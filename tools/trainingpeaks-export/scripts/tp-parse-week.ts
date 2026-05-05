@@ -35,6 +35,16 @@ type ParsedWorkout = {
   tss: number | null;
   if: number | null;
   rpe: number | null;
+  description: string | null;
+  avg_hr: number | null;
+  max_hr: number | null;
+  avg_pace_min_per_km: number | null;
+  avg_pace_text: string | null;
+  duration_text: string | null;
+  planned_duration_text: string | null;
+  distance_text: string | null;
+  intensity_flags: string[];
+  data_warnings: string[];
   athlete_comments: string | null;
   coach_comments: string | null;
   source_file: string;
@@ -54,6 +64,11 @@ type WeeklySummary = {
     total_distance_km: number | null;
     planned_duration_minutes: number | null;
     completed_duration_minutes: number | null;
+    total_completed_duration_text: string | null;
+    total_planned_duration_text: string | null;
+    total_distance_text: string | null;
+    data_warnings_count: number;
+    intensity_flags_count: number;
   };
   workouts: ParsedWorkout[];
 };
@@ -157,6 +172,25 @@ const FIELD_ALIASES = {
     "rpe",
     "sessionrpe",
     "perceivedexertion"
+  ],
+  description: [
+    "workoutdescription",
+    "description",
+    "details",
+    "workoutdetails",
+    "sessiondescription"
+  ],
+  avg_hr: [
+    "heartrateaverage",
+    "averageheartrate",
+    "avghr",
+    "hraverage"
+  ],
+  max_hr: [
+    "heartratemax",
+    "maxheartrate",
+    "maxhr",
+    "hrmax"
   ],
   athlete_comments: [
     "athletecomments",
@@ -467,6 +501,129 @@ function roundNumber(value: number, digits: number): number {
   return Math.round(value * factor) / factor;
 }
 
+function formatDurationMinutes(minutes: number | null): string | null {
+  if (minutes === null || !Number.isFinite(minutes) || minutes < 0) {
+    return null;
+  }
+
+  const roundedMinutes = Math.round(minutes);
+  if (roundedMinutes >= 60) {
+    const hours = Math.floor(roundedMinutes / 60);
+    const remainderMinutes = roundedMinutes % 60;
+    return `${hours}:${String(remainderMinutes).padStart(2, "0")}`;
+  }
+
+  return `${roundedMinutes} min`;
+}
+
+function formatDistanceKm(distanceKm: number | null): string | null {
+  if (distanceKm === null || !Number.isFinite(distanceKm) || distanceKm < 0) {
+    return null;
+  }
+
+  return `${distanceKm.toFixed(2)} km`;
+}
+
+function deriveAveragePaceMinPerKm(
+  distanceKm: number | null,
+  durationMinutes: number | null
+): number | null {
+  if (
+    distanceKm === null ||
+    durationMinutes === null ||
+    !Number.isFinite(distanceKm) ||
+    !Number.isFinite(durationMinutes) ||
+    distanceKm <= 0 ||
+    durationMinutes <= 0
+  ) {
+    return null;
+  }
+
+  return roundNumber(durationMinutes / distanceKm, 2);
+}
+
+function formatPaceMinPerKm(paceMinPerKm: number | null): string | null {
+  if (paceMinPerKm === null || !Number.isFinite(paceMinPerKm) || paceMinPerKm <= 0) {
+    return null;
+  }
+
+  const totalSeconds = Math.round(paceMinPerKm * 60);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}/km`;
+}
+
+function buildIntensityFlags(workout: {
+  avg_hr: number | null;
+  max_hr: number | null;
+  rpe: number | null;
+  distance_km: number | null;
+  completed_duration_minutes: number | null;
+}): string[] {
+  const flags: string[] = [];
+
+  if (workout.avg_hr !== null && workout.avg_hr >= 170) {
+    flags.push("high_average_hr");
+  }
+
+  if (workout.max_hr !== null && workout.max_hr >= 190) {
+    flags.push("high_max_hr");
+  }
+
+  if (workout.rpe !== null && workout.rpe >= 7) {
+    flags.push("hard_rpe");
+  }
+
+  if (
+    (workout.distance_km !== null && workout.distance_km >= 12) ||
+    (workout.completed_duration_minutes !== null && workout.completed_duration_minutes >= 80)
+  ) {
+    flags.push("long_run");
+  }
+
+  return flags;
+}
+
+function buildDataWarnings(workout: {
+  sport: string | null;
+  if: number | null;
+  tss: number | null;
+  distance_km: number | null;
+  completed_duration_minutes: number | null;
+  avg_hr: number | null;
+  max_hr: number | null;
+  description: string | null;
+}): string[] {
+  const warnings: string[] = [];
+  const sportNormalized = normalizeHeader(workout.sport ?? "");
+
+  if (workout.if !== null && workout.if > 1.15) {
+    warnings.push("suspicious_if");
+  }
+
+  if (
+    workout.tss !== null &&
+    workout.tss > 150 &&
+    (sportNormalized === "run" || sportNormalized === "")
+  ) {
+    warnings.push("suspicious_tss");
+  }
+
+  if (workout.completed_duration_minutes !== null && workout.distance_km === null) {
+    warnings.push("missing_distance");
+  }
+
+  if (workout.avg_hr === null && workout.max_hr === null) {
+    warnings.push("missing_hr");
+  }
+
+  if (workout.description === null) {
+    warnings.push("missing_description");
+  }
+
+  return warnings;
+}
+
 function buildHeaderIndex(row: RawRow): Map<string, string> {
   const index = new Map<string, string>();
 
@@ -526,6 +683,9 @@ function looksLikeWorkout(row: ParsedWorkout): boolean {
     row.tss,
     row.if,
     row.rpe,
+    row.description,
+    row.avg_hr,
+    row.max_hr,
     row.athlete_comments,
     row.coach_comments
   ].some((value) => value !== null);
@@ -644,18 +804,35 @@ async function parseCsvFile(candidate: CsvCandidate): Promise<ParsedCsv> {
     const completedDurationField = pickField(raw, FIELD_ALIASES.completed_duration);
     const distanceField = pickField(raw, FIELD_ALIASES.distance);
     const plannedDistanceField = pickField(raw, FIELD_ALIASES.planned_distance);
+    const description = pickValue(raw, FIELD_ALIASES.description);
+    const avgHr = parseFlexibleNumber(pickValue(raw, FIELD_ALIASES.avg_hr));
+    const maxHr = parseFlexibleNumber(pickValue(raw, FIELD_ALIASES.max_hr));
+    const plannedDurationMinutes = parseDurationMinutes(plannedDurationField);
+    const completedDurationMinutes = parseDurationMinutes(completedDurationField);
+    const distanceKm = parseDistanceKm(distanceField);
+    const avgPaceMinPerKm = deriveAveragePaceMinPerKm(distanceKm, completedDurationMinutes);
 
     const normalized: ParsedWorkout = {
       date: parseDate(dateField?.value ?? null),
       title: pickValue(raw, FIELD_ALIASES.title),
       sport: pickValue(raw, FIELD_ALIASES.sport),
-      planned_duration_minutes: parseDurationMinutes(plannedDurationField),
-      completed_duration_minutes: parseDurationMinutes(completedDurationField),
-      distance_km: parseDistanceKm(distanceField),
+      planned_duration_minutes: plannedDurationMinutes,
+      completed_duration_minutes: completedDurationMinutes,
+      distance_km: distanceKm,
       planned_distance_km: parseDistanceKm(plannedDistanceField),
       tss: parseFlexibleNumber(pickValue(raw, FIELD_ALIASES.tss)),
       if: parseIfValue(pickValue(raw, FIELD_ALIASES.if)),
       rpe: parseFlexibleNumber(pickValue(raw, FIELD_ALIASES.rpe)),
+      description,
+      avg_hr: avgHr,
+      max_hr: maxHr,
+      avg_pace_min_per_km: avgPaceMinPerKm,
+      avg_pace_text: formatPaceMinPerKm(avgPaceMinPerKm),
+      duration_text: formatDurationMinutes(completedDurationMinutes),
+      planned_duration_text: formatDurationMinutes(plannedDurationMinutes),
+      distance_text: formatDistanceKm(distanceKm),
+      intensity_flags: [],
+      data_warnings: [],
       athlete_comments: pickValue(raw, FIELD_ALIASES.athlete_comments),
       coach_comments: pickValue(raw, FIELD_ALIASES.coach_comments),
       source_file: candidate.sourceFile,
@@ -675,6 +852,17 @@ async function parseCsvFile(candidate: CsvCandidate): Promise<ParsedCsv> {
       normalized.rpe = null;
       normalized.athlete_comments = null;
     }
+
+    normalized.avg_pace_min_per_km = deriveAveragePaceMinPerKm(
+      normalized.distance_km,
+      normalized.completed_duration_minutes
+    );
+    normalized.avg_pace_text = formatPaceMinPerKm(normalized.avg_pace_min_per_km);
+    normalized.duration_text = formatDurationMinutes(normalized.completed_duration_minutes);
+    normalized.distance_text = formatDistanceKm(normalized.distance_km);
+
+    normalized.intensity_flags = buildIntensityFlags(normalized);
+    normalized.data_warnings = buildDataWarnings(normalized);
 
     if (looksLikeWorkout(normalized)) {
       workouts.push(normalized);
@@ -749,6 +937,23 @@ async function main(): Promise<void> {
         ),
         completed_duration_minutes: sumOrNull(
           workouts.map((workout) => workout.completed_duration_minutes),
+          0
+        ),
+        total_completed_duration_text: formatDurationMinutes(
+          sumOrNull(workouts.map((workout) => workout.completed_duration_minutes), 0)
+        ),
+        total_planned_duration_text: formatDurationMinutes(
+          sumOrNull(workouts.map((workout) => workout.planned_duration_minutes), 0)
+        ),
+        total_distance_text: formatDistanceKm(
+          sumOrNull(workouts.map((workout) => workout.distance_km), 2)
+        ),
+        data_warnings_count: workouts.reduce(
+          (count, workout) => count + workout.data_warnings.length,
+          0
+        ),
+        intensity_flags_count: workouts.reduce(
+          (count, workout) => count + workout.intensity_flags.length,
           0
         )
       },
