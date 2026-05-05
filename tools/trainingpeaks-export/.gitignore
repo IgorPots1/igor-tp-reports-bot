@@ -5,4 +5,6 @@ exports/*
 !exports/.gitkeep
 parsed/*
 !parsed/.gitkeep
+reports/*
+!reports/.gitkeep
 config/students.json
