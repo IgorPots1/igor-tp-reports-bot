@@ -45,6 +45,10 @@ npm run tp-sync-reports -- --from=YYYY-MM-DD --to=YYYY-MM-DD
 
 This sync writes sanitized weekly metadata plus `report-draft.md` content into Supabase and does not send anything to students.
 
+For MVP, the student registry in Supabase lives in `trainingpeaks_students` and is used by Telegram commands. The local export pipeline still reads `tools/trainingpeaks-export/config/students.json`.
+
+After adding a student through Telegram with `/tp_add_student`, manually mirror that student into `tools/trainingpeaks-export/config/students.json`, otherwise local export/parsing/report generation will not run for that athlete.
+
 ## Telegram Commands
 
 Available commands:
@@ -53,5 +57,6 @@ Available commands:
 - `/tp_status`
 - `/tp_status <from> <to>`
 - `/tp_students`
+- `/tp_add_student <name> | <trainingpeaks_url>`
 - `/tp_report <student> [from to]`
 - `/tp_weekly`

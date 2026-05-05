@@ -1,10 +1,15 @@
 import {
+  insertTrainingPeaksStudent,
   listAllTrainingPeaksReports,
+  listTrainingPeaksStudents,
+  TrainingPeaksStudentConflictError,
+  type TrainingPeaksStudent,
   type TrainingPeaksWeek,
   type TrainingPeaksWeeklyReport,
 } from "@/features/trainingpeaks/repository";
 
 export type TrainingPeaksStatus = "ready" | "parsed_only" | "missing";
+export type TrainingPeaksRegistryStatus = "no_data" | "ready" | "data_loaded" | "no_report";
 
 export type TrainingPeaksStatusOverviewStudent = {
   studentId: string;
@@ -33,6 +38,26 @@ export type TrainingPeaksReportSnapshot = {
   weekTo: string;
   reportMarkdown: string;
 };
+
+export type TrainingPeaksRegistryStudentSnapshot = {
+  id: string;
+  studentId: string;
+  studentName: string;
+  trainingPeaksAthleteUrl: string;
+  isActive: boolean;
+  weeklyReportEnabled: boolean;
+  dataQualityStatus: string | null;
+  notes: string | null;
+  latestWeekFrom: string | null;
+  latestWeekTo: string | null;
+  latestReportStatus: TrainingPeaksRegistryStatus;
+};
+
+export type AddTrainingPeaksStudentResult =
+  | { ok: true; student: TrainingPeaksStudent }
+  | { ok: false; reason: "empty_name" | "invalid_url" | "duplicate_student" | "duplicate_url" | "unknown" };
+
+const TP_ADD_STUDENT_COMMAND_PATTERN = /^\/tp_add_student(?:@\w+)?(?:\s+|$)/;
 
 function normalizeStudentQuery(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("ru");
@@ -98,6 +123,10 @@ function hasReportMarkdown(reportMarkdown: string | null): boolean {
   return Boolean(reportMarkdown?.trim());
 }
 
+function hasSummaryJson(summaryJson: unknown | null): boolean {
+  return summaryJson !== null;
+}
+
 function normalizeReportStatus(report: TrainingPeaksWeeklyReport): Exclude<TrainingPeaksStatus, "missing"> {
   if (report.status === "ready" || report.status === "parsed_only") {
     return report.status;
@@ -149,6 +178,43 @@ function getWeekReportByStudent(
   );
 }
 
+function stripTpAddStudentCommandPrefix(rawInput: string): string {
+  return rawInput.replace(TP_ADD_STUDENT_COMMAND_PATTERN, "").trim();
+}
+
+function parseTpAddStudentInput(rawInput: string): { studentName: string; trainingPeaksAthleteUrl: string } {
+  const normalizedInput = stripTpAddStudentCommandPrefix(rawInput);
+  const separatorIndex = normalizedInput.indexOf("|");
+
+  if (separatorIndex < 0) {
+    return {
+      studentName: normalizedInput.trim(),
+      trainingPeaksAthleteUrl: "",
+    };
+  }
+
+  return {
+    studentName: normalizedInput.slice(0, separatorIndex).trim(),
+    trainingPeaksAthleteUrl: normalizedInput.slice(separatorIndex + 1).trim(),
+  };
+}
+
+function getRegistryStudentStatus(report: TrainingPeaksWeeklyReport | null): TrainingPeaksRegistryStatus {
+  if (!report) {
+    return "no_data";
+  }
+
+  if (hasReportMarkdown(report.reportMarkdown)) {
+    return "ready";
+  }
+
+  if (hasSummaryJson(report.summaryJson)) {
+    return "data_loaded";
+  }
+
+  return "no_report";
+}
+
 export async function getTrainingPeaksStatusOverview(
   requestedWeek?: TrainingPeaksWeek
 ): Promise<TrainingPeaksStatusOverview | null> {
@@ -187,6 +253,77 @@ export async function getTrainingPeaksStudentSnapshots(): Promise<TrainingPeaksS
     weekTo: report.weekTo,
     status: normalizeReportStatus(report),
   }));
+}
+
+export async function addTrainingPeaksStudentFromCommand(
+  rawInput: string
+): Promise<AddTrainingPeaksStudentResult> {
+  const { studentName, trainingPeaksAthleteUrl } = parseTpAddStudentInput(rawInput);
+
+  if (!studentName) {
+    return { ok: false, reason: "empty_name" };
+  }
+
+  if (!trainingPeaksAthleteUrl.startsWith("https://")) {
+    return { ok: false, reason: "invalid_url" };
+  }
+
+  try {
+    const student = await insertTrainingPeaksStudent({
+      studentId: studentName,
+      studentName,
+      trainingPeaksAthleteUrl,
+    });
+
+    return {
+      ok: true,
+      student,
+    };
+  } catch (error) {
+    if (error instanceof TrainingPeaksStudentConflictError) {
+      return {
+        ok: false,
+        reason: error.reason === "trainingpeaks_athlete_url" ? "duplicate_url" : "duplicate_student",
+      };
+    }
+
+    console.error("Failed to add TrainingPeaks student", {
+      rawInput,
+      error,
+    });
+
+    return { ok: false, reason: "unknown" };
+  }
+}
+
+export async function getTrainingPeaksStudentsRegistryWithLatestReportStatus(): Promise<
+  TrainingPeaksRegistryStudentSnapshot[]
+> {
+  const [students, reports] = await Promise.all([
+    listTrainingPeaksStudents(),
+    listAllTrainingPeaksReports(),
+  ]);
+  const latestByStudent = getLatestReportByStudent(reports);
+
+  return students
+    .map((student) => {
+      const latestReport = latestByStudent.get(student.studentId) ?? null;
+
+      return {
+        id: student.id,
+        studentId: student.studentId,
+        studentName: student.studentName,
+        trainingPeaksAthleteUrl: student.trainingPeaksAthleteUrl,
+        isActive: student.isActive,
+        weeklyReportEnabled: student.weeklyReportEnabled,
+        dataQualityStatus: student.dataQualityStatus,
+        notes: student.notes,
+        latestWeekFrom: latestReport?.weekFrom ?? null,
+        latestWeekTo: latestReport?.weekTo ?? null,
+        latestReportStatus: getRegistryStudentStatus(latestReport),
+      };
+    })
+    .sort((left, right) => left.studentName.localeCompare(right.studentName, "ru"));
 }
 
 export async function getTrainingPeaksReportMarkdown(

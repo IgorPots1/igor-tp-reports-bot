@@ -1,5 +1,51 @@
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
+export type TrainingPeaksStudent = {
+  id: string;
+  studentId: string;
+  studentName: string;
+  trainingPeaksAthleteUrl: string;
+  isActive: boolean;
+  weeklyReportEnabled: boolean;
+  dataQualityStatus: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type TrainingPeaksStudentRow = {
+  id: string;
+  student_id: string;
+  student_name: string;
+  trainingpeaks_athlete_url: string;
+  is_active: boolean;
+  weekly_report_enabled: boolean;
+  data_quality_status: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type InsertTrainingPeaksStudentInput = {
+  studentId: string;
+  studentName: string;
+  trainingPeaksAthleteUrl: string;
+  isActive?: boolean;
+  weeklyReportEnabled?: boolean;
+  dataQualityStatus?: string | null;
+  notes?: string | null;
+};
+
+export class TrainingPeaksStudentConflictError extends Error {
+  readonly reason: "student_id" | "trainingpeaks_athlete_url";
+
+  constructor(reason: "student_id" | "trainingpeaks_athlete_url") {
+    super(`TrainingPeaks student already exists for ${reason}`);
+    this.name = "TrainingPeaksStudentConflictError";
+    this.reason = reason;
+  }
+}
+
 export type TrainingPeaksWeeklyReport = {
   id: string;
   studentId: string;
@@ -42,6 +88,21 @@ type TrainingPeaksWeekRow = {
   week_to: string;
 };
 
+function mapTrainingPeaksStudentRow(row: TrainingPeaksStudentRow): TrainingPeaksStudent {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    studentName: row.student_name,
+    trainingPeaksAthleteUrl: row.trainingpeaks_athlete_url,
+    isActive: row.is_active,
+    weeklyReportEnabled: row.weekly_report_enabled,
+    dataQualityStatus: row.data_quality_status,
+    notes: row.notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function mapTrainingPeaksWeeklyReportRow(
   row: TrainingPeaksWeeklyReportRow
 ): TrainingPeaksWeeklyReport {
@@ -67,6 +128,75 @@ function mapTrainingPeaksWeekRow(row: TrainingPeaksWeekRow): TrainingPeaksWeek {
     weekFrom: row.week_from,
     weekTo: row.week_to,
   };
+}
+
+function getTrainingPeaksStudentConflictReason(error: {
+  code?: string | null;
+  constraint?: string | null;
+  message?: string | null;
+  details?: string | null;
+}): "student_id" | "trainingpeaks_athlete_url" | null {
+  if (error.code !== "23505") {
+    return null;
+  }
+
+  const haystack = `${error.constraint ?? ""} ${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
+
+  if (haystack.includes("trainingpeaks_athlete_url")) {
+    return "trainingpeaks_athlete_url";
+  }
+
+  if (haystack.includes("student_id")) {
+    return "student_id";
+  }
+
+  return "student_id";
+}
+
+export async function insertTrainingPeaksStudent(
+  input: InsertTrainingPeaksStudentInput
+): Promise<TrainingPeaksStudent> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_students")
+    .insert({
+      student_id: input.studentId,
+      student_name: input.studentName,
+      trainingpeaks_athlete_url: input.trainingPeaksAthleteUrl,
+      is_active: input.isActive ?? true,
+      weekly_report_enabled: input.weeklyReportEnabled ?? true,
+      data_quality_status: input.dataQualityStatus ?? null,
+      notes: input.notes ?? null,
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    const conflictReason = getTrainingPeaksStudentConflictReason(error);
+
+    if (conflictReason) {
+      throw new TrainingPeaksStudentConflictError(conflictReason);
+    }
+
+    throw new Error(`Failed to insert TrainingPeaks student: ${error.message}`);
+  }
+
+  return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
+}
+
+export async function listTrainingPeaksStudents(): Promise<TrainingPeaksStudent[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_students")
+    .select("*")
+    .order("student_name", { ascending: true })
+    .order("student_id", { ascending: true });
+
+  if (error) {
+    throw new Error(`Failed to list TrainingPeaks students: ${error.message}`);
+  }
+
+  return ((data as TrainingPeaksStudentRow[]) ?? []).map(mapTrainingPeaksStudentRow);
 }
 
 export async function getLatestTrainingPeaksWeek(): Promise<TrainingPeaksWeek | null> {
@@ -109,7 +239,7 @@ export async function listTrainingPeaksReportsForWeek(
     );
   }
 
-  return (data as TrainingPeaksWeeklyReportRow[]).map(mapTrainingPeaksWeeklyReportRow);
+  return ((data as TrainingPeaksWeeklyReportRow[]) ?? []).map(mapTrainingPeaksWeeklyReportRow);
 }
 
 export async function listAllTrainingPeaksReports(): Promise<TrainingPeaksWeeklyReport[]> {

@@ -1,8 +1,9 @@
 import type { ParsedTelegramUpdate } from "@/features/telegram/parser";
 import {
+  addTrainingPeaksStudentFromCommand,
   getTrainingPeaksReportSnapshot,
   getTrainingPeaksStatusOverview,
-  getTrainingPeaksStudentSnapshots,
+  getTrainingPeaksStudentsRegistryWithLatestReportStatus,
 } from "@/features/trainingpeaks/service";
 import { sendTelegramMessage } from "@/features/telegram/telegram-client";
 
@@ -15,16 +16,25 @@ const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const TP_STATUS_COMMAND_PATTERN = /^\/tp_status(?:@\w+)?(?:\s+|$)/;
 const TP_STUDENTS_COMMAND_PATTERN = /^\/tp_students(?:@\w+)?(?:\s+|$)/;
+const TP_ADD_STUDENT_COMMAND_PATTERN = /^\/tp_add_student(?:@\w+)?(?:\s+|$)/;
 const TP_REPORT_COMMAND_PATTERN = /^\/tp_report(?:@\w+)?(?:\s+|$)/;
 const TP_WEEKLY_COMMAND_PATTERN = /^\/tp_weekly(?:@\w+)?(?:\s+|$)/;
 const TP_COMMAND_PATTERN = /^\/tp_[a-z0-9_]+(?:@\w+)?(?:\s+|$)/;
+const TP_ADD_STUDENT_USAGE =
+  "Напиши так: /tp_add_student Olga | https://app.trainingpeaks.com/athlete/...";
 const SHORT_DATE_FORMATTER = new Intl.DateTimeFormat("ru-RU", {
   day: "numeric",
   month: "short",
   timeZone: "UTC",
 });
 
-type TrainingPeaksCommand = "tp_status" | "tp_students" | "tp_report" | "tp_weekly" | "unknown";
+type TrainingPeaksCommand =
+  | "tp_status"
+  | "tp_students"
+  | "tp_add_student"
+  | "tp_report"
+  | "tp_weekly"
+  | "unknown";
 
 type TrainingPeaksWeek = {
   weekFrom: string;
@@ -53,6 +63,10 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
 
   if (TP_STUDENTS_COMMAND_PATTERN.test(text)) {
     return "tp_students";
+  }
+
+  if (TP_ADD_STUDENT_COMMAND_PATTERN.test(text)) {
+    return "tp_add_student";
   }
 
   if (TP_REPORT_COMMAND_PATTERN.test(text)) {
@@ -94,6 +108,22 @@ function getStatusLabel(status: string): string {
 
   if (status === "parsed_only") {
     return "только данные";
+  }
+
+  return "нет данных";
+}
+
+function getRegistryStatusLabel(status: string): string {
+  if (status === "ready") {
+    return "готов";
+  }
+
+  if (status === "data_loaded") {
+    return "данные загружены";
+  }
+
+  if (status === "no_report") {
+    return "нет отчета";
   }
 
   return "нет данных";
@@ -253,6 +283,15 @@ function parseReportCommand(text: string): {
   };
 }
 
+function parseAddStudentCommand(text: string): string {
+  return text.replace(TP_ADD_STUDENT_COMMAND_PATTERN, "").trim();
+}
+
+function getTpAddStudentNamePreview(rawInput: string): string {
+  const separatorIndex = rawInput.indexOf("|");
+  return (separatorIndex >= 0 ? rawInput.slice(0, separatorIndex) : rawInput).trim();
+}
+
 function formatStatusMessage(
   week: TrainingPeaksWeek,
   students: {
@@ -274,20 +313,20 @@ function formatStatusMessage(
 function formatStudentsMessage(
   students: {
     studentName: string;
-    weekFrom: string;
-    weekTo: string;
-    status: string;
+    latestWeekFrom: string | null;
+    latestWeekTo: string | null;
+    latestReportStatus: string;
   }[]
 ): string {
   return [
-    "👥 Ученики",
+    "Ученики TrainingPeaks:",
     "",
     ...students.map((student) => {
-      if (student.status === "ready") {
-        return `${student.studentName} — ${getStatusLabel(student.status)} (последняя неделя ${formatShortDate(student.weekFrom)})`;
+      if (student.latestWeekFrom && student.latestWeekTo) {
+        return `• ${student.studentName} — ${getRegistryStatusLabel(student.latestReportStatus)}, последняя неделя: ${student.latestWeekFrom} — ${student.latestWeekTo}`;
       }
 
-      return `${student.studentName} — ${getStatusLabel(student.status)}`;
+      return `• ${student.studentName} — ${getRegistryStatusLabel(student.latestReportStatus)}`;
     }),
   ].join("\n");
 }
@@ -306,6 +345,7 @@ export function getTrainingPeaksHelpLines(): string[] {
     "/tp_status — статусы за последнюю синхронизированную неделю",
     "/tp_status <from> <to> — статусы за выбранную неделю",
     "/tp_students — ученики и их последний статус",
+    "/tp_add_student Имя | ссылка",
     "/tp_report <ученик> [from to] — текст отчёта",
     "/tp_weekly — запуск workflow отключён",
   ];
@@ -338,17 +378,81 @@ async function handleTrainingPeaksStatus(
 }
 
 async function handleTrainingPeaksStudents(parsedMessage: ParsedTelegramUpdate): Promise<void> {
-  const students = await getTrainingPeaksStudentSnapshots();
+  const students = await getTrainingPeaksStudentsRegistryWithLatestReportStatus();
 
   if (students.length === 0) {
     await sendTrainingPeaksMessage(
       parsedMessage.chatId,
-      "В Supabase пока нет учеников TrainingPeaks."
+      [
+        "В Supabase пока нет учеников TrainingPeaks. Добавь первого через:",
+        TP_ADD_STUDENT_USAGE.replace("Напиши так: ", ""),
+      ].join("\n")
     );
     return;
   }
 
   await sendTrainingPeaksMessage(parsedMessage.chatId, formatStudentsMessage(students));
+}
+
+async function handleTrainingPeaksAddStudent(
+  parsedMessage: ParsedTelegramUpdate,
+  text: string
+): Promise<void> {
+  const rawInput = parseAddStudentCommand(text);
+
+  if (!rawInput) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, TP_ADD_STUDENT_USAGE);
+    return;
+  }
+
+  const result = await addTrainingPeaksStudentFromCommand(rawInput);
+  const studentName = getTpAddStudentNamePreview(rawInput);
+
+  if (!result.ok) {
+    if (result.reason === "empty_name") {
+      await sendTrainingPeaksMessage(parsedMessage.chatId, "Имя ученика не должно быть пустым.");
+      return;
+    }
+
+    if (result.reason === "invalid_url") {
+      await sendTrainingPeaksMessage(
+        parsedMessage.chatId,
+        "Ссылка на TrainingPeaks должна начинаться с https://"
+      );
+      return;
+    }
+
+    if (result.reason === "duplicate_student") {
+      await sendTrainingPeaksMessage(
+        parsedMessage.chatId,
+        `Ученик "${studentName}" уже существует.`
+      );
+      return;
+    }
+
+    if (result.reason === "duplicate_url") {
+      await sendTrainingPeaksMessage(
+        parsedMessage.chatId,
+        "Этот URL TrainingPeaks уже привязан к другому ученику."
+      );
+      return;
+    }
+
+    await sendTrainingPeaksMessage(
+      parsedMessage.chatId,
+      "Не смог добавить ученика в Supabase. Попробуй позже."
+    );
+    return;
+  }
+
+  await sendTrainingPeaksMessage(
+    parsedMessage.chatId,
+    [
+      `✅ Ученик добавлен: ${result.student.studentName}`,
+      "",
+      "⚠️ Важно: добавь этого ученика вручную в локальный tools/trainingpeaks-export/config/students.json, иначе локальный экспорт и отчеты по нему не запустятся.",
+    ].join("\n")
+  );
 }
 
 async function handleTrainingPeaksReport(
@@ -403,6 +507,11 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_students") {
       await handleTrainingPeaksStudents(parsedMessage);
+      return "handled";
+    }
+
+    if (command === "tp_add_student") {
+      await handleTrainingPeaksAddStudent(parsedMessage, text);
       return "handled";
     }
 
