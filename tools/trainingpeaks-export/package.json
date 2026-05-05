@@ -8,7 +8,9 @@
     "tp-export-one-student": "node --experimental-strip-types scripts/tp-export-one-student.ts",
     "tp-parse-week": "node --experimental-strip-types scripts/tp-parse-week.ts",
     "tp-generate-report": "node --experimental-strip-types scripts/tp-generate-report.ts",
-    "tp-weekly-one": "node --experimental-strip-types scripts/tp-weekly-one.ts"
+    "tp-weekly-one": "node --experimental-strip-types scripts/tp-weekly-one.ts",
+    "tp-weekly-all": "node --experimental-strip-types scripts/tp-weekly-all.ts",
+    "tp-student-add": "node --experimental-strip-types scripts/tp-student-add.ts"
   },
   "dependencies": {
     "csv-parse": "^6.2.1",

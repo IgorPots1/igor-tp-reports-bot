@@ -1,36 +1,20 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { stdin as input, stdout as output } from "node:process";
 import { createInterface } from "node:readline/promises";
-import { fileURLToPath } from "node:url";
 
 import type { Download } from "playwright";
 import { chromium } from "playwright";
-
-type StudentConfig = {
-  id: string;
-  name?: string;
-  url: string;
-};
-
-type ConfigFile = {
-  students: StudentConfig[];
-};
+import { exportsRoot, profileDir } from "./lib/paths.ts";
+import { findStudentById, readStudentsConfig } from "./lib/students.ts";
 
 type CliArgs = {
   student: string;
   from: string;
   to: string;
 };
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const toolRoot = path.resolve(__dirname, "..");
-const profileDir = path.join(toolRoot, ".playwright-profile", "trainingpeaks");
-const configPath = path.join(toolRoot, "config", "students.json");
-const exportsRoot = path.join(toolRoot, "exports");
 
 function usage(): string {
   return [
@@ -68,29 +52,6 @@ function parseArgs(argv: string[]): CliArgs {
   }
 
   return values as CliArgs;
-}
-
-async function readConfig(): Promise<ConfigFile> {
-  if (!existsSync(configPath)) {
-    throw new Error(
-      "Missing config/students.json.\nCopy config/students.example.json to config/students.json and fill in your student URLs."
-    );
-  }
-
-  const raw = await readFile(configPath, "utf8");
-  const parsed = JSON.parse(raw) as Partial<ConfigFile>;
-
-  if (!Array.isArray(parsed.students)) {
-    throw new Error("config/students.json must contain a `students` array.");
-  }
-
-  for (const student of parsed.students) {
-    if (!student || typeof student.id !== "string" || typeof student.url !== "string") {
-      throw new Error("Each student in config/students.json must have string `id` and `url` fields.");
-    }
-  }
-
-  return parsed as ConfigFile;
 }
 
 async function waitForEnter(message: string): Promise<void> {
@@ -142,21 +103,21 @@ async function saveDownload(download: Download, exportDir: string, savedFiles: s
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const config = await readConfig();
-  const student = config.students.find((entry) => entry.id === args.student);
+  const students = await readStudentsConfig();
+  const student = findStudentById(students, args.student);
 
   if (!student) {
-    const knownStudents = config.students.map((entry) => entry.id).join(", ") || "(none)";
+    const knownStudents = students.map((entry) => entry.student_id).join(", ") || "(none)";
     throw new Error(`Student "${args.student}" was not found in config/students.json. Known ids: ${knownStudents}`);
   }
 
-  const exportDir = path.join(exportsRoot, student.id, `${args.from}_${args.to}`);
+  const exportDir = path.join(exportsRoot, student.student_id, `${args.from}_${args.to}`);
   await mkdir(exportDir, { recursive: true });
   await mkdir(profileDir, { recursive: true });
 
   console.log(`Using persistent browser profile: ${profileDir}`);
   console.log(`Export folder: ${exportDir}`);
-  console.log(`Opening TrainingPeaks for student: ${student.id}`);
+  console.log(`Opening TrainingPeaks for student: ${student.student_id}`);
 
   const context = await chromium.launchPersistentContext(profileDir, {
     headless: false,
@@ -190,12 +151,12 @@ async function main(): Promise<void> {
     registerDownloadHandler(newPage);
   });
 
-  await page.goto(student.url, { waitUntil: "domcontentloaded" });
+  await page.goto(student.trainingpeaks_athlete_url, { waitUntil: "domcontentloaded" });
   await page.bringToFront();
 
   console.log("");
   console.log("Manual steps:");
-  console.log(`1. Confirm you are on the correct athlete page for ${student.id}.`);
+  console.log(`1. Confirm you are on the correct athlete page for ${student.student_id}.`);
   console.log("2. In TrainingPeaks, open Athlete Account Settings -> Export Data.");
   console.log(`3. Set the export date range to ${args.from} through ${args.to}.`);
   console.log("4. Download Workout Summary.");
