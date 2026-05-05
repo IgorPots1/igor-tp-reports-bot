@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { stdin as input, stdout as output } from "node:process";
@@ -88,6 +88,24 @@ function uniqueFilePath(directory: string, fileName: string): string {
   return attempt;
 }
 
+async function confirmYesNo(message: string): Promise<boolean> {
+  const rl = createInterface({ input, output });
+  try {
+    const answer = (await rl.question(`${message} `)).trim().toLowerCase();
+    return answer === "y" || answer === "yes";
+  } finally {
+    rl.close();
+  }
+}
+
+async function listZipFiles(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isFile() && path.extname(entry.name).toLowerCase() === ".zip")
+    .map((entry) => path.join(directory, entry.name))
+    .sort((left, right) => left.localeCompare(right));
+}
+
 async function saveDownload(download: Download, exportDir: string, savedFiles: string[]): Promise<void> {
   const failure = await download.failure();
   if (failure) {
@@ -145,43 +163,71 @@ async function main(): Promise<void> {
     });
   };
 
-  const page = context.pages()[0] ?? (await context.newPage());
-  registerDownloadHandler(page);
-  context.on("page", (newPage) => {
-    registerDownloadHandler(newPage);
-  });
+  try {
+    const page = context.pages()[0] ?? (await context.newPage());
+    registerDownloadHandler(page);
+    context.on("page", (newPage) => {
+      registerDownloadHandler(newPage);
+    });
 
-  await page.goto(student.trainingpeaks_athlete_url, { waitUntil: "domcontentloaded" });
-  await page.bringToFront();
+    await page.goto(student.trainingpeaks_athlete_url, { waitUntil: "domcontentloaded" });
+    await page.bringToFront();
 
-  console.log("");
-  console.log("Manual steps:");
-  console.log(`1. Confirm you are on the correct athlete page for ${student.student_id}.`);
-  console.log("2. In TrainingPeaks, open Athlete Account Settings -> Export Data.");
-  console.log(`3. Set the export date range to ${args.from} through ${args.to}.`);
-  console.log("4. Download Workout Summary.");
-  console.log("5. Download Workout Files.");
-  console.log("6. Return to this terminal and press Enter when both downloads have finished.");
-  console.log("");
+    console.log("");
+    console.log("Manual steps:");
+    console.log(`1. Confirm you are on the correct athlete page for ${student.student_id}.`);
+    console.log("2. In TrainingPeaks, open Athlete Account Settings -> Export Data.");
+    console.log(`3. Set the export date range to ${args.from} through ${args.to}.`);
+    console.log("4. Download Workout Summary.");
+    console.log("5. Download Workout Files.");
+    console.log("6. Return to this terminal and press Enter when both downloads have finished.");
+    console.log("");
 
-  await waitForEnter("Press Enter here after you finish the manual export flow.");
+    await waitForEnter("Press Enter here after you finish the manual export flow.");
 
-  if (pendingDownloads.size > 0) {
-    console.log(`Waiting for ${pendingDownloads.size} download(s) to finish saving...`);
-    await Promise.allSettled([...pendingDownloads]);
-  }
+    if (pendingDownloads.size > 0) {
+      console.log(`Waiting for ${pendingDownloads.size} download(s) to finish saving...`);
+      await Promise.allSettled([...pendingDownloads]);
+    }
 
-  if (savedFiles.length === 0) {
-    console.log("No downloads were captured.");
-  } else {
-    console.log("Saved files:");
-    for (const filePath of savedFiles) {
+    const downloadsCaptured = savedFiles.length;
+
+    if (downloadsCaptured > 0) {
+      console.log(`Status: new downloads captured (${downloadsCaptured}).`);
+      console.log("Saved files:");
+      for (const filePath of savedFiles) {
+        console.log(`- ${filePath}`);
+      }
+      return;
+    }
+
+    console.log("No downloads were captured in this run.");
+
+    const existingZipFiles = await listZipFiles(exportDir);
+    if (existingZipFiles.length === 0) {
+      console.log("Status: no export files available.");
+      throw new Error("No downloads captured and no existing export files found.");
+    }
+
+    console.log("Existing ZIP files found:");
+    for (const filePath of existingZipFiles) {
       console.log(`- ${filePath}`);
     }
-  }
 
-  await context.close();
-  console.log("Browser closed.");
+    const shouldContinue = await confirmYesNo(
+      "No new downloads were captured. Existing export files were found. Continue using existing files? y/N"
+    );
+
+    if (!shouldContinue) {
+      console.log("Status: no export files available.");
+      throw new Error("Workflow stopped because no new downloads were captured and existing files were not approved.");
+    }
+
+    console.log("Status: using existing export files.");
+  } finally {
+    await context.close();
+    console.log("Browser closed.");
+  }
 }
 
 main().catch((error: unknown) => {

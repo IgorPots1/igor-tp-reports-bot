@@ -108,6 +108,7 @@ npm run tp-weekly-one -- --student=Olga --from=2026-04-27 --to=2026-05-03 --skip
 - `weekly_report_enabled === true`
 
 If `--from` and `--to` are omitted, it automatically uses the previous full Monday-Sunday week based on local time.
+If no new downloads are captured during the manual export step, the workflow now asks before reusing existing ZIP exports from that week.
 
 Examples:
 
