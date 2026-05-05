@@ -1,19 +1,31 @@
-import { handleTelegramCommand } from "@/features/telegram/command-handler";
-import { routeNaturalTelegramText } from "@/features/telegram/natural-router";
 import { parseTelegramUpdate } from "@/features/telegram/parser";
+import { sendTelegramMessage } from "@/features/telegram/telegram-client";
+import {
+  getTrainingPeaksHelpLines,
+  handleTrainingPeaksTelegramCommand,
+} from "@/features/telegram/trainingpeaks";
 import type { TelegramUpdate } from "@/features/telegram/types";
-import { handleTelegramVoiceMessage } from "@/features/telegram/voice";
 
 export const runtime = "nodejs";
 
 const jsonHeaders = {
   "Content-Type": "application/json",
 };
+
+const HELP_COMMAND_PATTERN = /^\/help(?:@\w+)?(?:\s+|$)/;
+const START_COMMAND_PATTERN = /^\/start(?:@\w+)?(?:\s+|$)/;
+const TP_ONLY_MESSAGE =
+  "Этот бот только для TrainingPeaks отчётов. Используй /help.";
+
 function okResponse() {
   return new Response(JSON.stringify({ ok: true }), {
     status: 200,
     headers: jsonHeaders,
   });
+}
+
+function getTrainingPeaksHelpMessage(): string {
+  return ["Команды бота:", "/help — помощь", "/start — помощь", "", ...getTrainingPeaksHelpLines()].join("\n");
 }
 
 export async function GET() {
@@ -37,35 +49,19 @@ export async function POST(request: Request) {
     return okResponse();
   }
 
-  if (parsedMessage.voice) {
-    await handleTelegramVoiceMessage(parsedMessage);
+  const messageText = parsedMessage.text?.trim() ?? "";
+
+  if (HELP_COMMAND_PATTERN.test(messageText) || START_COMMAND_PATTERN.test(messageText)) {
+    await sendTelegramMessage(parsedMessage.chatId, getTrainingPeaksHelpMessage());
     return okResponse();
   }
 
-  if (parsedMessage.text && !parsedMessage.text.startsWith("/")) {
-    const naturalRoute = routeNaturalTelegramText(parsedMessage.text);
-
-    if (naturalRoute.kind === "command") {
-      await handleTelegramCommand(parsedMessage, {
-        messageText: naturalRoute.messageText,
-      });
-      return okResponse();
-    }
-
-    if (naturalRoute.kind === "save") {
-      await handleTelegramCommand(parsedMessage, {
-        fallbackSave: {
-          rawText: naturalRoute.rawText,
-          source: "telegram",
-          tags: [],
-          successMessage: "✅ Сохранил во второй мозг",
-        },
-      });
-      return okResponse();
-    }
+  if (messageText.startsWith("/tp_")) {
+    await handleTrainingPeaksTelegramCommand(parsedMessage, messageText);
+    return okResponse();
   }
 
-  await handleTelegramCommand(parsedMessage);
+  await sendTelegramMessage(parsedMessage.chatId, TP_ONLY_MESSAGE);
 
   return okResponse();
 }
