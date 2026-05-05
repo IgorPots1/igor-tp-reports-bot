@@ -195,10 +195,12 @@ async function main(): Promise<void> {
 
   console.log("");
   console.log("Manual steps:");
-  console.log(`1. Confirm you are on the correct student page for ${student.id}.`);
-  console.log("2. Manually navigate to Export Data in TrainingPeaks.");
-  console.log(`3. Download the files for the date window ${args.from} to ${args.to}.`);
-  console.log("4. Return to this terminal and press Enter when all downloads have finished.");
+  console.log(`1. Confirm you are on the correct athlete page for ${student.id}.`);
+  console.log("2. In TrainingPeaks, open Athlete Account Settings -> Export Data.");
+  console.log(`3. Set the export date range to ${args.from} through ${args.to}.`);
+  console.log("4. Download Workout Summary.");
+  console.log("5. Download Workout Files.");
+  console.log("6. Return to this terminal and press Enter when both downloads have finished.");
   console.log("");
 
   await waitForEnter("Press Enter here after you finish the manual export flow.");
