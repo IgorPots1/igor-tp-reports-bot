@@ -11,6 +11,7 @@
     "tp-weekly-one": "node --experimental-strip-types scripts/tp-weekly-one.ts",
     "tp-weekly-all": "node --experimental-strip-types scripts/tp-weekly-all.ts",
     "tp-reports-list": "node --experimental-strip-types scripts/tp-reports-list.ts",
+    "tp-report-open": "node --experimental-strip-types scripts/tp-report-open.ts",
     "tp-student-add": "node --experimental-strip-types scripts/tp-student-add.ts"
   },
   "dependencies": {

@@ -9,6 +9,7 @@ Current commands:
 - `npm run tp-weekly-one -- --student=Olga --from=2026-04-27 --to=2026-05-03`
 - `npm run tp-weekly-all`
 - `npm run tp-reports-list`
+- `npm run tp-report-open -- --student=Olga`
 - `npm run tp-student-add -- --student=Olga --name="Ольга" --url="https://app.trainingpeaks.com/#calendar/athletes/5734279"`
 
 `tp-weekly-one` is the MVP weekly workflow for one student:
@@ -60,6 +61,23 @@ npm run tp-reports-list
 npm run tp-reports-list -- --from=2026-04-27 --to=2026-05-03
 npm run tp-reports-list -- --enabled-only
 ```
+
+`tp-report-open` opens an already generated local report draft for one student without modifying any files.
+
+If `--from` and `--to` are omitted, it automatically uses the previous full Monday-Sunday week based on local time.
+
+Examples:
+
+```bash
+npm run tp-report-open -- --student=Olga
+npm run tp-report-open -- --student=Olga --from=2026-04-27 --to=2026-05-03
+```
+
+Expected report path:
+
+- `reports/{student_id}/{from}_{to}/report-draft.md`
+
+If the report does not exist yet, the command prints the expected path and suggests generating it with `tp-weekly-one` or `tp-weekly-all`.
 
 Student config lives in `config/students.json` and stays local (`config/students.json` is gitignored). The tool accepts both the new array format and older minimal entries that used `id` and `url`.
 
