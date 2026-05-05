@@ -7,14 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "check:obsidian-export": "node --experimental-strip-types scripts/check-obsidian-export.mts",
     "tp-sync-reports": "node --experimental-strip-types tools/trainingpeaks-export/scripts/tp-sync-reports.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.3",
-    "jszip": "^3.10.1",
     "next": "^15.3.2",
-    "openai": "^6.36.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

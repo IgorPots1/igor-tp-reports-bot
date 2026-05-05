@@ -1,24 +1,5 @@
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
 
-type TelegramApiSuccess<T> = {
-  ok: true;
-  result: T;
-};
-
-type TelegramApiFailure = {
-  ok: false;
-  description?: string;
-};
-
-type TelegramApiResponse<T> = TelegramApiSuccess<T> | TelegramApiFailure;
-
-type TelegramFile = {
-  file_id: string;
-  file_unique_id: string;
-  file_path?: string;
-  file_size?: number;
-};
-
 function getTelegramBotToken(): string {
   const token = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -49,70 +30,6 @@ async function postTelegramMessage(chatId: string | number, text: string): Promi
   }
 }
 
-async function callTelegramApi<T>(
-  method: string,
-  body: Record<string, unknown>
-): Promise<T> {
-  const token = getTelegramBotToken();
-
-  const response = await fetch(`${TELEGRAM_API_BASE_URL}/bot${token}/${method}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Telegram ${method} failed (${response.status}): ${errorText}`);
-  }
-
-  const payload = (await response.json()) as TelegramApiResponse<T>;
-
-  if (!payload.ok) {
-    throw new Error(`Telegram ${method} failed: ${payload.description ?? "Unknown error"}`);
-  }
-
-  return payload.result;
-}
-
-export async function getTelegramFile(fileId: string): Promise<{
-  fileId: string;
-  fileUniqueId: string;
-  filePath: string | null;
-  fileSize: number | null;
-}> {
-  const result = await callTelegramApi<TelegramFile>("getFile", {
-    file_id: fileId,
-  });
-
-  return {
-    fileId: result.file_id,
-    fileUniqueId: result.file_unique_id,
-    filePath: result.file_path ?? null,
-    fileSize: result.file_size ?? null,
-  };
-}
-
-export async function downloadTelegramFile(filePath: string): Promise<{
-  buffer: Buffer;
-  contentType: string | null;
-}> {
-  const token = getTelegramBotToken();
-  const response = await fetch(`${TELEGRAM_API_BASE_URL}/file/bot${token}/${encodeURI(filePath)}`);
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Telegram file download failed (${response.status}): ${errorText}`);
-  }
-
-  return {
-    buffer: Buffer.from(await response.arrayBuffer()),
-    contentType: response.headers.get("content-type"),
-  };
-}
-
 export async function sendTelegramMessage(chatId: string | number, text: string) {
   try {
     await postTelegramMessage(chatId, text);
@@ -125,8 +42,4 @@ export async function sendTelegramMessage(chatId: string | number, text: string)
       error: message,
     });
   }
-}
-
-export async function sendTelegramMessageOrThrow(chatId: string | number, text: string) {
-  await postTelegramMessage(chatId, text);
 }
