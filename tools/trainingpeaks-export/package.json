@@ -5,10 +5,13 @@
   "type": "module",
   "scripts": {
     "tp-login": "node --experimental-strip-types scripts/tp-login.ts",
-    "tp-export-one-student": "node --experimental-strip-types scripts/tp-export-one-student.ts"
+    "tp-export-one-student": "node --experimental-strip-types scripts/tp-export-one-student.ts",
+    "tp-parse-week": "node --experimental-strip-types scripts/tp-parse-week.ts"
   },
   "dependencies": {
-    "playwright": "^1.55.0"
+    "csv-parse": "^6.2.1",
+    "playwright": "^1.55.0",
+    "unzipper": "^0.12.3"
   },
   "devDependencies": {
     "@types/node": "^24.6.0",

@@ -3,4 +3,6 @@ node_modules/
 .playwright-profile/
 exports/*
 !exports/.gitkeep
+parsed/*
+!parsed/.gitkeep
 config/students.json

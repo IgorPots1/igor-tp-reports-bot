@@ -1,0 +1,773 @@
+import { createReadStream, existsSync } from "node:fs";
+import {
+  mkdtemp,
+  mkdir,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  writeFile
+} from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import process from "node:process";
+import { fileURLToPath } from "node:url";
+
+import { parse } from "csv-parse/sync";
+import * as unzipper from "unzipper";
+
+type CliArgs = {
+  student: string;
+  from: string;
+  to: string;
+};
+
+type RawRow = Record<string, string>;
+
+type ParsedWorkout = {
+  date: string | null;
+  title: string | null;
+  sport: string | null;
+  planned_duration_minutes: number | null;
+  completed_duration_minutes: number | null;
+  distance_km: number | null;
+  planned_distance_km: number | null;
+  tss: number | null;
+  if: number | null;
+  rpe: number | null;
+  athlete_comments: string | null;
+  coach_comments: string | null;
+  source_file: string;
+  raw: RawRow;
+};
+
+type WeeklySummary = {
+  student_id: string;
+  week: {
+    from: string;
+    to: string;
+  };
+  source_files: string[];
+  totals: {
+    workouts_count: number;
+    completed_workouts_count: number;
+    total_distance_km: number | null;
+    planned_duration_minutes: number | null;
+    completed_duration_minutes: number | null;
+  };
+  workouts: ParsedWorkout[];
+};
+
+type CsvCandidate = {
+  csvPath: string;
+  sourceFile: string;
+};
+
+type FieldMatch = {
+  key: string;
+  normalizedKey: string;
+  value: string;
+};
+
+type ParsedCsv = {
+  workouts: ParsedWorkout[];
+  sourceFiles: string[];
+};
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const toolRoot = path.resolve(__dirname, "..");
+const exportsRoot = path.join(toolRoot, "exports");
+const parsedRoot = path.join(toolRoot, "parsed");
+
+const FIELD_ALIASES = {
+  date: [
+    "date",
+    "workoutdate",
+    "workoutday",
+    "calendardate",
+    "completeddate",
+    "activitydate",
+    "scheduleddate"
+  ],
+  title: [
+    "title",
+    "name",
+    "workouttitle",
+    "workoutname",
+    "workout",
+    "sessionname",
+    "activityname"
+  ],
+  sport: [
+    "sport",
+    "workouttype",
+    "sporttype",
+    "type",
+    "activitytype",
+    "discipline"
+  ],
+  planned_duration: [
+    "plannedduration",
+    "planneddurationinhours",
+    "plannedtime",
+    "durationplanned",
+    "scheduledduration",
+    "totalplannedtime"
+  ],
+  completed_duration: [
+    "duration",
+    "completedduration",
+    "actualduration",
+    "movingtime",
+    "elapsedtime",
+    "totaltime",
+    "completedtime",
+    "timetotalinhours"
+  ],
+  distance: [
+    "distance",
+    "distanceinmeters",
+    "actualdistance",
+    "completeddistance",
+    "totaldistance"
+  ],
+  planned_distance: [
+    "planneddistance",
+    "planneddistanceinmeters",
+    "distanceplanned",
+    "scheduleddistance"
+  ],
+  tss: [
+    "tss",
+    "actualtss",
+    "completedtss",
+    "trainingstressscore",
+    "workouttss",
+    "plannedtss"
+  ],
+  if: [
+    "if",
+    "intensityfactor",
+    "actualif",
+    "completedif",
+    "plannedif"
+  ],
+  rpe: [
+    "rpe",
+    "sessionrpe",
+    "perceivedexertion"
+  ],
+  athlete_comments: [
+    "athletecomments",
+    "postactivitycomments",
+    "postworkoutcomments",
+    "comments",
+    "athletenotes",
+    "notes"
+  ],
+  coach_comments: [
+    "coachcomments",
+    "coachnote",
+    "coachnotes",
+    "plannedcomments",
+    "plannednotes",
+    "instructions"
+  ],
+  completion_status: [
+    "completed",
+    "completionstatus",
+    "status",
+    "compliance"
+  ]
+} as const;
+
+function usage(): string {
+  return [
+    "Usage:",
+    "  npm run tp-parse-week -- --student=Olga --from=2026-04-27 --to=2026-05-03"
+  ].join("\n");
+}
+
+function parseArgs(argv: string[]): CliArgs {
+  const values: Partial<CliArgs> = {};
+
+  for (const arg of argv) {
+    if (!arg.startsWith("--")) {
+      continue;
+    }
+
+    const [rawKey, ...rest] = arg.slice(2).split("=");
+    const value = rest.join("=");
+    if (!value) {
+      continue;
+    }
+
+    if (rawKey === "student" || rawKey === "from" || rawKey === "to") {
+      values[rawKey] = value;
+    }
+  }
+
+  if (!values.student || !values.from || !values.to) {
+    throw new Error(`Missing required CLI args.\n\n${usage()}`);
+  }
+
+  const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
+  if (!isoDatePattern.test(values.from) || !isoDatePattern.test(values.to)) {
+    throw new Error("`--from` and `--to` must use YYYY-MM-DD format.");
+  }
+
+  return values as CliArgs;
+}
+
+function toPosixPath(filePath: string): string {
+  return filePath.split(path.sep).join("/");
+}
+
+function relativeToToolRoot(filePath: string): string {
+  return toPosixPath(path.relative(toolRoot, filePath));
+}
+
+function normalizeHeader(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^\ufeff/, "")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function sanitizeForFileName(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "file";
+  }
+
+  return trimmed.replace(/[^a-zA-Z0-9._-]+/g, "_");
+}
+
+async function listFilesRecursively(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files: string[] = [];
+
+  for (const entry of entries) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...await listFilesRecursively(entryPath));
+      continue;
+    }
+
+    if (entry.isFile()) {
+      files.push(entryPath);
+    }
+  }
+
+  return files;
+}
+
+function detectDelimiter(content: string): string {
+  const firstDataLine = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+
+  if (!firstDataLine) {
+    return ",";
+  }
+
+  const candidates = [",", ";", "\t"];
+  let bestDelimiter = ",";
+  let bestScore = -1;
+
+  for (const delimiter of candidates) {
+    const score = firstDataLine.split(delimiter).length - 1;
+    if (score > bestScore) {
+      bestDelimiter = delimiter;
+      bestScore = score;
+    }
+  }
+
+  return bestDelimiter;
+}
+
+function cleanString(value: unknown): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const normalized = String(value).replace(/\r/g, "").trim();
+  return normalized ? normalized : null;
+}
+
+function parseDate(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const isoMatch = value.match(/\b\d{4}-\d{2}-\d{2}\b/);
+  if (isoMatch) {
+    return isoMatch[0];
+  }
+
+  const slashMatch = value.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
+  if (slashMatch) {
+    const [, month, day, year] = slashMatch;
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  const year = parsed.getUTCFullYear();
+  const month = String(parsed.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function parseFlexibleNumber(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value
+    .replace(/\u00a0/g, " ")
+    .replace(/,/g, ".")
+    .replace(/[^0-9.+-]/g, " ")
+    .trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  const match = normalized.match(/[+-]?\d+(?:\.\d+)?/);
+  if (!match) {
+    return null;
+  }
+
+  const parsed = Number.parseFloat(match[0]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseDurationMinutes(field: FieldMatch | null): number | null {
+  if (!field) {
+    return null;
+  }
+
+  const compact = field.value.trim();
+  const hhmmss = compact.match(/^(\d+):(\d{1,2})(?::(\d{1,2}))?$/);
+  if (hhmmss) {
+    const hours = Number.parseInt(hhmmss[1], 10);
+    const minutes = Number.parseInt(hhmmss[2], 10);
+    const seconds = Number.parseInt(hhmmss[3] ?? "0", 10);
+    return Math.round((hours * 3600 + minutes * 60 + seconds) / 60);
+  }
+
+  const unitMatches = [...compact.matchAll(/(\d+(?:[.,]\d+)?)\s*([a-zA-Z]+)/g)];
+  if (unitMatches.length > 0) {
+    let totalMinutes = 0;
+
+    for (const [, rawAmount, rawUnit] of unitMatches) {
+      const amount = Number.parseFloat(rawAmount.replace(",", "."));
+      const unit = rawUnit.toLowerCase();
+
+      if (!Number.isFinite(amount)) {
+        continue;
+      }
+
+      if (unit.startsWith("h")) {
+        totalMinutes += amount * 60;
+        continue;
+      }
+
+      if (unit.startsWith("m")) {
+        totalMinutes += amount;
+        continue;
+      }
+
+      if (unit.startsWith("s")) {
+        totalMinutes += amount / 60;
+      }
+    }
+
+    if (totalMinutes > 0) {
+      return Math.round(totalMinutes);
+    }
+  }
+
+  const numeric = parseFlexibleNumber(compact);
+  if (numeric === null) {
+    return null;
+  }
+
+  if (
+    field.normalizedKey === "plannedduration" ||
+    field.normalizedKey.endsWith("inhours") ||
+    /(^|[^a-z])hour|(^|[^a-z])hr/i.test(field.key)
+  ) {
+    return Math.round(numeric * 60);
+  }
+
+  if (/sec|second/i.test(compact)) {
+    return Math.round(numeric / 60);
+  }
+
+  if (/hour|hr/i.test(compact)) {
+    return Math.round(numeric * 60);
+  }
+
+  return Math.round(numeric);
+}
+
+function parseDistanceKm(field: FieldMatch | null): number | null {
+  if (!field) {
+    return null;
+  }
+
+  const numeric = parseFlexibleNumber(field.value);
+  if (numeric === null) {
+    return null;
+  }
+
+  if (field.normalizedKey.includes("meter")) {
+    return roundNumber(numeric / 1000, 2);
+  }
+
+  const lower = field.value.toLowerCase();
+  if (/\bmi\b|mile/.test(lower)) {
+    return roundNumber(numeric * 1.60934, 2);
+  }
+
+  if (/\bm\b|meter/.test(lower) && !/\bkm\b/.test(lower)) {
+    return roundNumber(numeric / 1000, 2);
+  }
+
+  return roundNumber(numeric, 2);
+}
+
+function parseIfValue(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const numeric = parseFlexibleNumber(value);
+  if (numeric === null) {
+    return null;
+  }
+
+  if (value.includes("%") || numeric > 5) {
+    return roundNumber(numeric / 100, 3);
+  }
+
+  return roundNumber(numeric, 3);
+}
+
+function roundNumber(value: number, digits: number): number {
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+}
+
+function buildHeaderIndex(row: RawRow): Map<string, string> {
+  const index = new Map<string, string>();
+
+  for (const key of Object.keys(row)) {
+    const normalized = normalizeHeader(key);
+    if (!normalized || index.has(normalized)) {
+      continue;
+    }
+
+    index.set(normalized, key);
+  }
+
+  return index;
+}
+
+function pickField(row: RawRow, aliases: readonly string[]): FieldMatch | null {
+  const headerIndex = buildHeaderIndex(row);
+
+  for (const alias of aliases) {
+    const originalKey = headerIndex.get(alias);
+    if (!originalKey) {
+      continue;
+    }
+
+    const value = cleanString(row[originalKey]);
+    if (value !== null) {
+      return {
+        key: originalKey,
+        normalizedKey: alias,
+        value
+      };
+    }
+  }
+
+  return null;
+}
+
+function pickValue(row: RawRow, aliases: readonly string[]): string | null {
+  return pickField(row, aliases)?.value ?? null;
+}
+
+function normalizeRawRow(record: Record<string, unknown>): RawRow {
+  return Object.fromEntries(
+    Object.entries(record).map(([key, value]) => [key, cleanString(value) ?? ""])
+  );
+}
+
+function looksLikeWorkout(row: ParsedWorkout): boolean {
+  return [
+    row.date,
+    row.title,
+    row.sport,
+    row.planned_duration_minutes,
+    row.completed_duration_minutes,
+    row.distance_km,
+    row.planned_distance_km,
+    row.tss,
+    row.if,
+    row.rpe,
+    row.athlete_comments,
+    row.coach_comments
+  ].some((value) => value !== null);
+}
+
+function isCompletedWorkout(row: ParsedWorkout): boolean {
+  if (
+    row.completed_duration_minutes !== null ||
+    row.distance_km !== null ||
+    row.if !== null ||
+    row.rpe !== null ||
+    row.athlete_comments !== null
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+async function extractZip(zipPath: string, tempRoot: string): Promise<string> {
+  const targetDir = path.join(
+    tempRoot,
+    path.basename(zipPath, path.extname(zipPath)),
+    sanitizeForFileName(path.basename(zipPath))
+  );
+  await mkdir(targetDir, { recursive: true });
+
+  await new Promise<void>((resolve, reject) => {
+    createReadStream(zipPath)
+      .pipe(unzipper.Extract({ path: targetDir }))
+      .on("close", resolve)
+      .on("error", reject);
+  });
+
+  return targetDir;
+}
+
+async function discoverCsvCandidates(exportDir: string, tempRoot: string): Promise<CsvCandidate[]> {
+  const files = (await listFilesRecursively(exportDir)).sort((a, b) => a.localeCompare(b));
+
+  console.log(`Files found (${files.length}):`);
+  if (files.length === 0) {
+    console.log("- none");
+  } else {
+    for (const filePath of files) {
+      console.log(`- ${relativeToToolRoot(filePath)}`);
+    }
+  }
+
+  const zipFiles = files.filter((filePath) => path.extname(filePath).toLowerCase() === ".zip");
+  const directCsvFiles = files.filter((filePath) => path.extname(filePath).toLowerCase() === ".csv");
+  const csvCandidates: CsvCandidate[] = directCsvFiles.map((csvPath) => ({
+    csvPath,
+    sourceFile: relativeToToolRoot(csvPath)
+  }));
+
+  for (const zipFile of zipFiles) {
+    console.log(`Unzipping: ${relativeToToolRoot(zipFile)}`);
+    const extractedDir = await extractZip(zipFile, tempRoot);
+    const extractedFiles = await listFilesRecursively(extractedDir);
+
+    for (const extractedFile of extractedFiles) {
+      if (path.extname(extractedFile).toLowerCase() !== ".csv") {
+        continue;
+      }
+
+      const zipRelativePath = toPosixPath(path.relative(extractedDir, extractedFile));
+      csvCandidates.push({
+        csvPath: extractedFile,
+        sourceFile: `${relativeToToolRoot(zipFile)}::${zipRelativePath}`
+      });
+    }
+  }
+
+  csvCandidates.sort((a, b) => a.sourceFile.localeCompare(b.sourceFile));
+
+  console.log(`CSV files parsed (${csvCandidates.length}):`);
+  if (csvCandidates.length === 0) {
+    console.log("- none");
+  } else {
+    for (const candidate of csvCandidates) {
+      console.log(`- ${candidate.sourceFile}`);
+    }
+  }
+
+  return csvCandidates;
+}
+
+async function parseCsvFile(candidate: CsvCandidate): Promise<ParsedCsv> {
+  const fileStats = await stat(candidate.csvPath);
+  if (!fileStats.isFile()) {
+    return { workouts: [], sourceFiles: [] };
+  }
+
+  const content = await readFile(candidate.csvPath, "utf8");
+  if (!content.trim()) {
+    return { workouts: [], sourceFiles: [candidate.sourceFile] };
+  }
+
+  const delimiter = detectDelimiter(content);
+  const records = parse(content, {
+    bom: true,
+    columns: true,
+    delimiter,
+    relax_column_count: true,
+    skip_empty_lines: true,
+    trim: true
+  }) as Record<string, unknown>[];
+
+  const workouts: ParsedWorkout[] = [];
+
+  for (const record of records) {
+    const raw = normalizeRawRow(record);
+    const dateField = pickField(raw, FIELD_ALIASES.date);
+    const plannedDurationField = pickField(raw, FIELD_ALIASES.planned_duration);
+    const completedDurationField = pickField(raw, FIELD_ALIASES.completed_duration);
+    const distanceField = pickField(raw, FIELD_ALIASES.distance);
+    const plannedDistanceField = pickField(raw, FIELD_ALIASES.planned_distance);
+
+    const normalized: ParsedWorkout = {
+      date: parseDate(dateField?.value ?? null),
+      title: pickValue(raw, FIELD_ALIASES.title),
+      sport: pickValue(raw, FIELD_ALIASES.sport),
+      planned_duration_minutes: parseDurationMinutes(plannedDurationField),
+      completed_duration_minutes: parseDurationMinutes(completedDurationField),
+      distance_km: parseDistanceKm(distanceField),
+      planned_distance_km: parseDistanceKm(plannedDistanceField),
+      tss: parseFlexibleNumber(pickValue(raw, FIELD_ALIASES.tss)),
+      if: parseIfValue(pickValue(raw, FIELD_ALIASES.if)),
+      rpe: parseFlexibleNumber(pickValue(raw, FIELD_ALIASES.rpe)),
+      athlete_comments: pickValue(raw, FIELD_ALIASES.athlete_comments),
+      coach_comments: pickValue(raw, FIELD_ALIASES.coach_comments),
+      source_file: candidate.sourceFile,
+      raw
+    };
+
+    const completionStatus = pickValue(raw, FIELD_ALIASES.completion_status)?.toLowerCase();
+    if (
+      completionStatus &&
+      ["planned", "scheduled", "notcompleted", "incomplete", "missed", "skipped"].includes(
+        normalizeHeader(completionStatus)
+      )
+    ) {
+      normalized.completed_duration_minutes = null;
+      normalized.distance_km = null;
+      normalized.if = null;
+      normalized.rpe = null;
+      normalized.athlete_comments = null;
+    }
+
+    if (looksLikeWorkout(normalized)) {
+      workouts.push(normalized);
+    }
+  }
+
+  return {
+    workouts,
+    sourceFiles: [candidate.sourceFile]
+  };
+}
+
+function sumOrNull(values: Array<number | null>, digits: number): number | null {
+  const numericValues = values.filter((value): value is number => value !== null);
+  if (numericValues.length === 0) {
+    return null;
+  }
+
+  const total = numericValues.reduce((sum, value) => sum + value, 0);
+  return roundNumber(total, digits);
+}
+
+async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+  const exportDir = path.join(exportsRoot, args.student, `${args.from}_${args.to}`);
+  const outputDir = path.join(parsedRoot, args.student, `${args.from}_${args.to}`);
+  const outputPath = path.join(outputDir, "weekly-summary.json");
+
+  if (!existsSync(exportDir)) {
+    throw new Error(`Export folder does not exist: ${exportDir}`);
+  }
+
+  await mkdir(outputDir, { recursive: true });
+
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "tp-parse-week-"));
+  console.log(`Export folder used: ${exportDir}`);
+
+  try {
+    const csvCandidates = await discoverCsvCandidates(exportDir, tempRoot);
+    const parsedFiles = await Promise.all(
+      csvCandidates.map(async (candidate) => {
+        try {
+          return await parseCsvFile(candidate);
+        } catch (error: unknown) {
+          console.warn(`Skipping CSV due to parse error: ${candidate.sourceFile}`);
+          console.warn(error);
+          return {
+            workouts: [],
+            sourceFiles: [candidate.sourceFile]
+          } satisfies ParsedCsv;
+        }
+      })
+    );
+
+    const workouts = parsedFiles.flatMap((entry) => entry.workouts);
+    const sourceFiles = [...new Set(parsedFiles.flatMap((entry) => entry.sourceFiles))];
+
+    const summary: WeeklySummary = {
+      student_id: args.student,
+      week: {
+        from: args.from,
+        to: args.to
+      },
+      source_files: sourceFiles,
+      totals: {
+        workouts_count: workouts.length,
+        completed_workouts_count: workouts.filter(isCompletedWorkout).length,
+        total_distance_km: sumOrNull(workouts.map((workout) => workout.distance_km), 2),
+        planned_duration_minutes: sumOrNull(
+          workouts.map((workout) => workout.planned_duration_minutes),
+          0
+        ),
+        completed_duration_minutes: sumOrNull(
+          workouts.map((workout) => workout.completed_duration_minutes),
+          0
+        )
+      },
+      workouts
+    };
+
+    await writeFile(outputPath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
+    console.log(`JSON output path: ${outputPath}`);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+}
+
+main().catch((error: unknown) => {
+  if (error instanceof Error) {
+    console.error(error.message);
+  } else {
+    console.error(error);
+  }
+
+  process.exit(1);
+});
