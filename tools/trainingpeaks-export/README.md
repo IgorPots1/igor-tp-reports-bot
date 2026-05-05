@@ -13,6 +13,82 @@ Current commands:
 - `npm run tp-report-copy -- --student=Olga`
 - `npm run tp-student-add -- --student=Olga --name="Ольга" --url="https://app.trainingpeaks.com/#calendar/athletes/5734279"`
 
+## Monday weekly workflow
+
+Еженедельный сценарий на понедельник:
+
+1. Откройте терминал:
+
+```bash
+cd ~/igor-agent-hub/tools/trainingpeaks-export
+```
+
+2. Проверьте настроенных учеников:
+
+```bash
+npm run tp-reports-list
+```
+
+3. Запустите недельный workflow для всех включенных учеников:
+
+```bash
+npm run tp-weekly-all
+```
+
+Что важно:
+
+- Если даты не переданы, инструмент автоматически берет предыдущую полную неделю с понедельника по воскресенье.
+- В понедельник это означает период с понедельника по воскресенье прошлой недели.
+- Обрабатываются только ученики, у которых `is_active=true` и `weekly_report_enabled=true`.
+
+4. Ручной шаг в TrainingPeaks:
+
+- Для каждого ученика откроется браузер.
+- Вручную перейдите в `Athlete Account Settings -> Export Data`.
+- Выберите запрошенные даты.
+- Скачайте `Workout Summary` и `Workout Files`.
+- Вернитесь в терминал и нажмите Enter.
+
+5. Проверьте готовность отчетов:
+
+```bash
+npm run tp-reports-list
+```
+
+6. Откройте отчет:
+
+```bash
+npm run tp-report-open -- --student=Olga
+```
+
+7. Скопируйте отчет:
+
+```bash
+npm run tp-report-copy -- --student=Olga
+```
+
+8. Вручную отправьте скопированный отчет спортсмену.
+
+### Current safety rules
+
+- Отчеты создаются только как черновики.
+- Ничего не отправляется автоматически.
+- `exports/`, `parsed/`, `reports/`, `.env`, `config/students.json` локальные и находятся в `.gitignore`.
+- Интеграция с Telegram появится позже.
+- Учеников с плохим качеством данных можно временно отключать через `weekly_report_enabled=false`.
+
+### Add student
+
+Используйте:
+
+```bash
+npm run tp-student-add -- --student=Olga --name="Ольга" --url="https://app.trainingpeaks.com/#calendar/athletes/5734279"
+```
+
+Команда создает локальный `config/students.json`, если файла еще нет, и добавляет в него ученика. Для обновления существующей записи используйте `--update`.
+
+Этот файл локальный и не должен попадать в коммит.
+
 `tp-weekly-one` is the MVP weekly workflow for one student:
 
 1. Open the athlete in TrainingPeaks with the same persistent browser profile.
