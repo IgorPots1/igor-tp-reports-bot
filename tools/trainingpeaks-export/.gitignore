@@ -1,0 +1,6 @@
+node_modules/
+.env
+.playwright-profile/
+exports/*
+!exports/.gitkeep
+config/students.json

@@ -1,0 +1,17 @@
+{
+  "name": "trainingpeaks-export",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "tp-login": "node --experimental-strip-types scripts/tp-login.ts",
+    "tp-export-one-student": "node --experimental-strip-types scripts/tp-export-one-student.ts"
+  },
+  "dependencies": {
+    "playwright": "^1.55.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "typescript": "^5.9.3"
+  }
+}
