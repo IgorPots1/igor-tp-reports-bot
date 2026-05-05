@@ -33,6 +33,11 @@ import {
   sendForwardedMessageUnsupportedReply,
 } from "@/features/reminders/service";
 import {
+  getTrainingPeaksHelpLines,
+  handleTrainingPeaksTelegramCommand,
+  isTrainingPeaksCommand,
+} from "@/features/telegram/trainingpeaks";
+import {
   type BrainItem,
   DEFAULT_BRAIN_ITEM_CATEGORY,
   DEFAULT_BRAIN_ITEM_TYPE,
@@ -89,6 +94,8 @@ function formatHelpMessage(): string {
     "/summary today — итоги за сегодня",
     "/summary week — итоги за неделю",
     "/stats — статистика мозга",
+    "",
+    ...getTrainingPeaksHelpLines(),
   ].join("\n");
 }
 
@@ -293,6 +300,7 @@ function withReplyPrefix(prefix: string | null | undefined, message: string): st
 
 function getCommandFlags(messageText: string) {
   return {
+    isTrainingPeaks: isTrainingPeaksCommand(messageText),
     isSave: isSaveCommand(messageText),
     isList: isListCommand(messageText),
     isInbox: isInboxCommand(messageText),
@@ -308,6 +316,7 @@ function getCommandFlags(messageText: string) {
 
 function hasSupportedCommand(flags: ReturnType<typeof getCommandFlags>): boolean {
   return (
+    flags.isTrainingPeaks ||
     flags.isSave ||
     flags.isList ||
     flags.isInbox ||
@@ -400,6 +409,10 @@ export async function handleTelegramCommand(
     }
 
     return "handled";
+  }
+
+  if (flags.isTrainingPeaks) {
+    return handleTrainingPeaksTelegramCommand(parsedMessage, messageText);
   }
 
   if (flags.isSave) {
