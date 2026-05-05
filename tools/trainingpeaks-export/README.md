@@ -10,6 +10,7 @@ Current commands:
 - `npm run tp-weekly-all`
 - `npm run tp-reports-list`
 - `npm run tp-report-open -- --student=Olga`
+- `npm run tp-report-copy -- --student=Olga`
 - `npm run tp-student-add -- --student=Olga --name="Ольга" --url="https://app.trainingpeaks.com/#calendar/athletes/5734279"`
 
 `tp-weekly-one` is the MVP weekly workflow for one student:
@@ -71,6 +72,23 @@ Examples:
 ```bash
 npm run tp-report-open -- --student=Olga
 npm run tp-report-open -- --student=Olga --from=2026-04-27 --to=2026-05-03
+```
+
+Expected report path:
+
+- `reports/{student_id}/{from}_{to}/report-draft.md`
+
+If the report does not exist yet, the command prints the expected path and suggests generating it with `tp-weekly-one` or `tp-weekly-all`.
+
+`tp-report-copy` copies an already generated local report draft to the macOS clipboard without modifying any files.
+
+If `--from` and `--to` are omitted, it automatically uses the previous full Monday-Sunday week based on local time.
+
+Examples:
+
+```bash
+npm run tp-report-copy -- --student=Olga
+npm run tp-report-copy -- --student=Olga --from=2026-04-27 --to=2026-05-03
 ```
 
 Expected report path:
