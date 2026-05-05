@@ -26,6 +26,14 @@ export type TrainingPeaksStudentSnapshot = {
   status: Exclude<TrainingPeaksStatus, "missing">;
 };
 
+export type TrainingPeaksReportSnapshot = {
+  studentId: string;
+  studentName: string;
+  weekFrom: string;
+  weekTo: string;
+  reportMarkdown: string;
+};
+
 function normalizeStudentQuery(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("ru");
 }
@@ -185,11 +193,30 @@ export async function getTrainingPeaksReportMarkdown(
   studentQuery: string,
   week?: TrainingPeaksWeek
 ): Promise<string | null> {
+  const report = await getTrainingPeaksReportSnapshot(studentQuery, week);
+  return report?.reportMarkdown ?? null;
+}
+
+export async function getTrainingPeaksReportSnapshot(
+  studentQuery: string,
+  week?: TrainingPeaksWeek
+): Promise<TrainingPeaksReportSnapshot | null> {
   const reports = await listAllTrainingPeaksReports();
   const filteredReports = week
     ? reports.filter((report) => report.weekFrom === week.weekFrom && report.weekTo === week.weekTo)
     : reports;
   const report = pickMatchingStudentReport(filteredReports, studentQuery);
   const reportMarkdown = report?.reportMarkdown?.trim();
-  return reportMarkdown ? reportMarkdown : null;
+
+  if (!report || !reportMarkdown) {
+    return null;
+  }
+
+  return {
+    studentId: report.studentId,
+    studentName: report.studentName,
+    weekFrom: report.weekFrom,
+    weekTo: report.weekTo,
+    reportMarkdown,
+  };
 }

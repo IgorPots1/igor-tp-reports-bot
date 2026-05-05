@@ -1,6 +1,6 @@
 import type { ParsedTelegramUpdate } from "@/features/telegram/parser";
 import {
-  getTrainingPeaksReportMarkdown,
+  getTrainingPeaksReportSnapshot,
   getTrainingPeaksStatusOverview,
   getTrainingPeaksStudentSnapshots,
 } from "@/features/trainingpeaks/service";
@@ -18,6 +18,11 @@ const TP_STUDENTS_COMMAND_PATTERN = /^\/tp_students(?:@\w+)?(?:\s+|$)/;
 const TP_REPORT_COMMAND_PATTERN = /^\/tp_report(?:@\w+)?(?:\s+|$)/;
 const TP_WEEKLY_COMMAND_PATTERN = /^\/tp_weekly(?:@\w+)?(?:\s+|$)/;
 const TP_COMMAND_PATTERN = /^\/tp_[a-z0-9_]+(?:@\w+)?(?:\s+|$)/;
+const SHORT_DATE_FORMATTER = new Intl.DateTimeFormat("ru-RU", {
+  day: "numeric",
+  month: "short",
+  timeZone: "UTC",
+});
 
 type TrainingPeaksCommand = "tp_status" | "tp_students" | "tp_report" | "tp_weekly" | "unknown";
 
@@ -75,7 +80,47 @@ function isIsoDate(value: string): boolean {
 }
 
 function formatWeek(week: TrainingPeaksWeek): string {
-  return `${week.weekFrom} — ${week.weekTo}`;
+  return `${formatShortDate(week.weekFrom)} — ${formatShortDate(week.weekTo)}`;
+}
+
+function formatShortDate(value: string): string {
+  return SHORT_DATE_FORMATTER.format(new Date(`${value}T00:00:00Z`)).replace(/\.$/, "");
+}
+
+function getStatusLabel(status: string): string {
+  if (status === "ready") {
+    return "готов";
+  }
+
+  if (status === "parsed_only") {
+    return "только данные";
+  }
+
+  return "нет данных";
+}
+
+function getStatusEmoji(status: string): string {
+  if (status === "ready") {
+    return "✅";
+  }
+
+  if (status === "parsed_only") {
+    return "⚠️";
+  }
+
+  return "❌";
+}
+
+function getStatusDetails(status: string): string {
+  if (status === "ready") {
+    return " (отчёт есть)";
+  }
+
+  if (status === "parsed_only") {
+    return " (нет отчёта)";
+  }
+
+  return "";
 }
 
 function splitTelegramMessage(text: string): string[] {
@@ -217,10 +262,11 @@ function formatStatusMessage(
   }[]
 ): string {
   return [
-    `Статусы TrainingPeaks: ${formatWeek(week)}`,
+    `📊 Отчёты за ${formatWeek(week)}`,
+    "",
     ...students.map(
       (student) =>
-        `${student.studentName} — ${student.status}, отчёт ${student.hasReport ? "есть" : "нет"}`
+        `${student.studentName} — ${getStatusEmoji(student.status)} ${getStatusLabel(student.status)}${getStatusDetails(student.status)}`
     ),
   ].join("\n");
 }
@@ -234,10 +280,15 @@ function formatStudentsMessage(
   }[]
 ): string {
   return [
-    "Ученики TrainingPeaks",
-    ...students.map(
-      (student) => `${student.studentName} — ${student.status}, ${student.weekFrom} — ${student.weekTo}`
-    ),
+    "👥 Ученики",
+    "",
+    ...students.map((student) => {
+      if (student.status === "ready") {
+        return `${student.studentName} — ${getStatusLabel(student.status)} (последняя неделя ${formatShortDate(student.weekFrom)})`;
+      }
+
+      return `${student.studentName} — ${getStatusLabel(student.status)}`;
+    }),
   ].join("\n");
 }
 
@@ -316,9 +367,17 @@ async function handleTrainingPeaksReport(
     return;
   }
 
-  const reportMarkdown = await getTrainingPeaksReportMarkdown(studentQuery, week ?? undefined);
+  const report = await getTrainingPeaksReportSnapshot(studentQuery, week ?? undefined);
 
-  await sendTrainingPeaksMessage(parsedMessage.chatId, reportMarkdown ?? "Отчёт не найден");
+  if (!report) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "Отчёт не найден");
+    return;
+  }
+
+  await sendTrainingPeaksMessage(
+    parsedMessage.chatId,
+    `📝 ${report.studentName} — отчёт за ${formatWeek(report)}\n\n${report.reportMarkdown}`
+  );
 }
 
 export async function handleTrainingPeaksTelegramCommand(
