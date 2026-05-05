@@ -68,3 +68,13 @@ To import into Obsidian:
 1. Unzip `obsidian-export.zip`.
 2. Copy the extracted category folders into your Obsidian vault, or unzip directly into a dedicated vault folder.
 3. Open the vault in Obsidian and let it index the new Markdown files.
+
+## TrainingPeaks Report Sync
+
+TrainingPeaks exports, parsed summaries, raw ZIP files, browser profile data, and local student config stay local in `tools/trainingpeaks-export/`. To publish only safe shared metadata and weekly report draft text for later Telegram bot reads, run:
+
+```bash
+npm run tp-sync-reports -- --from=YYYY-MM-DD --to=YYYY-MM-DD
+```
+
+This sync writes sanitized weekly metadata plus `report-draft.md` content into Supabase and does not send anything to students.
