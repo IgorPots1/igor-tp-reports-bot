@@ -1,24 +1,29 @@
 import {
-  getLatestTrainingPeaksWeek,
   listAllTrainingPeaksReports,
-  listTrainingPeaksReportsForWeek,
   type TrainingPeaksWeek,
   type TrainingPeaksWeeklyReport,
 } from "@/features/trainingpeaks/repository";
 
-export type TrainingPeaksWeekReports = {
-  week: TrainingPeaksWeek;
-  reports: TrainingPeaksWeeklyReport[];
+export type TrainingPeaksStatus = "ready" | "parsed_only" | "missing";
+
+export type TrainingPeaksStatusOverviewStudent = {
+  studentId: string;
+  studentName: string;
+  status: TrainingPeaksStatus;
+  hasReport: boolean;
 };
 
-export type TrainingPeaksStudentStatus = {
+export type TrainingPeaksStatusOverview = {
+  week: TrainingPeaksWeek;
+  students: TrainingPeaksStatusOverviewStudent[];
+};
+
+export type TrainingPeaksStudentSnapshot = {
   studentId: string;
   studentName: string;
   weekFrom: string;
   weekTo: string;
-  status: string;
-  reportMarkdown: string | null;
-  syncedAt: string;
+  status: Exclude<TrainingPeaksStatus, "missing">;
 };
 
 function normalizeStudentQuery(value: string): string {
@@ -81,70 +86,110 @@ function pickMatchingStudentReport(
   return containsMatches.length === 1 ? containsMatches[0] : null;
 }
 
-export async function getTrainingPeaksReportsForWeek(
-  week: TrainingPeaksWeek
-): Promise<TrainingPeaksWeekReports> {
-  const reports = await listTrainingPeaksReportsForWeek(week.weekFrom, week.weekTo);
-  return { week, reports };
+function hasReportMarkdown(reportMarkdown: string | null): boolean {
+  return Boolean(reportMarkdown?.trim());
 }
 
-export async function getLatestTrainingPeaksWeekReports(): Promise<TrainingPeaksWeekReports | null> {
-  const week = await getLatestTrainingPeaksWeek();
-
-  if (!week) {
-    return null;
+function normalizeReportStatus(report: TrainingPeaksWeeklyReport): Exclude<TrainingPeaksStatus, "missing"> {
+  if (report.status === "ready" || report.status === "parsed_only") {
+    return report.status;
   }
 
-  return getTrainingPeaksReportsForWeek(week);
+  return hasReportMarkdown(report.reportMarkdown) ? "ready" : "parsed_only";
 }
 
-export async function getTrainingPeaksStudentStatuses(): Promise<TrainingPeaksStudentStatus[]> {
-  const reports = await listAllTrainingPeaksReports();
-  const latestByStudent = new Map<string, TrainingPeaksStudentStatus>();
+function getLatestWeekFromReports(reports: TrainingPeaksWeeklyReport[]): TrainingPeaksWeek | null {
+  const latestReport = reports[0];
+  return latestReport
+    ? {
+        weekFrom: latestReport.weekFrom,
+        weekTo: latestReport.weekTo,
+      }
+    : null;
+}
+
+function getLatestReportByStudent(
+  reports: TrainingPeaksWeeklyReport[]
+): Map<string, TrainingPeaksWeeklyReport> {
+  const latestByStudent = new Map<string, TrainingPeaksWeeklyReport>();
 
   for (const report of reports) {
-    if (latestByStudent.has(report.studentId)) {
-      continue;
+    if (!latestByStudent.has(report.studentId)) {
+      latestByStudent.set(report.studentId, report);
     }
-
-    latestByStudent.set(report.studentId, {
-      studentId: report.studentId,
-      studentName: report.studentName,
-      weekFrom: report.weekFrom,
-      weekTo: report.weekTo,
-      status: report.status,
-      reportMarkdown: report.reportMarkdown,
-      syncedAt: report.syncedAt,
-    });
   }
 
+  return latestByStudent;
+}
+
+function getSortedStudents(
+  latestByStudent: Map<string, TrainingPeaksWeeklyReport>
+): TrainingPeaksWeeklyReport[] {
   return Array.from(latestByStudent.values()).sort((left, right) =>
     left.studentName.localeCompare(right.studentName, "ru")
   );
 }
 
-export async function getTrainingPeaksReportForStudent(
-  studentQuery: string,
-  week?: TrainingPeaksWeek
-): Promise<{ week: TrainingPeaksWeek; report: TrainingPeaksWeeklyReport } | null> {
-  if (week) {
-    const reports = await listTrainingPeaksReportsForWeek(week.weekFrom, week.weekTo);
-    const report = pickMatchingStudentReport(reports, studentQuery);
-    return report ? { week, report } : null;
-  }
+function getWeekReportByStudent(
+  reports: TrainingPeaksWeeklyReport[],
+  week: TrainingPeaksWeek
+): Map<string, TrainingPeaksWeeklyReport> {
+  return new Map(
+    reports
+      .filter((report) => report.weekFrom === week.weekFrom && report.weekTo === week.weekTo)
+      .map((report) => [report.studentId, report])
+  );
+}
 
+export async function getTrainingPeaksStatusOverview(
+  requestedWeek?: TrainingPeaksWeek
+): Promise<TrainingPeaksStatusOverview | null> {
   const reports = await listAllTrainingPeaksReports();
-  const report = pickMatchingStudentReport(reports, studentQuery);
+  const week = requestedWeek ?? getLatestWeekFromReports(reports);
 
-  if (!report) {
+  if (!week) {
     return null;
   }
 
+  const latestByStudent = getLatestReportByStudent(reports);
+  const weekReportsByStudent = getWeekReportByStudent(reports, week);
+
   return {
-    week: {
-      weekFrom: report.weekFrom,
-      weekTo: report.weekTo,
-    },
-    report,
+    week,
+    students: getSortedStudents(latestByStudent).map((student) => {
+      const report = weekReportsByStudent.get(student.studentId);
+
+      return {
+        studentId: student.studentId,
+        studentName: student.studentName,
+        status: report ? normalizeReportStatus(report) : "missing",
+        hasReport: report ? hasReportMarkdown(report.reportMarkdown) : false,
+      };
+    }),
   };
+}
+
+export async function getTrainingPeaksStudentSnapshots(): Promise<TrainingPeaksStudentSnapshot[]> {
+  const reports = await listAllTrainingPeaksReports();
+
+  return getSortedStudents(getLatestReportByStudent(reports)).map((report) => ({
+    studentId: report.studentId,
+    studentName: report.studentName,
+    weekFrom: report.weekFrom,
+    weekTo: report.weekTo,
+    status: normalizeReportStatus(report),
+  }));
+}
+
+export async function getTrainingPeaksReportMarkdown(
+  studentQuery: string,
+  week?: TrainingPeaksWeek
+): Promise<string | null> {
+  const reports = await listAllTrainingPeaksReports();
+  const filteredReports = week
+    ? reports.filter((report) => report.weekFrom === week.weekFrom && report.weekTo === week.weekTo)
+    : reports;
+  const report = pickMatchingStudentReport(filteredReports, studentQuery);
+  const reportMarkdown = report?.reportMarkdown?.trim();
+  return reportMarkdown ? reportMarkdown : null;
 }
