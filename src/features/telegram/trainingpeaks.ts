@@ -1,9 +1,8 @@
 import type { ParsedTelegramUpdate } from "@/features/telegram/parser";
 import {
-  getLatestTrainingPeaksWeekReports,
-  getTrainingPeaksReportForStudent,
-  getTrainingPeaksReportsForWeek,
-  getTrainingPeaksStudentStatuses,
+  getTrainingPeaksReportMarkdown,
+  getTrainingPeaksStatusOverview,
+  getTrainingPeaksStudentSnapshots,
 } from "@/features/trainingpeaks/service";
 import { sendTelegramMessage } from "@/features/telegram/telegram-client";
 
@@ -79,25 +78,6 @@ function formatWeek(week: TrainingPeaksWeek): string {
   return `${week.weekFrom} — ${week.weekTo}`;
 }
 
-function formatTrainingPeaksStatus(status: string, hasReport: boolean): string {
-  if (status === "ready") {
-    return "готов";
-  }
-
-  if (status === "parsed_only") {
-    return hasReport ? "готов" : "только метаданные";
-  }
-
-  return hasReport ? `${status} (отчёт есть)` : status;
-}
-
-function formatSyncedAt(value: string): string {
-  return new Intl.DateTimeFormat("ru-RU", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(new Date(value));
-}
-
 function splitTelegramMessage(text: string): string[] {
   const normalizedText = text.trim();
 
@@ -138,7 +118,10 @@ async function sendTrainingPeaksMessage(chatId: number | string, text: string): 
   }
 }
 
-function parseWeekArgs(tokens: string[]): { week: TrainingPeaksWeek | null; error: string | null } {
+function parseWeekArgs(
+  tokens: string[],
+  usageExample: string
+): { week: TrainingPeaksWeek | null; error: string | null } {
   if (tokens.length === 0) {
     return { week: null, error: null };
   }
@@ -146,7 +129,7 @@ function parseWeekArgs(tokens: string[]): { week: TrainingPeaksWeek | null; erro
   if (tokens.length !== 2) {
     return {
       week: null,
-      error: "Напиши так: /tp_status 2026-04-27 2026-05-03",
+      error: `Напиши так: ${usageExample}`,
     };
   }
 
@@ -174,7 +157,7 @@ function parseWeekArgs(tokens: string[]): { week: TrainingPeaksWeek | null; erro
 
 function parseStatusCommandWeek(text: string): { week: TrainingPeaksWeek | null; error: string | null } {
   const args = text.replace(TP_STATUS_COMMAND_PATTERN, "").trim();
-  return parseWeekArgs(args ? args.split(/\s+/) : []);
+  return parseWeekArgs(args ? args.split(/\s+/) : [], "/tp_status 2026-04-27 2026-05-03");
 }
 
 function parseReportCommand(text: string): {
@@ -198,7 +181,10 @@ function parseReportCommand(text: string): {
 
   if (tokens.length >= 3 && isIsoDate(beforeLastToken) && isIsoDate(lastToken)) {
     const studentQuery = tokens.slice(0, -2).join(" ").trim();
-    const { week, error } = parseWeekArgs([beforeLastToken, lastToken]);
+    const { week, error } = parseWeekArgs(
+      [beforeLastToken, lastToken],
+      "/tp_report Olga 2026-04-27 2026-05-03"
+    );
 
     if (!studentQuery) {
       return {
@@ -224,30 +210,17 @@ function parseReportCommand(text: string): {
 
 function formatStatusMessage(
   week: TrainingPeaksWeek,
-  reports: {
+  students: {
     studentName: string;
-    studentId: string;
     status: string;
-    reportMarkdown: string | null;
-    syncedAt: string;
+    hasReport: boolean;
   }[]
 ): string {
-  const readyCount = reports.filter((report) => report.reportMarkdown?.trim()).length;
-  const parsedOnlyCount = reports.length - readyCount;
-
   return [
-    `📊 TrainingPeaks за неделю ${formatWeek(week)}`,
-    "",
-    `Всего записей: ${reports.length}`,
-    `Готовых отчётов: ${readyCount}`,
-    `Только метаданные: ${parsedOnlyCount}`,
-    "",
-    ...reports.map(
-      (report, index) =>
-        `${index + 1}. ${report.studentName} — ${formatTrainingPeaksStatus(
-          report.status,
-          Boolean(report.reportMarkdown?.trim())
-        )}, синхронизировано ${formatSyncedAt(report.syncedAt)}`
+    `Статусы TrainingPeaks: ${formatWeek(week)}`,
+    ...students.map(
+      (student) =>
+        `${student.studentName} — ${student.status}, отчёт ${student.hasReport ? "есть" : "нет"}`
     ),
   ].join("\n");
 }
@@ -258,21 +231,12 @@ function formatStudentsMessage(
     weekFrom: string;
     weekTo: string;
     status: string;
-    reportMarkdown: string | null;
-    syncedAt: string;
   }[]
 ): string {
   return [
-    "👥 Ученики TrainingPeaks",
-    "",
-    `Всего учеников: ${students.length}`,
-    "",
+    "Ученики TrainingPeaks",
     ...students.map(
-      (student, index) =>
-        `${index + 1}. ${student.studentName} — ${formatTrainingPeaksStatus(
-          student.status,
-          Boolean(student.reportMarkdown?.trim())
-        )}, ${student.weekFrom} — ${student.weekTo}, синхронизировано ${formatSyncedAt(student.syncedAt)}`
+      (student) => `${student.studentName} — ${student.status}, ${student.weekFrom} — ${student.weekTo}`
     ),
   ].join("\n");
 }
@@ -307,33 +271,28 @@ async function handleTrainingPeaksStatus(
     return;
   }
 
-  const result = week
-    ? await getTrainingPeaksReportsForWeek(week)
-    : await getLatestTrainingPeaksWeekReports();
+  const result = await getTrainingPeaksStatusOverview(week ?? undefined);
 
-  if (!result || result.reports.length === 0) {
+  if (!result || result.students.length === 0) {
     await sendTrainingPeaksMessage(
       parsedMessage.chatId,
       week
-        ? `За неделю ${formatWeek(week)} синхронизированных отчётов нет.`
-        : "В Supabase пока нет синхронизированных отчётов TrainingPeaks."
+        ? `За неделю ${formatWeek(week)} данных TrainingPeaks пока нет.`
+        : "В Supabase пока нет данных TrainingPeaks."
     );
     return;
   }
 
-  await sendTrainingPeaksMessage(
-    parsedMessage.chatId,
-    formatStatusMessage(result.week, result.reports)
-  );
+  await sendTrainingPeaksMessage(parsedMessage.chatId, formatStatusMessage(result.week, result.students));
 }
 
 async function handleTrainingPeaksStudents(parsedMessage: ParsedTelegramUpdate): Promise<void> {
-  const students = await getTrainingPeaksStudentStatuses();
+  const students = await getTrainingPeaksStudentSnapshots();
 
   if (students.length === 0) {
     await sendTrainingPeaksMessage(
       parsedMessage.chatId,
-      "В Supabase пока нет синхронизированных учеников TrainingPeaks."
+      "В Supabase пока нет учеников TrainingPeaks."
     );
     return;
   }
@@ -357,40 +316,9 @@ async function handleTrainingPeaksReport(
     return;
   }
 
-  const result = await getTrainingPeaksReportForStudent(studentQuery, week ?? undefined);
+  const reportMarkdown = await getTrainingPeaksReportMarkdown(studentQuery, week ?? undefined);
 
-  if (!result) {
-    await sendTrainingPeaksMessage(
-      parsedMessage.chatId,
-      week
-        ? `Не нашёл отчёт для «${studentQuery}» за неделю ${formatWeek(week)}.`
-        : `Не нашёл отчёт для «${studentQuery}» в синхронизированных данных.`
-    );
-    return;
-  }
-
-  const reportMarkdown = result.report.reportMarkdown?.trim();
-
-  if (!reportMarkdown) {
-    await sendTrainingPeaksMessage(
-      parsedMessage.chatId,
-      [
-        `📝 ${result.report.studentName}`,
-        `Неделя: ${formatWeek(result.week)}`,
-        `Статус: ${formatTrainingPeaksStatus(result.report.status, false)}`,
-        "",
-        "Текст отчёта ещё не синхронизирован. В Supabase есть только метаданные.",
-      ].join("\n")
-    );
-    return;
-  }
-
-  await sendTrainingPeaksMessage(
-    parsedMessage.chatId,
-    [`📝 ${result.report.studentName}`, `Неделя: ${formatWeek(result.week)}`, "", reportMarkdown].join(
-      "\n"
-    )
-  );
+  await sendTrainingPeaksMessage(parsedMessage.chatId, reportMarkdown ?? "Отчёт не найден");
 }
 
 export async function handleTrainingPeaksTelegramCommand(
