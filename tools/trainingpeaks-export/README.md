@@ -23,7 +23,7 @@ Current commands:
 1. Откройте терминал:
 
 ```bash
-cd ~/igor-agent-hub/tools/trainingpeaks-export
+cd ~/igor-tp-reports-bot/tools/trainingpeaks-export
 ```
 
 2. Проверьте настроенных учеников:
@@ -73,20 +73,20 @@ npm run tp-report-copy -- --student=Olga
 8. Опубликуйте безопасные метаданные и черновик отчета в Supabase для будущих Telegram-команд:
 
 ```bash
-cd ~/igor-agent-hub
+cd ~/igor-tp-reports-bot
 npm run tp-sync-reports -- --from=2026-04-27 --to=2026-05-03
 ```
 
-9. Вручную отправьте скопированный отчет спортсмену.
+9. Отправьте черновик вручную после проверки. Авто-отправки спортсмену пока нет.
 
 ### Current safety rules
 
 - Отчеты создаются только как черновики.
 - `tp-sync-reports` публикует только безопасные метаданные и текст `report-draft.md` в Supabase для чтения ботом через общее состояние.
 - `tp-agent-once` забирает только одну queued-задачу из Supabase и запускается вручную на локальном Mac.
-- Ничего не отправляется автоматически.
+- После успешного sync `tp-agent-once` отправляет черновики отчетов только в Telegram чат заказчика задачи.
+- Авто-отправки спортсменам пока нет.
 - `exports/`, `parsed/`, `reports/`, `.env`, `config/students.json` локальные и находятся в `.gitignore`.
-- Интеграция с Telegram появится позже.
 - Учеников с плохим качеством данных можно временно отключать через `weekly_report_enabled=false`.
 
 ### Run one queued job
@@ -94,7 +94,7 @@ npm run tp-sync-reports -- --from=2026-04-27 --to=2026-05-03
 Для one-shot запуска локального runner:
 
 ```bash
-cd ~/igor-agent-hub/tools/trainingpeaks-export
+cd ~/igor-tp-reports-bot/tools/trainingpeaks-export
 npm run tp-agent-once
 ```
 
@@ -103,17 +103,19 @@ npm run tp-agent-once
 1. Claim'ит одну queued-задачу из `trainingpeaks_jobs`.
 2. Выполняет `tp-sync-students` и обновляет локальный `config/students.json` из Supabase.
 3. Запускает существующие `tp-weekly-all --from=... --to=...` и `tp-sync-reports --from=... --to=...`.
-4. Помечает задачу как `completed` или `failed` в Supabase.
+4. Читает готовые `report_markdown` из Supabase и отправляет каждый draft обратно в Telegram requester chat отдельным сообщением.
+5. Помечает задачу как `completed` или `failed` в Supabase.
 
 Нормальный weekly flow теперь такой:
 
 ```text
 Telegram:
 /tp_add_student Name | TP_URL
-/tp_run_week YYYY-MM-DD YYYY-MM-DD
+/tp_week
+/tp_run_week last
 
 Mac:
-cd tools/trainingpeaks-export
+cd ~/igor-tp-reports-bot/tools/trainingpeaks-export
 npm run tp-agent-once
 ```
 
@@ -123,6 +125,8 @@ npm run tp-agent-once
 - Обычное ручное редактирование `config/students.json` больше не нужно.
 - Перед перезаписью `config/students.json` создается backup-файл `students.backup-YYYYMMDD-HHMMSS.json`, если локальный файл уже существовал.
 - Если sync учеников падает, `tp-weekly-all` не запускается.
+- После sync отчеты-драфты отправляются обратно в Telegram только тому, кто создал задачу.
+- Это не approve/reject flow и не авто-отправка спортсменам.
 - Vercel по-прежнему не запускает Playwright/export/parser/AI.
 
 ### Sync students from Supabase

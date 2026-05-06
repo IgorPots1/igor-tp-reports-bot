@@ -25,6 +25,26 @@ type TrainingPeaksJobRow = {
   updated_at: string;
 };
 
+type TrainingPeaksWeeklyReportRow = {
+  student_name: string;
+  week_from: string;
+  week_to: string;
+  report_markdown: string | null;
+};
+
+type TrainingPeaksJobResult = {
+  week_from: string;
+  week_to: string;
+  reports_found: number;
+  reports_sent_to_telegram: number;
+  completed_at: string;
+  note: string;
+  delivery_warning?: string;
+};
+
+const TELEGRAM_MESSAGE_LIMIT = 4000;
+const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
+
 function readTextFileSyncSafe(filePath: string): string | null {
   try {
     return readFileSync(filePath, "utf8");
@@ -93,6 +113,11 @@ function getRequiredEnv(name: "SUPABASE_URL" | "SUPABASE_SERVICE_ROLE_KEY"): str
   return value;
 }
 
+function getOptionalEnv(name: "TELEGRAM_BOT_TOKEN"): string | null {
+  const value = process.env[name]?.trim();
+  return value ? value : null;
+}
+
 function getSupabase() {
   return createClient(getRequiredEnv("SUPABASE_URL"), getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY"), {
     auth: {
@@ -100,6 +125,91 @@ function getSupabase() {
       persistSession: false,
     },
   });
+}
+
+function splitTelegramText(text: string, limit = TELEGRAM_MESSAGE_LIMIT): string[] {
+  const normalizedText = text.trim();
+
+  if (normalizedText.length <= limit) {
+    return [normalizedText];
+  }
+
+  const chunks: string[] = [];
+  let rest = normalizedText;
+
+  while (rest.length > 0) {
+    if (rest.length <= limit) {
+      chunks.push(rest);
+      break;
+    }
+
+    let boundary = rest.lastIndexOf("\n\n", limit);
+    if (boundary < Math.floor(limit * 0.5)) {
+      boundary = rest.lastIndexOf("\n", limit);
+    }
+    if (boundary < Math.floor(limit * 0.5)) {
+      boundary = rest.lastIndexOf(" ", limit);
+    }
+    if (boundary <= 0) {
+      boundary = limit;
+    }
+
+    chunks.push(rest.slice(0, boundary).trimEnd());
+    rest = rest.slice(boundary).trimStart();
+  }
+
+  return chunks.filter(Boolean);
+}
+
+function buildTelegramReportMessages(report: TrainingPeaksWeeklyReportRow): string[] {
+  const reportMarkdown = report.report_markdown?.trim();
+  if (!reportMarkdown) {
+    return [];
+  }
+
+  const header = `✅ Отчет готов: ${report.student_name}\nНеделя: ${report.week_from} — ${report.week_to}\n\n`;
+  const continuationPrefix = `Продолжение отчета: ${report.student_name}\n\n`;
+
+  if ((header + reportMarkdown).length <= TELEGRAM_MESSAGE_LIMIT) {
+    return [`${header}${reportMarkdown}`];
+  }
+
+  const bodyChunks = splitTelegramText(reportMarkdown, TELEGRAM_MESSAGE_LIMIT - header.length);
+  if (bodyChunks.length === 0) {
+    return [header.trimEnd()];
+  }
+
+  const [firstChunk, ...restChunks] = bodyChunks;
+  const messages = [`${header}${firstChunk}`];
+
+  for (const chunk of restChunks) {
+    messages.push(`${continuationPrefix}${chunk}`);
+  }
+
+  return messages;
+}
+
+async function sendTelegramText(chatId: string, text: string): Promise<void> {
+  const token = getOptionalEnv("TELEGRAM_BOT_TOKEN");
+  if (!token) {
+    throw new Error("Missing TELEGRAM_BOT_TOKEN for Telegram delivery.");
+  }
+
+  const response = await fetch(`${TELEGRAM_API_BASE_URL}/bot${token}/sendMessage`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Telegram sendMessage failed (${response.status}): ${errorText}`);
+  }
 }
 
 function toShortErrorMessage(error: unknown): string {
@@ -190,6 +300,59 @@ async function claimNextQueuedTrainingPeaksJob(): Promise<TrainingPeaksJobRow | 
   return null;
 }
 
+async function listWeeklyReportsWithMarkdown(
+  weekFrom: string,
+  weekTo: string
+): Promise<TrainingPeaksWeeklyReportRow[]> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("trainingpeaks_weekly_reports")
+    .select("student_name, week_from, week_to, report_markdown")
+    .eq("week_from", weekFrom)
+    .eq("week_to", weekTo)
+    .order("student_name", { ascending: true });
+
+  if (error) {
+    throw new Error(
+      `Failed to list TrainingPeaks reports for ${weekFrom}..${weekTo}: ${error.message}`
+    );
+  }
+
+  return ((data as TrainingPeaksWeeklyReportRow[]) ?? []).filter((report) =>
+    Boolean(report.report_markdown?.trim())
+  );
+}
+
+async function deliverReportsToTelegram(
+  chatId: string,
+  reports: TrainingPeaksWeeklyReportRow[]
+): Promise<{ sentCount: number; warning: string | null }> {
+  let sentCount = 0;
+  const failures: string[] = [];
+
+  for (const report of reports) {
+    try {
+      for (const message of buildTelegramReportMessages(report)) {
+        await sendTelegramText(chatId, message);
+      }
+
+      sentCount += 1;
+    } catch (error) {
+      const shortMessage = toShortErrorMessage(error);
+      failures.push(`${report.student_name}: ${shortMessage}`);
+    }
+  }
+
+  if (failures.length === 0) {
+    return { sentCount, warning: null };
+  }
+
+  const warning = `Telegram delivery warning: ${sentCount}/${reports.length} report(s) sent. ${failures.join(" | ")}`;
+  console.warn(warning);
+
+  return { sentCount, warning };
+}
+
 async function completeTrainingPeaksJob(jobId: string, result: unknown): Promise<void> {
   const supabase = getSupabase();
   const { error } = await supabase
@@ -245,12 +408,42 @@ async function main(): Promise<void> {
     await runNpmScript("tp-sync-reports", [`--from=${job.week_from}`, `--to=${job.week_to}`]);
 
     const completedAt = new Date().toISOString();
-    await completeTrainingPeaksJob(job.id, {
+    const reports = await listWeeklyReportsWithMarkdown(job.week_from, job.week_to);
+    const reportsFound = reports.length;
+    let reportsSentToTelegram = 0;
+    let deliveryWarning: string | null = null;
+    let note = "Local Mac runner executed tp-weekly-all and tp-sync-reports.";
+
+    if (!job.requested_by_chat_id) {
+      note =
+        "Local Mac runner executed tp-weekly-all and tp-sync-reports, but skipped Telegram delivery because requested_by_chat_id is missing.";
+    } else if (reportsFound === 0) {
+      note =
+        "Local Mac runner executed tp-weekly-all and tp-sync-reports, but found no synced report drafts with report_markdown for Telegram delivery.";
+    } else {
+      const deliveryResult = await deliverReportsToTelegram(job.requested_by_chat_id, reports);
+      reportsSentToTelegram = deliveryResult.sentCount;
+      deliveryWarning = deliveryResult.warning;
+      note =
+        reportsSentToTelegram === reportsFound
+          ? "Local Mac runner executed tp-weekly-all and tp-sync-reports, then sent report drafts to the Telegram requester."
+          : "Local Mac runner executed tp-weekly-all and tp-sync-reports, but Telegram delivery finished with warnings.";
+    }
+
+    const result: TrainingPeaksJobResult = {
       week_from: job.week_from,
       week_to: job.week_to,
+      reports_found: reportsFound,
+      reports_sent_to_telegram: reportsSentToTelegram,
       completed_at: completedAt,
-      note: "Local Mac runner executed tp-weekly-all and tp-sync-reports.",
-    });
+      note,
+    };
+
+    if (deliveryWarning) {
+      result.delivery_warning = deliveryWarning;
+    }
+
+    await completeTrainingPeaksJob(job.id, result);
 
     console.log(`Completed TrainingPeaks job for ${job.week_from}..${job.week_to}.`);
   } catch (error) {

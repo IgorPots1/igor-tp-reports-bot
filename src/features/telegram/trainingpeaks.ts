@@ -7,6 +7,11 @@ import {
   getTrainingPeaksStudentsRegistryWithLatestReportStatus,
   requestTrainingPeaksWeeklyRun,
 } from "@/features/trainingpeaks/service";
+import {
+  getCurrentTrainingPeaksWeek,
+  getPreviousTrainingPeaksWeek,
+  getWeekBeforePreviousTrainingPeaksWeek,
+} from "@/features/trainingpeaks/week";
 import { sendTelegramMessage } from "@/features/telegram/telegram-client";
 
 const COACH_ONLY_MESSAGE = "⛔ Эта команда доступна только тренеру.";
@@ -20,6 +25,7 @@ const TP_STATUS_COMMAND_PATTERN = /^\/tp_status(?:@\w+)?(?:\s+|$)/;
 const TP_STUDENTS_COMMAND_PATTERN = /^\/tp_students(?:@\w+)?(?:\s+|$)/;
 const TP_ADD_STUDENT_COMMAND_PATTERN = /^\/tp_add_student(?:@\w+)?(?:\s+|$)/;
 const TP_REPORT_COMMAND_PATTERN = /^\/tp_report(?:@\w+)?(?:\s+|$)/;
+const TP_WEEK_COMMAND_PATTERN = /^\/tp_week(?:@\w+)?(?:\s+|$)/;
 const TP_RUN_WEEK_COMMAND_PATTERN = /^\/tp_run_week(?:@\w+)?(?:\s+|$)/;
 const TP_JOBS_COMMAND_PATTERN = /^\/tp_jobs(?:@\w+)?(?:\s+|$)/;
 const TP_WEEKLY_COMMAND_PATTERN = /^\/tp_weekly(?:@\w+)?(?:\s+|$)/;
@@ -37,6 +43,7 @@ type TrainingPeaksCommand =
   | "tp_students"
   | "tp_add_student"
   | "tp_report"
+  | "tp_week"
   | "tp_run_week"
   | "tp_jobs"
   | "tp_weekly"
@@ -79,6 +86,10 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
     return "tp_report";
   }
 
+  if (TP_WEEK_COMMAND_PATTERN.test(text)) {
+    return "tp_week";
+  }
+
   if (TP_RUN_WEEK_COMMAND_PATTERN.test(text)) {
     return "tp_run_week";
   }
@@ -109,6 +120,10 @@ function isIsoDate(value: string): boolean {
 
 function formatWeek(week: TrainingPeaksWeek): string {
   return `${formatShortDate(week.weekFrom)} — ${formatShortDate(week.weekTo)}`;
+}
+
+function formatWeekIso(week: TrainingPeaksWeek): string {
+  return `${week.weekFrom} — ${week.weekTo}`;
 }
 
 function formatShortDate(value: string): string {
@@ -355,11 +370,43 @@ function shortenJobError(errorMessage: string | null): string | null {
   return normalized.length > 120 ? `${normalized.slice(0, 117)}...` : normalized;
 }
 
+function getFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function getJobCountsSummary(resultJson: unknown): string | null {
+  if (!resultJson || typeof resultJson !== "object") {
+    return null;
+  }
+
+  const reportsFound = getFiniteNumber((resultJson as { reports_found?: unknown }).reports_found);
+  const reportsSent = getFiniteNumber(
+    (resultJson as { reports_sent_to_telegram?: unknown }).reports_sent_to_telegram
+  );
+
+  if (reportsFound === null && reportsSent === null) {
+    return null;
+  }
+
+  const parts: string[] = [];
+
+  if (reportsFound !== null) {
+    parts.push(`отчетов: ${reportsFound}`);
+  }
+
+  if (reportsSent !== null) {
+    parts.push(`отправлено: ${reportsSent}`);
+  }
+
+  return parts.length > 0 ? parts.join(", ") : null;
+}
+
 function formatJobsMessage(
   jobs: {
     status: string;
     weekFrom: string;
     weekTo: string;
+    resultJson: unknown | null;
     errorMessage: string | null;
   }[]
 ): string {
@@ -368,9 +415,14 @@ function formatJobsMessage(
     "",
     ...jobs.map((job) => {
       const shortError = shortenJobError(job.errorMessage);
+      const countsSummary = getJobCountsSummary(job.resultJson);
 
       if (job.status === "failed" && shortError) {
         return `• ${job.status} — ${job.weekFrom} — ${job.weekTo}: ${shortError}`;
+      }
+
+      if (job.status === "completed" && countsSummary) {
+        return `• ${job.status} — ${job.weekFrom} — ${job.weekTo} — ${countsSummary}`;
       }
 
       return `• ${job.status} — ${job.weekFrom} — ${job.weekTo}`;
@@ -393,7 +445,8 @@ export function getTrainingPeaksHelpLines(): string[] {
     "/tp_status <from> <to> — статусы за выбранную неделю",
     "/tp_students — ученики и их последний статус",
     "/tp_add_student Имя | ссылка",
-    "/tp_run_week YYYY-MM-DD YYYY-MM-DD",
+    "/tp_week — подсказка по неделям",
+    "/tp_run_week last|current|previous|YYYY-MM-DD YYYY-MM-DD",
     "/tp_jobs",
     "/tp_report <ученик> [from to] — текст отчёта",
   ];
@@ -498,7 +551,7 @@ async function handleTrainingPeaksAddStudent(
     [
       `✅ Ученик добавлен: ${result.student.studentName}`,
       "",
-      "⚠️ Важно: добавь этого ученика вручную в локальный tools/trainingpeaks-export/config/students.json, иначе локальный экспорт и отчеты по нему не запустятся.",
+      "Локальный Mac runner подтянет этого ученика из Supabase при следующем запуске tp-agent-once.",
     ].join("\n")
   );
 }
@@ -532,6 +585,31 @@ async function handleTrainingPeaksReport(
   );
 }
 
+async function handleTrainingPeaksWeek(parsedMessage: ParsedTelegramUpdate): Promise<void> {
+  const previousWeek = getPreviousTrainingPeaksWeek();
+  const currentWeek = getCurrentTrainingPeaksWeek();
+  const weekBeforePrevious = getWeekBeforePreviousTrainingPeaksWeek();
+
+  await sendTrainingPeaksMessage(
+    parsedMessage.chatId,
+    [
+      "Выбери неделю для отчетов:",
+      "",
+      "Прошлая неделя:",
+      `/tp_run_week ${previousWeek.weekFrom} ${previousWeek.weekTo}`,
+      "",
+      "Текущая неделя:",
+      `/tp_run_week ${currentWeek.weekFrom} ${currentWeek.weekTo}`,
+      "",
+      "Неделей раньше:",
+      `/tp_run_week ${weekBeforePrevious.weekFrom} ${weekBeforePrevious.weekTo}`,
+      "",
+      "Потом запусти на Mac:",
+      "cd ~/igor-tp-reports-bot/tools/trainingpeaks-export && npm run tp-agent-once",
+    ].join("\n")
+  );
+}
+
 async function handleTrainingPeaksRunWeek(
   parsedMessage: ParsedTelegramUpdate,
   text: string
@@ -549,10 +627,10 @@ async function handleTrainingPeaksRunWeek(
   await sendTrainingPeaksMessage(
     parsedMessage.chatId,
     [
-      `✅ Задача создана: недельные отчеты ${result.job.weekFrom} — ${result.job.weekTo}.`,
+      `✅ Задача создана: недельные отчеты ${formatWeekIso(result.job)}.`,
       "",
-      "Mac-agent запустит выгрузку локально, когда ты выполнишь:",
-      "npm run tp-agent-once",
+      "Теперь на Mac запусти:",
+      "cd ~/igor-tp-reports-bot/tools/trainingpeaks-export && npm run tp-agent-once",
     ].join("\n")
   );
 }
@@ -601,6 +679,11 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_report") {
       await handleTrainingPeaksReport(parsedMessage, text);
+      return "handled";
+    }
+
+    if (command === "tp_week") {
+      await handleTrainingPeaksWeek(parsedMessage);
       return "handled";
     }
 

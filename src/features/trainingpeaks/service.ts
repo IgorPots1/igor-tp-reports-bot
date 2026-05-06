@@ -11,6 +11,7 @@ import {
   type TrainingPeaksWeek,
   type TrainingPeaksWeeklyReport,
 } from "@/features/trainingpeaks/repository";
+import { resolveTrainingPeaksWeekKeyword } from "@/features/trainingpeaks/week";
 
 export type TrainingPeaksStatus = "ready" | "parsed_only" | "missing";
 export type TrainingPeaksRegistryStatus = "no_data" | "ready" | "data_loaded" | "no_report";
@@ -77,6 +78,12 @@ export type RequestTrainingPeaksWeeklyRunResult =
 const TP_ADD_STUDENT_COMMAND_PATTERN = /^\/tp_add_student(?:@\w+)?(?:\s+|$)/;
 const TP_RUN_WEEK_COMMAND_PATTERN = /^\/tp_run_week(?:@\w+)?(?:\s+|$)/;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const TP_RUN_WEEK_USAGE_MESSAGE = [
+  "Напиши так:",
+  "/tp_run_week last",
+  "или",
+  "/tp_run_week 2026-04-27 2026-05-03",
+].join("\n");
 
 function normalizeStudentQuery(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("ru");
@@ -224,11 +231,29 @@ function parseTrainingPeaksWeekRange(rawInput: string):
   const normalizedInput = stripTpRunWeekCommandPrefix(rawInput);
   const tokens = normalizedInput ? normalizedInput.split(/\s+/) : [];
 
+  if (tokens.length === 1) {
+    const resolvedWeek = resolveTrainingPeaksWeekKeyword(tokens[0] ?? "");
+
+    if (!resolvedWeek) {
+      return {
+        ok: false,
+        reason: "invalid_format",
+        message: TP_RUN_WEEK_USAGE_MESSAGE,
+      };
+    }
+
+    return {
+      ok: true,
+      weekFrom: resolvedWeek.weekFrom,
+      weekTo: resolvedWeek.weekTo,
+    };
+  }
+
   if (tokens.length !== 2) {
     return {
       ok: false,
       reason: "invalid_format",
-      message: "Напиши так: /tp_run_week 2026-04-27 2026-05-03",
+      message: TP_RUN_WEEK_USAGE_MESSAGE,
     };
   }
 
@@ -238,7 +263,7 @@ function parseTrainingPeaksWeekRange(rawInput: string):
     return {
       ok: false,
       reason: "invalid_date",
-      message: "Нужно указать две корректные даты в формате YYYY-MM-DD YYYY-MM-DD.",
+      message: TP_RUN_WEEK_USAGE_MESSAGE,
     };
   }
 
@@ -246,7 +271,7 @@ function parseTrainingPeaksWeekRange(rawInput: string):
     return {
       ok: false,
       reason: "invalid_range",
-      message: "Дата начала недели не может быть позже даты окончания.",
+      message: TP_RUN_WEEK_USAGE_MESSAGE,
     };
   }
 
