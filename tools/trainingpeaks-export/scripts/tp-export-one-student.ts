@@ -25,6 +25,7 @@ type PageAssessment = {
 type AutomationAttemptResult = {
   ok: boolean;
   reason?: string;
+  visibleCandidates?: string[];
 };
 
 function usage(): string {
@@ -272,6 +273,118 @@ async function clickFirstVisible(locators: Locator[], timeout = 500): Promise<bo
   return false;
 }
 
+function normalizeCandidateLabel(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+async function listVisibleCandidateControls(page: Page): Promise<string[]> {
+  const roleCandidates = await page
+    .locator('button, a, [role="button"], [role="link"]')
+    .evaluateAll((elements) => {
+      const isVisible = (element: Element): boolean => {
+        if (!(element instanceof HTMLElement)) {
+          return false;
+        }
+
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return (
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          rect.width > 0 &&
+          rect.height > 0
+        );
+      };
+
+      const labels = new Set<string>();
+      for (const element of elements) {
+        if (!isVisible(element)) {
+          continue;
+        }
+
+        const tagName = element.tagName.toLowerCase();
+        const role = element.getAttribute("role") ?? "";
+        const ariaLabel = element.getAttribute("aria-label") ?? "";
+        const title = element.getAttribute("title") ?? "";
+        const text = (element.textContent ?? "").replace(/\s+/g, " ").trim();
+        const accessibleLabel = (ariaLabel || title || text).replace(/\s+/g, " ").trim();
+        const keywordMatch = /(settings|athlete account|account settings|export data|\baccount\b)/i.test(accessibleLabel);
+        const exactMoreMatch = /^(more|⋯|…)$/.test(accessibleLabel);
+        if (
+          !accessibleLabel ||
+          accessibleLabel.length > 60 ||
+          /^\d+\s+more\b/i.test(accessibleLabel) ||
+          (!keywordMatch && !exactMoreMatch)
+        ) {
+          continue;
+        }
+
+        const source = role || tagName;
+        labels.add(`${source}: ${accessibleLabel}`);
+      }
+
+      return [...labels];
+    })
+    .catch(() => []);
+
+  const textCandidates = await page
+    .locator("h1, h2, h3, h4, span, div, p")
+    .evaluateAll((elements) => {
+      const isVisible = (element: Element): boolean => {
+        if (!(element instanceof HTMLElement)) {
+          return false;
+        }
+
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return (
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          rect.width > 0 &&
+          rect.height > 0
+        );
+      };
+
+      const labels = new Set<string>();
+      for (const element of elements) {
+        if (!isVisible(element)) {
+          continue;
+        }
+
+        const text = (element.textContent ?? "").replace(/\s+/g, " ").trim();
+        const keywordMatch = /(settings|athlete account|account settings|export data|\baccount\b)/i.test(text);
+        const exactMoreMatch = /^(more|⋯|…)$/.test(text);
+        if (
+          !text ||
+          text.length > 60 ||
+          /^\d+\s+more\b/i.test(text) ||
+          (!keywordMatch && !exactMoreMatch)
+        ) {
+          continue;
+        }
+
+        labels.add(`text: ${text}`);
+      }
+
+      return [...labels];
+    })
+    .catch(() => []);
+
+  return [...new Set([...roleCandidates, ...textCandidates].map(normalizeCandidateLabel))].slice(0, 12);
+}
+
+function logVisibleCandidateControls(candidates: string[]): void {
+  console.log("Visible candidate controls:");
+  if (candidates.length === 0) {
+    console.log("- (none detected)");
+    return;
+  }
+
+  for (const candidate of candidates) {
+    console.log(`- ${candidate}`);
+  }
+}
+
 function exportInstructionsLocator(page: Page): Locator {
   return page.getByText(/use the fields below to download your workout or metrics data to your computer\./i);
 }
@@ -304,6 +417,67 @@ async function locateSettingsScope(page: Page): Promise<Locator> {
   return page.locator("body");
 }
 
+async function tryOpenAthleteAccountSettings(page: Page): Promise<AutomationAttemptResult> {
+  if (await waitForSettingsModal(page)) {
+    return { ok: true };
+  }
+
+  const directSettingsLocators = [
+    page.getByRole("button", { name: /^athlete account settings$/i }),
+    page.getByRole("link", { name: /^athlete account settings$/i }),
+    page.getByRole("button", { name: /athlete account|account settings/i }),
+    page.getByRole("link", { name: /athlete account|account settings/i })
+  ];
+
+  if (await clickFirstVisible(directSettingsLocators, 700)) {
+    if (await waitForSettingsModal(page)) {
+      return { ok: true };
+    }
+  }
+
+  const menuOpeners = [
+    page.getByRole("button", { name: /settings|account|more/i }),
+    page.getByRole("link", { name: /settings|account|more/i }),
+    page.getByText(/^settings$/i),
+    page.getByText(/account settings/i),
+    page.getByText(/^more$/i)
+  ];
+
+  for (const locator of menuOpeners) {
+    if (!(await isVisible(locator, 700))) {
+      continue;
+    }
+
+    try {
+      await locator.first().click({ timeout: 2000 });
+    } catch {
+      continue;
+    }
+
+    if (await waitForSettingsModal(page)) {
+      return { ok: true };
+    }
+
+    if (
+      await clickFirstVisible([
+        page.getByRole("button", { name: /^athlete account settings$/i }),
+        page.getByRole("link", { name: /^athlete account settings$/i }),
+        page.getByText(/^athlete account settings$/i)
+      ], 700)
+    ) {
+      if (await waitForSettingsModal(page)) {
+        return { ok: true };
+      }
+    }
+  }
+
+  return {
+    ok: false,
+    reason: "could not find Athlete Account Settings control.",
+    visibleCandidates: await listVisibleCandidateControls(page)
+  };
+}
+
 async function tryOpenExportData(page: Page): Promise<AutomationAttemptResult> {
   if (await exportDataSectionReady(page)) {
     return { ok: true };
@@ -311,24 +485,13 @@ async function tryOpenExportData(page: Page): Promise<AutomationAttemptResult> {
 
   const settingsVisible = await waitForSettingsModal(page);
   if (!settingsVisible) {
-    const openedSettings = await clickFirstVisible([
-      page.getByRole("link", { name: /^athlete account settings$/i }),
-      page.getByRole("button", { name: /^athlete account settings$/i }),
-      page.getByText(/^athlete account settings$/i),
-      page.getByRole("link", { name: /account settings/i }),
-      page.getByRole("button", { name: /account settings/i }),
-      page.getByText(/account settings/i),
-      page.getByRole("link", { name: /^settings$/i }),
-      page.getByRole("button", { name: /^settings$/i }),
-      page.getByText(/^settings$/i)
-    ]);
-
-    if (!openedSettings) {
-      return { ok: false, reason: 'could not find an "Athlete Account Settings" control.' };
+    const openedSettings = await tryOpenAthleteAccountSettings(page);
+    if (!openedSettings.ok) {
+      return openedSettings;
     }
 
     if (!(await waitForSettingsModal(page))) {
-      return { ok: false, reason: 'clicked settings, but "Athlete Account Settings" did not appear.' };
+      return { ok: false, reason: 'clicked a likely settings control, but "Athlete Account Settings" did not appear.' };
     }
   }
 
@@ -427,14 +590,16 @@ async function tryFillExportDateRanges(page: Page, fromIso: string, toIso: strin
   const from = formatForTrainingPeaksDateInput(fromIso);
   const to = formatForTrainingPeaksDateInput(toIso);
 
-  const workoutFilesResult = await fillExportSubsectionDateRange(page, "Workout Files", from, to);
-  if (!workoutFilesResult.ok) {
-    return workoutFilesResult;
-  }
-
   const workoutSummaryResult = await fillExportSubsectionDateRange(page, "Workout Summary", from, to);
   if (!workoutSummaryResult.ok) {
     return workoutSummaryResult;
+  }
+
+  const workoutFilesResult = await fillExportSubsectionDateRange(page, "Workout Files", from, to);
+  if (!workoutFilesResult.ok) {
+    console.log(
+      `Auto-export note: ${workoutFilesResult.reason ?? 'could not fill the "Workout Files" export subsection.'} Workout Files is optional for the current weekly report.`
+    );
   }
 
   return { ok: true };
@@ -534,6 +699,9 @@ async function main(): Promise<void> {
         console.log("Auto-export check: Export Data is open.");
       } else {
         console.log(`Auto-export fallback: ${exportOpenResult.reason ?? 'could not open "Export Data" automatically.'}`);
+        if (exportOpenResult.visibleCandidates) {
+          logVisibleCandidateControls(exportOpenResult.visibleCandidates);
+        }
       }
     } else {
       console.log("Auto-export fallback: athlete page state was uncertain, skipping Export Data automation.");
@@ -560,16 +728,21 @@ async function main(): Promise<void> {
       console.log("");
       console.log("Manual final step:");
       console.log("1. Click Export in Workout Summary");
-      console.log("2. Click Export in Workout Files");
-      console.log("3. Wait until both ZIP files finish downloading");
-      console.log("4. Return to terminal and press Enter");
+      console.log("2. Wait until the ZIP file finishes downloading");
+      console.log("3. Return to terminal and press Enter");
+      console.log("");
+      console.log("Optional:");
+      console.log("Workout Files can be downloaded too, but it is not required for the current weekly report.");
     } else {
       console.log("Manual fallback:");
       console.log("1. Open Athlete Account Settings -> Export Data");
       console.log("2. Set date range manually");
       console.log("3. Download Workout Summary");
-      console.log("4. Download Workout Files");
-      console.log("5. Press Enter");
+      console.log("4. Wait until the ZIP file finishes downloading");
+      console.log("5. Return to terminal and press Enter");
+      console.log("");
+      console.log("Optional:");
+      console.log("Workout Files can be downloaded too, but it is not required for the current weekly report.");
     }
     console.log("If no files are downloaded and no existing ZIPs are found, this student will be skipped and the batch will continue.");
     console.log("");

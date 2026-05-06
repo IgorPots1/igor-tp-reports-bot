@@ -1,0 +1,108 @@
+- generic [active] [ref=e1] [box=0,0,776,640]:
+  - generic [ref=e4] [box=0,0,776,640]:
+    - generic [ref=e6] [box=0,0,776,40]:
+      - img [ref=e10] [box=24,10,21,20]
+      - generic [ref=e13] [box=45,4,621,32]:
+        - button "Home" [ref=e14] [cursor=pointer] [box=53,4,85,32]
+        - button "Calendar" [ref=e15] [cursor=pointer] [box=154,4,85,32]
+        - button "Dashboard" [ref=e16] [cursor=pointer] [box=255,4,85,32]
+        - button "ATP" [ref=e17] [cursor=pointer] [box=356,4,85,32]
+        - button "Manage Athletes" [ref=e18] [cursor=pointer] [box=456,4,100,32]
+        - button "Payments" [ref=e19] [cursor=pointer] [box=573,4,85,32]
+      - generic [ref=e20] [box=666,4,268,32]:
+        - generic [ref=e22] [box=682,4,101,32]:
+          - img [ref=e25] [box=685,11,18,18]
+          - paragraph [ref=e27] [box=714,1,69,38]: Igor Potseluev
+        - generic [ref=e28] [box=795,4,140,32]:
+          - generic "Sign Up for Beta Access" [ref=e30] [box=795,4,32,32]:
+            - button [ref=e31] [cursor=pointer] [box=795,4,32,32]
+          - generic [ref=e35] [cursor=pointer] [box=831,4,32,32]:
+            - generic "See Notifications" [ref=e36] [box=831,4,32,32]
+            - generic [ref=e43] [box=851,6,21,13]: "196"
+          - generic "Toggle Fullscreen" [ref=e44] [box=867,4,32,32]:
+            - button [ref=e45] [cursor=pointer] [box=867,4,32,32]
+          - button [ref=e52] [cursor=pointer] [box=903,4,32,32]:
+            - img [ref=e53] [box=907,8,24,24]
+    - generic [ref=e60] [box=0,40,776,610]:
+      - generic [ref=e62] [box=0,40,64,610]:
+        - generic [ref=e63] [cursor=pointer] [box=9,56,46,48]:
+          - img [ref=e64] [box=20,56,24,24]
+          - generic [ref=e68] [box=9,80,46,24]: Athlete Library
+        - generic [ref=e69] [cursor=pointer] [box=9,120,46,48]:
+          - img [ref=e71] [box=20,120,24,24]
+          - generic [ref=e75] [box=9,144,46,24]: Workout Library
+        - generic [ref=e76] [cursor=pointer] [box=9,184,46,48]:
+          - img [ref=e77] [box=20,184,24,24]
+          - generic [ref=e81] [box=9,208,46,24]: Training Plans
+        - generic [ref=e82] [cursor=pointer] [box=9,248,46,48]:
+          - img [ref=e83] [box=20,248,23,24]
+          - generic [ref=e90] [box=9,272,46,24]: Routes Library
+      - generic [ref=e92] [box=66,40,710,610]:
+        - generic [ref=e95] [box=90,40,662,56]:
+          - generic [ref=e96] [box=90,52,171,32]:
+            - generic [ref=e97] [box=90,52,14,32]
+            - button "Today" [ref=e101] [cursor=pointer] [box=128,53,57,30]
+          - generic [ref=e110] [cursor=pointer] [box=351,58,128,20]: Olga
+        - generic [ref=e127] [box=65,96,1007,535]:
+          - generic [ref=e129] [box=65,96,1007,28]:
+            - paragraph [ref=e131] [box=70,104,29,12]: Mon
+            - paragraph [ref=e133] [box=174,104,24,12]: Tue
+            - paragraph [ref=e135] [box=278,104,28,12]: Wed
+            - paragraph [ref=e137] [box=383,104,26,12]: Thu
+            - paragraph [ref=e139] [box=487,104,18,12]: Fri
+            - paragraph [ref=e141] [box=591,104,23,12]: Sat
+            - paragraph [ref=e143] [box=695,104,26,12]: Sun
+            - paragraph [ref=e147] [box=918,104,62,12]: Summary
+          - generic [ref=e148] [box=65,124,1007,507]:
+            - generic [ref=e149] [box=65,-5570,1007,5692]
+            - generic [ref=e2731] [box=65,122,1007,2296]
+      - complementary [ref=e3736] [box=776,40,346,600]:
+        - progressbar [ref=e3739] [box=863,338,173,4]
+  - iframe [ref=e3742] [box=0,-10000,300,150]:
+    
+  - generic [ref=e3744] [box=13,26,750,588]:
+    - heading "Athlete Account Settings" [level=2] [ref=e3747] [box=32,34,187,28]
+    - generic [ref=e3749] [box=13,70,750,513]:
+      - list [ref=e3750] [box=13,70,142,513]:
+        - listitem [ref=e3751] [cursor=pointer] [box=13,72,141,390]:
+          - generic [ref=e3752] [box=34,97,106,22]: Account
+          - list [ref=e3753] [box=38,134,112,308]:
+            - listitem [ref=e3754] [box=48,134,102,17]
+            - listitem [ref=e3756] [box=48,166,102,34]
+            - listitem [ref=e3758] [box=48,215,102,17]
+            - listitem [ref=e3760] [box=48,247,102,17]
+            - listitem [ref=e3762] [box=48,280,102,17]
+            - listitem [ref=e3764] [box=48,312,102,17]
+            - listitem [ref=e3766] [box=48,344,102,34]
+            - listitem [ref=e3768] [box=48,393,102,17]
+            - listitem [ref=e3770] [box=48,425,102,17]
+        - listitem [ref=e3772] [cursor=pointer] [box=13,464,141,32]:
+          - generic [ref=e3773] [box=34,469,106,22]: Zones
+        - listitem [ref=e3774] [cursor=pointer] [box=13,498,141,32]:
+          - generic [ref=e3775] [box=34,503,106,22]: Nutrition
+        - listitem [ref=e3776] [cursor=pointer] [box=13,532,141,32]:
+          - generic [ref=e3777] [box=34,537,106,22]: Equipment
+        - listitem [ref=e3778] [cursor=pointer] [box=13,566,141,32]:
+          - generic [ref=e3779] [box=34,571,106,22]: Layout
+        - listitem [ref=e3780] [cursor=pointer] [box=13,600,141,32]:
+          - generic [ref=e3781] [box=34,605,106,22]: Weather
+      - generic [ref=e3784] [box=185,-1946,757,2530]:
+        - generic [box=185,-1946,757,0]:
+          - generic [box=185,-1946,757,0]:
+            - generic [ref=e3785] [box=185,-1946,757,740]
+            - generic [ref=e3846] [box=185,-1206,757,137]
+            - generic [ref=e3851] [box=185,-1069,757,290]
+            - generic [ref=e3874] [box=185,-751,757,61]
+            - generic [ref=e3878] [box=185,-663,757,117]
+            - generic [ref=e3881] [box=185,-546,757,211]
+            - generic [ref=e3892] [box=185,-307,757,157]
+            - generic [ref=e3900] [box=185,-95,757,137]
+            - generic [ref=e3929] [box=185,99,757,337]
+      - generic [ref=e3962] [box=13,549,750,65]:
+        - generic [ref=e3963] [box=13,550,750,64]:
+          - button "Cancel" [ref=e3964] [cursor=pointer] [box=460,566,77,32]
+          - button "Save" [ref=e3965] [cursor=pointer] [box=545,566,77,32]
+          - button "Save & Close" [ref=e3966] [cursor=pointer] [box=630,566,109,32]
+        - alert [ref=e3968] [box=454,506,289,48]:
+          - img [ref=e3970] [box=470,519,22,22]
+          - generic [ref=e3972] [box=504,512,223,36]: Any changes will affect this athlete.
