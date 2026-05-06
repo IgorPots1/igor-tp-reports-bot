@@ -5,7 +5,7 @@ import process from "node:process";
 import { stdin as input, stdout as output } from "node:process";
 import { createInterface } from "node:readline/promises";
 
-import type { Download } from "playwright";
+import type { Download, Locator, Page } from "playwright";
 import { chromium } from "playwright";
 import { exportsRoot, profileDir } from "./lib/paths.ts";
 import { findStudentById, readStudentsConfig } from "./lib/students.ts";
@@ -14,6 +14,12 @@ type CliArgs = {
   student: string;
   from: string;
   to: string;
+};
+
+type PageAssessment = {
+  loginRequired: boolean;
+  athletePageLikelyReachable: boolean;
+  fallbackReason?: string;
 };
 
 function usage(): string {
@@ -106,6 +112,156 @@ async function listZipFiles(directory: string): Promise<string[]> {
     .sort((left, right) => left.localeCompare(right));
 }
 
+async function isVisible(locator: Locator, timeout = 700): Promise<boolean> {
+  try {
+    await locator.first().waitFor({ state: "visible", timeout });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function anyVisible(locators: Locator[], timeout = 700): Promise<boolean> {
+  for (const locator of locators) {
+    if (await isVisible(locator, timeout)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function getPageText(page: Page): Promise<string> {
+  const bodyText = await page.locator("body").innerText({ timeout: 3000 }).catch(() => "");
+  return bodyText.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+async function assessTrainingPeaksPage(page: Page): Promise<PageAssessment> {
+  await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
+  await page.waitForLoadState("networkidle", { timeout: 3000 }).catch(() => {});
+
+  const [title, bodyText] = await Promise.all([page.title().catch(() => ""), getPageText(page)]);
+  const combinedText = `${title} ${bodyText}`.trim().toLowerCase();
+  const currentUrl = page.url();
+
+  const loginSignals = await Promise.all([
+    isVisible(page.locator('input[type="password"]')),
+    isVisible(page.locator('input[type="email"], input[name*="email" i], input[autocomplete="username"]')),
+    anyVisible([
+      page.getByRole("button", { name: /sign in|log in|login/i }),
+      page.getByRole("link", { name: /sign in|log in|login/i }),
+      page.getByText(/sign in|log in|login/i)
+    ])
+  ]);
+
+  const loginTextDetected = /sign in|log in|login|password|forgot password|remember me/.test(combinedText);
+  if (/(login|signin|sign-in|auth)/i.test(currentUrl) || loginSignals.some(Boolean) || loginTextDetected) {
+    return {
+      loginRequired: true,
+      athletePageLikelyReachable: false,
+      fallbackReason: "login screen detected or session not ready."
+    };
+  }
+
+  if (!combinedText) {
+    return {
+      loginRequired: false,
+      athletePageLikelyReachable: false,
+      fallbackReason: "page content did not load clearly."
+    };
+  }
+
+  if (/something went wrong|access denied|403|404|not found|unavailable|forbidden/.test(combinedText)) {
+    return {
+      loginRequired: false,
+      athletePageLikelyReachable: false,
+      fallbackReason: "page appears to be unavailable or access is blocked."
+    };
+  }
+
+  const trainingPeaksShellVisible = await anyVisible([
+    page.getByText(/trainingpeaks/i),
+    page.getByRole("link", { name: /calendar|workouts|settings/i }),
+    page.getByRole("button", { name: /calendar|workouts|settings/i }),
+    page.getByText(/athlete account settings|export data/i)
+  ]);
+
+  const shellTextDetected = /trainingpeaks|calendar|workout|athlete|account settings|export data/.test(combinedText);
+  if (!currentUrl.includes("trainingpeaks") || (!trainingPeaksShellVisible && !shellTextDetected)) {
+    return {
+      loginRequired: false,
+      athletePageLikelyReachable: false,
+      fallbackReason: "could not confirm the athlete page loaded clearly."
+    };
+  }
+
+  return {
+    loginRequired: false,
+    athletePageLikelyReachable: true
+  };
+}
+
+async function clickFirstVisible(locators: Locator[], timeout = 500): Promise<boolean> {
+  for (const locator of locators) {
+    if (!(await isVisible(locator, timeout))) {
+      continue;
+    }
+
+    try {
+      await locator.first().click({ timeout: 2000 });
+      return true;
+    } catch {
+      continue;
+    }
+  }
+
+  return false;
+}
+
+async function probeExportArea(page: Page): Promise<boolean> {
+  const exportIndicators = [
+    page.getByText(/export data/i),
+    page.getByRole("heading", { name: /export data/i }),
+    page.getByRole("link", { name: /export data/i }),
+    page.getByRole("button", { name: /export data/i })
+  ];
+
+  if (await anyVisible(exportIndicators, 500)) {
+    return true;
+  }
+
+  const openedSettings = await clickFirstVisible([
+    page.getByRole("link", { name: /athlete account settings/i }),
+    page.getByRole("button", { name: /athlete account settings/i }),
+    page.getByText(/athlete account settings/i),
+    page.getByRole("link", { name: /^settings$/i }),
+    page.getByRole("button", { name: /^settings$/i }),
+    page.getByText(/^settings$/i)
+  ]);
+
+  if (openedSettings) {
+    await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => {});
+    await page.waitForTimeout(500);
+  }
+
+  if (await anyVisible(exportIndicators, 500)) {
+    return true;
+  }
+
+  const openedExport = await clickFirstVisible([
+    page.getByRole("link", { name: /export data/i }),
+    page.getByRole("button", { name: /export data/i }),
+    page.getByText(/export data/i)
+  ]);
+
+  if (openedExport) {
+    await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => {});
+    await page.waitForTimeout(500);
+  }
+
+  return anyVisible(exportIndicators, 500);
+}
+
 async function saveDownload(download: Download, exportDir: string, savedFiles: string[]): Promise<void> {
   const failure = await download.failure();
   if (failure) {
@@ -173,14 +329,44 @@ async function main(): Promise<void> {
     await page.goto(student.trainingpeaks_athlete_url, { waitUntil: "domcontentloaded" });
     await page.bringToFront();
 
+    console.log(`Auto-export check: opening TrainingPeaks for ${student.student_id}`);
+    console.log("Auto-export check: verifying login/page state");
+
+    let pageAssessment = await assessTrainingPeaksPage(page);
+    if (pageAssessment.loginRequired) {
+      console.log("TrainingPeaks login is required. Please sign in in the opened browser, then press Enter to continue.");
+      await waitForEnter("Press Enter after the TrainingPeaks login is complete.");
+      await page.goto(student.trainingpeaks_athlete_url, { waitUntil: "domcontentloaded" }).catch(() => {});
+      await page.bringToFront();
+      pageAssessment = await assessTrainingPeaksPage(page);
+    }
+
+    if (!pageAssessment.athletePageLikelyReachable) {
+      console.log(`Auto-export fallback: ${pageAssessment.fallbackReason ?? "athlete page was not reachable automatically."}`);
+    }
+
+    console.log("Auto-export check: attempting to locate export/settings area");
+    if (pageAssessment.athletePageLikelyReachable) {
+      const exportAreaReachable = await probeExportArea(page);
+      if (exportAreaReachable) {
+        console.log("Auto-export check: Export Data area appears reachable.");
+      } else {
+        console.log("Auto-export fallback: export/settings UI was not found automatically.");
+      }
+    } else {
+      console.log("Auto-export fallback: athlete page state was uncertain, skipping export/settings probe.");
+    }
+
     console.log("");
-    console.log("Manual steps:");
-    console.log(`1. Confirm you are on the correct athlete page for ${student.student_id}.`);
-    console.log("2. In TrainingPeaks, open Athlete Account Settings -> Export Data.");
-    console.log(`3. Set the export date range to ${args.from} through ${args.to}.`);
-    console.log("4. Download Workout Summary.");
-    console.log("5. Download Workout Files.");
-    console.log("6. Return to this terminal and press Enter when both downloads have finished.");
+    console.log("Manual fallback:");
+    console.log(`1. In the opened TrainingPeaks browser, make sure this is the correct athlete: ${student.student_id}`);
+    console.log("2. Open Athlete Account Settings -> Export Data");
+    console.log(`3. Set date range: ${args.from} — ${args.to}`);
+    console.log("4. Download Workout Summary");
+    console.log("5. Download Workout Files");
+    console.log("6. Wait until both files finish downloading");
+    console.log("7. Return to terminal and press Enter");
+    console.log("If no files are downloaded and no existing ZIPs are found, this student will be skipped and the batch will continue.");
     console.log("");
 
     await waitForEnter("Press Enter here after you finish the manual export flow.");
