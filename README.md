@@ -48,6 +48,7 @@ Example flow:
 
 ```text
 Telegram:
+/tp_add_student Olga | https://app.trainingpeaks.com/#calendar/athletes/5734279
 /tp_run_week 2026-04-27 2026-05-03
 
 Mac:
@@ -69,9 +70,19 @@ npm run tp-sync-reports -- --from=YYYY-MM-DD --to=YYYY-MM-DD
 
 This sync writes sanitized weekly metadata plus `report-draft.md` content into Supabase and does not send anything to students.
 
-For MVP, the student registry in Supabase lives in `trainingpeaks_students` and is used by Telegram commands. The local export pipeline still reads `tools/trainingpeaks-export/config/students.json`.
+For MVP, the student registry in Supabase lives in `trainingpeaks_students` and is used by Telegram commands. The local export pipeline still reads `tools/trainingpeaks-export/config/students.json`, but that file is now refreshed from Supabase by the local runner.
 
-After adding a student through Telegram with `/tp_add_student`, manually mirror that student into `tools/trainingpeaks-export/config/students.json`, otherwise local export/parsing/report generation will not run for that athlete.
+Normal weekly flow:
+
+```text
+Telegram:
+/tp_add_student <name> | <trainingpeaks_url>
+/tp_run_week YYYY-MM-DD YYYY-MM-DD
+
+Mac:
+cd tools/trainingpeaks-export
+npm run tp-agent-once
+```
 
 To execute one queued weekly job from Supabase on the local Mac runner:
 
@@ -80,7 +91,11 @@ cd tools/trainingpeaks-export
 npm run tp-agent-once
 ```
 
-`tp-agent-once` claims one queued `trainingpeaks_jobs` row, optionally runs `tp-sync-students` if that script exists, then runs the existing `tp-weekly-all` and `tp-sync-reports` pipeline for the requested week. It is intentionally a manual one-shot command, not a daemon and not a cron job yet.
+`tp-agent-once` claims one queued `trainingpeaks_jobs` row, syncs active weekly-enabled students from Supabase into the local `config/students.json`, then runs the existing `tp-weekly-all` and `tp-sync-reports` pipeline for the requested week. If the student sync fails, the export does not continue. Before overwriting `config/students.json`, the sync creates a timestamped `students.backup-YYYYMMDD-HHMMSS.json` file when a previous local config exists.
+
+Manual editing of `tools/trainingpeaks-export/config/students.json` is no longer needed for the normal Telegram -> local Mac weekly flow.
+
+Vercel still does not run Playwright, export, parser, or AI generation.
 
 ## Telegram Commands
 

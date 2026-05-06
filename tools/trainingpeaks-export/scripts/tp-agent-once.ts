@@ -102,21 +102,6 @@ function getSupabase() {
   });
 }
 
-function getToolScripts(): Record<string, string> {
-  const packageJsonPath = path.join(toolRoot, "package.json");
-  const packageJsonRaw = readTextFileSyncSafe(packageJsonPath);
-  if (!packageJsonRaw) {
-    return {};
-  }
-
-  const parsed = JSON.parse(packageJsonRaw) as { scripts?: Record<string, string> };
-  return parsed.scripts ?? {};
-}
-
-function hasToolScript(scriptName: string): boolean {
-  return Boolean(getToolScripts()[scriptName]);
-}
-
 function toShortErrorMessage(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   const normalized = raw.replace(/\s+/g, " ").trim();
@@ -251,13 +236,8 @@ async function main(): Promise<void> {
   console.log(`Claimed TrainingPeaks job for ${job.week_from}..${job.week_to}.`);
 
   try {
-    if (hasToolScript("tp-sync-students")) {
-      console.log("Running tp-sync-students...");
-      await runNpmScript("tp-sync-students");
-    } else {
-      console.warn("Warning: tp-sync-students script was not found. Skipping student sync.");
-    }
-
+    console.log("Running tp-sync-students...");
+    await runNpmScript("tp-sync-students");
     console.log("Running tp-weekly-all...");
     await runNpmScript("tp-weekly-all", [`--from=${job.week_from}`, `--to=${job.week_to}`]);
 

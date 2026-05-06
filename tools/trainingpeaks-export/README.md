@@ -12,6 +12,7 @@ Current commands:
 - `npm run tp-report-open -- --student=Olga`
 - `npm run tp-report-copy -- --student=Olga`
 - `npm run tp-sync-reports -- --from=2026-04-27 --to=2026-05-03`
+- `npm run tp-sync-students`
 - `npm run tp-agent-once`
 - `npm run tp-student-add -- --student=Olga --name="Ольга" --url="https://app.trainingpeaks.com/#calendar/athletes/5734279"`
 
@@ -100,9 +101,50 @@ npm run tp-agent-once
 Команда:
 
 1. Claim'ит одну queued-задачу из `trainingpeaks_jobs`.
-2. Пытается выполнить `tp-sync-students`, если такой скрипт существует.
+2. Выполняет `tp-sync-students` и обновляет локальный `config/students.json` из Supabase.
 3. Запускает существующие `tp-weekly-all --from=... --to=...` и `tp-sync-reports --from=... --to=...`.
 4. Помечает задачу как `completed` или `failed` в Supabase.
+
+Нормальный weekly flow теперь такой:
+
+```text
+Telegram:
+/tp_add_student Name | TP_URL
+/tp_run_week YYYY-MM-DD YYYY-MM-DD
+
+Mac:
+cd tools/trainingpeaks-export
+npm run tp-agent-once
+```
+
+Что изменилось:
+
+- `tp-agent-once` теперь автоматически синхронизирует учеников из Supabase перед локальным export pipeline.
+- Обычное ручное редактирование `config/students.json` больше не нужно.
+- Перед перезаписью `config/students.json` создается backup-файл `students.backup-YYYYMMDD-HHMMSS.json`, если локальный файл уже существовал.
+- Если sync учеников падает, `tp-weekly-all` не запускается.
+- Vercel по-прежнему не запускает Playwright/export/parser/AI.
+
+### Sync students from Supabase
+
+Локально можно отдельно обновить список учеников:
+
+```bash
+npm run tp-sync-students
+```
+
+Dry run:
+
+```bash
+npm run tp-sync-students -- --dry-run
+```
+
+Скрипт:
+
+- читает только `is_active=true` и `weekly_report_enabled=true` из `trainingpeaks_students`
+- сохраняет локальный формат `config/students.json`, который ожидает export pipeline
+- не перезаписывает локальный файл, если Supabase вернул 0 активных учеников
+- требует `SUPABASE_URL` и `SUPABASE_SERVICE_ROLE_KEY`
 
 ### Add student
 
