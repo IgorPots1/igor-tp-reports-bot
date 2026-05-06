@@ -136,23 +136,44 @@ function isLikelyWorkoutSummaryZip(filePath: string): boolean {
   return normalized.includes("workoutexport") || normalized.includes("workoutsummary");
 }
 
+function isLikelyWorkoutSummaryCsv(filePath: string): boolean {
+  if (path.extname(filePath).toLowerCase() !== ".csv") {
+    return false;
+  }
+
+  const lowerName = path.basename(filePath).toLowerCase();
+  return /^workouts.*\.csv$/.test(lowerName) || (lowerName.includes("workout") && lowerName.endsWith(".csv"));
+}
+
 function isLikelyWorkoutFilesZip(filePath: string): boolean {
   const normalized = normalizeExportName(filePath);
   return normalized.includes("workoutfileexport") || normalized.includes("workoutfiles");
 }
 
 async function assertWorkoutSummaryAvailable(exportDir: string): Promise<void> {
-  const zipFiles = await listZipFiles(exportDir);
+  const [zipFiles, entries] = await Promise.all([
+    listZipFiles(exportDir),
+    readdir(exportDir, { withFileTypes: true })
+  ]);
   const summaryZip = zipFiles.find((filePath) => isLikelyWorkoutSummaryZip(filePath));
+  const summaryCsv = entries
+    .filter((entry) => entry.isFile() && path.extname(entry.name).toLowerCase() === ".csv")
+    .map((entry) => path.join(exportDir, entry.name))
+    .find((filePath) => isLikelyWorkoutSummaryCsv(filePath));
   const workoutFilesZip = zipFiles.find((filePath) => isLikelyWorkoutFilesZip(filePath));
 
-  if (!summaryZip) {
+  if (!summaryZip && !summaryCsv) {
     console.log("Workout Summary export was not found. This student cannot be parsed.");
     throw new Error(`Workout Summary export is required in ${exportDir}`);
   }
 
-  console.log("Workout Summary export found. Continuing.");
-  console.log(`- ${summaryZip}`);
+  if (summaryZip) {
+    console.log("Workout Summary export found. Continuing.");
+    console.log(`- ${summaryZip}`);
+  } else if (summaryCsv) {
+    console.log("Workout Summary CSV found. Continuing.");
+    console.log(`- ${summaryCsv}`);
+  }
 
   if (!workoutFilesZip) {
     console.log("Workout Files export not found. Continuing because it is optional for weekly reports.");

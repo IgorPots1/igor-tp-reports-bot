@@ -75,14 +75,6 @@ async function waitForEnter(message: string): Promise<void> {
   }
 }
 
-async function listZipFiles(directory: string): Promise<string[]> {
-  const entries = await readdir(directory, { withFileTypes: true });
-  return entries
-    .filter((entry) => entry.isFile() && path.extname(entry.name).toLowerCase() === ".zip")
-    .map((entry) => path.join(directory, entry.name))
-    .sort((left, right) => left.localeCompare(right));
-}
-
 function normalizeExportName(filePath: string): string {
   return path
     .basename(filePath, path.extname(filePath))
@@ -102,20 +94,34 @@ function isLikelyWorkoutFilesZip(filePath: string): boolean {
 
 type ExportAssessment = {
   summaryZip?: string;
+  summaryCsv?: string;
   workoutFilesZip?: string;
 };
 
-function assessExportFiles(zipFiles: string[]): ExportAssessment {
+function isLikelyWorkoutSummaryCsv(filePath: string): boolean {
+  if (path.extname(filePath).toLowerCase() !== ".csv") {
+    return false;
+  }
+
+  const lowerName = path.basename(filePath).toLowerCase();
+  return /^workouts.*\.csv$/.test(lowerName) || (lowerName.includes("workout") && lowerName.endsWith(".csv"));
+}
+
+function assessExportFiles(summaryZipFiles: string[], summaryCsvFiles: string[], zipFiles: string[]): ExportAssessment {
   return {
-    summaryZip: zipFiles.find((filePath) => isLikelyWorkoutSummaryZip(filePath)),
+    summaryZip: summaryZipFiles.find((filePath) => isLikelyWorkoutSummaryZip(filePath)),
+    summaryCsv: summaryCsvFiles.find((filePath) => isLikelyWorkoutSummaryCsv(filePath)),
     workoutFilesZip: zipFiles.find((filePath) => isLikelyWorkoutFilesZip(filePath))
   };
 }
 
 type ExportDirSnapshot = {
   zipFiles: string[];
+  csvFiles: string[];
   summaryZipFiles: string[];
   summaryZipEntries: ExportFileEntry[];
+  summaryCsvFiles: string[];
+  summaryCsvEntries: ExportFileEntry[];
   summaryTempFiles: string[];
 };
 
@@ -140,7 +146,11 @@ function isLikelyWorkoutSummaryArtifact(fileName: string): boolean {
     return true;
   }
 
-  return fileName.toLowerCase().includes("workout summary");
+  if (isLikelyWorkoutSummaryCsv(fileName)) {
+    return true;
+  }
+
+  return fileName.toLowerCase().includes("workout summary") || fileName.toLowerCase().includes("workout");
 }
 
 async function inspectExportDir(exportDir: string): Promise<ExportDirSnapshot> {
@@ -181,24 +191,56 @@ async function inspectExportDir(exportDir: string): Promise<ExportDirSnapshot> {
     });
   const zipFiles = zipEntries.map((entry) => entry.filePath);
   const summaryZipEntries = zipEntries.filter((entry) => isLikelyWorkoutSummaryArtifact(entry.fileName));
+  const csvEntries = (
+    await Promise.all(
+      fileNames
+        .filter((fileName) => path.extname(fileName).toLowerCase() === ".csv")
+        .map(async (fileName) => {
+          const filePath = path.join(exportDir, fileName);
+          const fileStats = await stat(filePath).catch(() => null);
+          if (!fileStats?.isFile()) {
+            return null;
+          }
+
+          return {
+            fileName,
+            filePath,
+            modifiedAtMs: fileStats.mtimeMs
+          } satisfies ExportFileEntry;
+        })
+    )
+  )
+    .filter((entry): entry is ExportFileEntry => entry !== null)
+    .sort((left, right) => {
+      if (right.modifiedAtMs !== left.modifiedAtMs) {
+        return right.modifiedAtMs - left.modifiedAtMs;
+      }
+
+      return left.fileName.localeCompare(right.fileName);
+    });
+  const csvFiles = csvEntries.map((entry) => entry.filePath);
+  const summaryCsvEntries = csvEntries.filter((entry) => isLikelyWorkoutSummaryCsv(entry.fileName));
 
   return {
     zipFiles,
+    csvFiles,
     summaryZipFiles: summaryZipEntries.map((entry) => entry.filePath),
     summaryZipEntries,
+    summaryCsvFiles: summaryCsvEntries.map((entry) => entry.filePath),
+    summaryCsvEntries,
     summaryTempFiles: fileNames.filter(
       (fileName) => isLikelyBrowserTempDownload(fileName) && isLikelyWorkoutSummaryArtifact(fileName)
     )
   };
 }
 
-function selectNewSummaryZip(
+function selectNewExportFile(
   candidates: ExportFileEntry[],
-  knownSummaryZipFiles: Set<string>,
+  knownFiles: Set<string>,
   minimumModifiedAtMs: number
 ): ExportFileEntry | undefined {
   return candidates.find(
-    (candidate) => !knownSummaryZipFiles.has(candidate.filePath) && candidate.modifiedAtMs >= minimumModifiedAtMs
+    (candidate) => !knownFiles.has(candidate.filePath) && candidate.modifiedAtMs >= minimumModifiedAtMs
   );
 }
 
@@ -237,16 +279,62 @@ async function moveSummaryZipToExportDir(sourcePath: string, exportDir: string):
   return destinationPath;
 }
 
-async function waitForWorkoutSummaryZip(
+async function uniquePathForSummaryCsv(directory: string, fileName: string): Promise<string> {
+  const parsed = path.parse(fileName);
+  let suffix = 0;
+
+  while (true) {
+    const candidateName = suffix === 0 ? `${parsed.name}${parsed.ext}` : `${parsed.name}-${suffix}${parsed.ext}`;
+    const candidatePath = path.join(directory, candidateName);
+    const existingStats = await stat(candidatePath).catch(() => null);
+    if (!existingStats) {
+      return candidatePath;
+    }
+
+    suffix += 1;
+  }
+}
+
+async function moveSummaryCsvToExportDir(sourcePath: string, exportDir: string): Promise<string> {
+  const destinationPath = await uniquePathForSummaryCsv(exportDir, path.basename(sourcePath));
+
+  try {
+    await rename(sourcePath, destinationPath);
+    return destinationPath;
+  } catch (error) {
+    const fileError = error as NodeJS.ErrnoException;
+    if (fileError.code !== "EXDEV") {
+      throw error;
+    }
+  }
+
+  await copyFile(sourcePath, destinationPath);
+  await unlink(sourcePath);
+  return destinationPath;
+}
+
+type SummaryArtifactKind = "zip" | "csv";
+
+type SummaryArtifactDetectionResult = AutomationAttemptResult & {
+  detectedIn?: "exportDir" | "downloads";
+  summaryArtifact?: string;
+  summaryKind?: SummaryArtifactKind;
+};
+
+async function waitForWorkoutSummaryArtifact(
   exportDir: string,
   downloadsDir: string,
   knownSummaryZipFiles: string[],
+  knownSummaryCsvFiles: string[],
   knownDownloadsSummaryZipFiles: string[],
+  knownDownloadsSummaryCsvFiles: string[],
   minimumModifiedAtMs: number,
   timeoutMs = 90_000
-): Promise<AutomationAttemptResult & { summaryZip?: string; detectedIn?: "exportDir" | "downloads" }> {
+): Promise<SummaryArtifactDetectionResult> {
   const knownSummaryZipSet = new Set(knownSummaryZipFiles);
+  const knownSummaryCsvSet = new Set(knownSummaryCsvFiles);
   const knownDownloadsSummaryZipSet = new Set(knownDownloadsSummaryZipFiles);
+  const knownDownloadsSummaryCsvSet = new Set(knownDownloadsSummaryCsvFiles);
   const startedAt = Date.now();
   let lastProgressLogAt = 0;
 
@@ -255,23 +343,62 @@ async function waitForWorkoutSummaryZip(
       inspectExportDir(exportDir),
       inspectExportDir(downloadsDir)
     ]);
-    const newSummaryZipInExportDir = selectNewSummaryZip(
+    const newSummaryZipInExportDir = selectNewExportFile(
       exportSnapshot.summaryZipEntries,
       knownSummaryZipSet,
       minimumModifiedAtMs
     );
     if (newSummaryZipInExportDir) {
-      return { ok: true, summaryZip: newSummaryZipInExportDir.filePath, detectedIn: "exportDir" };
+      return {
+        ok: true,
+        summaryArtifact: newSummaryZipInExportDir.filePath,
+        summaryKind: "zip",
+        detectedIn: "exportDir"
+      };
     }
 
-    const newSummaryZipInDownloads = selectNewSummaryZip(
+    const newSummaryCsvInExportDir = selectNewExportFile(
+      exportSnapshot.summaryCsvEntries,
+      knownSummaryCsvSet,
+      minimumModifiedAtMs
+    );
+    if (newSummaryCsvInExportDir) {
+      return {
+        ok: true,
+        summaryArtifact: newSummaryCsvInExportDir.filePath,
+        summaryKind: "csv",
+        detectedIn: "exportDir"
+      };
+    }
+
+    const newSummaryZipInDownloads = selectNewExportFile(
       downloadsSnapshot.summaryZipEntries,
       knownDownloadsSummaryZipSet,
       minimumModifiedAtMs
     );
     if (newSummaryZipInDownloads) {
       const movedSummaryZip = await moveSummaryZipToExportDir(newSummaryZipInDownloads.filePath, exportDir);
-      return { ok: true, summaryZip: movedSummaryZip, detectedIn: "downloads" };
+      return {
+        ok: true,
+        summaryArtifact: movedSummaryZip,
+        summaryKind: "zip",
+        detectedIn: "downloads"
+      };
+    }
+
+    const newSummaryCsvInDownloads = selectNewExportFile(
+      downloadsSnapshot.summaryCsvEntries,
+      knownDownloadsSummaryCsvSet,
+      minimumModifiedAtMs
+    );
+    if (newSummaryCsvInDownloads) {
+      const movedSummaryCsv = await moveSummaryCsvToExportDir(newSummaryCsvInDownloads.filePath, exportDir);
+      return {
+        ok: true,
+        summaryArtifact: movedSummaryCsv,
+        summaryKind: "csv",
+        detectedIn: "downloads"
+      };
     }
 
     const now = Date.now();
@@ -283,10 +410,10 @@ async function waitForWorkoutSummaryZip(
       ];
       if (tempFiles.length > 0) {
         console.log(
-          `Auto-export: waiting for Workout Summary ZIP (${elapsedSeconds}s elapsed, temporary files: ${tempFiles.join(", ")})`
+          `Auto-export: waiting for Workout Summary export (${elapsedSeconds}s elapsed, temporary files: ${tempFiles.join(", ")})`
         );
       } else {
-        console.log(`Auto-export: waiting for Workout Summary ZIP (${elapsedSeconds}s elapsed)`);
+        console.log(`Auto-export: waiting for Workout Summary export (${elapsedSeconds}s elapsed)`);
       }
       lastProgressLogAt = now;
     }
@@ -296,7 +423,7 @@ async function waitForWorkoutSummaryZip(
 
   return {
     ok: false,
-    reason: `did not detect a new Workout Summary ZIP in ${timeoutMs / 1000} seconds.`
+    reason: `did not detect a new Workout Summary ZIP or CSV in ${timeoutMs / 1000} seconds.`
   };
 }
 
@@ -304,6 +431,9 @@ function logExportAssessment(assessment: ExportAssessment): void {
   if (assessment.summaryZip) {
     console.log("Workout Summary export found. Continuing.");
     console.log(`- ${assessment.summaryZip}`);
+  } else if (assessment.summaryCsv) {
+    console.log("Workout Summary CSV found. Continuing.");
+    console.log(`- ${assessment.summaryCsv}`);
   } else {
     console.log("Workout Summary export was not found. This student cannot be parsed.");
   }
@@ -749,21 +879,55 @@ async function tryClickWorkoutSummaryExport(page: Page): Promise<AutomationAttem
     return { ok: false, reason: 'could not find the "Workout Summary" export subsection.' };
   }
 
-  const clicked = await clickFirstVisible(
-    [
-      section.getByRole("button", { name: /^export$/i }),
-      section.getByRole("link", { name: /^export$/i }),
-      section.locator("button").filter({ hasText: /^export$/i }),
-      section.locator('[role="button"]').filter({ hasText: /^export$/i })
-    ],
-    700
-  );
+  const startDateValue = await section.locator('input[name="startDate"]').first().inputValue().catch(() => "");
+  const endDateValue = await section.locator('input[name="endDate"]').first().inputValue().catch(() => "");
+  const validationMessages = (
+    await section
+      .locator('.error, .errors, .validation, .validation-error, .error-message, [role="alert"]')
+      .allInnerTexts()
+      .catch(() => [])
+  )
+    .map(normalizeCandidateLabel)
+    .filter(Boolean)
+    .slice(0, 3);
+  const buttonLocators = [
+    section.getByRole("button", { name: /^export$/i }),
+    section.getByRole("link", { name: /^export$/i }),
+    section.locator("button").filter({ hasText: /^export$/i }),
+    section.locator('[role="button"]').filter({ hasText: /^export$/i })
+  ];
 
-  if (!clicked) {
-    return { ok: false, reason: 'could not find the "Export" button inside "Workout Summary".' };
+  for (const candidate of buttonLocators) {
+    if (!(await isVisible(candidate, 700))) {
+      continue;
+    }
+
+    const button = candidate.first();
+    const buttonText = normalizeCandidateLabel(
+      (await button.innerText().catch(() => "")) || (await button.getAttribute("aria-label").catch(() => "")) || "Export"
+    );
+    const popupPromise = page.waitForEvent("popup", { timeout: 1500 }).catch(() => null);
+
+    try {
+      await button.click({ timeout: 2000 });
+    } catch {
+      continue;
+    }
+
+    const popupPage = await popupPromise;
+    return {
+      ok: true,
+      reason: JSON.stringify({
+        buttonText,
+        startDateValue,
+        endDateValue,
+        validationMessages,
+        popupOpened: Boolean(popupPage)
+      })
+    };
   }
 
-  return { ok: true };
+  return { ok: false, reason: 'could not find the "Export" button inside "Workout Summary".' };
 }
 
 function logManualFallbackInstructions(): void {
@@ -793,10 +957,18 @@ async function main(): Promise<void> {
   await mkdir(exportDir, { recursive: true });
   await mkdir(profileDir, { recursive: true });
 
-  const existingZipFilesBeforeRun = await listZipFiles(exportDir);
-  const existingExportAssessment = assessExportFiles(existingZipFilesBeforeRun);
-  if (existingExportAssessment.summaryZip) {
-    console.log("Existing Workout Summary ZIP already present. Reusing export folder.");
+  const existingExportDirSnapshot = await inspectExportDir(exportDir);
+  const existingExportAssessment = assessExportFiles(
+    existingExportDirSnapshot.summaryZipFiles,
+    existingExportDirSnapshot.summaryCsvFiles,
+    existingExportDirSnapshot.zipFiles
+  );
+  if (existingExportAssessment.summaryZip || existingExportAssessment.summaryCsv) {
+    if (existingExportAssessment.summaryZip) {
+      console.log("Existing Workout Summary ZIP already present. Reusing export folder.");
+    } else {
+      console.log("Existing Workout Summary CSV already present. Reusing export folder.");
+    }
     logExportAssessment(existingExportAssessment);
     return;
   }
@@ -874,29 +1046,59 @@ async function main(): Promise<void> {
       if (!clickResult.ok) {
         console.log(`Auto-export fallback: ${clickResult.reason ?? 'could not click "Workout Summary" export.'}`);
       } else {
+        const clickDebug =
+          clickResult.reason && clickResult.reason.startsWith("{")
+            ? (JSON.parse(clickResult.reason) as {
+                buttonText?: string;
+                startDateValue?: string;
+                endDateValue?: string;
+                validationMessages?: string[];
+                popupOpened?: boolean;
+              })
+            : null;
+        if (clickDebug?.buttonText) {
+          console.log(`Auto-export debug: clicked button text="${clickDebug.buttonText}"`);
+        }
+        console.log(
+          `Auto-export debug: Workout Summary startDate="${clickDebug?.startDateValue ?? ""}" endDate="${clickDebug?.endDateValue ?? ""}"`
+        );
+        if (clickDebug?.validationMessages && clickDebug.validationMessages.length > 0) {
+          console.log(`Auto-export debug: section messages="${clickDebug.validationMessages.join(" | ")}"`);
+        }
+        console.log(`Auto-export debug: popup/new page appeared=${clickDebug?.popupOpened ? "yes" : "no"}`);
         const clickCompletedAt = Date.now();
-        console.log("Auto-export: waiting for Workout Summary ZIP");
-        const waitForZipResult = await waitForWorkoutSummaryZip(
+        console.log("Auto-export: waiting for Workout Summary ZIP or CSV");
+        const waitForArtifactResult = await waitForWorkoutSummaryArtifact(
           exportDir,
           downloadsDir,
           exportDirSnapshotBeforeClick.summaryZipFiles,
+          exportDirSnapshotBeforeClick.summaryCsvFiles,
           downloadsSnapshotBeforeClick.summaryZipFiles,
+          downloadsSnapshotBeforeClick.summaryCsvFiles,
           clickCompletedAt
         );
-        if (waitForZipResult.ok && waitForZipResult.summaryZip) {
+        if (waitForArtifactResult.ok && waitForArtifactResult.summaryArtifact && waitForArtifactResult.summaryKind) {
           automaticSummaryExportCompleted = true;
-          if (waitForZipResult.detectedIn === "downloads") {
+          if (waitForArtifactResult.summaryKind === "zip" && waitForArtifactResult.detectedIn === "downloads") {
             console.log(
-              `Auto-export: Summary ZIP found in Downloads and moved to export folder: ${path.basename(waitForZipResult.summaryZip)}`
+              `Auto-export: Summary ZIP found in Downloads and moved to export folder: ${path.basename(waitForArtifactResult.summaryArtifact)}`
+            );
+          } else if (waitForArtifactResult.summaryKind === "csv" && waitForArtifactResult.detectedIn === "downloads") {
+            console.log(
+              `Auto-export: Summary CSV found in Downloads and moved to export folder: ${path.basename(waitForArtifactResult.summaryArtifact)}`
+            );
+          } else if (waitForArtifactResult.summaryKind === "csv") {
+            console.log(
+              `Auto-export: Summary CSV detected in export folder: ${path.basename(waitForArtifactResult.summaryArtifact)}`
             );
           } else {
-            console.log(`Auto-export: Summary ZIP detected: ${path.basename(waitForZipResult.summaryZip)}`);
+            console.log(`Auto-export: Summary ZIP detected: ${path.basename(waitForArtifactResult.summaryArtifact)}`);
           }
           console.log("Workout Summary export downloaded automatically.");
         } else {
-          console.log("Auto-export did not detect Workout Summary ZIP. Switching to manual fallback.");
+          console.log("Auto-export did not detect Workout Summary ZIP or CSV. Switching to manual fallback.");
           console.log(
-            `Auto-export fallback: ${waitForZipResult.reason ?? "did not detect Workout Summary ZIP after clicking Export."}`
+            `Auto-export fallback: ${waitForArtifactResult.reason ?? "did not detect Workout Summary ZIP or CSV after clicking Export."}`
           );
         }
       }
@@ -912,17 +1114,24 @@ async function main(): Promise<void> {
     }
 
     const exportDirSnapshot = await inspectExportDir(exportDir);
-    const exportAssessment = assessExportFiles(exportDirSnapshot.zipFiles);
+    const exportAssessment = assessExportFiles(
+      exportDirSnapshot.summaryZipFiles,
+      exportDirSnapshot.summaryCsvFiles,
+      exportDirSnapshot.zipFiles
+    );
     logExportAssessment(exportAssessment);
 
-    if (!exportAssessment.summaryZip) {
-      if (exportDirSnapshot.zipFiles.length === 0) {
+    if (!exportAssessment.summaryZip && !exportAssessment.summaryCsv) {
+      if (exportDirSnapshot.zipFiles.length === 0 && exportDirSnapshot.csvFiles.length === 0) {
         console.log("Status: no export files available.");
-        throw new Error("No Workout Summary ZIP was found after automatic export attempt and manual fallback.");
+        throw new Error("No Workout Summary ZIP or CSV was found after automatic export attempt and manual fallback.");
       }
 
-      console.log("Existing ZIP files found:");
+      console.log("Existing export files found:");
       for (const filePath of exportDirSnapshot.zipFiles) {
+        console.log(`- ${filePath}`);
+      }
+      for (const filePath of exportDirSnapshot.csvFiles) {
         console.log(`- ${filePath}`);
       }
 
