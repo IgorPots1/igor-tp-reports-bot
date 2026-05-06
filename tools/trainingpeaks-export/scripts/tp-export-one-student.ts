@@ -1,4 +1,5 @@
-import { mkdir, readdir } from "node:fs/promises";
+import { copyFile, mkdir, readdir, rename, stat, unlink } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { stdin as input, stdout as output } from "node:process";
@@ -114,7 +115,14 @@ function assessExportFiles(zipFiles: string[]): ExportAssessment {
 type ExportDirSnapshot = {
   zipFiles: string[];
   summaryZipFiles: string[];
+  summaryZipEntries: ExportFileEntry[];
   summaryTempFiles: string[];
+};
+
+type ExportFileEntry = {
+  fileName: string;
+  filePath: string;
+  modifiedAtMs: number;
 };
 
 function isLikelyBrowserTempDownload(fileName: string): boolean {
@@ -136,44 +144,146 @@ function isLikelyWorkoutSummaryArtifact(fileName: string): boolean {
 }
 
 async function inspectExportDir(exportDir: string): Promise<ExportDirSnapshot> {
-  const entries = await readdir(exportDir, { withFileTypes: true });
+  const entries = await readdir(exportDir, { withFileTypes: true }).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  });
   const fileNames = entries.filter((entry) => entry.isFile()).map((entry) => entry.name);
-  const zipFiles = fileNames
-    .filter((fileName) => path.extname(fileName).toLowerCase() === ".zip")
-    .map((fileName) => path.join(exportDir, fileName))
-    .sort((left, right) => left.localeCompare(right));
+  const zipEntries = (
+    await Promise.all(
+      fileNames
+        .filter((fileName) => path.extname(fileName).toLowerCase() === ".zip")
+        .map(async (fileName) => {
+          const filePath = path.join(exportDir, fileName);
+          const fileStats = await stat(filePath).catch(() => null);
+          if (!fileStats?.isFile()) {
+            return null;
+          }
+
+          return {
+            fileName,
+            filePath,
+            modifiedAtMs: fileStats.mtimeMs
+          } satisfies ExportFileEntry;
+        })
+    )
+  )
+    .filter((entry): entry is ExportFileEntry => entry !== null)
+    .sort((left, right) => {
+      if (right.modifiedAtMs !== left.modifiedAtMs) {
+        return right.modifiedAtMs - left.modifiedAtMs;
+      }
+
+      return left.fileName.localeCompare(right.fileName);
+    });
+  const zipFiles = zipEntries.map((entry) => entry.filePath);
+  const summaryZipEntries = zipEntries.filter((entry) => isLikelyWorkoutSummaryArtifact(entry.fileName));
 
   return {
     zipFiles,
-    summaryZipFiles: zipFiles.filter((filePath) => isLikelyWorkoutSummaryZip(filePath)),
+    summaryZipFiles: summaryZipEntries.map((entry) => entry.filePath),
+    summaryZipEntries,
     summaryTempFiles: fileNames.filter(
       (fileName) => isLikelyBrowserTempDownload(fileName) && isLikelyWorkoutSummaryArtifact(fileName)
     )
   };
 }
 
+function selectNewSummaryZip(
+  candidates: ExportFileEntry[],
+  knownSummaryZipFiles: Set<string>,
+  minimumModifiedAtMs: number
+): ExportFileEntry | undefined {
+  return candidates.find(
+    (candidate) => !knownSummaryZipFiles.has(candidate.filePath) && candidate.modifiedAtMs >= minimumModifiedAtMs
+  );
+}
+
+async function uniquePathForFile(directory: string, fileName: string): Promise<string> {
+  const parsed = path.parse(fileName);
+  let suffix = 0;
+
+  while (true) {
+    const candidateName =
+      suffix === 0 ? `${parsed.name}${parsed.ext}` : `${parsed.name} (${suffix})${parsed.ext}`;
+    const candidatePath = path.join(directory, candidateName);
+    const existingStats = await stat(candidatePath).catch(() => null);
+    if (!existingStats) {
+      return candidatePath;
+    }
+
+    suffix += 1;
+  }
+}
+
+async function moveSummaryZipToExportDir(sourcePath: string, exportDir: string): Promise<string> {
+  const destinationPath = await uniquePathForFile(exportDir, path.basename(sourcePath));
+
+  try {
+    await rename(sourcePath, destinationPath);
+    return destinationPath;
+  } catch (error) {
+    const fileError = error as NodeJS.ErrnoException;
+    if (fileError.code !== "EXDEV") {
+      throw error;
+    }
+  }
+
+  await copyFile(sourcePath, destinationPath);
+  await unlink(sourcePath);
+  return destinationPath;
+}
+
 async function waitForWorkoutSummaryZip(
   exportDir: string,
+  downloadsDir: string,
   knownSummaryZipFiles: string[],
+  knownDownloadsSummaryZipFiles: string[],
+  minimumModifiedAtMs: number,
   timeoutMs = 90_000
-): Promise<AutomationAttemptResult & { summaryZip?: string }> {
+): Promise<AutomationAttemptResult & { summaryZip?: string; detectedIn?: "exportDir" | "downloads" }> {
   const knownSummaryZipSet = new Set(knownSummaryZipFiles);
+  const knownDownloadsSummaryZipSet = new Set(knownDownloadsSummaryZipFiles);
   const startedAt = Date.now();
   let lastProgressLogAt = 0;
 
   while (Date.now() - startedAt <= timeoutMs) {
-    const snapshot = await inspectExportDir(exportDir);
-    const newSummaryZip = snapshot.summaryZipFiles.find((filePath) => !knownSummaryZipSet.has(filePath));
-    if (newSummaryZip) {
-      return { ok: true, summaryZip: newSummaryZip };
+    const [exportSnapshot, downloadsSnapshot] = await Promise.all([
+      inspectExportDir(exportDir),
+      inspectExportDir(downloadsDir)
+    ]);
+    const newSummaryZipInExportDir = selectNewSummaryZip(
+      exportSnapshot.summaryZipEntries,
+      knownSummaryZipSet,
+      minimumModifiedAtMs
+    );
+    if (newSummaryZipInExportDir) {
+      return { ok: true, summaryZip: newSummaryZipInExportDir.filePath, detectedIn: "exportDir" };
+    }
+
+    const newSummaryZipInDownloads = selectNewSummaryZip(
+      downloadsSnapshot.summaryZipEntries,
+      knownDownloadsSummaryZipSet,
+      minimumModifiedAtMs
+    );
+    if (newSummaryZipInDownloads) {
+      const movedSummaryZip = await moveSummaryZipToExportDir(newSummaryZipInDownloads.filePath, exportDir);
+      return { ok: true, summaryZip: movedSummaryZip, detectedIn: "downloads" };
     }
 
     const now = Date.now();
     if (now - lastProgressLogAt >= 5_000) {
       const elapsedSeconds = Math.floor((now - startedAt) / 1000);
-      if (snapshot.summaryTempFiles.length > 0) {
+      const tempFiles = [
+        ...exportSnapshot.summaryTempFiles.map((fileName) => `${fileName} [exportDir]`),
+        ...downloadsSnapshot.summaryTempFiles.map((fileName) => `${fileName} [Downloads]`)
+      ];
+      if (tempFiles.length > 0) {
         console.log(
-          `Auto-export: waiting for Workout Summary ZIP (${elapsedSeconds}s elapsed, temporary files: ${snapshot.summaryTempFiles.join(", ")})`
+          `Auto-export: waiting for Workout Summary ZIP (${elapsedSeconds}s elapsed, temporary files: ${tempFiles.join(", ")})`
         );
       } else {
         console.log(`Auto-export: waiting for Workout Summary ZIP (${elapsedSeconds}s elapsed)`);
@@ -679,6 +789,7 @@ async function main(): Promise<void> {
   }
 
   const exportDir = path.join(exportsRoot, student.student_id, `${args.from}_${args.to}`);
+  const downloadsDir = path.join(os.homedir(), "Downloads");
   await mkdir(exportDir, { recursive: true });
   await mkdir(profileDir, { recursive: true });
 
@@ -754,17 +865,33 @@ async function main(): Promise<void> {
     }
 
     if (exportDataOpened && datesAutoFilled) {
-      const summaryZipFilesBeforeClick = (await inspectExportDir(exportDir)).summaryZipFiles;
+      const [exportDirSnapshotBeforeClick, downloadsSnapshotBeforeClick] = await Promise.all([
+        inspectExportDir(exportDir),
+        inspectExportDir(downloadsDir)
+      ]);
       console.log("Auto-export: clicking Workout Summary Export");
       const clickResult = await tryClickWorkoutSummaryExport(page);
       if (!clickResult.ok) {
         console.log(`Auto-export fallback: ${clickResult.reason ?? 'could not click "Workout Summary" export.'}`);
       } else {
+        const clickCompletedAt = Date.now();
         console.log("Auto-export: waiting for Workout Summary ZIP");
-        const waitForZipResult = await waitForWorkoutSummaryZip(exportDir, summaryZipFilesBeforeClick);
+        const waitForZipResult = await waitForWorkoutSummaryZip(
+          exportDir,
+          downloadsDir,
+          exportDirSnapshotBeforeClick.summaryZipFiles,
+          downloadsSnapshotBeforeClick.summaryZipFiles,
+          clickCompletedAt
+        );
         if (waitForZipResult.ok && waitForZipResult.summaryZip) {
           automaticSummaryExportCompleted = true;
-          console.log(`Auto-export: Summary ZIP detected: ${path.basename(waitForZipResult.summaryZip)}`);
+          if (waitForZipResult.detectedIn === "downloads") {
+            console.log(
+              `Auto-export: Summary ZIP found in Downloads and moved to export folder: ${path.basename(waitForZipResult.summaryZip)}`
+            );
+          } else {
+            console.log(`Auto-export: Summary ZIP detected: ${path.basename(waitForZipResult.summaryZip)}`);
+          }
           console.log("Workout Summary export downloaded automatically.");
         } else {
           console.log("Auto-export did not detect Workout Summary ZIP. Switching to manual fallback.");
