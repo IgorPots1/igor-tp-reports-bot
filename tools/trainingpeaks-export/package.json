@@ -14,7 +14,8 @@
     "tp-report-open": "node --experimental-strip-types scripts/tp-report-open.ts",
     "tp-report-copy": "node --experimental-strip-types scripts/tp-report-copy.ts",
     "tp-student-add": "node --experimental-strip-types scripts/tp-student-add.ts",
-    "tp-sync-reports": "node --experimental-strip-types scripts/tp-sync-reports.ts"
+    "tp-sync-reports": "node --experimental-strip-types scripts/tp-sync-reports.ts",
+    "tp-agent-once": "tsx scripts/tp-agent-once.ts"
   },
   "dependencies": {
     "csv-parse": "^6.2.1",
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.6.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }
 }

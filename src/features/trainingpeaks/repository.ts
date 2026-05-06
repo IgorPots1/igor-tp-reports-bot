@@ -88,6 +88,55 @@ type TrainingPeaksWeekRow = {
   week_to: string;
 };
 
+export type TrainingPeaksJobType = "weekly_reports";
+export type TrainingPeaksJobStatus = "queued" | "running" | "completed" | "failed";
+
+export type TrainingPeaksJob = {
+  id: string;
+  jobType: TrainingPeaksJobType;
+  status: TrainingPeaksJobStatus;
+  weekFrom: string;
+  weekTo: string;
+  requestedByChatId: string | null;
+  requestedByUserId: string | null;
+  resultJson: unknown | null;
+  errorMessage: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  updatedAt: string;
+};
+
+type TrainingPeaksJobRow = {
+  id: string;
+  job_type: TrainingPeaksJobType;
+  status: TrainingPeaksJobStatus;
+  week_from: string;
+  week_to: string;
+  requested_by_chat_id: string | null;
+  requested_by_user_id: string | null;
+  result_json: unknown | null;
+  error_message: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  updated_at: string;
+};
+
+export type CreateTrainingPeaksWeeklyJobInput = {
+  weekFrom: string;
+  weekTo: string;
+  requestedByChatId?: string | null;
+  requestedByUserId?: string | null;
+};
+
+export class TrainingPeaksJobConflictError extends Error {
+  constructor() {
+    super("TrainingPeaks weekly job already queued or running for this week");
+    this.name = "TrainingPeaksJobConflictError";
+  }
+}
+
 function mapTrainingPeaksStudentRow(row: TrainingPeaksStudentRow): TrainingPeaksStudent {
   return {
     id: row.id,
@@ -130,6 +179,24 @@ function mapTrainingPeaksWeekRow(row: TrainingPeaksWeekRow): TrainingPeaksWeek {
   };
 }
 
+function mapTrainingPeaksJobRow(row: TrainingPeaksJobRow): TrainingPeaksJob {
+  return {
+    id: row.id,
+    jobType: row.job_type,
+    status: row.status,
+    weekFrom: row.week_from,
+    weekTo: row.week_to,
+    requestedByChatId: row.requested_by_chat_id,
+    requestedByUserId: row.requested_by_user_id,
+    resultJson: row.result_json,
+    errorMessage: row.error_message,
+    createdAt: row.created_at,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function getTrainingPeaksStudentConflictReason(error: {
   code?: string | null;
   constraint?: string | null;
@@ -151,6 +218,20 @@ function getTrainingPeaksStudentConflictReason(error: {
   }
 
   return "student_id";
+}
+
+function isTrainingPeaksJobConflict(error: {
+  code?: string | null;
+  constraint?: string | null;
+  message?: string | null;
+  details?: string | null;
+}): boolean {
+  if (error.code !== "23505") {
+    return false;
+  }
+
+  const haystack = `${error.constraint ?? ""} ${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
+  return haystack.includes("trainingpeaks_jobs_active_week_idx");
 }
 
 export async function insertTrainingPeaksStudent(
@@ -272,4 +353,128 @@ export async function listAllTrainingPeaksReports(): Promise<TrainingPeaksWeekly
   }
 
   return reports;
+}
+
+export async function createTrainingPeaksWeeklyJob(
+  input: CreateTrainingPeaksWeeklyJobInput
+): Promise<TrainingPeaksJob> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_jobs")
+    .insert({
+      job_type: "weekly_reports",
+      status: "queued",
+      week_from: input.weekFrom,
+      week_to: input.weekTo,
+      requested_by_chat_id: input.requestedByChatId ?? null,
+      requested_by_user_id: input.requestedByUserId ?? null,
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    if (isTrainingPeaksJobConflict(error)) {
+      throw new TrainingPeaksJobConflictError();
+    }
+
+    throw new Error(`Failed to create TrainingPeaks weekly job: ${error.message}`);
+  }
+
+  return mapTrainingPeaksJobRow(data as TrainingPeaksJobRow);
+}
+
+export async function listRecentTrainingPeaksJobs(limit = 10): Promise<TrainingPeaksJob[]> {
+  const supabase = createSupabaseServerClient();
+  const safeLimit = Math.max(1, Math.min(limit, 50));
+  const { data, error } = await supabase
+    .from("trainingpeaks_jobs")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(safeLimit);
+
+  if (error) {
+    throw new Error(`Failed to list TrainingPeaks jobs: ${error.message}`);
+  }
+
+  return ((data as TrainingPeaksJobRow[]) ?? []).map(mapTrainingPeaksJobRow);
+}
+
+export async function claimNextQueuedTrainingPeaksJob(): Promise<TrainingPeaksJob | null> {
+  const supabase = createSupabaseServerClient();
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const { data: nextJob, error: selectError } = await supabase
+      .from("trainingpeaks_jobs")
+      .select("*")
+      .eq("job_type", "weekly_reports")
+      .eq("status", "queued")
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (selectError) {
+      throw new Error(`Failed to select next TrainingPeaks job: ${selectError.message}`);
+    }
+
+    if (!nextJob) {
+      return null;
+    }
+
+    const { data: claimedJob, error: claimError } = await supabase
+      .from("trainingpeaks_jobs")
+      .update({
+        status: "running",
+        started_at: new Date().toISOString(),
+        finished_at: null,
+        error_message: null,
+      })
+      .eq("id", nextJob.id)
+      .eq("status", "queued")
+      .select("*")
+      .maybeSingle();
+
+    if (claimError) {
+      throw new Error(`Failed to claim TrainingPeaks job ${nextJob.id}: ${claimError.message}`);
+    }
+
+    if (claimedJob) {
+      return mapTrainingPeaksJobRow(claimedJob as TrainingPeaksJobRow);
+    }
+  }
+
+  return null;
+}
+
+export async function completeTrainingPeaksJob(jobId: string, result: unknown): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from("trainingpeaks_jobs")
+    .update({
+      status: "completed",
+      result_json: result,
+      error_message: null,
+      finished_at: new Date().toISOString(),
+    })
+    .eq("id", jobId);
+
+  if (error) {
+    throw new Error(`Failed to complete TrainingPeaks job ${jobId}: ${error.message}`);
+  }
+}
+
+export async function failTrainingPeaksJob(jobId: string, errorMessage: string): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from("trainingpeaks_jobs")
+    .update({
+      status: "failed",
+      error_message: errorMessage,
+      result_json: null,
+      finished_at: new Date().toISOString(),
+    })
+    .eq("id", jobId);
+
+  if (error) {
+    throw new Error(`Failed to fail TrainingPeaks job ${jobId}: ${error.message}`);
+  }
 }

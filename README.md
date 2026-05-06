@@ -35,6 +35,30 @@ curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook" \
   -d "url=https://your-domain.example/api/telegram/webhook"
 ```
 
+## TrainingPeaks Job Flow
+
+Architecture rules for MVP:
+
+- Telegram only creates and reads `trainingpeaks_jobs` in Supabase.
+- Local Mac executes TrainingPeaks export, parsing, and AI report generation.
+- Vercel does not run Playwright, export, parser, or AI generation.
+- Existing `/tp_report` reads synced report drafts from Supabase.
+
+Example flow:
+
+```text
+Telegram:
+/tp_run_week 2026-04-27 2026-05-03
+
+Mac:
+cd tools/trainingpeaks-export
+npm run tp-agent-once
+
+Telegram:
+/tp_jobs
+/tp_report Olga 2026-04-27 2026-05-03
+```
+
 ## TrainingPeaks Report Sync
 
 TrainingPeaks exports, parsed summaries, raw ZIP files, browser profile data, and local student config stay local in `tools/trainingpeaks-export/`. To publish only safe shared metadata and weekly report draft text for later Telegram bot reads, run:
@@ -49,6 +73,15 @@ For MVP, the student registry in Supabase lives in `trainingpeaks_students` and 
 
 After adding a student through Telegram with `/tp_add_student`, manually mirror that student into `tools/trainingpeaks-export/config/students.json`, otherwise local export/parsing/report generation will not run for that athlete.
 
+To execute one queued weekly job from Supabase on the local Mac runner:
+
+```bash
+cd tools/trainingpeaks-export
+npm run tp-agent-once
+```
+
+`tp-agent-once` claims one queued `trainingpeaks_jobs` row, optionally runs `tp-sync-students` if that script exists, then runs the existing `tp-weekly-all` and `tp-sync-reports` pipeline for the requested week. It is intentionally a manual one-shot command, not a daemon and not a cron job yet.
+
 ## Telegram Commands
 
 Available commands:
@@ -58,5 +91,7 @@ Available commands:
 - `/tp_status <from> <to>`
 - `/tp_students`
 - `/tp_add_student <name> | <trainingpeaks_url>`
+- `/tp_run_week <from> <to>`
+- `/tp_jobs`
 - `/tp_report <student> [from to]`
 - `/tp_weekly`

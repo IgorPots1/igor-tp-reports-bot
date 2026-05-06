@@ -1,9 +1,11 @@
 import type { ParsedTelegramUpdate } from "@/features/telegram/parser";
 import {
   addTrainingPeaksStudentFromCommand,
+  getTrainingPeaksJobsStatus,
   getTrainingPeaksReportSnapshot,
   getTrainingPeaksStatusOverview,
   getTrainingPeaksStudentsRegistryWithLatestReportStatus,
+  requestTrainingPeaksWeeklyRun,
 } from "@/features/trainingpeaks/service";
 import { sendTelegramMessage } from "@/features/telegram/telegram-client";
 
@@ -18,6 +20,8 @@ const TP_STATUS_COMMAND_PATTERN = /^\/tp_status(?:@\w+)?(?:\s+|$)/;
 const TP_STUDENTS_COMMAND_PATTERN = /^\/tp_students(?:@\w+)?(?:\s+|$)/;
 const TP_ADD_STUDENT_COMMAND_PATTERN = /^\/tp_add_student(?:@\w+)?(?:\s+|$)/;
 const TP_REPORT_COMMAND_PATTERN = /^\/tp_report(?:@\w+)?(?:\s+|$)/;
+const TP_RUN_WEEK_COMMAND_PATTERN = /^\/tp_run_week(?:@\w+)?(?:\s+|$)/;
+const TP_JOBS_COMMAND_PATTERN = /^\/tp_jobs(?:@\w+)?(?:\s+|$)/;
 const TP_WEEKLY_COMMAND_PATTERN = /^\/tp_weekly(?:@\w+)?(?:\s+|$)/;
 const TP_COMMAND_PATTERN = /^\/tp_[a-z0-9_]+(?:@\w+)?(?:\s+|$)/;
 const TP_ADD_STUDENT_USAGE =
@@ -33,6 +37,8 @@ type TrainingPeaksCommand =
   | "tp_students"
   | "tp_add_student"
   | "tp_report"
+  | "tp_run_week"
+  | "tp_jobs"
   | "tp_weekly"
   | "unknown";
 
@@ -71,6 +77,14 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
 
   if (TP_REPORT_COMMAND_PATTERN.test(text)) {
     return "tp_report";
+  }
+
+  if (TP_RUN_WEEK_COMMAND_PATTERN.test(text)) {
+    return "tp_run_week";
+  }
+
+  if (TP_JOBS_COMMAND_PATTERN.test(text)) {
+    return "tp_jobs";
   }
 
   if (TP_WEEKLY_COMMAND_PATTERN.test(text)) {
@@ -331,6 +345,39 @@ function formatStudentsMessage(
   ].join("\n");
 }
 
+function shortenJobError(errorMessage: string | null): string | null {
+  const normalized = errorMessage?.replace(/\s+/g, " ").trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  return normalized.length > 120 ? `${normalized.slice(0, 117)}...` : normalized;
+}
+
+function formatJobsMessage(
+  jobs: {
+    status: string;
+    weekFrom: string;
+    weekTo: string;
+    errorMessage: string | null;
+  }[]
+): string {
+  return [
+    "Задачи TrainingPeaks:",
+    "",
+    ...jobs.map((job) => {
+      const shortError = shortenJobError(job.errorMessage);
+
+      if (job.status === "failed" && shortError) {
+        return `• ${job.status} — ${job.weekFrom} — ${job.weekTo}: ${shortError}`;
+      }
+
+      return `• ${job.status} — ${job.weekFrom} — ${job.weekTo}`;
+    }),
+  ].join("\n");
+}
+
 export function isCoachChat(chatId: number | string): boolean {
   return getCoachChatIds().has(String(chatId));
 }
@@ -346,8 +393,9 @@ export function getTrainingPeaksHelpLines(): string[] {
     "/tp_status <from> <to> — статусы за выбранную неделю",
     "/tp_students — ученики и их последний статус",
     "/tp_add_student Имя | ссылка",
+    "/tp_run_week YYYY-MM-DD YYYY-MM-DD",
+    "/tp_jobs",
     "/tp_report <ученик> [from to] — текст отчёта",
-    "/tp_weekly — запуск workflow отключён",
   ];
 }
 
@@ -484,6 +532,42 @@ async function handleTrainingPeaksReport(
   );
 }
 
+async function handleTrainingPeaksRunWeek(
+  parsedMessage: ParsedTelegramUpdate,
+  text: string
+): Promise<void> {
+  const result = await requestTrainingPeaksWeeklyRun(text, {
+    chatId: parsedMessage.chatId,
+    userId: parsedMessage.userId,
+  });
+
+  if (!result.ok) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, result.message);
+    return;
+  }
+
+  await sendTrainingPeaksMessage(
+    parsedMessage.chatId,
+    [
+      `✅ Задача создана: недельные отчеты ${result.job.weekFrom} — ${result.job.weekTo}.`,
+      "",
+      "Mac-agent запустит выгрузку локально, когда ты выполнишь:",
+      "npm run tp-agent-once",
+    ].join("\n")
+  );
+}
+
+async function handleTrainingPeaksJobs(parsedMessage: ParsedTelegramUpdate): Promise<void> {
+  const jobs = await getTrainingPeaksJobsStatus();
+
+  if (jobs.length === 0) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "Задач TrainingPeaks пока нет.");
+    return;
+  }
+
+  await sendTrainingPeaksMessage(parsedMessage.chatId, formatJobsMessage(jobs));
+}
+
 export async function handleTrainingPeaksTelegramCommand(
   parsedMessage: ParsedTelegramUpdate,
   text: string
@@ -517,6 +601,16 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_report") {
       await handleTrainingPeaksReport(parsedMessage, text);
+      return "handled";
+    }
+
+    if (command === "tp_run_week") {
+      await handleTrainingPeaksRunWeek(parsedMessage, text);
+      return "handled";
+    }
+
+    if (command === "tp_jobs") {
+      await handleTrainingPeaksJobs(parsedMessage);
       return "handled";
     }
 

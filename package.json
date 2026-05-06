@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "tp-sync-reports": "node --experimental-strip-types tools/trainingpeaks-export/scripts/tp-sync-reports.ts"
+    "tp-sync-reports": "node --experimental-strip-types tools/trainingpeaks-export/scripts/tp-sync-reports.ts",
+    "tp-agent-once": "npm --prefix tools/trainingpeaks-export run tp-agent-once"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.3",

@@ -1,8 +1,12 @@
 import {
+  createTrainingPeaksWeeklyJob,
   insertTrainingPeaksStudent,
   listAllTrainingPeaksReports,
+  listRecentTrainingPeaksJobs,
   listTrainingPeaksStudents,
+  TrainingPeaksJobConflictError,
   TrainingPeaksStudentConflictError,
+  type TrainingPeaksJob,
   type TrainingPeaksStudent,
   type TrainingPeaksWeek,
   type TrainingPeaksWeeklyReport,
@@ -57,7 +61,22 @@ export type AddTrainingPeaksStudentResult =
   | { ok: true; student: TrainingPeaksStudent }
   | { ok: false; reason: "empty_name" | "invalid_url" | "duplicate_student" | "duplicate_url" | "unknown" };
 
+export type TrainingPeaksJobRequester = {
+  chatId: number | string;
+  userId: number | string | null;
+};
+
+export type RequestTrainingPeaksWeeklyRunResult =
+  | { ok: true; job: TrainingPeaksJob }
+  | {
+      ok: false;
+      reason: "invalid_format" | "invalid_date" | "invalid_range" | "duplicate" | "unknown";
+      message: string;
+    };
+
 const TP_ADD_STUDENT_COMMAND_PATTERN = /^\/tp_add_student(?:@\w+)?(?:\s+|$)/;
+const TP_RUN_WEEK_COMMAND_PATTERN = /^\/tp_run_week(?:@\w+)?(?:\s+|$)/;
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 function normalizeStudentQuery(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("ru");
@@ -182,6 +201,62 @@ function stripTpAddStudentCommandPrefix(rawInput: string): string {
   return rawInput.replace(TP_ADD_STUDENT_COMMAND_PATTERN, "").trim();
 }
 
+function stripTpRunWeekCommandPrefix(rawInput: string): string {
+  return rawInput.replace(TP_RUN_WEEK_COMMAND_PATTERN, "").trim();
+}
+
+function isIsoDate(value: string): boolean {
+  if (!ISO_DATE_PATTERN.test(value)) {
+    return false;
+  }
+
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function parseTrainingPeaksWeekRange(rawInput: string):
+  | { ok: true; weekFrom: string; weekTo: string }
+  | {
+      ok: false;
+      reason: "invalid_format" | "invalid_date" | "invalid_range";
+      message: string;
+    } {
+  const normalizedInput = stripTpRunWeekCommandPrefix(rawInput);
+  const tokens = normalizedInput ? normalizedInput.split(/\s+/) : [];
+
+  if (tokens.length !== 2) {
+    return {
+      ok: false,
+      reason: "invalid_format",
+      message: "Напиши так: /tp_run_week 2026-04-27 2026-05-03",
+    };
+  }
+
+  const [weekFrom, weekTo] = tokens;
+
+  if (!isIsoDate(weekFrom) || !isIsoDate(weekTo)) {
+    return {
+      ok: false,
+      reason: "invalid_date",
+      message: "Нужно указать две корректные даты в формате YYYY-MM-DD YYYY-MM-DD.",
+    };
+  }
+
+  if (weekFrom > weekTo) {
+    return {
+      ok: false,
+      reason: "invalid_range",
+      message: "Дата начала недели не может быть позже даты окончания.",
+    };
+  }
+
+  return {
+    ok: true,
+    weekFrom,
+    weekTo,
+  };
+}
+
 function parseTpAddStudentInput(rawInput: string): { studentName: string; trainingPeaksAthleteUrl: string } {
   const normalizedInput = stripTpAddStudentCommandPrefix(rawInput);
   const separatorIndex = normalizedInput.indexOf("|");
@@ -294,6 +369,55 @@ export async function addTrainingPeaksStudentFromCommand(
 
     return { ok: false, reason: "unknown" };
   }
+}
+
+export async function requestTrainingPeaksWeeklyRun(
+  rawInput: string,
+  requester: TrainingPeaksJobRequester
+): Promise<RequestTrainingPeaksWeeklyRunResult> {
+  const parsedInput = parseTrainingPeaksWeekRange(rawInput);
+
+  if (!parsedInput.ok) {
+    return parsedInput;
+  }
+
+  try {
+    const job = await createTrainingPeaksWeeklyJob({
+      weekFrom: parsedInput.weekFrom,
+      weekTo: parsedInput.weekTo,
+      requestedByChatId: String(requester.chatId),
+      requestedByUserId: requester.userId === null ? null : String(requester.userId),
+    });
+
+    return {
+      ok: true,
+      job,
+    };
+  } catch (error) {
+    if (error instanceof TrainingPeaksJobConflictError) {
+      return {
+        ok: false,
+        reason: "duplicate",
+        message: "Такая задача уже ожидает выполнения или сейчас выполняется.",
+      };
+    }
+
+    console.error("Failed to request TrainingPeaks weekly job", {
+      rawInput,
+      requester,
+      error,
+    });
+
+    return {
+      ok: false,
+      reason: "unknown",
+      message: "Не смог создать задачу TrainingPeaks. Попробуй позже.",
+    };
+  }
+}
+
+export async function getTrainingPeaksJobsStatus(): Promise<TrainingPeaksJob[]> {
+  return listRecentTrainingPeaksJobs(10);
 }
 
 export async function getTrainingPeaksStudentsRegistryWithLatestReportStatus(): Promise<

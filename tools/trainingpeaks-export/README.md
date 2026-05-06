@@ -12,6 +12,7 @@ Current commands:
 - `npm run tp-report-open -- --student=Olga`
 - `npm run tp-report-copy -- --student=Olga`
 - `npm run tp-sync-reports -- --from=2026-04-27 --to=2026-05-03`
+- `npm run tp-agent-once`
 - `npm run tp-student-add -- --student=Olga --name="Ольга" --url="https://app.trainingpeaks.com/#calendar/athletes/5734279"`
 
 ## Monday weekly workflow
@@ -81,10 +82,27 @@ npm run tp-sync-reports -- --from=2026-04-27 --to=2026-05-03
 
 - Отчеты создаются только как черновики.
 - `tp-sync-reports` публикует только безопасные метаданные и текст `report-draft.md` в Supabase для чтения ботом через общее состояние.
+- `tp-agent-once` забирает только одну queued-задачу из Supabase и запускается вручную на локальном Mac.
 - Ничего не отправляется автоматически.
 - `exports/`, `parsed/`, `reports/`, `.env`, `config/students.json` локальные и находятся в `.gitignore`.
 - Интеграция с Telegram появится позже.
 - Учеников с плохим качеством данных можно временно отключать через `weekly_report_enabled=false`.
+
+### Run one queued job
+
+Для one-shot запуска локального runner:
+
+```bash
+cd ~/igor-agent-hub/tools/trainingpeaks-export
+npm run tp-agent-once
+```
+
+Команда:
+
+1. Claim'ит одну queued-задачу из `trainingpeaks_jobs`.
+2. Пытается выполнить `tp-sync-students`, если такой скрипт существует.
+3. Запускает существующие `tp-weekly-all --from=... --to=...` и `tp-sync-reports --from=... --to=...`.
+4. Помечает задачу как `completed` или `failed` в Supabase.
 
 ### Add student
 
