@@ -445,6 +445,32 @@ export async function claimNextQueuedTrainingPeaksJob(): Promise<TrainingPeaksJo
   return null;
 }
 
+export async function recoverStaleTrainingPeaksRunningJobs(timeoutMinutes: number): Promise<number> {
+  const supabase = createSupabaseServerClient();
+  const safeTimeoutMinutes = Math.max(1, Math.floor(timeoutMinutes));
+  const cutoff = new Date(Date.now() - safeTimeoutMinutes * 60 * 1000).toISOString();
+  const finishedAt = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("trainingpeaks_jobs")
+    .update({
+      status: "failed",
+      error_message: "Job marked failed after stale running timeout",
+      result_json: null,
+      finished_at: finishedAt,
+    })
+    .eq("job_type", "weekly_reports")
+    .eq("status", "running")
+    .not("started_at", "is", null)
+    .lt("started_at", cutoff)
+    .select("id");
+
+  if (error) {
+    throw new Error(`Failed to recover stale TrainingPeaks jobs: ${error.message}`);
+  }
+
+  return (data ?? []).length;
+}
+
 export async function completeTrainingPeaksJob(jobId: string, result: unknown): Promise<void> {
   const supabase = createSupabaseServerClient();
   const { error } = await supabase
@@ -462,14 +488,18 @@ export async function completeTrainingPeaksJob(jobId: string, result: unknown): 
   }
 }
 
-export async function failTrainingPeaksJob(jobId: string, errorMessage: string): Promise<void> {
+export async function failTrainingPeaksJob(
+  jobId: string,
+  errorMessage: string,
+  result?: unknown
+): Promise<void> {
   const supabase = createSupabaseServerClient();
   const { error } = await supabase
     .from("trainingpeaks_jobs")
     .update({
       status: "failed",
       error_message: errorMessage,
-      result_json: null,
+      result_json: result ?? null,
       finished_at: new Date().toISOString(),
     })
     .eq("id", jobId);

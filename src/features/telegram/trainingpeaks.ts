@@ -8,28 +8,30 @@ import {
   requestTrainingPeaksWeeklyRun,
 } from "@/features/trainingpeaks/service";
 import {
-  getCurrentTrainingPeaksWeek,
   getPreviousTrainingPeaksWeek,
-  getWeekBeforePreviousTrainingPeaksWeek,
+  resolveTrainingPeaksWeekKeyword,
 } from "@/features/trainingpeaks/week";
 import { sendTelegramMessage } from "@/features/telegram/telegram-client";
 
 const COACH_ONLY_MESSAGE = "⛔ Эта команда доступна только тренеру.";
 const TP_WEEKLY_DISABLED_MESSAGE =
   "⚙️ Запуск TrainingPeaks workflow из Telegram отключён. TrainingPeaks остаётся только в read-only режиме.";
-const TP_UNKNOWN_COMMAND_MESSAGE = "ℹ️ Команда TrainingPeaks не распознана. Используй /help.";
+const TP_UNKNOWN_COMMAND_MESSAGE = "ℹ️ Команда TrainingPeaks не распознана. Используй /tp.";
 const TELEGRAM_MESSAGE_LIMIT = 4000;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
+const TP_MAIN_COMMAND_PATTERN = /^\/tp(?:@\w+)?(?:\s+|$)/;
 const TP_STATUS_COMMAND_PATTERN = /^\/tp_status(?:@\w+)?(?:\s+|$)/;
 const TP_STUDENTS_COMMAND_PATTERN = /^\/tp_students(?:@\w+)?(?:\s+|$)/;
+const TP_ADD_COMMAND_PATTERN = /^\/tp_add(?:@\w+)?(?:\s+|$)/;
 const TP_ADD_STUDENT_COMMAND_PATTERN = /^\/tp_add_student(?:@\w+)?(?:\s+|$)/;
 const TP_REPORT_COMMAND_PATTERN = /^\/tp_report(?:@\w+)?(?:\s+|$)/;
 const TP_WEEK_COMMAND_PATTERN = /^\/tp_week(?:@\w+)?(?:\s+|$)/;
+const TP_RUN_COMMAND_PATTERN = /^\/tp_run(?:@\w+)?(?:\s+|$)/;
 const TP_RUN_WEEK_COMMAND_PATTERN = /^\/tp_run_week(?:@\w+)?(?:\s+|$)/;
 const TP_JOBS_COMMAND_PATTERN = /^\/tp_jobs(?:@\w+)?(?:\s+|$)/;
 const TP_WEEKLY_COMMAND_PATTERN = /^\/tp_weekly(?:@\w+)?(?:\s+|$)/;
-const TP_COMMAND_PATTERN = /^\/tp_[a-z0-9_]+(?:@\w+)?(?:\s+|$)/;
+const TP_COMMAND_PATTERN = /^\/tp(?:_[a-z0-9_]+)?(?:@\w+)?(?:\s+|$)/;
 const TP_ADD_STUDENT_USAGE =
   "Напиши так: /tp_add_student Olga | https://app.trainingpeaks.com/athlete/...";
 const SHORT_DATE_FORMATTER = new Intl.DateTimeFormat("ru-RU", {
@@ -39,11 +41,14 @@ const SHORT_DATE_FORMATTER = new Intl.DateTimeFormat("ru-RU", {
 });
 
 type TrainingPeaksCommand =
+  | "tp"
   | "tp_status"
   | "tp_students"
+  | "tp_add"
   | "tp_add_student"
   | "tp_report"
   | "tp_week"
+  | "tp_run"
   | "tp_run_week"
   | "tp_jobs"
   | "tp_weekly"
@@ -53,6 +58,17 @@ type TrainingPeaksWeek = {
   weekFrom: string;
   weekTo: string;
 };
+
+type TrainingPeaksConversationState =
+  | {
+      step: "waiting_for_student_name";
+    }
+  | {
+      step: "waiting_for_student_url";
+      studentName: string;
+    };
+
+const trainingPeaksConversationStates = new Map<string, TrainingPeaksConversationState>();
 
 function getCoachChatIds(): Set<string> {
   const value = process.env.TELEGRAM_COACH_CHAT_IDS?.trim();
@@ -70,12 +86,20 @@ function getCoachChatIds(): Set<string> {
 }
 
 function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
+  if (TP_MAIN_COMMAND_PATTERN.test(text)) {
+    return "tp";
+  }
+
   if (TP_STATUS_COMMAND_PATTERN.test(text)) {
     return "tp_status";
   }
 
   if (TP_STUDENTS_COMMAND_PATTERN.test(text)) {
     return "tp_students";
+  }
+
+  if (TP_ADD_COMMAND_PATTERN.test(text)) {
+    return "tp_add";
   }
 
   if (TP_ADD_STUDENT_COMMAND_PATTERN.test(text)) {
@@ -88,6 +112,10 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
 
   if (TP_WEEK_COMMAND_PATTERN.test(text)) {
     return "tp_week";
+  }
+
+  if (TP_RUN_COMMAND_PATTERN.test(text)) {
+    return "tp_run";
   }
 
   if (TP_RUN_WEEK_COMMAND_PATTERN.test(text)) {
@@ -275,7 +303,7 @@ function parseReportCommand(text: string): {
     return {
       studentQuery: null,
       week: null,
-      error: "Напиши так: /tp_report Olga или /tp_report Olga 2026-04-27 2026-05-03",
+      error: "Напиши так: /tp_report Olga, /tp_report Olga last или /tp_report Olga 2026-04-27 2026-05-03",
     };
   }
 
@@ -305,6 +333,28 @@ function parseReportCommand(text: string): {
     };
   }
 
+  if (tokens.length >= 2) {
+    const resolvedWeek = resolveTrainingPeaksWeekKeyword(lastToken);
+
+    if (resolvedWeek) {
+      const studentQuery = tokens.slice(0, -1).join(" ").trim();
+
+      if (!studentQuery) {
+        return {
+          studentQuery: null,
+          week: null,
+          error: "После /tp_report нужно указать ученика.",
+        };
+      }
+
+      return {
+        studentQuery,
+        week: resolvedWeek,
+        error: null,
+      };
+    }
+  }
+
   return {
     studentQuery: args,
     week: null,
@@ -319,6 +369,40 @@ function parseAddStudentCommand(text: string): string {
 function getTpAddStudentNamePreview(rawInput: string): string {
   const separatorIndex = rawInput.indexOf("|");
   return (separatorIndex >= 0 ? rawInput.slice(0, separatorIndex) : rawInput).trim();
+}
+
+function getConversationStateKey(chatId: number | string): string {
+  return String(chatId);
+}
+
+function getTrainingPeaksConversationState(
+  chatId: number | string
+): TrainingPeaksConversationState | null {
+  return trainingPeaksConversationStates.get(getConversationStateKey(chatId)) ?? null;
+}
+
+function setTrainingPeaksConversationState(
+  chatId: number | string,
+  state: TrainingPeaksConversationState
+): void {
+  trainingPeaksConversationStates.set(getConversationStateKey(chatId), state);
+}
+
+export function hasActiveTrainingPeaksConversation(chatId: number | string): boolean {
+  return trainingPeaksConversationStates.has(getConversationStateKey(chatId));
+}
+
+export function cancelTrainingPeaksConversation(chatId: number | string): void {
+  trainingPeaksConversationStates.delete(getConversationStateKey(chatId));
+}
+
+function normalizeTpRunCommand(text: string): string {
+  const args = text.replace(TP_RUN_COMMAND_PATTERN, "").trim();
+  return args ? `/tp_run_week ${args}` : "/tp_run_week";
+}
+
+function formatTpRunAliasMessage(message: string): string {
+  return message.replaceAll("/tp_run_week", "/tp_run");
 }
 
 function formatStatusMessage(
@@ -374,11 +458,80 @@ function getFiniteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function getBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+function getMissingStudents(resultJson: unknown): { studentId: string | null; studentName: string | null }[] {
+  if (!resultJson || typeof resultJson !== "object") {
+    return [];
+  }
+
+  const rawMissingStudents = (resultJson as { missing_students?: unknown }).missing_students;
+  if (!Array.isArray(rawMissingStudents)) {
+    return [];
+  }
+
+  return rawMissingStudents.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const studentId =
+      typeof (entry as { student_id?: unknown }).student_id === "string"
+        ? (entry as { student_id: string }).student_id.trim()
+        : "";
+    const studentName =
+      typeof (entry as { student_name?: unknown }).student_name === "string"
+        ? (entry as { student_name: string }).student_name.trim()
+        : "";
+
+    if (!studentId && !studentName) {
+      return [];
+    }
+
+    return [
+      {
+        studentId: studentId || null,
+        studentName: studentName || null,
+      },
+    ];
+  });
+}
+
+function formatMissingStudentsSummary(resultJson: unknown): string | null {
+  const labels = getMissingStudents(resultJson).map(
+    (student) => student.studentName ?? student.studentId ?? "Unknown"
+  );
+
+  if (labels.length === 0) {
+    return null;
+  }
+
+  if (labels.length <= 3) {
+    return labels.join(", ");
+  }
+
+  return `${labels.slice(0, 3).join(", ")} и ещё ${labels.length - 3}`;
+}
+
+function jobHasWarnings(resultJson: unknown): boolean {
+  if (!resultJson || typeof resultJson !== "object") {
+    return false;
+  }
+
+  return (
+    getBoolean((resultJson as { has_warnings?: unknown }).has_warnings) === true ||
+    getMissingStudents(resultJson).length > 0
+  );
+}
+
 function getJobCountsSummary(resultJson: unknown): string | null {
   if (!resultJson || typeof resultJson !== "object") {
     return null;
   }
 
+  const studentsExpected = getFiniteNumber((resultJson as { students_expected?: unknown }).students_expected);
   const reportsFound = getFiniteNumber((resultJson as { reports_found?: unknown }).reports_found);
   const reportsSent = getFiniteNumber(
     (resultJson as { reports_sent_to_telegram?: unknown }).reports_sent_to_telegram
@@ -391,7 +544,9 @@ function getJobCountsSummary(resultJson: unknown): string | null {
   const parts: string[] = [];
 
   if (reportsFound !== null) {
-    parts.push(`отчетов: ${reportsFound}`);
+    parts.push(
+      studentsExpected !== null ? `отчетов: ${reportsFound}/${studentsExpected}` : `отчетов: ${reportsFound}`
+    );
   }
 
   if (reportsSent !== null) {
@@ -413,19 +568,24 @@ function formatJobsMessage(
   return [
     "Задачи TrainingPeaks:",
     "",
-    ...jobs.map((job) => {
+    ...jobs.flatMap((job) => {
       const shortError = shortenJobError(job.errorMessage);
       const countsSummary = getJobCountsSummary(job.resultJson);
+      const hasWarnings = jobHasWarnings(job.resultJson);
+      const missingStudentsSummary = formatMissingStudentsSummary(job.resultJson);
 
       if (job.status === "failed" && shortError) {
-        return `• ${job.status} — ${job.weekFrom} — ${job.weekTo}: ${shortError}`;
+        return [`• ${job.status} — ${job.weekFrom} — ${job.weekTo}: ${shortError}`];
       }
 
       if (job.status === "completed" && countsSummary) {
-        return `• ${job.status} — ${job.weekFrom} — ${job.weekTo} — ${countsSummary}`;
+        return [
+          `• ${job.status} — ${job.weekFrom} — ${job.weekTo} — ${countsSummary}${hasWarnings ? " ⚠️" : ""}`,
+          ...(missingStudentsSummary ? [`  Не готово: ${missingStudentsSummary}`] : []),
+        ];
       }
 
-      return `• ${job.status} — ${job.weekFrom} — ${job.weekTo}`;
+      return [`• ${job.status} — ${job.weekFrom} — ${job.weekTo}`];
     }),
   ].join("\n");
 }
@@ -435,21 +595,40 @@ export function isCoachChat(chatId: number | string): boolean {
 }
 
 export function isTrainingPeaksCommand(text: string): boolean {
-  return TP_COMMAND_PATTERN.test(text);
+  return getTrainingPeaksCommand(text) !== null;
 }
 
 export function getTrainingPeaksHelpLines(): string[] {
   return [
     "TrainingPeaks отчёты:",
+    "/tp — главное меню",
     "/tp_status — статусы за последнюю синхронизированную неделю",
     "/tp_status <from> <to> — статусы за выбранную неделю",
     "/tp_students — ученики и их последний статус",
+    "/tp_add — добавить ученика по шагам",
     "/tp_add_student Имя | ссылка",
     "/tp_week — подсказка по неделям",
+    "/tp_run last|current|YYYY-MM-DD YYYY-MM-DD",
     "/tp_run_week last|current|previous|YYYY-MM-DD YYYY-MM-DD",
     "/tp_jobs",
-    "/tp_report <ученик> [from to] — текст отчёта",
+    "/tp_report <ученик> [last|current|from to] — текст отчёта",
   ];
+}
+
+async function handleTrainingPeaksMain(parsedMessage: ParsedTelegramUpdate): Promise<void> {
+  await sendTrainingPeaksMessage(
+    parsedMessage.chatId,
+    [
+      "TrainingPeaks Bot",
+      "",
+      "📅 /tp_week — выбрать неделю",
+      "🚀 /tp_run last — запустить прошлую неделю",
+      "👤 /tp_add — добавить ученика",
+      "📋 /tp_students — список учеников",
+      "📊 /tp_jobs — статус задач",
+      "📄 /tp_report Olga last — отчет",
+    ].join("\n")
+  );
 }
 
 async function handleTrainingPeaksStatus(
@@ -486,7 +665,7 @@ async function handleTrainingPeaksStudents(parsedMessage: ParsedTelegramUpdate):
       parsedMessage.chatId,
       [
         "В Supabase пока нет учеников TrainingPeaks. Добавь первого через:",
-        TP_ADD_STUDENT_USAGE.replace("Напиши так: ", ""),
+        "/tp_add",
       ].join("\n")
     );
     return;
@@ -556,6 +735,91 @@ async function handleTrainingPeaksAddStudent(
   );
 }
 
+async function handleTrainingPeaksAddConversationStart(
+  parsedMessage: ParsedTelegramUpdate
+): Promise<void> {
+  setTrainingPeaksConversationState(parsedMessage.chatId, {
+    step: "waiting_for_student_name",
+  });
+  await sendTrainingPeaksMessage(parsedMessage.chatId, "Напиши имя ученика");
+}
+
+async function handleTrainingPeaksConversationReply(
+  parsedMessage: ParsedTelegramUpdate,
+  text: string
+): Promise<void> {
+  const state = getTrainingPeaksConversationState(parsedMessage.chatId);
+
+  if (!state) {
+    return;
+  }
+
+  const normalizedText = text.trim();
+
+  if (state.step === "waiting_for_student_name") {
+    if (!normalizedText) {
+      cancelTrainingPeaksConversation(parsedMessage.chatId);
+      await sendTrainingPeaksMessage(parsedMessage.chatId, "Имя ученика не должно быть пустым.");
+      return;
+    }
+
+    setTrainingPeaksConversationState(parsedMessage.chatId, {
+      step: "waiting_for_student_url",
+      studentName: normalizedText,
+    });
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "Теперь пришли ссылку TrainingPeaks");
+    return;
+  }
+
+  cancelTrainingPeaksConversation(parsedMessage.chatId);
+
+  const result = await addTrainingPeaksStudentFromCommand(
+    `${state.studentName} | ${normalizedText}`
+  );
+
+  if (!result.ok) {
+    if (result.reason === "empty_name") {
+      await sendTrainingPeaksMessage(parsedMessage.chatId, "Имя ученика не должно быть пустым.");
+      return;
+    }
+
+    if (result.reason === "invalid_url") {
+      await sendTrainingPeaksMessage(
+        parsedMessage.chatId,
+        "Ссылка на TrainingPeaks должна начинаться с https://"
+      );
+      return;
+    }
+
+    if (result.reason === "duplicate_student") {
+      await sendTrainingPeaksMessage(
+        parsedMessage.chatId,
+        `Ученик "${state.studentName}" уже существует.`
+      );
+      return;
+    }
+
+    if (result.reason === "duplicate_url") {
+      await sendTrainingPeaksMessage(
+        parsedMessage.chatId,
+        "Этот URL TrainingPeaks уже привязан к другому ученику."
+      );
+      return;
+    }
+
+    await sendTrainingPeaksMessage(
+      parsedMessage.chatId,
+      "Не смог добавить ученика в Supabase. Попробуй позже."
+    );
+    return;
+  }
+
+  await sendTrainingPeaksMessage(
+    parsedMessage.chatId,
+    `✅ Ученик добавлен: ${result.student.studentName}`
+  );
+}
+
 async function handleTrainingPeaksReport(
   parsedMessage: ParsedTelegramUpdate,
   text: string
@@ -587,32 +851,30 @@ async function handleTrainingPeaksReport(
 
 async function handleTrainingPeaksWeek(parsedMessage: ParsedTelegramUpdate): Promise<void> {
   const previousWeek = getPreviousTrainingPeaksWeek();
-  const currentWeek = getCurrentTrainingPeaksWeek();
-  const weekBeforePrevious = getWeekBeforePreviousTrainingPeaksWeek();
 
   await sendTrainingPeaksMessage(
     parsedMessage.chatId,
     [
-      "Выбери неделю для отчетов:",
+      "Выбери неделю:",
       "",
-      "Прошлая неделя:",
-      `/tp_run_week ${previousWeek.weekFrom} ${previousWeek.weekTo}`,
+      "Прошлая:",
+      "`/tp_run last`",
       "",
-      "Текущая неделя:",
-      `/tp_run_week ${currentWeek.weekFrom} ${currentWeek.weekTo}`,
+      "Текущая:",
+      "`/tp_run current`",
       "",
-      "Неделей раньше:",
-      `/tp_run_week ${weekBeforePrevious.weekFrom} ${weekBeforePrevious.weekTo}`,
-      "",
-      "Потом запусти на Mac:",
-      "cd ~/igor-tp-reports-bot/tools/trainingpeaks-export && npm run tp-agent-once",
+      "Или вручную:",
+      `\`/tp_run ${previousWeek.weekFrom} ${previousWeek.weekTo}\``,
     ].join("\n")
   );
 }
 
 async function handleTrainingPeaksRunWeek(
   parsedMessage: ParsedTelegramUpdate,
-  text: string
+  text: string,
+  options?: {
+    useRunAliasMessage?: boolean;
+  }
 ): Promise<void> {
   const result = await requestTrainingPeaksWeeklyRun(text, {
     chatId: parsedMessage.chatId,
@@ -620,7 +882,10 @@ async function handleTrainingPeaksRunWeek(
   });
 
   if (!result.ok) {
-    await sendTrainingPeaksMessage(parsedMessage.chatId, result.message);
+    await sendTrainingPeaksMessage(
+      parsedMessage.chatId,
+      options?.useRunAliasMessage ? formatTpRunAliasMessage(result.message) : result.message
+    );
     return;
   }
 
@@ -653,7 +918,41 @@ export async function handleTrainingPeaksTelegramCommand(
   const command = getTrainingPeaksCommand(text);
 
   if (!command) {
-    return "ignored";
+    if (!hasActiveTrainingPeaksConversation(parsedMessage.chatId)) {
+      return "ignored";
+    }
+
+    if (text.startsWith("/")) {
+      cancelTrainingPeaksConversation(parsedMessage.chatId);
+      return "ignored";
+    }
+
+    if (!isCoachChat(parsedMessage.chatId)) {
+      cancelTrainingPeaksConversation(parsedMessage.chatId);
+      return "ignored";
+    }
+
+    try {
+      await handleTrainingPeaksConversationReply(parsedMessage, text);
+      return "handled";
+    } catch (error) {
+      console.error("TrainingPeaks Telegram conversation failed", {
+        chatId: parsedMessage.chatId,
+        messageId: parsedMessage.messageId,
+        error,
+      });
+
+      cancelTrainingPeaksConversation(parsedMessage.chatId);
+      await sendTrainingPeaksMessage(
+        parsedMessage.chatId,
+        "Не смог загрузить данные TrainingPeaks. Попробуй позже."
+      );
+      return "handled";
+    }
+  }
+
+  if (command !== "tp_add") {
+    cancelTrainingPeaksConversation(parsedMessage.chatId);
   }
 
   if (!isCoachChat(parsedMessage.chatId)) {
@@ -662,6 +961,11 @@ export async function handleTrainingPeaksTelegramCommand(
   }
 
   try {
+    if (command === "tp") {
+      await handleTrainingPeaksMain(parsedMessage);
+      return "handled";
+    }
+
     if (command === "tp_status") {
       await handleTrainingPeaksStatus(parsedMessage, text);
       return "handled";
@@ -669,6 +973,11 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_students") {
       await handleTrainingPeaksStudents(parsedMessage);
+      return "handled";
+    }
+
+    if (command === "tp_add") {
+      await handleTrainingPeaksAddConversationStart(parsedMessage);
       return "handled";
     }
 
@@ -684,6 +993,13 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_week") {
       await handleTrainingPeaksWeek(parsedMessage);
+      return "handled";
+    }
+
+    if (command === "tp_run") {
+      await handleTrainingPeaksRunWeek(parsedMessage, normalizeTpRunCommand(text), {
+        useRunAliasMessage: true,
+      });
       return "handled";
     }
 

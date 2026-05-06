@@ -16,9 +16,12 @@ Required variables:
 ```text
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_COACH_CHAT_IDS=507447935
+TELEGRAM_WEBHOOK_SECRET=...
 SUPABASE_URL=...
 SUPABASE_SERVICE_ROLE_KEY=...
 ```
+
+`TELEGRAM_WEBHOOK_SECRET` is optional but recommended for production. When it is set, the webhook endpoint requires Telegram to send the same value in the `x-telegram-bot-api-secret-token` header and rejects other requests with `401`.
 
 ## Telegram Webhook
 
@@ -28,11 +31,19 @@ Webhook endpoint path:
 /api/telegram/webhook
 ```
 
+If `TELEGRAM_WEBHOOK_SECRET` is not set, the webhook keeps the current local-development behavior and does not enforce Telegram secret verification.
+
+When you configure the webhook in Telegram, use the same secret token value that you set in `TELEGRAM_WEBHOOK_SECRET`.
+
 Example Telegram webhook setup command:
 
 ```bash
-curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook" \
-  -d "url=https://your-domain.example/api/telegram/webhook"
+export TELEGRAM_BOT_TOKEN="<your_bot_token>"
+export TELEGRAM_WEBHOOK_SECRET="<your_webhook_secret>"
+
+curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
+  -d "url=https://igor-tp-reports-bot.vercel.app/api/telegram/webhook" \
+  -d "secret_token=${TELEGRAM_WEBHOOK_SECRET}"
 ```
 
 ## TrainingPeaks Job Flow

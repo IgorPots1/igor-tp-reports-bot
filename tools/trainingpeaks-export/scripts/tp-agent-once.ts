@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
 
 import { toolRoot } from "./lib/paths.ts";
+import { readStudentsConfig } from "./lib/students.ts";
 
 type TrainingPeaksJobStatus = "queued" | "running" | "completed" | "failed";
 
@@ -26,24 +27,41 @@ type TrainingPeaksJobRow = {
 };
 
 type TrainingPeaksWeeklyReportRow = {
+  student_id: string;
   student_name: string;
   week_from: string;
   week_to: string;
   report_markdown: string | null;
 };
 
+type TrainingPeaksExpectedStudent = {
+  student_id: string;
+  student_name: string;
+};
+
+type TrainingPeaksMissingStudent = {
+  student_id: string;
+  student_name: string;
+};
+
 type TrainingPeaksJobResult = {
   week_from: string;
   week_to: string;
+  students_expected: number;
   reports_found: number;
   reports_sent_to_telegram: number;
+  missing_students: TrainingPeaksMissingStudent[];
+  has_warnings: boolean;
   completed_at: string;
   note: string;
   delivery_warning?: string;
+  warning_message?: string;
 };
 
 const TELEGRAM_MESSAGE_LIMIT = 4000;
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
+const STALE_RUNNING_JOB_TIMEOUT_MINUTES = 6 * 60;
+const STALE_RUNNING_JOB_ERROR_MESSAGE = "Job marked failed after stale running timeout";
 
 function readTextFileSyncSafe(filePath: string): string | null {
   try {
@@ -254,6 +272,73 @@ async function runNpmScript(scriptName: string, args: string[] = []): Promise<vo
   });
 }
 
+function normalizeStudentLabel(student: TrainingPeaksMissingStudent): string {
+  if (student.student_name && student.student_name !== student.student_id) {
+    return `${student.student_id} (${student.student_name})`;
+  }
+
+  return student.student_name || student.student_id;
+}
+
+function formatMissingStudentsWarning(missingStudents: TrainingPeaksMissingStudent[]): string {
+  const labels = missingStudents.map(normalizeStudentLabel);
+  const preview = labels.slice(0, 5).join(", ");
+  return labels.length > 5 ? `${preview} and ${labels.length - 5} more` : preview;
+}
+
+async function readExpectedStudentsFromLocalConfig(): Promise<TrainingPeaksExpectedStudent[]> {
+  const students = await readStudentsConfig();
+
+  return students
+    .filter((student) => student.is_active === true && student.weekly_report_enabled === true)
+    .map((student) => ({
+      student_id: student.student_id,
+      student_name: student.name?.trim() || student.student_id,
+    }));
+}
+
+function getMissingStudents(
+  expectedStudents: TrainingPeaksExpectedStudent[],
+  reports: TrainingPeaksWeeklyReportRow[]
+): TrainingPeaksMissingStudent[] {
+  const foundStudentIds = new Set(
+    reports.map((report) => report.student_id.trim()).filter((studentId) => studentId.length > 0)
+  );
+
+  return expectedStudents
+    .filter((student) => !foundStudentIds.has(student.student_id))
+    .map((student) => ({
+      student_id: student.student_id,
+      student_name: student.student_name,
+    }));
+}
+
+async function recoverStaleTrainingPeaksRunningJobs(timeoutMinutes: number): Promise<number> {
+  const supabase = getSupabase();
+  const safeTimeoutMinutes = Math.max(1, Math.floor(timeoutMinutes));
+  const cutoff = new Date(Date.now() - safeTimeoutMinutes * 60 * 1000).toISOString();
+  const finishedAt = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("trainingpeaks_jobs")
+    .update({
+      status: "failed",
+      error_message: STALE_RUNNING_JOB_ERROR_MESSAGE,
+      result_json: null,
+      finished_at: finishedAt,
+    })
+    .eq("job_type", "weekly_reports")
+    .eq("status", "running")
+    .not("started_at", "is", null)
+    .lt("started_at", cutoff)
+    .select("id");
+
+  if (error) {
+    throw new Error(`Failed to recover stale TrainingPeaks jobs: ${error.message}`);
+  }
+
+  return (data ?? []).length;
+}
+
 async function claimNextQueuedTrainingPeaksJob(): Promise<TrainingPeaksJobRow | null> {
   const supabase = getSupabase();
 
@@ -307,7 +392,7 @@ async function listWeeklyReportsWithMarkdown(
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("trainingpeaks_weekly_reports")
-    .select("student_name, week_from, week_to, report_markdown")
+    .select("student_id, student_name, week_from, week_to, report_markdown")
     .eq("week_from", weekFrom)
     .eq("week_to", weekTo)
     .order("student_name", { ascending: true });
@@ -370,14 +455,18 @@ async function completeTrainingPeaksJob(jobId: string, result: unknown): Promise
   }
 }
 
-async function failTrainingPeaksJob(jobId: string, errorMessage: string): Promise<void> {
+async function failTrainingPeaksJob(
+  jobId: string,
+  errorMessage: string,
+  result?: unknown
+): Promise<void> {
   const supabase = getSupabase();
   const { error } = await supabase
     .from("trainingpeaks_jobs")
     .update({
       status: "failed",
       error_message: errorMessage,
-      result_json: null,
+      result_json: result ?? null,
       finished_at: new Date().toISOString(),
     })
     .eq("id", jobId);
@@ -390,6 +479,13 @@ async function failTrainingPeaksJob(jobId: string, errorMessage: string): Promis
 async function main(): Promise<void> {
   loadLocalEnv();
 
+  const recoveredJobs = await recoverStaleTrainingPeaksRunningJobs(
+    STALE_RUNNING_JOB_TIMEOUT_MINUTES
+  );
+  if (recoveredJobs > 0) {
+    console.log(`Recovered ${recoveredJobs} stale TrainingPeaks job(s).`);
+  }
+
   const job = await claimNextQueuedTrainingPeaksJob();
   if (!job) {
     console.log("No queued TrainingPeaks jobs.");
@@ -401,6 +497,8 @@ async function main(): Promise<void> {
   try {
     console.log("Running tp-sync-students...");
     await runNpmScript("tp-sync-students");
+    const expectedStudents = await readExpectedStudentsFromLocalConfig();
+    const studentsExpected = expectedStudents.length;
     console.log("Running tp-weekly-all...");
     await runNpmScript("tp-weekly-all", [`--from=${job.week_from}`, `--to=${job.week_to}`]);
 
@@ -410,9 +508,41 @@ async function main(): Promise<void> {
     const completedAt = new Date().toISOString();
     const reports = await listWeeklyReportsWithMarkdown(job.week_from, job.week_to);
     const reportsFound = reports.length;
+    const missingStudents = getMissingStudents(expectedStudents, reports);
     let reportsSentToTelegram = 0;
     let deliveryWarning: string | null = null;
     let note = "Local Mac runner executed tp-weekly-all and tp-sync-reports.";
+    const warningMessages: string[] = [];
+
+    if (studentsExpected > 0 && reportsFound === 0) {
+      const errorMessage =
+        "No synced report drafts with report_markdown were found after pipeline run.";
+      const warningMessage = `Expected ${studentsExpected} student(s), but found 0 synced report draft(s).`;
+      const failedResult: TrainingPeaksJobResult = {
+        week_from: job.week_from,
+        week_to: job.week_to,
+        students_expected: studentsExpected,
+        reports_found: reportsFound,
+        reports_sent_to_telegram: 0,
+        missing_students: missingStudents,
+        has_warnings: true,
+        completed_at: completedAt,
+        note:
+          "Local Mac runner executed tp-weekly-all and tp-sync-reports, but no synced report drafts were produced for the requested week.",
+        warning_message: warningMessage,
+      };
+
+      console.error(errorMessage);
+      console.warn(warningMessage);
+      await failTrainingPeaksJob(job.id, errorMessage, failedResult);
+      return;
+    }
+
+    if (missingStudents.length > 0) {
+      const warningMessage = `Missing report drafts for ${missingStudents.length} student(s): ${formatMissingStudentsWarning(missingStudents)}`;
+      warningMessages.push(warningMessage);
+      console.warn(warningMessage);
+    }
 
     if (!job.requested_by_chat_id) {
       note =
@@ -430,17 +560,31 @@ async function main(): Promise<void> {
           : "Local Mac runner executed tp-weekly-all and tp-sync-reports, but Telegram delivery finished with warnings.";
     }
 
+    if (deliveryWarning) {
+      warningMessages.push(deliveryWarning);
+    }
+
+    const hasWarnings = warningMessages.length > 0;
+    const warningMessage = hasWarnings ? warningMessages.join(" ") : undefined;
+
     const result: TrainingPeaksJobResult = {
       week_from: job.week_from,
       week_to: job.week_to,
+      students_expected: studentsExpected,
       reports_found: reportsFound,
       reports_sent_to_telegram: reportsSentToTelegram,
+      missing_students: missingStudents,
+      has_warnings: hasWarnings,
       completed_at: completedAt,
       note,
     };
 
     if (deliveryWarning) {
       result.delivery_warning = deliveryWarning;
+    }
+
+    if (warningMessage) {
+      result.warning_message = warningMessage;
     }
 
     await completeTrainingPeaksJob(job.id, result);

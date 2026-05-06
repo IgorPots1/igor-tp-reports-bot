@@ -1,8 +1,11 @@
 import { parseTelegramUpdate } from "@/features/telegram/parser";
 import { sendTelegramMessage } from "@/features/telegram/telegram-client";
 import {
+  cancelTrainingPeaksConversation,
   getTrainingPeaksHelpLines,
+  hasActiveTrainingPeaksConversation,
   handleTrainingPeaksTelegramCommand,
+  isTrainingPeaksCommand,
 } from "@/features/telegram/trainingpeaks";
 import type { TelegramUpdate } from "@/features/telegram/types";
 
@@ -16,6 +19,7 @@ const HELP_COMMAND_PATTERN = /^\/help(?:@\w+)?(?:\s+|$)/;
 const START_COMMAND_PATTERN = /^\/start(?:@\w+)?(?:\s+|$)/;
 const TP_ONLY_MESSAGE =
   "Этот бот только для TrainingPeaks отчётов. Используй /help.";
+let hasLoggedMissingWebhookSecretWarning = false;
 
 function okResponse() {
   return new Response(JSON.stringify({ ok: true }), {
@@ -24,8 +28,33 @@ function okResponse() {
   });
 }
 
+function unauthorizedResponse() {
+  return new Response(JSON.stringify({ ok: false }), {
+    status: 401,
+    headers: jsonHeaders,
+  });
+}
+
 function getTrainingPeaksHelpMessage(): string {
   return ["Команды бота:", "/help — помощь", "/start — помощь", "", ...getTrainingPeaksHelpLines()].join("\n");
+}
+
+function isTelegramWebhookRequestAuthorized(request: Request): boolean {
+  const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET?.trim();
+
+  if (!webhookSecret) {
+    if (process.env.NODE_ENV === "development" && !hasLoggedMissingWebhookSecretWarning) {
+      hasLoggedMissingWebhookSecretWarning = true;
+      console.warn(
+        "Telegram webhook secret verification is disabled because TELEGRAM_WEBHOOK_SECRET is not set."
+      );
+    }
+
+    return true;
+  }
+
+  const incomingSecret = request.headers.get("x-telegram-bot-api-secret-token");
+  return incomingSecret === webhookSecret;
 }
 
 export async function GET() {
@@ -33,6 +62,11 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  if (!isTelegramWebhookRequestAuthorized(request)) {
+    console.warn("Telegram webhook rejected: invalid secret token");
+    return unauthorizedResponse();
+  }
+
   let update: TelegramUpdate | null = null;
 
   try {
@@ -52,11 +86,19 @@ export async function POST(request: Request) {
   const messageText = parsedMessage.text?.trim() ?? "";
 
   if (HELP_COMMAND_PATTERN.test(messageText) || START_COMMAND_PATTERN.test(messageText)) {
+    cancelTrainingPeaksConversation(parsedMessage.chatId);
     await sendTelegramMessage(parsedMessage.chatId, getTrainingPeaksHelpMessage());
     return okResponse();
   }
 
-  if (messageText.startsWith("/tp_")) {
+  if (messageText.startsWith("/")) {
+    cancelTrainingPeaksConversation(parsedMessage.chatId);
+  }
+
+  if (
+    isTrainingPeaksCommand(messageText) ||
+    (!messageText.startsWith("/") && hasActiveTrainingPeaksConversation(parsedMessage.chatId))
+  ) {
     await handleTrainingPeaksTelegramCommand(parsedMessage, messageText);
     return okResponse();
   }

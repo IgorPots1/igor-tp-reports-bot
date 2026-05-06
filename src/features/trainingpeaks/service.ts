@@ -1,5 +1,6 @@
 import {
   createTrainingPeaksWeeklyJob,
+  recoverStaleTrainingPeaksRunningJobs,
   insertTrainingPeaksStudent,
   listAllTrainingPeaksReports,
   listRecentTrainingPeaksJobs,
@@ -443,6 +444,10 @@ export async function requestTrainingPeaksWeeklyRun(
 
 export async function getTrainingPeaksJobsStatus(): Promise<TrainingPeaksJob[]> {
   return listRecentTrainingPeaksJobs(10);
+}
+
+export async function recoverStaleTrainingPeaksJobs(timeoutMinutes: number): Promise<number> {
+  return recoverStaleTrainingPeaksRunningJobs(timeoutMinutes);
 }
 
 export async function getTrainingPeaksStudentsRegistryWithLatestReportStatus(): Promise<
