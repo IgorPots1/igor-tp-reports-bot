@@ -1,11 +1,10 @@
-import { existsSync } from "node:fs";
 import { mkdir, readdir } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { stdin as input, stdout as output } from "node:process";
 import { createInterface } from "node:readline/promises";
 
-import type { Download, Locator, Page } from "playwright";
+import type { Locator, Page } from "playwright";
 import { chromium } from "playwright";
 import { exportsRoot, profileDir } from "./lib/paths.ts";
 import { findStudentById, readStudentsConfig } from "./lib/students.ts";
@@ -75,41 +74,6 @@ async function waitForEnter(message: string): Promise<void> {
   }
 }
 
-function sanitizeFileName(name: string): string {
-  const trimmed = name.trim();
-  if (!trimmed) {
-    return "download";
-  }
-
-  return trimmed.replace(/[\\/]/g, "_");
-}
-
-function uniqueFilePath(directory: string, fileName: string): string {
-  const safeName = sanitizeFileName(fileName);
-  const ext = path.extname(safeName);
-  const base = ext ? safeName.slice(0, -ext.length) : safeName;
-
-  let attempt = path.join(directory, safeName);
-  let counter = 1;
-
-  while (existsSync(attempt)) {
-    attempt = path.join(directory, `${base}-${counter}${ext}`);
-    counter += 1;
-  }
-
-  return attempt;
-}
-
-async function confirmYesNo(message: string): Promise<boolean> {
-  const rl = createInterface({ input, output });
-  try {
-    const answer = (await rl.question(`${message} `)).trim().toLowerCase();
-    return answer === "y" || answer === "yes";
-  } finally {
-    rl.close();
-  }
-}
-
 async function listZipFiles(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
   return entries
@@ -144,6 +108,85 @@ function assessExportFiles(zipFiles: string[]): ExportAssessment {
   return {
     summaryZip: zipFiles.find((filePath) => isLikelyWorkoutSummaryZip(filePath)),
     workoutFilesZip: zipFiles.find((filePath) => isLikelyWorkoutFilesZip(filePath))
+  };
+}
+
+type ExportDirSnapshot = {
+  zipFiles: string[];
+  summaryZipFiles: string[];
+  summaryTempFiles: string[];
+};
+
+function isLikelyBrowserTempDownload(fileName: string): boolean {
+  const lowerName = fileName.toLowerCase();
+  return (
+    lowerName.endsWith(".crdownload") ||
+    lowerName.endsWith(".download") ||
+    lowerName.endsWith(".part") ||
+    lowerName.endsWith(".tmp")
+  );
+}
+
+function isLikelyWorkoutSummaryArtifact(fileName: string): boolean {
+  if (isLikelyWorkoutSummaryZip(fileName)) {
+    return true;
+  }
+
+  return fileName.toLowerCase().includes("workout summary");
+}
+
+async function inspectExportDir(exportDir: string): Promise<ExportDirSnapshot> {
+  const entries = await readdir(exportDir, { withFileTypes: true });
+  const fileNames = entries.filter((entry) => entry.isFile()).map((entry) => entry.name);
+  const zipFiles = fileNames
+    .filter((fileName) => path.extname(fileName).toLowerCase() === ".zip")
+    .map((fileName) => path.join(exportDir, fileName))
+    .sort((left, right) => left.localeCompare(right));
+
+  return {
+    zipFiles,
+    summaryZipFiles: zipFiles.filter((filePath) => isLikelyWorkoutSummaryZip(filePath)),
+    summaryTempFiles: fileNames.filter(
+      (fileName) => isLikelyBrowserTempDownload(fileName) && isLikelyWorkoutSummaryArtifact(fileName)
+    )
+  };
+}
+
+async function waitForWorkoutSummaryZip(
+  exportDir: string,
+  knownSummaryZipFiles: string[],
+  timeoutMs = 90_000
+): Promise<AutomationAttemptResult & { summaryZip?: string }> {
+  const knownSummaryZipSet = new Set(knownSummaryZipFiles);
+  const startedAt = Date.now();
+  let lastProgressLogAt = 0;
+
+  while (Date.now() - startedAt <= timeoutMs) {
+    const snapshot = await inspectExportDir(exportDir);
+    const newSummaryZip = snapshot.summaryZipFiles.find((filePath) => !knownSummaryZipSet.has(filePath));
+    if (newSummaryZip) {
+      return { ok: true, summaryZip: newSummaryZip };
+    }
+
+    const now = Date.now();
+    if (now - lastProgressLogAt >= 5_000) {
+      const elapsedSeconds = Math.floor((now - startedAt) / 1000);
+      if (snapshot.summaryTempFiles.length > 0) {
+        console.log(
+          `Auto-export: waiting for Workout Summary ZIP (${elapsedSeconds}s elapsed, temporary files: ${snapshot.summaryTempFiles.join(", ")})`
+        );
+      } else {
+        console.log(`Auto-export: waiting for Workout Summary ZIP (${elapsedSeconds}s elapsed)`);
+      }
+      lastProgressLogAt = now;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+
+  return {
+    ok: false,
+    reason: `did not detect a new Workout Summary ZIP in ${timeoutMs / 1000} seconds.`
   };
 }
 
@@ -582,7 +625,11 @@ async function fillExportSubsectionDateRange(
   return { ok: true };
 }
 
-async function tryFillExportDateRanges(page: Page, fromIso: string, toIso: string): Promise<AutomationAttemptResult> {
+async function tryFillWorkoutSummaryDateRange(
+  page: Page,
+  fromIso: string,
+  toIso: string
+): Promise<AutomationAttemptResult> {
   if (!(await exportDataSectionReady(page))) {
     return { ok: false, reason: 'the "Export Data" section was not ready for date entry.' };
   }
@@ -595,27 +642,42 @@ async function tryFillExportDateRanges(page: Page, fromIso: string, toIso: strin
     return workoutSummaryResult;
   }
 
-  const workoutFilesResult = await fillExportSubsectionDateRange(page, "Workout Files", from, to);
-  if (!workoutFilesResult.ok) {
-    console.log(
-      `Auto-export note: ${workoutFilesResult.reason ?? 'could not fill the "Workout Files" export subsection.'} Workout Files is optional for the current weekly report.`
-    );
+  return { ok: true };
+}
+
+async function tryClickWorkoutSummaryExport(page: Page): Promise<AutomationAttemptResult> {
+  const section = await locateExportSubsection(page, "Workout Summary");
+  if (!section) {
+    return { ok: false, reason: 'could not find the "Workout Summary" export subsection.' };
+  }
+
+  const clicked = await clickFirstVisible(
+    [
+      section.getByRole("button", { name: /^export$/i }),
+      section.getByRole("link", { name: /^export$/i }),
+      section.locator("button").filter({ hasText: /^export$/i }),
+      section.locator('[role="button"]').filter({ hasText: /^export$/i })
+    ],
+    700
+  );
+
+  if (!clicked) {
+    return { ok: false, reason: 'could not find the "Export" button inside "Workout Summary".' };
   }
 
   return { ok: true };
 }
 
-async function saveDownload(download: Download, exportDir: string, savedFiles: string[]): Promise<void> {
-  const failure = await download.failure();
-  if (failure) {
-    console.error(`Download failed: ${failure}`);
-    return;
-  }
-
-  const filePath = uniqueFilePath(exportDir, download.suggestedFilename());
-  await download.saveAs(filePath);
-  savedFiles.push(filePath);
-  console.log(`Saved download: ${filePath}`);
+function logManualFallbackInstructions(): void {
+  console.log("Manual fallback:");
+  console.log("1. Open Athlete Account Settings -> Export Data");
+  console.log("2. Set date range manually");
+  console.log("3. Download Workout Summary");
+  console.log("4. Wait until the ZIP file finishes downloading");
+  console.log("5. Return to terminal and press Enter");
+  console.log("");
+  console.log("Optional:");
+  console.log("Workout Files can be downloaded too, but it is not required for the current weekly report.");
 }
 
 async function main(): Promise<void> {
@@ -632,6 +694,14 @@ async function main(): Promise<void> {
   await mkdir(exportDir, { recursive: true });
   await mkdir(profileDir, { recursive: true });
 
+  const existingZipFilesBeforeRun = await listZipFiles(exportDir);
+  const existingExportAssessment = assessExportFiles(existingZipFilesBeforeRun);
+  if (existingExportAssessment.summaryZip) {
+    console.log("Existing Workout Summary ZIP already present. Reusing export folder.");
+    logExportAssessment(existingExportAssessment);
+    return;
+  }
+
   console.log(`Using persistent browser profile: ${profileDir}`);
   console.log(`Export folder: ${exportDir}`);
   console.log(`Opening TrainingPeaks for student: ${student.student_id}`);
@@ -639,41 +709,18 @@ async function main(): Promise<void> {
   const context = await chromium.launchPersistentContext(profileDir, {
     headless: false,
     viewport: null,
-    acceptDownloads: true
+    acceptDownloads: true,
+    downloadsPath: exportDir
   });
-
-  const savedFiles: string[] = [];
-  const pendingDownloads = new Set<Promise<void>>();
-
-  const registerDownloadHandler = (pageForDownloads: { on(event: "download", listener: (download: Download) => void): void }) => {
-    pageForDownloads.on("download", (download) => {
-      console.log(`Download started: ${download.suggestedFilename()}`);
-
-      const task = saveDownload(download, exportDir, savedFiles)
-        .catch((error: unknown) => {
-          console.error(`Failed to save download: ${download.suggestedFilename()}`);
-          console.error(error);
-        })
-        .finally(() => {
-          pendingDownloads.delete(task);
-        });
-
-      pendingDownloads.add(task);
-    });
-  };
 
   try {
     const page = context.pages()[0] ?? (await context.newPage());
-    registerDownloadHandler(page);
-    context.on("page", (newPage) => {
-      registerDownloadHandler(newPage);
-    });
 
     await page.goto(student.trainingpeaks_athlete_url, { waitUntil: "domcontentloaded" });
     await page.bringToFront();
 
-    console.log(`Auto-export check: opening TrainingPeaks for ${student.student_id}`);
-    console.log("Auto-export check: verifying login/page state");
+    console.log(`Auto-export: opening TrainingPeaks for ${student.student_id}`);
+    console.log("Auto-export: verifying login/page state");
 
     let pageAssessment = await assessTrainingPeaksPage(page);
     if (pageAssessment.loginRequired) {
@@ -690,13 +737,14 @@ async function main(): Promise<void> {
 
     let exportDataOpened = false;
     let datesAutoFilled = false;
+    let automaticSummaryExportCompleted = false;
 
-    console.log("Auto-export check: attempting to open Athlete Account Settings -> Export Data");
+    console.log("Auto-export: attempting to open Athlete Account Settings -> Export Data");
     if (pageAssessment.athletePageLikelyReachable) {
       const exportOpenResult = await tryOpenExportData(page);
       if (exportOpenResult.ok) {
         exportDataOpened = true;
-        console.log("Auto-export check: Export Data is open.");
+        console.log("Auto-export: Export Data opened");
       } else {
         console.log(`Auto-export fallback: ${exportOpenResult.reason ?? 'could not open "Export Data" automatically.'}`);
         if (exportOpenResult.visibleCandidates) {
@@ -708,101 +756,63 @@ async function main(): Promise<void> {
     }
 
     if (exportDataOpened) {
-      console.log("Auto-export check: attempting to fill export date ranges");
-      const fillDatesResult = await tryFillExportDateRanges(page, args.from, args.to);
+      const fillDatesResult = await tryFillWorkoutSummaryDateRange(page, args.from, args.to);
       if (fillDatesResult.ok) {
         datesAutoFilled = true;
-        console.log(
-          `Auto-export check: date range filled automatically (${formatForTrainingPeaksDateInput(args.from)} — ${formatForTrainingPeaksDateInput(args.to)}).`
-        );
+        console.log("Auto-export: Summary date range filled");
       } else {
         console.log(`Auto-export fallback: ${fillDatesResult.reason ?? "could not fill export date fields automatically."}`);
       }
     }
 
-    console.log("");
-    if (datesAutoFilled) {
-      console.log("Auto-export prepared:");
-      console.log("- Export Data is open");
-      console.log(`- Date range was filled: ${args.from} — ${args.to}`);
-      console.log("");
-      console.log("Manual final step:");
-      console.log("1. Click Export in Workout Summary");
-      console.log("2. Wait until the ZIP file finishes downloading");
-      console.log("3. Return to terminal and press Enter");
-      console.log("");
-      console.log("Optional:");
-      console.log("Workout Files can be downloaded too, but it is not required for the current weekly report.");
-    } else {
-      console.log("Manual fallback:");
-      console.log("1. Open Athlete Account Settings -> Export Data");
-      console.log("2. Set date range manually");
-      console.log("3. Download Workout Summary");
-      console.log("4. Wait until the ZIP file finishes downloading");
-      console.log("5. Return to terminal and press Enter");
-      console.log("");
-      console.log("Optional:");
-      console.log("Workout Files can be downloaded too, but it is not required for the current weekly report.");
-    }
-    console.log("If no files are downloaded and no existing ZIPs are found, this student will be skipped and the batch will continue.");
-    console.log("");
-
-    await waitForEnter("Press Enter here after you finish the manual export flow.");
-
-    if (pendingDownloads.size > 0) {
-      console.log(`Waiting for ${pendingDownloads.size} download(s) to finish saving...`);
-      await Promise.allSettled([...pendingDownloads]);
+    if (exportDataOpened && datesAutoFilled) {
+      const summaryZipFilesBeforeClick = (await inspectExportDir(exportDir)).summaryZipFiles;
+      console.log("Auto-export: clicking Workout Summary Export");
+      const clickResult = await tryClickWorkoutSummaryExport(page);
+      if (!clickResult.ok) {
+        console.log(`Auto-export fallback: ${clickResult.reason ?? 'could not click "Workout Summary" export.'}`);
+      } else {
+        console.log("Auto-export: waiting for Workout Summary ZIP");
+        const waitForZipResult = await waitForWorkoutSummaryZip(exportDir, summaryZipFilesBeforeClick);
+        if (waitForZipResult.ok && waitForZipResult.summaryZip) {
+          automaticSummaryExportCompleted = true;
+          console.log(`Auto-export: Summary ZIP detected: ${path.basename(waitForZipResult.summaryZip)}`);
+          console.log("Workout Summary export downloaded automatically.");
+        } else {
+          console.log("Auto-export did not detect Workout Summary ZIP. Switching to manual fallback.");
+          console.log(
+            `Auto-export fallback: ${waitForZipResult.reason ?? "did not detect Workout Summary ZIP after clicking Export."}`
+          );
+        }
+      }
     }
 
-    const downloadsCaptured = savedFiles.length;
+    console.log("");
+    if (!automaticSummaryExportCompleted) {
+      logManualFallbackInstructions();
+      console.log("If no files are downloaded and no existing ZIPs are found, this student will be skipped and the batch will continue.");
+      console.log("");
 
-    if (downloadsCaptured > 0) {
-      console.log(`Status: new downloads captured (${downloadsCaptured}).`);
-      console.log("Saved files:");
-      for (const filePath of savedFiles) {
+      await waitForEnter("Press Enter here after you finish the manual export flow.");
+    }
+
+    const exportDirSnapshot = await inspectExportDir(exportDir);
+    const exportAssessment = assessExportFiles(exportDirSnapshot.zipFiles);
+    logExportAssessment(exportAssessment);
+
+    if (!exportAssessment.summaryZip) {
+      if (exportDirSnapshot.zipFiles.length === 0) {
+        console.log("Status: no export files available.");
+        throw new Error("No Workout Summary ZIP was found after automatic export attempt and manual fallback.");
+      }
+
+      console.log("Existing ZIP files found:");
+      for (const filePath of exportDirSnapshot.zipFiles) {
         console.log(`- ${filePath}`);
       }
 
-      const zipFilesAfterDownload = await listZipFiles(exportDir);
-      const exportAssessment = assessExportFiles(zipFilesAfterDownload);
-      logExportAssessment(exportAssessment);
-
-      if (!exportAssessment.summaryZip) {
-        throw new Error("Workout Summary export was not found after the manual export step.");
-      }
-
-      return;
+      throw new Error("Workout Summary export was not found after the export step.");
     }
-
-    console.log("No downloads were captured in this run.");
-
-    const existingZipFiles = await listZipFiles(exportDir);
-    if (existingZipFiles.length === 0) {
-      console.log("Status: no export files available.");
-      throw new Error("No downloads captured and no existing export files found.");
-    }
-
-    console.log("Existing ZIP files found:");
-    for (const filePath of existingZipFiles) {
-      console.log(`- ${filePath}`);
-    }
-
-    const exportAssessment = assessExportFiles(existingZipFiles);
-    logExportAssessment(exportAssessment);
-    if (!exportAssessment.summaryZip) {
-      throw new Error("No new downloads were captured and no Workout Summary export was found in the existing ZIP files.");
-    }
-
-    const shouldContinue = await confirmYesNo(
-      "No new downloads were captured. Existing export files were found. Continue using existing files? y/N"
-    );
-
-    if (!shouldContinue) {
-      console.log("Status: no export files available.");
-      throw new Error("Workflow stopped because no new downloads were captured and existing files were not approved.");
-    }
-
-    console.log("Status: using existing export files.");
   } finally {
     await context.close();
     console.log("Browser closed.");
