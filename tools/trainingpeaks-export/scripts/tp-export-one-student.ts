@@ -321,8 +321,8 @@ function normalizeCandidateLabel(value: string): string {
 }
 
 async function listVisibleCandidateControls(page: Page): Promise<string[]> {
-  const roleCandidates = await page
-    .locator('button, a, [role="button"], [role="link"]')
+  const candidates = await page
+    .locator('button, a, [role="button"], [role="link"], div')
     .evaluateAll((elements) => {
       const isVisible = (element: Element): boolean => {
         if (!(element instanceof HTMLElement)) {
@@ -338,6 +338,10 @@ async function listVisibleCandidateControls(page: Page): Promise<string[]> {
           rect.height > 0
         );
       };
+
+      const normalizeWhitespace = (value: string | null | undefined): string => (value ?? "").replace(/\s+/g, " ").trim();
+      const compactClassName = (value: string): string => value.split(/\s+/).filter(Boolean).slice(0, 4).join(".");
+      const keywordPattern = /(settings|athlete settings|athlete account|account settings|export data|\baccount\b|\bexport\b)/i;
 
       const labels = new Set<string>();
       for (const element of elements) {
@@ -347,73 +351,74 @@ async function listVisibleCandidateControls(page: Page): Promise<string[]> {
 
         const tagName = element.tagName.toLowerCase();
         const role = element.getAttribute("role") ?? "";
-        const ariaLabel = element.getAttribute("aria-label") ?? "";
-        const title = element.getAttribute("title") ?? "";
-        const text = (element.textContent ?? "").replace(/\s+/g, " ").trim();
-        const accessibleLabel = (ariaLabel || title || text).replace(/\s+/g, " ").trim();
-        const keywordMatch = /(settings|athlete account|account settings|export data|\baccount\b)/i.test(accessibleLabel);
+        const ariaLabel = normalizeWhitespace(element.getAttribute("aria-label"));
+        const title = normalizeWhitespace(element.getAttribute("title"));
+        const text = normalizeWhitespace(element.textContent);
+        const dataTooltip = normalizeWhitespace(element.getAttribute("data-tooltip"));
+        const onclick = normalizeWhitespace(element.getAttribute("onclick"));
+        const className = normalizeWhitespace(element.getAttribute("class"));
+        const computedCursor = window.getComputedStyle(element).cursor;
+        const accessibleLabel = normalizeWhitespace(ariaLabel || title || dataTooltip || text);
+        const keywordMatch = keywordPattern.test(`${accessibleLabel} ${className}`);
         const exactMoreMatch = /^(more|⋯|…)$/.test(accessibleLabel);
+        const isClickableDiv =
+          tagName === "div" &&
+          (
+            Boolean(dataTooltip) ||
+            Boolean(onclick) ||
+            computedCursor === "pointer" ||
+            keywordPattern.test(className)
+          );
+
+        if (tagName === "div" && !isClickableDiv) {
+          continue;
+        }
+
         if (
-          !accessibleLabel ||
-          accessibleLabel.length > 60 ||
-          /^\d+\s+more\b/i.test(accessibleLabel) ||
-          (!keywordMatch && !exactMoreMatch)
+          !exactMoreMatch &&
+          !keywordMatch &&
+          !keywordPattern.test(dataTooltip) &&
+          !keywordPattern.test(onclick) &&
+          !/openathletesettingsbutton/i.test(className)
         ) {
           continue;
         }
 
-        const source = role || tagName;
-        labels.add(`${source}: ${accessibleLabel}`);
+        if (
+          accessibleLabel.length > 80 ||
+          /^\d+\s+more\b/i.test(accessibleLabel)
+        ) {
+          continue;
+        }
+
+        const descriptionParts = [role || tagName];
+        if (className) {
+          descriptionParts.push(`class=.${compactClassName(className)}`);
+        }
+        if (dataTooltip) {
+          descriptionParts.push(`tooltip="${dataTooltip}"`);
+        }
+        if (accessibleLabel) {
+          descriptionParts.push(`label="${accessibleLabel}"`);
+        }
+        if (onclick) {
+          descriptionParts.push("onclick");
+        }
+        if (computedCursor === "pointer") {
+          descriptionParts.push("cursor:pointer");
+        }
+
+        labels.add(descriptionParts.join(" "));
+        if (labels.size >= 12) {
+          break;
+        }
       }
 
       return [...labels];
     })
     .catch(() => []);
 
-  const textCandidates = await page
-    .locator("h1, h2, h3, h4, span, div, p")
-    .evaluateAll((elements) => {
-      const isVisible = (element: Element): boolean => {
-        if (!(element instanceof HTMLElement)) {
-          return false;
-        }
-
-        const style = window.getComputedStyle(element);
-        const rect = element.getBoundingClientRect();
-        return (
-          style.visibility !== "hidden" &&
-          style.display !== "none" &&
-          rect.width > 0 &&
-          rect.height > 0
-        );
-      };
-
-      const labels = new Set<string>();
-      for (const element of elements) {
-        if (!isVisible(element)) {
-          continue;
-        }
-
-        const text = (element.textContent ?? "").replace(/\s+/g, " ").trim();
-        const keywordMatch = /(settings|athlete account|account settings|export data|\baccount\b)/i.test(text);
-        const exactMoreMatch = /^(more|⋯|…)$/.test(text);
-        if (
-          !text ||
-          text.length > 60 ||
-          /^\d+\s+more\b/i.test(text) ||
-          (!keywordMatch && !exactMoreMatch)
-        ) {
-          continue;
-        }
-
-        labels.add(`text: ${text}`);
-      }
-
-      return [...labels];
-    })
-    .catch(() => []);
-
-  return [...new Set([...roleCandidates, ...textCandidates].map(normalizeCandidateLabel))].slice(0, 12);
+  return [...new Set(candidates.map(normalizeCandidateLabel))].slice(0, 12);
 }
 
 function logVisibleCandidateControls(candidates: string[]): void {
@@ -428,30 +433,37 @@ function logVisibleCandidateControls(candidates: string[]): void {
   }
 }
 
-function exportInstructionsLocator(page: Page): Locator {
-  return page.getByText(/use the fields below to download your workout or metrics data to your computer\./i);
+function athleteAccountSettingsHeadingLocator(page: Page): Locator {
+  return page.locator("h2").filter({ hasText: /^Athlete Account Settings$/i }).first();
+}
+
+function athleteSettingsModalLocator(page: Page): Locator {
+  return page.locator("div.tabbedSettings.userSettings.overlayBox.modal").first();
+}
+
+function exportInstructionsLocator(scope: Page | Locator): Locator {
+  return scope.getByText(/use the fields below to download your workout or metrics data to your computer\./i);
 }
 
 async function exportDataSectionReady(page: Page): Promise<boolean> {
+  const settingsModal = athleteSettingsModalLocator(page);
   return anyVisible([
     page.getByRole("heading", { name: /^export data$/i }),
+    exportInstructionsLocator(settingsModal),
     exportInstructionsLocator(page)
   ], 700);
 }
 
 async function waitForSettingsModal(page: Page): Promise<boolean> {
-  return anyVisible([
-    page.getByRole("heading", { name: /^athlete account settings$/i }),
-    page.getByRole("dialog").filter({
-      has: page.getByRole("heading", { name: /^athlete account settings$/i })
-    })
-  ], 4000);
+  if (!(await isVisible(athleteAccountSettingsHeadingLocator(page), 4000))) {
+    return false;
+  }
+
+  return isVisible(athleteSettingsModalLocator(page), 4000);
 }
 
 async function locateSettingsScope(page: Page): Promise<Locator> {
-  const dialog = page.getByRole("dialog").filter({
-    has: page.getByRole("heading", { name: /^athlete account settings$/i })
-  });
+  const dialog = athleteSettingsModalLocator(page);
 
   if (await isVisible(dialog, 700)) {
     return dialog.first();
@@ -465,52 +477,24 @@ async function tryOpenAthleteAccountSettings(page: Page): Promise<AutomationAtte
     return { ok: true };
   }
 
-  const directSettingsLocators = [
-    page.getByRole("button", { name: /^athlete account settings$/i }),
-    page.getByRole("link", { name: /^athlete account settings$/i }),
-    page.getByRole("button", { name: /athlete account|account settings/i }),
-    page.getByRole("link", { name: /athlete account|account settings/i })
+  const triggerCandidates = [
+    page.locator('div.groupAndAthleteSelector [data-tooltip*="Athlete Settings"]').first(),
+    page.locator("div.groupAndAthleteSelector div.openAthleteSettingsButton").first()
   ];
 
-  if (await clickFirstVisible(directSettingsLocators, 700)) {
-    if (await waitForSettingsModal(page)) {
-      return { ok: true };
-    }
-  }
-
-  const menuOpeners = [
-    page.getByRole("button", { name: /settings|account|more/i }),
-    page.getByRole("link", { name: /settings|account|more/i }),
-    page.getByText(/^settings$/i),
-    page.getByText(/account settings/i),
-    page.getByText(/^more$/i)
-  ];
-
-  for (const locator of menuOpeners) {
-    if (!(await isVisible(locator, 700))) {
+  for (const trigger of triggerCandidates) {
+    if (!(await isVisible(trigger, 700))) {
       continue;
     }
 
     try {
-      await locator.first().click({ timeout: 2000 });
+      await trigger.click({ timeout: 2000 });
     } catch {
       continue;
     }
 
     if (await waitForSettingsModal(page)) {
       return { ok: true };
-    }
-
-    if (
-      await clickFirstVisible([
-        page.getByRole("button", { name: /^athlete account settings$/i }),
-        page.getByRole("link", { name: /^athlete account settings$/i }),
-        page.getByText(/^athlete account settings$/i)
-      ], 700)
-    ) {
-      if (await waitForSettingsModal(page)) {
-        return { ok: true };
-      }
     }
   }
 
@@ -544,6 +528,7 @@ async function tryOpenExportData(page: Page): Promise<AutomationAttemptResult> {
 
   const settingsScope = await locateSettingsScope(page);
   const openedExport = await clickFirstVisible([
+    settingsScope.locator("li").filter({ hasText: /^export data$/i }),
     settingsScope.getByRole("tab", { name: /^export data$/i }),
     settingsScope.getByRole("link", { name: /^export data$/i }),
     settingsScope.getByRole("button", { name: /^export data$/i }),
@@ -556,7 +541,10 @@ async function tryOpenExportData(page: Page): Promise<AutomationAttemptResult> {
 
   await page.waitForTimeout(500);
 
-  if (!(await exportDataSectionReady(page))) {
+  if (!(await anyVisible([
+    exportInstructionsLocator(settingsScope),
+    exportInstructionsLocator(page)
+  ], 1500))) {
     return { ok: false, reason: 'the "Export Data" section did not become ready after opening it.' };
   }
 
