@@ -49,7 +49,8 @@ npm run tp-weekly-all
 - Для каждого ученика откроется браузер.
 - Вручную перейдите в `Athlete Account Settings -> Export Data`.
 - Выберите запрошенные даты.
-- Скачайте `Workout Summary` и `Workout Files`.
+- Скачайте `Workout Summary` (обязательно).
+- `Workout Files` можно скачать дополнительно, но для текущего weekly report это не требуется.
 - Вернитесь в терминал и нажмите Enter.
 
 5. Проверьте готовность отчетов:
@@ -169,6 +170,13 @@ npm run tp-student-add -- --student=Olga --name="Ольга" --url="https://app.
 3. Parse the week into `parsed/{student_id}/{from}_{to}/weekly-summary.json`.
 4. Generate AI report drafts in `reports/{student_id}/{from}_{to}/`.
 
+Export expectations:
+
+- Required export: `Workout Summary`
+- Optional export: `Workout Files`
+- The current weekly report is generated from the Summary CSV inside the `Workout Summary` export.
+- `Workout Files` are kept compatible and may still be useful later for deeper analysis, but they are not required now.
+
 Use `--skip-export` to reuse an existing export folder and only run parse + report:
 
 ```bash
@@ -182,6 +190,7 @@ npm run tp-weekly-one -- --student=Olga --from=2026-04-27 --to=2026-05-03 --skip
 
 If `--from` and `--to` are omitted, it automatically uses the previous full Monday-Sunday week based on local time.
 If no new downloads are captured during the manual export step, the workflow now asks before reusing existing ZIP exports from that week.
+Reuse only continues when a likely `Workout Summary` ZIP is present.
 
 Examples:
 

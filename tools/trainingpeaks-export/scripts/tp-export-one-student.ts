@@ -22,6 +22,11 @@ type PageAssessment = {
   fallbackReason?: string;
 };
 
+type AutomationAttemptResult = {
+  ok: boolean;
+  reason?: string;
+};
+
 function usage(): string {
   return [
     "Usage:",
@@ -110,6 +115,50 @@ async function listZipFiles(directory: string): Promise<string[]> {
     .filter((entry) => entry.isFile() && path.extname(entry.name).toLowerCase() === ".zip")
     .map((entry) => path.join(directory, entry.name))
     .sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeExportName(filePath: string): string {
+  return path
+    .basename(filePath, path.extname(filePath))
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function isLikelyWorkoutSummaryZip(filePath: string): boolean {
+  const normalized = normalizeExportName(filePath);
+  return normalized.includes("workoutexport") || normalized.includes("workoutsummary");
+}
+
+function isLikelyWorkoutFilesZip(filePath: string): boolean {
+  const normalized = normalizeExportName(filePath);
+  return normalized.includes("workoutfileexport") || normalized.includes("workoutfiles");
+}
+
+type ExportAssessment = {
+  summaryZip?: string;
+  workoutFilesZip?: string;
+};
+
+function assessExportFiles(zipFiles: string[]): ExportAssessment {
+  return {
+    summaryZip: zipFiles.find((filePath) => isLikelyWorkoutSummaryZip(filePath)),
+    workoutFilesZip: zipFiles.find((filePath) => isLikelyWorkoutFilesZip(filePath))
+  };
+}
+
+function logExportAssessment(assessment: ExportAssessment): void {
+  if (assessment.summaryZip) {
+    console.log("Workout Summary export found. Continuing.");
+    console.log(`- ${assessment.summaryZip}`);
+  } else {
+    console.log("Workout Summary export was not found. This student cannot be parsed.");
+  }
+
+  if (assessment.workoutFilesZip) {
+    console.log(`Workout Files export found: ${assessment.workoutFilesZip}`);
+  } else {
+    console.log("Workout Files export not found. Continuing because it is optional for weekly reports.");
+  }
 }
 
 async function isVisible(locator: Locator, timeout = 700): Promise<boolean> {
@@ -201,6 +250,11 @@ async function assessTrainingPeaksPage(page: Page): Promise<PageAssessment> {
   };
 }
 
+function formatForTrainingPeaksDateInput(isoDate: string): string {
+  const [year, month, day] = isoDate.split("-").map((part) => Number(part));
+  return `${month}/${day}/${year}`;
+}
+
 async function clickFirstVisible(locators: Locator[], timeout = 500): Promise<boolean> {
   for (const locator of locators) {
     if (!(await isVisible(locator, timeout))) {
@@ -218,48 +272,172 @@ async function clickFirstVisible(locators: Locator[], timeout = 500): Promise<bo
   return false;
 }
 
-async function probeExportArea(page: Page): Promise<boolean> {
-  const exportIndicators = [
-    page.getByText(/export data/i),
-    page.getByRole("heading", { name: /export data/i }),
-    page.getByRole("link", { name: /export data/i }),
-    page.getByRole("button", { name: /export data/i })
+function exportInstructionsLocator(page: Page): Locator {
+  return page.getByText(/use the fields below to download your workout or metrics data to your computer\./i);
+}
+
+async function exportDataSectionReady(page: Page): Promise<boolean> {
+  return anyVisible([
+    page.getByRole("heading", { name: /^export data$/i }),
+    exportInstructionsLocator(page)
+  ], 700);
+}
+
+async function waitForSettingsModal(page: Page): Promise<boolean> {
+  return anyVisible([
+    page.getByRole("heading", { name: /^athlete account settings$/i }),
+    page.getByRole("dialog").filter({
+      has: page.getByRole("heading", { name: /^athlete account settings$/i })
+    })
+  ], 4000);
+}
+
+async function locateSettingsScope(page: Page): Promise<Locator> {
+  const dialog = page.getByRole("dialog").filter({
+    has: page.getByRole("heading", { name: /^athlete account settings$/i })
+  });
+
+  if (await isVisible(dialog, 700)) {
+    return dialog.first();
+  }
+
+  return page.locator("body");
+}
+
+async function tryOpenExportData(page: Page): Promise<AutomationAttemptResult> {
+  if (await exportDataSectionReady(page)) {
+    return { ok: true };
+  }
+
+  const settingsVisible = await waitForSettingsModal(page);
+  if (!settingsVisible) {
+    const openedSettings = await clickFirstVisible([
+      page.getByRole("link", { name: /^athlete account settings$/i }),
+      page.getByRole("button", { name: /^athlete account settings$/i }),
+      page.getByText(/^athlete account settings$/i),
+      page.getByRole("link", { name: /account settings/i }),
+      page.getByRole("button", { name: /account settings/i }),
+      page.getByText(/account settings/i),
+      page.getByRole("link", { name: /^settings$/i }),
+      page.getByRole("button", { name: /^settings$/i }),
+      page.getByText(/^settings$/i)
+    ]);
+
+    if (!openedSettings) {
+      return { ok: false, reason: 'could not find an "Athlete Account Settings" control.' };
+    }
+
+    if (!(await waitForSettingsModal(page))) {
+      return { ok: false, reason: 'clicked settings, but "Athlete Account Settings" did not appear.' };
+    }
+  }
+
+  if (await exportDataSectionReady(page)) {
+    return { ok: true };
+  }
+
+  const settingsScope = await locateSettingsScope(page);
+  const openedExport = await clickFirstVisible([
+    settingsScope.getByRole("tab", { name: /^export data$/i }),
+    settingsScope.getByRole("link", { name: /^export data$/i }),
+    settingsScope.getByRole("button", { name: /^export data$/i }),
+    settingsScope.getByText(/^export data$/i)
+  ], 700);
+
+  if (!openedExport) {
+    return { ok: false, reason: 'could not find the "Export Data" item inside Athlete Account Settings.' };
+  }
+
+  await page.waitForTimeout(500);
+
+  if (!(await exportDataSectionReady(page))) {
+    return { ok: false, reason: 'the "Export Data" section did not become ready after opening it.' };
+  }
+
+  return { ok: true };
+}
+
+async function locateExportSubsection(page: Page, headingText: string): Promise<Locator | null> {
+  const headingCandidates = [
+    page.getByRole("heading", { name: new RegExp(`^${headingText}$`, "i") }),
+    page.getByText(new RegExp(`^${headingText}$`, "i"))
   ];
 
-  if (await anyVisible(exportIndicators, 500)) {
-    return true;
+  for (const candidate of headingCandidates) {
+    const count = await candidate.count().catch(() => 0);
+    for (let index = 0; index < count; index += 1) {
+      const heading = candidate.nth(index);
+      if (!(await isVisible(heading, 500))) {
+        continue;
+      }
+
+      const section = heading.locator(
+        "xpath=ancestor::*[(self::section or self::div or self::form) and .//input[@name='startDate'] and .//input[@name='endDate']][1]"
+      );
+
+      if (await section.count().catch(() => 0)) {
+        return section.first();
+      }
+    }
   }
 
-  const openedSettings = await clickFirstVisible([
-    page.getByRole("link", { name: /athlete account settings/i }),
-    page.getByRole("button", { name: /athlete account settings/i }),
-    page.getByText(/athlete account settings/i),
-    page.getByRole("link", { name: /^settings$/i }),
-    page.getByRole("button", { name: /^settings$/i }),
-    page.getByText(/^settings$/i)
-  ]);
+  return null;
+}
 
-  if (openedSettings) {
-    await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => {});
-    await page.waitForTimeout(500);
+async function fillAndVerifyDateInput(input: Locator, value: string): Promise<boolean> {
+  try {
+    await input.fill(value);
+    await input.press("Tab").catch(() => {});
+    return (await input.inputValue()) === value;
+  } catch {
+    return false;
+  }
+}
+
+async function fillExportSubsectionDateRange(
+  page: Page,
+  headingText: string,
+  from: string,
+  to: string
+): Promise<AutomationAttemptResult> {
+  const section = await locateExportSubsection(page, headingText);
+  if (!section) {
+    return { ok: false, reason: `could not find the "${headingText}" export subsection.` };
   }
 
-  if (await anyVisible(exportIndicators, 500)) {
-    return true;
+  const startInput = section.locator('input[name="startDate"]').first();
+  const endInput = section.locator('input[name="endDate"]').first();
+
+  if (!(await fillAndVerifyDateInput(startInput, from))) {
+    return { ok: false, reason: `could not verify the "${headingText}" From date input.` };
   }
 
-  const openedExport = await clickFirstVisible([
-    page.getByRole("link", { name: /export data/i }),
-    page.getByRole("button", { name: /export data/i }),
-    page.getByText(/export data/i)
-  ]);
-
-  if (openedExport) {
-    await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => {});
-    await page.waitForTimeout(500);
+  if (!(await fillAndVerifyDateInput(endInput, to))) {
+    return { ok: false, reason: `could not verify the "${headingText}" To date input.` };
   }
 
-  return anyVisible(exportIndicators, 500);
+  return { ok: true };
+}
+
+async function tryFillExportDateRanges(page: Page, fromIso: string, toIso: string): Promise<AutomationAttemptResult> {
+  if (!(await exportDataSectionReady(page))) {
+    return { ok: false, reason: 'the "Export Data" section was not ready for date entry.' };
+  }
+
+  const from = formatForTrainingPeaksDateInput(fromIso);
+  const to = formatForTrainingPeaksDateInput(toIso);
+
+  const workoutFilesResult = await fillExportSubsectionDateRange(page, "Workout Files", from, to);
+  if (!workoutFilesResult.ok) {
+    return workoutFilesResult;
+  }
+
+  const workoutSummaryResult = await fillExportSubsectionDateRange(page, "Workout Summary", from, to);
+  if (!workoutSummaryResult.ok) {
+    return workoutSummaryResult;
+  }
+
+  return { ok: true };
 }
 
 async function saveDownload(download: Download, exportDir: string, savedFiles: string[]): Promise<void> {
@@ -345,27 +523,54 @@ async function main(): Promise<void> {
       console.log(`Auto-export fallback: ${pageAssessment.fallbackReason ?? "athlete page was not reachable automatically."}`);
     }
 
-    console.log("Auto-export check: attempting to locate export/settings area");
+    let exportDataOpened = false;
+    let datesAutoFilled = false;
+
+    console.log("Auto-export check: attempting to open Athlete Account Settings -> Export Data");
     if (pageAssessment.athletePageLikelyReachable) {
-      const exportAreaReachable = await probeExportArea(page);
-      if (exportAreaReachable) {
-        console.log("Auto-export check: Export Data area appears reachable.");
+      const exportOpenResult = await tryOpenExportData(page);
+      if (exportOpenResult.ok) {
+        exportDataOpened = true;
+        console.log("Auto-export check: Export Data is open.");
       } else {
-        console.log("Auto-export fallback: export/settings UI was not found automatically.");
+        console.log(`Auto-export fallback: ${exportOpenResult.reason ?? 'could not open "Export Data" automatically.'}`);
       }
     } else {
-      console.log("Auto-export fallback: athlete page state was uncertain, skipping export/settings probe.");
+      console.log("Auto-export fallback: athlete page state was uncertain, skipping Export Data automation.");
+    }
+
+    if (exportDataOpened) {
+      console.log("Auto-export check: attempting to fill export date ranges");
+      const fillDatesResult = await tryFillExportDateRanges(page, args.from, args.to);
+      if (fillDatesResult.ok) {
+        datesAutoFilled = true;
+        console.log(
+          `Auto-export check: date range filled automatically (${formatForTrainingPeaksDateInput(args.from)} — ${formatForTrainingPeaksDateInput(args.to)}).`
+        );
+      } else {
+        console.log(`Auto-export fallback: ${fillDatesResult.reason ?? "could not fill export date fields automatically."}`);
+      }
     }
 
     console.log("");
-    console.log("Manual fallback:");
-    console.log(`1. In the opened TrainingPeaks browser, make sure this is the correct athlete: ${student.student_id}`);
-    console.log("2. Open Athlete Account Settings -> Export Data");
-    console.log(`3. Set date range: ${args.from} — ${args.to}`);
-    console.log("4. Download Workout Summary");
-    console.log("5. Download Workout Files");
-    console.log("6. Wait until both files finish downloading");
-    console.log("7. Return to terminal and press Enter");
+    if (datesAutoFilled) {
+      console.log("Auto-export prepared:");
+      console.log("- Export Data is open");
+      console.log(`- Date range was filled: ${args.from} — ${args.to}`);
+      console.log("");
+      console.log("Manual final step:");
+      console.log("1. Click Export in Workout Summary");
+      console.log("2. Click Export in Workout Files");
+      console.log("3. Wait until both ZIP files finish downloading");
+      console.log("4. Return to terminal and press Enter");
+    } else {
+      console.log("Manual fallback:");
+      console.log("1. Open Athlete Account Settings -> Export Data");
+      console.log("2. Set date range manually");
+      console.log("3. Download Workout Summary");
+      console.log("4. Download Workout Files");
+      console.log("5. Press Enter");
+    }
     console.log("If no files are downloaded and no existing ZIPs are found, this student will be skipped and the batch will continue.");
     console.log("");
 
@@ -384,6 +589,15 @@ async function main(): Promise<void> {
       for (const filePath of savedFiles) {
         console.log(`- ${filePath}`);
       }
+
+      const zipFilesAfterDownload = await listZipFiles(exportDir);
+      const exportAssessment = assessExportFiles(zipFilesAfterDownload);
+      logExportAssessment(exportAssessment);
+
+      if (!exportAssessment.summaryZip) {
+        throw new Error("Workout Summary export was not found after the manual export step.");
+      }
+
       return;
     }
 
@@ -398,6 +612,12 @@ async function main(): Promise<void> {
     console.log("Existing ZIP files found:");
     for (const filePath of existingZipFiles) {
       console.log(`- ${filePath}`);
+    }
+
+    const exportAssessment = assessExportFiles(existingZipFiles);
+    logExportAssessment(exportAssessment);
+    if (!exportAssessment.summaryZip) {
+      throw new Error("No new downloads were captured and no Workout Summary export was found in the existing ZIP files.");
     }
 
     const shouldContinue = await confirmYesNo(

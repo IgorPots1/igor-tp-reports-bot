@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { spawn } from "node:child_process";
@@ -116,6 +116,49 @@ function assertExportFolderExists(exportDir: string, skipExport: boolean): void 
   throw new Error(`Export folder does not exist after export step: ${exportDir}`);
 }
 
+async function listZipFiles(exportDir: string): Promise<string[]> {
+  const entries = await readdir(exportDir, { withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isFile() && path.extname(entry.name).toLowerCase() === ".zip")
+    .map((entry) => path.join(exportDir, entry.name))
+    .sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeExportName(filePath: string): string {
+  return path
+    .basename(filePath, path.extname(filePath))
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function isLikelyWorkoutSummaryZip(filePath: string): boolean {
+  const normalized = normalizeExportName(filePath);
+  return normalized.includes("workoutexport") || normalized.includes("workoutsummary");
+}
+
+function isLikelyWorkoutFilesZip(filePath: string): boolean {
+  const normalized = normalizeExportName(filePath);
+  return normalized.includes("workoutfileexport") || normalized.includes("workoutfiles");
+}
+
+async function assertWorkoutSummaryAvailable(exportDir: string): Promise<void> {
+  const zipFiles = await listZipFiles(exportDir);
+  const summaryZip = zipFiles.find((filePath) => isLikelyWorkoutSummaryZip(filePath));
+  const workoutFilesZip = zipFiles.find((filePath) => isLikelyWorkoutFilesZip(filePath));
+
+  if (!summaryZip) {
+    console.log("Workout Summary export was not found. This student cannot be parsed.");
+    throw new Error(`Workout Summary export is required in ${exportDir}`);
+  }
+
+  console.log("Workout Summary export found. Continuing.");
+  console.log(`- ${summaryZip}`);
+
+  if (!workoutFilesZip) {
+    console.log("Workout Files export not found. Continuing because it is optional for weekly reports.");
+  }
+}
+
 export type WeeklyWorkflowResult = {
   summaryPath: string;
   reportMarkdownPath: string;
@@ -153,6 +196,7 @@ export async function runWeeklyWorkflow(args: WeeklyCliArgs): Promise<WeeklyWork
   }
 
   assertExportFolderExists(exportDir, args.skipExport);
+  await assertWorkoutSummaryAvailable(exportDir);
 
   console.log("");
   console.log("Step 2/3: parse week");
