@@ -32,8 +32,6 @@ const TP_RUN_WEEK_COMMAND_PATTERN = /^\/tp_run_week(?:@\w+)?(?:\s+|$)/;
 const TP_JOBS_COMMAND_PATTERN = /^\/tp_jobs(?:@\w+)?(?:\s+|$)/;
 const TP_WEEKLY_COMMAND_PATTERN = /^\/tp_weekly(?:@\w+)?(?:\s+|$)/;
 const TP_COMMAND_PATTERN = /^\/tp(?:_[a-z0-9_]+)?(?:@\w+)?(?:\s+|$)/;
-const TP_ADD_STUDENT_USAGE =
-  "Напиши так: /tp_add_student Olga | https://app.trainingpeaks.com/athlete/...";
 const SHORT_DATE_FORMATTER = new Intl.DateTimeFormat("ru-RU", {
   day: "numeric",
   month: "short",
@@ -58,17 +56,6 @@ type TrainingPeaksWeek = {
   weekFrom: string;
   weekTo: string;
 };
-
-type TrainingPeaksConversationState =
-  | {
-      step: "waiting_for_student_name";
-    }
-  | {
-      step: "waiting_for_student_url";
-      studentName: string;
-    };
-
-const trainingPeaksConversationStates = new Map<string, TrainingPeaksConversationState>();
 
 function getCoachChatIds(): Set<string> {
   const value = process.env.TELEGRAM_COACH_CHAT_IDS?.trim();
@@ -363,37 +350,16 @@ function parseReportCommand(text: string): {
 }
 
 function parseAddStudentCommand(text: string): string {
+  if (TP_ADD_COMMAND_PATTERN.test(text)) {
+    return text.replace(TP_ADD_COMMAND_PATTERN, "").trim();
+  }
+
   return text.replace(TP_ADD_STUDENT_COMMAND_PATTERN, "").trim();
 }
 
 function getTpAddStudentNamePreview(rawInput: string): string {
   const separatorIndex = rawInput.indexOf("|");
   return (separatorIndex >= 0 ? rawInput.slice(0, separatorIndex) : rawInput).trim();
-}
-
-function getConversationStateKey(chatId: number | string): string {
-  return String(chatId);
-}
-
-function getTrainingPeaksConversationState(
-  chatId: number | string
-): TrainingPeaksConversationState | null {
-  return trainingPeaksConversationStates.get(getConversationStateKey(chatId)) ?? null;
-}
-
-function setTrainingPeaksConversationState(
-  chatId: number | string,
-  state: TrainingPeaksConversationState
-): void {
-  trainingPeaksConversationStates.set(getConversationStateKey(chatId), state);
-}
-
-export function hasActiveTrainingPeaksConversation(chatId: number | string): boolean {
-  return trainingPeaksConversationStates.has(getConversationStateKey(chatId));
-}
-
-export function cancelTrainingPeaksConversation(chatId: number | string): void {
-  trainingPeaksConversationStates.delete(getConversationStateKey(chatId));
 }
 
 function normalizeTpRunCommand(text: string): string {
@@ -605,7 +571,7 @@ export function getTrainingPeaksHelpLines(): string[] {
     "/tp_status — статусы за последнюю синхронизированную неделю",
     "/tp_status <from> <to> — статусы за выбранную неделю",
     "/tp_students — ученики и их последний статус",
-    "/tp_add — добавить ученика по шагам",
+    "👤 /tp_add Имя | ссылка — добавить ученика",
     "/tp_add_student Имя | ссылка",
     "/tp_week — подсказка по неделям",
     "/tp_run last|current|YYYY-MM-DD YYYY-MM-DD",
@@ -623,7 +589,7 @@ async function handleTrainingPeaksMain(parsedMessage: ParsedTelegramUpdate): Pro
       "",
       "📅 /tp_week — выбрать неделю",
       "🚀 /tp_run last — запустить прошлую неделю",
-      "👤 /tp_add — добавить ученика",
+      "👤 /tp_add Имя | ссылка — добавить ученика",
       "📋 /tp_students — список учеников",
       "📊 /tp_jobs — статус задач",
       "📄 /tp_report Olga last — отчет",
@@ -681,7 +647,14 @@ async function handleTrainingPeaksAddStudent(
   const rawInput = parseAddStudentCommand(text);
 
   if (!rawInput) {
-    await sendTrainingPeaksMessage(parsedMessage.chatId, TP_ADD_STUDENT_USAGE);
+    await sendTrainingPeaksMessage(
+      parsedMessage.chatId,
+      [
+        "Добавь ученика одной командой:",
+        "",
+        "/tp_add Olga Slastnaia | https://app.trainingpeaks.com/#calendar/athletes/...",
+      ].join("\n")
+    );
     return;
   }
 
@@ -732,91 +705,6 @@ async function handleTrainingPeaksAddStudent(
       "",
       "Локальный Mac runner подтянет этого ученика из Supabase при следующем запуске tp-agent-once.",
     ].join("\n")
-  );
-}
-
-async function handleTrainingPeaksAddConversationStart(
-  parsedMessage: ParsedTelegramUpdate
-): Promise<void> {
-  setTrainingPeaksConversationState(parsedMessage.chatId, {
-    step: "waiting_for_student_name",
-  });
-  await sendTrainingPeaksMessage(parsedMessage.chatId, "Напиши имя ученика");
-}
-
-async function handleTrainingPeaksConversationReply(
-  parsedMessage: ParsedTelegramUpdate,
-  text: string
-): Promise<void> {
-  const state = getTrainingPeaksConversationState(parsedMessage.chatId);
-
-  if (!state) {
-    return;
-  }
-
-  const normalizedText = text.trim();
-
-  if (state.step === "waiting_for_student_name") {
-    if (!normalizedText) {
-      cancelTrainingPeaksConversation(parsedMessage.chatId);
-      await sendTrainingPeaksMessage(parsedMessage.chatId, "Имя ученика не должно быть пустым.");
-      return;
-    }
-
-    setTrainingPeaksConversationState(parsedMessage.chatId, {
-      step: "waiting_for_student_url",
-      studentName: normalizedText,
-    });
-    await sendTrainingPeaksMessage(parsedMessage.chatId, "Теперь пришли ссылку TrainingPeaks");
-    return;
-  }
-
-  cancelTrainingPeaksConversation(parsedMessage.chatId);
-
-  const result = await addTrainingPeaksStudentFromCommand(
-    `${state.studentName} | ${normalizedText}`
-  );
-
-  if (!result.ok) {
-    if (result.reason === "empty_name") {
-      await sendTrainingPeaksMessage(parsedMessage.chatId, "Имя ученика не должно быть пустым.");
-      return;
-    }
-
-    if (result.reason === "invalid_url") {
-      await sendTrainingPeaksMessage(
-        parsedMessage.chatId,
-        "Ссылка на TrainingPeaks должна начинаться с https://"
-      );
-      return;
-    }
-
-    if (result.reason === "duplicate_student") {
-      await sendTrainingPeaksMessage(
-        parsedMessage.chatId,
-        `Ученик "${state.studentName}" уже существует.`
-      );
-      return;
-    }
-
-    if (result.reason === "duplicate_url") {
-      await sendTrainingPeaksMessage(
-        parsedMessage.chatId,
-        "Этот URL TrainingPeaks уже привязан к другому ученику."
-      );
-      return;
-    }
-
-    await sendTrainingPeaksMessage(
-      parsedMessage.chatId,
-      "Не смог добавить ученика в Supabase. Попробуй позже."
-    );
-    return;
-  }
-
-  await sendTrainingPeaksMessage(
-    parsedMessage.chatId,
-    `✅ Ученик добавлен: ${result.student.studentName}`
   );
 }
 
@@ -918,41 +806,7 @@ export async function handleTrainingPeaksTelegramCommand(
   const command = getTrainingPeaksCommand(text);
 
   if (!command) {
-    if (!hasActiveTrainingPeaksConversation(parsedMessage.chatId)) {
-      return "ignored";
-    }
-
-    if (text.startsWith("/")) {
-      cancelTrainingPeaksConversation(parsedMessage.chatId);
-      return "ignored";
-    }
-
-    if (!isCoachChat(parsedMessage.chatId)) {
-      cancelTrainingPeaksConversation(parsedMessage.chatId);
-      return "ignored";
-    }
-
-    try {
-      await handleTrainingPeaksConversationReply(parsedMessage, text);
-      return "handled";
-    } catch (error) {
-      console.error("TrainingPeaks Telegram conversation failed", {
-        chatId: parsedMessage.chatId,
-        messageId: parsedMessage.messageId,
-        error,
-      });
-
-      cancelTrainingPeaksConversation(parsedMessage.chatId);
-      await sendTrainingPeaksMessage(
-        parsedMessage.chatId,
-        "Не смог загрузить данные TrainingPeaks. Попробуй позже."
-      );
-      return "handled";
-    }
-  }
-
-  if (command !== "tp_add") {
-    cancelTrainingPeaksConversation(parsedMessage.chatId);
+    return "ignored";
   }
 
   if (!isCoachChat(parsedMessage.chatId)) {
@@ -977,7 +831,7 @@ export async function handleTrainingPeaksTelegramCommand(
     }
 
     if (command === "tp_add") {
-      await handleTrainingPeaksAddConversationStart(parsedMessage);
+      await handleTrainingPeaksAddStudent(parsedMessage, text);
       return "handled";
     }
 

@@ -1,9 +1,7 @@
 import { parseTelegramUpdate } from "@/features/telegram/parser";
 import { sendTelegramMessage } from "@/features/telegram/telegram-client";
 import {
-  cancelTrainingPeaksConversation,
   getTrainingPeaksHelpLines,
-  hasActiveTrainingPeaksConversation,
   handleTrainingPeaksTelegramCommand,
   isTrainingPeaksCommand,
 } from "@/features/telegram/trainingpeaks";
@@ -86,19 +84,11 @@ export async function POST(request: Request) {
   const messageText = parsedMessage.text?.trim() ?? "";
 
   if (HELP_COMMAND_PATTERN.test(messageText) || START_COMMAND_PATTERN.test(messageText)) {
-    cancelTrainingPeaksConversation(parsedMessage.chatId);
     await sendTelegramMessage(parsedMessage.chatId, getTrainingPeaksHelpMessage());
     return okResponse();
   }
 
-  if (messageText.startsWith("/")) {
-    cancelTrainingPeaksConversation(parsedMessage.chatId);
-  }
-
-  if (
-    isTrainingPeaksCommand(messageText) ||
-    (!messageText.startsWith("/") && hasActiveTrainingPeaksConversation(parsedMessage.chatId))
-  ) {
+  if (isTrainingPeaksCommand(messageText)) {
     await handleTrainingPeaksTelegramCommand(parsedMessage, messageText);
     return okResponse();
   }
