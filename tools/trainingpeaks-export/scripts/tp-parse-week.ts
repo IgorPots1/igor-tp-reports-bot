@@ -12,8 +12,11 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { gunzip as gunzipCallback } from "node:zlib";
 
 import { parse } from "csv-parse/sync";
+import FitParser from "fit-file-parser";
 import * as unzipper from "unzipper";
 
 type CliArgs = {
@@ -293,6 +296,81 @@ type WorkoutFilesSource = {
   present: boolean;
   files: WorkoutFileEntry[];
   unsupported_files: UnsupportedWorkoutFileEntry[];
+  fit_diagnostics: FitDiagnostics;
+};
+
+type FitRecordFieldsPresent = {
+  distance: boolean;
+  speed: boolean;
+  enhanced_speed: boolean;
+  heart_rate: boolean;
+  cadence: boolean;
+  power: boolean;
+};
+
+type FitRecordFieldCounts = {
+  distance: number;
+  speed: number;
+  enhanced_speed: number;
+  heart_rate: number;
+  cadence: number;
+  power: number;
+};
+
+type FitSampleRecord = {
+  timestamp?: string | null;
+  distance?: number | null;
+  speed?: number | null;
+  enhanced_speed?: number | null;
+  heart_rate?: number | null;
+  cadence?: number | null;
+  power?: number | null;
+};
+
+type FitDiagnostics = {
+  status: "parsed_sample" | "parse_failed" | "not_available";
+  parser: "fit-file-parser";
+  sample_strategy: "first_fit_gz_sorted";
+  sampled_zip_path?: string;
+  sampled_entry_name?: string;
+  error?: string;
+  session_count?: number;
+  laps_count?: number;
+  records_count?: number;
+  sport?: string | null;
+  session_start_time?: string | null;
+  total_timer_time_s?: number | null;
+  total_elapsed_time_s?: number | null;
+  total_distance_m?: number | null;
+  first_record_timestamp?: string | null;
+  last_record_timestamp?: string | null;
+  record_fields_present?: FitRecordFieldsPresent;
+  record_field_counts?: FitRecordFieldCounts;
+  sample_record?: FitSampleRecord;
+};
+
+type FitRecordLike = {
+  timestamp?: string;
+  distance?: number;
+  speed?: number;
+  enhanced_speed?: number;
+  heart_rate?: number;
+  cadence?: number;
+  power?: number;
+};
+
+type FitSessionLike = {
+  sport?: string;
+  start_time?: string;
+  total_timer_time?: number;
+  total_elapsed_time?: number;
+  total_distance?: number;
+};
+
+type ParsedFitLike = {
+  sessions?: FitSessionLike[];
+  laps?: unknown[];
+  records?: FitRecordLike[];
 };
 
 type CandidateMatch<T> = {
@@ -339,6 +417,7 @@ const DISTANCE_DELTA_ABSOLUTE_THRESHOLD_KM = 1;
 const DELTA_PERCENT_THRESHOLD = 20;
 const HR_DELTA_THRESHOLD_BPM = 3;
 const PACE_DELTA_THRESHOLD_MINUTES = 10 / 60;
+const gunzip = promisify(gunzipCallback);
 
 function debugLog(...args: unknown[]): void {
   if (DEBUG) {
@@ -1635,6 +1714,192 @@ function getWorkoutFileExtension(entryName: string): string {
   return "other";
 }
 
+function buildNotAvailableFitDiagnostics(): FitDiagnostics {
+  return {
+    status: "not_available",
+    parser: "fit-file-parser",
+    sample_strategy: "first_fit_gz_sorted"
+  };
+}
+
+function trimFitErrorMessage(error: unknown): string {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : JSON.stringify(error);
+  const normalized = message.replace(/\s+/g, " ").trim();
+  return normalized.length > 240 ? `${normalized.slice(0, 237)}...` : normalized;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function createEmptyFitRecordFieldCounts(): FitRecordFieldCounts {
+  return {
+    distance: 0,
+    speed: 0,
+    enhanced_speed: 0,
+    heart_rate: 0,
+    cadence: 0,
+    power: 0
+  };
+}
+
+function createRecordFieldsPresent(counts: FitRecordFieldCounts): FitRecordFieldsPresent {
+  return {
+    distance: counts.distance > 0,
+    speed: counts.speed > 0,
+    enhanced_speed: counts.enhanced_speed > 0,
+    heart_rate: counts.heart_rate > 0,
+    cadence: counts.cadence > 0,
+    power: counts.power > 0
+  };
+}
+
+function buildFitSampleRecord(record: FitRecordLike | undefined): FitSampleRecord | undefined {
+  if (!record) {
+    return undefined;
+  }
+
+  return {
+    timestamp: record.timestamp ?? null,
+    distance: isFiniteNumber(record.distance) ? record.distance : null,
+    speed: isFiniteNumber(record.speed) ? record.speed : null,
+    enhanced_speed: isFiniteNumber(record.enhanced_speed) ? record.enhanced_speed : null,
+    heart_rate: isFiniteNumber(record.heart_rate) ? record.heart_rate : null,
+    cadence: isFiniteNumber(record.cadence) ? record.cadence : null,
+    power: isFiniteNumber(record.power) ? record.power : null
+  };
+}
+
+function pickRepresentativeFitRecord(records: FitRecordLike[]): FitRecordLike | undefined {
+  return records.find(
+    (record) =>
+      isFiniteNumber(record.distance) ||
+      isFiniteNumber(record.speed) ||
+      isFiniteNumber(record.enhanced_speed) ||
+      isFiniteNumber(record.heart_rate) ||
+      isFiniteNumber(record.cadence) ||
+      isFiniteNumber(record.power)
+  ) ?? records[0];
+}
+
+function summarizeParsedFit(
+  parsedFit: ParsedFitLike,
+  sampledFile: WorkoutFileEntry
+): FitDiagnostics {
+  const sessions = Array.isArray(parsedFit.sessions) ? parsedFit.sessions : [];
+  const laps = Array.isArray(parsedFit.laps) ? parsedFit.laps : [];
+  const records = Array.isArray(parsedFit.records) ? parsedFit.records : [];
+  const firstSession = sessions[0];
+  const firstRecord = records[0];
+  const lastRecord = records.at(-1);
+  const fieldCounts = createEmptyFitRecordFieldCounts();
+
+  for (const record of records) {
+    if (isFiniteNumber(record.distance)) {
+      fieldCounts.distance += 1;
+    }
+    if (isFiniteNumber(record.speed)) {
+      fieldCounts.speed += 1;
+    }
+    if (isFiniteNumber(record.enhanced_speed)) {
+      fieldCounts.enhanced_speed += 1;
+    }
+    if (isFiniteNumber(record.heart_rate)) {
+      fieldCounts.heart_rate += 1;
+    }
+    if (isFiniteNumber(record.cadence)) {
+      fieldCounts.cadence += 1;
+    }
+    if (isFiniteNumber(record.power)) {
+      fieldCounts.power += 1;
+    }
+  }
+
+  return {
+    status: "parsed_sample",
+    parser: "fit-file-parser",
+    sample_strategy: "first_fit_gz_sorted",
+    sampled_zip_path: sampledFile.zip_path,
+    sampled_entry_name: sampledFile.entry_name,
+    session_count: sessions.length,
+    laps_count: laps.length,
+    records_count: records.length,
+    sport: firstSession?.sport ?? null,
+    session_start_time: firstSession?.start_time ?? null,
+    total_timer_time_s: isFiniteNumber(firstSession?.total_timer_time)
+      ? firstSession.total_timer_time
+      : null,
+    total_elapsed_time_s: isFiniteNumber(firstSession?.total_elapsed_time)
+      ? firstSession.total_elapsed_time
+      : null,
+    total_distance_m: isFiniteNumber(firstSession?.total_distance)
+      ? firstSession.total_distance
+      : null,
+    first_record_timestamp: firstRecord?.timestamp ?? null,
+    last_record_timestamp: lastRecord?.timestamp ?? null,
+    record_fields_present: createRecordFieldsPresent(fieldCounts),
+    record_field_counts: fieldCounts,
+    sample_record: buildFitSampleRecord(pickRepresentativeFitRecord(records))
+  };
+}
+
+async function readWorkoutFileEntryBuffer(
+  sampledFile: WorkoutFileEntry
+): Promise<Buffer<ArrayBufferLike>> {
+  const zipPath = path.join(toolRoot, sampledFile.zip_path);
+  const directory = await unzipper.Open.file(zipPath);
+  const entry = directory.files.find(
+    (candidate) => candidate.type === "File" && toPosixPath(candidate.path) === sampledFile.entry_name
+  );
+
+  if (!entry) {
+    throw new Error(`ZIP entry not found: ${sampledFile.entry_name}`);
+  }
+
+  const entryBuffer = await entry.buffer();
+  if (sampledFile.compressed) {
+    return await gunzip(entryBuffer);
+  }
+
+  return entryBuffer;
+}
+
+async function parseFitDiagnosticsSample(workoutFilesSource: WorkoutFilesSource): Promise<FitDiagnostics> {
+  const sampledFile =
+    workoutFilesSource.files.find((file) => file.format === "fit.gz") ?? workoutFilesSource.files[0];
+
+  if (!sampledFile) {
+    return buildNotAvailableFitDiagnostics();
+  }
+
+  try {
+    const fitBuffer = await readWorkoutFileEntryBuffer(sampledFile);
+    const fitParser = new FitParser({
+      mode: "list",
+      lengthUnit: "m",
+      speedUnit: "m/s",
+      force: false
+    });
+    const parsedFit = await fitParser.parseAsync(fitBuffer);
+
+    return summarizeParsedFit(parsedFit as ParsedFitLike, sampledFile);
+  } catch (error: unknown) {
+    return {
+      status: "parse_failed",
+      parser: "fit-file-parser",
+      sample_strategy: "first_fit_gz_sorted",
+      sampled_zip_path: sampledFile.zip_path,
+      sampled_entry_name: sampledFile.entry_name,
+      error: trimFitErrorMessage(error)
+    };
+  }
+}
+
 async function discoverWorkoutFilesSource(exportDir: string): Promise<WorkoutFilesSource> {
   const files = (await listFilesRecursively(exportDir)).sort((a, b) => a.localeCompare(b));
   const workoutFilesZips = files.filter(
@@ -1644,7 +1909,8 @@ async function discoverWorkoutFilesSource(exportDir: string): Promise<WorkoutFil
   const source: WorkoutFilesSource = {
     present: workoutFilesZips.length > 0,
     files: [],
-    unsupported_files: []
+    unsupported_files: [],
+    fit_diagnostics: buildNotAvailableFitDiagnostics()
   };
 
   for (const zipPath of workoutFilesZips) {
@@ -1704,6 +1970,7 @@ async function discoverWorkoutFilesSource(exportDir: string): Promise<WorkoutFil
       ? a.entry_name.localeCompare(b.entry_name)
       : a.zip_path.localeCompare(b.zip_path)
   );
+  source.fit_diagnostics = await parseFitDiagnosticsSample(source);
 
   return source;
 }
