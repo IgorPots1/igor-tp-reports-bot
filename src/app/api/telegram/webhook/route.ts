@@ -4,7 +4,8 @@ import {
   sendTelegramMessage,
 } from "@/features/telegram/telegram-client";
 import {
-  getTrainingPeaksHelpLines,
+  handleTrainingPeaksTelegramHelp,
+  handleTrainingPeaksTelegramReplyKeyboardMessage,
   handleTrainingPeaksTelegramCallback,
   handleTrainingPeaksTelegramCommand,
   isTrainingPeaksCallback,
@@ -20,8 +21,8 @@ const jsonHeaders = {
 
 const HELP_COMMAND_PATTERN = /^\/help(?:@\w+)?(?:\s+|$)/;
 const START_COMMAND_PATTERN = /^\/start(?:@\w+)?(?:\s+|$)/;
-const TP_ONLY_MESSAGE =
-  "Этот бот только для TrainingPeaks отчётов. Используй /help.";
+const UNKNOWN_COMMAND_MESSAGE =
+  "Не поняла команду. Нажмите «🏠 Меню» или отправьте /start.";
 let hasLoggedMissingWebhookSecretWarning = false;
 
 function okResponse() {
@@ -36,10 +37,6 @@ function unauthorizedResponse() {
     status: 401,
     headers: jsonHeaders,
   });
-}
-
-function getTrainingPeaksHelpMessage(): string {
-  return ["Команды бота:", "/help — помощь", "/start — помощь", "", ...getTrainingPeaksHelpLines()].join("\n");
 }
 
 function isTelegramWebhookRequestAuthorized(request: Request): boolean {
@@ -99,8 +96,17 @@ export async function POST(request: Request) {
 
   const messageText = parsedMessage.text?.trim() ?? "";
 
-  if (HELP_COMMAND_PATTERN.test(messageText) || START_COMMAND_PATTERN.test(messageText)) {
-    await sendTelegramMessage(parsedMessage.chatId, getTrainingPeaksHelpMessage());
+  if (HELP_COMMAND_PATTERN.test(messageText)) {
+    await handleTrainingPeaksTelegramHelp(parsedMessage);
+    return okResponse();
+  }
+
+  if (START_COMMAND_PATTERN.test(messageText)) {
+    await handleTrainingPeaksTelegramCommand(parsedMessage, "/tp");
+    return okResponse();
+  }
+
+  if ((await handleTrainingPeaksTelegramReplyKeyboardMessage(parsedMessage, messageText)) === "handled") {
     return okResponse();
   }
 
@@ -109,7 +115,7 @@ export async function POST(request: Request) {
     return okResponse();
   }
 
-  await sendTelegramMessage(parsedMessage.chatId, TP_ONLY_MESSAGE);
+  await sendTelegramMessage(parsedMessage.chatId, UNKNOWN_COMMAND_MESSAGE);
 
   return okResponse();
 }

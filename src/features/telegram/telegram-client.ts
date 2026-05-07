@@ -1,12 +1,17 @@
-import type { TelegramInlineKeyboardMarkup } from "@/features/telegram/types";
+import type {
+  TelegramInlineKeyboardMarkup,
+  TelegramReplyMarkup,
+} from "@/features/telegram/types";
 
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
 
 type SendTelegramMessageOptions = {
-  replyMarkup?: TelegramInlineKeyboardMarkup;
+  replyMarkup?: TelegramReplyMarkup;
 };
 
-type EditTelegramMessageTextOptions = SendTelegramMessageOptions;
+type EditTelegramMessageTextOptions = {
+  replyMarkup?: TelegramInlineKeyboardMarkup;
+};
 
 function getTelegramBotToken(): string {
   const token = process.env.TELEGRAM_BOT_TOKEN;

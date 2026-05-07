@@ -1,5 +1,6 @@
 import type {
   ParsedTelegramCallbackUpdate,
+  ParsedTelegramMessageUpdate,
   ParsedTelegramUpdate,
 } from "@/features/telegram/parser";
 import {
@@ -24,12 +25,15 @@ import {
   editTelegramMessageText,
   sendTelegramMessage,
 } from "@/features/telegram/telegram-client";
-import type { TelegramInlineKeyboardMarkup } from "@/features/telegram/types";
+import type {
+  TelegramInlineKeyboardMarkup,
+  TelegramReplyKeyboardMarkup,
+} from "@/features/telegram/types";
 
 const COACH_ONLY_MESSAGE = "⛔ Эта команда доступна только тренеру.";
 const TP_WEEKLY_DISABLED_MESSAGE =
   "⚙️ Запуск TrainingPeaks workflow из Telegram отключён. TrainingPeaks остаётся только в read-only режиме.";
-const TP_UNKNOWN_COMMAND_MESSAGE = "ℹ️ Команда TrainingPeaks не распознана. Используй /tp.";
+const TP_UNKNOWN_COMMAND_MESSAGE = "Не поняла команду. Нажмите «🏠 Меню» или отправьте /start.";
 const TELEGRAM_MESSAGE_LIMIT = 4000;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const STUDENTS_PAGE_SIZE = 8;
@@ -41,6 +45,11 @@ const TP_CALLBACK_WEEK_CURRENT = "tp:wc";
 const TP_CALLBACK_JOBS = "tp:j";
 const TP_CALLBACK_HELP = "tp:h";
 const TP_CALLBACK_REPORTS = "tp:reports";
+const TP_REPLY_BUTTON_MENU = "🏠 Меню";
+const TP_REPLY_BUTTON_STUDENTS = "👥 Ученики";
+const TP_REPLY_BUTTON_WEEK = "▶️ Неделя";
+const TP_REPLY_BUTTON_JOBS = "🧾 Задачи";
+const TP_REPLY_KEYBOARD_HINT_MESSAGE = "Быстрые кнопки доступны ниже.";
 
 const TP_MAIN_COMMAND_PATTERN = /^\/tp(?:@\w+)?(?:\s+|$)/;
 const TP_STATUS_COMMAND_PATTERN = /^\/tp_status(?:@\w+)?(?:\s+|$)/;
@@ -103,6 +112,8 @@ type ParsedTrainingPeaksCallback =
   | { kind: "jobs" }
   | { kind: "help" }
   | { kind: "reports_hint" };
+
+type TrainingPeaksReplyKeyboardAction = "main_menu" | "students" | "week_menu" | "jobs";
 
 function getCoachChatIds(): Set<string> {
   const value = process.env.TELEGRAM_COACH_CHAT_IDS?.trim();
@@ -293,6 +304,23 @@ function createInlineKeyboardMarkup(
   return {
     inline_keyboard: rows,
   };
+}
+
+function getTrainingPeaksReplyKeyboardMarkup(): TelegramReplyKeyboardMarkup {
+  return {
+    keyboard: [
+      [{ text: TP_REPLY_BUTTON_MENU }, { text: TP_REPLY_BUTTON_STUDENTS }],
+      [{ text: TP_REPLY_BUTTON_WEEK }, { text: TP_REPLY_BUTTON_JOBS }],
+    ],
+    resize_keyboard: true,
+    is_persistent: true,
+  };
+}
+
+async function sendTrainingPeaksReplyKeyboard(chatId: number | string): Promise<void> {
+  await sendTelegramMessage(chatId, TP_REPLY_KEYBOARD_HINT_MESSAGE, {
+    replyMarkup: getTrainingPeaksReplyKeyboardMarkup(),
+  });
 }
 
 async function sendTrainingPeaksMenuMessage(
@@ -671,7 +699,7 @@ function getJobCountsSummary(resultJson: unknown): string | null {
 
   if (reportsFound !== null) {
     parts.push(
-      studentsExpected !== null ? `отчетов: ${reportsFound}/${studentsExpected}` : `отчетов: ${reportsFound}`
+      studentsExpected !== null ? `отчётов: ${reportsFound}/${studentsExpected}` : `отчётов: ${reportsFound}`
     );
   }
 
@@ -680,6 +708,26 @@ function getJobCountsSummary(resultJson: unknown): string | null {
   }
 
   return parts.length > 0 ? parts.join(", ") : null;
+}
+
+function getJobStatusLabel(status: string): string {
+  if (status === "queued") {
+    return "в очереди";
+  }
+
+  if (status === "running") {
+    return "выполняется";
+  }
+
+  if (status === "completed") {
+    return "завершена";
+  }
+
+  if (status === "failed") {
+    return "ошибка";
+  }
+
+  return status;
 }
 
 function formatJobsMessage(
@@ -692,26 +740,27 @@ function formatJobsMessage(
   }[]
 ): string {
   return [
-    "Задачи TrainingPeaks:",
+    "🧾 Задачи TrainingPeaks:",
     "",
     ...jobs.flatMap((job) => {
       const shortError = shortenJobError(job.errorMessage);
       const countsSummary = getJobCountsSummary(job.resultJson);
       const hasWarnings = jobHasWarnings(job.resultJson);
       const missingStudentsSummary = formatMissingStudentsSummary(job.resultJson);
+      const statusLabel = getJobStatusLabel(job.status);
 
       if (job.status === "failed" && shortError) {
-        return [`• ${job.status} — ${job.weekFrom} — ${job.weekTo}: ${shortError}`];
+        return [`• ${statusLabel} — ${job.weekFrom} — ${job.weekTo}: ${shortError}`];
       }
 
       if (job.status === "completed" && countsSummary) {
         return [
-          `• ${job.status} — ${job.weekFrom} — ${job.weekTo} — ${countsSummary}${hasWarnings ? " ⚠️" : ""}`,
+          `• ${statusLabel} — ${job.weekFrom} — ${job.weekTo} — ${countsSummary}${hasWarnings ? " ⚠️" : ""}`,
           ...(missingStudentsSummary ? [`  Не готово: ${missingStudentsSummary}`] : []),
         ];
       }
 
-      return [`• ${job.status} — ${job.weekFrom} — ${job.weekTo}`];
+      return [`• ${statusLabel} — ${job.weekFrom} — ${job.weekTo}`];
     }),
   ].join("\n");
 }
@@ -726,22 +775,35 @@ export function isTrainingPeaksCommand(text: string): boolean {
 
 export function getTrainingPeaksHelpLines(): string[] {
   return [
-    "TrainingPeaks отчёты:",
-    "/tp — главное меню",
-    "/tp_status — статусы за последнюю синхронизированную неделю",
-    "/tp_status <from> <to> — статусы за выбранную неделю",
-    "/tp_students — ученики и их последний статус",
-    "/tp_student <ученик> — карточка ученика",
-    "/tp_disable_student <ученик> — отключить из будущих недельных выгрузок",
-    "/tp_enable_student <ученик> — включить в будущие недельные выгрузки",
-    "👤 /tp_add Имя | ссылка — добавить ученика",
-    "/tp_add_student Имя | ссылка",
-    "/tp_week — подсказка по неделям",
-    "/tp_run last|current|YYYY-MM-DD YYYY-MM-DD",
-    "/tp_run_week last|current|previous|YYYY-MM-DD YYYY-MM-DD",
-    "/tp_jobs",
-    "/tp_report <ученик> [last|current|from to] — текст отчёта",
+    "Что можно сделать:",
+    "",
+    "👥 Ученики — открыть список учеников",
+    "▶️ Запустить неделю — поставить в очередь прошлую или текущую неделю",
+    "🧾 Задачи — посмотреть последние запуски",
+    "❓ Помощь — показать эту подсказку",
+    "",
+    "Команды тоже работают, но обычно быстрее пользоваться кнопками.",
   ];
+}
+
+function getTrainingPeaksReplyKeyboardAction(text: string): TrainingPeaksReplyKeyboardAction | null {
+  if (text === TP_REPLY_BUTTON_MENU) {
+    return "main_menu";
+  }
+
+  if (text === TP_REPLY_BUTTON_STUDENTS) {
+    return "students";
+  }
+
+  if (text === TP_REPLY_BUTTON_WEEK) {
+    return "week_menu";
+  }
+
+  if (text === TP_REPLY_BUTTON_JOBS) {
+    return "jobs";
+  }
+
+  return null;
 }
 
 export function isTrainingPeaksCallback(data: string | null): boolean {
@@ -807,15 +869,14 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
 }
 
 function getTrainingPeaksMainMenuText(): string {
-  return ["🏃 TrainingPeaks Reports Bot", "", "Выбери действие:"].join("\n");
+  return ["Главное меню", "Выберите действие:"].join("\n");
 }
 
 function getTrainingPeaksMainMenuMarkup(): TelegramInlineKeyboardMarkup {
   return createInlineKeyboardMarkup([
     [createMenuButton("👥 Ученики", "tp:s:0")],
     [createMenuButton("▶️ Запустить неделю", TP_CALLBACK_WEEK_MENU)],
-    [createMenuButton("🧾 Jobs", TP_CALLBACK_JOBS)],
-    [createMenuButton("📄 Отчёты", TP_CALLBACK_REPORTS)],
+    [createMenuButton("🧾 Задачи", TP_CALLBACK_JOBS)],
     [createMenuButton("❓ Помощь", TP_CALLBACK_HELP)],
   ]);
 }
@@ -908,7 +969,6 @@ function getWeekMenuMarkup(): TelegramInlineKeyboardMarkup {
     [createMenuButton("Прошлая неделя", TP_CALLBACK_WEEK_LAST)],
     [createMenuButton("Текущая неделя", TP_CALLBACK_WEEK_CURRENT)],
     [createMenuButton("⬅️ Назад", TP_CALLBACK_MAIN_MENU)],
-    [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
   ]);
 }
 
@@ -920,7 +980,7 @@ function getJobsMenuMarkup(): TelegramInlineKeyboardMarkup {
 }
 
 function getReportsHintText(): string {
-  return "Открой ученика в разделе «Ученики», затем нажми «Отчёт».";
+  return "Отчёты открываются из карточки ученика: 👥 Ученики -> выберите ученика -> Отчёт.";
 }
 
 function getReportsHintMarkup(): TelegramInlineKeyboardMarkup {
@@ -960,6 +1020,7 @@ async function showTrainingPeaksMainMenu(
     getTrainingPeaksMainMenuText(),
     getTrainingPeaksMainMenuMarkup()
   );
+  await sendTrainingPeaksReplyKeyboard(parsedMessage.chatId);
 }
 
 async function showTrainingPeaksStudentsPage(
@@ -984,6 +1045,7 @@ async function showTrainingPeaksStudentsPage(
       getStudentsEmptyMenuText(),
       getStudentsEmptyMenuMarkup()
     );
+    await sendTrainingPeaksReplyKeyboard(parsedMessage.chatId);
     return;
   }
 
@@ -1000,6 +1062,7 @@ async function showTrainingPeaksStudentsPage(
   }
 
   await sendTrainingPeaksMenuMessage(parsedMessage.chatId, text, markup);
+  await sendTrainingPeaksReplyKeyboard(parsedMessage.chatId);
 }
 
 async function showTrainingPeaksStudentCardMenu(
@@ -1046,6 +1109,7 @@ async function showTrainingPeaksWeekMenu(
   }
 
   await sendTrainingPeaksMenuMessage(parsedMessage.chatId, getWeekMenuText(), getWeekMenuMarkup());
+  await sendTrainingPeaksReplyKeyboard(parsedMessage.chatId);
 }
 
 async function showTrainingPeaksJobsMenu(
@@ -1061,6 +1125,7 @@ async function showTrainingPeaksJobsMenu(
   }
 
   await sendTrainingPeaksMenuMessage(parsedMessage.chatId, text, markup);
+  await sendTrainingPeaksReplyKeyboard(parsedMessage.chatId);
 }
 
 async function showTrainingPeaksReportsHint(
@@ -1081,6 +1146,7 @@ async function showTrainingPeaksReportsHint(
     getReportsHintText(),
     getReportsHintMarkup()
   );
+  await sendTrainingPeaksReplyKeyboard(parsedMessage.chatId);
 }
 
 async function showTrainingPeaksHelpMenu(
@@ -1097,6 +1163,66 @@ async function showTrainingPeaksHelpMenu(
   }
 
   await sendTrainingPeaksMenuMessage(parsedMessage.chatId, getHelpMenuText(), getHelpMenuMarkup());
+  await sendTrainingPeaksReplyKeyboard(parsedMessage.chatId);
+}
+
+export async function handleTrainingPeaksTelegramHelp(
+  parsedMessage: ParsedTelegramMessageUpdate
+): Promise<void> {
+  await showTrainingPeaksHelpMenu(parsedMessage);
+}
+
+export async function handleTrainingPeaksTelegramReplyKeyboardMessage(
+  parsedMessage: ParsedTelegramMessageUpdate,
+  text: string
+): Promise<"handled" | "ignored"> {
+  const action = getTrainingPeaksReplyKeyboardAction(text);
+
+  if (!action) {
+    return "ignored";
+  }
+
+  if (!isCoachChat(parsedMessage.chatId)) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, COACH_ONLY_MESSAGE);
+    return "handled";
+  }
+
+  try {
+    if (action === "main_menu") {
+      await showTrainingPeaksMainMenu(parsedMessage);
+      return "handled";
+    }
+
+    if (action === "students") {
+      await showTrainingPeaksStudentsPage(parsedMessage, 0);
+      return "handled";
+    }
+
+    if (action === "week_menu") {
+      await showTrainingPeaksWeekMenu(parsedMessage);
+      return "handled";
+    }
+
+    if (action === "jobs") {
+      await showTrainingPeaksJobsMenu(parsedMessage);
+      return "handled";
+    }
+  } catch (error) {
+    console.error("TrainingPeaks Telegram reply keyboard action failed", {
+      chatId: parsedMessage.chatId,
+      messageId: parsedMessage.messageId,
+      text,
+      error,
+    });
+
+    await sendTrainingPeaksMessage(
+      parsedMessage.chatId,
+      "Не смог загрузить данные TrainingPeaks. Попробуй позже."
+    );
+    return "handled";
+  }
+
+  return "handled";
 }
 
 async function handleTrainingPeaksMain(parsedMessage: ParsedTelegramUpdate): Promise<void> {
@@ -1362,7 +1488,7 @@ async function handleTrainingPeaksRunWeek(
   await sendTrainingPeaksMessage(
     parsedMessage.chatId,
     [
-      `✅ Задача создана: недельные отчеты ${formatWeekIso(result.job)}.`,
+      `✅ Задача создана: недельные отчёты ${formatWeekIso(result.job)}.`,
       "",
       "Теперь на Mac запусти:",
       "cd ~/igor-tp-reports-bot/tools/trainingpeaks-export && npm run tp-agent-once",
@@ -1515,7 +1641,7 @@ export async function handleTrainingPeaksTelegramCallback(
         parsedMessage.chatId,
         parsedMessage.messageId,
         [
-          `✅ Задача создана: недельные отчеты ${formatWeekIso(result.job)}.`,
+          `✅ Задача создана: недельные отчёты ${formatWeekIso(result.job)}.`,
           "",
           "Теперь на Mac запусти:",
           "cd ~/igor-tp-reports-bot/tools/trainingpeaks-export && npm run tp-agent-once",
