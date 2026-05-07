@@ -28,6 +28,44 @@ type AutomationAttemptResult = {
   visibleCandidates?: string[];
 };
 
+type WorkoutSummarySectionResolution = {
+  section: Locator | null;
+  candidates: string[];
+  selectedCandidate?: string;
+};
+
+type WorkoutSummaryFormatInspection = {
+  controls: string[];
+  selectedFormatValue?: string;
+  appliedSelection?: string;
+  selectionError?: string;
+};
+
+type WorkoutSummaryPreClickDebug = {
+  containerSummary: string;
+  startDateCount: number;
+  endDateCount: number;
+  exportButtons: string[];
+  selectedButtonText?: string;
+  selectedButtonDisabled?: boolean;
+  selectedButtonAriaDisabled?: string;
+  selectedButtonClass?: string;
+  selectedButtonFormInfo?: string;
+  controls: string[];
+  selectedFormatValue?: string;
+  startDateValue: string;
+  endDateValue: string;
+};
+
+type WorkoutSummaryClickDebug = WorkoutSummaryPreClickDebug & {
+  validationMessagesAfterClick: string[];
+  consoleErrors: string[];
+  networkEvents: string[];
+  popupOpened: boolean;
+  clickMode: "normal" | "force";
+  clickError?: string;
+};
+
 function usage(): string {
   return [
     "Usage:",
@@ -321,6 +359,24 @@ type SummaryArtifactDetectionResult = AutomationAttemptResult & {
   summaryKind?: SummaryArtifactKind;
 };
 
+type GeneratedDownloadLinkState = {
+  exportCompleteVisible: boolean;
+  downloadInstructionVisible: boolean;
+  linkText?: string;
+  linkHref?: string;
+  candidateTexts?: string[];
+  candidateLinks?: string[];
+};
+
+type GeneratedDownloadLinkWaitResult = AutomationAttemptResult & GeneratedDownloadLinkState;
+
+type GeneratedDownloadLinkClickResult = AutomationAttemptResult & GeneratedDownloadLinkState & {
+  clickMode: "normal" | "force";
+  clickSucceeded: boolean;
+  popupOpened: boolean;
+  clickError?: string;
+};
+
 async function waitForWorkoutSummaryArtifact(
   exportDir: string,
   downloadsDir: string,
@@ -349,6 +405,9 @@ async function waitForWorkoutSummaryArtifact(
       minimumModifiedAtMs
     );
     if (newSummaryZipInExportDir) {
+      console.log(
+        `Auto-export debug: detected Workout Summary ZIP in exportDir: ${path.basename(newSummaryZipInExportDir.filePath)}`
+      );
       return {
         ok: true,
         summaryArtifact: newSummaryZipInExportDir.filePath,
@@ -363,6 +422,9 @@ async function waitForWorkoutSummaryArtifact(
       minimumModifiedAtMs
     );
     if (newSummaryCsvInExportDir) {
+      console.log(
+        `Auto-export debug: detected Workout Summary CSV in exportDir: ${path.basename(newSummaryCsvInExportDir.filePath)}`
+      );
       return {
         ok: true,
         summaryArtifact: newSummaryCsvInExportDir.filePath,
@@ -377,6 +439,9 @@ async function waitForWorkoutSummaryArtifact(
       minimumModifiedAtMs
     );
     if (newSummaryZipInDownloads) {
+      console.log(
+        `Auto-export debug: detected Workout Summary ZIP in Downloads: ${path.basename(newSummaryZipInDownloads.filePath)}`
+      );
       const movedSummaryZip = await moveSummaryZipToExportDir(newSummaryZipInDownloads.filePath, exportDir);
       return {
         ok: true,
@@ -392,6 +457,9 @@ async function waitForWorkoutSummaryArtifact(
       minimumModifiedAtMs
     );
     if (newSummaryCsvInDownloads) {
+      console.log(
+        `Auto-export debug: detected Workout Summary CSV in Downloads: ${path.basename(newSummaryCsvInDownloads.filePath)}`
+      );
       const movedSummaryCsv = await moveSummaryCsvToExportDir(newSummaryCsvInDownloads.filePath, exportDir);
       return {
         ok: true,
@@ -560,6 +628,61 @@ function normalizeCandidateLabel(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function truncateForLog(value: string, maxLength = 140): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function formatDebugList(title: string, values: string[]): void {
+  console.log(title);
+  if (values.length === 0) {
+    console.log("- (none)");
+    return;
+  }
+
+  for (const value of values) {
+    console.log(`- ${value}`);
+  }
+}
+
+function summarizeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return normalizeCandidateLabel(error.message);
+  }
+
+  return normalizeCandidateLabel(String(error));
+}
+
+function isActionabilityError(error: unknown): boolean {
+  const message = summarizeErrorMessage(error).toLowerCase();
+  return (
+    message.includes("element is not visible") ||
+    message.includes("element is outside of the viewport") ||
+    message.includes("element is not attached") ||
+    message.includes("element is not stable") ||
+    message.includes("intercepts pointer events") ||
+    message.includes("another element would receive the click") ||
+    message.includes("not receiving pointer events") ||
+    message.includes("timeout")
+  );
+}
+
+function getSelectAllShortcut(): string {
+  return process.platform === "darwin" ? "Meta+A" : "Control+A";
+}
+
+function shortenUrl(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return rawUrl;
+  }
+}
+
 async function listVisibleCandidateControls(page: Page): Promise<string[]> {
   const candidates = await page
     .locator('button, a, [role="button"], [role="link"], div')
@@ -712,6 +835,637 @@ async function locateSettingsScope(page: Page): Promise<Locator> {
   return page.locator("body");
 }
 
+async function locateWorkoutSummarySection(page: Page): Promise<WorkoutSummarySectionResolution> {
+  const markerAttribute = "data-tp-workout-summary-container";
+  const markerValue = `selected-${Date.now()}`;
+  await page
+    .locator(`[${markerAttribute}]`)
+    .evaluateAll((elements, attributeName) => {
+      for (const element of elements) {
+        element.removeAttribute(attributeName as string);
+      }
+    }, markerAttribute)
+    .catch(() => {});
+
+  const resolution = await page.evaluate(
+    ({ markerAttributeName, markerAttributeValue }) => {
+      const normalize = (value: string | null | undefined): string => (value ?? "").replace(/\s+/g, " ").trim();
+      const isVisible = (element: Element | null): element is HTMLElement => {
+        if (!(element instanceof HTMLElement)) {
+          return false;
+        }
+
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+      };
+      const exactTextMatches = (root: ParentNode, text: string): HTMLElement[] =>
+        Array.from(root.querySelectorAll("h1, h2, h3, h4, h5, h6, [role='heading'], div, span, p, strong, label"))
+          .filter(isVisible)
+          .filter((element) => normalize(element.textContent) === text);
+      const visibleDateInputs = (root: ParentNode, name: string): HTMLElement[] =>
+        Array.from(root.querySelectorAll(`input[name="${name}"]`)).filter(isVisible);
+      const visibleExportButtons = (root: ParentNode): HTMLElement[] =>
+        Array.from(root.querySelectorAll("button, a, [role='button']"))
+          .filter(isVisible)
+          .filter((element) => normalize(element.textContent || element.getAttribute("aria-label")) === "Export");
+      const describeElement = (element: HTMLElement): string => {
+        const tagName = element.tagName.toLowerCase();
+        const id = element.id ? `#${element.id}` : "";
+        const classes = normalize(element.className)
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(0, 4)
+          .map((className) => `.${className}`)
+          .join("");
+        return `${tagName}${id}${classes}`;
+      };
+      const collectHeadingTexts = (root: ParentNode): string[] =>
+        [...new Set(exactTextMatches(root, "Workout Summary").map((element) => normalize(element.textContent)).filter(Boolean))];
+      const getDepth = (element: HTMLElement): number => {
+        let depth = 0;
+        let current: HTMLElement | null = element;
+        while (current) {
+          depth += 1;
+          current = current.parentElement;
+        }
+
+        return depth;
+      };
+
+      const headingElements = exactTextMatches(document, "Workout Summary");
+      const seen = new Set<HTMLElement>();
+      const candidates: Array<{
+        element: HTMLElement;
+        summary: string;
+        containsWorkoutFilesHeading: boolean;
+        exportButtonCount: number;
+        area: number;
+        descendants: number;
+        depth: number;
+      }> = [];
+
+      for (const heading of headingElements) {
+        let current = heading.parentElement;
+        while (current && current !== document.body) {
+          if (!isVisible(current)) {
+            current = current.parentElement;
+            continue;
+          }
+
+          const tagName = current.tagName.toLowerCase();
+          if (!["div", "section", "form", "article", "fieldset", "li"].includes(tagName)) {
+            current = current.parentElement;
+            continue;
+          }
+
+          if (seen.has(current)) {
+            current = current.parentElement;
+            continue;
+          }
+          seen.add(current);
+
+          const startDateInputs = visibleDateInputs(current, "startDate");
+          const endDateInputs = visibleDateInputs(current, "endDate");
+          const exportButtons = visibleExportButtons(current);
+          const containsWorkoutSummaryHeading = collectHeadingTexts(current).includes("Workout Summary");
+          const containsWorkoutFilesHeading = exactTextMatches(current, "Workout Files").length > 0;
+          if (!containsWorkoutSummaryHeading || startDateInputs.length === 0 || endDateInputs.length === 0 || exportButtons.length === 0) {
+            current = current.parentElement;
+            continue;
+          }
+
+          const rect = current.getBoundingClientRect();
+          const area = Math.max(1, Math.round(rect.width * rect.height));
+          const descendants = current.querySelectorAll("*").length;
+          const summary = [
+            describeElement(current),
+            `startDate=${startDateInputs.length}`,
+            `endDate=${endDateInputs.length}`,
+            `export=${exportButtons.length}`,
+            `containsWorkoutFiles=${containsWorkoutFilesHeading ? "yes" : "no"}`,
+            `area=${area}`,
+            `descendants=${descendants}`
+          ].join(" ");
+          candidates.push({
+            element: current,
+            summary,
+            containsWorkoutFilesHeading,
+            exportButtonCount: exportButtons.length,
+            area,
+            descendants,
+            depth: getDepth(current)
+          });
+          current = current.parentElement;
+        }
+      }
+
+      candidates.sort((left, right) => {
+        if (left.containsWorkoutFilesHeading !== right.containsWorkoutFilesHeading) {
+          return Number(left.containsWorkoutFilesHeading) - Number(right.containsWorkoutFilesHeading);
+        }
+        if ((left.exportButtonCount === 1) !== (right.exportButtonCount === 1)) {
+          return Number(right.exportButtonCount === 1) - Number(left.exportButtonCount === 1);
+        }
+        if (left.area !== right.area) {
+          return left.area - right.area;
+        }
+        if (left.descendants !== right.descendants) {
+          return left.descendants - right.descendants;
+        }
+
+        return right.depth - left.depth;
+      });
+
+      const selected = candidates[0];
+      if (selected) {
+        selected.element.setAttribute(markerAttributeName, markerAttributeValue);
+      }
+
+      return {
+        candidates: candidates.slice(0, 6).map((candidate) => candidate.summary),
+        selectedCandidate: selected?.summary
+      };
+    },
+    { markerAttributeName: markerAttribute, markerAttributeValue: markerValue }
+  );
+
+  const section = resolution.selectedCandidate
+    ? page.locator(`[${markerAttribute}="${markerValue}"]`).first()
+    : null;
+
+  return {
+    section,
+    candidates: resolution.candidates,
+    selectedCandidate: resolution.selectedCandidate
+  };
+}
+
+async function commitWorkoutSummaryDateInput(input: Locator, value: string): Promise<boolean> {
+  const selectAllShortcut = getSelectAllShortcut();
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await input.scrollIntoViewIfNeeded().catch(() => {});
+      await input.click({ timeout: 2000 });
+      await input.press(selectAllShortcut).catch(() => {});
+      await input.press("Delete").catch(() => {});
+      await input.fill("").catch(() => {});
+      await input.type(value, { delay: 35 }).catch(async () => {
+        await input.fill(value);
+      });
+      await input
+        .evaluate((element) => {
+          const target = element as HTMLInputElement;
+          target.dispatchEvent(new Event("input", { bubbles: true }));
+          target.dispatchEvent(new Event("change", { bubbles: true }));
+          target.blur();
+        })
+        .catch(() => {});
+      await input.press("Tab").catch(() => {});
+
+      if ((await input.inputValue().catch(() => "")) === value) {
+        return true;
+      }
+    } catch {
+      // Retry once with the same sequence; TrainingPeaks date inputs can be finicky.
+    }
+  }
+
+  try {
+    await input.fill(value);
+    await input.press("Tab").catch(() => {});
+    return (await input.inputValue().catch(() => "")) === value;
+  } catch {
+    return false;
+  }
+}
+
+async function inspectAndMaybeSelectWorkoutSummaryFormat(section: Locator): Promise<WorkoutSummaryFormatInspection> {
+  const markerAttribute = "data-tp-workout-summary-format-target";
+  const markerValue = `format-${Date.now()}`;
+  await section
+    .locator(`[${markerAttribute}]`)
+    .evaluateAll((elements, attributeName) => {
+      for (const element of elements) {
+        element.removeAttribute(attributeName as string);
+      }
+    }, markerAttribute)
+    .catch(() => {});
+
+  const initialInspection = await section.evaluate(
+    (root, { markerAttributeName, markerAttributeValue }) => {
+      const normalize = (value: string | null | undefined): string => (value ?? "").replace(/\s+/g, " ").trim();
+      const truncate = (value: string, maxLength = 160): string =>
+        value.length <= maxLength ? value : `${value.slice(0, Math.max(0, maxLength - 3))}...`;
+      const isVisible = (element: Element | null): element is HTMLElement => {
+        if (!(element instanceof HTMLElement)) {
+          return false;
+        }
+
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+      };
+      const labelForControl = (control: HTMLElement): string => {
+        if (control instanceof HTMLInputElement && control.labels?.length) {
+          return normalize(control.labels[0]?.textContent);
+        }
+
+        const closestLabel = control.closest("label");
+        if (closestLabel) {
+          return normalize(closestLabel.textContent);
+        }
+
+        const controlId = control.getAttribute("id");
+        if (controlId) {
+          const explicitLabel = root.querySelector(`label[for="${controlId}"]`);
+          if (explicitLabel) {
+            return normalize(explicitLabel.textContent);
+          }
+        }
+
+        return "";
+      };
+      const describeControl = (control: HTMLElement): string => {
+        const tagName = control.tagName.toLowerCase();
+        const type = control.getAttribute("type") ?? "";
+        const name = control.getAttribute("name") ?? "";
+        const label = labelForControl(control);
+        const disabled = control.hasAttribute("disabled") || control.getAttribute("aria-disabled") === "true";
+        let state = "";
+
+        if (control instanceof HTMLInputElement) {
+          state = control.type === "radio" || control.type === "checkbox"
+            ? `checked=${control.checked ? "yes" : "no"}`
+            : `value="${normalize(control.value)}"`;
+        } else if (control instanceof HTMLSelectElement) {
+          state = `value="${normalize(control.value)}"`;
+        }
+
+        return truncate(
+          [tagName, type && `type=${type}`, name && `name=${name}`, label && `label="${label}"`, state, disabled && "disabled"]
+            .filter(Boolean)
+            .join(" "),
+          160
+        );
+      };
+      const controls = Array.from(root.querySelectorAll('input[type="radio"], input[type="checkbox"], select'))
+        .filter(isVisible)
+        .map((control) => control as HTMLElement);
+      const controlSummaries = controls.slice(0, 10).map(describeControl);
+      const formatControls = controls.filter((control) => {
+        const text = [
+          normalize(control.getAttribute("name")),
+          normalize(control.getAttribute("value")),
+          labelForControl(control)
+        ].join(" ");
+        if (control instanceof HTMLSelectElement) {
+          const optionText = Array.from(control.options)
+            .map((option) => `${normalize(option.textContent)} ${normalize(option.value)}`)
+            .join(" ");
+          return /\b(format|csv|zip)\b/i.test(`${text} ${optionText}`);
+        }
+
+        return /\b(format|csv|zip)\b/i.test(text);
+      });
+
+      const selectedFormatControl = formatControls.find((control) => {
+        if (control instanceof HTMLInputElement) {
+          return control.checked;
+        }
+        if (control instanceof HTMLSelectElement) {
+          return Boolean(normalize(control.value));
+        }
+
+        return false;
+      });
+      const selectedFormatValue = selectedFormatControl
+        ? normalize(
+            selectedFormatControl instanceof HTMLSelectElement
+              ? selectedFormatControl.selectedOptions[0]?.textContent || selectedFormatControl.value
+              : labelForControl(selectedFormatControl) || selectedFormatControl.getAttribute("value")
+          )
+        : undefined;
+
+      if (!selectedFormatControl) {
+        const csvSelect = formatControls.find(
+          (control) =>
+            control instanceof HTMLSelectElement &&
+            Array.from(control.options).some(
+              (option) => /\bcsv\b/i.test(`${normalize(option.textContent)} ${normalize(option.value)}`)
+            )
+        ) as HTMLSelectElement | undefined;
+        if (csvSelect && !normalize(csvSelect.value)) {
+          csvSelect.setAttribute(markerAttributeName, markerAttributeValue);
+          const csvOption = Array.from(csvSelect.options).find(
+            (option) => /\bcsv\b/i.test(`${normalize(option.textContent)} ${normalize(option.value)}`)
+          );
+          return {
+            controls: controlSummaries,
+            action: { type: "select", csvValue: csvOption?.value ?? "" }
+          };
+        }
+
+        const csvInput = formatControls.find(
+          (control) =>
+            control instanceof HTMLInputElement &&
+            /\bcsv\b/i.test(
+              `${normalize(control.getAttribute("value"))} ${labelForControl(control)} ${normalize(control.getAttribute("name"))}`
+            )
+        ) as HTMLInputElement | undefined;
+        if (csvInput && !csvInput.checked) {
+          csvInput.setAttribute(markerAttributeName, markerAttributeValue);
+          return {
+            controls: controlSummaries,
+            action: { type: "click" }
+          };
+        }
+      }
+
+      return {
+        controls: controlSummaries,
+        selectedFormatValue
+      };
+    },
+    { markerAttributeName: markerAttribute, markerAttributeValue: markerValue }
+  );
+
+  let appliedSelection: string | undefined;
+  let selectionError: string | undefined;
+  const targetLocator = section.locator(`[${markerAttribute}="${markerValue}"]`).first();
+
+  if (initialInspection.action?.type === "select") {
+    try {
+      await targetLocator.selectOption(initialInspection.action.csvValue);
+      appliedSelection = "selected CSV in Workout Summary format control";
+    } catch (error) {
+      selectionError = `could not select CSV format: ${summarizeErrorMessage(error)}`;
+    }
+  } else if (initialInspection.action?.type === "click") {
+    try {
+      await targetLocator.evaluate((element) => {
+        if (element instanceof HTMLInputElement || element instanceof HTMLElement) {
+          element.click();
+        }
+      });
+      appliedSelection = "selected CSV in Workout Summary format control";
+    } catch (error) {
+      selectionError = `could not select CSV format: ${summarizeErrorMessage(error)}`;
+    }
+  }
+
+  const finalInspection = await section.evaluate((root) => {
+    const normalize = (value: string | null | undefined): string => (value ?? "").replace(/\s+/g, " ").trim();
+    const isVisible = (element: Element | null): element is HTMLElement => {
+      if (!(element instanceof HTMLElement)) {
+        return false;
+      }
+
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+    };
+    const labelForControl = (control: HTMLElement): string => {
+      if (control instanceof HTMLInputElement && control.labels?.length) {
+        return normalize(control.labels[0]?.textContent);
+      }
+
+      const closestLabel = control.closest("label");
+      if (closestLabel) {
+        return normalize(closestLabel.textContent);
+      }
+
+      const controlId = control.getAttribute("id");
+      if (controlId) {
+        const explicitLabel = root.querySelector(`label[for="${controlId}"]`);
+        if (explicitLabel) {
+          return normalize(explicitLabel.textContent);
+        }
+      }
+
+      return "";
+    };
+    const controls = Array.from(root.querySelectorAll('input[type="radio"], input[type="checkbox"], select'))
+      .filter(isVisible)
+      .slice(0, 10)
+      .map((control) => {
+        const element = control as HTMLElement;
+        const tagName = element.tagName.toLowerCase();
+        const type = element.getAttribute("type") ?? "";
+        const name = element.getAttribute("name") ?? "";
+        const label = labelForControl(element);
+        const state =
+          control instanceof HTMLInputElement
+            ? control.type === "radio" || control.type === "checkbox"
+              ? `checked=${control.checked ? "yes" : "no"}`
+              : `value="${normalize(control.value)}"`
+            : `value="${normalize((control as HTMLSelectElement).value)}"`;
+        return [tagName, type && `type=${type}`, name && `name=${name}`, label && `label="${label}"`, state]
+          .filter(Boolean)
+          .join(" ");
+      });
+    const selectedFormatControl = Array.from(root.querySelectorAll('input[type="radio"], input[type="checkbox"], select'))
+      .filter(isVisible)
+      .find((control) => {
+        if (control instanceof HTMLInputElement) {
+          return control.checked && /\b(format|csv|zip)\b/i.test(
+            `${normalize(control.getAttribute("name"))} ${normalize(control.getAttribute("value"))} ${labelForControl(control)}`
+          );
+        }
+        if (control instanceof HTMLSelectElement) {
+          const selectedText = normalize(control.selectedOptions[0]?.textContent);
+          return Boolean(control.value) && /\b(format|csv|zip)\b/i.test(`${normalize(control.name)} ${selectedText} ${normalize(control.value)}`);
+        }
+
+        return false;
+      });
+    return {
+      controls,
+      selectedFormatValue: selectedFormatControl
+        ? normalize(
+            selectedFormatControl instanceof HTMLSelectElement
+              ? selectedFormatControl.selectedOptions[0]?.textContent || selectedFormatControl.value
+              : labelForControl(selectedFormatControl) || selectedFormatControl.getAttribute("value")
+          )
+        : undefined
+    };
+  });
+
+  return {
+    controls: finalInspection.controls,
+    selectedFormatValue: finalInspection.selectedFormatValue,
+    appliedSelection,
+    selectionError
+  };
+}
+
+async function collectWorkoutSummaryPreClickDebug(
+  section: Locator,
+  selectedFormatValue?: string
+): Promise<WorkoutSummaryPreClickDebug> {
+  return section.evaluate((root, selectedFormat) => {
+    const normalize = (value: string | null | undefined): string => (value ?? "").replace(/\s+/g, " ").trim();
+    const isVisible = (element: Element | null): element is HTMLElement => {
+      if (!(element instanceof HTMLElement)) {
+        return false;
+      }
+
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+    };
+    const describeElement = (element: HTMLElement): string => {
+      const tagName = element.tagName.toLowerCase();
+      const id = element.id ? `#${element.id}` : "";
+      const classes = normalize(element.className)
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 4)
+        .map((className) => `.${className}`)
+        .join("");
+      return `${tagName}${id}${classes}`;
+    };
+    const labelForControl = (control: HTMLElement): string => {
+      if (control instanceof HTMLInputElement && control.labels?.length) {
+        return normalize(control.labels[0]?.textContent);
+      }
+
+      const closestLabel = control.closest("label");
+      if (closestLabel) {
+        return normalize(closestLabel.textContent);
+      }
+
+      const controlId = control.getAttribute("id");
+      if (controlId) {
+        const explicitLabel = root.querySelector(`label[for="${controlId}"]`);
+        if (explicitLabel) {
+          return normalize(explicitLabel.textContent);
+        }
+      }
+
+      return "";
+    };
+    const exportButtons = Array.from(root.querySelectorAll("button, a, [role='button']"))
+      .filter(isVisible)
+      .filter((element) => normalize(element.textContent || element.getAttribute("aria-label")) === "Export")
+      .map((element) => element as HTMLElement);
+    const selectedButton =
+      exportButtons.find(
+        (button) =>
+          !(button instanceof HTMLButtonElement && button.disabled) &&
+          button.getAttribute("aria-disabled") !== "true" &&
+          !/\bdisabled\b/i.test(normalize(button.className))
+      ) ?? exportButtons[0];
+    const startInput = root.querySelector('input[name="startDate"]') as HTMLInputElement | null;
+    const endInput = root.querySelector('input[name="endDate"]') as HTMLInputElement | null;
+    const controls = Array.from(root.querySelectorAll('input[type="radio"], input[type="checkbox"], select'))
+      .filter(isVisible)
+      .slice(0, 10)
+      .map((control) => {
+        const element = control as HTMLElement;
+        const tagName = element.tagName.toLowerCase();
+        const type = element.getAttribute("type") ?? "";
+        const name = element.getAttribute("name") ?? "";
+        const label = labelForControl(element);
+        const state =
+          control instanceof HTMLInputElement
+            ? `checked=${control.checked ? "yes" : "no"}`
+            : `value="${normalize((control as HTMLSelectElement).value)}"`;
+        return [tagName, type && `type=${type}`, name && `name=${name}`, label && `label="${label}"`, state]
+          .filter(Boolean)
+          .join(" ");
+      });
+    const buttonSummaries = exportButtons.map((button, index) => {
+      const label = normalize(button.textContent || button.getAttribute("aria-label")) || "Export";
+      const disabled =
+        (button instanceof HTMLButtonElement && button.disabled) ||
+        button.getAttribute("aria-disabled") === "true" ||
+        /\bdisabled\b/i.test(normalize(button.className));
+      return `${index === exportButtons.indexOf(selectedButton) ? "*" : ""}${describeElement(button)} text="${label}" disabled=${disabled ? "yes" : "no"}`;
+    });
+    const closestForm = selectedButton?.closest("form");
+
+    return {
+      containerSummary: [
+        describeElement(root as HTMLElement),
+        `visibleExportButtons=${exportButtons.length}`,
+        `visibleControls=${controls.length}`,
+        `text="${normalize((root as HTMLElement).innerText).slice(0, 120)}"`
+      ].join(" "),
+      startDateCount: Array.from(root.querySelectorAll('input[name="startDate"]')).filter(isVisible).length,
+      endDateCount: Array.from(root.querySelectorAll('input[name="endDate"]')).filter(isVisible).length,
+      exportButtons: buttonSummaries,
+      selectedButtonText: selectedButton ? normalize(selectedButton.textContent || selectedButton.getAttribute("aria-label")) || "Export" : undefined,
+      selectedButtonDisabled: selectedButton
+        ? (selectedButton instanceof HTMLButtonElement && selectedButton.disabled) ||
+          selectedButton.getAttribute("aria-disabled") === "true" ||
+          /\bdisabled\b/i.test(normalize(selectedButton.className))
+        : undefined,
+      selectedButtonAriaDisabled: selectedButton?.getAttribute("aria-disabled") ?? undefined,
+      selectedButtonClass: normalize(selectedButton?.className) || undefined,
+      selectedButtonFormInfo: closestForm
+        ? [
+            describeElement(closestForm),
+            closestForm.getAttribute("action") && `action="${normalize(closestForm.getAttribute("action"))}"`,
+            closestForm.getAttribute("method") && `method="${normalize(closestForm.getAttribute("method"))}"`
+          ]
+            .filter(Boolean)
+            .join(" ")
+        : "(no ancestor form)",
+      controls,
+      selectedFormatValue: selectedFormat ?? undefined,
+      startDateValue: normalize(startInput?.value),
+      endDateValue: normalize(endInput?.value)
+    };
+  }, selectedFormatValue);
+}
+
+async function collectVisibleExportFeedback(page: Page, section: Locator): Promise<string[]> {
+  const sectionMessages = await section
+    .locator('.error, .errors, .validation, .validation-error, .error-message, [role="alert"], .toast, .toast-message')
+    .evaluateAll((elements) => {
+      const normalize = (value: string | null | undefined): string => (value ?? "").replace(/\s+/g, " ").trim();
+      const isVisible = (element: Element): boolean => {
+        if (!(element instanceof HTMLElement)) {
+          return false;
+        }
+
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+      };
+      return elements
+        .filter(isVisible)
+        .map((element) => normalize(element.textContent))
+        .filter(Boolean)
+        .slice(0, 6);
+    })
+    .catch(() => []);
+  const pageMessages = await page
+    .locator('[role="alert"], .toast, .toast-message, .notification, .alert, .validation-error, .error-message')
+    .evaluateAll((elements) => {
+      const normalize = (value: string | null | undefined): string => (value ?? "").replace(/\s+/g, " ").trim();
+      const isVisible = (element: Element): boolean => {
+        if (!(element instanceof HTMLElement)) {
+          return false;
+        }
+
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+      };
+      return elements
+        .filter(isVisible)
+        .map((element) => normalize(element.textContent))
+        .filter(Boolean)
+        .slice(0, 8);
+    })
+    .catch(() => []);
+
+  return [...new Set([...sectionMessages, ...pageMessages].filter(Boolean).map((value) => truncateForLog(value, 180)))].slice(0, 8);
+}
+
 async function tryOpenAthleteAccountSettings(page: Page): Promise<AutomationAttemptResult> {
   if (await waitForSettingsModal(page)) {
     return { ok: true };
@@ -791,68 +1545,6 @@ async function tryOpenExportData(page: Page): Promise<AutomationAttemptResult> {
   return { ok: true };
 }
 
-async function locateExportSubsection(page: Page, headingText: string): Promise<Locator | null> {
-  const headingCandidates = [
-    page.getByRole("heading", { name: new RegExp(`^${headingText}$`, "i") }),
-    page.getByText(new RegExp(`^${headingText}$`, "i"))
-  ];
-
-  for (const candidate of headingCandidates) {
-    const count = await candidate.count().catch(() => 0);
-    for (let index = 0; index < count; index += 1) {
-      const heading = candidate.nth(index);
-      if (!(await isVisible(heading, 500))) {
-        continue;
-      }
-
-      const section = heading.locator(
-        "xpath=ancestor::*[(self::section or self::div or self::form) and .//input[@name='startDate'] and .//input[@name='endDate']][1]"
-      );
-
-      if (await section.count().catch(() => 0)) {
-        return section.first();
-      }
-    }
-  }
-
-  return null;
-}
-
-async function fillAndVerifyDateInput(input: Locator, value: string): Promise<boolean> {
-  try {
-    await input.fill(value);
-    await input.press("Tab").catch(() => {});
-    return (await input.inputValue()) === value;
-  } catch {
-    return false;
-  }
-}
-
-async function fillExportSubsectionDateRange(
-  page: Page,
-  headingText: string,
-  from: string,
-  to: string
-): Promise<AutomationAttemptResult> {
-  const section = await locateExportSubsection(page, headingText);
-  if (!section) {
-    return { ok: false, reason: `could not find the "${headingText}" export subsection.` };
-  }
-
-  const startInput = section.locator('input[name="startDate"]').first();
-  const endInput = section.locator('input[name="endDate"]').first();
-
-  if (!(await fillAndVerifyDateInput(startInput, from))) {
-    return { ok: false, reason: `could not verify the "${headingText}" From date input.` };
-  }
-
-  if (!(await fillAndVerifyDateInput(endInput, to))) {
-    return { ok: false, reason: `could not verify the "${headingText}" To date input.` };
-  }
-
-  return { ok: true };
-}
-
 async function tryFillWorkoutSummaryDateRange(
   page: Page,
   fromIso: string,
@@ -864,70 +1556,203 @@ async function tryFillWorkoutSummaryDateRange(
 
   const from = formatForTrainingPeaksDateInput(fromIso);
   const to = formatForTrainingPeaksDateInput(toIso);
+  const sectionResolution = await locateWorkoutSummarySection(page);
+  if (sectionResolution.candidates.length > 0) {
+    formatDebugList("Auto-export debug: Workout Summary locator candidates", sectionResolution.candidates);
+  }
+  if (!sectionResolution.section) {
+    return { ok: false, reason: 'could not find the "Workout Summary" export subsection.' };
+  }
 
-  const workoutSummaryResult = await fillExportSubsectionDateRange(page, "Workout Summary", from, to);
-  if (!workoutSummaryResult.ok) {
-    return workoutSummaryResult;
+  if (sectionResolution.selectedCandidate) {
+    console.log(`Auto-export debug: selected Workout Summary container="${sectionResolution.selectedCandidate}"`);
+  }
+
+  const startInput = sectionResolution.section.locator('input[name="startDate"]').first();
+  const endInput = sectionResolution.section.locator('input[name="endDate"]').first();
+
+  if (!(await commitWorkoutSummaryDateInput(startInput, from))) {
+    return { ok: false, reason: 'could not verify the "Workout Summary" From date input.' };
+  }
+
+  if (!(await commitWorkoutSummaryDateInput(endInput, to))) {
+    return { ok: false, reason: 'could not verify the "Workout Summary" To date input.' };
   }
 
   return { ok: true };
 }
 
 async function tryClickWorkoutSummaryExport(page: Page): Promise<AutomationAttemptResult> {
-  const section = await locateExportSubsection(page, "Workout Summary");
+  const sectionResolution = await locateWorkoutSummarySection(page);
+  if (sectionResolution.candidates.length > 0) {
+    formatDebugList("Auto-export debug: Workout Summary locator candidates", sectionResolution.candidates);
+  }
+  const section = sectionResolution.section;
   if (!section) {
     return { ok: false, reason: 'could not find the "Workout Summary" export subsection.' };
   }
 
-  const startDateValue = await section.locator('input[name="startDate"]').first().inputValue().catch(() => "");
-  const endDateValue = await section.locator('input[name="endDate"]').first().inputValue().catch(() => "");
-  const validationMessages = (
-    await section
-      .locator('.error, .errors, .validation, .validation-error, .error-message, [role="alert"]')
-      .allInnerTexts()
-      .catch(() => [])
-  )
-    .map(normalizeCandidateLabel)
-    .filter(Boolean)
-    .slice(0, 3);
+  const formatInspection = await inspectAndMaybeSelectWorkoutSummaryFormat(section);
+  if (formatInspection.appliedSelection) {
+    console.log(`Auto-export debug: ${formatInspection.appliedSelection}`);
+  }
+  if (formatInspection.selectionError) {
+    console.log(`Auto-export debug: ${formatInspection.selectionError}`);
+  }
+
+  const preClickDebug = await collectWorkoutSummaryPreClickDebug(section, formatInspection.selectedFormatValue);
+  console.log(`Auto-export debug: Workout Summary container="${truncateForLog(preClickDebug.containerSummary, 220)}"`);
+  console.log(
+    `Auto-export debug: Workout Summary inputs startDate=${preClickDebug.startDateCount} endDate=${preClickDebug.endDateCount}`
+  );
+  formatDebugList("Auto-export debug: Workout Summary Export buttons", preClickDebug.exportButtons);
+  formatDebugList("Auto-export debug: Workout Summary controls", preClickDebug.controls);
+  if (preClickDebug.selectedFormatValue) {
+    console.log(`Auto-export debug: Workout Summary selected format="${preClickDebug.selectedFormatValue}"`);
+  } else {
+    console.log("Auto-export debug: Workout Summary selected format=(none detected)");
+  }
+  if (preClickDebug.selectedButtonText) {
+    console.log(`Auto-export debug: selected button text="${preClickDebug.selectedButtonText}"`);
+    console.log(
+      `Auto-export debug: selected button disabled=${preClickDebug.selectedButtonDisabled ? "yes" : "no"} aria-disabled="${preClickDebug.selectedButtonAriaDisabled ?? ""}" class="${preClickDebug.selectedButtonClass ?? ""}"`
+    );
+    console.log(`Auto-export debug: selected button closest form=${preClickDebug.selectedButtonFormInfo ?? "(unknown)"}`);
+  }
+  console.log(
+    `Auto-export debug: Workout Summary startDate="${preClickDebug.startDateValue}" endDate="${preClickDebug.endDateValue}"`
+  );
+
   const buttonLocators = [
-    section.getByRole("button", { name: /^export$/i }),
+    section.getByRole("button", { name: /^export$/i }).filter({ hasNot: section.getByText(/^Workout Files$/i) }),
     section.getByRole("link", { name: /^export$/i }),
     section.locator("button").filter({ hasText: /^export$/i }),
     section.locator('[role="button"]').filter({ hasText: /^export$/i })
   ];
 
+  let button: Locator | null = null;
   for (const candidate of buttonLocators) {
-    if (!(await isVisible(candidate, 700))) {
-      continue;
+    if (await isVisible(candidate, 700)) {
+      button = candidate.first();
+      break;
     }
+  }
 
-    const button = candidate.first();
-    const buttonText = normalizeCandidateLabel(
-      (await button.innerText().catch(() => "")) || (await button.getAttribute("aria-label").catch(() => "")) || "Export"
-    );
-    const popupPromise = page.waitForEvent("popup", { timeout: 1500 }).catch(() => null);
+  if (!button) {
+    return { ok: false, reason: 'could not find the "Export" button inside "Workout Summary".' };
+  }
 
-    try {
-      await button.click({ timeout: 2000 });
-    } catch {
-      continue;
-    }
-
-    const popupPage = await popupPromise;
+  if (preClickDebug.selectedButtonDisabled) {
     return {
-      ok: true,
-      reason: JSON.stringify({
-        buttonText,
-        startDateValue,
-        endDateValue,
-        validationMessages,
-        popupOpened: Boolean(popupPage)
-      })
+      ok: false,
+      reason: `the "Workout Summary" Export button is disabled (aria-disabled="${preClickDebug.selectedButtonAriaDisabled ?? ""}", class="${preClickDebug.selectedButtonClass ?? ""}").`
     };
   }
 
-  return { ok: false, reason: 'could not find the "Export" button inside "Workout Summary".' };
+  const consoleErrors: string[] = [];
+  const networkEvents: string[] = [];
+  let popupOpened = false;
+  const context = page.context();
+  const pushLimited = (bucket: string[], value: string, limit: number): void => {
+    if (!value || bucket.includes(value) || bucket.length >= limit) {
+      return;
+    }
+    bucket.push(value);
+  };
+  const onConsole = (message: { type(): string; text(): string }): void => {
+    if (message.type() === "error") {
+      pushLimited(consoleErrors, truncateForLog(normalizeCandidateLabel(message.text()), 220), 8);
+    }
+  };
+  const onPageError = (error: Error): void => {
+    pushLimited(consoleErrors, truncateForLog(normalizeCandidateLabel(error.message), 220), 8);
+  };
+  const onRequest = (request: { method(): string; url(): string }): void => {
+    const shortUrl = shortenUrl(request.url());
+    if (/\b(export|download|csv|zip|workout)\b/i.test(shortUrl)) {
+      pushLimited(networkEvents, `request ${request.method()} ${shortUrl}`, 10);
+    }
+  };
+  const onResponse = async (response: {
+    status(): number;
+    url(): string;
+    allHeaders(): Promise<Record<string, string>>;
+  }): Promise<void> => {
+    const shortUrl = shortenUrl(response.url());
+    const headers = await response.allHeaders().catch(() => ({}));
+    const contentDisposition = headers["content-disposition"] ?? "";
+    const contentType = headers["content-type"] ?? "";
+    if (/\b(export|download|csv|zip|workout)\b/i.test(`${shortUrl} ${contentDisposition} ${contentType}`)) {
+      const detailParts = [`response ${response.status()} ${shortUrl}`];
+      if (contentDisposition) {
+        detailParts.push(`content-disposition="${truncateForLog(contentDisposition, 80)}"`);
+      }
+      if (contentType) {
+        detailParts.push(`content-type="${truncateForLog(contentType, 60)}"`);
+      }
+      pushLimited(networkEvents, detailParts.join(" "), 10);
+    }
+  };
+  const onContextPage = (): void => {
+    popupOpened = true;
+  };
+
+  page.on("console", onConsole);
+  page.on("pageerror", onPageError);
+  page.on("request", onRequest);
+  page.on("response", onResponse);
+  context.on("page", onContextPage);
+
+  let clickMode: "normal" | "force" = "normal";
+  let clickError: string | undefined;
+  const popupPromise = page.waitForEvent("popup", { timeout: 2000 }).then(() => true).catch(() => false);
+
+  try {
+    try {
+      await button.click({ timeout: 2500 });
+    } catch (error) {
+      if (!isActionabilityError(error)) {
+        throw error;
+      }
+
+      clickMode = "force";
+      await button.click({ timeout: 2500, force: true });
+    }
+
+    await page.waitForTimeout(2000);
+    popupOpened = popupOpened || (await popupPromise);
+  } catch (error) {
+    clickError = summarizeErrorMessage(error);
+  } finally {
+    page.off("console", onConsole);
+    page.off("pageerror", onPageError);
+    page.off("request", onRequest);
+    page.off("response", onResponse);
+    context.off("page", onContextPage);
+  }
+
+  const validationMessagesAfterClick = await collectVisibleExportFeedback(page, section);
+  const clickDebug: WorkoutSummaryClickDebug = {
+    ...preClickDebug,
+    validationMessagesAfterClick,
+    consoleErrors,
+    networkEvents,
+    popupOpened,
+    clickMode,
+    clickError
+  };
+
+  if (clickError) {
+    return {
+      ok: false,
+      reason: JSON.stringify(clickDebug)
+    };
+  }
+
+  return {
+    ok: true,
+    reason: JSON.stringify(clickDebug)
+  };
 }
 
 function logManualFallbackInstructions(): void {
@@ -940,6 +1765,287 @@ function logManualFallbackInstructions(): void {
   console.log("");
   console.log("Optional:");
   console.log("Workout Files can be downloaded too, but it is not required for the current weekly report.");
+}
+
+function parseWorkoutSummaryClickDebug(reason: string | undefined): WorkoutSummaryClickDebug | null {
+  if (!reason || !reason.startsWith("{")) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(reason) as WorkoutSummaryClickDebug;
+  } catch {
+    return null;
+  }
+}
+
+function logWorkoutSummaryClickDebug(debug: WorkoutSummaryClickDebug): void {
+  console.log(`Auto-export debug: click mode=${debug.clickMode}`);
+  if (debug.clickError) {
+    console.log(`Auto-export debug: click error="${debug.clickError}"`);
+  }
+  if (debug.validationMessagesAfterClick.length > 0) {
+    console.log(`Auto-export debug: visible feedback="${debug.validationMessagesAfterClick.join(" | ")}"`);
+  } else {
+    console.log("Auto-export debug: visible feedback=(none)");
+  }
+  if (debug.consoleErrors.length > 0) {
+    console.log(`Auto-export debug: console errors="${debug.consoleErrors.join(" | ")}"`);
+  } else {
+    console.log("Auto-export debug: console errors=(none)");
+  }
+  if (debug.networkEvents.length > 0) {
+    console.log(`Auto-export debug: network events="${debug.networkEvents.join(" | ")}"`);
+  } else {
+    console.log("Auto-export debug: network events=(none)");
+  }
+  console.log(`Auto-export debug: popup/new page appeared=${debug.popupOpened ? "yes" : "no"}`);
+}
+
+async function readGeneratedWorkoutSummaryDownloadLinkState(page: Page): Promise<GeneratedDownloadLinkState> {
+  const markerAttribute = "data-tp-generated-download-link";
+  const modalScope = athleteSettingsModalLocator(page);
+  const scope = (await isVisible(modalScope, 500)) ? modalScope : page.locator("body");
+  await page
+    .locator(`[${markerAttribute}]`)
+    .evaluateAll((elements, attributeName) => {
+      for (const element of elements) {
+        element.removeAttribute(attributeName as string);
+      }
+    }, markerAttribute)
+    .catch(() => {});
+
+  return scope.evaluate((root, markerAttributeName) => {
+    const normalize = (value: string | null | undefined): string => (value ?? "").replace(/\s+/g, " ").trim();
+    const truncate = (value: string, maxLength = 180): string =>
+      value.length <= maxLength ? value : `${value.slice(0, Math.max(0, maxLength - 3))}...`;
+    const isVisible = (element: Element | null): element is HTMLElement => {
+      if (!(element instanceof HTMLElement)) {
+        return false;
+      }
+
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+    };
+    const zipPattern = /WorkoutExport.*\.zip|Workout.*Export.*\.zip/i;
+    const debugPattern = /export complete|click on the link below to download|workoutexport|workout.*export|\.zip|download/i;
+    const exportCompletePattern = /export complete/i;
+    const downloadInstructionPattern = /click on the link below to download/i;
+    const describeElement = (element: HTMLElement): string => {
+      const tagName = element.tagName.toLowerCase();
+      const role = normalize(element.getAttribute("role"));
+      const href = normalize(element.getAttribute("href"));
+      const text = normalize(
+        element.textContent ||
+        element.getAttribute("aria-label") ||
+        element.getAttribute("title")
+      );
+      return truncate(
+        [
+          role ? `${tagName}[role="${role}"]` : tagName,
+          href && `href="${href}"`,
+          text && `text="${text}"`
+        ]
+          .filter(Boolean)
+          .join(" "),
+        220
+      );
+    };
+
+    const allVisibleElements = [root, ...Array.from(root.querySelectorAll("*"))]
+      .filter(isVisible)
+      .map((element) => element as HTMLElement);
+    const candidateTexts = allVisibleElements
+      .map((element) => ({ element, text: normalize(element.textContent) }))
+      .filter(({ text }) => Boolean(text) && debugPattern.test(text))
+      .map(({ element }) => describeElement(element))
+      .filter((value, index, values) => values.indexOf(value) === index)
+      .slice(0, 8);
+    const interactiveElements = allVisibleElements.filter((element) => {
+      const tagName = element.tagName.toLowerCase();
+      const role = normalize(element.getAttribute("role"));
+      return tagName === "a" || tagName === "button" || role === "link" || role === "button";
+    });
+    const candidateLinks = interactiveElements
+      .map((element) => {
+        const href = normalize(element.getAttribute("href"));
+        const text = normalize(
+          element.textContent ||
+          element.getAttribute("aria-label") ||
+          element.getAttribute("title")
+        );
+        return { element, searchable: `${text} ${href}`.trim() };
+      })
+      .filter(({ searchable }) => Boolean(searchable) && debugPattern.test(searchable))
+      .map(({ element }) => describeElement(element))
+      .filter((value, index, values) => values.indexOf(value) === index)
+      .slice(0, 8);
+
+    const selectedInteractive = interactiveElements.find((element) => {
+      const href = normalize(element.getAttribute("href"));
+      const text = normalize(
+        element.textContent ||
+        element.getAttribute("aria-label") ||
+        element.getAttribute("title")
+      );
+      return zipPattern.test(`${text} ${href}`);
+    });
+    const selectedFromText = allVisibleElements.find((element) => {
+      const text = normalize(element.textContent);
+      return Boolean(text) && zipPattern.test(text);
+    });
+    const selectedFromTextAncestor = selectedFromText?.closest(
+      'a, button, [role="link"], [role="button"]'
+    );
+    const selectedElement = selectedInteractive ?? (
+      selectedFromTextAncestor instanceof HTMLElement &&
+      isVisible(selectedFromTextAncestor)
+        ? selectedFromTextAncestor
+        : undefined
+    );
+
+    if (selectedElement) {
+      selectedElement.setAttribute(markerAttributeName as string, "selected");
+    }
+
+    const exportCompleteVisible = allVisibleElements.some((element) =>
+      exportCompletePattern.test(normalize(element.textContent))
+    );
+    const downloadInstructionVisible = allVisibleElements.some((element) =>
+      downloadInstructionPattern.test(normalize(element.textContent))
+    );
+    const linkText = normalize(
+      selectedElement?.textContent ||
+      selectedElement?.getAttribute("aria-label") ||
+      selectedElement?.getAttribute("title")
+    ) || undefined;
+    const linkHref = normalize(selectedElement?.getAttribute("href")) || undefined;
+
+    return {
+      exportCompleteVisible,
+      downloadInstructionVisible,
+      linkText,
+      linkHref,
+      candidateTexts,
+      candidateLinks
+    };
+  }, markerAttribute);
+}
+
+async function waitForGeneratedWorkoutSummaryDownloadLink(
+  page: Page,
+  timeoutMs = 90_000
+): Promise<GeneratedDownloadLinkWaitResult> {
+  const startedAt = Date.now();
+  let lastSeenState: GeneratedDownloadLinkState = {
+    exportCompleteVisible: false,
+    downloadInstructionVisible: false
+  };
+  let lastProgressLogAt = 0;
+
+  while (Date.now() - startedAt <= timeoutMs) {
+    const currentState = await readGeneratedWorkoutSummaryDownloadLinkState(page);
+    lastSeenState = {
+      exportCompleteVisible: currentState.exportCompleteVisible,
+      downloadInstructionVisible: currentState.downloadInstructionVisible,
+      linkText: currentState.linkText,
+      linkHref: currentState.linkHref,
+      candidateTexts: currentState.candidateTexts,
+      candidateLinks: currentState.candidateLinks
+    };
+
+    if (currentState.linkText || currentState.linkHref) {
+      return {
+        ok: true,
+        ...lastSeenState
+      };
+    }
+
+    const now = Date.now();
+    if (now - lastProgressLogAt >= 5_000) {
+      const elapsedSeconds = Math.floor((now - startedAt) / 1000);
+      console.log(
+        `Auto-export: waiting for Export Complete download link (${elapsedSeconds}s elapsed, exportComplete=${currentState.exportCompleteVisible ? "yes" : "no"}, instruction=${currentState.downloadInstructionVisible ? "yes" : "no"})`
+      );
+      lastProgressLogAt = now;
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  return {
+    ok: false,
+    reason: "Export Complete download link did not appear.",
+    ...lastSeenState
+  };
+}
+
+async function clickGeneratedWorkoutSummaryDownloadLink(page: Page): Promise<GeneratedDownloadLinkClickResult> {
+  const currentState = await readGeneratedWorkoutSummaryDownloadLinkState(page);
+  const visibleLink = page.locator('[data-tp-generated-download-link="selected"]').first();
+
+  if (!(await isVisible(visibleLink, 700))) {
+    return {
+      ok: false,
+      reason: "generated Workout Summary download link was not visible.",
+      exportCompleteVisible: currentState.exportCompleteVisible,
+      downloadInstructionVisible: currentState.downloadInstructionVisible,
+      linkText: currentState.linkText,
+      linkHref: currentState.linkHref,
+      candidateTexts: currentState.candidateTexts,
+      candidateLinks: currentState.candidateLinks,
+      clickMode: "normal",
+      clickSucceeded: false,
+      popupOpened: false
+    };
+  }
+
+  const context = page.context();
+  let popupOpened = false;
+  const onContextPage = (): void => {
+    popupOpened = true;
+  };
+  context.on("page", onContextPage);
+
+  let clickMode: "normal" | "force" = "normal";
+  let clickError: string | undefined;
+  const popupPromise = page.waitForEvent("popup", { timeout: 3000 }).then(() => true).catch(() => false);
+
+  try {
+    try {
+      await visibleLink.click({ timeout: 3000 });
+    } catch (error) {
+      if (!isActionabilityError(error)) {
+        throw error;
+      }
+
+      clickMode = "force";
+      await visibleLink.click({ timeout: 3000, force: true });
+    }
+
+    await page.waitForTimeout(1500);
+    popupOpened = popupOpened || (await popupPromise);
+  } catch (error) {
+    clickError = summarizeErrorMessage(error);
+  } finally {
+    context.off("page", onContextPage);
+  }
+
+  return {
+    ok: !clickError,
+    reason: clickError,
+    exportCompleteVisible: currentState.exportCompleteVisible,
+    downloadInstructionVisible: currentState.downloadInstructionVisible,
+    linkText: currentState.linkText,
+    linkHref: currentState.linkHref,
+    candidateTexts: currentState.candidateTexts,
+    candidateLinks: currentState.candidateLinks,
+    clickMode,
+    clickSucceeded: !clickError,
+    popupOpened,
+    clickError
+  };
 }
 
 async function main(): Promise<void> {
@@ -1043,63 +2149,96 @@ async function main(): Promise<void> {
       ]);
       console.log("Auto-export: clicking Workout Summary Export");
       const clickResult = await tryClickWorkoutSummaryExport(page);
+      const clickDebug = parseWorkoutSummaryClickDebug(clickResult.reason);
+      if (clickDebug) {
+        logWorkoutSummaryClickDebug(clickDebug);
+      }
       if (!clickResult.ok) {
-        console.log(`Auto-export fallback: ${clickResult.reason ?? 'could not click "Workout Summary" export.'}`);
+        console.log(
+          `Auto-export fallback: ${clickDebug?.clickError ?? clickResult.reason ?? 'could not click "Workout Summary" export.'}`
+        );
       } else {
-        const clickDebug =
-          clickResult.reason && clickResult.reason.startsWith("{")
-            ? (JSON.parse(clickResult.reason) as {
-                buttonText?: string;
-                startDateValue?: string;
-                endDateValue?: string;
-                validationMessages?: string[];
-                popupOpened?: boolean;
-              })
-            : null;
-        if (clickDebug?.buttonText) {
-          console.log(`Auto-export debug: clicked button text="${clickDebug.buttonText}"`);
+        if (clickDebug?.selectedButtonText) {
+          console.log(`Auto-export debug: clicked button text="${clickDebug.selectedButtonText}"`);
         }
         console.log(
           `Auto-export debug: Workout Summary startDate="${clickDebug?.startDateValue ?? ""}" endDate="${clickDebug?.endDateValue ?? ""}"`
         );
-        if (clickDebug?.validationMessages && clickDebug.validationMessages.length > 0) {
-          console.log(`Auto-export debug: section messages="${clickDebug.validationMessages.join(" | ")}"`);
-        }
-        console.log(`Auto-export debug: popup/new page appeared=${clickDebug?.popupOpened ? "yes" : "no"}`);
-        const clickCompletedAt = Date.now();
-        console.log("Auto-export: waiting for Workout Summary ZIP or CSV");
-        const waitForArtifactResult = await waitForWorkoutSummaryArtifact(
-          exportDir,
-          downloadsDir,
-          exportDirSnapshotBeforeClick.summaryZipFiles,
-          exportDirSnapshotBeforeClick.summaryCsvFiles,
-          downloadsSnapshotBeforeClick.summaryZipFiles,
-          downloadsSnapshotBeforeClick.summaryCsvFiles,
-          clickCompletedAt
+        console.log("Auto-export: waiting for Export Complete download link");
+        const exportCompleteResult = await waitForGeneratedWorkoutSummaryDownloadLink(page);
+        console.log(
+          `Auto-export debug: Export Complete visible=${exportCompleteResult.exportCompleteVisible ? "yes" : "no"} instruction visible=${exportCompleteResult.downloadInstructionVisible ? "yes" : "no"}`
         );
-        if (waitForArtifactResult.ok && waitForArtifactResult.summaryArtifact && waitForArtifactResult.summaryKind) {
-          automaticSummaryExportCompleted = true;
-          if (waitForArtifactResult.summaryKind === "zip" && waitForArtifactResult.detectedIn === "downloads") {
+        if (exportCompleteResult.candidateTexts && exportCompleteResult.candidateTexts.length > 0) {
+          console.log(`Auto-export debug: Export Complete candidates="${exportCompleteResult.candidateTexts.join(" | ")}"`);
+        } else {
+          console.log("Auto-export debug: Export Complete candidates=(none)");
+        }
+        if (exportCompleteResult.candidateLinks && exportCompleteResult.candidateLinks.length > 0) {
+          console.log(`Auto-export debug: generated link candidates="${exportCompleteResult.candidateLinks.join(" | ")}"`);
+        } else {
+          console.log("Auto-export debug: generated link candidates=(none)");
+        }
+        if (!exportCompleteResult.ok || (!exportCompleteResult.linkText && !exportCompleteResult.linkHref)) {
+          console.log("Auto-export fallback: Export Complete download link did not appear.");
+        } else {
+          console.log("Auto-export: Export Complete link appeared");
+          console.log(`Auto-export debug: generated link text="${exportCompleteResult.linkText ?? ""}"`);
+          if (exportCompleteResult.linkHref) {
+            console.log(`Auto-export debug: generated link href="${exportCompleteResult.linkHref}"`);
+          }
+          console.log("Auto-export: clicking generated Workout Summary download link");
+          const generatedLinkClickResult = await clickGeneratedWorkoutSummaryDownloadLink(page);
+          console.log(
+            `Auto-export debug: generated link click mode=${generatedLinkClickResult.clickMode} succeeded=${generatedLinkClickResult.clickSucceeded ? "yes" : "no"}`
+          );
+          console.log(
+            `Auto-export debug: generated link popup/new page appeared=${generatedLinkClickResult.popupOpened ? "yes" : "no"}`
+          );
+          if (generatedLinkClickResult.candidateLinks && generatedLinkClickResult.candidateLinks.length > 0) {
+            console.log(`Auto-export debug: clicked generated link candidates="${generatedLinkClickResult.candidateLinks.join(" | ")}"`);
+          }
+          if (!generatedLinkClickResult.ok) {
             console.log(
-              `Auto-export: Summary ZIP found in Downloads and moved to export folder: ${path.basename(waitForArtifactResult.summaryArtifact)}`
-            );
-          } else if (waitForArtifactResult.summaryKind === "csv" && waitForArtifactResult.detectedIn === "downloads") {
-            console.log(
-              `Auto-export: Summary CSV found in Downloads and moved to export folder: ${path.basename(waitForArtifactResult.summaryArtifact)}`
-            );
-          } else if (waitForArtifactResult.summaryKind === "csv") {
-            console.log(
-              `Auto-export: Summary CSV detected in export folder: ${path.basename(waitForArtifactResult.summaryArtifact)}`
+              `Auto-export fallback: ${generatedLinkClickResult.clickError ?? "could not click the generated Workout Summary download link."}`
             );
           } else {
-            console.log(`Auto-export: Summary ZIP detected: ${path.basename(waitForArtifactResult.summaryArtifact)}`);
+            const clickCompletedAt = Date.now();
+            console.log("Auto-export: waiting for Workout Summary ZIP or CSV");
+            const waitForArtifactResult = await waitForWorkoutSummaryArtifact(
+              exportDir,
+              downloadsDir,
+              exportDirSnapshotBeforeClick.summaryZipFiles,
+              exportDirSnapshotBeforeClick.summaryCsvFiles,
+              downloadsSnapshotBeforeClick.summaryZipFiles,
+              downloadsSnapshotBeforeClick.summaryCsvFiles,
+              clickCompletedAt
+            );
+            if (waitForArtifactResult.ok && waitForArtifactResult.summaryArtifact && waitForArtifactResult.summaryKind) {
+              automaticSummaryExportCompleted = true;
+              if (waitForArtifactResult.summaryKind === "zip" && waitForArtifactResult.detectedIn === "downloads") {
+                console.log(
+                  `Auto-export: Summary ZIP found in Downloads and moved to export folder: ${path.basename(waitForArtifactResult.summaryArtifact)}`
+                );
+              } else if (waitForArtifactResult.summaryKind === "csv" && waitForArtifactResult.detectedIn === "downloads") {
+                console.log(
+                  `Auto-export: Summary CSV found in Downloads and moved to export folder: ${path.basename(waitForArtifactResult.summaryArtifact)}`
+                );
+              } else if (waitForArtifactResult.summaryKind === "csv") {
+                console.log(
+                  `Auto-export: Summary CSV detected in export folder: ${path.basename(waitForArtifactResult.summaryArtifact)}`
+                );
+              } else {
+                console.log(`Auto-export: Summary ZIP detected: ${path.basename(waitForArtifactResult.summaryArtifact)}`);
+              }
+              console.log("Workout Summary export downloaded automatically.");
+            } else {
+              console.log("Auto-export did not detect Workout Summary ZIP or CSV. Switching to manual fallback.");
+              console.log(
+                `Auto-export fallback: ${waitForArtifactResult.reason ?? "did not detect Workout Summary ZIP or CSV after clicking Export."}`
+              );
+            }
           }
-          console.log("Workout Summary export downloaded automatically.");
-        } else {
-          console.log("Auto-export did not detect Workout Summary ZIP or CSV. Switching to manual fallback.");
-          console.log(
-            `Auto-export fallback: ${waitForArtifactResult.reason ?? "did not detect Workout Summary ZIP or CSV after clicking Export."}`
-          );
         }
       }
     }
