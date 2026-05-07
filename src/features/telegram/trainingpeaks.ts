@@ -33,7 +33,7 @@ import type {
 const COACH_ONLY_MESSAGE = "⛔ Эта команда доступна только тренеру.";
 const TP_WEEKLY_DISABLED_MESSAGE =
   "⚙️ Запуск TrainingPeaks workflow из Telegram отключён. TrainingPeaks остаётся только в read-only режиме.";
-const TP_UNKNOWN_COMMAND_MESSAGE = "Не поняла команду. Нажмите «🏠 Меню» или отправьте /start.";
+const TP_UNKNOWN_COMMAND_MESSAGE = "Не поняла команду. Используй кнопки внизу или отправь /start.";
 const TELEGRAM_MESSAGE_LIMIT = 4000;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const STUDENTS_PAGE_SIZE = 8;
@@ -47,6 +47,7 @@ const TP_CALLBACK_HELP = "tp:h";
 const TP_CALLBACK_REPORTS = "tp:reports";
 const TP_REPLY_BUTTON_MENU = "🏠 Меню";
 const TP_REPLY_BUTTON_STUDENTS = "👥 Ученики";
+const TP_REPLY_BUTTON_ADD = "➕ Добавить";
 const TP_REPLY_BUTTON_WEEK = "▶️ Неделя";
 const TP_REPLY_BUTTON_JOBS = "🧾 Задачи";
 // Telegram requires non-empty text when attaching a reply keyboard.
@@ -114,7 +115,12 @@ type ParsedTrainingPeaksCallback =
   | { kind: "help" }
   | { kind: "reports_hint" };
 
-type TrainingPeaksReplyKeyboardAction = "main_menu" | "students" | "week_menu" | "jobs";
+type TrainingPeaksReplyKeyboardAction =
+  | "main_menu"
+  | "students"
+  | "add_student_help"
+  | "week_menu"
+  | "jobs";
 
 function getCoachChatIds(): Set<string> {
   const value = process.env.TELEGRAM_COACH_CHAT_IDS?.trim();
@@ -311,7 +317,8 @@ function getTrainingPeaksReplyKeyboardMarkup(): TelegramReplyKeyboardMarkup {
   return {
     keyboard: [
       [{ text: TP_REPLY_BUTTON_MENU }, { text: TP_REPLY_BUTTON_STUDENTS }],
-      [{ text: TP_REPLY_BUTTON_WEEK }, { text: TP_REPLY_BUTTON_JOBS }],
+      [{ text: TP_REPLY_BUTTON_ADD }, { text: TP_REPLY_BUTTON_WEEK }],
+      [{ text: TP_REPLY_BUTTON_JOBS }],
     ],
     resize_keyboard: true,
     is_persistent: true,
@@ -778,10 +785,11 @@ export function getTrainingPeaksHelpLines(): string[] {
   return [
     "Что можно сделать:",
     "",
+    "🏠 Меню — открыть главное меню",
     "👥 Ученики — открыть список учеников",
-    "▶️ Запустить неделю — поставить в очередь прошлую или текущую неделю",
+    "➕ Добавить — показать формат команды для добавления ученика",
+    "▶️ Неделя — открыть меню запуска недели",
     "🧾 Задачи — посмотреть последние запуски",
-    "❓ Помощь — показать эту подсказку",
     "",
     "Команды тоже работают, но обычно быстрее пользоваться кнопками.",
   ];
@@ -794,6 +802,10 @@ function getTrainingPeaksReplyKeyboardAction(text: string): TrainingPeaksReplyKe
 
   if (text === TP_REPLY_BUTTON_STUDENTS) {
     return "students";
+  }
+
+  if (text === TP_REPLY_BUTTON_ADD) {
+    return "add_student_help";
   }
 
   if (text === TP_REPLY_BUTTON_WEEK) {
@@ -883,7 +895,11 @@ function getTrainingPeaksMainMenuMarkup(): TelegramInlineKeyboardMarkup {
 }
 
 function getStudentsEmptyMenuText(): string {
-  return ["Ученики TrainingPeaks пока не найдены.", "", "Добавь первого через `/tp_add`."].join("\n");
+  return [
+    "Ученики TrainingPeaks пока не найдены.",
+    "",
+    "Нажми «➕ Добавить» или отправь `/tp_add Имя | ссылка TrainingPeaks`.",
+  ].join("\n");
 }
 
 function getStudentsEmptyMenuMarkup(): TelegramInlineKeyboardMarkup {
@@ -996,6 +1012,23 @@ function getHelpMenuText(): string {
 }
 
 function getHelpMenuMarkup(): TelegramInlineKeyboardMarkup {
+  return createInlineKeyboardMarkup([[createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)]]);
+}
+
+function getAddStudentInstructionsText(): string {
+  return [
+    "➕ Добавить ученика",
+    "",
+    "Отправь команду в формате:",
+    "",
+    "/tp_add Имя | ссылка TrainingPeaks",
+    "",
+    "Пример:",
+    "/tp_add Nastya | https://app.trainingpeaks.com/...",
+  ].join("\n");
+}
+
+function getAddStudentInstructionsMarkup(): TelegramInlineKeyboardMarkup {
   return createInlineKeyboardMarkup([[createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)]]);
 }
 
@@ -1167,6 +1200,26 @@ async function showTrainingPeaksHelpMenu(
   await sendTrainingPeaksReplyKeyboard(parsedMessage.chatId);
 }
 
+async function showTrainingPeaksAddStudentInstructions(
+  parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate
+): Promise<void> {
+  if (parsedMessage.kind === "callback_query") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      getAddStudentInstructionsText(),
+      getAddStudentInstructionsMarkup()
+    );
+    return;
+  }
+
+  await sendTrainingPeaksMenuMessage(
+    parsedMessage.chatId,
+    getAddStudentInstructionsText(),
+    getAddStudentInstructionsMarkup()
+  );
+}
+
 export async function handleTrainingPeaksTelegramHelp(
   parsedMessage: ParsedTelegramMessageUpdate
 ): Promise<void> {
@@ -1196,6 +1249,11 @@ export async function handleTrainingPeaksTelegramReplyKeyboardMessage(
 
     if (action === "students") {
       await showTrainingPeaksStudentsPage(parsedMessage, 0);
+      return "handled";
+    }
+
+    if (action === "add_student_help") {
+      await showTrainingPeaksAddStudentInstructions(parsedMessage);
       return "handled";
     }
 
@@ -1372,13 +1430,10 @@ async function handleTrainingPeaksAddStudent(
   const rawInput = parseAddStudentCommand(text);
 
   if (!rawInput) {
-    await sendTrainingPeaksMessage(
+    await sendTrainingPeaksMenuMessage(
       parsedMessage.chatId,
-      [
-        "Добавь ученика одной командой:",
-        "",
-        "/tp_add Olga Slastnaia | https://app.trainingpeaks.com/#calendar/athletes/...",
-      ].join("\n")
+      getAddStudentInstructionsText(),
+      getAddStudentInstructionsMarkup()
     );
     return;
   }

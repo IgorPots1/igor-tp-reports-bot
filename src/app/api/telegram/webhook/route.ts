@@ -22,7 +22,7 @@ const jsonHeaders = {
 const HELP_COMMAND_PATTERN = /^\/help(?:@\w+)?(?:\s+|$)/;
 const START_COMMAND_PATTERN = /^\/start(?:@\w+)?(?:\s+|$)/;
 const UNKNOWN_COMMAND_MESSAGE =
-  "Не поняла команду. Нажмите «🏠 Меню» или отправьте /start.";
+  "Не поняла команду. Используй кнопки внизу или отправь /start.";
 let hasLoggedMissingWebhookSecretWarning = false;
 
 function okResponse() {
