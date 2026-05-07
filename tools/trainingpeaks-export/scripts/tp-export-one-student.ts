@@ -27,6 +27,8 @@ type CliArgs = {
 type PageAssessment = {
   loginRequired: boolean;
   athletePageLikelyReachable: boolean;
+  trainingPeaksContextLikely: boolean;
+  hardAccessBlocked?: boolean;
   fallbackReason?: string;
 };
 
@@ -1189,6 +1191,7 @@ async function assessTrainingPeaksPage(page: Page): Promise<PageAssessment> {
   const [title, bodyText] = await Promise.all([page.title().catch(() => ""), getPageText(page)]);
   const combinedText = `${title} ${bodyText}`.trim().toLowerCase();
   const currentUrl = page.url();
+  const trainingPeaksUrlDetected = currentUrl.toLowerCase().includes("trainingpeaks");
 
   const loginSignals = await Promise.all([
     isVisible(page.locator('input[type="password"]')),
@@ -1205,6 +1208,7 @@ async function assessTrainingPeaksPage(page: Page): Promise<PageAssessment> {
     return {
       loginRequired: true,
       athletePageLikelyReachable: false,
+      trainingPeaksContextLikely: trainingPeaksUrlDetected,
       fallbackReason: "login screen detected or session not ready."
     };
   }
@@ -1213,15 +1217,8 @@ async function assessTrainingPeaksPage(page: Page): Promise<PageAssessment> {
     return {
       loginRequired: false,
       athletePageLikelyReachable: false,
+      trainingPeaksContextLikely: trainingPeaksUrlDetected,
       fallbackReason: "page content did not load clearly."
-    };
-  }
-
-  if (/something went wrong|access denied|403|404|not found|unavailable|forbidden/.test(combinedText)) {
-    return {
-      loginRequired: false,
-      athletePageLikelyReachable: false,
-      fallbackReason: "page appears to be unavailable or access is blocked."
     };
   }
 
@@ -1233,17 +1230,41 @@ async function assessTrainingPeaksPage(page: Page): Promise<PageAssessment> {
   ]);
 
   const shellTextDetected = /trainingpeaks|calendar|workout|athlete|account settings|export data/.test(combinedText);
-  if (!currentUrl.includes("trainingpeaks") || (!trainingPeaksShellVisible && !shellTextDetected)) {
+  const trainingPeaksContextLikely = trainingPeaksUrlDetected || trainingPeaksShellVisible || shellTextDetected;
+  const hardAccessBlocked =
+    /access denied|403|forbidden/.test(combinedText) && !trainingPeaksShellVisible && !shellTextDetected;
+  if (hardAccessBlocked) {
     return {
       loginRequired: false,
       athletePageLikelyReachable: false,
-      fallbackReason: "could not confirm the athlete page loaded clearly."
+      trainingPeaksContextLikely,
+      hardAccessBlocked: true,
+      fallbackReason: "access denied or forbidden page detected."
+    };
+  }
+
+  if (!trainingPeaksContextLikely) {
+    return {
+      loginRequired: false,
+      athletePageLikelyReachable: false,
+      trainingPeaksContextLikely: false,
+      fallbackReason: "could not confirm the TrainingPeaks page context."
+    };
+  }
+
+  if (/something went wrong|404|not found|unavailable/.test(combinedText)) {
+    return {
+      loginRequired: false,
+      athletePageLikelyReachable: false,
+      trainingPeaksContextLikely,
+      fallbackReason: "page state is still uncertain."
     };
   }
 
   return {
     loginRequired: false,
-    athletePageLikelyReachable: true
+    athletePageLikelyReachable: true,
+    trainingPeaksContextLikely
   };
 }
 
@@ -2786,8 +2807,16 @@ async function main(): Promise<void> {
     let datesAutoFilled = false;
     let automaticSummaryExportCompleted = false;
 
-    console.log("Auto-export: attempting to open Athlete Account Settings -> Export Data");
-    if (pageAssessment.athletePageLikelyReachable) {
+    const shouldAttemptExportData =
+      !pageAssessment.loginRequired &&
+      !pageAssessment.hardAccessBlocked &&
+      pageAssessment.trainingPeaksContextLikely;
+
+    if (shouldAttemptExportData) {
+      console.log("Auto-export: attempting to open Athlete Account Settings -> Export Data");
+      if (!pageAssessment.athletePageLikelyReachable) {
+        console.log("Auto-export: page state uncertain, trying Export Data automation anyway");
+      }
       const exportOpenResult = await tryOpenExportData(page);
       if (exportOpenResult.ok) {
         exportDataOpened = true;
@@ -2798,8 +2827,6 @@ async function main(): Promise<void> {
           logVisibleCandidateControls(exportOpenResult.visibleCandidates);
         }
       }
-    } else {
-      console.log("Auto-export fallback: athlete page state was uncertain, skipping Export Data automation.");
     }
 
     if (exportDataOpened) {
