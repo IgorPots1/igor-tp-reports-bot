@@ -45,6 +45,12 @@ type PaceTarget = {
   slow_min_per_km: number;
 };
 
+type PaceRangeTarget = PaceTarget & {
+  source: "workout_description" | "coach_comments";
+  confidence: TargetConfidence;
+  text?: string;
+};
+
 type ZoneMinutes = {
   z1: number | null;
   z2: number | null;
@@ -61,6 +67,7 @@ type ZoneMinutes = {
 type PlannedTargets = {
   hr_bpm: HrbpmTarget | null;
   pace_min_per_km: PaceTarget | null;
+  pace_ranges: PaceRangeTarget[];
   source: TargetSource | null;
   confidence: TargetConfidence | null;
 };
@@ -143,6 +150,9 @@ type Comparison = {
   data_quality_flags: {
     planned_distance_missing_in_export: boolean;
     planned_targets_text_only: boolean;
+    multiple_pace_targets_found: boolean;
+    pace_target_text_only: boolean;
+    pace_target_unparsed: boolean;
     no_athlete_comment: boolean;
     no_completion_status_column: boolean;
     unclear_classification: boolean;
@@ -229,6 +239,8 @@ type WeeklySummary = {
       planned_distance_available: boolean;
       planned_hr_targets_found: number;
       planned_pace_targets_found: number;
+      planned_pace_ranges_found: number;
+      workouts_with_multiple_pace_ranges: number;
       warnings: string[];
     };
   };
@@ -255,11 +267,13 @@ type ParsedCsv = {
 type CandidateMatch<T> = {
   value: T;
   source: "workout_description" | "coach_comments";
+  text?: string;
 };
 
 type ParsedTargetsMeta = {
   targets: PlannedTargets;
   hasTargetLikeText: boolean;
+  hasPaceTargetLikeText: boolean;
   parsedAnyTarget: boolean;
 };
 
@@ -794,6 +808,13 @@ function formatPaceMinPerKm(paceMinPerKm: number | null): string | null {
   return `${minutes}:${String(seconds).padStart(2, "0")}/km`;
 }
 
+function formatPaceValue(paceMinPerKm: number): string {
+  const totalSeconds = Math.round(paceMinPerKm * 60);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 function parsePaceValueToMinutes(value: string): number | null {
   const match = value.match(/^(\d{1,2}):(\d{2})$/);
   if (!match) {
@@ -1021,7 +1042,8 @@ function extractPaceCandidates(
           fast_min_per_km: Math.min(first, second),
           slow_min_per_km: Math.max(first, second)
         },
-        source
+        source,
+        text: `${formatPaceValue(Math.min(first, second))}–${formatPaceValue(Math.max(first, second))}/км`
       });
     }
   }
@@ -1029,10 +1051,10 @@ function extractPaceCandidates(
   return candidates;
 }
 
-function getUniqueCandidate<T>(
+function getUniqueCandidates<T>(
   candidates: CandidateMatch<T>[],
   serialize: (value: T) => string
-): CandidateMatch<T> | null {
+): CandidateMatch<T>[] {
   const unique = new Map<string, CandidateMatch<T>>();
 
   for (const candidate of candidates) {
@@ -1042,11 +1064,23 @@ function getUniqueCandidate<T>(
     }
   }
 
-  if (unique.size !== 1) {
+  return [...unique.values()];
+}
+
+function getUniqueCandidate<T>(
+  candidates: CandidateMatch<T>[],
+  serialize: (value: T) => string
+): CandidateMatch<T> | null {
+  const unique = getUniqueCandidates(candidates, serialize);
+  if (unique.length !== 1) {
     return null;
   }
 
-  return [...unique.values()][0];
+  return unique[0];
+}
+
+function hasPaceTargetLikeText(value: string): boolean {
+  return /(?:темп|pace|\/\s*(?:км|km)|мин\/км|min\/km|@\s*\d{1,2}:\d{2})/iu.test(value);
 }
 
 function resolveTargetSource(
@@ -1090,21 +1124,30 @@ function parsePlannedTargets(params: {
   const paceCandidates = textSources.flatMap((entry) =>
     extractPaceCandidates(entry.text, entry.key)
   );
-  const uniqueHr = getUniqueCandidate(hrCandidates, (value) => `${value.min}-${value.max}`);
-  const uniquePace = getUniqueCandidate(
+  const uniquePaceCandidates = getUniqueCandidates(
     paceCandidates,
     (value) => `${value.fast_min_per_km}-${value.slow_min_per_km}`
   );
-  const parsedAnyTarget = Boolean(uniqueHr || uniquePace);
+  const uniqueHr = getUniqueCandidate(hrCandidates, (value) => `${value.min}-${value.max}`);
+  const uniquePace = uniquePaceCandidates.length === 1 ? uniquePaceCandidates[0] : null;
+  const parsedAnyTarget = hrCandidates.length > 0 || uniquePaceCandidates.length > 0;
+  const hasPaceLikeText = textSources.some((entry) => hasPaceTargetLikeText(entry.text));
 
   return {
     targets: {
       hr_bpm: uniqueHr?.value ?? null,
       pace_min_per_km: uniquePace?.value ?? null,
+      pace_ranges: uniquePaceCandidates.map((candidate) => ({
+        ...candidate.value,
+        source: candidate.source,
+        confidence: "high",
+        text: candidate.text
+      })),
       source: resolveTargetSource(uniqueHr, uniquePace),
-      confidence: parsedAnyTarget ? "high" : null
+      confidence: uniqueHr || uniquePace ? "high" : null
     },
-    hasTargetLikeText: hrCandidates.length > 0 || paceCandidates.length > 0,
+    hasTargetLikeText: hrCandidates.length > 0 || hasPaceLikeText,
+    hasPaceTargetLikeText: hasPaceLikeText,
     parsedAnyTarget
   };
 }
@@ -1303,6 +1346,7 @@ function buildComparison(params: {
   }
 
   const paceTarget = params.workout.planned.targets.pace_min_per_km;
+  const paceRanges = params.workout.planned.targets.pace_ranges;
   const actualPace = params.workout.completed.avg_pace_min_per_km;
   let paceStatus: PaceComparisonStatus = "unknown";
 
@@ -1408,6 +1452,11 @@ function buildComparison(params: {
         params.workout.classification.is_planned && params.workout.planned.distance_km === null,
       planned_targets_text_only:
         params.parsedTargetsMeta.hasTargetLikeText && !params.parsedTargetsMeta.parsedAnyTarget,
+      multiple_pace_targets_found: paceRanges.length > 1,
+      pace_target_text_only:
+        params.parsedTargetsMeta.hasPaceTargetLikeText && params.workout.planned.targets.pace_min_per_km === null,
+      pace_target_unparsed:
+        params.parsedTargetsMeta.hasPaceTargetLikeText && params.workout.planned.targets.pace_ranges.length === 0,
       no_athlete_comment:
         params.workout.classification.is_completed &&
         params.workout.completed.athlete_comments === null,
@@ -1683,6 +1732,9 @@ async function parseCsvFile(candidate: CsvCandidate): Promise<ParsedCsv> {
         data_quality_flags: {
           planned_distance_missing_in_export: false,
           planned_targets_text_only: false,
+          multiple_pace_targets_found: false,
+          pace_target_text_only: false,
+          pace_target_unparsed: false,
           no_athlete_comment: false,
           no_completion_status_column: false,
           unclear_classification: false
@@ -1760,6 +1812,12 @@ function buildWeekMetrics(
   const plannedTargetsTextOnlyCount = plannedWorkouts.filter(
     (workout) => workout.comparison.data_quality_flags.planned_targets_text_only
   ).length;
+  const paceTargetUnparsedCount = plannedWorkouts.filter(
+    (workout) => workout.comparison.data_quality_flags.pace_target_unparsed
+  ).length;
+  const workoutsWithMultiplePaceRanges = plannedWorkouts.filter(
+    (workout) => workout.comparison.data_quality_flags.multiple_pace_targets_found
+  ).length;
   const noAthleteCommentCount = completedWorkouts.filter(
     (workout) => workout.comparison.data_quality_flags.no_athlete_comment
   ).length;
@@ -1773,6 +1831,16 @@ function buildWeekMetrics(
 
   if (plannedTargetsTextOnlyCount > 0) {
     warnings.push(`planned targets not parsed for ${plannedTargetsTextOnlyCount} planned workout(s)`);
+  }
+
+  if (paceTargetUnparsedCount > 0) {
+    warnings.push(`pace target text not normalized for ${paceTargetUnparsedCount} planned workout(s)`);
+  }
+
+  if (workoutsWithMultiplePaceRanges > 0) {
+    warnings.push(
+      `multiple pace ranges found for ${workoutsWithMultiplePaceRanges} planned workout(s)`
+    );
   }
 
   if (noAthleteCommentCount > 0) {
@@ -1822,6 +1890,13 @@ function buildWeekMetrics(
       ).length,
       planned_pace_targets_found: plannedWorkouts.filter(
         (workout) => workout.planned.targets.pace_min_per_km !== null
+      ).length,
+      planned_pace_ranges_found: plannedWorkouts.reduce(
+        (count, workout) => count + workout.planned.targets.pace_ranges.length,
+        0
+      ),
+      workouts_with_multiple_pace_ranges: plannedWorkouts.filter(
+        (workout) => workout.planned.targets.pace_ranges.length > 1
       ).length,
       warnings
     }
