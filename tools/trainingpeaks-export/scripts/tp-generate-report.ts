@@ -10,6 +10,93 @@ type CliArgs = {
   to: string;
 };
 
+type WeeklySegmentAnalysis = {
+  available: boolean;
+  reason?: "computed" | "no_workout_files" | "no_matches" | "not_computed";
+  workouts_with_planned_segments?: number;
+  workouts_with_matched_fit?: number;
+  workouts_analyzed?: number;
+  workouts_partial?: number;
+  workouts_unsupported?: number;
+};
+
+type WorkoutFilesSource = {
+  present?: boolean;
+  files?: unknown[];
+};
+
+type PaceTarget = {
+  fast_min_per_km: number;
+  slow_min_per_km: number;
+};
+
+type HrbpmTarget = {
+  min: number;
+  max: number;
+};
+
+type WorkoutSegmentAnalysis = {
+  available: boolean;
+  reason?:
+    | "computed"
+    | "no_planned_segments"
+    | "fit_not_matched"
+    | "fit_parse_failed"
+    | "timer_time_unavailable"
+    | "unsupported_segments"
+    | "unsupported_repeats";
+  comparable_segments_count?: number;
+  compared_segments_count?: number;
+  extra_after_plan_seconds?: number;
+  data_quality_flags?: string[];
+};
+
+type SegmentComparisonEntry = {
+  label?: string | null;
+  segment_type?: string;
+  is_rest?: boolean;
+  planned_duration_minutes?: number | null;
+  planned_targets?: {
+    pace_min_per_km?: PaceTarget | null;
+    hr_bpm?: HrbpmTarget | null;
+  };
+  actual?: {
+    duration_minutes?: number | null;
+    distance_km?: number | null;
+    avg_pace_min_per_km?: number | null;
+    avg_hr?: number | null;
+    avg_cadence?: number | null;
+    avg_power?: number | null;
+  };
+  coverage?: "full" | "partial" | "missing" | "unsupported";
+  coverage_ratio?: number | null;
+  pace_vs_target?: {
+    status?: "too_fast" | "too_slow" | "within" | "unknown";
+    outside_by_min_per_km?: number | null;
+  };
+  hr_vs_target?: {
+    status?: "above" | "below" | "within" | "unknown";
+    outside_by_bpm?: number | null;
+  };
+  data_quality_flags?: string[];
+};
+
+type WorkoutSummary = Record<string, unknown> & {
+  classification?: Record<string, unknown>;
+  planned?: {
+    segments?: unknown[];
+    targets?: {
+      hr_bpm?: unknown;
+      pace_ranges?: Array<{ text?: string | null }>;
+      pace_min_per_km?: number | null;
+    };
+  };
+  completed?: Record<string, unknown>;
+  comparison?: Record<string, unknown>;
+  segment_analysis?: WorkoutSegmentAnalysis;
+  segment_comparison?: SegmentComparisonEntry[];
+};
+
 type WeeklySummary = {
   schema_version?: string;
   student_id: string;
@@ -18,6 +105,10 @@ type WeeklySummary = {
     to: string;
   };
   source_files: string[];
+  source?: {
+    workout_files?: WorkoutFilesSource;
+  };
+  segment_analysis?: WeeklySegmentAnalysis;
   totals?: {
     workouts_count: number;
     completed_workouts_count: number;
@@ -31,7 +122,7 @@ type WeeklySummary = {
     intensity_flags_count: number;
   };
   week_metrics?: Record<string, unknown>;
-  workouts: Array<Record<string, unknown>>;
+  workouts: WorkoutSummary[];
 };
 
 type ReportDraft = {
@@ -180,7 +271,7 @@ function buildSystemPrompt(): string {
   return [
     "Ты готовишь черновик недельного отчета тренера по бегу на русском языке.",
     "Используй weekly-summary.json как единственный источник данных.",
-    "Опирайся в первую очередь на детерминированные поля: week_metrics, workouts[].classification, workouts[].planned, workouts[].completed, workouts[].comparison.",
+    "Опирайся в первую очередь на детерминированные поля: week_metrics, source.workout_files, segment_analysis, workouts[].classification, workouts[].planned, workouts[].completed, workouts[].comparison, workouts[].segment_analysis, workouts[].segment_comparison.",
     "Не рассчитывай выводы из raw-строк и не делай собственные агрегаты из сырых полей, если уже есть нормализованные значения.",
     "Не придумывай недостающие данные, цели, причины, самочувствие, травмы, прогресс, объем, зоны или выводы.",
     "Если planned.distance_km отсутствует или week_metrics.data_quality.planned_distance_available=false, не пиши, что дистанция совпала с планом.",
@@ -192,6 +283,34 @@ function buildSystemPrompt(): string {
     "Если данные неполные, используй формулировки вроде 'по доступным данным' и явно называй, что именно нельзя оценить.",
     "Приоритет: mismatch_flags, coach_attention_flags, classification, plan_vs_fact, затем уже вторичные детали.",
     "Если suspicious_if или suspicious_tss=true, упоминай это как ограничение данных и не строй сильные выводы на IF/TSS.",
+    "Для анализа по блокам используй только workouts[].segment_analysis и workouts[].segment_comparison.",
+    "Никогда не оценивай отдельные блоки тренировки по whole-workout average pace/HR.",
+    "Никогда не выводи фактические метрики блока, если их нет в workouts[].segment_comparison[].actual.",
+    "Никогда не придумывай block-level pace/HR/distance и не рассчитывай их вручную.",
+    "Если workouts[].segment_comparison[] недоступен, можно опираться только на planned.segments и сводку по тренировке, но без фактических метрик отдельных блоков.",
+    "Если workouts[].segment_analysis.available=false, явно называй причину: fit_not_matched, unsupported_repeats, unsupported_segments, timer_time_unavailable, fit_parse_failed.",
+    "Если source.workout_files.present=false или top-level segment_analysis.reason='no_workout_files', то в режиме fallback для каждой такой тренировки используй причину отсутствия Workout Files, а не fit_not_matched.",
+    "Если workouts[].segment_comparison[].coverage='partial', явно пиши: 'Вывод только по доступной части блока.'",
+    "Если coverage='missing', не пиши фактические метрики этого блока.",
+    "Если coverage='unsupported', пиши, что автоматическое сравнение блока недоступно.",
+    "Если pace_vs_target.status='unknown', не пиши, что темп был в диапазоне / быстрее / медленнее.",
+    "Если hr_vs_target.status='unknown', не пиши, что пульс был в пределах / выше / ниже цели.",
+    "Упоминай только non-null метрики.",
+    "Для названия блока предпочитай segment.label; не называй беговой блок 'отдыхом' только из-за is_rest=true, если label говорит иначе.",
+    "На одну тренировку выводи не более 3 блоков; сначала самые важные: mismatched, partial/missing/unsupported, затем warmup/main/cooldown.",
+    "Для interval-heavy тренировок кратко суммируй повторы вместо перечисления каждого.",
+    "Отчет должен быть компактным и Telegram-friendly.",
+    "Раздел 2 всегда должен содержать один короткий bullet про доступность разбора по блокам.",
+    "Если top-level segment_analysis.available=true, используй формулировку уровня: 'Разбор по блокам доступен для X тренировок...'.",
+    "Если top-level segment_analysis.reason='no_workout_files', используй формулировку уровня: 'Разбор по блокам недоступен: Workout Files отсутствуют, поэтому доступны только сводные данные Workout Summary.'",
+    "Если top-level segment_analysis.reason='no_matches', используй формулировку уровня: 'Workout Files есть, но тренировки не удалось надежно сопоставить с FIT-файлами.'",
+    "Если planned сегментов в неделе нет или segment_analysis.reason='not_computed', коротко укажи, что разбор по блокам не применялся.",
+    "Раздел 3: для каждой тренировки выбери один режим.",
+    "Режим A, segment-aware: если workout.segment_analysis.available=true и workout.segment_comparison.length>0. В этом режиме предпочитай segment_comparison над whole-workout comparison.",
+    "Режим B, segment fallback: если planned.segments есть, но workout.segment_analysis.available=false. В этом режиме объясни причину недоступности блоков и не пиши фактический pace/HR отдельных блоков.",
+    "Режим C, legacy workout-level: если planned.segments нет или детализация по блокам не добавляет ценности.",
+    "В режиме A используй компактный формат вроде: 'План: Разминка — 10 мин @ 5:44-5:57/км. Факт: 10 мин, 1.72 км, 5:50/км, средний пульс 142. Оценка: темп в диапазоне.'",
+    "В режиме B используй формулировки вроде: 'Разбор по блокам недоступен: Workout Files отсутствуют, поэтому доступны только сводные данные Workout Summary.', 'Разбор по блокам недоступен: не удалось сопоставить тренировку с FIT-файлом.', 'Разбор по блокам недоступен: структура повторов в плане пока не поддерживается автоматически.', 'Разбор по блокам недоступен: в FIT нет надежной timer_time-разметки.', 'Разбор по блокам недоступен: блоки есть, но автоматическое сравнение ограничено.'",
     "Тон: кратко, профессионально, по-тренерски, без воды и без чрезмерной уверенности.",
     "Верни только Markdown без пояснений вне отчета.",
     "Используй ровно эту структуру и заголовки:",
@@ -211,7 +330,7 @@ function buildUserPrompt(summary: WeeklySummary): string {
     "Важно:",
     "- Отчет должен быть полностью на русском языке.",
     "- Для раздела 'План vs факт за неделю' используй week_metrics.plan_vs_fact и week_metrics.counts.",
-    "- Для разбора по тренировкам опирайся на workouts[].classification и workouts[].comparison.",
+    "- Для разбора по тренировкам опирайся на workouts[].classification, workouts[].comparison, workouts[].segment_analysis и workouts[].segment_comparison.",
     "- Явно отмечай skipped, extra, duration/distance deltas и HR/pace mismatches, только если они есть в deterministic fields.",
     "- Не утверждай, что дистанция совпала с планом, если planned distance отсутствует.",
     "- Не утверждай, что пульс соответствовал цели, если parser не нашел planned.targets.hr_bpm.",
@@ -220,6 +339,18 @@ function buildUserPrompt(summary: WeeklySummary): string {
     "- Для такой тренировки предпочитай формулировку вида: 'Темповые ориентиры в плане: 5:44–5:57/км, 5:20–5:31/км. Автоматическое сравнение с одним целевым темпом ограничено.' Используй planned.targets.pace_ranges[].text, если оно есть.",
     "- Если week_metrics.data_quality.planned_pace_ranges_found > 0 и week_metrics.data_quality.planned_pace_targets_found == 0, в недельном summary явно скажи: 'Темповые ориентиры есть в описаниях тренировок, но часто указаны несколькими диапазонами, поэтому точное автоматическое сравнение ограничено.'",
     "- Если есть data_quality warnings, кратко укажи ограничения оценки.",
+    "- Для анализа по блокам используй только workouts[].segment_analysis и workouts[].segment_comparison[].",
+    "- Не делай выводы по отдельным блокам из whole-workout average pace/HR.",
+    "- Если segment_comparison недоступен, не пиши фактический темп/пульс/дистанцию блока.",
+    "- Если top-level segment_analysis.available=true, в разделе 2 добавь короткий bullet вида: 'Разбор по блокам доступен для X тренировок...'.",
+    "- Если source.workout_files.present=false или top-level segment_analysis.reason='no_workout_files', в разделе 2 добавь: 'Разбор по блокам недоступен: Workout Files отсутствуют, поэтому доступны только сводные данные Workout Summary.'",
+    "- Если top-level segment_analysis.reason='no_matches', в разделе 2 добавь: 'Workout Files есть, но тренировки не удалось надежно сопоставить с FIT-файлами.'",
+    "- Для тренировки с available segment comparison используй компактные формулировки вида: 'Разбор по блокам доступен.', 'План: Разминка — 10 мин @ 5:44-5:57/км.', 'Факт: 10 мин, 1.72 км, 5:50/км, средний пульс 142.', 'Оценка: темп в диапазоне.'",
+    "- Для partial coverage пиши: 'Вывод только по доступной части блока.'",
+    "- Если source.workout_files.present=false или top-level segment_analysis.reason='no_workout_files', то для всех тренировок в fallback используй формулировку про отсутствие Workout Files, а не про несопоставленный FIT.",
+    "- Для fallback используй формулировки вроде: 'Разбор по блокам недоступен: Workout Files отсутствуют, поэтому доступны только сводные данные Workout Summary.', 'Разбор по блокам недоступен: не удалось сопоставить тренировку с FIT-файлом.', 'Разбор по блокам недоступен: структура повторов в плане пока не поддерживается автоматически.'",
+    "- Не перечисляй больше 3 блоков на тренировку; для интервальных работ суммируй повторы.",
+    "- Не используй source.workout_files, segment_analysis или segment_comparison для собственных вычислений; только для аккуратного описания того, что уже есть в JSON.",
     "- Не используй raw для собственных расчетов.",
     "",
     "weekly-summary.json:",
