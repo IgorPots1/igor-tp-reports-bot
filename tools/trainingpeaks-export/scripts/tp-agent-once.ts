@@ -58,6 +58,18 @@ type TrainingPeaksJobResult = {
   warning_message?: string;
 };
 
+type TelegramBatchSummaryInput = {
+  weekFrom: string;
+  weekTo: string;
+  finalStatus: "completed" | "failed";
+  studentsExpected: number | null;
+  reportsFound: number | null;
+  telegramDraftsSent: number | null;
+  missingStudents: TrainingPeaksMissingStudent[];
+  failedStudentNames: string[];
+  errorMessage?: string | null;
+};
+
 const TELEGRAM_MESSAGE_LIMIT = 4000;
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
 const STALE_RUNNING_JOB_TIMEOUT_MINUTES = 6 * 60;
@@ -286,6 +298,69 @@ function formatMissingStudentsWarning(missingStudents: TrainingPeaksMissingStude
   return labels.length > 5 ? `${preview} and ${labels.length - 5} more` : preview;
 }
 
+function formatSummaryCount(value: number | null): string {
+  return value === null ? "n/a" : String(value);
+}
+
+function buildStudentPreviewLines(
+  title: string,
+  studentNames: string[],
+  limit = 5
+): string[] {
+  if (studentNames.length === 0) {
+    return [];
+  }
+
+  const preview = studentNames.slice(0, limit);
+  const lines = ["", `${title}:`, ...preview.map((studentName) => `- ${studentName}`)];
+
+  if (studentNames.length > limit) {
+    lines.push(`- ...and ${studentNames.length - limit} more`);
+  }
+
+  return lines;
+}
+
+function buildTelegramBatchSummaryMessage(input: TelegramBatchSummaryInput): string {
+  const missingStudentNames = input.missingStudents.map(
+    (student) => student.student_name?.trim() || student.student_id
+  );
+  const failedStudentNames = input.failedStudentNames
+    .map((studentName) => studentName.trim())
+    .filter((studentName) => studentName.length > 0);
+  const studentIssueCount = missingStudentNames.length + failedStudentNames.length;
+  const warningsCount =
+    studentIssueCount + (input.finalStatus === "failed" && studentIssueCount === 0 ? 1 : 0);
+  const title =
+    input.finalStatus === "failed"
+      ? "❌ TP weekly batch failed"
+      : warningsCount > 0
+        ? "⚠️ TP weekly batch completed with warnings"
+        : "✅ TP weekly batch completed";
+
+  const lines = [
+    title,
+    "",
+    "Week:",
+    `${input.weekFrom} → ${input.weekTo}`,
+    "",
+    `Status: ${input.finalStatus}`,
+    `Students: ${formatSummaryCount(input.studentsExpected)}`,
+    `Reports: ${formatSummaryCount(input.reportsFound)}`,
+    `Telegram drafts: ${formatSummaryCount(input.telegramDraftsSent)}`,
+    `Warnings: ${warningsCount}`,
+  ];
+
+  if (input.finalStatus === "failed" && input.errorMessage) {
+    lines.push("", `Failure: ${input.errorMessage}`);
+  }
+
+  lines.push(...buildStudentPreviewLines("Missing", missingStudentNames));
+  lines.push(...buildStudentPreviewLines("Delivery failed", failedStudentNames));
+
+  return lines.join("\n");
+}
+
 async function readExpectedStudentsFromLocalConfig(): Promise<TrainingPeaksExpectedStudent[]> {
   const students = await readStudentsConfig();
 
@@ -411,9 +486,10 @@ async function listWeeklyReportsWithMarkdown(
 async function deliverReportsToTelegram(
   chatId: string,
   reports: TrainingPeaksWeeklyReportRow[]
-): Promise<{ sentCount: number; warning: string | null }> {
+): Promise<{ sentCount: number; warning: string | null; failedStudentNames: string[] }> {
   let sentCount = 0;
   const failures: string[] = [];
+  const failedStudentNames: string[] = [];
 
   for (const report of reports) {
     try {
@@ -426,17 +502,18 @@ async function deliverReportsToTelegram(
     } catch (error) {
       const shortMessage = toShortErrorMessage(error);
       failures.push(`${report.student_name}: ${shortMessage}`);
+      failedStudentNames.push(report.student_name?.trim() || report.student_id);
     }
   }
 
   if (failures.length === 0) {
-    return { sentCount, warning: null };
+    return { sentCount, warning: null, failedStudentNames };
   }
 
   const warning = `Telegram delivery warning: ${sentCount}/${reports.length} report(s) sent. ${failures.join(" | ")}`;
   console.warn(warning);
 
-  return { sentCount, warning };
+  return { sentCount, warning, failedStudentNames };
 }
 
 async function completeTrainingPeaksJob(jobId: string, result: unknown): Promise<void> {
@@ -477,6 +554,21 @@ async function failTrainingPeaksJob(
   }
 }
 
+async function sendTelegramBatchSummaryIfPossible(
+  chatId: string | null,
+  summary: TelegramBatchSummaryInput
+): Promise<void> {
+  if (!chatId) {
+    return;
+  }
+
+  try {
+    await sendTelegramText(chatId, buildTelegramBatchSummaryMessage(summary));
+  } catch (error) {
+    console.warn(`Telegram batch summary warning: ${toShortErrorMessage(error)}`);
+  }
+}
+
 async function main(): Promise<void> {
   loadLocalEnv();
 
@@ -495,11 +587,17 @@ async function main(): Promise<void> {
 
   console.log(`Claimed TrainingPeaks job for ${job.week_from}..${job.week_to}.`);
 
+  let studentsExpected: number | null = null;
+  let reportsFound: number | null = null;
+  let reportsSentToTelegram = 0;
+  let missingStudents: TrainingPeaksMissingStudent[] = [];
+  let failedTelegramStudentNames: string[] = [];
+
   try {
     console.log("Running tp-sync-students...");
     await runNpmScript("tp-sync-students");
     const expectedStudents = await readExpectedStudentsFromLocalConfig();
-    const studentsExpected = expectedStudents.length;
+    studentsExpected = expectedStudents.length;
     console.log("Running tp-weekly-all...");
     await runNpmScript("tp-weekly-all", [`--from=${job.week_from}`, `--to=${job.week_to}`]);
 
@@ -508,9 +606,8 @@ async function main(): Promise<void> {
 
     const completedAt = new Date().toISOString();
     const reports = await listWeeklyReportsWithMarkdown(job.week_from, job.week_to);
-    const reportsFound = reports.length;
-    const missingStudents = getMissingStudents(expectedStudents, reports);
-    let reportsSentToTelegram = 0;
+    reportsFound = reports.length;
+    missingStudents = getMissingStudents(expectedStudents, reports);
     let deliveryWarning: string | null = null;
     let note = "Local Mac runner executed tp-weekly-all and tp-sync-reports.";
     const warningMessages: string[] = [];
@@ -536,6 +633,17 @@ async function main(): Promise<void> {
       console.error(errorMessage);
       console.warn(warningMessage);
       await failTrainingPeaksJob(job.id, errorMessage, failedResult);
+      await sendTelegramBatchSummaryIfPossible(job.requested_by_chat_id, {
+        weekFrom: job.week_from,
+        weekTo: job.week_to,
+        finalStatus: "failed",
+        studentsExpected,
+        reportsFound,
+        telegramDraftsSent: 0,
+        missingStudents,
+        failedStudentNames: [],
+        errorMessage,
+      });
       return;
     }
 
@@ -555,6 +663,7 @@ async function main(): Promise<void> {
       const deliveryResult = await deliverReportsToTelegram(job.requested_by_chat_id, reports);
       reportsSentToTelegram = deliveryResult.sentCount;
       deliveryWarning = deliveryResult.warning;
+      failedTelegramStudentNames = deliveryResult.failedStudentNames;
       note =
         reportsSentToTelegram === reportsFound
           ? "Local Mac runner executed tp-weekly-all and tp-sync-reports, then sent report drafts to the Telegram requester."
@@ -589,6 +698,16 @@ async function main(): Promise<void> {
     }
 
     await completeTrainingPeaksJob(job.id, result);
+    await sendTelegramBatchSummaryIfPossible(job.requested_by_chat_id, {
+      weekFrom: job.week_from,
+      weekTo: job.week_to,
+      finalStatus: "completed",
+      studentsExpected,
+      reportsFound,
+      telegramDraftsSent: reportsSentToTelegram,
+      missingStudents,
+      failedStudentNames: failedTelegramStudentNames,
+    });
 
     console.log(
       `Completed TrainingPeaks job for ${job.week_from}..${job.week_to}. reports_found=${reportsFound} telegram_sent=${reportsSentToTelegram} warnings=${warningMessages.length}`
@@ -598,6 +717,17 @@ async function main(): Promise<void> {
 
     try {
       await failTrainingPeaksJob(job.id, shortErrorMessage);
+      await sendTelegramBatchSummaryIfPossible(job.requested_by_chat_id, {
+        weekFrom: job.week_from,
+        weekTo: job.week_to,
+        finalStatus: "failed",
+        studentsExpected,
+        reportsFound,
+        telegramDraftsSent: reportsSentToTelegram,
+        missingStudents,
+        failedStudentNames: failedTelegramStudentNames,
+        errorMessage: shortErrorMessage,
+      });
     } catch (markFailedError) {
       console.error("Failed to mark TrainingPeaks job as failed.", markFailedError);
     }
