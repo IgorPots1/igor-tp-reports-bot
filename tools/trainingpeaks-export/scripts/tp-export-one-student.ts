@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readdir, rename, stat, unlink } from "node:fs/promises";
+import { copyFile, mkdir, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -376,6 +376,643 @@ type GeneratedDownloadLinkClickResult = AutomationAttemptResult & GeneratedDownl
   popupOpened: boolean;
   clickError?: string;
 };
+
+type ExportApiCaptureResult = {
+  responseMatched: boolean;
+  status?: number;
+  contentType?: string;
+  topLevelKeys: string[];
+  bodyPreview?: string;
+  downloadUrlFound: boolean;
+  directBodyFound: boolean;
+  asyncJobDetected: boolean;
+  asyncPollAttempted: boolean;
+  savedArtifactPath?: string;
+  savedArtifactKind?: SummaryArtifactKind;
+  savedVia?: "response-url" | "response-body" | "async-job";
+  fallbackReason?: string;
+};
+
+type WorkoutSummaryClickAttemptResult = AutomationAttemptResult & {
+  clickDebug?: WorkoutSummaryClickDebug;
+  apiCapture?: ExportApiCaptureResult;
+};
+
+type AnalyzedExportApiPayload = {
+  status: number;
+  contentType: string;
+  topLevelKeys: string[];
+  bodyPreview: string;
+  parsedJson?: unknown;
+  downloadUrl?: string;
+  asyncEndpointUrls: string[];
+  asyncJobDetected: boolean;
+  directBodyKind?: SummaryArtifactKind;
+  embeddedBody?: Buffer;
+  fileNameHint?: string;
+};
+
+function normalizeHeaderRecord(headers: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]));
+}
+
+function normalizeKeyForComparison(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function isSensitiveKeyName(key: string): boolean {
+  const normalized = normalizeKeyForComparison(key);
+  return [
+    "token",
+    "accesstoken",
+    "refreshtoken",
+    "authtoken",
+    "authorization",
+    "cookie",
+    "cookies",
+    "session",
+    "sessionid",
+    "secret",
+    "signature",
+    "sig",
+    "apikey"
+  ].includes(normalized);
+}
+
+function sanitizeUrlForLog(rawUrl: string): string {
+  return shortenUrl(rawUrl);
+}
+
+function sanitizeStringForLog(value: string): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (!compact) {
+    return compact;
+  }
+
+  const redactedTokens = compact.replace(/(bearer\s+)[a-z0-9._-]+/gi, "$1[redacted]");
+  const redactedUrls = redactedTokens.replace(/https?:\/\/[^\s"'`<>]+/gi, (match) => sanitizeUrlForLog(match));
+  return truncateForLog(redactedUrls, 280);
+}
+
+function sanitizeJsonForLog(value: unknown, depth = 0): unknown {
+  if (value === null || value === undefined) {
+    return value;
+  }
+
+  if (depth >= 4) {
+    return "[truncated]";
+  }
+
+  if (typeof value === "string") {
+    return sanitizeStringForLog(value);
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.slice(0, 5).map((item) => sanitizeJsonForLog(item, depth + 1));
+  }
+
+  if (typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .slice(0, 20)
+        .map(([key, entryValue]) => [
+          key,
+          isSensitiveKeyName(key) ? "[redacted]" : sanitizeJsonForLog(entryValue, depth + 1)
+        ])
+    );
+  }
+
+  return String(value);
+}
+
+function getTopLevelKeys(value: unknown): string[] {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return Object.keys(value as Record<string, unknown>);
+  }
+
+  return [];
+}
+
+function getNestedValue(value: unknown, dottedPath: string): unknown {
+  const parts = dottedPath.split(".");
+  let current: unknown = value;
+
+  for (const part of parts) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      return undefined;
+    }
+
+    current = (current as Record<string, unknown>)[part];
+  }
+
+  return current;
+}
+
+function resolveUrlCandidate(rawValue: unknown, baseUrl: string): string | undefined {
+  if (typeof rawValue !== "string") {
+    return undefined;
+  }
+
+  const trimmed = rawValue.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  try {
+    return new URL(trimmed, baseUrl).toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function extractUrlFromPayload(value: unknown, dottedPaths: string[], baseUrl: string): string | undefined {
+  for (const dottedPath of dottedPaths) {
+    const candidate = resolveUrlCandidate(getNestedValue(value, dottedPath), baseUrl);
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return undefined;
+}
+
+function extractExplicitEndpointUrls(value: unknown, baseUrl: string): string[] {
+  const dottedPaths = [
+    "statusUrl",
+    "status_url",
+    "jobUrl",
+    "job_url",
+    "pollUrl",
+    "poll_url",
+    "statusEndpoint",
+    "downloadEndpoint",
+    "jobEndpoint",
+    "data.statusUrl",
+    "data.status_url",
+    "data.jobUrl",
+    "data.job_url",
+    "data.pollUrl",
+    "data.poll_url",
+    "data.statusEndpoint",
+    "data.downloadEndpoint",
+    "data.jobEndpoint"
+  ];
+
+  const urls = dottedPaths
+    .map((dottedPath) => resolveUrlCandidate(getNestedValue(value, dottedPath), baseUrl))
+    .filter((entry): entry is string => Boolean(entry));
+
+  return [...new Set(urls)];
+}
+
+function parseContentDispositionFileName(contentDisposition: string): string | undefined {
+  const utf8Match = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    return path.basename(decodeURIComponent(utf8Match[1]));
+  }
+
+  const plainMatch = contentDisposition.match(/filename\s*=\s*"([^"]+)"/i) ?? contentDisposition.match(/filename\s*=\s*([^;]+)/i);
+  if (plainMatch?.[1]) {
+    return path.basename(plainMatch[1].trim());
+  }
+
+  return undefined;
+}
+
+function inferSummaryArtifactKind(contentType: string): SummaryArtifactKind | undefined {
+  const normalizedContentType = contentType.toLowerCase();
+  if (normalizedContentType.includes("csv")) {
+    return "csv";
+  }
+
+  if (
+    normalizedContentType.includes("zip") ||
+    normalizedContentType.includes("gzip") ||
+    normalizedContentType.includes("octet-stream")
+  ) {
+    return "zip";
+  }
+
+  return undefined;
+}
+
+function looksLikeCsvText(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    return false;
+  }
+
+  const lines = trimmed.split(/\r?\n/).slice(0, 4).filter(Boolean);
+  if (lines.length < 2) {
+    return false;
+  }
+
+  return lines.every((line) => line.includes(","));
+}
+
+function looksLikeBase64(value: string): boolean {
+  const compact = value.replace(/\s+/g, "");
+  return compact.length >= 16 && compact.length % 4 === 0 && /^[A-Za-z0-9+/=]+$/.test(compact);
+}
+
+function inferSummaryArtifactFileName(
+  responseUrl: string,
+  contentDisposition: string | undefined,
+  fileNameHint: string | undefined,
+  kind: SummaryArtifactKind,
+  fallbackBaseName: string
+): string {
+  const contentDispositionName = contentDisposition ? parseContentDispositionFileName(contentDisposition) : undefined;
+  const urlBaseName = (() => {
+    try {
+      const parsedUrl = new URL(responseUrl);
+      const baseName = path.basename(parsedUrl.pathname);
+      return baseName && baseName !== "/" ? baseName : undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+  const selectedName = fileNameHint || contentDispositionName || urlBaseName || `${fallbackBaseName}.${kind}`;
+  const parsedName = path.parse(selectedName);
+
+  if (parsedName.ext) {
+    return selectedName;
+  }
+
+  return `${selectedName}.${kind}`;
+}
+
+async function saveSummaryArtifactFromBuffer(
+  exportDir: string,
+  responseUrl: string,
+  contentDisposition: string | undefined,
+  fileNameHint: string | undefined,
+  body: Buffer,
+  kind: SummaryArtifactKind,
+  fallbackBaseName: string
+): Promise<string> {
+  const targetFileName = inferSummaryArtifactFileName(
+    responseUrl,
+    contentDisposition,
+    fileNameHint,
+    kind,
+    fallbackBaseName
+  );
+  const destinationPath = await uniquePathForFile(exportDir, targetFileName);
+  await writeFile(destinationPath, body);
+  return destinationPath;
+}
+
+function analyzeExportApiPayload(params: {
+  responseUrl: string;
+  status: number;
+  headers: Record<string, string>;
+  body: Buffer;
+}): AnalyzedExportApiPayload {
+  const headers = normalizeHeaderRecord(params.headers);
+  const contentType = headers["content-type"] ?? "";
+  const normalizedContentType = contentType.toLowerCase();
+  const directBodyKind = inferSummaryArtifactKind(contentType);
+  const fileNameHint = parseContentDispositionFileName(headers["content-disposition"] ?? "");
+
+  if (directBodyKind === "zip") {
+    return {
+      status: params.status,
+      contentType,
+      topLevelKeys: [],
+      bodyPreview: `[binary zip body, ${params.body.length} bytes]`,
+      directBodyKind,
+      asyncEndpointUrls: [],
+      asyncJobDetected: false,
+      fileNameHint
+    };
+  }
+
+  const decodedText = params.body.toString("utf8");
+  if (directBodyKind === "csv" || normalizedContentType.includes("text/") || looksLikeCsvText(decodedText)) {
+    return {
+      status: params.status,
+      contentType,
+      topLevelKeys: [],
+      bodyPreview: sanitizeStringForLog(decodedText.split(/\r?\n/).slice(0, 3).join(" | ")),
+      directBodyKind: directBodyKind ?? (looksLikeCsvText(decodedText) ? "csv" : undefined),
+      asyncEndpointUrls: [],
+      asyncJobDetected: false,
+      fileNameHint
+    };
+  }
+
+  try {
+    const parsedJson = JSON.parse(decodedText) as unknown;
+    const topLevelKeys = getTopLevelKeys(parsedJson);
+    const jsonRecord =
+      parsedJson && typeof parsedJson === "object" && !Array.isArray(parsedJson)
+        ? (parsedJson as Record<string, unknown>)
+        : undefined;
+    const embeddedContentType = typeof jsonRecord?.contentType === "string" ? jsonRecord.contentType : "";
+    const embeddedData = typeof jsonRecord?.data === "string" ? jsonRecord.data : undefined;
+    const embeddedFileName = typeof jsonRecord?.fileName === "string" ? path.basename(jsonRecord.fileName) : fileNameHint;
+    const embeddedKind = embeddedContentType ? inferSummaryArtifactKind(embeddedContentType) : undefined;
+    const downloadUrl = extractUrlFromPayload(
+      parsedJson,
+      [
+        "url",
+        "downloadUrl",
+        "download_url",
+        "fileUrl",
+        "file_url",
+        "href",
+        "link",
+        "location",
+        "data.url",
+        "data.downloadUrl"
+      ],
+      params.responseUrl
+    ) ?? resolveUrlCandidate(headers.location, params.responseUrl);
+    const asyncEndpointUrls = extractExplicitEndpointUrls(parsedJson, params.responseUrl);
+    const asyncJobDetected =
+      Boolean(parsedJson) &&
+      typeof parsedJson === "object" &&
+      !Array.isArray(parsedJson) &&
+      topLevelKeys.some((key) =>
+        ["status", "state", "job", "jobId", "jobStatus", "progress", "complete", "completed"].includes(key)
+      );
+    const embeddedBody = (() => {
+      if (!embeddedKind || !embeddedData) {
+        return undefined;
+      }
+
+      if (embeddedKind === "zip" && looksLikeBase64(embeddedData)) {
+        const decoded = Buffer.from(embeddedData, "base64");
+        return decoded.length > 0 ? decoded : undefined;
+      }
+
+      if (embeddedKind === "csv") {
+        return Buffer.from(embeddedData, "utf8");
+      }
+
+      return undefined;
+    })();
+
+    return {
+      status: params.status,
+      contentType,
+      topLevelKeys,
+      bodyPreview: truncateForLog(JSON.stringify(sanitizeJsonForLog(parsedJson)), 280),
+      parsedJson,
+      downloadUrl,
+      asyncEndpointUrls,
+      asyncJobDetected,
+      directBodyKind: embeddedBody ? embeddedKind : undefined,
+      embeddedBody,
+      fileNameHint: embeddedFileName
+    };
+  } catch {
+    return {
+      status: params.status,
+      contentType,
+      topLevelKeys: [],
+      bodyPreview: sanitizeStringForLog(decodedText),
+      asyncEndpointUrls: [],
+      asyncJobDetected: false,
+      fileNameHint
+    };
+  }
+}
+
+function logExportApiSummary(prefix: string, analysis: AnalyzedExportApiPayload): void {
+  console.log(
+    `${prefix} ${JSON.stringify({
+      status: analysis.status,
+      contentType: analysis.contentType || "(none)",
+      topLevelKeys: analysis.topLevelKeys,
+      bodyPreview: analysis.bodyPreview
+    })}`
+  );
+}
+
+async function downloadWorkoutSummaryFromUrl(
+  context: ReturnType<Page["context"]>,
+  downloadUrl: string,
+  exportDir: string,
+  fallbackBaseName: string
+): Promise<{ filePath: string; kind: SummaryArtifactKind }> {
+  const response = await context.request.get(downloadUrl, { failOnStatusCode: false });
+  const body = Buffer.from(await response.body());
+  const headers = normalizeHeaderRecord(response.headers());
+  const contentType = headers["content-type"] ?? "";
+  const kind = inferSummaryArtifactKind(contentType) ?? (looksLikeCsvText(body.toString("utf8")) ? "csv" : "zip");
+  const filePath = await saveSummaryArtifactFromBuffer(
+    exportDir,
+    downloadUrl,
+    headers["content-disposition"],
+    undefined,
+    body,
+    kind,
+    fallbackBaseName
+  );
+
+  return { filePath, kind };
+}
+
+function extractAsyncStatusLabel(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return undefined;
+  }
+
+  const record = payload as Record<string, unknown>;
+  const statusCandidate = record.status ?? record.state ?? record.jobStatus;
+  return typeof statusCandidate === "string" ? statusCandidate : undefined;
+}
+
+async function pollExportApiAsyncJob(params: {
+  context: ReturnType<Page["context"]>;
+  endpointUrls: string[];
+  exportDir: string;
+  fallbackBaseName: string;
+}): Promise<Pick<ExportApiCaptureResult, "savedArtifactKind" | "savedArtifactPath" | "savedVia" | "fallbackReason">> {
+  const queue = [...new Set(params.endpointUrls)];
+  const seenUrls = new Set<string>();
+
+  while (queue.length > 0) {
+    const endpointUrl = queue.shift();
+    if (!endpointUrl || seenUrls.has(endpointUrl)) {
+      continue;
+    }
+    seenUrls.add(endpointUrl);
+
+    for (let attempt = 1; attempt <= 8; attempt += 1) {
+      console.log(`Auto-export debug: polling export API async endpoint="${sanitizeUrlForLog(endpointUrl)}" attempt=${attempt}`);
+      const response = await params.context.request.get(endpointUrl, { failOnStatusCode: false });
+      const body = Buffer.from(await response.body());
+      const responseHeaders = normalizeHeaderRecord(response.headers());
+      const analysis = analyzeExportApiPayload({
+        responseUrl: endpointUrl,
+        status: response.status(),
+        headers: responseHeaders,
+        body
+      });
+      logExportApiSummary("Auto-export debug: export API async poll", analysis);
+
+      if (analysis.downloadUrl) {
+        const downloaded = await downloadWorkoutSummaryFromUrl(
+          params.context,
+          analysis.downloadUrl,
+          params.exportDir,
+          params.fallbackBaseName
+        );
+        return {
+          savedArtifactKind: downloaded.kind,
+          savedArtifactPath: downloaded.filePath,
+          savedVia: "async-job"
+        };
+      }
+
+      if (analysis.directBodyKind) {
+        const savedPath = await saveSummaryArtifactFromBuffer(
+          params.exportDir,
+          endpointUrl,
+          responseHeaders["content-disposition"],
+          analysis.fileNameHint,
+          analysis.embeddedBody ?? body,
+          analysis.directBodyKind,
+          params.fallbackBaseName
+        );
+        return {
+          savedArtifactKind: analysis.directBodyKind,
+          savedArtifactPath: savedPath,
+          savedVia: "async-job"
+        };
+      }
+
+      for (const discoveredUrl of analysis.asyncEndpointUrls) {
+        if (!seenUrls.has(discoveredUrl) && !queue.includes(discoveredUrl)) {
+          queue.push(discoveredUrl);
+        }
+      }
+
+      const asyncStatus = extractAsyncStatusLabel(analysis.parsedJson);
+      if (asyncStatus && /(failed|error|cancelled)/i.test(asyncStatus)) {
+        return {
+          fallbackReason: `export API async job reported status "${asyncStatus}".`
+        };
+      }
+
+      if (!analysis.asyncJobDetected && analysis.asyncEndpointUrls.length === 0) {
+        break;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+  }
+
+  return {
+    fallbackReason: "export API async job did not produce a download URL or file body."
+  };
+}
+
+async function captureAndMaybeSaveWorkoutSummaryExportResponse(params: {
+  context: ReturnType<Page["context"]>;
+  response: Awaited<ReturnType<Page["waitForResponse"]>>;
+  exportDir: string;
+  studentId: string;
+  from: string;
+  to: string;
+}): Promise<ExportApiCaptureResult> {
+  const headers = await params.response.allHeaders().catch(() => ({}));
+  const body = Buffer.from(await params.response.body().catch(() => new Uint8Array()));
+  const analysis = analyzeExportApiPayload({
+    responseUrl: params.response.url(),
+    status: params.response.status(),
+    headers,
+    body
+  });
+  logExportApiSummary("Auto-export debug: export API response", analysis);
+
+  const fallbackBaseName = `WorkoutExport--${params.studentId}-${params.from}-${params.to}`;
+  const result: ExportApiCaptureResult = {
+    responseMatched: true,
+    status: analysis.status,
+    contentType: analysis.contentType,
+    topLevelKeys: analysis.topLevelKeys,
+    bodyPreview: analysis.bodyPreview,
+    downloadUrlFound: Boolean(analysis.downloadUrl),
+    directBodyFound: Boolean(analysis.directBodyKind),
+    asyncJobDetected: analysis.asyncJobDetected,
+    asyncPollAttempted: false
+  };
+
+  if (analysis.downloadUrl) {
+    const downloaded = await downloadWorkoutSummaryFromUrl(
+      params.context,
+      analysis.downloadUrl,
+      params.exportDir,
+      fallbackBaseName
+    );
+    console.log("Auto-export: downloaded Workout Summary from API response URL");
+    return {
+      ...result,
+      savedArtifactPath: downloaded.filePath,
+      savedArtifactKind: downloaded.kind,
+      savedVia: "response-url"
+    };
+  }
+
+  if (analysis.directBodyKind) {
+    const savedPath = await saveSummaryArtifactFromBuffer(
+      params.exportDir,
+      params.response.url(),
+      normalizeHeaderRecord(headers)["content-disposition"],
+      analysis.fileNameHint,
+      analysis.embeddedBody ?? body,
+      analysis.directBodyKind,
+      fallbackBaseName
+    );
+    console.log("Auto-export: saved Workout Summary from API response body");
+    return {
+      ...result,
+      savedArtifactPath: savedPath,
+      savedArtifactKind: analysis.directBodyKind,
+      savedVia: "response-body"
+    };
+  }
+
+  if (analysis.asyncJobDetected || analysis.asyncEndpointUrls.length > 0) {
+    console.log(
+      `Auto-export debug: export API async job detected top-level keys="${analysis.topLevelKeys.join(", ") || "(none)"}"`
+    );
+    if (analysis.asyncEndpointUrls.length > 0) {
+      const polledResult = await pollExportApiAsyncJob({
+        context: params.context,
+        endpointUrls: analysis.asyncEndpointUrls,
+        exportDir: params.exportDir,
+        fallbackBaseName
+      });
+      return {
+        ...result,
+        asyncPollAttempted: true,
+        savedArtifactPath: polledResult.savedArtifactPath,
+        savedArtifactKind: polledResult.savedArtifactKind,
+        savedVia: polledResult.savedVia,
+        fallbackReason: polledResult.fallbackReason
+      };
+    }
+
+    return {
+      ...result,
+      fallbackReason: "export API looked like an async job, but no explicit poll/download endpoint was provided."
+    };
+  }
+
+  return {
+    ...result,
+    fallbackReason: "export API response did not include a download URL or direct file body."
+  };
+}
 
 async function waitForWorkoutSummaryArtifact(
   exportDir: string,
@@ -1582,7 +2219,13 @@ async function tryFillWorkoutSummaryDateRange(
   return { ok: true };
 }
 
-async function tryClickWorkoutSummaryExport(page: Page): Promise<AutomationAttemptResult> {
+async function tryClickWorkoutSummaryExport(
+  page: Page,
+  exportDir: string,
+  studentId: string,
+  from: string,
+  to: string
+): Promise<WorkoutSummaryClickAttemptResult> {
   const sectionResolution = await locateWorkoutSummarySection(page);
   if (sectionResolution.candidates.length > 0) {
     formatDebugList("Auto-export debug: Workout Summary locator candidates", sectionResolution.candidates);
@@ -1706,6 +2349,12 @@ async function tryClickWorkoutSummaryExport(page: Page): Promise<AutomationAttem
   let clickMode: "normal" | "force" = "normal";
   let clickError: string | undefined;
   const popupPromise = page.waitForEvent("popup", { timeout: 2000 }).then(() => true).catch(() => false);
+  const exportApiResponsePromise = page
+    .waitForResponse(
+      (response) => response.url().includes("/fitness/v1/export/") && response.url().includes("/workouts/"),
+      { timeout: 15_000 }
+    )
+    .catch(() => null);
 
   try {
     try {
@@ -1731,6 +2380,26 @@ async function tryClickWorkoutSummaryExport(page: Page): Promise<AutomationAttem
     context.off("page", onContextPage);
   }
 
+  const matchedExportApiResponse = await exportApiResponsePromise;
+  const apiCapture = matchedExportApiResponse
+    ? await captureAndMaybeSaveWorkoutSummaryExportResponse({
+        context,
+        response: matchedExportApiResponse,
+        exportDir,
+        studentId,
+        from,
+        to
+      })
+    : {
+        responseMatched: false,
+        topLevelKeys: [],
+        downloadUrlFound: false,
+        directBodyFound: false,
+        asyncJobDetected: false,
+        asyncPollAttempted: false,
+        fallbackReason: "did not observe the Workout Summary export API response after clicking Export."
+      } satisfies ExportApiCaptureResult;
+
   const validationMessagesAfterClick = await collectVisibleExportFeedback(page, section);
   const clickDebug: WorkoutSummaryClickDebug = {
     ...preClickDebug,
@@ -1745,13 +2414,16 @@ async function tryClickWorkoutSummaryExport(page: Page): Promise<AutomationAttem
   if (clickError) {
     return {
       ok: false,
-      reason: JSON.stringify(clickDebug)
+      reason: clickError,
+      clickDebug,
+      apiCapture
     };
   }
 
   return {
     ok: true,
-    reason: JSON.stringify(clickDebug)
+    clickDebug,
+    apiCapture
   };
 }
 
@@ -1765,18 +2437,6 @@ function logManualFallbackInstructions(): void {
   console.log("");
   console.log("Optional:");
   console.log("Workout Files can be downloaded too, but it is not required for the current weekly report.");
-}
-
-function parseWorkoutSummaryClickDebug(reason: string | undefined): WorkoutSummaryClickDebug | null {
-  if (!reason || !reason.startsWith("{")) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(reason) as WorkoutSummaryClickDebug;
-  } catch {
-    return null;
-  }
 }
 
 function logWorkoutSummaryClickDebug(debug: WorkoutSummaryClickDebug): void {
@@ -2148,8 +2808,8 @@ async function main(): Promise<void> {
         inspectExportDir(downloadsDir)
       ]);
       console.log("Auto-export: clicking Workout Summary Export");
-      const clickResult = await tryClickWorkoutSummaryExport(page);
-      const clickDebug = parseWorkoutSummaryClickDebug(clickResult.reason);
+      const clickResult = await tryClickWorkoutSummaryExport(page, exportDir, student.student_id, args.from, args.to);
+      const clickDebug = clickResult.clickDebug;
       if (clickDebug) {
         logWorkoutSummaryClickDebug(clickDebug);
       }
@@ -2164,81 +2824,102 @@ async function main(): Promise<void> {
         console.log(
           `Auto-export debug: Workout Summary startDate="${clickDebug?.startDateValue ?? ""}" endDate="${clickDebug?.endDateValue ?? ""}"`
         );
-        console.log("Auto-export: waiting for Export Complete download link");
-        const exportCompleteResult = await waitForGeneratedWorkoutSummaryDownloadLink(page);
-        console.log(
-          `Auto-export debug: Export Complete visible=${exportCompleteResult.exportCompleteVisible ? "yes" : "no"} instruction visible=${exportCompleteResult.downloadInstructionVisible ? "yes" : "no"}`
-        );
-        if (exportCompleteResult.candidateTexts && exportCompleteResult.candidateTexts.length > 0) {
-          console.log(`Auto-export debug: Export Complete candidates="${exportCompleteResult.candidateTexts.join(" | ")}"`);
-        } else {
-          console.log("Auto-export debug: Export Complete candidates=(none)");
-        }
-        if (exportCompleteResult.candidateLinks && exportCompleteResult.candidateLinks.length > 0) {
-          console.log(`Auto-export debug: generated link candidates="${exportCompleteResult.candidateLinks.join(" | ")}"`);
-        } else {
-          console.log("Auto-export debug: generated link candidates=(none)");
-        }
-        if (!exportCompleteResult.ok || (!exportCompleteResult.linkText && !exportCompleteResult.linkHref)) {
-          console.log("Auto-export fallback: Export Complete download link did not appear.");
-        } else {
-          console.log("Auto-export: Export Complete link appeared");
-          console.log(`Auto-export debug: generated link text="${exportCompleteResult.linkText ?? ""}"`);
-          if (exportCompleteResult.linkHref) {
-            console.log(`Auto-export debug: generated link href="${exportCompleteResult.linkHref}"`);
-          }
-          console.log("Auto-export: clicking generated Workout Summary download link");
-          const generatedLinkClickResult = await clickGeneratedWorkoutSummaryDownloadLink(page);
+        const apiCapture = clickResult.apiCapture;
+        if (apiCapture) {
           console.log(
-            `Auto-export debug: generated link click mode=${generatedLinkClickResult.clickMode} succeeded=${generatedLinkClickResult.clickSucceeded ? "yes" : "no"}`
+            `Auto-export debug: export API matched=${apiCapture.responseMatched ? "yes" : "no"} downloadUrlFound=${apiCapture.downloadUrlFound ? "yes" : "no"} directBodyFound=${apiCapture.directBodyFound ? "yes" : "no"} asyncJobDetected=${apiCapture.asyncJobDetected ? "yes" : "no"}`
           );
-          console.log(
-            `Auto-export debug: generated link popup/new page appeared=${generatedLinkClickResult.popupOpened ? "yes" : "no"}`
-          );
-          if (generatedLinkClickResult.candidateLinks && generatedLinkClickResult.candidateLinks.length > 0) {
-            console.log(`Auto-export debug: clicked generated link candidates="${generatedLinkClickResult.candidateLinks.join(" | ")}"`);
+          if (apiCapture.fallbackReason) {
+            console.log(`Auto-export debug: export API fallback reason="${apiCapture.fallbackReason}"`);
           }
-          if (!generatedLinkClickResult.ok) {
-            console.log(
-              `Auto-export fallback: ${generatedLinkClickResult.clickError ?? "could not click the generated Workout Summary download link."}`
-            );
+        }
+
+        if (apiCapture?.savedArtifactPath && apiCapture.savedArtifactKind) {
+          automaticSummaryExportCompleted = true;
+          console.log(
+            `Auto-export: Workout Summary ${apiCapture.savedArtifactKind.toUpperCase()} saved automatically: ${path.basename(apiCapture.savedArtifactPath)}`
+          );
+        } else {
+          console.log("Auto-export: waiting for Export Complete download link");
+          const exportCompleteResult = await waitForGeneratedWorkoutSummaryDownloadLink(page);
+          console.log(
+            `Auto-export debug: Export Complete visible=${exportCompleteResult.exportCompleteVisible ? "yes" : "no"} instruction visible=${exportCompleteResult.downloadInstructionVisible ? "yes" : "no"}`
+          );
+          if (exportCompleteResult.candidateTexts && exportCompleteResult.candidateTexts.length > 0) {
+            console.log(`Auto-export debug: Export Complete candidates="${exportCompleteResult.candidateTexts.join(" | ")}"`);
           } else {
-            const clickCompletedAt = Date.now();
-            console.log("Auto-export: waiting for Workout Summary ZIP or CSV");
-            const waitForArtifactResult = await waitForWorkoutSummaryArtifact(
-              exportDir,
-              downloadsDir,
-              exportDirSnapshotBeforeClick.summaryZipFiles,
-              exportDirSnapshotBeforeClick.summaryCsvFiles,
-              downloadsSnapshotBeforeClick.summaryZipFiles,
-              downloadsSnapshotBeforeClick.summaryCsvFiles,
-              clickCompletedAt
+            console.log("Auto-export debug: Export Complete candidates=(none)");
+          }
+          if (exportCompleteResult.candidateLinks && exportCompleteResult.candidateLinks.length > 0) {
+            console.log(`Auto-export debug: generated link candidates="${exportCompleteResult.candidateLinks.join(" | ")}"`);
+          } else {
+            console.log("Auto-export debug: generated link candidates=(none)");
+          }
+          if (!exportCompleteResult.ok || (!exportCompleteResult.linkText && !exportCompleteResult.linkHref)) {
+            console.log("Auto-export fallback: Export Complete download link did not appear.");
+          } else {
+            console.log("Auto-export: Export Complete link appeared");
+            console.log(`Auto-export debug: generated link text="${exportCompleteResult.linkText ?? ""}"`);
+            if (exportCompleteResult.linkHref) {
+              console.log(`Auto-export debug: generated link href="${exportCompleteResult.linkHref}"`);
+            }
+            console.log("Auto-export: clicking generated Workout Summary download link");
+            const generatedLinkClickResult = await clickGeneratedWorkoutSummaryDownloadLink(page);
+            console.log(
+              `Auto-export debug: generated link click mode=${generatedLinkClickResult.clickMode} succeeded=${generatedLinkClickResult.clickSucceeded ? "yes" : "no"}`
             );
-            if (waitForArtifactResult.ok && waitForArtifactResult.summaryArtifact && waitForArtifactResult.summaryKind) {
-              automaticSummaryExportCompleted = true;
-              if (waitForArtifactResult.summaryKind === "zip" && waitForArtifactResult.detectedIn === "downloads") {
-                console.log(
-                  `Auto-export: Summary ZIP found in Downloads and moved to export folder: ${path.basename(waitForArtifactResult.summaryArtifact)}`
-                );
-              } else if (waitForArtifactResult.summaryKind === "csv" && waitForArtifactResult.detectedIn === "downloads") {
-                console.log(
-                  `Auto-export: Summary CSV found in Downloads and moved to export folder: ${path.basename(waitForArtifactResult.summaryArtifact)}`
-                );
-              } else if (waitForArtifactResult.summaryKind === "csv") {
-                console.log(
-                  `Auto-export: Summary CSV detected in export folder: ${path.basename(waitForArtifactResult.summaryArtifact)}`
-                );
-              } else {
-                console.log(`Auto-export: Summary ZIP detected: ${path.basename(waitForArtifactResult.summaryArtifact)}`);
-              }
-              console.log("Workout Summary export downloaded automatically.");
-            } else {
-              console.log("Auto-export did not detect Workout Summary ZIP or CSV. Switching to manual fallback.");
+            console.log(
+              `Auto-export debug: generated link popup/new page appeared=${generatedLinkClickResult.popupOpened ? "yes" : "no"}`
+            );
+            if (generatedLinkClickResult.candidateLinks && generatedLinkClickResult.candidateLinks.length > 0) {
+              console.log(`Auto-export debug: clicked generated link candidates="${generatedLinkClickResult.candidateLinks.join(" | ")}"`);
+            }
+            if (!generatedLinkClickResult.ok) {
               console.log(
-                `Auto-export fallback: ${waitForArtifactResult.reason ?? "did not detect Workout Summary ZIP or CSV after clicking Export."}`
+                `Auto-export fallback: ${generatedLinkClickResult.clickError ?? "could not click the generated Workout Summary download link."}`
               );
+            } else {
+              const clickCompletedAt = Date.now();
+              console.log("Auto-export: waiting for Workout Summary ZIP or CSV");
+              const waitForArtifactResult = await waitForWorkoutSummaryArtifact(
+                exportDir,
+                downloadsDir,
+                exportDirSnapshotBeforeClick.summaryZipFiles,
+                exportDirSnapshotBeforeClick.summaryCsvFiles,
+                downloadsSnapshotBeforeClick.summaryZipFiles,
+                downloadsSnapshotBeforeClick.summaryCsvFiles,
+                clickCompletedAt
+              );
+              if (waitForArtifactResult.ok && waitForArtifactResult.summaryArtifact && waitForArtifactResult.summaryKind) {
+                automaticSummaryExportCompleted = true;
+                if (waitForArtifactResult.summaryKind === "zip" && waitForArtifactResult.detectedIn === "downloads") {
+                  console.log(
+                    `Auto-export: Summary ZIP found in Downloads and moved to export folder: ${path.basename(waitForArtifactResult.summaryArtifact)}`
+                  );
+                } else if (waitForArtifactResult.summaryKind === "csv" && waitForArtifactResult.detectedIn === "downloads") {
+                  console.log(
+                    `Auto-export: Summary CSV found in Downloads and moved to export folder: ${path.basename(waitForArtifactResult.summaryArtifact)}`
+                  );
+                } else if (waitForArtifactResult.summaryKind === "csv") {
+                  console.log(
+                    `Auto-export: Summary CSV detected in export folder: ${path.basename(waitForArtifactResult.summaryArtifact)}`
+                  );
+                } else {
+                  console.log(`Auto-export: Summary ZIP detected: ${path.basename(waitForArtifactResult.summaryArtifact)}`);
+                }
+                console.log("Workout Summary export downloaded automatically.");
+              } else {
+                console.log("Auto-export did not detect Workout Summary ZIP or CSV. Switching to manual fallback.");
+                console.log(
+                  `Auto-export fallback: ${waitForArtifactResult.reason ?? "did not detect Workout Summary ZIP or CSV after clicking Export."}`
+                );
+              }
             }
           }
+        }
+
+        if (!automaticSummaryExportCompleted && apiCapture?.responseMatched && !apiCapture.savedArtifactPath && apiCapture.fallbackReason) {
+          console.log(`Auto-export fallback: ${apiCapture.fallbackReason}`);
         }
       }
     }
