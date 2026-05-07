@@ -16,6 +16,7 @@ import {
   getTrainingPeaksStudentCard,
   getTrainingPeaksStudentCardByInternalId,
   getTrainingPeaksStudentsRegistryWithLatestReportStatus,
+  type RequestTrainingPeaksWeeklyRunResult,
   requestTrainingPeaksWeeklyRun,
 } from "@/features/trainingpeaks/service";
 import {
@@ -350,6 +351,26 @@ async function editTrainingPeaksMenuMessage(
   await editTelegramMessageText(chatId, messageId, text, {
     replyMarkup,
   });
+}
+
+async function showTrainingPeaksMenuScreen(
+  parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate,
+  text: string,
+  replyMarkup: TelegramInlineKeyboardMarkup,
+  options?: {
+    refreshReplyKeyboard?: boolean;
+  }
+): Promise<void> {
+  if (parsedMessage.kind === "callback_query") {
+    await editTrainingPeaksMenuMessage(parsedMessage.chatId, parsedMessage.messageId, text, replyMarkup);
+    return;
+  }
+
+  await sendTrainingPeaksMenuMessage(parsedMessage.chatId, text, replyMarkup);
+
+  if (options?.refreshReplyKeyboard) {
+    await sendTrainingPeaksReplyKeyboard(parsedMessage.chatId);
+  }
 }
 
 function parseWeekArgs(
@@ -1019,7 +1040,7 @@ function getAddStudentInstructionsText(): string {
   return [
     "➕ Добавить ученика",
     "",
-    "Отправь команду в формате:",
+    "Отправь одним сообщением:",
     "",
     "/tp_add Имя | ссылка TrainingPeaks",
     "",
@@ -1039,22 +1060,14 @@ function getCallbackErrorMarkup(): TelegramInlineKeyboardMarkup {
 async function showTrainingPeaksMainMenu(
   parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate
 ): Promise<void> {
-  if (parsedMessage.kind === "callback_query") {
-    await editTrainingPeaksMenuMessage(
-      parsedMessage.chatId,
-      parsedMessage.messageId,
-      getTrainingPeaksMainMenuText(),
-      getTrainingPeaksMainMenuMarkup()
-    );
-    return;
-  }
-
-  await sendTrainingPeaksMenuMessage(
-    parsedMessage.chatId,
+  await showTrainingPeaksMenuScreen(
+    parsedMessage,
     getTrainingPeaksMainMenuText(),
-    getTrainingPeaksMainMenuMarkup()
+    getTrainingPeaksMainMenuMarkup(),
+    {
+      refreshReplyKeyboard: true,
+    }
   );
-  await sendTrainingPeaksReplyKeyboard(parsedMessage.chatId);
 }
 
 async function showTrainingPeaksStudentsPage(
@@ -1064,22 +1077,14 @@ async function showTrainingPeaksStudentsPage(
   const students = await getTrainingPeaksStudentsRegistryWithLatestReportStatus();
 
   if (students.length === 0) {
-    if (parsedMessage.kind === "callback_query") {
-      await editTrainingPeaksMenuMessage(
-        parsedMessage.chatId,
-        parsedMessage.messageId,
-        getStudentsEmptyMenuText(),
-        getStudentsEmptyMenuMarkup()
-      );
-      return;
-    }
-
-    await sendTrainingPeaksMenuMessage(
-      parsedMessage.chatId,
+    await showTrainingPeaksMenuScreen(
+      parsedMessage,
       getStudentsEmptyMenuText(),
-      getStudentsEmptyMenuMarkup()
+      getStudentsEmptyMenuMarkup(),
+      {
+        refreshReplyKeyboard: true,
+      }
     );
-    await sendTrainingPeaksReplyKeyboard(parsedMessage.chatId);
     return;
   }
 
@@ -1090,13 +1095,9 @@ async function showTrainingPeaksStudentsPage(
   const text = getStudentsPageText(pageStudents, safePage, totalPages);
   const markup = getStudentsPageMarkup(pageStudents, safePage, totalPages);
 
-  if (parsedMessage.kind === "callback_query") {
-    await editTrainingPeaksMenuMessage(parsedMessage.chatId, parsedMessage.messageId, text, markup);
-    return;
-  }
-
-  await sendTrainingPeaksMenuMessage(parsedMessage.chatId, text, markup);
-  await sendTrainingPeaksReplyKeyboard(parsedMessage.chatId);
+  await showTrainingPeaksMenuScreen(parsedMessage, text, markup, {
+    refreshReplyKeyboard: true,
+  });
 }
 
 async function showTrainingPeaksStudentCardMenu(
@@ -1132,18 +1133,9 @@ async function showTrainingPeaksStudentCardMenu(
 async function showTrainingPeaksWeekMenu(
   parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate
 ): Promise<void> {
-  if (parsedMessage.kind === "callback_query") {
-    await editTrainingPeaksMenuMessage(
-      parsedMessage.chatId,
-      parsedMessage.messageId,
-      getWeekMenuText(),
-      getWeekMenuMarkup()
-    );
-    return;
-  }
-
-  await sendTrainingPeaksMenuMessage(parsedMessage.chatId, getWeekMenuText(), getWeekMenuMarkup());
-  await sendTrainingPeaksReplyKeyboard(parsedMessage.chatId);
+  await showTrainingPeaksMenuScreen(parsedMessage, getWeekMenuText(), getWeekMenuMarkup(), {
+    refreshReplyKeyboard: true,
+  });
 }
 
 async function showTrainingPeaksJobsMenu(
@@ -1153,70 +1145,37 @@ async function showTrainingPeaksJobsMenu(
   const text = jobs.length === 0 ? "Задач TrainingPeaks пока нет." : formatJobsMessage(jobs);
   const markup = getJobsMenuMarkup();
 
-  if (parsedMessage.kind === "callback_query") {
-    await editTrainingPeaksMenuMessage(parsedMessage.chatId, parsedMessage.messageId, text, markup);
-    return;
-  }
-
-  await sendTrainingPeaksMenuMessage(parsedMessage.chatId, text, markup);
-  await sendTrainingPeaksReplyKeyboard(parsedMessage.chatId);
+  await showTrainingPeaksMenuScreen(parsedMessage, text, markup, {
+    refreshReplyKeyboard: true,
+  });
 }
 
 async function showTrainingPeaksReportsHint(
   parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate
 ): Promise<void> {
-  if (parsedMessage.kind === "callback_query") {
-    await editTrainingPeaksMenuMessage(
-      parsedMessage.chatId,
-      parsedMessage.messageId,
-      getReportsHintText(),
-      getReportsHintMarkup()
-    );
-    return;
-  }
-
-  await sendTrainingPeaksMenuMessage(
-    parsedMessage.chatId,
-    getReportsHintText(),
-    getReportsHintMarkup()
-  );
-  await sendTrainingPeaksReplyKeyboard(parsedMessage.chatId);
+  await showTrainingPeaksMenuScreen(parsedMessage, getReportsHintText(), getReportsHintMarkup(), {
+    refreshReplyKeyboard: true,
+  });
 }
 
 async function showTrainingPeaksHelpMenu(
   parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate
 ): Promise<void> {
-  if (parsedMessage.kind === "callback_query") {
-    await editTrainingPeaksMenuMessage(
-      parsedMessage.chatId,
-      parsedMessage.messageId,
-      getHelpMenuText(),
-      getHelpMenuMarkup()
-    );
-    return;
-  }
-
-  await sendTrainingPeaksMenuMessage(parsedMessage.chatId, getHelpMenuText(), getHelpMenuMarkup());
-  await sendTrainingPeaksReplyKeyboard(parsedMessage.chatId);
+  await showTrainingPeaksMenuScreen(parsedMessage, getHelpMenuText(), getHelpMenuMarkup(), {
+    refreshReplyKeyboard: true,
+  });
 }
 
 async function showTrainingPeaksAddStudentInstructions(
   parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate
 ): Promise<void> {
-  if (parsedMessage.kind === "callback_query") {
-    await editTrainingPeaksMenuMessage(
-      parsedMessage.chatId,
-      parsedMessage.messageId,
-      getAddStudentInstructionsText(),
-      getAddStudentInstructionsMarkup()
-    );
-    return;
-  }
-
-  await sendTrainingPeaksMenuMessage(
-    parsedMessage.chatId,
+  await showTrainingPeaksMenuScreen(
+    parsedMessage,
     getAddStudentInstructionsText(),
-    getAddStudentInstructionsMarkup()
+    getAddStudentInstructionsMarkup(),
+    {
+      refreshReplyKeyboard: true,
+    }
   );
 }
 
@@ -1430,11 +1389,7 @@ async function handleTrainingPeaksAddStudent(
   const rawInput = parseAddStudentCommand(text);
 
   if (!rawInput) {
-    await sendTrainingPeaksMenuMessage(
-      parsedMessage.chatId,
-      getAddStudentInstructionsText(),
-      getAddStudentInstructionsMarkup()
-    );
+    await showTrainingPeaksAddStudentInstructions(parsedMessage);
     return;
   }
 
@@ -1528,39 +1483,96 @@ async function handleTrainingPeaksRunWeek(
     useRunAliasMessage?: boolean;
   }
 ): Promise<void> {
+  const requestedWeek = resolveRequestedRunWeek(text);
   const result = await requestTrainingPeaksWeeklyRun(text, {
     chatId: parsedMessage.chatId,
     userId: parsedMessage.userId,
   });
+  const presentation = presentTrainingPeaksWeekRunResult(result, {
+    requestedWeek,
+    useRunAliasMessage: options?.useRunAliasMessage,
+  });
 
-  if (!result.ok) {
-    await sendTrainingPeaksMessage(
-      parsedMessage.chatId,
-      options?.useRunAliasMessage ? formatTpRunAliasMessage(result.message) : result.message
-    );
-    return;
-  }
-
-  await sendTrainingPeaksMessage(
-    parsedMessage.chatId,
-    [
-      `✅ Задача создана: недельные отчёты ${formatWeekIso(result.job)}.`,
-      "",
-      "Теперь на Mac запусти:",
-      "cd ~/igor-tp-reports-bot/tools/trainingpeaks-export && npm run tp-agent-once",
-    ].join("\n")
-  );
+  await sendTrainingPeaksMenuMessage(parsedMessage.chatId, presentation.text, presentation.replyMarkup);
 }
 
 async function handleTrainingPeaksJobs(parsedMessage: ParsedTelegramUpdate): Promise<void> {
   await showTrainingPeaksJobsMenu(parsedMessage);
 }
 
-function getWeekResultMarkup(): TelegramInlineKeyboardMarkup {
-  return createInlineKeyboardMarkup([
-    [createMenuButton("⬅️ Назад", TP_CALLBACK_WEEK_MENU)],
-    [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
+function getWeekResultMarkup(options?: {
+  includeJobsButton?: boolean;
+}): TelegramInlineKeyboardMarkup {
+  const rows: TrainingPeaksMenuButton[][] = [];
+
+  if (options?.includeJobsButton) {
+    rows.push([createMenuButton("🧾 Задачи", TP_CALLBACK_JOBS)]);
+  }
+
+  rows.push([
+    createMenuButton("⬅️ Назад", TP_CALLBACK_WEEK_MENU),
+    createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU),
   ]);
+
+  return createInlineKeyboardMarkup(rows);
+}
+
+function resolveRequestedRunWeek(text: string): TrainingPeaksWeek | null {
+  const args = text.replace(TP_RUN_WEEK_COMMAND_PATTERN, "").trim();
+
+  if (!args) {
+    return null;
+  }
+
+  const tokens = args.split(/\s+/);
+
+  if (tokens.length === 1) {
+    return resolveTrainingPeaksWeekKeyword(tokens[0] ?? "");
+  }
+
+  return parseWeekArgs(tokens, "/tp_run_week 2026-04-27 2026-05-03").week;
+}
+
+function presentTrainingPeaksWeekRunResult(
+  result: RequestTrainingPeaksWeeklyRunResult,
+  options?: {
+    requestedWeek?: TrainingPeaksWeek | null;
+    useRunAliasMessage?: boolean;
+  }
+): {
+  text: string;
+  replyMarkup: TelegramInlineKeyboardMarkup;
+} {
+  if (result.ok) {
+    return {
+      text: [
+        "✅ Неделя поставлена в очередь.",
+        `Неделя: ${formatWeekIso(result.job)}`,
+        "",
+        "Чтобы получить отчёты, запусти локальный runner на Mac.",
+      ].join("\n"),
+      replyMarkup: getWeekResultMarkup({
+        includeJobsButton: true,
+      }),
+    };
+  }
+
+  if (result.reason === "duplicate" && options?.requestedWeek) {
+    return {
+      text: [
+        "Задача за эту неделю уже в очереди или выполняется.",
+        `Неделя: ${formatWeekIso(options.requestedWeek)}`,
+      ].join("\n"),
+      replyMarkup: getWeekResultMarkup({
+        includeJobsButton: true,
+      }),
+    };
+  }
+
+  return {
+    text: options?.useRunAliasMessage ? formatTpRunAliasMessage(result.message) : result.message,
+    replyMarkup: getWeekResultMarkup(),
+  };
 }
 
 export async function handleTrainingPeaksTelegramCallback(
@@ -1675,6 +1687,9 @@ export async function handleTrainingPeaksTelegramCallback(
     }
 
     if (callback.kind === "week_last" || callback.kind === "week_current") {
+      const requestedWeek = resolveTrainingPeaksWeekKeyword(
+        callback.kind === "week_last" ? "last" : "current"
+      );
       const result = await requestTrainingPeaksWeeklyRun(
         callback.kind === "week_last" ? "/tp_run_week last" : "/tp_run_week current",
         {
@@ -1682,27 +1697,15 @@ export async function handleTrainingPeaksTelegramCallback(
           userId: parsedMessage.userId,
         }
       );
-
-      if (!result.ok) {
-        await editTrainingPeaksMenuMessage(
-          parsedMessage.chatId,
-          parsedMessage.messageId,
-          result.message,
-          getWeekResultMarkup()
-        );
-        return "handled";
-      }
+      const presentation = presentTrainingPeaksWeekRunResult(result, {
+        requestedWeek,
+      });
 
       await editTrainingPeaksMenuMessage(
         parsedMessage.chatId,
         parsedMessage.messageId,
-        [
-          `✅ Задача создана: недельные отчёты ${formatWeekIso(result.job)}.`,
-          "",
-          "Теперь на Mac запусти:",
-          "cd ~/igor-tp-reports-bot/tools/trainingpeaks-export && npm run tp-agent-once",
-        ].join("\n"),
-        getWeekResultMarkup()
+        presentation.text,
+        presentation.replyMarkup
       );
       return "handled";
     }
