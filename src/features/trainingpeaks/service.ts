@@ -423,6 +423,13 @@ async function resolveTrainingPeaksRegistryStudent(
   };
 }
 
+async function getTrainingPeaksRegistryStudentByInternalId(
+  id: string
+): Promise<TrainingPeaksRegistryStudentSnapshot | null> {
+  const students = await getTrainingPeaksStudentsRegistryWithLatestReportStatus();
+  return students.find((student) => student.id === id) ?? null;
+}
+
 export async function getTrainingPeaksStatusOverview(
   requestedWeek?: TrainingPeaksWeek
 ): Promise<TrainingPeaksStatusOverview | null> {
@@ -593,6 +600,12 @@ export async function getTrainingPeaksStudentCard(
   return resolveTrainingPeaksRegistryStudent(studentQuery);
 }
 
+export async function getTrainingPeaksStudentCardByInternalId(
+  id: string
+): Promise<TrainingPeaksRegistryStudentSnapshot | null> {
+  return getTrainingPeaksRegistryStudentByInternalId(id);
+}
+
 export async function disableTrainingPeaksStudent(
   studentQuery: string
 ): Promise<DisableTrainingPeaksStudentResult> {
@@ -610,6 +623,19 @@ export async function disableTrainingPeaksStudent(
   };
 }
 
+export async function disableTrainingPeaksStudentByInternalId(
+  id: string
+): Promise<TrainingPeaksRegistryStudentSnapshot | null> {
+  const existingStudent = await getTrainingPeaksRegistryStudentByInternalId(id);
+
+  if (!existingStudent) {
+    return null;
+  }
+
+  await disableTrainingPeaksStudentById(id);
+  return getTrainingPeaksRegistryStudentByInternalId(id);
+}
+
 export async function enableTrainingPeaksStudent(
   studentQuery: string
 ): Promise<EnableTrainingPeaksStudentResult> {
@@ -625,6 +651,19 @@ export async function enableTrainingPeaksStudent(
     kind: "student",
     student,
   };
+}
+
+export async function enableTrainingPeaksStudentByInternalId(
+  id: string
+): Promise<TrainingPeaksRegistryStudentSnapshot | null> {
+  const existingStudent = await getTrainingPeaksRegistryStudentByInternalId(id);
+
+  if (!existingStudent) {
+    return null;
+  }
+
+  await enableTrainingPeaksStudentById(id);
+  return getTrainingPeaksRegistryStudentByInternalId(id);
 }
 
 export async function getTrainingPeaksReportMarkdown(
@@ -657,4 +696,16 @@ export async function getTrainingPeaksReportSnapshot(
     weekTo: report.weekTo,
     reportMarkdown,
   };
+}
+
+export async function getTrainingPeaksLatestReportSnapshotByInternalId(
+  id: string
+): Promise<TrainingPeaksReportSnapshot | null> {
+  const student = await getTrainingPeaksRegistryStudentByInternalId(id);
+
+  if (!student) {
+    return null;
+  }
+
+  return getTrainingPeaksReportSnapshot(student.studentId);
 }

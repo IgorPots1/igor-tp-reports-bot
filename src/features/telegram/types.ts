@@ -3,6 +3,15 @@ export type TelegramUser = {
   username?: string;
 };
 
+export type TelegramInlineKeyboardButton = {
+  text: string;
+  callback_data: string;
+};
+
+export type TelegramInlineKeyboardMarkup = {
+  inline_keyboard: TelegramInlineKeyboardButton[][];
+};
+
 export type TelegramChat = {
   id: number;
   title?: string;
@@ -17,7 +26,15 @@ export type TelegramMessage = {
   caption?: string;
 };
 
+export type TelegramCallbackQuery = {
+  id: string;
+  from: TelegramUser;
+  message?: TelegramMessage;
+  data?: string;
+};
+
 export type TelegramUpdate = {
   update_id: number;
   message?: TelegramMessage;
+  callback_query?: TelegramCallbackQuery;
 };

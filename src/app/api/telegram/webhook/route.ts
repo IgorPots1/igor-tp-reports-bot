@@ -1,8 +1,13 @@
 import { parseTelegramUpdate } from "@/features/telegram/parser";
-import { sendTelegramMessage } from "@/features/telegram/telegram-client";
+import {
+  answerTelegramCallbackQuery,
+  sendTelegramMessage,
+} from "@/features/telegram/telegram-client";
 import {
   getTrainingPeaksHelpLines,
+  handleTrainingPeaksTelegramCallback,
   handleTrainingPeaksTelegramCommand,
+  isTrainingPeaksCallback,
   isTrainingPeaksCommand,
 } from "@/features/telegram/trainingpeaks";
 import type { TelegramUpdate } from "@/features/telegram/types";
@@ -77,7 +82,18 @@ export async function POST(request: Request) {
   const parsedMessage = parseTelegramUpdate(update);
 
   if (!parsedMessage) {
-    console.info("Telegram update ignored: no message");
+    console.info("Telegram update ignored: no supported message or callback");
+    return okResponse();
+  }
+
+  if (parsedMessage.kind === "callback_query") {
+    if (isTrainingPeaksCallback(parsedMessage.data)) {
+      await answerTelegramCallbackQuery(parsedMessage.callbackQueryId);
+      await handleTrainingPeaksTelegramCallback(parsedMessage);
+      return okResponse();
+    }
+
+    await answerTelegramCallbackQuery(parsedMessage.callbackQueryId);
     return okResponse();
   }
 
