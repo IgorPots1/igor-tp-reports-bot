@@ -1470,6 +1470,61 @@ function athleteSettingsModalLocator(page: Page): Locator {
   return page.locator("div.tabbedSettings.userSettings.overlayBox.modal").first();
 }
 
+function settingsTriggerRoleLocators(page: Page, name: RegExp): Locator[] {
+  return [
+    page.getByRole("button", { name }).first(),
+    page.getByRole("link", { name }).first()
+  ];
+}
+
+function settingsTriggerAttributeLocators(page: Page, label: string): Locator[] {
+  return [
+    page.locator(`button[aria-label="${label}" i], a[aria-label="${label}" i], [role="button"][aria-label="${label}" i]`).first(),
+    page.locator(`button[title="${label}" i], a[title="${label}" i], [role="button"][title="${label}" i]`).first(),
+    page.locator(`button[data-tooltip="${label}" i], a[data-tooltip="${label}" i], [role="button"][data-tooltip="${label}" i]`).first()
+  ];
+}
+
+function primaryAthleteSettingsTriggerLocators(page: Page): Locator[] {
+  return [
+    page.locator('div.groupAndAthleteSelector [data-tooltip*="Athlete Settings"]').first(),
+    page.locator("div.groupAndAthleteSelector div.openAthleteSettingsButton").first()
+  ];
+}
+
+function broaderAthleteSettingsTriggerLocators(page: Page): Locator[] {
+  return [
+    page.locator('[data-tooltip*="Athlete Settings"]').first(),
+    page.locator(".openAthleteSettingsButton").first(),
+    ...settingsTriggerRoleLocators(page, /^Athlete Settings$/i),
+    ...settingsTriggerRoleLocators(page, /^Athlete Account Settings$/i),
+    ...settingsTriggerAttributeLocators(page, "Athlete Settings"),
+    ...settingsTriggerAttributeLocators(page, "Athlete Account Settings"),
+    ...settingsTriggerRoleLocators(page, /^Account Settings$/i),
+    ...settingsTriggerAttributeLocators(page, "Account Settings")
+  ];
+}
+
+async function waitForAthleteShellOrSettingsTrigger(page: Page): Promise<boolean> {
+  const timeout = 4000;
+  const waiters = [
+    page.locator("div.groupAndAthleteSelector").first(),
+    ...primaryAthleteSettingsTriggerLocators(page),
+    ...broaderAthleteSettingsTriggerLocators(page)
+  ].map((locator) =>
+    locator
+      .waitFor({ state: "visible", timeout })
+      .then(() => true)
+  );
+
+  try {
+    await Promise.any(waiters);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function exportInstructionsLocator(scope: Page | Locator): Locator {
   return scope.getByText(/use the fields below to download your workout or metrics data to your computer\./i);
 }
@@ -2137,13 +2192,28 @@ async function tryOpenAthleteAccountSettings(page: Page): Promise<AutomationAtte
     return { ok: true };
   }
 
-  const triggerCandidates = [
-    page.locator('div.groupAndAthleteSelector [data-tooltip*="Athlete Settings"]').first(),
-    page.locator("div.groupAndAthleteSelector div.openAthleteSettingsButton").first()
-  ];
+  await waitForAthleteShellOrSettingsTrigger(page);
 
-  for (const trigger of triggerCandidates) {
+  for (const trigger of primaryAthleteSettingsTriggerLocators(page)) {
     if (!(await isVisible(trigger, 700))) {
+      continue;
+    }
+
+    try {
+      await trigger.click({ timeout: 2000 });
+    } catch {
+      continue;
+    }
+
+    if (await waitForSettingsModal(page)) {
+      return { ok: true };
+    }
+  }
+
+  console.log("Auto-export: settings control not found in primary location, trying broader search");
+
+  for (const trigger of broaderAthleteSettingsTriggerLocators(page)) {
+    if (!(await isVisible(trigger, 500))) {
       continue;
     }
 
