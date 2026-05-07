@@ -77,6 +77,13 @@ const __dirname = path.dirname(__filename);
 const toolRoot = path.resolve(__dirname, "..");
 const parsedRoot = path.join(toolRoot, "parsed");
 const reportsRoot = path.join(toolRoot, "reports");
+const DEBUG = process.env.TP_DEBUG === "1";
+
+function debugLog(...args: unknown[]): void {
+  if (DEBUG) {
+    console.log(...args);
+  }
+}
 
 function usage(): string {
   return [
@@ -289,9 +296,10 @@ async function main(): Promise<void> {
   const apiKey = getRequiredEnv("OPENAI_API_KEY");
   const model = getReportModel();
 
-  console.log(`Summary path used: ${summaryPath}`);
-  console.log(`Report output folder: ${reportDir}`);
-  console.log(`Model used: ${model}`);
+  console.log(`Report generation started: student=${args.student} week=${args.from}..${args.to}`);
+  debugLog(`Summary path used: ${summaryPath}`);
+  debugLog(`Report output folder: ${reportDir}`);
+  debugLog(`Model used: ${model}`);
 
   const summary = JSON.parse(await readFile(summaryPath, "utf8")) as WeeklySummary;
   const reportMarkdown = await requestReportMarkdown({
@@ -317,8 +325,9 @@ async function main(): Promise<void> {
   await writeFile(reportMarkdownPath, reportMarkdown, "utf8");
   await writeFile(reportJsonPath, `${JSON.stringify(reportDraft, null, 2)}\n`, "utf8");
 
-  console.log(`Created markdown path: ${reportMarkdownPath}`);
-  console.log(`Created json path: ${reportJsonPath}`);
+  debugLog(`Created markdown path: ${reportMarkdownPath}`);
+  debugLog(`Created json path: ${reportJsonPath}`);
+  console.log(`Report generated: student=${args.student} week=${args.from}..${args.to}`);
 }
 
 main().catch((error: unknown) => {

@@ -379,7 +379,7 @@ async function main(): Promise<void> {
   );
 
   if (candidates.length === 0) {
-    console.log("No parsed weekly summaries found to sync.");
+    console.log("[sync] no parsed weekly summaries found");
     return;
   }
 
@@ -425,10 +425,10 @@ async function main(): Promise<void> {
     throw new Error(`Failed to sync trainingpeaks_weekly_reports: ${error.message}`);
   }
 
-  console.log(`Synced ${rows.length} weekly report record(s) to Supabase.`);
+  console.log(`[sync] upserted count=${rows.length}`);
   for (const row of rows) {
     console.log(
-      `- ${row.student_id}: ${row.week_from}..${row.week_to} (${row.status}, report=${row.report_markdown ? "yes" : "no"})`
+      `[sync] student=${row.student_id} week=${row.week_from}..${row.week_to} status=${row.status} report=${row.report_markdown ? "yes" : "no"}`
     );
   }
 }

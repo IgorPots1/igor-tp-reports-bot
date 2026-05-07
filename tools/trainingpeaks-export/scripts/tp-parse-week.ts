@@ -94,6 +94,13 @@ const __dirname = path.dirname(__filename);
 const toolRoot = path.resolve(__dirname, "..");
 const exportsRoot = path.join(toolRoot, "exports");
 const parsedRoot = path.join(toolRoot, "parsed");
+const DEBUG = process.env.TP_DEBUG === "1";
+
+function debugLog(...args: unknown[]): void {
+  if (DEBUG) {
+    console.log(...args);
+  }
+}
 
 const FIELD_ALIASES = {
   date: [
@@ -726,12 +733,12 @@ async function extractZip(zipPath: string, tempRoot: string): Promise<string> {
 async function discoverCsvCandidates(exportDir: string, tempRoot: string): Promise<CsvCandidate[]> {
   const files = (await listFilesRecursively(exportDir)).sort((a, b) => a.localeCompare(b));
 
-  console.log(`Files found (${files.length}):`);
+  debugLog(`Files found (${files.length}):`);
   if (files.length === 0) {
-    console.log("- none");
+    debugLog("- none");
   } else {
     for (const filePath of files) {
-      console.log(`- ${relativeToToolRoot(filePath)}`);
+      debugLog(`- ${relativeToToolRoot(filePath)}`);
     }
   }
 
@@ -743,7 +750,7 @@ async function discoverCsvCandidates(exportDir: string, tempRoot: string): Promi
   }));
 
   for (const zipFile of zipFiles) {
-    console.log(`Unzipping: ${relativeToToolRoot(zipFile)}`);
+    debugLog(`Unzipping: ${relativeToToolRoot(zipFile)}`);
     const extractedDir = await extractZip(zipFile, tempRoot);
     const extractedFiles = await listFilesRecursively(extractedDir);
 
@@ -762,12 +769,12 @@ async function discoverCsvCandidates(exportDir: string, tempRoot: string): Promi
 
   csvCandidates.sort((a, b) => a.sourceFile.localeCompare(b.sourceFile));
 
-  console.log(`CSV files parsed (${csvCandidates.length}):`);
+  debugLog(`CSV files parsed (${csvCandidates.length}):`);
   if (csvCandidates.length === 0) {
-    console.log("- none");
+    debugLog("- none");
   } else {
     for (const candidate of csvCandidates) {
-      console.log(`- ${candidate.sourceFile}`);
+      debugLog(`- ${candidate.sourceFile}`);
     }
   }
 
@@ -961,7 +968,8 @@ async function main(): Promise<void> {
     };
 
     await writeFile(outputPath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
-    console.log(`JSON output path: ${outputPath}`);
+    console.log("Parser success.");
+    console.log(`weekly-summary.json path: ${outputPath}`);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

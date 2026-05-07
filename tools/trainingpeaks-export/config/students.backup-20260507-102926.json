@@ -1,0 +1,29 @@
+[
+  {
+    "student_id": "Nastya",
+    "name": "Nastya",
+    "trainingpeaks_athlete_url": "https://app.trainingpeaks.com/#calendar/athletes/5856847",
+    "is_active": true,
+    "weekly_report_enabled": true,
+    "data_quality_status": "ok",
+    "notes": ""
+  },
+  {
+    "student_id": "Olga",
+    "name": "Olga",
+    "trainingpeaks_athlete_url": "https://app.trainingpeaks.com/#calendar/athletes/5734279",
+    "is_active": true,
+    "weekly_report_enabled": true,
+    "data_quality_status": "ok",
+    "notes": ""
+  },
+  {
+    "student_id": "Olga Slastnaia",
+    "name": "Olga Slastnaia",
+    "trainingpeaks_athlete_url": "https://app.trainingpeaks.com/#calendar/athletes/5797403",
+    "is_active": true,
+    "weekly_report_enabled": true,
+    "data_quality_status": "ok",
+    "notes": ""
+  }
+]

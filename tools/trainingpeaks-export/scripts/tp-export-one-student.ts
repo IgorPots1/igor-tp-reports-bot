@@ -10,6 +10,14 @@ import { chromium } from "playwright";
 import { exportsRoot, profileDir } from "./lib/paths.ts";
 import { findStudentById, readStudentsConfig } from "./lib/students.ts";
 
+const DEBUG = process.env.TP_DEBUG === "1";
+
+function debugLog(...args: unknown[]): void {
+  if (DEBUG) {
+    console.log(...args);
+  }
+}
+
 type CliArgs = {
   student: string;
   from: string;
@@ -785,7 +793,7 @@ function analyzeExportApiPayload(params: {
 }
 
 function logExportApiSummary(prefix: string, analysis: AnalyzedExportApiPayload): void {
-  console.log(
+  debugLog(
     `${prefix} ${JSON.stringify({
       status: analysis.status,
       contentType: analysis.contentType || "(none)",
@@ -846,7 +854,7 @@ async function pollExportApiAsyncJob(params: {
     seenUrls.add(endpointUrl);
 
     for (let attempt = 1; attempt <= 8; attempt += 1) {
-      console.log(`Auto-export debug: polling export API async endpoint="${sanitizeUrlForLog(endpointUrl)}" attempt=${attempt}`);
+      debugLog(`Auto-export debug: polling export API async endpoint="${sanitizeUrlForLog(endpointUrl)}" attempt=${attempt}`);
       const response = await params.context.request.get(endpointUrl, { failOnStatusCode: false });
       const body = Buffer.from(await response.body());
       const responseHeaders = normalizeHeaderRecord(response.headers());
@@ -982,7 +990,7 @@ async function captureAndMaybeSaveWorkoutSummaryExportResponse(params: {
   }
 
   if (analysis.asyncJobDetected || analysis.asyncEndpointUrls.length > 0) {
-    console.log(
+    debugLog(
       `Auto-export debug: export API async job detected top-level keys="${analysis.topLevelKeys.join(", ") || "(none)"}"`
     );
     if (analysis.asyncEndpointUrls.length > 0) {
@@ -1042,7 +1050,7 @@ async function waitForWorkoutSummaryArtifact(
       minimumModifiedAtMs
     );
     if (newSummaryZipInExportDir) {
-      console.log(
+      debugLog(
         `Auto-export debug: detected Workout Summary ZIP in exportDir: ${path.basename(newSummaryZipInExportDir.filePath)}`
       );
       return {
@@ -1059,7 +1067,7 @@ async function waitForWorkoutSummaryArtifact(
       minimumModifiedAtMs
     );
     if (newSummaryCsvInExportDir) {
-      console.log(
+      debugLog(
         `Auto-export debug: detected Workout Summary CSV in exportDir: ${path.basename(newSummaryCsvInExportDir.filePath)}`
       );
       return {
@@ -1076,7 +1084,7 @@ async function waitForWorkoutSummaryArtifact(
       minimumModifiedAtMs
     );
     if (newSummaryZipInDownloads) {
-      console.log(
+      debugLog(
         `Auto-export debug: detected Workout Summary ZIP in Downloads: ${path.basename(newSummaryZipInDownloads.filePath)}`
       );
       const movedSummaryZip = await moveSummaryZipToExportDir(newSummaryZipInDownloads.filePath, exportDir);
@@ -1094,7 +1102,7 @@ async function waitForWorkoutSummaryArtifact(
       minimumModifiedAtMs
     );
     if (newSummaryCsvInDownloads) {
-      console.log(
+      debugLog(
         `Auto-export debug: detected Workout Summary CSV in Downloads: ${path.basename(newSummaryCsvInDownloads.filePath)}`
       );
       const movedSummaryCsv = await moveSummaryCsvToExportDir(newSummaryCsvInDownloads.filePath, exportDir);
@@ -1114,11 +1122,11 @@ async function waitForWorkoutSummaryArtifact(
         ...downloadsSnapshot.summaryTempFiles.map((fileName) => `${fileName} [Downloads]`)
       ];
       if (tempFiles.length > 0) {
-        console.log(
+        debugLog(
           `Auto-export: waiting for Workout Summary export (${elapsedSeconds}s elapsed, temporary files: ${tempFiles.join(", ")})`
         );
       } else {
-        console.log(`Auto-export: waiting for Workout Summary export (${elapsedSeconds}s elapsed)`);
+        debugLog(`Auto-export: waiting for Workout Summary export (${elapsedSeconds}s elapsed)`);
       }
       lastProgressLogAt = now;
     }
@@ -1274,14 +1282,14 @@ function truncateForLog(value: string, maxLength = 140): string {
 }
 
 function formatDebugList(title: string, values: string[]): void {
-  console.log(title);
+  debugLog(title);
   if (values.length === 0) {
-    console.log("- (none)");
+    debugLog("- (none)");
     return;
   }
 
   for (const value of values) {
-    console.log(`- ${value}`);
+    debugLog(`- ${value}`);
   }
 }
 
@@ -1422,14 +1430,14 @@ async function listVisibleCandidateControls(page: Page): Promise<string[]> {
 }
 
 function logVisibleCandidateControls(candidates: string[]): void {
-  console.log("Visible candidate controls:");
+  debugLog("Visible candidate controls:");
   if (candidates.length === 0) {
-    console.log("- (none detected)");
+    debugLog("- (none detected)");
     return;
   }
 
   for (const candidate of candidates) {
-    console.log(`- ${candidate}`);
+    debugLog(`- ${candidate}`);
   }
 }
 
@@ -2202,7 +2210,7 @@ async function tryFillWorkoutSummaryDateRange(
   }
 
   if (sectionResolution.selectedCandidate) {
-    console.log(`Auto-export debug: selected Workout Summary container="${sectionResolution.selectedCandidate}"`);
+    debugLog(`Auto-export debug: selected Workout Summary container="${sectionResolution.selectedCandidate}"`);
   }
 
   const startInput = sectionResolution.section.locator('input[name="startDate"]').first();
@@ -2237,32 +2245,32 @@ async function tryClickWorkoutSummaryExport(
 
   const formatInspection = await inspectAndMaybeSelectWorkoutSummaryFormat(section);
   if (formatInspection.appliedSelection) {
-    console.log(`Auto-export debug: ${formatInspection.appliedSelection}`);
+    debugLog(`Auto-export debug: ${formatInspection.appliedSelection}`);
   }
   if (formatInspection.selectionError) {
-    console.log(`Auto-export debug: ${formatInspection.selectionError}`);
+    debugLog(`Auto-export debug: ${formatInspection.selectionError}`);
   }
 
   const preClickDebug = await collectWorkoutSummaryPreClickDebug(section, formatInspection.selectedFormatValue);
-  console.log(`Auto-export debug: Workout Summary container="${truncateForLog(preClickDebug.containerSummary, 220)}"`);
-  console.log(
+  debugLog(`Auto-export debug: Workout Summary container="${truncateForLog(preClickDebug.containerSummary, 220)}"`);
+  debugLog(
     `Auto-export debug: Workout Summary inputs startDate=${preClickDebug.startDateCount} endDate=${preClickDebug.endDateCount}`
   );
   formatDebugList("Auto-export debug: Workout Summary Export buttons", preClickDebug.exportButtons);
   formatDebugList("Auto-export debug: Workout Summary controls", preClickDebug.controls);
   if (preClickDebug.selectedFormatValue) {
-    console.log(`Auto-export debug: Workout Summary selected format="${preClickDebug.selectedFormatValue}"`);
+    debugLog(`Auto-export debug: Workout Summary selected format="${preClickDebug.selectedFormatValue}"`);
   } else {
-    console.log("Auto-export debug: Workout Summary selected format=(none detected)");
+    debugLog("Auto-export debug: Workout Summary selected format=(none detected)");
   }
   if (preClickDebug.selectedButtonText) {
-    console.log(`Auto-export debug: selected button text="${preClickDebug.selectedButtonText}"`);
-    console.log(
+    debugLog(`Auto-export debug: selected button text="${preClickDebug.selectedButtonText}"`);
+    debugLog(
       `Auto-export debug: selected button disabled=${preClickDebug.selectedButtonDisabled ? "yes" : "no"} aria-disabled="${preClickDebug.selectedButtonAriaDisabled ?? ""}" class="${preClickDebug.selectedButtonClass ?? ""}"`
     );
-    console.log(`Auto-export debug: selected button closest form=${preClickDebug.selectedButtonFormInfo ?? "(unknown)"}`);
+    debugLog(`Auto-export debug: selected button closest form=${preClickDebug.selectedButtonFormInfo ?? "(unknown)"}`);
   }
-  console.log(
+  debugLog(
     `Auto-export debug: Workout Summary startDate="${preClickDebug.startDateValue}" endDate="${preClickDebug.endDateValue}"`
   );
 
@@ -2440,26 +2448,26 @@ function logManualFallbackInstructions(): void {
 }
 
 function logWorkoutSummaryClickDebug(debug: WorkoutSummaryClickDebug): void {
-  console.log(`Auto-export debug: click mode=${debug.clickMode}`);
+  debugLog(`Auto-export debug: click mode=${debug.clickMode}`);
   if (debug.clickError) {
-    console.log(`Auto-export debug: click error="${debug.clickError}"`);
+    debugLog(`Auto-export debug: click error="${debug.clickError}"`);
   }
   if (debug.validationMessagesAfterClick.length > 0) {
-    console.log(`Auto-export debug: visible feedback="${debug.validationMessagesAfterClick.join(" | ")}"`);
+    debugLog(`Auto-export debug: visible feedback="${debug.validationMessagesAfterClick.join(" | ")}"`);
   } else {
-    console.log("Auto-export debug: visible feedback=(none)");
+    debugLog("Auto-export debug: visible feedback=(none)");
   }
   if (debug.consoleErrors.length > 0) {
-    console.log(`Auto-export debug: console errors="${debug.consoleErrors.join(" | ")}"`);
+    debugLog(`Auto-export debug: console errors="${debug.consoleErrors.join(" | ")}"`);
   } else {
-    console.log("Auto-export debug: console errors=(none)");
+    debugLog("Auto-export debug: console errors=(none)");
   }
   if (debug.networkEvents.length > 0) {
-    console.log(`Auto-export debug: network events="${debug.networkEvents.join(" | ")}"`);
+    debugLog(`Auto-export debug: network events="${debug.networkEvents.join(" | ")}"`);
   } else {
-    console.log("Auto-export debug: network events=(none)");
+    debugLog("Auto-export debug: network events=(none)");
   }
-  console.log(`Auto-export debug: popup/new page appeared=${debug.popupOpened ? "yes" : "no"}`);
+  debugLog(`Auto-export debug: popup/new page appeared=${debug.popupOpened ? "yes" : "no"}`);
 }
 
 async function readGeneratedWorkoutSummaryDownloadLinkState(page: Page): Promise<GeneratedDownloadLinkState> {
@@ -2723,6 +2731,8 @@ async function main(): Promise<void> {
   await mkdir(exportDir, { recursive: true });
   await mkdir(profileDir, { recursive: true });
 
+  console.log(`Export started: student=${student.student_id} week=${args.from}..${args.to}`);
+
   const existingExportDirSnapshot = await inspectExportDir(exportDir);
   const existingExportAssessment = assessExportFiles(
     existingExportDirSnapshot.summaryZipFiles,
@@ -2819,18 +2829,18 @@ async function main(): Promise<void> {
         );
       } else {
         if (clickDebug?.selectedButtonText) {
-          console.log(`Auto-export debug: clicked button text="${clickDebug.selectedButtonText}"`);
+          debugLog(`Auto-export debug: clicked button text="${clickDebug.selectedButtonText}"`);
         }
-        console.log(
+        debugLog(
           `Auto-export debug: Workout Summary startDate="${clickDebug?.startDateValue ?? ""}" endDate="${clickDebug?.endDateValue ?? ""}"`
         );
         const apiCapture = clickResult.apiCapture;
         if (apiCapture) {
-          console.log(
+          debugLog(
             `Auto-export debug: export API matched=${apiCapture.responseMatched ? "yes" : "no"} downloadUrlFound=${apiCapture.downloadUrlFound ? "yes" : "no"} directBodyFound=${apiCapture.directBodyFound ? "yes" : "no"} asyncJobDetected=${apiCapture.asyncJobDetected ? "yes" : "no"}`
           );
           if (apiCapture.fallbackReason) {
-            console.log(`Auto-export debug: export API fallback reason="${apiCapture.fallbackReason}"`);
+            debugLog(`Auto-export debug: export API fallback reason="${apiCapture.fallbackReason}"`);
           }
         }
 
@@ -2842,37 +2852,37 @@ async function main(): Promise<void> {
         } else {
           console.log("Auto-export: waiting for Export Complete download link");
           const exportCompleteResult = await waitForGeneratedWorkoutSummaryDownloadLink(page);
-          console.log(
+          debugLog(
             `Auto-export debug: Export Complete visible=${exportCompleteResult.exportCompleteVisible ? "yes" : "no"} instruction visible=${exportCompleteResult.downloadInstructionVisible ? "yes" : "no"}`
           );
           if (exportCompleteResult.candidateTexts && exportCompleteResult.candidateTexts.length > 0) {
-            console.log(`Auto-export debug: Export Complete candidates="${exportCompleteResult.candidateTexts.join(" | ")}"`);
+            debugLog(`Auto-export debug: Export Complete candidates="${exportCompleteResult.candidateTexts.join(" | ")}"`);
           } else {
-            console.log("Auto-export debug: Export Complete candidates=(none)");
+            debugLog("Auto-export debug: Export Complete candidates=(none)");
           }
           if (exportCompleteResult.candidateLinks && exportCompleteResult.candidateLinks.length > 0) {
-            console.log(`Auto-export debug: generated link candidates="${exportCompleteResult.candidateLinks.join(" | ")}"`);
+            debugLog(`Auto-export debug: generated link candidates="${exportCompleteResult.candidateLinks.join(" | ")}"`);
           } else {
-            console.log("Auto-export debug: generated link candidates=(none)");
+            debugLog("Auto-export debug: generated link candidates=(none)");
           }
           if (!exportCompleteResult.ok || (!exportCompleteResult.linkText && !exportCompleteResult.linkHref)) {
             console.log("Auto-export fallback: Export Complete download link did not appear.");
           } else {
             console.log("Auto-export: Export Complete link appeared");
-            console.log(`Auto-export debug: generated link text="${exportCompleteResult.linkText ?? ""}"`);
+            debugLog(`Auto-export debug: generated link text="${exportCompleteResult.linkText ?? ""}"`);
             if (exportCompleteResult.linkHref) {
-              console.log(`Auto-export debug: generated link href="${exportCompleteResult.linkHref}"`);
+              debugLog(`Auto-export debug: generated link href="${exportCompleteResult.linkHref}"`);
             }
             console.log("Auto-export: clicking generated Workout Summary download link");
             const generatedLinkClickResult = await clickGeneratedWorkoutSummaryDownloadLink(page);
-            console.log(
+            debugLog(
               `Auto-export debug: generated link click mode=${generatedLinkClickResult.clickMode} succeeded=${generatedLinkClickResult.clickSucceeded ? "yes" : "no"}`
             );
-            console.log(
+            debugLog(
               `Auto-export debug: generated link popup/new page appeared=${generatedLinkClickResult.popupOpened ? "yes" : "no"}`
             );
             if (generatedLinkClickResult.candidateLinks && generatedLinkClickResult.candidateLinks.length > 0) {
-              console.log(`Auto-export debug: clicked generated link candidates="${generatedLinkClickResult.candidateLinks.join(" | ")}"`);
+              debugLog(`Auto-export debug: clicked generated link candidates="${generatedLinkClickResult.candidateLinks.join(" | ")}"`);
             }
             if (!generatedLinkClickResult.ok) {
               console.log(

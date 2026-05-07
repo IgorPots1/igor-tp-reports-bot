@@ -422,6 +422,7 @@ async function deliverReportsToTelegram(
       }
 
       sentCount += 1;
+      console.log(`[telegram] draft.sent student=${report.student_id}`);
     } catch (error) {
       const shortMessage = toShortErrorMessage(error);
       failures.push(`${report.student_name}: ${shortMessage}`);
@@ -589,7 +590,9 @@ async function main(): Promise<void> {
 
     await completeTrainingPeaksJob(job.id, result);
 
-    console.log(`Completed TrainingPeaks job for ${job.week_from}..${job.week_to}.`);
+    console.log(
+      `Completed TrainingPeaks job for ${job.week_from}..${job.week_to}. reports_found=${reportsFound} telegram_sent=${reportsSentToTelegram} warnings=${warningMessages.length}`
+    );
   } catch (error) {
     const shortErrorMessage = toShortErrorMessage(error);
 
