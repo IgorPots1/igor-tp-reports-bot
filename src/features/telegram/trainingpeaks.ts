@@ -60,6 +60,10 @@ const TP_REPLY_BUTTON_REPORT = "📄 Отчёт";
 const TP_REPLY_BUTTON_DISABLE = "⛔ Отключить";
 const TP_REPLY_BUTTON_ENABLE = "✅ Включить";
 const TP_CHAT_CONTEXT_TTL_MS = 30 * 60 * 1000;
+const TP_ADD_STUDENT_WAITING_TTL_MS = 10 * 60 * 1000;
+const TP_ADD_STUDENT_EXAMPLE =
+  "Valentin https://app.trainingpeaks.com/#calendar/athletes/5673496";
+const TP_TRAININGPEAKS_URL_PATTERN = /\bhttps?:\/\/\S*trainingpeaks\.com\S*/i;
 
 const TP_MAIN_COMMAND_PATTERN = /^\/tp(?:@\w+)?(?:\s+|$)/;
 const TP_STATUS_COMMAND_PATTERN = /^\/tp_status(?:@\w+)?(?:\s+|$)/;
@@ -123,13 +127,24 @@ type ParsedTrainingPeaksCallback =
   | { kind: "help" }
   | { kind: "reports_hint" };
 
-type TrainingPeaksScreen = "main_menu" | "students" | "student_actions" | "week" | "jobs";
+type TrainingPeaksScreen =
+  | "main_menu"
+  | "students"
+  | "student_actions"
+  | "week"
+  | "jobs"
+  | "add_student_waiting";
 
 type TrainingPeaksChatContext = {
   selectedStudentId: string | null;
   selectedStudentName: string | null;
   screen: TrainingPeaksScreen;
   expiresAt: number;
+};
+
+type ParsedTrainingPeaksAddStudentInput = {
+  studentName: string;
+  trainingPeaksAthleteUrl: string;
 };
 
 type TrainingPeaksReplyKeyboardAction =
@@ -320,28 +335,62 @@ function splitTelegramMessage(text: string): string[] {
 }
 
 function getTrainingPeaksChatContext(chatId: number | string): TrainingPeaksChatContext | null {
+  const state = getTrainingPeaksChatContextState(chatId);
+  return state.kind === "active" ? state.context : null;
+}
+
+function getTrainingPeaksChatContextState(
+  chatId: number | string
+):
+  | { kind: "missing" }
+  | { kind: "active"; context: TrainingPeaksChatContext }
+  | { kind: "expired"; context: TrainingPeaksChatContext } {
   const context = trainingPeaksChatContextByChatId.get(String(chatId));
 
   if (!context) {
-    return null;
+    return { kind: "missing" };
   }
 
   if (context.expiresAt <= Date.now()) {
     trainingPeaksChatContextByChatId.delete(String(chatId));
-    return null;
+    return { kind: "expired", context };
   }
 
-  return context;
+  return { kind: "active", context };
+}
+
+function clearTrainingPeaksChatContext(chatId: number | string): void {
+  trainingPeaksChatContextByChatId.delete(String(chatId));
+}
+
+function setTrainingPeaksChatContextWithTtl(
+  chatId: number | string,
+  context: Omit<TrainingPeaksChatContext, "expiresAt">,
+  expiresInMs: number
+): void {
+  trainingPeaksChatContextByChatId.set(String(chatId), {
+    ...context,
+    expiresAt: Date.now() + expiresInMs,
+  });
 }
 
 function setTrainingPeaksChatContext(
   chatId: number | string,
   context: Omit<TrainingPeaksChatContext, "expiresAt">
 ): void {
-  trainingPeaksChatContextByChatId.set(String(chatId), {
-    ...context,
-    expiresAt: Date.now() + TP_CHAT_CONTEXT_TTL_MS,
-  });
+  setTrainingPeaksChatContextWithTtl(chatId, context, TP_CHAT_CONTEXT_TTL_MS);
+}
+
+function setTrainingPeaksAddStudentWaitingContext(chatId: number | string): void {
+  setTrainingPeaksChatContextWithTtl(
+    chatId,
+    {
+      selectedStudentId: null,
+      selectedStudentName: null,
+      screen: "add_student_waiting",
+    },
+    TP_ADD_STUDENT_WAITING_TTL_MS
+  );
 }
 
 function setTrainingPeaksScreenContext(
@@ -623,9 +672,45 @@ function parseAddStudentCommand(text: string): string {
   return text.replace(TP_ADD_STUDENT_COMMAND_PATTERN, "").trim();
 }
 
+function parseTrainingPeaksAddStudentInput(rawInput: string): ParsedTrainingPeaksAddStudentInput {
+  const normalizedInput = parseAddStudentCommand(rawInput);
+  const urlMatch = normalizedInput.match(TP_TRAININGPEAKS_URL_PATTERN);
+
+  if (!urlMatch || typeof urlMatch.index !== "number") {
+    return {
+      studentName: normalizedInput.replace(/\|\s*$/, "").trim(),
+      trainingPeaksAthleteUrl: "",
+    };
+  }
+
+  return {
+    studentName: normalizedInput
+      .slice(0, urlMatch.index)
+      .replace(/\|\s*$/, "")
+      .trim(),
+    trainingPeaksAthleteUrl: urlMatch[0].trim(),
+  };
+}
+
+function normalizeTrainingPeaksAddStudentInput(rawInput: string): string {
+  const parsedInput = parseTrainingPeaksAddStudentInput(rawInput);
+  return `${parsedInput.studentName} | ${parsedInput.trainingPeaksAthleteUrl}`;
+}
+
 function getTpAddStudentNamePreview(rawInput: string): string {
-  const separatorIndex = rawInput.indexOf("|");
-  return (separatorIndex >= 0 ? rawInput.slice(0, separatorIndex) : rawInput).trim();
+  return parseTrainingPeaksAddStudentInput(rawInput).studentName;
+}
+
+function getAddStudentMissingUrlMessage(): string {
+  return ["Не вижу ссылку TrainingPeaks.", "", "Отправь так:", TP_ADD_STUDENT_EXAMPLE].join("\n");
+}
+
+function getAddStudentMissingNameMessage(): string {
+  return ["Не вижу имя ученика.", "", "Отправь так:", TP_ADD_STUDENT_EXAMPLE].join("\n");
+}
+
+function getAddStudentExpiredMessage(): string {
+  return "Режим добавления истёк. Нажми «➕ Добавить» ещё раз.";
 }
 
 function normalizeTpRunCommand(text: string): string {
@@ -938,7 +1023,7 @@ export function getTrainingPeaksHelpLines(): string[] {
     "",
     "🏠 Меню — открыть главное меню",
     "👥 Ученики — открыть список учеников",
-    "➕ Добавить — показать формат команды для добавления ученика",
+    "➕ Добавить — открыть режим добавления ученика",
     "▶️ Неделя — открыть меню запуска недели",
     "🧾 Задачи — посмотреть последние запуски",
     "",
@@ -1083,7 +1168,7 @@ function getStudentsEmptyMenuText(): string {
     "",
     "Ученики TrainingPeaks пока не найдены.",
     "",
-    "Нажми «➕ Добавить» или отправь `/tp_add Имя | ссылка TrainingPeaks`.",
+    "Нажми «➕ Добавить» и отправь имя со ссылкой одним сообщением.",
   ].join("\n");
 }
 
@@ -1215,12 +1300,9 @@ function getAddStudentInstructionsText(): string {
   return [
     "➕ Добавить ученика",
     "",
-    "Отправь одним сообщением:",
+    "Отправь имя и ссылку одним сообщением:",
     "",
-    "/tp_add Имя | ссылка TrainingPeaks",
-    "",
-    "Пример:",
-    "/tp_add Nastya | https://app.trainingpeaks.com/...",
+    TP_ADD_STUDENT_EXAMPLE,
   ].join("\n");
 }
 
@@ -1494,6 +1576,8 @@ async function showTrainingPeaksHelpMenu(
 async function showTrainingPeaksAddStudentInstructions(
   parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate
 ): Promise<void> {
+  setTrainingPeaksAddStudentWaitingContext(parsedMessage.chatId);
+
   if (parsedMessage.kind === "callback_query") {
     await showTrainingPeaksMenuScreen(
       parsedMessage,
@@ -1506,6 +1590,104 @@ async function showTrainingPeaksAddStudentInstructions(
   await sendTrainingPeaksReplyScreen(
     parsedMessage.chatId,
     getAddStudentInstructionsText(),
+    getTrainingPeaksMainReplyKeyboardMarkup()
+  );
+}
+
+async function handleTrainingPeaksAddStudentInput(
+  parsedMessage: ParsedTelegramUpdate,
+  rawInput: string,
+  options?: {
+    showStudentsListOnSuccess?: boolean;
+  }
+): Promise<void> {
+  const parsedInput = parseTrainingPeaksAddStudentInput(rawInput);
+
+  if (!parsedInput.trainingPeaksAthleteUrl) {
+    await sendTrainingPeaksReplyScreen(
+      parsedMessage.chatId,
+      getAddStudentMissingUrlMessage(),
+      getTrainingPeaksMainReplyKeyboardMarkup()
+    );
+    return;
+  }
+
+  if (!parsedInput.studentName) {
+    await sendTrainingPeaksReplyScreen(
+      parsedMessage.chatId,
+      getAddStudentMissingNameMessage(),
+      getTrainingPeaksMainReplyKeyboardMarkup()
+    );
+    return;
+  }
+
+  const normalizedInput = normalizeTrainingPeaksAddStudentInput(rawInput);
+  const result = await addTrainingPeaksStudentFromCommand(normalizedInput);
+  const studentName = getTpAddStudentNamePreview(normalizedInput);
+
+  if (!result.ok) {
+    if (result.reason === "empty_name") {
+      await sendTrainingPeaksReplyScreen(
+        parsedMessage.chatId,
+        getAddStudentMissingNameMessage(),
+        getTrainingPeaksMainReplyKeyboardMarkup()
+      );
+      return;
+    }
+
+    if (result.reason === "invalid_url") {
+      await sendTrainingPeaksReplyScreen(
+        parsedMessage.chatId,
+        "Ссылка на TrainingPeaks должна начинаться с https://",
+        getTrainingPeaksMainReplyKeyboardMarkup()
+      );
+      return;
+    }
+
+    if (result.reason === "duplicate_student") {
+      await sendTrainingPeaksReplyScreen(
+        parsedMessage.chatId,
+        `Ученик "${studentName}" уже существует.`,
+        getTrainingPeaksMainReplyKeyboardMarkup()
+      );
+      return;
+    }
+
+    if (result.reason === "duplicate_url") {
+      await sendTrainingPeaksReplyScreen(
+        parsedMessage.chatId,
+        "Этот URL TrainingPeaks уже привязан к другому ученику.",
+        getTrainingPeaksMainReplyKeyboardMarkup()
+      );
+      return;
+    }
+
+    await sendTrainingPeaksReplyScreen(
+      parsedMessage.chatId,
+      "Не смог добавить ученика в Supabase. Попробуй позже.",
+      getTrainingPeaksMainReplyKeyboardMarkup()
+    );
+    return;
+  }
+
+  clearTrainingPeaksChatContext(parsedMessage.chatId);
+
+  if (options?.showStudentsListOnSuccess) {
+    await sendTrainingPeaksMessage(
+      parsedMessage.chatId,
+      `✅ Ученик добавлен: ${result.student.studentName}`
+    );
+    await showTrainingPeaksStudentsPage(parsedMessage, 0);
+    return;
+  }
+
+  await sendTrainingPeaksReplyScreen(
+    parsedMessage.chatId,
+    [
+      `✅ Ученик добавлен: ${result.student.studentName}`,
+      "",
+      "Локальный Mac runner подтянет этого ученика из Supabase при следующем запуске tp-agent-once.",
+    ].join("\n"),
     getTrainingPeaksMainReplyKeyboardMarkup()
   );
 }
@@ -1533,6 +1715,32 @@ export async function handleTrainingPeaksTelegramReplyKeyboardMessage(
 
   try {
     if (!action) {
+      if (!isTrainingPeaksCommand(text)) {
+        const chatContextState = getTrainingPeaksChatContextState(parsedMessage.chatId);
+
+        if (
+          chatContextState.kind === "expired" &&
+          chatContextState.context.screen === "add_student_waiting"
+        ) {
+          await sendTrainingPeaksReplyScreen(
+            parsedMessage.chatId,
+            getAddStudentExpiredMessage(),
+            getTrainingPeaksMainReplyKeyboardMarkup()
+          );
+          return "handled";
+        }
+
+        if (
+          chatContextState.kind === "active" &&
+          chatContextState.context.screen === "add_student_waiting"
+        ) {
+          await handleTrainingPeaksAddStudentInput(parsedMessage, text, {
+            showStudentsListOnSuccess: true,
+          });
+          return "handled";
+        }
+      }
+
       const studentSelection = await findStudentByExactReplyButtonName(text);
 
       if (studentSelection.kind === "not_found") {
@@ -1850,63 +2058,7 @@ async function handleTrainingPeaksAddStudent(
     return;
   }
 
-  const result = await addTrainingPeaksStudentFromCommand(rawInput);
-  const studentName = getTpAddStudentNamePreview(rawInput);
-
-  if (!result.ok) {
-    if (result.reason === "empty_name") {
-      await sendTrainingPeaksReplyScreen(
-        parsedMessage.chatId,
-        "Имя ученика не должно быть пустым.",
-        getTrainingPeaksMainReplyKeyboardMarkup()
-      );
-      return;
-    }
-
-    if (result.reason === "invalid_url") {
-      await sendTrainingPeaksReplyScreen(
-        parsedMessage.chatId,
-        "Ссылка на TrainingPeaks должна начинаться с https://",
-        getTrainingPeaksMainReplyKeyboardMarkup()
-      );
-      return;
-    }
-
-    if (result.reason === "duplicate_student") {
-      await sendTrainingPeaksReplyScreen(
-        parsedMessage.chatId,
-        `Ученик "${studentName}" уже существует.`,
-        getTrainingPeaksMainReplyKeyboardMarkup()
-      );
-      return;
-    }
-
-    if (result.reason === "duplicate_url") {
-      await sendTrainingPeaksReplyScreen(
-        parsedMessage.chatId,
-        "Этот URL TrainingPeaks уже привязан к другому ученику.",
-        getTrainingPeaksMainReplyKeyboardMarkup()
-      );
-      return;
-    }
-
-    await sendTrainingPeaksReplyScreen(
-      parsedMessage.chatId,
-      "Не смог добавить ученика в Supabase. Попробуй позже.",
-      getTrainingPeaksMainReplyKeyboardMarkup()
-    );
-    return;
-  }
-
-  await sendTrainingPeaksReplyScreen(
-    parsedMessage.chatId,
-    [
-      `✅ Ученик добавлен: ${result.student.studentName}`,
-      "",
-      "Локальный Mac runner подтянет этого ученика из Supabase при следующем запуске tp-agent-once.",
-    ].join("\n"),
-    getTrainingPeaksMainReplyKeyboardMarkup()
-  );
+  await handleTrainingPeaksAddStudentInput(parsedMessage, rawInput);
 }
 
 async function handleTrainingPeaksReport(
