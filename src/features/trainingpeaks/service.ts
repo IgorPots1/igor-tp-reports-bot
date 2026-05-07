@@ -59,6 +59,20 @@ export type TrainingPeaksRegistryStudentSnapshot = {
   latestReportStatus: TrainingPeaksRegistryStatus;
 };
 
+export type TrainingPeaksStudentCard =
+  | { kind: "not_found" }
+  | {
+      kind: "ambiguous";
+      matches: {
+        studentId: string;
+        studentName: string;
+      }[];
+    }
+  | {
+      kind: "student";
+      student: TrainingPeaksRegistryStudentSnapshot;
+    };
+
 export type AddTrainingPeaksStudentResult =
   | { ok: true; student: TrainingPeaksStudent }
   | { ok: false; reason: "empty_name" | "invalid_url" | "duplicate_student" | "duplicate_url" | "unknown" };
@@ -316,6 +330,49 @@ function getRegistryStudentStatus(report: TrainingPeaksWeeklyReport | null): Tra
   return "no_report";
 }
 
+function findMatchingTrainingPeaksStudents(
+  students: TrainingPeaksRegistryStudentSnapshot[],
+  studentQuery: string
+): TrainingPeaksRegistryStudentSnapshot[] {
+  const normalizedQuery = normalizeStudentQuery(studentQuery);
+
+  if (!normalizedQuery) {
+    return [];
+  }
+
+  const exactMatches = students.filter((student) => {
+    const normalizedStudentName = normalizeStudentQuery(student.studentName);
+    const normalizedStudentId = normalizeStudentQuery(student.studentId);
+    return normalizedStudentName === normalizedQuery || normalizedStudentId === normalizedQuery;
+  });
+
+  if (exactMatches.length > 0) {
+    return exactMatches;
+  }
+
+  const prefixMatches = students.filter((student) => {
+    const normalizedStudentName = normalizeStudentQuery(student.studentName);
+    const normalizedStudentId = normalizeStudentQuery(student.studentId);
+    return (
+      normalizedStudentName.startsWith(normalizedQuery) ||
+      normalizedStudentId.startsWith(normalizedQuery)
+    );
+  });
+
+  if (prefixMatches.length > 0) {
+    return prefixMatches;
+  }
+
+  return students.filter((student) => {
+    const normalizedStudentName = normalizeStudentQuery(student.studentName);
+    const normalizedStudentId = normalizeStudentQuery(student.studentId);
+    return (
+      normalizedStudentName.includes(normalizedQuery) ||
+      normalizedStudentId.includes(normalizedQuery)
+    );
+  });
+}
+
 export async function getTrainingPeaksStatusOverview(
   requestedWeek?: TrainingPeaksWeek
 ): Promise<TrainingPeaksStatusOverview | null> {
@@ -478,6 +535,38 @@ export async function getTrainingPeaksStudentsRegistryWithLatestReportStatus(): 
       };
     })
     .sort((left, right) => left.studentName.localeCompare(right.studentName, "ru"));
+}
+
+export async function getTrainingPeaksStudentCard(
+  studentQuery: string
+): Promise<TrainingPeaksStudentCard> {
+  const students = await getTrainingPeaksStudentsRegistryWithLatestReportStatus();
+  const matches = findMatchingTrainingPeaksStudents(students, studentQuery);
+
+  if (matches.length === 0) {
+    return { kind: "not_found" };
+  }
+
+  if (matches.length > 1) {
+    return {
+      kind: "ambiguous",
+      matches: matches.map((student) => ({
+        studentId: student.studentId,
+        studentName: student.studentName,
+      })),
+    };
+  }
+
+  const student = matches[0];
+
+  if (!student) {
+    return { kind: "not_found" };
+  }
+
+  return {
+    kind: "student",
+    student,
+  };
 }
 
 export async function getTrainingPeaksReportMarkdown(

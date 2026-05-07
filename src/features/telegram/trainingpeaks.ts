@@ -4,6 +4,7 @@ import {
   getTrainingPeaksJobsStatus,
   getTrainingPeaksReportSnapshot,
   getTrainingPeaksStatusOverview,
+  getTrainingPeaksStudentCard,
   getTrainingPeaksStudentsRegistryWithLatestReportStatus,
   requestTrainingPeaksWeeklyRun,
 } from "@/features/trainingpeaks/service";
@@ -23,6 +24,7 @@ const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const TP_MAIN_COMMAND_PATTERN = /^\/tp(?:@\w+)?(?:\s+|$)/;
 const TP_STATUS_COMMAND_PATTERN = /^\/tp_status(?:@\w+)?(?:\s+|$)/;
 const TP_STUDENTS_COMMAND_PATTERN = /^\/tp_students(?:@\w+)?(?:\s+|$)/;
+const TP_STUDENT_COMMAND_PATTERN = /^\/tp_student(?:@\w+)?(?:\s+|$)/;
 const TP_ADD_COMMAND_PATTERN = /^\/tp_add(?:@\w+)?(?:\s+|$)/;
 const TP_ADD_STUDENT_COMMAND_PATTERN = /^\/tp_add_student(?:@\w+)?(?:\s+|$)/;
 const TP_REPORT_COMMAND_PATTERN = /^\/tp_report(?:@\w+)?(?:\s+|$)/;
@@ -42,6 +44,7 @@ type TrainingPeaksCommand =
   | "tp"
   | "tp_status"
   | "tp_students"
+  | "tp_student"
   | "tp_add"
   | "tp_add_student"
   | "tp_report"
@@ -83,6 +86,10 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
 
   if (TP_STUDENTS_COMMAND_PATTERN.test(text)) {
     return "tp_students";
+  }
+
+  if (TP_STUDENT_COMMAND_PATTERN.test(text)) {
+    return "tp_student";
   }
 
   if (TP_ADD_COMMAND_PATTERN.test(text)) {
@@ -410,6 +417,104 @@ function formatStudentsMessage(
   ].join("\n");
 }
 
+function parseStudentCommand(text: string): string {
+  return text.replace(TP_STUDENT_COMMAND_PATTERN, "").trim();
+}
+
+function getStudentCardReportStatusLabel(status: string): string {
+  if (status === "ready") {
+    return "готов";
+  }
+
+  if (status === "data_loaded") {
+    return "данные загружены";
+  }
+
+  return "нет отчёта";
+}
+
+function getStudentCardStatusLabel(isActive: boolean): string {
+  return isActive ? "активен" : "отключен";
+}
+
+function getStudentCardHint(student: {
+  isActive: boolean;
+  latestReportStatus: string;
+  weeklyReportEnabled: boolean;
+}): string | null {
+  if (!student.isActive) {
+    return "Ученик отключён.";
+  }
+
+  if (!student.weeklyReportEnabled) {
+    return "Недельные отчёты выключены.";
+  }
+
+  if (student.latestReportStatus === "no_data") {
+    return "Запусти `/tp_run last`, чтобы загрузить свежую неделю.";
+  }
+
+  return null;
+}
+
+function formatStudentCardMessage(student: {
+  studentName: string;
+  isActive: boolean;
+  trainingPeaksAthleteUrl: string;
+  latestWeekFrom: string | null;
+  latestWeekTo: string | null;
+  latestReportStatus: string;
+  weeklyReportEnabled: boolean;
+}): string {
+  const hint = getStudentCardHint(student);
+  const weekLabel =
+    student.latestWeekFrom && student.latestWeekTo
+      ? `${student.latestWeekFrom} — ${student.latestWeekTo}`
+      : "ещё нет";
+
+  return [
+    `👤 ${student.studentName}`,
+    `Статус: ${getStudentCardStatusLabel(student.isActive)}`,
+    "TrainingPeaks:",
+    student.trainingPeaksAthleteUrl,
+    "",
+    "Последний отчёт:",
+    getStudentCardReportStatusLabel(student.latestReportStatus),
+    "",
+    "Неделя:",
+    weekLabel,
+    ...(hint ? ["", `Подсказка: ${hint}`] : []),
+    "",
+    "Команды:",
+    `\`/tp_report ${student.studentName}\``,
+    "`/tp_run last`",
+  ].join("\n");
+}
+
+function formatStudentAmbiguityMessage(
+  matches: {
+    studentId: string;
+    studentName: string;
+  }[]
+): string {
+  const visibleMatches = matches.slice(0, 5).map((student) => {
+    const label =
+      student.studentId !== student.studentName
+        ? `${student.studentName} (${student.studentId})`
+        : student.studentName;
+    return `• ${label}`;
+  });
+  const hiddenMatchesCount = Math.max(0, matches.length - visibleMatches.length);
+
+  return [
+    "Нашлось несколько учеников:",
+    ...visibleMatches,
+    ...(hiddenMatchesCount > 0 ? [`• ... и ещё ${hiddenMatchesCount}`] : []),
+    "Уточни имя точнее.",
+    "Полный список: /tp_students",
+  ].join("\n");
+}
+
 function shortenJobError(errorMessage: string | null): string | null {
   const normalized = errorMessage?.replace(/\s+/g, " ").trim();
 
@@ -571,6 +676,7 @@ export function getTrainingPeaksHelpLines(): string[] {
     "/tp_status — статусы за последнюю синхронизированную неделю",
     "/tp_status <from> <to> — статусы за выбранную неделю",
     "/tp_students — ученики и их последний статус",
+    "/tp_student <ученик> — карточка ученика",
     "👤 /tp_add Имя | ссылка — добавить ученика",
     "/tp_add_student Имя | ссылка",
     "/tp_week — подсказка по неделям",
@@ -591,6 +697,7 @@ async function handleTrainingPeaksMain(parsedMessage: ParsedTelegramUpdate): Pro
       "🚀 /tp_run last — запустить прошлую неделю",
       "👤 /tp_add Имя | ссылка — добавить ученика",
       "📋 /tp_students — список учеников",
+      "🧑 /tp_student Olga — карточка ученика",
       "📊 /tp_jobs — статус задач",
       "📄 /tp_report Olga last — отчет",
     ].join("\n")
@@ -638,6 +745,35 @@ async function handleTrainingPeaksStudents(parsedMessage: ParsedTelegramUpdate):
   }
 
   await sendTrainingPeaksMessage(parsedMessage.chatId, formatStudentsMessage(students));
+}
+
+async function handleTrainingPeaksStudent(
+  parsedMessage: ParsedTelegramUpdate,
+  text: string
+): Promise<void> {
+  const studentQuery = parseStudentCommand(text);
+
+  if (!studentQuery) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "Напиши так: /tp_student Имя Фамилия");
+    return;
+  }
+
+  const result = await getTrainingPeaksStudentCard(studentQuery);
+
+  if (result.kind === "not_found") {
+    await sendTrainingPeaksMessage(
+      parsedMessage.chatId,
+      `Ученик "${studentQuery}" не найден.\nПосмотри список: /tp_students`
+    );
+    return;
+  }
+
+  if (result.kind === "ambiguous") {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, formatStudentAmbiguityMessage(result.matches));
+    return;
+  }
+
+  await sendTrainingPeaksMessage(parsedMessage.chatId, formatStudentCardMessage(result.student));
 }
 
 async function handleTrainingPeaksAddStudent(
@@ -827,6 +963,11 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_students") {
       await handleTrainingPeaksStudents(parsedMessage);
+      return "handled";
+    }
+
+    if (command === "tp_student") {
+      await handleTrainingPeaksStudent(parsedMessage, text);
       return "handled";
     }
 
