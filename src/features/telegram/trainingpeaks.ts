@@ -1,6 +1,7 @@
 import type { ParsedTelegramUpdate } from "@/features/telegram/parser";
 import {
   addTrainingPeaksStudentFromCommand,
+  disableTrainingPeaksStudent,
   getTrainingPeaksJobsStatus,
   getTrainingPeaksReportSnapshot,
   getTrainingPeaksStatusOverview,
@@ -25,6 +26,7 @@ const TP_MAIN_COMMAND_PATTERN = /^\/tp(?:@\w+)?(?:\s+|$)/;
 const TP_STATUS_COMMAND_PATTERN = /^\/tp_status(?:@\w+)?(?:\s+|$)/;
 const TP_STUDENTS_COMMAND_PATTERN = /^\/tp_students(?:@\w+)?(?:\s+|$)/;
 const TP_STUDENT_COMMAND_PATTERN = /^\/tp_student(?:@\w+)?(?:\s+|$)/;
+const TP_DISABLE_STUDENT_COMMAND_PATTERN = /^\/tp_disable_student(?:@\w+)?(?:\s+|$)/;
 const TP_ADD_COMMAND_PATTERN = /^\/tp_add(?:@\w+)?(?:\s+|$)/;
 const TP_ADD_STUDENT_COMMAND_PATTERN = /^\/tp_add_student(?:@\w+)?(?:\s+|$)/;
 const TP_REPORT_COMMAND_PATTERN = /^\/tp_report(?:@\w+)?(?:\s+|$)/;
@@ -45,6 +47,7 @@ type TrainingPeaksCommand =
   | "tp_status"
   | "tp_students"
   | "tp_student"
+  | "tp_disable_student"
   | "tp_add"
   | "tp_add_student"
   | "tp_report"
@@ -90,6 +93,10 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
 
   if (TP_STUDENT_COMMAND_PATTERN.test(text)) {
     return "tp_student";
+  }
+
+  if (TP_DISABLE_STUDENT_COMMAND_PATTERN.test(text)) {
+    return "tp_disable_student";
   }
 
   if (TP_ADD_COMMAND_PATTERN.test(text)) {
@@ -421,6 +428,10 @@ function parseStudentCommand(text: string): string {
   return text.replace(TP_STUDENT_COMMAND_PATTERN, "").trim();
 }
 
+function parseDisableStudentCommand(text: string): string {
+  return text.replace(TP_DISABLE_STUDENT_COMMAND_PATTERN, "").trim();
+}
+
 function getStudentCardReportStatusLabel(status: string): string {
   if (status === "ready") {
     return "готов";
@@ -677,6 +688,7 @@ export function getTrainingPeaksHelpLines(): string[] {
     "/tp_status <from> <to> — статусы за выбранную неделю",
     "/tp_students — ученики и их последний статус",
     "/tp_student <ученик> — карточка ученика",
+    "/tp_disable_student <ученик> — отключить из будущих недельных выгрузок",
     "👤 /tp_add Имя | ссылка — добавить ученика",
     "/tp_add_student Имя | ссылка",
     "/tp_week — подсказка по неделям",
@@ -698,6 +710,7 @@ async function handleTrainingPeaksMain(parsedMessage: ParsedTelegramUpdate): Pro
       "👤 /tp_add Имя | ссылка — добавить ученика",
       "📋 /tp_students — список учеников",
       "🧑 /tp_student Olga — карточка ученика",
+      "⛔ /tp_disable_student Olga — отключить ученика",
       "📊 /tp_jobs — статус задач",
       "📄 /tp_report Olga last — отчет",
     ].join("\n")
@@ -774,6 +787,42 @@ async function handleTrainingPeaksStudent(
   }
 
   await sendTrainingPeaksMessage(parsedMessage.chatId, formatStudentCardMessage(result.student));
+}
+
+async function handleTrainingPeaksDisableStudent(
+  parsedMessage: ParsedTelegramUpdate,
+  text: string
+): Promise<void> {
+  const studentQuery = parseDisableStudentCommand(text);
+
+  if (!studentQuery) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "Напиши так: /tp_disable_student Имя Фамилия");
+    return;
+  }
+
+  const result = await disableTrainingPeaksStudent(studentQuery);
+
+  if (result.kind === "not_found") {
+    await sendTrainingPeaksMessage(
+      parsedMessage.chatId,
+      `Ученик "${studentQuery}" не найден.\nПосмотри список: /tp_students`
+    );
+    return;
+  }
+
+  if (result.kind === "ambiguous") {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, formatStudentAmbiguityMessage(result.matches));
+    return;
+  }
+
+  await sendTrainingPeaksMessage(
+    parsedMessage.chatId,
+    [
+      `✅ Ученик отключён: ${result.student.studentName}`,
+      "",
+      "Он останется в Supabase и прошлых отчётах, но больше не попадёт в будущие недельные выгрузки TrainingPeaks.",
+    ].join("\n")
+  );
 }
 
 async function handleTrainingPeaksAddStudent(
@@ -968,6 +1017,11 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_student") {
       await handleTrainingPeaksStudent(parsedMessage, text);
+      return "handled";
+    }
+
+    if (command === "tp_disable_student") {
+      await handleTrainingPeaksDisableStudent(parsedMessage, text);
       return "handled";
     }
 

@@ -280,6 +280,25 @@ export async function listTrainingPeaksStudents(): Promise<TrainingPeaksStudent[
   return ((data as TrainingPeaksStudentRow[]) ?? []).map(mapTrainingPeaksStudentRow);
 }
 
+export async function disableTrainingPeaksStudentById(id: string): Promise<TrainingPeaksStudent> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_students")
+    .update({
+      is_active: false,
+      weekly_report_enabled: false,
+    })
+    .eq("id", id)
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to disable TrainingPeaks student ${id}: ${error.message}`);
+  }
+
+  return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
+}
+
 export async function getLatestTrainingPeaksWeek(): Promise<TrainingPeaksWeek | null> {
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase

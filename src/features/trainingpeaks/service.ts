@@ -1,5 +1,6 @@
 import {
   createTrainingPeaksWeeklyJob,
+  disableTrainingPeaksStudentById,
   recoverStaleTrainingPeaksRunningJobs,
   insertTrainingPeaksStudent,
   listAllTrainingPeaksReports,
@@ -76,6 +77,20 @@ export type TrainingPeaksStudentCard =
 export type AddTrainingPeaksStudentResult =
   | { ok: true; student: TrainingPeaksStudent }
   | { ok: false; reason: "empty_name" | "invalid_url" | "duplicate_student" | "duplicate_url" | "unknown" };
+
+export type DisableTrainingPeaksStudentResult =
+  | { kind: "not_found" }
+  | {
+      kind: "ambiguous";
+      matches: {
+        studentId: string;
+        studentName: string;
+      }[];
+    }
+  | {
+      kind: "student";
+      student: TrainingPeaksStudent;
+    };
 
 export type TrainingPeaksJobRequester = {
   chatId: number | string;
@@ -373,6 +388,38 @@ function findMatchingTrainingPeaksStudents(
   });
 }
 
+async function resolveTrainingPeaksRegistryStudent(
+  studentQuery: string
+): Promise<TrainingPeaksStudentCard> {
+  const students = await getTrainingPeaksStudentsRegistryWithLatestReportStatus();
+  const matches = findMatchingTrainingPeaksStudents(students, studentQuery);
+
+  if (matches.length === 0) {
+    return { kind: "not_found" };
+  }
+
+  if (matches.length > 1) {
+    return {
+      kind: "ambiguous",
+      matches: matches.map((student) => ({
+        studentId: student.studentId,
+        studentName: student.studentName,
+      })),
+    };
+  }
+
+  const student = matches[0];
+
+  if (!student) {
+    return { kind: "not_found" };
+  }
+
+  return {
+    kind: "student",
+    student,
+  };
+}
+
 export async function getTrainingPeaksStatusOverview(
   requestedWeek?: TrainingPeaksWeek
 ): Promise<TrainingPeaksStatusOverview | null> {
@@ -540,28 +587,19 @@ export async function getTrainingPeaksStudentsRegistryWithLatestReportStatus(): 
 export async function getTrainingPeaksStudentCard(
   studentQuery: string
 ): Promise<TrainingPeaksStudentCard> {
-  const students = await getTrainingPeaksStudentsRegistryWithLatestReportStatus();
-  const matches = findMatchingTrainingPeaksStudents(students, studentQuery);
+  return resolveTrainingPeaksRegistryStudent(studentQuery);
+}
 
-  if (matches.length === 0) {
-    return { kind: "not_found" };
+export async function disableTrainingPeaksStudent(
+  studentQuery: string
+): Promise<DisableTrainingPeaksStudentResult> {
+  const match = await resolveTrainingPeaksRegistryStudent(studentQuery);
+
+  if (match.kind !== "student") {
+    return match;
   }
 
-  if (matches.length > 1) {
-    return {
-      kind: "ambiguous",
-      matches: matches.map((student) => ({
-        studentId: student.studentId,
-        studentName: student.studentName,
-      })),
-    };
-  }
-
-  const student = matches[0];
-
-  if (!student) {
-    return { kind: "not_found" };
-  }
+  const student = await disableTrainingPeaksStudentById(match.student.id);
 
   return {
     kind: "student",
