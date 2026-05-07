@@ -37,6 +37,15 @@ type ClassificationType =
   | "unclear";
 type HrComparisonStatus = "above" | "below" | "within" | "unknown";
 type PaceComparisonStatus = "too_fast" | "too_slow" | "within" | "unknown";
+type SegmentCoverage = "full" | "partial" | "missing" | "unsupported";
+type WorkoutSegmentAnalysisReason =
+  | "computed"
+  | "no_planned_segments"
+  | "fit_not_matched"
+  | "fit_parse_failed"
+  | "timer_time_unavailable"
+  | "unsupported_segments"
+  | "unsupported_repeats";
 
 type HrbpmTarget = {
   min: number;
@@ -221,6 +230,53 @@ type Comparison = {
   };
 };
 
+type WorkoutSegmentAnalysis = {
+  available: boolean;
+  reason: WorkoutSegmentAnalysisReason;
+  axis?: "timer_time";
+  match_confidence?: "high" | "medium" | "low" | "none";
+  planned_segments_count?: number;
+  expanded_segments_count?: number;
+  comparable_segments_count?: number;
+  compared_segments_count?: number;
+  extra_after_plan_seconds?: number;
+  data_quality_flags?: string[];
+};
+
+type SegmentComparisonEntry = {
+  order: number;
+  planned_segment_order: number;
+  repeat_iteration: number | null;
+  repeat_group_id: string | null;
+  segment_type: string;
+  is_rest: boolean;
+  label: string | null;
+  planned_duration_minutes: number | null;
+  planned_targets: {
+    pace_min_per_km: PaceTarget | null;
+    hr_bpm: HrbpmTarget | null;
+  };
+  actual: {
+    duration_minutes: number | null;
+    distance_km: number | null;
+    avg_pace_min_per_km: number | null;
+    avg_hr: number | null;
+    avg_cadence: number | null;
+    avg_power: number | null;
+  };
+  coverage: SegmentCoverage;
+  coverage_ratio: number | null;
+  pace_vs_target: {
+    status: PaceComparisonStatus;
+    outside_by_min_per_km: number | null;
+  };
+  hr_vs_target: {
+    status: HrComparisonStatus;
+    outside_by_bpm: number | null;
+  };
+  data_quality_flags: string[];
+};
+
 type ParsedWorkout = {
   date: string | null;
   title: string | null;
@@ -248,8 +304,20 @@ type ParsedWorkout = {
   planned: PlannedSection;
   completed: CompletedSection;
   comparison: Comparison;
+  segment_analysis: WorkoutSegmentAnalysis;
+  segment_comparison: SegmentComparisonEntry[];
   source_file: string;
   raw: RawRow;
+};
+
+type WeeklySegmentAnalysis = {
+  available: boolean;
+  reason: "computed" | "no_workout_files" | "no_matches" | "not_computed";
+  workouts_with_planned_segments: number;
+  workouts_with_matched_fit: number;
+  workouts_analyzed: number;
+  workouts_partial: number;
+  workouts_unsupported: number;
 };
 
 type WeeklySummary = {
@@ -265,10 +333,7 @@ type WeeklySummary = {
     workout_summary_columns: string[];
     workout_files: WorkoutFilesSource;
   };
-  segment_analysis?: {
-    available: false;
-    reason: "workout_files_not_parsed_yet";
-  };
+  segment_analysis: WeeklySegmentAnalysis;
   totals: {
     workouts_count: number;
     completed_workouts_count: number;
@@ -428,6 +493,7 @@ type FitSummary = {
 
 type FitRecordLike = {
   timestamp?: string;
+  timer_time?: number;
   distance?: number;
   speed?: number;
   enhanced_speed?: number;
@@ -506,6 +572,43 @@ type PlannedSegmentsParseResult = {
   segments_parse: PlannedSegmentsParse;
 };
 
+type ExpandedPlannedSegment = {
+  order: number;
+  planned_segment_order: number;
+  repeat_iteration: number | null;
+  repeat_group_id: string | null;
+  segment_type: SegmentType;
+  is_rest: boolean;
+  label: string | null;
+  duration_minutes: number | null;
+  targets: PlannedSegmentTargets;
+  data_quality_flags: string[];
+};
+
+type ExpandedSegmentsResult = {
+  expanded_segments: ExpandedPlannedSegment[];
+  unsupported_repeats: boolean;
+  data_quality_flags: string[];
+};
+
+type TimerFitRecord = {
+  timer_time: number;
+  distance: number | null;
+  speed: number | null;
+  enhanced_speed: number | null;
+  heart_rate: number | null;
+  cadence: number | null;
+  power: number | null;
+};
+
+type SegmentSliceMetrics = {
+  coverage_seconds: number;
+  distance_m: number | null;
+  avg_hr: number | null;
+  avg_cadence: number | null;
+  avg_power: number | null;
+};
+
 type NormalizedCompletedMetrics = {
   duration_minutes: number | null;
   distance_km: number | null;
@@ -537,6 +640,8 @@ const DISTANCE_DELTA_ABSOLUTE_THRESHOLD_KM = 1;
 const DELTA_PERCENT_THRESHOLD = 20;
 const HR_DELTA_THRESHOLD_BPM = 3;
 const PACE_DELTA_THRESHOLD_MINUTES = 10 / 60;
+const SEGMENT_FULL_COVERAGE_THRESHOLD = 0.9;
+const SEGMENT_PARTIAL_COVERAGE_THRESHOLD = 0.2;
 const gunzip = promisify(gunzipCallback);
 
 function debugLog(...args: unknown[]): void {
@@ -2587,6 +2692,7 @@ function createFitParser(): FitParser {
     mode: "list",
     lengthUnit: "m",
     speedUnit: "m/s",
+    elapsedRecordField: true,
     force: false
   });
 }
@@ -2749,6 +2855,665 @@ async function readWorkoutFileEntryBuffer(
   }
 
   return entryBuffer;
+}
+
+function createDefaultWorkoutSegmentAnalysis(workout: Pick<ParsedWorkout, "planned" | "completed">): WorkoutSegmentAnalysis {
+  const hasPlannedSegments = workout.planned.segments.length > 0;
+  return {
+    available: false,
+    reason: hasPlannedSegments ? "fit_not_matched" : "no_planned_segments",
+    match_confidence: workout.completed.detail_source.match_confidence,
+    planned_segments_count: workout.planned.segments.length,
+    expanded_segments_count: 0,
+    comparable_segments_count: 0,
+    compared_segments_count: 0,
+    data_quality_flags: []
+  };
+}
+
+function buildUnsupportedSegmentComparisonEntry(
+  segment: ExpandedPlannedSegment,
+  flags: string[]
+): SegmentComparisonEntry {
+  return {
+    order: segment.order,
+    planned_segment_order: segment.planned_segment_order,
+    repeat_iteration: segment.repeat_iteration,
+    repeat_group_id: segment.repeat_group_id,
+    segment_type: segment.segment_type,
+    is_rest: segment.is_rest,
+    label: segment.label,
+    planned_duration_minutes: segment.duration_minutes,
+    planned_targets: {
+      pace_min_per_km: segment.targets.pace_min_per_km,
+      hr_bpm: segment.targets.hr_bpm
+    },
+    actual: {
+      duration_minutes: null,
+      distance_km: null,
+      avg_pace_min_per_km: null,
+      avg_hr: null,
+      avg_cadence: null,
+      avg_power: null
+    },
+    coverage: "unsupported",
+    coverage_ratio: null,
+    pace_vs_target: {
+      status: "unknown",
+      outside_by_min_per_km: null
+    },
+    hr_vs_target: {
+      status: "unknown",
+      outside_by_bpm: null
+    },
+    data_quality_flags: [...new Set([...segment.data_quality_flags, ...flags])]
+  };
+}
+
+function getComparablePaceTarget(targets: PlannedSegmentTargets): PaceTarget | null {
+  if (targets.pace_min_per_km !== null) {
+    return targets.pace_min_per_km;
+  }
+
+  if (targets.pace_ranges.length === 1) {
+    return {
+      fast_min_per_km: targets.pace_ranges[0].fast_min_per_km,
+      slow_min_per_km: targets.pace_ranges[0].slow_min_per_km
+    };
+  }
+
+  return null;
+}
+
+function compareSegmentPaceAgainstTarget(
+  actualPace: number | null,
+  target: PaceTarget | null
+): SegmentComparisonEntry["pace_vs_target"] {
+  if (actualPace === null || target === null) {
+    return {
+      status: "unknown",
+      outside_by_min_per_km: null
+    };
+  }
+
+  if (actualPace < target.fast_min_per_km - PACE_DELTA_THRESHOLD_MINUTES) {
+    return {
+      status: "too_fast",
+      outside_by_min_per_km: roundNumber(target.fast_min_per_km - actualPace, 2)
+    };
+  }
+
+  if (actualPace > target.slow_min_per_km + PACE_DELTA_THRESHOLD_MINUTES) {
+    return {
+      status: "too_slow",
+      outside_by_min_per_km: roundNumber(actualPace - target.slow_min_per_km, 2)
+    };
+  }
+
+  return {
+    status: "within",
+    outside_by_min_per_km: 0
+  };
+}
+
+function compareSegmentHrAgainstTarget(
+  actualHr: number | null,
+  target: HrbpmTarget | null
+): SegmentComparisonEntry["hr_vs_target"] {
+  if (actualHr === null || target === null) {
+    return {
+      status: "unknown",
+      outside_by_bpm: null
+    };
+  }
+
+  if (actualHr < target.min - HR_DELTA_THRESHOLD_BPM) {
+    return {
+      status: "below",
+      outside_by_bpm: roundNumber(target.min - actualHr, 1)
+    };
+  }
+
+  if (actualHr > target.max + HR_DELTA_THRESHOLD_BPM) {
+    return {
+      status: "above",
+      outside_by_bpm: roundNumber(actualHr - target.max, 1)
+    };
+  }
+
+  return {
+    status: "within",
+    outside_by_bpm: 0
+  };
+}
+
+function normalizeTimerFitRecords(records: FitRecordLike[]): TimerFitRecord[] {
+  const sortedRecords = records
+    .flatMap((record) =>
+      isFiniteNumber(record.timer_time)
+        ? [
+            {
+              timer_time: record.timer_time,
+              distance: isFiniteNumber(record.distance) ? record.distance : null,
+              speed: isFiniteNumber(record.speed) ? record.speed : null,
+              enhanced_speed: isFiniteNumber(record.enhanced_speed) ? record.enhanced_speed : null,
+              heart_rate: isFiniteNumber(record.heart_rate) ? record.heart_rate : null,
+              cadence: isFiniteNumber(record.cadence) ? record.cadence : null,
+              power: isFiniteNumber(record.power) ? record.power : null
+            } satisfies TimerFitRecord
+          ]
+        : []
+    )
+    .sort((left, right) => left.timer_time - right.timer_time);
+
+  const normalized: TimerFitRecord[] = [];
+  for (const record of sortedRecords) {
+    const previous = normalized.at(-1);
+    if (previous && previous.timer_time === record.timer_time) {
+      normalized[normalized.length - 1] = {
+        timer_time: record.timer_time,
+        distance: record.distance ?? previous.distance,
+        speed: record.speed ?? previous.speed,
+        enhanced_speed: record.enhanced_speed ?? previous.enhanced_speed,
+        heart_rate: record.heart_rate ?? previous.heart_rate,
+        cadence: record.cadence ?? previous.cadence,
+        power: record.power ?? previous.power
+      };
+      continue;
+    }
+
+    normalized.push(record);
+  }
+
+  return normalized;
+}
+
+function expandPlannedSegmentsForAnalysis(workout: ParsedWorkout): ExpandedSegmentsResult {
+  const expandedSegments: ExpandedPlannedSegment[] = [];
+  const flags = new Set<string>();
+  let expandedOrder = 1;
+  const canInferSingleSegmentDuration =
+    workout.planned.segments.length === 1 && workout.planned.duration_minutes !== null;
+
+  for (let index = 0; index < workout.planned.segments.length; index += 1) {
+    const segment = workout.planned.segments[index];
+    const repeatCount = segment.repeat_count;
+    const repeatGroupId = segment.repeat_group_id;
+    const segmentDurationMinutes =
+      segment.duration_minutes === null && canInferSingleSegmentDuration
+        ? workout.planned.duration_minutes
+        : segment.duration_minutes;
+    const segmentFlags =
+      segment.duration_minutes === null && canInferSingleSegmentDuration
+        ? [...segment.data_quality_flags, "duration_inferred_from_workout_total"]
+        : [...segment.data_quality_flags];
+
+    if (repeatCount <= 1 && repeatGroupId === null) {
+      expandedSegments.push({
+        order: expandedOrder,
+        planned_segment_order: segment.order,
+        repeat_iteration: null,
+        repeat_group_id: null,
+        segment_type: segment.segment_type,
+        is_rest: segment.is_rest,
+        label: segment.label,
+        duration_minutes: segmentDurationMinutes,
+        targets: segment.targets,
+        data_quality_flags: segmentFlags
+      });
+      expandedOrder += 1;
+      continue;
+    }
+
+    if (repeatCount <= 1 || !repeatGroupId) {
+      return {
+        expanded_segments: [],
+        unsupported_repeats: true,
+        data_quality_flags: ["repeat_group_structure_invalid"]
+      };
+    }
+
+    const repeatGroupSegments = [segment];
+    while (
+      index + 1 < workout.planned.segments.length &&
+      workout.planned.segments[index + 1].repeat_group_id === repeatGroupId
+    ) {
+      repeatGroupSegments.push(workout.planned.segments[index + 1]);
+      index += 1;
+    }
+
+    const repeatCounts = new Set(repeatGroupSegments.map((entry) => entry.repeat_count));
+    const groupIsAmbiguous =
+      repeatCounts.size !== 1 ||
+      workout.planned.segments_parse.flags.includes("repeat_block_partial") ||
+      repeatGroupSegments.some(
+        (entry) =>
+          entry.duration_minutes === null ||
+          entry.data_quality_flags.includes("duration_missing") ||
+          entry.data_quality_flags.includes("boundary_ambiguous")
+      );
+
+    if (groupIsAmbiguous) {
+      flags.add(`unsupported_repeat_group:${repeatGroupId}`);
+      return {
+        expanded_segments: [],
+        unsupported_repeats: true,
+        data_quality_flags: [...flags]
+      };
+    }
+
+    for (let iteration = 1; iteration <= repeatCount; iteration += 1) {
+      for (const groupSegment of repeatGroupSegments) {
+        expandedSegments.push({
+          order: expandedOrder,
+          planned_segment_order: groupSegment.order,
+          repeat_iteration: iteration,
+          repeat_group_id: repeatGroupId,
+          segment_type: groupSegment.segment_type,
+          is_rest: groupSegment.is_rest,
+          label: groupSegment.label,
+          duration_minutes: groupSegment.duration_minutes,
+          targets: groupSegment.targets,
+          data_quality_flags: [...groupSegment.data_quality_flags]
+        });
+        expandedOrder += 1;
+      }
+    }
+  }
+
+  return {
+    expanded_segments: expandedSegments,
+    unsupported_repeats: false,
+    data_quality_flags: [...flags]
+  };
+}
+
+function computeSliceMetrics(
+  records: TimerFitRecord[],
+  startSeconds: number,
+  endSeconds: number
+): SegmentSliceMetrics {
+  let coverageSeconds = 0;
+  let distanceMeters = 0;
+  let hasDistance = false;
+  let speedDistanceMeters = 0;
+  let hasSpeedDistance = false;
+  let weightedHr = 0;
+  let hrSeconds = 0;
+  let weightedCadence = 0;
+  let cadenceSeconds = 0;
+  let weightedPower = 0;
+  let powerSeconds = 0;
+
+  for (let index = 0; index < records.length - 1; index += 1) {
+    const current = records[index];
+    const next = records[index + 1];
+    const deltaSeconds = next.timer_time - current.timer_time;
+    if (!Number.isFinite(deltaSeconds) || deltaSeconds <= 0) {
+      continue;
+    }
+
+    const overlapStart = Math.max(startSeconds, current.timer_time);
+    const overlapEnd = Math.min(endSeconds, next.timer_time);
+    const overlapSeconds = overlapEnd - overlapStart;
+    if (overlapSeconds <= 0) {
+      continue;
+    }
+
+    coverageSeconds += overlapSeconds;
+    const overlapRatio = overlapSeconds / deltaSeconds;
+
+    if (current.distance !== null && next.distance !== null) {
+      const deltaDistance = next.distance - current.distance;
+      if (deltaDistance >= 0) {
+        distanceMeters += deltaDistance * overlapRatio;
+        hasDistance = true;
+      }
+    } else {
+      const fallbackSpeed = current.enhanced_speed ?? current.speed;
+      if (fallbackSpeed !== null && fallbackSpeed >= 0) {
+        speedDistanceMeters += fallbackSpeed * overlapSeconds;
+        hasSpeedDistance = true;
+      }
+    }
+
+    if (current.heart_rate !== null) {
+      weightedHr += current.heart_rate * overlapSeconds;
+      hrSeconds += overlapSeconds;
+    }
+
+    if (current.cadence !== null) {
+      weightedCadence += current.cadence * overlapSeconds;
+      cadenceSeconds += overlapSeconds;
+    }
+
+    if (current.power !== null) {
+      weightedPower += current.power * overlapSeconds;
+      powerSeconds += overlapSeconds;
+    }
+  }
+
+  return {
+    coverage_seconds: roundNumber(coverageSeconds, 1),
+    distance_m: hasDistance
+      ? roundNumber(distanceMeters, 1)
+      : hasSpeedDistance
+        ? roundNumber(speedDistanceMeters, 1)
+        : null,
+    avg_hr: hrSeconds > 0 ? roundNumber(weightedHr / hrSeconds, 1) : null,
+    avg_cadence: cadenceSeconds > 0 ? roundNumber(weightedCadence / cadenceSeconds, 1) : null,
+    avg_power: powerSeconds > 0 ? roundNumber(weightedPower / powerSeconds, 1) : null
+  };
+}
+
+function analyzeWorkoutSegmentComparisonFromFit(
+  workout: ParsedWorkout,
+  parsedFit: ParsedFitLike
+): Pick<ParsedWorkout, "segment_analysis" | "segment_comparison"> {
+  if (workout.planned.segments.length === 0) {
+    return {
+      segment_analysis: createDefaultWorkoutSegmentAnalysis(workout),
+      segment_comparison: []
+    };
+  }
+
+  const fitRecords = Array.isArray(parsedFit.records) ? parsedFit.records : [];
+  const timerRecords = normalizeTimerFitRecords(fitRecords);
+  if (timerRecords.length < 2) {
+    return {
+      segment_analysis: {
+        available: false,
+        reason: "timer_time_unavailable",
+        match_confidence: workout.completed.detail_source.match_confidence,
+        planned_segments_count: workout.planned.segments.length,
+        expanded_segments_count: 0,
+        comparable_segments_count: 0,
+        compared_segments_count: 0,
+        data_quality_flags: []
+      },
+      segment_comparison: []
+    };
+  }
+
+  const expanded = expandPlannedSegmentsForAnalysis(workout);
+  if (expanded.unsupported_repeats) {
+    return {
+      segment_analysis: {
+        available: false,
+        reason: "unsupported_repeats",
+        match_confidence: workout.completed.detail_source.match_confidence,
+        planned_segments_count: workout.planned.segments.length,
+        expanded_segments_count: 0,
+        comparable_segments_count: 0,
+        compared_segments_count: 0,
+        data_quality_flags: expanded.data_quality_flags
+      },
+      segment_comparison: []
+    };
+  }
+
+  const segmentComparison: SegmentComparisonEntry[] = [];
+  let comparableSegmentsCount = 0;
+  let comparedSegmentsCount = 0;
+  let cumulativeStartSeconds = 0;
+
+  for (const segment of expanded.expanded_segments) {
+    if (segment.duration_minutes === null) {
+      segmentComparison.push(
+        buildUnsupportedSegmentComparisonEntry(segment, ["duration_missing"])
+      );
+      continue;
+    }
+
+    comparableSegmentsCount += 1;
+    const plannedDurationSeconds = segment.duration_minutes * 60;
+    const sliceMetrics = computeSliceMetrics(
+      timerRecords,
+      cumulativeStartSeconds,
+      cumulativeStartSeconds + plannedDurationSeconds
+    );
+    const coverageRatio =
+      plannedDurationSeconds > 0
+        ? roundNumber(sliceMetrics.coverage_seconds / plannedDurationSeconds, 3)
+        : null;
+    const coverage: SegmentCoverage =
+      coverageRatio === null
+        ? "unsupported"
+        : coverageRatio >= SEGMENT_FULL_COVERAGE_THRESHOLD
+          ? "full"
+          : coverageRatio >= SEGMENT_PARTIAL_COVERAGE_THRESHOLD
+            ? "partial"
+            : "missing";
+    const actualDurationMinutes =
+      sliceMetrics.coverage_seconds > 0 ? roundNumber(sliceMetrics.coverage_seconds / 60, 2) : null;
+    const actualDistanceKm =
+      sliceMetrics.distance_m !== null && sliceMetrics.distance_m > 0
+        ? roundNumber(sliceMetrics.distance_m / 1000, 2)
+        : null;
+    const actualPace = deriveAveragePaceMinPerKm(actualDistanceKm, actualDurationMinutes);
+    const flags = [...segment.data_quality_flags];
+    if (segment.targets.pace_min_per_km === null && segment.targets.pace_ranges.length > 1) {
+      flags.push("pace_target_ambiguous");
+    }
+    if (sliceMetrics.distance_m === null) {
+      flags.push("distance_unavailable");
+    }
+    if (coverage === "partial") {
+      flags.push("partial_timer_coverage");
+    }
+    if (coverage === "missing") {
+      flags.push("timer_coverage_missing");
+    }
+    if (coverage === "full" || coverage === "partial") {
+      comparedSegmentsCount += 1;
+    }
+
+    segmentComparison.push({
+      order: segment.order,
+      planned_segment_order: segment.planned_segment_order,
+      repeat_iteration: segment.repeat_iteration,
+      repeat_group_id: segment.repeat_group_id,
+      segment_type: segment.segment_type,
+      is_rest: segment.is_rest,
+      label: segment.label,
+      planned_duration_minutes: segment.duration_minutes,
+      planned_targets: {
+        pace_min_per_km: segment.targets.pace_min_per_km,
+        hr_bpm: segment.targets.hr_bpm
+      },
+      actual: {
+        duration_minutes: actualDurationMinutes,
+        distance_km: actualDistanceKm,
+        avg_pace_min_per_km: actualPace,
+        avg_hr: sliceMetrics.avg_hr,
+        avg_cadence: sliceMetrics.avg_cadence,
+        avg_power: sliceMetrics.avg_power
+      },
+      coverage,
+      coverage_ratio: coverageRatio,
+      pace_vs_target: compareSegmentPaceAgainstTarget(actualPace, getComparablePaceTarget(segment.targets)),
+      hr_vs_target: compareSegmentHrAgainstTarget(sliceMetrics.avg_hr, segment.targets.hr_bpm),
+      data_quality_flags: [...new Set(flags)]
+    });
+
+    cumulativeStartSeconds += plannedDurationSeconds;
+  }
+
+  const analysisFlags = [...expanded.data_quality_flags];
+  if (segmentComparison.some((segment) => segment.coverage === "unsupported")) {
+    analysisFlags.push("contains_unsupported_segments");
+  }
+  if (segmentComparison.some((segment) => segment.coverage === "partial")) {
+    analysisFlags.push("contains_partial_segments");
+  }
+  if (segmentComparison.some((segment) => segment.coverage === "missing")) {
+    analysisFlags.push("contains_missing_segments");
+  }
+
+  if (comparableSegmentsCount === 0) {
+    return {
+      segment_analysis: {
+        available: false,
+        reason: "unsupported_segments",
+        match_confidence: workout.completed.detail_source.match_confidence,
+        planned_segments_count: workout.planned.segments.length,
+        expanded_segments_count: expanded.expanded_segments.length,
+        comparable_segments_count: 0,
+        compared_segments_count: 0,
+        data_quality_flags: [...new Set(analysisFlags)]
+      },
+      segment_comparison: segmentComparison
+    };
+  }
+
+  const lastTimerTime = timerRecords.at(-1)?.timer_time ?? null;
+  const extraAfterPlanSeconds =
+    lastTimerTime !== null ? Math.max(0, roundNumber(lastTimerTime - cumulativeStartSeconds, 1)) : 0;
+  if (extraAfterPlanSeconds > 0) {
+    analysisFlags.push("extra_activity_after_planned_segments");
+  }
+
+  return {
+    segment_analysis: {
+      available: true,
+      reason: "computed",
+      axis: "timer_time",
+      match_confidence: workout.completed.detail_source.match_confidence,
+      planned_segments_count: workout.planned.segments.length,
+      expanded_segments_count: expanded.expanded_segments.length,
+      comparable_segments_count: comparableSegmentsCount,
+      compared_segments_count: comparedSegmentsCount,
+      extra_after_plan_seconds: extraAfterPlanSeconds,
+      data_quality_flags: [...new Set(analysisFlags)]
+    },
+    segment_comparison: segmentComparison
+  };
+}
+
+function buildWorkoutFileEntryFromDetailSource(detailSource: CompletedDetailSource): WorkoutFileEntry | null {
+  if (!detailSource.zip_path || !detailSource.entry_name) {
+    return null;
+  }
+
+  const entryName = detailSource.entry_name;
+  const format = entryName.toLowerCase().endsWith(".fit.gz") ? "fit.gz" : "fit";
+  return {
+    zip_path: detailSource.zip_path,
+    entry_name: entryName,
+    format,
+    compressed: format === "fit.gz"
+  };
+}
+
+async function buildWorkoutSegmentComparisons(workouts: ParsedWorkout[]): Promise<ParsedWorkout[]> {
+  const fitCache = new Map<string, Promise<ParsedFitLike>>();
+
+  const getParsedFit = async (detailSource: CompletedDetailSource): Promise<ParsedFitLike> => {
+    const entry = buildWorkoutFileEntryFromDetailSource(detailSource);
+    if (!entry) {
+      throw new Error("matched FIT source is incomplete");
+    }
+
+    const cacheKey = `${entry.zip_path}::${entry.entry_name}`;
+    if (!fitCache.has(cacheKey)) {
+      fitCache.set(
+        cacheKey,
+        (async () => {
+          const fitBuffer = await readWorkoutFileEntryBuffer(entry);
+          const fitParser = createFitParser();
+          return (await fitParser.parseAsync(fitBuffer)) as ParsedFitLike;
+        })()
+      );
+    }
+
+    return await fitCache.get(cacheKey)!;
+  };
+
+  for (const workout of workouts) {
+    workout.segment_analysis = createDefaultWorkoutSegmentAnalysis(workout);
+    workout.segment_comparison = [];
+
+    if (workout.planned.segments.length === 0) {
+      continue;
+    }
+
+    if (workout.completed.detail_source.match_status !== "matched") {
+      workout.segment_analysis = {
+        ...workout.segment_analysis,
+        match_confidence: workout.completed.detail_source.match_confidence
+      };
+      continue;
+    }
+
+    try {
+      const parsedFit = await getParsedFit(workout.completed.detail_source);
+      const segmentResult = analyzeWorkoutSegmentComparisonFromFit(workout, parsedFit);
+      workout.segment_analysis = segmentResult.segment_analysis;
+      workout.segment_comparison = segmentResult.segment_comparison;
+    } catch (error: unknown) {
+      workout.segment_analysis = {
+        available: false,
+        reason: "fit_parse_failed",
+        match_confidence: workout.completed.detail_source.match_confidence,
+        planned_segments_count: workout.planned.segments.length,
+        expanded_segments_count: 0,
+        comparable_segments_count: 0,
+        compared_segments_count: 0,
+        data_quality_flags: [`fit_parse_failed:${trimFitErrorMessage(error)}`]
+      };
+      workout.segment_comparison = [];
+    }
+  }
+
+  return workouts;
+}
+
+function buildWeeklySegmentAnalysis(
+  workouts: ParsedWorkout[],
+  workoutFilesSource: WorkoutFilesSource
+): WeeklySegmentAnalysis {
+  const workoutsWithPlannedSegments = workouts.filter((workout) => workout.planned.segments.length > 0);
+  const workoutsWithMatchedFit = workoutsWithPlannedSegments.filter(
+    (workout) => workout.completed.detail_source.match_status === "matched"
+  );
+  const workoutsAnalyzed = workoutsWithPlannedSegments.filter(
+    (workout) => workout.segment_analysis.available && workout.segment_analysis.reason === "computed"
+  );
+  const workoutsPartial = workoutsAnalyzed.filter(
+    (workout) =>
+      workout.segment_comparison.some(
+        (segment) => segment.coverage === "partial" || segment.coverage === "missing"
+      ) ||
+      (workout.segment_analysis.extra_after_plan_seconds ?? 0) > 0 ||
+      (workout.segment_analysis.compared_segments_count ?? 0) <
+        (workout.segment_analysis.comparable_segments_count ?? 0)
+  );
+  const workoutsUnsupported = workoutsWithPlannedSegments.filter(
+    (workout) =>
+      !workout.segment_analysis.available ||
+      workout.segment_comparison.some((segment) => segment.coverage === "unsupported")
+  );
+
+  let reason: WeeklySegmentAnalysis["reason"] = "not_computed";
+  let available = false;
+  if (!workoutFilesSource.present) {
+    reason = "no_workout_files";
+  } else if (workoutsWithMatchedFit.length === 0) {
+    reason = "no_matches";
+  } else if (workoutsAnalyzed.length > 0) {
+    reason = "computed";
+    available = true;
+  }
+
+  return {
+    available,
+    reason,
+    workouts_with_planned_segments: workoutsWithPlannedSegments.length,
+    workouts_with_matched_fit: workoutsWithMatchedFit.length,
+    workouts_analyzed: workoutsAnalyzed.length,
+    workouts_partial: workoutsPartial.length,
+    workouts_unsupported: workoutsUnsupported.length
+  };
 }
 
 async function parseFitDiagnosticsSample(workoutFilesSource: WorkoutFilesSource): Promise<FitDiagnostics> {
@@ -3073,6 +3838,17 @@ async function parseCsvFile(candidate: CsvCandidate): Promise<ParsedCsv> {
           unclear_classification: false
         }
       },
+      segment_analysis: {
+        available: false,
+        reason: parsedSegments.segments.length > 0 ? "fit_not_matched" : "no_planned_segments",
+        match_confidence: "none",
+        planned_segments_count: parsedSegments.segments.length,
+        expanded_segments_count: 0,
+        comparable_segments_count: 0,
+        compared_segments_count: 0,
+        data_quality_flags: []
+      },
+      segment_comparison: [],
       source_file: candidate.sourceFile,
       raw
     };
@@ -3605,10 +4381,11 @@ async function main(): Promise<void> {
       })
     );
 
-    const workouts = buildWorkoutFitDetailSources(
+    const workoutsWithFitMatches = buildWorkoutFitDetailSources(
       parsedFiles.flatMap((entry) => entry.workouts),
       workoutFilesSource.fit_summaries
     );
+    const workouts = await buildWorkoutSegmentComparisons(workoutsWithFitMatches);
     const sourceFiles = [...new Set(parsedFiles.flatMap((entry) => entry.sourceFiles))];
     const workoutSummaryColumns = [
       ...new Set(parsedFiles.flatMap((entry) => entry.columns).filter((column) => column.length > 0))
@@ -3639,14 +4416,7 @@ async function main(): Promise<void> {
         workout_summary_columns: workoutSummaryColumns,
         workout_files: workoutFilesSource
       },
-      ...(workoutFilesSource.present
-        ? {
-            segment_analysis: {
-              available: false as const,
-              reason: "workout_files_not_parsed_yet" as const
-            }
-          }
-        : {}),
+      segment_analysis: buildWeeklySegmentAnalysis(workouts, workoutFilesSource),
       totals: {
         workouts_count: workouts.length,
         completed_workouts_count: workouts.filter(isCompletedWorkout).length,
