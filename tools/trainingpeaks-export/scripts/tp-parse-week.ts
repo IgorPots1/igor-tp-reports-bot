@@ -198,6 +198,15 @@ type WeeklySummary = {
     to: string;
   };
   source_files: string[];
+  source?: {
+    workout_summary_files: string[];
+    workout_summary_columns: string[];
+    workout_files: WorkoutFilesSource;
+  };
+  segment_analysis?: {
+    available: false;
+    reason: "workout_files_not_parsed_yet";
+  };
   totals: {
     workouts_count: number;
     completed_workouts_count: number;
@@ -261,7 +270,29 @@ type FieldMatch = {
 type ParsedCsv = {
   workouts: ParsedWorkout[];
   sourceFiles: string[];
+  columns: string[];
   completionStatusColumnAvailable: boolean;
+};
+
+type WorkoutFileEntry = {
+  zip_path: string;
+  entry_name: string;
+  format: "fit.gz" | "fit";
+  compressed: boolean;
+  size_bytes?: number;
+};
+
+type UnsupportedWorkoutFileEntry = {
+  zip_path: string;
+  entry_name: string;
+  extension: string;
+  size_bytes?: number;
+};
+
+type WorkoutFilesSource = {
+  present: boolean;
+  files: WorkoutFileEntry[];
+  unsupported_files: UnsupportedWorkoutFileEntry[];
 };
 
 type CandidateMatch<T> = {
@@ -532,6 +563,18 @@ function sanitizeForFileName(value: string): string {
   }
 
   return trimmed.replace(/[^a-zA-Z0-9._-]+/g, "_");
+}
+
+function normalizeExportName(filePath: string): string {
+  return path
+    .basename(filePath, path.extname(filePath))
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function isLikelyWorkoutFilesZip(filePath: string): boolean {
+  const normalized = normalizeExportName(filePath);
+  return normalized.includes("workoutfileexport") || normalized.includes("workoutfiles");
 }
 
 async function listFilesRecursively(directory: string): Promise<string[]> {
@@ -1520,7 +1563,10 @@ async function discoverCsvCandidates(exportDir: string, tempRoot: string): Promi
     }
   }
 
-  const zipFiles = files.filter((filePath) => path.extname(filePath).toLowerCase() === ".zip");
+  const zipFiles = files.filter(
+    (filePath) =>
+      path.extname(filePath).toLowerCase() === ".zip" && !isLikelyWorkoutFilesZip(filePath)
+  );
   const directCsvFiles = files.filter((filePath) => path.extname(filePath).toLowerCase() === ".csv");
   const csvCandidates: CsvCandidate[] = directCsvFiles.map((csvPath) => ({
     csvPath,
@@ -1559,12 +1605,116 @@ async function discoverCsvCandidates(exportDir: string, tempRoot: string): Promi
   return csvCandidates;
 }
 
+function getWorkoutFileExtension(entryName: string): string {
+  const lowerName = entryName.toLowerCase();
+
+  if (lowerName.endsWith(".fit.gz")) {
+    return "fit.gz";
+  }
+
+  if (lowerName.endsWith(".fit")) {
+    return "fit";
+  }
+
+  if (lowerName.endsWith(".tcx")) {
+    return "tcx";
+  }
+
+  if (lowerName.endsWith(".gpx")) {
+    return "gpx";
+  }
+
+  if (lowerName.endsWith(".json")) {
+    return "json";
+  }
+
+  if (lowerName.endsWith(".csv")) {
+    return "csv";
+  }
+
+  return "other";
+}
+
+async function discoverWorkoutFilesSource(exportDir: string): Promise<WorkoutFilesSource> {
+  const files = (await listFilesRecursively(exportDir)).sort((a, b) => a.localeCompare(b));
+  const workoutFilesZips = files.filter(
+    (filePath) =>
+      path.extname(filePath).toLowerCase() === ".zip" && isLikelyWorkoutFilesZip(filePath)
+  );
+  const source: WorkoutFilesSource = {
+    present: workoutFilesZips.length > 0,
+    files: [],
+    unsupported_files: []
+  };
+
+  for (const zipPath of workoutFilesZips) {
+    const zipRelativePath = relativeToToolRoot(zipPath);
+    const directory = await unzipper.Open.file(zipPath);
+
+    for (const entry of directory.files) {
+      if (entry.type !== "File") {
+        continue;
+      }
+
+      const entryName = toPosixPath(entry.path);
+      const extension = getWorkoutFileExtension(entryName);
+      const sizeBytes =
+        typeof entry.uncompressedSize === "number" && Number.isFinite(entry.uncompressedSize)
+          ? entry.uncompressedSize
+          : undefined;
+
+      if (extension === "fit.gz") {
+        source.files.push({
+          zip_path: zipRelativePath,
+          entry_name: entryName,
+          format: "fit.gz",
+          compressed: true,
+          ...(sizeBytes === undefined ? {} : { size_bytes: sizeBytes })
+        });
+        continue;
+      }
+
+      if (extension === "fit") {
+        source.files.push({
+          zip_path: zipRelativePath,
+          entry_name: entryName,
+          format: "fit",
+          compressed: false,
+          ...(sizeBytes === undefined ? {} : { size_bytes: sizeBytes })
+        });
+        continue;
+      }
+
+      source.unsupported_files.push({
+        zip_path: zipRelativePath,
+        entry_name: entryName,
+        extension,
+        ...(sizeBytes === undefined ? {} : { size_bytes: sizeBytes })
+      });
+    }
+  }
+
+  source.files.sort((a, b) =>
+    a.zip_path === b.zip_path
+      ? a.entry_name.localeCompare(b.entry_name)
+      : a.zip_path.localeCompare(b.zip_path)
+  );
+  source.unsupported_files.sort((a, b) =>
+    a.zip_path === b.zip_path
+      ? a.entry_name.localeCompare(b.entry_name)
+      : a.zip_path.localeCompare(b.zip_path)
+  );
+
+  return source;
+}
+
 async function parseCsvFile(candidate: CsvCandidate): Promise<ParsedCsv> {
   const fileStats = await stat(candidate.csvPath);
   if (!fileStats.isFile()) {
     return {
       workouts: [],
       sourceFiles: [],
+      columns: [],
       completionStatusColumnAvailable: false
     };
   }
@@ -1574,14 +1724,21 @@ async function parseCsvFile(candidate: CsvCandidate): Promise<ParsedCsv> {
     return {
       workouts: [],
       sourceFiles: [candidate.sourceFile],
+      columns: [],
       completionStatusColumnAvailable: false
     };
   }
 
   const delimiter = detectDelimiter(content);
+  let parsedColumns: string[] = [];
   const records = parse(content, {
     bom: true,
-    columns: true,
+    columns: (header) => {
+      parsedColumns = header
+        .map((value) => cleanString(value) ?? "")
+        .filter((value) => value.length > 0);
+      return header;
+    },
     delimiter,
     relax_column_count: true,
     skip_empty_lines: true,
@@ -1760,6 +1917,7 @@ async function parseCsvFile(candidate: CsvCandidate): Promise<ParsedCsv> {
   return {
     workouts,
     sourceFiles: [candidate.sourceFile],
+    columns: parsedColumns,
     completionStatusColumnAvailable
   };
 }
@@ -1920,6 +2078,7 @@ async function main(): Promise<void> {
 
   try {
     const csvCandidates = await discoverCsvCandidates(exportDir, tempRoot);
+    const workoutFilesSource = await discoverWorkoutFilesSource(exportDir);
     const parsedFiles = await Promise.all(
       csvCandidates.map(async (candidate) => {
         try {
@@ -1930,6 +2089,7 @@ async function main(): Promise<void> {
           return {
             workouts: [],
             sourceFiles: [candidate.sourceFile],
+            columns: [],
             completionStatusColumnAvailable: false
           } satisfies ParsedCsv;
         }
@@ -1938,6 +2098,9 @@ async function main(): Promise<void> {
 
     const workouts = parsedFiles.flatMap((entry) => entry.workouts);
     const sourceFiles = [...new Set(parsedFiles.flatMap((entry) => entry.sourceFiles))];
+    const workoutSummaryColumns = [
+      ...new Set(parsedFiles.flatMap((entry) => entry.columns).filter((column) => column.length > 0))
+    ];
     const completionStatusColumnAvailable = parsedFiles.some(
       (entry) => entry.completionStatusColumnAvailable
     );
@@ -1959,6 +2122,19 @@ async function main(): Promise<void> {
         to: args.to
       },
       source_files: sourceFiles,
+      source: {
+        workout_summary_files: sourceFiles,
+        workout_summary_columns: workoutSummaryColumns,
+        workout_files: workoutFilesSource
+      },
+      ...(workoutFilesSource.present
+        ? {
+            segment_analysis: {
+              available: false as const,
+              reason: "workout_files_not_parsed_yet" as const
+            }
+          }
+        : {}),
       totals: {
         workouts_count: workouts.length,
         completed_workouts_count: workouts.filter(isCompletedWorkout).length,
@@ -1982,6 +2158,13 @@ async function main(): Promise<void> {
     };
 
     await writeFile(outputPath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
+    if (workoutFilesSource.files.length > 0) {
+      console.log(`Workout Files found: ${workoutFilesSource.files.length} FIT file(s)`);
+      debugLog("Workout Files entries:", workoutFilesSource.files);
+      if (workoutFilesSource.unsupported_files.length > 0) {
+        debugLog("Workout Files unsupported entries:", workoutFilesSource.unsupported_files);
+      }
+    }
     console.log("Parser success.");
     console.log(`weekly-summary.json path: ${outputPath}`);
   } finally {
