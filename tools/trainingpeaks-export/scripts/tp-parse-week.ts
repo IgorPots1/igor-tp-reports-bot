@@ -92,6 +92,22 @@ type PlannedSection = {
   targets: PlannedTargets;
 };
 
+type CompletedDetailSource = {
+  type: "workout_file_fit" | "summary_only";
+  match_status: "matched" | "not_found" | "ambiguous" | "not_completed";
+  match_confidence: "high" | "medium" | "low" | "none";
+  zip_path?: string;
+  entry_name?: string;
+  fit_start_time?: string | null;
+  fit_start_date_utc?: string | null;
+  fit_sport?: string | null;
+  fit_total_timer_time_s?: number | null;
+  fit_total_elapsed_time_s?: number | null;
+  fit_total_distance_m?: number | null;
+  score?: number;
+  reasons?: string[];
+};
+
 type CompletedSection = {
   duration_minutes: number | null;
   distance_km: number | null;
@@ -111,6 +127,7 @@ type CompletedSection = {
   hr_zone_minutes: ZoneMinutes;
   power_zone_minutes: ZoneMinutes;
   athlete_comments: string | null;
+  detail_source: CompletedDetailSource;
 };
 
 type Comparison = {
@@ -296,6 +313,7 @@ type WorkoutFilesSource = {
   present: boolean;
   files: WorkoutFileEntry[];
   unsupported_files: UnsupportedWorkoutFileEntry[];
+  fit_summaries: FitSummary[];
   fit_diagnostics: FitDiagnostics;
 };
 
@@ -349,6 +367,23 @@ type FitDiagnostics = {
   sample_record?: FitSampleRecord;
 };
 
+type FitSummary = {
+  status: "parsed" | "parse_failed";
+  zip_path: string;
+  entry_name: string;
+  format: "fit.gz" | "fit";
+  error?: string;
+  start_time?: string | null;
+  start_date_utc?: string | null;
+  sport?: string | null;
+  total_timer_time_s?: number | null;
+  total_elapsed_time_s?: number | null;
+  total_distance_m?: number | null;
+  records_count?: number;
+  laps_count?: number;
+  session_count?: number;
+};
+
 type FitRecordLike = {
   timestamp?: string;
   distance?: number;
@@ -371,6 +406,16 @@ type ParsedFitLike = {
   sessions?: FitSessionLike[];
   laps?: unknown[];
   records?: FitRecordLike[];
+};
+
+type FitMatchCandidate = {
+  workout_index: number;
+  fit_index: number;
+  score: number;
+  reasons: string[];
+  exact_date_match: boolean;
+  passes_weak_thresholds: boolean;
+  match_confidence: "high" | "medium";
 };
 
 type CandidateMatch<T> = {
@@ -1612,6 +1657,22 @@ function isCompletedWorkout(row: ParsedWorkout): boolean {
   return row.classification.is_completed;
 }
 
+function createDefaultDetailSource(isCompleted: boolean): CompletedDetailSource {
+  if (!isCompleted) {
+    return {
+      type: "summary_only",
+      match_status: "not_completed",
+      match_confidence: "none"
+    };
+  }
+
+  return {
+    type: "summary_only",
+    match_status: "not_found",
+    match_confidence: "none"
+  };
+}
+
 async function extractZip(zipPath: string, tempRoot: string): Promise<string> {
   const targetDir = path.join(
     tempRoot,
@@ -1737,6 +1798,44 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+function normalizeIsoDateFromUtc(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed.toISOString();
+}
+
+function toUtcDateString(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  const year = parsed.getUTCFullYear();
+  const month = String(parsed.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function createFitParser(): FitParser {
+  return new FitParser({
+    mode: "list",
+    lengthUnit: "m",
+    speedUnit: "m/s",
+    force: false
+  });
+}
+
 function createEmptyFitRecordFieldCounts(): FitRecordFieldCounts {
   return {
     distance: 0,
@@ -1848,6 +1947,34 @@ function summarizeParsedFit(
   };
 }
 
+function summarizeFitForMatching(parsedFit: ParsedFitLike, fitFile: WorkoutFileEntry): FitSummary {
+  const sessions = Array.isArray(parsedFit.sessions) ? parsedFit.sessions : [];
+  const laps = Array.isArray(parsedFit.laps) ? parsedFit.laps : [];
+  const records = Array.isArray(parsedFit.records) ? parsedFit.records : [];
+  const firstSession = sessions[0];
+  const startTime = normalizeIsoDateFromUtc(firstSession?.start_time);
+
+  return {
+    status: "parsed",
+    zip_path: fitFile.zip_path,
+    entry_name: fitFile.entry_name,
+    format: fitFile.format,
+    start_time: startTime,
+    start_date_utc: toUtcDateString(startTime),
+    sport: firstSession?.sport ?? null,
+    total_timer_time_s: isFiniteNumber(firstSession?.total_timer_time)
+      ? firstSession.total_timer_time
+      : null,
+    total_elapsed_time_s: isFiniteNumber(firstSession?.total_elapsed_time)
+      ? firstSession.total_elapsed_time
+      : null,
+    total_distance_m: isFiniteNumber(firstSession?.total_distance) ? firstSession.total_distance : null,
+    records_count: records.length,
+    laps_count: laps.length,
+    session_count: sessions.length
+  };
+}
+
 async function readWorkoutFileEntryBuffer(
   sampledFile: WorkoutFileEntry
 ): Promise<Buffer<ArrayBufferLike>> {
@@ -1879,12 +2006,7 @@ async function parseFitDiagnosticsSample(workoutFilesSource: WorkoutFilesSource)
 
   try {
     const fitBuffer = await readWorkoutFileEntryBuffer(sampledFile);
-    const fitParser = new FitParser({
-      mode: "list",
-      lengthUnit: "m",
-      speedUnit: "m/s",
-      force: false
-    });
+    const fitParser = createFitParser();
     const parsedFit = await fitParser.parseAsync(fitBuffer);
 
     return summarizeParsedFit(parsedFit as ParsedFitLike, sampledFile);
@@ -1900,6 +2022,29 @@ async function parseFitDiagnosticsSample(workoutFilesSource: WorkoutFilesSource)
   }
 }
 
+async function parseAllFitSummaries(workoutFilesSource: WorkoutFilesSource): Promise<FitSummary[]> {
+  const fitSummaries: FitSummary[] = [];
+
+  for (const fitFile of workoutFilesSource.files) {
+    try {
+      const fitBuffer = await readWorkoutFileEntryBuffer(fitFile);
+      const fitParser = createFitParser();
+      const parsedFit = await fitParser.parseAsync(fitBuffer);
+      fitSummaries.push(summarizeFitForMatching(parsedFit as ParsedFitLike, fitFile));
+    } catch (error: unknown) {
+      fitSummaries.push({
+        status: "parse_failed",
+        zip_path: fitFile.zip_path,
+        entry_name: fitFile.entry_name,
+        format: fitFile.format,
+        error: trimFitErrorMessage(error)
+      });
+    }
+  }
+
+  return fitSummaries;
+}
+
 async function discoverWorkoutFilesSource(exportDir: string): Promise<WorkoutFilesSource> {
   const files = (await listFilesRecursively(exportDir)).sort((a, b) => a.localeCompare(b));
   const workoutFilesZips = files.filter(
@@ -1910,6 +2055,7 @@ async function discoverWorkoutFilesSource(exportDir: string): Promise<WorkoutFil
     present: workoutFilesZips.length > 0,
     files: [],
     unsupported_files: [],
+    fit_summaries: [],
     fit_diagnostics: buildNotAvailableFitDiagnostics()
   };
 
@@ -1971,6 +2117,7 @@ async function discoverWorkoutFilesSource(exportDir: string): Promise<WorkoutFil
       : a.zip_path.localeCompare(b.zip_path)
   );
   source.fit_diagnostics = await parseFitDiagnosticsSample(source);
+  source.fit_summaries = await parseAllFitSummaries(source);
 
   return source;
 }
@@ -2114,7 +2261,8 @@ async function parseCsvFile(candidate: CsvCandidate): Promise<ParsedCsv> {
         cadence_max: completedMetrics.cadence_max,
         hr_zone_minutes: completedMetrics.hr_zone_minutes,
         power_zone_minutes: completedMetrics.power_zone_minutes,
-        athlete_comments: completedMetrics.athlete_comments
+        athlete_comments: completedMetrics.athlete_comments,
+        detail_source: createDefaultDetailSource(classification.is_completed)
       },
       comparison: {
         duration_delta_minutes: null,
@@ -2187,6 +2335,339 @@ async function parseCsvFile(candidate: CsvCandidate): Promise<ParsedCsv> {
     columns: parsedColumns,
     completionStatusColumnAvailable
   };
+}
+
+function normalizeSportForFitMatch(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === "run" || normalized === "running") {
+    return "run";
+  }
+
+  return normalized;
+}
+
+function getDateDifferenceDays(leftDate: string | null, rightDate: string | null): number | null {
+  if (!leftDate || !rightDate) {
+    return null;
+  }
+
+  const left = new Date(`${leftDate}T00:00:00.000Z`);
+  const right = new Date(`${rightDate}T00:00:00.000Z`);
+  if (Number.isNaN(left.getTime()) || Number.isNaN(right.getTime())) {
+    return null;
+  }
+
+  return Math.round((left.getTime() - right.getTime()) / (24 * 60 * 60 * 1000));
+}
+
+function relativeDelta(delta: number, left: number, right: number): number {
+  const baseline = Math.max(Math.abs(left), Math.abs(right));
+  return baseline > 0 ? delta / baseline : 0;
+}
+
+function scoreDurationMatch(
+  workout: ParsedWorkout,
+  fitSummary: FitSummary,
+  reasons: string[]
+): { score: number; matched: boolean } {
+  const workoutDurationSeconds =
+    workout.completed.duration_minutes !== null ? workout.completed.duration_minutes * 60 : null;
+  const fitDurationSeconds = fitSummary.total_timer_time_s ?? null;
+
+  if (workoutDurationSeconds === null || fitDurationSeconds === null) {
+    reasons.push("duration_missing");
+    return { score: 0, matched: false };
+  }
+
+  const delta = Math.abs(workoutDurationSeconds - fitDurationSeconds);
+  const relative = relativeDelta(delta, workoutDurationSeconds, fitDurationSeconds);
+  if (delta <= 5 * 60 || relative <= 0.08) {
+    reasons.push("duration_strong");
+    return { score: 20, matched: true };
+  }
+
+  if (delta <= 10 * 60 || relative <= 0.15) {
+    reasons.push("duration_weak");
+    return { score: 10, matched: true };
+  }
+
+  return { score: 0, matched: false };
+}
+
+function scoreDistanceMatch(
+  workout: ParsedWorkout,
+  fitSummary: FitSummary,
+  reasons: string[]
+): { score: number; matched: boolean } {
+  const workoutDistanceMeters =
+    workout.completed.distance_km !== null ? workout.completed.distance_km * 1000 : null;
+  const fitDistanceMeters = fitSummary.total_distance_m ?? null;
+
+  if (workoutDistanceMeters === null || fitDistanceMeters === null) {
+    reasons.push("distance_missing");
+    return { score: 0, matched: false };
+  }
+
+  const delta = Math.abs(workoutDistanceMeters - fitDistanceMeters);
+  const relative = relativeDelta(delta, workoutDistanceMeters, fitDistanceMeters);
+  if (delta <= 500 || relative <= 0.08) {
+    reasons.push("distance_strong");
+    return { score: 20, matched: true };
+  }
+
+  if (delta <= 1000 || relative <= 0.15) {
+    reasons.push("distance_weak");
+    return { score: 10, matched: true };
+  }
+
+  return { score: 0, matched: false };
+}
+
+function buildFitMatchCandidate(
+  workout: ParsedWorkout,
+  workoutIndex: number,
+  fitSummary: FitSummary,
+  fitIndex: number,
+  exactDateCandidatesCount: number
+): FitMatchCandidate | null {
+  const dateDifferenceDays = getDateDifferenceDays(workout.date, fitSummary.start_date_utc ?? null);
+  const reasons: string[] = [];
+  let score = 0;
+  let exactDateMatch = false;
+
+  if (dateDifferenceDays === 0) {
+    score += 40;
+    reasons.push("same_date");
+    exactDateMatch = true;
+  } else if (dateDifferenceDays !== null && Math.abs(dateDifferenceDays) === 1) {
+    score += 15;
+    reasons.push("timezone_off_by_one_day_candidate");
+  } else {
+    return null;
+  }
+
+  const workoutSport = normalizeSportForFitMatch(workout.sport);
+  const fitSport = normalizeSportForFitMatch(fitSummary.sport ?? null);
+  if (workoutSport !== null && fitSport !== null && workoutSport === fitSport) {
+    score += 20;
+    reasons.push("sport_match");
+  }
+
+  const durationMatch = scoreDurationMatch(workout, fitSummary, reasons);
+  score += durationMatch.score;
+
+  const distanceMatch = scoreDistanceMatch(workout, fitSummary, reasons);
+  score += distanceMatch.score;
+
+  if (exactDateMatch && exactDateCandidatesCount === 1) {
+    score += 10;
+    reasons.push("single_candidate_on_date");
+  }
+
+  const passesWeakThresholds = durationMatch.matched || distanceMatch.matched;
+  if (!passesWeakThresholds || score < 60) {
+    return {
+      workout_index: workoutIndex,
+      fit_index: fitIndex,
+      score,
+      reasons,
+      exact_date_match: exactDateMatch,
+      passes_weak_thresholds: passesWeakThresholds,
+      match_confidence: "medium"
+    };
+  }
+
+  return {
+    workout_index: workoutIndex,
+    fit_index: fitIndex,
+    score,
+    reasons,
+    exact_date_match: exactDateMatch,
+    passes_weak_thresholds: true,
+    match_confidence: exactDateMatch && score >= 80 ? "high" : "medium"
+  };
+}
+
+function createMatchedDetailSource(
+  fitSummary: FitSummary,
+  candidate: FitMatchCandidate
+): CompletedDetailSource {
+  return {
+    type: "workout_file_fit",
+    match_status: "matched",
+    match_confidence: candidate.match_confidence,
+    zip_path: fitSummary.zip_path,
+    entry_name: fitSummary.entry_name,
+    fit_start_time: fitSummary.start_time ?? null,
+    fit_start_date_utc: fitSummary.start_date_utc ?? null,
+    fit_sport: fitSummary.sport ?? null,
+    fit_total_timer_time_s: fitSummary.total_timer_time_s ?? null,
+    fit_total_elapsed_time_s: fitSummary.total_elapsed_time_s ?? null,
+    fit_total_distance_m: fitSummary.total_distance_m ?? null,
+    score: candidate.score,
+    reasons: candidate.reasons
+  };
+}
+
+function createAmbiguousDetailSource(
+  fitSummary: FitSummary,
+  candidate: FitMatchCandidate
+): CompletedDetailSource {
+  return {
+    type: "summary_only",
+    match_status: "ambiguous",
+    match_confidence: "low",
+    zip_path: fitSummary.zip_path,
+    entry_name: fitSummary.entry_name,
+    fit_start_time: fitSummary.start_time ?? null,
+    fit_start_date_utc: fitSummary.start_date_utc ?? null,
+    fit_sport: fitSummary.sport ?? null,
+    fit_total_timer_time_s: fitSummary.total_timer_time_s ?? null,
+    fit_total_elapsed_time_s: fitSummary.total_elapsed_time_s ?? null,
+    fit_total_distance_m: fitSummary.total_distance_m ?? null,
+    score: candidate.score,
+    reasons: candidate.reasons
+  };
+}
+
+function buildWorkoutFitDetailSources(
+  workouts: ParsedWorkout[],
+  fitSummaries: FitSummary[]
+): ParsedWorkout[] {
+  const parsedFitSummaries = fitSummaries.filter(
+    (fitSummary): fitSummary is FitSummary & { status: "parsed" } => fitSummary.status === "parsed"
+  );
+  const parsedFitIndexes = fitSummaries.flatMap((fitSummary, fitIndex) =>
+    fitSummary.status === "parsed" ? [fitIndex] : []
+  );
+  const candidateMatrix = new Map<number, FitMatchCandidate[]>();
+  const ambiguousWorkouts = new Set<number>();
+  const assignableCandidates: Array<FitMatchCandidate & { fit_summary: FitSummary }> = [];
+  const usedWorkouts = new Set<number>();
+  const usedFits = new Set<number>();
+
+  workouts.forEach((workout, workoutIndex) => {
+    if (!workout.classification.is_completed) {
+      workout.completed.detail_source = createDefaultDetailSource(false);
+      return;
+    }
+
+    workout.completed.detail_source = createDefaultDetailSource(true);
+    const exactDateCandidatesCount = parsedFitSummaries.filter(
+      (fitSummary) => fitSummary.start_date_utc !== null && fitSummary.start_date_utc === workout.date
+    ).length;
+    const candidates = parsedFitSummaries
+      .map((fitSummary, parsedFitIndex) =>
+        buildFitMatchCandidate(
+          workout,
+          workoutIndex,
+          fitSummary,
+          parsedFitIndexes[parsedFitIndex],
+          exactDateCandidatesCount
+        )
+      )
+      .filter((candidate): candidate is FitMatchCandidate => candidate !== null)
+      .sort((left, right) => right.score - left.score);
+
+    candidateMatrix.set(workoutIndex, candidates);
+
+    const weakCandidates = candidates.filter((candidate) => candidate.passes_weak_thresholds);
+    const bestCandidate = weakCandidates[0];
+    const secondBestCandidate = weakCandidates[1];
+    if (!bestCandidate) {
+      return;
+    }
+
+    const requiredGap = bestCandidate.exact_date_match && bestCandidate.score >= 80 ? 20 : 15;
+    const scoreGap = secondBestCandidate ? bestCandidate.score - secondBestCandidate.score : Infinity;
+    if (secondBestCandidate && scoreGap < requiredGap) {
+      ambiguousWorkouts.add(workoutIndex);
+      return;
+    }
+
+    for (const candidate of candidates) {
+      if (!candidate.passes_weak_thresholds || candidate.score < 60) {
+        continue;
+      }
+
+      const fitSummary = fitSummaries[candidate.fit_index];
+      assignableCandidates.push({
+        ...candidate,
+        fit_summary: fitSummary
+      });
+    }
+  });
+
+  assignableCandidates.sort((left, right) => {
+    if (right.score !== left.score) {
+      return right.score - left.score;
+    }
+
+    if (left.match_confidence !== right.match_confidence) {
+      return left.match_confidence === "high" ? -1 : 1;
+    }
+
+    if (left.workout_index !== right.workout_index) {
+      return left.workout_index - right.workout_index;
+    }
+
+    return left.fit_index - right.fit_index;
+  });
+
+  for (const candidate of assignableCandidates) {
+    if (ambiguousWorkouts.has(candidate.workout_index)) {
+      continue;
+    }
+
+    if (usedWorkouts.has(candidate.workout_index) || usedFits.has(candidate.fit_index)) {
+      continue;
+    }
+
+    workouts[candidate.workout_index].completed.detail_source = createMatchedDetailSource(
+      candidate.fit_summary,
+      candidate
+    );
+    usedWorkouts.add(candidate.workout_index);
+    usedFits.add(candidate.fit_index);
+  }
+
+  workouts.forEach((workout, workoutIndex) => {
+    if (!workout.classification.is_completed || usedWorkouts.has(workoutIndex)) {
+      return;
+    }
+
+    const candidates = candidateMatrix.get(workoutIndex) ?? [];
+    if (ambiguousWorkouts.has(workoutIndex)) {
+      const bestCandidate = candidates.find((candidate) => candidate.passes_weak_thresholds);
+      if (bestCandidate) {
+        workout.completed.detail_source = createAmbiguousDetailSource(
+          fitSummaries[bestCandidate.fit_index],
+          bestCandidate
+        );
+      }
+      return;
+    }
+
+    const conflictCandidate = candidates.find(
+      (candidate) => candidate.passes_weak_thresholds && candidate.score >= 60 && usedFits.has(candidate.fit_index)
+    );
+    if (conflictCandidate) {
+      workout.completed.detail_source = createAmbiguousDetailSource(
+        fitSummaries[conflictCandidate.fit_index],
+        conflictCandidate
+      );
+    }
+  });
+
+  return workouts;
 }
 
 function sumOrNull(values: Array<number | null>, digits: number): number | null {
@@ -2363,7 +2844,10 @@ async function main(): Promise<void> {
       })
     );
 
-    const workouts = parsedFiles.flatMap((entry) => entry.workouts);
+    const workouts = buildWorkoutFitDetailSources(
+      parsedFiles.flatMap((entry) => entry.workouts),
+      workoutFilesSource.fit_summaries
+    );
     const sourceFiles = [...new Set(parsedFiles.flatMap((entry) => entry.sourceFiles))];
     const workoutSummaryColumns = [
       ...new Set(parsedFiles.flatMap((entry) => entry.columns).filter((column) => column.length > 0))
