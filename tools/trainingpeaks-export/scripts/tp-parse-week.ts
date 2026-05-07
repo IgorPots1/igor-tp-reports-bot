@@ -75,6 +75,46 @@ type PlannedTargets = {
   confidence: TargetConfidence | null;
 };
 
+type SegmentType =
+  | "warmup"
+  | "main"
+  | "cooldown"
+  | "interval"
+  | "recovery"
+  | "easy"
+  | "long_run_finish"
+  | "unknown";
+
+type PlannedSegmentTargets = {
+  hr_bpm: HrbpmTarget | null;
+  pace_min_per_km: PaceTarget | null;
+  pace_ranges: PaceRangeTarget[];
+  source: "workout_description" | null;
+  confidence: TargetConfidence | null;
+};
+
+type PlannedSegment = {
+  order: number;
+  segment_type: SegmentType;
+  is_rest: boolean;
+  repeat_count: number;
+  repeat_group_id: string | null;
+  duration_minutes: number | null;
+  distance_km: number | null;
+  label: string | null;
+  raw_text: string;
+  targets: PlannedSegmentTargets;
+  confidence: TargetConfidence;
+  data_quality_flags: string[];
+};
+
+type PlannedSegmentsParse = {
+  status: "parsed" | "partial" | "not_available" | "unsupported";
+  source: "workout_description";
+  confidence: TargetConfidence | null;
+  flags: string[];
+};
+
 type Classification = {
   type: ClassificationType;
   is_planned: boolean;
@@ -90,6 +130,8 @@ type PlannedSection = {
   description: string | null;
   coach_comments: string | null;
   targets: PlannedTargets;
+  segments: PlannedSegment[];
+  segments_parse: PlannedSegmentsParse;
 };
 
 type CompletedDetailSource = {
@@ -427,8 +469,41 @@ type CandidateMatch<T> = {
 type ParsedTargetsMeta = {
   targets: PlannedTargets;
   hasTargetLikeText: boolean;
+  hasHrTargetLikeText: boolean;
   hasPaceTargetLikeText: boolean;
   parsedAnyTarget: boolean;
+};
+
+type TextTargetSource = {
+  key: "workout_description" | "coach_comments";
+  text: string;
+};
+
+type SegmentDraft = Omit<PlannedSegment, "order">;
+
+type DurationParseResult = {
+  minutes: number | null;
+  isRange: boolean;
+  zeroDurationText: boolean;
+};
+
+type SplitSegmentLabel = {
+  label: string | null;
+  body: string;
+  mappedType: SegmentType | null;
+};
+
+type RepeatMatch = {
+  repeatCount: number;
+  durationMinutes: number | null;
+  durationIsRange: boolean;
+  zeroDurationText: boolean;
+  body: string;
+};
+
+type PlannedSegmentsParseResult = {
+  segments: PlannedSegment[];
+  segments_parse: PlannedSegmentsParse;
 };
 
 type NormalizedCompletedMetrics = {
@@ -1250,6 +1325,10 @@ function hasPaceTargetLikeText(value: string): boolean {
   return /(?:темп|pace|\/\s*(?:км|km)|мин\/км|min\/km|@\s*\d{1,2}:\d{2})/iu.test(value);
 }
 
+function hasHrTargetLikeText(value: string): boolean {
+  return /(?:пульс|чсс|\bhr\b|\d{2,3}\s*[-–]\s*\d{2,3}\s*(?:уд\/?\s*мин|bpm))/iu.test(value);
+}
+
 function resolveTargetSource(
   hr: CandidateMatch<HrbpmTarget> | null,
   pace: CandidateMatch<PaceTarget> | null
@@ -1275,18 +1354,7 @@ function resolveTargetSource(
   return "workout_description+coach_comments";
 }
 
-function parsePlannedTargets(params: {
-  description: string | null;
-  coachComments: string | null;
-}): ParsedTargetsMeta {
-  const textSources = [
-    { key: "workout_description" as const, text: params.description },
-    { key: "coach_comments" as const, text: params.coachComments }
-  ].filter(
-    (entry): entry is { key: "workout_description" | "coach_comments"; text: string } =>
-      Boolean(entry.text)
-  );
-
+function parseTargetsFromTextSources(textSources: TextTargetSource[]): ParsedTargetsMeta {
   const hrCandidates = textSources.flatMap((entry) => extractHrCandidates(entry.text, entry.key));
   const paceCandidates = textSources.flatMap((entry) =>
     extractPaceCandidates(entry.text, entry.key)
@@ -1299,6 +1367,7 @@ function parsePlannedTargets(params: {
   const uniquePace = uniquePaceCandidates.length === 1 ? uniquePaceCandidates[0] : null;
   const parsedAnyTarget = hrCandidates.length > 0 || uniquePaceCandidates.length > 0;
   const hasPaceLikeText = textSources.some((entry) => hasPaceTargetLikeText(entry.text));
+  const hasHrLikeText = textSources.some((entry) => hasHrTargetLikeText(entry.text));
 
   return {
     targets: {
@@ -1313,9 +1382,695 @@ function parsePlannedTargets(params: {
       source: resolveTargetSource(uniqueHr, uniquePace),
       confidence: uniqueHr || uniquePace ? "high" : null
     },
-    hasTargetLikeText: hrCandidates.length > 0 || hasPaceLikeText,
+    hasTargetLikeText: hasHrLikeText || hasPaceLikeText,
+    hasHrTargetLikeText: hasHrLikeText,
     hasPaceTargetLikeText: hasPaceLikeText,
     parsedAnyTarget
+  };
+}
+
+function parsePlannedTargets(params: {
+  description: string | null;
+  coachComments: string | null;
+}): ParsedTargetsMeta {
+  const textSources = [
+    { key: "workout_description" as const, text: params.description },
+    { key: "coach_comments" as const, text: params.coachComments }
+  ].filter((entry): entry is TextTargetSource => Boolean(entry.text));
+
+  return parseTargetsFromTextSources(textSources);
+}
+
+function buildEmptyPlannedSegmentsParse(status: PlannedSegmentsParse["status"]): PlannedSegmentsParse {
+  return {
+    status,
+    source: "workout_description",
+    confidence: null,
+    flags: []
+  };
+}
+
+function normalizeWorkoutDescriptionForSegments(value: string): string {
+  return value
+    .replace(/\r/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .replace(/[‐‑‒–—−]/g, "-")
+    .replace(/[⏸⏯⏹⏺]/g, " пауза ")
+    .replace(/[•●▪◦·]+/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function looksLikeSegmentCandidate(value: string): boolean {
+  return (
+    /\d{1,3}(?:\s*-\s*\d{1,3})?\s*мин(?:ут[аы]?|\.?)(?=\s|$|[.,;:])/iu.test(value) ||
+    /^\s*(?:разминка|основная часть|заминка|л[её]гкий бег)(?=\s|$|[-:])/iu.test(value) ||
+    /^\s*\d+\s*(?:повтор(?:а|ов|ения|ений)?|[xх×])\b/iu.test(value)
+  );
+}
+
+function splitNormalizedDescriptionIntoLines(value: string): string[] {
+  const withInlineBreaks = value
+    .replace(
+      /\s+(?=(?:разминка|основная часть|заминка|л[её]гкий бег)\s*[-:])/giu,
+      "\n"
+    )
+    .replace(/\s+(?=(?:пауза\s+)?пауза\s*-)/giu, "\n");
+
+  const expandInlineDurationBullets = (line: string): string[] => {
+    const labeled = splitSegmentLabel(line);
+    if (!labeled.label || !labeled.mappedType) {
+      return [line];
+    }
+
+    const expandedBody = labeled.body
+      .replace(
+        /\s+(?=-\s*\d{1,3}(?:\s*-\s*\d{1,3})?\s*мин(?:ут[аы]?|\.?)(?=\s|$|[.,;:]))/giu,
+        "\n"
+      )
+      .replace(/\s+(?=(?:пауза\s+)?пауза\s*-)/giu, "\n");
+    const parts = expandedBody
+      .split(/\n+/)
+      .map((part) => part.replace(/^-\s*/, "").trim())
+      .filter(Boolean);
+
+    if (parts.length <= 1) {
+      return [line];
+    }
+
+    return parts.map((part, index) =>
+      index === 0 ? `${labeled.label} - ${part}` : part
+    );
+  };
+
+  return withInlineBreaks
+    .split(/\n+/)
+    .flatMap((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        return [];
+      }
+
+      const semicolonParts = trimmed.split(/\s*;\s*/).map((part) => part.trim()).filter(Boolean);
+      if (semicolonParts.length > 1 && semicolonParts.every(looksLikeSegmentCandidate)) {
+        return semicolonParts;
+      }
+
+      return expandInlineDurationBullets(trimmed);
+    })
+    .map((line) => line.replace(/^(?:[-*]\s+|\d+[.)]\s+)/, "").trim())
+    .filter(Boolean);
+}
+
+function countMinuteDurations(value: string): number {
+  return [
+    ...value.matchAll(
+      /(?:^|[^\d:])(\d{1,3})(?:\s*-\s*(\d{1,3}))?\s*мин(?:ут[аы]?|\.?)(?=\s|$|[.,;:])/giu
+    )
+  ].length;
+}
+
+function parseMinuteDuration(value: string): DurationParseResult {
+  const match = value.match(
+    /(?:^|[^\d:])(?<first>\d{1,3})(?:\s*-\s*(?<second>\d{1,3}))?\s*мин(?:ут[аы]?|\.?)(?=\s|$|[.,;:])/iu
+  );
+  if (!match?.groups) {
+    return {
+      minutes: null,
+      isRange: false,
+      zeroDurationText: false
+    };
+  }
+
+  const first = Number.parseInt(match.groups.first, 10);
+  const second = match.groups.second ? Number.parseInt(match.groups.second, 10) : null;
+  const zeroDurationText = first === 0 || second === 0;
+  const minutes =
+    Number.isFinite(first) && first > 0
+      ? second !== null && Number.isFinite(second) && second > 0
+        ? Math.min(first, second)
+        : first
+      : null;
+
+  return {
+    minutes,
+    isRange: second !== null,
+    zeroDurationText
+  };
+}
+
+function splitSegmentLabel(value: string): SplitSegmentLabel {
+  const match = value.match(/^(?<label>[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё\s]{1,60})\s*[-:]\s*(?<body>.+)$/u);
+  if (!match?.groups) {
+    return {
+      label: null,
+      body: value.trim(),
+      mappedType: null
+    };
+  }
+
+  const label = match.groups.label.trim();
+  const normalizedLabel = label.toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ").trim();
+  let mappedType: SegmentType | null = null;
+  if (normalizedLabel.includes("разминка")) {
+    mappedType = "warmup";
+  } else if (normalizedLabel.includes("основная часть")) {
+    mappedType = "main";
+  } else if (normalizedLabel.includes("заминка")) {
+    mappedType = "cooldown";
+  } else if (normalizedLabel.includes("легкий бег")) {
+    mappedType = "easy";
+  }
+
+  return {
+    label,
+    body: match.groups.body.trim(),
+    mappedType
+  };
+}
+
+function isRestSegmentText(value: string): boolean {
+  return /(?:пауза|полный отдых|отдых|спокойного?\s+шага|шаг(?:а)?|пешком)/iu.test(value);
+}
+
+function isRecoverySegmentText(value: string): boolean {
+  return /(?:восстанов|очень легко бегом|легк(?:о|ое|ий)\s+бегом)/iu.test(value);
+}
+
+function isEasySegmentText(value: string): boolean {
+  return /л[её]гк(?:ий|ая|ое)?\s+бег/iu.test(value);
+}
+
+function parseRepeatMatch(value: string): RepeatMatch | null {
+  const wordMatch = value.match(
+    /^(?<count>\d+)\s*(?:повтор(?:а|ов|ения|ений)?)\s*:?\s*(?<body>.+)$/iu
+  );
+  if (wordMatch?.groups) {
+    const repeatCount = Number.parseInt(wordMatch.groups.count, 10);
+    if (repeatCount < 2) {
+      return null;
+    }
+
+    const duration = parseMinuteDuration(wordMatch.groups.body);
+    return {
+      repeatCount,
+      durationMinutes: duration.minutes,
+      durationIsRange: duration.isRange,
+      zeroDurationText: duration.zeroDurationText,
+      body: wordMatch.groups.body.trim()
+    };
+  }
+
+  const compactMatch = value.match(
+    /^(?<count>\d+)\s*[xх×]\s*(?<first>\d{1,3})(?:\s*-\s*(?<second>\d{1,3}))?\s*мин(?:ут[аы]?|\.?)?\s*(?<body>.*)$/iu
+  );
+  if (!compactMatch?.groups) {
+    return null;
+  }
+
+  const repeatCount = Number.parseInt(compactMatch.groups.count, 10);
+  if (repeatCount < 2) {
+    return null;
+  }
+
+  const first = Number.parseInt(compactMatch.groups.first, 10);
+  const second = compactMatch.groups.second
+    ? Number.parseInt(compactMatch.groups.second, 10)
+    : null;
+
+  return {
+    repeatCount,
+    durationMinutes: first > 0 ? (second !== null && second > 0 ? Math.min(first, second) : first) : null,
+    durationIsRange: second !== null,
+    zeroDurationText: first === 0 || second === 0,
+    body: `${compactMatch.groups.first}${compactMatch.groups.second ? `-${compactMatch.groups.second}` : ""} минут ${compactMatch.groups.body}`.trim()
+  };
+}
+
+function splitTrailingRecoveryFromRepeatText(value: string): {
+  intervalText: string;
+  recoveryText: string | null;
+} {
+  const match = value.match(
+    /\s+(?<recovery>\d{1,3}(?:\s*-\s*\d{1,3})?\s*мин(?:ут[аы]?|\.?)\s+(?:(?:очень\s+)?легк(?:о|ое|ий)\s+бегом|восстановление|полный отдых|отдых|спокойного?\s+шага|шаг(?:а)?|пешком).*)$/iu
+  );
+  if (!match?.groups || match.index === undefined) {
+    return {
+      intervalText: value.trim(),
+      recoveryText: null
+    };
+  }
+
+  return {
+    intervalText: value.slice(0, match.index).trim(),
+    recoveryText: match.groups.recovery.trim()
+  };
+}
+
+function buildSegmentTargetsMetaFromDescription(text: string): ParsedTargetsMeta {
+  return parseTargetsFromTextSources([
+    {
+      key: "workout_description",
+      text
+    }
+  ]);
+}
+
+function toPlannedSegmentTargets(meta: ParsedTargetsMeta): PlannedSegmentTargets {
+  return {
+    hr_bpm: meta.targets.hr_bpm,
+    pace_min_per_km: meta.targets.pace_min_per_km,
+    pace_ranges: meta.targets.pace_ranges,
+    source: meta.targets.source === "workout_description" ? "workout_description" : null,
+    confidence: meta.targets.confidence
+  };
+}
+
+function buildSegmentType(params: {
+  labelType: SegmentType | null;
+  text: string;
+  isRepeat: boolean;
+  defaultRecovery: boolean;
+}): { segmentType: SegmentType; isRest: boolean } {
+  const text = params.text.toLowerCase();
+  const isRest = isRestSegmentText(text);
+
+  if (isRest) {
+    return {
+      segmentType: "recovery",
+      isRest: true
+    };
+  }
+
+  if (params.labelType === "recovery" || params.defaultRecovery) {
+    return {
+      segmentType: "recovery",
+      isRest: false
+    };
+  }
+
+  if (params.isRepeat) {
+    return {
+      segmentType: "interval",
+      isRest: false
+    };
+  }
+
+  if (params.labelType) {
+    if (params.labelType === "main" && isRecoverySegmentText(text)) {
+      return {
+        segmentType: "recovery",
+        isRest
+      };
+    }
+
+    return {
+      segmentType: params.labelType,
+      isRest
+    };
+  }
+
+  if (isRecoverySegmentText(text)) {
+    return {
+      segmentType: "recovery",
+      isRest: false
+    };
+  }
+
+  if (isEasySegmentText(text)) {
+    return {
+      segmentType: "easy",
+      isRest: false
+    };
+  }
+
+  return {
+    segmentType: "unknown",
+    isRest: false
+  };
+}
+
+function buildSegmentConfidence(segmentType: SegmentType, flags: string[]): TargetConfidence {
+  if (segmentType === "unknown" || flags.includes("boundary_ambiguous")) {
+    return "low";
+  }
+
+  if (flags.length > 0) {
+    return "medium";
+  }
+
+  return "high";
+}
+
+function createSegmentDraft(params: {
+  label: string | null;
+  rawText: string;
+  durationMinutes: number | null;
+  repeatCount: number;
+  repeatGroupId: string | null;
+  distanceKm?: number | null;
+  labelType: SegmentType | null;
+  defaultRecovery?: boolean;
+  extraFlags?: string[];
+}): SegmentDraft {
+  const targetsMeta = buildSegmentTargetsMetaFromDescription(params.rawText);
+  const segmentFlags = [...(params.extraFlags ?? [])];
+  const { segmentType, isRest } = buildSegmentType({
+    labelType: params.labelType,
+    text: params.rawText,
+    isRepeat: params.repeatCount > 1 && params.labelType !== "recovery",
+    defaultRecovery: params.defaultRecovery ?? false
+  });
+
+  if (params.durationMinutes === null) {
+    segmentFlags.push("duration_missing");
+  }
+
+  if (targetsMeta.hasPaceTargetLikeText && targetsMeta.targets.pace_ranges.length === 0) {
+    segmentFlags.push("pace_target_unparsed");
+  }
+
+  if (targetsMeta.hasHrTargetLikeText && targetsMeta.targets.hr_bpm === null) {
+    segmentFlags.push("hr_target_unparsed");
+  }
+
+  if (/[,:;]/.test(params.rawText) && /(если|затем|по желанию|последн|ускорен)/iu.test(params.rawText)) {
+    segmentFlags.push("contains_free_text");
+  }
+
+  const uniqueFlags = [...new Set(segmentFlags)];
+
+  return {
+    segment_type: segmentType,
+    is_rest: isRest,
+    repeat_count: params.repeatCount,
+    repeat_group_id: params.repeatGroupId,
+    duration_minutes: params.durationMinutes,
+    distance_km: params.distanceKm ?? null,
+    label: params.label,
+    raw_text: params.rawText,
+    targets: toPlannedSegmentTargets(targetsMeta),
+    confidence: buildSegmentConfidence(segmentType, uniqueFlags),
+    data_quality_flags: uniqueFlags
+  };
+}
+
+function detectWorkoutLevelSegmentFlags(description: string): string[] {
+  const flags: string[] = [];
+
+  if (/(если чувству|по желанию|если самочув)/iu.test(description)) {
+    flags.push("unsupported_nested_instructions");
+  }
+
+  if (/\bпоследн(?:ие|их|яя)\b/iu.test(description)) {
+    flags.push("unsupported_finish_clause");
+  }
+
+  if (/\bзатем\b|\bпотом\b/iu.test(description)) {
+    flags.push("unsupported_then_clause");
+  }
+
+  if (/\bускорен|strides?\b|ускориться/iu.test(description)) {
+    flags.push("unsupported_accelerations_inline");
+  }
+
+  if (/(?:^|[^\d])0+\s*мин(?:ут[аы]?|\.?)(?=\s|$|[.,;:])/iu.test(description)) {
+    flags.push("zero_duration_text");
+  }
+
+  return flags;
+}
+
+function parsePlannedSegments(params: {
+  description: string | null;
+  plannedDurationMinutes: number | null;
+}): PlannedSegmentsParseResult {
+  if (!params.description) {
+    return {
+      segments: [],
+      segments_parse: buildEmptyPlannedSegmentsParse("not_available")
+    };
+  }
+
+  const normalizedDescription = normalizeWorkoutDescriptionForSegments(params.description);
+  if (!normalizedDescription) {
+    return {
+      segments: [],
+      segments_parse: buildEmptyPlannedSegmentsParse("not_available")
+    };
+  }
+
+  const lines = splitNormalizedDescriptionIntoLines(normalizedDescription);
+  const flags = new Set<string>(detectWorkoutLevelSegmentFlags(normalizedDescription));
+  const drafts: SegmentDraft[] = [];
+  let repeatGroupIndex = 1;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const labeled = splitSegmentLabel(line);
+    const repeatMatch = parseRepeatMatch(labeled.body);
+
+    if (!repeatMatch && countMinuteDurations(labeled.body) > 1) {
+      flags.add("ambiguous_segment_boundaries");
+      continue;
+    }
+
+    if (repeatMatch) {
+      const repeatGroupId = `r${repeatGroupIndex}`;
+      repeatGroupIndex += 1;
+      const extraFlags: string[] = [];
+      const splitRepeatText = splitTrailingRecoveryFromRepeatText(labeled.body);
+
+      if (repeatMatch.zeroDurationText) {
+        flags.add("zero_duration_text");
+      }
+
+      if (repeatMatch.durationIsRange) {
+        extraFlags.push("contains_free_text");
+      }
+
+      const totalDurationsInRepeatLine = countMinuteDurations(splitRepeatText.intervalText);
+      if (totalDurationsInRepeatLine > 1) {
+        flags.add("repeat_block_partial");
+      }
+
+      const intervalRawText = labeled.label
+        ? `${labeled.label} - ${splitRepeatText.intervalText}`
+        : splitRepeatText.intervalText;
+      drafts.push(
+        createSegmentDraft({
+          label: labeled.label,
+          rawText: intervalRawText,
+          durationMinutes: repeatMatch.durationMinutes,
+          repeatCount: repeatMatch.repeatCount,
+          repeatGroupId,
+          labelType: labeled.mappedType === "main" ? "interval" : labeled.mappedType,
+          extraFlags
+        })
+      );
+
+      if (splitRepeatText.recoveryText) {
+        const inlineRecoveryDuration = parseMinuteDuration(splitRepeatText.recoveryText);
+        if (inlineRecoveryDuration.zeroDurationText) {
+          flags.add("zero_duration_text");
+        }
+
+        drafts.push(
+          createSegmentDraft({
+            label: null,
+            rawText: splitRepeatText.recoveryText,
+            durationMinutes: inlineRecoveryDuration.minutes,
+            repeatCount: repeatMatch.repeatCount,
+            repeatGroupId,
+            labelType: null,
+            defaultRecovery: true,
+            extraFlags: [
+              "repeat_inferred",
+              ...(inlineRecoveryDuration.isRange ? ["contains_free_text"] : [])
+            ]
+          })
+        );
+        continue;
+      }
+
+      const nextLine = lines[index + 1];
+      if (nextLine) {
+        const nextLabeled = splitSegmentLabel(nextLine);
+        const nextDuration = parseMinuteDuration(nextLabeled.body);
+        const nextLooksRecoverable =
+          nextDuration.minutes !== null &&
+          !parseRepeatMatch(nextLabeled.body) &&
+          (isRecoverySegmentText(nextLabeled.body) || isRestSegmentText(nextLabeled.body));
+
+        if (nextLooksRecoverable) {
+          if (nextDuration.zeroDurationText) {
+            flags.add("zero_duration_text");
+          }
+
+          const recoveryFlags = ["repeat_inferred"];
+          if (nextDuration.isRange) {
+            recoveryFlags.push("contains_free_text");
+          }
+
+          drafts.push(
+            createSegmentDraft({
+              label: nextLabeled.label,
+              rawText: nextLine,
+              durationMinutes: nextDuration.minutes,
+              repeatCount: repeatMatch.repeatCount,
+              repeatGroupId,
+              labelType: nextLabeled.mappedType,
+              defaultRecovery: true,
+              extraFlags: recoveryFlags
+            })
+          );
+          index += 1;
+        }
+      }
+
+      continue;
+    }
+
+    const duration = parseMinuteDuration(labeled.body);
+    const extraFlags: string[] = [];
+
+    if (duration.zeroDurationText) {
+      flags.add("zero_duration_text");
+    }
+
+    if (duration.isRange) {
+      extraFlags.push("contains_free_text");
+    }
+
+    const canInferWholeWorkoutDuration =
+      lines.length === 1 &&
+      duration.minutes === null &&
+      params.plannedDurationMinutes !== null &&
+      !flags.has("unsupported_nested_instructions") &&
+      !flags.has("unsupported_then_clause") &&
+      !flags.has("unsupported_finish_clause");
+
+    const durationMinutes = canInferWholeWorkoutDuration
+      ? params.plannedDurationMinutes
+      : duration.minutes;
+
+    if (canInferWholeWorkoutDuration) {
+      extraFlags.push("duration_inferred_from_workout_total");
+      flags.add("segment_duration_from_workout_total");
+    }
+
+    const draft = createSegmentDraft({
+      label: labeled.label,
+      rawText: line,
+      durationMinutes,
+      repeatCount: 1,
+      repeatGroupId: null,
+      labelType: labeled.mappedType,
+      extraFlags
+    });
+
+    const safeToKeep =
+      draft.segment_type !== "unknown" ||
+      draft.duration_minutes !== null ||
+      draft.targets.hr_bpm !== null ||
+      draft.targets.pace_ranges.length > 0 ||
+      lines.length === 1;
+
+    if (!safeToKeep) {
+      continue;
+    }
+
+    if (draft.data_quality_flags.includes("pace_target_unparsed")) {
+      flags.add("segment_target_unparsed");
+    }
+
+    if (draft.data_quality_flags.includes("hr_target_unparsed")) {
+      flags.add("segment_target_unparsed");
+    }
+
+    if (draft.data_quality_flags.includes("boundary_ambiguous")) {
+      flags.add("ambiguous_segment_boundaries");
+    }
+
+    if (draft.is_rest) {
+      flags.add("rest_segment_detected");
+    }
+
+    drafts.push(draft);
+  }
+
+  drafts.forEach((draft) => {
+    if (draft.data_quality_flags.includes("pace_target_unparsed")) {
+      flags.add("segment_target_unparsed");
+    }
+    if (draft.data_quality_flags.includes("hr_target_unparsed")) {
+      flags.add("segment_target_unparsed");
+    }
+    if (draft.data_quality_flags.includes("duration_inferred_from_workout_total")) {
+      flags.add("segment_duration_from_workout_total");
+    }
+    if (draft.is_rest) {
+      flags.add("rest_segment_detected");
+    }
+  });
+
+  const segments = drafts.map((draft, order) => ({
+    order: order + 1,
+    ...draft
+  }));
+
+  const durationSumComparable =
+    params.plannedDurationMinutes !== null &&
+    segments.length > 0 &&
+    segments.every(
+      (segment) => segment.is_rest || segment.duration_minutes !== null
+    );
+  if (durationSumComparable) {
+    const summedMinutes = segments.reduce((total, segment) => {
+      if (segment.is_rest || segment.duration_minutes === null) {
+        return total;
+      }
+
+      return total + segment.duration_minutes * segment.repeat_count;
+    }, 0);
+    const delta = Math.abs(summedMinutes - params.plannedDurationMinutes);
+    const threshold = Math.max(10, Math.round(params.plannedDurationMinutes * 0.2));
+    if (delta >= threshold) {
+      flags.add("segment_duration_sum_mismatch");
+    }
+  }
+
+  let status: PlannedSegmentsParse["status"];
+  if (segments.length === 0) {
+    status = "unsupported";
+  } else if (flags.size > 0) {
+    flags.add("segments_partial");
+    status = "partial";
+  } else {
+    status = "parsed";
+  }
+
+  const confidence: TargetConfidence | null =
+    segments.length === 0
+      ? null
+      : segments.some((segment) => segment.confidence === "low")
+        ? "low"
+        : segments.some((segment) => segment.confidence === "medium")
+          ? "medium"
+          : flags.size > 0
+            ? "medium"
+            : "high";
+
+  return {
+    segments,
+    segments_parse: {
+      status,
+      source: "workout_description",
+      confidence,
+      flags: [...flags]
+    }
   };
 }
 
@@ -2202,6 +2957,10 @@ async function parseCsvFile(candidate: CsvCandidate): Promise<ParsedCsv> {
       description,
       coachComments
     });
+    const parsedSegments = parsePlannedSegments({
+      description,
+      plannedDurationMinutes
+    });
     const classification = buildClassification({
       title,
       sport,
@@ -2241,7 +3000,9 @@ async function parseCsvFile(candidate: CsvCandidate): Promise<ParsedCsv> {
         distance_km: plannedDistanceKm,
         description,
         coach_comments: coachComments,
-        targets: parsedTargetsMeta.targets
+        targets: parsedTargetsMeta.targets,
+        segments: parsedSegments.segments,
+        segments_parse: parsedSegments.segments_parse
       },
       completed: {
         duration_minutes: completedMetrics.duration_minutes,
