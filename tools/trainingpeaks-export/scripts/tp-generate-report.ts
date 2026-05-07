@@ -11,13 +11,14 @@ type CliArgs = {
 };
 
 type WeeklySummary = {
+  schema_version?: string;
   student_id: string;
   week: {
     from: string;
     to: string;
   };
   source_files: string[];
-  totals: {
+  totals?: {
     workouts_count: number;
     completed_workouts_count: number;
     total_distance_km: number | null;
@@ -29,31 +30,8 @@ type WeeklySummary = {
     data_warnings_count: number;
     intensity_flags_count: number;
   };
-  workouts: Array<{
-    date: string | null;
-    title: string | null;
-    sport: string | null;
-    planned_duration_minutes: number | null;
-    completed_duration_minutes: number | null;
-    distance_km: number | null;
-    planned_distance_km: number | null;
-    tss: number | null;
-    if: number | null;
-    rpe: number | null;
-    description: string | null;
-    avg_hr: number | null;
-    max_hr: number | null;
-    avg_pace_min_per_km: number | null;
-    avg_pace_text: string | null;
-    duration_text: string | null;
-    planned_duration_text: string | null;
-    distance_text: string | null;
-    intensity_flags: string[];
-    data_warnings: string[];
-    athlete_comments: string | null;
-    coach_comments: string | null;
-    source_file: string;
-  }>;
+  week_metrics?: Record<string, unknown>;
+  workouts: Array<Record<string, unknown>>;
 };
 
 type ReportDraft = {
@@ -200,31 +178,41 @@ function stripMarkdownFences(markdown: string): string {
 
 function buildSystemPrompt(): string {
   return [
-    "Ты спортивный тренер и готовишь краткий недельный черновик отчета для спортсмена на русском языке.",
+    "Ты готовишь черновик недельного отчета тренера по бегу на русском языке.",
     "Используй weekly-summary.json как единственный источник данных.",
-    "Ничего не придумывай: не добавляй тренировки, цели, старты, травмы, причины, контекст или выводы, которых нет в данных.",
-    "Если data_warnings содержат suspicious_if или suspicious_tss, не опирайся на IF/TSS в выводах.",
-    "Предпочитай distance, duration, HR, RPE, описания тренировок и выполнение плана.",
-    "Если HR выглядит высоким, формулируй осторожно: 'пульс был высоким для части работы', без медицинских диагнозов.",
-    "Тон: дружелюбный тренер, коротко и по делу, без фальшивой точности, без излишней похвалы и без жесткой критики.",
-    "Отчет должен быть пригоден для отправки атлету после проверки тренером.",
-    "Если в данных есть ограничения, упоминай их спокойно и только если это полезно.",
+    "Опирайся в первую очередь на детерминированные поля: week_metrics, workouts[].classification, workouts[].planned, workouts[].completed, workouts[].comparison.",
+    "Не рассчитывай выводы из raw-строк и не делай собственные агрегаты из сырых полей, если уже есть нормализованные значения.",
+    "Не придумывай недостающие данные, цели, причины, самочувствие, травмы, прогресс, объем, зоны или выводы.",
+    "Если planned.distance_km отсутствует или week_metrics.data_quality.planned_distance_available=false, не пиши, что дистанция совпала с планом.",
+    "Если parser не нашел planned.targets.hr_bpm или planned.targets.pace_min_per_km, не придумывай цели по пульсу или темпу.",
+    "Если данные неполные, используй формулировки вроде 'по доступным данным' и явно называй, что именно нельзя оценить.",
+    "Приоритет: mismatch_flags, coach_attention_flags, classification, plan_vs_fact, затем уже вторичные детали.",
+    "Если suspicious_if или suspicious_tss=true, упоминай это как ограничение данных и не строй сильные выводы на IF/TSS.",
+    "Тон: кратко, профессионально, по-тренерски, без воды и без чрезмерной уверенности.",
     "Верни только Markdown без пояснений вне отчета.",
     "Используй ровно эту структуру и заголовки:",
-    "1. Приветствие",
-    "2. Краткий итог недели",
-    "3. Что получилось хорошо",
-    "4. На что обратить внимание",
-    "5. По тренировкам",
-    "6. Вывод тренера",
-    "7. Фокус на следующую неделю"
+    "## 1. Краткий вывод тренера",
+    "## 2. План vs факт за неделю",
+    "## 3. Разбор по тренировкам",
+    "## 4. Ключевые расхождения",
+    "## 5. Риски и наблюдения",
+    "## 6. Что скорректировать на следующей неделе",
+    "## 7. Вопросы спортсмену"
   ].join("\n");
 }
 
 function buildUserPrompt(summary: WeeklySummary): string {
   return [
-    "Сгенерируй краткий недельный отчет для спортсмена по этим данным.",
-    "Сохрани отчет компактным и полезным.",
+    "Сгенерируй компактный и полезный недельный отчет тренера.",
+    "Важно:",
+    "- Отчет должен быть полностью на русском языке.",
+    "- Для раздела 'План vs факт за неделю' используй week_metrics.plan_vs_fact и week_metrics.counts.",
+    "- Для разбора по тренировкам опирайся на workouts[].classification и workouts[].comparison.",
+    "- Явно отмечай skipped, extra, duration/distance deltas и HR/pace mismatches, только если они есть в deterministic fields.",
+    "- Не утверждай, что дистанция совпала с планом, если planned distance отсутствует.",
+    "- Не утверждай, что пульс/темп соответствовали цели, если parser не нашел target range.",
+    "- Если есть data_quality warnings, кратко укажи ограничения оценки.",
+    "- Не используй raw для собственных расчетов.",
     "",
     "weekly-summary.json:",
     JSON.stringify(summary, null, 2)
