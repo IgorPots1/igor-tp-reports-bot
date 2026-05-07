@@ -1,6 +1,7 @@
 import {
   createTrainingPeaksWeeklyJob,
   disableTrainingPeaksStudentById,
+  enableTrainingPeaksStudentById,
   recoverStaleTrainingPeaksRunningJobs,
   insertTrainingPeaksStudent,
   listAllTrainingPeaksReports,
@@ -91,6 +92,8 @@ export type DisableTrainingPeaksStudentResult =
       kind: "student";
       student: TrainingPeaksStudent;
     };
+
+export type EnableTrainingPeaksStudentResult = DisableTrainingPeaksStudentResult;
 
 export type TrainingPeaksJobRequester = {
   chatId: number | string;
@@ -600,6 +603,23 @@ export async function disableTrainingPeaksStudent(
   }
 
   const student = await disableTrainingPeaksStudentById(match.student.id);
+
+  return {
+    kind: "student",
+    student,
+  };
+}
+
+export async function enableTrainingPeaksStudent(
+  studentQuery: string
+): Promise<EnableTrainingPeaksStudentResult> {
+  const match = await resolveTrainingPeaksRegistryStudent(studentQuery);
+
+  if (match.kind !== "student") {
+    return match;
+  }
+
+  const student = await enableTrainingPeaksStudentById(match.student.id);
 
   return {
     kind: "student",

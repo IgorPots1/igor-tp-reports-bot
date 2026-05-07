@@ -299,6 +299,25 @@ export async function disableTrainingPeaksStudentById(id: string): Promise<Train
   return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
 }
 
+export async function enableTrainingPeaksStudentById(id: string): Promise<TrainingPeaksStudent> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_students")
+    .update({
+      is_active: true,
+      weekly_report_enabled: true,
+    })
+    .eq("id", id)
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to enable TrainingPeaks student ${id}: ${error.message}`);
+  }
+
+  return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
+}
+
 export async function getLatestTrainingPeaksWeek(): Promise<TrainingPeaksWeek | null> {
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
