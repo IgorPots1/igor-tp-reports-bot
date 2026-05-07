@@ -130,6 +130,9 @@ export type CreateTrainingPeaksWeeklyJobInput = {
   requestedByUserId?: string | null;
 };
 
+export const TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE =
+  "Cancelled from Telegram before Mac runner start";
+
 export class TrainingPeaksJobConflictError extends Error {
   constructor() {
     super("TrainingPeaks weekly job already queued or running for this week");
@@ -421,6 +424,55 @@ export async function createTrainingPeaksWeeklyJob(
   return mapTrainingPeaksJobRow(data as TrainingPeaksJobRow);
 }
 
+export async function getTrainingPeaksJobById(jobId: string): Promise<TrainingPeaksJob | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_jobs")
+    .select("*")
+    .eq("id", jobId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to get TrainingPeaks job ${jobId}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksJobRow(data as TrainingPeaksJobRow);
+}
+
+export async function findActiveTrainingPeaksJobForWeek(
+  jobType: TrainingPeaksJobType,
+  weekFrom: string,
+  weekTo: string
+): Promise<TrainingPeaksJob | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_jobs")
+    .select("*")
+    .eq("job_type", jobType)
+    .eq("week_from", weekFrom)
+    .eq("week_to", weekTo)
+    .in("status", ["queued", "running"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to find active TrainingPeaks job for ${jobType} ${weekFrom}..${weekTo}: ${error.message}`
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksJobRow(data as TrainingPeaksJobRow);
+}
+
 export async function listRecentTrainingPeaksJobs(limit = 10): Promise<TrainingPeaksJob[]> {
   const supabase = createSupabaseServerClient();
   const safeLimit = Math.max(1, Math.min(limit, 50));
@@ -545,4 +597,31 @@ export async function failTrainingPeaksJob(
   if (error) {
     throw new Error(`Failed to fail TrainingPeaks job ${jobId}: ${error.message}`);
   }
+}
+
+export async function cancelQueuedTrainingPeaksJob(jobId: string): Promise<TrainingPeaksJob | null> {
+  const supabase = createSupabaseServerClient();
+  const finishedAt = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("trainingpeaks_jobs")
+    .update({
+      status: "failed",
+      error_message: TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
+      result_json: null,
+      finished_at: finishedAt,
+    })
+    .eq("id", jobId)
+    .eq("status", "queued")
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to cancel queued TrainingPeaks job ${jobId}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksJobRow(data as TrainingPeaksJobRow);
 }

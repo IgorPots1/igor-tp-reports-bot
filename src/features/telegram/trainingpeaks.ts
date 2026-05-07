@@ -5,6 +5,7 @@ import type {
 } from "@/features/telegram/parser";
 import {
   addTrainingPeaksStudentFromCommand,
+  cancelTrainingPeaksWeeklyRun,
   disableTrainingPeaksStudent,
   disableTrainingPeaksStudentByInternalId,
   enableTrainingPeaksStudent,
@@ -16,6 +17,7 @@ import {
   getTrainingPeaksStudentCard,
   getTrainingPeaksStudentCardByInternalId,
   getTrainingPeaksStudentsRegistryWithLatestReportStatus,
+  TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
   type RequestTrainingPeaksWeeklyRunResult,
   requestTrainingPeaksWeeklyRun,
 } from "@/features/trainingpeaks/service";
@@ -56,6 +58,7 @@ const TP_REPLY_BUTTON_STUDENTS_BACK = "⬅️ Ученики";
 const TP_REPLY_BUTTON_WEEK_LAST = "Прошлая неделя";
 const TP_REPLY_BUTTON_WEEK_CURRENT = "Текущая неделя";
 const TP_REPLY_BUTTON_JOBS_REFRESH = "🔄 Обновить задачи";
+const TP_REPLY_BUTTON_CANCEL_JOB = "❌ Отменить задачу";
 const TP_REPLY_BUTTON_REPORT = "📄 Отчёт";
 const TP_REPLY_BUTTON_DISABLE = "⛔ Отключить";
 const TP_REPLY_BUTTON_ENABLE = "✅ Включить";
@@ -138,6 +141,13 @@ type TrainingPeaksScreen =
 type TrainingPeaksChatContext = {
   selectedStudentId: string | null;
   selectedStudentName: string | null;
+  cancellableWeeklyJob:
+    | {
+        jobId: string;
+        weekFrom: string;
+        weekTo: string;
+      }
+    | null;
   screen: TrainingPeaksScreen;
   expiresAt: number;
 };
@@ -158,6 +168,7 @@ type TrainingPeaksReplyKeyboardAction =
   | "week_last"
   | "week_current"
   | "jobs_refresh"
+  | "cancel_job"
   | "student_report"
   | "student_disable"
   | "student_enable";
@@ -387,6 +398,7 @@ function setTrainingPeaksAddStudentWaitingContext(chatId: number | string): void
     {
       selectedStudentId: null,
       selectedStudentName: null,
+      cancellableWeeklyJob: null,
       screen: "add_student_waiting",
     },
     TP_ADD_STUDENT_WAITING_TTL_MS
@@ -412,6 +424,7 @@ function setTrainingPeaksScreenContext(
       options && "selectedStudentName" in options
         ? options.selectedStudentName ?? null
         : currentContext?.selectedStudentName ?? null,
+    cancellableWeeklyJob: currentContext?.cancellableWeeklyJob ?? null,
     screen,
   });
 }
@@ -420,8 +433,49 @@ function clearTrainingPeaksSelectedStudent(chatId: number | string, screen: Trai
   setTrainingPeaksChatContext(chatId, {
     selectedStudentId: null,
     selectedStudentName: null,
+    cancellableWeeklyJob: null,
     screen,
   });
+}
+
+function setTrainingPeaksCancellableWeeklyJobContext(
+  chatId: number | string,
+  job: {
+    jobId: string;
+    weekFrom: string;
+    weekTo: string;
+  }
+): void {
+  const currentContext = getTrainingPeaksChatContext(chatId);
+  setTrainingPeaksChatContext(chatId, {
+    selectedStudentId: currentContext?.selectedStudentId ?? null,
+    selectedStudentName: currentContext?.selectedStudentName ?? null,
+    cancellableWeeklyJob: job,
+    screen: currentContext?.screen ?? "week",
+  });
+}
+
+function clearTrainingPeaksCancellableWeeklyJobContext(chatId: number | string): void {
+  const currentContext = getTrainingPeaksChatContext(chatId);
+
+  if (!currentContext) {
+    return;
+  }
+
+  setTrainingPeaksChatContext(chatId, {
+    selectedStudentId: currentContext.selectedStudentId,
+    selectedStudentName: currentContext.selectedStudentName,
+    cancellableWeeklyJob: null,
+    screen: currentContext.screen,
+  });
+}
+
+function getTrainingPeaksCancellableWeeklyJobContext(chatId: number | string): {
+  jobId: string;
+  weekFrom: string;
+  weekTo: string;
+} | null {
+  return getTrainingPeaksChatContext(chatId)?.cancellableWeeklyJob ?? null;
 }
 
 async function sendTrainingPeaksMessage(
@@ -506,6 +560,18 @@ function getTrainingPeaksWeekReplyKeyboardMarkup(): TelegramReplyKeyboardMarkup 
 
 function getTrainingPeaksJobsReplyKeyboardMarkup(): TelegramReplyKeyboardMarkup {
   return createReplyKeyboardMarkup([[TP_REPLY_BUTTON_JOBS_REFRESH], [TP_REPLY_BUTTON_MENU]]);
+}
+
+function getTrainingPeaksQueuedDuplicateReplyKeyboardMarkup(): TelegramReplyKeyboardMarkup {
+  return createReplyKeyboardMarkup([
+    [TP_REPLY_BUTTON_JOBS],
+    [TP_REPLY_BUTTON_CANCEL_JOB],
+    [TP_REPLY_BUTTON_MENU],
+  ]);
+}
+
+function getTrainingPeaksRunningDuplicateReplyKeyboardMarkup(): TelegramReplyKeyboardMarkup {
+  return createReplyKeyboardMarkup([[TP_REPLY_BUTTON_JOBS], [TP_REPLY_BUTTON_MENU]]);
 }
 
 async function sendTrainingPeaksReplyScreen(
@@ -956,11 +1022,11 @@ function getJobCountsSummary(resultJson: unknown): string | null {
 
 function getJobStatusLabel(status: string): string {
   if (status === "queued") {
-    return "в очереди";
+    return "ожидает запуска на Mac";
   }
 
   if (status === "running") {
-    return "выполняется";
+    return "выполняется на Mac";
   }
 
   if (status === "completed") {
@@ -972,6 +1038,31 @@ function getJobStatusLabel(status: string): string {
   }
 
   return status;
+}
+
+function isCancelledTrainingPeaksJob(job: {
+  status: string;
+  errorMessage: string | null;
+}): boolean {
+  return (
+    job.status === "failed" &&
+    job.errorMessage?.trim() === TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE
+  );
+}
+
+function getTrainingPeaksJobStatusLabel(job: {
+  status: string;
+  errorMessage: string | null;
+}): string {
+  if (job.status === "failed" && isCancelledTrainingPeaksJob(job)) {
+    return "отменена";
+  }
+
+  if (job.status === "failed") {
+    return "ошибка";
+  }
+
+  return getJobStatusLabel(job.status);
 }
 
 function formatJobsMessage(
@@ -991,21 +1082,31 @@ function formatJobsMessage(
       const countsSummary = getJobCountsSummary(job.resultJson);
       const hasWarnings = jobHasWarnings(job.resultJson);
       const missingStudentsSummary = formatMissingStudentsSummary(job.resultJson);
-      const statusLabel = getJobStatusLabel(job.status);
+      const statusLabel = getTrainingPeaksJobStatusLabel(job);
+      const lines = [`• ${job.weekFrom} — ${job.weekTo}`, `  Статус: ${statusLabel}`];
 
-      if (job.status === "failed" && shortError) {
-        return [`• ${statusLabel} — ${job.weekFrom} — ${job.weekTo}: ${shortError}`];
+      if (job.status === "failed" && !isCancelledTrainingPeaksJob(job) && shortError) {
+        lines.push(`  Ошибка: ${shortError}`);
+        return lines;
       }
 
       if (job.status === "completed" && countsSummary) {
-        return [
-          `• ${statusLabel} — ${job.weekFrom} — ${job.weekTo} — ${countsSummary}${hasWarnings ? " ⚠️" : ""}`,
-          ...(missingStudentsSummary ? [`  Не готово: ${missingStudentsSummary}`] : []),
-        ];
+        lines.push(`  ${countsSummary}${hasWarnings ? " ⚠️" : ""}`);
+        if (missingStudentsSummary) {
+          lines.push(`  Не готово: ${missingStudentsSummary}`);
+        }
+        return lines;
       }
 
-      return [`• ${statusLabel} — ${job.weekFrom} — ${job.weekTo}`];
+      return lines;
     }),
+    ...(jobs.some((job) => job.status === "queued")
+      ? [
+          "",
+          "Чтобы начать обработку, запусти локальный runner:",
+          "npm run tp-agent-once",
+        ]
+      : []),
   ].join("\n");
 }
 
@@ -1070,6 +1171,10 @@ function getTrainingPeaksReplyKeyboardAction(text: string): TrainingPeaksReplyKe
 
   if (text === TP_REPLY_BUTTON_JOBS_REFRESH) {
     return "jobs_refresh";
+  }
+
+  if (text === TP_REPLY_BUTTON_CANCEL_JOB) {
+    return "cancel_job";
   }
 
   if (text === TP_REPLY_BUTTON_REPORT) {
@@ -1807,6 +1912,11 @@ export async function handleTrainingPeaksTelegramReplyKeyboardMessage(
       return "handled";
     }
 
+    if (action === "cancel_job") {
+      await handleTrainingPeaksCancelQueuedJob(parsedMessage);
+      return "handled";
+    }
+
     if (action === "student_report") {
       const selectedStudent = getSelectedStudentContext(parsedMessage.chatId);
 
@@ -2101,20 +2211,93 @@ async function handleTrainingPeaksRunWeek(
     useRunAliasMessage?: boolean;
   }
 ): Promise<void> {
-  const requestedWeek = resolveRequestedRunWeek(text);
   const result = await requestTrainingPeaksWeeklyRun(text, {
     chatId: parsedMessage.chatId,
     userId: parsedMessage.userId,
   });
-  const presentation = presentTrainingPeaksWeekRunResult(result, {
-    requestedWeek,
-    useRunAliasMessage: options?.useRunAliasMessage,
-  });
   setTrainingPeaksScreenContext(parsedMessage.chatId, "week");
+
+  if (result.ok) {
+    clearTrainingPeaksCancellableWeeklyJobContext(parsedMessage.chatId);
+    await sendTrainingPeaksReplyScreen(
+      parsedMessage.chatId,
+      getQueuedWeeklyJobSuccessMessage(result.job),
+      getTrainingPeaksWeekReplyKeyboardMarkup()
+    );
+    return;
+  }
+
+  if (result.reason === "duplicate" && result.activeJob) {
+    if (result.activeJob.status === "queued") {
+      setTrainingPeaksCancellableWeeklyJobContext(parsedMessage.chatId, {
+        jobId: result.activeJob.id,
+        weekFrom: result.activeJob.weekFrom,
+        weekTo: result.activeJob.weekTo,
+      });
+      await sendTrainingPeaksReplyScreen(
+        parsedMessage.chatId,
+        getDuplicateQueuedWeeklyJobMessage(result.activeJob),
+        getTrainingPeaksQueuedDuplicateReplyKeyboardMarkup()
+      );
+      return;
+    }
+
+    clearTrainingPeaksCancellableWeeklyJobContext(parsedMessage.chatId);
+    await sendTrainingPeaksReplyScreen(
+      parsedMessage.chatId,
+      getDuplicateRunningWeeklyJobMessage(result.activeJob),
+      getTrainingPeaksRunningDuplicateReplyKeyboardMarkup()
+    );
+    return;
+  }
+
+  clearTrainingPeaksCancellableWeeklyJobContext(parsedMessage.chatId);
   await sendTrainingPeaksReplyScreen(
     parsedMessage.chatId,
-    presentation.text,
+    options?.useRunAliasMessage ? formatTpRunAliasMessage(result.message) : result.message,
     getTrainingPeaksWeekReplyKeyboardMarkup()
+  );
+}
+
+async function handleTrainingPeaksCancelQueuedJob(
+  parsedMessage: ParsedTelegramMessageUpdate
+): Promise<void> {
+  const cancellableJob = getTrainingPeaksCancellableWeeklyJobContext(parsedMessage.chatId);
+
+  if (!cancellableJob) {
+    await sendTrainingPeaksReplyScreen(
+      parsedMessage.chatId,
+      getCancelWeeklyJobMissingContextMessage(),
+      getTrainingPeaksMainReplyKeyboardMarkup()
+    );
+    return;
+  }
+
+  const result = await cancelTrainingPeaksWeeklyRun(cancellableJob.jobId);
+  clearTrainingPeaksCancellableWeeklyJobContext(parsedMessage.chatId);
+
+  if (result.ok) {
+    await sendTrainingPeaksReplyScreen(
+      parsedMessage.chatId,
+      getCancelledWeeklyJobSuccessMessage(cancellableJob),
+      getTrainingPeaksWeekReplyKeyboardMarkup()
+    );
+    return;
+  }
+
+  if (result.reason === "already_started") {
+    await sendTrainingPeaksReplyScreen(
+      parsedMessage.chatId,
+      "Не удалось отменить задачу: она уже запущена на Mac.",
+      getTrainingPeaksRunningDuplicateReplyKeyboardMarkup()
+    );
+    return;
+  }
+
+  await sendTrainingPeaksReplyScreen(
+    parsedMessage.chatId,
+    getCancelWeeklyJobMissingContextMessage(),
+    getTrainingPeaksMainReplyKeyboardMarkup()
   );
 }
 
@@ -2139,20 +2322,43 @@ function getWeekResultMarkup(options?: {
   return createInlineKeyboardMarkup(rows);
 }
 
-function resolveRequestedRunWeek(text: string): TrainingPeaksWeek | null {
-  const args = text.replace(TP_RUN_WEEK_COMMAND_PATTERN, "").trim();
+function getQueuedWeeklyJobSuccessMessage(week: TrainingPeaksWeek): string {
+  return [
+    "✅ Задача поставлена в очередь.",
+    `Неделя: ${formatWeekIso(week)}`,
+    "",
+    "Статус: ожидает запуска на Mac.",
+    "Чтобы начать обработку, запусти локальный runner:",
+    "npm run tp-agent-once",
+  ].join("\n");
+}
 
-  if (!args) {
-    return null;
-  }
+function getDuplicateQueuedWeeklyJobMessage(week: TrainingPeaksWeek): string {
+  return [
+    "Задача за эту неделю уже ожидает запуска на Mac.",
+    `Неделя: ${formatWeekIso(week)}`,
+  ].join("\n");
+}
 
-  const tokens = args.split(/\s+/);
+function getDuplicateRunningWeeklyJobMessage(week: TrainingPeaksWeek): string {
+  return [
+    "Задача за эту неделю уже выполняется на Mac.",
+    `Неделя: ${formatWeekIso(week)}`,
+  ].join("\n");
+}
 
-  if (tokens.length === 1) {
-    return resolveTrainingPeaksWeekKeyword(tokens[0] ?? "");
-  }
+function getCancelledWeeklyJobSuccessMessage(week: TrainingPeaksWeek): string {
+  return [
+    "✅ Задача отменена.",
+    `Неделя: ${formatWeekIso(week)}`,
+  ].join("\n");
+}
 
-  return parseWeekArgs(tokens, "/tp_run_week 2026-04-27 2026-05-03").week;
+function getCancelWeeklyJobMissingContextMessage(): string {
+  return [
+    "Не вижу задачу для отмены.",
+    "Открой «🧾 Задачи» или попробуй поставить неделю в очередь ещё раз.",
+  ].join("\n");
 }
 
 function presentTrainingPeaksWeekRunResult(
@@ -2167,12 +2373,19 @@ function presentTrainingPeaksWeekRunResult(
 } {
   if (result.ok) {
     return {
-      text: [
-        "✅ Неделя поставлена в очередь.",
-        `Неделя: ${formatWeekIso(result.job)}`,
-        "",
-        "Чтобы получить отчёты, запусти локальный runner на Mac.",
-      ].join("\n"),
+      text: getQueuedWeeklyJobSuccessMessage(result.job),
+      replyMarkup: getWeekResultMarkup({
+        includeJobsButton: true,
+      }),
+    };
+  }
+
+  if (result.reason === "duplicate" && result.activeJob) {
+    return {
+      text:
+        result.activeJob.status === "queued"
+          ? getDuplicateQueuedWeeklyJobMessage(result.activeJob)
+          : getDuplicateRunningWeeklyJobMessage(result.activeJob),
       replyMarkup: getWeekResultMarkup({
         includeJobsButton: true,
       }),
@@ -2182,7 +2395,7 @@ function presentTrainingPeaksWeekRunResult(
   if (result.reason === "duplicate" && options?.requestedWeek) {
     return {
       text: [
-        "Задача за эту неделю уже в очереди или выполняется.",
+        "Задача за эту неделю уже ожидает запуска или выполняется на Mac.",
         `Неделя: ${formatWeekIso(options.requestedWeek)}`,
       ].join("\n"),
       replyMarkup: getWeekResultMarkup({

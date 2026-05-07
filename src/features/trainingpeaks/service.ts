@@ -1,12 +1,16 @@
 import {
+  cancelQueuedTrainingPeaksJob,
   createTrainingPeaksWeeklyJob,
   disableTrainingPeaksStudentById,
   enableTrainingPeaksStudentById,
+  findActiveTrainingPeaksJobForWeek,
+  getTrainingPeaksJobById,
   recoverStaleTrainingPeaksRunningJobs,
   insertTrainingPeaksStudent,
   listAllTrainingPeaksReports,
   listRecentTrainingPeaksJobs,
   listTrainingPeaksStudents,
+  TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
   TrainingPeaksJobConflictError,
   TrainingPeaksStudentConflictError,
   type TrainingPeaksJob,
@@ -104,8 +108,27 @@ export type RequestTrainingPeaksWeeklyRunResult =
   | { ok: true; job: TrainingPeaksJob }
   | {
       ok: false;
-      reason: "invalid_format" | "invalid_date" | "invalid_range" | "duplicate" | "unknown";
+      reason: "invalid_format" | "invalid_date" | "invalid_range";
       message: string;
+    }
+  | {
+      ok: false;
+      reason: "duplicate";
+      activeJob: Pick<TrainingPeaksJob, "id" | "status" | "weekFrom" | "weekTo"> | null;
+      message: string;
+    }
+  | {
+      ok: false;
+      reason: "unknown";
+      activeJob: null;
+      message: string;
+    };
+
+export type CancelTrainingPeaksWeeklyRunResult =
+  | { ok: true; job: TrainingPeaksJob }
+  | {
+      ok: false;
+      reason: "already_started" | "not_found" | "not_cancellable";
     };
 
 const TP_ADD_STUDENT_COMMAND_PATTERN = /^\/tp_add_student(?:@\w+)?(?:\s+|$)/;
@@ -535,9 +558,23 @@ export async function requestTrainingPeaksWeeklyRun(
     };
   } catch (error) {
     if (error instanceof TrainingPeaksJobConflictError) {
+      const activeJob = await findActiveTrainingPeaksJobForWeek(
+        "weekly_reports",
+        parsedInput.weekFrom,
+        parsedInput.weekTo
+      );
+
       return {
         ok: false,
         reason: "duplicate",
+        activeJob: activeJob
+          ? {
+              id: activeJob.id,
+              status: activeJob.status,
+              weekFrom: activeJob.weekFrom,
+              weekTo: activeJob.weekTo,
+            }
+          : null,
         message: "Такая задача уже ожидает выполнения или сейчас выполняется.",
       };
     }
@@ -551,10 +588,64 @@ export async function requestTrainingPeaksWeeklyRun(
     return {
       ok: false,
       reason: "unknown",
+      activeJob: null,
       message: "Не смог создать задачу TrainingPeaks. Попробуй позже.",
     };
   }
 }
+
+export async function getActiveTrainingPeaksWeeklyJobForWeek(
+  week: TrainingPeaksWeek
+): Promise<Pick<TrainingPeaksJob, "id" | "status" | "weekFrom" | "weekTo"> | null> {
+  const activeJob = await findActiveTrainingPeaksJobForWeek("weekly_reports", week.weekFrom, week.weekTo);
+
+  if (!activeJob) {
+    return null;
+  }
+
+  return {
+    id: activeJob.id,
+    status: activeJob.status,
+    weekFrom: activeJob.weekFrom,
+    weekTo: activeJob.weekTo,
+  };
+}
+
+export async function cancelTrainingPeaksWeeklyRun(
+  jobId: string
+): Promise<CancelTrainingPeaksWeeklyRunResult> {
+  const cancelledJob = await cancelQueuedTrainingPeaksJob(jobId);
+
+  if (cancelledJob) {
+    return {
+      ok: true,
+      job: cancelledJob,
+    };
+  }
+
+  const existingJob = await getTrainingPeaksJobById(jobId);
+
+  if (!existingJob) {
+    return {
+      ok: false,
+      reason: "not_found",
+    };
+  }
+
+  if (existingJob.status === "running") {
+    return {
+      ok: false,
+      reason: "already_started",
+    };
+  }
+
+  return {
+    ok: false,
+    reason: "not_cancellable",
+  };
+}
+
+export { TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE };
 
 export async function getTrainingPeaksJobsStatus(): Promise<TrainingPeaksJob[]> {
   return listRecentTrainingPeaksJobs(10);
