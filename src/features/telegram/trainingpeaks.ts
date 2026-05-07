@@ -51,8 +51,7 @@ const TP_REPLY_BUTTON_STUDENTS = "👥 Ученики";
 const TP_REPLY_BUTTON_ADD = "➕ Добавить";
 const TP_REPLY_BUTTON_WEEK = "▶️ Неделя";
 const TP_REPLY_BUTTON_JOBS = "🧾 Задачи";
-// Telegram requires non-empty text when attaching a reply keyboard.
-const TP_REPLY_KEYBOARD_ATTACH_MESSAGE = "\u200B";
+const TP_REPLY_KEYBOARD_ATTACH_MESSAGE = "Панель управления включена.";
 
 const TP_MAIN_COMMAND_PATTERN = /^\/tp(?:@\w+)?(?:\s+|$)/;
 const TP_STATUS_COMMAND_PATTERN = /^\/tp_status(?:@\w+)?(?:\s+|$)/;
@@ -359,10 +358,16 @@ async function showTrainingPeaksMenuScreen(
   replyMarkup: TelegramInlineKeyboardMarkup,
   options?: {
     refreshReplyKeyboard?: boolean;
+    refreshReplyKeyboardOnCallback?: boolean;
   }
 ): Promise<void> {
   if (parsedMessage.kind === "callback_query") {
     await editTrainingPeaksMenuMessage(parsedMessage.chatId, parsedMessage.messageId, text, replyMarkup);
+
+    if (options?.refreshReplyKeyboardOnCallback) {
+      await sendTrainingPeaksReplyKeyboard(parsedMessage.chatId);
+    }
+
     return;
   }
 
@@ -1066,6 +1071,7 @@ async function showTrainingPeaksMainMenu(
     getTrainingPeaksMainMenuMarkup(),
     {
       refreshReplyKeyboard: true,
+      refreshReplyKeyboardOnCallback: true,
     }
   );
 }
