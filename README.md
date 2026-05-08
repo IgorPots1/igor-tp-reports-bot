@@ -16,6 +16,7 @@ Required variables:
 ```text
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_COACH_CHAT_IDS=507447935
+TELEGRAM_BUSINESS_CONNECTION_ID=...
 TELEGRAM_WEBHOOK_SECRET=...
 SUPABASE_URL=...
 SUPABASE_SERVICE_ROLE_KEY=...
@@ -35,6 +36,12 @@ If `TELEGRAM_WEBHOOK_SECRET` is not set, the webhook keeps the current local-dev
 
 When you configure the webhook in Telegram, use the same secret token value that you set in `TELEGRAM_WEBHOOK_SECRET`.
 
+For Telegram Business smoke testing:
+
+- In BotFather, enable Chat Access Mode / Business Mode for the bot.
+- In Telegram Business, connect the bot only to the specific chats you want to test with.
+- After the first `business_connection` webhook arrives, copy its `connectionId` from the app logs into `TELEGRAM_BUSINESS_CONNECTION_ID`.
+
 Example Telegram webhook setup command:
 
 ```bash
@@ -43,8 +50,27 @@ export TELEGRAM_WEBHOOK_SECRET="<your_webhook_secret>"
 
 curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
   -d "url=https://igor-tp-reports-bot.vercel.app/api/telegram/webhook" \
-  -d "secret_token=${TELEGRAM_WEBHOOK_SECRET}"
+  -d "secret_token=${TELEGRAM_WEBHOOK_SECRET}" \
+  --data-urlencode 'allowed_updates=["message","callback_query","business_connection","business_message","edited_business_message","deleted_business_messages"]'
 ```
+
+Admin smoke-test command:
+
+```text
+/tp_business_test <chat_id>
+```
+
+This command is intentionally admin-only and is not added to the public bot menus. It sends:
+
+```text
+Тестовое сообщение от Игоря через TrainingPeaks Reports Bot ✅
+```
+
+Use it from a coach/admin chat after:
+
+1. Connecting the bot in Telegram Business.
+2. Confirming `business_connection` webhook logs appeared.
+3. Saving that `connectionId` into `TELEGRAM_BUSINESS_CONNECTION_ID`.
 
 ## TrainingPeaks Job Flow
 
@@ -129,3 +155,4 @@ Available commands:
 - `/tp_jobs`
 - `/tp_report <student> [from to]`
 - `/tp_weekly`
+- `/tp_business_test <chat_id>` (admin smoke test)

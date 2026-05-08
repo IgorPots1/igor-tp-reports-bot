@@ -7,6 +7,7 @@ const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
 
 type SendTelegramMessageOptions = {
   replyMarkup?: TelegramReplyMarkup;
+  businessConnectionId?: string;
 };
 
 type EditTelegramMessageTextOptions = {
@@ -65,11 +66,25 @@ async function postTelegramMessage(
   text: string,
   options?: SendTelegramMessageOptions
 ): Promise<void> {
-  await postTelegramApi("sendMessage", {
+  const body: Record<string, unknown> = {
     chat_id: chatId,
     text,
     reply_markup: options?.replyMarkup,
-  });
+  };
+
+  if (options?.businessConnectionId) {
+    body.business_connection_id = options.businessConnectionId;
+  }
+
+  await postTelegramApi("sendMessage", body);
+}
+
+export async function sendTelegramMessageStrict(
+  chatId: string | number,
+  text: string,
+  options?: SendTelegramMessageOptions
+): Promise<void> {
+  await postTelegramMessage(chatId, text, options);
 }
 
 export async function sendTelegramMessage(

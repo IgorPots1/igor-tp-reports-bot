@@ -27,6 +27,7 @@ import {
 import {
   editTelegramMessageText,
   sendTelegramMessage,
+  sendTelegramMessageStrict,
 } from "@/features/telegram/telegram-client";
 import type {
   TelegramInlineKeyboardMarkup,
@@ -82,6 +83,7 @@ const TP_RUN_COMMAND_PATTERN = /^\/tp_run(?:@\w+)?(?:\s+|$)/;
 const TP_RUN_WEEK_COMMAND_PATTERN = /^\/tp_run_week(?:@\w+)?(?:\s+|$)/;
 const TP_JOBS_COMMAND_PATTERN = /^\/tp_jobs(?:@\w+)?(?:\s+|$)/;
 const TP_WEEKLY_COMMAND_PATTERN = /^\/tp_weekly(?:@\w+)?(?:\s+|$)/;
+const TP_BUSINESS_TEST_COMMAND_PATTERN = /^\/tp_business_test(?:@\w+)?(?:\s+|$)/;
 const TP_COMMAND_PATTERN = /^\/tp(?:_[a-z0-9_]+)?(?:@\w+)?(?:\s+|$)/;
 const SHORT_DATE_FORMATTER = new Intl.DateTimeFormat("ru-RU", {
   day: "numeric",
@@ -104,6 +106,7 @@ type TrainingPeaksCommand =
   | "tp_run_week"
   | "tp_jobs"
   | "tp_weekly"
+  | "tp_business_test"
   | "unknown";
 
 type TrainingPeaksWeek = {
@@ -245,6 +248,10 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
 
   if (TP_WEEKLY_COMMAND_PATTERN.test(text)) {
     return "tp_weekly";
+  }
+
+  if (TP_BUSINESS_TEST_COMMAND_PATTERN.test(text)) {
+    return "tp_business_test";
   }
 
   if (TP_COMMAND_PATTERN.test(text)) {
@@ -782,6 +789,22 @@ function getAddStudentExpiredMessage(): string {
 function normalizeTpRunCommand(text: string): string {
   const args = text.replace(TP_RUN_COMMAND_PATTERN, "").trim();
   return args ? `/tp_run_week ${args}` : "/tp_run_week";
+}
+
+function parseTpBusinessTestChatId(text: string): string | null {
+  const args = text.replace(TP_BUSINESS_TEST_COMMAND_PATTERN, "").trim();
+
+  if (!args) {
+    return null;
+  }
+
+  const tokens = args.split(/\s+/);
+
+  if (tokens.length !== 1) {
+    return null;
+  }
+
+  return /^-?\d+$/.test(tokens[0] ?? "") ? tokens[0]! : null;
 }
 
 function formatTpRunAliasMessage(message: string): string {
@@ -2305,6 +2328,48 @@ async function handleTrainingPeaksJobs(parsedMessage: ParsedTelegramUpdate): Pro
   await showTrainingPeaksJobsMenu(parsedMessage);
 }
 
+async function handleTrainingPeaksBusinessTest(
+  parsedMessage: ParsedTelegramUpdate,
+  text: string
+): Promise<void> {
+  const targetChatId = parseTpBusinessTestChatId(text);
+  const businessConnectionId = process.env.TELEGRAM_BUSINESS_CONNECTION_ID?.trim();
+
+  if (!businessConnectionId) {
+    await sendTelegramMessage(
+      parsedMessage.chatId,
+      "Missing TELEGRAM_BUSINESS_CONNECTION_ID. Connect the business account first and copy the id from business_connection webhook logs."
+    );
+    return;
+  }
+
+  if (!targetChatId) {
+    await sendTelegramMessage(parsedMessage.chatId, "/tp_business_test <chat_id>");
+    return;
+  }
+
+  try {
+    await sendTelegramMessageStrict(
+      targetChatId,
+      "Тестовое сообщение от Игоря через TrainingPeaks Reports Bot ✅",
+      {
+        businessConnectionId,
+      }
+    );
+    await sendTelegramMessage(
+      parsedMessage.chatId,
+      `✅ Бизнес-сообщение отправлено в чат ${targetChatId}.`
+    );
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unknown error while sending Telegram business message";
+    await sendTelegramMessage(
+      parsedMessage.chatId,
+      `Не удалось отправить бизнес-сообщение в чат ${targetChatId}: ${message}`
+    );
+  }
+}
+
 function getWeekResultMarkup(options?: {
   includeJobsButton?: boolean;
 }): TelegramInlineKeyboardMarkup {
@@ -2664,6 +2729,11 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_weekly") {
       await sendTrainingPeaksMessage(parsedMessage.chatId, TP_WEEKLY_DISABLED_MESSAGE);
+      return "handled";
+    }
+
+    if (command === "tp_business_test") {
+      await handleTrainingPeaksBusinessTest(parsedMessage, text);
       return "handled";
     }
 

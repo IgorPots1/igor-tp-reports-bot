@@ -37,6 +37,20 @@ export type TelegramMessage = {
   from?: TelegramUser;
   text?: string;
   caption?: string;
+  business_connection_id?: string;
+};
+
+export type TelegramBusinessConnection = {
+  id: string;
+  user_chat_id?: number;
+  is_enabled?: boolean;
+  can_reply?: boolean;
+};
+
+export type TelegramBusinessMessagesDeleted = {
+  business_connection_id: string;
+  chat: TelegramChat;
+  message_ids: number[];
 };
 
 export type TelegramCallbackQuery = {
@@ -50,4 +64,8 @@ export type TelegramUpdate = {
   update_id: number;
   message?: TelegramMessage;
   callback_query?: TelegramCallbackQuery;
+  business_connection?: TelegramBusinessConnection;
+  business_message?: TelegramMessage;
+  edited_business_message?: TelegramMessage;
+  deleted_business_messages?: TelegramBusinessMessagesDeleted;
 };

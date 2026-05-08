@@ -76,6 +76,45 @@ export async function POST(request: Request) {
     return okResponse();
   }
 
+  if (update.business_connection) {
+    console.info("Telegram business connection update", {
+      connectionId: update.business_connection.id,
+      userChatId: update.business_connection.user_chat_id,
+      isEnabled: update.business_connection.is_enabled,
+      canReply: update.business_connection.can_reply,
+    });
+    return okResponse();
+  }
+
+  if (update.business_message) {
+    console.info("Telegram business message received", {
+      businessConnectionId: update.business_message.business_connection_id,
+      chatId: update.business_message.chat?.id,
+      text: update.business_message.text ?? update.business_message.caption,
+    });
+    return okResponse();
+  }
+
+  if (update.edited_business_message) {
+    console.info("Telegram edited business message received", {
+      businessConnectionId: update.edited_business_message.business_connection_id,
+      chatId: update.edited_business_message.chat?.id,
+      text: update.edited_business_message.text ?? update.edited_business_message.caption,
+    });
+    return okResponse();
+  }
+
+  if (update.deleted_business_messages) {
+    console.info("Telegram deleted business messages received", {
+      businessConnectionId: update.deleted_business_messages.business_connection_id,
+      chatId: update.deleted_business_messages.chat?.id,
+      count: Array.isArray(update.deleted_business_messages.message_ids)
+        ? update.deleted_business_messages.message_ids.length
+        : 0,
+    });
+    return okResponse();
+  }
+
   const parsedMessage = parseTelegramUpdate(update);
 
   if (!parsedMessage) {
