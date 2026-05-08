@@ -1,10 +1,13 @@
 import {
+  approveTrainingPeaksWeeklyReportIfDraft,
   cancelQueuedTrainingPeaksJob,
   createTrainingPeaksWeeklyJob,
   disableTrainingPeaksStudentById,
   enableTrainingPeaksStudentById,
   findActiveTrainingPeaksJobForWeek,
   getTrainingPeaksJobById,
+  getTrainingPeaksStudentById,
+  getTrainingPeaksWeeklyReportById,
   recoverStaleTrainingPeaksRunningJobs,
   insertTrainingPeaksStudent,
   listAllTrainingPeaksReports,
@@ -17,6 +20,10 @@ import {
   type TrainingPeaksStudent,
   type TrainingPeaksWeek,
   type TrainingPeaksWeeklyReport,
+  type UpdateTrainingPeaksStudentTelegramContactInput,
+  type UpdateTrainingPeaksWeeklyReportStateInput,
+  updateTrainingPeaksStudentTelegramContactById,
+  updateTrainingPeaksWeeklyReportStateById,
 } from "@/features/trainingpeaks/repository";
 import { resolveTrainingPeaksWeekKeyword } from "@/features/trainingpeaks/week";
 
@@ -58,6 +65,10 @@ export type TrainingPeaksRegistryStudentSnapshot = {
   trainingPeaksAthleteUrl: string;
   isActive: boolean;
   weeklyReportEnabled: boolean;
+  telegramChatId: string | null;
+  telegramUsername: string | null;
+  telegramProfileUrl: string | null;
+  telegramDeliveryEnabled: boolean;
   dataQualityStatus: string | null;
   notes: string | null;
   latestWeekFrom: string | null;
@@ -675,6 +686,10 @@ export async function getTrainingPeaksStudentsRegistryWithLatestReportStatus(): 
         trainingPeaksAthleteUrl: student.trainingPeaksAthleteUrl,
         isActive: student.isActive,
         weeklyReportEnabled: student.weeklyReportEnabled,
+        telegramChatId: student.telegramChatId,
+        telegramUsername: student.telegramUsername,
+        telegramProfileUrl: student.telegramProfileUrl,
+        telegramDeliveryEnabled: student.telegramDeliveryEnabled,
         dataQualityStatus: student.dataQualityStatus,
         notes: student.notes,
         latestWeekFrom: latestReport?.weekFrom ?? null,
@@ -799,4 +814,43 @@ export async function getTrainingPeaksLatestReportSnapshotByInternalId(
   }
 
   return getTrainingPeaksReportSnapshot(student.studentId);
+}
+
+export async function updateTrainingPeaksStudentTelegramContactByInternalId(
+  id: string,
+  input: UpdateTrainingPeaksStudentTelegramContactInput
+): Promise<TrainingPeaksRegistryStudentSnapshot | null> {
+  const existingStudent = await getTrainingPeaksStudentById(id);
+
+  if (!existingStudent) {
+    return null;
+  }
+
+  await updateTrainingPeaksStudentTelegramContactById(id, input);
+  return getTrainingPeaksRegistryStudentByInternalId(id);
+}
+
+export async function getTrainingPeaksWeeklyReportByInternalId(
+  id: string
+): Promise<TrainingPeaksWeeklyReport | null> {
+  return getTrainingPeaksWeeklyReportById(id);
+}
+
+export async function updateTrainingPeaksWeeklyReportStateByInternalId(
+  id: string,
+  input: UpdateTrainingPeaksWeeklyReportStateInput
+): Promise<TrainingPeaksWeeklyReport | null> {
+  const existingReport = await getTrainingPeaksWeeklyReportById(id);
+
+  if (!existingReport) {
+    return null;
+  }
+
+  return updateTrainingPeaksWeeklyReportStateById(id, input);
+}
+
+export async function approveTrainingPeaksWeeklyReportDraftByInternalId(
+  id: string
+): Promise<TrainingPeaksWeeklyReport | null> {
+  return approveTrainingPeaksWeeklyReportIfDraft(id);
 }

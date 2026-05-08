@@ -7,6 +7,10 @@ export type TrainingPeaksStudent = {
   trainingPeaksAthleteUrl: string;
   isActive: boolean;
   weeklyReportEnabled: boolean;
+  telegramChatId: string | null;
+  telegramUsername: string | null;
+  telegramProfileUrl: string | null;
+  telegramDeliveryEnabled: boolean;
   dataQualityStatus: string | null;
   notes: string | null;
   createdAt: string;
@@ -20,6 +24,10 @@ type TrainingPeaksStudentRow = {
   trainingpeaks_athlete_url: string;
   is_active: boolean;
   weekly_report_enabled: boolean;
+  telegram_chat_id: string | null;
+  telegram_username: string | null;
+  telegram_profile_url: string | null;
+  telegram_delivery_enabled: boolean;
   data_quality_status: string | null;
   notes: string | null;
   created_at: string;
@@ -32,8 +40,19 @@ export type InsertTrainingPeaksStudentInput = {
   trainingPeaksAthleteUrl: string;
   isActive?: boolean;
   weeklyReportEnabled?: boolean;
+  telegramChatId?: string | null;
+  telegramUsername?: string | null;
+  telegramProfileUrl?: string | null;
+  telegramDeliveryEnabled?: boolean;
   dataQualityStatus?: string | null;
   notes?: string | null;
+};
+
+export type UpdateTrainingPeaksStudentTelegramContactInput = {
+  telegramChatId?: string | null;
+  telegramUsername?: string | null;
+  telegramProfileUrl?: string | null;
+  telegramDeliveryEnabled?: boolean;
 };
 
 export class TrainingPeaksStudentConflictError extends Error {
@@ -58,6 +77,10 @@ export type TrainingPeaksWeeklyReport = {
   warnings: unknown | null;
   syncedAt: string;
   reviewStatus: string;
+  approvedAt: string | null;
+  sentAt: string | null;
+  sentToChatId: string | null;
+  deliveryError: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -74,8 +97,20 @@ type TrainingPeaksWeeklyReportRow = {
   warnings: unknown | null;
   synced_at: string;
   review_status: string;
+  approved_at: string | null;
+  sent_at: string | null;
+  sent_to_chat_id: string | null;
+  delivery_error: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type UpdateTrainingPeaksWeeklyReportStateInput = {
+  reviewStatus?: string;
+  approvedAt?: string | null;
+  sentAt?: string | null;
+  sentToChatId?: string | null;
+  deliveryError?: string | null;
 };
 
 export type TrainingPeaksWeek = {
@@ -148,6 +183,10 @@ function mapTrainingPeaksStudentRow(row: TrainingPeaksStudentRow): TrainingPeaks
     trainingPeaksAthleteUrl: row.trainingpeaks_athlete_url,
     isActive: row.is_active,
     weeklyReportEnabled: row.weekly_report_enabled,
+    telegramChatId: row.telegram_chat_id,
+    telegramUsername: row.telegram_username,
+    telegramProfileUrl: row.telegram_profile_url,
+    telegramDeliveryEnabled: row.telegram_delivery_enabled,
     dataQualityStatus: row.data_quality_status,
     notes: row.notes,
     createdAt: row.created_at,
@@ -170,6 +209,10 @@ function mapTrainingPeaksWeeklyReportRow(
     warnings: row.warnings,
     syncedAt: row.synced_at,
     reviewStatus: row.review_status,
+    approvedAt: row.approved_at,
+    sentAt: row.sent_at,
+    sentToChatId: row.sent_to_chat_id,
+    deliveryError: row.delivery_error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -198,6 +241,12 @@ function mapTrainingPeaksJobRow(row: TrainingPeaksJobRow): TrainingPeaksJob {
     finishedAt: row.finished_at,
     updatedAt: row.updated_at,
   };
+}
+
+function pickDefinedValues<T extends Record<string, unknown>>(value: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entryValue]) => entryValue !== undefined)
+  ) as Partial<T>;
 }
 
 function getTrainingPeaksStudentConflictReason(error: {
@@ -249,6 +298,10 @@ export async function insertTrainingPeaksStudent(
       trainingpeaks_athlete_url: input.trainingPeaksAthleteUrl,
       is_active: input.isActive ?? true,
       weekly_report_enabled: input.weeklyReportEnabled ?? true,
+      telegram_chat_id: input.telegramChatId ?? null,
+      telegram_username: input.telegramUsername ?? null,
+      telegram_profile_url: input.telegramProfileUrl ?? null,
+      telegram_delivery_enabled: input.telegramDeliveryEnabled ?? false,
       data_quality_status: input.dataQualityStatus ?? null,
       notes: input.notes ?? null,
     })
@@ -281,6 +334,65 @@ export async function listTrainingPeaksStudents(): Promise<TrainingPeaksStudent[
   }
 
   return ((data as TrainingPeaksStudentRow[]) ?? []).map(mapTrainingPeaksStudentRow);
+}
+
+export async function getTrainingPeaksStudentById(id: string): Promise<TrainingPeaksStudent | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_students")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to get TrainingPeaks student ${id}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
+}
+
+export async function updateTrainingPeaksStudentTelegramContactById(
+  id: string,
+  input: UpdateTrainingPeaksStudentTelegramContactInput
+): Promise<TrainingPeaksStudent> {
+  const updates = pickDefinedValues({
+    telegram_chat_id: input.telegramChatId,
+    telegram_username: input.telegramUsername,
+    telegram_profile_url: input.telegramProfileUrl,
+    telegram_delivery_enabled: input.telegramDeliveryEnabled,
+  });
+
+  if (Object.keys(updates).length === 0) {
+    const existingStudent = await getTrainingPeaksStudentById(id);
+
+    if (!existingStudent) {
+      throw new Error(`Failed to update TrainingPeaks student ${id}: student not found`);
+    }
+
+    return existingStudent;
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_students")
+    .update(updates)
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to update TrainingPeaks student ${id}: ${error.message}`);
+  }
+
+  if (!data) {
+    throw new Error(`Failed to update TrainingPeaks student ${id}: student not found`);
+  }
+
+  return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
 }
 
 export async function disableTrainingPeaksStudentById(id: string): Promise<TrainingPeaksStudent> {
@@ -394,6 +506,94 @@ export async function listAllTrainingPeaksReports(): Promise<TrainingPeaksWeekly
   }
 
   return reports;
+}
+
+export async function getTrainingPeaksWeeklyReportById(
+  id: string
+): Promise<TrainingPeaksWeeklyReport | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_weekly_reports")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to get TrainingPeaks weekly report ${id}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksWeeklyReportRow(data as TrainingPeaksWeeklyReportRow);
+}
+
+export async function updateTrainingPeaksWeeklyReportStateById(
+  id: string,
+  input: UpdateTrainingPeaksWeeklyReportStateInput
+): Promise<TrainingPeaksWeeklyReport> {
+  const updates = pickDefinedValues({
+    review_status: input.reviewStatus,
+    approved_at: input.approvedAt,
+    sent_at: input.sentAt,
+    sent_to_chat_id: input.sentToChatId,
+    delivery_error: input.deliveryError,
+  });
+
+  if (Object.keys(updates).length === 0) {
+    const existingReport = await getTrainingPeaksWeeklyReportById(id);
+
+    if (!existingReport) {
+      throw new Error(`Failed to update TrainingPeaks weekly report ${id}: report not found`);
+    }
+
+    return existingReport;
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_weekly_reports")
+    .update(updates)
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to update TrainingPeaks weekly report ${id}: ${error.message}`);
+  }
+
+  if (!data) {
+    throw new Error(`Failed to update TrainingPeaks weekly report ${id}: report not found`);
+  }
+
+  return mapTrainingPeaksWeeklyReportRow(data as TrainingPeaksWeeklyReportRow);
+}
+
+export async function approveTrainingPeaksWeeklyReportIfDraft(
+  id: string
+): Promise<TrainingPeaksWeeklyReport | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_weekly_reports")
+    .update({
+      review_status: "approved",
+      approved_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .eq("review_status", "draft")
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to approve TrainingPeaks weekly report ${id}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksWeeklyReportRow(data as TrainingPeaksWeeklyReportRow);
 }
 
 export async function createTrainingPeaksWeeklyJob(
