@@ -58,12 +58,14 @@ type SegmentComparisonEntry = {
   planned_duration_minutes?: number | null;
   planned_targets?: {
     pace_min_per_km?: PaceTarget | null;
+    pace_text?: string | null;
     hr_bpm?: HrbpmTarget | null;
   };
   actual?: {
     duration_minutes?: number | null;
     distance_km?: number | null;
     avg_pace_min_per_km?: number | null;
+    avg_pace_text?: string | null;
     avg_hr?: number | null;
     avg_cadence?: number | null;
     avg_power?: number | null;
@@ -285,6 +287,10 @@ function buildSystemPrompt(): string {
     "Если suspicious_if или suspicious_tss=true, упоминай это как ограничение данных и не строй сильные выводы на IF/TSS.",
     "Для анализа по блокам используй только workouts[].segment_analysis и workouts[].segment_comparison.",
     "Никогда не оценивай отдельные блоки тренировки по whole-workout average pace/HR.",
+    "Для фактического темпа блока используй только workouts[].segment_comparison[].actual.avg_pace_text.",
+    "Для планового темпа блока используй workouts[].segment_comparison[].planned_targets.pace_text, если оно есть.",
+    "Не конвертируй avg_pace_min_per_km вручную и не печатай десятичные значения темпа напрямую.",
+    "Если у блока нет formatted pace text, не угадывай и не выводи темп текстом.",
     "Никогда не выводи фактические метрики блока, если их нет в workouts[].segment_comparison[].actual.",
     "Никогда не придумывай block-level pace/HR/distance и не рассчитывай их вручную.",
     "Если workouts[].segment_comparison[] недоступен, можно опираться только на planned.segments и сводку по тренировке, но без фактических метрик отдельных блоков.",
@@ -305,12 +311,13 @@ function buildSystemPrompt(): string {
     "Если top-level segment_analysis.reason='no_workout_files', используй формулировку уровня: 'Разбор по блокам недоступен: Workout Files отсутствуют, поэтому доступны только сводные данные Workout Summary.'",
     "Если top-level segment_analysis.reason='no_matches', используй формулировку уровня: 'Workout Files есть, но тренировки не удалось надежно сопоставить с FIT-файлами.'",
     "Если planned сегментов в неделе нет или segment_analysis.reason='not_computed', коротко укажи, что разбор по блокам не применялся.",
+    "Если workout.classification.is_skipped=true или workout.classification.type='planned_skipped', обязательно пиши: 'Тренировка пропущена, разбор по блокам не требуется.' Не упоминай FIT matching, fit_not_matched или причины недоступности блоков для такой тренировки.",
     "Раздел 3: для каждой тренировки выбери один режим.",
     "Режим A, segment-aware: если workout.segment_analysis.available=true и workout.segment_comparison.length>0. В этом режиме предпочитай segment_comparison над whole-workout comparison.",
     "Режим B, segment fallback: если planned.segments есть, но workout.segment_analysis.available=false. В этом режиме объясни причину недоступности блоков и не пиши фактический pace/HR отдельных блоков.",
     "Режим C, legacy workout-level: если planned.segments нет или детализация по блокам не добавляет ценности.",
-    "В режиме A используй компактный формат вроде: 'План: Разминка — 10 мин @ 5:44-5:57/км. Факт: 10 мин, 1.72 км, 5:50/км, средний пульс 142. Оценка: темп в диапазоне.'",
-    "В режиме B используй формулировки вроде: 'Разбор по блокам недоступен: Workout Files отсутствуют, поэтому доступны только сводные данные Workout Summary.', 'Разбор по блокам недоступен: не удалось сопоставить тренировку с FIT-файлом.', 'Разбор по блокам недоступен: структура повторов в плане пока не поддерживается автоматически.', 'Разбор по блокам недоступен: в FIT нет надежной timer_time-разметки.', 'Разбор по блокам недоступен: блоки есть, но автоматическое сравнение ограничено.'",
+    "В режиме A используй компактный формат вроде: 'План: Разминка — 10 мин @ 5:44–5:57/км. Факт: 10 мин, 1.72 км, 5:50/км, средний пульс 142. Оценка: темп в диапазоне.' Используй только готовые pace_text поля.",
+    "В режиме B используй формулировки вроде: 'Разбор по блокам недоступен: Workout Files отсутствуют, поэтому доступны только сводные данные Workout Summary.', 'Разбор по блокам недоступен: не удалось сопоставить тренировку с FIT-файлом.', 'Разбор по блокам недоступен: структура повторов в плане пока не поддерживается автоматически.', 'Разбор по блокам недоступен: в FIT нет надежной timer_time-разметки.', 'Разбор по блокам недоступен: блоки есть, но автоматическое сравнение ограничено.'. Для skipped-тренировки вместо этого всегда используй: 'Тренировка пропущена, разбор по блокам не требуется.'",
     "Тон: кратко, профессионально, по-тренерски, без воды и без чрезмерной уверенности.",
     "Верни только Markdown без пояснений вне отчета.",
     "Используй ровно эту структуру и заголовки:",
@@ -341,14 +348,18 @@ function buildUserPrompt(summary: WeeklySummary): string {
     "- Если есть data_quality warnings, кратко укажи ограничения оценки.",
     "- Для анализа по блокам используй только workouts[].segment_analysis и workouts[].segment_comparison[].",
     "- Не делай выводы по отдельным блокам из whole-workout average pace/HR.",
+    "- Для темпа блока используй только workouts[].segment_comparison[].actual.avg_pace_text и workouts[].segment_comparison[].planned_targets.pace_text.",
+    "- Не конвертируй workouts[].segment_comparison[].actual.avg_pace_min_per_km вручную и не печатай decimal pace напрямую.",
+    "- Если pace_text отсутствует, не угадывай и не выводи темп текстом.",
     "- Если segment_comparison недоступен, не пиши фактический темп/пульс/дистанцию блока.",
     "- Если top-level segment_analysis.available=true, в разделе 2 добавь короткий bullet вида: 'Разбор по блокам доступен для X тренировок...'.",
     "- Если source.workout_files.present=false или top-level segment_analysis.reason='no_workout_files', в разделе 2 добавь: 'Разбор по блокам недоступен: Workout Files отсутствуют, поэтому доступны только сводные данные Workout Summary.'",
     "- Если top-level segment_analysis.reason='no_matches', в разделе 2 добавь: 'Workout Files есть, но тренировки не удалось надежно сопоставить с FIT-файлами.'",
-    "- Для тренировки с available segment comparison используй компактные формулировки вида: 'Разбор по блокам доступен.', 'План: Разминка — 10 мин @ 5:44-5:57/км.', 'Факт: 10 мин, 1.72 км, 5:50/км, средний пульс 142.', 'Оценка: темп в диапазоне.'",
+    "- Если workout.classification.is_skipped=true или workout.classification.type='planned_skipped', пиши ровно: 'Тренировка пропущена, разбор по блокам не требуется.' Не упоминай FIT matching и segment_analysis.reason для такой тренировки.",
+    "- Для тренировки с available segment comparison используй компактные формулировки вида: 'Разбор по блокам доступен.', 'План: Разминка — 10 мин @ 5:44–5:57/км.', 'Факт: 10 мин, 1.72 км, 5:50/км, средний пульс 142.', 'Оценка: темп в диапазоне.'. Используй только готовые pace_text поля.",
     "- Для partial coverage пиши: 'Вывод только по доступной части блока.'",
     "- Если source.workout_files.present=false или top-level segment_analysis.reason='no_workout_files', то для всех тренировок в fallback используй формулировку про отсутствие Workout Files, а не про несопоставленный FIT.",
-    "- Для fallback используй формулировки вроде: 'Разбор по блокам недоступен: Workout Files отсутствуют, поэтому доступны только сводные данные Workout Summary.', 'Разбор по блокам недоступен: не удалось сопоставить тренировку с FIT-файлом.', 'Разбор по блокам недоступен: структура повторов в плане пока не поддерживается автоматически.'",
+    "- Для fallback используй формулировки вроде: 'Разбор по блокам недоступен: Workout Files отсутствуют, поэтому доступны только сводные данные Workout Summary.', 'Разбор по блокам недоступен: не удалось сопоставить тренировку с FIT-файлом.', 'Разбор по блокам недоступен: структура повторов в плане пока не поддерживается автоматически.'. Для skipped не используй fallback-причины.",
     "- Не перечисляй больше 3 блоков на тренировку; для интервальных работ суммируй повторы.",
     "- Не используй source.workout_files, segment_analysis или segment_comparison для собственных вычислений; только для аккуратного описания того, что уже есть в JSON.",
     "- Не используй raw для собственных расчетов.",

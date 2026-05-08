@@ -254,12 +254,14 @@ type SegmentComparisonEntry = {
   planned_duration_minutes: number | null;
   planned_targets: {
     pace_min_per_km: PaceTarget | null;
+    pace_text: string | null;
     hr_bpm: HrbpmTarget | null;
   };
   actual: {
     duration_minutes: number | null;
     distance_km: number | null;
     avg_pace_min_per_km: number | null;
+    avg_pace_text: string | null;
     avg_hr: number | null;
     avg_cadence: number | null;
     avg_power: number | null;
@@ -1144,7 +1146,7 @@ function deriveAveragePaceMinPerKm(
   return roundNumber(durationMinutes / distanceKm, 2);
 }
 
-function formatPaceMinPerKm(paceMinPerKm: number | null): string | null {
+function formatPaceMinPerKm(paceMinPerKm: number | null, suffix = "/km"): string | null {
   if (paceMinPerKm === null || !Number.isFinite(paceMinPerKm) || paceMinPerKm <= 0) {
     return null;
   }
@@ -1152,7 +1154,7 @@ function formatPaceMinPerKm(paceMinPerKm: number | null): string | null {
   const totalSeconds = Math.round(paceMinPerKm * 60);
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
-  return `${minutes}:${String(seconds).padStart(2, "0")}/km`;
+  return `${minutes}:${String(seconds).padStart(2, "0")}${suffix}`;
 }
 
 function formatPaceValue(paceMinPerKm: number): string {
@@ -1160,6 +1162,14 @@ function formatPaceValue(paceMinPerKm: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatPaceTargetRange(target: PaceTarget | null, suffix = "/km"): string | null {
+  if (target === null) {
+    return null;
+  }
+
+  return `${formatPaceValue(target.fast_min_per_km)}–${formatPaceValue(target.slow_min_per_km)}${suffix}`;
 }
 
 function parsePaceValueToMinutes(value: string): number | null {
@@ -2875,6 +2885,8 @@ function buildUnsupportedSegmentComparisonEntry(
   segment: ExpandedPlannedSegment,
   flags: string[]
 ): SegmentComparisonEntry {
+  const comparablePaceTarget = getComparablePaceTarget(segment.targets);
+
   return {
     order: segment.order,
     planned_segment_order: segment.planned_segment_order,
@@ -2886,12 +2898,14 @@ function buildUnsupportedSegmentComparisonEntry(
     planned_duration_minutes: segment.duration_minutes,
     planned_targets: {
       pace_min_per_km: segment.targets.pace_min_per_km,
+      pace_text: formatPaceTargetRange(comparablePaceTarget, "/км"),
       hr_bpm: segment.targets.hr_bpm
     },
     actual: {
       duration_minutes: null,
       distance_km: null,
       avg_pace_min_per_km: null,
+      avg_pace_text: null,
       avg_hr: null,
       avg_cadence: null,
       avg_power: null
@@ -3291,6 +3305,7 @@ function analyzeWorkoutSegmentComparisonFromFit(
         ? roundNumber(sliceMetrics.distance_m / 1000, 2)
         : null;
     const actualPace = deriveAveragePaceMinPerKm(actualDistanceKm, actualDurationMinutes);
+    const comparablePaceTarget = getComparablePaceTarget(segment.targets);
     const flags = [...segment.data_quality_flags];
     if (segment.targets.pace_min_per_km === null && segment.targets.pace_ranges.length > 1) {
       flags.push("pace_target_ambiguous");
@@ -3319,19 +3334,21 @@ function analyzeWorkoutSegmentComparisonFromFit(
       planned_duration_minutes: segment.duration_minutes,
       planned_targets: {
         pace_min_per_km: segment.targets.pace_min_per_km,
+        pace_text: formatPaceTargetRange(comparablePaceTarget, "/км"),
         hr_bpm: segment.targets.hr_bpm
       },
       actual: {
         duration_minutes: actualDurationMinutes,
         distance_km: actualDistanceKm,
         avg_pace_min_per_km: actualPace,
+        avg_pace_text: formatPaceMinPerKm(actualPace, "/км"),
         avg_hr: sliceMetrics.avg_hr,
         avg_cadence: sliceMetrics.avg_cadence,
         avg_power: sliceMetrics.avg_power
       },
       coverage,
       coverage_ratio: coverageRatio,
-      pace_vs_target: compareSegmentPaceAgainstTarget(actualPace, getComparablePaceTarget(segment.targets)),
+      pace_vs_target: compareSegmentPaceAgainstTarget(actualPace, comparablePaceTarget),
       hr_vs_target: compareSegmentHrAgainstTarget(sliceMetrics.avg_hr, segment.targets.hr_bpm),
       data_quality_flags: [...new Set(flags)]
     });
