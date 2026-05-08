@@ -7,10 +7,13 @@ import {
   addTrainingPeaksStudentFromCommand,
   cancelTrainingPeaksWeeklyRun,
   claimTrainingPeaksWeeklyReportForSend,
+  consumeTrainingPeaksStudentTelegramLinkCode,
+  createTrainingPeaksStudentTelegramLinkCode,
   disableTrainingPeaksStudent,
   disableTrainingPeaksStudentByInternalId,
   enableTrainingPeaksStudent,
   enableTrainingPeaksStudentByInternalId,
+  findTrainingPeaksBusinessChatsByUsername,
   getTrainingPeaksJobsStatus,
   getTrainingPeaksBusinessChatByInternalId,
   getTrainingPeaksLatestReportSnapshotByInternalId,
@@ -28,6 +31,7 @@ import {
   requestTrainingPeaksWeeklyRun,
   updateTrainingPeaksWeeklyReportStateByInternalId,
   updateTrainingPeaksStudentTelegramContact,
+  upsertTrainingPeaksBusinessChatFromMessage,
 } from "@/features/trainingpeaks/service";
 import {
   resolveTrainingPeaksWeekKeyword,
@@ -39,6 +43,7 @@ import {
 } from "@/features/telegram/telegram-client";
 import type {
   TelegramInlineKeyboardMarkup,
+  TelegramMessage,
   TelegramReplyKeyboardMarkup,
 } from "@/features/telegram/types";
 
@@ -60,6 +65,8 @@ const TP_CALLBACK_REPORTS = "tp:reports";
 const TP_CALLBACK_REPORT_SEND_PREFIX = "tp:rs:";
 const TP_CALLBACK_REPORT_SKIP_PREFIX = "tp:rk:";
 const TP_CALLBACK_STUDENT_LINK_PREFIX = "tp:sl:";
+const TP_CALLBACK_STUDENT_USERNAME_PREFIX = "tp:su:";
+const TP_CALLBACK_STUDENT_LINK_CODE_PREFIX = "tp:sk:";
 const TP_CALLBACK_STUDENT_SELECT_CHAT_PREFIX = "tp:sc:";
 const TP_CALLBACK_STUDENT_TEST_PREFIX = "tp:st:";
 const TP_REPLY_BUTTON_MENU = "🏠 Меню";
@@ -75,12 +82,15 @@ const TP_REPLY_BUTTON_JOBS_REFRESH = "🔄 Обновить задачи";
 const TP_REPLY_BUTTON_CANCEL_JOB = "❌ Отменить задачу";
 const TP_REPLY_BUTTON_REPORT = "📄 Отчёт";
 const TP_REPLY_BUTTON_TELEGRAM_LINK = "🔗 Привязать Telegram";
+const TP_REPLY_BUTTON_TELEGRAM_USERNAME = "🔎 Найти по username";
+const TP_REPLY_BUTTON_TELEGRAM_CODE = "🔗 Код привязки";
 const TP_REPLY_BUTTON_TELEGRAM_TEST = "📨 Отправить тест";
 const TP_REPLY_BUTTON_DISABLE = "⛔ Отключить";
 const TP_REPLY_BUTTON_ENABLE = "✅ Включить";
 const TP_CHAT_CONTEXT_TTL_MS = 30 * 60 * 1000;
 const TP_ADD_STUDENT_WAITING_TTL_MS = 10 * 60 * 1000;
 const TP_TELEGRAM_LINK_OPTIONS_TTL_MS = 10 * 60 * 1000;
+const TP_TELEGRAM_USERNAME_WAITING_TTL_MS = 10 * 60 * 1000;
 const TP_ADD_STUDENT_EXAMPLE =
   "Valentin https://app.trainingpeaks.com/#calendar/athletes/5673496";
 const TP_TRAININGPEAKS_URL_PATTERN = /\bhttps?:\/\/\S*trainingpeaks\.com\S*/i;
@@ -101,6 +111,7 @@ const TP_JOBS_COMMAND_PATTERN = /^\/tp_jobs(?:@\w+)?(?:\s+|$)/;
 const TP_WEEKLY_COMMAND_PATTERN = /^\/tp_weekly(?:@\w+)?(?:\s+|$)/;
 const TP_BUSINESS_TEST_COMMAND_PATTERN = /^\/tp_business_test(?:@\w+)?(?:\s+|$)/;
 const TP_SET_TELEGRAM_COMMAND_PATTERN = /^\/tp_set_telegram(?:@\w+)?(?:\s+|$)/;
+const TP_BIND_COMMAND_PATTERN = /^\/tp_bind(?:@\w+)?(?:\s+|$)/;
 const TP_COMMAND_PATTERN = /^\/tp(?:_[a-z0-9_]+)?(?:@\w+)?(?:\s+|$)/;
 const SHORT_DATE_FORMATTER = new Intl.DateTimeFormat("ru-RU", {
   day: "numeric",
@@ -125,6 +136,7 @@ type TrainingPeaksCommand =
   | "tp_weekly"
   | "tp_business_test"
   | "tp_set_telegram"
+  | "tp_bind"
   | "unknown";
 
 type TrainingPeaksWeek = {
@@ -145,6 +157,8 @@ type ParsedTrainingPeaksCallback =
   | { kind: "student_disable"; studentId: string }
   | { kind: "student_enable"; studentId: string }
   | { kind: "student_link"; studentId: string }
+  | { kind: "student_username_prompt"; studentId: string }
+  | { kind: "student_link_code"; studentId: string }
   | { kind: "student_choose_chat"; studentId: string; chatKey: string }
   | { kind: "student_test"; studentId: string }
   | { kind: "report_send"; reportId: string }
@@ -160,6 +174,7 @@ type TrainingPeaksScreen =
   | "main_menu"
   | "students"
   | "student_actions"
+  | "student_username_waiting"
   | "week"
   | "jobs"
   | "add_student_waiting";
@@ -203,6 +218,8 @@ type TrainingPeaksReplyKeyboardAction =
   | "cancel_job"
   | "student_report"
   | "student_link"
+  | "student_username"
+  | "student_link_code"
   | "student_test"
   | "student_disable"
   | "student_enable";
@@ -288,6 +305,10 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
 
   if (TP_SET_TELEGRAM_COMMAND_PATTERN.test(text)) {
     return "tp_set_telegram";
+  }
+
+  if (TP_BIND_COMMAND_PATTERN.test(text)) {
+    return "tp_bind";
   }
 
   if (TP_COMMAND_PATTERN.test(text)) {
@@ -481,6 +502,23 @@ function setTrainingPeaksAddStudentWaitingContext(chatId: number | string): void
   );
 }
 
+function setTrainingPeaksUsernameWaitingContext(
+  chatId: number | string,
+  studentId: string,
+  studentName: string
+): void {
+  setTrainingPeaksChatContextWithTtl(
+    chatId,
+    {
+      selectedStudentId: studentId,
+      selectedStudentName: studentName,
+      cancellableWeeklyJob: null,
+      screen: "student_username_waiting",
+    },
+    TP_TELEGRAM_USERNAME_WAITING_TTL_MS
+  );
+}
+
 function setTrainingPeaksScreenContext(
   chatId: number | string,
   screen: TrainingPeaksScreen,
@@ -620,7 +658,12 @@ function getTrainingPeaksStudentActionsReplyKeyboardMarkup(
     telegramDeliveryEnabled: boolean;
   }
 ): TelegramReplyKeyboardMarkup {
-  const rows = [[TP_REPLY_BUTTON_REPORT], [TP_REPLY_BUTTON_TELEGRAM_LINK]];
+  const rows = [
+    [TP_REPLY_BUTTON_REPORT],
+    [TP_REPLY_BUTTON_TELEGRAM_LINK],
+    [TP_REPLY_BUTTON_TELEGRAM_USERNAME],
+    [TP_REPLY_BUTTON_TELEGRAM_CODE],
+  ];
 
   if (student.telegramChatId && student.telegramDeliveryEnabled) {
     rows.push([TP_REPLY_BUTTON_TELEGRAM_TEST]);
@@ -920,6 +963,30 @@ function parseTpSetTelegramCommand(text: string): {
   };
 }
 
+function parseTpBindCommand(text: string): {
+  studentQuery: string | null;
+  username: string | null;
+} {
+  const args = text.replace(TP_BIND_COMMAND_PATTERN, "").trim();
+
+  if (!args) {
+    return {
+      studentQuery: null,
+      username: null,
+    };
+  }
+
+  const tokens = args.split(/\s+/);
+  const rawUsername = tokens[tokens.length - 1]?.trim() ?? "";
+  const studentQuery = tokens.slice(0, -1).join(" ").trim() || null;
+  const username = normalizeTelegramUsernameLookup(rawUsername);
+
+  return {
+    studentQuery,
+    username,
+  };
+}
+
 function formatTpRunAliasMessage(message: string): string {
   return message.replaceAll("/tp_run_week", "/tp_run");
 }
@@ -997,25 +1064,39 @@ function getTelegramBusinessChatDisplayName(chat: {
   return `chat ${chat.chatId}`;
 }
 
+function normalizeTelegramUsernameLookup(value: string): string | null {
+  const normalized = value.trim().replace(/^@+/, "").replace(/\s+/g, "");
+  return normalized ? normalized.toLocaleLowerCase("en-US") : null;
+}
+
+function formatTelegramUsername(username: string | null): string {
+  return username ? `@${username}` : "без username";
+}
+
+function formatLinkCodeExpiresAt(value: string): string {
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Europe/Berlin",
+  }).format(new Date(value));
+}
+
 function getStudentTelegramStatusLabel(student: {
   telegramChatId: string | null;
   telegramUsername: string | null;
   telegramDeliveryEnabled: boolean;
 }): string {
   if (!student.telegramChatId) {
-    return "не привязан";
+    return ["Статус: не привязан", "Доставка: выключена"].join("\n");
   }
 
-  const parts = [
-    student.telegramDeliveryEnabled ? "привязан" : "привязан, но доставка выключена",
-  ];
-
-  if (student.telegramUsername) {
-    parts.push(`@${student.telegramUsername}`);
-  }
-
-  parts.push(`chat_id ${student.telegramChatId}`);
-  return parts.join(" ");
+  return [
+    `Статус: привязан${student.telegramUsername ? ` ${formatTelegramUsername(student.telegramUsername)}` : ""}`,
+    `Доставка: ${student.telegramDeliveryEnabled ? "включена" : "выключена"}`,
+    `chat_id: ${student.telegramChatId}`,
+  ].join("\n");
 }
 
 function getStudentCardHint(student: {
@@ -1373,6 +1454,7 @@ export function getTrainingPeaksHelpLines(): string[] {
     "➕ Добавить — открыть режим добавления ученика",
     "▶️ Неделя — открыть меню запуска недели",
     "🧾 Задачи — посмотреть последние запуски",
+    "🔎 Найти по username / 🔗 Код привязки — быстрее привязать Telegram в карточке ученика",
     "",
     "Команды тоже работают, но обычно быстрее пользоваться кнопками.",
   ];
@@ -1429,6 +1511,14 @@ function getTrainingPeaksReplyKeyboardAction(text: string): TrainingPeaksReplyKe
 
   if (text === TP_REPLY_BUTTON_TELEGRAM_LINK) {
     return "student_link";
+  }
+
+  if (text === TP_REPLY_BUTTON_TELEGRAM_USERNAME) {
+    return "student_username";
+  }
+
+  if (text === TP_REPLY_BUTTON_TELEGRAM_CODE) {
+    return "student_link_code";
   }
 
   if (text === TP_REPLY_BUTTON_TELEGRAM_TEST) {
@@ -1499,6 +1589,8 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
     ["tp:d:", "student_disable"],
     ["tp:e:", "student_enable"],
     [TP_CALLBACK_STUDENT_LINK_PREFIX, "student_link"],
+    [TP_CALLBACK_STUDENT_USERNAME_PREFIX, "student_username_prompt"],
+    [TP_CALLBACK_STUDENT_LINK_CODE_PREFIX, "student_link_code"],
     [TP_CALLBACK_STUDENT_TEST_PREFIX, "student_test"],
   ] as const) {
     if (data.startsWith(prefix)) {
@@ -1631,6 +1723,10 @@ function getStudentCardMenuMarkup(
   const rows: TrainingPeaksMenuButton[][] = [
     [createMenuButton("📄 Отчёт", `tp:r:${student.id}`)],
     [createMenuButton("🔗 Привязать Telegram", `${TP_CALLBACK_STUDENT_LINK_PREFIX}${student.id}`)],
+    [
+      createMenuButton("🔎 Найти по username", `${TP_CALLBACK_STUDENT_USERNAME_PREFIX}${student.id}`),
+      createMenuButton("🔗 Код привязки", `${TP_CALLBACK_STUDENT_LINK_CODE_PREFIX}${student.id}`),
+    ],
   ];
 
   if (student.telegramChatId && student.telegramDeliveryEnabled) {
@@ -1667,6 +1763,73 @@ function getStudentTelegramLinkEmptyText(): string {
 }
 
 function getStudentTelegramLinkEmptyMarkup(studentId: string): TelegramInlineKeyboardMarkup {
+  return createInlineKeyboardMarkup([
+    [createMenuButton("⬅️ К ученику", `tp:i:${studentId}`)],
+    [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
+  ]);
+}
+
+function getStudentTelegramUsernamePromptText(studentName: string): string {
+  return [
+    `🔎 Поиск по username: ${studentName}`,
+    "",
+    "Отправь username ученика одним сообщением.",
+    "Подойдут оба варианта: @username или username.",
+  ].join("\n");
+}
+
+function getStudentTelegramUsernamePromptMarkup(studentId: string): TelegramInlineKeyboardMarkup {
+  return createInlineKeyboardMarkup([
+    [createMenuButton("⬅️ К ученику", `tp:i:${studentId}`)],
+    [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
+  ]);
+}
+
+function getStudentTelegramUsernameNotFoundText(): string {
+  return "Не нашёл этот username среди последних Business-чатов. Попроси ученика написать тебе любое сообщение в Telegram и повтори привязку.";
+}
+
+function getStudentTelegramUsernameMatchesText(
+  studentName: string,
+  username: string,
+  chats: {
+    firstName: string | null;
+    lastName: string | null;
+    username: string | null;
+    lastText: string | null;
+    chatId: string;
+  }[]
+): string {
+  return [
+    `🔎 Поиск по username: ${studentName}`,
+    "",
+    `Нашлось несколько Business-чатов с username ${formatTelegramUsername(username)}.`,
+    "Выбери нужный чат:",
+    "",
+    ...chats.map((chat) => {
+      const lastText = chat.lastText ?? "без текста";
+      return `• ${getTelegramBusinessChatDisplayName(chat)} — ${lastText}`;
+    }),
+  ].join("\n");
+}
+
+function getStudentTelegramLinkCodeText(
+  studentName: string,
+  code: string,
+  expiresAt: string
+): string {
+  return [
+    `🔗 Код привязки: ${studentName}`,
+    "",
+    `Код: ${code}`,
+    `Действует до: ${formatLinkCodeExpiresAt(expiresAt)}`,
+    "",
+    "Попроси ученика прислать этот код тебе в Telegram одним сообщением.",
+    "Как только код придёт из Business-чата, привязка выполнится автоматически.",
+  ].join("\n");
+}
+
+function getStudentTelegramLinkCodeMarkup(studentId: string): TelegramInlineKeyboardMarkup {
   return createInlineKeyboardMarkup([
     [createMenuButton("⬅️ К ученику", `tp:i:${studentId}`)],
     [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
@@ -1722,18 +1885,6 @@ function getStudentTelegramLinkMenuMarkup(
   ]);
 }
 
-function getStudentTelegramLinkSuccessText(
-  studentName: string,
-  chat: {
-    firstName: string | null;
-    lastName: string | null;
-    username: string | null;
-    chatId: string;
-  }
-): string {
-  return `✅ Telegram привязан: ${studentName} -> ${getTelegramBusinessChatDisplayName(chat)}, chat_id ${chat.chatId}`;
-}
-
 function getStudentTelegramLinkSuccessMarkup(studentId: string): TelegramInlineKeyboardMarkup {
   return createInlineKeyboardMarkup([
     [createMenuButton("📨 Отправить тест", `${TP_CALLBACK_STUDENT_TEST_PREFIX}${studentId}`)],
@@ -1747,6 +1898,49 @@ function getStudentTelegramLinkErrorMarkup(studentId: string): TelegramInlineKey
     [createMenuButton("🔗 Привязать Telegram", `${TP_CALLBACK_STUDENT_LINK_PREFIX}${studentId}`)],
     [createMenuButton("⬅️ К ученику", `tp:i:${studentId}`)],
   ]);
+}
+
+async function showTrainingPeaksLinkedStudentCard(
+  parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate,
+  studentId: string
+): Promise<void> {
+  const student = await getTrainingPeaksStudentCardByInternalId(studentId);
+
+  if (!student) {
+    if (parsedMessage.kind === "callback_query") {
+      await editTrainingPeaksMenuMessage(
+        parsedMessage.chatId,
+        parsedMessage.messageId,
+        "Ученик больше не найден.",
+        getStudentNotFoundMarkup()
+      );
+      return;
+    }
+
+    await showTrainingPeaksSelectedStudentFallback(parsedMessage);
+    return;
+  }
+
+  setTrainingPeaksScreenContext(parsedMessage.chatId, "student_actions", {
+    selectedStudentId: student.id,
+    selectedStudentName: student.studentName,
+  });
+
+  if (parsedMessage.kind === "callback_query") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      getStudentCardMessageLines(student).join("\n"),
+      getStudentCardMenuMarkup(student)
+    );
+    return;
+  }
+
+  await sendTrainingPeaksReplyScreen(
+    parsedMessage.chatId,
+    getStudentCardMessageLines(student).join("\n"),
+    getTrainingPeaksStudentActionsReplyKeyboardMarkup(student)
+  );
 }
 
 function getWeekMenuText(): string {
@@ -1860,7 +2054,7 @@ async function findStudentByExactReplyButtonName(text: string): Promise<
 }
 
 async function showTrainingPeaksSelectedStudentFallback(
-  parsedMessage: ParsedTelegramMessageUpdate
+  parsedMessage: ParsedTelegramUpdate
 ): Promise<void> {
   const students = await getTrainingPeaksStudentsRegistryWithLatestReportStatus();
 
@@ -2079,6 +2273,309 @@ async function showTrainingPeaksStudentTelegramLinkMenu(
   );
 }
 
+async function promptTrainingPeaksStudentUsernameLookup(
+  parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate,
+  studentId: string
+): Promise<void> {
+  const student = await getTrainingPeaksStudentCardByInternalId(studentId);
+
+  if (!student) {
+    if (parsedMessage.kind === "callback_query") {
+      await editTrainingPeaksMenuMessage(
+        parsedMessage.chatId,
+        parsedMessage.messageId,
+        "Ученик больше не найден.",
+        getStudentNotFoundMarkup()
+      );
+      return;
+    }
+
+    await showTrainingPeaksSelectedStudentFallback(parsedMessage);
+    return;
+  }
+
+  clearTrainingPeaksTelegramLinkContext(parsedMessage.chatId);
+  setTrainingPeaksUsernameWaitingContext(parsedMessage.chatId, student.id, student.studentName);
+
+  if (parsedMessage.kind === "callback_query") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      getStudentTelegramUsernamePromptText(student.studentName),
+      getStudentTelegramUsernamePromptMarkup(student.id)
+    );
+    return;
+  }
+
+  await sendTrainingPeaksReplyScreen(
+    parsedMessage.chatId,
+    getStudentTelegramUsernamePromptText(student.studentName),
+    getTrainingPeaksStudentActionsReplyKeyboardMarkup(student)
+  );
+}
+
+async function handleTrainingPeaksStudentUsernameLookup(
+  parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate,
+  studentId: string,
+  rawUsername: string
+): Promise<void> {
+  const student = await getTrainingPeaksStudentCardByInternalId(studentId);
+
+  if (!student) {
+    if (parsedMessage.kind === "callback_query") {
+      await editTrainingPeaksMenuMessage(
+        parsedMessage.chatId,
+        parsedMessage.messageId,
+        "Ученик больше не найден.",
+        getStudentNotFoundMarkup()
+      );
+      return;
+    }
+
+    await showTrainingPeaksSelectedStudentFallback(parsedMessage);
+    return;
+  }
+
+  const username = normalizeTelegramUsernameLookup(rawUsername);
+
+  if (!username) {
+    setTrainingPeaksUsernameWaitingContext(parsedMessage.chatId, student.id, student.studentName);
+
+    if (parsedMessage.kind === "callback_query") {
+      await editTrainingPeaksMenuMessage(
+        parsedMessage.chatId,
+        parsedMessage.messageId,
+        getStudentTelegramUsernamePromptText(student.studentName),
+        getStudentTelegramUsernamePromptMarkup(student.id)
+      );
+      return;
+    }
+
+    await sendTrainingPeaksReplyScreen(
+      parsedMessage.chatId,
+      [
+        "Не вижу username.",
+        "",
+        getStudentTelegramUsernamePromptText(student.studentName),
+      ].join("\n"),
+      getTrainingPeaksStudentActionsReplyKeyboardMarkup(student)
+    );
+    return;
+  }
+
+  const chats = await findTrainingPeaksBusinessChatsByUsername(username, 10);
+  setTrainingPeaksScreenContext(parsedMessage.chatId, "student_actions", {
+    selectedStudentId: student.id,
+    selectedStudentName: student.studentName,
+  });
+
+  if (chats.length === 0) {
+    clearTrainingPeaksTelegramLinkContext(parsedMessage.chatId);
+
+    if (parsedMessage.kind === "callback_query") {
+      await editTrainingPeaksMenuMessage(
+        parsedMessage.chatId,
+        parsedMessage.messageId,
+        getStudentTelegramUsernameNotFoundText(),
+        getStudentTelegramLinkErrorMarkup(student.id)
+      );
+      return;
+    }
+
+    await sendTrainingPeaksReplyScreen(
+      parsedMessage.chatId,
+      getStudentTelegramUsernameNotFoundText(),
+      getTrainingPeaksStudentActionsReplyKeyboardMarkup(student)
+    );
+    return;
+  }
+
+  if (chats.length === 1) {
+    const linked = await linkTrainingPeaksStudentToBusinessChat(
+      student.id,
+      chats[0]!.chatId,
+      chats[0]!.businessConnectionId
+    );
+
+    if (!linked) {
+      clearTrainingPeaksTelegramLinkContext(parsedMessage.chatId);
+
+      if (parsedMessage.kind === "callback_query") {
+        await editTrainingPeaksMenuMessage(
+          parsedMessage.chatId,
+          parsedMessage.messageId,
+          "Не удалось привязать Telegram. Попробуй ещё раз.",
+          getStudentTelegramLinkErrorMarkup(student.id)
+        );
+        return;
+      }
+
+      await sendTrainingPeaksReplyScreen(
+        parsedMessage.chatId,
+        "Не удалось привязать Telegram. Попробуй ещё раз.",
+        getTrainingPeaksStudentActionsReplyKeyboardMarkup(student)
+      );
+      return;
+    }
+
+    clearTrainingPeaksTelegramLinkContext(parsedMessage.chatId);
+    await showTrainingPeaksLinkedStudentCard(parsedMessage, linked.student.id);
+    return;
+  }
+
+  const chatsWithKeys = chats.map((chat, index) => ({
+    ...chat,
+    key: index.toString(36),
+  }));
+
+  setTrainingPeaksTelegramLinkContext(
+    parsedMessage.chatId,
+    student.id,
+    Object.fromEntries(chatsWithKeys.map((chat) => [chat.key, chat.id]))
+  );
+
+  if (parsedMessage.kind === "callback_query") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      getStudentTelegramUsernameMatchesText(student.studentName, username, chatsWithKeys),
+      getStudentTelegramLinkMenuMarkup(student.id, chatsWithKeys)
+    );
+    return;
+  }
+
+  await sendTrainingPeaksMenuMessage(
+    parsedMessage.chatId,
+    getStudentTelegramUsernameMatchesText(student.studentName, username, chatsWithKeys),
+    getStudentTelegramLinkMenuMarkup(student.id, chatsWithKeys)
+  );
+}
+
+async function handleTrainingPeaksStudentLinkCodeRequest(
+  parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate,
+  studentId: string
+): Promise<void> {
+  const result = await createTrainingPeaksStudentTelegramLinkCode(studentId);
+
+  if (!result) {
+    if (parsedMessage.kind === "callback_query") {
+      await editTrainingPeaksMenuMessage(
+        parsedMessage.chatId,
+        parsedMessage.messageId,
+        "Ученик больше не найден.",
+        getStudentNotFoundMarkup()
+      );
+      return;
+    }
+
+    await showTrainingPeaksSelectedStudentFallback(parsedMessage);
+    return;
+  }
+
+  setTrainingPeaksScreenContext(parsedMessage.chatId, "student_actions", {
+    selectedStudentId: result.student.id,
+    selectedStudentName: result.student.studentName,
+  });
+
+  if (parsedMessage.kind === "callback_query") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      getStudentTelegramLinkCodeText(
+        result.student.studentName,
+        result.linkCode.code,
+        result.linkCode.expiresAt
+      ),
+      getStudentTelegramLinkCodeMarkup(result.student.id)
+    );
+    return;
+  }
+
+  await sendTrainingPeaksReplyScreen(
+    parsedMessage.chatId,
+    getStudentTelegramLinkCodeText(
+      result.student.studentName,
+      result.linkCode.code,
+      result.linkCode.expiresAt
+    ),
+    getTrainingPeaksStudentActionsReplyKeyboardMarkup(result.student)
+  );
+}
+
+async function notifyCoachChats(text: string): Promise<void> {
+  const coachChatIds = Array.from(getCoachChatIds());
+
+  if (coachChatIds.length === 0) {
+    return;
+  }
+
+  await Promise.allSettled(
+    coachChatIds.map(async (chatId) => {
+      await sendTelegramMessage(chatId, text);
+    })
+  );
+}
+
+export async function handleTrainingPeaksTelegramBusinessMessage(
+  message: Pick<TelegramMessage, "business_connection_id" | "chat" | "text" | "caption">
+): Promise<void> {
+  const persistedChat = await upsertTrainingPeaksBusinessChatFromMessage(message);
+  const businessConnectionId = message.business_connection_id?.trim();
+  const chatId =
+    message.chat?.id === undefined || message.chat?.id === null ? null : String(message.chat.id);
+  const messageText = (message.text ?? message.caption ?? "").trim();
+
+  if (!persistedChat || !businessConnectionId || !chatId || !messageText) {
+    return;
+  }
+
+  const result = await consumeTrainingPeaksStudentTelegramLinkCode(
+    messageText,
+    businessConnectionId,
+    chatId
+  );
+
+  if (result.kind === "no_candidate" || result.kind === "no_match") {
+    return;
+  }
+
+  if (result.kind === "linked") {
+    await notifyCoachChats(
+      [
+        `✅ Telegram привязан по коду ${result.code}.`,
+        `Ученик: ${result.student.studentName}`,
+        `Чат: ${getTelegramBusinessChatDisplayName(result.chat)}`,
+      ].join("\n")
+    );
+    return;
+  }
+
+  if (result.kind === "used") {
+    await notifyCoachChats(
+      `Код привязки ${result.code} уже использован${result.studentName ? ` для ${result.studentName}` : ""}. Новая привязка не выполнена.`
+    );
+    return;
+  }
+
+  if (result.kind === "expired") {
+    await notifyCoachChats(
+      `Код привязки ${result.code} истёк${result.studentName ? ` для ${result.studentName}` : ""}. Сгенерируй новый код и попроси ученика отправить его снова.`
+    );
+    return;
+  }
+
+  if (result.kind === "ambiguous") {
+    await notifyCoachChats(
+      `По коду ${result.code} найдено несколько активных записей (${result.matches}). Автопривязка не выполнена.`
+    );
+    return;
+  }
+
+  await notifyCoachChats(
+    `Не удалось завершить привязку по коду ${result.code}${result.studentName ? ` для ${result.studentName}` : ""}.`
+  );
+}
+
 async function handleTrainingPeaksStudentChooseBusinessChatCallback(
   parsedMessage: ParsedTelegramCallbackUpdate,
   studentId: string,
@@ -2153,12 +2650,7 @@ async function handleTrainingPeaksStudentChooseBusinessChatCallback(
   }
 
   clearTrainingPeaksTelegramLinkContext(parsedMessage.chatId);
-  await editTrainingPeaksMenuMessage(
-    parsedMessage.chatId,
-    parsedMessage.messageId,
-    getStudentTelegramLinkSuccessText(linked.student.studentName, linked.chat),
-    getStudentTelegramLinkSuccessMarkup(linked.student.id)
-  );
+  await showTrainingPeaksLinkedStudentCard(parsedMessage, linked.student.id);
 }
 
 async function sendTrainingPeaksStudentTestMessage(
@@ -2481,12 +2973,37 @@ export async function handleTrainingPeaksTelegramReplyKeyboardMessage(
         }
 
         if (
+          chatContextState.kind === "expired" &&
+          chatContextState.context.screen === "student_username_waiting"
+        ) {
+          await sendTrainingPeaksReplyScreen(
+            parsedMessage.chatId,
+            "Режим поиска по username истёк. Нажми «🔎 Найти по username» ещё раз.",
+            getTrainingPeaksMainReplyKeyboardMarkup()
+          );
+          return "handled";
+        }
+
+        if (
           chatContextState.kind === "active" &&
           chatContextState.context.screen === "add_student_waiting"
         ) {
           await handleTrainingPeaksAddStudentInput(parsedMessage, text, {
             showStudentsListOnSuccess: true,
           });
+          return "handled";
+        }
+
+        if (
+          chatContextState.kind === "active" &&
+          chatContextState.context.screen === "student_username_waiting" &&
+          chatContextState.context.selectedStudentId
+        ) {
+          await handleTrainingPeaksStudentUsernameLookup(
+            parsedMessage,
+            chatContextState.context.selectedStudentId,
+            text
+          );
           return "handled";
         }
       }
@@ -2615,6 +3132,30 @@ export async function handleTrainingPeaksTelegramReplyKeyboardMessage(
       }
 
       await showTrainingPeaksStudentTelegramLinkMenu(parsedMessage, selectedStudent.selectedStudentId);
+      return "handled";
+    }
+
+    if (action === "student_username") {
+      const selectedStudent = getSelectedStudentContext(parsedMessage.chatId);
+
+      if (!selectedStudent) {
+        await showTrainingPeaksSelectedStudentFallback(parsedMessage);
+        return "handled";
+      }
+
+      await promptTrainingPeaksStudentUsernameLookup(parsedMessage, selectedStudent.selectedStudentId);
+      return "handled";
+    }
+
+    if (action === "student_link_code") {
+      const selectedStudent = getSelectedStudentContext(parsedMessage.chatId);
+
+      if (!selectedStudent) {
+        await showTrainingPeaksSelectedStudentFallback(parsedMessage);
+        return "handled";
+      }
+
+      await handleTrainingPeaksStudentLinkCodeRequest(parsedMessage, selectedStudent.selectedStudentId);
       return "handled";
     }
 
@@ -3113,6 +3654,42 @@ async function handleTrainingPeaksSetTelegram(
   await sendTelegramMessage(parsedMessage.chatId, confirmationLines.join("\n"));
 }
 
+async function handleTrainingPeaksBind(
+  parsedMessage: ParsedTelegramUpdate,
+  text: string
+): Promise<void> {
+  const parsedCommand = parseTpBindCommand(text);
+
+  if (!parsedCommand.studentQuery || !parsedCommand.username) {
+    await sendTelegramMessage(
+      parsedMessage.chatId,
+      "Напиши так: /tp_bind <student_name_or_id> <@username>"
+    );
+    return;
+  }
+
+  const studentMatch = await getTrainingPeaksStudentCard(parsedCommand.studentQuery);
+
+  if (studentMatch.kind === "not_found") {
+    await sendTelegramMessage(
+      parsedMessage.chatId,
+      `Ученик "${parsedCommand.studentQuery}" не найден.\nПосмотри список: /tp_students`
+    );
+    return;
+  }
+
+  if (studentMatch.kind === "ambiguous") {
+    await sendTelegramMessage(parsedMessage.chatId, formatStudentAmbiguityMessage(studentMatch.matches));
+    return;
+  }
+
+  await handleTrainingPeaksStudentUsernameLookup(
+    parsedMessage,
+    studentMatch.student.id,
+    parsedCommand.username
+  );
+}
+
 function getWeekResultMarkup(options?: {
   includeJobsButton?: boolean;
 }): TelegramInlineKeyboardMarkup {
@@ -3369,6 +3946,16 @@ export async function handleTrainingPeaksTelegramCallback(
 
     if (callback.kind === "student_link") {
       await showTrainingPeaksStudentTelegramLinkMenu(parsedMessage, callback.studentId);
+      return "handled";
+    }
+
+    if (callback.kind === "student_username_prompt") {
+      await promptTrainingPeaksStudentUsernameLookup(parsedMessage, callback.studentId);
+      return "handled";
+    }
+
+    if (callback.kind === "student_link_code") {
+      await handleTrainingPeaksStudentLinkCodeRequest(parsedMessage, callback.studentId);
       return "handled";
     }
 
@@ -3630,6 +4217,11 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_set_telegram") {
       await handleTrainingPeaksSetTelegram(parsedMessage, text);
+      return "handled";
+    }
+
+    if (command === "tp_bind") {
+      await handleTrainingPeaksBind(parsedMessage, text);
       return "handled";
     }
 

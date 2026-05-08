@@ -216,6 +216,49 @@ export type UpsertTrainingPeaksBusinessChatInput = {
   lastSeenAt?: string;
 };
 
+export type TrainingPeaksStudentTelegramLinkCodeStatus = "active" | "used" | "expired";
+
+export type TrainingPeaksStudentTelegramLinkCode = {
+  id: string;
+  studentId: string;
+  code: string;
+  status: TrainingPeaksStudentTelegramLinkCodeStatus;
+  expiresAt: string;
+  usedAt: string | null;
+  businessConnectionId: string | null;
+  chatId: string | null;
+  createdAt: string;
+};
+
+type TrainingPeaksStudentTelegramLinkCodeRow = {
+  id: string;
+  student_id: string;
+  code: string;
+  status: TrainingPeaksStudentTelegramLinkCodeStatus;
+  expires_at: string;
+  used_at: string | null;
+  business_connection_id: string | null;
+  chat_id: string | null;
+  created_at: string;
+};
+
+export type InsertTrainingPeaksStudentTelegramLinkCodeInput = {
+  studentId: string;
+  code: string;
+  status?: TrainingPeaksStudentTelegramLinkCodeStatus;
+  expiresAt: string;
+};
+
+export class TrainingPeaksTelegramLinkCodeConflictError extends Error {
+  readonly codeValue: string;
+
+  constructor(codeValue: string) {
+    super(`TrainingPeaks Telegram link code already exists: ${codeValue}`);
+    this.name = "TrainingPeaksTelegramLinkCodeConflictError";
+    this.codeValue = codeValue;
+  }
+}
+
 export const TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE =
   "Cancelled from Telegram before Mac runner start";
 
@@ -311,6 +354,22 @@ function mapTrainingPeaksBusinessChatRow(
   };
 }
 
+function mapTrainingPeaksStudentTelegramLinkCodeRow(
+  row: TrainingPeaksStudentTelegramLinkCodeRow
+): TrainingPeaksStudentTelegramLinkCode {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    code: row.code,
+    status: row.status,
+    expiresAt: row.expires_at,
+    usedAt: row.used_at,
+    businessConnectionId: row.business_connection_id,
+    chatId: row.chat_id,
+    createdAt: row.created_at,
+  };
+}
+
 function pickDefinedValues<T extends Record<string, unknown>>(value: T): Partial<T> {
   return Object.fromEntries(
     Object.entries(value).filter(([, entryValue]) => entryValue !== undefined)
@@ -352,6 +411,20 @@ function isTrainingPeaksJobConflict(error: {
 
   const haystack = `${error.constraint ?? ""} ${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
   return haystack.includes("trainingpeaks_jobs_active_week_idx");
+}
+
+function isTrainingPeaksTelegramLinkCodeConflict(error: {
+  code?: string | null;
+  constraint?: string | null;
+  message?: string | null;
+  details?: string | null;
+}): boolean {
+  if (error.code !== "23505") {
+    return false;
+  }
+
+  const haystack = `${error.constraint ?? ""} ${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
+  return haystack.includes("trainingpeaks_student_telegram_link_codes_active_code_idx");
 }
 
 export async function insertTrainingPeaksStudent(
@@ -518,6 +591,171 @@ export async function listRecentTrainingPeaksBusinessChats(
   return ((data as TrainingPeaksBusinessChatRow[]) ?? []).map(mapTrainingPeaksBusinessChatRow);
 }
 
+export async function listTrainingPeaksBusinessChatsByUsername(
+  username: string,
+  limit = 10
+): Promise<TrainingPeaksBusinessChat[]> {
+  const normalizedUsername = username.trim().replace(/^@+/, "");
+
+  if (!normalizedUsername) {
+    return [];
+  }
+
+  const supabase = createSupabaseServerClient();
+  const safeLimit = Math.max(1, Math.min(limit, 50));
+  const { data, error } = await supabase
+    .from("trainingpeaks_telegram_business_chats")
+    .select("*")
+    .ilike("username", normalizedUsername)
+    .order("last_seen_at", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(safeLimit);
+
+  if (error) {
+    throw new Error(
+      `Failed to list TrainingPeaks business chats by username ${normalizedUsername}: ${error.message}`
+    );
+  }
+
+  return ((data as TrainingPeaksBusinessChatRow[]) ?? []).map(mapTrainingPeaksBusinessChatRow);
+}
+
+export async function expireActiveTrainingPeaksStudentTelegramLinkCodesForStudent(
+  studentId: string
+): Promise<number> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_telegram_link_codes")
+    .update({
+      status: "expired",
+    })
+    .eq("student_id", studentId)
+    .eq("status", "active")
+    .select("id");
+
+  if (error) {
+    throw new Error(
+      `Failed to expire TrainingPeaks Telegram link codes for student ${studentId}: ${error.message}`
+    );
+  }
+
+  return (data ?? []).length;
+}
+
+export async function insertTrainingPeaksStudentTelegramLinkCode(
+  input: InsertTrainingPeaksStudentTelegramLinkCodeInput
+): Promise<TrainingPeaksStudentTelegramLinkCode> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_telegram_link_codes")
+    .insert({
+      student_id: input.studentId,
+      code: input.code,
+      status: input.status ?? "active",
+      expires_at: input.expiresAt,
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    if (isTrainingPeaksTelegramLinkCodeConflict(error)) {
+      throw new TrainingPeaksTelegramLinkCodeConflictError(input.code);
+    }
+
+    throw new Error(`Failed to insert TrainingPeaks Telegram link code: ${error.message}`);
+  }
+
+  return mapTrainingPeaksStudentTelegramLinkCodeRow(data as TrainingPeaksStudentTelegramLinkCodeRow);
+}
+
+export async function listTrainingPeaksStudentTelegramLinkCodesByCode(
+  codes: string[]
+): Promise<TrainingPeaksStudentTelegramLinkCode[]> {
+  const normalizedCodes = Array.from(
+    new Set(
+      codes
+        .map((code) => code.trim().toUpperCase())
+        .filter(Boolean)
+    )
+  );
+
+  if (normalizedCodes.length === 0) {
+    return [];
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_telegram_link_codes")
+    .select("*")
+    .in("code", normalizedCodes)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new Error(`Failed to list TrainingPeaks Telegram link codes: ${error.message}`);
+  }
+
+  return ((data as TrainingPeaksStudentTelegramLinkCodeRow[]) ?? []).map(
+    mapTrainingPeaksStudentTelegramLinkCodeRow
+  );
+}
+
+export async function expireTrainingPeaksStudentTelegramLinkCodesByIds(ids: string[]): Promise<number> {
+  const normalizedIds = Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
+
+  if (normalizedIds.length === 0) {
+    return 0;
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_telegram_link_codes")
+    .update({
+      status: "expired",
+    })
+    .in("id", normalizedIds)
+    .eq("status", "active")
+    .select("id");
+
+  if (error) {
+    throw new Error(`Failed to expire TrainingPeaks Telegram link codes: ${error.message}`);
+  }
+
+  return (data ?? []).length;
+}
+
+export async function markTrainingPeaksStudentTelegramLinkCodeUsed(
+  id: string,
+  input: {
+    usedAt?: string;
+    businessConnectionId: string;
+    chatId: string;
+  }
+): Promise<TrainingPeaksStudentTelegramLinkCode | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_telegram_link_codes")
+    .update({
+      status: "used",
+      used_at: input.usedAt ?? new Date().toISOString(),
+      business_connection_id: input.businessConnectionId,
+      chat_id: input.chatId,
+    })
+    .eq("id", id)
+    .eq("status", "active")
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to mark TrainingPeaks Telegram link code ${id} used: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksStudentTelegramLinkCodeRow(data as TrainingPeaksStudentTelegramLinkCodeRow);
+}
+
 export async function updateTrainingPeaksStudentTelegramContactById(
   id: string,
   input: UpdateTrainingPeaksStudentTelegramContactInput
@@ -585,8 +823,9 @@ export async function linkTrainingPeaksStudentToBusinessChat(
   }
 
   const nextProfileUrl =
-    student.telegramProfileUrl?.trim() ||
-    (chat.username?.trim() ? `https://t.me/${chat.username.trim()}` : null);
+    chat.username?.trim()
+      ? `https://t.me/${chat.username.trim()}`
+      : student.telegramProfileUrl?.trim() || null;
 
   const updatedStudent = await updateTrainingPeaksStudentTelegramContact(studentId, {
     telegram_chat_id: chat.chatId,

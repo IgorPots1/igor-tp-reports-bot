@@ -5,6 +5,8 @@ import {
   createTrainingPeaksWeeklyJob,
   disableTrainingPeaksStudentById,
   enableTrainingPeaksStudentById,
+  expireActiveTrainingPeaksStudentTelegramLinkCodesForStudent,
+  expireTrainingPeaksStudentTelegramLinkCodesByIds,
   findActiveTrainingPeaksJobForWeek,
   getTrainingPeaksJobById,
   getTrainingPeaksBusinessChatById,
@@ -12,14 +14,20 @@ import {
   getTrainingPeaksWeeklyReportById,
   recoverStaleTrainingPeaksRunningJobs,
   insertTrainingPeaksStudent,
+  insertTrainingPeaksStudentTelegramLinkCode,
   linkTrainingPeaksStudentToBusinessChat as linkTrainingPeaksStudentToBusinessChatInRepository,
   listAllTrainingPeaksReports,
+  listTrainingPeaksBusinessChatsByUsername as listTrainingPeaksBusinessChatsByUsernameFromRepository,
   listRecentTrainingPeaksBusinessChats as listRecentTrainingPeaksBusinessChatsFromRepository,
+  listTrainingPeaksStudentTelegramLinkCodesByCode,
   listRecentTrainingPeaksJobs,
   listTrainingPeaksStudents,
+  markTrainingPeaksStudentTelegramLinkCodeUsed,
   TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
   type TrainingPeaksBusinessChat,
   TrainingPeaksJobConflictError,
+  type TrainingPeaksStudentTelegramLinkCode,
+  TrainingPeaksTelegramLinkCodeConflictError,
   TrainingPeaksStudentConflictError,
   type TrainingPeaksJob,
   type TrainingPeaksStudent,
@@ -127,6 +135,21 @@ export type TrainingPeaksJobRequester = {
 };
 
 export type TrainingPeaksBusinessChatSnapshot = TrainingPeaksBusinessChat;
+export type TrainingPeaksStudentTelegramLinkCodeSnapshot = TrainingPeaksStudentTelegramLinkCode;
+
+export type ConsumeTrainingPeaksStudentTelegramLinkCodeResult =
+  | { kind: "no_candidate" }
+  | { kind: "no_match"; code: string }
+  | { kind: "expired"; code: string; studentName: string | null }
+  | { kind: "used"; code: string; studentName: string | null }
+  | { kind: "ambiguous"; code: string; matches: number }
+  | { kind: "link_failed"; code: string; studentName: string | null }
+  | {
+      kind: "linked";
+      code: string;
+      student: TrainingPeaksStudent;
+      chat: TrainingPeaksBusinessChatSnapshot;
+    };
 
 export type {
   UpdateTrainingPeaksStudentTelegramContactParams,
@@ -162,6 +185,8 @@ export type CancelTrainingPeaksWeeklyRunResult =
 
 const TP_ADD_STUDENT_COMMAND_PATTERN = /^\/tp_add_student(?:@\w+)?(?:\s+|$)/;
 const TP_RUN_WEEK_COMMAND_PATTERN = /^\/tp_run_week(?:@\w+)?(?:\s+|$)/;
+const TP_TELEGRAM_LINK_CODE_PATTERN = /\b[A-Z0-9]{2,12}-\d{3,6}\b/gi;
+const TP_TELEGRAM_LINK_CODE_DEFAULT_TTL_HOURS = 24;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const TP_RUN_WEEK_USAGE_MESSAGE = [
   "Напиши так:",
@@ -172,6 +197,27 @@ const TP_RUN_WEEK_USAGE_MESSAGE = [
 
 function normalizeStudentQuery(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("ru");
+}
+
+function getTrainingPeaksTelegramLinkCodePrefix(studentName: string): string {
+  const normalized = studentName
+    .normalize("NFKD")
+    .replace(/[^\x00-\x7F]/g, "")
+    .replace(/[^A-Za-z0-9]+/g, "")
+    .toUpperCase();
+
+  return normalized.slice(0, 4) || "TP";
+}
+
+function createTrainingPeaksTelegramLinkCodeValue(studentName: string): string {
+  const prefix = getTrainingPeaksTelegramLinkCodePrefix(studentName);
+  const suffix = Math.floor(1000 + Math.random() * 9000);
+  return `${prefix}-${suffix}`;
+}
+
+function extractTrainingPeaksTelegramLinkCodeCandidates(text: string): string[] {
+  const matches = text.toUpperCase().match(TP_TELEGRAM_LINK_CODE_PATTERN) ?? [];
+  return Array.from(new Set(matches.map((match) => match.trim()).filter(Boolean)));
 }
 
 function compareStudentReports(
@@ -717,6 +763,13 @@ export async function listRecentTrainingPeaksBusinessChats(
   return listRecentTrainingPeaksBusinessChatsFromRepository(limit);
 }
 
+export async function findTrainingPeaksBusinessChatsByUsername(
+  username: string,
+  limit = 10
+): Promise<TrainingPeaksBusinessChatSnapshot[]> {
+  return listTrainingPeaksBusinessChatsByUsernameFromRepository(username, limit);
+}
+
 export async function getTrainingPeaksBusinessChatByInternalId(
   id: string
 ): Promise<TrainingPeaksBusinessChatSnapshot | null> {
@@ -729,6 +782,159 @@ export async function linkTrainingPeaksStudentToBusinessChat(
   businessConnectionId: string
 ): Promise<{ student: TrainingPeaksStudent; chat: TrainingPeaksBusinessChatSnapshot } | null> {
   return linkTrainingPeaksStudentToBusinessChatInRepository(studentId, chatId, businessConnectionId);
+}
+
+export async function createTrainingPeaksStudentTelegramLinkCode(
+  studentId: string,
+  options?: {
+    expiresInHours?: number;
+  }
+): Promise<
+  | {
+      student: TrainingPeaksRegistryStudentSnapshot;
+      linkCode: TrainingPeaksStudentTelegramLinkCodeSnapshot;
+    }
+  | null
+> {
+  const student = await getTrainingPeaksStudentCardByInternalId(studentId);
+
+  if (!student) {
+    return null;
+  }
+
+  await expireActiveTrainingPeaksStudentTelegramLinkCodesForStudent(student.id);
+  const expiresInHours = Math.max(1, Math.floor(options?.expiresInHours ?? TP_TELEGRAM_LINK_CODE_DEFAULT_TTL_HOURS));
+  const expiresAt = new Date(Date.now() + expiresInHours * 60 * 60 * 1000).toISOString();
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const code = createTrainingPeaksTelegramLinkCodeValue(student.studentName);
+
+    try {
+      const linkCode = await insertTrainingPeaksStudentTelegramLinkCode({
+        studentId: student.id,
+        code,
+        expiresAt,
+      });
+
+      return {
+        student,
+        linkCode,
+      };
+    } catch (error) {
+      if (error instanceof TrainingPeaksTelegramLinkCodeConflictError) {
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw new Error("Failed to generate unique TrainingPeaks Telegram link code");
+}
+
+async function getStudentNameByInternalId(id: string): Promise<string | null> {
+  const student = await getTrainingPeaksStudentByIdFromRepository(id);
+  return student?.studentName ?? null;
+}
+
+export async function consumeTrainingPeaksStudentTelegramLinkCode(
+  text: string,
+  businessConnectionId: string,
+  chatId: string
+): Promise<ConsumeTrainingPeaksStudentTelegramLinkCodeResult> {
+  const candidateCodes = extractTrainingPeaksTelegramLinkCodeCandidates(text);
+
+  if (candidateCodes.length === 0) {
+    return { kind: "no_candidate" };
+  }
+
+  const allMatchingCodes = await listTrainingPeaksStudentTelegramLinkCodesByCode(candidateCodes);
+  const now = Date.now();
+  const expiredActiveCodes = allMatchingCodes.filter(
+    (code) => code.status === "active" && new Date(code.expiresAt).getTime() <= now
+  );
+
+  if (expiredActiveCodes.length > 0) {
+    await expireTrainingPeaksStudentTelegramLinkCodesByIds(expiredActiveCodes.map((code) => code.id));
+  }
+
+  for (const candidateCode of candidateCodes) {
+    const candidateMatches = allMatchingCodes.filter((code) => code.code === candidateCode);
+    const activeMatches = candidateMatches.filter(
+      (code) => code.status === "active" && new Date(code.expiresAt).getTime() > now
+    );
+
+    if (activeMatches.length === 1) {
+      const activeCode = activeMatches[0]!;
+      const linked = await linkTrainingPeaksStudentToBusinessChatInRepository(
+        activeCode.studentId,
+        chatId,
+        businessConnectionId
+      );
+
+      if (!linked) {
+        return {
+          kind: "link_failed",
+          code: candidateCode,
+          studentName: await getStudentNameByInternalId(activeCode.studentId),
+        };
+      }
+
+      await markTrainingPeaksStudentTelegramLinkCodeUsed(activeCode.id, {
+        businessConnectionId,
+        chatId,
+      });
+
+      return {
+        kind: "linked",
+        code: candidateCode,
+        student: linked.student,
+        chat: linked.chat,
+      };
+    }
+  }
+
+  for (const candidateCode of candidateCodes) {
+    const candidateMatches = allMatchingCodes.filter((code) => code.code === candidateCode);
+    const activeMatches = candidateMatches.filter(
+      (code) => code.status === "active" && new Date(code.expiresAt).getTime() > now
+    );
+
+    if (activeMatches.length > 1) {
+      return {
+        kind: "ambiguous",
+        code: candidateCode,
+        matches: activeMatches.length,
+      };
+    }
+
+    const usedMatch = candidateMatches.find((code) => code.status === "used");
+
+    if (usedMatch) {
+      return {
+        kind: "used",
+        code: candidateCode,
+        studentName: await getStudentNameByInternalId(usedMatch.studentId),
+      };
+    }
+
+    const expiredMatch = candidateMatches.find(
+      (code) => code.status === "expired" || new Date(code.expiresAt).getTime() <= now
+    );
+
+    if (expiredMatch) {
+      return {
+        kind: "expired",
+        code: candidateCode,
+        studentName: await getStudentNameByInternalId(expiredMatch.studentId),
+      };
+    }
+  }
+
+  return {
+    kind: "no_match",
+    code: candidateCodes[0]!,
+  };
 }
 
 export async function recoverStaleTrainingPeaksJobs(timeoutMinutes: number): Promise<number> {
