@@ -180,6 +180,42 @@ export type CreateTrainingPeaksWeeklyJobInput = {
   requestedByUserId?: string | null;
 };
 
+export type TrainingPeaksBusinessChat = {
+  id: string;
+  businessConnectionId: string;
+  chatId: string;
+  username: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  lastText: string | null;
+  lastSeenAt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type TrainingPeaksBusinessChatRow = {
+  id: string;
+  business_connection_id: string;
+  chat_id: string;
+  username: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  last_text: string | null;
+  last_seen_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type UpsertTrainingPeaksBusinessChatInput = {
+  businessConnectionId: string;
+  chatId: string;
+  username?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  lastText?: string | null;
+  lastSeenAt?: string;
+};
+
 export const TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE =
   "Cancelled from Telegram before Mac runner start";
 
@@ -254,6 +290,23 @@ function mapTrainingPeaksJobRow(row: TrainingPeaksJobRow): TrainingPeaksJob {
     createdAt: row.created_at,
     startedAt: row.started_at,
     finishedAt: row.finished_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapTrainingPeaksBusinessChatRow(
+  row: TrainingPeaksBusinessChatRow
+): TrainingPeaksBusinessChat {
+  return {
+    id: row.id,
+    businessConnectionId: row.business_connection_id,
+    chatId: row.chat_id,
+    username: row.username,
+    firstName: row.first_name,
+    lastName: row.last_name,
+    lastText: row.last_text,
+    lastSeenAt: row.last_seen_at,
+    createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
@@ -370,6 +423,101 @@ export async function getTrainingPeaksStudentById(id: string): Promise<TrainingP
   return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
 }
 
+export async function upsertTrainingPeaksBusinessChatFromMessage(
+  input: UpsertTrainingPeaksBusinessChatInput
+): Promise<TrainingPeaksBusinessChat> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_telegram_business_chats")
+    .upsert(
+      {
+        business_connection_id: input.businessConnectionId,
+        chat_id: input.chatId,
+        username: input.username ?? null,
+        first_name: input.firstName ?? null,
+        last_name: input.lastName ?? null,
+        last_text: input.lastText ?? null,
+        last_seen_at: input.lastSeenAt ?? new Date().toISOString(),
+      },
+      {
+        onConflict: "business_connection_id,chat_id",
+      }
+    )
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to upsert TrainingPeaks business chat: ${error.message}`);
+  }
+
+  return mapTrainingPeaksBusinessChatRow(data as TrainingPeaksBusinessChatRow);
+}
+
+export async function getTrainingPeaksBusinessChatById(
+  id: string
+): Promise<TrainingPeaksBusinessChat | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_telegram_business_chats")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to get TrainingPeaks business chat ${id}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksBusinessChatRow(data as TrainingPeaksBusinessChatRow);
+}
+
+export async function getTrainingPeaksBusinessChatByConnectionAndChatId(
+  businessConnectionId: string,
+  chatId: string
+): Promise<TrainingPeaksBusinessChat | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_telegram_business_chats")
+    .select("*")
+    .eq("business_connection_id", businessConnectionId)
+    .eq("chat_id", chatId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to get TrainingPeaks business chat ${businessConnectionId}/${chatId}: ${error.message}`
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksBusinessChatRow(data as TrainingPeaksBusinessChatRow);
+}
+
+export async function listRecentTrainingPeaksBusinessChats(
+  limit = 10
+): Promise<TrainingPeaksBusinessChat[]> {
+  const supabase = createSupabaseServerClient();
+  const safeLimit = Math.max(1, Math.min(limit, 50));
+  const { data, error } = await supabase
+    .from("trainingpeaks_telegram_business_chats")
+    .select("*")
+    .order("last_seen_at", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(safeLimit);
+
+  if (error) {
+    throw new Error(`Failed to list TrainingPeaks business chats: ${error.message}`);
+  }
+
+  return ((data as TrainingPeaksBusinessChatRow[]) ?? []).map(mapTrainingPeaksBusinessChatRow);
+}
+
 export async function updateTrainingPeaksStudentTelegramContactById(
   id: string,
   input: UpdateTrainingPeaksStudentTelegramContactInput
@@ -420,6 +568,37 @@ export async function updateTrainingPeaksStudentTelegramContact(
     telegramProfileUrl: input.telegram_profile_url,
     telegramDeliveryEnabled: input.telegram_delivery_enabled,
   });
+}
+
+export async function linkTrainingPeaksStudentToBusinessChat(
+  studentId: string,
+  chatId: string,
+  businessConnectionId: string
+): Promise<{ student: TrainingPeaksStudent; chat: TrainingPeaksBusinessChat } | null> {
+  const [student, chat] = await Promise.all([
+    getTrainingPeaksStudentById(studentId),
+    getTrainingPeaksBusinessChatByConnectionAndChatId(businessConnectionId, chatId),
+  ]);
+
+  if (!student || !chat) {
+    return null;
+  }
+
+  const nextProfileUrl =
+    student.telegramProfileUrl?.trim() ||
+    (chat.username?.trim() ? `https://t.me/${chat.username.trim()}` : null);
+
+  const updatedStudent = await updateTrainingPeaksStudentTelegramContact(studentId, {
+    telegram_chat_id: chat.chatId,
+    telegram_username: chat.username,
+    telegram_profile_url: nextProfileUrl,
+    telegram_delivery_enabled: true,
+  });
+
+  return {
+    student: updatedStudent,
+    chat,
+  };
 }
 
 export async function disableTrainingPeaksStudentById(id: string): Promise<TrainingPeaksStudent> {

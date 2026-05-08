@@ -29,6 +29,8 @@ export type TelegramChat = {
   id: number;
   title?: string;
   username?: string;
+  first_name?: string;
+  last_name?: string;
 };
 
 export type TelegramMessage = {

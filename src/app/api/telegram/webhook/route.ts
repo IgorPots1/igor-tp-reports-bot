@@ -11,6 +11,7 @@ import {
   isTrainingPeaksCallback,
   isTrainingPeaksCommand,
 } from "@/features/telegram/trainingpeaks";
+import { upsertTrainingPeaksBusinessChatFromMessage } from "@/features/trainingpeaks/service";
 import type { TelegramUpdate } from "@/features/telegram/types";
 
 export const runtime = "nodejs";
@@ -92,6 +93,17 @@ export async function POST(request: Request) {
       chatId: update.business_message.chat?.id,
       text: update.business_message.text ?? update.business_message.caption,
     });
+
+    try {
+      await upsertTrainingPeaksBusinessChatFromMessage(update.business_message);
+    } catch (error) {
+      console.warn("Failed to persist Telegram business chat", {
+        businessConnectionId: update.business_message.business_connection_id,
+        chatId: update.business_message.chat?.id,
+        error,
+      });
+    }
+
     return okResponse();
   }
 

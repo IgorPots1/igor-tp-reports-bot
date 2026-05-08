@@ -72,7 +72,7 @@ Use it from a coach/admin chat after:
 2. Confirming `business_connection` webhook logs appeared.
 3. Saving that `connectionId` into `TELEGRAM_BUSINESS_CONNECTION_ID`.
 
-To capture a student `chat_id` for later linking, send a normal message from that student chat to the connected Telegram Business account and check the Vercel webhook logs for the `business_message` event. The app logs `chatId`, so you can copy that value directly.
+For normal student linking, the student should first send any message to the connected Telegram Business account. After that, the coach can open `👥 Ученики` -> choose a student -> `🔗 Привязать Telegram` and pick the student from the latest Telegram Business chats.
 
 Temporary coach-only linking command:
 
@@ -86,7 +86,7 @@ Optional username form:
 /tp_set_telegram <student_id> <chat_id> <username>
 ```
 
-This stores Telegram delivery metadata on the student row and enables coach-approved student delivery for weekly reports.
+This stores Telegram delivery metadata on the student row and enables coach-approved student delivery for weekly reports. The manual command remains available as a fallback if the button flow is not enough.
 
 ## TrainingPeaks Job Flow
 
@@ -163,7 +163,8 @@ Coach-approved student delivery requirements:
 
 - `TELEGRAM_BUSINESS_CONNECTION_ID` must be set in production.
 - The student row must have `telegram_chat_id` and `telegram_delivery_enabled=true`.
-- Link a student chat with `/tp_set_telegram <student_id> <chat_id>`.
+- Preferred flow: student sends any Telegram message first, then coach links from the student card with `🔗 Привязать Telegram`.
+- Manual fallback: `/tp_set_telegram <student_id> <chat_id>`.
 - Tapping `✅ Отправить ученику` sends the synced `report_markdown` to the student's Telegram chat through Telegram Business.
 - Tapping `⏭ Пропустить` marks the weekly report as skipped without sending anything to the student.
 

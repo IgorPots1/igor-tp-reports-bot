@@ -7,20 +7,25 @@ import {
   enableTrainingPeaksStudentById,
   findActiveTrainingPeaksJobForWeek,
   getTrainingPeaksJobById,
+  getTrainingPeaksBusinessChatById,
   getTrainingPeaksStudentById as getTrainingPeaksStudentByIdFromRepository,
   getTrainingPeaksWeeklyReportById,
   recoverStaleTrainingPeaksRunningJobs,
   insertTrainingPeaksStudent,
+  linkTrainingPeaksStudentToBusinessChat as linkTrainingPeaksStudentToBusinessChatInRepository,
   listAllTrainingPeaksReports,
+  listRecentTrainingPeaksBusinessChats as listRecentTrainingPeaksBusinessChatsFromRepository,
   listRecentTrainingPeaksJobs,
   listTrainingPeaksStudents,
   TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
+  type TrainingPeaksBusinessChat,
   TrainingPeaksJobConflictError,
   TrainingPeaksStudentConflictError,
   type TrainingPeaksJob,
   type TrainingPeaksStudent,
   type TrainingPeaksWeek,
   type TrainingPeaksWeeklyReport,
+  upsertTrainingPeaksBusinessChatFromMessage as upsertTrainingPeaksBusinessChatFromMessageInRepository,
   type UpdateTrainingPeaksStudentTelegramContactInput,
   type UpdateTrainingPeaksStudentTelegramContactParams,
   type UpdateTrainingPeaksWeeklyReportStateInput,
@@ -30,6 +35,7 @@ import {
   updateTrainingPeaksWeeklyReportReviewState as updateTrainingPeaksWeeklyReportReviewStateInRepository,
   updateTrainingPeaksWeeklyReportStateById,
 } from "@/features/trainingpeaks/repository";
+import type { TelegramMessage } from "@/features/telegram/types";
 import { resolveTrainingPeaksWeekKeyword } from "@/features/trainingpeaks/week";
 
 export type TrainingPeaksStatus = "ready" | "parsed_only" | "missing";
@@ -119,6 +125,8 @@ export type TrainingPeaksJobRequester = {
   chatId: number | string;
   userId: number | string | null;
 };
+
+export type TrainingPeaksBusinessChatSnapshot = TrainingPeaksBusinessChat;
 
 export type {
   UpdateTrainingPeaksStudentTelegramContactParams,
@@ -670,6 +678,57 @@ export { TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE };
 
 export async function getTrainingPeaksJobsStatus(): Promise<TrainingPeaksJob[]> {
   return listRecentTrainingPeaksJobs(10);
+}
+
+function trimTelegramBusinessText(value: string | undefined): string | null {
+  const normalized = value?.replace(/\s+/g, " ").trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  return normalized.length > 160 ? `${normalized.slice(0, 157)}...` : normalized;
+}
+
+export async function upsertTrainingPeaksBusinessChatFromMessage(
+  message: Pick<TelegramMessage, "business_connection_id" | "chat" | "text" | "caption">
+): Promise<TrainingPeaksBusinessChatSnapshot | null> {
+  const businessConnectionId = message.business_connection_id?.trim();
+  const chatId = message.chat?.id;
+
+  if (!businessConnectionId || chatId === undefined || chatId === null) {
+    return null;
+  }
+
+  return upsertTrainingPeaksBusinessChatFromMessageInRepository({
+    businessConnectionId,
+    chatId: String(chatId),
+    username: message.chat.username?.trim() || null,
+    firstName: message.chat.first_name?.trim() || null,
+    lastName: message.chat.last_name?.trim() || null,
+    lastText: trimTelegramBusinessText(message.text ?? message.caption),
+    lastSeenAt: new Date().toISOString(),
+  });
+}
+
+export async function listRecentTrainingPeaksBusinessChats(
+  limit = 10
+): Promise<TrainingPeaksBusinessChatSnapshot[]> {
+  return listRecentTrainingPeaksBusinessChatsFromRepository(limit);
+}
+
+export async function getTrainingPeaksBusinessChatByInternalId(
+  id: string
+): Promise<TrainingPeaksBusinessChatSnapshot | null> {
+  return getTrainingPeaksBusinessChatById(id);
+}
+
+export async function linkTrainingPeaksStudentToBusinessChat(
+  studentId: string,
+  chatId: string,
+  businessConnectionId: string
+): Promise<{ student: TrainingPeaksStudent; chat: TrainingPeaksBusinessChatSnapshot } | null> {
+  return linkTrainingPeaksStudentToBusinessChatInRepository(studentId, chatId, businessConnectionId);
 }
 
 export async function recoverStaleTrainingPeaksJobs(timeoutMinutes: number): Promise<number> {
