@@ -6,6 +6,7 @@ import type {
 import {
   addTrainingPeaksStudentFromCommand,
   cancelTrainingPeaksWeeklyRun,
+  claimTrainingPeaksWeeklyReportForSend,
   disableTrainingPeaksStudent,
   disableTrainingPeaksStudentByInternalId,
   enableTrainingPeaksStudent,
@@ -16,10 +17,13 @@ import {
   getTrainingPeaksStatusOverview,
   getTrainingPeaksStudentCard,
   getTrainingPeaksStudentCardByInternalId,
+  getTrainingPeaksStudentById,
   getTrainingPeaksStudentsRegistryWithLatestReportStatus,
+  getTrainingPeaksWeeklyReportByInternalId,
   TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
   type RequestTrainingPeaksWeeklyRunResult,
   requestTrainingPeaksWeeklyRun,
+  updateTrainingPeaksWeeklyReportStateByInternalId,
   updateTrainingPeaksStudentTelegramContact,
 } from "@/features/trainingpeaks/service";
 import {
@@ -50,6 +54,8 @@ const TP_CALLBACK_WEEK_CURRENT = "tp:wc";
 const TP_CALLBACK_JOBS = "tp:j";
 const TP_CALLBACK_HELP = "tp:h";
 const TP_CALLBACK_REPORTS = "tp:reports";
+const TP_CALLBACK_REPORT_SEND_PREFIX = "tp:rs:";
+const TP_CALLBACK_REPORT_SKIP_PREFIX = "tp:rk:";
 const TP_REPLY_BUTTON_MENU = "🏠 Меню";
 const TP_REPLY_BUTTON_STUDENTS = "👥 Ученики";
 const TP_REPLY_BUTTON_ADD = "➕ Добавить";
@@ -129,6 +135,8 @@ type ParsedTrainingPeaksCallback =
   | { kind: "student_report"; studentId: string }
   | { kind: "student_disable"; studentId: string }
   | { kind: "student_enable"; studentId: string }
+  | { kind: "report_send"; reportId: string }
+  | { kind: "report_skip"; reportId: string }
   | { kind: "week_menu" }
   | { kind: "week_last" }
   | { kind: "week_current" }
@@ -985,6 +993,62 @@ function shortenJobError(errorMessage: string | null): string | null {
   return normalized.length > 120 ? `${normalized.slice(0, 117)}...` : normalized;
 }
 
+function shortenDeliveryError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const normalized = raw.replace(/\s+/g, " ").trim();
+
+  if (!normalized) {
+    return "Unknown Telegram delivery error";
+  }
+
+  return normalized.length > 180 ? `${normalized.slice(0, 177)}...` : normalized;
+}
+
+function getReviewStatusLabel(status: string): string {
+  if (status === "draft") {
+    return "draft";
+  }
+
+  if (status === "approved") {
+    return "approved";
+  }
+
+  if (status === "sent") {
+    return "sent";
+  }
+
+  if (status === "skipped") {
+    return "skipped";
+  }
+
+  if (status === "failed") {
+    return "failed";
+  }
+
+  return status;
+}
+
+async function sendTelegramBusinessMessage(
+  chatId: string,
+  text: string,
+  businessConnectionId: string
+): Promise<void> {
+  const chunks = splitTelegramMessage(text);
+
+  for (const chunk of chunks) {
+    await sendTelegramMessageStrict(chatId, chunk, {
+      businessConnectionId,
+    });
+  }
+}
+
+async function notifyCoachReportAction(
+  chatId: number | string,
+  text: string
+): Promise<void> {
+  await sendTelegramMessage(chatId, text);
+}
+
 function getFiniteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -1315,6 +1379,16 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
     if (data.startsWith(prefix)) {
       const studentId = data.slice(prefix.length).trim();
       return studentId ? { kind, studentId } : null;
+    }
+  }
+
+  for (const [prefix, kind] of [
+    [TP_CALLBACK_REPORT_SEND_PREFIX, "report_send"],
+    [TP_CALLBACK_REPORT_SKIP_PREFIX, "report_skip"],
+  ] as const) {
+    if (data.startsWith(prefix)) {
+      const reportId = data.slice(prefix.length).trim();
+      return reportId ? { kind, reportId } : null;
     }
   }
 
@@ -2517,6 +2591,125 @@ function getCancelWeeklyJobMissingContextMessage(): string {
   ].join("\n");
 }
 
+async function handleTrainingPeaksSendReportToStudentCallback(
+  parsedMessage: ParsedTelegramCallbackUpdate,
+  reportId: string
+): Promise<void> {
+  const report = await getTrainingPeaksWeeklyReportByInternalId(reportId);
+
+  if (!report) {
+    await notifyCoachReportAction(parsedMessage.chatId, "Отчёт не найден.");
+    return;
+  }
+
+  const student = await getTrainingPeaksStudentById(report.studentId);
+
+  if (!student) {
+    await notifyCoachReportAction(parsedMessage.chatId, "Не могу отправить: ученик не найден.");
+    return;
+  }
+
+  if (!student.telegramDeliveryEnabled || !student.telegramChatId) {
+    await updateTrainingPeaksWeeklyReportStateByInternalId(report.id, {
+      deliveryError: "Student Telegram chat is not configured",
+    });
+    await notifyCoachReportAction(
+      parsedMessage.chatId,
+      "Не могу отправить: у ученика не привязан Telegram chat_id."
+    );
+    return;
+  }
+
+  const claimedReport = await claimTrainingPeaksWeeklyReportForSend(report.id);
+
+  if (!claimedReport) {
+    const currentReport = await getTrainingPeaksWeeklyReportByInternalId(report.id);
+    const currentStatus = getReviewStatusLabel(currentReport?.reviewStatus ?? report.reviewStatus);
+    await notifyCoachReportAction(
+      parsedMessage.chatId,
+      `Отчёт уже не в статусе draft: ${currentStatus}.`
+    );
+    return;
+  }
+
+  const businessConnectionId = process.env.TELEGRAM_BUSINESS_CONNECTION_ID?.trim();
+
+  if (!businessConnectionId) {
+    await updateTrainingPeaksWeeklyReportStateByInternalId(claimedReport.id, {
+      reviewStatus: "failed",
+      deliveryError: "Missing TELEGRAM_BUSINESS_CONNECTION_ID",
+    });
+    await notifyCoachReportAction(
+      parsedMessage.chatId,
+      "Не удалось отправить отчёт ученику: Missing TELEGRAM_BUSINESS_CONNECTION_ID"
+    );
+    return;
+  }
+
+  const reportMarkdown = claimedReport.reportMarkdown?.trim();
+
+  if (!reportMarkdown) {
+    await updateTrainingPeaksWeeklyReportStateByInternalId(claimedReport.id, {
+      reviewStatus: "failed",
+      deliveryError: "Report markdown is empty",
+    });
+    await notifyCoachReportAction(
+      parsedMessage.chatId,
+      "Не удалось отправить отчёт ученику: report_markdown is empty."
+    );
+    return;
+  }
+
+  try {
+    await sendTelegramBusinessMessage(student.telegramChatId, reportMarkdown, businessConnectionId);
+    await updateTrainingPeaksWeeklyReportStateByInternalId(claimedReport.id, {
+      reviewStatus: "sent",
+      sentAt: new Date().toISOString(),
+      sentToChatId: student.telegramChatId,
+      deliveryError: null,
+    });
+    await notifyCoachReportAction(
+      parsedMessage.chatId,
+      `Отчёт отправлен ученику: ${student.studentName}.`
+    );
+  } catch (error) {
+    const shortError = shortenDeliveryError(error);
+    await updateTrainingPeaksWeeklyReportStateByInternalId(claimedReport.id, {
+      reviewStatus: "failed",
+      deliveryError: shortError,
+    });
+    await notifyCoachReportAction(
+      parsedMessage.chatId,
+      `Не удалось отправить отчёт ученику: ${shortError}.`
+    );
+  }
+}
+
+async function handleTrainingPeaksSkipReportCallback(
+  parsedMessage: ParsedTelegramCallbackUpdate,
+  reportId: string
+): Promise<void> {
+  const report = await getTrainingPeaksWeeklyReportByInternalId(reportId);
+
+  if (!report) {
+    await notifyCoachReportAction(parsedMessage.chatId, "Отчёт не найден.");
+    return;
+  }
+
+  if (report.reviewStatus === "sent") {
+    await notifyCoachReportAction(
+      parsedMessage.chatId,
+      `Отчёт уже отправлен ученику: ${report.studentName}.`
+    );
+    return;
+  }
+
+  await updateTrainingPeaksWeeklyReportStateByInternalId(report.id, {
+    reviewStatus: "skipped",
+  });
+  await notifyCoachReportAction(parsedMessage.chatId, `Отчёт пропущен: ${report.studentName}.`);
+}
+
 function presentTrainingPeaksWeekRunResult(
   result: RequestTrainingPeaksWeeklyRunResult,
   options?: {
@@ -2669,6 +2862,16 @@ export async function handleTrainingPeaksTelegramCallback(
         getStudentCardMessageLines(student).join("\n"),
         getStudentCardMenuMarkup(student.id, student.isActive)
       );
+      return "handled";
+    }
+
+    if (callback.kind === "report_send") {
+      await handleTrainingPeaksSendReportToStudentCallback(parsedMessage, callback.reportId);
+      return "handled";
+    }
+
+    if (callback.kind === "report_skip") {
+      await handleTrainingPeaksSkipReportCallback(parsedMessage, callback.reportId);
       return "handled";
     }
 

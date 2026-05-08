@@ -18,6 +18,7 @@ export type ParsedTelegramCallbackUpdate = {
   userId: number | null;
   username: string | null;
   messageId: number;
+  messageText: string | null;
   data: string | null;
 };
 
@@ -37,6 +38,7 @@ export function parseTelegramUpdate(
       userId: callbackQuery.from?.id ?? null,
       username: callbackQuery.from?.username ?? null,
       messageId: callbackQuery.message.message_id,
+      messageText: callbackQuery.message.text?.trim() || callbackQuery.message.caption?.trim() || null,
       data: callbackQuery.data?.trim() || null,
     };
   }

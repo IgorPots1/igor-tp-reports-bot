@@ -78,7 +78,12 @@ cd ~/igor-tp-reports-bot
 npm run tp-sync-reports -- --from=2026-04-27 --to=2026-05-03
 ```
 
-9. Отправьте черновик вручную после проверки. Авто-отправки спортсмену пока нет.
+9. После `tp-agent-once` черновики придут в coach chat с кнопками:
+
+- `✅ Отправить ученику`
+- `⏭ Пропустить`
+
+Отправка спортсмену происходит только после явного подтверждения тренера через Telegram Business.
 
 ### Current safety rules
 
@@ -86,7 +91,8 @@ npm run tp-sync-reports -- --from=2026-04-27 --to=2026-05-03
 - `tp-sync-reports` публикует только безопасные метаданные и текст `report-draft.md` в Supabase для чтения ботом через общее состояние.
 - `tp-agent-once` забирает только одну queued-задачу из Supabase и запускается вручную на локальном Mac.
 - После успешного sync `tp-agent-once` отправляет черновики отчетов только в Telegram чат заказчика задачи.
-- Авто-отправки спортсменам пока нет.
+- На каждом draft сообщении есть inline-кнопки approve/skip.
+- Авто-отправки спортсменам нет: студент получает отчёт только после нажатия `✅ Отправить ученику`.
 - `exports/`, `parsed/`, `reports/`, `.env`, `config/students.json` локальные и находятся в `.gitignore`.
 - Учеников с плохим качеством данных можно временно отключать через `weekly_report_enabled=false`.
 
@@ -104,7 +110,7 @@ npm run tp-agent-once
 1. Claim'ит одну queued-задачу из `trainingpeaks_jobs`.
 2. Выполняет `tp-sync-students` и обновляет локальный `config/students.json` из Supabase.
 3. Запускает существующие `tp-weekly-all --from=... --to=...` и `tp-sync-reports --from=... --to=...`.
-4. Читает готовые `report_markdown` из Supabase и отправляет каждый draft обратно в Telegram requester chat отдельным сообщением.
+4. Читает готовые `report_markdown` из Supabase и отправляет каждый draft обратно в Telegram requester chat отдельным сообщением с inline-кнопками approve/skip.
 5. Помечает задачу как `completed` или `failed` в Supabase.
 
 Нормальный weekly flow теперь такой:
@@ -127,8 +133,24 @@ npm run tp-agent-once
 - Перед перезаписью `config/students.json` создается backup-файл `students.backup-YYYYMMDD-HHMMSS.json`, если локальный файл уже существовал.
 - Если sync учеников падает, `tp-weekly-all` не запускается.
 - После sync отчеты-драфты отправляются обратно в Telegram только тому, кто создал задачу.
-- Это не approve/reject flow и не авто-отправка спортсменам.
+- Coach review теперь происходит прямо в Telegram кнопками `✅ Отправить ученику` и `⏭ Пропустить`.
+- Для отправки студенту нужен `TELEGRAM_BUSINESS_CONNECTION_ID` и привязанный `telegram_chat_id` у студента.
 - Vercel по-прежнему не запускает Playwright/export/parser/AI.
+
+### Link student Telegram
+
+Чтобы привязать студента к Telegram-чату для weekly delivery, используйте coach-only команду:
+
+```text
+/tp_set_telegram <student_id> <chat_id>
+```
+
+После этого у студента должны быть:
+
+- `telegram_chat_id`
+- `telegram_delivery_enabled=true`
+
+Только тогда кнопка `✅ Отправить ученику` сможет доставить weekly report через Telegram Business.
 
 ### Sync students from Supabase
 

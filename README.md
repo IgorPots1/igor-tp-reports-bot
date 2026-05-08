@@ -86,7 +86,7 @@ Optional username form:
 /tp_set_telegram <student_id> <chat_id> <username>
 ```
 
-This only stores Telegram delivery metadata on the student row. It does not send any report to the student yet.
+This stores Telegram delivery metadata on the student row and enables coach-approved student delivery for weekly reports.
 
 ## TrainingPeaks Job Flow
 
@@ -137,6 +137,11 @@ Telegram:
 Mac:
 cd ~/igor-tp-reports-bot/tools/trainingpeaks-export
 npm run tp-agent-once
+
+Telegram:
+coach receives weekly report drafts with inline buttons
+`✅ Отправить ученику` -> `tp:rs:<reportId>`
+`⏭ Пропустить` -> `tp:rk:<reportId>`
 ```
 
 To execute one queued weekly job from Supabase on the local Mac runner:
@@ -146,14 +151,21 @@ cd ~/igor-tp-reports-bot/tools/trainingpeaks-export
 npm run tp-agent-once
 ```
 
-`tp-agent-once` claims one queued `trainingpeaks_jobs` row, syncs active weekly-enabled students from Supabase into the local `config/students.json`, then runs the existing `tp-weekly-all` and `tp-sync-reports` pipeline for the requested week. After sync, it reads the generated weekly report drafts from Supabase and sends them back to the Telegram requester chat as separate draft messages for coach review. If the student sync fails, the export does not continue. Before overwriting `config/students.json`, the sync creates a timestamped `students.backup-YYYYMMDD-HHMMSS.json` file when a previous local config exists.
+`tp-agent-once` claims one queued `trainingpeaks_jobs` row, syncs active weekly-enabled students from Supabase into the local `config/students.json`, then runs the existing `tp-weekly-all` and `tp-sync-reports` pipeline for the requested week. After sync, it reads the generated weekly report drafts from Supabase and sends them back to the Telegram requester chat as separate draft messages for coach review. Each draft now includes inline approval buttons. If the student sync fails, the export does not continue. Before overwriting `config/students.json`, the sync creates a timestamped `students.backup-YYYYMMDD-HHMMSS.json` file when a previous local config exists.
 
 Manual editing of `tools/trainingpeaks-export/config/students.json` is no longer needed for the normal Telegram -> local Mac weekly flow.
 
 Vercel still does not run Playwright, export, parser, or AI generation.
 
-This is still coach-only draft delivery. It is not auto-send to athletes yet.
-Weekly drafts still go only to the coach chat for review.
+Weekly drafts still go only to the coach chat first. Student delivery happens only after the coach taps the inline approval button.
+
+Coach-approved student delivery requirements:
+
+- `TELEGRAM_BUSINESS_CONNECTION_ID` must be set in production.
+- The student row must have `telegram_chat_id` and `telegram_delivery_enabled=true`.
+- Link a student chat with `/tp_set_telegram <student_id> <chat_id>`.
+- Tapping `✅ Отправить ученику` sends the synced `report_markdown` to the student's Telegram chat through Telegram Business.
+- Tapping `⏭ Пропустить` marks the weekly report as skipped without sending anything to the student.
 
 ## Telegram Commands
 

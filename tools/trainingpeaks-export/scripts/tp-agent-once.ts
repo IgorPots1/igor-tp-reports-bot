@@ -27,11 +27,19 @@ type TrainingPeaksJobRow = {
 };
 
 type TrainingPeaksWeeklyReportRow = {
+  id: string;
   student_id: string;
   student_name: string;
   week_from: string;
   week_to: string;
   report_markdown: string | null;
+};
+
+type TelegramInlineKeyboardMarkup = {
+  inline_keyboard: {
+    text: string;
+    callback_data: string;
+  }[][];
 };
 
 type TrainingPeaksExpectedStudent = {
@@ -74,6 +82,8 @@ const TELEGRAM_MESSAGE_LIMIT = 4000;
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
 const STALE_RUNNING_JOB_TIMEOUT_MINUTES = 6 * 60;
 const STALE_RUNNING_JOB_ERROR_MESSAGE = "Job marked failed after stale running timeout";
+const TP_CALLBACK_REPORT_SEND_PREFIX = "tp:rs:";
+const TP_CALLBACK_REPORT_SKIP_PREFIX = "tp:rk:";
 
 function readTextFileSyncSafe(filePath: string): string | null {
   try {
@@ -219,7 +229,22 @@ function buildTelegramReportMessages(report: TrainingPeaksWeeklyReportRow): stri
   return messages;
 }
 
-async function sendTelegramText(chatId: string, text: string): Promise<void> {
+function getReportReviewMarkup(reportId: string): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [{ text: "✅ Отправить ученику", callback_data: `${TP_CALLBACK_REPORT_SEND_PREFIX}${reportId}` }],
+      [{ text: "⏭ Пропустить", callback_data: `${TP_CALLBACK_REPORT_SKIP_PREFIX}${reportId}` }],
+    ],
+  };
+}
+
+async function sendTelegramText(
+  chatId: string,
+  text: string,
+  options?: {
+    replyMarkup?: TelegramInlineKeyboardMarkup;
+  }
+): Promise<void> {
   const token = getOptionalEnv("TELEGRAM_BOT_TOKEN");
   if (!token) {
     throw new Error("Missing TELEGRAM_BOT_TOKEN for Telegram delivery.");
@@ -233,6 +258,7 @@ async function sendTelegramText(chatId: string, text: string): Promise<void> {
     body: JSON.stringify({
       chat_id: chatId,
       text,
+      reply_markup: options?.replyMarkup,
     }),
   });
 
@@ -467,7 +493,7 @@ async function listWeeklyReportsWithMarkdown(
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("trainingpeaks_weekly_reports")
-    .select("student_id, student_name, week_from, week_to, report_markdown")
+    .select("id, student_id, student_name, week_from, week_to, report_markdown")
     .eq("week_from", weekFrom)
     .eq("week_to", weekTo)
     .order("student_name", { ascending: true });
@@ -493,8 +519,13 @@ async function deliverReportsToTelegram(
 
   for (const report of reports) {
     try {
-      for (const message of buildTelegramReportMessages(report)) {
-        await sendTelegramText(chatId, message);
+      const messages = buildTelegramReportMessages(report);
+
+      for (const [index, message] of messages.entries()) {
+        await sendTelegramText(chatId, message, {
+          replyMarkup:
+            index === messages.length - 1 && report.id ? getReportReviewMarkup(report.id) : undefined,
+        });
       }
 
       sentCount += 1;
