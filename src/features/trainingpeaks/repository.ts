@@ -55,6 +55,13 @@ export type UpdateTrainingPeaksStudentTelegramContactInput = {
   telegramDeliveryEnabled?: boolean;
 };
 
+export type UpdateTrainingPeaksStudentTelegramContactParams = {
+  telegram_chat_id?: string | null;
+  telegram_username?: string | null;
+  telegram_profile_url?: string | null;
+  telegram_delivery_enabled?: boolean;
+};
+
 export class TrainingPeaksStudentConflictError extends Error {
   readonly reason: "student_id" | "trainingpeaks_athlete_url";
 
@@ -111,6 +118,14 @@ export type UpdateTrainingPeaksWeeklyReportStateInput = {
   sentAt?: string | null;
   sentToChatId?: string | null;
   deliveryError?: string | null;
+};
+
+export type UpdateTrainingPeaksWeeklyReportReviewStateInput = {
+  review_status: string;
+  approved_at?: string | null;
+  sent_at?: string | null;
+  sent_to_chat_id?: string | null;
+  delivery_error?: string | null;
 };
 
 export type TrainingPeaksWeek = {
@@ -395,6 +410,18 @@ export async function updateTrainingPeaksStudentTelegramContactById(
   return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
 }
 
+export async function updateTrainingPeaksStudentTelegramContact(
+  studentId: string,
+  input: UpdateTrainingPeaksStudentTelegramContactParams
+): Promise<TrainingPeaksStudent> {
+  return updateTrainingPeaksStudentTelegramContactById(studentId, {
+    telegramChatId: input.telegram_chat_id,
+    telegramUsername: input.telegram_username,
+    telegramProfileUrl: input.telegram_profile_url,
+    telegramDeliveryEnabled: input.telegram_delivery_enabled,
+  });
+}
+
 export async function disableTrainingPeaksStudentById(id: string): Promise<TrainingPeaksStudent> {
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
@@ -570,6 +597,19 @@ export async function updateTrainingPeaksWeeklyReportStateById(
   return mapTrainingPeaksWeeklyReportRow(data as TrainingPeaksWeeklyReportRow);
 }
 
+export async function updateTrainingPeaksWeeklyReportReviewState(
+  reportId: string,
+  input: UpdateTrainingPeaksWeeklyReportReviewStateInput
+): Promise<TrainingPeaksWeeklyReport> {
+  return updateTrainingPeaksWeeklyReportStateById(reportId, {
+    reviewStatus: input.review_status,
+    approvedAt: input.approved_at,
+    sentAt: input.sent_at,
+    sentToChatId: input.sent_to_chat_id,
+    deliveryError: input.delivery_error,
+  });
+}
+
 export async function approveTrainingPeaksWeeklyReportIfDraft(
   id: string
 ): Promise<TrainingPeaksWeeklyReport | null> {
@@ -594,6 +634,12 @@ export async function approveTrainingPeaksWeeklyReportIfDraft(
   }
 
   return mapTrainingPeaksWeeklyReportRow(data as TrainingPeaksWeeklyReportRow);
+}
+
+export async function claimTrainingPeaksWeeklyReportForSend(
+  reportId: string
+): Promise<TrainingPeaksWeeklyReport | null> {
+  return approveTrainingPeaksWeeklyReportIfDraft(reportId);
 }
 
 export async function createTrainingPeaksWeeklyJob(

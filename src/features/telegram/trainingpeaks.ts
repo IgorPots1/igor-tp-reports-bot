@@ -20,6 +20,7 @@ import {
   TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
   type RequestTrainingPeaksWeeklyRunResult,
   requestTrainingPeaksWeeklyRun,
+  updateTrainingPeaksStudentTelegramContact,
 } from "@/features/trainingpeaks/service";
 import {
   resolveTrainingPeaksWeekKeyword,
@@ -84,6 +85,7 @@ const TP_RUN_WEEK_COMMAND_PATTERN = /^\/tp_run_week(?:@\w+)?(?:\s+|$)/;
 const TP_JOBS_COMMAND_PATTERN = /^\/tp_jobs(?:@\w+)?(?:\s+|$)/;
 const TP_WEEKLY_COMMAND_PATTERN = /^\/tp_weekly(?:@\w+)?(?:\s+|$)/;
 const TP_BUSINESS_TEST_COMMAND_PATTERN = /^\/tp_business_test(?:@\w+)?(?:\s+|$)/;
+const TP_SET_TELEGRAM_COMMAND_PATTERN = /^\/tp_set_telegram(?:@\w+)?(?:\s+|$)/;
 const TP_COMMAND_PATTERN = /^\/tp(?:_[a-z0-9_]+)?(?:@\w+)?(?:\s+|$)/;
 const SHORT_DATE_FORMATTER = new Intl.DateTimeFormat("ru-RU", {
   day: "numeric",
@@ -107,6 +109,7 @@ type TrainingPeaksCommand =
   | "tp_jobs"
   | "tp_weekly"
   | "tp_business_test"
+  | "tp_set_telegram"
   | "unknown";
 
 type TrainingPeaksWeek = {
@@ -252,6 +255,10 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
 
   if (TP_BUSINESS_TEST_COMMAND_PATTERN.test(text)) {
     return "tp_business_test";
+  }
+
+  if (TP_SET_TELEGRAM_COMMAND_PATTERN.test(text)) {
+    return "tp_set_telegram";
   }
 
   if (TP_COMMAND_PATTERN.test(text)) {
@@ -805,6 +812,43 @@ function parseTpBusinessTestChatId(text: string): string | null {
   }
 
   return /^-?\d+$/.test(tokens[0] ?? "") ? tokens[0]! : null;
+}
+
+function parseTpSetTelegramCommand(text: string): {
+  studentId: string | null;
+  chatId: string | null;
+  username: string | null;
+} {
+  const args = text.replace(TP_SET_TELEGRAM_COMMAND_PATTERN, "").trim();
+
+  if (!args) {
+    return {
+      studentId: null,
+      chatId: null,
+      username: null,
+    };
+  }
+
+  const tokens = args.split(/\s+/);
+
+  if (tokens.length < 2 || tokens.length > 3) {
+    return {
+      studentId: null,
+      chatId: null,
+      username: null,
+    };
+  }
+
+  const studentId = tokens[0]?.trim() || null;
+  const chatId = tokens[1]?.trim() || null;
+  const rawUsername = tokens[2]?.trim() || null;
+  const username = rawUsername ? rawUsername.replace(/^@/, "") || null : null;
+
+  return {
+    studentId,
+    chatId,
+    username,
+  };
 }
 
 function formatTpRunAliasMessage(message: string): string {
@@ -2370,6 +2414,53 @@ async function handleTrainingPeaksBusinessTest(
   }
 }
 
+async function handleTrainingPeaksSetTelegram(
+  parsedMessage: ParsedTelegramUpdate,
+  text: string
+): Promise<void> {
+  const parsedCommand = parseTpSetTelegramCommand(text);
+
+  if (!parsedCommand.studentId || !parsedCommand.chatId) {
+    await sendTelegramMessage(parsedMessage.chatId, "Usage: /tp_set_telegram <student_id> <chat_id>");
+    return;
+  }
+
+  const students = await getTrainingPeaksStudentsRegistryWithLatestReportStatus();
+  const student = students.find((entry) => entry.studentId === parsedCommand.studentId) ?? null;
+
+  if (!student) {
+    await sendTelegramMessage(
+      parsedMessage.chatId,
+      `Student with student_id "${parsedCommand.studentId}" not found.`
+    );
+    return;
+  }
+
+  const updatedStudent = await updateTrainingPeaksStudentTelegramContact(student.id, {
+    telegram_chat_id: parsedCommand.chatId,
+    telegram_username: parsedCommand.username ?? undefined,
+    telegram_delivery_enabled: true,
+  });
+
+  if (!updatedStudent) {
+    await sendTelegramMessage(
+      parsedMessage.chatId,
+      `Student with student_id "${parsedCommand.studentId}" not found.`
+    );
+    return;
+  }
+
+  const confirmationLines = [
+    `Telegram chat linked for ${updatedStudent.studentName}: ${parsedCommand.chatId}`,
+  ];
+
+  if (parsedCommand.username) {
+    confirmationLines.push(`Username: @${parsedCommand.username}`);
+  }
+
+  await sendTelegramMessage(parsedMessage.chatId, confirmationLines.join("\n"));
+}
+
 function getWeekResultMarkup(options?: {
   includeJobsButton?: boolean;
 }): TelegramInlineKeyboardMarkup {
@@ -2734,6 +2825,11 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_business_test") {
       await handleTrainingPeaksBusinessTest(parsedMessage, text);
+      return "handled";
+    }
+
+    if (command === "tp_set_telegram") {
+      await handleTrainingPeaksSetTelegram(parsedMessage, text);
       return "handled";
     }
 

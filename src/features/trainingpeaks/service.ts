@@ -1,12 +1,13 @@
 import {
   approveTrainingPeaksWeeklyReportIfDraft,
   cancelQueuedTrainingPeaksJob,
+  claimTrainingPeaksWeeklyReportForSend as claimTrainingPeaksWeeklyReportForSendInRepository,
   createTrainingPeaksWeeklyJob,
   disableTrainingPeaksStudentById,
   enableTrainingPeaksStudentById,
   findActiveTrainingPeaksJobForWeek,
   getTrainingPeaksJobById,
-  getTrainingPeaksStudentById,
+  getTrainingPeaksStudentById as getTrainingPeaksStudentByIdFromRepository,
   getTrainingPeaksWeeklyReportById,
   recoverStaleTrainingPeaksRunningJobs,
   insertTrainingPeaksStudent,
@@ -21,8 +22,12 @@ import {
   type TrainingPeaksWeek,
   type TrainingPeaksWeeklyReport,
   type UpdateTrainingPeaksStudentTelegramContactInput,
+  type UpdateTrainingPeaksStudentTelegramContactParams,
   type UpdateTrainingPeaksWeeklyReportStateInput,
+  type UpdateTrainingPeaksWeeklyReportReviewStateInput,
+  updateTrainingPeaksStudentTelegramContact as updateTrainingPeaksStudentTelegramContactInRepository,
   updateTrainingPeaksStudentTelegramContactById,
+  updateTrainingPeaksWeeklyReportReviewState as updateTrainingPeaksWeeklyReportReviewStateInRepository,
   updateTrainingPeaksWeeklyReportStateById,
 } from "@/features/trainingpeaks/repository";
 import { resolveTrainingPeaksWeekKeyword } from "@/features/trainingpeaks/week";
@@ -113,6 +118,11 @@ export type EnableTrainingPeaksStudentResult = DisableTrainingPeaksStudentResult
 export type TrainingPeaksJobRequester = {
   chatId: number | string;
   userId: number | string | null;
+};
+
+export type {
+  UpdateTrainingPeaksStudentTelegramContactParams,
+  UpdateTrainingPeaksWeeklyReportReviewStateInput,
 };
 
 export type RequestTrainingPeaksWeeklyRunResult =
@@ -712,6 +722,10 @@ export async function getTrainingPeaksStudentCardByInternalId(
   return getTrainingPeaksRegistryStudentByInternalId(id);
 }
 
+export async function getTrainingPeaksStudentById(studentId: string): Promise<TrainingPeaksStudent | null> {
+  return getTrainingPeaksStudentByIdFromRepository(studentId);
+}
+
 export async function disableTrainingPeaksStudent(
   studentQuery: string
 ): Promise<DisableTrainingPeaksStudentResult> {
@@ -820,7 +834,7 @@ export async function updateTrainingPeaksStudentTelegramContactByInternalId(
   id: string,
   input: UpdateTrainingPeaksStudentTelegramContactInput
 ): Promise<TrainingPeaksRegistryStudentSnapshot | null> {
-  const existingStudent = await getTrainingPeaksStudentById(id);
+  const existingStudent = await getTrainingPeaksStudentByIdFromRepository(id);
 
   if (!existingStudent) {
     return null;
@@ -828,6 +842,19 @@ export async function updateTrainingPeaksStudentTelegramContactByInternalId(
 
   await updateTrainingPeaksStudentTelegramContactById(id, input);
   return getTrainingPeaksRegistryStudentByInternalId(id);
+}
+
+export async function updateTrainingPeaksStudentTelegramContact(
+  studentId: string,
+  input: UpdateTrainingPeaksStudentTelegramContactParams
+): Promise<TrainingPeaksStudent | null> {
+  const existingStudent = await getTrainingPeaksStudentByIdFromRepository(studentId);
+
+  if (!existingStudent) {
+    return null;
+  }
+
+  return updateTrainingPeaksStudentTelegramContactInRepository(studentId, input);
 }
 
 export async function getTrainingPeaksWeeklyReportByInternalId(
@@ -849,8 +876,27 @@ export async function updateTrainingPeaksWeeklyReportStateByInternalId(
   return updateTrainingPeaksWeeklyReportStateById(id, input);
 }
 
+export async function updateTrainingPeaksWeeklyReportReviewState(
+  reportId: string,
+  input: UpdateTrainingPeaksWeeklyReportReviewStateInput
+): Promise<TrainingPeaksWeeklyReport | null> {
+  const existingReport = await getTrainingPeaksWeeklyReportById(reportId);
+
+  if (!existingReport) {
+    return null;
+  }
+
+  return updateTrainingPeaksWeeklyReportReviewStateInRepository(reportId, input);
+}
+
 export async function approveTrainingPeaksWeeklyReportDraftByInternalId(
   id: string
 ): Promise<TrainingPeaksWeeklyReport | null> {
   return approveTrainingPeaksWeeklyReportIfDraft(id);
+}
+
+export async function claimTrainingPeaksWeeklyReportForSend(
+  reportId: string
+): Promise<TrainingPeaksWeeklyReport | null> {
+  return claimTrainingPeaksWeeklyReportForSendInRepository(reportId);
 }

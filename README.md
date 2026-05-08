@@ -72,6 +72,22 @@ Use it from a coach/admin chat after:
 2. Confirming `business_connection` webhook logs appeared.
 3. Saving that `connectionId` into `TELEGRAM_BUSINESS_CONNECTION_ID`.
 
+To capture a student `chat_id` for later linking, send a normal message from that student chat to the connected Telegram Business account and check the Vercel webhook logs for the `business_message` event. The app logs `chatId`, so you can copy that value directly.
+
+Temporary coach-only linking command:
+
+```text
+/tp_set_telegram <student_id> <chat_id>
+```
+
+Optional username form:
+
+```text
+/tp_set_telegram <student_id> <chat_id> <username>
+```
+
+This only stores Telegram delivery metadata on the student row. It does not send any report to the student yet.
+
 ## TrainingPeaks Job Flow
 
 Architecture rules for MVP:
@@ -137,6 +153,7 @@ Manual editing of `tools/trainingpeaks-export/config/students.json` is no longer
 Vercel still does not run Playwright, export, parser, or AI generation.
 
 This is still coach-only draft delivery. It is not auto-send to athletes yet.
+Weekly drafts still go only to the coach chat for review.
 
 ## Telegram Commands
 
@@ -156,3 +173,4 @@ Available commands:
 - `/tp_report <student> [from to]`
 - `/tp_weekly`
 - `/tp_business_test <chat_id>` (admin smoke test)
+- `/tp_set_telegram <student_id> <chat_id>` (temporary coach-only metadata link; not shown in bot menu)
