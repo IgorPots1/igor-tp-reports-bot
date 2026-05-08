@@ -157,6 +157,7 @@ type CompletedDetailSource = {
   fit_total_distance_m?: number | null;
   score?: number;
   reasons?: string[];
+  data_quality_flags?: string[];
 };
 
 type CompletedSection = {
@@ -454,6 +455,8 @@ type FitSampleRecord = {
   power?: number | null;
 };
 
+type FitParseMode = "strict" | "force_fallback";
+
 type FitDiagnostics = {
   status: "parsed_sample" | "parse_failed" | "not_available";
   parser: "fit-file-parser";
@@ -461,6 +464,10 @@ type FitDiagnostics = {
   sampled_zip_path?: string;
   sampled_entry_name?: string;
   error?: string;
+  fit_parse_mode?: FitParseMode;
+  fit_parse_recovered?: boolean;
+  fit_parse_strict_error?: string;
+  data_quality_flags?: string[];
   session_count?: number;
   laps_count?: number;
   records_count?: number;
@@ -482,6 +489,10 @@ type FitSummary = {
   entry_name: string;
   format: "fit.gz" | "fit";
   error?: string;
+  fit_parse_mode?: FitParseMode;
+  fit_parse_recovered?: boolean;
+  fit_parse_strict_error?: string;
+  data_quality_flags?: string[];
   start_time?: string | null;
   start_date_utc?: string | null;
   sport?: string | null;
@@ -516,6 +527,14 @@ type ParsedFitLike = {
   sessions?: FitSessionLike[];
   laps?: unknown[];
   records?: FitRecordLike[];
+};
+
+type ParsedFitWithFallback = {
+  parsed_fit: ParsedFitLike;
+  fit_parse_mode: FitParseMode;
+  fit_parse_recovered: boolean;
+  fit_parse_strict_error?: string;
+  data_quality_flags: string[];
 };
 
 type FitMatchCandidate = {
@@ -2697,14 +2716,54 @@ function toUtcDateString(value: string | null | undefined): string | null {
   return `${year}-${month}-${day}`;
 }
 
-function createFitParser(): FitParser {
+function createFitParser(force = false): FitParser {
   return new FitParser({
     mode: "list",
     lengthUnit: "m",
     speedUnit: "m/s",
     elapsedRecordField: true,
-    force: false
+    force
   });
+}
+
+function isRecoverableFitParseError(error: unknown): boolean {
+  return (
+    error instanceof RangeError ||
+    trimFitErrorMessage(error).includes("Offset is outside the bounds of the DataView")
+  );
+}
+
+async function parseFitWithFallback(
+  fitBuffer: Buffer<ArrayBufferLike>
+): Promise<ParsedFitWithFallback> {
+  try {
+    const parsedFit = await createFitParser(false).parseAsync(fitBuffer);
+    return {
+      parsed_fit: parsedFit as ParsedFitLike,
+      fit_parse_mode: "strict",
+      fit_parse_recovered: false,
+      data_quality_flags: []
+    };
+  } catch (strictError: unknown) {
+    if (!isRecoverableFitParseError(strictError)) {
+      throw strictError;
+    }
+
+    const trimmedStrictError = trimFitErrorMessage(strictError);
+
+    try {
+      const parsedFit = await createFitParser(true).parseAsync(fitBuffer);
+      return {
+        parsed_fit: parsedFit as ParsedFitLike,
+        fit_parse_mode: "force_fallback",
+        fit_parse_recovered: true,
+        fit_parse_strict_error: trimmedStrictError,
+        data_quality_flags: ["fit_parse_force_fallback", "fit_parse_strict_failed"]
+      };
+    } catch {
+      throw strictError;
+    }
+  }
 }
 
 function createEmptyFitRecordFieldCounts(): FitRecordFieldCounts {
@@ -2758,9 +2817,10 @@ function pickRepresentativeFitRecord(records: FitRecordLike[]): FitRecordLike | 
 }
 
 function summarizeParsedFit(
-  parsedFit: ParsedFitLike,
+  fitResult: ParsedFitWithFallback,
   sampledFile: WorkoutFileEntry
 ): FitDiagnostics {
+  const parsedFit = fitResult.parsed_fit;
   const sessions = Array.isArray(parsedFit.sessions) ? parsedFit.sessions : [];
   const laps = Array.isArray(parsedFit.laps) ? parsedFit.laps : [];
   const records = Array.isArray(parsedFit.records) ? parsedFit.records : [];
@@ -2796,6 +2856,14 @@ function summarizeParsedFit(
     sample_strategy: "first_fit_gz_sorted",
     sampled_zip_path: sampledFile.zip_path,
     sampled_entry_name: sampledFile.entry_name,
+    ...(fitResult.fit_parse_recovered
+      ? {
+          fit_parse_mode: fitResult.fit_parse_mode,
+          fit_parse_recovered: fitResult.fit_parse_recovered,
+          fit_parse_strict_error: fitResult.fit_parse_strict_error,
+          data_quality_flags: [...fitResult.data_quality_flags]
+        }
+      : {}),
     session_count: sessions.length,
     laps_count: laps.length,
     records_count: records.length,
@@ -2818,7 +2886,11 @@ function summarizeParsedFit(
   };
 }
 
-function summarizeFitForMatching(parsedFit: ParsedFitLike, fitFile: WorkoutFileEntry): FitSummary {
+function summarizeFitForMatching(
+  fitResult: ParsedFitWithFallback,
+  fitFile: WorkoutFileEntry
+): FitSummary {
+  const parsedFit = fitResult.parsed_fit;
   const sessions = Array.isArray(parsedFit.sessions) ? parsedFit.sessions : [];
   const laps = Array.isArray(parsedFit.laps) ? parsedFit.laps : [];
   const records = Array.isArray(parsedFit.records) ? parsedFit.records : [];
@@ -2830,6 +2902,14 @@ function summarizeFitForMatching(parsedFit: ParsedFitLike, fitFile: WorkoutFileE
     zip_path: fitFile.zip_path,
     entry_name: fitFile.entry_name,
     format: fitFile.format,
+    fit_parse_mode: fitResult.fit_parse_mode,
+    fit_parse_recovered: fitResult.fit_parse_recovered,
+    ...(fitResult.fit_parse_strict_error
+      ? { fit_parse_strict_error: fitResult.fit_parse_strict_error }
+      : {}),
+    ...(fitResult.data_quality_flags.length > 0
+      ? { data_quality_flags: [...fitResult.data_quality_flags] }
+      : {}),
     start_time: startTime,
     start_date_utc: toUtcDateString(startTime),
     sport: firstSession?.sport ?? null,
@@ -3423,9 +3503,11 @@ function buildWorkoutFileEntryFromDetailSource(detailSource: CompletedDetailSour
 }
 
 async function buildWorkoutSegmentComparisons(workouts: ParsedWorkout[]): Promise<ParsedWorkout[]> {
-  const fitCache = new Map<string, Promise<ParsedFitLike>>();
+  const fitCache = new Map<string, Promise<ParsedFitWithFallback>>();
 
-  const getParsedFit = async (detailSource: CompletedDetailSource): Promise<ParsedFitLike> => {
+  const getParsedFit = async (
+    detailSource: CompletedDetailSource
+  ): Promise<ParsedFitWithFallback> => {
     const entry = buildWorkoutFileEntryFromDetailSource(detailSource);
     if (!entry) {
       throw new Error("matched FIT source is incomplete");
@@ -3437,8 +3519,7 @@ async function buildWorkoutSegmentComparisons(workouts: ParsedWorkout[]): Promis
         cacheKey,
         (async () => {
           const fitBuffer = await readWorkoutFileEntryBuffer(entry);
-          const fitParser = createFitParser();
-          return (await fitParser.parseAsync(fitBuffer)) as ParsedFitLike;
+          return await parseFitWithFallback(fitBuffer);
         })()
       );
     }
@@ -3463,9 +3544,20 @@ async function buildWorkoutSegmentComparisons(workouts: ParsedWorkout[]): Promis
     }
 
     try {
-      const parsedFit = await getParsedFit(workout.completed.detail_source);
-      const segmentResult = analyzeWorkoutSegmentComparisonFromFit(workout, parsedFit);
-      workout.segment_analysis = segmentResult.segment_analysis;
+      const fitResult = await getParsedFit(workout.completed.detail_source);
+      const segmentResult = analyzeWorkoutSegmentComparisonFromFit(workout, fitResult.parsed_fit);
+      const fitQualityFlags = [
+        ...new Set([
+          ...(workout.completed.detail_source.data_quality_flags ?? []),
+          ...fitResult.data_quality_flags
+        ])
+      ];
+      workout.segment_analysis = {
+        ...segmentResult.segment_analysis,
+        data_quality_flags: [
+          ...new Set([...(segmentResult.segment_analysis.data_quality_flags ?? []), ...fitQualityFlags])
+        ]
+      };
       workout.segment_comparison = segmentResult.segment_comparison;
     } catch (error: unknown) {
       workout.segment_analysis = {
@@ -3543,10 +3635,8 @@ async function parseFitDiagnosticsSample(workoutFilesSource: WorkoutFilesSource)
 
   try {
     const fitBuffer = await readWorkoutFileEntryBuffer(sampledFile);
-    const fitParser = createFitParser();
-    const parsedFit = await fitParser.parseAsync(fitBuffer);
-
-    return summarizeParsedFit(parsedFit as ParsedFitLike, sampledFile);
+    const fitResult = await parseFitWithFallback(fitBuffer);
+    return summarizeParsedFit(fitResult, sampledFile);
   } catch (error: unknown) {
     return {
       status: "parse_failed",
@@ -3565,9 +3655,8 @@ async function parseAllFitSummaries(workoutFilesSource: WorkoutFilesSource): Pro
   for (const fitFile of workoutFilesSource.files) {
     try {
       const fitBuffer = await readWorkoutFileEntryBuffer(fitFile);
-      const fitParser = createFitParser();
-      const parsedFit = await fitParser.parseAsync(fitBuffer);
-      fitSummaries.push(summarizeFitForMatching(parsedFit as ParsedFitLike, fitFile));
+      const fitResult = await parseFitWithFallback(fitBuffer);
+      fitSummaries.push(summarizeFitForMatching(fitResult, fitFile));
     } catch (error: unknown) {
       fitSummaries.push({
         status: "parse_failed",
@@ -4067,7 +4156,10 @@ function createMatchedDetailSource(
     fit_total_elapsed_time_s: fitSummary.total_elapsed_time_s ?? null,
     fit_total_distance_m: fitSummary.total_distance_m ?? null,
     score: candidate.score,
-    reasons: candidate.reasons
+    reasons: candidate.reasons,
+    ...(fitSummary.data_quality_flags?.length
+      ? { data_quality_flags: [...fitSummary.data_quality_flags] }
+      : {})
   };
 }
 
@@ -4088,7 +4180,10 @@ function createAmbiguousDetailSource(
     fit_total_elapsed_time_s: fitSummary.total_elapsed_time_s ?? null,
     fit_total_distance_m: fitSummary.total_distance_m ?? null,
     score: candidate.score,
-    reasons: candidate.reasons
+    reasons: candidate.reasons,
+    ...(fitSummary.data_quality_flags?.length
+      ? { data_quality_flags: [...fitSummary.data_quality_flags] }
+      : {})
   };
 }
 
