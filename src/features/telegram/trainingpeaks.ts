@@ -74,6 +74,8 @@ const TP_REPLY_BUTTON_WEEK_CURRENT = "Текущая неделя";
 const TP_REPLY_BUTTON_JOBS_REFRESH = "🔄 Обновить задачи";
 const TP_REPLY_BUTTON_CANCEL_JOB = "❌ Отменить задачу";
 const TP_REPLY_BUTTON_REPORT = "📄 Отчёт";
+const TP_REPLY_BUTTON_TELEGRAM_LINK = "🔗 Привязать Telegram";
+const TP_REPLY_BUTTON_TELEGRAM_TEST = "📨 Отправить тест";
 const TP_REPLY_BUTTON_DISABLE = "⛔ Отключить";
 const TP_REPLY_BUTTON_ENABLE = "✅ Включить";
 const TP_CHAT_CONTEXT_TTL_MS = 30 * 60 * 1000;
@@ -200,6 +202,8 @@ type TrainingPeaksReplyKeyboardAction =
   | "jobs_refresh"
   | "cancel_job"
   | "student_report"
+  | "student_link"
+  | "student_test"
   | "student_disable"
   | "student_enable";
 
@@ -612,13 +616,20 @@ function getTrainingPeaksStudentsReplyKeyboardMarkup(
 function getTrainingPeaksStudentActionsReplyKeyboardMarkup(
   student: {
     isActive: boolean;
+    telegramChatId: string | null;
+    telegramDeliveryEnabled: boolean;
   }
 ): TelegramReplyKeyboardMarkup {
-  return createReplyKeyboardMarkup([
-    [TP_REPLY_BUTTON_REPORT],
-    [student.isActive ? TP_REPLY_BUTTON_DISABLE : TP_REPLY_BUTTON_ENABLE],
-    [TP_REPLY_BUTTON_STUDENTS_BACK, TP_REPLY_BUTTON_MENU],
-  ]);
+  const rows = [[TP_REPLY_BUTTON_REPORT], [TP_REPLY_BUTTON_TELEGRAM_LINK]];
+
+  if (student.telegramChatId && student.telegramDeliveryEnabled) {
+    rows.push([TP_REPLY_BUTTON_TELEGRAM_TEST]);
+  }
+
+  rows.push([student.isActive ? TP_REPLY_BUTTON_DISABLE : TP_REPLY_BUTTON_ENABLE]);
+  rows.push([TP_REPLY_BUTTON_STUDENTS_BACK, TP_REPLY_BUTTON_MENU]);
+
+  return createReplyKeyboardMarkup(rows);
 }
 
 function getTrainingPeaksWeekReplyKeyboardMarkup(): TelegramReplyKeyboardMarkup {
@@ -1416,6 +1427,14 @@ function getTrainingPeaksReplyKeyboardAction(text: string): TrainingPeaksReplyKe
     return "student_report";
   }
 
+  if (text === TP_REPLY_BUTTON_TELEGRAM_LINK) {
+    return "student_link";
+  }
+
+  if (text === TP_REPLY_BUTTON_TELEGRAM_TEST) {
+    return "student_test";
+  }
+
   if (text === TP_REPLY_BUTTON_DISABLE) {
     return "student_disable";
   }
@@ -1986,7 +2005,7 @@ async function showTrainingPeaksStudentCardMenu(
 }
 
 async function showTrainingPeaksStudentTelegramLinkMenu(
-  parsedMessage: ParsedTelegramCallbackUpdate,
+  parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate,
   studentId: string
 ): Promise<void> {
   const [student, chats] = await Promise.all([
@@ -1995,19 +2014,33 @@ async function showTrainingPeaksStudentTelegramLinkMenu(
   ]);
 
   if (!student) {
-    await editTrainingPeaksMenuMessage(
-      parsedMessage.chatId,
-      parsedMessage.messageId,
-      "Ученик больше не найден.",
-      getStudentNotFoundMarkup()
-    );
+    if (parsedMessage.kind === "callback_query") {
+      await editTrainingPeaksMenuMessage(
+        parsedMessage.chatId,
+        parsedMessage.messageId,
+        "Ученик больше не найден.",
+        getStudentNotFoundMarkup()
+      );
+      return;
+    }
+
+    await showTrainingPeaksSelectedStudentFallback(parsedMessage);
     return;
   }
 
   if (chats.length === 0) {
-    await editTrainingPeaksMenuMessage(
+    if (parsedMessage.kind === "callback_query") {
+      await editTrainingPeaksMenuMessage(
+        parsedMessage.chatId,
+        parsedMessage.messageId,
+        getStudentTelegramLinkEmptyText(),
+        getStudentTelegramLinkEmptyMarkup(student.id)
+      );
+      return;
+    }
+
+    await sendTrainingPeaksMenuMessage(
       parsedMessage.chatId,
-      parsedMessage.messageId,
       getStudentTelegramLinkEmptyText(),
       getStudentTelegramLinkEmptyMarkup(student.id)
     );
@@ -2029,9 +2062,18 @@ async function showTrainingPeaksStudentTelegramLinkMenu(
     selectedStudentName: student.studentName,
   });
 
-  await editTrainingPeaksMenuMessage(
+  if (parsedMessage.kind === "callback_query") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      getStudentTelegramLinkMenuText(student.studentName, chatsWithKeys),
+      getStudentTelegramLinkMenuMarkup(student.id, chatsWithKeys)
+    );
+    return;
+  }
+
+  await sendTrainingPeaksMenuMessage(
     parsedMessage.chatId,
-    parsedMessage.messageId,
     getStudentTelegramLinkMenuText(student.studentName, chatsWithKeys),
     getStudentTelegramLinkMenuMarkup(student.id, chatsWithKeys)
   );
@@ -2119,13 +2161,58 @@ async function handleTrainingPeaksStudentChooseBusinessChatCallback(
   );
 }
 
+async function sendTrainingPeaksStudentTestMessage(
+  studentId: string
+): Promise<
+  | { kind: "not_found" }
+  | { kind: "not_configured"; studentId: string }
+  | { kind: "missing_business_connection"; studentId: string }
+  | { kind: "sent"; studentId: string; studentName: string }
+  | { kind: "failed"; studentId: string; errorMessage: string }
+> {
+  const student = await getTrainingPeaksStudentById(studentId);
+
+  if (!student) {
+    return { kind: "not_found" };
+  }
+
+  if (!student.telegramChatId || !student.telegramDeliveryEnabled) {
+    return { kind: "not_configured", studentId: student.id };
+  }
+
+  const businessConnectionId = process.env.TELEGRAM_BUSINESS_CONNECTION_ID?.trim();
+
+  if (!businessConnectionId) {
+    return { kind: "missing_business_connection", studentId: student.id };
+  }
+
+  try {
+    await sendTelegramBusinessMessage(
+      student.telegramChatId,
+      "Тестовое сообщение от Игоря ✅",
+      businessConnectionId
+    );
+    return {
+      kind: "sent",
+      studentId: student.id,
+      studentName: student.studentName,
+    };
+  } catch (error) {
+    return {
+      kind: "failed",
+      studentId: student.id,
+      errorMessage: shortenDeliveryError(error),
+    };
+  }
+}
+
 async function handleTrainingPeaksStudentTestMessageCallback(
   parsedMessage: ParsedTelegramCallbackUpdate,
   studentId: string
 ): Promise<void> {
-  const student = await getTrainingPeaksStudentById(studentId);
+  const result = await sendTrainingPeaksStudentTestMessage(studentId);
 
-  if (!student) {
+  if (result.kind === "not_found") {
     await editTrainingPeaksMenuMessage(
       parsedMessage.chatId,
       parsedMessage.messageId,
@@ -2135,48 +2222,42 @@ async function handleTrainingPeaksStudentTestMessageCallback(
     return;
   }
 
-  if (!student.telegramChatId || !student.telegramDeliveryEnabled) {
+  if (result.kind === "not_configured") {
     await editTrainingPeaksMenuMessage(
       parsedMessage.chatId,
       parsedMessage.messageId,
       "Не могу отправить тест: у ученика не привязан Telegram или доставка выключена.",
-      getStudentTelegramLinkErrorMarkup(student.id)
+      getStudentTelegramLinkErrorMarkup(result.studentId)
     );
     return;
   }
 
-  const businessConnectionId = process.env.TELEGRAM_BUSINESS_CONNECTION_ID?.trim();
-
-  if (!businessConnectionId) {
+  if (result.kind === "missing_business_connection") {
     await editTrainingPeaksMenuMessage(
       parsedMessage.chatId,
       parsedMessage.messageId,
       "Не могу отправить тест: missing TELEGRAM_BUSINESS_CONNECTION_ID.",
-      getStudentTelegramLinkSuccessMarkup(student.id)
+      getStudentTelegramLinkSuccessMarkup(result.studentId)
     );
     return;
   }
 
-  try {
-    await sendTelegramBusinessMessage(
-      student.telegramChatId,
-      "Тестовое сообщение от Игоря ✅",
-      businessConnectionId
-    );
+  if (result.kind === "sent") {
     await editTrainingPeaksMenuMessage(
       parsedMessage.chatId,
       parsedMessage.messageId,
-      `✅ Тестовое сообщение отправлено: ${student.studentName}.`,
-      getStudentTelegramLinkSuccessMarkup(student.id)
+      `✅ Тестовое сообщение отправлено: ${result.studentName}.`,
+      getStudentTelegramLinkSuccessMarkup(result.studentId)
     );
-  } catch (error) {
-    await editTrainingPeaksMenuMessage(
-      parsedMessage.chatId,
-      parsedMessage.messageId,
-      `Не удалось отправить тестовое сообщение: ${shortenDeliveryError(error)}.`,
-      getStudentTelegramLinkSuccessMarkup(student.id)
-    );
+    return;
   }
+
+  await editTrainingPeaksMenuMessage(
+    parsedMessage.chatId,
+    parsedMessage.messageId,
+    `Не удалось отправить тестовое сообщение: ${result.errorMessage}.`,
+    getStudentTelegramLinkSuccessMarkup(result.studentId)
+  );
 }
 
 async function showTrainingPeaksWeekMenu(
@@ -2522,6 +2603,80 @@ export async function handleTrainingPeaksTelegramReplyKeyboardMessage(
         selectedStudentId: student.id,
         selectedStudentName: student.studentName,
       });
+      return "handled";
+    }
+
+    if (action === "student_link") {
+      const selectedStudent = getSelectedStudentContext(parsedMessage.chatId);
+
+      if (!selectedStudent) {
+        await showTrainingPeaksSelectedStudentFallback(parsedMessage);
+        return "handled";
+      }
+
+      await showTrainingPeaksStudentTelegramLinkMenu(parsedMessage, selectedStudent.selectedStudentId);
+      return "handled";
+    }
+
+    if (action === "student_test") {
+      const selectedStudent = getSelectedStudentContext(parsedMessage.chatId);
+
+      if (!selectedStudent) {
+        await showTrainingPeaksSelectedStudentFallback(parsedMessage);
+        return "handled";
+      }
+
+      const result = await sendTrainingPeaksStudentTestMessage(selectedStudent.selectedStudentId);
+
+      if (result.kind === "not_found") {
+        await showTrainingPeaksSelectedStudentFallback(parsedMessage);
+        return "handled";
+      }
+
+      const student = await getTrainingPeaksStudentCardByInternalId(selectedStudent.selectedStudentId);
+
+      if (!student) {
+        await showTrainingPeaksSelectedStudentFallback(parsedMessage);
+        return "handled";
+      }
+
+      setTrainingPeaksScreenContext(parsedMessage.chatId, "student_actions", {
+        selectedStudentId: student.id,
+        selectedStudentName: student.studentName,
+      });
+
+      if (result.kind === "not_configured") {
+        await sendTrainingPeaksReplyScreen(
+          parsedMessage.chatId,
+          "Не могу отправить тест: у ученика не привязан Telegram или доставка выключена.",
+          getTrainingPeaksStudentActionsReplyKeyboardMarkup(student)
+        );
+        return "handled";
+      }
+
+      if (result.kind === "missing_business_connection") {
+        await sendTrainingPeaksReplyScreen(
+          parsedMessage.chatId,
+          "Не могу отправить тест: missing TELEGRAM_BUSINESS_CONNECTION_ID.",
+          getTrainingPeaksStudentActionsReplyKeyboardMarkup(student)
+        );
+        return "handled";
+      }
+
+      if (result.kind === "sent") {
+        await sendTrainingPeaksReplyScreen(
+          parsedMessage.chatId,
+          `✅ Тестовое сообщение отправлено: ${result.studentName}.`,
+          getTrainingPeaksStudentActionsReplyKeyboardMarkup(student)
+        );
+        return "handled";
+      }
+
+      await sendTrainingPeaksReplyScreen(
+        parsedMessage.chatId,
+        `Не удалось отправить тестовое сообщение: ${result.errorMessage}.`,
+        getTrainingPeaksStudentActionsReplyKeyboardMarkup(student)
+      );
       return "handled";
     }
 
