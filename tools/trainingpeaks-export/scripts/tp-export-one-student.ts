@@ -400,6 +400,12 @@ type GeneratedDownloadLinkState = {
   candidateLinks?: string[];
 };
 
+type GeneratedDownloadLinkReadOptions = {
+  scope?: Locator | null;
+  allowGenericDownloadControl?: boolean;
+  genericControlPatternSource?: string;
+};
+
 type GeneratedDownloadLinkWaitResult = AutomationAttemptResult & GeneratedDownloadLinkState;
 
 type GeneratedDownloadLinkClickResult = AutomationAttemptResult & GeneratedDownloadLinkState & {
@@ -428,6 +434,26 @@ type ExportApiCaptureResult = {
 type WorkoutSummaryClickAttemptResult = AutomationAttemptResult & {
   clickDebug?: WorkoutSummaryClickDebug;
   apiCapture?: ExportApiCaptureResult;
+};
+
+type WorkoutFilesPreClickDebug = {
+  containerSummary: string;
+  sectionTextSnippet: string;
+  exportButtons: string[];
+  controls: string[];
+  selectedButtonText?: string;
+  selectedButtonDisabled?: boolean;
+  selectedButtonAriaDisabled?: string;
+  selectedButtonClass?: string;
+  startDateValue: string;
+  endDateValue: string;
+};
+
+type WorkoutFilesClickDebug = WorkoutFilesPreClickDebug & {
+  validationMessagesAfterClick: string[];
+  networkEvents: string[];
+  clickMode: "normal" | "force";
+  clickError?: string;
 };
 
 type AnalyzedExportApiPayload = {
@@ -2250,6 +2276,129 @@ async function collectWorkoutSummaryPreClickDebug(
   }, selectedFormatValue);
 }
 
+async function collectWorkoutFilesPreClickDebug(section: Locator): Promise<WorkoutFilesPreClickDebug> {
+  return section.evaluate((root) => {
+    const normalize = (value: string | null | undefined): string => (value ?? "").replace(/\s+/g, " ").trim();
+    const truncate = (value: string, maxLength = 180): string =>
+      value.length <= maxLength ? value : `${value.slice(0, Math.max(0, maxLength - 3))}...`;
+    const isVisible = (element: Element | null): element is HTMLElement => {
+      if (!(element instanceof HTMLElement)) {
+        return false;
+      }
+
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+    };
+    const describeElement = (element: HTMLElement): string => {
+      const tagName = element.tagName.toLowerCase();
+      const id = element.id ? `#${element.id}` : "";
+      const classes = normalize(element.className)
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 4)
+        .map((className) => `.${className}`)
+        .join("");
+      return `${tagName}${id}${classes}`;
+    };
+    const labelForControl = (control: HTMLElement): string => {
+      if (control instanceof HTMLInputElement && control.labels?.length) {
+        return normalize(control.labels[0]?.textContent);
+      }
+
+      const closestLabel = control.closest("label");
+      if (closestLabel) {
+        return normalize(closestLabel.textContent);
+      }
+
+      const controlId = control.getAttribute("id");
+      if (controlId) {
+        const explicitLabel = root.querySelector(`label[for="${controlId}"]`);
+        if (explicitLabel) {
+          return normalize(explicitLabel.textContent);
+        }
+      }
+
+      return "";
+    };
+    const exportButtons = Array.from(root.querySelectorAll("button, a, [role='button']"))
+      .filter(isVisible)
+      .filter((element) => normalize(element.textContent || element.getAttribute("aria-label")) === "Export")
+      .map((element) => element as HTMLElement);
+    const selectedButton =
+      exportButtons.find(
+        (button) =>
+          !(button instanceof HTMLButtonElement && button.disabled) &&
+          button.getAttribute("aria-disabled") !== "true" &&
+          !/\bdisabled\b/i.test(normalize(button.className))
+      ) ?? exportButtons[0];
+    const startInput = root.querySelector('input[name="startDate"]') as HTMLInputElement | null;
+    const endInput = root.querySelector('input[name="endDate"]') as HTMLInputElement | null;
+    const controls = Array.from(root.querySelectorAll('input[type="radio"], input[type="checkbox"], select'))
+      .filter(isVisible)
+      .slice(0, 12)
+      .map((control) => {
+        const element = control as HTMLElement;
+        const tagName = element.tagName.toLowerCase();
+        const type = element.getAttribute("type") ?? "";
+        const name = element.getAttribute("name") ?? "";
+        const label = labelForControl(element) || normalize(element.textContent);
+        const valueSummary =
+          control instanceof HTMLInputElement
+            ? `checked=${control.checked ? "yes" : "no"}`
+            : `value="${normalize((control as HTMLSelectElement).value)}"`;
+        return truncate(
+          [tagName, type && `type=${type}`, name && `name=${name}`, label && `label="${label}"`, valueSummary]
+            .filter(Boolean)
+            .join(" "),
+          180
+        );
+      });
+    const buttonSummaries = exportButtons.map((button, index) => {
+      const label = normalize(button.textContent || button.getAttribute("aria-label")) || "Export";
+      const disabled =
+        (button instanceof HTMLButtonElement && button.disabled) ||
+        button.getAttribute("aria-disabled") === "true" ||
+        /\bdisabled\b/i.test(normalize(button.className));
+      const className = normalize(button.className);
+      return truncate(
+        [
+          index === exportButtons.indexOf(selectedButton) ? "*" : "",
+          describeElement(button),
+          `text="${label}"`,
+          `disabled=${disabled ? "yes" : "no"}`,
+          `aria-disabled="${button.getAttribute("aria-disabled") ?? ""}"`,
+          className && `class="${className}"`
+        ]
+          .filter(Boolean)
+          .join(" "),
+        220
+      );
+    });
+
+    return {
+      containerSummary: [
+        describeElement(root as HTMLElement),
+        `visibleExportButtons=${exportButtons.length}`,
+        `visibleControls=${controls.length}`
+      ].join(" "),
+      sectionTextSnippet: truncate(normalize((root as HTMLElement).innerText), 220),
+      exportButtons: buttonSummaries,
+      controls,
+      selectedButtonText: selectedButton ? normalize(selectedButton.textContent || selectedButton.getAttribute("aria-label")) || "Export" : undefined,
+      selectedButtonDisabled: selectedButton
+        ? (selectedButton instanceof HTMLButtonElement && selectedButton.disabled) ||
+          selectedButton.getAttribute("aria-disabled") === "true" ||
+          /\bdisabled\b/i.test(normalize(selectedButton.className))
+        : undefined,
+      selectedButtonAriaDisabled: selectedButton?.getAttribute("aria-disabled") ?? undefined,
+      selectedButtonClass: normalize(selectedButton?.className) || undefined,
+      startDateValue: normalize(startInput?.value),
+      endDateValue: normalize(endInput?.value)
+    };
+  });
+}
+
 async function collectVisibleExportFeedback(page: Page, section: Locator): Promise<string[]> {
   const sectionMessages = await section
     .locator('.error, .errors, .validation, .validation-error, .error-message, [role="alert"], .toast, .toast-message')
@@ -2444,6 +2593,9 @@ async function tryFillWorkoutFilesDateRange(
   if (!sectionResolution.section) {
     return { ok: false, reason: 'could not find the "Workout Files" export subsection.' };
   }
+  if (sectionResolution.selectedCandidate) {
+    debugLog(`Auto-export debug: selected Workout Files container="${sectionResolution.selectedCandidate}"`);
+  }
 
   const startInput = sectionResolution.section.locator('input[name="startDate"]').first();
   const endInput = sectionResolution.section.locator('input[name="endDate"]').first();
@@ -2461,6 +2613,7 @@ async function tryFillWorkoutFilesDateRange(
 
 type WorkoutFilesClickAttemptResult = AutomationAttemptResult & {
   apiCapture?: ExportApiCaptureResult;
+  clickDebug?: WorkoutFilesClickDebug;
   validationMessagesAfterClick?: string[];
 };
 
@@ -2686,6 +2839,11 @@ async function tryClickWorkoutFilesExport(
   if (!section) {
     return { ok: false, reason: 'could not find the "Workout Files" export subsection.' };
   }
+  if (sectionResolution.selectedCandidate) {
+    debugLog(`Auto-export debug: selected Workout Files container="${sectionResolution.selectedCandidate}"`);
+  }
+
+  const preClickDebug = await collectWorkoutFilesPreClickDebug(section);
 
   const buttonLocators = [
     section.getByRole("button", { name: /^export$/i }),
@@ -2716,14 +2874,46 @@ async function tryClickWorkoutFilesExport(
     })
     .catch(() => false);
   if (buttonDisabled) {
-    return { ok: false, reason: 'the "Workout Files" Export button is disabled.' };
+    return {
+      ok: false,
+      reason: 'the "Workout Files" Export button is disabled.',
+      clickDebug: {
+        ...preClickDebug,
+        validationMessagesAfterClick: [],
+        networkEvents: [],
+        clickMode: "normal"
+      }
+    };
   }
 
+  const networkEvents: string[] = [];
+  const pushLimited = (bucket: string[], value: string, limit: number): void => {
+    if (!value || bucket.includes(value) || bucket.length >= limit) {
+      return;
+    }
+    bucket.push(value);
+  };
+  const onRequest = (request: { method(): string; url(): string }): void => {
+    const shortUrl = shortenUrl(request.url());
+    if (/\b(export|download|zip|workout|file)\b/i.test(shortUrl)) {
+      pushLimited(networkEvents, `request ${request.method()} ${shortUrl}`, 12);
+    }
+  };
+  const onResponse = (response: { status(): number; url(): string }): void => {
+    const shortUrl = shortenUrl(response.url());
+    if (/\b(export|download|zip|workout|file)\b/i.test(shortUrl)) {
+      pushLimited(networkEvents, `response ${response.status()} ${shortUrl}`, 12);
+    }
+  };
+  page.on("request", onRequest);
+  page.on("response", onResponse);
+
   let clickError: string | undefined;
+  let clickMode: "normal" | "force" = "normal";
   const exportApiResponsePromise = page
     .waitForResponse(
-      (response) => response.url().includes("/fitness/v1/export/") && response.url().includes("/workouts/"),
-      { timeout: 15_000 }
+      (response) => isWorkoutFilesExportResponseUrl(response.url()),
+      { timeout: 30_000 }
     )
     .catch(() => null);
 
@@ -2735,12 +2925,16 @@ async function tryClickWorkoutFilesExport(
         throw error;
       }
 
+      clickMode = "force";
       await button.click({ timeout: 2500, force: true });
     }
 
     await page.waitForTimeout(1500);
   } catch (error) {
     clickError = summarizeErrorMessage(error);
+  } finally {
+    page.off("request", onRequest);
+    page.off("response", onResponse);
   }
 
   const matchedExportApiResponse = await exportApiResponsePromise;
@@ -2761,19 +2955,30 @@ async function tryClickWorkoutFilesExport(
         asyncPollAttempted: false,
         fallbackReason: "did not observe the Workout Files export API response after clicking Export."
       } satisfies ExportApiCaptureResult;
+  const validationMessagesAfterClick = await collectVisibleExportFeedback(page, section);
+  const clickDebug: WorkoutFilesClickDebug = {
+    ...preClickDebug,
+    validationMessagesAfterClick,
+    networkEvents,
+    clickMode,
+    clickError
+  };
 
   if (clickError) {
     return {
       ok: false,
       reason: clickError,
-      apiCapture
+      apiCapture,
+      clickDebug,
+      validationMessagesAfterClick
     };
   }
 
   return {
     ok: true,
     apiCapture,
-    validationMessagesAfterClick: await collectVisibleExportFeedback(page, section)
+    clickDebug,
+    validationMessagesAfterClick
   };
 }
 
@@ -2813,13 +3018,72 @@ function logWorkoutSummaryClickDebug(debug: WorkoutSummaryClickDebug): void {
   debugLog(`Auto-export debug: popup/new page appeared=${debug.popupOpened ? "yes" : "no"}`);
 }
 
+function logWorkoutFilesClickDebug(debug: WorkoutFilesClickDebug): void {
+  debugLog(`Auto-export debug: Workout Files container="${truncateForLog(debug.containerSummary, 220)}"`);
+  debugLog(`Auto-export debug: Workout Files text snippet="${truncateForLog(debug.sectionTextSnippet, 220)}"`);
+  debugLog(`Auto-export debug: Workout Files startDate="${debug.startDateValue}" endDate="${debug.endDateValue}"`);
+  formatDebugList("Auto-export debug: Workout Files Export buttons", debug.exportButtons);
+  formatDebugList("Auto-export debug: Workout Files controls", debug.controls);
+  if (debug.selectedButtonText) {
+    debugLog(`Auto-export debug: Workout Files selected button text="${debug.selectedButtonText}"`);
+    debugLog(
+      `Auto-export debug: Workout Files selected button disabled=${debug.selectedButtonDisabled ? "yes" : "no"} aria-disabled="${debug.selectedButtonAriaDisabled ?? ""}" class="${debug.selectedButtonClass ?? ""}"`
+    );
+  }
+  debugLog(`Auto-export debug: Workout Files click mode=${debug.clickMode}`);
+  if (debug.clickError) {
+    debugLog(`Auto-export debug: Workout Files click error="${debug.clickError}"`);
+  }
+  if (debug.validationMessagesAfterClick.length > 0) {
+    debugLog(`Auto-export debug: Workout Files visible feedback="${debug.validationMessagesAfterClick.join(" | ")}"`);
+  } else {
+    debugLog("Auto-export debug: Workout Files visible feedback=(none)");
+  }
+  if (debug.networkEvents.length > 0) {
+    debugLog(`Auto-export debug: Workout Files network URLs="${debug.networkEvents.join(" | ")}"`);
+  } else {
+    debugLog("Auto-export debug: Workout Files network URLs=(none)");
+  }
+}
+
+function isWorkoutFilesExportResponseUrl(rawUrl: string): boolean {
+  const normalizedUrl = rawUrl.toLowerCase();
+  return (
+    normalizedUrl.includes("/fitness/v1/export/") ||
+    normalizedUrl.includes("export") ||
+    normalizedUrl.includes("download")
+  );
+}
+
+async function locateWorkoutFilesGeneratedLinkScope(page: Page): Promise<Locator | null> {
+  const modalScope = athleteSettingsModalLocator(page);
+  if (await isVisible(modalScope, 500)) {
+    return modalScope;
+  }
+
+  const sectionResolution = await locateWorkoutFilesSection(page);
+  if (sectionResolution.section && (await isVisible(sectionResolution.section, 500))) {
+    return sectionResolution.section;
+  }
+
+  return null;
+}
+
 async function readGeneratedExportDownloadLinkState(
   page: Page,
-  artifactPatternSource: string
+  artifactPatternSource: string,
+  options?: GeneratedDownloadLinkReadOptions
 ): Promise<GeneratedDownloadLinkState> {
   const markerAttribute = "data-tp-generated-download-link";
-  const modalScope = athleteSettingsModalLocator(page);
-  const scope = (await isVisible(modalScope, 500)) ? modalScope : page.locator("body");
+  const scope = options?.scope ?? ((await isVisible(athleteSettingsModalLocator(page), 500)) ? athleteSettingsModalLocator(page) : page.locator("body"));
+  if (!scope) {
+    return {
+      exportCompleteVisible: false,
+      downloadInstructionVisible: false,
+      candidateTexts: [],
+      candidateLinks: []
+    };
+  }
   await page
     .locator(`[${markerAttribute}]`)
     .evaluateAll((elements, attributeName) => {
@@ -2829,7 +3093,12 @@ async function readGeneratedExportDownloadLinkState(
     }, markerAttribute)
     .catch(() => {});
 
-  return scope.evaluate((root, { markerAttributeName, artifactPatternSource: artifactPatternSourceFromArgs }) => {
+  return scope.evaluate((root, {
+    markerAttributeName,
+    artifactPatternSource: artifactPatternSourceFromArgs,
+    allowGenericDownloadControl,
+    genericControlPatternSource
+  }) => {
     const normalize = (value: string | null | undefined): string => (value ?? "").replace(/\s+/g, " ").trim();
     const truncate = (value: string, maxLength = 180): string =>
       value.length <= maxLength ? value : `${value.slice(0, Math.max(0, maxLength - 3))}...`;
@@ -2843,6 +3112,7 @@ async function readGeneratedExportDownloadLinkState(
       return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
     };
     const artifactPattern = new RegExp(artifactPatternSourceFromArgs, "i");
+    const genericControlPattern = genericControlPatternSource ? new RegExp(genericControlPatternSource, "i") : null;
     const debugPattern = /export complete|click on the link below to download|workoutexport|workout.*export|\.zip|download/i;
     const exportCompletePattern = /export complete/i;
     const downloadInstructionPattern = /click on the link below to download/i;
@@ -2929,12 +3199,28 @@ async function readGeneratedExportDownloadLinkState(
     const downloadInstructionVisible = allVisibleElements.some((element) =>
       downloadInstructionPattern.test(normalize(element.textContent))
     );
+    const readySignalVisible = exportCompleteVisible || downloadInstructionVisible;
+    const genericInteractive = allowGenericDownloadControl && readySignalVisible
+      ? interactiveElements.find((element) => {
+          const href = normalize(element.getAttribute("href"));
+          const text = normalize(
+            element.textContent ||
+            element.getAttribute("aria-label") ||
+            element.getAttribute("title")
+          );
+          return Boolean(genericControlPattern?.test(`${text} ${href}`.trim()));
+        })
+      : undefined;
     const linkText = normalize(
-      selectedElement?.textContent ||
-      selectedElement?.getAttribute("aria-label") ||
-      selectedElement?.getAttribute("title")
+      (selectedElement ?? genericInteractive)?.textContent ||
+      (selectedElement ?? genericInteractive)?.getAttribute("aria-label") ||
+      (selectedElement ?? genericInteractive)?.getAttribute("title")
     ) || undefined;
-    const linkHref = normalize(selectedElement?.getAttribute("href")) || undefined;
+    const linkHref = normalize((selectedElement ?? genericInteractive)?.getAttribute("href")) || undefined;
+
+    if (!selectedElement && genericInteractive) {
+      genericInteractive.setAttribute(markerAttributeName as string, "selected");
+    }
 
     return {
       exportCompleteVisible,
@@ -2944,14 +3230,20 @@ async function readGeneratedExportDownloadLinkState(
       candidateTexts,
       candidateLinks
     };
-  }, { markerAttributeName: markerAttribute, artifactPatternSource });
+  }, {
+    markerAttributeName: markerAttribute,
+    artifactPatternSource,
+    allowGenericDownloadControl: options?.allowGenericDownloadControl ?? false,
+    genericControlPatternSource: options?.genericControlPatternSource ?? ""
+  });
 }
 
 async function waitForGeneratedExportDownloadLink(
   page: Page,
   artifactLabel: string,
   artifactPatternSource: string,
-  timeoutMs = 90_000
+  timeoutMs = 90_000,
+  options?: GeneratedDownloadLinkReadOptions
 ): Promise<GeneratedDownloadLinkWaitResult> {
   const startedAt = Date.now();
   let lastSeenState: GeneratedDownloadLinkState = {
@@ -2961,7 +3253,7 @@ async function waitForGeneratedExportDownloadLink(
   let lastProgressLogAt = 0;
 
   while (Date.now() - startedAt <= timeoutMs) {
-    const currentState = await readGeneratedExportDownloadLinkState(page, artifactPatternSource);
+    const currentState = await readGeneratedExportDownloadLinkState(page, artifactPatternSource, options);
     lastSeenState = {
       exportCompleteVisible: currentState.exportCompleteVisible,
       downloadInstructionVisible: currentState.downloadInstructionVisible,
@@ -3000,9 +3292,10 @@ async function waitForGeneratedExportDownloadLink(
 async function clickGeneratedExportDownloadLink(
   page: Page,
   artifactLabel: string,
-  artifactPatternSource: string
+  artifactPatternSource: string,
+  options?: GeneratedDownloadLinkReadOptions
 ): Promise<GeneratedDownloadLinkClickResult> {
-  const currentState = await readGeneratedExportDownloadLinkState(page, artifactPatternSource);
+  const currentState = await readGeneratedExportDownloadLinkState(page, artifactPatternSource, options);
   const visibleLink = page.locator('[data-tp-generated-download-link="selected"]').first();
 
   if (!(await isVisible(visibleLink, 700))) {
@@ -3090,21 +3383,33 @@ async function clickGeneratedWorkoutSummaryDownloadLink(page: Page): Promise<Gen
 
 async function waitForGeneratedWorkoutFilesDownloadLink(
   page: Page,
-  timeoutMs = 20_000
+  timeoutMs = 45_000
 ): Promise<GeneratedDownloadLinkWaitResult> {
+  const scope = await locateWorkoutFilesGeneratedLinkScope(page);
   return waitForGeneratedExportDownloadLink(
     page,
     "Workout Files Export Complete",
     "WorkoutFileExport.*\\.zip|Workout.*File.*Export.*\\.zip|Workout Files.*\\.zip",
-    timeoutMs
+    timeoutMs,
+    {
+      scope,
+      allowGenericDownloadControl: true,
+      genericControlPatternSource: "download|\\.zip|workout|file"
+    }
   );
 }
 
 async function clickGeneratedWorkoutFilesDownloadLink(page: Page): Promise<GeneratedDownloadLinkClickResult> {
+  const scope = await locateWorkoutFilesGeneratedLinkScope(page);
   return clickGeneratedExportDownloadLink(
     page,
     "Workout Files",
-    "WorkoutFileExport.*\\.zip|Workout.*File.*Export.*\\.zip|Workout Files.*\\.zip"
+    "WorkoutFileExport.*\\.zip|Workout.*File.*Export.*\\.zip|Workout Files.*\\.zip",
+    {
+      scope,
+      allowGenericDownloadControl: true,
+      genericControlPatternSource: "download|\\.zip|workout|file"
+    }
   );
 }
 
@@ -3366,10 +3671,11 @@ async function main(): Promise<void> {
           args.from,
           args.to
         );
-        if (workoutFilesClickResult.validationMessagesAfterClick?.length) {
-          debugLog(
-            `Auto-export debug: Workout Files visible feedback="${workoutFilesClickResult.validationMessagesAfterClick.join(" | ")}"`
-          );
+        if (workoutFilesClickResult.clickDebug) {
+          logWorkoutFilesClickDebug(workoutFilesClickResult.clickDebug);
+          if (workoutFilesClickResult.clickDebug.selectedButtonText) {
+            debugLog(`Auto-export debug: clicked Workout Files button text="${workoutFilesClickResult.clickDebug.selectedButtonText}"`);
+          }
         }
         const workoutFilesApiCapture = workoutFilesClickResult.apiCapture;
         if (workoutFilesApiCapture) {
@@ -3402,6 +3708,20 @@ async function main(): Promise<void> {
           debugLog(
             `Auto-export debug: Workout Files download link visible=${workoutFilesDownloadLinkResult.ok ? "yes" : "no"} exportComplete=${workoutFilesDownloadLinkResult.exportCompleteVisible ? "yes" : "no"} instruction=${workoutFilesDownloadLinkResult.downloadInstructionVisible ? "yes" : "no"}`
           );
+          if (workoutFilesDownloadLinkResult.candidateTexts?.length) {
+            debugLog(
+              `Auto-export debug: Workout Files generated text candidates="${workoutFilesDownloadLinkResult.candidateTexts.join(" | ")}"`
+            );
+          } else {
+            debugLog("Auto-export debug: Workout Files generated text candidates=(none)");
+          }
+          if (workoutFilesDownloadLinkResult.candidateLinks?.length) {
+            debugLog(
+              `Auto-export debug: Workout Files generated link candidates="${workoutFilesDownloadLinkResult.candidateLinks.join(" | ")}"`
+            );
+          } else {
+            debugLog("Auto-export debug: Workout Files generated link candidates=(none)");
+          }
           if (workoutFilesDownloadLinkResult.ok && (workoutFilesDownloadLinkResult.linkText || workoutFilesDownloadLinkResult.linkHref)) {
             debugLog(`Auto-export debug: Workout Files generated link text="${workoutFilesDownloadLinkResult.linkText ?? ""}"`);
             if (workoutFilesDownloadLinkResult.linkHref) {
