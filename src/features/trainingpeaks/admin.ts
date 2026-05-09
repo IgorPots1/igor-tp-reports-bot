@@ -15,6 +15,9 @@ import {
 } from "@/features/trainingpeaks/repository";
 
 export type TrainingPeaksAdminStudentsView = "active" | "archived" | "all";
+export type TrainingPeaksAdminReportStatusFilter = "all" | "ready" | "sent" | "failed" | "unsent";
+export type TrainingPeaksAdminTelegramFilter = "all" | "linked" | "unlinked";
+export type TrainingPeaksAdminStudentStateFilter = "active" | "archived" | "orphan" | "all";
 
 export type TrainingPeaksAdminStudentRecord = TrainingPeaksRegistryStudentSnapshot;
 
@@ -32,6 +35,14 @@ export type TrainingPeaksAdminReportRecord = {
 export type TrainingPeaksAdminReportsResult = {
   reports: TrainingPeaksAdminReportRecord[];
   availableWeeks: string[];
+  selectedWeek: string | null;
+  summary: {
+    totalReports: number;
+    readyToSend: number;
+    sent: number;
+    errors: number;
+    withoutTelegram: number;
+  };
 };
 
 export {
@@ -112,6 +123,121 @@ function createReportRecord(
   };
 }
 
+function getReportWeekValue(report: Pick<TrainingPeaksWeeklyReport, "weekFrom" | "weekTo">): string {
+  return `${report.weekFrom}..${report.weekTo}`;
+}
+
+function isReportSent(record: TrainingPeaksAdminReportRecord): boolean {
+  return record.report.reviewStatus === "sent" || Boolean(record.report.sentAt);
+}
+
+function hasReportDeliveryError(record: TrainingPeaksAdminReportRecord): boolean {
+  return record.report.reviewStatus === "failed" || Boolean(record.report.deliveryError);
+}
+
+function isTelegramUnavailable(record: TrainingPeaksAdminReportRecord): boolean {
+  return !record.student?.telegramChatId;
+}
+
+function matchesReportStatusFilter(
+  record: TrainingPeaksAdminReportRecord,
+  filter: TrainingPeaksAdminReportStatusFilter
+): boolean {
+  if (filter === "all") {
+    return true;
+  }
+
+  if (filter === "ready") {
+    return record.canSend;
+  }
+
+  if (filter === "sent") {
+    return isReportSent(record);
+  }
+
+  if (filter === "failed") {
+    return hasReportDeliveryError(record);
+  }
+
+  return !isReportSent(record);
+}
+
+function matchesTelegramFilter(
+  record: TrainingPeaksAdminReportRecord,
+  filter: TrainingPeaksAdminTelegramFilter
+): boolean {
+  if (filter === "all") {
+    return true;
+  }
+
+  if (filter === "linked") {
+    return record.isTelegramLinked;
+  }
+
+  return !record.isTelegramLinked;
+}
+
+function matchesStudentStateFilter(
+  record: TrainingPeaksAdminReportRecord,
+  filter: TrainingPeaksAdminStudentStateFilter
+): boolean {
+  if (filter === "all") {
+    return true;
+  }
+
+  if (filter === "orphan") {
+    return record.student === null;
+  }
+
+  if (filter === "archived") {
+    return record.isStudentArchived;
+  }
+
+  return record.isStudentActive;
+}
+
+function normalizeReportStatusFilter(
+  value: string | null | undefined
+): TrainingPeaksAdminReportStatusFilter {
+  switch (value) {
+    case "ready":
+    case "sent":
+    case "failed":
+    case "unsent":
+    case "all":
+      return value;
+    default:
+      return "all";
+  }
+}
+
+function normalizeTelegramFilter(
+  value: string | null | undefined
+): TrainingPeaksAdminTelegramFilter {
+  switch (value) {
+    case "linked":
+    case "unlinked":
+    case "all":
+      return value;
+    default:
+      return "all";
+  }
+}
+
+function normalizeStudentStateFilter(
+  value: string | null | undefined
+): TrainingPeaksAdminStudentStateFilter {
+  switch (value) {
+    case "active":
+    case "archived":
+    case "orphan":
+    case "all":
+      return value;
+    default:
+      return "active";
+  }
+}
+
 function normalizeReportMarkdown(value: string): string {
   return value.replace(/\r\n/g, "\n").trim();
 }
@@ -136,7 +262,9 @@ export async function listTrainingPeaksAdminStudents(
 
 export async function listTrainingPeaksAdminReports(options?: {
   week?: string | null;
-  reviewStatus?: string | null;
+  reportStatus?: string | null;
+  telegramStatus?: string | null;
+  studentState?: string | null;
 }): Promise<TrainingPeaksAdminReportsResult> {
   const [reports, students] = await Promise.all([
     listAllTrainingPeaksReports(),
@@ -146,29 +274,65 @@ export async function listTrainingPeaksAdminReports(options?: {
   ]);
   const studentByStudentId = new Map(students.map((student) => [student.studentId, student] as const));
   const availableWeeks = Array.from(
-    new Set(reports.map((report) => `${report.weekFrom}..${report.weekTo}`))
+    new Set(reports.map((report) => getReportWeekValue(report)))
+  );
+  const selectedWeek =
+    options?.week && availableWeeks.includes(options.week)
+      ? options.week
+      : availableWeeks[0] ?? null;
+  const normalizedReportStatus = normalizeReportStatusFilter(options?.reportStatus);
+  const normalizedTelegramStatus = normalizeTelegramFilter(options?.telegramStatus);
+  const normalizedStudentState = normalizeStudentStateFilter(options?.studentState);
+  const records = reports.map((report) =>
+    createReportRecord(report, studentByStudentId.get(report.studentId) ?? null)
   );
 
-  const filteredReports = reports.filter((report) => {
-    if (options?.week && `${report.weekFrom}..${report.weekTo}` !== options.week) {
+  const filteredReports = records.filter((record) => {
+    if (selectedWeek && getReportWeekValue(record.report) !== selectedWeek) {
       return false;
     }
 
-    if (options?.reviewStatus && report.reviewStatus !== options.reviewStatus) {
+    if (!matchesReportStatusFilter(record, normalizedReportStatus)) {
+      return false;
+    }
+
+    if (!matchesTelegramFilter(record, normalizedTelegramStatus)) {
+      return false;
+    }
+
+    if (!matchesStudentStateFilter(record, normalizedStudentState)) {
       return false;
     }
 
     return true;
   });
 
-  const records = filteredReports.map((report) =>
-    createReportRecord(report, studentByStudentId.get(report.studentId) ?? null)
-  );
-
   return {
-    reports: records,
+    reports: filteredReports,
     availableWeeks,
+    selectedWeek,
+    summary: {
+      totalReports: filteredReports.length,
+      readyToSend: filteredReports.filter((record) => record.canSend).length,
+      sent: filteredReports.filter((record) => isReportSent(record)).length,
+      errors: filteredReports.filter((record) => hasReportDeliveryError(record)).length,
+      withoutTelegram: filteredReports.filter((record) => isTelegramUnavailable(record)).length,
+    },
   };
+}
+
+export function getTrainingPeaksAdminReportStudentState(
+  record: Pick<TrainingPeaksAdminReportRecord, "student" | "isStudentActive" | "isStudentArchived">
+): TrainingPeaksAdminStudentStateFilter {
+  if (!record.student) {
+    return "orphan";
+  }
+
+  if (record.isStudentArchived) {
+    return "archived";
+  }
+
+  return "active";
 }
 
 export async function getTrainingPeaksAdminReportById(

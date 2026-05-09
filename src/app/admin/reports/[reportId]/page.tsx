@@ -27,6 +27,12 @@ export default async function AdminReportDetailPage({
 }: ReportDetailPageProps) {
   const { reportId } = await params;
   const resolvedSearchParams = (await searchParams) ?? {};
+  const week = getSingleSearchParam(resolvedSearchParams.week);
+  const reportStatus =
+    getSingleSearchParam(resolvedSearchParams.reportStatus) ??
+    getSingleSearchParam(resolvedSearchParams.status);
+  const telegramStatus = getSingleSearchParam(resolvedSearchParams.telegram);
+  const studentState = getSingleSearchParam(resolvedSearchParams.studentState);
   const notice = getSingleSearchParam(resolvedSearchParams.notice);
   const error = getSingleSearchParam(resolvedSearchParams.error);
   const entry = await getTrainingPeaksAdminReportById(reportId);
@@ -37,12 +43,32 @@ export default async function AdminReportDetailPage({
 
   const currentMarkdown = entry.finalReportMarkdown ?? "";
   const isSent = entry.report.reviewStatus === "sent";
+  const listParams = new URLSearchParams();
+
+  if (week) {
+    listParams.set("week", week);
+  }
+
+  if (reportStatus) {
+    listParams.set("reportStatus", reportStatus);
+  }
+
+  if (telegramStatus) {
+    listParams.set("telegram", telegramStatus);
+  }
+
+  if (studentState) {
+    listParams.set("studentState", studentState);
+  }
+
+  const listHref = `/admin/reports${listParams.size > 0 ? `?${listParams.toString()}` : ""}`;
+  const detailRedirectTo = `/admin/reports/${entry.report.id}${listParams.size > 0 ? `?${listParams.toString()}` : ""}`;
 
   return (
     <section className="admin-section">
       <div className="admin-section-header">
         <div>
-          <Link className="admin-backlink" href="/admin/reports">
+          <Link className="admin-backlink" href={listHref}>
             ← Ко всем отчётам
           </Link>
           <h2>{entry.report.studentName}</h2>
@@ -150,7 +176,7 @@ export default async function AdminReportDetailPage({
           <div className="admin-form-stack">
             <form className="admin-form-stack" action={saveTrainingPeaksReportEditAction}>
               <input type="hidden" name="reportId" value={entry.report.id} />
-              <input type="hidden" name="redirectTo" value={`/admin/reports/${entry.report.id}`} />
+              <input type="hidden" name="redirectTo" value={detailRedirectTo} />
               <textarea
                 className="admin-textarea"
                 name="reportMarkdown"
@@ -167,7 +193,7 @@ export default async function AdminReportDetailPage({
               {entry.canSend && (
                 <form action={sendTrainingPeaksReportAction}>
                   <input type="hidden" name="reportId" value={entry.report.id} />
-                  <input type="hidden" name="redirectTo" value={`/admin/reports/${entry.report.id}`} />
+                  <input type="hidden" name="redirectTo" value={detailRedirectTo} />
                   <FormActionButton className="admin-button admin-button-secondary" pendingText="Отправка...">
                     Отправить ученику
                   </FormActionButton>

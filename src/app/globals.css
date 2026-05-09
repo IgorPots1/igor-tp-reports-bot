@@ -89,6 +89,33 @@ code {
   box-shadow: 0 12px 30px rgba(15, 23, 42, 0.05);
 }
 
+.admin-summary-grid,
+.admin-report-list {
+  display: grid;
+  gap: 16px;
+}
+
+.admin-summary-grid {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.admin-summary-card {
+  padding: 16px 18px;
+}
+
+.admin-summary-label {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.admin-summary-value {
+  display: block;
+  margin-top: 8px;
+  font-size: 32px;
+  line-height: 1;
+}
+
 .admin-alert {
   border-radius: 16px;
   padding: 14px 16px;
@@ -303,6 +330,50 @@ code {
   margin-top: 20px;
 }
 
+.admin-filters-actions {
+  align-items: flex-end;
+}
+
+.admin-report-card {
+  display: grid;
+  gap: 16px;
+}
+
+.admin-report-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.admin-report-card-title {
+  margin: 0;
+  font-size: 20px;
+}
+
+.admin-report-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+  margin: 0;
+}
+
+.admin-report-meta div {
+  display: grid;
+  gap: 4px;
+}
+
+.admin-report-meta dt {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.admin-report-meta dd {
+  margin: 0;
+  font-weight: 600;
+}
+
 .admin-grid-meta {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -370,6 +441,15 @@ code {
   }
 
   .admin-grid-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-report-card-header {
+    flex-direction: column;
+  }
+
+  .admin-report-meta,
+  .admin-summary-grid {
     grid-template-columns: 1fr;
   }
 }
