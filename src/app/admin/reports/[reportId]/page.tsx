@@ -222,8 +222,8 @@ export default async function AdminReportDetailPage({
         </article>
       )}
 
-      <article className="admin-card admin-card-compact admin-report-editor-card">
-        <div className="admin-section-header">
+      <section className="admin-report-document">
+        <div className="admin-section-header admin-report-document-header">
           <div>
             <h3>Текст отчёта</h3>
             <p className="admin-muted">
@@ -241,7 +241,7 @@ export default async function AdminReportDetailPage({
         ) : (
           <form
             id={saveFormId}
-            className="admin-form-stack admin-report-editor-form"
+            className="admin-form-stack admin-report-document-form"
             action={saveTrainingPeaksReportEditAction}
           >
             <input type="hidden" name="reportId" value={entry.report.id} />
@@ -255,28 +255,33 @@ export default async function AdminReportDetailPage({
           </form>
         )}
 
-        {!isSent && currentMarkdown && (
-          <div className="admin-card-actions admin-card-actions-compact admin-report-editor-footer">
-            <FormActionButton className="admin-button" form={saveFormId} pendingText="Сохранение...">
-              Сохранить
-            </FormActionButton>
-            {entry.canSend ? (
-              <form action={sendTrainingPeaksReportAction}>
-                <input type="hidden" name="reportId" value={entry.report.id} />
-                <input type="hidden" name="redirectTo" value={detailRedirectTo} />
-                <FormActionButton
-                  className="admin-button admin-button-secondary"
-                  pendingText="Отправка..."
-                >
-                  Отправить
-                </FormActionButton>
-              </form>
-            ) : (
-              <span className="admin-muted">{entry.sendBlockedReason ?? "Отправка недоступна"}</span>
-            )}
-          </div>
-        )}
-      </article>
+        <div className="admin-card-actions admin-card-actions-compact admin-report-document-actions">
+          {!isSent && currentMarkdown && (
+            <>
+              <FormActionButton className="admin-button" form={saveFormId} pendingText="Сохранение...">
+                Сохранить
+              </FormActionButton>
+              {entry.canSend ? (
+                <form action={sendTrainingPeaksReportAction}>
+                  <input type="hidden" name="reportId" value={entry.report.id} />
+                  <input type="hidden" name="redirectTo" value={detailRedirectTo} />
+                  <FormActionButton
+                    className="admin-button admin-button-secondary"
+                    pendingText="Отправка..."
+                  >
+                    Отправить
+                  </FormActionButton>
+                </form>
+              ) : (
+                <span className="admin-muted">{entry.sendBlockedReason ?? "Отправка недоступна"}</span>
+              )}
+            </>
+          )}
+          <Link className="admin-button admin-button-secondary" href={listHref}>
+            Назад
+          </Link>
+        </div>
+      </section>
 
       {entry.report.deliveryError && !entry.report.sentAt && (
         <div className="admin-alert admin-alert-error">{entry.report.deliveryError}</div>
