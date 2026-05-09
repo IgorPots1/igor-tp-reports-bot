@@ -25,6 +25,7 @@ import {
   listTrainingPeaksStudents,
   listTrainingPeaksStudentsIncludingArchived,
   markTrainingPeaksStudentTelegramLinkCodeUsed,
+  setTrainingPeaksStudentWeeklyReportsEnabledById,
   TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
   type TrainingPeaksBusinessChat,
   TrainingPeaksJobConflictError,
@@ -35,6 +36,7 @@ import {
   type TrainingPeaksStudent,
   type TrainingPeaksWeek,
   type TrainingPeaksWeeklyReport,
+  unlinkTrainingPeaksStudentTelegramById,
   upsertTrainingPeaksBusinessChatFromMessage as upsertTrainingPeaksBusinessChatFromMessageInRepository,
   type UpdateTrainingPeaksStudentTelegramContactInput,
   type UpdateTrainingPeaksStudentTelegramContactParams,
@@ -95,6 +97,8 @@ export type TrainingPeaksRegistryStudentSnapshot = {
   telegramDeliveryEnabled: boolean;
   dataQualityStatus: string | null;
   notes: string | null;
+  createdAt: string;
+  updatedAt: string;
   latestWeekFrom: string | null;
   latestWeekTo: string | null;
   latestReportStatus: TrainingPeaksRegistryStatus;
@@ -118,6 +122,30 @@ export type AddTrainingPeaksStudentResult =
   | { ok: true; student: TrainingPeaksStudent }
   | { ok: false; reason: "empty_name" | "invalid_url" | "duplicate_student" | "duplicate_url" | "unknown" };
 
+export type CreateTrainingPeaksStudentInput = {
+  studentId: string;
+  studentName: string;
+  trainingPeaksAthleteUrl: string;
+  notes?: string | null;
+  dataQualityStatus?: string | null;
+};
+
+export type CreateTrainingPeaksStudentResult =
+  | { ok: true; student: TrainingPeaksStudent }
+  | {
+      ok: false;
+      reason:
+        | "empty_student_id"
+        | "invalid_student_id"
+        | "empty_student_name"
+        | "empty_url"
+        | "invalid_url"
+        | "duplicate_student"
+        | "duplicate_url"
+        | "unknown";
+      message: string;
+    };
+
 export type DisableTrainingPeaksStudentResult =
   | { kind: "not_found" }
   | {
@@ -133,6 +161,14 @@ export type DisableTrainingPeaksStudentResult =
     };
 
 export type EnableTrainingPeaksStudentResult = DisableTrainingPeaksStudentResult;
+
+export type SetTrainingPeaksStudentWeeklyReportsEnabledResult =
+  | { ok: true; student: TrainingPeaksStudent }
+  | { ok: false; reason: "not_found" | "student_archived"; message: string };
+
+export type UnlinkTrainingPeaksStudentTelegramResult =
+  | { ok: true; student: TrainingPeaksStudent }
+  | { ok: false; reason: "not_found"; message: string };
 
 export type TrainingPeaksJobRequester = {
   chatId: number | string;
@@ -193,6 +229,7 @@ const TP_RUN_WEEK_COMMAND_PATTERN = /^\/tp_run_week(?:@\w+)?(?:\s+|$)/;
 const TP_TELEGRAM_LINK_CODE_PATTERN = /\b[A-Z0-9]{2,12}-\d{3,6}\b/gi;
 const TP_TELEGRAM_LINK_CODE_DEFAULT_TTL_HOURS = 24;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const TRAININGPEAKS_STUDENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const TP_RUN_WEEK_USAGE_MESSAGE = [
   "Напиши так:",
   "/tp_run_week last",
@@ -355,6 +392,20 @@ function isIsoDate(value: string): boolean {
 
   const date = new Date(`${value}T00:00:00Z`);
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function normalizeOptionalText(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
+}
+
+function isValidTrainingPeaksAthleteUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
 }
 
 function parseTrainingPeaksWeekRange(rawInput: string):
@@ -615,6 +666,170 @@ export async function addTrainingPeaksStudentFromCommand(
 
     return { ok: false, reason: "unknown" };
   }
+}
+
+export async function createTrainingPeaksStudent(
+  input: CreateTrainingPeaksStudentInput
+): Promise<CreateTrainingPeaksStudentResult> {
+  const studentId = input.studentId.trim();
+  const studentName = input.studentName.trim();
+  const trainingPeaksAthleteUrl = input.trainingPeaksAthleteUrl.trim();
+  const notes = normalizeOptionalText(input.notes);
+  const dataQualityStatus = normalizeOptionalText(input.dataQualityStatus);
+
+  if (!studentId) {
+    return {
+      ok: false,
+      reason: "empty_student_id",
+      message: "Укажи student_id.",
+    };
+  }
+
+  if (!TRAININGPEAKS_STUDENT_ID_PATTERN.test(studentId)) {
+    return {
+      ok: false,
+      reason: "invalid_student_id",
+      message: "student_id должен быть без пробелов и содержать только буквы, цифры, '.', '_' или '-'.",
+    };
+  }
+
+  if (!studentName) {
+    return {
+      ok: false,
+      reason: "empty_student_name",
+      message: "Укажи имя ученика.",
+    };
+  }
+
+  if (!trainingPeaksAthleteUrl) {
+    return {
+      ok: false,
+      reason: "empty_url",
+      message: "Укажи ссылку на TrainingPeaks athlete.",
+    };
+  }
+
+  if (!isValidTrainingPeaksAthleteUrl(trainingPeaksAthleteUrl)) {
+    return {
+      ok: false,
+      reason: "invalid_url",
+      message: "Ссылка на TrainingPeaks athlete должна выглядеть как URL.",
+    };
+  }
+
+  try {
+    const student = await insertTrainingPeaksStudent({
+      studentId,
+      studentName,
+      trainingPeaksAthleteUrl,
+      isActive: true,
+      weeklyReportEnabled: true,
+      telegramDeliveryEnabled: false,
+      dataQualityStatus,
+      notes,
+    });
+
+    return {
+      ok: true,
+      student,
+    };
+  } catch (error) {
+    if (error instanceof TrainingPeaksStudentConflictError) {
+      return {
+        ok: false,
+        reason: error.reason === "trainingpeaks_athlete_url" ? "duplicate_url" : "duplicate_student",
+        message:
+          error.reason === "trainingpeaks_athlete_url"
+            ? "Ученик с таким TrainingPeaks URL уже существует."
+            : "Ученик с таким student_id уже существует.",
+      };
+    }
+
+    console.error("Failed to create TrainingPeaks student from admin", {
+      input: {
+        ...input,
+        notes,
+        dataQualityStatus,
+        trainingPeaksAthleteUrl,
+        studentId,
+        studentName,
+      },
+      error,
+    });
+
+    return {
+      ok: false,
+      reason: "unknown",
+      message: "Не удалось создать ученика. Попробуй ещё раз.",
+    };
+  }
+}
+
+export async function setTrainingPeaksStudentWeeklyReportsEnabled(
+  id: string,
+  enabled: boolean
+): Promise<SetTrainingPeaksStudentWeeklyReportsEnabledResult> {
+  const existingStudent = await getTrainingPeaksStudentByIdFromRepository(id);
+
+  if (!existingStudent) {
+    return {
+      ok: false,
+      reason: "not_found",
+      message: "Ученик не найден.",
+    };
+  }
+
+  if (enabled && !existingStudent.isActive) {
+    return {
+      ok: false,
+      reason: "student_archived",
+      message: "Нельзя включить недельные отчёты для архивного ученика.",
+    };
+  }
+
+  const student = await setTrainingPeaksStudentWeeklyReportsEnabledById(id, enabled);
+
+  if (!student) {
+    return {
+      ok: false,
+      reason: "not_found",
+      message: "Ученик не найден.",
+    };
+  }
+
+  return {
+    ok: true,
+    student,
+  };
+}
+
+export async function unlinkTrainingPeaksStudentTelegram(
+  id: string
+): Promise<UnlinkTrainingPeaksStudentTelegramResult> {
+  const existingStudent = await getTrainingPeaksStudentByIdFromRepository(id);
+
+  if (!existingStudent) {
+    return {
+      ok: false,
+      reason: "not_found",
+      message: "Ученик не найден.",
+    };
+  }
+
+  const student = await unlinkTrainingPeaksStudentTelegramById(id);
+
+  if (!student) {
+    return {
+      ok: false,
+      reason: "not_found",
+      message: "Ученик не найден.",
+    };
+  }
+
+  return {
+    ok: true,
+    student,
+  };
 }
 
 export async function requestTrainingPeaksWeeklyRun(
@@ -976,6 +1191,8 @@ export async function getTrainingPeaksStudentsRegistryWithLatestReportStatus(opt
         telegramDeliveryEnabled: student.telegramDeliveryEnabled,
         dataQualityStatus: student.dataQualityStatus,
         notes: student.notes,
+        createdAt: student.createdAt,
+        updatedAt: student.updatedAt,
         latestWeekFrom: latestReport?.weekFrom ?? null,
         latestWeekTo: latestReport?.weekTo ?? null,
         latestReportStatus: getRegistryStudentStatus(latestReport),

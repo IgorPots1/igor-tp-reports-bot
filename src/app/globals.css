@@ -240,6 +240,7 @@ code {
   font-weight: 600;
 }
 
+.admin-input,
 .admin-field select,
 .admin-textarea {
   width: 100%;
@@ -250,6 +251,7 @@ code {
   font: inherit;
 }
 
+.admin-input,
 .admin-field select {
   min-height: 42px;
   padding: 0 12px;
@@ -260,6 +262,10 @@ code {
   padding: 14px 16px;
   resize: vertical;
   line-height: 1.6;
+}
+
+.admin-textarea-compact {
+  min-height: 140px;
 }
 
 .admin-form-stack {

@@ -476,6 +476,33 @@ export async function insertTrainingPeaksStudent(
   return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
 }
 
+export async function setTrainingPeaksStudentWeeklyReportsEnabledById(
+  id: string,
+  enabled: boolean
+): Promise<TrainingPeaksStudent | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_students")
+    .update({
+      weekly_report_enabled: enabled,
+    })
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to update weekly reports flag for TrainingPeaks student ${id}: ${error.message}`
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
+}
+
 export async function listTrainingPeaksStudents(): Promise<TrainingPeaksStudent[]> {
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
@@ -858,6 +885,33 @@ export async function updateTrainingPeaksStudentTelegramContact(
     telegramProfileUrl: input.telegram_profile_url,
     telegramDeliveryEnabled: input.telegram_delivery_enabled,
   });
+}
+
+export async function unlinkTrainingPeaksStudentTelegramById(
+  id: string
+): Promise<TrainingPeaksStudent | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_students")
+    .update({
+      telegram_chat_id: null,
+      telegram_username: null,
+      telegram_profile_url: null,
+      telegram_delivery_enabled: false,
+    })
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to unlink Telegram for TrainingPeaks student ${id}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
 }
 
 export async function linkTrainingPeaksStudentToBusinessChat(

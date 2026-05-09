@@ -4,8 +4,11 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import {
+  createTrainingPeaksStudent,
   saveTrainingPeaksAdminReportEdit,
+  setTrainingPeaksStudentWeeklyReportsEnabled,
   sendTrainingPeaksWeeklyReportToStudent,
+  unlinkTrainingPeaksStudentTelegram,
 } from "@/features/trainingpeaks/admin";
 import {
   disableTrainingPeaksStudentByInternalId,
@@ -104,5 +107,81 @@ export async function restoreTrainingPeaksStudentAction(formData: FormData): Pro
     redirect(withNotice(redirectTo, "error", "Ученик не найден."));
   }
 
-  redirect(withNotice(redirectTo, "notice", `Ученик восстановлен: ${student.studentName}.`));
+  redirect(
+    withNotice(
+      redirectTo,
+      "notice",
+      `Ученик восстановлен: ${student.studentName}. Проверь доставку в Telegram перед следующей отправкой.`
+    )
+  );
+}
+
+export async function createTrainingPeaksStudentAction(formData: FormData): Promise<void> {
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  const result = await createTrainingPeaksStudent({
+    studentId: typeof formData.get("student_id") === "string" ? String(formData.get("student_id")) : "",
+    studentName: typeof formData.get("student_name") === "string" ? String(formData.get("student_name")) : "",
+    trainingPeaksAthleteUrl:
+      typeof formData.get("trainingpeaks_athlete_url") === "string"
+        ? String(formData.get("trainingpeaks_athlete_url"))
+        : "",
+    notes: typeof formData.get("notes") === "string" ? String(formData.get("notes")) : null,
+    dataQualityStatus:
+      typeof formData.get("data_quality_status") === "string"
+        ? String(formData.get("data_quality_status"))
+        : null,
+  });
+
+  revalidateTrainingPeaksAdminPaths();
+
+  if (!result.ok) {
+    redirect(withNotice(redirectTo, "error", result.message));
+  }
+
+  redirect(
+    withNotice(
+      `/admin/students/${result.student.id}`,
+      "notice",
+      `Ученик создан: ${result.student.studentName}.`
+    )
+  );
+}
+
+export async function setTrainingPeaksStudentWeeklyReportsEnabledAction(
+  formData: FormData
+): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  const enabled = getRequiredFormValue(formData, "enabled") === "true";
+  const result = await setTrainingPeaksStudentWeeklyReportsEnabled(studentId, enabled);
+
+  revalidateTrainingPeaksAdminPaths(undefined, studentId);
+
+  if (!result.ok) {
+    redirect(withNotice(redirectTo, "error", result.message));
+  }
+
+  redirect(
+    withNotice(
+      redirectTo,
+      "notice",
+      enabled
+        ? `Недельные отчёты включены: ${result.student.studentName}.`
+        : `Недельные отчёты отключены: ${result.student.studentName}.`
+    )
+  );
+}
+
+export async function unlinkTrainingPeaksStudentTelegramAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  const result = await unlinkTrainingPeaksStudentTelegram(studentId);
+
+  revalidateTrainingPeaksAdminPaths(undefined, studentId);
+
+  if (!result.ok) {
+    redirect(withNotice(redirectTo, "error", result.message));
+  }
+
+  redirect(withNotice(redirectTo, "notice", `Telegram-привязка удалена: ${result.student.studentName}.`));
 }

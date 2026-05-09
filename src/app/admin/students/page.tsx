@@ -18,18 +18,24 @@ type StudentsPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
+function getWeeklyReportsText(
+  student: Awaited<ReturnType<typeof listTrainingPeaksAdminStudents>>[number]
+): string {
+  return student.weeklyReportEnabled ? "Недельные отчёты включены" : "Недельные отчёты выключены";
+}
+
 function getTelegramBindingText(
   student: Awaited<ReturnType<typeof listTrainingPeaksAdminStudents>>[number]
 ): string {
   if (!student.telegramChatId) {
-    return "Чат не привязан";
+    return "Telegram не привязан";
   }
 
   if (!student.telegramDeliveryEnabled) {
-    return "Привязан, но доставка выключена";
+    return "Telegram привязан, доставка выключена";
   }
 
-  return "Привязан и включён";
+  return "Telegram привязан, доставка включена";
 }
 
 export default async function AdminStudentsPage({ searchParams }: StudentsPageProps) {
@@ -47,9 +53,13 @@ export default async function AdminStudentsPage({ searchParams }: StudentsPagePr
         <div>
           <h2>Ученики</h2>
           <p className="admin-muted">
-            Активные ученики показываются по умолчанию. Архив не участвует в генерации и доставке.
+            Активные ученики показываются по умолчанию. Архив не участвует в генерации и доставке, а выключенные
+            недельные отчёты дополнительно блокируют будущую генерацию и доставку.
           </p>
         </div>
+        <Link className="admin-button" href="/admin/students/new">
+          Добавить ученика
+        </Link>
       </div>
 
       {(notice || error) && (
@@ -102,19 +112,47 @@ export default async function AdminStudentsPage({ searchParams }: StudentsPagePr
                   </td>
                   <td>
                     <div className="admin-table-primary">
-                      <span className={`admin-badge ${student.isActive ? "admin-badge-success" : "admin-badge-warning"}`}>
-                        {student.isActive ? "Активен" : "Архив"}
-                      </span>
+                      <div className="admin-badge-row">
+                        <span
+                          className={`admin-badge ${student.isActive ? "admin-badge-success" : "admin-badge-warning"}`}
+                        >
+                          {student.isActive ? "Активен" : "Архив"}
+                        </span>
+                        <span
+                          className={`admin-badge ${
+                            student.weeklyReportEnabled ? "admin-badge-accent" : "admin-badge-warning"
+                          }`}
+                        >
+                          {student.weeklyReportEnabled ? "Отчёты вкл" : "Отчёты выкл"}
+                        </span>
+                      </div>
                       <span className="admin-muted">
-                        {student.weeklyReportEnabled ? "Недельные отчёты включены" : "Недельные отчёты выключены"}
+                        {getWeeklyReportsText(student)}
                       </span>
                     </div>
                   </td>
-                  <td>{getTelegramBindingText(student)}</td>
+                  <td>
+                    <div className="admin-table-primary">
+                      <span
+                        className={`admin-badge ${
+                          student.telegramChatId
+                            ? student.telegramDeliveryEnabled
+                              ? "admin-badge-success"
+                              : "admin-badge-warning"
+                            : "admin-badge-muted"
+                        }`}
+                      >
+                        {student.telegramChatId ? "Привязан" : "Не привязан"}
+                      </span>
+                      <span className="admin-muted">{getTelegramBindingText(student)}</span>
+                    </div>
+                  </td>
                   <td>
                     {student.latestWeekFrom && student.latestWeekTo ? (
                       <div className="admin-table-primary">
-                        <span>{student.latestWeekFrom} — {student.latestWeekTo}</span>
+                        <span>
+                          {student.latestWeekFrom} — {student.latestWeekTo}
+                        </span>
                         <span className="admin-muted">{getRegistryStatusLabel(student.latestReportStatus)}</span>
                       </div>
                     ) : (
@@ -132,7 +170,7 @@ export default async function AdminStudentsPage({ searchParams }: StudentsPagePr
                           <input type="hidden" name="redirectTo" value={`/admin/students${view === "active" ? "" : `?view=${view}`}`} />
                           <FormActionButton
                             className="admin-button admin-button-danger"
-                            confirmMessage="Архивировать ученика? Это выключит weekly reports и Telegram delivery."
+                            confirmMessage="Архивировать ученика? Это выключит недельные отчёты и доставку в Telegram."
                             pendingText="Архивация..."
                           >
                             Архивировать

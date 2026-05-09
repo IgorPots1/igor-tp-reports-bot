@@ -5,6 +5,8 @@ import FormActionButton from "@/app/admin/FormActionButton";
 import {
   archiveTrainingPeaksStudentAction,
   restoreTrainingPeaksStudentAction,
+  setTrainingPeaksStudentWeeklyReportsEnabledAction,
+  unlinkTrainingPeaksStudentTelegramAction,
 } from "@/app/admin/actions";
 import {
   formatIsoDate,
@@ -25,6 +27,18 @@ type StudentDetailPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
+function getTelegramBindingText(student: Awaited<ReturnType<typeof getTrainingPeaksAdminStudentById>>): string {
+  if (!student?.telegramChatId) {
+    return "Не привязан";
+  }
+
+  if (!student.telegramDeliveryEnabled) {
+    return "Привязан, но доставка выключена";
+  }
+
+  return "Привязан и включён";
+}
+
 export default async function AdminStudentDetailPage({
   params,
   searchParams,
@@ -33,6 +47,7 @@ export default async function AdminStudentDetailPage({
   const resolvedSearchParams = (await searchParams) ?? {};
   const notice = getSingleSearchParam(resolvedSearchParams.notice);
   const error = getSingleSearchParam(resolvedSearchParams.error);
+  const showSyncReminder = notice?.startsWith("Ученик создан:") ?? false;
   const student = await getTrainingPeaksAdminStudentById(studentId);
 
   if (!student) {
@@ -50,15 +65,76 @@ export default async function AdminStudentDetailPage({
           </Link>
           <h2>{student.studentName}</h2>
           <p className="admin-muted">{student.studentId}</p>
+          <div className="admin-badge-row">
+            <span className={`admin-badge ${student.isActive ? "admin-badge-success" : "admin-badge-warning"}`}>
+              {student.isActive ? "Активен" : "Архив"}
+            </span>
+            <span
+              className={`admin-badge ${student.weeklyReportEnabled ? "admin-badge-accent" : "admin-badge-warning"}`}
+            >
+              {student.weeklyReportEnabled ? "Недельные отчёты включены" : "Недельные отчёты выключены"}
+            </span>
+            <span
+              className={`admin-badge ${
+                student.telegramChatId
+                  ? student.telegramDeliveryEnabled
+                    ? "admin-badge-success"
+                    : "admin-badge-warning"
+                  : "admin-badge-muted"
+              }`}
+            >
+              {student.telegramChatId ? "Telegram привязан" : "Telegram не привязан"}
+            </span>
+          </div>
         </div>
         <div className="admin-actions">
+          {student.weeklyReportEnabled ? (
+            <form action={setTrainingPeaksStudentWeeklyReportsEnabledAction}>
+              <input type="hidden" name="studentId" value={student.id} />
+              <input type="hidden" name="enabled" value="false" />
+              <input type="hidden" name="redirectTo" value={`/admin/students/${student.id}`} />
+              <FormActionButton
+                className="admin-button admin-button-secondary"
+                confirmMessage="Отключить недельные отчёты? Будущая генерация и доставка для ученика будут заблокированы."
+                pendingText="Сохранение..."
+              >
+                Отключить отчёты
+              </FormActionButton>
+            </form>
+          ) : (
+            <form action={setTrainingPeaksStudentWeeklyReportsEnabledAction}>
+              <input type="hidden" name="studentId" value={student.id} />
+              <input type="hidden" name="enabled" value="true" />
+              <input type="hidden" name="redirectTo" value={`/admin/students/${student.id}`} />
+              <FormActionButton
+                className="admin-button"
+                disabled={!student.isActive}
+                pendingText="Сохранение..."
+              >
+                Включить отчёты
+              </FormActionButton>
+            </form>
+          )}
+          {student.telegramChatId && (
+            <form action={unlinkTrainingPeaksStudentTelegramAction}>
+              <input type="hidden" name="studentId" value={student.id} />
+              <input type="hidden" name="redirectTo" value={`/admin/students/${student.id}`} />
+              <FormActionButton
+                className="admin-button admin-button-secondary"
+                confirmMessage="Telegram-привязка будет удалена. Отчёты не смогут отправляться ученику, пока Telegram не будет привязан заново."
+                pendingText="Отвязка..."
+              >
+                Отвязать Telegram
+              </FormActionButton>
+            </form>
+          )}
           {student.isActive ? (
             <form action={archiveTrainingPeaksStudentAction}>
               <input type="hidden" name="studentId" value={student.id} />
               <input type="hidden" name="redirectTo" value={`/admin/students/${student.id}`} />
               <FormActionButton
                 className="admin-button admin-button-danger"
-                confirmMessage="Архивировать ученика? Это выключит weekly reports и Telegram delivery."
+                confirmMessage="Архивировать ученика? Это выключит недельные отчёты и доставку в Telegram."
                 pendingText="Архивация..."
               >
                 Архивировать
@@ -82,6 +158,31 @@ export default async function AdminStudentDetailPage({
         </div>
       )}
 
+      {showSyncReminder && (
+        <div className="admin-alert admin-alert-success">
+          После добавления запусти локально <code>tp-sync-students</code>, чтобы Mac-runner обновил{" "}
+          <code>students.json</code>.
+        </div>
+      )}
+
+      {!student.isActive && (
+        <div className="admin-alert admin-alert-success">
+          После восстановления недельные отчёты включатся автоматически, но доставку в Telegram нужно проверить отдельно.
+        </div>
+      )}
+
+      {student.isActive && !student.weeklyReportEnabled && (
+        <div className="admin-alert admin-alert-error">
+          Недельные отчёты выключены. Будущая генерация, sync и доставка для этого ученика будут заблокированы.
+        </div>
+      )}
+
+      {student.telegramChatId && !student.telegramDeliveryEnabled && (
+        <div className="admin-alert admin-alert-error">
+          Telegram привязан, но доставка выключена. После восстановления или перепривязки проверь состояние доставки отдельно.
+        </div>
+      )}
+
       <div className="admin-grid admin-grid-meta">
         <article className="admin-card">
           <h3>Состояние</h3>
@@ -95,8 +196,34 @@ export default async function AdminStudentDetailPage({
               <dd>{formatIsoDate(student.archivedAt)}</dd>
             </div>
             <div>
-              <dt>Weekly reports</dt>
+              <dt>Недельные отчёты</dt>
               <dd>{student.weeklyReportEnabled ? "Включены" : "Выключены"}</dd>
+            </div>
+            <div>
+              <dt>Обновлён</dt>
+              <dd>{formatIsoDate(student.updatedAt)}</dd>
+            </div>
+          </dl>
+        </article>
+
+        <article className="admin-card">
+          <h3>TrainingPeaks</h3>
+          <dl className="admin-meta-list">
+            <div>
+              <dt>Ссылка на athlete</dt>
+              <dd>
+                <a href={student.trainingPeaksAthleteUrl} target="_blank" rel="noreferrer">
+                  {student.trainingPeaksAthleteUrl}
+                </a>
+              </dd>
+            </div>
+            <div>
+              <dt>Качество данных</dt>
+              <dd>{student.dataQualityStatus ?? "—"}</dd>
+            </div>
+            <div>
+              <dt>Заметки</dt>
+              <dd>{student.notes ?? "—"}</dd>
             </div>
           </dl>
         </article>
@@ -104,6 +231,10 @@ export default async function AdminStudentDetailPage({
         <article className="admin-card">
           <h3>Telegram</h3>
           <dl className="admin-meta-list">
+            <div>
+              <dt>Статус</dt>
+              <dd>{getTelegramBindingText(student)}</dd>
+            </div>
             <div>
               <dt>Chat ID</dt>
               <dd>{student.telegramChatId ?? "—"}</dd>

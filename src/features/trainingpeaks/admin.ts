@@ -1,6 +1,9 @@
 import {
+  createTrainingPeaksStudent as createTrainingPeaksStudentInService,
   getTrainingPeaksStudentsRegistryWithLatestReportStatus,
   getTrainingPeaksWeeklyReportByInternalId,
+  setTrainingPeaksStudentWeeklyReportsEnabled as setTrainingPeaksStudentWeeklyReportsEnabledInService,
+  unlinkTrainingPeaksStudentTelegram as unlinkTrainingPeaksStudentTelegramInService,
   updateTrainingPeaksWeeklyReportContentByInternalId,
   updateTrainingPeaksWeeklyReportStateByInternalId,
 } from "@/features/trainingpeaks/service";
@@ -29,6 +32,12 @@ export type TrainingPeaksAdminReportRecord = {
 export type TrainingPeaksAdminReportsResult = {
   reports: TrainingPeaksAdminReportRecord[];
   availableWeeks: string[];
+};
+
+export {
+  createTrainingPeaksStudentInService as createTrainingPeaksStudent,
+  setTrainingPeaksStudentWeeklyReportsEnabledInService as setTrainingPeaksStudentWeeklyReportsEnabled,
+  unlinkTrainingPeaksStudentTelegramInService as unlinkTrainingPeaksStudentTelegram,
 };
 
 function getSendBlockedReason(
