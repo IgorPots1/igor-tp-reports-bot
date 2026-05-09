@@ -238,6 +238,14 @@ function getReportReviewMarkup(reportId: string): TelegramInlineKeyboardMarkup {
   };
 }
 
+function getReportReviewPromptText(report: TrainingPeaksWeeklyReportRow): string {
+  return [
+    `Действие для отчёта: ${report.student_name}`,
+    `Неделя: ${report.week_from} — ${report.week_to}`,
+    "Проверь все части превью выше и выбери действие.",
+  ].join("\n");
+}
+
 async function sendTelegramText(
   chatId: string,
   text: string,
@@ -521,10 +529,13 @@ async function deliverReportsToTelegram(
     try {
       const messages = buildTelegramReportMessages(report);
 
-      for (const [index, message] of messages.entries()) {
-        await sendTelegramText(chatId, message, {
-          replyMarkup:
-            index === messages.length - 1 && report.id ? getReportReviewMarkup(report.id) : undefined,
+      for (const message of messages) {
+        await sendTelegramText(chatId, message);
+      }
+
+      if (report.id) {
+        await sendTelegramText(chatId, getReportReviewPromptText(report), {
+          replyMarkup: getReportReviewMarkup(report.id),
         });
       }
 
