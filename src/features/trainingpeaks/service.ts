@@ -51,6 +51,10 @@ import {
 } from "@/features/trainingpeaks/repository";
 import type { TelegramMessage } from "@/features/telegram/types";
 import { resolveTrainingPeaksWeekKeyword } from "@/features/trainingpeaks/week";
+import {
+  normalizeTrainingPeaksStudentId,
+  validateTrainingPeaksStudentId,
+} from "@/lib/trainingpeaks-student-id";
 
 export type TrainingPeaksStatus = "ready" | "parsed_only" | "missing";
 export type TrainingPeaksRegistryStatus = "no_data" | "ready" | "data_loaded" | "no_report";
@@ -229,7 +233,6 @@ const TP_RUN_WEEK_COMMAND_PATTERN = /^\/tp_run_week(?:@\w+)?(?:\s+|$)/;
 const TP_TELEGRAM_LINK_CODE_PATTERN = /\b[A-Z0-9]{2,12}-\d{3,6}\b/gi;
 const TP_TELEGRAM_LINK_CODE_DEFAULT_TTL_HOURS = 24;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-const TRAININGPEAKS_STUDENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const TP_RUN_WEEK_USAGE_MESSAGE = [
   "Напиши так:",
   "/tp_run_week last",
@@ -671,25 +674,19 @@ export async function addTrainingPeaksStudentFromCommand(
 export async function createTrainingPeaksStudent(
   input: CreateTrainingPeaksStudentInput
 ): Promise<CreateTrainingPeaksStudentResult> {
-  const studentId = input.studentId.trim();
+  const studentId = normalizeTrainingPeaksStudentId(input.studentId);
   const studentName = input.studentName.trim();
   const trainingPeaksAthleteUrl = input.trainingPeaksAthleteUrl.trim();
   const notes = normalizeOptionalText(input.notes);
   const dataQualityStatus = normalizeOptionalText(input.dataQualityStatus);
 
-  if (!studentId) {
-    return {
-      ok: false,
-      reason: "empty_student_id",
-      message: "Укажи student_id.",
-    };
-  }
+  const studentIdError = validateTrainingPeaksStudentId(studentId);
 
-  if (!TRAININGPEAKS_STUDENT_ID_PATTERN.test(studentId)) {
+  if (studentIdError) {
     return {
       ok: false,
-      reason: "invalid_student_id",
-      message: "student_id должен быть без пробелов и содержать только буквы, цифры, '.', '_' или '-'.",
+      reason: studentId ? "invalid_student_id" : "empty_student_id",
+      message: studentIdError,
     };
   }
 
@@ -741,7 +738,7 @@ export async function createTrainingPeaksStudent(
         message:
           error.reason === "trainingpeaks_athlete_url"
             ? "Ученик с таким TrainingPeaks URL уже существует."
-            : "Ученик с таким student_id уже существует.",
+            : "Ученик с таким техническим кодом уже существует.",
       };
     }
 

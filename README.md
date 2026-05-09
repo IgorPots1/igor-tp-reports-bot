@@ -14,6 +14,7 @@ npm run dev
 Required variables:
 
 ```text
+ADMIN_ACCESS_TOKEN=change-me
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_COACH_CHAT_IDS=507447935
 TELEGRAM_BUSINESS_CONNECTION_ID=...
@@ -23,6 +24,8 @@ SUPABASE_SERVICE_ROLE_KEY=...
 ```
 
 `TELEGRAM_WEBHOOK_SECRET` is optional but recommended for production. When it is set, the webhook endpoint requires Telegram to send the same value in the `x-telegram-bot-api-secret-token` header and rejects other requests with `401`.
+
+`ADMIN_ACCESS_TOKEN` protects `/admin`. Set it locally in `.env.local` before using Web Admin, and set the same variable in Vercel production before exposing any `/admin` route publicly. If `ADMIN_ACCESS_TOKEN` is missing in production, `/admin` stays closed and redirects to the login/setup screen.
 
 ## Telegram Webhook
 

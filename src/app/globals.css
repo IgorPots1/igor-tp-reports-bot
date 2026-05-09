@@ -107,6 +107,12 @@ code {
   border: 1px solid #fecaca;
 }
 
+.admin-alert-warning {
+  background: #fff7ed;
+  color: #9a3412;
+  border: 1px solid #fdba74;
+}
+
 .admin-button {
   display: inline-flex;
   align-items: center;
@@ -240,6 +246,12 @@ code {
   font-weight: 600;
 }
 
+.admin-field-error {
+  color: #b91c1c;
+  font-size: 14px;
+  font-weight: 600;
+}
+
 .admin-input,
 .admin-field select,
 .admin-textarea {
@@ -271,6 +283,10 @@ code {
 .admin-form-stack {
   display: grid;
   gap: 16px;
+}
+
+.admin-inline-actions {
+  justify-content: flex-start;
 }
 
 .admin-grid-meta {

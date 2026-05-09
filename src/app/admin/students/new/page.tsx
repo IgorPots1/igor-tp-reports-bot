@@ -3,6 +3,7 @@ import Link from "next/link";
 import FormActionButton from "@/app/admin/FormActionButton";
 import { createTrainingPeaksStudentAction } from "@/app/admin/actions";
 import { getSingleSearchParam } from "@/app/admin/lib";
+import StudentIdentityFields from "@/app/admin/students/new/StudentIdentityFields";
 
 type NewStudentPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
@@ -12,6 +13,11 @@ export default async function AdminNewStudentPage({ searchParams }: NewStudentPa
   const resolvedSearchParams = (await searchParams) ?? {};
   const notice = getSingleSearchParam(resolvedSearchParams.notice);
   const error = getSingleSearchParam(resolvedSearchParams.error);
+  const initialStudentId = getSingleSearchParam(resolvedSearchParams.student_id) ?? "";
+  const initialStudentName = getSingleSearchParam(resolvedSearchParams.student_name) ?? "";
+  const initialTrainingPeaksAthleteUrl =
+    getSingleSearchParam(resolvedSearchParams.trainingpeaks_athlete_url) ?? "";
+  const initialDataQualityStatus = getSingleSearchParam(resolvedSearchParams.data_quality_status) ?? "";
 
   return (
     <section className="admin-section">
@@ -42,26 +48,10 @@ export default async function AdminNewStudentPage({ searchParams }: NewStudentPa
       <article className="admin-card">
         <form className="admin-form-stack" action={createTrainingPeaksStudentAction}>
           <input type="hidden" name="redirectTo" value="/admin/students/new" />
-
-          <label className="admin-field">
-            <span>student_id</span>
-            <input
-              className="admin-input"
-              name="student_id"
-              placeholder="olga-smirnova"
-              autoComplete="off"
-              required
-            />
-            <span className="admin-muted">
-              Стабильный slug/code для локального pipeline и папок. Без пробелов, только буквы, цифры, точка,
-              подчёркивание или дефис.
-            </span>
-          </label>
-
-          <label className="admin-field">
-            <span>Имя ученика</span>
-            <input className="admin-input" name="student_name" placeholder="Ольга Смирнова" required />
-          </label>
+          <StudentIdentityFields
+            initialStudentId={initialStudentId}
+            initialStudentName={initialStudentName}
+          />
 
           <label className="admin-field">
             <span>TrainingPeaks athlete URL</span>
@@ -70,13 +60,19 @@ export default async function AdminNewStudentPage({ searchParams }: NewStudentPa
               name="trainingpeaks_athlete_url"
               type="url"
               placeholder="https://app.trainingpeaks.com/#calendar/athletes/123456"
+              defaultValue={initialTrainingPeaksAthleteUrl}
               required
             />
           </label>
 
           <label className="admin-field">
             <span>Статус качества данных</span>
-            <input className="admin-input" name="data_quality_status" placeholder="ok" />
+            <input
+              className="admin-input"
+              name="data_quality_status"
+              placeholder="ok"
+              defaultValue={initialDataQualityStatus}
+            />
             <span className="admin-muted">Поле опционально. Если не нужно, оставь пустым.</span>
           </label>
 

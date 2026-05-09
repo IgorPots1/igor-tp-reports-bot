@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import {
@@ -14,6 +15,12 @@ import {
   disableTrainingPeaksStudentByInternalId,
   enableTrainingPeaksStudentByInternalId,
 } from "@/features/trainingpeaks/service";
+import {
+  ADMIN_ACCESS_COOKIE_NAME,
+  hasValidAdminAccessCookie,
+  isAdminAccessBypassedForLocalDev,
+  normalizeAdminRedirectPath,
+} from "@/lib/admin-auth";
 
 function getRequiredFormValue(formData: FormData, key: string): string {
   const value = formData.get(key);
@@ -32,6 +39,31 @@ function withNotice(pathname: string, key: "notice" | "error", value: string): s
   return `${path}?${params.toString()}`;
 }
 
+function withParams(pathname: string, values: Record<string, string>): string {
+  const [path, rawQuery = ""] = pathname.split("?");
+  const params = new URLSearchParams(rawQuery);
+
+  for (const [key, value] of Object.entries(values)) {
+    params.set(key, value);
+  }
+
+  return `${path}?${params.toString()}`;
+}
+
+async function ensureAdminAccess(redirectTarget?: string): Promise<void> {
+  if (isAdminAccessBypassedForLocalDev()) {
+    return;
+  }
+
+  const cookieStore = await cookies();
+
+  if (hasValidAdminAccessCookie(cookieStore.get(ADMIN_ACCESS_COOKIE_NAME)?.value)) {
+    return;
+  }
+
+  redirect(`/admin/login?next=${encodeURIComponent(normalizeAdminRedirectPath(redirectTarget ?? "/admin/reports"))}`);
+}
+
 function revalidateTrainingPeaksAdminPaths(reportId?: string, studentId?: string): void {
   revalidatePath("/admin/reports");
   revalidatePath("/admin/students");
@@ -48,6 +80,7 @@ function revalidateTrainingPeaksAdminPaths(reportId?: string, studentId?: string
 export async function saveTrainingPeaksReportEditAction(formData: FormData): Promise<void> {
   const reportId = getRequiredFormValue(formData, "reportId");
   const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
   const reportMarkdown = getRequiredFormValue(formData, "reportMarkdown");
   const result = await saveTrainingPeaksAdminReportEdit(reportId, reportMarkdown);
 
@@ -63,6 +96,7 @@ export async function saveTrainingPeaksReportEditAction(formData: FormData): Pro
 export async function sendTrainingPeaksReportAction(formData: FormData): Promise<void> {
   const reportId = getRequiredFormValue(formData, "reportId");
   const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
   const result = await sendTrainingPeaksWeeklyReportToStudent(reportId);
 
   revalidateTrainingPeaksAdminPaths(reportId);
@@ -85,6 +119,7 @@ export async function sendTrainingPeaksReportAction(formData: FormData): Promise
 export async function archiveTrainingPeaksStudentAction(formData: FormData): Promise<void> {
   const studentId = getRequiredFormValue(formData, "studentId");
   const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
   const student = await disableTrainingPeaksStudentByInternalId(studentId);
 
   revalidateTrainingPeaksAdminPaths(undefined, studentId);
@@ -99,6 +134,7 @@ export async function archiveTrainingPeaksStudentAction(formData: FormData): Pro
 export async function restoreTrainingPeaksStudentAction(formData: FormData): Promise<void> {
   const studentId = getRequiredFormValue(formData, "studentId");
   const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
   const student = await enableTrainingPeaksStudentByInternalId(studentId);
 
   revalidateTrainingPeaksAdminPaths(undefined, studentId);
@@ -118,24 +154,36 @@ export async function restoreTrainingPeaksStudentAction(formData: FormData): Pro
 
 export async function createTrainingPeaksStudentAction(formData: FormData): Promise<void> {
   const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const studentId = typeof formData.get("student_id") === "string" ? String(formData.get("student_id")) : "";
+  const studentName = typeof formData.get("student_name") === "string" ? String(formData.get("student_name")) : "";
+  const trainingPeaksAthleteUrl =
+    typeof formData.get("trainingpeaks_athlete_url") === "string"
+      ? String(formData.get("trainingpeaks_athlete_url"))
+      : "";
+  const dataQualityStatus =
+    typeof formData.get("data_quality_status") === "string"
+      ? String(formData.get("data_quality_status"))
+      : "";
   const result = await createTrainingPeaksStudent({
-    studentId: typeof formData.get("student_id") === "string" ? String(formData.get("student_id")) : "",
-    studentName: typeof formData.get("student_name") === "string" ? String(formData.get("student_name")) : "",
-    trainingPeaksAthleteUrl:
-      typeof formData.get("trainingpeaks_athlete_url") === "string"
-        ? String(formData.get("trainingpeaks_athlete_url"))
-        : "",
+    studentId,
+    studentName,
+    trainingPeaksAthleteUrl,
     notes: typeof formData.get("notes") === "string" ? String(formData.get("notes")) : null,
-    dataQualityStatus:
-      typeof formData.get("data_quality_status") === "string"
-        ? String(formData.get("data_quality_status"))
-        : null,
+    dataQualityStatus,
   });
 
   revalidateTrainingPeaksAdminPaths();
 
   if (!result.ok) {
-    redirect(withNotice(redirectTo, "error", result.message));
+    redirect(
+      withParams(withNotice(redirectTo, "error", result.message), {
+        student_id: studentId,
+        student_name: studentName,
+        trainingpeaks_athlete_url: trainingPeaksAthleteUrl,
+        data_quality_status: dataQualityStatus,
+      })
+    );
   }
 
   redirect(
@@ -152,6 +200,7 @@ export async function setTrainingPeaksStudentWeeklyReportsEnabledAction(
 ): Promise<void> {
   const studentId = getRequiredFormValue(formData, "studentId");
   const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
   const enabled = getRequiredFormValue(formData, "enabled") === "true";
   const result = await setTrainingPeaksStudentWeeklyReportsEnabled(studentId, enabled);
 
@@ -175,6 +224,7 @@ export async function setTrainingPeaksStudentWeeklyReportsEnabledAction(
 export async function unlinkTrainingPeaksStudentTelegramAction(formData: FormData): Promise<void> {
   const studentId = getRequiredFormValue(formData, "studentId");
   const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
   const result = await unlinkTrainingPeaksStudentTelegram(studentId);
 
   revalidateTrainingPeaksAdminPaths(undefined, studentId);
