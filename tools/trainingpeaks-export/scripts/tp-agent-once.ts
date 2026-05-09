@@ -34,16 +34,11 @@ type TrainingPeaksWeeklyReportRow = {
   report_markdown: string | null;
 };
 
-type TelegramInlineKeyboardMarkup = {
-  inline_keyboard: {
-    text: string;
-    callback_data: string;
-  }[][];
-};
-
 type TrainingPeaksExpectedStudent = {
   student_id: string;
   student_name: string;
+  telegram_chat_id: string | null;
+  telegram_delivery_enabled: boolean;
 };
 
 type TrainingPeaksMissingStudent = {
@@ -61,7 +56,10 @@ type TrainingPeaksJobResult = {
   has_warnings: boolean;
   completed_at: string;
   note: string;
-  delivery_warning?: string;
+  reports_without_telegram?: number;
+  stale_reports_skipped?: number;
+  reports_requiring_review?: number;
+  admin_reports_url?: string | null;
   warning_message?: string;
 };
 
@@ -69,20 +67,18 @@ type TelegramBatchSummaryInput = {
   weekFrom: string;
   weekTo: string;
   finalStatus: "completed" | "failed";
-  studentsExpected: number | null;
-  reportsFound: number | null;
-  telegramDraftsSent: number | null;
-  missingStudents: TrainingPeaksMissingStudent[];
-  failedStudentNames: string[];
+  readyReports: number | null;
+  failedReports: number | null;
+  missingTelegramBindings: number | null;
+  reportsRequiringReview: number | null;
+  staleReportsSkipped: number | null;
+  adminReportsUrl: string | null;
   errorMessage?: string | null;
 };
 
-const TELEGRAM_MESSAGE_LIMIT = 4000;
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
 const STALE_RUNNING_JOB_TIMEOUT_MINUTES = 6 * 60;
 const STALE_RUNNING_JOB_ERROR_MESSAGE = "Job marked failed after stale running timeout";
-const TP_CALLBACK_REPORT_SEND_PREFIX = "tp:rs:";
-const TP_CALLBACK_REPORT_SKIP_PREFIX = "tp:rk:";
 
 function readTextFileSyncSafe(filePath: string): string | null {
   try {
@@ -152,7 +148,7 @@ function getRequiredEnv(name: "SUPABASE_URL" | "SUPABASE_SERVICE_ROLE_KEY"): str
   return value;
 }
 
-function getOptionalEnv(name: "TELEGRAM_BOT_TOKEN"): string | null {
+function getOptionalEnv(name: string): string | null {
   const value = process.env[name]?.trim();
   return value ? value : null;
 }
@@ -166,91 +162,52 @@ function getSupabase() {
   });
 }
 
-function splitTelegramText(text: string, limit = TELEGRAM_MESSAGE_LIMIT): string[] {
-  const normalizedText = text.trim();
-
-  if (normalizedText.length <= limit) {
-    return [normalizedText];
+function normalizeAppBaseUrl(rawValue: string): string | null {
+  const trimmed = rawValue.trim();
+  if (!trimmed) {
+    return null;
   }
 
-  const chunks: string[] = [];
-  let rest = normalizedText;
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 
-  while (rest.length > 0) {
-    if (rest.length <= limit) {
-      chunks.push(rest);
-      break;
-    }
-
-    let boundary = rest.lastIndexOf("\n\n", limit);
-    if (boundary < Math.floor(limit * 0.5)) {
-      boundary = rest.lastIndexOf("\n", limit);
-    }
-    if (boundary < Math.floor(limit * 0.5)) {
-      boundary = rest.lastIndexOf(" ", limit);
-    }
-    if (boundary <= 0) {
-      boundary = limit;
-    }
-
-    chunks.push(rest.slice(0, boundary).trimEnd());
-    rest = rest.slice(boundary).trimStart();
+  try {
+    const url = new URL(withProtocol);
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return null;
   }
-
-  return chunks.filter(Boolean);
 }
 
-function buildTelegramReportMessages(report: TrainingPeaksWeeklyReportRow): string[] {
-  const reportMarkdown = report.report_markdown?.trim();
-  if (!reportMarkdown) {
-    return [];
+function getAppBaseUrl(): string | null {
+  for (const envName of ["APP_BASE_URL", "NEXT_PUBLIC_APP_URL", "VERCEL_URL"]) {
+    const value = getOptionalEnv(envName);
+    if (!value) {
+      continue;
+    }
+
+    const normalized = normalizeAppBaseUrl(value);
+    if (normalized) {
+      return normalized;
+    }
   }
 
-  const header = `✅ Отчет готов: ${report.student_name}\nНеделя: ${report.week_from} — ${report.week_to}\n\n`;
-  const continuationPrefix = `Продолжение отчета: ${report.student_name}\n\n`;
-
-  if ((header + reportMarkdown).length <= TELEGRAM_MESSAGE_LIMIT) {
-    return [`${header}${reportMarkdown}`];
-  }
-
-  const bodyChunks = splitTelegramText(reportMarkdown, TELEGRAM_MESSAGE_LIMIT - header.length);
-  if (bodyChunks.length === 0) {
-    return [header.trimEnd()];
-  }
-
-  const [firstChunk, ...restChunks] = bodyChunks;
-  const messages = [`${header}${firstChunk}`];
-
-  for (const chunk of restChunks) {
-    messages.push(`${continuationPrefix}${chunk}`);
-  }
-
-  return messages;
+  return null;
 }
 
-function getReportReviewMarkup(reportId: string): TelegramInlineKeyboardMarkup {
-  return {
-    inline_keyboard: [
-      [{ text: "✅ Отправить ученику", callback_data: `${TP_CALLBACK_REPORT_SEND_PREFIX}${reportId}` }],
-      [{ text: "⏭ Пропустить", callback_data: `${TP_CALLBACK_REPORT_SKIP_PREFIX}${reportId}` }],
-    ],
-  };
-}
+function buildAdminReportsUrl(weekFrom: string): string | null {
+  const baseUrl = getAppBaseUrl();
+  if (!baseUrl) {
+    return null;
+  }
 
-function getReportReviewPromptText(report: TrainingPeaksWeeklyReportRow): string {
-  return [
-    `Действие для отчёта: ${report.student_name}`,
-    `Неделя: ${report.week_from} — ${report.week_to}`,
-    "Проверь все части превью выше и выбери действие.",
-  ].join("\n");
+  const url = new URL("/admin/reports", `${baseUrl}/`);
+  url.searchParams.set("week", weekFrom);
+  return url.toString();
 }
 
 async function sendTelegramText(
   chatId: string,
-  text: string,
-  options?: {
-    replyMarkup?: TelegramInlineKeyboardMarkup;
-  }
+  text: string
 ): Promise<void> {
   const token = getOptionalEnv("TELEGRAM_BOT_TOKEN");
   if (!token) {
@@ -265,7 +222,6 @@ async function sendTelegramText(
     body: JSON.stringify({
       chat_id: chatId,
       text,
-      reply_markup: options?.replyMarkup,
     }),
   });
 
@@ -331,65 +287,53 @@ function formatMissingStudentsWarning(missingStudents: TrainingPeaksMissingStude
   return labels.length > 5 ? `${preview} and ${labels.length - 5} more` : preview;
 }
 
-function formatSummaryCount(value: number | null): string {
-  return value === null ? "n/a" : String(value);
-}
-
-function buildStudentPreviewLines(
-  title: string,
-  studentNames: string[],
-  limit = 5
-): string[] {
-  if (studentNames.length === 0) {
-    return [];
-  }
-
-  const preview = studentNames.slice(0, limit);
-  const lines = ["", `${title}:`, ...preview.map((studentName) => `- ${studentName}`)];
-
-  if (studentNames.length > limit) {
-    lines.push(`- ...and ${studentNames.length - limit} more`);
-  }
-
-  return lines;
-}
-
 function buildTelegramBatchSummaryMessage(input: TelegramBatchSummaryInput): string {
-  const missingStudentNames = input.missingStudents.map(
-    (student) => student.student_name?.trim() || student.student_id
-  );
-  const failedStudentNames = input.failedStudentNames
-    .map((studentName) => studentName.trim())
-    .filter((studentName) => studentName.length > 0);
-  const studentIssueCount = missingStudentNames.length + failedStudentNames.length;
+  const readyReports = input.readyReports ?? 0;
+  const failedReports = input.failedReports ?? 0;
+  const missingTelegramBindings = input.missingTelegramBindings ?? 0;
+  const reportsRequiringReview = input.reportsRequiringReview ?? readyReports;
+  const staleReportsSkipped = input.staleReportsSkipped ?? 0;
   const warningsCount =
-    studentIssueCount + (input.finalStatus === "failed" && studentIssueCount === 0 ? 1 : 0);
+    failedReports +
+    staleReportsSkipped +
+    (input.finalStatus === "failed" && !input.errorMessage ? 1 : 0);
   const title =
     input.finalStatus === "failed"
-      ? "❌ TP weekly batch failed"
+      ? "❌ Отчёты TrainingPeaks не готовы"
       : warningsCount > 0
-        ? "⚠️ TP weekly batch completed with warnings"
-        : "✅ TP weekly batch completed";
+        ? "⚠️ Отчёты TrainingPeaks готовы с предупреждениями"
+        : "✅ Отчёты TrainingPeaks готовы";
 
   const lines = [
     title,
     "",
-    "Week:",
-    `${input.weekFrom} → ${input.weekTo}`,
+    `Неделя: ${input.weekFrom} — ${input.weekTo}`,
     "",
-    `Status: ${input.finalStatus}`,
-    `Students: ${formatSummaryCount(input.studentsExpected)}`,
-    `Reports: ${formatSummaryCount(input.reportsFound)}`,
-    `Telegram drafts: ${formatSummaryCount(input.telegramDraftsSent)}`,
-    `Warnings: ${warningsCount}`,
+    `Готово: ${readyReports}`,
+    `Ошибки: ${failedReports}`,
+    `Без Telegram: ${missingTelegramBindings}`,
+    `Требуют проверки: ${reportsRequiringReview}`,
   ];
 
+  const warningLines: string[] = [];
+  if (failedReports > 0) {
+    warningLines.push(`Есть ошибки генерации: ${failedReports}.`);
+  }
+  if (staleReportsSkipped > 0) {
+    warningLines.push(`Пропущены stale-черновики: ${staleReportsSkipped}.`);
+  }
   if (input.finalStatus === "failed" && input.errorMessage) {
-    lines.push("", `Failure: ${input.errorMessage}`);
+    warningLines.push(`Ошибка: ${input.errorMessage}`);
+  }
+  if (warningLines.length > 0) {
+    lines.push("", ...warningLines);
   }
 
-  lines.push(...buildStudentPreviewLines("Missing", missingStudentNames));
-  lines.push(...buildStudentPreviewLines("Delivery failed", failedStudentNames));
+  if (input.adminReportsUrl) {
+    lines.push("", "Проверь и отправь отчёты в админке:", input.adminReportsUrl);
+  } else {
+    lines.push("", "Проверь и отправь отчёты в админке.", "Нужен APP_BASE_URL для прямой ссылки.");
+  }
 
   return lines.join("\n");
 }
@@ -398,7 +342,7 @@ async function readExpectedStudentsFromSupabase(): Promise<TrainingPeaksExpected
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("trainingpeaks_students")
-    .select("student_id, student_name")
+    .select("student_id, student_name, telegram_chat_id, telegram_delivery_enabled")
     .eq("is_active", true)
     .eq("weekly_report_enabled", true)
     .order("student_name", { ascending: true });
@@ -410,6 +354,8 @@ async function readExpectedStudentsFromSupabase(): Promise<TrainingPeaksExpected
   return ((data as TrainingPeaksExpectedStudent[]) ?? []).map((student) => ({
     student_id: student.student_id,
     student_name: student.student_name?.trim() || student.student_id,
+    telegram_chat_id: student.telegram_chat_id?.trim() || null,
+    telegram_delivery_enabled: student.telegram_delivery_enabled === true,
   }));
 }
 
@@ -524,6 +470,24 @@ async function listWeeklyReportsWithMarkdown(
   );
 }
 
+function hasTelegramDeliveryBinding(student: TrainingPeaksExpectedStudent | undefined): boolean {
+  return Boolean(student?.telegram_chat_id) && student?.telegram_delivery_enabled === true;
+}
+
+function countReportsWithoutTelegramBinding(
+  expectedStudents: TrainingPeaksExpectedStudent[],
+  reports: TrainingPeaksWeeklyReportRow[]
+): number {
+  const studentById = new Map(
+    expectedStudents.map((student) => [student.student_id.trim(), student] as const)
+  );
+
+  return reports.reduce((count, report) => {
+    const student = studentById.get(report.student_id.trim());
+    return hasTelegramDeliveryBinding(student) ? count : count + 1;
+  }, 0);
+}
+
 function filterReportsForCurrentStudents(
   reports: TrainingPeaksWeeklyReportRow[],
   expectedStudents: TrainingPeaksExpectedStudent[]
@@ -549,47 +513,6 @@ function filterReportsForCurrentStudents(
   }
 
   return { deliverableReports, staleReports };
-}
-
-async function deliverReportsToTelegram(
-  chatId: string,
-  reports: TrainingPeaksWeeklyReportRow[]
-): Promise<{ sentCount: number; warning: string | null; failedStudentNames: string[] }> {
-  let sentCount = 0;
-  const failures: string[] = [];
-  const failedStudentNames: string[] = [];
-
-  for (const report of reports) {
-    try {
-      const messages = buildTelegramReportMessages(report);
-
-      for (const message of messages) {
-        await sendTelegramText(chatId, message);
-      }
-
-      if (report.id) {
-        await sendTelegramText(chatId, getReportReviewPromptText(report), {
-          replyMarkup: getReportReviewMarkup(report.id),
-        });
-      }
-
-      sentCount += 1;
-      console.log(`[telegram] draft.sent student=${report.student_id}`);
-    } catch (error) {
-      const shortMessage = toShortErrorMessage(error);
-      failures.push(`${report.student_name}: ${shortMessage}`);
-      failedStudentNames.push(report.student_name?.trim() || report.student_id);
-    }
-  }
-
-  if (failures.length === 0) {
-    return { sentCount, warning: null, failedStudentNames };
-  }
-
-  const warning = `Telegram delivery warning: ${sentCount}/${reports.length} report(s) sent. ${failures.join(" | ")}`;
-  console.warn(warning);
-
-  return { sentCount, warning, failedStudentNames };
 }
 
 async function completeTrainingPeaksJob(jobId: string, result: unknown): Promise<void> {
@@ -633,15 +556,17 @@ async function failTrainingPeaksJob(
 async function sendTelegramBatchSummaryIfPossible(
   chatId: string | null,
   summary: TelegramBatchSummaryInput
-): Promise<void> {
+): Promise<boolean> {
   if (!chatId) {
-    return;
+    return false;
   }
 
   try {
     await sendTelegramText(chatId, buildTelegramBatchSummaryMessage(summary));
+    return true;
   } catch (error) {
     console.warn(`Telegram batch summary warning: ${toShortErrorMessage(error)}`);
+    return false;
   }
 }
 
@@ -667,8 +592,13 @@ async function main(): Promise<void> {
   let reportsFound: number | null = null;
   let reportsSentToTelegram = 0;
   let missingStudents: TrainingPeaksMissingStudent[] = [];
-  let failedTelegramStudentNames: string[] = [];
   let staleReportsSkipped = 0;
+  let reportsWithoutTelegram = 0;
+  const adminReportsUrl = buildAdminReportsUrl(job.week_from);
+
+  if (!adminReportsUrl) {
+    console.warn("Admin reports URL is not configured. Set APP_BASE_URL, NEXT_PUBLIC_APP_URL, or VERCEL_URL.");
+  }
 
   try {
     console.log("Running tp-sync-students...");
@@ -696,7 +626,7 @@ async function main(): Promise<void> {
 
     reportsFound = deliverableReports.length;
     missingStudents = getMissingStudents(expectedStudents, deliverableReports);
-    let deliveryWarning: string | null = null;
+    reportsWithoutTelegram = countReportsWithoutTelegramBinding(expectedStudents, deliverableReports);
     let note = "Local Mac runner executed tp-weekly-all and tp-sync-reports.";
     const warningMessages: string[] = [];
 
@@ -713,6 +643,10 @@ async function main(): Promise<void> {
         missing_students: missingStudents,
         has_warnings: true,
         completed_at: completedAt,
+        reports_without_telegram: 0,
+        stale_reports_skipped: staleReportsSkipped,
+        reports_requiring_review: 0,
+        admin_reports_url: adminReportsUrl,
         note:
           "Local Mac runner executed tp-weekly-all and tp-sync-reports, but no synced report drafts were produced for the requested week.",
         warning_message: warningMessage,
@@ -725,11 +659,12 @@ async function main(): Promise<void> {
         weekFrom: job.week_from,
         weekTo: job.week_to,
         finalStatus: "failed",
-        studentsExpected,
-        reportsFound,
-        telegramDraftsSent: 0,
-        missingStudents,
-        failedStudentNames: [],
+        readyReports: 0,
+        failedReports: missingStudents.length,
+        missingTelegramBindings: 0,
+        reportsRequiringReview: 0,
+        staleReportsSkipped,
+        adminReportsUrl,
         errorMessage,
       });
       return;
@@ -747,25 +682,35 @@ async function main(): Promise<void> {
       console.warn(warningMessage);
     }
 
-    if (!job.requested_by_chat_id) {
-      note =
-        "Local Mac runner executed tp-weekly-all and tp-sync-reports, but skipped Telegram delivery because requested_by_chat_id is missing.";
-    } else if (reportsFound === 0) {
-      note =
-        "Local Mac runner executed tp-weekly-all and tp-sync-reports, but found no active weekly-enabled synced report drafts with report_markdown for Telegram delivery.";
-    } else {
-      const deliveryResult = await deliverReportsToTelegram(job.requested_by_chat_id, deliverableReports);
-      reportsSentToTelegram = deliveryResult.sentCount;
-      deliveryWarning = deliveryResult.warning;
-      failedTelegramStudentNames = deliveryResult.failedStudentNames;
-      note =
-        reportsSentToTelegram === reportsFound
-          ? "Local Mac runner executed tp-weekly-all and tp-sync-reports, then sent active weekly-enabled report drafts to the Telegram requester."
-          : "Local Mac runner executed tp-weekly-all and tp-sync-reports, but Telegram delivery finished with warnings for active weekly-enabled students.";
+    if (reportsWithoutTelegram > 0) {
+      const warningMessage = `Found ${reportsWithoutTelegram} ready report(s) without Telegram delivery binding in the current student registry.`;
+      warningMessages.push(warningMessage);
+      console.warn(warningMessage);
     }
 
-    if (deliveryWarning) {
-      warningMessages.push(deliveryWarning);
+    if (!job.requested_by_chat_id) {
+      note =
+        "Local Mac runner executed tp-weekly-all and tp-sync-reports, but skipped Telegram summary notification because requested_by_chat_id is missing.";
+    } else {
+      const summarySent = await sendTelegramBatchSummaryIfPossible(job.requested_by_chat_id, {
+        weekFrom: job.week_from,
+        weekTo: job.week_to,
+        finalStatus: "completed",
+        readyReports: reportsFound,
+        failedReports: missingStudents.length,
+        missingTelegramBindings: reportsWithoutTelegram,
+        reportsRequiringReview: reportsFound,
+        staleReportsSkipped,
+        adminReportsUrl,
+      });
+      reportsSentToTelegram = summarySent ? 1 : 0;
+      note =
+        summarySent
+          ? "Local Mac runner executed tp-weekly-all and tp-sync-reports, then sent a compact Telegram summary with the admin review link to the Telegram requester."
+          : "Local Mac runner executed tp-weekly-all and tp-sync-reports, but failed to send the compact Telegram summary to the Telegram requester.";
+      console.log(
+        `[telegram] summary.${summarySent ? "sent" : "failed"} week=${job.week_from}..${job.week_to} ready=${reportsFound} failed=${missingStudents.length} without_telegram=${reportsWithoutTelegram} admin_url=${adminReportsUrl ?? "missing"}`
+      );
     }
 
     const hasWarnings = warningMessages.length > 0;
@@ -780,31 +725,21 @@ async function main(): Promise<void> {
       missing_students: missingStudents,
       has_warnings: hasWarnings,
       completed_at: completedAt,
+      reports_without_telegram: reportsWithoutTelegram,
+      stale_reports_skipped: staleReportsSkipped,
+      reports_requiring_review: reportsFound,
+      admin_reports_url: adminReportsUrl,
       note,
     };
-
-    if (deliveryWarning) {
-      result.delivery_warning = deliveryWarning;
-    }
 
     if (warningMessage) {
       result.warning_message = warningMessage;
     }
 
     await completeTrainingPeaksJob(job.id, result);
-    await sendTelegramBatchSummaryIfPossible(job.requested_by_chat_id, {
-      weekFrom: job.week_from,
-      weekTo: job.week_to,
-      finalStatus: "completed",
-      studentsExpected,
-      reportsFound,
-      telegramDraftsSent: reportsSentToTelegram,
-      missingStudents,
-      failedStudentNames: failedTelegramStudentNames,
-    });
 
     console.log(
-      `Completed TrainingPeaks job for ${job.week_from}..${job.week_to}. reports_found=${reportsFound} telegram_sent=${reportsSentToTelegram} warnings=${warningMessages.length}`
+      `Completed TrainingPeaks job for ${job.week_from}..${job.week_to}. reports_found=${reportsFound} failed_reports=${missingStudents.length} without_telegram=${reportsWithoutTelegram} telegram_notifications=${reportsSentToTelegram} warnings=${warningMessages.length}`
     );
   } catch (error) {
     const shortErrorMessage = toShortErrorMessage(error);
@@ -815,11 +750,12 @@ async function main(): Promise<void> {
         weekFrom: job.week_from,
         weekTo: job.week_to,
         finalStatus: "failed",
-        studentsExpected,
-        reportsFound,
-        telegramDraftsSent: reportsSentToTelegram,
-        missingStudents,
-        failedStudentNames: failedTelegramStudentNames,
+        readyReports: reportsFound,
+        failedReports: missingStudents.length,
+        missingTelegramBindings: reportsWithoutTelegram,
+        reportsRequiringReview: reportsFound,
+        staleReportsSkipped,
+        adminReportsUrl,
         errorMessage: shortErrorMessage,
       });
     } catch (markFailedError) {

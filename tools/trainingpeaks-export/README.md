@@ -78,21 +78,19 @@ cd ~/igor-tp-reports-bot
 npm run tp-sync-reports -- --from=2026-04-27 --to=2026-05-03
 ```
 
-9. После `tp-agent-once` черновики придут в coach chat с кнопками:
+9. После `tp-agent-once` в coach chat придет только короткая сводка по weekly job и ссылка на `Web Admin`.
 
-- `✅ Отправить ученику`
-- `⏭ Пропустить`
-
-Отправка спортсмену происходит только после явного подтверждения тренера через Telegram Business.
+Полная проверка, ручная правка и отправка ученику теперь делаются из `Web Admin`.
 
 ### Current safety rules
 
 - Отчеты создаются только как черновики.
 - `tp-sync-reports` публикует только безопасные метаданные и текст `report-draft.md` в Supabase для чтения ботом через общее состояние.
 - `tp-agent-once` забирает только одну queued-задачу из Supabase и запускается вручную на локальном Mac.
-- После успешного sync `tp-agent-once` отправляет черновики отчетов только в Telegram чат заказчика задачи.
-- На каждом draft сообщении есть inline-кнопки approve/skip.
-- Авто-отправки спортсменам нет: студент получает отчёт только после нажатия `✅ Отправить ученику`.
+- После успешного sync `tp-agent-once` отправляет только короткую Telegram-сводку в чат заказчика задачи.
+- Полный текст отчётов в weekly notification больше не вставляется.
+- Inline-кнопки approve/skip в weekly notification больше не используются.
+- Авто-отправки спортсменам нет: студент получает отчёт только из `Web Admin` после явного действия тренера.
 - `exports/`, `parsed/`, `reports/`, `.env`, `config/students.json` локальные и находятся в `.gitignore`.
 - Учеников с плохим качеством данных можно временно отключать через `weekly_report_enabled=false`.
 - `tp-weekly-one` и `tp-weekly-all` теперь обновляют локальный `config/students.json` из Supabase перед запуском и не доверяют устаревшему локальному списку учеников.
@@ -111,7 +109,7 @@ npm run tp-agent-once
 1. Claim'ит одну queued-задачу из `trainingpeaks_jobs`.
 2. Выполняет `tp-sync-students` и обновляет локальный `config/students.json` из Supabase.
 3. Запускает существующие `tp-weekly-all --from=... --to=...` и `tp-sync-reports --from=... --to=...`.
-4. Читает готовые `report_markdown` из Supabase и отправляет каждый draft обратно в Telegram requester chat отдельным сообщением с inline-кнопками approve/skip.
+4. Читает готовые `report_markdown` из Supabase, считает итог по job и отправляет в Telegram requester chat короткую сводку с ссылкой на `Web Admin`.
 5. Помечает задачу как `completed` или `failed` в Supabase.
 
 Нормальный weekly flow теперь такой:
@@ -133,9 +131,10 @@ npm run tp-agent-once
 - Обычное ручное редактирование `config/students.json` больше не нужно.
 - Перед перезаписью `config/students.json` создается backup-файл `students.backup-YYYYMMDD-HHMMSS.json`, если локальный файл уже существовал.
 - Если sync учеников падает, `tp-weekly-all` не запускается.
-- После sync отчеты-драфты отправляются обратно в Telegram только тому, кто создал задачу.
-- Coach review теперь происходит прямо в Telegram кнопками `✅ Отправить ученику` и `⏭ Пропустить`.
-- Для отправки студенту нужен `TELEGRAM_BUSINESS_CONNECTION_ID` и привязанный `telegram_chat_id` у студента.
+- После sync в Telegram уходит только summary notification с числом готовых/ошибочных отчётов и ссылкой на `Web Admin`.
+- Основной review/send workspace теперь `Web Admin`, а Telegram остается каналом уведомлений и quick status.
+- Для прямой ссылки в summary notification нужен `APP_BASE_URL` или `NEXT_PUBLIC_APP_URL`; как fallback используется `VERCEL_URL`.
+- Для отправки студенту по-прежнему нужен `TELEGRAM_BUSINESS_CONNECTION_ID` и привязанный `telegram_chat_id` у студента.
 - Vercel по-прежнему не запускает Playwright/export/parser/AI.
 
 ### Link student Telegram
@@ -151,7 +150,7 @@ npm run tp-agent-once
 - `telegram_chat_id`
 - `telegram_delivery_enabled=true`
 
-Только тогда кнопка `✅ Отправить ученику` сможет доставить weekly report через Telegram Business.
+Только тогда отправка weekly report из `Web Admin` сможет доставить сообщение через Telegram Business.
 
 ### Sync students from Supabase
 

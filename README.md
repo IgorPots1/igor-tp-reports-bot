@@ -142,9 +142,7 @@ cd ~/igor-tp-reports-bot/tools/trainingpeaks-export
 npm run tp-agent-once
 
 Telegram:
-coach receives weekly report drafts with inline buttons
-`✅ Отправить ученику` -> `tp:rs:<reportId>`
-`⏭ Пропустить` -> `tp:rk:<reportId>`
+coach receives a compact weekly summary with a link to `/admin/reports`
 ```
 
 To execute one queued weekly job from Supabase on the local Mac runner:
@@ -154,13 +152,13 @@ cd ~/igor-tp-reports-bot/tools/trainingpeaks-export
 npm run tp-agent-once
 ```
 
-`tp-agent-once` claims one queued `trainingpeaks_jobs` row, syncs active weekly-enabled students from Supabase into the local `config/students.json`, then runs the existing `tp-weekly-all` and `tp-sync-reports` pipeline for the requested week. After sync, it reads the generated weekly report drafts from Supabase and sends them back to the Telegram requester chat as separate draft messages for coach review. Each draft now includes inline approval buttons. If the student sync fails, the export does not continue. Before overwriting `config/students.json`, the sync creates a timestamped `students.backup-YYYYMMDD-HHMMSS.json` file when a previous local config exists.
+`tp-agent-once` claims one queued `trainingpeaks_jobs` row, syncs active weekly-enabled students from Supabase into the local `config/students.json`, then runs the existing `tp-weekly-all` and `tp-sync-reports` pipeline for the requested week. After sync, it reads the generated weekly report drafts from Supabase, computes a compact batch summary, and sends only that notification back to the Telegram requester chat with a direct link to `Web Admin`. If the student sync fails, the export does not continue. Before overwriting `config/students.json`, the sync creates a timestamped `students.backup-YYYYMMDD-HHMMSS.json` file when a previous local config exists.
 
 Manual editing of `tools/trainingpeaks-export/config/students.json` is no longer needed for the normal Telegram -> local Mac weekly flow.
 
 Vercel still does not run Playwright, export, parser, or AI generation.
 
-Weekly drafts still go only to the coach chat first. Student delivery happens only after the coach taps the inline approval button.
+Telegram is now notification-first for weekly jobs. Review, manual edits, and student delivery happen from `Web Admin`.
 
 Coach-approved student delivery requirements:
 
@@ -168,8 +166,8 @@ Coach-approved student delivery requirements:
 - The student row must have `telegram_chat_id` and `telegram_delivery_enabled=true`.
 - Preferred flow: student sends any Telegram message first, then coach links from the student card with `🔗 Привязать Telegram`.
 - Manual fallback: `/tp_set_telegram <student_id> <chat_id>`.
-- Tapping `✅ Отправить ученику` sends the synced `report_markdown` to the student's Telegram chat through Telegram Business.
-- Tapping `⏭ Пропустить` marks the weekly report as skipped without sending anything to the student.
+- `APP_BASE_URL` is recommended for direct admin links in Telegram summary notifications. `NEXT_PUBLIC_APP_URL` and `VERCEL_URL` are supported fallbacks.
+- Sending from `Web Admin` delivers the final report to the student's Telegram chat through Telegram Business.
 
 ## Telegram Commands
 

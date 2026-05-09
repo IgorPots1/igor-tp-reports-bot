@@ -127,6 +127,22 @@ function getReportWeekValue(report: Pick<TrainingPeaksWeeklyReport, "weekFrom" |
   return `${report.weekFrom}..${report.weekTo}`;
 }
 
+function resolveSelectedWeek(
+  requestedWeek: string | null | undefined,
+  availableWeeks: string[]
+): string | null {
+  if (!requestedWeek) {
+    return availableWeeks[0] ?? null;
+  }
+
+  if (availableWeeks.includes(requestedWeek)) {
+    return requestedWeek;
+  }
+
+  const matchedByWeekFrom = availableWeeks.find((weekValue) => weekValue.startsWith(`${requestedWeek}..`));
+  return matchedByWeekFrom ?? availableWeeks[0] ?? null;
+}
+
 function isReportSent(record: TrainingPeaksAdminReportRecord): boolean {
   return record.report.reviewStatus === "sent" || Boolean(record.report.sentAt);
 }
@@ -276,10 +292,7 @@ export async function listTrainingPeaksAdminReports(options?: {
   const availableWeeks = Array.from(
     new Set(reports.map((report) => getReportWeekValue(report)))
   );
-  const selectedWeek =
-    options?.week && availableWeeks.includes(options.week)
-      ? options.week
-      : availableWeeks[0] ?? null;
+  const selectedWeek = resolveSelectedWeek(options?.week, availableWeeks);
   const normalizedReportStatus = normalizeReportStatusFilter(options?.reportStatus);
   const normalizedTelegramStatus = normalizeTelegramFilter(options?.telegramStatus);
   const normalizedStudentState = normalizeStudentStateFilter(options?.studentState);
