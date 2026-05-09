@@ -516,10 +516,6 @@ code {
 }
 
 .admin-report-toolbar {
-  position: sticky;
-  top: 12px;
-  z-index: 5;
-  display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
@@ -534,12 +530,17 @@ code {
 }
 
 .admin-textarea-editor {
-  min-height: min(72vh, 960px);
+  min-height: 60vh;
   font-family: inherit;
+  overflow-y: visible;
 }
 
 .admin-markdown-preview-editor {
   min-height: 320px;
+}
+
+.admin-report-editor-footer {
+  align-items: center;
 }
 
 .admin-backlink {

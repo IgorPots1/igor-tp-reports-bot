@@ -60,6 +60,14 @@ function getStudentStateText(entry: ReportDetailEntry): string {
   }
 }
 
+function getEditorRows(markdown: string): number {
+  const estimatedRows = markdown.split(/\r?\n/).reduce((total, line) => {
+    return total + Math.max(1, Math.ceil(line.length / 90));
+  }, 0);
+
+  return Math.max(28, Math.min(estimatedRows + 4, 80));
+}
+
 export default async function AdminReportDetailPage({
   params,
   searchParams,
@@ -103,6 +111,7 @@ export default async function AdminReportDetailPage({
   const listHref = `/admin/reports${listParams.size > 0 ? `?${listParams.toString()}` : ""}`;
   const detailRedirectTo = `/admin/reports/${entry.report.id}${listParams.size > 0 ? `?${listParams.toString()}` : ""}`;
   const saveFormId = `trainingpeaks-report-edit-${entry.report.id}`;
+  const editorRows = currentMarkdown ? getEditorRows(currentMarkdown) : 28;
 
   return (
     <section className="admin-section admin-report-detail-page">
@@ -132,6 +141,28 @@ export default async function AdminReportDetailPage({
           </div>
         </div>
 
+        <div className="admin-actions admin-report-toolbar">
+          <Link className="admin-button admin-button-secondary" href={listHref}>
+            Назад
+          </Link>
+          {!isSent && currentMarkdown && (
+            <FormActionButton className="admin-button" form={saveFormId} pendingText="Сохранение...">
+              Сохранить
+            </FormActionButton>
+          )}
+          {entry.canSend ? (
+            <form action={sendTrainingPeaksReportAction}>
+              <input type="hidden" name="reportId" value={entry.report.id} />
+              <input type="hidden" name="redirectTo" value={detailRedirectTo} />
+              <FormActionButton className="admin-button admin-button-secondary" pendingText="Отправка...">
+                Отправить
+              </FormActionButton>
+            </form>
+          ) : (
+            <span className="admin-muted">{entry.sendBlockedReason ?? "Отправка недоступна"}</span>
+          )}
+        </div>
+
         <dl className="admin-report-meta admin-report-meta-compact">
           <div className="admin-report-meta-chip">
             <dt>Неделя</dt>
@@ -158,28 +189,6 @@ export default async function AdminReportDetailPage({
             <dd>{formatIsoDate(entry.report.sentAt)}</dd>
           </div>
         </dl>
-      </div>
-
-      <div className="admin-card admin-card-compact admin-report-toolbar">
-        <Link className="admin-button admin-button-secondary" href={listHref}>
-          Назад
-        </Link>
-        {!isSent && currentMarkdown && (
-          <FormActionButton className="admin-button" form={saveFormId} pendingText="Сохранение...">
-            Сохранить
-          </FormActionButton>
-        )}
-        {entry.canSend ? (
-          <form action={sendTrainingPeaksReportAction}>
-            <input type="hidden" name="reportId" value={entry.report.id} />
-            <input type="hidden" name="redirectTo" value={detailRedirectTo} />
-            <FormActionButton className="admin-button admin-button-secondary" pendingText="Отправка...">
-              Отправить
-            </FormActionButton>
-          </form>
-        ) : (
-          <span className="admin-muted">{entry.sendBlockedReason ?? "Отправка недоступна"}</span>
-        )}
       </div>
 
       {(notice || error) && (
@@ -241,9 +250,31 @@ export default async function AdminReportDetailPage({
               className="admin-textarea admin-textarea-editor"
               name="reportMarkdown"
               defaultValue={currentMarkdown}
-              rows={28}
+              rows={editorRows}
             />
           </form>
+        )}
+
+        {!isSent && currentMarkdown && (
+          <div className="admin-card-actions admin-card-actions-compact admin-report-editor-footer">
+            <FormActionButton className="admin-button" form={saveFormId} pendingText="Сохранение...">
+              Сохранить
+            </FormActionButton>
+            {entry.canSend ? (
+              <form action={sendTrainingPeaksReportAction}>
+                <input type="hidden" name="reportId" value={entry.report.id} />
+                <input type="hidden" name="redirectTo" value={detailRedirectTo} />
+                <FormActionButton
+                  className="admin-button admin-button-secondary"
+                  pendingText="Отправка..."
+                >
+                  Отправить
+                </FormActionButton>
+              </form>
+            ) : (
+              <span className="admin-muted">{entry.sendBlockedReason ?? "Отправка недоступна"}</span>
+            )}
+          </div>
         )}
       </article>
 
