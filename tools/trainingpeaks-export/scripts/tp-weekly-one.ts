@@ -1,9 +1,10 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readdir } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { createClient } from "@supabase/supabase-js";
 import { exportsRoot, reportsRoot, scriptsRoot, parsedRoot } from "./lib/paths.ts";
 import { findStudentById, readStudentsConfig } from "./lib/students.ts";
 
@@ -12,6 +13,13 @@ export type WeeklyCliArgs = {
   from: string;
   to: string;
   skipExport: boolean;
+};
+
+type RuntimeStudentRow = {
+  student_id: string;
+  student_name: string;
+  is_active: boolean;
+  weekly_report_enabled: boolean;
 };
 
 function usage(): string {
@@ -62,6 +70,147 @@ function parseArgs(argv: string[]): WeeklyCliArgs {
     to: values.to,
     skipExport
   };
+}
+
+function readTextFileSyncSafe(filePath: string): string | null {
+  try {
+    return readFileSync(filePath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function loadDotEnvFile(dotEnvPath: string): void {
+  if (!existsSync(dotEnvPath)) {
+    return;
+  }
+
+  const content = readTextFileSyncSafe(dotEnvPath);
+  if (content === null) {
+    return;
+  }
+
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+
+    const separatorIndex = trimmed.indexOf("=");
+    if (separatorIndex < 0) {
+      continue;
+    }
+
+    const key = trimmed.slice(0, separatorIndex).trim();
+    if (!key || process.env[key] !== undefined) {
+      continue;
+    }
+
+    let value = trimmed.slice(separatorIndex + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+
+    process.env[key] = value;
+  }
+}
+
+function loadLocalEnv(): void {
+  const repoRoot = path.resolve(scriptsRoot, "..", "..", "..");
+  const envPaths = [
+    path.join(repoRoot, ".env.local"),
+    path.join(repoRoot, ".env"),
+    path.join(path.resolve(scriptsRoot, ".."), ".env")
+  ];
+
+  for (const envPath of envPaths) {
+    loadDotEnvFile(envPath);
+  }
+}
+
+function getRequiredEnv(name: "SUPABASE_URL" | "SUPABASE_SERVICE_ROLE_KEY"): string {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(
+      `Missing ${name}. Local weekly commands now require Supabase as the source of truth. Run tp-sync-students after setting ${name}.`
+    );
+  }
+
+  return value;
+}
+
+async function runNpmScript(scriptName: string): Promise<void> {
+  const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(npmExecutable, ["run", scriptName], {
+      cwd: path.resolve(scriptsRoot, ".."),
+      stdio: "inherit",
+      env: process.env
+    });
+
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      if (signal) {
+        reject(new Error(`${scriptName} exited from signal ${signal}.`));
+        return;
+      }
+
+      if (code !== 0) {
+        reject(new Error(`${scriptName} failed with exit code ${code}.`));
+        return;
+      }
+
+      resolve();
+    });
+  });
+}
+
+export async function refreshStudentsConfigFromSupabase(): Promise<void> {
+  loadLocalEnv();
+  console.log("Refreshing local students.json from Supabase before weekly run...");
+  await runNpmScript("tp-sync-students");
+}
+
+export async function assertStudentAllowedBySupabase(studentId: string): Promise<void> {
+  loadLocalEnv();
+
+  const supabase = createClient(getRequiredEnv("SUPABASE_URL"), getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY"), {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    }
+  });
+
+  const { data, error } = await supabase
+    .from("trainingpeaks_students")
+    .select("student_id, student_name, is_active, weekly_report_enabled")
+    .eq("student_id", studentId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to validate student "${studentId}" against Supabase: ${error.message}`);
+  }
+
+  const runtimeStudent = data as RuntimeStudentRow | null;
+  if (!runtimeStudent) {
+    throw new Error(
+      `Student "${studentId}" was not found in Supabase. Local weekly commands no longer trust stale config/students.json.`
+    );
+  }
+
+  if (!runtimeStudent.is_active) {
+    throw new Error(`Student "${studentId}" is inactive in Supabase. Weekly report generation is blocked.`);
+  }
+
+  if (!runtimeStudent.weekly_report_enabled) {
+    throw new Error(
+      `Student "${studentId}" has weekly_report_enabled=false in Supabase. Weekly report generation is blocked.`
+    );
+  }
 }
 
 async function runNodeScript(scriptName: string, args: WeeklyCliArgs): Promise<void> {
@@ -187,12 +336,15 @@ export type WeeklyWorkflowResult = {
 };
 
 export async function runWeeklyWorkflow(args: WeeklyCliArgs): Promise<WeeklyWorkflowResult> {
+  await assertStudentAllowedBySupabase(args.student);
+
   const students = await readStudentsConfig();
   const student = findStudentById(students, args.student);
 
   if (!student) {
-    const knownStudents = students.map((entry) => entry.student_id).join(", ") || "(none)";
-    throw new Error(`Student "${args.student}" was not found in config/students.json. Known ids: ${knownStudents}`);
+    throw new Error(
+      `Student "${args.student}" is not present in the freshly synced config/students.json. Run tp-sync-students and retry.`
+    );
   }
 
   const weekKey = `${args.from}_${args.to}`;
@@ -242,6 +394,7 @@ export async function runWeeklyWorkflow(args: WeeklyCliArgs): Promise<WeeklyWork
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+  await refreshStudentsConfigFromSupabase();
   await runWeeklyWorkflow(args);
 }
 

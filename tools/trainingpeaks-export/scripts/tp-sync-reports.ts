@@ -111,6 +111,26 @@ type RuntimeStudentRow = {
   weekly_report_enabled: boolean;
 };
 
+type SyncRow = {
+  student_id: string;
+  student_name: string;
+  week_from: string;
+  week_to: string;
+  status: string;
+  report_markdown: string | null;
+  summary_json: SafeWeeklySummary;
+  warnings: SyncWarnings | null;
+  synced_at: string;
+};
+
+type ExistingWeeklyReportRow = {
+  id: string;
+  student_id: string;
+  week_from: string;
+  week_to: string;
+  report_markdown: string | null;
+};
+
 function usage(): string {
   return [
     "Usage:",
@@ -363,6 +383,10 @@ function buildWarnings(summary: RawWeeklySummary): SyncWarnings | null {
   };
 }
 
+function buildWeeklyReportKey(studentId: string, weekFrom: string, weekTo: string): string {
+  return `${studentId}::${weekFrom}::${weekTo}`;
+}
+
 async function main(): Promise<void> {
   loadLocalEnv();
 
@@ -399,17 +423,7 @@ async function main(): Promise<void> {
     ((runtimeStudentsData as RuntimeStudentRow[]) ?? []).map((student) => [student.student_id, student] as const)
   );
 
-  const rows: {
-    student_id: string;
-    student_name: string;
-    week_from: string;
-    week_to: string;
-    status: string;
-    report_markdown: string | null;
-    summary_json: SafeWeeklySummary;
-    warnings: SyncWarnings | null;
-    synced_at: string;
-  }[] = [];
+  const rows: SyncRow[] = [];
   const skippedCandidates: { studentId: string; weekKey: string; reason: string }[] = [];
 
   for (const { studentId, weekKey, summaryPath } of candidates) {
@@ -469,15 +483,95 @@ async function main(): Promise<void> {
     return;
   }
 
-  const { error } = await supabase.from("trainingpeaks_weekly_reports").upsert(rows, {
-    onConflict: "student_id,week_from,week_to"
-  });
+  const studentIds = [...new Set(rows.map((row) => row.student_id))];
+  const { data: existingRowsData, error: existingRowsError } = await supabase
+    .from("trainingpeaks_weekly_reports")
+    .select("id, student_id, week_from, week_to, report_markdown")
+    .in("student_id", studentIds);
 
-  if (error) {
-    throw new Error(`Failed to sync trainingpeaks_weekly_reports: ${error.message}`);
+  if (existingRowsError) {
+    throw new Error(`Failed to load existing trainingpeaks_weekly_reports: ${existingRowsError.message}`);
   }
 
-  console.log(`[sync] upserted count=${rows.length}`);
+  const existingRowsByKey = new Map<string, ExistingWeeklyReportRow>(
+    ((existingRowsData as ExistingWeeklyReportRow[]) ?? []).map((row) => [
+      buildWeeklyReportKey(row.student_id, row.week_from, row.week_to),
+      row
+    ] as const)
+  );
+
+  const insertRows = rows.filter(
+    (row) => !existingRowsByKey.has(buildWeeklyReportKey(row.student_id, row.week_from, row.week_to))
+  );
+
+  if (insertRows.length > 0) {
+    const { error: insertError } = await supabase.from("trainingpeaks_weekly_reports").insert(insertRows);
+
+    if (insertError) {
+      throw new Error(`Failed to insert trainingpeaks_weekly_reports: ${insertError.message}`);
+    }
+  }
+
+  for (const row of rows) {
+    const key = buildWeeklyReportKey(row.student_id, row.week_from, row.week_to);
+    const existingRow = existingRowsByKey.get(key);
+
+    if (!existingRow) {
+      console.log(
+        `[sync] student=${row.student_id} week=${row.week_from}..${row.week_to} inserted new report row`
+      );
+      continue;
+    }
+
+    const reportChanged = existingRow.report_markdown !== row.report_markdown;
+    const updatePayload = reportChanged
+      ? {
+          student_name: row.student_name,
+          status: row.status,
+          report_markdown: row.report_markdown,
+          summary_json: row.summary_json,
+          warnings: row.warnings,
+          synced_at: row.synced_at,
+          edited_report_markdown: null,
+          edited_at: null,
+          review_status: "draft",
+          approved_at: null,
+          sent_at: null,
+          sent_to_chat_id: null,
+          delivery_error: null
+        }
+      : {
+          student_name: row.student_name,
+          status: row.status,
+          report_markdown: row.report_markdown,
+          summary_json: row.summary_json,
+          warnings: row.warnings,
+          synced_at: row.synced_at
+        };
+
+    const { error: updateError } = await supabase
+      .from("trainingpeaks_weekly_reports")
+      .update(updatePayload)
+      .eq("id", existingRow.id);
+
+    if (updateError) {
+      throw new Error(
+        `Failed to update trainingpeaks_weekly_reports for ${row.student_id} ${row.week_from}..${row.week_to}: ${updateError.message}`
+      );
+    }
+
+    if (reportChanged) {
+      console.log(
+        `[sync] student=${row.student_id} week=${row.week_from}..${row.week_to} report changed, reset review/delivery state`
+      );
+    } else {
+      console.log(
+        `[sync] student=${row.student_id} week=${row.week_from}..${row.week_to} report unchanged, preserved review/delivery state`
+      );
+    }
+  }
+
+  console.log(`[sync] synced count=${rows.length}`);
   for (const row of rows) {
     console.log(
       `[sync] student=${row.student_id} week=${row.week_from}..${row.week_to} status=${row.status} report=${row.report_markdown ? "yes" : "no"}`

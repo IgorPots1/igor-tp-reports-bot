@@ -1,7 +1,7 @@
 import process from "node:process";
 
 import { formatStudentLabel, readStudentsConfig } from "./lib/students.ts";
-import { runWeeklyWorkflow } from "./tp-weekly-one.ts";
+import { refreshStudentsConfigFromSupabase, runWeeklyWorkflow } from "./tp-weekly-one.ts";
 
 type CliArgs = {
   from?: string;
@@ -104,6 +104,7 @@ function resolvePreviousWeekRange(): { from: string; to: string } {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const period = args.from && args.to ? { from: args.from, to: args.to } : resolvePreviousWeekRange();
+  await refreshStudentsConfigFromSupabase();
   const students = await readStudentsConfig();
   const selectedStudents = students.filter(
     (student) => student.is_active === true && student.weekly_report_enabled === true

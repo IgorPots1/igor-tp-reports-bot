@@ -23,9 +23,9 @@ SUPABASE_URL=...
 SUPABASE_SERVICE_ROLE_KEY=...
 ```
 
-`TELEGRAM_WEBHOOK_SECRET` is optional but recommended for production. When it is set, the webhook endpoint requires Telegram to send the same value in the `x-telegram-bot-api-secret-token` header and rejects other requests with `401`.
-
 `ADMIN_ACCESS_TOKEN` protects `/admin`. Set it locally in `.env.local` before using Web Admin, and set the same variable in Vercel production before exposing any `/admin` route publicly. If `ADMIN_ACCESS_TOKEN` is missing in production, `/admin` stays closed and redirects to the login/setup screen.
+
+`TELEGRAM_WEBHOOK_SECRET` is required in production. Production webhook requests are rejected unless Telegram sends the same value in the `x-telegram-bot-api-secret-token` header. Development keeps the current bypass when the variable is unset and logs a warning once.
 
 ## Telegram Webhook
 
@@ -35,9 +35,9 @@ Webhook endpoint path:
 /api/telegram/webhook
 ```
 
-If `TELEGRAM_WEBHOOK_SECRET` is not set, the webhook keeps the current local-development behavior and does not enforce Telegram secret verification.
+In production, the webhook rejects all POST requests when `TELEGRAM_WEBHOOK_SECRET` is missing.
 
-When you configure the webhook in Telegram, use the same secret token value that you set in `TELEGRAM_WEBHOOK_SECRET`.
+When you configure the webhook in Telegram, `setWebhook secret_token` must exactly match `TELEGRAM_WEBHOOK_SECRET`.
 
 For Telegram Business smoke testing:
 

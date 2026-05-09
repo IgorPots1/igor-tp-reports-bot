@@ -33,29 +33,52 @@ function okResponse() {
   });
 }
 
-function unauthorizedResponse() {
-  return new Response(JSON.stringify({ ok: false }), {
-    status: 401,
+function errorResponse(status: number, error: string) {
+  return new Response(JSON.stringify({ ok: false, error }), {
+    status,
     headers: jsonHeaders,
   });
 }
 
-function isTelegramWebhookRequestAuthorized(request: Request): boolean {
+type WebhookAuthorizationResult =
+  | { authorized: true }
+  | { authorized: false; status: 401 | 403; error: string; logMessage: string };
+
+function getTelegramWebhookAuthorizationResult(request: Request): WebhookAuthorizationResult {
   const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET?.trim();
+  const isProduction = process.env.NODE_ENV === "production";
 
   if (!webhookSecret) {
-    if (process.env.NODE_ENV === "development" && !hasLoggedMissingWebhookSecretWarning) {
+    if (isProduction) {
+      return {
+        authorized: false,
+        status: 403,
+        error: "Telegram webhook secret is required in production.",
+        logMessage: "Telegram webhook rejected: TELEGRAM_WEBHOOK_SECRET is required in production",
+      };
+    }
+
+    if (!hasLoggedMissingWebhookSecretWarning) {
       hasLoggedMissingWebhookSecretWarning = true;
       console.warn(
         "Telegram webhook secret verification is disabled because TELEGRAM_WEBHOOK_SECRET is not set."
       );
     }
 
-    return true;
+    return { authorized: true };
   }
 
   const incomingSecret = request.headers.get("x-telegram-bot-api-secret-token");
-  return incomingSecret === webhookSecret;
+  if (incomingSecret !== webhookSecret) {
+    return {
+      authorized: false,
+      status: 401,
+      error: "Invalid Telegram webhook secret token.",
+      logMessage: "Telegram webhook rejected: invalid secret token",
+    };
+  }
+
+  return { authorized: true };
 }
 
 export async function GET() {
@@ -63,9 +86,11 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  if (!isTelegramWebhookRequestAuthorized(request)) {
-    console.warn("Telegram webhook rejected: invalid secret token");
-    return unauthorizedResponse();
+  const authorization = getTelegramWebhookAuthorizationResult(request);
+
+  if (!authorization.authorized) {
+    console.warn(authorization.logMessage);
+    return errorResponse(authorization.status, authorization.error);
   }
 
   let update: TelegramUpdate | null = null;

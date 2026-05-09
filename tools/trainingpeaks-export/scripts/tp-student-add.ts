@@ -12,23 +12,30 @@ type CliArgs = {
   name: string;
   url: string;
   update: boolean;
+  legacyLocalOnly: boolean;
 };
 
 function usage(): string {
   return [
     "Usage:",
-    '  npm run tp-student-add -- --student=Olga --name="Ольга" --url="https://app.trainingpeaks.com/#calendar/athletes/5734279"',
-    '  npm run tp-student-add -- --student=Olga --name="Ольга" --url="https://app.trainingpeaks.com/#calendar/athletes/5734279" --update'
+    '  npm run tp-student-add -- --legacy-local-only --student=Olga --name="Ольга" --url="https://app.trainingpeaks.com/#calendar/athletes/5734279"',
+    '  npm run tp-student-add -- --legacy-local-only --student=Olga --name="Ольга" --url="https://app.trainingpeaks.com/#calendar/athletes/5734279" --update'
   ].join("\n");
 }
 
 function parseArgs(argv: string[]): CliArgs {
-  const values: Partial<Omit<CliArgs, "update">> = {};
+  const values: Partial<Omit<CliArgs, "update" | "legacyLocalOnly">> = {};
   let update = false;
+  let legacyLocalOnly = false;
 
   for (const arg of argv) {
     if (arg === "--update") {
       update = true;
+      continue;
+    }
+
+    if (arg === "--legacy-local-only") {
+      legacyLocalOnly = true;
       continue;
     }
 
@@ -55,12 +62,23 @@ function parseArgs(argv: string[]): CliArgs {
     student: values.student,
     name: values.name,
     url: values.url,
-    update
+    update,
+    legacyLocalOnly
   };
 }
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+
+  if (!args.legacyLocalOnly) {
+    throw new Error(
+      `tp-student-add is now legacy/local-only and refuses to update config/students.json without --legacy-local-only.\nUse Web Admin / Supabase as the source of truth, then run tp-sync-students.\n\n${usage()}`
+    );
+  }
+
+  console.warn(
+    "WARNING: tp-student-add only changes local config/students.json. Supabase / Web Admin remains the source of truth."
+  );
   await ensureStudentsConfigExists();
 
   const students = await readStudentsConfig();

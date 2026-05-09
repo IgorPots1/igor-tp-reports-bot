@@ -95,6 +95,7 @@ npm run tp-sync-reports -- --from=2026-04-27 --to=2026-05-03
 - Авто-отправки спортсменам нет: студент получает отчёт только после нажатия `✅ Отправить ученику`.
 - `exports/`, `parsed/`, `reports/`, `.env`, `config/students.json` локальные и находятся в `.gitignore`.
 - Учеников с плохим качеством данных можно временно отключать через `weekly_report_enabled=false`.
+- `tp-weekly-one` и `tp-weekly-all` теперь обновляют локальный `config/students.json` из Supabase перед запуском и не доверяют устаревшему локальному списку учеников.
 
 ### Run one queued job
 
@@ -170,27 +171,30 @@ npm run tp-sync-students -- --dry-run
 
 - читает только `is_active=true` и `weekly_report_enabled=true` из `trainingpeaks_students`
 - сохраняет локальный формат `config/students.json`, который ожидает export pipeline
-- не перезаписывает локальный файл, если Supabase вернул 0 активных учеников
+- при 0 активных weekly-enabled учениках пишет пустой `config/students.json`, чтобы не запускаться по stale local config
 - требует `SUPABASE_URL` и `SUPABASE_SERVICE_ROLE_KEY`
 
 ### Add student
 
-Используйте:
+Используйте только для legacy local-only сценариев:
 
 ```bash
-npm run tp-student-add -- --student=Olga --name="Ольга" --url="https://app.trainingpeaks.com/#calendar/athletes/5734279"
+npm run tp-student-add -- --legacy-local-only --student=Olga --name="Ольга" --url="https://app.trainingpeaks.com/#calendar/athletes/5734279"
 ```
 
-Команда создает локальный `config/students.json`, если файла еще нет, и добавляет в него ученика. Для обновления существующей записи используйте `--update`.
+Без `--legacy-local-only` команда теперь отказывается менять `config/students.json` и просит использовать Web Admin / Supabase как source of truth.
+
+С `--legacy-local-only` команда создает локальный `config/students.json`, если файла еще нет, и добавляет в него ученика. Для обновления существующей записи используйте `--update`.
 
 Этот файл локальный и не должен попадать в коммит.
 
 `tp-weekly-one` is the MVP weekly workflow for one student:
 
 1. Open the athlete in TrainingPeaks with the same persistent browser profile.
-2. Capture manual exports into `exports/{student_id}/{from}_{to}/`.
-3. Parse the week into `parsed/{student_id}/{from}_{to}/weekly-summary.json`.
-4. Generate AI report drafts in `reports/{student_id}/{from}_{to}/`.
+2. Refresh local `config/students.json` from Supabase and verify that the selected student is still active and weekly-enabled there.
+3. Capture manual exports into `exports/{student_id}/{from}_{to}/`.
+4. Parse the week into `parsed/{student_id}/{from}_{to}/weekly-summary.json`.
+5. Generate AI report drafts in `reports/{student_id}/{from}_{to}/`.
 
 Export expectations:
 
@@ -205,7 +209,7 @@ Use `--skip-export` to reuse an existing export folder and only run parse + repo
 npm run tp-weekly-one -- --student=Olga --from=2026-04-27 --to=2026-05-03 --skip-export
 ```
 
-`tp-weekly-all` runs the same weekly workflow for every student where both flags are enabled:
+`tp-weekly-all` runs the same weekly workflow for every student from a freshly synced Supabase list where both flags are enabled:
 
 - `is_active === true`
 - `weekly_report_enabled === true`
@@ -213,6 +217,8 @@ npm run tp-weekly-one -- --student=Olga --from=2026-04-27 --to=2026-05-03 --skip
 If `--from` and `--to` are omitted, it automatically uses the previous full Monday-Sunday week based on local time.
 If no new downloads are captured during the manual export step, the workflow now asks before reusing existing ZIP exports from that week.
 Reuse only continues when a likely `Workout Summary` ZIP is present.
+
+If a student is missing, inactive, or has `weekly_report_enabled=false` in Supabase, weekly generation is blocked even if stale local config still exists.
 
 Examples:
 
@@ -303,14 +309,14 @@ Compatibility defaults:
 - Missing `data_quality_status` is allowed
 - Missing `notes` is allowed
 
-Use `tp-student-add` to add a local student entry. If `config/students.json` is missing, the script creates it from `config/students.example.json`.
+Use `tp-student-add` only for explicit legacy local-only cases. If `config/students.json` is missing, the script creates it from `config/students.example.json`.
 
 ```bash
-npm run tp-student-add -- --student=Olga --name="Ольга" --url="https://app.trainingpeaks.com/#calendar/athletes/5734279"
+npm run tp-student-add -- --legacy-local-only --student=Olga --name="Ольга" --url="https://app.trainingpeaks.com/#calendar/athletes/5734279"
 ```
 
 If the `student_id` already exists, the command refuses to overwrite it unless you add `--update`:
 
 ```bash
-npm run tp-student-add -- --student=Olga --name="Ольга" --url="https://app.trainingpeaks.com/#calendar/athletes/5734279" --update
+npm run tp-student-add -- --legacy-local-only --student=Olga --name="Ольга" --url="https://app.trainingpeaks.com/#calendar/athletes/5734279" --update
 ```
