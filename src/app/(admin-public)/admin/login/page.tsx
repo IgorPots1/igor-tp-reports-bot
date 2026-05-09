@@ -1,6 +1,15 @@
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+
 import { loginAdminAction } from "@/app/admin/login/actions";
 import { getSingleSearchParam } from "@/app/admin/lib";
-import { isAdminAccessBypassedForLocalDev, isAdminAccessConfigured, normalizeAdminRedirectPath } from "@/lib/admin-auth";
+import {
+  ADMIN_ACCESS_COOKIE_NAME,
+  hasValidAdminAccessCookie,
+  isAdminAccessBypassedForLocalDev,
+  isAdminAccessConfigured,
+  normalizeAdminRedirectPath,
+} from "@/lib/admin-auth";
 
 type AdminLoginPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
@@ -13,6 +22,11 @@ export default async function AdminLoginPage({ searchParams }: AdminLoginPagePro
   const nextPath = normalizeAdminRedirectPath(getSingleSearchParam(resolvedSearchParams.next));
   const isConfigured = isAdminAccessConfigured();
   const isLocalDevBypass = isAdminAccessBypassedForLocalDev();
+  const cookieStore = await cookies();
+
+  if (hasValidAdminAccessCookie(cookieStore.get(ADMIN_ACCESS_COOKIE_NAME)?.value)) {
+    redirect(nextPath);
+  }
 
   return (
     <section className="admin-section">
