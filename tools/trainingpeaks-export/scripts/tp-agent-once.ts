@@ -6,7 +6,6 @@ import { spawn } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
 
 import { toolRoot } from "./lib/paths.ts";
-import { readStudentsConfig } from "./lib/students.ts";
 
 type TrainingPeaksJobStatus = "queued" | "running" | "completed" | "failed";
 
@@ -395,15 +394,23 @@ function buildTelegramBatchSummaryMessage(input: TelegramBatchSummaryInput): str
   return lines.join("\n");
 }
 
-async function readExpectedStudentsFromLocalConfig(): Promise<TrainingPeaksExpectedStudent[]> {
-  const students = await readStudentsConfig();
+async function readExpectedStudentsFromSupabase(): Promise<TrainingPeaksExpectedStudent[]> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("trainingpeaks_students")
+    .select("student_id, student_name")
+    .eq("is_active", true)
+    .eq("weekly_report_enabled", true)
+    .order("student_name", { ascending: true });
 
-  return students
-    .filter((student) => student.is_active === true && student.weekly_report_enabled === true)
-    .map((student) => ({
-      student_id: student.student_id,
-      student_name: student.name?.trim() || student.student_id,
-    }));
+  if (error) {
+    throw new Error(`Failed to fetch expected TrainingPeaks students from Supabase: ${error.message}`);
+  }
+
+  return ((data as TrainingPeaksExpectedStudent[]) ?? []).map((student) => ({
+    student_id: student.student_id,
+    student_name: student.student_name?.trim() || student.student_id,
+  }));
 }
 
 function getMissingStudents(
@@ -638,7 +645,7 @@ async function main(): Promise<void> {
   try {
     console.log("Running tp-sync-students...");
     await runNpmScript("tp-sync-students");
-    const expectedStudents = await readExpectedStudentsFromLocalConfig();
+    const expectedStudents = await readExpectedStudentsFromSupabase();
     studentsExpected = expectedStudents.length;
     console.log("Running tp-weekly-all...");
     await runNpmScript("tp-weekly-all", [`--from=${job.week_from}`, `--to=${job.week_to}`]);

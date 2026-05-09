@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "igor-agent-hub",
-  description: "Personal Telegram-controlled AI agent hub."
+  title: "TrainingPeaks Reports Bot",
+  description: "Web Admin and Telegram delivery for TrainingPeaks weekly reports."
 };
 
 type RootLayoutProps = {
@@ -13,7 +13,7 @@ type RootLayoutProps = {
 
 export default function RootLayout({ children }: RootLayoutProps) {
   return (
-    <html lang="en">
+    <html lang="ru">
       <body>{children}</body>
     </html>
   );

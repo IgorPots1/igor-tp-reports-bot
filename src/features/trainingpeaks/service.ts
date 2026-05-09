@@ -11,6 +11,7 @@ import {
   getTrainingPeaksJobById,
   getTrainingPeaksBusinessChatById,
   getTrainingPeaksStudentById as getTrainingPeaksStudentByIdFromRepository,
+  getTrainingPeaksStudentByStudentId as getTrainingPeaksStudentByStudentIdFromRepository,
   getTrainingPeaksWeeklyReportById,
   recoverStaleTrainingPeaksRunningJobs,
   insertTrainingPeaksStudent,
@@ -22,6 +23,7 @@ import {
   listTrainingPeaksStudentTelegramLinkCodesByCode,
   listRecentTrainingPeaksJobs,
   listTrainingPeaksStudents,
+  listTrainingPeaksStudentsIncludingArchived,
   markTrainingPeaksStudentTelegramLinkCodeUsed,
   TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
   type TrainingPeaksBusinessChat,
@@ -36,10 +38,12 @@ import {
   upsertTrainingPeaksBusinessChatFromMessage as upsertTrainingPeaksBusinessChatFromMessageInRepository,
   type UpdateTrainingPeaksStudentTelegramContactInput,
   type UpdateTrainingPeaksStudentTelegramContactParams,
+  type UpdateTrainingPeaksWeeklyReportContentInput,
   type UpdateTrainingPeaksWeeklyReportStateInput,
   type UpdateTrainingPeaksWeeklyReportReviewStateInput,
   updateTrainingPeaksStudentTelegramContact as updateTrainingPeaksStudentTelegramContactInRepository,
   updateTrainingPeaksStudentTelegramContactById,
+  updateTrainingPeaksWeeklyReportContentById,
   updateTrainingPeaksWeeklyReportReviewState as updateTrainingPeaksWeeklyReportReviewStateInRepository,
   updateTrainingPeaksWeeklyReportStateById,
 } from "@/features/trainingpeaks/repository";
@@ -84,6 +88,7 @@ export type TrainingPeaksRegistryStudentSnapshot = {
   trainingPeaksAthleteUrl: string;
   isActive: boolean;
   weeklyReportEnabled: boolean;
+  archivedAt: string | null;
   telegramChatId: string | null;
   telegramUsername: string | null;
   telegramProfileUrl: string | null;
@@ -522,9 +527,12 @@ async function resolveTrainingPeaksRegistryStudent(
 }
 
 async function getTrainingPeaksRegistryStudentByInternalId(
-  id: string
+  id: string,
+  options?: {
+    includeArchived?: boolean;
+  }
 ): Promise<TrainingPeaksRegistryStudentSnapshot | null> {
-  const students = await getTrainingPeaksStudentsRegistryWithLatestReportStatus();
+  const students = await getTrainingPeaksStudentsRegistryWithLatestReportStatus(options);
   return students.find((student) => student.id === id) ?? null;
 }
 
@@ -941,11 +949,11 @@ export async function recoverStaleTrainingPeaksJobs(timeoutMinutes: number): Pro
   return recoverStaleTrainingPeaksRunningJobs(timeoutMinutes);
 }
 
-export async function getTrainingPeaksStudentsRegistryWithLatestReportStatus(): Promise<
-  TrainingPeaksRegistryStudentSnapshot[]
-> {
+export async function getTrainingPeaksStudentsRegistryWithLatestReportStatus(options?: {
+  includeArchived?: boolean;
+}): Promise<TrainingPeaksRegistryStudentSnapshot[]> {
   const [students, reports] = await Promise.all([
-    listTrainingPeaksStudents(),
+    options?.includeArchived ? listTrainingPeaksStudentsIncludingArchived() : listTrainingPeaksStudents(),
     listAllTrainingPeaksReports(),
   ]);
   const latestByStudent = getLatestReportByStudent(reports);
@@ -961,6 +969,7 @@ export async function getTrainingPeaksStudentsRegistryWithLatestReportStatus(): 
         trainingPeaksAthleteUrl: student.trainingPeaksAthleteUrl,
         isActive: student.isActive,
         weeklyReportEnabled: student.weeklyReportEnabled,
+        archivedAt: student.archivedAt,
         telegramChatId: student.telegramChatId,
         telegramUsername: student.telegramUsername,
         telegramProfileUrl: student.telegramProfileUrl,
@@ -991,6 +1000,12 @@ export async function getTrainingPeaksStudentById(studentId: string): Promise<Tr
   return getTrainingPeaksStudentByIdFromRepository(studentId);
 }
 
+export async function getTrainingPeaksStudentByStudentId(
+  studentId: string
+): Promise<TrainingPeaksStudent | null> {
+  return getTrainingPeaksStudentByStudentIdFromRepository(studentId);
+}
+
 export async function disableTrainingPeaksStudent(
   studentQuery: string
 ): Promise<DisableTrainingPeaksStudentResult> {
@@ -1011,14 +1026,18 @@ export async function disableTrainingPeaksStudent(
 export async function disableTrainingPeaksStudentByInternalId(
   id: string
 ): Promise<TrainingPeaksRegistryStudentSnapshot | null> {
-  const existingStudent = await getTrainingPeaksRegistryStudentByInternalId(id);
+  const existingStudent = await getTrainingPeaksRegistryStudentByInternalId(id, {
+    includeArchived: true,
+  });
 
   if (!existingStudent) {
     return null;
   }
 
   await disableTrainingPeaksStudentById(id);
-  return getTrainingPeaksRegistryStudentByInternalId(id);
+  return getTrainingPeaksRegistryStudentByInternalId(id, {
+    includeArchived: true,
+  });
 }
 
 export async function enableTrainingPeaksStudent(
@@ -1041,14 +1060,18 @@ export async function enableTrainingPeaksStudent(
 export async function enableTrainingPeaksStudentByInternalId(
   id: string
 ): Promise<TrainingPeaksRegistryStudentSnapshot | null> {
-  const existingStudent = await getTrainingPeaksRegistryStudentByInternalId(id);
+  const existingStudent = await getTrainingPeaksRegistryStudentByInternalId(id, {
+    includeArchived: true,
+  });
 
   if (!existingStudent) {
     return null;
   }
 
   await enableTrainingPeaksStudentById(id);
-  return getTrainingPeaksRegistryStudentByInternalId(id);
+  return getTrainingPeaksRegistryStudentByInternalId(id, {
+    includeArchived: true,
+  });
 }
 
 export async function getTrainingPeaksReportMarkdown(
@@ -1139,6 +1162,19 @@ export async function updateTrainingPeaksWeeklyReportStateByInternalId(
   }
 
   return updateTrainingPeaksWeeklyReportStateById(id, input);
+}
+
+export async function updateTrainingPeaksWeeklyReportContentByInternalId(
+  id: string,
+  input: UpdateTrainingPeaksWeeklyReportContentInput
+): Promise<TrainingPeaksWeeklyReport | null> {
+  const existingReport = await getTrainingPeaksWeeklyReportById(id);
+
+  if (!existingReport) {
+    return null;
+  }
+
+  return updateTrainingPeaksWeeklyReportContentById(id, input);
 }
 
 export async function updateTrainingPeaksWeeklyReportReviewState(

@@ -21,3 +21,304 @@ h1 {
 p {
   line-height: 1.6;
 }
+
+a {
+  color: inherit;
+}
+
+code {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+.admin-shell {
+  max-width: 1280px;
+  padding: 32px 20px 64px;
+}
+
+.admin-topbar,
+.admin-section-header,
+.admin-actions,
+.admin-badge-row,
+.admin-tabs,
+.admin-filters,
+.admin-grid {
+  display: flex;
+  gap: 12px;
+}
+
+.admin-topbar,
+.admin-section-header {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.admin-topbar {
+  margin-bottom: 24px;
+}
+
+.admin-nav {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.admin-nav a,
+.admin-tab {
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.admin-tab-active {
+  background: #0f172a;
+  color: #fff;
+}
+
+.admin-section {
+  display: grid;
+  gap: 16px;
+}
+
+.admin-card {
+  background: #fff;
+  border: 1px solid #dbe3ef;
+  border-radius: 20px;
+  padding: 20px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.05);
+}
+
+.admin-alert {
+  border-radius: 16px;
+  padding: 14px 16px;
+  font-weight: 600;
+}
+
+.admin-alert-success {
+  background: #ecfdf5;
+  color: #166534;
+  border: 1px solid #bbf7d0;
+}
+
+.admin-alert-error {
+  background: #fef2f2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+}
+
+.admin-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 0;
+  background: #2563eb;
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.admin-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.admin-button-secondary {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.admin-button-danger {
+  background: #dc2626;
+}
+
+.admin-muted {
+  color: #64748b;
+  font-size: 14px;
+}
+
+.admin-eyebrow {
+  margin: 0 0 6px;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.admin-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.admin-badge-success {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.admin-badge-warning {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.admin-badge-danger {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.admin-badge-accent {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.admin-badge-muted {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.admin-badge-outline {
+  background: #fff;
+  color: #0f172a;
+  border: 1px solid #cbd5e1;
+}
+
+.admin-table-wrap {
+  overflow-x: auto;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.admin-table th,
+.admin-table td {
+  padding: 14px 12px;
+  border-bottom: 1px solid #e2e8f0;
+  vertical-align: top;
+  text-align: left;
+}
+
+.admin-table th {
+  color: #475569;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.admin-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.admin-table-primary {
+  display: grid;
+  gap: 4px;
+}
+
+.admin-empty-cell {
+  padding: 32px 12px;
+  color: #64748b;
+  text-align: center;
+}
+
+.admin-field {
+  display: grid;
+  gap: 6px;
+  min-width: 220px;
+  color: #334155;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.admin-field select,
+.admin-textarea {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  background: #fff;
+  color: #0f172a;
+  font: inherit;
+}
+
+.admin-field select {
+  min-height: 42px;
+  padding: 0 12px;
+}
+
+.admin-textarea {
+  min-height: 420px;
+  padding: 14px 16px;
+  resize: vertical;
+  line-height: 1.6;
+}
+
+.admin-form-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.admin-grid-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.admin-meta-list {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+}
+
+.admin-meta-list div {
+  display: grid;
+  gap: 4px;
+}
+
+.admin-meta-list dt {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.admin-meta-list dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.admin-markdown-preview {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.admin-backlink {
+  display: inline-block;
+  margin-bottom: 8px;
+  color: #2563eb;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .admin-topbar,
+  .admin-section-header,
+  .admin-actions,
+  .admin-filters,
+  .admin-grid-meta {
+    flex-direction: column;
+  }
+
+  .admin-grid-meta {
+    grid-template-columns: 1fr;
+  }
+}

@@ -6,7 +6,6 @@ import type {
 import {
   addTrainingPeaksStudentFromCommand,
   cancelTrainingPeaksWeeklyRun,
-  claimTrainingPeaksWeeklyReportForSend,
   consumeTrainingPeaksStudentTelegramLinkCode,
   createTrainingPeaksStudentTelegramLinkCode,
   disableTrainingPeaksStudent,
@@ -33,6 +32,7 @@ import {
   updateTrainingPeaksStudentTelegramContact,
   upsertTrainingPeaksBusinessChatFromMessage,
 } from "@/features/trainingpeaks/service";
+import { sendTrainingPeaksWeeklyReportToStudent } from "@/features/trainingpeaks/report-delivery";
 import {
   resolveTrainingPeaksWeekKeyword,
 } from "@/features/trainingpeaks/week";
@@ -1198,30 +1198,6 @@ function shortenDeliveryError(error: unknown): string {
   }
 
   return normalized.length > 180 ? `${normalized.slice(0, 177)}...` : normalized;
-}
-
-function getReviewStatusLabel(status: string): string {
-  if (status === "draft") {
-    return "draft";
-  }
-
-  if (status === "approved") {
-    return "approved";
-  }
-
-  if (status === "sent") {
-    return "sent";
-  }
-
-  if (status === "skipped") {
-    return "skipped";
-  }
-
-  if (status === "failed") {
-    return "failed";
-  }
-
-  return status;
 }
 
 async function sendTelegramBusinessMessage(
@@ -3765,109 +3741,19 @@ async function handleTrainingPeaksSendReportToStudentCallback(
     return;
   }
 
-  const student = await getTrainingPeaksStudentById(report.studentId);
+  const deliveryResult = await sendTrainingPeaksWeeklyReportToStudent(report.id);
 
-  if (!student) {
-    await notifyCoachReportAction(parsedMessage.chatId, "Не могу отправить: ученик не найден.");
+  if (!deliveryResult.ok) {
+    await notifyCoachReportAction(parsedMessage.chatId, deliveryResult.message);
     return;
   }
 
-  if (report.reviewStatus === "sent") {
-    await notifyCoachReportAction(
-      parsedMessage.chatId,
-      `Отчёт уже отправлен ученику: ${student.studentName}.`
-    );
-    return;
-  }
-
-  if (!student.telegramDeliveryEnabled || !student.telegramChatId) {
-    const deliveryError = "У ученика не подключена доставка отчётов в Telegram.";
-    await updateTrainingPeaksWeeklyReportStateByInternalId(report.id, {
-      deliveryError,
-    });
-    await notifyCoachReportAction(parsedMessage.chatId, `Не могу отправить: ${deliveryError}`);
-    return;
-  }
-
-  const claimedReport = await claimTrainingPeaksWeeklyReportForSend(report.id);
-
-  if (!claimedReport) {
-    const currentReport = await getTrainingPeaksWeeklyReportByInternalId(report.id);
-    const resolvedStatus = currentReport?.reviewStatus ?? report.reviewStatus;
-
-    if (resolvedStatus === "sent") {
-      await notifyCoachReportAction(
-        parsedMessage.chatId,
-        `Отчёт уже отправлен ученику: ${student.studentName}.`
-      );
-      return;
-    }
-
-    const currentStatus = getReviewStatusLabel(resolvedStatus);
-    await notifyCoachReportAction(
-      parsedMessage.chatId,
-      `Отчёт уже не в статусе draft: ${currentStatus}.`
-    );
-    return;
-  }
-
-  const businessConnectionId = process.env.TELEGRAM_BUSINESS_CONNECTION_ID?.trim();
-
-  if (!businessConnectionId) {
-    const deliveryError = "Не настроен TELEGRAM_BUSINESS_CONNECTION_ID.";
-    await updateTrainingPeaksWeeklyReportStateByInternalId(claimedReport.id, {
-      reviewStatus: "failed",
-      deliveryError,
-    });
-    await notifyCoachReportAction(
-      parsedMessage.chatId,
-      `Не удалось отправить отчёт ученику: ${deliveryError}`
-    );
-    return;
-  }
-
-  const persistedReport = await getTrainingPeaksWeeklyReportByInternalId(claimedReport.id);
-  const reportMarkdown = persistedReport?.reportMarkdown?.trim();
-
-  if (!reportMarkdown) {
-    const deliveryError = "В сохранённом отчёте нет текста для отправки.";
-    await updateTrainingPeaksWeeklyReportStateByInternalId(claimedReport.id, {
-      reviewStatus: "failed",
-      deliveryError,
-    });
-    await notifyCoachReportAction(parsedMessage.chatId, `Не удалось отправить отчёт ученику: ${deliveryError}`);
-    return;
-  }
-
-  try {
-    const deliveredChunks = await sendTelegramBusinessMessage(
-      student.telegramChatId,
-      reportMarkdown,
-      businessConnectionId
-    );
-    await updateTrainingPeaksWeeklyReportStateByInternalId(claimedReport.id, {
-      reviewStatus: "sent",
-      sentAt: new Date().toISOString(),
-      sentToChatId: student.telegramChatId,
-      deliveryError: null,
-    });
-    await notifyCoachReportAction(
-      parsedMessage.chatId,
-      deliveredChunks > 1
-        ? `Отчёт отправлен ученику: ${student.studentName} (${deliveredChunks} сообщения).`
-        : `Отчёт отправлен ученику: ${student.studentName}.`
-    );
-  } catch (error) {
-    const shortError = shortenDeliveryError(error);
-    await updateTrainingPeaksWeeklyReportStateByInternalId(claimedReport.id, {
-      reviewStatus: "failed",
-      deliveryError: shortError,
-    });
-    await notifyCoachReportAction(
-      parsedMessage.chatId,
-      `Не удалось отправить отчёт ученику: ${shortError}.`
-    );
-  }
+  await notifyCoachReportAction(
+    parsedMessage.chatId,
+    deliveryResult.deliveredChunks > 1
+      ? `Отчёт отправлен ученику: ${deliveryResult.studentName} (${deliveryResult.deliveredChunks} сообщения).`
+      : `Отчёт отправлен ученику: ${deliveryResult.studentName}.`
+  );
 }
 
 async function handleTrainingPeaksSkipReportCallback(

@@ -5,8 +5,7 @@ import process from "node:process";
 
 import { createClient } from "@supabase/supabase-js";
 
-import { parsedRoot, reportsRoot, studentsConfigPath, toolRoot } from "./lib/paths.ts";
-import { readStudentsConfig } from "./lib/students.ts";
+import { parsedRoot, reportsRoot, toolRoot } from "./lib/paths.ts";
 
 type CliArgs = {
   from?: string;
@@ -105,7 +104,12 @@ type CandidateWeek = {
   summaryPath: string;
 };
 
-type StudentNameMap = Map<string, string>;
+type RuntimeStudentRow = {
+  student_id: string;
+  student_name: string;
+  is_active: boolean;
+  weekly_report_enabled: boolean;
+};
 
 function usage(): string {
   return [
@@ -221,17 +225,6 @@ function parseArgs(argv: string[]): CliArgs {
     from: values.from,
     to: values.to
   };
-}
-
-async function loadStudentNameMap(): Promise<StudentNameMap> {
-  if (!existsSync(studentsConfigPath)) {
-    return new Map();
-  }
-
-  const students = await readStudentsConfig();
-  return new Map(
-    students.map((student) => [student.student_id, student.name?.trim() || student.student_id] as const)
-  );
 }
 
 async function discoverCandidateWeeks(filter?: { from: string; to: string }): Promise<CandidateWeek[]> {
@@ -383,7 +376,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  const studentNames = await loadStudentNameMap();
   const supabase = createClient(
     getRequiredEnv("SUPABASE_URL"),
     getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY"),
@@ -395,27 +387,87 @@ async function main(): Promise<void> {
     }
   );
   const syncedAt = new Date().toISOString();
+  const { data: runtimeStudentsData, error: runtimeStudentsError } = await supabase
+    .from("trainingpeaks_students")
+    .select("student_id, student_name, is_active, weekly_report_enabled");
 
-  const rows = await Promise.all(
-    candidates.map(async ({ studentId, weekKey, summaryPath }) => {
-      const summary = parseSummary(await readFile(summaryPath, "utf8"), summaryPath);
-      const reportPath = path.join(reportsRoot, studentId, weekKey, "report-draft.md");
-      const reportMarkdown = existsSync(reportPath) ? await readFile(reportPath, "utf8") : null;
-      const studentName = studentNames.get(summary.student_id) ?? summary.student_id;
+  if (runtimeStudentsError) {
+    throw new Error(`Failed to load TrainingPeaks students from Supabase: ${runtimeStudentsError.message}`);
+  }
 
-      return {
-        student_id: summary.student_id,
-        student_name: studentName,
-        week_from: summary.week.from,
-        week_to: summary.week.to,
-        status: reportMarkdown ? "ready" : "parsed_only",
-        report_markdown: reportMarkdown,
-        summary_json: sanitizeSummary(summary),
-        warnings: buildWarnings(summary),
-        synced_at: syncedAt
-      };
-    })
+  const runtimeStudents = new Map<string, RuntimeStudentRow>(
+    ((runtimeStudentsData as RuntimeStudentRow[]) ?? []).map((student) => [student.student_id, student] as const)
   );
+
+  const rows: {
+    student_id: string;
+    student_name: string;
+    week_from: string;
+    week_to: string;
+    status: string;
+    report_markdown: string | null;
+    summary_json: SafeWeeklySummary;
+    warnings: SyncWarnings | null;
+    synced_at: string;
+  }[] = [];
+  const skippedCandidates: { studentId: string; weekKey: string; reason: string }[] = [];
+
+  for (const { studentId, weekKey, summaryPath } of candidates) {
+    const summary = parseSummary(await readFile(summaryPath, "utf8"), summaryPath);
+    const runtimeStudent = runtimeStudents.get(summary.student_id);
+
+    if (!runtimeStudent) {
+      skippedCandidates.push({
+        studentId: summary.student_id,
+        weekKey,
+        reason: "student missing in Supabase",
+      });
+      continue;
+    }
+
+    if (!runtimeStudent.is_active) {
+      skippedCandidates.push({
+        studentId: summary.student_id,
+        weekKey,
+        reason: "student inactive in Supabase",
+      });
+      continue;
+    }
+
+    if (!runtimeStudent.weekly_report_enabled) {
+      skippedCandidates.push({
+        studentId: summary.student_id,
+        weekKey,
+        reason: "weekly reports disabled in Supabase",
+      });
+      continue;
+    }
+
+    const reportPath = path.join(reportsRoot, studentId, weekKey, "report-draft.md");
+    const reportMarkdown = existsSync(reportPath) ? await readFile(reportPath, "utf8") : null;
+
+    rows.push({
+      student_id: summary.student_id,
+      student_name: runtimeStudent.student_name?.trim() || summary.student_id,
+      week_from: summary.week.from,
+      week_to: summary.week.to,
+      status: reportMarkdown ? "ready" : "parsed_only",
+      report_markdown: reportMarkdown,
+      summary_json: sanitizeSummary(summary),
+      warnings: buildWarnings(summary),
+      synced_at: syncedAt,
+    });
+  }
+
+  if (rows.length === 0) {
+    console.log("[sync] no reportable students matched Supabase runtime filters");
+    for (const skippedCandidate of skippedCandidates) {
+      console.log(
+        `[sync] skipped student=${skippedCandidate.studentId} week=${skippedCandidate.weekKey} reason=${skippedCandidate.reason}`
+      );
+    }
+    return;
+  }
 
   const { error } = await supabase.from("trainingpeaks_weekly_reports").upsert(rows, {
     onConflict: "student_id,week_from,week_to"
@@ -429,6 +481,12 @@ async function main(): Promise<void> {
   for (const row of rows) {
     console.log(
       `[sync] student=${row.student_id} week=${row.week_from}..${row.week_to} status=${row.status} report=${row.report_markdown ? "yes" : "no"}`
+    );
+  }
+
+  for (const skippedCandidate of skippedCandidates) {
+    console.log(
+      `[sync] skipped student=${skippedCandidate.studentId} week=${skippedCandidate.weekKey} reason=${skippedCandidate.reason}`
     );
   }
 }
