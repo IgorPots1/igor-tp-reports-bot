@@ -40,6 +40,21 @@ export {
   unlinkTrainingPeaksStudentTelegramInService as unlinkTrainingPeaksStudentTelegram,
 };
 
+export {
+  bindTrainingPeaksAdminStudentTelegramByBusinessChat,
+  bindTrainingPeaksAdminStudentTelegramByUsername,
+  createTrainingPeaksAdminStudentTelegramLinkCode,
+  formatTrainingPeaksAdminLinkCodeExpiresAt,
+  formatTrainingPeaksAdminTelegramChatName,
+  findTrainingPeaksAdminBusinessChatsByUsername,
+  getTrainingPeaksAdminStudentLastKnownBusinessChat,
+  listTrainingPeaksAdminRecentBusinessChats,
+  normalizeTrainingPeaksAdminTelegramUsername,
+  sendTrainingPeaksAdminStudentTelegramTestMessage,
+  shortenTrainingPeaksAdminChatId,
+  TRAININGPEAKS_ADMIN_TELEGRAM_USERNAME_NOT_FOUND_MESSAGE,
+} from "@/features/trainingpeaks/admin-telegram";
+
 function getSendBlockedReason(
   report: TrainingPeaksWeeklyReport,
   student: TrainingPeaksRegistryStudentSnapshot | null,

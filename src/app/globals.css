@@ -285,8 +285,22 @@ code {
   gap: 16px;
 }
 
+.admin-form-inline {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
 .admin-inline-actions {
   justify-content: flex-start;
+}
+
+.admin-card-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 20px;
 }
 
 .admin-grid-meta {
@@ -331,11 +345,26 @@ code {
   font-weight: 600;
 }
 
+.admin-code {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin: 0;
+  padding: 0 14px;
+  border-radius: 12px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
 @media (max-width: 900px) {
   .admin-topbar,
   .admin-section-header,
   .admin-actions,
   .admin-filters,
+  .admin-form-inline,
   .admin-grid-meta {
     flex-direction: column;
   }

@@ -5,6 +5,10 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import {
+  bindTrainingPeaksAdminStudentTelegramByBusinessChat,
+  bindTrainingPeaksAdminStudentTelegramByUsername,
+  createTrainingPeaksAdminStudentTelegramLinkCode,
+  sendTrainingPeaksAdminStudentTelegramTestMessage,
   createTrainingPeaksStudent,
   saveTrainingPeaksAdminReportEdit,
   setTrainingPeaksStudentWeeklyReportsEnabled,
@@ -48,6 +52,10 @@ function withParams(pathname: string, values: Record<string, string>): string {
   }
 
   return `${path}?${params.toString()}`;
+}
+
+function getTrainingPeaksStudentDetailPath(studentId: string): string {
+  return `/admin/students/${studentId}`;
 }
 
 async function ensureAdminAccess(redirectTarget?: string): Promise<void> {
@@ -217,6 +225,105 @@ export async function setTrainingPeaksStudentWeeklyReportsEnabledAction(
       enabled
         ? `Недельные отчёты включены: ${result.student.studentName}.`
         : `Недельные отчёты отключены: ${result.student.studentName}.`
+    )
+  );
+}
+
+export async function bindTrainingPeaksStudentTelegramFromBusinessChatAction(
+  formData: FormData
+): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const businessChatId = getRequiredFormValue(formData, "businessChatId");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const result = await bindTrainingPeaksAdminStudentTelegramByBusinessChat(studentId, businessChatId);
+
+  revalidateTrainingPeaksAdminPaths(undefined, studentId);
+
+  if (!result.ok) {
+    redirect(withNotice(redirectTo, "error", result.message));
+  }
+
+  redirect(
+    withNotice(
+      getTrainingPeaksStudentDetailPath(studentId),
+      "notice",
+      `Telegram привязан: ${result.studentName}.`
+    )
+  );
+}
+
+export async function searchTrainingPeaksStudentTelegramByUsernameAction(
+  formData: FormData
+): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  const rawUsername = getRequiredFormValue(formData, "telegramUsername");
+  await ensureAdminAccess(redirectTo);
+  const result = await bindTrainingPeaksAdminStudentTelegramByUsername(studentId, rawUsername);
+
+  revalidateTrainingPeaksAdminPaths(undefined, studentId);
+
+  if (result.ok) {
+    redirect(
+      withNotice(
+        getTrainingPeaksStudentDetailPath(studentId),
+        "notice",
+        `Telegram привязан: ${result.studentName}.`
+      )
+    );
+  }
+
+  if (!result.normalizedUsername) {
+    redirect(withNotice(redirectTo, "error", result.message));
+  }
+
+  redirect(
+    withParams(getTrainingPeaksStudentDetailPath(studentId), {
+      telegramView: "username",
+      telegramUsername: result.normalizedUsername,
+    })
+  );
+}
+
+export async function createTrainingPeaksStudentTelegramLinkCodeAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const result = await createTrainingPeaksAdminStudentTelegramLinkCode(studentId);
+
+  revalidateTrainingPeaksAdminPaths(undefined, studentId);
+
+  if (!result) {
+    redirect(withNotice(redirectTo, "error", "Ученик не найден."));
+  }
+
+  redirect(
+    withParams(withNotice(getTrainingPeaksStudentDetailPath(studentId), "notice", "Код привязки создан."), {
+      telegramView: "code",
+      telegramLinkCode: result.linkCode.code,
+      telegramLinkCodeExpiresAt: result.linkCode.expiresAt,
+    })
+  );
+}
+
+export async function sendTrainingPeaksStudentTelegramTestAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const result = await sendTrainingPeaksAdminStudentTelegramTestMessage(studentId);
+
+  revalidateTrainingPeaksAdminPaths(undefined, studentId);
+
+  if (!result.ok) {
+    redirect(withNotice(redirectTo, "error", result.message));
+  }
+
+  redirect(
+    withNotice(
+      getTrainingPeaksStudentDetailPath(studentId),
+      "notice",
+      `Тестовое сообщение отправлено: ${result.studentName}.`
     )
   );
 }

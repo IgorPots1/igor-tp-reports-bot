@@ -1,4 +1,3 @@
-import { sendTelegramMessageStrict } from "@/features/telegram/telegram-client";
 import {
   claimTrainingPeaksWeeklyReportForSend,
   getTrainingPeaksStudentByStudentId,
@@ -6,8 +5,11 @@ import {
   updateTrainingPeaksWeeklyReportStateByInternalId,
 } from "@/features/trainingpeaks/service";
 import type { TrainingPeaksWeeklyReport } from "@/features/trainingpeaks/repository";
-
-const TELEGRAM_MESSAGE_LIMIT = 4000;
+import {
+  getRequiredTrainingPeaksBusinessConnectionId,
+  sendTrainingPeaksTelegramBusinessMessage,
+  shortenTrainingPeaksTelegramDeliveryError,
+} from "@/features/trainingpeaks/telegram-business";
 
 export type SendTrainingPeaksWeeklyReportResult =
   | {
@@ -35,50 +37,7 @@ export type SendTrainingPeaksWeeklyReportResult =
       studentName?: string | null;
     };
 
-function splitTelegramMessage(text: string, limit = TELEGRAM_MESSAGE_LIMIT): string[] {
-  const normalizedText = text.trim();
-
-  if (normalizedText.length <= limit) {
-    return [normalizedText];
-  }
-
-  const chunks: string[] = [];
-  let rest = normalizedText;
-
-  while (rest.length > 0) {
-    if (rest.length <= limit) {
-      chunks.push(rest);
-      break;
-    }
-
-    let boundary = rest.lastIndexOf("\n\n", limit);
-    if (boundary < Math.floor(limit * 0.5)) {
-      boundary = rest.lastIndexOf("\n", limit);
-    }
-    if (boundary < Math.floor(limit * 0.5)) {
-      boundary = rest.lastIndexOf(" ", limit);
-    }
-    if (boundary <= 0) {
-      boundary = limit;
-    }
-
-    chunks.push(rest.slice(0, boundary).trimEnd());
-    rest = rest.slice(boundary).trimStart();
-  }
-
-  return chunks.filter(Boolean);
-}
-
-export function shortenTrainingPeaksDeliveryError(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error);
-  const normalized = raw.replace(/\s+/g, " ").trim();
-
-  if (!normalized) {
-    return "Неизвестная ошибка доставки в Telegram";
-  }
-
-  return normalized.length > 180 ? `${normalized.slice(0, 177)}...` : normalized;
-}
+export const shortenTrainingPeaksDeliveryError = shortenTrainingPeaksTelegramDeliveryError;
 
 export function getFinalTrainingPeaksReportMarkdown(
   report: Pick<TrainingPeaksWeeklyReport, "reportMarkdown" | "editedReportMarkdown">
@@ -90,38 +49,6 @@ export function getFinalTrainingPeaksReportMarkdown(
 
   const generated = report.reportMarkdown?.trim();
   return generated || null;
-}
-
-function getRequiredBusinessConnectionId(): string {
-  const value = process.env.TELEGRAM_BUSINESS_CONNECTION_ID?.trim();
-
-  if (!value) {
-    throw new Error("Не настроен TELEGRAM_BUSINESS_CONNECTION_ID.");
-  }
-
-  return value;
-}
-
-async function sendTelegramBusinessReport(
-  chatId: string,
-  text: string,
-  businessConnectionId: string
-): Promise<number> {
-  const chunks = splitTelegramMessage(text);
-
-  for (const [index, chunk] of chunks.entries()) {
-    try {
-      await sendTelegramMessageStrict(chatId, chunk, {
-        businessConnectionId,
-      });
-    } catch (error) {
-      throw new Error(
-        `Не удалось отправить часть ${index + 1} из ${chunks.length}: ${shortenTrainingPeaksDeliveryError(error)}`
-      );
-    }
-  }
-
-  return chunks.length;
 }
 
 async function markReportDeliveryFailed(reportId: string, message: string): Promise<void> {
@@ -248,7 +175,7 @@ export async function sendTrainingPeaksWeeklyReportToStudent(
   let businessConnectionId: string;
 
   try {
-    businessConnectionId = getRequiredBusinessConnectionId();
+    businessConnectionId = getRequiredTrainingPeaksBusinessConnectionId();
   } catch (error) {
     const message = shortenTrainingPeaksDeliveryError(error);
     await markReportDeliveryFailed(claimedReport.id, message);
@@ -261,7 +188,7 @@ export async function sendTrainingPeaksWeeklyReportToStudent(
   }
 
   try {
-    const deliveredChunks = await sendTelegramBusinessReport(
+    const deliveredChunks = await sendTrainingPeaksTelegramBusinessMessage(
       student.telegramChatId,
       finalReportMarkdown,
       businessConnectionId
