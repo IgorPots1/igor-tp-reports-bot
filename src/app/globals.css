@@ -32,7 +32,7 @@ code {
 
 .admin-shell {
   max-width: 1280px;
-  padding: 32px 20px 64px;
+  padding: 24px 20px 48px;
 }
 
 .admin-topbar,
@@ -53,7 +53,7 @@ code {
 }
 
 .admin-topbar {
-  margin-bottom: 24px;
+  margin-bottom: 20px;
 }
 
 .admin-nav {
@@ -78,21 +78,25 @@ code {
 
 .admin-section {
   display: grid;
-  gap: 16px;
+  gap: 12px;
 }
 
 .admin-card {
   background: #fff;
   border: 1px solid #dbe3ef;
-  border-radius: 20px;
-  padding: 20px;
+  border-radius: 18px;
+  padding: 16px;
   box-shadow: 0 12px 30px rgba(15, 23, 42, 0.05);
+}
+
+.admin-card-compact {
+  padding: 14px;
 }
 
 .admin-summary-grid,
 .admin-report-list {
   display: grid;
-  gap: 16px;
+  gap: 12px;
 }
 
 .admin-summary-grid {
@@ -100,7 +104,7 @@ code {
 }
 
 .admin-summary-card {
-  padding: 16px 18px;
+  padding: 12px 14px;
 }
 
 .admin-summary-label {
@@ -111,14 +115,14 @@ code {
 
 .admin-summary-value {
   display: block;
-  margin-top: 8px;
-  font-size: 32px;
+  margin-top: 6px;
+  font-size: 26px;
   line-height: 1;
 }
 
 .admin-alert {
-  border-radius: 16px;
-  padding: 14px 16px;
+  border-radius: 14px;
+  padding: 12px 14px;
   font-weight: 600;
 }
 
@@ -144,16 +148,18 @@ code {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 40px;
-  padding: 0 14px;
-  border-radius: 12px;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 10px;
   border: 0;
   background: #2563eb;
   color: #fff;
   font: inherit;
+  font-size: 14px;
   font-weight: 600;
   text-decoration: none;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .admin-button:disabled {
@@ -187,10 +193,10 @@ code {
 .admin-badge {
   display: inline-flex;
   align-items: center;
-  min-height: 28px;
-  padding: 0 10px;
+  min-height: 24px;
+  padding: 0 8px;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -236,7 +242,7 @@ code {
 
 .admin-table th,
 .admin-table td {
-  padding: 14px 12px;
+  padding: 10px 10px;
   border-bottom: 1px solid #e2e8f0;
   vertical-align: top;
   text-align: left;
@@ -259,7 +265,7 @@ code {
 }
 
 .admin-empty-cell {
-  padding: 32px 12px;
+  padding: 24px 12px;
   color: #64748b;
   text-align: center;
 }
@@ -267,9 +273,9 @@ code {
 .admin-field {
   display: grid;
   gap: 6px;
-  min-width: 220px;
+  min-width: 180px;
   color: #334155;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -292,8 +298,8 @@ code {
 
 .admin-input,
 .admin-field select {
-  min-height: 42px;
-  padding: 0 12px;
+  min-height: 38px;
+  padding: 0 10px;
 }
 
 .admin-textarea {
@@ -309,7 +315,7 @@ code {
 
 .admin-form-stack {
   display: grid;
-  gap: 16px;
+  gap: 12px;
 }
 
 .admin-form-inline {
@@ -325,9 +331,9 @@ code {
 
 .admin-card-actions {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
-  margin-top: 20px;
+  margin-top: 12px;
 }
 
 .admin-filters-actions {
@@ -336,7 +342,7 @@ code {
 
 .admin-report-card {
   display: grid;
-  gap: 16px;
+  gap: 12px;
 }
 
 .admin-report-card-header {
@@ -348,13 +354,13 @@ code {
 
 .admin-report-card-title {
   margin: 0;
-  font-size: 20px;
+  font-size: 18px;
 }
 
 .admin-report-meta {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px 16px;
+  gap: 12px;
   margin: 0;
 }
 
@@ -381,7 +387,7 @@ code {
 
 .admin-meta-list {
   display: grid;
-  gap: 14px;
+  gap: 10px;
   margin: 0;
 }
 
@@ -406,6 +412,134 @@ code {
   white-space: pre-wrap;
   line-height: 1.6;
   word-break: break-word;
+}
+
+.admin-filters-compact {
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.admin-summary-grid-compact {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.admin-report-card-compact {
+  gap: 10px;
+}
+
+.admin-report-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-report-card-identity {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.admin-report-card-subtitle {
+  margin: 0;
+}
+
+.admin-report-card-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.admin-report-card-flags {
+  gap: 8px;
+}
+
+.admin-report-card-error {
+  margin: 0;
+}
+
+.admin-report-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.admin-report-meta-compact {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.admin-report-meta-chip {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.admin-report-meta-chip dt {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.admin-report-meta-chip dd {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.admin-meta-list-compact {
+  gap: 8px;
+}
+
+.admin-grid-student-detail {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.admin-card-actions-compact {
+  margin-top: 10px;
+  gap: 8px;
+}
+
+.admin-report-detail-page {
+  gap: 14px;
+}
+
+.admin-report-detail-header {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-report-toolbar {
+  position: sticky;
+  top: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.admin-report-editor-card {
+  padding: 14px;
+}
+
+.admin-report-editor-form {
+  min-height: 0;
+}
+
+.admin-textarea-editor {
+  min-height: min(72vh, 960px);
+  font-family: inherit;
+}
+
+.admin-markdown-preview-editor {
+  min-height: 320px;
 }
 
 .admin-backlink {
@@ -435,21 +569,52 @@ code {
   .admin-section-header,
   .admin-actions,
   .admin-filters,
-  .admin-form-inline,
-  .admin-grid-meta {
+  .admin-form-inline {
     flex-direction: column;
   }
 
-  .admin-grid-meta {
+  .admin-grid-meta,
+  .admin-grid-student-detail {
     grid-template-columns: 1fr;
   }
 
-  .admin-report-card-header {
+  .admin-report-card-header,
+  .admin-report-card-top,
+  .admin-report-toolbar {
     flex-direction: column;
   }
 
   .admin-report-meta,
   .admin-summary-grid {
     grid-template-columns: 1fr;
+  }
+
+  .admin-report-card-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 640px) {
+  .admin-shell {
+    padding: 20px 14px 40px;
+  }
+
+  .admin-card,
+  .admin-card-compact {
+    padding: 12px;
+  }
+
+  .admin-summary-grid-compact,
+  .admin-report-meta-compact {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-button {
+    width: 100%;
+  }
+
+  .admin-card-actions form,
+  .admin-actions form {
+    width: 100%;
   }
 }

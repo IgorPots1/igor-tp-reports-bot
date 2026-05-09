@@ -165,56 +165,6 @@ export default async function AdminStudentDetailPage({
             </span>
           </div>
         </div>
-        <div className="admin-actions">
-          {student.weeklyReportEnabled ? (
-            <form action={setTrainingPeaksStudentWeeklyReportsEnabledAction}>
-              <input type="hidden" name="studentId" value={student.id} />
-              <input type="hidden" name="enabled" value="false" />
-              <input type="hidden" name="redirectTo" value={`/admin/students/${student.id}`} />
-              <FormActionButton
-                className="admin-button admin-button-secondary"
-                confirmMessage="Отключить недельные отчёты? Будущая генерация и доставка для ученика будут заблокированы."
-                pendingText="Сохранение..."
-              >
-                Отключить отчёты
-              </FormActionButton>
-            </form>
-          ) : (
-            <form action={setTrainingPeaksStudentWeeklyReportsEnabledAction}>
-              <input type="hidden" name="studentId" value={student.id} />
-              <input type="hidden" name="enabled" value="true" />
-              <input type="hidden" name="redirectTo" value={`/admin/students/${student.id}`} />
-              <FormActionButton
-                className="admin-button"
-                disabled={!student.isActive}
-                pendingText="Сохранение..."
-              >
-                Включить отчёты
-              </FormActionButton>
-            </form>
-          )}
-          {student.isActive ? (
-            <form action={archiveTrainingPeaksStudentAction}>
-              <input type="hidden" name="studentId" value={student.id} />
-              <input type="hidden" name="redirectTo" value={`/admin/students/${student.id}`} />
-              <FormActionButton
-                className="admin-button admin-button-danger"
-                confirmMessage="Архивировать ученика? Это выключит недельные отчёты и доставку в Telegram."
-                pendingText="Архивация..."
-              >
-                Архивировать
-              </FormActionButton>
-            </form>
-          ) : (
-            <form action={restoreTrainingPeaksStudentAction}>
-              <input type="hidden" name="studentId" value={student.id} />
-              <input type="hidden" name="redirectTo" value={`/admin/students/${student.id}`} />
-              <FormActionButton className="admin-button" pendingText="Восстановление...">
-                Восстановить
-              </FormActionButton>
-            </form>
-          )}
-        </div>
       </div>
 
       {(notice || error) && (
@@ -248,10 +198,10 @@ export default async function AdminStudentDetailPage({
         </div>
       )}
 
-      <div className="admin-grid admin-grid-meta">
-        <article className="admin-card">
+      <div className="admin-grid admin-grid-student-detail">
+        <article className="admin-card admin-card-compact">
           <h3>Состояние</h3>
-          <dl className="admin-meta-list">
+          <dl className="admin-meta-list admin-meta-list-compact">
             <div>
               <dt>Активность</dt>
               <dd>{student.isActive ? "Активен" : "Архив"}</dd>
@@ -271,9 +221,9 @@ export default async function AdminStudentDetailPage({
           </dl>
         </article>
 
-        <article className="admin-card">
+        <article className="admin-card admin-card-compact">
           <h3>TrainingPeaks</h3>
-          <dl className="admin-meta-list">
+          <dl className="admin-meta-list admin-meta-list-compact">
             <div>
               <dt>Ссылка на athlete</dt>
               <dd>
@@ -293,28 +243,29 @@ export default async function AdminStudentDetailPage({
           </dl>
         </article>
 
-        <article className="admin-card">
+        <article className="admin-card admin-card-compact">
           <h3>Telegram</h3>
-          <dl className="admin-meta-list">
+          <dl className="admin-meta-list admin-meta-list-compact">
             <div>
               <dt>Статус</dt>
-              <dd>{getTelegramBindingText(student)}</dd>
-            </div>
-            <div>
-              <dt>Контакт</dt>
-              <dd>{getTelegramContactText(student, lastKnownBusinessChat)}</dd>
-            </div>
-            <div>
-              <dt>Chat ID</dt>
-              <dd>{student.telegramChatId ?? "—"}</dd>
+              <dd>
+                <div className="admin-table-primary">
+                  <span>{getTelegramBindingText(student)}</span>
+                  <span className="admin-muted">{getTelegramContactText(student, lastKnownBusinessChat)}</span>
+                </div>
+              </dd>
             </div>
             <div>
               <dt>Доставка</dt>
               <dd>{student.telegramDeliveryEnabled ? "Включена" : "Выключена"}</dd>
             </div>
             <div>
-              <dt>Last known Business chat</dt>
+              <dt>Последний Business-чат</dt>
               <dd>{getLastKnownBusinessChatText(lastKnownBusinessChat)}</dd>
+            </div>
+            <div>
+              <dt>Chat ID</dt>
+              <dd>{student.telegramChatId ?? "—"}</dd>
             </div>
             {student.telegramProfileUrl && (
               <div>
@@ -332,7 +283,7 @@ export default async function AdminStudentDetailPage({
               Для архивного ученика новая Telegram-привязка недоступна, пока он не будет восстановлен.
             </p>
           )}
-          <div className="admin-card-actions">
+          <div className="admin-card-actions admin-card-actions-compact">
             <form method="get" action={studentDetailPath}>
               <input type="hidden" name="telegramView" value="recent" />
               <button className="admin-button admin-button-secondary" type="submit" disabled={!student.isActive}>
@@ -375,6 +326,60 @@ export default async function AdminStudentDetailPage({
                   pendingText="Отвязка..."
                 >
                   Отвязать Telegram
+                </FormActionButton>
+              </form>
+            )}
+          </div>
+        </article>
+
+        <article className="admin-card admin-card-compact">
+          <h3>Действия</h3>
+          <div className="admin-card-actions admin-card-actions-compact">
+            {student.weeklyReportEnabled ? (
+              <form action={setTrainingPeaksStudentWeeklyReportsEnabledAction}>
+                <input type="hidden" name="studentId" value={student.id} />
+                <input type="hidden" name="enabled" value="false" />
+                <input type="hidden" name="redirectTo" value={`/admin/students/${student.id}`} />
+                <FormActionButton
+                  className="admin-button admin-button-secondary"
+                  confirmMessage="Отключить недельные отчёты? Будущая генерация и доставка для ученика будут заблокированы."
+                  pendingText="Сохранение..."
+                >
+                  Отключить отчёты
+                </FormActionButton>
+              </form>
+            ) : (
+              <form action={setTrainingPeaksStudentWeeklyReportsEnabledAction}>
+                <input type="hidden" name="studentId" value={student.id} />
+                <input type="hidden" name="enabled" value="true" />
+                <input type="hidden" name="redirectTo" value={`/admin/students/${student.id}`} />
+                <FormActionButton
+                  className="admin-button"
+                  disabled={!student.isActive}
+                  pendingText="Сохранение..."
+                >
+                  Включить отчёты
+                </FormActionButton>
+              </form>
+            )}
+            {student.isActive ? (
+              <form action={archiveTrainingPeaksStudentAction}>
+                <input type="hidden" name="studentId" value={student.id} />
+                <input type="hidden" name="redirectTo" value={`/admin/students/${student.id}`} />
+                <FormActionButton
+                  className="admin-button admin-button-danger"
+                  confirmMessage="Архивировать ученика? Это выключит недельные отчёты и доставку в Telegram."
+                  pendingText="Архивация..."
+                >
+                  Архивировать
+                </FormActionButton>
+              </form>
+            ) : (
+              <form action={restoreTrainingPeaksStudentAction}>
+                <input type="hidden" name="studentId" value={student.id} />
+                <input type="hidden" name="redirectTo" value={`/admin/students/${student.id}`} />
+                <FormActionButton className="admin-button" pendingText="Восстановление...">
+                  Восстановить
                 </FormActionButton>
               </form>
             )}

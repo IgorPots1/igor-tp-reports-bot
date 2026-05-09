@@ -13,7 +13,10 @@ import {
   getReviewStatusLabel,
   getSingleSearchParam,
 } from "@/app/admin/lib";
-import { getTrainingPeaksAdminReportById } from "@/features/trainingpeaks/admin";
+import {
+  getTrainingPeaksAdminReportById,
+  getTrainingPeaksAdminReportStudentState,
+} from "@/features/trainingpeaks/admin";
 
 type ReportDetailPageProps = {
   params: Promise<{
@@ -21,6 +24,41 @@ type ReportDetailPageProps = {
   }>;
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
+
+type ReportDetailEntry = NonNullable<Awaited<ReturnType<typeof getTrainingPeaksAdminReportById>>>;
+
+function getDeliveryStatusText(entry: ReportDetailEntry): string {
+  if (entry.report.sentAt) {
+    return "Отправлен";
+  }
+
+  if (entry.report.deliveryError) {
+    return "Ошибка отправки";
+  }
+
+  return "Не отправлен";
+}
+
+function getTelegramStatusText(entry: ReportDetailEntry): string {
+  if (!entry.student?.telegramChatId) {
+    return "Не привязан";
+  }
+
+  return entry.student.telegramDeliveryEnabled ? "Привязан и включён" : "Привязан, но выключен";
+}
+
+function getStudentStateText(entry: ReportDetailEntry): string {
+  const state = getTrainingPeaksAdminReportStudentState(entry);
+
+  switch (state) {
+    case "archived":
+      return "Архив";
+    case "orphan":
+      return "Нет в реестре";
+    default:
+      return "Активен";
+  }
+}
 
 export default async function AdminReportDetailPage({
   params,
@@ -64,32 +102,84 @@ export default async function AdminReportDetailPage({
 
   const listHref = `/admin/reports${listParams.size > 0 ? `?${listParams.toString()}` : ""}`;
   const detailRedirectTo = `/admin/reports/${entry.report.id}${listParams.size > 0 ? `?${listParams.toString()}` : ""}`;
+  const saveFormId = `trainingpeaks-report-edit-${entry.report.id}`;
 
   return (
-    <section className="admin-section">
-      <div className="admin-section-header">
-        <div>
-          <Link className="admin-backlink" href={listHref}>
-            ← Ко всем отчётам
-          </Link>
-          <h2>{entry.report.studentName}</h2>
-          <p className="admin-muted">{formatWeekRange(entry.report.weekFrom, entry.report.weekTo)}</p>
+    <section className="admin-section admin-report-detail-page">
+      <div className="admin-report-detail-header">
+        <div className="admin-section-header">
+          <div>
+            <Link className="admin-backlink" href={listHref}>
+              ← Ко всем отчётам
+            </Link>
+            <h2>{entry.report.studentName}</h2>
+            <p className="admin-muted">{formatWeekRange(entry.report.weekFrom, entry.report.weekTo)}</p>
+          </div>
+          <div className="admin-badge-row">
+            <span className="admin-badge admin-badge-outline">
+              {getReviewStatusLabel(entry.report.reviewStatus)}
+            </span>
+            {!entry.student && <span className="admin-badge admin-badge-muted">Нет в реестре</span>}
+            {entry.student && !entry.student.isActive && (
+              <span className="admin-badge admin-badge-warning">Ученик в архиве</span>
+            )}
+            {entry.student?.weeklyReportEnabled === false && (
+              <span className="admin-badge admin-badge-warning">Недельные отчёты выключены</span>
+            )}
+            {entry.report.editedReportMarkdown?.trim() && (
+              <span className="admin-badge admin-badge-accent">Есть ручная правка</span>
+            )}
+          </div>
         </div>
-        <div className="admin-badge-row">
-          <span className="admin-badge admin-badge-outline">
-            {getReviewStatusLabel(entry.report.reviewStatus)}
-          </span>
-          {!entry.student && <span className="admin-badge admin-badge-muted">Нет в реестре</span>}
-          {entry.student && !entry.student.isActive && (
-            <span className="admin-badge admin-badge-warning">Ученик в архиве</span>
-          )}
-          {entry.student?.weeklyReportEnabled === false && (
-            <span className="admin-badge admin-badge-warning">Недельные отчёты выключены</span>
-          )}
-          {entry.report.editedReportMarkdown?.trim() && (
-            <span className="admin-badge admin-badge-accent">Используется ручная правка</span>
-          )}
-        </div>
+
+        <dl className="admin-report-meta admin-report-meta-compact">
+          <div className="admin-report-meta-chip">
+            <dt>Неделя</dt>
+            <dd>{formatWeekRange(entry.report.weekFrom, entry.report.weekTo)}</dd>
+          </div>
+          <div className="admin-report-meta-chip">
+            <dt>Статус отчёта</dt>
+            <dd>{getReviewStatusLabel(entry.report.reviewStatus)}</dd>
+          </div>
+          <div className="admin-report-meta-chip">
+            <dt>Доставка</dt>
+            <dd>{getDeliveryStatusText(entry)}</dd>
+          </div>
+          <div className="admin-report-meta-chip">
+            <dt>Telegram</dt>
+            <dd>{getTelegramStatusText(entry)}</dd>
+          </div>
+          <div className="admin-report-meta-chip">
+            <dt>Состояние ученика</dt>
+            <dd>{getStudentStateText(entry)}</dd>
+          </div>
+          <div className="admin-report-meta-chip">
+            <dt>Отправлен</dt>
+            <dd>{formatIsoDate(entry.report.sentAt)}</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div className="admin-card admin-card-compact admin-report-toolbar">
+        <Link className="admin-button admin-button-secondary" href={listHref}>
+          Назад
+        </Link>
+        {!isSent && currentMarkdown && (
+          <FormActionButton className="admin-button" form={saveFormId} pendingText="Сохранение...">
+            Сохранить
+          </FormActionButton>
+        )}
+        {entry.canSend ? (
+          <form action={sendTrainingPeaksReportAction}>
+            <input type="hidden" name="reportId" value={entry.report.id} />
+            <input type="hidden" name="redirectTo" value={detailRedirectTo} />
+            <FormActionButton className="admin-button admin-button-secondary" pendingText="Отправка...">
+              Отправить
+            </FormActionButton>
+          </form>
+        ) : (
+          <span className="admin-muted">{entry.sendBlockedReason ?? "Отправка недоступна"}</span>
+        )}
       </div>
 
       {(notice || error) && (
@@ -98,89 +188,32 @@ export default async function AdminReportDetailPage({
         </div>
       )}
 
-      <div className="admin-grid admin-grid-meta">
-        <article className="admin-card">
-          <h3>Состояние</h3>
-          <dl className="admin-meta-list">
-            <div>
-              <dt>Статус проверки</dt>
-              <dd>{getReviewStatusLabel(entry.report.reviewStatus)}</dd>
+      {!entry.student && (
+        <article className="admin-card admin-card-compact">
+          <div className="admin-form-stack">
+            <div className="admin-alert admin-alert-error">Ученик не найден в реестре</div>
+            <div className="admin-actions">
+              <form action={deleteTrainingPeaksOrphanReportAction}>
+                <input type="hidden" name="reportId" value={entry.report.id} />
+                <input type="hidden" name="redirectTo" value={listHref} />
+                <FormActionButton
+                  className="admin-button admin-button-secondary"
+                  pendingText="Удаление..."
+                  confirmMessage={[
+                    "Удалить этот orphan-отчёт?",
+                    "",
+                    "Удаление будет выполнено только если student_id по-прежнему отсутствует в trainingpeaks_students.",
+                  ].join("\n")}
+                >
+                  Удалить orphan-отчёт
+                </FormActionButton>
+              </form>
             </div>
-            <div>
-              <dt>Отправлен</dt>
-              <dd>{formatIsoDate(entry.report.sentAt)}</dd>
-            </div>
-            <div>
-              <dt>Последняя ошибка</dt>
-              <dd>{entry.report.deliveryError ?? "—"}</dd>
-            </div>
-          </dl>
+          </div>
         </article>
+      )}
 
-        <article className="admin-card">
-          <h3>Ученик</h3>
-          <dl className="admin-meta-list">
-            <div>
-              <dt>Реестр</dt>
-              <dd>{entry.student ? "Есть запись" : "Запись не найдена"}</dd>
-            </div>
-            <div>
-              <dt>Telegram</dt>
-              <dd>
-                {entry.student?.telegramChatId
-                  ? entry.student.telegramDeliveryEnabled
-                    ? "Привязан и включён"
-                    : "Привязан, но доставка выключена"
-                  : "Чат не привязан"}
-              </dd>
-            </div>
-            <div>
-              <dt>Активность</dt>
-              <dd>
-                {entry.student
-                  ? entry.student.isActive
-                    ? "Активен"
-                    : "Архив / выключен"
-                  : "Нет записи"}
-              </dd>
-            </div>
-            <div>
-              <dt>Недельные отчёты</dt>
-              <dd>
-                {entry.student
-                  ? entry.student.weeklyReportEnabled
-                    ? "Включены"
-                    : "Выключены"
-                  : "Нет записи"}
-              </dd>
-            </div>
-          </dl>
-          {!entry.student && (
-            <div className="admin-form-stack">
-              <div className="admin-alert admin-alert-error">Ученик не найден в реестре</div>
-              <div className="admin-actions">
-                <form action={deleteTrainingPeaksOrphanReportAction}>
-                  <input type="hidden" name="reportId" value={entry.report.id} />
-                  <input type="hidden" name="redirectTo" value={listHref} />
-                  <FormActionButton
-                    className="admin-button admin-button-secondary"
-                    pendingText="Удаление..."
-                    confirmMessage={[
-                      "Удалить этот orphan-отчёт?",
-                      "",
-                      "Удаление будет выполнено только если student_id по-прежнему отсутствует в trainingpeaks_students.",
-                    ].join("\n")}
-                  >
-                    Удалить этот orphan-отчёт
-                  </FormActionButton>
-                </form>
-              </div>
-            </div>
-          )}
-        </article>
-      </div>
-
-      <article className="admin-card">
+      <article className="admin-card admin-card-compact admin-report-editor-card">
         <div className="admin-section-header">
           <div>
             <h3>Текст отчёта</h3>
@@ -195,45 +228,32 @@ export default async function AdminReportDetailPage({
             В этом отчёте пока нет markdown-текста для редактирования и отправки.
           </div>
         ) : isSent ? (
-          <pre className="admin-markdown-preview">{currentMarkdown}</pre>
+          <pre className="admin-markdown-preview admin-markdown-preview-editor">{currentMarkdown}</pre>
         ) : (
-          <div className="admin-form-stack">
-            <form className="admin-form-stack" action={saveTrainingPeaksReportEditAction}>
-              <input type="hidden" name="reportId" value={entry.report.id} />
-              <input type="hidden" name="redirectTo" value={detailRedirectTo} />
-              <textarea
-                className="admin-textarea"
-                name="reportMarkdown"
-                defaultValue={currentMarkdown}
-                rows={28}
-              />
-              <div className="admin-actions">
-                <FormActionButton className="admin-button" pendingText="Сохранение...">
-                  Сохранить правки
-                </FormActionButton>
-              </div>
-            </form>
-            <div className="admin-actions">
-              {entry.canSend && (
-                <form action={sendTrainingPeaksReportAction}>
-                  <input type="hidden" name="reportId" value={entry.report.id} />
-                  <input type="hidden" name="redirectTo" value={detailRedirectTo} />
-                  <FormActionButton className="admin-button admin-button-secondary" pendingText="Отправка...">
-                    Отправить ученику
-                  </FormActionButton>
-                </form>
-              )}
-              {!entry.canSend && entry.sendBlockedReason && (
-                <span className="admin-muted">{entry.sendBlockedReason}</span>
-              )}
-            </div>
-          </div>
+          <form
+            id={saveFormId}
+            className="admin-form-stack admin-report-editor-form"
+            action={saveTrainingPeaksReportEditAction}
+          >
+            <input type="hidden" name="reportId" value={entry.report.id} />
+            <input type="hidden" name="redirectTo" value={detailRedirectTo} />
+            <textarea
+              className="admin-textarea admin-textarea-editor"
+              name="reportMarkdown"
+              defaultValue={currentMarkdown}
+              rows={28}
+            />
+          </form>
         )}
       </article>
 
+      {entry.report.deliveryError && !entry.report.sentAt && (
+        <div className="admin-alert admin-alert-error">{entry.report.deliveryError}</div>
+      )}
+
       {entry.report.editedReportMarkdown?.trim() && entry.report.reportMarkdown?.trim() && (
-        <article className="admin-card">
-          <h3>Исходный сгенерированный markdown</h3>
+        <article className="admin-card admin-card-compact">
+          <h3>Исходный markdown</h3>
           <pre className="admin-markdown-preview">{entry.report.reportMarkdown}</pre>
         </article>
       )}

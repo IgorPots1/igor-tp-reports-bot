@@ -178,7 +178,7 @@ export default async function AdminReportsPage({ searchParams }: ReportsPageProp
         </div>
       )}
 
-      <form className="admin-card admin-filters" method="get">
+      <form className="admin-card admin-filters admin-filters-compact" method="get">
         <label className="admin-field">
           <span>Неделя</span>
           <select name="week" defaultValue={selectedWeek ?? ""}>
@@ -229,7 +229,7 @@ export default async function AdminReportsPage({ searchParams }: ReportsPageProp
         </div>
       </form>
 
-      <div className="admin-summary-grid">
+      <div className="admin-summary-grid admin-summary-grid-compact">
         <article className="admin-card admin-summary-card">
           <span className="admin-summary-label">Всего отчётов</span>
           <strong className="admin-summary-value">{summary.totalReports}</strong>
@@ -294,73 +294,79 @@ export default async function AdminReportsPage({ searchParams }: ReportsPageProp
             const reportHref = `/admin/reports/${entry.report.id}${reportDetailParams.size > 0 ? `?${reportDetailParams.toString()}` : ""}`;
 
             return (
-              <article key={entry.report.id} className="admin-card admin-report-card">
-                <div className="admin-report-card-header">
-                  <div className="admin-table-primary">
+              <article key={entry.report.id} className="admin-card admin-report-card admin-report-card-compact">
+                <div className="admin-report-card-top">
+                  <div className="admin-report-card-identity">
                     <h3 className="admin-report-card-title">{entry.report.studentName}</h3>
-                    <p className="admin-muted">{formatWeekRange(entry.report.weekFrom, entry.report.weekTo)}</p>
+                    <p className="admin-muted admin-report-card-subtitle">
+                      {formatWeekRange(entry.report.weekFrom, entry.report.weekTo)}
+                    </p>
                   </div>
-                  <div className="admin-badge-row">
-                    <span className="admin-badge admin-badge-outline">
-                      {getReviewStatusLabel(entry.report.reviewStatus)}
-                    </span>
-                    {entry.report.sentAt && (
-                      <span className="admin-badge admin-badge-success">Отправлен</span>
-                    )}
-                    {entry.report.deliveryError && !entry.report.sentAt && (
-                      <span className="admin-badge admin-badge-danger">Ошибка доставки</span>
-                    )}
-                    {!entry.student && (
-                      <span className="admin-badge admin-badge-muted">Нет в реестре</span>
-                    )}
-                    {entry.student?.weeklyReportEnabled === false && (
-                      <span className="admin-badge admin-badge-warning">Недельные отчёты выключены</span>
-                    )}
-                    {entry.report.editedReportMarkdown?.trim() && (
-                      <span className="admin-badge admin-badge-accent">Есть правка</span>
-                    )}
+                  <div className="admin-actions admin-report-card-actions">
+                    <Link className="admin-button admin-button-secondary" href={reportHref}>
+                      Открыть
+                    </Link>
+                    {entry.canSend ? (
+                      <form action={sendTrainingPeaksReportAction}>
+                        <input type="hidden" name="reportId" value={entry.report.id} />
+                        <input type="hidden" name="redirectTo" value={redirectTo} />
+                        <FormActionButton className="admin-button" pendingText="Отправка...">
+                          Отправить
+                        </FormActionButton>
+                      </form>
+                    ) : null}
                   </div>
                 </div>
 
-                <dl className="admin-report-meta">
-                  <div>
+                <dl className="admin-report-meta admin-report-meta-compact">
+                  <div className="admin-report-meta-chip">
+                    <dt>Неделя</dt>
+                    <dd>{formatWeekRange(entry.report.weekFrom, entry.report.weekTo)}</dd>
+                  </div>
+                  <div className="admin-report-meta-chip">
                     <dt>Статус отчёта</dt>
                     <dd>{getReviewStatusLabel(entry.report.reviewStatus)}</dd>
                   </div>
-                  <div>
+                  <div className="admin-report-meta-chip">
                     <dt>Доставка</dt>
                     <dd>{getDeliveryStatusText(entry)}</dd>
                   </div>
-                  <div>
+                  <div className="admin-report-meta-chip">
                     <dt>Telegram</dt>
                     <dd>{getTelegramStatusText(entry)}</dd>
                   </div>
-                  <div>
+                  <div className="admin-report-meta-chip">
                     <dt>Состояние ученика</dt>
                     <dd>{getStudentStateText(entry)}</dd>
                   </div>
                 </dl>
 
-                {entry.report.deliveryError && !entry.report.sentAt && (
-                  <p className="admin-muted">{entry.report.deliveryError}</p>
-                )}
-
-                <div className="admin-actions">
-                  <Link className="admin-button admin-button-secondary" href={reportHref}>
-                    Открыть
-                  </Link>
-                  {entry.canSend ? (
-                    <form action={sendTrainingPeaksReportAction}>
-                      <input type="hidden" name="reportId" value={entry.report.id} />
-                      <input type="hidden" name="redirectTo" value={redirectTo} />
-                      <FormActionButton className="admin-button" pendingText="Отправка...">
-                        Отправить
-                      </FormActionButton>
-                    </form>
-                  ) : (
-                    <span className="admin-muted">{entry.sendBlockedReason ?? "Недоступно"}</span>
+                <div className="admin-badge-row admin-report-card-flags">
+                  <span className="admin-badge admin-badge-outline">
+                    {getReviewStatusLabel(entry.report.reviewStatus)}
+                  </span>
+                  {entry.report.sentAt && <span className="admin-badge admin-badge-success">Отправлен</span>}
+                  {entry.report.deliveryError && !entry.report.sentAt && (
+                    <span className="admin-badge admin-badge-danger">Ошибка доставки</span>
+                  )}
+                  {!entry.student && <span className="admin-badge admin-badge-muted">Нет в реестре</span>}
+                  {entry.student?.weeklyReportEnabled === false && (
+                    <span className="admin-badge admin-badge-warning">Отчёты выключены</span>
+                  )}
+                  {entry.report.editedReportMarkdown?.trim() && (
+                    <span className="admin-badge admin-badge-accent">Есть правка</span>
                   )}
                 </div>
+
+                {!entry.canSend && (
+                  <div className="admin-report-card-footer">
+                    <span className="admin-muted">{entry.sendBlockedReason ?? "Отправка недоступна"}</span>
+                  </div>
+                )}
+
+                {entry.report.deliveryError && !entry.report.sentAt && (
+                  <p className="admin-muted admin-report-card-error">{entry.report.deliveryError}</p>
+                )}
               </article>
             );
           })

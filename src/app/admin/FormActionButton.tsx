@@ -8,6 +8,7 @@ type FormActionButtonProps = {
   className?: string;
   confirmMessage?: string;
   disabled?: boolean;
+  form?: string;
   pendingText?: string;
 };
 
@@ -16,6 +17,7 @@ export default function FormActionButton({
   className,
   confirmMessage,
   disabled = false,
+  form,
   pendingText,
 }: FormActionButtonProps) {
   const { pending } = useFormStatus();
@@ -25,6 +27,7 @@ export default function FormActionButton({
       type="submit"
       className={className}
       disabled={disabled || pending}
+      form={form}
       onClick={(event) => {
         if (confirmMessage && !window.confirm(confirmMessage)) {
           event.preventDefault();
