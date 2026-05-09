@@ -10,6 +10,8 @@ import {
   createTrainingPeaksAdminStudentTelegramLinkCode,
   sendTrainingPeaksAdminStudentTelegramTestMessage,
   createTrainingPeaksStudent,
+  deleteTrainingPeaksAdminOrphanReport,
+  deleteTrainingPeaksOrphanReportsForWeek,
   saveTrainingPeaksAdminReportEdit,
   setTrainingPeaksStudentWeeklyReportsEnabled,
   sendTrainingPeaksWeeklyReportToStudent,
@@ -122,6 +124,45 @@ export async function sendTrainingPeaksReportAction(formData: FormData): Promise
         : "Отчёт отправлен."
     )
   );
+}
+
+export async function deleteTrainingPeaksOrphanReportsForWeekAction(formData: FormData): Promise<void> {
+  const weekFrom = getRequiredFormValue(formData, "weekFrom");
+  const weekTo = getRequiredFormValue(formData, "weekTo");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const result = await deleteTrainingPeaksOrphanReportsForWeek(weekFrom, weekTo);
+
+  revalidateTrainingPeaksAdminPaths();
+
+  if (!result.ok) {
+    redirect(withNotice(redirectTo, "error", result.message));
+  }
+
+  redirect(
+    withNotice(
+      redirectTo,
+      "notice",
+      result.deletedCount > 0
+        ? `Удалено orphan-отчётов: ${result.deletedCount}.`
+        : "За выбранную неделю orphan-отчёты не найдены."
+    )
+  );
+}
+
+export async function deleteTrainingPeaksOrphanReportAction(formData: FormData): Promise<void> {
+  const reportId = getRequiredFormValue(formData, "reportId");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const result = await deleteTrainingPeaksAdminOrphanReport(reportId);
+
+  revalidateTrainingPeaksAdminPaths(reportId);
+
+  if (!result.ok) {
+    redirect(withNotice(redirectTo, "error", result.message));
+  }
+
+  redirect(withNotice(redirectTo, "notice", "Orphan-отчёт удалён."));
 }
 
 export async function archiveTrainingPeaksStudentAction(formData: FormData): Promise<void> {

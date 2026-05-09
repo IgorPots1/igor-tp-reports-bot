@@ -91,6 +91,7 @@ const TP_CHAT_CONTEXT_TTL_MS = 30 * 60 * 1000;
 const TP_ADD_STUDENT_WAITING_TTL_MS = 10 * 60 * 1000;
 const TP_TELEGRAM_LINK_OPTIONS_TTL_MS = 10 * 60 * 1000;
 const TP_TELEGRAM_USERNAME_WAITING_TTL_MS = 10 * 60 * 1000;
+const TP_ADD_STUDENT_DEPRECATED_MESSAGE = "Добавление учеников теперь выполняется в админке.";
 const TP_ADD_STUDENT_EXAMPLE =
   "Valentin https://app.trainingpeaks.com/#calendar/athletes/5673496";
 const TP_TRAININGPEAKS_URL_PATTERN = /\bhttps?:\/\/\S*trainingpeaks\.com\S*/i;
@@ -634,7 +635,7 @@ function createReplyKeyboardMarkup(rows: string[][]): TelegramReplyKeyboardMarku
 function getTrainingPeaksMainReplyKeyboardMarkup(): TelegramReplyKeyboardMarkup {
   return createReplyKeyboardMarkup([
     [TP_REPLY_BUTTON_MENU, TP_REPLY_BUTTON_STUDENTS],
-    [TP_REPLY_BUTTON_ADD, TP_REPLY_BUTTON_WEEK],
+    [TP_REPLY_BUTTON_WEEK],
     [TP_REPLY_BUTTON_JOBS],
   ]);
 }
@@ -894,15 +895,29 @@ function getTpAddStudentNamePreview(rawInput: string): string {
 }
 
 function getAddStudentMissingUrlMessage(): string {
-  return ["Не вижу ссылку TrainingPeaks.", "", "Отправь так:", TP_ADD_STUDENT_EXAMPLE].join("\n");
+  return [
+    TP_ADD_STUDENT_DEPRECATED_MESSAGE,
+    "",
+    "Не вижу ссылку TrainingPeaks.",
+    "",
+    "Legacy fallback:",
+    `/tp_add_student ${TP_ADD_STUDENT_EXAMPLE}`,
+  ].join("\n");
 }
 
 function getAddStudentMissingNameMessage(): string {
-  return ["Не вижу имя ученика.", "", "Отправь так:", TP_ADD_STUDENT_EXAMPLE].join("\n");
+  return [
+    TP_ADD_STUDENT_DEPRECATED_MESSAGE,
+    "",
+    "Не вижу имя ученика.",
+    "",
+    "Legacy fallback:",
+    `/tp_add_student ${TP_ADD_STUDENT_EXAMPLE}`,
+  ].join("\n");
 }
 
 function getAddStudentExpiredMessage(): string {
-  return "Режим добавления истёк. Нажми «➕ Добавить» ещё раз.";
+  return `${TP_ADD_STUDENT_DEPRECATED_MESSAGE}\n\nОткрой Web Admin или повтори legacy-команду /tp_add_student.`;
 }
 
 function normalizeTpRunCommand(text: string): string {
@@ -1435,10 +1450,10 @@ export function getTrainingPeaksHelpLines(): string[] {
     "",
     "🏠 Меню — открыть главное меню",
     "👥 Ученики — открыть список учеников",
-    "➕ Добавить — открыть режим добавления ученика",
     "▶️ Неделя — открыть меню запуска недели",
     "🧾 Задачи — посмотреть последние запуски",
-    "🔎 Найти по username / 🔗 Код привязки — быстрее привязать Telegram в карточке ученика",
+    "Управление учениками и Telegram-привязкой теперь выполняется в Web Admin.",
+    "🔎 Найти по username / 🔗 Код привязки остаются fallback-инструментами в карточке ученика",
     "",
     "Команды тоже работают, но обычно быстрее пользоваться кнопками.",
   ];
@@ -1628,7 +1643,7 @@ function getStudentsEmptyMenuText(): string {
     "",
     "Ученики TrainingPeaks пока не найдены.",
     "",
-    "Нажми «➕ Добавить» и отправь имя со ссылкой одним сообщением.",
+    "Добавление учеников теперь выполняется в админке.",
   ].join("\n");
 }
 
@@ -1967,11 +1982,12 @@ function getHelpMenuMarkup(): TelegramInlineKeyboardMarkup {
 
 function getAddStudentInstructionsText(): string {
   return [
-    "➕ Добавить ученика",
+    TP_ADD_STUDENT_DEPRECATED_MESSAGE,
     "",
-    "Отправь имя и ссылку одним сообщением:",
+    "Основной путь: Web Admin -> Ученики.",
     "",
-    TP_ADD_STUDENT_EXAMPLE,
+    "Legacy fallback по команде всё ещё доступен:",
+    `/tp_add_student ${TP_ADD_STUDENT_EXAMPLE}`,
   ].join("\n");
 }
 
@@ -2864,7 +2880,9 @@ async function handleTrainingPeaksAddStudentInput(
     if (result.reason === "invalid_url") {
       await sendTrainingPeaksReplyScreen(
         parsedMessage.chatId,
-        "Ссылка на TrainingPeaks должна начинаться с https://",
+        [TP_ADD_STUDENT_DEPRECATED_MESSAGE, "", "Ссылка на TrainingPeaks должна начинаться с https://"].join(
+          "\n"
+        ),
         getTrainingPeaksMainReplyKeyboardMarkup()
       );
       return;
@@ -2873,7 +2891,7 @@ async function handleTrainingPeaksAddStudentInput(
     if (result.reason === "duplicate_student") {
       await sendTrainingPeaksReplyScreen(
         parsedMessage.chatId,
-        `Ученик "${studentName}" уже существует.`,
+        [TP_ADD_STUDENT_DEPRECATED_MESSAGE, "", `Ученик "${studentName}" уже существует.`].join("\n"),
         getTrainingPeaksMainReplyKeyboardMarkup()
       );
       return;
@@ -2882,7 +2900,11 @@ async function handleTrainingPeaksAddStudentInput(
     if (result.reason === "duplicate_url") {
       await sendTrainingPeaksReplyScreen(
         parsedMessage.chatId,
-        "Этот URL TrainingPeaks уже привязан к другому ученику.",
+        [
+          TP_ADD_STUDENT_DEPRECATED_MESSAGE,
+          "",
+          "Этот URL TrainingPeaks уже привязан к другому ученику.",
+        ].join("\n"),
         getTrainingPeaksMainReplyKeyboardMarkup()
       );
       return;
@@ -2890,7 +2912,9 @@ async function handleTrainingPeaksAddStudentInput(
 
     await sendTrainingPeaksReplyScreen(
       parsedMessage.chatId,
-      "Не смог добавить ученика в Supabase. Попробуй позже.",
+      [TP_ADD_STUDENT_DEPRECATED_MESSAGE, "", "Не смог добавить ученика в Supabase. Попробуй позже."].join(
+        "\n"
+      ),
       getTrainingPeaksMainReplyKeyboardMarkup()
     );
     return;
@@ -2901,7 +2925,9 @@ async function handleTrainingPeaksAddStudentInput(
   if (options?.showStudentsListOnSuccess) {
     await sendTrainingPeaksMessage(
       parsedMessage.chatId,
-      `✅ Ученик добавлен: ${result.student.studentName}`
+      [TP_ADD_STUDENT_DEPRECATED_MESSAGE, "", `✅ Ученик добавлен: ${result.student.studentName}`].join(
+        "\n"
+      )
     );
     await showTrainingPeaksStudentsPage(parsedMessage, 0);
     return;
@@ -2910,6 +2936,8 @@ async function handleTrainingPeaksAddStudentInput(
   await sendTrainingPeaksReplyScreen(
     parsedMessage.chatId,
     [
+      TP_ADD_STUDENT_DEPRECATED_MESSAGE,
+      "",
       `✅ Ученик добавлен: ${result.student.studentName}`,
       "",
       "Локальный Mac runner подтянет этого ученика из Supabase при следующем запуске tp-agent-once.",

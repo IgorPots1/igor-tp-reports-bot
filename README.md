@@ -77,7 +77,7 @@ Use it from a coach/admin chat after:
 
 For normal student linking, the student should first send any message to the connected Telegram Business account. After that, the coach can open `👥 Ученики` -> choose a student -> `🔗 Привязать Telegram` and pick the student from the latest Telegram Business chats.
 
-Temporary coach-only linking command:
+Break-glass fallback for Telegram linking (normally not needed):
 
 ```text
 /tp_set_telegram <student_id> <chat_id>
@@ -89,7 +89,7 @@ Optional username form:
 /tp_set_telegram <student_id> <chat_id> <username>
 ```
 
-This stores Telegram delivery metadata on the student row and enables coach-approved student delivery for weekly reports. The manual command remains available as a fallback if the button flow is not enough.
+This stores Telegram delivery metadata on the student row and enables coach-approved student delivery for weekly reports. The manual command remains available as a fallback, but is intentionally not shown in the primary bot menu/help.
 
 ## TrainingPeaks Job Flow
 
@@ -103,8 +103,10 @@ Architecture rules for MVP:
 Example flow:
 
 ```text
+Web Admin:
+create/update students and Telegram links
+
 Telegram:
-/tp_add_student Olga | https://app.trainingpeaks.com/#calendar/athletes/5734279
 /tp_week
 /tp_run_week last
 
@@ -127,13 +129,16 @@ npm run tp-sync-reports -- --from=YYYY-MM-DD --to=YYYY-MM-DD
 
 This sync writes sanitized weekly metadata plus `report-draft.md` content into Supabase. It does not auto-send anything to athletes.
 
-For MVP, the student registry in Supabase lives in `trainingpeaks_students` and is used by Telegram commands. The local export pipeline still reads `tools/trainingpeaks-export/config/students.json`, but that file is now refreshed from Supabase by the local runner.
+For MVP, the student registry in Supabase lives in `trainingpeaks_students` and is the source of truth. The local export pipeline still reads `tools/trainingpeaks-export/config/students.json`, but that file is refreshed from Supabase by the local runner.
 
 Normal weekly flow:
 
 ```text
+Web Admin:
+1. Add/update students in `trainingpeaks_students`
+2. Link Telegram from the student card when needed
+
 Telegram:
-/tp_add_student <name> | <trainingpeaks_url>
 /tp_week
 /tp_run_week last
 
@@ -165,7 +170,7 @@ Coach-approved student delivery requirements:
 - `TELEGRAM_BUSINESS_CONNECTION_ID` must be set in production.
 - The student row must have `telegram_chat_id` and `telegram_delivery_enabled=true`.
 - Preferred flow: student sends any Telegram message first, then coach links from the student card with `🔗 Привязать Telegram`.
-- Manual fallback: `/tp_set_telegram <student_id> <chat_id>`.
+- Break-glass fallback only: `/tp_set_telegram <student_id> <chat_id>`. If an older username-based flow was already used, `/tp_bind <student_name_or_id> <@username>` still works as a secondary fallback.
 - `APP_BASE_URL` is recommended for direct admin links in Telegram summary notifications. `NEXT_PUBLIC_APP_URL` and `VERCEL_URL` are supported fallbacks.
 - Sending from `Web Admin` delivers the final report to the student's Telegram chat through Telegram Business.
 
@@ -177,7 +182,6 @@ Available commands:
 - `/tp_status`
 - `/tp_status <from> <to>`
 - `/tp_students`
-- `/tp_add_student <name> | <trainingpeaks_url>`
 - `/tp_week`
 - `/tp_run_week last`
 - `/tp_run_week current`
@@ -187,4 +191,9 @@ Available commands:
 - `/tp_report <student> [from to]`
 - `/tp_weekly`
 - `/tp_business_test <chat_id>` (admin smoke test)
-- `/tp_set_telegram <student_id> <chat_id>` (temporary coach-only metadata link; not shown in bot menu)
+
+Legacy fallback commands are intentionally not shown in the primary bot menu/help:
+
+- `/tp_set_telegram <student_id> <chat_id>` (break-glass Telegram metadata link)
+- `/tp_bind <student_name_or_id> <@username>` (fallback only if that path was already used)
+- `/tp_add_student <name> | <trainingpeaks_url>` (deprecated; student creation now happens in Web Admin)

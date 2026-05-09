@@ -14,25 +14,27 @@ Current commands:
 - `npm run tp-sync-reports -- --from=2026-04-27 --to=2026-05-03`
 - `npm run tp-sync-students`
 - `npm run tp-agent-once`
-- `npm run tp-student-add -- --student=Olga --name="Ольга" --url="https://app.trainingpeaks.com/#calendar/athletes/5734279"`
+- `npm run tp-student-add -- --legacy-local-only --student=Olga --name="Ольга" --url="https://app.trainingpeaks.com/#calendar/athletes/5734279"` (legacy local-only)
 
 ## Monday weekly workflow
 
 Еженедельный сценарий на понедельник:
 
-1. Откройте терминал:
+1. В `Web Admin` проверьте, что список учеников и Telegram-привязки актуальны. `trainingpeaks_students` в Supabase является source of truth.
+
+2. Откройте терминал:
 
 ```bash
 cd ~/igor-tp-reports-bot/tools/trainingpeaks-export
 ```
 
-2. Проверьте настроенных учеников:
+3. Проверьте настроенных учеников:
 
 ```bash
 npm run tp-reports-list
 ```
 
-3. Запустите недельный workflow для всех включенных учеников:
+4. Запустите недельный workflow для всех включенных учеников:
 
 ```bash
 npm run tp-weekly-all
@@ -44,7 +46,7 @@ npm run tp-weekly-all
 - В понедельник это означает период с понедельника по воскресенье прошлой недели.
 - Обрабатываются только ученики, у которых `is_active=true` и `weekly_report_enabled=true`.
 
-4. Ручной шаг в TrainingPeaks:
+5. Ручной шаг в TrainingPeaks:
 
 - Для каждого ученика откроется браузер.
 - Вручную перейдите в `Athlete Account Settings -> Export Data`.
@@ -53,32 +55,32 @@ npm run tp-weekly-all
 - `Workout Files` можно скачать дополнительно, но для текущего weekly report это не требуется.
 - Вернитесь в терминал и нажмите Enter.
 
-5. Проверьте готовность отчетов:
+6. Проверьте готовность отчетов:
 
 ```bash
 npm run tp-reports-list
 ```
 
-6. Откройте отчет:
+7. Откройте отчет:
 
 ```bash
 npm run tp-report-open -- --student=Olga
 ```
 
-7. Скопируйте отчет:
+8. Скопируйте отчет:
 
 ```bash
 npm run tp-report-copy -- --student=Olga
 ```
 
-8. Опубликуйте безопасные метаданные и черновик отчета в Supabase для будущих Telegram-команд:
+9. Опубликуйте безопасные метаданные и черновик отчета в Supabase для будущих Telegram-команд:
 
 ```bash
 cd ~/igor-tp-reports-bot
 npm run tp-sync-reports -- --from=2026-04-27 --to=2026-05-03
 ```
 
-9. После `tp-agent-once` в coach chat придет только короткая сводка по weekly job и ссылка на `Web Admin`.
+10. После `tp-agent-once` в coach chat придет только короткая сводка по weekly job и ссылка на `Web Admin`.
 
 Полная проверка, ручная правка и отправка ученику теперь делаются из `Web Admin`.
 
@@ -115,8 +117,10 @@ npm run tp-agent-once
 Нормальный weekly flow теперь такой:
 
 ```text
+Web Admin:
+create/update students and Telegram links
+
 Telegram:
-/tp_add_student Name | TP_URL
 /tp_week
 /tp_run_week last
 
@@ -139,7 +143,9 @@ npm run tp-agent-once
 
 ### Link student Telegram
 
-Чтобы привязать студента к Telegram-чату для weekly delivery, используйте coach-only команду:
+Основной путь для weekly delivery: студент пишет в Telegram Business, после чего coach связывает чат из карточки ученика в `Web Admin`.
+
+Break-glass fallback:
 
 ```text
 /tp_set_telegram <student_id> <chat_id>
@@ -175,7 +181,7 @@ npm run tp-sync-students -- --dry-run
 
 ### Add student
 
-Используйте только для legacy local-only сценариев:
+Используйте только для explicit legacy local-only сценариев:
 
 ```bash
 npm run tp-student-add -- --legacy-local-only --student=Olga --name="Ольга" --url="https://app.trainingpeaks.com/#calendar/athletes/5734279"

@@ -1,5 +1,7 @@
 import {
   createTrainingPeaksStudent as createTrainingPeaksStudentInService,
+  deleteTrainingPeaksOrphanReportByInternalId,
+  deleteTrainingPeaksOrphanReportsForWeek as deleteTrainingPeaksOrphanReportsForWeekInService,
   getTrainingPeaksStudentsRegistryWithLatestReportStatus,
   getTrainingPeaksWeeklyReportByInternalId,
   setTrainingPeaksStudentWeeklyReportsEnabled as setTrainingPeaksStudentWeeklyReportsEnabledInService,
@@ -47,6 +49,7 @@ export type TrainingPeaksAdminReportsResult = {
 
 export {
   createTrainingPeaksStudentInService as createTrainingPeaksStudent,
+  deleteTrainingPeaksOrphanReportsForWeekInService as deleteTrainingPeaksOrphanReportsForWeek,
   setTrainingPeaksStudentWeeklyReportsEnabledInService as setTrainingPeaksStudentWeeklyReportsEnabled,
   unlinkTrainingPeaksStudentTelegramInService as unlinkTrainingPeaksStudentTelegram,
 };
@@ -459,6 +462,13 @@ export async function saveTrainingPeaksAdminReportEdit(
     ok: true,
     report: refreshedReport ?? updatedReport,
   };
+}
+
+export async function deleteTrainingPeaksAdminOrphanReport(reportId: string): Promise<
+  | { ok: true; report: TrainingPeaksWeeklyReport }
+  | { ok: false; message: string }
+> {
+  return deleteTrainingPeaksOrphanReportByInternalId(reportId);
 }
 
 export { sendTrainingPeaksWeeklyReportToStudent };

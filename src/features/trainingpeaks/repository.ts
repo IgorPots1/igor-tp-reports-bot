@@ -118,6 +118,9 @@ type TrainingPeaksWeeklyReportRow = {
   updated_at: string;
 };
 
+type TrainingPeaksWeeklyReportLookupRow = Pick<TrainingPeaksWeeklyReportRow, "id" | "student_id">;
+type TrainingPeaksStudentIdRow = Pick<TrainingPeaksStudentRow, "student_id">;
+
 export type UpdateTrainingPeaksWeeklyReportStateInput = {
   reviewStatus?: string;
   approvedAt?: string | null;
@@ -1081,6 +1084,76 @@ export async function getTrainingPeaksWeeklyReportById(
   }
 
   return mapTrainingPeaksWeeklyReportRow(data as TrainingPeaksWeeklyReportRow);
+}
+
+export async function deleteTrainingPeaksWeeklyReportById(id: string): Promise<TrainingPeaksWeeklyReport | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_weekly_reports")
+    .delete()
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to delete TrainingPeaks weekly report ${id}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksWeeklyReportRow(data as TrainingPeaksWeeklyReportRow);
+}
+
+export async function deleteTrainingPeaksOrphanReportsForWeek(
+  weekFrom: string,
+  weekTo: string
+): Promise<number> {
+  const supabase = createSupabaseServerClient();
+  const [{ data: reports, error: reportsError }, { data: students, error: studentsError }] = await Promise.all([
+    supabase
+      .from("trainingpeaks_weekly_reports")
+      .select("id, student_id")
+      .eq("week_from", weekFrom)
+      .eq("week_to", weekTo),
+    supabase.from("trainingpeaks_students").select("student_id"),
+  ]);
+
+  if (reportsError) {
+    throw new Error(
+      `Failed to list TrainingPeaks reports for orphan cleanup ${weekFrom}..${weekTo}: ${reportsError.message}`
+    );
+  }
+
+  if (studentsError) {
+    throw new Error(`Failed to list TrainingPeaks students for orphan cleanup: ${studentsError.message}`);
+  }
+
+  const knownStudentIds = new Set(
+    ((students as TrainingPeaksStudentIdRow[] | null) ?? []).map((student) => student.student_id)
+  );
+  const orphanReportIds = ((reports as TrainingPeaksWeeklyReportLookupRow[] | null) ?? [])
+    .filter((report) => !knownStudentIds.has(report.student_id))
+    .map((report) => report.id);
+
+  if (orphanReportIds.length === 0) {
+    return 0;
+  }
+
+  const { data: deletedReports, error: deleteError } = await supabase
+    .from("trainingpeaks_weekly_reports")
+    .delete()
+    .in("id", orphanReportIds)
+    .select("id");
+
+  if (deleteError) {
+    throw new Error(
+      `Failed to delete orphan TrainingPeaks reports for ${weekFrom}..${weekTo}: ${deleteError.message}`
+    );
+  }
+
+  return (deletedReports ?? []).length;
 }
 
 export async function updateTrainingPeaksWeeklyReportStateById(

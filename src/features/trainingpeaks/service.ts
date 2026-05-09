@@ -3,6 +3,8 @@ import {
   cancelQueuedTrainingPeaksJob,
   claimTrainingPeaksWeeklyReportForSend as claimTrainingPeaksWeeklyReportForSendInRepository,
   createTrainingPeaksWeeklyJob,
+  deleteTrainingPeaksOrphanReportsForWeek as deleteTrainingPeaksOrphanReportsForWeekInRepository,
+  deleteTrainingPeaksWeeklyReportById,
   disableTrainingPeaksStudentById,
   enableTrainingPeaksStudentById,
   expireActiveTrainingPeaksStudentTelegramLinkCodesForStudent,
@@ -1389,6 +1391,83 @@ export async function updateTrainingPeaksWeeklyReportContentByInternalId(
   }
 
   return updateTrainingPeaksWeeklyReportContentById(id, input);
+}
+
+export async function deleteTrainingPeaksOrphanReportsForWeek(
+  weekFrom: string,
+  weekTo: string
+): Promise<
+  | {
+      ok: true;
+      deletedCount: number;
+      weekFrom: string;
+      weekTo: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    }
+> {
+  if (!ISO_DATE_PATTERN.test(weekFrom) || !ISO_DATE_PATTERN.test(weekTo)) {
+    return {
+      ok: false,
+      message: "Некорректный диапазон недели.",
+    };
+  }
+
+  const deletedCount = await deleteTrainingPeaksOrphanReportsForWeekInRepository(weekFrom, weekTo);
+
+  return {
+    ok: true,
+    deletedCount,
+    weekFrom,
+    weekTo,
+  };
+}
+
+export async function deleteTrainingPeaksOrphanReportByInternalId(
+  id: string
+): Promise<
+  | {
+      ok: true;
+      report: TrainingPeaksWeeklyReport;
+    }
+  | {
+      ok: false;
+      message: string;
+    }
+> {
+  const report = await getTrainingPeaksWeeklyReportById(id);
+
+  if (!report) {
+    return {
+      ok: false,
+      message: "Отчёт не найден.",
+    };
+  }
+
+  const student = await getTrainingPeaksStudentByStudentIdFromRepository(report.studentId);
+
+  if (student) {
+    return {
+      ok: false,
+      message: "Можно удалить только orphan-отчёт, если ученика нет в реестре.",
+    };
+  }
+
+  const deletedReport = await deleteTrainingPeaksWeeklyReportById(id);
+
+  if (!deletedReport) {
+    return {
+      ok: false,
+      message: "Отчёт не найден.",
+    };
+  }
+
+  return {
+    ok: true,
+    report: deletedReport,
+  };
 }
 
 export async function updateTrainingPeaksWeeklyReportReviewState(

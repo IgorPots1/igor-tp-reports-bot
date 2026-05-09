@@ -17,6 +17,8 @@ type CliArgs = {
 
 function usage(): string {
   return [
+    "WARNING: legacy local-only helper. Web Admin / Supabase is the source of truth.",
+    "",
     "Usage:",
     '  npm run tp-student-add -- --legacy-local-only --student=Olga --name="Ольга" --url="https://app.trainingpeaks.com/#calendar/athletes/5734279"',
     '  npm run tp-student-add -- --legacy-local-only --student=Olga --name="Ольга" --url="https://app.trainingpeaks.com/#calendar/athletes/5734279" --update'
@@ -77,7 +79,7 @@ async function main(): Promise<void> {
   }
 
   console.warn(
-    "WARNING: tp-student-add only changes local config/students.json. Supabase / Web Admin remains the source of truth."
+    "WARNING: tp-student-add is a legacy local-only helper and only changes config/students.json. Web Admin / Supabase remains the source of truth."
   );
   await ensureStudentsConfigExists();
 

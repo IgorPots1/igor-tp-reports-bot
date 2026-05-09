@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import FormActionButton from "@/app/admin/FormActionButton";
 import {
+  deleteTrainingPeaksOrphanReportAction,
   saveTrainingPeaksReportEditAction,
   sendTrainingPeaksReportAction,
 } from "@/app/admin/actions";
@@ -78,6 +79,7 @@ export default async function AdminReportDetailPage({
           <span className="admin-badge admin-badge-outline">
             {getReviewStatusLabel(entry.report.reviewStatus)}
           </span>
+          {!entry.student && <span className="admin-badge admin-badge-muted">Нет в реестре</span>}
           {entry.student && !entry.student.isActive && (
             <span className="admin-badge admin-badge-warning">Ученик в архиве</span>
           )}
@@ -153,6 +155,28 @@ export default async function AdminReportDetailPage({
               </dd>
             </div>
           </dl>
+          {!entry.student && (
+            <div className="admin-form-stack">
+              <div className="admin-alert admin-alert-error">Ученик не найден в реестре</div>
+              <div className="admin-actions">
+                <form action={deleteTrainingPeaksOrphanReportAction}>
+                  <input type="hidden" name="reportId" value={entry.report.id} />
+                  <input type="hidden" name="redirectTo" value={listHref} />
+                  <FormActionButton
+                    className="admin-button admin-button-secondary"
+                    pendingText="Удаление..."
+                    confirmMessage={[
+                      "Удалить этот orphan-отчёт?",
+                      "",
+                      "Удаление будет выполнено только если student_id по-прежнему отсутствует в trainingpeaks_students.",
+                    ].join("\n")}
+                  >
+                    Удалить этот orphan-отчёт
+                  </FormActionButton>
+                </form>
+              </div>
+            </div>
+          )}
         </article>
       </div>
 

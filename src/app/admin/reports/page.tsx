@@ -1,7 +1,10 @@
 import Link from "next/link";
 
 import FormActionButton from "@/app/admin/FormActionButton";
-import { sendTrainingPeaksReportAction } from "@/app/admin/actions";
+import {
+  deleteTrainingPeaksOrphanReportsForWeekAction,
+  sendTrainingPeaksReportAction,
+} from "@/app/admin/actions";
 import {
   formatWeekRange,
   getReviewStatusLabel,
@@ -97,6 +100,23 @@ function getWeekLabel(weekValue: string): string {
   return formatWeekRange(weekFrom, weekTo);
 }
 
+function parseWeekValue(weekValue: string | null): {
+  weekFrom: string;
+  weekTo: string;
+} | null {
+  if (!weekValue) {
+    return null;
+  }
+
+  const [weekFrom, weekTo] = weekValue.split("..");
+
+  if (!weekFrom || !weekTo) {
+    return null;
+  }
+
+  return { weekFrom, weekTo };
+}
+
 function buildListHref(params: URLSearchParams): string {
   return `/admin/reports${params.size > 0 ? `?${params.toString()}` : ""}`;
 }
@@ -137,6 +157,9 @@ export default async function AdminReportsPage({ searchParams }: ReportsPageProp
   }
 
   const redirectTo = buildListHref(listRedirectParams);
+  const selectedWeekRange = parseWeekValue(selectedWeek);
+  const showOrphanCleanupAction =
+    Boolean(selectedWeekRange) && (studentState === "orphan" || studentState === "all");
 
   return (
     <section className="admin-section">
@@ -228,6 +251,37 @@ export default async function AdminReportsPage({ searchParams }: ReportsPageProp
           <strong className="admin-summary-value">{summary.withoutTelegram}</strong>
         </article>
       </div>
+
+      {showOrphanCleanupAction && selectedWeekRange && (
+        <article className="admin-card">
+          <div className="admin-section-header">
+            <div>
+              <h3>Cleanup orphan-отчётов</h3>
+              <p className="admin-muted">
+                Удаляет только orphan-отчёты за выбранную неделю, если `student_id` отсутствует в
+                `trainingpeaks_students`. Отчёты активных и архивных учеников не затрагиваются.
+              </p>
+            </div>
+          </div>
+          <form className="admin-actions" action={deleteTrainingPeaksOrphanReportsForWeekAction}>
+            <input type="hidden" name="weekFrom" value={selectedWeekRange.weekFrom} />
+            <input type="hidden" name="weekTo" value={selectedWeekRange.weekTo} />
+            <input type="hidden" name="redirectTo" value={redirectTo} />
+            <FormActionButton
+              className="admin-button admin-button-secondary"
+              pendingText="Удаление..."
+              confirmMessage={[
+                "Удалить orphan-отчёты за эту неделю?",
+                "",
+                "Будут удалены только записи, у которых student_id отсутствует в trainingpeaks_students.",
+                "Отчёты активных и архивных учеников останутся без изменений.",
+              ].join("\n")}
+            >
+              Удалить orphan-отчёты за эту неделю
+            </FormActionButton>
+          </form>
+        </article>
+      )}
 
       <div className="admin-report-list">
         {reports.length === 0 ? (
