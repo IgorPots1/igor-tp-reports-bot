@@ -15,15 +15,15 @@ type ReportsPageProps = {
 
 function getTelegramStatusText(report: Awaited<ReturnType<typeof listTrainingPeaksAdminReports>>["reports"][number]): string {
   if (!report.student) {
-    return "Нет записи в реестре";
+    return "Нет в реестре";
   }
 
   if (!report.student.telegramChatId) {
-    return "Чат не привязан";
+    return "Telegram не привязан";
   }
 
   if (!report.student.telegramDeliveryEnabled) {
-    return "Привязано, но доставка выключена";
+    return "Доставка отключена";
   }
 
   return "Привязано и включено";
@@ -126,6 +126,9 @@ export default async function AdminReportsPage({ searchParams }: ReportsPageProp
                         {entry.student && !entry.student.isActive && (
                           <span className="admin-badge admin-badge-warning">Архив</span>
                         )}
+                        {entry.student?.weeklyReportEnabled === false && (
+                          <span className="admin-badge admin-badge-warning">Недельные отчёты выключены</span>
+                        )}
                         {entry.report.editedReportMarkdown?.trim() && (
                           <span className="admin-badge admin-badge-accent">Есть правка</span>
                         )}
@@ -176,7 +179,7 @@ export default async function AdminReportsPage({ searchParams }: ReportsPageProp
                           </FormActionButton>
                         </form>
                       ) : (
-                        <span className="admin-muted">Недоступно</span>
+                        <span className="admin-muted">{entry.sendBlockedReason ?? "Недоступно"}</span>
                       )}
                     </div>
                   </td>

@@ -175,17 +175,16 @@ async function main(): Promise<void> {
   }
 
   const rows = (data as TrainingPeaksStudentRow[]) ?? [];
-  if (rows.length === 0) {
-    console.error("No active weekly-enabled TrainingPeaks students found in Supabase.");
-    console.error("Existing config/students.json was left unchanged.");
-    process.exit(1);
-  }
-
   const nextStudents = mapStudents(rows);
   const serialized = `${JSON.stringify(nextStudents, null, 2)}\n`;
+  const hasNoActiveStudents = rows.length === 0;
 
   if (args.dryRun) {
-    console.log(`Dry run: would write ${rows.length} student(s) to config/students.json`);
+    if (hasNoActiveStudents) {
+      console.warn("Dry run: would write empty students.json to avoid stale local runs.");
+    } else {
+      console.log(`Dry run: would write ${rows.length} student(s) to config/students.json`);
+    }
     console.log(serialized);
     return;
   }
@@ -194,7 +193,13 @@ async function main(): Promise<void> {
   await mkdir(configRoot, { recursive: true });
   await writeFile(studentsConfigPath, serialized, "utf8");
 
-  console.log(`Wrote ${rows.length} student(s) to config/students.json`);
+  if (hasNoActiveStudents) {
+    console.warn(
+      "No active weekly-enabled students found. Wrote empty students.json to avoid stale local runs."
+    );
+  } else {
+    console.log(`Wrote ${rows.length} student(s) to config/students.json`);
+  }
   if (backupPath) {
     console.log(`Created backup: ${path.relative(toolRoot, backupPath)}`);
   } else {

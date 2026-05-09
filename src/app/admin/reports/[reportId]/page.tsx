@@ -55,6 +55,9 @@ export default async function AdminReportDetailPage({
           {entry.student && !entry.student.isActive && (
             <span className="admin-badge admin-badge-warning">Ученик в архиве</span>
           )}
+          {entry.student?.weeklyReportEnabled === false && (
+            <span className="admin-badge admin-badge-warning">Недельные отчёты выключены</span>
+          )}
           {entry.report.editedReportMarkdown?.trim() && (
             <span className="admin-badge admin-badge-accent">Используется ручная правка</span>
           )}
@@ -113,6 +116,16 @@ export default async function AdminReportDetailPage({
                   : "Нет записи"}
               </dd>
             </div>
+            <div>
+              <dt>Недельные отчёты</dt>
+              <dd>
+                {entry.student
+                  ? entry.student.weeklyReportEnabled
+                    ? "Включены"
+                    : "Выключены"
+                  : "Нет записи"}
+              </dd>
+            </div>
           </dl>
         </article>
       </div>
@@ -159,6 +172,9 @@ export default async function AdminReportDetailPage({
                     Отправить ученику
                   </FormActionButton>
                 </form>
+              )}
+              {!entry.canSend && entry.sendBlockedReason && (
+                <span className="admin-muted">{entry.sendBlockedReason}</span>
               )}
             </div>
           </div>

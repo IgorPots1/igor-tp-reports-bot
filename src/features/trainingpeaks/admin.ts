@@ -23,6 +23,7 @@ export type TrainingPeaksAdminReportRecord = {
   isStudentArchived: boolean;
   isTelegramLinked: boolean;
   canSend: boolean;
+  sendBlockedReason: string | null;
 };
 
 export type TrainingPeaksAdminReportsResult = {
@@ -30,13 +31,50 @@ export type TrainingPeaksAdminReportsResult = {
   availableWeeks: string[];
 };
 
+function getSendBlockedReason(
+  report: TrainingPeaksWeeklyReport,
+  student: TrainingPeaksRegistryStudentSnapshot | null,
+  finalReportMarkdown: string | null
+): string | null {
+  if (!finalReportMarkdown) {
+    return "Нет текста отчёта";
+  }
+
+  if (report.reviewStatus === "sent") {
+    return "Уже отправлен";
+  }
+
+  if (!student) {
+    return "Нет в реестре";
+  }
+
+  if (!student.isActive) {
+    return "Ученик архивирован";
+  }
+
+  if (!student.weeklyReportEnabled) {
+    return "Еженедельные отчёты отключены";
+  }
+
+  if (!student.telegramChatId) {
+    return "Telegram не привязан";
+  }
+
+  if (!student.telegramDeliveryEnabled) {
+    return "Доставка отключена";
+  }
+
+  return null;
+}
+
 function createReportRecord(
   report: TrainingPeaksWeeklyReport,
   student: TrainingPeaksRegistryStudentSnapshot | null
 ): TrainingPeaksAdminReportRecord {
   const finalReportMarkdown = getFinalTrainingPeaksReportMarkdown(report);
   const isStudentActive = student?.isActive === true;
-  const isTelegramLinked = Boolean(student?.telegramDeliveryEnabled && student?.telegramChatId);
+  const isTelegramLinked = Boolean(student?.telegramChatId);
+  const sendBlockedReason = getSendBlockedReason(report, student, finalReportMarkdown);
 
   return {
     report,
@@ -45,7 +83,8 @@ function createReportRecord(
     isStudentActive,
     isStudentArchived: student ? !student.isActive : false,
     isTelegramLinked,
-    canSend: Boolean(finalReportMarkdown && isStudentActive && isTelegramLinked && report.reviewStatus !== "sent"),
+    canSend: sendBlockedReason === null,
+    sendBlockedReason,
   };
 }
 

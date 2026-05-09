@@ -524,6 +524,33 @@ async function listWeeklyReportsWithMarkdown(
   );
 }
 
+function filterReportsForCurrentStudents(
+  reports: TrainingPeaksWeeklyReportRow[],
+  expectedStudents: TrainingPeaksExpectedStudent[]
+): {
+  deliverableReports: TrainingPeaksWeeklyReportRow[];
+  staleReports: TrainingPeaksWeeklyReportRow[];
+} {
+  const activeStudentIds = new Set(
+    expectedStudents
+      .map((student) => student.student_id.trim())
+      .filter((studentId) => studentId.length > 0)
+  );
+
+  const deliverableReports: TrainingPeaksWeeklyReportRow[] = [];
+  const staleReports: TrainingPeaksWeeklyReportRow[] = [];
+
+  for (const report of reports) {
+    if (activeStudentIds.has(report.student_id.trim())) {
+      deliverableReports.push(report);
+    } else {
+      staleReports.push(report);
+    }
+  }
+
+  return { deliverableReports, staleReports };
+}
+
 async function deliverReportsToTelegram(
   chatId: string,
   reports: TrainingPeaksWeeklyReportRow[]
@@ -641,6 +668,7 @@ async function main(): Promise<void> {
   let reportsSentToTelegram = 0;
   let missingStudents: TrainingPeaksMissingStudent[] = [];
   let failedTelegramStudentNames: string[] = [];
+  let staleReportsSkipped = 0;
 
   try {
     console.log("Running tp-sync-students...");
@@ -654,9 +682,20 @@ async function main(): Promise<void> {
     await runNpmScript("tp-sync-reports", [`--from=${job.week_from}`, `--to=${job.week_to}`]);
 
     const completedAt = new Date().toISOString();
-    const reports = await listWeeklyReportsWithMarkdown(job.week_from, job.week_to);
-    reportsFound = reports.length;
-    missingStudents = getMissingStudents(expectedStudents, reports);
+    const syncedReports = await listWeeklyReportsWithMarkdown(job.week_from, job.week_to);
+    const { deliverableReports, staleReports } = filterReportsForCurrentStudents(
+      syncedReports,
+      expectedStudents
+    );
+    staleReportsSkipped = staleReports.length;
+    for (const staleReport of staleReports) {
+      console.warn(
+        `Skipping stale report for inactive/missing/disabled student: ${staleReport.student_id}`
+      );
+    }
+
+    reportsFound = deliverableReports.length;
+    missingStudents = getMissingStudents(expectedStudents, deliverableReports);
     let deliveryWarning: string | null = null;
     let note = "Local Mac runner executed tp-weekly-all and tp-sync-reports.";
     const warningMessages: string[] = [];
@@ -702,21 +741,27 @@ async function main(): Promise<void> {
       console.warn(warningMessage);
     }
 
+    if (staleReportsSkipped > 0) {
+      const warningMessage = `Skipped ${staleReportsSkipped} stale synced report draft(s) that no longer match active weekly-enabled students.`;
+      warningMessages.push(warningMessage);
+      console.warn(warningMessage);
+    }
+
     if (!job.requested_by_chat_id) {
       note =
         "Local Mac runner executed tp-weekly-all and tp-sync-reports, but skipped Telegram delivery because requested_by_chat_id is missing.";
     } else if (reportsFound === 0) {
       note =
-        "Local Mac runner executed tp-weekly-all and tp-sync-reports, but found no synced report drafts with report_markdown for Telegram delivery.";
+        "Local Mac runner executed tp-weekly-all and tp-sync-reports, but found no active weekly-enabled synced report drafts with report_markdown for Telegram delivery.";
     } else {
-      const deliveryResult = await deliverReportsToTelegram(job.requested_by_chat_id, reports);
+      const deliveryResult = await deliverReportsToTelegram(job.requested_by_chat_id, deliverableReports);
       reportsSentToTelegram = deliveryResult.sentCount;
       deliveryWarning = deliveryResult.warning;
       failedTelegramStudentNames = deliveryResult.failedStudentNames;
       note =
         reportsSentToTelegram === reportsFound
-          ? "Local Mac runner executed tp-weekly-all and tp-sync-reports, then sent report drafts to the Telegram requester."
-          : "Local Mac runner executed tp-weekly-all and tp-sync-reports, but Telegram delivery finished with warnings.";
+          ? "Local Mac runner executed tp-weekly-all and tp-sync-reports, then sent active weekly-enabled report drafts to the Telegram requester."
+          : "Local Mac runner executed tp-weekly-all and tp-sync-reports, but Telegram delivery finished with warnings for active weekly-enabled students.";
     }
 
     if (deliveryWarning) {

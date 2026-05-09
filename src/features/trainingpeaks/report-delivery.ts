@@ -24,7 +24,9 @@ export type SendTrainingPeaksWeeklyReportResult =
         | "already_sent"
         | "student_missing"
         | "student_inactive"
+        | "weekly_reports_disabled"
         | "telegram_not_linked"
+        | "delivery_disabled"
         | "missing_business_connection"
         | "missing_report_markdown"
         | "state_conflict"
@@ -175,12 +177,34 @@ export async function sendTrainingPeaksWeeklyReportToStudent(
     };
   }
 
-  if (!student.telegramDeliveryEnabled || !student.telegramChatId) {
-    const message = "У ученика не подключена доставка отчётов в Telegram.";
+  if (!student.weeklyReportEnabled) {
+    const message = "У ученика отключены еженедельные отчёты.";
+    await markReportDeliveryFailed(report.id, message);
+    return {
+      ok: false,
+      reason: "weekly_reports_disabled",
+      message,
+      studentName: student.studentName,
+    };
+  }
+
+  if (!student.telegramChatId) {
+    const message = "У ученика не привязан Telegram.";
     await markReportDeliveryFailed(report.id, message);
     return {
       ok: false,
       reason: "telegram_not_linked",
+      message,
+      studentName: student.studentName,
+    };
+  }
+
+  if (!student.telegramDeliveryEnabled) {
+    const message = "У ученика отключена доставка отчётов.";
+    await markReportDeliveryFailed(report.id, message);
+    return {
+      ok: false,
+      reason: "delivery_disabled",
       message,
       studentName: student.studentName,
     };
