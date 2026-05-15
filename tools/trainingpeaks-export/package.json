@@ -16,7 +16,8 @@
     "tp-student-add": "node --experimental-strip-types scripts/tp-student-add.ts",
     "tp-sync-reports": "node --experimental-strip-types scripts/tp-sync-reports.ts",
     "tp-sync-students": "tsx scripts/tp-sync-students.ts",
-    "tp-agent-once": "tsx scripts/tp-agent-once.ts"
+    "tp-agent-once": "tsx scripts/tp-agent-once.ts",
+    "tp-actions-once": "tsx scripts/tp-actions-once.ts"
   },
   "dependencies": {
     "csv-parse": "^6.2.1",

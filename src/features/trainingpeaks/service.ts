@@ -4,6 +4,7 @@ import {
   cancelQueuedTrainingPeaksJob,
   claimTrainingPeaksWeeklyReportForSend as claimTrainingPeaksWeeklyReportForSendInRepository,
   createTrainingPeaksAction as createTrainingPeaksActionInRepository,
+  createTrainingPeaksActionRun as createTrainingPeaksActionRunInRepository,
   createTrainingPeaksWeeklyJob,
   deleteTrainingPeaksOrphanReportsForWeek as deleteTrainingPeaksOrphanReportsForWeekInRepository,
   deleteTrainingPeaksWeeklyReportById,
@@ -31,11 +32,16 @@ import {
   listTrainingPeaksStudentsIncludingArchived,
   markTrainingPeaksStudentTelegramLinkCodeUsed,
   rejectTrainingPeaksAction as rejectTrainingPeaksActionInRepository,
+  claimOneApprovedTrainingPeaksActionForDryRun as claimOneApprovedTrainingPeaksActionForDryRunInRepository,
+  completeTrainingPeaksActionDryRun as completeTrainingPeaksActionDryRunInRepository,
+  failTrainingPeaksActionDryRun as failTrainingPeaksActionDryRunInRepository,
   setTrainingPeaksStudentWeeklyReportsEnabledById,
   TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
   type DecideTrainingPeaksActionResult,
   type TrainingPeaksBusinessChat,
   type TrainingPeaksAction,
+  type TrainingPeaksActionRun,
+  type ClaimedTrainingPeaksDryRunAction,
   TrainingPeaksJobConflictError,
   type TrainingPeaksStudentTelegramLinkCode,
   TrainingPeaksTelegramLinkCodeConflictError,
@@ -232,6 +238,8 @@ export type DecideTrainingPeaksActionInput = {
 };
 
 export type DecideTrainingPeaksActionResultSnapshot = DecideTrainingPeaksActionResult;
+export type TrainingPeaksActionRunSnapshot = TrainingPeaksActionRun;
+export type ClaimedTrainingPeaksDryRunActionSnapshot = ClaimedTrainingPeaksDryRunAction;
 
 export type TrainingPeaksBusinessChatSnapshot = TrainingPeaksBusinessChat;
 export type TrainingPeaksStudentTelegramLinkCodeSnapshot = TrainingPeaksStudentTelegramLinkCode;
@@ -1395,6 +1403,47 @@ export async function rejectTrainingPeaksAction(
     decidedByUserId: input.decidedByUserId ?? null,
     decisionMessageId: input.decisionMessageId ?? null,
   });
+}
+
+export async function claimOneApprovedTrainingPeaksActionForDryRun(
+  claimedBy: string
+): Promise<ClaimedTrainingPeaksDryRunActionSnapshot | null> {
+  return claimOneApprovedTrainingPeaksActionForDryRunInRepository(claimedBy);
+}
+
+export async function createTrainingPeaksActionDryRun(
+  actionId: string,
+  runnerId: string
+): Promise<TrainingPeaksActionRunSnapshot> {
+  return createTrainingPeaksActionRunInRepository({
+    actionId,
+    runType: "dry_run",
+    dryRun: true,
+    runnerId,
+  });
+}
+
+export async function completeTrainingPeaksActionDryRun(
+  actionId: string,
+  input: {
+    runId: string;
+    logJson?: unknown;
+    screenshotBeforePath?: string | null;
+    screenshotAfterPath?: string | null;
+  }
+): Promise<void> {
+  return completeTrainingPeaksActionDryRunInRepository(actionId, input);
+}
+
+export async function failTrainingPeaksActionDryRun(
+  actionId: string,
+  input: {
+    runId: string;
+    errorMessage: string;
+    logJson?: unknown;
+  }
+): Promise<void> {
+  return failTrainingPeaksActionDryRunInRepository(actionId, input);
 }
 
 export async function recoverStaleTrainingPeaksJobs(timeoutMinutes: number): Promise<number> {

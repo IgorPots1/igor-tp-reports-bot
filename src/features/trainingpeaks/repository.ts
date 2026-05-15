@@ -156,6 +156,17 @@ export type TrainingPeaksJobType = "weekly_reports";
 export type TrainingPeaksJobStatus = "queued" | "running" | "completed" | "failed";
 export type TrainingPeaksActionType = "move_workout";
 export type TrainingPeaksActionStatus = "pending_coach" | "approved" | "rejected";
+export type TrainingPeaksActionExecutionStatus =
+  | "not_started"
+  | "dry_run_running"
+  | "dry_run_completed"
+  | "execute_pending"
+  | "running_local"
+  | "completed"
+  | "failed";
+export type TrainingPeaksActionExecutionMode = "dry_run" | "real";
+export type TrainingPeaksActionRunType = "dry_run" | "real";
+export type TrainingPeaksActionRunStatus = "running" | "completed" | "failed";
 
 export type TrainingPeaksJob = {
   id: string;
@@ -206,6 +217,11 @@ export type TrainingPeaksAction = {
   decidedByChatId: string | null;
   decidedByUserId: string | null;
   decisionMessageId: string | null;
+  executionStatus: TrainingPeaksActionExecutionStatus;
+  executionMode: TrainingPeaksActionExecutionMode | null;
+  claimedBy: string | null;
+  claimedAt: string | null;
+  lastRunId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -227,8 +243,70 @@ type TrainingPeaksActionRow = {
   decided_by_chat_id: string | null;
   decided_by_user_id: string | null;
   decision_message_id: string | null;
+  execution_status: TrainingPeaksActionExecutionStatus;
+  execution_mode: TrainingPeaksActionExecutionMode | null;
+  claimed_by: string | null;
+  claimed_at: string | null;
+  last_run_id: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type TrainingPeaksActionRun = {
+  id: string;
+  actionId: string;
+  runType: TrainingPeaksActionRunType;
+  status: TrainingPeaksActionRunStatus;
+  dryRun: boolean;
+  runnerId: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  errorMessage: string | null;
+  logJson: unknown;
+  screenshotBeforePath: string | null;
+  screenshotAfterPath: string | null;
+  createdAt: string;
+};
+
+type TrainingPeaksActionRunRow = {
+  id: string;
+  action_id: string;
+  run_type: TrainingPeaksActionRunType;
+  status: TrainingPeaksActionRunStatus;
+  dry_run: boolean;
+  runner_id: string | null;
+  started_at: string;
+  finished_at: string | null;
+  error_message: string | null;
+  log_json: unknown;
+  screenshot_before_path: string | null;
+  screenshot_after_path: string | null;
+  created_at: string;
+};
+
+export type ClaimedTrainingPeaksDryRunAction = {
+  action: TrainingPeaksAction;
+  student: TrainingPeaksStudent | null;
+};
+
+export type CreateTrainingPeaksActionRunInput = {
+  actionId: string;
+  runType: TrainingPeaksActionRunType;
+  dryRun?: boolean;
+  runnerId?: string | null;
+};
+
+export type CompleteTrainingPeaksActionDryRunInput = {
+  runId: string;
+  logJson?: unknown;
+  screenshotBeforePath?: string | null;
+  screenshotAfterPath?: string | null;
+};
+
+export type FailTrainingPeaksActionDryRunInput = {
+  runId: string;
+  errorMessage: string;
+  logJson?: unknown;
 };
 
 export type CreateTrainingPeaksWeeklyJobInput = {
@@ -449,8 +527,31 @@ function mapTrainingPeaksActionRow(row: TrainingPeaksActionRow): TrainingPeaksAc
     decidedByChatId: row.decided_by_chat_id,
     decidedByUserId: row.decided_by_user_id,
     decisionMessageId: row.decision_message_id,
+    executionStatus: row.execution_status,
+    executionMode: row.execution_mode,
+    claimedBy: row.claimed_by,
+    claimedAt: row.claimed_at,
+    lastRunId: row.last_run_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function mapTrainingPeaksActionRunRow(row: TrainingPeaksActionRunRow): TrainingPeaksActionRun {
+  return {
+    id: row.id,
+    actionId: row.action_id,
+    runType: row.run_type,
+    status: row.status,
+    dryRun: row.dry_run,
+    runnerId: row.runner_id,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    errorMessage: row.error_message,
+    logJson: row.log_json,
+    screenshotBeforePath: row.screenshot_before_path,
+    screenshotAfterPath: row.screenshot_after_path,
+    createdAt: row.created_at,
   };
 }
 
@@ -1555,6 +1656,171 @@ export async function rejectTrainingPeaksAction(
   input: DecideTrainingPeaksActionInput
 ): Promise<DecideTrainingPeaksActionResult> {
   return decideTrainingPeaksActionStatus(input, "rejected");
+}
+
+export async function claimOneApprovedTrainingPeaksActionForDryRun(
+  claimedBy: string
+): Promise<ClaimedTrainingPeaksDryRunAction | null> {
+  const supabase = createSupabaseServerClient();
+  const normalizedClaimedBy = claimedBy.trim();
+  if (!normalizedClaimedBy) {
+    throw new Error("Failed to claim dry-run TrainingPeaks action: claimedBy is empty");
+  }
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const { data: candidate, error: candidateError } = await supabase
+      .from("trainingpeaks_actions")
+      .select("*")
+      .eq("action_type", "move_workout")
+      .eq("status", "approved")
+      .eq("execution_status", "not_started")
+      .order("approved_at", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (candidateError) {
+      throw new Error(
+        `Failed to select approved TrainingPeaks action candidate for dry-run: ${candidateError.message}`
+      );
+    }
+
+    if (!candidate) {
+      return null;
+    }
+
+    const claimedAt = new Date().toISOString();
+    const { data: claimedRow, error: claimError } = await supabase
+      .from("trainingpeaks_actions")
+      .update({
+        execution_status: "dry_run_running",
+        execution_mode: "dry_run",
+        claimed_by: normalizedClaimedBy,
+        claimed_at: claimedAt,
+      })
+      .eq("id", candidate.id)
+      .eq("status", "approved")
+      .eq("execution_status", "not_started")
+      .select("*")
+      .maybeSingle();
+
+    if (claimError) {
+      throw new Error(`Failed to claim TrainingPeaks action ${candidate.id} for dry-run: ${claimError.message}`);
+    }
+
+    if (!claimedRow) {
+      continue;
+    }
+
+    const action = mapTrainingPeaksActionRow(claimedRow as TrainingPeaksActionRow);
+    let student: TrainingPeaksStudent | null = null;
+    if (action.studentId) {
+      student = await getTrainingPeaksStudentById(action.studentId);
+    }
+
+    return { action, student };
+  }
+
+  return null;
+}
+
+export async function createTrainingPeaksActionRun(
+  input: CreateTrainingPeaksActionRunInput
+): Promise<TrainingPeaksActionRun> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_action_runs")
+    .insert({
+      action_id: input.actionId,
+      run_type: input.runType,
+      status: "running",
+      dry_run: input.dryRun ?? input.runType === "dry_run",
+      runner_id: input.runnerId ?? null,
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to create TrainingPeaks action run for action ${input.actionId}: ${error.message}`);
+  }
+
+  return mapTrainingPeaksActionRunRow(data as TrainingPeaksActionRunRow);
+}
+
+export async function completeTrainingPeaksActionDryRun(
+  actionId: string,
+  input: CompleteTrainingPeaksActionDryRunInput
+): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const finishedAt = new Date().toISOString();
+
+  const { error: runError } = await supabase
+    .from("trainingpeaks_action_runs")
+    .update({
+      status: "completed",
+      finished_at: finishedAt,
+      error_message: null,
+      log_json: input.logJson ?? {},
+      screenshot_before_path: input.screenshotBeforePath ?? null,
+      screenshot_after_path: input.screenshotAfterPath ?? null,
+    })
+    .eq("id", input.runId)
+    .eq("action_id", actionId)
+    .eq("status", "running");
+
+  if (runError) {
+    throw new Error(`Failed to complete dry-run action run ${input.runId}: ${runError.message}`);
+  }
+
+  const { error: actionError } = await supabase
+    .from("trainingpeaks_actions")
+    .update({
+      execution_status: "dry_run_completed",
+      execution_mode: "dry_run",
+      last_run_id: input.runId,
+    })
+    .eq("id", actionId);
+
+  if (actionError) {
+    throw new Error(`Failed to mark TrainingPeaks action ${actionId} as dry_run_completed: ${actionError.message}`);
+  }
+}
+
+export async function failTrainingPeaksActionDryRun(
+  actionId: string,
+  input: FailTrainingPeaksActionDryRunInput & { runId: string }
+): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const finishedAt = new Date().toISOString();
+
+  const { error: runError } = await supabase
+    .from("trainingpeaks_action_runs")
+    .update({
+      status: "failed",
+      finished_at: finishedAt,
+      error_message: input.errorMessage,
+      log_json: input.logJson ?? {},
+    })
+    .eq("id", input.runId)
+    .eq("action_id", actionId)
+    .eq("status", "running");
+
+  if (runError) {
+    throw new Error(`Failed to mark dry-run action run ${input.runId} as failed: ${runError.message}`);
+  }
+
+  const { error: actionError } = await supabase
+    .from("trainingpeaks_actions")
+    .update({
+      execution_status: "failed",
+      execution_mode: "dry_run",
+      last_run_id: input.runId,
+    })
+    .eq("id", actionId);
+
+  if (actionError) {
+    throw new Error(`Failed to mark TrainingPeaks action ${actionId} as failed: ${actionError.message}`);
+  }
 }
 
 export async function getTrainingPeaksJobById(jobId: string): Promise<TrainingPeaksJob | null> {

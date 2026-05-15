@@ -8,3 +8,5 @@ parsed/*
 reports/*
 !reports/.gitkeep
 config/students.json
+action-artifacts/*
+!action-artifacts/.gitkeep
