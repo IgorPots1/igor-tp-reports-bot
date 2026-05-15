@@ -20,6 +20,7 @@ type ActionExecutionStatus =
 type ActionExecutionMode = "dry_run" | "real";
 type ActionRunType = "dry_run" | "real";
 type ActionRunStatus = "running" | "completed" | "failed";
+type RunnerMode = "dry_run" | "real";
 
 type TrainingPeaksStudentRow = {
   id: string;
@@ -40,6 +41,10 @@ type TrainingPeaksActionRow = {
   decided_by_chat_id: string | null;
   execution_status: ActionExecutionStatus;
   execution_mode: ActionExecutionMode | null;
+  claimed_by: string | null;
+  claimed_at: string | null;
+  last_run_id: string | null;
+  execution_requested_at: string | null;
 };
 
 type TrainingPeaksActionRunRow = {
@@ -50,11 +55,34 @@ type TrainingPeaksActionRunRow = {
   dry_run: boolean;
   runner_id: string | null;
   started_at: string;
+  finished_at: string | null;
+  error_message: string | null;
+  log_json: unknown;
+  screenshot_before_path: string | null;
+  screenshot_after_path: string | null;
 };
 
 type ClaimedAction = {
   action: TrainingPeaksActionRow;
   student: TrainingPeaksStudentRow | null;
+};
+
+type TrustedDryRunLog = {
+  dryRunResult: "candidate_found";
+  canExecute: true;
+  confidence: number;
+  candidate: DryRunCandidate;
+  resolvedDates: {
+    sourceDate: string;
+    targetDate: string;
+    timezone: string | null;
+  };
+  identityCheck: DryRunIdentityCheck;
+};
+
+type ClaimedRealAction = ClaimedAction & {
+  trustedDryRunRun: TrainingPeaksActionRunRow;
+  trustedDryRunLog: TrustedDryRunLog;
 };
 
 type DryRunArtifacts = {
@@ -68,6 +96,35 @@ type DryRunArtifacts = {
     athletePageLikelyReachable: boolean;
     trainingPeaksContextLikely: boolean;
   };
+};
+
+type RevalidationComparisonField<T> = {
+  trusted: T | null;
+  current: T | null;
+  matches: boolean;
+};
+
+type RevalidationComparison = {
+  revalidationPassed: boolean;
+  mismatchReasons: string[];
+  trustedDryRunResult: string;
+  currentDryRunResult: string;
+  trustedCanExecute: boolean;
+  currentCanExecute: boolean;
+  trustedConfidence: number;
+  currentConfidence: number;
+  trustedIdentityMatchedBy: IdentityMatchType;
+  currentIdentityMatchedBy: IdentityMatchType;
+  sourceDate: RevalidationComparisonField<string>;
+  targetDate: RevalidationComparisonField<string>;
+  fingerprint: RevalidationComparisonField<string>;
+  title: RevalidationComparisonField<string>;
+  type: RevalidationComparisonField<string>;
+  plannedDurationSec: RevalidationComparisonField<number>;
+  plannedDistance: RevalidationComparisonField<number>;
+  startTimeLocal: RevalidationComparisonField<string>;
+  trustedCandidate: DryRunCandidate;
+  currentCandidate: DryRunCandidate | null;
 };
 
 type TrainingPeaksMoveWorkoutTarget =
@@ -213,12 +270,47 @@ const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
 const TP_CALLBACK_ACTION_EXECUTE_PREFIX = "tp:ta:x:";
 const TP_CALLBACK_ACTION_CANCEL_PREFIX = "tp:ta:c:";
 const ACTION_ARTIFACTS_ROOT = path.join(toolRoot, "action-artifacts");
+const TP_ACTIONS_EXECUTE_REAL_FLAG = "--execute-real";
+const TP_ACTIONS_REAL_EXECUTION_ENV = "TP_ACTIONS_REAL_EXECUTION";
+const REAL_MOVE_NOT_IMPLEMENTED_ERROR = "Real move not implemented yet (Phase 3D.2)";
+const TRAININGPEAKS_NOT_CHANGED_NOTE = "TrainingPeaks не изменён";
 const TP_CALENDAR_ROOT_SELECTOR = "div.calendar.athleteCalendar";
 const TP_DAY_CELL_SELECTOR = ".dayWidth.dayContainer.day";
 const TP_PRIMARY_WORKOUT_CARD_SELECTOR = ".dayWidth.dayContainer.day .activities .MuiCard-root.activity.workout";
 const TP_FALLBACK_WORKOUT_CARD_SELECTOR = ".dayWidth.dayContainer.day .workoutDiv";
 const TP_PRIMARY_WORKOUT_CARD_WITHIN_DAY_SELECTOR = ".activities .MuiCard-root.activity.workout";
 const TP_FALLBACK_WORKOUT_CARD_WITHIN_DAY_SELECTOR = ".workoutDiv";
+
+function hasCliFlag(flag: string): boolean {
+  return process.argv.slice(2).includes(flag);
+}
+
+function resolveRunnerMode(): { mode: RunnerMode | "blocked_real"; message?: string } {
+  const executeRealFlag = hasCliFlag(TP_ACTIONS_EXECUTE_REAL_FLAG);
+  const executeRealEnv = isTruthyEnvFlag(TP_ACTIONS_REAL_EXECUTION_ENV);
+
+  if (!executeRealFlag && !executeRealEnv) {
+    return { mode: "dry_run" };
+  }
+  if (executeRealFlag && executeRealEnv) {
+    return { mode: "real" };
+  }
+
+  const missing: string[] = [];
+  if (!executeRealFlag) {
+    missing.push(`CLI flag ${TP_ACTIONS_EXECUTE_REAL_FLAG}`);
+  }
+  if (!executeRealEnv) {
+    missing.push(`env ${TP_ACTIONS_REAL_EXECUTION_ENV}=true`);
+  }
+
+  return {
+    mode: "blocked_real",
+    message: `Real mode requires BOTH ${TP_ACTIONS_EXECUTE_REAL_FLAG} and ${TP_ACTIONS_REAL_EXECUTION_ENV}=true. Missing: ${missing.join(
+      ", "
+    )}. No execute_pending actions will be processed.`,
+  };
+}
 
 function readTextFileSyncSafe(filePath: string): string | null {
   try {
@@ -1121,15 +1213,122 @@ async function claimOneApprovedActionForDryRun(runnerId: string): Promise<Claime
   return null;
 }
 
-async function createActionRun(actionId: string, runnerId: string): Promise<TrainingPeaksActionRunRow> {
+async function claimOneExecutePendingActionForRealMode(runnerId: string): Promise<ClaimedRealAction | null> {
+  const supabase = getSupabase();
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const { data: candidate, error: selectError } = await supabase
+      .from("trainingpeaks_actions")
+      .select("*")
+      .eq("action_type", "move_workout")
+      .eq("status", "approved")
+      .eq("execution_status", "execute_pending")
+      .not("last_run_id", "is", null)
+      .order("execution_requested_at", { ascending: true, nullsFirst: false })
+      .order("approved_at", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (selectError) {
+      throw new Error(`Failed to select execute_pending action for real mode: ${selectError.message}`);
+    }
+
+    if (!candidate) {
+      return null;
+    }
+
+    const action = candidate as TrainingPeaksActionRow;
+    if (!action.last_run_id) {
+      continue;
+    }
+
+    const { data: trustedRunData, error: trustedRunError } = await supabase
+      .from("trainingpeaks_action_runs")
+      .select("*")
+      .eq("id", action.last_run_id)
+      .eq("action_id", action.id)
+      .eq("run_type", "dry_run")
+      .eq("status", "completed")
+      .maybeSingle();
+
+    if (trustedRunError) {
+      throw new Error(`Failed to load trusted dry-run ${action.last_run_id} for action ${action.id}: ${trustedRunError.message}`);
+    }
+
+    if (!trustedRunData) {
+      console.warn(`Skipping execute_pending action ${action.id}: trusted dry-run row ${action.last_run_id} not found.`);
+      continue;
+    }
+
+    const trustedDryRunRun = trustedRunData as TrainingPeaksActionRunRow;
+    const trustedDryRunLog = normalizeTrustedDryRunLog(trustedDryRunRun.log_json);
+    if (!trustedDryRunLog) {
+      console.warn(`Skipping execute_pending action ${action.id}: trusted dry-run log is not safe for real-mode revalidation.`);
+      continue;
+    }
+
+    const { data: claimed, error: claimError } = await supabase
+      .from("trainingpeaks_actions")
+      .update({
+        execution_status: "running_local",
+        execution_mode: "real",
+        claimed_by: runnerId,
+        claimed_at: new Date().toISOString(),
+      })
+      .eq("id", action.id)
+      .eq("status", "approved")
+      .eq("execution_status", "execute_pending")
+      .eq("last_run_id", action.last_run_id)
+      .select("*")
+      .maybeSingle();
+
+    if (claimError) {
+      throw new Error(`Failed to claim execute_pending action ${action.id} for real mode: ${claimError.message}`);
+    }
+
+    if (!claimed) {
+      continue;
+    }
+
+    const claimedAction = claimed as TrainingPeaksActionRow;
+    let student: TrainingPeaksStudentRow | null = null;
+    if (claimedAction.student_id) {
+      const { data: studentData, error: studentError } = await supabase
+        .from("trainingpeaks_students")
+        .select("id, student_id, student_name, telegram_chat_id, trainingpeaks_athlete_url")
+        .eq("id", claimedAction.student_id)
+        .maybeSingle();
+      if (studentError) {
+        throw new Error(`Failed to fetch student for real-mode action ${claimedAction.id}: ${studentError.message}`);
+      }
+      student = (studentData as TrainingPeaksStudentRow | null) ?? null;
+    }
+
+    return {
+      action: claimedAction,
+      student,
+      trustedDryRunRun,
+      trustedDryRunLog,
+    };
+  }
+
+  return null;
+}
+
+async function createActionRun(
+  actionId: string,
+  runnerId: string,
+  runType: ActionRunType = "dry_run"
+): Promise<TrainingPeaksActionRunRow> {
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("trainingpeaks_action_runs")
     .insert({
       action_id: actionId,
-      run_type: "dry_run",
+      run_type: runType,
       status: "running",
-      dry_run: true,
+      dry_run: runType === "dry_run",
       runner_id: runnerId,
     })
     .select("*")
@@ -2221,7 +2420,197 @@ function formatCandidateLine(candidate: DryRunCandidate | null): string {
   return parts.join(", ") || "кандидат без деталей";
 }
 
+function formatCandidateForNotification(candidate: DryRunCandidate | null): string {
+  return formatCandidateLine(candidate);
+}
+
+function normalizeTrustedDryRunLog(logJson: unknown): TrustedDryRunLog | null {
+  if (!logJson || typeof logJson !== "object") {
+    return null;
+  }
+
+  const payload = logJson as {
+    dryRunResult?: unknown;
+    canExecute?: unknown;
+    confidence?: unknown;
+    candidate?: DryRunCandidate | null;
+    resolvedDates?: { sourceDate?: unknown; targetDate?: unknown; timezone?: unknown } | null;
+    identityCheck?: DryRunIdentityCheck | null;
+  };
+
+  const confidence =
+    typeof payload.confidence === "number"
+      ? payload.confidence
+      : typeof payload.confidence === "string"
+        ? Number(payload.confidence)
+        : Number.NaN;
+  const sourceDate =
+    typeof payload.resolvedDates?.sourceDate === "string" ? payload.resolvedDates.sourceDate.trim() : "";
+  const targetDate =
+    typeof payload.resolvedDates?.targetDate === "string" ? payload.resolvedDates.targetDate.trim() : "";
+  const fingerprint =
+    typeof payload.candidate?.fingerprint === "string" ? payload.candidate.fingerprint.trim() : "";
+  const matchedBy = payload.identityCheck?.matchedBy;
+
+  if (payload.dryRunResult !== "candidate_found") {
+    return null;
+  }
+  if (payload.canExecute !== true) {
+    return null;
+  }
+  if (!Number.isFinite(confidence) || confidence < 0.8) {
+    return null;
+  }
+  if (!fingerprint) {
+    return null;
+  }
+  if (!sourceDate || !targetDate) {
+    return null;
+  }
+  if (!payload.identityCheck || matchedBy === "mismatch" || matchedBy === undefined) {
+    return null;
+  }
+  if (!payload.candidate) {
+    return null;
+  }
+
+  return {
+    dryRunResult: "candidate_found",
+    canExecute: true,
+    confidence,
+    candidate: payload.candidate,
+    resolvedDates: {
+      sourceDate,
+      targetDate,
+      timezone: typeof payload.resolvedDates?.timezone === "string" ? payload.resolvedDates.timezone : null,
+    },
+    identityCheck: payload.identityCheck,
+  };
+}
+
+function compareOptionalField<T>(trusted: T | null, current: T | null): RevalidationComparisonField<T> {
+  if (trusted === null || trusted === undefined) {
+    return {
+      trusted: trusted ?? null,
+      current: current ?? null,
+      matches: current === null || current === undefined,
+    };
+  }
+  if (current === null || current === undefined) {
+    return {
+      trusted,
+      current: null,
+      matches: false,
+    };
+  }
+  return {
+    trusted,
+    current,
+    matches: trusted === current,
+  };
+}
+
+function buildRevalidationComparison(input: {
+  trusted: TrustedDryRunLog;
+  current: DryRunEvaluation;
+}): RevalidationComparison {
+  const mismatchReasons: string[] = [];
+  const trustedCandidate = input.trusted.candidate;
+  const currentCandidate = input.current.candidate;
+
+  const sourceDate = compareOptionalField(
+    input.trusted.resolvedDates.sourceDate,
+    input.current.resolvedDates.sourceDate
+  );
+  const targetDate = compareOptionalField(
+    input.trusted.resolvedDates.targetDate,
+    input.current.resolvedDates.targetDate
+  );
+  const fingerprint = compareOptionalField(trustedCandidate.fingerprint, currentCandidate?.fingerprint ?? null);
+  const title = compareOptionalField(trustedCandidate.title, currentCandidate?.title ?? null);
+  const type = compareOptionalField(trustedCandidate.type, currentCandidate?.type ?? null);
+  const plannedDurationSec = compareOptionalField(
+    trustedCandidate.plannedDurationSec,
+    currentCandidate?.plannedDurationSec ?? null
+  );
+  const plannedDistance = compareOptionalField(
+    trustedCandidate.plannedDistance,
+    currentCandidate?.plannedDistance ?? null
+  );
+  const startTimeLocal = compareOptionalField(
+    trustedCandidate.startTimeLocal,
+    currentCandidate?.startTimeLocal ?? null
+  );
+
+  if (input.current.identityCheck.matchedBy === "mismatch") {
+    mismatchReasons.push("identityCheck.matchedBy became mismatch");
+  }
+  if (input.current.dryRunResult !== "candidate_found") {
+    mismatchReasons.push(`current dryRunResult=${input.current.dryRunResult}`);
+  }
+  if (!input.current.canExecute) {
+    mismatchReasons.push("current revalidation marked action unsafe");
+  }
+  if (input.current.confidence < 0.8) {
+    mismatchReasons.push(`current confidence below threshold: ${input.current.confidence.toFixed(2)}`);
+  }
+  if (input.current.candidateAlternativesCount > 0) {
+    mismatchReasons.push(`current evaluation ambiguous: alternatives=${input.current.candidateAlternativesCount}`);
+  }
+  if (!sourceDate.matches) {
+    mismatchReasons.push("sourceDate mismatch");
+  }
+  if (!targetDate.matches) {
+    mismatchReasons.push("targetDate mismatch");
+  }
+  if (!fingerprint.matches) {
+    mismatchReasons.push("candidate fingerprint mismatch");
+  }
+  if (!title.matches && title.current !== null) {
+    mismatchReasons.push("candidate title contradicts trusted dry-run");
+  }
+  if (!type.matches && type.current !== null) {
+    mismatchReasons.push("candidate type contradicts trusted dry-run");
+  }
+  if (!plannedDurationSec.matches && plannedDurationSec.current !== null) {
+    mismatchReasons.push("candidate plannedDurationSec contradicts trusted dry-run");
+  }
+  if (!plannedDistance.matches && plannedDistance.current !== null) {
+    mismatchReasons.push("candidate plannedDistance contradicts trusted dry-run");
+  }
+  if (!startTimeLocal.matches && startTimeLocal.current !== null) {
+    mismatchReasons.push("candidate startTimeLocal contradicts trusted dry-run");
+  }
+
+  return {
+    revalidationPassed: mismatchReasons.length === 0,
+    mismatchReasons,
+    trustedDryRunResult: input.trusted.dryRunResult,
+    currentDryRunResult: input.current.dryRunResult,
+    trustedCanExecute: input.trusted.canExecute,
+    currentCanExecute: input.current.canExecute,
+    trustedConfidence: input.trusted.confidence,
+    currentConfidence: input.current.confidence,
+    trustedIdentityMatchedBy: input.trusted.identityCheck.matchedBy,
+    currentIdentityMatchedBy: input.current.identityCheck.matchedBy,
+    sourceDate,
+    targetDate,
+    fingerprint,
+    title,
+    type,
+    plannedDurationSec,
+    plannedDistance,
+    startTimeLocal,
+    trustedCandidate,
+    currentCandidate,
+  };
+}
+
 async function runDryRunInspection(claimed: ClaimedAction, runId: string): Promise<DryRunArtifacts> {
+  return inspectActionCalendar(claimed, runId);
+}
+
+async function inspectActionCalendar(claimed: ClaimedAction, runId: string): Promise<DryRunArtifacts> {
   const student = claimed.student;
   if (!student) {
     throw new Error(`Student is missing for action ${claimed.action.id}.`);
@@ -2246,6 +2635,9 @@ async function runDryRunInspection(claimed: ClaimedAction, runId: string): Promi
     const page = context.pages()[0] ?? (await context.newPage());
     await page.goto(student.trainingpeaks_athlete_url, { waitUntil: "domcontentloaded", timeout: 30_000 });
     await page.bringToFront();
+
+    // Phase 3D.1 safety: inspection only. Do not click, drag, drop, save, submit, or change dates in TrainingPeaks.
+    console.log(`Inspection-only mode for action ${claimed.action.id}: no TrainingPeaks mutation is allowed.`);
 
     const pageAssessment = await assessTrainingPeaksPage(page);
     const visibleTrainingPeaksName = await extractVisibleTrainingPeaksAthleteName(page);
@@ -2301,24 +2693,282 @@ async function runDryRunInspection(claimed: ClaimedAction, runId: string): Promi
   }
 }
 
+async function finishRealRun(
+  actionId: string,
+  runId: string,
+  input: {
+    errorMessage: string;
+    logJson: unknown;
+    screenshotBeforePath: string | null;
+    screenshotAfterPath: string | null;
+  }
+): Promise<void> {
+  const supabase = getSupabase();
+  const finishedAt = new Date().toISOString();
+
+  const { error: runError } = await supabase
+    .from("trainingpeaks_action_runs")
+    .update({
+      status: "failed",
+      finished_at: finishedAt,
+      error_message: input.errorMessage,
+      log_json: input.logJson,
+      screenshot_before_path: input.screenshotBeforePath,
+      screenshot_after_path: input.screenshotAfterPath,
+    })
+    .eq("id", runId)
+    .eq("action_id", actionId)
+    .eq("status", "running");
+  if (runError) {
+    throw new Error(`Failed to finish real action run ${runId}: ${runError.message}`);
+  }
+
+  const { error: actionError } = await supabase
+    .from("trainingpeaks_actions")
+    .update({
+      execution_status: "failed",
+      execution_mode: "real",
+      last_run_id: runId,
+    })
+    .eq("id", actionId);
+  if (actionError) {
+    throw new Error(`Failed to update real-mode action ${actionId} as failed: ${actionError.message}`);
+  }
+}
+
+async function notifyCoachRealModeResult(input: {
+  chatId: string | null;
+  action: TrainingPeaksActionRow;
+  studentName: string;
+  trustedDryRun: TrustedDryRunLog;
+  currentEvaluation: DryRunEvaluation | null;
+  comparison: RevalidationComparison | null;
+  revalidationPassed: boolean;
+  errorMessage: string;
+  candidate: DryRunCandidate | null;
+}): Promise<void> {
+  if (!input.chatId) {
+    return;
+  }
+
+  const lines = [
+    "TrainingPeaks real-mode revalidation",
+    `Action ID: ${input.action.id}`,
+    `Ученик: ${input.studentName}`,
+    `Raw text: ${input.action.raw_text}`,
+    `Source -> target: ${input.trustedDryRun.resolvedDates.sourceDate} -> ${input.trustedDryRun.resolvedDates.targetDate}`,
+    `Candidate: ${formatCandidateForNotification(input.candidate)}`,
+    `Revalidation: ${input.revalidationPassed ? "passed" : "failed"}`,
+  ];
+
+  if (input.currentEvaluation) {
+    lines.push(`Trusted identity: ${input.trustedDryRun.identityCheck.matchedBy}`);
+    lines.push(`Current identity: ${input.currentEvaluation.identityCheck.matchedBy}`);
+    lines.push(
+      `Current canExecute/confidence: ${input.currentEvaluation.canExecute ? "yes" : "no"} / ${input.currentEvaluation.confidence.toFixed(2)}`
+    );
+  }
+
+  if (input.comparison) {
+    lines.push(
+      `Compare source/target/fingerprint: ${input.comparison.sourceDate.matches ? "ok" : "mismatch"} / ${input.comparison.targetDate.matches ? "ok" : "mismatch"} / ${input.comparison.fingerprint.matches ? "ok" : "mismatch"}`
+    );
+    if (!input.comparison.revalidationPassed && input.comparison.mismatchReasons.length > 0) {
+      lines.push(`Reason: ${input.comparison.mismatchReasons.join("; ")}`);
+    }
+  }
+
+  lines.push(input.errorMessage);
+  lines.push(TRAININGPEAKS_NOT_CHANGED_NOTE);
+
+  try {
+    await sendTelegramText(input.chatId, lines.join("\n"));
+  } catch (error) {
+    console.warn(`Telegram action real-mode summary warning: ${toShortErrorMessage(error)}`);
+  }
+}
+
 async function main(): Promise<void> {
   loadLocalEnv();
 
   const runnerId = getRunnerId();
-  const claimed = await claimOneApprovedActionForDryRun(runnerId);
-  if (!claimed) {
-    console.log("No approved TrainingPeaks actions ready for dry-run.");
+  const runnerMode = resolveRunnerMode();
+
+  if (runnerMode.mode === "blocked_real") {
+    console.log(runnerMode.message);
     return;
   }
 
-  console.log(`Claimed TrainingPeaks action ${claimed.action.id} for dry-run.`);
-  const run = await createActionRun(claimed.action.id, runnerId);
+  if (runnerMode.mode === "dry_run") {
+    const claimed = await claimOneApprovedActionForDryRun(runnerId);
+    if (!claimed) {
+      console.log("No approved TrainingPeaks actions ready for dry-run.");
+      return;
+    }
+
+    console.log(`Claimed TrainingPeaks action ${claimed.action.id} for dry-run.`);
+    const run = await createActionRun(claimed.action.id, runnerId, "dry_run");
+    const baseLog: Record<string, unknown> = {
+      actionId: claimed.action.id,
+      runId: run.id,
+      runnerId,
+      runType: "dry_run",
+      dryRun: true,
+      realMode: false,
+      actionType: claimed.action.action_type,
+      actionStatus: claimed.action.status,
+      rawText: claimed.action.raw_text,
+      targetSummary: getTargetSummary(claimed.action.parsed_payload),
+      student: claimed.student
+        ? {
+            id: claimed.student.id,
+            studentId: claimed.student.student_id,
+            studentName: claimed.student.student_name,
+            telegramChatId: claimed.student.telegram_chat_id,
+            trainingPeaksAthleteUrl: claimed.student.trainingpeaks_athlete_url,
+          }
+        : null,
+    };
+
+    const studentName = claimed.student?.student_name ?? "(unknown)";
+
+    try {
+      const artifacts = await runDryRunInspection(claimed, run.id);
+      const evaluation = artifacts.dryRunEvaluation;
+      const logJson = {
+        ...baseLog,
+        status: "dry_run_completed",
+        inspectedAt: new Date().toISOString(),
+        pageMeta: artifacts.pageMeta,
+        dryRunResult: evaluation.dryRunResult,
+        resolvedDates: evaluation.resolvedDates,
+        candidate: evaluation.candidate,
+        candidateAlternativesCount: evaluation.candidateAlternativesCount,
+        confidence: evaluation.confidence,
+        canExecute: evaluation.canExecute,
+        canExecuteReasons: evaluation.canExecuteReasons,
+        diagnostics: evaluation.diagnostics,
+        identityCheck: evaluation.identityCheck,
+        debugCandidatesTopN: evaluation.debugCandidatesTopN,
+        rankingDebug: evaluation.rankingDebug,
+        selectedSourceDatePolicy: evaluation.selectedSourceDatePolicy,
+        selectedSourceDate: evaluation.selectedSourceDate,
+        selectedSourceDateCandidateCount: evaluation.selectedSourceDateCandidateCount,
+        globalCandidateCount: evaluation.globalCandidateCount,
+        sourceDateBucketCounts: evaluation.sourceDateBucketCounts,
+        note: "Ничего не изменено в TrainingPeaks",
+      };
+
+      await completeDryRun(claimed.action.id, run.id, {
+        logJson,
+        screenshotBeforePath: artifacts.screenshotBeforePath,
+        screenshotAfterPath: artifacts.screenshotAfterPath,
+      });
+
+      await notifyCoachDryRunResult({
+        chatId: resolveDryRunNotificationChatId(claimed.action),
+        action: claimed.action,
+        studentName,
+        statusText: "dry-run completed",
+        dryRunEvaluation: evaluation,
+        note: "Ничего не изменено в TrainingPeaks",
+      });
+
+      console.log(`Dry-run completed for action ${claimed.action.id}.`);
+      return;
+    } catch (error) {
+      const errorMessage = toShortErrorMessage(error);
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? null;
+      const failedEvaluation: DryRunEvaluation = {
+        dryRunResult: "failed",
+        resolvedDates: {
+          sourceDate: null,
+          targetDate: null,
+          timezone,
+        },
+        candidate: null,
+        candidateAlternativesCount: 0,
+        confidence: 0,
+        canExecute: false,
+        canExecuteReasons: [errorMessage],
+        diagnostics: {
+          loginRequired: /login|sign in|session expired/i.test(errorMessage),
+          athleteReachable: false,
+          trainingPeaksContextOk: false,
+          parseWarnings: [],
+        },
+        identityCheck: {
+          telegramUsername: null,
+          telegramChatId: claimed.student?.telegram_chat_id ?? null,
+          expectedTrainingPeaksName: claimed.student?.student_name ?? null,
+          visibleTrainingPeaksName: null,
+          expectedAthleteId: parseTrainingPeaksAthleteId(claimed.student?.trainingpeaks_athlete_url ?? null),
+          currentAthleteId: null,
+          expectedTrainingPeaksUrl: claimed.student?.trainingpeaks_athlete_url ?? null,
+          currentUrl: null,
+          matchedBy: "inconclusive",
+          warnings: [],
+        },
+        debugCandidatesTopN: [],
+      };
+      const failedLog = {
+        ...baseLog,
+        status: "failed",
+        failedAt: new Date().toISOString(),
+        error: errorMessage,
+        dryRunResult: failedEvaluation.dryRunResult,
+        resolvedDates: failedEvaluation.resolvedDates,
+        candidate: failedEvaluation.candidate,
+        candidateAlternativesCount: failedEvaluation.candidateAlternativesCount,
+        confidence: failedEvaluation.confidence,
+        canExecute: failedEvaluation.canExecute,
+        canExecuteReasons: failedEvaluation.canExecuteReasons,
+        diagnostics: failedEvaluation.diagnostics,
+        identityCheck: failedEvaluation.identityCheck,
+        debugCandidatesTopN: failedEvaluation.debugCandidatesTopN,
+        rankingDebug: failedEvaluation.rankingDebug,
+        selectedSourceDatePolicy: failedEvaluation.selectedSourceDatePolicy,
+        selectedSourceDate: failedEvaluation.selectedSourceDate,
+        selectedSourceDateCandidateCount: failedEvaluation.selectedSourceDateCandidateCount,
+        globalCandidateCount: failedEvaluation.globalCandidateCount,
+        sourceDateBucketCounts: failedEvaluation.sourceDateBucketCounts,
+        note: "Ничего не изменено в TrainingPeaks",
+      };
+      await failDryRun(claimed.action.id, run.id, {
+        errorMessage,
+        logJson: failedLog,
+      });
+
+      await notifyCoachDryRunResult({
+        chatId: resolveDryRunNotificationChatId(claimed.action),
+        action: claimed.action,
+        studentName,
+        statusText: "dry-run failed",
+        dryRunEvaluation: failedEvaluation,
+        note: "Ничего не изменено в TrainingPeaks",
+        errorText: errorMessage,
+      });
+
+      throw error;
+    }
+  }
+
+  const claimed = await claimOneExecutePendingActionForRealMode(runnerId);
+  if (!claimed) {
+    console.log("No execute_pending TrainingPeaks actions ready for real-mode revalidation.");
+    return;
+  }
+
+  console.log(`Claimed TrainingPeaks action ${claimed.action.id} for real-mode revalidation.`);
+  console.log("Phase 3D.1 safety: revalidation only. No TrainingPeaks mutation will be attempted.");
+  const run = await createActionRun(claimed.action.id, runnerId, "real");
   const baseLog: Record<string, unknown> = {
     actionId: claimed.action.id,
     runId: run.id,
     runnerId,
-    runType: "dry_run",
-    dryRun: true,
+    runType: "real",
+    dryRun: false,
+    realMode: true,
     actionType: claimed.action.action_type,
     actionStatus: claimed.action.status,
     rawText: claimed.action.raw_text,
@@ -2332,124 +2982,136 @@ async function main(): Promise<void> {
           trainingPeaksAthleteUrl: claimed.student.trainingpeaks_athlete_url,
         }
       : null,
+    trustedDryRunRunId: claimed.trustedDryRunRun.id,
+    trustedDryRun: claimed.trustedDryRunLog,
+    safety: {
+      mutationForbidden: true,
+      allowedActions: ["open athlete page", "extract candidate", "compare with trusted dry-run", "capture screenshots"],
+      forbiddenActions: ["drag", "drop", "save", "date change click", "form submit", "TrainingPeaks mutation"],
+    },
   };
-
   const studentName = claimed.student?.student_name ?? "(unknown)";
 
   try {
-    const artifacts = await runDryRunInspection(claimed, run.id);
+    const artifacts = await inspectActionCalendar(claimed, run.id);
     const evaluation = artifacts.dryRunEvaluation;
+    const comparison = buildRevalidationComparison({
+      trusted: claimed.trustedDryRunLog,
+      current: evaluation,
+    });
+
+    if (!comparison.revalidationPassed) {
+      const errorMessage = `Revalidation failed: ${comparison.mismatchReasons.join("; ") || "unknown mismatch"}`;
+      const logJson = {
+        ...baseLog,
+        status: "failed",
+        failedAt: new Date().toISOString(),
+        error: errorMessage,
+        pageMeta: artifacts.pageMeta,
+        revalidationPassed: false,
+        revalidationComparison: comparison,
+        currentEvaluation: evaluation,
+        note: TRAININGPEAKS_NOT_CHANGED_NOTE,
+      };
+
+      await finishRealRun(claimed.action.id, run.id, {
+        errorMessage,
+        logJson,
+        screenshotBeforePath: artifacts.screenshotBeforePath,
+        screenshotAfterPath: artifacts.screenshotAfterPath,
+      });
+
+      await notifyCoachRealModeResult({
+        chatId: resolveDryRunNotificationChatId(claimed.action),
+        action: claimed.action,
+        studentName,
+        trustedDryRun: claimed.trustedDryRunLog,
+        currentEvaluation: evaluation,
+        comparison,
+        revalidationPassed: false,
+        errorMessage,
+        candidate: evaluation.candidate,
+      });
+
+      console.log(`Real-mode revalidation failed for action ${claimed.action.id}: ${errorMessage}`);
+      return;
+    }
+
+    const errorMessage = REAL_MOVE_NOT_IMPLEMENTED_ERROR;
     const logJson = {
       ...baseLog,
-      status: "dry_run_completed",
-      inspectedAt: new Date().toISOString(),
+      status: "failed",
+      failedAt: new Date().toISOString(),
+      error: errorMessage,
       pageMeta: artifacts.pageMeta,
-      dryRunResult: evaluation.dryRunResult,
-      resolvedDates: evaluation.resolvedDates,
-      candidate: evaluation.candidate,
-      candidateAlternativesCount: evaluation.candidateAlternativesCount,
-      confidence: evaluation.confidence,
-      canExecute: evaluation.canExecute,
-      canExecuteReasons: evaluation.canExecuteReasons,
-      diagnostics: evaluation.diagnostics,
-      identityCheck: evaluation.identityCheck,
-      debugCandidatesTopN: evaluation.debugCandidatesTopN,
-      rankingDebug: evaluation.rankingDebug,
-      selectedSourceDatePolicy: evaluation.selectedSourceDatePolicy,
-      selectedSourceDate: evaluation.selectedSourceDate,
-      selectedSourceDateCandidateCount: evaluation.selectedSourceDateCandidateCount,
-      globalCandidateCount: evaluation.globalCandidateCount,
-      sourceDateBucketCounts: evaluation.sourceDateBucketCounts,
-      note: "Ничего не изменено в TrainingPeaks",
+      revalidationPassed: true,
+      revalidationComparison: comparison,
+      currentEvaluation: evaluation,
+      wouldMove: {
+        sourceDate: claimed.trustedDryRunLog.resolvedDates.sourceDate,
+        targetDate: claimed.trustedDryRunLog.resolvedDates.targetDate,
+        candidate: {
+          title: comparison.currentCandidate?.title ?? comparison.trustedCandidate.title,
+          type: comparison.currentCandidate?.type ?? comparison.trustedCandidate.type,
+          plannedDurationSec:
+            comparison.currentCandidate?.plannedDurationSec ?? comparison.trustedCandidate.plannedDurationSec,
+          plannedDistance:
+            comparison.currentCandidate?.plannedDistance ?? comparison.trustedCandidate.plannedDistance,
+          startTimeLocal: comparison.currentCandidate?.startTimeLocal ?? comparison.trustedCandidate.startTimeLocal,
+          fingerprint: comparison.currentCandidate?.fingerprint ?? comparison.trustedCandidate.fingerprint,
+        },
+      },
+      note: "Проверка перед переносом пройдена. Реальный перенос ещё не реализован в Phase 3D.1. TrainingPeaks не изменён.",
     };
 
-    await completeDryRun(claimed.action.id, run.id, {
+    await finishRealRun(claimed.action.id, run.id, {
+      errorMessage,
       logJson,
       screenshotBeforePath: artifacts.screenshotBeforePath,
       screenshotAfterPath: artifacts.screenshotAfterPath,
     });
 
-    await notifyCoachDryRunResult({
+    await notifyCoachRealModeResult({
       chatId: resolveDryRunNotificationChatId(claimed.action),
       action: claimed.action,
       studentName,
-      statusText: "dry-run completed",
-      dryRunEvaluation: evaluation,
-      note: "Ничего не изменено в TrainingPeaks",
+      trustedDryRun: claimed.trustedDryRunLog,
+      currentEvaluation: evaluation,
+      comparison,
+      revalidationPassed: true,
+      errorMessage: "Проверка перед переносом пройдена. Реальный перенос ещё не реализован в Phase 3D.1. TrainingPeaks не изменён.",
+      candidate: evaluation.candidate ?? comparison.trustedCandidate,
     });
 
-    console.log(`Dry-run completed for action ${claimed.action.id}.`);
+    console.log(`Real-mode revalidation passed for action ${claimed.action.id}, but real move remains disabled in Phase 3D.1.`);
   } catch (error) {
     const errorMessage = toShortErrorMessage(error);
-    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? null;
-    const failedEvaluation: DryRunEvaluation = {
-      dryRunResult: "failed",
-      resolvedDates: {
-        sourceDate: null,
-        targetDate: null,
-        timezone,
-      },
-      candidate: null,
-      candidateAlternativesCount: 0,
-      confidence: 0,
-      canExecute: false,
-      canExecuteReasons: [errorMessage],
-      diagnostics: {
-        loginRequired: /login|sign in|session expired/i.test(errorMessage),
-        athleteReachable: false,
-        trainingPeaksContextOk: false,
-        parseWarnings: [],
-      },
-      identityCheck: {
-        telegramUsername: null,
-        telegramChatId: claimed.student?.telegram_chat_id ?? null,
-        expectedTrainingPeaksName: claimed.student?.student_name ?? null,
-        visibleTrainingPeaksName: null,
-        expectedAthleteId: parseTrainingPeaksAthleteId(claimed.student?.trainingpeaks_athlete_url ?? null),
-        currentAthleteId: null,
-        expectedTrainingPeaksUrl: claimed.student?.trainingpeaks_athlete_url ?? null,
-        currentUrl: null,
-        matchedBy: "inconclusive",
-        warnings: [],
-      },
-      debugCandidatesTopN: [],
-    };
-    const failedLog = {
+    const logJson = {
       ...baseLog,
       status: "failed",
       failedAt: new Date().toISOString(),
       error: errorMessage,
-      dryRunResult: failedEvaluation.dryRunResult,
-      resolvedDates: failedEvaluation.resolvedDates,
-      candidate: failedEvaluation.candidate,
-      candidateAlternativesCount: failedEvaluation.candidateAlternativesCount,
-      confidence: failedEvaluation.confidence,
-      canExecute: failedEvaluation.canExecute,
-      canExecuteReasons: failedEvaluation.canExecuteReasons,
-      diagnostics: failedEvaluation.diagnostics,
-      identityCheck: failedEvaluation.identityCheck,
-      debugCandidatesTopN: failedEvaluation.debugCandidatesTopN,
-      rankingDebug: failedEvaluation.rankingDebug,
-      selectedSourceDatePolicy: failedEvaluation.selectedSourceDatePolicy,
-      selectedSourceDate: failedEvaluation.selectedSourceDate,
-      selectedSourceDateCandidateCount: failedEvaluation.selectedSourceDateCandidateCount,
-      globalCandidateCount: failedEvaluation.globalCandidateCount,
-      sourceDateBucketCounts: failedEvaluation.sourceDateBucketCounts,
-      note: "Ничего не изменено в TrainingPeaks",
+      revalidationPassed: false,
+      note: TRAININGPEAKS_NOT_CHANGED_NOTE,
     };
-    await failDryRun(claimed.action.id, run.id, {
+
+    await finishRealRun(claimed.action.id, run.id, {
       errorMessage,
-      logJson: failedLog,
+      logJson,
+      screenshotBeforePath: null,
+      screenshotAfterPath: null,
     });
 
-    await notifyCoachDryRunResult({
+    await notifyCoachRealModeResult({
       chatId: resolveDryRunNotificationChatId(claimed.action),
       action: claimed.action,
       studentName,
-      statusText: "dry-run failed",
-      dryRunEvaluation: failedEvaluation,
-      note: "Ничего не изменено в TrainingPeaks",
-      errorText: errorMessage,
+      trustedDryRun: claimed.trustedDryRunLog,
+      currentEvaluation: null,
+      comparison: null,
+      revalidationPassed: false,
+      errorMessage,
+      candidate: claimed.trustedDryRunLog.candidate,
     });
 
     throw error;
