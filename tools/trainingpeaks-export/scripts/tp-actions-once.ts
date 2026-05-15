@@ -105,6 +105,7 @@ type DryRunDiagnostics = {
   athleteReachable: boolean;
   trainingPeaksContextOk: boolean;
   parseWarnings: string[];
+  domDebug?: DryRunDomDebug | null;
 };
 
 type IdentityMatchType = "athlete_id" | "trainingpeaks_name" | "inconclusive" | "mismatch";
@@ -164,8 +165,42 @@ type RawWorkoutCandidate = {
   rawScore: number;
 };
 
+type DryRunDomDebugSelectorCounts = {
+  calendarRoots: number;
+  dayCells: number;
+  primaryWorkoutCards: number;
+  fallbackWorkoutDivCards: number;
+};
+
+type DryRunDomDebugCheckpoint = {
+  label: string;
+  selectorCounts: DryRunDomDebugSelectorCounts;
+};
+
+type DryRunDomDebug = {
+  enabled: boolean;
+  calendarRootClass: string | null;
+  selectorCounts: DryRunDomDebugSelectorCounts;
+  checkpoints: DryRunDomDebugCheckpoint[];
+  cardSnippets: string[];
+  extractionError: string | null;
+};
+
+type WorkoutExtractionResult = {
+  candidates: RawWorkoutCandidate[];
+  domDebug: DryRunDomDebug | null;
+  parseWarnings: string[];
+  extractionError: string | null;
+};
+
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
 const ACTION_ARTIFACTS_ROOT = path.join(toolRoot, "action-artifacts");
+const TP_CALENDAR_ROOT_SELECTOR = "div.calendar.athleteCalendar";
+const TP_DAY_CELL_SELECTOR = ".dayWidth.dayContainer.day";
+const TP_PRIMARY_WORKOUT_CARD_SELECTOR = ".dayWidth.dayContainer.day .activities .MuiCard-root.activity.workout";
+const TP_FALLBACK_WORKOUT_CARD_SELECTOR = ".dayWidth.dayContainer.day .workoutDiv";
+const TP_PRIMARY_WORKOUT_CARD_WITHIN_DAY_SELECTOR = ".activities .MuiCard-root.activity.workout";
+const TP_FALLBACK_WORKOUT_CARD_WITHIN_DAY_SELECTOR = ".workoutDiv";
 
 function readTextFileSyncSafe(filePath: string): string | null {
   try {
@@ -238,6 +273,11 @@ function getRequiredEnv(name: "SUPABASE_URL" | "SUPABASE_SERVICE_ROLE_KEY"): str
 function getOptionalEnv(name: string): string | null {
   const value = process.env[name]?.trim();
   return value ? value : null;
+}
+
+function isTruthyEnvFlag(name: string): boolean {
+  const value = getOptionalEnv(name);
+  return value ? /^(1|true|yes|on)$/i.test(value) : false;
 }
 
 function getSupabase() {
@@ -406,6 +446,246 @@ function normalizeDateCandidate(raw: string): string | null {
   }
 
   return null;
+}
+
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function toTextSnippet(value: string, maxLength = 240): string {
+  return normalizeWhitespace(value).slice(0, maxLength);
+}
+
+function toIsoFromDateParts(year: number, month: number, day: number): string | null {
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    return null;
+  }
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  if (dt.getUTCFullYear() !== year || dt.getUTCMonth() !== month - 1 || dt.getUTCDate() !== day) {
+    return null;
+  }
+  return dt.toISOString().slice(0, 10);
+}
+
+function parseDateFromCalendarText(raw: string, defaultYear?: number): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const direct = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (direct) {
+    return toIsoFromDateParts(Number(direct[1]), Number(direct[2]), Number(direct[3]));
+  }
+  const slash = trimmed.match(/^(\d{1,2})[./-](\d{1,2})(?:[./-](\d{4}))?$/);
+  if (slash) {
+    const year = slash[3] ? Number(slash[3]) : defaultYear;
+    if (!year) {
+      return null;
+    }
+    return toIsoFromDateParts(year, Number(slash[2]), Number(slash[1]));
+  }
+  return null;
+}
+
+function parseDateFromCalendarAttr(value: string | null | undefined, defaultYear?: number): string | null {
+  if (!value) {
+    return null;
+  }
+  const iso = value.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0];
+  if (iso) {
+    return parseDateFromCalendarText(iso);
+  }
+  const slash = value.match(/\b\d{1,2}[./-]\d{1,2}(?:[./-]\d{4})?\b/)?.[0];
+  if (slash) {
+    return parseDateFromCalendarText(slash, defaultYear);
+  }
+  return null;
+}
+
+async function getInnerTextSafe(
+  locator: import("playwright").Locator,
+  timeout = 700
+): Promise<string | null> {
+  try {
+    const value = await locator.innerText({ timeout });
+    const normalized = normalizeWhitespace(value);
+    return normalized || null;
+  } catch {
+    return null;
+  }
+}
+
+async function getAttributeSafe(
+  locator: import("playwright").Locator,
+  name: string,
+  timeout = 700
+): Promise<string | null> {
+  try {
+    const value = await locator.getAttribute(name, { timeout });
+    if (value === null) {
+      return null;
+    }
+    const normalized = normalizeWhitespace(value);
+    return normalized || null;
+  } catch {
+    return null;
+  }
+}
+
+async function collectLocatorInnerTextSnippets(
+  locator: import("playwright").Locator,
+  limit: number,
+  maxLength = 180
+): Promise<string[]> {
+  const count = await locator.count();
+  const snippets: string[] = [];
+  for (let index = 0; index < count && snippets.length < limit; index += 1) {
+    const text = await getInnerTextSafe(locator.nth(index));
+    if (!text) {
+      continue;
+    }
+    snippets.push(toTextSnippet(text, maxLength));
+  }
+  return snippets;
+}
+
+async function inferCalendarMonthYear(
+  calendarRoot: import("playwright").Locator
+): Promise<{ year: number | null; month: number | null; reason: string }> {
+  const now = new Date();
+  const monthMap: Record<string, number> = {
+    january: 1,
+    february: 2,
+    march: 3,
+    april: 4,
+    may: 5,
+    june: 6,
+    july: 7,
+    august: 8,
+    september: 9,
+    october: 10,
+    november: 11,
+    december: 12,
+    январь: 1,
+    января: 1,
+    февраль: 2,
+    февраля: 2,
+    март: 3,
+    марта: 3,
+    апрель: 4,
+    апреля: 4,
+    май: 5,
+    мая: 5,
+    июнь: 6,
+    июня: 6,
+    июль: 7,
+    июля: 7,
+    август: 8,
+    августа: 8,
+    сентябрь: 9,
+    сентября: 9,
+    октябрь: 10,
+    октября: 10,
+    ноябрь: 11,
+    ноября: 11,
+    декабрь: 12,
+    декабря: 12,
+  };
+
+  const candidateTexts = [
+    await getAttributeSafe(calendarRoot, "aria-label"),
+    await getAttributeSafe(calendarRoot, "title"),
+    await getAttributeSafe(calendarRoot, "data-date"),
+    ...(await calendarRoot
+      .locator("h1, h2, h3, h4, [class*='month' i], [data-test*='month' i]")
+      .allInnerTexts()
+      .catch(() => []))
+      .map((value) => normalizeWhitespace(value))
+      .filter(Boolean)
+      .slice(0, 20),
+  ];
+
+  for (const text of candidateTexts) {
+    if (!text) {
+      continue;
+    }
+    const lower = text.toLowerCase();
+    for (const [monthName, monthNumber] of Object.entries(monthMap)) {
+      if (!lower.includes(monthName)) {
+        continue;
+      }
+      const yearMatch = lower.match(/\b(20\d{2})\b/);
+      return {
+        year: yearMatch ? Number(yearMatch[1]) : now.getUTCFullYear(),
+        month: monthNumber,
+        reason: yearMatch
+          ? "calendar month/year resolved from visible calendar header"
+          : "calendar month resolved from visible header; year defaulted to current year",
+      };
+    }
+  }
+
+  return {
+    year: null,
+    month: null,
+    reason: "calendar month/year unresolved from visible calendar context",
+  };
+}
+
+function detectWorkoutTypeFromText(text: string): string | null {
+  const lower = text.toLowerCase();
+  if (lower.includes("run") || lower.includes("бег")) {
+    return "run";
+  }
+  if (lower.includes("bike") || lower.includes("ride") || lower.includes("вел")) {
+    return "bike";
+  }
+  if (lower.includes("swim") || lower.includes("плав")) {
+    return "swim";
+  }
+  if (lower.includes("strength")) {
+    return "strength";
+  }
+  return null;
+}
+
+function extractTitleFromCardText(text: string): string | null {
+  const firstPart = text
+    .split(/[,|]/)[0]
+    ?.trim()
+    .replace(/\s+/g, " ");
+  return firstPart ? firstPart.slice(0, 120) : null;
+}
+
+function extractDayNumberCandidate(value: string): number | null {
+  const normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+  const lines = normalized
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 5);
+
+  for (const line of lines) {
+    const strictStart = line.match(/^([12]?\d|3[01])\b/);
+    if (strictStart) {
+      return Number(strictStart[1]);
+    }
+    if (line.length <= 12) {
+      const compact = line.match(/\b([12]?\d|3[01])\b/);
+      if (compact) {
+        return Number(compact[1]);
+      }
+    }
+  }
+
+  const startMatch = normalized.match(/^\D*([12]?\d|3[01])\b/);
+  return startMatch ? Number(startMatch[1]) : null;
 }
 
 function parseTrainingPeaksAthleteId(urlRaw: string | null): string | null {
@@ -902,265 +1182,316 @@ function scoreWorkoutCandidate(input: {
   return clampConfidence(score);
 }
 
+function emptyDomSelectorCounts(): DryRunDomDebugSelectorCounts {
+  return {
+    calendarRoots: 0,
+    dayCells: 0,
+    primaryWorkoutCards: 0,
+    fallbackWorkoutDivCards: 0,
+  };
+}
+
+async function captureCalendarDomSnapshot(
+  page: import("playwright").Page,
+  includeCardSnippets = false
+): Promise<{
+  selectorCounts: DryRunDomDebugSelectorCounts;
+  calendarRootClass: string | null;
+  cardSnippets: string[];
+  error: string | null;
+}> {
+  try {
+    const calendarRoots = page.locator(TP_CALENDAR_ROOT_SELECTOR);
+    const calendarRootCount = await calendarRoots.count();
+    const root = calendarRoots.first();
+    const selectorCounts: DryRunDomDebugSelectorCounts = {
+      calendarRoots: calendarRootCount,
+      dayCells: calendarRootCount > 0 ? await root.locator(TP_DAY_CELL_SELECTOR).count() : 0,
+      primaryWorkoutCards: calendarRootCount > 0 ? await root.locator(TP_PRIMARY_WORKOUT_CARD_WITHIN_DAY_SELECTOR).count() : 0,
+      fallbackWorkoutDivCards: calendarRootCount > 0 ? await root.locator(TP_FALLBACK_WORKOUT_CARD_WITHIN_DAY_SELECTOR).count() : 0,
+    };
+
+    const cardSnippets: string[] = [];
+    if (includeCardSnippets && calendarRootCount > 0) {
+      const primarySnippets = await collectLocatorInnerTextSnippets(
+        root.locator(TP_PRIMARY_WORKOUT_CARD_WITHIN_DAY_SELECTOR),
+        5
+      );
+      const fallbackSnippets = await collectLocatorInnerTextSnippets(
+        root.locator(TP_FALLBACK_WORKOUT_CARD_WITHIN_DAY_SELECTOR),
+        5
+      );
+      for (const snippet of [...primarySnippets, ...fallbackSnippets]) {
+        if (!snippet || cardSnippets.includes(snippet)) {
+          continue;
+        }
+        cardSnippets.push(snippet);
+        if (cardSnippets.length >= 5) {
+          break;
+        }
+      }
+    }
+
+    return {
+      selectorCounts,
+      calendarRootClass: calendarRootCount > 0 ? await getAttributeSafe(root, "class") : null,
+      cardSnippets,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      selectorCounts: emptyDomSelectorCounts(),
+      calendarRootClass: null,
+      cardSnippets: [],
+      error: `calendar DOM snapshot failed: ${toShortErrorMessage(error)}`,
+    };
+  }
+}
+
 async function extractWorkoutCandidatesFromPage(
   page: import("playwright").Page,
   targetDateIso: string | null
-): Promise<RawWorkoutCandidate[]> {
+): Promise<WorkoutExtractionResult> {
   const nowIso = toIsoDate(new Date());
-  const extracted = await page
-    .evaluate(() => {
-      type Candidate = {
-        rawTextSnippet: string;
-        selectorHint: string | null;
-        classHint: string | null;
-        title: string | null;
-        type: string | null;
-        plannedDurationRaw: string | null;
-        plannedDistanceRaw: string | null;
-        startTimeLocal: string | null;
-        sourceDateRaw: string | null;
-        reasons: string[];
-        fromFallback: boolean;
+  const domDebugEnabled = isTruthyEnvFlag("TP_DRY_RUN_DOM_DEBUG");
+  const parseWarnings: string[] = [];
+  const checkpoints: DryRunDomDebugCheckpoint[] = [];
+
+  const recordSnapshot = async (label: string, includeCardSnippets = false) => {
+    const snapshot = await captureCalendarDomSnapshot(page, includeCardSnippets);
+    if (snapshot.error) {
+      parseWarnings.push(snapshot.error);
+    }
+    checkpoints.push({
+      label,
+      selectorCounts: snapshot.selectorCounts,
+    });
+    return snapshot;
+  };
+
+  await recordSnapshot("after goto");
+
+  try {
+    await page.locator(TP_CALENDAR_ROOT_SELECTOR).first().waitFor({ state: "attached", timeout: 5_000 });
+  } catch (error) {
+    parseWarnings.push(`calendar root wait failed: ${toShortErrorMessage(error)}`);
+  }
+
+  try {
+    await page
+      .locator(`${TP_CALENDAR_ROOT_SELECTOR} ${TP_DAY_CELL_SELECTOR}`)
+      .first()
+      .waitFor({ state: "attached", timeout: 5_000 });
+  } catch (error) {
+    parseWarnings.push(`calendar day cells wait failed: ${toShortErrorMessage(error)}`);
+  }
+
+  try {
+    await Promise.any([
+      page.locator(`${TP_CALENDAR_ROOT_SELECTOR} ${TP_PRIMARY_WORKOUT_CARD_WITHIN_DAY_SELECTOR}`).first().waitFor({
+        state: "attached",
+        timeout: 1_500,
+      }),
+      page.locator(`${TP_CALENDAR_ROOT_SELECTOR} ${TP_FALLBACK_WORKOUT_CARD_WITHIN_DAY_SELECTOR}`).first().waitFor({
+        state: "attached",
+        timeout: 1_500,
+      }),
+    ]);
+  } catch (error) {
+    parseWarnings.push(`calendar workout card wait finished without visible card roots: ${toShortErrorMessage(error)}`);
+  }
+
+  await recordSnapshot("after readiness wait");
+  const beforeExtractSnapshot = await recordSnapshot("before extract", domDebugEnabled);
+
+  type EvaluatedWorkoutCandidate = {
+    rawTextSnippet: string;
+    selectorHint: string | null;
+    classHint: string | null;
+    title: string | null;
+    type: string | null;
+    plannedDurationRaw: string | null;
+    plannedDistanceRaw: string | null;
+    startTimeLocal: string | null;
+    sourceDateRaw: string | null;
+    reasons: string[];
+    fromFallback: boolean;
+  };
+
+  const extracted: EvaluatedWorkoutCandidate[] = [];
+  let extractionError: string | null = null;
+
+  try {
+    const calendarRoot = page.locator(TP_CALENDAR_ROOT_SELECTOR).first();
+    const calendarRootCount = await page.locator(TP_CALENDAR_ROOT_SELECTOR).count();
+    if (calendarRootCount === 0) {
+      throw new Error(`calendar root not found: ${TP_CALENDAR_ROOT_SELECTOR}`);
+    }
+
+    const calendarMonthYear = await inferCalendarMonthYear(calendarRoot);
+    const dayCells = calendarRoot.locator(TP_DAY_CELL_SELECTOR);
+    const dayCellCount = await dayCells.count();
+
+    for (let dayIndex = 0; dayIndex < dayCellCount && extracted.length < 80; dayIndex += 1) {
+      const dayCell = dayCells.nth(dayIndex);
+      const dayTextRaw = (await dayCell.innerText().catch(() => "")) ?? "";
+      const dayText = dayTextRaw.trim();
+      const dayClass = await getAttributeSafe(dayCell, "class");
+      const dayAttributes = {
+        dataDate: await getAttributeSafe(dayCell, "data-date"),
+        datetime: await getAttributeSafe(dayCell, "datetime"),
+        ariaLabel: await getAttributeSafe(dayCell, "aria-label"),
+        title: await getAttributeSafe(dayCell, "title"),
       };
 
-      const normalize = (value: string): string => value.replace(/\s+/g, " ").trim();
-      const snippet = (value: string): string => normalize(value).slice(0, 240);
-      const toIsoFromParts = (year: number, month: number, day: number): string | null => {
-        if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
-          return null;
-        }
-        if (month < 1 || month > 12 || day < 1 || day > 31) {
-          return null;
-        }
-        const dt = new Date(Date.UTC(year, month - 1, day));
-        if (dt.getUTCFullYear() !== year || dt.getUTCMonth() !== month - 1 || dt.getUTCDate() !== day) {
-          return null;
-        }
-        return dt.toISOString().slice(0, 10);
-      };
-      const parseDateText = (raw: string): string | null => {
-        const trimmed = raw.trim();
-        const direct = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-        if (direct) {
-          return toIsoFromParts(Number(direct[1]), Number(direct[2]), Number(direct[3]));
-        }
-        const slash = trimmed.match(/^(\d{1,2})[./-](\d{1,2})(?:[./-](\d{4}))?$/);
-        if (slash) {
-          const year = slash[3] ? Number(slash[3]) : new Date().getUTCFullYear();
-          return toIsoFromParts(year, Number(slash[2]), Number(slash[1]));
-        }
-        return null;
-      };
-      const parseDateFromAttr = (value: string | null): string | null => {
-        if (!value) {
-          return null;
-        }
-        const iso = value.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0];
-        if (iso) {
-          return parseDateText(iso);
-        }
-        const slash = value.match(/\b\d{1,2}[./-]\d{1,2}(?:[./-]\d{4})?\b/)?.[0];
-        if (slash) {
-          return parseDateText(slash);
-        }
-        return null;
-      };
-      const inferCalendarMonthYear = (): { year: number; month: number } => {
-        const monthMap: Record<string, number> = {
-          january: 1,
-          february: 2,
-          march: 3,
-          april: 4,
-          may: 5,
-          june: 6,
-          july: 7,
-          august: 8,
-          september: 9,
-          october: 10,
-          november: 11,
-          december: 12,
-          январь: 1,
-          февраля: 2,
-          март: 3,
-          апреля: 4,
-          май: 5,
-          июня: 6,
-          июля: 7,
-          августа: 8,
-          сентября: 9,
-          октября: 10,
-          ноября: 11,
-          декабря: 12,
-        };
-        const now = new Date();
-        const candidates = Array.from(
-          document.querySelectorAll("h1,h2,[class*='month' i],[data-test*='month' i],[class*='calendar' i] h3")
-        )
-          .map((el) => normalize(el.textContent ?? ""))
-          .filter(Boolean)
-          .slice(0, 20);
-        for (const text of candidates) {
-          const lower = text.toLowerCase();
-          for (const [monthName, monthNum] of Object.entries(monthMap)) {
-            if (lower.includes(monthName)) {
-              const yearMatch = lower.match(/\b(20\d{2})\b/);
-              const year = yearMatch ? Number(yearMatch[1]) : now.getUTCFullYear();
-              return { year, month: monthNum };
-            }
-          }
-        }
-        return { year: now.getUTCFullYear(), month: now.getUTCMonth() + 1 };
-      };
-      const calendarMonthYear = inferCalendarMonthYear();
-      const workoutKeywords = /(run|bike|swim|workout|strength|йога|бег|вел|плав|трениров)/i;
-      const isExcludedContext = (el: Element): boolean =>
-        Boolean(
-          el.closest(
-            "nav,aside,[role='navigation'],[class*='sidebar' i],[class*='library' i],[class*='summary' i],[class*='drawer' i],[class*='modal' i],[class*='popover' i]"
-          )
-        );
-      const getSelectorHint = (el: Element): string | null => {
-        const tag = el.tagName.toLowerCase();
-        const role = el.getAttribute("role");
-        const testId = el.getAttribute("data-testid") ?? el.getAttribute("data-test");
-        if (testId) {
-          return `${tag}[data-test=${testId}]`;
-        }
-        if (role) {
-          return `${tag}[role=${role}]`;
-        }
-        return tag;
-      };
-      const resolveDateFromContext = (node: Element): { dateIso: string | null; reason: string } => {
-        const dateAttrs = ["data-date", "date", "datetime", "aria-label", "title"];
-        let current: Element | null = node;
-        for (let depth = 0; depth < 8 && current; depth += 1) {
-          for (const attr of dateAttrs) {
-            const iso = parseDateFromAttr(current.getAttribute(attr));
-            if (iso) {
-              return { dateIso: iso, reason: `source date from ${attr}` };
-            }
-          }
-          current = current.parentElement;
-        }
+      let resolvedSourceDate: string | null = null;
+      let resolvedSourceDateReason = "source date unresolved";
 
-        const dayCell = node.closest("[role='gridcell'],[data-date],[class*='day' i],[class*='cell' i]");
-        if (dayCell) {
-          const dayLabel = normalize(
-            dayCell.querySelector("[data-day],[class*='day' i],[class*='date' i],header")?.textContent ?? ""
-          );
-          const dayNumber = dayLabel.match(/\b([12]?\d|3[01])\b/)?.[1];
-          if (dayNumber) {
-            const derived = toIsoFromParts(calendarMonthYear.year, calendarMonthYear.month, Number(dayNumber));
-            if (derived) {
-              return { dateIso: derived, reason: "source date derived from day cell header" };
-            }
-          }
-        }
-
-        const nodeText = normalize(node.textContent ?? "");
-        const dateToken =
-          nodeText.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0] ?? nodeText.match(/\b\d{1,2}[./-]\d{1,2}(?:[./-]\d{4})?\b/)?.[0] ?? null;
-        if (dateToken) {
-          const fallbackIso = parseDateText(dateToken);
-          if (fallbackIso) {
-            return { dateIso: fallbackIso, reason: "source date from card text fallback" };
-          }
-        }
-        return { dateIso: null, reason: "source date unresolved" };
-      };
-      const buildCandidateFromNode = (node: Element, fromFallback: boolean): Candidate | null => {
-        if (isExcludedContext(node) && !fromFallback) {
-          return null;
-        }
-        const text = snippet(node.textContent ?? "");
-        if (text.length < 3 || text.length > 260 || !workoutKeywords.test(text)) {
-          return null;
-        }
-        const lower = text.toLowerCase();
-        const type =
-          lower.includes("run") || lower.includes("бег")
-            ? "run"
-            : lower.includes("bike") || lower.includes("вел")
-              ? "bike"
-              : lower.includes("swim") || lower.includes("плав")
-                ? "swim"
-                : lower.includes("strength")
-                  ? "strength"
-                  : null;
-        const title =
-          normalize(node.querySelector("h1,h2,h3,strong,[class*='title' i]")?.textContent ?? "") ||
-          text.split(/[,|]/)[0]?.slice(0, 120) ||
-          null;
-        const plannedDurationRaw =
-          text.match(
-            /\b(?:\d{1,2}:\d{2}(?::\d{2})?|\d+(?:[.,]\d+)?\s*(?:h|hr|hour|hours|ч|min|mins|minute|minutes|мин|sec|secs|second|seconds|сек))\b/i
-          )?.[0] ?? null;
-        const plannedDistanceRaw = text.match(/\b\d+(?:[.,]\d+)?\s*(?:km|км|mi|mile|miles|m|м|meter|meters)\b/i)?.[0] ?? null;
-        const startTimeLocal = text.match(/\b\d{1,2}:\d{2}(?::\d{2})?\b/)?.[0] ?? null;
-        const dateResult = resolveDateFromContext(node);
-        const classHint = normalize((node as HTMLElement).className || "") || null;
-        const reasons = [dateResult.reason, fromFallback ? "candidate from fallback scraping" : "candidate from calendar card scope"];
-
-        return {
-          rawTextSnippet: text,
-          selectorHint: getSelectorHint(node),
-          classHint,
-          title: title || null,
-          type,
-          plannedDurationRaw,
-          plannedDistanceRaw,
-          startTimeLocal,
-          sourceDateRaw: dateResult.dateIso,
-          reasons,
-          fromFallback,
-        };
-      };
-
-      const primaryNodes = Array.from(
-        document.querySelectorAll(
-          "[data-test*='workout' i],[data-testid*='workout' i],[class*='workout' i],[class*='activity' i],[class*='session' i],[class*='planned' i]"
-        )
-      ).filter((node) =>
-        Boolean(node.closest("[class*='calendar' i],[data-test*='calendar' i],[data-testid*='calendar' i],[role='grid']"))
-      );
-
-      const fallbackNodes = Array.from(
-        document.querySelectorAll("[class*='calendar' i] article,[class*='calendar' i] li,[class*='calendar' i] div")
-      );
-      const unique = new Set<Element>();
-      const collected: Candidate[] = [];
-      for (const node of primaryNodes) {
-        if (unique.has(node)) {
-          continue;
-        }
-        unique.add(node);
-        const built = buildCandidateFromNode(node, false);
-        if (built) {
-          collected.push(built);
+      for (const [attrName, attrValue] of Object.entries(dayAttributes)) {
+        const dateIso = parseDateFromCalendarAttr(attrValue);
+        if (dateIso) {
+          resolvedSourceDate = dateIso;
+          resolvedSourceDateReason = `source date from day cell ${attrName}`;
+          break;
         }
       }
-      if (collected.length === 0) {
-        for (const node of fallbackNodes) {
-          if (unique.has(node) || isExcludedContext(node)) {
-            continue;
+
+      if (!resolvedSourceDate) {
+        const descendantDateLocators = dayCell.locator(
+          "[data-date],[datetime],[aria-label],[title],[class*='day' i],[class*='date' i],header,time"
+        );
+        const descendantCount = await descendantDateLocators.count();
+        for (let descendantIndex = 0; descendantIndex < descendantCount; descendantIndex += 1) {
+          const descendant = descendantDateLocators.nth(descendantIndex);
+          for (const attrName of ["data-date", "datetime", "aria-label", "title"] as const) {
+            const attrValue = await getAttributeSafe(descendant, attrName);
+            const dateIso = parseDateFromCalendarAttr(attrValue);
+            if (dateIso) {
+              resolvedSourceDate = dateIso;
+              resolvedSourceDateReason = `source date from day cell descendant ${attrName}`;
+              break;
+            }
           }
-          unique.add(node);
-          const built = buildCandidateFromNode(node, true);
-          if (built) {
-            collected.push(built);
-          }
-          if (collected.length >= 60) {
+          if (resolvedSourceDate) {
             break;
           }
         }
       }
-      return collected;
-    })
-    .catch(() => []);
+
+      const primaryCards = dayCell.locator(TP_PRIMARY_WORKOUT_CARD_WITHIN_DAY_SELECTOR);
+      const fallbackCards = dayCell.locator(TP_FALLBACK_WORKOUT_CARD_WITHIN_DAY_SELECTOR);
+      const primaryCount = await primaryCards.count();
+      const fallbackCount = await fallbackCards.count();
+
+      const dayCardTexts: string[] = [];
+      for (let cardIndex = 0; cardIndex < primaryCount; cardIndex += 1) {
+        const cardText = await getInnerTextSafe(primaryCards.nth(cardIndex));
+        if (cardText) {
+          dayCardTexts.push(cardText);
+        }
+      }
+      for (let cardIndex = 0; cardIndex < fallbackCount; cardIndex += 1) {
+        const cardText = await getInnerTextSafe(fallbackCards.nth(cardIndex));
+        if (cardText) {
+          dayCardTexts.push(cardText);
+        }
+      }
+
+      if (!resolvedSourceDate && calendarMonthYear.month && calendarMonthYear.year) {
+        let dayContextText = dayText;
+        for (const cardText of dayCardTexts) {
+          if (!cardText) {
+            continue;
+          }
+          dayContextText = dayContextText.replace(cardText, " ");
+        }
+        const derivedDayNumber = extractDayNumberCandidate(dayContextText);
+        if (derivedDayNumber !== null) {
+          const derivedDate = toIsoFromDateParts(calendarMonthYear.year, calendarMonthYear.month, derivedDayNumber);
+          if (derivedDate) {
+            resolvedSourceDate = derivedDate;
+            resolvedSourceDateReason = "source date derived from day cell number and visible calendar month/year";
+          }
+        }
+      }
+
+      if (!resolvedSourceDate && !calendarMonthYear.month) {
+        resolvedSourceDateReason = calendarMonthYear.reason;
+      }
+
+      const buildCandidate = async (
+        card: import("playwright").Locator,
+        selectorHint: string,
+        fromFallback: boolean
+      ): Promise<EvaluatedWorkoutCandidate | null> => {
+        const rawText = await getInnerTextSafe(card);
+        if (!rawText) {
+          return null;
+        }
+        const text = toTextSnippet(rawText);
+        if (!text) {
+          return null;
+        }
+        const title =
+          (await getInnerTextSafe(card.locator("h1, h2, h3, strong, [class*='title' i]").first())) ??
+          extractTitleFromCardText(text);
+        const classHint = await getAttributeSafe(card, "class");
+        const plannedDurationRaw =
+          text.match(
+            /\b(?:\d{1,2}:\d{2}(?::\d{2})?|\d+(?:[.,]\d+)?\s*(?:h|hr|hour|hours|ч|min|mins|minute|minutes|мин|sec|secs|second|seconds|сек))\b/i
+          )?.[0] ?? null;
+        const plannedDistanceRaw =
+          text.match(/\b\d+(?:[.,]\d+)?\s*(?:km|км|mi|mile|miles|m|м|meter|meters)\b/i)?.[0] ?? null;
+        const startTimeLocal = text.match(/\b\d{1,2}:\d{2}(?::\d{2})?\b/)?.[0] ?? null;
+
+        return {
+          rawTextSnippet: text,
+          selectorHint,
+          classHint,
+          title,
+          type: detectWorkoutTypeFromText(text),
+          plannedDurationRaw,
+          plannedDistanceRaw,
+          startTimeLocal,
+          sourceDateRaw: resolvedSourceDate,
+          reasons: [
+            resolvedSourceDateReason,
+            fromFallback ? "candidate from .workoutDiv fallback card root" : "candidate from primary calendar card root",
+            dayClass ? `day class: ${dayClass}` : "day class unavailable",
+          ],
+          fromFallback,
+        };
+      };
+
+      for (let cardIndex = 0; cardIndex < primaryCount && extracted.length < 80; cardIndex += 1) {
+        const candidate = await buildCandidate(
+          primaryCards.nth(cardIndex),
+          TP_PRIMARY_WORKOUT_CARD_SELECTOR,
+          false
+        );
+        if (candidate) {
+          extracted.push(candidate);
+        }
+      }
+
+      for (let cardIndex = 0; cardIndex < fallbackCount && extracted.length < 80; cardIndex += 1) {
+        const candidate = await buildCandidate(
+          fallbackCards.nth(cardIndex),
+          TP_FALLBACK_WORKOUT_CARD_SELECTOR,
+          true
+        );
+        if (candidate) {
+          extracted.push(candidate);
+        }
+      }
+    }
+  } catch (error) {
+    extractionError = `calendar extraction failed: ${toShortErrorMessage(error)}`;
+    parseWarnings.push(extractionError);
+  }
 
   const seen = new Set<string>();
-  return extracted
+  const candidates = extracted
     .map((candidate) => {
       const dateIso = candidate.sourceDateRaw ? normalizeDateCandidate(candidate.sourceDateRaw) : null;
       const distanceFromTodayDays = dateIso ? dateDistanceDays(nowIso, dateIso) : null;
@@ -1208,6 +1539,23 @@ async function extractWorkoutCandidatesFromPage(
     })
     .slice(0, 80)
     .sort((left, right) => right.rawScore - left.rawScore);
+
+  return {
+    candidates,
+    domDebug:
+      domDebugEnabled || Boolean(extractionError)
+        ? {
+            enabled: domDebugEnabled,
+            calendarRootClass: beforeExtractSnapshot.calendarRootClass,
+            selectorCounts: beforeExtractSnapshot.selectorCounts,
+            checkpoints,
+            cardSnippets: beforeExtractSnapshot.cardSnippets,
+            extractionError,
+          }
+        : null,
+    parseWarnings,
+    extractionError,
+  };
 }
 
 async function extractVisibleTrainingPeaksAthleteName(page: import("playwright").Page): Promise<string | null> {
@@ -1295,6 +1643,7 @@ function evaluateDryRunOutcome(input: {
     trainingPeaksContextLikely: boolean;
   };
   candidates: RawWorkoutCandidate[];
+  extraction: WorkoutExtractionResult;
   identityCheck: DryRunIdentityCheck;
 }): DryRunEvaluation {
   const parseWarnings: string[] = [];
@@ -1315,7 +1664,8 @@ function evaluateDryRunOutcome(input: {
     loginRequired: input.pageMeta.loginRequired,
     athleteReachable: input.pageMeta.athletePageLikelyReachable,
     trainingPeaksContextOk: input.pageMeta.trainingPeaksContextLikely,
-    parseWarnings: [...parseWarnings, ...input.identityCheck.warnings],
+    parseWarnings: [...parseWarnings, ...input.extraction.parseWarnings, ...input.identityCheck.warnings],
+    domDebug: input.extraction.domDebug,
   };
 
   const canExecuteReasons: string[] = [];
@@ -1359,6 +1709,21 @@ function evaluateDryRunOutcome(input: {
     };
   }
 
+  if (input.extraction.extractionError) {
+    return {
+      dryRunResult: "failed",
+      resolvedDates: { sourceDate: null, targetDate, timezone },
+      candidate: null,
+      candidateAlternativesCount: 0,
+      confidence: 0,
+      canExecute: false,
+      canExecuteReasons: ["Не удалось прочитать карточки тренировок из календаря"],
+      diagnostics,
+      identityCheck: input.identityCheck,
+      debugCandidatesTopN: [],
+    };
+  }
+
   if (input.candidates.length === 0) {
     return {
       dryRunResult: "not_found",
@@ -1367,7 +1732,7 @@ function evaluateDryRunOutcome(input: {
       candidateAlternativesCount: 0,
       confidence: 0.2,
       canExecute: false,
-      canExecuteReasons: ["no workout candidates found on page"],
+      canExecuteReasons: ["Карточки тренировок не найдены в календаре"],
       diagnostics,
       identityCheck: input.identityCheck,
       debugCandidatesTopN: [],
@@ -1386,7 +1751,7 @@ function evaluateDryRunOutcome(input: {
   const safeCandidates = input.candidates.filter(
     (candidate) => !candidate.fromFallback && Boolean(candidate.dateIso) && candidate.rawScore >= 0.75
   );
-  const alternativesCount = Math.max(0, plausibleCandidates.length - 1);
+  const alternativesCount = Math.max(0, input.candidates.length - 1);
 
   const candidate: DryRunCandidate = {
     title: top.title,
@@ -1555,12 +1920,13 @@ async function runDryRunInspection(claimed: ClaimedAction, runId: string): Promi
     const resolvedTargetDate = parsedPayload?.target
       ? resolveTargetDateFromPayload(parsedPayload.target).targetDate
       : null;
-    const extractedCandidates = await extractWorkoutCandidatesFromPage(page, resolvedTargetDate);
+    const extraction = await extractWorkoutCandidatesFromPage(page, resolvedTargetDate);
     const dryRunEvaluation = evaluateDryRunOutcome({
       action: claimed.action,
       student,
       pageMeta: pageAssessment,
-      candidates: extractedCandidates,
+      candidates: extraction.candidates,
+      extraction,
       identityCheck,
     });
 
