@@ -35,6 +35,7 @@ type TrainingPeaksActionRow = {
   raw_text: string;
   parsed_payload: unknown;
   coach_chat_id: string | null;
+  decided_by_chat_id: string | null;
   execution_status: ActionExecutionStatus;
   execution_mode: ActionExecutionMode | null;
 };
@@ -203,6 +204,16 @@ function getTargetSummary(parsedPayload: unknown): string {
   }
 
   return "target: unknown";
+}
+
+function resolveDryRunNotificationChatId(action: TrainingPeaksActionRow): string | null {
+  const chatId = action.coach_chat_id ?? action.decided_by_chat_id;
+  if (!chatId) {
+    console.warn(
+      `TrainingPeaks dry-run: skipping coach Telegram notification — no chat id (coach_chat_id and decided_by_chat_id both null) for action ${action.id}, status=${action.status}`
+    );
+  }
+  return chatId;
 }
 
 async function sendTelegramText(chatId: string, text: string): Promise<void> {
@@ -600,7 +611,7 @@ async function main(): Promise<void> {
     });
 
     await notifyCoachDryRunResult({
-      chatId: claimed.action.coach_chat_id,
+      chatId: resolveDryRunNotificationChatId(claimed.action),
       action: claimed.action,
       studentName,
       statusText: "dry-run completed",
@@ -623,7 +634,7 @@ async function main(): Promise<void> {
     });
 
     await notifyCoachDryRunResult({
-      chatId: claimed.action.coach_chat_id,
+      chatId: resolveDryRunNotificationChatId(claimed.action),
       action: claimed.action,
       studentName,
       statusText: "dry-run failed",
