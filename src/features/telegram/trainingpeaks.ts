@@ -5,6 +5,7 @@ import type {
 } from "@/features/telegram/parser";
 import {
   addTrainingPeaksStudentFromCommand,
+  approveTrainingPeaksAction,
   cancelTrainingPeaksWeeklyRun,
   consumeTrainingPeaksStudentTelegramLinkCode,
   createTrainingPeaksMoveWorkoutActionFromTelegram,
@@ -26,6 +27,7 @@ import {
   getTrainingPeaksWeeklyReportByInternalId,
   linkTrainingPeaksStudentToBusinessChat,
   listRecentTrainingPeaksBusinessChats,
+  rejectTrainingPeaksAction,
   TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
   type RequestTrainingPeaksWeeklyRunResult,
   requestTrainingPeaksWeeklyRun,
@@ -71,6 +73,8 @@ const TP_CALLBACK_STUDENT_USERNAME_PREFIX = "tp:su:";
 const TP_CALLBACK_STUDENT_LINK_CODE_PREFIX = "tp:sk:";
 const TP_CALLBACK_STUDENT_SELECT_CHAT_PREFIX = "tp:sc:";
 const TP_CALLBACK_STUDENT_TEST_PREFIX = "tp:st:";
+const TP_CALLBACK_ACTION_APPROVE_PREFIX = "tp:ta:a:";
+const TP_CALLBACK_ACTION_REJECT_PREFIX = "tp:ta:r:";
 const TP_REPLY_BUTTON_MENU = "🏠 Меню";
 const TP_REPLY_BUTTON_STUDENTS = "👥 Ученики";
 const TP_REPLY_BUTTON_ADD = "➕ Добавить";
@@ -166,6 +170,8 @@ type ParsedTrainingPeaksCallback =
   | { kind: "student_test"; studentId: string }
   | { kind: "report_send"; reportId: string }
   | { kind: "report_skip"; reportId: string }
+  | { kind: "action_approve"; actionId: string }
+  | { kind: "action_reject"; actionId: string }
   | { kind: "week_menu" }
   | { kind: "week_last" }
   | { kind: "week_current" }
@@ -1616,10 +1622,21 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
   for (const [prefix, kind] of [
     [TP_CALLBACK_REPORT_SEND_PREFIX, "report_send"],
     [TP_CALLBACK_REPORT_SKIP_PREFIX, "report_skip"],
+    [TP_CALLBACK_ACTION_APPROVE_PREFIX, "action_approve"],
+    [TP_CALLBACK_ACTION_REJECT_PREFIX, "action_reject"],
   ] as const) {
     if (data.startsWith(prefix)) {
-      const reportId = data.slice(prefix.length).trim();
-      return reportId ? { kind, reportId } : null;
+      const id = data.slice(prefix.length).trim();
+
+      if (!id) {
+        return null;
+      }
+
+      if (kind === "report_send" || kind === "report_skip") {
+        return { kind, reportId: id };
+      }
+
+      return { kind, actionId: id };
     }
   }
 
@@ -2518,6 +2535,36 @@ async function notifyCoachChats(text: string): Promise<void> {
   );
 }
 
+async function notifyCoachChatsWithMarkup(
+  text: string,
+  replyMarkup: TelegramInlineKeyboardMarkup
+): Promise<void> {
+  const coachChatIds = Array.from(getCoachChatIds());
+
+  if (coachChatIds.length === 0) {
+    return;
+  }
+
+  await Promise.allSettled(
+    coachChatIds.map(async (chatId) => {
+      await sendTelegramMessage(chatId, text, {
+        replyMarkup,
+      });
+    })
+  );
+}
+
+function getTrainingPeaksActionDecisionMarkup(actionId: string): TelegramInlineKeyboardMarkup {
+  return createInlineKeyboardMarkup([
+    [createMenuButton("✅ Одобрить", `${TP_CALLBACK_ACTION_APPROVE_PREFIX}${actionId}`)],
+    [createMenuButton("❌ Отклонить", `${TP_CALLBACK_ACTION_REJECT_PREFIX}${actionId}`)],
+  ]);
+}
+
+function getTrainingPeaksActionResolvedMarkup(): TelegramInlineKeyboardMarkup {
+  return createInlineKeyboardMarkup([]);
+}
+
 export async function handleTrainingPeaksTelegramBusinessMessage(
   message: Pick<
     TelegramMessage,
@@ -2553,7 +2600,7 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
     }
 
     const summary = formatTrainingPeaksMoveWorkoutActionSummary(moveActionResult.parsed);
-    await notifyCoachChats(
+    await notifyCoachChatsWithMarkup(
       [
         "Новая заявка TrainingPeaks",
         `Ученик: ${moveActionResult.student.studentName}`,
@@ -2561,7 +2608,8 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
         `Действие: ${summary}`,
         "Статус: waiting for coach review",
         `Action ID: ${moveActionResult.action.id}`,
-      ].join("\n")
+      ].join("\n"),
+      getTrainingPeaksActionDecisionMarkup(moveActionResult.action.id)
     );
     return;
   }
@@ -2776,6 +2824,63 @@ async function handleTrainingPeaksStudentTestMessageCallback(
     parsedMessage.messageId,
     `Не удалось отправить тестовое сообщение: ${result.errorMessage}.`,
     getStudentTelegramLinkSuccessMarkup(result.studentId)
+  );
+}
+
+async function handleTrainingPeaksActionDecisionCallback(
+  parsedMessage: ParsedTelegramCallbackUpdate,
+  decision: "approve" | "reject",
+  actionId: string
+): Promise<void> {
+  const decisionResult =
+    decision === "approve"
+      ? await approveTrainingPeaksAction({
+          actionId,
+          decidedByChatId: String(parsedMessage.chatId),
+          decidedByUserId: parsedMessage.userId === null ? null : String(parsedMessage.userId),
+          decisionMessageId: String(parsedMessage.messageId),
+        })
+      : await rejectTrainingPeaksAction({
+          actionId,
+          decidedByChatId: String(parsedMessage.chatId),
+          decidedByUserId: parsedMessage.userId === null ? null : String(parsedMessage.userId),
+          decisionMessageId: String(parsedMessage.messageId),
+        });
+
+  if (decisionResult.kind === "not_found") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      "Заявка не найдена или уже недоступна.",
+      getTrainingPeaksActionResolvedMarkup()
+    );
+    return;
+  }
+
+  if (decisionResult.kind === "already_decided") {
+    const alreadyDecidedText =
+      decisionResult.action.status === "approved"
+        ? "Эта заявка уже одобрена. Автоматическое выполнение ещё не подключено."
+        : "Эта заявка уже отклонена. Ничего не изменено в TrainingPeaks.";
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      alreadyDecidedText,
+      getTrainingPeaksActionResolvedMarkup()
+    );
+    return;
+  }
+
+  const decisionText =
+    decision === "approve"
+      ? "Одобрено. Автоматическое выполнение ещё не подключено."
+      : "Отклонено. Ничего не изменено в TrainingPeaks.";
+
+  await editTrainingPeaksMenuMessage(
+    parsedMessage.chatId,
+    parsedMessage.messageId,
+    decisionText,
+    getTrainingPeaksActionResolvedMarkup()
   );
 }
 
@@ -4027,6 +4132,16 @@ export async function handleTrainingPeaksTelegramCallback(
 
     if (callback.kind === "report_skip") {
       await handleTrainingPeaksSkipReportCallback(parsedMessage, callback.reportId);
+      return "handled";
+    }
+
+    if (callback.kind === "action_approve") {
+      await handleTrainingPeaksActionDecisionCallback(parsedMessage, "approve", callback.actionId);
+      return "handled";
+    }
+
+    if (callback.kind === "action_reject") {
+      await handleTrainingPeaksActionDecisionCallback(parsedMessage, "reject", callback.actionId);
       return "handled";
     }
 

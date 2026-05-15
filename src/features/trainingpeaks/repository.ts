@@ -155,7 +155,7 @@ type TrainingPeaksWeekRow = {
 export type TrainingPeaksJobType = "weekly_reports";
 export type TrainingPeaksJobStatus = "queued" | "running" | "completed" | "failed";
 export type TrainingPeaksActionType = "move_workout";
-export type TrainingPeaksActionStatus = "pending_coach";
+export type TrainingPeaksActionStatus = "pending_coach" | "approved" | "rejected";
 
 export type TrainingPeaksJob = {
   id: string;
@@ -201,6 +201,11 @@ export type TrainingPeaksAction = {
   parsedPayload: unknown;
   confidence: string | null;
   coachChatId: string | null;
+  approvedAt: string | null;
+  rejectedAt: string | null;
+  decidedByChatId: string | null;
+  decidedByUserId: string | null;
+  decisionMessageId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -217,6 +222,11 @@ type TrainingPeaksActionRow = {
   parsed_payload: unknown;
   confidence: string | null;
   coach_chat_id: string | null;
+  approved_at: string | null;
+  rejected_at: string | null;
+  decided_by_chat_id: string | null;
+  decided_by_user_id: string | null;
+  decision_message_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -240,6 +250,26 @@ export type CreateTrainingPeaksActionInput = {
   confidence?: string | null;
   coachChatId?: string | null;
 };
+
+type DecideTrainingPeaksActionInput = {
+  actionId: string;
+  decidedByChatId: string;
+  decidedByUserId?: string | null;
+  decisionMessageId?: string | null;
+};
+
+export type DecideTrainingPeaksActionResult =
+  | {
+      kind: "updated";
+      action: TrainingPeaksAction;
+    }
+  | {
+      kind: "already_decided";
+      action: TrainingPeaksAction;
+    }
+  | {
+      kind: "not_found";
+    };
 
 export type TrainingPeaksBusinessChat = {
   id: string;
@@ -414,6 +444,11 @@ function mapTrainingPeaksActionRow(row: TrainingPeaksActionRow): TrainingPeaksAc
     parsedPayload: row.parsed_payload,
     confidence: row.confidence,
     coachChatId: row.coach_chat_id,
+    approvedAt: row.approved_at,
+    rejectedAt: row.rejected_at,
+    decidedByChatId: row.decided_by_chat_id,
+    decidedByUserId: row.decided_by_user_id,
+    decisionMessageId: row.decision_message_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1454,6 +1489,72 @@ export async function createTrainingPeaksAction(
   }
 
   return mapTrainingPeaksActionRow(data as TrainingPeaksActionRow);
+}
+
+async function decideTrainingPeaksActionStatus(
+  input: DecideTrainingPeaksActionInput,
+  nextStatus: Extract<TrainingPeaksActionStatus, "approved" | "rejected">
+): Promise<DecideTrainingPeaksActionResult> {
+  const supabase = createSupabaseServerClient();
+  const nowIso = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("trainingpeaks_actions")
+    .update({
+      status: nextStatus,
+      approved_at: nextStatus === "approved" ? nowIso : null,
+      rejected_at: nextStatus === "rejected" ? nowIso : null,
+      decided_by_chat_id: input.decidedByChatId,
+      decided_by_user_id: input.decidedByUserId ?? null,
+      decision_message_id: input.decisionMessageId ?? null,
+    })
+    .eq("id", input.actionId)
+    .eq("status", "pending_coach")
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to ${nextStatus} TrainingPeaks action ${input.actionId}: ${error.message}`);
+  }
+
+  if (data) {
+    return {
+      kind: "updated",
+      action: mapTrainingPeaksActionRow(data as TrainingPeaksActionRow),
+    };
+  }
+
+  const { data: existing, error: existingError } = await supabase
+    .from("trainingpeaks_actions")
+    .select("*")
+    .eq("id", input.actionId)
+    .maybeSingle();
+
+  if (existingError) {
+    throw new Error(
+      `Failed to check decision state for TrainingPeaks action ${input.actionId}: ${existingError.message}`
+    );
+  }
+
+  if (!existing) {
+    return { kind: "not_found" };
+  }
+
+  return {
+    kind: "already_decided",
+    action: mapTrainingPeaksActionRow(existing as TrainingPeaksActionRow),
+  };
+}
+
+export async function approveTrainingPeaksAction(
+  input: DecideTrainingPeaksActionInput
+): Promise<DecideTrainingPeaksActionResult> {
+  return decideTrainingPeaksActionStatus(input, "approved");
+}
+
+export async function rejectTrainingPeaksAction(
+  input: DecideTrainingPeaksActionInput
+): Promise<DecideTrainingPeaksActionResult> {
+  return decideTrainingPeaksActionStatus(input, "rejected");
 }
 
 export async function getTrainingPeaksJobById(jobId: string): Promise<TrainingPeaksJob | null> {

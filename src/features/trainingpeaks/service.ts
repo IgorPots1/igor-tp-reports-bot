@@ -1,4 +1,5 @@
 import {
+  approveTrainingPeaksAction as approveTrainingPeaksActionInRepository,
   approveTrainingPeaksWeeklyReportIfDraft,
   cancelQueuedTrainingPeaksJob,
   claimTrainingPeaksWeeklyReportForSend as claimTrainingPeaksWeeklyReportForSendInRepository,
@@ -29,8 +30,10 @@ import {
   listTrainingPeaksStudents,
   listTrainingPeaksStudentsIncludingArchived,
   markTrainingPeaksStudentTelegramLinkCodeUsed,
+  rejectTrainingPeaksAction as rejectTrainingPeaksActionInRepository,
   setTrainingPeaksStudentWeeklyReportsEnabledById,
   TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
+  type DecideTrainingPeaksActionResult,
   type TrainingPeaksBusinessChat,
   type TrainingPeaksAction,
   TrainingPeaksJobConflictError,
@@ -220,6 +223,15 @@ export type CreateTrainingPeaksMoveWorkoutActionFromTelegramResult =
       ok: false;
       reason: "student_not_found" | "not_move_request" | "no_target_day" | "ambiguous_target_day" | "empty_text";
     };
+
+export type DecideTrainingPeaksActionInput = {
+  actionId: string;
+  decidedByChatId: string;
+  decidedByUserId?: string | null;
+  decisionMessageId?: string | null;
+};
+
+export type DecideTrainingPeaksActionResultSnapshot = DecideTrainingPeaksActionResult;
 
 export type TrainingPeaksBusinessChatSnapshot = TrainingPeaksBusinessChat;
 export type TrainingPeaksStudentTelegramLinkCodeSnapshot = TrainingPeaksStudentTelegramLinkCode;
@@ -1361,6 +1373,28 @@ export function formatTrainingPeaksMoveWorkoutActionSummary(
   payload: ParsedTrainingPeaksMoveWorkoutPayload
 ): string {
   return `move_workout ${formatTrainingPeaksMoveWorkoutTargetSummary(payload.target)}`;
+}
+
+export async function approveTrainingPeaksAction(
+  input: DecideTrainingPeaksActionInput
+): Promise<DecideTrainingPeaksActionResultSnapshot> {
+  return approveTrainingPeaksActionInRepository({
+    actionId: input.actionId,
+    decidedByChatId: input.decidedByChatId,
+    decidedByUserId: input.decidedByUserId ?? null,
+    decisionMessageId: input.decisionMessageId ?? null,
+  });
+}
+
+export async function rejectTrainingPeaksAction(
+  input: DecideTrainingPeaksActionInput
+): Promise<DecideTrainingPeaksActionResultSnapshot> {
+  return rejectTrainingPeaksActionInRepository({
+    actionId: input.actionId,
+    decidedByChatId: input.decidedByChatId,
+    decidedByUserId: input.decidedByUserId ?? null,
+    decisionMessageId: input.decisionMessageId ?? null,
+  });
 }
 
 export async function recoverStaleTrainingPeaksJobs(timeoutMinutes: number): Promise<number> {
