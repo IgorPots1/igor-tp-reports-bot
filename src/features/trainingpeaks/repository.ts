@@ -154,6 +154,8 @@ type TrainingPeaksWeekRow = {
 
 export type TrainingPeaksJobType = "weekly_reports";
 export type TrainingPeaksJobStatus = "queued" | "running" | "completed" | "failed";
+export type TrainingPeaksActionType = "move_workout";
+export type TrainingPeaksActionStatus = "pending_coach";
 
 export type TrainingPeaksJob = {
   id: string;
@@ -187,11 +189,56 @@ type TrainingPeaksJobRow = {
   updated_at: string;
 };
 
+export type TrainingPeaksAction = {
+  id: string;
+  studentId: string | null;
+  actionType: TrainingPeaksActionType;
+  status: TrainingPeaksActionStatus;
+  sourceChatId: string;
+  sourceMessageId: string;
+  sourceUserId: string | null;
+  rawText: string;
+  parsedPayload: unknown;
+  confidence: string | null;
+  coachChatId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type TrainingPeaksActionRow = {
+  id: string;
+  student_id: string | null;
+  action_type: TrainingPeaksActionType;
+  status: TrainingPeaksActionStatus;
+  source_chat_id: string;
+  source_message_id: string;
+  source_user_id: string | null;
+  raw_text: string;
+  parsed_payload: unknown;
+  confidence: string | null;
+  coach_chat_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type CreateTrainingPeaksWeeklyJobInput = {
   weekFrom: string;
   weekTo: string;
   requestedByChatId?: string | null;
   requestedByUserId?: string | null;
+};
+
+export type CreateTrainingPeaksActionInput = {
+  studentId?: string | null;
+  actionType?: TrainingPeaksActionType;
+  status?: TrainingPeaksActionStatus;
+  sourceChatId: string;
+  sourceMessageId: string;
+  sourceUserId?: string | null;
+  rawText: string;
+  parsedPayload: unknown;
+  confidence?: string | null;
+  coachChatId?: string | null;
 };
 
 export type TrainingPeaksBusinessChat = {
@@ -350,6 +397,24 @@ function mapTrainingPeaksJobRow(row: TrainingPeaksJobRow): TrainingPeaksJob {
     createdAt: row.created_at,
     startedAt: row.started_at,
     finishedAt: row.finished_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapTrainingPeaksActionRow(row: TrainingPeaksActionRow): TrainingPeaksAction {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    actionType: row.action_type,
+    status: row.status,
+    sourceChatId: row.source_chat_id,
+    sourceMessageId: row.source_message_id,
+    sourceUserId: row.source_user_id,
+    rawText: row.raw_text,
+    parsedPayload: row.parsed_payload,
+    confidence: row.confidence,
+    coachChatId: row.coach_chat_id,
+    createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
@@ -569,6 +634,36 @@ export async function getTrainingPeaksStudentByStudentId(
 
   if (error) {
     throw new Error(`Failed to get TrainingPeaks student by student_id ${studentId}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
+}
+
+export async function getTrainingPeaksStudentByTelegramChatId(
+  telegramChatId: string
+): Promise<TrainingPeaksStudent | null> {
+  const normalizedChatId = telegramChatId.trim();
+
+  if (!normalizedChatId) {
+    return null;
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_students")
+    .select("*")
+    .eq("telegram_chat_id", normalizedChatId)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to get TrainingPeaks student by telegram_chat_id ${normalizedChatId}: ${error.message}`
+    );
   }
 
   if (!data) {
@@ -1331,6 +1426,34 @@ export async function createTrainingPeaksWeeklyJob(
   }
 
   return mapTrainingPeaksJobRow(data as TrainingPeaksJobRow);
+}
+
+export async function createTrainingPeaksAction(
+  input: CreateTrainingPeaksActionInput
+): Promise<TrainingPeaksAction> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_actions")
+    .insert({
+      student_id: input.studentId ?? null,
+      action_type: input.actionType ?? "move_workout",
+      status: input.status ?? "pending_coach",
+      source_chat_id: input.sourceChatId,
+      source_message_id: input.sourceMessageId,
+      source_user_id: input.sourceUserId ?? null,
+      raw_text: input.rawText,
+      parsed_payload: input.parsedPayload,
+      confidence: input.confidence ?? null,
+      coach_chat_id: input.coachChatId ?? null,
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to create TrainingPeaks action: ${error.message}`);
+  }
+
+  return mapTrainingPeaksActionRow(data as TrainingPeaksActionRow);
 }
 
 export async function getTrainingPeaksJobById(jobId: string): Promise<TrainingPeaksJob | null> {

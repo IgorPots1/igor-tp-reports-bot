@@ -2,6 +2,7 @@ import {
   approveTrainingPeaksWeeklyReportIfDraft,
   cancelQueuedTrainingPeaksJob,
   claimTrainingPeaksWeeklyReportForSend as claimTrainingPeaksWeeklyReportForSendInRepository,
+  createTrainingPeaksAction as createTrainingPeaksActionInRepository,
   createTrainingPeaksWeeklyJob,
   deleteTrainingPeaksOrphanReportsForWeek as deleteTrainingPeaksOrphanReportsForWeekInRepository,
   deleteTrainingPeaksWeeklyReportById,
@@ -14,6 +15,7 @@ import {
   getTrainingPeaksBusinessChatById,
   getTrainingPeaksStudentById as getTrainingPeaksStudentByIdFromRepository,
   getTrainingPeaksStudentByStudentId as getTrainingPeaksStudentByStudentIdFromRepository,
+  getTrainingPeaksStudentByTelegramChatId as getTrainingPeaksStudentByTelegramChatIdFromRepository,
   getTrainingPeaksWeeklyReportById,
   recoverStaleTrainingPeaksRunningJobs,
   insertTrainingPeaksStudent,
@@ -30,6 +32,7 @@ import {
   setTrainingPeaksStudentWeeklyReportsEnabledById,
   TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
   type TrainingPeaksBusinessChat,
+  type TrainingPeaksAction,
   TrainingPeaksJobConflictError,
   type TrainingPeaksStudentTelegramLinkCode,
   TrainingPeaksTelegramLinkCodeConflictError,
@@ -181,6 +184,43 @@ export type TrainingPeaksJobRequester = {
   userId: number | string | null;
 };
 
+export type TrainingPeaksMoveWorkoutTarget =
+  | { kind: "relative_day"; value: "tomorrow" | "day_after_tomorrow"; sourceText: string }
+  | {
+      kind: "weekday";
+      value: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
+      sourceText: string;
+    };
+
+export type ParsedTrainingPeaksMoveWorkoutPayload = {
+  actionType: "move_workout";
+  target: TrainingPeaksMoveWorkoutTarget;
+};
+
+export type ParseTrainingPeaksMoveWorkoutResult =
+  | { ok: true; payload: ParsedTrainingPeaksMoveWorkoutPayload; confidence: "high" }
+  | { ok: false; reason: "not_move_request" | "no_target_day" | "ambiguous_target_day" };
+
+export type CreateTrainingPeaksMoveWorkoutActionFromTelegramInput = {
+  chatId: string;
+  messageId: string;
+  userId?: string | null;
+  text: string;
+  coachChatId?: string | null;
+};
+
+export type CreateTrainingPeaksMoveWorkoutActionFromTelegramResult =
+  | {
+      ok: true;
+      action: TrainingPeaksAction;
+      student: TrainingPeaksStudent;
+      parsed: ParsedTrainingPeaksMoveWorkoutPayload;
+    }
+  | {
+      ok: false;
+      reason: "student_not_found" | "not_move_request" | "no_target_day" | "ambiguous_target_day" | "empty_text";
+    };
+
 export type TrainingPeaksBusinessChatSnapshot = TrainingPeaksBusinessChat;
 export type TrainingPeaksStudentTelegramLinkCodeSnapshot = TrainingPeaksStudentTelegramLinkCode;
 
@@ -235,6 +275,8 @@ const TP_RUN_WEEK_COMMAND_PATTERN = /^\/tp_run_week(?:@\w+)?(?:\s+|$)/;
 const TP_TELEGRAM_LINK_CODE_PATTERN = /\b[A-Z0-9]{2,12}-\d{3,6}\b/gi;
 const TP_TELEGRAM_LINK_CODE_DEFAULT_TTL_HOURS = 24;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const TP_MOVE_WORKOUT_VERBS = ["перенеси", "перенести", "передвинь", "сдвинь"];
+const TP_MOVE_WORKOUT_OBJECTS = ["тренировку", "тренировка", "бег", "занятие", "занятия"];
 const TP_RUN_WEEK_USAGE_MESSAGE = [
   "Напиши так:",
   "/tp_run_week last",
@@ -244,6 +286,122 @@ const TP_RUN_WEEK_USAGE_MESSAGE = [
 
 function normalizeStudentQuery(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("ru");
+}
+
+function normalizeRussianText(value: string): string {
+  return value
+    .toLocaleLowerCase("ru")
+    .replace(/ё/g, "е")
+    .replace(/[.,!?;:()"'`]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function parseTrainingPeaksMoveWorkoutRequest(
+  rawText: string
+): ParseTrainingPeaksMoveWorkoutResult {
+  const normalized = normalizeRussianText(rawText);
+
+  if (!normalized) {
+    return { ok: false, reason: "not_move_request" };
+  }
+
+  const tokens = normalized.split(" ").filter(Boolean);
+  const hasMoveVerb = TP_MOVE_WORKOUT_VERBS.some((verb) => tokens.includes(verb));
+  const hasWorkoutObject = TP_MOVE_WORKOUT_OBJECTS.some((item) => tokens.includes(item));
+
+  if (!hasMoveVerb || !hasWorkoutObject) {
+    return { ok: false, reason: "not_move_request" };
+  }
+
+  const dayCandidateRegexes: { regex: RegExp; target: TrainingPeaksMoveWorkoutTarget }[] = [
+    {
+      regex: /\bпослезавтра\b/,
+      target: { kind: "relative_day", value: "day_after_tomorrow", sourceText: "послезавтра" },
+    },
+    {
+      regex: /\bзавтра\b/,
+      target: { kind: "relative_day", value: "tomorrow", sourceText: "завтра" },
+    },
+    {
+      regex: /\bпонедельник(?:а|у|ом|е)?\b/,
+      target: { kind: "weekday", value: "monday", sourceText: "понедельник" },
+    },
+    {
+      regex: /\bвторник(?:а|у|ом|е)?\b/,
+      target: { kind: "weekday", value: "tuesday", sourceText: "вторник" },
+    },
+    {
+      regex: /\bсред(?:а|у|е|ой)\b/,
+      target: { kind: "weekday", value: "wednesday", sourceText: "среда" },
+    },
+    {
+      regex: /\bчетверг(?:а|у|ом|е)?\b/,
+      target: { kind: "weekday", value: "thursday", sourceText: "четверг" },
+    },
+    {
+      regex: /\bпятниц(?:а|у|е|ей)\b/,
+      target: { kind: "weekday", value: "friday", sourceText: "пятница" },
+    },
+    {
+      regex: /\bсуббот(?:а|у|е|ой)\b/,
+      target: { kind: "weekday", value: "saturday", sourceText: "суббота" },
+    },
+    {
+      regex: /\bвоскресень(?:е|я|ю|ем)\b/,
+      target: { kind: "weekday", value: "sunday", sourceText: "воскресенье" },
+    },
+  ];
+
+  const matchedTargets = dayCandidateRegexes
+    .filter(({ regex }) => regex.test(normalized))
+    .map(({ target }) => target);
+
+  if (matchedTargets.length === 0) {
+    return { ok: false, reason: "no_target_day" };
+  }
+
+  const uniqueTargets = new Map<string, TrainingPeaksMoveWorkoutTarget>();
+  for (const target of matchedTargets) {
+    const key = `${target.kind}:${target.value}`;
+    if (!uniqueTargets.has(key)) {
+      uniqueTargets.set(key, target);
+    }
+  }
+
+  if (uniqueTargets.size !== 1) {
+    return { ok: false, reason: "ambiguous_target_day" };
+  }
+
+  const target = Array.from(uniqueTargets.values())[0]!;
+  return {
+    ok: true,
+    payload: {
+      actionType: "move_workout",
+      target,
+    },
+    confidence: "high",
+  };
+}
+
+function formatTrainingPeaksMoveWorkoutTargetSummary(target: TrainingPeaksMoveWorkoutTarget): string {
+  if (target.kind === "relative_day") {
+    return target.value === "tomorrow" ? "на завтра" : "на послезавтра";
+  }
+
+  const weekdayLabelByValue: Record<TrainingPeaksMoveWorkoutTarget["value"], string> = {
+    monday: "на понедельник",
+    tuesday: "на вторник",
+    wednesday: "на среду",
+    thursday: "на четверг",
+    friday: "на пятницу",
+    saturday: "на субботу",
+    sunday: "на воскресенье",
+    tomorrow: "на завтра",
+    day_after_tomorrow: "на послезавтра",
+  };
+
+  return weekdayLabelByValue[target.value];
 }
 
 function getTrainingPeaksTelegramLinkCodePrefix(studentName: string): string {
@@ -1157,6 +1315,52 @@ export async function consumeTrainingPeaksStudentTelegramLinkCode(
     kind: "no_match",
     code: candidateCodes[0]!,
   };
+}
+
+export async function createTrainingPeaksMoveWorkoutActionFromTelegram(
+  input: CreateTrainingPeaksMoveWorkoutActionFromTelegramInput
+): Promise<CreateTrainingPeaksMoveWorkoutActionFromTelegramResult> {
+  const trimmedText = input.text.trim();
+
+  if (!trimmedText) {
+    return { ok: false, reason: "empty_text" };
+  }
+
+  const student = await getTrainingPeaksStudentByTelegramChatIdFromRepository(input.chatId);
+  if (!student) {
+    return { ok: false, reason: "student_not_found" };
+  }
+
+  const parsed = parseTrainingPeaksMoveWorkoutRequest(trimmedText);
+  if (!parsed.ok) {
+    return { ok: false, reason: parsed.reason };
+  }
+
+  const action = await createTrainingPeaksActionInRepository({
+    studentId: student.id,
+    actionType: "move_workout",
+    status: "pending_coach",
+    sourceChatId: input.chatId,
+    sourceMessageId: input.messageId,
+    sourceUserId: input.userId ?? null,
+    rawText: trimmedText,
+    parsedPayload: parsed.payload,
+    confidence: parsed.confidence,
+    coachChatId: input.coachChatId ?? null,
+  });
+
+  return {
+    ok: true,
+    action,
+    student,
+    parsed: parsed.payload,
+  };
+}
+
+export function formatTrainingPeaksMoveWorkoutActionSummary(
+  payload: ParsedTrainingPeaksMoveWorkoutPayload
+): string {
+  return `move_workout ${formatTrainingPeaksMoveWorkoutTargetSummary(payload.target)}`;
 }
 
 export async function recoverStaleTrainingPeaksJobs(timeoutMinutes: number): Promise<number> {

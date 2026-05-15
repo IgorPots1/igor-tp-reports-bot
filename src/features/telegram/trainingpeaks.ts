@@ -7,6 +7,7 @@ import {
   addTrainingPeaksStudentFromCommand,
   cancelTrainingPeaksWeeklyRun,
   consumeTrainingPeaksStudentTelegramLinkCode,
+  createTrainingPeaksMoveWorkoutActionFromTelegram,
   createTrainingPeaksStudentTelegramLinkCode,
   disableTrainingPeaksStudent,
   disableTrainingPeaksStudentByInternalId,
@@ -31,6 +32,7 @@ import {
   updateTrainingPeaksWeeklyReportStateByInternalId,
   updateTrainingPeaksStudentTelegramContact,
   upsertTrainingPeaksBusinessChatFromMessage,
+  formatTrainingPeaksMoveWorkoutActionSummary,
 } from "@/features/trainingpeaks/service";
 import { sendTrainingPeaksWeeklyReportToStudent } from "@/features/trainingpeaks/report-delivery";
 import {
@@ -2517,7 +2519,10 @@ async function notifyCoachChats(text: string): Promise<void> {
 }
 
 export async function handleTrainingPeaksTelegramBusinessMessage(
-  message: Pick<TelegramMessage, "business_connection_id" | "chat" | "text" | "caption">
+  message: Pick<
+    TelegramMessage,
+    "business_connection_id" | "chat" | "text" | "caption" | "message_id" | "from"
+  >
 ): Promise<void> {
   const persistedChat = await upsertTrainingPeaksBusinessChatFromMessage(message);
   const businessConnectionId = message.business_connection_id?.trim();
@@ -2536,6 +2541,28 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
   );
 
   if (result.kind === "no_candidate" || result.kind === "no_match") {
+    const moveActionResult = await createTrainingPeaksMoveWorkoutActionFromTelegram({
+      chatId,
+      messageId: String(message.message_id),
+      userId: message.from?.id === undefined ? null : String(message.from.id),
+      text: messageText,
+    });
+
+    if (!moveActionResult.ok) {
+      return;
+    }
+
+    const summary = formatTrainingPeaksMoveWorkoutActionSummary(moveActionResult.parsed);
+    await notifyCoachChats(
+      [
+        "Новая заявка TrainingPeaks",
+        `Ученик: ${moveActionResult.student.studentName}`,
+        `Сообщение: ${moveActionResult.action.rawText}`,
+        `Действие: ${summary}`,
+        "Статус: waiting for coach review",
+        `Action ID: ${moveActionResult.action.id}`,
+      ].join("\n")
+    );
     return;
   }
 
