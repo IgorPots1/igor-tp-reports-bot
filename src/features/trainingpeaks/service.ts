@@ -314,47 +314,47 @@ function parseTrainingPeaksMoveWorkoutRequest(
     return { ok: false, reason: "not_move_request" };
   }
 
-  const dayCandidateRegexes: { regex: RegExp; target: TrainingPeaksMoveWorkoutTarget }[] = [
+  const dayTokenMatchers: { testToken: RegExp; target: TrainingPeaksMoveWorkoutTarget }[] = [
     {
-      regex: /\bпослезавтра\b/,
+      testToken: /^послезавтра$/,
       target: { kind: "relative_day", value: "day_after_tomorrow", sourceText: "послезавтра" },
     },
     {
-      regex: /\bзавтра\b/,
+      testToken: /^завтра$/,
       target: { kind: "relative_day", value: "tomorrow", sourceText: "завтра" },
     },
     {
-      regex: /\bпонедельник(?:а|у|ом|е)?\b/,
+      testToken: /^понедельник(?:а|у|ом|е)?$/,
       target: { kind: "weekday", value: "monday", sourceText: "понедельник" },
     },
     {
-      regex: /\bвторник(?:а|у|ом|е)?\b/,
+      testToken: /^вторник(?:а|у|ом|е)?$/,
       target: { kind: "weekday", value: "tuesday", sourceText: "вторник" },
     },
     {
-      regex: /\bсред(?:а|у|е|ой)\b/,
+      testToken: /^сред(?:а|у|е|ой)$/,
       target: { kind: "weekday", value: "wednesday", sourceText: "среда" },
     },
     {
-      regex: /\bчетверг(?:а|у|ом|е)?\b/,
+      testToken: /^четверг(?:а|у|ом|е)?$/,
       target: { kind: "weekday", value: "thursday", sourceText: "четверг" },
     },
     {
-      regex: /\bпятниц(?:а|у|е|ей)\b/,
+      testToken: /^пятниц(?:а|у|е|ей)$/,
       target: { kind: "weekday", value: "friday", sourceText: "пятница" },
     },
     {
-      regex: /\bсуббот(?:а|у|е|ой)\b/,
+      testToken: /^суббот(?:а|у|е|ой)$/,
       target: { kind: "weekday", value: "saturday", sourceText: "суббота" },
     },
     {
-      regex: /\bвоскресень(?:е|я|ю|ем)\b/,
+      testToken: /^воскресень(?:е|я|ю|ем)$/,
       target: { kind: "weekday", value: "sunday", sourceText: "воскресенье" },
     },
   ];
 
-  const matchedTargets = dayCandidateRegexes
-    .filter(({ regex }) => regex.test(normalized))
+  const matchedTargets = dayTokenMatchers
+    .filter(({ testToken }) => tokens.some((token) => testToken.test(token)))
     .map(({ target }) => target);
 
   if (matchedTargets.length === 0) {
