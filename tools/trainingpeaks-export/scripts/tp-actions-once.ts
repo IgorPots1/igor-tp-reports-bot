@@ -25,6 +25,7 @@ type TrainingPeaksStudentRow = {
   id: string;
   student_id: string;
   student_name: string;
+  telegram_chat_id: string | null;
   trainingpeaks_athlete_url: string;
 };
 
@@ -106,6 +107,35 @@ type DryRunDiagnostics = {
   parseWarnings: string[];
 };
 
+type IdentityMatchType = "athlete_id" | "trainingpeaks_name" | "inconclusive" | "mismatch";
+
+type DryRunIdentityCheck = {
+  telegramUsername: string | null;
+  telegramChatId: string | null;
+  expectedTrainingPeaksName: string | null;
+  visibleTrainingPeaksName: string | null;
+  expectedAthleteId: string | null;
+  currentAthleteId: string | null;
+  expectedTrainingPeaksUrl: string | null;
+  currentUrl: string | null;
+  matchedBy: IdentityMatchType;
+  warnings: string[];
+};
+
+type DryRunDebugCandidate = {
+  rawTextSnippet: string;
+  selectorHint: string | null;
+  classHint: string | null;
+  title: string | null;
+  type: string | null;
+  plannedDurationSec: number | null;
+  plannedDistance: number | null;
+  startTimeLocal: string | null;
+  sourceDate: string | null;
+  score: number;
+  reasons: string[];
+};
+
 type DryRunEvaluation = {
   dryRunResult: DryRunResult;
   resolvedDates: DryRunResolvedDates;
@@ -115,15 +145,22 @@ type DryRunEvaluation = {
   canExecute: boolean;
   canExecuteReasons: string[];
   diagnostics: DryRunDiagnostics;
+  identityCheck: DryRunIdentityCheck;
+  debugCandidatesTopN: DryRunDebugCandidate[];
 };
 
 type RawWorkoutCandidate = {
+  rawTextSnippet: string;
+  selectorHint: string | null;
+  classHint: string | null;
   title: string | null;
   type: string | null;
   plannedDurationSec: number | null;
   plannedDistance: number | null;
   startTimeLocal: string | null;
   dateIso: string | null;
+  reasons: string[];
+  fromFallback: boolean;
   rawScore: number;
 };
 
@@ -371,6 +408,79 @@ function normalizeDateCandidate(raw: string): string | null {
   return null;
 }
 
+function parseTrainingPeaksAthleteId(urlRaw: string | null): string | null {
+  if (!urlRaw) {
+    return null;
+  }
+
+  try {
+    const url = new URL(urlRaw);
+    const queryKeys = ["athleteid", "athlete_id", "athlete", "id"];
+    for (const key of queryKeys) {
+      const value = url.searchParams.get(key);
+      if (value && /^[a-z0-9-]{4,}$/i.test(value.trim())) {
+        return value.trim().toLowerCase();
+      }
+    }
+
+    const pathMatch = url.pathname.match(/\/(?:athlete|athletes)\/([a-z0-9-]{4,})/i);
+    if (pathMatch?.[1]) {
+      return pathMatch[1].toLowerCase();
+    }
+
+    const hashMatch = url.hash.match(/\/(?:athlete|athletes)\/([a-z0-9-]{4,})/i);
+    if (hashMatch?.[1]) {
+      return hashMatch[1].toLowerCase();
+    }
+  } catch {
+    const fallbackMatch = urlRaw.match(/(?:athlete|athletes)[=/]([a-z0-9-]{4,})/i);
+    if (fallbackMatch?.[1]) {
+      return fallbackMatch[1].toLowerCase();
+    }
+  }
+
+  return null;
+}
+
+function normalizeName(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const normalized = value
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized || null;
+}
+
+function namesLikelyMatch(expected: string | null, visible: string | null): boolean {
+  const left = normalizeName(expected);
+  const right = normalizeName(visible);
+  if (!left || !right) {
+    return false;
+  }
+  if (left === right) {
+    return true;
+  }
+  if (left.includes(right) || right.includes(left)) {
+    return true;
+  }
+  const leftParts = new Set(left.split(" ").filter(Boolean));
+  const rightParts = new Set(right.split(" ").filter(Boolean));
+  if (leftParts.size === 0 || rightParts.size === 0) {
+    return false;
+  }
+  let overlap = 0;
+  for (const token of leftParts) {
+    if (rightParts.has(token)) {
+      overlap += 1;
+    }
+  }
+  const ratio = overlap / Math.max(leftParts.size, rightParts.size);
+  return ratio >= 0.5;
+}
+
 function parseDurationSeconds(raw: string): number | null {
   const text = raw.trim().toLowerCase();
   if (!text) {
@@ -498,6 +608,9 @@ async function notifyCoachDryRunResult(input: {
   if (input.dryRunEvaluation) {
     const evaluation = input.dryRunEvaluation;
     lines.push(`dryRunResult: ${evaluation.dryRunResult}`);
+    lines.push(`identity: ${evaluation.identityCheck.matchedBy}`);
+    lines.push(`DB student name: ${evaluation.identityCheck.expectedTrainingPeaksName ?? "unknown"}`);
+    lines.push(`TP visible athlete: ${evaluation.identityCheck.visibleTrainingPeaksName ?? "unknown"}`);
     lines.push(`resolved target date: ${evaluation.resolvedDates.targetDate ?? "unknown"}`);
     lines.push(`resolved source date: ${evaluation.resolvedDates.sourceDate ?? "unknown"}`);
     lines.push(`candidate: ${formatCandidateLine(evaluation.candidate)}`);
@@ -571,7 +684,7 @@ async function claimOneApprovedActionForDryRun(runnerId: string): Promise<Claime
     if (action.student_id) {
       const { data: studentData, error: studentError } = await supabase
         .from("trainingpeaks_students")
-        .select("id, student_id, student_name, trainingpeaks_athlete_url")
+        .select("id, student_id, student_name, telegram_chat_id, trainingpeaks_athlete_url")
         .eq("id", action.student_id)
         .maybeSingle();
       if (studentError) {
@@ -793,89 +906,384 @@ async function extractWorkoutCandidatesFromPage(
   page: import("playwright").Page,
   targetDateIso: string | null
 ): Promise<RawWorkoutCandidate[]> {
-  const normalize = (value: string): string => value.replace(/\s+/g, " ").trim();
-  const texts = await page.locator("div,li,article,section,a").allInnerTexts().catch(() => []);
-  const MAX_CANDIDATES = 40;
-  const seen = new Set<string>();
-
-  const candidates = texts
-    .map((value) => normalize(value))
-    .filter((text) => text.length >= 3 && text.length <= 280)
-    .filter((text) => /(run|bike|swim|workout|strength|йога|бег|вел|плав|трениров)/i.test(text))
-    .slice(0, 1200)
-    .map((text) => {
-      const lower = text.toLowerCase();
-      const type =
-        lower.includes("run") || lower.includes("бег")
-          ? "run"
-          : lower.includes("bike") || lower.includes("вел")
-            ? "bike"
-            : lower.includes("swim") || lower.includes("плав")
-              ? "swim"
-              : lower.includes("strength")
-                ? "strength"
-                : null;
-      const dateRaw =
-        text.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0] ??
-        text.match(/\b\d{1,2}[./-]\d{1,2}(?:[./-]\d{4})?\b/)?.[0] ??
-        null;
-      const startTimeLocal = text.match(/\b\d{1,2}:\d{2}(?::\d{2})?\b/)?.[0] ?? null;
-      const plannedDurationRaw =
-        text.match(
-          /\b(?:\d{1,2}:\d{2}(?::\d{2})?|\d+(?:[.,]\d+)?\s*(?:h|hr|hour|hours|ч|min|mins|minute|minutes|мин|sec|secs|second|seconds|сек))\b/i
-        )?.[0] ?? null;
-      const plannedDistanceRaw = text.match(/\b\d+(?:[.,]\d+)?\s*(?:km|км|mi|mile|miles|m|м|meter|meters)\b/i)?.[0] ?? null;
-      const title = text.split(/[,|]/)[0]?.slice(0, 120) ?? null;
-      const dateIso = dateRaw ? normalizeDateCandidate(dateRaw) : null;
-      const distanceFromTodayDays = dateIso === null ? null : dateDistanceDays(toIsoDate(new Date()), dateIso);
-
-      return {
-        title,
-        type,
-        plannedDurationRaw,
-        plannedDistanceRaw,
-        startTimeLocal,
-        dateIsoRaw: dateIso,
-        distanceFromTodayDays,
+  const nowIso = toIsoDate(new Date());
+  const extracted = await page
+    .evaluate(() => {
+      type Candidate = {
+        rawTextSnippet: string;
+        selectorHint: string | null;
+        classHint: string | null;
+        title: string | null;
+        type: string | null;
+        plannedDurationRaw: string | null;
+        plannedDistanceRaw: string | null;
+        startTimeLocal: string | null;
+        sourceDateRaw: string | null;
+        reasons: string[];
+        fromFallback: boolean;
       };
-    })
-    .filter((candidate) => {
-      if (!targetDateIso || !candidate.dateIsoRaw) {
-        return true;
-      }
-      return dateDistanceDays(candidate.dateIsoRaw, targetDateIso) <= 14;
-    })
-    .filter((candidate) => {
-      const key = `${candidate.title ?? "na"}|${candidate.type ?? "na"}|${candidate.dateIsoRaw ?? "na"}|${candidate.startTimeLocal ?? "na"}`;
-      if (seen.has(key)) {
-        return false;
-      }
-      seen.add(key);
-      return true;
-    })
-    .slice(0, MAX_CANDIDATES);
 
-  return candidates
+      const normalize = (value: string): string => value.replace(/\s+/g, " ").trim();
+      const snippet = (value: string): string => normalize(value).slice(0, 240);
+      const toIsoFromParts = (year: number, month: number, day: number): string | null => {
+        if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+          return null;
+        }
+        if (month < 1 || month > 12 || day < 1 || day > 31) {
+          return null;
+        }
+        const dt = new Date(Date.UTC(year, month - 1, day));
+        if (dt.getUTCFullYear() !== year || dt.getUTCMonth() !== month - 1 || dt.getUTCDate() !== day) {
+          return null;
+        }
+        return dt.toISOString().slice(0, 10);
+      };
+      const parseDateText = (raw: string): string | null => {
+        const trimmed = raw.trim();
+        const direct = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (direct) {
+          return toIsoFromParts(Number(direct[1]), Number(direct[2]), Number(direct[3]));
+        }
+        const slash = trimmed.match(/^(\d{1,2})[./-](\d{1,2})(?:[./-](\d{4}))?$/);
+        if (slash) {
+          const year = slash[3] ? Number(slash[3]) : new Date().getUTCFullYear();
+          return toIsoFromParts(year, Number(slash[2]), Number(slash[1]));
+        }
+        return null;
+      };
+      const parseDateFromAttr = (value: string | null): string | null => {
+        if (!value) {
+          return null;
+        }
+        const iso = value.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0];
+        if (iso) {
+          return parseDateText(iso);
+        }
+        const slash = value.match(/\b\d{1,2}[./-]\d{1,2}(?:[./-]\d{4})?\b/)?.[0];
+        if (slash) {
+          return parseDateText(slash);
+        }
+        return null;
+      };
+      const inferCalendarMonthYear = (): { year: number; month: number } => {
+        const monthMap: Record<string, number> = {
+          january: 1,
+          february: 2,
+          march: 3,
+          april: 4,
+          may: 5,
+          june: 6,
+          july: 7,
+          august: 8,
+          september: 9,
+          october: 10,
+          november: 11,
+          december: 12,
+          январь: 1,
+          февраля: 2,
+          март: 3,
+          апреля: 4,
+          май: 5,
+          июня: 6,
+          июля: 7,
+          августа: 8,
+          сентября: 9,
+          октября: 10,
+          ноября: 11,
+          декабря: 12,
+        };
+        const now = new Date();
+        const candidates = Array.from(
+          document.querySelectorAll("h1,h2,[class*='month' i],[data-test*='month' i],[class*='calendar' i] h3")
+        )
+          .map((el) => normalize(el.textContent ?? ""))
+          .filter(Boolean)
+          .slice(0, 20);
+        for (const text of candidates) {
+          const lower = text.toLowerCase();
+          for (const [monthName, monthNum] of Object.entries(monthMap)) {
+            if (lower.includes(monthName)) {
+              const yearMatch = lower.match(/\b(20\d{2})\b/);
+              const year = yearMatch ? Number(yearMatch[1]) : now.getUTCFullYear();
+              return { year, month: monthNum };
+            }
+          }
+        }
+        return { year: now.getUTCFullYear(), month: now.getUTCMonth() + 1 };
+      };
+      const calendarMonthYear = inferCalendarMonthYear();
+      const workoutKeywords = /(run|bike|swim|workout|strength|йога|бег|вел|плав|трениров)/i;
+      const isExcludedContext = (el: Element): boolean =>
+        Boolean(
+          el.closest(
+            "nav,aside,[role='navigation'],[class*='sidebar' i],[class*='library' i],[class*='summary' i],[class*='drawer' i],[class*='modal' i],[class*='popover' i]"
+          )
+        );
+      const getSelectorHint = (el: Element): string | null => {
+        const tag = el.tagName.toLowerCase();
+        const role = el.getAttribute("role");
+        const testId = el.getAttribute("data-testid") ?? el.getAttribute("data-test");
+        if (testId) {
+          return `${tag}[data-test=${testId}]`;
+        }
+        if (role) {
+          return `${tag}[role=${role}]`;
+        }
+        return tag;
+      };
+      const resolveDateFromContext = (node: Element): { dateIso: string | null; reason: string } => {
+        const dateAttrs = ["data-date", "date", "datetime", "aria-label", "title"];
+        let current: Element | null = node;
+        for (let depth = 0; depth < 8 && current; depth += 1) {
+          for (const attr of dateAttrs) {
+            const iso = parseDateFromAttr(current.getAttribute(attr));
+            if (iso) {
+              return { dateIso: iso, reason: `source date from ${attr}` };
+            }
+          }
+          current = current.parentElement;
+        }
+
+        const dayCell = node.closest("[role='gridcell'],[data-date],[class*='day' i],[class*='cell' i]");
+        if (dayCell) {
+          const dayLabel = normalize(
+            dayCell.querySelector("[data-day],[class*='day' i],[class*='date' i],header")?.textContent ?? ""
+          );
+          const dayNumber = dayLabel.match(/\b([12]?\d|3[01])\b/)?.[1];
+          if (dayNumber) {
+            const derived = toIsoFromParts(calendarMonthYear.year, calendarMonthYear.month, Number(dayNumber));
+            if (derived) {
+              return { dateIso: derived, reason: "source date derived from day cell header" };
+            }
+          }
+        }
+
+        const nodeText = normalize(node.textContent ?? "");
+        const dateToken =
+          nodeText.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0] ?? nodeText.match(/\b\d{1,2}[./-]\d{1,2}(?:[./-]\d{4})?\b/)?.[0] ?? null;
+        if (dateToken) {
+          const fallbackIso = parseDateText(dateToken);
+          if (fallbackIso) {
+            return { dateIso: fallbackIso, reason: "source date from card text fallback" };
+          }
+        }
+        return { dateIso: null, reason: "source date unresolved" };
+      };
+      const buildCandidateFromNode = (node: Element, fromFallback: boolean): Candidate | null => {
+        if (isExcludedContext(node) && !fromFallback) {
+          return null;
+        }
+        const text = snippet(node.textContent ?? "");
+        if (text.length < 3 || text.length > 260 || !workoutKeywords.test(text)) {
+          return null;
+        }
+        const lower = text.toLowerCase();
+        const type =
+          lower.includes("run") || lower.includes("бег")
+            ? "run"
+            : lower.includes("bike") || lower.includes("вел")
+              ? "bike"
+              : lower.includes("swim") || lower.includes("плав")
+                ? "swim"
+                : lower.includes("strength")
+                  ? "strength"
+                  : null;
+        const title =
+          normalize(node.querySelector("h1,h2,h3,strong,[class*='title' i]")?.textContent ?? "") ||
+          text.split(/[,|]/)[0]?.slice(0, 120) ||
+          null;
+        const plannedDurationRaw =
+          text.match(
+            /\b(?:\d{1,2}:\d{2}(?::\d{2})?|\d+(?:[.,]\d+)?\s*(?:h|hr|hour|hours|ч|min|mins|minute|minutes|мин|sec|secs|second|seconds|сек))\b/i
+          )?.[0] ?? null;
+        const plannedDistanceRaw = text.match(/\b\d+(?:[.,]\d+)?\s*(?:km|км|mi|mile|miles|m|м|meter|meters)\b/i)?.[0] ?? null;
+        const startTimeLocal = text.match(/\b\d{1,2}:\d{2}(?::\d{2})?\b/)?.[0] ?? null;
+        const dateResult = resolveDateFromContext(node);
+        const classHint = normalize((node as HTMLElement).className || "") || null;
+        const reasons = [dateResult.reason, fromFallback ? "candidate from fallback scraping" : "candidate from calendar card scope"];
+
+        return {
+          rawTextSnippet: text,
+          selectorHint: getSelectorHint(node),
+          classHint,
+          title: title || null,
+          type,
+          plannedDurationRaw,
+          plannedDistanceRaw,
+          startTimeLocal,
+          sourceDateRaw: dateResult.dateIso,
+          reasons,
+          fromFallback,
+        };
+      };
+
+      const primaryNodes = Array.from(
+        document.querySelectorAll(
+          "[data-test*='workout' i],[data-testid*='workout' i],[class*='workout' i],[class*='activity' i],[class*='session' i],[class*='planned' i]"
+        )
+      ).filter((node) =>
+        Boolean(node.closest("[class*='calendar' i],[data-test*='calendar' i],[data-testid*='calendar' i],[role='grid']"))
+      );
+
+      const fallbackNodes = Array.from(
+        document.querySelectorAll("[class*='calendar' i] article,[class*='calendar' i] li,[class*='calendar' i] div")
+      );
+      const unique = new Set<Element>();
+      const collected: Candidate[] = [];
+      for (const node of primaryNodes) {
+        if (unique.has(node)) {
+          continue;
+        }
+        unique.add(node);
+        const built = buildCandidateFromNode(node, false);
+        if (built) {
+          collected.push(built);
+        }
+      }
+      if (collected.length === 0) {
+        for (const node of fallbackNodes) {
+          if (unique.has(node) || isExcludedContext(node)) {
+            continue;
+          }
+          unique.add(node);
+          const built = buildCandidateFromNode(node, true);
+          if (built) {
+            collected.push(built);
+          }
+          if (collected.length >= 60) {
+            break;
+          }
+        }
+      }
+      return collected;
+    })
+    .catch(() => []);
+
+  const seen = new Set<string>();
+  return extracted
     .map((candidate) => {
-      const dateIso = candidate.dateIsoRaw ? normalizeDateCandidate(candidate.dateIsoRaw) : null;
-      const rawScore = scoreWorkoutCandidate({
+      const dateIso = candidate.sourceDateRaw ? normalizeDateCandidate(candidate.sourceDateRaw) : null;
+      const distanceFromTodayDays = dateIso ? dateDistanceDays(nowIso, dateIso) : null;
+      let rawScore = scoreWorkoutCandidate({
         title: candidate.title,
         type: candidate.type,
         dateIso,
         targetDate: targetDateIso,
-        distanceFromTodayDays: candidate.distanceFromTodayDays,
+        distanceFromTodayDays,
       });
+      if (candidate.fromFallback) {
+        rawScore = clampConfidence(rawScore - 0.2);
+      }
+      if (!dateIso) {
+        rawScore = clampConfidence(rawScore - 0.18);
+      }
       return {
+        rawTextSnippet: candidate.rawTextSnippet,
+        selectorHint: candidate.selectorHint,
+        classHint: candidate.classHint,
         title: candidate.title,
         type: candidate.type,
         plannedDurationSec: candidate.plannedDurationRaw ? parseDurationSeconds(candidate.plannedDurationRaw) : null,
         plannedDistance: candidate.plannedDistanceRaw ? parseDistance(candidate.plannedDistanceRaw) : null,
         startTimeLocal: candidate.startTimeLocal,
         dateIso,
+        reasons: candidate.reasons,
+        fromFallback: candidate.fromFallback,
         rawScore,
       } satisfies RawWorkoutCandidate;
     })
+    .filter((candidate) => {
+      if (!targetDateIso || !candidate.dateIso) {
+        return true;
+      }
+      return dateDistanceDays(candidate.dateIso, targetDateIso) <= 14;
+    })
+    .filter((candidate) => {
+      const key = `${candidate.title ?? "na"}|${candidate.type ?? "na"}|${candidate.dateIso ?? "na"}|${candidate.startTimeLocal ?? "na"}|${candidate.rawTextSnippet}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 80)
     .sort((left, right) => right.rawScore - left.rawScore);
+}
+
+async function extractVisibleTrainingPeaksAthleteName(page: import("playwright").Page): Promise<string | null> {
+  const selectors = [
+    "[data-test*='athlete' i]",
+    "[data-testid*='athlete' i]",
+    "[class*='athlete' i]",
+    "header h1",
+    "header h2",
+    "main h1",
+    "main h2",
+    "[role='combobox']",
+    "select",
+  ];
+  for (const selector of selectors) {
+    const value = await page
+      .locator(selector)
+      .first()
+      .innerText({ timeout: 400 })
+      .catch(() => null);
+    if (!value) {
+      continue;
+    }
+    const normalized = value.replace(/\s+/g, " ").trim();
+    if (!normalized || normalized.length > 120) {
+      continue;
+    }
+    if (/calendar|workout|trainingpeaks|settings|home/i.test(normalized)) {
+      continue;
+    }
+    return normalized;
+  }
+  return null;
+}
+
+function buildIdentityCheck(input: {
+  student: TrainingPeaksStudentRow;
+  expectedUrl: string;
+  currentUrl: string;
+  visibleTrainingPeaksName: string | null;
+}): DryRunIdentityCheck {
+  const warnings: string[] = [];
+  const expectedAthleteId = parseTrainingPeaksAthleteId(input.expectedUrl);
+  const currentAthleteId = parseTrainingPeaksAthleteId(input.currentUrl);
+  const expectedTrainingPeaksName = input.student.student_name ?? null;
+  const visibleTrainingPeaksName = input.visibleTrainingPeaksName ?? null;
+
+  let matchedBy: IdentityMatchType = "inconclusive";
+  if (expectedAthleteId && currentAthleteId) {
+    if (expectedAthleteId === currentAthleteId) {
+      matchedBy = "athlete_id";
+    } else {
+      matchedBy = "mismatch";
+      warnings.push("athlete context mismatch: athlete id");
+    }
+  } else if (expectedTrainingPeaksName && visibleTrainingPeaksName) {
+    if (namesLikelyMatch(expectedTrainingPeaksName, visibleTrainingPeaksName)) {
+      matchedBy = "trainingpeaks_name";
+    } else {
+      matchedBy = "mismatch";
+      warnings.push("athlete context mismatch: TrainingPeaks name");
+    }
+  }
+
+  return {
+    telegramUsername: null,
+    telegramChatId: input.student.telegram_chat_id ?? null,
+    expectedTrainingPeaksName,
+    visibleTrainingPeaksName,
+    expectedAthleteId,
+    currentAthleteId,
+    expectedTrainingPeaksUrl: input.expectedUrl,
+    currentUrl: input.currentUrl,
+    matchedBy,
+    warnings,
+  };
 }
 
 function evaluateDryRunOutcome(input: {
@@ -887,6 +1295,7 @@ function evaluateDryRunOutcome(input: {
     trainingPeaksContextLikely: boolean;
   };
   candidates: RawWorkoutCandidate[];
+  identityCheck: DryRunIdentityCheck;
 }): DryRunEvaluation {
   const parseWarnings: string[] = [];
   const payload = parseMoveWorkoutPayload(input.action.parsed_payload);
@@ -906,7 +1315,7 @@ function evaluateDryRunOutcome(input: {
     loginRequired: input.pageMeta.loginRequired,
     athleteReachable: input.pageMeta.athletePageLikelyReachable,
     trainingPeaksContextOk: input.pageMeta.trainingPeaksContextLikely,
-    parseWarnings,
+    parseWarnings: [...parseWarnings, ...input.identityCheck.warnings],
   };
 
   const canExecuteReasons: string[] = [];
@@ -919,6 +1328,9 @@ function evaluateDryRunOutcome(input: {
   if (!diagnostics.trainingPeaksContextOk) {
     canExecuteReasons.push("trainingpeaks context not confirmed");
   }
+  if (input.identityCheck.matchedBy === "mismatch") {
+    canExecuteReasons.push(...input.identityCheck.warnings);
+  }
 
   if (canExecuteReasons.length > 0) {
     return {
@@ -930,6 +1342,20 @@ function evaluateDryRunOutcome(input: {
       canExecute: false,
       canExecuteReasons,
       diagnostics,
+      identityCheck: input.identityCheck,
+      debugCandidatesTopN: input.candidates.slice(0, 10).map((candidate) => ({
+        rawTextSnippet: candidate.rawTextSnippet,
+        selectorHint: candidate.selectorHint,
+        classHint: candidate.classHint,
+        title: candidate.title,
+        type: candidate.type,
+        plannedDurationSec: candidate.plannedDurationSec,
+        plannedDistance: candidate.plannedDistance,
+        startTimeLocal: candidate.startTimeLocal,
+        sourceDate: candidate.dateIso,
+        score: candidate.rawScore,
+        reasons: candidate.reasons,
+      })),
     };
   }
 
@@ -943,6 +1369,8 @@ function evaluateDryRunOutcome(input: {
       canExecute: false,
       canExecuteReasons: ["no workout candidates found on page"],
       diagnostics,
+      identityCheck: input.identityCheck,
+      debugCandidatesTopN: [],
     };
   }
 
@@ -952,7 +1380,13 @@ function evaluateDryRunOutcome(input: {
     top.rawScore - (second ? Math.min(0.18, Math.max(0, second.rawScore - 0.45)) : 0)
   );
   sourceDate = top.dateIso;
-  const alternativesCount = Math.max(0, input.candidates.length - 1);
+  const plausibleCandidates = input.candidates.filter(
+    (candidate) => candidate.rawScore >= Math.max(0.6, top.rawScore - 0.1)
+  );
+  const safeCandidates = input.candidates.filter(
+    (candidate) => !candidate.fromFallback && Boolean(candidate.dateIso) && candidate.rawScore >= 0.75
+  );
+  const alternativesCount = Math.max(0, plausibleCandidates.length - 1);
 
   const candidate: DryRunCandidate = {
     title: top.title,
@@ -978,6 +1412,10 @@ function evaluateDryRunOutcome(input: {
     dryRunResult = "ambiguous";
     reasons.push("multiple plausible workout candidates");
   }
+  if (plausibleCandidates.length > 1) {
+    dryRunResult = "ambiguous";
+    reasons.push("multiple plausible candidates remain");
+  }
   if (!targetDate) {
     reasons.push("target date could not be resolved");
   }
@@ -990,14 +1428,21 @@ function evaluateDryRunOutcome(input: {
   if (confidence < 0.8) {
     reasons.push("confidence below threshold 0.8");
   }
+  if (safeCandidates.length !== 1) {
+    reasons.push("exactly one safe candidate is required");
+  }
+  if (input.identityCheck.matchedBy === "mismatch") {
+    reasons.push(...input.identityCheck.warnings);
+  }
 
   const canExecute =
     dryRunResult === "candidate_found" &&
-    input.candidates.length === 1 &&
+    safeCandidates.length === 1 &&
     Boolean(targetDate) &&
     Boolean(sourceDate) &&
     Boolean(candidate.fingerprint) &&
-    confidence >= 0.8;
+    confidence >= 0.8 &&
+    input.identityCheck.matchedBy !== "mismatch";
 
   if (!canExecute && reasons.length === 0) {
     reasons.push("safety policy conditions not met");
@@ -1020,6 +1465,20 @@ function evaluateDryRunOutcome(input: {
     canExecute,
     canExecuteReasons: canExecute ? [] : reasons,
     diagnostics,
+    identityCheck: input.identityCheck,
+    debugCandidatesTopN: input.candidates.slice(0, 10).map((candidate) => ({
+      rawTextSnippet: candidate.rawTextSnippet,
+      selectorHint: candidate.selectorHint,
+      classHint: candidate.classHint,
+      title: candidate.title,
+      type: candidate.type,
+      plannedDurationSec: candidate.plannedDurationSec,
+      plannedDistance: candidate.plannedDistance,
+      startTimeLocal: candidate.startTimeLocal,
+      sourceDate: candidate.dateIso,
+      score: candidate.rawScore,
+      reasons: candidate.reasons,
+    })),
   };
 }
 
@@ -1073,6 +1532,13 @@ async function runDryRunInspection(claimed: ClaimedAction, runId: string): Promi
     await page.bringToFront();
 
     const pageAssessment = await assessTrainingPeaksPage(page);
+    const visibleTrainingPeaksName = await extractVisibleTrainingPeaksAthleteName(page);
+    const identityCheck = buildIdentityCheck({
+      student,
+      expectedUrl: student.trainingpeaks_athlete_url,
+      currentUrl: page.url(),
+      visibleTrainingPeaksName,
+    });
     await page.screenshot({ path: screenshotBeforePath, fullPage: true });
 
     if (pageAssessment.loginRequired) {
@@ -1095,6 +1561,7 @@ async function runDryRunInspection(claimed: ClaimedAction, runId: string): Promi
       student,
       pageMeta: pageAssessment,
       candidates: extractedCandidates,
+      identityCheck,
     });
 
     await page.waitForTimeout(1000);
@@ -1144,6 +1611,7 @@ async function main(): Promise<void> {
           id: claimed.student.id,
           studentId: claimed.student.student_id,
           studentName: claimed.student.student_name,
+          telegramChatId: claimed.student.telegram_chat_id,
           trainingPeaksAthleteUrl: claimed.student.trainingpeaks_athlete_url,
         }
       : null,
@@ -1167,6 +1635,8 @@ async function main(): Promise<void> {
       canExecute: evaluation.canExecute,
       canExecuteReasons: evaluation.canExecuteReasons,
       diagnostics: evaluation.diagnostics,
+      identityCheck: evaluation.identityCheck,
+      debugCandidatesTopN: evaluation.debugCandidatesTopN,
       note: "Ничего не изменено в TrainingPeaks",
     };
 
@@ -1207,6 +1677,19 @@ async function main(): Promise<void> {
         trainingPeaksContextOk: false,
         parseWarnings: [],
       },
+      identityCheck: {
+        telegramUsername: null,
+        telegramChatId: claimed.student?.telegram_chat_id ?? null,
+        expectedTrainingPeaksName: claimed.student?.student_name ?? null,
+        visibleTrainingPeaksName: null,
+        expectedAthleteId: parseTrainingPeaksAthleteId(claimed.student?.trainingpeaks_athlete_url ?? null),
+        currentAthleteId: null,
+        expectedTrainingPeaksUrl: claimed.student?.trainingpeaks_athlete_url ?? null,
+        currentUrl: null,
+        matchedBy: "inconclusive",
+        warnings: [],
+      },
+      debugCandidatesTopN: [],
     };
     const failedLog = {
       ...baseLog,
@@ -1221,6 +1704,8 @@ async function main(): Promise<void> {
       canExecute: failedEvaluation.canExecute,
       canExecuteReasons: failedEvaluation.canExecuteReasons,
       diagnostics: failedEvaluation.diagnostics,
+      identityCheck: failedEvaluation.identityCheck,
+      debugCandidatesTopN: failedEvaluation.debugCandidatesTopN,
       note: "Ничего не изменено в TrainingPeaks",
     };
     await failDryRun(claimed.action.id, run.id, {
