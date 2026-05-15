@@ -81,6 +81,9 @@ type TrainingPeaksMoveWorkoutTarget =
 type ParsedMoveWorkoutPayload = {
   actionType?: "move_workout";
   target?: TrainingPeaksMoveWorkoutTarget;
+  source?: TrainingPeaksMoveWorkoutTarget | { date?: string; isoDate?: string };
+  sourceDate?: string;
+  source_date?: string;
 };
 
 type DryRunResult = "candidate_found" | "ambiguous" | "not_found" | "failed";
@@ -148,6 +151,19 @@ type DryRunEvaluation = {
   diagnostics: DryRunDiagnostics;
   identityCheck: DryRunIdentityCheck;
   debugCandidatesTopN: DryRunDebugCandidate[];
+  rankingDebug?: {
+    strictGlobalCount: number;
+    selectedSourceDatePolicy: string;
+    selectedSourceDate: string | null;
+    selectedSourceDateCandidateCount: number;
+    globalCandidateCount: number;
+    sourceDateBucketCounts: Record<string, number>;
+  };
+  selectedSourceDatePolicy?: string;
+  selectedSourceDate?: string | null;
+  selectedSourceDateCandidateCount?: number;
+  globalCandidateCount?: number;
+  sourceDateBucketCounts?: Record<string, number>;
 };
 
 type RawWorkoutCandidate = {
@@ -446,6 +462,79 @@ function normalizeDateCandidate(raw: string): string | null {
   }
 
   return null;
+}
+
+function extractExplicitSourceDate(input: { rawText: string; parsedPayload: unknown }): string | null {
+  const payload = input.parsedPayload && typeof input.parsedPayload === "object"
+    ? (input.parsedPayload as ParsedMoveWorkoutPayload)
+    : null;
+  const payloadDateCandidates = [
+    payload?.sourceDate,
+    payload?.source_date,
+    (payload?.source && typeof payload.source === "object" && "date" in payload.source
+      ? payload.source.date
+      : null) ?? null,
+    (payload?.source && typeof payload.source === "object" && "isoDate" in payload.source
+      ? payload.source.isoDate
+      : null) ?? null,
+  ];
+  for (const candidate of payloadDateCandidates) {
+    if (!candidate) {
+      continue;
+    }
+    const normalized = normalizeDateCandidate(candidate);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  const rawText = input.rawText.toLowerCase();
+  const explicitSourceRegex =
+    /\b(?:с|со|from)\s+(\d{4}-\d{2}-\d{2}|\d{1,2}[./-]\d{1,2}(?:[./-]\d{4})?)/i;
+  const sourceMatch = rawText.match(explicitSourceRegex);
+  if (sourceMatch?.[1]) {
+    const normalized = normalizeDateCandidate(sourceMatch[1]);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function formatDryRunReasonForCoach(reason: string): string {
+  if (reason === "multiple candidates on selected source date") {
+    return "Найдено несколько тренировок на исходную дату";
+  }
+  if (reason === "source date could not be resolved safely") {
+    return "Нужна исходная дата";
+  }
+  if (reason === "no planned candidate on inferred source date") {
+    return "Нужна конкретная тренировка";
+  }
+  return reason;
+}
+
+function candidateLooksCompleted(rawTextSnippet: string): boolean {
+  const text = rawTextSnippet.toLowerCase();
+  return /\b(done|completed|выполнено|завершено|finished|отчет|report|результат)\b/i.test(text);
+}
+
+function candidateLooksLikeWorkoutCard(candidate: RawWorkoutCandidate): boolean {
+  const text = candidate.rawTextSnippet.toLowerCase();
+  if (
+    /\b(sidebar|navigation|menu|summary|итого|сводка|навигац|календарь|calendar|week total|month total)\b/i.test(
+      text
+    )
+  ) {
+    return false;
+  }
+  return Boolean(candidate.selectorHint?.includes(".activity.workout") || candidate.selectorHint?.includes(".workoutDiv"));
+}
+
+function isTargetTomorrow(action: TrainingPeaksActionRow): boolean {
+  const parsed = parseMoveWorkoutPayload(action.parsed_payload);
+  return parsed?.target?.kind === "relative_day" && parsed.target.value === "tomorrow";
 }
 
 function normalizeWhitespace(value: string): string {
@@ -895,7 +984,8 @@ async function notifyCoachDryRunResult(input: {
     lines.push(`resolved source date: ${evaluation.resolvedDates.sourceDate ?? "unknown"}`);
     lines.push(`candidate: ${formatCandidateLine(evaluation.candidate)}`);
     if (!evaluation.canExecute) {
-      const reason = evaluation.canExecuteReasons.join("; ") || "небезопасно выполнить";
+      const reason =
+        evaluation.canExecuteReasons.map(formatDryRunReasonForCoach).join("; ") || "небезопасно выполнить";
       lines.push(`reason: ${reason}`);
     }
     lines.push(`confidence: ${evaluation.confidence.toFixed(2)}`);
@@ -1651,6 +1741,8 @@ function evaluateDryRunOutcome(input: {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? null;
   let targetDate: string | null = null;
   let sourceDate: string | null = null;
+  let selectedSourceDatePolicy = "unresolved";
+  let selectedSourceDate: string | null = null;
 
   if (!payload?.target) {
     parseWarnings.push("parsed_payload.target is missing or invalid");
@@ -1658,6 +1750,15 @@ function evaluateDryRunOutcome(input: {
     const resolved = resolveTargetDateFromPayload(payload.target);
     targetDate = resolved.targetDate;
     parseWarnings.push(...resolved.warnings);
+  }
+
+  const explicitSourceDate = extractExplicitSourceDate({
+    rawText: input.action.raw_text,
+    parsedPayload: input.action.parsed_payload,
+  });
+  if (explicitSourceDate) {
+    selectedSourceDatePolicy = "explicit_source_date";
+    selectedSourceDate = explicitSourceDate;
   }
 
   const diagnostics: DryRunDiagnostics = {
@@ -1706,6 +1807,19 @@ function evaluateDryRunOutcome(input: {
         score: candidate.rawScore,
         reasons: candidate.reasons,
       })),
+      selectedSourceDatePolicy,
+      selectedSourceDate,
+      selectedSourceDateCandidateCount: 0,
+      globalCandidateCount: input.candidates.length,
+      sourceDateBucketCounts: {},
+      rankingDebug: {
+        strictGlobalCount: 0,
+        selectedSourceDatePolicy,
+        selectedSourceDate,
+        selectedSourceDateCandidateCount: 0,
+        globalCandidateCount: input.candidates.length,
+        sourceDateBucketCounts: {},
+      },
     };
   }
 
@@ -1721,6 +1835,19 @@ function evaluateDryRunOutcome(input: {
       diagnostics,
       identityCheck: input.identityCheck,
       debugCandidatesTopN: [],
+      selectedSourceDatePolicy,
+      selectedSourceDate,
+      selectedSourceDateCandidateCount: 0,
+      globalCandidateCount: 0,
+      sourceDateBucketCounts: {},
+      rankingDebug: {
+        strictGlobalCount: 0,
+        selectedSourceDatePolicy,
+        selectedSourceDate,
+        selectedSourceDateCandidateCount: 0,
+        globalCandidateCount: 0,
+        sourceDateBucketCounts: {},
+      },
     };
   }
 
@@ -1736,22 +1863,175 @@ function evaluateDryRunOutcome(input: {
       diagnostics,
       identityCheck: input.identityCheck,
       debugCandidatesTopN: [],
+      selectedSourceDatePolicy,
+      selectedSourceDate,
+      selectedSourceDateCandidateCount: 0,
+      globalCandidateCount: 0,
+      sourceDateBucketCounts: {},
+      rankingDebug: {
+        strictGlobalCount: 0,
+        selectedSourceDatePolicy,
+        selectedSourceDate,
+        selectedSourceDateCandidateCount: 0,
+        globalCandidateCount: 0,
+        sourceDateBucketCounts: {},
+      },
     };
   }
 
-  const top = input.candidates[0]!;
-  const second = input.candidates[1] ?? null;
+  const strictGlobalCandidates = input.candidates.filter((candidate) => {
+    if (candidate.fromFallback) {
+      return false;
+    }
+    if (!candidate.dateIso) {
+      return false;
+    }
+    if (candidateLooksCompleted(candidate.rawTextSnippet)) {
+      return false;
+    }
+    if (!candidateLooksLikeWorkoutCard(candidate)) {
+      return false;
+    }
+    const fingerprint = buildCandidateFingerprint({
+      studentId: input.student?.id ?? null,
+      dateIso: candidate.dateIso,
+      title: candidate.title,
+      type: candidate.type,
+      startTimeLocal: candidate.startTimeLocal,
+      plannedDurationSec: candidate.plannedDurationSec,
+      plannedDistance: candidate.plannedDistance,
+    });
+    return Boolean(fingerprint);
+  });
+  const globalCandidateCount = input.candidates.length;
+  const sourceDateBucketCounts: Record<string, number> = {};
+  for (const candidate of strictGlobalCandidates) {
+    if (!candidate.dateIso) {
+      continue;
+    }
+    sourceDateBucketCounts[candidate.dateIso] = (sourceDateBucketCounts[candidate.dateIso] ?? 0) + 1;
+  }
+
+  if (!selectedSourceDate && targetDate && isTargetTomorrow(input.action)) {
+    selectedSourceDate = toIsoDate(new Date());
+    selectedSourceDatePolicy = "target_tomorrow_prefers_today";
+  }
+
+  if (!selectedSourceDate && targetDate) {
+    const eligibleDates = Object.keys(sourceDateBucketCounts)
+      .filter((date) => date < targetDate)
+      .map((date) => ({ date, delta: dateDistanceDays(date, targetDate) }))
+      .filter((entry) => entry.delta >= 1 && entry.delta <= 3)
+      .sort((left, right) => left.delta - right.delta);
+    if (eligibleDates.length > 0) {
+      selectedSourceDate = eligibleDates[0]!.date;
+      selectedSourceDatePolicy = "nearest_prior_within_3_days";
+    } else {
+      selectedSourceDatePolicy = "no_safe_inferred_source_date";
+    }
+  }
+
+  const selectedBucketCandidates = selectedSourceDate
+    ? strictGlobalCandidates.filter((candidate) => candidate.dateIso === selectedSourceDate)
+    : [];
+  const selectedSourceDateCandidateCount = selectedBucketCandidates.length;
+
+  if (!selectedSourceDate) {
+    const reasons = ["source date could not be resolved safely", "Нужна исходная дата"];
+    return {
+      dryRunResult: strictGlobalCandidates.length > 0 ? "ambiguous" : "not_found",
+      resolvedDates: { sourceDate: null, targetDate, timezone },
+      candidate: null,
+      candidateAlternativesCount: 0,
+      confidence: 0,
+      canExecute: false,
+      canExecuteReasons: reasons,
+      diagnostics,
+      identityCheck: input.identityCheck,
+      debugCandidatesTopN: input.candidates.slice(0, 10).map((candidate) => ({
+        rawTextSnippet: candidate.rawTextSnippet,
+        selectorHint: candidate.selectorHint,
+        classHint: candidate.classHint,
+        title: candidate.title,
+        type: candidate.type,
+        plannedDurationSec: candidate.plannedDurationSec,
+        plannedDistance: candidate.plannedDistance,
+        startTimeLocal: candidate.startTimeLocal,
+        sourceDate: candidate.dateIso,
+        score: candidate.rawScore,
+        reasons: candidate.reasons,
+      })),
+      selectedSourceDatePolicy,
+      selectedSourceDate,
+      selectedSourceDateCandidateCount,
+      globalCandidateCount,
+      sourceDateBucketCounts,
+      rankingDebug: {
+        strictGlobalCount: strictGlobalCandidates.length,
+        selectedSourceDatePolicy,
+        selectedSourceDate,
+        selectedSourceDateCandidateCount,
+        globalCandidateCount,
+        sourceDateBucketCounts,
+      },
+    };
+  }
+
+  if (selectedBucketCandidates.length === 0) {
+    const reasons = ["no planned candidate on inferred source date", "Нужна конкретная тренировка"];
+    return {
+      dryRunResult: "not_found",
+      resolvedDates: { sourceDate: selectedSourceDate, targetDate, timezone },
+      candidate: null,
+      candidateAlternativesCount: 0,
+      confidence: 0,
+      canExecute: false,
+      canExecuteReasons: reasons,
+      diagnostics,
+      identityCheck: input.identityCheck,
+      debugCandidatesTopN: input.candidates.slice(0, 10).map((candidate) => ({
+        rawTextSnippet: candidate.rawTextSnippet,
+        selectorHint: candidate.selectorHint,
+        classHint: candidate.classHint,
+        title: candidate.title,
+        type: candidate.type,
+        plannedDurationSec: candidate.plannedDurationSec,
+        plannedDistance: candidate.plannedDistance,
+        startTimeLocal: candidate.startTimeLocal,
+        sourceDate: candidate.dateIso,
+        score: candidate.rawScore,
+        reasons: candidate.reasons,
+      })),
+      selectedSourceDatePolicy,
+      selectedSourceDate,
+      selectedSourceDateCandidateCount,
+      globalCandidateCount,
+      sourceDateBucketCounts,
+      rankingDebug: {
+        strictGlobalCount: strictGlobalCandidates.length,
+        selectedSourceDatePolicy,
+        selectedSourceDate,
+        selectedSourceDateCandidateCount,
+        globalCandidateCount,
+        sourceDateBucketCounts,
+      },
+    };
+  }
+
+  const sortedBucketCandidates = [...selectedBucketCandidates].sort((left, right) => right.rawScore - left.rawScore);
+  const top = sortedBucketCandidates[0]!;
+  const second = sortedBucketCandidates[1] ?? null;
   const confidence = clampConfidence(
     top.rawScore - (second ? Math.min(0.18, Math.max(0, second.rawScore - 0.45)) : 0)
   );
-  sourceDate = top.dateIso;
-  const plausibleCandidates = input.candidates.filter(
+  sourceDate = selectedSourceDate;
+  const plausibleCandidates = sortedBucketCandidates.filter(
     (candidate) => candidate.rawScore >= Math.max(0.6, top.rawScore - 0.1)
   );
-  const safeCandidates = input.candidates.filter(
+  const safeCandidates = sortedBucketCandidates.filter(
     (candidate) => !candidate.fromFallback && Boolean(candidate.dateIso) && candidate.rawScore >= 0.75
   );
-  const alternativesCount = Math.max(0, input.candidates.length - 1);
+  const alternativesCount = Math.max(0, sortedBucketCandidates.length - 1);
 
   const candidate: DryRunCandidate = {
     title: top.title,
@@ -1775,11 +2055,11 @@ function evaluateDryRunOutcome(input: {
 
   if (input.candidates.length > 1 && second && Math.abs(top.rawScore - second.rawScore) < 0.12) {
     dryRunResult = "ambiguous";
-    reasons.push("multiple plausible workout candidates");
+    reasons.push("top candidate margin too small");
   }
   if (plausibleCandidates.length > 1) {
     dryRunResult = "ambiguous";
-    reasons.push("multiple plausible candidates remain");
+    reasons.push("multiple candidates on selected source date");
   }
   if (!targetDate) {
     reasons.push("target date could not be resolved");
@@ -1794,7 +2074,13 @@ function evaluateDryRunOutcome(input: {
     reasons.push("confidence below threshold 0.8");
   }
   if (safeCandidates.length !== 1) {
-    reasons.push("exactly one safe candidate is required");
+    reasons.push("multiple candidates on selected source date");
+  }
+  if (selectedSourceDatePolicy === "nearest_prior_within_3_days") {
+    reasons.push("source date inferred with low confidence");
+  }
+  if (second && top.rawScore - second.rawScore < 0.12) {
+    reasons.push("top candidate margin too small");
   }
   if (input.identityCheck.matchedBy === "mismatch") {
     reasons.push(...input.identityCheck.warnings);
@@ -1804,7 +2090,7 @@ function evaluateDryRunOutcome(input: {
     dryRunResult === "candidate_found" &&
     safeCandidates.length === 1 &&
     Boolean(targetDate) &&
-    Boolean(sourceDate) &&
+    Boolean(selectedSourceDate) &&
     Boolean(candidate.fingerprint) &&
     confidence >= 0.8 &&
     input.identityCheck.matchedBy !== "mismatch";
@@ -1814,7 +2100,7 @@ function evaluateDryRunOutcome(input: {
   }
 
   if (dryRunResult === "candidate_found" && !canExecute) {
-    dryRunResult = input.candidates.length > 1 ? "ambiguous" : "not_found";
+    dryRunResult = sortedBucketCandidates.length > 1 ? "ambiguous" : "not_found";
   }
 
   return {
@@ -1844,6 +2130,19 @@ function evaluateDryRunOutcome(input: {
       score: candidate.rawScore,
       reasons: candidate.reasons,
     })),
+    selectedSourceDatePolicy,
+    selectedSourceDate,
+    selectedSourceDateCandidateCount,
+    globalCandidateCount,
+    sourceDateBucketCounts,
+    rankingDebug: {
+      strictGlobalCount: strictGlobalCandidates.length,
+      selectedSourceDatePolicy,
+      selectedSourceDate,
+      selectedSourceDateCandidateCount,
+      globalCandidateCount,
+      sourceDateBucketCounts,
+    },
   };
 }
 
@@ -2003,6 +2302,12 @@ async function main(): Promise<void> {
       diagnostics: evaluation.diagnostics,
       identityCheck: evaluation.identityCheck,
       debugCandidatesTopN: evaluation.debugCandidatesTopN,
+      rankingDebug: evaluation.rankingDebug,
+      selectedSourceDatePolicy: evaluation.selectedSourceDatePolicy,
+      selectedSourceDate: evaluation.selectedSourceDate,
+      selectedSourceDateCandidateCount: evaluation.selectedSourceDateCandidateCount,
+      globalCandidateCount: evaluation.globalCandidateCount,
+      sourceDateBucketCounts: evaluation.sourceDateBucketCounts,
       note: "Ничего не изменено в TrainingPeaks",
     };
 
@@ -2072,6 +2377,12 @@ async function main(): Promise<void> {
       diagnostics: failedEvaluation.diagnostics,
       identityCheck: failedEvaluation.identityCheck,
       debugCandidatesTopN: failedEvaluation.debugCandidatesTopN,
+      rankingDebug: failedEvaluation.rankingDebug,
+      selectedSourceDatePolicy: failedEvaluation.selectedSourceDatePolicy,
+      selectedSourceDate: failedEvaluation.selectedSourceDate,
+      selectedSourceDateCandidateCount: failedEvaluation.selectedSourceDateCandidateCount,
+      globalCandidateCount: failedEvaluation.globalCandidateCount,
+      sourceDateBucketCounts: failedEvaluation.sourceDateBucketCounts,
       note: "Ничего не изменено в TrainingPeaks",
     };
     await failDryRun(claimed.action.id, run.id, {
