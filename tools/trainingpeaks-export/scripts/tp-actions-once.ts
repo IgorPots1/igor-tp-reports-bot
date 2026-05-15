@@ -127,6 +127,44 @@ type RevalidationComparison = {
   currentCandidate: DryRunCandidate | null;
 };
 
+type UiCapabilityProbeScreenshots = {
+  before: string | null;
+  menuOpened: string | null;
+  detailOpened: string | null;
+  afterClosed: string | null;
+};
+
+type UiCapabilityProbe = {
+  attempted: boolean;
+  safeToProceedLater: boolean;
+  recommendedMutationMethod: "detail_date_save" | "explicit_move_menu" | "unknown";
+  card: {
+    found: boolean;
+    selectorUsed: string | null;
+    textSnippet: string | null;
+    menuButtonFound: boolean;
+    menuOpened: boolean;
+    menuMoveOptionFound: boolean;
+    menuRescheduleOptionFound: boolean;
+    menuCopyOptionFound: boolean;
+    menuCloseSucceeded: boolean;
+  };
+  detail: {
+    openAttempted: boolean;
+    opened: boolean;
+    dateFieldFound: boolean;
+    dateFieldSelectorHint: string | null;
+    currentDateValue: string | null;
+    saveButtonFound: boolean;
+    cancelButtonFound: boolean;
+    closeButtonFound: boolean;
+    closeSucceeded: boolean;
+  };
+  screenshots: UiCapabilityProbeScreenshots;
+  warnings: string[];
+  errors: string[];
+};
+
 type TrainingPeaksMoveWorkoutTarget =
   | { kind: "relative_day"; value: "tomorrow" | "day_after_tomorrow"; sourceText?: string }
   | {
@@ -711,6 +749,19 @@ async function getAttributeSafe(
     if (value === null) {
       return null;
     }
+    const normalized = normalizeWhitespace(value);
+    return normalized || null;
+  } catch {
+    return null;
+  }
+}
+
+async function getInputValueSafe(
+  locator: import("playwright").Locator,
+  timeout = 700
+): Promise<string | null> {
+  try {
+    const value = await locator.inputValue({ timeout });
     const normalized = normalizeWhitespace(value);
     return normalized || null;
   } catch {
@@ -1586,6 +1637,523 @@ async function captureCalendarDomSnapshot(
       cardSnippets: [],
       error: `calendar DOM snapshot failed: ${toShortErrorMessage(error)}`,
     };
+  }
+}
+
+function buildEmptyUiCapabilityProbe(): UiCapabilityProbe {
+  return {
+    attempted: true,
+    safeToProceedLater: false,
+    recommendedMutationMethod: "unknown",
+    card: {
+      found: false,
+      selectorUsed: null,
+      textSnippet: null,
+      menuButtonFound: false,
+      menuOpened: false,
+      menuMoveOptionFound: false,
+      menuRescheduleOptionFound: false,
+      menuCopyOptionFound: false,
+      menuCloseSucceeded: false,
+    },
+    detail: {
+      openAttempted: false,
+      opened: false,
+      dateFieldFound: false,
+      dateFieldSelectorHint: null,
+      currentDateValue: null,
+      saveButtonFound: false,
+      cancelButtonFound: false,
+      closeButtonFound: false,
+      closeSucceeded: false,
+    },
+    screenshots: {
+      before: null,
+      menuOpened: null,
+      detailOpened: null,
+      afterClosed: null,
+    },
+    warnings: [],
+    errors: [],
+  };
+}
+
+async function captureProbeScreenshot(
+  page: import("playwright").Page,
+  filePath: string,
+  warnings: string[]
+): Promise<string | null> {
+  try {
+    await page.screenshot({ path: filePath, fullPage: true });
+    return filePath;
+  } catch (error) {
+    warnings.push(`probe screenshot failed for ${path.basename(filePath)}: ${toShortErrorMessage(error)}`);
+    return null;
+  }
+}
+
+async function waitForTrainingPeaksCalendarReadiness(
+  page: import("playwright").Page,
+  warnings: string[]
+): Promise<void> {
+  await page.waitForLoadState("domcontentloaded", { timeout: 5_000 }).catch(() => {});
+  await page.waitForLoadState("networkidle", { timeout: 3_000 }).catch(() => {});
+
+  try {
+    await page.locator(TP_CALENDAR_ROOT_SELECTOR).first().waitFor({ state: "attached", timeout: 5_000 });
+  } catch (error) {
+    warnings.push(`probe calendar root wait failed: ${toShortErrorMessage(error)}`);
+  }
+
+  try {
+    await page
+      .locator(`${TP_CALENDAR_ROOT_SELECTOR} ${TP_DAY_CELL_SELECTOR}`)
+      .first()
+      .waitFor({ state: "attached", timeout: 5_000 });
+  } catch (error) {
+    warnings.push(`probe calendar day cells wait failed: ${toShortErrorMessage(error)}`);
+  }
+}
+
+async function resolveDayCellDateForProbe(
+  dayCell: import("playwright").Locator,
+  calendarMonthYear: { year: number | null; month: number | null }
+): Promise<string | null> {
+  const dayTextRaw = (await dayCell.innerText().catch(() => "")) ?? "";
+  const dayText = dayTextRaw.trim();
+  const dayAttributes = {
+    dataDate: await getAttributeSafe(dayCell, "data-date"),
+    datetime: await getAttributeSafe(dayCell, "datetime"),
+    ariaLabel: await getAttributeSafe(dayCell, "aria-label"),
+    title: await getAttributeSafe(dayCell, "title"),
+  };
+
+  for (const attrValue of Object.values(dayAttributes)) {
+    const dateIso = parseDateFromCalendarAttr(attrValue);
+    if (dateIso) {
+      return dateIso;
+    }
+  }
+
+  const descendantDateLocators = dayCell.locator(
+    "[data-date],[datetime],[aria-label],[title],[class*='day' i],[class*='date' i],header,time"
+  );
+  const descendantCount = await descendantDateLocators.count();
+  for (let descendantIndex = 0; descendantIndex < descendantCount; descendantIndex += 1) {
+    const descendant = descendantDateLocators.nth(descendantIndex);
+    for (const attrName of ["data-date", "datetime", "aria-label", "title"] as const) {
+      const attrValue = await getAttributeSafe(descendant, attrName);
+      const dateIso = parseDateFromCalendarAttr(attrValue);
+      if (dateIso) {
+        return dateIso;
+      }
+    }
+  }
+
+  if (!calendarMonthYear.month || !calendarMonthYear.year) {
+    return null;
+  }
+
+  const primaryCards = dayCell.locator(TP_PRIMARY_WORKOUT_CARD_WITHIN_DAY_SELECTOR);
+  const fallbackCards = dayCell.locator(TP_FALLBACK_WORKOUT_CARD_WITHIN_DAY_SELECTOR);
+  const dayCardTexts: string[] = [];
+  for (const locator of [primaryCards, fallbackCards]) {
+    const count = await locator.count();
+    for (let index = 0; index < count; index += 1) {
+      const cardText = await getInnerTextSafe(locator.nth(index));
+      if (cardText) {
+        dayCardTexts.push(cardText);
+      }
+    }
+  }
+
+  let dayContextText = dayText;
+  for (const cardText of dayCardTexts) {
+    dayContextText = dayContextText.replace(cardText, " ");
+  }
+  const derivedDayNumber = extractDayNumberCandidate(dayContextText);
+  if (derivedDayNumber === null) {
+    return null;
+  }
+
+  return toIsoFromDateParts(calendarMonthYear.year, calendarMonthYear.month, derivedDayNumber);
+}
+
+async function locateWorkoutCardForProbe(
+  page: import("playwright").Page,
+  input: {
+    studentId: string | null;
+    sourceDate: string;
+    candidate: DryRunCandidate;
+  }
+): Promise<{
+  locator: import("playwright").Locator | null;
+  selectorUsed: string | null;
+  textSnippet: string | null;
+}> {
+  const calendarRoot = page.locator(TP_CALENDAR_ROOT_SELECTOR).first();
+  const calendarRootCount = await page.locator(TP_CALENDAR_ROOT_SELECTOR).count();
+  if (calendarRootCount === 0) {
+    return {
+      locator: null,
+      selectorUsed: null,
+      textSnippet: null,
+    };
+  }
+
+  const calendarMonthYear = await inferCalendarMonthYear(calendarRoot);
+  const dayCells = calendarRoot.locator(TP_DAY_CELL_SELECTOR);
+  const dayCellCount = await dayCells.count();
+
+  const selectors = [
+    { selector: TP_PRIMARY_WORKOUT_CARD_WITHIN_DAY_SELECTOR, fullSelector: TP_PRIMARY_WORKOUT_CARD_SELECTOR },
+    { selector: TP_FALLBACK_WORKOUT_CARD_WITHIN_DAY_SELECTOR, fullSelector: TP_FALLBACK_WORKOUT_CARD_SELECTOR },
+  ];
+
+  for (let dayIndex = 0; dayIndex < dayCellCount; dayIndex += 1) {
+    const dayCell = dayCells.nth(dayIndex);
+    const dayDate = await resolveDayCellDateForProbe(dayCell, calendarMonthYear);
+    if (dayDate !== input.sourceDate) {
+      continue;
+    }
+
+    for (const selectorEntry of selectors) {
+      const cards = dayCell.locator(selectorEntry.selector);
+      const count = await cards.count();
+      for (let cardIndex = 0; cardIndex < count; cardIndex += 1) {
+        const card = cards.nth(cardIndex);
+        const rawText = await getInnerTextSafe(card);
+        if (!rawText) {
+          continue;
+        }
+        const text = toTextSnippet(rawText);
+        const title =
+          (await getInnerTextSafe(card.locator("h1, h2, h3, strong, [class*='title' i]").first())) ??
+          extractTitleFromCardText(text);
+        const type = detectWorkoutTypeFromText(text);
+        const plannedDurationRaw =
+          text.match(
+            /\b(?:\d{1,2}:\d{2}(?::\d{2})?|\d+(?:[.,]\d+)?\s*(?:h|hr|hour|hours|ч|min|mins|minute|minutes|мин|sec|secs|second|seconds|сек))\b/i
+          )?.[0] ?? null;
+        const plannedDistanceRaw =
+          text.match(/\b\d+(?:[.,]\d+)?\s*(?:km|км|mi|mile|miles|m|м|meter|meters)\b/i)?.[0] ?? null;
+        const startTimeLocal = text.match(/\b\d{1,2}:\d{2}(?::\d{2})?\b/)?.[0] ?? null;
+        const fingerprint = buildCandidateFingerprint({
+          studentId: input.studentId,
+          dateIso: dayDate,
+          title,
+          type,
+          startTimeLocal,
+          plannedDurationSec: plannedDurationRaw ? parseDurationSeconds(plannedDurationRaw) : null,
+          plannedDistance: plannedDistanceRaw ? parseDistance(plannedDistanceRaw) : null,
+        });
+        if (fingerprint !== input.candidate.fingerprint) {
+          continue;
+        }
+        if (selectorEntry.fullSelector === TP_FALLBACK_WORKOUT_CARD_SELECTOR) {
+          continue;
+        }
+
+        return {
+          locator: card,
+          selectorUsed: selectorEntry.fullSelector,
+          textSnippet: text,
+        };
+      }
+    }
+  }
+
+  return {
+    locator: null,
+    selectorUsed: null,
+    textSnippet: null,
+  };
+}
+
+async function findFirstVisibleLocator(
+  candidates: Array<{ locator: import("playwright").Locator; selectorHint: string }>,
+  timeout = 700
+): Promise<{ locator: import("playwright").Locator; selectorHint: string } | null> {
+  for (const candidate of candidates) {
+    if (await isVisible(candidate.locator, timeout)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+async function readDateFieldValue(locator: import("playwright").Locator): Promise<string | null> {
+  return (await getInputValueSafe(locator, 700)) ?? (await getInnerTextSafe(locator, 700));
+}
+
+async function menuStillVisible(page: import("playwright").Page): Promise<boolean> {
+  return anyVisible(
+    [
+      page.getByRole("menu"),
+      page.getByRole("menuitem", { name: /move|resched|copy|duplicate/i }),
+      page.getByText(/move|resched|copy/i),
+    ],
+    500
+  );
+}
+
+async function detailStillVisible(page: import("playwright").Page): Promise<boolean> {
+  return anyVisible(
+    [
+      page.locator('input[name*="date" i], input[id*="date" i], [aria-label*="date" i]'),
+      page.getByRole("button", { name: /save|done|update/i }),
+      page.getByRole("button", { name: /cancel|close|x/i }),
+    ],
+    500
+  );
+}
+
+async function probeTrainingPeaksMoveCapabilities(
+  claimed: ClaimedRealAction,
+  runId: string,
+  comparison: RevalidationComparison
+): Promise<UiCapabilityProbe> {
+  const probe = buildEmptyUiCapabilityProbe();
+  const student = claimed.student;
+  if (!student) {
+    probe.errors.push(`Student is missing for action ${claimed.action.id}.`);
+    return probe;
+  }
+  if (!student.trainingpeaks_athlete_url?.trim()) {
+    probe.errors.push(`Missing trainingpeaks_athlete_url for student ${student.student_name}.`);
+    return probe;
+  }
+
+  const sourceDate = comparison.sourceDate.current ?? comparison.sourceDate.trusted;
+  const candidate = comparison.currentCandidate ?? comparison.trustedCandidate;
+  if (!sourceDate) {
+    probe.errors.push("Probe skipped: source date is unavailable after revalidation.");
+    return probe;
+  }
+
+  await mkdir(profileDir, { recursive: true });
+  const artifactDir = path.join(ACTION_ARTIFACTS_ROOT, claimed.action.id, runId);
+  await mkdir(artifactDir, { recursive: true });
+
+  const screenshotBeforePath = path.join(artifactDir, "probe_before.png");
+  const screenshotMenuOpenedPath = path.join(artifactDir, "probe_menu_opened.png");
+  const screenshotDetailOpenedPath = path.join(artifactDir, "probe_detail_opened.png");
+  const screenshotAfterClosedPath = path.join(artifactDir, "probe_after_closed.png");
+
+  const context = await chromium.launchPersistentContext(profileDir, {
+    headless: false,
+    viewport: null,
+  });
+
+  try {
+    const page = context.pages()[0] ?? (await context.newPage());
+    await page.goto(student.trainingpeaks_athlete_url, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.bringToFront();
+    await waitForTrainingPeaksCalendarReadiness(page, probe.warnings);
+
+    const pageAssessment = await assessTrainingPeaksPage(page);
+    if (pageAssessment.loginRequired) {
+      probe.errors.push("Probe aborted: TrainingPeaks session expired or login required.");
+      return probe;
+    }
+    if (!pageAssessment.trainingPeaksContextLikely || !pageAssessment.athletePageLikelyReachable) {
+      probe.errors.push("Probe aborted: athlete TrainingPeaks page is not safely reachable.");
+      return probe;
+    }
+
+    probe.screenshots.before = await captureProbeScreenshot(page, screenshotBeforePath, probe.warnings);
+
+    const cardMatch = await locateWorkoutCardForProbe(page, {
+      studentId: student.id,
+      sourceDate,
+      candidate,
+    });
+    probe.card.found = Boolean(cardMatch.locator);
+    probe.card.selectorUsed = cardMatch.selectorUsed;
+    probe.card.textSnippet = cardMatch.textSnippet;
+
+    if (!cardMatch.locator) {
+      probe.errors.push("Probe could not match the revalidated candidate back to a visible calendar card.");
+      return probe;
+    }
+
+    const card = cardMatch.locator;
+    const safeMenuButton = await findFirstVisibleLocator(
+      [
+        {
+          locator: card.locator('[aria-label*="more" i],[title*="more" i],[data-tooltip*="more" i]').first(),
+          selectorHint: '[aria-label*="more" i],[title*="more" i],[data-tooltip*="more" i]',
+        },
+        {
+          locator: card.locator('[aria-label*="menu" i],[title*="menu" i],[data-tooltip*="menu" i]').first(),
+          selectorHint: '[aria-label*="menu" i],[title*="menu" i],[data-tooltip*="menu" i]',
+        },
+      ],
+      700
+    );
+    if (safeMenuButton) {
+      probe.card.menuButtonFound = true;
+      try {
+        await safeMenuButton.locator.first().click({ timeout: 2_000 });
+        await page.waitForTimeout(400);
+        probe.card.menuOpened = await anyVisible(
+          [
+            page.getByRole("menu"),
+            page.getByRole("menuitem", { name: /move|resched|copy|duplicate/i }),
+            page.getByText(/move|resched|copy/i),
+          ],
+          700
+        );
+        if (probe.card.menuOpened) {
+          probe.card.menuMoveOptionFound = await anyVisible(
+            [page.getByRole("menuitem", { name: /move/i }), page.getByText(/move/i)],
+            500
+          );
+          probe.card.menuRescheduleOptionFound = await anyVisible(
+            [page.getByRole("menuitem", { name: /resched/i }), page.getByText(/resched/i)],
+            500
+          );
+          probe.card.menuCopyOptionFound = await anyVisible(
+            [page.getByRole("menuitem", { name: /copy|duplicate/i }), page.getByText(/copy|duplicate/i)],
+            500
+          );
+          probe.screenshots.menuOpened = await captureProbeScreenshot(page, screenshotMenuOpenedPath, probe.warnings);
+
+          await page.keyboard.press("Escape").catch(() => {});
+          await page.waitForTimeout(300);
+          probe.card.menuCloseSucceeded = !(await menuStillVisible(page));
+          if (!probe.card.menuCloseSucceeded) {
+            probe.errors.push("Probe opened the card menu but could not confirm a safe close.");
+            return probe;
+          }
+        }
+      } catch (error) {
+        probe.warnings.push(`Menu probe failed: ${toShortErrorMessage(error)}`);
+      }
+    }
+
+    probe.detail.openAttempted = true;
+    try {
+      await card.click({ timeout: 2_000 });
+      await page.waitForTimeout(700);
+    } catch (error) {
+      probe.warnings.push(`Detail open attempt failed: ${toShortErrorMessage(error)}`);
+    }
+
+    const dateFieldCandidates = [
+      {
+        locator: page.locator('input[name*="date" i]').first(),
+        selectorHint: 'input[name*="date" i]',
+      },
+      {
+        locator: page.locator('input[id*="date" i]').first(),
+        selectorHint: 'input[id*="date" i]',
+      },
+      {
+        locator: page.locator('[aria-label*="date" i]').first(),
+        selectorHint: '[aria-label*="date" i]',
+      },
+    ];
+    const dateFieldMatch = await findFirstVisibleLocator(dateFieldCandidates, 700);
+    probe.detail.dateFieldFound = Boolean(dateFieldMatch);
+    probe.detail.dateFieldSelectorHint = dateFieldMatch?.selectorHint ?? null;
+    if (dateFieldMatch) {
+      probe.detail.currentDateValue = await readDateFieldValue(dateFieldMatch.locator);
+    }
+
+    probe.detail.saveButtonFound = await anyVisible([page.getByRole("button", { name: /save|done|update/i })], 700);
+    probe.detail.cancelButtonFound = await anyVisible([page.getByRole("button", { name: /cancel/i })], 700);
+    probe.detail.closeButtonFound = await anyVisible(
+      [
+        page.getByRole("button", { name: /close|x/i }),
+        page.locator('[aria-label*="close" i],[title*="close" i]').first(),
+      ],
+      700
+    );
+    probe.detail.opened = Boolean(
+      probe.detail.dateFieldFound ||
+        probe.detail.saveButtonFound ||
+        probe.detail.cancelButtonFound ||
+        probe.detail.closeButtonFound
+    );
+
+    if (probe.detail.opened) {
+      probe.screenshots.detailOpened = await captureProbeScreenshot(page, screenshotDetailOpenedPath, probe.warnings);
+
+      const closeCandidate = await findFirstVisibleLocator(
+        [
+          {
+            locator: page.getByRole("button", { name: /cancel/i }).first(),
+            selectorHint: 'button[name=/cancel/i]',
+          },
+          {
+            locator: page.getByRole("button", { name: /close|x/i }).first(),
+            selectorHint: 'button[name=/close|x/i]',
+          },
+          {
+            locator: page.locator('[aria-label*="close" i],[title*="close" i]').first(),
+            selectorHint: '[aria-label*="close" i],[title*="close" i]',
+          },
+        ],
+        700
+      );
+
+      if (closeCandidate) {
+        try {
+          await closeCandidate.locator.click({ timeout: 2_000 });
+          await page.waitForTimeout(500);
+        } catch (error) {
+          probe.warnings.push(`Detail close click failed: ${toShortErrorMessage(error)}`);
+        }
+      } else {
+        await page.keyboard.press("Escape").catch(() => {});
+        await page.waitForTimeout(500);
+      }
+
+      probe.detail.closeSucceeded = !(await detailStillVisible(page));
+      if (!probe.detail.closeSucceeded) {
+        probe.errors.push("Probe opened workout detail UI but could not confirm a safe close without saving.");
+        return probe;
+      }
+    }
+
+    probe.screenshots.afterClosed = await captureProbeScreenshot(page, screenshotAfterClosedPath, probe.warnings);
+
+    const detailMethodReady =
+      probe.detail.opened &&
+      probe.detail.dateFieldFound &&
+      probe.detail.saveButtonFound &&
+      (probe.detail.cancelButtonFound || probe.detail.closeButtonFound) &&
+      probe.detail.closeSucceeded;
+    const explicitMenuMethodReady =
+      probe.card.menuOpened &&
+      probe.card.menuCloseSucceeded &&
+      (probe.card.menuMoveOptionFound || probe.card.menuRescheduleOptionFound);
+
+    probe.safeToProceedLater = detailMethodReady || explicitMenuMethodReady;
+    probe.recommendedMutationMethod = detailMethodReady
+      ? "detail_date_save"
+      : explicitMenuMethodReady
+        ? "explicit_move_menu"
+        : "unknown";
+
+    if (!probe.detail.opened) {
+      probe.warnings.push("Probe did not detect a safe detail panel after clicking the candidate card.");
+    }
+    if (
+      probe.detail.opened &&
+      !(probe.detail.cancelButtonFound || probe.detail.closeButtonFound) &&
+      probe.detail.closeSucceeded
+    ) {
+      probe.warnings.push("Detail UI only closed via Escape; explicit cancel/close control was not detected.");
+    }
+
+    return probe;
+  } catch (error) {
+    probe.errors.push(`UI capability probe failed: ${toShortErrorMessage(error)}`);
+    return probe;
+  } finally {
+    await context.close().catch(() => {});
   }
 }
 
@@ -3038,6 +3606,7 @@ async function main(): Promise<void> {
     }
 
     const errorMessage = REAL_MOVE_NOT_IMPLEMENTED_ERROR;
+    const uiCapabilityProbe = await probeTrainingPeaksMoveCapabilities(claimed, run.id, comparison);
     const logJson = {
       ...baseLog,
       status: "failed",
@@ -3047,6 +3616,7 @@ async function main(): Promise<void> {
       revalidationPassed: true,
       revalidationComparison: comparison,
       currentEvaluation: evaluation,
+      uiCapabilityProbe,
       wouldMove: {
         sourceDate: claimed.trustedDryRunLog.resolvedDates.sourceDate,
         targetDate: claimed.trustedDryRunLog.resolvedDates.targetDate,
@@ -3061,7 +3631,7 @@ async function main(): Promise<void> {
           fingerprint: comparison.currentCandidate?.fingerprint ?? comparison.trustedCandidate.fingerprint,
         },
       },
-      note: "Проверка перед переносом пройдена. Реальный перенос ещё не реализован в Phase 3D.1. TrainingPeaks не изменён.",
+      note: "Проверка перед переносом пройдена. UI capability probe выполнен в режиме read-only. Реальный перенос ещё не реализован в Phase 3D.2. TrainingPeaks не изменён.",
     };
 
     await finishRealRun(claimed.action.id, run.id, {
@@ -3079,7 +3649,8 @@ async function main(): Promise<void> {
       currentEvaluation: evaluation,
       comparison,
       revalidationPassed: true,
-      errorMessage: "Проверка перед переносом пройдена. Реальный перенос ещё не реализован в Phase 3D.1. TrainingPeaks не изменён.",
+      errorMessage:
+        "Проверка перед переносом пройдена. UI capability probe выполнен в режиме read-only. Реальный перенос ещё не реализован в Phase 3D.2. TrainingPeaks не изменён.",
       candidate: evaluation.candidate ?? comparison.trustedCandidate,
     });
 
