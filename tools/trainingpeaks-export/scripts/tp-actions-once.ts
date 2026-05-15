@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import process from "node:process";
 import { createClient } from "@supabase/supabase-js";
@@ -58,6 +59,7 @@ type ClaimedAction = {
 type DryRunArtifacts = {
   screenshotBeforePath: string;
   screenshotAfterPath: string | null;
+  dryRunEvaluation: DryRunEvaluation;
   pageMeta: {
     url: string;
     title: string;
@@ -65,6 +67,64 @@ type DryRunArtifacts = {
     athletePageLikelyReachable: boolean;
     trainingPeaksContextLikely: boolean;
   };
+};
+
+type TrainingPeaksMoveWorkoutTarget =
+  | { kind: "relative_day"; value: "tomorrow" | "day_after_tomorrow"; sourceText?: string }
+  | {
+      kind: "weekday";
+      value: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
+      sourceText?: string;
+    };
+
+type ParsedMoveWorkoutPayload = {
+  actionType?: "move_workout";
+  target?: TrainingPeaksMoveWorkoutTarget;
+};
+
+type DryRunResult = "candidate_found" | "ambiguous" | "not_found" | "failed";
+
+type DryRunResolvedDates = {
+  sourceDate: string | null;
+  targetDate: string | null;
+  timezone: string | null;
+};
+
+type DryRunCandidate = {
+  title: string | null;
+  type: string | null;
+  plannedDurationSec: number | null;
+  plannedDistance: number | null;
+  startTimeLocal: string | null;
+  fingerprint: string;
+};
+
+type DryRunDiagnostics = {
+  loginRequired: boolean;
+  athleteReachable: boolean;
+  trainingPeaksContextOk: boolean;
+  parseWarnings: string[];
+};
+
+type DryRunEvaluation = {
+  dryRunResult: DryRunResult;
+  resolvedDates: DryRunResolvedDates;
+  candidate: DryRunCandidate | null;
+  candidateAlternativesCount: number;
+  confidence: number;
+  canExecute: boolean;
+  canExecuteReasons: string[];
+  diagnostics: DryRunDiagnostics;
+};
+
+type RawWorkoutCandidate = {
+  title: string | null;
+  type: string | null;
+  plannedDurationSec: number | null;
+  plannedDistance: number | null;
+  startTimeLocal: string | null;
+  dateIso: string | null;
+  rawScore: number;
 };
 
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
@@ -206,6 +266,182 @@ function getTargetSummary(parsedPayload: unknown): string {
   return "target: unknown";
 }
 
+function toIsoDate(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
+
+function addDays(value: Date, days: number): Date {
+  const next = new Date(value);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function clampConfidence(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  if (value < 0) {
+    return 0;
+  }
+  if (value > 1) {
+    return 1;
+  }
+  return Number(value.toFixed(2));
+}
+
+function parseMoveWorkoutPayload(parsedPayload: unknown): ParsedMoveWorkoutPayload | null {
+  if (!parsedPayload || typeof parsedPayload !== "object") {
+    return null;
+  }
+
+  const payload = parsedPayload as ParsedMoveWorkoutPayload;
+  if (payload.actionType !== "move_workout" || !payload.target) {
+    return null;
+  }
+  if (payload.target.kind !== "relative_day" && payload.target.kind !== "weekday") {
+    return null;
+  }
+  return payload;
+}
+
+function resolveTargetDateFromPayload(target: TrainingPeaksMoveWorkoutTarget): { targetDate: string; warnings: string[] } {
+  const warnings: string[] = [];
+  const now = new Date();
+
+  if (target.kind === "relative_day") {
+    if (target.value === "tomorrow") {
+      return { targetDate: toIsoDate(addDays(now, 1)), warnings };
+    }
+    return { targetDate: toIsoDate(addDays(now, 2)), warnings };
+  }
+
+  const weekdayMap: Record<TrainingPeaksMoveWorkoutTarget["value"], number> = {
+    monday: 1,
+    tuesday: 2,
+    wednesday: 3,
+    thursday: 4,
+    friday: 5,
+    saturday: 6,
+    sunday: 0,
+    tomorrow: 0,
+    day_after_tomorrow: 0,
+  };
+
+  const nowWeekday = now.getUTCDay();
+  const targetWeekday = weekdayMap[target.value];
+  if (targetWeekday === undefined) {
+    warnings.push("target weekday is unknown");
+    return { targetDate: toIsoDate(now), warnings };
+  }
+
+  let delta = (targetWeekday - nowWeekday + 7) % 7;
+  if (delta === 0) {
+    delta = 7;
+  }
+  return { targetDate: toIsoDate(addDays(now, delta)), warnings };
+}
+
+function dateDistanceDays(fromIso: string, toIso: string): number {
+  const from = new Date(`${fromIso}T00:00:00.000Z`).getTime();
+  const to = new Date(`${toIso}T00:00:00.000Z`).getTime();
+  const diffMs = Math.abs(to - from);
+  return Math.round(diffMs / (24 * 60 * 60 * 1000));
+}
+
+function normalizeDateCandidate(raw: string): string | null {
+  const direct = raw.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (direct) {
+    return `${direct[1]}-${direct[2]}-${direct[3]}`;
+  }
+
+  const slash = raw.trim().match(/^(\d{1,2})[./-](\d{1,2})(?:[./-](\d{4}))?$/);
+  if (slash) {
+    const now = new Date();
+    const year = slash[3] ? Number(slash[3]) : now.getUTCFullYear();
+    const month = Number(slash[2]);
+    const day = Number(slash[1]);
+    if (Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day)) {
+      return null;
+    }
+    const mm = String(month).padStart(2, "0");
+    const dd = String(day).padStart(2, "0");
+    return `${String(year).padStart(4, "0")}-${mm}-${dd}`;
+  }
+
+  return null;
+}
+
+function parseDurationSeconds(raw: string): number | null {
+  const text = raw.trim().toLowerCase();
+  if (!text) {
+    return null;
+  }
+
+  const hhmmss = text.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (hhmmss) {
+    const hours = Number(hhmmss[1]);
+    const minutes = Number(hhmmss[2]);
+    const seconds = Number(hhmmss[3] ?? "0");
+    return hours * 3600 + minutes * 60 + seconds;
+  }
+
+  const hourMatch = text.match(/(\d+(?:[.,]\d+)?)\s*(h|hr|hour|hours|ч)\b/);
+  const minMatch = text.match(/(\d+(?:[.,]\d+)?)\s*(m|min|mins|minute|minutes|мин)\b/);
+  const secMatch = text.match(/(\d+(?:[.,]\d+)?)\s*(s|sec|secs|second|seconds|сек)\b/);
+  if (hourMatch || minMatch || secMatch) {
+    const hours = Number((hourMatch?.[1] ?? "0").replace(",", "."));
+    const minutes = Number((minMatch?.[1] ?? "0").replace(",", "."));
+    const seconds = Number((secMatch?.[1] ?? "0").replace(",", "."));
+    return Math.round(hours * 3600 + minutes * 60 + seconds);
+  }
+
+  return null;
+}
+
+function parseDistance(raw: string): number | null {
+  const text = raw.trim().toLowerCase();
+  if (!text) {
+    return null;
+  }
+  const match = text.match(/(\d+(?:[.,]\d+)?)\s*(km|км|mi|mile|miles|м|meter|meters)\b/);
+  if (!match) {
+    return null;
+  }
+  const value = Number(match[1].replace(",", "."));
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  const unit = match[2];
+  if (unit === "mi" || unit === "mile" || unit === "miles") {
+    return Number((value * 1.60934).toFixed(2));
+  }
+  if (unit === "m" || unit === "м" || unit === "meter" || unit === "meters") {
+    return Number((value / 1000).toFixed(3));
+  }
+  return value;
+}
+
+function buildCandidateFingerprint(input: {
+  studentId: string | null;
+  dateIso: string | null;
+  title: string | null;
+  type: string | null;
+  startTimeLocal: string | null;
+  plannedDurationSec: number | null;
+  plannedDistance: number | null;
+}): string {
+  const stable = [
+    input.studentId ?? "na",
+    input.dateIso ?? "na",
+    (input.title ?? "untitled").trim().toLowerCase(),
+    (input.type ?? "na").trim().toLowerCase(),
+    input.startTimeLocal ?? "na",
+    input.plannedDurationSec === null ? "na" : String(input.plannedDurationSec),
+    input.plannedDistance === null ? "na" : String(input.plannedDistance),
+  ].join("|");
+  return createHash("sha1").update(stable).digest("hex");
+}
+
 function resolveDryRunNotificationChatId(action: TrainingPeaksActionRow): string | null {
   const chatId = action.coach_chat_id ?? action.decided_by_chat_id;
   if (!chatId) {
@@ -243,6 +479,7 @@ async function notifyCoachDryRunResult(input: {
   studentName: string;
   statusText: string;
   note: string;
+  dryRunEvaluation?: DryRunEvaluation | null;
   errorText?: string | null;
 }): Promise<void> {
   if (!input.chatId) {
@@ -253,15 +490,29 @@ async function notifyCoachDryRunResult(input: {
     "TrainingPeaks dry-run",
     `Action ID: ${input.action.id}`,
     `Ученик: ${input.studentName}`,
-    `Сообщение: ${input.action.raw_text}`,
+    `Raw text: ${input.action.raw_text}`,
     `Target: ${getTargetSummary(input.action.parsed_payload)}`,
     `Статус: ${input.statusText}`,
-    `Note: ${input.note}`,
   ];
+
+  if (input.dryRunEvaluation) {
+    const evaluation = input.dryRunEvaluation;
+    lines.push(`dryRunResult: ${evaluation.dryRunResult}`);
+    lines.push(`resolved target date: ${evaluation.resolvedDates.targetDate ?? "unknown"}`);
+    lines.push(`resolved source date: ${evaluation.resolvedDates.sourceDate ?? "unknown"}`);
+    lines.push(`candidate: ${formatCandidateLine(evaluation.candidate)}`);
+    if (!evaluation.canExecute) {
+      const reason = evaluation.canExecuteReasons.join("; ") || "небезопасно выполнить";
+      lines.push(`reason: ${reason}`);
+    }
+    lines.push(`confidence: ${evaluation.confidence.toFixed(2)}`);
+    lines.push(`canExecute: ${evaluation.canExecute ? "yes" : "no"}`);
+  }
 
   if (input.errorText) {
     lines.push(`Ошибка: ${input.errorText}`);
   }
+  lines.push(input.note);
 
   try {
     await sendTelegramText(input.chatId, lines.join("\n"));
@@ -502,6 +753,299 @@ async function assessTrainingPeaksPage(page: import("playwright").Page): Promise
   };
 }
 
+function scoreWorkoutCandidate(input: {
+  title: string | null;
+  type: string | null;
+  dateIso: string | null;
+  targetDate: string | null;
+  distanceFromTodayDays: number | null;
+}): number {
+  let score = 0.35;
+  if (input.title) {
+    score += 0.2;
+  }
+  if (input.type) {
+    score += 0.1;
+  }
+  if (input.dateIso && input.targetDate) {
+    const days = dateDistanceDays(input.dateIso, input.targetDate);
+    if (days === 0) {
+      score += 0.3;
+    } else if (days === 1) {
+      score += 0.2;
+    } else if (days === 2) {
+      score += 0.08;
+    } else {
+      score -= Math.min(0.2, days * 0.03);
+    }
+  }
+  if (input.distanceFromTodayDays !== null) {
+    if (input.distanceFromTodayDays <= 3) {
+      score += 0.1;
+    } else if (input.distanceFromTodayDays >= 8) {
+      score -= 0.1;
+    }
+  }
+  return clampConfidence(score);
+}
+
+async function extractWorkoutCandidatesFromPage(
+  page: import("playwright").Page,
+  targetDateIso: string | null
+): Promise<RawWorkoutCandidate[]> {
+  const normalize = (value: string): string => value.replace(/\s+/g, " ").trim();
+  const texts = await page.locator("div,li,article,section,a").allInnerTexts().catch(() => []);
+  const MAX_CANDIDATES = 40;
+  const seen = new Set<string>();
+
+  const candidates = texts
+    .map((value) => normalize(value))
+    .filter((text) => text.length >= 3 && text.length <= 280)
+    .filter((text) => /(run|bike|swim|workout|strength|йога|бег|вел|плав|трениров)/i.test(text))
+    .slice(0, 1200)
+    .map((text) => {
+      const lower = text.toLowerCase();
+      const type =
+        lower.includes("run") || lower.includes("бег")
+          ? "run"
+          : lower.includes("bike") || lower.includes("вел")
+            ? "bike"
+            : lower.includes("swim") || lower.includes("плав")
+              ? "swim"
+              : lower.includes("strength")
+                ? "strength"
+                : null;
+      const dateRaw =
+        text.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0] ??
+        text.match(/\b\d{1,2}[./-]\d{1,2}(?:[./-]\d{4})?\b/)?.[0] ??
+        null;
+      const startTimeLocal = text.match(/\b\d{1,2}:\d{2}(?::\d{2})?\b/)?.[0] ?? null;
+      const plannedDurationRaw =
+        text.match(
+          /\b(?:\d{1,2}:\d{2}(?::\d{2})?|\d+(?:[.,]\d+)?\s*(?:h|hr|hour|hours|ч|min|mins|minute|minutes|мин|sec|secs|second|seconds|сек))\b/i
+        )?.[0] ?? null;
+      const plannedDistanceRaw = text.match(/\b\d+(?:[.,]\d+)?\s*(?:km|км|mi|mile|miles|m|м|meter|meters)\b/i)?.[0] ?? null;
+      const title = text.split(/[,|]/)[0]?.slice(0, 120) ?? null;
+      const dateIso = dateRaw ? normalizeDateCandidate(dateRaw) : null;
+      const distanceFromTodayDays = dateIso === null ? null : dateDistanceDays(toIsoDate(new Date()), dateIso);
+
+      return {
+        title,
+        type,
+        plannedDurationRaw,
+        plannedDistanceRaw,
+        startTimeLocal,
+        dateIsoRaw: dateIso,
+        distanceFromTodayDays,
+      };
+    })
+    .filter((candidate) => {
+      if (!targetDateIso || !candidate.dateIsoRaw) {
+        return true;
+      }
+      return dateDistanceDays(candidate.dateIsoRaw, targetDateIso) <= 14;
+    })
+    .filter((candidate) => {
+      const key = `${candidate.title ?? "na"}|${candidate.type ?? "na"}|${candidate.dateIsoRaw ?? "na"}|${candidate.startTimeLocal ?? "na"}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .slice(0, MAX_CANDIDATES);
+
+  return candidates
+    .map((candidate) => {
+      const dateIso = candidate.dateIsoRaw ? normalizeDateCandidate(candidate.dateIsoRaw) : null;
+      const rawScore = scoreWorkoutCandidate({
+        title: candidate.title,
+        type: candidate.type,
+        dateIso,
+        targetDate: targetDateIso,
+        distanceFromTodayDays: candidate.distanceFromTodayDays,
+      });
+      return {
+        title: candidate.title,
+        type: candidate.type,
+        plannedDurationSec: candidate.plannedDurationRaw ? parseDurationSeconds(candidate.plannedDurationRaw) : null,
+        plannedDistance: candidate.plannedDistanceRaw ? parseDistance(candidate.plannedDistanceRaw) : null,
+        startTimeLocal: candidate.startTimeLocal,
+        dateIso,
+        rawScore,
+      } satisfies RawWorkoutCandidate;
+    })
+    .sort((left, right) => right.rawScore - left.rawScore);
+}
+
+function evaluateDryRunOutcome(input: {
+  action: TrainingPeaksActionRow;
+  student: TrainingPeaksStudentRow | null;
+  pageMeta: {
+    loginRequired: boolean;
+    athletePageLikelyReachable: boolean;
+    trainingPeaksContextLikely: boolean;
+  };
+  candidates: RawWorkoutCandidate[];
+}): DryRunEvaluation {
+  const parseWarnings: string[] = [];
+  const payload = parseMoveWorkoutPayload(input.action.parsed_payload);
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? null;
+  let targetDate: string | null = null;
+  let sourceDate: string | null = null;
+
+  if (!payload?.target) {
+    parseWarnings.push("parsed_payload.target is missing or invalid");
+  } else {
+    const resolved = resolveTargetDateFromPayload(payload.target);
+    targetDate = resolved.targetDate;
+    parseWarnings.push(...resolved.warnings);
+  }
+
+  const diagnostics: DryRunDiagnostics = {
+    loginRequired: input.pageMeta.loginRequired,
+    athleteReachable: input.pageMeta.athletePageLikelyReachable,
+    trainingPeaksContextOk: input.pageMeta.trainingPeaksContextLikely,
+    parseWarnings,
+  };
+
+  const canExecuteReasons: string[] = [];
+  if (diagnostics.loginRequired) {
+    canExecuteReasons.push("login required");
+  }
+  if (!diagnostics.athleteReachable) {
+    canExecuteReasons.push("athlete page unreachable");
+  }
+  if (!diagnostics.trainingPeaksContextOk) {
+    canExecuteReasons.push("trainingpeaks context not confirmed");
+  }
+
+  if (canExecuteReasons.length > 0) {
+    return {
+      dryRunResult: "failed",
+      resolvedDates: { sourceDate: null, targetDate, timezone },
+      candidate: null,
+      candidateAlternativesCount: input.candidates.length,
+      confidence: 0,
+      canExecute: false,
+      canExecuteReasons,
+      diagnostics,
+    };
+  }
+
+  if (input.candidates.length === 0) {
+    return {
+      dryRunResult: "not_found",
+      resolvedDates: { sourceDate: null, targetDate, timezone },
+      candidate: null,
+      candidateAlternativesCount: 0,
+      confidence: 0.2,
+      canExecute: false,
+      canExecuteReasons: ["no workout candidates found on page"],
+      diagnostics,
+    };
+  }
+
+  const top = input.candidates[0]!;
+  const second = input.candidates[1] ?? null;
+  const confidence = clampConfidence(
+    top.rawScore - (second ? Math.min(0.18, Math.max(0, second.rawScore - 0.45)) : 0)
+  );
+  sourceDate = top.dateIso;
+  const alternativesCount = Math.max(0, input.candidates.length - 1);
+
+  const candidate: DryRunCandidate = {
+    title: top.title,
+    type: top.type,
+    plannedDurationSec: top.plannedDurationSec,
+    plannedDistance: top.plannedDistance,
+    startTimeLocal: top.startTimeLocal,
+    fingerprint: buildCandidateFingerprint({
+      studentId: input.student?.id ?? null,
+      dateIso: sourceDate,
+      title: top.title,
+      type: top.type,
+      startTimeLocal: top.startTimeLocal,
+      plannedDurationSec: top.plannedDurationSec,
+      plannedDistance: top.plannedDistance,
+    }),
+  };
+
+  let dryRunResult: DryRunResult = "candidate_found";
+  const reasons: string[] = [];
+
+  if (input.candidates.length > 1 && second && Math.abs(top.rawScore - second.rawScore) < 0.12) {
+    dryRunResult = "ambiguous";
+    reasons.push("multiple plausible workout candidates");
+  }
+  if (!targetDate) {
+    reasons.push("target date could not be resolved");
+  }
+  if (!sourceDate) {
+    reasons.push("source date could not be resolved safely");
+  }
+  if (!candidate.fingerprint) {
+    reasons.push("candidate fingerprint missing");
+  }
+  if (confidence < 0.8) {
+    reasons.push("confidence below threshold 0.8");
+  }
+
+  const canExecute =
+    dryRunResult === "candidate_found" &&
+    input.candidates.length === 1 &&
+    Boolean(targetDate) &&
+    Boolean(sourceDate) &&
+    Boolean(candidate.fingerprint) &&
+    confidence >= 0.8;
+
+  if (!canExecute && reasons.length === 0) {
+    reasons.push("safety policy conditions not met");
+  }
+
+  if (dryRunResult === "candidate_found" && !canExecute) {
+    dryRunResult = input.candidates.length > 1 ? "ambiguous" : "not_found";
+  }
+
+  return {
+    dryRunResult,
+    resolvedDates: {
+      sourceDate: sourceDate ?? null,
+      targetDate: targetDate ?? null,
+      timezone,
+    },
+    candidate,
+    candidateAlternativesCount: alternativesCount,
+    confidence,
+    canExecute,
+    canExecuteReasons: canExecute ? [] : reasons,
+    diagnostics,
+  };
+}
+
+function formatCandidateLine(candidate: DryRunCandidate | null): string {
+  if (!candidate) {
+    return "кандидат не найден";
+  }
+  const parts: string[] = [];
+  if (candidate.title) {
+    parts.push(candidate.title);
+  }
+  if (candidate.type) {
+    parts.push(`тип=${candidate.type}`);
+  }
+  if (candidate.plannedDurationSec !== null) {
+    parts.push(`длит=${candidate.plannedDurationSec}с`);
+  }
+  if (candidate.plannedDistance !== null) {
+    parts.push(`дист=${candidate.plannedDistance}км`);
+  }
+  if (candidate.startTimeLocal) {
+    parts.push(`старт=${candidate.startTimeLocal}`);
+  }
+  return parts.join(", ") || "кандидат без деталей";
+}
+
 async function runDryRunInspection(claimed: ClaimedAction, runId: string): Promise<DryRunArtifacts> {
   const student = claimed.student;
   if (!student) {
@@ -541,12 +1085,25 @@ async function runDryRunInspection(claimed: ClaimedAction, runId: string): Promi
       throw new Error("Athlete page is not reachable or failed to load fully.");
     }
 
+    const parsedPayload = parseMoveWorkoutPayload(claimed.action.parsed_payload);
+    const resolvedTargetDate = parsedPayload?.target
+      ? resolveTargetDateFromPayload(parsedPayload.target).targetDate
+      : null;
+    const extractedCandidates = await extractWorkoutCandidatesFromPage(page, resolvedTargetDate);
+    const dryRunEvaluation = evaluateDryRunOutcome({
+      action: claimed.action,
+      student,
+      pageMeta: pageAssessment,
+      candidates: extractedCandidates,
+    });
+
     await page.waitForTimeout(1000);
     await page.screenshot({ path: screenshotAfterPath, fullPage: true });
 
     return {
       screenshotBeforePath,
       screenshotAfterPath,
+      dryRunEvaluation,
       pageMeta: {
         url: page.url(),
         title: await page.title().catch(() => ""),
@@ -596,11 +1153,20 @@ async function main(): Promise<void> {
 
   try {
     const artifacts = await runDryRunInspection(claimed, run.id);
+    const evaluation = artifacts.dryRunEvaluation;
     const logJson = {
       ...baseLog,
       status: "dry_run_completed",
       inspectedAt: new Date().toISOString(),
       pageMeta: artifacts.pageMeta,
+      dryRunResult: evaluation.dryRunResult,
+      resolvedDates: evaluation.resolvedDates,
+      candidate: evaluation.candidate,
+      candidateAlternativesCount: evaluation.candidateAlternativesCount,
+      confidence: evaluation.confidence,
+      canExecute: evaluation.canExecute,
+      canExecuteReasons: evaluation.canExecuteReasons,
+      diagnostics: evaluation.diagnostics,
       note: "Ничего не изменено в TrainingPeaks",
     };
 
@@ -615,17 +1181,46 @@ async function main(): Promise<void> {
       action: claimed.action,
       studentName,
       statusText: "dry-run completed",
+      dryRunEvaluation: evaluation,
       note: "Ничего не изменено в TrainingPeaks",
     });
 
     console.log(`Dry-run completed for action ${claimed.action.id}.`);
   } catch (error) {
     const errorMessage = toShortErrorMessage(error);
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? null;
+    const failedEvaluation: DryRunEvaluation = {
+      dryRunResult: "failed",
+      resolvedDates: {
+        sourceDate: null,
+        targetDate: null,
+        timezone,
+      },
+      candidate: null,
+      candidateAlternativesCount: 0,
+      confidence: 0,
+      canExecute: false,
+      canExecuteReasons: [errorMessage],
+      diagnostics: {
+        loginRequired: /login|sign in|session expired/i.test(errorMessage),
+        athleteReachable: false,
+        trainingPeaksContextOk: false,
+        parseWarnings: [],
+      },
+    };
     const failedLog = {
       ...baseLog,
       status: "failed",
       failedAt: new Date().toISOString(),
       error: errorMessage,
+      dryRunResult: failedEvaluation.dryRunResult,
+      resolvedDates: failedEvaluation.resolvedDates,
+      candidate: failedEvaluation.candidate,
+      candidateAlternativesCount: failedEvaluation.candidateAlternativesCount,
+      confidence: failedEvaluation.confidence,
+      canExecute: failedEvaluation.canExecute,
+      canExecuteReasons: failedEvaluation.canExecuteReasons,
+      diagnostics: failedEvaluation.diagnostics,
       note: "Ничего не изменено в TrainingPeaks",
     };
     await failDryRun(claimed.action.id, run.id, {
@@ -638,6 +1233,7 @@ async function main(): Promise<void> {
       action: claimed.action,
       studentName,
       statusText: "dry-run failed",
+      dryRunEvaluation: failedEvaluation,
       note: "Ничего не изменено в TrainingPeaks",
       errorText: errorMessage,
     });
