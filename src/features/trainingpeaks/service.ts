@@ -32,12 +32,16 @@ import {
   listTrainingPeaksStudentsIncludingArchived,
   markTrainingPeaksStudentTelegramLinkCodeUsed,
   rejectTrainingPeaksAction as rejectTrainingPeaksActionInRepository,
+  requestTrainingPeaksActionExecution as requestTrainingPeaksActionExecutionInRepository,
+  cancelTrainingPeaksActionExecution as cancelTrainingPeaksActionExecutionInRepository,
   claimOneApprovedTrainingPeaksActionForDryRun as claimOneApprovedTrainingPeaksActionForDryRunInRepository,
   completeTrainingPeaksActionDryRun as completeTrainingPeaksActionDryRunInRepository,
   failTrainingPeaksActionDryRun as failTrainingPeaksActionDryRunInRepository,
   setTrainingPeaksStudentWeeklyReportsEnabledById,
   TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
   type DecideTrainingPeaksActionResult,
+  type RequestTrainingPeaksActionExecutionResult,
+  type CancelTrainingPeaksActionExecutionResult,
   type TrainingPeaksBusinessChat,
   type TrainingPeaksAction,
   type TrainingPeaksActionRun,
@@ -238,6 +242,8 @@ export type DecideTrainingPeaksActionInput = {
 };
 
 export type DecideTrainingPeaksActionResultSnapshot = DecideTrainingPeaksActionResult;
+export type RequestTrainingPeaksActionExecutionResultSnapshot = RequestTrainingPeaksActionExecutionResult;
+export type CancelTrainingPeaksActionExecutionResultSnapshot = CancelTrainingPeaksActionExecutionResult;
 export type TrainingPeaksActionRunSnapshot = TrainingPeaksActionRun;
 export type ClaimedTrainingPeaksDryRunActionSnapshot = ClaimedTrainingPeaksDryRunAction;
 
@@ -1402,6 +1408,34 @@ export async function rejectTrainingPeaksAction(
     decidedByChatId: input.decidedByChatId,
     decidedByUserId: input.decidedByUserId ?? null,
     decisionMessageId: input.decisionMessageId ?? null,
+  });
+}
+
+export async function requestTrainingPeaksActionExecution(input: {
+  actionId: string;
+  requestedByChatId: string;
+  requestedByUserId?: string | null;
+  requestMessageId?: string | null;
+}): Promise<RequestTrainingPeaksActionExecutionResultSnapshot> {
+  return requestTrainingPeaksActionExecutionInRepository({
+    actionId: input.actionId,
+    requestedByChatId: input.requestedByChatId,
+    requestedByUserId: input.requestedByUserId ?? null,
+    requestMessageId: input.requestMessageId ?? null,
+  });
+}
+
+export async function cancelTrainingPeaksActionExecution(input: {
+  actionId: string;
+  cancelledByChatId: string;
+  cancelledByUserId?: string | null;
+  cancelMessageId?: string | null;
+}): Promise<CancelTrainingPeaksActionExecutionResultSnapshot> {
+  return cancelTrainingPeaksActionExecutionInRepository({
+    actionId: input.actionId,
+    cancelledByChatId: input.cancelledByChatId,
+    cancelledByUserId: input.cancelledByUserId ?? null,
+    cancelMessageId: input.cancelMessageId ?? null,
   });
 }
 

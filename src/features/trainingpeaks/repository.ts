@@ -222,6 +222,14 @@ export type TrainingPeaksAction = {
   claimedBy: string | null;
   claimedAt: string | null;
   lastRunId: string | null;
+  executionRequestedAt: string | null;
+  executionRequestedByChatId: string | null;
+  executionRequestedByUserId: string | null;
+  executionRequestMessageId: string | null;
+  cancelledAt: string | null;
+  cancelledByChatId: string | null;
+  cancelledByUserId: string | null;
+  cancelMessageId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -248,6 +256,14 @@ type TrainingPeaksActionRow = {
   claimed_by: string | null;
   claimed_at: string | null;
   last_run_id: string | null;
+  execution_requested_at: string | null;
+  execution_requested_by_chat_id: string | null;
+  execution_requested_by_user_id: string | null;
+  execution_request_message_id: string | null;
+  cancelled_at: string | null;
+  cancelled_by_chat_id: string | null;
+  cancelled_by_user_id: string | null;
+  cancel_message_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -343,6 +359,59 @@ export type DecideTrainingPeaksActionResult =
     }
   | {
       kind: "already_decided";
+      action: TrainingPeaksAction;
+    }
+  | {
+      kind: "not_found";
+    };
+
+export type RequestTrainingPeaksActionExecutionInput = {
+  actionId: string;
+  requestedByChatId: string;
+  requestedByUserId?: string | null;
+  requestMessageId?: string | null;
+};
+
+export type RequestTrainingPeaksActionExecutionResult =
+  | {
+      kind: "queued";
+      action: TrainingPeaksAction;
+    }
+  | {
+      kind: "already_queued";
+      action: TrainingPeaksAction;
+    }
+  | {
+      kind: "final_state";
+      action: TrainingPeaksAction;
+    }
+  | {
+      kind: "blocked";
+      action: TrainingPeaksAction;
+      reason: string;
+    }
+  | {
+      kind: "not_found";
+    };
+
+export type CancelTrainingPeaksActionExecutionInput = {
+  actionId: string;
+  cancelledByChatId: string;
+  cancelledByUserId?: string | null;
+  cancelMessageId?: string | null;
+};
+
+export type CancelTrainingPeaksActionExecutionResult =
+  | {
+      kind: "cancelled";
+      action: TrainingPeaksAction;
+    }
+  | {
+      kind: "already_cancelled";
+      action: TrainingPeaksAction;
+    }
+  | {
+      kind: "final_state";
       action: TrainingPeaksAction;
     }
   | {
@@ -532,9 +601,79 @@ function mapTrainingPeaksActionRow(row: TrainingPeaksActionRow): TrainingPeaksAc
     claimedBy: row.claimed_by,
     claimedAt: row.claimed_at,
     lastRunId: row.last_run_id,
+    executionRequestedAt: row.execution_requested_at,
+    executionRequestedByChatId: row.execution_requested_by_chat_id,
+    executionRequestedByUserId: row.execution_requested_by_user_id,
+    executionRequestMessageId: row.execution_request_message_id,
+    cancelledAt: row.cancelled_at,
+    cancelledByChatId: row.cancelled_by_chat_id,
+    cancelledByUserId: row.cancelled_by_user_id,
+    cancelMessageId: row.cancel_message_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function toNumericConfidence(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function validateDryRunLogReadiness(logJson: unknown): { ok: true } | { ok: false; reason: string } {
+  if (!logJson || typeof logJson !== "object") {
+    return { ok: false, reason: "Dry-run log not found." };
+  }
+
+  const payload = logJson as {
+    dryRunResult?: unknown;
+    canExecute?: unknown;
+    candidate?: { fingerprint?: unknown } | null;
+    confidence?: unknown;
+  };
+
+  if (payload.dryRunResult !== "candidate_found") {
+    return { ok: false, reason: "Dry-run did not find a unique candidate." };
+  }
+  if (payload.canExecute !== true) {
+    return { ok: false, reason: "Dry-run marked action as unsafe for execution." };
+  }
+
+  const fingerprint = payload.candidate?.fingerprint;
+  if (typeof fingerprint !== "string" || !fingerprint.trim()) {
+    return { ok: false, reason: "Dry-run candidate fingerprint is missing." };
+  }
+
+  const confidence = toNumericConfidence(payload.confidence);
+  if (confidence === null || confidence < 0.8) {
+    return { ok: false, reason: "Dry-run confidence is below 0.8." };
+  }
+
+  return { ok: true };
+}
+
+async function getTrainingPeaksActionByIdInternal(actionId: string): Promise<TrainingPeaksAction | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_actions")
+    .select("*")
+    .eq("id", actionId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to get TrainingPeaks action ${actionId}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksActionRow(data as TrainingPeaksActionRow);
 }
 
 function mapTrainingPeaksActionRunRow(row: TrainingPeaksActionRunRow): TrainingPeaksActionRun {
@@ -1656,6 +1795,170 @@ export async function rejectTrainingPeaksAction(
   input: DecideTrainingPeaksActionInput
 ): Promise<DecideTrainingPeaksActionResult> {
   return decideTrainingPeaksActionStatus(input, "rejected");
+}
+
+export async function requestTrainingPeaksActionExecution(
+  input: RequestTrainingPeaksActionExecutionInput
+): Promise<RequestTrainingPeaksActionExecutionResult> {
+  const supabase = createSupabaseServerClient();
+  const action = await getTrainingPeaksActionByIdInternal(input.actionId);
+  if (!action) {
+    return { kind: "not_found" };
+  }
+
+  if (action.executionStatus === "execute_pending" && action.status === "approved") {
+    return { kind: "already_queued", action };
+  }
+
+  if (
+    action.executionStatus === "completed" ||
+    action.executionStatus === "running_local" ||
+    action.executionStatus === "failed"
+  ) {
+    return { kind: "final_state", action };
+  }
+
+  if (action.status !== "approved") {
+    return { kind: "blocked", action, reason: "Action is not approved." };
+  }
+
+  if (action.executionStatus !== "dry_run_completed") {
+    return { kind: "blocked", action, reason: "Dry-run is not completed yet." };
+  }
+
+  const dryRunRunQuery = action.lastRunId
+    ? supabase
+        .from("trainingpeaks_action_runs")
+        .select("id, log_json")
+        .eq("id", action.lastRunId)
+        .eq("action_id", action.id)
+        .eq("run_type", "dry_run")
+        .eq("status", "completed")
+        .maybeSingle()
+    : supabase
+        .from("trainingpeaks_action_runs")
+        .select("id, log_json")
+        .eq("action_id", action.id)
+        .eq("run_type", "dry_run")
+        .eq("status", "completed")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+  const { data: dryRunRun, error: dryRunError } = await dryRunRunQuery;
+
+  if (dryRunError) {
+    throw new Error(
+      `Failed to load latest dry-run for TrainingPeaks action ${input.actionId}: ${dryRunError.message}`
+    );
+  }
+
+  if (!dryRunRun) {
+    return { kind: "blocked", action, reason: "Trusted dry-run run is missing." };
+  }
+
+  const dryRunValidation = validateDryRunLogReadiness((dryRunRun as { log_json?: unknown }).log_json);
+  if (!dryRunValidation.ok) {
+    return { kind: "blocked", action, reason: dryRunValidation.reason };
+  }
+
+  const nowIso = new Date().toISOString();
+  const { data: queuedRow, error: updateError } = await supabase
+    .from("trainingpeaks_actions")
+    .update({
+      execution_status: "execute_pending",
+      execution_requested_at: nowIso,
+      execution_requested_by_chat_id: input.requestedByChatId,
+      execution_requested_by_user_id: input.requestedByUserId ?? null,
+      execution_request_message_id: input.requestMessageId ?? null,
+    })
+    .eq("id", input.actionId)
+    .eq("status", "approved")
+    .eq("execution_status", "dry_run_completed")
+    .select("*")
+    .maybeSingle();
+
+  if (updateError) {
+    throw new Error(`Failed to queue TrainingPeaks action execution ${input.actionId}: ${updateError.message}`);
+  }
+
+  if (queuedRow) {
+    return { kind: "queued", action: mapTrainingPeaksActionRow(queuedRow as TrainingPeaksActionRow) };
+  }
+
+  const latest = await getTrainingPeaksActionByIdInternal(input.actionId);
+  if (!latest) {
+    return { kind: "not_found" };
+  }
+  if (latest.executionStatus === "execute_pending" && latest.status === "approved") {
+    return { kind: "already_queued", action: latest };
+  }
+  if (
+    latest.executionStatus === "completed" ||
+    latest.executionStatus === "running_local" ||
+    latest.executionStatus === "failed"
+  ) {
+    return { kind: "final_state", action: latest };
+  }
+  return { kind: "blocked", action: latest, reason: "Action state changed. Please refresh and try again." };
+}
+
+export async function cancelTrainingPeaksActionExecution(
+  input: CancelTrainingPeaksActionExecutionInput
+): Promise<CancelTrainingPeaksActionExecutionResult> {
+  const supabase = createSupabaseServerClient();
+  const action = await getTrainingPeaksActionByIdInternal(input.actionId);
+  if (!action) {
+    return { kind: "not_found" };
+  }
+
+  if (action.status === "rejected") {
+    return { kind: "already_cancelled", action };
+  }
+
+  if (action.executionStatus === "completed" || action.executionStatus === "running_local") {
+    return { kind: "final_state", action };
+  }
+
+  const nowIso = new Date().toISOString();
+  const { data: cancelledRow, error: cancelError } = await supabase
+    .from("trainingpeaks_actions")
+    .update({
+      status: "rejected",
+      approved_at: null,
+      rejected_at: nowIso,
+      decided_by_chat_id: input.cancelledByChatId,
+      decided_by_user_id: input.cancelledByUserId ?? null,
+      decision_message_id: input.cancelMessageId ?? null,
+      cancelled_at: nowIso,
+      cancelled_by_chat_id: input.cancelledByChatId,
+      cancelled_by_user_id: input.cancelledByUserId ?? null,
+      cancel_message_id: input.cancelMessageId ?? null,
+    })
+    .eq("id", input.actionId)
+    .eq("status", "approved")
+    .in("execution_status", ["not_started", "dry_run_running", "dry_run_completed", "execute_pending", "failed"])
+    .select("*")
+    .maybeSingle();
+
+  if (cancelError) {
+    throw new Error(`Failed to cancel TrainingPeaks action execution ${input.actionId}: ${cancelError.message}`);
+  }
+
+  if (cancelledRow) {
+    return { kind: "cancelled", action: mapTrainingPeaksActionRow(cancelledRow as TrainingPeaksActionRow) };
+  }
+
+  const latest = await getTrainingPeaksActionByIdInternal(input.actionId);
+  if (!latest) {
+    return { kind: "not_found" };
+  }
+  if (latest.status === "rejected") {
+    return { kind: "already_cancelled", action: latest };
+  }
+  if (latest.executionStatus === "completed" || latest.executionStatus === "running_local") {
+    return { kind: "final_state", action: latest };
+  }
+  return { kind: "final_state", action: latest };
 }
 
 export async function claimOneApprovedTrainingPeaksActionForDryRun(

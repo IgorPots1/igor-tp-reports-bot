@@ -6,6 +6,7 @@ import type {
 import {
   addTrainingPeaksStudentFromCommand,
   approveTrainingPeaksAction,
+  cancelTrainingPeaksActionExecution,
   cancelTrainingPeaksWeeklyRun,
   consumeTrainingPeaksStudentTelegramLinkCode,
   createTrainingPeaksMoveWorkoutActionFromTelegram,
@@ -28,6 +29,7 @@ import {
   linkTrainingPeaksStudentToBusinessChat,
   listRecentTrainingPeaksBusinessChats,
   rejectTrainingPeaksAction,
+  requestTrainingPeaksActionExecution,
   TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
   type RequestTrainingPeaksWeeklyRunResult,
   requestTrainingPeaksWeeklyRun,
@@ -75,6 +77,8 @@ const TP_CALLBACK_STUDENT_SELECT_CHAT_PREFIX = "tp:sc:";
 const TP_CALLBACK_STUDENT_TEST_PREFIX = "tp:st:";
 const TP_CALLBACK_ACTION_APPROVE_PREFIX = "tp:ta:a:";
 const TP_CALLBACK_ACTION_REJECT_PREFIX = "tp:ta:r:";
+const TP_CALLBACK_ACTION_EXECUTE_PREFIX = "tp:ta:x:";
+const TP_CALLBACK_ACTION_CANCEL_PREFIX = "tp:ta:c:";
 const TP_REPLY_BUTTON_MENU = "🏠 Меню";
 const TP_REPLY_BUTTON_STUDENTS = "👥 Ученики";
 const TP_REPLY_BUTTON_ADD = "➕ Добавить";
@@ -172,6 +176,8 @@ type ParsedTrainingPeaksCallback =
   | { kind: "report_skip"; reportId: string }
   | { kind: "action_approve"; actionId: string }
   | { kind: "action_reject"; actionId: string }
+  | { kind: "action_execute_request"; actionId: string }
+  | { kind: "action_execute_cancel"; actionId: string }
   | { kind: "week_menu" }
   | { kind: "week_last" }
   | { kind: "week_current" }
@@ -1624,6 +1630,8 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
     [TP_CALLBACK_REPORT_SKIP_PREFIX, "report_skip"],
     [TP_CALLBACK_ACTION_APPROVE_PREFIX, "action_approve"],
     [TP_CALLBACK_ACTION_REJECT_PREFIX, "action_reject"],
+    [TP_CALLBACK_ACTION_EXECUTE_PREFIX, "action_execute_request"],
+    [TP_CALLBACK_ACTION_CANCEL_PREFIX, "action_execute_cancel"],
   ] as const) {
     if (data.startsWith(prefix)) {
       const id = data.slice(prefix.length).trim();
@@ -2880,6 +2888,114 @@ async function handleTrainingPeaksActionDecisionCallback(
     parsedMessage.chatId,
     parsedMessage.messageId,
     decisionText,
+    getTrainingPeaksActionResolvedMarkup()
+  );
+}
+
+async function handleTrainingPeaksActionExecuteRequestCallback(
+  parsedMessage: ParsedTelegramCallbackUpdate,
+  actionId: string
+): Promise<void> {
+  const result = await requestTrainingPeaksActionExecution({
+    actionId,
+    requestedByChatId: String(parsedMessage.chatId),
+    requestedByUserId: parsedMessage.userId === null ? null : String(parsedMessage.userId),
+    requestMessageId: String(parsedMessage.messageId),
+  });
+
+  if (result.kind === "not_found") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      "Заявка не найдена или уже недоступна.",
+      getTrainingPeaksActionResolvedMarkup()
+    );
+    return;
+  }
+
+  if (result.kind === "queued") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      "Перенос поставлен в очередь. TrainingPeaks ещё не изменён. Выполнение произойдёт только локальным runner.",
+      getTrainingPeaksActionResolvedMarkup()
+    );
+    return;
+  }
+
+  if (result.kind === "already_queued") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      "Перенос уже стоит в очереди. TrainingPeaks ещё не изменён.",
+      getTrainingPeaksActionResolvedMarkup()
+    );
+    return;
+  }
+
+  if (result.kind === "final_state") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      "Эта заявка уже в финальном состоянии и больше не может быть поставлена в очередь.",
+      getTrainingPeaksActionResolvedMarkup()
+    );
+    return;
+  }
+
+  await editTrainingPeaksMenuMessage(
+    parsedMessage.chatId,
+    parsedMessage.messageId,
+    `Нельзя поставить в очередь: ${result.reason}`,
+    getTrainingPeaksActionResolvedMarkup()
+  );
+}
+
+async function handleTrainingPeaksActionExecuteCancelCallback(
+  parsedMessage: ParsedTelegramCallbackUpdate,
+  actionId: string
+): Promise<void> {
+  const result = await cancelTrainingPeaksActionExecution({
+    actionId,
+    cancelledByChatId: String(parsedMessage.chatId),
+    cancelledByUserId: parsedMessage.userId === null ? null : String(parsedMessage.userId),
+    cancelMessageId: String(parsedMessage.messageId),
+  });
+
+  if (result.kind === "not_found") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      "Заявка не найдена или уже недоступна.",
+      getTrainingPeaksActionResolvedMarkup()
+    );
+    return;
+  }
+
+  if (result.kind === "cancelled") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      "Заявка отменена. Ничего не изменено в TrainingPeaks.",
+      getTrainingPeaksActionResolvedMarkup()
+    );
+    return;
+  }
+
+  if (result.kind === "already_cancelled") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      "Заявка уже отменена. Ничего не изменено в TrainingPeaks.",
+      getTrainingPeaksActionResolvedMarkup()
+    );
+    return;
+  }
+
+  await editTrainingPeaksMenuMessage(
+    parsedMessage.chatId,
+    parsedMessage.messageId,
+    "Заявка уже выполняется или завершена, отмена недоступна.",
     getTrainingPeaksActionResolvedMarkup()
   );
 }
@@ -4142,6 +4258,16 @@ export async function handleTrainingPeaksTelegramCallback(
 
     if (callback.kind === "action_reject") {
       await handleTrainingPeaksActionDecisionCallback(parsedMessage, "reject", callback.actionId);
+      return "handled";
+    }
+
+    if (callback.kind === "action_execute_request") {
+      await handleTrainingPeaksActionExecuteRequestCallback(parsedMessage, callback.actionId);
+      return "handled";
+    }
+
+    if (callback.kind === "action_execute_cancel") {
+      await handleTrainingPeaksActionExecuteCancelCallback(parsedMessage, callback.actionId);
       return "handled";
     }
 

@@ -210,6 +210,8 @@ type WorkoutExtractionResult = {
 };
 
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
+const TP_CALLBACK_ACTION_EXECUTE_PREFIX = "tp:ta:x:";
+const TP_CALLBACK_ACTION_CANCEL_PREFIX = "tp:ta:c:";
 const ACTION_ARTIFACTS_ROOT = path.join(toolRoot, "action-artifacts");
 const TP_CALENDAR_ROOT_SELECTOR = "div.calendar.athleteCalendar";
 const TP_DAY_CELL_SELECTOR = ".dayWidth.dayContainer.day";
@@ -931,11 +933,24 @@ function resolveDryRunNotificationChatId(action: TrainingPeaksActionRow): string
   return chatId;
 }
 
-async function sendTelegramText(chatId: string, text: string): Promise<void> {
+async function sendTelegramText(
+  chatId: string,
+  text: string,
+  options?: {
+    inlineKeyboardRows?: Array<Array<{ text: string; callback_data: string }>>;
+  }
+): Promise<{ messageId: string | null }> {
   const token = getOptionalEnv("TELEGRAM_BOT_TOKEN");
   if (!token) {
     throw new Error("Missing TELEGRAM_BOT_TOKEN for Telegram delivery.");
   }
+
+  const replyMarkup =
+    options?.inlineKeyboardRows && options.inlineKeyboardRows.length > 0
+      ? {
+          inline_keyboard: options.inlineKeyboardRows,
+        }
+      : undefined;
 
   const response = await fetch(`${TELEGRAM_API_BASE_URL}/bot${token}/sendMessage`, {
     method: "POST",
@@ -943,6 +958,7 @@ async function sendTelegramText(chatId: string, text: string): Promise<void> {
     body: JSON.stringify({
       chat_id: chatId,
       text,
+      ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
     }),
   });
 
@@ -950,6 +966,17 @@ async function sendTelegramText(chatId: string, text: string): Promise<void> {
     const errorText = await response.text();
     throw new Error(`Telegram sendMessage failed (${response.status}): ${errorText}`);
   }
+
+  const payload = (await response.json().catch(() => null)) as
+    | {
+        ok?: boolean;
+        result?: { message_id?: number };
+      }
+    | null;
+  const messageId = payload?.result?.message_id;
+  return {
+    messageId: typeof messageId === "number" ? String(messageId) : null,
+  };
 }
 
 async function notifyCoachDryRunResult(input: {
@@ -996,9 +1023,34 @@ async function notifyCoachDryRunResult(input: {
     lines.push(`Ошибка: ${input.errorText}`);
   }
   lines.push(input.note);
+  lines.push(
+    "Это только подтверждение выполнения. TrainingPeaks изменится только после запуска локального runner на следующем этапе."
+  );
+
+  let inlineKeyboardRows: Array<Array<{ text: string; callback_data: string }>> = [];
+  if (input.dryRunEvaluation?.dryRunResult === "candidate_found") {
+    const actionId = input.action.id;
+    const cancelButton = {
+      text: "❌ Отменить",
+      callback_data: `${TP_CALLBACK_ACTION_CANCEL_PREFIX}${actionId}`,
+    };
+    if (input.dryRunEvaluation.canExecute) {
+      inlineKeyboardRows = [
+        [
+          {
+            text: "✅ Выполнить перенос",
+            callback_data: `${TP_CALLBACK_ACTION_EXECUTE_PREFIX}${actionId}`,
+          },
+        ],
+        [cancelButton],
+      ];
+    } else {
+      inlineKeyboardRows = [[cancelButton]];
+    }
+  }
 
   try {
-    await sendTelegramText(input.chatId, lines.join("\n"));
+    await sendTelegramText(input.chatId, lines.join("\n"), { inlineKeyboardRows });
   } catch (error) {
     console.warn(`Telegram action dry-run summary warning: ${toShortErrorMessage(error)}`);
   }
