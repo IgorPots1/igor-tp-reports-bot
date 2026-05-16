@@ -37,6 +37,9 @@ export type ProbeLike = {
     datepickerDomDebugError: string | null;
     opened: boolean;
     closeSucceeded: boolean;
+    datePickerCloseAttempted: boolean;
+    datePickerCloseSucceeded: boolean;
+    datePickerCloseError: string | null;
   };
   screenshots: Record<string, string | null>;
   progress: {
@@ -179,6 +182,11 @@ export function derivePrepareMoveWorkoutResultFromProbe(
     status = "needs_manual";
     recommendedNextDriver = "manual";
     failureReason = failureReason ?? "Datepicker probing was unstable under Playwright selectors.";
+  } else if (datePickerOpened && targetDateVisible && !probe.detail.targetDateClickCandidateFound) {
+    status = "needs_manual";
+    recommendedNextDriver = "manual";
+    failureReason =
+      "Datepicker detected and target date visible, but no unambiguous target day click candidate was found.";
   } else if (probe.detail.opened && datePickerOpened && !targetDateSelectionConfirmed && probe.errors.length === 0) {
     status = "needs_manual";
     recommendedNextDriver = "manual";
@@ -310,6 +318,9 @@ export class PlaywrightOnlyTrainingPeaksDriver implements TrainingPeaksAutomatio
             datepickerDomDebugError: null,
             opened: false,
             closeSucceeded: false,
+            datePickerCloseAttempted: false,
+            datePickerCloseSucceeded: false,
+            datePickerCloseError: null,
           },
           screenshots: {},
           progress: { stepHistory: [] },

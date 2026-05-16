@@ -203,6 +203,9 @@ type UiCapabilityProbeDetailDiscovery = {
   modalScopedCancelFound: boolean;
   modalScopedCloseFound: boolean;
   closeSucceeded: boolean;
+  datePickerCloseAttempted: boolean;
+  datePickerCloseSucceeded: boolean;
+  datePickerCloseError: string | null;
 };
 
 type UiCapabilityProbe = {
@@ -293,7 +296,7 @@ type DatepickerDomDebugContext = {
 
 type DatepickerDomDebugPartialArtifact = {
   created: true;
-  stage: "started" | "partial";
+  stage: "started" | "partial" | "complete";
   timestamp: string;
   context: DatepickerDomDebugContext;
   pageUrl?: string | null;
@@ -303,6 +306,7 @@ type DatepickerDomDebugPartialArtifact = {
   modalTextSample?: string | null;
   topCandidates?: string[];
   error?: string;
+  datepickerDomDebugError?: string | null;
 };
 
 type DatepickerDebugCaptureResult = {
@@ -498,7 +502,7 @@ const UI_PROBE_STEP_TIMEOUTS = {
   getDateHeaderBoundingBox: 1_000,
   clickDateHeader: 1_500,
   detectDatepicker: 2_500,
-  closeDatepicker: 3_000,
+  closeDatepicker: 1_500,
   closeModal: 4_000,
 } as const;
 
@@ -1930,6 +1934,9 @@ function buildEmptyUiCapabilityProbe(): UiCapabilityProbe {
     modalScopedCancelFound: false,
     modalScopedCloseFound: false,
     closeSucceeded: false,
+    datePickerCloseAttempted: false,
+    datePickerCloseSucceeded: false,
+    datePickerCloseError: null,
   };
   return {
     attempted: true,
@@ -3139,386 +3146,295 @@ async function collectVisibleDatepickerDebugSnapshot(
 
   try {
     snapshot = await page.evaluate(
-    ({ dateHeaderBox, sourceDateIso, targetDateIso }) => {
-      const normalizeWhitespace = (value: string | null | undefined): string =>
-        (value ?? "").replace(/\s+/g, " ").trim();
-      const viewportWidth =
-        typeof window.innerWidth === "number" && Number.isFinite(window.innerWidth) ? window.innerWidth : 0;
-      const viewportHeight =
-        typeof window.innerHeight === "number" && Number.isFinite(window.innerHeight) ? window.innerHeight : 0;
-      const toNumericDay = (iso: string | null | undefined): number | null => {
-        if (!iso) {
+      `(({ dateHeaderBox, sourceDateIso, targetDateIso }) => {
+        const normalize = (value) => String(value ?? "").replace(/\\s+/g, " ").trim();
+        const clip = (value, max = 120) => {
+          const text = normalize(value);
+          return text.length > max ? text.slice(0, max) : text;
+        };
+        const toNumericDay = (iso) => {
+          const m = String(iso ?? "").match(/^\\d{4}-\\d{2}-(\\d{2})$/);
+          if (!m) return null;
+          const day = Number(m[1]);
+          return Number.isFinite(day) && day >= 1 && day <= 31 ? day : null;
+        };
+        const sourceDay = toNumericDay(sourceDateIso);
+        const targetDay = toNumericDay(targetDateIso);
+        const monthNames = [
+          "January","February","March","April","May","June",
+          "July","August","September","October","November","December"
+        ];
+        const weekdayTokens = ["mo", "tu", "we", "th", "fr", "sa", "su"];
+        const monthRegex = /\\b(?:january|february|march|april|may|june|july|august|september|october|november|december)\\b/i;
+        const yearRegex = /\\b(20\\d{2})\\b/;
+        const dayRegex = /\\b([1-9]|[12]\\d|3[01])\\b/g;
+        const signalRegexes = [/\\bmay\\b/i,/\\b2026\\b/,/\\bmo\\b/i,/\\btu\\b/i,/\\bwe\\b/i,/\\bth\\b/i,/\\bfr\\b/i,/\\bsa\\b/i,/\\bsu\\b/i,/\\b16\\b/,/\\b17\\b/,/\\bselect date\\b/i];
+        const viewportWidth = Number.isFinite(window.innerWidth) ? window.innerWidth : 0;
+        const viewportHeight = Number.isFinite(window.innerHeight) ? window.innerHeight : 0;
+        const intersects = (a, b) => !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom);
+        const isVisibleLike = (element) => {
+          const style = window.getComputedStyle(element);
+          if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") return false;
+          const opacity = Number(style.opacity || "1");
+          if (Number.isFinite(opacity) && opacity === 0) return false;
+          const rect = element.getBoundingClientRect();
+          if (rect.width < 2 || rect.height < 2) return false;
+          if (rect.bottom < 0 || rect.right < 0 || rect.top > viewportHeight || rect.left > viewportWidth) return false;
+          return true;
+        };
+        const isNearHeader = (rect) => {
+          if (!dateHeaderBox) return false;
+          const headerCx = dateHeaderBox.x + dateHeaderBox.width / 2;
+          const headerCy = dateHeaderBox.y + dateHeaderBox.height / 2;
+          const cx = rect.x + rect.width / 2;
+          const cy = rect.y + rect.height / 2;
+          const dx = Math.abs(cx - headerCx);
+          const dy = Math.abs(cy - headerCy);
+          const allowedX = Math.max(320, dateHeaderBox.width * 4);
+          const allowedY = Math.max(420, dateHeaderBox.height * 10);
+          return dx <= allowedX && dy <= allowedY;
+        };
+        const modalCandidateNodes = Array.from(document.querySelectorAll('[role="dialog"],.MuiDialog-root,.MuiModal-root'));
+        let modalRect = null;
+        for (const node of modalCandidateNodes) {
+          if (!isVisibleLike(node)) continue;
+          const r = node.getBoundingClientRect();
+          if (r.width >= 100 && r.height >= 80) {
+            modalRect = r;
+            break;
+          }
+        }
+        const isInsideModal = (rect) => (modalRect ? intersects(rect, modalRect) : false);
+        const addMonthFromText = (text, current) => {
+          if (current) return current;
+          for (const month of monthNames) {
+            if (new RegExp("\\\\b" + month + "\\\\b", "i").test(text)) return month;
+          }
           return null;
-        }
-        const m = iso.match(/^\d{4}-(\d{2})-(\d{2})$/);
-        if (!m) {
-          return null;
-        }
-        const day = Number(m[3]);
-        if (!Number.isFinite(day) || day < 1 || day > 31) {
-          return null;
-        }
-        return day;
-      };
-      const sourceDay = toNumericDay(sourceDateIso);
-      const targetDay = toNumericDay(targetDateIso);
-      const monthNames = [
-        "January",
-        "February",
-        "March",
-        "April",
-        "May",
-        "June",
-        "July",
-        "August",
-        "September",
-        "October",
-        "November",
-        "December",
-      ];
-      const weekdayTokens = ["mo", "tu", "we", "th", "fr", "sa", "su"];
-      const monthRegex =
-        /\b(?:january|february|march|april|may|june|july|august|september|october|november|december)\b/i;
-      const yearRegex = /\b(20\d{2})\b/;
-      const dayRegex = /\b([1-9]|[12]\d|3[01])\b/g;
-      const signalRegexes = [
-        /\bmay\b/i,
-        /\b2026\b/,
-        /\bmo\b/i,
-        /\btu\b/i,
-        /\bwe\b/i,
-        /\bth\b/i,
-        /\bfr\b/i,
-        /\bsa\b/i,
-        /\bsu\b/i,
-        /\b16\b/,
-        /\b17\b/,
-      ];
+        };
 
-      const isVisible = (element: Element): boolean => {
-        const html = element as HTMLElement;
-        const style = window.getComputedStyle(html);
-        if (
-          style.display === "none" ||
-          style.visibility === "hidden" ||
-          style.visibility === "collapse" ||
-          Number(style.opacity || "1") === 0
-        ) {
-          return false;
-        }
-        const rect = html.getBoundingClientRect();
-        if (rect.width < 2 || rect.height < 2) {
-          return false;
-        }
-        if (rect.bottom < 0 || rect.right < 0 || rect.top > viewportHeight || rect.left > viewportWidth) {
-          return false;
-        }
-        return true;
-      };
+        const selectors = [
+          "button","input","select",'[role="gridcell"]','[role="cell"]',"td",'[role="columnheader"]',"th","div","span"
+        ];
+        const perSelectorLimit = 700;
+        const maxElements = 500;
+        const seen = new Set();
+        const visibleElements = [];
+        const visibleDaySet = new Set();
+        const weekdayTokenSet = new Set();
+        let visibleMonth = null;
+        let visibleYear = null;
+        let selectedSourceDayVisible = false;
+        let sourceDayVisible = false;
+        let targetDayVisible = false;
+        let targetDateClickCandidateFound = false;
+        let targetDateClickCandidateBoundingBox = null;
 
-      const modalCandidates = Array.from(document.querySelectorAll('[role="dialog"],.MuiDialog-root,.MuiModal-root')).filter(
-        (el) => isVisible(el)
-      );
-      const modalRect = (() => {
-        for (const candidate of modalCandidates) {
-          const rect = (candidate as HTMLElement).getBoundingClientRect();
-          if (rect.width >= 100 && rect.height >= 80) {
-            return rect;
-          }
-        }
-        return null;
-      })();
+        for (const selector of selectors) {
+          if (visibleElements.length >= maxElements) break;
+          const nodes = Array.from(document.querySelectorAll(selector)).slice(0, perSelectorLimit);
+          for (const element of nodes) {
+            if (visibleElements.length >= maxElements) break;
+            if (seen.has(element)) continue;
+            seen.add(element);
+            if (!(element instanceof HTMLElement)) continue;
+            const rect = element.getBoundingClientRect();
+            const visible = isVisibleLike(element);
+            if (!visible) continue;
+            const text = clip(element.innerText || element.textContent || "", 160);
+            const role = clip(element.getAttribute("role"), 60);
+            const ariaLabel = clip(element.getAttribute("aria-label"), 120);
+            const className = clip(element.className || "", 160);
+            const id = clip(element.id || "", 80);
+            const style = window.getComputedStyle(element);
+            const nearDateHeader = isNearHeader(rect);
+            const insideModal = isInsideModal(rect);
+            const textLower = text.toLowerCase();
+            const matchedSignals = [];
 
-      const isNearDateHeader = (rect: DOMRect): boolean => {
-        if (!dateHeaderBox) {
-          return false;
-        }
-        const headerCenterX = dateHeaderBox.x + dateHeaderBox.width / 2;
-        const headerCenterY = dateHeaderBox.y + dateHeaderBox.height / 2;
-        const candidateCenterX = rect.x + rect.width / 2;
-        const candidateCenterY = rect.y + rect.height / 2;
-        const dx = Math.abs(candidateCenterX - headerCenterX);
-        const dy = Math.abs(candidateCenterY - headerCenterY);
-        const allowedX = Math.max(320, dateHeaderBox.width * 4);
-        const allowedY = Math.max(420, dateHeaderBox.height * 10);
-        return dx <= allowedX && dy <= allowedY;
-      };
-
-      const isInsideModal = (rect: DOMRect): boolean => {
-        if (!modalRect) {
-          return false;
-        }
-        return !(
-          rect.right < modalRect.left ||
-          rect.left > modalRect.right ||
-          rect.bottom < modalRect.top ||
-          rect.top > modalRect.bottom
-        );
-      };
-
-      const addMonthFromText = (text: string, current: string | null): string | null => {
-        if (current) {
-          return current;
-        }
-        for (const month of monthNames) {
-          if (new RegExp(`\\b${month}\\b`, "i").test(text)) {
-            return month;
-          }
-        }
-        return null;
-      };
-
-      const seen = new Set<Element>();
-      const visibleElements: DatepickerDebugVisibleElement[] = [];
-      const visibleDaySet = new Set<number>();
-      const weekdayTokenSet = new Set<string>();
-      let visibleMonth: string | null = null;
-      let visibleYear: string | null = null;
-      let selectedSourceDayVisible = false;
-      let sourceDayVisible = false;
-      let targetDayVisible = false;
-      let targetDateClickCandidateFound = false;
-      let targetDateClickCandidateBoundingBox: { x: number; y: number; width: number; height: number } | null = null;
-
-      const selectors = [
-        "button",
-        "input",
-        "select",
-        '[role="gridcell"]',
-        '[role="cell"]',
-        "td",
-        '[role="columnheader"]',
-        "th",
-        "div",
-        "span",
-      ];
-
-      for (const selector of selectors) {
-        const candidates = Array.from(document.querySelectorAll(selector)).slice(0, 1200);
-        for (const element of candidates) {
-          if (seen.has(element)) {
-            continue;
-          }
-          seen.add(element);
-          const html = element as HTMLElement;
-          const rect = html.getBoundingClientRect();
-          const visible = isVisible(element);
-          if (!visible) {
-            continue;
-          }
-          const text = normalizeWhitespace(html.innerText || element.textContent || "");
-          const role = normalizeWhitespace(html.getAttribute("role"));
-          const ariaLabel = normalizeWhitespace(html.getAttribute("aria-label"));
-          const value =
-            html instanceof HTMLInputElement || html instanceof HTMLSelectElement || html instanceof HTMLButtonElement
-              ? normalizeWhitespace(String(html.value ?? ""))
-              : null;
-          const className = normalizeWhitespace(html.className || "");
-          const id = normalizeWhitespace(html.id || "");
-          const style = window.getComputedStyle(html);
-          const nearDateHeader = isNearDateHeader(rect);
-          const insideModal = isInsideModal(rect);
-          const textLower = text.toLowerCase();
-          const matchedSignals: string[] = [];
-          if (monthRegex.test(text)) {
-            matchedSignals.push("month");
-          }
-          if (yearRegex.test(text)) {
-            matchedSignals.push("year");
-          }
-          for (const token of weekdayTokens) {
-            if (new RegExp(`\\b${token}\\b`, "i").test(text)) {
-              weekdayTokenSet.add(token);
+            if (monthRegex.test(text)) matchedSignals.push("month");
+            if (yearRegex.test(text)) matchedSignals.push("year");
+            for (const token of weekdayTokens) {
+              if (new RegExp("\\\\b" + token + "\\\\b", "i").test(text)) weekdayTokenSet.add(token);
             }
-          }
-          const dayMatches = text.match(dayRegex) ?? [];
-          for (const dayRaw of dayMatches) {
-            const dayNum = Number(dayRaw);
-            if (Number.isFinite(dayNum) && dayNum >= 1 && dayNum <= 31) {
-              visibleDaySet.add(dayNum);
+            const dayMatches = text.match(dayRegex) || [];
+            for (const dayRaw of dayMatches) {
+              const dayNum = Number(dayRaw);
+              if (Number.isFinite(dayNum) && dayNum >= 1 && dayNum <= 31) visibleDaySet.add(dayNum);
             }
-          }
-          if (sourceDay !== null && new RegExp(`\\b${sourceDay}\\b`).test(text)) {
-            sourceDayVisible = true;
-            matchedSignals.push("source-day");
-          }
-          if (targetDay !== null && new RegExp(`\\b${targetDay}\\b`).test(text)) {
-            targetDayVisible = true;
-            matchedSignals.push("target-day");
-          }
-          const hasSelectedState =
-            html.getAttribute("aria-selected") === "true" ||
-            /\bMui-selected\b/i.test(className) ||
-            /\bselected\b/i.test(className);
-          if (sourceDay !== null && hasSelectedState && new RegExp(`\\b${sourceDay}\\b`).test(`${text} ${ariaLabel}`)) {
-            selectedSourceDayVisible = true;
-            matchedSignals.push("source-day-selected");
-          }
-          if (
-            targetDay !== null &&
-            !targetDateClickCandidateFound &&
-            nearDateHeader &&
-            (insideModal || /picker|calendar|date|day/i.test(className)) &&
-            (role === "gridcell" ||
-              role === "option" ||
-              html.tagName === "BUTTON" ||
-              html.tagName === "TD" ||
-              new RegExp(`\\b${targetDay}\\b`).test(ariaLabel)) &&
-            new RegExp(`\\b${targetDay}\\b`).test(`${text} ${ariaLabel}`)
-          ) {
-            targetDateClickCandidateFound = true;
-            targetDateClickCandidateBoundingBox = {
-              x: Math.round(rect.x * 100) / 100,
-              y: Math.round(rect.y * 100) / 100,
-              width: Math.round(rect.width * 100) / 100,
-              height: Math.round(rect.height * 100) / 100,
-            };
-          }
+            if (sourceDay !== null && new RegExp("\\\\b" + sourceDay + "\\\\b").test(text)) {
+              sourceDayVisible = true;
+              matchedSignals.push("source-day");
+            }
+            if (targetDay !== null && new RegExp("\\\\b" + targetDay + "\\\\b").test(text)) {
+              targetDayVisible = true;
+              matchedSignals.push("target-day");
+            }
+            const hasSelectedState =
+              element.getAttribute("aria-selected") === "true" ||
+              /\\bMui-selected\\b/i.test(className) ||
+              /\\bselected\\b/i.test(className);
+            if (sourceDay !== null && hasSelectedState && new RegExp("\\\\b" + sourceDay + "\\\\b").test(text + " " + ariaLabel)) {
+              selectedSourceDayVisible = true;
+              matchedSignals.push("source-day-selected");
+            }
+            if (
+              targetDay !== null &&
+              !targetDateClickCandidateFound &&
+              nearDateHeader &&
+              (insideModal || /picker|calendar|date|day/i.test(className)) &&
+              (
+                role === "gridcell" ||
+                role === "option" ||
+                element.tagName === "BUTTON" ||
+                element.tagName === "TD" ||
+                new RegExp("\\\\b" + targetDay + "\\\\b").test(ariaLabel)
+              ) &&
+              new RegExp("\\\\b" + targetDay + "\\\\b").test(text + " " + ariaLabel)
+            ) {
+              targetDateClickCandidateFound = true;
+              targetDateClickCandidateBoundingBox = {
+                x: Math.round(rect.x * 100) / 100,
+                y: Math.round(rect.y * 100) / 100,
+                width: Math.round(rect.width * 100) / 100,
+                height: Math.round(rect.height * 100) / 100,
+              };
+            }
 
-          const keep =
-            html.tagName === "BUTTON" ||
-            html.tagName === "INPUT" ||
-            html.tagName === "SELECT" ||
-            role === "gridcell" ||
-            role === "cell" ||
-            role === "columnheader" ||
-            html.tagName === "TD" ||
-            html.tagName === "TH" ||
-            (["DIV", "SPAN"].includes(html.tagName) &&
+            const isTagCandidate =
+              element.tagName === "BUTTON" ||
+              element.tagName === "INPUT" ||
+              element.tagName === "SELECT" ||
+              role === "gridcell" ||
+              role === "cell" ||
+              role === "columnheader" ||
+              element.tagName === "TD" ||
+              element.tagName === "TH";
+            const shortTextCandidate =
+              (element.tagName === "DIV" || element.tagName === "SPAN") &&
               text.length > 0 &&
-              text.length <= 60 &&
-              (insideModal || nearDateHeader || signalRegexes.some((rx) => rx.test(text))));
-          if (!keep) {
-            continue;
-          }
+              text.length <= 60;
+            const hasSignalText = signalRegexes.some((rx) => rx.test(textLower));
+            if (!isTagCandidate && !(shortTextCandidate && (insideModal || nearDateHeader || hasSignalText))) {
+              continue;
+            }
 
-          visibleMonth = addMonthFromText(text, visibleMonth);
-          if (!visibleYear) {
-            const yearMatch = text.match(yearRegex);
-            visibleYear = yearMatch?.[1] ?? null;
-          }
+            visibleMonth = addMonthFromText(text, visibleMonth);
+            if (!visibleYear) {
+              const yearMatch = text.match(yearRegex);
+              visibleYear = yearMatch ? yearMatch[1] : null;
+            }
+            if (insideModal) matchedSignals.push("inside-modal");
+            if (nearDateHeader) matchedSignals.push("near-date-header");
+            if (hasSignalText) matchedSignals.push("signal-text");
 
-          if (insideModal) {
-            matchedSignals.push("inside-modal");
+            let value = null;
+            if (element instanceof HTMLInputElement || element instanceof HTMLSelectElement || element instanceof HTMLButtonElement) {
+              value = clip(element.value ?? "", 120) || null;
+            }
+            visibleElements.push({
+              tagName: element.tagName.toLowerCase(),
+              textContent: text || null,
+              value,
+              ariaLabel: ariaLabel || null,
+              role: role || null,
+              className: className || null,
+              id: id || null,
+              boundingBox: {
+                x: Math.round(rect.x * 100) / 100,
+                y: Math.round(rect.y * 100) / 100,
+                width: Math.round(rect.width * 100) / 100,
+                height: Math.round(rect.height * 100) / 100,
+              },
+              isVisible: visible,
+              position: clip(style.position || "", 40) || null,
+              zIndex: clip(style.zIndex || "", 40) || null,
+              nearDateHeader,
+              insideModal,
+              matchedSignals,
+            });
           }
-          if (nearDateHeader) {
-            matchedSignals.push("near-date-header");
-          }
-          if (signalRegexes.some((rx) => rx.test(textLower))) {
-            matchedSignals.push("signal-text");
-          }
-
-          visibleElements.push({
-            tagName: html.tagName.toLowerCase(),
-            textContent: text || null,
-            value: value || null,
-            ariaLabel: ariaLabel || null,
-            role: role || null,
-            className: className || null,
-            id: id || null,
-            boundingBox: {
-              x: Math.round(rect.x * 100) / 100,
-              y: Math.round(rect.y * 100) / 100,
-              width: Math.round(rect.width * 100) / 100,
-              height: Math.round(rect.height * 100) / 100,
-            },
-            isVisible: visible,
-            position: style.position || null,
-            zIndex: style.zIndex || null,
-            nearDateHeader,
-            insideModal,
-            matchedSignals,
-          });
         }
-      }
 
-      const visibleDayCandidates = [...visibleDaySet].sort((a, b) => a - b).slice(0, 31);
-      const weekdayMatched = [...weekdayTokenSet].sort();
-      const monthSignal = Boolean(visibleMonth);
-      const yearSignal = Boolean(visibleYear);
-      const weekdaySignal = weekdayMatched.length >= 5;
-      const dayGridSignal = visibleDayCandidates.length >= 7;
-      const sourceSignal = sourceDay !== null ? visibleDayCandidates.includes(sourceDay) || sourceDayVisible : false;
-      const targetSignal = targetDay !== null ? visibleDayCandidates.includes(targetDay) || targetDayVisible : false;
-      const reasons = [
-        monthSignal ? `month:${visibleMonth}` : null,
-        yearSignal ? `year:${visibleYear}` : null,
-        weekdaySignal ? `weekday:${weekdayMatched.join(",")}` : null,
-        dayGridSignal ? `day-grid:${visibleDayCandidates.length}` : null,
-        sourceSignal ? `source-day:${sourceDay}` : null,
-        targetSignal ? `target-day:${targetDay}` : null,
-        selectedSourceDayVisible ? "source-day-selected" : null,
-      ].filter(Boolean) as string[];
-      const openByMultisignal =
-        monthSignal && yearSignal && weekdaySignal && dayGridSignal && sourceSignal && targetSignal;
+        const visibleDayCandidates = Array.from(visibleDaySet).sort((a, b) => a - b).slice(0, 31);
+        const weekdayMatched = Array.from(weekdayTokenSet).sort();
+        const monthSignal = Boolean(visibleMonth);
+        const yearSignal = Boolean(visibleYear);
+        const weekdaySignal = weekdayMatched.length >= 5;
+        const dayGridSignal = visibleDayCandidates.length >= 7;
+        const sourceSignal = sourceDay !== null ? (visibleDayCandidates.includes(sourceDay) || sourceDayVisible) : false;
+        const targetSignal = targetDay !== null ? (visibleDayCandidates.includes(targetDay) || targetDayVisible) : false;
+        const reasons = [
+          monthSignal ? "month:" + visibleMonth : null,
+          yearSignal ? "year:" + visibleYear : null,
+          weekdaySignal ? "weekday:" + weekdayMatched.join(",") : null,
+          dayGridSignal ? "day-grid:" + visibleDayCandidates.length : null,
+          sourceSignal ? "source-day:" + sourceDay : null,
+          targetSignal ? "target-day:" + targetDay : null,
+          selectedSourceDayVisible ? "source-day-selected" : null,
+        ].filter(Boolean);
+        const openByMultisignal = monthSignal && yearSignal && weekdaySignal && dayGridSignal && sourceSignal && targetSignal;
 
-      const scored = visibleElements
-        .map((element) => {
-          const text = (element.textContent ?? "").toLowerCase();
-          const score =
-            (element.insideModal ? 2 : 0) +
-            (element.nearDateHeader ? 2 : 0) +
-            (element.matchedSignals.includes("month") ? 2 : 0) +
-            (element.matchedSignals.includes("year") ? 2 : 0) +
-            (element.matchedSignals.includes("target-day") ? 2 : 0) +
-            (element.matchedSignals.includes("source-day") ? 1 : 0) +
-            (element.tagName === "button" || element.role === "gridcell" ? 1 : 0) +
-            (/\bmo\b|\btu\b|\bwe\b|\bth\b|\bfr\b|\bsa\b|\bsu\b/.test(text) ? 1 : 0);
-          return { score, element };
-        })
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 20)
-        .map(({ element }) =>
-          normalizeWhitespace(
-            [
-              element.tagName,
-              element.role ? `role=${element.role}` : null,
-              element.className ? `class=${element.className.slice(0, 60)}` : null,
-              element.textContent ? `text=${element.textContent.slice(0, 80)}` : null,
-            ]
-              .filter(Boolean)
-              .join(" | ")
-          )
-        );
+        const scored = visibleElements
+          .map((element) => {
+            const text = (element.textContent || "").toLowerCase();
+            const score =
+              (element.insideModal ? 2 : 0) +
+              (element.nearDateHeader ? 2 : 0) +
+              (element.matchedSignals.includes("month") ? 2 : 0) +
+              (element.matchedSignals.includes("year") ? 2 : 0) +
+              (element.matchedSignals.includes("target-day") ? 2 : 0) +
+              (element.matchedSignals.includes("source-day") ? 1 : 0) +
+              (element.tagName === "button" || element.role === "gridcell" ? 1 : 0) +
+              (/\\bmo\\b|\\btu\\b|\\bwe\\b|\\bth\\b|\\bfr\\b|\\bsa\\b|\\bsu\\b/.test(text) ? 1 : 0);
+            return { score, element };
+          })
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 20)
+          .map(({ element }) =>
+            normalize(
+              [
+                element.tagName,
+                element.role ? "role=" + element.role : null,
+                element.className ? "class=" + element.className.slice(0, 60) : null,
+                element.textContent ? "text=" + element.textContent.slice(0, 80) : null,
+              ].filter(Boolean).join(" | ")
+            )
+          );
 
-      return {
-        collectedAt: new Date().toISOString(),
-        sourceDateIso: sourceDateIso ?? null,
-        targetDateIso: targetDateIso ?? null,
-        dateHeaderBoundingBox: dateHeaderBox
-          ? {
-              x: dateHeaderBox.x,
-              y: dateHeaderBox.y,
-              width: dateHeaderBox.width,
-              height: dateHeaderBox.height,
-            }
-          : null,
-        modalBoundingBox: modalRect
-          ? {
-              x: Math.round(modalRect.x * 100) / 100,
-              y: Math.round(modalRect.y * 100) / 100,
-              width: Math.round(modalRect.width * 100) / 100,
-              height: Math.round(modalRect.height * 100) / 100,
-            }
-          : null,
-        topCandidates: scored,
-        visibleElements: visibleElements.slice(0, 350),
-        signals: {
-          month: visibleMonth,
-          year: visibleYear,
-          weekdayTokens: weekdayMatched,
-          weekdayTokenCount: weekdayMatched.length,
-          visibleDayCandidates,
-          sourceDayVisible: sourceSignal,
-          selectedSourceDayVisible,
-          targetDayVisible: targetSignal,
-          targetDateClickCandidateFound,
-          targetDateClickCandidateBoundingBox,
-          openByMultisignal,
-          reasons,
-        },
-      };
-      },
+        return {
+          collectedAt: new Date().toISOString(),
+          sourceDateIso: sourceDateIso ?? null,
+          targetDateIso: targetDateIso ?? null,
+          dateHeaderBoundingBox: dateHeaderBox
+            ? { x: dateHeaderBox.x, y: dateHeaderBox.y, width: dateHeaderBox.width, height: dateHeaderBox.height }
+            : null,
+          modalBoundingBox: modalRect
+            ? {
+                x: Math.round(modalRect.x * 100) / 100,
+                y: Math.round(modalRect.y * 100) / 100,
+                width: Math.round(modalRect.width * 100) / 100,
+                height: Math.round(modalRect.height * 100) / 100,
+              }
+            : null,
+          topCandidates: scored,
+          visibleElements: visibleElements.slice(0, maxElements),
+          signals: {
+            month: visibleMonth,
+            year: visibleYear,
+            weekdayTokens: weekdayMatched,
+            weekdayTokenCount: weekdayMatched.length,
+            visibleDayCandidates,
+            sourceDayVisible: sourceSignal,
+            selectedSourceDayVisible,
+            targetDayVisible: targetSignal,
+            targetDateClickCandidateFound,
+            targetDateClickCandidateBoundingBox,
+            openByMultisignal,
+            reasons,
+          },
+        };
+      })`,
       {
         dateHeaderBox: input.dateHeaderBox,
         sourceDateIso: input.sourceDateIso ?? null,
@@ -3530,7 +3446,19 @@ async function collectVisibleDatepickerDebugSnapshot(
   }
 
   if (snapshot) {
-    await writeFile(input.artifactPath, JSON.stringify(snapshot, null, 2), "utf8");
+    const completeArtifact: DatepickerDomDebugSnapshot & {
+      stage: "complete";
+      created: true;
+      context: DatepickerDomDebugContext;
+      datepickerDomDebugError: null;
+    } = {
+      ...snapshot,
+      stage: "complete",
+      created: true,
+      context,
+      datepickerDomDebugError: null,
+    };
+    await writeFile(input.artifactPath, JSON.stringify(completeArtifact, null, 2), "utf8");
     return {
       snapshot,
       artifactPath: input.artifactPath,
@@ -3547,6 +3475,7 @@ async function collectVisibleDatepickerDebugSnapshot(
     timestamp: new Date().toISOString(),
     context,
     error: stageCError ?? "Stage C snapshot failed for unknown reason.",
+    datepickerDomDebugError: stageCError ?? "Stage C snapshot failed for unknown reason.",
     bodyTextSample: stageB.bodyTextSample,
     pageUrl,
     pageTitle,
@@ -4130,18 +4059,29 @@ async function probeTrainingPeaksMoveCapabilities(
           probe.warnings
         );
         console.log("[ui-probe] step: close datepicker");
-        const datePickerStillVisible = await runStep("close datepicker", UI_PROBE_STEP_TIMEOUTS.closeDatepicker, async () => {
-          await page.keyboard.press("Escape").catch(() => {});
-          const closeDetection = await withUiProbeTimeout("verify datepicker closed", 2_000, async () => {
-            return await detectVisibleDatePickerSnapshot(page, {
-              dateHeaderBox: probe.detail.dateHeaderBoundingBox,
-              dateHeaderText: probe.detail.dateHeaderText,
-            });
-          }).catch(() => ({ opened: false, selectorHint: null, snippets: [] as string[] }));
-          return closeDetection.opened;
-        });
-        if (datePickerStillVisible) {
-          probe.warnings.push("Escape did not fully close the datepicker before modal close.");
+        probe.detail.datePickerCloseAttempted = true;
+        let datePickerStillVisible = false;
+        try {
+          datePickerStillVisible = await runStep("close datepicker", UI_PROBE_STEP_TIMEOUTS.closeDatepicker, async () => {
+            await page.keyboard.press("Escape").catch(() => {});
+            const closeDetection = await withUiProbeTimeout("verify datepicker closed", 1_000, async () => {
+              return await detectVisibleDatePickerSnapshot(page, {
+                dateHeaderBox: probe.detail.dateHeaderBoundingBox,
+                dateHeaderText: probe.detail.dateHeaderText,
+              });
+            }).catch(() => ({ opened: false, selectorHint: null, snippets: [] as string[] }));
+            return closeDetection.opened;
+          });
+          probe.detail.datePickerCloseSucceeded = !datePickerStillVisible;
+          probe.detail.datePickerCloseError = null;
+          if (datePickerStillVisible) {
+            probe.warnings.push("Escape did not fully close the datepicker before modal close.");
+          }
+        } catch (error) {
+          const closeError = toShortErrorMessage(error);
+          probe.detail.datePickerCloseSucceeded = false;
+          probe.detail.datePickerCloseError = closeError.slice(0, 300);
+          probe.warnings.push(`Close datepicker best-effort failed: ${probe.detail.datePickerCloseError}`);
         }
       } else if (dateHeaderClickSucceeded) {
         probe.warnings.push("Date header clicked, but datepicker was not detected within timeout");
@@ -5594,6 +5534,9 @@ function probeToDriverProbeShape(probe: UiCapabilityProbe): TrainingPeaksProbeLi
       datepickerDomDebugError: detail.datepickerDomDebugError,
       opened: detail.opened,
       closeSucceeded: detail.closeSucceeded,
+      datePickerCloseAttempted: detail.datePickerCloseAttempted,
+      datePickerCloseSucceeded: detail.datePickerCloseSucceeded,
+      datePickerCloseError: detail.datePickerCloseError,
     },
     screenshots: { ...probe.screenshots },
     progress: {
