@@ -341,6 +341,7 @@ type DatepickerDebugCaptureResult = {
   pageUrl: string | null;
   pageTitle: string | null;
   stageCError: string | null;
+  stageCErrorDetails: string | null;
 };
 
 type TrainingPeaksMoveWorkoutTarget =
@@ -1032,6 +1033,216 @@ function visibleAnyTextReferencesIsoTarget(
   targetIso: string
 ): boolean {
   return fragments.some((fragment) => visibleTextReferencesIsoTarget(fragment, targetIso));
+}
+
+function parseIsoDateParts(iso: string | null | undefined): { year: number; month: number; day: number } | null {
+  const match = String(iso ?? "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    return null;
+  }
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+  return { year, month, day };
+}
+
+function monthNumberToEnglishName(month: number): string | null {
+  const months = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ];
+  return month >= 1 && month <= 12 ? months[month - 1] : null;
+}
+
+function buildCurrentModalBodyTextFallbackSignals(input: {
+  bodyTextSample: string;
+  sourceDateIso: string;
+  targetDateIso: string;
+}): {
+  activated: boolean;
+  datePickerOpened: boolean;
+  targetDayVisible: boolean;
+  selectedSourceDayVisible: boolean;
+  visibleMonth: string | null;
+  visibleYear: string | null;
+  strategy: string | null;
+  diagnostics: string[];
+} {
+  const text = String(input.bodyTextSample || "");
+  const lower = text.toLowerCase();
+  const selectDateIndex = lower.indexOf("select date");
+  if (selectDateIndex < 0) {
+    return {
+      activated: false,
+      datePickerOpened: false,
+      targetDayVisible: false,
+      selectedSourceDayVisible: false,
+      visibleMonth: null,
+      visibleYear: null,
+      strategy: null,
+      diagnostics: ["missing_select_date_token"],
+    };
+  }
+
+  const regionStart = Math.max(0, selectDateIndex - 300);
+  const regionEnd = Math.min(text.length, selectDateIndex + 3000);
+  const region = text.slice(regionStart, regionEnd);
+  const sourceParts = parseIsoDateParts(input.sourceDateIso);
+  const targetParts = parseIsoDateParts(input.targetDateIso);
+  const targetMonthName = targetParts ? monthNumberToEnglishName(targetParts.month) : null;
+  const hasMonthYear =
+    Boolean(targetMonthName) &&
+    Boolean(targetParts) &&
+    new RegExp(`\\b${targetMonthName}\\s+${targetParts!.year}\\b`, "i").test(region);
+  const hasWeekdayRow = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].every((token) =>
+    new RegExp(`\\b${token}\\b`, "i").test(region)
+  );
+  const dayTokens = region.match(/\b([1-9]|[12]\d|3[01])\b/g) ?? [];
+  const uniqueDayTokenCount = new Set(dayTokens.map((token) => Number(token))).size;
+  const hasDayGrid = uniqueDayTokenCount >= 7;
+  const targetDayVisible =
+    Boolean(targetParts) && new RegExp(`\\b${targetParts!.day}\\b`).test(region);
+  const sourceDayVisible =
+    Boolean(sourceParts) && new RegExp(`\\b${sourceParts!.day}\\b`).test(region);
+  const opened = hasMonthYear && hasWeekdayRow && hasDayGrid;
+  const diagnostics = [
+    "select_date_token",
+    hasMonthYear ? "month_year_signal" : "missing_month_year_signal",
+    hasWeekdayRow ? "weekday_row_signal" : "missing_weekday_row_signal",
+    hasDayGrid ? `day_grid_signal:${String(uniqueDayTokenCount)}` : `missing_day_grid_signal:${String(uniqueDayTokenCount)}`,
+    targetDayVisible ? "target_day_visible" : "target_day_not_visible",
+    sourceDayVisible ? "source_day_visible" : "source_day_not_visible",
+  ];
+
+  return {
+    activated: opened,
+    datePickerOpened: opened,
+    targetDayVisible,
+    selectedSourceDayVisible: sourceDayVisible,
+    visibleMonth: targetMonthName ?? null,
+    visibleYear: targetParts ? String(targetParts.year) : null,
+    strategy: opened ? "current_modal_body_text_multisignal_fallback" : null,
+    diagnostics,
+  };
+}
+
+function formatStageFailureDiagnostic(input: {
+  stage: string;
+  substage: string;
+  error: unknown;
+  details?: Record<string, unknown>;
+}): string {
+  const payload = {
+    stage: input.stage,
+    substage: input.substage,
+    errorName: input.error instanceof Error ? input.error.name || "Error" : "Error",
+    errorMessage: input.error instanceof Error ? input.error.message || "Unknown error" : String(input.error),
+    errorStack: input.error instanceof Error ? input.error.stack ?? null : null,
+    ...(input.details ? { details: input.details } : {}),
+  };
+  return JSON.stringify(payload);
+}
+
+function buildFailedPrepareGatesDiagnostics(input: {
+  prepareMoveWorkout: ReturnType<typeof derivePrepareMoveWorkoutResultFromProbe>;
+  expectedSourceDate: string | null;
+  expectedTargetDate: string | null;
+  preSaveTargetDateSelectionConfirmed: boolean;
+  preSaveTargetDateConfirmedBy: string | null;
+  saveAndCloseButtonFound: boolean;
+  saveAndCloseButtonEnabled: boolean;
+}): {
+  prepareMoveWorkoutStatus: string | null;
+  prepareMoveWorkoutTargetDateSelectionConfirmed: boolean;
+  prepareMoveWorkoutTargetDateConfirmedBy: string | null;
+  prepareMoveWorkoutMutationOccurred: boolean;
+  prepareMoveWorkoutAthleteIdentityOk: boolean;
+  prepareMoveWorkoutCandidateFingerprintOk: boolean;
+  prepareMoveWorkoutSourceDate: string | null;
+  prepareMoveWorkoutTargetDate: string | null;
+  expectedSourceDate: string | null;
+  expectedTargetDate: string | null;
+  sourceDateMatchesExpected: boolean;
+  targetDateMatchesExpected: boolean;
+  preSaveTargetDateSelectionConfirmed: boolean;
+  preSaveTargetDateConfirmedBy: string | null;
+  saveAndCloseButtonFound: boolean;
+  saveAndCloseButtonEnabled: boolean;
+  failedPrepareGates: string[];
+} {
+  const failedPrepareGates: string[] = [];
+  if (input.prepareMoveWorkout.status !== "ready_to_save") {
+    failedPrepareGates.push("prepareMoveWorkout.status");
+  }
+  if (input.prepareMoveWorkout.targetDateSelectionConfirmed !== true) {
+    failedPrepareGates.push("prepareMoveWorkout.targetDateSelectionConfirmed");
+  }
+  if (input.prepareMoveWorkout.targetDateConfirmedBy === null) {
+    failedPrepareGates.push("prepareMoveWorkout.targetDateConfirmedBy");
+  }
+  if (input.prepareMoveWorkout.mutationOccurred !== false) {
+    failedPrepareGates.push("prepareMoveWorkout.mutationOccurred");
+  }
+  if (input.prepareMoveWorkout.athleteIdentityOk !== true) {
+    failedPrepareGates.push("prepareMoveWorkout.athleteIdentityOk");
+  }
+  if (input.prepareMoveWorkout.candidateFingerprintOk !== true) {
+    failedPrepareGates.push("prepareMoveWorkout.candidateFingerprintOk");
+  }
+  if (input.prepareMoveWorkout.sourceDate !== input.expectedSourceDate) {
+    failedPrepareGates.push("prepareMoveWorkout.sourceDate");
+  }
+  if (input.prepareMoveWorkout.targetDate !== input.expectedTargetDate) {
+    failedPrepareGates.push("prepareMoveWorkout.targetDate");
+  }
+  if (input.preSaveTargetDateSelectionConfirmed !== true) {
+    failedPrepareGates.push("preSaveTargetDateSelectionConfirmed");
+  }
+  if (input.preSaveTargetDateConfirmedBy === null) {
+    failedPrepareGates.push("preSaveTargetDateConfirmedBy");
+  }
+  if (!input.saveAndCloseButtonFound) {
+    failedPrepareGates.push("saveAndCloseButtonFound");
+  }
+  if (!input.saveAndCloseButtonEnabled) {
+    failedPrepareGates.push("saveAndCloseButtonEnabled");
+  }
+
+  return {
+    prepareMoveWorkoutStatus: input.prepareMoveWorkout.status ?? null,
+    prepareMoveWorkoutTargetDateSelectionConfirmed: input.prepareMoveWorkout.targetDateSelectionConfirmed === true,
+    prepareMoveWorkoutTargetDateConfirmedBy: input.prepareMoveWorkout.targetDateConfirmedBy ?? null,
+    prepareMoveWorkoutMutationOccurred: input.prepareMoveWorkout.mutationOccurred === true,
+    prepareMoveWorkoutAthleteIdentityOk: input.prepareMoveWorkout.athleteIdentityOk === true,
+    prepareMoveWorkoutCandidateFingerprintOk: input.prepareMoveWorkout.candidateFingerprintOk === true,
+    prepareMoveWorkoutSourceDate: input.prepareMoveWorkout.sourceDate ?? null,
+    prepareMoveWorkoutTargetDate: input.prepareMoveWorkout.targetDate ?? null,
+    expectedSourceDate: input.expectedSourceDate ?? null,
+    expectedTargetDate: input.expectedTargetDate ?? null,
+    sourceDateMatchesExpected: input.prepareMoveWorkout.sourceDate === input.expectedSourceDate,
+    targetDateMatchesExpected: input.prepareMoveWorkout.targetDate === input.expectedTargetDate,
+    preSaveTargetDateSelectionConfirmed: input.preSaveTargetDateSelectionConfirmed === true,
+    preSaveTargetDateConfirmedBy: input.preSaveTargetDateConfirmedBy ?? null,
+    saveAndCloseButtonFound: input.saveAndCloseButtonFound,
+    saveAndCloseButtonEnabled: input.saveAndCloseButtonEnabled,
+    failedPrepareGates,
+  };
 }
 
 const visibleTextReferencesIsoTargetLocalCheck =
@@ -3119,6 +3330,7 @@ async function collectVisibleDatepickerDebugSnapshot(
   const pageUrl = await page.url();
   const pageTitle = await page.title().catch(() => null);
   let stageCError: string | null = null;
+  let stageCErrorDetails: string | null = null;
   let snapshot: DatepickerDomDebugSnapshot | null = null;
 
   try {
@@ -3419,7 +3631,20 @@ async function collectVisibleDatepickerDebugSnapshot(
       }
     );
   } catch (error) {
-    stageCError = toShortErrorMessage(error);
+    stageCErrorDetails = formatStageFailureDiagnostic({
+      stage: "collectVisibleDatepickerDebugSnapshot",
+      substage: "stage_c_collect_snapshot",
+      error,
+      details: {
+        sourceDateIso: input.sourceDateIso ?? null,
+        targetDateIso: input.targetDateIso ?? null,
+        dateHeaderBoxProvided: Boolean(input.dateHeaderBox),
+        selectorScanPlan: "button,input,select,[role=gridcell],[role=cell],td,[role=columnheader],th,div,span",
+        perSelectorLimit: 700,
+        maxElements: 500,
+      },
+    });
+    stageCError = stageCErrorDetails;
   }
 
   if (snapshot) {
@@ -3443,6 +3668,7 @@ async function collectVisibleDatepickerDebugSnapshot(
       pageUrl,
       pageTitle,
       stageCError: null,
+      stageCErrorDetails: null,
     };
   }
 
@@ -3451,8 +3677,24 @@ async function collectVisibleDatepickerDebugSnapshot(
     stage: "partial",
     timestamp: new Date().toISOString(),
     context,
-    error: stageCError ?? "Stage C snapshot failed for unknown reason.",
-    datepickerDomDebugError: stageCError ?? "Stage C snapshot failed for unknown reason.",
+    error:
+      stageCError ??
+      JSON.stringify({
+        stage: "collectVisibleDatepickerDebugSnapshot",
+        substage: "stage_c_collect_snapshot",
+        errorName: "UnknownError",
+        errorMessage: "Stage C snapshot failed without a caught exception.",
+        errorStack: null,
+      }),
+    datepickerDomDebugError:
+      stageCError ??
+      JSON.stringify({
+        stage: "collectVisibleDatepickerDebugSnapshot",
+        substage: "stage_c_collect_snapshot",
+        errorName: "UnknownError",
+        errorMessage: "Stage C snapshot failed without a caught exception.",
+        errorStack: null,
+      }),
     bodyTextSample: stageB.bodyTextSample,
     pageUrl,
     pageTitle,
@@ -3467,6 +3709,7 @@ async function collectVisibleDatepickerDebugSnapshot(
     pageUrl,
     pageTitle,
     stageCError,
+    stageCErrorDetails,
   };
 }
 
@@ -5687,12 +5930,25 @@ async function selectAndConfirmTargetDateInCurrentModalSession(input: {
         result.datePickerDetectionStrategy = "visible_dom_multisignal_fallback";
       }
     } else {
-      const scratchProbe = buildEmptyUiCapabilityProbe();
-      const fallback = applyBodyTextMultiSignalFallback(scratchProbe.detail, domDebugCapture.bodyTextSample);
-      if (fallback.activated) {
+      const currentModalFallbackSignals = buildCurrentModalBodyTextFallbackSignals({
+        bodyTextSample: domDebugCapture.bodyTextSample,
+        sourceDateIso: input.sourceDateIso,
+        targetDateIso: input.targetDateIso,
+      });
+      if (currentModalFallbackSignals.activated) {
         result.datePickerOpened = true;
-        result.datePickerDetectionStrategy = "body_text_multisignal_fallback";
+        result.datePickerDetectionStrategy =
+          currentModalFallbackSignals.strategy ?? "current_modal_body_text_multisignal_fallback";
       }
+      if (currentModalFallbackSignals.activated) {
+        result.datepickerDomDebugTopCandidates = [
+          ...result.datepickerDomDebugTopCandidates,
+          `current-modal-fallback:${currentModalFallbackSignals.diagnostics.join("+")}`,
+        ].slice(0, 12);
+      }
+    }
+    if (domDebugCapture.stageCErrorDetails) {
+      result.datepickerDomDebugError = domDebugCapture.stageCErrorDetails;
     }
   } catch (error) {
     result.datepickerDomDebugPath = datepickerDomDebugPath;
@@ -5718,7 +5974,20 @@ async function selectAndConfirmTargetDateInCurrentModalSession(input: {
     result.datePickerDetectionStrategy = result.datePickerDetectionStrategy ?? detection.strategy;
   }
 
-  const targetDayVisible = Boolean(detection?.targetDayVisible);
+  const currentModalFallbackSignals = buildCurrentModalBodyTextFallbackSignals({
+    bodyTextSample:
+      result.datepickerDomDebugError && result.datePickerOpened
+        ? ""
+        : await page.evaluate(() => (document.body?.innerText ?? "").slice(0, 20_000)).catch(() => ""),
+    sourceDateIso: input.sourceDateIso,
+    targetDateIso: input.targetDateIso,
+  });
+  if (!result.datePickerOpened && currentModalFallbackSignals.datePickerOpened) {
+    result.datePickerOpened = true;
+    result.datePickerDetectionStrategy =
+      currentModalFallbackSignals.strategy ?? "current_modal_body_text_multisignal_fallback";
+  }
+  const targetDayVisible = Boolean(detection?.targetDayVisible) || currentModalFallbackSignals.targetDayVisible;
   if (
     result.datePickerOpened &&
     targetDayVisible &&
@@ -5762,15 +6031,18 @@ async function selectAndConfirmTargetDateInCurrentModalSession(input: {
   const confirmedBySelectedHighlight = Boolean(postSelection?.targetDaySelectedVisible);
   result.preSaveTargetDateConfirmedByHeader = confirmedByDateHeader;
   result.preSaveTargetDateConfirmedByInput = confirmedByDateInput;
-  if (confirmedByDateHeader || confirmedByDateInput || confirmedBySelectedHighlight) {
+  if (confirmedByDateHeader || confirmedByDateInput) {
     result.preSaveTargetDateSelectionConfirmed = true;
     if (confirmedByDateHeader) {
       result.preSaveTargetDateConfirmedBy = "date_header";
     } else if (confirmedByDateInput) {
       result.preSaveTargetDateConfirmedBy = "date_input";
-    } else if (confirmedBySelectedHighlight) {
-      result.preSaveTargetDateConfirmedBy = "selected_day_highlight";
     }
+  } else if (confirmedBySelectedHighlight) {
+    result.datepickerDomDebugTopCandidates = [
+      ...result.datepickerDomDebugTopCandidates,
+      "post-selection-highlight-visible-without-header-or-input-confirmation",
+    ].slice(0, 12);
   }
 
   return result;
@@ -5923,6 +6195,25 @@ async function findSaveAndCloseButton(
 
 type ControlledSaveExecutionResult = {
   prepareMoveWorkout: ReturnType<typeof derivePrepareMoveWorkoutResultFromProbe>;
+  prepareGateDiagnostics: {
+    prepareMoveWorkoutStatus: string | null;
+    prepareMoveWorkoutTargetDateSelectionConfirmed: boolean;
+    prepareMoveWorkoutTargetDateConfirmedBy: string | null;
+    prepareMoveWorkoutMutationOccurred: boolean;
+    prepareMoveWorkoutAthleteIdentityOk: boolean;
+    prepareMoveWorkoutCandidateFingerprintOk: boolean;
+    prepareMoveWorkoutSourceDate: string | null;
+    prepareMoveWorkoutTargetDate: string | null;
+    expectedSourceDate: string | null;
+    expectedTargetDate: string | null;
+    sourceDateMatchesExpected: boolean;
+    targetDateMatchesExpected: boolean;
+    preSaveTargetDateSelectionConfirmed: boolean;
+    preSaveTargetDateConfirmedBy: string | null;
+    saveAndCloseButtonFound: boolean;
+    saveAndCloseButtonEnabled: boolean;
+    failedPrepareGates: string[];
+  };
   preSaveScreenshot: string | null;
   afterSaveScreenshot: string | null;
   unsavedUiStateChanged: boolean;
@@ -5950,6 +6241,9 @@ type ControlledSaveExecutionResult = {
     targetDateMatchesExpected: boolean;
     saveAndCloseButtonFound: boolean;
     saveAndCloseButtonEnabled: boolean;
+    expectedSourceDate: string | null;
+    expectedTargetDate: string | null;
+    failedPrepareGates: string[];
   };
   postSaveAudit: {
     athleteIdentityMatchedBy: IdentityMatchType | null;
@@ -6094,6 +6388,9 @@ async function runControlledSaveAndCloseExecution(input: {
       targetDateMatchesExpected: prepareMoveWorkout.targetDate === expectedTargetDate,
       saveAndCloseButtonFound,
       saveAndCloseButtonEnabled,
+      expectedSourceDate,
+      expectedTargetDate,
+      failedPrepareGates: [] as string[],
     } as const;
 
     const preSaveScreenshot = await captureProbeScreenshot(page, preSaveScreenshotPath, []);
@@ -6111,6 +6408,16 @@ async function runControlledSaveAndCloseExecution(input: {
       preSaveAudit.preSaveTargetDateConfirmedBy !== null &&
       saveAndCloseButtonFound &&
       saveAndCloseButtonEnabled;
+
+    const prepareGateDiagnostics = buildFailedPrepareGatesDiagnostics({
+      prepareMoveWorkout,
+      expectedSourceDate,
+      expectedTargetDate,
+      preSaveTargetDateSelectionConfirmed: preSaveAudit.preSaveTargetDateSelectionConfirmed,
+      preSaveTargetDateConfirmedBy: preSaveAudit.preSaveTargetDateConfirmedBy,
+      saveAndCloseButtonFound,
+      saveAndCloseButtonEnabled,
+    });
 
     let saveAndCloseAttempted = false;
     let saveAndCloseClicked = false;
@@ -6222,6 +6529,7 @@ async function runControlledSaveAndCloseExecution(input: {
 
     return {
       prepareMoveWorkout,
+      prepareGateDiagnostics,
       preSaveScreenshot,
       afterSaveScreenshot,
       unsavedUiStateChanged,
@@ -6234,7 +6542,10 @@ async function runControlledSaveAndCloseExecution(input: {
       postSaveValidationError,
       mutationOccurred,
       durableMutationOccurred: saveAndCloseClicked,
-      preSaveAudit,
+      preSaveAudit: {
+        ...preSaveAudit,
+        failedPrepareGates: prepareGateDiagnostics.failedPrepareGates,
+      },
       postSaveAudit: {
         athleteIdentityMatchedBy: postSaveIdentityMatchedBy,
         movedCandidateFoundOnTargetDate,
@@ -6699,6 +7010,17 @@ async function main(): Promise<void> {
       execution.preSaveAudit.preSaveTargetDateConfirmedBy !== null &&
       execution.preSaveAudit.saveAndCloseButtonFound &&
       execution.preSaveAudit.saveAndCloseButtonEnabled;
+    const failedPrepareGateDiagnostics = buildFailedPrepareGatesDiagnostics({
+      prepareMoveWorkout: prepareMoveWorkoutResult,
+      expectedSourceDate:
+        comparison.sourceDate.current ?? comparison.sourceDate.trusted ?? claimed.trustedDryRunLog.resolvedDates.sourceDate,
+      expectedTargetDate:
+        comparison.targetDate.current ?? comparison.targetDate.trusted ?? claimed.trustedDryRunLog.resolvedDates.targetDate,
+      preSaveTargetDateSelectionConfirmed: execution.preSaveAudit.preSaveTargetDateSelectionConfirmed,
+      preSaveTargetDateConfirmedBy: execution.preSaveAudit.preSaveTargetDateConfirmedBy,
+      saveAndCloseButtonFound: execution.preSaveAudit.saveAndCloseButtonFound,
+      saveAndCloseButtonEnabled: execution.preSaveAudit.saveAndCloseButtonEnabled,
+    });
 
     const logJson = {
       ...baseLog,
@@ -6713,6 +7035,7 @@ async function main(): Promise<void> {
       preSaveScreenshot: execution.preSaveScreenshot,
       afterSaveScreenshot: execution.afterSaveScreenshot,
       preSaveAudit: execution.preSaveAudit,
+      failedPrepareGateDiagnostics,
       postSaveAudit: execution.postSaveAudit,
       unsavedUiStateChanged: execution.unsavedUiStateChanged,
       saveAndCloseAttempted: execution.saveAndCloseAttempted,
@@ -6733,13 +7056,15 @@ async function main(): Promise<void> {
     };
 
     if (!prepareGatesPassed) {
-      const gateError = `Controlled save prepare gates failed before Save & Close: ${prepareMoveWorkoutResult.failureReason ?? "unknown prepare mismatch"}`;
+      const gateError = `Controlled save prepare gates failed before Save & Close: ${prepareMoveWorkoutResult.failureReason ?? "prepare gate diagnostics available"} | failedPrepareGates=${failedPrepareGateDiagnostics.failedPrepareGates.join(",") || "none"}`;
       await finishRealRun(claimed.action.id, run.id, {
         errorMessage: gateError,
         logJson: {
           ...logJson,
           status: "failed",
           error: gateError,
+          failedPrepareGateDiagnostics,
+          failedPrepareGates: failedPrepareGateDiagnostics.failedPrepareGates,
           mutationOccurred: false,
           saveAndCloseAttempted: false,
           saveAndCloseClicked: false,
@@ -6764,7 +7089,11 @@ async function main(): Promise<void> {
         errorMessage: gateError,
         candidate: evaluation.candidate ?? comparison.trustedCandidate,
       });
-      console.log(`Real-mode prepare gates failed for action ${claimed.action.id}: ${gateError}`);
+      console.log(
+        `Real-mode prepare gates failed for action ${claimed.action.id}: ${gateError} diagnostics=${JSON.stringify(
+          failedPrepareGateDiagnostics
+        )}`
+      );
       return;
     }
 
