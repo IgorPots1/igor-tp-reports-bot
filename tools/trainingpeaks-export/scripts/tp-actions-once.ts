@@ -1996,7 +1996,34 @@ async function claimOneApprovedActionForDryRun(runnerId: string): Promise<Claime
       throw new Error(`Failed to select approved action for dry-run: ${selectError.message}`);
     }
 
-    if (!candidate) {
+    let candidateRow = (candidate as TrainingPeaksActionRow | null) ?? null;
+    let expectedExecutionStatusForClaim: "not_started" | "execute_pending" = "not_started";
+
+    if (!candidateRow) {
+      // Backward-compat path: some historical approvals ended up in execute_pending
+      // before dry-run, without an execution request timestamp and baseline run.
+      const { data: legacyCandidate, error: legacySelectError } = await supabase
+        .from("trainingpeaks_actions")
+        .select("*")
+        .eq("action_type", "move_workout")
+        .eq("status", "approved")
+        .eq("execution_status", "execute_pending")
+        .is("execution_requested_at", null)
+        .is("last_run_id", null)
+        .order("approved_at", { ascending: true, nullsFirst: false })
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (legacySelectError) {
+        throw new Error(`Failed to select legacy approved action for dry-run: ${legacySelectError.message}`);
+      }
+      if (legacyCandidate) {
+        candidateRow = legacyCandidate as TrainingPeaksActionRow;
+        expectedExecutionStatusForClaim = "execute_pending";
+      }
+    }
+
+    if (!candidateRow) {
       return null;
     }
 
@@ -2008,14 +2035,14 @@ async function claimOneApprovedActionForDryRun(runnerId: string): Promise<Claime
         claimed_by: runnerId,
         claimed_at: new Date().toISOString(),
       })
-      .eq("id", candidate.id)
+      .eq("id", candidateRow.id)
       .eq("status", "approved")
-      .eq("execution_status", "not_started")
+      .eq("execution_status", expectedExecutionStatusForClaim)
       .select("*")
       .maybeSingle();
 
     if (claimError) {
-      throw new Error(`Failed to claim action ${candidate.id} for dry-run: ${claimError.message}`);
+      throw new Error(`Failed to claim action ${candidateRow.id} for dry-run: ${claimError.message}`);
     }
 
     if (!claimed) {
