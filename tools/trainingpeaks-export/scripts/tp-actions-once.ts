@@ -188,6 +188,9 @@ type UiCapabilityProbeDetailDiscovery = {
   selectedSourceDayVisible: boolean;
   targetDateSelectionAttempted: boolean;
   targetDateSelectionConfirmed: boolean;
+  postClickDateHeaderText: string | null;
+  postClickDateInputValue: string | null;
+  targetDateConfirmedBy: "date_header" | "date_input" | "selected_day_highlight" | null;
   targetDateClickMethod: "mouse.click.bounding_box_center" | null;
   targetDateClickCandidateFound: boolean;
   targetDateClickCandidateBoundingBox: { x: number; y: number; width: number; height: number } | null;
@@ -209,6 +212,7 @@ type UiCapabilityProbeDetailDiscovery = {
   datePickerCloseAttempted: boolean;
   datePickerCloseSucceeded: boolean;
   datePickerCloseError: string | null;
+  mutationOccurred: boolean;
 };
 
 type UiCapabilityProbe = {
@@ -972,7 +976,7 @@ function extractIsoFromNaturalDateText(raw: string | null | undefined): string |
     return directIso[1];
   }
   const natural = text.match(
-    /\b(?:(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b[\s,\-/:]*)?(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s+(20\d{2})\b/i
+    /\b(?:(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b[\s,\-/:]*)?(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(20\d{2})\b/i
   );
   if (!natural) {
     return null;
@@ -986,28 +990,30 @@ function extractIsoFromNaturalDateText(raw: string | null | undefined): string |
   return toIsoFromDateParts(year, month, day);
 }
 
-function visibleTextReferencesIsoTarget(
-  targetIso: string,
-  fragments: readonly (string | null | undefined)[]
-): boolean {
+function visibleTextReferencesIsoTarget(fragment: string | null | undefined, targetIso: string): boolean {
   const normalizedTarget = normalizeWhitespace(targetIso);
   if (!normalizedTarget) {
     return false;
   }
-  for (const fragment of fragments) {
-    const text = normalizeWhitespace(fragment);
-    if (!text) {
-      continue;
-    }
-    if (text.toLowerCase().includes(normalizedTarget.toLowerCase())) {
-      return true;
-    }
-    if (extractIsoFromNaturalDateText(text) === normalizedTarget) {
-      return true;
-    }
+  const text = normalizeWhitespace(fragment);
+  if (!text) {
+    return false;
   }
-  return false;
+  if (text.toLowerCase().includes(normalizedTarget.toLowerCase())) {
+    return true;
+  }
+  return extractIsoFromNaturalDateText(text) === normalizedTarget;
 }
+
+function visibleAnyTextReferencesIsoTarget(
+  fragments: readonly (string | null | undefined)[],
+  targetIso: string
+): boolean {
+  return fragments.some((fragment) => visibleTextReferencesIsoTarget(fragment, targetIso));
+}
+
+const visibleTextReferencesIsoTargetLocalCheck =
+  visibleTextReferencesIsoTarget("SUNDAY May 17, 2026", "2026-05-17") === true;
 
 function parseDateFromCalendarAttr(value: string | null | undefined, defaultYear?: number): string | null {
   if (!value) {
@@ -1983,6 +1989,9 @@ function buildEmptyUiCapabilityProbe(): UiCapabilityProbe {
     selectedSourceDayVisible: false,
     targetDateSelectionAttempted: false,
     targetDateSelectionConfirmed: false,
+    postClickDateHeaderText: null,
+    postClickDateInputValue: null,
+    targetDateConfirmedBy: null,
     targetDateClickMethod: null,
     targetDateClickCandidateFound: false,
     targetDateClickCandidateBoundingBox: null,
@@ -2004,6 +2013,7 @@ function buildEmptyUiCapabilityProbe(): UiCapabilityProbe {
     datePickerCloseAttempted: false,
     datePickerCloseSucceeded: false,
     datePickerCloseError: null,
+    mutationOccurred: false,
   };
   return {
     attempted: true,
@@ -4114,6 +4124,11 @@ async function probeTrainingPeaksMoveCapabilities(
 
       if (dateHeaderClickSucceeded && probe.detail.datePickerOpened) {
         const targetDateIso = comparison.targetDate.current ?? comparison.targetDate.trusted;
+        if (!visibleTextReferencesIsoTargetLocalCheck) {
+          probe.warnings.push(
+            'visibleTextReferencesIsoTarget local check failed for "SUNDAY May 17, 2026" -> "2026-05-17".'
+          );
+        }
         if (probe.detail.targetDayVisible && targetDateIso && probe.detail.targetDateClickCandidateFound) {
           probe.detail.targetDateSelectionAttempted = true;
           probe.detail.targetDateClickMethod = "mouse.click.bounding_box_center";
@@ -4158,16 +4173,27 @@ async function probeTrainingPeaksMoveCapabilities(
             probe.detail.targetDayVisible = postSelection.targetDayVisible || probe.detail.targetDayVisible;
             probe.detail.selectedSourceDayVisible =
               postSelection.selectedSourceDayVisible || probe.detail.selectedSourceDayVisible;
-            const postClickTargetConfirmedByHeaderOrInput = visibleTextReferencesIsoTarget(targetDateIso, [
-              postClickDateHeaderText,
-              postClickDateFieldValue,
-              probe.detail.dateHeaderText,
-              probe.detail.currentDateValue,
-            ]);
-            probe.detail.targetDateSelectionConfirmed =
-              postClickTargetConfirmedByHeaderOrInput ||
-              postSelection.targetDaySelectedVisible ||
-              probe.detail.targetDateSelectionConfirmed;
+            probe.detail.postClickDateHeaderText = postClickDateHeaderText;
+            probe.detail.postClickDateInputValue = postClickDateFieldValue;
+            const confirmedByDateHeader = visibleAnyTextReferencesIsoTarget(
+              [postClickDateHeaderText, probe.detail.dateHeaderText],
+              targetDateIso
+            );
+            const confirmedByDateInput = visibleAnyTextReferencesIsoTarget(
+              [postClickDateFieldValue, probe.detail.currentDateValue],
+              targetDateIso
+            );
+            const confirmedBySelectedHighlight = postSelection.targetDaySelectedVisible;
+            if (confirmedByDateHeader || confirmedByDateInput || confirmedBySelectedHighlight) {
+              probe.detail.targetDateSelectionConfirmed = true;
+              if (confirmedByDateHeader) {
+                probe.detail.targetDateConfirmedBy = "date_header";
+              } else if (confirmedByDateInput) {
+                probe.detail.targetDateConfirmedBy = "date_input";
+              } else if (confirmedBySelectedHighlight) {
+                probe.detail.targetDateConfirmedBy = "selected_day_highlight";
+              }
+            }
             probe.detail.datePickerOpenCheckSnippets.push(
               ...postSelection.snippets.slice(0, Math.max(0, 12 - probe.detail.datePickerOpenCheckSnippets.length))
             );
@@ -5636,6 +5662,9 @@ function probeToDriverProbeShape(probe: UiCapabilityProbe): TrainingPeaksProbeLi
       selectedSourceDayVisible: detail.selectedSourceDayVisible,
       targetDateSelectionAttempted: detail.targetDateSelectionAttempted,
       targetDateSelectionConfirmed: detail.targetDateSelectionConfirmed,
+      postClickDateHeaderText: detail.postClickDateHeaderText,
+      postClickDateInputValue: detail.postClickDateInputValue,
+      targetDateConfirmedBy: detail.targetDateConfirmedBy,
       targetDateClickMethod: detail.targetDateClickMethod,
       targetDateClickCandidateFound: detail.targetDateClickCandidateFound,
       targetDateClickCandidateBoundingBox: detail.targetDateClickCandidateBoundingBox,
@@ -5648,6 +5677,7 @@ function probeToDriverProbeShape(probe: UiCapabilityProbe): TrainingPeaksProbeLi
       datePickerCloseAttempted: detail.datePickerCloseAttempted,
       datePickerCloseSucceeded: detail.datePickerCloseSucceeded,
       datePickerCloseError: detail.datePickerCloseError,
+      mutationOccurred: detail.mutationOccurred,
     },
     screenshots: { ...probe.screenshots },
     progress: {
@@ -6013,6 +6043,9 @@ async function main(): Promise<void> {
         targetDateClickCandidateBoundingBox: prepareMoveWorkoutResult.targetDateClickCandidateBoundingBox,
         targetDateSelectionAttempted: prepareMoveWorkoutResult.targetDateSelectionAttempted,
         targetDateSelectionConfirmed: prepareMoveWorkoutResult.targetDateSelectionConfirmed,
+        postClickDateHeaderText: prepareMoveWorkoutResult.postClickDateHeaderText,
+        postClickDateInputValue: prepareMoveWorkoutResult.postClickDateInputValue,
+        targetDateConfirmedBy: prepareMoveWorkoutResult.targetDateConfirmedBy,
         targetDateClickMethod: prepareMoveWorkoutResult.targetDateClickMethod,
         afterTargetDayClickError: prepareMoveWorkoutResult.afterTargetDayClickError,
         datePickerCloseAttempted: uiCapabilityProbe.detail.datePickerCloseAttempted,

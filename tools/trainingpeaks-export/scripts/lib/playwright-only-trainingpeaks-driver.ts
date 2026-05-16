@@ -30,6 +30,9 @@ export type ProbeLike = {
     selectedSourceDayVisible: boolean;
     targetDateSelectionAttempted: boolean;
     targetDateSelectionConfirmed: boolean;
+    postClickDateHeaderText: string | null;
+    postClickDateInputValue: string | null;
+    targetDateConfirmedBy: "date_header" | "date_input" | "selected_day_highlight" | null;
     targetDateClickMethod: "mouse.click.bounding_box_center" | null;
     targetDateClickCandidateFound: boolean;
     targetDateClickCandidateBoundingBox: { x: number; y: number; width: number; height: number } | null;
@@ -42,6 +45,7 @@ export type ProbeLike = {
     datePickerCloseAttempted: boolean;
     datePickerCloseSucceeded: boolean;
     datePickerCloseError: string | null;
+    mutationOccurred: boolean;
   };
   screenshots: Record<string, string | null>;
   progress: {
@@ -142,7 +146,14 @@ export function derivePrepareMoveWorkoutResultFromProbe(
 
   const targetIso = input.targetDateIso;
   const datePickerOpened = probe.detail.datePickerOpened;
-  const targetDateSelectionConfirmed = probe.detail.targetDateSelectionConfirmed;
+  const headerReferencesTarget =
+    targetIso !== null ? naturalLanguageTextsReferenceTargetIso(targetIso, [dateHeaderText]) : false;
+  const inferredHeaderConfirmation =
+    probe.detail.targetDateSelectionAttempted && headerReferencesTarget && probe.detail.mutationOccurred === false;
+  const targetDateSelectionConfirmed = probe.detail.targetDateSelectionConfirmed || inferredHeaderConfirmation;
+  const postClickDateHeaderText = probe.detail.postClickDateHeaderText ?? (inferredHeaderConfirmation ? dateHeaderText : null);
+  const targetDateConfirmedBy =
+    probe.detail.targetDateConfirmedBy ?? (inferredHeaderConfirmation ? "date_header" : null);
   const targetDateVisible =
     targetIso !== null
       ? probe.detail.targetDayVisible ||
@@ -180,7 +191,7 @@ export function derivePrepareMoveWorkoutResultFromProbe(
   if (loginOrReachability || unsafeStructure) {
     status = "unsafe";
     recommendedNextDriver = "manual";
-  } else if (datePickerOpened && targetDateSelectionConfirmed) {
+  } else if (targetDateSelectionConfirmed && probe.detail.mutationOccurred === false) {
     status = "ready_to_save";
     recommendedNextDriver = "playwright";
     failureReason = null;
@@ -234,6 +245,9 @@ export function derivePrepareMoveWorkoutResultFromProbe(
     selectedSourceDayVisible: probe.detail.selectedSourceDayVisible,
     targetDateSelectionAttempted: probe.detail.targetDateSelectionAttempted,
     targetDateSelectionConfirmed,
+    postClickDateHeaderText,
+    postClickDateInputValue: probe.detail.postClickDateInputValue,
+    targetDateConfirmedBy,
     targetDateClickMethod: probe.detail.targetDateClickMethod,
     targetDateClickCandidateFound: probe.detail.targetDateClickCandidateFound,
     targetDateClickCandidateBoundingBox: probe.detail.targetDateClickCandidateBoundingBox,
@@ -241,7 +255,7 @@ export function derivePrepareMoveWorkoutResultFromProbe(
     datepickerDomDebugPath: probe.detail.datepickerDomDebugPath,
     datepickerDomDebugTopCandidates: [...probe.detail.datepickerDomDebugTopCandidates],
     datepickerDomDebugError: probe.detail.datepickerDomDebugError,
-    mutationOccurred: false,
+    mutationOccurred: probe.detail.mutationOccurred,
     saveButtonVisible,
     screenshots: { ...probe.screenshots },
     stepHistory: [...probe.progress.stepHistory],
@@ -274,6 +288,9 @@ export class PlaywrightOnlyTrainingPeaksDriver implements TrainingPeaksAutomatio
       selectedSourceDayVisible: false,
       targetDateSelectionAttempted: false,
       targetDateSelectionConfirmed: false,
+      postClickDateHeaderText: null,
+      postClickDateInputValue: null,
+      targetDateConfirmedBy: null,
       targetDateClickMethod: null,
       targetDateClickCandidateFound: false,
       targetDateClickCandidateBoundingBox: null,
@@ -326,6 +343,9 @@ export class PlaywrightOnlyTrainingPeaksDriver implements TrainingPeaksAutomatio
             selectedSourceDayVisible: false,
             targetDateSelectionAttempted: false,
             targetDateSelectionConfirmed: false,
+            postClickDateHeaderText: null,
+            postClickDateInputValue: null,
+            targetDateConfirmedBy: null,
             targetDateClickMethod: null,
             targetDateClickCandidateFound: false,
             targetDateClickCandidateBoundingBox: null,
@@ -338,6 +358,7 @@ export class PlaywrightOnlyTrainingPeaksDriver implements TrainingPeaksAutomatio
             datePickerCloseAttempted: false,
             datePickerCloseSucceeded: false,
             datePickerCloseError: null,
+            mutationOccurred: false,
           },
           screenshots: {},
           progress: { stepHistory: [] },

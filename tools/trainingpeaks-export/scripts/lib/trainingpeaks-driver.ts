@@ -20,6 +20,9 @@ export interface PrepareMoveWorkoutResult {
   selectedSourceDayVisible: boolean;
   targetDateSelectionAttempted: boolean;
   targetDateSelectionConfirmed: boolean;
+  postClickDateHeaderText: string | null;
+  postClickDateInputValue: string | null;
+  targetDateConfirmedBy: "date_header" | "date_input" | "selected_day_highlight" | null;
   targetDateClickMethod: "mouse.click.bounding_box_center" | null;
   targetDateClickCandidateFound: boolean;
   targetDateClickCandidateBoundingBox: { x: number; y: number; width: number; height: number } | null;
