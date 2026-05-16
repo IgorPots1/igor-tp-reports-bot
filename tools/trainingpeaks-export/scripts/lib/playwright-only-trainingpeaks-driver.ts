@@ -180,6 +180,10 @@ export function derivePrepareMoveWorkoutResultFromProbe(
   if (loginOrReachability || unsafeStructure) {
     status = "unsafe";
     recommendedNextDriver = "manual";
+  } else if (datePickerOpened && targetDateSelectionConfirmed) {
+    status = "ready_to_save";
+    recommendedNextDriver = "playwright";
+    failureReason = null;
   } else if (
     probe.detail.opened &&
     datePickerOpened &&
@@ -206,10 +210,6 @@ export function derivePrepareMoveWorkoutResultFromProbe(
     status = "needs_manual";
     recommendedNextDriver = "manual";
     failureReason = failureReason ?? "Target selection could not be verified safely.";
-  } else if (datePickerOpened && targetDateSelectionConfirmed) {
-    status = "ready_to_save";
-    recommendedNextDriver = "playwright";
-    failureReason = null;
   } else {
     status = "needs_manual";
     recommendedNextDriver = "playwright";

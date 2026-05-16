@@ -947,6 +947,68 @@ function parseDateFromCalendarText(raw: string, defaultYear?: number): string | 
   return null;
 }
 
+const MONTH_NAME_TO_NUMBER: Record<string, number> = {
+  january: 1,
+  february: 2,
+  march: 3,
+  april: 4,
+  may: 5,
+  june: 6,
+  july: 7,
+  august: 8,
+  september: 9,
+  october: 10,
+  november: 11,
+  december: 12,
+};
+
+function extractIsoFromNaturalDateText(raw: string | null | undefined): string | null {
+  const text = normalizeWhitespace(raw);
+  if (!text) {
+    return null;
+  }
+  const directIso = text.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
+  if (directIso?.[1]) {
+    return directIso[1];
+  }
+  const natural = text.match(
+    /\b(?:(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b[\s,\-/:]*)?(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s+(20\d{2})\b/i
+  );
+  if (!natural) {
+    return null;
+  }
+  const month = MONTH_NAME_TO_NUMBER[natural[1].toLowerCase()];
+  const day = Number(natural[2]);
+  const year = Number(natural[3]);
+  if (!month) {
+    return null;
+  }
+  return toIsoFromDateParts(year, month, day);
+}
+
+function visibleTextReferencesIsoTarget(
+  targetIso: string,
+  fragments: readonly (string | null | undefined)[]
+): boolean {
+  const normalizedTarget = normalizeWhitespace(targetIso);
+  if (!normalizedTarget) {
+    return false;
+  }
+  for (const fragment of fragments) {
+    const text = normalizeWhitespace(fragment);
+    if (!text) {
+      continue;
+    }
+    if (text.toLowerCase().includes(normalizedTarget.toLowerCase())) {
+      return true;
+    }
+    if (extractIsoFromNaturalDateText(text) === normalizedTarget) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function parseDateFromCalendarAttr(value: string | null | undefined, defaultYear?: number): string | null {
   if (!value) {
     return null;
@@ -4066,6 +4128,19 @@ async function probeTrainingPeaksMoveCapabilities(
             await withUiProbeTimeout("best-effort target date selection click", 900, async () => {
               await page.mouse.click(x, y);
             });
+            await page.waitForTimeout(180).catch(() => {});
+            const postClickDateHeaderText = await findBoundedDateHeaderText(page, modalRoot?.locator ?? null).catch(
+              () => null as string | null
+            );
+            const postClickDateFieldValue = dateFieldMatch
+              ? await readDateFieldValue(dateFieldMatch.locator).catch(() => null as string | null)
+              : null;
+            if (postClickDateHeaderText) {
+              probe.detail.dateHeaderText = postClickDateHeaderText;
+            }
+            if (postClickDateFieldValue) {
+              probe.detail.currentDateValue = postClickDateFieldValue;
+            }
             const postSelection = await detectVisibleDatePickerSnapshot(page, {
               dateHeaderBox: probe.detail.dateHeaderBoundingBox,
               dateHeaderText: probe.detail.dateHeaderText,
@@ -4083,8 +4158,16 @@ async function probeTrainingPeaksMoveCapabilities(
             probe.detail.targetDayVisible = postSelection.targetDayVisible || probe.detail.targetDayVisible;
             probe.detail.selectedSourceDayVisible =
               postSelection.selectedSourceDayVisible || probe.detail.selectedSourceDayVisible;
+            const postClickTargetConfirmedByHeaderOrInput = visibleTextReferencesIsoTarget(targetDateIso, [
+              postClickDateHeaderText,
+              postClickDateFieldValue,
+              probe.detail.dateHeaderText,
+              probe.detail.currentDateValue,
+            ]);
             probe.detail.targetDateSelectionConfirmed =
-              postSelection.targetDaySelectedVisible || probe.detail.targetDateSelectionConfirmed;
+              postClickTargetConfirmedByHeaderOrInput ||
+              postSelection.targetDaySelectedVisible ||
+              probe.detail.targetDateSelectionConfirmed;
             probe.detail.datePickerOpenCheckSnippets.push(
               ...postSelection.snippets.slice(0, Math.max(0, 12 - probe.detail.datePickerOpenCheckSnippets.length))
             );
