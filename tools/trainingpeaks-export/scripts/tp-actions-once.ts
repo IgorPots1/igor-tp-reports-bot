@@ -4096,38 +4096,39 @@ async function probeTrainingPeaksMoveCapabilities(
             probe.warnings.push(`Playwright locator fallback for target day candidate failed: ${toShortErrorMessage(error)}`);
           }
         }
+      }
 
+      if (dateHeaderClickSucceeded && probe.detail.datePickerOpened) {
+        const targetDateIso = comparison.targetDate.current ?? comparison.targetDate.trusted;
         if (probe.detail.targetDayVisible && targetDateIso && probe.detail.targetDateClickCandidateFound) {
           probe.detail.targetDateSelectionAttempted = true;
           try {
-            // Best-effort only: keep this short and do not allow it to drive global probe progress/timeout.
-            await withUiProbeTimeout("best-effort target date click", 1_750, async () => {
+            // Best-effort only: isolate target selection from the detect datepicker step.
+            await withUiProbeTimeout("best-effort target date selection", 1_900, async () => {
               await clickVisibleTargetDayInDatePicker(page, targetDateIso);
-            });
-            const postSelection = await withUiProbeTimeout("best-effort verify target date selection", 1_750, async () => {
-              return await detectVisibleDatePickerSnapshot(page, {
+              const postSelection = await detectVisibleDatePickerSnapshot(page, {
                 dateHeaderBox: probe.detail.dateHeaderBoundingBox,
                 dateHeaderText: probe.detail.dateHeaderText,
                 sourceDateIso: comparison.sourceDate.current ?? comparison.sourceDate.trusted,
                 targetDateIso,
               });
+              probe.detail.datePickerDetectionStrategy =
+                postSelection.strategy ?? probe.detail.datePickerDetectionStrategy;
+              probe.detail.datePickerBoundingBox = postSelection.boundingBox ?? probe.detail.datePickerBoundingBox;
+              probe.detail.visibleMonth = postSelection.visibleMonth ?? probe.detail.visibleMonth;
+              probe.detail.visibleYear = postSelection.visibleYear ?? probe.detail.visibleYear;
+              probe.detail.visibleDayCandidates = postSelection.visibleDayCandidates.length
+                ? [...postSelection.visibleDayCandidates]
+                : probe.detail.visibleDayCandidates;
+              probe.detail.targetDayVisible = postSelection.targetDayVisible || probe.detail.targetDayVisible;
+              probe.detail.selectedSourceDayVisible =
+                postSelection.selectedSourceDayVisible || probe.detail.selectedSourceDayVisible;
+              probe.detail.targetDateSelectionConfirmed =
+                postSelection.targetDaySelectedVisible || probe.detail.targetDateSelectionConfirmed;
+              probe.detail.datePickerOpenCheckSnippets.push(
+                ...postSelection.snippets.slice(0, Math.max(0, 12 - probe.detail.datePickerOpenCheckSnippets.length))
+              );
             });
-            probe.detail.datePickerDetectionStrategy =
-              postSelection.strategy ?? probe.detail.datePickerDetectionStrategy;
-            probe.detail.datePickerBoundingBox = postSelection.boundingBox ?? probe.detail.datePickerBoundingBox;
-            probe.detail.visibleMonth = postSelection.visibleMonth ?? probe.detail.visibleMonth;
-            probe.detail.visibleYear = postSelection.visibleYear ?? probe.detail.visibleYear;
-            probe.detail.visibleDayCandidates = postSelection.visibleDayCandidates.length
-              ? [...postSelection.visibleDayCandidates]
-              : probe.detail.visibleDayCandidates;
-            probe.detail.targetDayVisible = postSelection.targetDayVisible || probe.detail.targetDayVisible;
-            probe.detail.selectedSourceDayVisible =
-              postSelection.selectedSourceDayVisible || probe.detail.selectedSourceDayVisible;
-            probe.detail.targetDateSelectionConfirmed =
-              postSelection.targetDaySelectedVisible || probe.detail.targetDateSelectionConfirmed;
-            probe.detail.datePickerOpenCheckSnippets.push(
-              ...postSelection.snippets.slice(0, Math.max(0, 12 - probe.detail.datePickerOpenCheckSnippets.length))
-            );
           } catch (error) {
             probe.warnings.push(`Target date selection attempt failed safely: ${toShortErrorMessage(error)}`);
           } finally {
@@ -4139,6 +4140,9 @@ async function probeTrainingPeaksMoveCapabilities(
             );
           }
         }
+      }
+
+      if (dateHeaderClickSucceeded && probe.detail.datePickerOpened) {
         probe.screenshots.datePickerOpened = await captureProbeScreenshot(
           page,
           screenshotDatePickerOpenedPath,
