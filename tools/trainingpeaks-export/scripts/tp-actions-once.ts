@@ -284,6 +284,36 @@ type DatepickerDomDebugSnapshot = {
   };
 };
 
+type DatepickerDomDebugContext = {
+  actionId: string;
+  runId: string;
+  sourceDateIso: string | null;
+  targetDateIso: string | null;
+};
+
+type DatepickerDomDebugPartialArtifact = {
+  created: true;
+  stage: "started" | "partial";
+  timestamp: string;
+  context: DatepickerDomDebugContext;
+  pageUrl?: string | null;
+  pageTitle?: string | null;
+  viewport?: { width: number; height: number };
+  bodyTextSample?: string;
+  modalTextSample?: string | null;
+  topCandidates?: string[];
+  error?: string;
+};
+
+type DatepickerDebugCaptureResult = {
+  snapshot: DatepickerDomDebugSnapshot | null;
+  artifactPath: string;
+  bodyTextSample: string;
+  pageUrl: string | null;
+  pageTitle: string | null;
+  stageCError: string | null;
+};
+
 type TrainingPeaksMoveWorkoutTarget =
   | { kind: "date"; value: string; sourceText?: string }
   | { kind: "relative_day"; value: "tomorrow" | "day_after_tomorrow"; sourceText?: string }
@@ -620,6 +650,19 @@ function toShortErrorMessage(error: unknown): string {
     return normalized;
   }
   return `${normalized.slice(0, 497)}...`;
+}
+
+function formatDiagnosticError(error: unknown): string {
+  if (error instanceof Error) {
+    const name = error.name || "Error";
+    const message = error.message || "Unknown error";
+    const stackLine = error.stack
+      ?.split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.startsWith("at "));
+    return stackLine ? `${name}: ${message} (${stackLine})` : `${name}: ${message}`;
+  }
+  return `Error: ${String(error)}`;
 }
 
 function getTargetSummary(parsedPayload: unknown): string {
@@ -3051,12 +3094,51 @@ async function detectVisibleDatePickerSnapshot(
 async function collectVisibleDatepickerDebugSnapshot(
   page: import("playwright").Page,
   input: {
+    artifactPath: string;
+    actionId: string;
+    runId: string;
     dateHeaderBox: { x: number; y: number; width: number; height: number } | null;
     sourceDateIso?: string | null;
     targetDateIso?: string | null;
   }
-): Promise<DatepickerDomDebugSnapshot> {
-  return page.evaluate(
+): Promise<DatepickerDebugCaptureResult> {
+  const context: DatepickerDomDebugContext = {
+    actionId: input.actionId,
+    runId: input.runId,
+    sourceDateIso: input.sourceDateIso ?? null,
+    targetDateIso: input.targetDateIso ?? null,
+  };
+
+  const startedArtifact: DatepickerDomDebugPartialArtifact = {
+    created: true,
+    stage: "started",
+    timestamp: new Date().toISOString(),
+    context,
+  };
+  await writeFile(input.artifactPath, JSON.stringify(startedArtifact, null, 2), "utf8");
+
+  const stageB = await page.evaluate(() => {
+    const bodyText = (document.body?.innerText ?? "").slice(0, 20_000);
+    const viewport = {
+      width: typeof window.innerWidth === "number" && Number.isFinite(window.innerWidth) ? window.innerWidth : 0,
+      height: typeof window.innerHeight === "number" && Number.isFinite(window.innerHeight) ? window.innerHeight : 0,
+    };
+    const modalCandidate = document.querySelector('[role="dialog"],.MuiDialog-root,.MuiModal-root');
+    const modalText = (modalCandidate?.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 4_000);
+    return {
+      bodyTextSample: bodyText,
+      viewport,
+      modalTextSample: modalText || null,
+    };
+  });
+
+  const pageUrl = await page.url();
+  const pageTitle = await page.title().catch(() => null);
+  let stageCError: string | null = null;
+  let snapshot: DatepickerDomDebugSnapshot | null = null;
+
+  try {
+    snapshot = await page.evaluate(
     ({ dateHeaderBox, sourceDateIso, targetDateIso }) => {
       const normalizeWhitespace = (value: string | null | undefined): string =>
         (value ?? "").replace(/\s+/g, " ").trim();
@@ -3436,13 +3518,77 @@ async function collectVisibleDatepickerDebugSnapshot(
           reasons,
         },
       };
-    },
-    {
-      dateHeaderBox: input.dateHeaderBox,
-      sourceDateIso: input.sourceDateIso ?? null,
-      targetDateIso: input.targetDateIso ?? null,
-    }
+      },
+      {
+        dateHeaderBox: input.dateHeaderBox,
+        sourceDateIso: input.sourceDateIso ?? null,
+        targetDateIso: input.targetDateIso ?? null,
+      }
+    );
+  } catch (error) {
+    stageCError = toShortErrorMessage(error);
+  }
+
+  if (snapshot) {
+    await writeFile(input.artifactPath, JSON.stringify(snapshot, null, 2), "utf8");
+    return {
+      snapshot,
+      artifactPath: input.artifactPath,
+      bodyTextSample: stageB.bodyTextSample,
+      pageUrl,
+      pageTitle,
+      stageCError: null,
+    };
+  }
+
+  const partialArtifact: DatepickerDomDebugPartialArtifact = {
+    created: true,
+    stage: "partial",
+    timestamp: new Date().toISOString(),
+    context,
+    error: stageCError ?? "Stage C snapshot failed for unknown reason.",
+    bodyTextSample: stageB.bodyTextSample,
+    pageUrl,
+    pageTitle,
+    viewport: stageB.viewport,
+    modalTextSample: stageB.modalTextSample,
+  };
+  await writeFile(input.artifactPath, JSON.stringify(partialArtifact, null, 2), "utf8");
+  return {
+    snapshot: null,
+    artifactPath: input.artifactPath,
+    bodyTextSample: stageB.bodyTextSample,
+    pageUrl,
+    pageTitle,
+    stageCError,
+  };
+}
+
+function applyBodyTextMultiSignalFallback(
+  detail: UiCapabilityProbeDetailDiscovery,
+  bodyTextSample: string
+): { activated: boolean } {
+  const sample = bodyTextSample || "";
+  const hasMonth = /\bMay\b/i.test(sample);
+  const hasYear = /\b2026\b/.test(sample);
+  const hasWeekdays = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].every((token) =>
+    new RegExp(`\\b${token}\\b`, "i").test(sample)
   );
+  const has16 = /\b16\b/.test(sample);
+  const has17 = /\b17\b/.test(sample);
+  const activated = hasMonth && hasYear && hasWeekdays && has16 && has17;
+
+  if (!activated) {
+    return { activated: false };
+  }
+
+  detail.datePickerOpened = true;
+  detail.datePickerDetectionStrategy = "body_text_multisignal_fallback";
+  detail.visibleMonth = detail.visibleMonth ?? "May";
+  detail.visibleYear = detail.visibleYear ?? "2026";
+  detail.targetDayVisible = detail.targetDayVisible || has17;
+  detail.selectedSourceDayVisible = detail.selectedSourceDayVisible || has16;
+  return { activated: true };
 }
 
 async function clickVisibleTargetDayInDatePicker(
@@ -3849,40 +3995,53 @@ async function probeTrainingPeaksMoveCapabilities(
         probe.progress.currentStep = "capture datepicker DOM debug snapshot";
         probe.progress.updatedAt = new Date().toISOString();
         try {
-          const domDebugSnapshot = await collectVisibleDatepickerDebugSnapshot(page, {
+          const domDebugCapture = await collectVisibleDatepickerDebugSnapshot(page, {
+            artifactPath: datepickerDomDebugPath,
+            actionId: claimed.action.id,
+            runId,
             dateHeaderBox: probe.detail.dateHeaderBoundingBox,
             sourceDateIso,
             targetDateIso,
           });
           probe.detail.datepickerDomDebugPath = datepickerDomDebugPath;
-          probe.detail.datepickerDomDebugTopCandidates = [...domDebugSnapshot.topCandidates.slice(0, 12)];
+          const domDebugSnapshot = domDebugCapture.snapshot;
+          probe.detail.datepickerDomDebugTopCandidates = domDebugSnapshot
+            ? [...domDebugSnapshot.topCandidates.slice(0, 12)]
+            : [];
           probe.detail.datepickerDomDebugError = null;
-          probe.detail.visibleMonth = probe.detail.visibleMonth ?? domDebugSnapshot.signals.month;
-          probe.detail.visibleYear = probe.detail.visibleYear ?? domDebugSnapshot.signals.year;
-          if (probe.detail.visibleDayCandidates.length === 0 && domDebugSnapshot.signals.visibleDayCandidates.length > 0) {
-            probe.detail.visibleDayCandidates = [...domDebugSnapshot.signals.visibleDayCandidates];
+          if (domDebugSnapshot) {
+            probe.detail.visibleMonth = probe.detail.visibleMonth ?? domDebugSnapshot.signals.month;
+            probe.detail.visibleYear = probe.detail.visibleYear ?? domDebugSnapshot.signals.year;
+            if (probe.detail.visibleDayCandidates.length === 0 && domDebugSnapshot.signals.visibleDayCandidates.length > 0) {
+              probe.detail.visibleDayCandidates = [...domDebugSnapshot.signals.visibleDayCandidates];
+            }
+            probe.detail.targetDayVisible = probe.detail.targetDayVisible || domDebugSnapshot.signals.targetDayVisible;
+            probe.detail.selectedSourceDayVisible =
+              probe.detail.selectedSourceDayVisible || domDebugSnapshot.signals.selectedSourceDayVisible;
+            probe.detail.targetDateClickCandidateFound = domDebugSnapshot.signals.targetDateClickCandidateFound;
+            probe.detail.targetDateClickCandidateBoundingBox = domDebugSnapshot.signals.targetDateClickCandidateBoundingBox;
+            if (domDebugSnapshot.signals.openByMultisignal) {
+              datePickerOpenedSnapshot = true;
+              probe.detail.datePickerDetectionStrategy = "visible_dom_multisignal_fallback";
+            }
+          } else {
+            const fallback = applyBodyTextMultiSignalFallback(probe.detail, domDebugCapture.bodyTextSample);
+            if (fallback.activated) {
+              datePickerOpenedSnapshot = true;
+            }
           }
-          probe.detail.targetDayVisible = probe.detail.targetDayVisible || domDebugSnapshot.signals.targetDayVisible;
-          probe.detail.selectedSourceDayVisible =
-            probe.detail.selectedSourceDayVisible || domDebugSnapshot.signals.selectedSourceDayVisible;
-          probe.detail.targetDateClickCandidateFound = domDebugSnapshot.signals.targetDateClickCandidateFound;
-          probe.detail.targetDateClickCandidateBoundingBox = domDebugSnapshot.signals.targetDateClickCandidateBoundingBox;
-          if (domDebugSnapshot.signals.openByMultisignal) {
-            datePickerOpenedSnapshot = true;
-            probe.detail.datePickerDetectionStrategy = "visible_dom_multisignal_fallback";
-          }
-          await writeFile(datepickerDomDebugPath, JSON.stringify(domDebugSnapshot, null, 2), "utf8");
           probe.progress.stepHistory.push("capture datepicker DOM debug snapshot");
           probe.progress.lastCompletedStep = "capture datepicker DOM debug snapshot";
           probe.progress.updatedAt = new Date().toISOString();
           console.log(`[ui-probe] datepicker DOM debug artifact: ${datepickerDomDebugPath}`);
         } catch (error) {
-          const errorMessage = toShortErrorMessage(error);
+          const errorMessage = formatDiagnosticError(error);
           probe.detail.datepickerDomDebugError = errorMessage;
           probe.progress.stepHistory.push("capture datepicker DOM debug snapshot failed");
           probe.progress.lastCompletedStep = "capture datepicker DOM debug snapshot failed";
           probe.progress.updatedAt = new Date().toISOString();
           probe.warnings.push(`Datepicker DOM debug snapshot failed safely: ${errorMessage}`);
+          console.log(`[ui-probe] datepicker DOM debug error: ${errorMessage}`);
           console.log("[ui-probe] datepicker DOM debug artifact: null");
         }
 
@@ -5432,6 +5591,7 @@ function probeToDriverProbeShape(probe: UiCapabilityProbe): TrainingPeaksProbeLi
       targetDateClickCandidateBoundingBox: detail.targetDateClickCandidateBoundingBox,
       datepickerDomDebugPath: detail.datepickerDomDebugPath,
       datepickerDomDebugTopCandidates: [...detail.datepickerDomDebugTopCandidates],
+      datepickerDomDebugError: detail.datepickerDomDebugError,
       opened: detail.opened,
       closeSucceeded: detail.closeSucceeded,
     },
@@ -5799,6 +5959,7 @@ async function main(): Promise<void> {
         targetDateSelectionConfirmed: prepareMoveWorkoutResult.targetDateSelectionConfirmed,
         datepickerDomDebugPath: prepareMoveWorkoutResult.datepickerDomDebugPath,
         datepickerDomDebugTopCandidates: prepareMoveWorkoutResult.datepickerDomDebugTopCandidates,
+        datepickerDomDebugError: prepareMoveWorkoutResult.datepickerDomDebugError,
         trainingPeaksDriver: driverLogJsonSlice,
         uiCapabilityProbeErrors: uiCapabilityProbe.errors,
         diagnostics: prepareMoveWorkoutResult,

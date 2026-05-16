@@ -34,6 +34,7 @@ export type ProbeLike = {
     targetDateClickCandidateBoundingBox: { x: number; y: number; width: number; height: number } | null;
     datepickerDomDebugPath: string | null;
     datepickerDomDebugTopCandidates: string[];
+    datepickerDomDebugError: string | null;
     opened: boolean;
     closeSucceeded: boolean;
   };
@@ -218,6 +219,7 @@ export function derivePrepareMoveWorkoutResultFromProbe(
     targetDateClickCandidateBoundingBox: probe.detail.targetDateClickCandidateBoundingBox,
     datepickerDomDebugPath: probe.detail.datepickerDomDebugPath,
     datepickerDomDebugTopCandidates: [...probe.detail.datepickerDomDebugTopCandidates],
+    datepickerDomDebugError: probe.detail.datepickerDomDebugError,
     mutationOccurred: false,
     saveButtonVisible,
     screenshots: { ...probe.screenshots },
@@ -255,6 +257,7 @@ export class PlaywrightOnlyTrainingPeaksDriver implements TrainingPeaksAutomatio
       targetDateClickCandidateBoundingBox: null,
       datepickerDomDebugPath: null,
       datepickerDomDebugTopCandidates: [],
+      datepickerDomDebugError: null,
       mutationOccurred: false,
       saveButtonVisible: false,
       screenshots: {},
@@ -304,6 +307,7 @@ export class PlaywrightOnlyTrainingPeaksDriver implements TrainingPeaksAutomatio
             targetDateClickCandidateBoundingBox: null,
             datepickerDomDebugPath: null,
             datepickerDomDebugTopCandidates: [],
+            datepickerDomDebugError: null,
             opened: false,
             closeSucceeded: false,
           },

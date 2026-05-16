@@ -24,6 +24,7 @@ export interface PrepareMoveWorkoutResult {
   targetDateClickCandidateBoundingBox: { x: number; y: number; width: number; height: number } | null;
   datepickerDomDebugPath: string | null;
   datepickerDomDebugTopCandidates: string[];
+  datepickerDomDebugError: string | null;
   mutationOccurred: boolean;
   saveButtonVisible: boolean;
   screenshots: Record<string, string | null>;
