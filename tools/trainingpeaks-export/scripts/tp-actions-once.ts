@@ -6,6 +6,10 @@ import process from "node:process";
 import { createClient } from "@supabase/supabase-js";
 import { chromium } from "playwright";
 
+import {
+  PlaywrightOnlyTrainingPeaksDriver,
+  type ProbeLike as TrainingPeaksProbeLikeForDriver,
+} from "./lib/playwright-only-trainingpeaks-driver.ts";
 import { profileDir, toolRoot } from "./lib/paths.ts";
 
 type ActionExecutionStatus =
@@ -136,6 +140,7 @@ type UiCapabilityProbeScreenshots = {
   afterDateHeaderClickAttempt1: string | null;
   datePickerOpened: string | null;
   afterClosed: string | null;
+  timeout: string | null;
 };
 
 type UiCapabilityProbeCardDiscovery = {
@@ -197,6 +202,15 @@ type UiCapabilityProbe = {
     detail: UiCapabilityProbeDetailDiscovery;
   };
   screenshots: UiCapabilityProbeScreenshots;
+  progress: {
+    currentStep: string | null;
+    lastCompletedStep: string | null;
+    timeoutStep: string | null;
+    timeoutAt: string | null;
+    startedAt: string;
+    updatedAt: string;
+    stepHistory: string[];
+  };
   warnings: string[];
   errors: string[];
 };
@@ -346,6 +360,7 @@ const TP_CALLBACK_ACTION_EXECUTE_PREFIX = "tp:ta:x:";
 const TP_CALLBACK_ACTION_CANCEL_PREFIX = "tp:ta:c:";
 const ACTION_ARTIFACTS_ROOT = path.join(toolRoot, "action-artifacts");
 const TP_ACTIONS_EXECUTE_REAL_FLAG = "--execute-real";
+const TP_ACTIONS_PREPARE_ONLY_FLAG = "--prepare-only";
 const TP_ACTIONS_REAL_EXECUTION_ENV = "TP_ACTIONS_REAL_EXECUTION";
 const REAL_MOVE_NOT_IMPLEMENTED_ERROR = "Real move not implemented yet (Phase 3D.2)";
 const TRAININGPEAKS_NOT_CHANGED_NOTE = "TrainingPeaks не изменён";
@@ -363,8 +378,6 @@ const TP_MONTH_REGEX = /\b(?:january|february|march|april|may|june|july|august|s
 const TP_YEAR_REGEX = /\b20\d{2}\b/;
 const TP_TIME_DROPDOWN_REGEX = /\b\d{1,2}:\d{2}\s*(?:am|pm)\b/i;
 const TP_WEEKDAY_ROW_REGEX = /\b(?:mo|tu|we|th|fr|sa|su)\b(?:\s+\b(?:mo|tu|we|th|fr|sa|su)\b){3,}/i;
-const TP_MUTATION_ACTION_REGEX = /save(?:\s*&\s*close)?|delete|update|submit|move|resched|postpone|shift|copy|duplicate/i;
-const TP_DATE_CONTROL_ATTR_REGEX = /date|calendar/i;
 const TP_MOVE_MENU_ACTION_REGEX = /move/i;
 const TP_RESCHEDULE_MENU_ACTION_REGEX = /resched|postpone|shift/i;
 const TP_COPY_MENU_ACTION_REGEX = /copy|duplicate/i;
@@ -372,10 +385,20 @@ const TP_EDIT_MENU_ACTION_REGEX = /^edit$/i;
 const UI_PROBE_OVERALL_TIMEOUT_MS = 25_000;
 const UI_PROBE_CLEANUP_TIMEOUT_MS = 5_000;
 const UI_PROBE_STEP_TIMEOUTS = {
+  launchBrowserContext: 8_000,
+  openAthletePage: 10_000,
+  locateCandidateCard: 4_000,
+  cardHover: 2_500,
+  openCardMenu: 3_000,
+  extractMenuLabels: 2_500,
+  captureScreenshot: 3_000,
   clickEdit: 3_000,
   waitDetailModal: 5_000,
-  clickDateHeader: 3_000,
-  detectDatepicker: 4_000,
+  findDateHeaderText: 1_500,
+  resolveDateHeaderClickableTarget: 2_500,
+  getDateHeaderBoundingBox: 1_000,
+  clickDateHeader: 1_500,
+  detectDatepicker: 2_500,
   closeDatepicker: 3_000,
   closeModal: 4_000,
 } as const;
@@ -1735,6 +1758,7 @@ async function captureCalendarDomSnapshot(
 }
 
 function buildEmptyUiCapabilityProbe(): UiCapabilityProbe {
+  const nowIso = new Date().toISOString();
   const card: UiCapabilityProbeCardDiscovery = {
     found: false,
     selectorUsed: null,
@@ -1800,6 +1824,16 @@ function buildEmptyUiCapabilityProbe(): UiCapabilityProbe {
       afterDateHeaderClickAttempt1: null,
       datePickerOpened: null,
       afterClosed: null,
+      timeout: null,
+    },
+    progress: {
+      currentStep: null,
+      lastCompletedStep: null,
+      timeoutStep: null,
+      timeoutAt: null,
+      startedAt: nowIso,
+      updatedAt: nowIso,
+      stepHistory: [],
     },
     warnings: [],
     errors: [],
@@ -2040,35 +2074,6 @@ function extractTrainingPeaksDateHeaderText(text: string | null): string | null 
   return null;
 }
 
-async function isLocatorClickable(locator: import("playwright").Locator, timeout = 700): Promise<boolean> {
-  if (!(await isVisible(locator, timeout))) {
-    return false;
-  }
-  try {
-    await locator.click({ timeout, trial: true });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function locatorMatchesTopOfScope(
-  scope: import("playwright").Locator,
-  candidate: import("playwright").Locator
-): Promise<boolean> {
-  try {
-    const [scopeBox, candidateBox] = await Promise.all([scope.boundingBox(), candidate.boundingBox()]);
-    if (!scopeBox || !candidateBox) {
-      return false;
-    }
-    const withinTopBand = candidateBox.y <= scopeBox.y + scopeBox.height * 0.4;
-    const withinLeftBand = candidateBox.x <= scopeBox.x + scopeBox.width * 0.6;
-    return withinTopBand && withinLeftBand;
-  } catch {
-    return false;
-  }
-}
-
 function toProbeBoundingBox(
   box: { x: number; y: number; width: number; height: number } | null
 ): { x: number; y: number; width: number; height: number } | null {
@@ -2086,13 +2091,6 @@ function toProbeBoundingBox(
 function boundingBoxCenter(box: { x: number; y: number; width: number; height: number }): { x: number; y: number } {
   return {
     x: box.x + box.width / 2,
-    y: box.y + box.height / 2,
-  };
-}
-
-function boundingBoxCenterLeft(box: { x: number; y: number; width: number; height: number }): { x: number; y: number } {
-  return {
-    x: box.x + Math.max(8, Math.min(18, box.width * 0.22)),
     y: box.y + box.height / 2,
   };
 }
@@ -2119,40 +2117,6 @@ function isBoxNearDateHeader(
   const notHugePageRegion =
     !detailBox || candidateBox.width * candidateBox.height <= detailBox.width * detailBox.height * 1.35;
   return horizontallyNear && verticallyNear && belowOrOverlappingHeader && notHugePageRegion;
-}
-
-async function clickInsideDetailButOutsideDatePicker(
-  page: import("playwright").Page,
-  detailRoot: import("playwright").Locator,
-  datePickerRoot: import("playwright").Locator | null
-): Promise<boolean> {
-  try {
-    const [detailBox, pickerBox] = await Promise.all([detailRoot.boundingBox(), datePickerRoot?.boundingBox() ?? Promise.resolve(null)]);
-    if (!detailBox) {
-      return false;
-    }
-    const candidatePoints = [
-      { x: detailBox.x + 24, y: detailBox.y + Math.max(24, Math.min(96, detailBox.height * 0.18)) },
-      { x: detailBox.x + 24, y: detailBox.y + Math.max(40, detailBox.height * 0.55) },
-      { x: detailBox.x + Math.max(24, detailBox.width * 0.15), y: detailBox.y + Math.max(24, detailBox.height * 0.72) },
-    ];
-    const pointInsidePicker = (point: { x: number; y: number }) =>
-      Boolean(
-        pickerBox &&
-          point.x >= pickerBox.x &&
-          point.x <= pickerBox.x + pickerBox.width &&
-          point.y >= pickerBox.y &&
-          point.y <= pickerBox.y + pickerBox.height
-      );
-    const safePoint = candidatePoints.find((point) => !pointInsidePicker(point));
-    if (!safePoint) {
-      return false;
-    }
-    await page.mouse.click(safePoint.x, safePoint.y);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function normalizeActionLabels(labels: string[]): string[] {
@@ -2325,272 +2289,225 @@ async function findVisibleDetailRoot(
   return null;
 }
 
-async function findDetailDateHeader(
-  modalRoot: import("playwright").Locator
-): Promise<{ locator: import("playwright").Locator; text: string } | null> {
-  const candidates = modalRoot.locator('h1,h2,h3,h4,[role="heading"],button,[role="button"],div,span,p');
-  const count = Math.min(await candidates.count(), 80);
-  let bestMatch: { locator: import("playwright").Locator; text: string; score: number } | null = null;
-  for (let index = 0; index < count; index += 1) {
-    const locator = candidates.nth(index);
-    if (!(await isVisible(locator, 300))) {
-      continue;
-    }
-    const text = await getInnerTextSafe(locator);
+async function findBoundedDateHeaderText(
+  page: import("playwright").Page,
+  modalRoot: import("playwright").Locator | null
+): Promise<string | null> {
+  const surfaces: import("playwright").Locator[] = [];
+  if (modalRoot) {
+    surfaces.push(modalRoot);
+  }
+  surfaces.push(page.locator("body").first());
+  for (const surface of surfaces) {
+    const text = await getInnerTextSafe(surface, 700);
     const matchedHeaderText = extractTrainingPeaksDateHeaderText(text);
-    if (!matchedHeaderText) {
-      continue;
+    if (matchedHeaderText) {
+      return matchedHeaderText;
     }
-    const normalizedText = matchedHeaderText;
-    let score = 0;
-    if (TP_STRONG_DATE_HEADER_REGEX.test(normalizedText)) {
-      score += 4;
-    }
-    if (TP_DATE_HEADER_REGEX.test(normalizedText)) {
-      score += 3;
-    }
-    if (await locatorMatchesTopOfScope(modalRoot, locator)) {
-      score += 3;
-    }
-    const role = await getAttributeSafe(locator, "role");
-    const className = await getAttributeSafe(locator, "class");
-    if (role === "button" || /button|header/i.test(className ?? "")) {
-      score += 1;
-    }
-    if (!bestMatch || score > bestMatch.score) {
-      bestMatch = { locator, text: normalizedText, score };
-    }
-  }
-  if (bestMatch) {
-    return {
-      locator: bestMatch.locator,
-      text: bestMatch.text,
-    };
-  }
-  const fallbackText = await getInnerTextSafe(modalRoot);
-  const matchedText = extractTrainingPeaksDateHeaderText(fallbackText);
-  return matchedText ? { locator: modalRoot, text: matchedText } : null;
-}
-
-async function findPreciseDateHeaderClickTarget(
-  modalRoot: import("playwright").Locator,
-  dateHeaderText: string | null,
-  fallbackLocator: import("playwright").Locator | null
-): Promise<
-  | {
-      locator: import("playwright").Locator;
-      selectorHint: string;
-      boundingBox: { x: number; y: number; width: number; height: number } | null;
-    }
-  | null
-> {
-  type CandidateMatch = {
-    locator: import("playwright").Locator;
-    selectorHint: string;
-    score: number;
-    box: { x: number; y: number; width: number; height: number } | null;
-  };
-
-  const candidates = modalRoot.locator('button,[role="button"],h1,h2,h3,h4,[role="heading"],span,p,div');
-  const count = Math.min(await candidates.count(), 140);
-  let bestMatch: CandidateMatch | null = null;
-
-  for (let index = 0; index < count; index += 1) {
-    const locator = candidates.nth(index);
-    if (!(await isVisible(locator, 250))) {
-      continue;
-    }
-    const text = normalizeWhitespace(await getInnerTextSafe(locator));
-    const extractedText = extractTrainingPeaksDateHeaderText(text);
-    const exactTextMatch = Boolean(dateHeaderText && text && text === dateHeaderText);
-    const extractedTextMatch = Boolean(dateHeaderText && extractedText && extractedText === dateHeaderText);
-    if (!exactTextMatch && !extractedTextMatch) {
-      continue;
-    }
-    const box = toProbeBoundingBox(await locator.boundingBox().catch(() => null));
-    const role = await getAttributeSafe(locator, "role");
-    const className = await getAttributeSafe(locator, "class");
-    const tagName = await locator.evaluate((node) => node.tagName.toLowerCase()).catch(() => "");
-    let score = 0;
-    if (exactTextMatch) {
-      score += 8;
-    }
-    if (extractedTextMatch) {
-      score += 5;
-    }
-    if (await locatorMatchesTopOfScope(modalRoot, locator)) {
-      score += 4;
-    }
-    if (role === "button" || /button|header|date|clickable/i.test(className ?? "")) {
-      score += 2;
-    }
-    if (/^(button|span|h1|h2|h3|h4|p)$/.test(tagName)) {
-      score += 1;
-    }
-
-    const candidate: CandidateMatch = {
-      locator,
-      selectorHint: exactTextMatch ? "exact-visible-date-header-text" : "date-header-text-fragment",
-      score,
-      box,
-    };
-
-    if (
-      !bestMatch ||
-      candidate.score > bestMatch.score ||
-      (candidate.score === bestMatch.score &&
-        ((candidate.box?.y ?? Number.POSITIVE_INFINITY) < (bestMatch.box?.y ?? Number.POSITIVE_INFINITY) ||
-          ((candidate.box?.y ?? Number.POSITIVE_INFINITY) === (bestMatch.box?.y ?? Number.POSITIVE_INFINITY) &&
-            (candidate.box?.x ?? Number.POSITIVE_INFINITY) < (bestMatch.box?.x ?? Number.POSITIVE_INFINITY))))
-    ) {
-      bestMatch = candidate;
-    }
-  }
-
-  if (bestMatch) {
-    return {
-      locator: bestMatch.locator,
-      selectorHint: bestMatch.selectorHint,
-      boundingBox: bestMatch.box,
-    };
-  }
-
-  if (fallbackLocator && (await isVisible(fallbackLocator, 400))) {
-    return {
-      locator: fallbackLocator,
-      selectorHint: "date-header-fallback-locator",
-      boundingBox: toProbeBoundingBox(await fallbackLocator.boundingBox().catch(() => null)),
-    };
-  }
-
-  return null;
-}
-
-async function findDetailDateHeaderOnPage(
-  page: import("playwright").Page
-): Promise<{ locator: import("playwright").Locator; text: string; selectorHint: string } | null> {
-  const candidates = page.locator('h1,h2,h3,h4,[role="heading"],button,[role="button"],div,span,p');
-  const count = Math.min(await candidates.count(), 250);
-  let bestMatch: { locator: import("playwright").Locator; text: string; score: number; selectorHint: string } | null = null;
-  for (let index = 0; index < count; index += 1) {
-    const locator = candidates.nth(index);
-    if (!(await isVisible(locator, 250))) {
-      continue;
-    }
-    const text = await getInnerTextSafe(locator);
-    const matchedHeaderText = extractTrainingPeaksDateHeaderText(text);
-    if (!matchedHeaderText) {
-      continue;
-    }
-    let score = 0;
-    if (TP_STRONG_DATE_HEADER_REGEX.test(matchedHeaderText)) {
-      score += 5;
-    }
-    if (TP_DATE_HEADER_REGEX.test(matchedHeaderText)) {
-      score += 3;
-    }
-    const role = await getAttributeSafe(locator, "role");
-    const className = await getAttributeSafe(locator, "class");
-    if (role === "button" || /button|header|date/i.test(className ?? "")) {
-      score += 1;
-    }
-    if (!bestMatch || score > bestMatch.score) {
-      bestMatch = {
-        locator,
-        text: matchedHeaderText,
-        score,
-        selectorHint: "text=date-header-pattern",
-      };
-    }
-  }
-  if (bestMatch) {
-    return bestMatch;
   }
   return null;
 }
 
-async function findLikelyDateControlInModal(
-  modalRoot: import("playwright").Locator,
-  dateHeaderText: string | null,
-  dateHeaderLocator: import("playwright").Locator | null
-): Promise<{ locator: import("playwright").Locator; selectorHint: string } | null> {
-  if (dateHeaderLocator && (await isVisible(dateHeaderLocator, 500))) {
-    return {
-      locator: dateHeaderLocator,
-      selectorHint: "text=date-header-pattern",
+async function resolveDateHeaderDomRectSnapshotBounded(
+  page: import("playwright").Page,
+  dateHeaderText: string
+): Promise<{
+  found: boolean;
+  text: string | null;
+  tagName: string | null;
+  className: string | null;
+  rect: { x: number; y: number; width: number; height: number } | null;
+  reason: string;
+}> {
+  return await page.evaluate(({ dateHeaderText: targetText }) => {
+    const browserProbe = new Function(
+      "dateHeaderText",
+      `
+        const normalizeWhitespace = (value) => String(value ?? "").replace(/\\s+/g, " ").trim();
+        const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+        const body = document.body;
+        if (!body) {
+          return {
+            found: false,
+            text: null,
+            tagName: null,
+            className: null,
+            rect: null,
+            reason: "document.body unavailable",
+          };
+        }
+
+        const isVisibleElement = (element) => {
+          if (!(element instanceof HTMLElement)) {
+            return false;
+          }
+          const style = window.getComputedStyle(element);
+          if (
+            style.display === "none" ||
+            style.visibility === "hidden" ||
+            style.visibility === "collapse" ||
+            Number(style.opacity || "1") < 0.05
+          ) {
+            return false;
+          }
+          const rect = element.getBoundingClientRect();
+          if (rect.width < 4 || rect.height < 4) {
+            return false;
+          }
+          if (rect.bottom <= 0 || rect.right <= 0 || rect.top >= viewportHeight || rect.left >= viewportWidth) {
+            return false;
+          }
+          return true;
+        };
+
+        const modalCandidates = Array.from(
+          document.querySelectorAll(
+            '[role="dialog"], .MuiDialog-root, .MuiDialog-container, .MuiModal-root, [class*="dialog" i], [class*="modal" i]'
+          )
+        ).filter(isVisibleElement);
+
+        let modalRect = null;
+        let modalReason = "no visible modal candidate";
+        if (modalCandidates.length > 0) {
+          let bestModal = null;
+          let bestModalScore = Number.NEGATIVE_INFINITY;
+          for (const candidate of modalCandidates) {
+            const rect = candidate.getBoundingClientRect();
+            const area = rect.width * rect.height;
+            const distanceFromCenter =
+              Math.abs(rect.left + rect.width / 2 - viewportWidth / 2) +
+              Math.abs(rect.top + rect.height / 2 - viewportHeight / 2);
+            const score = area * 0.0001 - distanceFromCenter * 0.05 - rect.top * 0.03;
+            if (score > bestModalScore) {
+              bestModalScore = score;
+              bestModal = rect;
+            }
+          }
+          if (bestModal) {
+            modalRect = bestModal;
+            modalReason = "using visible modal candidate bounds";
+          }
+        }
+
+        const allElements = Array.from(body.querySelectorAll("*"));
+        let bestMatch = null;
+        for (const element of allElements) {
+          if (!(element instanceof HTMLElement) || !isVisibleElement(element)) {
+            continue;
+          }
+          const text = normalizeWhitespace(element.innerText || element.textContent || "");
+          if (!text || !text.includes(dateHeaderText)) {
+            continue;
+          }
+          const rect = element.getBoundingClientRect();
+          const className = normalizeWhitespace(
+            typeof element.className === "string" ? element.className : element.getAttribute("class") || ""
+          );
+          const role = normalizeWhitespace(element.getAttribute("role") || "").toLowerCase();
+          const cursor = normalizeWhitespace(window.getComputedStyle(element).cursor).toLowerCase();
+          const extraChars = Math.max(0, text.length - dateHeaderText.length);
+          let score = text === dateHeaderText ? 140 : 90;
+          score -= Math.min(70, extraChars * 0.8);
+          score -= rect.width > viewportWidth * 0.8 ? 60 : 0;
+          score -= rect.height > 120 ? 25 : 0;
+          if (cursor.includes("pointer")) {
+            score += 28;
+          }
+          if (role === "button" || element.tagName === "BUTTON") {
+            score += 24;
+          }
+          if (typeof element.onclick === "function") {
+            score += 14;
+          }
+          if (element.hasAttribute("aria-haspopup")) {
+            score += 10;
+          }
+          if (element.hasAttribute("tabindex")) {
+            score += 6;
+          }
+          if (/(^|\\s)(date|day|header|calendar|picker)(\\s|$)/i.test(className)) {
+            score += 16;
+          }
+          if (text.split(" ").length <= 8) {
+            score += 10;
+          }
+          if (modalRect) {
+            const insideModal =
+              rect.left >= modalRect.left - 12 &&
+              rect.right <= modalRect.right + 12 &&
+              rect.top >= modalRect.top - 12 &&
+              rect.bottom <= modalRect.bottom + 12;
+            score += insideModal ? 45 : -35;
+            const leftDistance = Math.abs(rect.left - modalRect.left);
+            const topDistance = Math.abs(rect.top - modalRect.top);
+            score += Math.max(0, 40 - leftDistance * 0.08 - topDistance * 0.14);
+          } else {
+            score += Math.max(0, 18 - rect.left * 0.03 - rect.top * 0.04);
+          }
+
+          const candidate = {
+            found: true,
+            text: text,
+            tagName: element.tagName || null,
+            className: className || null,
+            rect: {
+              x: Math.round(rect.x * 100) / 100,
+              y: Math.round(rect.y * 100) / 100,
+              width: Math.round(rect.width * 100) / 100,
+              height: Math.round(rect.height * 100) / 100,
+            },
+            reason:
+              [
+                modalReason,
+                text === dateHeaderText ? "exact-text" : "contains-text",
+                cursor.includes("pointer") ? "cursor-pointer" : null,
+                role === "button" || element.tagName === "BUTTON" ? "button-role" : null,
+                typeof element.onclick === "function" ? "onclick" : null,
+                /(date|day|header|calendar|picker)/i.test(className) ? "dateish-class" : null,
+                extraChars <= 40 ? "tight-text" : "long-text",
+              ]
+                .filter(Boolean)
+                .join("; "),
+            score,
+          };
+
+          if (!bestMatch || candidate.score > bestMatch.score) {
+            bestMatch = candidate;
+          }
+        }
+
+        if (!bestMatch) {
+          return {
+            found: false,
+            text: null,
+            tagName: null,
+            className: null,
+            rect: null,
+            reason: modalReason + "; no visible element text included target date header",
+          };
+        }
+
+        return {
+          found: true,
+          text: bestMatch.text,
+          tagName: bestMatch.tagName,
+          className: bestMatch.className,
+          rect: bestMatch.rect,
+          reason: bestMatch.reason,
+        };
+      `
+    ) as (dateHeaderText: string) => {
+      found: boolean;
+      text: string | null;
+      tagName: string | null;
+      className: string | null;
+      rect: { x: number; y: number; width: number; height: number } | null;
+      reason: string;
     };
-  }
 
-  const candidateDefinitions: Array<{ locator: import("playwright").Locator; selectorHint: string }> = [];
-
-  if (dateHeaderText) {
-    const safePattern = dateHeaderText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    candidateDefinitions.push(
-      {
-        locator: modalRoot.getByRole("button", { name: new RegExp(safePattern, "i") }).first(),
-        selectorHint: `role=button name~"${dateHeaderText}"`,
-      },
-      {
-        locator: modalRoot.locator('[role="button"]', { hasText: new RegExp(safePattern, "i") }).first(),
-        selectorHint: `[role="button"] hasText="${dateHeaderText}"`,
-      },
-      {
-        locator: modalRoot.locator("button", { hasText: new RegExp(safePattern, "i") }).first(),
-        selectorHint: `button hasText="${dateHeaderText}"`,
-      }
-    );
-  }
-
-  candidateDefinitions.push({
-    locator: modalRoot.locator(
-      '[aria-label*="date" i],[title*="date" i],[data-testid*="date" i],[aria-label*="calendar" i],[title*="calendar" i],[data-testid*="calendar" i]'
-    ).first(),
-    selectorHint:
-      '[aria-label*="date" i],[title*="date" i],[data-testid*="date" i],[aria-label*="calendar" i],[title*="calendar" i],[data-testid*="calendar" i]',
-  });
-
-  const explicitCandidates = await findFirstVisibleLocator(candidateDefinitions, 500);
-  if (explicitCandidates) {
-    return explicitCandidates;
-  }
-
-  const buttonish = modalRoot.locator('button,[role="button"],[aria-haspopup],div,span');
-  const count = Math.min(await buttonish.count(), 80);
-  for (let index = 0; index < count; index += 1) {
-    const candidate = buttonish.nth(index);
-    if (!(await isVisible(candidate, 400))) {
-      continue;
-    }
-    const text = await getInnerTextSafe(candidate);
-    const ariaLabel = await getAttributeSafe(candidate, "aria-label");
-    const title = await getAttributeSafe(candidate, "title");
-    const dataTestId = await getAttributeSafe(candidate, "data-testid");
-    const combined = normalizeWhitespace([text, ariaLabel, title, dataTestId].filter(Boolean).join(" "));
-    if (!combined || TP_MUTATION_ACTION_REGEX.test(combined)) {
-      continue;
-    }
-    const role = await getAttributeSafe(candidate, "role");
-    const hasClick = await getAttributeSafe(candidate, "onclick");
-    const style = await getAttributeSafe(candidate, "style");
-    const className = await getAttributeSafe(candidate, "class");
-    const looksClickable =
-      role === "button" ||
-      Boolean(hasClick) ||
-      /pointer/i.test(style ?? "") ||
-      /button|clickable|header/i.test(className ?? "");
-    const looksDateLike =
-      Boolean(dateHeaderText && combined.toLowerCase().includes(dateHeaderText.toLowerCase())) ||
-      looksLikeTrainingPeaksDateHeader(combined) ||
-      TP_DATE_CONTROL_ATTR_REGEX.test(combined);
-    if (!looksDateLike || !looksClickable) {
-      continue;
-    }
-    return {
-      locator: candidate,
-      selectorHint: "clickable element matching date-like text or attrs",
-    };
-  }
-  return null;
+    return browserProbe(targetText);
+  }, { dateHeaderText });
 }
 
 async function findVisibleDatePicker(
@@ -2736,6 +2653,159 @@ async function findVisibleDatePicker(
   return null;
 }
 
+async function detectVisibleDatePickerSnapshot(
+  page: import("playwright").Page,
+  input: {
+    dateHeaderBox: { x: number; y: number; width: number; height: number } | null;
+    dateHeaderText: string | null;
+  }
+): Promise<{
+  opened: boolean;
+  selectorHint: string | null;
+  snippets: string[];
+}> {
+  return page.evaluate(
+    ({ dateHeaderBox, dateHeaderText }) => {
+      const normalizeWhitespace = (value: string | null | undefined): string =>
+        (value ?? "").replace(/\s+/g, " ").trim();
+
+      const monthRegex =
+        /\b(?:january|february|march|april|may|june|july|august|september|october|november|december)\b/i;
+      const yearRegex = /\b20\d{2}\b/;
+      const weekdayRowRegex = /\b(?:mo|tu|we|th|fr|sa|su)\b(?:\s+\b(?:mo|tu|we|th|fr|sa|su)\b){3,}/i;
+      const expectedMonthMatch = dateHeaderText?.match(
+        /\b(January|February|March|April|May|June|July|August|September|October|November|December)\b/i
+      );
+      const expectedMonth = expectedMonthMatch?.[1] ?? null;
+      const expectedYearMatch = dateHeaderText?.match(/\b(20\d{2})\b/);
+      const expectedYear = expectedYearMatch?.[1] ?? null;
+      const viewportWidth =
+        typeof window.innerWidth === "number" && Number.isFinite(window.innerWidth) ? window.innerWidth : 0;
+      const viewportHeight =
+        typeof window.innerHeight === "number" && Number.isFinite(window.innerHeight) ? window.innerHeight : 0;
+      const selectors = [
+        ".MuiPickersPopper-root,.MuiPickersLayout-root,.MuiDateCalendar-root",
+        '[role="dialog"] [role="grid"],[role="presentation"] [role="grid"]',
+        '[aria-label*="calendar" i],[class*="calendar" i],[class*="datepicker" i],[class*="picker" i]',
+        ".MuiPopover-paper,.MuiPaper-root,[role='dialog'],[role='presentation']",
+      ];
+
+      const elementSummary = (element: Element): string => {
+        const htmlElement = element as HTMLElement;
+        const idPart = htmlElement.id ? `#${htmlElement.id}` : "";
+        const classNames = normalizeWhitespace(htmlElement.className || "")
+          .split(" ")
+          .filter(Boolean)
+          .slice(0, 3);
+        const classPart = classNames.length ? `.${classNames.join(".")}` : "";
+        return `${element.tagName.toLowerCase()}${idPart}${classPart}`;
+      };
+
+      const isVisible = (element: Element): boolean => {
+        const htmlElement = element as HTMLElement;
+        const style = window.getComputedStyle(htmlElement);
+        if (
+          style.display === "none" ||
+          style.visibility === "hidden" ||
+          style.visibility === "collapse" ||
+          Number(style.opacity || "1") === 0
+        ) {
+          return false;
+        }
+        const rect = htmlElement.getBoundingClientRect();
+        if (rect.width < 16 || rect.height < 16) {
+          return false;
+        }
+        if (rect.bottom < 0 || rect.right < 0 || rect.top > viewportHeight || rect.left > viewportWidth) {
+          return false;
+        }
+        return true;
+      };
+
+      const isNearHeader = (candidateRect: DOMRect): boolean => {
+        if (!dateHeaderBox) {
+          return true;
+        }
+        const headerCenterX = dateHeaderBox.x + dateHeaderBox.width / 2;
+        const headerCenterY = dateHeaderBox.y + dateHeaderBox.height / 2;
+        const candidateCenterX = candidateRect.x + candidateRect.width / 2;
+        const candidateCenterY = candidateRect.y + candidateRect.height / 2;
+        const dx = Math.abs(candidateCenterX - headerCenterX);
+        const dy = Math.abs(candidateCenterY - headerCenterY);
+        const allowedX = Math.max(220, dateHeaderBox.width * 2.5);
+        const allowedY = Math.max(280, dateHeaderBox.height * 8);
+        return dx <= allowedX && dy <= allowedY;
+      };
+
+      const snippets: string[] = [];
+      const seen = new Set<Element>();
+
+      for (const selector of selectors) {
+        const matches = Array.from(document.querySelectorAll(selector)).slice(0, 8);
+        for (const element of matches) {
+          if (seen.has(element) || !isVisible(element)) {
+            continue;
+          }
+          seen.add(element);
+          const rect = (element as HTMLElement).getBoundingClientRect();
+          const text = normalizeWhitespace((element as HTMLElement).innerText || element.textContent || "");
+          const monthTextMatchesExpectation = expectedMonth ? new RegExp(`\\b${expectedMonth}\\b`, "i").test(text) : false;
+          const yearTextMatchesExpectation = expectedYear ? new RegExp(`\\b${expectedYear}\\b`).test(text) : false;
+          const hasMonthSignal =
+            monthTextMatchesExpectation ||
+            Boolean(expectedMonth && element.querySelector(`[aria-label*="${expectedMonth}" i],[title*="${expectedMonth}" i]`)) ||
+            monthRegex.test(text) ||
+            Boolean(element.querySelector('[aria-label*="month" i],[title*="month" i],select[name*="month" i]'));
+          const hasYearSignal =
+            yearTextMatchesExpectation ||
+            yearRegex.test(text) ||
+            Boolean(element.querySelector('[aria-label*="year" i],[title*="year" i],select[name*="year" i]'));
+          const weekdayHeaderCount = element.querySelectorAll('[role="columnheader"],th,.MuiDayCalendar-weekDayLabel').length;
+          const hasWeekdayRow =
+            weekdayRowRegex.test(text) || /\b(?:mo|tu|we|th|fr|sa|su)\b/i.test(text) || weekdayHeaderCount >= 7;
+          const dayCellCount = element.querySelectorAll('[role="gridcell"],[role="option"],button,.MuiPickersDay-root').length;
+          const dayCellMatches = text.match(/(?:^|\s)(?:[1-9]|[12]\d|3[01])(?=\s|$)/g) ?? [];
+          const hasEnoughDayCells = dayCellCount >= 14 || dayCellMatches.length >= 7;
+          const nearHeader = isNearHeader(rect);
+          snippets.push(
+            normalizeWhitespace(
+              [
+                `check:${selector}`,
+                `element=${elementSummary(element)}`,
+                `signals=${[
+                  hasMonthSignal ? (monthTextMatchesExpectation ? "month-expected" : "month") : null,
+                  hasYearSignal ? (yearTextMatchesExpectation ? "year-expected" : "year") : null,
+                  hasWeekdayRow ? "weekday-row" : null,
+                  hasEnoughDayCells ? `days:${Math.max(dayCellCount, dayCellMatches.length)}` : null,
+                  nearHeader ? "near-header" : "far-from-header",
+                ]
+                  .filter(Boolean)
+                  .join("+") || "none"}`,
+                `box=${Math.round(rect.x)},${Math.round(rect.y)},${Math.round(rect.width)}x${Math.round(rect.height)}`,
+                text.slice(0, 140),
+              ].join(" | ")
+            )
+          );
+          if (hasMonthSignal && hasYearSignal && hasWeekdayRow && hasEnoughDayCells && nearHeader) {
+            return {
+              opened: true,
+              selectorHint: `${selector} [dom-snapshot]`,
+              snippets: snippets.slice(0, 12),
+            };
+          }
+        }
+      }
+
+      return {
+        opened: false,
+        selectorHint: null,
+        snippets: snippets.slice(0, 12),
+      };
+    },
+    { dateHeaderBox: input.dateHeaderBox, dateHeaderText: input.dateHeaderText }
+  );
+}
+
 async function detailStillVisible(page: import("playwright").Page): Promise<boolean> {
   return anyVisible(
     [
@@ -2755,6 +2825,32 @@ async function probeTrainingPeaksMoveCapabilities(
   comparison: RevalidationComparison
 ): Promise<UiCapabilityProbe> {
   const probe = buildEmptyUiCapabilityProbe();
+  const markStep = (step: string): void => {
+    probe.progress.currentStep = step;
+    probe.progress.updatedAt = new Date().toISOString();
+    probe.progress.stepHistory.push(step);
+  };
+  const completeStep = (step?: string): void => {
+    probe.progress.lastCompletedStep = step ?? probe.progress.currentStep;
+    probe.progress.updatedAt = new Date().toISOString();
+  };
+  const runStep = async <T>(step: string, timeoutMs: number, fn: () => Promise<T>): Promise<T> => {
+    const previousCompletedStep = probe.progress.lastCompletedStep;
+    markStep(step);
+    try {
+      const result = await withUiProbeTimeout(step, timeoutMs, fn);
+      completeStep(step);
+      return result;
+    } catch (error) {
+      const message = toShortErrorMessage(error);
+      probe.progress.lastCompletedStep = previousCompletedStep;
+      if (message.startsWith("UI capability probe timeout at step")) {
+        probe.progress.timeoutStep = step;
+        probe.progress.timeoutAt = new Date().toISOString();
+      }
+      throw error;
+    }
+  };
   const student = claimed.student;
   if (!student) {
     probe.errors.push(`Student is missing for action ${claimed.action.id}.`);
@@ -2784,18 +2880,25 @@ async function probeTrainingPeaksMoveCapabilities(
   const screenshotAfterDateHeaderClickAttempt1Path = path.join(artifactDir, "probe2_after_date_header_click_attempt_1.png");
   const screenshotDatePickerOpenedPath = path.join(artifactDir, "probe2_datepicker_opened.png");
   const screenshotAfterClosedPath = path.join(artifactDir, "probe2_after_closed.png");
+  const screenshotTimeoutPath = path.join(artifactDir, "probe_timeout.png");
   let context: import("playwright").BrowserContext | null = null;
+  let probePage: import("playwright").Page | null = null;
 
   const probeTask = (async () => {
-    context = await chromium.launchPersistentContext(profileDir, {
-      headless: false,
-      viewport: null,
+    context = await runStep("launch browser context", UI_PROBE_STEP_TIMEOUTS.launchBrowserContext, async () => {
+      return await chromium.launchPersistentContext(profileDir, {
+        headless: false,
+        viewport: null,
+      });
     });
 
     const page = context.pages()[0] ?? (await context.newPage());
-    await page.goto(student.trainingpeaks_athlete_url, { waitUntil: "domcontentloaded", timeout: 30_000 });
-    await page.bringToFront();
-    await waitForTrainingPeaksCalendarReadiness(page, probe.warnings);
+    probePage = page;
+    await runStep("open athlete page", UI_PROBE_STEP_TIMEOUTS.openAthletePage, async () => {
+      await page.goto(student.trainingpeaks_athlete_url, { waitUntil: "domcontentloaded", timeout: 30_000 });
+      await page.bringToFront();
+      await waitForTrainingPeaksCalendarReadiness(page, probe.warnings);
+    });
 
     const pageAssessment = await assessTrainingPeaksPage(page);
     if (pageAssessment.loginRequired) {
@@ -2807,12 +2910,20 @@ async function probeTrainingPeaksMoveCapabilities(
       return probe;
     }
 
-    probe.screenshots.before = await captureProbeScreenshot(page, screenshotBeforePath, probe.warnings);
+    probe.screenshots.before = await runStep(
+      "capture probe_before screenshot",
+      UI_PROBE_STEP_TIMEOUTS.captureScreenshot,
+      async () => {
+        return await captureProbeScreenshot(page, screenshotBeforePath, probe.warnings);
+      }
+    );
 
-    const cardMatch = await locateWorkoutCardForProbe(page, {
-      studentId: student.id,
-      sourceDate,
-      candidate,
+    const cardMatch = await runStep("locate candidate card", UI_PROBE_STEP_TIMEOUTS.locateCandidateCard, async () => {
+      return await locateWorkoutCardForProbe(page, {
+        studentId: student.id,
+        sourceDate,
+        candidate,
+      });
     });
     probe.card.found = Boolean(cardMatch.locator);
     probe.card.selectorUsed = cardMatch.selectorUsed;
@@ -2824,7 +2935,9 @@ async function probeTrainingPeaksMoveCapabilities(
     }
 
     const card = cardMatch.locator;
-    await card.hover({ timeout: 2_000 }).catch(() => {});
+    await runStep("card hover", UI_PROBE_STEP_TIMEOUTS.cardHover, async () => {
+      await card.hover({ timeout: 2_000 }).catch(() => {});
+    });
     const safeMenuButton = await findFirstVisibleLocator(
       [
         {
@@ -2851,12 +2964,18 @@ async function probeTrainingPeaksMoveCapabilities(
       probe.card.menuTriggerFound = true;
       probe.card.menuTriggerSelectorUsed = safeMenuButton.selectorHint;
       try {
-        await safeMenuButton.locator.first().click({ timeout: 2_000 });
-        await page.waitForTimeout(400);
-        const menuRoot = await findVisibleMenuRoot(page);
+        const menuRoot = await runStep("open card menu", UI_PROBE_STEP_TIMEOUTS.openCardMenu, async () => {
+          await safeMenuButton.locator.first().click({ timeout: 2_000 });
+          await page.waitForTimeout(400);
+          return await findVisibleMenuRoot(page);
+        });
         probe.card.menuOpened = Boolean(menuRoot);
         if (probe.card.menuOpened) {
-          probe.card.menuActionLabels = menuRoot ? await collectMenuActionLabels(menuRoot.locator) : [];
+          probe.card.menuActionLabels = menuRoot
+            ? await runStep("extract menu labels", UI_PROBE_STEP_TIMEOUTS.extractMenuLabels, async () => {
+                return await collectMenuActionLabels(menuRoot.locator);
+              })
+            : [];
           probe.card.menuMoveActionFound = probe.card.menuActionLabels.some((label) => TP_MOVE_MENU_ACTION_REGEX.test(label));
           probe.card.menuRescheduleActionFound = probe.card.menuActionLabels.some((label) =>
             TP_RESCHEDULE_MENU_ACTION_REGEX.test(label)
@@ -2873,12 +2992,12 @@ async function probeTrainingPeaksMoveCapabilities(
             try {
               probe.detail.openAttempted = true;
               console.log("[ui-probe] step: click Edit");
-              await withUiProbeTimeout("click Edit", UI_PROBE_STEP_TIMEOUTS.clickEdit, async () => {
+              await runStep("click Edit", UI_PROBE_STEP_TIMEOUTS.clickEdit, async () => {
                 await editAction.locator.click({ timeout: 2_000 });
               });
               probe.card.menuEditClicked = true;
               console.log("[ui-probe] step: wait for detail modal");
-              await withUiProbeTimeout("wait for detail modal", UI_PROBE_STEP_TIMEOUTS.waitDetailModal, async () => {
+              await runStep("wait detail modal", UI_PROBE_STEP_TIMEOUTS.waitDetailModal, async () => {
                 for (const checkpointMs of [500, 1500, 3000]) {
                   await page.waitForTimeout(checkpointMs);
                   const detailCheckpoint = await findVisibleDetailRoot(page);
@@ -2887,10 +3006,12 @@ async function probeTrainingPeaksMoveCapabilities(
                   }
                 }
               });
-              probe.screenshots.afterEditClick = await captureProbeScreenshot(
-                page,
-                screenshotAfterEditClickPath,
-                probe.warnings
+              probe.screenshots.afterEditClick = await runStep(
+                "capture afterEditClick screenshot",
+                UI_PROBE_STEP_TIMEOUTS.captureScreenshot,
+                async () => {
+                  return await captureProbeScreenshot(page, screenshotAfterEditClickPath, probe.warnings);
+                }
               );
             } catch (error) {
               probe.warnings.push(`Edit menu click failed: ${toShortErrorMessage(error)}`);
@@ -2946,29 +3067,154 @@ async function probeTrainingPeaksMoveCapabilities(
       probe.detail.currentDateValue = await readDateFieldValue(dateFieldMatch.locator);
     }
 
-    const globalDateHeaderMatch = await findDetailDateHeaderOnPage(page);
-    const scopedDateHeaderMatch = modalRoot ? await findDetailDateHeader(modalRoot.locator) : null;
-    const dateHeaderMatch = globalDateHeaderMatch
-      ? { locator: globalDateHeaderMatch.locator, text: globalDateHeaderMatch.text }
-      : scopedDateHeaderMatch;
-    probe.detail.dateHeaderFound = Boolean(dateHeaderMatch);
-    probe.detail.dateHeaderText = dateHeaderMatch?.text ?? null;
+    const dateHeaderText = await runStep(
+      "find date header text",
+      UI_PROBE_STEP_TIMEOUTS.findDateHeaderText,
+      async () => {
+        return await findBoundedDateHeaderText(page, modalRoot?.locator ?? null);
+      }
+    );
+    probe.detail.dateHeaderFound = Boolean(dateHeaderText);
+    probe.detail.dateHeaderText = dateHeaderText ?? null;
 
-    const dateControlMatch = await findLikelyDateControlInModal(
-      modalRoot?.locator ?? page.locator("body"),
-      probe.detail.dateHeaderText,
-      dateHeaderMatch?.locator ?? null
-    );
-    const preciseDateHeaderTarget = await findPreciseDateHeaderClickTarget(
-      modalRoot?.locator ?? page.locator("body"),
-      probe.detail.dateHeaderText,
-      dateControlMatch?.locator ?? dateHeaderMatch?.locator ?? null
-    );
-    const dateClickTarget = preciseDateHeaderTarget ?? dateControlMatch;
-    probe.detail.dateControlClickable = dateClickTarget ? await isLocatorClickable(dateClickTarget.locator, 700) : false;
-    probe.detail.dateControlSelectorUsed =
-      dateClickTarget?.selectorHint ?? dateControlMatch?.selectorHint ?? (globalDateHeaderMatch ? globalDateHeaderMatch.selectorHint : null);
-    probe.detail.dateHeaderBoundingBox = preciseDateHeaderTarget?.boundingBox ?? null;
+    let dateHeaderDomRectMatch:
+      | {
+          found: boolean;
+          text: string | null;
+          tagName: string | null;
+          className: string | null;
+          rect: { x: number; y: number; width: number; height: number } | null;
+          reason: string;
+        }
+      | null = null;
+    let dateHeaderDomRectResolved = false;
+    if (probe.detail.dateHeaderText) {
+      const step = "resolve date header dom rect";
+      const previousCompletedStep = probe.progress.lastCompletedStep;
+      markStep(step);
+      try {
+        dateHeaderDomRectMatch = await withUiProbeTimeout(step, UI_PROBE_STEP_TIMEOUTS.getDateHeaderBoundingBox, async () => {
+          return await resolveDateHeaderDomRectSnapshotBounded(page, probe.detail.dateHeaderText as string);
+        });
+        probe.detail.dateControlSelectorUsed = dateHeaderDomRectMatch?.found ? "dom-rect-date-header" : null;
+        probe.detail.dateControlClickable = Boolean(dateHeaderDomRectMatch?.found && dateHeaderDomRectMatch.rect);
+        probe.detail.dateHeaderBoundingBox = toProbeBoundingBox(dateHeaderDomRectMatch?.rect ?? null);
+        if (probe.detail.dateHeaderFound && !probe.detail.dateControlClickable) {
+          probe.warnings.push(
+            `Date header DOM rect lookup failed: ${dateHeaderDomRectMatch?.reason ?? "no browser-side match found"}`
+          );
+          probe.safeToProceedLater = false;
+          probe.recommendedMutationMethod = "unknown";
+        }
+        completeStep(step);
+        dateHeaderDomRectResolved = true;
+      } catch (error) {
+        const message = toShortErrorMessage(error);
+        probe.progress.lastCompletedStep = previousCompletedStep;
+        if (message.startsWith("UI capability probe timeout at step")) {
+          probe.progress.timeoutStep = step;
+          probe.progress.timeoutAt = new Date().toISOString();
+        }
+        probe.detail.dateControlSelectorUsed = null;
+        probe.detail.dateControlClickable = false;
+        probe.detail.dateHeaderBoundingBox = null;
+        probe.detail.datePickerOpened = false;
+        probe.warnings.push(`Date header DOM rect lookup timed out or failed: ${message}`);
+        probe.safeToProceedLater = false;
+        probe.recommendedMutationMethod = "unknown";
+      }
+    }
+    if (!probe.detail.dateHeaderText) {
+      probe.detail.dateControlSelectorUsed = null;
+      probe.detail.dateControlClickable = false;
+      probe.detail.dateHeaderBoundingBox = null;
+    }
+
+    if (probe.detail.dateHeaderFound && probe.detail.dateControlClickable && dateHeaderDomRectResolved) {
+      probe.screenshots.beforeDateHeaderClick = await captureProbeScreenshot(
+        page,
+        screenshotBeforeDateHeaderClickPath,
+        probe.warnings
+      );
+      const domRect = probe.detail.dateHeaderBoundingBox;
+      const clickStrategy = "mouse.click.dom_rect_center";
+      probe.detail.dateHeaderClickStrategiesTried.push(clickStrategy);
+      let dateHeaderClickSucceeded = false;
+      try {
+        console.log("[ui-probe] step: click date header dom rect");
+        await runStep("click date header dom rect", UI_PROBE_STEP_TIMEOUTS.clickDateHeader, async () => {
+          if (!domRect) {
+            throw new Error("Date header DOM rect was unavailable at click time");
+          }
+          const center = boundingBoxCenter(domRect);
+          await page.mouse.click(center.x, center.y);
+        });
+        probe.detail.dateHeaderClickSucceededStrategy = clickStrategy;
+        dateHeaderClickSucceeded = true;
+      } catch (error) {
+        probe.warnings.push(`Date header click strategy "${clickStrategy}" failed: ${toShortErrorMessage(error)}`);
+        probe.detail.datePickerOpened = false;
+      }
+
+      if (dateHeaderClickSucceeded) {
+        probe.screenshots.afterDateHeaderClickAttempt1 = await captureProbeScreenshot(
+          page,
+          screenshotAfterDateHeaderClickAttempt1Path,
+          probe.warnings
+        );
+      }
+
+      let datePickerOpenedSnapshot = false;
+      let datePickerSelectorHint: string | null = null;
+      if (dateHeaderClickSucceeded) {
+        probe.detail.datePickerOpenCheckCount += 1;
+        const step = "detect datepicker";
+        markStep(step);
+        try {
+          console.log("[ui-probe] step: detect datepicker");
+          const detection = await withUiProbeTimeout(step, 2_500, async () => {
+            return await detectVisibleDatePickerSnapshot(page, {
+              dateHeaderBox: probe.detail.dateHeaderBoundingBox,
+              dateHeaderText: probe.detail.dateHeaderText,
+            });
+          });
+          datePickerOpenedSnapshot = detection.opened;
+          datePickerSelectorHint = detection.selectorHint;
+          probe.detail.datePickerOpenCheckSnippets.push(
+            ...detection.snippets.slice(0, Math.max(0, 12 - probe.detail.datePickerOpenCheckSnippets.length))
+          );
+        } catch (error) {
+          probe.warnings.push(`Datepicker detection check failed safely: ${toShortErrorMessage(error)}`);
+        } finally {
+          completeStep(step);
+        }
+      }
+      probe.detail.datePickerOpened = dateHeaderClickSucceeded ? datePickerOpenedSnapshot : false;
+      probe.detail.datePickerSelectorHint = datePickerSelectorHint;
+      if (dateHeaderClickSucceeded && probe.detail.datePickerOpened) {
+        probe.screenshots.datePickerOpened = await captureProbeScreenshot(
+          page,
+          screenshotDatePickerOpenedPath,
+          probe.warnings
+        );
+        console.log("[ui-probe] step: close datepicker");
+        const datePickerStillVisible = await runStep("close datepicker", UI_PROBE_STEP_TIMEOUTS.closeDatepicker, async () => {
+          await page.keyboard.press("Escape").catch(() => {});
+          const closeDetection = await withUiProbeTimeout("verify datepicker closed", 2_000, async () => {
+            return await detectVisibleDatePickerSnapshot(page, {
+              dateHeaderBox: probe.detail.dateHeaderBoundingBox,
+              dateHeaderText: probe.detail.dateHeaderText,
+            });
+          }).catch(() => ({ opened: false, selectorHint: null, snippets: [] as string[] }));
+          return closeDetection.opened;
+        });
+        if (datePickerStillVisible) {
+          probe.warnings.push("Escape did not fully close the datepicker before modal close.");
+        }
+      } else if (dateHeaderClickSucceeded) {
+        probe.warnings.push("Date header clicked, but datepicker was not detected within timeout");
+      }
+    }
 
     const titleOrDetailFieldsFound = await anyVisible(
       [
@@ -3049,139 +3295,6 @@ async function probeTrainingPeaksMoveCapabilities(
     if (probe.detail.opened) {
       probe.screenshots.detailOpened = await captureProbeScreenshot(page, screenshotDetailOpenedPath, probe.warnings);
 
-      if (dateClickTarget && probe.detail.dateHeaderFound && probe.detail.dateControlClickable) {
-        probe.screenshots.beforeDateHeaderClick = await captureProbeScreenshot(
-          page,
-          screenshotBeforeDateHeaderClickPath,
-          probe.warnings
-        );
-        const targetBoundingBox =
-          probe.detail.dateHeaderBoundingBox ??
-          toProbeBoundingBox(await dateClickTarget.locator.boundingBox().catch(() => null));
-        probe.detail.dateHeaderBoundingBox = targetBoundingBox;
-        const centerPoint = targetBoundingBox ? boundingBoxCenter(targetBoundingBox) : null;
-        const centerLeftPoint = targetBoundingBox ? boundingBoxCenterLeft(targetBoundingBox) : null;
-        const clickStrategies: Array<{
-          name: string;
-          waitMs: number;
-          perform: () => Promise<void>;
-        }> = [
-          {
-            name: "locator.click",
-            waitMs: 450,
-            perform: async () => {
-              await dateClickTarget.locator.click({ timeout: 2_000 });
-            },
-          },
-          {
-            name: "locator.click.force",
-            waitMs: 650,
-            perform: async () => {
-              await dateClickTarget.locator.click({ timeout: 2_000, force: true });
-            },
-          },
-          {
-            name: "mouse.click.center",
-            waitMs: 500,
-            perform: async () => {
-              if (!centerPoint) {
-                throw new Error("missing date header bounding box center");
-              }
-              await page.mouse.click(centerPoint.x, centerPoint.y);
-            },
-          },
-          {
-            name: "mouse.click.center_left_offset",
-            waitMs: 550,
-            perform: async () => {
-              if (!centerLeftPoint) {
-                throw new Error("missing date header bounding box center-left point");
-              }
-              await page.mouse.click(centerLeftPoint.x, centerLeftPoint.y);
-            },
-          },
-        ];
-        let datePickerRoot: { locator: import("playwright").Locator; selectorHint: string } | null = null;
-        for (let strategyIndex = 0; strategyIndex < clickStrategies.length; strategyIndex += 1) {
-          const strategy = clickStrategies[strategyIndex];
-          probe.detail.dateHeaderClickStrategiesTried.push(strategy.name);
-          try {
-            if (strategyIndex === 0) {
-              console.log("[ui-probe] step: click date header");
-            }
-            await withUiProbeTimeout("click date header", UI_PROBE_STEP_TIMEOUTS.clickDateHeader, async () => {
-              await strategy.perform();
-            });
-          } catch (error) {
-            probe.warnings.push(`Date header click strategy "${strategy.name}" failed: ${toShortErrorMessage(error)}`);
-          }
-          await page.waitForTimeout(strategy.waitMs);
-          probe.detail.datePickerOpenCheckCount += 1;
-          const openCheckSnippets: string[] = [];
-          if (strategyIndex === 0) {
-            console.log("[ui-probe] step: detect datepicker");
-          }
-          datePickerRoot = await withUiProbeTimeout("detect datepicker", UI_PROBE_STEP_TIMEOUTS.detectDatepicker, async () => {
-            return await findVisibleDatePicker(
-              page,
-              modalRoot?.locator ?? null,
-              probe.detail.dateHeaderBoundingBox,
-              probe.detail.dateHeaderText,
-              openCheckSnippets
-            );
-          });
-          probe.detail.datePickerOpenCheckSnippets.push(
-            ...openCheckSnippets.slice(0, Math.max(0, 12 - probe.detail.datePickerOpenCheckSnippets.length))
-          );
-          if (strategyIndex === 0) {
-            probe.screenshots.afterDateHeaderClickAttempt1 = await captureProbeScreenshot(
-              page,
-              screenshotAfterDateHeaderClickAttempt1Path,
-              probe.warnings
-            );
-          }
-          if (datePickerRoot) {
-            probe.detail.dateHeaderClickSucceededStrategy = strategy.name;
-            break;
-          }
-        }
-        probe.detail.datePickerOpened = Boolean(datePickerRoot);
-        probe.detail.datePickerSelectorHint = datePickerRoot?.selectorHint ?? null;
-        if (probe.detail.datePickerOpened) {
-          probe.screenshots.datePickerOpened = await captureProbeScreenshot(
-            page,
-            screenshotDatePickerOpenedPath,
-            probe.warnings
-          );
-          console.log("[ui-probe] step: close datepicker");
-          const datePickerStillVisible = await withUiProbeTimeout(
-            "close datepicker",
-            UI_PROBE_STEP_TIMEOUTS.closeDatepicker,
-            async () => {
-              await page.keyboard.press("Escape").catch(() => {});
-              await page.waitForTimeout(300);
-              return await findVisibleDatePicker(
-                page,
-                modalRoot?.locator ?? null,
-                probe.detail.dateHeaderBoundingBox,
-                probe.detail.dateHeaderText
-              );
-            }
-          );
-          if (datePickerStillVisible && modalRoot) {
-            const clickedSafeArea = await clickInsideDetailButOutsideDatePicker(
-              page,
-              modalRoot.locator,
-              datePickerStillVisible.locator
-            );
-            if (!clickedSafeArea) {
-              await clickAwayFromOverlay(page);
-            }
-            await page.waitForTimeout(300);
-          }
-        }
-      }
-
       const closeCandidate = await findFirstVisibleLocator(
         [
           {
@@ -3215,7 +3328,7 @@ async function probeTrainingPeaksMoveCapabilities(
       if (closeCandidate) {
         try {
           console.log("[ui-probe] step: close modal");
-          await withUiProbeTimeout("close modal", UI_PROBE_STEP_TIMEOUTS.closeModal, async () => {
+          await runStep("close modal", UI_PROBE_STEP_TIMEOUTS.closeModal, async () => {
             await closeCandidate.locator.click({ timeout: 2_000 });
             await page.waitForTimeout(500);
           });
@@ -3275,7 +3388,9 @@ async function probeTrainingPeaksMoveCapabilities(
         setTimeout(() => {
           reject(
             new Error(
-              `UI capability probe timeout at step "overall UI capability probe" after ${UI_PROBE_OVERALL_TIMEOUT_MS}ms`
+              `UI capability probe timeout at step "overall_ui_capability_probe"; currentStep="${
+                probe.progress.currentStep ?? "unknown"
+              }" after ${UI_PROBE_OVERALL_TIMEOUT_MS}ms`
             )
           );
         }, UI_PROBE_OVERALL_TIMEOUT_MS);
@@ -3283,17 +3398,36 @@ async function probeTrainingPeaksMoveCapabilities(
     ]);
     return timedResult;
   } catch (error) {
+    if (!probe.progress.timeoutStep) {
+      probe.progress.timeoutStep = probe.progress.currentStep;
+      probe.progress.timeoutAt = new Date().toISOString();
+    }
+    if (probePage) {
+      try {
+        probe.screenshots.timeout = await withUiProbeTimeout(
+          "capture timeout screenshot",
+          UI_PROBE_STEP_TIMEOUTS.captureScreenshot,
+          async () => {
+            return await captureProbeScreenshot(probePage as import("playwright").Page, screenshotTimeoutPath, probe.warnings);
+          }
+        );
+      } catch (screenshotError) {
+        probe.warnings.push(`Timeout screenshot failed: ${toShortErrorMessage(screenshotError)}`);
+      }
+    }
     const message = toShortErrorMessage(error);
     const prefixedMessage =
       message.startsWith("UI capability probe timeout at step")
-        ? message
+        ? `${message}; timeoutStep="${probe.progress.timeoutStep ?? "unknown"}"; currentStep="${
+            probe.progress.currentStep ?? "unknown"
+          }"`
         : `UI capability probe failed: ${message}`;
     probe.errors.push(prefixedMessage);
     return probe;
   } finally {
     if (context) {
-      await withUiProbeTimeout("cleanup ui probe context", UI_PROBE_CLEANUP_TIMEOUT_MS, async () => {
-        await context?.close().catch(() => {});
+      await withUiProbeTimeout("cleanup browser context", UI_PROBE_CLEANUP_TIMEOUT_MS, async () => {
+        await context.close().catch(() => {});
       }).catch((error) => {
         probe.warnings.push(`UI probe cleanup warning: ${toShortErrorMessage(error)}`);
       });
@@ -4500,11 +4634,40 @@ async function notifyCoachRealModeResult(input: {
   }
 }
 
+function probeToDriverProbeShape(probe: UiCapabilityProbe): TrainingPeaksProbeLikeForDriver {
+  const detail = probe.detail;
+  return {
+    errors: [...probe.errors],
+    warnings: [...probe.warnings],
+    detail: {
+      dateHeaderText: detail.dateHeaderText,
+      currentDateValue: detail.currentDateValue,
+      datePickerOpened: detail.datePickerOpened,
+      saveButtonFound: detail.saveButtonFound,
+      saveAndCloseButtonFound: detail.saveAndCloseButtonFound,
+      opened: detail.opened,
+      closeSucceeded: detail.closeSucceeded,
+    },
+    screenshots: { ...probe.screenshots },
+    progress: {
+      stepHistory: [...probe.progress.stepHistory],
+    },
+  };
+}
+
 async function main(): Promise<void> {
   loadLocalEnv();
 
   const runnerId = getRunnerId();
   const runnerMode = resolveRunnerMode();
+  const prepareOnly = hasCliFlag(TP_ACTIONS_PREPARE_ONLY_FLAG);
+
+  if (prepareOnly && runnerMode.mode === "dry_run") {
+    console.log(
+      `${TP_ACTIONS_PREPARE_ONLY_FLAG} applies only together with ${TP_ACTIONS_EXECUTE_REAL_FLAG} and ${TP_ACTIONS_REAL_EXECUTION_ENV}=true. Dry-run mode will not honor ${TP_ACTIONS_PREPARE_ONLY_FLAG}.`
+    );
+    return;
+  }
 
   if (runnerMode.mode === "blocked_real") {
     console.log(runnerMode.message);
@@ -4733,26 +4896,52 @@ async function main(): Promise<void> {
         screenshotAfterPath: artifacts.screenshotAfterPath,
       });
 
-      await notifyCoachRealModeResult({
-        chatId: resolveDryRunNotificationChatId(claimed.action),
-        action: claimed.action,
-        studentName,
-        trustedDryRun: claimed.trustedDryRunLog,
-        currentEvaluation: evaluation,
-        comparison,
-        revalidationPassed: false,
-        errorMessage,
-        candidate: evaluation.candidate,
-      });
+      if (!prepareOnly) {
+        await notifyCoachRealModeResult({
+          chatId: resolveDryRunNotificationChatId(claimed.action),
+          action: claimed.action,
+          studentName,
+          trustedDryRun: claimed.trustedDryRunLog,
+          currentEvaluation: evaluation,
+          comparison,
+          revalidationPassed: false,
+          errorMessage,
+          candidate: evaluation.candidate,
+        });
+      }
 
       console.log(`Real-mode revalidation failed for action ${claimed.action.id}: ${errorMessage}`);
       return;
     }
 
-    const uiCapabilityProbe = await probeTrainingPeaksMoveCapabilities(claimed, run.id, comparison);
+    let lastProbePayload: UiCapabilityProbe | null = null;
+    const trainingPeaksDriver = new PlaywrightOnlyTrainingPeaksDriver({
+      expectedActionId: claimed.action.id,
+      sourceDateIso: claimed.trustedDryRunLog.resolvedDates.sourceDate,
+      targetDateIso: claimed.trustedDryRunLog.resolvedDates.targetDate,
+      athleteIdentityMatchedBy: evaluation.identityCheck.matchedBy,
+      candidateFingerprintMatches: comparison.fingerprint.matches,
+      runProbe: async () => {
+        lastProbePayload = await probeTrainingPeaksMoveCapabilities(claimed, run.id, comparison);
+        return probeToDriverProbeShape(lastProbePayload);
+      },
+    });
+
+    const prepareMoveWorkoutResult = await trainingPeaksDriver.prepareMoveWorkout(claimed.action.id);
+    const executePreparedMoveResult = await trainingPeaksDriver.executePreparedMove(claimed.action.id);
+    const validateMoveWorkoutResult = await trainingPeaksDriver.validateMoveWorkout(claimed.action.id);
+    const uiCapabilityProbe = lastProbePayload!;
     const latestUiProbeError =
       uiCapabilityProbe.errors.length > 0 ? uiCapabilityProbe.errors[uiCapabilityProbe.errors.length - 1] : null;
-    const errorMessage = latestUiProbeError ?? REAL_MOVE_NOT_IMPLEMENTED_ERROR;
+    const errorMessage =
+      latestUiProbeError ?? prepareMoveWorkoutResult.failureReason ?? REAL_MOVE_NOT_IMPLEMENTED_ERROR;
+    const driverLogJsonSlice = {
+      kind: "playwright_only_v1",
+      prepareMoveWorkout: prepareMoveWorkoutResult,
+      executePreparedMove: executePreparedMoveResult,
+      validateMoveWorkout: validateMoveWorkoutResult,
+    };
+
     const logJson = {
       ...baseLog,
       status: "failed",
@@ -4763,6 +4952,7 @@ async function main(): Promise<void> {
       revalidationComparison: comparison,
       currentEvaluation: evaluation,
       uiCapabilityProbe,
+      trainingPeaksDriver: driverLogJsonSlice,
       wouldMove: {
         sourceDate: claimed.trustedDryRunLog.resolvedDates.sourceDate,
         targetDate: claimed.trustedDryRunLog.resolvedDates.targetDate,
@@ -4777,7 +4967,7 @@ async function main(): Promise<void> {
           fingerprint: comparison.currentCandidate?.fingerprint ?? comparison.trustedCandidate.fingerprint,
         },
       },
-      note: "Проверка перед переносом пройдена. UI capability probe выполнен в режиме read-only. Реальный перенос ещё не реализован в Phase 3D.2. TrainingPeaks не изменён.",
+      note: "Проверка перед переносом пройдена. UI capability probe выполнен в режиме read-only; trainingPeaksDriver boundary вызван. Реальный перенос сохранением не выполнен. TrainingPeaks не изменён.",
     };
 
     await finishRealRun(claimed.action.id, run.id, {
@@ -4787,20 +4977,38 @@ async function main(): Promise<void> {
       screenshotAfterPath: artifacts.screenshotAfterPath,
     });
 
-    await notifyCoachRealModeResult({
-      chatId: resolveDryRunNotificationChatId(claimed.action),
-      action: claimed.action,
-      studentName,
-      trustedDryRun: claimed.trustedDryRunLog,
-      currentEvaluation: evaluation,
-      comparison,
-      revalidationPassed: true,
-      errorMessage:
-        "Проверка перед переносом пройдена. UI capability probe выполнен в режиме read-only. Реальный перенос ещё не реализован в Phase 3D.2. TrainingPeaks не изменён.",
-      candidate: evaluation.candidate ?? comparison.trustedCandidate,
-    });
+    const coachExplanation =
+      "Проверка перед переносом пройдена. UI capability probe выполнен в режиме read-only; trainingPeaksDriver boundary вызван. Реальный перенос сохранением не выполнен. TrainingPeaks не изменён.";
 
-    console.log(`Real-mode revalidation passed for action ${claimed.action.id}, but real move remains disabled in Phase 3D.1.`);
+    if (!prepareOnly) {
+      await notifyCoachRealModeResult({
+        chatId: resolveDryRunNotificationChatId(claimed.action),
+        action: claimed.action,
+        studentName,
+        trustedDryRun: claimed.trustedDryRunLog,
+        currentEvaluation: evaluation,
+        comparison,
+        revalidationPassed: true,
+        errorMessage: coachExplanation,
+        candidate: evaluation.candidate ?? comparison.trustedCandidate,
+      });
+    }
+
+    if (prepareOnly) {
+      const summaryPayload = {
+        actionId: claimed.action.id,
+        runId: run.id,
+        revalidationPassed: true,
+        mutationOccurred: false,
+        trainingPeaksDriver: driverLogJsonSlice,
+        uiCapabilityProbeErrors: uiCapabilityProbe.errors,
+        diagnostics: prepareMoveWorkoutResult,
+      };
+      console.log(JSON.stringify({ prepareOnlySummary: summaryPayload }, null, 2));
+      console.log("No TrainingPeaks mutation occurred (prepare-only tooling run).");
+    }
+
+    console.log(`Real-mode revalidation passed for action ${claimed.action.id}, but real move remains blocked (driver.executePreparedMove).`);
   } catch (error) {
     const errorMessage = toShortErrorMessage(error);
     const logJson = {
@@ -4819,17 +5027,19 @@ async function main(): Promise<void> {
       screenshotAfterPath: null,
     });
 
-    await notifyCoachRealModeResult({
-      chatId: resolveDryRunNotificationChatId(claimed.action),
-      action: claimed.action,
-      studentName,
-      trustedDryRun: claimed.trustedDryRunLog,
-      currentEvaluation: null,
-      comparison: null,
-      revalidationPassed: false,
-      errorMessage,
-      candidate: claimed.trustedDryRunLog.candidate,
-    });
+    if (!prepareOnly) {
+      await notifyCoachRealModeResult({
+        chatId: resolveDryRunNotificationChatId(claimed.action),
+        action: claimed.action,
+        studentName,
+        trustedDryRun: claimed.trustedDryRunLog,
+        currentEvaluation: null,
+        comparison: null,
+        revalidationPassed: false,
+        errorMessage,
+        candidate: claimed.trustedDryRunLog.candidate,
+      });
+    }
 
     throw error;
   }
