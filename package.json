@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "tp-sync-reports": "node --experimental-strip-types tools/trainingpeaks-export/scripts/tp-sync-reports.ts",
     "tp-agent-once": "npm --prefix tools/trainingpeaks-export run tp-agent-once",
-    "tp-actions-once": "npm --prefix tools/trainingpeaks-export run tp-actions-once --"
+    "tp-actions-once": "npm --prefix tools/trainingpeaks-export run tp-actions-once --",
+    "check-trainingpeaks-action-parser": "npx tsx scripts/check-trainingpeaks-action-parser.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.3",

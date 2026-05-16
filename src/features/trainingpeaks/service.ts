@@ -67,6 +67,7 @@ import {
   updateTrainingPeaksWeeklyReportReviewState as updateTrainingPeaksWeeklyReportReviewStateInRepository,
   updateTrainingPeaksWeeklyReportStateById,
 } from "@/features/trainingpeaks/repository";
+import { parseMoveWorkoutWithAiFallback } from "@/features/trainingpeaks/move-workout-parser-ai";
 import type { TelegramMessage } from "@/features/telegram/types";
 import { resolveTrainingPeaksWeekKeyword } from "@/features/trainingpeaks/week";
 import {
@@ -197,21 +198,43 @@ export type TrainingPeaksJobRequester = {
   userId: number | string | null;
 };
 
-export type TrainingPeaksMoveWorkoutTarget =
-  | { kind: "relative_day"; value: "tomorrow" | "day_after_tomorrow"; sourceText: string }
-  | {
-      kind: "weekday";
-      value: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
-      sourceText: string;
-    };
+export type TrainingPeaksMoveWorkoutTimeRefKind = "date" | "weekday" | "relative_day";
+
+export type TrainingPeaksMoveWorkoutTimeRef = {
+  kind: TrainingPeaksMoveWorkoutTimeRefKind;
+  value: string;
+  sourceText: string;
+};
+
+export type TrainingPeaksMoveWorkoutWorkoutType =
+  | "easy_run"
+  | "interval"
+  | "tempo"
+  | "long_run"
+  | "run"
+  | "unknown";
+
+export type TrainingPeaksMoveWorkoutDescriptor = {
+  raw: string;
+  type: TrainingPeaksMoveWorkoutWorkoutType;
+  confidence: number;
+};
 
 export type ParsedTrainingPeaksMoveWorkoutPayload = {
   actionType: "move_workout";
-  target: TrainingPeaksMoveWorkoutTarget;
+  source: TrainingPeaksMoveWorkoutTimeRef | null;
+  target: TrainingPeaksMoveWorkoutTimeRef;
+  workoutDescriptor: TrainingPeaksMoveWorkoutDescriptor | null;
+  confidence: number;
+  needsClarification: boolean;
+  clarificationReason: string | null;
+  parser: "deterministic" | "ai_fallback";
+  sourceDate?: string;
+  source_date?: string;
 };
 
 export type ParseTrainingPeaksMoveWorkoutResult =
-  | { ok: true; payload: ParsedTrainingPeaksMoveWorkoutPayload; confidence: "high" }
+  | { ok: true; payload: ParsedTrainingPeaksMoveWorkoutPayload; confidence: number }
   | { ok: false; reason: "not_move_request" | "no_target_day" | "ambiguous_target_day" };
 
 export type CreateTrainingPeaksMoveWorkoutActionFromTelegramInput = {
@@ -301,8 +324,36 @@ const TP_RUN_WEEK_COMMAND_PATTERN = /^\/tp_run_week(?:@\w+)?(?:\s+|$)/;
 const TP_TELEGRAM_LINK_CODE_PATTERN = /\b[A-Z0-9]{2,12}-\d{3,6}\b/gi;
 const TP_TELEGRAM_LINK_CODE_DEFAULT_TTL_HOURS = 24;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-const TP_MOVE_WORKOUT_VERBS = ["перенеси", "перенести", "передвинь", "сдвинь"];
-const TP_MOVE_WORKOUT_OBJECTS = ["тренировку", "тренировка", "бег", "занятие", "занятия"];
+const TP_MOVE_WORKOUT_VERBS = [
+  "перенеси",
+  "перенести",
+  "переставь",
+  "переставить",
+  "передвинь",
+  "сдвинь",
+  "подвинь",
+  "поставь",
+  "перенесем",
+  "перенесем",
+  "можно перенести",
+];
+const TP_MOVE_WORKOUT_OBJECTS = [
+  "тренировку",
+  "тренировка",
+  "бег",
+  "пробежку",
+  "занятие",
+  "занятия",
+  "легкую",
+  "легкий бег",
+  "интервальную",
+  "интервалы",
+  "темповую",
+  "темп",
+  "длительную",
+  "лонгран",
+  "long run",
+];
 const TP_RUN_WEEK_USAGE_MESSAGE = [
   "Напиши так:",
   "/tp_run_week last",
@@ -323,99 +374,377 @@ function normalizeRussianText(value: string): string {
     .trim();
 }
 
-function parseTrainingPeaksMoveWorkoutRequest(
-  rawText: string
-): ParseTrainingPeaksMoveWorkoutResult {
-  const normalized = normalizeRussianText(rawText);
+const TP_WEEKDAY_ALIASES: Record<string, string> = {
+  пн: "monday",
+  понедельник: "monday",
+  понедельника: "monday",
+  вт: "tuesday",
+  вторник: "tuesday",
+  вторника: "tuesday",
+  ср: "wednesday",
+  среда: "wednesday",
+  среду: "wednesday",
+  чт: "thursday",
+  четверг: "thursday",
+  четверга: "thursday",
+  пт: "friday",
+  пятница: "friday",
+  пятницу: "friday",
+  сб: "saturday",
+  суббота: "saturday",
+  субботу: "saturday",
+  вс: "sunday",
+  воскресенье: "sunday",
+  воскресеньею: "sunday",
+  воскресеньея: "sunday",
+};
 
-  if (!normalized) {
-    return { ok: false, reason: "not_move_request" };
+const TP_RELATIVE_DAY_ALIASES: Record<string, string> = {
+  сегодня: "today",
+  завтра: "tomorrow",
+  послезавтра: "day_after_tomorrow",
+};
+
+const TP_MONTH_ALIASES: Record<string, number> = {
+  января: 1,
+  февраля: 2,
+  марта: 3,
+  апреля: 4,
+  мая: 5,
+  июня: 6,
+  июля: 7,
+  августа: 8,
+  сентября: 9,
+  октября: 10,
+  ноября: 11,
+  декабря: 12,
+};
+
+type IndexedTimeRef = TrainingPeaksMoveWorkoutTimeRef & { index: number };
+
+function clampMoveWorkoutConfidence(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
   }
-
-  const tokens = normalized.split(" ").filter(Boolean);
-  const hasMoveVerb = TP_MOVE_WORKOUT_VERBS.some((verb) => tokens.includes(verb));
-  const hasWorkoutObject = TP_MOVE_WORKOUT_OBJECTS.some((item) => tokens.includes(item));
-
-  if (!hasMoveVerb || !hasWorkoutObject) {
-    return { ok: false, reason: "not_move_request" };
+  if (value < 0) {
+    return 0;
   }
-
-  const dayTokenMatchers: { testToken: RegExp; target: TrainingPeaksMoveWorkoutTarget }[] = [
-    {
-      testToken: /^послезавтра$/,
-      target: { kind: "relative_day", value: "day_after_tomorrow", sourceText: "послезавтра" },
-    },
-    {
-      testToken: /^завтра$/,
-      target: { kind: "relative_day", value: "tomorrow", sourceText: "завтра" },
-    },
-    {
-      testToken: /^понедельник(?:а|у|ом|е)?$/,
-      target: { kind: "weekday", value: "monday", sourceText: "понедельник" },
-    },
-    {
-      testToken: /^вторник(?:а|у|ом|е)?$/,
-      target: { kind: "weekday", value: "tuesday", sourceText: "вторник" },
-    },
-    {
-      testToken: /^сред(?:а|у|е|ой)$/,
-      target: { kind: "weekday", value: "wednesday", sourceText: "среда" },
-    },
-    {
-      testToken: /^четверг(?:а|у|ом|е)?$/,
-      target: { kind: "weekday", value: "thursday", sourceText: "четверг" },
-    },
-    {
-      testToken: /^пятниц(?:а|у|е|ей)$/,
-      target: { kind: "weekday", value: "friday", sourceText: "пятница" },
-    },
-    {
-      testToken: /^суббот(?:а|у|е|ой)$/,
-      target: { kind: "weekday", value: "saturday", sourceText: "суббота" },
-    },
-    {
-      testToken: /^воскресень(?:е|я|ю|ем)$/,
-      target: { kind: "weekday", value: "sunday", sourceText: "воскресенье" },
-    },
-  ];
-
-  const matchedTargets = dayTokenMatchers
-    .filter(({ testToken }) => tokens.some((token) => testToken.test(token)))
-    .map(({ target }) => target);
-
-  if (matchedTargets.length === 0) {
-    return { ok: false, reason: "no_target_day" };
+  if (value > 1) {
+    return 1;
   }
+  return Number(value.toFixed(2));
+}
 
-  const uniqueTargets = new Map<string, TrainingPeaksMoveWorkoutTarget>();
-  for (const target of matchedTargets) {
-    const key = `${target.kind}:${target.value}`;
-    if (!uniqueTargets.has(key)) {
-      uniqueTargets.set(key, target);
-    }
+function parseIsoDateParts(year: number, month: number, day: number): string | null {
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
   }
-
-  if (uniqueTargets.size !== 1) {
-    return { ok: false, reason: "ambiguous_target_day" };
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  if (dt.getUTCFullYear() !== year || dt.getUTCMonth() !== month - 1 || dt.getUTCDate() !== day) {
+    return null;
   }
+  return dt.toISOString().slice(0, 10);
+}
 
-  const target = Array.from(uniqueTargets.values())[0]!;
+function normalizeTimeRef(ref: TrainingPeaksMoveWorkoutTimeRef): TrainingPeaksMoveWorkoutTimeRef {
+  return ref;
+}
+
+function toTimeRefWithoutIndex(ref: IndexedTimeRef): TrainingPeaksMoveWorkoutTimeRef {
   return {
-    ok: true,
-    payload: {
-      actionType: "move_workout",
-      target,
-    },
-    confidence: "high",
+    kind: ref.kind,
+    value: ref.value,
+    sourceText: ref.sourceText,
   };
 }
 
-function formatTrainingPeaksMoveWorkoutTargetSummary(target: TrainingPeaksMoveWorkoutTarget): string {
-  if (target.kind === "relative_day") {
-    return target.value === "tomorrow" ? "на завтра" : "на послезавтра";
+function uniqueTimeRefs(refs: IndexedTimeRef[]): IndexedTimeRef[] {
+  const seen = new Set<string>();
+  const deduped: IndexedTimeRef[] = [];
+  for (const item of refs) {
+    const key = `${item.kind}:${item.value}:${item.sourceText}:${item.index}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(item);
+  }
+  return deduped.sort((a, b) => a.index - b.index);
+}
+
+function extractDateRefs(normalized: string): IndexedTimeRef[] {
+  const result: IndexedTimeRef[] = [];
+  const now = new Date();
+
+  const dottedPattern = /(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?/g;
+  let match = dottedPattern.exec(normalized);
+  while (match) {
+    const day = Number(match[1]);
+    const month = Number(match[2]);
+    const yearRaw = match[3] ? Number(match[3]) : now.getUTCFullYear();
+    const year = yearRaw < 100 ? 2000 + yearRaw : yearRaw;
+    const iso = parseIsoDateParts(year, month, day);
+    if (iso && typeof match.index === "number") {
+      result.push({ kind: "date", value: iso, sourceText: match[0], index: match.index });
+    }
+    match = dottedPattern.exec(normalized);
   }
 
-  const weekdayLabelByValue: Record<TrainingPeaksMoveWorkoutTarget["value"], string> = {
+  const monthNames = Object.keys(TP_MONTH_ALIASES).join("|");
+  const monthPattern = new RegExp(`(\\d{1,2})\\s+(${monthNames})(?:\\s+(\\d{4}))?`, "g");
+  let monthMatch = monthPattern.exec(normalized);
+  while (monthMatch) {
+    const day = Number(monthMatch[1]);
+    const month = TP_MONTH_ALIASES[monthMatch[2] ?? ""] ?? 0;
+    const year = monthMatch[3] ? Number(monthMatch[3]) : now.getUTCFullYear();
+    const iso = parseIsoDateParts(year, month, day);
+    if (iso && typeof monthMatch.index === "number") {
+      result.push({ kind: "date", value: iso, sourceText: monthMatch[0], index: monthMatch.index });
+    }
+    monthMatch = monthPattern.exec(normalized);
+  }
+
+  return uniqueTimeRefs(result);
+}
+
+function extractWeekdayAndRelativeRefs(normalized: string): IndexedTimeRef[] {
+  const refs: IndexedTimeRef[] = [];
+  const tokenPattern = /[а-яa-z]+/g;
+  let tokenMatch = tokenPattern.exec(normalized);
+  while (tokenMatch) {
+    const token = tokenMatch[0];
+    const weekday = TP_WEEKDAY_ALIASES[token];
+    if (weekday) {
+      refs.push({ kind: "weekday", value: weekday, sourceText: token, index: tokenMatch.index });
+      tokenMatch = tokenPattern.exec(normalized);
+      continue;
+    }
+    const relative = TP_RELATIVE_DAY_ALIASES[token];
+    if (relative) {
+      refs.push({ kind: "relative_day", value: relative, sourceText: token, index: tokenMatch.index });
+    }
+    tokenMatch = tokenPattern.exec(normalized);
+  }
+  return uniqueTimeRefs(refs);
+}
+
+function extractWorkoutDescriptor(rawText: string, normalized: string): TrainingPeaksMoveWorkoutDescriptor | null {
+  if (normalized.includes("легк")) {
+    return { raw: rawText.trim(), type: "easy_run", confidence: 0.9 };
+  }
+  if (normalized.includes("интервальн") || normalized.includes("интервалы")) {
+    return { raw: rawText.trim(), type: "interval", confidence: 0.9 };
+  }
+  if (normalized.includes("темпов") || normalized.includes("темп")) {
+    return { raw: rawText.trim(), type: "tempo", confidence: 0.88 };
+  }
+  if (normalized.includes("длительн") || normalized.includes("лонгран") || normalized.includes("long run")) {
+    return { raw: rawText.trim(), type: "long_run", confidence: 0.9 };
+  }
+  if (normalized.includes("бег") || normalized.includes("пробеж")) {
+    return { raw: rawText.trim(), type: "run", confidence: 0.8 };
+  }
+  if (normalized.includes("трениров") || normalized.includes("заняти")) {
+    return {
+      raw: rawText.trim(),
+      type: "unknown",
+      confidence: 0.65,
+    };
+  }
+
+  return null;
+}
+
+function hasMoveIntent(normalized: string): boolean {
+  const hasVerb = TP_MOVE_WORKOUT_VERBS.some((verb) => normalized.includes(verb));
+  const hasObject = TP_MOVE_WORKOUT_OBJECTS.some((item) => normalized.includes(item));
+  if (hasVerb && hasObject) {
+    return true;
+  }
+  if (hasVerb && /(сегодня|завтра|послезавтра|пн|вт|ср|чт|пт|сб|вс)/i.test(normalized)) {
+    return true;
+  }
+  if (/(сегодня не успеваю|можно завтра|давай завтра)/i.test(normalized)) {
+    return true;
+  }
+  if (/можно.*(сегодня|завтра|послезавтра)/i.test(normalized)) {
+    return true;
+  }
+  return false;
+}
+
+function resolveDeterministicMoveWorkout(
+  rawText: string
+): ParseTrainingPeaksMoveWorkoutResult & { deterministicReason?: string } {
+  const normalized = normalizeRussianText(rawText);
+  if (!normalized || !hasMoveIntent(normalized)) {
+    return { ok: false, reason: "not_move_request" };
+  }
+
+  const refs = uniqueTimeRefs([...extractDateRefs(normalized), ...extractWeekdayAndRelativeRefs(normalized)]);
+  const pairPattern = /с\s+(.+?)\s+на\s+(.+?)(?=$|[,.!?])/g;
+  const pairMatches: Array<{ source: IndexedTimeRef; target: IndexedTimeRef }> = [];
+  let pairMatch = pairPattern.exec(normalized);
+  while (pairMatch) {
+    const sourceInSegment = uniqueTimeRefs([
+      ...extractDateRefs(pairMatch[1] ?? ""),
+      ...extractWeekdayAndRelativeRefs(pairMatch[1] ?? ""),
+    ]);
+    const targetInSegment = uniqueTimeRefs([
+      ...extractDateRefs(pairMatch[2] ?? ""),
+      ...extractWeekdayAndRelativeRefs(pairMatch[2] ?? ""),
+    ]);
+    if (sourceInSegment.length === 1 && targetInSegment.length === 1) {
+      pairMatches.push({ source: sourceInSegment[0]!, target: targetInSegment[0]! });
+    }
+    pairMatch = pairPattern.exec(normalized);
+  }
+
+  let source: TrainingPeaksMoveWorkoutTimeRef | null = null;
+  let target: TrainingPeaksMoveWorkoutTimeRef | null = null;
+  let needsClarification = false;
+  let clarificationReason: string | null = null;
+
+  if (pairMatches.length > 1) {
+    return { ok: false, reason: "ambiguous_target_day", deterministicReason: "multiple source-target pairs" };
+  }
+
+  if (pairMatches.length === 1) {
+    source = normalizeTimeRef(pairMatches[0]!.source);
+    target = normalizeTimeRef(pairMatches[0]!.target);
+  } else {
+    const targetCandidatePattern = /на\s+([а-яa-z0-9./-]+(?:\s+[а-яa-z0-9./-]+)?)/g;
+    const targetCandidates: IndexedTimeRef[] = [];
+    let targetMatch = targetCandidatePattern.exec(normalized);
+    while (targetMatch) {
+      const chunk = targetMatch[1] ?? "";
+      const refsInChunk = uniqueTimeRefs([...extractDateRefs(chunk), ...extractWeekdayAndRelativeRefs(chunk)]).map((item) => ({
+        ...item,
+        index: targetMatch!.index + item.index,
+      }));
+      if (refsInChunk.length === 1) {
+        targetCandidates.push(refsInChunk[0]!);
+      }
+      targetMatch = targetCandidatePattern.exec(normalized);
+    }
+
+    const uniqueTargets = uniqueTimeRefs(targetCandidates);
+    if (uniqueTargets.length === 1) {
+      target = normalizeTimeRef(uniqueTargets[0]!);
+      const sourceCandidates = refs.filter((item) => {
+        if (item.index === uniqueTargets[0]!.index) {
+          return false;
+        }
+        return !(item.kind === uniqueTargets[0]!.kind && item.value === uniqueTargets[0]!.value);
+      });
+      if (sourceCandidates.length === 1) {
+        source = normalizeTimeRef(sourceCandidates[0]!);
+      } else if (sourceCandidates.length > 1) {
+        needsClarification = true;
+        clarificationReason = "source day is ambiguous";
+      }
+    } else if (uniqueTargets.length > 1) {
+      return { ok: false, reason: "ambiguous_target_day", deterministicReason: "multiple explicit targets" };
+    } else if (refs.length === 1) {
+      target = normalizeTimeRef(refs[0]!);
+    } else if (refs.length === 2) {
+      const rel = refs.filter((item) => item.kind === "relative_day");
+      if (rel.length === 2 && rel.some((item) => item.value === "today") && rel.some((item) => item.value === "tomorrow")) {
+        source = normalizeTimeRef(rel.find((item) => item.value === "today")!);
+        target = normalizeTimeRef(rel.find((item) => item.value === "tomorrow")!);
+      } else {
+        return { ok: false, reason: "ambiguous_target_day", deterministicReason: "multiple time references" };
+      }
+    } else if (refs.length > 1) {
+      return { ok: false, reason: "ambiguous_target_day", deterministicReason: "multiple time references" };
+    }
+  }
+
+  if (!target) {
+    return { ok: false, reason: "no_target_day" };
+  }
+
+  if (target.kind === "relative_day" && target.value === "today") {
+    needsClarification = true;
+    clarificationReason = clarificationReason ?? "target day equals today";
+  }
+
+  const workoutDescriptor = extractWorkoutDescriptor(rawText, normalized);
+  const baseConfidence = source ? 0.92 : 0.8;
+  const descriptorBonus = workoutDescriptor ? 0.04 : -0.08;
+  const clarificationPenalty = needsClarification ? -0.2 : 0;
+  const confidence = clampMoveWorkoutConfidence(baseConfidence + descriptorBonus + clarificationPenalty);
+  const normalizedSource = source ? toTimeRefWithoutIndex(source as IndexedTimeRef) : null;
+  const normalizedTarget = toTimeRefWithoutIndex(target as IndexedTimeRef);
+
+  const payload: ParsedTrainingPeaksMoveWorkoutPayload = {
+    actionType: "move_workout",
+    source: normalizedSource,
+    target: normalizedTarget,
+    workoutDescriptor,
+    confidence,
+    needsClarification,
+    clarificationReason,
+    parser: "deterministic",
+  };
+
+  if (normalizedSource?.kind === "date") {
+    payload.sourceDate = normalizedSource.value;
+    payload.source_date = normalizedSource.value;
+  }
+
+  return {
+    ok: true,
+    payload,
+    confidence,
+  };
+}
+
+export async function parseTrainingPeaksMoveWorkoutRequest(
+  rawText: string
+): Promise<ParseTrainingPeaksMoveWorkoutResult> {
+  const deterministic = resolveDeterministicMoveWorkout(rawText);
+  if (deterministic.ok && !deterministic.payload.needsClarification && deterministic.payload.confidence >= 0.75) {
+    return deterministic;
+  }
+
+  const aiFallback = await parseMoveWorkoutWithAiFallback(rawText);
+  if (!aiFallback) {
+    return deterministic.ok ? deterministic : { ok: false, reason: deterministic.reason };
+  }
+  if (!aiFallback.target) {
+    return deterministic.ok ? deterministic : { ok: false, reason: "no_target_day" };
+  }
+
+  return {
+    ok: true,
+    payload: {
+      ...aiFallback,
+      actionType: "move_workout",
+      parser: "ai_fallback",
+      sourceDate: aiFallback.source?.kind === "date" ? aiFallback.source.value : undefined,
+      source_date: aiFallback.source?.kind === "date" ? aiFallback.source.value : undefined,
+    },
+    confidence: clampMoveWorkoutConfidence(aiFallback.confidence),
+  };
+}
+
+function formatTrainingPeaksMoveWorkoutTargetSummary(target: TrainingPeaksMoveWorkoutTimeRef): string {
+  if (target.kind === "date") {
+    return `на ${target.value}`;
+  }
+  if (target.kind === "relative_day") {
+    if (target.value === "tomorrow") {
+      return "на завтра";
+    }
+    if (target.value === "day_after_tomorrow") {
+      return "на послезавтра";
+    }
+    if (target.value === "today") {
+      return "на сегодня";
+    }
+  }
+  const weekdayLabelByValue: Record<string, string> = {
     monday: "на понедельник",
     tuesday: "на вторник",
     wednesday: "на среду",
@@ -423,11 +752,8 @@ function formatTrainingPeaksMoveWorkoutTargetSummary(target: TrainingPeaksMoveWo
     friday: "на пятницу",
     saturday: "на субботу",
     sunday: "на воскресенье",
-    tomorrow: "на завтра",
-    day_after_tomorrow: "на послезавтра",
   };
-
-  return weekdayLabelByValue[target.value];
+  return weekdayLabelByValue[target.value] ?? `на ${target.sourceText}`;
 }
 
 function getTrainingPeaksTelegramLinkCodePrefix(studentName: string): string {
@@ -1357,7 +1683,7 @@ export async function createTrainingPeaksMoveWorkoutActionFromTelegram(
     return { ok: false, reason: "student_not_found" };
   }
 
-  const parsed = parseTrainingPeaksMoveWorkoutRequest(trimmedText);
+  const parsed = await parseTrainingPeaksMoveWorkoutRequest(trimmedText);
   if (!parsed.ok) {
     return { ok: false, reason: parsed.reason };
   }
@@ -1371,7 +1697,7 @@ export async function createTrainingPeaksMoveWorkoutActionFromTelegram(
     sourceUserId: input.userId ?? null,
     rawText: trimmedText,
     parsedPayload: parsed.payload,
-    confidence: parsed.confidence,
+    confidence: String(parsed.confidence),
     coachChatId: input.coachChatId ?? null,
   });
 
