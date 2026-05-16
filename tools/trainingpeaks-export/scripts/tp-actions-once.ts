@@ -4099,13 +4099,12 @@ async function probeTrainingPeaksMoveCapabilities(
 
         if (probe.detail.targetDayVisible && targetDateIso && probe.detail.targetDateClickCandidateFound) {
           probe.detail.targetDateSelectionAttempted = true;
-          const clickTargetStep = "select target date";
-          markStep(clickTargetStep);
           try {
-            await withUiProbeTimeout(clickTargetStep, 2_000, async () => {
+            // Best-effort only: keep this short and do not allow it to drive global probe progress/timeout.
+            await withUiProbeTimeout("best-effort target date click", 1_750, async () => {
               await clickVisibleTargetDayInDatePicker(page, targetDateIso);
             });
-            const postSelection = await withUiProbeTimeout("verify target date selection", 2_000, async () => {
+            const postSelection = await withUiProbeTimeout("best-effort verify target date selection", 1_750, async () => {
               return await detectVisibleDatePickerSnapshot(page, {
                 dateHeaderBox: probe.detail.dateHeaderBoundingBox,
                 dateHeaderText: probe.detail.dateHeaderText,
@@ -4132,13 +4131,13 @@ async function probeTrainingPeaksMoveCapabilities(
           } catch (error) {
             probe.warnings.push(`Target date selection attempt failed safely: ${toShortErrorMessage(error)}`);
           } finally {
-            completeStep(clickTargetStep);
+            // Always attempt this artifact after candidate-click attempt, even on timeout/error.
+            probe.screenshots.afterTargetDayClick = await captureProbeScreenshot(
+              page,
+              screenshotAfterTargetDayClickPath,
+              probe.warnings
+            );
           }
-          probe.screenshots.afterTargetDayClick = await captureProbeScreenshot(
-            page,
-            screenshotAfterTargetDayClickPath,
-            probe.warnings
-          );
         }
         probe.screenshots.datePickerOpened = await captureProbeScreenshot(
           page,
