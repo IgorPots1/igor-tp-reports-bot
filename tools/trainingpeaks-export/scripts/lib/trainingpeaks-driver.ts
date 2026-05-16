@@ -20,8 +20,10 @@ export interface PrepareMoveWorkoutResult {
   selectedSourceDayVisible: boolean;
   targetDateSelectionAttempted: boolean;
   targetDateSelectionConfirmed: boolean;
+  targetDateClickMethod: "mouse.click.bounding_box_center" | null;
   targetDateClickCandidateFound: boolean;
   targetDateClickCandidateBoundingBox: { x: number; y: number; width: number; height: number } | null;
+  afterTargetDayClickError: string | null;
   datepickerDomDebugPath: string | null;
   datepickerDomDebugTopCandidates: string[];
   datepickerDomDebugError: string | null;

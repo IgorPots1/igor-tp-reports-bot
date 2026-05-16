@@ -188,8 +188,10 @@ type UiCapabilityProbeDetailDiscovery = {
   selectedSourceDayVisible: boolean;
   targetDateSelectionAttempted: boolean;
   targetDateSelectionConfirmed: boolean;
+  targetDateClickMethod: "mouse.click.bounding_box_center" | null;
   targetDateClickCandidateFound: boolean;
   targetDateClickCandidateBoundingBox: { x: number; y: number; width: number; height: number } | null;
+  afterTargetDayClickError: string | null;
   datePickerOpenCheckCount: number;
   datePickerOpenCheckSnippets: string[];
   datepickerDomDebugPath: string | null;
@@ -1919,8 +1921,10 @@ function buildEmptyUiCapabilityProbe(): UiCapabilityProbe {
     selectedSourceDayVisible: false,
     targetDateSelectionAttempted: false,
     targetDateSelectionConfirmed: false,
+    targetDateClickMethod: null,
     targetDateClickCandidateFound: false,
     targetDateClickCandidateBoundingBox: null,
+    afterTargetDayClickError: null,
     datePickerOpenCheckCount: 0,
     datePickerOpenCheckSnippets: [],
     datepickerDomDebugPath: null,
@@ -3522,73 +3526,6 @@ function applyBodyTextMultiSignalFallback(
   return { activated: true };
 }
 
-async function clickVisibleTargetDayInDatePicker(
-  page: import("playwright").Page,
-  targetDateIso: string | null
-): Promise<boolean> {
-  if (!targetDateIso) {
-    return false;
-  }
-  const dayMatch = targetDateIso.match(/^\d{4}-(\d{2})-(\d{2})$/);
-  if (!dayMatch) {
-    return false;
-  }
-  const dayNum = Number(dayMatch[2]);
-  if (!Number.isFinite(dayNum) || dayNum < 1 || dayNum > 31) {
-    return false;
-  }
-  const day = String(dayNum);
-  const exactDayRegex = new RegExp(`^\\s*${day}\\s*$`);
-  const candidates = [
-    page.locator(`.MuiPickersDay-root:has-text("${day}")`).first(),
-    page.locator(`[aria-label*=" ${day} " i][role="gridcell"],button[aria-label*=" ${day} " i]`).first(),
-    page.getByRole("gridcell", { name: new RegExp(`(^|\\D)${day}(\\D|$)`) }).first(),
-    page.getByRole("button", { name: new RegExp(`(^|\\D)${day}(\\D|$)`) }).first(),
-  ];
-  for (const locator of candidates) {
-    if (await isVisible(locator, 500)) {
-      try {
-        await locator.click({ timeout: 1_500 });
-        return true;
-      } catch {
-        // continue trying safer fallback selectors
-      }
-    }
-  }
-
-  const tdCandidates = await page.locator("td").filter({ hasText: exactDayRegex }).all().catch(() => [] as import("playwright").Locator[]);
-  for (const td of tdCandidates) {
-    if (!(await td.isVisible().catch(() => false))) continue;
-    const box = await td.boundingBox().catch(() => null);
-    if (!box || box.width > 80 || box.height > 60 || box.width < 5 || box.height < 5) continue;
-    try {
-      await td.click({ timeout: 1_500 });
-      return true;
-    } catch {
-      // continue
-    }
-  }
-
-  const spanDivCandidates = await page
-    .locator("span, div")
-    .filter({ hasText: exactDayRegex })
-    .all()
-    .catch(() => [] as import("playwright").Locator[]);
-  for (const el of spanDivCandidates) {
-    if (!(await el.isVisible().catch(() => false))) continue;
-    const box = await el.boundingBox().catch(() => null);
-    if (!box || box.width > 80 || box.height > 60 || box.width < 5 || box.height < 5) continue;
-    try {
-      await el.click({ timeout: 1_500 });
-      return true;
-    } catch {
-      // continue
-    }
-  }
-
-  return false;
-}
-
 async function detailStillVisible(page: import("playwright").Page): Promise<boolean> {
   return anyVisible(
     [
@@ -3615,6 +3552,7 @@ async function probeTrainingPeaksMoveCapabilities(
   };
   const completeStep = (step?: string): void => {
     probe.progress.lastCompletedStep = step ?? probe.progress.currentStep;
+    probe.progress.currentStep = null;
     probe.progress.updatedAt = new Date().toISOString();
   };
   const runStep = async <T>(step: string, timeoutMs: number, fn: () => Promise<T>): Promise<T> => {
@@ -4116,33 +4054,40 @@ async function probeTrainingPeaksMoveCapabilities(
         const targetDateIso = comparison.targetDate.current ?? comparison.targetDate.trusted;
         if (probe.detail.targetDayVisible && targetDateIso && probe.detail.targetDateClickCandidateFound) {
           probe.detail.targetDateSelectionAttempted = true;
+          probe.detail.targetDateClickMethod = "mouse.click.bounding_box_center";
           try {
-            // Best-effort only: isolate target selection from the detect datepicker step.
-            await withUiProbeTimeout("best-effort target date selection", 1_900, async () => {
-              await clickVisibleTargetDayInDatePicker(page, targetDateIso);
-              const postSelection = await detectVisibleDatePickerSnapshot(page, {
-                dateHeaderBox: probe.detail.dateHeaderBoundingBox,
-                dateHeaderText: probe.detail.dateHeaderText,
-                sourceDateIso: comparison.sourceDate.current ?? comparison.sourceDate.trusted,
-                targetDateIso,
-              });
-              probe.detail.datePickerDetectionStrategy =
-                postSelection.strategy ?? probe.detail.datePickerDetectionStrategy;
-              probe.detail.datePickerBoundingBox = postSelection.boundingBox ?? probe.detail.datePickerBoundingBox;
-              probe.detail.visibleMonth = postSelection.visibleMonth ?? probe.detail.visibleMonth;
-              probe.detail.visibleYear = postSelection.visibleYear ?? probe.detail.visibleYear;
-              probe.detail.visibleDayCandidates = postSelection.visibleDayCandidates.length
-                ? [...postSelection.visibleDayCandidates]
-                : probe.detail.visibleDayCandidates;
-              probe.detail.targetDayVisible = postSelection.targetDayVisible || probe.detail.targetDayVisible;
-              probe.detail.selectedSourceDayVisible =
-                postSelection.selectedSourceDayVisible || probe.detail.selectedSourceDayVisible;
-              probe.detail.targetDateSelectionConfirmed =
-                postSelection.targetDaySelectedVisible || probe.detail.targetDateSelectionConfirmed;
-              probe.detail.datePickerOpenCheckSnippets.push(
-                ...postSelection.snippets.slice(0, Math.max(0, 12 - probe.detail.datePickerOpenCheckSnippets.length))
-              );
+            const clickBox = probe.detail.targetDateClickCandidateBoundingBox;
+            if (!clickBox || clickBox.width <= 0 || clickBox.height <= 0) {
+              throw new Error("targetDateClickCandidateBoundingBox is missing or invalid");
+            }
+            const x = clickBox.x + clickBox.width / 2;
+            const y = clickBox.y + clickBox.height / 2;
+            // Best-effort only: use a short, direct mouse click without actionability waits.
+            await withUiProbeTimeout("best-effort target date selection click", 900, async () => {
+              await page.mouse.click(x, y);
             });
+            const postSelection = await detectVisibleDatePickerSnapshot(page, {
+              dateHeaderBox: probe.detail.dateHeaderBoundingBox,
+              dateHeaderText: probe.detail.dateHeaderText,
+              sourceDateIso: comparison.sourceDate.current ?? comparison.sourceDate.trusted,
+              targetDateIso,
+            });
+            probe.detail.datePickerDetectionStrategy =
+              postSelection.strategy ?? probe.detail.datePickerDetectionStrategy;
+            probe.detail.datePickerBoundingBox = postSelection.boundingBox ?? probe.detail.datePickerBoundingBox;
+            probe.detail.visibleMonth = postSelection.visibleMonth ?? probe.detail.visibleMonth;
+            probe.detail.visibleYear = postSelection.visibleYear ?? probe.detail.visibleYear;
+            probe.detail.visibleDayCandidates = postSelection.visibleDayCandidates.length
+              ? [...postSelection.visibleDayCandidates]
+              : probe.detail.visibleDayCandidates;
+            probe.detail.targetDayVisible = postSelection.targetDayVisible || probe.detail.targetDayVisible;
+            probe.detail.selectedSourceDayVisible =
+              postSelection.selectedSourceDayVisible || probe.detail.selectedSourceDayVisible;
+            probe.detail.targetDateSelectionConfirmed =
+              postSelection.targetDaySelectedVisible || probe.detail.targetDateSelectionConfirmed;
+            probe.detail.datePickerOpenCheckSnippets.push(
+              ...postSelection.snippets.slice(0, Math.max(0, 12 - probe.detail.datePickerOpenCheckSnippets.length))
+            );
             probe.progress.stepHistory.push("best-effort target date selection");
             probe.progress.lastCompletedStep = "best-effort target date selection";
             probe.progress.updatedAt = new Date().toISOString();
@@ -4153,11 +4098,17 @@ async function probeTrainingPeaksMoveCapabilities(
             probe.warnings.push(`Target date selection attempt failed safely: ${toShortErrorMessage(error)}`);
           } finally {
             // Always attempt this artifact after candidate-click attempt, even on timeout/error.
-            probe.screenshots.afterTargetDayClick = await captureProbeScreenshot(
-              page,
-              screenshotAfterTargetDayClickPath,
-              probe.warnings
-            );
+            try {
+              await page.screenshot({ path: screenshotAfterTargetDayClickPath, fullPage: true });
+              probe.screenshots.afterTargetDayClick = screenshotAfterTargetDayClickPath;
+              probe.detail.afterTargetDayClickError = null;
+            } catch (error) {
+              probe.screenshots.afterTargetDayClick = null;
+              probe.detail.afterTargetDayClickError = toShortErrorMessage(error);
+              probe.warnings.push(
+                `probe screenshot failed for ${path.basename(screenshotAfterTargetDayClickPath)}: ${probe.detail.afterTargetDayClickError}`
+              );
+            }
           }
         }
       }
@@ -5602,8 +5553,10 @@ function probeToDriverProbeShape(probe: UiCapabilityProbe): TrainingPeaksProbeLi
       selectedSourceDayVisible: detail.selectedSourceDayVisible,
       targetDateSelectionAttempted: detail.targetDateSelectionAttempted,
       targetDateSelectionConfirmed: detail.targetDateSelectionConfirmed,
+      targetDateClickMethod: detail.targetDateClickMethod,
       targetDateClickCandidateFound: detail.targetDateClickCandidateFound,
       targetDateClickCandidateBoundingBox: detail.targetDateClickCandidateBoundingBox,
+      afterTargetDayClickError: detail.afterTargetDayClickError,
       datepickerDomDebugPath: detail.datepickerDomDebugPath,
       datepickerDomDebugTopCandidates: [...detail.datepickerDomDebugTopCandidates],
       datepickerDomDebugError: detail.datepickerDomDebugError,
@@ -5977,6 +5930,8 @@ async function main(): Promise<void> {
         targetDateClickCandidateBoundingBox: prepareMoveWorkoutResult.targetDateClickCandidateBoundingBox,
         targetDateSelectionAttempted: prepareMoveWorkoutResult.targetDateSelectionAttempted,
         targetDateSelectionConfirmed: prepareMoveWorkoutResult.targetDateSelectionConfirmed,
+        targetDateClickMethod: prepareMoveWorkoutResult.targetDateClickMethod,
+        afterTargetDayClickError: prepareMoveWorkoutResult.afterTargetDayClickError,
         datePickerCloseAttempted: uiCapabilityProbe.detail.datePickerCloseAttempted,
         datePickerCloseSucceeded: uiCapabilityProbe.detail.datePickerCloseSucceeded,
         datePickerCloseError: uiCapabilityProbe.detail.datePickerCloseError,

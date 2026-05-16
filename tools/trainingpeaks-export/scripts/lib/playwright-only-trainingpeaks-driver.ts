@@ -30,8 +30,10 @@ export type ProbeLike = {
     selectedSourceDayVisible: boolean;
     targetDateSelectionAttempted: boolean;
     targetDateSelectionConfirmed: boolean;
+    targetDateClickMethod: "mouse.click.bounding_box_center" | null;
     targetDateClickCandidateFound: boolean;
     targetDateClickCandidateBoundingBox: { x: number; y: number; width: number; height: number } | null;
+    afterTargetDayClickError: string | null;
     datepickerDomDebugPath: string | null;
     datepickerDomDebugTopCandidates: string[];
     datepickerDomDebugError: string | null;
@@ -178,6 +180,15 @@ export function derivePrepareMoveWorkoutResultFromProbe(
   if (loginOrReachability || unsafeStructure) {
     status = "unsafe";
     recommendedNextDriver = "manual";
+  } else if (
+    probe.detail.opened &&
+    datePickerOpened &&
+    probe.detail.targetDateSelectionAttempted &&
+    !targetDateSelectionConfirmed
+  ) {
+    status = "needs_manual";
+    recommendedNextDriver = "manual";
+    failureReason = "Target date click was attempted, but selection could not be confirmed.";
   } else if (combinedErrors.some((line) => instabilityHints.some((hint) => line.includes(hint)))) {
     status = "needs_manual";
     recommendedNextDriver = "manual";
@@ -187,16 +198,6 @@ export function derivePrepareMoveWorkoutResultFromProbe(
     recommendedNextDriver = "manual";
     failureReason =
       "Datepicker detected and target date visible, but no unambiguous target day click candidate was found.";
-  } else if (
-    probe.detail.opened &&
-    datePickerOpened &&
-    probe.detail.targetDateSelectionAttempted &&
-    !targetDateSelectionConfirmed &&
-    probe.errors.length === 0
-  ) {
-    status = "needs_manual";
-    recommendedNextDriver = "manual";
-    failureReason = "Target date click was attempted, but selection could not be confirmed.";
   } else if (probe.detail.opened && datePickerOpened && !targetDateSelectionConfirmed && probe.errors.length === 0) {
     status = "needs_manual";
     recommendedNextDriver = "manual";
@@ -233,8 +234,10 @@ export function derivePrepareMoveWorkoutResultFromProbe(
     selectedSourceDayVisible: probe.detail.selectedSourceDayVisible,
     targetDateSelectionAttempted: probe.detail.targetDateSelectionAttempted,
     targetDateSelectionConfirmed,
+    targetDateClickMethod: probe.detail.targetDateClickMethod,
     targetDateClickCandidateFound: probe.detail.targetDateClickCandidateFound,
     targetDateClickCandidateBoundingBox: probe.detail.targetDateClickCandidateBoundingBox,
+    afterTargetDayClickError: probe.detail.afterTargetDayClickError,
     datepickerDomDebugPath: probe.detail.datepickerDomDebugPath,
     datepickerDomDebugTopCandidates: [...probe.detail.datepickerDomDebugTopCandidates],
     datepickerDomDebugError: probe.detail.datepickerDomDebugError,
@@ -271,8 +274,10 @@ export class PlaywrightOnlyTrainingPeaksDriver implements TrainingPeaksAutomatio
       selectedSourceDayVisible: false,
       targetDateSelectionAttempted: false,
       targetDateSelectionConfirmed: false,
+      targetDateClickMethod: null,
       targetDateClickCandidateFound: false,
       targetDateClickCandidateBoundingBox: null,
+      afterTargetDayClickError: null,
       datepickerDomDebugPath: null,
       datepickerDomDebugTopCandidates: [],
       datepickerDomDebugError: null,
@@ -321,8 +326,10 @@ export class PlaywrightOnlyTrainingPeaksDriver implements TrainingPeaksAutomatio
             selectedSourceDayVisible: false,
             targetDateSelectionAttempted: false,
             targetDateSelectionConfirmed: false,
+            targetDateClickMethod: null,
             targetDateClickCandidateFound: false,
             targetDateClickCandidateBoundingBox: null,
+            afterTargetDayClickError: null,
             datepickerDomDebugPath: null,
             datepickerDomDebugTopCandidates: [],
             datepickerDomDebugError: null,
