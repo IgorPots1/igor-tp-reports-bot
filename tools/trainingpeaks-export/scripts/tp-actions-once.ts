@@ -4099,6 +4099,20 @@ async function probeTrainingPeaksMoveCapabilities(
       }
 
       if (dateHeaderClickSucceeded && probe.detail.datePickerOpened) {
+        probe.screenshots.datePickerOpened = await captureProbeScreenshot(
+          page,
+          screenshotDatePickerOpenedPath,
+          probe.warnings
+        );
+        probe.detail.datePickerCloseAttempted = false;
+        probe.detail.datePickerCloseSucceeded = false;
+        probe.detail.datePickerCloseError = "skipped_in_probe";
+        console.log("[ui-probe] close datepicker skipped (modal close will dismiss)");
+      } else if (dateHeaderClickSucceeded) {
+        probe.warnings.push("Date header clicked, but datepicker was not detected within timeout");
+      }
+
+      if (dateHeaderClickSucceeded && probe.detail.datePickerOpened) {
         const targetDateIso = comparison.targetDate.current ?? comparison.targetDate.trusted;
         if (probe.detail.targetDayVisible && targetDateIso && probe.detail.targetDateClickCandidateFound) {
           probe.detail.targetDateSelectionAttempted = true;
@@ -4129,7 +4143,13 @@ async function probeTrainingPeaksMoveCapabilities(
                 ...postSelection.snippets.slice(0, Math.max(0, 12 - probe.detail.datePickerOpenCheckSnippets.length))
               );
             });
+            probe.progress.stepHistory.push("best-effort target date selection");
+            probe.progress.lastCompletedStep = "best-effort target date selection";
+            probe.progress.updatedAt = new Date().toISOString();
           } catch (error) {
+            probe.progress.stepHistory.push("best-effort target date selection failed");
+            probe.progress.lastCompletedStep = "best-effort target date selection failed";
+            probe.progress.updatedAt = new Date().toISOString();
             probe.warnings.push(`Target date selection attempt failed safely: ${toShortErrorMessage(error)}`);
           } finally {
             // Always attempt this artifact after candidate-click attempt, even on timeout/error.
@@ -4140,20 +4160,6 @@ async function probeTrainingPeaksMoveCapabilities(
             );
           }
         }
-      }
-
-      if (dateHeaderClickSucceeded && probe.detail.datePickerOpened) {
-        probe.screenshots.datePickerOpened = await captureProbeScreenshot(
-          page,
-          screenshotDatePickerOpenedPath,
-          probe.warnings
-        );
-        probe.detail.datePickerCloseAttempted = false;
-        probe.detail.datePickerCloseSucceeded = false;
-        probe.detail.datePickerCloseError = "skipped_in_probe";
-        console.log("[ui-probe] close datepicker skipped (modal close will dismiss)");
-      } else if (dateHeaderClickSucceeded) {
-        probe.warnings.push("Date header clicked, but datepicker was not detected within timeout");
       }
     }
 
