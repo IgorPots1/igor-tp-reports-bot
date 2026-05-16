@@ -5738,37 +5738,110 @@ function probeToDriverProbeShape(probe: UiCapabilityProbe): TrainingPeaksProbeLi
 
 async function findSaveAndCloseButton(
   page: import("playwright").Page
-): Promise<{ locator: import("playwright").Locator; enabled: boolean; selectorHint: string } | null> {
+): Promise<
+  | {
+      status: "ok";
+      locator: import("playwright").Locator;
+      enabled: boolean;
+      selectorHint: "modal role exact" | "global role exact";
+    }
+  | {
+      status: "not_found" | "ambiguous_save_and_close_button";
+      reason: string;
+    }
+> {
   const modalRoot = await findVisibleDetailRoot(page);
   const modalScope = modalRoot?.locator ?? page.locator("body");
-  const candidates = [
-    { locator: modalScope.getByRole("button", { name: /^save\s*&\s*close$/i }).first(), selectorHint: "modal role exact" },
-    { locator: modalScope.getByRole("button", { name: /save\s*&\s*close/i }).first(), selectorHint: "modal role fuzzy" },
-    { locator: page.getByRole("button", { name: /^save\s*&\s*close$/i }).first(), selectorHint: "global role exact" },
-    { locator: page.getByRole("button", { name: /save\s*&\s*close/i }).first(), selectorHint: "global role fuzzy" },
-    { locator: modalScope.getByText(/^save\s*&\s*close$/i).first(), selectorHint: "modal text exact" },
-    { locator: page.getByText(/^save\s*&\s*close$/i).first(), selectorHint: "global text exact" },
-  ] as const;
+  const modalExact = modalScope.getByRole("button", { name: /^Save\s*&\s*Close$/i });
+  const modalExactFirst = modalScope.getByRole("button", { name: /^Save\s*&\s*Close$/i }).first();
+  const pageExact = page.getByRole("button", { name: /^Save\s*&\s*Close$/i });
+  const pageExactFirst = page.getByRole("button", { name: /^Save\s*&\s*Close$/i }).first();
 
-  for (const candidate of candidates) {
-    if (!(await candidate.locator.isVisible().catch(() => false))) {
-      continue;
+  const collectQualified = async (
+    locator: import("playwright").Locator,
+    selectorHint: "modal role exact" | "global role exact"
+  ): Promise<Array<{ locator: import("playwright").Locator; enabled: boolean; selectorHint: "modal role exact" | "global role exact" }>> => {
+    const qualified: Array<{
+      locator: import("playwright").Locator;
+      enabled: boolean;
+      selectorHint: "modal role exact" | "global role exact";
+    }> = [];
+    const total = await locator.count().catch(() => 0);
+    for (let i = 0; i < total; i += 1) {
+      const candidate = locator.nth(i);
+      const visible = await candidate.isVisible().catch(() => false);
+      if (!visible) {
+        continue;
+      }
+      const enabled = !(await candidate.isDisabled().catch(() => true));
+      const a11yName = await candidate.getAttribute("aria-label").catch(() => null as string | null);
+      const textName = await candidate.innerText().catch(() => "");
+      const normalizedName = normalizeWhitespace(a11yName ?? textName).toLowerCase();
+      if (normalizedName !== "save & close") {
+        continue;
+      }
+      qualified.push({ locator: candidate, enabled, selectorHint });
     }
-    const disabled = await candidate.locator.isDisabled().catch(() => true);
+    return qualified;
+  };
+
+  const modalQualified = await collectQualified(modalExact, "modal role exact");
+  if (modalQualified.length > 0) {
+    const enabled = !(await modalExactFirst.isDisabled().catch(() => true));
+    const a11yName = await modalExactFirst.getAttribute("aria-label").catch(() => null as string | null);
+    const textName = await modalExactFirst.innerText().catch(() => "");
+    const normalizedName = normalizeWhitespace(a11yName ?? textName).toLowerCase();
+    if (normalizedName !== "save & close" || !(await modalExactFirst.isVisible().catch(() => false))) {
+      return {
+        status: "not_found",
+        reason: "save_and_close_button_not_found",
+      };
+    }
     return {
-      locator: candidate.locator,
-      enabled: !disabled,
-      selectorHint: candidate.selectorHint,
+      status: "ok",
+      locator: modalExactFirst,
+      enabled,
+      selectorHint: "modal role exact",
     };
   }
 
-  return null;
+  const pageQualified = await collectQualified(pageExact, "global role exact");
+  if (pageQualified.length > 1) {
+    return {
+      status: "ambiguous_save_and_close_button",
+      reason: "ambiguous_save_and_close_button",
+    };
+  }
+  if (pageQualified.length === 1) {
+    const enabled = !(await pageExactFirst.isDisabled().catch(() => true));
+    const a11yName = await pageExactFirst.getAttribute("aria-label").catch(() => null as string | null);
+    const textName = await pageExactFirst.innerText().catch(() => "");
+    const normalizedName = normalizeWhitespace(a11yName ?? textName).toLowerCase();
+    if (normalizedName !== "save & close" || !(await pageExactFirst.isVisible().catch(() => false))) {
+      return {
+        status: "not_found",
+        reason: "save_and_close_button_not_found",
+      };
+    }
+    return {
+      status: "ok",
+      locator: pageExactFirst,
+      enabled,
+      selectorHint: "global role exact",
+    };
+  }
+
+  return {
+    status: "not_found",
+    reason: "save_and_close_button_not_found",
+  };
 }
 
 type ControlledSaveExecutionResult = {
   prepareMoveWorkout: ReturnType<typeof derivePrepareMoveWorkoutResultFromProbe>;
   preSaveScreenshot: string | null;
   afterSaveScreenshot: string | null;
+  unsavedUiStateChanged: boolean;
   saveAndCloseAttempted: boolean;
   saveAndCloseClicked: boolean;
   saveAndCloseClickMethod: string | null;
@@ -5777,11 +5850,14 @@ type ControlledSaveExecutionResult = {
   postSaveValidationPassed: boolean;
   postSaveValidationError: string | null;
   mutationOccurred: boolean;
+  durableMutationOccurred: boolean;
   preSaveAudit: {
     visibleDateHeaderText: string | null;
     targetDate: string | null;
     athleteIdentityMatchedBy: IdentityMatchType;
     workoutFingerprint: string | null;
+    unsavedUiStateChanged: boolean;
+    mutationOccurred: boolean;
     saveAndCloseButtonFound: boolean;
     saveAndCloseButtonEnabled: boolean;
   };
@@ -5934,6 +6010,7 @@ async function runControlledSaveAndCloseExecution(input: {
     const clickBox = targetDateClickCandidateBoundingBox;
     await page.mouse.click(clickBox.x + clickBox.width / 2, clickBox.y + clickBox.height / 2);
     await page.waitForTimeout(220);
+    const unsavedUiStateChanged = true;
     const postClickHeader = await findBoundedDateHeaderText(page, modalRoot?.locator ?? null);
     const dateField = await findFirstVisibleLocator(
       [
@@ -5962,7 +6039,8 @@ async function runControlledSaveAndCloseExecution(input: {
       visibleTrainingPeaksName,
     });
 
-    const saveButton = await findSaveAndCloseButton(page);
+    const saveButtonLookup = await findSaveAndCloseButton(page);
+    const saveButton = saveButtonLookup.status === "ok" ? saveButtonLookup : null;
     const saveAndCloseButtonFound = Boolean(saveButton);
     const saveAndCloseButtonEnabled = Boolean(saveButton?.enabled);
     const workoutFingerprint = candidate?.fingerprint ?? null;
@@ -5972,6 +6050,8 @@ async function runControlledSaveAndCloseExecution(input: {
       targetDate,
       athleteIdentityMatchedBy: identityCheck.matchedBy,
       workoutFingerprint,
+      unsavedUiStateChanged,
+      mutationOccurred: false,
       saveAndCloseButtonFound,
       saveAndCloseButtonEnabled,
     } as const;
@@ -6054,7 +6134,10 @@ async function runControlledSaveAndCloseExecution(input: {
         saveAndCloseError = toShortErrorMessage(error);
       }
     } else if (!saveButton) {
-      saveAndCloseError = "Save & Close button not found.";
+      saveAndCloseError =
+        saveButtonLookup.status === "ambiguous_save_and_close_button"
+          ? "ambiguous_save_and_close_button"
+          : "Save & Close button not found.";
     } else if (!saveButton.enabled) {
       saveAndCloseError = "Save & Close button is disabled.";
     } else if (!prepareGatesPassedBeforeSave) {
@@ -6146,6 +6229,7 @@ async function runControlledSaveAndCloseExecution(input: {
       prepareMoveWorkout,
       preSaveScreenshot,
       afterSaveScreenshot,
+      unsavedUiStateChanged,
       saveAndCloseAttempted,
       saveAndCloseClicked,
       saveAndCloseClickMethod,
@@ -6154,6 +6238,7 @@ async function runControlledSaveAndCloseExecution(input: {
       postSaveValidationPassed,
       postSaveValidationError,
       mutationOccurred,
+      durableMutationOccurred: saveAndCloseClicked,
       preSaveAudit,
       postSaveAudit: {
         athleteIdentityMatchedBy: postSaveIdentityMatchedBy,
@@ -6388,8 +6473,14 @@ async function main(): Promise<void> {
     trustedDryRun: claimed.trustedDryRunLog,
     safety: {
       mutationForbidden: prepareOnly || !saveGateOpen,
-      allowedActions: ["open athlete page", "extract candidate", "compare with trusted dry-run", "capture screenshots"],
-      forbiddenActions: ["drag", "drop", "save", "date change click", "form submit", "TrainingPeaks mutation"],
+      allowedActions: [
+        "open athlete page",
+        "extract candidate",
+        "compare with trusted dry-run",
+        "capture screenshots",
+        "unsaved modal date selection (prepare flow)",
+      ],
+      forbiddenActions: ["drag", "drop", "save", "form submit", "TrainingPeaks mutation"],
     },
     realSaveGate: {
       confirmSaveFlag,
@@ -6495,10 +6586,12 @@ async function main(): Promise<void> {
         saveAndCloseClicked: false,
         saveAndCloseClickMethod: null,
         saveAndCloseError: !saveGateOpen && !prepareOnly ? errorMessage : null,
+      unsavedUiStateChanged: Boolean(prepareMoveWorkoutResult.targetDateSelectionAttempted),
         postSaveValidationAttempted: false,
         postSaveValidationPassed: false,
         postSaveValidationError: null,
         mutationOccurred: false,
+      durableMutationOccurred: false,
         wouldMove: {
           sourceDate: claimed.trustedDryRunLog.resolvedDates.sourceDate,
           targetDate: claimed.trustedDryRunLog.resolvedDates.targetDate,
@@ -6622,6 +6715,7 @@ async function main(): Promise<void> {
       afterSaveScreenshot: execution.afterSaveScreenshot,
       preSaveAudit: execution.preSaveAudit,
       postSaveAudit: execution.postSaveAudit,
+      unsavedUiStateChanged: execution.unsavedUiStateChanged,
       saveAndCloseAttempted: execution.saveAndCloseAttempted,
       saveAndCloseClicked: execution.saveAndCloseClicked,
       saveAndCloseClickMethod: execution.saveAndCloseClickMethod,
@@ -6630,6 +6724,7 @@ async function main(): Promise<void> {
       postSaveValidationPassed: execution.postSaveValidationPassed,
       postSaveValidationError: execution.postSaveValidationError,
       mutationOccurred: execution.mutationOccurred,
+      durableMutationOccurred: execution.durableMutationOccurred,
       prepareGatesPassed,
       note: execution.postSaveValidationPassed
         ? "Controlled Save & Close executed and post-save validation passed."
