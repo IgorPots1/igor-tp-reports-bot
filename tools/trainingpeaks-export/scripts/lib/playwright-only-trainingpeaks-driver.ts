@@ -187,6 +187,16 @@ export function derivePrepareMoveWorkoutResultFromProbe(
     recommendedNextDriver = "manual";
     failureReason =
       "Datepicker detected and target date visible, but no unambiguous target day click candidate was found.";
+  } else if (
+    probe.detail.opened &&
+    datePickerOpened &&
+    probe.detail.targetDateSelectionAttempted &&
+    !targetDateSelectionConfirmed &&
+    probe.errors.length === 0
+  ) {
+    status = "needs_manual";
+    recommendedNextDriver = "manual";
+    failureReason = "Target date click was attempted, but selection could not be confirmed.";
   } else if (probe.detail.opened && datePickerOpened && !targetDateSelectionConfirmed && probe.errors.length === 0) {
     status = "needs_manual";
     recommendedNextDriver = "manual";
