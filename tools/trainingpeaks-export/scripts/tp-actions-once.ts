@@ -193,6 +193,7 @@ type UiCapabilityProbeDetailDiscovery = {
   datePickerOpenCheckSnippets: string[];
   datepickerDomDebugPath: string | null;
   datepickerDomDebugTopCandidates: string[];
+  datepickerDomDebugError: string | null;
   saveButtonFound: boolean;
   saveAndCloseButtonFound: boolean;
   cancelButtonFound: boolean;
@@ -1876,6 +1877,7 @@ function buildEmptyUiCapabilityProbe(): UiCapabilityProbe {
     datePickerOpenCheckSnippets: [],
     datepickerDomDebugPath: null,
     datepickerDomDebugTopCandidates: [],
+    datepickerDomDebugError: null,
     saveButtonFound: false,
     saveAndCloseButtonFound: false,
     cancelButtonFound: false,
@@ -2755,7 +2757,7 @@ async function detectVisibleDatePickerSnapshot(
         if (!m) {
           return null;
         }
-        const day = Number(m[2]);
+        const day = Number(m[3]);
         if (!Number.isFinite(day) || day < 1 || day > 31) {
           return null;
         }
@@ -3070,7 +3072,7 @@ async function collectVisibleDatepickerDebugSnapshot(
         if (!m) {
           return null;
         }
-        const day = Number(m[2]);
+        const day = Number(m[3]);
         if (!Number.isFinite(day) || day < 1 || day > 31) {
           return null;
         }
@@ -3843,6 +3845,9 @@ async function probeTrainingPeaksMoveCapabilities(
         const sourceDateIso = comparison.sourceDate.current ?? comparison.sourceDate.trusted;
         const targetDateIso = comparison.targetDate.current ?? comparison.targetDate.trusted;
         await page.waitForTimeout(500).catch(() => {});
+        console.log("[ui-probe] step: capture datepicker DOM debug snapshot");
+        probe.progress.currentStep = "capture datepicker DOM debug snapshot";
+        probe.progress.updatedAt = new Date().toISOString();
         try {
           const domDebugSnapshot = await collectVisibleDatepickerDebugSnapshot(page, {
             dateHeaderBox: probe.detail.dateHeaderBoundingBox,
@@ -3851,6 +3856,7 @@ async function probeTrainingPeaksMoveCapabilities(
           });
           probe.detail.datepickerDomDebugPath = datepickerDomDebugPath;
           probe.detail.datepickerDomDebugTopCandidates = [...domDebugSnapshot.topCandidates.slice(0, 12)];
+          probe.detail.datepickerDomDebugError = null;
           probe.detail.visibleMonth = probe.detail.visibleMonth ?? domDebugSnapshot.signals.month;
           probe.detail.visibleYear = probe.detail.visibleYear ?? domDebugSnapshot.signals.year;
           if (probe.detail.visibleDayCandidates.length === 0 && domDebugSnapshot.signals.visibleDayCandidates.length > 0) {
@@ -3866,8 +3872,18 @@ async function probeTrainingPeaksMoveCapabilities(
             probe.detail.datePickerDetectionStrategy = "visible_dom_multisignal_fallback";
           }
           await writeFile(datepickerDomDebugPath, JSON.stringify(domDebugSnapshot, null, 2), "utf8");
+          probe.progress.stepHistory.push("capture datepicker DOM debug snapshot");
+          probe.progress.lastCompletedStep = "capture datepicker DOM debug snapshot";
+          probe.progress.updatedAt = new Date().toISOString();
+          console.log(`[ui-probe] datepicker DOM debug artifact: ${datepickerDomDebugPath}`);
         } catch (error) {
-          probe.warnings.push(`Datepicker DOM debug snapshot failed safely: ${toShortErrorMessage(error)}`);
+          const errorMessage = toShortErrorMessage(error);
+          probe.detail.datepickerDomDebugError = errorMessage;
+          probe.progress.stepHistory.push("capture datepicker DOM debug snapshot failed");
+          probe.progress.lastCompletedStep = "capture datepicker DOM debug snapshot failed";
+          probe.progress.updatedAt = new Date().toISOString();
+          probe.warnings.push(`Datepicker DOM debug snapshot failed safely: ${errorMessage}`);
+          console.log("[ui-probe] datepicker DOM debug artifact: null");
         }
 
         probe.detail.datePickerOpenCheckCount += 1;
