@@ -1737,17 +1737,24 @@ async function decideTrainingPeaksActionStatus(
 ): Promise<DecideTrainingPeaksActionResult> {
   const supabase = createSupabaseServerClient();
   const nowIso = new Date().toISOString();
+  const updatePayload: Partial<TrainingPeaksActionRow> = {
+    status: nextStatus,
+    approved_at: nextStatus === "approved" ? nowIso : null,
+    rejected_at: nextStatus === "rejected" ? nowIso : null,
+    decided_by_chat_id: input.decidedByChatId,
+    decided_by_user_id: input.decidedByUserId ?? null,
+    decision_message_id: input.decisionMessageId ?? null,
+  };
+
+  if (nextStatus === "approved") {
+    updatePayload.execution_status = "execute_pending";
+  }
+
   const { data, error } = await supabase
     .from("trainingpeaks_actions")
-    .update({
-      status: nextStatus,
-      approved_at: nextStatus === "approved" ? nowIso : null,
-      rejected_at: nextStatus === "rejected" ? nowIso : null,
-      decided_by_chat_id: input.decidedByChatId,
-      decided_by_user_id: input.decidedByUserId ?? null,
-      decision_message_id: input.decisionMessageId ?? null,
-    })
+    .update(updatePayload)
     .eq("id", input.actionId)
+    .eq("action_type", "move_workout")
     .eq("status", "pending_coach")
     .select("*")
     .maybeSingle();

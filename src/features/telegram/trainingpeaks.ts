@@ -2868,7 +2868,7 @@ async function handleTrainingPeaksActionDecisionCallback(
   if (decisionResult.kind === "already_decided") {
     const alreadyDecidedText =
       decisionResult.action.status === "approved"
-        ? "Эта заявка уже одобрена. Автоматическое выполнение ещё не подключено."
+        ? "Эта заявка уже одобрена. Запусти локальный runner для выполнения переноса."
         : "Эта заявка уже отклонена. Ничего не изменено в TrainingPeaks.";
     await editTrainingPeaksMenuMessage(
       parsedMessage.chatId,
@@ -2881,7 +2881,7 @@ async function handleTrainingPeaksActionDecisionCallback(
 
   const decisionText =
     decision === "approve"
-      ? "Одобрено. Автоматическое выполнение ещё не подключено."
+      ? "Одобрено. Запусти локальный runner для выполнения переноса."
       : "Отклонено. Ничего не изменено в TrainingPeaks.";
 
   await editTrainingPeaksMenuMessage(
