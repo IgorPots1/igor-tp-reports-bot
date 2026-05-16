@@ -178,6 +178,15 @@ type UiCapabilityProbeDetailDiscovery = {
   dateHeaderBoundingBox: { x: number; y: number; width: number; height: number } | null;
   datePickerOpened: boolean;
   datePickerSelectorHint: string | null;
+  datePickerDetectionStrategy: string | null;
+  datePickerBoundingBox: { x: number; y: number; width: number; height: number } | null;
+  visibleMonth: string | null;
+  visibleYear: string | null;
+  visibleDayCandidates: number[];
+  targetDayVisible: boolean;
+  selectedSourceDayVisible: boolean;
+  targetDateSelectionAttempted: boolean;
+  targetDateSelectionConfirmed: boolean;
   datePickerOpenCheckCount: number;
   datePickerOpenCheckSnippets: string[];
   saveButtonFound: boolean;
@@ -213,6 +222,20 @@ type UiCapabilityProbe = {
   };
   warnings: string[];
   errors: string[];
+};
+
+type DatePickerDetectionSnapshot = {
+  opened: boolean;
+  selectorHint: string | null;
+  snippets: string[];
+  strategy: string | null;
+  boundingBox: { x: number; y: number; width: number; height: number } | null;
+  visibleMonth: string | null;
+  visibleYear: string | null;
+  visibleDayCandidates: number[];
+  targetDayVisible: boolean;
+  targetDaySelectedVisible: boolean;
+  selectedSourceDayVisible: boolean;
 };
 
 type TrainingPeaksMoveWorkoutTarget =
@@ -1793,6 +1816,15 @@ function buildEmptyUiCapabilityProbe(): UiCapabilityProbe {
     dateHeaderBoundingBox: null,
     datePickerOpened: false,
     datePickerSelectorHint: null,
+    datePickerDetectionStrategy: null,
+    datePickerBoundingBox: null,
+    visibleMonth: null,
+    visibleYear: null,
+    visibleDayCandidates: [],
+    targetDayVisible: false,
+    selectedSourceDayVisible: false,
+    targetDateSelectionAttempted: false,
+    targetDateSelectionConfirmed: false,
     datePickerOpenCheckCount: 0,
     datePickerOpenCheckSnippets: [],
     saveButtonFound: false,
@@ -2658,16 +2690,101 @@ async function detectVisibleDatePickerSnapshot(
   input: {
     dateHeaderBox: { x: number; y: number; width: number; height: number } | null;
     dateHeaderText: string | null;
+    sourceDateIso?: string | null;
+    targetDateIso?: string | null;
   }
-): Promise<{
-  opened: boolean;
-  selectorHint: string | null;
-  snippets: string[];
-}> {
+): Promise<DatePickerDetectionSnapshot> {
   return page.evaluate(
-    ({ dateHeaderBox, dateHeaderText }) => {
+    ({ dateHeaderBox, dateHeaderText, sourceDateIso, targetDateIso }) => {
       const normalizeWhitespace = (value: string | null | undefined): string =>
         (value ?? "").replace(/\s+/g, " ").trim();
+      const toNumericDay = (iso: string | null | undefined): number | null => {
+        if (!iso) {
+          return null;
+        }
+        const m = iso.match(/^\d{4}-(\d{2})-(\d{2})$/);
+        if (!m) {
+          return null;
+        }
+        const day = Number(m[2]);
+        if (!Number.isFinite(day) || day < 1 || day > 31) {
+          return null;
+        }
+        return day;
+      };
+      const sourceDay = toNumericDay(sourceDateIso);
+      const targetDay = toNumericDay(targetDateIso);
+      const monthNames = [
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+      ];
+      const extractMonthName = (text: string): string | null => {
+        for (const month of monthNames) {
+          if (new RegExp(`\\b${month}\\b`, "i").test(text)) {
+            return month;
+          }
+        }
+        return null;
+      };
+      const extractYear = (text: string): string | null => {
+        const m = text.match(/\b(20\d{2})\b/);
+        return m ? m[1] : null;
+      };
+      const extractVisibleDayCandidates = (text: string): number[] => {
+        const matches = text.match(/(?:^|\s)([1-9]|[12]\d|3[01])(?=\s|$)/g) ?? [];
+        const numbers = new Set<number>();
+        for (const raw of matches) {
+          const n = Number(raw.trim());
+          if (Number.isFinite(n) && n >= 1 && n <= 31) {
+            numbers.add(n);
+          }
+        }
+        return [...numbers].sort((a, b) => a - b);
+      };
+      const dayButtonMatches = (element: Element, day: number): Element[] => {
+        const dayText = String(day);
+        const candidates = Array.from(
+          element.querySelectorAll('[role="gridcell"],[role="option"],button,.MuiPickersDay-root,[data-day]')
+        );
+        return candidates.filter((candidate) => {
+          const text = normalizeWhitespace((candidate as HTMLElement).innerText || candidate.textContent || "");
+          const dataDay = (candidate as HTMLElement).getAttribute("data-day");
+          const ariaLabel = normalizeWhitespace((candidate as HTMLElement).getAttribute("aria-label"));
+          if (dataDay && String(Number(dataDay)) === dayText) {
+            return true;
+          }
+          if (new RegExp(`(^|\\D)${dayText}(\\D|$)`).test(text)) {
+            return true;
+          }
+          if (new RegExp(`(^|\\D)${dayText}(\\D|$)`).test(ariaLabel)) {
+            return true;
+          }
+          return false;
+        });
+      };
+      const hasSelectedState = (element: Element): boolean => {
+        const html = element as HTMLElement;
+        const className = normalizeWhitespace(html.className || "");
+        const ariaSelected = html.getAttribute("aria-selected");
+        const selectedAttr = html.getAttribute("data-selected");
+        return (
+          ariaSelected === "true" ||
+          selectedAttr === "true" ||
+          /\bMui-selected\b/i.test(className) ||
+          /\bselected\b/i.test(className) ||
+          /\bactive\b/i.test(className)
+        );
+      };
 
       const monthRegex =
         /\b(?:january|february|march|april|may|june|july|august|september|october|november|december)\b/i;
@@ -2739,6 +2856,19 @@ async function detectVisibleDatePickerSnapshot(
 
       const snippets: string[] = [];
       const seen = new Set<Element>();
+      const detectionFallback: DatePickerDetectionSnapshot = {
+        opened: false,
+        selectorHint: null,
+        snippets: [],
+        strategy: null,
+        boundingBox: null,
+        visibleMonth: null,
+        visibleYear: null,
+        visibleDayCandidates: [],
+        targetDayVisible: false,
+        targetDaySelectedVisible: false,
+        selectedSourceDayVisible: false,
+      };
 
       for (const selector of selectors) {
         const matches = Array.from(document.querySelectorAll(selector)).slice(0, 8);
@@ -2749,6 +2879,19 @@ async function detectVisibleDatePickerSnapshot(
           seen.add(element);
           const rect = (element as HTMLElement).getBoundingClientRect();
           const text = normalizeWhitespace((element as HTMLElement).innerText || element.textContent || "");
+          const visibleMonth = extractMonthName(text);
+          const visibleYear = extractYear(text);
+          const visibleDayCandidates = extractVisibleDayCandidates(text);
+          const targetDayVisible = targetDay !== null ? visibleDayCandidates.includes(targetDay) : false;
+          const sourceDayVisible = sourceDay !== null ? visibleDayCandidates.includes(sourceDay) : false;
+          const sourceDaySelectedVisible =
+            sourceDay !== null
+              ? dayButtonMatches(element, sourceDay).some((candidate) => hasSelectedState(candidate))
+              : false;
+          const targetDaySelectedVisible =
+            targetDay !== null
+              ? dayButtonMatches(element, targetDay).some((candidate) => hasSelectedState(candidate))
+              : false;
           const monthTextMatchesExpectation = expectedMonth ? new RegExp(`\\b${expectedMonth}\\b`, "i").test(text) : false;
           const yearTextMatchesExpectation = expectedYear ? new RegExp(`\\b${expectedYear}\\b`).test(text) : false;
           const hasMonthSignal =
@@ -2777,6 +2920,9 @@ async function detectVisibleDatePickerSnapshot(
                   hasYearSignal ? (yearTextMatchesExpectation ? "year-expected" : "year") : null,
                   hasWeekdayRow ? "weekday-row" : null,
                   hasEnoughDayCells ? `days:${Math.max(dayCellCount, dayCellMatches.length)}` : null,
+                  targetDayVisible ? "target-day-visible" : null,
+                  targetDaySelectedVisible ? "target-day-selected" : null,
+                  sourceDaySelectedVisible ? "source-day-selected" : sourceDayVisible ? "source-day-visible" : null,
                   nearHeader ? "near-header" : "far-from-header",
                 ]
                   .filter(Boolean)
@@ -2786,24 +2932,104 @@ async function detectVisibleDatePickerSnapshot(
               ].join(" | ")
             )
           );
+          detectionFallback.snippets = snippets.slice(0, 12);
+          detectionFallback.visibleMonth = detectionFallback.visibleMonth ?? visibleMonth;
+          detectionFallback.visibleYear = detectionFallback.visibleYear ?? visibleYear;
+          if (detectionFallback.visibleDayCandidates.length === 0 && visibleDayCandidates.length > 0) {
+            detectionFallback.visibleDayCandidates = [...visibleDayCandidates];
+          }
+          detectionFallback.targetDayVisible = detectionFallback.targetDayVisible || targetDayVisible;
+          detectionFallback.targetDaySelectedVisible =
+            detectionFallback.targetDaySelectedVisible || targetDaySelectedVisible;
+          detectionFallback.selectedSourceDayVisible =
+            detectionFallback.selectedSourceDayVisible || sourceDaySelectedVisible;
+          if (!detectionFallback.boundingBox && rect.width >= 16 && rect.height >= 16) {
+            detectionFallback.boundingBox = {
+              x: rect.x,
+              y: rect.y,
+              width: rect.width,
+              height: rect.height,
+            };
+          }
           if (hasMonthSignal && hasYearSignal && hasWeekdayRow && hasEnoughDayCells && nearHeader) {
+            const strategySignals = [
+              hasMonthSignal ? "month" : null,
+              hasYearSignal ? "year" : null,
+              hasWeekdayRow ? "weekday-row" : null,
+              hasEnoughDayCells ? "day-grid" : null,
+              targetDayVisible ? "target-day-visible" : null,
+              targetDaySelectedVisible ? "target-day-selected" : null,
+              sourceDaySelectedVisible ? "source-day-selected" : null,
+              nearHeader ? "near-header" : null,
+            ]
+              .filter(Boolean)
+              .join("+");
             return {
               opened: true,
               selectorHint: `${selector} [dom-snapshot]`,
               snippets: snippets.slice(0, 12),
+              strategy: strategySignals || "dom-snapshot",
+              boundingBox: {
+                x: rect.x,
+                y: rect.y,
+                width: rect.width,
+                height: rect.height,
+              },
+              visibleMonth,
+              visibleYear,
+              visibleDayCandidates,
+              targetDayVisible,
+              targetDaySelectedVisible,
+              selectedSourceDayVisible: sourceDaySelectedVisible,
             };
           }
         }
       }
 
-      return {
-        opened: false,
-        selectorHint: null,
-        snippets: snippets.slice(0, 12),
-      };
+      return detectionFallback;
     },
-    { dateHeaderBox: input.dateHeaderBox, dateHeaderText: input.dateHeaderText }
+    {
+      dateHeaderBox: input.dateHeaderBox,
+      dateHeaderText: input.dateHeaderText,
+      sourceDateIso: input.sourceDateIso ?? null,
+      targetDateIso: input.targetDateIso ?? null,
+    }
   );
+}
+
+async function clickVisibleTargetDayInDatePicker(
+  page: import("playwright").Page,
+  targetDateIso: string | null
+): Promise<boolean> {
+  if (!targetDateIso) {
+    return false;
+  }
+  const dayMatch = targetDateIso.match(/^\d{4}-(\d{2})-(\d{2})$/);
+  if (!dayMatch) {
+    return false;
+  }
+  const dayNum = Number(dayMatch[2]);
+  if (!Number.isFinite(dayNum) || dayNum < 1 || dayNum > 31) {
+    return false;
+  }
+  const day = String(dayNum);
+  const candidates = [
+    page.locator(`.MuiPickersDay-root:has-text("${day}")`).first(),
+    page.locator(`[aria-label*=" ${day} " i][role="gridcell"],button[aria-label*=" ${day} " i]`).first(),
+    page.getByRole("gridcell", { name: new RegExp(`(^|\\D)${day}(\\D|$)`) }).first(),
+    page.getByRole("button", { name: new RegExp(`(^|\\D)${day}(\\D|$)`) }).first(),
+  ];
+  for (const locator of candidates) {
+    if (await isVisible(locator, 500)) {
+      try {
+        await locator.click({ timeout: 1_500 });
+        return true;
+      } catch {
+        // continue trying safer fallback selectors
+      }
+    }
+  }
+  return false;
 }
 
 async function detailStillVisible(page: import("playwright").Page): Promise<boolean> {
@@ -3176,10 +3402,20 @@ async function probeTrainingPeaksMoveCapabilities(
             return await detectVisibleDatePickerSnapshot(page, {
               dateHeaderBox: probe.detail.dateHeaderBoundingBox,
               dateHeaderText: probe.detail.dateHeaderText,
+              sourceDateIso: comparison.sourceDate.current ?? comparison.sourceDate.trusted,
+              targetDateIso: comparison.targetDate.current ?? comparison.targetDate.trusted,
             });
           });
           datePickerOpenedSnapshot = detection.opened;
           datePickerSelectorHint = detection.selectorHint;
+          probe.detail.datePickerDetectionStrategy = detection.strategy;
+          probe.detail.datePickerBoundingBox = detection.boundingBox;
+          probe.detail.visibleMonth = detection.visibleMonth;
+          probe.detail.visibleYear = detection.visibleYear;
+          probe.detail.visibleDayCandidates = [...detection.visibleDayCandidates];
+          probe.detail.targetDayVisible = detection.targetDayVisible;
+          probe.detail.selectedSourceDayVisible = detection.selectedSourceDayVisible;
+          probe.detail.targetDateSelectionConfirmed = detection.targetDaySelectedVisible;
           probe.detail.datePickerOpenCheckSnippets.push(
             ...detection.snippets.slice(0, Math.max(0, 12 - probe.detail.datePickerOpenCheckSnippets.length))
           );
@@ -3192,6 +3428,46 @@ async function probeTrainingPeaksMoveCapabilities(
       probe.detail.datePickerOpened = dateHeaderClickSucceeded ? datePickerOpenedSnapshot : false;
       probe.detail.datePickerSelectorHint = datePickerSelectorHint;
       if (dateHeaderClickSucceeded && probe.detail.datePickerOpened) {
+        const targetDateIso = comparison.targetDate.current ?? comparison.targetDate.trusted;
+        probe.detail.targetDateSelectionAttempted = false;
+        if (probe.detail.targetDayVisible && targetDateIso) {
+          probe.detail.targetDateSelectionAttempted = true;
+          const clickTargetStep = "select target date";
+          markStep(clickTargetStep);
+          try {
+            await withUiProbeTimeout(clickTargetStep, 2_000, async () => {
+              await clickVisibleTargetDayInDatePicker(page, targetDateIso);
+            });
+            const postSelection = await withUiProbeTimeout("verify target date selection", 2_000, async () => {
+              return await detectVisibleDatePickerSnapshot(page, {
+                dateHeaderBox: probe.detail.dateHeaderBoundingBox,
+                dateHeaderText: probe.detail.dateHeaderText,
+                sourceDateIso: comparison.sourceDate.current ?? comparison.sourceDate.trusted,
+                targetDateIso,
+              });
+            });
+            probe.detail.datePickerDetectionStrategy =
+              postSelection.strategy ?? probe.detail.datePickerDetectionStrategy;
+            probe.detail.datePickerBoundingBox = postSelection.boundingBox ?? probe.detail.datePickerBoundingBox;
+            probe.detail.visibleMonth = postSelection.visibleMonth ?? probe.detail.visibleMonth;
+            probe.detail.visibleYear = postSelection.visibleYear ?? probe.detail.visibleYear;
+            probe.detail.visibleDayCandidates = postSelection.visibleDayCandidates.length
+              ? [...postSelection.visibleDayCandidates]
+              : probe.detail.visibleDayCandidates;
+            probe.detail.targetDayVisible = postSelection.targetDayVisible || probe.detail.targetDayVisible;
+            probe.detail.selectedSourceDayVisible =
+              postSelection.selectedSourceDayVisible || probe.detail.selectedSourceDayVisible;
+            probe.detail.targetDateSelectionConfirmed =
+              postSelection.targetDaySelectedVisible || probe.detail.targetDateSelectionConfirmed;
+            probe.detail.datePickerOpenCheckSnippets.push(
+              ...postSelection.snippets.slice(0, Math.max(0, 12 - probe.detail.datePickerOpenCheckSnippets.length))
+            );
+          } catch (error) {
+            probe.warnings.push(`Target date selection attempt failed safely: ${toShortErrorMessage(error)}`);
+          } finally {
+            completeStep(clickTargetStep);
+          }
+        }
         probe.screenshots.datePickerOpened = await captureProbeScreenshot(
           page,
           screenshotDatePickerOpenedPath,
@@ -4645,6 +4921,15 @@ function probeToDriverProbeShape(probe: UiCapabilityProbe): TrainingPeaksProbeLi
       datePickerOpened: detail.datePickerOpened,
       saveButtonFound: detail.saveButtonFound,
       saveAndCloseButtonFound: detail.saveAndCloseButtonFound,
+      datePickerDetectionStrategy: detail.datePickerDetectionStrategy,
+      datePickerBoundingBox: detail.datePickerBoundingBox,
+      visibleMonth: detail.visibleMonth,
+      visibleYear: detail.visibleYear,
+      visibleDayCandidates: [...detail.visibleDayCandidates],
+      targetDayVisible: detail.targetDayVisible,
+      selectedSourceDayVisible: detail.selectedSourceDayVisible,
+      targetDateSelectionAttempted: detail.targetDateSelectionAttempted,
+      targetDateSelectionConfirmed: detail.targetDateSelectionConfirmed,
       opened: detail.opened,
       closeSucceeded: detail.closeSucceeded,
     },
@@ -5000,6 +5285,11 @@ async function main(): Promise<void> {
         runId: run.id,
         revalidationPassed: true,
         mutationOccurred: false,
+        datePickerOpened: prepareMoveWorkoutResult.datePickerOpened,
+        targetDateVisible: prepareMoveWorkoutResult.targetDateVisible,
+        datePickerDetectionStrategy: prepareMoveWorkoutResult.datePickerDetectionStrategy,
+        targetDateSelectionAttempted: prepareMoveWorkoutResult.targetDateSelectionAttempted,
+        targetDateSelectionConfirmed: prepareMoveWorkoutResult.targetDateSelectionConfirmed,
         trainingPeaksDriver: driverLogJsonSlice,
         uiCapabilityProbeErrors: uiCapabilityProbe.errors,
         diagnostics: prepareMoveWorkoutResult,

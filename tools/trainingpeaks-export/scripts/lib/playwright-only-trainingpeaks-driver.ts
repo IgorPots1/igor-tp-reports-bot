@@ -21,6 +21,15 @@ export type ProbeLike = {
     datePickerOpened: boolean;
     saveButtonFound: boolean;
     saveAndCloseButtonFound: boolean;
+    datePickerDetectionStrategy: string | null;
+    datePickerBoundingBox: { x: number; y: number; width: number; height: number } | null;
+    visibleMonth: string | null;
+    visibleYear: string | null;
+    visibleDayCandidates: number[];
+    targetDayVisible: boolean;
+    selectedSourceDayVisible: boolean;
+    targetDateSelectionAttempted: boolean;
+    targetDateSelectionConfirmed: boolean;
     opened: boolean;
     closeSucceeded: boolean;
   };
@@ -118,14 +127,17 @@ export function derivePrepareMoveWorkoutResultFromProbe(
   const candidateFingerprintOk = input.candidateFingerprintMatches;
 
   const dateHeaderText = probe.detail.dateHeaderText;
-  const datePickerOpened = probe.detail.datePickerOpened;
   const saveButtonVisible =
     probe.detail.saveButtonFound || probe.detail.saveAndCloseButtonFound;
 
   const targetIso = input.targetDateIso;
+  const datePickerOpened = probe.detail.datePickerOpened;
+  const targetDateSelectionConfirmed = probe.detail.targetDateSelectionConfirmed;
   const targetDateVisible =
     targetIso !== null
-      ? naturalLanguageTextsReferenceTargetIso(targetIso, [dateHeaderText, probe.detail.currentDateValue])
+      ? probe.detail.targetDayVisible ||
+        targetDateSelectionConfirmed ||
+        naturalLanguageTextsReferenceTargetIso(targetIso, [dateHeaderText, probe.detail.currentDateValue])
       : false;
 
   const instabilityHints = [
@@ -160,27 +172,24 @@ export function derivePrepareMoveWorkoutResultFromProbe(
     recommendedNextDriver = "manual";
   } else if (combinedErrors.some((line) => instabilityHints.some((hint) => line.includes(hint)))) {
     status = "needs_manual";
-    recommendedNextDriver = "stagehand";
+    recommendedNextDriver = "manual";
     failureReason = failureReason ?? "Datepicker probing was unstable under Playwright selectors.";
-  } else if (
-    probe.detail.opened &&
-    !targetDateVisible &&
-    probe.errors.length === 0
-  ) {
+  } else if (probe.detail.opened && datePickerOpened && !targetDateSelectionConfirmed && probe.errors.length === 0) {
     status = "needs_manual";
     recommendedNextDriver = "manual";
-    failureReason = failureReason ?? "Target date is not visibly selected and verified on the modal.";
+    failureReason = failureReason ?? "Datepicker opened but target date could not be safely confirmed as selected.";
   } else if (!targetDateVisible) {
     status = "needs_manual";
-    recommendedNextDriver = probe.errors.length === 0 ? "manual" : "stagehand";
+    recommendedNextDriver = "manual";
     failureReason = failureReason ?? "Target selection could not be verified safely.";
+  } else if (datePickerOpened && targetDateSelectionConfirmed) {
+    status = "ready_to_save";
+    recommendedNextDriver = "playwright";
+    failureReason = null;
   } else {
-    // Even if the header matched the target unexpectedly, mutations via Save/Save & Close remain forbidden externally.
     status = "needs_manual";
     recommendedNextDriver = "playwright";
-    failureReason =
-      failureReason ??
-      "prepareMoveWorkout does not certify ready_to_save until execution policy is wired (Phase 3D).";
+    failureReason = failureReason ?? "Target date visibility was inferred but selected state could not be confirmed.";
   }
 
   return {
@@ -192,6 +201,16 @@ export function derivePrepareMoveWorkoutResultFromProbe(
     dateHeaderText,
     datePickerOpened,
     targetDateVisible,
+    datePickerDetectionStrategy: probe.detail.datePickerDetectionStrategy,
+    datePickerBoundingBox: probe.detail.datePickerBoundingBox,
+    visibleMonth: probe.detail.visibleMonth,
+    visibleYear: probe.detail.visibleYear,
+    visibleDayCandidates: [...probe.detail.visibleDayCandidates],
+    targetDayVisible: probe.detail.targetDayVisible,
+    selectedSourceDayVisible: probe.detail.selectedSourceDayVisible,
+    targetDateSelectionAttempted: probe.detail.targetDateSelectionAttempted,
+    targetDateSelectionConfirmed,
+    mutationOccurred: false,
     saveButtonVisible,
     screenshots: { ...probe.screenshots },
     stepHistory: [...probe.progress.stepHistory],
@@ -215,6 +234,16 @@ export class PlaywrightOnlyTrainingPeaksDriver implements TrainingPeaksAutomatio
       dateHeaderText: null,
       datePickerOpened: false,
       targetDateVisible: false,
+      datePickerDetectionStrategy: null,
+      datePickerBoundingBox: null,
+      visibleMonth: null,
+      visibleYear: null,
+      visibleDayCandidates: [],
+      targetDayVisible: false,
+      selectedSourceDayVisible: false,
+      targetDateSelectionAttempted: false,
+      targetDateSelectionConfirmed: false,
+      mutationOccurred: false,
       saveButtonVisible: false,
       screenshots: {},
       stepHistory: [],
@@ -250,6 +279,15 @@ export class PlaywrightOnlyTrainingPeaksDriver implements TrainingPeaksAutomatio
             datePickerOpened: false,
             saveButtonFound: false,
             saveAndCloseButtonFound: false,
+            datePickerDetectionStrategy: null,
+            datePickerBoundingBox: null,
+            visibleMonth: null,
+            visibleYear: null,
+            visibleDayCandidates: [],
+            targetDayVisible: false,
+            selectedSourceDayVisible: false,
+            targetDateSelectionAttempted: false,
+            targetDateSelectionConfirmed: false,
             opened: false,
             closeSucceeded: false,
           },

@@ -11,6 +11,16 @@ export interface PrepareMoveWorkoutResult {
   dateHeaderText: string | null;
   datePickerOpened: boolean;
   targetDateVisible: boolean;
+  datePickerDetectionStrategy: string | null;
+  datePickerBoundingBox: { x: number; y: number; width: number; height: number } | null;
+  visibleMonth: string | null;
+  visibleYear: string | null;
+  visibleDayCandidates: number[];
+  targetDayVisible: boolean;
+  selectedSourceDayVisible: boolean;
+  targetDateSelectionAttempted: boolean;
+  targetDateSelectionConfirmed: boolean;
+  mutationOccurred: boolean;
   saveButtonVisible: boolean;
   screenshots: Record<string, string | null>;
   stepHistory: string[];
