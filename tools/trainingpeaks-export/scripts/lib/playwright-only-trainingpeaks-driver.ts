@@ -227,6 +227,18 @@ export function derivePrepareMoveWorkoutResultFromProbe(
     failureReason = failureReason ?? "Target date visibility was inferred but selected state could not be confirmed.";
   }
 
+  const stepHistory = [...probe.progress.stepHistory];
+  if (targetDateSelectionConfirmed) {
+    const filtered = stepHistory.filter((step) => step !== "best-effort target date selection failed");
+    const hasConfirmedOrSucceeded = filtered.some((step) =>
+      /^best-effort target date selection (confirmed|succeeded)$/i.test(step)
+    );
+    if (!hasConfirmedOrSucceeded) {
+      filtered.push("best-effort target date selection confirmed");
+    }
+    stepHistory.splice(0, stepHistory.length, ...filtered);
+  }
+
   return {
     status,
     athleteIdentityOk,
@@ -258,7 +270,7 @@ export function derivePrepareMoveWorkoutResultFromProbe(
     mutationOccurred: probe.detail.mutationOccurred,
     saveButtonVisible,
     screenshots: { ...probe.screenshots },
-    stepHistory: [...probe.progress.stepHistory],
+    stepHistory,
     failureReason,
     recommendedNextDriver,
   };

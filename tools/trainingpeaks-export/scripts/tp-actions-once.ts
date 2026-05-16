@@ -6026,6 +6026,10 @@ async function main(): Promise<void> {
     }
 
     if (prepareOnly) {
+      const uiCapabilityProbeErrors =
+        prepareMoveWorkoutResult.status === "ready_to_save"
+          ? uiCapabilityProbe.errors.filter((entry) => !/currentStep\s*=\s*unknown/i.test(entry))
+          : uiCapabilityProbe.errors;
       const summaryPayload = {
         actionId: claimed.action.id,
         runId: run.id,
@@ -6057,7 +6061,7 @@ async function main(): Promise<void> {
         datepickerDomDebugTopCandidates: prepareMoveWorkoutResult.datepickerDomDebugTopCandidates,
         datepickerDomDebugError: prepareMoveWorkoutResult.datepickerDomDebugError,
         trainingPeaksDriver: driverLogJsonSlice,
-        uiCapabilityProbeErrors: uiCapabilityProbe.errors,
+        uiCapabilityProbeErrors,
         diagnostics: prepareMoveWorkoutResult,
       };
       console.log(JSON.stringify({ prepareOnlySummary: summaryPayload }, null, 2));
