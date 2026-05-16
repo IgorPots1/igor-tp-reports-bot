@@ -363,7 +363,11 @@ type DatepickerDebugCaptureResult = {
 
 type TrainingPeaksMoveWorkoutTarget =
   | { kind: "date"; value: string; sourceText?: string }
-  | { kind: "relative_day"; value: "tomorrow" | "day_after_tomorrow"; sourceText?: string }
+  | {
+      kind: "relative_day";
+      value: "yesterday" | "today" | "tomorrow" | "day_after_tomorrow";
+      sourceText?: string;
+    }
   | {
       kind: "weekday";
       value: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
@@ -787,14 +791,93 @@ function getTargetSummary(parsedPayload: unknown): string {
   return "target: unknown";
 }
 
-function toIsoDate(value: Date): string {
-  return value.toISOString().slice(0, 10);
+const MOVE_DATE_TIMEZONE = "Europe/Belgrade";
+const YYYY_MM_DD_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+function getBelgradeDateParts(value: Date): { year: number; month: number; day: number; weekday: number } {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: MOVE_DATE_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+  });
+  const parts = formatter.formatToParts(value);
+  const year = Number(parts.find((part) => part.type === "year")?.value ?? "");
+  const month = Number(parts.find((part) => part.type === "month")?.value ?? "");
+  const day = Number(parts.find((part) => part.type === "day")?.value ?? "");
+  const weekdayRaw = (parts.find((part) => part.type === "weekday")?.value ?? "").toLowerCase();
+  const weekdayMap: Record<string, number> = {
+    sun: 0,
+    mon: 1,
+    tue: 2,
+    wed: 3,
+    thu: 4,
+    fri: 5,
+    sat: 6,
+  };
+  const weekday = weekdayMap[weekdayRaw];
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day) || weekday === undefined) {
+    throw new Error(`Unable to derive Belgrade date parts for ${value.toISOString()}`);
+  }
+  return { year, month, day, weekday };
 }
 
-function addDays(value: Date, days: number): Date {
-  const next = new Date(value);
-  next.setUTCDate(next.getUTCDate() + days);
-  return next;
+function formatIsoDateParts(year: number, month: number, day: number): string {
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function toBelgradeIsoDate(value: Date): string {
+  const parts = getBelgradeDateParts(value);
+  return formatIsoDateParts(parts.year, parts.month, parts.day);
+}
+
+function addLocalDaysIso(baseIsoDate: string, days: number): string {
+  const match = baseIsoDate.match(YYYY_MM_DD_PATTERN);
+  if (!match) {
+    return baseIsoDate;
+  }
+  const dt = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + days, 12, 0, 0));
+  return toBelgradeIsoDate(dt);
+}
+
+function resolveWeekdayFromBaseIso(
+  baseIsoDate: string,
+  targetWeekday: number,
+  direction: "next" | "previous"
+): string {
+  const match = baseIsoDate.match(YYYY_MM_DD_PATTERN);
+  if (!match) {
+    return baseIsoDate;
+  }
+  const baseDate = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12, 0, 0));
+  const baseWeekday = getBelgradeDateParts(baseDate).weekday;
+  if (direction === "next") {
+    let delta = (targetWeekday - baseWeekday + 7) % 7;
+    if (delta === 0) {
+      delta = 7;
+    }
+    return addLocalDaysIso(baseIsoDate, delta);
+  }
+  const deltaBack = (baseWeekday - targetWeekday + 7) % 7;
+  return addLocalDaysIso(baseIsoDate, -deltaBack);
+}
+
+function getRelativeLocalIsoDate(
+  kind: "today" | "tomorrow" | "day_after_tomorrow" | "yesterday",
+  baseDate: Date
+): string {
+  const baseIso = toBelgradeIsoDate(baseDate);
+  if (kind === "today") {
+    return baseIso;
+  }
+  if (kind === "tomorrow") {
+    return addLocalDaysIso(baseIso, 1);
+  }
+  if (kind === "day_after_tomorrow") {
+    return addLocalDaysIso(baseIso, 2);
+  }
+  return addLocalDaysIso(baseIso, -1);
 }
 
 function clampConfidence(value: number): number {
@@ -825,9 +908,12 @@ function parseMoveWorkoutPayload(parsedPayload: unknown): ParsedMoveWorkoutPaylo
   return payload;
 }
 
-function resolveTargetDateFromPayload(target: TrainingPeaksMoveWorkoutTarget): { targetDate: string; warnings: string[] } {
+function resolveTargetDateFromPayload(
+  target: TrainingPeaksMoveWorkoutTarget,
+  baseDate: Date
+): { targetDate: string; warnings: string[] } {
   const warnings: string[] = [];
-  const now = new Date();
+  const nowIso = toBelgradeIsoDate(baseDate);
 
   if (target.kind === "date") {
     const normalized = normalizeDateCandidate(target.value);
@@ -835,14 +921,17 @@ function resolveTargetDateFromPayload(target: TrainingPeaksMoveWorkoutTarget): {
       return { targetDate: normalized, warnings };
     }
     warnings.push("target date is invalid");
-    return { targetDate: toIsoDate(now), warnings };
+    return { targetDate: nowIso, warnings };
   }
 
   if (target.kind === "relative_day") {
     if (target.value === "tomorrow") {
-      return { targetDate: toIsoDate(addDays(now, 1)), warnings };
+      return { targetDate: getRelativeLocalIsoDate("tomorrow", baseDate), warnings };
     }
-    return { targetDate: toIsoDate(addDays(now, 2)), warnings };
+    if (target.value === "day_after_tomorrow") {
+      return { targetDate: getRelativeLocalIsoDate("day_after_tomorrow", baseDate), warnings };
+    }
+    return { targetDate: getRelativeLocalIsoDate("today", baseDate), warnings };
   }
 
   const weekdayMap: Record<TrainingPeaksMoveWorkoutTarget["value"], number> = {
@@ -857,18 +946,53 @@ function resolveTargetDateFromPayload(target: TrainingPeaksMoveWorkoutTarget): {
     day_after_tomorrow: 0,
   };
 
-  const nowWeekday = now.getUTCDay();
   const targetWeekday = weekdayMap[target.value];
   if (targetWeekday === undefined) {
     warnings.push("target weekday is unknown");
-    return { targetDate: toIsoDate(now), warnings };
+    return { targetDate: nowIso, warnings };
   }
+  return { targetDate: resolveWeekdayFromBaseIso(nowIso, targetWeekday, "next"), warnings };
+}
 
-  let delta = (targetWeekday - nowWeekday + 7) % 7;
-  if (delta === 0) {
-    delta = 7;
+function resolveSourceDateFromPayload(
+  source: TrainingPeaksMoveWorkoutTarget | null | undefined,
+  targetDateIso: string | null,
+  baseDate: Date
+): { sourceDate: string | null; warnings: string[] } {
+  const warnings: string[] = [];
+  if (!source) {
+    return { sourceDate: null, warnings };
   }
-  return { targetDate: toIsoDate(addDays(now, delta)), warnings };
+  const baseIso = toBelgradeIsoDate(baseDate);
+  if (source.kind === "date") {
+    return { sourceDate: normalizeDateCandidate(source.value), warnings };
+  }
+  if (source.kind === "relative_day") {
+    return { sourceDate: getRelativeLocalIsoDate(source.value, baseDate), warnings };
+  }
+  const weekdayMap: Record<TrainingPeaksMoveWorkoutTarget["value"], number> = {
+    monday: 1,
+    tuesday: 2,
+    wednesday: 3,
+    thursday: 4,
+    friday: 5,
+    saturday: 6,
+    sunday: 0,
+    yesterday: 0,
+    today: 0,
+    tomorrow: 0,
+    day_after_tomorrow: 0,
+  };
+  const targetWeekday = weekdayMap[source.value];
+  if (targetWeekday === undefined) {
+    warnings.push("source weekday is unknown");
+    return { sourceDate: null, warnings };
+  }
+  let resolved = resolveWeekdayFromBaseIso(baseIso, targetWeekday, "previous");
+  if (targetDateIso && resolved >= targetDateIso) {
+    resolved = addLocalDaysIso(resolved, -7);
+  }
+  return { sourceDate: resolved, warnings };
 }
 
 function dateDistanceDays(fromIso: string, toIso: string): number {
@@ -886,8 +1010,7 @@ function normalizeDateCandidate(raw: string): string | null {
 
   const slash = raw.trim().match(/^(\d{1,2})[./-](\d{1,2})(?:[./-](\d{4}))?$/);
   if (slash) {
-    const now = new Date();
-    const year = slash[3] ? Number(slash[3]) : now.getUTCFullYear();
+    const year = slash[3] ? Number(slash[3]) : getBelgradeDateParts(new Date()).year;
     const month = Number(slash[2]);
     const day = Number(slash[1]);
     if (Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day)) {
@@ -942,6 +1065,31 @@ function extractExplicitSourceDate(input: { rawText: string; parsedPayload: unkn
   return null;
 }
 
+function extractExplicitSourceTimeRef(input: {
+  parsedPayload: unknown;
+}): TrainingPeaksMoveWorkoutTarget | null {
+  const payload = input.parsedPayload && typeof input.parsedPayload === "object"
+    ? (input.parsedPayload as ParsedMoveWorkoutPayload)
+    : null;
+  const source = payload?.source;
+  if (!source || typeof source !== "object" || !("kind" in source) || !("value" in source)) {
+    return null;
+  }
+  const kind = source.kind;
+  const value = source.value;
+  if (kind !== "date" && kind !== "relative_day" && kind !== "weekday") {
+    return null;
+  }
+  if (typeof value !== "string" || !value) {
+    return null;
+  }
+  return {
+    kind,
+    value,
+    sourceText: "sourceText" in source && typeof source.sourceText === "string" ? source.sourceText : undefined,
+  } as TrainingPeaksMoveWorkoutTarget;
+}
+
 function formatDryRunReasonForCoach(reason: string): string {
   if (reason === "multiple candidates on selected source date") {
     return "Найдено несколько тренировок на исходную дату";
@@ -975,6 +1123,11 @@ function candidateLooksLikeWorkoutCard(candidate: RawWorkoutCandidate): boolean 
 function isTargetTomorrow(action: TrainingPeaksActionRow): boolean {
   const parsed = parseMoveWorkoutPayload(action.parsed_payload);
   return parsed?.target?.kind === "relative_day" && parsed.target.value === "tomorrow";
+}
+
+function isTargetToday(action: TrainingPeaksActionRow): boolean {
+  const parsed = parseMoveWorkoutPayload(action.parsed_payload);
+  return parsed?.target?.kind === "relative_day" && parsed.target.value === "today";
 }
 
 function normalizeWhitespace(value: string | null | undefined): string {
@@ -1893,6 +2046,7 @@ async function claimOneExecutePendingActionForRealMode(runnerId: string): Promis
   const supabase = getSupabase();
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
+    console.debug(`[execute-real] selection_attempt=${attempt + 1} filtering status=approved execution_status=execute_pending`);
     const { data: candidate, error: selectError } = await supabase
       .from("trainingpeaks_actions")
       .select("*")
@@ -1911,11 +2065,54 @@ async function claimOneExecutePendingActionForRealMode(runnerId: string): Promis
     }
 
     if (!candidate) {
+      const { data: debugRows, error: debugError } = await supabase
+        .from("trainingpeaks_actions")
+        .select("id,status,execution_status,last_run_id,execution_requested_at,approved_at,created_at")
+        .eq("action_type", "move_workout")
+        .eq("status", "approved")
+        .eq("execution_status", "execute_pending")
+        .order("execution_requested_at", { ascending: true, nullsFirst: false })
+        .order("approved_at", { ascending: true, nullsFirst: false })
+        .order("created_at", { ascending: true })
+        .limit(5);
+      if (debugError) {
+        console.warn(`[execute-real] debug lookup failed: ${debugError.message}`);
+      } else {
+        const rows = (debugRows as Array<Record<string, unknown>> | null) ?? [];
+        if (rows.length === 0) {
+          console.debug("[execute-real] no rows found with status=approved execution_status=execute_pending");
+        } else {
+          for (const row of rows) {
+            const whySkipped = row.last_run_id ? "eligible_for_claim_query" : "missing_last_run_id";
+            console.warn(
+              `[execute-real] candidate_not_claimable id=${String(row.id)} status=${String(
+                row.status
+              )} execution_status=${String(row.execution_status)} reason=${whySkipped}`
+            );
+            if (!row.last_run_id) {
+              console.warn(
+                `[execute-real] approved action ${String(
+                  row.id
+                )} has execute_pending but no trusted dry-run baseline (last_run_id). Queue dry-run first, then request execute.`
+              );
+            }
+          }
+        }
+      }
       return null;
     }
 
     const action = candidate as TrainingPeaksActionRow;
+    console.log(
+      `[execute-real] action_ready_for_execute id=${action.id} trusted_last_run_id=${action.last_run_id ?? "null"}`
+    );
+    console.log(
+      `[execute-real] selected_action id=${action.id} status=${action.status} execution_status=${action.execution_status} last_run_id=${action.last_run_id ?? "null"}`
+    );
     if (!action.last_run_id) {
+      console.warn(
+        `[execute-real] skipping id=${action.id} status=${action.status} execution_status=${action.execution_status}: missing_last_run_id`
+      );
       continue;
     }
 
@@ -1933,14 +2130,18 @@ async function claimOneExecutePendingActionForRealMode(runnerId: string): Promis
     }
 
     if (!trustedRunData) {
-      console.warn(`Skipping execute_pending action ${action.id}: trusted dry-run row ${action.last_run_id} not found.`);
+      console.warn(
+        `[execute-real] skipping id=${action.id} status=${action.status} execution_status=${action.execution_status}: trusted dry-run row ${action.last_run_id} not found`
+      );
       continue;
     }
 
     const trustedDryRunRun = trustedRunData as TrainingPeaksActionRunRow;
     const trustedDryRunLog = normalizeTrustedDryRunLog(trustedDryRunRun.log_json);
     if (!trustedDryRunLog) {
-      console.warn(`Skipping execute_pending action ${action.id}: trusted dry-run log is not safe for real-mode revalidation.`);
+      console.warn(
+        `[execute-real] skipping id=${action.id} status=${action.status} execution_status=${action.execution_status}: trusted dry-run log is not safe for real-mode revalidation`
+      );
       continue;
     }
 
@@ -1964,10 +2165,16 @@ async function claimOneExecutePendingActionForRealMode(runnerId: string): Promis
     }
 
     if (!claimed) {
+      console.warn(
+        `[execute-real] skipping id=${action.id} status=${action.status} execution_status=${action.execution_status}: claim_conflict_or_state_changed`
+      );
       continue;
     }
 
     const claimedAction = claimed as TrainingPeaksActionRow;
+    console.log(
+      `[execute-real] claimed_action id=${claimedAction.id} status=${claimedAction.status} execution_status=${claimedAction.execution_status}`
+    );
     let student: TrainingPeaksStudentRow | null = null;
     if (claimedAction.student_id) {
       const { data: studentData, error: studentError } = await supabase
@@ -4943,7 +5150,7 @@ async function extractWorkoutCandidatesFromPage(
   page: import("playwright").Page,
   targetDateIso: string | null
 ): Promise<WorkoutExtractionResult> {
-  const nowIso = toIsoDate(new Date());
+  const nowIso = toBelgradeIsoDate(new Date());
   const domDebugEnabled = isTruthyEnvFlag("TP_DRY_RUN_DOM_DEBUG");
   const parseWarnings: string[] = [];
   const checkpoints: DryRunDomDebugCheckpoint[] = [];
@@ -5342,7 +5549,8 @@ function evaluateDryRunOutcome(input: {
 }): DryRunEvaluation {
   const parseWarnings: string[] = [];
   const payload = parseMoveWorkoutPayload(input.action.parsed_payload);
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? null;
+  const timezone = MOVE_DATE_TIMEZONE;
+  const baseDate = new Date();
   let targetDate: string | null = null;
   let sourceDate: string | null = null;
   let selectedSourceDatePolicy = "unresolved";
@@ -5351,7 +5559,7 @@ function evaluateDryRunOutcome(input: {
   if (!payload?.target) {
     parseWarnings.push("parsed_payload.target is missing or invalid");
   } else {
-    const resolved = resolveTargetDateFromPayload(payload.target);
+    const resolved = resolveTargetDateFromPayload(payload.target, baseDate);
     targetDate = resolved.targetDate;
     parseWarnings.push(...resolved.warnings);
   }
@@ -5363,6 +5571,18 @@ function evaluateDryRunOutcome(input: {
   if (explicitSourceDate) {
     selectedSourceDatePolicy = "explicit_source_date";
     selectedSourceDate = explicitSourceDate;
+  } else {
+    const explicitSourceRef = extractExplicitSourceTimeRef({
+      parsedPayload: input.action.parsed_payload,
+    });
+    if (explicitSourceRef) {
+      const resolvedSource = resolveSourceDateFromPayload(explicitSourceRef, targetDate, baseDate);
+      parseWarnings.push(...resolvedSource.warnings);
+      if (resolvedSource.sourceDate) {
+        selectedSourceDatePolicy = "explicit_source_ref";
+        selectedSourceDate = resolvedSource.sourceDate;
+      }
+    }
   }
 
   const diagnostics: DryRunDiagnostics = {
@@ -5518,8 +5738,12 @@ function evaluateDryRunOutcome(input: {
   }
 
   if (!selectedSourceDate && targetDate && isTargetTomorrow(input.action)) {
-    selectedSourceDate = toIsoDate(new Date());
+    selectedSourceDate = getRelativeLocalIsoDate("today", baseDate);
     selectedSourceDatePolicy = "target_tomorrow_prefers_today";
+  }
+  if (!selectedSourceDate && targetDate && isTargetToday(input.action)) {
+    selectedSourceDate = getRelativeLocalIsoDate("yesterday", baseDate);
+    selectedSourceDatePolicy = "target_today_prefers_yesterday";
   }
 
   if (!selectedSourceDate && targetDate) {
@@ -6025,7 +6249,7 @@ async function inspectActionCalendar(claimed: ClaimedAction, runId: string): Pro
 
     const parsedPayload = parseMoveWorkoutPayload(claimed.action.parsed_payload);
     const resolvedTargetDate = parsedPayload?.target
-      ? resolveTargetDateFromPayload(parsedPayload.target).targetDate
+      ? resolveTargetDateFromPayload(parsedPayload.target, new Date()).targetDate
       : null;
     const extraction = await extractWorkoutCandidatesFromPage(page, resolvedTargetDate);
     const dryRunEvaluation = evaluateDryRunOutcome({
@@ -7032,6 +7256,9 @@ async function main(): Promise<void> {
       return;
     }
 
+    console.log(
+      `[dry-run] action_queued_for_dry_run id=${claimed.action.id} status=${claimed.action.status} execution_status=${claimed.action.execution_status}`
+    );
     console.log(`Claimed TrainingPeaks action ${claimed.action.id} for dry-run.`);
     const run = await createActionRun(claimed.action.id, runnerId, "dry_run");
     const baseLog: Record<string, unknown> = {

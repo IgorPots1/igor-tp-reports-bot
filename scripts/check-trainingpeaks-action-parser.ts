@@ -8,6 +8,12 @@ type ParseCase = {
   expectOk: boolean;
 };
 
+type DeterministicResolveCase = {
+  text: string;
+  expectedSourceDate: string;
+  expectedTargetDate: string;
+};
+
 /**
  * Positive examples: explicit reschedule requests that must parse successfully.
  */
@@ -42,6 +48,34 @@ const expectRejectCases: ParseCase[] = [
   { text: "сегодня не успеваю, можно завтра?", expectOk: false },
   { text: "перенеси тренировку", expectOk: false },
   { text: "завтра или в пятницу", expectOk: false },
+];
+
+const deterministicCases: DeterministicResolveCase[] = [
+  {
+    text: "перенеси тренировку с 17 мая на 19 мая",
+    expectedSourceDate: "2026-05-17",
+    expectedTargetDate: "2026-05-19",
+  },
+  {
+    text: "перенеси тренировку с 16 мая на 19 мая",
+    expectedSourceDate: "2026-05-16",
+    expectedTargetDate: "2026-05-19",
+  },
+  {
+    text: "перенеси вчерашнюю тренировку на сегодня",
+    expectedSourceDate: "2026-05-16",
+    expectedTargetDate: "2026-05-17",
+  },
+  {
+    text: "перенеси сегодняшнюю тренировку на завтра",
+    expectedSourceDate: "2026-05-17",
+    expectedTargetDate: "2026-05-18",
+  },
+  {
+    text: "перенеси тренировку с субботы на понедельник",
+    expectedSourceDate: "2026-05-16",
+    expectedTargetDate: "2026-05-18",
+  },
 ];
 
 /** Gate-only checks: obvious non-actions must fail before deterministic / AI. */
@@ -98,6 +132,54 @@ async function run(): Promise<void> {
   console.log(
     `${casualReasonOk}: AI skipped path — casual message reason is "${casual.ok ? "unexpected ok" : casual.reason}"`
   );
+
+  const previousTimezone = process.env.TZ;
+  const previousBaseDate = process.env.TP_MOVE_DATE_BASE_DATE;
+  process.env.TZ = "Europe/Belgrade";
+  process.env.TP_MOVE_DATE_BASE_DATE = "2026-05-17";
+
+  for (const testCase of deterministicCases) {
+    const result = await parseTrainingPeaksMoveWorkoutRequest(testCase.text);
+    if (!result.ok) {
+      failed += 1;
+      console.log(`FAIL (deterministic parse): "${testCase.text}" -> ${JSON.stringify({ reason: result.reason })}`);
+      continue;
+    }
+
+    const source = result.payload.source;
+    const target = result.payload.target;
+    const sourceOk = source?.kind === "date" && source.value === testCase.expectedSourceDate;
+    const targetOk = target.kind === "date" && target.value === testCase.expectedTargetDate;
+    const ok = sourceOk && targetOk;
+
+    if (!ok) {
+      failed += 1;
+    }
+    console.log(
+      `${ok ? "PASS" : "FAIL"} (deterministic): "${testCase.text}" -> ${JSON.stringify(
+        {
+          gotSource: source?.kind === "date" ? source.value : `${source?.kind ?? "null"}:${source?.value ?? "null"}`,
+          gotTarget: target.kind === "date" ? target.value : `${target.kind}:${target.value}`,
+          expectedSource: testCase.expectedSourceDate,
+          expectedTarget: testCase.expectedTargetDate,
+          parser: result.payload.parser,
+        },
+        null,
+        2
+      )}`
+    );
+  }
+
+  if (previousTimezone === undefined) {
+    delete process.env.TZ;
+  } else {
+    process.env.TZ = previousTimezone;
+  }
+  if (previousBaseDate === undefined) {
+    delete process.env.TP_MOVE_DATE_BASE_DATE;
+  } else {
+    process.env.TP_MOVE_DATE_BASE_DATE = previousBaseDate;
+  }
 
   if (failed > 0) {
     process.exitCode = 1;

@@ -401,6 +401,7 @@ const TP_WEEKDAY_ALIASES: Record<string, string> = {
   ср: "wednesday",
   среда: "wednesday",
   среду: "wednesday",
+  среды: "wednesday",
   чт: "thursday",
   четверг: "thursday",
   четверга: "thursday",
@@ -411,16 +412,146 @@ const TP_WEEKDAY_ALIASES: Record<string, string> = {
   сб: "saturday",
   суббота: "saturday",
   субботу: "saturday",
+  субботы: "saturday",
   вс: "sunday",
   воскресенье: "sunday",
+  воскресенья: "sunday",
   воскресеньею: "sunday",
   воскресеньея: "sunday",
 };
 
+const TP_PARSER_TIMEZONE = "Europe/Belgrade";
+const ISO_YMD_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+function getBelgradeDateParts(value: Date): { year: number; month: number; day: number; weekday: number } {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TP_PARSER_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+  });
+  const parts = formatter.formatToParts(value);
+  const year = Number(parts.find((part) => part.type === "year")?.value ?? "");
+  const month = Number(parts.find((part) => part.type === "month")?.value ?? "");
+  const day = Number(parts.find((part) => part.type === "day")?.value ?? "");
+  const weekdayRaw = (parts.find((part) => part.type === "weekday")?.value ?? "").toLowerCase();
+  const weekdayMap: Record<string, number> = {
+    sun: 0,
+    mon: 1,
+    tue: 2,
+    wed: 3,
+    thu: 4,
+    fri: 5,
+    sat: 6,
+  };
+  const weekday = weekdayMap[weekdayRaw];
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day) || weekday === undefined) {
+    throw new Error(`Unable to derive parser date parts for ${value.toISOString()}`);
+  }
+  return { year, month, day, weekday };
+}
+
+function toIsoDate(year: number, month: number, day: number): string {
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function addLocalDaysIso(isoDate: string, days: number): string {
+  const match = isoDate.match(ISO_YMD_PATTERN);
+  if (!match) {
+    return isoDate;
+  }
+  const shifted = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + days, 12, 0, 0));
+  const parts = getBelgradeDateParts(shifted);
+  return toIsoDate(parts.year, parts.month, parts.day);
+}
+
+function getParserBaseDate(): Date {
+  const envBaseDate = process.env.TP_MOVE_DATE_BASE_DATE?.trim();
+  if (envBaseDate && ISO_DATE_PATTERN.test(envBaseDate)) {
+    const match = envBaseDate.match(ISO_YMD_PATTERN);
+    if (match) {
+      return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12, 0, 0));
+    }
+  }
+  return new Date();
+}
+
+function resolveRelativeDayIso(
+  value: "today" | "tomorrow" | "day_after_tomorrow" | "yesterday",
+  baseDate: Date
+): string {
+  const base = getBelgradeDateParts(baseDate);
+  const baseIso = toIsoDate(base.year, base.month, base.day);
+  if (value === "today") {
+    return baseIso;
+  }
+  if (value === "tomorrow") {
+    return addLocalDaysIso(baseIso, 1);
+  }
+  if (value === "day_after_tomorrow") {
+    return addLocalDaysIso(baseIso, 2);
+  }
+  return addLocalDaysIso(baseIso, -1);
+}
+
+function resolveWeekdayIso(value: string, baseDate: Date, direction: "next" | "previous"): string | null {
+  const weekdayMap: Record<string, number> = {
+    monday: 1,
+    tuesday: 2,
+    wednesday: 3,
+    thursday: 4,
+    friday: 5,
+    saturday: 6,
+    sunday: 0,
+  };
+  const target = weekdayMap[value];
+  if (target === undefined) {
+    return null;
+  }
+  const base = getBelgradeDateParts(baseDate);
+  const baseIso = toIsoDate(base.year, base.month, base.day);
+  if (direction === "next") {
+    let delta = (target - base.weekday + 7) % 7;
+    if (delta === 0) {
+      delta = 7;
+    }
+    return addLocalDaysIso(baseIso, delta);
+  }
+  const deltaBack = (base.weekday - target + 7) % 7;
+  return addLocalDaysIso(baseIso, -deltaBack);
+}
+
+function resolveTimeRefToDateIso(
+  ref: TrainingPeaksMoveWorkoutTimeRef | null | undefined,
+  baseDate: Date,
+  direction: "next" | "previous"
+): string | null {
+  if (!ref) {
+    return null;
+  }
+  if (ref.kind === "date") {
+    return ref.value;
+  }
+  if (ref.kind === "relative_day") {
+    if (ref.value === "today" || ref.value === "tomorrow" || ref.value === "day_after_tomorrow" || ref.value === "yesterday") {
+      return resolveRelativeDayIso(ref.value, baseDate);
+    }
+    return null;
+  }
+  return resolveWeekdayIso(ref.value, baseDate, direction);
+}
+
 const TP_RELATIVE_DAY_ALIASES: Record<string, string> = {
   сегодня: "today",
+  сегодняшнюю: "today",
+  "сегодняшнюю тренировку": "today",
   завтра: "tomorrow",
+  завтрашнюю: "tomorrow",
   послезавтра: "day_after_tomorrow",
+  вчера: "yesterday",
+  вчерашнюю: "yesterday",
+  вчерашний: "yesterday",
 };
 
 const TP_MONTH_ALIASES: Record<string, number> = {
@@ -640,15 +771,22 @@ function hasExplicitMoveTargetReference(normalized: string): boolean {
   }
   const weekdayNeedles = [
     "понедельник",
+    "понедельника",
     "вторник",
+    "вторника",
     "среду",
     "среда",
+    "среды",
     "четверг",
+    "четверга",
     "пятницу",
     "пятница",
+    "пятницы",
     "субботу",
     "суббота",
+    "субботы",
     "воскресенье",
+    "воскресенья",
   ];
   for (const w of weekdayNeedles) {
     if (normalized.includes(w)) {
@@ -679,7 +817,7 @@ function isParseableMoveWorkoutTimeRef(ref: TrainingPeaksMoveWorkoutTimeRef): bo
     return ISO_DATE_PATTERN.test(ref.value);
   }
   if (ref.kind === "relative_day") {
-    return ["today", "tomorrow", "day_after_tomorrow"].includes(ref.value);
+    return ["yesterday", "today", "tomorrow", "day_after_tomorrow"].includes(ref.value);
   }
   if (ref.kind === "weekday") {
     return ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].includes(ref.value);
@@ -713,6 +851,7 @@ function acceptsMoveWorkoutParseResult(
 function resolveDeterministicMoveWorkout(
   rawText: string
 ): ParseTrainingPeaksMoveWorkoutResult & { deterministicReason?: string } {
+  const parserBaseDate = getParserBaseDate();
   const normalized = normalizeRussianText(rawText);
   if (!normalized || !passesStrictMoveWorkoutIntentGate(normalized)) {
     return { ok: false, reason: "not_move_request" };
@@ -801,7 +940,7 @@ function resolveDeterministicMoveWorkout(
     return { ok: false, reason: "no_target_day" };
   }
 
-  if (target.kind === "relative_day" && target.value === "today") {
+  if (target.kind === "relative_day" && target.value === "today" && !source) {
     needsClarification = true;
     clarificationReason = clarificationReason ?? "target day equals today";
   }
@@ -825,7 +964,17 @@ function resolveDeterministicMoveWorkout(
     parser: "deterministic",
   };
 
-  if (normalizedSource?.kind === "date") {
+  const targetDateIso = resolveTimeRefToDateIso(normalizedTarget, parserBaseDate, "next");
+  if (targetDateIso && normalizedTarget.kind !== "date") {
+    payload.target = { ...normalizedTarget, kind: "date", value: targetDateIso };
+  }
+
+  const sourceDateIso = resolveTimeRefToDateIso(normalizedSource, parserBaseDate, "previous");
+  if (sourceDateIso && normalizedSource) {
+    payload.source = { ...normalizedSource, kind: "date", value: sourceDateIso };
+    payload.sourceDate = sourceDateIso;
+    payload.source_date = sourceDateIso;
+  } else if (normalizedSource?.kind === "date") {
     payload.sourceDate = normalizedSource.value;
     payload.source_date = normalizedSource.value;
   }
@@ -885,6 +1034,20 @@ export async function parseTrainingPeaksMoveWorkoutRequest(
     sourceDate: aiFallback.source?.kind === "date" ? aiFallback.source.value : undefined,
     source_date: aiFallback.source?.kind === "date" ? aiFallback.source.value : undefined,
   };
+
+  const parserBaseDate = getParserBaseDate();
+  const aiResolvedTargetDate = resolveTimeRefToDateIso(aiPayload.target, parserBaseDate, "next");
+  if (aiResolvedTargetDate && aiPayload.target.kind !== "date") {
+    aiPayload.target = { ...aiPayload.target, kind: "date", value: aiResolvedTargetDate };
+  }
+  if (aiPayload.source) {
+    const aiResolvedSourceDate = resolveTimeRefToDateIso(aiPayload.source, parserBaseDate, "previous");
+    if (aiResolvedSourceDate) {
+      aiPayload.source = { ...aiPayload.source, kind: "date", value: aiResolvedSourceDate };
+      aiPayload.sourceDate = aiResolvedSourceDate;
+      aiPayload.source_date = aiResolvedSourceDate;
+    }
+  }
 
   if (!acceptsMoveWorkoutParseResult(aiPayload, aiConfidence, normalized)) {
     logIgnoredTrainingPeaksMoveParser("parse_acceptance_failed", rawText);
