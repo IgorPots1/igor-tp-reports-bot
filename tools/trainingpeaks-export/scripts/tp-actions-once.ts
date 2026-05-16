@@ -138,6 +138,7 @@ type UiCapabilityProbeScreenshots = {
   detailOpened: string | null;
   beforeDateHeaderClick: string | null;
   afterDateHeaderClickAttempt1: string | null;
+  afterTargetDayClick: string | null;
   datePickerOpened: string | null;
   afterClosed: string | null;
   timeout: string | null;
@@ -1955,6 +1956,7 @@ function buildEmptyUiCapabilityProbe(): UiCapabilityProbe {
       detailOpened: null,
       beforeDateHeaderClick: null,
       afterDateHeaderClickAttempt1: null,
+      afterTargetDayClick: null,
       datePickerOpened: null,
       afterClosed: null,
       timeout: null,
@@ -3536,6 +3538,7 @@ async function clickVisibleTargetDayInDatePicker(
     return false;
   }
   const day = String(dayNum);
+  const exactDayRegex = new RegExp(`^\\s*${day}\\s*$`);
   const candidates = [
     page.locator(`.MuiPickersDay-root:has-text("${day}")`).first(),
     page.locator(`[aria-label*=" ${day} " i][role="gridcell"],button[aria-label*=" ${day} " i]`).first(),
@@ -3552,6 +3555,37 @@ async function clickVisibleTargetDayInDatePicker(
       }
     }
   }
+
+  const tdCandidates = await page.locator("td").filter({ hasText: exactDayRegex }).all().catch(() => [] as import("playwright").Locator[]);
+  for (const td of tdCandidates) {
+    if (!(await td.isVisible().catch(() => false))) continue;
+    const box = await td.boundingBox().catch(() => null);
+    if (!box || box.width > 80 || box.height > 60 || box.width < 5 || box.height < 5) continue;
+    try {
+      await td.click({ timeout: 1_500 });
+      return true;
+    } catch {
+      // continue
+    }
+  }
+
+  const spanDivCandidates = await page
+    .locator("span, div")
+    .filter({ hasText: exactDayRegex })
+    .all()
+    .catch(() => [] as import("playwright").Locator[]);
+  for (const el of spanDivCandidates) {
+    if (!(await el.isVisible().catch(() => false))) continue;
+    const box = await el.boundingBox().catch(() => null);
+    if (!box || box.width > 80 || box.height > 60 || box.width < 5 || box.height < 5) continue;
+    try {
+      await el.click({ timeout: 1_500 });
+      return true;
+    } catch {
+      // continue
+    }
+  }
+
   return false;
 }
 
@@ -3628,6 +3662,7 @@ async function probeTrainingPeaksMoveCapabilities(
   const screenshotBeforeDateHeaderClickPath = path.join(artifactDir, "probe2_before_date_header_click.png");
   const screenshotAfterDateHeaderClickAttempt1Path = path.join(artifactDir, "probe2_after_date_header_click_attempt_1.png");
   const screenshotDatePickerOpenedPath = path.join(artifactDir, "probe2_datepicker_opened.png");
+  const screenshotAfterTargetDayClickPath = path.join(artifactDir, "probe2_after_target_day_click.png");
   const datepickerDomDebugPath = path.join(artifactDir, "datepicker_dom_debug.json");
   const screenshotAfterClosedPath = path.join(artifactDir, "probe2_after_closed.png");
   const screenshotTimeoutPath = path.join(artifactDir, "probe_timeout.png");
@@ -4015,6 +4050,53 @@ async function probeTrainingPeaksMoveCapabilities(
       if (dateHeaderClickSucceeded && probe.detail.datePickerOpened) {
         const targetDateIso = comparison.targetDate.current ?? comparison.targetDate.trusted;
         probe.detail.targetDateSelectionAttempted = false;
+
+        if (!probe.detail.targetDateClickCandidateFound && targetDateIso && probe.detail.targetDayVisible) {
+          try {
+            const targetDayMatch = targetDateIso.match(/^\d{4}-\d{2}-(\d{2})$/);
+            const targetDayNum = targetDayMatch ? Number(targetDayMatch[1]) : NaN;
+            if (Number.isFinite(targetDayNum) && targetDayNum >= 1 && targetDayNum <= 31) {
+              const day = String(targetDayNum);
+              const dayRegex = new RegExp(`(^|\\D)${day}(\\D|$)`);
+              const dateHeaderBox = probe.detail.dateHeaderBoundingBox;
+              const locatorSpecs = [
+                { locator: page.locator(`.MuiPickersDay-root:has-text("${day}")`), hint: "MuiPickersDay" },
+                { locator: page.locator(`[role="gridcell"]`).filter({ hasText: new RegExp(`^\\s*${day}\\s*$`) }), hint: "gridcell" },
+                { locator: page.locator(`button[aria-label*="${day}"]`).filter({ hasText: dayRegex }), hint: "button[aria-label]" },
+                { locator: page.locator(`td`).filter({ hasText: new RegExp(`^\\s*${day}\\s*$`) }), hint: "td" },
+              ];
+              for (const spec of locatorSpecs) {
+                if (probe.detail.targetDateClickCandidateFound) break;
+                const allMatches = await spec.locator.all().catch(() => [] as import("playwright").Locator[]);
+                for (const loc of allMatches) {
+                  if (!(await loc.isVisible().catch(() => false))) continue;
+                  const box = await loc.boundingBox().catch(() => null);
+                  if (!box || box.width < 5 || box.height < 5) continue;
+                  if (box.width > 80 || box.height > 60) continue;
+                  if (dateHeaderBox) {
+                    const dx = Math.abs((box.x + box.width / 2) - (dateHeaderBox.x + dateHeaderBox.width / 2));
+                    const dy = (box.y + box.height / 2) - (dateHeaderBox.y + dateHeaderBox.height / 2);
+                    if (dx > 320 || dy < 0 || dy > 420) continue;
+                  }
+                  const text = await loc.textContent().catch(() => "");
+                  if (!dayRegex.test(text ?? "")) continue;
+                  probe.detail.targetDateClickCandidateFound = true;
+                  probe.detail.targetDateClickCandidateBoundingBox = {
+                    x: Math.round(box.x * 100) / 100,
+                    y: Math.round(box.y * 100) / 100,
+                    width: Math.round(box.width * 100) / 100,
+                    height: Math.round(box.height * 100) / 100,
+                  };
+                  console.log(`[ui-probe] target day candidate found via Playwright locator fallback (${spec.hint}, day ${day})`);
+                  break;
+                }
+              }
+            }
+          } catch (error) {
+            probe.warnings.push(`Playwright locator fallback for target day candidate failed: ${toShortErrorMessage(error)}`);
+          }
+        }
+
         if (probe.detail.targetDayVisible && targetDateIso && probe.detail.targetDateClickCandidateFound) {
           probe.detail.targetDateSelectionAttempted = true;
           const clickTargetStep = "select target date";
@@ -4052,37 +4134,21 @@ async function probeTrainingPeaksMoveCapabilities(
           } finally {
             completeStep(clickTargetStep);
           }
+          probe.screenshots.afterTargetDayClick = await captureProbeScreenshot(
+            page,
+            screenshotAfterTargetDayClickPath,
+            probe.warnings
+          );
         }
         probe.screenshots.datePickerOpened = await captureProbeScreenshot(
           page,
           screenshotDatePickerOpenedPath,
           probe.warnings
         );
-        console.log("[ui-probe] step: close datepicker");
-        probe.detail.datePickerCloseAttempted = true;
-        let datePickerStillVisible = false;
-        try {
-          datePickerStillVisible = await runStep("close datepicker", UI_PROBE_STEP_TIMEOUTS.closeDatepicker, async () => {
-            await page.keyboard.press("Escape").catch(() => {});
-            const closeDetection = await withUiProbeTimeout("verify datepicker closed", 1_000, async () => {
-              return await detectVisibleDatePickerSnapshot(page, {
-                dateHeaderBox: probe.detail.dateHeaderBoundingBox,
-                dateHeaderText: probe.detail.dateHeaderText,
-              });
-            }).catch(() => ({ opened: false, selectorHint: null, snippets: [] as string[] }));
-            return closeDetection.opened;
-          });
-          probe.detail.datePickerCloseSucceeded = !datePickerStillVisible;
-          probe.detail.datePickerCloseError = null;
-          if (datePickerStillVisible) {
-            probe.warnings.push("Escape did not fully close the datepicker before modal close.");
-          }
-        } catch (error) {
-          const closeError = toShortErrorMessage(error);
-          probe.detail.datePickerCloseSucceeded = false;
-          probe.detail.datePickerCloseError = closeError.slice(0, 300);
-          probe.warnings.push(`Close datepicker best-effort failed: ${probe.detail.datePickerCloseError}`);
-        }
+        probe.detail.datePickerCloseAttempted = false;
+        probe.detail.datePickerCloseSucceeded = false;
+        probe.detail.datePickerCloseError = "skipped_in_probe";
+        console.log("[ui-probe] close datepicker skipped (modal close will dismiss)");
       } else if (dateHeaderClickSucceeded) {
         probe.warnings.push("Date header clicked, but datepicker was not detected within timeout");
       }
@@ -5898,8 +5964,15 @@ async function main(): Promise<void> {
         visibleDayCandidates: prepareMoveWorkoutResult.visibleDayCandidates,
         targetDayVisible: prepareMoveWorkoutResult.targetDayVisible,
         selectedSourceDayVisible: prepareMoveWorkoutResult.selectedSourceDayVisible,
+        targetDateClickCandidateFound: prepareMoveWorkoutResult.targetDateClickCandidateFound,
+        targetDateClickCandidateBoundingBox: prepareMoveWorkoutResult.targetDateClickCandidateBoundingBox,
         targetDateSelectionAttempted: prepareMoveWorkoutResult.targetDateSelectionAttempted,
         targetDateSelectionConfirmed: prepareMoveWorkoutResult.targetDateSelectionConfirmed,
+        datePickerCloseAttempted: uiCapabilityProbe.detail.datePickerCloseAttempted,
+        datePickerCloseSucceeded: uiCapabilityProbe.detail.datePickerCloseSucceeded,
+        datePickerCloseError: uiCapabilityProbe.detail.datePickerCloseError,
+        status: prepareMoveWorkoutResult.status,
+        failureReason: prepareMoveWorkoutResult.failureReason,
         datepickerDomDebugPath: prepareMoveWorkoutResult.datepickerDomDebugPath,
         datepickerDomDebugTopCandidates: prepareMoveWorkoutResult.datepickerDomDebugTopCandidates,
         datepickerDomDebugError: prepareMoveWorkoutResult.datepickerDomDebugError,
