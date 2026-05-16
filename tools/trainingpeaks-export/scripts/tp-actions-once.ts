@@ -240,6 +240,23 @@ type UiCapabilityProbe = {
   errors: string[];
 };
 
+type TargetDateSelectionConfirmation = {
+  preSaveDateHeaderText: string | null;
+  preSaveDateInputValue: string | null;
+  preSaveTargetDateSelectionAttempted: boolean;
+  preSaveTargetDateSelectionConfirmed: boolean;
+  preSaveTargetDateConfirmedBy: "date_header" | "date_input" | "selected_day_highlight" | null;
+  preSaveTargetDateConfirmedByHeader: boolean;
+  preSaveTargetDateConfirmedByInput: boolean;
+  datePickerOpened: boolean;
+  datePickerDetectionStrategy: string | null;
+  targetDateClickCandidateFound: boolean;
+  targetDateClickCandidateBoundingBox: { x: number; y: number; width: number; height: number } | null;
+  datepickerDomDebugPath: string | null;
+  datepickerDomDebugTopCandidates: string[];
+  datepickerDomDebugError: string | null;
+};
+
 type DatePickerDetectionSnapshot = {
   opened: boolean;
   selectorHint: string | null;
@@ -5589,6 +5606,176 @@ async function notifyCoachRealModeResult(input: {
   }
 }
 
+async function selectAndConfirmTargetDateInCurrentModalSession(input: {
+  page: import("playwright").Page;
+  actionId: string;
+  runId: string;
+  sourceDateIso: string;
+  targetDateIso: string;
+  artifactDir: string;
+}): Promise<TargetDateSelectionConfirmation> {
+  const result: TargetDateSelectionConfirmation = {
+    preSaveDateHeaderText: null,
+    preSaveDateInputValue: null,
+    preSaveTargetDateSelectionAttempted: false,
+    preSaveTargetDateSelectionConfirmed: false,
+    preSaveTargetDateConfirmedBy: null,
+    preSaveTargetDateConfirmedByHeader: false,
+    preSaveTargetDateConfirmedByInput: false,
+    datePickerOpened: false,
+    datePickerDetectionStrategy: null,
+    targetDateClickCandidateFound: false,
+    targetDateClickCandidateBoundingBox: null,
+    datepickerDomDebugPath: null,
+    datepickerDomDebugTopCandidates: [],
+    datepickerDomDebugError: null,
+  };
+
+  const page = input.page;
+  const modalRoot = await findVisibleDetailRoot(page);
+  const modalScope = modalRoot?.locator ?? page.locator("body");
+  const dateFieldCandidates = [
+    { locator: modalScope.locator('input[name*="date" i]').first(), selectorHint: 'input[name*="date" i]' },
+    { locator: modalScope.locator('input[id*="date" i]').first(), selectorHint: 'input[id*="date" i]' },
+    { locator: modalScope.locator('[aria-label*="date" i]').first(), selectorHint: '[aria-label*="date" i]' },
+  ];
+  const dateFieldMatch = await findFirstVisibleLocator(dateFieldCandidates, 700);
+  if (dateFieldMatch) {
+    result.preSaveDateInputValue = await readDateFieldValue(dateFieldMatch.locator);
+  }
+
+  const dateHeaderText = await findBoundedDateHeaderText(page, modalRoot?.locator ?? null);
+  result.preSaveDateHeaderText = dateHeaderText ?? null;
+  if (!dateHeaderText) {
+    return result;
+  }
+
+  const dateHeaderDomRectMatch = await resolveDateHeaderDomRectSnapshotBounded(page, dateHeaderText, {
+    stage: "controlled-save-resolve-date-header-dom-rect",
+    actionId: input.actionId,
+    runId: input.runId,
+  }).catch(() => null);
+  const dateHeaderBoundingBox = toProbeBoundingBox(dateHeaderDomRectMatch?.rect ?? null);
+  if (!dateHeaderBoundingBox) {
+    return result;
+  }
+
+  const center = boundingBoxCenter(dateHeaderBoundingBox);
+  await page.mouse.click(center.x, center.y).catch(() => {});
+  await page.waitForTimeout(500).catch(() => {});
+
+  const datepickerDomDebugPath = path.join(input.artifactDir, "real_pre_save_datepicker_dom_debug.json");
+  try {
+    const domDebugCapture = await collectVisibleDatepickerDebugSnapshot(page, {
+      artifactPath: datepickerDomDebugPath,
+      actionId: input.actionId,
+      runId: input.runId,
+      dateHeaderBox: dateHeaderBoundingBox,
+      sourceDateIso: input.sourceDateIso,
+      targetDateIso: input.targetDateIso,
+    });
+    result.datepickerDomDebugPath = datepickerDomDebugPath;
+    result.datepickerDomDebugTopCandidates = domDebugCapture.snapshot
+      ? [...domDebugCapture.snapshot.topCandidates.slice(0, 12)]
+      : [];
+    result.datepickerDomDebugError = null;
+    if (domDebugCapture.snapshot) {
+      result.targetDateClickCandidateFound = domDebugCapture.snapshot.signals.targetDateClickCandidateFound;
+      result.targetDateClickCandidateBoundingBox = domDebugCapture.snapshot.signals.targetDateClickCandidateBoundingBox;
+      if (domDebugCapture.snapshot.signals.openByMultisignal) {
+        result.datePickerOpened = true;
+        result.datePickerDetectionStrategy = "visible_dom_multisignal_fallback";
+      }
+    } else {
+      const scratchProbe = buildEmptyUiCapabilityProbe();
+      const fallback = applyBodyTextMultiSignalFallback(scratchProbe.detail, domDebugCapture.bodyTextSample);
+      if (fallback.activated) {
+        result.datePickerOpened = true;
+        result.datePickerDetectionStrategy = "body_text_multisignal_fallback";
+      }
+    }
+  } catch (error) {
+    result.datepickerDomDebugPath = datepickerDomDebugPath;
+    result.datepickerDomDebugError = formatDiagnosticError(error);
+  }
+
+  const detection = await detectVisibleDatePickerSnapshot(
+    page,
+    {
+      dateHeaderBox: dateHeaderBoundingBox,
+      dateHeaderText,
+      sourceDateIso: input.sourceDateIso,
+      targetDateIso: input.targetDateIso,
+    },
+    {
+      stage: "controlled-save-detect-datepicker",
+      actionId: input.actionId,
+      runId: input.runId,
+    }
+  ).catch(() => null);
+  if (detection) {
+    result.datePickerOpened = result.datePickerOpened || detection.opened;
+    result.datePickerDetectionStrategy = result.datePickerDetectionStrategy ?? detection.strategy;
+  }
+
+  const targetDayVisible = Boolean(detection?.targetDayVisible);
+  if (
+    result.datePickerOpened &&
+    targetDayVisible &&
+    result.targetDateClickCandidateFound &&
+    result.targetDateClickCandidateBoundingBox
+  ) {
+    result.preSaveTargetDateSelectionAttempted = true;
+    const clickBox = result.targetDateClickCandidateBoundingBox;
+    const x = clickBox.x + clickBox.width / 2;
+    const y = clickBox.y + clickBox.height / 2;
+    await page.mouse.click(x, y).catch(() => {});
+    await page.waitForTimeout(180).catch(() => {});
+  }
+
+  const postClickDateHeaderText = await findBoundedDateHeaderText(page, modalRoot?.locator ?? null).catch(
+    () => null as string | null
+  );
+  const postClickDateFieldValue = dateFieldMatch
+    ? await readDateFieldValue(dateFieldMatch.locator).catch(() => null as string | null)
+    : null;
+  result.preSaveDateHeaderText = postClickDateHeaderText ?? result.preSaveDateHeaderText;
+  result.preSaveDateInputValue = postClickDateFieldValue ?? result.preSaveDateInputValue;
+
+  const postSelection = await detectVisibleDatePickerSnapshot(
+    page,
+    {
+      dateHeaderBox: dateHeaderBoundingBox,
+      dateHeaderText: result.preSaveDateHeaderText ?? dateHeaderText,
+      sourceDateIso: input.sourceDateIso,
+      targetDateIso: input.targetDateIso,
+    },
+    {
+      stage: "controlled-save-detect-datepicker-post-selection",
+      actionId: input.actionId,
+      runId: input.runId,
+    }
+  ).catch(() => null);
+
+  const confirmedByDateHeader = visibleAnyTextReferencesIsoTarget([result.preSaveDateHeaderText], input.targetDateIso);
+  const confirmedByDateInput = visibleAnyTextReferencesIsoTarget([result.preSaveDateInputValue], input.targetDateIso);
+  const confirmedBySelectedHighlight = Boolean(postSelection?.targetDaySelectedVisible);
+  result.preSaveTargetDateConfirmedByHeader = confirmedByDateHeader;
+  result.preSaveTargetDateConfirmedByInput = confirmedByDateInput;
+  if (confirmedByDateHeader || confirmedByDateInput || confirmedBySelectedHighlight) {
+    result.preSaveTargetDateSelectionConfirmed = true;
+    if (confirmedByDateHeader) {
+      result.preSaveTargetDateConfirmedBy = "date_header";
+    } else if (confirmedByDateInput) {
+      result.preSaveTargetDateConfirmedBy = "date_input";
+    } else if (confirmedBySelectedHighlight) {
+      result.preSaveTargetDateConfirmedBy = "selected_day_highlight";
+    }
+  }
+
+  return result;
+}
+
 function probeToDriverProbeShape(probe: UiCapabilityProbe): TrainingPeaksProbeLikeForDriver {
   const detail = probe.detail;
   return {
@@ -5750,11 +5937,17 @@ type ControlledSaveExecutionResult = {
   durableMutationOccurred: boolean;
   preSaveAudit: {
     visibleDateHeaderText: string | null;
+    preSaveDateHeaderText: string | null;
+    preSaveDateInputValue: string | null;
+    preSaveTargetDateSelectionConfirmed: boolean;
+    preSaveTargetDateConfirmedBy: "date_header" | "date_input" | "selected_day_highlight" | null;
     targetDate: string | null;
     athleteIdentityMatchedBy: IdentityMatchType;
     workoutFingerprint: string | null;
     unsavedUiStateChanged: boolean;
     mutationOccurred: boolean;
+    sourceDateMatchesExpected: boolean;
+    targetDateMatchesExpected: boolean;
     saveAndCloseButtonFound: boolean;
     saveAndCloseButtonEnabled: boolean;
   };
@@ -5783,8 +5976,28 @@ async function runControlledSaveAndCloseExecution(input: {
   }
 
   const candidate = input.comparison.currentCandidate ?? input.comparison.trustedCandidate;
-  const sourceDate = input.comparison.sourceDate.current ?? input.comparison.sourceDate.trusted;
-  const targetDate = input.comparison.targetDate.current ?? input.comparison.targetDate.trusted;
+  const expectedSourceDate =
+    input.comparison.sourceDate.current ??
+    input.comparison.sourceDate.trusted ??
+    input.claimed.trustedDryRunLog.resolvedDates.sourceDate;
+  const expectedTargetDate =
+    input.comparison.targetDate.current ??
+    input.comparison.targetDate.trusted ??
+    input.claimed.trustedDryRunLog.resolvedDates.targetDate;
+  const sourceDate = expectedSourceDate;
+  const targetDate = expectedTargetDate;
+  const trainingPeaksDriver = new PlaywrightOnlyTrainingPeaksDriver({
+    expectedActionId: input.claimed.action.id,
+    sourceDateIso: sourceDate,
+    targetDateIso: targetDate,
+    athleteIdentityMatchedBy: input.comparison.currentIdentityMatchedBy,
+    candidateFingerprintMatches: input.comparison.fingerprint.matches,
+    runProbe: async () => {
+      const probe = await probeTrainingPeaksMoveCapabilities(input.claimed, input.runId, input.comparison);
+      return probeToDriverProbeShape(probe);
+    },
+  });
+  const prepareMoveWorkout = await trainingPeaksDriver.prepareMoveWorkout(input.claimed.action.id);
 
   let context: import("playwright").BrowserContext | null = null;
   try {
@@ -5842,103 +6055,15 @@ async function runControlledSaveAndCloseExecution(input: {
     await editAction.locator.click({ timeout: 2_000 });
     await page.waitForTimeout(700);
 
-    const modalRoot = await findVisibleDetailRoot(page);
-    const modalScope = modalRoot?.locator ?? page.locator("body");
-    const dateHeaderText = await findBoundedDateHeaderText(page, modalRoot?.locator ?? null);
-    if (!dateHeaderText) {
-      throw new Error("Date header not found in workout detail modal.");
-    }
-    const dateHeaderRect = await resolveDateHeaderDomRectSnapshotBounded(page, dateHeaderText, {
-      stage: "controlled-save-resolve-date-header-dom-rect",
+    const modalDateSelection = await selectAndConfirmTargetDateInCurrentModalSession({
+      page,
       actionId: input.claimed.action.id,
       runId: input.runId,
+      sourceDateIso: sourceDate,
+      targetDateIso: targetDate,
+      artifactDir,
     });
-    if (!dateHeaderRect?.found || !dateHeaderRect.rect) {
-      throw new Error("Date header bounding box not resolved.");
-    }
-    const center = boundingBoxCenter(dateHeaderRect.rect);
-    await page.mouse.click(center.x, center.y);
-    await page.waitForTimeout(300);
-
-    const detected = await detectVisibleDatePickerSnapshot(
-      page,
-      {
-        dateHeaderBox: toProbeBoundingBox(dateHeaderRect.rect),
-        dateHeaderText,
-        sourceDateIso: sourceDate,
-        targetDateIso: targetDate,
-      },
-      {
-        stage: "controlled-save-detect-datepicker",
-        actionId: input.claimed.action.id,
-        runId: input.runId,
-      }
-    );
-    let targetDateClickCandidateFound = false;
-    let targetDateClickCandidateBoundingBox: { x: number; y: number; width: number; height: number } | null = null;
-    const targetDayMatch = targetDate.match(/^\d{4}-\d{2}-(\d{2})$/);
-    const targetDayNum = targetDayMatch ? Number(targetDayMatch[1]) : NaN;
-    if (Number.isFinite(targetDayNum) && targetDayNum >= 1 && targetDayNum <= 31) {
-      const day = String(targetDayNum);
-      const dayRegex = new RegExp(`^\\s*${day}\\s*$`);
-      const locatorSpecs = [
-        page.locator(`.MuiPickersDay-root:has-text("${day}")`),
-        page.locator(`[role="gridcell"]`).filter({ hasText: dayRegex }),
-        page.locator(`button[aria-label*="${day}"]`),
-        page.locator("td").filter({ hasText: dayRegex }),
-      ];
-      for (const locator of locatorSpecs) {
-        if (targetDateClickCandidateFound) {
-          break;
-        }
-        const allMatches = await locator.all().catch(() => [] as import("playwright").Locator[]);
-        for (const match of allMatches) {
-          if (!(await match.isVisible().catch(() => false))) {
-            continue;
-          }
-          const box = await match.boundingBox().catch(() => null);
-          if (!box || box.width < 5 || box.height < 5) {
-            continue;
-          }
-          targetDateClickCandidateFound = true;
-          targetDateClickCandidateBoundingBox = {
-            x: Math.round(box.x * 100) / 100,
-            y: Math.round(box.y * 100) / 100,
-            width: Math.round(box.width * 100) / 100,
-            height: Math.round(box.height * 100) / 100,
-          };
-          break;
-        }
-      }
-    }
-
-    if (!detected.opened || !targetDateClickCandidateFound || !targetDateClickCandidateBoundingBox) {
-      throw new Error("Datepicker opened but target day click candidate was not safely detected.");
-    }
-
-    const clickBox = targetDateClickCandidateBoundingBox;
-    await page.mouse.click(clickBox.x + clickBox.width / 2, clickBox.y + clickBox.height / 2);
-    await page.waitForTimeout(220);
-    const unsavedUiStateChanged = true;
-    const postClickHeader = await findBoundedDateHeaderText(page, modalRoot?.locator ?? null);
-    const dateField = await findFirstVisibleLocator(
-      [
-        { locator: modalScope.locator('input[name*="date" i]').first(), selectorHint: "input[name*=date]" },
-        { locator: modalScope.locator('input[id*="date" i]').first(), selectorHint: "input[id*=date]" },
-      ],
-      500
-    );
-    const postClickDateInputValue = dateField ? await readDateFieldValue(dateField.locator) : null;
-    const targetConfirmedByHeader = visibleAnyTextReferencesIsoTarget([postClickHeader], targetDate);
-    const targetConfirmedByInput = visibleAnyTextReferencesIsoTarget([postClickDateInputValue], targetDate);
-    const targetDateSelectionConfirmed = targetConfirmedByHeader || targetConfirmedByInput || detected.targetDaySelectedVisible;
-    const targetDateConfirmedBy = targetConfirmedByHeader
-      ? "date_header"
-      : targetConfirmedByInput
-        ? "date_input"
-        : detected.targetDaySelectedVisible
-          ? "selected_day_highlight"
-          : null;
+    const unsavedUiStateChanged = Boolean(modalDateSelection.preSaveTargetDateSelectionAttempted);
 
     const visibleTrainingPeaksName = await extractVisibleTrainingPeaksAthleteName(page);
     const identityCheck = buildIdentityCheck({
@@ -5955,62 +6080,21 @@ async function runControlledSaveAndCloseExecution(input: {
     const workoutFingerprint = candidate?.fingerprint ?? null;
 
     const preSaveAudit = {
-      visibleDateHeaderText: postClickHeader ?? dateHeaderText,
+      visibleDateHeaderText: modalDateSelection.preSaveDateHeaderText,
+      preSaveDateHeaderText: modalDateSelection.preSaveDateHeaderText,
+      preSaveDateInputValue: modalDateSelection.preSaveDateInputValue,
+      preSaveTargetDateSelectionConfirmed: modalDateSelection.preSaveTargetDateSelectionConfirmed,
+      preSaveTargetDateConfirmedBy: modalDateSelection.preSaveTargetDateConfirmedBy,
       targetDate,
       athleteIdentityMatchedBy: identityCheck.matchedBy,
       workoutFingerprint,
       unsavedUiStateChanged,
       mutationOccurred: false,
+      sourceDateMatchesExpected: prepareMoveWorkout.sourceDate === expectedSourceDate,
+      targetDateMatchesExpected: prepareMoveWorkout.targetDate === expectedTargetDate,
       saveAndCloseButtonFound,
       saveAndCloseButtonEnabled,
     } as const;
-
-    const prepareProbeForAudit: TrainingPeaksProbeLikeForDriver = {
-      errors: [],
-      warnings: [],
-      detail: {
-        dateHeaderText: postClickHeader ?? dateHeaderText,
-        currentDateValue: postClickDateInputValue,
-        datePickerOpened: detected.opened,
-        saveButtonFound: false,
-        saveAndCloseButtonFound,
-        datePickerDetectionStrategy: detected.strategy,
-        datePickerBoundingBox: toProbeBoundingBox(detected.boundingBox),
-        visibleMonth: detected.visibleMonth,
-        visibleYear: detected.visibleYear,
-        visibleDayCandidates: [...detected.visibleDayCandidates],
-        targetDayVisible: detected.targetDayVisible,
-        selectedSourceDayVisible: detected.selectedSourceDayVisible,
-        targetDateSelectionAttempted: true,
-        targetDateSelectionConfirmed,
-        postClickDateHeaderText: postClickHeader,
-        postClickDateInputValue,
-        targetDateConfirmedBy,
-        targetDateClickMethod: "mouse.click.bounding_box_center",
-        targetDateClickCandidateFound,
-        targetDateClickCandidateBoundingBox,
-        afterTargetDayClickError: null,
-        datepickerDomDebugPath: null,
-        datepickerDomDebugTopCandidates: [],
-        datepickerDomDebugError: null,
-        opened: true,
-        closeSucceeded: true,
-        datePickerCloseAttempted: false,
-        datePickerCloseSucceeded: false,
-        datePickerCloseError: "skipped_in_real_execution",
-        mutationOccurred: false,
-      },
-      screenshots: {},
-      progress: {
-        stepHistory: ["real execution prepare (same session)"],
-      },
-    };
-    const prepareMoveWorkout = derivePrepareMoveWorkoutResultFromProbe(prepareProbeForAudit, {
-      athleteIdentityMatchedBy: identityCheck.matchedBy,
-      candidateFingerprintMatches: input.comparison.fingerprint.matches,
-      sourceDateIso: sourceDate,
-      targetDateIso: targetDate,
-    });
 
     const preSaveScreenshot = await captureProbeScreenshot(page, preSaveScreenshotPath, []);
 
@@ -6021,8 +6105,10 @@ async function runControlledSaveAndCloseExecution(input: {
       prepareMoveWorkout.mutationOccurred === false &&
       prepareMoveWorkout.athleteIdentityOk === true &&
       prepareMoveWorkout.candidateFingerprintOk === true &&
-      prepareMoveWorkout.sourceDate === sourceDate &&
-      prepareMoveWorkout.targetDate === targetDate &&
+      prepareMoveWorkout.sourceDate === expectedSourceDate &&
+      prepareMoveWorkout.targetDate === expectedTargetDate &&
+      preSaveAudit.preSaveTargetDateSelectionConfirmed === true &&
+      preSaveAudit.preSaveTargetDateConfirmedBy !== null &&
       saveAndCloseButtonFound &&
       saveAndCloseButtonEnabled;
 
@@ -6605,8 +6691,12 @@ async function main(): Promise<void> {
       prepareMoveWorkoutResult.mutationOccurred === false &&
       prepareMoveWorkoutResult.athleteIdentityOk === true &&
       prepareMoveWorkoutResult.candidateFingerprintOk === true &&
-      prepareMoveWorkoutResult.sourceDate === claimed.trustedDryRunLog.resolvedDates.sourceDate &&
-      prepareMoveWorkoutResult.targetDate === claimed.trustedDryRunLog.resolvedDates.targetDate &&
+      prepareMoveWorkoutResult.sourceDate ===
+        (comparison.sourceDate.current ?? comparison.sourceDate.trusted ?? claimed.trustedDryRunLog.resolvedDates.sourceDate) &&
+      prepareMoveWorkoutResult.targetDate ===
+        (comparison.targetDate.current ?? comparison.targetDate.trusted ?? claimed.trustedDryRunLog.resolvedDates.targetDate) &&
+      execution.preSaveAudit.preSaveTargetDateSelectionConfirmed &&
+      execution.preSaveAudit.preSaveTargetDateConfirmedBy !== null &&
       execution.preSaveAudit.saveAndCloseButtonFound &&
       execution.preSaveAudit.saveAndCloseButtonEnabled;
 
