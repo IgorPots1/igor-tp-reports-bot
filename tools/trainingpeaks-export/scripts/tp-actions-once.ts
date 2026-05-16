@@ -8,6 +8,7 @@ import { chromium } from "playwright";
 
 import {
   PlaywrightOnlyTrainingPeaksDriver,
+  derivePrepareMoveWorkoutResultFromProbe,
   type ProbeLike as TrainingPeaksProbeLikeForDriver,
 } from "./lib/playwright-only-trainingpeaks-driver.ts";
 import { profileDir, toolRoot } from "./lib/paths.ts";
@@ -471,9 +472,13 @@ const TP_CALLBACK_ACTION_CANCEL_PREFIX = "tp:ta:c:";
 const ACTION_ARTIFACTS_ROOT = path.join(toolRoot, "action-artifacts");
 const TP_ACTIONS_EXECUTE_REAL_FLAG = "--execute-real";
 const TP_ACTIONS_PREPARE_ONLY_FLAG = "--prepare-only";
+const TP_ACTIONS_CONFIRM_SAVE_FLAG = "--confirm-save";
 const TP_ACTIONS_REAL_EXECUTION_ENV = "TP_ACTIONS_REAL_EXECUTION";
+const TP_ACTIONS_ALLOW_SAVE_ENV = "TP_ACTIONS_ALLOW_SAVE";
 const REAL_MOVE_NOT_IMPLEMENTED_ERROR = "Real move not implemented yet (Phase 3D.2)";
 const TRAININGPEAKS_NOT_CHANGED_NOTE = "TrainingPeaks не изменён";
+const SAVE_CLICK_POST_VALIDATION_FAILED_ALERT =
+  "Save was clicked but post-save validation failed. Manual review required.";
 const TP_CALENDAR_ROOT_SELECTOR = "div.calendar.athleteCalendar";
 const TP_DAY_CELL_SELECTOR = ".dayWidth.dayContainer.day";
 const TP_PRIMARY_WORKOUT_CARD_SELECTOR = ".dayWidth.dayContainer.day .activities .MuiCard-root.activity.workout";
@@ -5590,6 +5595,48 @@ async function finishRealRun(
   }
 }
 
+async function completeRealRun(
+  actionId: string,
+  runId: string,
+  input: {
+    logJson: unknown;
+    screenshotBeforePath: string | null;
+    screenshotAfterPath: string | null;
+  }
+): Promise<void> {
+  const supabase = getSupabase();
+  const finishedAt = new Date().toISOString();
+
+  const { error: runError } = await supabase
+    .from("trainingpeaks_action_runs")
+    .update({
+      status: "completed",
+      finished_at: finishedAt,
+      error_message: null,
+      log_json: input.logJson,
+      screenshot_before_path: input.screenshotBeforePath,
+      screenshot_after_path: input.screenshotAfterPath,
+    })
+    .eq("id", runId)
+    .eq("action_id", actionId)
+    .eq("status", "running");
+  if (runError) {
+    throw new Error(`Failed to complete real action run ${runId}: ${runError.message}`);
+  }
+
+  const { error: actionError } = await supabase
+    .from("trainingpeaks_actions")
+    .update({
+      execution_status: "completed",
+      execution_mode: "real",
+      last_run_id: runId,
+    })
+    .eq("id", actionId);
+  if (actionError) {
+    throw new Error(`Failed to update real-mode action ${actionId} as completed: ${actionError.message}`);
+  }
+}
+
 async function notifyCoachRealModeResult(input: {
   chatId: string | null;
   action: TrainingPeaksActionRow;
@@ -5600,6 +5647,7 @@ async function notifyCoachRealModeResult(input: {
   revalidationPassed: boolean;
   errorMessage: string;
   candidate: DryRunCandidate | null;
+  includeNotChangedNote?: boolean;
 }): Promise<void> {
   if (!input.chatId) {
     return;
@@ -5633,7 +5681,9 @@ async function notifyCoachRealModeResult(input: {
   }
 
   lines.push(input.errorMessage);
-  lines.push(TRAININGPEAKS_NOT_CHANGED_NOTE);
+  if (input.includeNotChangedNote ?? true) {
+    lines.push(TRAININGPEAKS_NOT_CHANGED_NOTE);
+  }
 
   try {
     await sendTelegramText(input.chatId, lines.join("\n"));
@@ -5686,12 +5736,450 @@ function probeToDriverProbeShape(probe: UiCapabilityProbe): TrainingPeaksProbeLi
   };
 }
 
+async function findSaveAndCloseButton(
+  page: import("playwright").Page
+): Promise<{ locator: import("playwright").Locator; enabled: boolean; selectorHint: string } | null> {
+  const modalRoot = await findVisibleDetailRoot(page);
+  const modalScope = modalRoot?.locator ?? page.locator("body");
+  const candidates = [
+    { locator: modalScope.getByRole("button", { name: /^save\s*&\s*close$/i }).first(), selectorHint: "modal role exact" },
+    { locator: modalScope.getByRole("button", { name: /save\s*&\s*close/i }).first(), selectorHint: "modal role fuzzy" },
+    { locator: page.getByRole("button", { name: /^save\s*&\s*close$/i }).first(), selectorHint: "global role exact" },
+    { locator: page.getByRole("button", { name: /save\s*&\s*close/i }).first(), selectorHint: "global role fuzzy" },
+    { locator: modalScope.getByText(/^save\s*&\s*close$/i).first(), selectorHint: "modal text exact" },
+    { locator: page.getByText(/^save\s*&\s*close$/i).first(), selectorHint: "global text exact" },
+  ] as const;
+
+  for (const candidate of candidates) {
+    if (!(await candidate.locator.isVisible().catch(() => false))) {
+      continue;
+    }
+    const disabled = await candidate.locator.isDisabled().catch(() => true);
+    return {
+      locator: candidate.locator,
+      enabled: !disabled,
+      selectorHint: candidate.selectorHint,
+    };
+  }
+
+  return null;
+}
+
+type ControlledSaveExecutionResult = {
+  prepareMoveWorkout: ReturnType<typeof derivePrepareMoveWorkoutResultFromProbe>;
+  preSaveScreenshot: string | null;
+  afterSaveScreenshot: string | null;
+  saveAndCloseAttempted: boolean;
+  saveAndCloseClicked: boolean;
+  saveAndCloseClickMethod: string | null;
+  saveAndCloseError: string | null;
+  postSaveValidationAttempted: boolean;
+  postSaveValidationPassed: boolean;
+  postSaveValidationError: string | null;
+  mutationOccurred: boolean;
+  preSaveAudit: {
+    visibleDateHeaderText: string | null;
+    targetDate: string | null;
+    athleteIdentityMatchedBy: IdentityMatchType;
+    workoutFingerprint: string | null;
+    saveAndCloseButtonFound: boolean;
+    saveAndCloseButtonEnabled: boolean;
+  };
+  postSaveAudit: {
+    athleteIdentityMatchedBy: IdentityMatchType | null;
+    movedCandidateFoundOnTargetDate: boolean;
+    oldCandidateStillOnSourceDate: boolean;
+    targetDate: string | null;
+    sourceDate: string | null;
+    expectedMovedFingerprint: string | null;
+  };
+};
+
+async function runControlledSaveAndCloseExecution(input: {
+  claimed: ClaimedRealAction;
+  runId: string;
+  comparison: RevalidationComparison;
+}): Promise<ControlledSaveExecutionResult> {
+  const artifactDir = path.join(ACTION_ARTIFACTS_ROOT, input.claimed.action.id, input.runId);
+  await mkdir(artifactDir, { recursive: true });
+  const preSaveScreenshotPath = path.join(artifactDir, "real_pre_save.png");
+  const afterSaveScreenshotPath = path.join(artifactDir, "real_after_save.png");
+  const student = input.claimed.student;
+  if (!student?.trainingpeaks_athlete_url) {
+    throw new Error(`Missing trainingpeaks_athlete_url for action ${input.claimed.action.id}.`);
+  }
+
+  const candidate = input.comparison.currentCandidate ?? input.comparison.trustedCandidate;
+  const sourceDate = input.comparison.sourceDate.current ?? input.comparison.sourceDate.trusted;
+  const targetDate = input.comparison.targetDate.current ?? input.comparison.targetDate.trusted;
+
+  let context: import("playwright").BrowserContext | null = null;
+  try {
+    context = await chromium.launchPersistentContext(profileDir, {
+      headless: false,
+      viewport: null,
+    });
+    const page = context.pages()[0] ?? (await context.newPage());
+    await page.goto(student.trainingpeaks_athlete_url, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.bringToFront();
+    await waitForTrainingPeaksCalendarReadiness(page, []);
+
+    const pageAssessment = await assessTrainingPeaksPage(page);
+    if (pageAssessment.loginRequired) {
+      throw new Error("TrainingPeaks session expired or login required.");
+    }
+    if (!pageAssessment.trainingPeaksContextLikely || !pageAssessment.athletePageLikelyReachable) {
+      throw new Error("TrainingPeaks athlete page is not safely reachable.");
+    }
+
+    if (!sourceDate || !targetDate) {
+      throw new Error("Source/target dates are unavailable for controlled save execution.");
+    }
+
+    const cardMatch = await locateWorkoutCardForProbe(page, {
+      studentId: student.id,
+      sourceDate,
+      candidate,
+    });
+    if (!cardMatch.locator) {
+      throw new Error("Could not locate the revalidated candidate card before save.");
+    }
+
+    await cardMatch.locator.hover({ timeout: 2_000 }).catch(() => {});
+    const menuTrigger = await findFirstVisibleLocator(
+      [
+        { locator: cardMatch.locator.locator('button[aria-haspopup="menu"]').first(), selectorHint: "menu-haspopup" },
+        { locator: cardMatch.locator.locator(".MuiIconButton-root").first(), selectorHint: "menu-mui-iconbutton" },
+      ],
+      800
+    );
+    if (!menuTrigger) {
+      throw new Error("Card menu trigger was not found.");
+    }
+    await menuTrigger.locator.click({ timeout: 2_000 });
+    await page.waitForTimeout(300);
+    const menuRoot = await findVisibleMenuRoot(page);
+    if (!menuRoot) {
+      throw new Error("Card menu did not open.");
+    }
+    const editAction = await findExactEditMenuAction(menuRoot.locator);
+    if (!editAction) {
+      throw new Error('Exact "Edit" action was not found in card menu.');
+    }
+    await editAction.locator.click({ timeout: 2_000 });
+    await page.waitForTimeout(700);
+
+    const modalRoot = await findVisibleDetailRoot(page);
+    const modalScope = modalRoot?.locator ?? page.locator("body");
+    const dateHeaderText = await findBoundedDateHeaderText(page, modalRoot?.locator ?? null);
+    if (!dateHeaderText) {
+      throw new Error("Date header not found in workout detail modal.");
+    }
+    const dateHeaderRect = await resolveDateHeaderDomRectSnapshotBounded(page, dateHeaderText);
+    if (!dateHeaderRect?.found || !dateHeaderRect.rect) {
+      throw new Error("Date header bounding box not resolved.");
+    }
+    const center = boundingBoxCenter(dateHeaderRect.rect);
+    await page.mouse.click(center.x, center.y);
+    await page.waitForTimeout(300);
+
+    const detected = await detectVisibleDatePickerSnapshot(page, {
+      dateHeaderBox: toProbeBoundingBox(dateHeaderRect.rect),
+      dateHeaderText,
+      sourceDateIso: sourceDate,
+      targetDateIso: targetDate,
+    });
+    let targetDateClickCandidateFound = false;
+    let targetDateClickCandidateBoundingBox: { x: number; y: number; width: number; height: number } | null = null;
+    const targetDayMatch = targetDate.match(/^\d{4}-\d{2}-(\d{2})$/);
+    const targetDayNum = targetDayMatch ? Number(targetDayMatch[1]) : NaN;
+    if (Number.isFinite(targetDayNum) && targetDayNum >= 1 && targetDayNum <= 31) {
+      const day = String(targetDayNum);
+      const dayRegex = new RegExp(`^\\s*${day}\\s*$`);
+      const locatorSpecs = [
+        page.locator(`.MuiPickersDay-root:has-text("${day}")`),
+        page.locator(`[role="gridcell"]`).filter({ hasText: dayRegex }),
+        page.locator(`button[aria-label*="${day}"]`),
+        page.locator("td").filter({ hasText: dayRegex }),
+      ];
+      for (const locator of locatorSpecs) {
+        if (targetDateClickCandidateFound) {
+          break;
+        }
+        const allMatches = await locator.all().catch(() => [] as import("playwright").Locator[]);
+        for (const match of allMatches) {
+          if (!(await match.isVisible().catch(() => false))) {
+            continue;
+          }
+          const box = await match.boundingBox().catch(() => null);
+          if (!box || box.width < 5 || box.height < 5) {
+            continue;
+          }
+          targetDateClickCandidateFound = true;
+          targetDateClickCandidateBoundingBox = {
+            x: Math.round(box.x * 100) / 100,
+            y: Math.round(box.y * 100) / 100,
+            width: Math.round(box.width * 100) / 100,
+            height: Math.round(box.height * 100) / 100,
+          };
+          break;
+        }
+      }
+    }
+
+    if (!detected.opened || !targetDateClickCandidateFound || !targetDateClickCandidateBoundingBox) {
+      throw new Error("Datepicker opened but target day click candidate was not safely detected.");
+    }
+
+    const clickBox = targetDateClickCandidateBoundingBox;
+    await page.mouse.click(clickBox.x + clickBox.width / 2, clickBox.y + clickBox.height / 2);
+    await page.waitForTimeout(220);
+    const postClickHeader = await findBoundedDateHeaderText(page, modalRoot?.locator ?? null);
+    const dateField = await findFirstVisibleLocator(
+      [
+        { locator: modalScope.locator('input[name*="date" i]').first(), selectorHint: "input[name*=date]" },
+        { locator: modalScope.locator('input[id*="date" i]').first(), selectorHint: "input[id*=date]" },
+      ],
+      500
+    );
+    const postClickDateInputValue = dateField ? await readDateFieldValue(dateField.locator) : null;
+    const targetConfirmedByHeader = visibleAnyTextReferencesIsoTarget([postClickHeader], targetDate);
+    const targetConfirmedByInput = visibleAnyTextReferencesIsoTarget([postClickDateInputValue], targetDate);
+    const targetDateSelectionConfirmed = targetConfirmedByHeader || targetConfirmedByInput || detected.targetDaySelectedVisible;
+    const targetDateConfirmedBy = targetConfirmedByHeader
+      ? "date_header"
+      : targetConfirmedByInput
+        ? "date_input"
+        : detected.targetDaySelectedVisible
+          ? "selected_day_highlight"
+          : null;
+
+    const visibleTrainingPeaksName = await extractVisibleTrainingPeaksAthleteName(page);
+    const identityCheck = buildIdentityCheck({
+      student,
+      expectedUrl: student.trainingpeaks_athlete_url,
+      currentUrl: page.url(),
+      visibleTrainingPeaksName,
+    });
+
+    const saveButton = await findSaveAndCloseButton(page);
+    const saveAndCloseButtonFound = Boolean(saveButton);
+    const saveAndCloseButtonEnabled = Boolean(saveButton?.enabled);
+    const workoutFingerprint = candidate?.fingerprint ?? null;
+
+    const preSaveAudit = {
+      visibleDateHeaderText: postClickHeader ?? dateHeaderText,
+      targetDate,
+      athleteIdentityMatchedBy: identityCheck.matchedBy,
+      workoutFingerprint,
+      saveAndCloseButtonFound,
+      saveAndCloseButtonEnabled,
+    } as const;
+
+    const prepareProbeForAudit: TrainingPeaksProbeLikeForDriver = {
+      errors: [],
+      warnings: [],
+      detail: {
+        dateHeaderText: postClickHeader ?? dateHeaderText,
+        currentDateValue: postClickDateInputValue,
+        datePickerOpened: detected.opened,
+        saveButtonFound: false,
+        saveAndCloseButtonFound,
+        datePickerDetectionStrategy: detected.strategy,
+        datePickerBoundingBox: toProbeBoundingBox(detected.boundingBox),
+        visibleMonth: detected.visibleMonth,
+        visibleYear: detected.visibleYear,
+        visibleDayCandidates: [...detected.visibleDayCandidates],
+        targetDayVisible: detected.targetDayVisible,
+        selectedSourceDayVisible: detected.selectedSourceDayVisible,
+        targetDateSelectionAttempted: true,
+        targetDateSelectionConfirmed,
+        postClickDateHeaderText: postClickHeader,
+        postClickDateInputValue,
+        targetDateConfirmedBy,
+        targetDateClickMethod: "mouse.click.bounding_box_center",
+        targetDateClickCandidateFound,
+        targetDateClickCandidateBoundingBox,
+        afterTargetDayClickError: null,
+        datepickerDomDebugPath: null,
+        datepickerDomDebugTopCandidates: [],
+        datepickerDomDebugError: null,
+        opened: true,
+        closeSucceeded: true,
+        datePickerCloseAttempted: false,
+        datePickerCloseSucceeded: false,
+        datePickerCloseError: "skipped_in_real_execution",
+        mutationOccurred: false,
+      },
+      screenshots: {},
+      progress: {
+        stepHistory: ["real execution prepare (same session)"],
+      },
+    };
+    const prepareMoveWorkout = derivePrepareMoveWorkoutResultFromProbe(prepareProbeForAudit, {
+      athleteIdentityMatchedBy: identityCheck.matchedBy,
+      candidateFingerprintMatches: input.comparison.fingerprint.matches,
+      sourceDateIso: sourceDate,
+      targetDateIso: targetDate,
+    });
+
+    const preSaveScreenshot = await captureProbeScreenshot(page, preSaveScreenshotPath, []);
+
+    const prepareGatesPassedBeforeSave =
+      prepareMoveWorkout.status === "ready_to_save" &&
+      prepareMoveWorkout.targetDateSelectionConfirmed === true &&
+      prepareMoveWorkout.targetDateConfirmedBy !== null &&
+      prepareMoveWorkout.mutationOccurred === false &&
+      prepareMoveWorkout.athleteIdentityOk === true &&
+      prepareMoveWorkout.candidateFingerprintOk === true &&
+      prepareMoveWorkout.sourceDate === sourceDate &&
+      prepareMoveWorkout.targetDate === targetDate &&
+      saveAndCloseButtonFound &&
+      saveAndCloseButtonEnabled;
+
+    let saveAndCloseAttempted = false;
+    let saveAndCloseClicked = false;
+    let saveAndCloseClickMethod: string | null = null;
+    let saveAndCloseError: string | null = null;
+    let mutationOccurred = false;
+
+    if (saveButton && saveButton.enabled && prepareGatesPassedBeforeSave) {
+      saveAndCloseAttempted = true;
+      try {
+        await saveButton.locator.click({ timeout: 1_500 });
+        saveAndCloseClicked = true;
+        saveAndCloseClickMethod = `exact_save_and_close_button:${saveButton.selectorHint}`;
+        mutationOccurred = true;
+      } catch (error) {
+        saveAndCloseError = toShortErrorMessage(error);
+      }
+    } else if (!saveButton) {
+      saveAndCloseError = "Save & Close button not found.";
+    } else if (!saveButton.enabled) {
+      saveAndCloseError = "Save & Close button is disabled.";
+    } else if (!prepareGatesPassedBeforeSave) {
+      saveAndCloseError = `Prepare/save gates did not pass before Save & Close: ${prepareMoveWorkout.failureReason ?? "unknown reason"}`;
+    } else {
+      saveAndCloseError = "Target date selection could not be confirmed immediately before save.";
+    }
+
+    if (saveAndCloseClicked) {
+      for (let i = 0; i < 12; i += 1) {
+        if (!(await detailStillVisible(page))) {
+          break;
+        }
+        await page.waitForTimeout(250);
+      }
+      await page.waitForLoadState("networkidle", { timeout: 4_000 }).catch(() => {});
+    }
+
+    const afterSaveScreenshot = await captureProbeScreenshot(page, afterSaveScreenshotPath, []);
+    let postSaveValidationAttempted = false;
+    let postSaveValidationPassed = false;
+    let postSaveValidationError: string | null = null;
+    let postSaveIdentityMatchedBy: IdentityMatchType | null = null;
+    let movedCandidateFoundOnTargetDate = false;
+    let oldCandidateStillOnSourceDate = false;
+    let expectedMovedFingerprint: string | null = null;
+
+    if (saveAndCloseClicked) {
+      postSaveValidationAttempted = true;
+      try {
+        const extraction = await extractWorkoutCandidatesFromPage(page, targetDate);
+        const postSaveVisibleTrainingPeaksName = await extractVisibleTrainingPeaksAthleteName(page);
+        const postSaveIdentity = buildIdentityCheck({
+          student,
+          expectedUrl: student.trainingpeaks_athlete_url,
+          currentUrl: page.url(),
+          visibleTrainingPeaksName: postSaveVisibleTrainingPeaksName,
+        });
+        postSaveIdentityMatchedBy = postSaveIdentity.matchedBy;
+        expectedMovedFingerprint = buildCandidateFingerprint({
+          studentId: student.id,
+          dateIso: targetDate,
+          title: candidate.title,
+          type: candidate.type,
+          startTimeLocal: candidate.startTimeLocal,
+          plannedDurationSec: candidate.plannedDurationSec,
+          plannedDistance: candidate.plannedDistance,
+        });
+        movedCandidateFoundOnTargetDate = extraction.candidates.some((entry) => {
+          if (entry.dateIso !== targetDate) {
+            return false;
+          }
+          const fingerprint = buildCandidateFingerprint({
+            studentId: student.id,
+            dateIso: entry.dateIso,
+            title: entry.title,
+            type: entry.type,
+            startTimeLocal: entry.startTimeLocal,
+            plannedDurationSec: entry.plannedDurationSec,
+            plannedDistance: entry.plannedDistance,
+          });
+          return Boolean(expectedMovedFingerprint) && fingerprint === expectedMovedFingerprint;
+        });
+        oldCandidateStillOnSourceDate = extraction.candidates.some((entry) => {
+          const fingerprint = buildCandidateFingerprint({
+            studentId: student.id,
+            dateIso: entry.dateIso,
+            title: entry.title,
+            type: entry.type,
+            startTimeLocal: entry.startTimeLocal,
+            plannedDurationSec: entry.plannedDurationSec,
+            plannedDistance: entry.plannedDistance,
+          });
+          return fingerprint === (candidate.fingerprint ?? "");
+        });
+        const athleteIdentityOk =
+          postSaveIdentity.matchedBy !== "inconclusive" && postSaveIdentity.matchedBy !== "mismatch";
+        postSaveValidationPassed = movedCandidateFoundOnTargetDate && !oldCandidateStillOnSourceDate && athleteIdentityOk;
+        if (!postSaveValidationPassed) {
+          postSaveValidationError =
+            "Post-save validation checks failed (target match/source cleanup/identity verification).";
+        }
+      } catch (error) {
+        postSaveValidationError = toShortErrorMessage(error);
+      }
+    }
+
+    return {
+      prepareMoveWorkout,
+      preSaveScreenshot,
+      afterSaveScreenshot,
+      saveAndCloseAttempted,
+      saveAndCloseClicked,
+      saveAndCloseClickMethod,
+      saveAndCloseError,
+      postSaveValidationAttempted,
+      postSaveValidationPassed,
+      postSaveValidationError,
+      mutationOccurred,
+      preSaveAudit,
+      postSaveAudit: {
+        athleteIdentityMatchedBy: postSaveIdentityMatchedBy,
+        movedCandidateFoundOnTargetDate,
+        oldCandidateStillOnSourceDate,
+        targetDate,
+        sourceDate,
+        expectedMovedFingerprint,
+      },
+    };
+  } finally {
+    if (context) {
+      await context.close().catch(() => {});
+    }
+  }
+}
+
 async function main(): Promise<void> {
   loadLocalEnv();
 
   const runnerId = getRunnerId();
   const runnerMode = resolveRunnerMode();
   const prepareOnly = hasCliFlag(TP_ACTIONS_PREPARE_ONLY_FLAG);
+  const confirmSaveFlag = hasCliFlag(TP_ACTIONS_CONFIRM_SAVE_FLAG);
+  const allowSaveEnv = isTruthyEnvFlag(TP_ACTIONS_ALLOW_SAVE_ENV);
+  const saveGateOpen = confirmSaveFlag || allowSaveEnv;
 
   if (prepareOnly && runnerMode.mode === "dry_run") {
     console.log(
@@ -5866,7 +6354,15 @@ async function main(): Promise<void> {
   }
 
   console.log(`Claimed TrainingPeaks action ${claimed.action.id} for real-mode revalidation.`);
-  console.log("Phase 3D.1 safety: revalidation only. No TrainingPeaks mutation will be attempted.");
+  if (prepareOnly) {
+    console.log("Prepare-only enabled: no TrainingPeaks mutation will be attempted.");
+  } else if (!saveGateOpen) {
+    console.log(
+      `Real save gate is closed. To allow Save & Close use ${TP_ACTIONS_CONFIRM_SAVE_FLAG} and/or ${TP_ACTIONS_ALLOW_SAVE_ENV}=true.`
+    );
+  } else {
+    console.log("Controlled real save path enabled (Save & Close is additionally gated and post-validated).");
+  }
   const run = await createActionRun(claimed.action.id, runnerId, "real");
   const baseLog: Record<string, unknown> = {
     actionId: claimed.action.id,
@@ -5891,9 +6387,15 @@ async function main(): Promise<void> {
     trustedDryRunRunId: claimed.trustedDryRunRun.id,
     trustedDryRun: claimed.trustedDryRunLog,
     safety: {
-      mutationForbidden: true,
+      mutationForbidden: prepareOnly || !saveGateOpen,
       allowedActions: ["open athlete page", "extract candidate", "compare with trusted dry-run", "capture screenshots"],
       forbiddenActions: ["drag", "drop", "save", "date change click", "form submit", "TrainingPeaks mutation"],
+    },
+    realSaveGate: {
+      confirmSaveFlag,
+      allowSaveEnv,
+      saveGateOpen,
+      requiredWhenNotPrepareOnly: true,
     },
   };
   const studentName = claimed.student?.student_name ?? "(unknown)";
@@ -5945,73 +6447,218 @@ async function main(): Promise<void> {
       return;
     }
 
-    let lastProbePayload: UiCapabilityProbe | null = null;
-    const trainingPeaksDriver = new PlaywrightOnlyTrainingPeaksDriver({
-      expectedActionId: claimed.action.id,
-      sourceDateIso: claimed.trustedDryRunLog.resolvedDates.sourceDate,
-      targetDateIso: claimed.trustedDryRunLog.resolvedDates.targetDate,
-      athleteIdentityMatchedBy: evaluation.identityCheck.matchedBy,
-      candidateFingerprintMatches: comparison.fingerprint.matches,
-      runProbe: async () => {
-        lastProbePayload = await probeTrainingPeaksMoveCapabilities(claimed, run.id, comparison);
-        return probeToDriverProbeShape(lastProbePayload);
-      },
-    });
+    if (prepareOnly || !saveGateOpen) {
+      let lastProbePayload: UiCapabilityProbe | null = null;
+      const trainingPeaksDriver = new PlaywrightOnlyTrainingPeaksDriver({
+        expectedActionId: claimed.action.id,
+        sourceDateIso: claimed.trustedDryRunLog.resolvedDates.sourceDate,
+        targetDateIso: claimed.trustedDryRunLog.resolvedDates.targetDate,
+        athleteIdentityMatchedBy: evaluation.identityCheck.matchedBy,
+        candidateFingerprintMatches: comparison.fingerprint.matches,
+        runProbe: async () => {
+          lastProbePayload = await probeTrainingPeaksMoveCapabilities(claimed, run.id, comparison);
+          return probeToDriverProbeShape(lastProbePayload);
+        },
+      });
 
-    const prepareMoveWorkoutResult = await trainingPeaksDriver.prepareMoveWorkout(claimed.action.id);
-    const executePreparedMoveResult = await trainingPeaksDriver.executePreparedMove(claimed.action.id);
-    const validateMoveWorkoutResult = await trainingPeaksDriver.validateMoveWorkout(claimed.action.id);
-    const uiCapabilityProbe = lastProbePayload!;
-    const latestUiProbeError =
-      uiCapabilityProbe.errors.length > 0 ? uiCapabilityProbe.errors[uiCapabilityProbe.errors.length - 1] : null;
-    const errorMessage =
-      latestUiProbeError ?? prepareMoveWorkoutResult.failureReason ?? REAL_MOVE_NOT_IMPLEMENTED_ERROR;
-    const driverLogJsonSlice = {
-      kind: "playwright_only_v1",
-      prepareMoveWorkout: prepareMoveWorkoutResult,
-      executePreparedMove: executePreparedMoveResult,
-      validateMoveWorkout: validateMoveWorkoutResult,
-    };
+      const prepareMoveWorkoutResult = await trainingPeaksDriver.prepareMoveWorkout(claimed.action.id);
+      const executePreparedMoveResult = await trainingPeaksDriver.executePreparedMove(claimed.action.id);
+      const validateMoveWorkoutResult = await trainingPeaksDriver.validateMoveWorkout(claimed.action.id);
+      const uiCapabilityProbe = lastProbePayload!;
+      const latestUiProbeError =
+        uiCapabilityProbe.errors.length > 0 ? uiCapabilityProbe.errors[uiCapabilityProbe.errors.length - 1] : null;
+      const errorMessage =
+        latestUiProbeError ??
+        prepareMoveWorkoutResult.failureReason ??
+        (!saveGateOpen && !prepareOnly
+          ? `Real save gate closed: provide ${TP_ACTIONS_CONFIRM_SAVE_FLAG} or ${TP_ACTIONS_ALLOW_SAVE_ENV}=true.`
+          : REAL_MOVE_NOT_IMPLEMENTED_ERROR);
+      const driverLogJsonSlice = {
+        kind: "playwright_only_v1",
+        prepareMoveWorkout: prepareMoveWorkoutResult,
+        executePreparedMove: executePreparedMoveResult,
+        validateMoveWorkout: validateMoveWorkoutResult,
+      };
+
+      const logJson = {
+        ...baseLog,
+        status: "failed",
+        failedAt: new Date().toISOString(),
+        error: errorMessage,
+        pageMeta: artifacts.pageMeta,
+        revalidationPassed: true,
+        revalidationComparison: comparison,
+        currentEvaluation: evaluation,
+        uiCapabilityProbe,
+        trainingPeaksDriver: driverLogJsonSlice,
+        saveAndCloseAttempted: false,
+        saveAndCloseClicked: false,
+        saveAndCloseClickMethod: null,
+        saveAndCloseError: !saveGateOpen && !prepareOnly ? errorMessage : null,
+        postSaveValidationAttempted: false,
+        postSaveValidationPassed: false,
+        postSaveValidationError: null,
+        mutationOccurred: false,
+        wouldMove: {
+          sourceDate: claimed.trustedDryRunLog.resolvedDates.sourceDate,
+          targetDate: claimed.trustedDryRunLog.resolvedDates.targetDate,
+          candidate: {
+            title: comparison.currentCandidate?.title ?? comparison.trustedCandidate.title,
+            type: comparison.currentCandidate?.type ?? comparison.trustedCandidate.type,
+            plannedDurationSec:
+              comparison.currentCandidate?.plannedDurationSec ?? comparison.trustedCandidate.plannedDurationSec,
+            plannedDistance:
+              comparison.currentCandidate?.plannedDistance ?? comparison.trustedCandidate.plannedDistance,
+            startTimeLocal: comparison.currentCandidate?.startTimeLocal ?? comparison.trustedCandidate.startTimeLocal,
+            fingerprint: comparison.currentCandidate?.fingerprint ?? comparison.trustedCandidate.fingerprint,
+          },
+        },
+        note: !saveGateOpen && !prepareOnly
+          ? `Real mode revalidation passed, but save gate is closed (${TP_ACTIONS_CONFIRM_SAVE_FLAG} OR ${TP_ACTIONS_ALLOW_SAVE_ENV}=true required). TrainingPeaks not changed.`
+          : "Проверка перед переносом пройдена. UI capability probe выполнен в режиме read-only; trainingPeaksDriver boundary вызван. Реальный перенос сохранением не выполнен. TrainingPeaks не изменён.",
+      };
+
+      await finishRealRun(claimed.action.id, run.id, {
+        errorMessage,
+        logJson,
+        screenshotBeforePath: artifacts.screenshotBeforePath,
+        screenshotAfterPath: artifacts.screenshotAfterPath,
+      });
+
+      if (!prepareOnly) {
+        await notifyCoachRealModeResult({
+          chatId: resolveDryRunNotificationChatId(claimed.action),
+          action: claimed.action,
+          studentName,
+          trustedDryRun: claimed.trustedDryRunLog,
+          currentEvaluation: evaluation,
+          comparison,
+          revalidationPassed: true,
+          errorMessage: logJson.note as string,
+          candidate: evaluation.candidate ?? comparison.trustedCandidate,
+        });
+      }
+
+      if (prepareOnly) {
+        const uiCapabilityProbeErrors =
+          prepareMoveWorkoutResult.status === "ready_to_save"
+            ? uiCapabilityProbe.errors.filter((entry) => !/currentStep\s*=\s*unknown/i.test(entry))
+            : uiCapabilityProbe.errors;
+        const summaryPayload = {
+          actionId: claimed.action.id,
+          runId: run.id,
+          revalidationPassed: true,
+          mutationOccurred: false,
+          datePickerOpened: prepareMoveWorkoutResult.datePickerOpened,
+          targetDateVisible: prepareMoveWorkoutResult.targetDateVisible,
+          datePickerDetectionStrategy: prepareMoveWorkoutResult.datePickerDetectionStrategy,
+          visibleMonth: prepareMoveWorkoutResult.visibleMonth,
+          visibleYear: prepareMoveWorkoutResult.visibleYear,
+          visibleDayCandidates: prepareMoveWorkoutResult.visibleDayCandidates,
+          targetDayVisible: prepareMoveWorkoutResult.targetDayVisible,
+          selectedSourceDayVisible: prepareMoveWorkoutResult.selectedSourceDayVisible,
+          targetDateClickCandidateFound: prepareMoveWorkoutResult.targetDateClickCandidateFound,
+          targetDateClickCandidateBoundingBox: prepareMoveWorkoutResult.targetDateClickCandidateBoundingBox,
+          targetDateSelectionAttempted: prepareMoveWorkoutResult.targetDateSelectionAttempted,
+          targetDateSelectionConfirmed: prepareMoveWorkoutResult.targetDateSelectionConfirmed,
+          postClickDateHeaderText: prepareMoveWorkoutResult.postClickDateHeaderText,
+          postClickDateInputValue: prepareMoveWorkoutResult.postClickDateInputValue,
+          targetDateConfirmedBy: prepareMoveWorkoutResult.targetDateConfirmedBy,
+          targetDateClickMethod: prepareMoveWorkoutResult.targetDateClickMethod,
+          afterTargetDayClickError: prepareMoveWorkoutResult.afterTargetDayClickError,
+          datePickerCloseAttempted: uiCapabilityProbe.detail.datePickerCloseAttempted,
+          datePickerCloseSucceeded: uiCapabilityProbe.detail.datePickerCloseSucceeded,
+          datePickerCloseError: uiCapabilityProbe.detail.datePickerCloseError,
+          status: prepareMoveWorkoutResult.status,
+          failureReason: prepareMoveWorkoutResult.failureReason,
+          datepickerDomDebugPath: prepareMoveWorkoutResult.datepickerDomDebugPath,
+          datepickerDomDebugTopCandidates: prepareMoveWorkoutResult.datepickerDomDebugTopCandidates,
+          datepickerDomDebugError: prepareMoveWorkoutResult.datepickerDomDebugError,
+          trainingPeaksDriver: driverLogJsonSlice,
+          uiCapabilityProbeErrors,
+          diagnostics: prepareMoveWorkoutResult,
+        };
+        console.log(JSON.stringify({ prepareOnlySummary: summaryPayload }, null, 2));
+        console.log("No TrainingPeaks mutation occurred (prepare-only tooling run).");
+      }
+
+      console.log(
+        !saveGateOpen && !prepareOnly
+          ? `Real-mode revalidation passed for action ${claimed.action.id}, but save gate is closed.`
+          : `Real-mode revalidation passed for action ${claimed.action.id}, but real move remains blocked (driver.executePreparedMove).`
+      );
+      return;
+    }
+
+    const execution = await runControlledSaveAndCloseExecution({
+      claimed,
+      runId: run.id,
+      comparison,
+    });
+    const prepareMoveWorkoutResult = execution.prepareMoveWorkout;
+    const prepareGatesPassed =
+      prepareMoveWorkoutResult.status === "ready_to_save" &&
+      prepareMoveWorkoutResult.targetDateSelectionConfirmed === true &&
+      prepareMoveWorkoutResult.targetDateConfirmedBy !== null &&
+      prepareMoveWorkoutResult.mutationOccurred === false &&
+      prepareMoveWorkoutResult.athleteIdentityOk === true &&
+      prepareMoveWorkoutResult.candidateFingerprintOk === true &&
+      prepareMoveWorkoutResult.sourceDate === claimed.trustedDryRunLog.resolvedDates.sourceDate &&
+      prepareMoveWorkoutResult.targetDate === claimed.trustedDryRunLog.resolvedDates.targetDate &&
+      execution.preSaveAudit.saveAndCloseButtonFound &&
+      execution.preSaveAudit.saveAndCloseButtonEnabled;
 
     const logJson = {
       ...baseLog,
-      status: "failed",
-      failedAt: new Date().toISOString(),
-      error: errorMessage,
+      status: execution.postSaveValidationPassed ? "completed" : "failed",
+      completedAt: execution.postSaveValidationPassed ? new Date().toISOString() : undefined,
+      failedAt: execution.postSaveValidationPassed ? undefined : new Date().toISOString(),
       pageMeta: artifacts.pageMeta,
       revalidationPassed: true,
       revalidationComparison: comparison,
       currentEvaluation: evaluation,
-      uiCapabilityProbe,
-      trainingPeaksDriver: driverLogJsonSlice,
-      wouldMove: {
-        sourceDate: claimed.trustedDryRunLog.resolvedDates.sourceDate,
-        targetDate: claimed.trustedDryRunLog.resolvedDates.targetDate,
-        candidate: {
-          title: comparison.currentCandidate?.title ?? comparison.trustedCandidate.title,
-          type: comparison.currentCandidate?.type ?? comparison.trustedCandidate.type,
-          plannedDurationSec:
-            comparison.currentCandidate?.plannedDurationSec ?? comparison.trustedCandidate.plannedDurationSec,
-          plannedDistance:
-            comparison.currentCandidate?.plannedDistance ?? comparison.trustedCandidate.plannedDistance,
-          startTimeLocal: comparison.currentCandidate?.startTimeLocal ?? comparison.trustedCandidate.startTimeLocal,
-          fingerprint: comparison.currentCandidate?.fingerprint ?? comparison.trustedCandidate.fingerprint,
-        },
-      },
-      note: "Проверка перед переносом пройдена. UI capability probe выполнен в режиме read-only; trainingPeaksDriver boundary вызван. Реальный перенос сохранением не выполнен. TrainingPeaks не изменён.",
+      prepareMoveWorkout: prepareMoveWorkoutResult,
+      preSaveScreenshot: execution.preSaveScreenshot,
+      afterSaveScreenshot: execution.afterSaveScreenshot,
+      preSaveAudit: execution.preSaveAudit,
+      postSaveAudit: execution.postSaveAudit,
+      saveAndCloseAttempted: execution.saveAndCloseAttempted,
+      saveAndCloseClicked: execution.saveAndCloseClicked,
+      saveAndCloseClickMethod: execution.saveAndCloseClickMethod,
+      saveAndCloseError: execution.saveAndCloseError,
+      postSaveValidationAttempted: execution.postSaveValidationAttempted,
+      postSaveValidationPassed: execution.postSaveValidationPassed,
+      postSaveValidationError: execution.postSaveValidationError,
+      mutationOccurred: execution.mutationOccurred,
+      prepareGatesPassed,
+      note: execution.postSaveValidationPassed
+        ? "Controlled Save & Close executed and post-save validation passed."
+        : execution.saveAndCloseClicked
+          ? `${SAVE_CLICK_POST_VALIDATION_FAILED_ALERT}`
+          : TRAININGPEAKS_NOT_CHANGED_NOTE,
     };
 
-    await finishRealRun(claimed.action.id, run.id, {
-      errorMessage,
-      logJson,
-      screenshotBeforePath: artifacts.screenshotBeforePath,
-      screenshotAfterPath: artifacts.screenshotAfterPath,
-    });
-
-    const coachExplanation =
-      "Проверка перед переносом пройдена. UI capability probe выполнен в режиме read-only; trainingPeaksDriver boundary вызван. Реальный перенос сохранением не выполнен. TrainingPeaks не изменён.";
-
-    if (!prepareOnly) {
+    if (!prepareGatesPassed) {
+      const gateError = `Controlled save prepare gates failed before Save & Close: ${prepareMoveWorkoutResult.failureReason ?? "unknown prepare mismatch"}`;
+      await finishRealRun(claimed.action.id, run.id, {
+        errorMessage: gateError,
+        logJson: {
+          ...logJson,
+          status: "failed",
+          error: gateError,
+          mutationOccurred: false,
+          saveAndCloseAttempted: false,
+          saveAndCloseClicked: false,
+          saveAndCloseClickMethod: null,
+          saveAndCloseError: gateError,
+          postSaveValidationAttempted: false,
+          postSaveValidationPassed: false,
+          postSaveValidationError: null,
+          note: TRAININGPEAKS_NOT_CHANGED_NOTE,
+        },
+        screenshotBeforePath: execution.preSaveScreenshot ?? artifacts.screenshotBeforePath,
+        screenshotAfterPath: execution.afterSaveScreenshot ?? artifacts.screenshotAfterPath,
+      });
       await notifyCoachRealModeResult({
         chatId: resolveDryRunNotificationChatId(claimed.action),
         action: claimed.action,
@@ -6020,55 +6667,65 @@ async function main(): Promise<void> {
         currentEvaluation: evaluation,
         comparison,
         revalidationPassed: true,
-        errorMessage: coachExplanation,
+        errorMessage: gateError,
         candidate: evaluation.candidate ?? comparison.trustedCandidate,
       });
+      console.log(`Real-mode prepare gates failed for action ${claimed.action.id}: ${gateError}`);
+      return;
     }
 
-    if (prepareOnly) {
-      const uiCapabilityProbeErrors =
-        prepareMoveWorkoutResult.status === "ready_to_save"
-          ? uiCapabilityProbe.errors.filter((entry) => !/currentStep\s*=\s*unknown/i.test(entry))
-          : uiCapabilityProbe.errors;
-      const summaryPayload = {
-        actionId: claimed.action.id,
-        runId: run.id,
+    if (execution.saveAndCloseClicked && execution.postSaveValidationPassed) {
+      await completeRealRun(claimed.action.id, run.id, {
+        logJson,
+        screenshotBeforePath: execution.preSaveScreenshot ?? artifacts.screenshotBeforePath,
+        screenshotAfterPath: execution.afterSaveScreenshot ?? artifacts.screenshotAfterPath,
+      });
+      await notifyCoachRealModeResult({
+        chatId: resolveDryRunNotificationChatId(claimed.action),
+        action: claimed.action,
+        studentName,
+        trustedDryRun: claimed.trustedDryRunLog,
+        currentEvaluation: evaluation,
+        comparison,
         revalidationPassed: true,
-        mutationOccurred: false,
-        datePickerOpened: prepareMoveWorkoutResult.datePickerOpened,
-        targetDateVisible: prepareMoveWorkoutResult.targetDateVisible,
-        datePickerDetectionStrategy: prepareMoveWorkoutResult.datePickerDetectionStrategy,
-        visibleMonth: prepareMoveWorkoutResult.visibleMonth,
-        visibleYear: prepareMoveWorkoutResult.visibleYear,
-        visibleDayCandidates: prepareMoveWorkoutResult.visibleDayCandidates,
-        targetDayVisible: prepareMoveWorkoutResult.targetDayVisible,
-        selectedSourceDayVisible: prepareMoveWorkoutResult.selectedSourceDayVisible,
-        targetDateClickCandidateFound: prepareMoveWorkoutResult.targetDateClickCandidateFound,
-        targetDateClickCandidateBoundingBox: prepareMoveWorkoutResult.targetDateClickCandidateBoundingBox,
-        targetDateSelectionAttempted: prepareMoveWorkoutResult.targetDateSelectionAttempted,
-        targetDateSelectionConfirmed: prepareMoveWorkoutResult.targetDateSelectionConfirmed,
-        postClickDateHeaderText: prepareMoveWorkoutResult.postClickDateHeaderText,
-        postClickDateInputValue: prepareMoveWorkoutResult.postClickDateInputValue,
-        targetDateConfirmedBy: prepareMoveWorkoutResult.targetDateConfirmedBy,
-        targetDateClickMethod: prepareMoveWorkoutResult.targetDateClickMethod,
-        afterTargetDayClickError: prepareMoveWorkoutResult.afterTargetDayClickError,
-        datePickerCloseAttempted: uiCapabilityProbe.detail.datePickerCloseAttempted,
-        datePickerCloseSucceeded: uiCapabilityProbe.detail.datePickerCloseSucceeded,
-        datePickerCloseError: uiCapabilityProbe.detail.datePickerCloseError,
-        status: prepareMoveWorkoutResult.status,
-        failureReason: prepareMoveWorkoutResult.failureReason,
-        datepickerDomDebugPath: prepareMoveWorkoutResult.datepickerDomDebugPath,
-        datepickerDomDebugTopCandidates: prepareMoveWorkoutResult.datepickerDomDebugTopCandidates,
-        datepickerDomDebugError: prepareMoveWorkoutResult.datepickerDomDebugError,
-        trainingPeaksDriver: driverLogJsonSlice,
-        uiCapabilityProbeErrors,
-        diagnostics: prepareMoveWorkoutResult,
-      };
-      console.log(JSON.stringify({ prepareOnlySummary: summaryPayload }, null, 2));
-      console.log("No TrainingPeaks mutation occurred (prepare-only tooling run).");
+        errorMessage: "Controlled Save & Close executed successfully; post-save validation passed.",
+        candidate: evaluation.candidate ?? comparison.trustedCandidate,
+        includeNotChangedNote: false,
+      });
+      console.log(`Real-mode controlled Save & Close completed for action ${claimed.action.id}.`);
+      return;
     }
 
-    console.log(`Real-mode revalidation passed for action ${claimed.action.id}, but real move remains blocked (driver.executePreparedMove).`);
+    const failureErrorMessage = execution.saveAndCloseClicked
+      ? SAVE_CLICK_POST_VALIDATION_FAILED_ALERT
+      : execution.saveAndCloseError ?? "Controlled Save & Close was not clicked.";
+    await finishRealRun(claimed.action.id, run.id, {
+      errorMessage: failureErrorMessage,
+      logJson: {
+        ...logJson,
+        status: "failed",
+        error: failureErrorMessage,
+        note: execution.saveAndCloseClicked
+          ? SAVE_CLICK_POST_VALIDATION_FAILED_ALERT
+          : TRAININGPEAKS_NOT_CHANGED_NOTE,
+      },
+      screenshotBeforePath: execution.preSaveScreenshot ?? artifacts.screenshotBeforePath,
+      screenshotAfterPath: execution.afterSaveScreenshot ?? artifacts.screenshotAfterPath,
+    });
+    await notifyCoachRealModeResult({
+      chatId: resolveDryRunNotificationChatId(claimed.action),
+      action: claimed.action,
+      studentName,
+      trustedDryRun: claimed.trustedDryRunLog,
+      currentEvaluation: evaluation,
+      comparison,
+      revalidationPassed: true,
+      errorMessage: failureErrorMessage,
+      candidate: evaluation.candidate ?? comparison.trustedCandidate,
+      includeNotChangedNote: !execution.saveAndCloseClicked,
+    });
+    console.log(`Real-mode controlled Save & Close failed for action ${claimed.action.id}: ${failureErrorMessage}`);
+    return;
   } catch (error) {
     const errorMessage = toShortErrorMessage(error);
     const logJson = {
