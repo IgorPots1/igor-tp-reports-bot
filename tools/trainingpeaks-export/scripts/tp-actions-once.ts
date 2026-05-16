@@ -130,35 +130,71 @@ type RevalidationComparison = {
 type UiCapabilityProbeScreenshots = {
   before: string | null;
   menuOpened: string | null;
+  afterEditClick: string | null;
   detailOpened: string | null;
+  beforeDateHeaderClick: string | null;
+  afterDateHeaderClickAttempt1: string | null;
+  datePickerOpened: string | null;
   afterClosed: string | null;
+};
+
+type UiCapabilityProbeCardDiscovery = {
+  found: boolean;
+  selectorUsed: string | null;
+  textSnippet: string | null;
+  menuButtonFound: boolean;
+  menuTriggerFound: boolean;
+  menuTriggerSelectorUsed: string | null;
+  menuOpened: boolean;
+  menuActionLabels: string[];
+  menuMoveOptionFound: boolean;
+  menuRescheduleOptionFound: boolean;
+  menuCopyOptionFound: boolean;
+  menuMoveActionFound: boolean;
+  menuRescheduleActionFound: boolean;
+  menuCopyActionFound: boolean;
+  menuEditActionFound: boolean;
+  menuEditClicked: boolean;
+  menuCloseSucceeded: boolean;
+};
+
+type UiCapabilityProbeDetailDiscovery = {
+  openAttempted: boolean;
+  opened: boolean;
+  dateFieldFound: boolean;
+  dateFieldSelectorHint: string | null;
+  currentDateValue: string | null;
+  dateHeaderFound: boolean;
+  dateHeaderText: string | null;
+  dateControlClickable: boolean;
+  dateControlSelectorUsed: string | null;
+  dateHeaderClickStrategiesTried: string[];
+  dateHeaderClickSucceededStrategy: string | null;
+  dateHeaderBoundingBox: { x: number; y: number; width: number; height: number } | null;
+  datePickerOpened: boolean;
+  datePickerSelectorHint: string | null;
+  datePickerOpenCheckCount: number;
+  datePickerOpenCheckSnippets: string[];
+  saveButtonFound: boolean;
+  saveAndCloseButtonFound: boolean;
+  cancelButtonFound: boolean;
+  closeButtonFound: boolean;
+  modalScopedSaveFound: boolean;
+  modalScopedSaveAndCloseFound: boolean;
+  modalScopedCancelFound: boolean;
+  modalScopedCloseFound: boolean;
+  closeSucceeded: boolean;
 };
 
 type UiCapabilityProbe = {
   attempted: boolean;
   safeToProceedLater: boolean;
-  recommendedMutationMethod: "detail_date_save" | "explicit_move_menu" | "unknown";
-  card: {
-    found: boolean;
-    selectorUsed: string | null;
-    textSnippet: string | null;
-    menuButtonFound: boolean;
-    menuOpened: boolean;
-    menuMoveOptionFound: boolean;
-    menuRescheduleOptionFound: boolean;
-    menuCopyOptionFound: boolean;
-    menuCloseSucceeded: boolean;
-  };
-  detail: {
-    openAttempted: boolean;
-    opened: boolean;
-    dateFieldFound: boolean;
-    dateFieldSelectorHint: string | null;
-    currentDateValue: string | null;
-    saveButtonFound: boolean;
-    cancelButtonFound: boolean;
-    closeButtonFound: boolean;
-    closeSucceeded: boolean;
+  recommendedMutationMethod: "detail_date_picker_save_close" | "unknown";
+  card: UiCapabilityProbeCardDiscovery;
+  detail: UiCapabilityProbeDetailDiscovery;
+  controlDiscovery: {
+    card: UiCapabilityProbeCardDiscovery;
+    detail: UiCapabilityProbeDetailDiscovery;
   };
   screenshots: UiCapabilityProbeScreenshots;
   warnings: string[];
@@ -166,6 +202,7 @@ type UiCapabilityProbe = {
 };
 
 type TrainingPeaksMoveWorkoutTarget =
+  | { kind: "date"; value: string; sourceText?: string }
   | { kind: "relative_day"; value: "tomorrow" | "day_after_tomorrow"; sourceText?: string }
   | {
       kind: "weekday";
@@ -318,6 +355,20 @@ const TP_PRIMARY_WORKOUT_CARD_SELECTOR = ".dayWidth.dayContainer.day .activities
 const TP_FALLBACK_WORKOUT_CARD_SELECTOR = ".dayWidth.dayContainer.day .workoutDiv";
 const TP_PRIMARY_WORKOUT_CARD_WITHIN_DAY_SELECTOR = ".activities .MuiCard-root.activity.workout";
 const TP_FALLBACK_WORKOUT_CARD_WITHIN_DAY_SELECTOR = ".workoutDiv";
+const TP_DATE_HEADER_REGEX =
+  /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b[\s,\-/:]*[a-z]{3,}\s+\d{1,2},?\s+20\d{2}\b/i;
+const TP_STRONG_DATE_HEADER_REGEX =
+  /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b[\s,\-/:]+(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2},?\s+20\d{2}\b/i;
+const TP_MONTH_REGEX = /\b(?:january|february|march|april|may|june|july|august|september|october|november|december)\b/i;
+const TP_YEAR_REGEX = /\b20\d{2}\b/;
+const TP_TIME_DROPDOWN_REGEX = /\b\d{1,2}:\d{2}\s*(?:am|pm)\b/i;
+const TP_WEEKDAY_ROW_REGEX = /\b(?:mo|tu|we|th|fr|sa|su)\b(?:\s+\b(?:mo|tu|we|th|fr|sa|su)\b){3,}/i;
+const TP_MUTATION_ACTION_REGEX = /save(?:\s*&\s*close)?|delete|update|submit|move|resched|postpone|shift|copy|duplicate/i;
+const TP_DATE_CONTROL_ATTR_REGEX = /date|calendar/i;
+const TP_MOVE_MENU_ACTION_REGEX = /move/i;
+const TP_RESCHEDULE_MENU_ACTION_REGEX = /resched|postpone|shift/i;
+const TP_COPY_MENU_ACTION_REGEX = /copy|duplicate/i;
+const TP_EDIT_MENU_ACTION_REGEX = /^edit$/i;
 
 function hasCliFlag(flag: string): boolean {
   return process.argv.slice(2).includes(flag);
@@ -523,7 +574,7 @@ function parseMoveWorkoutPayload(parsedPayload: unknown): ParsedMoveWorkoutPaylo
   if (payload.actionType !== "move_workout" || !payload.target) {
     return null;
   }
-  if (payload.target.kind !== "relative_day" && payload.target.kind !== "weekday") {
+  if (payload.target.kind !== "relative_day" && payload.target.kind !== "weekday" && payload.target.kind !== "date") {
     return null;
   }
   return payload;
@@ -532,6 +583,15 @@ function parseMoveWorkoutPayload(parsedPayload: unknown): ParsedMoveWorkoutPaylo
 function resolveTargetDateFromPayload(target: TrainingPeaksMoveWorkoutTarget): { targetDate: string; warnings: string[] } {
   const warnings: string[] = [];
   const now = new Date();
+
+  if (target.kind === "date") {
+    const normalized = normalizeDateCandidate(target.value);
+    if (normalized) {
+      return { targetDate: normalized, warnings };
+    }
+    warnings.push("target date is invalid");
+    return { targetDate: toIsoDate(now), warnings };
+  }
 
   if (target.kind === "relative_day") {
     if (target.value === "tomorrow") {
@@ -603,6 +663,9 @@ function extractExplicitSourceDate(input: { rawText: string; parsedPayload: unkn
   const payloadDateCandidates = [
     payload?.sourceDate,
     payload?.source_date,
+    payload?.source && typeof payload.source === "object" && "kind" in payload.source && payload.source.kind === "date" && "value" in payload.source
+      ? payload.source.value
+      : null,
     (payload?.source && typeof payload.source === "object" && "date" in payload.source
       ? payload.source.date
       : null) ?? null,
@@ -669,11 +732,14 @@ function isTargetTomorrow(action: TrainingPeaksActionRow): boolean {
   return parsed?.target?.kind === "relative_day" && parsed.target.value === "tomorrow";
 }
 
-function normalizeWhitespace(value: string): string {
+function normalizeWhitespace(value: string | null | undefined): string {
+  if (value == null) {
+    return "";
+  }
   return value.replace(/\s+/g, " ").trim();
 }
 
-function toTextSnippet(value: string, maxLength = 240): string {
+function toTextSnippet(value: string | null | undefined, maxLength = 240): string {
   return normalizeWhitespace(value).slice(0, maxLength);
 }
 
@@ -1641,36 +1707,70 @@ async function captureCalendarDomSnapshot(
 }
 
 function buildEmptyUiCapabilityProbe(): UiCapabilityProbe {
+  const card: UiCapabilityProbeCardDiscovery = {
+    found: false,
+    selectorUsed: null,
+    textSnippet: null,
+    menuButtonFound: false,
+    menuTriggerFound: false,
+    menuTriggerSelectorUsed: null,
+    menuOpened: false,
+    menuActionLabels: [],
+    menuMoveOptionFound: false,
+    menuRescheduleOptionFound: false,
+    menuCopyOptionFound: false,
+    menuMoveActionFound: false,
+    menuRescheduleActionFound: false,
+    menuCopyActionFound: false,
+    menuEditActionFound: false,
+    menuEditClicked: false,
+    menuCloseSucceeded: false,
+  };
+  const detail: UiCapabilityProbeDetailDiscovery = {
+    openAttempted: false,
+    opened: false,
+    dateFieldFound: false,
+    dateFieldSelectorHint: null,
+    currentDateValue: null,
+    dateHeaderFound: false,
+    dateHeaderText: null,
+    dateControlClickable: false,
+    dateControlSelectorUsed: null,
+    dateHeaderClickStrategiesTried: [],
+    dateHeaderClickSucceededStrategy: null,
+    dateHeaderBoundingBox: null,
+    datePickerOpened: false,
+    datePickerSelectorHint: null,
+    datePickerOpenCheckCount: 0,
+    datePickerOpenCheckSnippets: [],
+    saveButtonFound: false,
+    saveAndCloseButtonFound: false,
+    cancelButtonFound: false,
+    closeButtonFound: false,
+    modalScopedSaveFound: false,
+    modalScopedSaveAndCloseFound: false,
+    modalScopedCancelFound: false,
+    modalScopedCloseFound: false,
+    closeSucceeded: false,
+  };
   return {
     attempted: true,
     safeToProceedLater: false,
     recommendedMutationMethod: "unknown",
-    card: {
-      found: false,
-      selectorUsed: null,
-      textSnippet: null,
-      menuButtonFound: false,
-      menuOpened: false,
-      menuMoveOptionFound: false,
-      menuRescheduleOptionFound: false,
-      menuCopyOptionFound: false,
-      menuCloseSucceeded: false,
-    },
-    detail: {
-      openAttempted: false,
-      opened: false,
-      dateFieldFound: false,
-      dateFieldSelectorHint: null,
-      currentDateValue: null,
-      saveButtonFound: false,
-      cancelButtonFound: false,
-      closeButtonFound: false,
-      closeSucceeded: false,
+    card,
+    detail,
+    controlDiscovery: {
+      card,
+      detail,
     },
     screenshots: {
       before: null,
       menuOpened: null,
+      afterEditClick: null,
       detailOpened: null,
+      beforeDateHeaderClick: null,
+      afterDateHeaderClickAttempt1: null,
+      datePickerOpened: null,
       afterClosed: null,
     },
     warnings: [],
@@ -1886,20 +1986,733 @@ async function readDateFieldValue(locator: import("playwright").Locator): Promis
   return (await getInputValueSafe(locator, 700)) ?? (await getInnerTextSafe(locator, 700));
 }
 
+function looksLikeTrainingPeaksDateHeader(text: string | null): boolean {
+  if (!text) {
+    return false;
+  }
+  return Boolean(extractTrainingPeaksDateHeaderText(text));
+}
+
+function extractTrainingPeaksDateHeaderText(text: string | null): string | null {
+  if (!text) {
+    return null;
+  }
+  const normalized = normalizeWhitespace(text);
+  if (!normalized) {
+    return null;
+  }
+  const strictMatch = normalized.match(TP_STRONG_DATE_HEADER_REGEX);
+  if (strictMatch?.[0]) {
+    return normalizeWhitespace(strictMatch[0]);
+  }
+  const fallbackMatch = normalized.match(TP_DATE_HEADER_REGEX);
+  if (fallbackMatch?.[0]) {
+    return normalizeWhitespace(fallbackMatch[0]);
+  }
+  return null;
+}
+
+async function isLocatorClickable(locator: import("playwright").Locator, timeout = 700): Promise<boolean> {
+  if (!(await isVisible(locator, timeout))) {
+    return false;
+  }
+  try {
+    await locator.click({ timeout, trial: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function locatorMatchesTopOfScope(
+  scope: import("playwright").Locator,
+  candidate: import("playwright").Locator
+): Promise<boolean> {
+  try {
+    const [scopeBox, candidateBox] = await Promise.all([scope.boundingBox(), candidate.boundingBox()]);
+    if (!scopeBox || !candidateBox) {
+      return false;
+    }
+    const withinTopBand = candidateBox.y <= scopeBox.y + scopeBox.height * 0.4;
+    const withinLeftBand = candidateBox.x <= scopeBox.x + scopeBox.width * 0.6;
+    return withinTopBand && withinLeftBand;
+  } catch {
+    return false;
+  }
+}
+
+function toProbeBoundingBox(
+  box: { x: number; y: number; width: number; height: number } | null
+): { x: number; y: number; width: number; height: number } | null {
+  if (!box) {
+    return null;
+  }
+  return {
+    x: Math.round(box.x * 100) / 100,
+    y: Math.round(box.y * 100) / 100,
+    width: Math.round(box.width * 100) / 100,
+    height: Math.round(box.height * 100) / 100,
+  };
+}
+
+function boundingBoxCenter(box: { x: number; y: number; width: number; height: number }): { x: number; y: number } {
+  return {
+    x: box.x + box.width / 2,
+    y: box.y + box.height / 2,
+  };
+}
+
+function boundingBoxCenterLeft(box: { x: number; y: number; width: number; height: number }): { x: number; y: number } {
+  return {
+    x: box.x + Math.max(8, Math.min(18, box.width * 0.22)),
+    y: box.y + box.height / 2,
+  };
+}
+
+function isBoxNearDateHeader(
+  candidateBox: { x: number; y: number; width: number; height: number } | null,
+  detailBox: { x: number; y: number; width: number; height: number } | null,
+  headerBox: { x: number; y: number; width: number; height: number } | null
+): boolean {
+  if (!candidateBox) {
+    return false;
+  }
+  const referenceHeaderBox = headerBox ?? detailBox;
+  if (!referenceHeaderBox) {
+    return true;
+  }
+  const candidateCenter = boundingBoxCenter(candidateBox);
+  const headerCenter = boundingBoxCenter(referenceHeaderBox);
+  const horizontalDistance = Math.abs(candidateCenter.x - headerCenter.x);
+  const verticalDistance = candidateCenter.y - headerCenter.y;
+  const horizontallyNear = horizontalDistance <= Math.max(280, referenceHeaderBox.width * 1.8);
+  const verticallyNear = verticalDistance >= -120 && verticalDistance <= Math.max(440, referenceHeaderBox.height * 8);
+  const belowOrOverlappingHeader = candidateBox.y <= referenceHeaderBox.y + referenceHeaderBox.height + 320;
+  const notHugePageRegion =
+    !detailBox || candidateBox.width * candidateBox.height <= detailBox.width * detailBox.height * 1.35;
+  return horizontallyNear && verticallyNear && belowOrOverlappingHeader && notHugePageRegion;
+}
+
+async function clickInsideDetailButOutsideDatePicker(
+  page: import("playwright").Page,
+  detailRoot: import("playwright").Locator,
+  datePickerRoot: import("playwright").Locator | null
+): Promise<boolean> {
+  try {
+    const [detailBox, pickerBox] = await Promise.all([detailRoot.boundingBox(), datePickerRoot?.boundingBox() ?? Promise.resolve(null)]);
+    if (!detailBox) {
+      return false;
+    }
+    const candidatePoints = [
+      { x: detailBox.x + 24, y: detailBox.y + Math.max(24, Math.min(96, detailBox.height * 0.18)) },
+      { x: detailBox.x + 24, y: detailBox.y + Math.max(40, detailBox.height * 0.55) },
+      { x: detailBox.x + Math.max(24, detailBox.width * 0.15), y: detailBox.y + Math.max(24, detailBox.height * 0.72) },
+    ];
+    const pointInsidePicker = (point: { x: number; y: number }) =>
+      Boolean(
+        pickerBox &&
+          point.x >= pickerBox.x &&
+          point.x <= pickerBox.x + pickerBox.width &&
+          point.y >= pickerBox.y &&
+          point.y <= pickerBox.y + pickerBox.height
+      );
+    const safePoint = candidatePoints.find((point) => !pointInsidePicker(point));
+    if (!safePoint) {
+      return false;
+    }
+    await page.mouse.click(safePoint.x, safePoint.y);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeActionLabels(labels: string[]): string[] {
+  const deduped = new Set<string>();
+  for (const label of labels) {
+    const normalized = normalizeWhitespace(label);
+    if (!normalized) {
+      continue;
+    }
+    deduped.add(normalized);
+  }
+  return [...deduped];
+}
+
+async function collectMenuActionLabels(menuRoot: import("playwright").Locator): Promise<string[]> {
+  const selectors = [
+    '[role="menuitem"]',
+    '[role="option"]',
+    "button",
+    "li",
+    '[class*="MenuItem" i]',
+  ];
+  const labels: string[] = [];
+  for (const selector of selectors) {
+    const snippets = await collectLocatorInnerTextSnippets(menuRoot.locator(selector), 12, 120);
+    for (const snippet of snippets) {
+      labels.push(snippet);
+    }
+    if (labels.length >= 12) {
+      break;
+    }
+  }
+  return normalizeActionLabels(labels);
+}
+
+async function findExactEditMenuAction(
+  menuRoot: import("playwright").Locator
+): Promise<{ locator: import("playwright").Locator; selectorHint: string } | null> {
+  const directRoleMatch = menuRoot.getByRole("menuitem", { name: /^edit$/i }).first();
+  if (await isVisible(directRoleMatch, 500)) {
+    return {
+      locator: directRoleMatch,
+      selectorHint: 'role="menuitem" name=/^edit$/i',
+    };
+  }
+
+  const candidateSelectors = ['[role="menuitem"]', '[role="option"]', "button", "li", '[class*="MenuItem" i]'];
+  for (const selector of candidateSelectors) {
+    const items = menuRoot.locator(selector);
+    const count = Math.min(await items.count(), 20);
+    for (let index = 0; index < count; index += 1) {
+      const item = items.nth(index);
+      if (!(await isVisible(item, 350))) {
+        continue;
+      }
+      const text = normalizeWhitespace(await getInnerTextSafe(item));
+      if (text && TP_EDIT_MENU_ACTION_REGEX.test(text)) {
+        return {
+          locator: item,
+          selectorHint: `${selector} text=/^edit$/i`,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+async function findVisibleMenuRoot(
+  page: import("playwright").Page
+): Promise<{ locator: import("playwright").Locator; selectorHint: string } | null> {
+  return findFirstVisibleLocator(
+    [
+      {
+        locator: page.getByRole("menu").first(),
+        selectorHint: 'role="menu"',
+      },
+      {
+        locator: page.locator(".MuiMenu-paper,.MuiMenu-list,[role='presentation'] [role='menu']").first(),
+        selectorHint: ".MuiMenu-paper,.MuiMenu-list,[role='presentation'] [role='menu']",
+      },
+    ],
+    700
+  );
+}
+
 async function menuStillVisible(page: import("playwright").Page): Promise<boolean> {
   return anyVisible(
     [
       page.getByRole("menu"),
-      page.getByRole("menuitem", { name: /move|resched|copy|duplicate/i }),
-      page.getByText(/move|resched|copy/i),
+      page.getByRole("menuitem", { name: /move|resched|postpone|shift|copy|duplicate/i }),
+      page.getByText(/move|resched|postpone|shift|copy|duplicate/i),
     ],
     500
   );
 }
 
+async function clickAwayFromOverlay(page: import("playwright").Page): Promise<void> {
+  try {
+    await page.mouse.click(8, 8);
+  } catch {
+    // Ignore click-away failures and let the caller decide whether to continue.
+  }
+}
+
+async function findVisibleDetailRoot(
+  page: import("playwright").Page
+): Promise<{ locator: import("playwright").Locator; selectorHint: string } | null> {
+  const directRoot = await findFirstVisibleLocator(
+    [
+      {
+        locator: page.getByRole("dialog").first(),
+        selectorHint: 'role="dialog"',
+      },
+      {
+        locator: page.locator(".MuiDialog-root:visible,.MuiDialog-container:visible,.MuiModal-root:visible").first(),
+        selectorHint: ".MuiDialog-root,.MuiDialog-container,.MuiModal-root",
+      },
+      {
+        locator: page.locator('[class*="Dialog" i]:visible,[class*="Modal" i]:visible,[class*="overlay" i]:visible').first(),
+        selectorHint: '[class*="Dialog" i],[class*="Modal" i],[class*="overlay" i]',
+      },
+    ],
+    700
+  );
+  if (directRoot) {
+    return directRoot;
+  }
+
+  const heuristicContainers = page.locator(
+    'body > div:visible,.MuiPaper-root:visible,.MuiDrawer-paper:visible,.MuiPopover-paper:visible,[class*="detail" i]:visible,[class*="workout" i]:visible,form:visible,section:visible'
+  );
+  const count = Math.min(await heuristicContainers.count(), 40);
+  for (let index = 0; index < count; index += 1) {
+    const candidate = heuristicContainers.nth(index);
+    if (!(await isVisible(candidate, 350))) {
+      continue;
+    }
+    const text = normalizeWhitespace(await getInnerTextSafe(candidate));
+    if (!text) {
+      continue;
+    }
+    let score = 0;
+    if (looksLikeTrainingPeaksDateHeader(text)) {
+      score += 2;
+    }
+    if (/save\s*&\s*close/i.test(text)) {
+      score += 2;
+    }
+    if (/\bcancel\b/i.test(text)) {
+      score += 1;
+    }
+    if (/\banaly(?:z|s)e\b|\bfiles?\b/i.test(text)) {
+      score += 1;
+    }
+    if (/\btitle\b|\bworkout\b/i.test(text)) {
+      score += 1;
+    }
+    if (TP_TIME_DROPDOWN_REGEX.test(text)) {
+      score += 1;
+    }
+    if (score >= 3) {
+      return {
+        locator: candidate,
+        selectorHint: "heuristic overlay root with workout detail signals",
+      };
+    }
+  }
+
+  return null;
+}
+
+async function findDetailDateHeader(
+  modalRoot: import("playwright").Locator
+): Promise<{ locator: import("playwright").Locator; text: string } | null> {
+  const candidates = modalRoot.locator('h1,h2,h3,h4,[role="heading"],button,[role="button"],div,span,p');
+  const count = Math.min(await candidates.count(), 80);
+  let bestMatch: { locator: import("playwright").Locator; text: string; score: number } | null = null;
+  for (let index = 0; index < count; index += 1) {
+    const locator = candidates.nth(index);
+    if (!(await isVisible(locator, 300))) {
+      continue;
+    }
+    const text = await getInnerTextSafe(locator);
+    const matchedHeaderText = extractTrainingPeaksDateHeaderText(text);
+    if (!matchedHeaderText) {
+      continue;
+    }
+    const normalizedText = matchedHeaderText;
+    let score = 0;
+    if (TP_STRONG_DATE_HEADER_REGEX.test(normalizedText)) {
+      score += 4;
+    }
+    if (TP_DATE_HEADER_REGEX.test(normalizedText)) {
+      score += 3;
+    }
+    if (await locatorMatchesTopOfScope(modalRoot, locator)) {
+      score += 3;
+    }
+    const role = await getAttributeSafe(locator, "role");
+    const className = await getAttributeSafe(locator, "class");
+    if (role === "button" || /button|header/i.test(className ?? "")) {
+      score += 1;
+    }
+    if (!bestMatch || score > bestMatch.score) {
+      bestMatch = { locator, text: normalizedText, score };
+    }
+  }
+  if (bestMatch) {
+    return {
+      locator: bestMatch.locator,
+      text: bestMatch.text,
+    };
+  }
+  const fallbackText = await getInnerTextSafe(modalRoot);
+  const matchedText = extractTrainingPeaksDateHeaderText(fallbackText);
+  return matchedText ? { locator: modalRoot, text: matchedText } : null;
+}
+
+async function findPreciseDateHeaderClickTarget(
+  modalRoot: import("playwright").Locator,
+  dateHeaderText: string | null,
+  fallbackLocator: import("playwright").Locator | null
+): Promise<
+  | {
+      locator: import("playwright").Locator;
+      selectorHint: string;
+      boundingBox: { x: number; y: number; width: number; height: number } | null;
+    }
+  | null
+> {
+  type CandidateMatch = {
+    locator: import("playwright").Locator;
+    selectorHint: string;
+    score: number;
+    box: { x: number; y: number; width: number; height: number } | null;
+  };
+
+  const candidates = modalRoot.locator('button,[role="button"],h1,h2,h3,h4,[role="heading"],span,p,div');
+  const count = Math.min(await candidates.count(), 140);
+  let bestMatch: CandidateMatch | null = null;
+
+  for (let index = 0; index < count; index += 1) {
+    const locator = candidates.nth(index);
+    if (!(await isVisible(locator, 250))) {
+      continue;
+    }
+    const text = normalizeWhitespace(await getInnerTextSafe(locator));
+    const extractedText = extractTrainingPeaksDateHeaderText(text);
+    const exactTextMatch = Boolean(dateHeaderText && text && text === dateHeaderText);
+    const extractedTextMatch = Boolean(dateHeaderText && extractedText && extractedText === dateHeaderText);
+    if (!exactTextMatch && !extractedTextMatch) {
+      continue;
+    }
+    const box = toProbeBoundingBox(await locator.boundingBox().catch(() => null));
+    const role = await getAttributeSafe(locator, "role");
+    const className = await getAttributeSafe(locator, "class");
+    const tagName = await locator.evaluate((node) => node.tagName.toLowerCase()).catch(() => "");
+    let score = 0;
+    if (exactTextMatch) {
+      score += 8;
+    }
+    if (extractedTextMatch) {
+      score += 5;
+    }
+    if (await locatorMatchesTopOfScope(modalRoot, locator)) {
+      score += 4;
+    }
+    if (role === "button" || /button|header|date|clickable/i.test(className ?? "")) {
+      score += 2;
+    }
+    if (/^(button|span|h1|h2|h3|h4|p)$/.test(tagName)) {
+      score += 1;
+    }
+
+    const candidate: CandidateMatch = {
+      locator,
+      selectorHint: exactTextMatch ? "exact-visible-date-header-text" : "date-header-text-fragment",
+      score,
+      box,
+    };
+
+    if (
+      !bestMatch ||
+      candidate.score > bestMatch.score ||
+      (candidate.score === bestMatch.score &&
+        ((candidate.box?.y ?? Number.POSITIVE_INFINITY) < (bestMatch.box?.y ?? Number.POSITIVE_INFINITY) ||
+          ((candidate.box?.y ?? Number.POSITIVE_INFINITY) === (bestMatch.box?.y ?? Number.POSITIVE_INFINITY) &&
+            (candidate.box?.x ?? Number.POSITIVE_INFINITY) < (bestMatch.box?.x ?? Number.POSITIVE_INFINITY))))
+    ) {
+      bestMatch = candidate;
+    }
+  }
+
+  if (bestMatch) {
+    return {
+      locator: bestMatch.locator,
+      selectorHint: bestMatch.selectorHint,
+      boundingBox: bestMatch.box,
+    };
+  }
+
+  if (fallbackLocator && (await isVisible(fallbackLocator, 400))) {
+    return {
+      locator: fallbackLocator,
+      selectorHint: "date-header-fallback-locator",
+      boundingBox: toProbeBoundingBox(await fallbackLocator.boundingBox().catch(() => null)),
+    };
+  }
+
+  return null;
+}
+
+async function findDetailDateHeaderOnPage(
+  page: import("playwright").Page
+): Promise<{ locator: import("playwright").Locator; text: string; selectorHint: string } | null> {
+  const candidates = page.locator('h1,h2,h3,h4,[role="heading"],button,[role="button"],div,span,p');
+  const count = Math.min(await candidates.count(), 250);
+  let bestMatch: { locator: import("playwright").Locator; text: string; score: number; selectorHint: string } | null = null;
+  for (let index = 0; index < count; index += 1) {
+    const locator = candidates.nth(index);
+    if (!(await isVisible(locator, 250))) {
+      continue;
+    }
+    const text = await getInnerTextSafe(locator);
+    const matchedHeaderText = extractTrainingPeaksDateHeaderText(text);
+    if (!matchedHeaderText) {
+      continue;
+    }
+    let score = 0;
+    if (TP_STRONG_DATE_HEADER_REGEX.test(matchedHeaderText)) {
+      score += 5;
+    }
+    if (TP_DATE_HEADER_REGEX.test(matchedHeaderText)) {
+      score += 3;
+    }
+    const role = await getAttributeSafe(locator, "role");
+    const className = await getAttributeSafe(locator, "class");
+    if (role === "button" || /button|header|date/i.test(className ?? "")) {
+      score += 1;
+    }
+    if (!bestMatch || score > bestMatch.score) {
+      bestMatch = {
+        locator,
+        text: matchedHeaderText,
+        score,
+        selectorHint: "text=date-header-pattern",
+      };
+    }
+  }
+  if (bestMatch) {
+    return bestMatch;
+  }
+  return null;
+}
+
+async function findLikelyDateControlInModal(
+  modalRoot: import("playwright").Locator,
+  dateHeaderText: string | null,
+  dateHeaderLocator: import("playwright").Locator | null
+): Promise<{ locator: import("playwright").Locator; selectorHint: string } | null> {
+  if (dateHeaderLocator && (await isVisible(dateHeaderLocator, 500))) {
+    return {
+      locator: dateHeaderLocator,
+      selectorHint: "text=date-header-pattern",
+    };
+  }
+
+  const candidateDefinitions: Array<{ locator: import("playwright").Locator; selectorHint: string }> = [];
+
+  if (dateHeaderText) {
+    const safePattern = dateHeaderText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    candidateDefinitions.push(
+      {
+        locator: modalRoot.getByRole("button", { name: new RegExp(safePattern, "i") }).first(),
+        selectorHint: `role=button name~"${dateHeaderText}"`,
+      },
+      {
+        locator: modalRoot.locator('[role="button"]', { hasText: new RegExp(safePattern, "i") }).first(),
+        selectorHint: `[role="button"] hasText="${dateHeaderText}"`,
+      },
+      {
+        locator: modalRoot.locator("button", { hasText: new RegExp(safePattern, "i") }).first(),
+        selectorHint: `button hasText="${dateHeaderText}"`,
+      }
+    );
+  }
+
+  candidateDefinitions.push({
+    locator: modalRoot.locator(
+      '[aria-label*="date" i],[title*="date" i],[data-testid*="date" i],[aria-label*="calendar" i],[title*="calendar" i],[data-testid*="calendar" i]'
+    ).first(),
+    selectorHint:
+      '[aria-label*="date" i],[title*="date" i],[data-testid*="date" i],[aria-label*="calendar" i],[title*="calendar" i],[data-testid*="calendar" i]',
+  });
+
+  const explicitCandidates = await findFirstVisibleLocator(candidateDefinitions, 500);
+  if (explicitCandidates) {
+    return explicitCandidates;
+  }
+
+  const buttonish = modalRoot.locator('button,[role="button"],[aria-haspopup],div,span');
+  const count = Math.min(await buttonish.count(), 80);
+  for (let index = 0; index < count; index += 1) {
+    const candidate = buttonish.nth(index);
+    if (!(await isVisible(candidate, 400))) {
+      continue;
+    }
+    const text = await getInnerTextSafe(candidate);
+    const ariaLabel = await getAttributeSafe(candidate, "aria-label");
+    const title = await getAttributeSafe(candidate, "title");
+    const dataTestId = await getAttributeSafe(candidate, "data-testid");
+    const combined = normalizeWhitespace([text, ariaLabel, title, dataTestId].filter(Boolean).join(" "));
+    if (!combined || TP_MUTATION_ACTION_REGEX.test(combined)) {
+      continue;
+    }
+    const role = await getAttributeSafe(candidate, "role");
+    const hasClick = await getAttributeSafe(candidate, "onclick");
+    const style = await getAttributeSafe(candidate, "style");
+    const className = await getAttributeSafe(candidate, "class");
+    const looksClickable =
+      role === "button" ||
+      Boolean(hasClick) ||
+      /pointer/i.test(style ?? "") ||
+      /button|clickable|header/i.test(className ?? "");
+    const looksDateLike =
+      Boolean(dateHeaderText && combined.toLowerCase().includes(dateHeaderText.toLowerCase())) ||
+      looksLikeTrainingPeaksDateHeader(combined) ||
+      TP_DATE_CONTROL_ATTR_REGEX.test(combined);
+    if (!looksDateLike || !looksClickable) {
+      continue;
+    }
+    return {
+      locator: candidate,
+      selectorHint: "clickable element matching date-like text or attrs",
+    };
+  }
+  return null;
+}
+
+async function findVisibleDatePicker(
+  page: import("playwright").Page,
+  modalRoot: import("playwright").Locator | null = null,
+  dateHeaderBox: { x: number; y: number; width: number; height: number } | null = null,
+  dateHeaderText: string | null = null,
+  diagnostics: string[] = []
+): Promise<{ locator: import("playwright").Locator; selectorHint: string } | null> {
+  const detailBox = modalRoot ? await modalRoot.boundingBox().catch(() => null) : null;
+  const expectedMonthMatch = dateHeaderText?.match(
+    /\b(January|February|March|April|May|June|July|August|September|October|November|December)\b/i
+  );
+  const expectedMonth = expectedMonthMatch?.[1] ?? null;
+  const expectedYearMatch = dateHeaderText?.match(/\b(20\d{2})\b/);
+  const expectedYear = expectedYearMatch?.[1] ?? null;
+  const candidateDefinitions = [
+    {
+      locator: page.locator(".MuiPickersPopper-root,.MuiPickersLayout-root,.MuiDateCalendar-root"),
+      selectorHint: ".MuiPickersPopper-root,.MuiPickersLayout-root,.MuiDateCalendar-root",
+    },
+    {
+      locator: page.locator('[role="dialog"] [role="grid"],[role="presentation"] [role="grid"]'),
+      selectorHint: '[role="dialog"] [role="grid"],[role="presentation"] [role="grid"]',
+    },
+    {
+      locator: page.locator('[aria-label*="calendar" i],[class*="calendar" i],[class*="datepicker" i],[class*="picker" i]'),
+      selectorHint: '[aria-label*="calendar" i],[class*="calendar" i],[class*="datepicker" i],[class*="picker" i]',
+    },
+    {
+      locator: page.locator(".MuiPopover-paper:visible,.MuiPaper-root:visible,[role='dialog']:visible,[role='presentation']:visible"),
+      selectorHint: ".MuiPopover-paper,.MuiPaper-root,[role='dialog'],[role='presentation']",
+    },
+  ];
+
+  for (const candidate of candidateDefinitions) {
+    const count = Math.min(await candidate.locator.count().catch(() => 0), 8);
+    for (let index = 0; index < count; index += 1) {
+      const candidateLocator = candidate.locator.nth(index);
+      if (!(await isVisible(candidateLocator, 500))) {
+        continue;
+      }
+      const text = normalizeWhitespace(await getInnerTextSafe(candidateLocator)) ?? "";
+      const candidateBox = toProbeBoundingBox(await candidateLocator.boundingBox().catch(() => null));
+      const monthTextMatchesExpectation = expectedMonth ? new RegExp(`\\b${expectedMonth}\\b`, "i").test(text) : false;
+      const yearTextMatchesExpectation = expectedYear ? new RegExp(`\\b${expectedYear}\\b`).test(text) : false;
+      const hasMonthMarker = monthTextMatchesExpectation || TP_MONTH_REGEX.test(text);
+      const hasYearMarker = yearTextMatchesExpectation || TP_YEAR_REGEX.test(text);
+      const hasMonthControl = await anyVisible(
+        [
+          candidateLocator.locator('select[aria-label*="month" i],select[name*="month" i],[aria-label*="month" i],[title*="month" i]').first(),
+          candidateLocator.getByRole("combobox", { name: /month/i }).first(),
+          candidateLocator.getByRole("button", { name: expectedMonth ? new RegExp(`^${expectedMonth}$`, "i") : /january|february|march|april|may|june|july|august|september|october|november|december/i }).first(),
+        ],
+        300
+      );
+      const hasYearControl = await anyVisible(
+        [
+          candidateLocator.locator('select[aria-label*="year" i],select[name*="year" i],[aria-label*="year" i],[title*="year" i]').first(),
+          candidateLocator.getByRole("combobox", { name: /year/i }).first(),
+          candidateLocator.getByRole("button", { name: expectedYear ? new RegExp(`^${expectedYear}$`) : /20\d{2}/ }).first(),
+        ],
+        300
+      );
+      const hasMonthSwitcherButtons = await anyVisible(
+        [
+          candidateLocator.getByRole("button", { name: /previous month|next month|choose month/i }).first(),
+          candidateLocator.locator('[aria-label*="month" i][role="button"],button[aria-label*="month" i]').first(),
+        ],
+        300
+      );
+      const hasYearSwitcherButtons = await anyVisible(
+        [
+          candidateLocator.getByRole("button", { name: /choose year|previous year|next year/i }).first(),
+          candidateLocator.locator('[aria-label*="year" i][role="button"],button[aria-label*="year" i]').first(),
+        ],
+        300
+      );
+      const weekdayHeaderCount = await candidateLocator
+        .locator('[role="columnheader"],th,.MuiDayCalendar-weekDayLabel')
+        .count()
+        .catch(() => 0);
+      const hasWeekdayRow =
+        TP_WEEKDAY_ROW_REGEX.test(text) ||
+        /\b(?:mo|tu|we|th|fr|sa|su)\b/i.test(text) ||
+        weekdayHeaderCount >= 7;
+      const dayCellCount = await candidateLocator
+        .locator('[role="gridcell"],[role="option"],button,.MuiPickersDay-root')
+        .count()
+        .catch(() => 0);
+      const dayCellMatches = text.match(/(?:^|\s)(?:[1-9]|[12]\d|3[01])(?=\s|$)/g) ?? [];
+      const hasEnoughDayCells = dayCellMatches.length >= 7 || dayCellCount >= 14;
+      const hasSelectedCurrentDay = await anyVisible(
+        [
+          candidateLocator.locator('[aria-selected="true"]').first(),
+          candidateLocator.locator(".Mui-selected,[class*='selected' i]").first(),
+        ],
+        250
+      );
+      const nearHeader = isBoxNearDateHeader(candidateBox, detailBox ? toProbeBoundingBox(detailBox) : null, dateHeaderBox);
+      const monthSignal = hasMonthControl || hasMonthMarker || hasMonthSwitcherButtons;
+      const yearSignal = hasYearControl || hasYearMarker || hasYearSwitcherButtons;
+      diagnostics.push(
+        normalizeWhitespace(
+          [
+            `check:${candidate.selectorHint}#${index + 1}`,
+            `signals=${[
+              monthSignal ? (monthTextMatchesExpectation ? "month-expected" : "month") : null,
+              yearSignal ? (yearTextMatchesExpectation ? "year-expected" : "year") : null,
+              hasWeekdayRow ? "weekday-row" : null,
+              hasEnoughDayCells ? `days:${Math.max(dayCellCount, dayCellMatches.length)}` : null,
+              hasSelectedCurrentDay ? "selected-day" : null,
+              nearHeader ? "near-header" : "far-from-header",
+            ]
+              .filter(Boolean)
+              .join("+")}`,
+            candidateBox
+              ? `box=${Math.round(candidateBox.x)},${Math.round(candidateBox.y)},${Math.round(candidateBox.width)}x${Math.round(candidateBox.height)}`
+              : "box=none",
+            text.slice(0, 140),
+          ].join(" | ")
+        ) ?? candidate.selectorHint
+      );
+      if (monthSignal && yearSignal && hasWeekdayRow && hasEnoughDayCells && nearHeader) {
+        const signalHint = [
+          hasMonthControl ? "month-control" : hasMonthMarker ? "month" : hasMonthSwitcherButtons ? "month-switcher" : null,
+          hasYearControl ? "year-control" : hasYearMarker ? "year" : hasYearSwitcherButtons ? "year-switcher" : null,
+          hasWeekdayRow ? "weekday-row" : null,
+          hasEnoughDayCells ? "days" : null,
+          hasSelectedCurrentDay ? "selected-day" : null,
+          nearHeader ? "near-header" : null,
+        ]
+          .filter(Boolean)
+          .join("+");
+        return {
+          locator: candidateLocator,
+          selectorHint: `${candidate.selectorHint} [${signalHint}]`,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
 async function detailStillVisible(page: import("playwright").Page): Promise<boolean> {
   return anyVisible(
     [
+      page.getByRole("dialog"),
+      page.locator(".MuiDialog-root,.MuiDialog-container,.MuiModal-root"),
       page.locator('input[name*="date" i], input[id*="date" i], [aria-label*="date" i]'),
       page.getByRole("button", { name: /save|done|update/i }),
       page.getByRole("button", { name: /cancel|close|x/i }),
@@ -1936,9 +2749,13 @@ async function probeTrainingPeaksMoveCapabilities(
   await mkdir(artifactDir, { recursive: true });
 
   const screenshotBeforePath = path.join(artifactDir, "probe_before.png");
-  const screenshotMenuOpenedPath = path.join(artifactDir, "probe_menu_opened.png");
-  const screenshotDetailOpenedPath = path.join(artifactDir, "probe_detail_opened.png");
-  const screenshotAfterClosedPath = path.join(artifactDir, "probe_after_closed.png");
+  const screenshotMenuOpenedPath = path.join(artifactDir, "probe2_menu_opened.png");
+  const screenshotAfterEditClickPath = path.join(artifactDir, "probe3_after_edit_click.png");
+  const screenshotDetailOpenedPath = path.join(artifactDir, "probe2_detail_opened.png");
+  const screenshotBeforeDateHeaderClickPath = path.join(artifactDir, "probe2_before_date_header_click.png");
+  const screenshotAfterDateHeaderClickAttempt1Path = path.join(artifactDir, "probe2_after_date_header_click_attempt_1.png");
+  const screenshotDatePickerOpenedPath = path.join(artifactDir, "probe2_datepicker_opened.png");
+  const screenshotAfterClosedPath = path.join(artifactDir, "probe2_after_closed.png");
 
   const context = await chromium.launchPersistentContext(profileDir, {
     headless: false,
@@ -1978,8 +2795,13 @@ async function probeTrainingPeaksMoveCapabilities(
     }
 
     const card = cardMatch.locator;
+    await card.hover({ timeout: 2_000 }).catch(() => {});
     const safeMenuButton = await findFirstVisibleLocator(
       [
+        {
+          locator: card.locator('button[aria-haspopup="menu"]').first(),
+          selectorHint: 'button[aria-haspopup="menu"]',
+        },
         {
           locator: card.locator('[aria-label*="more" i],[title*="more" i],[data-tooltip*="more" i]').first(),
           selectorHint: '[aria-label*="more" i],[title*="more" i],[data-tooltip*="more" i]',
@@ -1988,69 +2810,97 @@ async function probeTrainingPeaksMoveCapabilities(
           locator: card.locator('[aria-label*="menu" i],[title*="menu" i],[data-tooltip*="menu" i]').first(),
           selectorHint: '[aria-label*="menu" i],[title*="menu" i],[data-tooltip*="menu" i]',
         },
+        {
+          locator: card.locator(".MuiIconButton-root").first(),
+          selectorHint: ".MuiIconButton-root",
+        },
       ],
       700
     );
     if (safeMenuButton) {
       probe.card.menuButtonFound = true;
+      probe.card.menuTriggerFound = true;
+      probe.card.menuTriggerSelectorUsed = safeMenuButton.selectorHint;
       try {
         await safeMenuButton.locator.first().click({ timeout: 2_000 });
         await page.waitForTimeout(400);
-        probe.card.menuOpened = await anyVisible(
-          [
-            page.getByRole("menu"),
-            page.getByRole("menuitem", { name: /move|resched|copy|duplicate/i }),
-            page.getByText(/move|resched|copy/i),
-          ],
-          700
-        );
+        const menuRoot = await findVisibleMenuRoot(page);
+        probe.card.menuOpened = Boolean(menuRoot);
         if (probe.card.menuOpened) {
-          probe.card.menuMoveOptionFound = await anyVisible(
-            [page.getByRole("menuitem", { name: /move/i }), page.getByText(/move/i)],
-            500
+          probe.card.menuActionLabels = menuRoot ? await collectMenuActionLabels(menuRoot.locator) : [];
+          probe.card.menuMoveActionFound = probe.card.menuActionLabels.some((label) => TP_MOVE_MENU_ACTION_REGEX.test(label));
+          probe.card.menuRescheduleActionFound = probe.card.menuActionLabels.some((label) =>
+            TP_RESCHEDULE_MENU_ACTION_REGEX.test(label)
           );
-          probe.card.menuRescheduleOptionFound = await anyVisible(
-            [page.getByRole("menuitem", { name: /resched/i }), page.getByText(/resched/i)],
-            500
-          );
-          probe.card.menuCopyOptionFound = await anyVisible(
-            [page.getByRole("menuitem", { name: /copy|duplicate/i }), page.getByText(/copy|duplicate/i)],
-            500
-          );
+          probe.card.menuCopyActionFound = probe.card.menuActionLabels.some((label) => TP_COPY_MENU_ACTION_REGEX.test(label));
+          probe.card.menuEditActionFound = probe.card.menuActionLabels.some((label) => TP_EDIT_MENU_ACTION_REGEX.test(label));
+          probe.card.menuMoveOptionFound = probe.card.menuMoveActionFound;
+          probe.card.menuRescheduleOptionFound = probe.card.menuRescheduleActionFound;
+          probe.card.menuCopyOptionFound = probe.card.menuCopyActionFound;
           probe.screenshots.menuOpened = await captureProbeScreenshot(page, screenshotMenuOpenedPath, probe.warnings);
 
-          await page.keyboard.press("Escape").catch(() => {});
-          await page.waitForTimeout(300);
+          const editAction = await findExactEditMenuAction(menuRoot.locator);
+          if (editAction) {
+            try {
+              probe.detail.openAttempted = true;
+              await editAction.locator.click({ timeout: 2_000 });
+              probe.card.menuEditClicked = true;
+              for (const checkpointMs of [500, 1500, 3000]) {
+                await page.waitForTimeout(checkpointMs);
+                const detailCheckpoint = await findVisibleDetailRoot(page);
+                if (detailCheckpoint) {
+                  break;
+                }
+              }
+              probe.screenshots.afterEditClick = await captureProbeScreenshot(
+                page,
+                screenshotAfterEditClickPath,
+                probe.warnings
+              );
+            } catch (error) {
+              probe.warnings.push(`Edit menu click failed: ${toShortErrorMessage(error)}`);
+            }
+          } else {
+            probe.warnings.push('Menu opened but exact "Edit" action was not found.');
+          }
+
+          if (await menuStillVisible(page)) {
+            await page.keyboard.press("Escape").catch(() => {});
+            await page.waitForTimeout(300);
+          }
+          if (await menuStillVisible(page)) {
+            await clickAwayFromOverlay(page);
+            await page.waitForTimeout(300);
+          }
           probe.card.menuCloseSucceeded = !(await menuStillVisible(page));
-          if (!probe.card.menuCloseSucceeded) {
+          if (!probe.card.menuCloseSucceeded && !probe.card.menuEditClicked) {
             probe.errors.push("Probe opened the card menu but could not confirm a safe close.");
             return probe;
           }
+        } else {
+          probe.warnings.push("Card menu trigger was found but menu root was not detected.");
         }
       } catch (error) {
         probe.warnings.push(`Menu probe failed: ${toShortErrorMessage(error)}`);
       }
     }
 
-    probe.detail.openAttempted = true;
-    try {
-      await card.click({ timeout: 2_000 });
-      await page.waitForTimeout(700);
-    } catch (error) {
-      probe.warnings.push(`Detail open attempt failed: ${toShortErrorMessage(error)}`);
-    }
+    const modalRoot = await findVisibleDetailRoot(page);
+    const modalScope = modalRoot?.locator ?? page.locator("body");
+    const detailSurfaceText = normalizeWhitespace(await getInnerTextSafe(modalScope)) ?? "";
+    const pageSurfaceText = normalizeWhitespace(await getInnerTextSafe(page.locator("body"))) ?? "";
 
     const dateFieldCandidates = [
       {
-        locator: page.locator('input[name*="date" i]').first(),
+        locator: modalScope.locator('input[name*="date" i]').first(),
         selectorHint: 'input[name*="date" i]',
       },
       {
-        locator: page.locator('input[id*="date" i]').first(),
+        locator: modalScope.locator('input[id*="date" i]').first(),
         selectorHint: 'input[id*="date" i]',
       },
       {
-        locator: page.locator('[aria-label*="date" i]').first(),
+        locator: modalScope.locator('[aria-label*="date" i]').first(),
         selectorHint: '[aria-label*="date" i]',
       },
     ];
@@ -2061,38 +2911,250 @@ async function probeTrainingPeaksMoveCapabilities(
       probe.detail.currentDateValue = await readDateFieldValue(dateFieldMatch.locator);
     }
 
-    probe.detail.saveButtonFound = await anyVisible([page.getByRole("button", { name: /save|done|update/i })], 700);
-    probe.detail.cancelButtonFound = await anyVisible([page.getByRole("button", { name: /cancel/i })], 700);
-    probe.detail.closeButtonFound = await anyVisible(
+    const globalDateHeaderMatch = await findDetailDateHeaderOnPage(page);
+    const scopedDateHeaderMatch = modalRoot ? await findDetailDateHeader(modalRoot.locator) : null;
+    const dateHeaderMatch = globalDateHeaderMatch
+      ? { locator: globalDateHeaderMatch.locator, text: globalDateHeaderMatch.text }
+      : scopedDateHeaderMatch;
+    probe.detail.dateHeaderFound = Boolean(dateHeaderMatch);
+    probe.detail.dateHeaderText = dateHeaderMatch?.text ?? null;
+
+    const dateControlMatch = await findLikelyDateControlInModal(
+      modalRoot?.locator ?? page.locator("body"),
+      probe.detail.dateHeaderText,
+      dateHeaderMatch?.locator ?? null
+    );
+    const preciseDateHeaderTarget = await findPreciseDateHeaderClickTarget(
+      modalRoot?.locator ?? page.locator("body"),
+      probe.detail.dateHeaderText,
+      dateControlMatch?.locator ?? dateHeaderMatch?.locator ?? null
+    );
+    const dateClickTarget = preciseDateHeaderTarget ?? dateControlMatch;
+    probe.detail.dateControlClickable = dateClickTarget ? await isLocatorClickable(dateClickTarget.locator, 700) : false;
+    probe.detail.dateControlSelectorUsed =
+      dateClickTarget?.selectorHint ?? dateControlMatch?.selectorHint ?? (globalDateHeaderMatch ? globalDateHeaderMatch.selectorHint : null);
+    probe.detail.dateHeaderBoundingBox = preciseDateHeaderTarget?.boundingBox ?? null;
+
+    const titleOrDetailFieldsFound = await anyVisible(
       [
-        page.getByRole("button", { name: /close|x/i }),
-        page.locator('[aria-label*="close" i],[title*="close" i]').first(),
+        modalScope.locator('input[name*="title" i], input[id*="title" i], textarea[name*="title" i], textarea[id*="title" i]'),
+        page.locator(
+          'input[name*="title" i],input[id*="title" i],textarea[name*="title" i],textarea[id*="title" i],input[name*="duration" i],input[id*="duration" i],input[name*="distance" i],input[id*="distance" i],input[name*="tss" i],input[id*="tss" i]'
+        ),
+        modalScope.getByRole("textbox", { name: /title|workout/i }),
+        page.getByRole("textbox", { name: /title|workout|duration|distance|tss/i }),
       ],
       700
     );
+    const modalScopedAnalyzeOrFilesFound = await anyVisible(
+      [
+        modalScope.getByRole("button", { name: /analy(?:z|s)e/i }),
+        modalScope.getByRole("button", { name: /files?/i }),
+        modalScope.getByRole("button", { name: /upload/i }),
+        page.getByRole("button", { name: /analy(?:z|s)e/i }),
+        page.getByRole("button", { name: /files?/i }),
+        page.getByRole("button", { name: /upload/i }),
+        page.getByText(/\banaly(?:z|s)e\b|\bfiles?\b|\bupload\b/i),
+      ],
+      700
+    );
+    const timeDropdownFound = TP_TIME_DROPDOWN_REGEX.test(detailSurfaceText);
+    probe.detail.modalScopedSaveAndCloseFound = await anyVisible(
+      [
+        modalScope.getByRole("button", { name: /save\s*&\s*close/i }),
+        page.getByRole("button", { name: /save\s*&\s*close/i }),
+        page.getByText(/^save\s*&\s*close$/i),
+      ],
+      700
+    );
+    probe.detail.modalScopedSaveFound = await anyVisible(
+      [
+        modalScope.getByRole("button", { name: /^save$/i }),
+        modalScope.getByRole("button", { name: /\bsave\b/i }),
+        page.getByRole("button", { name: /^save$/i }),
+        page.getByRole("button", { name: /\bsave\b/i }),
+        page.getByText(/^save$/i),
+      ],
+      700
+    );
+    probe.detail.modalScopedCancelFound = await anyVisible(
+      [
+        modalScope.getByRole("button", { name: /cancel/i }),
+        page.getByRole("button", { name: /cancel/i }),
+        page.getByText(/^cancel$/i),
+      ],
+      700
+    );
+    probe.detail.modalScopedCloseFound = await anyVisible(
+      [
+        modalScope.getByRole("button", { name: /close|x/i }),
+        modalScope.locator('[aria-label*="close" i],[title*="close" i]').first(),
+        page.getByRole("button", { name: /close|x/i }),
+        page.locator('[aria-label*="close" i],[title*="close" i]').first(),
+        page.getByText(/^[x×]$/i),
+      ],
+      700
+    );
+    probe.detail.saveButtonFound = probe.detail.modalScopedSaveFound;
+    probe.detail.saveAndCloseButtonFound = probe.detail.modalScopedSaveAndCloseFound;
+    probe.detail.cancelButtonFound = probe.detail.modalScopedCancelFound;
+    probe.detail.closeButtonFound = probe.detail.modalScopedCloseFound;
+    const detailFieldSignalsFound =
+      titleOrDetailFieldsFound || /\bworkout\b|\btitle\b|\bduration\b|\bdistance\b|\btss\b/i.test(pageSurfaceText);
     probe.detail.opened = Boolean(
-      probe.detail.dateFieldFound ||
-        probe.detail.saveButtonFound ||
+      probe.detail.dateHeaderFound ||
+        probe.detail.saveAndCloseButtonFound ||
         probe.detail.cancelButtonFound ||
-        probe.detail.closeButtonFound
+        probe.detail.saveButtonFound ||
+        detailFieldSignalsFound ||
+        modalScopedAnalyzeOrFilesFound ||
+        timeDropdownFound
     );
 
     if (probe.detail.opened) {
       probe.screenshots.detailOpened = await captureProbeScreenshot(page, screenshotDetailOpenedPath, probe.warnings);
 
+      if (dateClickTarget && probe.detail.dateHeaderFound && probe.detail.dateControlClickable) {
+        probe.screenshots.beforeDateHeaderClick = await captureProbeScreenshot(
+          page,
+          screenshotBeforeDateHeaderClickPath,
+          probe.warnings
+        );
+        const targetBoundingBox =
+          probe.detail.dateHeaderBoundingBox ??
+          toProbeBoundingBox(await dateClickTarget.locator.boundingBox().catch(() => null));
+        probe.detail.dateHeaderBoundingBox = targetBoundingBox;
+        const centerPoint = targetBoundingBox ? boundingBoxCenter(targetBoundingBox) : null;
+        const centerLeftPoint = targetBoundingBox ? boundingBoxCenterLeft(targetBoundingBox) : null;
+        const clickStrategies: Array<{
+          name: string;
+          waitMs: number;
+          perform: () => Promise<void>;
+        }> = [
+          {
+            name: "locator.click",
+            waitMs: 450,
+            perform: async () => {
+              await dateClickTarget.locator.click({ timeout: 2_000 });
+            },
+          },
+          {
+            name: "locator.click.force",
+            waitMs: 650,
+            perform: async () => {
+              await dateClickTarget.locator.click({ timeout: 2_000, force: true });
+            },
+          },
+          {
+            name: "mouse.click.center",
+            waitMs: 500,
+            perform: async () => {
+              if (!centerPoint) {
+                throw new Error("missing date header bounding box center");
+              }
+              await page.mouse.click(centerPoint.x, centerPoint.y);
+            },
+          },
+          {
+            name: "mouse.click.center_left_offset",
+            waitMs: 550,
+            perform: async () => {
+              if (!centerLeftPoint) {
+                throw new Error("missing date header bounding box center-left point");
+              }
+              await page.mouse.click(centerLeftPoint.x, centerLeftPoint.y);
+            },
+          },
+        ];
+        let datePickerRoot: { locator: import("playwright").Locator; selectorHint: string } | null = null;
+        for (let strategyIndex = 0; strategyIndex < clickStrategies.length; strategyIndex += 1) {
+          const strategy = clickStrategies[strategyIndex];
+          probe.detail.dateHeaderClickStrategiesTried.push(strategy.name);
+          try {
+            await strategy.perform();
+          } catch (error) {
+            probe.warnings.push(`Date header click strategy "${strategy.name}" failed: ${toShortErrorMessage(error)}`);
+          }
+          await page.waitForTimeout(strategy.waitMs);
+          probe.detail.datePickerOpenCheckCount += 1;
+          const openCheckSnippets: string[] = [];
+          datePickerRoot = await findVisibleDatePicker(
+            page,
+            modalRoot?.locator ?? null,
+            probe.detail.dateHeaderBoundingBox,
+            probe.detail.dateHeaderText,
+            openCheckSnippets
+          );
+          probe.detail.datePickerOpenCheckSnippets.push(
+            ...openCheckSnippets.slice(0, Math.max(0, 12 - probe.detail.datePickerOpenCheckSnippets.length))
+          );
+          if (strategyIndex === 0) {
+            probe.screenshots.afterDateHeaderClickAttempt1 = await captureProbeScreenshot(
+              page,
+              screenshotAfterDateHeaderClickAttempt1Path,
+              probe.warnings
+            );
+          }
+          if (datePickerRoot) {
+            probe.detail.dateHeaderClickSucceededStrategy = strategy.name;
+            break;
+          }
+        }
+        probe.detail.datePickerOpened = Boolean(datePickerRoot);
+        probe.detail.datePickerSelectorHint = datePickerRoot?.selectorHint ?? null;
+        if (probe.detail.datePickerOpened) {
+          probe.screenshots.datePickerOpened = await captureProbeScreenshot(
+            page,
+            screenshotDatePickerOpenedPath,
+            probe.warnings
+          );
+          await page.keyboard.press("Escape").catch(() => {});
+          await page.waitForTimeout(300);
+          const datePickerStillVisible = await findVisibleDatePicker(
+            page,
+            modalRoot?.locator ?? null,
+            probe.detail.dateHeaderBoundingBox,
+            probe.detail.dateHeaderText
+          );
+          if (datePickerStillVisible && modalRoot) {
+            const clickedSafeArea = await clickInsideDetailButOutsideDatePicker(
+              page,
+              modalRoot.locator,
+              datePickerStillVisible.locator
+            );
+            if (!clickedSafeArea) {
+              await clickAwayFromOverlay(page);
+            }
+            await page.waitForTimeout(300);
+          }
+        }
+      }
+
       const closeCandidate = await findFirstVisibleLocator(
         [
           {
-            locator: page.getByRole("button", { name: /cancel/i }).first(),
+            locator: modalScope.getByRole("button", { name: /cancel/i }).first(),
             selectorHint: 'button[name=/cancel/i]',
           },
           {
-            locator: page.getByRole("button", { name: /close|x/i }).first(),
+            locator: modalScope.getByRole("button", { name: /close|x/i }).first(),
             selectorHint: 'button[name=/close|x/i]',
           },
           {
-            locator: page.locator('[aria-label*="close" i],[title*="close" i]').first(),
+            locator: modalScope.locator('[aria-label*="close" i],[title*="close" i]').first(),
             selectorHint: '[aria-label*="close" i],[title*="close" i]',
+          },
+          {
+            locator: page.getByRole("button", { name: /cancel/i }).first(),
+            selectorHint: 'global button[name=/cancel/i]',
+          },
+          {
+            locator: page.getByRole("button", { name: /close|x/i }).first(),
+            selectorHint: 'global button[name=/close|x/i]',
+          },
+          {
+            locator: page.locator('[aria-label*="close" i],[title*="close" i]').first(),
+            selectorHint: 'global [aria-label*="close" i],[title*="close" i]',
           },
         ],
         700
@@ -2105,12 +3167,16 @@ async function probeTrainingPeaksMoveCapabilities(
         } catch (error) {
           probe.warnings.push(`Detail close click failed: ${toShortErrorMessage(error)}`);
         }
-      } else {
-        await page.keyboard.press("Escape").catch(() => {});
-        await page.waitForTimeout(500);
       }
 
-      probe.detail.closeSucceeded = !(await detailStillVisible(page));
+      const detailClosed = !(await detailStillVisible(page));
+      const datePickerStillVisibleAfterClose = await findVisibleDatePicker(
+        page,
+        modalRoot?.locator ?? null,
+        probe.detail.dateHeaderBoundingBox,
+        probe.detail.dateHeaderText
+      );
+      probe.detail.closeSucceeded = detailClosed || !datePickerStillVisibleAfterClose;
       if (!probe.detail.closeSucceeded) {
         probe.errors.push("Probe opened workout detail UI but could not confirm a safe close without saving.");
         return probe;
@@ -2121,24 +3187,18 @@ async function probeTrainingPeaksMoveCapabilities(
 
     const detailMethodReady =
       probe.detail.opened &&
-      probe.detail.dateFieldFound &&
-      probe.detail.saveButtonFound &&
-      (probe.detail.cancelButtonFound || probe.detail.closeButtonFound) &&
+      probe.detail.dateHeaderFound &&
+      probe.detail.dateControlClickable &&
+      probe.detail.datePickerOpened &&
+      probe.detail.modalScopedSaveAndCloseFound &&
+      (probe.detail.modalScopedCancelFound || probe.detail.modalScopedCloseFound) &&
       probe.detail.closeSucceeded;
-    const explicitMenuMethodReady =
-      probe.card.menuOpened &&
-      probe.card.menuCloseSucceeded &&
-      (probe.card.menuMoveOptionFound || probe.card.menuRescheduleOptionFound);
 
-    probe.safeToProceedLater = detailMethodReady || explicitMenuMethodReady;
-    probe.recommendedMutationMethod = detailMethodReady
-      ? "detail_date_save"
-      : explicitMenuMethodReady
-        ? "explicit_move_menu"
-        : "unknown";
+    probe.safeToProceedLater = detailMethodReady;
+    probe.recommendedMutationMethod = detailMethodReady ? "detail_date_picker_save_close" : "unknown";
 
     if (!probe.detail.opened) {
-      probe.warnings.push("Probe did not detect a safe detail panel after clicking the candidate card.");
+      probe.warnings.push('Probe did not detect a safe detail modal after clicking menu action "Edit".');
     }
     if (
       probe.detail.opened &&
