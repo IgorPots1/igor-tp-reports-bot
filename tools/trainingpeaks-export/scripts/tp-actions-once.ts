@@ -12,6 +12,15 @@ import {
   type ProbeLike as TrainingPeaksProbeLikeForDriver,
 } from "./lib/playwright-only-trainingpeaks-driver.ts";
 import { profileDir, toolRoot } from "./lib/paths.ts";
+import {
+  buildTpApiWorkoutUrl,
+  buildWorkoutMovePayload,
+  captureSessionAuth,
+  parseDateArgToTpDateTime,
+  performApiJsonRequest,
+  redactUnknown,
+  verifyWorkoutMoved,
+} from "./lib/trainingpeaks-api-move.ts";
 
 type ActionExecutionStatus =
   | "not_started"
@@ -384,6 +393,7 @@ type DryRunCandidate = {
   plannedDistance: number | null;
   startTimeLocal: string | null;
   fingerprint: string;
+  workoutId?: number | null;
 };
 
 type DryRunDiagnostics = {
@@ -419,6 +429,7 @@ type DryRunDebugCandidate = {
   plannedDistance: number | null;
   startTimeLocal: string | null;
   sourceDate: string | null;
+  workoutId: number | null;
   score: number;
   reasons: string[];
 };
@@ -459,9 +470,39 @@ type RawWorkoutCandidate = {
   plannedDistance: number | null;
   startTimeLocal: string | null;
   dateIso: string | null;
+  workoutId: number | null;
   reasons: string[];
   fromFallback: boolean;
   rawScore: number;
+};
+
+type ApiMoveExecutionArtifacts = {
+  requestArtifactPath: string;
+  responseArtifactPath: string;
+  verificationArtifactPath: string;
+};
+
+type ApiMoveExecutionResult = {
+  apiMoveEnabled: boolean;
+  apiMoveExecuted: boolean;
+  athleteId: number;
+  workoutId: number;
+  sourceDate: string;
+  targetDate: string;
+  targetDateTime: string;
+  putStatus: number | null;
+  verificationStatus: number | null;
+  verificationOk: boolean;
+  verificationWorkoutDay: string | null;
+  verificationMatchesTargetDate: boolean;
+  authHeaderObserved: boolean;
+  sampleTpApiUrl: string | null;
+  screenshotBeforePath: string | null;
+  screenshotAfterPath: string | null;
+  artifacts: ApiMoveExecutionArtifacts;
+  requestSummary: unknown;
+  responseSummary: unknown;
+  verificationSummary: unknown;
 };
 
 type DryRunDomDebugSelectorCounts = {
@@ -500,11 +541,10 @@ const TP_ACTIONS_EXECUTE_REAL_FLAG = "--execute-real";
 const TP_ACTIONS_PREPARE_ONLY_FLAG = "--prepare-only";
 const TP_ACTIONS_CONFIRM_SAVE_FLAG = "--confirm-save";
 const TP_ACTIONS_REAL_EXECUTION_ENV = "TP_ACTIONS_REAL_EXECUTION";
+const TP_ACTIONS_USE_API_MOVE_ENV = "TP_ACTIONS_USE_API_MOVE";
 const TP_ACTIONS_ALLOW_SAVE_ENV = "TP_ACTIONS_ALLOW_SAVE";
 const REAL_MOVE_NOT_IMPLEMENTED_ERROR = "Real move not implemented yet (Phase 3D.2)";
 const TRAININGPEAKS_NOT_CHANGED_NOTE = "TrainingPeaks не изменён";
-const SAVE_CLICK_POST_VALIDATION_FAILED_ALERT =
-  "Save was clicked but post-save validation failed. Manual review required.";
 const TP_CALENDAR_ROOT_SELECTOR = "div.calendar.athleteCalendar";
 const TP_DAY_CELL_SELECTOR = ".dayWidth.dayContainer.day";
 const TP_PRIMARY_WORKOUT_CARD_SELECTOR = ".dayWidth.dayContainer.day .activities .MuiCard-root.activity.workout";
@@ -1611,6 +1651,46 @@ function buildCandidateFingerprint(input: {
   return createHash("sha1").update(stable).digest("hex");
 }
 
+function extractWorkoutIdFromText(value: string | null | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+  const match = value.match(/\bworkout(?:id)?[^0-9]{0,8}(\d{6,})\b/i) ?? value.match(/\b(\d{6,})\b/);
+  if (!match?.[1]) {
+    return null;
+  }
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+async function extractWorkoutIdFromCard(card: import("playwright").Locator): Promise<number | null> {
+  const attrNames = ["data-workout-id", "data-workoutid", "data-id", "data-activity-id", "href", "id"] as const;
+
+  for (const attrName of attrNames) {
+    const attrValue = await getAttributeSafe(card, attrName);
+    const parsed = extractWorkoutIdFromText(attrValue);
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  const descendants = card.locator("[data-workout-id],[data-workoutid],[data-id],[data-activity-id],a[href],button[id],[id]");
+  const count = await descendants.count().catch(() => 0);
+  for (let index = 0; index < count; index += 1) {
+    const descendant = descendants.nth(index);
+    for (const attrName of attrNames) {
+      const attrValue = await getAttributeSafe(descendant, attrName);
+      const parsed = extractWorkoutIdFromText(attrValue);
+      if (parsed) {
+        return parsed;
+      }
+    }
+  }
+
+  const text = await getInnerTextSafe(card);
+  return extractWorkoutIdFromText(text);
+}
+
 function resolveDryRunNotificationChatId(action: TrainingPeaksActionRow): string | null {
   const chatId = action.coach_chat_id ?? action.decided_by_chat_id;
   if (!chatId) {
@@ -2482,6 +2562,252 @@ async function locateWorkoutCardForProbe(
     selectorUsed: null,
     textSnippet: null,
   };
+}
+
+async function executeApiMoveForApprovedAction(input: {
+  claimed: ClaimedRealAction;
+  runId: string;
+  comparison: RevalidationComparison;
+  artifactDir: string;
+}): Promise<ApiMoveExecutionResult> {
+  const student = input.claimed.student;
+  if (!student?.trainingpeaks_athlete_url) {
+    throw new Error(`Missing trainingpeaks_athlete_url for action ${input.claimed.action.id}.`);
+  }
+
+  const athleteIdRaw = parseTrainingPeaksAthleteId(student.trainingpeaks_athlete_url);
+  const athleteId = athleteIdRaw ? Number(athleteIdRaw) : Number.NaN;
+  if (!Number.isFinite(athleteId) || athleteId <= 0) {
+    throw new Error(`Could not resolve numeric athleteId from ${student.trainingpeaks_athlete_url}.`);
+  }
+
+  const sourceDate =
+    input.comparison.sourceDate.current ??
+    input.comparison.sourceDate.trusted ??
+    input.claimed.trustedDryRunLog.resolvedDates.sourceDate;
+  const targetDate =
+    input.comparison.targetDate.current ??
+    input.comparison.targetDate.trusted ??
+    input.claimed.trustedDryRunLog.resolvedDates.targetDate;
+  if (!sourceDate || !targetDate) {
+    throw new Error("Source/target dates are unavailable for API move execution.");
+  }
+
+  const candidate = input.comparison.currentCandidate ?? input.comparison.trustedCandidate;
+  const apiMoveArtifactDir = path.join(input.artifactDir, "api-move");
+  await mkdir(apiMoveArtifactDir, { recursive: true });
+  const requestArtifactPath = path.join(apiMoveArtifactDir, "request.redacted.json");
+  const responseArtifactPath = path.join(apiMoveArtifactDir, "response.redacted.json");
+  const verificationArtifactPath = path.join(apiMoveArtifactDir, "verification.redacted.json");
+  const beforeScreenshotPath = path.join(apiMoveArtifactDir, "before.png");
+  const afterScreenshotPath = path.join(apiMoveArtifactDir, "after.png");
+
+  let context: import("playwright").BrowserContext | null = null;
+  try {
+    context = await chromium.launchPersistentContext(profileDir, {
+      headless: false,
+      viewport: null,
+    });
+    const page = context.pages()[0] ?? (await context.newPage());
+    await page.goto(student.trainingpeaks_athlete_url, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.bringToFront();
+    await waitForTrainingPeaksCalendarReadiness(page, []);
+
+    const pageAssessment = await assessTrainingPeaksPage(page);
+    if (pageAssessment.loginRequired) {
+      throw new Error("TrainingPeaks session expired or login required.");
+    }
+    if (!pageAssessment.trainingPeaksContextLikely || !pageAssessment.athletePageLikelyReachable) {
+      throw new Error("TrainingPeaks athlete page is not safely reachable.");
+    }
+
+    const visibleTrainingPeaksName = await extractVisibleTrainingPeaksAthleteName(page);
+    const identityCheck = buildIdentityCheck({
+      student,
+      expectedUrl: student.trainingpeaks_athlete_url,
+      currentUrl: page.url(),
+      visibleTrainingPeaksName,
+    });
+    const athleteIdentityOk = identityCheck.matchedBy !== "inconclusive" && identityCheck.matchedBy !== "mismatch";
+    if (!athleteIdentityOk) {
+      throw new Error(`Athlete identity check failed before API move: matchedBy=${identityCheck.matchedBy}`);
+    }
+    if (!input.comparison.fingerprint.matches) {
+      throw new Error("Candidate fingerprint mismatch before API move.");
+    }
+
+    const cardMatch = await locateWorkoutCardForProbe(page, {
+      studentId: student.id,
+      sourceDate,
+      candidate,
+    });
+    if (!cardMatch.locator) {
+      throw new Error("Could not locate the revalidated candidate card before API move.");
+    }
+
+    const workoutId = (await extractWorkoutIdFromCard(cardMatch.locator)) ?? candidate.workoutId ?? null;
+    if (!workoutId || !Number.isFinite(workoutId) || workoutId <= 0) {
+      throw new Error("Could not resolve workoutId from the revalidated TrainingPeaks workout card.");
+    }
+
+    await captureProbeScreenshot(page, beforeScreenshotPath, []);
+    const capturedAuth = await captureSessionAuth({
+      context,
+      page,
+      athleteId,
+    });
+    const cookies = await context.cookies(["https://app.trainingpeaks.com", "https://tpapi.trainingpeaks.com"]);
+    const authHeaders: Record<string, string> = {};
+    if (capturedAuth.authorizationHeader) {
+      authHeaders.authorization = capturedAuth.authorizationHeader;
+    }
+
+    const endpoint = buildTpApiWorkoutUrl(athleteId, workoutId);
+    const prefetchResult = await performApiJsonRequest({
+      page,
+      method: "GET",
+      endpoint,
+      headers: {
+        accept: "application/json, text/javascript, */*; q=0.01",
+        ...authHeaders,
+      },
+    });
+    if (!prefetchResult.ok) {
+      throw new Error(`API prefetch GET failed with status ${prefetchResult.status}.`);
+    }
+
+    const targetDateTime = parseDateArgToTpDateTime(targetDate);
+    const payload = buildWorkoutMovePayload({
+      athleteId,
+      workoutId,
+      targetDateTime,
+      sourceWorkout: prefetchResult.body,
+    });
+
+    const requestSummary = {
+      mode: "execute",
+      endpoint,
+      request: {
+        method: "PUT",
+        headers: {
+          accept: "application/json, text/javascript, */*; q=0.01",
+          "content-type": "application/json",
+          ...authHeaders,
+        },
+        payload,
+      },
+      authValidation: {
+        browserStorageCount: cookies.length,
+        authHeaderObserved: Boolean(capturedAuth.authorizationHeader),
+        sampleTpApiUrl: capturedAuth.sampleRequestUrl,
+      },
+      actionContext: {
+        actionId: input.claimed.action.id,
+        runId: input.runId,
+        athleteId,
+        workoutId,
+        sourceDate,
+        targetDate,
+      },
+    };
+
+    console.log("API move path enabled");
+    console.log(`athleteId=${athleteId}`);
+    console.log(`workoutId=${workoutId}`);
+    console.log(`sourceDate=${sourceDate}`);
+    console.log(`targetDate=${targetDate}`);
+
+    const putResult = await performApiJsonRequest({
+      page,
+      method: "PUT",
+      endpoint,
+      headers: {
+        accept: "application/json, text/javascript, */*; q=0.01",
+        "content-type": "application/json",
+        ...authHeaders,
+      },
+      body: payload,
+    });
+    console.log(`PUT status=${putResult.status}`);
+
+    const verification = await verifyWorkoutMoved({
+      page,
+      athleteId,
+      workoutId,
+      targetDate,
+      authHeaders,
+    });
+    console.log(
+      `verification status=${verification.status} ok=${verification.ok ? "yes" : "no"} matchesTargetDate=${verification.matchesTargetDate ? "yes" : "no"}`
+    );
+
+    await captureProbeScreenshot(page, afterScreenshotPath, []);
+
+    const responseSummary = {
+      session: {
+        browserStorageCount: cookies.length,
+        authHeaderObserved: Boolean(capturedAuth.authorizationHeader),
+        authHeaderSourceUrl: capturedAuth.sampleRequestUrl,
+      },
+      prefetchWorkout: {
+        status: prefetchResult.status,
+        ok: prefetchResult.ok,
+        body: prefetchResult.body,
+      },
+      executePut: {
+        attempted: true,
+        status: putResult.status,
+        ok: putResult.ok,
+        body: putResult.body,
+      },
+    };
+
+    const verificationSummary = {
+      mode: "execute",
+      targetDate,
+      expectedWorkoutDay: targetDateTime,
+      verification,
+      notes:
+        putResult.status === 200 && verification.ok && verification.matchesTargetDate
+          ? ["Execute mode complete: PUT 200 and verification passed."]
+          : [],
+    };
+
+    await writeFile(requestArtifactPath, `${JSON.stringify(redactUnknown(requestSummary), null, 2)}\n`, "utf8");
+    await writeFile(responseArtifactPath, `${JSON.stringify(redactUnknown(responseSummary), null, 2)}\n`, "utf8");
+    await writeFile(verificationArtifactPath, `${JSON.stringify(redactUnknown(verificationSummary), null, 2)}\n`, "utf8");
+
+    return {
+      apiMoveEnabled: true,
+      apiMoveExecuted: true,
+      athleteId,
+      workoutId,
+      sourceDate,
+      targetDate,
+      targetDateTime,
+      putStatus: putResult.status,
+      verificationStatus: verification.status,
+      verificationOk: verification.ok,
+      verificationWorkoutDay: verification.workoutDay,
+      verificationMatchesTargetDate: verification.matchesTargetDate,
+      authHeaderObserved: Boolean(capturedAuth.authorizationHeader),
+      sampleTpApiUrl: capturedAuth.sampleRequestUrl,
+      screenshotBeforePath: beforeScreenshotPath,
+      screenshotAfterPath: afterScreenshotPath,
+      artifacts: {
+        requestArtifactPath,
+        responseArtifactPath,
+        verificationArtifactPath,
+      },
+      requestSummary,
+      responseSummary,
+      verificationSummary,
+    };
+  } finally {
+    if (context) {
+      await context.close().catch(() => {});
+    }
+  }
 }
 
 async function findFirstVisibleLocator(
@@ -4679,6 +5005,7 @@ async function extractWorkoutCandidatesFromPage(
     plannedDistanceRaw: string | null;
     startTimeLocal: string | null;
     sourceDateRaw: string | null;
+    workoutId: number | null;
     reasons: string[];
     fromFallback: boolean;
   };
@@ -4819,6 +5146,7 @@ async function extractWorkoutCandidatesFromPage(
           plannedDistanceRaw,
           startTimeLocal,
           sourceDateRaw: resolvedSourceDate,
+          workoutId: await extractWorkoutIdFromCard(card),
           reasons: [
             resolvedSourceDateReason,
             fromFallback ? "candidate from .workoutDiv fallback card root" : "candidate from primary calendar card root",
@@ -4883,6 +5211,7 @@ async function extractWorkoutCandidatesFromPage(
         plannedDistance: candidate.plannedDistanceRaw ? parseDistance(candidate.plannedDistanceRaw) : null,
         startTimeLocal: candidate.startTimeLocal,
         dateIso,
+        workoutId: candidate.workoutId ?? null,
         reasons: candidate.reasons,
         fromFallback: candidate.fromFallback,
         rawScore,
@@ -5079,6 +5408,7 @@ function evaluateDryRunOutcome(input: {
         plannedDistance: candidate.plannedDistance,
         startTimeLocal: candidate.startTimeLocal,
         sourceDate: candidate.dateIso,
+        workoutId: candidate.workoutId ?? null,
         score: candidate.rawScore,
         reasons: candidate.reasons,
       })),
@@ -5233,6 +5563,7 @@ function evaluateDryRunOutcome(input: {
         plannedDistance: candidate.plannedDistance,
         startTimeLocal: candidate.startTimeLocal,
         sourceDate: candidate.dateIso,
+        workoutId: candidate.workoutId ?? null,
         score: candidate.rawScore,
         reasons: candidate.reasons,
       })),
@@ -5274,6 +5605,7 @@ function evaluateDryRunOutcome(input: {
         plannedDistance: candidate.plannedDistance,
         startTimeLocal: candidate.startTimeLocal,
         sourceDate: candidate.dateIso,
+        workoutId: candidate.workoutId ?? null,
         score: candidate.rawScore,
         reasons: candidate.reasons,
       })),
@@ -5323,6 +5655,7 @@ function evaluateDryRunOutcome(input: {
       plannedDurationSec: top.plannedDurationSec,
       plannedDistance: top.plannedDistance,
     }),
+    workoutId: top.workoutId ?? null,
   };
 
   let dryRunResult: DryRunResult = "candidate_found";
@@ -5402,6 +5735,7 @@ function evaluateDryRunOutcome(input: {
       plannedDistance: candidate.plannedDistance,
       startTimeLocal: candidate.startTimeLocal,
       sourceDate: candidate.dateIso,
+      workoutId: candidate.workoutId ?? null,
       score: candidate.rawScore,
       reasons: candidate.reasons,
     })),
@@ -5502,7 +5836,13 @@ function normalizeTrustedDryRunLog(logJson: unknown): TrustedDryRunLog | null {
     dryRunResult: "candidate_found",
     canExecute: true,
     confidence,
-    candidate: payload.candidate,
+    candidate: {
+      ...payload.candidate,
+      workoutId:
+        typeof payload.candidate.workoutId === "number" && Number.isFinite(payload.candidate.workoutId)
+          ? payload.candidate.workoutId
+          : null,
+    },
     resolvedDates: {
       sourceDate,
       targetDate,
@@ -6670,6 +7010,7 @@ async function main(): Promise<void> {
   const prepareOnly = hasCliFlag(TP_ACTIONS_PREPARE_ONLY_FLAG);
   const confirmSaveFlag = hasCliFlag(TP_ACTIONS_CONFIRM_SAVE_FLAG);
   const allowSaveEnv = isTruthyEnvFlag(TP_ACTIONS_ALLOW_SAVE_ENV);
+  const useApiMoveEnv = isTruthyEnvFlag(TP_ACTIONS_USE_API_MOVE_ENV);
   const saveGateOpen = confirmSaveFlag || allowSaveEnv;
 
   if (prepareOnly && runnerMode.mode === "dry_run") {
@@ -6847,12 +7188,10 @@ async function main(): Promise<void> {
   console.log(`Claimed TrainingPeaks action ${claimed.action.id} for real-mode revalidation.`);
   if (prepareOnly) {
     console.log("Prepare-only enabled: no TrainingPeaks mutation will be attempted.");
-  } else if (!saveGateOpen) {
-    console.log(
-      `Real save gate is closed. To allow Save & Close use ${TP_ACTIONS_CONFIRM_SAVE_FLAG} and/or ${TP_ACTIONS_ALLOW_SAVE_ENV}=true.`
-    );
+  } else if (!useApiMoveEnv) {
+    console.log(`API move path disabled. Set ${TP_ACTIONS_USE_API_MOVE_ENV}=true to allow TrainingPeaks API move.`);
   } else {
-    console.log("Controlled real save path enabled (Save & Close is additionally gated and post-validated).");
+    console.log("API move path enabled");
   }
   const run = await createActionRun(claimed.action.id, runnerId, "real");
   const baseLog: Record<string, unknown> = {
@@ -6878,21 +7217,31 @@ async function main(): Promise<void> {
     trustedDryRunRunId: claimed.trustedDryRunRun.id,
     trustedDryRun: claimed.trustedDryRunLog,
     safety: {
-      mutationForbidden: prepareOnly || !saveGateOpen,
+      mutationForbidden: prepareOnly || !useApiMoveEnv,
       allowedActions: [
         "open athlete page",
         "extract candidate",
         "compare with trusted dry-run",
         "capture screenshots",
-        "unsaved modal date selection (prepare flow)",
+        "resolve exact workout card",
+        "GET workout",
+        "PUT workout move via TrainingPeaks API",
+        "GET verification",
       ],
-      forbiddenActions: ["drag", "drop", "save", "form submit", "TrainingPeaks mutation"],
+      forbiddenActions: ["drag", "drop", "save", "Save & Close", "form submit", "legacy UI mutation path"],
+    },
+    apiMoveGate: {
+      enabled: useApiMoveEnv,
+      requiredEnv: TP_ACTIONS_USE_API_MOVE_ENV,
+      requiresRealExecutionEnv: TP_ACTIONS_REAL_EXECUTION_ENV,
     },
     realSaveGate: {
       confirmSaveFlag,
       allowSaveEnv,
       saveGateOpen,
-      requiredWhenNotPrepareOnly: true,
+      requiredWhenNotPrepareOnly: false,
+      legacyOnly: true,
+      legacyUiPathPresentInCode: typeof runControlledSaveAndCloseExecution === "function",
     },
   };
   const studentName = claimed.student?.student_name ?? "(unknown)";
@@ -6944,7 +7293,7 @@ async function main(): Promise<void> {
       return;
     }
 
-    if (prepareOnly || !saveGateOpen) {
+    if (prepareOnly || !useApiMoveEnv) {
       let lastProbePayload: UiCapabilityProbe | null = null;
       const trainingPeaksDriver = new PlaywrightOnlyTrainingPeaksDriver({
         expectedActionId: claimed.action.id,
@@ -6967,8 +7316,8 @@ async function main(): Promise<void> {
       const errorMessage =
         latestUiProbeError ??
         prepareMoveWorkoutResult.failureReason ??
-        (!saveGateOpen && !prepareOnly
-          ? `Real save gate closed: provide ${TP_ACTIONS_CONFIRM_SAVE_FLAG} or ${TP_ACTIONS_ALLOW_SAVE_ENV}=true.`
+        (!useApiMoveEnv && !prepareOnly
+          ? `API move gate closed: provide ${TP_ACTIONS_USE_API_MOVE_ENV}=true.`
           : REAL_MOVE_NOT_IMPLEMENTED_ERROR);
       const driverLogJsonSlice = {
         kind: "playwright_only_v1",
@@ -6991,13 +7340,14 @@ async function main(): Promise<void> {
         saveAndCloseAttempted: false,
         saveAndCloseClicked: false,
         saveAndCloseClickMethod: null,
-        saveAndCloseError: !saveGateOpen && !prepareOnly ? errorMessage : null,
-      unsavedUiStateChanged: Boolean(prepareMoveWorkoutResult.targetDateSelectionAttempted),
+        saveAndCloseError: null,
+        unsavedUiStateChanged: Boolean(prepareMoveWorkoutResult.targetDateSelectionAttempted),
         postSaveValidationAttempted: false,
         postSaveValidationPassed: false,
         postSaveValidationError: null,
         mutationOccurred: false,
-      durableMutationOccurred: false,
+        durableMutationOccurred: false,
+        apiMoveAttempted: false,
         wouldMove: {
           sourceDate: claimed.trustedDryRunLog.resolvedDates.sourceDate,
           targetDate: claimed.trustedDryRunLog.resolvedDates.targetDate,
@@ -7012,9 +7362,9 @@ async function main(): Promise<void> {
             fingerprint: comparison.currentCandidate?.fingerprint ?? comparison.trustedCandidate.fingerprint,
           },
         },
-        note: !saveGateOpen && !prepareOnly
-          ? `Real mode revalidation passed, but save gate is closed (${TP_ACTIONS_CONFIRM_SAVE_FLAG} OR ${TP_ACTIONS_ALLOW_SAVE_ENV}=true required). TrainingPeaks not changed.`
-          : "Проверка перед переносом пройдена. UI capability probe выполнен в режиме read-only; trainingPeaksDriver boundary вызван. Реальный перенос сохранением не выполнен. TrainingPeaks не изменён.",
+        note: !useApiMoveEnv && !prepareOnly
+          ? `Real mode revalidation passed, but API move gate is closed (${TP_ACTIONS_USE_API_MOVE_ENV}=true required). TrainingPeaks not changed.`
+          : "Проверка перед переносом пройдена. Legacy UI prepare flow оставлен в режиме read-only; реальный перенос через UI disabled. TrainingPeaks не изменён.",
       };
 
       await finishRealRun(claimed.action.id, run.id, {
@@ -7082,101 +7432,82 @@ async function main(): Promise<void> {
       }
 
       console.log(
-        !saveGateOpen && !prepareOnly
-          ? `Real-mode revalidation passed for action ${claimed.action.id}, but save gate is closed.`
-          : `Real-mode revalidation passed for action ${claimed.action.id}, but real move remains blocked (driver.executePreparedMove).`
+        !useApiMoveEnv && !prepareOnly
+          ? `Real-mode revalidation passed for action ${claimed.action.id}, but API move gate is closed.`
+          : `Real-mode revalidation passed for action ${claimed.action.id}, but legacy UI move remains blocked.`
       );
       return;
     }
 
-    const execution = await runControlledSaveAndCloseExecution({
+    const artifactDir = path.join(ACTION_ARTIFACTS_ROOT, claimed.action.id, run.id);
+    await mkdir(artifactDir, { recursive: true });
+    const apiExecution = await executeApiMoveForApprovedAction({
       claimed,
       runId: run.id,
       comparison,
-    });
-    const prepareMoveWorkoutResult = execution.prepareMoveWorkout;
-    const prepareGatesPassed =
-      prepareMoveWorkoutResult.status === "ready_to_save" &&
-      prepareMoveWorkoutResult.targetDateSelectionConfirmed === true &&
-      prepareMoveWorkoutResult.targetDateConfirmedBy !== null &&
-      prepareMoveWorkoutResult.mutationOccurred === false &&
-      prepareMoveWorkoutResult.athleteIdentityOk === true &&
-      prepareMoveWorkoutResult.candidateFingerprintOk === true &&
-      prepareMoveWorkoutResult.sourceDate ===
-        (comparison.sourceDate.current ?? comparison.sourceDate.trusted ?? claimed.trustedDryRunLog.resolvedDates.sourceDate) &&
-      prepareMoveWorkoutResult.targetDate ===
-        (comparison.targetDate.current ?? comparison.targetDate.trusted ?? claimed.trustedDryRunLog.resolvedDates.targetDate) &&
-      execution.preSaveAudit.preSaveTargetDateSelectionConfirmed &&
-      execution.preSaveAudit.preSaveTargetDateConfirmedBy !== null &&
-      execution.preSaveAudit.saveAndCloseButtonFound &&
-      execution.preSaveAudit.saveAndCloseButtonEnabled;
-    const failedPrepareGateDiagnostics = buildFailedPrepareGatesDiagnostics({
-      prepareMoveWorkout: prepareMoveWorkoutResult,
-      expectedSourceDate:
-        comparison.sourceDate.current ?? comparison.sourceDate.trusted ?? claimed.trustedDryRunLog.resolvedDates.sourceDate,
-      expectedTargetDate:
-        comparison.targetDate.current ?? comparison.targetDate.trusted ?? claimed.trustedDryRunLog.resolvedDates.targetDate,
-      preSaveTargetDateSelectionConfirmed: execution.preSaveAudit.preSaveTargetDateSelectionConfirmed,
-      preSaveTargetDateConfirmedBy: execution.preSaveAudit.preSaveTargetDateConfirmedBy,
-      saveAndCloseButtonFound: execution.preSaveAudit.saveAndCloseButtonFound,
-      saveAndCloseButtonEnabled: execution.preSaveAudit.saveAndCloseButtonEnabled,
+      artifactDir,
     });
 
     const logJson = {
       ...baseLog,
-      status: execution.postSaveValidationPassed ? "completed" : "failed",
-      completedAt: execution.postSaveValidationPassed ? new Date().toISOString() : undefined,
-      failedAt: execution.postSaveValidationPassed ? undefined : new Date().toISOString(),
+      status:
+        apiExecution.putStatus === 200 && apiExecution.verificationOk && apiExecution.verificationMatchesTargetDate
+          ? "completed"
+          : "failed",
+      completedAt:
+        apiExecution.putStatus === 200 && apiExecution.verificationOk && apiExecution.verificationMatchesTargetDate
+          ? new Date().toISOString()
+          : undefined,
+      failedAt:
+        apiExecution.putStatus === 200 && apiExecution.verificationOk && apiExecution.verificationMatchesTargetDate
+          ? undefined
+          : new Date().toISOString(),
       pageMeta: artifacts.pageMeta,
       revalidationPassed: true,
       revalidationComparison: comparison,
       currentEvaluation: evaluation,
-      prepareMoveWorkout: prepareMoveWorkoutResult,
-      preSaveScreenshot: execution.preSaveScreenshot,
-      afterSaveScreenshot: execution.afterSaveScreenshot,
-      preSaveAudit: execution.preSaveAudit,
-      failedPrepareGateDiagnostics,
-      postSaveAudit: execution.postSaveAudit,
-      unsavedUiStateChanged: execution.unsavedUiStateChanged,
-      saveAndCloseAttempted: execution.saveAndCloseAttempted,
-      saveAndCloseClicked: execution.saveAndCloseClicked,
-      saveAndCloseClickMethod: execution.saveAndCloseClickMethod,
-      saveAndCloseError: execution.saveAndCloseError,
-      postSaveValidationAttempted: execution.postSaveValidationAttempted,
-      postSaveValidationPassed: execution.postSaveValidationPassed,
-      postSaveValidationError: execution.postSaveValidationError,
-      mutationOccurred: execution.mutationOccurred,
-      durableMutationOccurred: execution.durableMutationOccurred,
-      prepareGatesPassed,
-      note: execution.postSaveValidationPassed
-        ? "Controlled Save & Close executed and post-save validation passed."
-        : execution.saveAndCloseClicked
-          ? `${SAVE_CLICK_POST_VALIDATION_FAILED_ALERT}`
-          : TRAININGPEAKS_NOT_CHANGED_NOTE,
+      mutationOccurred: apiExecution.apiMoveExecuted,
+      durableMutationOccurred: apiExecution.apiMoveExecuted,
+      apiMove: {
+        enabled: apiExecution.apiMoveEnabled,
+        executed: apiExecution.apiMoveExecuted,
+        athleteId: apiExecution.athleteId,
+        workoutId: apiExecution.workoutId,
+        sourceDate: apiExecution.sourceDate,
+        targetDate: apiExecution.targetDate,
+        targetDateTime: apiExecution.targetDateTime,
+        putStatus: apiExecution.putStatus,
+        verificationStatus: apiExecution.verificationStatus,
+        verificationOk: apiExecution.verificationOk,
+        verificationWorkoutDay: apiExecution.verificationWorkoutDay,
+        verificationMatchesTargetDate: apiExecution.verificationMatchesTargetDate,
+        authHeaderObserved: apiExecution.authHeaderObserved,
+        sampleTpApiUrl: apiExecution.sampleTpApiUrl,
+        artifacts: apiExecution.artifacts,
+      },
+      apiMoveRequest: apiExecution.requestSummary,
+      apiMoveResponse: apiExecution.responseSummary,
+      apiMoveVerification: apiExecution.verificationSummary,
+      note:
+        apiExecution.putStatus === 200 && apiExecution.verificationOk && apiExecution.verificationMatchesTargetDate
+          ? "TrainingPeaks API move executed successfully and verification confirmed target workoutDay."
+          : "TrainingPeaks API move failed or could not be verified. Manual review required.",
     };
 
-    if (!prepareGatesPassed) {
-      const gateError = `Controlled save prepare gates failed before Save & Close: ${prepareMoveWorkoutResult.failureReason ?? "prepare gate diagnostics available"} | failedPrepareGates=${failedPrepareGateDiagnostics.failedPrepareGates.join(",") || "none"}`;
+    if (apiExecution.putStatus !== 200) {
+      const errorMessage = `API move PUT failed with status ${apiExecution.putStatus}; artifactDir=${path.join(
+        artifactDir,
+        "api-move"
+      )}`;
       await finishRealRun(claimed.action.id, run.id, {
-        errorMessage: gateError,
+        errorMessage,
         logJson: {
           ...logJson,
           status: "failed",
-          error: gateError,
-          failedPrepareGateDiagnostics,
-          failedPrepareGates: failedPrepareGateDiagnostics.failedPrepareGates,
-          mutationOccurred: false,
-          saveAndCloseAttempted: false,
-          saveAndCloseClicked: false,
-          saveAndCloseClickMethod: null,
-          saveAndCloseError: gateError,
-          postSaveValidationAttempted: false,
-          postSaveValidationPassed: false,
-          postSaveValidationError: null,
-          note: TRAININGPEAKS_NOT_CHANGED_NOTE,
+          error: errorMessage,
         },
-        screenshotBeforePath: execution.preSaveScreenshot ?? artifacts.screenshotBeforePath,
-        screenshotAfterPath: execution.afterSaveScreenshot ?? artifacts.screenshotAfterPath,
+        screenshotBeforePath: apiExecution.screenshotBeforePath ?? artifacts.screenshotBeforePath,
+        screenshotAfterPath: apiExecution.screenshotAfterPath ?? artifacts.screenshotAfterPath,
       });
       await notifyCoachRealModeResult({
         chatId: resolveDryRunNotificationChatId(claimed.action),
@@ -7186,22 +7517,27 @@ async function main(): Promise<void> {
         currentEvaluation: evaluation,
         comparison,
         revalidationPassed: true,
-        errorMessage: gateError,
+        errorMessage,
         candidate: evaluation.candidate ?? comparison.trustedCandidate,
       });
-      console.log(
-        `Real-mode prepare gates failed for action ${claimed.action.id}: ${gateError} diagnostics=${JSON.stringify(
-          failedPrepareGateDiagnostics
-        )}`
-      );
+      console.log(`Real-mode API move failed for action ${claimed.action.id}: ${errorMessage}`);
       return;
     }
 
-    if (execution.saveAndCloseClicked && execution.postSaveValidationPassed) {
-      await completeRealRun(claimed.action.id, run.id, {
-        logJson,
-        screenshotBeforePath: execution.preSaveScreenshot ?? artifacts.screenshotBeforePath,
-        screenshotAfterPath: execution.afterSaveScreenshot ?? artifacts.screenshotAfterPath,
+    if (!apiExecution.verificationOk || !apiExecution.verificationMatchesTargetDate) {
+      const errorMessage = `API move sent but verification failed; manual review required. artifactDir=${path.join(
+        artifactDir,
+        "api-move"
+      )}`;
+      await finishRealRun(claimed.action.id, run.id, {
+        errorMessage,
+        logJson: {
+          ...logJson,
+          status: "failed",
+          error: errorMessage,
+        },
+        screenshotBeforePath: apiExecution.screenshotBeforePath ?? artifacts.screenshotBeforePath,
+        screenshotAfterPath: apiExecution.screenshotAfterPath ?? artifacts.screenshotAfterPath,
       });
       await notifyCoachRealModeResult({
         chatId: resolveDryRunNotificationChatId(claimed.action),
@@ -7211,29 +7547,17 @@ async function main(): Promise<void> {
         currentEvaluation: evaluation,
         comparison,
         revalidationPassed: true,
-        errorMessage: "Controlled Save & Close executed successfully; post-save validation passed.",
+        errorMessage,
         candidate: evaluation.candidate ?? comparison.trustedCandidate,
-        includeNotChangedNote: false,
       });
-      console.log(`Real-mode controlled Save & Close completed for action ${claimed.action.id}.`);
+      console.log(`Real-mode API move verification failed for action ${claimed.action.id}: ${errorMessage}`);
       return;
     }
 
-    const failureErrorMessage = execution.saveAndCloseClicked
-      ? SAVE_CLICK_POST_VALIDATION_FAILED_ALERT
-      : execution.saveAndCloseError ?? "Controlled Save & Close was not clicked.";
-    await finishRealRun(claimed.action.id, run.id, {
-      errorMessage: failureErrorMessage,
-      logJson: {
-        ...logJson,
-        status: "failed",
-        error: failureErrorMessage,
-        note: execution.saveAndCloseClicked
-          ? SAVE_CLICK_POST_VALIDATION_FAILED_ALERT
-          : TRAININGPEAKS_NOT_CHANGED_NOTE,
-      },
-      screenshotBeforePath: execution.preSaveScreenshot ?? artifacts.screenshotBeforePath,
-      screenshotAfterPath: execution.afterSaveScreenshot ?? artifacts.screenshotAfterPath,
+    await completeRealRun(claimed.action.id, run.id, {
+      logJson,
+      screenshotBeforePath: apiExecution.screenshotBeforePath ?? artifacts.screenshotBeforePath,
+      screenshotAfterPath: apiExecution.screenshotAfterPath ?? artifacts.screenshotAfterPath,
     });
     await notifyCoachRealModeResult({
       chatId: resolveDryRunNotificationChatId(claimed.action),
@@ -7243,11 +7567,11 @@ async function main(): Promise<void> {
       currentEvaluation: evaluation,
       comparison,
       revalidationPassed: true,
-      errorMessage: failureErrorMessage,
+      errorMessage: "TrainingPeaks API move executed successfully; verification passed.",
       candidate: evaluation.candidate ?? comparison.trustedCandidate,
-      includeNotChangedNote: !execution.saveAndCloseClicked,
+      includeNotChangedNote: false,
     });
-    console.log(`Real-mode controlled Save & Close failed for action ${claimed.action.id}: ${failureErrorMessage}`);
+    console.log(`Real-mode API move completed for action ${claimed.action.id}.`);
     return;
   } catch (error) {
     const errorMessage = toShortErrorMessage(error);
