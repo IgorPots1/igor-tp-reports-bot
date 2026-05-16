@@ -2526,7 +2526,8 @@ async function findBoundedDateHeaderText(
 
 async function resolveDateHeaderDomRectSnapshotBounded(
   page: import("playwright").Page,
-  dateHeaderText: string
+  dateHeaderText: string,
+  context?: { stage?: string; actionId?: string | null; runId?: string | null }
 ): Promise<{
   found: boolean;
   text: string | null;
@@ -2535,195 +2536,116 @@ async function resolveDateHeaderDomRectSnapshotBounded(
   rect: { x: number; y: number; width: number; height: number } | null;
   reason: string;
 }> {
-  return await page.evaluate(({ dateHeaderText: targetText }) => {
-    const browserProbe = new Function(
-      "dateHeaderText",
-      `
-        const normalizeWhitespace = (value) => String(value ?? "").replace(/\\s+/g, " ").trim();
-        const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
-        const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
-        const body = document.body;
-        if (!body) {
-          return {
-            found: false,
-            text: null,
-            tagName: null,
-            className: null,
-            rect: null,
-            reason: "document.body unavailable",
-          };
+  const payload = { dateHeaderText };
+  try {
+    return await page.evaluate(`(() => {
+      const input = ${JSON.stringify(payload)};
+      const target = String(input.dateHeaderText || "").replace(/\\s+/g, " ").trim();
+      const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+      const body = document.body;
+      if (!body) {
+        return { found: false, text: null, tagName: null, className: null, rect: null, reason: "document.body unavailable" };
+      }
+      const modalNodes = Array.from(document.querySelectorAll('[role="dialog"], .MuiDialog-root, .MuiDialog-container, .MuiModal-root, [class*="dialog" i], [class*="modal" i]'));
+      let modalRect = null;
+      let modalReason = "no visible modal candidate";
+      let bestModalScore = Number.NEGATIVE_INFINITY;
+      for (const node of modalNodes) {
+        if (!(node instanceof HTMLElement)) continue;
+        const style = window.getComputedStyle(node);
+        if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") continue;
+        const opacity = Number(style.opacity || "1");
+        if (Number.isFinite(opacity) && opacity < 0.05) continue;
+        const rect = node.getBoundingClientRect();
+        if (rect.width < 4 || rect.height < 4) continue;
+        if (rect.bottom <= 0 || rect.right <= 0 || rect.top >= viewportHeight || rect.left >= viewportWidth) continue;
+        const area = rect.width * rect.height;
+        const distanceFromCenter = Math.abs(rect.left + rect.width / 2 - viewportWidth / 2) + Math.abs(rect.top + rect.height / 2 - viewportHeight / 2);
+        const score = area * 0.0001 - distanceFromCenter * 0.05 - rect.top * 0.03;
+        if (score > bestModalScore) {
+          bestModalScore = score;
+          modalRect = rect;
+          modalReason = "using visible modal candidate bounds";
         }
-
-        const isVisibleElement = (element) => {
-          if (!(element instanceof HTMLElement)) {
-            return false;
-          }
-          const style = window.getComputedStyle(element);
-          if (
-            style.display === "none" ||
-            style.visibility === "hidden" ||
-            style.visibility === "collapse" ||
-            Number(style.opacity || "1") < 0.05
-          ) {
-            return false;
-          }
-          const rect = element.getBoundingClientRect();
-          if (rect.width < 4 || rect.height < 4) {
-            return false;
-          }
-          if (rect.bottom <= 0 || rect.right <= 0 || rect.top >= viewportHeight || rect.left >= viewportWidth) {
-            return false;
-          }
-          return true;
+      }
+      let bestMatch = null;
+      for (const node of Array.from(body.querySelectorAll("*"))) {
+        if (!(node instanceof HTMLElement)) continue;
+        const style = window.getComputedStyle(node);
+        if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") continue;
+        const opacity = Number(style.opacity || "1");
+        if (Number.isFinite(opacity) && opacity < 0.05) continue;
+        const rect = node.getBoundingClientRect();
+        if (rect.width < 4 || rect.height < 4) continue;
+        if (rect.bottom <= 0 || rect.right <= 0 || rect.top >= viewportHeight || rect.left >= viewportWidth) continue;
+        const text = String(node.innerText || node.textContent || "").replace(/\\s+/g, " ").trim();
+        if (!text || !target || !text.includes(target)) continue;
+        const className = String(typeof node.className === "string" ? node.className : node.getAttribute("class") || "").replace(/\\s+/g, " ").trim();
+        const role = String(node.getAttribute("role") || "").replace(/\\s+/g, " ").trim().toLowerCase();
+        const cursor = String(style.cursor || "").replace(/\\s+/g, " ").trim().toLowerCase();
+        const extraChars = Math.max(0, text.length - target.length);
+        let score = text === target ? 140 : 90;
+        score -= Math.min(70, extraChars * 0.8);
+        score -= rect.width > viewportWidth * 0.8 ? 60 : 0;
+        score -= rect.height > 120 ? 25 : 0;
+        if (cursor.includes("pointer")) score += 28;
+        if (role === "button" || node.tagName === "BUTTON") score += 24;
+        if (node.hasAttribute("aria-haspopup")) score += 10;
+        if (node.hasAttribute("tabindex")) score += 6;
+        if (/(^|\\s)(date|day|header|calendar|picker)(\\s|$)/i.test(className)) score += 16;
+        if (text.split(" ").length <= 8) score += 10;
+        if (modalRect) {
+          const insideModal = rect.left >= modalRect.left - 12 && rect.right <= modalRect.right + 12 && rect.top >= modalRect.top - 12 && rect.bottom <= modalRect.bottom + 12;
+          score += insideModal ? 45 : -35;
+          const leftDistance = Math.abs(rect.left - modalRect.left);
+          const topDistance = Math.abs(rect.top - modalRect.top);
+          score += Math.max(0, 40 - leftDistance * 0.08 - topDistance * 0.14);
+        } else {
+          score += Math.max(0, 18 - rect.left * 0.03 - rect.top * 0.04);
+        }
+        const candidate = {
+          text,
+          tagName: node.tagName || null,
+          className: className || null,
+          rect: {
+            x: Math.round(rect.x * 100) / 100,
+            y: Math.round(rect.y * 100) / 100,
+            width: Math.round(rect.width * 100) / 100,
+            height: Math.round(rect.height * 100) / 100,
+          },
+          reason: [modalReason, text === target ? "exact-text" : "contains-text", cursor.includes("pointer") ? "cursor-pointer" : null, role === "button" || node.tagName === "BUTTON" ? "button-role" : null, /(date|day|header|calendar|picker)/i.test(className) ? "dateish-class" : null, extraChars <= 40 ? "tight-text" : "long-text"].filter(Boolean).join("; "),
+          score,
         };
-
-        const modalCandidates = Array.from(
-          document.querySelectorAll(
-            '[role="dialog"], .MuiDialog-root, .MuiDialog-container, .MuiModal-root, [class*="dialog" i], [class*="modal" i]'
-          )
-        ).filter(isVisibleElement);
-
-        let modalRect = null;
-        let modalReason = "no visible modal candidate";
-        if (modalCandidates.length > 0) {
-          let bestModal = null;
-          let bestModalScore = Number.NEGATIVE_INFINITY;
-          for (const candidate of modalCandidates) {
-            const rect = candidate.getBoundingClientRect();
-            const area = rect.width * rect.height;
-            const distanceFromCenter =
-              Math.abs(rect.left + rect.width / 2 - viewportWidth / 2) +
-              Math.abs(rect.top + rect.height / 2 - viewportHeight / 2);
-            const score = area * 0.0001 - distanceFromCenter * 0.05 - rect.top * 0.03;
-            if (score > bestModalScore) {
-              bestModalScore = score;
-              bestModal = rect;
-            }
-          }
-          if (bestModal) {
-            modalRect = bestModal;
-            modalReason = "using visible modal candidate bounds";
-          }
-        }
-
-        const allElements = Array.from(body.querySelectorAll("*"));
-        let bestMatch = null;
-        for (const element of allElements) {
-          if (!(element instanceof HTMLElement) || !isVisibleElement(element)) {
-            continue;
-          }
-          const text = normalizeWhitespace(element.innerText || element.textContent || "");
-          if (!text || !text.includes(dateHeaderText)) {
-            continue;
-          }
-          const rect = element.getBoundingClientRect();
-          const className = normalizeWhitespace(
-            typeof element.className === "string" ? element.className : element.getAttribute("class") || ""
-          );
-          const role = normalizeWhitespace(element.getAttribute("role") || "").toLowerCase();
-          const cursor = normalizeWhitespace(window.getComputedStyle(element).cursor).toLowerCase();
-          const extraChars = Math.max(0, text.length - dateHeaderText.length);
-          let score = text === dateHeaderText ? 140 : 90;
-          score -= Math.min(70, extraChars * 0.8);
-          score -= rect.width > viewportWidth * 0.8 ? 60 : 0;
-          score -= rect.height > 120 ? 25 : 0;
-          if (cursor.includes("pointer")) {
-            score += 28;
-          }
-          if (role === "button" || element.tagName === "BUTTON") {
-            score += 24;
-          }
-          if (typeof element.onclick === "function") {
-            score += 14;
-          }
-          if (element.hasAttribute("aria-haspopup")) {
-            score += 10;
-          }
-          if (element.hasAttribute("tabindex")) {
-            score += 6;
-          }
-          if (/(^|\\s)(date|day|header|calendar|picker)(\\s|$)/i.test(className)) {
-            score += 16;
-          }
-          if (text.split(" ").length <= 8) {
-            score += 10;
-          }
-          if (modalRect) {
-            const insideModal =
-              rect.left >= modalRect.left - 12 &&
-              rect.right <= modalRect.right + 12 &&
-              rect.top >= modalRect.top - 12 &&
-              rect.bottom <= modalRect.bottom + 12;
-            score += insideModal ? 45 : -35;
-            const leftDistance = Math.abs(rect.left - modalRect.left);
-            const topDistance = Math.abs(rect.top - modalRect.top);
-            score += Math.max(0, 40 - leftDistance * 0.08 - topDistance * 0.14);
-          } else {
-            score += Math.max(0, 18 - rect.left * 0.03 - rect.top * 0.04);
-          }
-
-          const candidate = {
-            found: true,
-            text: text,
-            tagName: element.tagName || null,
-            className: className || null,
-            rect: {
-              x: Math.round(rect.x * 100) / 100,
-              y: Math.round(rect.y * 100) / 100,
-              width: Math.round(rect.width * 100) / 100,
-              height: Math.round(rect.height * 100) / 100,
-            },
-            reason:
-              [
-                modalReason,
-                text === dateHeaderText ? "exact-text" : "contains-text",
-                cursor.includes("pointer") ? "cursor-pointer" : null,
-                role === "button" || element.tagName === "BUTTON" ? "button-role" : null,
-                typeof element.onclick === "function" ? "onclick" : null,
-                /(date|day|header|calendar|picker)/i.test(className) ? "dateish-class" : null,
-                extraChars <= 40 ? "tight-text" : "long-text",
-              ]
-                .filter(Boolean)
-                .join("; "),
-            score,
-          };
-
-          if (!bestMatch || candidate.score > bestMatch.score) {
-            bestMatch = candidate;
-          }
-        }
-
-        if (!bestMatch) {
-          return {
-            found: false,
-            text: null,
-            tagName: null,
-            className: null,
-            rect: null,
-            reason: modalReason + "; no visible element text included target date header",
-          };
-        }
-
+        if (!bestMatch || candidate.score > bestMatch.score) bestMatch = candidate;
+      }
+      if (!bestMatch) {
         return {
-          found: true,
-          text: bestMatch.text,
-          tagName: bestMatch.tagName,
-          className: bestMatch.className,
-          rect: bestMatch.rect,
-          reason: bestMatch.reason,
+          found: false,
+          text: null,
+          tagName: null,
+          className: null,
+          rect: null,
+          reason: modalReason + "; no visible element text included target date header",
         };
-      `
-    ) as (dateHeaderText: string) => {
-      found: boolean;
-      text: string | null;
-      tagName: string | null;
-      className: string | null;
-      rect: { x: number; y: number; width: number; height: number } | null;
-      reason: string;
-    };
-
-    return browserProbe(targetText);
-  }, { dateHeaderText });
+      }
+      return {
+        found: true,
+        text: bestMatch.text,
+        tagName: bestMatch.tagName,
+        className: bestMatch.className,
+        rect: bestMatch.rect,
+        reason: bestMatch.reason,
+      };
+    })()`);
+  } catch (error) {
+    const stage = context?.stage ?? "resolve-date-header-dom-rect";
+    const actionPart = context?.actionId ? ` actionId=${context.actionId}` : "";
+    const runPart = context?.runId ? ` runId=${context.runId}` : "";
+    throw new Error(
+      `evaluateContext=trainingpeaks helper=resolveDateHeaderDomRectSnapshotBounded stage=${stage}${actionPart}${runPart} cause=${toShortErrorMessage(error)}`
+    );
+  }
 }
 
 async function findVisibleDatePicker(
@@ -2876,10 +2798,12 @@ async function detectVisibleDatePickerSnapshot(
     dateHeaderText: string | null;
     sourceDateIso?: string | null;
     targetDateIso?: string | null;
-  }
+  },
+  context?: { stage?: string; actionId?: string | null; runId?: string | null }
 ): Promise<DatePickerDetectionSnapshot> {
-  return page.evaluate(
-    ({ dateHeaderBox, dateHeaderText, sourceDateIso, targetDateIso }) => {
+  try {
+    return await page.evaluate(
+      ({ dateHeaderBox, dateHeaderText, sourceDateIso, targetDateIso }) => {
       const normalizeWhitespace = (value: string | null | undefined): string =>
         (value ?? "").replace(/\s+/g, " ").trim();
       const toNumericDay = (iso: string | null | undefined): number | null => {
@@ -3172,13 +3096,21 @@ async function detectVisibleDatePickerSnapshot(
 
       return detectionFallback;
     },
-    {
-      dateHeaderBox: input.dateHeaderBox,
-      dateHeaderText: input.dateHeaderText,
-      sourceDateIso: input.sourceDateIso ?? null,
-      targetDateIso: input.targetDateIso ?? null,
-    }
-  );
+      {
+        dateHeaderBox: input.dateHeaderBox,
+        dateHeaderText: input.dateHeaderText,
+        sourceDateIso: input.sourceDateIso ?? null,
+        targetDateIso: input.targetDateIso ?? null,
+      }
+    );
+  } catch (error) {
+    const stage = context?.stage ?? "detect-date-picker";
+    const actionPart = context?.actionId ? ` actionId=${context.actionId}` : "";
+    const runPart = context?.runId ? ` runId=${context.runId}` : "";
+    throw new Error(
+      `evaluateContext=trainingpeaks helper=detectVisibleDatePickerSnapshot stage=${stage}${actionPart}${runPart} cause=${toShortErrorMessage(error)}`
+    );
+  }
 }
 
 async function collectVisibleDatepickerDebugSnapshot(
@@ -3894,7 +3826,11 @@ async function probeTrainingPeaksMoveCapabilities(
       markStep(step);
       try {
         dateHeaderDomRectMatch = await withUiProbeTimeout(step, UI_PROBE_STEP_TIMEOUTS.getDateHeaderBoundingBox, async () => {
-          return await resolveDateHeaderDomRectSnapshotBounded(page, probe.detail.dateHeaderText as string);
+          return await resolveDateHeaderDomRectSnapshotBounded(page, probe.detail.dateHeaderText as string, {
+            stage: "ui-probe-resolve-date-header-dom-rect",
+            actionId: claimed.action.id,
+            runId,
+          });
         });
         probe.detail.dateControlSelectorUsed = dateHeaderDomRectMatch?.found ? "dom-rect-date-header" : null;
         probe.detail.dateControlClickable = Boolean(dateHeaderDomRectMatch?.found && dateHeaderDomRectMatch.rect);
@@ -4030,12 +3966,20 @@ async function probeTrainingPeaksMoveCapabilities(
         try {
           console.log("[ui-probe] step: detect datepicker");
           const detection = await withUiProbeTimeout(step, 2_500, async () => {
-            return await detectVisibleDatePickerSnapshot(page, {
-              dateHeaderBox: probe.detail.dateHeaderBoundingBox,
-              dateHeaderText: probe.detail.dateHeaderText,
-              sourceDateIso,
-              targetDateIso,
-            });
+            return await detectVisibleDatePickerSnapshot(
+              page,
+              {
+                dateHeaderBox: probe.detail.dateHeaderBoundingBox,
+                dateHeaderText: probe.detail.dateHeaderText,
+                sourceDateIso,
+                targetDateIso,
+              },
+              {
+                stage: "ui-probe-detect-datepicker",
+                actionId: claimed.action.id,
+                runId,
+              }
+            );
           });
           datePickerOpenedSnapshot = datePickerOpenedSnapshot || detection.opened;
           datePickerSelectorHint = detection.selectorHint;
@@ -4161,12 +4105,20 @@ async function probeTrainingPeaksMoveCapabilities(
             if (postClickDateFieldValue) {
               probe.detail.currentDateValue = postClickDateFieldValue;
             }
-            const postSelection = await detectVisibleDatePickerSnapshot(page, {
-              dateHeaderBox: probe.detail.dateHeaderBoundingBox,
-              dateHeaderText: probe.detail.dateHeaderText,
-              sourceDateIso: comparison.sourceDate.current ?? comparison.sourceDate.trusted,
-              targetDateIso,
-            });
+            const postSelection = await detectVisibleDatePickerSnapshot(
+              page,
+              {
+                dateHeaderBox: probe.detail.dateHeaderBoundingBox,
+                dateHeaderText: probe.detail.dateHeaderText,
+                sourceDateIso: comparison.sourceDate.current ?? comparison.sourceDate.trusted,
+                targetDateIso,
+              },
+              {
+                stage: "ui-probe-detect-datepicker-post-selection",
+                actionId: claimed.action.id,
+                runId,
+              }
+            );
             probe.detail.datePickerDetectionStrategy =
               postSelection.strategy ?? probe.detail.datePickerDetectionStrategy;
             probe.detail.datePickerBoundingBox = postSelection.boundingBox ?? probe.detail.datePickerBoundingBox;
@@ -5951,7 +5903,11 @@ async function runControlledSaveAndCloseExecution(input: {
     if (!dateHeaderText) {
       throw new Error("Date header not found in workout detail modal.");
     }
-    const dateHeaderRect = await resolveDateHeaderDomRectSnapshotBounded(page, dateHeaderText);
+    const dateHeaderRect = await resolveDateHeaderDomRectSnapshotBounded(page, dateHeaderText, {
+      stage: "controlled-save-resolve-date-header-dom-rect",
+      actionId: input.claimed.action.id,
+      runId: input.runId,
+    });
     if (!dateHeaderRect?.found || !dateHeaderRect.rect) {
       throw new Error("Date header bounding box not resolved.");
     }
@@ -5959,12 +5915,20 @@ async function runControlledSaveAndCloseExecution(input: {
     await page.mouse.click(center.x, center.y);
     await page.waitForTimeout(300);
 
-    const detected = await detectVisibleDatePickerSnapshot(page, {
-      dateHeaderBox: toProbeBoundingBox(dateHeaderRect.rect),
-      dateHeaderText,
-      sourceDateIso: sourceDate,
-      targetDateIso: targetDate,
-    });
+    const detected = await detectVisibleDatePickerSnapshot(
+      page,
+      {
+        dateHeaderBox: toProbeBoundingBox(dateHeaderRect.rect),
+        dateHeaderText,
+        sourceDateIso: sourceDate,
+        targetDateIso: targetDate,
+      },
+      {
+        stage: "controlled-save-detect-datepicker",
+        actionId: input.claimed.action.id,
+        runId: input.runId,
+      }
+    );
     let targetDateClickCandidateFound = false;
     let targetDateClickCandidateBoundingBox: { x: number; y: number; width: number; height: number } | null = null;
     const targetDayMatch = targetDate.match(/^\d{4}-\d{2}-(\d{2})$/);
