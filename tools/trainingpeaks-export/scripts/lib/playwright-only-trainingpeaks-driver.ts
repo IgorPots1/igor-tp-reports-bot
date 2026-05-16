@@ -30,6 +30,10 @@ export type ProbeLike = {
     selectedSourceDayVisible: boolean;
     targetDateSelectionAttempted: boolean;
     targetDateSelectionConfirmed: boolean;
+    targetDateClickCandidateFound: boolean;
+    targetDateClickCandidateBoundingBox: { x: number; y: number; width: number; height: number } | null;
+    datepickerDomDebugPath: string | null;
+    datepickerDomDebugTopCandidates: string[];
     opened: boolean;
     closeSucceeded: boolean;
   };
@@ -210,6 +214,10 @@ export function derivePrepareMoveWorkoutResultFromProbe(
     selectedSourceDayVisible: probe.detail.selectedSourceDayVisible,
     targetDateSelectionAttempted: probe.detail.targetDateSelectionAttempted,
     targetDateSelectionConfirmed,
+    targetDateClickCandidateFound: probe.detail.targetDateClickCandidateFound,
+    targetDateClickCandidateBoundingBox: probe.detail.targetDateClickCandidateBoundingBox,
+    datepickerDomDebugPath: probe.detail.datepickerDomDebugPath,
+    datepickerDomDebugTopCandidates: [...probe.detail.datepickerDomDebugTopCandidates],
     mutationOccurred: false,
     saveButtonVisible,
     screenshots: { ...probe.screenshots },
@@ -243,6 +251,10 @@ export class PlaywrightOnlyTrainingPeaksDriver implements TrainingPeaksAutomatio
       selectedSourceDayVisible: false,
       targetDateSelectionAttempted: false,
       targetDateSelectionConfirmed: false,
+      targetDateClickCandidateFound: false,
+      targetDateClickCandidateBoundingBox: null,
+      datepickerDomDebugPath: null,
+      datepickerDomDebugTopCandidates: [],
       mutationOccurred: false,
       saveButtonVisible: false,
       screenshots: {},
@@ -288,6 +300,10 @@ export class PlaywrightOnlyTrainingPeaksDriver implements TrainingPeaksAutomatio
             selectedSourceDayVisible: false,
             targetDateSelectionAttempted: false,
             targetDateSelectionConfirmed: false,
+            targetDateClickCandidateFound: false,
+            targetDateClickCandidateBoundingBox: null,
+            datepickerDomDebugPath: null,
+            datepickerDomDebugTopCandidates: [],
             opened: false,
             closeSucceeded: false,
           },

@@ -20,6 +20,10 @@ export interface PrepareMoveWorkoutResult {
   selectedSourceDayVisible: boolean;
   targetDateSelectionAttempted: boolean;
   targetDateSelectionConfirmed: boolean;
+  targetDateClickCandidateFound: boolean;
+  targetDateClickCandidateBoundingBox: { x: number; y: number; width: number; height: number } | null;
+  datepickerDomDebugPath: string | null;
+  datepickerDomDebugTopCandidates: string[];
   mutationOccurred: boolean;
   saveButtonVisible: boolean;
   screenshots: Record<string, string | null>;

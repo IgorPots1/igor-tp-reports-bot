@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import process from "node:process";
@@ -187,8 +187,12 @@ type UiCapabilityProbeDetailDiscovery = {
   selectedSourceDayVisible: boolean;
   targetDateSelectionAttempted: boolean;
   targetDateSelectionConfirmed: boolean;
+  targetDateClickCandidateFound: boolean;
+  targetDateClickCandidateBoundingBox: { x: number; y: number; width: number; height: number } | null;
   datePickerOpenCheckCount: number;
   datePickerOpenCheckSnippets: string[];
+  datepickerDomDebugPath: string | null;
+  datepickerDomDebugTopCandidates: string[];
   saveButtonFound: boolean;
   saveAndCloseButtonFound: boolean;
   cancelButtonFound: boolean;
@@ -236,6 +240,47 @@ type DatePickerDetectionSnapshot = {
   targetDayVisible: boolean;
   targetDaySelectedVisible: boolean;
   selectedSourceDayVisible: boolean;
+};
+
+type DatepickerDebugVisibleElement = {
+  tagName: string;
+  textContent: string | null;
+  value: string | null;
+  ariaLabel: string | null;
+  role: string | null;
+  className: string | null;
+  id: string | null;
+  boundingBox: { x: number; y: number; width: number; height: number } | null;
+  isVisible: boolean;
+  position: string | null;
+  zIndex: string | null;
+  nearDateHeader: boolean;
+  insideModal: boolean;
+  matchedSignals: string[];
+};
+
+type DatepickerDomDebugSnapshot = {
+  collectedAt: string;
+  sourceDateIso: string | null;
+  targetDateIso: string | null;
+  dateHeaderBoundingBox: { x: number; y: number; width: number; height: number } | null;
+  modalBoundingBox: { x: number; y: number; width: number; height: number } | null;
+  topCandidates: string[];
+  visibleElements: DatepickerDebugVisibleElement[];
+  signals: {
+    month: string | null;
+    year: string | null;
+    weekdayTokens: string[];
+    weekdayTokenCount: number;
+    visibleDayCandidates: number[];
+    sourceDayVisible: boolean;
+    selectedSourceDayVisible: boolean;
+    targetDayVisible: boolean;
+    targetDateClickCandidateFound: boolean;
+    targetDateClickCandidateBoundingBox: { x: number; y: number; width: number; height: number } | null;
+    openByMultisignal: boolean;
+    reasons: string[];
+  };
 };
 
 type TrainingPeaksMoveWorkoutTarget =
@@ -1825,8 +1870,12 @@ function buildEmptyUiCapabilityProbe(): UiCapabilityProbe {
     selectedSourceDayVisible: false,
     targetDateSelectionAttempted: false,
     targetDateSelectionConfirmed: false,
+    targetDateClickCandidateFound: false,
+    targetDateClickCandidateBoundingBox: null,
     datePickerOpenCheckCount: 0,
     datePickerOpenCheckSnippets: [],
+    datepickerDomDebugPath: null,
+    datepickerDomDebugTopCandidates: [],
     saveButtonFound: false,
     saveAndCloseButtonFound: false,
     cancelButtonFound: false,
@@ -2997,6 +3046,403 @@ async function detectVisibleDatePickerSnapshot(
   );
 }
 
+async function collectVisibleDatepickerDebugSnapshot(
+  page: import("playwright").Page,
+  input: {
+    dateHeaderBox: { x: number; y: number; width: number; height: number } | null;
+    sourceDateIso?: string | null;
+    targetDateIso?: string | null;
+  }
+): Promise<DatepickerDomDebugSnapshot> {
+  return page.evaluate(
+    ({ dateHeaderBox, sourceDateIso, targetDateIso }) => {
+      const normalizeWhitespace = (value: string | null | undefined): string =>
+        (value ?? "").replace(/\s+/g, " ").trim();
+      const viewportWidth =
+        typeof window.innerWidth === "number" && Number.isFinite(window.innerWidth) ? window.innerWidth : 0;
+      const viewportHeight =
+        typeof window.innerHeight === "number" && Number.isFinite(window.innerHeight) ? window.innerHeight : 0;
+      const toNumericDay = (iso: string | null | undefined): number | null => {
+        if (!iso) {
+          return null;
+        }
+        const m = iso.match(/^\d{4}-(\d{2})-(\d{2})$/);
+        if (!m) {
+          return null;
+        }
+        const day = Number(m[2]);
+        if (!Number.isFinite(day) || day < 1 || day > 31) {
+          return null;
+        }
+        return day;
+      };
+      const sourceDay = toNumericDay(sourceDateIso);
+      const targetDay = toNumericDay(targetDateIso);
+      const monthNames = [
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+      ];
+      const weekdayTokens = ["mo", "tu", "we", "th", "fr", "sa", "su"];
+      const monthRegex =
+        /\b(?:january|february|march|april|may|june|july|august|september|october|november|december)\b/i;
+      const yearRegex = /\b(20\d{2})\b/;
+      const dayRegex = /\b([1-9]|[12]\d|3[01])\b/g;
+      const signalRegexes = [
+        /\bmay\b/i,
+        /\b2026\b/,
+        /\bmo\b/i,
+        /\btu\b/i,
+        /\bwe\b/i,
+        /\bth\b/i,
+        /\bfr\b/i,
+        /\bsa\b/i,
+        /\bsu\b/i,
+        /\b16\b/,
+        /\b17\b/,
+      ];
+
+      const isVisible = (element: Element): boolean => {
+        const html = element as HTMLElement;
+        const style = window.getComputedStyle(html);
+        if (
+          style.display === "none" ||
+          style.visibility === "hidden" ||
+          style.visibility === "collapse" ||
+          Number(style.opacity || "1") === 0
+        ) {
+          return false;
+        }
+        const rect = html.getBoundingClientRect();
+        if (rect.width < 2 || rect.height < 2) {
+          return false;
+        }
+        if (rect.bottom < 0 || rect.right < 0 || rect.top > viewportHeight || rect.left > viewportWidth) {
+          return false;
+        }
+        return true;
+      };
+
+      const modalCandidates = Array.from(document.querySelectorAll('[role="dialog"],.MuiDialog-root,.MuiModal-root')).filter(
+        (el) => isVisible(el)
+      );
+      const modalRect = (() => {
+        for (const candidate of modalCandidates) {
+          const rect = (candidate as HTMLElement).getBoundingClientRect();
+          if (rect.width >= 100 && rect.height >= 80) {
+            return rect;
+          }
+        }
+        return null;
+      })();
+
+      const isNearDateHeader = (rect: DOMRect): boolean => {
+        if (!dateHeaderBox) {
+          return false;
+        }
+        const headerCenterX = dateHeaderBox.x + dateHeaderBox.width / 2;
+        const headerCenterY = dateHeaderBox.y + dateHeaderBox.height / 2;
+        const candidateCenterX = rect.x + rect.width / 2;
+        const candidateCenterY = rect.y + rect.height / 2;
+        const dx = Math.abs(candidateCenterX - headerCenterX);
+        const dy = Math.abs(candidateCenterY - headerCenterY);
+        const allowedX = Math.max(320, dateHeaderBox.width * 4);
+        const allowedY = Math.max(420, dateHeaderBox.height * 10);
+        return dx <= allowedX && dy <= allowedY;
+      };
+
+      const isInsideModal = (rect: DOMRect): boolean => {
+        if (!modalRect) {
+          return false;
+        }
+        return !(
+          rect.right < modalRect.left ||
+          rect.left > modalRect.right ||
+          rect.bottom < modalRect.top ||
+          rect.top > modalRect.bottom
+        );
+      };
+
+      const addMonthFromText = (text: string, current: string | null): string | null => {
+        if (current) {
+          return current;
+        }
+        for (const month of monthNames) {
+          if (new RegExp(`\\b${month}\\b`, "i").test(text)) {
+            return month;
+          }
+        }
+        return null;
+      };
+
+      const seen = new Set<Element>();
+      const visibleElements: DatepickerDebugVisibleElement[] = [];
+      const visibleDaySet = new Set<number>();
+      const weekdayTokenSet = new Set<string>();
+      let visibleMonth: string | null = null;
+      let visibleYear: string | null = null;
+      let selectedSourceDayVisible = false;
+      let sourceDayVisible = false;
+      let targetDayVisible = false;
+      let targetDateClickCandidateFound = false;
+      let targetDateClickCandidateBoundingBox: { x: number; y: number; width: number; height: number } | null = null;
+
+      const selectors = [
+        "button",
+        "input",
+        "select",
+        '[role="gridcell"]',
+        '[role="cell"]',
+        "td",
+        '[role="columnheader"]',
+        "th",
+        "div",
+        "span",
+      ];
+
+      for (const selector of selectors) {
+        const candidates = Array.from(document.querySelectorAll(selector)).slice(0, 1200);
+        for (const element of candidates) {
+          if (seen.has(element)) {
+            continue;
+          }
+          seen.add(element);
+          const html = element as HTMLElement;
+          const rect = html.getBoundingClientRect();
+          const visible = isVisible(element);
+          if (!visible) {
+            continue;
+          }
+          const text = normalizeWhitespace(html.innerText || element.textContent || "");
+          const role = normalizeWhitespace(html.getAttribute("role"));
+          const ariaLabel = normalizeWhitespace(html.getAttribute("aria-label"));
+          const value =
+            html instanceof HTMLInputElement || html instanceof HTMLSelectElement || html instanceof HTMLButtonElement
+              ? normalizeWhitespace(String(html.value ?? ""))
+              : null;
+          const className = normalizeWhitespace(html.className || "");
+          const id = normalizeWhitespace(html.id || "");
+          const style = window.getComputedStyle(html);
+          const nearDateHeader = isNearDateHeader(rect);
+          const insideModal = isInsideModal(rect);
+          const textLower = text.toLowerCase();
+          const matchedSignals: string[] = [];
+          if (monthRegex.test(text)) {
+            matchedSignals.push("month");
+          }
+          if (yearRegex.test(text)) {
+            matchedSignals.push("year");
+          }
+          for (const token of weekdayTokens) {
+            if (new RegExp(`\\b${token}\\b`, "i").test(text)) {
+              weekdayTokenSet.add(token);
+            }
+          }
+          const dayMatches = text.match(dayRegex) ?? [];
+          for (const dayRaw of dayMatches) {
+            const dayNum = Number(dayRaw);
+            if (Number.isFinite(dayNum) && dayNum >= 1 && dayNum <= 31) {
+              visibleDaySet.add(dayNum);
+            }
+          }
+          if (sourceDay !== null && new RegExp(`\\b${sourceDay}\\b`).test(text)) {
+            sourceDayVisible = true;
+            matchedSignals.push("source-day");
+          }
+          if (targetDay !== null && new RegExp(`\\b${targetDay}\\b`).test(text)) {
+            targetDayVisible = true;
+            matchedSignals.push("target-day");
+          }
+          const hasSelectedState =
+            html.getAttribute("aria-selected") === "true" ||
+            /\bMui-selected\b/i.test(className) ||
+            /\bselected\b/i.test(className);
+          if (sourceDay !== null && hasSelectedState && new RegExp(`\\b${sourceDay}\\b`).test(`${text} ${ariaLabel}`)) {
+            selectedSourceDayVisible = true;
+            matchedSignals.push("source-day-selected");
+          }
+          if (
+            targetDay !== null &&
+            !targetDateClickCandidateFound &&
+            nearDateHeader &&
+            (insideModal || /picker|calendar|date|day/i.test(className)) &&
+            (role === "gridcell" ||
+              role === "option" ||
+              html.tagName === "BUTTON" ||
+              html.tagName === "TD" ||
+              new RegExp(`\\b${targetDay}\\b`).test(ariaLabel)) &&
+            new RegExp(`\\b${targetDay}\\b`).test(`${text} ${ariaLabel}`)
+          ) {
+            targetDateClickCandidateFound = true;
+            targetDateClickCandidateBoundingBox = {
+              x: Math.round(rect.x * 100) / 100,
+              y: Math.round(rect.y * 100) / 100,
+              width: Math.round(rect.width * 100) / 100,
+              height: Math.round(rect.height * 100) / 100,
+            };
+          }
+
+          const keep =
+            html.tagName === "BUTTON" ||
+            html.tagName === "INPUT" ||
+            html.tagName === "SELECT" ||
+            role === "gridcell" ||
+            role === "cell" ||
+            role === "columnheader" ||
+            html.tagName === "TD" ||
+            html.tagName === "TH" ||
+            (["DIV", "SPAN"].includes(html.tagName) &&
+              text.length > 0 &&
+              text.length <= 60 &&
+              (insideModal || nearDateHeader || signalRegexes.some((rx) => rx.test(text))));
+          if (!keep) {
+            continue;
+          }
+
+          visibleMonth = addMonthFromText(text, visibleMonth);
+          if (!visibleYear) {
+            const yearMatch = text.match(yearRegex);
+            visibleYear = yearMatch?.[1] ?? null;
+          }
+
+          if (insideModal) {
+            matchedSignals.push("inside-modal");
+          }
+          if (nearDateHeader) {
+            matchedSignals.push("near-date-header");
+          }
+          if (signalRegexes.some((rx) => rx.test(textLower))) {
+            matchedSignals.push("signal-text");
+          }
+
+          visibleElements.push({
+            tagName: html.tagName.toLowerCase(),
+            textContent: text || null,
+            value: value || null,
+            ariaLabel: ariaLabel || null,
+            role: role || null,
+            className: className || null,
+            id: id || null,
+            boundingBox: {
+              x: Math.round(rect.x * 100) / 100,
+              y: Math.round(rect.y * 100) / 100,
+              width: Math.round(rect.width * 100) / 100,
+              height: Math.round(rect.height * 100) / 100,
+            },
+            isVisible: visible,
+            position: style.position || null,
+            zIndex: style.zIndex || null,
+            nearDateHeader,
+            insideModal,
+            matchedSignals,
+          });
+        }
+      }
+
+      const visibleDayCandidates = [...visibleDaySet].sort((a, b) => a - b).slice(0, 31);
+      const weekdayMatched = [...weekdayTokenSet].sort();
+      const monthSignal = Boolean(visibleMonth);
+      const yearSignal = Boolean(visibleYear);
+      const weekdaySignal = weekdayMatched.length >= 5;
+      const dayGridSignal = visibleDayCandidates.length >= 7;
+      const sourceSignal = sourceDay !== null ? visibleDayCandidates.includes(sourceDay) || sourceDayVisible : false;
+      const targetSignal = targetDay !== null ? visibleDayCandidates.includes(targetDay) || targetDayVisible : false;
+      const reasons = [
+        monthSignal ? `month:${visibleMonth}` : null,
+        yearSignal ? `year:${visibleYear}` : null,
+        weekdaySignal ? `weekday:${weekdayMatched.join(",")}` : null,
+        dayGridSignal ? `day-grid:${visibleDayCandidates.length}` : null,
+        sourceSignal ? `source-day:${sourceDay}` : null,
+        targetSignal ? `target-day:${targetDay}` : null,
+        selectedSourceDayVisible ? "source-day-selected" : null,
+      ].filter(Boolean) as string[];
+      const openByMultisignal =
+        monthSignal && yearSignal && weekdaySignal && dayGridSignal && sourceSignal && targetSignal;
+
+      const scored = visibleElements
+        .map((element) => {
+          const text = (element.textContent ?? "").toLowerCase();
+          const score =
+            (element.insideModal ? 2 : 0) +
+            (element.nearDateHeader ? 2 : 0) +
+            (element.matchedSignals.includes("month") ? 2 : 0) +
+            (element.matchedSignals.includes("year") ? 2 : 0) +
+            (element.matchedSignals.includes("target-day") ? 2 : 0) +
+            (element.matchedSignals.includes("source-day") ? 1 : 0) +
+            (element.tagName === "button" || element.role === "gridcell" ? 1 : 0) +
+            (/\bmo\b|\btu\b|\bwe\b|\bth\b|\bfr\b|\bsa\b|\bsu\b/.test(text) ? 1 : 0);
+          return { score, element };
+        })
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 20)
+        .map(({ element }) =>
+          normalizeWhitespace(
+            [
+              element.tagName,
+              element.role ? `role=${element.role}` : null,
+              element.className ? `class=${element.className.slice(0, 60)}` : null,
+              element.textContent ? `text=${element.textContent.slice(0, 80)}` : null,
+            ]
+              .filter(Boolean)
+              .join(" | ")
+          )
+        );
+
+      return {
+        collectedAt: new Date().toISOString(),
+        sourceDateIso: sourceDateIso ?? null,
+        targetDateIso: targetDateIso ?? null,
+        dateHeaderBoundingBox: dateHeaderBox
+          ? {
+              x: dateHeaderBox.x,
+              y: dateHeaderBox.y,
+              width: dateHeaderBox.width,
+              height: dateHeaderBox.height,
+            }
+          : null,
+        modalBoundingBox: modalRect
+          ? {
+              x: Math.round(modalRect.x * 100) / 100,
+              y: Math.round(modalRect.y * 100) / 100,
+              width: Math.round(modalRect.width * 100) / 100,
+              height: Math.round(modalRect.height * 100) / 100,
+            }
+          : null,
+        topCandidates: scored,
+        visibleElements: visibleElements.slice(0, 350),
+        signals: {
+          month: visibleMonth,
+          year: visibleYear,
+          weekdayTokens: weekdayMatched,
+          weekdayTokenCount: weekdayMatched.length,
+          visibleDayCandidates,
+          sourceDayVisible: sourceSignal,
+          selectedSourceDayVisible,
+          targetDayVisible: targetSignal,
+          targetDateClickCandidateFound,
+          targetDateClickCandidateBoundingBox,
+          openByMultisignal,
+          reasons,
+        },
+      };
+    },
+    {
+      dateHeaderBox: input.dateHeaderBox,
+      sourceDateIso: input.sourceDateIso ?? null,
+      targetDateIso: input.targetDateIso ?? null,
+    }
+  );
+}
+
 async function clickVisibleTargetDayInDatePicker(
   page: import("playwright").Page,
   targetDateIso: string | null
@@ -3105,6 +3551,7 @@ async function probeTrainingPeaksMoveCapabilities(
   const screenshotBeforeDateHeaderClickPath = path.join(artifactDir, "probe2_before_date_header_click.png");
   const screenshotAfterDateHeaderClickAttempt1Path = path.join(artifactDir, "probe2_after_date_header_click_attempt_1.png");
   const screenshotDatePickerOpenedPath = path.join(artifactDir, "probe2_datepicker_opened.png");
+  const datepickerDomDebugPath = path.join(artifactDir, "datepicker_dom_debug.json");
   const screenshotAfterClosedPath = path.join(artifactDir, "probe2_after_closed.png");
   const screenshotTimeoutPath = path.join(artifactDir, "probe_timeout.png");
   let context: import("playwright").BrowserContext | null = null;
@@ -3213,7 +3660,7 @@ async function probeTrainingPeaksMoveCapabilities(
           probe.card.menuCopyOptionFound = probe.card.menuCopyActionFound;
           probe.screenshots.menuOpened = await captureProbeScreenshot(page, screenshotMenuOpenedPath, probe.warnings);
 
-          const editAction = await findExactEditMenuAction(menuRoot.locator);
+          const editAction = await findExactEditMenuAction(menuRoot!.locator);
           if (editAction) {
             try {
               probe.detail.openAttempted = true;
@@ -3393,6 +3840,36 @@ async function probeTrainingPeaksMoveCapabilities(
       let datePickerOpenedSnapshot = false;
       let datePickerSelectorHint: string | null = null;
       if (dateHeaderClickSucceeded) {
+        const sourceDateIso = comparison.sourceDate.current ?? comparison.sourceDate.trusted;
+        const targetDateIso = comparison.targetDate.current ?? comparison.targetDate.trusted;
+        await page.waitForTimeout(500).catch(() => {});
+        try {
+          const domDebugSnapshot = await collectVisibleDatepickerDebugSnapshot(page, {
+            dateHeaderBox: probe.detail.dateHeaderBoundingBox,
+            sourceDateIso,
+            targetDateIso,
+          });
+          probe.detail.datepickerDomDebugPath = datepickerDomDebugPath;
+          probe.detail.datepickerDomDebugTopCandidates = [...domDebugSnapshot.topCandidates.slice(0, 12)];
+          probe.detail.visibleMonth = probe.detail.visibleMonth ?? domDebugSnapshot.signals.month;
+          probe.detail.visibleYear = probe.detail.visibleYear ?? domDebugSnapshot.signals.year;
+          if (probe.detail.visibleDayCandidates.length === 0 && domDebugSnapshot.signals.visibleDayCandidates.length > 0) {
+            probe.detail.visibleDayCandidates = [...domDebugSnapshot.signals.visibleDayCandidates];
+          }
+          probe.detail.targetDayVisible = probe.detail.targetDayVisible || domDebugSnapshot.signals.targetDayVisible;
+          probe.detail.selectedSourceDayVisible =
+            probe.detail.selectedSourceDayVisible || domDebugSnapshot.signals.selectedSourceDayVisible;
+          probe.detail.targetDateClickCandidateFound = domDebugSnapshot.signals.targetDateClickCandidateFound;
+          probe.detail.targetDateClickCandidateBoundingBox = domDebugSnapshot.signals.targetDateClickCandidateBoundingBox;
+          if (domDebugSnapshot.signals.openByMultisignal) {
+            datePickerOpenedSnapshot = true;
+            probe.detail.datePickerDetectionStrategy = "visible_dom_multisignal_fallback";
+          }
+          await writeFile(datepickerDomDebugPath, JSON.stringify(domDebugSnapshot, null, 2), "utf8");
+        } catch (error) {
+          probe.warnings.push(`Datepicker DOM debug snapshot failed safely: ${toShortErrorMessage(error)}`);
+        }
+
         probe.detail.datePickerOpenCheckCount += 1;
         const step = "detect datepicker";
         markStep(step);
@@ -3402,20 +3879,24 @@ async function probeTrainingPeaksMoveCapabilities(
             return await detectVisibleDatePickerSnapshot(page, {
               dateHeaderBox: probe.detail.dateHeaderBoundingBox,
               dateHeaderText: probe.detail.dateHeaderText,
-              sourceDateIso: comparison.sourceDate.current ?? comparison.sourceDate.trusted,
-              targetDateIso: comparison.targetDate.current ?? comparison.targetDate.trusted,
+              sourceDateIso,
+              targetDateIso,
             });
           });
-          datePickerOpenedSnapshot = detection.opened;
+          datePickerOpenedSnapshot = datePickerOpenedSnapshot || detection.opened;
           datePickerSelectorHint = detection.selectorHint;
-          probe.detail.datePickerDetectionStrategy = detection.strategy;
+          probe.detail.datePickerDetectionStrategy = probe.detail.datePickerDetectionStrategy ?? detection.strategy;
           probe.detail.datePickerBoundingBox = detection.boundingBox;
-          probe.detail.visibleMonth = detection.visibleMonth;
-          probe.detail.visibleYear = detection.visibleYear;
-          probe.detail.visibleDayCandidates = [...detection.visibleDayCandidates];
-          probe.detail.targetDayVisible = detection.targetDayVisible;
-          probe.detail.selectedSourceDayVisible = detection.selectedSourceDayVisible;
-          probe.detail.targetDateSelectionConfirmed = detection.targetDaySelectedVisible;
+          probe.detail.visibleMonth = probe.detail.visibleMonth ?? detection.visibleMonth;
+          probe.detail.visibleYear = probe.detail.visibleYear ?? detection.visibleYear;
+          probe.detail.visibleDayCandidates = probe.detail.visibleDayCandidates.length
+            ? probe.detail.visibleDayCandidates
+            : [...detection.visibleDayCandidates];
+          probe.detail.targetDayVisible = probe.detail.targetDayVisible || detection.targetDayVisible;
+          probe.detail.selectedSourceDayVisible =
+            probe.detail.selectedSourceDayVisible || detection.selectedSourceDayVisible;
+          probe.detail.targetDateSelectionConfirmed =
+            probe.detail.targetDateSelectionConfirmed || detection.targetDaySelectedVisible;
           probe.detail.datePickerOpenCheckSnippets.push(
             ...detection.snippets.slice(0, Math.max(0, 12 - probe.detail.datePickerOpenCheckSnippets.length))
           );
@@ -3430,7 +3911,7 @@ async function probeTrainingPeaksMoveCapabilities(
       if (dateHeaderClickSucceeded && probe.detail.datePickerOpened) {
         const targetDateIso = comparison.targetDate.current ?? comparison.targetDate.trusted;
         probe.detail.targetDateSelectionAttempted = false;
-        if (probe.detail.targetDayVisible && targetDateIso) {
+        if (probe.detail.targetDayVisible && targetDateIso && probe.detail.targetDateClickCandidateFound) {
           probe.detail.targetDateSelectionAttempted = true;
           const clickTargetStep = "select target date";
           markStep(clickTargetStep);
@@ -3702,8 +4183,9 @@ async function probeTrainingPeaksMoveCapabilities(
     return probe;
   } finally {
     if (context) {
+      const contextToClose = context as import("playwright").BrowserContext;
       await withUiProbeTimeout("cleanup browser context", UI_PROBE_CLEANUP_TIMEOUT_MS, async () => {
-        await context.close().catch(() => {});
+        await contextToClose.close().catch(() => {});
       }).catch((error) => {
         probe.warnings.push(`UI probe cleanup warning: ${toShortErrorMessage(error)}`);
       });
@@ -4930,6 +5412,10 @@ function probeToDriverProbeShape(probe: UiCapabilityProbe): TrainingPeaksProbeLi
       selectedSourceDayVisible: detail.selectedSourceDayVisible,
       targetDateSelectionAttempted: detail.targetDateSelectionAttempted,
       targetDateSelectionConfirmed: detail.targetDateSelectionConfirmed,
+      targetDateClickCandidateFound: detail.targetDateClickCandidateFound,
+      targetDateClickCandidateBoundingBox: detail.targetDateClickCandidateBoundingBox,
+      datepickerDomDebugPath: detail.datepickerDomDebugPath,
+      datepickerDomDebugTopCandidates: [...detail.datepickerDomDebugTopCandidates],
       opened: detail.opened,
       closeSucceeded: detail.closeSucceeded,
     },
@@ -5288,8 +5774,15 @@ async function main(): Promise<void> {
         datePickerOpened: prepareMoveWorkoutResult.datePickerOpened,
         targetDateVisible: prepareMoveWorkoutResult.targetDateVisible,
         datePickerDetectionStrategy: prepareMoveWorkoutResult.datePickerDetectionStrategy,
+        visibleMonth: prepareMoveWorkoutResult.visibleMonth,
+        visibleYear: prepareMoveWorkoutResult.visibleYear,
+        visibleDayCandidates: prepareMoveWorkoutResult.visibleDayCandidates,
+        targetDayVisible: prepareMoveWorkoutResult.targetDayVisible,
+        selectedSourceDayVisible: prepareMoveWorkoutResult.selectedSourceDayVisible,
         targetDateSelectionAttempted: prepareMoveWorkoutResult.targetDateSelectionAttempted,
         targetDateSelectionConfirmed: prepareMoveWorkoutResult.targetDateSelectionConfirmed,
+        datepickerDomDebugPath: prepareMoveWorkoutResult.datepickerDomDebugPath,
+        datepickerDomDebugTopCandidates: prepareMoveWorkoutResult.datepickerDomDebugTopCandidates,
         trainingPeaksDriver: driverLogJsonSlice,
         uiCapabilityProbeErrors: uiCapabilityProbe.errors,
         diagnostics: prepareMoveWorkoutResult,
