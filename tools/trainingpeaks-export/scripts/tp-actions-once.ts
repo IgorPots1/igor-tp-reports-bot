@@ -248,10 +248,18 @@ type TargetDateSelectionConfirmation = {
   preSaveTargetDateConfirmedBy: "date_header" | "date_input" | "selected_day_highlight" | null;
   preSaveTargetDateConfirmedByHeader: boolean;
   preSaveTargetDateConfirmedByInput: boolean;
+  beforeClickDateHeaderText: string | null;
   datePickerOpened: boolean;
   datePickerDetectionStrategy: string | null;
   targetDateClickCandidateFound: boolean;
   targetDateClickCandidateBoundingBox: { x: number; y: number; width: number; height: number } | null;
+  targetDateClickAttempted: boolean;
+  targetDateClickMethod: "mouse.click.bounding_box_center" | null;
+  afterTargetDayClickError: string | null;
+  afterClickDateHeaderText: string | null;
+  afterClickDateInputValue: string | null;
+  afterClickVisibleTextContainsTarget: boolean;
+  confirmSource: "date_header" | "date_input" | null;
   datepickerDomDebugPath: string | null;
   datepickerDomDebugTopCandidates: string[];
   datepickerDomDebugError: string | null;
@@ -5865,10 +5873,18 @@ async function selectAndConfirmTargetDateInCurrentModalSession(input: {
     preSaveTargetDateConfirmedBy: null,
     preSaveTargetDateConfirmedByHeader: false,
     preSaveTargetDateConfirmedByInput: false,
+    beforeClickDateHeaderText: null,
     datePickerOpened: false,
     datePickerDetectionStrategy: null,
     targetDateClickCandidateFound: false,
     targetDateClickCandidateBoundingBox: null,
+    targetDateClickAttempted: false,
+    targetDateClickMethod: null,
+    afterTargetDayClickError: null,
+    afterClickDateHeaderText: null,
+    afterClickDateInputValue: null,
+    afterClickVisibleTextContainsTarget: false,
+    confirmSource: null,
     datepickerDomDebugPath: null,
     datepickerDomDebugTopCandidates: [],
     datepickerDomDebugError: null,
@@ -5889,6 +5905,7 @@ async function selectAndConfirmTargetDateInCurrentModalSession(input: {
 
   const dateHeaderText = await findBoundedDateHeaderText(page, modalRoot?.locator ?? null);
   result.preSaveDateHeaderText = dateHeaderText ?? null;
+  result.beforeClickDateHeaderText = dateHeaderText ?? null;
   if (!dateHeaderText) {
     return result;
   }
@@ -5988,6 +6005,54 @@ async function selectAndConfirmTargetDateInCurrentModalSession(input: {
       currentModalFallbackSignals.strategy ?? "current_modal_body_text_multisignal_fallback";
   }
   const targetDayVisible = Boolean(detection?.targetDayVisible) || currentModalFallbackSignals.targetDayVisible;
+  if (result.datePickerOpened && targetDayVisible && !result.targetDateClickCandidateFound) {
+    try {
+      const targetDayMatch = input.targetDateIso.match(/^\d{4}-\d{2}-(\d{2})$/);
+      const targetDayNum = targetDayMatch ? Number(targetDayMatch[1]) : NaN;
+      if (Number.isFinite(targetDayNum) && targetDayNum >= 1 && targetDayNum <= 31) {
+        const day = String(targetDayNum);
+        const dayRegex = new RegExp(`(^|\\D)${day}(\\D|$)`);
+        const locatorSpecs = [
+          { locator: page.locator(`.MuiPickersDay-root:has-text("${day}")`), hint: "MuiPickersDay" },
+          { locator: page.locator(`[role="gridcell"]`).filter({ hasText: new RegExp(`^\\s*${day}\\s*$`) }), hint: "gridcell" },
+          { locator: page.locator(`button[aria-label*="${day}"]`).filter({ hasText: dayRegex }), hint: "button[aria-label]" },
+          { locator: page.locator(`td`).filter({ hasText: new RegExp(`^\\s*${day}\\s*$`) }), hint: "td" },
+        ] as const;
+        for (const spec of locatorSpecs) {
+          if (result.targetDateClickCandidateFound) break;
+          const allMatches = await spec.locator.all().catch(() => [] as import("playwright").Locator[]);
+          for (const loc of allMatches) {
+            if (!(await loc.isVisible().catch(() => false))) continue;
+            const box = await loc.boundingBox().catch(() => null);
+            if (!box || box.width < 5 || box.height < 5) continue;
+            if (box.width > 80 || box.height > 60) continue;
+            const dx = Math.abs((box.x + box.width / 2) - (dateHeaderBoundingBox.x + dateHeaderBoundingBox.width / 2));
+            const dy = box.y + box.height / 2 - (dateHeaderBoundingBox.y + dateHeaderBoundingBox.height / 2);
+            if (dx > 320 || dy < 0 || dy > 420) continue;
+            const text = await loc.textContent().catch(() => "");
+            if (!dayRegex.test(text ?? "")) continue;
+            result.targetDateClickCandidateFound = true;
+            result.targetDateClickCandidateBoundingBox = {
+              x: Math.round(box.x * 100) / 100,
+              y: Math.round(box.y * 100) / 100,
+              width: Math.round(box.width * 100) / 100,
+              height: Math.round(box.height * 100) / 100,
+            };
+            result.datepickerDomDebugTopCandidates = [
+              ...result.datepickerDomDebugTopCandidates,
+              `candidate-fallback:${spec.hint}:day-${day}`,
+            ].slice(0, 12);
+            break;
+          }
+        }
+      }
+    } catch (error) {
+      result.datepickerDomDebugTopCandidates = [
+        ...result.datepickerDomDebugTopCandidates,
+        `candidate-fallback-error:${toShortErrorMessage(error)}`,
+      ].slice(0, 12);
+    }
+  }
   if (
     result.datePickerOpened &&
     targetDayVisible &&
@@ -5995,11 +6060,18 @@ async function selectAndConfirmTargetDateInCurrentModalSession(input: {
     result.targetDateClickCandidateBoundingBox
   ) {
     result.preSaveTargetDateSelectionAttempted = true;
+    result.targetDateClickAttempted = true;
+    result.targetDateClickMethod = "mouse.click.bounding_box_center";
     const clickBox = result.targetDateClickCandidateBoundingBox;
     const x = clickBox.x + clickBox.width / 2;
     const y = clickBox.y + clickBox.height / 2;
-    await page.mouse.click(x, y).catch(() => {});
-    await page.waitForTimeout(180).catch(() => {});
+    try {
+      await page.mouse.click(x, y);
+      await page.waitForTimeout(260).catch(() => {});
+      result.afterTargetDayClickError = null;
+    } catch (error) {
+      result.afterTargetDayClickError = toShortErrorMessage(error);
+    }
   }
 
   const postClickDateHeaderText = await findBoundedDateHeaderText(page, modalRoot?.locator ?? null).catch(
@@ -6008,6 +6080,8 @@ async function selectAndConfirmTargetDateInCurrentModalSession(input: {
   const postClickDateFieldValue = dateFieldMatch
     ? await readDateFieldValue(dateFieldMatch.locator).catch(() => null as string | null)
     : null;
+  result.afterClickDateHeaderText = postClickDateHeaderText ?? null;
+  result.afterClickDateInputValue = postClickDateFieldValue ?? null;
   result.preSaveDateHeaderText = postClickDateHeaderText ?? result.preSaveDateHeaderText;
   result.preSaveDateInputValue = postClickDateFieldValue ?? result.preSaveDateInputValue;
 
@@ -6028,6 +6102,10 @@ async function selectAndConfirmTargetDateInCurrentModalSession(input: {
 
   const confirmedByDateHeader = visibleAnyTextReferencesIsoTarget([result.preSaveDateHeaderText], input.targetDateIso);
   const confirmedByDateInput = visibleAnyTextReferencesIsoTarget([result.preSaveDateInputValue], input.targetDateIso);
+  result.afterClickVisibleTextContainsTarget = visibleAnyTextReferencesIsoTarget(
+    [result.afterClickDateHeaderText, result.afterClickDateInputValue],
+    input.targetDateIso
+  );
   const confirmedBySelectedHighlight = Boolean(postSelection?.targetDaySelectedVisible);
   result.preSaveTargetDateConfirmedByHeader = confirmedByDateHeader;
   result.preSaveTargetDateConfirmedByInput = confirmedByDateInput;
@@ -6035,8 +6113,10 @@ async function selectAndConfirmTargetDateInCurrentModalSession(input: {
     result.preSaveTargetDateSelectionConfirmed = true;
     if (confirmedByDateHeader) {
       result.preSaveTargetDateConfirmedBy = "date_header";
+      result.confirmSource = "date_header";
     } else if (confirmedByDateInput) {
       result.preSaveTargetDateConfirmedBy = "date_input";
+      result.confirmSource = "date_input";
     }
   } else if (confirmedBySelectedHighlight) {
     result.datepickerDomDebugTopCandidates = [
@@ -6230,6 +6310,16 @@ type ControlledSaveExecutionResult = {
     visibleDateHeaderText: string | null;
     preSaveDateHeaderText: string | null;
     preSaveDateInputValue: string | null;
+    beforeClickDateHeaderText: string | null;
+    targetDateClickCandidateFound: boolean;
+    targetDateClickCandidateBoundingBox: { x: number; y: number; width: number; height: number } | null;
+    targetDateClickAttempted: boolean;
+    targetDateClickMethod: "mouse.click.bounding_box_center" | null;
+    afterTargetDayClickError: string | null;
+    afterClickDateHeaderText: string | null;
+    afterClickDateInputValue: string | null;
+    afterClickVisibleTextContainsTarget: boolean;
+    confirmSource: "date_header" | "date_input" | null;
     preSaveTargetDateSelectionConfirmed: boolean;
     preSaveTargetDateConfirmedBy: "date_header" | "date_input" | "selected_day_highlight" | null;
     targetDate: string | null;
@@ -6377,6 +6467,16 @@ async function runControlledSaveAndCloseExecution(input: {
       visibleDateHeaderText: modalDateSelection.preSaveDateHeaderText,
       preSaveDateHeaderText: modalDateSelection.preSaveDateHeaderText,
       preSaveDateInputValue: modalDateSelection.preSaveDateInputValue,
+      beforeClickDateHeaderText: modalDateSelection.beforeClickDateHeaderText,
+      targetDateClickCandidateFound: modalDateSelection.targetDateClickCandidateFound,
+      targetDateClickCandidateBoundingBox: modalDateSelection.targetDateClickCandidateBoundingBox,
+      targetDateClickAttempted: modalDateSelection.targetDateClickAttempted,
+      targetDateClickMethod: modalDateSelection.targetDateClickMethod,
+      afterTargetDayClickError: modalDateSelection.afterTargetDayClickError,
+      afterClickDateHeaderText: modalDateSelection.afterClickDateHeaderText,
+      afterClickDateInputValue: modalDateSelection.afterClickDateInputValue,
+      afterClickVisibleTextContainsTarget: modalDateSelection.afterClickVisibleTextContainsTarget,
+      confirmSource: modalDateSelection.confirmSource,
       preSaveTargetDateSelectionConfirmed: modalDateSelection.preSaveTargetDateSelectionConfirmed,
       preSaveTargetDateConfirmedBy: modalDateSelection.preSaveTargetDateConfirmedBy,
       targetDate,
