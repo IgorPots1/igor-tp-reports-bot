@@ -369,6 +369,34 @@ const TP_MOVE_MENU_ACTION_REGEX = /move/i;
 const TP_RESCHEDULE_MENU_ACTION_REGEX = /resched|postpone|shift/i;
 const TP_COPY_MENU_ACTION_REGEX = /copy|duplicate/i;
 const TP_EDIT_MENU_ACTION_REGEX = /^edit$/i;
+const UI_PROBE_OVERALL_TIMEOUT_MS = 25_000;
+const UI_PROBE_CLEANUP_TIMEOUT_MS = 5_000;
+const UI_PROBE_STEP_TIMEOUTS = {
+  clickEdit: 3_000,
+  waitDetailModal: 5_000,
+  clickDateHeader: 3_000,
+  detectDatepicker: 4_000,
+  closeDatepicker: 3_000,
+  closeModal: 4_000,
+} as const;
+
+function withUiProbeTimeout<T>(step: string, timeoutMs: number, run: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`UI capability probe timeout at step "${step}" after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    run()
+      .then((result) => {
+        clearTimeout(timer);
+        resolve(result);
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
+}
 
 function hasCliFlag(flag: string): boolean {
   return process.argv.slice(2).includes(flag);
@@ -2756,13 +2784,14 @@ async function probeTrainingPeaksMoveCapabilities(
   const screenshotAfterDateHeaderClickAttempt1Path = path.join(artifactDir, "probe2_after_date_header_click_attempt_1.png");
   const screenshotDatePickerOpenedPath = path.join(artifactDir, "probe2_datepicker_opened.png");
   const screenshotAfterClosedPath = path.join(artifactDir, "probe2_after_closed.png");
+  let context: import("playwright").BrowserContext | null = null;
 
-  const context = await chromium.launchPersistentContext(profileDir, {
-    headless: false,
-    viewport: null,
-  });
+  const probeTask = (async () => {
+    context = await chromium.launchPersistentContext(profileDir, {
+      headless: false,
+      viewport: null,
+    });
 
-  try {
     const page = context.pages()[0] ?? (await context.newPage());
     await page.goto(student.trainingpeaks_athlete_url, { waitUntil: "domcontentloaded", timeout: 30_000 });
     await page.bringToFront();
@@ -2843,15 +2872,21 @@ async function probeTrainingPeaksMoveCapabilities(
           if (editAction) {
             try {
               probe.detail.openAttempted = true;
-              await editAction.locator.click({ timeout: 2_000 });
+              console.log("[ui-probe] step: click Edit");
+              await withUiProbeTimeout("click Edit", UI_PROBE_STEP_TIMEOUTS.clickEdit, async () => {
+                await editAction.locator.click({ timeout: 2_000 });
+              });
               probe.card.menuEditClicked = true;
-              for (const checkpointMs of [500, 1500, 3000]) {
-                await page.waitForTimeout(checkpointMs);
-                const detailCheckpoint = await findVisibleDetailRoot(page);
-                if (detailCheckpoint) {
-                  break;
+              console.log("[ui-probe] step: wait for detail modal");
+              await withUiProbeTimeout("wait for detail modal", UI_PROBE_STEP_TIMEOUTS.waitDetailModal, async () => {
+                for (const checkpointMs of [500, 1500, 3000]) {
+                  await page.waitForTimeout(checkpointMs);
+                  const detailCheckpoint = await findVisibleDetailRoot(page);
+                  if (detailCheckpoint) {
+                    break;
+                  }
                 }
-              }
+              });
               probe.screenshots.afterEditClick = await captureProbeScreenshot(
                 page,
                 screenshotAfterEditClickPath,
@@ -3071,20 +3106,30 @@ async function probeTrainingPeaksMoveCapabilities(
           const strategy = clickStrategies[strategyIndex];
           probe.detail.dateHeaderClickStrategiesTried.push(strategy.name);
           try {
-            await strategy.perform();
+            if (strategyIndex === 0) {
+              console.log("[ui-probe] step: click date header");
+            }
+            await withUiProbeTimeout("click date header", UI_PROBE_STEP_TIMEOUTS.clickDateHeader, async () => {
+              await strategy.perform();
+            });
           } catch (error) {
             probe.warnings.push(`Date header click strategy "${strategy.name}" failed: ${toShortErrorMessage(error)}`);
           }
           await page.waitForTimeout(strategy.waitMs);
           probe.detail.datePickerOpenCheckCount += 1;
           const openCheckSnippets: string[] = [];
-          datePickerRoot = await findVisibleDatePicker(
-            page,
-            modalRoot?.locator ?? null,
-            probe.detail.dateHeaderBoundingBox,
-            probe.detail.dateHeaderText,
-            openCheckSnippets
-          );
+          if (strategyIndex === 0) {
+            console.log("[ui-probe] step: detect datepicker");
+          }
+          datePickerRoot = await withUiProbeTimeout("detect datepicker", UI_PROBE_STEP_TIMEOUTS.detectDatepicker, async () => {
+            return await findVisibleDatePicker(
+              page,
+              modalRoot?.locator ?? null,
+              probe.detail.dateHeaderBoundingBox,
+              probe.detail.dateHeaderText,
+              openCheckSnippets
+            );
+          });
           probe.detail.datePickerOpenCheckSnippets.push(
             ...openCheckSnippets.slice(0, Math.max(0, 12 - probe.detail.datePickerOpenCheckSnippets.length))
           );
@@ -3108,13 +3153,20 @@ async function probeTrainingPeaksMoveCapabilities(
             screenshotDatePickerOpenedPath,
             probe.warnings
           );
-          await page.keyboard.press("Escape").catch(() => {});
-          await page.waitForTimeout(300);
-          const datePickerStillVisible = await findVisibleDatePicker(
-            page,
-            modalRoot?.locator ?? null,
-            probe.detail.dateHeaderBoundingBox,
-            probe.detail.dateHeaderText
+          console.log("[ui-probe] step: close datepicker");
+          const datePickerStillVisible = await withUiProbeTimeout(
+            "close datepicker",
+            UI_PROBE_STEP_TIMEOUTS.closeDatepicker,
+            async () => {
+              await page.keyboard.press("Escape").catch(() => {});
+              await page.waitForTimeout(300);
+              return await findVisibleDatePicker(
+                page,
+                modalRoot?.locator ?? null,
+                probe.detail.dateHeaderBoundingBox,
+                probe.detail.dateHeaderText
+              );
+            }
           );
           if (datePickerStillVisible && modalRoot) {
             const clickedSafeArea = await clickInsideDetailButOutsideDatePicker(
@@ -3162,8 +3214,11 @@ async function probeTrainingPeaksMoveCapabilities(
 
       if (closeCandidate) {
         try {
-          await closeCandidate.locator.click({ timeout: 2_000 });
-          await page.waitForTimeout(500);
+          console.log("[ui-probe] step: close modal");
+          await withUiProbeTimeout("close modal", UI_PROBE_STEP_TIMEOUTS.closeModal, async () => {
+            await closeCandidate.locator.click({ timeout: 2_000 });
+            await page.waitForTimeout(500);
+          });
         } catch (error) {
           probe.warnings.push(`Detail close click failed: ${toShortErrorMessage(error)}`);
         }
@@ -3209,11 +3264,40 @@ async function probeTrainingPeaksMoveCapabilities(
     }
 
     return probe;
+  })();
+
+  probeTask.catch(() => {});
+
+  try {
+    const timedResult = await Promise.race([
+      probeTask,
+      new Promise<UiCapabilityProbe>((_, reject) => {
+        setTimeout(() => {
+          reject(
+            new Error(
+              `UI capability probe timeout at step "overall UI capability probe" after ${UI_PROBE_OVERALL_TIMEOUT_MS}ms`
+            )
+          );
+        }, UI_PROBE_OVERALL_TIMEOUT_MS);
+      }),
+    ]);
+    return timedResult;
   } catch (error) {
-    probe.errors.push(`UI capability probe failed: ${toShortErrorMessage(error)}`);
+    const message = toShortErrorMessage(error);
+    const prefixedMessage =
+      message.startsWith("UI capability probe timeout at step")
+        ? message
+        : `UI capability probe failed: ${message}`;
+    probe.errors.push(prefixedMessage);
     return probe;
   } finally {
-    await context.close().catch(() => {});
+    if (context) {
+      await withUiProbeTimeout("cleanup ui probe context", UI_PROBE_CLEANUP_TIMEOUT_MS, async () => {
+        await context?.close().catch(() => {});
+      }).catch((error) => {
+        probe.warnings.push(`UI probe cleanup warning: ${toShortErrorMessage(error)}`);
+      });
+    }
   }
 }
 
@@ -4665,8 +4749,10 @@ async function main(): Promise<void> {
       return;
     }
 
-    const errorMessage = REAL_MOVE_NOT_IMPLEMENTED_ERROR;
     const uiCapabilityProbe = await probeTrainingPeaksMoveCapabilities(claimed, run.id, comparison);
+    const latestUiProbeError =
+      uiCapabilityProbe.errors.length > 0 ? uiCapabilityProbe.errors[uiCapabilityProbe.errors.length - 1] : null;
+    const errorMessage = latestUiProbeError ?? REAL_MOVE_NOT_IMPLEMENTED_ERROR;
     const logJson = {
       ...baseLog,
       status: "failed",
