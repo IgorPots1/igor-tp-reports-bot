@@ -13,11 +13,16 @@ const APP_HOST = "https://app.trainingpeaks.com";
 const TP_API_HOST = "https://tpapi.trainingpeaks.com";
 const EVENTS_ENDPOINT_TEMPLATE = "/fitness/v6/athletes/{athleteId}/events/{from}/{to}";
 const DEFAULT_LIMIT = 15;
+const DEFAULT_CONCURRENCY = 3;
+const MIN_CONCURRENCY = 1;
+const MAX_CONCURRENCY = 5;
+const ATHLETE_REQUEST_TIMEOUT_MS = 30_000;
 
 type CliArgs = {
   from: string;
   to: string;
   limit: number;
+  concurrency: number;
   athleteId: number | null;
   student: string | null;
   headed: boolean;
@@ -44,8 +49,18 @@ type ScanLogEntry = {
   reason: string;
   request_url: string | null;
   request_status: number | null;
+  http_status: number | null;
   request_ok: boolean | null;
   extracted_count: number;
+  request_started_at: string | null;
+  request_finished_at: string | null;
+  request_ms: number | null;
+  parse_ms: number;
+  total_ms: number | null;
+  attempts: number;
+  timed_out: boolean;
+  retry_reason: string | null;
+  auth_refreshed_before_retry: boolean;
   error: string | null;
 };
 
@@ -114,6 +129,7 @@ function parseAthleteIdFromUrl(athleteUrl: string): number | null {
 function parseArgs(argv: string[]): CliArgs {
   const out: Partial<CliArgs> = {
     limit: DEFAULT_LIMIT,
+    concurrency: DEFAULT_CONCURRENCY,
     athleteId: null,
     student: null,
     headed: false,
@@ -142,6 +158,14 @@ function parseArgs(argv: string[]): CliArgs {
         throw new Error(`Invalid --athlete-id value: ${arg}`);
       }
       out.athleteId = parsed;
+      continue;
+    }
+    if (arg.startsWith("--concurrency=")) {
+      const parsed = Number(arg.slice("--concurrency=".length).trim());
+      if (!Number.isFinite(parsed)) {
+        throw new Error(`Invalid --concurrency value: ${arg}`);
+      }
+      out.concurrency = Math.min(MAX_CONCURRENCY, Math.max(MIN_CONCURRENCY, Math.floor(parsed)));
       continue;
     }
     if (arg.startsWith("--student=")) {
@@ -595,7 +619,50 @@ function studentMatchesFilter(student: StudentConfig, args: CliArgs, athleteId: 
   return { ok: true, reason: "selected" };
 }
 
+function isTransientStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function isTimeoutError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /timed out|timeout/i.test(message);
+}
+
+function isNetworkError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /network|econn|socket|connect|fetch failed|dns|getaddrinfo|enotfound|eai_again/i.test(message);
+}
+
+function computePercentile(values: number[], percentile: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.ceil((percentile / 100) * sorted.length) - 1),
+  );
+  return sorted[index] ?? 0;
+}
+
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  handler: (item: T) => Promise<void>,
+): Promise<void> {
+  if (items.length === 0) return;
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (true) {
+      const idx = cursor;
+      cursor += 1;
+      if (idx >= items.length) return;
+      await handler(items[idx]!);
+    }
+  });
+  await Promise.all(workers);
+}
+
 async function main(): Promise<void> {
+  const totalScanStartedAtMs = Date.now();
   const args = parseArgs(process.argv.slice(2));
   const students = await readStudentsConfig();
   const activeOnly = students.filter((student) => student.is_active !== false);
@@ -614,8 +681,18 @@ async function main(): Promise<void> {
         reason: athleteId === null ? "missing athlete id in URL" : matches.reason,
         request_url: null,
         request_status: null,
+        http_status: null,
         request_ok: null,
         extracted_count: 0,
+        request_started_at: null,
+        request_finished_at: null,
+        request_ms: null,
+        parse_ms: 0,
+        total_ms: null,
+        attempts: 0,
+        timed_out: false,
+        retry_reason: null,
+        auth_refreshed_before_retry: false,
         error: athleteId === null ? "Cannot parse athlete id" : null,
       });
       continue;
@@ -630,8 +707,18 @@ async function main(): Promise<void> {
       reason: "selected",
       request_url: null,
       request_status: null,
+      http_status: null,
       request_ok: null,
       extracted_count: 0,
+      request_started_at: null,
+      request_finished_at: null,
+      request_ms: null,
+      parse_ms: 0,
+      total_ms: null,
+      attempts: 0,
+      timed_out: false,
+      retry_reason: null,
+      auth_refreshed_before_retry: false,
       error: null,
     });
   }
@@ -658,8 +745,18 @@ async function main(): Promise<void> {
         reason: "selected (direct athlete-id fallback)",
         request_url: null,
         request_status: null,
+        http_status: null,
         request_ok: null,
         extracted_count: 0,
+        request_started_at: null,
+        request_finished_at: null,
+        request_ms: null,
+        parse_ms: 0,
+        total_ms: null,
+        attempts: 0,
+        timed_out: false,
+        retry_reason: null,
+        auth_refreshed_before_retry: false,
         error: null,
       });
     }
@@ -676,49 +773,132 @@ async function main(): Promise<void> {
   await mkdir(profileDir, { recursive: true });
   await mkdir(outputDir, { recursive: true });
 
+  const playwrightLaunchStartedAtMs = Date.now();
   const context = await chromium.launchPersistentContext(profileDir, {
     headless: !args.headed,
     viewport: null,
   });
+  const playwrightLaunchMs = Date.now() - playwrightLaunchStartedAtMs;
 
   const races: RaceRow[] = [];
   const eventsApiDebug: AthleteApiDebug[] = [];
+  const selectedLogByKey = new Map<string, ScanLogEntry>();
+  for (const log of logs) {
+    if (log.selected && log.athlete_id !== null) {
+      selectedLogByKey.set(`${log.student_id}:${log.athlete_id}`, log);
+    }
+  }
+  let requestsTotalMs = 0;
+  let parseTotalMs = 0;
+  const requestDurationsMs: number[] = [];
+  let authCaptureMs = 0;
+  let authRefreshedGlobally = false;
+  let authRefreshInFlight: Promise<void> | null = null;
+  let authorizationHeader: string | null = null;
   try {
     const page = context.pages()[0] ?? (await context.newPage());
-    for (const item of limitedStudents) {
+    if (limitedStudents.length > 0) {
+      const authCaptureStartedAtMs = Date.now();
+      const auth = await captureSessionAuth({
+        context,
+        page,
+        athleteId: limitedStudents[0]!.athleteId,
+      });
+      authorizationHeader = auth.authorizationHeader;
+      authCaptureMs = Date.now() - authCaptureStartedAtMs;
+    }
+
+    const refreshAuthOnceGlobal = async (athleteId: number): Promise<void> => {
+      if (authRefreshedGlobally) return;
+      if (authRefreshInFlight) {
+        await authRefreshInFlight;
+        return;
+      }
+      authRefreshInFlight = (async () => {
+        const refreshed = await captureSessionAuth({ context, page, athleteId });
+        authorizationHeader = refreshed.authorizationHeader;
+        authRefreshedGlobally = true;
+      })();
+      try {
+        await authRefreshInFlight;
+      } finally {
+        authRefreshInFlight = null;
+      }
+    };
+
+    await runWithConcurrency(limitedStudents, args.concurrency, async (item) => {
       const student = item.student;
       const athleteId = item.athleteId;
-      const logEntry = logs.find((log) => log.student_id === student.student_id && log.selected);
+      const logEntry = selectedLogByKey.get(`${student.student_id}:${athleteId}`);
+      if (!logEntry) return;
+
+      const requestUrl = buildEventsUrl(athleteId, args.from, args.to);
+      logEntry.request_url = requestUrl;
+      logEntry.request_started_at = new Date().toISOString();
+      const athleteTotalStartedAtMs = Date.now();
+
       try {
-        await page.goto(`${APP_HOST}/#calendar/athletes/${athleteId}`, {
-          waitUntil: "domcontentloaded",
-          timeout: 60_000,
-        });
-        const auth = await captureSessionAuth({ context, page, athleteId });
+        let finalParsedPayload: unknown = null;
+        let finalStatus: number | null = null;
+        let finalOk: boolean | null = null;
+        let attempts = 0;
+        let retryReason: string | null = null;
+        let timedOut = false;
+        let authRefreshedBeforeRetry = false;
+        let requestMsAccumulated = 0;
+        let parseMs = 0;
 
-        const requestUrl = buildEventsUrl(athleteId, args.from, args.to);
-        logEntry!.request_url = requestUrl;
+        while (attempts < 2) {
+          attempts += 1;
+          const requestAttemptStartedAtMs = Date.now();
+          try {
+            const response = await page.request.fetch(requestUrl, {
+              method: "GET",
+              headers: {
+                accept: "application/json, text/javascript, */*; q=0.01",
+                ...(authorizationHeader ? { authorization: authorizationHeader } : {}),
+              },
+              failOnStatusCode: false,
+              timeout: ATHLETE_REQUEST_TIMEOUT_MS,
+            });
+            requestMsAccumulated += Date.now() - requestAttemptStartedAtMs;
+            finalStatus = response.status();
+            finalOk = response.ok();
 
-        const response = await page.request.fetch(requestUrl, {
-          method: "GET",
-          headers: {
-            accept: "application/json, text/javascript, */*; q=0.01",
-            ...(auth.authorizationHeader ? { authorization: auth.authorizationHeader } : {}),
-          },
-          failOnStatusCode: false,
-        });
+            if ((finalStatus === 401 || finalStatus === 403) && attempts === 1) {
+              retryReason = `http_${finalStatus}_auth_refresh`;
+              await refreshAuthOnceGlobal(athleteId);
+              authRefreshedBeforeRetry = true;
+              continue;
+            }
+            if (isTransientStatus(finalStatus) && attempts === 1) {
+              retryReason = `http_${finalStatus}`;
+              continue;
+            }
 
-        logEntry!.request_status = response.status();
-        logEntry!.request_ok = response.ok();
-
-        let parsed: unknown = null;
-        try {
-          parsed = await response.json();
-        } catch {
-          parsed = await response.text();
+            const parseResponseStartedAtMs = Date.now();
+            try {
+              finalParsedPayload = await response.json();
+            } catch {
+              finalParsedPayload = await response.text();
+            }
+            parseMs += Date.now() - parseResponseStartedAtMs;
+            break;
+          } catch (error) {
+            requestMsAccumulated += Date.now() - requestAttemptStartedAtMs;
+            timedOut = timedOut || isTimeoutError(error);
+            const retryableError = timedOut || isNetworkError(error);
+            if (attempts === 1 && retryableError) {
+              retryReason = timedOut ? "timeout" : "network_error";
+              continue;
+            }
+            throw error;
+          }
         }
-        const redacted = redactUnknown(parsed);
+
+        const redacted = redactUnknown(finalParsedPayload);
         const shape = summarizeResponseShape(redacted);
+        const parseScannerStartedAtMs = Date.now();
         const parsedResult = parseRacesFromPayload({
           payload: redacted,
           student,
@@ -726,6 +906,7 @@ async function main(): Promise<void> {
           from: args.from,
           to: args.to,
         });
+        parseMs += Date.now() - parseScannerStartedAtMs;
         const hasEventLikeKeys =
           shape.nested_keys_summary.some((key) => /event|sport|distance|goal|race|name/i.test(key)) ||
           parsedResult.debug.raw_items_found > 0;
@@ -735,64 +916,31 @@ async function main(): Promise<void> {
           athlete_id: athleteId,
           endpoint_url_pattern: EVENTS_ENDPOINT_TEMPLATE,
           request_url: requestUrl,
-          http_status: response.status(),
+          http_status: finalStatus,
           response_shape: shape,
           parser_debug: parsedResult.debug,
           contains_event_like_data: hasEventLikeKeys,
         });
-        logEntry!.extracted_count = parsedResult.rows.length;
+        logEntry.request_status = finalStatus;
+        logEntry.http_status = finalStatus;
+        logEntry.request_ok = finalOk;
+        logEntry.extracted_count = parsedResult.rows.length;
+        logEntry.request_ms = requestMsAccumulated;
+        logEntry.parse_ms = parseMs;
+        logEntry.attempts = attempts;
+        logEntry.timed_out = timedOut;
+        logEntry.retry_reason = retryReason;
+        logEntry.auth_refreshed_before_retry = authRefreshedBeforeRetry;
+        logEntry.request_finished_at = new Date().toISOString();
+        logEntry.total_ms = Date.now() - athleteTotalStartedAtMs;
+        requestsTotalMs += requestMsAccumulated;
+        parseTotalMs += parseMs;
+        requestDurationsMs.push(requestMsAccumulated);
         races.push(...parsedResult.rows);
-        // #region agent log
-        fetch("http://127.0.0.1:7521/ingest/adcbf755-c5c9-4a78-9e7d-4a590fbeae5c", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "819926" },
-          body: JSON.stringify({
-            sessionId: "819926",
-            runId: `${student.student_id}:${athleteId}:${args.from}:${args.to}`,
-            hypothesisId: "H1_H4",
-            location: "tp-scan-events.ts:response-shape",
-            message: "Captured response shape for events endpoint",
-            data: {
-              athleteId,
-              status: response.status(),
-              topLevelType: shape.top_level_type,
-              arrayLength: shape.array_length,
-              topLevelKeys: shape.top_level_keys.slice(0, 20),
-            },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {});
-        // #endregion
-        // #region agent log
-        fetch("http://127.0.0.1:7521/ingest/adcbf755-c5c9-4a78-9e7d-4a590fbeae5c", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "819926" },
-          body: JSON.stringify({
-            sessionId: "819926",
-            runId: `${student.student_id}:${athleteId}:${args.from}:${args.to}`,
-            hypothesisId: "H2_H3",
-            location: "tp-scan-events.ts:parser-debug",
-            message: "Parser candidate/skip summary",
-            data: {
-              athleteId,
-              rawItemsFound: parsedResult.debug.raw_items_found,
-              emittedRows: parsedResult.debug.emitted_rows,
-              candidateArrays: parsedResult.debug.candidate_event_arrays.slice(0, 10).map((item) => ({
-                path: item.path,
-                length: item.length,
-                eventLikeItems: item.event_like_items,
-              })),
-              skippedItems: parsedResult.debug.skipped_items.slice(0, 10).map((item) => ({
-                index: item.index,
-                reason: item.reason,
-              })),
-            },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {});
-        // #endregion
       } catch (error) {
-        logEntry!.error = (error as Error).message;
+        logEntry.error = (error as Error).message;
+        logEntry.request_finished_at = new Date().toISOString();
+        logEntry.total_ms = Date.now() - athleteTotalStartedAtMs;
         // #region agent log
         fetch("http://127.0.0.1:7521/ingest/adcbf755-c5c9-4a78-9e7d-4a590fbeae5c", {
           method: "POST",
@@ -812,11 +960,12 @@ async function main(): Promise<void> {
         }).catch(() => {});
         // #endregion
       }
-    }
+    });
   } finally {
     await context.close().catch(() => {});
   }
 
+  const artifactsWriteStartedAtMs = Date.now();
   await writeFile(
     racesJsonPath,
     `${JSON.stringify(
@@ -845,6 +994,14 @@ async function main(): Promise<void> {
     }),
     "utf8",
   );
+  const artifactsWriteMs = Date.now() - artifactsWriteStartedAtMs;
+  const totalScanMs = Date.now() - totalScanStartedAtMs;
+  const completedAthletes = logs.filter((entry) => entry.selected && !entry.error).length;
+  const failedAthletes = logs.filter((entry) => entry.selected && Boolean(entry.error)).length;
+  const p50RequestMs = Math.round(computePercentile(requestDurationsMs, 50));
+  const p95RequestMs = Math.round(computePercentile(requestDurationsMs, 95));
+  const maxRequestMs =
+    requestDurationsMs.length > 0 ? Math.max(...requestDurationsMs.map((value) => Math.round(value))) : 0;
   await writeFile(
     scanLogPath,
     `${JSON.stringify(
@@ -856,6 +1013,21 @@ async function main(): Promise<void> {
           student_name: entry.student.name ?? entry.student.student_id,
           athlete_id: entry.athleteId,
         })),
+        timing: {
+          total_scan_ms: totalScanMs,
+          playwright_launch_ms: playwrightLaunchMs,
+          auth_capture_ms: authCaptureMs,
+          requests_total_ms: Math.round(requestsTotalMs),
+          parse_total_ms: Math.round(parseTotalMs),
+          artifacts_write_ms: artifactsWriteMs,
+          concurrency: args.concurrency,
+          selected_athletes: limitedStudents.length,
+          completed_athletes: completedAthletes,
+          failed_athletes: failedAthletes,
+          p50_request_ms: p50RequestMs,
+          p95_request_ms: p95RequestMs,
+          max_request_ms: maxRequestMs,
+        },
         logs,
       },
       null,
@@ -886,6 +1058,9 @@ async function main(): Promise<void> {
   console.log(`[tp-scan-events] races.md=${racesMdPath}`);
   console.log(`[tp-scan-events] scan-log.json=${scanLogPath}`);
   console.log(`[tp-scan-events] events-api-debug.json=${eventsApiDebugPath}`);
+  console.log(
+    `[tp-scan-events] scanned=${completedAthletes + failedAthletes} rows=${races.length} total=${totalScanMs}ms auth=${authCaptureMs}ms p50=${p50RequestMs}ms p95=${p95RequestMs}ms concurrency=${args.concurrency}`,
+  );
 }
 
 main().catch((error: unknown) => {
