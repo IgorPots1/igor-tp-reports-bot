@@ -11,15 +11,32 @@ PLIST_DIR="${USER_HOME}/Library/LaunchAgents"
 PLIST_PATH="${PLIST_DIR}/${LABEL}.plist"
 OUT_LOG="${LOG_DIR}/tp-actions-loop.out.log"
 ERR_LOG="${LOG_DIR}/tp-actions-loop.err.log"
+TP_ACTIONS_LOOP_SINCE_VALUE="${TP_ACTIONS_LOOP_SINCE:-}"
 NPM_BIN="$(command -v npm)"
+NODE_BIN="$(command -v node)"
+NPM_DIR="$(dirname "$NPM_BIN")"
+NODE_DIR="$(dirname "$NODE_BIN")"
 
 if [ -z "${NPM_BIN}" ]; then
   echo "npm not found in PATH" >&2
   exit 1
 fi
 
+if [ -z "${NODE_BIN}" ]; then
+  echo "node not found in PATH" >&2
+  exit 1
+fi
+
 mkdir -p "${LOG_DIR}"
 mkdir -p "${PLIST_DIR}"
+
+SINCE_PROGRAM_ARGUMENT=""
+if [ -n "${TP_ACTIONS_LOOP_SINCE_VALUE}" ]; then
+  echo "Using cutoff: ${TP_ACTIONS_LOOP_SINCE_VALUE}"
+  SINCE_PROGRAM_ARGUMENT="    <string>--since=${TP_ACTIONS_LOOP_SINCE_VALUE}</string>"
+else
+  echo "No cutoff configured"
+fi
 
 cat > "${PLIST_PATH}" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -38,6 +55,7 @@ cat > "${PLIST_PATH}" <<EOF
     <string>--</string>
     <string>--execute-real</string>
     <string>--interval-seconds=30</string>
+${SINCE_PROGRAM_ARGUMENT}
   </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -45,6 +63,8 @@ cat > "${PLIST_PATH}" <<EOF
     <string>true</string>
     <key>TP_ACTIONS_USE_API_MOVE</key>
     <string>true</string>
+    <key>PATH</key>
+    <string>${NODE_DIR}:${NPM_DIR}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>
