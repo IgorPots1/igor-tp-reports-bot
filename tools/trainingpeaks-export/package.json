@@ -19,6 +19,8 @@
     "tp-agent-once": "tsx scripts/tp-agent-once.ts",
     "tp-actions-once": "tsx scripts/tp-actions-once.ts",
     "tp-actions-loop": "tsx scripts/tp-actions-loop.ts",
+    "tp-discover-events-api": "tsx scripts/tp-discover-events-api.ts",
+    "tp-scan-events": "tsx scripts/tp-scan-events.ts",
     "tp-actions-loop:install": "sh scripts/install-tp-actions-launchagent.sh",
     "tp-actions-loop:uninstall": "sh scripts/uninstall-tp-actions-launchagent.sh",
     "tp-actions-loop:logs": "mkdir -p logs && touch logs/tp-actions-loop.out.log logs/tp-actions-loop.err.log && tail -f logs/tp-actions-loop.out.log logs/tp-actions-loop.err.log"
