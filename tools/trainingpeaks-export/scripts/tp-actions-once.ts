@@ -542,6 +542,7 @@ const TP_CALLBACK_ACTION_EXECUTE_PREFIX = "tp:ta:x:";
 const TP_CALLBACK_ACTION_CANCEL_PREFIX = "tp:ta:c:";
 const ACTION_ARTIFACTS_ROOT = path.join(toolRoot, "action-artifacts");
 const TP_ACTIONS_EXECUTE_REAL_FLAG = "--execute-real";
+const TP_ACTIONS_ACTION_ID_PREFIX = "--action-id=";
 const TP_ACTIONS_PREPARE_ONLY_FLAG = "--prepare-only";
 const TP_ACTIONS_CONFIRM_SAVE_FLAG = "--confirm-save";
 const TP_ACTIONS_REAL_EXECUTION_ENV = "TP_ACTIONS_REAL_EXECUTION";
@@ -608,6 +609,18 @@ function withUiProbeTimeout<T>(step: string, timeoutMs: number, run: () => Promi
 
 function hasCliFlag(flag: string): boolean {
   return process.argv.slice(2).includes(flag);
+}
+
+function getCliValueByPrefix(prefix: string): string | null {
+  const match = process.argv.slice(2).find((arg) => arg.startsWith(prefix));
+  if (!match) {
+    return null;
+  }
+  const value = match.slice(prefix.length).trim();
+  if (!value) {
+    throw new Error(`CLI argument ${prefix}<value> must not be empty.`);
+  }
+  return value;
 }
 
 function resolveRunnerMode(): { mode: RunnerMode | "blocked_real"; message?: string } {
@@ -2069,8 +2082,118 @@ async function claimOneApprovedActionForDryRun(runnerId: string): Promise<Claime
   return null;
 }
 
-async function claimOneExecutePendingActionForRealMode(runnerId: string): Promise<ClaimedRealAction | null> {
+async function claimOneExecutePendingActionForRealMode(
+  runnerId: string,
+  requestedActionId: string | null
+): Promise<ClaimedRealAction | null> {
   const supabase = getSupabase();
+
+  if (requestedActionId) {
+    console.debug(`[execute-real] selecting explicit action id=${requestedActionId}`);
+    const { data: requestedActionData, error: requestedActionError } = await supabase
+      .from("trainingpeaks_actions")
+      .select("*")
+      .eq("id", requestedActionId)
+      .eq("action_type", "move_workout")
+      .maybeSingle();
+    if (requestedActionError) {
+      throw new Error(`Failed to load requested action ${requestedActionId}: ${requestedActionError.message}`);
+    }
+    if (!requestedActionData) {
+      throw new Error(`Requested action ${requestedActionId} was not found.`);
+    }
+
+    const requestedAction = requestedActionData as TrainingPeaksActionRow;
+    if (requestedAction.status !== "approved") {
+      throw new Error(
+        `Requested action ${requestedAction.id} is not approved (status=${requestedAction.status}).`
+      );
+    }
+    if (requestedAction.execution_status !== "execute_pending") {
+      throw new Error(
+        `Requested action ${requestedAction.id} is not ready for real execution (status=${requestedAction.status}, execution_status=${requestedAction.execution_status}).`
+      );
+    }
+    if (!requestedAction.last_run_id) {
+      throw new Error(
+        `Requested action ${requestedAction.id} has no trusted dry-run baseline (last_run_id is null). Run dry-run first, then request execute.`
+      );
+    }
+
+    const { data: trustedRunData, error: trustedRunError } = await supabase
+      .from("trainingpeaks_action_runs")
+      .select("*")
+      .eq("id", requestedAction.last_run_id)
+      .eq("action_id", requestedAction.id)
+      .eq("run_type", "dry_run")
+      .eq("status", "completed")
+      .maybeSingle();
+    if (trustedRunError) {
+      throw new Error(
+        `Failed to load trusted dry-run ${requestedAction.last_run_id} for action ${requestedAction.id}: ${trustedRunError.message}`
+      );
+    }
+    if (!trustedRunData) {
+      throw new Error(
+        `Requested action ${requestedAction.id} has no trusted completed dry-run row for last_run_id=${requestedAction.last_run_id}. Run dry-run first, then request execute.`
+      );
+    }
+
+    const trustedDryRunRun = trustedRunData as TrainingPeaksActionRunRow;
+    const trustedDryRunLog = normalizeTrustedDryRunLog(trustedDryRunRun.log_json);
+    if (!trustedDryRunLog) {
+      throw new Error(
+        `Requested action ${requestedAction.id} has an unsafe trusted dry-run log in ${requestedAction.last_run_id}. Re-run dry-run and request execute again.`
+      );
+    }
+
+    const { data: claimed, error: claimError } = await supabase
+      .from("trainingpeaks_actions")
+      .update({
+        execution_status: "running_local",
+        execution_mode: "real",
+        claimed_by: runnerId,
+        claimed_at: new Date().toISOString(),
+      })
+      .eq("id", requestedAction.id)
+      .eq("status", "approved")
+      .eq("execution_status", "execute_pending")
+      .eq("last_run_id", requestedAction.last_run_id)
+      .select("*")
+      .maybeSingle();
+    if (claimError) {
+      throw new Error(`Failed to claim requested action ${requestedAction.id}: ${claimError.message}`);
+    }
+    if (!claimed) {
+      throw new Error(
+        `Requested action ${requestedAction.id} could not be claimed because its state changed. Current state is no longer status=approved/execution_status=execute_pending.`
+      );
+    }
+
+    const claimedAction = claimed as TrainingPeaksActionRow;
+    let student: TrainingPeaksStudentRow | null = null;
+    if (claimedAction.student_id) {
+      const { data: studentData, error: studentError } = await supabase
+        .from("trainingpeaks_students")
+        .select("id, student_id, student_name, telegram_chat_id, trainingpeaks_athlete_url")
+        .eq("id", claimedAction.student_id)
+        .maybeSingle();
+      if (studentError) {
+        throw new Error(`Failed to fetch student for real-mode action ${claimedAction.id}: ${studentError.message}`);
+      }
+      student = (studentData as TrainingPeaksStudentRow | null) ?? null;
+    }
+
+    console.log(
+      `[execute-real] claimed_action id=${claimedAction.id} status=${claimedAction.status} execution_status=${claimedAction.execution_status}`
+    );
+    return {
+      action: claimedAction,
+      student,
+      trustedDryRunRun,
+      trustedDryRunLog,
+    };
+  }
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     console.debug(`[execute-real] selection_attempt=${attempt + 1} filtering status=approved execution_status=execute_pending`);
@@ -2945,6 +3068,9 @@ async function executeApiMoveForApprovedAction(input: {
       },
     };
 
+    console.log("[execute-real] mutation_context");
+    console.log(`actionId=${input.claimed.action.id}`);
+    console.log(`originalStudentMessage=${input.claimed.action.raw_text}`);
     console.log("API move path enabled");
     console.log(`athleteId=${athleteId}`);
     console.log(`workoutId=${workoutId}`);
@@ -7257,6 +7383,7 @@ async function main(): Promise<void> {
   loadLocalEnv();
 
   const runnerId = getRunnerId();
+  const requestedActionId = getCliValueByPrefix(TP_ACTIONS_ACTION_ID_PREFIX);
   const runnerMode = resolveRunnerMode();
   const prepareOnly = hasCliFlag(TP_ACTIONS_PREPARE_ONLY_FLAG);
   const confirmSaveFlag = hasCliFlag(TP_ACTIONS_CONFIRM_SAVE_FLAG);
@@ -7433,7 +7560,7 @@ async function main(): Promise<void> {
     }
   }
 
-  const claimed = await claimOneExecutePendingActionForRealMode(runnerId);
+  const claimed = await claimOneExecutePendingActionForRealMode(runnerId, requestedActionId);
   if (!claimed) {
     console.log("No execute_pending TrainingPeaks actions ready for real-mode revalidation.");
     return;
