@@ -32,7 +32,9 @@ import {
   requestTrainingPeaksActionExecution,
   TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
   type RequestTrainingPeaksWeeklyRunResult,
+  type RequestTrainingPeaksRaceScanResult,
   requestTrainingPeaksWeeklyRun,
+  requestTrainingPeaksRaceScan,
   updateTrainingPeaksWeeklyReportStateByInternalId,
   updateTrainingPeaksStudentTelegramContact,
   upsertTrainingPeaksBusinessChatFromMessage,
@@ -67,6 +69,11 @@ const TP_CALLBACK_MAIN_MENU = "tp:m";
 const TP_CALLBACK_WEEK_MENU = "tp:w";
 const TP_CALLBACK_WEEK_LAST = "tp:wl";
 const TP_CALLBACK_WEEK_CURRENT = "tp:wc";
+const TP_CALLBACK_RACES_MENU = "tp:races";
+const TP_CALLBACK_RACES_NEXT_WEEK = "tp:races:nw";
+const TP_CALLBACK_RACES_7_DAYS = "tp:races:7d";
+const TP_CALLBACK_RACES_30_DAYS = "tp:races:30d";
+const TP_CALLBACK_RACES_TO_AUGUST = "tp:races:aug1";
 const TP_CALLBACK_JOBS = "tp:j";
 const TP_CALLBACK_HELP = "tp:h";
 const TP_CALLBACK_REPORTS = "tp:reports";
@@ -89,11 +96,17 @@ const TP_REPLY_BUTTON_MENU = "🏠 Меню";
 const TP_REPLY_BUTTON_STUDENTS = "👥 Ученики";
 const TP_REPLY_BUTTON_ADD = "➕ Добавить";
 const TP_REPLY_BUTTON_WEEK = "▶️ Неделя";
+const TP_REPLY_BUTTON_RACES = "🏁 Забеги";
 const TP_REPLY_BUTTON_JOBS = "🧾 Задачи";
 const TP_REPLY_BUTTON_BACK = "⬅️ Назад";
 const TP_REPLY_BUTTON_STUDENTS_BACK = "⬅️ Ученики";
 const TP_REPLY_BUTTON_WEEK_LAST = "Прошлая неделя";
 const TP_REPLY_BUTTON_WEEK_CURRENT = "Текущая неделя";
+const TP_REPLY_BUTTON_RACES_NEXT_WEEK = "🗓 Следующая неделя";
+const TP_REPLY_BUTTON_RACES_7_DAYS = "7 дней";
+const TP_REPLY_BUTTON_RACES_30_DAYS = "30 дней";
+const TP_REPLY_BUTTON_RACES_TO_AUGUST = "До 1 августа";
+const TP_REPLY_BUTTON_RACES_CUSTOM = "Свой период";
 const TP_REPLY_BUTTON_JOBS_REFRESH = "🔄 Обновить задачи";
 const TP_REPLY_BUTTON_CANCEL_JOB = "❌ Отменить задачу";
 const TP_REPLY_BUTTON_REPORT = "📄 Отчёт";
@@ -124,6 +137,7 @@ const TP_REPORT_COMMAND_PATTERN = /^\/tp_report(?:@\w+)?(?:\s+|$)/;
 const TP_WEEK_COMMAND_PATTERN = /^\/tp_week(?:@\w+)?(?:\s+|$)/;
 const TP_RUN_COMMAND_PATTERN = /^\/tp_run(?:@\w+)?(?:\s+|$)/;
 const TP_RUN_WEEK_COMMAND_PATTERN = /^\/tp_run_week(?:@\w+)?(?:\s+|$)/;
+const TP_RACES_COMMAND_PATTERN = /^\/tp_races(?:@\w+)?(?:\s+|$)/;
 const TP_JOBS_COMMAND_PATTERN = /^\/tp_jobs(?:@\w+)?(?:\s+|$)/;
 const TP_WEEKLY_COMMAND_PATTERN = /^\/tp_weekly(?:@\w+)?(?:\s+|$)/;
 const TP_BUSINESS_TEST_COMMAND_PATTERN = /^\/tp_business_test(?:@\w+)?(?:\s+|$)/;
@@ -136,6 +150,13 @@ const SHORT_DATE_FORMATTER = new Intl.DateTimeFormat("ru-RU", {
   month: "short",
   timeZone: "UTC",
 });
+const LONG_DATE_FORMATTER = new Intl.DateTimeFormat("ru-RU", {
+  day: "numeric",
+  month: "long",
+  timeZone: "UTC",
+});
+const TP_RACES_TIMEZONE = "Europe/Belgrade";
+const ISO_YMD_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 type TrainingPeaksCommand =
   | "tp"
@@ -150,6 +171,7 @@ type TrainingPeaksCommand =
   | "tp_week"
   | "tp_run"
   | "tp_run_week"
+  | "tp_races"
   | "tp_jobs"
   | "tp_weekly"
   | "tp_business_test"
@@ -194,6 +216,11 @@ type ParsedTrainingPeaksCallback =
   | { kind: "week_menu" }
   | { kind: "week_last" }
   | { kind: "week_current" }
+  | { kind: "races_menu" }
+  | { kind: "races_next_week" }
+  | { kind: "races_7_days" }
+  | { kind: "races_30_days" }
+  | { kind: "races_to_august" }
   | { kind: "jobs" }
   | { kind: "help" }
   | { kind: "reports_hint" };
@@ -205,7 +232,8 @@ type TrainingPeaksScreen =
   | "student_username_waiting"
   | "week"
   | "jobs"
-  | "add_student_waiting";
+  | "add_student_waiting"
+  | "races";
 
 type TrainingPeaksChatContext = {
   selectedStudentId: string | null;
@@ -237,11 +265,17 @@ type TrainingPeaksReplyKeyboardAction =
   | "students"
   | "add_student_help"
   | "week_menu"
+  | "races_menu"
   | "jobs"
   | "back"
   | "students_back"
   | "week_last"
   | "week_current"
+  | "races_next_week"
+  | "races_7_days"
+  | "races_30_days"
+  | "races_to_august"
+  | "races_custom"
   | "jobs_refresh"
   | "cancel_job"
   | "student_report"
@@ -319,6 +353,10 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
     return "tp_run_week";
   }
 
+  if (TP_RACES_COMMAND_PATTERN.test(text)) {
+    return "tp_races";
+  }
+
   if (TP_JOBS_COMMAND_PATTERN.test(text)) {
     return "tp_jobs";
   }
@@ -369,6 +407,58 @@ function formatWeekIso(week: TrainingPeaksWeek): string {
 
 function formatShortDate(value: string): string {
   return SHORT_DATE_FORMATTER.format(new Date(`${value}T00:00:00Z`)).replace(/\.$/, "");
+}
+
+function formatLongDate(value: string): string {
+  return LONG_DATE_FORMATTER.format(new Date(`${value}T00:00:00Z`)).replace(/\.$/, "");
+}
+
+function getBelgradeDateParts(value: Date): { year: number; month: number; day: number; weekday: number } {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TP_RACES_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+  });
+  const parts = formatter.formatToParts(value);
+  const year = Number(parts.find((part) => part.type === "year")?.value ?? "");
+  const month = Number(parts.find((part) => part.type === "month")?.value ?? "");
+  const day = Number(parts.find((part) => part.type === "day")?.value ?? "");
+  const weekdayRaw = (parts.find((part) => part.type === "weekday")?.value ?? "").toLowerCase();
+  const weekdayMap: Record<string, number> = {
+    sun: 0,
+    mon: 1,
+    tue: 2,
+    wed: 3,
+    thu: 4,
+    fri: 5,
+    sat: 6,
+  };
+  const weekday = weekdayMap[weekdayRaw];
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day) || weekday === undefined) {
+    throw new Error(`Unable to derive Belgrade date parts for ${value.toISOString()}`);
+  }
+  return { year, month, day, weekday };
+}
+
+function toIsoDate(year: number, month: number, day: number): string {
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function addBelgradeDaysIso(isoDate: string, days: number): string {
+  const match = isoDate.match(ISO_YMD_PATTERN);
+  if (!match) {
+    return isoDate;
+  }
+  const shifted = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + days, 12, 0, 0));
+  const parts = getBelgradeDateParts(shifted);
+  return toIsoDate(parts.year, parts.month, parts.day);
+}
+
+function getBelgradeTodayIso(): string {
+  const parts = getBelgradeDateParts(new Date());
+  return toIsoDate(parts.year, parts.month, parts.day);
 }
 
 function getStatusLabel(status: string): string {
@@ -666,7 +756,7 @@ function createReplyKeyboardMarkup(rows: string[][]): TelegramReplyKeyboardMarku
 function getTrainingPeaksMainReplyKeyboardMarkup(): TelegramReplyKeyboardMarkup {
   return createReplyKeyboardMarkup([
     [TP_REPLY_BUTTON_MENU, TP_REPLY_BUTTON_STUDENTS],
-    [TP_REPLY_BUTTON_WEEK],
+    [TP_REPLY_BUTTON_WEEK, TP_REPLY_BUTTON_RACES],
     [TP_REPLY_BUTTON_JOBS],
   ]);
 }
@@ -711,6 +801,16 @@ function getTrainingPeaksWeekReplyKeyboardMarkup(): TelegramReplyKeyboardMarkup 
   return createReplyKeyboardMarkup([
     [TP_REPLY_BUTTON_WEEK_LAST],
     [TP_REPLY_BUTTON_WEEK_CURRENT],
+    [TP_REPLY_BUTTON_BACK],
+    [TP_REPLY_BUTTON_MENU],
+  ]);
+}
+
+function getTrainingPeaksRacesReplyKeyboardMarkup(): TelegramReplyKeyboardMarkup {
+  return createReplyKeyboardMarkup([
+    [TP_REPLY_BUTTON_RACES_NEXT_WEEK],
+    [TP_REPLY_BUTTON_RACES_7_DAYS, TP_REPLY_BUTTON_RACES_30_DAYS],
+    [TP_REPLY_BUTTON_RACES_TO_AUGUST, TP_REPLY_BUTTON_RACES_CUSTOM],
     [TP_REPLY_BUTTON_BACK],
     [TP_REPLY_BUTTON_MENU],
   ]);
@@ -816,6 +916,41 @@ function parseWeekArgs(
 function parseStatusCommandWeek(text: string): { week: TrainingPeaksWeek | null; error: string | null } {
   const args = text.replace(TP_STATUS_COMMAND_PATTERN, "").trim();
   return parseWeekArgs(args ? args.split(/\s+/) : [], "/tp_status 2026-04-27 2026-05-03");
+}
+
+function parseRacesCommandPeriod(text: string): {
+  fromDate: string | null;
+  toDate: string | null;
+  error: string | null;
+} {
+  const args = text.replace(TP_RACES_COMMAND_PATTERN, "").trim();
+  if (!args) {
+    return { fromDate: null, toDate: null, error: null };
+  }
+  const tokens = args.split(/\s+/);
+  if (tokens.length !== 2) {
+    return {
+      fromDate: null,
+      toDate: null,
+      error: "Напиши так: /tp_races 2026-05-17 2026-08-01",
+    };
+  }
+  const [fromDate, toDate] = tokens;
+  if (!isIsoDate(fromDate) || !isIsoDate(toDate)) {
+    return {
+      fromDate: null,
+      toDate: null,
+      error: "Период нужно передать в формате YYYY-MM-DD YYYY-MM-DD.",
+    };
+  }
+  if (fromDate > toDate) {
+    return {
+      fromDate: null,
+      toDate: null,
+      error: "Дата начала периода не может быть позже даты окончания.",
+    };
+  }
+  return { fromDate, toDate, error: null };
 }
 
 function parseReportCommand(text: string): {
@@ -1482,7 +1617,9 @@ export function getTrainingPeaksHelpLines(): string[] {
     "🏠 Меню — открыть главное меню",
     "👥 Ученики — открыть список учеников",
     "▶️ Неделя — открыть меню запуска недели",
+    "🏁 Забеги — запросить сканирование забегов",
     "🧾 Задачи — посмотреть последние запуски",
+    "/tp_races YYYY-MM-DD YYYY-MM-DD — скан забегов за период",
     "/tp_actions — последние заявки на перенос и очистка очереди",
     "Управление учениками и Telegram-привязкой теперь выполняется в Web Admin.",
     "🔎 Найти по username / 🔗 Код привязки остаются fallback-инструментами в карточке ученика",
@@ -1508,6 +1645,10 @@ function getTrainingPeaksReplyKeyboardAction(text: string): TrainingPeaksReplyKe
     return "week_menu";
   }
 
+  if (text === TP_REPLY_BUTTON_RACES) {
+    return "races_menu";
+  }
+
   if (text === TP_REPLY_BUTTON_JOBS) {
     return "jobs";
   }
@@ -1526,6 +1667,26 @@ function getTrainingPeaksReplyKeyboardAction(text: string): TrainingPeaksReplyKe
 
   if (text === TP_REPLY_BUTTON_WEEK_CURRENT) {
     return "week_current";
+  }
+
+  if (text === TP_REPLY_BUTTON_RACES_NEXT_WEEK) {
+    return "races_next_week";
+  }
+
+  if (text === TP_REPLY_BUTTON_RACES_7_DAYS) {
+    return "races_7_days";
+  }
+
+  if (text === TP_REPLY_BUTTON_RACES_30_DAYS) {
+    return "races_30_days";
+  }
+
+  if (text === TP_REPLY_BUTTON_RACES_TO_AUGUST) {
+    return "races_to_august";
+  }
+
+  if (text === TP_REPLY_BUTTON_RACES_CUSTOM) {
+    return "races_custom";
   }
 
   if (text === TP_REPLY_BUTTON_JOBS_REFRESH) {
@@ -1584,12 +1745,32 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
     return { kind: "week_menu" };
   }
 
+  if (data === TP_CALLBACK_RACES_MENU) {
+    return { kind: "races_menu" };
+  }
+
   if (data === TP_CALLBACK_WEEK_LAST) {
     return { kind: "week_last" };
   }
 
   if (data === TP_CALLBACK_WEEK_CURRENT) {
     return { kind: "week_current" };
+  }
+
+  if (data === TP_CALLBACK_RACES_NEXT_WEEK) {
+    return { kind: "races_next_week" };
+  }
+
+  if (data === TP_CALLBACK_RACES_7_DAYS) {
+    return { kind: "races_7_days" };
+  }
+
+  if (data === TP_CALLBACK_RACES_30_DAYS) {
+    return { kind: "races_30_days" };
+  }
+
+  if (data === TP_CALLBACK_RACES_TO_AUGUST) {
+    return { kind: "races_to_august" };
   }
 
   if (data === TP_CALLBACK_JOBS) {
@@ -1688,6 +1869,7 @@ function getTrainingPeaksMainMenuMarkup(): TelegramInlineKeyboardMarkup {
   return createInlineKeyboardMarkup([
     [createMenuButton("👥 Ученики", "tp:s:0")],
     [createMenuButton("▶️ Запустить неделю", TP_CALLBACK_WEEK_MENU)],
+    [createMenuButton("🏁 Забеги", TP_CALLBACK_RACES_MENU)],
     [createMenuButton("🧾 Задачи", TP_CALLBACK_JOBS)],
     [createMenuButton("❓ Помощь", TP_CALLBACK_HELP)],
   ]);
@@ -2010,6 +2192,22 @@ function getWeekMenuMarkup(): TelegramInlineKeyboardMarkup {
   ]);
 }
 
+function getRacesMenuText(): string {
+  return ["🏁 Забеги", "Выберите период или отправьте /tp_races YYYY-MM-DD YYYY-MM-DD."].join("\n");
+}
+
+function getRacesMenuMarkup(): TelegramInlineKeyboardMarkup {
+  return createInlineKeyboardMarkup([
+    [createMenuButton("🗓 Следующая неделя", TP_CALLBACK_RACES_NEXT_WEEK)],
+    [
+      createMenuButton("7 дней", TP_CALLBACK_RACES_7_DAYS),
+      createMenuButton("30 дней", TP_CALLBACK_RACES_30_DAYS),
+    ],
+    [createMenuButton("До 1 августа", TP_CALLBACK_RACES_TO_AUGUST)],
+    [createMenuButton("⬅️ Назад", TP_CALLBACK_MAIN_MENU)],
+  ]);
+}
+
 function getJobsMenuMarkup(): TelegramInlineKeyboardMarkup {
   return createInlineKeyboardMarkup([
     [createMenuButton("🔄 Обновить задачи", TP_CALLBACK_JOBS)],
@@ -2045,6 +2243,62 @@ function getAddStudentInstructionsText(): string {
     "Legacy fallback по команде всё ещё доступен:",
     `/tp_add_student ${TP_ADD_STUDENT_EXAMPLE}`,
   ].join("\n");
+}
+
+function getRaceScanQueuedMessage(fromDate: string, toDate: string): string {
+  return [
+    "Запросил список забегов. Локальный Mac проверит TrainingPeaks и пришлёт результат.",
+    "",
+    `Период: ${formatLongDate(fromDate)} — ${formatLongDate(toDate)}`,
+  ].join("\n");
+}
+
+function getRaceScanManualUsageMessage(): string {
+  return ["Свой период:", "/tp_races 2026-05-17 2026-08-01"].join("\n");
+}
+
+function presentTrainingPeaksRaceScanRequestResult(input: {
+  fromDate: string;
+  toDate: string;
+  result: RequestTrainingPeaksRaceScanResult;
+}): string {
+  if (input.result.ok) {
+    return getRaceScanQueuedMessage(input.fromDate, input.toDate);
+  }
+  if (input.result.reason === "duplicate" && input.result.activeJob) {
+    return [
+      "Такой запрос уже в очереди или выполняется на локальном Mac.",
+      `Период: ${formatLongDate(input.fromDate)} — ${formatLongDate(input.toDate)}`,
+      `Статус: ${getJobStatusLabel(input.result.activeJob.status)}`,
+    ].join("\n");
+  }
+  return input.result.message;
+}
+
+function getRacesNextWeekPeriod(): { fromDate: string; toDate: string } {
+  const todayIso = getBelgradeTodayIso();
+  const todayDate = new Date(`${todayIso}T12:00:00Z`);
+  const parts = getBelgradeDateParts(todayDate);
+  const daysUntilNextMonday = ((8 - parts.weekday) % 7) || 7;
+  const fromDate = addBelgradeDaysIso(todayIso, daysUntilNextMonday);
+  const toDate = addBelgradeDaysIso(fromDate, 6);
+  return { fromDate, toDate };
+}
+
+function getRaces7DaysPeriod(): { fromDate: string; toDate: string } {
+  const fromDate = getBelgradeTodayIso();
+  return { fromDate, toDate: addBelgradeDaysIso(fromDate, 7) };
+}
+
+function getRaces30DaysPeriod(): { fromDate: string; toDate: string } {
+  const fromDate = getBelgradeTodayIso();
+  return { fromDate, toDate: addBelgradeDaysIso(fromDate, 30) };
+}
+
+function getRacesToAugustPeriod(): { fromDate: string; toDate: string } {
+  const fromDate = getBelgradeTodayIso();
+  const currentYear = Number(fromDate.slice(0, 4));
+  return { fromDate, toDate: `${String(currentYear).padStart(4, "0")}-08-01` };
 }
 
 function getAddStudentInstructionsMarkup(): TelegramInlineKeyboardMarkup {
@@ -3761,6 +4015,11 @@ export async function handleTrainingPeaksTelegramReplyKeyboardMessage(
       return "handled";
     }
 
+    if (action === "races_menu") {
+      await handleTrainingPeaksRacesMenu(parsedMessage);
+      return "handled";
+    }
+
     if (action === "jobs") {
       await showTrainingPeaksJobsMenu(parsedMessage);
       return "handled";
@@ -3781,6 +4040,36 @@ export async function handleTrainingPeaksTelegramReplyKeyboardMessage(
         parsedMessage,
         action === "week_last" ? "/tp_run_week last" : "/tp_run_week current"
       );
+      return "handled";
+    }
+
+    if (action === "races_next_week") {
+      await requestTrainingPeaksRaceScanAndReply(parsedMessage, getRacesNextWeekPeriod());
+      return "handled";
+    }
+
+    if (action === "races_7_days") {
+      await requestTrainingPeaksRaceScanAndReply(parsedMessage, getRaces7DaysPeriod());
+      return "handled";
+    }
+
+    if (action === "races_30_days") {
+      await requestTrainingPeaksRaceScanAndReply(parsedMessage, getRaces30DaysPeriod());
+      return "handled";
+    }
+
+    if (action === "races_to_august") {
+      await requestTrainingPeaksRaceScanAndReply(parsedMessage, getRacesToAugustPeriod());
+      return "handled";
+    }
+
+    if (action === "races_custom") {
+      await sendTrainingPeaksReplyScreen(
+        parsedMessage.chatId,
+        getRaceScanManualUsageMessage(),
+        getTrainingPeaksRacesReplyKeyboardMarkup()
+      );
+      setTrainingPeaksScreenContext(parsedMessage.chatId, "races");
       return "handled";
     }
 
@@ -4177,6 +4466,74 @@ async function handleTrainingPeaksReport(
 
 async function handleTrainingPeaksWeek(parsedMessage: ParsedTelegramUpdate): Promise<void> {
   await showTrainingPeaksWeekMenu(parsedMessage);
+}
+
+async function handleTrainingPeaksRacesMenu(parsedMessage: ParsedTelegramUpdate): Promise<void> {
+  setTrainingPeaksScreenContext(parsedMessage.chatId, "races");
+  if (parsedMessage.kind === "callback_query") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      getRacesMenuText(),
+      getRacesMenuMarkup()
+    );
+    return;
+  }
+  await sendTrainingPeaksReplyScreen(
+    parsedMessage.chatId,
+    [getRacesMenuText(), "", getRaceScanManualUsageMessage()].join("\n"),
+    getTrainingPeaksRacesReplyKeyboardMarkup()
+  );
+}
+
+async function requestTrainingPeaksRaceScanAndReply(
+  parsedMessage: ParsedTelegramUpdate,
+  period: { fromDate: string; toDate: string },
+  options?: { callbackMessageId?: number }
+): Promise<void> {
+  const result = await requestTrainingPeaksRaceScan(period.fromDate, period.toDate, {
+    chatId: parsedMessage.chatId,
+    userId: parsedMessage.userId,
+  });
+  const text = presentTrainingPeaksRaceScanRequestResult({
+    fromDate: period.fromDate,
+    toDate: period.toDate,
+    result,
+  });
+  setTrainingPeaksScreenContext(parsedMessage.chatId, "races");
+  if (parsedMessage.kind === "callback_query" && options?.callbackMessageId) {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      options.callbackMessageId,
+      text,
+      getRacesMenuMarkup()
+    );
+    return;
+  }
+  await sendTrainingPeaksReplyScreen(parsedMessage.chatId, text, getTrainingPeaksRacesReplyKeyboardMarkup());
+}
+
+async function handleTrainingPeaksRaces(
+  parsedMessage: ParsedTelegramUpdate,
+  text: string
+): Promise<void> {
+  const parsedPeriod = parseRacesCommandPeriod(text);
+  if (parsedPeriod.error) {
+    await sendTrainingPeaksReplyScreen(
+      parsedMessage.chatId,
+      [parsedPeriod.error, "", getRaceScanManualUsageMessage()].join("\n"),
+      getTrainingPeaksRacesReplyKeyboardMarkup()
+    );
+    return;
+  }
+  if (!parsedPeriod.fromDate || !parsedPeriod.toDate) {
+    await handleTrainingPeaksRacesMenu(parsedMessage);
+    return;
+  }
+  await requestTrainingPeaksRaceScanAndReply(parsedMessage, {
+    fromDate: parsedPeriod.fromDate,
+    toDate: parsedPeriod.toDate,
+  });
 }
 
 async function handleTrainingPeaksRunWeek(
@@ -4756,6 +5113,11 @@ export async function handleTrainingPeaksTelegramCallback(
       return "handled";
     }
 
+    if (callback.kind === "races_menu") {
+      await handleTrainingPeaksRacesMenu(parsedMessage);
+      return "handled";
+    }
+
     if (callback.kind === "week_last" || callback.kind === "week_current") {
       const requestedWeek = resolveTrainingPeaksWeekKeyword(
         callback.kind === "week_last" ? "last" : "current"
@@ -4777,6 +5139,34 @@ export async function handleTrainingPeaksTelegramCallback(
         presentation.text,
         presentation.replyMarkup
       );
+      return "handled";
+    }
+
+    if (callback.kind === "races_next_week") {
+      await requestTrainingPeaksRaceScanAndReply(parsedMessage, getRacesNextWeekPeriod(), {
+        callbackMessageId: parsedMessage.messageId,
+      });
+      return "handled";
+    }
+
+    if (callback.kind === "races_7_days") {
+      await requestTrainingPeaksRaceScanAndReply(parsedMessage, getRaces7DaysPeriod(), {
+        callbackMessageId: parsedMessage.messageId,
+      });
+      return "handled";
+    }
+
+    if (callback.kind === "races_30_days") {
+      await requestTrainingPeaksRaceScanAndReply(parsedMessage, getRaces30DaysPeriod(), {
+        callbackMessageId: parsedMessage.messageId,
+      });
+      return "handled";
+    }
+
+    if (callback.kind === "races_to_august") {
+      await requestTrainingPeaksRaceScanAndReply(parsedMessage, getRacesToAugustPeriod(), {
+        callbackMessageId: parsedMessage.messageId,
+      });
       return "handled";
     }
 
@@ -4889,6 +5279,11 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_run_week") {
       await handleTrainingPeaksRunWeek(parsedMessage, text);
+      return "handled";
+    }
+
+    if (command === "tp_races") {
+      await handleTrainingPeaksRaces(parsedMessage, text);
       return "handled";
     }
 

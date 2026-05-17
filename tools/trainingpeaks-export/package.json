@@ -19,6 +19,7 @@
     "tp-agent-once": "tsx scripts/tp-agent-once.ts",
     "tp-actions-once": "tsx scripts/tp-actions-once.ts",
     "tp-actions-loop": "tsx scripts/tp-actions-loop.ts",
+    "tp-races-requests-once": "tsx scripts/tp-races-requests-once.ts",
     "tp-discover-events-api": "tsx scripts/tp-discover-events-api.ts",
     "tp-scan-events": "tsx scripts/tp-scan-events.ts",
     "tp-actions-loop:install": "sh scripts/install-tp-actions-launchagent.sh",

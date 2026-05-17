@@ -152,7 +152,7 @@ type TrainingPeaksWeekRow = {
   week_to: string;
 };
 
-export type TrainingPeaksJobType = "weekly_reports";
+export type TrainingPeaksJobType = "weekly_reports" | "race_scan_events";
 export type TrainingPeaksJobStatus = "queued" | "running" | "completed" | "failed";
 export type TrainingPeaksActionType = "move_workout";
 export type TrainingPeaksActionStatus = "pending_coach" | "approved" | "rejected";
@@ -332,6 +332,13 @@ export type FailTrainingPeaksActionDryRunInput = {
 export type CreateTrainingPeaksWeeklyJobInput = {
   weekFrom: string;
   weekTo: string;
+  requestedByChatId?: string | null;
+  requestedByUserId?: string | null;
+};
+
+export type CreateTrainingPeaksRaceScanJobInput = {
+  fromDate: string;
+  toDate: string;
   requestedByChatId?: string | null;
   requestedByUserId?: string | null;
 };
@@ -1686,16 +1693,44 @@ export async function claimTrainingPeaksWeeklyReportForSend(
 export async function createTrainingPeaksWeeklyJob(
   input: CreateTrainingPeaksWeeklyJobInput
 ): Promise<TrainingPeaksJob> {
+  return createTrainingPeaksJob({
+    jobType: "weekly_reports",
+    weekFrom: input.weekFrom,
+    weekTo: input.weekTo,
+    requestedByChatId: input.requestedByChatId ?? null,
+    requestedByUserId: input.requestedByUserId ?? null,
+  });
+}
+
+export async function createTrainingPeaksRaceScanJob(
+  input: CreateTrainingPeaksRaceScanJobInput
+): Promise<TrainingPeaksJob> {
+  return createTrainingPeaksJob({
+    jobType: "race_scan_events",
+    weekFrom: input.fromDate,
+    weekTo: input.toDate,
+    requestedByChatId: input.requestedByChatId ?? null,
+    requestedByUserId: input.requestedByUserId ?? null,
+  });
+}
+
+async function createTrainingPeaksJob(input: {
+  jobType: TrainingPeaksJobType;
+  weekFrom: string;
+  weekTo: string;
+  requestedByChatId: string | null;
+  requestedByUserId: string | null;
+}): Promise<TrainingPeaksJob> {
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("trainingpeaks_jobs")
     .insert({
-      job_type: "weekly_reports",
+      job_type: input.jobType,
       status: "queued",
       week_from: input.weekFrom,
       week_to: input.weekTo,
-      requested_by_chat_id: input.requestedByChatId ?? null,
-      requested_by_user_id: input.requestedByUserId ?? null,
+      requested_by_chat_id: input.requestedByChatId,
+      requested_by_user_id: input.requestedByUserId,
     })
     .select("*")
     .single();
@@ -2299,13 +2334,23 @@ export async function listRecentTrainingPeaksJobs(limit = 10): Promise<TrainingP
 }
 
 export async function claimNextQueuedTrainingPeaksJob(): Promise<TrainingPeaksJob | null> {
+  return claimNextQueuedTrainingPeaksJobByType("weekly_reports");
+}
+
+export async function claimNextQueuedTrainingPeaksRaceScanJob(): Promise<TrainingPeaksJob | null> {
+  return claimNextQueuedTrainingPeaksJobByType("race_scan_events");
+}
+
+async function claimNextQueuedTrainingPeaksJobByType(
+  jobType: TrainingPeaksJobType
+): Promise<TrainingPeaksJob | null> {
   const supabase = createSupabaseServerClient();
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const { data: nextJob, error: selectError } = await supabase
       .from("trainingpeaks_jobs")
       .select("*")
-      .eq("job_type", "weekly_reports")
+      .eq("job_type", jobType)
       .eq("status", "queued")
       .order("created_at", { ascending: true })
       .limit(1)
@@ -2345,6 +2390,19 @@ export async function claimNextQueuedTrainingPeaksJob(): Promise<TrainingPeaksJo
 }
 
 export async function recoverStaleTrainingPeaksRunningJobs(timeoutMinutes: number): Promise<number> {
+  return recoverStaleTrainingPeaksRunningJobsByTypes(timeoutMinutes, ["weekly_reports"]);
+}
+
+export async function recoverStaleTrainingPeaksRunningRaceScanJobs(
+  timeoutMinutes: number
+): Promise<number> {
+  return recoverStaleTrainingPeaksRunningJobsByTypes(timeoutMinutes, ["race_scan_events"]);
+}
+
+async function recoverStaleTrainingPeaksRunningJobsByTypes(
+  timeoutMinutes: number,
+  jobTypes: TrainingPeaksJobType[]
+): Promise<number> {
   const supabase = createSupabaseServerClient();
   const safeTimeoutMinutes = Math.max(1, Math.floor(timeoutMinutes));
   const cutoff = new Date(Date.now() - safeTimeoutMinutes * 60 * 1000).toISOString();
@@ -2357,7 +2415,7 @@ export async function recoverStaleTrainingPeaksRunningJobs(timeoutMinutes: numbe
       result_json: null,
       finished_at: finishedAt,
     })
-    .eq("job_type", "weekly_reports")
+    .in("job_type", jobTypes)
     .eq("status", "running")
     .not("started_at", "is", null)
     .lt("started_at", cutoff)

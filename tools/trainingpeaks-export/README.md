@@ -14,6 +14,7 @@ Current commands:
 - `npm run tp-sync-reports -- --from=2026-04-27 --to=2026-05-03`
 - `npm run tp-sync-students`
 - `npm run tp-agent-once`
+- `npm run tp-races-requests-once`
 - `npm run tp-student-add -- --legacy-local-only --student=Olga --name="Ольга" --url="https://app.trainingpeaks.com/#calendar/athletes/5734279"` (legacy local-only)
 
 ## Monday weekly workflow
@@ -113,6 +114,23 @@ npm run tp-agent-once
 3. Запускает существующие `tp-weekly-all --from=... --to=...` и `tp-sync-reports --from=... --to=...`.
 4. Читает готовые `report_markdown` из Supabase, считает итог по job и отправляет в Telegram requester chat короткую сводку с ссылкой на `Web Admin`.
 5. Помечает задачу как `completed` или `failed` в Supabase.
+
+### Run one queued race-scan request
+
+Для one-shot запуска локального race scanner runner:
+
+```bash
+cd ~/igor-tp-reports-bot/tools/trainingpeaks-export
+npm run tp-races-requests-once
+```
+
+Команда:
+
+1. Claim'ит одну queued-задачу `job_type=race_scan_events` из `trainingpeaks_jobs`.
+2. Запускает `tp-scan-events --from=... --to=...` локально на Mac (GET-only).
+3. Формирует компактный Telegram-ответ по найденным забегам.
+4. При длинном ответе разбивает его на несколько сообщений.
+5. Помечает задачу как `completed` или `failed`.
 
 Нормальный weekly flow теперь такой:
 

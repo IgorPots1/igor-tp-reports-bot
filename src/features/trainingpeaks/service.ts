@@ -5,6 +5,7 @@ import {
   claimTrainingPeaksWeeklyReportForSend as claimTrainingPeaksWeeklyReportForSendInRepository,
   createTrainingPeaksAction as createTrainingPeaksActionInRepository,
   createTrainingPeaksActionRun as createTrainingPeaksActionRunInRepository,
+  createTrainingPeaksRaceScanJob,
   createTrainingPeaksWeeklyJob,
   deleteTrainingPeaksOrphanReportsForWeek as deleteTrainingPeaksOrphanReportsForWeekInRepository,
   deleteTrainingPeaksWeeklyReportById,
@@ -20,6 +21,7 @@ import {
   getTrainingPeaksStudentByTelegramChatId as getTrainingPeaksStudentByTelegramChatIdFromRepository,
   getTrainingPeaksWeeklyReportById,
   recoverStaleTrainingPeaksRunningJobs,
+  recoverStaleTrainingPeaksRunningRaceScanJobs,
   insertTrainingPeaksStudent,
   insertTrainingPeaksStudentTelegramLinkCode,
   linkTrainingPeaksStudentToBusinessChat as linkTrainingPeaksStudentToBusinessChatInRepository,
@@ -314,6 +316,26 @@ export type {
 };
 
 export type RequestTrainingPeaksWeeklyRunResult =
+  | { ok: true; job: TrainingPeaksJob }
+  | {
+      ok: false;
+      reason: "invalid_format" | "invalid_date" | "invalid_range";
+      message: string;
+    }
+  | {
+      ok: false;
+      reason: "duplicate";
+      activeJob: Pick<TrainingPeaksJob, "id" | "status" | "weekFrom" | "weekTo"> | null;
+      message: string;
+    }
+  | {
+      ok: false;
+      reason: "unknown";
+      activeJob: null;
+      message: string;
+    };
+
+export type RequestTrainingPeaksRaceScanResult =
   | { ok: true; job: TrainingPeaksJob }
   | {
       ok: false;
@@ -1737,6 +1759,66 @@ export async function requestTrainingPeaksWeeklyRun(
   }
 }
 
+export async function requestTrainingPeaksRaceScan(
+  fromDate: string,
+  toDate: string,
+  requester: TrainingPeaksJobRequester
+): Promise<RequestTrainingPeaksRaceScanResult> {
+  if (!ISO_DATE_PATTERN.test(fromDate) || !ISO_DATE_PATTERN.test(toDate)) {
+    return {
+      ok: false,
+      reason: "invalid_date",
+      message: "Период нужно передать в формате YYYY-MM-DD YYYY-MM-DD.",
+    };
+  }
+  if (fromDate > toDate) {
+    return {
+      ok: false,
+      reason: "invalid_range",
+      message: "Дата начала периода не может быть позже даты окончания.",
+    };
+  }
+
+  try {
+    const job = await createTrainingPeaksRaceScanJob({
+      fromDate,
+      toDate,
+      requestedByChatId: String(requester.chatId),
+      requestedByUserId: requester.userId === null ? null : String(requester.userId),
+    });
+    return { ok: true, job };
+  } catch (error) {
+    if (error instanceof TrainingPeaksJobConflictError) {
+      const activeJob = await findActiveTrainingPeaksJobForWeek("race_scan_events", fromDate, toDate);
+      return {
+        ok: false,
+        reason: "duplicate",
+        activeJob: activeJob
+          ? {
+              id: activeJob.id,
+              status: activeJob.status,
+              weekFrom: activeJob.weekFrom,
+              weekTo: activeJob.weekTo,
+            }
+          : null,
+        message: "Такая задача по забегам уже ожидает выполнения или сейчас выполняется.",
+      };
+    }
+    console.error("Failed to request TrainingPeaks race scan job", {
+      fromDate,
+      toDate,
+      requester,
+      error,
+    });
+    return {
+      ok: false,
+      reason: "unknown",
+      activeJob: null,
+      message: "Не смог создать задачу сканирования забегов. Попробуй позже.",
+    };
+  }
+}
+
 export async function getActiveTrainingPeaksWeeklyJobForWeek(
   week: TrainingPeaksWeek
 ): Promise<Pick<TrainingPeaksJob, "id" | "status" | "weekFrom" | "weekTo"> | null> {
@@ -2165,6 +2247,10 @@ export async function failTrainingPeaksActionDryRun(
 
 export async function recoverStaleTrainingPeaksJobs(timeoutMinutes: number): Promise<number> {
   return recoverStaleTrainingPeaksRunningJobs(timeoutMinutes);
+}
+
+export async function recoverStaleTrainingPeaksRaceScanJobs(timeoutMinutes: number): Promise<number> {
+  return recoverStaleTrainingPeaksRunningRaceScanJobs(timeoutMinutes);
 }
 
 export async function getTrainingPeaksStudentsRegistryWithLatestReportStatus(options?: {
