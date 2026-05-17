@@ -319,22 +319,96 @@ function readRaceRows(resultJson: unknown): RaceRow[] {
   return rows.filter((row) => row && typeof row === "object") as RaceRow[];
 }
 
+function parseEventDateMs(value: string | null): number | null {
+  if (!value || !ISO_DATE_PATTERN.test(value)) {
+    return null;
+  }
+  const ms = Date.parse(`${value}T00:00:00Z`);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function raceSortDateMs(row: RaceRow): number {
+  const eventDate = readStringValue(row.event_date);
+  return parseEventDateMs(eventDate) ?? Number.POSITIVE_INFINITY;
+}
+
+function compareRaceRowsByDateThenTitle(a: RaceRow, b: RaceRow): number {
+  const dateDiff = raceSortDateMs(a) - raceSortDateMs(b);
+  if (dateDiff !== 0) {
+    return dateDiff;
+  }
+  const titleA = (readStringValue(a.event_title) ?? "").toLocaleLowerCase("ru-RU");
+  const titleB = (readStringValue(b.event_title) ?? "").toLocaleLowerCase("ru-RU");
+  if (titleA < titleB) return -1;
+  if (titleA > titleB) return 1;
+  return 0;
+}
+
+function formatDistanceValue(rawDistance: string): string {
+  const normalized = rawDistance.replace(",", ".").trim();
+  const parsed = Number(normalized);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    if (Number.isInteger(parsed)) {
+      return `${String(parsed)} км`;
+    }
+    return `${String(parsed)} км`;
+  }
+  return rawDistance.trim();
+}
+
+function titleHasDistanceLikePattern(title: string): boolean {
+  const normalized = title.toLowerCase();
+  return (
+    /\(\s*\d+(?:[.,]\d+)?\s*(?:k|km|км)\s*\)/i.test(title) ||
+    /\b\d+(?:[.,]\d+)?\s*(?:k|km|км)\b/i.test(normalized)
+  );
+}
+
+function formatRaceTitleWithDistance(row: RaceRow): string {
+  const title = readStringValue(row.event_title) ?? "Без названия";
+  const distance = readStringValue(row.distance);
+  if (!distance) {
+    return title;
+  }
+  if (titleHasDistanceLikePattern(title)) {
+    return title;
+  }
+  return `${title} (${formatDistanceValue(distance)})`;
+}
+
 function buildRaceSummaryText(fromDate: string, toDate: string, rows: RaceRow[]): string {
   const header = ["🏁 Забеги", `Период: ${formatShortDate(fromDate)} — ${formatShortDate(toDate)}`, ""];
   if (rows.length === 0) {
     return [...header, "Забегов не найдено."].join("\n");
   }
-  const lines: string[] = [...header, `Найдено: ${rows.length}`, ""];
+  const groups = new Map<string, RaceRow[]>();
   for (const row of rows) {
-    const dateLabel = readStringValue(row.event_date) ? formatShortDate(String(row.event_date)) : "дата не указана";
     const studentName = readStringValue(row.student_name) ?? "Неизвестный ученик";
-    const title = readStringValue(row.event_title) ?? "Без названия";
-    const distance = readStringValue(row.distance);
-    const goal = readStringValue(row.goal);
-    lines.push(`${dateLabel} — ${studentName}`);
-    lines.push(distance ? `${title} (${distance})` : title);
-    if (goal) {
-      lines.push(`Цель: ${goal}`);
+    const groupRows = groups.get(studentName);
+    if (groupRows) {
+      groupRows.push(row);
+    } else {
+      groups.set(studentName, [row]);
+    }
+  }
+
+  const sortedGroups = Array.from(groups.entries()).sort(([nameA, racesA], [nameB, racesB]) => {
+    const earliestA = Math.min(...racesA.map((race) => raceSortDateMs(race)));
+    const earliestB = Math.min(...racesB.map((race) => raceSortDateMs(race)));
+    if (earliestA !== earliestB) {
+      return earliestA - earliestB;
+    }
+    return nameA.localeCompare(nameB, "ru");
+  });
+
+  const lines: string[] = [...header, `Найдено: ${rows.length}`, ""];
+  for (const [studentName, groupRows] of sortedGroups) {
+    lines.push(studentName);
+    const sortedRows = [...groupRows].sort(compareRaceRowsByDateThenTitle);
+    for (const row of sortedRows) {
+      const rawDate = readStringValue(row.event_date);
+      const dateLabel = rawDate ? formatShortDate(rawDate) : "дата не указана";
+      lines.push(`• ${dateLabel} — ${formatRaceTitleWithDistance(row)}`);
     }
     lines.push("");
   }

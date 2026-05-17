@@ -132,6 +132,45 @@ npm run tp-races-requests-once
 4. При длинном ответе разбивает его на несколько сообщений.
 5. Помечает задачу как `completed` или `failed`.
 
+### Run automatic race-scan loop (macOS LaunchAgent)
+
+Автоматическая обработка queued race-scan задач на локальном Mac:
+
+```bash
+cd ~/igor-tp-reports-bot/tools/trainingpeaks-export
+npm run tp-races-loop
+```
+
+CLI options:
+
+- `--interval-seconds=60` (default: 60)
+- `--once` (запустить один тик и завершиться)
+
+Установка LaunchAgent:
+
+```bash
+cd ~/igor-tp-reports-bot
+npm run tp-races-loop:install
+```
+
+Проверка статуса:
+
+```bash
+launchctl print gui/$(id -u)/com.igor.trainingpeaks-races-loop
+```
+
+Логи:
+
+```bash
+npm run tp-races-loop:logs
+```
+
+Удаление LaunchAgent:
+
+```bash
+npm run tp-races-loop:uninstall
+```
+
 Нормальный weekly flow теперь такой:
 
 ```text

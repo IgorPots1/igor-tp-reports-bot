@@ -20,11 +20,15 @@
     "tp-actions-once": "tsx scripts/tp-actions-once.ts",
     "tp-actions-loop": "tsx scripts/tp-actions-loop.ts",
     "tp-races-requests-once": "tsx scripts/tp-races-requests-once.ts",
+    "tp-races-loop": "tsx scripts/tp-races-loop.ts",
     "tp-discover-events-api": "tsx scripts/tp-discover-events-api.ts",
     "tp-scan-events": "tsx scripts/tp-scan-events.ts",
     "tp-actions-loop:install": "sh scripts/install-tp-actions-launchagent.sh",
     "tp-actions-loop:uninstall": "sh scripts/uninstall-tp-actions-launchagent.sh",
-    "tp-actions-loop:logs": "mkdir -p logs && touch logs/tp-actions-loop.out.log logs/tp-actions-loop.err.log && tail -f logs/tp-actions-loop.out.log logs/tp-actions-loop.err.log"
+    "tp-actions-loop:logs": "mkdir -p logs && touch logs/tp-actions-loop.out.log logs/tp-actions-loop.err.log && tail -f logs/tp-actions-loop.out.log logs/tp-actions-loop.err.log",
+    "tp-races-loop:install": "sh scripts/install-tp-races-launchagent.sh",
+    "tp-races-loop:uninstall": "sh scripts/uninstall-tp-races-launchagent.sh",
+    "tp-races-loop:logs": "mkdir -p logs && touch logs/tp-races-loop.out.log logs/tp-races-loop.err.log && tail -f logs/tp-races-loop.out.log logs/tp-races-loop.err.log"
   },
   "dependencies": {
     "csv-parse": "^6.2.1",
