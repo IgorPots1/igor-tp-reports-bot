@@ -32,6 +32,18 @@ type ActionSelectorRow = {
 
 const DEFAULT_INTERVAL_SECONDS = 30;
 
+type TrustedDryRunInspection = {
+  trusted: boolean;
+  reason: string;
+  dryRunResult: string | null;
+  canExecute: boolean | null;
+  confidence: number | null;
+  fingerprintExists: boolean;
+  sourceDateExists: boolean;
+  targetDateExists: boolean;
+  identityMatchedBy: string | null;
+};
+
 function getCliValueByPrefix(prefix: string): string | null {
   const match = process.argv.slice(2).find((arg) => arg.startsWith(prefix));
   if (!match) {
@@ -160,11 +172,17 @@ function getSupabase() {
   });
 }
 
-async function runCommand(args: string[]): Promise<void> {
+async function runCommand(
+  args: string[],
+  envOverrides?: Record<string, string | undefined>
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn("npm", args, {
       stdio: "inherit",
-      env: process.env,
+      env: {
+        ...process.env,
+        ...envOverrides,
+      },
       shell: false,
     });
     child.on("error", reject);
@@ -204,6 +222,158 @@ function hasTrustedDryRunLog(logJson: unknown): boolean {
   );
 }
 
+function inspectTrustedDryRunLog(logJson: unknown): TrustedDryRunInspection {
+  if (!logJson || typeof logJson !== "object") {
+    return {
+      trusted: false,
+      reason: "log_json_not_object",
+      dryRunResult: null,
+      canExecute: null,
+      confidence: null,
+      fingerprintExists: false,
+      sourceDateExists: false,
+      targetDateExists: false,
+      identityMatchedBy: null,
+    };
+  }
+
+  const payload = logJson as {
+    dryRunResult?: unknown;
+    canExecute?: unknown;
+    confidence?: unknown;
+    candidate?: { fingerprint?: unknown } | null;
+    resolvedDates?: { sourceDate?: unknown; targetDate?: unknown } | null;
+    identityCheck?: { matchedBy?: unknown } | null;
+  };
+  const confidence =
+    typeof payload.confidence === "number"
+      ? payload.confidence
+      : typeof payload.confidence === "string"
+        ? Number(payload.confidence)
+        : Number.NaN;
+  const dryRunResult = typeof payload.dryRunResult === "string" ? payload.dryRunResult : null;
+  const canExecute = typeof payload.canExecute === "boolean" ? payload.canExecute : null;
+  const fingerprint =
+    typeof payload.candidate?.fingerprint === "string" ? payload.candidate.fingerprint.trim() : "";
+  const sourceDate =
+    typeof payload.resolvedDates?.sourceDate === "string" ? payload.resolvedDates.sourceDate.trim() : "";
+  const targetDate =
+    typeof payload.resolvedDates?.targetDate === "string" ? payload.resolvedDates.targetDate.trim() : "";
+  const identityMatchedBy =
+    typeof payload.identityCheck?.matchedBy === "string" ? payload.identityCheck.matchedBy : null;
+
+  if (dryRunResult !== "candidate_found") {
+    return {
+      trusted: false,
+      reason: `dry_run_result_${dryRunResult ?? "missing"}`,
+      dryRunResult,
+      canExecute,
+      confidence: Number.isFinite(confidence) ? confidence : null,
+      fingerprintExists: fingerprint.length > 0,
+      sourceDateExists: sourceDate.length > 0,
+      targetDateExists: targetDate.length > 0,
+      identityMatchedBy,
+    };
+  }
+  if (canExecute !== true) {
+    return {
+      trusted: false,
+      reason: `can_execute_${String(canExecute)}`,
+      dryRunResult,
+      canExecute,
+      confidence: Number.isFinite(confidence) ? confidence : null,
+      fingerprintExists: fingerprint.length > 0,
+      sourceDateExists: sourceDate.length > 0,
+      targetDateExists: targetDate.length > 0,
+      identityMatchedBy,
+    };
+  }
+  if (!Number.isFinite(confidence) || confidence < 0.8) {
+    return {
+      trusted: false,
+      reason: "confidence_below_threshold",
+      dryRunResult,
+      canExecute,
+      confidence: Number.isFinite(confidence) ? confidence : null,
+      fingerprintExists: fingerprint.length > 0,
+      sourceDateExists: sourceDate.length > 0,
+      targetDateExists: targetDate.length > 0,
+      identityMatchedBy,
+    };
+  }
+  if (!fingerprint) {
+    return {
+      trusted: false,
+      reason: "missing_fingerprint",
+      dryRunResult,
+      canExecute,
+      confidence,
+      fingerprintExists: false,
+      sourceDateExists: sourceDate.length > 0,
+      targetDateExists: targetDate.length > 0,
+      identityMatchedBy,
+    };
+  }
+  if (!sourceDate || !targetDate) {
+    return {
+      trusted: false,
+      reason: "missing_resolved_dates",
+      dryRunResult,
+      canExecute,
+      confidence,
+      fingerprintExists: true,
+      sourceDateExists: sourceDate.length > 0,
+      targetDateExists: targetDate.length > 0,
+      identityMatchedBy,
+    };
+  }
+  if (!identityMatchedBy || identityMatchedBy === "mismatch") {
+    return {
+      trusted: false,
+      reason: `identity_check_${identityMatchedBy ?? "missing"}`,
+      dryRunResult,
+      canExecute,
+      confidence,
+      fingerprintExists: true,
+      sourceDateExists: true,
+      targetDateExists: true,
+      identityMatchedBy,
+    };
+  }
+  return {
+    trusted: true,
+    reason: "trusted",
+    dryRunResult,
+    canExecute,
+    confidence,
+    fingerprintExists: true,
+    sourceDateExists: true,
+    targetDateExists: true,
+    identityMatchedBy,
+  };
+}
+
+function formatAutoQueueContext(
+  row: QueueCandidate,
+  input: {
+    runStatus: string | null;
+    runType: string | null;
+    trustedInspection?: TrustedDryRunInspection;
+  }
+): string {
+  return [
+    `status=${row.status}`,
+    `execution_status=${row.execution_status}`,
+    `last_run_id=${row.last_run_id ?? "null"}`,
+    `dryRunResult=${input.trustedInspection?.dryRunResult ?? "null"}`,
+    `canExecute=${String(input.trustedInspection?.canExecute ?? null)}`,
+    `confidence=${String(input.trustedInspection?.confidence ?? null)}`,
+    `fingerprintExists=${input.trustedInspection?.fingerprintExists ? "yes" : "no"}`,
+    `runRowExists=${input.runStatus || input.runType ? "yes" : "no"}`,
+    `runRowStatus=${input.runStatus ?? "null"}`,
+    `runRowType=${input.runType ?? "null"}`,
+  ].join(" ");
+}
 async function autoQueueTrustedActions(since: string | null): Promise<number> {
   const supabase = getSupabase();
   let query = supabase
@@ -229,6 +399,14 @@ async function autoQueueTrustedActions(since: string | null): Promise<number> {
   let queued = 0;
   for (const row of ((data as QueueCandidate[]) ?? [])) {
     if (!row.last_run_id) {
+      const message = `[tp-actions-loop] skipped action ${row.id}: missing_last_run_id ${formatAutoQueueContext(
+        row,
+        {
+          runStatus: null,
+          runType: null,
+        }
+      )}`;
+      console.log(message);
       continue;
     }
 
@@ -241,10 +419,61 @@ async function autoQueueTrustedActions(since: string | null): Promise<number> {
       .eq("run_type", "dry_run")
       .maybeSingle();
     if (runError) {
-      console.warn(`auto-queue skipped ${row.id}: failed to load trusted run (${runError.message})`);
+      const message = `[tp-actions-loop] skipped action ${row.id}: failed_to_load_trusted_run (${runError.message}) ${formatAutoQueueContext(
+        row,
+        {
+          runStatus: null,
+          runType: null,
+        }
+      )}`;
+      console.warn(message);
       continue;
     }
-    if (!runData || !hasTrustedDryRunLog((runData as { log_json?: unknown }).log_json)) {
+    if (!runData) {
+      const { data: anyRunData, error: anyRunError } = await supabase
+        .from("trainingpeaks_action_runs")
+        .select("id,status,run_type,log_json")
+        .eq("id", row.last_run_id)
+        .eq("action_id", row.id)
+        .maybeSingle();
+      if (anyRunError) {
+        const message = `[tp-actions-loop] skipped action ${row.id}: trusted_run_lookup_failed (${anyRunError.message}) ${formatAutoQueueContext(
+          row,
+          {
+            runStatus: null,
+            runType: null,
+          }
+        )}`;
+        console.warn(message);
+        continue;
+      }
+      const runSnapshot = (anyRunData as { status: string; run_type: string } | null) ?? null;
+      const rejectionReason = runSnapshot
+        ? `run_row_mismatch_status=${runSnapshot.status}_type=${runSnapshot.run_type}`
+        : "run_row_missing";
+      const message = `[tp-actions-loop] skipped action ${row.id}: ${rejectionReason} ${formatAutoQueueContext(
+        row,
+        {
+          runStatus: runSnapshot?.status ?? null,
+          runType: runSnapshot?.run_type ?? null,
+        }
+      )}`;
+      console.log(message);
+      continue;
+    }
+
+    const trustedInspection = inspectTrustedDryRunLog((runData as { log_json?: unknown }).log_json);
+    if (!trustedInspection.trusted || !hasTrustedDryRunLog((runData as { log_json?: unknown }).log_json)) {
+      const runSnapshot = runData as { status: string; run_type: string };
+      const message = `[tp-actions-loop] skipped action ${row.id}: ${trustedInspection.reason} ${formatAutoQueueContext(
+        row,
+        {
+          runStatus: runSnapshot.status,
+          runType: runSnapshot.run_type,
+          trustedInspection,
+        }
+      )}`;
+      console.log(message);
       continue;
     }
 
@@ -265,12 +494,32 @@ async function autoQueueTrustedActions(since: string | null): Promise<number> {
       .select("id")
       .maybeSingle();
     if (queueError) {
-      console.warn(`auto-queue failed ${row.id}: ${queueError.message}`);
+      const runSnapshot = runData as { status: string; run_type: string };
+      const message = `[tp-actions-loop] skipped action ${row.id}: queue_update_failed (${queueError.message}) ${formatAutoQueueContext(
+        row,
+        {
+          runStatus: runSnapshot.status,
+          runType: runSnapshot.run_type,
+          trustedInspection,
+        }
+      )}`;
+      console.warn(message);
       continue;
     }
     if (queuedRow) {
       queued += 1;
-      console.log(`auto-queued action ${row.id}`);
+      console.log(`[tp-actions-loop] queued action ${row.id} for execute`);
+    } else {
+      const runSnapshot = runData as { status: string; run_type: string };
+      const message = `[tp-actions-loop] skipped action ${row.id}: action_state_changed_before_queue ${formatAutoQueueContext(
+        row,
+        {
+          runStatus: runSnapshot.status,
+          runType: runSnapshot.run_type,
+          trustedInspection,
+        }
+      )}`;
+      console.log(message);
     }
   }
 
@@ -339,8 +588,11 @@ async function selectNextExecutePendingActionIdSince(since: string): Promise<str
 }
 
 async function runDryRunPass(options: LoopOptions): Promise<void> {
+  const dryRunEnvOverrides = {
+    TP_ACTIONS_REAL_EXECUTION: "false",
+  };
   if (!options.since) {
-    await runCommand(["run", "tp-actions-once"]);
+    await runCommand(["run", "tp-actions-once"], dryRunEnvOverrides);
     return;
   }
 
@@ -354,7 +606,7 @@ async function runDryRunPass(options: LoopOptions): Promise<void> {
     "tp-actions-once",
     "--",
     `--action-id=${actionId}`,
-  ]);
+  ], dryRunEnvOverrides);
 }
 
 async function runRealPass(options: LoopOptions): Promise<void> {
