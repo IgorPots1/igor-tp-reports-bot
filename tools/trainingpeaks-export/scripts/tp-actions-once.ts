@@ -538,7 +538,6 @@ type WorkoutExtractionResult = {
 };
 
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
-const TP_CALLBACK_ACTION_EXECUTE_PREFIX = "tp:ta:x:";
 const TP_CALLBACK_ACTION_CANCEL_PREFIX = "tp:ta:c:";
 const ACTION_ARTIFACTS_ROOT = path.join(toolRoot, "action-artifacts");
 const TP_ACTIONS_EXECUTE_REAL_FLAG = "--execute-real";
@@ -1958,7 +1957,7 @@ async function notifyCoachDryRunResult(input: {
   }
   lines.push(input.note);
   lines.push(
-    "Это только подтверждение выполнения. TrainingPeaks изменится только после запуска локального runner на следующем этапе."
+    "TrainingPeaks не изменяется из Telegram. Реальное выполнение возможно только локальным Mac loop при включенных env-флагах."
   );
 
   let inlineKeyboardRows: Array<Array<{ text: string; callback_data: string }>> = [];
@@ -1968,19 +1967,7 @@ async function notifyCoachDryRunResult(input: {
       text: "❌ Отменить",
       callback_data: `${TP_CALLBACK_ACTION_CANCEL_PREFIX}${actionId}`,
     };
-    if (input.dryRunEvaluation.canExecute) {
-      inlineKeyboardRows = [
-        [
-          {
-            text: "✅ Выполнить перенос",
-            callback_data: `${TP_CALLBACK_ACTION_EXECUTE_PREFIX}${actionId}`,
-          },
-        ],
-        [cancelButton],
-      ];
-    } else {
-      inlineKeyboardRows = [[cancelButton]];
-    }
+    inlineKeyboardRows = [[cancelButton]];
   }
 
   try {
@@ -1990,8 +1977,85 @@ async function notifyCoachDryRunResult(input: {
   }
 }
 
-async function claimOneApprovedActionForDryRun(runnerId: string): Promise<ClaimedAction | null> {
+async function claimOneApprovedActionForDryRun(
+  runnerId: string,
+  requestedActionId: string | null
+): Promise<ClaimedAction | null> {
   const supabase = getSupabase();
+
+  if (requestedActionId) {
+    const { data: requestedActionData, error: requestedActionError } = await supabase
+      .from("trainingpeaks_actions")
+      .select("*")
+      .eq("id", requestedActionId)
+      .eq("action_type", "move_workout")
+      .maybeSingle();
+    if (requestedActionError) {
+      throw new Error(`Failed to load requested dry-run action ${requestedActionId}: ${requestedActionError.message}`);
+    }
+    if (!requestedActionData) {
+      throw new Error(`Requested dry-run action ${requestedActionId} was not found.`);
+    }
+
+    const requestedAction = requestedActionData as TrainingPeaksActionRow;
+    if (requestedAction.status !== "approved") {
+      throw new Error(
+        `Requested dry-run action ${requestedAction.id} is not approved (status=${requestedAction.status}).`
+      );
+    }
+
+    let expectedExecutionStatusForClaim: "not_started" | "execute_pending" = "not_started";
+    if (requestedAction.execution_status === "not_started") {
+      expectedExecutionStatusForClaim = "not_started";
+    } else if (
+      requestedAction.execution_status === "execute_pending" &&
+      requestedAction.execution_requested_at === null &&
+      requestedAction.last_run_id === null
+    ) {
+      expectedExecutionStatusForClaim = "execute_pending";
+    } else {
+      throw new Error(
+        `Requested dry-run action ${requestedAction.id} is not ready for dry-run (execution_status=${requestedAction.execution_status}).`
+      );
+    }
+
+    const { data: claimed, error: claimError } = await supabase
+      .from("trainingpeaks_actions")
+      .update({
+        execution_status: "dry_run_running",
+        execution_mode: "dry_run",
+        claimed_by: runnerId,
+        claimed_at: new Date().toISOString(),
+      })
+      .eq("id", requestedAction.id)
+      .eq("status", "approved")
+      .eq("execution_status", expectedExecutionStatusForClaim)
+      .select("*")
+      .maybeSingle();
+    if (claimError) {
+      throw new Error(`Failed to claim requested dry-run action ${requestedAction.id}: ${claimError.message}`);
+    }
+    if (!claimed) {
+      throw new Error(
+        `Requested dry-run action ${requestedAction.id} could not be claimed because its state changed.`
+      );
+    }
+
+    const action = claimed as TrainingPeaksActionRow;
+    let student: TrainingPeaksStudentRow | null = null;
+    if (action.student_id) {
+      const { data: studentData, error: studentError } = await supabase
+        .from("trainingpeaks_students")
+        .select("id, student_id, student_name, telegram_chat_id, trainingpeaks_athlete_url")
+        .eq("id", action.student_id)
+        .maybeSingle();
+      if (studentError) {
+        throw new Error(`Failed to fetch student for action ${action.id}: ${studentError.message}`);
+      }
+      student = (studentData as TrainingPeaksStudentRow | null) ?? null;
+    }
+    return { action, student };
+  }
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const { data: candidate, error: selectError } = await supabase
@@ -7404,7 +7468,7 @@ async function main(): Promise<void> {
   }
 
   if (runnerMode.mode === "dry_run") {
-    const claimed = await claimOneApprovedActionForDryRun(runnerId);
+    const claimed = await claimOneApprovedActionForDryRun(runnerId, requestedActionId);
     if (!claimed) {
       console.log("No approved TrainingPeaks actions ready for dry-run.");
       return;
@@ -7476,9 +7540,11 @@ async function main(): Promise<void> {
         chatId: resolveDryRunNotificationChatId(claimed.action),
         action: claimed.action,
         studentName,
-        statusText: "dry-run completed",
+        statusText: evaluation.canExecute ? "dry-run completed (safe)" : "dry-run completed (unsafe)",
         dryRunEvaluation: evaluation,
-        note: "Ничего не изменено в TrainingPeaks",
+        note: evaluation.canExecute
+          ? "Безопасно: заявка будет поставлена в auto-queue и выполнена локальным Mac loop."
+          : "Небезопасно: TrainingPeaks не изменён, нужна ручная проверка.",
       });
 
       console.log(`Dry-run completed for action ${claimed.action.id}.`);
@@ -7552,7 +7618,7 @@ async function main(): Promise<void> {
         studentName,
         statusText: "dry-run failed",
         dryRunEvaluation: failedEvaluation,
-        note: "Ничего не изменено в TrainingPeaks",
+        note: "Небезопасно: TrainingPeaks не изменён, нужна ручная проверка.",
         errorText: errorMessage,
       });
 

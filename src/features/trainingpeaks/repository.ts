@@ -234,6 +234,10 @@ export type TrainingPeaksAction = {
   updatedAt: string;
 };
 
+export type TrainingPeaksActionWithStudent = TrainingPeaksAction & {
+  studentName: string | null;
+};
+
 type TrainingPeaksActionRow = {
   id: string;
   student_id: string | null;
@@ -1731,6 +1735,44 @@ export async function createTrainingPeaksAction(
   return mapTrainingPeaksActionRow(data as TrainingPeaksActionRow);
 }
 
+export async function listRecentTrainingPeaksActions(limit = 15): Promise<TrainingPeaksActionWithStudent[]> {
+  const supabase = createSupabaseServerClient();
+  const safeLimit = Math.max(1, Math.min(limit, 30));
+  const { data, error } = await supabase
+    .from("trainingpeaks_actions")
+    .select("*")
+    .eq("action_type", "move_workout")
+    .order("created_at", { ascending: false })
+    .limit(safeLimit);
+
+  if (error) {
+    throw new Error(`Failed to list recent TrainingPeaks actions: ${error.message}`);
+  }
+
+  const actions = ((data as TrainingPeaksActionRow[]) ?? []).map(mapTrainingPeaksActionRow);
+  const studentIds = Array.from(new Set(actions.map((action) => action.studentId).filter((value): value is string => Boolean(value))));
+  const studentNamesById = new Map<string, string>();
+
+  if (studentIds.length > 0) {
+    const { data: studentsData, error: studentsError } = await supabase
+      .from("trainingpeaks_students")
+      .select("id, student_name")
+      .in("id", studentIds);
+    if (studentsError) {
+      throw new Error(`Failed to load TrainingPeaks students for actions list: ${studentsError.message}`);
+    }
+
+    for (const row of (studentsData as Array<{ id: string; student_name: string }> | null) ?? []) {
+      studentNamesById.set(row.id, row.student_name);
+    }
+  }
+
+  return actions.map((action) => ({
+    ...action,
+    studentName: action.studentId ? studentNamesById.get(action.studentId) ?? null : null,
+  }));
+}
+
 async function decideTrainingPeaksActionStatus(
   input: DecideTrainingPeaksActionInput,
   nextStatus: Extract<TrainingPeaksActionStatus, "approved" | "rejected">
@@ -1747,7 +1789,9 @@ async function decideTrainingPeaksActionStatus(
   };
 
   if (nextStatus === "approved") {
-    updatePayload.execution_status = "execute_pending";
+    // Safety: approval only opens the action for dry-run. Real execution is queued
+    // later by explicit execute request after trusted dry-run validation.
+    updatePayload.execution_status = "not_started";
   }
 
   const { data, error } = await supabase
@@ -1873,6 +1917,7 @@ export async function requestTrainingPeaksActionExecution(
     .from("trainingpeaks_actions")
     .update({
       execution_status: "execute_pending",
+      last_run_id: (dryRunRun as { id: string }).id,
       execution_requested_at: nowIso,
       execution_requested_by_chat_id: input.requestedByChatId,
       execution_requested_by_user_id: input.requestedByUserId ?? null,

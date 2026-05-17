@@ -37,6 +37,7 @@ import {
   updateTrainingPeaksStudentTelegramContact,
   upsertTrainingPeaksBusinessChatFromMessage,
   formatTrainingPeaksMoveWorkoutActionSummary,
+  listRecentTrainingPeaksActions,
 } from "@/features/trainingpeaks/service";
 import { sendTrainingPeaksWeeklyReportToStudent } from "@/features/trainingpeaks/report-delivery";
 import {
@@ -79,6 +80,7 @@ const TP_CALLBACK_ACTION_APPROVE_PREFIX = "tp:ta:a:";
 const TP_CALLBACK_ACTION_REJECT_PREFIX = "tp:ta:r:";
 const TP_CALLBACK_ACTION_EXECUTE_PREFIX = "tp:ta:x:";
 const TP_CALLBACK_ACTION_CANCEL_PREFIX = "tp:ta:c:";
+const TP_CALLBACK_ACTION_LIST_CANCEL_PREFIX = "tp:ta:lc:";
 const TP_REPLY_BUTTON_MENU = "🏠 Меню";
 const TP_REPLY_BUTTON_STUDENTS = "👥 Ученики";
 const TP_REPLY_BUTTON_ADD = "➕ Добавить";
@@ -123,6 +125,7 @@ const TP_WEEKLY_COMMAND_PATTERN = /^\/tp_weekly(?:@\w+)?(?:\s+|$)/;
 const TP_BUSINESS_TEST_COMMAND_PATTERN = /^\/tp_business_test(?:@\w+)?(?:\s+|$)/;
 const TP_SET_TELEGRAM_COMMAND_PATTERN = /^\/tp_set_telegram(?:@\w+)?(?:\s+|$)/;
 const TP_BIND_COMMAND_PATTERN = /^\/tp_bind(?:@\w+)?(?:\s+|$)/;
+const TP_ACTIONS_COMMAND_PATTERN = /^\/tp_actions(?:@\w+)?(?:\s+|$)/;
 const TP_COMMAND_PATTERN = /^\/tp(?:_[a-z0-9_]+)?(?:@\w+)?(?:\s+|$)/;
 const SHORT_DATE_FORMATTER = new Intl.DateTimeFormat("ru-RU", {
   day: "numeric",
@@ -148,6 +151,7 @@ type TrainingPeaksCommand =
   | "tp_business_test"
   | "tp_set_telegram"
   | "tp_bind"
+  | "tp_actions"
   | "unknown";
 
 type TrainingPeaksWeek = {
@@ -178,6 +182,8 @@ type ParsedTrainingPeaksCallback =
   | { kind: "action_reject"; actionId: string }
   | { kind: "action_execute_request"; actionId: string }
   | { kind: "action_execute_cancel"; actionId: string }
+  | { kind: "action_list_cancel"; actionId: string }
+  | { kind: "actions_list" }
   | { kind: "week_menu" }
   | { kind: "week_last" }
   | { kind: "week_current" }
@@ -324,6 +330,10 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
 
   if (TP_BIND_COMMAND_PATTERN.test(text)) {
     return "tp_bind";
+  }
+
+  if (TP_ACTIONS_COMMAND_PATTERN.test(text)) {
+    return "tp_actions";
   }
 
   if (TP_COMMAND_PATTERN.test(text)) {
@@ -1466,6 +1476,7 @@ export function getTrainingPeaksHelpLines(): string[] {
     "👥 Ученики — открыть список учеников",
     "▶️ Неделя — открыть меню запуска недели",
     "🧾 Задачи — посмотреть последние запуски",
+    "/tp_actions — последние заявки на перенос и очистка очереди",
     "Управление учениками и Telegram-привязкой теперь выполняется в Web Admin.",
     "🔎 Найти по username / 🔗 Код привязки остаются fallback-инструментами в карточке ученика",
     "",
@@ -1586,6 +1597,10 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
     return { kind: "reports_hint" };
   }
 
+  if (data === "tp:actions:list") {
+    return { kind: "actions_list" };
+  }
+
   if (data.startsWith("tp:s:")) {
     const page = Number.parseInt(data.slice("tp:s:".length), 10);
 
@@ -1632,6 +1647,7 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
     [TP_CALLBACK_ACTION_REJECT_PREFIX, "action_reject"],
     [TP_CALLBACK_ACTION_EXECUTE_PREFIX, "action_execute_request"],
     [TP_CALLBACK_ACTION_CANCEL_PREFIX, "action_execute_cancel"],
+    [TP_CALLBACK_ACTION_LIST_CANCEL_PREFIX, "action_list_cancel"],
   ] as const) {
     if (data.startsWith(prefix)) {
       const id = data.slice(prefix.length).trim();
@@ -2564,13 +2580,141 @@ async function notifyCoachChatsWithMarkup(
 
 function getTrainingPeaksActionDecisionMarkup(actionId: string): TelegramInlineKeyboardMarkup {
   return createInlineKeyboardMarkup([
-    [createMenuButton("✅ Одобрить", `${TP_CALLBACK_ACTION_APPROVE_PREFIX}${actionId}`)],
+    [createMenuButton("✅ Перенести", `${TP_CALLBACK_ACTION_APPROVE_PREFIX}${actionId}`)],
     [createMenuButton("❌ Отклонить", `${TP_CALLBACK_ACTION_REJECT_PREFIX}${actionId}`)],
   ]);
 }
 
 function getTrainingPeaksActionResolvedMarkup(): TelegramInlineKeyboardMarkup {
   return createInlineKeyboardMarkup([]);
+}
+
+function formatActionCompactDate(value: string | null): string {
+  if (!value) {
+    return "—";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Europe/Belgrade",
+  }).format(date);
+}
+
+function extractMoveDateRangeFromParsedPayload(
+  parsedPayload: unknown
+): { sourceDate: string | null; targetDate: string | null } {
+  if (!parsedPayload || typeof parsedPayload !== "object") {
+    return { sourceDate: null, targetDate: null };
+  }
+  const payload = parsedPayload as {
+    source?: { kind?: string; value?: string };
+    target?: { kind?: string; value?: string };
+    sourceDate?: string;
+    source_date?: string;
+  };
+  const sourceDate =
+    payload.sourceDate ??
+    payload.source_date ??
+    (payload.source?.kind === "date" && typeof payload.source.value === "string" ? payload.source.value : null);
+  const targetDate =
+    payload.target?.kind === "date" && typeof payload.target.value === "string" ? payload.target.value : null;
+  return {
+    sourceDate: sourceDate ?? null,
+    targetDate: targetDate ?? null,
+  };
+}
+
+function truncateActionMessage(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= 90) {
+    return normalized;
+  }
+  return `${normalized.slice(0, 87)}...`;
+}
+
+function shortenActionId(value: string): string {
+  return value.slice(-6);
+}
+
+function getTpActionsListText(
+  actions: Awaited<ReturnType<typeof listRecentTrainingPeaksActions>>
+): string {
+  if (actions.length === 0) {
+    return "TrainingPeaks actions\n\nПока заявок на перенос нет.";
+  }
+
+  const lines = ["TrainingPeaks actions (последние):", ""];
+  actions.forEach((action, index) => {
+    const dates = extractMoveDateRangeFromParsedPayload(action.parsedPayload);
+    const sourceToTarget = `${dates.sourceDate ?? "?"} -> ${dates.targetDate ?? "?"}`;
+    lines.push(
+      `${index + 1}. ${action.studentName ?? "unknown"} | ${truncateActionMessage(action.rawText)} | ${sourceToTarget} | ${action.status}/${action.executionStatus} | c:${formatActionCompactDate(action.createdAt)} | a:${formatActionCompactDate(action.approvedAt)} | run:${action.lastRunId ? "yes" : "no"} | #${shortenActionId(action.id)}`
+    );
+  });
+
+  return lines.join("\n");
+}
+
+function getTpActionsListMarkup(
+  actions: Awaited<ReturnType<typeof listRecentTrainingPeaksActions>>
+): TelegramInlineKeyboardMarkup {
+  const rows: TrainingPeaksMenuButton[][] = actions.map((action, index) => [
+    createMenuButton(
+      `❌ ${index + 1} #${shortenActionId(action.id)}`,
+      `${TP_CALLBACK_ACTION_LIST_CANCEL_PREFIX}${action.id}`
+    ),
+  ]);
+  rows.push([createMenuButton("🔄 Обновить", "tp:actions:list")]);
+  rows.push([createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)]);
+  return createInlineKeyboardMarkup(rows);
+}
+
+async function showTpActionsList(
+  parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate
+): Promise<void> {
+  const actions = await listRecentTrainingPeaksActions(15);
+  const text = getTpActionsListText(actions);
+  const markup = getTpActionsListMarkup(actions);
+  if (parsedMessage.kind === "callback_query") {
+    await editTrainingPeaksMenuMessage(parsedMessage.chatId, parsedMessage.messageId, text, markup);
+    return;
+  }
+  await sendTrainingPeaksMenuMessage(parsedMessage.chatId, text, markup);
+}
+
+async function handleTpActionsCancelCallback(
+  parsedMessage: ParsedTelegramCallbackUpdate,
+  actionId: string
+): Promise<void> {
+  const result = await cancelTrainingPeaksActionExecution({
+    actionId,
+    cancelledByChatId: String(parsedMessage.chatId),
+    cancelledByUserId: parsedMessage.userId === null ? null : String(parsedMessage.userId),
+    cancelMessageId: String(parsedMessage.messageId),
+  });
+
+  let statusText = "";
+  if (result.kind === "cancelled" || result.kind === "already_cancelled") {
+    statusText = "Заявка снята из очереди. TrainingPeaks не изменён.";
+  } else if (result.kind === "final_state") {
+    statusText = "Заявка уже в финальном состоянии, отмена недоступна.";
+  } else {
+    statusText = "Заявка не найдена.";
+  }
+
+  const actions = await listRecentTrainingPeaksActions(15);
+  await editTrainingPeaksMenuMessage(
+    parsedMessage.chatId,
+    parsedMessage.messageId,
+    `${statusText}\n\n${getTpActionsListText(actions)}`,
+    getTpActionsListMarkup(actions)
+  );
 }
 
 export async function handleTrainingPeaksTelegramBusinessMessage(
@@ -2868,7 +3012,7 @@ async function handleTrainingPeaksActionDecisionCallback(
   if (decisionResult.kind === "already_decided") {
     const alreadyDecidedText =
       decisionResult.action.status === "approved"
-        ? "Эта заявка уже одобрена. Запусти локальный runner для выполнения переноса."
+        ? "Эта заявка уже одобрена. Локальный Mac loop проверит и выполнит перенос автоматически, если это безопасно."
         : "Эта заявка уже отклонена. Ничего не изменено в TrainingPeaks.";
     await editTrainingPeaksMenuMessage(
       parsedMessage.chatId,
@@ -2881,7 +3025,7 @@ async function handleTrainingPeaksActionDecisionCallback(
 
   const decisionText =
     decision === "approve"
-      ? "Одобрено. Запусти локальный runner для выполнения переноса."
+      ? "Одобрено. Локальный Mac проверит и выполнит перенос автоматически, если всё безопасно."
       : "Отклонено. Ничего не изменено в TrainingPeaks.";
 
   await editTrainingPeaksMenuMessage(
@@ -4271,6 +4415,16 @@ export async function handleTrainingPeaksTelegramCallback(
       return "handled";
     }
 
+    if (callback.kind === "action_list_cancel") {
+      await handleTpActionsCancelCallback(parsedMessage, callback.actionId);
+      return "handled";
+    }
+
+    if (callback.kind === "actions_list") {
+      await showTpActionsList(parsedMessage);
+      return "handled";
+    }
+
     if (callback.kind === "week_menu") {
       await showTrainingPeaksWeekMenu(parsedMessage);
       return "handled";
@@ -4434,6 +4588,11 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_bind") {
       await handleTrainingPeaksBind(parsedMessage, text);
+      return "handled";
+    }
+
+    if (command === "tp_actions") {
+      await showTpActionsList(parsedMessage);
       return "handled";
     }
 

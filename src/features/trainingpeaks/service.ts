@@ -28,6 +28,7 @@ import {
   listRecentTrainingPeaksBusinessChats as listRecentTrainingPeaksBusinessChatsFromRepository,
   listTrainingPeaksStudentTelegramLinkCodesByCode,
   listRecentTrainingPeaksJobs,
+  listRecentTrainingPeaksActions as listRecentTrainingPeaksActionsFromRepository,
   listTrainingPeaksStudents,
   listTrainingPeaksStudentsIncludingArchived,
   markTrainingPeaksStudentTelegramLinkCodeUsed,
@@ -44,6 +45,7 @@ import {
   type CancelTrainingPeaksActionExecutionResult,
   type TrainingPeaksBusinessChat,
   type TrainingPeaksAction,
+  type TrainingPeaksActionWithStudent,
   type TrainingPeaksActionRun,
   type ClaimedTrainingPeaksDryRunAction,
   TrainingPeaksJobConflictError,
@@ -286,6 +288,7 @@ export type RequestTrainingPeaksActionExecutionResultSnapshot = RequestTrainingP
 export type CancelTrainingPeaksActionExecutionResultSnapshot = CancelTrainingPeaksActionExecutionResult;
 export type TrainingPeaksActionRunSnapshot = TrainingPeaksActionRun;
 export type ClaimedTrainingPeaksDryRunActionSnapshot = ClaimedTrainingPeaksDryRunAction;
+export type TrainingPeaksActionWithStudentSnapshot = TrainingPeaksActionWithStudent;
 
 export type TrainingPeaksBusinessChatSnapshot = TrainingPeaksBusinessChat;
 export type TrainingPeaksStudentTelegramLinkCodeSnapshot = TrainingPeaksStudentTelegramLinkCode;
@@ -2095,6 +2098,12 @@ export async function cancelTrainingPeaksActionExecution(input: {
     cancelledByUserId: input.cancelledByUserId ?? null,
     cancelMessageId: input.cancelMessageId ?? null,
   });
+}
+
+export async function listRecentTrainingPeaksActions(
+  limit = 15
+): Promise<TrainingPeaksActionWithStudentSnapshot[]> {
+  return listRecentTrainingPeaksActionsFromRepository(limit);
 }
 
 export async function claimOneApprovedTrainingPeaksActionForDryRun(
