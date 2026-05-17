@@ -38,6 +38,7 @@ import {
   upsertTrainingPeaksBusinessChatFromMessage,
   formatTrainingPeaksMoveWorkoutActionSummary,
   listRecentTrainingPeaksActions,
+  getTrainingPeaksActionWithStudentById,
 } from "@/features/trainingpeaks/service";
 import { sendTrainingPeaksWeeklyReportToStudent } from "@/features/trainingpeaks/report-delivery";
 import {
@@ -81,6 +82,9 @@ const TP_CALLBACK_ACTION_REJECT_PREFIX = "tp:ta:r:";
 const TP_CALLBACK_ACTION_EXECUTE_PREFIX = "tp:ta:x:";
 const TP_CALLBACK_ACTION_CANCEL_PREFIX = "tp:ta:c:";
 const TP_CALLBACK_ACTION_LIST_CANCEL_PREFIX = "tp:ta:lc:";
+const TP_CALLBACK_ACTION_DETAIL_PREFIX = "tp:ta:d:";
+const TP_CALLBACK_ACTION_DETAIL_CANCEL_PREFIX = "tp:ta:dc:";
+const TP_CALLBACK_ACTION_DETAIL_BACK = "tp:ta:back";
 const TP_REPLY_BUTTON_MENU = "🏠 Меню";
 const TP_REPLY_BUTTON_STUDENTS = "👥 Ученики";
 const TP_REPLY_BUTTON_ADD = "➕ Добавить";
@@ -183,6 +187,9 @@ type ParsedTrainingPeaksCallback =
   | { kind: "action_execute_request"; actionId: string }
   | { kind: "action_execute_cancel"; actionId: string }
   | { kind: "action_list_cancel"; actionId: string }
+  | { kind: "action_detail"; actionId: string }
+  | { kind: "action_detail_cancel"; actionId: string }
+  | { kind: "action_detail_back" }
   | { kind: "actions_list" }
   | { kind: "week_menu" }
   | { kind: "week_last" }
@@ -1601,6 +1608,10 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
     return { kind: "actions_list" };
   }
 
+  if (data === TP_CALLBACK_ACTION_DETAIL_BACK) {
+    return { kind: "action_detail_back" };
+  }
+
   if (data.startsWith("tp:s:")) {
     const page = Number.parseInt(data.slice("tp:s:".length), 10);
 
@@ -1648,6 +1659,8 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
     [TP_CALLBACK_ACTION_EXECUTE_PREFIX, "action_execute_request"],
     [TP_CALLBACK_ACTION_CANCEL_PREFIX, "action_execute_cancel"],
     [TP_CALLBACK_ACTION_LIST_CANCEL_PREFIX, "action_list_cancel"],
+    [TP_CALLBACK_ACTION_DETAIL_PREFIX, "action_detail"],
+    [TP_CALLBACK_ACTION_DETAIL_CANCEL_PREFIX, "action_detail_cancel"],
   ] as const) {
     if (data.startsWith(prefix)) {
       const id = data.slice(prefix.length).trim();
@@ -2630,33 +2643,145 @@ function extractMoveDateRangeFromParsedPayload(
   };
 }
 
-function truncateActionMessage(value: string): string {
+function truncateActionMessage(value: string, maxLength = 90): string {
   const normalized = value.replace(/\s+/g, " ").trim();
-  if (normalized.length <= 90) {
+  if (normalized.length <= maxLength) {
     return normalized;
   }
-  return `${normalized.slice(0, 87)}...`;
+  return `${normalized.slice(0, maxLength - 3)}...`;
 }
 
 function shortenActionId(value: string): string {
   return value.slice(-6);
 }
 
+type ActionStatusGroup = "pending" | "in_progress" | "needs_review" | "completed" | "rejected";
+
+function classifyActionStatusGroup(
+  action: Awaited<ReturnType<typeof listRecentTrainingPeaksActions>>[number]
+): ActionStatusGroup {
+  if (action.status === "rejected") {
+    return "rejected";
+  }
+  if (action.executionStatus === "completed") {
+    return "completed";
+  }
+  if (action.executionStatus === "failed") {
+    return "needs_review";
+  }
+  if (action.status === "pending_coach") {
+    return "pending";
+  }
+  if (
+    action.executionStatus === "dry_run_running" ||
+    action.executionStatus === "execute_pending" ||
+    action.executionStatus === "running_local"
+  ) {
+    return "in_progress";
+  }
+  if (action.executionStatus === "dry_run_completed" || action.executionStatus === "not_started") {
+    return "in_progress";
+  }
+  return "in_progress";
+}
+
+function formatCompactDateShort(value: string | null): string {
+  if (!value) {
+    return "?";
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) {
+    return "?";
+  }
+  return `${match[3]}.${match[2]}`;
+}
+
+function formatExecutionStatusLabel(executionStatus: string): string {
+  const labels: Record<string, string> = {
+    not_started: "не начато",
+    dry_run_running: "dry-run...",
+    dry_run_completed: "dry-run ✓",
+    execute_pending: "в очереди",
+    running_local: "выполняется",
+    completed: "выполнено",
+    failed: "ошибка",
+  };
+  return labels[executionStatus] ?? executionStatus;
+}
+
+function formatCompactActionLine(
+  action: Awaited<ReturnType<typeof listRecentTrainingPeaksActions>>[number],
+  index: number
+): string {
+  const dates = extractMoveDateRangeFromParsedPayload(action.parsedPayload);
+  const src = formatCompactDateShort(dates.sourceDate);
+  const tgt = formatCompactDateShort(dates.targetDate);
+  const name = action.studentName ?? "?";
+  const execLabel = formatExecutionStatusLabel(action.executionStatus);
+  return `${index + 1}. ${name} | ${src} → ${tgt} | ${execLabel}`;
+}
+
 function getTpActionsListText(
   actions: Awaited<ReturnType<typeof listRecentTrainingPeaksActions>>
 ): string {
   if (actions.length === 0) {
-    return "TrainingPeaks actions\n\nПока заявок на перенос нет.";
+    return "📋 TrainingPeaks Actions\n\nПока заявок на перенос нет.";
   }
 
-  const lines = ["TrainingPeaks actions (последние):", ""];
-  actions.forEach((action, index) => {
-    const dates = extractMoveDateRangeFromParsedPayload(action.parsedPayload);
-    const sourceToTarget = `${dates.sourceDate ?? "?"} -> ${dates.targetDate ?? "?"}`;
-    lines.push(
-      `${index + 1}. ${action.studentName ?? "unknown"} | ${truncateActionMessage(action.rawText)} | ${sourceToTarget} | ${action.status}/${action.executionStatus} | c:${formatActionCompactDate(action.createdAt)} | a:${formatActionCompactDate(action.approvedAt)} | run:${action.lastRunId ? "yes" : "no"} | #${shortenActionId(action.id)}`
-    );
-  });
+  const grouped: Record<ActionStatusGroup, typeof actions> = {
+    pending: [],
+    in_progress: [],
+    needs_review: [],
+    completed: [],
+    rejected: [],
+  };
+
+  for (const action of actions) {
+    grouped[classifyActionStatusGroup(action)].push(action);
+  }
+
+  const activeActions = [
+    ...grouped.pending,
+    ...grouped.in_progress,
+    ...grouped.needs_review,
+  ];
+
+  const lines: string[] = ["📋 TrainingPeaks Actions", ""];
+
+  if (grouped.pending.length > 0) {
+    lines.push("⏳ Ожидают решения:");
+    for (const action of grouped.pending) {
+      lines.push(formatCompactActionLine(action, activeActions.indexOf(action)));
+    }
+    lines.push("");
+  }
+
+  if (grouped.in_progress.length > 0) {
+    lines.push("🔄 В работе / очередь:");
+    for (const action of grouped.in_progress) {
+      lines.push(formatCompactActionLine(action, activeActions.indexOf(action)));
+    }
+    lines.push("");
+  }
+
+  if (grouped.needs_review.length > 0) {
+    lines.push("⚠️ Требуют проверки:");
+    for (const action of grouped.needs_review) {
+      lines.push(formatCompactActionLine(action, activeActions.indexOf(action)));
+    }
+    lines.push("");
+  }
+
+  if (activeActions.length === 0) {
+    lines.push("Нет активных заявок.", "");
+  }
+
+  if (grouped.completed.length > 0) {
+    lines.push(`✅ Выполнено: ${grouped.completed.length}`);
+  }
+  if (grouped.rejected.length > 0) {
+    lines.push(`❌ Отклонено/отменено: ${grouped.rejected.length}`);
+  }
 
   return lines.join("\n");
 }
@@ -2664,12 +2789,25 @@ function getTpActionsListText(
 function getTpActionsListMarkup(
   actions: Awaited<ReturnType<typeof listRecentTrainingPeaksActions>>
 ): TelegramInlineKeyboardMarkup {
-  const rows: TrainingPeaksMenuButton[][] = actions.map((action, index) => [
-    createMenuButton(
-      `❌ ${index + 1} #${shortenActionId(action.id)}`,
-      `${TP_CALLBACK_ACTION_LIST_CANCEL_PREFIX}${action.id}`
-    ),
-  ]);
+  const activeActions = actions.filter(
+    (a) => classifyActionStatusGroup(a) !== "completed" && classifyActionStatusGroup(a) !== "rejected"
+  );
+
+  const rows: TrainingPeaksMenuButton[][] = [];
+
+  const ROW_SIZE = 3;
+  for (let i = 0; i < activeActions.length; i += ROW_SIZE) {
+    const chunk = activeActions.slice(i, i + ROW_SIZE);
+    rows.push(
+      chunk.map((action, j) =>
+        createMenuButton(
+          `📋 ${i + j + 1}`,
+          `${TP_CALLBACK_ACTION_DETAIL_PREFIX}${action.id}`
+        )
+      )
+    );
+  }
+
   rows.push([createMenuButton("🔄 Обновить", "tp:actions:list")]);
   rows.push([createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)]);
   return createInlineKeyboardMarkup(rows);
@@ -2688,6 +2826,162 @@ async function showTpActionsList(
   await sendTrainingPeaksMenuMessage(parsedMessage.chatId, text, markup);
 }
 
+const ACTION_CANCELLABLE_EXECUTION_STATUSES = new Set([
+  "not_started",
+  "dry_run_running",
+  "dry_run_completed",
+  "execute_pending",
+  "failed",
+]);
+
+function isActionCancellable(
+  action: Awaited<ReturnType<typeof getTrainingPeaksActionWithStudentById>>
+): boolean {
+  if (!action) {
+    return false;
+  }
+  if (action.status === "rejected") {
+    return false;
+  }
+  if (action.executionStatus === "completed" || action.executionStatus === "running_local") {
+    return false;
+  }
+  if (action.status !== "pending_coach" && action.status !== "approved") {
+    return false;
+  }
+  return ACTION_CANCELLABLE_EXECUTION_STATUSES.has(action.executionStatus);
+}
+
+function formatActionStatusLabel(action: NonNullable<Awaited<ReturnType<typeof getTrainingPeaksActionWithStudentById>>>): string {
+  if (action.status === "rejected") {
+    return "❌ Отклонено";
+  }
+  if (action.executionStatus === "completed") {
+    return "✅ Выполнено";
+  }
+  if (action.executionStatus === "running_local") {
+    return "🔄 Выполняется сейчас";
+  }
+  if (action.executionStatus === "failed") {
+    return "⚠️ Ошибка";
+  }
+  if (action.status === "pending_coach") {
+    return "⏳ Ожидает решения";
+  }
+  if (action.executionStatus === "execute_pending") {
+    return "🔄 В очереди на выполнение";
+  }
+  if (action.executionStatus === "dry_run_running") {
+    return "🔄 Dry-run...";
+  }
+  if (action.executionStatus === "dry_run_completed") {
+    return "🔄 Dry-run завершён";
+  }
+  if (action.executionStatus === "not_started") {
+    return "🔄 Одобрено, не начато";
+  }
+  return `${action.status} / ${action.executionStatus}`;
+}
+
+function getTpActionDetailText(
+  action: NonNullable<Awaited<ReturnType<typeof getTrainingPeaksActionWithStudentById>>>
+): string {
+  const dates = extractMoveDateRangeFromParsedPayload(action.parsedPayload);
+  const src = formatCompactDateShort(dates.sourceDate);
+  const tgt = formatCompactDateShort(dates.targetDate);
+  const lines = [
+    `📋 Действие #${shortenActionId(action.id)}`,
+    "",
+    `Ученик: ${action.studentName ?? "?"}`,
+    `Запрос: ${truncateActionMessage(action.rawText, 120)}`,
+    `Перенос: ${src} → ${tgt}`,
+    `Статус: ${formatActionStatusLabel(action)}`,
+    `Run: ${action.lastRunId ? "yes" : "no"}`,
+    `Создано: ${formatActionCompactDate(action.createdAt)}`,
+  ];
+  if (action.approvedAt) {
+    lines.push(`Одобрено: ${formatActionCompactDate(action.approvedAt)}`);
+  }
+  if (action.rejectedAt) {
+    lines.push(`Отклонено: ${formatActionCompactDate(action.rejectedAt)}`);
+  }
+  return lines.join("\n");
+}
+
+function getTpActionDetailMarkup(
+  action: NonNullable<Awaited<ReturnType<typeof getTrainingPeaksActionWithStudentById>>>
+): TelegramInlineKeyboardMarkup {
+  const rows: TrainingPeaksMenuButton[][] = [];
+
+  if (isActionCancellable(action)) {
+    rows.push([
+      createMenuButton("❌ Отменить", `${TP_CALLBACK_ACTION_DETAIL_CANCEL_PREFIX}${action.id}`),
+    ]);
+  }
+
+  rows.push([
+    createMenuButton("◀ Назад", TP_CALLBACK_ACTION_DETAIL_BACK),
+    createMenuButton("🔄 Обновить", `${TP_CALLBACK_ACTION_DETAIL_PREFIX}${action.id}`),
+  ]);
+  return createInlineKeyboardMarkup(rows);
+}
+
+async function showTpActionDetail(
+  parsedMessage: ParsedTelegramCallbackUpdate,
+  actionId: string
+): Promise<void> {
+  const action = await getTrainingPeaksActionWithStudentById(actionId);
+  if (!action) {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      "Заявка не найдена.",
+      createInlineKeyboardMarkup([
+        [createMenuButton("◀ Назад к списку", "tp:actions:list")],
+      ])
+    );
+    return;
+  }
+  await editTrainingPeaksMenuMessage(
+    parsedMessage.chatId,
+    parsedMessage.messageId,
+    getTpActionDetailText(action),
+    getTpActionDetailMarkup(action)
+  );
+}
+
+async function handleTpActionDetailCancelCallback(
+  parsedMessage: ParsedTelegramCallbackUpdate,
+  actionId: string
+): Promise<void> {
+  const result = await cancelTrainingPeaksActionExecution({
+    actionId,
+    cancelledByChatId: String(parsedMessage.chatId),
+    cancelledByUserId: parsedMessage.userId === null ? null : String(parsedMessage.userId),
+    cancelMessageId: String(parsedMessage.messageId),
+  });
+
+  let statusText: string;
+  if (result.kind === "cancelled" || result.kind === "already_cancelled") {
+    statusText = "✅ Заявка отменена. TrainingPeaks не изменён.";
+  } else if (result.kind === "not_cancellable") {
+    statusText = `⚠️ Отмена недоступна: ${result.reason}`;
+  } else if (result.kind === "final_state") {
+    statusText = "⚠️ Заявка уже в финальном состоянии, отмена недоступна.";
+  } else {
+    statusText = "⚠️ Заявка не найдена.";
+  }
+
+  await editTrainingPeaksMenuMessage(
+    parsedMessage.chatId,
+    parsedMessage.messageId,
+    statusText,
+    createInlineKeyboardMarkup([
+      [createMenuButton("◀ Назад к списку", "tp:actions:list")],
+    ])
+  );
+}
+
 async function handleTpActionsCancelCallback(
   parsedMessage: ParsedTelegramCallbackUpdate,
   actionId: string
@@ -2702,6 +2996,8 @@ async function handleTpActionsCancelCallback(
   let statusText = "";
   if (result.kind === "cancelled" || result.kind === "already_cancelled") {
     statusText = "Заявка снята из очереди. TrainingPeaks не изменён.";
+  } else if (result.kind === "not_cancellable") {
+    statusText = `Отмена недоступна: ${result.reason}`;
   } else if (result.kind === "final_state") {
     statusText = "Заявка уже в финальном состоянии, отмена недоступна.";
   } else {
@@ -4417,6 +4713,21 @@ export async function handleTrainingPeaksTelegramCallback(
 
     if (callback.kind === "action_list_cancel") {
       await handleTpActionsCancelCallback(parsedMessage, callback.actionId);
+      return "handled";
+    }
+
+    if (callback.kind === "action_detail") {
+      await showTpActionDetail(parsedMessage, callback.actionId);
+      return "handled";
+    }
+
+    if (callback.kind === "action_detail_cancel") {
+      await handleTpActionDetailCancelCallback(parsedMessage, callback.actionId);
+      return "handled";
+    }
+
+    if (callback.kind === "action_detail_back") {
+      await showTpActionsList(parsedMessage);
       return "handled";
     }
 

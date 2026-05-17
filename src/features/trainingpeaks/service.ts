@@ -35,6 +35,7 @@ import {
   rejectTrainingPeaksAction as rejectTrainingPeaksActionInRepository,
   requestTrainingPeaksActionExecution as requestTrainingPeaksActionExecutionInRepository,
   cancelTrainingPeaksActionExecution as cancelTrainingPeaksActionExecutionInRepository,
+  getTrainingPeaksActionById as getTrainingPeaksActionByIdInRepository,
   claimOneApprovedTrainingPeaksActionForDryRun as claimOneApprovedTrainingPeaksActionForDryRunInRepository,
   completeTrainingPeaksActionDryRun as completeTrainingPeaksActionDryRunInRepository,
   failTrainingPeaksActionDryRun as failTrainingPeaksActionDryRunInRepository,
@@ -42,7 +43,7 @@ import {
   TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
   type DecideTrainingPeaksActionResult,
   type RequestTrainingPeaksActionExecutionResult,
-  type CancelTrainingPeaksActionExecutionResult,
+  type CancelTrainingPeaksActionExecutionResultExtended,
   type TrainingPeaksBusinessChat,
   type TrainingPeaksAction,
   type TrainingPeaksActionWithStudent,
@@ -285,7 +286,7 @@ export type DecideTrainingPeaksActionInput = {
 
 export type DecideTrainingPeaksActionResultSnapshot = DecideTrainingPeaksActionResult;
 export type RequestTrainingPeaksActionExecutionResultSnapshot = RequestTrainingPeaksActionExecutionResult;
-export type CancelTrainingPeaksActionExecutionResultSnapshot = CancelTrainingPeaksActionExecutionResult;
+export type CancelTrainingPeaksActionExecutionResultSnapshot = CancelTrainingPeaksActionExecutionResultExtended;
 export type TrainingPeaksActionRunSnapshot = TrainingPeaksActionRun;
 export type ClaimedTrainingPeaksDryRunActionSnapshot = ClaimedTrainingPeaksDryRunAction;
 export type TrainingPeaksActionWithStudentSnapshot = TrainingPeaksActionWithStudent;
@@ -2104,6 +2105,21 @@ export async function listRecentTrainingPeaksActions(
   limit = 15
 ): Promise<TrainingPeaksActionWithStudentSnapshot[]> {
   return listRecentTrainingPeaksActionsFromRepository(limit);
+}
+
+export async function getTrainingPeaksActionWithStudentById(
+  actionId: string
+): Promise<TrainingPeaksActionWithStudentSnapshot | null> {
+  const action = await getTrainingPeaksActionByIdInRepository(actionId);
+  if (!action) {
+    return null;
+  }
+  let studentName: string | null = null;
+  if (action.studentId) {
+    const student = await getTrainingPeaksStudentByIdFromRepository(action.studentId);
+    studentName = student?.studentName ?? null;
+  }
+  return { ...action, studentName };
 }
 
 export async function claimOneApprovedTrainingPeaksActionForDryRun(

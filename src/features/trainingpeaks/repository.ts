@@ -661,6 +661,10 @@ function validateDryRunLogReadiness(logJson: unknown): { ok: true } | { ok: fals
   return { ok: true };
 }
 
+export async function getTrainingPeaksActionById(actionId: string): Promise<TrainingPeaksAction | null> {
+  return getTrainingPeaksActionByIdInternal(actionId);
+}
+
 async function getTrainingPeaksActionByIdInternal(actionId: string): Promise<TrainingPeaksAction | null> {
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
@@ -1954,9 +1958,25 @@ export async function requestTrainingPeaksActionExecution(
   return { kind: "blocked", action: latest, reason: "Action state changed. Please refresh and try again." };
 }
 
+export type CancelTrainingPeaksActionExecutionResultExtended =
+  | CancelTrainingPeaksActionExecutionResult
+  | {
+      kind: "not_cancellable";
+      action: TrainingPeaksAction;
+      reason: string;
+    };
+
+const CANCELLABLE_EXECUTION_STATUSES: TrainingPeaksActionExecutionStatus[] = [
+  "not_started",
+  "dry_run_running",
+  "dry_run_completed",
+  "execute_pending",
+  "failed",
+];
+
 export async function cancelTrainingPeaksActionExecution(
   input: CancelTrainingPeaksActionExecutionInput
-): Promise<CancelTrainingPeaksActionExecutionResult> {
+): Promise<CancelTrainingPeaksActionExecutionResultExtended> {
   const supabase = createSupabaseServerClient();
   const action = await getTrainingPeaksActionByIdInternal(input.actionId);
   if (!action) {
@@ -1967,37 +1987,69 @@ export async function cancelTrainingPeaksActionExecution(
     return { kind: "already_cancelled", action };
   }
 
-  if (action.executionStatus === "completed" || action.executionStatus === "running_local") {
-    return { kind: "final_state", action };
+  if (action.executionStatus === "completed") {
+    return { kind: "not_cancellable", action, reason: "Action already completed." };
+  }
+
+  if (action.executionStatus === "running_local") {
+    return { kind: "not_cancellable", action, reason: "Action is currently executing on local runner." };
+  }
+
+  if (action.status !== "pending_coach" && action.status !== "approved") {
+    return { kind: "not_cancellable", action, reason: `Unexpected action status: ${action.status}` };
+  }
+
+  if (!CANCELLABLE_EXECUTION_STATUSES.includes(action.executionStatus)) {
+    return { kind: "not_cancellable", action, reason: `Execution status ${action.executionStatus} is not cancellable.` };
   }
 
   const nowIso = new Date().toISOString();
-  const { data: cancelledRow, error: cancelError } = await supabase
+  const cancelPayload = {
+    status: "rejected" as const,
+    rejected_at: nowIso,
+    decided_by_chat_id: input.cancelledByChatId,
+    decided_by_user_id: input.cancelledByUserId ?? null,
+    decision_message_id: input.cancelMessageId ?? null,
+    cancelled_at: nowIso,
+    cancelled_by_chat_id: input.cancelledByChatId,
+    cancelled_by_user_id: input.cancelledByUserId ?? null,
+    cancel_message_id: input.cancelMessageId ?? null,
+  };
+
+  // Try cancelling approved actions
+  const { data: cancelledApproved, error: approvedError } = await supabase
     .from("trainingpeaks_actions")
-    .update({
-      status: "rejected",
-      approved_at: null,
-      rejected_at: nowIso,
-      decided_by_chat_id: input.cancelledByChatId,
-      decided_by_user_id: input.cancelledByUserId ?? null,
-      decision_message_id: input.cancelMessageId ?? null,
-      cancelled_at: nowIso,
-      cancelled_by_chat_id: input.cancelledByChatId,
-      cancelled_by_user_id: input.cancelledByUserId ?? null,
-      cancel_message_id: input.cancelMessageId ?? null,
-    })
+    .update(cancelPayload)
     .eq("id", input.actionId)
     .eq("status", "approved")
-    .in("execution_status", ["not_started", "dry_run_running", "dry_run_completed", "execute_pending", "failed"])
+    .in("execution_status", CANCELLABLE_EXECUTION_STATUSES)
     .select("*")
     .maybeSingle();
 
-  if (cancelError) {
-    throw new Error(`Failed to cancel TrainingPeaks action execution ${input.actionId}: ${cancelError.message}`);
+  if (approvedError) {
+    throw new Error(`Failed to cancel TrainingPeaks action execution ${input.actionId}: ${approvedError.message}`);
   }
 
-  if (cancelledRow) {
-    return { kind: "cancelled", action: mapTrainingPeaksActionRow(cancelledRow as TrainingPeaksActionRow) };
+  if (cancelledApproved) {
+    return { kind: "cancelled", action: mapTrainingPeaksActionRow(cancelledApproved as TrainingPeaksActionRow) };
+  }
+
+  // Try cancelling pending_coach actions
+  const { data: cancelledPending, error: pendingError } = await supabase
+    .from("trainingpeaks_actions")
+    .update(cancelPayload)
+    .eq("id", input.actionId)
+    .eq("status", "pending_coach")
+    .in("execution_status", CANCELLABLE_EXECUTION_STATUSES)
+    .select("*")
+    .maybeSingle();
+
+  if (pendingError) {
+    throw new Error(`Failed to cancel TrainingPeaks action execution ${input.actionId}: ${pendingError.message}`);
+  }
+
+  if (cancelledPending) {
+    return { kind: "cancelled", action: mapTrainingPeaksActionRow(cancelledPending as TrainingPeaksActionRow) };
   }
 
   const latest = await getTrainingPeaksActionByIdInternal(input.actionId);
@@ -2007,10 +2059,13 @@ export async function cancelTrainingPeaksActionExecution(
   if (latest.status === "rejected") {
     return { kind: "already_cancelled", action: latest };
   }
-  if (latest.executionStatus === "completed" || latest.executionStatus === "running_local") {
-    return { kind: "final_state", action: latest };
+  if (latest.executionStatus === "completed") {
+    return { kind: "not_cancellable", action: latest, reason: "Action already completed." };
   }
-  return { kind: "final_state", action: latest };
+  if (latest.executionStatus === "running_local") {
+    return { kind: "not_cancellable", action: latest, reason: "Action is currently executing on local runner." };
+  }
+  return { kind: "not_cancellable", action: latest, reason: "Action state changed. Please refresh and try again." };
 }
 
 export async function claimOneApprovedTrainingPeaksActionForDryRun(
