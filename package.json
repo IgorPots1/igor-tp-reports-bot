@@ -10,6 +10,9 @@
     "tp-sync-reports": "node --experimental-strip-types tools/trainingpeaks-export/scripts/tp-sync-reports.ts",
     "tp-agent-once": "npm --prefix tools/trainingpeaks-export run tp-agent-once",
     "tp-actions-once": "npm --prefix tools/trainingpeaks-export run tp-actions-once --",
+    "tp-actions-loop:install": "npm --prefix tools/trainingpeaks-export run tp-actions-loop:install",
+    "tp-actions-loop:uninstall": "npm --prefix tools/trainingpeaks-export run tp-actions-loop:uninstall",
+    "tp-actions-loop:logs": "npm --prefix tools/trainingpeaks-export run tp-actions-loop:logs",
     "check-trainingpeaks-action-parser": "npx tsx scripts/check-trainingpeaks-action-parser.ts"
   },
   "dependencies": {
