@@ -10,3 +10,5 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 .vercel
+.cursor/debug-*.log
+tools/trainingpeaks-export/logs/
