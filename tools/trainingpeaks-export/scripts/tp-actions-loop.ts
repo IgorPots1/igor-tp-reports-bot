@@ -14,6 +14,7 @@ type LoopOptions = {
 type QueueCandidate = {
   id: string;
   execution_status: string;
+  execution_mode: string | null;
   status: string;
   approved_at: string | null;
   created_at: string;
@@ -30,7 +31,20 @@ type ActionSelectorRow = {
   last_run_id: string | null;
 };
 
+type RunningLocalCandidate = {
+  id: string;
+  status: string;
+  execution_status: string;
+  execution_mode: string | null;
+  approved_at: string | null;
+  created_at: string;
+  claimed_at: string | null;
+  execution_requested_at: string | null;
+  last_run_id: string | null;
+};
+
 const DEFAULT_INTERVAL_SECONDS = 30;
+const RUNNING_LOCAL_STALE_TIMEOUT_MINUTES = 15;
 
 type TrustedDryRunInspection = {
   trusted: boolean;
@@ -378,7 +392,7 @@ async function autoQueueTrustedActions(since: string | null): Promise<number> {
   const supabase = getSupabase();
   let query = supabase
     .from("trainingpeaks_actions")
-    .select("id,status,execution_status,approved_at,created_at,last_run_id")
+    .select("id,status,execution_status,execution_mode,approved_at,created_at,last_run_id")
     .eq("action_type", "move_workout")
     .eq("status", "approved")
     .eq("execution_status", "dry_run_completed")
@@ -397,6 +411,33 @@ async function autoQueueTrustedActions(since: string | null): Promise<number> {
   }
 
   let queued = 0;
+  const retireUnsafeDryRunAction = async (
+    row: QueueCandidate,
+    reason: string
+  ): Promise<void> => {
+    const { data: retiredRow, error: retireError } = await supabase
+      .from("trainingpeaks_actions")
+      .update({
+        execution_status: "failed",
+        execution_mode: "dry_run",
+      })
+      .eq("id", row.id)
+      .eq("status", "approved")
+      .eq("execution_status", "dry_run_completed")
+      .eq("last_run_id", row.last_run_id)
+      .select("id")
+      .maybeSingle();
+    if (retireError) {
+      console.warn(
+        `[tp-actions-loop] failed to retire unsafe dry-run action ${row.id}: ${retireError.message}`
+      );
+      return;
+    }
+    if (retiredRow) {
+      console.log(`[tp-actions-loop] retired unsafe dry-run action ${row.id}: ${reason}`);
+    }
+  };
+
   for (const row of ((data as QueueCandidate[]) ?? [])) {
     if (!row.last_run_id) {
       const message = `[tp-actions-loop] skipped action ${row.id}: missing_last_run_id ${formatAutoQueueContext(
@@ -451,29 +492,13 @@ async function autoQueueTrustedActions(since: string | null): Promise<number> {
       const rejectionReason = runSnapshot
         ? `run_row_mismatch_status=${runSnapshot.status}_type=${runSnapshot.run_type}`
         : "run_row_missing";
-      const message = `[tp-actions-loop] skipped action ${row.id}: ${rejectionReason} ${formatAutoQueueContext(
-        row,
-        {
-          runStatus: runSnapshot?.status ?? null,
-          runType: runSnapshot?.run_type ?? null,
-        }
-      )}`;
-      console.log(message);
+      await retireUnsafeDryRunAction(row, rejectionReason);
       continue;
     }
 
     const trustedInspection = inspectTrustedDryRunLog((runData as { log_json?: unknown }).log_json);
     if (!trustedInspection.trusted || !hasTrustedDryRunLog((runData as { log_json?: unknown }).log_json)) {
-      const runSnapshot = runData as { status: string; run_type: string };
-      const message = `[tp-actions-loop] skipped action ${row.id}: ${trustedInspection.reason} ${formatAutoQueueContext(
-        row,
-        {
-          runStatus: runSnapshot.status,
-          runType: runSnapshot.run_type,
-          trustedInspection,
-        }
-      )}`;
-      console.log(message);
+      await retireUnsafeDryRunAction(row, trustedInspection.reason);
       continue;
     }
 
@@ -524,6 +549,61 @@ async function autoQueueTrustedActions(since: string | null): Promise<number> {
   }
 
   return queued;
+}
+
+function getRunningLocalAnchorTimestamp(row: RunningLocalCandidate): string | null {
+  return row.claimed_at ?? row.execution_requested_at ?? row.approved_at ?? row.created_at ?? null;
+}
+
+async function markStaleRunningLocalActions(): Promise<number> {
+  const supabase = getSupabase();
+  const cutoffMs = Date.now() - RUNNING_LOCAL_STALE_TIMEOUT_MINUTES * 60 * 1000;
+  const { data, error } = await supabase
+    .from("trainingpeaks_actions")
+    .select(
+      "id,status,execution_status,execution_mode,approved_at,created_at,claimed_at,execution_requested_at,last_run_id"
+    )
+    .eq("action_type", "move_workout")
+    .eq("status", "approved")
+    .eq("execution_status", "running_local")
+    .order("claimed_at", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: true })
+    .limit(100);
+  if (error) {
+    throw new Error(`Failed to load running_local actions: ${error.message}`);
+  }
+
+  let markedFailed = 0;
+  for (const row of (data as RunningLocalCandidate[]) ?? []) {
+    const anchor = getRunningLocalAnchorTimestamp(row);
+    const anchorMs = anchor ? new Date(anchor).getTime() : Number.NaN;
+    if (!Number.isFinite(anchorMs) || anchorMs >= cutoffMs) {
+      continue;
+    }
+    const { data: updatedRow, error: updateError } = await supabase
+      .from("trainingpeaks_actions")
+      .update({
+        execution_status: "failed",
+        execution_mode: "real",
+      })
+      .eq("id", row.id)
+      .eq("status", "approved")
+      .eq("execution_status", "running_local")
+      .select("id")
+      .maybeSingle();
+    if (updateError) {
+      console.warn(
+        `[tp-actions-loop] failed to mark stale running_local action ${row.id} as failed: ${updateError.message}`
+      );
+      continue;
+    }
+    if (!updatedRow) {
+      continue;
+    }
+    markedFailed += 1;
+    console.log(`[tp-actions-loop] marked stale running_local action ${row.id} as failed`);
+  }
+  return markedFailed;
 }
 
 async function selectNextDryRunActionIdSince(since: string): Promise<string | null> {
@@ -643,6 +723,7 @@ function canExecuteRealInLoop(executeRealFlag: boolean): boolean {
 
 async function runTick(options: LoopOptions, tickNo: number): Promise<void> {
   console.log(`[tp-actions-loop] tick ${tickNo} started`);
+  await markStaleRunningLocalActions();
   await runDryRunPass(options);
   const queuedCount = await autoQueueTrustedActions(options.since);
   if (queuedCount > 0) {

@@ -1102,19 +1102,6 @@ function extractExplicitSourceTimeRef(input: {
   } as TrainingPeaksMoveWorkoutTarget;
 }
 
-function formatDryRunReasonForCoach(reason: string): string {
-  if (reason === "multiple candidates on selected source date") {
-    return "Найдено несколько тренировок на исходную дату";
-  }
-  if (reason === "source date could not be resolved safely") {
-    return "Нужна исходная дата";
-  }
-  if (reason === "no planned candidate on inferred source date") {
-    return "Нужна конкретная тренировка";
-  }
-  return reason;
-}
-
 function candidateLooksCompleted(rawTextSnippet: string): boolean {
   const text = rawTextSnippet.toLowerCase();
   return /\b(done|completed|выполнено|завершено|finished|отчет|report|результат)\b/i.test(text);
@@ -1866,6 +1853,53 @@ function resolveDryRunNotificationChatId(action: TrainingPeaksActionRow): string
   return chatId;
 }
 
+function extractMoveDateRangeFromParsedPayload(
+  parsedPayload: unknown
+): { sourceDate: string | null; targetDate: string | null } {
+  if (!parsedPayload || typeof parsedPayload !== "object") {
+    return { sourceDate: null, targetDate: null };
+  }
+  const payload = parsedPayload as {
+    source?: { kind?: string; value?: string };
+    target?: { kind?: string; value?: string };
+    sourceDate?: string;
+    source_date?: string;
+  };
+  const sourceDate =
+    payload.sourceDate ??
+    payload.source_date ??
+    (payload.source?.kind === "date" && typeof payload.source.value === "string"
+      ? payload.source.value
+      : null);
+  const targetDate =
+    payload.target?.kind === "date" && typeof payload.target.value === "string" ? payload.target.value : null;
+  return {
+    sourceDate: sourceDate ?? null,
+    targetDate: targetDate ?? null,
+  };
+}
+
+function formatCompactDateShort(value: string | null): string {
+  if (!value) {
+    return "?";
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) {
+    return value;
+  }
+  return `${match[3]}.${match[2]}`;
+}
+
+function formatMoveRouteForCoach(
+  action: TrainingPeaksActionRow,
+  options?: { sourceDate?: string | null; targetDate?: string | null }
+): string {
+  const parsedDates = extractMoveDateRangeFromParsedPayload(action.parsed_payload);
+  const sourceDate = options?.sourceDate ?? parsedDates.sourceDate;
+  const targetDate = options?.targetDate ?? parsedDates.targetDate;
+  return `${formatCompactDateShort(sourceDate)} → ${formatCompactDateShort(targetDate)}`;
+}
+
 async function sendTelegramText(
   chatId: string,
   text: string,
@@ -1916,52 +1950,36 @@ async function notifyCoachDryRunResult(input: {
   chatId: string | null;
   action: TrainingPeaksActionRow;
   studentName: string;
-  statusText: string;
-  note: string;
   dryRunEvaluation?: DryRunEvaluation | null;
-  errorText?: string | null;
 }): Promise<void> {
   if (!input.chatId) {
     return;
   }
 
-  const lines = [
-    "TrainingPeaks dry-run",
-    `Action ID: ${input.action.id}`,
-    `Ученик: ${input.studentName}`,
-    `Raw text: ${input.action.raw_text}`,
-    `Target: ${getTargetSummary(input.action.parsed_payload)}`,
-    `Статус: ${input.statusText}`,
-  ];
+  const evaluation = input.dryRunEvaluation ?? null;
+  const route = formatMoveRouteForCoach(input.action, {
+    sourceDate: evaluation?.resolvedDates.sourceDate ?? undefined,
+    targetDate: evaluation?.resolvedDates.targetDate ?? undefined,
+  });
+  const lines: string[] = [];
 
-  if (input.dryRunEvaluation) {
-    const evaluation = input.dryRunEvaluation;
-    lines.push(`dryRunResult: ${evaluation.dryRunResult}`);
-    lines.push(`identity: ${evaluation.identityCheck.matchedBy}`);
-    lines.push(`DB student name: ${evaluation.identityCheck.expectedTrainingPeaksName ?? "unknown"}`);
-    lines.push(`TP visible athlete: ${evaluation.identityCheck.visibleTrainingPeaksName ?? "unknown"}`);
-    lines.push(`resolved target date: ${evaluation.resolvedDates.targetDate ?? "unknown"}`);
-    lines.push(`resolved source date: ${evaluation.resolvedDates.sourceDate ?? "unknown"}`);
-    lines.push(`candidate: ${formatCandidateLine(evaluation.candidate)}`);
-    if (!evaluation.canExecute) {
-      const reason =
-        evaluation.canExecuteReasons.map(formatDryRunReasonForCoach).join("; ") || "небезопасно выполнить";
-      lines.push(`reason: ${reason}`);
-    }
-    lines.push(`confidence: ${evaluation.confidence.toFixed(2)}`);
-    lines.push(`canExecute: ${evaluation.canExecute ? "yes" : "no"}`);
+  if (
+    evaluation &&
+    evaluation.dryRunResult === "candidate_found" &&
+    evaluation.canExecute === true
+  ) {
+    lines.push(
+      `✅ Проверка пройдена. ${input.studentName}: ${route}. Перенос поставлен в очередь на выполнение.`
+    );
+  } else {
+    lines.push(
+      `⚠️ Проверка не пройдена. ${input.studentName}: ${route}. Перенос не выполнен.`
+    );
+    lines.push("TrainingPeaks не изменён. Проверь заявку в /tp_actions.");
   }
-
-  if (input.errorText) {
-    lines.push(`Ошибка: ${input.errorText}`);
-  }
-  lines.push(input.note);
-  lines.push(
-    "TrainingPeaks не изменяется из Telegram. Реальное выполнение возможно только локальным Mac loop при включенных env-флагах."
-  );
 
   let inlineKeyboardRows: Array<Array<{ text: string; callback_data: string }>> = [];
-  if (input.dryRunEvaluation?.dryRunResult === "candidate_found") {
+  if (evaluation?.dryRunResult === "candidate_found") {
     const actionId = input.action.id;
     const cancelButton = {
       text: "❌ Отменить",
@@ -6194,33 +6212,6 @@ function evaluateDryRunOutcome(input: {
   };
 }
 
-function formatCandidateLine(candidate: DryRunCandidate | null): string {
-  if (!candidate) {
-    return "кандидат не найден";
-  }
-  const parts: string[] = [];
-  if (candidate.title) {
-    parts.push(candidate.title);
-  }
-  if (candidate.type) {
-    parts.push(`тип=${candidate.type}`);
-  }
-  if (candidate.plannedDurationSec !== null) {
-    parts.push(`длит=${candidate.plannedDurationSec}с`);
-  }
-  if (candidate.plannedDistance !== null) {
-    parts.push(`дист=${candidate.plannedDistance}км`);
-  }
-  if (candidate.startTimeLocal) {
-    parts.push(`старт=${candidate.startTimeLocal}`);
-  }
-  return parts.join(", ") || "кандидат без деталей";
-}
-
-function formatCandidateForNotification(candidate: DryRunCandidate | null): string {
-  return formatCandidateLine(candidate);
-}
-
 function normalizeTrustedDryRunLog(logJson: unknown): TrustedDryRunLog | null {
   if (!logJson || typeof logJson !== "object") {
     return null;
@@ -6596,36 +6587,23 @@ async function notifyCoachRealModeResult(input: {
     return;
   }
 
-  const lines = [
-    "TrainingPeaks real-mode revalidation",
-    `Action ID: ${input.action.id}`,
-    `Ученик: ${input.studentName}`,
-    `Raw text: ${input.action.raw_text}`,
-    `Source -> target: ${input.trustedDryRun.resolvedDates.sourceDate} -> ${input.trustedDryRun.resolvedDates.targetDate}`,
-    `Candidate: ${formatCandidateForNotification(input.candidate)}`,
-    `Revalidation: ${input.revalidationPassed ? "passed" : "failed"}`,
-  ];
+  const route = formatMoveRouteForCoach(input.action, {
+    sourceDate: input.trustedDryRun.resolvedDates.sourceDate,
+    targetDate: input.trustedDryRun.resolvedDates.targetDate,
+  });
+  const lines: string[] = [];
+  const isSuccess = input.errorMessage.includes("verification passed");
+  const isVerificationFailure =
+    input.errorMessage.includes("verification failed") || input.errorMessage.includes("manual review required");
 
-  if (input.currentEvaluation) {
-    lines.push(`Trusted identity: ${input.trustedDryRun.identityCheck.matchedBy}`);
-    lines.push(`Current identity: ${input.currentEvaluation.identityCheck.matchedBy}`);
+  if (isSuccess) {
     lines.push(
-      `Current canExecute/confidence: ${input.currentEvaluation.canExecute ? "yes" : "no"} / ${input.currentEvaluation.confidence.toFixed(2)}`
+      `✅ Перенос выполнен. ${input.studentName}: ${route}. Проверка после переноса пройдена.`
     );
-  }
-
-  if (input.comparison) {
-    lines.push(
-      `Compare source/target/fingerprint: ${input.comparison.sourceDate.matches ? "ok" : "mismatch"} / ${input.comparison.targetDate.matches ? "ok" : "mismatch"} / ${input.comparison.fingerprint.matches ? "ok" : "mismatch"}`
-    );
-    if (!input.comparison.revalidationPassed && input.comparison.mismatchReasons.length > 0) {
-      lines.push(`Reason: ${input.comparison.mismatchReasons.join("; ")}`);
-    }
-  }
-
-  lines.push(input.errorMessage);
-  if (input.includeNotChangedNote ?? true) {
-    lines.push(TRAININGPEAKS_NOT_CHANGED_NOTE);
+  } else if (isVerificationFailure) {
+    lines.push(`⚠️ Перенос не подтверждён. ${input.studentName}: ${route}. Нужна ручная проверка.`);
+  } else {
+    lines.push("⚠️ Перенос не выполнен. TrainingPeaks не изменён. Проверь заявку в /tp_actions.");
   }
 
   try {
@@ -7536,11 +7514,7 @@ async function main(): Promise<void> {
         chatId: resolveDryRunNotificationChatId(claimed.action),
         action: claimed.action,
         studentName,
-        statusText: evaluation.canExecute ? "dry-run completed (safe)" : "dry-run completed (unsafe)",
         dryRunEvaluation: evaluation,
-        note: evaluation.canExecute
-          ? "Безопасно: заявка будет поставлена в auto-queue и выполнена локальным Mac loop."
-          : "Небезопасно: TrainingPeaks не изменён, нужна ручная проверка.",
       });
 
       console.log(`Dry-run completed for action ${claimed.action.id}.`);
@@ -7612,10 +7586,7 @@ async function main(): Promise<void> {
         chatId: resolveDryRunNotificationChatId(claimed.action),
         action: claimed.action,
         studentName,
-        statusText: "dry-run failed",
         dryRunEvaluation: failedEvaluation,
-        note: "Небезопасно: TrainingPeaks не изменён, нужна ручная проверка.",
-        errorText: errorMessage,
       });
 
       throw error;

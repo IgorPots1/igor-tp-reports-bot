@@ -2602,6 +2602,16 @@ function getTrainingPeaksActionResolvedMarkup(): TelegramInlineKeyboardMarkup {
   return createInlineKeyboardMarkup([]);
 }
 
+function formatActionMoveRoute(
+  action: { parsedPayload: unknown } | null
+): string {
+  if (!action) {
+    return "? → ?";
+  }
+  const dates = extractMoveDateRangeFromParsedPayload(action.parsedPayload);
+  return `${formatCompactDateShort(dates.sourceDate)} → ${formatCompactDateShort(dates.targetDate)}`;
+}
+
 function formatActionCompactDate(value: string | null): string {
   if (!value) {
     return "—";
@@ -2679,8 +2689,11 @@ function classifyActionStatusGroup(
   ) {
     return "in_progress";
   }
-  if (action.executionStatus === "dry_run_completed" || action.executionStatus === "not_started") {
+  if (action.executionStatus === "not_started") {
     return "in_progress";
+  }
+  if (action.executionStatus === "dry_run_completed") {
+    return "needs_review";
   }
   return "in_progress";
 }
@@ -3308,7 +3321,7 @@ async function handleTrainingPeaksActionDecisionCallback(
   if (decisionResult.kind === "already_decided") {
     const alreadyDecidedText =
       decisionResult.action.status === "approved"
-        ? "Эта заявка уже одобрена. Локальный Mac loop проверит и выполнит перенос автоматически, если это безопасно."
+        ? "✅ Одобрено. Сначала запущу безопасную проверку. TrainingPeaks пока не изменён."
         : "Эта заявка уже отклонена. Ничего не изменено в TrainingPeaks.";
     await editTrainingPeaksMenuMessage(
       parsedMessage.chatId,
@@ -3321,7 +3334,7 @@ async function handleTrainingPeaksActionDecisionCallback(
 
   const decisionText =
     decision === "approve"
-      ? "Одобрено. Локальный Mac проверит и выполнит перенос автоматически, если всё безопасно."
+      ? "✅ Одобрено. Сначала запущу безопасную проверку. TrainingPeaks пока не изменён."
       : "Отклонено. Ничего не изменено в TrainingPeaks.";
 
   await editTrainingPeaksMenuMessage(
@@ -3354,10 +3367,12 @@ async function handleTrainingPeaksActionExecuteRequestCallback(
   }
 
   if (result.kind === "queued") {
+    const action = result.action;
+    const route = formatActionMoveRoute(action);
     await editTrainingPeaksMenuMessage(
       parsedMessage.chatId,
       parsedMessage.messageId,
-      "Перенос поставлен в очередь. TrainingPeaks ещё не изменён. Выполнение произойдёт только локальным runner.",
+      `✅ Проверка пройдена. Ученик: ${route}. Перенос поставлен в очередь на выполнение.`,
       getTrainingPeaksActionResolvedMarkup()
     );
     return;
@@ -3386,7 +3401,7 @@ async function handleTrainingPeaksActionExecuteRequestCallback(
   await editTrainingPeaksMenuMessage(
     parsedMessage.chatId,
     parsedMessage.messageId,
-    `Нельзя поставить в очередь: ${result.reason}`,
+    "⚠️ Перенос не выполнен. TrainingPeaks не изменён. Проверь заявку в /tp_actions.",
     getTrainingPeaksActionResolvedMarkup()
   );
 }
