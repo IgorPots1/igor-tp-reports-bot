@@ -3026,12 +3026,11 @@ async function executeApiMoveForApprovedAction(input: {
   let context: import("playwright").BrowserContext | null = null;
   try {
     context = await chromium.launchPersistentContext(profileDir, {
-      headless: false,
+      headless: true,
       viewport: null,
     });
     const page = context.pages()[0] ?? (await context.newPage());
     await page.goto(student.trainingpeaks_athlete_url, { waitUntil: "domcontentloaded", timeout: 30_000 });
-    await page.bringToFront();
     await waitForTrainingPeaksCalendarReadiness(page, []);
 
     const pageAssessment = await assessTrainingPeaksPage(page);
@@ -4582,7 +4581,7 @@ async function probeTrainingPeaksMoveCapabilities(
   const probeTask = (async () => {
     context = await runStep("launch browser context", UI_PROBE_STEP_TIMEOUTS.launchBrowserContext, async () => {
       return await chromium.launchPersistentContext(profileDir, {
-        headless: false,
+        headless: true,
         viewport: null,
       });
     });
@@ -4591,7 +4590,6 @@ async function probeTrainingPeaksMoveCapabilities(
     probePage = page;
     await runStep("open athlete page", UI_PROBE_STEP_TIMEOUTS.openAthletePage, async () => {
       await page.goto(student.trainingpeaks_athlete_url, { waitUntil: "domcontentloaded", timeout: 30_000 });
-      await page.bringToFront();
       await waitForTrainingPeaksCalendarReadiness(page, probe.warnings);
     });
 
@@ -6432,14 +6430,13 @@ async function inspectActionCalendar(claimed: ClaimedAction, runId: string): Pro
   const screenshotAfterPath = path.join(artifactDir, "after.png");
 
   const context = await chromium.launchPersistentContext(profileDir, {
-    headless: false,
+    headless: true,
     viewport: null,
   });
 
   try {
     const page = context.pages()[0] ?? (await context.newPage());
     await page.goto(student.trainingpeaks_athlete_url, { waitUntil: "domcontentloaded", timeout: 30_000 });
-    await page.bringToFront();
 
     // Phase 3D.1 safety: inspection only. Do not click, drag, drop, save, submit, or change dates in TrainingPeaks.
     console.log(`Inspection-only mode for action ${claimed.action.id}: no TrainingPeaks mutation is allowed.`);
@@ -7167,12 +7164,11 @@ async function runControlledSaveAndCloseExecution(input: {
   let context: import("playwright").BrowserContext | null = null;
   try {
     context = await chromium.launchPersistentContext(profileDir, {
-      headless: false,
+      headless: true,
       viewport: null,
     });
     const page = context.pages()[0] ?? (await context.newPage());
     await page.goto(student.trainingpeaks_athlete_url, { waitUntil: "domcontentloaded", timeout: 30_000 });
-    await page.bringToFront();
     await waitForTrainingPeaksCalendarReadiness(page, []);
 
     const pageAssessment = await assessTrainingPeaksPage(page);
