@@ -22,6 +22,7 @@ const APP_HOST = "https://app.trainingpeaks.com";
 type CliArgs = {
   from: string;
   to: string;
+  allActive: boolean;
   athleteId: number | null;
   athleteUrl: string | null;
   student: string | null;
@@ -32,6 +33,18 @@ type ResolvedTarget = {
   student: TrainingPeaksStudent;
   athleteId: number;
   athleteUrl: string;
+};
+
+type StudentSummary = {
+  studentName: string;
+  status: "ok" | "failed" | "skipped";
+  rows: number;
+  planned: number;
+  completed: number;
+  plannedButNotCompleted: number;
+  warnings: number;
+  reason?: string;
+  rawItemsReturned?: number;
 };
 
 type RepositoryCompat = {
@@ -132,9 +145,11 @@ function parseOptionalIsoDateTime(value: string | null): string | null {
 }
 
 function parseArgs(argv: string[]): CliArgs {
+  let date: string | null = null;
   const parsed: CliArgs = {
     from: "",
     to: "",
+    allActive: false,
     athleteId: null,
     athleteUrl: null,
     student: null,
@@ -142,6 +157,10 @@ function parseArgs(argv: string[]): CliArgs {
   };
 
   for (const arg of argv) {
+    if (arg.startsWith("--date=")) {
+      date = arg.slice("--date=".length).trim();
+      continue;
+    }
     if (arg.startsWith("--from=")) {
       parsed.from = arg.slice("--from=".length).trim();
       continue;
@@ -171,6 +190,10 @@ function parseArgs(argv: string[]): CliArgs {
       parsed.student = student || null;
       continue;
     }
+    if (arg === "--all-active") {
+      parsed.allActive = true;
+      continue;
+    }
     if (arg === "--headed") {
       parsed.headed = true;
       continue;
@@ -180,6 +203,17 @@ function parseArgs(argv: string[]): CliArgs {
       continue;
     }
     throw new Error(`Unknown argument: ${arg}`);
+  }
+
+  if (date && (parsed.from || parsed.to)) {
+    throw new Error("Use either --date=YYYY-MM-DD or --from=YYYY-MM-DD --to=YYYY-MM-DD, not both.");
+  }
+  if (date) {
+    if (!isIsoDate(date)) {
+      throw new Error(`Missing or invalid --date value: "${date}". Expected YYYY-MM-DD.`);
+    }
+    parsed.from = date;
+    parsed.to = date;
   }
 
   if (!isIsoDate(parsed.from)) {
@@ -192,8 +226,12 @@ function parseArgs(argv: string[]): CliArgs {
     throw new Error(`Invalid date range: --from (${parsed.from}) is after --to (${parsed.to}).`);
   }
 
-  if (!parsed.athleteId && !parsed.athleteUrl && !parsed.student) {
-    throw new Error("Provide one identity input: --athlete-id, --athlete-url, or --student.");
+  if (parsed.allActive) {
+    if (parsed.athleteId || parsed.athleteUrl || parsed.student) {
+      throw new Error("Do not combine --all-active with --athlete-id, --athlete-url, or --student.");
+    }
+  } else if (!parsed.athleteId && !parsed.athleteUrl && !parsed.student) {
+    throw new Error("Provide one identity input: --athlete-id, --athlete-url, --student, or use --all-active.");
   }
 
   return parsed;
@@ -282,6 +320,99 @@ function buildCompactSourceSnapshot(raw: TrainingPeaksWorkoutRaw): Record<string
   };
 }
 
+function hasValidAthleteUrl(value: string): boolean {
+  return Boolean(parseAthleteIdFromUrl(value));
+}
+
+async function scanOneStudent(input: {
+  page: import("playwright").Page;
+  upsertCacheFn: (rows: TrainingPeaksWorkoutCacheUpsertRow[]) => Promise<void>;
+  target: ResolvedTarget;
+  from: string;
+  to: string;
+  scannedAt: string;
+  authHeaders: Record<string, string>;
+}): Promise<StudentSummary> {
+  const { page, upsertCacheFn, target, from, to, scannedAt, authHeaders } = input;
+  const endpoint = `${TP_API_HOST}/fitness/v6/athletes/${target.athleteId}/workouts/${from}/${to}`;
+  const result = await performApiJsonRequest({
+    page,
+    method: "GET",
+    endpoint,
+    headers: authHeaders,
+  });
+
+  if (result.status !== 200) {
+    throw new Error(`TrainingPeaks workouts GET failed: status=${result.status}, ok=${result.ok}`);
+  }
+  if (!Array.isArray(result.body)) {
+    throw new Error("TrainingPeaks workouts GET returned non-array JSON body.");
+  }
+
+  const rawItems = result.body.filter((item): item is TrainingPeaksWorkoutRaw => isRecord(item));
+  const normalizedItems = normalizeTrainingPeaksWorkoutItems({
+    athleteId: target.athleteId,
+    rawItems,
+  });
+  const filteredItems = normalizedItems.filter((item) => item.workoutDate >= from && item.workoutDate <= to);
+
+  const rawByWorkoutId = new Map<number, TrainingPeaksWorkoutRaw>();
+  for (const rawItem of rawItems) {
+    const workoutId = readPositiveInt(rawItem.workoutId);
+    if (workoutId && !rawByWorkoutId.has(workoutId)) {
+      rawByWorkoutId.set(workoutId, rawItem);
+    }
+  }
+
+  const rows: TrainingPeaksWorkoutCacheUpsertRow[] = filteredItems.map((item) => {
+    const rawItem = rawByWorkoutId.get(item.trainingPeaksWorkoutId);
+    return {
+      student_id: target.student.id,
+      student_name: target.student.studentName,
+      trainingpeaks_athlete_id: item.trainingPeaksAthleteId,
+      trainingpeaks_workout_id: item.trainingPeaksWorkoutId,
+      workout_date: item.workoutDate,
+      title: item.title,
+      sport_or_type_code: item.sportOrTypeCode,
+      workout_type_value_id: item.workoutTypeValueId,
+      workout_sub_type_id: item.workoutSubTypeId,
+      is_planned: item.isPlanned,
+      is_completed: item.isCompleted,
+      planned_time_raw: item.plannedTimeRaw,
+      completed_time_raw: item.completedTimeRaw,
+      planned_distance_raw: item.plannedDistanceRaw,
+      completed_distance_raw: item.completedDistanceRaw,
+      compliance_duration_percent: item.complianceDurationPercent,
+      compliance_distance_percent: item.complianceDistancePercent,
+      start_time_planned: item.startTimePlanned,
+      start_time: item.startTime,
+      source_updated_at: parseOptionalIsoDateTime(item.lastModifiedDate),
+      order_on_day: item.orderOnDay,
+      scanned_at: scannedAt,
+      normalization_warnings: item.normalizationWarnings,
+      source_snapshot: rawItem ? buildCompactSourceSnapshot(rawItem) : {},
+    };
+  });
+
+  await upsertCacheFn(rows);
+
+  const planned = filteredItems.filter((item) => item.isPlanned).length;
+  const completed = filteredItems.filter((item) => item.isCompleted).length;
+  const plannedButNotCompleted = filteredItems.filter((item) => item.isPlanned && !item.isCompleted).length;
+  const warnings = filteredItems.reduce((acc, item) => acc + item.normalizationWarnings.length, 0);
+
+  return {
+    studentName: target.student.studentName,
+    status: "ok",
+    rows: rows.length,
+    planned,
+    completed,
+    plannedButNotCompleted,
+    warnings,
+    rawItemsReturned: result.body.length,
+  };
+}
+
 async function main(): Promise<void> {
   loadLocalEnv();
   const args = parseArgs(process.argv.slice(2));
@@ -296,9 +427,39 @@ async function main(): Promise<void> {
   }
 
   const students = await listStudentsFn();
-  const resolved = resolveTargetStudent({ args, students });
+  const targets: ResolvedTarget[] = [];
+  const summaries: StudentSummary[] = [];
 
-  const endpoint = `${TP_API_HOST}/fitness/v6/athletes/${resolved.athleteId}/workouts/${args.from}/${args.to}`;
+  if (args.allActive) {
+    const eligible = students.filter((student) => student.isActive);
+    for (const student of eligible) {
+      const athleteId = parseAthleteIdFromUrl(student.trainingPeaksAthleteUrl);
+      if (!athleteId || !hasValidAthleteUrl(student.trainingPeaksAthleteUrl)) {
+        summaries.push({
+          studentName: student.studentName,
+          status: "skipped",
+          rows: 0,
+          planned: 0,
+          completed: 0,
+          plannedButNotCompleted: 0,
+          warnings: 0,
+          reason: "missing valid TrainingPeaks athlete URL/id",
+        });
+        continue;
+      }
+      targets.push({
+        student,
+        athleteId,
+        athleteUrl: `${APP_HOST}/#calendar/athletes/${athleteId}`,
+      });
+    }
+    if (targets.length === 0) {
+      throw new Error("No eligible active students with valid TrainingPeaks athlete mapping.");
+    }
+  } else {
+    targets.push(resolveTargetStudent({ args, students }));
+  }
+
   const scannedAt = new Date().toISOString();
 
   const context = await chromium.launchPersistentContext(profileDir, {
@@ -312,10 +473,14 @@ async function main(): Promise<void> {
 
     let auth;
     try {
+      const authAthlete = targets[0]?.athleteId;
+      if (!authAthlete) {
+        throw new Error("No eligible target athlete found for auth capture.");
+      }
       auth = await captureSessionAuth({
         context,
         page,
-        athleteId: resolved.athleteId,
+        athleteId: authAthlete,
       });
     } catch (error) {
       throw new Error(`Failed to capture TrainingPeaks auth/session: ${(error as Error).message}`);
@@ -339,94 +504,68 @@ async function main(): Promise<void> {
       headers.origin = auth.sampleHeaders.origin;
     }
 
-    const result = await performApiJsonRequest({
-      page,
-      method: "GET",
-      endpoint,
-      headers,
-    });
-
-    if (result.status !== 200) {
-      throw new Error(`TrainingPeaks workouts GET failed: status=${result.status}, ok=${result.ok}`);
-    }
-    if (!Array.isArray(result.body)) {
-      throw new Error("TrainingPeaks workouts GET returned non-array JSON body.");
-    }
-
-    const rawItems = result.body.filter((item): item is TrainingPeaksWorkoutRaw => isRecord(item));
-    const normalizedItems = normalizeTrainingPeaksWorkoutItems({
-      athleteId: resolved.athleteId,
-      rawItems,
-    });
-    const filteredItems = normalizedItems.filter(
-      (item) => item.workoutDate >= args.from && item.workoutDate <= args.to,
-    );
-
-    const rawByWorkoutId = new Map<number, TrainingPeaksWorkoutRaw>();
-    for (const rawItem of rawItems) {
-      const workoutId = readPositiveInt(rawItem.workoutId);
-      if (workoutId && !rawByWorkoutId.has(workoutId)) {
-        rawByWorkoutId.set(workoutId, rawItem);
+    for (const target of targets) {
+      try {
+        const studentSummary = await scanOneStudent({
+          page,
+          upsertCacheFn,
+          target,
+          from: args.from,
+          to: args.to,
+          scannedAt,
+          authHeaders: headers,
+        });
+        summaries.push(studentSummary);
+      } catch (error) {
+        summaries.push({
+          studentName: target.student.studentName,
+          status: "failed",
+          rows: 0,
+          planned: 0,
+          completed: 0,
+          plannedButNotCompleted: 0,
+          warnings: 1,
+          reason: (error as Error).message,
+        });
       }
     }
 
-    const rows: TrainingPeaksWorkoutCacheUpsertRow[] = filteredItems.map((item) => {
-      const rawItem = rawByWorkoutId.get(item.trainingPeaksWorkoutId);
-      return {
-        student_id: resolved.student.id,
-        student_name: resolved.student.studentName,
-        trainingpeaks_athlete_id: item.trainingPeaksAthleteId,
-        trainingpeaks_workout_id: item.trainingPeaksWorkoutId,
-        workout_date: item.workoutDate,
-        title: item.title,
-        sport_or_type_code: item.sportOrTypeCode,
-        workout_type_value_id: item.workoutTypeValueId,
-        workout_sub_type_id: item.workoutSubTypeId,
-        is_planned: item.isPlanned,
-        is_completed: item.isCompleted,
-        planned_time_raw: item.plannedTimeRaw,
-        completed_time_raw: item.completedTimeRaw,
-        planned_distance_raw: item.plannedDistanceRaw,
-        completed_distance_raw: item.completedDistanceRaw,
-        compliance_duration_percent: item.complianceDurationPercent,
-        compliance_distance_percent: item.complianceDistancePercent,
-        start_time_planned: item.startTimePlanned,
-        start_time: item.startTime,
-        source_updated_at: parseOptionalIsoDateTime(item.lastModifiedDate),
-        order_on_day: item.orderOnDay,
-        scanned_at: scannedAt,
-        normalization_warnings: item.normalizationWarnings,
-        source_snapshot: rawItem ? buildCompactSourceSnapshot(rawItem) : {},
-      };
-    });
+    writeSucceeded = summaries.some((item) => item.status === "ok");
+    const selectedStudents = targets.length + summaries.filter((item) => item.status === "skipped").length;
+    const successCount = summaries.filter((item) => item.status === "ok").length;
+    const failedCount = summaries.filter((item) => item.status === "failed").length;
+    const skippedCount = summaries.filter((item) => item.status === "skipped").length;
+    const totalRawItems = summaries.reduce((acc, item) => acc + (item.rawItemsReturned ?? 0), 0);
+    const totalRows = summaries.reduce((acc, item) => acc + item.rows, 0);
+    const totalPlanned = summaries.reduce((acc, item) => acc + item.planned, 0);
+    const totalCompleted = summaries.reduce((acc, item) => acc + item.completed, 0);
+    const totalPlannedNotCompleted = summaries.reduce((acc, item) => acc + item.plannedButNotCompleted, 0);
 
-    try {
-      await upsertCacheFn(rows);
-      writeSucceeded = true;
-    } catch (error) {
-      throw new Error(
-        `Failed writing to trainingpeaks_workout_cache (is migration applied?): ${(error as Error).message}`,
+    console.log("[tp-workouts-cache-scan] Summary");
+    console.log(`mode: ${args.allActive ? "all-active" : "single-student"}`);
+    console.log(`date_range: ${args.from} -> ${args.to}`);
+    console.log(`selected_students: ${selectedStudents}`);
+    console.log(`scanned_successfully: ${successCount}`);
+    console.log(`failed: ${failedCount}`);
+    console.log(`skipped: ${skippedCount}`);
+    console.log(`total_raw_items: ${totalRawItems}`);
+    console.log(`total_upserted_rows: ${totalRows}`);
+    console.log(`total_planned: ${totalPlanned}`);
+    console.log(`total_completed: ${totalCompleted}`);
+    console.log(`total_planned_but_not_completed: ${totalPlannedNotCompleted}`);
+    console.log(`table_write_succeeded: ${writeSucceeded ? "yes" : "no"}`);
+    console.log("");
+    console.log("per_student:");
+    for (const item of summaries.sort((a, b) => a.studentName.localeCompare(b.studentName))) {
+      const shortReason = item.reason ? ` (${item.reason})` : "";
+      console.log(
+        `- ${item.studentName}: rows=${item.rows}, planned=${item.planned}, completed=${item.completed}, planned_not_completed=${item.plannedButNotCompleted}, warnings=${item.warnings}, status=${item.status}${shortReason}`,
       );
     }
 
-    const plannedCount = filteredItems.filter((item) => item.isPlanned).length;
-    const completedCount = filteredItems.filter((item) => item.isCompleted).length;
-    const plannedButNotCompletedCount = filteredItems.filter((item) => item.isPlanned && !item.isCompleted).length;
-    const warningsCount = filteredItems.reduce((acc, item) => acc + item.normalizationWarnings.length, 0);
-
-    console.log("[tp-workouts-cache-scan] Summary");
-    console.log(`athlete_id: ${resolved.athleteId}`);
-    console.log(`student_name: ${resolved.student.studentName}`);
-    console.log(`date_range: ${args.from} -> ${args.to}`);
-    console.log(`raw_items_returned: ${result.body.length}`);
-    console.log(`normalized_items: ${normalizedItems.length}`);
-    console.log(`filtered_in_range_items: ${filteredItems.length}`);
-    console.log(`upserted_rows: ${rows.length}`);
-    console.log(`planned_count: ${plannedCount}`);
-    console.log(`completed_count: ${completedCount}`);
-    console.log(`planned_but_not_completed_count: ${plannedButNotCompletedCount}`);
-    console.log(`warnings_count: ${warningsCount}`);
-    console.log(`table_write_succeeded: ${writeSucceeded ? "yes" : "no"}`);
+    if (!args.allActive && failedCount > 0) {
+      throw new Error("Single-student scan failed.");
+    }
   } finally {
     await context.close().catch(() => {});
   }
