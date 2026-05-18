@@ -6,6 +6,10 @@ import { chromium, type Request, type Response } from "playwright";
 
 import { profileDir, toolRoot } from "./lib/paths.ts";
 import { captureSessionAuth, performApiJsonRequest, redactUnknown } from "./lib/trainingpeaks-api-move.ts";
+import {
+  normalizeTrainingPeaksWorkoutItems,
+  type TrainingPeaksWorkoutRaw,
+} from "./lib/trainingpeaks-workout-normalization.ts";
 
 const TP_API_HOST = "https://tpapi.trainingpeaks.com";
 const APP_HOST = "https://app.trainingpeaks.com";
@@ -316,6 +320,12 @@ type ScriptSummary = {
     plannedAndCompletedCandidates: number;
     recentWindowSamples: number;
     futureSamples: number;
+  };
+  normalizedSampleCounts: {
+    normalizedCount: number;
+    droppedCount: number;
+    warningCount: number;
+    warningsSample: string[];
   };
   fieldSemanticsHypothesis: FieldSemanticsHypothesis;
   firstPassNormalizationContract: "safe" | "blocked";
@@ -1602,6 +1612,8 @@ function createSummaryMarkdown(summary: ScriptSummary): string {
     `- candidate_title_fields: ${summary.candidateTitleFields.length ? summary.candidateTitleFields.map((value) => `\`${value}\``).join(", ") : "none"}`,
     `- candidate_completed_flag_fields: ${summary.candidateCompletedFlagFields.length ? summary.candidateCompletedFlagFields.map((value) => `\`${value}\``).join(", ") : "none"}`,
     `- semantic_sample_counts: planned=${summary.semanticSampleCounts.plannedCandidates}, completed=${summary.semanticSampleCounts.completedCandidates}, planned_not_completed=${summary.semanticSampleCounts.plannedButNotCompletedCandidates}, planned_and_completed=${summary.semanticSampleCounts.plannedAndCompletedCandidates}, recent14d=${summary.semanticSampleCounts.recentWindowSamples}, future=${summary.semanticSampleCounts.futureSamples}`,
+    `- normalized_sample_counts: normalized=${summary.normalizedSampleCounts.normalizedCount}, dropped=${summary.normalizedSampleCounts.droppedCount}, warnings=${summary.normalizedSampleCounts.warningCount}`,
+    `- normalized_warning_samples: ${summary.normalizedSampleCounts.warningsSample.length ? summary.normalizedSampleCounts.warningsSample.join("; ") : "none"}`,
     `- hypothesis_likely_fields: planned_duration=\`${summary.fieldSemanticsHypothesis.likelyPlannedDurationField ?? "none"}\`, completed_duration=\`${summary.fieldSemanticsHypothesis.likelyCompletedDurationField ?? "none"}\`, planned_distance=\`${summary.fieldSemanticsHypothesis.likelyPlannedDistanceField ?? "none"}\`, completed_distance=\`${summary.fieldSemanticsHypothesis.likelyCompletedDistanceField ?? "none"}\`, completion_indicator=\`${summary.fieldSemanticsHypothesis.likelyCompletionIndicator ?? "none"}\``,
     `- hypothesis_confidence: **${summary.fieldSemanticsHypothesis.confidence}**`,
     `- hypothesis_blockers: ${summary.fieldSemanticsHypothesis.blockersForNormalization.length ? summary.fieldSemanticsHypothesis.blockersForNormalization.join("; ") : "none"}`,
@@ -1806,6 +1818,19 @@ async function main(): Promise<void> {
     normalizationContractSufficient: workoutsSchemaArtifact.normalizationContractSufficient,
     artifactPath: workoutsSemanticSamplesPath,
   });
+  const rawWorkoutItemsForNormalization = semanticWorkoutItems.filter(
+    (item): item is TrainingPeaksWorkoutRaw => isRecord(item),
+  );
+  const normalizedWorkouts = normalizeTrainingPeaksWorkoutItems({
+    athleteId: resolvedAthleteId,
+    rawItems: rawWorkoutItemsForNormalization,
+  });
+  const warningSet = new Set<string>();
+  for (const item of normalizedWorkouts) {
+    for (const warning of item.normalizationWarnings) {
+      warningSet.add(warning);
+    }
+  }
 
   const summary: ScriptSummary = {
     athleteId: String(resolvedAthleteId),
@@ -1836,6 +1861,12 @@ async function main(): Promise<void> {
       plannedAndCompletedCandidates: semanticSamplesArtifact.plannedAndCompletedCandidates.count,
       recentWindowSamples: semanticSamplesArtifact.recentWindowSamples.count,
       futureSamples: semanticSamplesArtifact.futureSamples.count,
+    },
+    normalizedSampleCounts: {
+      normalizedCount: normalizedWorkouts.length,
+      droppedCount: rawWorkoutItemsForNormalization.length - normalizedWorkouts.length,
+      warningCount: warningSet.size,
+      warningsSample: [...warningSet].slice(0, 8),
     },
     fieldSemanticsHypothesis: semanticSamplesArtifact.fieldSemanticsHypothesis,
     firstPassNormalizationContract: semanticSamplesArtifact.firstPassNormalizationContract,
@@ -2030,6 +2061,14 @@ async function main(): Promise<void> {
     }, planned_not_completed=${summary.semanticSampleCounts.plannedButNotCompletedCandidates}, planned_and_completed=${
       summary.semanticSampleCounts.plannedAndCompletedCandidates
     }, recent14d=${summary.semanticSampleCounts.recentWindowSamples}, future=${summary.semanticSampleCounts.futureSamples}`,
+  );
+  console.log(
+    `normalized_sample_counts: normalized=${summary.normalizedSampleCounts.normalizedCount}, dropped=${summary.normalizedSampleCounts.droppedCount}, warnings=${summary.normalizedSampleCounts.warningCount}`,
+  );
+  console.log(
+    `normalized_warning_samples: ${
+      summary.normalizedSampleCounts.warningsSample.length ? summary.normalizedSampleCounts.warningsSample.join(" | ") : "none"
+    }`,
   );
   console.log(
     `field_semantics_hypothesis: plannedDuration=${summary.fieldSemanticsHypothesis.likelyPlannedDurationField ?? "none"}, completedDuration=${
