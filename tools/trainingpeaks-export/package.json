@@ -24,6 +24,7 @@
     "tp-discover-events-api": "tsx scripts/tp-discover-events-api.ts",
     "tp-discover-workouts-api": "tsx scripts/tp-discover-workouts-api.ts",
     "tp-discover-custom-metrics-api": "tsx scripts/tp-discover-custom-metrics-api.ts",
+    "tp-custom-metrics-availability-report": "tsx scripts/tp-custom-metrics-availability-report.ts",
     "check-trainingpeaks-custom-metrics-normalization": "tsx scripts/check-trainingpeaks-custom-metrics-normalization.ts",
     "tp-workouts-cache-scan": "tsx scripts/tp-workouts-cache-scan.ts",
     "tp-workouts-cache-report": "tsx scripts/tp-workouts-cache-report.ts",
