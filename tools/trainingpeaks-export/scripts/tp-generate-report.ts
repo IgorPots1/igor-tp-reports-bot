@@ -3,6 +3,9 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { createClient } from "@supabase/supabase-js";
+import { buildTrainingPeaksRecoverySummary } from "./lib/trainingpeaks-recovery-summary.ts";
+import { findStudentById, readStudentsConfig } from "./lib/students.ts";
 
 type CliArgs = {
   student: string;
@@ -136,7 +139,40 @@ type ReportDraft = {
   source_summary_path: string;
   model: string;
   created_at: string;
+  recovery_context: RecoveryContextForPrompt | null;
   report_markdown: string;
+};
+
+type RecoveryContextDecision =
+  | "included"
+  | "skipped_insufficient_data"
+  | "skipped_no_profile"
+  | "skipped_no_cache";
+
+type RecoveryContextForPrompt = {
+  decision: RecoveryContextDecision;
+  student_id: string;
+  student_name: string;
+  profile: {
+    status: string;
+    recovery_metrics_enabled: boolean;
+  } | null;
+  summary: ReturnType<typeof buildTrainingPeaksRecoverySummary> | null;
+  include_in_athlete_report: boolean;
+};
+
+type HealthMetricProfileRow = {
+  student_id: string;
+  student_name: string;
+  status: string;
+  recovery_metrics_enabled: boolean;
+};
+
+type HealthMetricCacheRow = {
+  metric_key: string;
+  metric_date: string;
+  value_numeric: number | null;
+  value_avg_numeric: number | null;
 };
 
 const DEFAULT_REPORT_MODEL = "gpt-4.1-mini";
@@ -240,6 +276,19 @@ function loadDotEnvFile(dotEnvPath: string): void {
   }
 }
 
+function loadLocalEnv(): void {
+  const repoRoot = path.resolve(toolRoot, "..", "..");
+  const envPaths = [
+    path.join(repoRoot, ".env.local"),
+    path.join(repoRoot, ".env"),
+    path.join(toolRoot, ".env"),
+  ];
+
+  for (const envPath of envPaths) {
+    loadDotEnvFile(envPath);
+  }
+}
+
 function readTextFileSyncSafe(filePath: string): string | null {
   try {
     return readFileSync(filePath, "utf8");
@@ -259,6 +308,17 @@ function getRequiredEnv(name: "OPENAI_API_KEY"): string {
   return value;
 }
 
+function getRequiredSupabaseEnv(name: "SUPABASE_URL" | "SUPABASE_SERVICE_ROLE_KEY"): string {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(
+      `Missing ${name}. Recovery context will be skipped unless Supabase credentials are available.`
+    );
+  }
+
+  return value;
+}
+
 function getReportModel(): string {
   return process.env.OPENAI_REPORT_MODEL?.trim() || DEFAULT_REPORT_MODEL;
 }
@@ -272,8 +332,9 @@ function stripMarkdownFences(markdown: string): string {
 function buildSystemPrompt(): string {
   return [
     "Ты готовишь черновик недельного отчета тренера по бегу на русском языке.",
-    "Используй weekly-summary.json как единственный источник данных.",
+    "Используй weekly-summary.json как основной источник данных и recovery_context как дополнительный опциональный источник, если он передан.",
     "Опирайся в первую очередь на детерминированные поля: week_metrics, source.workout_files, segment_analysis, workouts[].classification, workouts[].planned, workouts[].completed, workouts[].comparison, workouts[].segment_analysis, workouts[].segment_comparison.",
+    "Если доступен блок восстановления Garmin/TrainingPeaks, используй его как дополнительный контекст. Не делай медицинских выводов. Не сравнивай ученика с другими людьми. Если данных мало или baseline не подключён, явно не делай сильных выводов. HRV и пульс оценивай осторожно, как сигналы, требующие личной базы.",
     "Не рассчитывай выводы из raw-строк и не делай собственные агрегаты из сырых полей, если уже есть нормализованные значения.",
     "Не придумывай недостающие данные, цели, причины, самочувствие, травмы, прогресс, объем, зоны или выводы.",
     "Если planned.distance_km отсутствует или week_metrics.data_quality.planned_distance_available=false, не пиши, что дистанция совпала с планом.",
@@ -339,7 +400,7 @@ function buildSystemPrompt(): string {
   ].join("\n");
 }
 
-function buildUserPrompt(summary: WeeklySummary): string {
+function buildUserPrompt(summary: WeeklySummary, recoveryContext: RecoveryContextForPrompt | null): string {
   return [
     "Сгенерируй компактный и полезный недельный отчет тренера.",
     "Важно:",
@@ -378,6 +439,11 @@ function buildUserPrompt(summary: WeeklySummary): string {
     "- Не перечисляй больше 3 блоков на тренировку; для интервальных работ суммируй повторы.",
     "- Не используй source.workout_files, segment_analysis или segment_comparison для собственных вычислений; только для аккуратного описания того, что уже есть в JSON.",
     "- Не используй raw для собственных расчетов.",
+    "- Если передан recovery_context и recovery_context.include_in_athlete_report=true, можешь добавить 1-2 осторожных bullet-пункта в раздел 'Риски и наблюдения' как дополнительный контекст восстановления.",
+    "- Если recovery_context отсутствует, include_in_athlete_report=false или decision начинается с skipped_, не добавляй отдельный recovery-блок и не форсируй выводы о восстановлении.",
+    "",
+    "recovery_context (optional):",
+    JSON.stringify(recoveryContext, null, 2),
     "",
     "weekly-summary.json:",
     JSON.stringify(summary, null, 2)
@@ -388,6 +454,7 @@ async function requestReportMarkdown(params: {
   apiKey: string;
   model: string;
   summary: WeeklySummary;
+  recoveryContext: RecoveryContextForPrompt | null;
 }): Promise<string> {
   const response = await fetch(OPENAI_API_URL, {
     method: "POST",
@@ -405,7 +472,7 @@ async function requestReportMarkdown(params: {
         },
         {
           role: "user",
-          content: buildUserPrompt(params.summary)
+          content: buildUserPrompt(params.summary, params.recoveryContext)
         }
       ]
     }),
@@ -433,8 +500,135 @@ async function requestReportMarkdown(params: {
   return `${stripMarkdownFences(content)}\n`;
 }
 
+async function buildRecoveryContext(input: {
+  args: CliArgs;
+  summary: WeeklySummary;
+}): Promise<RecoveryContextForPrompt | null> {
+  try {
+    const supabase = createClient(
+      getRequiredSupabaseEnv("SUPABASE_URL"),
+      getRequiredSupabaseEnv("SUPABASE_SERVICE_ROLE_KEY"),
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false,
+        },
+      }
+    );
+
+    const studentId = summary.student_id || input.args.student;
+    let studentName = studentId;
+    try {
+      const students = await readStudentsConfig();
+      const student = findStudentById(students, studentId);
+      if (student?.name) {
+        studentName = student.name;
+      }
+    } catch {
+      debugLog("Recovery context: students config unavailable, using student_id as label.");
+    }
+
+    let profile: HealthMetricProfileRow | undefined;
+    const { data: profileRowsById, error: profileByIdError } = await supabase
+      .from("trainingpeaks_student_health_metric_profiles")
+      .select("student_id, student_name, status, recovery_metrics_enabled")
+      .eq("student_id", studentId)
+      .limit(1);
+    if (profileByIdError) {
+      throw new Error(`Failed to read recovery profile by student_id: ${profileByIdError.message}`);
+    }
+    profile = (profileRowsById as HealthMetricProfileRow[] | null)?.[0];
+
+    if (!profile && studentName) {
+      const { data: profileRowsByName, error: profileByNameError } = await supabase
+        .from("trainingpeaks_student_health_metric_profiles")
+        .select("student_id, student_name, status, recovery_metrics_enabled")
+        .eq("student_name", studentName)
+        .limit(1);
+      if (profileByNameError) {
+        throw new Error(`Failed to read recovery profile by student_name: ${profileByNameError.message}`);
+      }
+      profile = (profileRowsByName as HealthMetricProfileRow[] | null)?.[0];
+    }
+
+    if (!profile) {
+      return {
+        decision: "skipped_no_profile",
+        student_id: studentId,
+        student_name: studentName,
+        profile: null,
+        summary: null,
+        include_in_athlete_report: false,
+      };
+    }
+
+    const { data: metricRows, error: metricsError } = await supabase
+      .from("trainingpeaks_health_metrics_cache")
+      .select("metric_key, metric_date, value_numeric, value_avg_numeric")
+      .eq("student_id", profile.student_id)
+      .gte("metric_date", input.args.from)
+      .lte("metric_date", input.args.to)
+      .order("metric_date", { ascending: true })
+      .order("metric_timestamp", { ascending: true })
+      .order("metric_type_id", { ascending: true });
+    if (metricsError) {
+      throw new Error(`Failed to read health metrics cache: ${metricsError.message}`);
+    }
+    const rows = (metricRows as HealthMetricCacheRow[] | null) ?? [];
+    if (rows.length === 0) {
+      return {
+        decision: "skipped_no_cache",
+        student_id: profile.student_id,
+        student_name: profile.student_name,
+        profile: {
+          status: profile.status,
+          recovery_metrics_enabled: profile.recovery_metrics_enabled,
+        },
+        summary: null,
+        include_in_athlete_report: false,
+      };
+    }
+
+    const recoverySummary = buildTrainingPeaksRecoverySummary({
+      studentName: profile.student_name,
+      from: input.args.from,
+      to: input.args.to,
+      profile: {
+        status: profile.status,
+        recovery_metrics_enabled: profile.recovery_metrics_enabled,
+      },
+      metrics: rows.map((row) => ({
+        metric_key: row.metric_key,
+        metric_date: row.metric_date,
+        value_numeric: row.value_numeric,
+        value_avg_numeric: row.value_avg_numeric,
+      })),
+      baseline: null,
+    });
+
+    const include =
+      profile.recovery_metrics_enabled &&
+      (recoverySummary.status === "ready" || recoverySummary.status === "partial");
+
+    return {
+      decision: include ? "included" : "skipped_insufficient_data",
+      student_id: profile.student_id,
+      student_name: profile.student_name,
+      profile: {
+        status: profile.status,
+        recovery_metrics_enabled: profile.recovery_metrics_enabled,
+      },
+      summary: recoverySummary,
+      include_in_athlete_report: include,
+    };
+  } catch (error: unknown) {
+    debugLog("Recovery context failed, fallback to null:", error);
+    return null;
+  }
+}
+
 async function main(): Promise<void> {
-  loadDotEnvFile(path.join(toolRoot, ".env"));
+  loadLocalEnv();
 
   const args = parseArgs(process.argv.slice(2));
   const summaryPath = path.join(parsedRoot, args.student, `${args.from}_${args.to}`, "weekly-summary.json");
@@ -455,10 +649,14 @@ async function main(): Promise<void> {
   debugLog(`Model used: ${model}`);
 
   const summary = JSON.parse(await readFile(summaryPath, "utf8")) as WeeklySummary;
+  const recoveryContext = await buildRecoveryContext({ args, summary });
+  const recoveryDecision = recoveryContext?.decision ?? "skipped_insufficient_data";
+  console.log(`recovery_context: ${recoveryDecision}`);
   const reportMarkdown = await requestReportMarkdown({
     apiKey,
     model,
-    summary
+    summary,
+    recoveryContext,
   });
   const createdAt = new Date().toISOString();
 
@@ -471,6 +669,7 @@ async function main(): Promise<void> {
     source_summary_path: relativeToToolRoot(summaryPath),
     model,
     created_at: createdAt,
+    recovery_context: recoveryContext,
     report_markdown: reportMarkdown
   };
 
