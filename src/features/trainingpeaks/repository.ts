@@ -465,6 +465,96 @@ export type UpsertTrainingPeaksBusinessChatInput = {
   lastSeenAt?: string;
 };
 
+export type TrainingPeaksWorkoutCacheRow = {
+  id: string;
+  studentId: string;
+  studentName: string;
+  trainingPeaksAthleteId: number;
+  trainingPeaksWorkoutId: number;
+  workoutDate: string;
+  title: string | null;
+  sportOrTypeCode: string | null;
+  workoutTypeValueId: number | null;
+  workoutSubTypeId: number | null;
+  isPlanned: boolean;
+  isCompleted: boolean;
+  plannedTimeRaw: number | string | null;
+  completedTimeRaw: number | string | null;
+  plannedDistanceRaw: number | string | null;
+  completedDistanceRaw: number | string | null;
+  complianceDurationPercent: number | string | null;
+  complianceDistancePercent: number | string | null;
+  startTimePlanned: string | null;
+  startTime: string | null;
+  sourceUpdatedAt: string | null;
+  orderOnDay: number | string | null;
+  scannedAt: string;
+  scanJobId: string | null;
+  normalizationWarnings: string[];
+  sourceSnapshot: unknown;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type TrainingPeaksWorkoutCacheDbRow = {
+  id: string;
+  student_id: string;
+  student_name: string;
+  trainingpeaks_athlete_id: number;
+  trainingpeaks_workout_id: number;
+  workout_date: string;
+  title: string | null;
+  sport_or_type_code: string | null;
+  workout_type_value_id: number | null;
+  workout_sub_type_id: number | null;
+  is_planned: boolean;
+  is_completed: boolean;
+  planned_time_raw: number | string | null;
+  completed_time_raw: number | string | null;
+  planned_distance_raw: number | string | null;
+  completed_distance_raw: number | string | null;
+  compliance_duration_percent: number | string | null;
+  compliance_distance_percent: number | string | null;
+  start_time_planned: string | null;
+  start_time: string | null;
+  source_updated_at: string | null;
+  order_on_day: number | string | null;
+  scanned_at: string;
+  scan_job_id: string | null;
+  normalization_warnings: string[];
+  source_snapshot: unknown;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TrainingPeaksWorkoutCacheUpsertRow = {
+  student_id: string;
+  student_name: string;
+  trainingpeaks_athlete_id: number;
+  trainingpeaks_workout_id: number;
+  workout_date: string;
+  title?: string | null;
+  sport_or_type_code?: string | null;
+  workout_type_value_id?: number | null;
+  workout_sub_type_id?: number | null;
+  is_planned: boolean;
+  is_completed: boolean;
+  planned_time_raw?: number | string | null;
+  completed_time_raw?: number | string | null;
+  planned_distance_raw?: number | string | null;
+  completed_distance_raw?: number | string | null;
+  compliance_duration_percent?: number | string | null;
+  compliance_distance_percent?: number | string | null;
+  start_time_planned?: string | null;
+  start_time?: string | null;
+  source_updated_at?: string | null;
+  order_on_day?: number | string | null;
+  scanned_at?: string;
+  scan_job_id?: string | null;
+  normalization_warnings?: string[];
+  source_snapshot?: unknown;
+};
+
 export type TrainingPeaksStudentTelegramLinkCodeStatus = "active" | "used" | "expired";
 
 export type TrainingPeaksStudentTelegramLinkCode = {
@@ -742,6 +832,41 @@ function mapTrainingPeaksStudentTelegramLinkCodeRow(
   };
 }
 
+function mapTrainingPeaksWorkoutCacheRow(
+  row: TrainingPeaksWorkoutCacheDbRow
+): TrainingPeaksWorkoutCacheRow {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    studentName: row.student_name,
+    trainingPeaksAthleteId: row.trainingpeaks_athlete_id,
+    trainingPeaksWorkoutId: row.trainingpeaks_workout_id,
+    workoutDate: row.workout_date,
+    title: row.title,
+    sportOrTypeCode: row.sport_or_type_code,
+    workoutTypeValueId: row.workout_type_value_id,
+    workoutSubTypeId: row.workout_sub_type_id,
+    isPlanned: row.is_planned,
+    isCompleted: row.is_completed,
+    plannedTimeRaw: row.planned_time_raw,
+    completedTimeRaw: row.completed_time_raw,
+    plannedDistanceRaw: row.planned_distance_raw,
+    completedDistanceRaw: row.completed_distance_raw,
+    complianceDurationPercent: row.compliance_duration_percent,
+    complianceDistancePercent: row.compliance_distance_percent,
+    startTimePlanned: row.start_time_planned,
+    startTime: row.start_time,
+    sourceUpdatedAt: row.source_updated_at,
+    orderOnDay: row.order_on_day,
+    scannedAt: row.scanned_at,
+    scanJobId: row.scan_job_id,
+    normalizationWarnings: row.normalization_warnings,
+    sourceSnapshot: row.source_snapshot,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function pickDefinedValues<T extends Record<string, unknown>>(value: T): Partial<T> {
   return Object.fromEntries(
     Object.entries(value).filter(([, entryValue]) => entryValue !== undefined)
@@ -859,6 +984,117 @@ export async function setTrainingPeaksStudentWeeklyReportsEnabledById(
   }
 
   return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
+}
+
+export async function upsertTrainingPeaksWorkoutCacheRows(
+  rows: TrainingPeaksWorkoutCacheUpsertRow[]
+): Promise<void> {
+  if (rows.length === 0) {
+    return;
+  }
+
+  const supabase = createSupabaseServerClient();
+  const updatedAt = new Date().toISOString();
+  const payload = rows.map((row) => ({
+    ...row,
+    updated_at: updatedAt,
+  }));
+
+  const { error } = await supabase.from("trainingpeaks_workout_cache").upsert(payload, {
+    onConflict: "trainingpeaks_athlete_id,trainingpeaks_workout_id",
+  });
+
+  if (error) {
+    throw new Error(`Failed to upsert TrainingPeaks workout cache rows: ${error.message}`);
+  }
+}
+
+export async function listTrainingPeaksWorkoutCacheForDate(
+  date: string
+): Promise<TrainingPeaksWorkoutCacheRow[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_workout_cache")
+    .select("*")
+    .eq("workout_date", date)
+    .order("student_name", { ascending: true })
+    .order("trainingpeaks_workout_id", { ascending: true });
+
+  if (error) {
+    throw new Error(`Failed to list TrainingPeaks workout cache for date ${date}: ${error.message}`);
+  }
+
+  return ((data as TrainingPeaksWorkoutCacheDbRow[]) ?? []).map(mapTrainingPeaksWorkoutCacheRow);
+}
+
+export async function listTrainingPeaksWorkoutCacheForStudentDateRange(input: {
+  studentId: string;
+  from: string;
+  to: string;
+}): Promise<TrainingPeaksWorkoutCacheRow[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_workout_cache")
+    .select("*")
+    .eq("student_id", input.studentId)
+    .gte("workout_date", input.from)
+    .lte("workout_date", input.to)
+    .order("workout_date", { ascending: true })
+    .order("trainingpeaks_workout_id", { ascending: true });
+
+  if (error) {
+    throw new Error(
+      `Failed to list TrainingPeaks workout cache for student ${input.studentId} and range ${input.from}..${input.to}: ${error.message}`
+    );
+  }
+
+  return ((data as TrainingPeaksWorkoutCacheDbRow[]) ?? []).map(mapTrainingPeaksWorkoutCacheRow);
+}
+
+export async function getTrainingPeaksWorkoutCacheFreshness(input?: {
+  date?: string;
+}): Promise<{ latestScannedAt: string | null; rowCount: number }> {
+  const supabase = createSupabaseServerClient();
+
+  const latestQuery = input?.date
+    ? supabase
+        .from("trainingpeaks_workout_cache")
+        .select("scanned_at")
+        .eq("workout_date", input.date)
+        .order("scanned_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    : supabase
+        .from("trainingpeaks_workout_cache")
+        .select("scanned_at")
+        .order("scanned_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+  const countQuery = input?.date
+    ? supabase
+        .from("trainingpeaks_workout_cache")
+        .select("id", { count: "exact", head: true })
+        .eq("workout_date", input.date)
+    : supabase.from("trainingpeaks_workout_cache").select("id", { count: "exact", head: true });
+
+  const [{ data: latestRow, error: latestError }, { count, error: countError }] = await Promise.all([
+    latestQuery,
+    countQuery,
+  ]);
+
+  if (latestError) {
+    throw new Error(`Failed to get TrainingPeaks workout cache freshness: ${latestError.message}`);
+  }
+
+  if (countError) {
+    throw new Error(`Failed to count TrainingPeaks workout cache rows: ${countError.message}`);
+  }
+
+  return {
+    latestScannedAt: (latestRow as { scanned_at: string } | null)?.scanned_at ?? null,
+    rowCount: count ?? 0,
+  };
 }
 
 export async function listTrainingPeaksStudents(): Promise<TrainingPeaksStudent[]> {
