@@ -34,6 +34,8 @@ import {
   listLatestTrainingPeaksActionRunsByActionIds,
   listTrainingPeaksStudents,
   listTrainingPeaksStudentsIncludingArchived,
+  listTrainingPeaksWorkoutCacheForDateRange,
+  listTrainingPeaksWorkoutCacheScanStatusesForRange,
   markTrainingPeaksStudentTelegramLinkCodeUsed,
   rejectTrainingPeaksAction as rejectTrainingPeaksActionInRepository,
   requestTrainingPeaksActionExecution as requestTrainingPeaksActionExecutionInRepository,
@@ -73,9 +75,10 @@ import {
   updateTrainingPeaksWeeklyReportReviewState as updateTrainingPeaksWeeklyReportReviewStateInRepository,
   updateTrainingPeaksWeeklyReportStateById,
 } from "@/features/trainingpeaks/repository";
+import { classifyTrainingPeaksWorkoutActivity } from "@/features/trainingpeaks/workout-activity-classification";
 import { parseMoveWorkoutWithAiFallback } from "@/features/trainingpeaks/move-workout-parser-ai";
+import { TRAININGPEAKS_TIME_ZONE, resolveTrainingPeaksWeekKeyword } from "@/features/trainingpeaks/week";
 import type { TelegramMessage } from "@/features/telegram/types";
-import { resolveTrainingPeaksWeekKeyword } from "@/features/trainingpeaks/week";
 import {
   normalizeTrainingPeaksStudentId,
   validateTrainingPeaksStudentId,
@@ -1923,6 +1926,47 @@ function pushUniqueAttentionSignal(
   }
 }
 
+function getBelgradeIsoDate(value: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TRAININGPEAKS_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(value);
+  const year = Number(parts.find((part) => part.type === "year")?.value ?? "");
+  const month = Number(parts.find((part) => part.type === "month")?.value ?? "");
+  const day = Number(parts.find((part) => part.type === "day")?.value ?? "");
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    throw new Error("Unable to derive Belgrade date.");
+  }
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function shiftBelgradeIsoDate(isoDate: string, days: number): string {
+  const match = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return isoDate;
+  }
+  const shifted = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + days, 12, 0, 0));
+  return getBelgradeIsoDate(shifted);
+}
+
+function getYesterdayBelgradeIsoDate(now = new Date()): string {
+  const today = getBelgradeIsoDate(now);
+  return shiftBelgradeIsoDate(today, -1);
+}
+
+function formatMissedRunningWorkoutReason(count: number): string {
+  const lastTwoDigits = Math.abs(count) % 100;
+  const lastDigit = Math.abs(count) % 10;
+  const noun = lastTwoDigits >= 11 && lastTwoDigits <= 14
+    ? "беговых тренировок"
+    : lastDigit >= 2 && lastDigit <= 4
+      ? "беговые тренировки"
+      : "беговых тренировок";
+  return `вчера ${count} ${noun}, выполнения не найдено`;
+}
+
 export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaksAttentionSnapshot> {
   const [actions, jobs] = await Promise.all([
     listRecentTrainingPeaksActionsFromRepository(50),
@@ -1935,6 +1979,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
   const urgent: TrainingPeaksAttentionSignal[] = [];
   const today: TrainingPeaksAttentionSignal[] = [];
   const observe: TrainingPeaksAttentionSignal[] = [];
+  const fyi: TrainingPeaksAttentionSignal[] = [];
 
   for (const action of actions) {
     const studentName = action.studentName?.trim() || null;
@@ -1984,6 +2029,106 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     // before surfacing intermediate statuses in /tp_attention.
   }
 
+  const yesterdayDate = getYesterdayBelgradeIsoDate();
+  const [activeStudents, yesterdayWorkoutRows, yesterdayScanStatuses] = await Promise.all([
+    listTrainingPeaksStudents(),
+    listTrainingPeaksWorkoutCacheForDateRange({
+      from: yesterdayDate,
+      to: yesterdayDate,
+    }),
+    listTrainingPeaksWorkoutCacheScanStatusesForRange({
+      from: yesterdayDate,
+      to: yesterdayDate,
+    }),
+  ]);
+
+  const scanStatusByStudentId = new Map<string, (typeof yesterdayScanStatuses)[number]>();
+  for (const status of yesterdayScanStatuses) {
+    if (!scanStatusByStudentId.has(status.studentId)) {
+      scanStatusByStudentId.set(status.studentId, status);
+    }
+  }
+
+  const rowsByStudentId = new Map<string, (typeof yesterdayWorkoutRows)>();
+  for (const row of yesterdayWorkoutRows) {
+    const rows = rowsByStudentId.get(row.studentId) ?? [];
+    rows.push(row);
+    rowsByStudentId.set(row.studentId, rows);
+  }
+
+  let missingScanCount = 0;
+  for (const student of activeStudents) {
+    const studentName = student.studentName?.trim() || null;
+    const scanStatus = scanStatusByStudentId.get(student.id);
+
+    if (!scanStatus) {
+      missingScanCount += 1;
+      continue;
+    }
+
+    if (scanStatus.status === "failed") {
+      pushUniqueAttentionSignal(observe, {
+        level: "observe",
+        studentName,
+        reason: "скан тренировок за вчера завершился с ошибкой",
+      });
+      continue;
+    }
+
+    if (scanStatus.status !== "ok") {
+      continue;
+    }
+
+    const studentRows = rowsByStudentId.get(student.id) ?? [];
+    if (studentRows.length === 0) {
+      continue;
+    }
+
+    let missedRunningPlannedCount = 0;
+    for (const row of studentRows) {
+      if (!row.isPlanned || row.isCompleted) {
+        continue;
+      }
+
+      const classification = classifyTrainingPeaksWorkoutActivity({
+        title: row.title,
+        sportOrTypeCode: row.sportOrTypeCode,
+        workoutTypeValueId: row.workoutTypeValueId,
+        workoutSubTypeId: row.workoutSubTypeId,
+        sourceSnapshot: row.sourceSnapshot,
+      });
+
+      if (classification.isRunning) {
+        missedRunningPlannedCount += 1;
+      }
+    }
+
+    if (missedRunningPlannedCount === 1) {
+      pushUniqueAttentionSignal(today, {
+        level: "today",
+        studentName,
+        reason: "вчера была беговая тренировка, выполнения не найдено",
+      });
+      continue;
+    }
+
+    if (missedRunningPlannedCount > 1) {
+      pushUniqueAttentionSignal(today, {
+        level: "today",
+        studentName,
+        reason: formatMissedRunningWorkoutReason(missedRunningPlannedCount),
+      });
+    }
+  }
+
+  if (missingScanCount > 0) {
+    pushUniqueAttentionSignal(fyi, {
+      level: "fyi",
+      studentName: null,
+      reason: `Нет свежего скана тренировок за вчера для ${missingScanCount} учеников`,
+    });
+  }
+
   for (const job of jobs) {
     if (job.status !== "failed") {
       continue;
@@ -2012,7 +2157,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     urgent,
     today,
     observe,
-    fyi: [],
+    fyi,
   };
 }
 

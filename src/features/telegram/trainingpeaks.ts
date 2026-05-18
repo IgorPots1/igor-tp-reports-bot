@@ -1651,7 +1651,10 @@ async function handleTrainingPeaksAttention(parsedMessage: ParsedTelegramUpdate)
   const observe = buildAttentionSection("Наблюдать", snapshot.observe, sectionLimit);
 
   const hasSignals = snapshot.urgent.length > 0 || snapshot.today.length > 0 || snapshot.observe.length > 0;
-  const fyiLines = ["FYI", hasSignals ? "• Нет" : "• Активных сигналов больше нет"];
+  const fyiLines = buildAttentionSection("FYI", snapshot.fyi, sectionLimit);
+  if (snapshot.fyi.length === 0 && !hasSignals) {
+    fyiLines.splice(1, fyiLines.length - 1, "• Активных сигналов больше нет");
+  }
 
   await sendTrainingPeaksMessage(
     parsedMessage.chatId,
