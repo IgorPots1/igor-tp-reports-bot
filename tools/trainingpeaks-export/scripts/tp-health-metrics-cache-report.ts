@@ -10,6 +10,10 @@ import type {
 } from "../../../src/features/trainingpeaks/repository.ts";
 import * as trainingPeaksRepository from "../../../src/features/trainingpeaks/repository.ts";
 import { toolRoot } from "./lib/paths.ts";
+import {
+  buildTrainingPeaksRecoverySummary,
+  type RecoverySummaryResult,
+} from "./lib/trainingpeaks-recovery-summary.ts";
 
 const OUTPUT_DIR = path.join(toolRoot, "debug", "health-metrics-cache-report");
 const OUTPUT_JSON = path.join(OUTPUT_DIR, "report.json");
@@ -52,6 +56,7 @@ type StudentSummary = {
   first_metric_date: string | null;
   last_metric_date: string | null;
   weekly_recovery_summary: WeeklyRecoverySummary;
+  recovery_summary: RecoverySummaryResult;
 };
 
 type ReportArtifact = {
@@ -305,6 +310,22 @@ function summarizeStudent(input: {
   const { profile, rows, rangeDays } = input;
   const metricKeys = [...new Set(rows.map((row) => row.metricKey))].sort((a, b) => a.localeCompare(b));
   const metricDates = [...new Set(rows.map((row) => row.metricDate))].sort();
+  const recoverySummary = buildTrainingPeaksRecoverySummary({
+    studentName: profile.studentName,
+    from: metricDates[0] ?? "",
+    to: metricDates.at(-1) ?? "",
+    profile: {
+      status: profile.status,
+      recovery_metrics_enabled: profile.recoveryMetricsEnabled,
+    },
+    metrics: rows.map((row) => ({
+      metric_key: row.metricKey,
+      metric_date: row.metricDate,
+      value_numeric: row.valueNumeric,
+      value_avg_numeric: row.valueAvgNumeric,
+    })),
+    baseline: null,
+  });
 
   return {
     student_id: profile.studentId,
@@ -317,6 +338,7 @@ function summarizeStudent(input: {
     first_metric_date: metricDates[0] ?? null,
     last_metric_date: metricDates.at(-1) ?? null,
     weekly_recovery_summary: computeWeeklyRecoverySummary(rows),
+    recovery_summary: recoverySummary,
   };
 }
 
@@ -378,6 +400,15 @@ function printCompactReport(input: {
     console.log(
       `  weekly: avg_sleep_hours=${formatCompactValue(summary.weekly_recovery_summary.avg_sleep_hours)}, nights_lt_6h=${summary.weekly_recovery_summary.nights_sleep_lt_6h}, nights_lt_7h=${summary.weekly_recovery_summary.nights_sleep_lt_7h}, avg_hrv=${formatCompactValue(summary.weekly_recovery_summary.avg_hrv)}, avg_pulse=${formatCompactValue(summary.weekly_recovery_summary.avg_pulse)}, avg_body_battery=${formatCompactValue(summary.weekly_recovery_summary.avg_body_battery)}, avg_stress_level=${formatCompactValue(summary.weekly_recovery_summary.avg_stress_level)}`
     );
+    console.log(
+      `  recovery_summary: status=${summary.recovery_summary.status}, signals=${Object.entries(
+        summary.recovery_summary.signals
+      )
+        .filter(([, value]) => value)
+        .map(([key]) => key)
+        .join(", ") || "(none)"}`
+    );
+    console.log(`  recovery_text: ${summary.recovery_summary.text.replace(/\n/g, " | ")}`);
   }
 }
 
@@ -399,6 +430,15 @@ function createMarkdown(report: ReportArtifact): string {
     lines.push(
       `  - weekly: avg_sleep_hours=${formatCompactValue(student.weekly_recovery_summary.avg_sleep_hours)}, nights_sleep_lt_6h=${student.weekly_recovery_summary.nights_sleep_lt_6h}, nights_sleep_lt_7h=${student.weekly_recovery_summary.nights_sleep_lt_7h}, avg_hrv=${formatCompactValue(student.weekly_recovery_summary.avg_hrv)}, avg_pulse=${formatCompactValue(student.weekly_recovery_summary.avg_pulse)}, avg_body_battery=${formatCompactValue(student.weekly_recovery_summary.avg_body_battery)}, avg_stress_level=${formatCompactValue(student.weekly_recovery_summary.avg_stress_level)}`
     );
+    lines.push(
+      `  - recovery_summary: status=${student.recovery_summary.status}, signals=${Object.entries(
+        student.recovery_summary.signals
+      )
+        .filter(([, value]) => value)
+        .map(([key]) => key)
+        .join(", ") || "(none)"}`
+    );
+    lines.push(`  - recovery_text: ${student.recovery_summary.text.replace(/\n/g, " | ")}`);
   }
   lines.push("");
   lines.push("## Artifacts");
