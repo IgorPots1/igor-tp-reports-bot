@@ -28,6 +28,35 @@ SUPABASE_SERVICE_ROLE_KEY=...
 
 `TELEGRAM_WEBHOOK_SECRET` is required in production. Production webhook requests are rejected unless Telegram sends the same value in the `x-telegram-bot-api-secret-token` header. Development keeps the current bypass when the variable is unset and logs a warning once.
 
+## TrainingPeaks Morning Attention Digest
+
+Endpoint path:
+
+```text
+/api/cron/trainingpeaks-attention-digest
+```
+
+Required production variables:
+
+```text
+CRON_SECRET
+TELEGRAM_BOT_TOKEN
+TELEGRAM_COACH_CHAT_IDS
+SUPABASE_URL
+SUPABASE_SERVICE_ROLE_KEY
+```
+
+Vercel reminder: `CRON_SECRET` must be added to the `igor-tp-reports-bot` Vercel project, not the Second Brain project.
+
+Vercel cron uses UTC. The configured schedule is `0 6 * * *`, which matches 08:00 Europe/Belgrade during summer time. If exact local 08:00 matters year-round, adjust this seasonally.
+
+Manual production test:
+
+```bash
+curl -i -X POST "https://<production-domain>/api/cron/trainingpeaks-attention-digest" \
+  -H "Authorization: Bearer <CRON_SECRET>"
+```
+
 ## Telegram Webhook
 
 Webhook endpoint path:
