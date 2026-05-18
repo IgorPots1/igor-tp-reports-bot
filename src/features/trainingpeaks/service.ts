@@ -31,6 +31,7 @@ import {
   listTrainingPeaksStudentTelegramLinkCodesByCode,
   listRecentTrainingPeaksJobs,
   listRecentTrainingPeaksActions as listRecentTrainingPeaksActionsFromRepository,
+  listLatestTrainingPeaksActionRunsByActionIds,
   listTrainingPeaksStudents,
   listTrainingPeaksStudentsIncludingArchived,
   markTrainingPeaksStudentTelegramLinkCodeUsed,
@@ -1927,6 +1928,9 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     listRecentTrainingPeaksActionsFromRepository(50),
     listRecentTrainingPeaksJobs(40),
   ]);
+  const latestRunsByActionId = await listLatestTrainingPeaksActionRunsByActionIds(
+    actions.map((action) => action.id)
+  );
 
   const urgent: TrainingPeaksAttentionSignal[] = [];
   const today: TrainingPeaksAttentionSignal[] = [];
@@ -1947,6 +1951,28 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
       action.executionStatus === "failed" &&
       isWithinLookbackHours(action.updatedAt, 48)
     ) {
+      const latestRun = latestRunsByActionId.get(action.id);
+      const isResolvedAction = action.status === "rejected";
+
+      if (isResolvedAction) {
+        continue;
+      }
+
+      if (latestRun) {
+        if (latestRun.status === "completed") {
+          continue;
+        }
+
+        if (latestRun.status === "failed" && isWithinLookbackHours(latestRun.createdAt, 48)) {
+          pushUniqueAttentionSignal(urgent, {
+            level: "urgent",
+            studentName,
+            reason: "выполнение переноса завершилось с ошибкой",
+          });
+        }
+        continue;
+      }
+
       pushUniqueAttentionSignal(urgent, {
         level: "urgent",
         studentName,
@@ -1954,16 +1980,8 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
       });
     }
 
-    if (
-      (action.executionStatus === "dry_run_running" || action.executionStatus === "execute_pending") &&
-      !isWithinLookbackHours(action.updatedAt, 4)
-    ) {
-      pushUniqueAttentionSignal(observe, {
-        level: "observe",
-        studentName,
-        reason: "заявка долго находится в промежуточном статусе",
-      });
-    }
+    // Stuck detection is temporarily disabled: we need a more reliable source of truth
+    // before surfacing intermediate statuses in /tp_attention.
   }
 
   for (const job of jobs) {

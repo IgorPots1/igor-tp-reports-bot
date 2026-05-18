@@ -2192,6 +2192,35 @@ export async function createTrainingPeaksActionRun(
   return mapTrainingPeaksActionRunRow(data as TrainingPeaksActionRunRow);
 }
 
+export async function listLatestTrainingPeaksActionRunsByActionIds(
+  actionIds: string[]
+): Promise<Map<string, TrainingPeaksActionRun>> {
+  const normalizedActionIds = Array.from(new Set(actionIds.map((id) => id.trim()).filter(Boolean)));
+  if (normalizedActionIds.length === 0) {
+    return new Map();
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_action_runs")
+    .select("*")
+    .in("action_id", normalizedActionIds)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new Error(`Failed to list latest TrainingPeaks action runs: ${error.message}`);
+  }
+
+  const latestByActionId = new Map<string, TrainingPeaksActionRun>();
+  for (const row of (data as TrainingPeaksActionRunRow[] | null) ?? []) {
+    if (!latestByActionId.has(row.action_id)) {
+      latestByActionId.set(row.action_id, mapTrainingPeaksActionRunRow(row));
+    }
+  }
+
+  return latestByActionId;
+}
+
 export async function completeTrainingPeaksActionDryRun(
   actionId: string,
   input: CompleteTrainingPeaksActionDryRunInput
