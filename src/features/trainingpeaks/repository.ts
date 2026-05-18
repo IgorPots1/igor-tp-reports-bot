@@ -1027,6 +1027,35 @@ export async function listTrainingPeaksWorkoutCacheForDate(
   return ((data as TrainingPeaksWorkoutCacheDbRow[]) ?? []).map(mapTrainingPeaksWorkoutCacheRow);
 }
 
+export async function listTrainingPeaksWorkoutCacheForDateRange(input: {
+  from: string;
+  to: string;
+  studentId?: string;
+}): Promise<TrainingPeaksWorkoutCacheRow[]> {
+  const supabase = createSupabaseServerClient();
+  let query = supabase
+    .from("trainingpeaks_workout_cache")
+    .select("*")
+    .gte("workout_date", input.from)
+    .lte("workout_date", input.to)
+    .order("student_name", { ascending: true })
+    .order("workout_date", { ascending: true })
+    .order("trainingpeaks_workout_id", { ascending: true });
+
+  if (input.studentId) {
+    query = query.eq("student_id", input.studentId);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    throw new Error(
+      `Failed to list TrainingPeaks workout cache for range ${input.from}..${input.to}: ${error.message}`
+    );
+  }
+
+  return ((data as TrainingPeaksWorkoutCacheDbRow[]) ?? []).map(mapTrainingPeaksWorkoutCacheRow);
+}
+
 export async function listTrainingPeaksWorkoutCacheForStudentDateRange(input: {
   studentId: string;
   from: string;
