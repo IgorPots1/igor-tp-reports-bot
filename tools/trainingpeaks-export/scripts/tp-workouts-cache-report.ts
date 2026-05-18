@@ -3,11 +3,31 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import type {
+  TrainingPeaksWorkoutCacheScanStatus,
   TrainingPeaksStudent,
   TrainingPeaksWorkoutCacheRow,
 } from "../../../src/features/trainingpeaks/repository.ts";
+import * as workoutActivityClassification from "../../../src/features/trainingpeaks/workout-activity-classification.ts";
 import * as trainingPeaksRepository from "../../../src/features/trainingpeaks/repository.ts";
 import { toolRoot } from "./lib/paths.ts";
+import type { TrainingPeaksWorkoutActivityFamily } from "../../../src/features/trainingpeaks/workout-activity-classification.ts";
+
+const classifyTrainingPeaksWorkoutActivity = (
+  workoutActivityClassification as {
+    classifyTrainingPeaksWorkoutActivity?: unknown;
+    default?: { classifyTrainingPeaksWorkoutActivity?: unknown };
+  }
+).classifyTrainingPeaksWorkoutActivity ??
+  (
+    workoutActivityClassification as {
+      classifyTrainingPeaksWorkoutActivity?: unknown;
+      default?: { classifyTrainingPeaksWorkoutActivity?: unknown };
+    }
+  ).default?.classifyTrainingPeaksWorkoutActivity;
+
+if (typeof classifyTrainingPeaksWorkoutActivity !== "function") {
+  throw new Error("Failed to load classifyTrainingPeaksWorkoutActivity helper.");
+}
 
 type CliArgs = {
   from: string;
@@ -25,6 +45,10 @@ type RepositoryCompat = {
   getTrainingPeaksWorkoutCacheFreshness?: (input?: {
     date?: string;
   }) => Promise<{ latestScannedAt: string | null; rowCount: number }>;
+  listTrainingPeaksWorkoutCacheScanStatusesForRange?: (input: {
+    from: string;
+    to: string;
+  }) => Promise<TrainingPeaksWorkoutCacheScanStatus[]>;
   default?: {
     listTrainingPeaksStudents?: () => Promise<TrainingPeaksStudent[]>;
     listTrainingPeaksWorkoutCacheForDateRange?: (input: {
@@ -35,6 +59,10 @@ type RepositoryCompat = {
     getTrainingPeaksWorkoutCacheFreshness?: (input?: {
       date?: string;
     }) => Promise<{ latestScannedAt: string | null; rowCount: number }>;
+    listTrainingPeaksWorkoutCacheScanStatusesForRange?: (input: {
+      from: string;
+      to: string;
+    }) => Promise<TrainingPeaksWorkoutCacheScanStatus[]>;
   };
 };
 
@@ -204,13 +232,45 @@ function formatDateTime(value: string | null): string {
   return `${year}-${month}-${day} ${hours}:${minutes}`;
 }
 
+function formatFamilyLabel(family: TrainingPeaksWorkoutActivityFamily): string {
+  switch (family) {
+    case "walk_hike":
+      return "walk/hike";
+    case "day_off":
+      return "day off";
+    case "run":
+      return "run";
+    case "strength":
+      return "strength";
+    case "bike":
+      return "bike";
+    case "swim":
+      return "swim";
+    case "paddle":
+      return "paddle";
+    case "row":
+      return "row";
+    case "ski":
+      return "ski";
+    case "crosstrain":
+      return "crosstrain";
+    case "other":
+      return "other";
+    case "unknown":
+      return "unknown";
+    default:
+      return "unknown";
+  }
+}
+
 function printReport(input: {
   from: string;
   to: string;
   rows: TrainingPeaksWorkoutCacheRow[];
+  scanStatuses: TrainingPeaksWorkoutCacheScanStatus[];
   globalFreshness: { latestScannedAt: string | null; rowCount: number };
 }): void {
-  const { from, to, rows, globalFreshness } = input;
+  const { from, to, rows, scanStatuses, globalFreshness } = input;
   const label = from === to ? from : `${from}..${to}`;
   const latestScannedAtInResult = rows.reduce<string | null>((latest, row) => {
     if (!latest || row.scannedAt > latest) {
@@ -223,6 +283,35 @@ function printReport(input: {
   console.log(`Range: ${label}`);
   console.log(`Rows: ${rows.length}`);
   console.log(`Latest scan: ${formatDateTime(latestScannedAtInResult)}`);
+  console.log("");
+
+  const scannedStudentsCount = scanStatuses.length;
+  const okCount = scanStatuses.filter((row) => row.status === "ok").length;
+  const failedCount = scanStatuses.filter((row) => row.status === "failed").length;
+  const skippedCount = scanStatuses.filter((row) => row.status === "skipped").length;
+  const latestScannedAtFromStatus = scanStatuses.reduce<string | null>((latest, row) => {
+    if (!latest || row.scannedAt > latest) {
+      return row.scannedAt;
+    }
+    return latest;
+  }, null);
+  const failedOrSkipped = scanStatuses.filter((row) => row.status === "failed" || row.status === "skipped");
+
+  console.log("Scan status");
+  console.log(`Scanned students: ${scannedStudentsCount}`);
+  console.log(`OK: ${okCount}`);
+  console.log(`Failed: ${failedCount}`);
+  console.log(`Skipped: ${skippedCount}`);
+  console.log(`Latest scanned_at: ${formatDateTime(latestScannedAtFromStatus)}`);
+  if (failedOrSkipped.length > 0) {
+    console.log("Failed/skipped students:");
+    for (const row of failedOrSkipped) {
+      const message = row.errorMessage?.trim();
+      const athleteLabel = row.trainingPeaksAthleteId ?? "n/a";
+      const suffix = message ? ` (${message})` : "";
+      console.log(`- ${row.studentName} [athlete=${athleteLabel}]: ${row.status}${suffix}`);
+    }
+  }
   console.log("");
 
   if (rows.length === 0) {
@@ -251,25 +340,89 @@ function printReport(input: {
   for (const studentKey of studentKeys) {
     const studentRows = rowsByStudent.get(studentKey) ?? [];
     const [, studentName] = studentKey.split("::");
-    const plannedCount = studentRows.filter((row) => row.isPlanned).length;
-    const completedCount = studentRows.filter((row) => row.isCompleted).length;
-    const plannedButNotCompleted = studentRows.filter((row) => row.isPlanned && !row.isCompleted);
-    const completedWithoutPlanCount = studentRows.filter((row) => !row.isPlanned && row.isCompleted).length;
+    const classifiedRows = studentRows.map((row) => ({
+      row,
+      classification: classifyTrainingPeaksWorkoutActivity({
+        title: row.title,
+        sportOrTypeCode: row.sportOrTypeCode,
+        workoutTypeValueId: row.workoutTypeValueId,
+        workoutSubTypeId: row.workoutSubTypeId,
+        sourceSnapshot: row.sourceSnapshot,
+      }),
+    }));
+
+    const plannedCount = classifiedRows.filter((entry) => entry.row.isPlanned).length;
+    const completedCount = classifiedRows.filter((entry) => entry.row.isCompleted).length;
+    const plannedButNotCompleted = classifiedRows.filter(
+      (entry) => entry.row.isPlanned && !entry.row.isCompleted
+    );
+    const completedWithoutPlanCount = classifiedRows.filter(
+      (entry) => !entry.row.isPlanned && entry.row.isCompleted
+    ).length;
+
+    const runningPlannedCount = classifiedRows.filter(
+      (entry) => entry.row.isPlanned && entry.classification.isRunning
+    ).length;
+    const runningCompletedCount = classifiedRows.filter(
+      (entry) => entry.row.isCompleted && entry.classification.isRunning
+    ).length;
+    const runningPlannedButNotCompleted = classifiedRows.filter(
+      (entry) => entry.row.isPlanned && entry.classification.isRunning && !entry.row.isCompleted
+    );
+
+    const nonRunningCompleted = classifiedRows.filter(
+      (entry) => entry.row.isCompleted && !entry.classification.isRunning
+    );
+    const strengthCompletedCount = nonRunningCompleted.filter(
+      (entry) => entry.classification.family === "strength"
+    ).length;
+    const paddleCompletedCount = nonRunningCompleted.filter(
+      (entry) => entry.classification.family === "paddle"
+    ).length;
+    const unknownCompletedCount = nonRunningCompleted.filter(
+      (entry) => entry.classification.family === "unknown"
+    ).length;
+    const otherCompletedCount = nonRunningCompleted.filter(
+      (entry) =>
+        entry.classification.family !== "strength" &&
+        entry.classification.family !== "paddle" &&
+        entry.classification.family !== "unknown"
+    ).length;
     const warningsCount = studentRows.reduce((acc, row) => acc + row.normalizationWarnings.length, 0);
 
     console.log(studentName);
+    console.log("All activities");
     console.log(`- planned: ${plannedCount}`);
     console.log(`- completed: ${completedCount}`);
     console.log(`- planned but not completed: ${plannedButNotCompleted.length}`);
     console.log(`- completed without plan: ${completedWithoutPlanCount}`);
+    console.log("Running");
+    console.log(`- running planned: ${runningPlannedCount}`);
+    console.log(`- running completed: ${runningCompletedCount}`);
+    console.log(`- running planned but not completed: ${runningPlannedButNotCompleted.length}`);
+    console.log("Other completed");
+    console.log(`- strength completed: ${strengthCompletedCount}`);
+    console.log(`- paddle completed: ${paddleCompletedCount}`);
+    console.log(`- other completed: ${otherCompletedCount}`);
+    console.log(`- unknown completed: ${unknownCompletedCount}`);
     console.log(`- warnings: ${warningsCount}`);
     console.log("");
 
-    if (plannedButNotCompleted.length > 0) {
-      console.log("Planned but not completed");
-      for (const row of plannedButNotCompleted) {
-        const title = row.title?.trim() ? row.title.trim() : "(no title)";
-        console.log(`- ${formatWorkoutDate(row.workoutDate)} - ${title}`);
+    if (runningPlannedButNotCompleted.length > 0) {
+      console.log("Running planned but not completed");
+      for (const entry of runningPlannedButNotCompleted) {
+        const title = entry.row.title?.trim() ? entry.row.title.trim() : "(no title)";
+        console.log(`- ${formatWorkoutDate(entry.row.workoutDate)} - ${title}`);
+      }
+      console.log("");
+    }
+
+    if (nonRunningCompleted.length > 0) {
+      console.log("Other completed");
+      for (const entry of nonRunningCompleted) {
+        const title = entry.row.title?.trim() ? entry.row.title.trim() : "(no title)";
+        const familyLabel = formatFamilyLabel(entry.classification.family);
+        console.log(`- ${formatWorkoutDate(entry.row.workoutDate)} - ${title} - ${familyLabel}`);
       }
       console.log("");
     }
@@ -293,27 +446,39 @@ async function main(): Promise<void> {
   const freshnessFn =
     repoCompat.getTrainingPeaksWorkoutCacheFreshness ??
     repoCompat.default?.getTrainingPeaksWorkoutCacheFreshness;
+  const listScanStatusesFn =
+    repoCompat.listTrainingPeaksWorkoutCacheScanStatusesForRange ??
+    repoCompat.default?.listTrainingPeaksWorkoutCacheScanStatusesForRange;
 
-  if (!listStudentsFn || !listRangeFn || !freshnessFn) {
+  if (!listStudentsFn || !listRangeFn || !freshnessFn || !listScanStatusesFn) {
     throw new Error("TrainingPeaks repository helpers are unavailable in this runtime.");
   }
 
   const students = await listStudentsFn();
   const studentId = resolveStudentId({ students, studentNeedle: args.student });
 
-  const [rows, globalFreshness] = await Promise.all([
+  const [rows, scanStatuses, globalFreshness] = await Promise.all([
     listRangeFn({
       from: args.from,
       to: args.to,
       studentId: studentId ?? undefined,
     }),
+    listScanStatusesFn({
+      from: args.from,
+      to: args.to,
+    }),
     freshnessFn(),
   ]);
+
+  const filteredScanStatuses = studentId
+    ? scanStatuses.filter((status) => status.studentId === studentId)
+    : scanStatuses;
 
   printReport({
     from: args.from,
     to: args.to,
     rows,
+    scanStatuses: filteredScanStatuses,
     globalFreshness,
   });
 }

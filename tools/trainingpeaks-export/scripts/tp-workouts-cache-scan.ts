@@ -6,6 +6,7 @@ import { chromium } from "playwright";
 
 import type {
   TrainingPeaksStudent,
+  TrainingPeaksWorkoutCacheScanStatusUpsertRow,
   TrainingPeaksWorkoutCacheUpsertRow,
 } from "../../../src/features/trainingpeaks/repository.ts";
 import * as trainingPeaksRepository from "../../../src/features/trainingpeaks/repository.ts";
@@ -36,9 +37,12 @@ type ResolvedTarget = {
 };
 
 type StudentSummary = {
+  studentId: string;
+  athleteId: number | null;
   studentName: string;
   status: "ok" | "failed" | "skipped";
   rows: number;
+  normalizedRows: number;
   planned: number;
   completed: number;
   plannedButNotCompleted: number;
@@ -50,9 +54,15 @@ type StudentSummary = {
 type RepositoryCompat = {
   listTrainingPeaksStudents?: () => Promise<TrainingPeaksStudent[]>;
   upsertTrainingPeaksWorkoutCacheRows?: (rows: TrainingPeaksWorkoutCacheUpsertRow[]) => Promise<void>;
+  upsertTrainingPeaksWorkoutCacheScanStatuses?: (
+    rows: TrainingPeaksWorkoutCacheScanStatusUpsertRow[],
+  ) => Promise<void>;
   default?: {
     listTrainingPeaksStudents?: () => Promise<TrainingPeaksStudent[]>;
     upsertTrainingPeaksWorkoutCacheRows?: (rows: TrainingPeaksWorkoutCacheUpsertRow[]) => Promise<void>;
+    upsertTrainingPeaksWorkoutCacheScanStatuses?: (
+      rows: TrainingPeaksWorkoutCacheScanStatusUpsertRow[],
+    ) => Promise<void>;
   };
 };
 
@@ -324,6 +334,11 @@ function hasValidAthleteUrl(value: string): boolean {
   return Boolean(parseAthleteIdFromUrl(value));
 }
 
+function toCompactErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error ?? "unknown error");
+  return raw.replace(/\s+/g, " ").trim().slice(0, 240);
+}
+
 async function scanOneStudent(input: {
   page: import("playwright").Page;
   upsertCacheFn: (rows: TrainingPeaksWorkoutCacheUpsertRow[]) => Promise<void>;
@@ -402,9 +417,12 @@ async function scanOneStudent(input: {
   const warnings = filteredItems.reduce((acc, item) => acc + item.normalizationWarnings.length, 0);
 
   return {
+    studentId: target.student.id,
+    athleteId: target.athleteId,
     studentName: target.student.studentName,
     status: "ok",
     rows: rows.length,
+    normalizedRows: filteredItems.length,
     planned,
     completed,
     plannedButNotCompleted,
@@ -421,8 +439,11 @@ async function main(): Promise<void> {
     repoCompat.listTrainingPeaksStudents ?? repoCompat.default?.listTrainingPeaksStudents;
   const upsertCacheFn =
     repoCompat.upsertTrainingPeaksWorkoutCacheRows ?? repoCompat.default?.upsertTrainingPeaksWorkoutCacheRows;
+  const upsertScanStatusesFn =
+    repoCompat.upsertTrainingPeaksWorkoutCacheScanStatuses ??
+    repoCompat.default?.upsertTrainingPeaksWorkoutCacheScanStatuses;
 
-  if (!listStudentsFn || !upsertCacheFn) {
+  if (!listStudentsFn || !upsertCacheFn || !upsertScanStatusesFn) {
     throw new Error("TrainingPeaks repository helpers are unavailable in this runtime.");
   }
 
@@ -436,9 +457,12 @@ async function main(): Promise<void> {
       const athleteId = parseAthleteIdFromUrl(student.trainingPeaksAthleteUrl);
       if (!athleteId || !hasValidAthleteUrl(student.trainingPeaksAthleteUrl)) {
         summaries.push({
+          studentId: student.id,
+          athleteId: null,
           studentName: student.studentName,
           status: "skipped",
           rows: 0,
+          normalizedRows: 0,
           planned: 0,
           completed: 0,
           plannedButNotCompleted: 0,
@@ -518,17 +542,42 @@ async function main(): Promise<void> {
         summaries.push(studentSummary);
       } catch (error) {
         summaries.push({
+          studentId: target.student.id,
+          athleteId: target.athleteId,
           studentName: target.student.studentName,
           status: "failed",
           rows: 0,
+          normalizedRows: 0,
           planned: 0,
           completed: 0,
           plannedButNotCompleted: 0,
           warnings: 1,
-          reason: (error as Error).message,
+          reason: toCompactErrorMessage(error),
         });
       }
     }
+
+    const statusRows: TrainingPeaksWorkoutCacheScanStatusUpsertRow[] = summaries
+      .filter((item) => item.studentId)
+      .map((item) => ({
+        student_id: item.studentId,
+        student_name: item.studentName,
+        trainingpeaks_athlete_id: item.athleteId,
+        scan_from: args.from,
+        scan_to: args.to,
+        status: item.status,
+        raw_items_count: item.rawItemsReturned ?? 0,
+        normalized_items_count: item.normalizedRows,
+        upserted_rows_count: item.rows,
+        planned_count: item.planned,
+        completed_count: item.completed,
+        planned_not_completed_count: item.plannedButNotCompleted,
+        warnings_count: item.warnings,
+        error_message: item.status === "ok" ? null : (item.reason ?? null),
+        scanned_at: scannedAt,
+      }));
+
+    await upsertScanStatusesFn(statusRows);
 
     writeSucceeded = summaries.some((item) => item.status === "ok");
     const selectedStudents = targets.length + summaries.filter((item) => item.status === "skipped").length;

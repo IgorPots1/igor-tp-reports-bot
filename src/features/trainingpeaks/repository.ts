@@ -555,6 +555,66 @@ export type TrainingPeaksWorkoutCacheUpsertRow = {
   source_snapshot?: unknown;
 };
 
+export type TrainingPeaksWorkoutCacheScanStatus = {
+  id: string;
+  studentId: string;
+  studentName: string;
+  trainingPeaksAthleteId: number | null;
+  scanFrom: string;
+  scanTo: string;
+  status: "ok" | "failed" | "skipped";
+  rawItemsCount: number;
+  normalizedItemsCount: number;
+  upsertedRowsCount: number;
+  plannedCount: number;
+  completedCount: number;
+  plannedNotCompletedCount: number;
+  warningsCount: number;
+  errorMessage: string | null;
+  scannedAt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type TrainingPeaksWorkoutCacheScanStatusDbRow = {
+  id: string;
+  student_id: string;
+  student_name: string;
+  trainingpeaks_athlete_id: number | null;
+  scan_from: string;
+  scan_to: string;
+  status: "ok" | "failed" | "skipped";
+  raw_items_count: number;
+  normalized_items_count: number;
+  upserted_rows_count: number;
+  planned_count: number;
+  completed_count: number;
+  planned_not_completed_count: number;
+  warnings_count: number;
+  error_message: string | null;
+  scanned_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TrainingPeaksWorkoutCacheScanStatusUpsertRow = {
+  student_id: string;
+  student_name: string;
+  trainingpeaks_athlete_id: number | null;
+  scan_from: string;
+  scan_to: string;
+  status: "ok" | "failed" | "skipped";
+  raw_items_count?: number;
+  normalized_items_count?: number;
+  upserted_rows_count?: number;
+  planned_count?: number;
+  completed_count?: number;
+  planned_not_completed_count?: number;
+  warnings_count?: number;
+  error_message?: string | null;
+  scanned_at?: string;
+};
+
 export type TrainingPeaksStudentTelegramLinkCodeStatus = "active" | "used" | "expired";
 
 export type TrainingPeaksStudentTelegramLinkCode = {
@@ -867,6 +927,31 @@ function mapTrainingPeaksWorkoutCacheRow(
   };
 }
 
+function mapTrainingPeaksWorkoutCacheScanStatusRow(
+  row: TrainingPeaksWorkoutCacheScanStatusDbRow
+): TrainingPeaksWorkoutCacheScanStatus {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    studentName: row.student_name,
+    trainingPeaksAthleteId: row.trainingpeaks_athlete_id,
+    scanFrom: row.scan_from,
+    scanTo: row.scan_to,
+    status: row.status,
+    rawItemsCount: row.raw_items_count,
+    normalizedItemsCount: row.normalized_items_count,
+    upsertedRowsCount: row.upserted_rows_count,
+    plannedCount: row.planned_count,
+    completedCount: row.completed_count,
+    plannedNotCompletedCount: row.planned_not_completed_count,
+    warningsCount: row.warnings_count,
+    errorMessage: row.error_message,
+    scannedAt: row.scanned_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function pickDefinedValues<T extends Record<string, unknown>>(value: T): Partial<T> {
   return Object.fromEntries(
     Object.entries(value).filter(([, entryValue]) => entryValue !== undefined)
@@ -1009,6 +1094,29 @@ export async function upsertTrainingPeaksWorkoutCacheRows(
   }
 }
 
+export async function upsertTrainingPeaksWorkoutCacheScanStatuses(
+  rows: TrainingPeaksWorkoutCacheScanStatusUpsertRow[]
+): Promise<void> {
+  if (rows.length === 0) {
+    return;
+  }
+
+  const supabase = createSupabaseServerClient();
+  const updatedAt = new Date().toISOString();
+  const payload = rows.map((row) => ({
+    ...row,
+    updated_at: updatedAt,
+  }));
+
+  const { error } = await supabase.from("trainingpeaks_workout_cache_scan_status").upsert(payload, {
+    onConflict: "student_id,scan_from,scan_to",
+  });
+
+  if (error) {
+    throw new Error(`Failed to upsert TrainingPeaks workout cache scan statuses: ${error.message}`);
+  }
+}
+
 export async function listTrainingPeaksWorkoutCacheForDate(
   date: string
 ): Promise<TrainingPeaksWorkoutCacheRow[]> {
@@ -1054,6 +1162,30 @@ export async function listTrainingPeaksWorkoutCacheForDateRange(input: {
   }
 
   return ((data as TrainingPeaksWorkoutCacheDbRow[]) ?? []).map(mapTrainingPeaksWorkoutCacheRow);
+}
+
+export async function listTrainingPeaksWorkoutCacheScanStatusesForRange(input: {
+  from: string;
+  to: string;
+}): Promise<TrainingPeaksWorkoutCacheScanStatus[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_workout_cache_scan_status")
+    .select("*")
+    .eq("scan_from", input.from)
+    .eq("scan_to", input.to)
+    .order("student_name", { ascending: true })
+    .order("scanned_at", { ascending: false });
+
+  if (error) {
+    throw new Error(
+      `Failed to list TrainingPeaks workout cache scan statuses for range ${input.from}..${input.to}: ${error.message}`
+    );
+  }
+
+  return ((data as TrainingPeaksWorkoutCacheScanStatusDbRow[]) ?? []).map(
+    mapTrainingPeaksWorkoutCacheScanStatusRow
+  );
 }
 
 export async function listTrainingPeaksWorkoutCacheForStudentDateRange(input: {
