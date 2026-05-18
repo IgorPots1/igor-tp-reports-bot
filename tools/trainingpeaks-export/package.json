@@ -23,6 +23,7 @@
     "tp-races-loop": "tsx scripts/tp-races-loop.ts",
     "tp-discover-events-api": "tsx scripts/tp-discover-events-api.ts",
     "tp-discover-workouts-api": "tsx scripts/tp-discover-workouts-api.ts",
+    "tp-discover-custom-metrics-api": "tsx scripts/tp-discover-custom-metrics-api.ts",
     "tp-workouts-cache-scan": "tsx scripts/tp-workouts-cache-scan.ts",
     "tp-workouts-cache-report": "tsx scripts/tp-workouts-cache-report.ts",
     "tp-scan-events": "tsx scripts/tp-scan-events.ts",
