@@ -14,6 +14,7 @@
     "tp-discover-custom-metrics-api": "npm --prefix tools/trainingpeaks-export run tp-discover-custom-metrics-api --",
     "tp-custom-metrics-availability-report": "npm --prefix tools/trainingpeaks-export run tp-custom-metrics-availability-report --",
     "tp-custom-metrics-profile-sync": "npm --prefix tools/trainingpeaks-export run tp-custom-metrics-profile-sync --",
+    "tp-health-metrics-scan": "npm --prefix tools/trainingpeaks-export run tp-health-metrics-scan --",
     "tp-workouts-cache-scan": "npm --prefix tools/trainingpeaks-export run tp-workouts-cache-scan --",
     "tp-workouts-cache-report": "npm --prefix tools/trainingpeaks-export run tp-workouts-cache-report --",
     "tp-actions-loop:install": "npm --prefix tools/trainingpeaks-export run tp-actions-loop:install",

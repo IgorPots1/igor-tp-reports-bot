@@ -615,6 +615,94 @@ export type TrainingPeaksWorkoutCacheScanStatusUpsertRow = {
   scanned_at?: string;
 };
 
+export type TrainingPeaksHealthMetricCacheRow = {
+  id: string;
+  studentId: string;
+  studentName: string;
+  trainingPeaksAthleteId: number;
+  metricTimestamp: string;
+  metricDate: string;
+  metricTypeId: number;
+  metricKey: string;
+  metricLabel: string | null;
+  rawValueText: string | null;
+  valueNumeric: number | null;
+  valueMinNumeric: number | null;
+  valueMaxNumeric: number | null;
+  valueAvgNumeric: number | null;
+  unit: string | null;
+  uploadClient: string | null;
+  sourceSnapshot: unknown;
+  normalizationWarnings: string[];
+  scannedAt: string;
+  scanJobId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type TrainingPeaksHealthMetricCacheDbRow = {
+  id: string;
+  student_id: string;
+  student_name: string;
+  trainingpeaks_athlete_id: number;
+  metric_timestamp: string;
+  metric_date: string;
+  metric_type_id: number;
+  metric_key: string;
+  metric_label: string | null;
+  raw_value_text: string | null;
+  value_numeric: number | null;
+  value_min_numeric: number | null;
+  value_max_numeric: number | null;
+  value_avg_numeric: number | null;
+  unit: string | null;
+  upload_client: string | null;
+  source_snapshot: unknown;
+  normalization_warnings: string[];
+  scanned_at: string;
+  scan_job_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TrainingPeaksHealthMetricCacheUpsertRow = {
+  student_id: string;
+  student_name: string;
+  trainingpeaks_athlete_id: number;
+  metric_timestamp: string;
+  metric_date: string;
+  metric_type_id: number;
+  metric_key: string;
+  metric_label?: string | null;
+  raw_value_text?: string | null;
+  value_numeric?: number | null;
+  value_min_numeric?: number | null;
+  value_max_numeric?: number | null;
+  value_avg_numeric?: number | null;
+  unit?: string | null;
+  upload_client?: string | null;
+  source_snapshot?: unknown;
+  normalization_warnings?: string[];
+  scanned_at?: string;
+  scan_job_id?: string | null;
+};
+
+export type TrainingPeaksHealthMetricsScanStatusUpsertRow = {
+  student_id: string;
+  student_name: string;
+  trainingpeaks_athlete_id: number | null;
+  scan_from: string;
+  scan_to: string;
+  status: "ok" | "failed" | "skipped";
+  raw_items_count?: number;
+  normalized_items_count?: number;
+  upserted_rows_count?: number;
+  metric_types_found?: string[];
+  warnings_count?: number;
+  error_message?: string | null;
+  scanned_at?: string;
+};
+
 export type TrainingPeaksStudentHealthMetricProfileStatus =
   | "ready"
   | "partial"
@@ -1032,6 +1120,35 @@ function mapTrainingPeaksWorkoutCacheScanStatusRow(
   };
 }
 
+function mapTrainingPeaksHealthMetricCacheRow(
+  row: TrainingPeaksHealthMetricCacheDbRow
+): TrainingPeaksHealthMetricCacheRow {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    studentName: row.student_name,
+    trainingPeaksAthleteId: row.trainingpeaks_athlete_id,
+    metricTimestamp: row.metric_timestamp,
+    metricDate: row.metric_date,
+    metricTypeId: row.metric_type_id,
+    metricKey: row.metric_key,
+    metricLabel: row.metric_label,
+    rawValueText: row.raw_value_text,
+    valueNumeric: row.value_numeric,
+    valueMinNumeric: row.value_min_numeric,
+    valueMaxNumeric: row.value_max_numeric,
+    valueAvgNumeric: row.value_avg_numeric,
+    unit: row.unit,
+    uploadClient: row.upload_client,
+    sourceSnapshot: row.source_snapshot,
+    normalizationWarnings: row.normalization_warnings,
+    scannedAt: row.scanned_at,
+    scanJobId: row.scan_job_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function mapTrainingPeaksStudentHealthMetricProfileRow(
   row: TrainingPeaksStudentHealthMetricProfileDbRow
 ): TrainingPeaksStudentHealthMetricProfile {
@@ -1246,6 +1363,52 @@ export async function upsertTrainingPeaksStudentHealthMetricProfiles(
   }
 }
 
+export async function upsertTrainingPeaksHealthMetricsCacheRows(
+  rows: TrainingPeaksHealthMetricCacheUpsertRow[]
+): Promise<void> {
+  if (rows.length === 0) {
+    return;
+  }
+
+  const supabase = createSupabaseServerClient();
+  const updatedAt = new Date().toISOString();
+  const payload = rows.map((row) => ({
+    ...row,
+    updated_at: updatedAt,
+  }));
+
+  const { error } = await supabase.from("trainingpeaks_health_metrics_cache").upsert(payload, {
+    onConflict: "student_id,metric_timestamp,metric_type_id,metric_key",
+  });
+
+  if (error) {
+    throw new Error(`Failed to upsert TrainingPeaks health metrics cache rows: ${error.message}`);
+  }
+}
+
+export async function upsertTrainingPeaksHealthMetricsScanStatuses(
+  rows: TrainingPeaksHealthMetricsScanStatusUpsertRow[]
+): Promise<void> {
+  if (rows.length === 0) {
+    return;
+  }
+
+  const supabase = createSupabaseServerClient();
+  const updatedAt = new Date().toISOString();
+  const payload = rows.map((row) => ({
+    ...row,
+    updated_at: updatedAt,
+  }));
+
+  const { error } = await supabase.from("trainingpeaks_health_metrics_scan_status").upsert(payload, {
+    onConflict: "student_id,scan_from,scan_to",
+  });
+
+  if (error) {
+    throw new Error(`Failed to upsert TrainingPeaks health metrics scan statuses: ${error.message}`);
+  }
+}
+
 export async function listTrainingPeaksWorkoutCacheForDate(
   date: string
 ): Promise<TrainingPeaksWorkoutCacheRow[]> {
@@ -1428,6 +1591,112 @@ export async function getTrainingPeaksWorkoutCacheFreshness(input?: {
 
   if (countError) {
     throw new Error(`Failed to count TrainingPeaks workout cache rows: ${countError.message}`);
+  }
+
+  return {
+    latestScannedAt: (latestRow as { scanned_at: string } | null)?.scanned_at ?? null,
+    rowCount: count ?? 0,
+  };
+}
+
+export async function listTrainingPeaksHealthMetricsForStudentDateRange(input: {
+  studentId: string;
+  from: string;
+  to: string;
+  metricKey?: string;
+}): Promise<TrainingPeaksHealthMetricCacheRow[]> {
+  const supabase = createSupabaseServerClient();
+  let query = supabase
+    .from("trainingpeaks_health_metrics_cache")
+    .select("*")
+    .eq("student_id", input.studentId)
+    .gte("metric_date", input.from)
+    .lte("metric_date", input.to)
+    .order("metric_date", { ascending: true })
+    .order("metric_timestamp", { ascending: true })
+    .order("metric_type_id", { ascending: true });
+
+  if (input.metricKey) {
+    query = query.eq("metric_key", input.metricKey);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    throw new Error(
+      `Failed to list TrainingPeaks health metrics cache for student ${input.studentId} and range ${input.from}..${input.to}: ${error.message}`
+    );
+  }
+
+  return ((data as TrainingPeaksHealthMetricCacheDbRow[]) ?? []).map(mapTrainingPeaksHealthMetricCacheRow);
+}
+
+export async function getTrainingPeaksHealthMetricsFreshness(input?: {
+  date?: string;
+  studentId?: string;
+}): Promise<{ latestScannedAt: string | null; rowCount: number }> {
+  const supabase = createSupabaseServerClient();
+  let latestQuery;
+  let countQuery;
+  if (input?.date && input?.studentId) {
+    latestQuery = supabase
+      .from("trainingpeaks_health_metrics_cache")
+      .select("scanned_at")
+      .eq("metric_date", input.date)
+      .eq("student_id", input.studentId)
+      .order("scanned_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    countQuery = supabase
+      .from("trainingpeaks_health_metrics_cache")
+      .select("id", { count: "exact", head: true })
+      .eq("metric_date", input.date)
+      .eq("student_id", input.studentId);
+  } else if (input?.date) {
+    latestQuery = supabase
+      .from("trainingpeaks_health_metrics_cache")
+      .select("scanned_at")
+      .eq("metric_date", input.date)
+      .order("scanned_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    countQuery = supabase
+      .from("trainingpeaks_health_metrics_cache")
+      .select("id", { count: "exact", head: true })
+      .eq("metric_date", input.date);
+  } else if (input?.studentId) {
+    latestQuery = supabase
+      .from("trainingpeaks_health_metrics_cache")
+      .select("scanned_at")
+      .eq("student_id", input.studentId)
+      .order("scanned_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    countQuery = supabase
+      .from("trainingpeaks_health_metrics_cache")
+      .select("id", { count: "exact", head: true })
+      .eq("student_id", input.studentId);
+  } else {
+    latestQuery = supabase
+      .from("trainingpeaks_health_metrics_cache")
+      .select("scanned_at")
+      .order("scanned_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    countQuery = supabase
+      .from("trainingpeaks_health_metrics_cache")
+      .select("id", { count: "exact", head: true });
+  }
+
+  const [{ data: latestRow, error: latestError }, { count, error: countError }] = await Promise.all([
+    latestQuery,
+    countQuery,
+  ]);
+
+  if (latestError) {
+    throw new Error(`Failed to get TrainingPeaks health metrics cache freshness: ${latestError.message}`);
+  }
+  if (countError) {
+    throw new Error(`Failed to count TrainingPeaks health metrics cache rows: ${countError.message}`);
   }
 
   return {
