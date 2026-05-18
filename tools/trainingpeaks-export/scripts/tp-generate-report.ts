@@ -5,7 +5,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import { buildTrainingPeaksRecoverySummary } from "./lib/trainingpeaks-recovery-summary.ts";
-import { findStudentById, readStudentsConfig } from "./lib/students.ts";
+import { readStudentsConfig } from "./lib/students.ts";
 
 type CliArgs = {
   student: string;
@@ -139,7 +139,7 @@ type ReportDraft = {
   source_summary_path: string;
   model: string;
   created_at: string;
-  recovery_context: RecoveryContextForPrompt | null;
+  recovery_context: RecoveryContextForPrompt;
   report_markdown: string;
 };
 
@@ -147,7 +147,8 @@ type RecoveryContextDecision =
   | "included"
   | "skipped_insufficient_data"
   | "skipped_no_profile"
-  | "skipped_no_cache";
+  | "skipped_no_cache"
+  | "skipped_error";
 
 type RecoveryContextForPrompt = {
   decision: RecoveryContextDecision;
@@ -159,6 +160,7 @@ type RecoveryContextForPrompt = {
   } | null;
   summary: ReturnType<typeof buildTrainingPeaksRecoverySummary> | null;
   include_in_athlete_report: boolean;
+  error?: string;
 };
 
 type HealthMetricProfileRow = {
@@ -173,6 +175,12 @@ type HealthMetricCacheRow = {
   metric_date: string;
   value_numeric: number | null;
   value_avg_numeric: number | null;
+};
+
+type RuntimeStudentRow = {
+  id: string;
+  student_id: string;
+  student_name: string;
 };
 
 const DEFAULT_REPORT_MODEL = "gpt-4.1-mini";
@@ -327,6 +335,26 @@ function stripMarkdownFences(markdown: string): string {
   const trimmed = markdown.trim();
   const fencedMatch = trimmed.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/i);
   return fencedMatch ? fencedMatch[1].trim() : trimmed;
+}
+
+function normalizeMatchValue(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function addLookupToken(tokens: Set<string>, value: string | null | undefined): void {
+  if (!value) {
+    return;
+  }
+  const normalized = normalizeMatchValue(value);
+  if (!normalized) {
+    return;
+  }
+  tokens.add(normalized);
+}
+
+function getSafeErrorReason(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error ?? "unknown error");
+  return raw.replace(/\s+/g, " ").trim().slice(0, 200) || "unknown error";
 }
 
 function buildSystemPrompt(): string {
@@ -503,7 +531,10 @@ async function requestReportMarkdown(params: {
 async function buildRecoveryContext(input: {
   args: CliArgs;
   summary: WeeklySummary;
-}): Promise<RecoveryContextForPrompt | null> {
+}): Promise<RecoveryContextForPrompt> {
+  const inputStudent = input.summary.student_id || input.args.student;
+  const fallbackName = input.args.student;
+
   try {
     const supabase = createClient(
       getRequiredSupabaseEnv("SUPABASE_URL"),
@@ -516,45 +547,70 @@ async function buildRecoveryContext(input: {
       }
     );
 
-    const studentId = summary.student_id || input.args.student;
-    let studentName = studentId;
+    const lookupTokens = new Set<string>();
+    addLookupToken(lookupTokens, inputStudent);
+    addLookupToken(lookupTokens, input.args.student);
+    let studentName = fallbackName;
+
     try {
       const students = await readStudentsConfig();
-      const student = findStudentById(students, studentId);
-      if (student?.name) {
-        studentName = student.name;
+      const configMatch = students.find((student) => {
+        const studentIdToken = normalizeMatchValue(student.student_id);
+        const studentNameToken = normalizeMatchValue(student.name ?? "");
+        return lookupTokens.has(studentIdToken) || (studentNameToken ? lookupTokens.has(studentNameToken) : false);
+      });
+      if (configMatch) {
+        addLookupToken(lookupTokens, configMatch.student_id);
+        addLookupToken(lookupTokens, configMatch.name);
+        studentName = configMatch.name || studentName;
       }
     } catch {
       debugLog("Recovery context: students config unavailable, using student_id as label.");
     }
 
-    let profile: HealthMetricProfileRow | undefined;
-    const { data: profileRowsById, error: profileByIdError } = await supabase
-      .from("trainingpeaks_student_health_metric_profiles")
-      .select("student_id, student_name, status, recovery_metrics_enabled")
-      .eq("student_id", studentId)
-      .limit(1);
-    if (profileByIdError) {
-      throw new Error(`Failed to read recovery profile by student_id: ${profileByIdError.message}`);
-    }
-    profile = (profileRowsById as HealthMetricProfileRow[] | null)?.[0];
-
-    if (!profile && studentName) {
-      const { data: profileRowsByName, error: profileByNameError } = await supabase
-        .from("trainingpeaks_student_health_metric_profiles")
-        .select("student_id, student_name, status, recovery_metrics_enabled")
-        .eq("student_name", studentName)
-        .limit(1);
-      if (profileByNameError) {
-        throw new Error(`Failed to read recovery profile by student_name: ${profileByNameError.message}`);
+    const runtimeStudentOr = await (async () => {
+      const { data, error } = await supabase
+        .from("trainingpeaks_students")
+        .select("id, student_id, student_name")
+        .eq("is_active", true);
+      if (error) {
+        throw new Error(`Failed to read trainingpeaks_students for recovery resolution: ${error.message}`);
       }
-      profile = (profileRowsByName as HealthMetricProfileRow[] | null)?.[0];
+      const runtimeStudents = (data as RuntimeStudentRow[] | null) ?? [];
+      return runtimeStudents.find((student) => {
+        const tokens = [
+          normalizeMatchValue(student.id),
+          normalizeMatchValue(student.student_id),
+          normalizeMatchValue(student.student_name),
+        ];
+        return tokens.some((token) => lookupTokens.has(token));
+      });
+    })();
+
+    if (runtimeStudentOr) {
+      addLookupToken(lookupTokens, runtimeStudentOr.id);
+      addLookupToken(lookupTokens, runtimeStudentOr.student_id);
+      addLookupToken(lookupTokens, runtimeStudentOr.student_name);
+      studentName = runtimeStudentOr.student_name || studentName;
     }
+
+    const { data: profileRowsRaw, error: profilesError } = await supabase
+      .from("trainingpeaks_student_health_metric_profiles")
+      .select("student_id, student_name, status, recovery_metrics_enabled");
+    if (profilesError) {
+      throw new Error(`Failed to read recovery profiles: ${profilesError.message}`);
+    }
+    const profileRows = (profileRowsRaw as HealthMetricProfileRow[] | null) ?? [];
+    const profile = profileRows.find((row) => {
+      const idToken = normalizeMatchValue(row.student_id);
+      const nameToken = normalizeMatchValue(row.student_name);
+      return lookupTokens.has(idToken) || lookupTokens.has(nameToken);
+    });
 
     if (!profile) {
       return {
         decision: "skipped_no_profile",
-        student_id: studentId,
+        student_id: runtimeStudentOr?.id ?? inputStudent,
         student_name: studentName,
         profile: null,
         summary: null,
@@ -622,8 +678,17 @@ async function buildRecoveryContext(input: {
       include_in_athlete_report: include,
     };
   } catch (error: unknown) {
-    debugLog("Recovery context failed, fallback to null:", error);
-    return null;
+    const safeReason = getSafeErrorReason(error);
+    debugLog("Recovery context failed, returning skipped_error:", safeReason);
+    return {
+      decision: "skipped_error",
+      student_id: inputStudent,
+      student_name: fallbackName,
+      profile: null,
+      summary: null,
+      include_in_athlete_report: false,
+      error: safeReason,
+    };
   }
 }
 
@@ -650,7 +715,7 @@ async function main(): Promise<void> {
 
   const summary = JSON.parse(await readFile(summaryPath, "utf8")) as WeeklySummary;
   const recoveryContext = await buildRecoveryContext({ args, summary });
-  const recoveryDecision = recoveryContext?.decision ?? "skipped_insufficient_data";
+  const recoveryDecision = recoveryContext.decision;
   console.log(`recovery_context: ${recoveryDecision}`);
   const reportMarkdown = await requestReportMarkdown({
     apiKey,

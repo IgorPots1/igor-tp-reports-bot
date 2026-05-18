@@ -6,10 +6,12 @@ import process from "node:process";
 import type {
   TrainingPeaksHealthMetricCacheRow,
   TrainingPeaksStudentHealthMetricProfile,
+  TrainingPeaksStudent,
   ListTrainingPeaksStudentHealthMetricProfilesInput,
 } from "../../../src/features/trainingpeaks/repository.ts";
 import * as trainingPeaksRepository from "../../../src/features/trainingpeaks/repository.ts";
 import { toolRoot } from "./lib/paths.ts";
+import { readStudentsConfig } from "./lib/students.ts";
 import {
   buildTrainingPeaksRecoverySummary,
   type RecoverySummaryResult,
@@ -85,6 +87,7 @@ type ReportArtifact = {
 };
 
 type RepositoryCompat = {
+  listTrainingPeaksStudents?: () => Promise<TrainingPeaksStudent[]>;
   listTrainingPeaksStudentHealthMetricProfiles?: (
     input?: ListTrainingPeaksStudentHealthMetricProfilesInput
   ) => Promise<TrainingPeaksStudentHealthMetricProfile[]>;
@@ -95,6 +98,7 @@ type RepositoryCompat = {
     metricKey?: string;
   }) => Promise<TrainingPeaksHealthMetricCacheRow[]>;
   default?: {
+    listTrainingPeaksStudents?: () => Promise<TrainingPeaksStudent[]>;
     listTrainingPeaksStudentHealthMetricProfiles?: (
       input?: ListTrainingPeaksStudentHealthMetricProfilesInput
     ) => Promise<TrainingPeaksStudentHealthMetricProfile[]>;
@@ -120,6 +124,17 @@ function diffDaysInclusive(from: string, to: string): number {
 
 function normalizeMatchValue(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function addLookupToken(tokens: Set<string>, value: string | null | undefined): void {
+  if (!value) {
+    return;
+  }
+  const normalized = normalizeMatchValue(value);
+  if (!normalized) {
+    return;
+  }
+  tokens.add(normalized);
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -342,16 +357,44 @@ function summarizeStudent(input: {
   };
 }
 
-function resolveProfiles(
+async function resolveProfiles(
   profiles: TrainingPeaksStudentHealthMetricProfile[],
-  args: CliArgs
-): TrainingPeaksStudentHealthMetricProfile[] {
+  args: CliArgs,
+  students: TrainingPeaksStudent[]
+): Promise<TrainingPeaksStudentHealthMetricProfile[]> {
   if (args.student) {
-    const needle = normalizeMatchValue(args.student);
+    const lookupTokens = new Set<string>();
+    addLookupToken(lookupTokens, args.student);
+
+    const studentsConfig = await readStudentsConfig().catch(() => []);
+    for (const student of studentsConfig) {
+      const matchesInput =
+        normalizeMatchValue(student.student_id) === normalizeMatchValue(args.student) ||
+        normalizeMatchValue(student.name ?? "") === normalizeMatchValue(args.student);
+      if (!matchesInput) {
+        continue;
+      }
+      addLookupToken(lookupTokens, student.student_id);
+      addLookupToken(lookupTokens, student.name);
+    }
+
+    for (const student of students) {
+      const studentTokens = [
+        normalizeMatchValue(student.id),
+        normalizeMatchValue(student.studentId),
+        normalizeMatchValue(student.studentName),
+      ];
+      if (studentTokens.some((token) => lookupTokens.has(token))) {
+        addLookupToken(lookupTokens, student.studentId);
+        addLookupToken(lookupTokens, student.studentName);
+        addLookupToken(lookupTokens, student.id);
+      }
+    }
+
     const matched = profiles.filter((profile) => {
-      const byId = normalizeMatchValue(profile.studentId) === needle;
-      const byName = normalizeMatchValue(profile.studentName) === needle;
-      return byId || byName;
+      const profileIdToken = normalizeMatchValue(profile.studentId);
+      const profileNameToken = normalizeMatchValue(profile.studentName);
+      return lookupTokens.has(profileIdToken) || lookupTokens.has(profileNameToken);
     });
     if (matched.length === 0) {
       throw new Error(`No eligible profile matched --student="${args.student}".`);
@@ -453,6 +496,7 @@ async function main(): Promise<void> {
   const rangeDays = diffDaysInclusive(args.from, args.to);
 
   const repoCompat = trainingPeaksRepository as RepositoryCompat;
+  const listStudentsFn = repoCompat.listTrainingPeaksStudents ?? repoCompat.default?.listTrainingPeaksStudents;
   const listProfilesFn =
     repoCompat.listTrainingPeaksStudentHealthMetricProfiles ??
     repoCompat.default?.listTrainingPeaksStudentHealthMetricProfiles;
@@ -460,12 +504,13 @@ async function main(): Promise<void> {
     repoCompat.listTrainingPeaksHealthMetricsForStudentDateRange ??
     repoCompat.default?.listTrainingPeaksHealthMetricsForStudentDateRange;
 
-  if (!listProfilesFn || !listCacheFn) {
+  if (!listStudentsFn || !listProfilesFn || !listCacheFn) {
     throw new Error("TrainingPeaks repository helpers are unavailable in this runtime.");
   }
 
+  const students = await listStudentsFn();
   const eligibleProfiles = await listProfilesFn({ recoveryMetricsEnabled: true });
-  const selectedProfiles = resolveProfiles(eligibleProfiles, args).sort((a, b) =>
+  const selectedProfiles = (await resolveProfiles(eligibleProfiles, args, students)).sort((a, b) =>
     a.studentName.localeCompare(b.studentName)
   );
 
