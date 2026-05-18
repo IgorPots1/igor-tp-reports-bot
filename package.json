@@ -11,6 +11,7 @@
     "tp-agent-once": "npm --prefix tools/trainingpeaks-export run tp-agent-once",
     "tp-actions-once": "npm --prefix tools/trainingpeaks-export run tp-actions-once --",
     "tp-discover-workouts-api": "npm --prefix tools/trainingpeaks-export run tp-discover-workouts-api --",
+    "tp-workouts-cache-scan": "npm --prefix tools/trainingpeaks-export run tp-workouts-cache-scan --",
     "tp-actions-loop:install": "npm --prefix tools/trainingpeaks-export run tp-actions-loop:install",
     "tp-actions-loop:uninstall": "npm --prefix tools/trainingpeaks-export run tp-actions-loop:uninstall",
     "tp-actions-loop:logs": "npm --prefix tools/trainingpeaks-export run tp-actions-loop:logs",
