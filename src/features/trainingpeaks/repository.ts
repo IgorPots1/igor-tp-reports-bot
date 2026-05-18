@@ -615,6 +615,86 @@ export type TrainingPeaksWorkoutCacheScanStatusUpsertRow = {
   scanned_at?: string;
 };
 
+export type TrainingPeaksStudentHealthMetricProfileStatus =
+  | "ready"
+  | "partial"
+  | "no_metrics"
+  | "failed"
+  | "skipped_no_athlete_id"
+  | "unknown";
+
+export type TrainingPeaksStudentHealthMetricProfile = {
+  studentId: string;
+  studentName: string;
+  trainingPeaksAthleteId: number | null;
+  status: TrainingPeaksStudentHealthMetricProfileStatus;
+  recoveryMetricsEnabled: boolean;
+  hasHrv: boolean;
+  hasSleepHours: boolean;
+  hasPulse: boolean;
+  hasBodyBattery: boolean;
+  hasStressLevel: boolean;
+  hasWeight: boolean;
+  coverage7d: unknown;
+  coverage30d: unknown;
+  lastCheckedAt: string;
+  nextFullCheckAt: string | null;
+  warnings: string[];
+  sourceSnapshot: unknown;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type TrainingPeaksStudentHealthMetricProfileDbRow = {
+  student_id: string;
+  student_name: string;
+  trainingpeaks_athlete_id: number | null;
+  status: TrainingPeaksStudentHealthMetricProfileStatus;
+  recovery_metrics_enabled: boolean;
+  has_hrv: boolean;
+  has_sleep_hours: boolean;
+  has_pulse: boolean;
+  has_body_battery: boolean;
+  has_stress_level: boolean;
+  has_weight: boolean;
+  coverage_7d: unknown;
+  coverage_30d: unknown;
+  last_checked_at: string;
+  next_full_check_at: string | null;
+  warnings: string[];
+  source_snapshot: unknown;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TrainingPeaksStudentHealthMetricProfileUpsertRow = {
+  student_id: string;
+  student_name: string;
+  trainingpeaks_athlete_id?: number | null;
+  status: TrainingPeaksStudentHealthMetricProfileStatus;
+  recovery_metrics_enabled: boolean;
+  has_hrv?: boolean;
+  has_sleep_hours?: boolean;
+  has_pulse?: boolean;
+  has_body_battery?: boolean;
+  has_stress_level?: boolean;
+  has_weight?: boolean;
+  coverage_7d?: unknown;
+  coverage_30d?: unknown;
+  last_checked_at?: string;
+  next_full_check_at?: string | null;
+  warnings?: string[];
+  source_snapshot?: unknown;
+};
+
+export type ListTrainingPeaksStudentHealthMetricProfilesInput = {
+  studentId?: string;
+  statuses?: TrainingPeaksStudentHealthMetricProfileStatus[];
+  recoveryMetricsEnabled?: boolean;
+  dueForFullCheckBeforeOrAt?: string;
+  limit?: number;
+};
+
 export type TrainingPeaksStudentTelegramLinkCodeStatus = "active" | "used" | "expired";
 
 export type TrainingPeaksStudentTelegramLinkCode = {
@@ -952,6 +1032,32 @@ function mapTrainingPeaksWorkoutCacheScanStatusRow(
   };
 }
 
+function mapTrainingPeaksStudentHealthMetricProfileRow(
+  row: TrainingPeaksStudentHealthMetricProfileDbRow
+): TrainingPeaksStudentHealthMetricProfile {
+  return {
+    studentId: row.student_id,
+    studentName: row.student_name,
+    trainingPeaksAthleteId: row.trainingpeaks_athlete_id,
+    status: row.status,
+    recoveryMetricsEnabled: row.recovery_metrics_enabled,
+    hasHrv: row.has_hrv,
+    hasSleepHours: row.has_sleep_hours,
+    hasPulse: row.has_pulse,
+    hasBodyBattery: row.has_body_battery,
+    hasStressLevel: row.has_stress_level,
+    hasWeight: row.has_weight,
+    coverage7d: row.coverage_7d,
+    coverage30d: row.coverage_30d,
+    lastCheckedAt: row.last_checked_at,
+    nextFullCheckAt: row.next_full_check_at,
+    warnings: row.warnings,
+    sourceSnapshot: row.source_snapshot,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function pickDefinedValues<T extends Record<string, unknown>>(value: T): Partial<T> {
   return Object.fromEntries(
     Object.entries(value).filter(([, entryValue]) => entryValue !== undefined)
@@ -1117,6 +1223,29 @@ export async function upsertTrainingPeaksWorkoutCacheScanStatuses(
   }
 }
 
+export async function upsertTrainingPeaksStudentHealthMetricProfiles(
+  rows: TrainingPeaksStudentHealthMetricProfileUpsertRow[]
+): Promise<void> {
+  if (rows.length === 0) {
+    return;
+  }
+
+  const supabase = createSupabaseServerClient();
+  const nowIso = new Date().toISOString();
+  const payload = rows.map((row) => ({
+    ...row,
+    updated_at: nowIso,
+  }));
+
+  const { error } = await supabase
+    .from("trainingpeaks_student_health_metric_profiles")
+    .upsert(payload, { onConflict: "student_id" });
+
+  if (error) {
+    throw new Error(`Failed to upsert TrainingPeaks health metric profiles: ${error.message}`);
+  }
+}
+
 export async function listTrainingPeaksWorkoutCacheForDate(
   date: string
 ): Promise<TrainingPeaksWorkoutCacheRow[]> {
@@ -1186,6 +1315,55 @@ export async function listTrainingPeaksWorkoutCacheScanStatusesForRange(input: {
   return ((data as TrainingPeaksWorkoutCacheScanStatusDbRow[]) ?? []).map(
     mapTrainingPeaksWorkoutCacheScanStatusRow
   );
+}
+
+export async function listTrainingPeaksStudentHealthMetricProfiles(
+  input: ListTrainingPeaksStudentHealthMetricProfilesInput = {}
+): Promise<TrainingPeaksStudentHealthMetricProfile[]> {
+  const supabase = createSupabaseServerClient();
+  let query = supabase
+    .from("trainingpeaks_student_health_metric_profiles")
+    .select("*")
+    .order("student_name", { ascending: true });
+
+  if (input.studentId) {
+    query = query.eq("student_id", input.studentId);
+  }
+  if (input.statuses && input.statuses.length > 0) {
+    query = query.in("status", input.statuses);
+  }
+  if (input.recoveryMetricsEnabled !== undefined) {
+    query = query.eq("recovery_metrics_enabled", input.recoveryMetricsEnabled);
+  }
+  if (input.dueForFullCheckBeforeOrAt) {
+    query = query.or(
+      `next_full_check_at.is.null,next_full_check_at.lte.${input.dueForFullCheckBeforeOrAt}`
+    );
+  }
+  if (input.limit && input.limit > 0) {
+    query = query.limit(input.limit);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    throw new Error(`Failed to list TrainingPeaks health metric profiles: ${error.message}`);
+  }
+
+  return ((data as TrainingPeaksStudentHealthMetricProfileDbRow[]) ?? []).map(
+    mapTrainingPeaksStudentHealthMetricProfileRow
+  );
+}
+
+export async function listTrainingPeaksStudentsEligibleForHealthMetrics(input?: {
+  dueForFullCheckBeforeOrAt?: string;
+  limit?: number;
+}): Promise<TrainingPeaksStudentHealthMetricProfile[]> {
+  return listTrainingPeaksStudentHealthMetricProfiles({
+    statuses: ["ready", "partial"],
+    recoveryMetricsEnabled: true,
+    dueForFullCheckBeforeOrAt: input?.dueForFullCheckBeforeOrAt,
+    limit: input?.limit,
+  });
 }
 
 export async function listTrainingPeaksWorkoutCacheForStudentDateRange(input: {
