@@ -48,7 +48,47 @@ SUPABASE_SERVICE_ROLE_KEY
 
 Vercel reminder: `CRON_SECRET` must be added to the `igor-tp-reports-bot` Vercel project, not the Second Brain project.
 
-Vercel cron uses UTC. The configured schedule is `0 6 * * *`, which matches 08:00 Europe/Belgrade during summer time. If exact local 08:00 matters year-round, adjust this seasonally.
+Vercel cron uses UTC. The configured schedule is `0 9 * * *`, which matches 11:00 Europe/Belgrade during summer time. This is a seasonal UTC mapping; if exact local 11:00 matters year-round, adjust this schedule when DST changes.
+
+## Local Workout Cache Scan Automation (Mac)
+
+The TrainingPeaks workout cache scan runs locally on Mac using the persistent Chromium profile and writes normalized workout cache plus scan status to Supabase. Vercel cron should not call TrainingPeaks directly.
+
+Wrapper script:
+
+```text
+tools/trainingpeaks-export/scripts/run-workout-cache-scan-yesterday.sh
+```
+
+This script computes yesterday using `Europe/Belgrade`, then runs:
+
+```text
+npm run tp-workouts-cache-scan -- --all-active --date=YYYY-MM-DD
+```
+
+LaunchAgent template:
+
+```text
+tools/trainingpeaks-export/launchd/com.igor.trainingpeaks.workout-cache-scan.plist.example
+```
+
+Install/update the LaunchAgent:
+
+```bash
+mkdir -p ~/Library/LaunchAgents
+cp tools/trainingpeaks-export/launchd/com.igor.trainingpeaks.workout-cache-scan.plist.example ~/Library/LaunchAgents/com.igor.trainingpeaks.workout-cache-scan.plist
+launchctl unload ~/Library/LaunchAgents/com.igor.trainingpeaks.workout-cache-scan.plist 2>/dev/null || true
+mkdir -p tools/trainingpeaks-export/logs
+launchctl load ~/Library/LaunchAgents/com.igor.trainingpeaks.workout-cache-scan.plist
+launchctl start com.igor.trainingpeaks.workout-cache-scan
+```
+
+Inspect scan logs:
+
+```bash
+tail -n 100 tools/trainingpeaks-export/logs/workout-cache-scan-yesterday.log
+tail -n 100 tools/trainingpeaks-export/logs/workout-cache-scan.launchd.err.log
+```
 
 Vercel Cron invokes this endpoint with `GET` (same Bearer auth). Manual test examples:
 
