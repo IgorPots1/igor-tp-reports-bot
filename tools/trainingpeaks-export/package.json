@@ -27,6 +27,7 @@
     "tp-custom-metrics-availability-report": "tsx scripts/tp-custom-metrics-availability-report.ts",
     "tp-custom-metrics-profile-sync": "tsx scripts/tp-custom-metrics-profile-sync.ts",
     "tp-health-metrics-scan": "tsx scripts/tp-health-metrics-scan.ts",
+    "tp-health-metrics-cache-report": "tsx scripts/tp-health-metrics-cache-report.ts",
     "check-trainingpeaks-custom-metrics-normalization": "tsx scripts/check-trainingpeaks-custom-metrics-normalization.ts",
     "tp-workouts-cache-scan": "tsx scripts/tp-workouts-cache-scan.ts",
     "tp-workouts-cache-report": "tsx scripts/tp-workouts-cache-report.ts",
