@@ -5,6 +5,7 @@ import process from "node:process";
 import { chromium } from "playwright";
 
 import { profileDir, toolRoot } from "./lib/paths.ts";
+import { normalizeTrainingPeaksCustomMetricsPayload } from "./lib/trainingpeaks-custom-metrics-normalization.ts";
 import { captureSessionAuth, redactUnknown } from "./lib/trainingpeaks-api-move.ts";
 
 const TP_API_HOST = "https://tpapi.trainingpeaks.com";
@@ -52,6 +53,12 @@ type DiscoverySummary = {
   sampleDates: string[];
   dateRangeAppearsHonored: boolean | "ambiguous";
   sourceOrVendorFieldsPresent: boolean;
+  normalizedRowCount: number;
+  normalizedMetricKeys: string[];
+  normalizedCoverageByMetricKey: Record<string, number>;
+  normalizedSampleRows: unknown[];
+  normalizationWarnings: string[];
+  hadAggregateValueRows: boolean;
   failureMessage: string | null;
   nextStepSuggestion: string | null;
   artifactDir: string;
@@ -288,6 +295,15 @@ function createSummaryMarkdown(summary: DiscoverySummary): string {
     `- sample_dates: ${summary.sampleDates.length ? summary.sampleDates.map((d) => `\`${d}\``).join(", ") : "none"}`,
     `- date_range_appears_honored: **${String(summary.dateRangeAppearsHonored)}**`,
     `- source_or_vendor_fields_present: **${summary.sourceOrVendorFieldsPresent ? "yes" : "no"}**`,
+    `- normalized_row_count: **${summary.normalizedRowCount}**`,
+    `- normalized_metric_keys: ${
+      summary.normalizedMetricKeys.length ? summary.normalizedMetricKeys.map((k) => `\`${k}\``).join(", ") : "none"
+    }`,
+    `- normalized_coverage_by_metric_key: \`${JSON.stringify(summary.normalizedCoverageByMetricKey)}\``,
+    `- normalization_warnings: ${
+      summary.normalizationWarnings.length ? summary.normalizationWarnings.map((w) => `\`${w}\``).join(", ") : "none"
+    }`,
+    `- had_aggregate_value_rows: **${summary.hadAggregateValueRows ? "yes" : "no"}**`,
     `- failure_message: ${summary.failureMessage ? `\`${summary.failureMessage}\`` : "none"}`,
     `- next_step_suggestion: ${summary.nextStepSuggestion ? summary.nextStepSuggestion : "none"}`,
     `- raw_response_artifact: \`${summary.rawResponsePath ?? "none"}\``,
@@ -332,6 +348,12 @@ async function main(): Promise<void> {
     sampleDates: [],
     dateRangeAppearsHonored: "ambiguous",
     sourceOrVendorFieldsPresent: false,
+    normalizedRowCount: 0,
+    normalizedMetricKeys: [],
+    normalizedCoverageByMetricKey: {},
+    normalizedSampleRows: [],
+    normalizationWarnings: [],
+    hadAggregateValueRows: false,
     failureMessage: null,
     nextStepSuggestion: null,
     artifactDir,
@@ -414,6 +436,24 @@ async function main(): Promise<void> {
         const parsed = JSON.parse(bodyText);
         const redacted = redactUnknown(parsed);
         const jsonSummary = summarizeJsonBody({ body: redacted, from: args.from, to: args.to });
+        const normalizedRows = normalizeTrainingPeaksCustomMetricsPayload(parsed);
+        const coverageByMetricKey: Record<string, number> = {};
+        const warningSet = new Set<string>();
+        let hadAggregateValueRows = false;
+        for (const row of normalizedRows) {
+          coverageByMetricKey[row.metricKey] = (coverageByMetricKey[row.metricKey] ?? 0) + 1;
+          if (
+            row.valueMinNumeric !== null ||
+            row.valueMaxNumeric !== null ||
+            row.valueAvgNumeric !== null ||
+            (row.rawValueText !== null && row.rawValueText.trim().startsWith("["))
+          ) {
+            hadAggregateValueRows = true;
+          }
+          for (const warning of row.normalizationWarnings) {
+            warningSet.add(warning);
+          }
+        }
         await writeFile(redactedJsonPath, `${JSON.stringify(redacted, null, 2)}\n`, "utf8");
 
         summary.topLevelKeys = jsonSummary.topLevelKeys;
@@ -423,6 +463,12 @@ async function main(): Promise<void> {
         summary.sampleDates = jsonSummary.sampleDates;
         summary.dateRangeAppearsHonored = jsonSummary.dateRangeAppearsHonored;
         summary.sourceOrVendorFieldsPresent = jsonSummary.sourceOrVendorFieldsPresent;
+        summary.normalizedRowCount = normalizedRows.length;
+        summary.normalizedCoverageByMetricKey = coverageByMetricKey;
+        summary.normalizedMetricKeys = Object.keys(coverageByMetricKey).sort((a, b) => a.localeCompare(b));
+        summary.normalizedSampleRows = normalizedRows.slice(0, 8);
+        summary.normalizationWarnings = [...warningSet].sort((a, b) => a.localeCompare(b));
+        summary.hadAggregateValueRows = hadAggregateValueRows;
         summary.redactedJsonPath = redactedJsonPath;
       } catch (error) {
         summary.failureMessage = `JSON parse failed: ${(error as Error).message}`;
@@ -471,6 +517,14 @@ async function main(): Promise<void> {
   console.log(`sample_dates: ${summary.sampleDates.length ? summary.sampleDates.join(", ") : "none"}`);
   console.log(`date_range_appears_honored: ${String(summary.dateRangeAppearsHonored)}`);
   console.log(`source_or_vendor_fields_present: ${summary.sourceOrVendorFieldsPresent ? "yes" : "no"}`);
+  console.log(`normalized_row_count: ${summary.normalizedRowCount}`);
+  console.log(`metric_keys_found: ${summary.normalizedMetricKeys.length ? summary.normalizedMetricKeys.join(", ") : "none"}`);
+  console.log(`coverage_by_metric_key: ${JSON.stringify(summary.normalizedCoverageByMetricKey)}`);
+  console.log(
+    `warnings_observed: ${summary.normalizationWarnings.length ? summary.normalizationWarnings.join(" | ") : "none"}`,
+  );
+  console.log(`had_aggregate_value_rows: ${summary.hadAggregateValueRows ? "yes" : "no"}`);
+  console.log(`sample_normalized_rows: ${JSON.stringify(summary.normalizedSampleRows, null, 2)}`);
   if (summary.failureMessage) {
     console.log(`failure_message: ${summary.failureMessage}`);
   }
