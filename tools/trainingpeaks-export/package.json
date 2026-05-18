@@ -22,6 +22,7 @@
     "tp-races-requests-once": "tsx scripts/tp-races-requests-once.ts",
     "tp-races-loop": "tsx scripts/tp-races-loop.ts",
     "tp-discover-events-api": "tsx scripts/tp-discover-events-api.ts",
+    "tp-discover-workouts-api": "tsx scripts/tp-discover-workouts-api.ts",
     "tp-scan-events": "tsx scripts/tp-scan-events.ts",
     "tp-actions-loop:install": "sh scripts/install-tp-actions-launchagent.sh",
     "tp-actions-loop:uninstall": "sh scripts/uninstall-tp-actions-launchagent.sh",
