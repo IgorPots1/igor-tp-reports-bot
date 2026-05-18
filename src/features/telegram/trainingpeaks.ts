@@ -16,6 +16,7 @@ import {
   enableTrainingPeaksStudent,
   enableTrainingPeaksStudentByInternalId,
   findTrainingPeaksBusinessChatsByUsername,
+  getTrainingPeaksAttentionSnapshot,
   getTrainingPeaksJobsStatus,
   getTrainingPeaksBusinessChatByInternalId,
   getTrainingPeaksLatestReportSnapshotByInternalId,
@@ -139,6 +140,7 @@ const TP_RUN_COMMAND_PATTERN = /^\/tp_run(?:@\w+)?(?:\s+|$)/;
 const TP_RUN_WEEK_COMMAND_PATTERN = /^\/tp_run_week(?:@\w+)?(?:\s+|$)/;
 const TP_RACES_COMMAND_PATTERN = /^\/tp_races(?:@\w+)?(?:\s+|$)/;
 const TP_JOBS_COMMAND_PATTERN = /^\/tp_jobs(?:@\w+)?(?:\s+|$)/;
+const TP_ATTENTION_COMMAND_PATTERN = /^\/tp_attention(?:@\w+)?(?:\s+|$)/;
 const TP_WEEKLY_COMMAND_PATTERN = /^\/tp_weekly(?:@\w+)?(?:\s+|$)/;
 const TP_BUSINESS_TEST_COMMAND_PATTERN = /^\/tp_business_test(?:@\w+)?(?:\s+|$)/;
 const TP_SET_TELEGRAM_COMMAND_PATTERN = /^\/tp_set_telegram(?:@\w+)?(?:\s+|$)/;
@@ -173,6 +175,7 @@ type TrainingPeaksCommand =
   | "tp_run_week"
   | "tp_races"
   | "tp_jobs"
+  | "tp_attention"
   | "tp_weekly"
   | "tp_business_test"
   | "tp_set_telegram"
@@ -359,6 +362,10 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
 
   if (TP_JOBS_COMMAND_PATTERN.test(text)) {
     return "tp_jobs";
+  }
+
+  if (TP_ATTENTION_COMMAND_PATTERN.test(text)) {
+    return "tp_attention";
   }
 
   if (TP_WEEKLY_COMMAND_PATTERN.test(text)) {
@@ -1600,6 +1607,56 @@ function formatJobsMessage(
         ]
       : []),
   ].join("\n");
+}
+
+function formatAttentionSignalLine(signal: {
+  studentName: string | null;
+  reason: string;
+}): string {
+  if (signal.studentName) {
+    return `• ${signal.studentName} — ${signal.reason}`;
+  }
+  return `• ${signal.reason}`;
+}
+
+function buildAttentionSection(
+  title: string,
+  signals: Array<{
+    studentName: string | null;
+    reason: string;
+  }>,
+  limit: number
+): string[] {
+  const lines = [title];
+  if (signals.length === 0) {
+    lines.push("• Нет");
+    return lines;
+  }
+
+  const visible = signals.slice(0, limit);
+  for (const signal of visible) {
+    lines.push(formatAttentionSignalLine(signal));
+  }
+  if (signals.length > visible.length) {
+    lines.push(`• Ещё ${signals.length - visible.length}`);
+  }
+  return lines;
+}
+
+async function handleTrainingPeaksAttention(parsedMessage: ParsedTelegramUpdate): Promise<void> {
+  const snapshot = await getTrainingPeaksAttentionSnapshot();
+  const sectionLimit = 4;
+  const urgent = buildAttentionSection("Срочно", snapshot.urgent, sectionLimit);
+  const today = buildAttentionSection("Сегодня", snapshot.today, sectionLimit);
+  const observe = buildAttentionSection("Наблюдать", snapshot.observe, sectionLimit);
+
+  const hasSignals = snapshot.urgent.length > 0 || snapshot.today.length > 0 || snapshot.observe.length > 0;
+  const fyiLines = ["FYI", hasSignals ? "• Нет" : "• Активных сигналов больше нет"];
+
+  await sendTrainingPeaksMessage(
+    parsedMessage.chatId,
+    ["Внимание на сегодня", "", ...urgent, "", ...today, "", ...observe, "", ...fyiLines].join("\n")
+  );
 }
 
 export function isCoachChat(chatId: number | string): boolean {
@@ -5289,6 +5346,11 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_jobs") {
       await handleTrainingPeaksJobs(parsedMessage);
+      return "handled";
+    }
+
+    if (command === "tp_attention") {
+      await handleTrainingPeaksAttention(parsedMessage);
       return "handled";
     }
 

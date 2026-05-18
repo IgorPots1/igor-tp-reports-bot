@@ -362,6 +362,21 @@ export type CancelTrainingPeaksWeeklyRunResult =
       reason: "already_started" | "not_found" | "not_cancellable";
     };
 
+export type TrainingPeaksAttentionLevel = "urgent" | "today" | "observe" | "fyi";
+
+export type TrainingPeaksAttentionSignal = {
+  level: TrainingPeaksAttentionLevel;
+  studentName: string | null;
+  reason: string;
+};
+
+export type TrainingPeaksAttentionSnapshot = {
+  urgent: TrainingPeaksAttentionSignal[];
+  today: TrainingPeaksAttentionSignal[];
+  observe: TrainingPeaksAttentionSignal[];
+  fyi: TrainingPeaksAttentionSignal[];
+};
+
 const TP_ADD_STUDENT_COMMAND_PATTERN = /^\/tp_add_student(?:@\w+)?(?:\s+|$)/;
 const TP_RUN_WEEK_COMMAND_PATTERN = /^\/tp_run_week(?:@\w+)?(?:\s+|$)/;
 const TP_TELEGRAM_LINK_CODE_PATTERN = /\b[A-Z0-9]{2,12}-\d{3,6}\b/gi;
@@ -1874,6 +1889,113 @@ export { TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE };
 
 export async function getTrainingPeaksJobsStatus(): Promise<TrainingPeaksJob[]> {
   return listRecentTrainingPeaksJobs(10);
+}
+
+function getIsoTimeMs(value: string | null | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function isWithinLookbackHours(value: string | null | undefined, lookbackHours: number): boolean {
+  const timeMs = getIsoTimeMs(value);
+  if (timeMs === null) {
+    return false;
+  }
+  const cutoffMs = Date.now() - lookbackHours * 60 * 60 * 1000;
+  return timeMs >= cutoffMs;
+}
+
+function pushUniqueAttentionSignal(
+  list: TrainingPeaksAttentionSignal[],
+  signal: TrainingPeaksAttentionSignal
+): void {
+  const key = `${signal.level}:${signal.studentName ?? ""}:${signal.reason}`;
+  const exists = list.some(
+    (item) =>
+      `${item.level}:${item.studentName ?? ""}:${item.reason}` === key
+  );
+  if (!exists) {
+    list.push(signal);
+  }
+}
+
+export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaksAttentionSnapshot> {
+  const [actions, jobs] = await Promise.all([
+    listRecentTrainingPeaksActionsFromRepository(50),
+    listRecentTrainingPeaksJobs(40),
+  ]);
+
+  const urgent: TrainingPeaksAttentionSignal[] = [];
+  const today: TrainingPeaksAttentionSignal[] = [];
+  const observe: TrainingPeaksAttentionSignal[] = [];
+
+  for (const action of actions) {
+    const studentName = action.studentName?.trim() || null;
+
+    if (action.status === "pending_coach") {
+      pushUniqueAttentionSignal(today, {
+        level: "today",
+        studentName,
+        reason: "ждёт решения по переносу тренировки",
+      });
+    }
+
+    if (
+      action.executionStatus === "failed" &&
+      isWithinLookbackHours(action.updatedAt, 48)
+    ) {
+      pushUniqueAttentionSignal(urgent, {
+        level: "urgent",
+        studentName,
+        reason: "выполнение переноса завершилось с ошибкой",
+      });
+    }
+
+    if (
+      (action.executionStatus === "dry_run_running" || action.executionStatus === "execute_pending") &&
+      !isWithinLookbackHours(action.updatedAt, 4)
+    ) {
+      pushUniqueAttentionSignal(observe, {
+        level: "observe",
+        studentName,
+        reason: "заявка долго находится в промежуточном статусе",
+      });
+    }
+  }
+
+  for (const job of jobs) {
+    if (job.status !== "failed") {
+      continue;
+    }
+    if (!isWithinLookbackHours(job.updatedAt, 48)) {
+      continue;
+    }
+
+    if (job.jobType === "race_scan_events") {
+      pushUniqueAttentionSignal(urgent, {
+        level: "urgent",
+        studentName: null,
+        reason: "последний запуск сканирования забегов завершился с ошибкой",
+      });
+      continue;
+    }
+
+    pushUniqueAttentionSignal(urgent, {
+      level: "urgent",
+      studentName: null,
+      reason: "последний запуск TP завершился с ошибкой",
+    });
+  }
+
+  return {
+    urgent,
+    today,
+    observe,
+    fyi: [],
+  };
 }
 
 function trimTelegramBusinessText(value: string | undefined): string | null {
