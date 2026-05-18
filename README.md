@@ -50,10 +50,13 @@ Vercel reminder: `CRON_SECRET` must be added to the `igor-tp-reports-bot` Vercel
 
 Vercel cron uses UTC. The configured schedule is `0 6 * * *`, which matches 08:00 Europe/Belgrade during summer time. If exact local 08:00 matters year-round, adjust this seasonally.
 
-Manual production test:
+Vercel Cron invokes this endpoint with `GET` (same Bearer auth). Manual test examples:
 
 ```bash
 curl -i -X POST "https://<production-domain>/api/cron/trainingpeaks-attention-digest" \
+  -H "Authorization: Bearer <CRON_SECRET>"
+
+curl -i "https://<production-domain>/api/cron/trainingpeaks-attention-digest" \
   -H "Authorization: Bearer <CRON_SECRET>"
 ```
 

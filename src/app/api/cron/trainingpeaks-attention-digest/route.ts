@@ -46,7 +46,7 @@ function getCronSecret(): string {
   return process.env.CRON_SECRET?.trim() ?? "";
 }
 
-export async function POST(request: Request) {
+async function handleTrainingPeaksAttentionDigest(request: Request) {
   const cronSecret = getCronSecret();
   if (!cronSecret || !process.env.TELEGRAM_BOT_TOKEN?.trim()) {
     console.error("TrainingPeaks attention digest is not configured correctly");
@@ -114,4 +114,12 @@ export async function POST(request: Request) {
       error: "Internal server error",
     });
   }
+}
+
+export async function GET(request: Request) {
+  return handleTrainingPeaksAttentionDigest(request);
+}
+
+export async function POST(request: Request) {
+  return handleTrainingPeaksAttentionDigest(request);
 }
