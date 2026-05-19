@@ -90,6 +90,46 @@ tail -n 100 tools/trainingpeaks-export/logs/workout-cache-scan-yesterday.log
 tail -n 100 tools/trainingpeaks-export/logs/workout-cache-scan.launchd.err.log
 ```
 
+## Local Health Metrics Scan Automation (Mac)
+
+Silent daily Garmin/health metrics collection for eligible students only. Data is written to Supabase so `/tp_attention` can alert on sustained patterns (for example, three consecutive days of short sleep). This does not generate recovery reports, call OpenAI, or send Telegram messages.
+
+Wrapper script:
+
+```text
+tools/trainingpeaks-export/scripts/run-health-metrics-scan-recent.sh
+```
+
+This script computes yesterday in `Europe/Belgrade` as `TO_DATE`, sets `FROM_DATE` to two days earlier (three-day window ending yesterday), then runs:
+
+```text
+npm run tp-health-metrics-scan -- --from=YYYY-MM-DD --to=YYYY-MM-DD --eligible-only
+```
+
+LaunchAgent template (runs daily at 10:10 local Mac time, after the 10:00 workout cache scan):
+
+```text
+tools/trainingpeaks-export/launchd/com.igor.trainingpeaks.health-metrics-scan.plist.example
+```
+
+Install/update the LaunchAgent:
+
+```bash
+mkdir -p tools/trainingpeaks-export/logs
+mkdir -p ~/Library/LaunchAgents
+cp tools/trainingpeaks-export/launchd/com.igor.trainingpeaks.health-metrics-scan.plist.example ~/Library/LaunchAgents/com.igor.trainingpeaks.health-metrics-scan.plist
+launchctl unload ~/Library/LaunchAgents/com.igor.trainingpeaks.health-metrics-scan.plist 2>/dev/null || true
+launchctl load ~/Library/LaunchAgents/com.igor.trainingpeaks.health-metrics-scan.plist
+launchctl start com.igor.trainingpeaks.health-metrics-scan
+```
+
+Inspect scan logs:
+
+```bash
+tail -n 100 tools/trainingpeaks-export/logs/health-metrics-scan-recent.log
+tail -n 100 tools/trainingpeaks-export/logs/health-metrics-scan.launchd.err.log
+```
+
 Vercel Cron invokes this endpoint with `GET` (same Bearer auth). Manual test examples:
 
 ```bash
