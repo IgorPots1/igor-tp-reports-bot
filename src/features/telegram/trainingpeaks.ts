@@ -38,7 +38,9 @@ import {
   parseTrainingPeaksWeeklyRunWeekInput,
   requestTrainingPeaksWeeklyRun,
   requestTrainingPeaksWeeklyRunForStudent,
+  requestTrainingPeaksWeeklyRunForStudentByInternalId,
   requestTrainingPeaksRaceScan,
+  type RequestTrainingPeaksWeeklyRunForStudentResult,
   updateTrainingPeaksWeeklyReportStateByInternalId,
   updateTrainingPeaksStudentTelegramContact,
   upsertTrainingPeaksBusinessChatFromMessage,
@@ -107,6 +109,7 @@ const TP_CALLBACK_REPORTS_STATUS_LAST = "tp:reports:status_last";
 const TP_CALLBACK_REPORTS_FROM_STUDENT = "tp:reports:from_student";
 const TP_CALLBACK_MORE_MENU = "tp:menu:more";
 const TP_CALLBACK_STUDENT_WEEKLY_HINT_PREFIX = "tp:student:weekly_hint:";
+const TP_CALLBACK_STUDENT_RUN_PREFIX = "tp:run:";
 const TP_ALL_ENABLED_WEEKLY_PREVIEW_NAME_LIMIT = 10;
 const TP_PENDING_ALL_ENABLED_WEEKLY_RUN_TTL_MS = 30 * 60 * 1000;
 const TP_CALLBACK_REPORTS = "tp:reports";
@@ -272,7 +275,8 @@ type ParsedTrainingPeaksCallback =
   | { kind: "reports_status_last" }
   | { kind: "reports_from_student" }
   | { kind: "more_menu" }
-  | { kind: "student_weekly_hint"; studentId: string };
+  | { kind: "student_weekly_hint"; studentId: string }
+  | { kind: "student_weekly_run"; studentId: string; weekKeyword: "last" | "current" };
 
 type PendingAllEnabledWeeklyRunContext = {
   weekFrom: string;
@@ -2097,6 +2101,27 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
     return studentId ? { kind: "student_weekly_hint", studentId } : null;
   }
 
+  if (data.startsWith(TP_CALLBACK_STUDENT_RUN_PREFIX)) {
+    const rest = data.slice(TP_CALLBACK_STUDENT_RUN_PREFIX.length);
+    const weekKeywordSeparatorIndex = rest.lastIndexOf(":");
+
+    if (weekKeywordSeparatorIndex <= 0) {
+      return null;
+    }
+
+    const studentId = rest.slice(0, weekKeywordSeparatorIndex).trim();
+    const weekKeyword = rest.slice(weekKeywordSeparatorIndex + 1).trim();
+
+    if (
+      studentId &&
+      (weekKeyword === "last" || weekKeyword === "current")
+    ) {
+      return { kind: "student_weekly_run", studentId, weekKeyword };
+    }
+
+    return null;
+  }
+
   if (data === "tp:actions:list") {
     return { kind: "actions_list" };
   }
@@ -2270,7 +2295,8 @@ function getStudentCardMenuMarkup(
   }
 ): TelegramInlineKeyboardMarkup {
   const rows: TrainingPeaksMenuButton[][] = [
-    [createMenuButton("▶️ Недельный отчёт", `${TP_CALLBACK_STUDENT_WEEKLY_HINT_PREFIX}${student.id}`)],
+    [createMenuButton("📅 Отчёт за прошлую неделю", `${TP_CALLBACK_STUDENT_RUN_PREFIX}${student.id}:last`)],
+    [createMenuButton("📅 Отчёт за текущую неделю", `${TP_CALLBACK_STUDENT_RUN_PREFIX}${student.id}:current`)],
     [createMenuButton("📄 Отчёт", `tp:r:${student.id}`)],
     [createMenuButton("🔗 Привязать Telegram", `${TP_CALLBACK_STUDENT_LINK_PREFIX}${student.id}`)],
     [
@@ -4185,6 +4211,164 @@ async function handleTrainingPeaksReportsStatusLast(
   await sendTrainingPeaksMessage(parsedMessage.chatId, statusText);
 }
 
+function getStudentWeeklyRunQueuedSuccessMessage(input: {
+  studentName: string;
+  week: TrainingPeaksWeek;
+}): string {
+  return [
+    "✅ Отчёт поставлен в очередь.",
+    `Ученик: ${input.studentName}`,
+    `Неделя: ${formatWeekIso(input.week)}`,
+    "",
+    "Отчёт будет создан локальным Mac-агентом.",
+    "Ученику ничего не отправится автоматически.",
+  ].join("\n");
+}
+
+function getStudentWeeklyRunResultMarkup(studentId: string): TelegramInlineKeyboardMarkup {
+  return createInlineKeyboardMarkup([
+    [createMenuButton("🧾 Задачи", TP_CALLBACK_JOBS)],
+    [createMenuButton("👤 К ученику", `tp:i:${studentId}`)],
+    [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
+  ]);
+}
+
+function getStudentWeeklyRunDuplicateMarkup(): TelegramInlineKeyboardMarkup {
+  return createInlineKeyboardMarkup([[createMenuButton("🧾 Задачи", TP_CALLBACK_JOBS)]]);
+}
+
+function getStudentWeeklyRunDuplicateMessage(input: {
+  studentName: string;
+  week: TrainingPeaksWeek;
+  status: "queued" | "running";
+}): string {
+  return input.status === "queued"
+    ? [
+        "Задача для этого ученика уже ожидает запуска на Mac.",
+        `Ученик: ${input.studentName}`,
+        `Неделя: ${formatWeekIso(input.week)}`,
+      ].join("\n")
+    : [
+        "Задача для этого ученика уже выполняется на Mac.",
+        `Ученик: ${input.studentName}`,
+        `Неделя: ${formatWeekIso(input.week)}`,
+      ].join("\n");
+}
+
+async function handleTrainingPeaksStudentWeeklyRunCallback(
+  parsedMessage: ParsedTelegramCallbackUpdate,
+  studentId: string,
+  weekKeyword: "last" | "current"
+): Promise<void> {
+  const student = await getTrainingPeaksStudentCardByInternalId(studentId);
+
+  if (!student) {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      "Ученик больше не найден.",
+      getStudentNotFoundMarkup()
+    );
+    return;
+  }
+
+  if (student.archivedAt) {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      `Ученик ${student.studentName} в архиве. Восстанови его перед генерацией отчёта.`,
+      getStudentWeeklyRunResultMarkup(student.id)
+    );
+    return;
+  }
+
+  if (!student.isActive) {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      `Ученик ${student.studentName} неактивен.`,
+      getStudentWeeklyRunResultMarkup(student.id)
+    );
+    return;
+  }
+
+  if (!student.trainingPeaksAthleteUrl.trim()) {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      `У ученика ${student.studentName} нет ссылки TrainingPeaks athlete.`,
+      getStudentWeeklyRunResultMarkup(student.id)
+    );
+    return;
+  }
+
+  const week = resolveTrainingPeaksWeekKeyword(weekKeyword);
+
+  if (!week) {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      "Не удалось определить неделю. Попробуй ещё раз.",
+      getStudentWeeklyRunResultMarkup(student.id)
+    );
+    return;
+  }
+
+  const result = await requestTrainingPeaksWeeklyRunForStudentByInternalId({
+    studentInternalId: student.id,
+    weekFrom: week.weekFrom,
+    weekTo: week.weekTo,
+    requestedByChatId: String(parsedMessage.chatId),
+    requestedByUserId: parsedMessage.userId === null ? null : String(parsedMessage.userId),
+  });
+
+  await presentTrainingPeaksStudentWeeklyRunEnqueueResult(parsedMessage, student, week, result);
+}
+
+async function presentTrainingPeaksStudentWeeklyRunEnqueueResult(
+  parsedMessage: ParsedTelegramCallbackUpdate,
+  student: { id: string; studentName: string },
+  week: TrainingPeaksWeek,
+  result: RequestTrainingPeaksWeeklyRunForStudentResult
+): Promise<void> {
+  if (result.ok) {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      getStudentWeeklyRunQueuedSuccessMessage({
+        studentName: student.studentName,
+        week,
+      }),
+      getStudentWeeklyRunResultMarkup(student.id)
+    );
+    return;
+  }
+
+  if (result.reason === "duplicate" && result.activeJob) {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      getStudentWeeklyRunDuplicateMessage({
+        studentName: student.studentName,
+        week: {
+          weekFrom: result.activeJob.weekFrom,
+          weekTo: result.activeJob.weekTo,
+        },
+        status: result.activeJob.status === "queued" ? "queued" : "running",
+      }),
+      getStudentWeeklyRunDuplicateMarkup()
+    );
+    return;
+  }
+
+  await editTrainingPeaksMenuMessage(
+    parsedMessage.chatId,
+    parsedMessage.messageId,
+    result.message,
+    getStudentWeeklyRunResultMarkup(student.id)
+  );
+}
+
 function getStudentWeeklyReportHintMessage(student: {
   studentId: string;
   studentName: string;
@@ -6034,6 +6218,15 @@ export async function handleTrainingPeaksTelegramCallback(
 
     if (callback.kind === "student_weekly_hint") {
       await showTrainingPeaksStudentWeeklyReportHint(parsedMessage, callback.studentId);
+      return "handled";
+    }
+
+    if (callback.kind === "student_weekly_run") {
+      await handleTrainingPeaksStudentWeeklyRunCallback(
+        parsedMessage,
+        callback.studentId,
+        callback.weekKeyword
+      );
       return "handled";
     }
   } catch (error) {
