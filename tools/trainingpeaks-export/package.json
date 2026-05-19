@@ -26,6 +26,7 @@
     "tp-discover-custom-metrics-api": "tsx scripts/tp-discover-custom-metrics-api.ts",
     "tp-discover-athletes": "tsx scripts/tp-discover-athletes.ts",
     "tp-import-athletes": "tsx scripts/tp-import-athletes.ts",
+    "tp-enable-weekly-reports": "tsx scripts/tp-enable-weekly-reports.ts",
     "tp-custom-metrics-availability-report": "tsx scripts/tp-custom-metrics-availability-report.ts",
     "tp-custom-metrics-profile-sync": "tsx scripts/tp-custom-metrics-profile-sync.ts",
     "tp-health-metrics-scan": "tsx scripts/tp-health-metrics-scan.ts",
