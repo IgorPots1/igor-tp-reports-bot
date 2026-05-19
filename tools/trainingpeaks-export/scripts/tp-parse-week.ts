@@ -1550,7 +1550,7 @@ function normalizeWorkoutDescriptionForSegments(value: string): string {
     .replace(/\r/g, "\n")
     .replace(/\u00a0/g, " ")
     .replace(/[‐‑‒–—−]/g, "-")
-    .replace(/[⏸⏯⏹⏺]/g, " пауза ")
+    .replace(/[⏸⏯⏹⏺]\s*/g, "")
     .replace(/[•●▪◦·]+/g, "\n")
     .replace(/[ \t]+/g, " ")
     .replace(/ *\n */g, "\n")
@@ -1703,9 +1703,82 @@ function countMinuteDurations(value: string): number {
   return collectDurationMatches(value).length;
 }
 
+function getDurationMatchLength(value: string, match: DurationMatch): number {
+  const slice = value.slice(match.index);
+  const minuteMatch = slice.match(
+    /^(?<first>\d{1,3}(?:[.,]\d+)?)(?:\s*-\s*(?<second>\d{1,3}(?:[.,]\d+)?))?\s*мин(?:ут(?:а|ы)?|\.?)/iu
+  );
+  if (minuteMatch?.[0]) {
+    return minuteMatch[0].length;
+  }
+
+  const clockMatch = slice.match(/^(?<minutes>[0-4]|0[0-4]):(?<seconds>[0-5]\d)/u);
+  if (clockMatch?.[0]) {
+    return clockMatch[0].length;
+  }
+
+  const secondsMatch = slice.match(/^(?<seconds>\d{1,4})\s*сек(?:унд(?:а|ы)?|\.?)?/iu);
+  if (secondsMatch?.[0]) {
+    return secondsMatch[0].length;
+  }
+
+  return 0;
+}
+
+function isMinutesDurationMatch(value: string, match: DurationMatch): boolean {
+  const slice = value.slice(match.index, match.index + 24);
+  return /\d\s*мин(?:ут(?:а|ы)?|\.?)/iu.test(slice);
+}
+
+function isSecondsDurationMatch(value: string, match: DurationMatch): boolean {
+  const slice = value.slice(match.index, match.index + 24);
+  return /\d\s*сек(?:унд(?:а|ы)?|\.?)?/iu.test(slice) || /^[0-4]?\d:[0-5]\d/u.test(slice);
+}
+
+function parseAdjacentMinSecDuration(value: string, matches: DurationMatch[]): DurationParseResult | null {
+  if (matches.length < 2) {
+    return null;
+  }
+
+  const [first, second] = matches;
+  if (!isMinutesDurationMatch(value, first) || !isSecondsDurationMatch(value, second)) {
+    return null;
+  }
+
+  const between = value
+    .slice(first.index + getDurationMatchLength(value, first), second.index)
+    .trim();
+  if (between.length > 0) {
+    return null;
+  }
+
+  if (first.minutes === null || second.minutes === null) {
+    return null;
+  }
+
+  return {
+    minutes: roundNumber(first.minutes + second.minutes, 2),
+    isRange: first.isRange,
+    zeroDurationText: first.zeroDurationText || second.zeroDurationText
+  };
+}
+
+function hasSingleEffectiveDuration(value: string): boolean {
+  const matches = collectDurationMatches(value);
+  if (matches.length === 0) {
+    return false;
+  }
+
+  if (parseAdjacentMinSecDuration(value, matches)) {
+    return matches.length <= 2;
+  }
+
+  return matches.length === 1;
+}
+
 function parseMinuteDuration(value: string): DurationParseResult {
-  const match = collectDurationMatches(value)[0];
-  if (!match) {
+  const matches = collectDurationMatches(value);
+  if (matches.length === 0) {
     return {
       minutes: null,
       isRange: false,
@@ -1713,6 +1786,12 @@ function parseMinuteDuration(value: string): DurationParseResult {
     };
   }
 
+  const adjacent = parseAdjacentMinSecDuration(value, matches);
+  if (adjacent) {
+    return adjacent;
+  }
+
+  const match = matches[0];
   return {
     minutes: match.minutes,
     isRange: match.isRange,
@@ -1830,14 +1909,46 @@ function parseRepeatMatch(value: string): RepeatMatch | null {
   };
 }
 
+function stripRecoveryTrailingProse(value: string): string {
+  return value
+    .replace(/\s+(?:полное\s+)?восстановлен(?:ие|ия)\s*\.?\s*$/iu, "")
+    .trim();
+}
+
+function splitInlineRepeatRecovery(value: string): {
+  intervalText: string;
+  recoveryText: string | null;
+} {
+  const afterEachMatch = value.match(
+    /^(?<interval>.+?)\s+после\s+каждого\s*[-:]?\s*(?<recovery>.+)$/iu
+  );
+  if (!afterEachMatch?.groups) {
+    return {
+      intervalText: value.trim(),
+      recoveryText: null
+    };
+  }
+
+  return {
+    intervalText: afterEachMatch.groups.interval.trim(),
+    recoveryText: stripRecoveryTrailingProse(afterEachMatch.groups.recovery.trim())
+  };
+}
+
 function splitTrailingRecoveryFromRepeatText(value: string): {
   intervalText: string;
   recoveryText: string | null;
 } {
-  const match = value.match(
-    /\s+(?<recovery>(?:\d{1,3}(?:[.,]\d+)?(?:\s*-\s*\d{1,3}(?:[.,]\d+)?)?\s*мин(?:ут(?:а|ы)?|\.?)|\d{1,4}\s*сек(?:унд(?:а|ы)?|\.?)?|\d{1,2}:\d{2})\s+(?:(?:очень\s+)?легк(?:о|ое|ий)\s+бег(?:ом)?|восстановление|полный отдых|отдых|спокойного?\s+шага|шаг(?:а)?|пешком).*)$/iu
-  );
-  if (!match?.groups || match.index === undefined) {
+  const inlineSplit = splitInlineRepeatRecovery(value);
+  if (inlineSplit.recoveryText) {
+    return inlineSplit;
+  }
+
+  const recoverySuffix =
+    /(\d{1,3}\s*мин(?:ут(?:а|ы)?|\.?)?\s+\d{1,2}\s*сек(?:унд(?:а|ы)?|\.?)?|\d{1,2}:\d{2}|\d{1,3}(?:[.,]\d+)?\s*мин(?:ут(?:а|ы)?|\.?)|\d{1,4}\s*сек(?:унд(?:а|ы)?|\.?)?)\s+(?:(?:очень\s+)?легк(?:о|ое|ий)\s+бег(?:ом)?|восстановление|полный отдых|отдых|спокойного?\s+шага|шаг(?:а)?|пешком)(?:\s+(?:полное\s+)?восстановлен(?:ие|ия)?)?$/iu;
+
+  const match = value.match(recoverySuffix);
+  if (!match || match.index === undefined || match.index === 0) {
     return {
       intervalText: value.trim(),
       recoveryText: null
@@ -1846,8 +1957,18 @@ function splitTrailingRecoveryFromRepeatText(value: string): {
 
   return {
     intervalText: value.slice(0, match.index).trim(),
-    recoveryText: match.groups.recovery.trim()
+    recoveryText: stripRecoveryTrailingProse(value.slice(match.index).trim())
   };
+}
+
+function recoverySegmentLooksRecoverable(recoveryText: string, recoveryDuration: DurationParseResult): boolean {
+  return (
+    recoveryDuration.minutes !== null &&
+    !parseRepeatMatch(recoveryText) &&
+    (isRecoverySegmentText(recoveryText) ||
+      isEasySegmentText(recoveryText) ||
+      isRestSegmentText(recoveryText))
+  );
 }
 
 function parseSimpleRepeatBlock(value: string): {
@@ -1861,34 +1982,56 @@ function parseSimpleRepeatBlock(value: string): {
     return null;
   }
 
+  const tryRepeatPair = (
+    intervalText: string,
+    recoveryText: string
+  ): {
+    intervalText: string;
+    intervalDuration: DurationParseResult;
+    recoveryText: string;
+    recoveryDuration: DurationParseResult;
+  } | null => {
+    const intervalDuration = parseMinuteDuration(intervalText);
+    const recoveryDuration = parseMinuteDuration(recoveryText);
+    const recoveryLooksRecoverable = recoverySegmentLooksRecoverable(recoveryText, recoveryDuration);
+
+    if (
+      intervalDuration.minutes === null ||
+      !recoveryLooksRecoverable ||
+      !hasSingleEffectiveDuration(intervalText) ||
+      !hasSingleEffectiveDuration(recoveryText)
+    ) {
+      return null;
+    }
+
+    return {
+      intervalText,
+      intervalDuration,
+      recoveryText,
+      recoveryDuration
+    };
+  };
+
+  const slashMatch = normalized.match(/^(?<interval>.+?)\s*\/\s*(?<recovery>.+)$/u);
+  if (slashMatch?.groups) {
+    const slashPair = tryRepeatPair(
+      slashMatch.groups.interval.trim(),
+      slashMatch.groups.recovery.trim()
+    );
+    if (slashPair) {
+      return slashPair;
+    }
+  }
+
   const bulletParts = normalized
     .split(/\s+-\s+/)
     .map((part, index) => (index === 0 ? part.replace(/^\s*-\s*/, "").trim() : part.trim()))
     .filter(Boolean);
 
   if (bulletParts.length === 2) {
-    const [intervalText, recoveryText] = bulletParts;
-    const intervalDuration = parseMinuteDuration(intervalText);
-    const recoveryDuration = parseMinuteDuration(recoveryText);
-    const recoveryLooksRecoverable =
-      recoveryDuration.minutes !== null &&
-      !parseRepeatMatch(recoveryText) &&
-      (isRecoverySegmentText(recoveryText) ||
-        isEasySegmentText(recoveryText) ||
-        isRestSegmentText(recoveryText));
-
-    if (
-      intervalDuration.minutes !== null &&
-      recoveryLooksRecoverable &&
-      countMinuteDurations(intervalText) === 1 &&
-      countMinuteDurations(recoveryText) === 1
-    ) {
-      return {
-        intervalText,
-        intervalDuration,
-        recoveryText,
-        recoveryDuration
-      };
+    const slashPair = tryRepeatPair(bulletParts[0], bulletParts[1]);
+    if (slashPair) {
+      return slashPair;
     }
   }
 
@@ -1897,30 +2040,7 @@ function parseSimpleRepeatBlock(value: string): {
     return null;
   }
 
-  const intervalDuration = parseMinuteDuration(splitRepeatText.intervalText);
-  const recoveryDuration = parseMinuteDuration(splitRepeatText.recoveryText);
-  const recoveryLooksRecoverable =
-    recoveryDuration.minutes !== null &&
-    !parseRepeatMatch(splitRepeatText.recoveryText) &&
-    (isRecoverySegmentText(splitRepeatText.recoveryText) ||
-      isEasySegmentText(splitRepeatText.recoveryText) ||
-      isRestSegmentText(splitRepeatText.recoveryText));
-
-  if (
-    intervalDuration.minutes === null ||
-    !recoveryLooksRecoverable ||
-    countMinuteDurations(splitRepeatText.intervalText) !== 1 ||
-    countMinuteDurations(splitRepeatText.recoveryText) !== 1
-  ) {
-    return null;
-  }
-
-  return {
-    intervalText: splitRepeatText.intervalText,
-    intervalDuration,
-    recoveryText: splitRepeatText.recoveryText,
-    recoveryDuration
-  };
+  return tryRepeatPair(splitRepeatText.intervalText, splitRepeatText.recoveryText);
 }
 
 function buildSegmentTargetsMetaFromDescription(text: string): ParsedTargetsMeta {
@@ -2273,6 +2393,15 @@ function parsePlannedSegments(params: {
       draft.targets.hr_bpm !== null ||
       draft.targets.pace_ranges.length > 0 ||
       lines.length === 1;
+
+    if (
+      draft.is_rest &&
+      draft.duration_minutes === null &&
+      isRestSegmentText(labeled.body) &&
+      countMinuteDurations(labeled.body) === 0
+    ) {
+      continue;
+    }
 
     if (!safeToKeep) {
       continue;
@@ -4761,12 +4890,20 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error: unknown) => {
-  if (error instanceof Error) {
-    console.error(error.message);
-  } else {
-    console.error(error);
-  }
+export { expandPlannedSegmentsForAnalysis, parsePlannedSegments };
 
-  process.exit(1);
-});
+const isMainModule =
+  process.argv[1] !== undefined &&
+  fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+
+if (isMainModule) {
+  main().catch((error: unknown) => {
+    if (error instanceof Error) {
+      console.error(error.message);
+    } else {
+      console.error(error);
+    }
+
+    process.exit(1);
+  });
+}
