@@ -1807,6 +1807,36 @@ export async function getTrainingPeaksStudentByTelegramChatId(
   return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
 }
 
+export async function getTrainingPeaksStudentByTelegramUsername(
+  username: string
+): Promise<TrainingPeaksStudent | null> {
+  const normalizedUsername = username.trim().replace(/^@+/, "");
+
+  if (!normalizedUsername) {
+    return null;
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_students")
+    .select("*")
+    .ilike("telegram_username", normalizedUsername)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to get TrainingPeaks student by telegram_username ${normalizedUsername}: ${error.message}`
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
+}
+
 export async function upsertTrainingPeaksBusinessChatFromMessage(
   input: UpsertTrainingPeaksBusinessChatInput
 ): Promise<TrainingPeaksBusinessChat> {

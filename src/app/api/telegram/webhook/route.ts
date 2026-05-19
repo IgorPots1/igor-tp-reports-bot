@@ -12,7 +12,8 @@ import {
   isTrainingPeaksCallback,
   isTrainingPeaksCommand,
 } from "@/features/telegram/trainingpeaks";
-import type { TelegramUpdate } from "@/features/telegram/types";
+import { handleTrainingPeaksGroupProbe } from "@/features/trainingpeaks/group-probe";
+import type { TelegramMessage, TelegramUpdate } from "@/features/telegram/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -39,6 +40,15 @@ function errorResponse(status: number, error: string) {
     status,
     headers: jsonHeaders,
   });
+}
+
+function isTelegramGroupChat(message: TelegramMessage): boolean {
+  const chatType = message.chat.type;
+  return chatType === "group" || chatType === "supergroup";
+}
+
+function getTelegramMessageTextOrCaption(message: TelegramMessage): string {
+  return (message.text ?? message.caption ?? "").trim();
 }
 
 type WebhookAuthorizationResult =
@@ -189,6 +199,22 @@ export async function POST(request: Request) {
 
   if (isTrainingPeaksCommand(messageText)) {
     await handleTrainingPeaksTelegramCommand(parsedMessage, messageText);
+    return okResponse();
+  }
+
+  const rawMessage = update.message;
+
+  if (rawMessage && isTelegramGroupChat(rawMessage) && !getTelegramMessageTextOrCaption(rawMessage).startsWith("/")) {
+    try {
+      await handleTrainingPeaksGroupProbe(rawMessage);
+    } catch (error) {
+      console.warn("TrainingPeaks group probe failed", {
+        chatId: rawMessage.chat.id,
+        messageId: rawMessage.message_id,
+        error,
+      });
+    }
+
     return okResponse();
   }
 

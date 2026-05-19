@@ -1,6 +1,9 @@
+export type TelegramChatType = "private" | "group" | "supergroup" | "channel";
+
 export type TelegramUser = {
   id: number;
   username?: string;
+  first_name?: string;
 };
 
 export type TelegramInlineKeyboardButton = {
@@ -27,6 +30,7 @@ export type TelegramReplyMarkup = TelegramInlineKeyboardMarkup | TelegramReplyKe
 
 export type TelegramChat = {
   id: number;
+  type?: TelegramChatType;
   title?: string;
   username?: string;
   first_name?: string;
@@ -39,6 +43,7 @@ export type TelegramMessage = {
   from?: TelegramUser;
   text?: string;
   caption?: string;
+  date?: number;
   business_connection_id?: string;
 };
 
