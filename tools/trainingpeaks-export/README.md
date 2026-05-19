@@ -14,6 +14,7 @@ Current commands:
 - `npm run tp-sync-reports -- --from=2026-04-27 --to=2026-05-03`
 - `npm run tp-sync-students`
 - `npm run tp-agent-once`
+- `npm run tp-agent-loop`
 - `npm run tp-races-requests-once`
 - `npm run tp-student-add -- --legacy-local-only --student=Olga --name="Ольга" --url="https://app.trainingpeaks.com/#calendar/athletes/5734279"` (legacy local-only)
 
@@ -98,6 +99,52 @@ npm run tp-sync-reports -- --from=2026-04-27 --to=2026-05-03
 - Учеников с плохим качеством данных можно временно отключать через `weekly_report_enabled=false`.
 - `tp-weekly-one` и `tp-weekly-all` теперь обновляют локальный `config/students.json` из Supabase перед запуском и не доверяют устаревшему локальному списку учеников.
 
+### Background weekly agent loop (local Mac)
+
+Purpose: poll Supabase for queued `trainingpeaks_jobs` and run `tp-agent-once` on a fixed interval, without manually starting the browser each time. TrainingPeaks export stays on the local Mac; Vercel does not call TrainingPeaks.
+
+The LaunchAgent runs headless export by default. Headed mode remains available for manual runs (omit `--headless`).
+
+Install:
+
+```bash
+mkdir -p ~/Library/LaunchAgents
+cp tools/trainingpeaks-export/launchd/com.igor.trainingpeaks.weekly-agent.plist.example ~/Library/LaunchAgents/com.igor.trainingpeaks.weekly-agent.plist
+launchctl unload ~/Library/LaunchAgents/com.igor.trainingpeaks.weekly-agent.plist 2>/dev/null || true
+launchctl load ~/Library/LaunchAgents/com.igor.trainingpeaks.weekly-agent.plist
+launchctl start com.igor.trainingpeaks.weekly-agent
+```
+
+Start / stop:
+
+```bash
+launchctl start com.igor.trainingpeaks.weekly-agent
+launchctl stop com.igor.trainingpeaks.weekly-agent
+launchctl unload ~/Library/LaunchAgents/com.igor.trainingpeaks.weekly-agent.plist
+```
+
+Logs:
+
+- Loop output (npm): `tools/trainingpeaks-export/logs/weekly-agent-loop.log`
+- launchd stdout: `tools/trainingpeaks-export/logs/weekly-agent.launchd.out.log`
+- launchd stderr: `tools/trainingpeaks-export/logs/weekly-agent.launchd.err.log`
+
+Manual loop (foreground):
+
+```bash
+cd ~/igor-tp-reports-bot/tools/trainingpeaks-export
+npm run tp-agent-loop -- --headless --interval-seconds=60
+npm run tp-agent-loop -- --once --headless
+```
+
+Headed fallback: run `tp-agent-once`, `tp-weekly-one`, or `tp-weekly-all` without `--headless` when you need a visible browser.
+
+If the Playwright session expires:
+
+```bash
+npm run tp-login
+```
+
 ### Run one queued job
 
 Для one-shot запуска локального runner:
@@ -105,6 +152,7 @@ npm run tp-sync-reports -- --from=2026-04-27 --to=2026-05-03
 ```bash
 cd ~/igor-tp-reports-bot/tools/trainingpeaks-export
 npm run tp-agent-once
+npm run tp-agent-once -- --headless
 ```
 
 Команда:
@@ -304,6 +352,7 @@ Examples:
 npm run tp-weekly-all
 npm run tp-weekly-all -- --skip-export
 npm run tp-weekly-all -- --from=2026-04-27 --to=2026-05-03 --skip-export
+npm run tp-weekly-all -- --from=2026-04-27 --to=2026-05-03 --headless
 ```
 
 `tp-reports-list` reviews the local weekly report status for configured students without creating or modifying files.

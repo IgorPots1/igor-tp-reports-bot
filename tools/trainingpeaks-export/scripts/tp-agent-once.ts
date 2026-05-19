@@ -241,6 +241,10 @@ function toShortErrorMessage(error: unknown): string {
   return `${normalized.slice(0, 297)}...`;
 }
 
+function hasCliFlag(flag: string): boolean {
+  return process.argv.slice(2).includes(flag);
+}
+
 async function runNpmScript(scriptName: string, args: string[] = []): Promise<void> {
   const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
   const childArgs = ["run", scriptName];
@@ -572,6 +576,7 @@ async function sendTelegramBatchSummaryIfPossible(
 
 async function main(): Promise<void> {
   loadLocalEnv();
+  const headless = hasCliFlag("--headless");
 
   const recoveredJobs = await recoverStaleTrainingPeaksRunningJobs(
     STALE_RUNNING_JOB_TIMEOUT_MINUTES
@@ -605,8 +610,12 @@ async function main(): Promise<void> {
     await runNpmScript("tp-sync-students");
     const expectedStudents = await readExpectedStudentsFromSupabase();
     studentsExpected = expectedStudents.length;
-    console.log("Running tp-weekly-all...");
-    await runNpmScript("tp-weekly-all", [`--from=${job.week_from}`, `--to=${job.week_to}`]);
+    console.log(`Running tp-weekly-all...${headless ? " (headless)" : ""}`);
+    await runNpmScript("tp-weekly-all", [
+      `--from=${job.week_from}`,
+      `--to=${job.week_to}`,
+      ...(headless ? ["--headless"] : []),
+    ]);
 
     console.log("Running tp-sync-reports...");
     await runNpmScript("tp-sync-reports", [`--from=${job.week_from}`, `--to=${job.week_to}`]);

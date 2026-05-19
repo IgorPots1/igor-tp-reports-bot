@@ -7,6 +7,7 @@ type CliArgs = {
   from?: string;
   to?: string;
   skipExport: boolean;
+  headless: boolean;
 };
 
 type StudentRunResult = {
@@ -21,7 +22,8 @@ function usage(): string {
     "Usage:",
     "  npm run tp-weekly-all",
     "  npm run tp-weekly-all -- --skip-export",
-    "  npm run tp-weekly-all -- --from=2026-04-27 --to=2026-05-03 --skip-export"
+    "  npm run tp-weekly-all -- --from=2026-04-27 --to=2026-05-03 --skip-export",
+    "  npm run tp-weekly-all -- --from=2026-04-27 --to=2026-05-03 --headless"
   ].join("\n");
 }
 
@@ -32,12 +34,18 @@ function assertIsoDate(value: string, flagName: "--from" | "--to"): void {
 }
 
 function parseArgs(argv: string[]): CliArgs {
-  const values: Partial<Omit<CliArgs, "skipExport">> = {};
+  const values: Partial<Omit<CliArgs, "skipExport" | "headless">> = {};
   let skipExport = false;
+  let headless = false;
 
   for (const arg of argv) {
     if (arg === "--skip-export") {
       skipExport = true;
+      continue;
+    }
+
+    if (arg === "--headless") {
+      headless = true;
       continue;
     }
 
@@ -68,7 +76,8 @@ function parseArgs(argv: string[]): CliArgs {
   return {
     from: values.from,
     to: values.to,
-    skipExport
+    skipExport,
+    headless
   };
 }
 
@@ -114,6 +123,7 @@ async function main(): Promise<void> {
   console.log(`- from=${period.from}`);
   console.log(`- to=${period.to}`);
   console.log(`- skip_export=${args.skipExport ? "yes" : "no"}`);
+  console.log(`- headless=${args.headless ? "yes" : "no"}`);
   console.log("");
   console.log("Selected students:");
 
@@ -141,7 +151,8 @@ async function main(): Promise<void> {
         student: student.student_id,
         from: period.from,
         to: period.to,
-        skipExport: args.skipExport
+        skipExport: args.skipExport,
+        headless: args.headless
       });
 
       results.push({
