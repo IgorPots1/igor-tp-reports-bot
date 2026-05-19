@@ -271,6 +271,22 @@ Use `--skip-export` to reuse an existing export folder and only run parse + repo
 npm run tp-weekly-one -- --student=Olga --from=2026-04-27 --to=2026-05-03 --skip-export
 ```
 
+### Headless smoke testing
+
+Headed mode remains the default. Pass `--headless` only for automated smoke checks; manual login and export fallback still apply when the session is missing or automation cannot finish.
+
+```bash
+npm run tp-weekly-one -- --student=<student_id> --from=YYYY-MM-DD --to=YYYY-MM-DD --headless
+```
+
+If login or the persistent browser session has expired, refresh it with:
+
+```bash
+npm run tp-login
+```
+
+For export failures, rerun with `TP_DEBUG=1` to print extra Playwright diagnostics.
+
 `tp-weekly-all` runs the same weekly workflow for every student from a freshly synced Supabase list where both flags are enabled:
 
 - `is_active === true`

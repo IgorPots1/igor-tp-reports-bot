@@ -13,6 +13,7 @@ export type WeeklyCliArgs = {
   from: string;
   to: string;
   skipExport: boolean;
+  headless: boolean;
 };
 
 type RuntimeStudentRow = {
@@ -31,12 +32,18 @@ function usage(): string {
 }
 
 function parseArgs(argv: string[]): WeeklyCliArgs {
-  const values: Partial<Omit<WeeklyCliArgs, "skipExport">> = {};
+  const values: Partial<Omit<WeeklyCliArgs, "skipExport" | "headless">> = {};
   let skipExport = false;
+  let headless = false;
 
   for (const arg of argv) {
     if (arg === "--skip-export") {
       skipExport = true;
+      continue;
+    }
+
+    if (arg === "--headless") {
+      headless = true;
       continue;
     }
 
@@ -68,7 +75,8 @@ function parseArgs(argv: string[]): WeeklyCliArgs {
     student: values.student,
     from: values.from,
     to: values.to,
-    skipExport
+    skipExport,
+    headless
   };
 }
 
@@ -222,6 +230,10 @@ async function runNodeScript(scriptName: string, args: WeeklyCliArgs): Promise<v
     `--from=${args.from}`,
     `--to=${args.to}`
   ];
+
+  if (args.headless && scriptName === "tp-export-one-student.ts") {
+    childArgs.push("--headless");
+  }
 
   await new Promise<void>((resolve, reject) => {
     const child = spawn(process.execPath, childArgs, {

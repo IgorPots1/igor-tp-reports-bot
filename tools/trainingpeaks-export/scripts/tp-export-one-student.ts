@@ -22,6 +22,7 @@ type CliArgs = {
   student: string;
   from: string;
   to: string;
+  headless: boolean;
 };
 
 type PageAssessment = {
@@ -81,14 +82,26 @@ type WorkoutSummaryClickDebug = WorkoutSummaryPreClickDebug & {
 function usage(): string {
   return [
     "Usage:",
-    "  npm run tp-export-one-student -- --student=nadezhda --from=2026-04-28 --to=2026-05-04"
+    "  npm run tp-export-one-student -- --student=nadezhda --from=2026-04-28 --to=2026-05-04",
+    "  npm run tp-export-one-student -- --student=nadezhda --from=2026-04-28 --to=2026-05-04 --headless"
   ].join("\n");
 }
 
 function parseArgs(argv: string[]): CliArgs {
-  const values: Partial<CliArgs> = {};
+  const values: Partial<Pick<CliArgs, "student" | "from" | "to">> = {};
+  let headless = false;
 
   for (const arg of argv) {
+    if (arg === "--headless") {
+      headless = true;
+      continue;
+    }
+
+    if (arg === "--headed") {
+      headless = false;
+      continue;
+    }
+
     if (!arg.startsWith("--")) {
       continue;
     }
@@ -113,7 +126,12 @@ function parseArgs(argv: string[]): CliArgs {
     throw new Error("`--from` and `--to` must use YYYY-MM-DD format.");
   }
 
-  return values as CliArgs;
+  return {
+    student: values.student,
+    from: values.from,
+    to: values.to,
+    headless
+  };
 }
 
 async function waitForEnter(message: string): Promise<void> {
@@ -3460,10 +3478,13 @@ async function main(): Promise<void> {
   console.log(`Using persistent browser profile: ${profileDir}`);
   console.log(`Export folder: ${exportDir}`);
   console.log(`Opening TrainingPeaks for student: ${student.student_id}`);
+  if (args.headless) {
+    console.log("Browser mode: headless (viewport 1440x900). Default is headed; pass --headed to force a visible window.");
+  }
 
   const context = await chromium.launchPersistentContext(profileDir, {
-    headless: false,
-    viewport: null,
+    headless: args.headless,
+    viewport: args.headless ? { width: 1440, height: 900 } : null,
     acceptDownloads: true,
     downloadsPath: exportDir
   });
