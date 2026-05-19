@@ -15,6 +15,7 @@ import {
 import type { TelegramUpdate } from "@/features/telegram/types";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 const jsonHeaders = {
   "Content-Type": "application/json",

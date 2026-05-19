@@ -48,6 +48,11 @@ import {
   getTrainingPeaksCoachChatIds,
 } from "@/features/trainingpeaks/attention-telegram";
 import { sendTrainingPeaksWeeklyReportToStudent } from "@/features/trainingpeaks/report-delivery";
+import { buildTrainingPeaksReplyDraftContext } from "@/features/trainingpeaks/reply-draft-context";
+import {
+  formatTrainingPeaksReplyDraftTelegramMessage,
+  generateTrainingPeaksReplyDraft,
+} from "@/features/trainingpeaks/reply-draft-generator";
 import {
   resolveTrainingPeaksWeekKeyword,
 } from "@/features/trainingpeaks/week";
@@ -150,6 +155,7 @@ const TP_BUSINESS_TEST_COMMAND_PATTERN = /^\/tp_business_test(?:@\w+)?(?:\s+|$)/
 const TP_SET_TELEGRAM_COMMAND_PATTERN = /^\/tp_set_telegram(?:@\w+)?(?:\s+|$)/;
 const TP_BIND_COMMAND_PATTERN = /^\/tp_bind(?:@\w+)?(?:\s+|$)/;
 const TP_ACTIONS_COMMAND_PATTERN = /^\/tp_actions(?:@\w+)?(?:\s+|$)/;
+const TP_REPLY_DRAFT_COMMAND_PATTERN = /^\/tp_reply_draft(?:@\w+)?(?:\s+|$)/;
 const TP_COMMAND_PATTERN = /^\/tp(?:_[a-z0-9_]+)?(?:@\w+)?(?:\s+|$)/;
 const SHORT_DATE_FORMATTER = new Intl.DateTimeFormat("ru-RU", {
   day: "numeric",
@@ -185,6 +191,7 @@ type TrainingPeaksCommand =
   | "tp_set_telegram"
   | "tp_bind"
   | "tp_actions"
+  | "tp_reply_draft"
   | "unknown";
 
 type TrainingPeaksWeek = {
@@ -375,6 +382,10 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
 
   if (TP_ACTIONS_COMMAND_PATTERN.test(text)) {
     return "tp_actions";
+  }
+
+  if (TP_REPLY_DRAFT_COMMAND_PATTERN.test(text)) {
+    return "tp_reply_draft";
   }
 
   if (TP_COMMAND_PATTERN.test(text)) {
@@ -1198,6 +1209,49 @@ function parseEnableStudentCommand(text: string): string {
   return text.replace(TP_ENABLE_STUDENT_COMMAND_PATTERN, "").trim();
 }
 
+function parseReplyDraftCommand(text: string): {
+  studentQuery: string | null;
+  studentMessage: string | null;
+} {
+  const body = text.replace(/^\/tp_reply_draft(?:@\w+)?\s*/i, "").trim();
+
+  if (!body) {
+    return { studentQuery: null, studentMessage: null };
+  }
+
+  const newlineIndex = body.indexOf("\n");
+  if (newlineIndex === -1) {
+    const tokens = body.split(/\s+/);
+    if (tokens.length <= 1) {
+      return {
+        studentQuery: tokens[0]?.trim() || null,
+        studentMessage: null,
+      };
+    }
+
+    return {
+      studentQuery: tokens[0]?.trim() || null,
+      studentMessage: tokens.slice(1).join(" ").trim() || null,
+    };
+  }
+
+  const studentQuery = body.slice(0, newlineIndex).trim();
+  const studentMessage = body.slice(newlineIndex + 1).trim();
+
+  return {
+    studentQuery: studentQuery || null,
+    studentMessage: studentMessage || null,
+  };
+}
+
+function getReplyDraftUsageMessage(): string {
+  return [
+    "Напиши так:",
+    "/tp_reply_draft alexander-lavrentyev",
+    "Пробежал, было тяжело, пульс высокий, ноги ватные.",
+  ].join("\n");
+}
+
 function getStudentCardReportStatusLabel(status: string): string {
   if (status === "ready") {
     return "готов";
@@ -1625,6 +1679,7 @@ export function getTrainingPeaksHelpLines(): string[] {
     "🧾 Задачи — посмотреть последние запуски",
     "/tp_races YYYY-MM-DD YYYY-MM-DD — скан забегов за период",
     "/tp_actions — последние заявки на перенос и очистка очереди",
+    "/tp_reply_draft <ученик> — черновик ответа ученику (только тренеру, без автоотправки)",
     "Управление учениками и Telegram-привязкой теперь выполняется в Web Admin.",
     "🔎 Найти по username / 🔗 Код привязки остаются fallback-инструментами в карточке ученика",
     "",
@@ -4439,6 +4494,84 @@ async function handleTrainingPeaksAddStudent(
   await handleTrainingPeaksAddStudentInput(parsedMessage, rawInput);
 }
 
+async function handleTrainingPeaksReplyDraft(
+  parsedMessage: ParsedTelegramUpdate,
+  text: string
+): Promise<void> {
+  const { studentQuery, studentMessage } = parseReplyDraftCommand(text);
+
+  if (!studentQuery) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, getReplyDraftUsageMessage());
+    return;
+  }
+
+  if (!studentMessage) {
+    await sendTrainingPeaksMessage(
+      parsedMessage.chatId,
+      "Вставь сообщение ученика после строки с учеником (можно несколько строк)."
+    );
+    return;
+  }
+
+  let studentMatch = await getTrainingPeaksStudentCard(studentQuery);
+
+  if (studentMatch.kind === "not_found" && /^[0-9a-f-]{36}$/i.test(studentQuery)) {
+    const studentByUuid = await getTrainingPeaksStudentCardByInternalId(studentQuery);
+    if (studentByUuid) {
+      studentMatch = { kind: "student", student: studentByUuid };
+    }
+  }
+
+  if (studentMatch.kind === "not_found") {
+    await sendTrainingPeaksMessage(
+      parsedMessage.chatId,
+      `Ученик "${studentQuery}" не найден.\nПосмотри список: /tp_students`
+    );
+    return;
+  }
+
+  if (studentMatch.kind === "ambiguous") {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, formatStudentAmbiguityMessage(studentMatch.matches));
+    return;
+  }
+
+  const draftContext = await buildTrainingPeaksReplyDraftContext({
+    studentUuid: studentMatch.student.id,
+    studentSlug: studentMatch.student.studentId,
+    studentName: studentMatch.student.studentName,
+  });
+
+  const draftResult = await generateTrainingPeaksReplyDraft({
+    studentMessage,
+    context: draftContext,
+  });
+
+  if (!draftResult.ok) {
+    if (draftResult.reason === "missing_api_key") {
+      await sendTrainingPeaksMessage(
+        parsedMessage.chatId,
+        "Не настроен OPENAI_API_KEY — черновик ответа недоступен."
+      );
+      return;
+    }
+
+    await sendTrainingPeaksMessage(
+      parsedMessage.chatId,
+      "Не смог сгенерировать черновик ответа. Попробуй позже."
+    );
+    return;
+  }
+
+  await sendTrainingPeaksMessage(
+    parsedMessage.chatId,
+    formatTrainingPeaksReplyDraftTelegramMessage({
+      studentName: studentMatch.student.studentName,
+      contextBullets: draftContext.telegramContextBullets,
+      draftText: draftResult.draftText,
+    })
+  );
+}
+
 async function handleTrainingPeaksReport(
   parsedMessage: ParsedTelegramUpdate,
   text: string
@@ -5323,6 +5456,11 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_actions") {
       await showTpActionsList(parsedMessage);
+      return "handled";
+    }
+
+    if (command === "tp_reply_draft") {
+      await handleTrainingPeaksReplyDraft(parsedMessage, text);
       return "handled";
     }
 
