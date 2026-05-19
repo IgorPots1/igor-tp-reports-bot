@@ -118,6 +118,7 @@ type SyncRow = {
   week_to: string;
   status: string;
   report_markdown: string | null;
+  coach_notes_json: unknown | null;
   summary_json: SafeWeeklySummary;
   warnings: SyncWarnings | null;
   synced_at: string;
@@ -142,6 +143,19 @@ function usage(): string {
 function readTextFileSyncSafe(filePath: string): string | null {
   try {
     return readFileSync(filePath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+async function readCoachNotesJson(filePath: string): Promise<unknown | null> {
+  if (!existsSync(filePath)) {
+    return null;
+  }
+
+  try {
+    const raw = await readFile(filePath, "utf8");
+    return JSON.parse(raw) as unknown;
   } catch {
     return null;
   }
@@ -458,7 +472,9 @@ async function main(): Promise<void> {
     }
 
     const reportPath = path.join(reportsRoot, studentId, weekKey, "report-draft.md");
+    const coachNotesPath = path.join(reportsRoot, studentId, weekKey, "coach-notes.json");
     const reportMarkdown = existsSync(reportPath) ? await readFile(reportPath, "utf8") : null;
+    const coachNotesJson = await readCoachNotesJson(coachNotesPath);
 
     rows.push({
       student_id: summary.student_id,
@@ -467,6 +483,7 @@ async function main(): Promise<void> {
       week_to: summary.week.to,
       status: reportMarkdown ? "ready" : "parsed_only",
       report_markdown: reportMarkdown,
+      coach_notes_json: coachNotesJson,
       summary_json: sanitizeSummary(summary),
       warnings: buildWarnings(summary),
       synced_at: syncedAt,
@@ -529,6 +546,7 @@ async function main(): Promise<void> {
           student_name: row.student_name,
           status: row.status,
           report_markdown: row.report_markdown,
+          coach_notes_json: row.coach_notes_json,
           summary_json: row.summary_json,
           warnings: row.warnings,
           synced_at: row.synced_at,
@@ -544,6 +562,7 @@ async function main(): Promise<void> {
           student_name: row.student_name,
           status: row.status,
           report_markdown: row.report_markdown,
+          coach_notes_json: row.coach_notes_json,
           summary_json: row.summary_json,
           warnings: row.warnings,
           synced_at: row.synced_at

@@ -86,6 +86,7 @@ export type TrainingPeaksWeeklyReport = {
   editedAt: string | null;
   summaryJson: unknown | null;
   warnings: unknown | null;
+  coachNotesJson: unknown | null;
   syncedAt: string;
   reviewStatus: string;
   approvedAt: string | null;
@@ -108,6 +109,7 @@ type TrainingPeaksWeeklyReportRow = {
   edited_at: string | null;
   summary_json: unknown | null;
   warnings: unknown | null;
+  coach_notes_json: unknown | null;
   synced_at: string;
   review_status: string;
   approved_at: string | null;
@@ -871,6 +873,7 @@ function mapTrainingPeaksWeeklyReportRow(
     editedAt: row.edited_at,
     summaryJson: row.summary_json,
     warnings: row.warnings,
+    coachNotesJson: row.coach_notes_json,
     syncedAt: row.synced_at,
     reviewStatus: row.review_status,
     approvedAt: row.approved_at,

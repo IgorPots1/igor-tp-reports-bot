@@ -4,6 +4,10 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
+import {
+  buildTrainingPeaksCoachNotes,
+  type RecoveryContextForCoachNotes,
+} from "./lib/trainingpeaks-coach-notes.ts";
 import { buildTrainingPeaksRecoverySummary } from "./lib/trainingpeaks-recovery-summary.ts";
 import { readStudentsConfig } from "./lib/students.ts";
 
@@ -137,9 +141,11 @@ type ReportDraft = {
     to: string;
   };
   source_summary_path: string;
+  coach_notes_path: string;
   model: string;
   created_at: string;
   recovery_context: RecoveryContextForPrompt;
+  coach_notes: ReturnType<typeof buildTrainingPeaksCoachNotes>;
   report_markdown: string;
 };
 
@@ -712,6 +718,7 @@ async function main(): Promise<void> {
   const reportDir = path.join(reportsRoot, args.student, `${args.from}_${args.to}`);
   const reportMarkdownPath = path.join(reportDir, "report-draft.md");
   const reportJsonPath = path.join(reportDir, "report-draft.json");
+  const coachNotesPath = path.join(reportDir, "coach-notes.json");
 
   if (!existsSync(summaryPath)) {
     throw new Error(`Weekly summary does not exist: ${summaryPath}`);
@@ -736,6 +743,11 @@ async function main(): Promise<void> {
     recoveryContext,
   });
   const createdAt = new Date().toISOString();
+  const coachNotes = buildTrainingPeaksCoachNotes({
+    summary,
+    recoveryContext: recoveryContext as RecoveryContextForCoachNotes,
+    generatedAt: createdAt,
+  });
 
   const reportDraft: ReportDraft = {
     student_id: summary.student_id,
@@ -744,17 +756,21 @@ async function main(): Promise<void> {
       to: summary.week.to
     },
     source_summary_path: relativeToToolRoot(summaryPath),
+    coach_notes_path: relativeToToolRoot(coachNotesPath),
     model,
     created_at: createdAt,
     recovery_context: recoveryContext,
+    coach_notes: coachNotes,
     report_markdown: reportMarkdown
   };
 
   await mkdir(reportDir, { recursive: true });
   await writeFile(reportMarkdownPath, reportMarkdown, "utf8");
+  await writeFile(coachNotesPath, `${JSON.stringify(coachNotes, null, 2)}\n`, "utf8");
   await writeFile(reportJsonPath, `${JSON.stringify(reportDraft, null, 2)}\n`, "utf8");
 
   debugLog(`Created markdown path: ${reportMarkdownPath}`);
+  debugLog(`Created coach notes path: ${coachNotesPath}`);
   debugLog(`Created json path: ${reportJsonPath}`);
   console.log(`Report generated: student=${args.student} week=${args.from}..${args.to}`);
 }

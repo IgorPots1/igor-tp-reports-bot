@@ -654,3 +654,62 @@ code {
     width: 100%;
   }
 }
+
+.admin-coach-notes-panel {
+  border-style: dashed;
+  background: #f8fafc;
+}
+
+.admin-coach-notes-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.admin-coach-notes-summary::-webkit-details-marker {
+  display: none;
+}
+
+.admin-coach-notes-body {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.admin-coach-notes-section h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.admin-coach-notes-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+
+.admin-coach-notes-list-compact {
+  margin-top: 8px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.admin-coach-notes-code {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: #e2e8f0;
+  color: #334155;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  vertical-align: baseline;
+}

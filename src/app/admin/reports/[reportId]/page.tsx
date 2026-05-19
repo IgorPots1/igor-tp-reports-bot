@@ -14,6 +14,10 @@ import {
   getSingleSearchParam,
 } from "@/app/admin/lib";
 import {
+  parseCoachNotesForDisplay,
+  TrainingPeaksCoachNotesPanel,
+} from "@/features/trainingpeaks/coach-notes-display";
+import {
   getTrainingPeaksAdminReportById,
   getTrainingPeaksAdminReportStudentState,
 } from "@/features/trainingpeaks/admin";
@@ -89,6 +93,7 @@ export default async function AdminReportDetailPage({
   }
 
   const currentMarkdown = entry.finalReportMarkdown ?? "";
+  const coachNotes = parseCoachNotesForDisplay(entry.report.coachNotesJson);
   const isSent = entry.report.reviewStatus === "sent";
   const listParams = new URLSearchParams();
 
@@ -288,6 +293,8 @@ export default async function AdminReportDetailPage({
       {entry.report.deliveryError && !entry.report.sentAt && (
         <div className="admin-alert admin-alert-error">{entry.report.deliveryError}</div>
       )}
+
+      {coachNotes && <TrainingPeaksCoachNotesPanel notes={coachNotes} />}
 
       {entry.report.editedReportMarkdown?.trim() && entry.report.reportMarkdown?.trim() && (
         <article className="admin-card admin-card-compact">
