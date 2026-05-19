@@ -24,7 +24,8 @@
     "tp-races-loop:install": "npm --prefix tools/trainingpeaks-export run tp-races-loop:install",
     "tp-races-loop:uninstall": "npm --prefix tools/trainingpeaks-export run tp-races-loop:uninstall",
     "tp-races-loop:logs": "npm --prefix tools/trainingpeaks-export run tp-races-loop:logs",
-    "check-trainingpeaks-action-parser": "npx tsx scripts/check-trainingpeaks-action-parser.ts"
+    "check-trainingpeaks-action-parser": "npx tsx scripts/check-trainingpeaks-action-parser.ts",
+    "check-trainingpeaks-recovery-alerts": "npx tsx scripts/check-trainingpeaks-recovery-alerts.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.3",

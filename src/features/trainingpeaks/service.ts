@@ -36,6 +36,8 @@ import {
   listTrainingPeaksStudentsIncludingArchived,
   listTrainingPeaksWorkoutCacheForDateRange,
   listTrainingPeaksWorkoutCacheScanStatusesForRange,
+  listTrainingPeaksStudentsEligibleForHealthMetrics,
+  listTrainingPeaksHealthMetricsForStudentDateRange,
   markTrainingPeaksStudentTelegramLinkCodeUsed,
   rejectTrainingPeaksAction as rejectTrainingPeaksActionInRepository,
   requestTrainingPeaksActionExecution as requestTrainingPeaksActionExecutionInRepository,
@@ -75,6 +77,7 @@ import {
   updateTrainingPeaksWeeklyReportReviewState as updateTrainingPeaksWeeklyReportReviewStateInRepository,
   updateTrainingPeaksWeeklyReportStateById,
 } from "@/features/trainingpeaks/repository";
+import { evaluateTrainingPeaksRecoveryAlert } from "@/features/trainingpeaks/recovery-alerts";
 import { classifyTrainingPeaksWorkoutActivity } from "@/features/trainingpeaks/workout-activity-classification";
 import { parseMoveWorkoutWithAiFallback } from "@/features/trainingpeaks/move-workout-parser-ai";
 import { TRAININGPEAKS_TIME_ZONE, resolveTrainingPeaksWeekKeyword } from "@/features/trainingpeaks/week";
@@ -2126,6 +2129,31 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
       level: "fyi",
       studentName: null,
       reason: `Нет свежего скана тренировок за вчера для ${missingScanCount} учеников`,
+    });
+  }
+
+  const recoveryAlertTargetDate = yesterdayDate;
+  const recoveryAlertFromDate = shiftBelgradeIsoDate(recoveryAlertTargetDate, -2);
+  const eligibleRecoveryProfiles = await listTrainingPeaksStudentsEligibleForHealthMetrics();
+  for (const profile of eligibleRecoveryProfiles) {
+    const metrics = await listTrainingPeaksHealthMetricsForStudentDateRange({
+      studentId: profile.studentId,
+      from: recoveryAlertFromDate,
+      to: recoveryAlertTargetDate,
+    });
+    const alert = evaluateTrainingPeaksRecoveryAlert({
+      profile,
+      metrics,
+      targetDate: recoveryAlertTargetDate,
+      lookbackDays: 3,
+    });
+    if (!alert) {
+      continue;
+    }
+    pushUniqueAttentionSignal(observe, {
+      level: "observe",
+      studentName: profile.studentName?.trim() || null,
+      reason: alert.message,
     });
   }
 
