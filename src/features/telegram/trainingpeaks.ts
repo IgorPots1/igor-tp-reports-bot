@@ -54,6 +54,11 @@ import {
   generateTrainingPeaksReplyDraft,
 } from "@/features/trainingpeaks/reply-draft-generator";
 import {
+  listTrainingPeaksCronRunLogs,
+  TRAININGPEAKS_ATTENTION_DIGEST_CRON_JOB_NAME,
+  type TrainingPeaksCronRunLog,
+} from "@/features/trainingpeaks/repository";
+import {
   resolveTrainingPeaksWeekKeyword,
 } from "@/features/trainingpeaks/week";
 import {
@@ -150,6 +155,7 @@ const TP_RUN_WEEK_COMMAND_PATTERN = /^\/tp_run_week(?:@\w+)?(?:\s+|$)/;
 const TP_RACES_COMMAND_PATTERN = /^\/tp_races(?:@\w+)?(?:\s+|$)/;
 const TP_JOBS_COMMAND_PATTERN = /^\/tp_jobs(?:@\w+)?(?:\s+|$)/;
 const TP_ATTENTION_COMMAND_PATTERN = /^\/tp_attention(?:@\w+)?(?:\s+|$)/;
+const TP_CRON_STATUS_COMMAND_PATTERN = /^\/tp_cron_status(?:@\w+)?(?:\s+|$)/;
 const TP_WEEKLY_COMMAND_PATTERN = /^\/tp_weekly(?:@\w+)?(?:\s+|$)/;
 const TP_BUSINESS_TEST_COMMAND_PATTERN = /^\/tp_business_test(?:@\w+)?(?:\s+|$)/;
 const TP_SET_TELEGRAM_COMMAND_PATTERN = /^\/tp_set_telegram(?:@\w+)?(?:\s+|$)/;
@@ -186,6 +192,7 @@ type TrainingPeaksCommand =
   | "tp_races"
   | "tp_jobs"
   | "tp_attention"
+  | "tp_cron_status"
   | "tp_weekly"
   | "tp_business_test"
   | "tp_set_telegram"
@@ -362,6 +369,10 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
 
   if (TP_ATTENTION_COMMAND_PATTERN.test(text)) {
     return "tp_attention";
+  }
+
+  if (TP_CRON_STATUS_COMMAND_PATTERN.test(text)) {
+    return "tp_cron_status";
   }
 
   if (TP_WEEKLY_COMMAND_PATTERN.test(text)) {
@@ -1658,6 +1669,94 @@ async function handleTrainingPeaksAttention(parsedMessage: ParsedTelegramUpdate)
     parsedMessage.chatId,
     formatTrainingPeaksAttentionSnapshotMessage(snapshot, "Внимание на сегодня")
   );
+}
+
+const TP_CRON_STATUS_BELGRADE_FORMATTER = new Intl.DateTimeFormat("ru-RU", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  timeZone: "Europe/Belgrade",
+});
+
+function formatTrainingPeaksCronRunLogBelgradeTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return `${TP_CRON_STATUS_BELGRADE_FORMATTER.format(date)} (Belgrade)`;
+}
+
+function shortTrainingPeaksCronUserAgentLabel(userAgent: string | null): string {
+  if (!userAgent) {
+    return "—";
+  }
+
+  const lower = userAgent.toLowerCase();
+  if (lower.includes("vercel-cron")) {
+    return "vercel-cron";
+  }
+
+  if (lower.startsWith("curl/")) {
+    return "curl";
+  }
+
+  return userAgent.length > 40 ? `${userAgent.slice(0, 37)}...` : userAgent;
+}
+
+function formatTrainingPeaksCronRunLogCounts(counts: Record<string, unknown>): string {
+  const keys = ["urgent", "today", "observe", "fyi", "sent", "failed"] as const;
+  const parts = keys
+    .map((key) => {
+      const value = counts[key];
+      if (typeof value !== "number") {
+        return null;
+      }
+
+      return `${key}=${value}`;
+    })
+    .filter((part): part is string => part !== null);
+
+  return parts.length > 0 ? parts.join(", ") : "—";
+}
+
+function formatTrainingPeaksCronRunLogLine(log: TrainingPeaksCronRunLog, index: number): string {
+  return [
+    `${index + 1}. ${formatTrainingPeaksCronRunLogBelgradeTime(log.startedAt)}`,
+    `source: ${log.source}`,
+    `status: ${log.status}`,
+    `http: ${log.responseStatus ?? "—"}`,
+    `counts: ${formatTrainingPeaksCronRunLogCounts(log.counts)}`,
+    `ua: ${shortTrainingPeaksCronUserAgentLabel(log.userAgent)}`,
+  ].join("\n");
+}
+
+function formatTrainingPeaksCronStatusMessage(logs: TrainingPeaksCronRunLog[]): string {
+  if (logs.length === 0) {
+    return [
+      "Cron run log: attention_digest",
+      "",
+      "Записей пока нет.",
+      "После ручного curl или Vercel Cron здесь появятся последние 5 запусков.",
+    ].join("\n");
+  }
+
+  return [
+    "Cron run log: attention_digest",
+    "Последние 5 запусков:",
+    "",
+    ...logs.map((log, index) => formatTrainingPeaksCronRunLogLine(log, index)),
+  ].join("\n");
+}
+
+async function handleTrainingPeaksCronStatus(parsedMessage: ParsedTelegramUpdate): Promise<void> {
+  const logs = await listTrainingPeaksCronRunLogs({
+    jobName: TRAININGPEAKS_ATTENTION_DIGEST_CRON_JOB_NAME,
+    limit: 5,
+  });
+  await sendTrainingPeaksMessage(parsedMessage.chatId, formatTrainingPeaksCronStatusMessage(logs));
 }
 
 export function isCoachChat(chatId: number | string): boolean {
@@ -5431,6 +5530,11 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_attention") {
       await handleTrainingPeaksAttention(parsedMessage);
+      return "handled";
+    }
+
+    if (command === "tp_cron_status") {
+      await handleTrainingPeaksCronStatus(parsedMessage);
       return "handled";
     }
 

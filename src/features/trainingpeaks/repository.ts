@@ -3395,3 +3395,153 @@ export async function cancelQueuedTrainingPeaksJob(jobId: string): Promise<Train
 
   return mapTrainingPeaksJobRow(data as TrainingPeaksJobRow);
 }
+
+export const TRAININGPEAKS_ATTENTION_DIGEST_CRON_JOB_NAME = "attention_digest";
+
+export type TrainingPeaksCronRunLogSource = "vercel_cron" | "manual" | "unknown";
+export type TrainingPeaksCronRunLogStatus =
+  | "started"
+  | "sent"
+  | "failed"
+  | "unauthorized"
+  | "skipped";
+
+export type TrainingPeaksCronRunLog = {
+  id: string;
+  jobName: string;
+  source: TrainingPeaksCronRunLogSource;
+  status: TrainingPeaksCronRunLogStatus;
+  httpMethod: string | null;
+  userAgent: string | null;
+  requestPath: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  durationMs: number | null;
+  responseStatus: number | null;
+  counts: Record<string, unknown>;
+  errorMessage: string | null;
+  createdAt: string;
+};
+
+type TrainingPeaksCronRunLogRow = {
+  id: string;
+  job_name: string;
+  source: TrainingPeaksCronRunLogSource;
+  status: TrainingPeaksCronRunLogStatus;
+  http_method: string | null;
+  user_agent: string | null;
+  request_path: string | null;
+  started_at: string;
+  finished_at: string | null;
+  duration_ms: number | null;
+  response_status: number | null;
+  counts: Record<string, unknown> | null;
+  error_message: string | null;
+  created_at: string;
+};
+
+function mapTrainingPeaksCronRunLogRow(row: TrainingPeaksCronRunLogRow): TrainingPeaksCronRunLog {
+  return {
+    id: row.id,
+    jobName: row.job_name,
+    source: row.source,
+    status: row.status,
+    httpMethod: row.http_method,
+    userAgent: row.user_agent,
+    requestPath: row.request_path,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    durationMs: row.duration_ms,
+    responseStatus: row.response_status,
+    counts: row.counts ?? {},
+    errorMessage: row.error_message,
+    createdAt: row.created_at,
+  };
+}
+
+export type CreateTrainingPeaksCronRunLogInput = {
+  jobName: string;
+  source?: TrainingPeaksCronRunLogSource;
+  status: TrainingPeaksCronRunLogStatus;
+  httpMethod?: string | null;
+  userAgent?: string | null;
+  requestPath?: string | null;
+  counts?: Record<string, unknown>;
+};
+
+export async function createTrainingPeaksCronRunLog(
+  input: CreateTrainingPeaksCronRunLogInput
+): Promise<TrainingPeaksCronRunLog> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_cron_run_logs")
+    .insert({
+      job_name: input.jobName,
+      source: input.source ?? "unknown",
+      status: input.status,
+      http_method: input.httpMethod ?? null,
+      user_agent: input.userAgent ?? null,
+      request_path: input.requestPath ?? null,
+      counts: input.counts ?? {},
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to create TrainingPeaks cron run log for ${input.jobName}: ${error.message}`);
+  }
+
+  return mapTrainingPeaksCronRunLogRow(data as TrainingPeaksCronRunLogRow);
+}
+
+export type FinishTrainingPeaksCronRunLogInput = {
+  status: Exclude<TrainingPeaksCronRunLogStatus, "started">;
+  responseStatus?: number | null;
+  counts?: Record<string, unknown>;
+  errorMessage?: string | null;
+  finishedAt?: string;
+  durationMs?: number | null;
+};
+
+export async function finishTrainingPeaksCronRunLog(
+  runLogId: string,
+  input: FinishTrainingPeaksCronRunLogInput
+): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const finishedAt = input.finishedAt ?? new Date().toISOString();
+  const { error } = await supabase
+    .from("trainingpeaks_cron_run_logs")
+    .update({
+      status: input.status,
+      finished_at: finishedAt,
+      duration_ms: input.durationMs ?? null,
+      response_status: input.responseStatus ?? null,
+      counts: input.counts ?? {},
+      error_message: input.errorMessage ?? null,
+    })
+    .eq("id", runLogId);
+
+  if (error) {
+    throw new Error(`Failed to finish TrainingPeaks cron run log ${runLogId}: ${error.message}`);
+  }
+}
+
+export async function listTrainingPeaksCronRunLogs(input: {
+  jobName: string;
+  limit?: number;
+}): Promise<TrainingPeaksCronRunLog[]> {
+  const supabase = createSupabaseServerClient();
+  const safeLimit = Math.max(1, Math.min(input.limit ?? 5, 20));
+  const { data, error } = await supabase
+    .from("trainingpeaks_cron_run_logs")
+    .select("*")
+    .eq("job_name", input.jobName)
+    .order("started_at", { ascending: false })
+    .limit(safeLimit);
+
+  if (error) {
+    throw new Error(`Failed to list TrainingPeaks cron run logs for ${input.jobName}: ${error.message}`);
+  }
+
+  return ((data as TrainingPeaksCronRunLogRow[] | null) ?? []).map(mapTrainingPeaksCronRunLogRow);
+}
