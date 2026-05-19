@@ -57,9 +57,14 @@ export default async function AdminStudentsPage({ searchParams }: StudentsPagePr
             недельные отчёты дополнительно блокируют будущую генерацию и доставку.
           </p>
         </div>
-        <Link className="admin-button" href="/admin/students/new">
-          Добавить ученика
-        </Link>
+        <div className="admin-actions">
+          <Link className="admin-button admin-button-secondary" href="/admin/students/weekly-reports">
+            Недельные отчёты
+          </Link>
+          <Link className="admin-button" href="/admin/students/new">
+            Добавить ученика
+          </Link>
+        </div>
       </div>
 
       {(notice || error) && (

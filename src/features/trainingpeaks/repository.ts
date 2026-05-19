@@ -1737,6 +1737,24 @@ export async function listTrainingPeaksStudents(): Promise<TrainingPeaksStudent[
   return ((data as TrainingPeaksStudentRow[]) ?? []).map(mapTrainingPeaksStudentRow);
 }
 
+/** Active students included in all_enabled weekly report jobs. */
+export async function listTrainingPeaksWeeklyReportEligibleStudents(): Promise<TrainingPeaksStudent[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_students")
+    .select("*")
+    .eq("is_active", true)
+    .eq("weekly_report_enabled", true)
+    .order("student_name", { ascending: true })
+    .order("student_id", { ascending: true });
+
+  if (error) {
+    throw new Error(`Failed to list TrainingPeaks weekly-report eligible students: ${error.message}`);
+  }
+
+  return ((data as TrainingPeaksStudentRow[]) ?? []).map(mapTrainingPeaksStudentRow);
+}
+
 /** Active, non-archived students for race/event discovery (ignores weekly_report_enabled). */
 export async function listTrainingPeaksActiveStudentsForEventScan(): Promise<TrainingPeaksStudent[]> {
   const supabase = createSupabaseServerClient();

@@ -36,6 +36,7 @@ import {
   listLatestTrainingPeaksActionRunsByActionIds,
   listTrainingPeaksStudents,
   listTrainingPeaksStudentsIncludingArchived,
+  listTrainingPeaksWeeklyReportEligibleStudents as listTrainingPeaksWeeklyReportEligibleStudentsFromRepository,
   listTrainingPeaksWorkoutCacheForDateRange,
   listTrainingPeaksWorkoutCacheScanStatusesForRange,
   listTrainingPeaksStudentsEligibleForHealthMetrics,
@@ -1334,7 +1335,7 @@ function isValidTrainingPeaksAthleteUrl(value: string): boolean {
   }
 }
 
-function parseTrainingPeaksWeekRange(rawInput: string):
+export function parseTrainingPeaksWeeklyRunWeekInput(rawInput: string):
   | { ok: true; weekFrom: string; weekTo: string }
   | {
       ok: false;
@@ -1752,11 +1753,21 @@ export async function unlinkTrainingPeaksStudentTelegram(
   };
 }
 
+export async function listTrainingPeaksWeeklyReportEligibleStudents(): Promise<
+  Pick<TrainingPeaksStudent, "studentId" | "studentName">[]
+> {
+  const students = await listTrainingPeaksWeeklyReportEligibleStudentsFromRepository();
+  return students.map((student) => ({
+    studentId: student.studentId,
+    studentName: student.studentName,
+  }));
+}
+
 export async function requestTrainingPeaksWeeklyRun(
   rawInput: string,
   requester: TrainingPeaksJobRequester
 ): Promise<RequestTrainingPeaksWeeklyRunResult> {
-  const parsedInput = parseTrainingPeaksWeekRange(rawInput);
+  const parsedInput = parseTrainingPeaksWeeklyRunWeekInput(rawInput);
 
   if (!parsedInput.ok) {
     return parsedInput;

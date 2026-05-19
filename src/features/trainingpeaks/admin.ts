@@ -261,6 +261,38 @@ function normalizeReportMarkdown(value: string): string {
   return value.replace(/\r\n/g, "\n").trim();
 }
 
+export type TrainingPeaksAdminWeeklyReportRoster = {
+  inGeneration: TrainingPeaksAdminStudentRecord[];
+  activeReportsDisabled: TrainingPeaksAdminStudentRecord[];
+  archived: TrainingPeaksAdminStudentRecord[];
+};
+
+export async function listTrainingPeaksAdminWeeklyReportRoster(): Promise<TrainingPeaksAdminWeeklyReportRoster> {
+  const students = await getTrainingPeaksStudentsRegistryWithLatestReportStatus({
+    includeArchived: true,
+  });
+
+  const inGeneration: TrainingPeaksAdminStudentRecord[] = [];
+  const activeReportsDisabled: TrainingPeaksAdminStudentRecord[] = [];
+  const archived: TrainingPeaksAdminStudentRecord[] = [];
+
+  for (const student of students) {
+    if (!student.isActive) {
+      archived.push(student);
+      continue;
+    }
+
+    if (student.weeklyReportEnabled) {
+      inGeneration.push(student);
+      continue;
+    }
+
+    activeReportsDisabled.push(student);
+  }
+
+  return { inGeneration, activeReportsDisabled, archived };
+}
+
 export async function listTrainingPeaksAdminStudents(
   view: TrainingPeaksAdminStudentsView = "active"
 ): Promise<TrainingPeaksAdminStudentRecord[]> {
