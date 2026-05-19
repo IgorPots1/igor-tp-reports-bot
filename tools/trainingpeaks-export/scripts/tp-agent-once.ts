@@ -9,9 +9,13 @@ import { toolRoot } from "./lib/paths.ts";
 
 type TrainingPeaksJobStatus = "queued" | "running" | "completed" | "failed";
 
+type TrainingPeaksJobScope = "all_enabled" | "single_student";
+
 type TrainingPeaksJobRow = {
   id: string;
   job_type: "weekly_reports";
+  scope: TrainingPeaksJobScope;
+  student_id: string | null;
   status: TrainingPeaksJobStatus;
   week_from: string;
   week_to: string;
@@ -60,6 +64,23 @@ type TrainingPeaksJobResult = {
   stale_reports_skipped?: number;
   reports_requiring_review?: number;
   admin_reports_url?: string | null;
+  warning_message?: string;
+};
+
+type TrainingPeaksSingleStudentJobResult = {
+  scope: "single_student";
+  student_id: string;
+  student_name: string | null;
+  week_from: string;
+  week_to: string;
+  success: boolean;
+  report_found: boolean;
+  report_id: string | null;
+  report_markdown_path: string | null;
+  admin_report_url: string | null;
+  admin_reports_url: string | null;
+  completed_at: string;
+  note: string;
   warning_message?: string;
 };
 
@@ -205,6 +226,19 @@ function buildAdminReportsUrl(weekFrom: string): string | null {
   return url.toString();
 }
 
+function buildAdminReportUrl(reportId: string): string | null {
+  const baseUrl = getAppBaseUrl();
+  if (!baseUrl) {
+    return null;
+  }
+
+  return new URL(`/admin/reports/${reportId}`, `${baseUrl}/`).toString();
+}
+
+function buildLocalReportMarkdownPath(studentId: string, weekFrom: string, weekTo: string): string {
+  return path.join(toolRoot, "reports", studentId, `${weekFrom}_${weekTo}`, "report-draft.md");
+}
+
 async function sendTelegramText(
   chatId: string,
   text: string
@@ -245,7 +279,11 @@ function hasCliFlag(flag: string): boolean {
   return process.argv.slice(2).includes(flag);
 }
 
-async function runNpmScript(scriptName: string, args: string[] = []): Promise<void> {
+async function runNpmScript(
+  scriptName: string,
+  args: string[] = [],
+  envOverrides: NodeJS.ProcessEnv = {}
+): Promise<void> {
   const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
   const childArgs = ["run", scriptName];
 
@@ -257,7 +295,7 @@ async function runNpmScript(scriptName: string, args: string[] = []): Promise<vo
     const child = spawn(npmCommand, childArgs, {
       cwd: toolRoot,
       stdio: "inherit",
-      env: process.env,
+      env: { ...process.env, ...envOverrides },
     });
 
     child.on("error", reject);
@@ -451,6 +489,50 @@ async function claimNextQueuedTrainingPeaksJob(): Promise<TrainingPeaksJobRow | 
   return null;
 }
 
+async function getStudentNameFromSupabase(studentId: string): Promise<string | null> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("trainingpeaks_students")
+    .select("student_name")
+    .eq("student_id", studentId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to fetch student name for ${studentId}: ${error.message}`);
+  }
+
+  const studentName = (data as { student_name?: string | null } | null)?.student_name?.trim();
+  return studentName || null;
+}
+
+async function getWeeklyReportForStudentWeek(
+  studentId: string,
+  weekFrom: string,
+  weekTo: string
+): Promise<TrainingPeaksWeeklyReportRow | null> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("trainingpeaks_weekly_reports")
+    .select("id, student_id, student_name, week_from, week_to, report_markdown")
+    .eq("student_id", studentId)
+    .eq("week_from", weekFrom)
+    .eq("week_to", weekTo)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to get TrainingPeaks report for ${studentId} ${weekFrom}..${weekTo}: ${error.message}`
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  const report = data as TrainingPeaksWeeklyReportRow;
+  return report.report_markdown?.trim() ? report : null;
+}
+
 async function listWeeklyReportsWithMarkdown(
   weekFrom: string,
   weekTo: string
@@ -574,9 +656,159 @@ async function sendTelegramBatchSummaryIfPossible(
   }
 }
 
+async function runSingleStudentWeeklyJob(
+  job: TrainingPeaksJobRow,
+  headless: boolean
+): Promise<void> {
+  const studentId = job.student_id?.trim();
+  if (!studentId) {
+    throw new Error("single_student job is missing student_id.");
+  }
+
+  const scriptEnv: NodeJS.ProcessEnv = {
+    TP_SINGLE_STUDENT_JOB: "1",
+  };
+  if (headless) {
+    scriptEnv.TP_NON_INTERACTIVE = "1";
+  }
+
+  const adminReportsUrl = buildAdminReportsUrl(job.week_from);
+  const completedAt = new Date().toISOString();
+  const studentName = await getStudentNameFromSupabase(studentId);
+  const reportMarkdownPath = buildLocalReportMarkdownPath(studentId, job.week_from, job.week_to);
+
+  try {
+    console.log(`Running single-student weekly job for ${studentId} (${job.week_from}..${job.week_to})...`);
+    await runNpmScript("tp-sync-students");
+    await runNpmScript(
+      "tp-weekly-one",
+      [
+        `--student=${studentId}`,
+        `--from=${job.week_from}`,
+        `--to=${job.week_to}`,
+        "--force-single-student-job",
+        ...(headless ? ["--headless"] : []),
+      ],
+      scriptEnv
+    );
+
+    console.log("Running tp-sync-reports...");
+    await runNpmScript("tp-sync-reports", [`--from=${job.week_from}`, `--to=${job.week_to}`], scriptEnv);
+
+    const syncedReport = await getWeeklyReportForStudentWeek(studentId, job.week_from, job.week_to);
+    const success = Boolean(syncedReport);
+    const result: TrainingPeaksSingleStudentJobResult = {
+      scope: "single_student",
+      student_id: studentId,
+      student_name: studentName,
+      week_from: job.week_from,
+      week_to: job.week_to,
+      success,
+      report_found: success,
+      report_id: syncedReport?.id ?? null,
+      report_markdown_path: existsSync(reportMarkdownPath) ? reportMarkdownPath : null,
+      admin_report_url: syncedReport ? buildAdminReportUrl(syncedReport.id) : null,
+      admin_reports_url: adminReportsUrl,
+      completed_at: completedAt,
+      note: "Local Mac runner executed tp-weekly-one and tp-sync-reports for a single-student ad-hoc job.",
+    };
+
+    if (!success) {
+      result.warning_message =
+        "Pipeline finished, but no synced report draft with report_markdown was found for this student/week.";
+      await failTrainingPeaksJob(
+        job.id,
+        "No synced report draft with report_markdown was found after single-student pipeline run.",
+        result
+      );
+      if (job.requested_by_chat_id) {
+        await sendTelegramText(
+          job.requested_by_chat_id,
+          [
+            "❌ Не удалось подготовить отчёт TrainingPeaks",
+            "",
+            `Ученик: ${studentName ?? studentId} (${studentId})`,
+            `Неделя: ${job.week_from} — ${job.week_to}`,
+            "",
+            result.warning_message,
+            ...(adminReportsUrl ? ["", "Админка:", adminReportsUrl] : []),
+          ].join("\n")
+        );
+      }
+      return;
+    }
+
+    await completeTrainingPeaksJob(job.id, result);
+
+    if (job.requested_by_chat_id) {
+      const summaryLines = [
+        "✅ Отчёт TrainingPeaks для одного ученика готов",
+        "",
+        `Ученик: ${studentName ?? studentId} (${studentId})`,
+        `Неделя: ${job.week_from} — ${job.week_to}`,
+        "",
+        "Отчёт не отправлен ученику автоматически.",
+      ];
+      if (result.admin_report_url) {
+        summaryLines.push("", "Открыть отчёт:", result.admin_report_url);
+      } else if (adminReportsUrl) {
+        summaryLines.push("", "Проверь отчёт в админке:", adminReportsUrl);
+      }
+      await sendTelegramText(job.requested_by_chat_id, summaryLines.join("\n"));
+    }
+
+    console.log(
+      `Completed single-student TrainingPeaks job for ${studentId} ${job.week_from}..${job.week_to}. report_id=${syncedReport?.id ?? "missing"}`
+    );
+  } catch (error) {
+    const shortErrorMessage = toShortErrorMessage(error);
+    const failedResult: TrainingPeaksSingleStudentJobResult = {
+      scope: "single_student",
+      student_id: studentId,
+      student_name: studentName,
+      week_from: job.week_from,
+      week_to: job.week_to,
+      success: false,
+      report_found: false,
+      report_id: null,
+      report_markdown_path: existsSync(reportMarkdownPath) ? reportMarkdownPath : null,
+      admin_report_url: null,
+      admin_reports_url: adminReportsUrl,
+      completed_at: completedAt,
+      note: "Local Mac runner failed while executing a single-student ad-hoc weekly job.",
+      warning_message: shortErrorMessage,
+    };
+
+    await failTrainingPeaksJob(job.id, shortErrorMessage, failedResult);
+
+    if (job.requested_by_chat_id) {
+      try {
+        await sendTelegramText(
+          job.requested_by_chat_id,
+          [
+            "❌ Не удалось подготовить отчёт TrainingPeaks",
+            "",
+            `Ученик: ${studentName ?? studentId} (${studentId})`,
+            `Неделя: ${job.week_from} — ${job.week_to}`,
+            "",
+            `Ошибка: ${shortErrorMessage}`,
+          ].join("\n")
+        );
+      } catch (telegramError) {
+        console.warn(`Telegram single-student summary warning: ${toShortErrorMessage(telegramError)}`);
+      }
+    }
+
+    throw error;
+  }
+}
+
 async function main(): Promise<void> {
   loadLocalEnv();
   const headless = hasCliFlag("--headless");
+  if (headless) {
+    process.env.TP_NON_INTERACTIVE = "1";
+  }
 
   const recoveredJobs = await recoverStaleTrainingPeaksRunningJobs(
     STALE_RUNNING_JOB_TIMEOUT_MINUTES
@@ -591,7 +823,15 @@ async function main(): Promise<void> {
     return;
   }
 
-  console.log(`Claimed TrainingPeaks job for ${job.week_from}..${job.week_to}.`);
+  const jobScope = job.scope ?? "all_enabled";
+  console.log(
+    `Claimed TrainingPeaks job for ${job.week_from}..${job.week_to} (scope=${jobScope}${job.student_id ? `, student=${job.student_id}` : ""}).`
+  );
+
+  if (jobScope === "single_student") {
+    await runSingleStudentWeeklyJob(job, headless);
+    return;
+  }
 
   let studentsExpected: number | null = null;
   let reportsFound: number | null = null;
@@ -610,15 +850,16 @@ async function main(): Promise<void> {
     await runNpmScript("tp-sync-students");
     const expectedStudents = await readExpectedStudentsFromSupabase();
     studentsExpected = expectedStudents.length;
+    const batchEnv: NodeJS.ProcessEnv = headless ? { TP_NON_INTERACTIVE: "1" } : {};
     console.log(`Running tp-weekly-all...${headless ? " (headless)" : ""}`);
-    await runNpmScript("tp-weekly-all", [
-      `--from=${job.week_from}`,
-      `--to=${job.week_to}`,
-      ...(headless ? ["--headless"] : []),
-    ]);
+    await runNpmScript(
+      "tp-weekly-all",
+      [`--from=${job.week_from}`, `--to=${job.week_to}`, ...(headless ? ["--headless"] : [])],
+      batchEnv
+    );
 
     console.log("Running tp-sync-reports...");
-    await runNpmScript("tp-sync-reports", [`--from=${job.week_from}`, `--to=${job.week_to}`]);
+    await runNpmScript("tp-sync-reports", [`--from=${job.week_from}`, `--to=${job.week_to}`], batchEnv);
 
     const completedAt = new Date().toISOString();
     const syncedReports = await listWeeklyReportsWithMarkdown(job.week_from, job.week_to);

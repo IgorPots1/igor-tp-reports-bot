@@ -45,10 +45,15 @@ async function runAgentOnce(headless: boolean): Promise<void> {
     childArgs.push("--", "--headless");
   }
 
+  const childEnv = { ...process.env };
+  if (headless) {
+    childEnv.TP_NON_INTERACTIVE = "1";
+  }
+
   await new Promise<void>((resolve, reject) => {
     const child = spawn("npm", childArgs, {
       stdio: "inherit",
-      env: process.env,
+      env: childEnv,
       shell: false,
     });
     child.on("error", reject);

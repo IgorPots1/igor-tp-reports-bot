@@ -6,6 +6,7 @@ import {
   archiveTrainingPeaksStudentAction,
   bindTrainingPeaksStudentTelegramFromBusinessChatAction,
   createTrainingPeaksStudentTelegramLinkCodeAction,
+  createTrainingPeaksStudentWeeklyReportJobAction,
   restoreTrainingPeaksStudentAction,
   searchTrainingPeaksStudentTelegramByUsernameAction,
   sendTrainingPeaksStudentTelegramTestAction,
@@ -31,6 +32,8 @@ import {
   shortenTrainingPeaksAdminChatId,
   TRAININGPEAKS_ADMIN_TELEGRAM_USERNAME_NOT_FOUND_MESSAGE,
 } from "@/features/trainingpeaks/admin";
+import { getTrainingPeaksWeeklyReportForStudentWeekFromService } from "@/features/trainingpeaks/service";
+import { getPreviousTrainingPeaksWeek } from "@/features/trainingpeaks/week";
 type StudentDetailPageProps = {
   params: Promise<{
     studentId: string;
@@ -153,14 +156,21 @@ export default async function AdminStudentDetailPage({
   const telegramLinkCodeExpiresAt = getSingleSearchParam(resolvedSearchParams.telegramLinkCodeExpiresAt);
   const showSyncReminder = notice?.startsWith("Ученик создан:") ?? false;
   const normalizedTelegramUsername = normalizeTrainingPeaksAdminTelegramUsername(telegramUsername ?? "");
-  const [student, reports] = await Promise.all([
-    getTrainingPeaksAdminStudentById(studentId),
-    listTrainingPeaksAdminReportsForStudent(studentId),
-  ]);
+  const lastFullWeek = getPreviousTrainingPeaksWeek();
+  const student = await getTrainingPeaksAdminStudentById(studentId);
 
   if (!student) {
     notFound();
   }
+
+  const [reports, existingLastWeekReport] = await Promise.all([
+    listTrainingPeaksAdminReportsForStudent(studentId),
+    getTrainingPeaksWeeklyReportForStudentWeekFromService(
+      student.studentId,
+      lastFullWeek.weekFrom,
+      lastFullWeek.weekTo
+    ),
+  ]);
 
   const [lastKnownBusinessChat, recentChats, usernameLookup] = await Promise.all([
     getTrainingPeaksAdminStudentLastKnownBusinessChat(student),
@@ -399,6 +409,56 @@ export default async function AdminStudentDetailPage({
               </form>
             )}
           </div>
+        </article>
+
+        <article className="admin-card admin-card-compact">
+          <h3>Создать недельный отчёт</h3>
+          <p className="admin-muted">
+            Поставит в очередь локальную генерацию для одного ученика. Отчёт не отправится ученику автоматически.
+          </p>
+          {existingLastWeekReport && (
+            <p className="admin-muted">
+              За прошлую неделю ({formatWeekRange(lastFullWeek.weekFrom, lastFullWeek.weekTo)}) отчёт уже есть:{" "}
+              <Link href={`/admin/reports/${existingLastWeekReport.id}`}>открыть</Link>
+            </p>
+          )}
+          <form className="admin-form-inline" action={createTrainingPeaksStudentWeeklyReportJobAction}>
+            <input type="hidden" name="studentId" value={student.id} />
+            <input type="hidden" name="redirectTo" value={studentDetailPath} />
+            <label className="admin-form-field">
+              <span className="admin-muted">С</span>
+              <input
+                className="admin-input"
+                type="date"
+                name="weekFrom"
+                defaultValue={lastFullWeek.weekFrom}
+                required
+              />
+            </label>
+            <label className="admin-form-field">
+              <span className="admin-muted">По</span>
+              <input
+                className="admin-input"
+                type="date"
+                name="weekTo"
+                defaultValue={lastFullWeek.weekTo}
+                required
+              />
+            </label>
+            <FormActionButton
+              className="admin-button"
+              disabled={!student.isActive || !student.trainingPeaksAthleteUrl}
+              pendingText="Постановка..."
+            >
+              Создать задачу
+            </FormActionButton>
+          </form>
+          {!student.isActive && (
+            <p className="admin-muted">Архивного ученика нельзя запустить без восстановления.</p>
+          )}
+          {student.isActive && !student.trainingPeaksAthleteUrl && (
+            <p className="admin-muted">Нужна ссылка TrainingPeaks athlete.</p>
+          )}
         </article>
 
         <article className="admin-card admin-card-compact">

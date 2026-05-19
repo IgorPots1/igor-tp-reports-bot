@@ -155,6 +155,7 @@ type TrainingPeaksWeekRow = {
 };
 
 export type TrainingPeaksJobType = "weekly_reports" | "race_scan_events";
+export type TrainingPeaksJobScope = "all_enabled" | "single_student";
 export type TrainingPeaksJobStatus = "queued" | "running" | "completed" | "failed";
 export type TrainingPeaksActionType = "move_workout";
 export type TrainingPeaksActionStatus = "pending_coach" | "approved" | "rejected";
@@ -173,6 +174,8 @@ export type TrainingPeaksActionRunStatus = "running" | "completed" | "failed";
 export type TrainingPeaksJob = {
   id: string;
   jobType: TrainingPeaksJobType;
+  scope: TrainingPeaksJobScope;
+  studentId: string | null;
   status: TrainingPeaksJobStatus;
   weekFrom: string;
   weekTo: string;
@@ -189,6 +192,8 @@ export type TrainingPeaksJob = {
 type TrainingPeaksJobRow = {
   id: string;
   job_type: TrainingPeaksJobType;
+  scope: TrainingPeaksJobScope;
+  student_id: string | null;
   status: TrainingPeaksJobStatus;
   week_from: string;
   week_to: string;
@@ -332,6 +337,8 @@ export type FailTrainingPeaksActionDryRunInput = {
 };
 
 export type CreateTrainingPeaksWeeklyJobInput = {
+  scope?: TrainingPeaksJobScope;
+  studentId?: string | null;
   weekFrom: string;
   weekTo: string;
   requestedByChatId?: string | null;
@@ -896,6 +903,8 @@ function mapTrainingPeaksJobRow(row: TrainingPeaksJobRow): TrainingPeaksJob {
   return {
     id: row.id,
     jobType: row.job_type,
+    scope: row.scope ?? "all_enabled",
+    studentId: row.student_id,
     status: row.status,
     weekFrom: row.week_from,
     weekTo: row.week_to,
@@ -1218,7 +1227,11 @@ function isTrainingPeaksJobConflict(error: {
   }
 
   const haystack = `${error.constraint ?? ""} ${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
-  return haystack.includes("trainingpeaks_jobs_active_week_idx");
+  return (
+    haystack.includes("trainingpeaks_jobs_active_week_idx") ||
+    haystack.includes("trainingpeaks_jobs_active_all_enabled_week_idx") ||
+    haystack.includes("trainingpeaks_jobs_active_single_student_week_idx")
+  );
 }
 
 function isTrainingPeaksTelegramLinkCodeConflict(error: {
@@ -2588,8 +2601,20 @@ export async function claimTrainingPeaksWeeklyReportForSend(
 export async function createTrainingPeaksWeeklyJob(
   input: CreateTrainingPeaksWeeklyJobInput
 ): Promise<TrainingPeaksJob> {
+  const scope = input.scope ?? "all_enabled";
+
+  if (scope === "single_student" && !input.studentId?.trim()) {
+    throw new Error("studentId is required for single_student weekly jobs.");
+  }
+
+  if (scope === "all_enabled" && input.studentId) {
+    throw new Error("studentId must be omitted for all_enabled weekly jobs.");
+  }
+
   return createTrainingPeaksJob({
     jobType: "weekly_reports",
+    scope,
+    studentId: scope === "single_student" ? input.studentId!.trim() : null,
     weekFrom: input.weekFrom,
     weekTo: input.weekTo,
     requestedByChatId: input.requestedByChatId ?? null,
@@ -2611,6 +2636,8 @@ export async function createTrainingPeaksRaceScanJob(
 
 async function createTrainingPeaksJob(input: {
   jobType: TrainingPeaksJobType;
+  scope?: TrainingPeaksJobScope;
+  studentId?: string | null;
   weekFrom: string;
   weekTo: string;
   requestedByChatId: string | null;
@@ -2621,6 +2648,8 @@ async function createTrainingPeaksJob(input: {
     .from("trainingpeaks_jobs")
     .insert({
       job_type: input.jobType,
+      scope: input.scope ?? "all_enabled",
+      student_id: input.studentId ?? null,
       status: "queued",
       week_from: input.weekFrom,
       week_to: input.weekTo,
@@ -3221,6 +3250,7 @@ export async function findActiveTrainingPeaksJobForWeek(
     .from("trainingpeaks_jobs")
     .select("*")
     .eq("job_type", jobType)
+    .eq("scope", "all_enabled")
     .eq("week_from", weekFrom)
     .eq("week_to", weekTo)
     .in("status", ["queued", "running"])
@@ -3239,6 +3269,66 @@ export async function findActiveTrainingPeaksJobForWeek(
   }
 
   return mapTrainingPeaksJobRow(data as TrainingPeaksJobRow);
+}
+
+export async function findActiveTrainingPeaksJobForStudentWeek(
+  jobType: TrainingPeaksJobType,
+  studentId: string,
+  weekFrom: string,
+  weekTo: string
+): Promise<TrainingPeaksJob | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_jobs")
+    .select("*")
+    .eq("job_type", jobType)
+    .eq("scope", "single_student")
+    .eq("student_id", studentId)
+    .eq("week_from", weekFrom)
+    .eq("week_to", weekTo)
+    .in("status", ["queued", "running"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to find active TrainingPeaks job for ${jobType} student ${studentId} ${weekFrom}..${weekTo}: ${error.message}`
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksJobRow(data as TrainingPeaksJobRow);
+}
+
+export async function getTrainingPeaksWeeklyReportForStudentWeek(
+  studentId: string,
+  weekFrom: string,
+  weekTo: string
+): Promise<TrainingPeaksWeeklyReport | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_weekly_reports")
+    .select("*")
+    .eq("student_id", studentId)
+    .eq("week_from", weekFrom)
+    .eq("week_to", weekTo)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to get TrainingPeaks weekly report for ${studentId} ${weekFrom}..${weekTo}: ${error.message}`
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksWeeklyReportRow(data as TrainingPeaksWeeklyReportRow);
 }
 
 export async function listRecentTrainingPeaksJobs(limit = 10): Promise<TrainingPeaksJob[]> {

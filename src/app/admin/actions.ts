@@ -20,6 +20,7 @@ import {
 import {
   disableTrainingPeaksStudentByInternalId,
   enableTrainingPeaksStudentByInternalId,
+  requestTrainingPeaksWeeklyRunForStudentByInternalId,
 } from "@/features/trainingpeaks/service";
 import {
   ADMIN_ACCESS_COOKIE_NAME,
@@ -365,6 +366,38 @@ export async function sendTrainingPeaksStudentTelegramTestAction(formData: FormD
       getTrainingPeaksStudentDetailPath(studentId),
       "notice",
       `Тестовое сообщение отправлено: ${result.studentName}.`
+    )
+  );
+}
+
+export async function createTrainingPeaksStudentWeeklyReportJobAction(
+  formData: FormData
+): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const weekFrom = getRequiredFormValue(formData, "weekFrom");
+  const weekTo = getRequiredFormValue(formData, "weekTo");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+
+  const result = await requestTrainingPeaksWeeklyRunForStudentByInternalId({
+    studentInternalId: studentId,
+    weekFrom,
+    weekTo,
+    requestedByChatId: "admin",
+    requestedByUserId: "admin",
+  });
+
+  revalidateTrainingPeaksAdminPaths(undefined, studentId);
+
+  if (!result.ok) {
+    redirect(withNotice(redirectTo, "error", result.message));
+  }
+
+  redirect(
+    withNotice(
+      redirectTo,
+      "notice",
+      `Задача на генерацию отчёта поставлена в очередь: ${result.student.studentName}, ${weekFrom} — ${weekTo}. Отчёт не будет отправлен ученику автоматически.`
     )
   );
 }

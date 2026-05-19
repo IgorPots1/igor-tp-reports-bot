@@ -14,6 +14,8 @@ import {
   expireActiveTrainingPeaksStudentTelegramLinkCodesForStudent,
   expireTrainingPeaksStudentTelegramLinkCodesByIds,
   findActiveTrainingPeaksJobForWeek,
+  findActiveTrainingPeaksJobForStudentWeek,
+  getTrainingPeaksWeeklyReportForStudentWeek,
   getTrainingPeaksJobById,
   getTrainingPeaksBusinessChatById,
   getTrainingPeaksStudentById as getTrainingPeaksStudentByIdFromRepository,
@@ -332,7 +334,36 @@ export type RequestTrainingPeaksWeeklyRunResult =
   | {
       ok: false;
       reason: "duplicate";
-      activeJob: Pick<TrainingPeaksJob, "id" | "status" | "weekFrom" | "weekTo"> | null;
+      activeJob: Pick<TrainingPeaksJob, "id" | "status" | "weekFrom" | "weekTo" | "scope" | "studentId"> | null;
+      message: string;
+    }
+  | {
+      ok: false;
+      reason: "unknown";
+      activeJob: null;
+      message: string;
+    };
+
+export type RequestTrainingPeaksWeeklyRunForStudentResult =
+  | { ok: true; job: TrainingPeaksJob; student: TrainingPeaksRegistryStudentSnapshot }
+  | {
+      ok: false;
+      reason:
+        | "invalid_format"
+        | "invalid_date"
+        | "invalid_range"
+        | "student_not_found"
+        | "student_ambiguous"
+        | "student_archived"
+        | "student_inactive"
+        | "missing_trainingpeaks_url";
+      message: string;
+      matches?: { studentId: string; studentName: string }[];
+    }
+  | {
+      ok: false;
+      reason: "duplicate";
+      activeJob: Pick<TrainingPeaksJob, "id" | "status" | "weekFrom" | "weekTo" | "scope" | "studentId"> | null;
       message: string;
     }
   | {
@@ -1754,14 +1785,7 @@ export async function requestTrainingPeaksWeeklyRun(
       return {
         ok: false,
         reason: "duplicate",
-        activeJob: activeJob
-          ? {
-              id: activeJob.id,
-              status: activeJob.status,
-              weekFrom: activeJob.weekFrom,
-              weekTo: activeJob.weekTo,
-            }
-          : null,
+        activeJob: activeJob ? mapActiveTrainingPeaksJobSnapshot(activeJob) : null,
         message: "Такая задача уже ожидает выполнения или сейчас выполняется.",
       };
     }
@@ -1779,6 +1803,271 @@ export async function requestTrainingPeaksWeeklyRun(
       message: "Не смог создать задачу TrainingPeaks. Попробуй позже.",
     };
   }
+}
+
+const TP_RUN_STUDENT_COMMAND_PATTERN = /^\/tp_run_student(?:@\w+)?(?:\s+|$)/;
+
+function stripTpRunStudentCommandPrefix(rawInput: string): string {
+  return rawInput.replace(TP_RUN_STUDENT_COMMAND_PATTERN, "").trim();
+}
+
+function parseTpRunStudentCommand(rawInput: string):
+  | { ok: true; studentQuery: string; weekFrom: string; weekTo: string }
+  | {
+      ok: false;
+      reason: "invalid_format" | "invalid_date" | "invalid_range";
+      message: string;
+    } {
+  const normalizedInput = stripTpRunStudentCommandPrefix(rawInput);
+
+  if (!normalizedInput) {
+    return {
+      ok: false,
+      reason: "invalid_format",
+      message:
+        "Напиши так: /tp_run_student levan 2026-05-11 2026-05-17 или /tp_run_student \"Alena Kovaldova\" 2026-05-11 2026-05-17",
+    };
+  }
+
+  const quotedMatch = normalizedInput.match(/^"([^"]+)"\s+(\S+)\s+(\S+)$/);
+  if (quotedMatch) {
+    const [, studentQuery, weekFrom, weekTo] = quotedMatch;
+    if (!isIsoDate(weekFrom) || !isIsoDate(weekTo)) {
+      return {
+        ok: false,
+        reason: "invalid_date",
+        message: "Даты недели нужно передать в формате YYYY-MM-DD YYYY-MM-DD.",
+      };
+    }
+    if (weekFrom > weekTo) {
+      return {
+        ok: false,
+        reason: "invalid_range",
+        message: "Дата начала недели не может быть позже даты окончания.",
+      };
+    }
+    return { ok: true, studentQuery: studentQuery.trim(), weekFrom, weekTo };
+  }
+
+  const tokens = normalizedInput.split(/\s+/);
+  if (tokens.length < 3) {
+    return {
+      ok: false,
+      reason: "invalid_format",
+      message:
+        "Напиши так: /tp_run_student levan 2026-05-11 2026-05-17 или /tp_run_student \"Alena Kovaldova\" 2026-05-11 2026-05-17",
+    };
+  }
+
+  const weekTo = tokens[tokens.length - 1] ?? "";
+  const weekFrom = tokens[tokens.length - 2] ?? "";
+  const studentQuery = tokens.slice(0, -2).join(" ").trim();
+
+  if (!studentQuery) {
+    return {
+      ok: false,
+      reason: "invalid_format",
+      message: "После /tp_run_student нужно указать ученика.",
+    };
+  }
+
+  if (!isIsoDate(weekFrom) || !isIsoDate(weekTo)) {
+    return {
+      ok: false,
+      reason: "invalid_date",
+      message: "Даты недели нужно передать в формате YYYY-MM-DD YYYY-MM-DD.",
+    };
+  }
+
+  if (weekFrom > weekTo) {
+    return {
+      ok: false,
+      reason: "invalid_range",
+      message: "Дата начала недели не может быть позже даты окончания.",
+    };
+  }
+
+  return { ok: true, studentQuery, weekFrom, weekTo };
+}
+
+function validateStudentForSingleWeeklyJob(
+  match: TrainingPeaksStudentCard
+):
+  | { ok: true; student: TrainingPeaksRegistryStudentSnapshot }
+  | {
+      ok: false;
+      reason:
+        | "student_not_found"
+        | "student_ambiguous"
+        | "student_archived"
+        | "student_inactive"
+        | "missing_trainingpeaks_url";
+      message: string;
+      matches?: { studentId: string; studentName: string }[];
+    } {
+  if (match.kind === "not_found") {
+    return { ok: false, reason: "student_not_found", message: "Ученик не найден." };
+  }
+
+  if (match.kind === "ambiguous") {
+    return {
+      ok: false,
+      reason: "student_ambiguous",
+      message: `Нашлось несколько учеников: ${match.matches.map((entry) => entry.studentName).join(", ")}. Уточни имя или slug.`,
+      matches: match.matches,
+    };
+  }
+
+  const { student } = match;
+
+  if (student.archivedAt) {
+    return {
+      ok: false,
+      reason: "student_archived",
+      message: `Ученик ${student.studentName} в архиве. Восстанови его перед генерацией отчёта.`,
+    };
+  }
+
+  if (!student.isActive) {
+    return {
+      ok: false,
+      reason: "student_inactive",
+      message: `Ученик ${student.studentName} неактивен.`,
+    };
+  }
+
+  if (!student.trainingPeaksAthleteUrl.trim()) {
+    return {
+      ok: false,
+      reason: "missing_trainingpeaks_url",
+      message: `У ученика ${student.studentName} нет ссылки TrainingPeaks athlete.`,
+    };
+  }
+
+  return { ok: true, student };
+}
+
+function mapActiveTrainingPeaksJobSnapshot(
+  job: TrainingPeaksJob
+): Pick<TrainingPeaksJob, "id" | "status" | "weekFrom" | "weekTo" | "scope" | "studentId"> {
+  return {
+    id: job.id,
+    status: job.status,
+    weekFrom: job.weekFrom,
+    weekTo: job.weekTo,
+    scope: job.scope,
+    studentId: job.studentId,
+  };
+}
+
+export async function requestTrainingPeaksWeeklyRunForStudent(
+  rawInput: string,
+  requester: TrainingPeaksJobRequester
+): Promise<RequestTrainingPeaksWeeklyRunForStudentResult> {
+  const parsedInput = parseTpRunStudentCommand(rawInput);
+
+  if (!parsedInput.ok) {
+    return parsedInput;
+  }
+
+  const studentMatch = await resolveTrainingPeaksRegistryStudent(parsedInput.studentQuery);
+  const validatedStudent = validateStudentForSingleWeeklyJob(studentMatch);
+
+  if (!validatedStudent.ok) {
+    return validatedStudent;
+  }
+
+  try {
+    const job = await createTrainingPeaksWeeklyJob({
+      scope: "single_student",
+      studentId: validatedStudent.student.studentId,
+      weekFrom: parsedInput.weekFrom,
+      weekTo: parsedInput.weekTo,
+      requestedByChatId: String(requester.chatId),
+      requestedByUserId: requester.userId === null ? null : String(requester.userId),
+    });
+
+    return {
+      ok: true,
+      job,
+      student: validatedStudent.student,
+    };
+  } catch (error) {
+    if (error instanceof TrainingPeaksJobConflictError) {
+      const activeJob = await findActiveTrainingPeaksJobForStudentWeek(
+        "weekly_reports",
+        validatedStudent.student.studentId,
+        parsedInput.weekFrom,
+        parsedInput.weekTo
+      );
+
+      return {
+        ok: false,
+        reason: "duplicate",
+        activeJob: activeJob ? mapActiveTrainingPeaksJobSnapshot(activeJob) : null,
+        message: "Такая задача для этого ученика уже ожидает выполнения или сейчас выполняется.",
+      };
+    }
+
+    console.error("Failed to request TrainingPeaks single-student weekly job", {
+      rawInput,
+      requester,
+      error,
+    });
+
+    return {
+      ok: false,
+      reason: "unknown",
+      activeJob: null,
+      message: "Не смог создать задачу TrainingPeaks. Попробуй позже.",
+    };
+  }
+}
+
+export async function requestTrainingPeaksWeeklyRunForStudentByInternalId(input: {
+  studentInternalId: string;
+  weekFrom: string;
+  weekTo: string;
+  requestedByChatId?: string | null;
+  requestedByUserId?: string | null;
+}): Promise<RequestTrainingPeaksWeeklyRunForStudentResult> {
+  if (!isIsoDate(input.weekFrom) || !isIsoDate(input.weekTo)) {
+    return {
+      ok: false,
+      reason: "invalid_date",
+      message: "Даты недели нужно передать в формате YYYY-MM-DD.",
+    };
+  }
+
+  if (input.weekFrom > input.weekTo) {
+    return {
+      ok: false,
+      reason: "invalid_range",
+      message: "Дата начала недели не может быть позже даты окончания.",
+    };
+  }
+
+  const studentRecord = await getTrainingPeaksStudentByIdFromRepository(input.studentInternalId);
+
+  if (!studentRecord) {
+    return { ok: false, reason: "student_not_found", message: "Ученик не найден." };
+  }
+
+  return requestTrainingPeaksWeeklyRunForStudent(
+    `/tp_run_student ${studentRecord.studentId} ${input.weekFrom} ${input.weekTo}`,
+    {
+      chatId: input.requestedByChatId ?? "admin",
+      userId: input.requestedByUserId ?? null,
+    }
+  );
+}
+
+export async function getTrainingPeaksWeeklyReportForStudentWeekFromService(
+  studentId: string,
+  weekFrom: string,
+  weekTo: string
+) {
+  return getTrainingPeaksWeeklyReportForStudentWeek(studentId, weekFrom, weekTo);
 }
 
 export async function requestTrainingPeaksRaceScan(

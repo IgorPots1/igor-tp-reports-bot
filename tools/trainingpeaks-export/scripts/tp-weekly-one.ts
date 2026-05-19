@@ -14,6 +14,7 @@ export type WeeklyCliArgs = {
   to: string;
   skipExport: boolean;
   headless: boolean;
+  forceSingleStudentJob: boolean;
 };
 
 type RuntimeStudentRow = {
@@ -21,6 +22,8 @@ type RuntimeStudentRow = {
   student_name: string;
   is_active: boolean;
   weekly_report_enabled: boolean;
+  archived_at: string | null;
+  trainingpeaks_athlete_url: string | null;
 };
 
 function usage(): string {
@@ -31,10 +34,18 @@ function usage(): string {
   ].join("\n");
 }
 
+function hasForceSingleStudentJobFlag(): boolean {
+  return (
+    process.argv.slice(2).includes("--force-single-student-job") ||
+    process.env.TP_SINGLE_STUDENT_JOB === "1"
+  );
+}
+
 function parseArgs(argv: string[]): WeeklyCliArgs {
-  const values: Partial<Omit<WeeklyCliArgs, "skipExport" | "headless">> = {};
+  const values: Partial<Omit<WeeklyCliArgs, "skipExport" | "headless" | "forceSingleStudentJob">> = {};
   let skipExport = false;
   let headless = false;
+  let forceSingleStudentJob = hasForceSingleStudentJobFlag();
 
   for (const arg of argv) {
     if (arg === "--skip-export") {
@@ -44,6 +55,11 @@ function parseArgs(argv: string[]): WeeklyCliArgs {
 
     if (arg === "--headless") {
       headless = true;
+      continue;
+    }
+
+    if (arg === "--force-single-student-job") {
+      forceSingleStudentJob = true;
       continue;
     }
 
@@ -76,7 +92,8 @@ function parseArgs(argv: string[]): WeeklyCliArgs {
     from: values.from,
     to: values.to,
     skipExport,
-    headless
+    headless,
+    forceSingleStudentJob
   };
 }
 
@@ -183,8 +200,13 @@ export async function refreshStudentsConfigFromSupabase(): Promise<void> {
   await runNpmScript("tp-sync-students");
 }
 
-export async function assertStudentAllowedBySupabase(studentId: string): Promise<void> {
+export async function assertStudentAllowedBySupabase(
+  studentId: string,
+  options?: { forceSingleStudentJob?: boolean }
+): Promise<void> {
   loadLocalEnv();
+  const forceSingleStudentJob =
+    options?.forceSingleStudentJob === true || process.env.TP_SINGLE_STUDENT_JOB === "1";
 
   const supabase = createClient(getRequiredEnv("SUPABASE_URL"), getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY"), {
     auth: {
@@ -195,7 +217,7 @@ export async function assertStudentAllowedBySupabase(studentId: string): Promise
 
   const { data, error } = await supabase
     .from("trainingpeaks_students")
-    .select("student_id, student_name, is_active, weekly_report_enabled")
+    .select("student_id, student_name, is_active, weekly_report_enabled, archived_at, trainingpeaks_athlete_url")
     .eq("student_id", studentId)
     .maybeSingle();
 
@@ -210,11 +232,21 @@ export async function assertStudentAllowedBySupabase(studentId: string): Promise
     );
   }
 
+  if (runtimeStudent.archived_at) {
+    throw new Error(`Student "${studentId}" is archived in Supabase. Weekly report generation is blocked.`);
+  }
+
   if (!runtimeStudent.is_active) {
     throw new Error(`Student "${studentId}" is inactive in Supabase. Weekly report generation is blocked.`);
   }
 
-  if (!runtimeStudent.weekly_report_enabled) {
+  if (!runtimeStudent.trainingpeaks_athlete_url?.trim()) {
+    throw new Error(
+      `Student "${studentId}" has no TrainingPeaks athlete URL in Supabase. Weekly report generation is blocked.`
+    );
+  }
+
+  if (!forceSingleStudentJob && !runtimeStudent.weekly_report_enabled) {
     throw new Error(
       `Student "${studentId}" has weekly_report_enabled=false in Supabase. Weekly report generation is blocked.`
     );
@@ -348,7 +380,9 @@ export type WeeklyWorkflowResult = {
 };
 
 export async function runWeeklyWorkflow(args: WeeklyCliArgs): Promise<WeeklyWorkflowResult> {
-  await assertStudentAllowedBySupabase(args.student);
+  await assertStudentAllowedBySupabase(args.student, {
+    forceSingleStudentJob: args.forceSingleStudentJob
+  });
 
   const students = await readStudentsConfig();
   const student = findStudentById(students, args.student);

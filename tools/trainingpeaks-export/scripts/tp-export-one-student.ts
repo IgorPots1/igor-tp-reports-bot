@@ -134,12 +134,25 @@ function parseArgs(argv: string[]): CliArgs {
   };
 }
 
+function isNonInteractiveExportMode(headless: boolean): boolean {
+  return headless || !process.stdin.isTTY || process.env.TP_NON_INTERACTIVE === "1";
+}
+
 async function waitForEnter(message: string): Promise<void> {
   const rl = createInterface({ input, output });
   try {
     await rl.question(`${message}\n`);
   } finally {
     rl.close();
+  }
+}
+
+async function requireInteractiveExportOrThrow(
+  headless: boolean,
+  errorMessage: string
+): Promise<void> {
+  if (isNonInteractiveExportMode(headless)) {
+    throw new Error(errorMessage);
   }
 }
 
@@ -3500,6 +3513,10 @@ async function main(): Promise<void> {
 
     let pageAssessment = await assessTrainingPeaksPage(page);
     if (pageAssessment.loginRequired) {
+      await requireInteractiveExportOrThrow(
+        args.headless,
+        "TrainingPeaks login is required. Run `npm run tp-login` locally, then retry the export."
+      );
       console.log("TrainingPeaks login is required. Please sign in in the opened browser, then press Enter to continue.");
       await waitForEnter("Press Enter after the TrainingPeaks login is complete.");
       await page.goto(student.trainingpeaks_athlete_url, { waitUntil: "domcontentloaded" }).catch(() => {});
@@ -3783,6 +3800,10 @@ async function main(): Promise<void> {
 
     console.log("");
     if (!automaticSummaryExportCompleted) {
+      await requireInteractiveExportOrThrow(
+        args.headless,
+        "Automatic TrainingPeaks export failed and Workout Summary is missing. Re-run headed after login, or fix export automation."
+      );
       logManualFallbackInstructions();
       console.log("If no files are downloaded and no existing ZIPs are found, this student will be skipped and the batch will continue.");
       console.log("");

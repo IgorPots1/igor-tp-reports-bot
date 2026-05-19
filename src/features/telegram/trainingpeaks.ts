@@ -35,6 +35,7 @@ import {
   type RequestTrainingPeaksWeeklyRunResult,
   type RequestTrainingPeaksRaceScanResult,
   requestTrainingPeaksWeeklyRun,
+  requestTrainingPeaksWeeklyRunForStudent,
   requestTrainingPeaksRaceScan,
   updateTrainingPeaksWeeklyReportStateByInternalId,
   updateTrainingPeaksStudentTelegramContact,
@@ -155,6 +156,7 @@ const TP_ADD_STUDENT_COMMAND_PATTERN = /^\/tp_add_student(?:@\w+)?(?:\s+|$)/;
 const TP_REPORT_COMMAND_PATTERN = /^\/tp_report(?:@\w+)?(?:\s+|$)/;
 const TP_WEEK_COMMAND_PATTERN = /^\/tp_week(?:@\w+)?(?:\s+|$)/;
 const TP_RUN_COMMAND_PATTERN = /^\/tp_run(?:@\w+)?(?:\s+|$)/;
+const TP_RUN_STUDENT_COMMAND_PATTERN = /^\/tp_run_student(?:@\w+)?(?:\s+|$)/;
 const TP_RUN_WEEK_COMMAND_PATTERN = /^\/tp_run_week(?:@\w+)?(?:\s+|$)/;
 const TP_RACES_COMMAND_PATTERN = /^\/tp_races(?:@\w+)?(?:\s+|$)/;
 const TP_JOBS_COMMAND_PATTERN = /^\/tp_jobs(?:@\w+)?(?:\s+|$)/;
@@ -192,6 +194,7 @@ type TrainingPeaksCommand =
   | "tp_report"
   | "tp_week"
   | "tp_run"
+  | "tp_run_student"
   | "tp_run_week"
   | "tp_races"
   | "tp_jobs"
@@ -353,6 +356,10 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
 
   if (TP_WEEK_COMMAND_PATTERN.test(text)) {
     return "tp_week";
+  }
+
+  if (TP_RUN_STUDENT_COMMAND_PATTERN.test(text)) {
+    return "tp_run_student";
   }
 
   if (TP_RUN_COMMAND_PATTERN.test(text)) {
@@ -1611,8 +1618,30 @@ function getTrainingPeaksJobStatusLabel(job: {
   return getJobStatusLabel(job.status);
 }
 
+function formatJobScopeLabel(job: {
+  scope?: string;
+  studentId?: string | null;
+  status: string;
+}): string | null {
+  if (job.scope === "single_student" && job.studentId) {
+    return `Один ученик: ${job.studentId}`;
+  }
+
+  if (job.scope === "all_enabled" && job.status === "running") {
+    return "Все weekly-enabled ученики";
+  }
+
+  if (job.scope === "all_enabled") {
+    return "Все weekly-enabled ученики";
+  }
+
+  return null;
+}
+
 function formatJobsMessage(
   jobs: {
+    scope?: string;
+    studentId?: string | null;
     status: string;
     weekFrom: string;
     weekTo: string;
@@ -1620,6 +1649,10 @@ function formatJobsMessage(
     errorMessage: string | null;
   }[]
 ): string {
+  const hasRunningBroadJob = jobs.some(
+    (job) => job.scope === "all_enabled" && job.status === "running"
+  );
+
   return [
     "🧾 Задачи TrainingPeaks",
     "",
@@ -1629,7 +1662,12 @@ function formatJobsMessage(
       const hasWarnings = jobHasWarnings(job.resultJson);
       const missingStudentsSummary = formatMissingStudentsSummary(job.resultJson);
       const statusLabel = getTrainingPeaksJobStatusLabel(job);
+      const scopeLabel = formatJobScopeLabel(job);
       const lines = [`• ${job.weekFrom} — ${job.weekTo}`, `  Статус: ${statusLabel}`];
+
+      if (scopeLabel) {
+        lines.push(`  ${scopeLabel}`);
+      }
 
       if (job.status === "failed" && !isCancelledTrainingPeaksJob(job) && shortError) {
         lines.push(`  Ошибка: ${shortError}`);
@@ -1646,6 +1684,12 @@ function formatJobsMessage(
 
       return lines;
     }),
+    ...(hasRunningBroadJob
+      ? [
+          "",
+          "⚠️ Сейчас выполняется широкая задача на всех weekly-enabled учеников.",
+        ]
+      : []),
     ...(jobs.some((job) => job.status === "queued")
       ? [
           "",
@@ -4765,6 +4809,59 @@ async function handleTrainingPeaksRaces(
   });
 }
 
+async function handleTrainingPeaksRunStudent(
+  parsedMessage: ParsedTelegramUpdate,
+  text: string
+): Promise<void> {
+  const result = await requestTrainingPeaksWeeklyRunForStudent(text, {
+    chatId: parsedMessage.chatId,
+    userId: parsedMessage.userId,
+  });
+  setTrainingPeaksScreenContext(parsedMessage.chatId, "week");
+
+  if (result.ok) {
+    await sendTrainingPeaksReplyScreen(
+      parsedMessage.chatId,
+      getQueuedSingleStudentWeeklyJobSuccessMessage({
+        studentName: result.student.studentName,
+        studentId: result.student.studentId,
+        weekFrom: result.job.weekFrom,
+        weekTo: result.job.weekTo,
+      }),
+      getTrainingPeaksWeekReplyKeyboardMarkup()
+    );
+    return;
+  }
+
+  if (result.reason === "duplicate" && result.activeJob) {
+    const duplicateMessage =
+      result.activeJob.status === "queued"
+        ? [
+            "Задача для этого ученика уже ожидает запуска на Mac.",
+            `Ученик: ${result.activeJob.studentId ?? "—"}`,
+            `Неделя: ${formatWeekIso(result.activeJob)}`,
+          ].join("\n")
+        : [
+            "Задача для этого ученика уже выполняется на Mac.",
+            `Ученик: ${result.activeJob.studentId ?? "—"}`,
+            `Неделя: ${formatWeekIso(result.activeJob)}`,
+          ].join("\n");
+
+    await sendTrainingPeaksReplyScreen(
+      parsedMessage.chatId,
+      duplicateMessage,
+      getTrainingPeaksWeekReplyKeyboardMarkup()
+    );
+    return;
+  }
+
+  await sendTrainingPeaksReplyScreen(
+    parsedMessage.chatId,
+    result.message,
+    getTrainingPeaksWeekReplyKeyboardMarkup()
+  );
+}
+
 async function handleTrainingPeaksRunWeek(
   parsedMessage: ParsedTelegramUpdate,
   text: string,
@@ -4782,7 +4879,9 @@ async function handleTrainingPeaksRunWeek(
     clearTrainingPeaksCancellableWeeklyJobContext(parsedMessage.chatId);
     await sendTrainingPeaksReplyScreen(
       parsedMessage.chatId,
-      getQueuedWeeklyJobSuccessMessage(result.job),
+      getQueuedWeeklyJobSuccessMessage(result.job, {
+        allEnabledWarning: options?.useRunAliasMessage === true,
+      }),
       getTrainingPeaksWeekReplyKeyboardMarkup()
     );
     return;
@@ -5009,11 +5108,39 @@ function getWeekResultMarkup(options?: {
   return createInlineKeyboardMarkup(rows);
 }
 
-function getQueuedWeeklyJobSuccessMessage(week: TrainingPeaksWeek): string {
+function getQueuedWeeklyJobSuccessMessage(
+  week: TrainingPeaksWeek,
+  options?: { allEnabledWarning?: boolean }
+): string {
   return [
     "✅ Задача поставлена в очередь.",
     `Неделя: ${formatWeekIso(week)}`,
+    ...(options?.allEnabledWarning
+      ? [
+          "",
+          "⚠️ Эта задача запустит генерацию для всех учеников с включёнными недельными отчётами.",
+          "Для одного ученика используй /tp_run_student.",
+        ]
+      : []),
     "",
+    "Статус: ожидает запуска на Mac.",
+    "Чтобы начать обработку, запусти локальный runner:",
+    "npm run tp-agent-once",
+  ].join("\n");
+}
+
+function getQueuedSingleStudentWeeklyJobSuccessMessage(input: {
+  studentName: string;
+  studentId: string;
+  weekFrom: string;
+  weekTo: string;
+}): string {
+  return [
+    "✅ Задача для одного ученика поставлена в очередь.",
+    `Ученик: ${input.studentName} (${input.studentId})`,
+    `Неделя: ${formatWeekIso({ weekFrom: input.weekFrom, weekTo: input.weekTo })}`,
+    "",
+    "Отчёт не будет отправлен ученику автоматически.",
     "Статус: ожидает запуска на Mac.",
     "Чтобы начать обработку, запусти локальный runner:",
     "npm run tp-agent-once",
@@ -5497,6 +5624,11 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_week") {
       await handleTrainingPeaksWeek(parsedMessage);
+      return "handled";
+    }
+
+    if (command === "tp_run_student") {
+      await handleTrainingPeaksRunStudent(parsedMessage, text);
       return "handled";
     }
 
