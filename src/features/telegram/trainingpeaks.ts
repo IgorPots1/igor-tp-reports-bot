@@ -48,6 +48,10 @@ import {
   getTrainingPeaksCoachChatIds,
 } from "@/features/trainingpeaks/attention-telegram";
 import { sendTrainingPeaksWeeklyReportToStudent } from "@/features/trainingpeaks/report-delivery";
+import {
+  isTrainingPeaksTelegramBusinessPeerMissingError,
+  shortenTrainingPeaksTelegramDeliveryError,
+} from "@/features/trainingpeaks/telegram-business";
 import { buildTrainingPeaksReplyDraftContext } from "@/features/trainingpeaks/reply-draft-context";
 import {
   formatTrainingPeaksReplyDraftTelegramMessage,
@@ -1431,17 +1435,6 @@ function shortenJobError(errorMessage: string | null): string | null {
   return normalized.length > 120 ? `${normalized.slice(0, 117)}...` : normalized;
 }
 
-function shortenDeliveryError(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error);
-  const normalized = raw.replace(/\s+/g, " ").trim();
-
-  if (!normalized) {
-    return "Неизвестная ошибка доставки в Telegram";
-  }
-
-  return normalized.length > 180 ? `${normalized.slice(0, 177)}...` : normalized;
-}
-
 async function sendTelegramBusinessMessage(
   chatId: string,
   text: string,
@@ -1456,7 +1449,7 @@ async function sendTelegramBusinessMessage(
       });
     } catch (error) {
       throw new Error(
-        `Не удалось отправить часть ${index + 1} из ${chunks.length}: ${shortenDeliveryError(error)}`
+        `Не удалось отправить часть ${index + 1} из ${chunks.length}: ${shortenTrainingPeaksTelegramDeliveryError(error)}`
       );
     }
   }
@@ -3641,7 +3634,7 @@ async function sendTrainingPeaksStudentTestMessage(
     return {
       kind: "failed",
       studentId: student.id,
-      errorMessage: shortenDeliveryError(error),
+      errorMessage: shortenTrainingPeaksTelegramDeliveryError(error),
     };
   }
 }
@@ -4906,11 +4899,12 @@ async function handleTrainingPeaksBusinessTest(
       `✅ Бизнес-сообщение отправлено в чат ${targetChatId}.`
     );
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unknown error while sending Telegram business message";
+    const detail = shortenTrainingPeaksTelegramDeliveryError(error);
     await sendTelegramMessage(
       parsedMessage.chatId,
-      `Не удалось отправить бизнес-сообщение в чат ${targetChatId}: ${message}`
+      isTrainingPeaksTelegramBusinessPeerMissingError(error)
+        ? detail
+        : `Не удалось отправить бизнес-сообщение в чат ${targetChatId}: ${detail}`
     );
   }
 }

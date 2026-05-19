@@ -12,6 +12,7 @@ import {
 } from "@/features/trainingpeaks/service";
 import {
   getRequiredTrainingPeaksBusinessConnectionId,
+  isTrainingPeaksTelegramBusinessPeerMissingError,
   sendTrainingPeaksTelegramBusinessMessage,
   shortenTrainingPeaksTelegramDeliveryError,
 } from "@/features/trainingpeaks/telegram-business";
@@ -326,9 +327,13 @@ export async function sendTrainingPeaksAdminStudentTelegramTestMessage(
       studentName: student.studentName,
     };
   } catch (error) {
+    const detail = shortenTrainingPeaksTelegramDeliveryError(error);
+
     return {
       ok: false,
-      message: `Не удалось отправить тестовое сообщение: ${shortenTrainingPeaksTelegramDeliveryError(error)}.`,
+      message: isTrainingPeaksTelegramBusinessPeerMissingError(error)
+        ? detail
+        : `Не удалось отправить тестовое сообщение: ${detail}.`,
     };
   }
 }

@@ -228,6 +228,8 @@ export default async function AdminReportDetailPage({
             <h3>Текст отчёта</h3>
             <p className="admin-muted">
               Отправка использует сохранённую ручную правку, если она есть; иначе оригинальный сгенерированный текст.
+              Кнопка «Отправить» доставляет отчёт ученику в Telegram Business; команда /tp_report в боте — только
+              превью для тренера.
             </p>
           </div>
         </div>

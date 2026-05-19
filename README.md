@@ -287,6 +287,18 @@ Coach-approved student delivery requirements:
 - `APP_BASE_URL` is recommended for direct admin links in Telegram summary notifications. `NEXT_PUBLIC_APP_URL` and `VERCEL_URL` are supported fallbacks.
 - Sending from `Web Admin` delivers the final report to the student's Telegram chat through Telegram Business.
 
+### Sending a single report to a student
+
+Coach-approved delivery of one report happens only from Web Admin:
+
+1. Open `/admin/reports` and choose the report, or go directly to `/admin/reports/[reportId]`.
+2. Review or edit the markdown on the report detail page.
+3. Click **Отправить** to deliver the final text to the student's Telegram chat via Telegram Business.
+
+`/tp_report` in Telegram is a coach preview only: it shows the report text in the coach chat and does not send anything to the student.
+
+If test delivery or report send fails with `BUSINESS_PEER_USAGE_MISSING`, the student must message the Telegram Business account first; then re-link them from the latest Business chats on the student card and retry.
+
 ## Telegram Commands
 
 Available commands:
@@ -301,7 +313,7 @@ Available commands:
 - `/tp_run_week previous`
 - `/tp_run_week <from> <to>`
 - `/tp_jobs`
-- `/tp_report <student> [from to]`
+- `/tp_report <student> [from to]` (coach preview only; does not send to the student)
 - `/tp_weekly`
 - `/tp_business_test <chat_id>` (admin smoke test)
 

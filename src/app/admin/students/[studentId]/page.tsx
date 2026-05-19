@@ -31,7 +31,6 @@ import {
   shortenTrainingPeaksAdminChatId,
   TRAININGPEAKS_ADMIN_TELEGRAM_USERNAME_NOT_FOUND_MESSAGE,
 } from "@/features/trainingpeaks/admin";
-
 type StudentDetailPageProps = {
   params: Promise<{
     studentId: string;
@@ -94,6 +93,48 @@ function getLastKnownBusinessChatText(chat: BusinessChatRecord | null): string {
   return `${formatTrainingPeaksAdminTelegramChatName(chat)} · ${formatIsoDate(chat.lastSeenAt)}${lastText}`;
 }
 
+function getTelegramLinkStatusText(student: AdminStudentRecord): string {
+  return student.telegramChatId ? "Привязан" : "Не привязан";
+}
+
+function getTelegramDeliveryStatusText(student: AdminStudentRecord): string {
+  if (!student.telegramChatId) {
+    return "—";
+  }
+
+  return student.telegramDeliveryEnabled ? "Включена" : "Выключена";
+}
+
+function getBusinessChatSeenStatusText(
+  student: AdminStudentRecord,
+  lastKnownBusinessChat: BusinessChatRecord | null
+): string {
+  if (!student.telegramChatId) {
+    return "—";
+  }
+
+  if (!lastKnownBusinessChat) {
+    return "Не видели — ученик ещё не писал в Business или привязка устарела";
+  }
+
+  if (lastKnownBusinessChat.chatId !== student.telegramChatId) {
+    return "Возможно устарела — привязанный chat_id не совпадает с последним Business-чатом";
+  }
+
+  return "Видели в Business";
+}
+
+function hasBusinessChatMismatch(
+  student: AdminStudentRecord,
+  lastKnownBusinessChat: BusinessChatRecord | null
+): boolean {
+  return Boolean(
+    student.telegramChatId &&
+      lastKnownBusinessChat &&
+      lastKnownBusinessChat.chatId !== student.telegramChatId
+  );
+}
+
 function getStudentDetailPath(studentId: string): string {
   return `/admin/students/${studentId}`;
 }
@@ -132,6 +173,9 @@ export default async function AdminStudentDetailPage({
         }),
   ]);
   const usernameCandidates = telegramView === "username" ? usernameLookup.chats : [];
+  const businessChatSeen = getBusinessChatSeenStatusText(student, lastKnownBusinessChat);
+  const showBusinessChatMissingWarning =
+    Boolean(student.telegramChatId && student.telegramDeliveryEnabled && !lastKnownBusinessChat);
   const studentDetailPath = getStudentDetailPath(student.id);
   const recentViewPath = `${studentDetailPath}?telegramView=recent`;
   const usernameViewPath = `${studentDetailPath}?telegramView=username`;
@@ -198,6 +242,20 @@ export default async function AdminStudentDetailPage({
         </div>
       )}
 
+      {showBusinessChatMissingWarning && (
+        <div className="admin-alert admin-alert-warning">
+          Telegram привязан и доставка включена, но Business-чат не найден в истории. Попроси ученика написать в
+          Business-чат, затем привяжи его из последних Business-чатов и отправь тест.
+        </div>
+      )}
+
+      {hasBusinessChatMismatch(student, lastKnownBusinessChat) && (
+        <div className="admin-alert admin-alert-warning">
+          Привязанный chat_id не совпадает с последним Business-чатом по username. Перепривяжи ученика из последних
+          Business-чатов.
+        </div>
+      )}
+
       <div className="admin-grid admin-grid-student-detail">
         <article className="admin-card admin-card-compact">
           <h3>Состояние</h3>
@@ -247,21 +305,32 @@ export default async function AdminStudentDetailPage({
           <h3>Telegram</h3>
           <dl className="admin-meta-list admin-meta-list-compact">
             <div>
-              <dt>Статус</dt>
+              <dt>Привязка</dt>
               <dd>
                 <div className="admin-table-primary">
-                  <span>{getTelegramBindingText(student)}</span>
-                  <span className="admin-muted">{getTelegramContactText(student, lastKnownBusinessChat)}</span>
+                  <span>{getTelegramLinkStatusText(student)}</span>
+                  <span className="admin-muted">{getTelegramBindingText(student)}</span>
                 </div>
               </dd>
             </div>
             <div>
               <dt>Доставка</dt>
-              <dd>{student.telegramDeliveryEnabled ? "Включена" : "Выключена"}</dd>
+              <dd>{getTelegramDeliveryStatusText(student)}</dd>
             </div>
             <div>
-              <dt>Последний Business-чат</dt>
-              <dd>{getLastKnownBusinessChatText(lastKnownBusinessChat)}</dd>
+              <dt>Business-чат</dt>
+              <dd>
+                <div className="admin-table-primary">
+                  <span>{businessChatSeen}</span>
+                  {lastKnownBusinessChat && (
+                    <span className="admin-muted">{getLastKnownBusinessChatText(lastKnownBusinessChat)}</span>
+                  )}
+                </div>
+              </dd>
+            </div>
+            <div>
+              <dt>Контакт</dt>
+              <dd>{getTelegramContactText(student, lastKnownBusinessChat)}</dd>
             </div>
             <div>
               <dt>Chat ID</dt>

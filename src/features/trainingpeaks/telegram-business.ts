@@ -2,6 +2,18 @@ import { sendTelegramMessageStrict } from "@/features/telegram/telegram-client";
 
 const TELEGRAM_MESSAGE_LIMIT = 4000;
 
+export const TRAININGPEAKS_TELEGRAM_BUSINESS_PEER_MISSING_MESSAGE =
+  "Telegram Business пока не может написать этому ученику. Попроси ученика написать в Business-чат, затем привяжи его из последних Business-чатов и повтори тест.";
+
+export function isTrainingPeaksTelegramBusinessPeerMissingError(error: unknown): boolean {
+  const raw = error instanceof Error ? error.message : String(error);
+
+  return (
+    raw.includes("BUSINESS_PEER_USAGE_MISSING") ||
+    raw.includes(TRAININGPEAKS_TELEGRAM_BUSINESS_PEER_MISSING_MESSAGE)
+  );
+}
+
 export function splitTrainingPeaksTelegramMessage(text: string, limit = TELEGRAM_MESSAGE_LIMIT): string[] {
   const normalizedText = text.trim();
 
@@ -37,6 +49,10 @@ export function splitTrainingPeaksTelegramMessage(text: string, limit = TELEGRAM
 }
 
 export function shortenTrainingPeaksTelegramDeliveryError(error: unknown): string {
+  if (isTrainingPeaksTelegramBusinessPeerMissingError(error)) {
+    return TRAININGPEAKS_TELEGRAM_BUSINESS_PEER_MISSING_MESSAGE;
+  }
+
   const raw = error instanceof Error ? error.message : String(error);
   const normalized = raw.replace(/\s+/g, " ").trim();
 
