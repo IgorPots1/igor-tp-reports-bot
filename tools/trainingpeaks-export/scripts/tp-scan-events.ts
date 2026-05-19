@@ -1,11 +1,14 @@
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
 import { chromium } from "playwright";
 
-import { profileDir, reportsRoot } from "./lib/paths.ts";
-import { readStudentsConfig, type StudentConfig } from "./lib/students.ts";
+import type { TrainingPeaksStudent } from "../../../src/features/trainingpeaks/repository.ts";
+import * as trainingPeaksRepository from "../../../src/features/trainingpeaks/repository.ts";
+import { profileDir, reportsRoot, toolRoot } from "./lib/paths.ts";
+import type { StudentConfig } from "./lib/students.ts";
 import { captureSessionAuth, redactUnknown } from "./lib/trainingpeaks-api-move.ts";
 
 const SCAN_ROOT = path.join(reportsRoot, "races-scan");
@@ -106,6 +109,83 @@ type AthleteApiDebug = {
   parser_debug: ParserDebug;
   contains_event_like_data: boolean;
 };
+
+type RepositoryCompat = {
+  listTrainingPeaksActiveStudentsForEventScan?: () => Promise<TrainingPeaksStudent[]>;
+  default?: {
+    listTrainingPeaksActiveStudentsForEventScan?: () => Promise<TrainingPeaksStudent[]>;
+  };
+};
+
+function readTextFileSyncSafe(filePath: string): string | null {
+  try {
+    return readFileSync(filePath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function loadDotEnvFile(dotEnvPath: string): void {
+  if (!existsSync(dotEnvPath)) {
+    return;
+  }
+
+  const content = readTextFileSyncSafe(dotEnvPath);
+  if (content === null) {
+    return;
+  }
+
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+
+    const separatorIndex = trimmed.indexOf("=");
+    if (separatorIndex < 0) {
+      continue;
+    }
+
+    const key = trimmed.slice(0, separatorIndex).trim();
+    if (!key || process.env[key] !== undefined) {
+      continue;
+    }
+
+    let value = trimmed.slice(separatorIndex + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+
+    process.env[key] = value;
+  }
+}
+
+function loadLocalEnv(): void {
+  const repoRoot = path.resolve(toolRoot, "..", "..");
+  const envPaths = [
+    path.join(repoRoot, ".env.local"),
+    path.join(repoRoot, ".env"),
+    path.join(toolRoot, ".env"),
+  ];
+  for (const envPath of envPaths) {
+    loadDotEnvFile(envPath);
+  }
+}
+
+function mapStudentForEventScan(student: TrainingPeaksStudent): StudentConfig {
+  return {
+    student_id: student.studentId,
+    name: student.studentName,
+    trainingpeaks_athlete_url: student.trainingPeaksAthleteUrl,
+    is_active: student.isActive,
+    weekly_report_enabled: student.weeklyReportEnabled,
+    data_quality_status: student.dataQualityStatus ?? undefined,
+    notes: student.notes ?? undefined,
+  };
+}
 
 function timestampForPath(date: Date): string {
   return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
@@ -661,11 +741,28 @@ async function runWithConcurrency<T>(
   await Promise.all(workers);
 }
 
+async function loadStudentsForEventScan(): Promise<StudentConfig[]> {
+  const repoCompat = trainingPeaksRepository as RepositoryCompat;
+  const listStudentsFn =
+    repoCompat.listTrainingPeaksActiveStudentsForEventScan ??
+    repoCompat.default?.listTrainingPeaksActiveStudentsForEventScan;
+
+  if (!listStudentsFn) {
+    throw new Error("TrainingPeaks repository helper listTrainingPeaksActiveStudentsForEventScan is unavailable.");
+  }
+
+  const students = await listStudentsFn();
+  return students.map(mapStudentForEventScan);
+}
+
 async function main(): Promise<void> {
+  loadLocalEnv();
   const totalScanStartedAtMs = Date.now();
   const args = parseArgs(process.argv.slice(2));
-  const students = await readStudentsConfig();
+  const students = await loadStudentsForEventScan();
   const activeOnly = students.filter((student) => student.is_active !== false);
+  const weeklyEnabledCount = activeOnly.filter((student) => student.weekly_report_enabled).length;
+  const weeklyDisabledIncludedCount = activeOnly.length - weeklyEnabledCount;
   const selectedStudents: Array<{ student: StudentConfig; athleteId: number }> = [];
   const logs: ScanLogEntry[] = [];
 
@@ -763,6 +860,10 @@ async function main(): Promise<void> {
   }
 
   const limitedStudents = selectedStudents.slice(0, args.limit);
+  console.log(`[tp-scan-events] selected_students=${selectedStudents.length}`);
+  console.log(`[tp-scan-events] weekly_enabled_count=${weeklyEnabledCount}`);
+  console.log(`[tp-scan-events] weekly_disabled_included_count=${weeklyDisabledIncludedCount}`);
+  console.log(`[tp-scan-events] scan_limit=${args.limit} scanning=${limitedStudents.length}`);
   const timestamp = timestampForPath(new Date());
   const outputDir = path.join(SCAN_ROOT, timestamp);
   const racesJsonPath = path.join(outputDir, "races.json");

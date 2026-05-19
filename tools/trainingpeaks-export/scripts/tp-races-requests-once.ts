@@ -438,7 +438,11 @@ async function runRaceScanJob(job: TrainingPeaksJobRow): Promise<{
   if (!ISO_DATE_PATTERN.test(job.week_from) || !ISO_DATE_PATTERN.test(job.week_to)) {
     throw new Error(`Invalid date range in job ${job.id}: ${job.week_from}..${job.week_to}`);
   }
-  await runNpmScript("tp-scan-events", [`--from=${job.week_from}`, `--to=${job.week_to}`]);
+  await runNpmScript("tp-scan-events", [
+    `--from=${job.week_from}`,
+    `--to=${job.week_to}`,
+    "--limit=10000",
+  ]);
   const outputDir = await getLatestRaceScanOutputDir();
   if (!outputDir) {
     throw new Error("Race scan finished, but output directory was not found.");
