@@ -6,6 +6,13 @@ import process from "node:process";
 import { chromium } from "playwright";
 
 import * as workoutActivityClassificationModule from "../../../src/features/trainingpeaks/workout-activity-classification.ts";
+import {
+  collectWorkoutText,
+  containsStrongRaceKeyword,
+  extractWorkoutSummaryMetrics,
+  hasSameDayNamedEvent,
+  median,
+} from "../src/quality/index.ts";
 import { profileDir, toolRoot } from "./lib/paths.ts";
 import { readStudentsConfig, type StudentConfig } from "./lib/students.ts";
 import { captureSessionAuth, performApiJsonRequest } from "./lib/trainingpeaks-api-move.ts";
@@ -48,23 +55,6 @@ const LONG_CUE_KEYWORDS = [
   "длинн",
   "lsd",
   "продолжительн",
-] as const;
-const STRONG_RACE_KEYWORDS = [
-  "race",
-  "забег",
-  "соревнование",
-  "старт",
-  "parkrun",
-  "марафон",
-  "полумарафон",
-  "5k",
-  "10k",
-  "5 km",
-  "10 km",
-  "5км",
-  "10км",
-  "5 км",
-  "10 км",
 ] as const;
 const INDOOR_PATTERN = /\b(treadmill|indoor|tm\b|беговая дорожка|дорожк|манеж)\b/i;
 
@@ -500,16 +490,6 @@ function formatSignedBpm(value: number | null): string {
   return `${sign}${rounded} bpm`;
 }
 
-function median(values: number[]): number | null {
-  if (!values.length) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 0) {
-    return (sorted[mid - 1]! + sorted[mid]!) / 2;
-  }
-  return sorted[mid]!;
-}
-
 function quantile(values: number[], q: number): number | null {
   if (!values.length) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -905,33 +885,12 @@ function parseEventsFromApi(body: unknown, from: string, to: string): ParsedEven
   return parsed;
 }
 
-function collectWorkoutText(raw: TrainingPeaksWorkoutRaw): string {
-  const parts = [
-    raw.title,
-    raw.description,
-    raw.coachComments,
-    raw.workoutComments,
-    raw.userTags,
-  ]
-    .filter((value) => typeof value === "string" && value.trim())
-    .map((value) => String(value));
-  return parts.join(" ");
-}
-
 function hasPlausibleAverageHr(minHr: number | null, avgHr: number | null, maxHr: number | null): boolean {
   if (avgHr === null) return false;
   if (avgHr < 90 || avgHr > 190) return false;
   if (maxHr !== null && avgHr > maxHr) return false;
   if (minHr !== null && minHr > avgHr) return false;
   return true;
-}
-
-function containsStrongRaceKeyword(text: string): boolean {
-  const lower = text.toLowerCase();
-  if (/разминка\s+перед\s+(стартом|забегом)/i.test(lower)) {
-    return false;
-  }
-  return STRONG_RACE_KEYWORDS.some((keyword) => lower.includes(keyword.toLowerCase()));
 }
 
 function hasHardRunCue(text: string): boolean {
@@ -943,11 +902,6 @@ function hasHardRunCue(text: string): boolean {
 function hasLongCue(text: string): boolean {
   const lower = text.toLowerCase();
   return LONG_CUE_KEYWORDS.some((keyword) => lower.includes(keyword));
-}
-
-function hasSameDayNamedEvent(date: string, eventsByDate: Map<string, ParsedEvent[]>): boolean {
-  const sameDayEvents = eventsByDate.get(date) ?? [];
-  return sameDayEvents.some((event) => Boolean(event.event_name?.trim()));
 }
 
 function detectRaceLike(input: {
@@ -1039,12 +993,13 @@ function toCandidateExample(run: ComparableRun, reason: string): CandidateExampl
 
 function buildSuspiciousReasons(raw: TrainingPeaksWorkoutRaw, derivedSpeedMps: number | null): string[] {
   const suspicious: string[] = [];
-  const velocityAverage = toFiniteNumber(raw.velocityAverage);
-  const velocityMaximum = toFiniteNumber(raw.velocityMaximum);
-  const normalizedSpeedActual = toFiniteNumber(raw.normalizedSpeedActual);
-  const minHr = toFiniteNumber(raw.heartRateMinimum);
-  const avgHr = toFiniteNumber(raw.heartRateAverage);
-  const maxHr = toFiniteNumber(raw.heartRateMaximum);
+  const metrics = extractWorkoutSummaryMetrics(raw, toFiniteNumber);
+  const velocityAverage = metrics.velocityAverage;
+  const velocityMaximum = metrics.velocityMaximum;
+  const normalizedSpeedActual = metrics.normalizedSpeedActual;
+  const minHr = metrics.heartRateMinimum;
+  const avgHr = metrics.heartRateAverage;
+  const maxHr = metrics.heartRateMaximum;
 
   if (avgHr !== null && maxHr !== null && avgHr > maxHr) suspicious.push("avg_hr_gt_max_hr");
   if (minHr !== null && avgHr !== null && minHr > avgHr) suspicious.push("min_hr_gt_avg_hr");

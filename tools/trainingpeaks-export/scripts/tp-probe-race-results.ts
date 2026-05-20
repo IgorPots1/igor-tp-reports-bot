@@ -5,6 +5,20 @@ import process from "node:process";
 
 import { chromium } from "playwright";
 
+import {
+  assessCandidateDataQuality,
+  collectRaceSignals,
+  collectWorkoutText,
+  DISTANCE_KEYWORDS,
+  isWeekday,
+  matchSameDayEvent as matchSharedSameDayEvent,
+  median,
+  RACE_KEYWORDS_PATTERN,
+  scoreEventForCandidate as scoreSharedEventForCandidate,
+  type DataQualityStatus,
+  type DataQualityWarning,
+  type HeartRatePeerReference,
+} from "../src/quality/index.ts";
 import { profileDir, toolRoot } from "./lib/paths.ts";
 import { readStudentsConfig, type StudentConfig } from "./lib/students.ts";
 import { captureSessionAuth, performApiJsonRequest } from "./lib/trainingpeaks-api-move.ts";
@@ -32,82 +46,6 @@ const DISTANCE_PRESETS: Record<DistanceKey, DistancePreset> = {
   "10k": { label: "10 км", target_km: 10, min_km: 9.6, max_km: 10.6 },
   half: { label: "21.1 км", target_km: 21.0975, min_km: 20.5, max_km: 22.5 },
   marathon: { label: "42.2 км", target_km: 42.195, min_km: 41.0, max_km: 43.0 },
-};
-
-const DISTANCE_KEYWORDS: Record<DistanceKey, RegExp> = {
-  "5k": /\b(5k|5\s*km|5\s*км|5000)\b/i,
-  "10k": /\b(10k|10\s*km|10\s*км|10000)\b/i,
-  half: /\b(half|half\s*marathon|полумарафон|21\.1|21\s*km|21\s*км)\b/i,
-  marathon: /\b(marathon|марафон|42\.2|42\s*km|42\s*км)\b/i,
-};
-
-const RACE_KEYWORDS_PATTERN = /\b(race|start|забег|соревнование|parkrun)\b/i;
-
-const RACE_TEXT_BY_DISTANCE: Record<DistanceKey, RegExp> = {
-  "5k": /\b(race|start|забег|соревнование|parkrun|5k|5\s*km|5\s*км)\b/i,
-  "10k": /\b(race|start|забег|соревнование|parkrun|10k|10\s*km|10\s*км)\b/i,
-  half: /\b(race|start|забег|соревнование|parkrun|half|half\s*marathon|полумарафон)\b/i,
-  marathon: /\b(race|start|забег|соревнование|parkrun|marathon|марафон)\b/i,
-};
-
-const WARNING_PENALTIES: Record<DataQualityWarning, number> = {
-  duration_distance_mismatch: 0.25,
-  speed_summary_inconsistent: 0.2,
-  gps_or_speed_anomaly: 0.3,
-  pace_outlier: 0.2,
-  physiology_inconsistent: 0.15,
-  power_or_cadence_inconsistent: 0.1,
-  low_confidence_race_result: 0.15,
-  missing_required_metrics: 0.1,
-  distance_near_window_edge: 0.05,
-  impossible_summary_metrics: 1.0,
-  weekday_fast_candidate_without_event: 0.1,
-  heart_rate_mismatch: 0.2,
-};
-
-const BASE_BLOCKING_WARNINGS = new Set<DataQualityWarning>([
-  "gps_or_speed_anomaly",
-  "speed_summary_inconsistent",
-  "duration_distance_mismatch",
-  "impossible_summary_metrics",
-]);
-
-const PACE_OUTLIER_COMPANION_BLOCKERS = new Set<DataQualityWarning>([
-  "gps_or_speed_anomaly",
-  "speed_summary_inconsistent",
-  "duration_distance_mismatch",
-  "heart_rate_mismatch",
-  "impossible_summary_metrics",
-  "low_confidence_race_result",
-  "weekday_fast_candidate_without_event",
-]);
-
-const MIN_EVENT_CONFIDENCE_FOR_PACE_OUTLIER_PASS = 0.45;
-
-const IMPOSSIBLE_PACE_MIN_PER_KM: Record<DistanceKey, number> = {
-  "5k": 2 + 35 / 60,
-  "10k": 2 + 40 / 60,
-  half: 2 + 45 / 60,
-  marathon: 2 + 55 / 60,
-};
-
-const DAY_OF_WEEK_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
-
-type WorkoutSummaryMetrics = {
-  distanceMeters: number | null;
-  totalTimeHours: number | null;
-  derivedSpeedMps: number | null;
-  velocityAverage: number | null;
-  velocityMaximum: number | null;
-  normalizedSpeedActual: number | null;
-  heartRateMinimum: number | null;
-  heartRateMaximum: number | null;
-  heartRateAverage: number | null;
-  cadenceAverage: number | null;
-  cadenceMaximum: number | null;
-  powerAverage: number | null;
-  powerMaximum: number | null;
-  normalizedPowerActual: number | null;
 };
 
 type CliArgs = {
@@ -145,29 +83,6 @@ type DistanceWindow = {
   max_meters: number;
   target_km: number;
   label: string;
-};
-
-type DataQualityStatus = "verified" | "needs_review" | "excluded";
-
-type DataQualityWarning =
-  | "gps_or_speed_anomaly"
-  | "pace_outlier"
-  | "speed_summary_inconsistent"
-  | "duration_distance_mismatch"
-  | "physiology_inconsistent"
-  | "power_or_cadence_inconsistent"
-  | "low_confidence_race_result"
-  | "missing_required_metrics"
-  | "distance_near_window_edge"
-  | "impossible_summary_metrics"
-  | "weekday_fast_candidate_without_event"
-  | "heart_rate_mismatch";
-
-type HeartRatePeerReference = {
-  peer_median_hr: number;
-  next_best_hr: number | null;
-  hr_gap_vs_median: number;
-  hr_gap_vs_next_best: number | null;
 };
 
 type ResultCandidate = {
@@ -840,19 +755,6 @@ function resolveTarget(args: CliArgs, students: StudentConfig[]): ResolvedTarget
   };
 }
 
-function collectWorkoutText(raw: TrainingPeaksWorkoutRaw): string {
-  const parts = [
-    raw.title,
-    raw.description,
-    raw.coachComments,
-    raw.workoutComments,
-    raw.userTags,
-  ]
-    .filter((value) => typeof value === "string" && value.trim())
-    .map((value) => String(value));
-  return parts.join(" ");
-}
-
 function isRunningWorkout(raw: TrainingPeaksWorkoutRaw): { ok: boolean; reasons: string[] } {
   const reasons: string[] = [];
   const typeId = toFiniteNumber(raw.workoutTypeValueId);
@@ -890,29 +792,6 @@ function isCompletedWorkout(raw: TrainingPeaksWorkoutRaw): boolean {
   return raw.completed === true;
 }
 
-function collectRaceSignals(raw: TrainingPeaksWorkoutRaw, distanceKey: DistanceKey): string[] {
-  const signals: string[] = [];
-  const text = collectWorkoutText(raw);
-  if (RACE_TEXT_BY_DISTANCE[distanceKey].test(text)) signals.push("race_keywords_in_text");
-
-  const prCount = toFiniteNumber(raw.personalRecordCount);
-  if (prCount !== null && prCount > 0) signals.push(`personalRecordCount=${prCount}`);
-
-  if (raw.raceTypeDuration !== null && raw.raceTypeDuration !== undefined) {
-    signals.push("raceTypeDuration_present");
-  }
-
-  const intensityFactor = toFiniteNumber(raw.if);
-  if (intensityFactor !== null && intensityFactor >= 0.95) {
-    signals.push(`high_if=${intensityFactor.toFixed(2)}`);
-  }
-
-  const tss = toFiniteNumber(raw.tssActual);
-  if (tss !== null && tss >= 50) signals.push(`high_tss=${tss.toFixed(1)}`);
-
-  return signals;
-}
-
 function formatPaceText(paceMinPerKm: number): string {
   const totalSec = Math.round(paceMinPerKm * 60);
   const min = Math.floor(totalSec / 60);
@@ -929,391 +808,6 @@ function formatDurationText(durationMin: number): string {
     return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   }
   return `${m}:${String(s).padStart(2, "0")}`;
-}
-
-function getDayOfWeekLabel(isoDate: string): string {
-  const date = new Date(`${isoDate}T12:00:00Z`);
-  return DAY_OF_WEEK_LABELS[date.getUTCDay()] ?? "Unknown";
-}
-
-function isWeekday(isoDate: string): boolean {
-  const day = new Date(`${isoDate}T12:00:00Z`).getUTCDay();
-  return day >= 1 && day <= 5;
-}
-
-function median(values: number[]): number | null {
-  if (!values.length) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 0) {
-    return (sorted[mid - 1]! + sorted[mid]!) / 2;
-  }
-  return sorted[mid]!;
-}
-
-function extractWorkoutSummaryMetrics(raw: TrainingPeaksWorkoutRaw): WorkoutSummaryMetrics {
-  const distanceMeters = toFiniteNumber(raw.distance);
-  const totalTimeHours = toFiniteNumber(raw.totalTime);
-  const derivedSpeedMps =
-    distanceMeters !== null && totalTimeHours !== null && totalTimeHours > 0
-      ? distanceMeters / (totalTimeHours * 3600)
-      : null;
-
-  return {
-    distanceMeters,
-    totalTimeHours,
-    derivedSpeedMps,
-    velocityAverage: toFiniteNumber(raw.velocityAverage),
-    velocityMaximum: toFiniteNumber(raw.velocityMaximum),
-    normalizedSpeedActual: toFiniteNumber(raw.normalizedSpeedActual),
-    heartRateMinimum: toFiniteNumber(raw.heartRateMinimum),
-    heartRateMaximum: toFiniteNumber(raw.heartRateMaximum),
-    heartRateAverage: toFiniteNumber(raw.heartRateAverage),
-    cadenceAverage: toFiniteNumber(raw.cadenceAverage),
-    cadenceMaximum: toFiniteNumber(raw.cadenceMaximum),
-    powerAverage: toFiniteNumber(raw.powerAverage),
-    powerMaximum: toFiniteNumber(raw.powerMaximum),
-    normalizedPowerActual: toFiniteNumber(raw.normalizedPowerActual),
-  };
-}
-
-function hasRaceLikeText(candidate: ResultCandidate, raw: TrainingPeaksWorkoutRaw | undefined): boolean {
-  if ((candidate.race_signals?.length ?? 0) > 0) return true;
-  const text = raw ? collectWorkoutText(raw) : "";
-  if (text && RACE_TEXT_BY_DISTANCE[candidate.distance_bucket].test(text)) return true;
-  if (RACE_KEYWORDS_PATTERN.test(text)) return true;
-  const prCount = candidate.personalRecordCount;
-  if (prCount !== null && prCount > 0) return true;
-  if (candidate.raceTypeDuration !== null && candidate.raceTypeDuration !== undefined) return true;
-  return false;
-}
-
-function isPaceOutlierVsPeers(input: {
-  candidatePace: number;
-  medianPace: number | null;
-  nextBestPace: number | null;
-}): boolean {
-  if (input.nextBestPace !== null) {
-    const deltaVsNext = (input.nextBestPace - input.candidatePace) / input.nextBestPace;
-    if (deltaVsNext > 0.08) return true;
-  }
-  if (input.medianPace !== null) {
-    const deltaVsMedian = (input.medianPace - input.candidatePace) / input.medianPace;
-    if (deltaVsMedian > 0.1) return true;
-  }
-  return false;
-}
-
-function hasReasonableSameDayEventConfidence(candidate: ResultCandidate): boolean {
-  if (!candidate.same_day_event) return false;
-  if (candidate.event_confidence < MIN_EVENT_CONFIDENCE_FOR_PACE_OUTLIER_PASS) return false;
-  if (!candidate.event_name?.trim()) return false;
-  return true;
-}
-
-function isPaceOutlierNonBlocking(
-  warnings: Set<DataQualityWarning>,
-  candidate: ResultCandidate,
-): boolean {
-  if (!warnings.has("pace_outlier")) return false;
-  if (!hasReasonableSameDayEventConfidence(candidate)) return false;
-  for (const blocker of PACE_OUTLIER_COMPANION_BLOCKERS) {
-    if (warnings.has(blocker)) return false;
-  }
-  return true;
-}
-
-function isBlockingWarning(
-  warning: DataQualityWarning,
-  context: {
-    hrGapMax: number;
-    sameDayEvent: boolean;
-    candidate: ResultCandidate;
-    warnings: Set<DataQualityWarning>;
-  },
-): boolean {
-  if (warning === "pace_outlier") {
-    return !isPaceOutlierNonBlocking(context.warnings, context.candidate);
-  }
-  if (BASE_BLOCKING_WARNINGS.has(warning)) return true;
-  if (warning === "heart_rate_mismatch" && context.hrGapMax >= 20 && !context.sameDayEvent) {
-    return true;
-  }
-  return false;
-}
-
-function clampScore(score: number): number {
-  return Math.max(0, Math.min(1, Number(score.toFixed(2))));
-}
-
-function assessCandidateDataQuality(input: {
-  candidate: ResultCandidate;
-  raw: TrainingPeaksWorkoutRaw | undefined;
-  window: DistanceWindow;
-  rankByPace: number;
-  peerCandidates: ResultCandidate[];
-  medianPace: number | null;
-  nextBestPace: number | null;
-  nextBestCandidate: ResultCandidate | null;
-}): Pick<
-  ResultCandidate,
-  | "day_of_week"
-  | "heart_rate_peer_reference"
-  | "data_quality_status"
-  | "data_quality_score"
-  | "warnings"
-  | "review_required"
-  | "can_be_official_best"
-> {
-  const { candidate, raw, rankByPace, peerCandidates } = input;
-  const metrics = raw ? extractWorkoutSummaryMetrics(raw) : null;
-  const warnings = new Set<DataQualityWarning>();
-  let score = 1.0;
-
-  const dayOfWeek = getDayOfWeekLabel(candidate.date);
-
-  const peerHrValues = peerCandidates
-    .map((peer) => peer.avg_hr)
-    .filter((value): value is number => value !== null);
-  const peerMedianHr = median(peerHrValues);
-  const nextBestHr = input.nextBestCandidate?.avg_hr ?? null;
-  const candidateHr = candidate.avg_hr ?? metrics?.heartRateAverage ?? null;
-
-  let heartRatePeerReference: HeartRatePeerReference | undefined;
-  let hrGapVsMedian = 0;
-  let hrGapVsNextBest: number | null = null;
-  if (candidateHr !== null && peerMedianHr !== null) {
-    hrGapVsMedian = peerMedianHr - candidateHr;
-    hrGapVsNextBest = nextBestHr !== null ? nextBestHr - candidateHr : null;
-    heartRatePeerReference = {
-      peer_median_hr: Math.round(peerMedianHr),
-      next_best_hr: nextBestHr !== null ? Math.round(nextBestHr) : null,
-      hr_gap_vs_median: Math.round(hrGapVsMedian),
-      hr_gap_vs_next_best: hrGapVsNextBest !== null ? Math.round(hrGapVsNextBest) : null,
-    };
-  }
-
-  const hrGapMax = Math.max(hrGapVsMedian, hrGapVsNextBest ?? 0);
-
-  if (metrics) {
-    const {
-      distanceMeters,
-      totalTimeHours,
-      derivedSpeedMps,
-      velocityAverage,
-      velocityMaximum,
-      normalizedSpeedActual,
-      heartRateMinimum,
-      heartRateMaximum,
-      heartRateAverage,
-      cadenceAverage,
-      cadenceMaximum,
-      powerAverage,
-      powerMaximum,
-    } = metrics;
-
-    if (
-      (distanceMeters !== null && distanceMeters <= 0) ||
-      (totalTimeHours !== null && totalTimeHours <= 0)
-    ) {
-      warnings.add("impossible_summary_metrics");
-    }
-    if (derivedSpeedMps !== null && !Number.isFinite(derivedSpeedMps)) {
-      warnings.add("impossible_summary_metrics");
-    }
-
-    if (
-      velocityAverage !== null &&
-      velocityMaximum !== null &&
-      velocityAverage > velocityMaximum * 1.01
-    ) {
-      warnings.add("impossible_summary_metrics");
-    }
-    if (
-      derivedSpeedMps !== null &&
-      velocityMaximum !== null &&
-      derivedSpeedMps > velocityMaximum * 1.01
-    ) {
-      warnings.add("impossible_summary_metrics");
-    }
-
-    if (
-      heartRateAverage !== null &&
-      heartRateMaximum !== null &&
-      heartRateAverage > heartRateMaximum
-    ) {
-      warnings.add("impossible_summary_metrics");
-    }
-    if (
-      heartRateMinimum !== null &&
-      heartRateAverage !== null &&
-      heartRateMinimum > heartRateAverage
-    ) {
-      warnings.add("impossible_summary_metrics");
-    }
-    if (
-      heartRateMinimum !== null &&
-      heartRateMaximum !== null &&
-      heartRateMinimum > heartRateMaximum
-    ) {
-      warnings.add("impossible_summary_metrics");
-    }
-    if (cadenceAverage !== null && cadenceMaximum !== null && cadenceAverage > cadenceMaximum) {
-      warnings.add("impossible_summary_metrics");
-    }
-    if (powerAverage !== null && powerMaximum !== null && powerAverage > powerMaximum) {
-      warnings.add("impossible_summary_metrics");
-    }
-
-    if (candidate.pace_min_per_km < IMPOSSIBLE_PACE_MIN_PER_KM[candidate.distance_bucket]) {
-      warnings.add("impossible_summary_metrics");
-    }
-
-    if (
-      derivedSpeedMps !== null &&
-      velocityAverage !== null &&
-      velocityAverage > 0 &&
-      Math.abs(derivedSpeedMps - velocityAverage) / velocityAverage > 0.05
-    ) {
-      warnings.add("speed_summary_inconsistent");
-    }
-    if (
-      derivedSpeedMps !== null &&
-      normalizedSpeedActual !== null &&
-      normalizedSpeedActual > 0 &&
-      Math.abs(derivedSpeedMps - normalizedSpeedActual) / normalizedSpeedActual > 0.07
-    ) {
-      warnings.add("duration_distance_mismatch");
-    }
-
-    if (
-      derivedSpeedMps !== null &&
-      velocityMaximum !== null &&
-      derivedSpeedMps > 0 &&
-      velocityMaximum / derivedSpeedMps > 2.2
-    ) {
-      warnings.add("gps_or_speed_anomaly");
-    }
-    if (velocityMaximum !== null && velocityMaximum > 8.5) {
-      warnings.add("gps_or_speed_anomaly");
-    }
-
-    if (rankByPace <= 1 && candidateHr !== null && candidateHr < 125) {
-      warnings.add("physiology_inconsistent");
-    }
-    if (rankByPace <= 1 && cadenceAverage !== null && cadenceAverage < 150) {
-      warnings.add("power_or_cadence_inconsistent");
-    }
-
-    if (
-      rankByPace === 0 &&
-      velocityAverage === null &&
-      normalizedSpeedActual === null
-    ) {
-      warnings.add("missing_required_metrics");
-    }
-  }
-
-  if (candidate.reasons.includes("distance_near_window_edge")) {
-    warnings.add("distance_near_window_edge");
-  }
-
-  const peerCount = peerCandidates.length;
-  const paceOutlier =
-    peerCount >= 2 &&
-    isPaceOutlierVsPeers({
-      candidatePace: candidate.pace_min_per_km,
-      medianPace: input.medianPace,
-      nextBestPace: input.nextBestPace,
-    });
-  const paceOutlierWeak =
-    peerCount < 3 &&
-    isPaceOutlierVsPeers({
-      candidatePace: candidate.pace_min_per_km,
-      medianPace: input.medianPace,
-      nextBestPace: input.nextBestPace,
-    });
-
-  if (paceOutlier) {
-    warnings.add("pace_outlier");
-  } else if (paceOutlierWeak) {
-    warnings.add("pace_outlier");
-  }
-
-  const raceLike = hasRaceLikeText(candidate, raw);
-  const exceptionallyFast =
-    paceOutlier ||
-    paceOutlierWeak ||
-    (input.medianPace !== null &&
-      (input.medianPace - candidate.pace_min_per_km) / input.medianPace > 0.1);
-
-  if (
-    !candidate.same_day_event &&
-    !raceLike &&
-    exceptionallyFast
-  ) {
-    warnings.add("low_confidence_race_result");
-  }
-
-  if (
-    rankByPace <= 1 &&
-    isWeekday(candidate.date) &&
-    !candidate.same_day_event &&
-    !raceLike &&
-    (paceOutlier || paceOutlierWeak)
-  ) {
-    warnings.add("weekday_fast_candidate_without_event");
-  }
-
-  if (
-    candidateHr !== null &&
-    peerHrValues.length >= 2 &&
-    (paceOutlier || paceOutlierWeak || rankByPace <= 1)
-  ) {
-    const belowMedian = peerMedianHr !== null && hrGapVsMedian >= 12;
-    const belowNextBest = hrGapVsNextBest !== null && hrGapVsNextBest >= 15;
-    if (belowMedian || belowNextBest) {
-      warnings.add("heart_rate_mismatch");
-    }
-  }
-
-  for (const warning of warnings) {
-    score -= WARNING_PENALTIES[warning] ?? 0;
-  }
-  score = clampScore(score);
-
-  const warningList = [...warnings];
-  const blockingContext = {
-    hrGapMax,
-    sameDayEvent: candidate.same_day_event,
-    candidate,
-    warnings,
-  };
-  const hasBlockingWarning = warningList.some((warning) =>
-    isBlockingWarning(warning, blockingContext),
-  );
-
-  let dataQualityStatus: DataQualityStatus;
-  if (warnings.has("impossible_summary_metrics") || score < 0.35) {
-    dataQualityStatus = "excluded";
-  } else if (score < 0.75 || hasBlockingWarning) {
-    dataQualityStatus = "needs_review";
-  } else {
-    dataQualityStatus = "verified";
-  }
-
-  const reviewRequired = dataQualityStatus === "needs_review";
-  const canBeOfficialBest = dataQualityStatus === "verified";
-
-  return {
-    day_of_week: dayOfWeek,
-    heart_rate_peer_reference: heartRatePeerReference,
-    data_quality_status: dataQualityStatus,
-    data_quality_score: score,
-    warnings: warningList,
-    review_required: reviewRequired,
-    can_be_official_best: canBeOfficialBest,
-  };
 }
 
 function applyDataQualityToBucket(input: {
@@ -1342,6 +836,7 @@ function applyDataQualityToBucket(input: {
       medianPace,
       nextBestPace: nextBestCandidate?.pace_min_per_km ?? null,
       nextBestCandidate,
+      parseNumber: toFiniteNumber,
     });
     return { ...candidate, ...quality };
   });
@@ -1566,31 +1061,12 @@ function scoreEventForCandidate(event: ParsedEvent, distanceKey: DistanceKey, wi
   score: number;
   reasons: string[];
 } {
-  const reasons: string[] = [];
-  let score = 0;
-
-  if (event.event_distance_km !== null) {
-    const deltaKm = Math.abs(event.event_distance_km - window.target_km);
-    const proximityScore = Math.max(0, 40 - deltaKm * 8);
-    score += proximityScore;
-    reasons.push(`event_distance_delta_km=${deltaKm.toFixed(2)}`);
-  }
-
-  const blob = `${event.event_name ?? ""} ${event.sport_type ?? ""}`.toLowerCase();
-  if (DISTANCE_KEYWORDS[distanceKey].test(blob)) {
-    score += 25;
-    reasons.push("title_distance_keyword");
-  }
-  if (RACE_KEYWORDS_PATTERN.test(blob)) {
-    score += 15;
-    reasons.push("race_or_start_keywords");
-  }
-  if (/road\s*run|roadrunning|running/i.test(event.sport_type ?? "")) {
-    score += 8;
-    reasons.push("running_sport_type");
-  }
-
-  return { score, reasons };
+  return scoreSharedEventForCandidate({
+    event,
+    target_km: window.target_km,
+    matchesDistanceKeyword: (blob) => DISTANCE_KEYWORDS[distanceKey].test(blob),
+    matchesRaceKeyword: (blob) => RACE_KEYWORDS_PATTERN.test(blob),
+  });
 }
 
 function matchSameDayEvent(input: {
@@ -1608,52 +1084,11 @@ function matchSameDayEvent(input: {
   event_match_reason: string[];
   event_confidence: number;
 } {
-  const sameDayEvents = input.eventsByDate.get(input.workoutDate) ?? [];
-  if (!sameDayEvents.length) {
-    return {
-      same_day_event: false,
-      event_name: null,
-      event_date: null,
-      event_distance_km: null,
-      event_id: null,
-      event_source: null,
-      event_match_reason: [],
-      event_confidence: 0,
-    };
-  }
-
-  let best: { event: ParsedEvent; score: number; reasons: string[] } | null = null;
-  for (const event of sameDayEvents) {
-    const scored = scoreEventForCandidate(event, input.distanceKey, input.window);
-    if (!best || scored.score > best.score) {
-      best = { event, score: scored.score, reasons: scored.reasons };
-    }
-  }
-
-  if (!best || best.score <= 0) {
-    return {
-      same_day_event: true,
-      event_name: sameDayEvents[0]?.event_name ?? null,
-      event_date: input.workoutDate,
-      event_distance_km: sameDayEvents[0]?.event_distance_km ?? null,
-      event_id: sameDayEvents[0]?.event_id ?? null,
-      event_source: "events_api",
-      event_match_reason: ["same_day_event_weak_match"],
-      event_confidence: 0.35,
-    };
-  }
-
-  const confidence = Math.min(0.99, Number((0.45 + best.score / 100).toFixed(2)));
-  return {
-    same_day_event: true,
-    event_name: best.event.event_name,
-    event_date: best.event.event_date,
-    event_distance_km: best.event.event_distance_km,
-    event_id: best.event.event_id,
-    event_source: "events_api",
-    event_match_reason: ["same_day_event", ...best.reasons],
-    event_confidence: confidence,
-  };
+  return matchSharedSameDayEvent({
+    workoutDate: input.workoutDate,
+    eventsByDate: input.eventsByDate,
+    scoreEvent: (event) => scoreEventForCandidate(event, input.distanceKey, input.window),
+  });
 }
 
 function buildCleanCandidate(input: {
