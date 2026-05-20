@@ -1,6 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
 
-import { formatTrainingPeaksAttentionSnapshotMessage, getTrainingPeaksCoachChatIds } from "@/features/trainingpeaks/attention-telegram";
+import {
+  buildTrainingPeaksAttentionDigestMessages,
+  getTrainingPeaksCoachChatIds,
+} from "@/features/trainingpeaks/attention-telegram";
 import {
   createTrainingPeaksCronRunLog,
   finishTrainingPeaksCronRunLog,
@@ -97,25 +100,6 @@ async function handleTrainingPeaksAttentionDigest(request: Request) {
   const providedSecret = getBearerToken(request);
   if (!providedSecret || !safeEqual(providedSecret, cronSecret)) {
     // Unauthorized requests are not persisted: avoids storing scanner traffic and never logs secrets.
-    // TODO: Remove debug=1 unauthorized response block after cron auth diagnosis on Vercel Production.
-    const debugEnabled = new URL(request.url).searchParams.get("debug") === "1";
-    if (debugEnabled) {
-      const authorization = request.headers.get("authorization");
-      return jsonResponse(401, {
-        ok: false,
-        error: "Unauthorized",
-        debug: {
-          expectedSecretLength: cronSecret.length,
-          hasExpectedSecret: cronSecret.length > 0,
-          receivedAuthorizationLength: authorization?.length ?? 0,
-          receivedBearerTokenLength: providedSecret?.length ?? 0,
-          authorizationStartsWithBearer: authorization?.startsWith("Bearer") ?? false,
-          vercelEnv: process.env.VERCEL_ENV ?? null,
-          gitCommitSha: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
-        },
-      });
-    }
-
     return jsonResponse(401, {
       ok: false,
       error: "Unauthorized",
@@ -156,11 +140,16 @@ async function handleTrainingPeaksAttentionDigest(request: Request) {
 
   try {
     const snapshot = await getTrainingPeaksAttentionSnapshot();
-    const text = formatTrainingPeaksAttentionSnapshotMessage(snapshot, "Утренний обзор TrainingPeaks");
+    const messages = buildTrainingPeaksAttentionDigestMessages(
+      snapshot,
+      "Утренний обзор TrainingPeaks"
+    );
 
     const results = await Promise.allSettled(
       coachChatIds.map(async (chatId) => {
-        await sendTelegramMessageStrict(chatId, text);
+        for (const message of messages) {
+          await sendTelegramMessageStrict(chatId, message);
+        }
       })
     );
 
