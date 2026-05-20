@@ -12,3 +12,4 @@ pnpm-debug.log*
 .vercel
 .cursor/debug-*.log
 tools/trainingpeaks-export/logs/
+.env.vercel.production
