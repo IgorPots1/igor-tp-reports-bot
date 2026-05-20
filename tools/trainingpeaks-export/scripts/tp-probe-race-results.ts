@@ -17,12 +17,98 @@ const TP_API_HOST = "https://tpapi.trainingpeaks.com";
 const APP_HOST = "https://app.trainingpeaks.com";
 const RUNNING_WORKOUT_TYPE_VALUE_ID = 3;
 
-const DISTANCE_PRESETS: Record<string, { minMeters: number; maxMeters: number }> = {
-  "5k": { minMeters: 4600, maxMeters: 5600 },
+const ALL_DISTANCE_KEYS = ["5k", "10k", "half", "marathon"] as const;
+type DistanceKey = (typeof ALL_DISTANCE_KEYS)[number];
+
+type DistancePreset = {
+  label: string;
+  target_km: number;
+  min_km: number;
+  max_km: number;
 };
 
-const RACE_TEXT_PATTERN =
-  /\b(race|start|забег|соревнование|5k|5\s*km|5\s*км|parkrun)\b/i;
+const DISTANCE_PRESETS: Record<DistanceKey, DistancePreset> = {
+  "5k": { label: "5 км", target_km: 5, min_km: 4.6, max_km: 5.6 },
+  "10k": { label: "10 км", target_km: 10, min_km: 9.6, max_km: 10.6 },
+  half: { label: "21.1 км", target_km: 21.0975, min_km: 20.5, max_km: 22.5 },
+  marathon: { label: "42.2 км", target_km: 42.195, min_km: 41.0, max_km: 43.0 },
+};
+
+const DISTANCE_KEYWORDS: Record<DistanceKey, RegExp> = {
+  "5k": /\b(5k|5\s*km|5\s*км|5000)\b/i,
+  "10k": /\b(10k|10\s*km|10\s*км|10000)\b/i,
+  half: /\b(half|half\s*marathon|полумарафон|21\.1|21\s*km|21\s*км)\b/i,
+  marathon: /\b(marathon|марафон|42\.2|42\s*km|42\s*км)\b/i,
+};
+
+const RACE_KEYWORDS_PATTERN = /\b(race|start|забег|соревнование|parkrun)\b/i;
+
+const RACE_TEXT_BY_DISTANCE: Record<DistanceKey, RegExp> = {
+  "5k": /\b(race|start|забег|соревнование|parkrun|5k|5\s*km|5\s*км)\b/i,
+  "10k": /\b(race|start|забег|соревнование|parkrun|10k|10\s*km|10\s*км)\b/i,
+  half: /\b(race|start|забег|соревнование|parkrun|half|half\s*marathon|полумарафон)\b/i,
+  marathon: /\b(race|start|забег|соревнование|parkrun|marathon|марафон)\b/i,
+};
+
+const WARNING_PENALTIES: Record<DataQualityWarning, number> = {
+  duration_distance_mismatch: 0.25,
+  speed_summary_inconsistent: 0.2,
+  gps_or_speed_anomaly: 0.3,
+  pace_outlier: 0.2,
+  physiology_inconsistent: 0.15,
+  power_or_cadence_inconsistent: 0.1,
+  low_confidence_race_result: 0.15,
+  missing_required_metrics: 0.1,
+  distance_near_window_edge: 0.05,
+  impossible_summary_metrics: 1.0,
+  weekday_fast_candidate_without_event: 0.1,
+  heart_rate_mismatch: 0.2,
+};
+
+const BASE_BLOCKING_WARNINGS = new Set<DataQualityWarning>([
+  "gps_or_speed_anomaly",
+  "speed_summary_inconsistent",
+  "duration_distance_mismatch",
+  "impossible_summary_metrics",
+]);
+
+const PACE_OUTLIER_COMPANION_BLOCKERS = new Set<DataQualityWarning>([
+  "gps_or_speed_anomaly",
+  "speed_summary_inconsistent",
+  "duration_distance_mismatch",
+  "heart_rate_mismatch",
+  "impossible_summary_metrics",
+  "low_confidence_race_result",
+  "weekday_fast_candidate_without_event",
+]);
+
+const MIN_EVENT_CONFIDENCE_FOR_PACE_OUTLIER_PASS = 0.45;
+
+const IMPOSSIBLE_PACE_MIN_PER_KM: Record<DistanceKey, number> = {
+  "5k": 2 + 35 / 60,
+  "10k": 2 + 40 / 60,
+  half: 2 + 45 / 60,
+  marathon: 2 + 55 / 60,
+};
+
+const DAY_OF_WEEK_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
+
+type WorkoutSummaryMetrics = {
+  distanceMeters: number | null;
+  totalTimeHours: number | null;
+  derivedSpeedMps: number | null;
+  velocityAverage: number | null;
+  velocityMaximum: number | null;
+  normalizedSpeedActual: number | null;
+  heartRateMinimum: number | null;
+  heartRateMaximum: number | null;
+  heartRateAverage: number | null;
+  cadenceAverage: number | null;
+  cadenceMaximum: number | null;
+  powerAverage: number | null;
+  powerMaximum: number | null;
+  normalizedPowerActual: number | null;
+};
 
 type CliArgs = {
   from: string;
@@ -31,6 +117,7 @@ type CliArgs = {
   athleteUrl: string | null;
   student: string | null;
   distancePreset: string | null;
+  distances: string | null;
   minKm: number | null;
   maxKm: number | null;
   headed: boolean;
@@ -51,13 +138,48 @@ type ApiFetchResult = {
   error: string | null;
 };
 
-type Clean5kCandidate = {
+type DistanceWindow = {
+  min_km: number;
+  max_km: number;
+  min_meters: number;
+  max_meters: number;
+  target_km: number;
+  label: string;
+};
+
+type DataQualityStatus = "verified" | "needs_review" | "excluded";
+
+type DataQualityWarning =
+  | "gps_or_speed_anomaly"
+  | "pace_outlier"
+  | "speed_summary_inconsistent"
+  | "duration_distance_mismatch"
+  | "physiology_inconsistent"
+  | "power_or_cadence_inconsistent"
+  | "low_confidence_race_result"
+  | "missing_required_metrics"
+  | "distance_near_window_edge"
+  | "impossible_summary_metrics"
+  | "weekday_fast_candidate_without_event"
+  | "heart_rate_mismatch";
+
+type HeartRatePeerReference = {
+  peer_median_hr: number;
+  next_best_hr: number | null;
+  hr_gap_vs_median: number;
+  hr_gap_vs_next_best: number | null;
+};
+
+type ResultCandidate = {
   workoutId: number;
   date: string;
   title: string | null;
+  distance_bucket: DistanceKey;
   distance_km: number;
   duration_min: number;
+  duration_text: string;
   pace_min_per_km: number;
+  pace_text: string;
   avg_hr: number | null;
   tssActual: number | null;
   if: number | null;
@@ -65,7 +187,156 @@ type Clean5kCandidate = {
   raceTypeDuration: unknown | null;
   confidence: number;
   reasons: string[];
+  same_day_event: boolean;
+  event_name: string | null;
+  event_date: string | null;
+  event_distance_km: number | null;
+  event_id: string | null;
+  event_source: "events_api" | "local_races_scan" | null;
+  event_match_reason: string[];
+  event_confidence: number;
+  race_signals?: string[];
+  day_of_week?: string;
+  heart_rate_peer_reference?: HeartRatePeerReference;
+  data_quality_status?: DataQualityStatus;
+  data_quality_score?: number;
+  warnings?: DataQualityWarning[];
+  review_required?: boolean;
+  can_be_official_best?: boolean;
 };
+
+type DistanceBucketReport = {
+  label: string;
+  distance_window: DistanceWindow;
+  candidates_count: number;
+  best_result: ResultCandidate | null;
+  best_candidate_needs_review: ResultCandidate | null;
+  excluded_candidates_count: number;
+  candidates: ResultCandidate[];
+};
+
+type PlannedEventByDate = {
+  event_date: string;
+  event_id: string | null;
+  event_name: string | null;
+  event_distance_km: number | null;
+  sport_type: string | null;
+  event_source: "events_api";
+};
+
+type EventWorkoutLink = {
+  event_date: string;
+  event_name: string | null;
+  event_distance_km: number | null;
+  event_id: string | null;
+  workout_id: number;
+  workout_title: string | null;
+  distance_bucket: DistanceKey;
+  distance_km: number;
+  event_match_reason: string[];
+  event_confidence: number;
+};
+
+type ExcludedSummary = {
+  below_min_km: number;
+  above_max_km: number;
+  non_running: number;
+  not_completed: number;
+  out_of_date_range: number;
+};
+
+type ParsedEvent = {
+  event_id: string | null;
+  event_date: string;
+  event_name: string | null;
+  event_distance_km: number | null;
+  sport_type: string | null;
+  raw: Record<string, unknown>;
+};
+
+type ManualReviewCandidate = {
+  distance_bucket: DistanceKey;
+  distance_label: string;
+  date: string;
+  day_of_week: string | null;
+  workoutId: number;
+  title: string | null;
+  distance_km: number;
+  duration_text: string;
+  pace_text: string;
+  data_quality_status: DataQualityStatus;
+  data_quality_score: number;
+  warnings: DataQualityWarning[];
+  review_required: boolean;
+  can_be_official_best: boolean;
+  same_day_event: boolean;
+  event_name: string | null;
+  event_distance_km: number | null;
+  event_confidence: number;
+  heartRateAverage: number | null;
+  avg_hr: number | null;
+  heart_rate_peer_reference: HeartRatePeerReference | null;
+  short_review_reason: string;
+};
+
+type ManualReviewSummary = {
+  total: number;
+  by_distance: Record<string, number>;
+  by_warning: Record<string, number>;
+};
+
+type ProbeReport = {
+  run_at: string;
+  mode: "single" | "multi";
+  athlete: {
+    athlete_id: number;
+    athlete_url: string;
+    student_id: string | null;
+    student_name: string | null;
+  };
+  range: { from: string; to: string };
+  target_distance: string | null;
+  target_distances: DistanceKey[];
+  distance_window?: DistanceWindow;
+  distance_results: Partial<Record<DistanceKey, DistanceBucketReport>>;
+  manual_review_candidates: ManualReviewCandidate[];
+  manual_review_summary: ManualReviewSummary;
+  workouts_scanned: number;
+  events_scanned: number;
+  data_sources: {
+    workouts: ApiFetchResult;
+    events: ApiFetchResult;
+  };
+  fields_available: string[];
+  fields_missing: string[];
+  planned_events_by_date: PlannedEventByDate[];
+  event_workout_links: EventWorkoutLink[];
+  excluded_summary_by_distance: Partial<Record<DistanceKey, ExcludedSummary>>;
+  planned_race_candidates?: PlannedRaceCandidate[];
+  race_like_5k_candidates?: RaceLike5kCandidate[];
+  clean_5k_candidates?: Clean5kCandidate[];
+  excluded_summary?: ExcludedSummary;
+  notes: string[];
+  output_paths: {
+    report_json: string;
+    report_md: string;
+  };
+};
+
+type Clean5kCandidate = Omit<
+  ResultCandidate,
+  | "distance_bucket"
+  | "duration_text"
+  | "pace_text"
+  | "same_day_event"
+  | "event_name"
+  | "event_date"
+  | "event_distance_km"
+  | "event_id"
+  | "event_source"
+  | "event_match_reason"
+  | "event_confidence"
+>;
 
 type RaceLike5kCandidate = Clean5kCandidate & {
   race_signals: string[];
@@ -81,43 +352,6 @@ type PlannedRaceCandidate = {
   matching_workout_ids: number[];
   confidence: number;
   reasons: string[];
-};
-
-type ExcludedSummary = {
-  below_min_km: number;
-  above_max_km: number;
-  non_running: number;
-  not_completed: number;
-  out_of_date_range: number;
-};
-
-type ProbeReport = {
-  run_at: string;
-  athlete: {
-    athlete_id: number;
-    athlete_url: string;
-    student_id: string | null;
-    student_name: string | null;
-  };
-  range: { from: string; to: string };
-  target_distance: string | null;
-  distance_window: { min_km: number; max_km: number; min_meters: number; max_meters: number };
-  workouts_scanned: number;
-  data_sources: {
-    workouts: ApiFetchResult;
-    events: ApiFetchResult;
-  };
-  fields_available: string[];
-  fields_missing: string[];
-  planned_race_candidates: PlannedRaceCandidate[];
-  race_like_5k_candidates: RaceLike5kCandidate[];
-  clean_5k_candidates: Clean5kCandidate[];
-  excluded_summary: ExcludedSummary;
-  notes: string[];
-  output_paths: {
-    report_json: string;
-    report_md: string;
-  };
 };
 
 function readTextFileSyncSafe(filePath: string): string | null {
@@ -221,20 +455,27 @@ function pickFirstNonEmpty(record: Record<string, unknown>, keys: readonly strin
   return null;
 }
 
-function formatDistanceKm(rawDistance: unknown): { distance: string | null; meters: number | null } {
-  if (rawDistance === null || rawDistance === undefined) {
-    return { distance: null, meters: null };
-  }
+function parseDistanceMeters(rawDistance: unknown): number | null {
+  if (rawDistance === null || rawDistance === undefined) return null;
   const raw = typeof rawDistance === "string" ? rawDistance.trim() : String(rawDistance);
-  if (!raw) return { distance: null, meters: null };
+  if (!raw) return null;
   const numeric = Number(raw.replace(",", "."));
-  if (!Number.isFinite(numeric) || numeric <= 0) {
-    return { distance: raw, meters: null };
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  if (numeric > 200) return numeric;
+  return numeric * 1000;
+}
+
+function formatDistanceKm(rawDistance: unknown): { distance: string | null; meters: number | null } {
+  const meters = parseDistanceMeters(rawDistance);
+  if (meters === null) {
+    if (rawDistance === null || rawDistance === undefined) return { distance: null, meters: null };
+    const raw = typeof rawDistance === "string" ? rawDistance.trim() : String(rawDistance);
+    return raw ? { distance: raw, meters: null } : { distance: null, meters: null };
   }
-  const kilometers = numeric / 1000;
+  const kilometers = meters / 1000;
   const roundedOne = Math.round(kilometers * 10) / 10;
   const rendered = Number.isInteger(roundedOne) ? String(roundedOne) : roundedOne.toFixed(1);
-  return { distance: `${rendered} km`, meters: numeric };
+  return { distance: `${rendered} km`, meters };
 }
 
 function sanitizeGoalValue(rawGoal: unknown): string | null {
@@ -263,6 +504,17 @@ function pickEventDate(record: Record<string, unknown>): string | null {
   if (!raw) return null;
   const isoMatch = raw.match(/\d{4}-\d{2}-\d{2}/);
   return isoMatch ? isoMatch[0] : null;
+}
+
+function pickEventId(record: Record<string, unknown>): string | null {
+  return pickFirstString(record, [
+    "AthleteEventId",
+    "athleteEventId",
+    "EventId",
+    "eventId",
+    "Id",
+    "id",
+  ]);
 }
 
 function looksLikeEventRecord(record: Record<string, unknown>): boolean {
@@ -318,8 +570,58 @@ function flattenEventCandidates(input: unknown): Record<string, unknown>[] {
   return found;
 }
 
+function parseEventsFromApi(body: unknown, from: string, to: string): ParsedEvent[] {
+  const eventObjects = flattenEventCandidates(body);
+  const parsed: ParsedEvent[] = [];
+  for (const eventObj of eventObjects) {
+    const eventDate = pickEventDate(eventObj);
+    if (!eventDate || eventDate < from || eventDate > to) continue;
+    const distanceValue = pickFirstNonEmpty(eventObj, ["Distance", "distance"]);
+    const distanceParsed = formatDistanceKm(distanceValue);
+    parsed.push({
+      event_id: pickEventId(eventObj),
+      event_date: eventDate,
+      event_name: pickFirstString(eventObj, [
+        "EventTitle",
+        "eventTitle",
+        "EventName",
+        "eventName",
+        "Name",
+        "name",
+        "Title",
+        "title",
+      ]),
+      event_distance_km:
+        distanceParsed.meters !== null ? Math.round((distanceParsed.meters / 1000) * 1000) / 1000 : null,
+      sport_type: pickFirstString(eventObj, ["SportType", "sportType", "EventType", "eventType"]),
+      raw: eventObj,
+    });
+  }
+  return parsed;
+}
+
 function timestampForPath(date: Date): string {
   return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+}
+
+function isDistanceKey(value: string): value is DistanceKey {
+  return (ALL_DISTANCE_KEYS as readonly string[]).includes(value);
+}
+
+function parseDistanceKeysList(value: string): DistanceKey[] {
+  const keys = value
+    .split(",")
+    .map((part) => part.trim().toLowerCase())
+    .filter(Boolean);
+  if (!keys.length) throw new Error("Empty --distances value.");
+  const unique: DistanceKey[] = [];
+  for (const key of keys) {
+    if (!isDistanceKey(key)) {
+      throw new Error(`Unknown distance "${key}" in --distances. Supported: ${ALL_DISTANCE_KEYS.join(", ")}`);
+    }
+    if (!unique.includes(key)) unique.push(key);
+  }
+  return unique;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -330,6 +632,7 @@ function parseArgs(argv: string[]): CliArgs {
     athleteUrl: null,
     student: null,
     distancePreset: null,
+    distances: null,
     minKm: null,
     maxKm: null,
     headed: false,
@@ -373,6 +676,10 @@ function parseArgs(argv: string[]): CliArgs {
       parsed.distancePreset = arg.slice("--distance=".length).trim().toLowerCase();
       continue;
     }
+    if (arg.startsWith("--distances=")) {
+      parsed.distances = arg.slice("--distances=".length).trim();
+      continue;
+    }
     if (arg.startsWith("--min-km=")) {
       const minKm = Number(arg.slice("--min-km=".length).trim());
       if (!Number.isFinite(minKm) || minKm <= 0) throw new Error(`Invalid --min-km value: ${arg}`);
@@ -413,29 +720,74 @@ function parseArgs(argv: string[]): CliArgs {
     throw new Error(`Invalid date range: --from (${parsed.from}) is after --to (${parsed.to}).`);
   }
 
+  if (parsed.distances && parsed.distancePreset) {
+    throw new Error("Use either --distance or --distances, not both.");
+  }
+
   return parsed;
 }
 
-function resolveDistanceWindow(args: CliArgs): { minMeters: number; maxMeters: number; minKm: number; maxKm: number } {
-  const preset = args.distancePreset ? DISTANCE_PRESETS[args.distancePreset] : null;
-  if (args.distancePreset && !preset) {
-    throw new Error(`Unknown --distance preset "${args.distancePreset}". Supported: ${Object.keys(DISTANCE_PRESETS).join(", ")}`);
+type ResolvedRunMode = {
+  mode: "single" | "multi";
+  distanceKeys: DistanceKey[];
+  singleDistanceKey: DistanceKey | null;
+};
+
+function resolveRunMode(args: CliArgs): ResolvedRunMode {
+  if (args.distances) {
+    if (args.minKm !== null || args.maxKm !== null) {
+      throw new Error("--min-km and --max-km are only supported in single-distance mode.");
+    }
+    return { mode: "multi", distanceKeys: parseDistanceKeysList(args.distances), singleDistanceKey: null };
   }
 
-  const minKm = args.minKm ?? (preset ? preset.minMeters / 1000 : null);
-  const maxKm = args.maxKm ?? (preset ? preset.maxMeters / 1000 : null);
-  if (minKm === null || maxKm === null) {
-    throw new Error("Provide --distance preset and/or both --min-km and --max-km.");
+  if (args.distancePreset === "all") {
+    if (args.minKm !== null || args.maxKm !== null) {
+      throw new Error("--min-km and --max-km are only supported in single-distance mode.");
+    }
+    return { mode: "multi", distanceKeys: [...ALL_DISTANCE_KEYS], singleDistanceKey: null };
   }
+
+  const singleKey = args.distancePreset ?? "5k";
+  if (!isDistanceKey(singleKey)) {
+    throw new Error(
+      `Unknown --distance "${singleKey}". Supported: ${ALL_DISTANCE_KEYS.join(", ")}, all`,
+    );
+  }
+
+  return { mode: "single", distanceKeys: [singleKey], singleDistanceKey: singleKey };
+}
+
+function resolveDistanceWindow(
+  args: CliArgs,
+  distanceKey: DistanceKey,
+  mode: ResolvedRunMode,
+): DistanceWindow {
+  const preset = DISTANCE_PRESETS[distanceKey];
+  if (mode.mode === "multi") {
+    return {
+      label: preset.label,
+      target_km: preset.target_km,
+      min_km: preset.min_km,
+      max_km: preset.max_km,
+      min_meters: preset.min_km * 1000,
+      max_meters: preset.max_km * 1000,
+    };
+  }
+
+  const minKm = args.minKm ?? preset.min_km;
+  const maxKm = args.maxKm ?? preset.max_km;
   if (minKm >= maxKm) {
     throw new Error(`Invalid distance window: min (${minKm}) must be less than max (${maxKm}).`);
   }
 
   return {
-    minKm,
-    maxKm,
-    minMeters: minKm * 1000,
-    maxMeters: maxKm * 1000,
+    label: preset.label,
+    target_km: preset.target_km,
+    min_km: minKm,
+    max_km: maxKm,
+    min_meters: minKm * 1000,
+    max_meters: maxKm * 1000,
   };
 }
 
@@ -538,10 +890,10 @@ function isCompletedWorkout(raw: TrainingPeaksWorkoutRaw): boolean {
   return raw.completed === true;
 }
 
-function collectRaceSignals(raw: TrainingPeaksWorkoutRaw): string[] {
+function collectRaceSignals(raw: TrainingPeaksWorkoutRaw, distanceKey: DistanceKey): string[] {
   const signals: string[] = [];
   const text = collectWorkoutText(raw);
-  if (RACE_TEXT_PATTERN.test(text)) signals.push("race_keywords_in_text");
+  if (RACE_TEXT_BY_DISTANCE[distanceKey].test(text)) signals.push("race_keywords_in_text");
 
   const prCount = toFiniteNumber(raw.personalRecordCount);
   if (prCount !== null && prCount > 0) signals.push(`personalRecordCount=${prCount}`);
@@ -561,6 +913,845 @@ function collectRaceSignals(raw: TrainingPeaksWorkoutRaw): string[] {
   return signals;
 }
 
+function formatPaceText(paceMinPerKm: number): string {
+  const totalSec = Math.round(paceMinPerKm * 60);
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  return `${min}:${String(sec).padStart(2, "0")}/км`;
+}
+
+function formatDurationText(durationMin: number): string {
+  const totalSec = Math.round(durationMin * 60);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function getDayOfWeekLabel(isoDate: string): string {
+  const date = new Date(`${isoDate}T12:00:00Z`);
+  return DAY_OF_WEEK_LABELS[date.getUTCDay()] ?? "Unknown";
+}
+
+function isWeekday(isoDate: string): boolean {
+  const day = new Date(`${isoDate}T12:00:00Z`).getUTCDay();
+  return day >= 1 && day <= 5;
+}
+
+function median(values: number[]): number | null {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    return (sorted[mid - 1]! + sorted[mid]!) / 2;
+  }
+  return sorted[mid]!;
+}
+
+function extractWorkoutSummaryMetrics(raw: TrainingPeaksWorkoutRaw): WorkoutSummaryMetrics {
+  const distanceMeters = toFiniteNumber(raw.distance);
+  const totalTimeHours = toFiniteNumber(raw.totalTime);
+  const derivedSpeedMps =
+    distanceMeters !== null && totalTimeHours !== null && totalTimeHours > 0
+      ? distanceMeters / (totalTimeHours * 3600)
+      : null;
+
+  return {
+    distanceMeters,
+    totalTimeHours,
+    derivedSpeedMps,
+    velocityAverage: toFiniteNumber(raw.velocityAverage),
+    velocityMaximum: toFiniteNumber(raw.velocityMaximum),
+    normalizedSpeedActual: toFiniteNumber(raw.normalizedSpeedActual),
+    heartRateMinimum: toFiniteNumber(raw.heartRateMinimum),
+    heartRateMaximum: toFiniteNumber(raw.heartRateMaximum),
+    heartRateAverage: toFiniteNumber(raw.heartRateAverage),
+    cadenceAverage: toFiniteNumber(raw.cadenceAverage),
+    cadenceMaximum: toFiniteNumber(raw.cadenceMaximum),
+    powerAverage: toFiniteNumber(raw.powerAverage),
+    powerMaximum: toFiniteNumber(raw.powerMaximum),
+    normalizedPowerActual: toFiniteNumber(raw.normalizedPowerActual),
+  };
+}
+
+function hasRaceLikeText(candidate: ResultCandidate, raw: TrainingPeaksWorkoutRaw | undefined): boolean {
+  if ((candidate.race_signals?.length ?? 0) > 0) return true;
+  const text = raw ? collectWorkoutText(raw) : "";
+  if (text && RACE_TEXT_BY_DISTANCE[candidate.distance_bucket].test(text)) return true;
+  if (RACE_KEYWORDS_PATTERN.test(text)) return true;
+  const prCount = candidate.personalRecordCount;
+  if (prCount !== null && prCount > 0) return true;
+  if (candidate.raceTypeDuration !== null && candidate.raceTypeDuration !== undefined) return true;
+  return false;
+}
+
+function isPaceOutlierVsPeers(input: {
+  candidatePace: number;
+  medianPace: number | null;
+  nextBestPace: number | null;
+}): boolean {
+  if (input.nextBestPace !== null) {
+    const deltaVsNext = (input.nextBestPace - input.candidatePace) / input.nextBestPace;
+    if (deltaVsNext > 0.08) return true;
+  }
+  if (input.medianPace !== null) {
+    const deltaVsMedian = (input.medianPace - input.candidatePace) / input.medianPace;
+    if (deltaVsMedian > 0.1) return true;
+  }
+  return false;
+}
+
+function hasReasonableSameDayEventConfidence(candidate: ResultCandidate): boolean {
+  if (!candidate.same_day_event) return false;
+  if (candidate.event_confidence < MIN_EVENT_CONFIDENCE_FOR_PACE_OUTLIER_PASS) return false;
+  if (!candidate.event_name?.trim()) return false;
+  return true;
+}
+
+function isPaceOutlierNonBlocking(
+  warnings: Set<DataQualityWarning>,
+  candidate: ResultCandidate,
+): boolean {
+  if (!warnings.has("pace_outlier")) return false;
+  if (!hasReasonableSameDayEventConfidence(candidate)) return false;
+  for (const blocker of PACE_OUTLIER_COMPANION_BLOCKERS) {
+    if (warnings.has(blocker)) return false;
+  }
+  return true;
+}
+
+function isBlockingWarning(
+  warning: DataQualityWarning,
+  context: {
+    hrGapMax: number;
+    sameDayEvent: boolean;
+    candidate: ResultCandidate;
+    warnings: Set<DataQualityWarning>;
+  },
+): boolean {
+  if (warning === "pace_outlier") {
+    return !isPaceOutlierNonBlocking(context.warnings, context.candidate);
+  }
+  if (BASE_BLOCKING_WARNINGS.has(warning)) return true;
+  if (warning === "heart_rate_mismatch" && context.hrGapMax >= 20 && !context.sameDayEvent) {
+    return true;
+  }
+  return false;
+}
+
+function clampScore(score: number): number {
+  return Math.max(0, Math.min(1, Number(score.toFixed(2))));
+}
+
+function assessCandidateDataQuality(input: {
+  candidate: ResultCandidate;
+  raw: TrainingPeaksWorkoutRaw | undefined;
+  window: DistanceWindow;
+  rankByPace: number;
+  peerCandidates: ResultCandidate[];
+  medianPace: number | null;
+  nextBestPace: number | null;
+  nextBestCandidate: ResultCandidate | null;
+}): Pick<
+  ResultCandidate,
+  | "day_of_week"
+  | "heart_rate_peer_reference"
+  | "data_quality_status"
+  | "data_quality_score"
+  | "warnings"
+  | "review_required"
+  | "can_be_official_best"
+> {
+  const { candidate, raw, rankByPace, peerCandidates } = input;
+  const metrics = raw ? extractWorkoutSummaryMetrics(raw) : null;
+  const warnings = new Set<DataQualityWarning>();
+  let score = 1.0;
+
+  const dayOfWeek = getDayOfWeekLabel(candidate.date);
+
+  const peerHrValues = peerCandidates
+    .map((peer) => peer.avg_hr)
+    .filter((value): value is number => value !== null);
+  const peerMedianHr = median(peerHrValues);
+  const nextBestHr = input.nextBestCandidate?.avg_hr ?? null;
+  const candidateHr = candidate.avg_hr ?? metrics?.heartRateAverage ?? null;
+
+  let heartRatePeerReference: HeartRatePeerReference | undefined;
+  let hrGapVsMedian = 0;
+  let hrGapVsNextBest: number | null = null;
+  if (candidateHr !== null && peerMedianHr !== null) {
+    hrGapVsMedian = peerMedianHr - candidateHr;
+    hrGapVsNextBest = nextBestHr !== null ? nextBestHr - candidateHr : null;
+    heartRatePeerReference = {
+      peer_median_hr: Math.round(peerMedianHr),
+      next_best_hr: nextBestHr !== null ? Math.round(nextBestHr) : null,
+      hr_gap_vs_median: Math.round(hrGapVsMedian),
+      hr_gap_vs_next_best: hrGapVsNextBest !== null ? Math.round(hrGapVsNextBest) : null,
+    };
+  }
+
+  const hrGapMax = Math.max(hrGapVsMedian, hrGapVsNextBest ?? 0);
+
+  if (metrics) {
+    const {
+      distanceMeters,
+      totalTimeHours,
+      derivedSpeedMps,
+      velocityAverage,
+      velocityMaximum,
+      normalizedSpeedActual,
+      heartRateMinimum,
+      heartRateMaximum,
+      heartRateAverage,
+      cadenceAverage,
+      cadenceMaximum,
+      powerAverage,
+      powerMaximum,
+    } = metrics;
+
+    if (
+      (distanceMeters !== null && distanceMeters <= 0) ||
+      (totalTimeHours !== null && totalTimeHours <= 0)
+    ) {
+      warnings.add("impossible_summary_metrics");
+    }
+    if (derivedSpeedMps !== null && !Number.isFinite(derivedSpeedMps)) {
+      warnings.add("impossible_summary_metrics");
+    }
+
+    if (
+      velocityAverage !== null &&
+      velocityMaximum !== null &&
+      velocityAverage > velocityMaximum * 1.01
+    ) {
+      warnings.add("impossible_summary_metrics");
+    }
+    if (
+      derivedSpeedMps !== null &&
+      velocityMaximum !== null &&
+      derivedSpeedMps > velocityMaximum * 1.01
+    ) {
+      warnings.add("impossible_summary_metrics");
+    }
+
+    if (
+      heartRateAverage !== null &&
+      heartRateMaximum !== null &&
+      heartRateAverage > heartRateMaximum
+    ) {
+      warnings.add("impossible_summary_metrics");
+    }
+    if (
+      heartRateMinimum !== null &&
+      heartRateAverage !== null &&
+      heartRateMinimum > heartRateAverage
+    ) {
+      warnings.add("impossible_summary_metrics");
+    }
+    if (
+      heartRateMinimum !== null &&
+      heartRateMaximum !== null &&
+      heartRateMinimum > heartRateMaximum
+    ) {
+      warnings.add("impossible_summary_metrics");
+    }
+    if (cadenceAverage !== null && cadenceMaximum !== null && cadenceAverage > cadenceMaximum) {
+      warnings.add("impossible_summary_metrics");
+    }
+    if (powerAverage !== null && powerMaximum !== null && powerAverage > powerMaximum) {
+      warnings.add("impossible_summary_metrics");
+    }
+
+    if (candidate.pace_min_per_km < IMPOSSIBLE_PACE_MIN_PER_KM[candidate.distance_bucket]) {
+      warnings.add("impossible_summary_metrics");
+    }
+
+    if (
+      derivedSpeedMps !== null &&
+      velocityAverage !== null &&
+      velocityAverage > 0 &&
+      Math.abs(derivedSpeedMps - velocityAverage) / velocityAverage > 0.05
+    ) {
+      warnings.add("speed_summary_inconsistent");
+    }
+    if (
+      derivedSpeedMps !== null &&
+      normalizedSpeedActual !== null &&
+      normalizedSpeedActual > 0 &&
+      Math.abs(derivedSpeedMps - normalizedSpeedActual) / normalizedSpeedActual > 0.07
+    ) {
+      warnings.add("duration_distance_mismatch");
+    }
+
+    if (
+      derivedSpeedMps !== null &&
+      velocityMaximum !== null &&
+      derivedSpeedMps > 0 &&
+      velocityMaximum / derivedSpeedMps > 2.2
+    ) {
+      warnings.add("gps_or_speed_anomaly");
+    }
+    if (velocityMaximum !== null && velocityMaximum > 8.5) {
+      warnings.add("gps_or_speed_anomaly");
+    }
+
+    if (rankByPace <= 1 && candidateHr !== null && candidateHr < 125) {
+      warnings.add("physiology_inconsistent");
+    }
+    if (rankByPace <= 1 && cadenceAverage !== null && cadenceAverage < 150) {
+      warnings.add("power_or_cadence_inconsistent");
+    }
+
+    if (
+      rankByPace === 0 &&
+      velocityAverage === null &&
+      normalizedSpeedActual === null
+    ) {
+      warnings.add("missing_required_metrics");
+    }
+  }
+
+  if (candidate.reasons.includes("distance_near_window_edge")) {
+    warnings.add("distance_near_window_edge");
+  }
+
+  const peerCount = peerCandidates.length;
+  const paceOutlier =
+    peerCount >= 2 &&
+    isPaceOutlierVsPeers({
+      candidatePace: candidate.pace_min_per_km,
+      medianPace: input.medianPace,
+      nextBestPace: input.nextBestPace,
+    });
+  const paceOutlierWeak =
+    peerCount < 3 &&
+    isPaceOutlierVsPeers({
+      candidatePace: candidate.pace_min_per_km,
+      medianPace: input.medianPace,
+      nextBestPace: input.nextBestPace,
+    });
+
+  if (paceOutlier) {
+    warnings.add("pace_outlier");
+  } else if (paceOutlierWeak) {
+    warnings.add("pace_outlier");
+  }
+
+  const raceLike = hasRaceLikeText(candidate, raw);
+  const exceptionallyFast =
+    paceOutlier ||
+    paceOutlierWeak ||
+    (input.medianPace !== null &&
+      (input.medianPace - candidate.pace_min_per_km) / input.medianPace > 0.1);
+
+  if (
+    !candidate.same_day_event &&
+    !raceLike &&
+    exceptionallyFast
+  ) {
+    warnings.add("low_confidence_race_result");
+  }
+
+  if (
+    rankByPace <= 1 &&
+    isWeekday(candidate.date) &&
+    !candidate.same_day_event &&
+    !raceLike &&
+    (paceOutlier || paceOutlierWeak)
+  ) {
+    warnings.add("weekday_fast_candidate_without_event");
+  }
+
+  if (
+    candidateHr !== null &&
+    peerHrValues.length >= 2 &&
+    (paceOutlier || paceOutlierWeak || rankByPace <= 1)
+  ) {
+    const belowMedian = peerMedianHr !== null && hrGapVsMedian >= 12;
+    const belowNextBest = hrGapVsNextBest !== null && hrGapVsNextBest >= 15;
+    if (belowMedian || belowNextBest) {
+      warnings.add("heart_rate_mismatch");
+    }
+  }
+
+  for (const warning of warnings) {
+    score -= WARNING_PENALTIES[warning] ?? 0;
+  }
+  score = clampScore(score);
+
+  const warningList = [...warnings];
+  const blockingContext = {
+    hrGapMax,
+    sameDayEvent: candidate.same_day_event,
+    candidate,
+    warnings,
+  };
+  const hasBlockingWarning = warningList.some((warning) =>
+    isBlockingWarning(warning, blockingContext),
+  );
+
+  let dataQualityStatus: DataQualityStatus;
+  if (warnings.has("impossible_summary_metrics") || score < 0.35) {
+    dataQualityStatus = "excluded";
+  } else if (score < 0.75 || hasBlockingWarning) {
+    dataQualityStatus = "needs_review";
+  } else {
+    dataQualityStatus = "verified";
+  }
+
+  const reviewRequired = dataQualityStatus === "needs_review";
+  const canBeOfficialBest = dataQualityStatus === "verified";
+
+  return {
+    day_of_week: dayOfWeek,
+    heart_rate_peer_reference: heartRatePeerReference,
+    data_quality_status: dataQualityStatus,
+    data_quality_score: score,
+    warnings: warningList,
+    review_required: reviewRequired,
+    can_be_official_best: canBeOfficialBest,
+  };
+}
+
+function applyDataQualityToBucket(input: {
+  candidates: ResultCandidate[];
+  rawByWorkoutId: Map<number, TrainingPeaksWorkoutRaw>;
+  window: DistanceWindow;
+}): {
+  candidates: ResultCandidate[];
+  best_result: ResultCandidate | null;
+  best_candidate_needs_review: ResultCandidate | null;
+  excluded_candidates_count: number;
+} {
+  const sorted = [...input.candidates].sort((a, b) => a.pace_min_per_km - b.pace_min_per_km);
+  const paces = sorted.map((candidate) => candidate.pace_min_per_km);
+  const medianPace = median(paces);
+
+  const enriched = sorted.map((candidate, index) => {
+    const peerCandidates = sorted.filter((_, peerIndex) => peerIndex !== index);
+    const nextBestCandidate = sorted[index + 1] ?? null;
+    const quality = assessCandidateDataQuality({
+      candidate,
+      raw: input.rawByWorkoutId.get(candidate.workoutId),
+      window: input.window,
+      rankByPace: index,
+      peerCandidates,
+      medianPace,
+      nextBestPace: nextBestCandidate?.pace_min_per_km ?? null,
+      nextBestCandidate,
+    });
+    return { ...candidate, ...quality };
+  });
+
+  const best_result = enriched.find((candidate) => candidate.can_be_official_best) ?? null;
+  const best_candidate_needs_review =
+    enriched.find((candidate) => candidate.data_quality_status === "needs_review") ?? null;
+  const excluded_candidates_count = enriched.filter(
+    (candidate) => candidate.data_quality_status === "excluded",
+  ).length;
+
+  return {
+    candidates: enriched,
+    best_result,
+    best_candidate_needs_review,
+    excluded_candidates_count,
+  };
+}
+
+function formatDataQualityStatus(candidate: ResultCandidate): string {
+  return candidate.data_quality_status ?? "unknown";
+}
+
+function formatWarningsCell(candidate: ResultCandidate): string {
+  const warnings = candidate.warnings ?? [];
+  if (!warnings.length) return "—";
+
+  const parts = [...warnings];
+  const hrRef = candidate.heart_rate_peer_reference;
+  if (
+    warnings.includes("heart_rate_mismatch") &&
+    candidate.avg_hr !== null &&
+    hrRef
+  ) {
+    const peerLabel = hrRef.next_best_hr ?? hrRef.peer_median_hr;
+    const extras: string[] = [`HR ${Math.round(candidate.avg_hr)} vs peer ~${peerLabel}`];
+    if (!candidate.same_day_event) extras.push("no event");
+    if (candidate.day_of_week && isWeekday(candidate.date)) extras.push("weekday");
+    parts.push(`(${extras.join(", ")})`);
+  }
+
+  return parts.join(", ");
+}
+
+function shouldIncludeInManualReview(candidate: ResultCandidate): boolean {
+  if (candidate.review_required === true) return true;
+  if (candidate.data_quality_status === "needs_review") return true;
+  if (candidate.data_quality_status === "excluded") return true;
+  const warnings = candidate.warnings ?? [];
+  if (warnings.length > 0 && candidate.can_be_official_best === false) return true;
+  return false;
+}
+
+function buildShortReviewReason(candidate: ResultCandidate): string {
+  const status = candidate.data_quality_status ?? "unknown";
+  const warnings = candidate.warnings ?? [];
+  const warningText = warnings.length ? warnings.join(", ") : "no warnings";
+  if (status === "excluded") {
+    return `Excluded from official best (${warningText})`;
+  }
+  if (status === "needs_review" || candidate.review_required) {
+    return `Needs manual review (${warningText})`;
+  }
+  if (warnings.length > 0) {
+    return `Warnings without official best (${warningText})`;
+  }
+  return "Flagged for manual review";
+}
+
+function toManualReviewCandidate(
+  candidate: ResultCandidate,
+  distanceLabel: string,
+): ManualReviewCandidate {
+  const hr = candidate.avg_hr ?? null;
+  return {
+    distance_bucket: candidate.distance_bucket,
+    distance_label: distanceLabel,
+    date: candidate.date,
+    day_of_week: candidate.day_of_week ?? null,
+    workoutId: candidate.workoutId,
+    title: candidate.title,
+    distance_km: candidate.distance_km,
+    duration_text: candidate.duration_text,
+    pace_text: candidate.pace_text,
+    data_quality_status: candidate.data_quality_status ?? "needs_review",
+    data_quality_score: candidate.data_quality_score ?? 0,
+    warnings: candidate.warnings ?? [],
+    review_required: candidate.review_required ?? false,
+    can_be_official_best: candidate.can_be_official_best ?? false,
+    same_day_event: candidate.same_day_event,
+    event_name: candidate.event_name,
+    event_distance_km: candidate.event_distance_km,
+    event_confidence: candidate.event_confidence,
+    heartRateAverage: hr,
+    avg_hr: hr,
+    heart_rate_peer_reference: candidate.heart_rate_peer_reference ?? null,
+    short_review_reason: buildShortReviewReason(candidate),
+  };
+}
+
+function manualReviewSeverityRank(status: DataQualityStatus | undefined): number {
+  if (status === "excluded") return 0;
+  if (status === "needs_review") return 1;
+  return 2;
+}
+
+function sortManualReviewCandidatesByPace(
+  candidates: ManualReviewCandidate[],
+  distanceResults: Partial<Record<DistanceKey, DistanceBucketReport>>,
+): ManualReviewCandidate[] {
+  const paceByWorkoutId = new Map<number, number>();
+  for (const bucket of Object.values(distanceResults)) {
+    if (!bucket) continue;
+    for (const row of bucket.candidates) {
+      paceByWorkoutId.set(row.workoutId, row.pace_min_per_km);
+    }
+  }
+
+  const distanceOrder = new Map(ALL_DISTANCE_KEYS.map((key, index) => [key, index]));
+  return [...candidates].sort((a, b) => {
+    const distanceDelta =
+      (distanceOrder.get(a.distance_bucket) ?? 99) - (distanceOrder.get(b.distance_bucket) ?? 99);
+    if (distanceDelta !== 0) return distanceDelta;
+
+    const severityDelta =
+      manualReviewSeverityRank(a.data_quality_status) -
+      manualReviewSeverityRank(b.data_quality_status);
+    if (severityDelta !== 0) return severityDelta;
+
+    const paceA = paceByWorkoutId.get(a.workoutId) ?? Number.POSITIVE_INFINITY;
+    const paceB = paceByWorkoutId.get(b.workoutId) ?? Number.POSITIVE_INFINITY;
+    if (paceA !== paceB) return paceA - paceB;
+
+    return a.date.localeCompare(b.date) || a.workoutId - b.workoutId;
+  });
+}
+
+function buildManualReviewCandidates(input: {
+  distanceKeys: DistanceKey[];
+  distanceResults: Partial<Record<DistanceKey, DistanceBucketReport>>;
+}): ManualReviewCandidate[] {
+  const collected: ManualReviewCandidate[] = [];
+  for (const key of input.distanceKeys) {
+    const bucket = input.distanceResults[key];
+    if (!bucket) continue;
+    for (const candidate of bucket.candidates) {
+      if (!shouldIncludeInManualReview(candidate)) continue;
+      collected.push(toManualReviewCandidate(candidate, bucket.label));
+    }
+  }
+  return sortManualReviewCandidatesByPace(collected, input.distanceResults);
+}
+
+function buildManualReviewSummary(candidates: ManualReviewCandidate[]): ManualReviewSummary {
+  const by_distance: Record<string, number> = {};
+  const by_warning: Record<string, number> = {};
+  for (const candidate of candidates) {
+    by_distance[candidate.distance_label] = (by_distance[candidate.distance_label] ?? 0) + 1;
+    for (const warning of candidate.warnings) {
+      by_warning[warning] = (by_warning[warning] ?? 0) + 1;
+    }
+  }
+  return { total: candidates.length, by_distance, by_warning };
+}
+
+function formatManualReviewHrCheck(candidate: ManualReviewCandidate): string {
+  const hr = candidate.avg_hr ?? candidate.heartRateAverage;
+  const hrRef = candidate.heart_rate_peer_reference;
+  if (hr === null || !hrRef) return "—";
+  const peerLabel = hrRef.next_best_hr ?? hrRef.peer_median_hr;
+  return `HR ${Math.round(hr)} vs peer ~${peerLabel}`;
+}
+
+function formatManualReviewEventCell(candidate: ManualReviewCandidate): string {
+  if (!candidate.same_day_event || !candidate.event_name) return "no event";
+  const distance =
+    candidate.event_distance_km !== null ? ` (${candidate.event_distance_km} km)` : "";
+  return `${candidate.event_name}${distance}`;
+}
+
+function formatBestResultCell(bucket: DistanceBucketReport | undefined): string {
+  if (bucket?.best_result) {
+    return formatResultLine(bucket.best_result);
+  }
+  if (bucket?.best_candidate_needs_review) {
+    return `needs review (${formatResultLine(bucket.best_candidate_needs_review)})`;
+  }
+  return "—";
+}
+
+function formatBestPaceCell(bucket: DistanceBucketReport | undefined): string {
+  if (bucket?.best_result) {
+    return bucket.best_result.pace_text;
+  }
+  if (bucket?.best_candidate_needs_review) {
+    return `needs review (${bucket.best_candidate_needs_review.pace_text})`;
+  }
+  return "—";
+}
+
+function formatBestDateCell(bucket: DistanceBucketReport | undefined): string {
+  if (bucket?.best_result) {
+    return bucket.best_result.date;
+  }
+  if (bucket?.best_candidate_needs_review) {
+    return `${bucket.best_candidate_needs_review.date} (needs review)`;
+  }
+  return "—";
+}
+
+function formatBestEventCell(bucket: DistanceBucketReport | undefined): string {
+  if (bucket?.best_result) {
+    return formatEventCell(bucket.best_result);
+  }
+  if (bucket?.best_candidate_needs_review) {
+    return formatEventCell(bucket.best_candidate_needs_review);
+  }
+  return "—";
+}
+
+function scoreEventForCandidate(event: ParsedEvent, distanceKey: DistanceKey, window: DistanceWindow): {
+  score: number;
+  reasons: string[];
+} {
+  const reasons: string[] = [];
+  let score = 0;
+
+  if (event.event_distance_km !== null) {
+    const deltaKm = Math.abs(event.event_distance_km - window.target_km);
+    const proximityScore = Math.max(0, 40 - deltaKm * 8);
+    score += proximityScore;
+    reasons.push(`event_distance_delta_km=${deltaKm.toFixed(2)}`);
+  }
+
+  const blob = `${event.event_name ?? ""} ${event.sport_type ?? ""}`.toLowerCase();
+  if (DISTANCE_KEYWORDS[distanceKey].test(blob)) {
+    score += 25;
+    reasons.push("title_distance_keyword");
+  }
+  if (RACE_KEYWORDS_PATTERN.test(blob)) {
+    score += 15;
+    reasons.push("race_or_start_keywords");
+  }
+  if (/road\s*run|roadrunning|running/i.test(event.sport_type ?? "")) {
+    score += 8;
+    reasons.push("running_sport_type");
+  }
+
+  return { score, reasons };
+}
+
+function matchSameDayEvent(input: {
+  workoutDate: string;
+  distanceKey: DistanceKey;
+  window: DistanceWindow;
+  eventsByDate: Map<string, ParsedEvent[]>;
+}): {
+  same_day_event: boolean;
+  event_name: string | null;
+  event_date: string | null;
+  event_distance_km: number | null;
+  event_id: string | null;
+  event_source: "events_api" | null;
+  event_match_reason: string[];
+  event_confidence: number;
+} {
+  const sameDayEvents = input.eventsByDate.get(input.workoutDate) ?? [];
+  if (!sameDayEvents.length) {
+    return {
+      same_day_event: false,
+      event_name: null,
+      event_date: null,
+      event_distance_km: null,
+      event_id: null,
+      event_source: null,
+      event_match_reason: [],
+      event_confidence: 0,
+    };
+  }
+
+  let best: { event: ParsedEvent; score: number; reasons: string[] } | null = null;
+  for (const event of sameDayEvents) {
+    const scored = scoreEventForCandidate(event, input.distanceKey, input.window);
+    if (!best || scored.score > best.score) {
+      best = { event, score: scored.score, reasons: scored.reasons };
+    }
+  }
+
+  if (!best || best.score <= 0) {
+    return {
+      same_day_event: true,
+      event_name: sameDayEvents[0]?.event_name ?? null,
+      event_date: input.workoutDate,
+      event_distance_km: sameDayEvents[0]?.event_distance_km ?? null,
+      event_id: sameDayEvents[0]?.event_id ?? null,
+      event_source: "events_api",
+      event_match_reason: ["same_day_event_weak_match"],
+      event_confidence: 0.35,
+    };
+  }
+
+  const confidence = Math.min(0.99, Number((0.45 + best.score / 100).toFixed(2)));
+  return {
+    same_day_event: true,
+    event_name: best.event.event_name,
+    event_date: best.event.event_date,
+    event_distance_km: best.event.event_distance_km,
+    event_id: best.event.event_id,
+    event_source: "events_api",
+    event_match_reason: ["same_day_event", ...best.reasons],
+    event_confidence: confidence,
+  };
+}
+
+function buildCleanCandidate(input: {
+  raw: TrainingPeaksWorkoutRaw;
+  window: DistanceWindow;
+  distanceKey: DistanceKey;
+  eventsByDate: Map<string, ParsedEvent[]>;
+}): ResultCandidate | null {
+  const workoutId = toPositiveInt(input.raw.workoutId);
+  const date = toIsoDatePart(input.raw.workoutDay);
+  const distanceMeters = toFiniteNumber(input.raw.distance);
+  const durationHours = toFiniteNumber(input.raw.totalTime);
+  if (!workoutId || !date || distanceMeters === null || durationHours === null) return null;
+  if (distanceMeters < input.window.min_meters || distanceMeters > input.window.max_meters) return null;
+  if (durationHours <= 0) return null;
+
+  const distanceKm = distanceMeters / 1000;
+  const durationMin = durationHours * 60;
+  const paceMinPerKm = durationMin / distanceKm;
+
+  const reasons: string[] = [
+    `completed_distance_m=${Math.round(distanceMeters)}`,
+    `duration_min=${durationMin.toFixed(1)}`,
+    `pace_min_per_km=${paceMinPerKm.toFixed(2)}`,
+  ];
+
+  const centerDelta = Math.abs(distanceMeters - input.window.target_km * 1000);
+  let confidence = 0.72;
+  const toleranceMeters = Math.max(400, (input.window.max_meters - input.window.min_meters) * 0.15);
+  if (centerDelta <= toleranceMeters * 0.4) confidence = 0.95;
+  else if (centerDelta <= toleranceMeters) confidence = 0.85;
+  if (
+    distanceMeters >= input.window.min_meters + 100 &&
+    distanceMeters <= input.window.max_meters - 100
+  ) {
+    reasons.push("distance_within_clean_window");
+  } else {
+    reasons.push("distance_near_window_edge");
+    confidence -= 0.08;
+  }
+
+  const eventMatch = matchSameDayEvent({
+    workoutDate: date,
+    distanceKey: input.distanceKey,
+    window: input.window,
+    eventsByDate: input.eventsByDate,
+  });
+  if (eventMatch.same_day_event) {
+    reasons.push("same_day_event");
+    confidence = Math.min(0.99, confidence + 0.05);
+  }
+
+  const raceSignals = collectRaceSignals(input.raw, input.distanceKey);
+  if (raceSignals.length > 0) {
+    reasons.push(...raceSignals.map((signal) => `race_signal:${signal}`));
+    confidence = Math.min(0.99, confidence + raceSignals.length * 0.03);
+  }
+
+  return {
+    workoutId,
+    date,
+    title: typeof input.raw.title === "string" ? input.raw.title : null,
+    distance_bucket: input.distanceKey,
+    distance_km: Math.round(distanceKm * 100) / 100,
+    duration_min: Math.round(durationMin * 10) / 10,
+    duration_text: formatDurationText(durationMin),
+    pace_min_per_km: Math.round(paceMinPerKm * 100) / 100,
+    pace_text: formatPaceText(paceMinPerKm),
+    avg_hr: toFiniteNumber(input.raw.heartRateAverage),
+    tssActual: toFiniteNumber(input.raw.tssActual),
+    if: toFiniteNumber(input.raw.if),
+    personalRecordCount: toFiniteNumber(input.raw.personalRecordCount),
+    raceTypeDuration: input.raw.raceTypeDuration ?? null,
+    confidence: Math.max(0.5, Math.min(0.99, Number(confidence.toFixed(2)))),
+    reasons,
+    ...eventMatch,
+    race_signals: raceSignals.length > 0 ? raceSignals : undefined,
+  };
+}
+
+function toLegacyClean5k(candidate: ResultCandidate): Clean5kCandidate {
+  return {
+    workoutId: candidate.workoutId,
+    date: candidate.date,
+    title: candidate.title,
+    distance_km: candidate.distance_km,
+    duration_min: candidate.duration_min,
+    pace_min_per_km: candidate.pace_min_per_km,
+    avg_hr: candidate.avg_hr,
+    tssActual: candidate.tssActual,
+    if: candidate.if,
+    personalRecordCount: candidate.personalRecordCount,
+    raceTypeDuration: candidate.raceTypeDuration,
+    confidence: candidate.confidence,
+    reasons: candidate.reasons,
+  };
+}
+
 function looksLike5kEvent(record: Record<string, unknown>): { ok: boolean; reasons: string[] } {
   const reasons: string[] = [];
   const title =
@@ -571,8 +1762,8 @@ function looksLike5kEvent(record: Record<string, unknown>): { ok: boolean; reaso
     pickFirstString(record, ["Description", "description", "Notes", "notes"]) ?? "";
   const blob = `${title} ${sport} ${description}`.toLowerCase();
 
-  if (/\b(5k|5\s*km|5\s*км|5000)\b/.test(blob)) reasons.push("distance_label_5k");
-  if (/\b(race|start|забег|соревнование|parkrun)\b/i.test(blob)) reasons.push("race_or_start_keywords");
+  if (DISTANCE_KEYWORDS["5k"].test(blob)) reasons.push("distance_label_5k");
+  if (RACE_KEYWORDS_PATTERN.test(blob)) reasons.push("race_or_start_keywords");
   if (/road\s*run|roadrunning|running/i.test(sport)) reasons.push("running_sport_type");
 
   const distanceValue = pickFirstNonEmpty(record, ["Distance", "distance"]);
@@ -586,156 +1777,112 @@ function looksLike5kEvent(record: Record<string, unknown>): { ok: boolean; reaso
   return { ok: reasons.length > 0, reasons };
 }
 
-function buildCleanCandidate(input: {
-  raw: TrainingPeaksWorkoutRaw;
-  window: { minMeters: number; maxMeters: number };
-}): Clean5kCandidate | null {
-  const workoutId = toPositiveInt(input.raw.workoutId);
-  const date = toIsoDatePart(input.raw.workoutDay);
-  const distanceMeters = toFiniteNumber(input.raw.distance);
-  const durationHours = toFiniteNumber(input.raw.totalTime);
-  if (!workoutId || !date || distanceMeters === null || durationHours === null) return null;
-  if (distanceMeters < input.window.minMeters || distanceMeters > input.window.maxMeters) return null;
-  if (durationHours <= 0) return null;
+function formatResultLine(candidate: ResultCandidate): string {
+  return `${candidate.distance_km} км / ${candidate.duration_text}`;
+}
 
-  const distanceKm = distanceMeters / 1000;
-  const durationMin = durationHours * 60;
-  const paceMinPerKm = durationMin / distanceKm;
-
-  const reasons: string[] = [
-    `completed_distance_m=${Math.round(distanceMeters)}`,
-    `duration_min=${durationMin.toFixed(1)}`,
-    `pace_min_per_km=${paceMinPerKm.toFixed(2)}`,
-  ];
-
-  const centerDelta = Math.abs(distanceMeters - 5000);
-  let confidence = 0.72;
-  if (centerDelta <= 150) confidence = 0.95;
-  else if (centerDelta <= 400) confidence = 0.85;
-  if (distanceMeters >= input.window.minMeters + 100 && distanceMeters <= input.window.maxMeters - 100) {
-    reasons.push("distance_within_clean_window");
-  } else {
-    reasons.push("distance_near_window_edge");
-    confidence -= 0.08;
-  }
-
-  return {
-    workoutId,
-    date,
-    title: typeof input.raw.title === "string" ? input.raw.title : null,
-    distance_km: Math.round(distanceKm * 100) / 100,
-    duration_min: Math.round(durationMin * 10) / 10,
-    pace_min_per_km: Math.round(paceMinPerKm * 100) / 100,
-    avg_hr: toFiniteNumber(input.raw.heartRateAverage),
-    tssActual: toFiniteNumber(input.raw.tssActual),
-    if: toFiniteNumber(input.raw.if),
-    personalRecordCount: toFiniteNumber(input.raw.personalRecordCount),
-    raceTypeDuration: input.raw.raceTypeDuration ?? null,
-    confidence: Math.max(0.5, Math.min(0.99, Number(confidence.toFixed(2)))),
-    reasons,
-  };
+function formatEventCell(candidate: ResultCandidate): string {
+  if (!candidate.same_day_event || !candidate.event_name) return "no event";
+  const distance =
+    candidate.event_distance_km !== null ? ` (${candidate.event_distance_km} km)` : "";
+  return `${candidate.event_name}${distance}`;
 }
 
 function createMarkdown(report: ProbeReport): string {
   const lines: string[] = [];
-  lines.push("# TrainingPeaks race results probe");
+  lines.push("# Race Results Probe");
   lines.push("");
   lines.push("## Athlete / range");
-  lines.push(`- athlete_id: **${report.athlete.athlete_id}**`);
-  lines.push(`- athlete_url: \`${report.athlete.athlete_url}\``);
-  if (report.athlete.student_id) {
-    lines.push(`- student: ${report.athlete.student_name ?? report.athlete.student_id} (\`${report.athlete.student_id}\`)`);
-  }
-  lines.push(`- range: \`${report.range.from}\` -> \`${report.range.to}\``);
-  lines.push(
-    `- distance window: **${report.distance_window.min_km}–${report.distance_window.max_km} km** (${report.target_distance ?? "custom"})`,
-  );
-  lines.push("");
-  lines.push("## API status / counts");
-  lines.push(
-    `- workouts: status=${report.data_sources.workouts.status}, count=${report.data_sources.workouts.count}${report.data_sources.workouts.error ? `, error=${report.data_sources.workouts.error}` : ""}`,
-  );
-  lines.push(
-    `- events: status=${report.data_sources.events.status}, count=${report.data_sources.events.count}${report.data_sources.events.error ? `, error=${report.data_sources.events.error}` : ""}`,
-  );
-  lines.push(`- workouts scanned (in range): **${report.workouts_scanned}**`);
-  lines.push(`- clean 5K candidates: **${report.clean_5k_candidates.length}**`);
-  lines.push(`- race-like 5K candidates: **${report.race_like_5k_candidates.length}**`);
-  lines.push(`- planned race candidates: **${report.planned_race_candidates.length}**`);
+  lines.push(`- Athlete: **${report.athlete.student_name ?? report.athlete.athlete_id}** (id ${report.athlete.athlete_id})`);
+  lines.push(`- Range: \`${report.range.from}\` → \`${report.range.to}\``);
+  lines.push(`- Workouts scanned: **${report.workouts_scanned}**`);
+  lines.push(`- Events scanned: **${report.events_scanned}**`);
   lines.push("");
 
-  lines.push("## Clean 5K candidates (top 20 by pace)");
-  if (!report.clean_5k_candidates.length) {
-    lines.push("- None");
+  lines.push("## Best results by distance");
+  lines.push("| Distance | Best date | Result | Pace | Event |");
+  lines.push("| --- | ---: | ---: | ---: | --- |");
+  for (const key of report.target_distances) {
+    const bucket = report.distance_results[key];
+    lines.push(
+      `| ${bucket?.label ?? key} | ${formatBestDateCell(bucket)} | ${formatBestResultCell(bucket)} | ${formatBestPaceCell(bucket)} | ${formatBestEventCell(bucket)} |`,
+    );
+  }
+  lines.push("");
+  lines.push(
+    "_needs_review candidates are not treated as official best results until manually checked._",
+  );
+  lines.push("");
+
+  lines.push("## ⚠️ Требуют ручной проверки");
+  if (!report.manual_review_candidates.length) {
+    lines.push("Нет кандидатов для ручной проверки.");
   } else {
-    lines.push("| date | title | distance_km | duration_min | pace_min_per_km | avg_hr | confidence |");
-    lines.push("| --- | --- | ---: | ---: | ---: | ---: | ---: |");
-    for (const row of report.clean_5k_candidates.slice(0, 20)) {
+    lines.push(
+      "| Distance | Date | Result | Pace | Status | Event | HR check | Warnings |",
+    );
+    lines.push("|---|---|---:|---:|---|---|---|---|");
+    for (const row of report.manual_review_candidates) {
+      const resultLine = `${row.distance_km} км / ${row.duration_text}`;
       lines.push(
-        `| ${row.date} | ${row.title ?? ""} | ${row.distance_km} | ${row.duration_min} | ${row.pace_min_per_km} | ${row.avg_hr ?? ""} | ${row.confidence} |`,
+        `| ${row.distance_label} | ${row.date} | ${resultLine} | ${row.pace_text} | ${row.data_quality_status} | ${formatManualReviewEventCell(row)} | ${formatManualReviewHrCheck(row)} | ${row.warnings.join(", ") || "—"} |`,
       );
     }
+    lines.push("");
+    lines.push(
+      "Эти кандидаты не считаются официальными лучшими результатами, пока тренер не проверит их вручную.",
+    );
   }
   lines.push("");
 
-  lines.push("## Race-like 5K candidates");
-  if (!report.race_like_5k_candidates.length) {
-    lines.push("- None");
-  } else {
-    lines.push("| date | title | pace_min_per_km | signals | confidence |");
-    lines.push("| --- | --- | ---: | --- | ---: |");
-    for (const row of report.race_like_5k_candidates.slice(0, 20)) {
+  for (const key of report.target_distances) {
+    const bucket = report.distance_results[key];
+    if (!bucket) continue;
+    lines.push(`## ${bucket.label}`);
+    if (!bucket.candidates.length) {
+      lines.push("- No clean standalone candidates in this distance window.");
+    } else {
+      lines.push("| Date | Day | Result | Pace | Event | Status | Warnings | Race-like reasons |");
+      lines.push("| --- | --- | ---: | ---: | --- | --- | --- | --- |");
+      for (const row of bucket.candidates) {
+        const raceReasons = row.reasons.filter((reason) => reason.startsWith("race_signal:"));
+        lines.push(
+          `| ${row.date} | ${row.day_of_week ?? "—"} | ${formatResultLine(row)} | ${row.pace_text} | ${formatEventCell(row)} | ${formatDataQualityStatus(row)} | ${formatWarningsCell(row)} | ${raceReasons.join(", ") || "—"} |`,
+        );
+      }
+    }
+    if (bucket.excluded_candidates_count > 0) {
       lines.push(
-        `| ${row.date} | ${row.title ?? ""} | ${row.pace_min_per_km} | ${row.race_signals.join(", ")} | ${row.confidence} |`,
+        `- Excluded candidates (data quality): **${bucket.excluded_candidates_count}**`,
       );
     }
+    lines.push("");
   }
-  lines.push("");
 
-  lines.push("## Planned races / events");
-  if (!report.planned_race_candidates.length) {
+  lines.push("## Planned events matched to workouts");
+  if (!report.event_workout_links.length) {
     lines.push("- None");
   } else {
-    lines.push("| event_date | title | distance | matching_workouts | confidence |");
+    lines.push("| Date | Event | Workout | Distance | Match confidence |");
     lines.push("| --- | --- | --- | ---: | ---: |");
-    for (const row of report.planned_race_candidates.slice(0, 20)) {
+    for (const link of report.event_workout_links) {
       lines.push(
-        `| ${row.event_date ?? ""} | ${row.event_title ?? ""} | ${row.distance ?? ""} | ${row.matching_workout_ids.length} | ${row.confidence} |`,
+        `| ${link.event_date} | ${link.event_name ?? ""} | ${link.workout_title ?? link.workout_id} | ${link.distance_km} km (${link.distance_bucket}) | ${link.event_confidence} |`,
       );
     }
   }
   lines.push("");
 
-  lines.push("## Excluded summary");
-  lines.push(`- below_min_km: ${report.excluded_summary.below_min_km}`);
-  lines.push(`- above_max_km: ${report.excluded_summary.above_max_km}`);
-  lines.push(`- non_running: ${report.excluded_summary.non_running}`);
-  lines.push(`- not_completed: ${report.excluded_summary.not_completed}`);
-  lines.push(`- out_of_date_range: ${report.excluded_summary.out_of_date_range}`);
-  lines.push("");
-
-  lines.push("## Notes / limitations");
+  lines.push("## Notes");
+  lines.push("- This report uses standalone workouts only.");
+  lines.push("- Rolling/best segment inside longer workouts is not included.");
+  lines.push("- Rolling analysis requires FIT/lap/stream data from Workout Files.");
+  lines.push(
+    "- needs_review candidates are not treated as official best results until manually checked.",
+  );
   for (const note of report.notes) {
     lines.push(`- ${note}`);
   }
-  lines.push("");
-
-  lines.push("## Feasibility summary");
-  const best = report.clean_5k_candidates[0] ?? null;
-  if (best) {
-    lines.push(
-      `- Clean standalone 5K results are discoverable from workouts API for this athlete (best pace ${best.pace_min_per_km} min/km on ${best.date}).`,
-    );
-  } else {
-    lines.push("- No clean standalone 5K workouts found in the selected distance window.");
-  }
-  if (report.race_like_5k_candidates.length > 0) {
-    lines.push("- Race-like heuristics (title/PR/IF/TSS) can flag likely race efforts among clean 5Ks.");
-  }
-  if (report.planned_race_candidates.length > 0) {
-    lines.push("- Planned calendar events can be correlated with same-day workouts.");
-  }
-  lines.push("- Rolling/best segment 5K inside longer workouts is not included in this MVP; it requires FIT/lap/stream analysis from Workout Files.");
   lines.push("");
   lines.push("## Artifacts");
   lines.push(`- report_json: \`${report.output_paths.report_json}\``);
@@ -746,7 +1893,7 @@ function createMarkdown(report: ProbeReport): string {
 async function main(): Promise<void> {
   loadLocalEnv();
   const args = parseArgs(process.argv.slice(2));
-  const distanceWindow = resolveDistanceWindow(args);
+  const runMode = resolveRunMode(args);
   const students = await readStudentsConfig();
   const target = resolveTarget(args, students);
   const runAt = new Date().toISOString();
@@ -810,6 +1957,17 @@ async function main(): Promise<void> {
       throw new Error(`TrainingPeaks workouts GET failed: status=${workoutsResult.status}`);
     }
 
+    const parsedEvents =
+      eventsResult.status === 200 ? parseEventsFromApi(eventsResult.body, args.from, args.to) : [];
+    eventsApi.count = parsedEvents.length;
+
+    const eventsByDate = new Map<string, ParsedEvent[]>();
+    for (const event of parsedEvents) {
+      const list = eventsByDate.get(event.event_date) ?? [];
+      list.push(event);
+      eventsByDate.set(event.event_date, list);
+    }
+
     const rawItems = workoutsResult.body.filter((item): item is TrainingPeaksWorkoutRaw => isRecord(item));
     const normalizedItems = normalizeTrainingPeaksWorkoutItems({
       athleteId: target.athleteId,
@@ -831,70 +1989,124 @@ async function main(): Promise<void> {
       if (present) fieldPresence.set(name, (fieldPresence.get(name) ?? 0) + 1);
     };
 
-    const excluded: ExcludedSummary = {
-      below_min_km: 0,
-      above_max_km: 0,
-      non_running: 0,
-      not_completed: 0,
-      out_of_date_range: 0,
-    };
+    const distanceResults: Partial<Record<DistanceKey, DistanceBucketReport>> = {};
+    const excludedSummaryByDistance: Partial<Record<DistanceKey, ExcludedSummary>> = {};
+    const eventWorkoutLinks: EventWorkoutLink[] = [];
 
-    const cleanCandidates: Clean5kCandidate[] = [];
+    for (const distanceKey of runMode.distanceKeys) {
+      const window = resolveDistanceWindow(args, distanceKey, runMode);
+      const excluded: ExcludedSummary = {
+        below_min_km: 0,
+        above_max_km: 0,
+        non_running: 0,
+        not_completed: 0,
+        out_of_date_range: 0,
+      };
+      const candidates: ResultCandidate[] = [];
 
-    for (const item of inRangeItems) {
-      const raw = rawByWorkoutId.get(item.trainingPeaksWorkoutId);
-      if (!raw) continue;
+      for (const item of inRangeItems) {
+        const raw = rawByWorkoutId.get(item.trainingPeaksWorkoutId);
+        if (!raw) continue;
 
-      trackField("distance", raw.distance !== null && raw.distance !== undefined);
-      trackField("totalTime", raw.totalTime !== null && raw.totalTime !== undefined);
-      trackField("heartRateAverage", raw.heartRateAverage !== null && raw.heartRateAverage !== undefined);
-      trackField("tssActual", raw.tssActual !== null && raw.tssActual !== undefined);
-      trackField("if", raw.if !== null && raw.if !== undefined);
-      trackField("personalRecordCount", raw.personalRecordCount !== null && raw.personalRecordCount !== undefined);
-      trackField("raceTypeDuration", raw.raceTypeDuration !== null && raw.raceTypeDuration !== undefined);
-      trackField("description", typeof raw.description === "string" && Boolean(raw.description.trim()));
-      trackField("coachComments", typeof raw.coachComments === "string" && Boolean(raw.coachComments.trim()));
-      trackField("workoutComments", typeof raw.workoutComments === "string" && Boolean(raw.workoutComments.trim()));
+        trackField("distance", raw.distance !== null && raw.distance !== undefined);
+        trackField("totalTime", raw.totalTime !== null && raw.totalTime !== undefined);
+        trackField("velocityAverage", raw.velocityAverage !== null && raw.velocityAverage !== undefined);
+        trackField("velocityMaximum", raw.velocityMaximum !== null && raw.velocityMaximum !== undefined);
+        trackField(
+          "normalizedSpeedActual",
+          raw.normalizedSpeedActual !== null && raw.normalizedSpeedActual !== undefined,
+        );
+        trackField("heartRateAverage", raw.heartRateAverage !== null && raw.heartRateAverage !== undefined);
+        trackField("heartRateMinimum", raw.heartRateMinimum !== null && raw.heartRateMinimum !== undefined);
+        trackField("heartRateMaximum", raw.heartRateMaximum !== null && raw.heartRateMaximum !== undefined);
+        trackField("cadenceAverage", raw.cadenceAverage !== null && raw.cadenceAverage !== undefined);
+        trackField("cadenceMaximum", raw.cadenceMaximum !== null && raw.cadenceMaximum !== undefined);
+        trackField("powerAverage", raw.powerAverage !== null && raw.powerAverage !== undefined);
+        trackField("powerMaximum", raw.powerMaximum !== null && raw.powerMaximum !== undefined);
+        trackField(
+          "normalizedPowerActual",
+          raw.normalizedPowerActual !== null && raw.normalizedPowerActual !== undefined,
+        );
+        trackField("tssActual", raw.tssActual !== null && raw.tssActual !== undefined);
+        trackField("if", raw.if !== null && raw.if !== undefined);
+        trackField("personalRecordCount", raw.personalRecordCount !== null && raw.personalRecordCount !== undefined);
+        trackField("raceTypeDuration", raw.raceTypeDuration !== null && raw.raceTypeDuration !== undefined);
+        trackField("description", typeof raw.description === "string" && Boolean(raw.description.trim()));
+        trackField("coachComments", typeof raw.coachComments === "string" && Boolean(raw.coachComments.trim()));
+        trackField("workoutComments", typeof raw.workoutComments === "string" && Boolean(raw.workoutComments.trim()));
+        trackField("rpe", raw.rpe !== null && raw.rpe !== undefined);
+        trackField("feeling", raw.feeling !== null && raw.feeling !== undefined);
+        trackField(
+          "workoutDeviceSource",
+          raw.workoutDeviceSource !== null && raw.workoutDeviceSource !== undefined,
+        );
+        trackField("syncedTo", raw.syncedTo !== null && raw.syncedTo !== undefined);
 
-      if (!isCompletedWorkout(raw)) {
-        excluded.not_completed += 1;
-        continue;
+        if (!isCompletedWorkout(raw)) {
+          excluded.not_completed += 1;
+          continue;
+        }
+
+        const running = isRunningWorkout(raw);
+        if (!running.ok) {
+          excluded.non_running += 1;
+          continue;
+        }
+
+        const distanceMeters = toFiniteNumber(raw.distance) ?? 0;
+        if (distanceMeters > 0 && distanceMeters < window.min_meters) {
+          excluded.below_min_km += 1;
+          continue;
+        }
+        if (distanceMeters > window.max_meters) {
+          excluded.above_max_km += 1;
+          continue;
+        }
+
+        const candidate = buildCleanCandidate({
+          raw,
+          window,
+          distanceKey,
+          eventsByDate,
+        });
+        if (candidate) candidates.push(candidate);
       }
 
-      const running = isRunningWorkout(raw);
-      if (!running.ok) {
-        excluded.non_running += 1;
-        continue;
-      }
+      candidates.sort((a, b) => a.pace_min_per_km - b.pace_min_per_km);
+      excluded.out_of_date_range = normalizedItems.length - inRangeItems.length;
+      excludedSummaryByDistance[distanceKey] = excluded;
 
-      const distanceMeters = toFiniteNumber(raw.distance) ?? 0;
-      if (distanceMeters > 0 && distanceMeters < distanceWindow.minMeters) {
-        excluded.below_min_km += 1;
-        continue;
-      }
-      if (distanceMeters > distanceWindow.maxMeters) {
-        excluded.above_max_km += 1;
-        continue;
-      }
-
-      const candidate = buildCleanCandidate({ raw, window: distanceWindow });
-      if (candidate) cleanCandidates.push(candidate);
-    }
-
-    cleanCandidates.sort((a, b) => a.pace_min_per_km - b.pace_min_per_km);
-
-    const raceLikeCandidates: RaceLike5kCandidate[] = [];
-    for (const clean of cleanCandidates) {
-      const raw = rawByWorkoutId.get(clean.workoutId);
-      if (!raw) continue;
-      const raceSignals = collectRaceSignals(raw);
-      if (raceSignals.length === 0) continue;
-      raceLikeCandidates.push({
-        ...clean,
-        race_signals: raceSignals,
-        confidence: Math.min(0.99, Number((clean.confidence + raceSignals.length * 0.04).toFixed(2))),
-        reasons: [...clean.reasons, ...raceSignals.map((signal) => `race_signal:${signal}`)],
+      const qualityBucket = applyDataQualityToBucket({
+        candidates,
+        rawByWorkoutId,
+        window,
       });
+
+      for (const candidate of qualityBucket.candidates) {
+        if (!candidate.same_day_event || !candidate.event_name) continue;
+        eventWorkoutLinks.push({
+          event_date: candidate.event_date ?? candidate.date,
+          event_name: candidate.event_name,
+          event_distance_km: candidate.event_distance_km,
+          event_id: candidate.event_id,
+          workout_id: candidate.workoutId,
+          workout_title: candidate.title,
+          distance_bucket: candidate.distance_bucket,
+          distance_km: candidate.distance_km,
+          event_match_reason: candidate.event_match_reason,
+          event_confidence: candidate.event_confidence,
+        });
+      }
+
+      distanceResults[distanceKey] = {
+        label: window.label,
+        distance_window: window,
+        candidates_count: qualityBucket.candidates.length,
+        best_result: qualityBucket.best_result,
+        best_candidate_needs_review: qualityBucket.best_candidate_needs_review,
+        excluded_candidates_count: qualityBucket.excluded_candidates_count,
+        candidates: qualityBucket.candidates,
+      };
     }
 
     const workoutsByDate = new Map<string, number[]>();
@@ -906,61 +2118,39 @@ async function main(): Promise<void> {
     }
 
     const plannedRaceCandidates: PlannedRaceCandidate[] = [];
-    if (eventsResult.status === 200) {
-      const eventObjects = flattenEventCandidates(eventsResult.body);
-      eventsApi.count = eventObjects.length;
-      for (const eventObj of eventObjects) {
-        const eventDate = pickEventDate(eventObj);
-        if (eventDate && (eventDate < args.from || eventDate > args.to)) continue;
-
-        const looks5k = looksLike5kEvent(eventObj);
-        if (!looks5k.ok) continue;
-
-        const title = pickFirstString(eventObj, [
-          "EventTitle",
-          "eventTitle",
-          "EventName",
-          "eventName",
-          "Name",
-          "name",
-          "Title",
-          "title",
-        ]);
-        const sportType = pickFirstString(eventObj, ["SportType", "sportType", "EventType", "eventType"]);
-        const distanceValue = pickFirstNonEmpty(eventObj, ["Distance", "distance"]);
-        const distanceParsed = formatDistanceKm(distanceValue);
-        const goalValue = pickFirstNonEmpty(eventObj, ["Goals", "goals", "Goal", "goal"]);
-        const descriptionValue = pickFirstNonEmpty(eventObj, ["Description", "description", "Notes", "notes"]);
-        const description =
-          descriptionValue === null
-            ? null
-            : typeof descriptionValue === "string"
-              ? descriptionValue
-              : JSON.stringify(descriptionValue);
-
-        const matchingWorkoutIds = eventDate ? (workoutsByDate.get(eventDate) ?? []) : [];
-        const confidence = Math.min(0.99, 0.55 + looks5k.reasons.length * 0.1 + (matchingWorkoutIds.length > 0 ? 0.15 : 0));
-
-        plannedRaceCandidates.push({
-          event_date: eventDate,
-          event_title: title,
-          sport_type: sportType,
-          distance: distanceParsed.distance,
-          goal: sanitizeGoalValue(goalValue),
-          description,
-          matching_workout_ids: matchingWorkoutIds,
-          confidence: Number(confidence.toFixed(2)),
-          reasons: [
-            ...looks5k.reasons,
-            matchingWorkoutIds.length > 0
-              ? `same_day_workouts=${matchingWorkoutIds.length}`
-              : "no_same_day_completed_workout",
-          ],
-        });
-      }
+    for (const event of parsedEvents) {
+      const looks5k = looksLike5kEvent(event.raw);
+      if (!looks5k.ok) continue;
+      const distanceValue = pickFirstNonEmpty(event.raw, ["Distance", "distance"]);
+      const distanceParsed = formatDistanceKm(distanceValue);
+      const goalValue = pickFirstNonEmpty(event.raw, ["Goals", "goals", "Goal", "goal"]);
+      const descriptionValue = pickFirstNonEmpty(event.raw, ["Description", "description", "Notes", "notes"]);
+      const description =
+        descriptionValue === null
+          ? null
+          : typeof descriptionValue === "string"
+            ? descriptionValue
+            : JSON.stringify(descriptionValue);
+      const matchingWorkoutIds = workoutsByDate.get(event.event_date) ?? [];
+      plannedRaceCandidates.push({
+        event_date: event.event_date,
+        event_title: event.event_name,
+        sport_type: event.sport_type,
+        distance: distanceParsed.distance,
+        goal: sanitizeGoalValue(goalValue),
+        description,
+        matching_workout_ids: matchingWorkoutIds,
+        confidence: Number(
+          Math.min(0.99, 0.55 + looks5k.reasons.length * 0.1 + (matchingWorkoutIds.length > 0 ? 0.15 : 0)).toFixed(2),
+        ),
+        reasons: [
+          ...looks5k.reasons,
+          matchingWorkoutIds.length > 0
+            ? `same_day_workouts=${matchingWorkoutIds.length}`
+            : "no_same_day_completed_workout",
+        ],
+      });
     }
-
-    excluded.out_of_date_range = normalizedItems.length - inRangeItems.length;
 
     const fieldsAvailable = [...fieldPresence.entries()]
       .filter(([, count]) => count > 0)
@@ -977,8 +2167,33 @@ async function main(): Promise<void> {
     const reportJsonPath = path.join(outputDir, "report.json");
     const reportMdPath = path.join(outputDir, "report.md");
 
+    const singleWindow =
+      runMode.mode === "single" && runMode.singleDistanceKey
+        ? distanceResults[runMode.singleDistanceKey]?.distance_window
+        : undefined;
+
+    const fiveKCandidates = distanceResults["5k"]?.candidates ?? [];
+    const clean5kLegacy = fiveKCandidates.map(toLegacyClean5k);
+    const raceLike5kLegacy: RaceLike5kCandidate[] = fiveKCandidates
+      .filter((candidate) => (candidate.race_signals?.length ?? 0) > 0)
+      .map((candidate) => ({
+        ...toLegacyClean5k(candidate),
+        race_signals: candidate.race_signals ?? [],
+        confidence: Math.min(
+          0.99,
+          Number((candidate.confidence + (candidate.race_signals?.length ?? 0) * 0.04).toFixed(2)),
+        ),
+      }));
+
+    const manualReviewCandidates = buildManualReviewCandidates({
+      distanceKeys: runMode.distanceKeys,
+      distanceResults,
+    });
+    const manualReviewSummary = buildManualReviewSummary(manualReviewCandidates);
+
     const report: ProbeReport = {
       run_at: runAt,
+      mode: runMode.mode,
       athlete: {
         athlete_id: target.athleteId,
         athlete_url: target.athleteUrl,
@@ -986,25 +2201,37 @@ async function main(): Promise<void> {
         student_name: target.studentName,
       },
       range: { from: args.from, to: args.to },
-      target_distance: args.distancePreset,
-      distance_window: {
-        min_km: distanceWindow.minKm,
-        max_km: distanceWindow.maxKm,
-        min_meters: distanceWindow.minMeters,
-        max_meters: distanceWindow.maxMeters,
-      },
+      target_distance:
+        runMode.mode === "single"
+          ? (args.distancePreset ?? runMode.singleDistanceKey)
+          : args.distances
+            ? args.distances
+            : "all",
+      target_distances: runMode.distanceKeys,
+      distance_window: singleWindow,
+      distance_results: distanceResults,
+      manual_review_candidates: manualReviewCandidates,
+      manual_review_summary: manualReviewSummary,
       workouts_scanned: inRangeItems.length,
+      events_scanned: parsedEvents.length,
       data_sources: { workouts: workoutsApi, events: eventsApi },
       fields_available: fieldsAvailable,
       fields_missing: fieldsMissing,
-      planned_race_candidates: plannedRaceCandidates,
-      race_like_5k_candidates: raceLikeCandidates,
-      clean_5k_candidates: cleanCandidates,
-      excluded_summary: excluded,
+      planned_events_by_date: parsedEvents.map((event) => ({
+        event_date: event.event_date,
+        event_id: event.event_id,
+        event_name: event.event_name,
+        event_distance_km: event.event_distance_km,
+        sport_type: event.sport_type,
+        event_source: "events_api",
+      })),
+      event_workout_links: eventWorkoutLinks,
+      excluded_summary_by_distance: excludedSummaryByDistance,
       notes: [
         "Read-only probe; no Supabase writes, no Telegram, no weekly reports.",
-        "Rolling/best segment 5K inside longer workouts is not included in this MVP; it requires FIT/lap/stream analysis from Workout Files.",
-        "Clean 5K = completed running workout with total distance in configured window (excludes rolling segments).",
+        "Rolling/best segment inside longer workouts is not included; it requires FIT/lap/stream analysis from Workout Files.",
+        "Clean result = completed running workout with total distance in configured window (excludes rolling segments).",
+        "needs_review candidates are not treated as official best results until manually checked.",
       ],
       output_paths: {
         report_json: reportJsonPath,
@@ -1012,24 +2239,56 @@ async function main(): Promise<void> {
       },
     };
 
+    if (runMode.mode === "single" && runMode.singleDistanceKey === "5k") {
+      report.clean_5k_candidates = clean5kLegacy;
+      report.race_like_5k_candidates = raceLike5kLegacy;
+      report.planned_race_candidates = plannedRaceCandidates;
+      report.excluded_summary = excludedSummaryByDistance["5k"];
+    }
+
     await writeFile(reportJsonPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
     await writeFile(reportMdPath, createMarkdown(report), "utf8");
 
-    const best = cleanCandidates[0] ?? null;
     console.log("[tp-probe-race-results] Summary");
     console.log(`athlete_id: ${target.athleteId}`);
     console.log(`range: ${args.from} -> ${args.to}`);
+    console.log(`mode: ${runMode.mode}`);
     console.log(`workouts_scanned: ${report.workouts_scanned}`);
-    console.log(`clean_5k_candidates: ${cleanCandidates.length}`);
-    if (best) {
-      console.log(
-        `best_clean_5k: ${best.date} | ${best.title ?? "untitled"} | ${best.distance_km} km | pace ${best.pace_min_per_km} min/km`,
-      );
-    } else {
-      console.log("best_clean_5k: none");
+    console.log(`events_scanned: ${report.events_scanned}`);
+    for (const key of runMode.distanceKeys) {
+      const bucket = distanceResults[key];
+      const best = bucket?.best_result ?? null;
+      const review = bucket?.best_candidate_needs_review ?? null;
+      if (best) {
+        console.log(
+          `best_${key}: ${best.date} | ${best.title ?? "untitled"} | ${best.distance_km} km | pace ${best.pace_text} | event ${best.event_name ?? "none"} | status ${best.data_quality_status}`,
+        );
+      } else if (review) {
+        console.log(
+          `best_${key}: needs_review | ${review.date} | ${review.title ?? "untitled"} | ${review.distance_km} km | pace ${review.pace_text} | warnings ${(review.warnings ?? []).join(", ")}`,
+        );
+      } else {
+        console.log(`best_${key}: none`);
+      }
     }
-    console.log(`race_like_5k_candidates: ${raceLikeCandidates.length}`);
-    console.log(`planned_race_candidates: ${plannedRaceCandidates.length}`);
+    console.log(`manual_review_candidates: ${manualReviewCandidates.length}`);
+    for (const row of manualReviewCandidates.slice(0, 5)) {
+      console.log(
+        `  manual_review: ${row.distance_label} | ${row.date} | ${row.distance_km} km | pace ${row.pace_text} | status ${row.data_quality_status} | warnings ${row.warnings.join(", ") || "none"}`,
+      );
+    }
+    const aug13 = manualReviewCandidates.find((row) => row.date === "2025-08-13");
+    if (aug13) {
+      console.log(
+        `manual_review_2025-08-13: status=${aug13.data_quality_status} | warnings=${aug13.warnings.join(", ")} | can_be_official_best=${aug13.can_be_official_best}`,
+      );
+    }
+    console.log(`same_day_event_links: ${eventWorkoutLinks.length}`);
+    if (runMode.mode === "single" && runMode.singleDistanceKey === "5k") {
+      console.log(`clean_5k_candidates: ${clean5kLegacy.length}`);
+      console.log(`race_like_5k_candidates: ${raceLike5kLegacy.length}`);
+      console.log(`planned_race_candidates: ${plannedRaceCandidates.length}`);
+    }
     console.log(`report_json: ${reportJsonPath}`);
     console.log(`report_md: ${reportMdPath}`);
   } finally {
