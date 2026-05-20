@@ -118,12 +118,36 @@ type ResultCandidate = {
   warnings?: DataQualityWarning[];
   review_required?: boolean;
   can_be_official_best?: boolean;
+  result_status?:
+    | "official_event"
+    | "probable_result"
+    | "possible_result"
+    | "training_candidate"
+    | "needs_coach_review"
+    | "excluded";
+  result_confidence_score?: number;
+  result_confidence_reasons?: string[];
+  display_class?:
+    | "official_best"
+    | "official_flagged"
+    | "probable_best"
+    | "clean_training_best"
+    | "manual_review"
+    | "display_candidate"
+    | "excluded";
+  rationale?: string;
 };
 
 type DistanceBucketReport = {
   label: string;
   distance_window: DistanceWindow;
   candidates_count: number;
+  official_best: ResultCandidate | null;
+  official_flagged: ResultCandidate | null;
+  probable_best: ResultCandidate | null;
+  clean_training_best: ResultCandidate | null;
+  clean_training_best_needs_review: boolean;
+  display_candidates: ResultCandidate[];
   best_result: ResultCandidate | null;
   best_candidate_needs_review: ResultCandidate | null;
   excluded_candidates_count: number;
@@ -191,6 +215,17 @@ type ManualReviewCandidate = {
   heartRateAverage: number | null;
   avg_hr: number | null;
   heart_rate_peer_reference: HeartRatePeerReference | null;
+  result_status:
+    | "official_event"
+    | "probable_result"
+    | "possible_result"
+    | "training_candidate"
+    | "needs_coach_review"
+    | "excluded";
+  result_confidence_score: number;
+  result_confidence_reasons: string[];
+  display_class: NonNullable<ResultCandidate["display_class"]>;
+  rationale: string;
   short_review_reason: string;
 };
 
@@ -810,12 +845,301 @@ function formatDurationText(durationMin: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+const DISPLAY_CANDIDATE_LIMIT = 10;
+
+function candidateHasRaceKeyword(candidate: ResultCandidate): boolean {
+  return (candidate.race_signals ?? []).some((signal) => signal === "race_keywords_in_text");
+}
+
+function candidateHasPersonalRecord(candidate: ResultCandidate): boolean {
+  return (candidate.personalRecordCount ?? 0) > 0;
+}
+
+function candidateHasHardEffortHr(candidate: ResultCandidate): boolean {
+  const hr = candidate.avg_hr;
+  if (hr === null) return false;
+  if (hr >= 178) return true;
+  const peer = candidate.heart_rate_peer_reference;
+  const baseline = peer?.next_best_hr ?? peer?.peer_median_hr ?? null;
+  if (baseline === null) return hr >= 175;
+  return hr >= baseline - 6;
+}
+
+function candidateHasStrongHrMismatch(candidate: ResultCandidate): boolean {
+  const warnings = new Set(candidate.warnings ?? []);
+  if (!warnings.has("heart_rate_mismatch")) return false;
+  const ref = candidate.heart_rate_peer_reference;
+  if (!ref) return false;
+  const gap = Math.max(ref.hr_gap_vs_median, ref.hr_gap_vs_next_best ?? 0);
+  return gap >= 20;
+}
+
+function candidateHasFastPeerPace(candidate: ResultCandidate): boolean {
+  return (candidate.warnings ?? []).includes("pace_outlier");
+}
+
+function candidateHasBlockingQualityWarning(candidate: ResultCandidate): boolean {
+  const warnings = new Set(candidate.warnings ?? []);
+  return (
+    warnings.has("gps_or_speed_anomaly") ||
+    warnings.has("speed_summary_inconsistent") ||
+    warnings.has("duration_distance_mismatch") ||
+    warnings.has("normalized_speed_mismatch") ||
+    warnings.has("impossible_summary_metrics") ||
+    warnings.has("implausible_max_speed")
+  );
+}
+
+function isWeekendDate(isoDate: string): boolean {
+  const day = new Date(`${isoDate}T12:00:00Z`).getUTCDay();
+  return day === 0 || day === 6;
+}
+
+function deriveResultModel(candidate: ResultCandidate): ResultCandidate {
+  const dataQuality = candidate.data_quality_status ?? "clean";
+  const warnings = new Set(candidate.warnings ?? []);
+  const reasons: string[] = [];
+  let score = 0;
+
+  const sameDayEventCredible =
+    candidate.same_day_event &&
+    Boolean(candidate.event_name?.trim()) &&
+    candidate.event_confidence >= 0.45;
+
+  if (dataQuality === "excluded") {
+    reasons.push("Excluded because summary metrics are not trustworthy.");
+    return {
+      ...candidate,
+      result_status: "excluded",
+      result_confidence_score: 0,
+      result_confidence_reasons: reasons,
+      display_class: "excluded",
+      rationale: "Excluded: summary metrics contain impossible or unusable data.",
+    };
+  }
+
+  if (sameDayEventCredible) {
+    score += 100;
+    reasons.push(`Same-day event match: ${candidate.event_name ?? "named event"} (${candidate.event_confidence}).`);
+    if (dataQuality === "suspicious") {
+      reasons.push("Event is present, but workout summary still has suspicious quality warnings.");
+    } else {
+      reasons.push("Workout summary metrics look internally plausible.");
+    }
+    return {
+      ...candidate,
+      result_status: "official_event",
+      result_confidence_score: Math.min(100, score),
+      result_confidence_reasons: reasons,
+      display_class: dataQuality === "suspicious" ? "official_flagged" : "official_best",
+      rationale:
+        dataQuality === "suspicious"
+          ? `Official event with suspicious data: ${candidate.event_name ?? "event"}; ${formatWarningsCell(candidate)}.`
+          : `Official event result: ${candidate.event_name ?? "event"} with clean summary data.`,
+    };
+  }
+
+  const weekend = isWeekendDate(candidate.date);
+  const raceKeyword = candidateHasRaceKeyword(candidate);
+  const pr = candidateHasPersonalRecord(candidate);
+  const hardHr = candidateHasHardEffortHr(candidate);
+  const fastPeerPace = candidateHasFastPeerPace(candidate);
+  const blockingQuality = candidateHasBlockingQualityWarning(candidate);
+  const strongHrMismatch = candidateHasStrongHrMismatch(candidate);
+  const weekdayNoEventLowConfidence =
+    isWeekday(candidate.date) && !candidate.same_day_event && warnings.has("low_confidence_race_result");
+  const coreResultSignals = [weekend, raceKeyword, pr, fastPeerPace].filter(Boolean).length;
+  const strongStandaloneResult =
+    fastPeerPace && (weekend || raceKeyword || pr || hardHr);
+  const reviewWorthyStandalone =
+    fastPeerPace || (pr && (weekend || raceKeyword)) || (raceKeyword && hardHr);
+
+  if (weekend) {
+    score += 18;
+    reasons.push("Weekend standalone effort.");
+  }
+  if (raceKeyword) {
+    score += 22;
+    reasons.push("Race-like title or text.");
+  }
+  if (pr) {
+    score += 24;
+    reasons.push(`Personal records logged (${candidate.personalRecordCount}).`);
+  }
+  if (hardHr) {
+    score += 10;
+    reasons.push("HR supports hard effort versus peers.");
+  }
+  if (fastPeerPace) {
+    score += 14;
+    reasons.push("Faster than nearby peer candidates.");
+  }
+  if (dataQuality === "clean") {
+    score += 8;
+    reasons.push("Clean summary data.");
+  }
+  if (warnings.has("distance_near_window_edge")) {
+    score -= 4;
+    reasons.push("Distance sits near the bucket edge.");
+  }
+  if (warnings.has("pace_outlier")) {
+    reasons.push("Pace outlier remains visible for coach review.");
+  }
+  if (blockingQuality) {
+    score -= 35;
+    reasons.push("Blocking summary contradictions reduce result confidence.");
+  }
+  if (strongHrMismatch) {
+    score -= 18;
+    reasons.push("HR is much lower than peer efforts.");
+  }
+  if (weekdayNoEventLowConfidence) {
+    score -= 16;
+    reasons.push("Weekday fast standalone result without event confirmation.");
+  }
+  if (warnings.has("low_confidence_race_result") && !weekdayNoEventLowConfidence) {
+    score -= 10;
+    reasons.push("Standalone result lacks enough race context.");
+  }
+  if (dataQuality === "suspicious" && !blockingQuality) {
+    score -= 10;
+    reasons.push("Suspicious quality warnings need coach confirmation.");
+  }
+
+  score = Math.max(0, Math.min(100, score));
+
+  let result_status: NonNullable<ResultCandidate["result_status"]>;
+  if (blockingQuality) {
+    result_status = "needs_coach_review";
+  } else if (score >= 60 && strongStandaloneResult) {
+    result_status = dataQuality === "clean" ? "probable_result" : "needs_coach_review";
+  } else if (score >= 42 && reviewWorthyStandalone) {
+    result_status = "needs_coach_review";
+  } else if (score >= 32 && coreResultSignals >= 2 && (raceKeyword || pr || fastPeerPace)) {
+    result_status = "possible_result";
+  } else {
+    result_status = "training_candidate";
+  }
+
+  let display_class: NonNullable<ResultCandidate["display_class"]>;
+  if (result_status === "probable_result") display_class = "probable_best";
+  else if (result_status === "excluded") display_class = "excluded";
+  else if (result_status === "possible_result" || result_status === "needs_coach_review") display_class = "manual_review";
+  else display_class = "display_candidate";
+
+  const rationaleParts: string[] = [];
+  if (result_status === "probable_result") rationaleParts.push("Fast probable result without event.");
+  if (result_status === "needs_coach_review") rationaleParts.push("Plausible strong result that needs coach confirmation.");
+  if (result_status === "possible_result") rationaleParts.push("Possible result signal, but weaker than probable.");
+  if (result_status === "training_candidate") rationaleParts.push("Clean standalone distance workout used as training reference.");
+  if (hardHr) rationaleParts.push("HR supports hard effort.");
+  if (pr) rationaleParts.push(`personalRecordCount=${candidate.personalRecordCount}.`);
+  if (warnings.has("pace_outlier") && !blockingQuality) rationaleParts.push("pace_outlier only.");
+  if (warnings.size > 0 && !(warnings.has("pace_outlier") && warnings.size === 1)) {
+    rationaleParts.push(`Warnings: ${formatWarningsCell(candidate)}.`);
+  }
+
+  return {
+    ...candidate,
+    result_status,
+    result_confidence_score: score,
+    result_confidence_reasons: reasons,
+    display_class,
+    rationale: rationaleParts.join(" ").trim() || "Standalone candidate.",
+  };
+}
+
+function shouldIncludeInDisplay(candidate: ResultCandidate): boolean {
+  return (
+    candidate.display_class === "official_best" ||
+    candidate.display_class === "official_flagged" ||
+    candidate.display_class === "probable_best" ||
+    candidate.display_class === "clean_training_best" ||
+    candidate.result_status === "needs_coach_review" ||
+    candidate.result_status === "possible_result" ||
+    candidate.result_status === "excluded"
+  );
+}
+
+function dedupeCandidates(candidates: ResultCandidate[]): ResultCandidate[] {
+  const seen = new Set<number>();
+  const unique: ResultCandidate[] = [];
+  for (const candidate of candidates) {
+    if (seen.has(candidate.workoutId)) continue;
+    seen.add(candidate.workoutId);
+    unique.push(candidate);
+  }
+  return unique;
+}
+
+const GPS_SPEED_DATA_QUALITY_WARNINGS: DataQualityWarning[] = [
+  "gps_or_speed_anomaly",
+  "speed_summary_inconsistent",
+  "duration_distance_mismatch",
+  "normalized_speed_mismatch",
+  "impossible_summary_metrics",
+  "implausible_max_speed",
+];
+
+function hasGpsSpeedDataQualityWarning(candidate: ResultCandidate): boolean {
+  const warnings = new Set(candidate.warnings ?? []);
+  return GPS_SPEED_DATA_QUALITY_WARNINGS.some((warning) => warnings.has(warning));
+}
+
+function isEligibleCleanTrainingAnchor(candidate: ResultCandidate): boolean {
+  if (candidate.result_status !== "training_candidate") return false;
+  if (candidate.data_quality_status !== "clean") return false;
+  if (candidate.same_day_event) return false;
+  if (candidateHasRaceKeyword(candidate)) return false;
+  if (hasGpsSpeedDataQualityWarning(candidate)) return false;
+  return true;
+}
+
+function hasPerfectCleanTrainingProfile(candidate: ResultCandidate): boolean {
+  const warnings = new Set(candidate.warnings ?? []);
+  if (warnings.has("pace_outlier")) return false;
+  if (warnings.has("heart_rate_mismatch")) return false;
+  if (warnings.has("low_confidence_race_result")) return false;
+  if (warnings.has("distance_near_window_edge")) return false;
+  return true;
+}
+
+function selectCleanTrainingBest(candidates: ResultCandidate[]): {
+  best: ResultCandidate | null;
+  needsReview: boolean;
+} {
+  const eligible = candidates.filter(isEligibleCleanTrainingAnchor);
+  if (!eligible.length) return { best: null, needsReview: false };
+
+  const withoutEdgeWarning = eligible.filter(
+    (candidate) => !(candidate.warnings ?? []).includes("distance_near_window_edge"),
+  );
+  const edgePool = withoutEdgeWarning.length ? withoutEdgeWarning : eligible;
+
+  const perfect = edgePool.filter(hasPerfectCleanTrainingProfile);
+  if (perfect.length) {
+    return { best: perfect[0]!, needsReview: false };
+  }
+
+  if (edgePool.length) {
+    return { best: edgePool[0]!, needsReview: true };
+  }
+
+  return { best: eligible[0]!, needsReview: true };
+}
+
 function applyDataQualityToBucket(input: {
   candidates: ResultCandidate[];
   rawByWorkoutId: Map<number, TrainingPeaksWorkoutRaw>;
   window: DistanceWindow;
 }): {
   candidates: ResultCandidate[];
+  official_best: ResultCandidate | null;
+  official_flagged: ResultCandidate | null;
+  probable_best: ResultCandidate | null;
+  clean_training_best: ResultCandidate | null;
+  clean_training_best_needs_review: boolean;
+  display_candidates: ResultCandidate[];
   best_result: ResultCandidate | null;
   best_candidate_needs_review: ResultCandidate | null;
   excluded_candidates_count: number;
@@ -824,7 +1148,7 @@ function applyDataQualityToBucket(input: {
   const paces = sorted.map((candidate) => candidate.pace_min_per_km);
   const medianPace = median(paces);
 
-  const enriched = sorted.map((candidate, index) => {
+  const qualityEnriched = sorted.map((candidate, index) => {
     const peerCandidates = sorted.filter((_, peerIndex) => peerIndex !== index);
     const nextBestCandidate = sorted[index + 1] ?? null;
     const quality = assessCandidateDataQuality({
@@ -841,23 +1165,117 @@ function applyDataQualityToBucket(input: {
     return { ...candidate, ...quality };
   });
 
-  const best_result = enriched.find((candidate) => candidate.can_be_official_best) ?? null;
+  const enriched = qualityEnriched.map((candidate) => deriveResultModel(candidate));
+
+  const official_best =
+    enriched.find(
+      (candidate) =>
+        candidate.result_status === "official_event" && candidate.data_quality_status !== "excluded",
+    ) ?? null;
+  const official_flagged =
+    enriched.find(
+      (candidate) =>
+        candidate.result_status === "official_event" && candidate.data_quality_status === "suspicious",
+    ) ?? null;
+  const probable_best =
+    enriched.find(
+      (candidate) =>
+        (candidate.result_status === "probable_result" || candidate.result_status === "needs_coach_review") &&
+        candidate.data_quality_status !== "excluded",
+    ) ?? null;
+  const cleanTrainingSelection = selectCleanTrainingBest(enriched);
+  const clean_training_best = cleanTrainingSelection.best;
+  const clean_training_best_needs_review = cleanTrainingSelection.needsReview;
+
+  const enrichedWithDisplayClass = enriched.map((candidate) => {
+    if (
+      clean_training_best &&
+      candidate.workoutId === clean_training_best.workoutId &&
+      candidate.result_status === "training_candidate"
+    ) {
+      return { ...candidate, display_class: "clean_training_best" as const };
+    }
+    if (candidate.display_class === "clean_training_best") {
+      return { ...candidate, display_class: "display_candidate" as const };
+    }
+    return candidate;
+  });
+
+  const cleanTrainingBestForDisplay =
+    clean_training_best
+      ? enrichedWithDisplayClass.find(
+          (candidate) => candidate.workoutId === clean_training_best.workoutId,
+        ) ?? clean_training_best
+      : null;
+
+  const displayCandidates = dedupeCandidates(
+    [
+      official_best,
+      official_flagged,
+      probable_best,
+      cleanTrainingBestForDisplay,
+      ...enrichedWithDisplayClass.filter((candidate) => shouldIncludeInDisplay(candidate)),
+    ].filter((candidate): candidate is ResultCandidate => candidate !== null),
+  ).slice(0, DISPLAY_CANDIDATE_LIMIT);
+
+  const best_result = official_best ?? probable_best ?? clean_training_best ?? null;
   const best_candidate_needs_review =
-    enriched.find((candidate) => candidate.data_quality_status === "needs_review") ?? null;
-  const excluded_candidates_count = enriched.filter(
+    enrichedWithDisplayClass.find(
+      (candidate) =>
+        candidate.result_status === "needs_coach_review" || candidate.data_quality_status === "suspicious",
+    ) ?? null;
+  const excluded_candidates_count = enrichedWithDisplayClass.filter(
     (candidate) => candidate.data_quality_status === "excluded",
   ).length;
 
   return {
-    candidates: enriched,
+    candidates: enrichedWithDisplayClass,
+    official_best,
+    official_flagged,
+    probable_best,
+    clean_training_best: cleanTrainingBestForDisplay,
+    clean_training_best_needs_review,
+    display_candidates: displayCandidates,
     best_result,
     best_candidate_needs_review,
     excluded_candidates_count,
   };
 }
 
+function formatDataQualityStatusLabel(status: DataQualityStatus | undefined): string {
+  switch (status) {
+    case "clean":
+      return "чистые данные";
+    case "suspicious":
+      return "есть предупреждения";
+    case "excluded":
+      return "исключено";
+    default:
+      return "неизвестно";
+  }
+}
+
 function formatDataQualityStatus(candidate: ResultCandidate): string {
-  return candidate.data_quality_status ?? "unknown";
+  return formatDataQualityStatusLabel(candidate.data_quality_status);
+}
+
+function formatResultStatus(candidate: ResultCandidate): string {
+  switch (candidate.result_status) {
+    case "official_event":
+      return "официальный старт";
+    case "probable_result":
+      return "вероятный результат";
+    case "possible_result":
+      return "возможный результат";
+    case "training_candidate":
+      return "тренировка";
+    case "needs_coach_review":
+      return "проверить тренеру";
+    case "excluded":
+      return "исключено";
+    default:
+      return "неизвестно";
+  }
 }
 
 function formatWarningsCell(candidate: ResultCandidate): string {
@@ -882,11 +1300,9 @@ function formatWarningsCell(candidate: ResultCandidate): string {
 }
 
 function shouldIncludeInManualReview(candidate: ResultCandidate): boolean {
-  if (candidate.review_required === true) return true;
-  if (candidate.data_quality_status === "needs_review") return true;
   if (candidate.data_quality_status === "excluded") return true;
-  const warnings = candidate.warnings ?? [];
-  if (warnings.length > 0 && candidate.can_be_official_best === false) return true;
+  if (candidate.data_quality_status === "suspicious") return true;
+  if (candidate.result_status === "needs_coach_review") return true;
   return false;
 }
 
@@ -895,15 +1311,18 @@ function buildShortReviewReason(candidate: ResultCandidate): string {
   const warnings = candidate.warnings ?? [];
   const warningText = warnings.length ? warnings.join(", ") : "no warnings";
   if (status === "excluded") {
-    return `Excluded from official best (${warningText})`;
+    return `Excluded from bests (${warningText})`;
   }
-  if (status === "needs_review" || candidate.review_required) {
-    return `Needs manual review (${warningText})`;
+  if (candidate.result_status === "needs_coach_review") {
+    return candidate.rationale ?? `Needs coach review (${warningText})`;
   }
-  if (warnings.length > 0) {
-    return `Warnings without official best (${warningText})`;
+  if (status === "suspicious" || candidate.review_required) {
+    return `Suspicious summary data (${warningText})`;
   }
-  return "Flagged for manual review";
+  if (candidate.result_status === "possible_result") {
+    return candidate.rationale ?? `Possible result (${warningText})`;
+  }
+  return candidate.rationale ?? "Flagged for manual review";
 }
 
 function toManualReviewCandidate(
@@ -921,7 +1340,7 @@ function toManualReviewCandidate(
     distance_km: candidate.distance_km,
     duration_text: candidate.duration_text,
     pace_text: candidate.pace_text,
-    data_quality_status: candidate.data_quality_status ?? "needs_review",
+    data_quality_status: candidate.data_quality_status ?? "suspicious",
     data_quality_score: candidate.data_quality_score ?? 0,
     warnings: candidate.warnings ?? [],
     review_required: candidate.review_required ?? false,
@@ -933,13 +1352,18 @@ function toManualReviewCandidate(
     heartRateAverage: hr,
     avg_hr: hr,
     heart_rate_peer_reference: candidate.heart_rate_peer_reference ?? null,
+    result_status: candidate.result_status ?? "needs_coach_review",
+    result_confidence_score: candidate.result_confidence_score ?? 0,
+    result_confidence_reasons: candidate.result_confidence_reasons ?? [],
+    display_class: candidate.display_class ?? "manual_review",
+    rationale: candidate.rationale ?? buildShortReviewReason(candidate),
     short_review_reason: buildShortReviewReason(candidate),
   };
 }
 
 function manualReviewSeverityRank(status: DataQualityStatus | undefined): number {
   if (status === "excluded") return 0;
-  if (status === "needs_review") return 1;
+  if (status === "suspicious") return 1;
   return 2;
 }
 
@@ -1011,50 +1435,40 @@ function formatManualReviewHrCheck(candidate: ManualReviewCandidate): string {
 }
 
 function formatManualReviewEventCell(candidate: ManualReviewCandidate): string {
-  if (!candidate.same_day_event || !candidate.event_name) return "no event";
+  if (!candidate.same_day_event || !candidate.event_name) return "нет старта";
   const distance =
-    candidate.event_distance_km !== null ? ` (${candidate.event_distance_km} km)` : "";
+    candidate.event_distance_km !== null ? ` (${candidate.event_distance_km} км)` : "";
   return `${candidate.event_name}${distance}`;
 }
 
-function formatBestResultCell(bucket: DistanceBucketReport | undefined): string {
-  if (bucket?.best_result) {
-    return formatResultLine(bucket.best_result);
-  }
-  if (bucket?.best_candidate_needs_review) {
-    return `needs review (${formatResultLine(bucket.best_candidate_needs_review)})`;
-  }
-  return "—";
+function formatSummaryCell(candidate: ResultCandidate | null | undefined, emptyLabel = "Нет данных"): string {
+  if (!candidate) return emptyLabel;
+  return `${candidate.date} — ${candidate.distance_km} км / ${candidate.duration_text} — ${candidate.pace_text}`;
 }
 
-function formatBestPaceCell(bucket: DistanceBucketReport | undefined): string {
-  if (bucket?.best_result) {
-    return bucket.best_result.pace_text;
-  }
-  if (bucket?.best_candidate_needs_review) {
-    return `needs review (${bucket.best_candidate_needs_review.pace_text})`;
-  }
-  return "—";
+function formatSummaryNotes(bucket: DistanceBucketReport | undefined): string {
+  if (!bucket) return "Нет данных";
+  const notes: string[] = [];
+  if (bucket.official_flagged) notes.push("Официальный старт с предупреждениями по данным");
+  if (bucket.probable_best?.result_status === "needs_coach_review") notes.push("Нужна проверка тренером");
+  if (bucket.clean_training_best_needs_review) notes.push("Тренировочный ориентир требует проверки");
+  const excludedCount = bucket.candidates.filter((candidate) => candidate.result_status === "excluded").length;
+  if (excludedCount > 0) notes.push(`Исключено: ${excludedCount}`);
+  return notes.join("; ") || "—";
 }
 
-function formatBestDateCell(bucket: DistanceBucketReport | undefined): string {
-  if (bucket?.best_result) {
-    return bucket.best_result.date;
+function formatDisplayLabel(candidate: ResultCandidate): string {
+  if (candidate.display_class === "clean_training_best") return "тренировочный ориентир";
+  if (candidate.result_status === "official_event") {
+    return candidate.data_quality_status === "suspicious"
+      ? "официальный старт / есть предупреждения"
+      : "официальный старт";
   }
-  if (bucket?.best_candidate_needs_review) {
-    return `${bucket.best_candidate_needs_review.date} (needs review)`;
-  }
-  return "—";
-}
-
-function formatBestEventCell(bucket: DistanceBucketReport | undefined): string {
-  if (bucket?.best_result) {
-    return formatEventCell(bucket.best_result);
-  }
-  if (bucket?.best_candidate_needs_review) {
-    return formatEventCell(bucket.best_candidate_needs_review);
-  }
-  return "—";
+  if (candidate.result_status === "probable_result") return "вероятный результат";
+  if (candidate.result_status === "training_candidate") return "тренировка";
+  if (candidate.result_status === "needs_coach_review") return "проверить тренеру";
+  if (candidate.result_status === "possible_result") return "возможный результат";
+  return "исключено";
 }
 
 function scoreEventForCandidate(event: ParsedEvent, distanceKey: DistanceKey, window: DistanceWindow): {
@@ -1217,9 +1631,9 @@ function formatResultLine(candidate: ResultCandidate): string {
 }
 
 function formatEventCell(candidate: ResultCandidate): string {
-  if (!candidate.same_day_event || !candidate.event_name) return "no event";
+  if (!candidate.same_day_event || !candidate.event_name) return "нет старта";
   const distance =
-    candidate.event_distance_km !== null ? ` (${candidate.event_distance_km} km)` : "";
+    candidate.event_distance_km !== null ? ` (${candidate.event_distance_km} км)` : "";
   return `${candidate.event_name}${distance}`;
 }
 
@@ -1234,19 +1648,19 @@ function createMarkdown(report: ProbeReport): string {
   lines.push(`- Events scanned: **${report.events_scanned}**`);
   lines.push("");
 
-  lines.push("## Best results by distance");
-  lines.push("| Distance | Best date | Result | Pace | Event |");
-  lines.push("| --- | ---: | ---: | ---: | --- |");
+  lines.push("## Лучшие результаты по дистанциям");
+  lines.push(
+    "| Дистанция | Официальный старт | Вероятный результат / проверить | Тренировочный ориентир | Заметки |",
+  );
+  lines.push("| --- | --- | --- | --- | --- |");
   for (const key of report.target_distances) {
     const bucket = report.distance_results[key];
     lines.push(
-      `| ${bucket?.label ?? key} | ${formatBestDateCell(bucket)} | ${formatBestResultCell(bucket)} | ${formatBestPaceCell(bucket)} | ${formatBestEventCell(bucket)} |`,
+      `| ${bucket?.label ?? key} | ${formatSummaryCell(bucket?.official_best, "Нет данных")} | ${formatSummaryCell(bucket?.probable_best, "Нет данных")} | ${formatSummaryCell(bucket?.clean_training_best, "Нет данных")} | ${formatSummaryNotes(bucket)} |`,
     );
   }
   lines.push("");
-  lines.push(
-    "_needs_review candidates are not treated as official best results until manually checked._",
-  );
+  lines.push("_Проверяемые кандидаты не скрываются под более медленными чистыми тренировками._");
   lines.push("");
 
   lines.push("## ⚠️ Требуют ручной проверки");
@@ -1254,19 +1668,17 @@ function createMarkdown(report: ProbeReport): string {
     lines.push("Нет кандидатов для ручной проверки.");
   } else {
     lines.push(
-      "| Distance | Date | Result | Pace | Status | Event | HR check | Warnings |",
+      "| Дистанция | Дата | Результат | Темп | Тип | Качество данных | Старт | Пульс | Пояснение |",
     );
-    lines.push("|---|---|---:|---:|---|---|---|---|");
+    lines.push("|---|---|---:|---:|---|---|---|---|---|");
     for (const row of report.manual_review_candidates) {
       const resultLine = `${row.distance_km} км / ${row.duration_text}`;
       lines.push(
-        `| ${row.distance_label} | ${row.date} | ${resultLine} | ${row.pace_text} | ${row.data_quality_status} | ${formatManualReviewEventCell(row)} | ${formatManualReviewHrCheck(row)} | ${row.warnings.join(", ") || "—"} |`,
+        `| ${row.distance_label} | ${row.date} | ${resultLine} | ${row.pace_text} | ${formatResultStatus(row)} | ${formatDataQualityStatusLabel(row.data_quality_status)} | ${formatManualReviewEventCell(row)} | ${formatManualReviewHrCheck(row)} | ${row.rationale} |`,
       );
     }
     lines.push("");
-    lines.push(
-      "Эти кандидаты не считаются официальными лучшими результатами, пока тренер не проверит их вручную.",
-    );
+    lines.push("Эти кандидаты остаются видимыми для тренера и не подменяются более медленными training-ориентирами.");
   }
   lines.push("");
 
@@ -1274,21 +1686,22 @@ function createMarkdown(report: ProbeReport): string {
     const bucket = report.distance_results[key];
     if (!bucket) continue;
     lines.push(`## ${bucket.label}`);
-    if (!bucket.candidates.length) {
-      lines.push("- No clean standalone candidates in this distance window.");
+    if (!bucket.display_candidates.length) {
+      lines.push("- Нет подходящих кандидатов в этом диапазоне дистанции.");
     } else {
-      lines.push("| Date | Day | Result | Pace | Event | Status | Warnings | Race-like reasons |");
+      lines.push("| Дата | День | Результат | Темп | Тип | Старт | Качество данных | Пояснение |");
       lines.push("| --- | --- | ---: | ---: | --- | --- | --- | --- |");
-      for (const row of bucket.candidates) {
+      for (const row of bucket.display_candidates) {
         const raceReasons = row.reasons.filter((reason) => reason.startsWith("race_signal:"));
+        const noteText = row.rationale ?? (raceReasons.join(", ") || "—");
         lines.push(
-          `| ${row.date} | ${row.day_of_week ?? "—"} | ${formatResultLine(row)} | ${row.pace_text} | ${formatEventCell(row)} | ${formatDataQualityStatus(row)} | ${formatWarningsCell(row)} | ${raceReasons.join(", ") || "—"} |`,
+          `| ${row.date} | ${row.day_of_week ?? "—"} | ${formatResultLine(row)} | ${row.pace_text} | ${formatDisplayLabel(row)} | ${formatEventCell(row)} | ${formatDataQualityStatus(row)} | ${noteText} |`,
         );
       }
     }
     if (bucket.excluded_candidates_count > 0) {
       lines.push(
-        `- Excluded candidates (data quality): **${bucket.excluded_candidates_count}**`,
+        `- Исключено по качеству данных: **${bucket.excluded_candidates_count}**`,
       );
     }
     lines.push("");
@@ -1312,9 +1725,6 @@ function createMarkdown(report: ProbeReport): string {
   lines.push("- This report uses standalone workouts only.");
   lines.push("- Rolling/best segment inside longer workouts is not included.");
   lines.push("- Rolling analysis requires FIT/lap/stream data from Workout Files.");
-  lines.push(
-    "- needs_review candidates are not treated as official best results until manually checked.",
-  );
   for (const note of report.notes) {
     lines.push(`- ${note}`);
   }
@@ -1537,6 +1947,12 @@ async function main(): Promise<void> {
         label: window.label,
         distance_window: window,
         candidates_count: qualityBucket.candidates.length,
+        official_best: qualityBucket.official_best,
+        official_flagged: qualityBucket.official_flagged,
+        probable_best: qualityBucket.probable_best,
+        clean_training_best: qualityBucket.clean_training_best,
+        clean_training_best_needs_review: qualityBucket.clean_training_best_needs_review,
+        display_candidates: qualityBucket.display_candidates,
         best_result: qualityBucket.best_result,
         best_candidate_needs_review: qualityBucket.best_candidate_needs_review,
         excluded_candidates_count: qualityBucket.excluded_candidates_count,
@@ -1666,7 +2082,7 @@ async function main(): Promise<void> {
         "Read-only probe; no Supabase writes, no Telegram, no weekly reports.",
         "Rolling/best segment inside longer workouts is not included; it requires FIT/lap/stream analysis from Workout Files.",
         "Clean result = completed running workout with total distance in configured window (excludes rolling segments).",
-        "needs_review candidates are not treated as official best results until manually checked.",
+        "Bests are split into official event, probable/check, and clean training lanes.",
       ],
       output_paths: {
         report_json: reportJsonPath,
@@ -1692,18 +2108,28 @@ async function main(): Promise<void> {
     console.log(`events_scanned: ${report.events_scanned}`);
     for (const key of runMode.distanceKeys) {
       const bucket = distanceResults[key];
-      const best = bucket?.best_result ?? null;
-      const review = bucket?.best_candidate_needs_review ?? null;
-      if (best) {
+      if (bucket?.official_best) {
         console.log(
-          `best_${key}: ${best.date} | ${best.title ?? "untitled"} | ${best.distance_km} km | pace ${best.pace_text} | event ${best.event_name ?? "none"} | status ${best.data_quality_status}`,
-        );
-      } else if (review) {
-        console.log(
-          `best_${key}: needs_review | ${review.date} | ${review.title ?? "untitled"} | ${review.distance_km} km | pace ${review.pace_text} | warnings ${(review.warnings ?? []).join(", ")}`,
+          `official_best_${key}: ${bucket.official_best.date} | ${bucket.official_best.title ?? "untitled"} | ${bucket.official_best.distance_km} km | pace ${bucket.official_best.pace_text} | event ${bucket.official_best.event_name ?? "none"} | quality ${bucket.official_best.data_quality_status}`,
         );
       } else {
-        console.log(`best_${key}: none`);
+        console.log(
+          `official_best_${key}: none`,
+        );
+      }
+      if (bucket?.probable_best) {
+        console.log(
+          `probable_best_${key}: ${bucket.probable_best.date} | ${bucket.probable_best.title ?? "untitled"} | ${bucket.probable_best.distance_km} km | pace ${bucket.probable_best.pace_text} | status ${bucket.probable_best.result_status} | quality ${bucket.probable_best.data_quality_status}`,
+        );
+      } else {
+        console.log(`probable_best_${key}: none`);
+      }
+      if (bucket?.clean_training_best) {
+        console.log(
+          `clean_training_best_${key}: ${bucket.clean_training_best.date} | ${bucket.clean_training_best.title ?? "untitled"} | ${bucket.clean_training_best.distance_km} km | pace ${bucket.clean_training_best.pace_text}`,
+        );
+      } else {
+        console.log(`clean_training_best_${key}: none`);
       }
     }
     console.log(`manual_review_candidates: ${manualReviewCandidates.length}`);

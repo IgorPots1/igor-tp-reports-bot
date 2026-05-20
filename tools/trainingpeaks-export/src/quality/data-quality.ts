@@ -6,20 +6,18 @@ import {
 } from "./extract-summary.ts";
 import { RACE_KEYWORDS_PATTERN, RACE_TEXT_BY_DISTANCE } from "./race-keywords.ts";
 
-export type DataQualityStatus = "verified" | "needs_review" | "excluded";
+export type DataQualityStatus = "clean" | "suspicious" | "excluded";
 
 export type DataQualityWarning =
   | "gps_or_speed_anomaly"
   | "pace_outlier"
   | "speed_summary_inconsistent"
   | "duration_distance_mismatch"
-  | "physiology_inconsistent"
-  | "power_or_cadence_inconsistent"
   | "low_confidence_race_result"
-  | "missing_required_metrics"
   | "distance_near_window_edge"
   | "impossible_summary_metrics"
-  | "weekday_fast_candidate_without_event"
+  | "normalized_speed_mismatch"
+  | "implausible_max_speed"
   | "heart_rate_mismatch";
 
 export type HeartRatePeerReference = {
@@ -63,22 +61,22 @@ export type AssessedCandidateQuality = {
 const WARNING_PENALTIES: Record<DataQualityWarning, number> = {
   duration_distance_mismatch: 0.25,
   speed_summary_inconsistent: 0.2,
-  gps_or_speed_anomaly: 0.3,
-  pace_outlier: 0.2,
-  physiology_inconsistent: 0.15,
-  power_or_cadence_inconsistent: 0.1,
-  low_confidence_race_result: 0.15,
-  missing_required_metrics: 0.1,
-  distance_near_window_edge: 0.05,
+  normalized_speed_mismatch: 0.18,
+  gps_or_speed_anomaly: 0.22,
+  implausible_max_speed: 0.18,
+  pace_outlier: 0.05,
+  low_confidence_race_result: 0.12,
+  distance_near_window_edge: 0.03,
   impossible_summary_metrics: 1.0,
-  weekday_fast_candidate_without_event: 0.1,
-  heart_rate_mismatch: 0.2,
+  heart_rate_mismatch: 0.1,
 };
 
 const BASE_BLOCKING_WARNINGS = new Set<DataQualityWarning>([
   "gps_or_speed_anomaly",
   "speed_summary_inconsistent",
   "duration_distance_mismatch",
+  "normalized_speed_mismatch",
+  "implausible_max_speed",
   "impossible_summary_metrics",
 ]);
 
@@ -86,13 +84,12 @@ const PACE_OUTLIER_COMPANION_BLOCKERS = new Set<DataQualityWarning>([
   "gps_or_speed_anomaly",
   "speed_summary_inconsistent",
   "duration_distance_mismatch",
+  "normalized_speed_mismatch",
+  "implausible_max_speed",
   "heart_rate_mismatch",
   "impossible_summary_metrics",
   "low_confidence_race_result",
-  "weekday_fast_candidate_without_event",
 ]);
-
-const MIN_EVENT_CONFIDENCE_FOR_PACE_OUTLIER_PASS = 0.45;
 
 const IMPOSSIBLE_PACE_MIN_PER_KM: Record<DataQualityDistanceKey, number> = {
   "5k": 2 + 35 / 60,
@@ -163,7 +160,7 @@ function hasRaceLikeText(
 
 function hasReasonableSameDayEventConfidence(candidate: DataQualityCandidate): boolean {
   if (!candidate.same_day_event) return false;
-  if (candidate.event_confidence < MIN_EVENT_CONFIDENCE_FOR_PACE_OUTLIER_PASS) return false;
+  if (candidate.event_confidence < 0.45) return false;
   if (!candidate.event_name?.trim()) return false;
   return true;
 }
@@ -173,11 +170,10 @@ function isPaceOutlierNonBlocking(
   candidate: DataQualityCandidate,
 ): boolean {
   if (!warnings.has("pace_outlier")) return false;
-  if (!hasReasonableSameDayEventConfidence(candidate)) return false;
   for (const blocker of PACE_OUTLIER_COMPANION_BLOCKERS) {
     if (warnings.has(blocker)) return false;
   }
-  return true;
+  return hasReasonableSameDayEventConfidence(candidate) || !warnings.has("low_confidence_race_result");
 }
 
 function isBlockingWarning(
@@ -193,7 +189,12 @@ function isBlockingWarning(
     return !isPaceOutlierNonBlocking(context.warnings, context.candidate);
   }
   if (BASE_BLOCKING_WARNINGS.has(warning)) return true;
-  if (warning === "heart_rate_mismatch" && context.hrGapMax >= 20 && !context.sameDayEvent) {
+  if (
+    warning === "heart_rate_mismatch" &&
+    context.hrGapMax >= 20 &&
+    !context.sameDayEvent &&
+    context.warnings.has("pace_outlier")
+  ) {
     return true;
   }
   return false;
@@ -326,13 +327,14 @@ export function assessCandidateDataQuality(input: {
     ) {
       warnings.add("speed_summary_inconsistent");
     }
-    if (
-      derivedSpeedMps !== null &&
-      normalizedSpeedActual !== null &&
-      normalizedSpeedActual > 0 &&
-      Math.abs(derivedSpeedMps - normalizedSpeedActual) / normalizedSpeedActual > 0.07
-    ) {
-      warnings.add("duration_distance_mismatch");
+    if (derivedSpeedMps !== null && normalizedSpeedActual !== null && normalizedSpeedActual > 0) {
+      const normalizedDelta = Math.abs(derivedSpeedMps - normalizedSpeedActual) / normalizedSpeedActual;
+      if (normalizedDelta > 0.07) {
+        warnings.add("normalized_speed_mismatch");
+      }
+      if (normalizedDelta > 0.15) {
+        warnings.add("duration_distance_mismatch");
+      }
     }
 
     if (
@@ -344,22 +346,7 @@ export function assessCandidateDataQuality(input: {
       warnings.add("gps_or_speed_anomaly");
     }
     if (velocityMaximum !== null && velocityMaximum > 8.5) {
-      warnings.add("gps_or_speed_anomaly");
-    }
-
-    if (rankByPace <= 1 && candidateHr !== null && candidateHr < 125) {
-      warnings.add("physiology_inconsistent");
-    }
-    if (rankByPace <= 1 && cadenceAverage !== null && cadenceAverage < 150) {
-      warnings.add("power_or_cadence_inconsistent");
-    }
-
-    if (
-      rankByPace === 0 &&
-      velocityAverage === null &&
-      normalizedSpeedActual === null
-    ) {
-      warnings.add("missing_required_metrics");
+      warnings.add("implausible_max_speed");
     }
   }
 
@@ -411,7 +398,7 @@ export function assessCandidateDataQuality(input: {
     !raceLike &&
     (paceOutlier || paceOutlierWeak)
   ) {
-    warnings.add("weekday_fast_candidate_without_event");
+    warnings.add("low_confidence_race_result");
   }
 
   if (
@@ -445,10 +432,10 @@ export function assessCandidateDataQuality(input: {
   let dataQualityStatus: DataQualityStatus;
   if (warnings.has("impossible_summary_metrics") || score < 0.35) {
     dataQualityStatus = "excluded";
-  } else if (score < 0.75 || hasBlockingWarning) {
-    dataQualityStatus = "needs_review";
+  } else if (score < 0.72 || hasBlockingWarning) {
+    dataQualityStatus = "suspicious";
   } else {
-    dataQualityStatus = "verified";
+    dataQualityStatus = "clean";
   }
 
   return {
@@ -457,7 +444,7 @@ export function assessCandidateDataQuality(input: {
     data_quality_status: dataQualityStatus,
     data_quality_score: score,
     warnings: warningList,
-    review_required: dataQualityStatus === "needs_review",
-    can_be_official_best: dataQualityStatus === "verified",
+    review_required: dataQualityStatus === "suspicious",
+    can_be_official_best: dataQualityStatus !== "excluded",
   };
 }
