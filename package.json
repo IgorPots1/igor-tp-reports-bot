@@ -21,6 +21,7 @@
     "tp-workouts-cache-scan": "npm --prefix tools/trainingpeaks-export run tp-workouts-cache-scan --",
     "tp-workouts-cache-report": "npm --prefix tools/trainingpeaks-export run tp-workouts-cache-report --",
     "tp-probe-race-results": "npm --prefix tools/trainingpeaks-export run tp-probe-race-results --",
+    "tp-probe-progress-evidence": "npm --prefix tools/trainingpeaks-export run tp-probe-progress-evidence --",
     "tp-actions-loop:install": "npm --prefix tools/trainingpeaks-export run tp-actions-loop:install",
     "tp-actions-loop:uninstall": "npm --prefix tools/trainingpeaks-export run tp-actions-loop:uninstall",
     "tp-actions-loop:logs": "npm --prefix tools/trainingpeaks-export run tp-actions-loop:logs",
