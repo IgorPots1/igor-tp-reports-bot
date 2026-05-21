@@ -33,6 +33,8 @@ type CliArgs = {
   targetTime: string | null;
   noAi: boolean;
   includeReviewAnchors: boolean;
+  segmentAudit: boolean;
+  segmentAuditJson: boolean;
 };
 
 type ResolvedTarget = {
@@ -43,6 +45,28 @@ type ResolvedTarget = {
 };
 
 type WeekRange = { from: string; to: string };
+
+type WorkoutSegmentAnalysisAudit = {
+  available?: boolean;
+  reason?: string;
+  match_confidence?: string;
+  planned_segments_count?: number;
+  expanded_segments_count?: number;
+  comparable_segments_count?: number;
+  compared_segments_count?: number;
+  extra_after_plan_seconds?: number;
+  data_quality_flags?: string[];
+};
+
+type SegmentComparisonEntryAudit = {
+  segment_type?: string;
+  is_rest?: boolean;
+  coverage?: string;
+  coverage_ratio?: number | null;
+  repeat_iteration?: number | null;
+  repeat_group_id?: string | null;
+  data_quality_flags?: string[];
+};
 
 type WeeklySummaryWorkout = {
   date: string | null;
@@ -60,10 +84,86 @@ type WeeklySummaryWorkout = {
     is_completed: boolean;
     is_skipped: boolean;
   };
-  planned: { description: string | null; coach_comments: string | null };
-  completed: {
-    detail_source: { type: string; match_status: string };
+  planned: {
+    description: string | null;
+    coach_comments: string | null;
+    segments?: unknown[];
   };
+  completed: {
+    detail_source: {
+      type: string;
+      match_status: string;
+      match_confidence?: string;
+    };
+  };
+  segment_analysis?: WorkoutSegmentAnalysisAudit;
+  segment_comparison?: SegmentComparisonEntryAudit[];
+};
+
+type KeyWorkoutRole = "tempo_threshold" | "intervals" | "race_pace_like" | "long_run";
+
+type RawKeyWorkoutCapture = {
+  date: string;
+  title: string | null;
+  role: KeyWorkoutRole;
+  week: WeekRange;
+  workout: WeeklySummaryWorkout;
+};
+
+type SegmentAuditVerdict =
+  | "usable"
+  | "plan_only_no_actual_segments"
+  | "no_segment_data"
+  | "ambiguous";
+
+type SegmentAuditReport = {
+  enabled: true;
+  summary: {
+    key_workouts_count: number;
+    segment_analysis_available_count: number;
+    segment_comparison_available_count: number;
+    interval_key_workouts_count: number;
+    interval_key_workouts_with_segments_count: number;
+    fit_or_workout_files_coverage_hint: string;
+  };
+  workouts: Array<{
+    date: string;
+    title: string | null;
+    role: KeyWorkoutRole;
+    completed: {
+      distance_km: number | null;
+      duration_text: string | null;
+      pace_text: string | null;
+    };
+    has_segment_analysis: boolean;
+    has_segment_comparison: boolean;
+    segment_analysis: {
+      available: boolean;
+      reason: string | null;
+      planned_segments_count: number;
+      expanded_segments_count: number;
+      comparable_segments_count: number;
+      compared_segments_count: number;
+      data_quality_flags: string[];
+    };
+    expanded_segments_count: number;
+    compared_segments_count: number;
+    segment_shape_summary: {
+      segment_types: string[];
+      coverage_counts: Record<string, number>;
+      sample_keys: string[];
+    };
+    fit_detail_source: {
+      type: string | null;
+      match_status: string | null;
+      match_confidence: string | null;
+    };
+    verdict: SegmentAuditVerdict;
+    reason: string;
+    raw_shape?: Record<string, unknown>;
+  }>;
+  recommendation: "segment_aware_ready" | "needs_fit_or_parser";
+  recommendation_note: string;
 };
 
 type WeeklySummary = {
@@ -264,6 +364,7 @@ type RacePredictionReport = {
     report_json: string;
     report_md: string;
   };
+  segment_audit?: SegmentAuditReport;
 };
 
 const TEMPO_PATTERN =
@@ -345,6 +446,8 @@ function parseArgs(argv: string[]): CliArgs {
     targetTime: null,
     noAi: true,
     includeReviewAnchors: false,
+    segmentAudit: false,
+    segmentAuditJson: false,
   };
 
   let targetCount = 0;
@@ -417,6 +520,15 @@ function parseArgs(argv: string[]): CliArgs {
     }
     if (arg === "--include-review-anchors") {
       parsed.includeReviewAnchors = true;
+      continue;
+    }
+    if (arg === "--segment-audit") {
+      parsed.segmentAudit = true;
+      continue;
+    }
+    if (arg === "--segment-audit-json") {
+      parsed.segmentAudit = true;
+      parsed.segmentAuditJson = true;
       continue;
     }
     throw new Error(`Unknown argument: ${arg}`);
@@ -556,9 +668,7 @@ function collectWorkoutText(workout: WeeklySummaryWorkout): string {
     .join(" ");
 }
 
-function classifyKeyWorkout(
-  workout: WeeklySummaryWorkout,
-): "tempo_threshold" | "intervals" | "race_pace_like" | "long_run" | null {
+function classifyKeyWorkout(workout: WeeklySummaryWorkout): KeyWorkoutRole | null {
   if (!workout.classification.is_completed || !isRunningWorkout(workout)) return null;
   const text = collectWorkoutText(workout);
   if (workout.intensity_flags.includes("long_run") || LONG_RUN_PATTERN.test(text)) {
@@ -907,6 +1017,225 @@ function computePrediction(input: {
   };
 }
 
+function asSegmentAnalysis(workout: WeeklySummaryWorkout): WorkoutSegmentAnalysisAudit {
+  return workout.segment_analysis ?? {};
+}
+
+function asSegmentComparison(workout: WeeklySummaryWorkout): SegmentComparisonEntryAudit[] {
+  return workout.segment_comparison ?? [];
+}
+
+function buildSegmentShapeSummary(workout: WeeklySummaryWorkout): SegmentAuditReport["workouts"][number]["segment_shape_summary"] {
+  const segments = asSegmentComparison(workout);
+  const segmentTypes = [...new Set(segments.map((segment) => segment.segment_type).filter(Boolean))] as string[];
+  const coverageCounts: Record<string, number> = {};
+  for (const segment of segments) {
+    const key = segment.coverage ?? "unknown";
+    coverageCounts[key] = (coverageCounts[key] ?? 0) + 1;
+  }
+  const sampleKeys = segments.slice(0, 6).map((segment, index) => {
+    const parts = [
+      `#${index + 1}`,
+      segment.segment_type ?? "unknown",
+      segment.is_rest ? "rest" : "work",
+      segment.coverage ?? "n/a",
+    ];
+    if (segment.repeat_group_id) parts.push(segment.repeat_group_id);
+    if (segment.repeat_iteration !== null && segment.repeat_iteration !== undefined) {
+      parts.push(`iter${segment.repeat_iteration}`);
+    }
+    return parts.join(":");
+  });
+  return { segment_types: segmentTypes, coverage_counts: coverageCounts, sample_keys: sampleKeys };
+}
+
+function deriveSegmentVerdict(workout: WeeklySummaryWorkout): { verdict: SegmentAuditVerdict; reason: string } {
+  const analysis = asSegmentAnalysis(workout);
+  const comparison = asSegmentComparison(workout);
+  const plannedSegmentsCount = analysis.planned_segments_count ?? workout.planned.segments?.length ?? 0;
+  const comparedCount = analysis.compared_segments_count ?? 0;
+  const comparableCount = analysis.comparable_segments_count ?? 0;
+  const hasComparison = comparison.length > 0;
+  const nonRestCompared = comparison.filter((segment) => !segment.is_rest && segment.coverage !== "unsupported");
+  const usableNonRest = nonRestCompared.filter(
+    (segment) => segment.coverage === "full" || segment.coverage === "partial",
+  );
+
+  if (analysis.available === true && comparedCount > 0 && usableNonRest.length > 0) {
+    const partialCount = nonRestCompared.filter((segment) => segment.coverage === "partial").length;
+    const missingCount = comparison.filter((segment) => segment.coverage === "missing").length;
+    const ratio = comparableCount > 0 ? comparedCount / comparableCount : 1;
+    if (
+      missingCount > 0 ||
+      partialCount > 0 ||
+      ratio < 0.75 ||
+      (analysis.data_quality_flags ?? []).includes("contains_missing_segments")
+    ) {
+      return {
+        verdict: "usable",
+        reason: `Частично пригодно: ${usableNonRest.length} рабочих сегментов full/partial, ${comparedCount}/${comparableCount || comparedCount} compared.`,
+      };
+    }
+    return {
+      verdict: "usable",
+      reason: `Пригодно: ${usableNonRest.length} рабочих сегментов full/partial, ${comparedCount} compared.`,
+    };
+  }
+
+  if (plannedSegmentsCount === 0 && !hasComparison) {
+    return {
+      verdict: "no_segment_data",
+      reason: "Нет planned segments и segment_comparison в weekly-summary.",
+    };
+  }
+
+  if (plannedSegmentsCount > 0 && (analysis.available !== true || comparedCount === 0)) {
+    const fitType = workout.completed.detail_source?.type ?? "unknown";
+    if (analysis.reason === "unsupported_repeats") {
+      return {
+        verdict: "plan_only_no_actual_segments",
+        reason: `План есть (${plannedSegmentsCount} сегм.), FIT matched (${fitType}), но парсер: unsupported_repeats.`,
+      };
+    }
+    if (fitType !== "workout_file_fit") {
+      return {
+        verdict: "plan_only_no_actual_segments",
+        reason: `План есть (${plannedSegmentsCount} сегм.), но нет matched FIT (${fitType}).`,
+      };
+    }
+    return {
+      verdict: "plan_only_no_actual_segments",
+      reason: `План есть (${plannedSegmentsCount} сегм.), segment analysis: ${analysis.reason ?? "unavailable"}.`,
+    };
+  }
+
+  const partialCount = comparison.filter((segment) => segment.coverage === "partial").length;
+  const missingCount = comparison.filter((segment) => segment.coverage === "missing").length;
+  const ratio = comparableCount > 0 ? comparedCount / comparableCount : 0;
+  return {
+    verdict: "ambiguous",
+    reason: `Неоднозначно: compared ${comparedCount}/${comparableCount || "?"}, partial ${partialCount}, missing ${missingCount}, ratio ${ratio.toFixed(2)}.`,
+  };
+}
+
+function buildRawShape(workout: WeeklySummaryWorkout): Record<string, unknown> {
+  const analysis = asSegmentAnalysis(workout);
+  const comparison = asSegmentComparison(workout);
+  return {
+    segment_analysis: analysis,
+    segment_comparison_sample: comparison.slice(0, 4).map((segment) => ({
+      segment_type: segment.segment_type,
+      is_rest: segment.is_rest,
+      coverage: segment.coverage,
+      coverage_ratio: segment.coverage_ratio,
+      repeat_group_id: segment.repeat_group_id,
+      repeat_iteration: segment.repeat_iteration,
+    })),
+    planned_segments_count: workout.planned.segments?.length ?? 0,
+    detail_source: workout.completed.detail_source,
+  };
+}
+
+function buildSegmentAudit(
+  captures: RawKeyWorkoutCapture[],
+  includeRawShape: boolean,
+): SegmentAuditReport {
+  const workouts = captures.map((capture) => {
+    const workout = capture.workout;
+    const analysis = asSegmentAnalysis(workout);
+    const comparison = asSegmentComparison(workout);
+    const { verdict, reason } = deriveSegmentVerdict(workout);
+    const segmentAnalysisBlock = {
+      available: analysis.available === true,
+      reason: analysis.reason ?? null,
+      planned_segments_count: analysis.planned_segments_count ?? workout.planned.segments?.length ?? 0,
+      expanded_segments_count: analysis.expanded_segments_count ?? 0,
+      comparable_segments_count: analysis.comparable_segments_count ?? 0,
+      compared_segments_count: analysis.compared_segments_count ?? 0,
+      data_quality_flags: analysis.data_quality_flags ?? [],
+    };
+
+    const entry: SegmentAuditReport["workouts"][number] = {
+      date: capture.date,
+      title: capture.title,
+      role: capture.role,
+      completed: {
+        distance_km: workout.distance_km,
+        duration_text:
+          workout.completed_duration_minutes !== null
+            ? formatDurationText(workout.completed_duration_minutes)
+            : null,
+        pace_text:
+          workout.avg_pace_text ??
+          (workout.avg_pace_min_per_km ? formatPaceText(workout.avg_pace_min_per_km) : null),
+      },
+      has_segment_analysis: analysis.available === true,
+      has_segment_comparison: comparison.length > 0,
+      segment_analysis: segmentAnalysisBlock,
+      expanded_segments_count: segmentAnalysisBlock.expanded_segments_count,
+      compared_segments_count: segmentAnalysisBlock.compared_segments_count,
+      segment_shape_summary: buildSegmentShapeSummary(workout),
+      fit_detail_source: {
+        type: workout.completed.detail_source?.type ?? null,
+        match_status: workout.completed.detail_source?.match_status ?? null,
+        match_confidence: workout.completed.detail_source?.match_confidence ?? null,
+      },
+      verdict,
+      reason,
+    };
+    if (includeRawShape) {
+      entry.raw_shape = buildRawShape(workout);
+    }
+    return entry;
+  });
+
+  const segmentAnalysisAvailableCount = workouts.filter((workout) => workout.has_segment_analysis).length;
+  const segmentComparisonAvailableCount = workouts.filter((workout) => workout.has_segment_comparison).length;
+  const isIntervalLike = (workout: SegmentAuditReport["workouts"][number]): boolean =>
+    workout.role === "intervals" ||
+    INTERVAL_PATTERN.test([workout.title ?? "", workout.role].join(" "));
+
+  const intervalWorkouts = workouts.filter((workout) => workout.role === "intervals");
+  const intervalLikeWorkouts = workouts.filter(isIntervalLike);
+  const intervalWithSegments = intervalWorkouts.filter(
+    (workout) => workout.has_segment_analysis || workout.has_segment_comparison || workout.segment_analysis.planned_segments_count > 0,
+  );
+  const usableIntervalCount = intervalLikeWorkouts.filter((workout) => workout.verdict === "usable").length;
+  const fitMatchedCount = workouts.filter(
+    (workout) => workout.fit_detail_source.type === "workout_file_fit" && workout.fit_detail_source.match_status === "matched",
+  ).length;
+
+  const segmentAwareReady = usableIntervalCount >= 2;
+  const recommendation: SegmentAuditReport["recommendation"] = segmentAwareReady
+    ? "segment_aware_ready"
+    : "needs_fit_or_parser";
+  const recommendationNote = segmentAwareReady
+    ? "Можно переходить к segment-aware анализу интервалов: есть минимум 2 пригодные interval key workouts."
+    : "Нужны Workout Files/FIT или доработка парсера: недостаточно пригодных interval key workouts с сегментами.";
+
+  return {
+    enabled: true,
+    summary: {
+      key_workouts_count: workouts.length,
+      segment_analysis_available_count: segmentAnalysisAvailableCount,
+      segment_comparison_available_count: segmentComparisonAvailableCount,
+      interval_key_workouts_count: intervalWorkouts.length,
+      interval_key_workouts_with_segments_count: intervalWithSegments.length,
+      fit_or_workout_files_coverage_hint: `${fitMatchedCount}/${workouts.length} key workouts with matched FIT`,
+    },
+    workouts: workouts.sort((a, b) => b.date.localeCompare(a.date)),
+    recommendation,
+    recommendation_note: recommendationNote,
+  };
+}
+
+function formatSegmentDataCell(workout: SegmentAuditReport["workouts"][number]): string {
+  const parts: string[] = [];
+  if (workout.has_segment_analysis) parts.push("analysis");
+  if (workout.has_segment_comparison) parts.push("comparison");
+  return parts.length ? parts.join("+") : "—";
+}
+
 function progressEvidencePositive(report: ProgressEvidenceReport | null): boolean {
   if (!report) return false;
   const interpretations = new Set([
@@ -1018,6 +1347,25 @@ function createMarkdown(report: RacePredictionReport): string {
   ) {
     lines.push("- Сверить прогноз с ощущениями спортсмена и планом старта.");
   }
+  if (report.segment_audit) {
+    const audit = report.segment_audit;
+    lines.push("");
+    lines.push("## Segment audit");
+    lines.push("| Date | Workout | Role | Segment data | Compared | Verdict |");
+    lines.push("|---|---|---|---:|---:|---|");
+    for (const workout of audit.workouts) {
+      lines.push(
+        `| ${workout.date} | ${workout.title ?? "—"} | ${workout.role} | ${formatSegmentDataCell(workout)} | ${workout.compared_segments_count} | ${workout.verdict} |`,
+      );
+    }
+    lines.push("");
+    const recommendationText =
+      audit.recommendation === "segment_aware_ready"
+        ? "Можно переходить к segment-aware анализу интервалов"
+        : "Нужны Workout Files/FIT или доработка парсера";
+    lines.push(`**Рекомендация:** ${recommendationText}`);
+    lines.push(`- ${audit.recommendation_note}`);
+  }
   lines.push("");
   lines.push("## Рекомендация по тактике");
   lines.push(
@@ -1080,6 +1428,7 @@ async function main(): Promise<void> {
   const weeklyVolume: RacePredictionReport["features"]["weekly_volume"] = [];
   const longRuns: RacePredictionReport["features"]["long_runs"] = [];
   const keyWorkouts: RacePredictionReport["features"]["key_workouts"] = [];
+  const rawKeyWorkoutCaptures: RawKeyWorkoutCapture[] = [];
   const completionRates: number[] = [];
   const dataWarnings = new Set<string>();
   let missedWorkouts = 0;
@@ -1132,6 +1481,13 @@ async function main(): Promise<void> {
               : null,
           pace_text: workout.avg_pace_text ?? (workout.avg_pace_min_per_km ? formatPaceText(workout.avg_pace_min_per_km) : null),
           week: entry.week,
+        });
+        rawKeyWorkoutCaptures.push({
+          date: workout.date,
+          title: workout.title,
+          role: keyCategory,
+          week: entry.week,
+          workout,
         });
       }
     }
@@ -1222,6 +1578,10 @@ async function main(): Promise<void> {
   const reportJsonPath = path.join(outputDir, "report.json");
   const reportMdPath = path.join(outputDir, "report.md");
 
+  const segmentAudit = args.segmentAudit
+    ? buildSegmentAudit(rawKeyWorkoutCaptures, args.segmentAuditJson)
+    : undefined;
+
   const report: RacePredictionReport = {
     schema_version: "race-prediction.v1",
     run_at: runAt,
@@ -1296,6 +1656,7 @@ async function main(): Promise<void> {
       report_json: reportJsonPath,
       report_md: reportMdPath,
     },
+    ...(segmentAudit ? { segment_audit: segmentAudit } : {}),
   };
 
   await writeFile(reportJsonPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
@@ -1320,6 +1681,18 @@ async function main(): Promise<void> {
     `prediction_range: conservative ${prediction.conservative.time_text} | likely ${prediction.likely.time_text} | optimistic ${prediction.optimistic.time_text}`,
   );
   console.log(`confidence: ${prediction.confidence} (${prediction.confidence_score}/100)`);
+  if (segmentAudit) {
+    console.log("[tp-race-prediction-probe] Segment audit");
+    console.log(`key_workouts_count: ${segmentAudit.summary.key_workouts_count}`);
+    console.log(`segment_analysis_available_count: ${segmentAudit.summary.segment_analysis_available_count}`);
+    console.log(`segment_comparison_available_count: ${segmentAudit.summary.segment_comparison_available_count}`);
+    console.log(`interval_key_workouts_count: ${segmentAudit.summary.interval_key_workouts_count}`);
+    console.log(
+      `interval_key_workouts_with_segments_count: ${segmentAudit.summary.interval_key_workouts_with_segments_count}`,
+    );
+    console.log(`recommendation: ${segmentAudit.recommendation}`);
+    console.log(`recommendation_note: ${segmentAudit.recommendation_note}`);
+  }
   console.log(`report_json: ${reportJsonPath}`);
   console.log(`report_md: ${reportMdPath}`);
 }
