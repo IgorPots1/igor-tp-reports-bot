@@ -48,6 +48,11 @@ const DISTANCE_PRESETS: Record<DistanceKey, DistancePreset> = {
   marathon: { label: "42.2 км", target_km: 42.195, min_km: 41.0, max_km: 43.0 },
 };
 
+/** Below this distance (km), add a short-course coach note in summaries. */
+const SHORT_COURSE_NOTE_THRESHOLD_KM: Partial<Record<DistanceKey, number>> = {
+  "5k": 4.85,
+};
+
 type CliArgs = {
   from: string;
   to: string;
@@ -138,6 +143,12 @@ type ResultCandidate = {
   rationale?: string;
 };
 
+type CandidateResultSummary = {
+  official_best: ResultCandidate | null;
+  probable_or_possible_best: ResultCandidate | null;
+  clean_training_best: ResultCandidate | null;
+};
+
 type DistanceBucketReport = {
   label: string;
   distance_window: DistanceWindow;
@@ -145,6 +156,8 @@ type DistanceBucketReport = {
   official_best: ResultCandidate | null;
   official_flagged: ResultCandidate | null;
   probable_best: ResultCandidate | null;
+  probable_or_possible_best: ResultCandidate | null;
+  candidate_result_summary: CandidateResultSummary;
   clean_training_best: ResultCandidate | null;
   clean_training_best_needs_review: boolean;
   display_candidates: ResultCandidate[];
@@ -1104,6 +1117,49 @@ function hasPerfectCleanTrainingProfile(candidate: ResultCandidate): boolean {
   return true;
 }
 
+function selectPossibleResultBest(candidates: ResultCandidate[]): ResultCandidate | null {
+  return (
+    candidates.find(
+      (candidate) =>
+        candidate.result_status === "possible_result" && candidate.data_quality_status !== "excluded",
+    ) ?? null
+  );
+}
+
+function selectProbableOrPossibleBest(input: {
+  probable_best: ResultCandidate | null;
+  candidates: ResultCandidate[];
+}): ResultCandidate | null {
+  if (input.probable_best) return input.probable_best;
+  return selectPossibleResultBest(input.candidates);
+}
+
+function displayCandidateRank(candidate: ResultCandidate): number {
+  if (candidate.display_class === "official_best" || candidate.display_class === "official_flagged") {
+    return 0;
+  }
+  if (
+    candidate.result_status === "probable_result" ||
+    candidate.result_status === "needs_coach_review" ||
+    candidate.result_status === "possible_result"
+  ) {
+    return 1;
+  }
+  if (candidate.display_class === "clean_training_best") return 2;
+  if (candidate.result_status === "excluded") return 4;
+  return 3;
+}
+
+function sortDisplayCandidates(candidates: ResultCandidate[]): ResultCandidate[] {
+  return [...candidates].sort((a, b) => {
+    const rankDelta = displayCandidateRank(a) - displayCandidateRank(b);
+    if (rankDelta !== 0) return rankDelta;
+    const paceDelta = a.pace_min_per_km - b.pace_min_per_km;
+    if (paceDelta !== 0) return paceDelta;
+    return a.date.localeCompare(b.date) || a.workoutId - b.workoutId;
+  });
+}
+
 function selectCleanTrainingBest(candidates: ResultCandidate[]): {
   best: ResultCandidate | null;
   needsReview: boolean;
@@ -1137,6 +1193,7 @@ function applyDataQualityToBucket(input: {
   official_best: ResultCandidate | null;
   official_flagged: ResultCandidate | null;
   probable_best: ResultCandidate | null;
+  probable_or_possible_best: ResultCandidate | null;
   clean_training_best: ResultCandidate | null;
   clean_training_best_needs_review: boolean;
   display_candidates: ResultCandidate[];
@@ -1183,6 +1240,10 @@ function applyDataQualityToBucket(input: {
         (candidate.result_status === "probable_result" || candidate.result_status === "needs_coach_review") &&
         candidate.data_quality_status !== "excluded",
     ) ?? null;
+  const probable_or_possible_best = selectProbableOrPossibleBest({
+    probable_best,
+    candidates: enriched,
+  });
   const cleanTrainingSelection = selectCleanTrainingBest(enriched);
   const clean_training_best = cleanTrainingSelection.best;
   const clean_training_best_needs_review = cleanTrainingSelection.needsReview;
@@ -1208,14 +1269,17 @@ function applyDataQualityToBucket(input: {
         ) ?? clean_training_best
       : null;
 
-  const displayCandidates = dedupeCandidates(
-    [
-      official_best,
-      official_flagged,
-      probable_best,
-      cleanTrainingBestForDisplay,
-      ...enrichedWithDisplayClass.filter((candidate) => shouldIncludeInDisplay(candidate)),
-    ].filter((candidate): candidate is ResultCandidate => candidate !== null),
+  const displayCandidates = sortDisplayCandidates(
+    dedupeCandidates(
+      [
+        official_best,
+        official_flagged,
+        probable_best,
+        probable_or_possible_best,
+        cleanTrainingBestForDisplay,
+        ...enrichedWithDisplayClass.filter((candidate) => shouldIncludeInDisplay(candidate)),
+      ].filter((candidate): candidate is ResultCandidate => candidate !== null),
+    ),
   ).slice(0, DISPLAY_CANDIDATE_LIMIT);
 
   const best_result = official_best ?? probable_best ?? clean_training_best ?? null;
@@ -1233,6 +1297,7 @@ function applyDataQualityToBucket(input: {
     official_best,
     official_flagged,
     probable_best,
+    probable_or_possible_best,
     clean_training_best: cleanTrainingBestForDisplay,
     clean_training_best_needs_review,
     display_candidates: displayCandidates,
@@ -1441,15 +1506,59 @@ function formatManualReviewEventCell(candidate: ManualReviewCandidate): string {
   return `${candidate.event_name}${distance}`;
 }
 
+function mentionsTriathlonContext(candidate: ResultCandidate): boolean {
+  const parts = [
+    candidate.title,
+    candidate.event_name,
+    ...(candidate.race_signals ?? []),
+    candidate.rationale,
+  ];
+  const blob = parts.filter(Boolean).join(" ").toLowerCase();
+  return /\b(triathlon|триатлон)\b/i.test(blob);
+}
+
+function formatShortCourseNote(candidate: ResultCandidate): string | null {
+  const thresholdKm = SHORT_COURSE_NOTE_THRESHOLD_KM[candidate.distance_bucket];
+  if (thresholdKm === undefined || candidate.distance_km >= thresholdKm) return null;
+  const targetLabel = DISTANCE_PRESETS[candidate.distance_bucket].label;
+  const triathlonHint = mentionsTriathlonContext(candidate) ? " / триатлон" : "";
+  return `дистанция короче ${targetLabel}, проверить контекст${triathlonHint}`;
+}
+
+function formatCandidateResultStatusNote(candidate: ResultCandidate): string | null {
+  switch (candidate.result_status) {
+    case "probable_result":
+      return null;
+    case "needs_coach_review":
+      return "проверить";
+    case "possible_result":
+      return "возможный результат / проверить";
+    default:
+      return null;
+  }
+}
+
 function formatSummaryCell(candidate: ResultCandidate | null | undefined, emptyLabel = "Нет данных"): string {
   if (!candidate) return emptyLabel;
-  return `${candidate.date} — ${candidate.distance_km} км / ${candidate.duration_text} — ${candidate.pace_text}`;
+  const base = `${candidate.date} — ${candidate.distance_km} км / ${candidate.duration_text} — ${candidate.pace_text}`;
+  const notes = [
+    formatCandidateResultStatusNote(candidate),
+    formatShortCourseNote(candidate),
+  ].filter((note): note is string => Boolean(note));
+  if (!notes.length) return base;
+  return `${base} — ${notes.join("; ")}`;
 }
 
 function formatSummaryNotes(bucket: DistanceBucketReport | undefined): string {
   if (!bucket) return "Нет данных";
   const notes: string[] = [];
   if (bucket.official_flagged) notes.push("Официальный старт с предупреждениями по данным");
+  if (
+    bucket.probable_or_possible_best?.result_status === "possible_result" &&
+    !bucket.probable_best
+  ) {
+    notes.push("Возможный результат без официального старта");
+  }
   if (bucket.probable_best?.result_status === "needs_coach_review") notes.push("Нужна проверка тренером");
   if (bucket.clean_training_best_needs_review) notes.push("Тренировочный ориентир требует проверки");
   const excludedCount = bucket.candidates.filter((candidate) => candidate.result_status === "excluded").length;
@@ -1650,13 +1759,13 @@ function createMarkdown(report: ProbeReport): string {
 
   lines.push("## Лучшие результаты по дистанциям");
   lines.push(
-    "| Дистанция | Официальный старт | Вероятный результат / проверить | Тренировочный ориентир | Заметки |",
+    "| Дистанция | Официальный старт | Кандидат на результат / проверить | Тренировочный ориентир | Заметки |",
   );
   lines.push("| --- | --- | --- | --- | --- |");
   for (const key of report.target_distances) {
     const bucket = report.distance_results[key];
     lines.push(
-      `| ${bucket?.label ?? key} | ${formatSummaryCell(bucket?.official_best, "Нет данных")} | ${formatSummaryCell(bucket?.probable_best, "Нет данных")} | ${formatSummaryCell(bucket?.clean_training_best, "Нет данных")} | ${formatSummaryNotes(bucket)} |`,
+      `| ${bucket?.label ?? key} | ${formatSummaryCell(bucket?.official_best, "Нет данных")} | ${formatSummaryCell(bucket?.probable_or_possible_best, "Нет данных")} | ${formatSummaryCell(bucket?.clean_training_best, "Нет данных")} | ${formatSummaryNotes(bucket)} |`,
     );
   }
   lines.push("");
@@ -1693,7 +1802,10 @@ function createMarkdown(report: ProbeReport): string {
       lines.push("| --- | --- | ---: | ---: | --- | --- | --- | --- |");
       for (const row of bucket.display_candidates) {
         const raceReasons = row.reasons.filter((reason) => reason.startsWith("race_signal:"));
-        const noteText = row.rationale ?? (raceReasons.join(", ") || "—");
+        const noteParts = [row.rationale ?? (raceReasons.join(", ") || null), formatShortCourseNote(row)].filter(
+          (part): part is string => Boolean(part),
+        );
+        const noteText = noteParts.length ? noteParts.join("; ") : "—";
         lines.push(
           `| ${row.date} | ${row.day_of_week ?? "—"} | ${formatResultLine(row)} | ${row.pace_text} | ${formatDisplayLabel(row)} | ${formatEventCell(row)} | ${formatDataQualityStatus(row)} | ${noteText} |`,
         );
@@ -1950,6 +2062,12 @@ async function main(): Promise<void> {
         official_best: qualityBucket.official_best,
         official_flagged: qualityBucket.official_flagged,
         probable_best: qualityBucket.probable_best,
+        probable_or_possible_best: qualityBucket.probable_or_possible_best,
+        candidate_result_summary: {
+          official_best: qualityBucket.official_best,
+          probable_or_possible_best: qualityBucket.probable_or_possible_best,
+          clean_training_best: qualityBucket.clean_training_best,
+        },
         clean_training_best: qualityBucket.clean_training_best,
         clean_training_best_needs_review: qualityBucket.clean_training_best_needs_review,
         display_candidates: qualityBucket.display_candidates,
@@ -2123,6 +2241,13 @@ async function main(): Promise<void> {
         );
       } else {
         console.log(`probable_best_${key}: none`);
+      }
+      if (bucket?.probable_or_possible_best) {
+        console.log(
+          `candidate_result_${key}: ${bucket.probable_or_possible_best.date} | ${bucket.probable_or_possible_best.title ?? "untitled"} | ${bucket.probable_or_possible_best.distance_km} km | pace ${bucket.probable_or_possible_best.pace_text} | status ${bucket.probable_or_possible_best.result_status} | ${formatSummaryCell(bucket.probable_or_possible_best)}`,
+        );
+      } else {
+        console.log(`candidate_result_${key}: none`);
       }
       if (bucket?.clean_training_best) {
         console.log(
