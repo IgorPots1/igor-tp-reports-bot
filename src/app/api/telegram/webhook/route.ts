@@ -13,6 +13,10 @@ import {
   isTrainingPeaksCallback,
   isTrainingPeaksCommand,
 } from "@/features/telegram/trainingpeaks";
+import {
+  handleTrainingPeaksContextObserverMessage,
+  isTrainingPeaksContextObserverEnabled,
+} from "@/features/trainingpeaks/context-observer";
 import { handleTrainingPeaksGroupProbe } from "@/features/trainingpeaks/group-probe";
 import type { TelegramMessage, TelegramUpdate } from "@/features/telegram/types";
 
@@ -207,6 +211,22 @@ export async function POST(request: Request) {
   }
 
   const rawMessage = update.message;
+  const observerEnabled = isTrainingPeaksContextObserverEnabled();
+
+  if (rawMessage && observerEnabled) {
+    try {
+      const observerResult = await handleTrainingPeaksContextObserverMessage(rawMessage);
+      if (observerResult.handled) {
+        return okResponse();
+      }
+    } catch (error) {
+      console.warn("TrainingPeaks context observer failed", {
+        chatId: rawMessage.chat.id,
+        messageId: rawMessage.message_id,
+        error,
+      });
+    }
+  }
 
   if (rawMessage && isTelegramGroupChat(rawMessage) && !getTelegramMessageTextOrCaption(rawMessage).startsWith("/")) {
     try {

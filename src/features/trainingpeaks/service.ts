@@ -18,6 +18,7 @@ import {
   getTrainingPeaksWeeklyReportForStudentWeek,
   getTrainingPeaksJobById,
   getTrainingPeaksBusinessChatById,
+  getTrainingPeaksStudentThreadByChatThread as getTrainingPeaksStudentThreadByChatThreadFromRepository,
   getTrainingPeaksStudentById as getTrainingPeaksStudentByIdFromRepository,
   getTrainingPeaksStudentByStudentId as getTrainingPeaksStudentByStudentIdFromRepository,
   getTrainingPeaksStudentByTelegramChatId as getTrainingPeaksStudentByTelegramChatIdFromRepository,
@@ -25,6 +26,7 @@ import {
   recoverStaleTrainingPeaksRunningJobs,
   recoverStaleTrainingPeaksRunningRaceScanJobs,
   insertTrainingPeaksStudent,
+  insertTrainingPeaksStudentThread,
   insertTrainingPeaksStudentTelegramLinkCode,
   linkTrainingPeaksStudentToBusinessChat as linkTrainingPeaksStudentToBusinessChatInRepository,
   listAllTrainingPeaksReports,
@@ -36,6 +38,7 @@ import {
   listLatestTrainingPeaksActionRunsByActionIds,
   listTrainingPeaksStudents,
   listTrainingPeaksStudentsIncludingArchived,
+  listTrainingPeaksStudentThreads as listTrainingPeaksStudentThreadsFromRepository,
   listTrainingPeaksWeeklyReportEligibleStudents as listTrainingPeaksWeeklyReportEligibleStudentsFromRepository,
   listTrainingPeaksWorkoutCacheForDateRange,
   listTrainingPeaksWorkoutCacheScanStatusesForRange,
@@ -65,8 +68,11 @@ import {
   TrainingPeaksStudentConflictError,
   type TrainingPeaksJob,
   type TrainingPeaksStudent,
+  type TrainingPeaksStudentThread,
+  TrainingPeaksStudentThreadConflictError,
   type TrainingPeaksWeek,
   type TrainingPeaksWeeklyReport,
+  deleteTrainingPeaksStudentThreadById,
   unlinkTrainingPeaksStudentTelegramById,
   upsertTrainingPeaksBusinessChatFromMessage as upsertTrainingPeaksBusinessChatFromMessageInRepository,
   type UpdateTrainingPeaksStudentTelegramContactInput,
@@ -76,6 +82,7 @@ import {
   type UpdateTrainingPeaksWeeklyReportReviewStateInput,
   updateTrainingPeaksStudentTelegramContact as updateTrainingPeaksStudentTelegramContactInRepository,
   updateTrainingPeaksStudentTelegramContactById,
+  updateTrainingPeaksStudentThreadById,
   updateTrainingPeaksWeeklyReportContentById,
   updateTrainingPeaksWeeklyReportReviewState as updateTrainingPeaksWeeklyReportReviewStateInRepository,
   updateTrainingPeaksWeeklyReportStateById,
@@ -305,6 +312,55 @@ export type TrainingPeaksActionWithStudentSnapshot = TrainingPeaksActionWithStud
 
 export type TrainingPeaksBusinessChatSnapshot = TrainingPeaksBusinessChat;
 export type TrainingPeaksStudentTelegramLinkCodeSnapshot = TrainingPeaksStudentTelegramLinkCode;
+export type TrainingPeaksStudentThreadSnapshot = TrainingPeaksStudentThread;
+
+export type LinkTrainingPeaksStudentThreadResult =
+  | {
+      ok: true;
+      kind: "linked" | "already_linked";
+      thread: TrainingPeaksStudentThreadSnapshot;
+      student: TrainingPeaksRegistryStudentSnapshot;
+    }
+  | { ok: false; reason: "student_not_found" | "student_archived" | "student_inactive"; message: string }
+  | {
+      ok: false;
+      reason: "student_ambiguous";
+      message: string;
+      matches: { studentId: string; studentName: string }[];
+    }
+  | {
+      ok: false;
+      reason: "linked_to_other_student";
+      message: string;
+      thread: TrainingPeaksStudentThreadSnapshot;
+      existingStudent: TrainingPeaksRegistryStudentSnapshot | null;
+    };
+
+export type UnlinkTrainingPeaksStudentThreadResult =
+  | {
+      ok: true;
+      thread: TrainingPeaksStudentThreadSnapshot;
+      student: TrainingPeaksRegistryStudentSnapshot | null;
+    }
+  | { ok: false; reason: "not_linked"; message: string };
+
+export type TrainingPeaksThreadInfo =
+  | {
+      linked: false;
+      chatId: string;
+      messageThreadId: number;
+      chatTitle: string | null;
+      threadTitle: string | null;
+    }
+  | {
+      linked: true;
+      chatId: string;
+      messageThreadId: number;
+      chatTitle: string | null;
+      threadTitle: string | null;
+      thread: TrainingPeaksStudentThreadSnapshot;
+      student: TrainingPeaksRegistryStudentSnapshot | null;
+    };
 
 export type ConsumeTrainingPeaksStudentTelegramLinkCodeResult =
   | { kind: "no_candidate" }
@@ -2923,6 +2979,228 @@ export async function getTrainingPeaksStudentByStudentId(
   studentId: string
 ): Promise<TrainingPeaksStudent | null> {
   return getTrainingPeaksStudentByStudentIdFromRepository(studentId);
+}
+
+export async function listStudentThreads(
+  studentId: string
+): Promise<TrainingPeaksStudentThreadSnapshot[]> {
+  return listTrainingPeaksStudentThreadsFromRepository(studentId);
+}
+
+export async function getTrainingPeaksStudentThreadByChatThread(
+  telegramChatId: string,
+  telegramMessageThreadId: number
+): Promise<TrainingPeaksStudentThreadSnapshot | null> {
+  return getTrainingPeaksStudentThreadByChatThreadFromRepository(
+    telegramChatId,
+    telegramMessageThreadId
+  );
+}
+
+export async function getTrainingPeaksThreadInfo(input: {
+  telegramChatId: string;
+  telegramMessageThreadId: number;
+  chatTitle?: string | null;
+  threadTitle?: string | null;
+}): Promise<TrainingPeaksThreadInfo> {
+  const thread = await getTrainingPeaksStudentThreadByChatThreadFromRepository(
+    input.telegramChatId,
+    input.telegramMessageThreadId
+  );
+
+  if (!thread) {
+    return {
+      linked: false,
+      chatId: input.telegramChatId,
+      messageThreadId: input.telegramMessageThreadId,
+      chatTitle: input.chatTitle ?? null,
+      threadTitle: input.threadTitle ?? null,
+    };
+  }
+
+  const student = await getTrainingPeaksRegistryStudentByInternalId(thread.studentId, {
+    includeArchived: true,
+  });
+
+  return {
+    linked: true,
+    chatId: thread.telegramChatId,
+    messageThreadId: thread.telegramMessageThreadId,
+    chatTitle: thread.chatTitle ?? input.chatTitle ?? null,
+    threadTitle: thread.threadTitle ?? input.threadTitle ?? null,
+    thread,
+    student,
+  };
+}
+
+export async function linkTrainingPeaksStudentThread(input: {
+  studentQuery: string;
+  telegramChatId: string;
+  telegramMessageThreadId: number;
+  chatTitle?: string | null;
+  threadTitle?: string | null;
+  linkedByUserId: string;
+}): Promise<LinkTrainingPeaksStudentThreadResult> {
+  const match = await resolveTrainingPeaksRegistryStudent(input.studentQuery);
+
+  if (match.kind === "not_found") {
+    return {
+      ok: false,
+      reason: "student_not_found",
+      message: `Ученик "${input.studentQuery}" не найден.\nПосмотри список: /tp_students`,
+    };
+  }
+
+  if (match.kind === "ambiguous") {
+    return {
+      ok: false,
+      reason: "student_ambiguous",
+      message: `Нашлось несколько учеников: ${match.matches.map((entry) => entry.studentName).join(", ")}. Уточни имя или slug.`,
+      matches: match.matches,
+    };
+  }
+
+  if (match.student.archivedAt) {
+    return {
+      ok: false,
+      reason: "student_archived",
+      message: "Нельзя привязать тему к архивному ученику.",
+    };
+  }
+
+  if (!match.student.isActive) {
+    return {
+      ok: false,
+      reason: "student_inactive",
+      message: "Нельзя привязать тему к неактивному ученику.",
+    };
+  }
+
+  const existingThread = await getTrainingPeaksStudentThreadByChatThreadFromRepository(
+    input.telegramChatId,
+    input.telegramMessageThreadId
+  );
+
+  if (existingThread) {
+    if (existingThread.studentId !== match.student.id) {
+      const existingStudent = await getTrainingPeaksRegistryStudentByInternalId(existingThread.studentId, {
+        includeArchived: true,
+      });
+
+      return {
+        ok: false,
+        reason: "linked_to_other_student",
+        message: "Эта тема уже привязана к другому ученику. Сначала отправь /tp_unlink_thread в этой теме.",
+        thread: existingThread,
+        existingStudent,
+      };
+    }
+
+    const updatedThread =
+      (await updateTrainingPeaksStudentThreadById(existingThread.id, {
+        chatTitle: input.chatTitle ?? null,
+        threadTitle: input.threadTitle ?? null,
+        linkedByUserId: input.linkedByUserId,
+      })) ?? existingThread;
+
+    return {
+      ok: true,
+      kind: "already_linked",
+      thread: updatedThread,
+      student: match.student,
+    };
+  }
+
+  try {
+    const thread = await insertTrainingPeaksStudentThread({
+      studentId: match.student.id,
+      telegramChatId: input.telegramChatId,
+      telegramMessageThreadId: input.telegramMessageThreadId,
+      chatTitle: input.chatTitle ?? null,
+      threadTitle: input.threadTitle ?? null,
+      linkedByUserId: input.linkedByUserId,
+    });
+
+    return {
+      ok: true,
+      kind: "linked",
+      thread,
+      student: match.student,
+    };
+  } catch (error) {
+    if (error instanceof TrainingPeaksStudentThreadConflictError) {
+      const conflictedThread = await getTrainingPeaksStudentThreadByChatThreadFromRepository(
+        input.telegramChatId,
+        input.telegramMessageThreadId
+      );
+
+      if (conflictedThread?.studentId === match.student.id) {
+        return {
+          ok: true,
+          kind: "already_linked",
+          thread: conflictedThread,
+          student: match.student,
+        };
+      }
+
+      const existingStudent = conflictedThread
+        ? await getTrainingPeaksRegistryStudentByInternalId(conflictedThread.studentId, {
+            includeArchived: true,
+          })
+        : null;
+
+      return {
+        ok: false,
+        reason: "linked_to_other_student",
+        message: "Эта тема уже привязана к другому ученику. Сначала отправь /tp_unlink_thread в этой теме.",
+        thread:
+          conflictedThread ??
+          ({
+            id: "",
+            studentId: "",
+            telegramChatId: input.telegramChatId,
+            telegramMessageThreadId: input.telegramMessageThreadId,
+            chatTitle: input.chatTitle ?? null,
+            threadTitle: input.threadTitle ?? null,
+            linkedByUserId: input.linkedByUserId,
+            createdAt: "",
+            updatedAt: "",
+          } satisfies TrainingPeaksStudentThreadSnapshot),
+        existingStudent,
+      };
+    }
+
+    throw error;
+  }
+}
+
+export async function unlinkTrainingPeaksStudentThread(input: {
+  telegramChatId: string;
+  telegramMessageThreadId: number;
+}): Promise<UnlinkTrainingPeaksStudentThreadResult> {
+  const existingThread = await getTrainingPeaksStudentThreadByChatThreadFromRepository(
+    input.telegramChatId,
+    input.telegramMessageThreadId
+  );
+
+  if (!existingThread) {
+    return {
+      ok: false,
+      reason: "not_linked",
+      message: "Эта тема пока не привязана.",
+    };
+  }
+
+  const student = await getTrainingPeaksRegistryStudentByInternalId(existingThread.studentId, {
+    includeArchived: true,
+  });
+  const deletedThread = await deleteTrainingPeaksStudentThreadById(existingThread.id);
+
+  return {
+    ok: true,
+    thread: deletedThread ?? existingThread,
+    student,
+  };
 }
 
 export async function disableTrainingPeaksStudent(

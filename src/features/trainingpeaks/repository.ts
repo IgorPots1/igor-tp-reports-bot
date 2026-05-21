@@ -18,6 +18,18 @@ export type TrainingPeaksStudent = {
   updatedAt: string;
 };
 
+export type TrainingPeaksStudentThread = {
+  id: string;
+  studentId: string;
+  telegramChatId: string;
+  telegramMessageThreadId: number;
+  chatTitle: string | null;
+  threadTitle: string | null;
+  linkedByUserId: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type TrainingPeaksStudentRow = {
   id: string;
   student_id: string;
@@ -32,6 +44,18 @@ type TrainingPeaksStudentRow = {
   telegram_delivery_enabled: boolean;
   data_quality_status: string | null;
   notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type TrainingPeaksStudentThreadRow = {
+  id: string;
+  student_id: string;
+  telegram_chat_id: string;
+  telegram_message_thread_id: number;
+  chat_title: string | null;
+  thread_title: string | null;
+  linked_by_user_id: string;
   created_at: string;
   updated_at: string;
 };
@@ -71,6 +95,13 @@ export class TrainingPeaksStudentConflictError extends Error {
     super(`TrainingPeaks student already exists for ${reason}`);
     this.name = "TrainingPeaksStudentConflictError";
     this.reason = reason;
+  }
+}
+
+export class TrainingPeaksStudentThreadConflictError extends Error {
+  constructor() {
+    super("TrainingPeaks student thread already exists");
+    this.name = "TrainingPeaksStudentThreadConflictError";
   }
 }
 
@@ -860,6 +891,22 @@ function mapTrainingPeaksStudentRow(row: TrainingPeaksStudentRow): TrainingPeaks
     telegramDeliveryEnabled: row.telegram_delivery_enabled,
     dataQualityStatus: row.data_quality_status,
     notes: row.notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapTrainingPeaksStudentThreadRow(
+  row: TrainingPeaksStudentThreadRow
+): TrainingPeaksStudentThread {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    telegramChatId: row.telegram_chat_id,
+    telegramMessageThreadId: row.telegram_message_thread_id,
+    chatTitle: row.chat_title,
+    threadTitle: row.thread_title,
+    linkedByUserId: row.linked_by_user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1887,6 +1934,148 @@ export async function getTrainingPeaksStudentByTelegramUsername(
   }
 
   return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
+}
+
+export async function listTrainingPeaksStudentThreads(
+  studentId: string
+): Promise<TrainingPeaksStudentThread[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_threads")
+    .select("*")
+    .eq("student_id", studentId)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw new Error(`Failed to list TrainingPeaks student threads for ${studentId}: ${error.message}`);
+  }
+
+  return ((data as TrainingPeaksStudentThreadRow[]) ?? []).map(mapTrainingPeaksStudentThreadRow);
+}
+
+export async function getTrainingPeaksStudentThreadByChatThread(
+  telegramChatId: string,
+  telegramMessageThreadId: number
+): Promise<TrainingPeaksStudentThread | null> {
+  const normalizedChatId = telegramChatId.trim();
+
+  if (!normalizedChatId) {
+    return null;
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_threads")
+    .select("*")
+    .eq("telegram_chat_id", normalizedChatId)
+    .eq("telegram_message_thread_id", telegramMessageThreadId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to get TrainingPeaks student thread ${normalizedChatId}/${telegramMessageThreadId}: ${error.message}`
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksStudentThreadRow(data as TrainingPeaksStudentThreadRow);
+}
+
+export async function insertTrainingPeaksStudentThread(input: {
+  studentId: string;
+  telegramChatId: string;
+  telegramMessageThreadId: number;
+  chatTitle?: string | null;
+  threadTitle?: string | null;
+  linkedByUserId: string;
+}): Promise<TrainingPeaksStudentThread> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_threads")
+    .insert({
+      student_id: input.studentId,
+      telegram_chat_id: input.telegramChatId,
+      telegram_message_thread_id: input.telegramMessageThreadId,
+      chat_title: input.chatTitle ?? null,
+      thread_title: input.threadTitle ?? null,
+      linked_by_user_id: input.linkedByUserId,
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    if (error.code === "23505") {
+      throw new TrainingPeaksStudentThreadConflictError();
+    }
+    throw new Error(`Failed to insert TrainingPeaks student thread: ${error.message}`);
+  }
+
+  return mapTrainingPeaksStudentThreadRow(data as TrainingPeaksStudentThreadRow);
+}
+
+export async function updateTrainingPeaksStudentThreadById(
+  id: string,
+  input: {
+    chatTitle?: string | null;
+    threadTitle?: string | null;
+    linkedByUserId?: string;
+  }
+): Promise<TrainingPeaksStudentThread | null> {
+  const updates = pickDefinedValues({
+    chat_title: input.chatTitle,
+    thread_title: input.threadTitle,
+    linked_by_user_id: input.linkedByUserId,
+  });
+
+  if (Object.keys(updates).length === 0) {
+    const supabase = createSupabaseServerClient();
+    const { data, error } = await supabase
+      .from("trainingpeaks_student_threads")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to get TrainingPeaks student thread ${id}: ${error.message}`);
+    }
+
+    return data ? mapTrainingPeaksStudentThreadRow(data as TrainingPeaksStudentThreadRow) : null;
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_threads")
+    .update(updates)
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to update TrainingPeaks student thread ${id}: ${error.message}`);
+  }
+
+  return data ? mapTrainingPeaksStudentThreadRow(data as TrainingPeaksStudentThreadRow) : null;
+}
+
+export async function deleteTrainingPeaksStudentThreadById(
+  id: string
+): Promise<TrainingPeaksStudentThread | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_threads")
+    .delete()
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to delete TrainingPeaks student thread ${id}: ${error.message}`);
+  }
+
+  return data ? mapTrainingPeaksStudentThreadRow(data as TrainingPeaksStudentThreadRow) : null;
 }
 
 export async function upsertTrainingPeaksBusinessChatFromMessage(

@@ -4,12 +4,14 @@ export type ParsedTelegramMessageUpdate = {
   kind: "message";
   updateId: number;
   chatId: number;
+  chatTitle: string | null;
   userId: number | null;
   username: string | null;
   text: string | null;
   messageId: number;
   isTopicMessage: boolean | null;
   messageThreadId: number | null;
+  threadTitle: string | null;
 };
 
 export type ParsedTelegramCallbackUpdate = {
@@ -56,6 +58,7 @@ export function parseTelegramUpdate(
     kind: "message",
     updateId: update.update_id,
     chatId: message.chat.id,
+    chatTitle: message.chat.title ?? null,
     userId: message.from?.id ?? null,
     username: message.from?.username ?? null,
     text,
@@ -66,5 +69,6 @@ export function parseTelegramUpdate(
       typeof message.message_thread_id === "number" && Number.isFinite(message.message_thread_id)
         ? message.message_thread_id
         : null,
+    threadTitle: message.forum_topic_created?.name ?? message.forum_topic_edited?.name ?? null,
   };
 }

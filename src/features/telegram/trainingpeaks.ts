@@ -26,7 +26,9 @@ import {
   getTrainingPeaksStudentCardByInternalId,
   getTrainingPeaksStudentById,
   getTrainingPeaksStudentsRegistryWithLatestReportStatus,
+  getTrainingPeaksThreadInfo,
   getTrainingPeaksWeeklyReportByInternalId,
+  linkTrainingPeaksStudentThread,
   linkTrainingPeaksStudentToBusinessChat,
   listRecentTrainingPeaksBusinessChats,
   rejectTrainingPeaksAction,
@@ -41,6 +43,7 @@ import {
   requestTrainingPeaksWeeklyRunForStudentByInternalId,
   requestTrainingPeaksRaceScan,
   type RequestTrainingPeaksWeeklyRunForStudentResult,
+  unlinkTrainingPeaksStudentThread,
   updateTrainingPeaksWeeklyReportStateByInternalId,
   updateTrainingPeaksStudentTelegramContact,
   upsertTrainingPeaksBusinessChatFromMessage,
@@ -189,6 +192,9 @@ const TP_SET_TELEGRAM_COMMAND_PATTERN = /^\/tp_set_telegram(?:@\w+)?(?:\s+|$)/;
 const TP_BIND_COMMAND_PATTERN = /^\/tp_bind(?:@\w+)?(?:\s+|$)/;
 const TP_ACTIONS_COMMAND_PATTERN = /^\/tp_actions(?:@\w+)?(?:\s+|$)/;
 const TP_REPLY_DRAFT_COMMAND_PATTERN = /^\/tp_reply_draft(?:@\w+)?(?:\s+|$)/;
+const TP_LINK_THREAD_COMMAND_PATTERN = /^\/tp_link_thread(?:@\w+)?(?:\s+|$)/;
+const TP_THREAD_INFO_COMMAND_PATTERN = /^\/tp_thread_info(?:@\w+)?(?:\s+|$)/;
+const TP_UNLINK_THREAD_COMMAND_PATTERN = /^\/tp_unlink_thread(?:@\w+)?(?:\s+|$)/;
 const TP_COMMAND_PATTERN = /^\/tp(?:_[a-z0-9_]+)?(?:@\w+)?(?:\s+|$)/;
 const SHORT_DATE_FORMATTER = new Intl.DateTimeFormat("ru-RU", {
   day: "numeric",
@@ -228,6 +234,9 @@ type TrainingPeaksCommand =
   | "tp_bind"
   | "tp_actions"
   | "tp_reply_draft"
+  | "tp_link_thread"
+  | "tp_thread_info"
+  | "tp_unlink_thread"
   | "unknown";
 
 type TrainingPeaksWeek = {
@@ -452,6 +461,18 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
 
   if (TP_REPLY_DRAFT_COMMAND_PATTERN.test(text)) {
     return "tp_reply_draft";
+  }
+
+  if (TP_LINK_THREAD_COMMAND_PATTERN.test(text)) {
+    return "tp_link_thread";
+  }
+
+  if (TP_THREAD_INFO_COMMAND_PATTERN.test(text)) {
+    return "tp_thread_info";
+  }
+
+  if (TP_UNLINK_THREAD_COMMAND_PATTERN.test(text)) {
+    return "tp_unlink_thread";
   }
 
   if (TP_COMMAND_PATTERN.test(text)) {
@@ -1203,6 +1224,11 @@ function parseTpBindCommand(text: string): {
   };
 }
 
+function parseTpLinkThreadCommand(text: string): string | null {
+  const args = text.replace(TP_LINK_THREAD_COMMAND_PATTERN, "").trim();
+  return args || null;
+}
+
 function formatTpRunAliasMessage(message: string): string {
   return message.replaceAll("/tp_run_week", "/tp_run");
 }
@@ -1904,6 +1930,9 @@ export function getTrainingPeaksHelpLines(): string[] {
     "/tp_set_telegram — привязка Telegram вручную",
     "/tp_business_test — тест Business API",
     "/tp_cron_status — статус cron attention_digest",
+    "/tp_link_thread <ученик> — привязать текущую тему к ученику",
+    "/tp_thread_info — показать привязку текущей темы",
+    "/tp_unlink_thread — отвязать текущую тему",
   ];
 }
 
@@ -5516,6 +5545,186 @@ async function handleTrainingPeaksBind(
   );
 }
 
+function getTopicReplyOptions(parsedMessage: ParsedTelegramUpdate): { messageThreadId?: number } {
+  if (parsedMessage.kind !== "message") {
+    return {};
+  }
+
+  return parsedMessage.messageThreadId !== null
+    ? { messageThreadId: parsedMessage.messageThreadId }
+    : {};
+}
+
+function isMessageInsideTopic(parsedMessage: ParsedTelegramUpdate): parsedMessage is ParsedTelegramMessageUpdate {
+  return (
+    parsedMessage.kind === "message" &&
+    parsedMessage.isTopicMessage === true &&
+    parsedMessage.messageThreadId !== null
+  );
+}
+
+function formatThreadStudentLabel(student: { studentName: string; studentId: string } | null): string {
+  if (!student) {
+    return "unknown";
+  }
+
+  return student.studentId !== student.studentName
+    ? `${student.studentName} (${student.studentId})`
+    : student.studentName;
+}
+
+async function handleTrainingPeaksLinkThread(
+  parsedMessage: ParsedTelegramUpdate,
+  text: string
+): Promise<void> {
+  if (!isMessageInsideTopic(parsedMessage)) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "Отправь команду внутри темы ученика.");
+    return;
+  }
+
+  const studentQuery = parseTpLinkThreadCommand(text);
+
+  if (!studentQuery) {
+    await sendTrainingPeaksMessage(
+      parsedMessage.chatId,
+      "Напиши так: /tp_link_thread <ученик>",
+      getTopicReplyOptions(parsedMessage)
+    );
+    return;
+  }
+
+  const messageThreadId = parsedMessage.messageThreadId;
+  if (messageThreadId === null) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "Отправь команду внутри темы ученика.");
+    return;
+  }
+
+  const result = await linkTrainingPeaksStudentThread({
+    studentQuery,
+    telegramChatId: String(parsedMessage.chatId),
+    telegramMessageThreadId: messageThreadId,
+    chatTitle: parsedMessage.chatTitle,
+    threadTitle: parsedMessage.threadTitle,
+    linkedByUserId: String(parsedMessage.userId ?? parsedMessage.chatId),
+  });
+
+  if (!result.ok) {
+    if (result.reason === "student_ambiguous") {
+      await sendTrainingPeaksMessage(
+        parsedMessage.chatId,
+        formatStudentAmbiguityMessage(result.matches),
+        getTopicReplyOptions(parsedMessage)
+      );
+      return;
+    }
+
+    if (result.reason === "linked_to_other_student") {
+      const existingLabel = formatThreadStudentLabel(
+        result.existingStudent
+          ? {
+              studentId: result.existingStudent.studentId,
+              studentName: result.existingStudent.studentName,
+            }
+          : null
+      );
+      await sendTrainingPeaksMessage(
+        parsedMessage.chatId,
+        `${result.message}\nСейчас: ${existingLabel}`,
+        getTopicReplyOptions(parsedMessage)
+      );
+      return;
+    }
+
+    await sendTrainingPeaksMessage(parsedMessage.chatId, result.message, getTopicReplyOptions(parsedMessage));
+    return;
+  }
+
+  const confirmation =
+    result.kind === "already_linked"
+      ? `Тема уже привязана к ученику ${formatThreadStudentLabel(result.student)}.`
+      : `Тема привязана к ученику ${formatThreadStudentLabel(result.student)}.`;
+
+  await sendTrainingPeaksMessage(parsedMessage.chatId, confirmation, getTopicReplyOptions(parsedMessage));
+}
+
+async function handleTrainingPeaksThreadInfo(parsedMessage: ParsedTelegramUpdate): Promise<void> {
+  if (!isMessageInsideTopic(parsedMessage)) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "Отправь команду внутри темы ученика.");
+    return;
+  }
+
+  const messageThreadId = parsedMessage.messageThreadId;
+  if (messageThreadId === null) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "Отправь команду внутри темы ученика.");
+    return;
+  }
+
+  const info = await getTrainingPeaksThreadInfo({
+    telegramChatId: String(parsedMessage.chatId),
+    telegramMessageThreadId: messageThreadId,
+    chatTitle: parsedMessage.chatTitle,
+    threadTitle: parsedMessage.threadTitle,
+  });
+
+  const lines = [
+    "Thread info",
+    `chat.id: ${info.chatId}`,
+    `message_thread_id: ${info.messageThreadId}`,
+    `chat title: ${info.chatTitle ?? "—"}`,
+    `thread title: ${info.threadTitle ?? "—"}`,
+    `linked student: ${
+      info.linked
+        ? formatThreadStudentLabel(
+            info.student
+              ? {
+                  studentId: info.student.studentId,
+                  studentName: info.student.studentName,
+                }
+              : null
+          )
+        : "не привязана"
+    }`,
+  ];
+
+  await sendTrainingPeaksMessage(parsedMessage.chatId, lines.join("\n"), getTopicReplyOptions(parsedMessage));
+}
+
+async function handleTrainingPeaksUnlinkThread(parsedMessage: ParsedTelegramUpdate): Promise<void> {
+  if (!isMessageInsideTopic(parsedMessage)) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "Отправь команду внутри темы ученика.");
+    return;
+  }
+
+  const messageThreadId = parsedMessage.messageThreadId;
+  if (messageThreadId === null) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "Отправь команду внутри темы ученика.");
+    return;
+  }
+
+  const result = await unlinkTrainingPeaksStudentThread({
+    telegramChatId: String(parsedMessage.chatId),
+    telegramMessageThreadId: messageThreadId,
+  });
+
+  if (!result.ok) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, result.message, getTopicReplyOptions(parsedMessage));
+    return;
+  }
+
+  await sendTrainingPeaksMessage(
+    parsedMessage.chatId,
+    `Тема отвязана от ученика ${formatThreadStudentLabel(
+      result.student
+        ? {
+            studentId: result.student.studentId,
+            studentName: result.student.studentName,
+          }
+        : null
+    )}.`,
+    getTopicReplyOptions(parsedMessage)
+  );
+}
+
 function getWeekResultMarkup(options?: {
   includeJobsButton?: boolean;
   cancellableJobId?: string | null;
@@ -6378,6 +6587,21 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_reply_draft") {
       await handleTrainingPeaksReplyDraft(parsedMessage, text);
+      return "handled";
+    }
+
+    if (command === "tp_link_thread") {
+      await handleTrainingPeaksLinkThread(parsedMessage, text);
+      return "handled";
+    }
+
+    if (command === "tp_thread_info") {
+      await handleTrainingPeaksThreadInfo(parsedMessage);
+      return "handled";
+    }
+
+    if (command === "tp_unlink_thread") {
+      await handleTrainingPeaksUnlinkThread(parsedMessage);
       return "handled";
     }
 
