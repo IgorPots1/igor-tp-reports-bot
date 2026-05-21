@@ -84,6 +84,35 @@ function run(): void {
     "Expected explicit 5-minute pause segment to remain."
   );
 
+  const tatianaMay16Description =
+    "Скорость подбери по ощущениям, начинай ускорения с запасом Разминка: — 10 мин лёгкого бега @ 6:05–6:27 /км — 3 мин активнее 7 из 10 — 3 мин медленнее @ 6:53–7:23 /км — отдышись и сосредоточься Основная часть — 6 повторов: — 5 мин 04:55-05:10 Ощущения — 7-8 из 10. — 2 мин очень легко бегом Сбрось темп, восстанови дыхание и снова включайся. можно шагом Заминка — 5 мин @ 6:05–6:27 /км Просто расслабься и плавно заверши тренировку.";
+  const tatianaMay16 = parsePlannedSegments({
+    description: tatianaMay16Description,
+    plannedDurationMinutes: 63
+  });
+  const tatianaRepeatSegments = tatianaMay16.segments.filter((segment) => segment.repeat_group_id === "r1");
+  assert(tatianaRepeatSegments.length === 2, "Expected 6 x 5 min repeat to parse into hard + easy pair.");
+  assert(
+    tatianaRepeatSegments.every((segment) => segment.repeat_count === 6),
+    "Expected repeat_count=6 for both repeat segments."
+  );
+  assert(
+    !tatianaMay16.segments_parse.flags.includes("repeat_block_partial"),
+    "Did not expect repeat_block_partial for Tatiana 6 x 5 min workout."
+  );
+  const tatianaMay16Expanded = expandPlannedSegmentsForAnalysis({
+    planned: {
+      duration_minutes: 63,
+      segments: tatianaMay16.segments,
+      segments_parse: tatianaMay16.segments_parse
+    }
+  } as Parameters<typeof expandPlannedSegmentsForAnalysis>[0]);
+  assert(!tatianaMay16Expanded.unsupported_repeats, "Expected Tatiana 6 x 5 min repeat expansion to succeed.");
+  assert(
+    tatianaMay16Expanded.expanded_segments.filter((segment) => segment.repeat_group_id === "r1").length === 12,
+    "Expected 6 hard + 6 easy expanded repeat segments."
+  );
+
   console.log("[check-planned-segment-parser] PASS");
 }
 

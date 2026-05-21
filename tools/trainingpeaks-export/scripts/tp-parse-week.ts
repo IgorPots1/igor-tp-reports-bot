@@ -1912,6 +1912,18 @@ function parseRepeatMatch(value: string): RepeatMatch | null {
 function stripRecoveryTrailingProse(value: string): string {
   return value
     .replace(/\s+(?:полное\s+)?восстановлен(?:ие|ия)\s*\.?\s*$/iu, "")
+    .replace(/\s+(?:можно\s+шаг(?:ом|а)?)\s*\.?\s*$/iu, "")
+    .replace(/\s+(?:Сбрось|сбрось)\s+[^\n.]+(?:\.|$)/giu, "")
+    .trim();
+}
+
+function stripRepeatBlockCoachingProse(value: string): string {
+  return value
+    .replace(
+      /\s*(?:Ощущения|RPE|усил(?:ие|ия))\s*-\s*\d+\s*-\s*\d+\s*из\s*10\.?\s*/giu,
+      " "
+    )
+    .replace(/\s+/g, " ")
     .trim();
 }
 
@@ -1945,10 +1957,16 @@ function splitTrailingRecoveryFromRepeatText(value: string): {
   }
 
   const recoverySuffix =
-    /(\d{1,3}\s*мин(?:ут(?:а|ы)?|\.?)?\s+\d{1,2}\s*сек(?:унд(?:а|ы)?|\.?)?|\d{1,2}:\d{2}|\d{1,3}(?:[.,]\d+)?\s*мин(?:ут(?:а|ы)?|\.?)|\d{1,4}\s*сек(?:унд(?:а|ы)?|\.?)?)\s+(?:(?:очень\s+)?легк(?:о|ое|ий)\s+бег(?:ом)?|восстановление|полный отдых|отдых|спокойного?\s+шага|шаг(?:а)?|пешком)(?:\s+(?:полное\s+)?восстановлен(?:ие|ия)?)?$/iu;
+    /(\d{1,3}\s*мин(?:ут(?:а|ы)?|\.?)?\s+\d{1,2}\s*сек(?:унд(?:а|ы)?|\.?)?|\d{1,2}:\d{2}|\d{1,3}(?:[.,]\d+)?\s*мин(?:ут(?:а|ы)?|\.?)|\d{1,4}\s*сек(?:унд(?:а|ы)?|\.?)?)\s+(?:(?:очень\s+)?легк(?:о|ое|ий)\s+бег(?:ом)?|восстановление|полный отдых|отдых|спокойного?\s+шага|шаг(?:а)?|пешком)(?:\s+(?:полное\s+)?восстановлен(?:ие|ия)?)?/giu;
 
-  const match = value.match(recoverySuffix);
-  if (!match || match.index === undefined || match.index === 0) {
+  let lastMatch: RegExpExecArray | null = null;
+  for (const match of value.matchAll(recoverySuffix)) {
+    if (match.index !== undefined && match.index > 0) {
+      lastMatch = match;
+    }
+  }
+
+  if (!lastMatch || lastMatch.index === undefined || lastMatch.index === 0) {
     return {
       intervalText: value.trim(),
       recoveryText: null
@@ -1956,8 +1974,8 @@ function splitTrailingRecoveryFromRepeatText(value: string): {
   }
 
   return {
-    intervalText: value.slice(0, match.index).trim(),
-    recoveryText: stripRecoveryTrailingProse(value.slice(match.index).trim())
+    intervalText: value.slice(0, lastMatch.index).trim(),
+    recoveryText: stripRecoveryTrailingProse(value.slice(lastMatch.index).trim())
   };
 }
 
@@ -1977,7 +1995,7 @@ function parseSimpleRepeatBlock(value: string): {
   recoveryText: string;
   recoveryDuration: DurationParseResult;
 } | null {
-  const normalized = value.replace(/^\s*-\s*/, "").trim();
+  const normalized = stripRepeatBlockCoachingProse(value.replace(/^\s*-\s*/, "").trim());
   if (!normalized) {
     return null;
   }
@@ -2071,13 +2089,6 @@ function buildSegmentType(params: {
   const text = params.text.toLowerCase();
   const isRest = isRestSegmentText(text);
 
-  if (isRest) {
-    return {
-      segmentType: "recovery",
-      isRest: true
-    };
-  }
-
   if (params.labelType === "recovery" || params.defaultRecovery) {
     return {
       segmentType: "recovery",
@@ -2089,6 +2100,13 @@ function buildSegmentType(params: {
     return {
       segmentType: "interval",
       isRest: false
+    };
+  }
+
+  if (isRest) {
+    return {
+      segmentType: "recovery",
+      isRest: true
     };
   }
 
