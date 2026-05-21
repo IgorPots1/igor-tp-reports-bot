@@ -10,6 +10,12 @@ function getTelegramUpdateChatContext(update: TelegramUpdate): {
   chatTitle: string | null;
   fromId: number | null;
   fromUsername: string | null;
+  isTopicMessage: boolean | null;
+  messageThreadId: number | null;
+  hasForumTopicCreated: boolean;
+  hasForumTopicEdited: boolean;
+  hasForumTopicClosed: boolean;
+  hasForumTopicReopened: boolean;
   textPrefix: string | null;
 } {
   const message =
@@ -38,6 +44,15 @@ function getTelegramUpdateChatContext(update: TelegramUpdate): {
     chatTitle: chatType === "group" || chatType === "supergroup" ? (chat?.title ?? null) : null,
     fromId: from?.id ?? null,
     fromUsername: from?.username ?? null,
+    isTopicMessage: typeof message?.is_topic_message === "boolean" ? message.is_topic_message : null,
+    messageThreadId:
+      typeof message?.message_thread_id === "number" && Number.isFinite(message.message_thread_id)
+        ? message.message_thread_id
+        : null,
+    hasForumTopicCreated: message?.forum_topic_created !== undefined,
+    hasForumTopicEdited: message?.forum_topic_edited !== undefined,
+    hasForumTopicClosed: message?.forum_topic_closed !== undefined,
+    hasForumTopicReopened: message?.forum_topic_reopened !== undefined,
     textPrefix,
   };
 }

@@ -8,7 +8,16 @@ const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
 type SendTelegramMessageOptions = {
   replyMarkup?: TelegramReplyMarkup;
   businessConnectionId?: string;
+  messageThreadId?: number;
 };
+
+function isTelegramTopicClosedError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return error.message.includes("TOPIC_CLOSED");
+}
 
 type EditTelegramMessageTextOptions = {
   replyMarkup?: TelegramInlineKeyboardMarkup;
@@ -61,11 +70,11 @@ async function postTelegramApi(method: string, body: Record<string, unknown>): P
   }
 }
 
-async function postTelegramMessage(
+function buildTelegramSendMessageBody(
   chatId: string | number,
   text: string,
   options?: SendTelegramMessageOptions
-): Promise<void> {
+): Record<string, unknown> {
   const body: Record<string, unknown> = {
     chat_id: chatId,
     text,
@@ -76,7 +85,52 @@ async function postTelegramMessage(
     body.business_connection_id = options.businessConnectionId;
   }
 
-  await postTelegramApi("sendMessage", body);
+  if (options?.messageThreadId !== undefined) {
+    body.message_thread_id = options.messageThreadId;
+  }
+
+  return body;
+}
+
+async function postTelegramMessage(
+  chatId: string | number,
+  text: string,
+  options?: SendTelegramMessageOptions
+): Promise<void> {
+  const body = buildTelegramSendMessageBody(chatId, text, options);
+
+  try {
+    await postTelegramApi("sendMessage", body);
+  } catch (error) {
+    if (options?.messageThreadId !== undefined && isTelegramTopicClosedError(error)) {
+      console.warn("Telegram sendMessage TOPIC_CLOSED, retrying without message_thread_id", {
+        chatId,
+        messageThreadId: options.messageThreadId,
+      });
+
+      const fallbackBody = buildTelegramSendMessageBody(chatId, text, {
+        ...options,
+        messageThreadId: undefined,
+      });
+
+      try {
+        await postTelegramApi("sendMessage", fallbackBody);
+        return;
+      } catch (fallbackError) {
+        console.warn("Telegram sendMessage fallback without message_thread_id failed", {
+          chatId,
+          messageThreadId: options.messageThreadId,
+          error:
+            fallbackError instanceof Error
+              ? fallbackError.message
+              : "Unknown error while sending Telegram message",
+        });
+        throw fallbackError;
+      }
+    }
+
+    throw error;
+  }
 }
 
 export async function sendTelegramMessageStrict(

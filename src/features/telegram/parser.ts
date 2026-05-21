@@ -8,6 +8,8 @@ export type ParsedTelegramMessageUpdate = {
   username: string | null;
   text: string | null;
   messageId: number;
+  isTopicMessage: boolean | null;
+  messageThreadId: number | null;
 };
 
 export type ParsedTelegramCallbackUpdate = {
@@ -58,5 +60,11 @@ export function parseTelegramUpdate(
     username: message.from?.username ?? null,
     text,
     messageId: message.message_id,
+    isTopicMessage:
+      typeof message.is_topic_message === "boolean" ? message.is_topic_message : null,
+    messageThreadId:
+      typeof message.message_thread_id === "number" && Number.isFinite(message.message_thread_id)
+        ? message.message_thread_id
+        : null,
   };
 }

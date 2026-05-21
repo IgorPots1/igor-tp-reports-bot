@@ -37,6 +37,25 @@ export type TelegramChat = {
   last_name?: string;
 };
 
+export type TelegramForumTopicCreated = {
+  name: string;
+  icon_color: number;
+  icon_custom_emoji_id?: string;
+};
+
+export type TelegramForumTopicEdited = {
+  name?: string;
+  icon_custom_emoji_id?: string;
+};
+
+export type TelegramForumTopicClosed = {
+  [key: string]: unknown;
+};
+
+export type TelegramForumTopicReopened = {
+  [key: string]: unknown;
+};
+
 export type TelegramMessage = {
   message_id: number;
   chat: TelegramChat;
@@ -45,6 +64,12 @@ export type TelegramMessage = {
   caption?: string;
   date?: number;
   business_connection_id?: string;
+  is_topic_message?: boolean;
+  message_thread_id?: number;
+  forum_topic_created?: TelegramForumTopicCreated;
+  forum_topic_edited?: TelegramForumTopicEdited;
+  forum_topic_closed?: TelegramForumTopicClosed;
+  forum_topic_reopened?: TelegramForumTopicReopened;
 };
 
 export type TelegramBusinessConnection = {

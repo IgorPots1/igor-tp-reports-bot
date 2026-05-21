@@ -823,6 +823,7 @@ async function sendTrainingPeaksMessage(
   text: string,
   options?: {
     replyMarkup?: TelegramReplyKeyboardMarkup;
+    messageThreadId?: number;
   }
 ): Promise<void> {
   const chunks = splitTelegramMessage(text);
@@ -830,6 +831,7 @@ async function sendTrainingPeaksMessage(
   for (const [index, chunk] of chunks.entries()) {
     await sendTelegramMessage(chatId, chunk, {
       replyMarkup: index === chunks.length - 1 ? options?.replyMarkup : undefined,
+      messageThreadId: options?.messageThreadId,
     });
   }
 }
@@ -1830,12 +1832,24 @@ function isCoachAuthorizedForGroupTest(
   return isCoachChat(parsedMessage.chatId);
 }
 
+function formatTelegramTopicFlag(value: boolean | null): string {
+  if (value === null) {
+    return "null";
+  }
+
+  return value ? "yes" : "no";
+}
+
 async function handleTrainingPeaksGroupTest(
   parsedMessage: ParsedTelegramUpdate,
   chatType: TelegramChatType | undefined
 ): Promise<void> {
   const senderIsCoach =
     parsedMessage.userId !== null && isCoachChat(parsedMessage.userId);
+  const isTopicMessage =
+    parsedMessage.kind === "message" ? parsedMessage.isTopicMessage : null;
+  const messageThreadId =
+    parsedMessage.kind === "message" ? parsedMessage.messageThreadId : null;
 
   const lines = [
     "🧪 Group diagnostics",
@@ -1844,11 +1858,15 @@ async function handleTrainingPeaksGroupTest(
     `chat.type: ${chatType ?? "unknown"}`,
     `from.id: ${parsedMessage.userId ?? "null"}`,
     `sender is coach: ${senderIsCoach ? "yes" : "no"}`,
+    `is_topic_message: ${formatTelegramTopicFlag(isTopicMessage)}`,
+    `message_thread_id: ${messageThreadId ?? "null"}`,
     "",
-    "Если обычные сообщения не видны, проверь Privacy Mode в BotFather.",
+    "Если чат разбит на темы, ответы идут в текущую тему. Закрытая тема может дать TOPIC_CLOSED.",
   ];
 
-  await sendTrainingPeaksMessage(parsedMessage.chatId, lines.join("\n"));
+  await sendTrainingPeaksMessage(parsedMessage.chatId, lines.join("\n"), {
+    messageThreadId: messageThreadId ?? undefined,
+  });
 }
 
 export function isCoachChat(chatId: number | string): boolean {
