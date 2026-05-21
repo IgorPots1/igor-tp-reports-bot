@@ -40,6 +40,7 @@
     "tp-workouts-cache-report": "tsx scripts/tp-workouts-cache-report.ts",
     "tp-scan-events": "tsx scripts/tp-scan-events.ts",
     "tp-probe-race-results": "tsx scripts/tp-probe-race-results.ts",
+    "tp-probes-once": "tsx scripts/tp-probes-once.ts",
     "tp-probe-progress-evidence": "tsx scripts/tp-probe-progress-evidence.ts",
     "tp-actions-loop:install": "sh scripts/install-tp-actions-launchagent.sh",
     "tp-actions-loop:uninstall": "sh scripts/uninstall-tp-actions-launchagent.sh",

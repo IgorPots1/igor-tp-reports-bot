@@ -42,6 +42,7 @@ import {
   requestTrainingPeaksWeeklyRunForStudent,
   requestTrainingPeaksWeeklyRunForStudentByInternalId,
   requestTrainingPeaksRaceScan,
+  requestTrainingPeaksRaceResultsProbeJob,
   type RequestTrainingPeaksWeeklyRunForStudentResult,
   unlinkTrainingPeaksStudentThread,
   updateTrainingPeaksWeeklyReportStateByInternalId,
@@ -126,6 +127,8 @@ const TP_CALLBACK_STUDENT_USERNAME_PREFIX = "tp:su:";
 const TP_CALLBACK_STUDENT_LINK_CODE_PREFIX = "tp:sk:";
 const TP_CALLBACK_STUDENT_SELECT_CHAT_PREFIX = "tp:sc:";
 const TP_CALLBACK_STUDENT_TEST_PREFIX = "tp:st:";
+const TP_CALLBACK_STUDENT_TOOLS_PREFIX = "tp:stools:";
+const TP_CALLBACK_STUDENT_RACE_RESULTS_PROBE_PREFIX = "tp:sprobe:race:";
 const TP_CALLBACK_ACTION_APPROVE_PREFIX = "tp:ta:a:";
 const TP_CALLBACK_ACTION_REJECT_PREFIX = "tp:ta:r:";
 const TP_CALLBACK_ACTION_EXECUTE_PREFIX = "tp:ta:x:";
@@ -261,6 +264,8 @@ type ParsedTrainingPeaksCallback =
   | { kind: "student_link_code"; studentId: string }
   | { kind: "student_choose_chat"; studentId: string; chatKey: string }
   | { kind: "student_test"; studentId: string }
+  | { kind: "student_tools_menu"; studentId: string }
+  | { kind: "student_race_results_probe"; studentId: string }
   | { kind: "report_send"; reportId: string }
   | { kind: "report_skip"; reportId: string }
   | { kind: "action_approve"; actionId: string }
@@ -1675,6 +1680,10 @@ function getTrainingPeaksJobTypeLabel(jobType: string): string {
     return "Скан стартов";
   }
 
+  if (jobType === "race_results_probe") {
+    return "Результаты по дистанциям";
+  }
+
   return "Недельный отчёт";
 }
 
@@ -1705,7 +1714,10 @@ function formatJobsMessage(
       const statusLabel = getTrainingPeaksJobStatusLabel(job);
       const scopeLabel = formatJobScopeLabel(job);
       const jobTypeLabel = getTrainingPeaksJobTypeLabel(job.jobType ?? "weekly_reports");
-      const periodLabel = job.jobType === "race_scan_events" ? "период скана" : "неделя";
+      const periodLabel =
+        job.jobType === "race_scan_events" || job.jobType === "race_results_probe"
+          ? "период"
+          : "неделя";
       const lines = [
         `• ${jobTypeLabel}`,
         `  ${periodLabel}: ${job.weekFrom} — ${job.weekTo}`,
@@ -1737,7 +1749,14 @@ function formatJobsMessage(
           "⚠️ Сейчас выполняется широкая задача на всех weekly-enabled учеников.",
         ]
       : []),
-    ...(jobs.some((job) => job.status === "queued")
+    ...(jobs.some((job) => job.status === "queued" && job.jobType === "race_results_probe")
+      ? [
+          "",
+          "Для задач по дистанциям запусти локальный runner:",
+          "npm run tp-probes-once",
+        ]
+      : []),
+    ...(jobs.some((job) => job.status === "queued" && job.jobType !== "race_results_probe")
       ? [
           "",
           "Чтобы начать обработку, запусти локальный runner:",
@@ -2175,6 +2194,8 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
     [TP_CALLBACK_STUDENT_USERNAME_PREFIX, "student_username_prompt"],
     [TP_CALLBACK_STUDENT_LINK_CODE_PREFIX, "student_link_code"],
     [TP_CALLBACK_STUDENT_TEST_PREFIX, "student_test"],
+    [TP_CALLBACK_STUDENT_TOOLS_PREFIX, "student_tools_menu"],
+    [TP_CALLBACK_STUDENT_RACE_RESULTS_PROBE_PREFIX, "student_race_results_probe"],
   ] as const) {
     if (data.startsWith(prefix)) {
       const studentId = data.slice(prefix.length).trim();
@@ -2333,12 +2354,25 @@ function getStudentCardMenuMarkup(
     rows.push([createMenuButton("📨 Отправить тест", `${TP_CALLBACK_STUDENT_TEST_PREFIX}${student.id}`)]);
   }
 
+  rows.push([createMenuButton("🧰 Инструменты", `${TP_CALLBACK_STUDENT_TOOLS_PREFIX}${student.id}`)]);
   rows.push([
     createMenuButton(student.isActive ? "⛔ Отключить" : "✅ Включить", `${student.isActive ? "tp:d" : "tp:e"}:${student.id}`),
   ]);
   rows.push([createMenuButton("👥 К ученикам", "tp:s:0"), createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)]);
 
   return createInlineKeyboardMarkup(rows);
+}
+
+function getStudentToolsMenuMarkup(studentId: string): TelegramInlineKeyboardMarkup {
+  return createInlineKeyboardMarkup([
+    [createMenuButton("🏁 Результаты по дистанциям", `${TP_CALLBACK_STUDENT_RACE_RESULTS_PROBE_PREFIX}${studentId}`)],
+    [createMenuButton("⬅️ К ученику", `tp:i:${studentId}`)],
+    [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
+  ]);
+}
+
+function getStudentToolsMenuText(studentName: string): string {
+  return ["🧰 Инструменты", "", `Ученик: ${studentName}`, "", "Выберите действие:"].join("\n");
 }
 
 function getStudentNotFoundMarkup(): TelegramInlineKeyboardMarkup {
@@ -2933,6 +2967,80 @@ async function showTrainingPeaksStudentCardMenu(
   }
 
   await showTrainingPeaksMenuScreen(parsedMessage, text, markup);
+}
+
+async function showTrainingPeaksStudentToolsMenu(
+  parsedMessage: ParsedTelegramCallbackUpdate,
+  studentId: string
+): Promise<void> {
+  const student = await getTrainingPeaksStudentCardByInternalId(studentId);
+
+  if (!student) {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      "Ученик больше не найден.",
+      getStudentNotFoundMarkup()
+    );
+    return;
+  }
+
+  await editTrainingPeaksMenuMessage(
+    parsedMessage.chatId,
+    parsedMessage.messageId,
+    getStudentToolsMenuText(student.studentName),
+    getStudentToolsMenuMarkup(student.id)
+  );
+}
+
+async function handleTrainingPeaksStudentRaceResultsProbeCallback(
+  parsedMessage: ParsedTelegramCallbackUpdate,
+  studentId: string
+): Promise<void> {
+  const student = await getTrainingPeaksStudentCardByInternalId(studentId);
+
+  if (!student) {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      "Ученик больше не найден.",
+      getStudentNotFoundMarkup()
+    );
+    return;
+  }
+
+  const result = await requestTrainingPeaksRaceResultsProbeJob(student.id, String(parsedMessage.chatId));
+
+  if (result.ok) {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      [
+        "🏁 Задача создана. Mac выполнит отчёт по дистанциям и пришлёт результат сюда.",
+        "",
+        `Ученик: ${student.studentName}`,
+      ].join("\n"),
+      getStudentToolsMenuMarkup(student.id)
+    );
+    return;
+  }
+
+  if (result.reason === "duplicate") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      ["Такая задача уже в очереди или выполняется.", "", `Ученик: ${student.studentName}`].join("\n"),
+      getStudentToolsMenuMarkup(student.id)
+    );
+    return;
+  }
+
+  await editTrainingPeaksMenuMessage(
+    parsedMessage.chatId,
+    parsedMessage.messageId,
+    [result.message, "", `Ученик: ${student.studentName}`].join("\n"),
+    getStudentToolsMenuMarkup(student.id)
+  );
 }
 
 async function showTrainingPeaksStudentTelegramLinkMenu(
@@ -6183,6 +6291,16 @@ export async function handleTrainingPeaksTelegramCallback(
 
     if (callback.kind === "student_test") {
       await handleTrainingPeaksStudentTestMessageCallback(parsedMessage, callback.studentId);
+      return "handled";
+    }
+
+    if (callback.kind === "student_tools_menu") {
+      await showTrainingPeaksStudentToolsMenu(parsedMessage, callback.studentId);
+      return "handled";
+    }
+
+    if (callback.kind === "student_race_results_probe") {
+      await handleTrainingPeaksStudentRaceResultsProbeCallback(parsedMessage, callback.studentId);
       return "handled";
     }
 

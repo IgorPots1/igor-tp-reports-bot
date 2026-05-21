@@ -6,6 +6,7 @@ import {
   createTrainingPeaksAction as createTrainingPeaksActionInRepository,
   createTrainingPeaksActionRun as createTrainingPeaksActionRunInRepository,
   createTrainingPeaksRaceScanJob,
+  createTrainingPeaksRaceResultsProbeJob,
   createTrainingPeaksWeeklyJob,
   deleteTrainingPeaksOrphanReportsForWeek as deleteTrainingPeaksOrphanReportsForWeekInRepository,
   deleteTrainingPeaksWeeklyReportById,
@@ -15,6 +16,7 @@ import {
   expireTrainingPeaksStudentTelegramLinkCodesByIds,
   findActiveTrainingPeaksJobForWeek,
   findActiveTrainingPeaksJobForStudentWeek,
+  findActiveTrainingPeaksRaceResultsProbeJobForStudent,
   getTrainingPeaksWeeklyReportForStudentWeek,
   getTrainingPeaksJobById,
   getTrainingPeaksBusinessChatById,
@@ -68,6 +70,7 @@ import {
   TrainingPeaksTelegramLinkCodeConflictError,
   TrainingPeaksStudentConflictError,
   type TrainingPeaksJob,
+  type TrainingPeaksRaceResultsProbeRequestJson,
   type TrainingPeaksStudent,
   type TrainingPeaksStudentThread,
   TrainingPeaksStudentThreadConflictError,
@@ -444,6 +447,39 @@ export type RequestTrainingPeaksRaceScanResult =
       ok: false;
       reason: "duplicate";
       activeJob: Pick<TrainingPeaksJob, "id" | "status" | "weekFrom" | "weekTo"> | null;
+      message: string;
+    }
+  | {
+      ok: false;
+      reason: "unknown";
+      activeJob: null;
+      message: string;
+    };
+
+export type RequestTrainingPeaksRaceResultsProbeOptions = Partial<{
+  distance: string;
+  preset: string;
+  from: string;
+  to: string;
+}>;
+
+export type RequestTrainingPeaksRaceResultsProbeResult =
+  | { ok: true; job: TrainingPeaksJob }
+  | {
+      ok: false;
+      reason:
+        | "missing_requester"
+        | "student_not_found"
+        | "missing_trainingpeaks_url"
+        | "invalid_athlete_url"
+        | "invalid_date"
+        | "invalid_range";
+      message: string;
+    }
+  | {
+      ok: false;
+      reason: "duplicate";
+      activeJob: Pick<TrainingPeaksJob, "id" | "status" | "weekFrom" | "weekTo" | "studentId"> | null;
       message: string;
     }
   | {
@@ -2138,6 +2174,134 @@ export async function getTrainingPeaksWeeklyReportForStudentWeekFromService(
   weekTo: string
 ) {
   return getTrainingPeaksWeeklyReportForStudentWeek(studentId, weekFrom, weekTo);
+}
+
+function parseTrainingPeaksAthleteIdFromUrl(value: string): number | null {
+  const match = value.match(/\/athletes\/(\d+)/i);
+  if (!match) {
+    return null;
+  }
+
+  const parsed = Number(match[1]);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function getUtcTodayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function getDefaultRaceResultsProbeFromDate(toDate: string): string {
+  const anchor = new Date(`${toDate}T12:00:00Z`);
+  const from = new Date(anchor);
+  from.setUTCMonth(from.getUTCMonth() - 24);
+  const fromIso = from.toISOString().slice(0, 10);
+  return fromIso > "2024-01-01" ? fromIso : "2024-01-01";
+}
+
+export async function requestTrainingPeaksRaceResultsProbeJob(
+  studentInternalId: string,
+  requestedByChatId: string,
+  options?: RequestTrainingPeaksRaceResultsProbeOptions
+): Promise<RequestTrainingPeaksRaceResultsProbeResult> {
+  const normalizedChatId = requestedByChatId.trim();
+  if (!normalizedChatId) {
+    return {
+      ok: false,
+      reason: "missing_requester",
+      message: "Не указан chat_id тренера для ответа.",
+    };
+  }
+
+  const student = await getTrainingPeaksStudentByIdFromRepository(studentInternalId);
+  if (!student) {
+    return {
+      ok: false,
+      reason: "student_not_found",
+      message: "Ученик не найден.",
+    };
+  }
+
+  const athleteUrl = student.trainingPeaksAthleteUrl.trim();
+  if (!athleteUrl) {
+    return {
+      ok: false,
+      reason: "missing_trainingpeaks_url",
+      message: `У ученика ${student.studentName} нет ссылки TrainingPeaks athlete.`,
+    };
+  }
+
+  const athleteId = parseTrainingPeaksAthleteIdFromUrl(athleteUrl);
+  if (!athleteId) {
+    return {
+      ok: false,
+      reason: "invalid_athlete_url",
+      message: `Не удалось извлечь athlete id из ссылки TrainingPeaks для ${student.studentName}.`,
+    };
+  }
+
+  const toDate = options?.to?.trim() || getUtcTodayIsoDate();
+  const fromDate = options?.from?.trim() || getDefaultRaceResultsProbeFromDate(toDate);
+
+  if (!isIsoDate(fromDate) || !isIsoDate(toDate)) {
+    return {
+      ok: false,
+      reason: "invalid_date",
+      message: "Период нужно передать в формате YYYY-MM-DD.",
+    };
+  }
+
+  if (fromDate > toDate) {
+    return {
+      ok: false,
+      reason: "invalid_range",
+      message: "Дата начала периода не может быть позже даты окончания.",
+    };
+  }
+
+  const requestJson: TrainingPeaksRaceResultsProbeRequestJson = {
+    distance: options?.distance?.trim() || "all",
+    preset: options?.preset?.trim() || "default_24m",
+    from: fromDate,
+    to: toDate,
+    athleteId,
+    studentSlug: student.studentId,
+  };
+
+  try {
+    const job = await createTrainingPeaksRaceResultsProbeJob({
+      studentInternalId: student.id,
+      fromDate,
+      toDate,
+      requestJson,
+      requestedByChatId: normalizedChatId,
+    });
+
+    return { ok: true, job };
+  } catch (error) {
+    if (error instanceof TrainingPeaksJobConflictError) {
+      const activeJob = await findActiveTrainingPeaksRaceResultsProbeJobForStudent(student.id);
+      return {
+        ok: false,
+        reason: "duplicate",
+        activeJob: activeJob ? mapActiveTrainingPeaksJobSnapshot(activeJob) : null,
+        message: "Такая задача уже в очереди или выполняется.",
+      };
+    }
+
+    console.error("Failed to request TrainingPeaks race-results probe job", {
+      studentInternalId,
+      requestedByChatId: normalizedChatId,
+      options,
+      error,
+    });
+
+    return {
+      ok: false,
+      reason: "unknown",
+      activeJob: null,
+      message: "Не смог создать задачу по дистанциям. Попробуй позже.",
+    };
+  }
 }
 
 export async function requestTrainingPeaksRaceScan(

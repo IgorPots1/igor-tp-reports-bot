@@ -185,7 +185,7 @@ type TrainingPeaksWeekRow = {
   week_to: string;
 };
 
-export type TrainingPeaksJobType = "weekly_reports" | "race_scan_events";
+export type TrainingPeaksJobType = "weekly_reports" | "race_scan_events" | "race_results_probe";
 export type TrainingPeaksJobScope = "all_enabled" | "single_student";
 export type TrainingPeaksJobStatus = "queued" | "running" | "completed" | "failed";
 export type TrainingPeaksActionType = "move_workout";
@@ -202,6 +202,15 @@ export type TrainingPeaksActionExecutionMode = "dry_run" | "real";
 export type TrainingPeaksActionRunType = "dry_run" | "real";
 export type TrainingPeaksActionRunStatus = "running" | "completed" | "failed";
 
+export type TrainingPeaksRaceResultsProbeRequestJson = {
+  distance: string;
+  preset: string;
+  from: string;
+  to: string;
+  athleteId: number;
+  studentSlug?: string;
+};
+
 export type TrainingPeaksJob = {
   id: string;
   jobType: TrainingPeaksJobType;
@@ -210,6 +219,7 @@ export type TrainingPeaksJob = {
   status: TrainingPeaksJobStatus;
   weekFrom: string;
   weekTo: string;
+  requestJson: TrainingPeaksRaceResultsProbeRequestJson | null;
   requestedByChatId: string | null;
   requestedByUserId: string | null;
   resultJson: unknown | null;
@@ -228,6 +238,7 @@ type TrainingPeaksJobRow = {
   status: TrainingPeaksJobStatus;
   week_from: string;
   week_to: string;
+  request_json: TrainingPeaksRaceResultsProbeRequestJson | null;
   requested_by_chat_id: string | null;
   requested_by_user_id: string | null;
   result_json: unknown | null;
@@ -380,6 +391,15 @@ export type CreateTrainingPeaksRaceScanJobInput = {
   fromDate: string;
   toDate: string;
   requestedByChatId?: string | null;
+  requestedByUserId?: string | null;
+};
+
+export type CreateTrainingPeaksRaceResultsProbeJobInput = {
+  studentInternalId: string;
+  fromDate: string;
+  toDate: string;
+  requestJson: TrainingPeaksRaceResultsProbeRequestJson;
+  requestedByChatId: string;
   requestedByUserId?: string | null;
 };
 
@@ -955,6 +975,7 @@ function mapTrainingPeaksJobRow(row: TrainingPeaksJobRow): TrainingPeaksJob {
     status: row.status,
     weekFrom: row.week_from,
     weekTo: row.week_to,
+    requestJson: row.request_json ?? null,
     requestedByChatId: row.requested_by_chat_id,
     requestedByUserId: row.requested_by_user_id,
     resultJson: row.result_json,
@@ -1277,7 +1298,9 @@ function isTrainingPeaksJobConflict(error: {
   return (
     haystack.includes("trainingpeaks_jobs_active_week_idx") ||
     haystack.includes("trainingpeaks_jobs_active_all_enabled_week_idx") ||
-    haystack.includes("trainingpeaks_jobs_active_single_student_week_idx")
+    haystack.includes("trainingpeaks_jobs_active_single_student_week_idx") ||
+    haystack.includes("trainingpeaks_jobs_active_race_scan_range_idx") ||
+    haystack.includes("trainingpeaks_jobs_active_race_results_probe_student_idx")
   );
 }
 
@@ -2920,12 +2943,28 @@ export async function createTrainingPeaksRaceScanJob(
   });
 }
 
+export async function createTrainingPeaksRaceResultsProbeJob(
+  input: CreateTrainingPeaksRaceResultsProbeJobInput
+): Promise<TrainingPeaksJob> {
+  return createTrainingPeaksJob({
+    jobType: "race_results_probe",
+    scope: "single_student",
+    studentId: input.studentInternalId,
+    weekFrom: input.fromDate,
+    weekTo: input.toDate,
+    requestJson: input.requestJson,
+    requestedByChatId: input.requestedByChatId,
+    requestedByUserId: input.requestedByUserId ?? null,
+  });
+}
+
 async function createTrainingPeaksJob(input: {
   jobType: TrainingPeaksJobType;
   scope?: TrainingPeaksJobScope;
   studentId?: string | null;
   weekFrom: string;
   weekTo: string;
+  requestJson?: TrainingPeaksRaceResultsProbeRequestJson | null;
   requestedByChatId: string | null;
   requestedByUserId: string | null;
 }): Promise<TrainingPeaksJob> {
@@ -2939,6 +2978,7 @@ async function createTrainingPeaksJob(input: {
       status: "queued",
       week_from: input.weekFrom,
       week_to: input.weekTo,
+      request_json: input.requestJson ?? null,
       requested_by_chat_id: input.requestedByChatId,
       requested_by_user_id: input.requestedByUserId,
     })
@@ -3557,6 +3597,34 @@ export async function findActiveTrainingPeaksJobForWeek(
   return mapTrainingPeaksJobRow(data as TrainingPeaksJobRow);
 }
 
+export async function findActiveTrainingPeaksRaceResultsProbeJobForStudent(
+  studentInternalId: string
+): Promise<TrainingPeaksJob | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_jobs")
+    .select("*")
+    .eq("job_type", "race_results_probe")
+    .eq("scope", "single_student")
+    .eq("student_id", studentInternalId)
+    .in("status", ["queued", "running"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to find active TrainingPeaks race-results probe job for student ${studentInternalId}: ${error.message}`
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksJobRow(data as TrainingPeaksJobRow);
+}
+
 export async function findActiveTrainingPeaksJobForStudentWeek(
   jobType: TrainingPeaksJobType,
   studentId: string,
@@ -3641,6 +3709,10 @@ export async function claimNextQueuedTrainingPeaksRaceScanJob(): Promise<Trainin
   return claimNextQueuedTrainingPeaksJobByType("race_scan_events");
 }
 
+export async function claimNextQueuedTrainingPeaksRaceResultsProbeJob(): Promise<TrainingPeaksJob | null> {
+  return claimNextQueuedTrainingPeaksJobByType("race_results_probe");
+}
+
 async function claimNextQueuedTrainingPeaksJobByType(
   jobType: TrainingPeaksJobType
 ): Promise<TrainingPeaksJob | null> {
@@ -3697,6 +3769,12 @@ export async function recoverStaleTrainingPeaksRunningRaceScanJobs(
   timeoutMinutes: number
 ): Promise<number> {
   return recoverStaleTrainingPeaksRunningJobsByTypes(timeoutMinutes, ["race_scan_events"]);
+}
+
+export async function recoverStaleTrainingPeaksRunningRaceResultsProbeJobs(
+  timeoutMinutes: number
+): Promise<number> {
+  return recoverStaleTrainingPeaksRunningJobsByTypes(timeoutMinutes, ["race_results_probe"]);
 }
 
 async function recoverStaleTrainingPeaksRunningJobsByTypes(
