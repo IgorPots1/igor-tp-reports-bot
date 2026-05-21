@@ -1847,7 +1847,7 @@ function isTelegramGroupChatType(chatType: TelegramChatType | undefined): boolea
   return chatType === "group" || chatType === "supergroup";
 }
 
-function isCoachAuthorizedForGroupTest(
+function isCoachAuthorizedForTelegramChat(
   parsedMessage: ParsedTelegramUpdate,
   chatType: TelegramChatType | undefined
 ): boolean {
@@ -6458,12 +6458,51 @@ export async function handleTrainingPeaksTelegramCommand(
   }
 
   if (command === "tp_group_test") {
-    if (!isCoachAuthorizedForGroupTest(parsedMessage, chatType)) {
+    if (!isCoachAuthorizedForTelegramChat(parsedMessage, chatType)) {
       await sendTrainingPeaksMessage(parsedMessage.chatId, COACH_ONLY_MESSAGE);
       return "handled";
     }
 
     await handleTrainingPeaksGroupTest(parsedMessage, chatType);
+    return "handled";
+  }
+
+  if (
+    command === "tp_link_thread" ||
+    command === "tp_thread_info" ||
+    command === "tp_unlink_thread"
+  ) {
+    if (!isCoachAuthorizedForTelegramChat(parsedMessage, chatType)) {
+      await sendTrainingPeaksMessage(parsedMessage.chatId, COACH_ONLY_MESSAGE);
+      return "handled";
+    }
+
+    try {
+      if (command === "tp_link_thread") {
+        await handleTrainingPeaksLinkThread(parsedMessage, text);
+        return "handled";
+      }
+
+      if (command === "tp_thread_info") {
+        await handleTrainingPeaksThreadInfo(parsedMessage);
+        return "handled";
+      }
+
+      await handleTrainingPeaksUnlinkThread(parsedMessage);
+    } catch (error) {
+      console.error("TrainingPeaks Telegram thread command failed", {
+        chatId: parsedMessage.chatId,
+        messageId: parsedMessage.messageId,
+        command,
+        error,
+      });
+
+      await sendTrainingPeaksMessage(
+        parsedMessage.chatId,
+        "Не смог загрузить данные TrainingPeaks. Попробуй позже."
+      );
+    }
+
     return "handled";
   }
 
@@ -6587,21 +6626,6 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_reply_draft") {
       await handleTrainingPeaksReplyDraft(parsedMessage, text);
-      return "handled";
-    }
-
-    if (command === "tp_link_thread") {
-      await handleTrainingPeaksLinkThread(parsedMessage, text);
-      return "handled";
-    }
-
-    if (command === "tp_thread_info") {
-      await handleTrainingPeaksThreadInfo(parsedMessage);
-      return "handled";
-    }
-
-    if (command === "tp_unlink_thread") {
-      await handleTrainingPeaksUnlinkThread(parsedMessage);
       return "handled";
     }
 
