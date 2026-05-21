@@ -42,6 +42,7 @@
     "tp-probe-race-results": "tsx scripts/tp-probe-race-results.ts",
     "tp-probes-once": "tsx scripts/tp-probes-once.ts",
     "tp-probe-progress-evidence": "tsx scripts/tp-probe-progress-evidence.ts",
+    "tp-race-prediction-probe": "tsx scripts/tp-race-prediction-probe.ts",
     "tp-actions-loop:install": "sh scripts/install-tp-actions-launchagent.sh",
     "tp-actions-loop:uninstall": "sh scripts/uninstall-tp-actions-launchagent.sh",
     "tp-actions-loop:logs": "mkdir -p logs && touch logs/tp-actions-loop.out.log logs/tp-actions-loop.err.log && tail -f logs/tp-actions-loop.out.log logs/tp-actions-loop.err.log",

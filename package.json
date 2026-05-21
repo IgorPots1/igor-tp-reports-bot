@@ -23,6 +23,7 @@
     "tp-probe-race-results": "npm --prefix tools/trainingpeaks-export run tp-probe-race-results --",
     "tp-probes-once": "npm --prefix tools/trainingpeaks-export run tp-probes-once --",
     "tp-probe-progress-evidence": "npm --prefix tools/trainingpeaks-export run tp-probe-progress-evidence --",
+    "tp-race-prediction-probe": "npm --prefix tools/trainingpeaks-export run tp-race-prediction-probe --",
     "tp-actions-loop:install": "npm --prefix tools/trainingpeaks-export run tp-actions-loop:install",
     "tp-actions-loop:uninstall": "npm --prefix tools/trainingpeaks-export run tp-actions-loop:uninstall",
     "tp-actions-loop:logs": "npm --prefix tools/trainingpeaks-export run tp-actions-loop:logs",
