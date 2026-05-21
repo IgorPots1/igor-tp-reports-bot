@@ -4,10 +4,12 @@ import {
   deleteTrainingPeaksOrphanReportsForWeek as deleteTrainingPeaksOrphanReportsForWeekInService,
   getTrainingPeaksStudentsRegistryWithLatestReportStatus,
   getTrainingPeaksWeeklyReportByInternalId,
+  listStudentThreads,
   setTrainingPeaksStudentWeeklyReportsEnabled as setTrainingPeaksStudentWeeklyReportsEnabledInService,
   unlinkTrainingPeaksStudentTelegram as unlinkTrainingPeaksStudentTelegramInService,
   updateTrainingPeaksWeeklyReportContentByInternalId,
   updateTrainingPeaksWeeklyReportStateByInternalId,
+  type TrainingPeaksStudentThreadSnapshot,
 } from "@/features/trainingpeaks/service";
 import { getFinalTrainingPeaksReportMarkdown, sendTrainingPeaksWeeklyReportToStudent } from "@/features/trainingpeaks/report-delivery";
 import type { TrainingPeaksRegistryStudentSnapshot } from "@/features/trainingpeaks/service";
@@ -22,6 +24,38 @@ export type TrainingPeaksAdminTelegramFilter = "all" | "linked" | "unlinked";
 export type TrainingPeaksAdminStudentStateFilter = "active" | "archived" | "orphan" | "all";
 
 export type TrainingPeaksAdminStudentRecord = TrainingPeaksRegistryStudentSnapshot;
+
+export function getTrainingPeaksAdminStudentGroupTopicListText(
+  student: Pick<TrainingPeaksAdminStudentRecord, "hasGroupTopic" | "groupTopicCount">
+): string {
+  if (student.groupTopicCount > 1) {
+    return `Тем: ${student.groupTopicCount}`;
+  }
+
+  return student.hasGroupTopic ? "Тема есть" : "Нет темы";
+}
+
+export function getTrainingPeaksAdminStudentGroupTopicLinkStatusText(
+  hasGroupTopic: boolean
+): "Привязана" | "Не привязана" {
+  return hasGroupTopic ? "Привязана" : "Не привязана";
+}
+
+export function getTrainingPeaksAdminStudentThreadLinkMethod(
+  linkedByUserId: string | null | undefined
+): "Автоматически" | "Вручную" | "—" {
+  if (!linkedByUserId) {
+    return "—";
+  }
+
+  return linkedByUserId.startsWith("auto_link:") ? "Автоматически" : "Вручную";
+}
+
+export async function listTrainingPeaksAdminStudentThreads(
+  studentId: string
+): Promise<TrainingPeaksStudentThreadSnapshot[]> {
+  return listStudentThreads(studentId);
+}
 
 export type TrainingPeaksAdminReportRecord = {
   report: TrainingPeaksWeeklyReport;

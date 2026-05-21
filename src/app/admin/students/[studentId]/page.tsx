@@ -25,9 +25,12 @@ import {
   formatTrainingPeaksAdminLinkCodeExpiresAt,
   formatTrainingPeaksAdminTelegramChatName,
   getTrainingPeaksAdminStudentById,
+  getTrainingPeaksAdminStudentGroupTopicLinkStatusText,
   getTrainingPeaksAdminStudentLastKnownBusinessChat,
+  getTrainingPeaksAdminStudentThreadLinkMethod,
   listTrainingPeaksAdminRecentBusinessChats,
   listTrainingPeaksAdminReportsForStudent,
+  listTrainingPeaksAdminStudentThreads,
   normalizeTrainingPeaksAdminTelegramUsername,
   shortenTrainingPeaksAdminChatId,
   TRAININGPEAKS_ADMIN_TELEGRAM_USERNAME_NOT_FOUND_MESSAGE,
@@ -163,14 +166,16 @@ export default async function AdminStudentDetailPage({
     notFound();
   }
 
-  const [reports, existingLastWeekReport] = await Promise.all([
+  const [reports, existingLastWeekReport, studentThreads] = await Promise.all([
     listTrainingPeaksAdminReportsForStudent(studentId),
     getTrainingPeaksWeeklyReportForStudentWeekFromService(
       student.studentId,
       lastFullWeek.weekFrom,
       lastFullWeek.weekTo
     ),
+    listTrainingPeaksAdminStudentThreads(student.id),
   ]);
+  const primaryStudentThread = studentThreads[0] ?? null;
 
   const [lastKnownBusinessChat, recentChats, usernameLookup] = await Promise.all([
     getTrainingPeaksAdminStudentLastKnownBusinessChat(student),
@@ -356,6 +361,36 @@ export default async function AdminStudentDetailPage({
                 </dd>
               </div>
             )}
+            <div>
+              <dt>Группа (тема ученика)</dt>
+              <dd>
+                <dl className="admin-meta-list admin-meta-list-compact">
+                  <div>
+                    <dt>Тема</dt>
+                    <dd>{getTrainingPeaksAdminStudentGroupTopicLinkStatusText(student.hasGroupTopic)}</dd>
+                  </div>
+                  <div>
+                    <dt>Группа</dt>
+                    <dd>{primaryStudentThread?.chatTitle ?? "—"}</dd>
+                  </div>
+                  <div>
+                    <dt>Тема</dt>
+                    <dd>{primaryStudentThread?.threadTitle ?? "—"}</dd>
+                  </div>
+                  <div>
+                    <dt>Как привязали</dt>
+                    <dd>
+                      {getTrainingPeaksAdminStudentThreadLinkMethod(primaryStudentThread?.linkedByUserId)}
+                    </dd>
+                  </div>
+                </dl>
+                {!student.hasGroupTopic && (
+                  <p className="admin-muted">
+                    В Telegram откройте тему ученика в группе и отправьте: /tp_link_thread {student.studentName}
+                  </p>
+                )}
+              </dd>
+            </div>
           </dl>
           {!student.isActive && (
             <p className="admin-muted">

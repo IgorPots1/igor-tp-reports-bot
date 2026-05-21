@@ -38,6 +38,7 @@ import {
   listLatestTrainingPeaksActionRunsByActionIds,
   listTrainingPeaksStudents,
   listTrainingPeaksStudentsIncludingArchived,
+  countTrainingPeaksStudentThreadsByStudentIds as countTrainingPeaksStudentThreadsByStudentIdsFromRepository,
   listTrainingPeaksStudentThreads as listTrainingPeaksStudentThreadsFromRepository,
   listTrainingPeaksWeeklyReportEligibleStudents as listTrainingPeaksWeeklyReportEligibleStudentsFromRepository,
   listTrainingPeaksWorkoutCacheForDateRange,
@@ -147,6 +148,8 @@ export type TrainingPeaksRegistryStudentSnapshot = {
   latestWeekFrom: string | null;
   latestWeekTo: string | null;
   latestReportStatus: TrainingPeaksRegistryStatus;
+  hasGroupTopic: boolean;
+  groupTopicCount: number;
 };
 
 export type TrainingPeaksStudentCard =
@@ -2922,6 +2925,12 @@ export async function recoverStaleTrainingPeaksRaceScanJobs(timeoutMinutes: numb
   return recoverStaleTrainingPeaksRunningRaceScanJobs(timeoutMinutes);
 }
 
+export async function countTrainingPeaksStudentThreadsByStudentIds(
+  studentIds: string[]
+): Promise<Map<string, number>> {
+  return countTrainingPeaksStudentThreadsByStudentIdsFromRepository(studentIds);
+}
+
 export async function getTrainingPeaksStudentsRegistryWithLatestReportStatus(options?: {
   includeArchived?: boolean;
 }): Promise<TrainingPeaksRegistryStudentSnapshot[]> {
@@ -2930,10 +2939,14 @@ export async function getTrainingPeaksStudentsRegistryWithLatestReportStatus(opt
     listAllTrainingPeaksReports(),
   ]);
   const latestByStudent = getLatestReportByStudent(reports);
+  const groupTopicCountByStudentId = await countTrainingPeaksStudentThreadsByStudentIdsFromRepository(
+    students.map((student) => student.id)
+  );
 
   return students
     .map((student) => {
       const latestReport = latestByStudent.get(student.studentId) ?? null;
+      const groupTopicCount = groupTopicCountByStudentId.get(student.id) ?? 0;
 
       return {
         id: student.id,
@@ -2954,6 +2967,8 @@ export async function getTrainingPeaksStudentsRegistryWithLatestReportStatus(opt
         latestWeekFrom: latestReport?.weekFrom ?? null,
         latestWeekTo: latestReport?.weekTo ?? null,
         latestReportStatus: getRegistryStudentStatus(latestReport),
+        hasGroupTopic: groupTopicCount > 0,
+        groupTopicCount,
       };
     })
     .sort((left, right) => left.studentName.localeCompare(right.studentName, "ru"));

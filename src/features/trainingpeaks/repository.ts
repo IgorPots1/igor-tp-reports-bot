@@ -1988,6 +1988,33 @@ export async function listTrainingPeaksStudentsByTelegramUsername(
   return ((data as TrainingPeaksStudentRow[]) ?? []).map(mapTrainingPeaksStudentRow);
 }
 
+export async function countTrainingPeaksStudentThreadsByStudentIds(
+  studentIds: string[]
+): Promise<Map<string, number>> {
+  const normalizedIds = Array.from(new Set(studentIds.filter(Boolean)));
+  const counts = new Map<string, number>();
+
+  if (normalizedIds.length === 0) {
+    return counts;
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_threads")
+    .select("student_id")
+    .in("student_id", normalizedIds);
+
+  if (error) {
+    throw new Error(`Failed to count TrainingPeaks student threads: ${error.message}`);
+  }
+
+  for (const row of (data as Array<{ student_id: string }> | null) ?? []) {
+    counts.set(row.student_id, (counts.get(row.student_id) ?? 0) + 1);
+  }
+
+  return counts;
+}
+
 export async function listTrainingPeaksStudentThreads(
   studentId: string
 ): Promise<TrainingPeaksStudentThread[]> {

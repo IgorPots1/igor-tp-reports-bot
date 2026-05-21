@@ -10,6 +10,7 @@ import {
   getSingleSearchParam,
 } from "@/app/admin/lib";
 import {
+  getTrainingPeaksAdminStudentGroupTopicListText,
   listTrainingPeaksAdminStudents,
   type TrainingPeaksAdminStudentsView,
 } from "@/features/trainingpeaks/admin";
@@ -150,6 +151,7 @@ export default async function AdminStudentsPage({ searchParams }: StudentsPagePr
                         {student.telegramChatId ? "Привязан" : "Не привязан"}
                       </span>
                       <span className="admin-muted">{getTelegramBindingText(student)}</span>
+                      <span className="admin-muted">{getTrainingPeaksAdminStudentGroupTopicListText(student)}</span>
                     </div>
                   </td>
                   <td>
