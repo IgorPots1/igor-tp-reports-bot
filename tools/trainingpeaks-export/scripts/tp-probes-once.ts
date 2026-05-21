@@ -59,6 +59,28 @@ type DistanceBucketReport = {
   clean_training_best?: ResultCandidate | null;
 };
 
+type ManualReviewCandidate = {
+  distance_bucket?: string;
+  distance_label?: string;
+  date?: string;
+  distance_km?: number;
+  duration_text?: string;
+  pace_text?: string;
+  warnings?: string[];
+  same_day_event?: boolean;
+  event_name?: string | null;
+  result_status?:
+    | "official_event"
+    | "probable_result"
+    | "possible_result"
+    | "training_candidate"
+    | "needs_coach_review"
+    | "excluded";
+  display_class?: string;
+  rationale?: string;
+  short_review_reason?: string;
+};
+
 type RaceResultsProbeReport = {
   athlete?: {
     athlete_id?: number;
@@ -70,7 +92,7 @@ type RaceResultsProbeReport = {
     to?: string;
   };
   distance_results?: Record<string, DistanceBucketReport>;
-  manual_review_candidates?: unknown[];
+  manual_review_candidates?: ManualReviewCandidate[];
   manual_review_summary?: {
     total?: number;
   };
@@ -86,6 +108,10 @@ const TELEGRAM_MESSAGE_LIMIT = 4000;
 const STALE_RUNNING_JOB_TIMEOUT_MINUTES = 12 * 60;
 const STALE_RUNNING_JOB_ERROR_MESSAGE = "Race-results probe job marked failed after stale running timeout";
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_MANUAL_REVIEW_CANDIDATES_IN_TELEGRAM = 5;
+const SHORT_COURSE_NOTE_THRESHOLD_KM: Record<string, number> = {
+  "5k": 4.85,
+};
 
 const DISTANCE_LINES = [
   { key: "5k", label: "5 км" },
@@ -416,6 +442,113 @@ function pickTrainingResult(bucket: DistanceBucketReport | undefined): ResultCan
   return bucket.candidate_result_summary?.clean_training_best ?? bucket.clean_training_best ?? null;
 }
 
+function formatManualReviewResultStatus(candidate: ManualReviewCandidate): string | null {
+  switch (candidate.result_status) {
+    case "official_event":
+      return "официальный старт";
+    case "probable_result":
+      return "вероятный результат";
+    case "possible_result":
+      return "возможный результат";
+    case "training_candidate":
+      return "тренировка";
+    case "needs_coach_review":
+      return "проверить тренеру";
+    case "excluded":
+      return "исключено";
+    default:
+      return null;
+  }
+}
+
+function formatManualReviewShortCourseNote(candidate: ManualReviewCandidate): string | null {
+  const bucket = candidate.distance_bucket;
+  const thresholdKm = bucket ? SHORT_COURSE_NOTE_THRESHOLD_KM[bucket] : undefined;
+  const distanceKm = candidate.distance_km;
+  const distanceLabel = candidate.distance_label?.trim();
+  if (thresholdKm === undefined || distanceKm === undefined || distanceKm >= thresholdKm || !distanceLabel) {
+    return null;
+  }
+  return `дистанция короче ${distanceLabel}, проверить контекст`;
+}
+
+function formatManualReviewCandidateReason(candidate: ManualReviewCandidate): string | null {
+  const parts: string[] = [];
+  const shortCourseNote = formatManualReviewShortCourseNote(candidate);
+  if (shortCourseNote) {
+    parts.push(shortCourseNote);
+  }
+
+  const eventName = candidate.event_name?.trim();
+  if (candidate.same_day_event && eventName) {
+    parts.push(eventName);
+  } else if (
+    !candidate.same_day_event &&
+    candidate.result_status &&
+    ["probable_result", "possible_result", "needs_coach_review"].includes(candidate.result_status)
+  ) {
+    parts.push("быстрый кандидат без старта");
+  }
+
+  const warnings = (candidate.warnings ?? []).filter(Boolean);
+  if (warnings.length > 0) {
+    parts.push(warnings.join(" / "));
+  }
+
+  if (parts.length > 0) {
+    return parts.join(" / ");
+  }
+
+  const fallbackReason = candidate.short_review_reason?.trim() || candidate.rationale?.trim();
+  if (fallbackReason) {
+    return fallbackReason.length <= 120 ? fallbackReason : `${fallbackReason.slice(0, 117)}...`;
+  }
+
+  return null;
+}
+
+function formatManualReviewCandidateBlock(candidate: ManualReviewCandidate): string[] {
+  const mainParts = [
+    candidate.distance_label?.trim() || "—",
+    candidate.date?.trim() || "—",
+    candidate.duration_text?.trim() || "—",
+    candidate.pace_text?.trim() || "—",
+  ];
+  const resultStatus = formatManualReviewResultStatus(candidate);
+  if (resultStatus) {
+    mainParts.push(resultStatus);
+  }
+  const lines = [`• ${mainParts.join(" · ")}`];
+  const reason = formatManualReviewCandidateReason(candidate);
+  if (reason) {
+    lines.push(`  ${reason}`);
+  }
+  return lines;
+}
+
+function buildManualReviewSection(report: RaceResultsProbeReport): string[] {
+  const candidates = report.manual_review_candidates ?? [];
+  const total =
+    report.manual_review_summary?.total ?? (candidates.length > 0 ? candidates.length : 0);
+
+  if (total <= 0) {
+    return ["", "⚠️ Проверить: нет"];
+  }
+
+  const lines = ["", "⚠️ Проверить:"];
+  const topCandidates = candidates.slice(0, MAX_MANUAL_REVIEW_CANDIDATES_IN_TELEGRAM);
+  for (const candidate of topCandidates) {
+    lines.push(...formatManualReviewCandidateBlock(candidate));
+  }
+
+  const remaining = total - topCandidates.length;
+  if (remaining > 0) {
+    lines.push(`Ещё ${remaining} кандидатов в полном отчёте.`);
+  }
+
+  return lines;
+}
+
 async function loadStudentName(studentInternalId: string | null, fallbackSlug: string | null): Promise<string> {
   if (!studentInternalId) {
     return fallbackSlug ?? "ученик";
@@ -441,10 +574,6 @@ function buildRaceResultsProbeSummaryText(input: {
   to: string;
   report: RaceResultsProbeReport;
 }): string {
-  const manualReviewCount =
-    input.report.manual_review_summary?.total ??
-    input.report.manual_review_candidates?.length ??
-    0;
   const lines = [
     `🏁 Результаты — ${input.studentName}`,
     `Период: ${input.from} — ${input.to}`,
@@ -459,7 +588,7 @@ function buildRaceResultsProbeSummaryText(input: {
     lines.push(`${distance.label}: офиц. ${official} · канд. ${candidate} · трен. ${training}`);
   }
 
-  lines.push("", `⚠️ Проверить: ${manualReviewCount}`);
+  lines.push(...buildManualReviewSection(input.report));
   return lines.join("\n");
 }
 
