@@ -1,4 +1,5 @@
 import { parseTelegramUpdate } from "@/features/telegram/parser";
+import { logTelegramUpdateIngress } from "@/features/telegram/ingress-logging";
 import {
   answerTelegramCallbackQuery,
   sendTelegramMessage,
@@ -113,6 +114,8 @@ export async function POST(request: Request) {
     return okResponse();
   }
 
+  logTelegramUpdateIngress(update);
+
   if (update.business_connection) {
     console.info("Telegram business connection update", {
       connectionId: update.business_connection.id,
@@ -182,6 +185,7 @@ export async function POST(request: Request) {
   }
 
   const messageText = parsedMessage.text?.trim() ?? "";
+  const messageChatType = update.message?.chat.type;
 
   if (HELP_COMMAND_PATTERN.test(messageText)) {
     await handleTrainingPeaksTelegramHelp(parsedMessage);
@@ -189,7 +193,7 @@ export async function POST(request: Request) {
   }
 
   if (START_COMMAND_PATTERN.test(messageText)) {
-    await handleTrainingPeaksTelegramCommand(parsedMessage, "/tp");
+    await handleTrainingPeaksTelegramCommand(parsedMessage, "/tp", messageChatType);
     return okResponse();
   }
 
@@ -198,7 +202,7 @@ export async function POST(request: Request) {
   }
 
   if (isTrainingPeaksCommand(messageText)) {
-    await handleTrainingPeaksTelegramCommand(parsedMessage, messageText);
+    await handleTrainingPeaksTelegramCommand(parsedMessage, messageText, messageChatType);
     return okResponse();
   }
 

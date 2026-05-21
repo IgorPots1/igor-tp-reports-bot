@@ -77,6 +77,7 @@ import {
   sendTelegramMessageStrict,
 } from "@/features/telegram/telegram-client";
 import type {
+  TelegramChatType,
   TelegramInlineKeyboardMarkup,
   TelegramMessage,
   TelegramReplyKeyboardMarkup,
@@ -183,6 +184,7 @@ const TP_ATTENTION_COMMAND_PATTERN = /^\/tp_attention(?:@\w+)?(?:\s+|$)/;
 const TP_CRON_STATUS_COMMAND_PATTERN = /^\/tp_cron_status(?:@\w+)?(?:\s+|$)/;
 const TP_WEEKLY_COMMAND_PATTERN = /^\/tp_weekly(?:@\w+)?(?:\s+|$)/;
 const TP_BUSINESS_TEST_COMMAND_PATTERN = /^\/tp_business_test(?:@\w+)?(?:\s+|$)/;
+const TP_GROUP_TEST_COMMAND_PATTERN = /^\/tp_group_test(?:@\w+)?(?:\s+|$)/;
 const TP_SET_TELEGRAM_COMMAND_PATTERN = /^\/tp_set_telegram(?:@\w+)?(?:\s+|$)/;
 const TP_BIND_COMMAND_PATTERN = /^\/tp_bind(?:@\w+)?(?:\s+|$)/;
 const TP_ACTIONS_COMMAND_PATTERN = /^\/tp_actions(?:@\w+)?(?:\s+|$)/;
@@ -221,6 +223,7 @@ type TrainingPeaksCommand =
   | "tp_cron_status"
   | "tp_weekly"
   | "tp_business_test"
+  | "tp_group_test"
   | "tp_set_telegram"
   | "tp_bind"
   | "tp_actions"
@@ -429,6 +432,10 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
 
   if (TP_BUSINESS_TEST_COMMAND_PATTERN.test(text)) {
     return "tp_business_test";
+  }
+
+  if (TP_GROUP_TEST_COMMAND_PATTERN.test(text)) {
+    return "tp_group_test";
   }
 
   if (TP_SET_TELEGRAM_COMMAND_PATTERN.test(text)) {
@@ -1806,6 +1813,42 @@ async function handleTrainingPeaksCronStatus(parsedMessage: ParsedTelegramUpdate
     limit: 5,
   });
   await sendTrainingPeaksMessage(parsedMessage.chatId, formatTrainingPeaksCronStatusMessage(logs));
+}
+
+function isTelegramGroupChatType(chatType: TelegramChatType | undefined): boolean {
+  return chatType === "group" || chatType === "supergroup";
+}
+
+function isCoachAuthorizedForGroupTest(
+  parsedMessage: ParsedTelegramUpdate,
+  chatType: TelegramChatType | undefined
+): boolean {
+  if (isTelegramGroupChatType(chatType)) {
+    return parsedMessage.userId !== null && isCoachChat(parsedMessage.userId);
+  }
+
+  return isCoachChat(parsedMessage.chatId);
+}
+
+async function handleTrainingPeaksGroupTest(
+  parsedMessage: ParsedTelegramUpdate,
+  chatType: TelegramChatType | undefined
+): Promise<void> {
+  const senderIsCoach =
+    parsedMessage.userId !== null && isCoachChat(parsedMessage.userId);
+
+  const lines = [
+    "🧪 Group diagnostics",
+    "",
+    `chat.id: ${parsedMessage.chatId}`,
+    `chat.type: ${chatType ?? "unknown"}`,
+    `from.id: ${parsedMessage.userId ?? "null"}`,
+    `sender is coach: ${senderIsCoach ? "yes" : "no"}`,
+    "",
+    "Если обычные сообщения не видны, проверь Privacy Mode в BotFather.",
+  ];
+
+  await sendTrainingPeaksMessage(parsedMessage.chatId, lines.join("\n"));
 }
 
 export function isCoachChat(chatId: number | string): boolean {
@@ -6178,12 +6221,23 @@ export async function handleTrainingPeaksTelegramCallback(
 
 export async function handleTrainingPeaksTelegramCommand(
   parsedMessage: ParsedTelegramUpdate,
-  text: string
+  text: string,
+  chatType?: TelegramChatType
 ): Promise<"handled" | "ignored"> {
   const command = getTrainingPeaksCommand(text);
 
   if (!command) {
     return "ignored";
+  }
+
+  if (command === "tp_group_test") {
+    if (!isCoachAuthorizedForGroupTest(parsedMessage, chatType)) {
+      await sendTrainingPeaksMessage(parsedMessage.chatId, COACH_ONLY_MESSAGE);
+      return "handled";
+    }
+
+    await handleTrainingPeaksGroupTest(parsedMessage, chatType);
+    return "handled";
   }
 
   if (!isCoachChat(parsedMessage.chatId)) {
