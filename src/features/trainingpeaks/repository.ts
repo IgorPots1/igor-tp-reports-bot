@@ -1906,6 +1906,32 @@ export async function getTrainingPeaksStudentByTelegramChatId(
   return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
 }
 
+export async function listTrainingPeaksStudentsByTelegramChatId(
+  telegramChatId: string
+): Promise<TrainingPeaksStudent[]> {
+  const normalizedChatId = telegramChatId.trim();
+
+  if (!normalizedChatId) {
+    return [];
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_students")
+    .select("*")
+    .eq("telegram_chat_id", normalizedChatId)
+    .eq("is_active", true)
+    .order("student_name", { ascending: true });
+
+  if (error) {
+    throw new Error(
+      `Failed to list TrainingPeaks students by telegram_chat_id ${normalizedChatId}: ${error.message}`
+    );
+  }
+
+  return ((data as TrainingPeaksStudentRow[]) ?? []).map(mapTrainingPeaksStudentRow);
+}
+
 export async function getTrainingPeaksStudentByTelegramUsername(
   username: string
 ): Promise<TrainingPeaksStudent | null> {
@@ -1934,6 +1960,32 @@ export async function getTrainingPeaksStudentByTelegramUsername(
   }
 
   return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
+}
+
+export async function listTrainingPeaksStudentsByTelegramUsername(
+  username: string
+): Promise<TrainingPeaksStudent[]> {
+  const normalizedUsername = username.trim().replace(/^@+/, "");
+
+  if (!normalizedUsername) {
+    return [];
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_students")
+    .select("*")
+    .ilike("telegram_username", normalizedUsername)
+    .eq("is_active", true)
+    .order("student_name", { ascending: true });
+
+  if (error) {
+    throw new Error(
+      `Failed to list TrainingPeaks students by telegram_username ${normalizedUsername}: ${error.message}`
+    );
+  }
+
+  return ((data as TrainingPeaksStudentRow[]) ?? []).map(mapTrainingPeaksStudentRow);
 }
 
 export async function listTrainingPeaksStudentThreads(

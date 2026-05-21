@@ -9,6 +9,7 @@ import {
 } from "@/features/trainingpeaks/repository";
 import { getTrainingPeaksCoachChatIds } from "@/features/trainingpeaks/attention-telegram";
 import { passesTrainingPeaksStrictMoveWorkoutIntentGate } from "@/features/trainingpeaks/service";
+import { tryAutoLinkTrainingPeaksTopic } from "@/features/trainingpeaks/topic-auto-link";
 import type { TelegramMessage } from "@/features/telegram/types";
 
 export type TrainingPeaksObserverLabel =
@@ -46,7 +47,11 @@ type TrainingPeaksObserverRouteResult =
   | { handled: false }
   | {
       handled: true;
-      reason: "known_student_private_dm" | "unknown_private_dm" | "linked_group_topic";
+      reason:
+        | "known_student_private_dm"
+        | "unknown_private_dm"
+        | "linked_group_topic"
+        | "unlinked_group_topic_auto_link";
     };
 
 const TRAINING_REPORT_KEYWORDS = [
@@ -265,6 +270,73 @@ function logObserverObservation(input: BuildObservationLogPayloadInput): void {
   );
 }
 
+async function observeLinkedGroupTopicMessage(input: {
+  message: TelegramMessage;
+  linkedStudent: TrainingPeaksStudent;
+  text: string | null;
+  hasAttachment: boolean;
+  messageLength: number;
+  fromId: number | undefined;
+  fromUsername: string | null;
+}): Promise<TrainingPeaksObserverRouteResult> {
+  const senderIdentity = await resolveStudentByTelegramIdentity({
+    fromId: input.fromId,
+    fromUsername: input.message.from?.username,
+  });
+
+  const senderMatchesLinkedStudent =
+    senderIdentity.student !== null && senderIdentity.student.id === input.linkedStudent.id;
+
+  if (!senderMatchesLinkedStudent) {
+    logObserverObservation({
+      studentId: input.linkedStudent.id,
+      sourceType: "group_topic",
+      chatId: String(input.message.chat.id),
+      messageThreadId: input.message.message_thread_id ?? null,
+      messageId: input.message.message_id,
+      fromId: input.fromId === undefined ? null : String(input.fromId),
+      fromUsername: input.fromUsername,
+      isTopicMessage: true,
+      labels: ["third_party_in_linked_topic"],
+      scores: { third_party_in_linked_topic: 0.95 },
+      messageLength: input.messageLength,
+      hasAttachment: input.hasAttachment,
+      text: input.text,
+      senderRole: "third_party_in_linked_topic",
+      senderMatchMethod: senderIdentity.matchMethod,
+    });
+
+    return {
+      handled: true,
+      reason: "linked_group_topic",
+    };
+  }
+
+  const classified = classifyObserverText(input.text);
+  logObserverObservation({
+    studentId: input.linkedStudent.id,
+    sourceType: "group_topic",
+    chatId: String(input.message.chat.id),
+    messageThreadId: input.message.message_thread_id ?? null,
+    messageId: input.message.message_id,
+    fromId: input.fromId === undefined ? null : String(input.fromId),
+    fromUsername: input.fromUsername,
+    isTopicMessage: true,
+    labels: classified.labels,
+    scores: classified.scores,
+    messageLength: input.messageLength,
+    hasAttachment: input.hasAttachment,
+    text: input.text,
+    senderRole: "linked_student",
+    senderMatchMethod: senderIdentity.matchMethod,
+  });
+
+  return {
+    handled: true,
+    reason: "linked_group_topic",
+  };
+}
+
 export async function handleTrainingPeaksContextObserverMessage(
   message: TelegramMessage
 ): Promise<TrainingPeaksObserverRouteResult> {
@@ -335,66 +407,47 @@ export async function handleTrainingPeaksContextObserverMessage(
   );
 
   if (!linkedThread) {
+    const autoLinkResult = await tryAutoLinkTrainingPeaksTopic(message);
+
+    if (autoLinkResult.kind === "linked") {
+      return observeLinkedGroupTopicMessage({
+        message,
+        linkedStudent: autoLinkResult.student,
+        text,
+        hasAttachment,
+        messageLength,
+        fromId,
+        fromUsername,
+      });
+    }
+
+    if (
+      autoLinkResult.kind === "no_match" ||
+      autoLinkResult.kind === "ambiguous" ||
+      autoLinkResult.kind === "conflict"
+    ) {
+      return {
+        handled: true,
+        reason: "unlinked_group_topic_auto_link",
+      };
+    }
+
     return { handled: false };
   }
 
   const linkedStudent = await getTrainingPeaksStudentById(linkedThread.studentId);
-  const senderIdentity = await resolveStudentByTelegramIdentity({
-    fromId,
-    fromUsername: message.from?.username,
-  });
 
-  const senderMatchesLinkedStudent =
-    linkedStudent !== null &&
-    senderIdentity.student !== null &&
-    senderIdentity.student.id === linkedStudent.id;
-
-  if (!senderMatchesLinkedStudent) {
-    logObserverObservation({
-      studentId: linkedStudent?.id ?? null,
-      sourceType: "group_topic",
-      chatId: String(message.chat.id),
-      messageThreadId: message.message_thread_id,
-      messageId: message.message_id,
-      fromId: fromId === undefined ? null : String(fromId),
-      fromUsername,
-      isTopicMessage: true,
-      labels: ["third_party_in_linked_topic"],
-      scores: { third_party_in_linked_topic: 0.95 },
-      messageLength,
-      hasAttachment,
-      text,
-      senderRole: "third_party_in_linked_topic",
-      senderMatchMethod: senderIdentity.matchMethod,
-    });
-
-    return {
-      handled: true,
-      reason: "linked_group_topic",
-    };
+  if (!linkedStudent) {
+    return { handled: false };
   }
 
-  const classified = classifyObserverText(text);
-  logObserverObservation({
-    studentId: linkedStudent.id,
-    sourceType: "group_topic",
-    chatId: String(message.chat.id),
-    messageThreadId: message.message_thread_id,
-    messageId: message.message_id,
-    fromId: fromId === undefined ? null : String(fromId),
-    fromUsername,
-    isTopicMessage: true,
-    labels: classified.labels,
-    scores: classified.scores,
-    messageLength,
-    hasAttachment,
+  return observeLinkedGroupTopicMessage({
+    message,
+    linkedStudent,
     text,
-    senderRole: "linked_student",
-    senderMatchMethod: senderIdentity.matchMethod,
+    hasAttachment,
+    messageLength,
+    fromId,
+    fromUsername,
   });
-
-  return {
-    handled: true,
-    reason: "linked_group_topic",
-  };
 }
