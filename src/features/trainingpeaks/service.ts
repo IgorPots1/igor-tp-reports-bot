@@ -2190,12 +2190,8 @@ function getUtcTodayIsoDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function getDefaultRaceResultsProbeFromDate(toDate: string): string {
-  const anchor = new Date(`${toDate}T12:00:00Z`);
-  const from = new Date(anchor);
-  from.setUTCMonth(from.getUTCMonth() - 24);
-  const fromIso = from.toISOString().slice(0, 10);
-  return fromIso > "2024-01-01" ? fromIso : "2024-01-01";
+function getDefaultRaceResultsProbeFromDate(): string {
+  return "2024-01-01";
 }
 
 export async function requestTrainingPeaksRaceResultsProbeJob(
@@ -2240,7 +2236,7 @@ export async function requestTrainingPeaksRaceResultsProbeJob(
   }
 
   const toDate = options?.to?.trim() || getUtcTodayIsoDate();
-  const fromDate = options?.from?.trim() || getDefaultRaceResultsProbeFromDate(toDate);
+  const fromDate = options?.from?.trim() || getDefaultRaceResultsProbeFromDate();
 
   if (!isIsoDate(fromDate) || !isIsoDate(toDate)) {
     return {
