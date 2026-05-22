@@ -18,6 +18,10 @@ import {
   isStrongHalfRaceAnchor,
   type TrainingImpliedHalfAnchor,
 } from "./lib/e-predictor-training-implied-half.ts";
+import {
+  buildSustainedEffortCandidate,
+  type SustainedEffortCandidate,
+} from "./lib/e-predictor-sustained-effort.ts";
 import { parsedRoot, toolRoot } from "./lib/paths.ts";
 import {
   DISTANCE_PRESETS,
@@ -242,6 +246,7 @@ type SegmentKeyWorkout = {
   takeaway: string;
   limitations: string[];
   segment_matching?: SegmentMatchingDiagnostics;
+  sustained_effort_candidate?: SustainedEffortCandidate;
 };
 
 const PACE_SPREAD_WARNING_PCT = 18;
@@ -1217,6 +1222,9 @@ function clampScore(value: number): number {
 function segmentRoleBucket(role: string): "interval_specific" | "threshold" | "sub_threshold" | "other" {
   const lower = role.toLowerCase();
   if (lower.includes("10k-specific") || lower.includes("vo2")) return "interval_specific";
+  if (lower.includes("half-specific sustained") || lower.includes("sustained tempo")) {
+    return "sub_threshold";
+  }
   if (lower.includes("threshold support") || (lower.includes("threshold") && !lower.includes("sub"))) {
     return "threshold";
   }
@@ -1347,12 +1355,18 @@ function computeReadinessScores(input: {
         workout.block_minutes >= 14 &&
         workout.block_minutes <= 30,
     );
+    const sustainedBlocks = input.trainingImpliedAnchor.evidence_workouts.filter(
+      (workout) => workout.evidence_kind === "sustained_effort",
+    );
     thresholdReadiness = 40 + Math.min(45, input.trainingImpliedAnchor.evidence_workouts.length * 10);
     if (preferredBlocks.length > 0) {
       thresholdReadiness += Math.min(15, preferredBlocks.length * 5);
     }
+    if (sustainedBlocks.length > 0) {
+      thresholdReadiness += Math.min(20, sustainedBlocks.length * 8);
+    }
     notes.push(
-      `${input.trainingImpliedAnchor.evidence_workouts.length} темповых блоков для training-implied half (${preferredBlocks.length} по 14–30 мин).`,
+      `${input.trainingImpliedAnchor.evidence_workouts.length} темповых/sustained блоков для training-implied half (${preferredBlocks.length} repeat 14–30 мин, ${sustainedBlocks.length} sustained).`,
     );
   } else if (thresholdWorkouts.length > 0) {
     notes.push(`${thresholdWorkouts.length} пригодных threshold/tempo отрезков 8–18 мин.`);
@@ -1443,16 +1457,28 @@ function computeReadinessScores(input: {
   if (input.weeksFound > 0) {
     dataQuality += (input.fitWeeks / input.weeksFound) * 20;
   }
+  const sustainedEligibleSegments = input.segmentKeyWorkouts.filter(
+    (workout) => workout.sustained_effort_candidate?.prediction_eligible,
+  );
   const segmentCoverage =
     input.segmentKeyWorkouts.length > 0
-      ? usableSegments.length / input.segmentKeyWorkouts.length
+      ? (usableSegments.length + sustainedEligibleSegments.length) / input.segmentKeyWorkouts.length
       : 0;
   dataQuality += segmentCoverage * 20;
   dataQuality += Math.min(18, usableSegments.length * 6);
+  dataQuality += Math.min(16, sustainedEligibleSegments.length * 8);
   dataQuality -= Math.min(20, input.dataWarnings.length * 2);
   dataQuality -= Math.min(10, input.suspiciousWeeks * 2);
-  if (usableSegments.length === 0 && input.segmentKeyWorkouts.some((w) => w.segment_evidence_available)) {
+  if (
+    usableSegments.length === 0 &&
+    sustainedEligibleSegments.length === 0 &&
+    input.segmentKeyWorkouts.some((w) => w.segment_evidence_available)
+  ) {
     notes.push("Segment evidence есть, но пригодных для прогноза тренировок нет.");
+  } else if (sustainedEligibleSegments.length > 0) {
+    notes.push(
+      `${sustainedEligibleSegments.length} sustained-effort block(s) пригодны для half training-implied anchor.`,
+    );
   }
   dataQuality = clampScore(dataQuality);
 
@@ -2307,6 +2333,9 @@ function classifyWorkoutEvidenceRole(
     }
     if (repDurationMin >= 20 && repDurationMin <= 40) {
       return { role: "tempo / sub-threshold support", limitations };
+    }
+    if (repDurationMin >= 40 && repDurationMin <= 65) {
+      return { role: "half-specific sustained tempo", limitations };
     }
   }
 
@@ -3675,6 +3704,42 @@ function buildSegmentKeyWorkoutTakeaway(input: {
   }
 }
 
+function attachSustainedEffortCandidate(input: {
+  workout: WeeklySummaryWorkout;
+  capture: RawKeyWorkoutCapture;
+  role: string;
+  fitLaps: FitLapRecord[] | null;
+  timerSliceWorkPaceMinPerKm: number | null;
+  dataQualityFlags: string[];
+  base: SegmentKeyWorkout;
+}): SegmentKeyWorkout {
+  const sustainedEffortCandidate = buildSustainedEffortCandidate({
+    workout: {
+      date: input.capture.date,
+      title: input.capture.title,
+      role: input.role,
+      description: input.workout.planned?.description ?? null,
+      avg_pace_min_per_km: input.workout.avg_pace_min_per_km,
+      completed_duration_minutes: input.workout.completed_duration_minutes,
+      distance_km: input.workout.distance_km,
+      avg_hr: input.workout.avg_hr ?? input.workout.completed?.avg_hr ?? null,
+      max_hr: input.workout.max_hr ?? input.workout.completed?.max_hr ?? null,
+      intensity_flags: input.workout.intensity_flags,
+      planned: input.workout.planned,
+      segment_comparison: asSegmentComparison(input.workout),
+      data_quality_flags: input.dataQualityFlags,
+    },
+    fitLaps: input.fitLaps,
+    timerSliceWorkPaceMinPerKm: input.timerSliceWorkPaceMinPerKm,
+    dataQualityFlags: input.dataQualityFlags,
+  });
+  if (!sustainedEffortCandidate) return input.base;
+  return {
+    ...input.base,
+    sustained_effort_candidate: sustainedEffortCandidate,
+  };
+}
+
 async function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): Promise<SegmentKeyWorkout> {
   const workout = capture.workout;
   const fitLaps = await loadWorkoutFitLaps(workout);
@@ -3707,39 +3772,47 @@ async function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): Promise<Se
           })
         : undefined;
 
-    return {
-      date: capture.date,
-      title: capture.title,
+    return attachSustainedEffortCandidate({
+      workout,
+      capture,
       role,
-      segment_evidence_available: false,
-      usable_for_prediction: false,
-      evidence_type: "unavailable",
-      work_reps_compared: null,
-      work_reps_planned: countPlannedWorkReps(workout),
-      work_avg_pace: null,
-      work_fastest_pace: null,
-      work_slowest_pace: null,
-      work_avg_hr: null,
-      work_max_hr: null,
-      rep_to_rep_fade_pct: null,
-      last_rep_vs_first_rep_pct: null,
-      completion_ratio: null,
-      verdict: "unavailable",
-      takeaway: buildSegmentKeyWorkoutTakeaway({
-        verdict: "unavailable",
+      fitLaps,
+      timerSliceWorkPaceMinPerKm: null,
+      dataQualityFlags: uniqueDataQualityFlags,
+      base: {
+        date: capture.date,
+        title: capture.title,
         role,
-        workAvgPace: null,
-        workRepsCompared: null,
-        workRepsPlanned: countPlannedWorkReps(workout),
-        evidenceWarnings: [],
-      }),
-      limitations: [
-        ...roleLimitations,
-        segmentVerdict.reason,
-        "Средний темп всей тренировки не используется как интервальное доказательство.",
-      ],
-      ...(segmentMatching ? { segment_matching: segmentMatching } : {}),
-    };
+        segment_evidence_available: false,
+        usable_for_prediction: false,
+        evidence_type: "unavailable",
+        work_reps_compared: null,
+        work_reps_planned: countPlannedWorkReps(workout),
+        work_avg_pace: null,
+        work_fastest_pace: null,
+        work_slowest_pace: null,
+        work_avg_hr: null,
+        work_max_hr: null,
+        rep_to_rep_fade_pct: null,
+        last_rep_vs_first_rep_pct: null,
+        completion_ratio: null,
+        verdict: "unavailable",
+        takeaway: buildSegmentKeyWorkoutTakeaway({
+          verdict: "unavailable",
+          role,
+          workAvgPace: null,
+          workRepsCompared: null,
+          workRepsPlanned: countPlannedWorkReps(workout),
+          evidenceWarnings: [],
+        }),
+        limitations: [
+          ...roleLimitations,
+          segmentVerdict.reason,
+          "Средний темп всей тренировки не используется как интервальное доказательство.",
+        ],
+        ...(segmentMatching ? { segment_matching: segmentMatching } : {}),
+      },
+    });
   }
 
   const paces = segments
@@ -3856,7 +3929,15 @@ async function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): Promise<Se
     segmentMatching = promoted.segmentMatching;
   }
 
-  return promotedWorkout;
+  return attachSustainedEffortCandidate({
+    workout,
+    capture,
+    role,
+    fitLaps,
+    timerSliceWorkPaceMinPerKm: workAvgPaceMin,
+    dataQualityFlags: uniqueDataQualityFlags,
+    base: promotedWorkout,
+  });
 }
 
 async function buildSegmentKeyWorkouts(captures: RawKeyWorkoutCapture[]): Promise<SegmentKeyWorkout[]> {
@@ -3965,6 +4046,45 @@ function formatSegmentMatchingMarkdown(workout: SegmentKeyWorkout): string[] {
   return lines;
 }
 
+function formatSustainedEffortMarkdown(candidate: SustainedEffortCandidate): string[] {
+  const lines: string[] = [];
+  if (!candidate.available) {
+    lines.push("  - Sustained effort: unavailable");
+    for (const note of candidate.notes.slice(0, 3)) {
+      lines.push(`  - ${note}`);
+    }
+    return lines;
+  }
+
+  const durationText =
+    candidate.duration_seconds !== null
+      ? formatDurationFromSeconds(candidate.duration_seconds)
+      : "—";
+  const distanceText =
+    candidate.distance_km !== null ? `${candidate.distance_km.toFixed(2)} км` : "—";
+  const paceParts = [durationText, distanceText, candidate.pace_text ?? "—"];
+  if (candidate.ngp_seconds_per_km != null) {
+    const ngpMin = Math.floor(candidate.ngp_seconds_per_km / 60);
+    const ngpSec = candidate.ngp_seconds_per_km % 60;
+    paceParts.push(`NGP ${ngpMin}:${String(ngpSec).padStart(2, "0")}/км`);
+  }
+  lines.push(`  - Sustained effort: ${paceParts.join(" / ")}`);
+  lines.push(`  - Evidence role: ${candidate.evidence_role}`);
+  lines.push(
+    `  - Used for training-implied half anchor: ${candidate.used_for_training_implied_anchor ? "yes" : "no"}`,
+  );
+  if (candidate.half_pace_penalty_sec_per_km != null) {
+    lines.push(`  - Penalty to half pace: +${candidate.half_pace_penalty_sec_per_km} sec/km`);
+  }
+  lines.push(
+    `  - Source: ${candidate.source}; confidence: ${candidate.confidence}; prediction eligible: ${candidate.prediction_eligible ? "yes" : "no"}`,
+  );
+  for (const note of candidate.notes.slice(0, 4)) {
+    lines.push(`  - ${note}`);
+  }
+  return lines;
+}
+
 function formatSegmentKeyWorkoutsMarkdown(segmentKeyWorkouts: SegmentKeyWorkout[]): string[] {
   const lines: string[] = [];
   const segmentAware = segmentKeyWorkouts.filter((workout) => workout.segment_evidence_available);
@@ -3972,6 +4092,9 @@ function formatSegmentKeyWorkoutsMarkdown(segmentKeyWorkouts: SegmentKeyWorkout[
 
   for (const workout of segmentAware) {
     lines.push(`- ${workout.date} · ${workout.title ?? "без названия"}`);
+    if (workout.sustained_effort_candidate) {
+      lines.push(...formatSustainedEffortMarkdown(workout.sustained_effort_candidate));
+    }
     lines.push(`  - Тип: ${workout.role}`);
     lines.push(
       `  - Рабочие отрезки: ${workout.work_reps_compared ?? "?"}/${workout.work_reps_planned ?? "?"}`,
@@ -4011,6 +4134,11 @@ function formatSegmentKeyWorkoutsMarkdown(segmentKeyWorkouts: SegmentKeyWorkout[
   }
 
   for (const workout of withoutSegment) {
+    if (workout.sustained_effort_candidate?.available) {
+      lines.push(`- ${workout.date} · ${workout.title ?? "без названия"}`);
+      lines.push(...formatSustainedEffortMarkdown(workout.sustained_effort_candidate));
+      continue;
+    }
     lines.push(
       `- ${workout.date} · ${workout.title ?? "без названия"} — нет segment/FIT данных; средний темп всей тренировки не используется для прогноза интервалов.`,
     );
@@ -4227,8 +4355,10 @@ function createMarkdown(report: RacePredictionReport): string {
     for (const workout of anchor.evidence_workouts.slice(0, 8)) {
       const blockLabel =
         workout.block_minutes !== null ? `${workout.block_minutes} мин` : "блок";
+      const kindLabel =
+        workout.evidence_kind === "sustained_effort" ? "sustained" : "threshold";
       lines.push(
-        `  - ${workout.date} · ${workout.title ?? "—"} — ${workout.work_avg_pace} (${blockLabel}, ${workout.role})`,
+        `  - ${workout.date} · ${workout.title ?? "—"} — ${workout.work_avg_pace} (${blockLabel}, ${kindLabel}, ${workout.role})`,
       );
     }
     for (const note of anchor.notes.slice(0, 4)) {

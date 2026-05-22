@@ -113,6 +113,12 @@ type VdotStyleSegmentKeyWorkout = {
   evidence_source?: string;
   extraction_strategy?: string;
   work_avg_pace?: string | null;
+  sustained_effort_candidate?: {
+    available?: boolean;
+    prediction_eligible?: boolean;
+    pace_text?: string | null;
+    pace_seconds_per_km?: number | null;
+  };
   segment_matching?: {
     fit_lap_candidate?: {
       candidate_work_avg_pace?: string | null;
@@ -269,6 +275,13 @@ function resolveAnchorSource(input: BuildVdotStyleCheckInput): {
 function observedPaceFromWorkout(
   workout: VdotStyleSegmentKeyWorkout,
 ): { paceText: string; paceSecondsPerKm: number } | null {
+  const sustained = workout.sustained_effort_candidate;
+  if (sustained?.available && sustained.prediction_eligible) {
+    if (sustained.pace_text && sustained.pace_seconds_per_km != null) {
+      return { paceText: sustained.pace_text, paceSecondsPerKm: sustained.pace_seconds_per_km };
+    }
+  }
+
   const paceText =
     workout.work_avg_pace ??
     workout.segment_matching?.fit_lap_candidate?.candidate_work_avg_pace ??
@@ -451,6 +464,12 @@ export function buildVdotStyleCheck(input: BuildVdotStyleCheckInput): VdotStyleC
     ePredictorLikelySeconds: input.ePredictorLikelySeconds,
     segmentKeyWorkouts: input.segmentKeyWorkouts,
   });
+
+  if (resolved.source === "training_implied_anchor") {
+    notes.push(
+      "Официального anchor нет; VDOT-style построен от training-implied current shape.",
+    );
+  }
 
   const staleness =
     resolved.source === "training_implied_anchor"
