@@ -181,9 +181,9 @@ type FitLapSelectedLap = {
 
 type FitLapCandidate = {
   available: boolean;
-  shadow_mode: true;
-  prediction_eligible: false;
-  confidence: "medium" | "low" | "none";
+  shadow_mode: boolean;
+  prediction_eligible: boolean;
+  confidence: "high" | "medium" | "low" | "none";
   strategy: "fit_lap_exact" | "fit_lap_fuzzy";
   selected_laps_count: number;
   expected_work_reps_count: number | null;
@@ -206,6 +206,13 @@ type SegmentMatchingDiagnostics = {
   fit_lap_candidate?: FitLapCandidate;
 };
 
+type SegmentKeyWorkoutExtractionStrategy = "fit_lap_exact" | "fit_lap_fuzzy" | "timer_slice";
+
+type SegmentKeyWorkoutEvidenceSource =
+  | "fit_lap_candidate"
+  | "segment_comparison"
+  | "repeat_group_inferred";
+
 type SegmentKeyWorkout = {
   date: string;
   title: string | null;
@@ -213,6 +220,9 @@ type SegmentKeyWorkout = {
   segment_evidence_available: boolean;
   usable_for_prediction: boolean;
   evidence_type: SegmentKeyWorkoutEvidenceType;
+  extraction_strategy?: SegmentKeyWorkoutExtractionStrategy;
+  evidence_source?: SegmentKeyWorkoutEvidenceSource;
+  original_timer_slice_work_avg_pace?: string | null;
   work_reps_compared: number | null;
   work_reps_planned: number | null;
   work_avg_pace: string | null;
@@ -247,6 +257,15 @@ const FIT_LAP_MERGE_MAX_SECOND_LAP_S = 120;
 const FIT_LAP_MIN_DISTANCE_LAP_S = 250;
 const FIT_LAP_WARMUP_PACE_BUFFER_MIN_PER_KM = 0.75;
 const FIT_LAP_MEDIUM_REP_RATIO = 0.8;
+const FIT_LAP_HIGH_REP_RATIO = 0.95;
+const FIT_LAP_PROMOTION_REP_RATIO = 0.75;
+const FIT_LAP_PROMOTION_DIAGNOSTIC_NOTE =
+  "Timer-slice work pace was rejected due to misalignment; FIT-lap candidate used as segment evidence.";
+const SERIOUS_FIT_LAP_REJECTION_REASONS = new Set([
+  "lap_records_not_available_in_parsed_data",
+  "no_planned_work_target",
+  "no_fit_lap_work_groups",
+]);
 const FIT_LAP_FIELD_PATHS = [
   "workouts[].completed.detail_source.zip_path",
   "workouts[].completed.detail_source.entry_name",
@@ -2981,6 +3000,189 @@ function buildFitLapSelectedReason(
   return parts.join("; ");
 }
 
+function parsePaceRangeSpreadPct(paceRange: string | null): number | null {
+  if (!paceRange) return null;
+  const parts = paceRange.split(/[–-]/).map((part) => part.trim());
+  if (parts.length !== 2) return null;
+  const fastest = parsePaceTextToMinPerKm(parts[0]!);
+  const slowest = parsePaceTextToMinPerKm(parts[1]!);
+  if (fastest === null || slowest === null || fastest <= 0) return null;
+  return ((slowest - fastest) / fastest) * 100;
+}
+
+function selectedFitLapLapsHavePlausibleDuration(
+  candidate: FitLapCandidate,
+  repDurationMin: number | null,
+): boolean {
+  if (candidate.selected_laps.length === 0) return false;
+  return candidate.selected_laps.every((lap) =>
+    durationMatchesRepDuration(lap.duration_seconds, repDurationMin),
+  );
+}
+
+function hasSeriousFitLapRejectionDiagnostics(candidate: FitLapCandidate): boolean {
+  if (candidate.rejected_reason && SERIOUS_FIT_LAP_REJECTION_REASONS.has(candidate.rejected_reason)) {
+    return true;
+  }
+  return candidate.diagnostics.some(
+    (entry) =>
+      entry.includes("no matched workout_file_fit") ||
+      entry.includes("FIT file load/parse failed") ||
+      entry.includes("fit.parsed.laps[] is empty"),
+  );
+}
+
+function isFitLapCandidatePromotionEligible(input: {
+  candidate: FitLapCandidate;
+  hasMisalignment: boolean;
+  repDurationMin: number | null;
+}): boolean {
+  const candidate = input.candidate;
+  if (!input.hasMisalignment || !candidate.available) return false;
+  if (candidate.confidence !== "medium" && candidate.confidence !== "high") return false;
+  if (!candidate.candidate_work_avg_pace) return false;
+  if (hasSeriousFitLapRejectionDiagnostics(candidate)) return false;
+  if (!selectedFitLapLapsHavePlausibleDuration(candidate, input.repDurationMin)) return false;
+
+  const spreadPct = parsePaceRangeSpreadPct(candidate.candidate_work_pace_range);
+  if (spreadPct !== null && spreadPct > PACE_SPREAD_WARNING_PCT) return false;
+
+  const expected = candidate.expected_work_reps_count;
+  if (expected !== null && expected > 0) {
+    return candidate.selected_laps_count >= expected * FIT_LAP_PROMOTION_REP_RATIO;
+  }
+  return candidate.selected_laps_count > 0;
+}
+
+function promoteSegmentKeyWorkoutWithFitLapCandidate(input: {
+  workout: SegmentKeyWorkout;
+  segmentMatching: SegmentMatchingDiagnostics;
+  fitLap: FitLapCandidate;
+  repDurationMin: number | null;
+  wholeWorkoutPaceMin: number | null;
+  dataQualityFlags: string[];
+  roleLimitations: string[];
+}): { workout: SegmentKeyWorkout; segmentMatching: SegmentMatchingDiagnostics } {
+  const paces = input.fitLap.selected_laps
+    .map((lap) => (lap.pace ? parsePaceTextToMinPerKm(lap.pace) : null))
+    .filter((pace): pace is number => pace !== null);
+  const hrValues = input.fitLap.selected_laps
+    .map((lap) => lap.avg_hr)
+    .filter((hr): hr is number => hr != null && hr > 0);
+
+  const workAvgPaceMin =
+    input.fitLap.candidate_work_avg_pace !== null
+      ? parsePaceTextToMinPerKm(input.fitLap.candidate_work_avg_pace)
+      : paces.length > 0
+        ? averageNumeric(paces)
+        : null;
+  const rangeSpread = parsePaceRangeSpreadPct(input.fitLap.candidate_work_pace_range);
+  const fastestPace =
+    rangeSpread !== null && input.fitLap.candidate_work_pace_range
+      ? parsePaceTextToMinPerKm(input.fitLap.candidate_work_pace_range.split(/[–-]/)[0]!.trim())
+      : paces.length > 0
+        ? Math.min(...paces)
+        : null;
+  const slowestPace =
+    rangeSpread !== null && input.fitLap.candidate_work_pace_range
+      ? parsePaceTextToMinPerKm(input.fitLap.candidate_work_pace_range.split(/[–-]/)[1]!.trim())
+      : paces.length > 0
+        ? Math.max(...paces)
+        : null;
+  const fadeMetrics = computeRepFadeMetrics(paces);
+
+  const workRepsPlanned = input.fitLap.expected_work_reps_count ?? input.workout.work_reps_planned;
+  const workRepsCompared = input.fitLap.selected_laps_count;
+  const completionRatio =
+    workRepsPlanned !== null && workRepsPlanned > 0
+      ? Math.round((workRepsCompared / workRepsPlanned) * 100) / 100
+      : null;
+
+  const evidenceWarnings = collectSegmentEvidenceWarnings({
+    completionRatio,
+    fastestPace,
+    slowestPace,
+    workAvgPaceMin,
+    wholeWorkoutPaceMin: input.wholeWorkoutPaceMin,
+    paces,
+    fadePct: fadeMetrics.last_rep_vs_first_rep_pct,
+    dataQualityFlags: input.dataQualityFlags,
+  });
+  const { verdict, usable_for_prediction } = deriveSegmentKeyWorkoutVerdict({
+    segmentEvidenceAvailable: true,
+    completionRatio,
+    fadePct: fadeMetrics.last_rep_vs_first_rep_pct,
+    evidenceWarnings,
+  });
+
+  const workAvgPace = workAvgPaceMin !== null ? formatPaceText(workAvgPaceMin) : null;
+  const limitations = [...input.roleLimitations];
+  if (input.workout.evidence_type === "repeat_group_inferred") {
+    limitations.push("Рабочие отрезки выведены из repeat-блока плана (mislabeled recovery в segment_comparison).");
+  }
+  if (input.dataQualityFlags.length > 0) {
+    limitations.push(`Флаги качества: ${input.dataQualityFlags.join(", ")}.`);
+  }
+  limitations.push(FIT_LAP_PROMOTION_DIAGNOSTIC_NOTE);
+  if (!usable_for_prediction) {
+    limitations.push("Не использовать как позитивное evidence для прогноза.");
+  }
+
+  const promotedFitLap: FitLapCandidate = {
+    ...input.fitLap,
+    shadow_mode: false,
+    prediction_eligible: true,
+  };
+  const segmentMatching: SegmentMatchingDiagnostics = {
+    ...input.segmentMatching,
+    prediction_eligible: usable_for_prediction,
+    warnings: [
+      ...input.segmentMatching.warnings.filter(
+        (warning) => !warning.startsWith("do not trust ") && warning !== "timer-slice values are observation-only",
+      ),
+      "timer-slice values are observation-only",
+      "timer_slice_misalignment_detected",
+      FIT_LAP_PROMOTION_DIAGNOSTIC_NOTE,
+    ],
+    fit_lap_candidate: promotedFitLap,
+  };
+
+  return {
+    workout: {
+      ...input.workout,
+      usable_for_prediction,
+      extraction_strategy: input.fitLap.strategy,
+      evidence_source: "fit_lap_candidate",
+      original_timer_slice_work_avg_pace:
+        input.segmentMatching.original_timer_slice_comparison.work_avg_pace,
+      work_reps_compared: workRepsCompared,
+      work_reps_planned: workRepsPlanned,
+      work_avg_pace: workAvgPace,
+      work_fastest_pace: fastestPace !== null ? formatPaceText(fastestPace) : null,
+      work_slowest_pace: slowestPace !== null ? formatPaceText(slowestPace) : null,
+      work_avg_hr:
+        input.fitLap.candidate_work_avg_hr ??
+        (hrValues.length > 0 ? Math.round(hrValues.reduce((sum, hr) => sum + hr, 0) / hrValues.length) : null),
+      work_max_hr: hrValues.length > 0 ? Math.max(...hrValues) : null,
+      rep_to_rep_fade_pct: fadeMetrics.rep_to_rep_fade_pct,
+      last_rep_vs_first_rep_pct: fadeMetrics.last_rep_vs_first_rep_pct,
+      completion_ratio: completionRatio,
+      verdict,
+      takeaway: buildSegmentKeyWorkoutTakeaway({
+        verdict,
+        role: input.workout.role,
+        workAvgPace,
+        workRepsCompared,
+        workRepsPlanned,
+        evidenceWarnings,
+      }),
+      limitations,
+      segment_matching: segmentMatching,
+    },
+    segmentMatching,
+  };
+}
+
 function buildFitLapCandidate(input: {
   workout: WeeklySummaryWorkout;
   fitLaps: FitLapRecord[] | null;
@@ -3134,13 +3336,26 @@ function buildFitLapCandidate(input: {
     ? "fit_lap_exact"
     : "fit_lap_fuzzy";
 
+  const durationsPlausible = trimmed.every((group) =>
+    durationMatchesRepDuration(group.duration_seconds, input.repDurationMin),
+  );
   let confidence: FitLapCandidate["confidence"] = "none";
   if (trimmed.length > 0) {
     if (
       repRatio !== null &&
+      repRatio >= FIT_LAP_HIGH_REP_RATIO &&
+      paceBandOk &&
+      spreadOk &&
+      strategy === "fit_lap_exact" &&
+      durationsPlausible
+    ) {
+      confidence = "high";
+    } else if (
+      repRatio !== null &&
       repRatio >= FIT_LAP_MEDIUM_REP_RATIO &&
       paceBandOk &&
-      spreadOk
+      spreadOk &&
+      durationsPlausible
     ) {
       confidence = "medium";
     } else {
@@ -3570,7 +3785,7 @@ async function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): Promise<Se
     limitations.push("Не использовать как позитивное evidence для прогноза.");
   }
 
-  const segmentMatching = buildSegmentMatchingDiagnostics({
+  let segmentMatching = buildSegmentMatchingDiagnostics({
     workout,
     evidenceType,
     selectedWorkSegments: segments,
@@ -3579,7 +3794,7 @@ async function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): Promise<Se
     fitLaps,
   });
 
-  return {
+  let promotedWorkout: SegmentKeyWorkout = {
     date: capture.date,
     title: capture.title,
     role,
@@ -3608,6 +3823,34 @@ async function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): Promise<Se
     limitations,
     ...(segmentMatching ? { segment_matching: segmentMatching } : {}),
   };
+
+  const hasMisalignment =
+    segmentMatching?.diagnostics.some((entry) => entry.code === "possible_timer_slice_misalignment") ??
+    false;
+  const fitLapCandidate = segmentMatching?.fit_lap_candidate;
+  if (
+    segmentMatching &&
+    fitLapCandidate &&
+    isFitLapCandidatePromotionEligible({
+      candidate: fitLapCandidate,
+      hasMisalignment,
+      repDurationMin: titleParsed.repDurationMin,
+    })
+  ) {
+    const promoted = promoteSegmentKeyWorkoutWithFitLapCandidate({
+      workout: promotedWorkout,
+      segmentMatching,
+      fitLap: fitLapCandidate,
+      repDurationMin: titleParsed.repDurationMin,
+      wholeWorkoutPaceMin: workout.avg_pace_min_per_km,
+      dataQualityFlags: uniqueDataQualityFlags,
+      roleLimitations: roleLimitations,
+    });
+    promotedWorkout = promoted.workout;
+    segmentMatching = promoted.segmentMatching;
+  }
+
+  return promotedWorkout;
 }
 
 async function buildSegmentKeyWorkouts(captures: RawKeyWorkoutCapture[]): Promise<SegmentKeyWorkout[]> {
@@ -3654,9 +3897,11 @@ function formatSegmentMatchingMarkdown(workout: SegmentKeyWorkout): string[] {
   const hasMisalignment = matching.diagnostics.some(
     (entry) => entry.code === "possible_timer_slice_misalignment",
   );
-  if (hasMisalignment && workout.work_avg_pace) {
+  const timerSliceWorkPace =
+    workout.original_timer_slice_work_avg_pace ?? timerSlice.work_avg_pace;
+  if (hasMisalignment && timerSliceWorkPace && workout.evidence_source !== "fit_lap_candidate") {
     lines.push(
-      `    - Не доверять ${workout.work_avg_pace} как финальному рабочему темпу — вероятное смещение timer-slice.`,
+      `    - Не доверять ${timerSliceWorkPace} как финальному рабочему темпу — вероятное смещение timer-slice.`,
     );
   }
   const rescue = matching.target_proximity_rescue_candidate;
@@ -3678,6 +3923,9 @@ function formatSegmentMatchingMarkdown(workout: SegmentKeyWorkout): string[] {
   } else if (rescue && !rescue.available && rescue.rejected_reason === "no_planned_work_target") {
     lines.push("    - Target-proximity candidate: нет planned work target (shadow only).");
   }
+  if (matching.warnings.includes("timer_slice_misalignment_detected")) {
+    lines.push("    - Диагностика: timer_slice_misalignment_detected");
+  }
   const fitLap = matching.fit_lap_candidate;
   if (fitLap?.available) {
     const repLabel =
@@ -3688,12 +3936,21 @@ function formatSegmentMatchingMarkdown(workout: SegmentKeyWorkout): string[] {
       fitLap.candidate_work_avg_pace ? `avg ${fitLap.candidate_work_avg_pace}` : null,
       fitLap.candidate_work_pace_range ? `range ${fitLap.candidate_work_pace_range}` : null,
     ].filter(Boolean);
-    lines.push("    - Shadow FIT-lap candidate:");
-    lines.push(
-      `      - FIT lap ${fitLap.strategy}: ${repLabel} lap group(s)${paceParts.length ? `, ${paceParts.join(", ")}` : ""}`,
-    );
-    lines.push(`      - confidence: ${fitLap.confidence}`);
-    lines.push("      - shadow mode / not used in prediction");
+    if (fitLap.prediction_eligible) {
+      lines.push("    - FIT-lap evidence (promoted):");
+      lines.push(
+        `      - FIT lap ${fitLap.strategy}: ${repLabel} lap group(s)${paceParts.length ? `, ${paceParts.join(", ")}` : ""}`,
+      );
+      lines.push(`      - confidence: ${fitLap.confidence}`);
+      lines.push("      - used as segment evidence for prediction");
+    } else {
+      lines.push("    - Shadow FIT-lap candidate:");
+      lines.push(
+        `      - FIT lap ${fitLap.strategy}: ${repLabel} lap group(s)${paceParts.length ? `, ${paceParts.join(", ")}` : ""}`,
+      );
+      lines.push(`      - confidence: ${fitLap.confidence}`);
+      lines.push("      - shadow mode / not used in prediction");
+    }
   } else if (fitLap && !fitLap.available) {
     lines.push(
       `    - Shadow FIT-lap candidate: unavailable (${fitLap.rejected_reason ?? "no_match"}) — shadow only.`,
@@ -3713,6 +3970,12 @@ function formatSegmentKeyWorkoutsMarkdown(segmentKeyWorkouts: SegmentKeyWorkout[
     lines.push(
       `  - Рабочие отрезки: ${workout.work_reps_compared ?? "?"}/${workout.work_reps_planned ?? "?"}`,
     );
+    if (workout.evidence_source === "fit_lap_candidate" && workout.extraction_strategy) {
+      lines.push(`  - Источник: FIT laps / ${workout.extraction_strategy}`);
+      if (workout.original_timer_slice_work_avg_pace) {
+        lines.push(`  - Таймерная нарезка отклонена: ${workout.original_timer_slice_work_avg_pace}`);
+      }
+    }
     if (workout.work_avg_pace) {
       lines.push(`  - Ср. темп рабочих: ${workout.work_avg_pace}`);
     }
@@ -4486,6 +4749,9 @@ async function main(): Promise<void> {
       workout.segment_matching?.fit_lap_candidate?.available === true &&
       workout.segment_matching?.fit_lap_candidate?.confidence === "medium",
   ).length;
+  const fitLapPromotedCount = segmentKeyWorkouts.filter(
+    (workout) => workout.segment_matching?.fit_lap_candidate?.prediction_eligible === true,
+  ).length;
   if (segmentAudit || usableSegmentKeyWorkouts.length > 0) {
     console.log("[tp-race-prediction-probe] Segment key workouts");
     console.log(`segment_key_workouts_count: ${segmentKeyWorkouts.length}`);
@@ -4504,6 +4770,7 @@ async function main(): Promise<void> {
     console.log(`target_proximity_rescue_medium_count: ${targetProximityRescueMediumCount}`);
     console.log(`fit_lap_candidates_count: ${fitLapCandidatesCount}`);
     console.log(`fit_lap_medium_count: ${fitLapMediumCount}`);
+    console.log(`fit_lap_promoted_count: ${fitLapPromotedCount}`);
   }
   if (classificationDiagnostics.length > 0) {
     console.log("[tp-race-prediction-probe] Classification diagnostics");
