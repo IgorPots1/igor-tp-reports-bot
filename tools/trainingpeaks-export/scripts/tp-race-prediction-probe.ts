@@ -445,6 +445,7 @@ type RacePredictionReport = {
     insufficient_data?: boolean;
   };
   limitations: string[];
+  classification_diagnostics?: string[];
   output_paths: {
     report_json: string;
     report_md: string;
@@ -455,14 +456,19 @@ type RacePredictionReport = {
 
 const TEMPO_PATTERN =
   /\b(tempo|threshold|порог|темпов|темповая|темповый|темповой|lactate|lt\b|critical power)\b/i;
-const INTERVAL_PATTERN =
-  /\b(interval|intervals|интерв|повтор|repeats?|fartlek|фартлек|vo2|ускорен|track)\b|\d+\s*[x×хX]\s*\d+/i;
+const INTERVAL_KEYWORD_PATTERN =
+  /\b(interval|intervals|интерв|повтор|repeats?|fartlek|фартлек|vo2|ускорен|track)\b/i;
+const INTERVAL_REPEAT_WITH_UNITS_PATTERN =
+  /\d+\s*[x×хX]\s*\d+\s*(?:мин|min|сек|sec|(?:м|m)(?:\/|\b|\s)|(?:km|км)\b)/i;
+const EASY_TITLE_PATTERN =
+  /(?:^|\b)(?:легкий\s+бег|лёгкий\s+бег|easy\s+run|\beasy\b|\brecovery\b|восстановительн(?:ый|ая|ое|ые)?)(?:\b|$)/i;
 const RACE_PACE_PATTERN =
   /\b(race pace|goal pace|целевой темп|темп старта|темп гонки|marathon pace|half marathon pace|10k pace|5k pace)\b/i;
 const LONG_RUN_PATTERN = /\b(long run|long\b|длительн|длинн|lsd|продолжительн)\b/i;
 const RUNNING_SPORT_PATTERN = /\b(run|running|бег|jog)\b/i;
 const NON_WORK_SEGMENT_TYPES = new Set(["recovery", "rest", "warmup", "cooldown"]);
-const INTERVAL_TITLE_PATTERN = /(\d+)\s*[x×хX]\s*(\d+)\s*(?:мин|min)?/i;
+const INTERVAL_TITLE_PATTERN =
+  /(\d+)\s*[x×хX]\s*(\d+)\s*(?:мин|min|сек|sec|(?:м|m)(?:\/|\b|\s)|(?:km|км)\b)/i;
 
 function readTextFileSyncSafe(filePath: string): string | null {
   try {
@@ -792,13 +798,70 @@ function collectWorkoutText(workout: WeeklySummaryWorkout): string {
     .join(" ");
 }
 
+function isEasyRecoveryTitle(title: string | null | undefined): boolean {
+  if (!title) return false;
+  return EASY_TITLE_PATTERN.test(title);
+}
+
+function hasIntervalKeyword(text: string): boolean {
+  return INTERVAL_KEYWORD_PATTERN.test(text);
+}
+
+function hasIntervalRepeatWithUnits(text: string): boolean {
+  return INTERVAL_REPEAT_WITH_UNITS_PATTERN.test(text);
+}
+
+function hasExplicitNonEasyIntervalMainSet(workout: WeeklySummaryWorkout): boolean {
+  return getPlannedSegments(workout).some((segment) => {
+    if ((segment.repeat_count ?? 1) <= 1) return false;
+    if (segment.is_rest) return false;
+    if (segment.segment_type === "warmup" || segment.segment_type === "cooldown" || segment.segment_type === "recovery") {
+      return false;
+    }
+    if (segment.segment_type === "interval") return true;
+    return (segment.duration_minutes ?? 0) >= 3;
+  });
+}
+
+function hasIntervalEvidence(text: string, title: string, workout: WeeklySummaryWorkout): boolean {
+  if (hasIntervalKeyword(text)) return true;
+  if (hasIntervalRepeatWithUnits(title)) return true;
+  if (hasExplicitNonEasyIntervalMainSet(workout)) return true;
+  if (!isEasyRecoveryTitle(title) && hasIntervalRepeatWithUnits(text)) return true;
+  return false;
+}
+
+function wouldClassifyAsIntervalWithoutEasyGuard(text: string): boolean {
+  if (hasIntervalKeyword(text)) return true;
+  if (hasIntervalRepeatWithUnits(text)) return true;
+  return false;
+}
+
+function getEasyTitleClassificationDiagnostic(
+  workout: WeeklySummaryWorkout,
+  role: KeyWorkoutRole | null,
+): string | null {
+  if (role !== null || !isEasyRecoveryTitle(workout.title)) return null;
+  if (!wouldClassifyAsIntervalWithoutEasyGuard(collectWorkoutText(workout))) return null;
+  return `easy_title_with_drills_ignored_for_interval_evidence: ${workout.date ?? "?"} · ${workout.title ?? "untitled"}`;
+}
+
 function classifyKeyWorkout(workout: WeeklySummaryWorkout): KeyWorkoutRole | null {
   if (!workout.classification.is_completed || !isRunningWorkout(workout)) return null;
   const text = collectWorkoutText(workout);
+  const title = workout.title ?? "";
   if (workout.intensity_flags.includes("long_run") || LONG_RUN_PATTERN.test(text)) {
     return "long_run";
   }
-  if (INTERVAL_PATTERN.test(text)) return "intervals";
+
+  if (isEasyRecoveryTitle(title)) {
+    if (hasIntervalEvidence(text, title, workout)) return "intervals";
+    if (TEMPO_PATTERN.test(title)) return "tempo_threshold";
+    if (RACE_PACE_PATTERN.test(title)) return "race_pace_like";
+    return null;
+  }
+
+  if (hasIntervalEvidence(text, title, workout)) return "intervals";
   if (TEMPO_PATTERN.test(text)) return "tempo_threshold";
   if (RACE_PACE_PATTERN.test(text)) return "race_pace_like";
   return null;
@@ -1851,7 +1914,8 @@ function buildSegmentAudit(
   const segmentComparisonAvailableCount = workouts.filter((workout) => workout.has_segment_comparison).length;
   const isIntervalLike = (workout: SegmentAuditReport["workouts"][number]): boolean =>
     workout.role === "intervals" ||
-    INTERVAL_PATTERN.test([workout.title ?? "", workout.role].join(" "));
+    hasIntervalKeyword(workout.title ?? "") ||
+    hasIntervalRepeatWithUnits(workout.title ?? "");
 
   const intervalWorkouts = workouts.filter((workout) => workout.role === "intervals");
   const intervalLikeWorkouts = workouts.filter(isIntervalLike);
@@ -2085,8 +2149,12 @@ function classifyWorkoutEvidenceRole(
     }
   }
 
-  const text = (title ?? "").toLowerCase();
-  if (INTERVAL_PATTERN.test(text) || INTERVAL_TITLE_PATTERN.test(text)) {
+  const text = title ?? "";
+  if (
+    hasIntervalKeyword(text) ||
+    hasIntervalRepeatWithUnits(text) ||
+    INTERVAL_TITLE_PATTERN.test(text)
+  ) {
     limitations.push("Длительность повтора выведена из названия — уверенность ниже.");
     return { role: "interval support (inferred from title)", limitations };
   }
@@ -2814,6 +2882,7 @@ async function main(): Promise<void> {
   const rawKeyWorkoutCaptures: RawKeyWorkoutCapture[] = [];
   const completionRates: number[] = [];
   const dataWarnings = new Set<string>();
+  const classificationDiagnostics: string[] = [];
   let missedWorkouts = 0;
   let fitWeeks = 0;
   let workoutFilesWeeks = 0;
@@ -2852,6 +2921,8 @@ async function main(): Promise<void> {
       }
 
       const keyCategory = classifyKeyWorkout(workout);
+      const easyTitleDiagnostic = getEasyTitleClassificationDiagnostic(workout, keyCategory);
+      if (easyTitleDiagnostic) classificationDiagnostics.push(easyTitleDiagnostic);
       if (keyCategory && workout.date) {
         keyWorkouts.push({
           category: keyCategory,
@@ -3071,6 +3142,7 @@ async function main(): Promise<void> {
     ...(trainingImpliedAnchor ? { training_implied_anchor: trainingImpliedAnchor } : {}),
     prediction,
     limitations,
+    ...(classificationDiagnostics.length > 0 ? { classification_diagnostics: classificationDiagnostics } : {}),
     output_paths: {
       report_json: reportJsonPath,
       report_md: reportMdPath,
@@ -3131,6 +3203,10 @@ async function main(): Promise<void> {
     console.log("[tp-race-prediction-probe] Segment key workouts");
     console.log(`segment_key_workouts_count: ${segmentKeyWorkouts.length}`);
     console.log(`usable_segment_key_workouts_count: ${usableSegmentKeyWorkouts.length}`);
+  }
+  if (classificationDiagnostics.length > 0) {
+    console.log("[tp-race-prediction-probe] Classification diagnostics");
+    console.log(`easy_title_drills_ignored_count: ${classificationDiagnostics.length}`);
   }
   console.log(`report_json: ${reportJsonPath}`);
   console.log(`report_md: ${reportMdPath}`);
