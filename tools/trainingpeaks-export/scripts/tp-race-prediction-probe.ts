@@ -59,14 +59,64 @@ type WorkoutSegmentAnalysisAudit = {
 };
 
 type SegmentComparisonEntryAudit = {
+  order?: number;
+  planned_segment_order?: number;
   segment_type?: string;
   is_rest?: boolean;
   coverage?: string;
   coverage_ratio?: number | null;
+  planned_duration_minutes?: number | null;
   repeat_iteration?: number | null;
   repeat_group_id?: string | null;
+  actual?: {
+    duration_minutes?: number | null;
+    distance_km?: number | null;
+    avg_pace_min_per_km?: number | null;
+    avg_pace_text?: string | null;
+    avg_hr?: number | null;
+  };
   data_quality_flags?: string[];
 };
+
+type PlannedSegmentSummary = {
+  segment_type?: string;
+  is_rest?: boolean;
+  repeat_count?: number;
+  repeat_group_id?: string | null;
+  duration_minutes?: number | null;
+  label?: string | null;
+};
+
+type SegmentKeyWorkoutEvidenceType = "segment_comparison" | "repeat_group_inferred" | "unavailable";
+
+type SegmentKeyWorkoutVerdict = "positive" | "neutral" | "warning" | "unavailable";
+
+type SegmentKeyWorkout = {
+  date: string;
+  title: string | null;
+  role: string;
+  segment_evidence_available: boolean;
+  usable_for_prediction: boolean;
+  evidence_type: SegmentKeyWorkoutEvidenceType;
+  work_reps_compared: number | null;
+  work_reps_planned: number | null;
+  work_avg_pace: string | null;
+  work_fastest_pace: string | null;
+  work_slowest_pace: string | null;
+  work_avg_hr: number | null;
+  work_max_hr: number | null;
+  rep_to_rep_fade_pct: number | null;
+  last_rep_vs_first_rep_pct: number | null;
+  completion_ratio: number | null;
+  verdict: SegmentKeyWorkoutVerdict;
+  takeaway: string;
+  limitations: string[];
+};
+
+const PACE_SPREAD_WARNING_PCT = 18;
+const SLOW_SEGMENT_VS_FASTEST_PCT = 25;
+const WORK_AVG_SLOWER_THAN_WHOLE_WORKOUT_PCT = 8;
+const CRITICAL_SEGMENT_DATA_QUALITY_FLAGS = new Set(["contains_missing_segments"]);
 
 type WeeklySummaryWorkout = {
   date: string | null;
@@ -365,6 +415,7 @@ type RacePredictionReport = {
     report_md: string;
   };
   segment_audit?: SegmentAuditReport;
+  segment_key_workouts?: SegmentKeyWorkout[];
 };
 
 const TEMPO_PATTERN =
@@ -375,6 +426,8 @@ const RACE_PACE_PATTERN =
   /\b(race pace|goal pace|целевой темп|темп старта|темп гонки|marathon pace|half marathon pace|10k pace|5k pace)\b/i;
 const LONG_RUN_PATTERN = /\b(long run|long\b|длительн|длинн|lsd|продолжительн)\b/i;
 const RUNNING_SPORT_PATTERN = /\b(run|running|бег|jog)\b/i;
+const NON_WORK_SEGMENT_TYPES = new Set(["recovery", "rest", "warmup", "cooldown"]);
+const INTERVAL_TITLE_PATTERN = /(\d+)\s*[x×хX]\s*(\d+)\s*(?:мин|min)?/i;
 
 function readTextFileSyncSafe(filePath: string): string | null {
   try {
@@ -1229,6 +1282,538 @@ function buildSegmentAudit(
   };
 }
 
+function isWorkCoverage(coverage: string | undefined): boolean {
+  return coverage === "full" || coverage === "partial";
+}
+
+function segmentHasUsablePace(segment: SegmentComparisonEntryAudit): boolean {
+  return (
+    segment.actual?.avg_pace_text != null ||
+    (segment.actual?.avg_pace_min_per_km != null && segment.actual.avg_pace_min_per_km > 0)
+  );
+}
+
+function segmentPaceMinPerKm(segment: SegmentComparisonEntryAudit): number | null {
+  const pace = segment.actual?.avg_pace_min_per_km;
+  if (pace != null && pace > 0) return pace;
+  const text = segment.actual?.avg_pace_text;
+  if (!text) return null;
+  const match = text.match(/(\d+):(\d+)/);
+  if (!match) return null;
+  return Number(match[1]) + Number(match[2]) / 60;
+}
+
+function getPlannedSegments(workout: WeeklySummaryWorkout): PlannedSegmentSummary[] {
+  return (workout.planned.segments ?? []) as PlannedSegmentSummary[];
+}
+
+function getPlannedRepeatBlocks(workout: WeeklySummaryWorkout): PlannedSegmentSummary[] {
+  return getPlannedSegments(workout).filter(
+    (segment) => (segment.repeat_count ?? 1) > 1 && (segment.duration_minutes ?? 0) >= 3,
+  );
+}
+
+function parseIntervalRepsFromTitle(title: string | null): { reps: number | null; repDurationMin: number | null } {
+  if (!title) return { reps: null, repDurationMin: null };
+  const match = title.match(INTERVAL_TITLE_PATTERN);
+  if (!match) return { reps: null, repDurationMin: null };
+  return { reps: Number(match[1]), repDurationMin: Number(match[2]) };
+}
+
+function countPlannedWorkReps(workout: WeeklySummaryWorkout): number | null {
+  const fromTitle = parseIntervalRepsFromTitle(workout.title);
+  if (fromTitle.reps !== null) return fromTitle.reps;
+
+  const repeatBlock = getPlannedRepeatBlocks(workout).find(
+    (segment) => segment.segment_type === "interval" || (segment.duration_minutes ?? 0) >= 8,
+  );
+  return repeatBlock?.repeat_count ?? null;
+}
+
+function sortWorkSegments(segments: SegmentComparisonEntryAudit[]): SegmentComparisonEntryAudit[] {
+  return [...segments].sort((left, right) => {
+    const leftRepeat = left.repeat_iteration ?? Number.MAX_SAFE_INTEGER;
+    const rightRepeat = right.repeat_iteration ?? Number.MAX_SAFE_INTEGER;
+    if (leftRepeat !== rightRepeat) return leftRepeat - rightRepeat;
+    return (left.order ?? 0) - (right.order ?? 0);
+  });
+}
+
+function isStrictWorkSegment(segment: SegmentComparisonEntryAudit): boolean {
+  if (segment.is_rest === true) return false;
+  if (NON_WORK_SEGMENT_TYPES.has(segment.segment_type ?? "")) return false;
+  if (!isWorkCoverage(segment.coverage)) return false;
+  return segmentHasUsablePace(segment);
+}
+
+function isRepeatBlockWorkSegment(
+  segment: SegmentComparisonEntryAudit,
+  plannedBlocks: PlannedSegmentSummary[],
+): boolean {
+  if (!isWorkCoverage(segment.coverage)) return false;
+  if (!segmentHasUsablePace(segment)) return false;
+  if (segment.repeat_iteration == null || !segment.repeat_group_id) return false;
+
+  const block = plannedBlocks.find((entry) => entry.repeat_group_id === segment.repeat_group_id);
+  if (!block) return false;
+
+  const duration = segment.planned_duration_minutes ?? block.duration_minutes ?? 0;
+  if (segment.segment_type === "warmup" || segment.segment_type === "cooldown") return false;
+  if (duration <= 3 && segment.segment_type !== "interval") return false;
+  if (segment.segment_type === "interval") return true;
+  if (duration >= 8 && Math.abs(duration - (block.duration_minutes ?? 0)) < 1) return true;
+  return false;
+}
+
+function filterToRepDuration(
+  segments: SegmentComparisonEntryAudit[],
+  repDurationMin: number | null,
+): SegmentComparisonEntryAudit[] {
+  if (repDurationMin === null) return segments;
+  return segments.filter((segment) => {
+    if (segment.segment_type === "interval") return true;
+    const duration = segment.planned_duration_minutes ?? 0;
+    return Math.abs(duration - repDurationMin) < 2;
+  });
+}
+
+function scoreWorkSegmentCandidate(
+  segments: SegmentComparisonEntryAudit[],
+  titleParsed: { reps: number | null; repDurationMin: number | null },
+): number {
+  if (!segments.length) return -1;
+  let score = segments.length;
+  if (titleParsed.reps !== null && titleParsed.reps > 0) {
+    const repRatio = segments.length / titleParsed.reps;
+    if (repRatio >= 0.75 && repRatio <= 1.1) score += 12;
+    else if (repRatio < 0.5) score -= 8;
+  }
+  if (titleParsed.repDurationMin !== null) {
+    const durationMatches = segments.filter((segment) => {
+      const duration = segment.planned_duration_minutes ?? 0;
+      return Math.abs(duration - titleParsed.repDurationMin!) < 2;
+    }).length;
+    score += durationMatches * 3;
+  }
+  if (segments.every((segment) => segment.segment_type === "interval")) {
+    score += 5;
+  }
+  return score;
+}
+
+function identifyWorkSegments(workout: WeeklySummaryWorkout): {
+  segments: SegmentComparisonEntryAudit[];
+  evidenceType: SegmentKeyWorkoutEvidenceType;
+} {
+  const comparison = asSegmentComparison(workout);
+  const plannedBlocks = getPlannedRepeatBlocks(workout);
+  const titleParsed = parseIntervalRepsFromTitle(workout.title);
+
+  const inferred = comparison.filter((segment) => isRepeatBlockWorkSegment(segment, plannedBlocks));
+  const strictIntervals = comparison.filter(
+    (segment) => isStrictWorkSegment(segment) && segment.segment_type === "interval",
+  );
+  const strictWork = filterToRepDuration(
+    comparison.filter(isStrictWorkSegment),
+    titleParsed.repDurationMin,
+  );
+
+  const candidates: Array<{
+    segments: SegmentComparisonEntryAudit[];
+    evidenceType: SegmentKeyWorkoutEvidenceType;
+    score: number;
+  }> = [];
+
+  if (inferred.length > 0) {
+    candidates.push({
+      segments: sortWorkSegments(inferred),
+      evidenceType: "repeat_group_inferred",
+      score: scoreWorkSegmentCandidate(inferred, titleParsed),
+    });
+  }
+  if (strictIntervals.length > 0) {
+    candidates.push({
+      segments: sortWorkSegments(strictIntervals),
+      evidenceType: "segment_comparison",
+      score: scoreWorkSegmentCandidate(strictIntervals, titleParsed),
+    });
+  }
+  if (strictWork.length > 0) {
+    candidates.push({
+      segments: sortWorkSegments(strictWork),
+      evidenceType: "segment_comparison",
+      score: scoreWorkSegmentCandidate(strictWork, titleParsed),
+    });
+  }
+
+  if (!candidates.length) {
+    return { segments: [], evidenceType: "unavailable" };
+  }
+
+  const best = candidates.sort((left, right) => {
+    if (right.score !== left.score) return right.score - left.score;
+    if (left.evidenceType === "segment_comparison" && right.evidenceType === "repeat_group_inferred") {
+      return -1;
+    }
+    if (right.evidenceType === "segment_comparison" && left.evidenceType === "repeat_group_inferred") {
+      return 1;
+    }
+    return 0;
+  })[0]!;
+  return { segments: best.segments, evidenceType: best.evidenceType };
+}
+
+function classifyWorkoutEvidenceRole(
+  repDurationMin: number | null,
+  title: string | null,
+): { role: string; limitations: string[] } {
+  const limitations: string[] = [];
+  if (repDurationMin !== null) {
+    if (repDurationMin >= 3 && repDurationMin <= 6) {
+      return { role: "10K-specific / VO2 support", limitations };
+    }
+    if (repDurationMin >= 8 && repDurationMin <= 15) {
+      return { role: "threshold support", limitations };
+    }
+    if (repDurationMin >= 20 && repDurationMin <= 40) {
+      return { role: "tempo / sub-threshold support", limitations };
+    }
+  }
+
+  const text = (title ?? "").toLowerCase();
+  if (INTERVAL_PATTERN.test(text) || INTERVAL_TITLE_PATTERN.test(text)) {
+    limitations.push("Длительность повтора выведена из названия — уверенность ниже.");
+    return { role: "interval support (inferred from title)", limitations };
+  }
+  if (TEMPO_PATTERN.test(text)) {
+    limitations.push("Тип выведен из названия — уверенность ниже.");
+    return { role: "tempo / threshold support (inferred from title)", limitations };
+  }
+  limitations.push("Не удалось классифицировать по длительности рабочих отрезков.");
+  return { role: "key workout", limitations };
+}
+
+function computeRepFadeMetrics(paces: number[]): {
+  rep_to_rep_fade_pct: number | null;
+  last_rep_vs_first_rep_pct: number | null;
+} {
+  if (paces.length < 2) {
+    return { rep_to_rep_fade_pct: null, last_rep_vs_first_rep_pct: null };
+  }
+  const lastRepVsFirst = ((paces[paces.length - 1]! - paces[0]!) / paces[0]!) * 100;
+  let totalStepFade = 0;
+  for (let index = 1; index < paces.length; index += 1) {
+    totalStepFade += ((paces[index]! - paces[index - 1]!) / paces[index - 1]!) * 100;
+  }
+  return {
+    rep_to_rep_fade_pct: Math.round((totalStepFade / (paces.length - 1)) * 10) / 10,
+    last_rep_vs_first_rep_pct: Math.round(lastRepVsFirst * 10) / 10,
+  };
+}
+
+function collectSegmentEvidenceWarnings(input: {
+  completionRatio: number | null;
+  fastestPace: number | null;
+  slowestPace: number | null;
+  workAvgPaceMin: number | null;
+  wholeWorkoutPaceMin: number | null;
+  paces: number[];
+  fadePct: number | null;
+  dataQualityFlags: string[];
+}): string[] {
+  const warnings: string[] = [];
+
+  if (input.completionRatio !== null && input.completionRatio < 0.75) {
+    warnings.push("incomplete_completion");
+  }
+  if (input.fastestPace !== null && input.slowestPace !== null && input.fastestPace > 0) {
+    const spreadPct = ((input.slowestPace - input.fastestPace) / input.fastestPace) * 100;
+    if (spreadPct > PACE_SPREAD_WARNING_PCT) {
+      warnings.push("wide_pace_spread");
+    }
+  }
+  if (input.fastestPace !== null && input.fastestPace > 0) {
+    const hasExtremelySlowSegment = input.paces.some(
+      (pace) => ((pace - input.fastestPace!) / input.fastestPace!) * 100 > SLOW_SEGMENT_VS_FASTEST_PCT,
+    );
+    if (hasExtremelySlowSegment) {
+      warnings.push("extremely_slow_work_segment");
+    }
+  }
+  if (input.workAvgPaceMin !== null && input.wholeWorkoutPaceMin !== null && input.wholeWorkoutPaceMin > 0) {
+    const slowerThanWholePct =
+      ((input.workAvgPaceMin - input.wholeWorkoutPaceMin) / input.wholeWorkoutPaceMin) * 100;
+    if (slowerThanWholePct > WORK_AVG_SLOWER_THAN_WHOLE_WORKOUT_PCT) {
+      warnings.push("work_avg_slower_than_whole_workout");
+    }
+  }
+  if (input.dataQualityFlags.some((flag) => CRITICAL_SEGMENT_DATA_QUALITY_FLAGS.has(flag))) {
+    warnings.push("missing_segments");
+  }
+  if (input.fadePct !== null && input.fadePct > 6) {
+    warnings.push("high_fade");
+  }
+
+  return warnings;
+}
+
+function deriveSegmentKeyWorkoutVerdict(input: {
+  segmentEvidenceAvailable: boolean;
+  completionRatio: number | null;
+  fadePct: number | null;
+  evidenceWarnings: string[];
+}): { verdict: SegmentKeyWorkoutVerdict; usable_for_prediction: boolean } {
+  if (!input.segmentEvidenceAvailable) {
+    return { verdict: "unavailable", usable_for_prediction: false };
+  }
+  if (input.evidenceWarnings.length > 0) {
+    return { verdict: "warning", usable_for_prediction: false };
+  }
+  if (input.completionRatio === null) {
+    return { verdict: "warning", usable_for_prediction: false };
+  }
+  if (input.completionRatio >= 0.9 && (input.fadePct === null || input.fadePct <= 3)) {
+    return { verdict: "positive", usable_for_prediction: true };
+  }
+  if (input.completionRatio >= 0.75 && (input.fadePct === null || input.fadePct <= 6)) {
+    return { verdict: "neutral", usable_for_prediction: true };
+  }
+  return { verdict: "warning", usable_for_prediction: false };
+}
+
+function isAnomalousSegmentEvidence(evidenceWarnings: string[]): boolean {
+  return evidenceWarnings.some((warning) =>
+    [
+      "incomplete_completion",
+      "wide_pace_spread",
+      "extremely_slow_work_segment",
+      "work_avg_slower_than_whole_workout",
+      "missing_segments",
+    ].includes(warning),
+  );
+}
+
+function buildSegmentKeyWorkoutTakeaway(input: {
+  verdict: SegmentKeyWorkoutVerdict;
+  role: string;
+  workAvgPace: string | null;
+  workRepsCompared: number | null;
+  workRepsPlanned: number | null;
+  evidenceWarnings: string[];
+}): string {
+  if (input.verdict === "warning" && isAnomalousSegmentEvidence(input.evidenceWarnings)) {
+    return `частично/аномально: ${input.workRepsCompared ?? "?"}/${input.workRepsPlanned ?? "?"} рабочих отрезков, большой разброс темпа; нужна ручная проверка`;
+  }
+  switch (input.verdict) {
+    case "positive":
+      return `Рабочие отрезки (${input.role}) выполнены стабильно${input.workAvgPace ? `, ср. ${input.workAvgPace}` : ""} — поддерживает прогноз.`;
+    case "neutral":
+      return `Рабочие отрезки (${input.role}) в целом выполнены, есть умеренная просадка или неполный объём.`;
+    case "warning":
+      return `Рабочие отрезки (${input.role}) выполнены неполно или с заметной просадкой — осторожный сигнал.`;
+    default:
+      return "Нет пригодных segment/FIT данных для рабочих отрезков.";
+  }
+}
+
+function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): SegmentKeyWorkout {
+  const workout = capture.workout;
+  const segmentVerdict = deriveSegmentVerdict(workout);
+  const { segments, evidenceType } = identifyWorkSegments(workout);
+  const analysis = asSegmentAnalysis(workout);
+  const dataQualityFlags = [
+    ...(analysis.data_quality_flags ?? []),
+    ...segments.flatMap((segment) => segment.data_quality_flags ?? []),
+  ];
+  const uniqueDataQualityFlags = [...new Set(dataQualityFlags)];
+
+  const titleParsed = parseIntervalRepsFromTitle(capture.title);
+  const repDurationMin =
+    titleParsed.repDurationMin ??
+    segments.find((segment) => segment.planned_duration_minutes != null)?.planned_duration_minutes ??
+    null;
+  const { role, limitations: roleLimitations } = classifyWorkoutEvidenceRole(repDurationMin, capture.title);
+
+  if (segmentVerdict.verdict !== "usable" || segments.length === 0) {
+    return {
+      date: capture.date,
+      title: capture.title,
+      role,
+      segment_evidence_available: false,
+      usable_for_prediction: false,
+      evidence_type: "unavailable",
+      work_reps_compared: null,
+      work_reps_planned: countPlannedWorkReps(workout),
+      work_avg_pace: null,
+      work_fastest_pace: null,
+      work_slowest_pace: null,
+      work_avg_hr: null,
+      work_max_hr: null,
+      rep_to_rep_fade_pct: null,
+      last_rep_vs_first_rep_pct: null,
+      completion_ratio: null,
+      verdict: "unavailable",
+      takeaway: buildSegmentKeyWorkoutTakeaway({
+        verdict: "unavailable",
+        role,
+        workAvgPace: null,
+        workRepsCompared: null,
+        workRepsPlanned: countPlannedWorkReps(workout),
+        evidenceWarnings: [],
+      }),
+      limitations: [
+        ...roleLimitations,
+        segmentVerdict.reason,
+        "Средний темп всей тренировки не используется как интервальное доказательство.",
+      ],
+    };
+  }
+
+  const paces = segments
+    .map((segment) => segmentPaceMinPerKm(segment))
+    .filter((pace): pace is number => pace !== null);
+  const hrValues = segments
+    .map((segment) => segment.actual?.avg_hr)
+    .filter((hr): hr is number => hr != null && hr > 0);
+
+  const workAvgPaceMin =
+    paces.length > 0 ? paces.reduce((sum, pace) => sum + pace, 0) / paces.length : null;
+  const fastestPace = paces.length > 0 ? Math.min(...paces) : null;
+  const slowestPace = paces.length > 0 ? Math.max(...paces) : null;
+  const fadeMetrics = computeRepFadeMetrics(paces);
+
+  const workRepsPlanned = countPlannedWorkReps(workout);
+  const workRepsCompared = segments.length;
+  const completionRatio =
+    workRepsPlanned !== null && workRepsPlanned > 0
+      ? Math.round((workRepsCompared / workRepsPlanned) * 100) / 100
+      : null;
+
+  const limitations = [...roleLimitations];
+  if (evidenceType === "repeat_group_inferred") {
+    limitations.push("Рабочие отрезки выведены из repeat-блока плана (mislabeled recovery в segment_comparison).");
+  }
+  if (uniqueDataQualityFlags.length > 0) {
+    limitations.push(`Флаги качества: ${uniqueDataQualityFlags.join(", ")}.`);
+  }
+
+  const evidenceWarnings = collectSegmentEvidenceWarnings({
+    completionRatio,
+    fastestPace,
+    slowestPace,
+    workAvgPaceMin,
+    wholeWorkoutPaceMin: workout.avg_pace_min_per_km,
+    paces,
+    fadePct: fadeMetrics.last_rep_vs_first_rep_pct,
+    dataQualityFlags: uniqueDataQualityFlags,
+  });
+  const { verdict, usable_for_prediction } = deriveSegmentKeyWorkoutVerdict({
+    segmentEvidenceAvailable: true,
+    completionRatio,
+    fadePct: fadeMetrics.last_rep_vs_first_rep_pct,
+    evidenceWarnings,
+  });
+  const workAvgPace = workAvgPaceMin !== null ? formatPaceText(workAvgPaceMin) : null;
+  if (!usable_for_prediction) {
+    limitations.push("Не использовать как позитивное evidence для прогноза.");
+  }
+
+  return {
+    date: capture.date,
+    title: capture.title,
+    role,
+    segment_evidence_available: true,
+    usable_for_prediction,
+    evidence_type: evidenceType,
+    work_reps_compared: workRepsCompared,
+    work_reps_planned: workRepsPlanned,
+    work_avg_pace: workAvgPace,
+    work_fastest_pace: fastestPace !== null ? formatPaceText(fastestPace) : null,
+    work_slowest_pace: slowestPace !== null ? formatPaceText(slowestPace) : null,
+    work_avg_hr: hrValues.length > 0 ? Math.round(hrValues.reduce((sum, hr) => sum + hr, 0) / hrValues.length) : null,
+    work_max_hr: hrValues.length > 0 ? Math.max(...hrValues) : null,
+    rep_to_rep_fade_pct: fadeMetrics.rep_to_rep_fade_pct,
+    last_rep_vs_first_rep_pct: fadeMetrics.last_rep_vs_first_rep_pct,
+    completion_ratio: completionRatio,
+    verdict,
+    takeaway: buildSegmentKeyWorkoutTakeaway({
+      verdict,
+      role,
+      workAvgPace,
+      workRepsCompared,
+      workRepsPlanned,
+      evidenceWarnings,
+    }),
+    limitations,
+  };
+}
+
+function buildSegmentKeyWorkouts(captures: RawKeyWorkoutCapture[]): SegmentKeyWorkout[] {
+  return captures
+    .map((capture) => buildSegmentKeyWorkout(capture))
+    .sort((left, right) => right.date.localeCompare(left.date));
+}
+
+function formatSegmentKeyWorkoutVerdictLabel(workout: SegmentKeyWorkout): string {
+  switch (workout.verdict) {
+    case "positive":
+      return "supports";
+    case "neutral":
+      return "neutral";
+    case "warning":
+      return workout.usable_for_prediction ? "warning" : "warning (unusable_for_prediction)";
+    default:
+      return "unavailable";
+  }
+}
+
+function formatSegmentKeyWorkoutsMarkdown(segmentKeyWorkouts: SegmentKeyWorkout[]): string[] {
+  const lines: string[] = [];
+  const segmentAware = segmentKeyWorkouts.filter((workout) => workout.segment_evidence_available);
+  const withoutSegment = segmentKeyWorkouts.filter((workout) => !workout.segment_evidence_available);
+
+  for (const workout of segmentAware) {
+    lines.push(`- ${workout.date} · ${workout.title ?? "без названия"}`);
+    lines.push(`  - Тип: ${workout.role}`);
+    lines.push(
+      `  - Рабочие отрезки: ${workout.work_reps_compared ?? "?"}/${workout.work_reps_planned ?? "?"}`,
+    );
+    if (workout.work_avg_pace) {
+      lines.push(`  - Ср. темп рабочих: ${workout.work_avg_pace}`);
+    }
+    if (workout.work_fastest_pace && workout.work_slowest_pace) {
+      lines.push(`  - Разброс: ${workout.work_fastest_pace}–${workout.work_slowest_pace}`);
+    }
+    if (workout.last_rep_vs_first_rep_pct !== null) {
+      lines.push(`  - Просадка: ${workout.last_rep_vs_first_rep_pct}%`);
+    }
+    if (workout.work_avg_hr !== null || workout.work_max_hr !== null) {
+      const hrParts: string[] = [];
+      if (workout.work_avg_hr !== null) hrParts.push(`avg ${workout.work_avg_hr}`);
+      if (workout.work_max_hr !== null) hrParts.push(`max ${workout.work_max_hr}`);
+      lines.push(`  - HR: ${hrParts.join(", ")}`);
+    }
+    lines.push(`  - Вывод: ${formatSegmentKeyWorkoutVerdictLabel(workout)}`);
+    if (!workout.usable_for_prediction) {
+      lines.push("  - Не использовать как позитивное evidence для прогноза");
+    }
+    if (workout.takeaway) {
+      lines.push(`  - ${workout.takeaway}`);
+    }
+    if (workout.limitations.length > 0) {
+      lines.push(`  - Ограничения: ${workout.limitations.join(" ")}`);
+    }
+  }
+
+  for (const workout of withoutSegment) {
+    lines.push(
+      `- ${workout.date} · ${workout.title ?? "без названия"} — нет segment/FIT данных; средний темп всей тренировки не используется для прогноза интервалов.`,
+    );
+  }
+
+  return lines;
+}
+
 function formatSegmentDataCell(workout: SegmentAuditReport["workouts"][number]): string {
   const parts: string[] = [];
   if (workout.has_segment_analysis) parts.push("analysis");
@@ -1291,12 +1876,14 @@ function createMarkdown(report: RacePredictionReport): string {
   );
   lines.push("");
   lines.push("## Ключевые тренировки");
-  if (!report.features.key_workouts.length) {
+  if (!report.segment_key_workouts?.length && !report.features.key_workouts.length) {
     lines.push("- Ключевые тренировки в parsed weekly-summary не найдены.");
+  } else if (report.segment_key_workouts?.length) {
+    lines.push(...formatSegmentKeyWorkoutsMarkdown(report.segment_key_workouts));
   } else {
     for (const workout of report.features.key_workouts.slice(0, 12)) {
       lines.push(
-        `- ${workout.date} · ${workout.category} · ${workout.title ?? "без названия"} · ${workout.pace_text ?? "н/д"} · ${workout.duration_text ?? "н/д"}`,
+        `- ${workout.date} · ${workout.title ?? "без названия"} — нет segment/FIT данных; средний темп всей тренировки не используется для прогноза интервалов.`,
       );
     }
   }
@@ -1581,6 +2168,7 @@ async function main(): Promise<void> {
   const segmentAudit = args.segmentAudit
     ? buildSegmentAudit(rawKeyWorkoutCaptures, args.segmentAuditJson)
     : undefined;
+  const segmentKeyWorkouts = buildSegmentKeyWorkouts(rawKeyWorkoutCaptures);
 
   const report: RacePredictionReport = {
     schema_version: "race-prediction.v1",
@@ -1657,6 +2245,7 @@ async function main(): Promise<void> {
       report_md: reportMdPath,
     },
     ...(segmentAudit ? { segment_audit: segmentAudit } : {}),
+    segment_key_workouts: segmentKeyWorkouts,
   };
 
   await writeFile(reportJsonPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
@@ -1692,6 +2281,12 @@ async function main(): Promise<void> {
     );
     console.log(`recommendation: ${segmentAudit.recommendation}`);
     console.log(`recommendation_note: ${segmentAudit.recommendation_note}`);
+  }
+  const usableSegmentKeyWorkouts = segmentKeyWorkouts.filter((workout) => workout.usable_for_prediction);
+  if (segmentAudit || usableSegmentKeyWorkouts.length > 0) {
+    console.log("[tp-race-prediction-probe] Segment key workouts");
+    console.log(`segment_key_workouts_count: ${segmentKeyWorkouts.length}`);
+    console.log(`usable_segment_key_workouts_count: ${usableSegmentKeyWorkouts.length}`);
   }
   console.log(`report_json: ${reportJsonPath}`);
   console.log(`report_md: ${reportMdPath}`);
