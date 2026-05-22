@@ -134,6 +134,33 @@ type SegmentMatchingOriginalTimerSliceComparison = {
   differs_from_selected: boolean;
 };
 
+type TargetProximityRescueRow = {
+  order: number | null;
+  segment_type: string | null;
+  repeat_iteration: number | null;
+  coverage: string | null;
+  pace: string | null;
+  avg_hr: number | null;
+  duration_seconds: number | null;
+  reason: string;
+};
+
+type TargetProximityRescueCandidate = {
+  available: boolean;
+  shadow_mode: true;
+  prediction_eligible: false;
+  confidence: "medium" | "low" | "none";
+  reason: string;
+  planned_work_target_pace_range: string | null;
+  selected_segments_count: number;
+  expected_work_reps_count: number | null;
+  candidate_work_avg_pace: string | null;
+  candidate_work_pace_range: string | null;
+  candidate_work_avg_hr: number | null;
+  selected_rows: TargetProximityRescueRow[];
+  rejected_reason?: string;
+};
+
 type SegmentMatchingDiagnostics = {
   strategy: "timer_slice";
   confidence: "low" | "medium";
@@ -141,6 +168,7 @@ type SegmentMatchingDiagnostics = {
   diagnostics: SegmentMatchingDiagnostic[];
   warnings: string[];
   original_timer_slice_comparison: SegmentMatchingOriginalTimerSliceComparison;
+  target_proximity_rescue_candidate?: TargetProximityRescueCandidate;
 };
 
 type SegmentKeyWorkout = {
@@ -170,6 +198,13 @@ const PACE_SPREAD_WARNING_PCT = 18;
 const WORK_RECOVERY_HR_INVERSION_BPM = 5;
 const HIGH_WORK_PACE_CV_PCT = 8;
 const WORK_TARGET_RECOVERY_PROXIMITY_MIN_PER_KM = 0.12;
+const RESCUE_EXCLUDED_SEGMENT_TYPES = new Set(["warmup", "cooldown", "rest"]);
+const RESCUE_MIN_DURATION_MINUTES = 3;
+const RESCUE_MISALIGNED_RECOVERY_MIN_DURATION_MINUTES = 2;
+const RESCUE_MIN_DURATION_RATIO_OF_REP = 0.55;
+const RESCUE_TARGET_NEAR_BAND_MIN_PER_KM = 0.18;
+const RESCUE_MEDIUM_REP_RATIO = 0.6;
+const RESCUE_HR_SUPPORT_MARGIN_BPM = 2;
 const SLOW_SEGMENT_VS_FASTEST_PCT = 25;
 const WORK_AVG_SLOWER_THAN_WHOLE_WORKOUT_PCT = 8;
 const CRITICAL_SEGMENT_DATA_QUALITY_FLAGS = new Set(["contains_missing_segments"]);
@@ -2520,6 +2555,248 @@ function detectTimerSliceMisalignment(input: {
   return { diagnostics, warnings };
 }
 
+function formatPaceTargetRange(target: SegmentPaceTargetAudit): string {
+  return `${formatPaceText(target.fast_min_per_km)}–${formatPaceText(target.slow_min_per_km)}`;
+}
+
+function segmentDurationMinutes(segment: SegmentComparisonEntryAudit): number | null {
+  const actualMinutes = segment.actual?.duration_minutes;
+  if (actualMinutes != null && actualMinutes > 0) return actualMinutes;
+  const plannedMinutes = segment.planned_duration_minutes;
+  if (plannedMinutes != null && plannedMinutes > 0) return plannedMinutes;
+  return null;
+}
+
+function segmentDurationSeconds(segment: SegmentComparisonEntryAudit): number | null {
+  const minutes = segmentDurationMinutes(segment);
+  return minutes !== null ? Math.round(minutes * 60) : null;
+}
+
+function paceCloseToTarget(pace: number, target: SegmentPaceTargetAudit): boolean {
+  if (paceWithinTarget(pace, target)) return true;
+  return (
+    pace >= target.fast_min_per_km - RESCUE_TARGET_NEAR_BAND_MIN_PER_KM &&
+    pace <= target.slow_min_per_km + RESCUE_TARGET_NEAR_BAND_MIN_PER_KM
+  );
+}
+
+function rescueMinDurationMinutesForRow(
+  segment: SegmentComparisonEntryAudit,
+  defaultMinDurationMinutes: number,
+): number {
+  if (
+    segment.segment_type === "recovery" &&
+    segment.repeat_group_id &&
+    segment.repeat_iteration != null
+  ) {
+    return Math.min(defaultMinDurationMinutes, RESCUE_MISALIGNED_RECOVERY_MIN_DURATION_MINUTES);
+  }
+  return defaultMinDurationMinutes;
+}
+
+function isRescueCandidateRow(segment: SegmentComparisonEntryAudit, minDurationMinutes: number): boolean {
+  if (!isWorkCoverage(segment.coverage)) return false;
+  if (!segmentHasUsablePace(segment)) return false;
+  if (segment.is_rest === true) return false;
+  if (RESCUE_EXCLUDED_SEGMENT_TYPES.has(segment.segment_type ?? "")) return false;
+  const duration = segmentDurationMinutes(segment);
+  const minForRow = rescueMinDurationMinutesForRow(segment, minDurationMinutes);
+  if (duration !== null && duration < minForRow) return false;
+  if (segment.repeat_group_id && segment.repeat_iteration != null) return true;
+  if (segment.segment_type === "interval") return true;
+  if (segment.segment_type === "recovery") return true;
+  return false;
+}
+
+function scoreRescueCandidateRow(input: {
+  segment: SegmentComparisonEntryAudit;
+  target: SegmentPaceTargetAudit;
+  baselineHr: number | null;
+}): number {
+  const pace = segmentPaceMinPerKm(input.segment);
+  if (pace === null) return Number.POSITIVE_INFINITY;
+  let score = distanceToTargetMid(pace, input.target);
+  if (input.segment.coverage !== "full") score += 0.08;
+  const hr = input.segment.actual?.avg_hr;
+  if (hr != null && hr > 0 && input.baselineHr !== null && hr >= input.baselineHr + RESCUE_HR_SUPPORT_MARGIN_BPM) {
+    score -= 0.04;
+  }
+  if (paceCloseToTarget(pace, input.target)) score -= 0.06;
+  if (input.segment.segment_type === "recovery") score -= 0.02;
+  return score;
+}
+
+function buildRescueRowReason(segment: SegmentComparisonEntryAudit, target: SegmentPaceTargetAudit): string {
+  const pace = segmentPaceMinPerKm(segment);
+  const parts: string[] = [];
+  if (pace !== null && paceCloseToTarget(pace, target)) {
+    parts.push("closest to planned work target");
+  } else if (pace !== null) {
+    parts.push("near planned work target");
+  }
+  if (segment.coverage === "full") parts.push("full coverage");
+  if (segment.segment_type === "recovery") parts.push("recovery-labeled row");
+  if (segment.segment_type === "interval") parts.push("interval-labeled row");
+  return parts.length > 0 ? parts.join("; ") : "target-proximity candidate";
+}
+
+function buildTargetProximityRescueCandidate(input: {
+  workout: WeeklySummaryWorkout;
+  comparison: SegmentComparisonEntryAudit[];
+  timerSliceWork: SegmentComparisonEntryAudit[];
+  timerSliceRecovery: SegmentComparisonEntryAudit[];
+  hasMisalignment: boolean;
+}): TargetProximityRescueCandidate | undefined {
+  if (!input.hasMisalignment) return undefined;
+
+  const workTarget =
+    extractIntervalWorkPaceTarget(input.timerSliceWork) ??
+    extractIntervalWorkPaceTarget(input.comparison);
+  if (!workTarget) {
+    return {
+      available: false,
+      shadow_mode: true,
+      prediction_eligible: false,
+      confidence: "none",
+      reason: "No planned work pace target in segment_comparison.",
+      planned_work_target_pace_range: null,
+      selected_segments_count: 0,
+      expected_work_reps_count: countPlannedWorkReps(input.workout),
+      candidate_work_avg_pace: null,
+      candidate_work_pace_range: null,
+      candidate_work_avg_hr: null,
+      selected_rows: [],
+      rejected_reason: "no_planned_work_target",
+    };
+  }
+
+  const titleParsed = parseIntervalRepsFromTitle(input.workout.title);
+  const minDurationMinutes = Math.max(
+    RESCUE_MIN_DURATION_MINUTES,
+    titleParsed.repDurationMin !== null
+      ? titleParsed.repDurationMin * RESCUE_MIN_DURATION_RATIO_OF_REP
+      : RESCUE_MIN_DURATION_MINUTES,
+  );
+  const expectedWorkReps = countPlannedWorkReps(input.workout);
+  const recoveryStats = buildTimerSliceSegmentStats(input.timerSliceRecovery);
+  const workStats = buildTimerSliceSegmentStats(input.timerSliceWork);
+  const baselineHr = recoveryStats.avgHr ?? workStats.avgHr;
+
+  const pool = input.comparison.filter((segment) => isRescueCandidateRow(segment, minDurationMinutes));
+  const byIteration = new Map<number, SegmentComparisonEntryAudit[]>();
+  for (const segment of pool) {
+    const iteration = segment.repeat_iteration;
+    if (iteration == null) continue;
+    const bucket = byIteration.get(iteration) ?? [];
+    bucket.push(segment);
+    byIteration.set(iteration, bucket);
+  }
+
+  const selected: SegmentComparisonEntryAudit[] = [];
+  const sortedIterations = [...byIteration.keys()].sort((left, right) => left - right);
+  for (const iteration of sortedIterations) {
+    const candidates = byIteration.get(iteration) ?? [];
+    if (!candidates.length) continue;
+    const best = [...candidates].sort(
+      (left, right) =>
+        scoreRescueCandidateRow({ segment: left, target: workTarget, baselineHr }) -
+        scoreRescueCandidateRow({ segment: right, target: workTarget, baselineHr }),
+    )[0]!;
+    selected.push(best);
+  }
+
+  if (!selected.length) {
+    const fallback = [...pool]
+      .sort(
+        (left, right) =>
+          scoreRescueCandidateRow({ segment: left, target: workTarget, baselineHr }) -
+          scoreRescueCandidateRow({ segment: right, target: workTarget, baselineHr }),
+      )
+      .slice(0, expectedWorkReps ?? pool.length);
+    selected.push(...fallback);
+  }
+
+  const maxRows = expectedWorkReps ?? selected.length;
+  const trimmed = selected.slice(0, maxRows > 0 ? maxRows : selected.length);
+  const paces = trimmed
+    .map((segment) => segmentPaceMinPerKm(segment))
+    .filter((pace): pace is number => pace !== null);
+  const hrValues = trimmed
+    .map((segment) => segment.actual?.avg_hr)
+    .filter((hr): hr is number => hr != null && hr > 0);
+
+  const candidateAvgPaceMin = averageNumeric(paces);
+  const fastestPace = paces.length > 0 ? Math.min(...paces) : null;
+  const slowestPace = paces.length > 0 ? Math.max(...paces) : null;
+  const spreadPct =
+    fastestPace !== null && slowestPace !== null && fastestPace > 0
+      ? ((slowestPace - fastestPace) / fastestPace) * 100
+      : null;
+  const candidateAvgHr = hrValues.length > 0 ? Math.round(averageNumeric(hrValues)!) : null;
+
+  const repRatio =
+    expectedWorkReps !== null && expectedWorkReps > 0 ? trimmed.length / expectedWorkReps : null;
+  const paceBandOk =
+    candidateAvgPaceMin !== null && paceCloseToTarget(candidateAvgPaceMin, workTarget);
+  const spreadOk = spreadPct === null || spreadPct <= PACE_SPREAD_WARNING_PCT;
+  const hrSupportsEffort =
+    candidateAvgHr === null ||
+    baselineHr === null ||
+    candidateAvgHr >= baselineHr + RESCUE_HR_SUPPORT_MARGIN_BPM;
+
+  let confidence: TargetProximityRescueCandidate["confidence"] = "none";
+  let reason = "No target-proximity rescue rows matched planned work reps.";
+  if (trimmed.length > 0) {
+    if (
+      repRatio !== null &&
+      repRatio >= RESCUE_MEDIUM_REP_RATIO &&
+      paceBandOk &&
+      spreadOk &&
+      hrSupportsEffort
+    ) {
+      confidence = "medium";
+      reason =
+        "Target-proximity rows cover most planned work reps with pace/HR consistent with harder work effort.";
+    } else {
+      confidence = "low";
+      reason = "Some target-proximity rows found, but rep coverage, pace band, spread, or HR support is weak.";
+    }
+  }
+
+  const selectedRows: TargetProximityRescueRow[] = trimmed.map((segment) => ({
+    order: segment.order ?? null,
+    segment_type: segment.segment_type ?? null,
+    repeat_iteration: segment.repeat_iteration ?? null,
+    coverage: segment.coverage ?? null,
+    pace:
+      segment.actual?.avg_pace_text ??
+      (segmentPaceMinPerKm(segment) !== null ? formatPaceText(segmentPaceMinPerKm(segment)!) : null),
+    avg_hr: segment.actual?.avg_hr ?? null,
+    duration_seconds: segmentDurationSeconds(segment),
+    reason: buildRescueRowReason(segment, workTarget),
+  }));
+
+  return {
+    available: trimmed.length > 0,
+    shadow_mode: true,
+    prediction_eligible: false,
+    confidence,
+    reason,
+    planned_work_target_pace_range: formatPaceTargetRange(workTarget),
+    selected_segments_count: trimmed.length,
+    expected_work_reps_count: expectedWorkReps,
+    candidate_work_avg_pace:
+      candidateAvgPaceMin !== null ? formatPaceText(candidateAvgPaceMin) : null,
+    candidate_work_pace_range:
+      fastestPace !== null && slowestPace !== null
+        ? `${formatPaceText(fastestPace)}–${formatPaceText(slowestPace)}`
+        : null,
+    candidate_work_avg_hr: candidateAvgHr,
+    selected_rows: selectedRows,
+    ...(trimmed.length === 0 ? { rejected_reason: "no_target_proximity_rows" } : {}),
+  };
+}
+
 function buildSegmentMatchingDiagnostics(input: {
   workout: WeeklySummaryWorkout;
   evidenceType: SegmentKeyWorkoutEvidenceType;
@@ -2572,6 +2849,14 @@ function buildSegmentMatchingDiagnostics(input: {
     (entry) => entry.code === "possible_timer_slice_misalignment",
   );
 
+  const targetProximityRescueCandidate = buildTargetProximityRescueCandidate({
+    workout: input.workout,
+    comparison,
+    timerSliceWork,
+    timerSliceRecovery,
+    hasMisalignment,
+  });
+
   return {
     strategy: "timer_slice",
     confidence: hasMisalignment ? "low" : "medium",
@@ -2579,6 +2864,9 @@ function buildSegmentMatchingDiagnostics(input: {
     diagnostics: misalignment.diagnostics,
     warnings: [...misalignment.warnings, "timer-slice values are observation-only"],
     original_timer_slice_comparison: originalTimerSliceComparison,
+    ...(targetProximityRescueCandidate
+      ? { target_proximity_rescue_candidate: targetProximityRescueCandidate }
+      : {}),
   };
 }
 
@@ -2803,6 +3091,25 @@ function formatSegmentMatchingMarkdown(workout: SegmentKeyWorkout): string[] {
     lines.push(
       `    - Не доверять ${workout.work_avg_pace} как финальному рабочему темпу — вероятное смещение timer-slice.`,
     );
+  }
+  const rescue = matching.target_proximity_rescue_candidate;
+  if (rescue?.available) {
+    const repLabel =
+      rescue.expected_work_reps_count !== null
+        ? `${rescue.selected_segments_count}/${rescue.expected_work_reps_count}`
+        : `${rescue.selected_segments_count}`;
+    const paceParts = [
+      rescue.candidate_work_avg_pace ? `avg ${rescue.candidate_work_avg_pace}` : null,
+      rescue.candidate_work_pace_range ? `range ${rescue.candidate_work_pace_range}` : null,
+    ].filter(Boolean);
+    lines.push("    - Shadow rescue candidate:");
+    lines.push(
+      `      - Кандидат на rescue по целевому темпу: ${repLabel} rows${paceParts.length ? `, ${paceParts.join(", ")}` : ""}`,
+    );
+    lines.push(`      - confidence: ${rescue.confidence}`);
+    lines.push("      - Пока не используется в прогнозе — shadow mode.");
+  } else if (rescue && !rescue.available && rescue.rejected_reason === "no_planned_work_target") {
+    lines.push("    - Shadow rescue candidate: нет planned work target (shadow only).");
   }
   return lines;
 }
@@ -3575,15 +3882,29 @@ async function main(): Promise<void> {
       (entry) => entry.code === "possible_timer_slice_misalignment",
     ),
   ).length;
+  const targetProximityRescueCandidatesCount = segmentKeyWorkouts.filter(
+    (workout) => workout.segment_matching?.target_proximity_rescue_candidate?.available === true,
+  ).length;
+  const targetProximityRescueMediumCount = segmentKeyWorkouts.filter(
+    (workout) =>
+      workout.segment_matching?.target_proximity_rescue_candidate?.available === true &&
+      workout.segment_matching?.target_proximity_rescue_candidate?.confidence === "medium",
+  ).length;
   if (segmentAudit || usableSegmentKeyWorkouts.length > 0) {
     console.log("[tp-race-prediction-probe] Segment key workouts");
     console.log(`segment_key_workouts_count: ${segmentKeyWorkouts.length}`);
     console.log(`usable_segment_key_workouts_count: ${usableSegmentKeyWorkouts.length}`);
   }
-  if (segmentMatchingDiagnosticsCount > 0 || timerSliceMisalignmentCount > 0) {
+  if (
+    segmentMatchingDiagnosticsCount > 0 ||
+    timerSliceMisalignmentCount > 0 ||
+    targetProximityRescueCandidatesCount > 0
+  ) {
     console.log("[tp-race-prediction-probe] Segment matching diagnostics");
     console.log(`segment_matching_diagnostics_count: ${segmentMatchingDiagnosticsCount}`);
     console.log(`timer_slice_misalignment_count: ${timerSliceMisalignmentCount}`);
+    console.log(`target_proximity_rescue_candidates_count: ${targetProximityRescueCandidatesCount}`);
+    console.log(`target_proximity_rescue_medium_count: ${targetProximityRescueMediumCount}`);
   }
   if (classificationDiagnostics.length > 0) {
     console.log("[tp-race-prediction-probe] Classification diagnostics");
