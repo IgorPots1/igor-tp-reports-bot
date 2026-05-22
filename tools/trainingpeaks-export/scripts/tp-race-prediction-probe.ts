@@ -232,7 +232,7 @@ type WeeklySummary = {
   schema_version: string;
   student_id: string;
   week: WeekRange;
-  segment_analysis: {
+  segment_analysis?: {
     available: boolean;
     reason: string;
     workouts_with_matched_fit: number;
@@ -2890,10 +2890,11 @@ async function main(): Promise<void> {
     }
     if (summary.week_metrics.data_quality.warnings.length > 0) suspiciousWeeks += 1;
 
-    if (summary.segment_analysis.workouts_with_matched_fit > 0) {
+    const workoutsWithMatchedFit = summary.segment_analysis?.workouts_with_matched_fit ?? 0;
+    if (workoutsWithMatchedFit > 0) {
       fitWeeks += 1;
       workoutFilesWeeks += 1;
-    } else if (summary.segment_analysis.reason === "no_workout_files") {
+    } else if (summary.segment_analysis?.reason === "no_workout_files") {
       dataWarnings.add("no_workout_files");
     }
   }
