@@ -70,6 +70,11 @@ type WorkoutSegmentAnalysisAudit = {
   data_quality_flags?: string[];
 };
 
+type SegmentPaceTargetAudit = {
+  fast_min_per_km: number;
+  slow_min_per_km: number;
+};
+
 type SegmentComparisonEntryAudit = {
   order?: number;
   planned_segment_order?: number;
@@ -80,12 +85,20 @@ type SegmentComparisonEntryAudit = {
   planned_duration_minutes?: number | null;
   repeat_iteration?: number | null;
   repeat_group_id?: string | null;
+  planned_targets?: {
+    pace_min_per_km?: SegmentPaceTargetAudit | null;
+    pace_text?: string | null;
+  };
   actual?: {
     duration_minutes?: number | null;
     distance_km?: number | null;
     avg_pace_min_per_km?: number | null;
     avg_pace_text?: string | null;
     avg_hr?: number | null;
+  };
+  pace_vs_target?: {
+    status?: string;
+    outside_by_min_per_km?: number | null;
   };
   data_quality_flags?: string[];
 };
@@ -102,6 +115,33 @@ type PlannedSegmentSummary = {
 type SegmentKeyWorkoutEvidenceType = "segment_comparison" | "repeat_group_inferred" | "unavailable";
 
 type SegmentKeyWorkoutVerdict = "positive" | "neutral" | "warning" | "unavailable";
+
+type SegmentMatchingDiagnosticSeverity = "info" | "warning" | "critical";
+
+type SegmentMatchingDiagnostic = {
+  code: string;
+  severity: SegmentMatchingDiagnosticSeverity;
+  detail: string;
+};
+
+type SegmentMatchingOriginalTimerSliceComparison = {
+  work_avg_pace: string | null;
+  recovery_avg_pace: string | null;
+  work_avg_hr: number | null;
+  recovery_avg_hr: number | null;
+  work_segments_count: number;
+  recovery_segments_count: number;
+  differs_from_selected: boolean;
+};
+
+type SegmentMatchingDiagnostics = {
+  strategy: "timer_slice";
+  confidence: "low" | "medium";
+  prediction_eligible: boolean;
+  diagnostics: SegmentMatchingDiagnostic[];
+  warnings: string[];
+  original_timer_slice_comparison: SegmentMatchingOriginalTimerSliceComparison;
+};
 
 type SegmentKeyWorkout = {
   date: string;
@@ -123,9 +163,13 @@ type SegmentKeyWorkout = {
   verdict: SegmentKeyWorkoutVerdict;
   takeaway: string;
   limitations: string[];
+  segment_matching?: SegmentMatchingDiagnostics;
 };
 
 const PACE_SPREAD_WARNING_PCT = 18;
+const WORK_RECOVERY_HR_INVERSION_BPM = 5;
+const HIGH_WORK_PACE_CV_PCT = 8;
+const WORK_TARGET_RECOVERY_PROXIMITY_MIN_PER_KM = 0.12;
 const SLOW_SEGMENT_VS_FASTEST_PCT = 25;
 const WORK_AVG_SLOWER_THAN_WHOLE_WORKOUT_PCT = 8;
 const CRITICAL_SEGMENT_DATA_QUALITY_FLAGS = new Set(["contains_missing_segments"]);
@@ -2266,6 +2310,278 @@ function isAnomalousSegmentEvidence(evidenceWarnings: string[]): boolean {
   );
 }
 
+function isTimerSliceRecoverySegment(segment: SegmentComparisonEntryAudit): boolean {
+  if (!isWorkCoverage(segment.coverage)) return false;
+  if (!segmentHasUsablePace(segment)) return false;
+  if (segment.is_rest === true) return false;
+  return segment.segment_type === "recovery";
+}
+
+function isTimerSliceIntervalSegment(segment: SegmentComparisonEntryAudit): boolean {
+  if (!isWorkCoverage(segment.coverage)) return false;
+  if (!segmentHasUsablePace(segment)) return false;
+  if (segment.is_rest === true) return false;
+  if (segment.segment_type === "recovery") return false;
+  if (NON_WORK_SEGMENT_TYPES.has(segment.segment_type ?? "")) return false;
+  return segment.segment_type === "interval";
+}
+
+function averageNumeric(values: number[]): number | null {
+  if (!values.length) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function medianNumeric(values: number[]): number | null {
+  if (!values.length) return null;
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    return (sorted[middle - 1]! + sorted[middle]!) / 2;
+  }
+  return sorted[middle]!;
+}
+
+function paceCoefficientOfVariationPct(paces: number[]): number | null {
+  if (paces.length < 2) return null;
+  const mean = averageNumeric(paces);
+  if (mean === null || mean <= 0) return null;
+  const variance =
+    paces.reduce((sum, pace) => sum + (pace - mean) ** 2, 0) / (paces.length - 1);
+  return (Math.sqrt(variance) / mean) * 100;
+}
+
+function extractIntervalWorkPaceTarget(
+  segments: SegmentComparisonEntryAudit[],
+): SegmentPaceTargetAudit | null {
+  for (const segment of segments) {
+    const target = segment.planned_targets?.pace_min_per_km;
+    if (target && target.fast_min_per_km > 0 && target.slow_min_per_km > 0) {
+      return target;
+    }
+  }
+  return null;
+}
+
+function paceWithinTarget(pace: number, target: SegmentPaceTargetAudit): boolean {
+  return pace >= target.fast_min_per_km && pace <= target.slow_min_per_km;
+}
+
+function distanceToTargetMid(pace: number, target: SegmentPaceTargetAudit): number {
+  const mid = (target.fast_min_per_km + target.slow_min_per_km) / 2;
+  return Math.abs(pace - mid);
+}
+
+function buildTimerSliceSegmentStats(segments: SegmentComparisonEntryAudit[]): {
+  avgPaceMin: number | null;
+  medianPaceMin: number | null;
+  avgHr: number | null;
+  paceCvPct: number | null;
+  paceSpreadPct: number | null;
+  count: number;
+} {
+  const paces = segments
+    .map((segment) => segmentPaceMinPerKm(segment))
+    .filter((pace): pace is number => pace !== null);
+  const hrValues = segments
+    .map((segment) => segment.actual?.avg_hr)
+    .filter((hr): hr is number => hr != null && hr > 0);
+  const avgPaceMin = averageNumeric(paces);
+  const medianPaceMin = medianNumeric(paces);
+  const fastestPace = paces.length > 0 ? Math.min(...paces) : null;
+  const slowestPace = paces.length > 0 ? Math.max(...paces) : null;
+  const paceSpreadPct =
+    fastestPace !== null && slowestPace !== null && fastestPace > 0
+      ? ((slowestPace - fastestPace) / fastestPace) * 100
+      : null;
+
+  return {
+    avgPaceMin,
+    medianPaceMin,
+    avgHr: hrValues.length > 0 ? Math.round(averageNumeric(hrValues)!) : null,
+    paceCvPct: paceCoefficientOfVariationPct(paces),
+    paceSpreadPct,
+    count: segments.length,
+  };
+}
+
+function detectTimerSliceMisalignment(input: {
+  timerSliceWork: SegmentComparisonEntryAudit[];
+  timerSliceRecovery: SegmentComparisonEntryAudit[];
+  selectedWorkAvgPaceMin: number | null;
+}): {
+  diagnostics: SegmentMatchingDiagnostic[];
+  warnings: string[];
+} {
+  const diagnostics: SegmentMatchingDiagnostic[] = [];
+  const warnings: string[] = [];
+
+  const workStats = buildTimerSliceSegmentStats(input.timerSliceWork);
+  const recoveryStats = buildTimerSliceSegmentStats(input.timerSliceRecovery);
+  if (workStats.count === 0 || recoveryStats.count === 0) {
+    return { diagnostics, warnings };
+  }
+
+  const workPaceForCompare = workStats.medianPaceMin ?? workStats.avgPaceMin;
+  const recoveryPaceForCompare = recoveryStats.medianPaceMin ?? recoveryStats.avgPaceMin;
+
+  if (
+    workPaceForCompare !== null &&
+    recoveryPaceForCompare !== null &&
+    recoveryPaceForCompare < workPaceForCompare
+  ) {
+    const workPaceText = formatPaceText(workPaceForCompare);
+    const recoveryPaceText = formatPaceText(recoveryPaceForCompare);
+    diagnostics.push({
+      code: "work_recovery_pace_inversion",
+      severity: "warning",
+      detail: `Recovery timer-slice pace (${recoveryPaceText}) is faster than work (${workPaceText}).`,
+    });
+    warnings.push(`recovery faster than work (${recoveryPaceText} vs ${workPaceText})`);
+  }
+
+  if (
+    workStats.avgHr !== null &&
+    recoveryStats.avgHr !== null &&
+    recoveryStats.avgHr > workStats.avgHr + WORK_RECOVERY_HR_INVERSION_BPM
+  ) {
+    diagnostics.push({
+      code: "work_recovery_hr_inversion",
+      severity: "warning",
+      detail: `Recovery avg HR (${recoveryStats.avgHr} bpm) exceeds work avg HR (${workStats.avgHr} bpm) by more than ${WORK_RECOVERY_HR_INVERSION_BPM} bpm.`,
+    });
+    warnings.push(
+      `recovery avg HR higher than work (${recoveryStats.avgHr} vs ${workStats.avgHr} bpm)`,
+    );
+  }
+
+  const workTarget = extractIntervalWorkPaceTarget(input.timerSliceWork);
+  if (workTarget && workPaceForCompare !== null && recoveryPaceForCompare !== null) {
+    const workMissesTarget =
+      !paceWithinTarget(workPaceForCompare, workTarget) ||
+      input.timerSliceWork.filter((segment) => segment.pace_vs_target?.status === "too_slow").length >=
+        Math.ceil(input.timerSliceWork.length / 2);
+    const recoveryCloserToWorkTarget =
+      distanceToTargetMid(recoveryPaceForCompare, workTarget) + WORK_TARGET_RECOVERY_PROXIMITY_MIN_PER_KM <
+      distanceToTargetMid(workPaceForCompare, workTarget);
+    const recoveryHitsWorkTarget = paceWithinTarget(recoveryPaceForCompare, workTarget);
+
+    if (workMissesTarget && (recoveryHitsWorkTarget || recoveryCloserToWorkTarget)) {
+      diagnostics.push({
+        code: "work_target_miss_recovery_target_hit",
+        severity: "warning",
+        detail: `Work timer-slice rows miss planned pace target (${formatPaceText(workTarget.fast_min_per_km)}–${formatPaceText(workTarget.slow_min_per_km)}), while recovery rows are closer to the work target.`,
+      });
+      warnings.push("work rows miss planned pace target while recovery rows match work target better");
+    }
+  }
+
+  if (
+    (workStats.paceSpreadPct !== null && workStats.paceSpreadPct > PACE_SPREAD_WARNING_PCT) ||
+    (workStats.paceCvPct !== null && workStats.paceCvPct > HIGH_WORK_PACE_CV_PCT)
+  ) {
+    const spreadParts: string[] = [];
+    if (workStats.paceSpreadPct !== null) {
+      spreadParts.push(`spread ${workStats.paceSpreadPct.toFixed(1)}%`);
+    }
+    if (workStats.paceCvPct !== null) {
+      spreadParts.push(`CV ${workStats.paceCvPct.toFixed(1)}%`);
+    }
+    diagnostics.push({
+      code: "high_work_pace_spread",
+      severity: "info",
+      detail: `Work timer-slice pace dispersion is high (${spreadParts.join(", ")}).`,
+    });
+  }
+
+  const strongSignals = new Set([
+    "work_recovery_pace_inversion",
+    "work_recovery_hr_inversion",
+    "work_target_miss_recovery_target_hit",
+  ]);
+  const strongCount = diagnostics.filter((entry) => strongSignals.has(entry.code)).length;
+  const hasPaceInversion = diagnostics.some((entry) => entry.code === "work_recovery_pace_inversion");
+  const hasTargetMiss = diagnostics.some((entry) => entry.code === "work_target_miss_recovery_target_hit");
+
+  if (strongCount >= 2 || (hasPaceInversion && hasTargetMiss)) {
+    diagnostics.push({
+      code: "possible_timer_slice_misalignment",
+      severity: "critical",
+      detail:
+        "Multiple timer-slice inversions suggest work/recovery windows are likely misaligned; do not trust timer-slice work pace as final.",
+    });
+    warnings.push("possible_timer_slice_misalignment");
+    if (input.selectedWorkAvgPaceMin !== null) {
+      warnings.push(
+        `do not trust ${formatPaceText(input.selectedWorkAvgPaceMin)} as final work pace — timer-slice misalignment likely`,
+      );
+    }
+  }
+
+  return { diagnostics, warnings };
+}
+
+function buildSegmentMatchingDiagnostics(input: {
+  workout: WeeklySummaryWorkout;
+  evidenceType: SegmentKeyWorkoutEvidenceType;
+  selectedWorkSegments: SegmentComparisonEntryAudit[];
+  selectedWorkAvgPaceMin: number | null;
+  usableForPrediction: boolean;
+}): SegmentMatchingDiagnostics | undefined {
+  const comparison = asSegmentComparison(input.workout);
+  if (!comparison.length) return undefined;
+
+  const timerSliceWork = comparison.filter(isTimerSliceIntervalSegment);
+  const timerSliceRecovery = comparison.filter(isTimerSliceRecoverySegment);
+  const workStats = buildTimerSliceSegmentStats(timerSliceWork);
+  const recoveryStats = buildTimerSliceSegmentStats(timerSliceRecovery);
+
+  const selectedAvgPaceMin =
+    input.selectedWorkAvgPaceMin ??
+    averageNumeric(
+      input.selectedWorkSegments
+        .map((segment) => segmentPaceMinPerKm(segment))
+        .filter((pace): pace is number => pace !== null),
+    );
+
+  const differsFromSelected =
+    workStats.avgPaceMin !== null &&
+    selectedAvgPaceMin !== null &&
+    Math.abs(workStats.avgPaceMin - selectedAvgPaceMin) > 0.02;
+
+  const originalTimerSliceComparison: SegmentMatchingOriginalTimerSliceComparison = {
+    work_avg_pace: workStats.avgPaceMin !== null ? formatPaceText(workStats.avgPaceMin) : null,
+    recovery_avg_pace:
+      recoveryStats.avgPaceMin !== null ? formatPaceText(recoveryStats.avgPaceMin) : null,
+    work_avg_hr: workStats.avgHr,
+    recovery_avg_hr: recoveryStats.avgHr,
+    work_segments_count: workStats.count,
+    recovery_segments_count: recoveryStats.count,
+    differs_from_selected: differsFromSelected,
+  };
+
+  const misalignment =
+    input.evidenceType === "segment_comparison"
+      ? detectTimerSliceMisalignment({
+          timerSliceWork,
+          timerSliceRecovery,
+          selectedWorkAvgPaceMin: selectedAvgPaceMin,
+        })
+      : { diagnostics: [] as SegmentMatchingDiagnostic[], warnings: [] as string[] };
+
+  const hasMisalignment = misalignment.diagnostics.some(
+    (entry) => entry.code === "possible_timer_slice_misalignment",
+  );
+
+  return {
+    strategy: "timer_slice",
+    confidence: hasMisalignment ? "low" : "medium",
+    prediction_eligible: input.usableForPrediction,
+    diagnostics: misalignment.diagnostics,
+    warnings: [...misalignment.warnings, "timer-slice values are observation-only"],
+    original_timer_slice_comparison: originalTimerSliceComparison,
+  };
+}
+
 function buildSegmentKeyWorkoutTakeaway(input: {
   verdict: SegmentKeyWorkoutVerdict;
   role: string;
@@ -2308,6 +2624,17 @@ function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): SegmentKeyWorkou
   const { role, limitations: roleLimitations } = classifyWorkoutEvidenceRole(repDurationMin, capture.title);
 
   if (segmentVerdict.verdict !== "usable" || segments.length === 0) {
+    const segmentMatching =
+      asSegmentComparison(workout).length > 0
+        ? buildSegmentMatchingDiagnostics({
+            workout,
+            evidenceType: "unavailable",
+            selectedWorkSegments: [],
+            selectedWorkAvgPaceMin: null,
+            usableForPrediction: false,
+          })
+        : undefined;
+
     return {
       date: capture.date,
       title: capture.title,
@@ -2339,6 +2666,7 @@ function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): SegmentKeyWorkou
         segmentVerdict.reason,
         "Средний темп всей тренировки не используется как интервальное доказательство.",
       ],
+      ...(segmentMatching ? { segment_matching: segmentMatching } : {}),
     };
   }
 
@@ -2391,6 +2719,14 @@ function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): SegmentKeyWorkou
     limitations.push("Не использовать как позитивное evidence для прогноза.");
   }
 
+  const segmentMatching = buildSegmentMatchingDiagnostics({
+    workout,
+    evidenceType,
+    selectedWorkSegments: segments,
+    selectedWorkAvgPaceMin: workAvgPaceMin,
+    usableForPrediction: usable_for_prediction,
+  });
+
   return {
     date: capture.date,
     title: capture.title,
@@ -2418,6 +2754,7 @@ function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): SegmentKeyWorkou
       evidenceWarnings,
     }),
     limitations,
+    ...(segmentMatching ? { segment_matching: segmentMatching } : {}),
   };
 }
 
@@ -2438,6 +2775,36 @@ function formatSegmentKeyWorkoutVerdictLabel(workout: SegmentKeyWorkout): string
     default:
       return "unavailable";
   }
+}
+
+function formatSegmentMatchingMarkdown(workout: SegmentKeyWorkout): string[] {
+  const matching = workout.segment_matching;
+  if (!matching?.diagnostics.length) return [];
+
+  const lines: string[] = ["  - Диагностика сегментов:"];
+  for (const diagnostic of matching.diagnostics) {
+    if (diagnostic.code === "possible_timer_slice_misalignment") {
+      lines.push("    - possible_timer_slice_misalignment");
+    } else if (diagnostic.code === "work_recovery_pace_inversion") {
+      lines.push("    - recovery faster than work");
+    } else if (diagnostic.code === "work_recovery_hr_inversion") {
+      lines.push("    - recovery higher HR than work");
+    } else if (diagnostic.code === "work_target_miss_recovery_target_hit") {
+      lines.push("    - work rows miss target while recovery rows fit work target better");
+    } else if (diagnostic.code === "high_work_pace_spread") {
+      lines.push("    - high work pace spread in timer-slice rows");
+    }
+  }
+  lines.push("    - timer-slice values are observation-only");
+  const hasMisalignment = matching.diagnostics.some(
+    (entry) => entry.code === "possible_timer_slice_misalignment",
+  );
+  if (hasMisalignment && workout.work_avg_pace) {
+    lines.push(
+      `    - Не доверять ${workout.work_avg_pace} как финальному рабочему темпу — вероятное смещение timer-slice.`,
+    );
+  }
+  return lines;
 }
 
 function formatSegmentKeyWorkoutsMarkdown(segmentKeyWorkouts: SegmentKeyWorkout[]): string[] {
@@ -2476,6 +2843,7 @@ function formatSegmentKeyWorkoutsMarkdown(segmentKeyWorkouts: SegmentKeyWorkout[
     if (workout.limitations.length > 0) {
       lines.push(`  - Ограничения: ${workout.limitations.join(" ")}`);
     }
+    lines.push(...formatSegmentMatchingMarkdown(workout));
   }
 
   for (const workout of withoutSegment) {
@@ -3199,10 +3567,23 @@ async function main(): Promise<void> {
     console.log(`recommendation_note: ${segmentAudit.recommendation_note}`);
   }
   const usableSegmentKeyWorkouts = segmentKeyWorkouts.filter((workout) => workout.usable_for_prediction);
+  const segmentMatchingDiagnosticsCount = segmentKeyWorkouts.filter(
+    (workout) => (workout.segment_matching?.diagnostics.length ?? 0) > 0,
+  ).length;
+  const timerSliceMisalignmentCount = segmentKeyWorkouts.filter((workout) =>
+    workout.segment_matching?.diagnostics.some(
+      (entry) => entry.code === "possible_timer_slice_misalignment",
+    ),
+  ).length;
   if (segmentAudit || usableSegmentKeyWorkouts.length > 0) {
     console.log("[tp-race-prediction-probe] Segment key workouts");
     console.log(`segment_key_workouts_count: ${segmentKeyWorkouts.length}`);
     console.log(`usable_segment_key_workouts_count: ${usableSegmentKeyWorkouts.length}`);
+  }
+  if (segmentMatchingDiagnosticsCount > 0 || timerSliceMisalignmentCount > 0) {
+    console.log("[tp-race-prediction-probe] Segment matching diagnostics");
+    console.log(`segment_matching_diagnostics_count: ${segmentMatchingDiagnosticsCount}`);
+    console.log(`timer_slice_misalignment_count: ${timerSliceMisalignmentCount}`);
   }
   if (classificationDiagnostics.length > 0) {
     console.log("[tp-race-prediction-probe] Classification diagnostics");
