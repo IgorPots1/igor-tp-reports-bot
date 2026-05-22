@@ -1,0 +1,95 @@
+{
+  "schema_version": "e-predictor-constants.v1",
+  "riegel": {
+    "default_exponent": 1.06,
+    "distance_pair_overrides": {}
+  },
+  "freshness_windows_days": {
+    "5k": 112,
+    "10k": 112,
+    "half": 140,
+    "marathon": 182
+  },
+  "half_marathon": {
+    "pace_offset_seconds_per_km_by_finish_band": [
+      { "max_finish_seconds": 4800, "offset_seconds_per_km": 0 },
+      { "max_finish_seconds": 6000, "offset_seconds_per_km": 5 },
+      { "max_finish_seconds": 7500, "offset_seconds_per_km": 10 },
+      { "max_finish_seconds": 10000, "offset_seconds_per_km": 15 }
+    ],
+    "training_implied_anchor": {
+      "min_weeks_found": 6,
+      "min_usable_threshold_workouts": 2,
+      "preferred_usable_threshold_workouts": 4,
+      "min_long_runs_14k": 2,
+      "min_longest_run_fraction_of_race": 0.7,
+      "max_confidence_without_race_anchor": "medium",
+      "durability_penalty_seconds_per_km": {
+        "cleared": 0,
+        "partial": 5,
+        "weak": 15
+      }
+    }
+  },
+  "distance_layer_weights": {
+    "5k": {
+      "anchor_quality": 0.30,
+      "interval_specificity": 0.25,
+      "threshold_readiness": 0.10,
+      "endurance": 0.05,
+      "consistency": 0.10,
+      "taper": 0.10,
+      "data_quality": 0.10
+    },
+    "10k": {
+      "anchor_quality": 0.30,
+      "interval_specificity": 0.20,
+      "threshold_readiness": 0.20,
+      "endurance": 0.10,
+      "consistency": 0.10,
+      "taper": 0.05,
+      "data_quality": 0.05
+    },
+    "half": {
+      "anchor_quality": 0.25,
+      "interval_specificity": 0.10,
+      "threshold_readiness": 0.25,
+      "endurance": 0.20,
+      "consistency": 0.10,
+      "taper": 0.05,
+      "data_quality": 0.05
+    },
+    "marathon": {
+      "anchor_quality": 0.20,
+      "interval_specificity": 0.05,
+      "threshold_readiness": 0.20,
+      "endurance": 0.30,
+      "consistency": 0.15,
+      "taper": 0.05,
+      "data_quality": 0.05
+    }
+  },
+  "range_spread": {
+    "high": { "conservative_pct": 0.025, "optimistic_pct": 0.015 },
+    "medium": { "conservative_pct": 0.055, "optimistic_pct": 0.025 },
+    "medium_low": { "conservative_pct": 0.09, "optimistic_pct": 0.04 },
+    "low": { "conservative_pct": 0.14, "optimistic_pct": 0.06 }
+  },
+  "refusal_thresholds": {
+    "min_data_quality_score": 30,
+    "min_weeks_found": 3,
+    "require_anchor_or_training_implied_anchor": true
+  },
+  "long_run_gates": {
+    "5k": { "min_longest_run_fraction_of_race": 1.6 },
+    "10k": { "min_longest_run_fraction_of_race": 1.2 },
+    "half": { "min_longest_run_fraction_of_race": 0.7, "good_long_run_km": 15 },
+    "marathon": { "min_longest_run_fraction_of_race": 0.65, "good_long_run_km": 28 }
+  },
+  "segment_quality": {
+    "warning_completion_ratio_below": 0.75,
+    "warning_pace_spread_pct_above": 18,
+    "warning_any_rep_slower_than_fastest_pct_above": 25,
+    "warning_fade_pct_above": 6
+  }
+}
