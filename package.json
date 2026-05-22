@@ -34,7 +34,8 @@
     "check-trainingpeaks-recovery-alerts": "npx tsx scripts/check-trainingpeaks-recovery-alerts.ts",
     "check-trainingpeaks-coach-notes-delivery": "npx tsx scripts/check-trainingpeaks-coach-notes-delivery.ts",
     "check-trainingpeaks-attention-digest": "npx tsx scripts/check-trainingpeaks-attention-digest.ts",
-    "check-e-predictor-constants": "npm --prefix tools/trainingpeaks-export run check-e-predictor-constants --"
+    "check-e-predictor-constants": "npm --prefix tools/trainingpeaks-export run check-e-predictor-constants --",
+    "check-vdot-style": "npm --prefix tools/trainingpeaks-export run check-vdot-style --"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.3",

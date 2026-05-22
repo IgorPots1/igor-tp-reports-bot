@@ -37,6 +37,7 @@
     "check-trainingpeaks-custom-metrics-normalization": "tsx scripts/check-trainingpeaks-custom-metrics-normalization.ts",
     "check-planned-segment-parser": "tsx scripts/check-planned-segment-parser.ts",
     "check-e-predictor-constants": "tsx scripts/check-e-predictor-constants.ts",
+    "check-vdot-style": "tsx scripts/check-vdot-style.ts",
     "tp-workouts-cache-scan": "tsx scripts/tp-workouts-cache-scan.ts",
     "tp-workouts-cache-report": "tsx scripts/tp-workouts-cache-report.ts",
     "tp-scan-events": "tsx scripts/tp-scan-events.ts",
