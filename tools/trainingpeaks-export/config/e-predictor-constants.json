@@ -10,12 +10,19 @@
     "half": 140,
     "marathon": 182
   },
+  "default_analysis_weeks": {
+    "5k": 8,
+    "10k": 10,
+    "half": 12,
+    "marathon": 16
+  },
   "half_marathon": {
     "pace_offset_seconds_per_km_by_finish_band": [
-      { "max_finish_seconds": 4800, "offset_seconds_per_km": 0 },
-      { "max_finish_seconds": 6000, "offset_seconds_per_km": 5 },
-      { "max_finish_seconds": 7500, "offset_seconds_per_km": 10 },
-      { "max_finish_seconds": 10000, "offset_seconds_per_km": 15 }
+      { "max_finish_seconds": 4800, "offset_seconds_per_km": 5 },
+      { "max_finish_seconds": 6000, "offset_seconds_per_km": 10 },
+      { "max_finish_seconds": 7500, "offset_seconds_per_km": 15 },
+      { "max_finish_seconds": 8100, "offset_seconds_per_km": 20 },
+      { "max_finish_seconds": 10000, "offset_seconds_per_km": 20 }
     ],
     "training_implied_anchor": {
       "min_weeks_found": 6,
@@ -24,6 +31,7 @@
       "min_long_runs_14k": 2,
       "min_longest_run_fraction_of_race": 0.7,
       "max_confidence_without_race_anchor": "medium",
+      "no_race_anchor_safety_penalty_s_per_km": 5,
       "durability_penalty_seconds_per_km": {
         "cleared": 0,
         "partial": 5,

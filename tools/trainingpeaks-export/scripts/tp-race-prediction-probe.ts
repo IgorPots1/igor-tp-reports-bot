@@ -3,6 +3,16 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
+import {
+  defaultAnalysisWeeksForDistance,
+  loadEPredictorConstants,
+  type ConfidenceBand,
+} from "./lib/e-predictor-constants.ts";
+import {
+  computeTrainingImpliedHalfAnchor,
+  isStrongHalfRaceAnchor,
+  type TrainingImpliedHalfAnchor,
+} from "./lib/e-predictor-training-implied-half.ts";
 import { parsedRoot, toolRoot } from "./lib/paths.ts";
 import {
   DISTANCE_PRESETS,
@@ -20,13 +30,15 @@ const PROBE_STALE_DAYS = 14;
 
 type ConfidenceLevel = "high" | "medium" | "low";
 
+type WeeksCliValue = number | "auto";
+
 type CliArgs = {
   student: string | null;
   athleteId: number | null;
   athleteUrl: string | null;
   raceDate: string;
   distance: DistanceKey;
-  weeks: number;
+  weeks: WeeksCliValue;
   from: string | null;
   to: string | null;
   raceName: string | null;
@@ -363,6 +375,8 @@ type RacePredictionReport = {
     weeks_requested: number;
     weeks_found: number;
     weeks_missing: number;
+    weeks_mode: "auto" | "manual";
+    default_weeks_for_distance: number;
   };
   data_sources: {
     weekly_summaries: Array<{ from: string; to: string; path: string | null; found: boolean }>;
@@ -412,6 +426,7 @@ type RacePredictionReport = {
     };
     cross_distance: SelectedAnchor[];
   };
+  training_implied_anchor?: TrainingImpliedHalfAnchor;
   readiness_scores: ReadinessScores;
   prediction: {
     conservative: PredictionScenario;
@@ -420,7 +435,8 @@ type RacePredictionReport = {
     confidence: ConfidenceLevel;
     confidence_score: number;
     confidence_reasons: string[];
-    method: "deterministic_v2_segment_aware";
+    method: "deterministic_v2_segment_aware" | "deterministic_v3_training_implied_half";
+    anchor_tier_used?: "race_anchor" | "training_implied";
     target_time_hint_used: boolean;
     anchor_implied_time: PredictionScenario | null;
     segment_adjustment_seconds: number;
@@ -511,7 +527,7 @@ function parseArgs(argv: string[]): CliArgs {
     athleteUrl: null,
     raceDate: "",
     distance: "10k",
-    weeks: 8,
+    weeks: "auto",
     from: null,
     to: null,
     raceName: null,
@@ -559,11 +575,16 @@ function parseArgs(argv: string[]): CliArgs {
       continue;
     }
     if (arg.startsWith("--weeks=")) {
-      const weeks = Number(arg.slice("--weeks=".length).trim());
-      if (!Number.isInteger(weeks) || weeks <= 0) {
-        throw new Error(`Invalid --weeks value: ${arg}`);
+      const rawWeeks = arg.slice("--weeks=".length).trim().toLowerCase();
+      if (rawWeeks === "auto") {
+        parsed.weeks = "auto";
+      } else {
+        const weeks = Number(rawWeeks);
+        if (!Number.isInteger(weeks) || weeks <= 0) {
+          throw new Error(`Invalid --weeks value: ${arg} (use a positive integer or auto)`);
+        }
+        parsed.weeks = weeks;
       }
-      parsed.weeks = weeks;
       continue;
     }
     if (arg.startsWith("--from=")) {
@@ -674,6 +695,37 @@ function resolveTarget(args: CliArgs, students: StudentConfig[]): ResolvedTarget
     studentId: matched?.student_id ?? args.student ?? `athlete-${athleteId}`,
     studentName: matched?.name ?? matched?.student_id ?? args.student ?? String(athleteId),
   };
+}
+
+function resolveAnalysisWeeks(distance: DistanceKey, weeksCli: WeeksCliValue): {
+  weeks: number;
+  weeksMode: "auto" | "manual";
+  defaultWeeksForDistance: number;
+} {
+  const defaultWeeksForDistance = defaultAnalysisWeeksForDistance(distance);
+  if (weeksCli === "auto") {
+    return {
+      weeks: defaultWeeksForDistance,
+      weeksMode: "auto",
+      defaultWeeksForDistance,
+    };
+  }
+  return {
+    weeks: weeksCli,
+    weeksMode: "manual",
+    defaultWeeksForDistance,
+  };
+}
+
+function capConfidenceLevel(level: ConfidenceLevel, cap: ConfidenceBand): ConfidenceLevel {
+  const order: ConfidenceLevel[] = ["low", "medium", "high"];
+  const capIndex =
+    cap === "medium_low"
+      ? order.indexOf("medium")
+      : order.indexOf(cap as ConfidenceLevel);
+  const levelIndex = order.indexOf(level);
+  if (capIndex < 0 || levelIndex < 0) return level;
+  return order[Math.min(levelIndex, capIndex)]!;
 }
 
 function buildPrepWindow(input: {
@@ -955,6 +1007,7 @@ function computeAnchorImpliedSeconds(anchor: SelectedAnchor | null, distanceKm: 
 
 function computeReadinessScores(input: {
   anchor: SelectedAnchor | null;
+  trainingImpliedAnchor: TrainingImpliedHalfAnchor | null;
   raceDate: string;
   distance: DistanceKey;
   segmentKeyWorkouts: SegmentKeyWorkout[];
@@ -1011,6 +1064,15 @@ function computeReadinessScores(input: {
     if (input.anchor.kind === "clean_training_best") {
       notes.push("Якорь — тренировочный ориентир, не официальный старт.");
     }
+  } else if (input.trainingImpliedAnchor?.available) {
+    anchorQuality = 48;
+    anchorQuality += Math.min(22, input.trainingImpliedAnchor.evidence_workouts.length * 5);
+    if (input.trainingImpliedAnchor.endurance_gate.status === "cleared") {
+      anchorQuality += 8;
+    } else if (input.trainingImpliedAnchor.endurance_gate.status === "partial") {
+      anchorQuality += 4;
+    }
+    notes.push("Официального half anchor нет; используется training-implied anchor (не официальный старт).");
   } else {
     notes.push("Нет надёжного результата на целевой дистанции.");
   }
@@ -1054,8 +1116,22 @@ function computeReadinessScores(input: {
     if (workout.rep_to_rep_fade_pct !== null && workout.rep_to_rep_fade_pct <= 4) workoutScore += 4;
     thresholdReadiness += workoutScore;
   }
-  if (thresholdWorkouts.length > 0) {
-    notes.push(`${thresholdWorkouts.length} пригодных threshold/tempo отрезков 8–15 мин.`);
+  if (input.distance === "half" && input.trainingImpliedAnchor?.available) {
+    const preferredBlocks = input.trainingImpliedAnchor.evidence_workouts.filter(
+      (workout) =>
+        workout.block_minutes !== null &&
+        workout.block_minutes >= 14 &&
+        workout.block_minutes <= 30,
+    );
+    thresholdReadiness = 40 + Math.min(45, input.trainingImpliedAnchor.evidence_workouts.length * 10);
+    if (preferredBlocks.length > 0) {
+      thresholdReadiness += Math.min(15, preferredBlocks.length * 5);
+    }
+    notes.push(
+      `${input.trainingImpliedAnchor.evidence_workouts.length} темповых блоков для training-implied half (${preferredBlocks.length} по 14–30 мин).`,
+    );
+  } else if (thresholdWorkouts.length > 0) {
+    notes.push(`${thresholdWorkouts.length} пригодных threshold/tempo отрезков 8–18 мин.`);
   }
   thresholdReadiness = clampScore(thresholdReadiness);
 
@@ -1081,6 +1157,23 @@ function computeReadinessScores(input: {
     else if (medianVolume >= volumeTarget * 0.7) endurance += 10;
   }
   if (subThresholdWorkouts.length > 0) endurance += Math.min(15, subThresholdWorkouts.length * 6);
+
+  if (input.distance === "half" && input.trainingImpliedAnchor?.available) {
+    switch (input.trainingImpliedAnchor.endurance_gate.status) {
+      case "cleared":
+        endurance += 28;
+        break;
+      case "partial":
+        endurance += 16;
+        break;
+      default:
+        endurance += 6;
+        break;
+    }
+    for (const gateNote of input.trainingImpliedAnchor.endurance_gate.notes.slice(0, 1)) {
+      notes.push(gateNote);
+    }
+  }
 
   if (input.progressReport?.long_run_progress.status === "found") {
     if (input.progressReport.long_run_progress.confidence === "high") endurance += 10;
@@ -1148,6 +1241,10 @@ function computeReadinessScores(input: {
   let confidence: ConfidenceLevel = "medium";
   if (overall >= 72) confidence = "high";
   if (overall <= 44) confidence = "low";
+  if (input.trainingImpliedAnchor?.available) {
+    confidence = capConfidenceLevel(confidence, input.trainingImpliedAnchor.confidence_cap);
+    if (confidence === "high") confidence = "medium";
+  }
 
   return {
     anchor_quality_score: anchorQuality,
@@ -1397,6 +1494,175 @@ function computePredictionV2(input: {
       ...(insufficientData ? { insufficient_data: true } : {}),
     },
     limitations,
+  };
+}
+
+function computePredictionV3TrainingImpliedHalf(input: {
+  distance: DistanceKey;
+  targetTimeSeconds: number | null;
+  readinessScores: ReadinessScores;
+  trainingImpliedAnchor: TrainingImpliedHalfAnchor;
+  taperSignal: RacePredictionReport["features"]["taper"]["signal"];
+  missedWorkouts: number;
+}): {
+  prediction: RacePredictionReport["prediction"];
+  limitations: string[];
+} {
+  const preset = DISTANCE_PRESETS[input.distance];
+  const limitations: string[] = [
+    "Нет официального half anchor — уверенность ограничена; training-implied anchor уточняет диапазон.",
+  ];
+  const rangeModelNotes: string[] = [];
+  const confidenceReasons: string[] = [
+    "Training-implied half anchor из темповых блоков и длительных (не официальный старт).",
+  ];
+
+  const impliedSeconds = input.trainingImpliedAnchor.implied_half_time_s!;
+  let baseSeconds = impliedSeconds;
+  if (input.targetTimeSeconds !== null) {
+    baseSeconds = Math.round(baseSeconds * 0.85 + input.targetTimeSeconds * 0.15);
+    confidenceReasons.push("Учтён --target-time как мягкая подсказка (15% веса).");
+  }
+
+  let riskAdjustmentSeconds = 0;
+  if (input.taperSignal === "volume_spike") {
+    riskAdjustmentSeconds += Math.round(baseSeconds * 0.008);
+    limitations.push("Перед стартом объём не снижался (возможен недотейпер).");
+  }
+  if (input.missedWorkouts >= 3) {
+    riskAdjustmentSeconds += Math.min(Math.round(baseSeconds * 0.012), 35);
+    limitations.push(`Пропущено ${input.missedWorkouts} запланированных тренировок.`);
+  }
+
+  const likelySeconds = Math.round(baseSeconds + riskAdjustmentSeconds * 0.25);
+
+  const spreadKey: ConfidenceBand =
+    input.trainingImpliedAnchor.evidence_workouts.length >=
+    loadEPredictorConstants().half_marathon.training_implied_anchor.preferred_usable_threshold_workouts
+      ? input.trainingImpliedAnchor.confidence_cap
+      : "medium_low";
+  const spread = loadEPredictorConstants().range_spread[spreadKey];
+  let spreadConservative = spread.conservative_pct;
+  const spreadOptimistic = spread.optimistic_pct;
+
+  if (input.readinessScores.taper_score < 45) spreadConservative += 0.012;
+  if (input.readinessScores.consistency_score < 50) spreadConservative += 0.01;
+
+  let conservativeSeconds = Math.round(likelySeconds * (1 + spreadConservative));
+  let optimisticSeconds = Math.round(likelySeconds * (1 - spreadOptimistic));
+
+  const thresholdPaceSPerKm = input.trainingImpliedAnchor.threshold_pace_s_per_km;
+  const halfOffset = input.trainingImpliedAnchor.half_pace_offset_s_per_km ?? 0;
+  if (thresholdPaceSPerKm !== null) {
+    const optimisticCeilingPaceSPerKm = thresholdPaceSPerKm + halfOffset;
+    const optimisticCeilingSeconds = Math.round(optimisticCeilingPaceSPerKm * preset.target_km);
+    if (optimisticSeconds < optimisticCeilingSeconds) {
+      rangeModelNotes.push(
+        `Оптимистичный сценарий ограничен threshold evidence (~${formatDurationFromSeconds(optimisticCeilingSeconds)}).`,
+      );
+    }
+    optimisticSeconds = Math.max(optimisticSeconds, optimisticCeilingSeconds);
+  }
+
+  if (optimisticSeconds >= likelySeconds) {
+    optimisticSeconds = Math.max(likelySeconds - 1, Math.round(likelySeconds * (1 - spreadOptimistic)));
+  }
+
+  const ordered = [conservativeSeconds, likelySeconds, optimisticSeconds].sort((a, b) => a - b);
+  conservativeSeconds = ordered[2]!;
+  optimisticSeconds = ordered[0]!;
+
+  rangeModelNotes.push(
+    `Training-implied: threshold ${input.trainingImpliedAnchor.threshold_pace_s_per_km}s/km + offset ${input.trainingImpliedAnchor.half_pace_offset_s_per_km}s/km + durability ${input.trainingImpliedAnchor.durability_penalty_s_per_km}s/km + no-race-anchor safety ${input.trainingImpliedAnchor.no_race_anchor_safety_penalty_s_per_km ?? 0}s/km.`,
+  );
+  rangeModelNotes.push(
+    `Spread (${spreadKey}): conservative +${Math.round(spreadConservative * 1000) / 10}%, optimistic -${Math.round(spreadOptimistic * 1000) / 10}%.`,
+  );
+  for (const note of input.trainingImpliedAnchor.notes.slice(0, 3)) {
+    rangeModelNotes.push(note);
+  }
+  for (const note of input.readinessScores.notes.slice(0, 3)) {
+    if (!confidenceReasons.includes(note)) confidenceReasons.push(note);
+  }
+
+  let confidence = capConfidenceLevel(
+    input.readinessScores.confidence,
+    input.trainingImpliedAnchor.confidence_cap,
+  );
+  if (confidence === "high") confidence = "medium";
+
+  const anchorImpliedTime = buildScenario(impliedSeconds, preset.target_km);
+
+  return {
+    prediction: {
+      conservative: buildScenario(conservativeSeconds, preset.target_km),
+      likely: buildScenario(likelySeconds, preset.target_km),
+      optimistic: buildScenario(optimisticSeconds, preset.target_km),
+      confidence,
+      confidence_score: Math.min(
+        input.readinessScores.overall_confidence_score,
+        confidence === "medium" ? 62 : 48,
+      ),
+      confidence_reasons: confidenceReasons,
+      method: "deterministic_v3_training_implied_half",
+      anchor_tier_used: "training_implied",
+      target_time_hint_used: input.targetTimeSeconds !== null,
+      anchor_implied_time: anchorImpliedTime,
+      segment_adjustment_seconds: 0,
+      risk_adjustment_seconds: riskAdjustmentSeconds,
+      range_model_notes: rangeModelNotes,
+    },
+    limitations,
+  };
+}
+
+function computePrediction(input: {
+  distance: DistanceKey;
+  anchor: SelectedAnchor | null;
+  targetTimeSeconds: number | null;
+  readinessScores: ReadinessScores;
+  segmentKeyWorkouts: SegmentKeyWorkout[];
+  progressReport: ProgressEvidenceReport | null;
+  trainingImpliedAnchor: TrainingImpliedHalfAnchor | null;
+  taperSignal: RacePredictionReport["features"]["taper"]["signal"];
+  missedWorkouts: number;
+  raceDate: string;
+}): {
+  prediction: RacePredictionReport["prediction"];
+  limitations: string[];
+} {
+  if (
+    input.distance === "half" &&
+    !isStrongHalfRaceAnchor(input.anchor?.kind) &&
+    input.trainingImpliedAnchor?.available
+  ) {
+    return computePredictionV3TrainingImpliedHalf({
+      distance: input.distance,
+      targetTimeSeconds: input.targetTimeSeconds,
+      readinessScores: input.readinessScores,
+      trainingImpliedAnchor: input.trainingImpliedAnchor,
+      taperSignal: input.taperSignal,
+      missedWorkouts: input.missedWorkouts,
+    });
+  }
+
+  const v2 = computePredictionV2({
+    distance: input.distance,
+    anchor: input.anchor,
+    targetTimeSeconds: input.targetTimeSeconds,
+    readinessScores: input.readinessScores,
+    segmentKeyWorkouts: input.segmentKeyWorkouts,
+    progressReport: input.progressReport,
+    taperSignal: input.taperSignal,
+    missedWorkouts: input.missedWorkouts,
+    raceDate: input.raceDate,
+  });
+  return {
+    prediction: {
+      ...v2.prediction,
+      anchor_tier_used: input.anchor ? "race_anchor" : undefined,
+    },
+    limitations: v2.limitations,
   };
 }
 
@@ -1811,7 +2077,7 @@ function classifyWorkoutEvidenceRole(
     if (repDurationMin >= 3 && repDurationMin <= 6) {
       return { role: "10K-specific / VO2 support", limitations };
     }
-    if (repDurationMin >= 8 && repDurationMin <= 15) {
+    if (repDurationMin >= 8 && repDurationMin <= 18) {
       return { role: "threshold support", limitations };
     }
     if (repDurationMin >= 20 && repDurationMin <= 40) {
@@ -2294,7 +2560,9 @@ function createMarkdown(report: RacePredictionReport): string {
   lines.push(
     `- Старт: ${DISTANCE_PRESETS[report.race.distance].label}, ${report.race.date}${report.race.name ? `, ${report.race.name}` : ""}`,
   );
-  lines.push(`- Окно анализа: ${report.window.from} → ${report.window.to}`);
+  lines.push(
+    `- Окно анализа: ${report.window.from} → ${report.window.to} (${report.window.weeks_found}/${report.window.weeks_requested} нед., режим ${report.window.weeks_mode})`,
+  );
   lines.push("");
   lines.push("## Прогноз");
   lines.push("| Сценарий | Время | Темп |");
@@ -2309,12 +2577,16 @@ function createMarkdown(report: RacePredictionReport): string {
     `| Оптимистично | ${report.prediction.optimistic.time_text} | ${report.prediction.optimistic.pace_text} |`,
   );
   lines.push("");
-  const anchorNote =
+  let anchorNote =
     report.anchors.target_distance.primary?.kind === "official_best"
       ? `Прогноз основан на официальном ${DISTANCE_PRESETS[report.race.distance].label} + segment-aware анализе ключевых тренировок.`
       : report.prediction.insufficient_data
         ? "Недостаточно данных для уточнения прогноза — широкий ориентир."
         : "Прогноз основан на доступной опоре + segment-aware анализе ключевых тренировок.";
+  if (report.training_implied_anchor?.available) {
+    anchorNote =
+      "Нет официального half anchor, поэтому уверенность ограничена; но training-implied anchor позволяет уточнить диапазон.";
+  }
   lines.push(anchorNote);
   lines.push("");
   lines.push(
@@ -2325,6 +2597,45 @@ function createMarkdown(report: RacePredictionReport): string {
   }
   lines.push("");
   lines.push(...formatReadinessScoresMarkdown(report.readiness_scores, report.race.distance));
+  if (report.training_implied_anchor?.available) {
+    const anchor = report.training_implied_anchor;
+    lines.push("## Training-implied anchor");
+    lines.push("");
+    lines.push(
+      "Официального результата на 21.1 км нет; прогноз построен от темповых блоков и длительных.",
+    );
+    lines.push("");
+    if (anchor.threshold_pace_s_per_km !== null) {
+      lines.push(
+        `- Пороговый/темповый темп: **${formatPaceText(anchor.threshold_pace_s_per_km / 60)}**`,
+      );
+    }
+    lines.push(`- Half pace offset: **+${anchor.half_pace_offset_s_per_km ?? 0} с/км**`);
+    lines.push(`- Durability penalty: **+${anchor.durability_penalty_s_per_km ?? 0} с/км** (${anchor.endurance_gate.status})`);
+    lines.push(
+      `- No-race-anchor safety: **+${anchor.no_race_anchor_safety_penalty_s_per_km ?? 0} с/км**`,
+    );
+    if (anchor.implied_half_time_s !== null && anchor.implied_half_pace_s_per_km !== null) {
+      lines.push(
+        `- Implied half: **${formatDurationFromSeconds(anchor.implied_half_time_s)}** (${formatPaceText(anchor.implied_half_pace_s_per_km / 60)})`,
+      );
+    }
+    lines.push(
+      `- Long-run gate: ${anchor.endurance_gate.long_runs_14k_count}×≥14 км, longest ${anchor.endurance_gate.longest_run_km} км (${anchor.endurance_gate.status})`,
+    );
+    lines.push("- Evidence workouts:");
+    for (const workout of anchor.evidence_workouts.slice(0, 8)) {
+      const blockLabel =
+        workout.block_minutes !== null ? `${workout.block_minutes} мин` : "блок";
+      lines.push(
+        `  - ${workout.date} · ${workout.title ?? "—"} — ${workout.work_avg_pace} (${blockLabel}, ${workout.role})`,
+      );
+    }
+    for (const note of anchor.notes.slice(0, 4)) {
+      lines.push(`- ${note}`);
+    }
+    lines.push("");
+  }
   lines.push("## Почему");
   for (const reason of report.prediction.confidence_reasons) {
     lines.push(`- ${reason}`);
@@ -2459,9 +2770,11 @@ async function main(): Promise<void> {
   const today = runAt.slice(0, 10);
   const commandUsed = `npm run tp-race-prediction-probe -- ${process.argv.slice(2).join(" ")}`.trim();
 
+  const analysisWeeks = resolveAnalysisWeeks(args.distance, args.weeks);
+
   const prepWindow = buildPrepWindow({
     raceDate: args.raceDate,
-    weeks: args.weeks,
+    weeks: analysisWeeks.weeks,
     fromOverride: args.from,
     toOverride: args.to,
   });
@@ -2478,7 +2791,7 @@ async function main(): Promise<void> {
   }
 
   const weeksFound = weeklySummaries.filter((entry) => entry.summary !== null).length;
-  const weeksMissing = args.weeks - weeksFound;
+  const weeksMissing = analysisWeeks.weeks - weeksFound;
 
   const raceResultsCached = findLatestProbeReport<RaceResultsProbeReport>(
     path.join(toolRoot, "debug", "race-results-probe"),
@@ -2606,8 +2919,19 @@ async function main(): Promise<void> {
 
   const segmentKeyWorkouts = buildSegmentKeyWorkouts(rawKeyWorkoutCaptures);
 
+  const trainingImpliedAnchor =
+    args.distance === "half" && !isStrongHalfRaceAnchor(anchors.primary?.kind)
+      ? computeTrainingImpliedHalfAnchor({
+          segmentKeyWorkouts,
+          longRuns,
+          weeksFound,
+          raceDistanceKm: DISTANCE_PRESETS.half.target_km,
+        })
+      : null;
+
   const readinessScores = computeReadinessScores({
     anchor: anchors.primary,
+    trainingImpliedAnchor,
     raceDate: args.raceDate,
     distance: args.distance,
     segmentKeyWorkouts,
@@ -2615,7 +2939,7 @@ async function main(): Promise<void> {
     completionRates,
     missedWorkouts,
     weeksFound,
-    weeksRequested: args.weeks,
+    weeksRequested: analysisWeeks.weeks,
     longRuns,
     weeklyVolume,
     taperSignal,
@@ -2625,13 +2949,14 @@ async function main(): Promise<void> {
     suspiciousWeeks,
   });
 
-  const { prediction, limitations: predictionLimitations } = computePredictionV2({
+  const { prediction, limitations: predictionLimitations } = computePrediction({
     distance: args.distance,
     anchor: anchors.primary,
     targetTimeSeconds,
     readinessScores,
     segmentKeyWorkouts,
     progressReport: progressCached.report,
+    trainingImpliedAnchor,
     taperSignal,
     missedWorkouts,
     raceDate: args.raceDate,
@@ -2689,9 +3014,11 @@ async function main(): Promise<void> {
     window: {
       from: prepWindow.from,
       to: prepWindow.to,
-      weeks_requested: args.weeks,
+      weeks_requested: analysisWeeks.weeks,
       weeks_found: weeksFound,
       weeks_missing: weeksMissing,
+      weeks_mode: analysisWeeks.weeksMode,
+      default_weeks_for_distance: analysisWeeks.defaultWeeksForDistance,
     },
     data_sources: {
       weekly_summaries: weeklySummaries.map((entry) => ({
@@ -2740,6 +3067,7 @@ async function main(): Promise<void> {
       cross_distance: anchors.crossDistance,
     },
     readiness_scores: readinessScores,
+    ...(trainingImpliedAnchor ? { training_implied_anchor: trainingImpliedAnchor } : {}),
     prediction,
     limitations,
     output_paths: {
@@ -2759,8 +3087,21 @@ async function main(): Promise<void> {
   console.log(`athlete_id: ${target.athleteId}`);
   console.log(`race: ${args.distance} on ${args.raceDate}`);
   console.log(`window: ${prepWindow.from} -> ${prepWindow.to}`);
+  console.log(`weeks_mode: ${analysisWeeks.weeksMode}`);
+  console.log(`weeks_requested: ${analysisWeeks.weeks}`);
+  console.log(`default_weeks_for_distance: ${analysisWeeks.defaultWeeksForDistance}`);
   console.log(`weeks_found: ${weeksFound}`);
   console.log(`weeks_missing: ${weeksMissing}`);
+  if (trainingImpliedAnchor) {
+    console.log(
+      `training_implied_anchor: ${trainingImpliedAnchor.available ? "available" : "unavailable"}`,
+    );
+    if (trainingImpliedAnchor.available && trainingImpliedAnchor.implied_half_time_s !== null) {
+      console.log(
+        `training_implied_half: ${formatDurationFromSeconds(trainingImpliedAnchor.implied_half_time_s)} (${formatPaceText((trainingImpliedAnchor.implied_half_pace_s_per_km ?? 0) / 60)})`,
+      );
+    }
+  }
   console.log(
     `selected_anchor: ${
       anchors.primary

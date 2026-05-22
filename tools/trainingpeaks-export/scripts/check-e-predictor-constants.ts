@@ -10,6 +10,7 @@ const REQUIRED_TOP_LEVEL_KEYS = [
   "schema_version",
   "riegel",
   "freshness_windows_days",
+  "default_analysis_weeks",
   "half_marathon",
   "distance_layer_weights",
   "range_spread",
@@ -71,6 +72,14 @@ function validateFreshnessWindows(freshness: unknown): void {
   }
 }
 
+function validateDefaultAnalysisWeeks(weeks: unknown): void {
+  const section = expectRecord(weeks, "default_analysis_weeks");
+  for (const distance of REQUIRED_DISTANCES) {
+    const value = expectNumber(section[distance], `default_analysis_weeks.${distance}`);
+    assert(Number.isInteger(value) && value > 0, `default_analysis_weeks.${distance} must be a positive integer.`);
+  }
+}
+
 function validateHalfMarathon(halfMarathon: unknown): void {
   const section = expectRecord(halfMarathon, "half_marathon");
   const bands = section.pace_offset_seconds_per_km_by_finish_band;
@@ -92,6 +101,10 @@ function validateHalfMarathon(halfMarathon: unknown): void {
   expectNumber(trainingImplied.min_long_runs_14k, "half_marathon.training_implied_anchor.min_long_runs_14k");
   expectNumber(trainingImplied.min_longest_run_fraction_of_race, "half_marathon.training_implied_anchor.min_longest_run_fraction_of_race");
   expectString(trainingImplied.max_confidence_without_race_anchor, "half_marathon.training_implied_anchor.max_confidence_without_race_anchor");
+  expectNumber(
+    trainingImplied.no_race_anchor_safety_penalty_s_per_km,
+    "half_marathon.training_implied_anchor.no_race_anchor_safety_penalty_s_per_km",
+  );
 
   const durability = expectRecord(
     trainingImplied.durability_penalty_seconds_per_km,
@@ -165,6 +178,7 @@ function run(): void {
   expectString(config.schema_version, "schema_version");
   validateRiegel(config.riegel);
   validateFreshnessWindows(config.freshness_windows_days);
+  validateDefaultAnalysisWeeks(config.default_analysis_weeks);
   validateHalfMarathon(config.half_marathon);
   validateDistanceLayerWeights(config.distance_layer_weights);
   validateRangeSpread(config.range_spread);
