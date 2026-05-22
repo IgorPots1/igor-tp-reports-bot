@@ -30,6 +30,11 @@ import {
   type DistanceKey,
 } from "./lib/race-distance.ts";
 import { readStudentsConfig, type StudentConfig } from "./lib/students.ts";
+import {
+  buildVdotStyleCheck,
+  formatVdotStyleCheckMarkdown,
+  type VdotStyleCheck,
+} from "./lib/vdot-style/check-report.ts";
 
 const gunzip = promisify(gunzipCallback);
 
@@ -607,6 +612,7 @@ type RacePredictionReport = {
   };
   segment_audit?: SegmentAuditReport;
   segment_key_workouts?: SegmentKeyWorkout[];
+  vdot_style_check: VdotStyleCheck;
 };
 
 const TEMPO_PATTERN =
@@ -4230,6 +4236,7 @@ function createMarkdown(report: RacePredictionReport): string {
     }
     lines.push("");
   }
+  lines.push(...formatVdotStyleCheckMarkdown(report.vdot_style_check));
   lines.push("## Почему");
   for (const reason of report.prediction.confidence_reasons) {
     lines.push(`- ${reason}`);
@@ -4594,6 +4601,14 @@ async function main(): Promise<void> {
     ? buildSegmentAudit(rawKeyWorkoutCaptures, args.segmentAuditJson)
     : undefined;
 
+  const vdotStyleCheck = buildVdotStyleCheck({
+    targetDistance: args.distance,
+    primaryAnchor: anchors.primary,
+    trainingImpliedAnchor,
+    ePredictorLikelySeconds: prediction.likely.seconds,
+    segmentKeyWorkouts,
+  });
+
   const report: RacePredictionReport = {
     schema_version: "race-prediction.v1",
     run_at: runAt,
@@ -4675,6 +4690,7 @@ async function main(): Promise<void> {
     },
     ...(segmentAudit ? { segment_audit: segmentAudit } : {}),
     segment_key_workouts: segmentKeyWorkouts,
+    vdot_style_check: vdotStyleCheck,
   };
 
   await writeFile(reportJsonPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
@@ -4712,6 +4728,11 @@ async function main(): Promise<void> {
     `prediction_range: conservative ${prediction.conservative.time_text} | likely ${prediction.likely.time_text} | optimistic ${prediction.optimistic.time_text}`,
   );
   console.log(`confidence: ${prediction.confidence} (${prediction.confidence_score}/100)`);
+  console.log(
+    `vdot_style_check: source=${vdotStyleCheck.source}, verdict=${
+      vdotStyleCheck.comparison_to_e_predictor?.verdict ?? "no_anchor"
+    }`,
+  );
   if (segmentAudit) {
     console.log("[tp-race-prediction-probe] Segment audit");
     console.log(`key_workouts_count: ${segmentAudit.summary.key_workouts_count}`);
