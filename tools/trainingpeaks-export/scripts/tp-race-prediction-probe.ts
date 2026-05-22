@@ -2,6 +2,11 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { gunzip as gunzipCallback } from "node:zlib";
+import { promisify } from "node:util";
+
+import FitParser from "fit-file-parser";
+import unzipper from "unzipper";
 
 import {
   defaultAnalysisWeeksForDistance,
@@ -25,6 +30,8 @@ import {
   type DistanceKey,
 } from "./lib/race-distance.ts";
 import { readStudentsConfig, type StudentConfig } from "./lib/students.ts";
+
+const gunzip = promisify(gunzipCallback);
 
 const PROBE_STALE_DAYS = 14;
 
@@ -161,6 +168,33 @@ type TargetProximityRescueCandidate = {
   rejected_reason?: string;
 };
 
+type FitLapSelectedLap = {
+  lap_index: number;
+  lap_indices: number[];
+  duration_seconds: number;
+  distance_meters: number | null;
+  pace: string | null;
+  avg_hr: number | null;
+  lap_trigger: string | null;
+  reason: string;
+};
+
+type FitLapCandidate = {
+  available: boolean;
+  shadow_mode: true;
+  prediction_eligible: false;
+  confidence: "medium" | "low" | "none";
+  strategy: "fit_lap_exact" | "fit_lap_fuzzy";
+  selected_laps_count: number;
+  expected_work_reps_count: number | null;
+  candidate_work_avg_pace: string | null;
+  candidate_work_pace_range: string | null;
+  candidate_work_avg_hr: number | null;
+  selected_laps: FitLapSelectedLap[];
+  diagnostics: string[];
+  rejected_reason?: string;
+};
+
 type SegmentMatchingDiagnostics = {
   strategy: "timer_slice";
   confidence: "low" | "medium";
@@ -169,6 +203,7 @@ type SegmentMatchingDiagnostics = {
   warnings: string[];
   original_timer_slice_comparison: SegmentMatchingOriginalTimerSliceComparison;
   target_proximity_rescue_candidate?: TargetProximityRescueCandidate;
+  fit_lap_candidate?: FitLapCandidate;
 };
 
 type SegmentKeyWorkout = {
@@ -205,6 +240,26 @@ const RESCUE_MIN_DURATION_RATIO_OF_REP = 0.55;
 const RESCUE_TARGET_NEAR_BAND_MIN_PER_KM = 0.18;
 const RESCUE_MEDIUM_REP_RATIO = 0.6;
 const RESCUE_HR_SUPPORT_MARGIN_BPM = 2;
+const FIT_LAP_RECOVERY_MAX_DURATION_S = 150;
+const FIT_LAP_RECOVERY_PACE_BUFFER_MIN_PER_KM = 0.35;
+const FIT_LAP_WORK_DURATION_TOLERANCE_RATIO = 0.18;
+const FIT_LAP_MERGE_MAX_SECOND_LAP_S = 120;
+const FIT_LAP_MIN_DISTANCE_LAP_S = 250;
+const FIT_LAP_WARMUP_PACE_BUFFER_MIN_PER_KM = 0.75;
+const FIT_LAP_MEDIUM_REP_RATIO = 0.8;
+const FIT_LAP_FIELD_PATHS = [
+  "workouts[].completed.detail_source.zip_path",
+  "workouts[].completed.detail_source.entry_name",
+  "fit.parsed.laps[].total_timer_time",
+  "fit.parsed.laps[].total_elapsed_time",
+  "fit.parsed.laps[].total_distance",
+  "fit.parsed.laps[].avg_heart_rate",
+  "fit.parsed.laps[].avg_speed",
+  "fit.parsed.laps[].enhanced_avg_speed",
+  "fit.parsed.laps[].lap_trigger",
+  "fit.parsed.laps[].event",
+  "fit.parsed.laps[].event_type",
+];
 const SLOW_SEGMENT_VS_FASTEST_PCT = 25;
 const WORK_AVG_SLOWER_THAN_WHOLE_WORKOUT_PCT = 8;
 const CRITICAL_SEGMENT_DATA_QUALITY_FLAGS = new Set(["contains_missing_segments"]);
@@ -235,6 +290,8 @@ type WeeklySummaryWorkout = {
       type: string;
       match_status: string;
       match_confidence?: string;
+      zip_path?: string;
+      entry_name?: string;
     };
   };
   segment_analysis?: WorkoutSegmentAnalysisAudit;
@@ -2640,6 +2697,496 @@ function buildRescueRowReason(segment: SegmentComparisonEntryAudit, target: Segm
   return parts.length > 0 ? parts.join("; ") : "target-proximity candidate";
 }
 
+type FitLapLike = {
+  total_timer_time?: number;
+  total_elapsed_time?: number;
+  total_distance?: number;
+  avg_heart_rate?: number;
+  avg_speed?: number;
+  enhanced_avg_speed?: number;
+  lap_trigger?: string;
+  event?: string;
+  event_type?: string;
+};
+
+type FitLapRecord = {
+  lap_index: number;
+  duration_seconds: number;
+  distance_meters: number | null;
+  pace_min_per_km: number | null;
+  avg_hr: number | null;
+  lap_trigger: string | null;
+};
+
+type FitLapGroupCandidate = {
+  lap_indices: number[];
+  duration_seconds: number;
+  distance_meters: number | null;
+  pace_min_per_km: number | null;
+  avg_hr: number | null;
+  lap_trigger: string | null;
+  merge_strategy: "single" | "distance_plus_time";
+};
+
+const fitLapLoadCache = new Map<string, FitLapRecord[] | null>();
+
+function createFitParser(): FitParser {
+  return new FitParser({
+    mode: "list",
+    lengthUnit: "m",
+    speedUnit: "m/s",
+    elapsedRecordField: true,
+  });
+}
+
+function fitLapDurationSeconds(lap: FitLapLike): number | null {
+  if (typeof lap.total_timer_time === "number" && Number.isFinite(lap.total_timer_time) && lap.total_timer_time > 0) {
+    return lap.total_timer_time;
+  }
+  if (
+    typeof lap.total_elapsed_time === "number" &&
+    Number.isFinite(lap.total_elapsed_time) &&
+    lap.total_elapsed_time > 0
+  ) {
+    return lap.total_elapsed_time;
+  }
+  return null;
+}
+
+function fitLapPaceMinPerKm(lap: FitLapLike, durationSeconds: number): number | null {
+  if (
+    typeof lap.total_distance === "number" &&
+    Number.isFinite(lap.total_distance) &&
+    lap.total_distance > 0 &&
+    durationSeconds > 0
+  ) {
+    return (durationSeconds / 60) / (lap.total_distance / 1000);
+  }
+
+  const speed =
+    typeof lap.enhanced_avg_speed === "number" && Number.isFinite(lap.enhanced_avg_speed) && lap.enhanced_avg_speed > 0
+      ? lap.enhanced_avg_speed
+      : typeof lap.avg_speed === "number" && Number.isFinite(lap.avg_speed) && lap.avg_speed > 0
+        ? lap.avg_speed
+        : null;
+  if (speed === null || speed <= 0) return null;
+  return (1000 / speed) / 60;
+}
+
+function normalizeFitLaps(rawLaps: unknown[]): FitLapRecord[] {
+  const normalized: FitLapRecord[] = [];
+  rawLaps.forEach((rawLap, lapIndex) => {
+    if (!rawLap || typeof rawLap !== "object") return;
+    const lap = rawLap as FitLapLike;
+    const durationSeconds = fitLapDurationSeconds(lap);
+    if (durationSeconds === null || durationSeconds <= 0) return;
+    normalized.push({
+      lap_index: lapIndex,
+      duration_seconds: durationSeconds,
+      distance_meters:
+        typeof lap.total_distance === "number" && Number.isFinite(lap.total_distance) && lap.total_distance > 0
+          ? lap.total_distance
+          : null,
+      pace_min_per_km: fitLapPaceMinPerKm(lap, durationSeconds),
+      avg_hr:
+        typeof lap.avg_heart_rate === "number" && Number.isFinite(lap.avg_heart_rate) && lap.avg_heart_rate > 0
+          ? lap.avg_heart_rate
+          : null,
+      lap_trigger: typeof lap.lap_trigger === "string" ? lap.lap_trigger : null,
+    });
+  });
+  return normalized;
+}
+
+function getMatchedFitDetailSource(
+  workout: WeeklySummaryWorkout,
+): { zip_path: string; entry_name: string } | null {
+  const detailSource = workout.completed?.detail_source;
+  if (
+    !detailSource ||
+    detailSource.type !== "workout_file_fit" ||
+    detailSource.match_status !== "matched" ||
+    !detailSource.zip_path ||
+    !detailSource.entry_name
+  ) {
+    return null;
+  }
+  return {
+    zip_path: detailSource.zip_path,
+    entry_name: detailSource.entry_name,
+  };
+}
+
+async function readWorkoutFitEntryBuffer(input: {
+  zip_path: string;
+  entry_name: string;
+}): Promise<Buffer> {
+  const zipPath = path.join(toolRoot, input.zip_path);
+  const directory = await unzipper.Open.file(zipPath);
+  const entry = directory.files.find(
+    (candidate) => candidate.type === "File" && candidate.path === input.entry_name,
+  );
+  if (!entry) {
+    throw new Error(`ZIP entry not found: ${input.entry_name}`);
+  }
+
+  const entryBuffer = await entry.buffer();
+  if (input.entry_name.toLowerCase().endsWith(".gz")) {
+    return await gunzip(entryBuffer);
+  }
+  return entryBuffer;
+}
+
+async function loadWorkoutFitLaps(workout: WeeklySummaryWorkout): Promise<FitLapRecord[] | null> {
+  const detailSource = getMatchedFitDetailSource(workout);
+  if (!detailSource) return null;
+
+  const cacheKey = `${detailSource.zip_path}::${detailSource.entry_name}`;
+  if (fitLapLoadCache.has(cacheKey)) {
+    return fitLapLoadCache.get(cacheKey) ?? null;
+  }
+
+  try {
+    const fitBuffer = await readWorkoutFitEntryBuffer(detailSource);
+    const parsedFit = (await createFitParser().parseAsync(fitBuffer)) as { laps?: unknown[] };
+    const rawLaps = Array.isArray(parsedFit.laps) ? parsedFit.laps : [];
+    const normalized = normalizeFitLaps(rawLaps);
+    fitLapLoadCache.set(cacheKey, normalized);
+    return normalized;
+  } catch {
+    fitLapLoadCache.set(cacheKey, null);
+    return null;
+  }
+}
+
+function durationMatchesRepDuration(durationSeconds: number, repDurationMin: number | null): boolean {
+  if (repDurationMin === null || repDurationMin <= 0) return durationSeconds >= 240;
+  const targetSeconds = repDurationMin * 60;
+  const tolerance = Math.max(45, targetSeconds * FIT_LAP_WORK_DURATION_TOLERANCE_RATIO);
+  return Math.abs(durationSeconds - targetSeconds) <= tolerance;
+}
+
+function isFitLapRecoveryCandidate(
+  group: FitLapGroupCandidate,
+  workTarget: SegmentPaceTargetAudit | null,
+): boolean {
+  if (group.duration_seconds > FIT_LAP_RECOVERY_MAX_DURATION_S) return false;
+  if (group.pace_min_per_km === null || workTarget === null) {
+    return group.duration_seconds <= FIT_LAP_RECOVERY_MAX_DURATION_S;
+  }
+  return group.pace_min_per_km > workTarget.slow_min_per_km + FIT_LAP_RECOVERY_PACE_BUFFER_MIN_PER_KM;
+}
+
+function isFitLapWarmupCandidate(
+  group: FitLapGroupCandidate,
+  workTarget: SegmentPaceTargetAudit | null,
+): boolean {
+  if (group.lap_indices[0] !== 0) return false;
+  if (workTarget === null || group.pace_min_per_km === null) return group.duration_seconds >= 360;
+  return group.pace_min_per_km > workTarget.slow_min_per_km + FIT_LAP_WARMUP_PACE_BUFFER_MIN_PER_KM;
+}
+
+function buildFitLapGroupCandidates(laps: FitLapRecord[], repDurationMin: number | null): FitLapGroupCandidate[] {
+  const groups: FitLapGroupCandidate[] = [];
+
+  for (let index = 0; index < laps.length; index += 1) {
+    const lap = laps[index]!;
+    if (lap.pace_min_per_km === null) continue;
+
+    if (durationMatchesRepDuration(lap.duration_seconds, repDurationMin)) {
+      groups.push({
+        lap_indices: [lap.lap_index],
+        duration_seconds: lap.duration_seconds,
+        distance_meters: lap.distance_meters,
+        pace_min_per_km: lap.pace_min_per_km,
+        avg_hr: lap.avg_hr,
+        lap_trigger: lap.lap_trigger,
+        merge_strategy: "single",
+      });
+    }
+
+    const nextLap = laps[index + 1];
+    if (
+      !nextLap ||
+      lap.lap_trigger !== "distance" ||
+      nextLap.lap_trigger !== "time" ||
+      lap.duration_seconds < FIT_LAP_MIN_DISTANCE_LAP_S ||
+      nextLap.duration_seconds <= 0 ||
+      nextLap.duration_seconds > FIT_LAP_MERGE_MAX_SECOND_LAP_S ||
+      lap.pace_min_per_km === null ||
+      nextLap.pace_min_per_km === null
+    ) {
+      continue;
+    }
+
+    const combinedDuration = lap.duration_seconds + nextLap.duration_seconds;
+    if (!durationMatchesRepDuration(combinedDuration, repDurationMin)) continue;
+
+    const combinedDistance =
+      (lap.distance_meters ?? 0) + (nextLap.distance_meters ?? 0) > 0
+        ? (lap.distance_meters ?? 0) + (nextLap.distance_meters ?? 0)
+        : null;
+    const combinedPace =
+      combinedDistance !== null && combinedDistance > 0
+        ? (combinedDuration / 60) / (combinedDistance / 1000)
+        : averageNumeric([lap.pace_min_per_km, nextLap.pace_min_per_km]);
+    if (combinedPace === null) continue;
+
+    const hrValues = [lap.avg_hr, nextLap.avg_hr].filter((hr): hr is number => hr != null && hr > 0);
+    groups.push({
+      lap_indices: [lap.lap_index, nextLap.lap_index],
+      duration_seconds: combinedDuration,
+      distance_meters: combinedDistance,
+      pace_min_per_km: combinedPace,
+      avg_hr: hrValues.length > 0 ? averageNumeric(hrValues) : null,
+      lap_trigger: `${lap.lap_trigger}+${nextLap.lap_trigger}`,
+      merge_strategy: "distance_plus_time",
+    });
+  }
+
+  return groups;
+}
+
+function scoreFitLapGroupCandidate(
+  group: FitLapGroupCandidate,
+  workTarget: SegmentPaceTargetAudit,
+  repDurationMin: number | null,
+): number {
+  if (group.pace_min_per_km === null) return Number.POSITIVE_INFINITY;
+  let score = distanceToTargetMid(group.pace_min_per_km, workTarget);
+  if (paceWithinTarget(group.pace_min_per_km, workTarget)) score -= 0.08;
+  if (repDurationMin !== null) {
+    score += Math.abs(group.duration_seconds - repDurationMin * 60) / 600;
+  }
+  if (group.merge_strategy === "distance_plus_time") score -= 0.03;
+  return score;
+}
+
+function buildFitLapSelectedReason(
+  group: FitLapGroupCandidate,
+  workTarget: SegmentPaceTargetAudit,
+): string {
+  const parts: string[] = [];
+  if (group.pace_min_per_km !== null && paceWithinTarget(group.pace_min_per_km, workTarget)) {
+    parts.push("pace within planned work target");
+  } else if (group.pace_min_per_km !== null) {
+    parts.push("closest plausible work lap to planned target");
+  }
+  if (group.merge_strategy === "distance_plus_time") {
+    parts.push("merged distance+time lap pair matches planned rep duration");
+  } else {
+    parts.push("single lap matches planned rep duration");
+  }
+  if (group.lap_trigger) parts.push(`lap_trigger=${group.lap_trigger}`);
+  return parts.join("; ");
+}
+
+function buildFitLapCandidate(input: {
+  workout: WeeklySummaryWorkout;
+  fitLaps: FitLapRecord[] | null;
+  hasMisalignment: boolean;
+  workTarget: SegmentPaceTargetAudit | null;
+  expectedWorkReps: number | null;
+  repDurationMin: number | null;
+}): FitLapCandidate | undefined {
+  if (!input.hasMisalignment) return undefined;
+
+  const detailSource = getMatchedFitDetailSource(input.workout);
+  const diagnostics: string[] = [
+    "weekly-summary does not embed lap arrays; FIT laps loaded from completed.detail_source zip entry",
+    `field paths: ${FIT_LAP_FIELD_PATHS.join(", ")}`,
+  ];
+
+  if (!detailSource) {
+    return {
+      available: false,
+      shadow_mode: true,
+      prediction_eligible: false,
+      confidence: "none",
+      strategy: "fit_lap_fuzzy",
+      selected_laps_count: 0,
+      expected_work_reps_count: input.expectedWorkReps,
+      candidate_work_avg_pace: null,
+      candidate_work_pace_range: null,
+      candidate_work_avg_hr: null,
+      selected_laps: [],
+      diagnostics: [
+        ...diagnostics,
+        "no matched workout_file_fit in workouts[].completed.detail_source",
+      ],
+      rejected_reason: "lap_records_not_available_in_parsed_data",
+    };
+  }
+
+  diagnostics.push(`fit source: ${detailSource.zip_path}::${detailSource.entry_name}`);
+
+  if (input.fitLaps === null) {
+    return {
+      available: false,
+      shadow_mode: true,
+      prediction_eligible: false,
+      confidence: "none",
+      strategy: "fit_lap_fuzzy",
+      selected_laps_count: 0,
+      expected_work_reps_count: input.expectedWorkReps,
+      candidate_work_avg_pace: null,
+      candidate_work_pace_range: null,
+      candidate_work_avg_hr: null,
+      selected_laps: [],
+      diagnostics: [...diagnostics, "FIT file load/parse failed for matched detail_source entry"],
+      rejected_reason: "lap_records_not_available_in_parsed_data",
+    };
+  }
+
+  diagnostics.push(`parsed fit laps count: ${input.fitLaps.length}`);
+
+  if (input.fitLaps.length === 0) {
+    return {
+      available: false,
+      shadow_mode: true,
+      prediction_eligible: false,
+      confidence: "none",
+      strategy: "fit_lap_fuzzy",
+      selected_laps_count: 0,
+      expected_work_reps_count: input.expectedWorkReps,
+      candidate_work_avg_pace: null,
+      candidate_work_pace_range: null,
+      candidate_work_avg_hr: null,
+      selected_laps: [],
+      diagnostics: [...diagnostics, "fit.parsed.laps[] is empty"],
+      rejected_reason: "lap_records_not_available_in_parsed_data",
+    };
+  }
+
+  if (!input.workTarget) {
+    return {
+      available: false,
+      shadow_mode: true,
+      prediction_eligible: false,
+      confidence: "none",
+      strategy: "fit_lap_fuzzy",
+      selected_laps_count: 0,
+      expected_work_reps_count: input.expectedWorkReps,
+      candidate_work_avg_pace: null,
+      candidate_work_pace_range: null,
+      candidate_work_avg_hr: null,
+      selected_laps: [],
+      diagnostics: [...diagnostics, "no planned work pace target in segment_comparison"],
+      rejected_reason: "no_planned_work_target",
+    };
+  }
+
+  const allGroups = buildFitLapGroupCandidates(input.fitLaps, input.repDurationMin);
+  const workCandidates = allGroups.filter(
+    (group) =>
+      group.pace_min_per_km !== null &&
+      !isFitLapRecoveryCandidate(group, input.workTarget) &&
+      !isFitLapWarmupCandidate(group, input.workTarget),
+  );
+
+  diagnostics.push(`work-like lap groups after warmup/recovery exclusion: ${workCandidates.length}`);
+
+  const sortedCandidates = [...workCandidates].sort(
+    (left, right) =>
+      scoreFitLapGroupCandidate(left, input.workTarget!, input.repDurationMin) -
+      scoreFitLapGroupCandidate(right, input.workTarget!, input.repDurationMin),
+  );
+
+  const selected: FitLapGroupCandidate[] = [];
+  const usedLapIndices = new Set<number>();
+  for (const candidate of sortedCandidates) {
+    if (candidate.lap_indices.some((lapIndex) => usedLapIndices.has(lapIndex))) continue;
+    selected.push(candidate);
+    for (const lapIndex of candidate.lap_indices) usedLapIndices.add(lapIndex);
+    if (input.expectedWorkReps !== null && selected.length >= input.expectedWorkReps) break;
+  }
+
+  if (selected.length > 1) {
+    selected.sort((left, right) => left.lap_indices[0]! - right.lap_indices[0]!);
+  }
+
+  const maxRows = input.expectedWorkReps ?? selected.length;
+  const trimmed = selected.slice(0, maxRows > 0 ? maxRows : selected.length);
+  const paces = trimmed
+    .map((group) => group.pace_min_per_km)
+    .filter((pace): pace is number => pace !== null);
+  const hrValues = trimmed
+    .map((group) => group.avg_hr)
+    .filter((hr): hr is number => hr != null && hr > 0);
+  const candidateAvgPaceMin = averageNumeric(paces);
+  const fastestPace = paces.length > 0 ? Math.min(...paces) : null;
+  const slowestPace = paces.length > 0 ? Math.max(...paces) : null;
+  const spreadPct =
+    fastestPace !== null && slowestPace !== null && fastestPace > 0
+      ? ((slowestPace - fastestPace) / fastestPace) * 100
+      : null;
+  const candidateAvgHr = hrValues.length > 0 ? Math.round(averageNumeric(hrValues)!) : null;
+  const repRatio =
+    input.expectedWorkReps !== null && input.expectedWorkReps > 0
+      ? trimmed.length / input.expectedWorkReps
+      : null;
+  const paceBandOk =
+    candidateAvgPaceMin !== null && paceWithinTarget(candidateAvgPaceMin, input.workTarget);
+  const spreadOk = spreadPct === null || spreadPct <= PACE_SPREAD_WARNING_PCT;
+  const strategy: FitLapCandidate["strategy"] = trimmed.every(
+    (group) => group.merge_strategy === "single",
+  )
+    ? "fit_lap_exact"
+    : "fit_lap_fuzzy";
+
+  let confidence: FitLapCandidate["confidence"] = "none";
+  if (trimmed.length > 0) {
+    if (
+      repRatio !== null &&
+      repRatio >= FIT_LAP_MEDIUM_REP_RATIO &&
+      paceBandOk &&
+      spreadOk
+    ) {
+      confidence = "medium";
+    } else {
+      confidence = "low";
+    }
+  }
+
+  const selectedLaps: FitLapSelectedLap[] = trimmed.map((group) => ({
+    lap_index: group.lap_indices[0]!,
+    lap_indices: group.lap_indices,
+    duration_seconds: Math.round(group.duration_seconds),
+    distance_meters:
+      group.distance_meters !== null ? Math.round(group.distance_meters) : null,
+    pace: group.pace_min_per_km !== null ? formatPaceText(group.pace_min_per_km) : null,
+    avg_hr: group.avg_hr !== null ? Math.round(group.avg_hr) : null,
+    lap_trigger: group.lap_trigger,
+    reason: buildFitLapSelectedReason(group, input.workTarget!),
+  }));
+
+  if (trimmed.length === 0) {
+    diagnostics.push("no plausible work lap groups matched planned rep duration and target pace");
+  } else {
+    diagnostics.push(`selected ${trimmed.length} lap group(s) using ${strategy}`);
+  }
+
+  return {
+    available: trimmed.length > 0,
+    shadow_mode: true,
+    prediction_eligible: false,
+    confidence,
+    strategy,
+    selected_laps_count: trimmed.length,
+    expected_work_reps_count: input.expectedWorkReps,
+    candidate_work_avg_pace:
+      candidateAvgPaceMin !== null ? formatPaceText(candidateAvgPaceMin) : null,
+    candidate_work_pace_range:
+      fastestPace !== null && slowestPace !== null
+        ? `${formatPaceText(fastestPace)}–${formatPaceText(slowestPace)}`
+        : null,
+    candidate_work_avg_hr: candidateAvgHr,
+    selected_laps: selectedLaps,
+    diagnostics,
+    ...(trimmed.length === 0 ? { rejected_reason: "no_fit_lap_work_groups" } : {}),
+  };
+}
+
 function buildTargetProximityRescueCandidate(input: {
   workout: WeeklySummaryWorkout;
   comparison: SegmentComparisonEntryAudit[];
@@ -2803,6 +3350,7 @@ function buildSegmentMatchingDiagnostics(input: {
   selectedWorkSegments: SegmentComparisonEntryAudit[];
   selectedWorkAvgPaceMin: number | null;
   usableForPrediction: boolean;
+  fitLaps: FitLapRecord[] | null;
 }): SegmentMatchingDiagnostics | undefined {
   const comparison = asSegmentComparison(input.workout);
   if (!comparison.length) return undefined;
@@ -2857,6 +3405,18 @@ function buildSegmentMatchingDiagnostics(input: {
     hasMisalignment,
   });
 
+  const titleParsed = parseIntervalRepsFromTitle(input.workout.title);
+  const workTarget =
+    extractIntervalWorkPaceTarget(timerSliceWork) ?? extractIntervalWorkPaceTarget(comparison);
+  const fitLapCandidate = buildFitLapCandidate({
+    workout: input.workout,
+    fitLaps: input.fitLaps,
+    hasMisalignment,
+    workTarget,
+    expectedWorkReps: countPlannedWorkReps(input.workout),
+    repDurationMin: titleParsed.repDurationMin,
+  });
+
   return {
     strategy: "timer_slice",
     confidence: hasMisalignment ? "low" : "medium",
@@ -2867,6 +3427,7 @@ function buildSegmentMatchingDiagnostics(input: {
     ...(targetProximityRescueCandidate
       ? { target_proximity_rescue_candidate: targetProximityRescueCandidate }
       : {}),
+    ...(fitLapCandidate ? { fit_lap_candidate: fitLapCandidate } : {}),
   };
 }
 
@@ -2893,8 +3454,9 @@ function buildSegmentKeyWorkoutTakeaway(input: {
   }
 }
 
-function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): SegmentKeyWorkout {
+async function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): Promise<SegmentKeyWorkout> {
   const workout = capture.workout;
+  const fitLaps = await loadWorkoutFitLaps(workout);
   const segmentVerdict = deriveSegmentVerdict(workout);
   const { segments, evidenceType } = identifyWorkSegments(workout);
   const analysis = asSegmentAnalysis(workout);
@@ -2920,6 +3482,7 @@ function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): SegmentKeyWorkou
             selectedWorkSegments: [],
             selectedWorkAvgPaceMin: null,
             usableForPrediction: false,
+            fitLaps,
           })
         : undefined;
 
@@ -3013,6 +3576,7 @@ function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): SegmentKeyWorkou
     selectedWorkSegments: segments,
     selectedWorkAvgPaceMin: workAvgPaceMin,
     usableForPrediction: usable_for_prediction,
+    fitLaps,
   });
 
   return {
@@ -3046,10 +3610,9 @@ function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): SegmentKeyWorkou
   };
 }
 
-function buildSegmentKeyWorkouts(captures: RawKeyWorkoutCapture[]): SegmentKeyWorkout[] {
-  return captures
-    .map((capture) => buildSegmentKeyWorkout(capture))
-    .sort((left, right) => right.date.localeCompare(left.date));
+async function buildSegmentKeyWorkouts(captures: RawKeyWorkoutCapture[]): Promise<SegmentKeyWorkout[]> {
+  const workouts = await Promise.all(captures.map((capture) => buildSegmentKeyWorkout(capture)));
+  return workouts.sort((left, right) => right.date.localeCompare(left.date));
 }
 
 function formatSegmentKeyWorkoutVerdictLabel(workout: SegmentKeyWorkout): string {
@@ -3084,6 +3647,10 @@ function formatSegmentMatchingMarkdown(workout: SegmentKeyWorkout): string[] {
     }
   }
   lines.push("    - timer-slice values are observation-only");
+  const timerSlice = matching.original_timer_slice_comparison;
+  if (timerSlice.work_avg_pace) {
+    lines.push(`    - Timer-slice work: avg ${timerSlice.work_avg_pace} (${timerSlice.work_segments_count} rows)`);
+  }
   const hasMisalignment = matching.diagnostics.some(
     (entry) => entry.code === "possible_timer_slice_misalignment",
   );
@@ -3104,12 +3671,33 @@ function formatSegmentMatchingMarkdown(workout: SegmentKeyWorkout): string[] {
     ].filter(Boolean);
     lines.push("    - Shadow rescue candidate:");
     lines.push(
-      `      - Кандидат на rescue по целевому темпу: ${repLabel} rows${paceParts.length ? `, ${paceParts.join(", ")}` : ""}`,
+      `      - Target-proximity candidate: ${repLabel} rows${paceParts.length ? `, ${paceParts.join(", ")}` : ""}`,
     );
     lines.push(`      - confidence: ${rescue.confidence}`);
-    lines.push("      - Пока не используется в прогнозе — shadow mode.");
+    lines.push("      - shadow mode / not used in prediction");
   } else if (rescue && !rescue.available && rescue.rejected_reason === "no_planned_work_target") {
-    lines.push("    - Shadow rescue candidate: нет planned work target (shadow only).");
+    lines.push("    - Target-proximity candidate: нет planned work target (shadow only).");
+  }
+  const fitLap = matching.fit_lap_candidate;
+  if (fitLap?.available) {
+    const repLabel =
+      fitLap.expected_work_reps_count !== null
+        ? `${fitLap.selected_laps_count}/${fitLap.expected_work_reps_count}`
+        : `${fitLap.selected_laps_count}`;
+    const paceParts = [
+      fitLap.candidate_work_avg_pace ? `avg ${fitLap.candidate_work_avg_pace}` : null,
+      fitLap.candidate_work_pace_range ? `range ${fitLap.candidate_work_pace_range}` : null,
+    ].filter(Boolean);
+    lines.push("    - Shadow FIT-lap candidate:");
+    lines.push(
+      `      - FIT lap ${fitLap.strategy}: ${repLabel} lap group(s)${paceParts.length ? `, ${paceParts.join(", ")}` : ""}`,
+    );
+    lines.push(`      - confidence: ${fitLap.confidence}`);
+    lines.push("      - shadow mode / not used in prediction");
+  } else if (fitLap && !fitLap.available) {
+    lines.push(
+      `    - Shadow FIT-lap candidate: unavailable (${fitLap.rejected_reason ?? "no_match"}) — shadow only.`,
+    );
   }
   return lines;
 }
@@ -3664,7 +4252,7 @@ async function main(): Promise<void> {
     throw new Error(`Could not parse --target-time: "${args.targetTime}"`);
   }
 
-  const segmentKeyWorkouts = buildSegmentKeyWorkouts(rawKeyWorkoutCaptures);
+  const segmentKeyWorkouts = await buildSegmentKeyWorkouts(rawKeyWorkoutCaptures);
 
   const trainingImpliedAnchor =
     args.distance === "half" && !isStrongHalfRaceAnchor(anchors.primary?.kind)
@@ -3890,6 +4478,14 @@ async function main(): Promise<void> {
       workout.segment_matching?.target_proximity_rescue_candidate?.available === true &&
       workout.segment_matching?.target_proximity_rescue_candidate?.confidence === "medium",
   ).length;
+  const fitLapCandidatesCount = segmentKeyWorkouts.filter(
+    (workout) => workout.segment_matching?.fit_lap_candidate?.available === true,
+  ).length;
+  const fitLapMediumCount = segmentKeyWorkouts.filter(
+    (workout) =>
+      workout.segment_matching?.fit_lap_candidate?.available === true &&
+      workout.segment_matching?.fit_lap_candidate?.confidence === "medium",
+  ).length;
   if (segmentAudit || usableSegmentKeyWorkouts.length > 0) {
     console.log("[tp-race-prediction-probe] Segment key workouts");
     console.log(`segment_key_workouts_count: ${segmentKeyWorkouts.length}`);
@@ -3898,13 +4494,16 @@ async function main(): Promise<void> {
   if (
     segmentMatchingDiagnosticsCount > 0 ||
     timerSliceMisalignmentCount > 0 ||
-    targetProximityRescueCandidatesCount > 0
+    targetProximityRescueCandidatesCount > 0 ||
+    fitLapCandidatesCount > 0
   ) {
     console.log("[tp-race-prediction-probe] Segment matching diagnostics");
     console.log(`segment_matching_diagnostics_count: ${segmentMatchingDiagnosticsCount}`);
     console.log(`timer_slice_misalignment_count: ${timerSliceMisalignmentCount}`);
     console.log(`target_proximity_rescue_candidates_count: ${targetProximityRescueCandidatesCount}`);
     console.log(`target_proximity_rescue_medium_count: ${targetProximityRescueMediumCount}`);
+    console.log(`fit_lap_candidates_count: ${fitLapCandidatesCount}`);
+    console.log(`fit_lap_medium_count: ${fitLapMediumCount}`);
   }
   if (classificationDiagnostics.length > 0) {
     console.log("[tp-race-prediction-probe] Classification diagnostics");
