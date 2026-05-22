@@ -4020,3 +4020,34 @@ export async function listTrainingPeaksCronRunLogs(input: {
 
   return ((data as TrainingPeaksCronRunLogRow[] | null) ?? []).map(mapTrainingPeaksCronRunLogRow);
 }
+
+export async function getLatestTrainingPeaksCronRunLog(input: {
+  jobName: string;
+  status?: TrainingPeaksCronRunLogStatus;
+}): Promise<TrainingPeaksCronRunLog | null> {
+  const supabase = createSupabaseServerClient();
+  let query = supabase
+    .from("trainingpeaks_cron_run_logs")
+    .select("*")
+    .eq("job_name", input.jobName)
+    .order("started_at", { ascending: false })
+    .limit(1);
+
+  if (input.status) {
+    query = query.eq("status", input.status);
+  }
+
+  const { data, error } = await query.maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to get latest TrainingPeaks cron run log for ${input.jobName}: ${error.message}`
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksCronRunLogRow(data as TrainingPeaksCronRunLogRow);
+}

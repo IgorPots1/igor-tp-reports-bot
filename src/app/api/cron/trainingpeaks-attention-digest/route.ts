@@ -81,6 +81,37 @@ async function finishCronRunLogSafely(
   }
 }
 
+async function persistVercelCronPreAuthRunLog(input: {
+  startedAtMs: number;
+  httpMethod: string;
+  userAgent: string | null;
+  requestPath: string;
+  status: "unauthorized" | "failed";
+  responseStatus: number;
+  errorMessage: string;
+}): Promise<void> {
+  try {
+    const runLog = await createTrainingPeaksCronRunLog({
+      jobName: TRAININGPEAKS_ATTENTION_DIGEST_CRON_JOB_NAME,
+      source: "vercel_cron",
+      status: "started",
+      httpMethod: input.httpMethod,
+      userAgent: input.userAgent,
+      requestPath: input.requestPath,
+    });
+    await finishCronRunLogSafely(runLog.id, {
+      startedAtMs: input.startedAtMs,
+      status: input.status,
+      responseStatus: input.responseStatus,
+      errorMessage: input.errorMessage,
+    });
+  } catch (error) {
+    console.error("TrainingPeaks attention digest failed to persist pre-auth cron run log", {
+      error,
+    });
+  }
+}
+
 async function handleTrainingPeaksAttentionDigest(request: Request) {
   const startedAtMs = Date.now();
   const httpMethod = request.method;
@@ -89,8 +120,20 @@ async function handleTrainingPeaksAttentionDigest(request: Request) {
   const source = detectCronSource(request);
 
   const cronSecret = getCronSecret();
+  const isVercelCron = source === "vercel_cron";
   if (!cronSecret || !process.env.TELEGRAM_BOT_TOKEN?.trim()) {
     console.error("TrainingPeaks attention digest is not configured correctly");
+    if (isVercelCron) {
+      await persistVercelCronPreAuthRunLog({
+        startedAtMs,
+        httpMethod,
+        userAgent,
+        requestPath,
+        status: "failed",
+        responseStatus: 500,
+        errorMessage: "missing_cron_config",
+      });
+    }
     return jsonResponse(500, {
       ok: false,
       error: "Internal server error",
@@ -99,7 +142,17 @@ async function handleTrainingPeaksAttentionDigest(request: Request) {
 
   const providedSecret = getBearerToken(request);
   if (!providedSecret || !safeEqual(providedSecret, cronSecret)) {
-    // Unauthorized requests are not persisted: avoids storing scanner traffic and never logs secrets.
+    if (isVercelCron) {
+      await persistVercelCronPreAuthRunLog({
+        startedAtMs,
+        httpMethod,
+        userAgent,
+        requestPath,
+        status: "unauthorized",
+        responseStatus: 401,
+        errorMessage: "unauthorized_vercel_cron",
+      });
+    }
     return jsonResponse(401, {
       ok: false,
       error: "Unauthorized",

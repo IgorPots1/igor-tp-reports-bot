@@ -67,6 +67,7 @@ import {
   generateTrainingPeaksReplyDraft,
 } from "@/features/trainingpeaks/reply-draft-generator";
 import {
+  getLatestTrainingPeaksCronRunLog,
   listTrainingPeaksCronRunLogs,
   TRAININGPEAKS_ATTENTION_DIGEST_CRON_JOB_NAME,
   type TrainingPeaksCronRunLog,
@@ -1825,41 +1826,104 @@ function formatTrainingPeaksCronRunLogCounts(counts: Record<string, unknown>): s
   return parts.length > 0 ? parts.join(", ") : "—";
 }
 
-function formatTrainingPeaksCronRunLogLine(log: TrainingPeaksCronRunLog, index: number): string {
-  return [
-    `${index + 1}. ${formatTrainingPeaksCronRunLogBelgradeTime(log.startedAt)}`,
+const TP_CRON_STATUS_SENT_STALE_MS = 26 * 60 * 60 * 1000;
+const TP_CRON_STATUS_SCHEDULE_TEXT =
+  "09:00 UTC hour / примерно 11:00–11:59 Белград летом на Vercel Hobby";
+
+function formatTrainingPeaksCronAgeMs(ageMs: number): string {
+  const totalMinutes = Math.max(0, Math.floor(ageMs / 60_000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours > 0) {
+    return `${hours}ч ${minutes}м`;
+  }
+
+  return `${minutes}м`;
+}
+
+function formatTrainingPeaksCronRunSummary(log: TrainingPeaksCronRunLog): string {
+  const lines = [
+    formatTrainingPeaksCronRunLogBelgradeTime(log.startedAt),
     `source: ${log.source}`,
     `status: ${log.status}`,
     `http: ${log.responseStatus ?? "—"}`,
     `counts: ${formatTrainingPeaksCronRunLogCounts(log.counts)}`,
     `ua: ${shortTrainingPeaksCronUserAgentLabel(log.userAgent)}`,
-  ].join("\n");
-}
+  ];
 
-function formatTrainingPeaksCronStatusMessage(logs: TrainingPeaksCronRunLog[]): string {
-  if (logs.length === 0) {
-    return [
-      "Cron run log: attention_digest",
-      "",
-      "Записей пока нет.",
-      "После ручного curl или Vercel Cron здесь появятся последние 5 запусков.",
-    ].join("\n");
+  if (log.errorMessage) {
+    lines.push(`error: ${log.errorMessage}`);
   }
 
-  return [
-    "Cron run log: attention_digest",
-    "Последние 5 запусков:",
+  return lines.join("\n");
+}
+
+function formatTrainingPeaksCronRunLogLine(log: TrainingPeaksCronRunLog, index: number): string {
+  return [`${index + 1}. ${formatTrainingPeaksCronRunSummary(log)}`].join("\n");
+}
+
+function formatTrainingPeaksCronStatusMessage(input: {
+  lastAttempt: TrainingPeaksCronRunLog | null;
+  lastSent: TrainingPeaksCronRunLog | null;
+  recentLogs: TrainingPeaksCronRunLog[];
+}): string {
+  const { lastAttempt, lastSent, recentLogs } = input;
+  const lines = [
+    "Cron status: attention_digest",
+    `Расписание: ${TP_CRON_STATUS_SCHEDULE_TEXT}`,
     "",
-    ...logs.map((log, index) => formatTrainingPeaksCronRunLogLine(log, index)),
-  ].join("\n");
+    "Последняя успешная отправка (sent):",
+    lastSent ? formatTrainingPeaksCronRunSummary(lastSent) : "— нет записей",
+  ];
+
+  if (lastSent) {
+    const ageMs = Date.now() - new Date(lastSent.startedAt).getTime();
+    lines.push("", `Возраст последней sent: ${formatTrainingPeaksCronAgeMs(ageMs)}`);
+    if (ageMs > TP_CRON_STATUS_SENT_STALE_MS) {
+      lines.push("⚠️ Нет успешной отправки attention_digest более 26 часов.");
+    }
+  } else {
+    lines.push("", "⚠️ Успешных отправок (sent) пока не было.");
+  }
+
+  lines.push("", "Последняя попытка (любой status):");
+  lines.push(lastAttempt ? formatTrainingPeaksCronRunSummary(lastAttempt) : "— нет записей");
+
+  if (recentLogs.length === 0) {
+    lines.push("", "Последние запуски:", "Записей пока нет.");
+    return lines.join("\n");
+  }
+
+  lines.push("", "Последние 5 запусков:", "");
+  lines.push(...recentLogs.map((log, index) => formatTrainingPeaksCronRunLogLine(log, index)));
+
+  return lines.join("\n");
 }
 
 async function handleTrainingPeaksCronStatus(parsedMessage: ParsedTelegramUpdate): Promise<void> {
-  const logs = await listTrainingPeaksCronRunLogs({
-    jobName: TRAININGPEAKS_ATTENTION_DIGEST_CRON_JOB_NAME,
-    limit: 5,
-  });
-  await sendTrainingPeaksMessage(parsedMessage.chatId, formatTrainingPeaksCronStatusMessage(logs));
+  const [lastAttempt, lastSent, recentLogs] = await Promise.all([
+    getLatestTrainingPeaksCronRunLog({
+      jobName: TRAININGPEAKS_ATTENTION_DIGEST_CRON_JOB_NAME,
+    }),
+    getLatestTrainingPeaksCronRunLog({
+      jobName: TRAININGPEAKS_ATTENTION_DIGEST_CRON_JOB_NAME,
+      status: "sent",
+    }),
+    listTrainingPeaksCronRunLogs({
+      jobName: TRAININGPEAKS_ATTENTION_DIGEST_CRON_JOB_NAME,
+      limit: 5,
+    }),
+  ]);
+
+  await sendTrainingPeaksMessage(
+    parsedMessage.chatId,
+    formatTrainingPeaksCronStatusMessage({
+      lastAttempt,
+      lastSent,
+      recentLogs,
+    })
+  );
 }
 
 function isTelegramGroupChatType(chatType: TelegramChatType | undefined): boolean {
