@@ -329,6 +329,19 @@ type PredictionScenario = {
   seconds: number;
 };
 
+type ReadinessScores = {
+  anchor_quality_score: number;
+  interval_specificity_score: number;
+  threshold_readiness_score: number;
+  endurance_score: number;
+  consistency_score: number;
+  taper_score: number;
+  data_quality_score: number;
+  overall_confidence_score: number;
+  confidence: ConfidenceLevel;
+  notes: string[];
+};
+
 type RacePredictionReport = {
   schema_version: "race-prediction.v1";
   run_at: string;
@@ -399,6 +412,7 @@ type RacePredictionReport = {
     };
     cross_distance: SelectedAnchor[];
   };
+  readiness_scores: ReadinessScores;
   prediction: {
     conservative: PredictionScenario;
     likely: PredictionScenario;
@@ -406,8 +420,13 @@ type RacePredictionReport = {
     confidence: ConfidenceLevel;
     confidence_score: number;
     confidence_reasons: string[];
-    method: "deterministic_v1";
+    method: "deterministic_v2_segment_aware";
     target_time_hint_used: boolean;
+    anchor_implied_time: PredictionScenario | null;
+    segment_adjustment_seconds: number;
+    risk_adjustment_seconds: number;
+    range_model_notes: string[];
+    insufficient_data?: boolean;
   };
   limitations: string[];
   output_paths: {
@@ -908,165 +927,485 @@ function selectAnchorsFromRaceProbe(
   return { primary, alternates, excludedForReview, crossDistance };
 }
 
-function buildScenario(seconds: number, distanceKm: number): PredictionScenario {
-  const paceMinPerKm = seconds / 60 / distanceKm;
-  return {
-    seconds,
-    time_text: formatDurationFromSeconds(seconds),
-    pace_text: formatPaceText(paceMinPerKm),
-  };
+function parsePaceTextToMinPerKm(paceText: string | null): number | null {
+  if (!paceText) return null;
+  const match = paceText.match(/(\d+):(\d+)/);
+  if (!match) return null;
+  return Number(match[1]) + Number(match[2]) / 60;
 }
 
-function computePrediction(input: {
-  distance: DistanceKey;
+function clampScore(value: number): number {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function segmentRoleBucket(role: string): "interval_specific" | "threshold" | "sub_threshold" | "other" {
+  const lower = role.toLowerCase();
+  if (lower.includes("10k-specific") || lower.includes("vo2")) return "interval_specific";
+  if (lower.includes("threshold support") || (lower.includes("threshold") && !lower.includes("sub"))) {
+    return "threshold";
+  }
+  if (lower.includes("sub-threshold") || lower.includes("tempo / sub")) return "sub_threshold";
+  return "other";
+}
+
+function computeAnchorImpliedSeconds(anchor: SelectedAnchor | null, distanceKm: number): number | null {
+  if (!anchor || anchor.candidate.pace_min_per_km <= 0) return null;
+  return paceMinPerKmToSeconds(anchor.candidate.pace_min_per_km, distanceKm);
+}
+
+function computeReadinessScores(input: {
   anchor: SelectedAnchor | null;
-  targetTimeSeconds: number | null;
+  raceDate: string;
+  distance: DistanceKey;
+  segmentKeyWorkouts: SegmentKeyWorkout[];
+  progressReport: ProgressEvidenceReport | null;
   completionRates: number[];
   missedWorkouts: number;
   weeksFound: number;
   weeksRequested: number;
-  keyWorkoutsFound: number;
-  progressPositive: boolean;
-  dataWarnings: string[];
+  longRuns: RacePredictionReport["features"]["long_runs"];
+  weeklyVolume: RacePredictionReport["features"]["weekly_volume"];
   taperSignal: RacePredictionReport["features"]["taper"]["signal"];
+  taperRatio: number | null;
+  dataWarnings: string[];
+  fitWeeks: number;
+  suspiciousWeeks: number;
+}): ReadinessScores {
+  const notes: string[] = [];
+  const preset = DISTANCE_PRESETS[input.distance];
+
+  let anchorQuality = 15;
+  if (input.anchor) {
+    switch (input.anchor.kind) {
+      case "official_best":
+        anchorQuality = 88;
+        break;
+      case "official_flagged":
+        anchorQuality = 78;
+        break;
+      case "probable_best":
+        anchorQuality = 70;
+        break;
+      case "clean_training_best":
+        anchorQuality = 48;
+        break;
+      default:
+        anchorQuality = 40;
+    }
+    const anchorAgeDays = daysBetween(input.anchor.candidate.date, input.raceDate);
+    if (anchorAgeDays <= 90) {
+      anchorQuality += 8;
+      notes.push(`Якорь свежий (${anchorAgeDays} дн. до старта).`);
+    } else if (anchorAgeDays <= 180) {
+      anchorQuality += 3;
+    } else if (anchorAgeDays > 365) {
+      anchorQuality -= 12;
+      notes.push("Якорь старше года — осторожнее с экстраполяцией.");
+    } else {
+      anchorQuality -= 4;
+    }
+    if (input.anchor.candidate.data_quality_status === "suspicious") {
+      anchorQuality -= 12;
+      notes.push("Якорь помечен suspicious в race-results probe.");
+    }
+    if (input.anchor.kind === "clean_training_best") {
+      notes.push("Якорь — тренировочный ориентир, не официальный старт.");
+    }
+  } else {
+    notes.push("Нет надёжного результата на целевой дистанции.");
+  }
+  anchorQuality = clampScore(anchorQuality);
+
+  const usableSegments = input.segmentKeyWorkouts.filter((workout) => workout.usable_for_prediction);
+  const intervalWorkouts = usableSegments.filter(
+    (workout) => segmentRoleBucket(workout.role) === "interval_specific",
+  );
+  const thresholdWorkouts = usableSegments.filter(
+    (workout) => segmentRoleBucket(workout.role) === "threshold",
+  );
+  const subThresholdWorkouts = usableSegments.filter(
+    (workout) => segmentRoleBucket(workout.role) === "sub_threshold",
+  );
+
+  let intervalSpecificity = 18;
+  if (intervalWorkouts.length > 0) {
+    intervalSpecificity = 35;
+    for (const workout of intervalWorkouts) {
+      let workoutScore = 22;
+      if (workout.verdict === "positive") workoutScore += 8;
+      if (workout.completion_ratio !== null && workout.completion_ratio >= 0.95) workoutScore += 6;
+      if (workout.rep_to_rep_fade_pct !== null && workout.rep_to_rep_fade_pct <= 3) workoutScore += 4;
+      intervalSpecificity += workoutScore;
+    }
+    intervalSpecificity = Math.min(100, intervalSpecificity);
+    notes.push(
+      `${intervalWorkouts.length} пригодных 10K-specific интервалов с segment evidence.`,
+    );
+  } else {
+    notes.push("Нет пригодных 3–6 мин интервалов для прямой 10K-специфики.");
+  }
+  intervalSpecificity = clampScore(intervalSpecificity);
+
+  let thresholdReadiness = 20;
+  for (const workout of thresholdWorkouts) {
+    let workoutScore = 18;
+    if (workout.verdict === "positive") workoutScore += 10;
+    if (workout.completion_ratio !== null && workout.completion_ratio >= 0.9) workoutScore += 8;
+    if (workout.rep_to_rep_fade_pct !== null && workout.rep_to_rep_fade_pct <= 4) workoutScore += 4;
+    thresholdReadiness += workoutScore;
+  }
+  if (thresholdWorkouts.length > 0) {
+    notes.push(`${thresholdWorkouts.length} пригодных threshold/tempo отрезков 8–15 мин.`);
+  }
+  thresholdReadiness = clampScore(thresholdReadiness);
+
+  const longestRunKm =
+    input.longRuns.length > 0 ? Math.max(...input.longRuns.map((run) => run.distance_km)) : 0;
+  const volumeValues = input.weeklyVolume
+    .map((week) => week.running_km)
+    .filter((value): value is number => value !== null);
+  const medianVolume = median(volumeValues);
+
+  const longRunTarget =
+    input.distance === "5k" ? 8 : input.distance === "10k" ? 12 : input.distance === "half" ? 18 : 28;
+  const volumeTarget =
+    input.distance === "5k" ? 25 : input.distance === "10k" ? 35 : input.distance === "half" ? 45 : 55;
+
+  let endurance = 25;
+  if (longestRunKm >= longRunTarget) endurance += 28;
+  else if (longestRunKm >= longRunTarget * 0.75) endurance += 14;
+  else notes.push(`Длинная тренировка ${longestRunKm.toFixed(1)} км — ниже типичного для ${preset.label}.`);
+
+  if (medianVolume !== null) {
+    if (medianVolume >= volumeTarget) endurance += 22;
+    else if (medianVolume >= volumeTarget * 0.7) endurance += 10;
+  }
+  if (subThresholdWorkouts.length > 0) endurance += Math.min(15, subThresholdWorkouts.length * 6);
+
+  if (input.progressReport?.long_run_progress.status === "found") {
+    if (input.progressReport.long_run_progress.confidence === "high") endurance += 10;
+    else if (input.progressReport.long_run_progress.confidence === "medium") endurance += 6;
+    notes.push("Progress-evidence: положительный тренд длинного бега.");
+  }
+  endurance = clampScore(endurance);
+
+  const weekCoverage = input.weeksRequested > 0 ? input.weeksFound / input.weeksRequested : 0;
+  const completionMedian = median(input.completionRates);
+  let consistency = weekCoverage * 45;
+  if (completionMedian !== null) {
+    consistency += completionMedian * 40;
+    if (completionMedian >= 0.85) notes.push(`Выполнение плана ~${Math.round(completionMedian * 100)}%.`);
+  }
+  consistency -= Math.min(25, input.missedWorkouts * 3);
+  if (input.weeksFound < input.weeksRequested) {
+    notes.push(`Найдено ${input.weeksFound}/${input.weeksRequested} недель подготовки.`);
+  }
+  consistency = clampScore(consistency);
+
+  let taperScore = 50;
+  switch (input.taperSignal) {
+    case "taper_detected":
+      taperScore = 82;
+      notes.push("Тейпер: объём последних дней ниже 3-недельной медианы.");
+      break;
+    case "flat":
+      taperScore = 58;
+      break;
+    case "volume_spike":
+      taperScore = 32;
+      notes.push("Перед стартом объём не снижался — риск недотейпера.");
+      break;
+    default:
+      taperScore = 48;
+      notes.push("Тейпер оценён приблизительно — мало данных.");
+  }
+  if (input.taperRatio !== null && input.taperRatio >= 0.95) taperScore -= 8;
+  taperScore = clampScore(taperScore);
+
+  let dataQuality = 30 + weekCoverage * 25;
+  if (input.weeksFound > 0) {
+    dataQuality += (input.fitWeeks / input.weeksFound) * 20;
+  }
+  const segmentCoverage =
+    input.segmentKeyWorkouts.length > 0
+      ? usableSegments.length / input.segmentKeyWorkouts.length
+      : 0;
+  dataQuality += segmentCoverage * 20;
+  dataQuality += Math.min(18, usableSegments.length * 6);
+  dataQuality -= Math.min(20, input.dataWarnings.length * 2);
+  dataQuality -= Math.min(10, input.suspiciousWeeks * 2);
+  if (usableSegments.length === 0 && input.segmentKeyWorkouts.some((w) => w.segment_evidence_available)) {
+    notes.push("Segment evidence есть, но пригодных для прогноза тренировок нет.");
+  }
+  dataQuality = clampScore(dataQuality);
+
+  const componentAvg =
+    (intervalSpecificity + thresholdReadiness + endurance + consistency + taperScore) / 5;
+  const overall = clampScore(
+    Math.min(100, Math.min(anchorQuality, dataQuality) * 0.55 + componentAvg * 0.45),
+  );
+
+  let confidence: ConfidenceLevel = "medium";
+  if (overall >= 72) confidence = "high";
+  if (overall <= 44) confidence = "low";
+
+  return {
+    anchor_quality_score: anchorQuality,
+    interval_specificity_score: intervalSpecificity,
+    threshold_readiness_score: thresholdReadiness,
+    endurance_score: endurance,
+    consistency_score: consistency,
+    taper_score: taperScore,
+    data_quality_score: dataQuality,
+    overall_confidence_score: overall,
+    confidence,
+    notes,
+  };
+}
+
+function computePredictionV2(input: {
+  distance: DistanceKey;
+  anchor: SelectedAnchor | null;
+  targetTimeSeconds: number | null;
+  readinessScores: ReadinessScores;
+  segmentKeyWorkouts: SegmentKeyWorkout[];
+  progressReport: ProgressEvidenceReport | null;
+  taperSignal: RacePredictionReport["features"]["taper"]["signal"];
+  missedWorkouts: number;
+  raceDate: string;
 }): {
   prediction: RacePredictionReport["prediction"];
   limitations: string[];
 } {
   const preset = DISTANCE_PRESETS[input.distance];
   const limitations: string[] = [];
+  const rangeModelNotes: string[] = [];
   const confidenceReasons: string[] = [];
-  let confidenceScore = 50;
+
+  const anchorImpliedSeconds = computeAnchorImpliedSeconds(input.anchor, preset.target_km);
+  const anchorPaceMin =
+    input.anchor && input.anchor.candidate.pace_min_per_km > 0
+      ? input.anchor.candidate.pace_min_per_km
+      : null;
+
+  const insufficientData =
+    anchorImpliedSeconds === null ||
+    (input.readinessScores.data_quality_score < 40 && input.readinessScores.anchor_quality_score < 55);
+
+  if (insufficientData) {
+    rangeModelNotes.push("Недостаточно данных для уточнения прогноза.");
+    limitations.push("Недостаточно данных для узкого прогноза — широкий ориентир.");
+  }
 
   let baseSeconds: number;
-  if (input.anchor) {
+  if (anchorImpliedSeconds !== null) {
+    baseSeconds = anchorImpliedSeconds;
+    confidenceReasons.push(
+      `Опорный результат: ${input.anchor!.kind} (${input.anchor!.candidate.date}, ${input.anchor!.candidate.pace_text}).`,
+    );
+    rangeModelNotes.push(
+      `Якорь: ${input.anchor!.candidate.duration_text} (${input.anchor!.candidate.pace_text}) → ${formatDurationFromSeconds(anchorImpliedSeconds)} на ${preset.target_km} км.`,
+    );
+  } else if (input.anchor?.kind === "clean_training_best" && anchorImpliedSeconds === null) {
+    baseSeconds = paceMinPerKmToSeconds(6.0, preset.target_km);
+    limitations.push("Слабый якорь — широкий базовый ориентир.");
+  } else {
     baseSeconds = paceMinPerKmToSeconds(
-      input.anchor.candidate.pace_min_per_km,
+      input.distance === "5k" ? 5.5 : input.distance === "10k" ? 6.0 : input.distance === "half" ? 6.2 : 6.5,
       preset.target_km,
     );
-    confidenceScore += Math.round(input.anchor.confidence_weight * 25);
-    confidenceReasons.push(
-      `Опорный результат: ${input.anchor.kind} (${input.anchor.candidate.date}, ${input.anchor.candidate.pace_text}).`,
-    );
-    if (input.anchor.kind === "clean_training_best") {
-      limitations.push("Опора — тренировочный ориентир, не официальный старт.");
-      confidenceScore -= 8;
-    }
-    if (input.anchor.candidate.data_quality_status === "suspicious") {
-      limitations.push("Опорный результат помечен как suspicious в race-results probe.");
-      confidenceScore -= 12;
-    }
-  } else {
-    baseSeconds = paceMinPerKmToSeconds(6.0, preset.target_km);
-    limitations.push("Нет надёжного результата на целевой дистанции — использован широкий базовый ориентир.");
-    confidenceScore -= 25;
     confidenceReasons.push("Опорный результат на целевой дистанции не найден.");
   }
 
   if (input.targetTimeSeconds !== null) {
-    baseSeconds = Math.round(baseSeconds * 0.7 + input.targetTimeSeconds * 0.3);
-    confidenceReasons.push("Учтён --target-time как мягкая подсказка (30% веса).");
+    baseSeconds = Math.round(baseSeconds * 0.85 + input.targetTimeSeconds * 0.15);
+    confidenceReasons.push("Учтён --target-time как мягкая подсказка (15% веса).");
   }
 
-  let spreadConservative = 0.05;
-  let spreadOptimistic = 0.035;
+  const usableSegments = input.segmentKeyWorkouts.filter((workout) => workout.usable_for_prediction);
+  const intervalWorkouts = usableSegments.filter(
+    (workout) => segmentRoleBucket(workout.role) === "interval_specific",
+  );
+  const thresholdWorkouts = usableSegments.filter(
+    (workout) => segmentRoleBucket(workout.role) === "threshold",
+  );
 
-  if (!input.anchor || input.anchor.confidence_weight < 0.7) {
-    spreadConservative += 0.04;
-    spreadOptimistic += 0.025;
-  }
-  if (input.weeksFound < input.weeksRequested) {
-    const missing = input.weeksRequested - input.weeksFound;
-    spreadConservative += Math.min(0.08, missing * 0.012);
-    spreadOptimistic += Math.min(0.04, missing * 0.006);
-    limitations.push(`Не хватает ${missing} недель parsed weekly-summary.`);
-    confidenceScore -= missing * 4;
-    confidenceReasons.push(`Найдено ${input.weeksFound}/${input.weeksRequested} недель подготовки.`);
-  } else {
-    confidenceScore += 8;
-    confidenceReasons.push("Полный набор недель подготовки найден локально.");
-  }
+  let segmentAdjustmentSeconds = 0;
+  const maxTotalSegmentAdj = Math.round(baseSeconds * 0.02);
+  const maxPerWorkoutAdj = Math.round(baseSeconds * 0.012);
 
-  const completionMedian = median(input.completionRates);
-  if (completionMedian !== null) {
-    if (completionMedian >= 0.85) {
-      confidenceScore += 6;
-      confidenceReasons.push(`Медианное выполнение плана ~${Math.round(completionMedian * 100)}%.`);
-    } else if (completionMedian < 0.7) {
-      spreadConservative += 0.03;
-      limitations.push("Низкое выполнение плана в подготовительном блоке.");
-      confidenceScore -= 10;
-      confidenceReasons.push(`Слабое выполнение плана (~${Math.round(completionMedian * 100)}%).`);
+  if (anchorPaceMin !== null && intervalWorkouts.length > 0) {
+    for (const workout of intervalWorkouts) {
+      const workPace = parsePaceTextToMinPerKm(workout.work_avg_pace ?? workout.work_fastest_pace);
+      if (workPace === null) continue;
+      const paceDeltaPct = ((workPace - anchorPaceMin) / anchorPaceMin) * 100;
+      let workoutAdj = 0;
+      if (paceDeltaPct <= -1 && paceDeltaPct >= -4) {
+        workoutAdj = -Math.min(maxPerWorkoutAdj, Math.round(Math.abs(paceDeltaPct) * baseSeconds * 0.004));
+        rangeModelNotes.push(
+          `${workout.date} ${workout.title ?? ""}: рабочий темп ${workout.work_avg_pace} быстрее якоря → небольшое улучшение.`,
+        );
+      } else if (Math.abs(paceDeltaPct) <= 3) {
+        workoutAdj = 0;
+        rangeModelNotes.push(
+          `${workout.date}: ${workout.work_avg_pace} близок к якорю — подтверждает опору.`,
+        );
+      } else if (paceDeltaPct > 3) {
+        workoutAdj = Math.min(maxPerWorkoutAdj, Math.round(paceDeltaPct * baseSeconds * 0.002));
+        rangeModelNotes.push(
+          `${workout.date}: интервалы медленнее якоря — без улучшения likely.`,
+        );
+      }
+      segmentAdjustmentSeconds += workoutAdj;
     }
-  } else if (input.weeksFound === 0) {
-    confidenceScore -= 15;
+    segmentAdjustmentSeconds = Math.max(
+      -maxTotalSegmentAdj,
+      Math.min(maxTotalSegmentAdj, segmentAdjustmentSeconds),
+    );
+  } else if (intervalWorkouts.length > 0) {
+    rangeModelNotes.push("Интервальные тренировки учтены для уверенности, без сдвига якоря.");
   }
 
+  if (thresholdWorkouts.length > 0 && anchorPaceMin !== null) {
+    for (const workout of thresholdWorkouts) {
+      const workPace = parsePaceTextToMinPerKm(workout.work_avg_pace);
+      if (workPace === null) continue;
+      const slowerPct = ((workPace - anchorPaceMin) / anchorPaceMin) * 100;
+      if (slowerPct >= 2 && slowerPct <= 12) {
+        rangeModelNotes.push(
+          `${workout.date}: threshold ${workout.work_avg_pace} — ожидаемо медленнее 10K, поддерживает выносливость.`,
+        );
+      }
+    }
+  }
+
+  const warningOnlySegments = input.segmentKeyWorkouts.filter(
+    (workout) => workout.segment_evidence_available && !workout.usable_for_prediction,
+  );
+  if (warningOnlySegments.length > 0) {
+    rangeModelNotes.push(
+      `${warningOnlySegments.length} segment-тренировок с warning/unusable — не улучшают прогноз.`,
+    );
+  }
+
+  let progressAdj = 0;
+  if (input.progressReport && progressEvidencePositive(input.progressReport)) {
+    progressAdj = -Math.min(Math.round(baseSeconds * 0.008), 20);
+    confidenceReasons.push("Progress-evidence: положительный тренд лёгкого/длинного бега.");
+    rangeModelNotes.push("Progress-evidence: лёгкий/длинный бег улучшился — небольшой оптимизм.");
+  }
+  segmentAdjustmentSeconds = Math.max(
+    -maxTotalSegmentAdj,
+    Math.min(maxTotalSegmentAdj, segmentAdjustmentSeconds + progressAdj),
+  );
+
+  let riskAdjustmentSeconds = 0;
+  if (input.taperSignal === "volume_spike") {
+    riskAdjustmentSeconds += Math.round(baseSeconds * 0.008);
+    limitations.push("Перед стартом объём не снижался (возможен недотейпер).");
+  }
   if (input.missedWorkouts >= 3) {
-    spreadConservative += 0.025;
-    confidenceScore -= Math.min(12, input.missedWorkouts * 2);
+    riskAdjustmentSeconds += Math.min(Math.round(baseSeconds * 0.012), 35);
     limitations.push(`Пропущено ${input.missedWorkouts} запланированных тренировок.`);
   }
 
-  if (input.keyWorkoutsFound < 2) {
-    spreadConservative += 0.02;
-    limitations.push("Мало ключевых тренировок (темп/интервалы/темп гонки) в окне.");
-    confidenceScore -= 6;
-  } else {
-    confidenceScore += 4;
+  const likelySeconds = Math.round(baseSeconds + segmentAdjustmentSeconds + riskAdjustmentSeconds * 0.25);
+
+  let spreadConservative: number;
+  let spreadOptimistic: number;
+  switch (input.readinessScores.confidence) {
+    case "high":
+      spreadConservative = 0.02;
+      spreadOptimistic = 0.015;
+      break;
+    case "medium":
+      spreadConservative = 0.035;
+      spreadOptimistic = 0.025;
+      break;
+    default:
+      spreadConservative = 0.065;
+      spreadOptimistic = 0.045;
   }
 
-  if (input.progressPositive) {
-    spreadOptimistic += 0.015;
-    confidenceScore += 5;
-    confidenceReasons.push("Progress-evidence: положительный тренд лёгкого/длинного бега.");
+  if (insufficientData) {
+    spreadConservative = Math.max(spreadConservative, 0.08);
+    spreadOptimistic = Math.max(spreadOptimistic, 0.06);
   }
 
-  if (input.dataWarnings.length > 0) {
-    confidenceScore -= Math.min(15, input.dataWarnings.length * 2);
-    limitations.push(`Предупреждения качества данных: ${input.dataWarnings.slice(0, 5).join(", ")}.`);
+  if (input.readinessScores.taper_score < 45) spreadConservative += 0.012;
+  if (input.readinessScores.consistency_score < 50) spreadConservative += 0.01;
+  if (warningOnlySegments.length > 0) spreadConservative += 0.008;
+
+  let conservativeSeconds = Math.round(likelySeconds * (1 + spreadConservative));
+  let optimisticSeconds = Math.round(likelySeconds * (1 - spreadOptimistic));
+
+  let evidenceCeilingSeconds: number | null = null;
+  if (intervalWorkouts.length > 0) {
+    const fastestPaces = intervalWorkouts
+      .map((workout) => parsePaceTextToMinPerKm(workout.work_fastest_pace ?? workout.work_avg_pace))
+      .filter((pace): pace is number => pace !== null);
+    if (fastestPaces.length > 0) {
+      evidenceCeilingSeconds = paceMinPerKmToSeconds(Math.min(...fastestPaces), preset.target_km);
+      if (optimisticSeconds < evidenceCeilingSeconds) {
+        rangeModelNotes.push(
+          `Оптимистичный сценарий ограничен fastest segment evidence (~${formatDurationFromSeconds(evidenceCeilingSeconds)}).`,
+        );
+      }
+      optimisticSeconds = Math.max(optimisticSeconds, evidenceCeilingSeconds);
+    }
   }
 
-  let conservativeShift = 0;
-  let optimisticShift = 0;
-  if (input.taperSignal === "taper_detected") {
-    optimisticShift -= 0.01;
-    confidenceScore += 3;
-    confidenceReasons.push("Тейпер: объём последних дней ниже 3-недельной медианы.");
-  } else if (input.taperSignal === "volume_spike") {
-    conservativeShift += 0.02;
-    limitations.push("Перед стартом объём не снижался (возможен недотейпер).");
-    confidenceScore -= 4;
-  } else if (input.taperSignal === "insufficient_data") {
-    limitations.push("Тейпер оценён приблизительно — мало недельных данных.");
+  if (optimisticSeconds >= likelySeconds) {
+    const targetOptimistic = Math.round(likelySeconds * (1 - spreadOptimistic));
+    optimisticSeconds =
+      evidenceCeilingSeconds !== null
+        ? Math.max(evidenceCeilingSeconds, Math.min(targetOptimistic, likelySeconds - 1))
+        : Math.min(targetOptimistic, likelySeconds - 1);
   }
-
-  const conservativeSeconds = Math.round(
-    baseSeconds * (1 + spreadConservative + conservativeShift),
-  );
-  const likelySeconds = Math.round(baseSeconds);
-  const optimisticSeconds = Math.round(
-    baseSeconds * (1 - spreadOptimistic + optimisticShift),
-  );
 
   const ordered = [conservativeSeconds, likelySeconds, optimisticSeconds].sort((a, b) => a - b);
+  conservativeSeconds = ordered[2]!;
+  optimisticSeconds = ordered[0]!;
 
-  let confidence: ConfidenceLevel = "medium";
-  if (confidenceScore >= 72) confidence = "high";
-  if (confidenceScore <= 45) confidence = "low";
+  rangeModelNotes.push(
+    `Spread: conservative +${Math.round(spreadConservative * 1000) / 10}%, optimistic -${Math.round(spreadOptimistic * 1000) / 10}% (${input.readinessScores.confidence} confidence).`,
+  );
+
+  for (const note of input.readinessScores.notes.slice(0, 4)) {
+    if (!confidenceReasons.includes(note)) confidenceReasons.push(note);
+  }
+
+  const anchorImpliedTime =
+    anchorImpliedSeconds !== null ? buildScenario(anchorImpliedSeconds, preset.target_km) : null;
 
   return {
     prediction: {
-      conservative: buildScenario(ordered[2]!, preset.target_km),
-      likely: buildScenario(ordered[1]!, preset.target_km),
-      optimistic: buildScenario(ordered[0]!, preset.target_km),
-      confidence,
-      confidence_score: Math.max(0, Math.min(100, confidenceScore)),
+      conservative: buildScenario(conservativeSeconds, preset.target_km),
+      likely: buildScenario(likelySeconds, preset.target_km),
+      optimistic: buildScenario(optimisticSeconds, preset.target_km),
+      confidence: insufficientData ? "low" : input.readinessScores.confidence,
+      confidence_score: insufficientData
+        ? Math.min(input.readinessScores.overall_confidence_score, 35)
+        : input.readinessScores.overall_confidence_score,
       confidence_reasons: confidenceReasons,
-      method: "deterministic_v1",
+      method: "deterministic_v2_segment_aware",
       target_time_hint_used: input.targetTimeSeconds !== null,
+      anchor_implied_time: anchorImpliedTime,
+      segment_adjustment_seconds: segmentAdjustmentSeconds,
+      risk_adjustment_seconds: riskAdjustmentSeconds,
+      range_model_notes: rangeModelNotes,
+      ...(insufficientData ? { insufficient_data: true } : {}),
     },
     limitations,
+  };
+}
+
+function buildScenario(seconds: number, distanceKm: number): PredictionScenario {
+  const paceMinPerKm = seconds / 60 / distanceKm;
+  return {
+    seconds,
+    time_text: formatDurationFromSeconds(seconds),
+    pace_text: formatPaceText(paceMinPerKm),
   };
 }
 
@@ -1833,6 +2172,122 @@ function progressEvidencePositive(report: ProgressEvidenceReport | null): boolea
   );
 }
 
+function readinessSystemLabel(key: keyof Omit<ReadinessScores, "overall_confidence_score" | "confidence" | "notes">): string {
+  switch (key) {
+    case "anchor_quality_score":
+      return "Якорь результата";
+    case "interval_specificity_score":
+      return "10K-specific интервалы";
+    case "threshold_readiness_score":
+      return "Порог / темпо";
+    case "endurance_score":
+      return "Выносливость";
+    case "consistency_score":
+      return "Стабильность";
+    case "taper_score":
+      return "Тейпер";
+    case "data_quality_score":
+      return "Качество данных";
+    default:
+      return key;
+  }
+}
+
+function readinessSystemMeaning(
+  key: keyof Omit<ReadinessScores, "overall_confidence_score" | "confidence" | "notes">,
+  score: number,
+): string {
+  if (score >= 75) {
+    switch (key) {
+      case "anchor_quality_score":
+        return "Надёжная опора на целевой дистанции";
+      case "interval_specificity_score":
+        return "Есть пригодные короткие интервалы рядом с темпом гонки";
+      case "threshold_readiness_score":
+        return "Пороговая работа подтверждает форму";
+      case "endurance_score":
+        return "Объём и длинные поддерживают дистанцию";
+      case "consistency_score":
+        return "Стабильное выполнение плана";
+      case "taper_score":
+        return "Тейпер выглядит уместно";
+      case "data_quality_score":
+        return "Достаточно данных для segment-aware анализа";
+      default:
+        return "Сильная готовность";
+    }
+  }
+  if (score >= 50) {
+    switch (key) {
+      case "anchor_quality_score":
+        return "Опора есть, но с оговорками";
+      case "interval_specificity_score":
+        return "Частичная поддержка от интервалов";
+      case "threshold_readiness_score":
+        return "Пороговая работа умеренная";
+      case "endurance_score":
+        return "Базовая выносливость в норме";
+      case "consistency_score":
+        return "Есть пробелы в регулярности";
+      case "taper_score":
+        return "Тейпер нейтральный или неполный";
+      case "data_quality_score":
+        return "Данные частичные, но usable";
+      default:
+        return "Умеренная готовность";
+    }
+  }
+  switch (key) {
+    case "anchor_quality_score":
+      return "Слабый или отсутствующий якорь";
+    case "interval_specificity_score":
+      return "Нет пригодных коротких интервалов";
+    case "threshold_readiness_score":
+      return "Мало пороговой работы";
+    case "endurance_score":
+      return "Объём/длинные ниже ожиданий";
+    case "consistency_score":
+      return "Много пропусков или дыр в данных";
+    case "taper_score":
+      return "Риск перегруза перед стартом";
+    case "data_quality_score":
+      return "Мало FIT/segment coverage";
+    default:
+      return "Слабая готовность";
+  }
+}
+
+function formatReadinessScoresMarkdown(readiness: ReadinessScores, distance: DistanceKey): string[] {
+  const lines: string[] = [];
+  lines.push("## Готовность по системам");
+  lines.push("");
+  lines.push("| Система | Оценка | Что значит |");
+  lines.push("|---|---:|---|");
+
+  const keys: Array<keyof Omit<ReadinessScores, "overall_confidence_score" | "confidence" | "notes">> = [
+    "anchor_quality_score",
+    "interval_specificity_score",
+    "threshold_readiness_score",
+    "endurance_score",
+    "consistency_score",
+    "taper_score",
+    "data_quality_score",
+  ];
+
+  for (const key of keys) {
+    let label = readinessSystemLabel(key);
+    if (key === "interval_specificity_score" && distance !== "10k") {
+      label = "Интервалы race-specific";
+    }
+    lines.push(`| ${label} | ${readiness[key]}/100 | ${readinessSystemMeaning(key, readiness[key])} |`);
+  }
+  lines.push("");
+  lines.push(
+    `**Сводная уверенность:** ${readiness.confidence} (${readiness.overall_confidence_score}/100).`,
+  );
+  return lines;
+}
+
 function createMarkdown(report: RacePredictionReport): string {
   const lines: string[] = [];
   lines.push(`# Прогноз результата — ${report.athlete.student_name}`);
@@ -1854,10 +2309,22 @@ function createMarkdown(report: RacePredictionReport): string {
     `| Оптимистично | ${report.prediction.optimistic.time_text} | ${report.prediction.optimistic.pace_text} |`,
   );
   lines.push("");
+  const anchorNote =
+    report.anchors.target_distance.primary?.kind === "official_best"
+      ? `Прогноз основан на официальном ${DISTANCE_PRESETS[report.race.distance].label} + segment-aware анализе ключевых тренировок.`
+      : report.prediction.insufficient_data
+        ? "Недостаточно данных для уточнения прогноза — широкий ориентир."
+        : "Прогноз основан на доступной опоре + segment-aware анализе ключевых тренировок.";
+  lines.push(anchorNote);
+  lines.push("");
   lines.push(
     `**Уверенность:** ${report.prediction.confidence} (${report.prediction.confidence_score}/100), метод ${report.prediction.method}.`,
   );
+  if (report.prediction.confidence_reasons.length > 0) {
+    lines.push(`Кратко: ${report.prediction.confidence_reasons.slice(0, 2).join(" ")}`);
+  }
   lines.push("");
+  lines.push(...formatReadinessScoresMarkdown(report.readiness_scores, report.race.distance));
   lines.push("## Почему");
   for (const reason of report.prediction.confidence_reasons) {
     lines.push(`- ${reason}`);
@@ -1955,11 +2422,27 @@ function createMarkdown(report: RacePredictionReport): string {
   }
   lines.push("");
   lines.push("## Рекомендация по тактике");
+  if (report.prediction.confidence === "high") {
+    lines.push(
+      `- Стартовать ближе к **${report.prediction.likely.pace_text}** (${report.prediction.likely.time_text}); держать ровный темп первые 2–3 км.`,
+    );
+  } else if (report.prediction.confidence === "medium") {
+    lines.push(
+      `- Первые 2–3 км — **консервативно**, ближе к ${report.prediction.conservative.pace_text} или чуть медленнее likely; точка решения после 3 км.`,
+    );
+    lines.push(
+      `- Если темп держится комфортно — можно сближаться с **${report.prediction.likely.pace_text}** (${report.prediction.likely.time_text}).`,
+    );
+  } else {
+    lines.push(
+      `- При низкой уверенности — старт **консервативно** (${report.prediction.conservative.pace_text}), без гонки за оптимистичным сценарием.`,
+    );
+    lines.push(
+      `- Ориентир likely **${report.prediction.likely.time_text}** — только если самочувствие и темп подтверждаются после 3–5 км.`,
+    );
+  }
   lines.push(
-    `- Стартовать ближе к **${report.prediction.likely.time_text}** (${report.prediction.likely.pace_text}); при плохом самочувствии держать **${report.prediction.conservative.pace_text}**.`,
-  );
-  lines.push(
-    `- Верхняя граница сценария дня — около **${report.prediction.optimistic.time_text}**, только если план по темпу держится без «красной зоны» в первой половине.`,
+    `- Верхняя граница дня — около **${report.prediction.optimistic.time_text}**, только если темп держится без «красной зоны»; не стартовать под optimistic.`,
   );
   lines.push("");
   lines.push("## Artifacts");
@@ -2121,18 +2604,37 @@ async function main(): Promise<void> {
     throw new Error(`Could not parse --target-time: "${args.targetTime}"`);
   }
 
-  const { prediction, limitations: predictionLimitations } = computePrediction({
-    distance: args.distance,
+  const segmentKeyWorkouts = buildSegmentKeyWorkouts(rawKeyWorkoutCaptures);
+
+  const readinessScores = computeReadinessScores({
     anchor: anchors.primary,
-    targetTimeSeconds,
+    raceDate: args.raceDate,
+    distance: args.distance,
+    segmentKeyWorkouts,
+    progressReport: progressCached.report,
     completionRates,
     missedWorkouts,
     weeksFound,
     weeksRequested: args.weeks,
-    keyWorkoutsFound: keyWorkouts.length,
-    progressPositive: progressEvidencePositive(progressCached.report),
-    dataWarnings: [...dataWarnings],
+    longRuns,
+    weeklyVolume,
     taperSignal,
+    taperRatio,
+    dataWarnings: [...dataWarnings],
+    fitWeeks,
+    suspiciousWeeks,
+  });
+
+  const { prediction, limitations: predictionLimitations } = computePredictionV2({
+    distance: args.distance,
+    anchor: anchors.primary,
+    targetTimeSeconds,
+    readinessScores,
+    segmentKeyWorkouts,
+    progressReport: progressCached.report,
+    taperSignal,
+    missedWorkouts,
+    raceDate: args.raceDate,
   });
 
   const limitations = [
@@ -2168,7 +2670,6 @@ async function main(): Promise<void> {
   const segmentAudit = args.segmentAudit
     ? buildSegmentAudit(rawKeyWorkoutCaptures, args.segmentAuditJson)
     : undefined;
-  const segmentKeyWorkouts = buildSegmentKeyWorkouts(rawKeyWorkoutCaptures);
 
   const report: RacePredictionReport = {
     schema_version: "race-prediction.v1",
@@ -2238,6 +2739,7 @@ async function main(): Promise<void> {
       },
       cross_distance: anchors.crossDistance,
     },
+    readiness_scores: readinessScores,
     prediction,
     limitations,
     output_paths: {
