@@ -21,12 +21,16 @@ import {
   getSingleSearchParam,
 } from "@/app/admin/lib";
 import {
+  buildTrainingPeaksAdminStudentTelegramMismatchStatus,
   findTrainingPeaksAdminBusinessChatsByUsername,
   formatTrainingPeaksAdminLinkCodeExpiresAt,
+  formatTrainingPeaksAdminTelegramBindConfirmMessage,
   formatTrainingPeaksAdminTelegramChatName,
   getTrainingPeaksAdminStudentById,
+  getTrainingPeaksAdminStudentCapturedBusinessChat,
   getTrainingPeaksAdminStudentGroupTopicLinkStatusText,
   getTrainingPeaksAdminStudentLastKnownBusinessChat,
+  getTrainingPeaksAdminStudentTelegramSuggestedMatches,
   getTrainingPeaksAdminStudentThreadLinkMethod,
   listTrainingPeaksAdminRecentBusinessChats,
   listTrainingPeaksAdminReportsForStudent,
@@ -35,6 +39,7 @@ import {
   shortenTrainingPeaksAdminChatId,
   TRAININGPEAKS_ADMIN_TELEGRAM_USERNAME_NOT_FOUND_MESSAGE,
 } from "@/features/trainingpeaks/admin";
+import { formatTelegramMismatchAcknowledgementMessage } from "@/features/trainingpeaks/telegram-identity-match";
 import { getTrainingPeaksWeeklyReportForStudentWeekFromService } from "@/features/trainingpeaks/service";
 import { getPreviousTrainingPeaksWeek } from "@/features/trainingpeaks/week";
 type StudentDetailPageProps = {
@@ -177,16 +182,31 @@ export default async function AdminStudentDetailPage({
   ]);
   const primaryStudentThread = studentThreads[0] ?? null;
 
-  const [lastKnownBusinessChat, recentChats, usernameLookup] = await Promise.all([
-    getTrainingPeaksAdminStudentLastKnownBusinessChat(student),
-    telegramView === "recent" ? listTrainingPeaksAdminRecentBusinessChats(12) : Promise.resolve([]),
-    telegramView === "username" && normalizedTelegramUsername
-      ? findTrainingPeaksAdminBusinessChatsByUsername(normalizedTelegramUsername, 10)
-      : Promise.resolve({
-          normalizedUsername: normalizedTelegramUsername,
-          chats: [],
-        }),
-  ]);
+  const [lastKnownBusinessChat, capturedBusinessChat, suggestedTelegramMatches, recentChats, usernameLookup] =
+    await Promise.all([
+      getTrainingPeaksAdminStudentLastKnownBusinessChat(student),
+      getTrainingPeaksAdminStudentCapturedBusinessChat(student),
+      getTrainingPeaksAdminStudentTelegramSuggestedMatches(student),
+      telegramView === "recent" ? listTrainingPeaksAdminRecentBusinessChats(12) : Promise.resolve([]),
+      telegramView === "username" && normalizedTelegramUsername
+        ? findTrainingPeaksAdminBusinessChatsByUsername(normalizedTelegramUsername, 10)
+        : Promise.resolve({
+            normalizedUsername: normalizedTelegramUsername,
+            chats: [],
+          }),
+    ]);
+  const telegramMismatchStatus = buildTrainingPeaksAdminStudentTelegramMismatchStatus(
+    student,
+    capturedBusinessChat
+  );
+  const telegramMismatchAckMessage = telegramMismatchStatus.hasMismatch
+    ? formatTelegramMismatchAcknowledgementMessage({
+        studentName: student.studentName,
+        capturedName: telegramMismatchStatus.capturedName,
+        capturedUsername: capturedBusinessChat?.username ?? null,
+        actionLabel: "Отправить тест",
+      })
+    : undefined;
   const usernameCandidates = telegramView === "username" ? usernameLookup.chats : [];
   const businessChatSeen = getBusinessChatSeenStatusText(student, lastKnownBusinessChat);
   const showBusinessChatMissingWarning =
@@ -271,6 +291,70 @@ export default async function AdminStudentDetailPage({
         </div>
       )}
 
+      {telegramMismatchStatus.hasMismatch && (
+        <div className="admin-alert admin-alert-error">
+          <strong>Несовпадение Telegram-привязки.</strong> Ученик «{student.studentName}» привязан к другому
+          Business-контакту: {formatTrainingPeaksAdminTelegramChatName(capturedBusinessChat!)}
+          {capturedBusinessChat?.username ? ` (@${capturedBusinessChat.username})` : ""}. Последняя активность:{" "}
+          {formatIsoDate(capturedBusinessChat!.lastSeenAt)}. Перепроверь привязку перед отправкой отчётов.
+        </div>
+      )}
+
+      {!student.telegramChatId && suggestedTelegramMatches.length > 0 && (
+        <article className="admin-card">
+          <h3>Предложенные Business-чаты</h3>
+          <p className="admin-muted">
+            Найдены непривязанные Business-чаты, похожие на этого ученика. Проверь имя и username перед привязкой.
+          </p>
+          <div className="admin-table-wrap">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Контакт</th>
+                  <th>Последнее сообщение</th>
+                  <th>Был в сети</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {suggestedTelegramMatches.map((candidate) => (
+                  <tr key={candidate.chat.id}>
+                    <td>
+                      <div className="admin-table-primary">
+                        <strong>{formatTrainingPeaksAdminTelegramChatName(candidate.chat)}</strong>
+                        <span className="admin-muted">
+                          {candidate.chat.username ? `@${candidate.chat.username}` : "без username"} · score{" "}
+                          {candidate.score}
+                        </span>
+                      </div>
+                    </td>
+                    <td>{candidate.chat.lastText ?? "—"}</td>
+                    <td>{formatIsoDate(candidate.chat.lastSeenAt)}</td>
+                    <td>
+                      <form action={bindTrainingPeaksStudentTelegramFromBusinessChatAction}>
+                        <input type="hidden" name="studentId" value={student.id} />
+                        <input type="hidden" name="businessChatId" value={candidate.chat.id} />
+                        <input type="hidden" name="redirectTo" value={studentDetailPath} />
+                        <FormActionButton
+                          className="admin-button"
+                          pendingText="Привязка..."
+                          confirmMessage={formatTrainingPeaksAdminTelegramBindConfirmMessage(
+                            student.studentName,
+                            candidate.chat
+                          )}
+                        >
+                          Привязать
+                        </FormActionButton>
+                      </form>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </article>
+      )}
+
       <div className="admin-grid admin-grid-student-detail">
         <article className="admin-card admin-card-compact">
           <h3>Состояние</h3>
@@ -337,10 +421,36 @@ export default async function AdminStudentDetailPage({
               <dd>
                 <div className="admin-table-primary">
                   <span>{businessChatSeen}</span>
-                  {lastKnownBusinessChat && (
+                  {!capturedBusinessChat && lastKnownBusinessChat && (
                     <span className="admin-muted">{getLastKnownBusinessChatText(lastKnownBusinessChat)}</span>
                   )}
                 </div>
+                {capturedBusinessChat && (
+                  <dl className="admin-meta-list admin-meta-list-compact">
+                    <div>
+                      <dt>Имя</dt>
+                      <dd>{capturedBusinessChat.firstName ?? "—"}</dd>
+                    </div>
+                    <div>
+                      <dt>Фамилия</dt>
+                      <dd>{capturedBusinessChat.lastName ?? "—"}</dd>
+                    </div>
+                    <div>
+                      <dt>Username</dt>
+                      <dd>{capturedBusinessChat.username ? `@${capturedBusinessChat.username}` : "—"}</dd>
+                    </div>
+                    <div>
+                      <dt>Последняя активность</dt>
+                      <dd>{formatIsoDate(capturedBusinessChat.lastSeenAt)}</dd>
+                    </div>
+                    {capturedBusinessChat.lastText && (
+                      <div>
+                        <dt>Последнее сообщение</dt>
+                        <dd>{capturedBusinessChat.lastText}</dd>
+                      </div>
+                    )}
+                  </dl>
+                )}
               </dd>
             </div>
             <div>
@@ -425,7 +535,11 @@ export default async function AdminStudentDetailPage({
               <form action={sendTrainingPeaksStudentTelegramTestAction}>
                 <input type="hidden" name="studentId" value={student.id} />
                 <input type="hidden" name="redirectTo" value={studentDetailPath} />
-                <FormActionButton className="admin-button" pendingText="Отправка...">
+                <FormActionButton
+                  className="admin-button"
+                  pendingText="Отправка..."
+                  confirmMessage={telegramMismatchAckMessage}
+                >
                   Отправить тест
                 </FormActionButton>
               </form>
@@ -620,7 +734,14 @@ export default async function AdminStudentDetailPage({
                           <input type="hidden" name="studentId" value={student.id} />
                           <input type="hidden" name="businessChatId" value={chat.id} />
                           <input type="hidden" name="redirectTo" value={recentViewPath} />
-                          <FormActionButton className="admin-button" pendingText="Привязка...">
+                          <FormActionButton
+                            className="admin-button"
+                            pendingText="Привязка..."
+                            confirmMessage={formatTrainingPeaksAdminTelegramBindConfirmMessage(
+                              student.studentName,
+                              chat
+                            )}
+                          >
                             Привязать
                           </FormActionButton>
                         </form>
@@ -708,7 +829,14 @@ export default async function AdminStudentDetailPage({
                             <input type="hidden" name="studentId" value={student.id} />
                             <input type="hidden" name="businessChatId" value={chat.id} />
                             <input type="hidden" name="redirectTo" value={usernameResolvedPath} />
-                            <FormActionButton className="admin-button" pendingText="Привязка...">
+                            <FormActionButton
+                              className="admin-button"
+                              pendingText="Привязка..."
+                              confirmMessage={formatTrainingPeaksAdminTelegramBindConfirmMessage(
+                                student.studentName,
+                                chat
+                              )}
+                            >
                               Привязать
                             </FormActionButton>
                           </form>

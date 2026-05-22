@@ -28,6 +28,7 @@ export default function AdminShell({
             <nav className="admin-nav">
               <Link href="/admin/reports">Отчёты</Link>
               <Link href="/admin/students">Ученики</Link>
+              <Link href="/admin/telegram-links">Telegram-привязки</Link>
               <Link href="/admin/students/weekly-reports">Недельные отчёты</Link>
             </nav>
             {hasAdminSession && (

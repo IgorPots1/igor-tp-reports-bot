@@ -25,6 +25,7 @@ import {
   getTrainingPeaksStudentCard,
   getTrainingPeaksStudentCardByInternalId,
   getTrainingPeaksStudentById,
+  getTrainingPeaksBusinessChatByChatId,
   getTrainingPeaksStudentsRegistryWithLatestReportStatus,
   getTrainingPeaksThreadInfo,
   getTrainingPeaksWeeklyReportByInternalId,
@@ -5656,6 +5657,36 @@ async function handleTrainingPeaksSetTelegram(
     return;
   }
 
+  const businessChat = await getTrainingPeaksBusinessChatByChatId(parsedCommand.chatId);
+
+  if (businessChat) {
+    const linked = await linkTrainingPeaksStudentToBusinessChat(
+      student.id,
+      businessChat.chatId,
+      businessChat.businessConnectionId
+    );
+
+    if (!linked) {
+      await sendTelegramMessage(
+        parsedMessage.chatId,
+        `Не удалось привязать Telegram для ${student.studentName}.`
+      );
+      return;
+    }
+
+    await sendTelegramMessage(
+      parsedMessage.chatId,
+      [
+        `Telegram chat linked for ${linked.student.studentName}: ${linked.chat.chatId}`,
+        linked.chat.username ? `Username: @${linked.chat.username}` : null,
+        "Источник: существующий Business-чат.",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    );
+    return;
+  }
+
   const updatedStudent = await updateTrainingPeaksStudentTelegramContact(student.id, {
     telegram_chat_id: parsedCommand.chatId,
     telegram_username: parsedCommand.username ?? undefined,
@@ -5671,7 +5702,9 @@ async function handleTrainingPeaksSetTelegram(
   }
 
   const confirmationLines = [
+    `⚠️ ВНИМАНИЕ: chat_id не найден в trainingpeaks_telegram_business_chats.`,
     `Telegram chat linked for ${updatedStudent.studentName}: ${parsedCommand.chatId}`,
+    "Привязка выполнена в обход Business-истории. Проверь имя/username в /admin/telegram-links перед отправкой отчётов.",
   ];
 
   if (parsedCommand.username) {

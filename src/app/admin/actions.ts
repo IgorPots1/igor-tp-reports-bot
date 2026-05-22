@@ -78,6 +78,7 @@ async function ensureAdminAccess(redirectTarget?: string): Promise<void> {
 function revalidateTrainingPeaksAdminPaths(reportId?: string, studentId?: string): void {
   revalidatePath("/admin/reports");
   revalidatePath("/admin/students");
+  revalidatePath("/admin/telegram-links");
 
   if (reportId) {
     revalidatePath(`/admin/reports/${reportId}`);
@@ -287,11 +288,7 @@ export async function bindTrainingPeaksStudentTelegramFromBusinessChatAction(
   }
 
   redirect(
-    withNotice(
-      getTrainingPeaksStudentDetailPath(studentId),
-      "notice",
-      `Telegram привязан: ${result.studentName}.`
-    )
+    withNotice(redirectTo, "notice", `Telegram привязан: ${result.studentName}.`)
   );
 }
 
@@ -362,11 +359,7 @@ export async function sendTrainingPeaksStudentTelegramTestAction(formData: FormD
   }
 
   redirect(
-    withNotice(
-      getTrainingPeaksStudentDetailPath(studentId),
-      "notice",
-      `Тестовое сообщение отправлено: ${result.studentName}.`
-    )
+    withNotice(redirectTo, "notice", `Тестовое сообщение отправлено: ${result.studentName}.`)
   );
 }
 

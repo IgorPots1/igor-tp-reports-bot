@@ -20,7 +20,9 @@ import {
 import {
   getTrainingPeaksAdminReportById,
   getTrainingPeaksAdminReportStudentState,
+  getTrainingPeaksAdminStudentTelegramMismatchStatus,
 } from "@/features/trainingpeaks/admin";
+import { formatTelegramMismatchAcknowledgementMessage } from "@/features/trainingpeaks/telegram-identity-match";
 
 type ReportDetailPageProps = {
   params: Promise<{
@@ -92,6 +94,20 @@ export default async function AdminReportDetailPage({
     notFound();
   }
 
+  const telegramMismatchStatus =
+    entry.student?.telegramChatId
+      ? await getTrainingPeaksAdminStudentTelegramMismatchStatus(entry.student)
+      : null;
+  const telegramMismatchAckMessage =
+    telegramMismatchStatus?.hasMismatch
+      ? formatTelegramMismatchAcknowledgementMessage({
+          studentName: entry.student!.studentName,
+          capturedName: telegramMismatchStatus.capturedName,
+          capturedUsername: telegramMismatchStatus.capturedChat?.username ?? null,
+          actionLabel: "Отправить отчёт",
+        })
+      : undefined;
+
   const currentMarkdown = entry.finalReportMarkdown ?? "";
   const coachNotes = parseCoachNotesForDisplay(entry.report.coachNotesJson);
   const isSent = entry.report.reviewStatus === "sent";
@@ -159,7 +175,11 @@ export default async function AdminReportDetailPage({
             <form action={sendTrainingPeaksReportAction}>
               <input type="hidden" name="reportId" value={entry.report.id} />
               <input type="hidden" name="redirectTo" value={detailRedirectTo} />
-              <FormActionButton className="admin-button admin-button-secondary" pendingText="Отправка...">
+              <FormActionButton
+                className="admin-button admin-button-secondary"
+                pendingText="Отправка..."
+                confirmMessage={telegramMismatchAckMessage}
+              >
                 Отправить
               </FormActionButton>
             </form>
@@ -199,6 +219,18 @@ export default async function AdminReportDetailPage({
       {(notice || error) && (
         <div className={`admin-alert ${error ? "admin-alert-error" : "admin-alert-success"}`}>
           {error ?? notice}
+        </div>
+      )}
+
+      {telegramMismatchStatus?.hasMismatch && (
+        <div className="admin-alert admin-alert-error">
+          <strong>Несовпадение Telegram-привязки.</strong> Отчёт будет отправлен не тому человеку, если привязка
+          неверна. Ученик «{entry.student?.studentName}», Business-контакт:{" "}
+          {telegramMismatchStatus.capturedName ?? "без имени"}
+          {telegramMismatchStatus.capturedChat?.username
+            ? ` (@${telegramMismatchStatus.capturedChat.username})`
+            : ""}
+          .
         </div>
       )}
 
@@ -275,6 +307,7 @@ export default async function AdminReportDetailPage({
                   <FormActionButton
                     className="admin-button admin-button-secondary"
                     pendingText="Отправка..."
+                    confirmMessage={telegramMismatchAckMessage}
                   >
                     Отправить
                   </FormActionButton>

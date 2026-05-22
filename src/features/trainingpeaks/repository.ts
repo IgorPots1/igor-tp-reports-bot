@@ -2275,6 +2275,55 @@ export async function listRecentTrainingPeaksBusinessChats(
   return ((data as TrainingPeaksBusinessChatRow[]) ?? []).map(mapTrainingPeaksBusinessChatRow);
 }
 
+export async function getTrainingPeaksBusinessChatByChatId(
+  chatId: string
+): Promise<TrainingPeaksBusinessChat | null> {
+  const normalizedChatId = chatId.trim();
+
+  if (!normalizedChatId) {
+    return null;
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_telegram_business_chats")
+    .select("*")
+    .eq("chat_id", normalizedChatId)
+    .order("last_seen_at", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to get TrainingPeaks business chat by chat_id ${normalizedChatId}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksBusinessChatRow(data as TrainingPeaksBusinessChatRow);
+}
+
+export async function listTrainingPeaksBusinessChatsForTelegramLinking(
+  limit = 500
+): Promise<TrainingPeaksBusinessChat[]> {
+  const supabase = createSupabaseServerClient();
+  const safeLimit = Math.max(1, Math.min(limit, 1000));
+  const { data, error } = await supabase
+    .from("trainingpeaks_telegram_business_chats")
+    .select("*")
+    .order("last_seen_at", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(safeLimit);
+
+  if (error) {
+    throw new Error(`Failed to list TrainingPeaks business chats for linking: ${error.message}`);
+  }
+
+  return ((data as TrainingPeaksBusinessChatRow[]) ?? []).map(mapTrainingPeaksBusinessChatRow);
+}
+
 export async function listTrainingPeaksBusinessChatsByUsername(
   username: string,
   limit = 10

@@ -103,6 +103,23 @@ export {
   TRAININGPEAKS_ADMIN_TELEGRAM_USERNAME_NOT_FOUND_MESSAGE,
 } from "@/features/trainingpeaks/admin-telegram";
 
+export {
+  buildTrainingPeaksAdminStudentTelegramMismatchStatus,
+  formatTrainingPeaksAdminTelegramBindConfirmMessage,
+  getTrainingPeaksAdminStudentCapturedBusinessChat,
+  getTrainingPeaksAdminStudentTelegramMismatchStatus,
+  getTrainingPeaksAdminStudentTelegramSuggestedMatches,
+  listTrainingPeaksAdminTelegramLinksOverview,
+  suggestTrainingPeaksAdminTelegramMatchesForStudent,
+  type TrainingPeaksAdminOrphanTelegramChatRecord,
+  type TrainingPeaksAdminStudentTelegramMismatchStatus,
+  type TrainingPeaksAdminSuspiciousTelegramLinkRecord,
+  type TrainingPeaksAdminTelegramLinksOverview,
+  type TrainingPeaksAdminTelegramLinksTab,
+  type TrainingPeaksAdminTelegramSuggestedMatch,
+  type TrainingPeaksAdminUnlinkedTelegramStudentRecord,
+} from "@/features/trainingpeaks/admin-telegram-links";
+
 function getSendBlockedReason(
   report: TrainingPeaksWeeklyReport,
   student: TrainingPeaksRegistryStudentSnapshot | null,

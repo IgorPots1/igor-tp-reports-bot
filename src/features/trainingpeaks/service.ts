@@ -20,6 +20,7 @@ import {
   getTrainingPeaksWeeklyReportForStudentWeek,
   getTrainingPeaksJobById,
   getTrainingPeaksBusinessChatById,
+  getTrainingPeaksBusinessChatByChatId as getTrainingPeaksBusinessChatByChatIdFromRepository,
   getTrainingPeaksStudentThreadByChatThread as getTrainingPeaksStudentThreadByChatThreadFromRepository,
   getTrainingPeaksStudentById as getTrainingPeaksStudentByIdFromRepository,
   getTrainingPeaksStudentByStudentId as getTrainingPeaksStudentByStudentIdFromRepository,
@@ -33,6 +34,7 @@ import {
   linkTrainingPeaksStudentToBusinessChat as linkTrainingPeaksStudentToBusinessChatInRepository,
   listAllTrainingPeaksReports,
   listTrainingPeaksBusinessChatsByUsername as listTrainingPeaksBusinessChatsByUsernameFromRepository,
+  listTrainingPeaksBusinessChatsForTelegramLinking as listTrainingPeaksBusinessChatsForTelegramLinkingFromRepository,
   listRecentTrainingPeaksBusinessChats as listRecentTrainingPeaksBusinessChatsFromRepository,
   listTrainingPeaksStudentTelegramLinkCodesByCode,
   listRecentTrainingPeaksJobs,
@@ -2756,6 +2758,18 @@ export async function getTrainingPeaksBusinessChatByInternalId(
   id: string
 ): Promise<TrainingPeaksBusinessChatSnapshot | null> {
   return getTrainingPeaksBusinessChatById(id);
+}
+
+export async function getTrainingPeaksBusinessChatByChatId(
+  chatId: string
+): Promise<TrainingPeaksBusinessChatSnapshot | null> {
+  return getTrainingPeaksBusinessChatByChatIdFromRepository(chatId);
+}
+
+export async function listTrainingPeaksBusinessChatsForTelegramLinking(
+  limit = 500
+): Promise<TrainingPeaksBusinessChatSnapshot[]> {
+  return listTrainingPeaksBusinessChatsForTelegramLinkingFromRepository(limit);
 }
 
 export async function linkTrainingPeaksStudentToBusinessChat(
