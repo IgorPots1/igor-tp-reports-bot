@@ -28,6 +28,23 @@ export type EPredictorConstants = {
         weak: number;
       };
     };
+    sustained_effort: {
+      min_duration_seconds: number;
+      max_duration_seconds: number;
+      promotion_min_duration_seconds: number;
+      strong_single_block_min_duration_seconds: number;
+      min_half_pace_penalty_sec_per_km: number;
+      max_half_pace_penalty_sec_per_km: number;
+      default_half_pace_penalty_sec_per_km: number;
+      controlled_block_half_pace_penalty_sec_per_km: number;
+      shorter_block_half_pace_penalty_sec_per_km: number;
+      long_block_half_pace_penalty_sec_per_km: number;
+      elevated_hr_threshold_bpm: number;
+      high_hr_penalty_threshold_bpm: number;
+      elevated_hr_extra_penalty_sec_per_km: number;
+      high_hr_extra_penalty_sec_per_km: number;
+      fade_extra_penalty_sec_per_km: number;
+    };
   };
   range_spread: Record<
     ConfidenceBand,

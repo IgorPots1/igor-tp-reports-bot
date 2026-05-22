@@ -113,6 +113,26 @@ function validateHalfMarathon(halfMarathon: unknown): void {
   for (const key of ["cleared", "partial", "weak"] as const) {
     expectNumber(durability[key], `half_marathon.training_implied_anchor.durability_penalty_seconds_per_km.${key}`);
   }
+
+  const sustained = expectRecord(section.sustained_effort, "half_marathon.sustained_effort");
+  expectNumber(sustained.min_duration_seconds, "half_marathon.sustained_effort.min_duration_seconds");
+  expectNumber(sustained.max_duration_seconds, "half_marathon.sustained_effort.max_duration_seconds");
+  expectNumber(
+    sustained.promotion_min_duration_seconds,
+    "half_marathon.sustained_effort.promotion_min_duration_seconds",
+  );
+  expectNumber(
+    sustained.strong_single_block_min_duration_seconds,
+    "half_marathon.sustained_effort.strong_single_block_min_duration_seconds",
+  );
+  expectNumber(
+    sustained.min_half_pace_penalty_sec_per_km,
+    "half_marathon.sustained_effort.min_half_pace_penalty_sec_per_km",
+  );
+  expectNumber(
+    sustained.max_half_pace_penalty_sec_per_km,
+    "half_marathon.sustained_effort.max_half_pace_penalty_sec_per_km",
+  );
 }
 
 function validateDistanceLayerWeights(weights: unknown): void {

@@ -37,6 +37,23 @@
         "partial": 5,
         "weak": 15
       }
+    },
+    "sustained_effort": {
+      "min_duration_seconds": 2100,
+      "max_duration_seconds": 3900,
+      "promotion_min_duration_seconds": 2400,
+      "strong_single_block_min_duration_seconds": 2700,
+      "min_half_pace_penalty_sec_per_km": 10,
+      "max_half_pace_penalty_sec_per_km": 25,
+      "default_half_pace_penalty_sec_per_km": 15,
+      "controlled_block_half_pace_penalty_sec_per_km": 12,
+      "shorter_block_half_pace_penalty_sec_per_km": 18,
+      "long_block_half_pace_penalty_sec_per_km": 10,
+      "elevated_hr_threshold_bpm": 170,
+      "high_hr_penalty_threshold_bpm": 175,
+      "elevated_hr_extra_penalty_sec_per_km": 4,
+      "high_hr_extra_penalty_sec_per_km": 8,
+      "fade_extra_penalty_sec_per_km": 5
     }
   },
   "distance_layer_weights": {

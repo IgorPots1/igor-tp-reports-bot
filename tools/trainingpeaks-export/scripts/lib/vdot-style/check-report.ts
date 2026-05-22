@@ -31,6 +31,7 @@ import {
   type DistanceKey,
 } from "../race-distance.ts";
 import type { TrainingImpliedHalfAnchor } from "../e-predictor-training-implied-half.ts";
+import { sustainedBlockPaceSecondsPerKm } from "../e-predictor-sustained-effort.ts";
 
 export type {
   VdotStyleAnchor,
@@ -277,6 +278,15 @@ function observedPaceFromWorkout(
 ): { paceText: string; paceSecondsPerKm: number } | null {
   const sustained = workout.sustained_effort_candidate;
   if (sustained?.available && sustained.prediction_eligible) {
+    const effectivePaceSeconds = sustainedBlockPaceSecondsPerKm(sustained);
+    if (effectivePaceSeconds != null) {
+      const minutes = Math.floor(effectivePaceSeconds / 60);
+      const seconds = effectivePaceSeconds % 60;
+      return {
+        paceText: `${minutes}:${String(seconds).padStart(2, "0")}/км`,
+        paceSecondsPerKm: effectivePaceSeconds,
+      };
+    }
     if (sustained.pace_text && sustained.pace_seconds_per_km != null) {
       return { paceText: sustained.pace_text, paceSecondsPerKm: sustained.pace_seconds_per_km };
     }
@@ -598,6 +608,11 @@ export function formatVdotStyleCheckMarkdown(check: VdotStyleCheck): string[] {
     lines.push("Недостаточно надёжного anchor для VDOT-style проверки.");
     lines.push("");
     return lines;
+  }
+
+  if (check.source === "training_implied_anchor") {
+    lines.push("Официального anchor нет; VDOT-style построен от training-implied current shape.");
+    lines.push("");
   }
 
   lines.push(

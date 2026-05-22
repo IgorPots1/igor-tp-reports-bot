@@ -20,6 +20,7 @@ import {
 } from "./lib/e-predictor-training-implied-half.ts";
 import {
   buildSustainedEffortCandidate,
+  type FitRecordLike,
   type SustainedEffortCandidate,
 } from "./lib/e-predictor-sustained-effort.ts";
 import { parsedRoot, toolRoot } from "./lib/paths.ts";
@@ -2763,6 +2764,17 @@ type FitLapLike = {
   event_type?: string;
 };
 
+type FitRecordRawLike = {
+  timer_time?: number;
+  elapsed_time?: number;
+  distance?: number;
+  heart_rate?: number;
+  speed?: number;
+  enhanced_speed?: number;
+  altitude?: number;
+  enhanced_altitude?: number;
+};
+
 type FitLapRecord = {
   lap_index: number;
   duration_seconds: number;
@@ -2783,6 +2795,7 @@ type FitLapGroupCandidate = {
 };
 
 const fitLapLoadCache = new Map<string, FitLapRecord[] | null>();
+const fitRecordLoadCache = new Map<string, FitRecordLike[] | null>();
 
 function createFitParser(): FitParser {
   return new FitParser({
@@ -2852,6 +2865,44 @@ function normalizeFitLaps(rawLaps: unknown[]): FitLapRecord[] {
   return normalized;
 }
 
+function normalizeFitRecords(rawRecords: unknown[]): FitRecordLike[] {
+  const normalized: FitRecordLike[] = [];
+  rawRecords.forEach((rawRecord) => {
+    if (!rawRecord || typeof rawRecord !== "object") return;
+    const record = rawRecord as FitRecordRawLike;
+    const timerTime =
+      typeof record.timer_time === "number" && Number.isFinite(record.timer_time)
+        ? record.timer_time
+        : typeof record.elapsed_time === "number" && Number.isFinite(record.elapsed_time)
+          ? record.elapsed_time
+          : null;
+    const distance =
+      typeof record.distance === "number" && Number.isFinite(record.distance) ? record.distance : null;
+    if (timerTime === null || distance === null) return;
+    normalized.push({
+      timer_time_seconds: timerTime,
+      distance_meters: distance,
+      heart_rate:
+        typeof record.heart_rate === "number" && Number.isFinite(record.heart_rate) && record.heart_rate > 0
+          ? record.heart_rate
+          : null,
+      speed_mps:
+        typeof record.enhanced_speed === "number" && Number.isFinite(record.enhanced_speed) && record.enhanced_speed > 0
+          ? record.enhanced_speed
+          : typeof record.speed === "number" && Number.isFinite(record.speed) && record.speed > 0
+            ? record.speed
+            : null,
+      altitude_meters:
+        typeof record.enhanced_altitude === "number" && Number.isFinite(record.enhanced_altitude)
+          ? record.enhanced_altitude
+          : typeof record.altitude === "number" && Number.isFinite(record.altitude)
+            ? record.altitude
+            : null,
+    });
+  });
+  return normalized;
+}
+
 function getMatchedFitDetailSource(
   workout: WeeklySummaryWorkout,
 ): { zip_path: string; entry_name: string } | null {
@@ -2909,6 +2960,28 @@ async function loadWorkoutFitLaps(workout: WeeklySummaryWorkout): Promise<FitLap
     return normalized;
   } catch {
     fitLapLoadCache.set(cacheKey, null);
+    return null;
+  }
+}
+
+async function loadWorkoutFitRecords(workout: WeeklySummaryWorkout): Promise<FitRecordLike[] | null> {
+  const detailSource = getMatchedFitDetailSource(workout);
+  if (!detailSource) return null;
+
+  const cacheKey = `${detailSource.zip_path}::${detailSource.entry_name}`;
+  if (fitRecordLoadCache.has(cacheKey)) {
+    return fitRecordLoadCache.get(cacheKey) ?? null;
+  }
+
+  try {
+    const fitBuffer = await readWorkoutFitEntryBuffer(detailSource);
+    const parsedFit = (await createFitParser().parseAsync(fitBuffer)) as { records?: unknown[] };
+    const rawRecords = Array.isArray(parsedFit.records) ? parsedFit.records : [];
+    const normalized = normalizeFitRecords(rawRecords);
+    fitRecordLoadCache.set(cacheKey, normalized);
+    return normalized;
+  } catch {
+    fitRecordLoadCache.set(cacheKey, null);
     return null;
   }
 }
@@ -3709,6 +3782,7 @@ function attachSustainedEffortCandidate(input: {
   capture: RawKeyWorkoutCapture;
   role: string;
   fitLaps: FitLapRecord[] | null;
+  fitRecords: FitRecordLike[] | null;
   timerSliceWorkPaceMinPerKm: number | null;
   dataQualityFlags: string[];
   base: SegmentKeyWorkout;
@@ -3730,6 +3804,7 @@ function attachSustainedEffortCandidate(input: {
       data_quality_flags: input.dataQualityFlags,
     },
     fitLaps: input.fitLaps,
+    fitRecords: input.fitRecords,
     timerSliceWorkPaceMinPerKm: input.timerSliceWorkPaceMinPerKm,
     dataQualityFlags: input.dataQualityFlags,
   });
@@ -3742,7 +3817,10 @@ function attachSustainedEffortCandidate(input: {
 
 async function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): Promise<SegmentKeyWorkout> {
   const workout = capture.workout;
-  const fitLaps = await loadWorkoutFitLaps(workout);
+  const [fitLaps, fitRecords] = await Promise.all([
+    loadWorkoutFitLaps(workout),
+    loadWorkoutFitRecords(workout),
+  ]);
   const segmentVerdict = deriveSegmentVerdict(workout);
   const { segments, evidenceType } = identifyWorkSegments(workout);
   const analysis = asSegmentAnalysis(workout);
@@ -3777,6 +3855,7 @@ async function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): Promise<Se
       capture,
       role,
       fitLaps,
+      fitRecords,
       timerSliceWorkPaceMinPerKm: null,
       dataQualityFlags: uniqueDataQualityFlags,
       base: {
@@ -3934,6 +4013,7 @@ async function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): Promise<Se
     capture,
     role,
     fitLaps,
+    fitRecords,
     timerSliceWorkPaceMinPerKm: workAvgPaceMin,
     dataQualityFlags: uniqueDataQualityFlags,
     base: promotedWorkout,
