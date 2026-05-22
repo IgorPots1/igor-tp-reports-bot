@@ -9,8 +9,20 @@ import {
   type SegmentBoundaryLabel,
   type SegmentClassificationZone,
 } from "./classify.ts";
+import { buildTrainingImpliedCurrentShapeAnchor } from "./current-shape-anchor.ts";
 import { equivalentRaceTimes } from "./equivalency.ts";
-import { trainingZonesFromAnchor, type TrainingZoneRange } from "./zones.ts";
+import { detectAnchorStaleness, type VdotStyleStaleness } from "./staleness.ts";
+import type {
+  VdotStyleAnchor,
+  VdotStyleComparison,
+  VdotStyleEquivalentRaceTimes,
+  VdotStyleRaceTime,
+  VdotStyleSource,
+  VdotStyleSourceQuality,
+  VdotStyleTargetPrediction,
+  VdotStyleVerdict,
+} from "./types.ts";
+import { trainingZonesFromAnchor, type TrainingZoneRange, type TrainingZones } from "./zones.ts";
 import {
   DISTANCE_PRESETS,
   formatDurationFromSeconds,
@@ -20,43 +32,17 @@ import {
 } from "../race-distance.ts";
 import type { TrainingImpliedHalfAnchor } from "../e-predictor-training-implied-half.ts";
 
-export type VdotStyleSource =
-  | "official_best"
-  | "probable_best"
-  | "clean_training_best"
-  | "training_implied_anchor"
-  | "none";
+export type {
+  VdotStyleAnchor,
+  VdotStyleComparison,
+  VdotStyleEquivalentRaceTimes,
+  VdotStyleRaceTime,
+  VdotStyleSource,
+  VdotStyleSourceQuality,
+  VdotStyleVerdict,
+} from "./types.ts";
 
-export type VdotStyleSourceQuality = "high" | "medium" | "low" | "stale" | "none";
-
-export type VdotStyleVerdict = "agree" | "mild_disagree" | "strong_disagree" | "no_anchor";
-
-export type VdotStyleAnchor = {
-  distance: VdotStyleDistanceKey;
-  date: string | null;
-  time_seconds: number;
-  pace_seconds_per_km: number;
-  label: string;
-};
-
-export type VdotStyleRaceTime = {
-  time_seconds: number;
-  pace_seconds_per_km: number;
-};
-
-export type VdotStyleEquivalentRaceTimes = Record<VdotStyleDistanceKey, VdotStyleRaceTime>;
-
-export type VdotStyleTrainingZones = Record<VdotStyleZoneName, TrainingZoneRange>;
-
-export type VdotStyleComparison = {
-  e_predictor_likely_time_seconds: number;
-  e_predictor_likely_pace_seconds_per_km: number;
-  vdot_style_time_seconds: number;
-  vdot_style_pace_seconds_per_km: number;
-  disagreement_sec_per_km: number;
-  disagreement_pct: number;
-  verdict: VdotStyleVerdict;
-};
+export type VdotStyleTrainingZones = TrainingZones;
 
 export type VdotStyleWorkoutClassification = {
   date: string;
@@ -71,6 +57,18 @@ export type VdotStyleWorkoutClassification = {
   extraction_strategy: string | null;
 };
 
+export type VdotStyleSecondarySource = {
+  source: "training_implied_current_shape";
+  source_quality: "medium" | "low";
+  anchor: VdotStyleAnchor;
+  equivalent_race_times: VdotStyleEquivalentRaceTimes;
+  training_zones: VdotStyleTrainingZones;
+  target_distance_prediction: VdotStyleTargetPrediction;
+  workout_zone_classification: VdotStyleWorkoutClassification[];
+  comparison_to_e_predictor: VdotStyleComparison;
+  notes: string[];
+};
+
 export type VdotStyleCheck = {
   enabled: true;
   report_only: true;
@@ -79,13 +77,11 @@ export type VdotStyleCheck = {
   anchor: VdotStyleAnchor | null;
   equivalent_race_times: VdotStyleEquivalentRaceTimes | null;
   training_zones: VdotStyleTrainingZones | null;
-  target_distance_prediction: {
-    distance: DistanceKey;
-    time_seconds: number;
-    pace_seconds_per_km: number;
-  } | null;
+  target_distance_prediction: VdotStyleTargetPrediction | null;
   comparison_to_e_predictor: VdotStyleComparison | null;
   workout_zone_classification: VdotStyleWorkoutClassification[];
+  staleness: VdotStyleStaleness;
+  secondary_sources: VdotStyleSecondarySource[];
   notes: string[];
 };
 
@@ -112,18 +108,22 @@ type VdotStyleSegmentKeyWorkout = {
   date: string;
   title: string | null;
   segment_evidence_available: boolean;
-  work_avg_pace: string | null;
+  usable_for_prediction?: boolean;
+  verdict?: string;
   evidence_source?: string;
   extraction_strategy?: string;
+  work_avg_pace?: string | null;
   segment_matching?: {
     fit_lap_candidate?: {
       candidate_work_avg_pace?: string | null;
+      confidence?: string;
     } | null;
   };
 };
 
 type BuildVdotStyleCheckInput = {
   targetDistance: DistanceKey;
+  referenceDate: string;
   primaryAnchor: VdotStyleRaceAnchor | null;
   trainingImpliedAnchor: TrainingImpliedHalfAnchor | null;
   ePredictorLikelySeconds: number;
@@ -282,14 +282,13 @@ function classifyWorkouts(
   workouts: VdotStyleSegmentKeyWorkout[],
   zones: VdotStyleTrainingZones,
 ): VdotStyleWorkoutClassification[] {
-  const zoneMap = zones;
   return workouts
     .filter((workout) => workout.segment_evidence_available)
     .slice(0, 5)
     .flatMap((workout) => {
       const observed = observedPaceFromWorkout(workout);
       if (!observed) return [];
-      const classification = classifySegmentPace(observed.paceSecondsPerKm, zoneMap);
+      const classification = classifySegmentPace(observed.paceSecondsPerKm, zones);
       return [{
         date: workout.date,
         title: workout.title,
@@ -305,31 +304,28 @@ function classifyWorkouts(
     });
 }
 
-export function buildVdotStyleCheck(input: BuildVdotStyleCheckInput): VdotStyleCheck {
-  const notes = [
-    "Report-only VDOT-style check: эквивалентные результаты и тренировочные зоны не меняют прогноз E-Predictor.",
-    "Phase B: один anchor-источник, без staleness detector и без dual official vs training-implied сравнения.",
-  ];
+type ResolvedAnchorCheck = {
+  source: VdotStyleSource;
+  source_quality: VdotStyleSourceQuality;
+  anchor: VdotStyleAnchor;
+  equivalent_race_times: VdotStyleEquivalentRaceTimes;
+  training_zones: VdotStyleTrainingZones;
+  target_distance_prediction: VdotStyleTargetPrediction;
+  comparison_to_e_predictor: VdotStyleComparison;
+  workout_zone_classification: VdotStyleWorkoutClassification[];
+};
 
-  const resolved = resolveAnchorSource(input);
-  if (!resolved) {
-    return {
-      enabled: true,
-      report_only: true,
-      source: "none",
-      source_quality: "none",
-      anchor: null,
-      equivalent_race_times: null,
-      training_zones: null,
-      target_distance_prediction: null,
-      comparison_to_e_predictor: null,
-      workout_zone_classification: [],
-      notes: [...notes, "Недостаточно надёжного anchor для VDOT-style проверки."],
-    };
-  }
-
-  const { source, anchorDistanceMeters, anchorTimeSeconds, anchor } = resolved;
-  const equivalentsRaw = equivalentRaceTimes(anchorDistanceMeters, anchorTimeSeconds);
+function buildCheckFromResolvedAnchor(input: {
+  source: VdotStyleSource;
+  sourceQuality?: VdotStyleSourceQuality;
+  anchorDistanceMeters: number;
+  anchorTimeSeconds: number;
+  anchor: VdotStyleAnchor;
+  targetDistance: DistanceKey;
+  ePredictorLikelySeconds: number;
+  segmentKeyWorkouts: VdotStyleSegmentKeyWorkout[];
+}): ResolvedAnchorCheck {
+  const equivalentsRaw = equivalentRaceTimes(input.anchorDistanceMeters, input.anchorTimeSeconds);
   const equivalentRaceTimesOut = Object.fromEntries(
     (Object.keys(VDOT_STYLE_STANDARD_DISTANCES) as VdotStyleDistanceKey[]).map((distanceKey) => [
       distanceKey,
@@ -337,7 +333,10 @@ export function buildVdotStyleCheck(input: BuildVdotStyleCheckInput): VdotStyleC
     ]),
   ) as VdotStyleEquivalentRaceTimes;
 
-  const trainingZones = trainingZonesFromAnchor(anchorDistanceMeters, anchorTimeSeconds).zones;
+  const trainingZones = trainingZonesFromAnchor(
+    input.anchorDistanceMeters,
+    input.anchorTimeSeconds,
+  ).zones;
   const targetKey = distanceKeyToVdotKey(input.targetDistance);
   const targetEstimate = equivalentRaceTimesOut[targetKey];
   const targetDistanceKm = DISTANCE_PRESETS[input.targetDistance].target_km;
@@ -351,11 +350,9 @@ export function buildVdotStyleCheck(input: BuildVdotStyleCheckInput): VdotStyleC
       : 0;
 
   return {
-    enabled: true,
-    report_only: true,
-    source,
-    source_quality: sourceQualityFor(source),
-    anchor,
+    source: input.source,
+    source_quality: input.sourceQuality ?? sourceQualityFor(input.source),
+    anchor: input.anchor,
     equivalent_race_times: equivalentRaceTimesOut,
     training_zones: trainingZones,
     target_distance_prediction: {
@@ -373,6 +370,137 @@ export function buildVdotStyleCheck(input: BuildVdotStyleCheckInput): VdotStyleC
       verdict: computeComparisonVerdict(disagreementPct),
     },
     workout_zone_classification: classifyWorkouts(input.segmentKeyWorkouts, trainingZones),
+  };
+}
+
+function buildSecondarySource(input: {
+  targetDistance: DistanceKey;
+  ePredictorLikelySeconds: number;
+  segmentKeyWorkouts: VdotStyleSegmentKeyWorkout[];
+}): VdotStyleSecondarySource | null {
+  const implied = buildTrainingImpliedCurrentShapeAnchor({
+    targetDistance: input.targetDistance,
+    segmentKeyWorkouts: input.segmentKeyWorkouts,
+  });
+  if (!implied) return null;
+
+  const anchorDistanceMeters = VDOT_STYLE_STANDARD_DISTANCES[implied.anchor.distance];
+  const built = buildCheckFromResolvedAnchor({
+    source: "training_implied_anchor",
+    sourceQuality: implied.source_quality,
+    anchorDistanceMeters,
+    anchorTimeSeconds: implied.anchor.time_seconds,
+    anchor: implied.anchor,
+    targetDistance: input.targetDistance,
+    ePredictorLikelySeconds: input.ePredictorLikelySeconds,
+    segmentKeyWorkouts: input.segmentKeyWorkouts,
+  });
+
+  return {
+    source: "training_implied_current_shape",
+    source_quality: implied.source_quality === "medium" ? "medium" : "low",
+    anchor: built.anchor,
+    equivalent_race_times: built.equivalent_race_times,
+    training_zones: built.training_zones,
+    target_distance_prediction: built.target_distance_prediction,
+    workout_zone_classification: built.workout_zone_classification,
+    comparison_to_e_predictor: built.comparison_to_e_predictor,
+    notes: implied.notes,
+  };
+}
+
+const EMPTY_STALENESS: VdotStyleStaleness = {
+  flagged: false,
+  reason: null,
+  anchor_age_days: null,
+  recent_segments_used: [],
+  notes: [],
+};
+
+export function buildVdotStyleCheck(input: BuildVdotStyleCheckInput): VdotStyleCheck {
+  const notes = [
+    "Report-only VDOT-style check: эквивалентные результаты и тренировочные зоны не меняют прогноз E-Predictor.",
+    "При обнаружении устаревшего официального anchor добавляется диагностическая проверка по текущей форме.",
+  ];
+
+  const resolved = resolveAnchorSource(input);
+  if (!resolved) {
+    return {
+      enabled: true,
+      report_only: true,
+      source: "none",
+      source_quality: "none",
+      anchor: null,
+      equivalent_race_times: null,
+      training_zones: null,
+      target_distance_prediction: null,
+      comparison_to_e_predictor: null,
+      workout_zone_classification: [],
+      staleness: EMPTY_STALENESS,
+      secondary_sources: [],
+      notes: [...notes, "Недостаточно надёжного anchor для VDOT-style проверки."],
+    };
+  }
+
+  const built = buildCheckFromResolvedAnchor({
+    source: resolved.source,
+    anchorDistanceMeters: resolved.anchorDistanceMeters,
+    anchorTimeSeconds: resolved.anchorTimeSeconds,
+    anchor: resolved.anchor,
+    targetDistance: input.targetDistance,
+    ePredictorLikelySeconds: input.ePredictorLikelySeconds,
+    segmentKeyWorkouts: input.segmentKeyWorkouts,
+  });
+
+  const staleness =
+    resolved.source === "training_implied_anchor"
+      ? {
+          ...EMPTY_STALENESS,
+          notes: [
+            "Primary VDOT-style source is training-implied — official-anchor staleness check skipped.",
+          ],
+        }
+      : detectAnchorStaleness({
+          source: resolved.source,
+          primaryAnchorKind: input.primaryAnchor?.kind ?? null,
+          anchorDate: resolved.anchor.date,
+          referenceDate: input.referenceDate,
+          trainingZones: built.training_zones,
+          segmentKeyWorkouts: input.segmentKeyWorkouts,
+        });
+
+  const secondarySources: VdotStyleSecondarySource[] = [];
+  if (staleness.flagged) {
+    const secondary = buildSecondarySource({
+      targetDistance: input.targetDistance,
+      ePredictorLikelySeconds: input.ePredictorLikelySeconds,
+      segmentKeyWorkouts: input.segmentKeyWorkouts,
+    });
+    if (secondary) {
+      secondarySources.push(secondary);
+      notes.push(
+        "Добавлена альтернативная VDOT-style проверка по текущей форме (training_implied_current_shape).",
+      );
+    } else {
+      notes.push(
+        "Старый официальный anchor помечен как устаревший, но недостаточно данных для training-implied current-shape проверки.",
+      );
+    }
+  }
+
+  return {
+    enabled: true,
+    report_only: true,
+    source: built.source,
+    source_quality: built.source_quality,
+    anchor: built.anchor,
+    equivalent_race_times: built.equivalent_race_times,
+    training_zones: built.training_zones,
+    target_distance_prediction: built.target_distance_prediction,
+    comparison_to_e_predictor: built.comparison_to_e_predictor,
+    workout_zone_classification: built.workout_zone_classification,
+    staleness,
+    secondary_sources: secondarySources,
     notes,
   };
 }
@@ -381,6 +509,61 @@ function formatClassificationLine(entry: VdotStyleWorkoutClassification): string
   const zoneLabel = entry.boundary_label ?? entry.zone;
   const title = entry.title ?? "—";
   return `${entry.date} · ${title} · ${entry.observed_pace_text} → ${zoneLabel}`;
+}
+
+function formatAnchorCheckBlock(input: {
+  sourceLabel: string;
+  anchor: VdotStyleAnchor;
+  equivalentRaceTimes: VdotStyleEquivalentRaceTimes;
+  trainingZones: VdotStyleTrainingZones;
+  comparison: VdotStyleComparison;
+  workoutClassification: VdotStyleWorkoutClassification[];
+}): string[] {
+  const lines: string[] = [];
+  const anchorDate = input.anchor.date ? `, ${input.anchor.date}` : "";
+  lines.push(
+    `Источник: ${input.sourceLabel} — ${input.anchor.label}${anchorDate}, ${formatDurationFromSeconds(input.anchor.time_seconds)}, ${formatPaceSecondsPerKm(input.anchor.pace_seconds_per_km)}`,
+  );
+  lines.push("");
+
+  lines.push("| Дистанция | Время | Темп |");
+  lines.push("|---|---:|---:|");
+  for (const distanceKey of ["5k", "10k", "half", "marathon"] as const) {
+    const estimate = input.equivalentRaceTimes[distanceKey];
+    lines.push(
+      `| ${VDOT_EQUIVALENT_DISTANCE_LABELS[distanceKey]} | ${formatDurationFromSeconds(estimate.time_seconds)} | ${formatPaceSecondsPerKm(estimate.pace_seconds_per_km)} |`,
+    );
+  }
+  lines.push("");
+
+  lines.push("| Зона | Темп |");
+  lines.push("|---|---:|");
+  for (const zoneName of [
+    "easy",
+    "marathon",
+    "threshold",
+    "interval",
+    "repetition",
+  ] as const) {
+    lines.push(
+      `| ${VDOT_ZONE_LABELS[zoneName]} | ${formatZonePaceRange(input.trainingZones[zoneName])} |`,
+    );
+  }
+  lines.push("");
+
+  lines.push(
+    `VDOT-style: ${formatDurationFromSeconds(input.comparison.vdot_style_time_seconds)} (${formatPaceSecondsPerKm(input.comparison.vdot_style_pace_seconds_per_km)}); E-Predictor likely: ${formatDurationFromSeconds(input.comparison.e_predictor_likely_time_seconds)} (${formatPaceText(input.comparison.e_predictor_likely_pace_seconds_per_km / 60)}); расхождение: ${input.comparison.disagreement_sec_per_km} сек/км; verdict: ${input.comparison.verdict}`,
+  );
+  lines.push("");
+
+  if (input.workoutClassification.length > 0) {
+    for (const entry of input.workoutClassification) {
+      lines.push(formatClassificationLine(entry));
+    }
+    lines.push("");
+  }
+
+  return lines;
 }
 
 export function formatVdotStyleCheckMarkdown(check: VdotStyleCheck): string[] {
@@ -398,52 +581,51 @@ export function formatVdotStyleCheckMarkdown(check: VdotStyleCheck): string[] {
     return lines;
   }
 
-  const anchorDate = check.anchor.date ? `, ${check.anchor.date}` : "";
   lines.push(
-    `Источник: ${check.source} — ${check.anchor.label}${anchorDate}, ${formatDurationFromSeconds(check.anchor.time_seconds)}, ${formatPaceSecondsPerKm(check.anchor.pace_seconds_per_km)}`,
+    ...formatAnchorCheckBlock({
+      sourceLabel: check.source,
+      anchor: check.anchor,
+      equivalentRaceTimes: check.equivalent_race_times!,
+      trainingZones: check.training_zones!,
+      comparison: check.comparison_to_e_predictor!,
+      workoutClassification: check.workout_zone_classification,
+    }),
   );
-  lines.push("");
 
-  if (check.equivalent_race_times) {
-    lines.push("| Дистанция | Время | Темп |");
-    lines.push("|---|---:|---:|");
-    for (const distanceKey of ["5k", "10k", "half", "marathon"] as const) {
-      const estimate = check.equivalent_race_times[distanceKey];
-      lines.push(
-        `| ${VDOT_EQUIVALENT_DISTANCE_LABELS[distanceKey]} | ${formatDurationFromSeconds(estimate.time_seconds)} | ${formatPaceSecondsPerKm(estimate.pace_seconds_per_km)} |`,
-      );
-    }
+  if (check.staleness.flagged) {
+    lines.push("### Проверка актуальности anchor");
     lines.push("");
-  }
-
-  if (check.training_zones) {
-    lines.push("| Зона | Темп |");
-    lines.push("|---|---:|");
-    for (const zoneName of [
-      "easy",
-      "marathon",
-      "threshold",
-      "interval",
-      "repetition",
-    ] as const) {
-      lines.push(
-        `| ${VDOT_ZONE_LABELS[zoneName]} | ${formatZonePaceRange(check.training_zones[zoneName])} |`,
-      );
-    }
-    lines.push("");
-  }
-
-  if (check.comparison_to_e_predictor && check.target_distance_prediction) {
-    const comparison = check.comparison_to_e_predictor;
+    lines.push("Официальный anchor может быть устаревшим.");
     lines.push(
-      `VDOT-style: ${formatDurationFromSeconds(comparison.vdot_style_time_seconds)} (${formatPaceSecondsPerKm(comparison.vdot_style_pace_seconds_per_km)}); E-Predictor likely: ${formatDurationFromSeconds(comparison.e_predictor_likely_time_seconds)} (${formatPaceText(comparison.e_predictor_likely_pace_seconds_per_km / 60)}); расхождение: ${comparison.disagreement_sec_per_km} сек/км; verdict: ${comparison.verdict}`,
+      "Причина: текущие рабочие отрезки быстрее зон, рассчитанных от старого результата.",
     );
     lines.push("");
+    for (const segment of check.staleness.recent_segments_used) {
+      const title = segment.title ?? "—";
+      lines.push(
+        `- ${segment.date} · ${title} · ${segment.observed_pace_text} → ${segment.classification_summary}`,
+      );
+    }
+    lines.push("");
   }
 
-  if (check.workout_zone_classification.length > 0) {
-    for (const entry of check.workout_zone_classification) {
-      lines.push(formatClassificationLine(entry));
+  for (const secondary of check.secondary_sources) {
+    lines.push("### Альтернативная VDOT-style проверка по текущей форме");
+    lines.push("");
+    lines.push(
+      ...formatAnchorCheckBlock({
+        sourceLabel: secondary.source,
+        anchor: secondary.anchor,
+        equivalentRaceTimes: secondary.equivalent_race_times,
+        trainingZones: secondary.training_zones,
+        comparison: secondary.comparison_to_e_predictor,
+        workoutClassification: secondary.workout_zone_classification,
+      }),
+    );
+    lines.push("Не меняет прогноз автоматически.");
+    lines.push("");
+    for (const note of secondary.notes) {
+      lines.push(`- ${note}`);
     }
     lines.push("");
   }

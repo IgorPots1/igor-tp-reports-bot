@@ -4603,6 +4603,7 @@ async function main(): Promise<void> {
 
   const vdotStyleCheck = buildVdotStyleCheck({
     targetDistance: args.distance,
+    referenceDate: args.raceDate,
     primaryAnchor: anchors.primary,
     trainingImpliedAnchor,
     ePredictorLikelySeconds: prediction.likely.seconds,
@@ -4731,8 +4732,16 @@ async function main(): Promise<void> {
   console.log(
     `vdot_style_check: source=${vdotStyleCheck.source}, verdict=${
       vdotStyleCheck.comparison_to_e_predictor?.verdict ?? "no_anchor"
-    }`,
+    }, staleness=${vdotStyleCheck.staleness.flagged}, secondary_sources=${vdotStyleCheck.secondary_sources.length}`,
   );
+  if (vdotStyleCheck.staleness.flagged) {
+    console.log(`vdot_staleness_reason: ${vdotStyleCheck.staleness.reason ?? "n/a"}`);
+  }
+  for (const secondary of vdotStyleCheck.secondary_sources) {
+    console.log(
+      `vdot_secondary: ${secondary.source} | ${formatDurationFromSeconds(secondary.target_distance_prediction.time_seconds)} (${formatPaceText(secondary.target_distance_prediction.pace_seconds_per_km / 60)}) | verdict=${secondary.comparison_to_e_predictor.verdict}`,
+    );
+  }
   if (segmentAudit) {
     console.log("[tp-race-prediction-probe] Segment audit");
     console.log(`key_workouts_count: ${segmentAudit.summary.key_workouts_count}`);

@@ -11,6 +11,8 @@ import {
 import { classifySegmentPace } from "./lib/vdot-style/classify.ts";
 import { equivalentRaceTimes } from "./lib/vdot-style/equivalency.ts";
 import { formatDurationFromSeconds } from "./lib/race-distance.ts";
+import { buildTrainingImpliedCurrentShapeAnchor } from "./lib/vdot-style/current-shape-anchor.ts";
+import { detectAnchorStaleness } from "./lib/vdot-style/staleness.ts";
 import { trainingZonesFromAnchor } from "./lib/vdot-style/zones.ts";
 
 function assert(condition: unknown, message: string): void {
@@ -166,6 +168,116 @@ function runOlgaOldAnchorFixture(): void {
   );
 }
 
+function runOlgaStalenessFixture(): void {
+  const anchorDistanceMeters = VDOT_STYLE_STANDARD_DISTANCES["10k"];
+  const anchorTimeSeconds = 62 * 60 + 33;
+  const zones = trainingZonesFromAnchor(anchorDistanceMeters, anchorTimeSeconds).zones;
+
+  const staleness = detectAnchorStaleness({
+    source: "official_best",
+    primaryAnchorKind: "official_best",
+    anchorDate: "2025-10-11",
+    referenceDate: "2026-05-23",
+    trainingZones: zones,
+    segmentKeyWorkouts: [
+      {
+        date: "2026-05-13",
+        title: "5 х 7 мин",
+        segment_evidence_available: true,
+        usable_for_prediction: true,
+        verdict: "positive",
+        evidence_source: "fit_lap_candidate",
+        work_avg_pace: "5:46/км",
+        segment_matching: {
+          fit_lap_candidate: {
+            candidate_work_avg_pace: "5:46/км",
+            confidence: "medium",
+          },
+        },
+      },
+    ],
+  });
+
+  assert(staleness.flagged, "Olga official 10K anchor with 5:46/km segment should flag staleness.");
+  assert(
+    staleness.recent_segments_used.length >= 1,
+    "Olga staleness should list at least one suspicious segment.",
+  );
+
+  const implied = buildTrainingImpliedCurrentShapeAnchor({
+    targetDistance: "10k",
+    segmentKeyWorkouts: [
+      {
+        date: "2026-05-13",
+        title: "5 х 7 мин",
+        segment_evidence_available: true,
+        usable_for_prediction: true,
+        verdict: "positive",
+        evidence_source: "fit_lap_candidate",
+        work_avg_pace: "5:46/км",
+        segment_matching: {
+          fit_lap_candidate: {
+            candidate_work_avg_pace: "5:46/км",
+            confidence: "medium",
+          },
+        },
+      },
+    ],
+  });
+
+  assert(implied !== null, "Olga training-implied current-shape anchor should be buildable.");
+  assert(
+    implied!.anchor.time_seconds >= 59 * 60 && implied!.anchor.time_seconds <= 61 * 60 + 30,
+    `Olga training-implied 10K should land near 59–61 min, got ${implied!.anchor.time_seconds}s.`,
+  );
+  assert(
+    implied!.anchor.pace_seconds_per_km >= 355 && implied!.anchor.pace_seconds_per_km <= 366,
+    `Olga training-implied pace should be ~5:55–6:06/km, got ${implied!.anchor.pace_seconds_per_km}s/km.`,
+  );
+
+  console.log(
+    `[olga-staleness] flagged=${staleness.flagged}, segments=${staleness.recent_segments_used.length}, implied10k=${formatDurationFromSeconds(implied!.anchor.time_seconds)} (${formatPace(implied!.anchor.pace_seconds_per_km)})`,
+  );
+}
+
+function runTatianaStalenessFixture(): void {
+  const anchorDistanceMeters = VDOT_STYLE_STANDARD_DISTANCES["10k"];
+  const anchorTimeSeconds = 49 * 60 + 30;
+  const zones = trainingZonesFromAnchor(anchorDistanceMeters, anchorTimeSeconds).zones;
+
+  const staleness = detectAnchorStaleness({
+    source: "official_best",
+    primaryAnchorKind: "official_best",
+    anchorDate: "2026-02-22",
+    referenceDate: "2026-05-23",
+    trainingZones: zones,
+    segmentKeyWorkouts: [
+      {
+        date: "2026-05-16",
+        title: "6 x 5 мин",
+        segment_evidence_available: true,
+        usable_for_prediction: true,
+        verdict: "positive",
+        evidence_source: "segment_comparison",
+        work_avg_pace: "4:57/км",
+      },
+      {
+        date: "2026-05-10",
+        title: "4 x 10",
+        segment_evidence_available: true,
+        usable_for_prediction: true,
+        verdict: "positive",
+        evidence_source: "segment_comparison",
+        work_avg_pace: "5:11/км",
+      },
+    ],
+  });
+
+  assert(!staleness.flagged, "Tatiana recent official anchor should not flag staleness.");
+
+  console.log(`[tatiana-staleness] flagged=${staleness.flagged}`);
+}
+
 function runOlgaTrainingImpliedFixture(): void {
   const candidateAnchors = [
     { label: "59:30", seconds: 59 * 60 + 30 },
@@ -233,6 +345,8 @@ function run(): void {
   runTatianaFixture();
   runAnnaFixture();
   runOlgaOldAnchorFixture();
+  runOlgaStalenessFixture();
+  runTatianaStalenessFixture();
   runOlgaTrainingImpliedFixture();
   console.log("[check-vdot-style] PASS");
 }

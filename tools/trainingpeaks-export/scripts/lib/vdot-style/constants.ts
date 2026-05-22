@@ -46,3 +46,9 @@ export const VDOT_STYLE_VERDICT_THRESHOLDS = {
 } as const;
 
 export const VDOT_STYLE_STALENESS_THRESHOLD_DAYS = 120;
+
+/** Pace faster than official-anchor threshold min by more than this → suspicious segment. */
+export const VDOT_STYLE_STALENESS_MODERATE_MARGIN_SEC_PER_KM = 5;
+
+/** Strong suspicious signal when faster than threshold min by more than this. */
+export const VDOT_STYLE_STALENESS_STRONG_MARGIN_SEC_PER_KM = 15;
