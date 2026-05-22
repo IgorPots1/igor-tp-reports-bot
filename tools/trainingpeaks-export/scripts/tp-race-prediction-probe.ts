@@ -36,6 +36,10 @@ import {
 } from "./lib/race-distance.ts";
 import { readStudentsConfig, type StudentConfig } from "./lib/students.ts";
 import {
+  appendValidationRecord,
+  buildValidationRecord,
+} from "./lib/prediction-validation-log.ts";
+import {
   buildVdotStyleCheck,
   formatVdotStyleCheckMarkdown,
   type VdotStyleCheck,
@@ -64,6 +68,7 @@ type CliArgs = {
   includeReviewAnchors: boolean;
   segmentAudit: boolean;
   segmentAuditJson: boolean;
+  writeValidationLog: boolean;
 };
 
 type ResolvedTarget = {
@@ -709,6 +714,7 @@ function parseArgs(argv: string[]): CliArgs {
     includeReviewAnchors: false,
     segmentAudit: false,
     segmentAuditJson: false,
+    writeValidationLog: false,
   };
 
   let targetCount = 0;
@@ -795,6 +801,10 @@ function parseArgs(argv: string[]): CliArgs {
     if (arg === "--segment-audit-json") {
       parsed.segmentAudit = true;
       parsed.segmentAuditJson = true;
+      continue;
+    }
+    if (arg === "--write-validation-log") {
+      parsed.writeValidationLog = true;
       continue;
     }
     throw new Error(`Unknown argument: ${arg}`);
@@ -4906,6 +4916,31 @@ async function main(): Promise<void> {
 
   await writeFile(reportJsonPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
   await writeFile(reportMdPath, createMarkdown(report), "utf8");
+
+  if (args.writeValidationLog) {
+    const validationRecord = buildValidationRecord({
+      createdAt: runAt,
+      studentId: target.studentId,
+      athleteId: target.athleteId,
+      athleteName: target.studentName,
+      raceDate: args.raceDate,
+      distance: args.distance,
+      prediction,
+      readinessScores,
+      vdotStyleCheck,
+      selectedAnchor: anchors.primary,
+      trainingImpliedAnchor,
+      weeksFound,
+      weeksRequested: analysisWeeks.weeks,
+      segmentKeyWorkouts,
+      dataQualityWarnings: [...dataWarnings].sort(),
+      predictionLimitations,
+      reportJsonPath,
+      reportMdPath,
+    });
+    const validationLogPath = await appendValidationRecord(validationRecord);
+    console.log(`validation_log: ${validationLogPath}`);
+  }
 
   console.log("[tp-race-prediction-probe] Summary");
   console.log(`command_used: ${commandUsed}`);
