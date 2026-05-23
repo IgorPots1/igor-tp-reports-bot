@@ -4567,6 +4567,7 @@ const TRAININGPEAKS_MESSAGE_INTENT_LOG_TRIAGE_STATUSES: TrainingPeaksMessageInte
 export type ListTrainingPeaksMessageIntentLogsForTriageInput = {
   limit?: number;
   status?: TrainingPeaksMessageIntentLogStatus;
+  statuses?: TrainingPeaksMessageIntentLogStatus[];
   aiMoveOnly?: boolean;
   minAiConfidence?: number;
   studentId?: string;
@@ -4602,7 +4603,9 @@ export async function listTrainingPeaksMessageIntentLogsForTriage(
     query = query.filter("ai_intent->>intent", "eq", "move_workout");
   }
 
-  if (input.status) {
+  if (input.statuses && input.statuses.length > 0) {
+    query = query.in("status", input.statuses);
+  } else if (input.status) {
     query = query.eq("status", input.status);
   } else {
     query = query.or(

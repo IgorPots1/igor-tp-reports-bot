@@ -12,6 +12,12 @@ import {
   resolveTrainingPeaksMessageIntentLogStatus,
   shouldRunTrainingPeaksIntentAiLogOnly,
 } from "@/features/trainingpeaks/message-intent-log";
+import {
+  buildTrainingPeaksMessageIntentLogTriageRecommendation,
+  formatTrainingPeaksMessageIntentLogsTriageTelegram,
+  parseTrainingPeaksIntentsCommandArgs,
+} from "@/features/trainingpeaks/message-intent-log-triage";
+import type { TrainingPeaksMessageIntentLog } from "@/features/trainingpeaks/repository";
 import { classifyTelegramContextLabels } from "@/features/trainingpeaks/telegram-context";
 
 type CheckCase = {
@@ -220,6 +226,81 @@ function runChecks(): void {
     "AI log-only must not run when rule parser created an action"
   );
   console.log("PASS: no AI log-only run when move action already created");
+
+  const parsedDefault = parseTrainingPeaksIntentsCommandArgs("/tp_intents");
+  assert(!("error" in parsedDefault) && parsedDefault.limit === 10, "default /tp_intents limit must be 10");
+  const parsedLimit = parseTrainingPeaksIntentsCommandArgs("/tp_intents 20 ai");
+  assert(
+    !("error" in parsedLimit) && parsedLimit.limit === 20 && parsedLimit.aiMoveOnly,
+    "/tp_intents 20 ai must parse limit and ai filter"
+  );
+  console.log("PASS: /tp_intents command args parser");
+
+  const sampleLogs: TrainingPeaksMessageIntentLog[] = [
+    {
+      id: "log-1",
+      createdAt: "2026-05-23T12:55:00.000Z",
+      source: "telegram_business",
+      studentId: "student-1",
+      telegramChatId: "1",
+      telegramUserId: "2",
+      telegramMessageId: "3",
+      businessConnectionId: "bc",
+      messageThreadId: null,
+      rawText: null,
+      textPreview: "лонг был тяжелый",
+      textSha256: null,
+      normalizedText: null,
+      ruleIntent: null,
+      ruleConfidence: null,
+      aiIntent: { intent: "none" },
+      aiConfidence: 0,
+      finalIntent: null,
+      status: "unrecognized",
+      actionId: null,
+      reason: "no_move_intent",
+      metadata: {},
+    },
+    {
+      id: "log-2",
+      createdAt: "2026-05-23T12:50:00.000Z",
+      source: "telegram_business",
+      studentId: null,
+      telegramChatId: "1",
+      telegramUserId: "2",
+      telegramMessageId: "4",
+      businessConnectionId: "bc",
+      messageThreadId: null,
+      rawText: null,
+      textPreview: "может темповую лучше в среду?",
+      textSha256: null,
+      normalizedText: null,
+      ruleIntent: null,
+      ruleConfidence: null,
+      aiIntent: {
+        intent: "move_workout",
+        workout_reference: { kind: "tempo" },
+        target_date: { text: "Wednesday" },
+      },
+      aiConfidence: 0.86,
+      finalIntent: null,
+      status: "unrecognized",
+      actionId: null,
+      reason: null,
+      metadata: {},
+    },
+  ];
+  const triageMessage = formatTrainingPeaksMessageIntentLogsTriageTelegram(sampleLogs, {
+    limit: 10,
+    studentNames: new Map([["student-1", "Alexander"]]),
+  });
+  assert(triageMessage.includes("🧠 Непонятые TP-сообщения"), "triage telegram message must include header");
+  assert(
+    buildTrainingPeaksMessageIntentLogTriageRecommendation(sampleLogs[1]!) ===
+      "AI понял перенос, rule-parser пропустил",
+    "move_workout triage recommendation must be Russian"
+  );
+  console.log("PASS: /tp_intents telegram formatter");
 
   if (previousMode === undefined) {
     delete process.env.TRAININGPEAKS_INTENT_AI_MODE;

@@ -73,7 +73,12 @@ import {
 } from "@/features/trainingpeaks/telegram-context";
 import { logTrainingPeaksBusinessMessageIntentDecision } from "@/features/trainingpeaks/message-intent-log";
 import {
+  formatTrainingPeaksMessageIntentLogsTriageTelegram,
+  parseTrainingPeaksIntentsCommandArgs,
+} from "@/features/trainingpeaks/message-intent-log-triage";
+import {
   getLatestTrainingPeaksCronRunLog,
+  listTrainingPeaksMessageIntentLogsForTriage,
   listTrainingPeaksCronRunLogs,
   TRAININGPEAKS_ATTENTION_DIGEST_CRON_JOB_NAME,
   type TrainingPeaksCronRunLog,
@@ -201,6 +206,10 @@ const TP_GROUP_TEST_COMMAND_PATTERN = /^\/tp_group_test(?:@\w+)?(?:\s+|$)/;
 const TP_SET_TELEGRAM_COMMAND_PATTERN = /^\/tp_set_telegram(?:@\w+)?(?:\s+|$)/;
 const TP_BIND_COMMAND_PATTERN = /^\/tp_bind(?:@\w+)?(?:\s+|$)/;
 const TP_ACTIONS_COMMAND_PATTERN = /^\/tp_actions(?:@\w+)?(?:\s+|$)/;
+const TP_INTENTS_COMMAND_PATTERN = /^\/tp_intents(?:@\w+)?(?:\s+|$)/;
+const TP_INTENT_LOGS_COMMAND_PATTERN = /^\/tp_intent_logs(?:@\w+)?(?:\s+|$)/;
+const TP_UNKNOWN_INTENTS_COMMAND_PATTERN = /^\/tp_unknown(?:@\w+)?(?:\s+|$)/;
+const TP_AI_INTENTS_COMMAND_PATTERN = /^\/tp_ai_intents(?:@\w+)?(?:\s+|$)/;
 const TP_REPLY_DRAFT_COMMAND_PATTERN = /^\/tp_reply_draft(?:@\w+)?(?:\s+|$)/;
 const TP_LINK_THREAD_COMMAND_PATTERN = /^\/tp_link_thread(?:@\w+)?(?:\s+|$)/;
 const TP_THREAD_INFO_COMMAND_PATTERN = /^\/tp_thread_info(?:@\w+)?(?:\s+|$)/;
@@ -243,6 +252,7 @@ type TrainingPeaksCommand =
   | "tp_set_telegram"
   | "tp_bind"
   | "tp_actions"
+  | "tp_intents"
   | "tp_reply_draft"
   | "tp_link_thread"
   | "tp_thread_info"
@@ -469,6 +479,15 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
 
   if (TP_ACTIONS_COMMAND_PATTERN.test(text)) {
     return "tp_actions";
+  }
+
+  if (
+    TP_INTENTS_COMMAND_PATTERN.test(text) ||
+    TP_INTENT_LOGS_COMMAND_PATTERN.test(text) ||
+    TP_UNKNOWN_INTENTS_COMMAND_PATTERN.test(text) ||
+    TP_AI_INTENTS_COMMAND_PATTERN.test(text)
+  ) {
+    return "tp_intents";
   }
 
   if (TP_REPLY_DRAFT_COMMAND_PATTERN.test(text)) {
@@ -2012,6 +2031,7 @@ export function getTrainingPeaksHelpLines(): string[] {
     "/tp_run_student <slug> YYYY-MM-DD YYYY-MM-DD — черновик отчёта одного ученика",
     "/tp_report <ученик> [last|даты] — посмотреть отчёт",
     "/tp_actions — последние заявки на перенос",
+    "/tp_intents — triage непонятых TP-сообщений (read-only)",
     "/tp_races YYYY-MM-DD YYYY-MM-DD — скан забегов за период",
     "/tp_reply_draft <ученик> — черновик ответа ученику (без автоотправки)",
     "",
@@ -3696,6 +3716,46 @@ async function showTpActionsList(
     return;
   }
   await sendTrainingPeaksMenuMessage(parsedMessage.chatId, text, markup);
+}
+
+async function handleTrainingPeaksIntents(
+  parsedMessage: ParsedTelegramUpdate,
+  text: string
+): Promise<void> {
+  const parsedArgs = parseTrainingPeaksIntentsCommandArgs(text);
+  if ("error" in parsedArgs) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, parsedArgs.error);
+    return;
+  }
+
+  const logs = await listTrainingPeaksMessageIntentLogsForTriage({
+    limit: parsedArgs.limit,
+    sinceHours: 24,
+    aiMoveOnly: parsedArgs.aiMoveOnly,
+    minAiConfidence: parsedArgs.aiMoveOnly ? 0.75 : undefined,
+    statuses: parsedArgs.unknownOnly ? ["unrecognized", "parse_failed"] : undefined,
+  });
+
+  const uniqueStudentIds = [
+    ...new Set(logs.map((log) => log.studentId).filter((studentId): studentId is string => Boolean(studentId))),
+  ];
+  const studentNames = new Map<string, string>();
+
+  await Promise.all(
+    uniqueStudentIds.map(async (studentId) => {
+      const student = await getTrainingPeaksStudentById(studentId);
+      if (student?.studentName) {
+        studentNames.set(studentId, student.studentName);
+      }
+    })
+  );
+
+  const message = formatTrainingPeaksMessageIntentLogsTriageTelegram(logs, {
+    limit: parsedArgs.limit,
+    studentNames,
+  });
+
+  await sendTrainingPeaksMessage(parsedMessage.chatId, message);
 }
 
 const ACTION_CANCELLABLE_EXECUTION_STATUSES = new Set([
@@ -6875,6 +6935,11 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_actions") {
       await showTpActionsList(parsedMessage);
+      return "handled";
+    }
+
+    if (command === "tp_intents") {
+      await handleTrainingPeaksIntents(parsedMessage, text);
       return "handled";
     }
 
