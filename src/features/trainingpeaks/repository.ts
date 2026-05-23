@@ -4556,3 +4556,65 @@ export async function listRecentTrainingPeaksMessageIntentLogs(
 
   return ((data as TrainingPeaksMessageIntentLogRow[]) ?? []).map(mapTrainingPeaksMessageIntentLogRow);
 }
+
+const TRAININGPEAKS_MESSAGE_INTENT_LOG_TRIAGE_STATUSES: TrainingPeaksMessageIntentLogStatus[] = [
+  "unrecognized",
+  "needs_review",
+  "parse_failed",
+  "student_not_found",
+];
+
+export type ListTrainingPeaksMessageIntentLogsForTriageInput = {
+  limit?: number;
+  status?: TrainingPeaksMessageIntentLogStatus;
+  aiMoveOnly?: boolean;
+  minAiConfidence?: number;
+  studentId?: string;
+  sinceHours?: number;
+};
+
+export async function listTrainingPeaksMessageIntentLogsForTriage(
+  input: ListTrainingPeaksMessageIntentLogsForTriageInput = {}
+): Promise<TrainingPeaksMessageIntentLog[]> {
+  const supabase = createSupabaseServerClient();
+  const safeLimit = Math.max(1, Math.min(input.limit ?? 30, 200));
+
+  let query = supabase
+    .from("trainingpeaks_message_intent_logs")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(safeLimit);
+
+  if (input.studentId) {
+    query = query.eq("student_id", input.studentId);
+  }
+
+  if (input.sinceHours !== undefined && Number.isFinite(input.sinceHours) && input.sinceHours > 0) {
+    const sinceIso = new Date(Date.now() - input.sinceHours * 60 * 60 * 1000).toISOString();
+    query = query.gte("created_at", sinceIso);
+  }
+
+  if (input.minAiConfidence !== undefined && Number.isFinite(input.minAiConfidence)) {
+    query = query.gte("ai_confidence", input.minAiConfidence);
+  }
+
+  if (input.aiMoveOnly) {
+    query = query.filter("ai_intent->>intent", "eq", "move_workout");
+  }
+
+  if (input.status) {
+    query = query.eq("status", input.status);
+  } else {
+    query = query.or(
+      `status.in.(${TRAININGPEAKS_MESSAGE_INTENT_LOG_TRIAGE_STATUSES.join(",")}),ai_intent.not.is.null`
+    );
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw new Error(`Failed to list TrainingPeaks message intent logs for triage: ${error.message}`);
+  }
+
+  return ((data as TrainingPeaksMessageIntentLogRow[]) ?? []).map(mapTrainingPeaksMessageIntentLogRow);
+}
