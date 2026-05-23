@@ -28,6 +28,25 @@ export type EPredictorConstants = {
         weak: number;
       };
     };
+    training_implied_anchor_sanity: {
+      near_half_distance_km_min: number;
+      near_half_distance_km_max: number;
+      mild_conflict_faster_pct: number;
+      strong_conflict_faster_pct: number;
+      block_automatic_likely_faster_pct: number;
+      aerobic_blend_likely_max_faster_than_floor_pct: Record<
+        "mild" | "strong" | "block",
+        number
+      >;
+      aerobic_blend_optimistic_max_faster_than_floor_pct: Record<
+        "mild" | "strong" | "block",
+        number
+      >;
+      cross_distance_race_freshness_days: {
+        "5k": number;
+        "10k": number;
+      };
+    };
     sustained_effort: {
       min_duration_seconds: number;
       max_duration_seconds: number;

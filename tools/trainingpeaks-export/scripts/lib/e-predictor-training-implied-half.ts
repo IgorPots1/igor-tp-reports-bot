@@ -7,6 +7,7 @@ import {
   sustainedBlockPaceSecondsPerKm,
   sustainedEvidenceWeight,
   type SustainedEffortCandidate,
+  type SustainedEffortEvidenceRole,
 } from "./e-predictor-sustained-effort.ts";
 import {
   formatDurationFromSeconds,
@@ -28,6 +29,7 @@ export type TrainingImpliedEvidenceWorkout = {
   block_minutes: number | null;
   weight: number;
   evidence_kind: TrainingImpliedEvidenceKind;
+  sustained_evidence_role?: SustainedEffortEvidenceRole | null;
   sustained_penalty_s_per_km?: number | null;
 };
 
@@ -220,6 +222,7 @@ function buildEvidenceWorkout(
       block_minutes: blockMinutes,
       weight: blockWeight(blockMinutes, "sustained_effort"),
       evidence_kind: "sustained_effort",
+      sustained_evidence_role: sustained!.evidence_role,
       sustained_penalty_s_per_km: sustained!.half_pace_penalty_sec_per_km ?? null,
     };
   }
@@ -250,6 +253,8 @@ function countEligibleEvidence(segmentKeyWorkouts: SegmentKeyWorkoutLike[]): {
   sustainedCount: number;
   thresholdCount: number;
   strongSustained: boolean;
+  longRunEnduranceExcludedCount: number;
+  excludedSustainedDiagnostics: string[];
 } {
   const evidenceWorkouts = segmentKeyWorkouts
     .map((workout) => buildEvidenceWorkout(workout))
@@ -261,6 +266,27 @@ function countEligibleEvidence(segmentKeyWorkouts: SegmentKeyWorkoutLike[]): {
   const thresholdCount = evidenceWorkouts.filter(
     (workout) => workout.evidence_kind === "threshold_repeat",
   ).length;
+  const longRunEnduranceExcludedCount = segmentKeyWorkouts.filter((workout) => {
+    const sustained = workout.sustained_effort_candidate;
+    return (
+      sustained?.available === true &&
+      (sustained.evidence_role === "long_run_endurance_support" ||
+        sustained.evidence_role === "easy_long_run_support")
+    );
+  }).length;
+  const excludedSustainedDiagnostics = segmentKeyWorkouts
+    .flatMap((workout) => {
+      const sustained = workout.sustained_effort_candidate;
+      if (!sustained?.available || sustained.prediction_eligible) return [];
+      const reason = sustained.excluded_from_training_implied_reason ?? "unspecified";
+      const role = sustained.evidence_role;
+      const thresholdEligible =
+        sustained.threshold_eligible === undefined ? "unknown" : sustained.threshold_eligible ? "yes" : "no";
+      return [
+        `${workout.date} · ${workout.title ?? "—"}: excluded (${reason}); role=${role}; threshold_eligible=${thresholdEligible}.`,
+      ];
+    })
+    .slice(0, 6);
   const sustainedCfg = loadEPredictorConstants().half_marathon.sustained_effort;
   const strongSustained = segmentKeyWorkouts.some((workout) => {
     const sustained = workout.sustained_effort_candidate;
@@ -271,7 +297,14 @@ function countEligibleEvidence(segmentKeyWorkouts: SegmentKeyWorkoutLike[]): {
     );
   });
 
-  return { evidenceWorkouts, sustainedCount, thresholdCount, strongSustained };
+  return {
+    evidenceWorkouts,
+    sustainedCount,
+    thresholdCount,
+    strongSustained,
+    longRunEnduranceExcludedCount,
+    excludedSustainedDiagnostics,
+  };
 }
 
 export function isStrongHalfRaceAnchor(kind: string | null | undefined): boolean {
@@ -295,8 +328,14 @@ export function computeTrainingImpliedHalfAnchor(input: {
     minLongestRunFraction: cfg.min_longest_run_fraction_of_race,
   });
 
-  const { evidenceWorkouts, sustainedCount, thresholdCount, strongSustained } =
-    countEligibleEvidence(input.segmentKeyWorkouts);
+  const {
+    evidenceWorkouts,
+    sustainedCount,
+    thresholdCount,
+    strongSustained,
+    longRunEnduranceExcludedCount,
+    excludedSustainedDiagnostics,
+  } = countEligibleEvidence(input.segmentKeyWorkouts);
 
   for (const workout of input.segmentKeyWorkouts) {
     const sustained = workout.sustained_effort_candidate;
@@ -368,6 +407,12 @@ export function computeTrainingImpliedHalfAnchor(input: {
     if (sustainedCount > 0) {
       notes.push(`Sustained blocks найдены (${sustainedCount}), но не прошли promotion gate.`);
     }
+    notes.push(
+      `Training-implied aggregation: sustained=${sustainedCount}, threshold=${thresholdCount}, strong_sustained=${strongSustained ? "yes" : "no"}, endurance_gate=${enduranceGate.passed ? "passed" : "failed"}.`,
+    );
+    for (const diagnostic of excludedSustainedDiagnostics) {
+      notes.push(diagnostic);
+    }
     return unavailableBase;
   }
   if (!enduranceGate.passed) {
@@ -391,9 +436,16 @@ export function computeTrainingImpliedHalfAnchor(input: {
       : paceMinPerKmToSeconds(impliedHalfPaceBeforePenalties / 60, distanceKm);
   const halfPaceOffsetSPerKm = lookupHalfPaceOffsetSeconds(representativeThresholdFinishS);
 
-  if (sustainedCount > 0) {
+  if (sustainedCount > 0 || thresholdCount > 0) {
+    const exclusionNote =
+      longRunEnduranceExcludedCount > 0
+        ? ` (${longRunEnduranceExcludedCount} long-run endurance window(s) excluded from threshold pace)`
+        : "";
     notes.push(
-      `${sustainedCount} sustained block(s) + ${thresholdCount} threshold repeat(s) учтены для training-implied half.`,
+      `${sustainedCount} tempo/threshold sustained block(s) + ${thresholdCount} threshold repeat(s) учтены для training-implied half${exclusionNote}.`,
+    );
+    notes.push(
+      `Training-implied aggregation: sustained=${sustainedCount}, threshold=${thresholdCount}, strong_sustained=${strongSustained ? "yes" : "no"}, endurance_gate=${enduranceGate.passed ? "passed" : "failed"}.`,
     );
   } else {
     notes.push(

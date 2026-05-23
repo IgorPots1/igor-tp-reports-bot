@@ -14,15 +14,32 @@ import {
   type ConfidenceBand,
 } from "./lib/e-predictor-constants.ts";
 import {
+  applyTrainingImpliedSanityToSustainedBlocks,
+  assessTrainingImpliedHalfAnchorSanity,
+  blendScenariosWithAerobicNearDistanceFloor,
+  boostTrainingImpliedEnduranceWithAerobicNearDistance,
+  resolveSelectedAnchorForNearDistance,
+  type TrainingImpliedAnchorSanityCheck,
+} from "./lib/e-predictor-training-implied-anchor-sanity.ts";
+import {
   computeTrainingImpliedHalfAnchor,
   isStrongHalfRaceAnchor,
   type TrainingImpliedHalfAnchor,
 } from "./lib/e-predictor-training-implied-half.ts";
 import {
   buildSustainedEffortCandidate,
+  isQualifyingSustainedEffortWorkout,
   type FitRecordLike,
   type SustainedEffortCandidate,
 } from "./lib/e-predictor-sustained-effort.ts";
+import {
+  configureProbeTiming,
+  isProbeTimingEnabled,
+  logProbeTiming,
+  probeTimingElapsedMs,
+  probeTimingNowMs,
+  withProbeTiming,
+} from "./lib/probe-timing.ts";
 import { parsedRoot, toolRoot } from "./lib/paths.ts";
 import {
   DISTANCE_PRESETS,
@@ -69,6 +86,7 @@ type CliArgs = {
   segmentAudit: boolean;
   segmentAuditJson: boolean;
   writeValidationLog: boolean;
+  debugTiming: boolean;
 };
 
 type ResolvedTarget = {
@@ -134,7 +152,26 @@ type PlannedSegmentSummary = {
   label?: string | null;
 };
 
-type SegmentKeyWorkoutEvidenceType = "segment_comparison" | "repeat_group_inferred" | "unavailable";
+type SegmentKeyWorkoutEvidenceType =
+  | "segment_comparison"
+  | "repeat_group_inferred"
+  | "mislabeled_recovery_rescue"
+  | "unavailable";
+
+type SegmentCoverageDiagnostic = {
+  date: string;
+  title: string | null;
+  role: string;
+  segment_audit_verdict: SegmentAuditVerdict;
+  segment_analysis_available: boolean;
+  segment_comparison_rows_count: number;
+  planned_segments_count: number;
+  extracted_work_segments_count: number;
+  work_extraction_failure_reason: string;
+  classification_reason: string;
+  excluded_from_training_implied_half: boolean;
+  exclusion_reason: string | null;
+};
 
 type SegmentKeyWorkoutVerdict = "positive" | "neutral" | "warning" | "unavailable";
 
@@ -251,6 +288,7 @@ type SegmentKeyWorkout = {
   verdict: SegmentKeyWorkoutVerdict;
   takeaway: string;
   limitations: string[];
+  work_extraction_failure_reason?: string | null;
   segment_matching?: SegmentMatchingDiagnostics;
   sustained_effort_candidate?: SustainedEffortCandidate;
 };
@@ -434,12 +472,22 @@ type RaceResultCandidate = {
   duration_text: string;
   pace_min_per_km: number;
   pace_text: string;
+  avg_hr?: number | null;
+  personalRecordCount?: number | null;
+  race_signals?: string[];
   display_class?: string;
   result_status?: string;
   data_quality_status?: string;
   warnings?: string[];
   same_day_event?: boolean;
   event_name?: string | null;
+  event_confidence?: number;
+  heart_rate_peer_reference?: {
+    peer_median_hr?: number | null;
+    next_best_hr?: number | null;
+    hr_gap_vs_median?: number;
+    hr_gap_vs_next_best?: number | null;
+  };
 };
 
 type RaceResultsProbeReport = {
@@ -551,8 +599,8 @@ type RacePredictionReport = {
   };
   data_sources: {
     weekly_summaries: Array<{ from: string; to: string; path: string | null; found: boolean }>;
-    race_results_probe: { path: string | null; run_at: string | null; stale: boolean };
-    progress_evidence_probe: { path: string | null; run_at: string | null; stale: boolean };
+    race_results_probe: ProbeCacheDiagnostics;
+    progress_evidence_probe: ProbeCacheDiagnostics;
     fit_weeks_count: number;
     workout_files_present_weeks: number;
   };
@@ -598,6 +646,7 @@ type RacePredictionReport = {
     cross_distance: SelectedAnchor[];
   };
   training_implied_anchor?: TrainingImpliedHalfAnchor;
+  training_implied_anchor_sanity?: TrainingImpliedAnchorSanityCheck;
   readiness_scores: ReadinessScores;
   prediction: {
     conservative: PredictionScenario;
@@ -607,13 +656,15 @@ type RacePredictionReport = {
     confidence_score: number;
     confidence_reasons: string[];
     method: "deterministic_v2_segment_aware" | "deterministic_v3_training_implied_half";
-    anchor_tier_used?: "race_anchor" | "training_implied";
+    anchor_tier_used?: "race_anchor" | "training_implied" | "near_distance_anchor";
+    training_implied_candidate?: PredictionScenario | null;
     target_time_hint_used: boolean;
     anchor_implied_time: PredictionScenario | null;
     segment_adjustment_seconds: number;
     risk_adjustment_seconds: number;
     range_model_notes: string[];
     insufficient_data?: boolean;
+    prediction_flags?: string[];
   };
   limitations: string[];
   classification_diagnostics?: string[];
@@ -623,6 +674,7 @@ type RacePredictionReport = {
   };
   segment_audit?: SegmentAuditReport;
   segment_key_workouts?: SegmentKeyWorkout[];
+  segment_coverage_diagnostics?: SegmentCoverageDiagnostic[];
   vdot_style_check: VdotStyleCheck;
 };
 
@@ -641,6 +693,11 @@ const RUNNING_SPORT_PATTERN = /\b(run|running|бег|jog)\b/i;
 const NON_WORK_SEGMENT_TYPES = new Set(["recovery", "rest", "warmup", "cooldown"]);
 const INTERVAL_TITLE_PATTERN =
   /(\d+)\s*[x×хX]\s*(\d+)\s*(?:мин|min|сек|sec|(?:м|m)(?:\/|\b|\s)|(?:km|км)\b)/i;
+const PLANNED_DESCRIPTION_PACE_RANGE_PATTERN =
+  /(\d{1,2}):(\d{2})\s*[–-]\s*(\d{1,2}):(\d{2})\s*\/?\s*км/gi;
+const REPEAT_WORK_MIN_DURATION_MIN = 3;
+const REPEAT_WORK_MAX_DURATION_MIN = 30;
+const MISLABELED_RECOVERY_PACE_GAP_MIN_PER_KM = 0.35;
 
 function readTextFileSyncSafe(filePath: string): string | null {
   try {
@@ -715,6 +772,7 @@ function parseArgs(argv: string[]): CliArgs {
     segmentAudit: false,
     segmentAuditJson: false,
     writeValidationLog: false,
+    debugTiming: false,
   };
 
   let targetCount = 0;
@@ -805,6 +863,10 @@ function parseArgs(argv: string[]): CliArgs {
     }
     if (arg === "--write-validation-log") {
       parsed.writeValidationLog = true;
+      continue;
+    }
+    if (arg === "--debug-timing") {
+      parsed.debugTiming = true;
       continue;
     }
     throw new Error(`Unknown argument: ${arg}`);
@@ -1053,25 +1115,49 @@ function isLongRunWorkout(workout: WeeklySummaryWorkout): boolean {
   return LONG_RUN_PATTERN.test(collectWorkoutText(workout));
 }
 
-function findLatestProbeReport<T>(baseDir: string, athleteId: number): {
+type ProbeCacheDiagnostics = {
   path: string | null;
-  report: T | null;
-  runAt: string | null;
+  run_at: string | null;
   stale: boolean;
+  athlete_id: number;
+  expected_dir: string;
+  found: boolean;
+  latest_candidate_path: string | null;
+  candidate_timestamps: string[];
+};
+
+function findLatestProbeReport<T>(baseDir: string, athleteId: number): ProbeCacheDiagnostics & {
+  report: T | null;
 } {
-  const athleteDir = path.join(baseDir, String(athleteId));
-  if (!existsSync(athleteDir)) {
-    return { path: null, report: null, runAt: null, stale: true };
+  const expectedDir = path.join(baseDir, String(athleteId));
+  const emptyResult: ProbeCacheDiagnostics & { report: T | null } = {
+    path: null,
+    report: null,
+    run_at: null,
+    stale: true,
+    athlete_id: athleteId,
+    expected_dir: expectedDir,
+    found: false,
+    latest_candidate_path: null,
+    candidate_timestamps: [],
+  };
+
+  if (!existsSync(expectedDir)) {
+    return emptyResult;
   }
 
-  const timestamps = readdirSync(athleteDir, { withFileTypes: true })
+  const candidateTimestamps = readdirSync(expectedDir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .sort()
     .reverse();
+  const latestCandidatePath =
+    candidateTimestamps.length > 0
+      ? path.join(expectedDir, candidateTimestamps[0]!, "report.json")
+      : null;
 
-  for (const timestamp of timestamps) {
-    const reportPath = path.join(athleteDir, timestamp, "report.json");
+  for (const timestamp of candidateTimestamps) {
+    const reportPath = path.join(expectedDir, timestamp, "report.json");
     if (!existsSync(reportPath)) continue;
     const raw = readTextFileSyncSafe(reportPath);
     if (!raw) continue;
@@ -1081,10 +1167,25 @@ function findLatestProbeReport<T>(baseDir: string, athleteId: number): {
       runAt === null
         ? true
         : daysBetween(runAt.slice(0, 10), new Date().toISOString().slice(0, 10)) > PROBE_STALE_DAYS;
-    return { path: reportPath, report, runAt, stale };
+    const result: ProbeCacheDiagnostics & { report: T | null } = {
+      path: reportPath,
+      report,
+      run_at: runAt,
+      stale,
+      athlete_id: athleteId,
+      expected_dir: expectedDir,
+      found: true,
+      latest_candidate_path: latestCandidatePath,
+      candidate_timestamps: candidateTimestamps,
+    };
+    return result;
   }
 
-  return { path: null, report: null, runAt: null, stale: true };
+  return {
+    ...emptyResult,
+    latest_candidate_path: latestCandidatePath,
+    candidate_timestamps: candidateTimestamps,
+  };
 }
 
 function anchorWeight(kind: AnchorKind): number {
@@ -1880,6 +1981,8 @@ function computePredictionV3TrainingImpliedHalf(input: {
 function computePrediction(input: {
   distance: DistanceKey;
   anchor: SelectedAnchor | null;
+  alternates: SelectedAnchor[];
+  crossDistance: SelectedAnchor[];
   targetTimeSeconds: number | null;
   readinessScores: ReadinessScores;
   segmentKeyWorkouts: SegmentKeyWorkout[];
@@ -1891,13 +1994,159 @@ function computePrediction(input: {
 }): {
   prediction: RacePredictionReport["prediction"];
   limitations: string[];
+  trainingImpliedAnchorSanity: TrainingImpliedAnchorSanityCheck | null;
 } {
   if (
     input.distance === "half" &&
     !isStrongHalfRaceAnchor(input.anchor?.kind) &&
     input.trainingImpliedAnchor?.available
   ) {
-    return computePredictionV3TrainingImpliedHalf({
+    const sanity = assessTrainingImpliedHalfAnchorSanity({
+      primary: input.anchor,
+      alternates: input.alternates,
+      crossDistance: input.crossDistance,
+      trainingImpliedAnchor: input.trainingImpliedAnchor,
+      raceDate: input.raceDate,
+    });
+
+    if (sanity.aerobic_near_distance_blend && sanity.near_distance_anchor) {
+      const boostedTrainingImplied = boostTrainingImpliedEnduranceWithAerobicNearDistance({
+        trainingImpliedAnchor: input.trainingImpliedAnchor,
+        nearDistanceAnchor: sanity.near_distance_anchor,
+        effort: sanity.near_distance_anchor_effort_classification!,
+      });
+      const v3 = computePredictionV3TrainingImpliedHalf({
+        distance: input.distance,
+        targetTimeSeconds: input.targetTimeSeconds,
+        readinessScores: input.readinessScores,
+        trainingImpliedAnchor: boostedTrainingImplied,
+        taperSignal: input.taperSignal,
+        missedWorkouts: input.missedWorkouts,
+      });
+      const blended = blendScenariosWithAerobicNearDistanceFloor({
+        floorHalfTimeS: sanity.near_distance_anchor.implied_half_time_s,
+        trainingImpliedHalfTimeS: boostedTrainingImplied.implied_half_time_s!,
+        severity: sanity.severity,
+        v3LikelySeconds: v3.prediction.likely.seconds,
+        v3OptimisticSeconds: v3.prediction.optimistic.seconds,
+        v3ConservativeSeconds: v3.prediction.conservative.seconds,
+        targetDistanceKm: DISTANCE_PRESETS.half.target_km,
+      });
+      const trainingImpliedCandidate = buildScenario(
+        boostedTrainingImplied.implied_half_time_s!,
+        DISTANCE_PRESETS.half.target_km,
+      );
+      const limitations = [
+        ...v3.limitations,
+        "Near-distance aerobic long run supports durability; it does not cap tempo-implied half.",
+      ];
+      if (sanity.source_quality_note_ru) {
+        limitations.push(sanity.source_quality_note_ru);
+      }
+
+      const confidenceReasons = [
+        ...v3.prediction.confidence_reasons,
+        `Aerobic near-distance floor ${formatDurationFromSeconds(sanity.near_distance_anchor.implied_half_time_s)} (${sanity.near_distance_anchor.pace_text}).`,
+        `Training-implied raw candidate ${trainingImpliedCandidate.time_text} (${trainingImpliedCandidate.pace_text}) — report-only until coach review.`,
+        "Coach review required: tempo-implied half exceeds aerobic near-distance support.",
+      ];
+      const rangeModelNotes = [...v3.prediction.range_model_notes, ...sanity.notes, ...blended.notes];
+
+      return {
+        prediction: {
+          ...v3.prediction,
+          conservative: blended.conservative,
+          likely: blended.likely,
+          optimistic: blended.optimistic,
+          confidence: capConfidenceLevel(v3.prediction.confidence, "medium_low"),
+          confidence_score: Math.min(v3.prediction.confidence_score, sanity.severity === "block" ? 44 : 50),
+          confidence_reasons: confidenceReasons,
+          anchor_tier_used: "training_implied",
+          training_implied_candidate: trainingImpliedCandidate,
+          range_model_notes: rangeModelNotes,
+          prediction_flags: sanity.flags,
+          anchor_implied_time: buildScenario(
+            sanity.near_distance_anchor.implied_half_time_s,
+            DISTANCE_PRESETS.half.target_km,
+          ),
+        },
+        limitations,
+        trainingImpliedAnchorSanity: sanity,
+      };
+    }
+
+    if (sanity.block_automatic_likely && sanity.near_distance_anchor) {
+      const nearDistanceAnchor = resolveSelectedAnchorForNearDistance(
+        sanity.near_distance_anchor,
+        input.anchor,
+      );
+      const v2 = computePredictionV2({
+        distance: input.distance,
+        anchor: {
+          kind: nearDistanceAnchor.kind as AnchorKind,
+          candidate: nearDistanceAnchor.candidate as RaceResultCandidate,
+          confidence_weight: anchorWeight(nearDistanceAnchor.kind as AnchorKind),
+        },
+        targetTimeSeconds: input.targetTimeSeconds,
+        readinessScores: input.readinessScores,
+        segmentKeyWorkouts: input.segmentKeyWorkouts,
+        progressReport: input.progressReport,
+        taperSignal: input.taperSignal,
+        missedWorkouts: input.missedWorkouts,
+        raceDate: input.raceDate,
+      });
+
+      const trainingImpliedCandidate = buildScenario(
+        input.trainingImpliedAnchor.implied_half_time_s!,
+        DISTANCE_PRESETS.half.target_km,
+      );
+      const limitations = [
+        ...v2.limitations,
+        "Training-implied half отклонён: конфликт с near-distance Tier 1 anchor.",
+      ];
+      if (sanity.source_quality_note_ru) {
+        limitations.push(sanity.source_quality_note_ru);
+      }
+
+      let confidence = v2.prediction.confidence;
+      let confidenceScore = v2.prediction.confidence_score;
+      const confidenceReasons = [
+        ...v2.prediction.confidence_reasons,
+        `Training-implied candidate ${trainingImpliedCandidate.time_text} (${trainingImpliedCandidate.pace_text}) — report-only (conflict ${Math.round((sanity.training_implied_faster_pct ?? 0) * 100)}% faster than near-distance anchor).`,
+      ];
+      const rangeModelNotes = [
+        ...v2.prediction.range_model_notes,
+        ...sanity.notes,
+      ];
+
+      if (sanity.severity === "strong" || sanity.severity === "block") {
+        confidence = capConfidenceLevel(confidence, "medium_low");
+        confidenceScore = Math.min(confidenceScore, sanity.severity === "block" ? 42 : 48);
+        confidenceReasons.push("Coach review required: tempo-implied half conflicts with near-distance evidence.");
+      } else {
+        confidence = capConfidenceLevel(confidence, "medium");
+        confidenceScore = Math.min(confidenceScore, 55);
+      }
+
+      const predictionFlags = [...sanity.flags];
+
+      return {
+        prediction: {
+          ...v2.prediction,
+          confidence,
+          confidence_score: confidenceScore,
+          confidence_reasons: confidenceReasons,
+          anchor_tier_used: "near_distance_anchor",
+          training_implied_candidate: trainingImpliedCandidate,
+          range_model_notes: rangeModelNotes,
+          ...(predictionFlags.length > 0 ? { prediction_flags: predictionFlags } : {}),
+        },
+        limitations,
+        trainingImpliedAnchorSanity: sanity,
+      };
+    }
+
+    const v3 = computePredictionV3TrainingImpliedHalf({
       distance: input.distance,
       targetTimeSeconds: input.targetTimeSeconds,
       readinessScores: input.readinessScores,
@@ -1905,6 +2154,10 @@ function computePrediction(input: {
       taperSignal: input.taperSignal,
       missedWorkouts: input.missedWorkouts,
     });
+    return {
+      ...v3,
+      trainingImpliedAnchorSanity: sanity.severity === "none" ? null : sanity,
+    };
   }
 
   const v2 = computePredictionV2({
@@ -1924,6 +2177,7 @@ function computePrediction(input: {
       anchor_tier_used: input.anchor ? "race_anchor" : undefined,
     },
     limitations: v2.limitations,
+    trainingImpliedAnchorSanity: null,
   };
 }
 
@@ -2197,6 +2451,352 @@ function countPlannedWorkReps(workout: WeeklySummaryWorkout): number | null {
   return repeatBlock?.repeat_count ?? null;
 }
 
+function isRepeatTitleWorkout(title: string | null): boolean {
+  const parsed = parseIntervalRepsFromTitle(title);
+  return (
+    parsed.reps !== null &&
+    parsed.repDurationMin !== null &&
+    parsed.repDurationMin >= REPEAT_WORK_MIN_DURATION_MIN &&
+    parsed.repDurationMin <= REPEAT_WORK_MAX_DURATION_MIN
+  );
+}
+
+function isPartialRepeatTemplateComparison(input: {
+  title: string | null;
+  comparison: SegmentComparisonEntryAudit[];
+  selectedWorkSegments: SegmentComparisonEntryAudit[];
+}): boolean {
+  const titleParsed = parseIntervalRepsFromTitle(input.title);
+  if (!titleParsed.reps || titleParsed.reps <= 1 || titleParsed.repDurationMin === null) {
+    return false;
+  }
+  const hasRepeatGroups = input.comparison.some((segment) => segment.repeat_group_id != null);
+  if (hasRepeatGroups) return false;
+  return input.selectedWorkSegments.length < titleParsed.reps;
+}
+
+function computeRepeatWorkoutRescueContext(input: {
+  title: string | null;
+  comparison: SegmentComparisonEntryAudit[];
+  selectedWorkSegments: SegmentComparisonEntryAudit[];
+  diagnostics: SegmentMatchingDiagnostic[];
+}): {
+  hasMisalignment: boolean;
+  partialRepeatTemplate: boolean;
+  repeatWorkoutRescue: boolean;
+  shouldAttemptFitLapRescue: boolean;
+} {
+  const hasMisalignment = input.diagnostics.some(
+    (entry) => entry.code === "possible_timer_slice_misalignment",
+  );
+  const misalignmentRescue =
+    isRepeatTitleWorkout(input.title) &&
+    input.diagnostics.some(
+      (entry) =>
+        entry.code === "unsupported_main_repeat_block" ||
+        entry.code === "possible_timer_slice_misalignment",
+    );
+  const partialRepeatTemplate = isPartialRepeatTemplateComparison({
+    title: input.title,
+    comparison: input.comparison,
+    selectedWorkSegments: input.selectedWorkSegments,
+  });
+  const repeatWorkoutRescue = misalignmentRescue || partialRepeatTemplate;
+  return {
+    hasMisalignment,
+    partialRepeatTemplate,
+    repeatWorkoutRescue,
+    shouldAttemptFitLapRescue: hasMisalignment || repeatWorkoutRescue,
+  };
+}
+
+function parsePaceRangeFromText(text: string): SegmentPaceTargetAudit | null {
+  const match = text.match(/(\d{1,2}):(\d{2})\s*[–-]\s*(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  const fast = Number(match[1]) + Number(match[2]) / 60;
+  const slow = Number(match[3]) + Number(match[4]) / 60;
+  if (!Number.isFinite(fast) || !Number.isFinite(slow) || fast <= 0 || slow <= 0) return null;
+  return {
+    fast_min_per_km: Math.min(fast, slow),
+    slow_min_per_km: Math.max(fast, slow),
+  };
+}
+
+function extractWorkPaceTargetFromPlannedDescription(
+  workout: WeeklySummaryWorkout,
+  repDurationMin: number | null,
+): SegmentPaceTargetAudit | null {
+  const description = workout.planned?.description ?? "";
+  if (!description.trim()) return null;
+
+  if (repDurationMin !== null) {
+    const durationPatterns = [
+      new RegExp(`${repDurationMin}\\s*(?:мин|min)[^@]{0,40}@\\s*(\\d{1,2}:\\d{2}\\s*[–-]\\s*\\d{1,2}:\\d{2})`, "i"),
+      new RegExp(`@\\s*(\\d{1,2}:\\d{2}\\s*[–-]\\s*\\d{1,2}:\\d{2})[^\\n]{0,40}${repDurationMin}\\s*(?:мин|min)`, "i"),
+    ];
+    for (const pattern of durationPatterns) {
+      const match = description.match(pattern);
+      if (match?.[1]) {
+        const target = parsePaceRangeFromText(match[1]);
+        if (target) return target;
+      }
+    }
+  }
+
+  const ranges: SegmentPaceTargetAudit[] = [];
+  for (const match of description.matchAll(PLANNED_DESCRIPTION_PACE_RANGE_PATTERN)) {
+    const target = parsePaceRangeFromText(`${match[1]}:${match[2]}–${match[3]}:${match[4]}`);
+    if (target && target.fast_min_per_km <= 5.5) {
+      ranges.push(target);
+    }
+  }
+  if (!ranges.length) return null;
+  ranges.sort((left, right) => left.fast_min_per_km - right.fast_min_per_km);
+  return ranges[0] ?? null;
+}
+
+function extractWorkPaceTargetFromWorkout(
+  workout: WeeklySummaryWorkout,
+  comparison: SegmentComparisonEntryAudit[],
+): SegmentPaceTargetAudit | null {
+  const titleParsed = parseIntervalRepsFromTitle(workout.title);
+  const fromComparison =
+    extractIntervalWorkPaceTarget(comparison.filter((segment) => segment.segment_type === "interval")) ??
+    extractIntervalWorkPaceTarget(comparison.filter((segment) => segment.segment_type === "main")) ??
+    extractIntervalWorkPaceTarget(comparison.filter((segment) => segment.segment_type === "unknown"));
+  if (fromComparison) return fromComparison;
+
+  const fromDescription = extractWorkPaceTargetFromPlannedDescription(workout, titleParsed.repDurationMin);
+  if (fromDescription) return fromDescription;
+
+  const repeatBlocks = getPlannedRepeatBlocks(workout).filter(
+    (segment) => segment.segment_type === "interval" || (segment.duration_minutes ?? 0) >= REPEAT_WORK_MIN_DURATION_MIN,
+  );
+  for (const block of repeatBlocks) {
+    const target = (block as { pace_targets?: { pace_min_per_km?: SegmentPaceTargetAudit } }).pace_targets
+      ?.pace_min_per_km;
+    if (target && target.fast_min_per_km > 0 && target.slow_min_per_km > 0) {
+      return target;
+    }
+  }
+
+  return null;
+}
+
+function hasUnsupportedMainRepeatBlock(comparison: SegmentComparisonEntryAudit[]): boolean {
+  return comparison.some(
+    (segment) =>
+      (segment.segment_type === "main" || segment.segment_type === "interval") &&
+      segment.coverage === "unsupported",
+  );
+}
+
+function warmupPaceBaseline(comparison: SegmentComparisonEntryAudit[]): number | null {
+  const warmupPaces = comparison
+    .filter((segment) => segment.segment_type === "warmup" && isWorkCoverage(segment.coverage))
+    .map((segment) => segmentPaceMinPerKm(segment))
+    .filter((pace): pace is number => pace !== null);
+  return medianNumeric(warmupPaces);
+}
+
+function detectRepeatWorkoutTimerSliceMisalignment(input: {
+  workout: WeeklySummaryWorkout;
+  comparison: SegmentComparisonEntryAudit[];
+  titleParsed: { reps: number | null; repDurationMin: number | null };
+}): {
+  hasMisalignment: boolean;
+  diagnostics: SegmentMatchingDiagnostic[];
+  warnings: string[];
+} {
+  const diagnostics: SegmentMatchingDiagnostic[] = [];
+  const warnings: string[] = [];
+  if (!isRepeatTitleWorkout(input.workout.title)) {
+    return { hasMisalignment: false, diagnostics, warnings };
+  }
+
+  const timerSliceWork = input.comparison.filter(isTimerSliceIntervalSegment);
+  const timerSliceRecovery = input.comparison.filter(isTimerSliceRecoverySegment);
+  const workStats = buildTimerSliceSegmentStats(timerSliceWork);
+  const recoveryStats = buildTimerSliceSegmentStats(timerSliceRecovery);
+  const warmupBaseline = warmupPaceBaseline(input.comparison);
+
+  const recoveryFasterThanWarmup =
+    warmupBaseline !== null &&
+    recoveryStats.avgPaceMin !== null &&
+    recoveryStats.avgPaceMin + MISLABELED_RECOVERY_PACE_GAP_MIN_PER_KM < warmupBaseline;
+
+  const recoveryTooFastRows = timerSliceRecovery.filter(
+    (segment) => segment.pace_vs_target?.status === "too_fast",
+  ).length;
+
+  const unsupportedMain = hasUnsupportedMainRepeatBlock(input.comparison);
+  const missingWorkRows = workStats.count === 0 && recoveryStats.count > 0;
+
+  if (recoveryFasterThanWarmup) {
+    diagnostics.push({
+      code: "work_recovery_pace_inversion",
+      severity: "warning",
+      detail: `Recovery-labeled timer slices (${formatPaceText(recoveryStats.avgPaceMin!)}) are faster than warmup (${formatPaceText(warmupBaseline!)}).`,
+    });
+    warnings.push("recovery faster than work");
+  }
+
+  if (unsupportedMain && missingWorkRows) {
+    diagnostics.push({
+      code: "unsupported_main_repeat_block",
+      severity: "warning",
+      detail: "Planned repeat main/interval block is unsupported in segment_comparison; work effort likely mislabeled.",
+    });
+    warnings.push("unsupported_main_repeat_block");
+  }
+
+  if (recoveryTooFastRows > 0 && missingWorkRows) {
+    diagnostics.push({
+      code: "work_target_miss_recovery_target_hit",
+      severity: "warning",
+      detail: `${recoveryTooFastRows} recovery-labeled row(s) exceed their recovery pace target — likely mislabeled work blocks.`,
+    });
+    warnings.push("work rows miss planned pace target while recovery rows match work target better");
+  }
+
+  const hasMisalignment =
+    (recoveryFasterThanWarmup && missingWorkRows) ||
+    (unsupportedMain && missingWorkRows && recoveryStats.count > 0) ||
+    (recoveryTooFastRows > 0 && missingWorkRows);
+
+  if (hasMisalignment) {
+    diagnostics.push({
+      code: "possible_timer_slice_misalignment",
+      severity: "critical",
+      detail:
+        "Repeat workout has no interval/main work rows but fast recovery-labeled rows — timer-slice misalignment likely.",
+    });
+    warnings.push("possible_timer_slice_misalignment");
+  }
+
+  return { hasMisalignment, diagnostics, warnings };
+}
+
+function extractMislabeledRecoveryWorkSegments(input: {
+  comparison: SegmentComparisonEntryAudit[];
+  titleParsed: { reps: number | null; repDurationMin: number | null };
+  workTarget: SegmentPaceTargetAudit | null;
+}): SegmentComparisonEntryAudit[] {
+  if (!input.titleParsed.reps || !input.titleParsed.repDurationMin) return [];
+  const warmupBaseline = warmupPaceBaseline(input.comparison);
+  const candidates = input.comparison.filter((segment) => {
+    if (segment.is_rest === true) return false;
+    if (!isWorkCoverage(segment.coverage)) return false;
+    if (!segmentHasUsablePace(segment)) return false;
+    if (NON_WORK_SEGMENT_TYPES.has(segment.segment_type ?? "")) return false;
+    if (segment.segment_type !== "recovery" && segment.segment_type !== "main") return false;
+
+    const pace = segmentPaceMinPerKm(segment)!;
+    if (segment.pace_vs_target?.status === "too_fast") return true;
+    if (input.workTarget && paceCloseToTarget(pace, input.workTarget)) return true;
+    if (warmupBaseline !== null && pace + MISLABELED_RECOVERY_PACE_GAP_MIN_PER_KM < warmupBaseline) {
+      return true;
+    }
+    return false;
+  });
+
+  const sorted = sortWorkSegments(candidates);
+  const expected = input.titleParsed.reps;
+  if (sorted.length === 0) return [];
+  if (sorted.length > expected) return sorted.slice(0, expected);
+  return sorted;
+}
+
+function explainWorkSegmentExtractionFailure(input: {
+  segmentVerdict: { verdict: SegmentAuditVerdict; reason: string };
+  comparisonCount: number;
+  extractedCount: number;
+  title: string | null;
+  segmentMatching?: SegmentMatchingDiagnostics;
+}): string {
+  if (input.comparisonCount === 0) {
+    return input.segmentVerdict.reason;
+  }
+  if (input.extractedCount > 0) return "work segments extracted";
+
+  const fitLap = input.segmentMatching?.fit_lap_candidate;
+  if (fitLap?.rejected_reason === "no_planned_work_target") {
+    return "segment data exists, but work-block extraction failed: no planned work pace target in segment_comparison or description";
+  }
+  if (fitLap?.rejected_reason === "no_fit_lap_work_groups") {
+    return "segment data exists, but work-block extraction failed: FIT laps present but no lap groups match planned rep duration";
+  }
+  if (fitLap?.rejected_reason === "lap_records_not_available_in_parsed_data") {
+    return "segment data exists, but work-block extraction failed: FIT lap records unavailable in parsed export";
+  }
+  if (input.segmentMatching?.diagnostics.some((entry) => entry.code === "unsupported_main_repeat_block")) {
+    return "segment data exists, but work-block extraction failed: planned repeat main/interval block unsupported in parser output";
+  }
+  if (input.segmentMatching?.diagnostics.some((entry) => entry.code === "possible_timer_slice_misalignment")) {
+    return "segment data exists, but work-block extraction failed: timer-slice misalignment (work effort mislabeled as recovery)";
+  }
+  if (isRepeatTitleWorkout(input.title) && input.segmentVerdict.verdict === "usable") {
+    return "segment data exists, but work-block extraction failed: no interval/main rows matched repeat title pattern";
+  }
+  if (input.segmentVerdict.verdict === "usable") {
+    return `segment data exists, but work-block extraction failed: ${input.segmentVerdict.reason}`;
+  }
+  return input.segmentVerdict.reason;
+}
+
+function buildSegmentCoverageDiagnostics(input: {
+  segmentAudit?: SegmentAuditReport;
+  segmentKeyWorkouts: SegmentKeyWorkout[];
+  trainingImpliedAnchor?: TrainingImpliedHalfAnchor;
+}): SegmentCoverageDiagnostic[] {
+  if (!input.segmentAudit) return [];
+  const evidenceDates = new Set(
+    (input.trainingImpliedAnchor?.evidence_workouts ?? []).map((workout) => workout.date),
+  );
+  const keyByDateTitle = new Map(
+    input.segmentKeyWorkouts.map((workout) => [`${workout.date}::${workout.title ?? ""}`, workout]),
+  );
+
+  return input.segmentAudit.workouts
+    .filter((auditWorkout) => {
+      if (auditWorkout.verdict !== "usable") return false;
+      const keyWorkout = keyByDateTitle.get(`${auditWorkout.date}::${auditWorkout.title ?? ""}`);
+      if (!keyWorkout) return true;
+      if (keyWorkout.usable_for_prediction && (keyWorkout.work_reps_compared ?? 0) > 0) {
+        return false;
+      }
+      return !keyWorkout.segment_evidence_available || (keyWorkout.work_reps_compared ?? 0) === 0;
+    })
+    .map((auditWorkout) => {
+      const keyWorkout = keyByDateTitle.get(`${auditWorkout.date}::${auditWorkout.title ?? ""}`);
+      const extractedCount = keyWorkout?.work_reps_compared ?? 0;
+      const failureReason =
+        keyWorkout?.work_extraction_failure_reason ??
+        (keyWorkout?.segment_evidence_available
+          ? "segment evidence flagged but zero work reps counted"
+          : "segment audit usable but segment_key_workout has no extracted work blocks");
+      const usedInTrainingImplied = evidenceDates.has(auditWorkout.date);
+      return {
+        date: auditWorkout.date,
+        title: auditWorkout.title,
+        role: auditWorkout.role,
+        segment_audit_verdict: auditWorkout.verdict,
+        segment_analysis_available: auditWorkout.has_segment_analysis,
+        segment_comparison_rows_count: auditWorkout.compared_segments_count ?? 0,
+        planned_segments_count: auditWorkout.segment_analysis.planned_segments_count,
+        extracted_work_segments_count: extractedCount,
+        work_extraction_failure_reason: failureReason,
+        classification_reason: keyWorkout?.limitations[0] ?? auditWorkout.reason,
+        excluded_from_training_implied_half: !usedInTrainingImplied,
+        exclusion_reason: usedInTrainingImplied
+          ? null
+          : keyWorkout?.usable_for_prediction
+            ? "not selected by training-implied aggregation"
+            : failureReason,
+      };
+    });
+}
+
 function sortWorkSegments(segments: SegmentComparisonEntryAudit[]): SegmentComparisonEntryAudit[] {
   return [...segments].sort((left, right) => {
     const leftRepeat = left.repeat_iteration ?? Number.MAX_SAFE_INTEGER;
@@ -2311,6 +2911,22 @@ function identifyWorkSegments(workout: WeeklySummaryWorkout): {
       evidenceType: "segment_comparison",
       score: scoreWorkSegmentCandidate(strictWork, titleParsed),
     });
+  }
+
+  if (!candidates.length && isRepeatTitleWorkout(workout.title)) {
+    const workTarget = extractWorkPaceTargetFromWorkout(workout, comparison);
+    const mislabeled = extractMislabeledRecoveryWorkSegments({
+      comparison,
+      titleParsed,
+      workTarget,
+    });
+    if (mislabeled.length > 0) {
+      candidates.push({
+        segments: sortWorkSegments(mislabeled),
+        evidenceType: "mislabeled_recovery_rescue",
+        score: scoreWorkSegmentCandidate(mislabeled, titleParsed) - 2,
+      });
+    }
   }
 
   if (!candidates.length) {
@@ -2961,12 +3577,29 @@ async function loadWorkoutFitLaps(workout: WeeklySummaryWorkout): Promise<FitLap
     return fitLapLoadCache.get(cacheKey) ?? null;
   }
 
+  const startedMs = probeTimingNowMs();
   try {
     const fitBuffer = await readWorkoutFitEntryBuffer(detailSource);
+    const zipElapsedMs = probeTimingElapsedMs(startedMs);
+    const parseStartedMs = probeTimingNowMs();
     const parsedFit = (await createFitParser().parseAsync(fitBuffer)) as { laps?: unknown[] };
     const rawLaps = Array.isArray(parsedFit.laps) ? parsedFit.laps : [];
     const normalized = normalizeFitLaps(rawLaps);
     fitLapLoadCache.set(cacheKey, normalized);
+    if (isProbeTimingEnabled()) {
+      logProbeTiming({
+        phase: "fit_lap_parse",
+        message: "loadWorkoutFitLaps",
+        elapsedMs: probeTimingElapsedMs(startedMs),
+        data: {
+          zipPath: detailSource.zip_path,
+          entryName: detailSource.entry_name,
+          zipReadMs: zipElapsedMs,
+          parseMs: probeTimingElapsedMs(parseStartedMs),
+          lapsCount: normalized.length,
+        },
+      });
+    }
     return normalized;
   } catch {
     fitLapLoadCache.set(cacheKey, null);
@@ -2983,12 +3616,29 @@ async function loadWorkoutFitRecords(workout: WeeklySummaryWorkout): Promise<Fit
     return fitRecordLoadCache.get(cacheKey) ?? null;
   }
 
+  const startedMs = probeTimingNowMs();
   try {
     const fitBuffer = await readWorkoutFitEntryBuffer(detailSource);
+    const zipElapsedMs = probeTimingElapsedMs(startedMs);
+    const parseStartedMs = probeTimingNowMs();
     const parsedFit = (await createFitParser().parseAsync(fitBuffer)) as { records?: unknown[] };
     const rawRecords = Array.isArray(parsedFit.records) ? parsedFit.records : [];
     const normalized = normalizeFitRecords(rawRecords);
     fitRecordLoadCache.set(cacheKey, normalized);
+    if (isProbeTimingEnabled()) {
+      logProbeTiming({
+        phase: "fit_record_parse",
+        message: "loadWorkoutFitRecords",
+        elapsedMs: probeTimingElapsedMs(startedMs),
+        data: {
+          zipPath: detailSource.zip_path,
+          entryName: detailSource.entry_name,
+          zipReadMs: zipElapsedMs,
+          parseMs: probeTimingElapsedMs(parseStartedMs),
+          recordsCount: normalized.length,
+        },
+      });
+    }
     return normalized;
   } catch {
     fitRecordLoadCache.set(cacheKey, null);
@@ -3153,11 +3803,27 @@ function hasSeriousFitLapRejectionDiagnostics(candidate: FitLapCandidate): boole
 function isFitLapCandidatePromotionEligible(input: {
   candidate: FitLapCandidate;
   hasMisalignment: boolean;
+  repeatWorkoutRescue: boolean;
+  partialRepeatTemplate?: boolean;
   repDurationMin: number | null;
 }): boolean {
   const candidate = input.candidate;
-  if (!input.hasMisalignment || !candidate.available) return false;
-  if (candidate.confidence !== "medium" && candidate.confidence !== "high") return false;
+  if ((!input.hasMisalignment && !input.repeatWorkoutRescue) || !candidate.available) return false;
+  const expected = candidate.expected_work_reps_count;
+  const repRatio =
+    expected !== null && expected > 0 ? candidate.selected_laps_count / expected : null;
+  const allowLowConfidencePartialRescue =
+    input.partialRepeatTemplate === true &&
+    repRatio !== null &&
+    repRatio >= FIT_LAP_PROMOTION_REP_RATIO &&
+    Boolean(candidate.candidate_work_avg_pace);
+  if (
+    candidate.confidence !== "medium" &&
+    candidate.confidence !== "high" &&
+    !allowLowConfidencePartialRescue
+  ) {
+    return false;
+  }
   if (!candidate.candidate_work_avg_pace) return false;
   if (hasSeriousFitLapRejectionDiagnostics(candidate)) return false;
   if (!selectedFitLapLapsHavePlausibleDuration(candidate, input.repDurationMin)) return false;
@@ -3165,7 +3831,6 @@ function isFitLapCandidatePromotionEligible(input: {
   const spreadPct = parsePaceRangeSpreadPct(candidate.candidate_work_pace_range);
   if (spreadPct !== null && spreadPct > PACE_SPREAD_WARNING_PCT) return false;
 
-  const expected = candidate.expected_work_reps_count;
   if (expected !== null && expected > 0) {
     return candidate.selected_laps_count >= expected * FIT_LAP_PROMOTION_REP_RATIO;
   }
@@ -3268,6 +3933,9 @@ function promoteSegmentKeyWorkoutWithFitLapCandidate(input: {
   return {
     workout: {
       ...input.workout,
+      segment_evidence_available: true,
+      evidence_type: "segment_comparison",
+      work_extraction_failure_reason: null,
       usable_for_prediction,
       extraction_strategy: input.fitLap.strategy,
       evidence_source: "fit_lap_candidate",
@@ -3304,12 +3972,12 @@ function promoteSegmentKeyWorkoutWithFitLapCandidate(input: {
 function buildFitLapCandidate(input: {
   workout: WeeklySummaryWorkout;
   fitLaps: FitLapRecord[] | null;
-  hasMisalignment: boolean;
+  shouldAttemptFitLapRescue: boolean;
   workTarget: SegmentPaceTargetAudit | null;
   expectedWorkReps: number | null;
   repDurationMin: number | null;
 }): FitLapCandidate | undefined {
-  if (!input.hasMisalignment) return undefined;
+  if (!input.shouldAttemptFitLapRescue) return undefined;
 
   const detailSource = getMatchedFitDetailSource(input.workout);
   const diagnostics: string[] = [
@@ -3391,7 +4059,7 @@ function buildFitLapCandidate(input: {
       candidate_work_pace_range: null,
       candidate_work_avg_hr: null,
       selected_laps: [],
-      diagnostics: [...diagnostics, "no planned work pace target in segment_comparison"],
+      diagnostics: [...diagnostics, "no planned work pace target in segment_comparison or description"],
       rejected_reason: "no_planned_work_target",
     };
   }
@@ -3531,7 +4199,7 @@ function buildTargetProximityRescueCandidate(input: {
 
   const workTarget =
     extractIntervalWorkPaceTarget(input.timerSliceWork) ??
-    extractIntervalWorkPaceTarget(input.comparison);
+    extractWorkPaceTargetFromWorkout(input.workout, input.comparison);
   if (!workTarget) {
     return {
       available: false,
@@ -3688,10 +4356,16 @@ function buildSegmentMatchingDiagnostics(input: {
   const comparison = asSegmentComparison(input.workout);
   if (!comparison.length) return undefined;
 
+  const titleParsed = parseIntervalRepsFromTitle(input.workout.title);
   const timerSliceWork = comparison.filter(isTimerSliceIntervalSegment);
   const timerSliceRecovery = comparison.filter(isTimerSliceRecoverySegment);
   const workStats = buildTimerSliceSegmentStats(timerSliceWork);
   const recoveryStats = buildTimerSliceSegmentStats(timerSliceRecovery);
+  const repeatMisalignment = detectRepeatWorkoutTimerSliceMisalignment({
+    workout: input.workout,
+    comparison,
+    titleParsed,
+  });
 
   const selectedAvgPaceMin =
     input.selectedWorkAvgPaceMin ??
@@ -3717,8 +4391,8 @@ function buildSegmentMatchingDiagnostics(input: {
     differs_from_selected: differsFromSelected,
   };
 
-  const misalignment =
-    input.evidenceType === "segment_comparison"
+  const timerSliceMisalignment =
+    input.evidenceType === "segment_comparison" || input.evidenceType === "mislabeled_recovery_rescue"
       ? detectTimerSliceMisalignment({
           timerSliceWork,
           timerSliceRecovery,
@@ -3726,9 +4400,29 @@ function buildSegmentMatchingDiagnostics(input: {
         })
       : { diagnostics: [] as SegmentMatchingDiagnostic[], warnings: [] as string[] };
 
-  const hasMisalignment = misalignment.diagnostics.some(
-    (entry) => entry.code === "possible_timer_slice_misalignment",
-  );
+  const diagnostics = [...repeatMisalignment.diagnostics];
+  for (const diagnostic of timerSliceMisalignment.diagnostics) {
+    if (!diagnostics.some((entry) => entry.code === diagnostic.code)) {
+      diagnostics.push(diagnostic);
+    }
+  }
+
+  const warnings = [...repeatMisalignment.warnings, ...timerSliceMisalignment.warnings];
+  const hasMisalignment = diagnostics.some((entry) => entry.code === "possible_timer_slice_misalignment");
+  const rescueContext = computeRepeatWorkoutRescueContext({
+    title: input.workout.title,
+    comparison,
+    selectedWorkSegments: input.selectedWorkSegments,
+    diagnostics,
+  });
+  if (rescueContext.partialRepeatTemplate) {
+    diagnostics.push({
+      code: "partial_repeat_template_comparison",
+      severity: "warning",
+      detail:
+        "Title indicates multiple work reps, but segment_comparison has no repeat_group_id and fewer work rows than planned — FIT-lap rescue eligible.",
+    });
+  }
 
   const targetProximityRescueCandidate = buildTargetProximityRescueCandidate({
     workout: input.workout,
@@ -3738,13 +4432,13 @@ function buildSegmentMatchingDiagnostics(input: {
     hasMisalignment,
   });
 
-  const titleParsed = parseIntervalRepsFromTitle(input.workout.title);
   const workTarget =
-    extractIntervalWorkPaceTarget(timerSliceWork) ?? extractIntervalWorkPaceTarget(comparison);
+    extractIntervalWorkPaceTarget(timerSliceWork) ??
+    extractWorkPaceTargetFromWorkout(input.workout, comparison);
   const fitLapCandidate = buildFitLapCandidate({
     workout: input.workout,
     fitLaps: input.fitLaps,
-    hasMisalignment,
+    shouldAttemptFitLapRescue: rescueContext.shouldAttemptFitLapRescue,
     workTarget,
     expectedWorkReps: countPlannedWorkReps(input.workout),
     repDurationMin: titleParsed.repDurationMin,
@@ -3754,8 +4448,8 @@ function buildSegmentMatchingDiagnostics(input: {
     strategy: "timer_slice",
     confidence: hasMisalignment ? "low" : "medium",
     prediction_eligible: input.usableForPrediction,
-    diagnostics: misalignment.diagnostics,
-    warnings: [...misalignment.warnings, "timer-slice values are observation-only"],
+    diagnostics,
+    warnings: [...warnings, "timer-slice values are observation-only"],
     original_timer_slice_comparison: originalTimerSliceComparison,
     ...(targetProximityRescueCandidate
       ? { target_proximity_rescue_candidate: targetProximityRescueCandidate }
@@ -3801,7 +4495,7 @@ function attachSustainedEffortCandidate(input: {
     workout: {
       date: input.capture.date,
       title: input.capture.title,
-      role: input.role,
+      role: input.capture.role,
       description: input.workout.planned?.description ?? null,
       avg_pace_min_per_km: input.workout.avg_pace_min_per_km,
       completed_duration_minutes: input.workout.completed_duration_minutes,
@@ -3826,11 +4520,68 @@ function attachSustainedEffortCandidate(input: {
 }
 
 async function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): Promise<SegmentKeyWorkout> {
+  const workoutStartedMs = probeTimingNowMs();
   const workout = capture.workout;
-  const [fitLaps, fitRecords] = await Promise.all([
-    loadWorkoutFitLaps(workout),
-    loadWorkoutFitRecords(workout),
-  ]);
+  const sustainedQualifying = isQualifyingSustainedEffortWorkout({
+    date: capture.date,
+    title: capture.title,
+    role: capture.role,
+    description: workout.planned?.description ?? null,
+    avg_pace_min_per_km: workout.avg_pace_min_per_km,
+    completed_duration_minutes: workout.completed_duration_minutes,
+    distance_km: workout.distance_km,
+    avg_hr: workout.avg_hr ?? workout.completed?.avg_hr ?? null,
+    max_hr: workout.max_hr ?? workout.completed?.max_hr ?? null,
+    intensity_flags: workout.intensity_flags,
+    planned: workout.planned,
+    segment_comparison: asSegmentComparison(workout),
+  });
+
+  const fitLapsStartedMs = probeTimingNowMs();
+  const fitLaps = await loadWorkoutFitLaps(workout);
+  const fitLapsElapsedMs = probeTimingElapsedMs(fitLapsStartedMs);
+
+  let fitRecords: FitRecordLike[] | null = null;
+  let fitRecordsElapsedMs = 0;
+  const fitRecordsSkipped = !sustainedQualifying;
+  if (sustainedQualifying) {
+    const fitRecordsStartedMs = probeTimingNowMs();
+    fitRecords = await loadWorkoutFitRecords(workout);
+    fitRecordsElapsedMs = probeTimingElapsedMs(fitRecordsStartedMs);
+  } else if (isProbeTimingEnabled()) {
+    logProbeTiming({
+      phase: "fit_record_parse",
+      message: "loadWorkoutFitRecords skipped (not sustained-qualifying)",
+      elapsedMs: 0,
+      data: {
+        week: capture.week,
+        workoutDate: capture.date,
+        workoutTitle: capture.title,
+      },
+    });
+  }
+
+  if (isProbeTimingEnabled()) {
+    const detailSource = getMatchedFitDetailSource(workout);
+    logProbeTiming({
+      phase: "build_segment_key_workout",
+      message: "workout processed",
+      elapsedMs: probeTimingElapsedMs(workoutStartedMs),
+      data: {
+        week: capture.week,
+        workoutDate: capture.date,
+        workoutTitle: capture.title,
+        zipPath: detailSource?.zip_path ?? null,
+        entryName: detailSource?.entry_name ?? null,
+        sustainedQualifying,
+        fitRecordsSkipped,
+        lapsCount: fitLaps?.length ?? 0,
+        recordsCount: fitRecords?.length ?? 0,
+        fitLapsMs: fitLapsElapsedMs,
+        fitRecordsMs: fitRecordsElapsedMs,
+      },
+    });
+  }
   const segmentVerdict = deriveSegmentVerdict(workout);
   const { segments, evidenceType } = identifyWorkSegments(workout);
   const analysis = asSegmentAnalysis(workout);
@@ -3846,10 +4597,113 @@ async function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): Promise<Se
     segments.find((segment) => segment.planned_duration_minutes != null)?.planned_duration_minutes ??
     null;
   const { role, limitations: roleLimitations } = classifyWorkoutEvidenceRole(repDurationMin, capture.title);
+  const comparisonCount = asSegmentComparison(workout).length;
+
+  const buildUnavailableSegmentKeyWorkout = (input: {
+    segmentMatching?: SegmentMatchingDiagnostics;
+    extraLimitations?: string[];
+  }): SegmentKeyWorkout => {
+    const workExtractionFailureReason = explainWorkSegmentExtractionFailure({
+      segmentVerdict,
+      comparisonCount,
+      extractedCount: 0,
+      title: capture.title,
+      segmentMatching: input.segmentMatching,
+    });
+    const auditUsableButMissingWork =
+      segmentVerdict.verdict === "usable" && comparisonCount > 0;
+    return {
+      date: capture.date,
+      title: capture.title,
+      role,
+      segment_evidence_available: false,
+      usable_for_prediction: false,
+      evidence_type: "unavailable",
+      work_reps_compared: null,
+      work_reps_planned: countPlannedWorkReps(workout),
+      work_avg_pace: null,
+      work_fastest_pace: null,
+      work_slowest_pace: null,
+      work_avg_hr: null,
+      work_max_hr: null,
+      rep_to_rep_fade_pct: null,
+      last_rep_vs_first_rep_pct: null,
+      completion_ratio: null,
+      verdict: "unavailable",
+      takeaway: auditUsableButMissingWork
+        ? workExtractionFailureReason
+        : buildSegmentKeyWorkoutTakeaway({
+            verdict: "unavailable",
+            role,
+            workAvgPace: null,
+            workRepsCompared: null,
+            workRepsPlanned: countPlannedWorkReps(workout),
+            evidenceWarnings: [],
+          }),
+      work_extraction_failure_reason: workExtractionFailureReason,
+      limitations: [
+        ...roleLimitations,
+        ...(input.extraLimitations ?? []),
+        auditUsableButMissingWork ? workExtractionFailureReason : segmentVerdict.reason,
+        "Средний темп всей тренировки не используется как интервальное доказательство.",
+      ],
+      ...(input.segmentMatching ? { segment_matching: input.segmentMatching } : {}),
+    };
+  };
+
+  if (segments.length === 0 && comparisonCount > 0) {
+    const rescueMatching = buildSegmentMatchingDiagnostics({
+      workout,
+      evidenceType: "unavailable",
+      selectedWorkSegments: [],
+      selectedWorkAvgPaceMin: null,
+      usableForPrediction: false,
+      fitLaps,
+    });
+    const rescueContext = computeRepeatWorkoutRescueContext({
+      title: capture.title,
+      comparison: asSegmentComparison(workout),
+      selectedWorkSegments: [],
+      diagnostics: rescueMatching?.diagnostics ?? [],
+    });
+    const fitLapCandidate = rescueMatching?.fit_lap_candidate;
+    if (
+      rescueMatching &&
+      fitLapCandidate &&
+      isFitLapCandidatePromotionEligible({
+        candidate: fitLapCandidate,
+        hasMisalignment: rescueContext.hasMisalignment,
+        repeatWorkoutRescue: rescueContext.repeatWorkoutRescue,
+        partialRepeatTemplate: rescueContext.partialRepeatTemplate,
+        repDurationMin: titleParsed.repDurationMin,
+      })
+    ) {
+      const shell = buildUnavailableSegmentKeyWorkout({ segmentMatching: rescueMatching });
+      const promoted = promoteSegmentKeyWorkoutWithFitLapCandidate({
+        workout: shell,
+        segmentMatching: rescueMatching,
+        fitLap: fitLapCandidate,
+        repDurationMin: titleParsed.repDurationMin,
+        wholeWorkoutPaceMin: workout.avg_pace_min_per_km,
+        dataQualityFlags: uniqueDataQualityFlags,
+        roleLimitations,
+      });
+      return attachSustainedEffortCandidate({
+        workout,
+        capture,
+        role,
+        fitLaps,
+        fitRecords,
+        timerSliceWorkPaceMinPerKm: null,
+        dataQualityFlags: uniqueDataQualityFlags,
+        base: promoted.workout,
+      });
+    }
+  }
 
   if (segmentVerdict.verdict !== "usable" || segments.length === 0) {
     const segmentMatching =
-      asSegmentComparison(workout).length > 0
+      comparisonCount > 0
         ? buildSegmentMatchingDiagnostics({
             workout,
             evidenceType: "unavailable",
@@ -3868,39 +4722,7 @@ async function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): Promise<Se
       fitRecords,
       timerSliceWorkPaceMinPerKm: null,
       dataQualityFlags: uniqueDataQualityFlags,
-      base: {
-        date: capture.date,
-        title: capture.title,
-        role,
-        segment_evidence_available: false,
-        usable_for_prediction: false,
-        evidence_type: "unavailable",
-        work_reps_compared: null,
-        work_reps_planned: countPlannedWorkReps(workout),
-        work_avg_pace: null,
-        work_fastest_pace: null,
-        work_slowest_pace: null,
-        work_avg_hr: null,
-        work_max_hr: null,
-        rep_to_rep_fade_pct: null,
-        last_rep_vs_first_rep_pct: null,
-        completion_ratio: null,
-        verdict: "unavailable",
-        takeaway: buildSegmentKeyWorkoutTakeaway({
-          verdict: "unavailable",
-          role,
-          workAvgPace: null,
-          workRepsCompared: null,
-          workRepsPlanned: countPlannedWorkReps(workout),
-          evidenceWarnings: [],
-        }),
-        limitations: [
-          ...roleLimitations,
-          segmentVerdict.reason,
-          "Средний темп всей тренировки не используется как интервальное доказательство.",
-        ],
-        ...(segmentMatching ? { segment_matching: segmentMatching } : {}),
-      },
+      base: buildUnavailableSegmentKeyWorkout({ segmentMatching }),
     });
   }
 
@@ -3927,6 +4749,9 @@ async function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): Promise<Se
   const limitations = [...roleLimitations];
   if (evidenceType === "repeat_group_inferred") {
     limitations.push("Рабочие отрезки выведены из repeat-блока плана (mislabeled recovery в segment_comparison).");
+  }
+  if (evidenceType === "mislabeled_recovery_rescue") {
+    limitations.push("Рабочие отрезки выведены из mislabeled recovery rows в segment_comparison (timer-slice rescue).");
   }
   if (uniqueDataQualityFlags.length > 0) {
     limitations.push(`Флаги качества: ${uniqueDataQualityFlags.join(", ")}.`);
@@ -3992,16 +4817,21 @@ async function buildSegmentKeyWorkout(capture: RawKeyWorkoutCapture): Promise<Se
     ...(segmentMatching ? { segment_matching: segmentMatching } : {}),
   };
 
-  const hasMisalignment =
-    segmentMatching?.diagnostics.some((entry) => entry.code === "possible_timer_slice_misalignment") ??
-    false;
+  const promotionRescueContext = computeRepeatWorkoutRescueContext({
+    title: capture.title,
+    comparison: asSegmentComparison(workout),
+    selectedWorkSegments: segments,
+    diagnostics: segmentMatching?.diagnostics ?? [],
+  });
   const fitLapCandidate = segmentMatching?.fit_lap_candidate;
   if (
     segmentMatching &&
     fitLapCandidate &&
     isFitLapCandidatePromotionEligible({
       candidate: fitLapCandidate,
-      hasMisalignment,
+      hasMisalignment: promotionRescueContext.hasMisalignment,
+      repeatWorkoutRescue: promotionRescueContext.repeatWorkoutRescue,
+      partialRepeatTemplate: promotionRescueContext.partialRepeatTemplate,
       repDurationMin: titleParsed.repDurationMin,
     })
   ) {
@@ -4160,9 +4990,23 @@ function formatSustainedEffortMarkdown(candidate: SustainedEffortCandidate): str
   }
   lines.push(`  - Sustained effort: ${paceParts.join(" / ")}`);
   lines.push(`  - Evidence role: ${candidate.evidence_role}`);
+  if (candidate.threshold_eligible !== undefined) {
+    lines.push(`  - Threshold eligible: ${candidate.threshold_eligible ? "yes" : "no"}`);
+  }
+  if (candidate.prediction_evidence_status) {
+    lines.push(`  - Prediction evidence: ${candidate.prediction_evidence_status}`);
+  }
+  if (candidate.sanity_flags?.length) {
+    lines.push(`  - Sanity flags: ${candidate.sanity_flags.join(", ")}`);
+  }
   lines.push(
     `  - Used for training-implied half anchor: ${candidate.used_for_training_implied_anchor ? "yes" : "no"}`,
   );
+  if (candidate.excluded_from_training_implied_reason) {
+    lines.push(
+      `  - Excluded from training-implied anchor: ${candidate.excluded_from_training_implied_reason}`,
+    );
+  }
   if (candidate.half_pace_penalty_sec_per_km != null) {
     lines.push(`  - Penalty to half pace: +${candidate.half_pace_penalty_sec_per_km} sec/km`);
   }
@@ -4177,8 +5021,13 @@ function formatSustainedEffortMarkdown(candidate: SustainedEffortCandidate): str
 
 function formatSegmentKeyWorkoutsMarkdown(segmentKeyWorkouts: SegmentKeyWorkout[]): string[] {
   const lines: string[] = [];
-  const segmentAware = segmentKeyWorkouts.filter((workout) => workout.segment_evidence_available);
-  const withoutSegment = segmentKeyWorkouts.filter((workout) => !workout.segment_evidence_available);
+  const hasExtractedWorkEvidence = (workout: SegmentKeyWorkout): boolean =>
+    workout.segment_evidence_available ||
+    (workout.usable_for_prediction &&
+      (workout.work_reps_compared ?? 0) > 0 &&
+      workout.evidence_source === "fit_lap_candidate");
+  const segmentAware = segmentKeyWorkouts.filter(hasExtractedWorkEvidence);
+  const withoutSegment = segmentKeyWorkouts.filter((workout) => !hasExtractedWorkEvidence(workout));
 
   for (const workout of segmentAware) {
     lines.push(`- ${workout.date} · ${workout.title ?? "без названия"}`);
@@ -4229,11 +5078,38 @@ function formatSegmentKeyWorkoutsMarkdown(segmentKeyWorkouts: SegmentKeyWorkout[
       lines.push(...formatSustainedEffortMarkdown(workout.sustained_effort_candidate));
       continue;
     }
+    const failureReason = workout.work_extraction_failure_reason?.trim();
+    if (failureReason && failureReason.startsWith("segment data exists")) {
+      lines.push(`- ${workout.date} · ${workout.title ?? "без названия"}`);
+      lines.push(`  - ${failureReason}`);
+      lines.push(
+        "  - Средний темп всей тренировки не используется как интервальное доказательство.",
+      );
+      continue;
+    }
     lines.push(
       `- ${workout.date} · ${workout.title ?? "без названия"} — нет segment/FIT данных; средний темп всей тренировки не используется для прогноза интервалов.`,
     );
   }
 
+  return lines;
+}
+
+function formatSegmentCoverageDiagnosticsMarkdown(
+  diagnostics: SegmentCoverageDiagnostic[],
+): string[] {
+  if (!diagnostics.length) return [];
+  const lines: string[] = [
+    "",
+    "## Segment coverage diagnostics",
+    "| Date | Workout | Audit | Compared | Extracted | Failure / exclusion |",
+    "|---|---|---|---:|---:|---|",
+  ];
+  for (const row of diagnostics) {
+    lines.push(
+      `| ${row.date} | ${row.title ?? "—"} | ${row.segment_audit_verdict} | ${row.segment_comparison_rows_count} | ${row.extracted_work_segments_count} | ${row.work_extraction_failure_reason} |`,
+    );
+  }
   return lines;
 }
 
@@ -4402,8 +5278,19 @@ function createMarkdown(report: RacePredictionReport): string {
         ? "Недостаточно данных для уточнения прогноза — широкий ориентир."
         : "Прогноз основан на доступной опоре + segment-aware анализе ключевых тренировок.";
   if (report.training_implied_anchor?.available) {
-    anchorNote =
-      "Нет официального half anchor, поэтому уверенность ограничена; но training-implied anchor позволяет уточнить диапазон.";
+    if (report.prediction.anchor_tier_used === "near_distance_anchor") {
+      anchorNote =
+        "Нет официального half anchor; training-implied half конфликтует с race-like near-distance опорой — likely построен от консервативного near-distance anchor.";
+    } else if (
+      report.training_implied_anchor_sanity?.near_distance_anchor_effort_classification
+        ?.effort_class === "aerobic_near_distance_support"
+    ) {
+      anchorNote =
+        "Нет официального half anchor; аэробная near-distance длительная поддерживает выносливость, likely — от capped training-implied (требуется проверка тренером).";
+    } else {
+      anchorNote =
+        "Нет официального half anchor, поэтому уверенность ограничена; но training-implied anchor позволяет уточнить диапазон.";
+    }
   }
   lines.push(anchorNote);
   lines.push("");
@@ -4412,6 +5299,34 @@ function createMarkdown(report: RacePredictionReport): string {
   );
   if (report.prediction.confidence_reasons.length > 0) {
     lines.push(`Кратко: ${report.prediction.confidence_reasons.slice(0, 2).join(" ")}`);
+  }
+  if (report.prediction.prediction_flags?.includes("prediction_conflict_requires_coach_review")) {
+    lines.push("");
+    lines.push(
+      "**Конфликт прогноза: автоматический likely требует проверки тренером (training-implied vs near-distance / VDOT-style).**",
+    );
+  }
+  if (report.prediction.prediction_flags?.includes("training_implied_anchor_conflicts_with_near_distance_anchor")) {
+    lines.push("");
+    lines.push(
+      "**Training-implied half конфликтует с race-like near-distance Tier 1 anchor — likely построен от консервативной near-distance опоры.**",
+    );
+  }
+  if (report.prediction.prediction_flags?.includes("combined_evidence_requires_coach_review")) {
+    lines.push("");
+    lines.push(
+      "**Комбинированные источники расходятся: аэробная near-distance длительная + быстрые темповые блоки — требуется проверка тренером.**",
+    );
+  }
+  if (report.training_implied_anchor_sanity?.source_quality_note_ru) {
+    lines.push("");
+    lines.push(`**Качество источников:** ${report.training_implied_anchor_sanity.source_quality_note_ru}`);
+  }
+  if (report.prediction.training_implied_candidate) {
+    lines.push("");
+    lines.push(
+      `Training-implied candidate (report-only): **${report.prediction.training_implied_candidate.time_text}** (${report.prediction.training_implied_candidate.pace_text}).`,
+    );
   }
   lines.push("");
   lines.push(...formatReadinessScoresMarkdown(report.readiness_scores, report.race.distance));
@@ -4453,6 +5368,59 @@ function createMarkdown(report: RacePredictionReport): string {
     }
     for (const note of anchor.notes.slice(0, 4)) {
       lines.push(`- ${note}`);
+    }
+    const excludedSustained = report.segment_key_workouts
+      .filter(
+        (workout) =>
+          workout.sustained_effort_candidate?.available &&
+          !workout.sustained_effort_candidate?.used_for_training_implied_anchor,
+      )
+      .slice(0, 6);
+    if (excludedSustained.length > 0) {
+      lines.push("- Excluded sustained candidates:");
+      for (const workout of excludedSustained) {
+        const candidate = workout.sustained_effort_candidate!;
+        lines.push(
+          `  - ${workout.date} · ${workout.title ?? "—"} — ${candidate.excluded_from_training_implied_reason ?? "unspecified"}; role=${candidate.evidence_role}; threshold_eligible=${candidate.threshold_eligible ? "yes" : "no"}`,
+        );
+      }
+    }
+    if (report.training_implied_anchor_sanity) {
+      lines.push("");
+      lines.push("### Sanity check vs near-distance anchor");
+      const sanity = report.training_implied_anchor_sanity;
+      if (sanity.near_distance_anchor_effort_classification) {
+        const effort = sanity.near_distance_anchor_effort_classification;
+        lines.push(`- Effort class: **${effort.effort_class}**`);
+        lines.push(`- Effort reason: ${effort.reason}`);
+        if (effort.avg_hr !== null) {
+          lines.push(`- Avg HR: **${effort.avg_hr}**`);
+        }
+        if (effort.how_used.length) {
+          lines.push(`- How used: ${effort.how_used.join(", ")}`);
+        }
+      }
+      if (sanity.near_distance_anchor) {
+        lines.push(
+          `- Near-distance anchor: **${sanity.near_distance_anchor.duration_text}** (${sanity.near_distance_anchor.pace_text}), ${sanity.near_distance_anchor.source_label}.`,
+        );
+      }
+      if (sanity.training_implied_half_time_s !== null) {
+        lines.push(
+          `- Training-implied raw candidate: **${formatDurationFromSeconds(sanity.training_implied_half_time_s)}** (${formatPaceText((report.training_implied_anchor?.implied_half_pace_s_per_km ?? 0) / 60)}).`,
+        );
+      }
+      if (sanity.training_implied_faster_pct !== null) {
+        lines.push(
+          `- Conflict: training-implied **${Math.round(sanity.training_implied_faster_pct * 1000) / 10}% faster** (${sanity.severity}).`,
+        );
+      }
+      if (sanity.flags.length) {
+        lines.push(`- Flags: ${sanity.flags.join(", ")}`);
+      }
+      for (const note of sanity.notes.slice(0, 3)) {
+        lines.push(`- ${note}`);
+      }
     }
     lines.push("");
   }
@@ -4526,6 +5494,23 @@ function createMarkdown(report: RacePredictionReport): string {
   if (report.data_sources.progress_evidence_probe.path === null) {
     lines.push("- Нет кэша progress-evidence probe — тренд аэробной формы не подтверждён.");
   }
+  lines.push("");
+  lines.push("## Probe cache diagnostics");
+  for (const [label, cache] of [
+    ["Race-results", report.data_sources.race_results_probe],
+    ["Progress-evidence", report.data_sources.progress_evidence_probe],
+  ] as const) {
+    lines.push(`- ${label}: athlete_id=${cache.athlete_id}, found=${cache.found ? "yes" : "no"}`);
+    lines.push(`  - expected_dir: \`${cache.expected_dir}\``);
+    lines.push(`  - report_path: ${cache.path ? `\`${cache.path}\`` : "—"}`);
+    lines.push(`  - latest_candidate: ${cache.latest_candidate_path ? `\`${cache.latest_candidate_path}\`` : "—"}`);
+    if (cache.candidate_timestamps.length > 0) {
+      lines.push(`  - candidate_timestamps: ${cache.candidate_timestamps.slice(0, 5).join(", ")}`);
+    }
+    if (cache.run_at) {
+      lines.push(`  - run_at: ${cache.run_at}${cache.stale ? " (stale)" : ""}`);
+    }
+  }
   if (
     !report.anchors.target_distance.excluded_for_review.length &&
     report.data_sources.fit_weeks_count > 0 &&
@@ -4551,6 +5536,9 @@ function createMarkdown(report: RacePredictionReport): string {
         : "Нужны Workout Files/FIT или доработка парсера";
     lines.push(`**Рекомендация:** ${recommendationText}`);
     lines.push(`- ${audit.recommendation_note}`);
+  }
+  if (report.segment_coverage_diagnostics?.length) {
+    lines.push(...formatSegmentCoverageDiagnosticsMarkdown(report.segment_coverage_diagnostics));
   }
   lines.push("");
   lines.push("## Рекомендация по тактике");
@@ -4584,9 +5572,14 @@ function createMarkdown(report: RacePredictionReport): string {
 }
 
 async function main(): Promise<void> {
+  const totalStartedMs = probeTimingNowMs();
   const args = parseArgs(process.argv.slice(2));
-  const students = await readStudentsConfig();
+  configureProbeTiming({ enabled: args.debugTiming });
+
+  const students = await withProbeTiming("resolve_student", () => readStudentsConfig());
   const target = resolveTarget(args, students);
+  configureProbeTiming({ enabled: args.debugTiming, studentId: target.studentId });
+
   const runAt = new Date().toISOString();
   const today = runAt.slice(0, 10);
   const commandUsed = `npm run tp-race-prediction-probe -- ${process.argv.slice(2).join(" ")}`.trim();
@@ -4601,7 +5594,9 @@ async function main(): Promise<void> {
   });
 
   const weeklySummaries: Array<{ week: WeekRange; summary: WeeklySummary | null; path: string | null }> = [];
+  const weeklySummariesStartedMs = probeTimingNowMs();
   for (const week of prepWindow.weekRanges) {
+    const weekStartedMs = probeTimingNowMs();
     const summaryPath = weeklySummaryPath(target.studentId, week);
     const summary = await loadWeeklySummary(target.studentId, week);
     weeklySummaries.push({
@@ -4609,18 +5604,42 @@ async function main(): Promise<void> {
       summary,
       path: summary ? summaryPath : null,
     });
+    if (isProbeTimingEnabled()) {
+      logProbeTiming({
+        phase: "load_weekly_summary",
+        message: summary ? "week loaded" : "week missing",
+        elapsedMs: probeTimingElapsedMs(weekStartedMs),
+        data: {
+          weekFrom: week.from,
+          weekTo: week.to,
+          workoutsCount: summary?.workouts.length ?? 0,
+        },
+      });
+    }
+  }
+  if (isProbeTimingEnabled()) {
+    logProbeTiming({
+      phase: "load_weekly_summaries",
+      message: "all weeks loaded",
+      elapsedMs: probeTimingElapsedMs(weeklySummariesStartedMs),
+      data: { weeksRequested: prepWindow.weekRanges.length, weeksFound: weeklySummaries.filter((e) => e.summary).length },
+    });
   }
 
   const weeksFound = weeklySummaries.filter((entry) => entry.summary !== null).length;
   const weeksMissing = analysisWeeks.weeks - weeksFound;
 
-  const raceResultsCached = findLatestProbeReport<RaceResultsProbeReport>(
-    path.join(toolRoot, "debug", "race-results-probe"),
-    target.athleteId,
+  const raceResultsCached = await withProbeTiming("load_race_results_cache", async () =>
+    findLatestProbeReport<RaceResultsProbeReport>(
+      path.join(toolRoot, "debug", "race-results-probe"),
+      target.athleteId,
+    ),
   );
-  const progressCached = findLatestProbeReport<ProgressEvidenceReport>(
-    path.join(toolRoot, "debug", "progress-evidence"),
-    target.athleteId,
+  const progressCached = await withProbeTiming("load_progress_evidence_cache", async () =>
+    findLatestProbeReport<ProgressEvidenceReport>(
+      path.join(toolRoot, "debug", "progress-evidence"),
+      target.athleteId,
+    ),
   );
 
   const anchors = selectAnchorsFromRaceProbe(
@@ -4644,6 +5663,7 @@ async function main(): Promise<void> {
   const taperRecentDates = addDays(args.raceDate, -10);
   let taperRecentKm = 0;
 
+  const buildKeyWorkoutsStartedMs = probeTimingNowMs();
   for (const entry of weeklySummaries) {
     const summary = entry.summary;
     if (!summary) continue;
@@ -4742,17 +5762,31 @@ async function main(): Promise<void> {
     throw new Error(`Could not parse --target-time: "${args.targetTime}"`);
   }
 
-  const segmentKeyWorkouts = await buildSegmentKeyWorkouts(rawKeyWorkoutCaptures);
+  if (isProbeTimingEnabled()) {
+    logProbeTiming({
+      phase: "build_key_workouts",
+      message: "key workout captures collected",
+      elapsedMs: probeTimingElapsedMs(buildKeyWorkoutsStartedMs),
+      data: { keyWorkoutsCount: rawKeyWorkoutCaptures.length },
+    });
+  }
 
-  const trainingImpliedAnchor =
-    args.distance === "half" && !isStrongHalfRaceAnchor(anchors.primary?.kind)
-      ? computeTrainingImpliedHalfAnchor({
-          segmentKeyWorkouts,
-          longRuns,
-          weeksFound,
-          raceDistanceKm: DISTANCE_PRESETS.half.target_km,
-        })
-      : null;
+  const segmentKeyWorkouts = await withProbeTiming("build_segment_key_workouts", () =>
+    buildSegmentKeyWorkouts(rawKeyWorkoutCaptures),
+  );
+
+  const trainingImpliedAnchor = await withProbeTiming(
+    "training_implied_anchor",
+    async () =>
+      args.distance === "half" && !isStrongHalfRaceAnchor(anchors.primary?.kind)
+        ? computeTrainingImpliedHalfAnchor({
+            segmentKeyWorkouts,
+            longRuns,
+            weeksFound,
+            raceDistanceKm: DISTANCE_PRESETS.half.target_km,
+          })
+        : null,
+  );
 
   const readinessScores = computeReadinessScores({
     anchor: anchors.primary,
@@ -4774,18 +5808,28 @@ async function main(): Promise<void> {
     suspiciousWeeks,
   });
 
-  const { prediction, limitations: predictionLimitations } = computePrediction({
-    distance: args.distance,
-    anchor: anchors.primary,
-    targetTimeSeconds,
-    readinessScores,
-    segmentKeyWorkouts,
-    progressReport: progressCached.report,
-    trainingImpliedAnchor,
-    taperSignal,
-    missedWorkouts,
-    raceDate: args.raceDate,
-  });
+  const { prediction, limitations: predictionLimitations, trainingImpliedAnchorSanity } =
+    computePrediction({
+      distance: args.distance,
+      anchor: anchors.primary,
+      alternates: anchors.alternates,
+      crossDistance: anchors.crossDistance,
+      targetTimeSeconds,
+      readinessScores,
+      segmentKeyWorkouts,
+      progressReport: progressCached.report,
+      trainingImpliedAnchor,
+      taperSignal,
+      missedWorkouts,
+      raceDate: args.raceDate,
+    });
+
+  if (trainingImpliedAnchorSanity) {
+    applyTrainingImpliedSanityToSustainedBlocks({
+      segmentKeyWorkouts,
+      sanity: trainingImpliedAnchorSanity,
+    });
+  }
 
   const limitations = [
     "Read-only local probe: без Supabase, Telegram, TrainingPeaks и AI.",
@@ -4818,16 +5862,35 @@ async function main(): Promise<void> {
   const reportMdPath = path.join(outputDir, "report.md");
 
   const segmentAudit = args.segmentAudit
-    ? buildSegmentAudit(rawKeyWorkoutCaptures, args.segmentAuditJson)
+    ? await withProbeTiming("segment_audit", async () =>
+        buildSegmentAudit(rawKeyWorkoutCaptures, args.segmentAuditJson),
+      )
     : undefined;
 
-  const vdotStyleCheck = buildVdotStyleCheck({
-    targetDistance: args.distance,
-    referenceDate: args.raceDate,
-    primaryAnchor: anchors.primary,
-    trainingImpliedAnchor,
-    ePredictorLikelySeconds: prediction.likely.seconds,
+  const vdotStyleCheck = await withProbeTiming("vdot_style_check", async () =>
+    buildVdotStyleCheck({
+      targetDistance: args.distance,
+      referenceDate: args.raceDate,
+      primaryAnchor: anchors.primary,
+      trainingImpliedAnchor,
+      ePredictorLikelySeconds: prediction.likely.seconds,
+      segmentKeyWorkouts,
+    }),
+  );
+
+  const predictionFlags: string[] = [...(prediction.prediction_flags ?? [])];
+  if (vdotStyleCheck.comparison_to_e_predictor?.verdict === "strong_disagree") {
+    if (!predictionFlags.includes("prediction_conflict_requires_coach_review")) {
+      predictionFlags.push("prediction_conflict_requires_coach_review");
+    }
+  }
+  const predictionForReport =
+    predictionFlags.length > 0 ? { ...prediction, prediction_flags: predictionFlags } : prediction;
+
+  const segmentCoverageDiagnostics = buildSegmentCoverageDiagnostics({
+    segmentAudit,
     segmentKeyWorkouts,
+    trainingImpliedAnchor,
   });
 
   const report: RacePredictionReport = {
@@ -4863,13 +5926,23 @@ async function main(): Promise<void> {
       })),
       race_results_probe: {
         path: raceResultsCached.path,
-        run_at: raceResultsCached.runAt,
+        run_at: raceResultsCached.run_at,
         stale: raceResultsCached.stale,
+        athlete_id: raceResultsCached.athlete_id,
+        expected_dir: raceResultsCached.expected_dir,
+        found: raceResultsCached.found,
+        latest_candidate_path: raceResultsCached.latest_candidate_path,
+        candidate_timestamps: raceResultsCached.candidate_timestamps,
       },
       progress_evidence_probe: {
         path: progressCached.path,
-        run_at: progressCached.runAt,
+        run_at: progressCached.run_at,
         stale: progressCached.stale,
+        athlete_id: progressCached.athlete_id,
+        expected_dir: progressCached.expected_dir,
+        found: progressCached.found,
+        latest_candidate_path: progressCached.latest_candidate_path,
+        candidate_timestamps: progressCached.candidate_timestamps,
       },
       fit_weeks_count: fitWeeks,
       workout_files_present_weeks: workoutFilesWeeks,
@@ -4902,7 +5975,8 @@ async function main(): Promise<void> {
     },
     readiness_scores: readinessScores,
     ...(trainingImpliedAnchor ? { training_implied_anchor: trainingImpliedAnchor } : {}),
-    prediction,
+    ...(trainingImpliedAnchorSanity ? { training_implied_anchor_sanity: trainingImpliedAnchorSanity } : {}),
+    prediction: predictionForReport,
     limitations,
     ...(classificationDiagnostics.length > 0 ? { classification_diagnostics: classificationDiagnostics } : {}),
     output_paths: {
@@ -4911,6 +5985,9 @@ async function main(): Promise<void> {
     },
     ...(segmentAudit ? { segment_audit: segmentAudit } : {}),
     segment_key_workouts: segmentKeyWorkouts,
+    ...(segmentCoverageDiagnostics.length > 0
+      ? { segment_coverage_diagnostics: segmentCoverageDiagnostics }
+      : {}),
     vdot_style_check: vdotStyleCheck,
   };
 
@@ -4918,28 +5995,38 @@ async function main(): Promise<void> {
   await writeFile(reportMdPath, createMarkdown(report), "utf8");
 
   if (args.writeValidationLog) {
-    const validationRecord = buildValidationRecord({
-      createdAt: runAt,
-      studentId: target.studentId,
-      athleteId: target.athleteId,
-      athleteName: target.studentName,
-      raceDate: args.raceDate,
-      distance: args.distance,
-      prediction,
-      readinessScores,
-      vdotStyleCheck,
-      selectedAnchor: anchors.primary,
-      trainingImpliedAnchor,
-      weeksFound,
-      weeksRequested: analysisWeeks.weeks,
-      segmentKeyWorkouts,
-      dataQualityWarnings: [...dataWarnings].sort(),
-      predictionLimitations,
-      reportJsonPath,
-      reportMdPath,
+    const validationLogPath = await withProbeTiming("validation_log_append", async () => {
+      const validationRecord = buildValidationRecord({
+        createdAt: runAt,
+        studentId: target.studentId,
+        athleteId: target.athleteId,
+        athleteName: target.studentName,
+        raceDate: args.raceDate,
+        distance: args.distance,
+        prediction: predictionForReport,
+        readinessScores,
+        vdotStyleCheck,
+        selectedAnchor: anchors.primary,
+        trainingImpliedAnchor,
+        weeksFound,
+        weeksRequested: analysisWeeks.weeks,
+        segmentKeyWorkouts,
+        dataQualityWarnings: [...dataWarnings].sort(),
+        predictionLimitations,
+        reportJsonPath,
+        reportMdPath,
+      });
+      return appendValidationRecord(validationRecord);
     });
-    const validationLogPath = await appendValidationRecord(validationRecord);
     console.log(`validation_log: ${validationLogPath}`);
+  }
+
+  if (isProbeTimingEnabled()) {
+    logProbeTiming({
+      phase: "total",
+      message: "probe complete",
+      elapsedMs: probeTimingElapsedMs(totalStartedMs),
+    });
   }
 
   console.log("[tp-race-prediction-probe] Summary");
@@ -4962,6 +6049,31 @@ async function main(): Promise<void> {
         `training_implied_half: ${formatDurationFromSeconds(trainingImpliedAnchor.implied_half_time_s)} (${formatPaceText((trainingImpliedAnchor.implied_half_pace_s_per_km ?? 0) / 60)})`,
       );
     }
+  }
+  if (trainingImpliedAnchorSanity?.near_distance_anchor_effort_classification) {
+    const effort = trainingImpliedAnchorSanity.near_distance_anchor_effort_classification;
+    console.log(`near_distance_effort: ${effort.effort_class} (${effort.reason})`);
+    if (effort.how_used.length) {
+      console.log(`near_distance_how_used: ${effort.how_used.join(", ")}`);
+    }
+  }
+  if (trainingImpliedAnchorSanity?.near_distance_anchor) {
+    console.log(
+      `near_distance_anchor: ${trainingImpliedAnchorSanity.near_distance_anchor.duration_text} (${trainingImpliedAnchorSanity.near_distance_anchor.pace_text}) -> half ~${formatDurationFromSeconds(trainingImpliedAnchorSanity.near_distance_anchor.implied_half_time_s)}`,
+    );
+    if (trainingImpliedAnchorSanity.training_implied_faster_pct !== null) {
+      console.log(
+        `training_implied_conflict: ${Math.round(trainingImpliedAnchorSanity.training_implied_faster_pct * 1000) / 10}% faster (${trainingImpliedAnchorSanity.severity})`,
+      );
+    }
+    if (trainingImpliedAnchorSanity.flags.length) {
+      console.log(`training_implied_sanity_flags: ${trainingImpliedAnchorSanity.flags.join(", ")}`);
+    }
+  }
+  if (prediction.training_implied_candidate) {
+    console.log(
+      `training_implied_candidate_report_only: ${prediction.training_implied_candidate.time_text} (${prediction.training_implied_candidate.pace_text})`,
+    );
   }
   console.log(
     `selected_anchor: ${

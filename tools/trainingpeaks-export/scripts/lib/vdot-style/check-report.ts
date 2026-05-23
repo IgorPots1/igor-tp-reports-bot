@@ -626,6 +626,13 @@ export function formatVdotStyleCheckMarkdown(check: VdotStyleCheck): string[] {
     }),
   );
 
+  if (check.comparison_to_e_predictor?.verdict === "strong_disagree") {
+    lines.push(
+      "VDOT-style / clean training best strongly disagrees with E-Predictor. Do not rely on automatic likely without coach review.",
+    );
+    lines.push("");
+  }
+
   if (check.staleness.flagged) {
     lines.push("### Проверка актуальности anchor");
     lines.push("");

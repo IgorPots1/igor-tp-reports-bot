@@ -38,6 +38,27 @@
         "weak": 15
       }
     },
+    "training_implied_anchor_sanity": {
+      "near_half_distance_km_min": 18,
+      "near_half_distance_km_max": 23,
+      "mild_conflict_faster_pct": 0.03,
+      "strong_conflict_faster_pct": 0.05,
+      "block_automatic_likely_faster_pct": 0.07,
+      "aerobic_blend_likely_max_faster_than_floor_pct": {
+        "mild": 0.03,
+        "strong": 0.05,
+        "block": 0.07
+      },
+      "aerobic_blend_optimistic_max_faster_than_floor_pct": {
+        "mild": 0.05,
+        "strong": 0.08,
+        "block": 0.1
+      },
+      "cross_distance_race_freshness_days": {
+        "5k": 112,
+        "10k": 112
+      }
+    },
     "sustained_effort": {
       "min_duration_seconds": 2100,
       "max_duration_seconds": 3900,

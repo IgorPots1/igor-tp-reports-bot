@@ -114,6 +114,49 @@ function validateHalfMarathon(halfMarathon: unknown): void {
     expectNumber(durability[key], `half_marathon.training_implied_anchor.durability_penalty_seconds_per_km.${key}`);
   }
 
+  const sanity = expectRecord(
+    section.training_implied_anchor_sanity,
+    "half_marathon.training_implied_anchor_sanity",
+  );
+  expectNumber(sanity.near_half_distance_km_min, "half_marathon.training_implied_anchor_sanity.near_half_distance_km_min");
+  expectNumber(sanity.near_half_distance_km_max, "half_marathon.training_implied_anchor_sanity.near_half_distance_km_max");
+  expectNumber(sanity.mild_conflict_faster_pct, "half_marathon.training_implied_anchor_sanity.mild_conflict_faster_pct");
+  expectNumber(sanity.strong_conflict_faster_pct, "half_marathon.training_implied_anchor_sanity.strong_conflict_faster_pct");
+  expectNumber(
+    sanity.block_automatic_likely_faster_pct,
+    "half_marathon.training_implied_anchor_sanity.block_automatic_likely_faster_pct",
+  );
+  const crossFreshness = expectRecord(
+    sanity.cross_distance_race_freshness_days,
+    "half_marathon.training_implied_anchor_sanity.cross_distance_race_freshness_days",
+  );
+  expectNumber(crossFreshness["5k"], "half_marathon.training_implied_anchor_sanity.cross_distance_race_freshness_days.5k");
+  expectNumber(crossFreshness["10k"], "half_marathon.training_implied_anchor_sanity.cross_distance_race_freshness_days.10k");
+  const likelyCap = expectRecord(
+    sanity.aerobic_blend_likely_max_faster_than_floor_pct,
+    "half_marathon.training_implied_anchor_sanity.aerobic_blend_likely_max_faster_than_floor_pct",
+  );
+  const optimisticCap = expectRecord(
+    sanity.aerobic_blend_optimistic_max_faster_than_floor_pct,
+    "half_marathon.training_implied_anchor_sanity.aerobic_blend_optimistic_max_faster_than_floor_pct",
+  );
+  for (const key of ["mild", "strong", "block"] as const) {
+    expectNumber(likelyCap[key], `half_marathon.training_implied_anchor_sanity.aerobic_blend_likely_max_faster_than_floor_pct.${key}`);
+    expectNumber(
+      optimisticCap[key],
+      `half_marathon.training_implied_anchor_sanity.aerobic_blend_optimistic_max_faster_than_floor_pct.${key}`,
+    );
+  }
+  assert(
+    likelyCap.mild < likelyCap.strong && likelyCap.strong < likelyCap.block,
+    "aerobic_blend_likely_max_faster_than_floor_pct must increase: mild < strong < block.",
+  );
+  assert(
+    sanity.mild_conflict_faster_pct < sanity.strong_conflict_faster_pct &&
+      sanity.strong_conflict_faster_pct < sanity.block_automatic_likely_faster_pct,
+    "training_implied_anchor_sanity conflict thresholds must increase: mild < strong < block.",
+  );
+
   const sustained = expectRecord(section.sustained_effort, "half_marathon.sustained_effort");
   expectNumber(sustained.min_duration_seconds, "half_marathon.sustained_effort.min_duration_seconds");
   expectNumber(sustained.max_duration_seconds, "half_marathon.sustained_effort.max_duration_seconds");

@@ -1,5 +1,11 @@
 import { loadEPredictorConstants } from "./e-predictor-constants.ts";
+import { isProbeTimingEnabled, logProbeTiming, probeTimingElapsedMs, probeTimingNowMs } from "./probe-timing.ts";
 import { formatDurationFromSeconds, formatPaceText } from "./race-distance.ts";
+
+const FIT_RECORD_WINDOW_MAX_RECORDS = 4_000;
+const FIT_RECORD_WINDOW_DOWNSAMPLE_TARGET = 3_000;
+const FIT_RECORD_WINDOW_MAX_ELAPSED_MS = 5_000;
+const FIT_RECORD_WINDOW_START_STRIDE = 2;
 
 export type SustainedEffortSource =
   | "fit_record_window"
@@ -11,10 +17,27 @@ export type SustainedEffortSource =
 
 export type SustainedEffortEvidenceRole =
   | "half_specific_sustained"
-  | "threshold_support"
-  | "steady_support";
+  | "threshold_tempo_sustained"
+  | "steady_support"
+  | "long_run_endurance_support"
+  | "easy_long_run_support"
+  | "unknown_sustained";
+
+const THRESHOLD_ANCHOR_EVIDENCE_ROLES: ReadonlySet<SustainedEffortEvidenceRole> = new Set([
+  "half_specific_sustained",
+  "threshold_tempo_sustained",
+]);
 
 export type SustainedEffortConfidence = "high" | "medium" | "low" | "none";
+
+export type ExcludedFromTrainingImpliedReason =
+  | "long_run_endurance_support_only"
+  | "no_explicit_tempo_marker"
+  | "near_distance_conflict"
+  | "low_confidence"
+  | "severe_quality_flags"
+  | "insufficient_duration"
+  | "missing_pace";
 
 export type SustainedEffortCandidate = {
   available: boolean;
@@ -32,6 +55,13 @@ export type SustainedEffortCandidate = {
   evidence_role: SustainedEffortEvidenceRole;
   half_pace_penalty_sec_per_km?: number | null;
   used_for_training_implied_anchor?: boolean;
+  excluded_from_training_implied_reason?: ExcludedFromTrainingImpliedReason | null;
+  threshold_eligible?: boolean;
+  prediction_evidence_status?:
+    | "supports_current_shape"
+    | "report_only_until_coach_review"
+    | "low_confidence";
+  sanity_flags?: string[];
   notes: string[];
 };
 
@@ -106,6 +136,24 @@ const SUSTAINED_STANDALONE_TITLE_PATTERN = /^\s*(\d{2,3})\s*мин(?:$|\s|[·\-�
 const SUSTAINED_TEXT_PATTERN =
   /\b(40|50|60)\s*мин(?:ут(?:а|ы)?)?\b|\b\d+\s*[x×хX]\s*25\s*мин|\bтемп\b|\bпо\s*темпу\b|\bsteady\b|\btempo\b/i;
 const LONG_RUN_TITLE_PATTERN = /\b(long run|long\b|длительн|длинн|lsd|продолжительн)\b/i;
+const LONG_RUN_DURATION_RUN_TITLE_PATTERN = /^\s*(\d{2,3})\s*мин(?:ут(?:а|ы)?)?\s+(?:бег|run)\b/i;
+const TEMPO_THRESHOLD_TEXT_PATTERN =
+  /\d+\s*мин(?:ут(?:а|ы)?)?\s*темп|(?:^|[\s,.:;(\-–—])(?:tempo|threshold|порог|steady hard|hm pace|race pace|half marathon pace|по\s*темпу|темп(?:\s|$|[·\-–—]))/i;
+
+function hasExplicitTempoThresholdMarker(title: string | null, text: string): boolean {
+  const titleTrimmed = (title ?? "").trim();
+  if (/\d+\s*мин(?:ут(?:а|ы)?)?\s*темп/i.test(titleTrimmed)) return true;
+  if (/^\s*\d+\s*мин(?:\s|$|[·\-–—])/i.test(titleTrimmed) && /\sтемп(?:\s|$|[·\-–—])/i.test(titleTrimmed)) {
+    return true;
+  }
+  return TEMPO_THRESHOLD_TEXT_PATTERN.test(text);
+}
+const PROGRESSIVE_LONG_RUN_PATTERN =
+  /\b(progressive|fast finish|fast-finish|ускорени|прогресс|hm pace|race pace)\b/i;
+const LONG_RUN_WORKOUT_MIN_MINUTES = 70;
+const PLANNED_CONTINUOUS_SUSTAINED_MAX_EXTRA_MINUTES = 30;
+const HARD_SUSTAINED_HR_BPM = 155;
+const HARD_SUSTAINED_PACE_MAX_MIN_PER_KM = 5.5;
 const GEL_TIMING_PATTERN = /\bгел(?:ь|я)\s+на\s+\d+\s*мин/i;
 const EASY_RECOVERY_PATTERN =
   /\b(easy|recovery|лёгк|легк|восстанов|recovery run|легкий бег|лёгкий бег)\b/i;
@@ -140,9 +188,72 @@ function parseMinutesFromTitle(title: string | null): number | null {
   return null;
 }
 
+function isPlannedContinuousSustainedWorkoutContext(
+  workout: SustainedEffortWorkoutLike,
+  extractedBlockMinutes: number | null = null,
+): boolean {
+  const title = (workout.title ?? "").trim();
+  const text = `${title} ${workout.planned?.description ?? workout.description ?? ""}`;
+
+  if (LONG_RUN_TITLE_PATTERN.test(title)) return false;
+  if (LONG_RUN_DURATION_RUN_TITLE_PATTERN.test(title)) return false;
+  if (EASY_RECOVERY_PATTERN.test(text)) return false;
+  if (PROGRESSIVE_LONG_RUN_PATTERN.test(text) && !hasExplicitTempoThresholdMarker(workout.title, text)) {
+    return false;
+  }
+
+  let plannedMinutes: number | null = null;
+  const titleMinutes = parseMinutesFromTitle(workout.title);
+  if (
+    titleMinutes !== null &&
+    titleMinutes >= 35 &&
+    titleMinutes <= 65 &&
+    SUSTAINED_STANDALONE_TITLE_PATTERN.test(title)
+  ) {
+    plannedMinutes = titleMinutes;
+  }
+
+  if (plannedMinutes === null) {
+    const segments = workout.planned?.segments ?? [];
+    const mainSegments = segments.filter(
+      (segment) =>
+        segment.is_rest !== true &&
+        segment.segment_type !== "warmup" &&
+        segment.segment_type !== "cooldown" &&
+        (segment.duration_minutes ?? 0) >= 35 &&
+        (segment.duration_minutes ?? 0) <= 65,
+    );
+    if (mainSegments.length === 1) {
+      plannedMinutes = mainSegments[0]!.duration_minutes ?? null;
+    }
+  }
+
+  if (plannedMinutes === null) return false;
+
+  const blockMinutes = extractedBlockMinutes ?? plannedMinutes;
+  if (blockMinutes < 35 || blockMinutes > 65) return false;
+
+  const completedMinutes = workout.completed_duration_minutes;
+  if (completedMinutes != null) {
+    const sustainedSpan = Math.max(plannedMinutes, blockMinutes);
+    if (completedMinutes - sustainedSpan > PLANNED_CONTINUOUS_SUSTAINED_MAX_EXTRA_MINUTES) {
+      if (
+        completedMinutes >= LONG_RUN_WORKOUT_MIN_MINUTES &&
+        !hasExplicitTempoThresholdMarker(workout.title, text)
+      ) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
 function inferPlannedSustainedMinutes(workout: SustainedEffortWorkoutLike): number | null {
   const fromTitle = parseMinutesFromTitle(workout.title);
-  if (fromTitle !== null && fromTitle >= 35 && fromTitle <= 65) return fromTitle;
+  if (fromTitle !== null && fromTitle >= 35 && fromTitle <= 65 && isPlannedContinuousSustainedWorkoutContext(workout)) {
+    return fromTitle;
+  }
 
   const segments = workout.planned?.segments ?? [];
   const mainSegments = segments.filter(
@@ -191,15 +302,231 @@ export function isQualifyingSustainedEffortWorkout(workout: SustainedEffortWorko
   return mainComparison !== undefined;
 }
 
-function classifySustainedEvidenceRole(
-  durationSeconds: number | null,
-  plannedMinutes: number | null,
-): SustainedEffortEvidenceRole {
+function isTempoThresholdWorkoutContext(
+  workout: SustainedEffortWorkoutLike,
+  extractedBlockMinutes: number | null = null,
+): boolean {
+  const text = `${workout.title ?? ""} ${workout.planned?.description ?? workout.description ?? ""}`;
+  if (hasExplicitTempoThresholdMarker(workout.title, text)) return true;
+  if (PROGRESSIVE_LONG_RUN_PATTERN.test(text)) return true;
+
+  if (isLongRunWorkoutContext(workout, extractedBlockMinutes)) {
+    return false;
+  }
+
+  const roleLower = workout.role.toLowerCase();
+  if (roleLower === "tempo_threshold") return true;
+
+  const targetFastMinPerKm = findPlannedTargetFastMinPerKm(workout);
+  const avgPaceMinPerKm = workout.avg_pace_min_per_km;
+  if (
+    targetFastMinPerKm !== null &&
+    avgPaceMinPerKm !== null &&
+    avgPaceMinPerKm <= targetFastMinPerKm + 0.15
+  ) {
+    return true;
+  }
+
+  const avgHr = workout.avg_hr;
+  if (avgHr != null && avgHr >= HARD_SUSTAINED_HR_BPM) return true;
+
+  return false;
+}
+
+function isLongRunWorkoutContext(
+  workout: SustainedEffortWorkoutLike,
+  extractedBlockMinutes: number | null = null,
+): boolean {
+  const title = workout.title ?? "";
+  const titleTrimmed = title.trim();
+  const text = `${title} ${workout.planned?.description ?? workout.description ?? ""}`;
+
+  if (isPlannedContinuousSustainedWorkoutContext(workout, extractedBlockMinutes)) {
+    return false;
+  }
+
+  if (hasExplicitTempoThresholdMarker(workout.title, text)) {
+    const titleDurationMinutes = parseMinutesFromTitle(workout.title);
+    if (
+      titleDurationMinutes !== null &&
+      titleDurationMinutes >= 35 &&
+      titleDurationMinutes <= 65
+    ) {
+      return false;
+    }
+  }
+
+  if ((workout.intensity_flags ?? []).includes("long_run")) return true;
+  if (LONG_RUN_TITLE_PATTERN.test(titleTrimmed)) return true;
+
+  const roleLower = workout.role.toLowerCase();
+  if (roleLower.includes("long_run") || roleLower === "long run") return true;
+
+  const titleDurationMinutes = parseMinutesFromTitle(workout.title);
+  if (
+    titleDurationMinutes !== null &&
+    titleDurationMinutes >= 35 &&
+    titleDurationMinutes <= 65 &&
+    SUSTAINED_STANDALONE_TITLE_PATTERN.test(titleTrimmed) &&
+    !LONG_RUN_DURATION_RUN_TITLE_PATTERN.test(titleTrimmed) &&
+    !LONG_RUN_TITLE_PATTERN.test(titleTrimmed)
+  ) {
+    return false;
+  }
+
+  if (
+    titleDurationMinutes !== null &&
+    titleDurationMinutes >= LONG_RUN_WORKOUT_MIN_MINUTES &&
+    !hasExplicitTempoThresholdMarker(workout.title, text)
+  ) {
+    return true;
+  }
+
+  const durationRunMatch = titleTrimmed.match(LONG_RUN_DURATION_RUN_TITLE_PATTERN);
+  if (durationRunMatch) {
+    const totalMinutes = Number(durationRunMatch[1]);
+    if (
+      Number.isFinite(totalMinutes) &&
+      totalMinutes >= LONG_RUN_WORKOUT_MIN_MINUTES &&
+      !hasExplicitTempoThresholdMarker(workout.title, text)
+    ) {
+      return true;
+    }
+  }
+
+  const completedMinutes = workout.completed_duration_minutes;
+  if (
+    completedMinutes != null &&
+    completedMinutes >= LONG_RUN_WORKOUT_MIN_MINUTES &&
+    !hasExplicitTempoThresholdMarker(workout.title, text)
+  ) {
+    return true;
+  }
+
+  if (
+    extractedBlockMinutes !== null &&
+    completedMinutes != null &&
+    completedMinutes >= LONG_RUN_WORKOUT_MIN_MINUTES &&
+    completedMinutes - extractedBlockMinutes >= 20 &&
+    !hasExplicitTempoThresholdMarker(workout.title, text)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function isHardSustainedBlock(input: {
+  blockPaceMinPerKm: number | null;
+  blockAvgHr: number | null;
+  targetFastMinPerKm: number | null;
+  isLongRun: boolean;
+  isTempoThreshold: boolean;
+}): boolean {
+  if (input.blockAvgHr != null && input.blockAvgHr >= HARD_SUSTAINED_HR_BPM) return true;
+  if (input.blockPaceMinPerKm === null) return false;
+  if (input.isLongRun) {
+    return input.isTempoThreshold;
+  }
+  if (
+    input.targetFastMinPerKm !== null &&
+    input.blockPaceMinPerKm <= input.targetFastMinPerKm + 0.15
+  ) {
+    return true;
+  }
+  if (input.blockPaceMinPerKm <= HARD_SUSTAINED_PACE_MAX_MIN_PER_KM) return true;
+  return false;
+}
+
+function classifySustainedEvidenceRole(input: {
+  workout: SustainedEffortWorkoutLike;
+  durationSeconds: number | null;
+  plannedMinutes: number | null;
+  blockPaceMinPerKm: number | null;
+  blockAvgHr: number | null;
+  targetFastMinPerKm: number | null;
+}): SustainedEffortEvidenceRole {
   const minutes =
-    durationSeconds !== null ? durationSeconds / 60 : plannedMinutes ?? 0;
-  if (minutes >= 40 && minutes <= 65) return "half_specific_sustained";
-  if (minutes >= 25 && minutes < 40) return "threshold_support";
+    input.durationSeconds !== null ? input.durationSeconds / 60 : input.plannedMinutes ?? 0;
+  const text = `${input.workout.title ?? ""} ${input.workout.planned?.description ?? input.workout.description ?? ""}`;
+  const isLongRun = isLongRunWorkoutContext(input.workout, minutes);
+  const isTempoThreshold = isTempoThresholdWorkoutContext(input.workout, minutes);
+  const isHardBlock = isHardSustainedBlock({
+    blockPaceMinPerKm: input.blockPaceMinPerKm,
+    blockAvgHr: input.blockAvgHr,
+    targetFastMinPerKm: input.targetFastMinPerKm,
+    isLongRun,
+    isTempoThreshold,
+  });
+  const isProgressiveLongRun = PROGRESSIVE_LONG_RUN_PATTERN.test(text);
+
+  if (isLongRun) {
+    if ((isTempoThreshold || isProgressiveLongRun) && isHardBlock) {
+      if (minutes >= 40 && minutes <= 65) return "half_specific_sustained";
+      if (minutes >= 25) return "threshold_tempo_sustained";
+    }
+    if (EASY_RECOVERY_PATTERN.test(text)) return "easy_long_run_support";
+    return "long_run_endurance_support";
+  }
+
+  if (isTempoThreshold || isHardBlock) {
+    if (minutes >= 40 && minutes <= 65) return "half_specific_sustained";
+    if (minutes >= 25) return "threshold_tempo_sustained";
+  }
+
+  const titleTrimmed = (input.workout.title ?? "").trim();
+  if (
+    SUSTAINED_STANDALONE_TITLE_PATTERN.test(titleTrimmed) &&
+    minutes >= 35 &&
+    minutes <= 65 &&
+    isHardBlock
+  ) {
+    return "half_specific_sustained";
+  }
+
+  if (minutes >= 40 && minutes <= 65) return "unknown_sustained";
+  if (minutes >= 25 && minutes < 40) return "threshold_tempo_sustained";
   return "steady_support";
+}
+
+export function isSustainedRoleEligibleForThresholdAnchor(
+  role: SustainedEffortEvidenceRole,
+): boolean {
+  return THRESHOLD_ANCHOR_EVIDENCE_ROLES.has(role);
+}
+
+function computeExcludedFromTrainingImpliedReason(input: {
+  available: boolean;
+  predictionEligible: boolean;
+  evidenceRole: SustainedEffortEvidenceRole;
+  confidence: SustainedEffortConfidence;
+  durationSeconds: number | null;
+  paceSecondsPerKm: number | null;
+  severeFlags: boolean;
+}): ExcludedFromTrainingImpliedReason | null {
+  if (!input.available) return "missing_pace";
+  if (input.predictionEligible) return null;
+  if (input.severeFlags) return "severe_quality_flags";
+  if (
+    input.evidenceRole === "long_run_endurance_support" ||
+    input.evidenceRole === "easy_long_run_support"
+  ) {
+    return "long_run_endurance_support_only";
+  }
+  if (!isSustainedRoleEligibleForThresholdAnchor(input.evidenceRole)) {
+    return "no_explicit_tempo_marker";
+  }
+  const cfg = sustainedCfg();
+  if ((input.durationSeconds ?? 0) < cfg.promotion_min_duration_seconds) {
+    return "insufficient_duration";
+  }
+  if (input.paceSecondsPerKm == null || input.paceSecondsPerKm <= 0) {
+    return "missing_pace";
+  }
+  if (input.confidence === "low" || input.confidence === "none") {
+    return "low_confidence";
+  }
+  return "low_confidence";
 }
 
 function isRecoveryOrEasyPace(paceMinPerKm: number, targetFastMinPerKm: number | null): boolean {
@@ -428,6 +755,20 @@ function findPlannedTargetSlowMinPerKm(workout: SustainedEffortWorkoutLike): num
   return null;
 }
 
+function downsampleFitRecords(records: FitRecordLike[], targetCount: number): FitRecordLike[] {
+  if (records.length <= targetCount) return records;
+  const stride = Math.ceil(records.length / targetCount);
+  const downsampled: FitRecordLike[] = [];
+  for (let index = 0; index < records.length; index += stride) {
+    downsampled.push(records[index]!);
+  }
+  const last = records[records.length - 1]!;
+  if (downsampled[downsampled.length - 1] !== last) {
+    downsampled.push(last);
+  }
+  return downsampled;
+}
+
 function extractFromFitRecordWindow(input: {
   fitRecords: FitRecordLike[] | null;
   workout: SustainedEffortWorkoutLike;
@@ -445,10 +786,26 @@ function extractFromFitRecordWindow(input: {
   notes: string[];
 } {
   const notes: string[] = [];
-  const records = normalizeFitRecords(input.fitRecords);
-  if (!records.length) {
+  const normalizedRecords = normalizeFitRecords(input.fitRecords);
+  if (!normalizedRecords.length) {
     notes.push("FIT records недоступны в parsed export.");
     return { block: null, notes };
+  }
+
+  const extractionStartedMs = probeTimingNowMs();
+  let records = normalizedRecords;
+  let startStride = 1;
+  const guardDiagnostics: string[] = [];
+
+  if (records.length > FIT_RECORD_WINDOW_MAX_RECORDS) {
+    records = downsampleFitRecords(records, FIT_RECORD_WINDOW_DOWNSAMPLE_TARGET);
+    guardDiagnostics.push(
+      `FIT records downsampled ${normalizedRecords.length}→${records.length} for sustained window search.`,
+    );
+  }
+  if (records.length > FIT_RECORD_WINDOW_DOWNSAMPLE_TARGET) {
+    startStride = FIT_RECORD_WINDOW_START_STRIDE;
+    guardDiagnostics.push(`FIT record window start stride=${startStride}.`);
   }
 
   const cfg = sustainedCfg();
@@ -459,22 +816,38 @@ function extractFromFitRecordWindow(input: {
     durationSeconds: number;
     distanceMeters: number;
     paceMinPerKm: number;
-    avgHr: number | null;
-    ngpSecondsPerKm: number | null;
     score: number;
     startIndex: number;
     endIndex: number;
   };
 
-  const candidates: WindowCandidate[] = [];
-  for (let startIndex = 0; startIndex < records.length - 1; startIndex += 1) {
+  let bestCandidate: WindowCandidate | null = null;
+  let guardTriggered = false;
+  let minEndIndex = 1;
+
+  for (let startIndex = 0; startIndex < records.length - 1; startIndex += startStride) {
+    if (probeTimingElapsedMs(extractionStartedMs) > FIT_RECORD_WINDOW_MAX_ELAPSED_MS) {
+      guardTriggered = true;
+      guardDiagnostics.push(
+        `FIT record window search stopped after ${FIT_RECORD_WINDOW_MAX_ELAPSED_MS}ms (partial results kept).`,
+      );
+      break;
+    }
+
+    if (minEndIndex <= startIndex) minEndIndex = startIndex + 1;
     const start = records[startIndex]!;
-    for (let endIndex = startIndex + 1; endIndex < records.length; endIndex += 1) {
+
+    while (minEndIndex < records.length) {
+      const durationSeconds = records[minEndIndex]!.timer_time_seconds - start.timer_time_seconds;
+      if (durationSeconds >= cfg.min_duration_seconds) break;
+      minEndIndex += 1;
+    }
+
+    for (let endIndex = minEndIndex; endIndex < records.length; endIndex += 1) {
       const end = records[endIndex]!;
       const durationSeconds = end.timer_time_seconds - start.timer_time_seconds;
-      if (durationSeconds < cfg.min_duration_seconds || durationSeconds > cfg.max_duration_seconds) {
-        continue;
-      }
+      if (durationSeconds > cfg.max_duration_seconds) break;
+
       if (Math.abs(durationSeconds - targetSeconds) > durationToleranceSeconds) continue;
 
       const distanceMeters = end.distance_meters - start.distance_meters;
@@ -493,37 +866,58 @@ function extractFromFitRecordWindow(input: {
       });
       if (score <= 0) continue;
 
-      const windowRecords = records.slice(startIndex, endIndex + 1);
-      const hrValues = windowRecords
-        .map((record) => record.heart_rate)
-        .filter((hr): hr is number => hr != null && hr > 0);
-      const avgHr =
-        hrValues.length > 0
-          ? Math.round(hrValues.reduce((sum, hr) => sum + hr, 0) / hrValues.length)
-          : null;
-
-      candidates.push({
+      const candidate: WindowCandidate = {
         durationSeconds,
         distanceMeters,
         paceMinPerKm,
-        avgHr,
-        ngpSecondsPerKm: computeWindowNgpSecondsPerKm(windowRecords),
         score,
         startIndex,
         endIndex,
-      });
+      };
+
+      if (!bestCandidate || candidate.score > bestCandidate.score) {
+        bestCandidate = candidate;
+      }
     }
   }
 
-  if (!candidates.length) {
+  if (isProbeTimingEnabled()) {
+    logProbeTiming({
+      phase: "sustained_fit_record_window",
+      message: "extractFromFitRecordWindow",
+      elapsedMs: probeTimingElapsedMs(extractionStartedMs),
+      data: {
+        workoutDate: input.workout.date,
+        workoutTitle: input.workout.title,
+        recordsCount: normalizedRecords.length,
+        searchRecordsCount: records.length,
+        candidatesCount: bestCandidate ? 1 : 0,
+        guardTriggered,
+      },
+    });
+  }
+
+  if (guardDiagnostics.length > 0) {
+    notes.push(...guardDiagnostics);
+  }
+
+  if (!bestCandidate) {
     notes.push("В FIT records нет непрерывного блока, близкого к planned sustained window.");
     return { block: null, notes };
   }
 
-  candidates.sort((left, right) => right.score - left.score);
-  const best = candidates[0]!;
+  const best = bestCandidate;
+  const windowRecords = records.slice(best.startIndex, best.endIndex + 1);
+  const hrValues = windowRecords
+    .map((record) => record.heart_rate)
+    .filter((hr): hr is number => hr != null && hr > 0);
+  const avgHr =
+    hrValues.length > 0
+      ? Math.round(hrValues.reduce((sum, hr) => sum + hr, 0) / hrValues.length)
+      : null;
+  const ngpSecondsPerKm = computeWindowNgpSecondsPerKm(windowRecords);
   const ngpText =
-    best.ngpSecondsPerKm != null ? ` / NGP ${formatPaceSecondsPerKm(best.ngpSecondsPerKm)}` : "";
+    ngpSecondsPerKm != null ? ` / NGP ${formatPaceSecondsPerKm(ngpSecondsPerKm)}` : "";
   notes.push(
     `FIT record window: ${formatDurationFromSeconds(Math.round(best.durationSeconds))} / ${(best.distanceMeters / 1000).toFixed(2)} км / ${formatPaceText(best.paceMinPerKm)}${ngpText}.`,
   );
@@ -536,8 +930,8 @@ function extractFromFitRecordWindow(input: {
       duration_seconds: Math.round(best.durationSeconds),
       distance_km: Math.round((best.distanceMeters / 1000) * 100) / 100,
       pace_seconds_per_km: paceMinPerKmToSeconds(best.paceMinPerKm),
-      ngp_seconds_per_km: best.ngpSecondsPerKm,
-      avg_hr: best.avgHr,
+      ngp_seconds_per_km: ngpSecondsPerKm,
+      avg_hr: avgHr,
     },
     notes,
   };
@@ -846,7 +1240,15 @@ export function buildSustainedEffortCandidate(input: {
 
   const selected = ranked[0]!;
   const block = selected.block;
-  const evidenceRole = classifySustainedEvidenceRole(block.duration_seconds, plannedMinutes);
+  const blockPaceMinPerKm = block.pace_seconds_per_km / 60;
+  const evidenceRole = classifySustainedEvidenceRole({
+    workout: input.workout,
+    durationSeconds: block.duration_seconds,
+    plannedMinutes,
+    blockPaceMinPerKm,
+    blockAvgHr: block.avg_hr,
+    targetFastMinPerKm,
+  });
   const confidence = assessSustainedConfidence({
     source: selected.source,
     durationSeconds: block.duration_seconds,
@@ -864,12 +1266,24 @@ export function buildSustainedEffortCandidate(input: {
   });
 
   const cfg = sustainedCfg();
+  const severeQualityFlags =
+    selected.severeFlags || (input.dataQualityFlags ?? []).some((flag) => SEVERE_DATA_QUALITY_FLAGS.has(flag));
+  const thresholdEligible = isSustainedRoleEligibleForThresholdAnchor(evidenceRole);
   const promotionEligible =
     block.duration_seconds >= cfg.promotion_min_duration_seconds &&
     block.pace_seconds_per_km > 0 &&
     (confidence === "medium" || confidence === "high") &&
-    !selected.severeFlags &&
-    evidenceRole === "half_specific_sustained";
+    !severeQualityFlags &&
+    thresholdEligible;
+  const excludedFromTrainingImpliedReason = computeExcludedFromTrainingImpliedReason({
+    available: true,
+    predictionEligible: promotionEligible,
+    evidenceRole,
+    confidence,
+    durationSeconds: block.duration_seconds,
+    paceSecondsPerKm: block.pace_seconds_per_km,
+    severeFlags: severeQualityFlags,
+  });
 
   if (timerSlicePaceSecondsPerKm !== null && block.pace_seconds_per_km + 8 < timerSlicePaceSecondsPerKm) {
     notes.push(
@@ -892,6 +1306,8 @@ export function buildSustainedEffortCandidate(input: {
     max_hr: undefined,
     evidence_role: evidenceRole,
     half_pace_penalty_sec_per_km: penalty,
+    excluded_from_training_implied_reason: excludedFromTrainingImpliedReason,
+    threshold_eligible: thresholdEligible,
     notes,
   };
 }

@@ -27,6 +27,9 @@ const expectOkCases: ParseCase[] = [
   { text: "перенеси тренировку на 2026-05-16", expectOk: true },
   { text: "перенеси бег с четверга на пятницу", expectOk: true },
   { text: "переставь легкую на субботу", expectOk: true },
+  { text: "Привет, давай Лонг перенесем на завтра", expectOk: true },
+  { text: "Лонг давай завтра", expectOk: true },
+  { text: "перенеси длительную на завтра", expectOk: true },
 ];
 
 /**
@@ -45,6 +48,8 @@ const expectRejectCases: ParseCase[] = [
   { text: "давай завтра", expectOk: false },
   { text: "сегодня не получится", expectOk: false },
   { text: "у меня болит нога", expectOk: false },
+  { text: "лонг был тяжелый", expectOk: false },
+  { text: "завтра побегу легко", expectOk: false },
   { text: "сегодня не успеваю, можно завтра?", expectOk: false },
   { text: "перенеси тренировку", expectOk: false },
   { text: "завтра или в пятницу", expectOk: false },
