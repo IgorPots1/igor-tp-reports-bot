@@ -57,6 +57,13 @@ import {
   buildValidationRecord,
 } from "./lib/prediction-validation-log.ts";
 import {
+  buildPredictionEstimatorDiagnostics,
+  formatEstimatorBreakdownMarkdown,
+  type EstimatorDiagnosticsResult,
+  type PredictionEstimator,
+  type ThresholdClusterDiagnostic,
+} from "./lib/e-predictor-estimator-diagnostics.ts";
+import {
   buildVdotStyleCheck,
   formatVdotStyleCheckMarkdown,
   type VdotStyleCheck,
@@ -676,6 +683,10 @@ type RacePredictionReport = {
   segment_key_workouts?: SegmentKeyWorkout[];
   segment_coverage_diagnostics?: SegmentCoverageDiagnostic[];
   vdot_style_check: VdotStyleCheck;
+  estimators?: PredictionEstimator[];
+  threshold_cluster_diagnostic?: ThresholdClusterDiagnostic;
+  estimator_coach_notes?: string[];
+  estimator_warnings?: string[];
 };
 
 const TEMPO_PATTERN =
@@ -5300,6 +5311,17 @@ function createMarkdown(report: RacePredictionReport): string {
   if (report.prediction.confidence_reasons.length > 0) {
     lines.push(`Кратко: ${report.prediction.confidence_reasons.slice(0, 2).join(" ")}`);
   }
+  if (report.estimators?.length) {
+    lines.push("");
+    lines.push(
+      ...formatEstimatorBreakdownMarkdown({
+        estimators: report.estimators,
+        threshold_cluster_diagnostic: report.threshold_cluster_diagnostic ?? null,
+        coach_notes: report.estimator_coach_notes ?? [],
+        warnings: report.estimator_warnings ?? [],
+      }),
+    );
+  }
   if (report.prediction.prediction_flags?.includes("prediction_conflict_requires_coach_review")) {
     lines.push("");
     lines.push(
@@ -5878,14 +5900,26 @@ async function main(): Promise<void> {
     }),
   );
 
-  const predictionFlags: string[] = [...(prediction.prediction_flags ?? [])];
+  const estimatorDiagnostics: EstimatorDiagnosticsResult = buildPredictionEstimatorDiagnostics({
+    targetDistance: args.distance,
+    raceDate: args.raceDate,
+    primaryAnchor: anchors.primary,
+    prediction: { conservative: prediction.conservative },
+    raceResultsProbe: raceResultsCached.report,
+    segmentKeyWorkouts,
+  });
+
+  const predictionFlags: string[] = [
+    ...(prediction.prediction_flags ?? []),
+    ...estimatorDiagnostics.flags,
+  ];
   if (vdotStyleCheck.comparison_to_e_predictor?.verdict === "strong_disagree") {
     if (!predictionFlags.includes("prediction_conflict_requires_coach_review")) {
       predictionFlags.push("prediction_conflict_requires_coach_review");
     }
   }
   const predictionForReport =
-    predictionFlags.length > 0 ? { ...prediction, prediction_flags: predictionFlags } : prediction;
+    predictionFlags.length > 0 ? { ...prediction, prediction_flags: [...new Set(predictionFlags)] } : prediction;
 
   const segmentCoverageDiagnostics = buildSegmentCoverageDiagnostics({
     segmentAudit,
@@ -5989,6 +6023,16 @@ async function main(): Promise<void> {
       ? { segment_coverage_diagnostics: segmentCoverageDiagnostics }
       : {}),
     vdot_style_check: vdotStyleCheck,
+    estimators: estimatorDiagnostics.estimators,
+    ...(estimatorDiagnostics.threshold_cluster_diagnostic
+      ? { threshold_cluster_diagnostic: estimatorDiagnostics.threshold_cluster_diagnostic }
+      : {}),
+    ...(estimatorDiagnostics.coach_notes.length > 0
+      ? { estimator_coach_notes: estimatorDiagnostics.coach_notes }
+      : {}),
+    ...(estimatorDiagnostics.warnings.length > 0
+      ? { estimator_warnings: estimatorDiagnostics.warnings }
+      : {}),
   };
 
   await writeFile(reportJsonPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
