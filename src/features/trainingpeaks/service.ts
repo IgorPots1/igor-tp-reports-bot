@@ -75,6 +75,7 @@ import {
   type TrainingPeaksRaceResultsProbeRequestJson,
   type TrainingPeaksStudent,
   type TrainingPeaksStudentThread,
+  type TrainingPeaksTelegramFormality,
   TrainingPeaksStudentThreadConflictError,
   type TrainingPeaksWeek,
   type TrainingPeaksWeeklyReport,
@@ -83,11 +84,14 @@ import {
   upsertTrainingPeaksBusinessChatFromMessage as upsertTrainingPeaksBusinessChatFromMessageInRepository,
   type UpdateTrainingPeaksStudentTelegramContactInput,
   type UpdateTrainingPeaksStudentTelegramContactParams,
+  type UpdateTrainingPeaksStudentTelegramContextInput,
   type UpdateTrainingPeaksWeeklyReportContentInput,
   type UpdateTrainingPeaksWeeklyReportStateInput,
   type UpdateTrainingPeaksWeeklyReportReviewStateInput,
   updateTrainingPeaksStudentTelegramContact as updateTrainingPeaksStudentTelegramContactInRepository,
   updateTrainingPeaksStudentTelegramContactById,
+  updateTrainingPeaksStudentTelegramContextById,
+  listTrainingPeaksTelegramContextObservationsForStudent,
   updateTrainingPeaksStudentThreadById,
   updateTrainingPeaksWeeklyReportContentById,
   updateTrainingPeaksWeeklyReportReviewState as updateTrainingPeaksWeeklyReportReviewStateInRepository,
@@ -96,6 +100,10 @@ import {
 import { evaluateTrainingPeaksRecoveryAlert } from "@/features/trainingpeaks/recovery-alerts";
 import { classifyTrainingPeaksWorkoutActivity } from "@/features/trainingpeaks/workout-activity-classification";
 import { parseMoveWorkoutWithAiFallback } from "@/features/trainingpeaks/move-workout-parser-ai";
+import {
+  hasRecognizedWorkoutReference,
+  normalizeWorkoutReference,
+} from "@/features/trainingpeaks/workout-reference";
 import { TRAININGPEAKS_TIME_ZONE, resolveTrainingPeaksWeekKeyword } from "@/features/trainingpeaks/week";
 import type { TelegramMessage } from "@/features/telegram/types";
 import {
@@ -146,6 +154,8 @@ export type TrainingPeaksRegistryStudentSnapshot = {
   telegramUsername: string | null;
   telegramProfileUrl: string | null;
   telegramDeliveryEnabled: boolean;
+  telegramFormality: TrainingPeaksTelegramFormality;
+  telegramContextNotes: string | null;
   dataQualityStatus: string | null;
   notes: string | null;
   createdAt: string;
@@ -302,6 +312,7 @@ export type CreateTrainingPeaksMoveWorkoutActionFromTelegramResult =
         | "not_explicit_move_request"
         | "needs_clarification"
         | "parse_rejected";
+      student?: TrainingPeaksStudent;
     };
 
 export type DecideTrainingPeaksActionInput = {
@@ -527,8 +538,18 @@ const TP_STRICT_MOVE_VERBS = [
   "передвинь",
   "сдвинь",
   "перенесем",
+  "сместим",
   "можно перенести",
   "поставь на",
+];
+
+/** Reschedule intent without an explicit verb — requires workout + date elsewhere in the gate. */
+const TP_SOFT_MOVE_INTENT_PATTERNS: RegExp[] = [
+  /(?:^|[\s,.])давай\s+.+\s+(?:на\s+)?завтра(?:[\s,.]|$)/u,
+  /(?:^|[\s,.])(?:можно|лучше)\s+.+\s+(?:на\s+)?завтра(?:[\s,.]|$)/u,
+  /(?:^|[\s,.])поставь\s+.+\s+на\s+/u,
+  /(?:^|[\s,.])[\p{L}\p{N}_-]+\s+давай\s+(?:на\s+)?завтра(?:[\s,.]|$)/u,
+  /(?:^|[\s,.])давай\s+(?:на\s+)?завтра(?:[\s,.]|$)/u,
 ];
 
 const MOVE_WORKOUT_MIN_ACCEPT_CONFIDENCE = 0.75;
@@ -865,30 +886,42 @@ function extractWeekdayAndRelativeRefs(normalized: string): IndexedTimeRef[] {
 }
 
 function extractWorkoutDescriptor(rawText: string, normalized: string): TrainingPeaksMoveWorkoutDescriptor | null {
+  const reference = normalizeWorkoutReference(normalized);
+  if (reference.kind === "unknown") {
+    if (normalized.includes("заняти")) {
+      return {
+        raw: rawText.trim(),
+        type: "unknown",
+        confidence: 0.65,
+      };
+    }
+    return null;
+  }
+
+  const confidenceByLevel = { high: 0.9, medium: 0.82, low: 0.75 } as const;
+  const confidence = confidenceByLevel[reference.confidence];
+
   if (normalized.includes("легк")) {
     return { raw: rawText.trim(), type: "easy_run", confidence: 0.9 };
   }
-  if (normalized.includes("интервальн") || normalized.includes("интервалы")) {
-    return { raw: rawText.trim(), type: "interval", confidence: 0.9 };
+  if (reference.kind === "long_run") {
+    return { raw: rawText.trim(), type: "long_run", confidence };
   }
-  if (normalized.includes("темпов") || normalized.includes("темп")) {
-    return { raw: rawText.trim(), type: "tempo", confidence: 0.88 };
+  if (reference.kind === "intervals") {
+    return { raw: rawText.trim(), type: "interval", confidence };
   }
-  if (normalized.includes("длительн") || normalized.includes("лонгран") || normalized.includes("long run")) {
-    return { raw: rawText.trim(), type: "long_run", confidence: 0.9 };
+  if (reference.kind === "tempo") {
+    return { raw: rawText.trim(), type: "tempo", confidence };
   }
-  if (normalized.includes("бег") || normalized.includes("пробеж")) {
-    return { raw: rawText.trim(), type: "run", confidence: 0.8 };
-  }
-  if (normalized.includes("трениров") || normalized.includes("заняти")) {
-    return {
-      raw: rawText.trim(),
-      type: "unknown",
-      confidence: 0.65,
-    };
+  if (reference.matchedAlias === "бег" || reference.matchedAlias === "пробежк") {
+    return { raw: rawText.trim(), type: "run", confidence };
   }
 
-  return null;
+  return {
+    raw: rawText.trim(),
+    type: "unknown",
+    confidence,
+  };
 }
 
 function logIgnoredTrainingPeaksMoveParser(kind: string, rawText: string): void {
@@ -902,32 +935,20 @@ function matchesCasualNonMoveTrainingChat(normalized: string): boolean {
 }
 
 function hasStrictMoveVerb(normalized: string): boolean {
-  return TP_STRICT_MOVE_VERBS.some((verb) => normalized.includes(verb));
+  if (TP_STRICT_MOVE_VERBS.some((verb) => normalized.includes(verb))) {
+    return true;
+  }
+  return TP_SOFT_MOVE_INTENT_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
 function hasStrictWorkoutObject(normalized: string): boolean {
-  if (normalized.includes("workout")) {
+  if (hasRecognizedWorkoutReference(normalized)) {
     return true;
   }
-  if (normalized.includes("тренировк")) {
+  if (normalized.includes("заняти")) {
     return true;
   }
-  if (normalized.includes("пробежк")) {
-    return true;
-  }
-  if (normalized.includes("интервальн")) {
-    return true;
-  }
-  if (normalized.includes("темпов")) {
-    return true;
-  }
-  if (normalized.includes("длительн")) {
-    return true;
-  }
-  if (normalized.includes("легк")) {
-    return true;
-  }
-  return /(?:^|[\s,.])(?:легкий\s+|интервальн\w*\s+|темпов\w*\s+|длительн\w*\s+)?бег(?:[\s,.]|$)/u.test(normalized);
+  return false;
 }
 
 function hasExplicitMoveTargetReference(normalized: string): boolean {
@@ -2949,7 +2970,7 @@ export async function createTrainingPeaksMoveWorkoutActionFromTelegram(
 
   const parsed = await parseTrainingPeaksMoveWorkoutRequest(trimmedText);
   if (!parsed.ok) {
-    return { ok: false, reason: parsed.reason };
+    return { ok: false, reason: parsed.reason, student };
   }
 
   const action = await createTrainingPeaksActionInRepository({
@@ -3134,6 +3155,8 @@ export async function getTrainingPeaksStudentsRegistryWithLatestReportStatus(opt
         telegramUsername: student.telegramUsername,
         telegramProfileUrl: student.telegramProfileUrl,
         telegramDeliveryEnabled: student.telegramDeliveryEnabled,
+        telegramFormality: student.telegramFormality,
+        telegramContextNotes: student.telegramContextNotes,
         dataQualityStatus: student.dataQualityStatus,
         notes: student.notes,
         createdAt: student.createdAt,
@@ -3529,6 +3552,29 @@ export async function updateTrainingPeaksStudentTelegramContact(
   }
 
   return updateTrainingPeaksStudentTelegramContactInRepository(studentId, input);
+}
+
+export async function updateTrainingPeaksStudentTelegramContextByInternalId(
+  id: string,
+  input: UpdateTrainingPeaksStudentTelegramContextInput
+): Promise<TrainingPeaksRegistryStudentSnapshot | null> {
+  const existingStudent = await getTrainingPeaksStudentByIdFromRepository(id);
+
+  if (!existingStudent) {
+    return null;
+  }
+
+  await updateTrainingPeaksStudentTelegramContextById(id, input);
+  return getTrainingPeaksRegistryStudentByInternalId(id, {
+    includeArchived: true,
+  });
+}
+
+export async function listTrainingPeaksStudentTelegramContextObservations(
+  studentId: string,
+  limit = 10
+) {
+  return listTrainingPeaksTelegramContextObservationsForStudent(studentId, limit);
 }
 
 export async function getTrainingPeaksWeeklyReportByInternalId(

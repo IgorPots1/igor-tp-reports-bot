@@ -68,6 +68,11 @@ import {
   generateTrainingPeaksReplyDraft,
 } from "@/features/trainingpeaks/reply-draft-generator";
 import {
+  classifyTelegramContextLabels,
+  recordTrainingPeaksTelegramBusinessContextObservation,
+} from "@/features/trainingpeaks/telegram-context";
+import { logTrainingPeaksBusinessMessageIntentDecision } from "@/features/trainingpeaks/message-intent-log";
+import {
   getLatestTrainingPeaksCronRunLog,
   listTrainingPeaksCronRunLogs,
   TRAININGPEAKS_ATTENTION_DIGEST_CRON_JOB_NAME,
@@ -3891,6 +3896,22 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
   const chatId =
     message.chat?.id === undefined || message.chat?.id === null ? null : String(message.chat.id);
   const messageText = (message.text ?? message.caption ?? "").trim();
+  const contextLabels = messageText ? classifyTelegramContextLabels(messageText) : [];
+
+  if (chatId && messageText) {
+    try {
+      await recordTrainingPeaksTelegramBusinessContextObservation({
+        chatId,
+        messageId: message.message_id,
+        text: messageText,
+      });
+    } catch (error) {
+      console.warn("Failed to record TrainingPeaks telegram business context observation", {
+        chatId,
+        error,
+      });
+    }
+  }
 
   if (!persistedChat || !businessConnectionId || !chatId || !messageText) {
     return;
@@ -3909,6 +3930,23 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
       userId: message.from?.id === undefined ? null : String(message.from.id),
       text: messageText,
     });
+
+    try {
+      await logTrainingPeaksBusinessMessageIntentDecision({
+        chatId,
+        messageId: message.message_id,
+        userId: message.from?.id === undefined ? null : String(message.from.id),
+        businessConnectionId,
+        messageText,
+        contextLabels,
+        moveActionResult,
+      });
+    } catch (error) {
+      console.warn("Failed to log TrainingPeaks business message intent decision", {
+        chatId,
+        error,
+      });
+    }
 
     if (!moveActionResult.ok) {
       return;
@@ -5354,6 +5392,7 @@ async function handleTrainingPeaksReplyDraft(
   const draftResult = await generateTrainingPeaksReplyDraft({
     studentMessage,
     context: draftContext,
+    telegramFormality: studentMatch.student.telegramFormality,
   });
 
   if (!draftResult.ok) {

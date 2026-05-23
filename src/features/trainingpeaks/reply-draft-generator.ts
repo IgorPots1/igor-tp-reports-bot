@@ -1,4 +1,6 @@
 import type { TrainingPeaksReplyDraftContext } from "@/features/trainingpeaks/reply-draft-context";
+import { getTrainingPeaksReplyDraftFormalityInstruction } from "@/features/trainingpeaks/telegram-context";
+import type { TrainingPeaksTelegramFormality } from "@/features/trainingpeaks/repository";
 
 const AI_MODEL = process.env.OPENAI_REPLY_DRAFT_MODEL?.trim() || "gpt-4o-mini";
 const OPENAI_API_URL = process.env.OPENAI_API_URL?.trim() || "https://api.openai.com/v1/chat/completions";
@@ -10,15 +12,20 @@ export type GenerateTrainingPeaksReplyDraftResult =
 export async function generateTrainingPeaksReplyDraft(input: {
   studentMessage: string;
   context: TrainingPeaksReplyDraftContext;
+  telegramFormality?: TrainingPeaksTelegramFormality;
 }): Promise<GenerateTrainingPeaksReplyDraftResult> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
     return { ok: false, reason: "missing_api_key" };
   }
 
+  const formalityInstruction = getTrainingPeaksReplyDraftFormalityInstruction(
+    input.telegramFormality ?? "unknown"
+  );
+
   const systemPrompt = [
     "Ты помогаешь тренеру по бегу подготовить черновик ответа ученику в Telegram.",
-    "Пиши по-русски, тепло, просто, на «ты».",
+    formalityInstruction,
     "Ответ короткий: 2–4 предложения, без списков и без markdown.",
     "Это только черновик для проверки тренером — не обещай, что сообщение уже отправлено ученику.",
     "Используй только факты из переданного контекста. Если данных не хватает — прямо скажи, что нужно уточнить.",

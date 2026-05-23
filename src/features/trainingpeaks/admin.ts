@@ -120,6 +120,13 @@ export {
   type TrainingPeaksAdminUnlinkedTelegramStudentRecord,
 } from "@/features/trainingpeaks/admin-telegram-links";
 
+export {
+  listTrainingPeaksAdminStudentContextObservations,
+  updateTrainingPeaksAdminStudentTelegramContext,
+  parseTrainingPeaksAdminTelegramFormality,
+  parseTrainingPeaksAdminTelegramContextNotes,
+} from "@/features/trainingpeaks/admin-telegram-context";
+
 function getSendBlockedReason(
   report: TrainingPeaksWeeklyReport,
   student: TrainingPeaksRegistryStudentSnapshot | null,

@@ -1,5 +1,6 @@
 import { parseTelegramUpdate } from "@/features/telegram/parser";
 import { logTelegramUpdateIngress } from "@/features/telegram/ingress-logging";
+import { buildTelegramContextTextPreview } from "@/features/trainingpeaks/telegram-context";
 import {
   answerTelegramCallbackQuery,
   sendTelegramMessage,
@@ -131,10 +132,13 @@ export async function POST(request: Request) {
   }
 
   if (update.business_message) {
+    const businessMessageText =
+      update.business_message.text ?? update.business_message.caption ?? null;
+
     console.info("Telegram business message received", {
       businessConnectionId: update.business_message.business_connection_id,
       chatId: update.business_message.chat?.id,
-      text: update.business_message.text ?? update.business_message.caption,
+      textPreview: buildTelegramContextTextPreview(businessMessageText),
     });
 
     try {
@@ -151,10 +155,13 @@ export async function POST(request: Request) {
   }
 
   if (update.edited_business_message) {
+    const editedBusinessMessageText =
+      update.edited_business_message.text ?? update.edited_business_message.caption ?? null;
+
     console.info("Telegram edited business message received", {
       businessConnectionId: update.edited_business_message.business_connection_id,
       chatId: update.edited_business_message.chat?.id,
-      text: update.edited_business_message.text ?? update.edited_business_message.caption,
+      textPreview: buildTelegramContextTextPreview(editedBusinessMessageText),
     });
     return okResponse();
   }

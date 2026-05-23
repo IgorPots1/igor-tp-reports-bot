@@ -12,10 +12,13 @@ import {
   createTrainingPeaksStudent,
   deleteTrainingPeaksAdminOrphanReport,
   deleteTrainingPeaksOrphanReportsForWeek,
+  parseTrainingPeaksAdminTelegramContextNotes,
+  parseTrainingPeaksAdminTelegramFormality,
   saveTrainingPeaksAdminReportEdit,
   setTrainingPeaksStudentWeeklyReportsEnabled,
   sendTrainingPeaksWeeklyReportToStudent,
   unlinkTrainingPeaksStudentTelegram,
+  updateTrainingPeaksAdminStudentTelegramContext,
 } from "@/features/trainingpeaks/admin";
 import {
   disableTrainingPeaksStudentByInternalId,
@@ -408,4 +411,23 @@ export async function unlinkTrainingPeaksStudentTelegramAction(formData: FormDat
   }
 
   redirect(withNotice(redirectTo, "notice", `Telegram-привязка удалена: ${result.student.studentName}.`));
+}
+
+export async function updateTrainingPeaksStudentTelegramContextAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+
+  const result = await updateTrainingPeaksAdminStudentTelegramContext(studentId, {
+    telegramFormality: parseTrainingPeaksAdminTelegramFormality(formData.get("telegramFormality")),
+    telegramContextNotes: parseTrainingPeaksAdminTelegramContextNotes(formData.get("telegramContextNotes")),
+  });
+
+  revalidateTrainingPeaksAdminPaths(undefined, studentId);
+
+  if (!result.ok) {
+    redirect(withNotice(redirectTo, "error", result.message));
+  }
+
+  redirect(withNotice(redirectTo, "notice", `Telegram-контекст сохранён: ${result.studentName}.`));
 }

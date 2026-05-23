@@ -32,6 +32,8 @@
     "tp-races-loop:uninstall": "npm --prefix tools/trainingpeaks-export run tp-races-loop:uninstall",
     "tp-races-loop:logs": "npm --prefix tools/trainingpeaks-export run tp-races-loop:logs",
     "check-trainingpeaks-action-parser": "npx tsx scripts/check-trainingpeaks-action-parser.ts",
+    "check-trainingpeaks-move-intent": "npx tsx scripts/check-trainingpeaks-move-intent.ts",
+    "tp-intent-logs-recent": "npx tsx scripts/tp-intent-logs-recent.ts",
     "check-trainingpeaks-recovery-alerts": "npx tsx scripts/check-trainingpeaks-recovery-alerts.ts",
     "check-trainingpeaks-coach-notes-delivery": "npx tsx scripts/check-trainingpeaks-coach-notes-delivery.ts",
     "check-trainingpeaks-attention-digest": "npx tsx scripts/check-trainingpeaks-attention-digest.ts",

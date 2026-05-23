@@ -1,4 +1,5 @@
 import type { TelegramChatType, TelegramUpdate } from "@/features/telegram/types";
+import { buildTelegramContextTextPreview } from "@/features/trainingpeaks/telegram-context";
 
 function getTelegramUpdateTopLevelKeys(update: TelegramUpdate): string[] {
   return Object.keys(update).filter((key) => update[key as keyof TelegramUpdate] !== undefined);
@@ -34,8 +35,8 @@ function getTelegramUpdateChatContext(update: TelegramUpdate): {
   const text = message?.text ?? message?.caption ?? null;
 
   let textPrefix: string | null = null;
-  if (text && (chatType === "group" || chatType === "supergroup")) {
-    textPrefix = text.trim().slice(0, 40);
+  if (text) {
+    textPrefix = buildTelegramContextTextPreview(text);
   }
 
   return {

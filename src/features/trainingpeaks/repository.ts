@@ -1,5 +1,7 @@
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
+export type TrainingPeaksTelegramFormality = "ty" | "vy" | "unknown";
+
 export type TrainingPeaksStudent = {
   id: string;
   studentId: string;
@@ -12,6 +14,8 @@ export type TrainingPeaksStudent = {
   telegramUsername: string | null;
   telegramProfileUrl: string | null;
   telegramDeliveryEnabled: boolean;
+  telegramFormality: TrainingPeaksTelegramFormality;
+  telegramContextNotes: string | null;
   dataQualityStatus: string | null;
   notes: string | null;
   createdAt: string;
@@ -42,6 +46,8 @@ type TrainingPeaksStudentRow = {
   telegram_username: string | null;
   telegram_profile_url: string | null;
   telegram_delivery_enabled: boolean;
+  telegram_formality: string;
+  telegram_context_notes: string | null;
   data_quality_status: string | null;
   notes: string | null;
   created_at: string;
@@ -79,6 +85,11 @@ export type UpdateTrainingPeaksStudentTelegramContactInput = {
   telegramUsername?: string | null;
   telegramProfileUrl?: string | null;
   telegramDeliveryEnabled?: boolean;
+};
+
+export type UpdateTrainingPeaksStudentTelegramContextInput = {
+  telegramFormality?: TrainingPeaksTelegramFormality;
+  telegramContextNotes?: string | null;
 };
 
 export type UpdateTrainingPeaksStudentTelegramContactParams = {
@@ -909,11 +920,23 @@ function mapTrainingPeaksStudentRow(row: TrainingPeaksStudentRow): TrainingPeaks
     telegramUsername: row.telegram_username,
     telegramProfileUrl: row.telegram_profile_url,
     telegramDeliveryEnabled: row.telegram_delivery_enabled,
+    telegramFormality: normalizeTrainingPeaksTelegramFormality(row.telegram_formality),
+    telegramContextNotes: row.telegram_context_notes,
     dataQualityStatus: row.data_quality_status,
     notes: row.notes,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function normalizeTrainingPeaksTelegramFormality(
+  value: string | null | undefined
+): TrainingPeaksTelegramFormality {
+  if (value === "ty" || value === "vy") {
+    return value;
+  }
+
+  return "unknown";
 }
 
 function mapTrainingPeaksStudentThreadRow(
@@ -4099,4 +4122,361 @@ export async function getLatestTrainingPeaksCronRunLog(input: {
   }
 
   return mapTrainingPeaksCronRunLogRow(data as TrainingPeaksCronRunLogRow);
+}
+
+export type TrainingPeaksTelegramContextSourceType = "business_dm" | "private_dm" | "group_topic";
+
+export type TrainingPeaksTelegramContextObservation = {
+  id: string;
+  studentId: string | null;
+  sourceType: TrainingPeaksTelegramContextSourceType;
+  chatId: string;
+  messageThreadId: number | null;
+  messageId: string | null;
+  observedAt: string;
+  labels: string[];
+  textSha256: string | null;
+  textPreview: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
+type TrainingPeaksTelegramContextObservationRow = {
+  id: string;
+  student_id: string | null;
+  source_type: string;
+  chat_id: string;
+  message_thread_id: number | null;
+  message_id: string | null;
+  observed_at: string;
+  labels: unknown;
+  text_sha256: string | null;
+  text_preview: string | null;
+  metadata: unknown;
+  created_at: string;
+};
+
+export type InsertTrainingPeaksTelegramContextObservationInput = {
+  studentId: string | null;
+  sourceType: TrainingPeaksTelegramContextSourceType;
+  chatId: string;
+  messageThreadId?: number | null;
+  messageId?: string | null;
+  observedAt?: string;
+  labels: string[];
+  textSha256?: string | null;
+  textPreview?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
+function mapTrainingPeaksTelegramContextObservationRow(
+  row: TrainingPeaksTelegramContextObservationRow
+): TrainingPeaksTelegramContextObservation {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    sourceType: row.source_type as TrainingPeaksTelegramContextSourceType,
+    chatId: row.chat_id,
+    messageThreadId: row.message_thread_id,
+    messageId: row.message_id,
+    observedAt: row.observed_at,
+    labels: Array.isArray(row.labels) ? row.labels.map(String) : [],
+    textSha256: row.text_sha256,
+    textPreview: row.text_preview,
+    metadata:
+      row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? (row.metadata as Record<string, unknown>)
+        : {},
+    createdAt: row.created_at,
+  };
+}
+
+export async function insertTrainingPeaksTelegramContextObservation(
+  input: InsertTrainingPeaksTelegramContextObservationInput
+): Promise<TrainingPeaksTelegramContextObservation> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_telegram_context_observations")
+    .insert({
+      student_id: input.studentId,
+      source_type: input.sourceType,
+      chat_id: input.chatId,
+      message_thread_id: input.messageThreadId ?? null,
+      message_id: input.messageId ?? null,
+      observed_at: input.observedAt ?? new Date().toISOString(),
+      labels: input.labels,
+      text_sha256: input.textSha256 ?? null,
+      text_preview: input.textPreview ?? null,
+      metadata: input.metadata ?? {},
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to insert TrainingPeaks telegram context observation: ${error.message}`);
+  }
+
+  return mapTrainingPeaksTelegramContextObservationRow(
+    data as TrainingPeaksTelegramContextObservationRow
+  );
+}
+
+export async function listTrainingPeaksTelegramContextObservationsForStudent(
+  studentId: string,
+  limit = 10
+): Promise<TrainingPeaksTelegramContextObservation[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_telegram_context_observations")
+    .select("*")
+    .eq("student_id", studentId)
+    .order("observed_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    throw new Error(
+      `Failed to list TrainingPeaks telegram context observations for student ${studentId}: ${error.message}`
+    );
+  }
+
+  return ((data as TrainingPeaksTelegramContextObservationRow[]) ?? []).map(
+    mapTrainingPeaksTelegramContextObservationRow
+  );
+}
+
+export async function hasTrainingPeaksTelegramContextObservationForChatTextHash(
+  chatId: string,
+  textSha256: string
+): Promise<boolean> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_telegram_context_observations")
+    .select("id")
+    .eq("chat_id", chatId)
+    .eq("text_sha256", textSha256)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to check TrainingPeaks telegram context observation dedupe: ${error.message}`
+    );
+  }
+
+  return Boolean(data);
+}
+
+export async function updateTrainingPeaksStudentTelegramContextById(
+  id: string,
+  input: UpdateTrainingPeaksStudentTelegramContextInput
+): Promise<TrainingPeaksStudent> {
+  const updates = pickDefinedValues({
+    telegram_formality: input.telegramFormality,
+    telegram_context_notes: input.telegramContextNotes,
+  });
+
+  if (Object.keys(updates).length === 0) {
+    const existingStudent = await getTrainingPeaksStudentById(id);
+
+    if (!existingStudent) {
+      throw new Error(`Failed to update TrainingPeaks student telegram context ${id}: student not found`);
+    }
+
+    return existingStudent;
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_students")
+    .update(updates)
+    .eq("id", id)
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to update TrainingPeaks student telegram context ${id}: ${error.message}`);
+  }
+
+  return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
+}
+
+export type TrainingPeaksMessageIntentLogStatus =
+  | "action_created"
+  | "unrecognized"
+  | "ignored"
+  | "student_not_found"
+  | "parse_failed"
+  | "needs_review";
+
+export type TrainingPeaksMessageIntentLog = {
+  id: string;
+  createdAt: string;
+  source: string;
+  studentId: string | null;
+  telegramChatId: string | null;
+  telegramUserId: string | null;
+  telegramMessageId: string | null;
+  businessConnectionId: string | null;
+  messageThreadId: number | null;
+  rawText: string | null;
+  textPreview: string | null;
+  textSha256: string | null;
+  normalizedText: string | null;
+  ruleIntent: Record<string, unknown> | null;
+  ruleConfidence: number | null;
+  aiIntent: Record<string, unknown> | null;
+  aiConfidence: number | null;
+  finalIntent: Record<string, unknown> | null;
+  status: TrainingPeaksMessageIntentLogStatus;
+  actionId: string | null;
+  reason: string | null;
+  metadata: Record<string, unknown>;
+};
+
+type TrainingPeaksMessageIntentLogRow = {
+  id: string;
+  created_at: string;
+  source: string;
+  student_id: string | null;
+  telegram_chat_id: string | null;
+  telegram_user_id: string | null;
+  telegram_message_id: string | null;
+  business_connection_id: string | null;
+  message_thread_id: number | null;
+  raw_text: string | null;
+  text_preview: string | null;
+  text_sha256: string | null;
+  normalized_text: string | null;
+  rule_intent: unknown;
+  rule_confidence: number | null;
+  ai_intent: unknown;
+  ai_confidence: number | null;
+  final_intent: unknown;
+  status: string;
+  action_id: string | null;
+  reason: string | null;
+  metadata: unknown;
+};
+
+export type InsertTrainingPeaksMessageIntentLogInput = {
+  source?: string;
+  studentId?: string | null;
+  telegramChatId?: string | null;
+  telegramUserId?: string | null;
+  telegramMessageId?: string | null;
+  businessConnectionId?: string | null;
+  messageThreadId?: number | null;
+  rawText?: string | null;
+  textPreview?: string | null;
+  textSha256?: string | null;
+  normalizedText?: string | null;
+  ruleIntent?: Record<string, unknown> | null;
+  ruleConfidence?: number | null;
+  aiIntent?: Record<string, unknown> | null;
+  aiConfidence?: number | null;
+  finalIntent?: Record<string, unknown> | null;
+  status: TrainingPeaksMessageIntentLogStatus;
+  actionId?: string | null;
+  reason?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
+function mapTrainingPeaksMessageIntentLogRow(
+  row: TrainingPeaksMessageIntentLogRow
+): TrainingPeaksMessageIntentLog {
+  return {
+    id: row.id,
+    createdAt: row.created_at,
+    source: row.source,
+    studentId: row.student_id,
+    telegramChatId: row.telegram_chat_id,
+    telegramUserId: row.telegram_user_id,
+    telegramMessageId: row.telegram_message_id,
+    businessConnectionId: row.business_connection_id,
+    messageThreadId: row.message_thread_id,
+    rawText: row.raw_text,
+    textPreview: row.text_preview,
+    textSha256: row.text_sha256,
+    normalizedText: row.normalized_text,
+    ruleIntent:
+      row.rule_intent && typeof row.rule_intent === "object" && !Array.isArray(row.rule_intent)
+        ? (row.rule_intent as Record<string, unknown>)
+        : null,
+    ruleConfidence: row.rule_confidence,
+    aiIntent:
+      row.ai_intent && typeof row.ai_intent === "object" && !Array.isArray(row.ai_intent)
+        ? (row.ai_intent as Record<string, unknown>)
+        : null,
+    aiConfidence: row.ai_confidence,
+    finalIntent:
+      row.final_intent && typeof row.final_intent === "object" && !Array.isArray(row.final_intent)
+        ? (row.final_intent as Record<string, unknown>)
+        : null,
+    status: row.status as TrainingPeaksMessageIntentLogStatus,
+    actionId: row.action_id,
+    reason: row.reason,
+    metadata:
+      row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? (row.metadata as Record<string, unknown>)
+        : {},
+  };
+}
+
+export async function insertTrainingPeaksMessageIntentLog(
+  input: InsertTrainingPeaksMessageIntentLogInput
+): Promise<TrainingPeaksMessageIntentLog | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_message_intent_logs")
+    .insert({
+      source: input.source ?? "telegram_business",
+      student_id: input.studentId ?? null,
+      telegram_chat_id: input.telegramChatId ?? null,
+      telegram_user_id: input.telegramUserId ?? null,
+      telegram_message_id: input.telegramMessageId ?? null,
+      business_connection_id: input.businessConnectionId ?? null,
+      message_thread_id: input.messageThreadId ?? null,
+      raw_text: input.rawText ?? null,
+      text_preview: input.textPreview ?? null,
+      text_sha256: input.textSha256 ?? null,
+      normalized_text: input.normalizedText ?? null,
+      rule_intent: input.ruleIntent ?? null,
+      rule_confidence: input.ruleConfidence ?? null,
+      ai_intent: input.aiIntent ?? null,
+      ai_confidence: input.aiConfidence ?? null,
+      final_intent: input.finalIntent ?? null,
+      status: input.status,
+      action_id: input.actionId ?? null,
+      reason: input.reason ?? null,
+      metadata: input.metadata ?? {},
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    if (error.code === "23505") {
+      return null;
+    }
+
+    throw new Error(`Failed to insert TrainingPeaks message intent log: ${error.message}`);
+  }
+
+  return mapTrainingPeaksMessageIntentLogRow(data as TrainingPeaksMessageIntentLogRow);
+}
+
+export async function listRecentTrainingPeaksMessageIntentLogs(
+  limit = 20
+): Promise<TrainingPeaksMessageIntentLog[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_message_intent_logs")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    throw new Error(`Failed to list recent TrainingPeaks message intent logs: ${error.message}`);
+  }
+
+  return ((data as TrainingPeaksMessageIntentLogRow[]) ?? []).map(mapTrainingPeaksMessageIntentLogRow);
 }

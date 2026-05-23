@@ -12,6 +12,7 @@ import {
   sendTrainingPeaksStudentTelegramTestAction,
   setTrainingPeaksStudentWeeklyReportsEnabledAction,
   unlinkTrainingPeaksStudentTelegramAction,
+  updateTrainingPeaksStudentTelegramContextAction,
 } from "@/app/admin/actions";
 import {
   formatIsoDate,
@@ -34,12 +35,18 @@ import {
   getTrainingPeaksAdminStudentThreadLinkMethod,
   listTrainingPeaksAdminRecentBusinessChats,
   listTrainingPeaksAdminReportsForStudent,
+  listTrainingPeaksAdminStudentContextObservations,
   listTrainingPeaksAdminStudentThreads,
   normalizeTrainingPeaksAdminTelegramUsername,
   shortenTrainingPeaksAdminChatId,
   TRAININGPEAKS_ADMIN_TELEGRAM_USERNAME_NOT_FOUND_MESSAGE,
 } from "@/features/trainingpeaks/admin";
 import { formatTelegramMismatchAcknowledgementMessage } from "@/features/trainingpeaks/telegram-identity-match";
+import {
+  buildTelegramContextTextPreview,
+  formatTrainingPeaksTelegramContextSourceType,
+  formatTrainingPeaksTelegramFormalityLabel,
+} from "@/features/trainingpeaks/telegram-context";
 import { getTrainingPeaksWeeklyReportForStudentWeekFromService } from "@/features/trainingpeaks/service";
 import { getPreviousTrainingPeaksWeek } from "@/features/trainingpeaks/week";
 type StudentDetailPageProps = {
@@ -150,6 +157,26 @@ function getStudentDetailPath(studentId: string): string {
   return `/admin/students/${studentId}`;
 }
 
+function getLatestBusinessMessagePreview(
+  capturedBusinessChat: BusinessChatRecord | null,
+  lastKnownBusinessChat: BusinessChatRecord | null
+): string {
+  const sourceChat = capturedBusinessChat ?? lastKnownBusinessChat;
+  if (!sourceChat?.lastText) {
+    return "—";
+  }
+
+  return buildTelegramContextTextPreview(sourceChat.lastText) ?? "—";
+}
+
+function getContextObservationLabelsText(labels: string[]): string {
+  if (labels.length === 0) {
+    return "unknown";
+  }
+
+  return labels.join(", ");
+}
+
 export default async function AdminStudentDetailPage({
   params,
   searchParams,
@@ -182,7 +209,7 @@ export default async function AdminStudentDetailPage({
   ]);
   const primaryStudentThread = studentThreads[0] ?? null;
 
-  const [lastKnownBusinessChat, capturedBusinessChat, suggestedTelegramMatches, recentChats, usernameLookup] =
+  const [lastKnownBusinessChat, capturedBusinessChat, suggestedTelegramMatches, recentChats, usernameLookup, contextObservations] =
     await Promise.all([
       getTrainingPeaksAdminStudentLastKnownBusinessChat(student),
       getTrainingPeaksAdminStudentCapturedBusinessChat(student),
@@ -194,6 +221,7 @@ export default async function AdminStudentDetailPage({
             normalizedUsername: normalizedTelegramUsername,
             chats: [],
           }),
+      listTrainingPeaksAdminStudentContextObservations(student.id),
     ]);
   const telegramMismatchStatus = buildTrainingPeaksAdminStudentTelegramMismatchStatus(
     student,
@@ -558,6 +586,73 @@ export default async function AdminStudentDetailPage({
               </form>
             )}
           </div>
+        </article>
+
+        <article className="admin-card admin-card-compact">
+          <h3>Telegram context</h3>
+          <form className="admin-form-stack" action={updateTrainingPeaksStudentTelegramContextAction}>
+            <input type="hidden" name="studentId" value={student.id} />
+            <input type="hidden" name="redirectTo" value={studentDetailPath} />
+            <label className="admin-form-field">
+              <span>Обращение</span>
+              <select
+                className="admin-input"
+                name="telegramFormality"
+                defaultValue={student.telegramFormality}
+              >
+                <option value="unknown">неизвестно</option>
+                <option value="ty">на ты</option>
+                <option value="vy">на вы</option>
+              </select>
+            </label>
+            <p className="admin-muted">
+              Сейчас: {formatTrainingPeaksTelegramFormalityLabel(student.telegramFormality)}
+            </p>
+            <label className="admin-form-field">
+              <span>Заметки по контексту</span>
+              <textarea
+                className="admin-textarea admin-textarea-compact"
+                name="telegramContextNotes"
+                rows={4}
+                defaultValue={student.telegramContextNotes ?? ""}
+              />
+            </label>
+            <FormActionButton className="admin-button" pendingText="Сохранение...">
+              Сохранить контекст
+            </FormActionButton>
+          </form>
+          <dl className="admin-meta-list admin-meta-list-compact">
+            <div>
+              <dt>Последнее Business-сообщение</dt>
+              <dd>{getLatestBusinessMessagePreview(capturedBusinessChat, lastKnownBusinessChat)}</dd>
+            </div>
+          </dl>
+          {contextObservations.length > 0 ? (
+            <div className="admin-table-wrap">
+              <table className="admin-table admin-table-compact">
+                <thead>
+                  <tr>
+                    <th>Дата</th>
+                    <th>Источник</th>
+                    <th>Метки</th>
+                    <th>Превью</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {contextObservations.map((observation) => (
+                    <tr key={observation.id}>
+                      <td>{formatIsoDate(observation.observedAt)}</td>
+                      <td>{formatTrainingPeaksTelegramContextSourceType(observation.sourceType)}</td>
+                      <td>{getContextObservationLabelsText(observation.labels)}</td>
+                      <td>{observation.textPreview ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="admin-muted">Наблюдений контекста пока нет.</p>
+          )}
         </article>
 
         <article className="admin-card admin-card-compact">
