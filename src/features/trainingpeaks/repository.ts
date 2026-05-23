@@ -4464,6 +4464,82 @@ export async function insertTrainingPeaksMessageIntentLog(
   return mapTrainingPeaksMessageIntentLogRow(data as TrainingPeaksMessageIntentLogRow);
 }
 
+export type UpdateTrainingPeaksMessageIntentLogAiInput = {
+  aiIntent?: Record<string, unknown> | null;
+  aiConfidence?: number | null;
+  metadata?: Record<string, unknown>;
+};
+
+export async function getTrainingPeaksMessageIntentLogByTelegramMessage(
+  telegramChatId: string,
+  telegramMessageId: string
+): Promise<TrainingPeaksMessageIntentLog | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_message_intent_logs")
+    .select("*")
+    .eq("telegram_chat_id", telegramChatId)
+    .eq("telegram_message_id", telegramMessageId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to get TrainingPeaks message intent log: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksMessageIntentLogRow(data as TrainingPeaksMessageIntentLogRow);
+}
+
+export async function updateTrainingPeaksMessageIntentLogAiFields(
+  id: string,
+  input: UpdateTrainingPeaksMessageIntentLogAiInput
+): Promise<TrainingPeaksMessageIntentLog | null> {
+  const supabase = createSupabaseServerClient();
+  const existing = await supabase
+    .from("trainingpeaks_message_intent_logs")
+    .select("metadata")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (existing.error) {
+    throw new Error(`Failed to load TrainingPeaks message intent log ${id}: ${existing.error.message}`);
+  }
+
+  if (!existing.data) {
+    return null;
+  }
+
+  const previousMetadata =
+    existing.data.metadata &&
+    typeof existing.data.metadata === "object" &&
+    !Array.isArray(existing.data.metadata)
+      ? (existing.data.metadata as Record<string, unknown>)
+      : {};
+
+  const { data, error } = await supabase
+    .from("trainingpeaks_message_intent_logs")
+    .update({
+      ai_intent: input.aiIntent ?? null,
+      ai_confidence: input.aiConfidence ?? null,
+      metadata: {
+        ...previousMetadata,
+        ...(input.metadata ?? {}),
+      },
+    })
+    .eq("id", id)
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to update TrainingPeaks message intent log ${id}: ${error.message}`);
+  }
+
+  return mapTrainingPeaksMessageIntentLogRow(data as TrainingPeaksMessageIntentLogRow);
+}
+
 export async function listRecentTrainingPeaksMessageIntentLogs(
   limit = 20
 ): Promise<TrainingPeaksMessageIntentLog[]> {

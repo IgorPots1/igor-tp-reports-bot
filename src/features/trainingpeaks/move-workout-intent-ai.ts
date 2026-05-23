@@ -1,0 +1,334 @@
+import { listKnownWorkoutAliasesForAiPrompt } from "@/features/trainingpeaks/workout-reference";
+
+export type TrainingPeaksAiIntentKind = "move_workout" | "none" | "unknown";
+
+export type TrainingPeaksAiWorkoutReferenceKind =
+  | "long_run"
+  | "tempo"
+  | "intervals"
+  | "easy_run"
+  | "workout"
+  | "unknown";
+
+export type TrainingPeaksAiDateReferenceKind = "date" | "relative" | "unknown";
+
+export type TrainingPeaksAiWorkoutReference = {
+  kind: TrainingPeaksAiWorkoutReferenceKind;
+  text: string | null;
+  confidence: number;
+};
+
+export type TrainingPeaksAiDateReference = {
+  kind: TrainingPeaksAiDateReferenceKind;
+  value: string | null;
+  text: string | null;
+  confidence: number;
+};
+
+export type TrainingPeaksAiIntentClassification = {
+  intent: TrainingPeaksAiIntentKind;
+  workout_reference: TrainingPeaksAiWorkoutReference;
+  target_date: TrainingPeaksAiDateReference;
+  source_date: TrainingPeaksAiDateReference | null;
+  confidence: number;
+  needs_clarification: boolean;
+  clarification_reason: string | null;
+  reasoning_summary: string;
+};
+
+export type ClassifyTrainingPeaksMoveIntentInput = {
+  normalizedText: string;
+  textPreview: string;
+  studentLinked: boolean;
+  timezone?: string;
+  baseDate?: Date;
+};
+
+export type ClassifyTrainingPeaksMoveIntentResult =
+  | {
+      ok: true;
+      classification: TrainingPeaksAiIntentClassification;
+      model: string;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
+const AI_MODEL = process.env.OPENAI_MOVE_WORKOUT_PARSER_MODEL?.trim() || "gpt-4o-mini";
+const OPENAI_API_URL = process.env.OPENAI_API_URL?.trim() || "https://api.openai.com/v1/chat/completions";
+const ALLOWED_INTENTS = new Set<TrainingPeaksAiIntentKind>(["move_workout", "none", "unknown"]);
+const ALLOWED_WORKOUT_KINDS = new Set<TrainingPeaksAiWorkoutReferenceKind>([
+  "long_run",
+  "tempo",
+  "intervals",
+  "easy_run",
+  "workout",
+  "unknown",
+]);
+const ALLOWED_DATE_KINDS = new Set<TrainingPeaksAiDateReferenceKind>(["date", "relative", "unknown"]);
+
+function clampConfidence(value: unknown, fallback = 0): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.max(0, Math.min(1, Number(value.toFixed(3))));
+}
+
+function sanitizeNullableString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function sanitizeDateReference(value: unknown): TrainingPeaksAiDateReference | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const raw = value as { kind?: unknown; value?: unknown; text?: unknown; confidence?: unknown };
+  if (typeof raw.kind !== "string" || !ALLOWED_DATE_KINDS.has(raw.kind as TrainingPeaksAiDateReferenceKind)) {
+    return null;
+  }
+
+  return {
+    kind: raw.kind as TrainingPeaksAiDateReferenceKind,
+    value: sanitizeNullableString(raw.value),
+    text: sanitizeNullableString(raw.text),
+    confidence: clampConfidence(raw.confidence, 0),
+  };
+}
+
+function sanitizeWorkoutReference(value: unknown): TrainingPeaksAiWorkoutReference | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const raw = value as { kind?: unknown; text?: unknown; confidence?: unknown };
+  if (typeof raw.kind !== "string" || !ALLOWED_WORKOUT_KINDS.has(raw.kind as TrainingPeaksAiWorkoutReferenceKind)) {
+    return null;
+  }
+
+  return {
+    kind: raw.kind as TrainingPeaksAiWorkoutReferenceKind,
+    text: sanitizeNullableString(raw.text),
+    confidence: clampConfidence(raw.confidence, 0),
+  };
+}
+
+function extractJsonOnly(content: string): string {
+  const trimmed = content.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    return trimmed;
+  }
+
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    return trimmed.slice(start, end + 1);
+  }
+
+  return trimmed;
+}
+
+export function parseTrainingPeaksAiIntentClassification(
+  rawJson: unknown
+): { ok: true; classification: TrainingPeaksAiIntentClassification } | { ok: false; error: string } {
+  if (!rawJson || typeof rawJson !== "object") {
+    return { ok: false, error: "invalid_json_object" };
+  }
+
+  const raw = rawJson as {
+    intent?: unknown;
+    workout_reference?: unknown;
+    target_date?: unknown;
+    source_date?: unknown;
+    confidence?: unknown;
+    needs_clarification?: unknown;
+    clarification_reason?: unknown;
+    reasoning_summary?: unknown;
+  };
+
+  if (typeof raw.intent !== "string" || !ALLOWED_INTENTS.has(raw.intent as TrainingPeaksAiIntentKind)) {
+    return { ok: false, error: "invalid_intent" };
+  }
+
+  const workoutReference = sanitizeWorkoutReference(raw.workout_reference);
+  if (!workoutReference) {
+    return { ok: false, error: "invalid_workout_reference" };
+  }
+
+  const targetDate = sanitizeDateReference(raw.target_date);
+  if (!targetDate) {
+    return { ok: false, error: "invalid_target_date" };
+  }
+
+  const sourceDate =
+    raw.source_date === null || raw.source_date === undefined
+      ? null
+      : sanitizeDateReference(raw.source_date);
+  if (raw.source_date !== null && raw.source_date !== undefined && !sourceDate) {
+    return { ok: false, error: "invalid_source_date" };
+  }
+
+  const confidence = clampConfidence(raw.confidence, 0);
+  const reasoningSummary = sanitizeNullableString(raw.reasoning_summary);
+  if (!reasoningSummary) {
+    return { ok: false, error: "missing_reasoning_summary" };
+  }
+
+  return {
+    ok: true,
+    classification: {
+      intent: raw.intent as TrainingPeaksAiIntentKind,
+      workout_reference: workoutReference,
+      target_date: targetDate,
+      source_date: sourceDate,
+      confidence,
+      needs_clarification: raw.needs_clarification === true,
+      clarification_reason: sanitizeNullableString(raw.clarification_reason),
+      reasoning_summary: reasoningSummary,
+    },
+  };
+}
+
+export function buildTrainingPeaksAiIntentLogFields(input: {
+  result: ClassifyTrainingPeaksMoveIntentResult;
+}): {
+  aiIntent: Record<string, unknown> | null;
+  aiConfidence: number | null;
+  metadata: Record<string, unknown>;
+} {
+  const metadata: Record<string, unknown> = {
+    ai_mode: "log_only",
+  };
+
+  if (!input.result.ok) {
+    metadata.ai_error = input.result.error;
+    return {
+      aiIntent: null,
+      aiConfidence: null,
+      metadata,
+    };
+  }
+
+  metadata.ai_model = input.result.model;
+
+  return {
+    aiIntent: input.result.classification as unknown as Record<string, unknown>,
+    aiConfidence: input.result.classification.confidence,
+    metadata,
+  };
+}
+
+export async function classifyTrainingPeaksMoveIntentWithAi(
+  input: ClassifyTrainingPeaksMoveIntentInput
+): Promise<ClassifyTrainingPeaksMoveIntentResult> {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) {
+    return { ok: false, error: "missing_openai_api_key" };
+  }
+
+  const timezone = input.timezone?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const baseDate = input.baseDate ?? new Date();
+  const schemaHint = {
+    intent: "move_workout|none|unknown",
+    workout_reference: {
+      kind: "long_run|tempo|intervals|easy_run|workout|unknown",
+      text: "string|null",
+      confidence: 0.0,
+    },
+    target_date: {
+      kind: "date|relative|unknown",
+      value: "string|null",
+      text: "string|null",
+      confidence: 0.0,
+    },
+    source_date: {
+      kind: "date|relative|unknown",
+      value: "string|null",
+      text: "string|null",
+      confidence: 0.0,
+    },
+    confidence: 0.0,
+    needs_clarification: false,
+    clarification_reason: "string|null",
+    reasoning_summary: "string",
+  };
+
+  const prompt = [
+    "Ты классификатор русских Telegram-сообщений ученика тренера по бегу.",
+    "Определи, просит ли ученик перенести тренировку в TrainingPeaks.",
+    "Верни только JSON без markdown и без пояснений.",
+    "Если это отчет, эмоция, casual chat или просто упоминание тренировки без просьбы перенести — intent=none.",
+    "Если сообщение не про расписание/тренировки — intent=none.",
+    "Если intent неясен — intent=unknown или needs_clarification=true.",
+    "Не выдумывай даты. value для date — ISO YYYY-MM-DD, для relative — tomorrow|today|monday|...",
+    `Текущая дата: ${baseDate.toISOString().slice(0, 10)}; timezone: ${timezone}.`,
+    `Ученик привязан к TrainingPeaks: ${input.studentLinked ? "yes" : "no"}.`,
+    `Известные алиасы тренировок: ${listKnownWorkoutAliasesForAiPrompt()}.`,
+    `Схема: ${JSON.stringify(schemaHint)}.`,
+    `normalized_text: ${input.normalizedText}`,
+    `text_preview: ${input.textPreview}`,
+  ].join("\n");
+
+  try {
+    const response = await fetch(OPENAI_API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: AI_MODEL,
+        temperature: 0,
+        messages: [
+          {
+            role: "system",
+            content: "Return strict JSON only.",
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      return { ok: false, error: `openai_http_${response.status}` };
+    }
+
+    const payload = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string | null } }>;
+    };
+    const text = payload.choices?.[0]?.message?.content?.trim();
+    if (!text) {
+      return { ok: false, error: "empty_openai_response" };
+    }
+
+    let parsedJson: unknown;
+    try {
+      parsedJson = JSON.parse(extractJsonOnly(text));
+    } catch {
+      return { ok: false, error: "json_parse_failed" };
+    }
+
+    const parsed = parseTrainingPeaksAiIntentClassification(parsedJson);
+    if (!parsed.ok) {
+      return { ok: false, error: parsed.error };
+    }
+
+    return {
+      ok: true,
+      classification: parsed.classification,
+      model: AI_MODEL,
+    };
+  } catch {
+    return { ok: false, error: "openai_request_failed" };
+  }
+}

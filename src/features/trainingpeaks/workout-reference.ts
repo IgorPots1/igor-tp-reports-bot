@@ -97,3 +97,19 @@ export function normalizeWorkoutReference(text: string): NormalizeWorkoutReferen
 export function hasRecognizedWorkoutReference(text: string): boolean {
   return normalizeWorkoutReference(text).kind !== "unknown";
 }
+
+export function listKnownWorkoutAliasesForAiPrompt(): string {
+  const grouped = new Map<string, string[]>();
+
+  for (const rule of WORKOUT_ALIAS_RULES) {
+    const aliases = grouped.get(rule.kind) ?? [];
+    aliases.push(rule.stem ? `${rule.alias}*` : rule.alias);
+    grouped.set(rule.kind, aliases);
+  }
+
+  grouped.set("easy_run", ["легкий бег", "легко", "easy run"]);
+
+  return [...grouped.entries()]
+    .map(([kind, aliases]) => `${kind}: ${aliases.join(", ")}`)
+    .join("; ");
+}

@@ -1,8 +1,16 @@
 import {
+  getTrainingPeaksMessageIntentLogByTelegramMessage,
   insertTrainingPeaksMessageIntentLog,
+  updateTrainingPeaksMessageIntentLogAiFields,
+  type TrainingPeaksMessageIntentLog,
   type TrainingPeaksMessageIntentLogStatus,
 } from "@/features/trainingpeaks/repository";
 import type { CreateTrainingPeaksMoveWorkoutActionFromTelegramResult } from "@/features/trainingpeaks/service";
+import { isTrainingPeaksIntentAiLogOnlyEnabled } from "@/features/trainingpeaks/intent-ai-mode";
+import {
+  buildTrainingPeaksAiIntentLogFields,
+  classifyTrainingPeaksMoveIntentWithAi,
+} from "@/features/trainingpeaks/move-workout-intent-ai";
 import {
   buildTelegramContextTextPreview,
   classifyTelegramContextLabels,
@@ -132,13 +140,71 @@ export function resolveTrainingPeaksMessageIntentLogStatus(input: {
   return hasRelevance ? "parse_failed" : null;
 }
 
+const AI_LOG_ONLY_STATUSES = new Set<TrainingPeaksMessageIntentLogStatus>([
+  "unrecognized",
+  "parse_failed",
+  "needs_review",
+  "student_not_found",
+]);
+
+export function shouldRunTrainingPeaksIntentAiLogOnly(input: {
+  status: TrainingPeaksMessageIntentLogStatus;
+  hasRelevance: boolean;
+  moveActionOk: boolean;
+}): boolean {
+  if (!isTrainingPeaksIntentAiLogOnlyEnabled()) {
+    return false;
+  }
+
+  if (input.moveActionOk) {
+    return false;
+  }
+
+  if (!input.hasRelevance) {
+    return false;
+  }
+
+  return AI_LOG_ONLY_STATUSES.has(input.status);
+}
+
+async function appendTrainingPeaksIntentAiLogOnlyFields(input: {
+  logEntry: TrainingPeaksMessageIntentLog | null;
+  telegramChatId: string;
+  telegramMessageId: string;
+  normalizedText: string | null;
+  textPreview: string | null;
+  studentLinked: boolean;
+}): Promise<TrainingPeaksMessageIntentLog | null> {
+  const aiResult = await classifyTrainingPeaksMoveIntentWithAi({
+    normalizedText: input.normalizedText ?? "",
+    textPreview: input.textPreview ?? "",
+    studentLinked: input.studentLinked,
+  });
+  const aiFields = buildTrainingPeaksAiIntentLogFields({ result: aiResult });
+
+  const logId =
+    input.logEntry?.id ??
+    (
+      await getTrainingPeaksMessageIntentLogByTelegramMessage(
+        input.telegramChatId,
+        input.telegramMessageId
+      )
+    )?.id;
+
+  if (!logId) {
+    return null;
+  }
+
+  return updateTrainingPeaksMessageIntentLogAiFields(logId, aiFields);
+}
+
 export async function logTrainingPeaksMessageIntentDecision(
   input: LogTrainingPeaksMessageIntentDecisionInput
-): Promise<void> {
+): Promise<TrainingPeaksMessageIntentLog | null> {
   try {
     const textFields = buildIntentLogTextFields(input.rawText ?? null);
 
-    await insertTrainingPeaksMessageIntentLog({
+    return await insertTrainingPeaksMessageIntentLog({
       source: input.source ?? "telegram_business",
       studentId: input.studentId ?? null,
       telegramChatId: input.telegramChatId ?? null,
@@ -167,6 +233,7 @@ export async function logTrainingPeaksMessageIntentDecision(
       telegramMessageId: input.telegramMessageId,
       error,
     });
+    return null;
   }
 }
 
@@ -221,10 +288,38 @@ export async function logTrainingPeaksBusinessMessageIntentDecision(input: {
     return;
   }
 
-  await logTrainingPeaksMessageIntentDecision({
+  const textFields = buildIntentLogTextFields(input.messageText);
+  const logEntry = await logTrainingPeaksMessageIntentDecision({
     ...baseFields,
     studentId: input.moveActionResult.student?.id ?? null,
     status,
     reason: mapMoveActionFailureReasonToLogReason(input.moveActionResult.reason),
   });
+
+  if (
+    !shouldRunTrainingPeaksIntentAiLogOnly({
+      status,
+      hasRelevance,
+      moveActionOk: false,
+    })
+  ) {
+    return;
+  }
+
+  try {
+    await appendTrainingPeaksIntentAiLogOnlyFields({
+      logEntry,
+      telegramChatId: input.chatId,
+      telegramMessageId: String(input.messageId),
+      normalizedText: textFields.normalizedText,
+      textPreview: textFields.textPreview,
+      studentLinked: Boolean(input.moveActionResult.student),
+    });
+  } catch (error) {
+    console.warn("Failed to append TrainingPeaks AI intent log-only fields", {
+      chatId: input.chatId,
+      messageId: input.messageId,
+      error,
+    });
+  }
 }
