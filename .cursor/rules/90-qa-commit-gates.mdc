@@ -1,0 +1,14 @@
+---
+description: QA and git discipline before commit in this repo
+alwaysApply: true
+---
+
+# QA And Commit Gates
+
+- After implementation tasks, run `npm run lint` and `npm run build` when relevant to the touched area and report the result clearly.
+- When touching TrainingPeaks parser, intent, digest, or attention logic, also run the relevant focused `check-*` scripts when they exist.
+- Do not use `git add .` or `git add -A`. Stage explicit files only.
+- Do not commit or push unless the user explicitly asks.
+- Before any commit, report `git status`, the exact files changed, checks run, known risks, and anything intentionally deferred.
+- Never commit `.env` files, local artifacts, debug exports, local browser state, athlete data backups, tokens, or secrets.
+- If lint/build failures are unrelated to the scoped change, say so clearly instead of expanding scope silently.

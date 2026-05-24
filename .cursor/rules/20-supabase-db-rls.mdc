@@ -1,0 +1,17 @@
+---
+description: Safety rules for Supabase schema, RLS, grants, and migrations
+globs: supabase/**
+alwaysApply: false
+---
+
+# Supabase DB And RLS Safety
+
+- Any schema change must ship as a migration. Do not edit deployed schema by hand and do not imply that dashboard clicks are enough.
+- Prefer additive migrations. New columns, tables, policies, and indexes are safer than destructive rewrites.
+- Never edit production data directly as part of a code task.
+- Treat `service_role` access as privileged escape hatch logic. Prefer RLS-safe application paths where possible and document why elevated access is required.
+- Review RLS, grants, and policy impact together. A table change without policy review is incomplete.
+- Add guard clauses around unique indexes or constraint creation when re-runs could fail.
+- Do not drop constraints, indexes, policies, or columns without explaining why, the rollback risk, and what protects existing reads/writes.
+- Never put secrets, tokens, or environment-specific values into migrations, SQL seeds, or checked-in docs.
+- Document migration QA: lint/build status, migration review notes, affected tables, and manual verification steps.

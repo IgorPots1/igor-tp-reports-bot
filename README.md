@@ -2,6 +2,10 @@
 
 TrainingPeaks weekly reports bot for Telegram.
 
+## AI Workflow
+
+AI development guardrails and launch templates live in `.cursor/rules/`, `.cursor/skills/`, and `docs/launch-packets/`. Cross-agent repo notes live in `CLAUDE.md`, `AGENTS.md`, and `BUGBOT.md`.
+
 ## Setup
 
 ```bash

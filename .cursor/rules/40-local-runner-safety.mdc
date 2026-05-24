@@ -1,0 +1,15 @@
+---
+description: Safety rules for local TrainingPeaks runner, scripts, and LaunchAgent automation
+globs: tools/trainingpeaks-export/**,scripts/**
+alwaysApply: false
+---
+
+# Local Runner Safety
+
+- `tools/trainingpeaks-export` operates around real TrainingPeaks data and local browser state. Treat all changes here as high-risk.
+- Preserve the prepare -> validate -> execute pattern when touching runner flows, action pipelines, or local automation.
+- Dry-run must remain the default unless the task explicitly changes that contract with approval gates.
+- Do not introduce real TrainingPeaks mutation without an explicit approval step and a clear operator signal that execution is live.
+- Never log auth headers, cookies, bearer tokens, session material, or private athlete data to console, files, debug exports, or docs.
+- Changes to LaunchAgent files, schedule wrappers, or local automation entrypoints require explicit review because they can create unattended behavior.
+- Any script that touches TrainingPeaks APIs, Playwright state, or the persistent local browser profile is high-risk and should be audited before implementation.

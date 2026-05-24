@@ -1,0 +1,16 @@
+---
+description: Core project contract for safe work in the Coach OS repo
+alwaysApply: true
+---
+
+# Project Contract
+
+- This repository powers a real Coach OS stack around Telegram, TrainingPeaks, Supabase, and local Mac automation. Treat it as production infrastructure, not a toy MVP.
+- Keep changes tightly scoped to the task. Do not modify unrelated files, backups, debug exports, or generated artifacts.
+- Prefer ASK or audit-first work before risky changes involving Telegram delivery, coach/admin auth, Supabase schema/data, TrainingPeaks actions, local automation, or AI prompts.
+- Do not add any path that auto-sends athlete-facing messages.
+- Do not add any path that automatically mutates TrainingPeaks data.
+- Human coach approval is required for risky sends, athlete linking, TrainingPeaks execute paths, and irreversible admin actions.
+- Preserve existing safety gates, approval steps, and dry-run defaults unless the task explicitly changes them.
+- Ship production-quality changes: smallest safe diff, clear reasoning, and no speculative refactors.
+- Never commit, push, or rewrite git history unless the user explicitly asks.

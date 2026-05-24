@@ -1,0 +1,15 @@
+---
+description: Safety rules for AI prompt, model, and structured output schema changes
+globs: src/**/openai/**,src/**/ai/**,tools/**/prompt*,tools/**/schema*,docs/ai-dev/**
+alwaysApply: false
+---
+
+# AI Prompt And Schema Safety
+
+- AI prompt changes are logic changes. Treat edits to prompts, model names, temperatures, response schemas, and post-processing as behavior changes.
+- Flag any change to model name, temperature, structured output schema, or parsing assumptions in the task summary.
+- For JSON schema changes, review every downstream consumer: parsing code, storage, UI/admin display, logs, scripts, and fallback handling.
+- Preserve Russian coach and athlete tone unless the task explicitly calls for tone work. Do not let wording drift accidentally.
+- Never introduce automatic AI-generated athlete-facing messages without coach approval.
+- If AI is used for classification or drafting, deterministic safety gates and explicit approval paths remain primary.
+- When a prompt or schema changes, include before/after notes, compatibility risks, and what manual QA proves the change is safe.

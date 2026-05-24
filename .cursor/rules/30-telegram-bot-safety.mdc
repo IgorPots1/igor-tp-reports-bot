@@ -1,0 +1,16 @@
+---
+description: Safety rules for Telegram webhook, Business messaging, and coach-only flows
+globs: src/**/telegram/**,src/**/tp_*,src/**/admin/**
+alwaysApply: false
+---
+
+# Telegram Bot Safety
+
+- Telegram webhook and Telegram Business message paths are safety-critical. Audit routing before changing handlers, commands, callbacks, or delivery code.
+- Coach-only gates must stay intact for admin commands, callbacks, report approval, athlete linking, and break-glass actions.
+- Prefer student lookup by `chat_id`. Username-only matching is weaker and must not auto-bind a student without explicit reasoning and manual safeguards.
+- No athlete-facing Telegram message may be sent automatically unless the task explicitly preserves an existing coach approval flow.
+- Weekly report send, action approval, and TrainingPeaks-related follow-up remain coach-gated.
+- Every callback handler must be checked for coach-only access and wrong-student risk.
+- Telegram Business paths need extra review because they can bridge coach actions into student chats.
+- Any change to Telegram delivery must include a routing trace and manual QA notes covering who can trigger the path, who receives the message, and why no athlete auto-send was introduced.
