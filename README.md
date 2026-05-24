@@ -54,6 +54,12 @@ Vercel reminder: `CRON_SECRET` must be added to the `igor-tp-reports-bot` Vercel
 
 Vercel cron uses UTC. The configured schedule is `0 9 * * *`, which matches 11:00 Europe/Belgrade during summer time. This is a seasonal UTC mapping; if exact local 11:00 matters year-round, adjust this schedule when DST changes.
 
+Operational note:
+
+- `/tp_health` gives a compact coach-only health check for production config plus stale running jobs.
+- `/api/cron/trainingpeaks-stale-job-sweeper` runs every 30 minutes on Vercel and marks stale TrainingPeaks jobs as failed via existing recovery helpers.
+- Local TrainingPeaks backup/debug/export artifacts under `tools/trainingpeaks-export/` are intentionally git-ignored.
+
 ## Local Workout Cache Scan Automation (Mac)
 
 The TrainingPeaks workout cache scan runs locally on Mac using the persistent Chromium profile and writes normalized workout cache plus scan status to Supabase. Vercel cron should not call TrainingPeaks directly.

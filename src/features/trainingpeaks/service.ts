@@ -2,6 +2,7 @@ import {
   approveTrainingPeaksAction as approveTrainingPeaksActionInRepository,
   approveTrainingPeaksWeeklyReportIfDraft,
   cancelQueuedTrainingPeaksJob,
+  countRunningTrainingPeaksJobsUpdatedBefore,
   claimTrainingPeaksWeeklyReportForSend as claimTrainingPeaksWeeklyReportForSendInRepository,
   createTrainingPeaksAction as createTrainingPeaksActionInRepository,
   createTrainingPeaksActionRun as createTrainingPeaksActionRunInRepository,
@@ -54,10 +55,12 @@ import {
   requestTrainingPeaksActionExecution as requestTrainingPeaksActionExecutionInRepository,
   cancelTrainingPeaksActionExecution as cancelTrainingPeaksActionExecutionInRepository,
   getTrainingPeaksActionById as getTrainingPeaksActionByIdInRepository,
+  getLatestTrainingPeaksCronRunLog,
   claimOneApprovedTrainingPeaksActionForDryRun as claimOneApprovedTrainingPeaksActionForDryRunInRepository,
   completeTrainingPeaksActionDryRun as completeTrainingPeaksActionDryRunInRepository,
   failTrainingPeaksActionDryRun as failTrainingPeaksActionDryRunInRepository,
   setTrainingPeaksStudentWeeklyReportsEnabledById,
+  TRAININGPEAKS_ATTENTION_DIGEST_CRON_JOB_NAME,
   TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
   type DecideTrainingPeaksActionResult,
   type RequestTrainingPeaksActionExecutionResult,
@@ -522,6 +525,11 @@ export type TrainingPeaksAttentionSnapshot = {
   today: TrainingPeaksAttentionSignal[];
   observe: TrainingPeaksAttentionSignal[];
   fyi: TrainingPeaksAttentionSignal[];
+};
+
+export type TrainingPeaksHealthSnapshot = {
+  lastAttentionDigestCronStatus: string | null;
+  runningJobsOlderThanSixHours: number;
 };
 
 const TP_ADD_STUDENT_COMMAND_PATTERN = /^\/tp_add_student(?:@\w+)?(?:\s+|$)/;
@@ -2728,6 +2736,21 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     today,
     observe,
     fyi,
+  };
+}
+
+export async function getTrainingPeaksHealthSnapshot(): Promise<TrainingPeaksHealthSnapshot> {
+  const staleRunningCutoffIso = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+  const [lastAttentionDigestCronRun, runningJobsOlderThanSixHours] = await Promise.all([
+    getLatestTrainingPeaksCronRunLog({
+      jobName: TRAININGPEAKS_ATTENTION_DIGEST_CRON_JOB_NAME,
+    }),
+    countRunningTrainingPeaksJobsUpdatedBefore(staleRunningCutoffIso),
+  ]);
+
+  return {
+    lastAttentionDigestCronStatus: lastAttentionDigestCronRun?.status ?? null,
+    runningJobsOlderThanSixHours,
   };
 }
 

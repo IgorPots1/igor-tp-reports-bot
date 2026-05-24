@@ -1,6 +1,10 @@
 node_modules/
 .env
 .playwright-profile/
+config/.backup-archive/
+config/students.backup-*.json
+debug/
+logs/
 exports/*
 !exports/.gitkeep
 parsed/*

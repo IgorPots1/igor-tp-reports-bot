@@ -17,6 +17,7 @@ import {
   enableTrainingPeaksStudentByInternalId,
   findTrainingPeaksBusinessChatsByUsername,
   getTrainingPeaksAttentionSnapshot,
+  getTrainingPeaksHealthSnapshot,
   getTrainingPeaksJobsStatus,
   getTrainingPeaksBusinessChatByInternalId,
   getTrainingPeaksLatestReportSnapshotByInternalId,
@@ -83,6 +84,7 @@ import {
   TRAININGPEAKS_ATTENTION_DIGEST_CRON_JOB_NAME,
   type TrainingPeaksCronRunLog,
 } from "@/features/trainingpeaks/repository";
+import { isTrainingPeaksContextObserverEnabled } from "@/features/trainingpeaks/context-observer";
 import {
   getPreviousTrainingPeaksWeek,
   resolveTrainingPeaksWeekKeyword,
@@ -199,6 +201,7 @@ const TP_RUN_WEEK_COMMAND_PATTERN = /^\/tp_run_week(?:@\w+)?(?:\s+|$)/;
 const TP_RACES_COMMAND_PATTERN = /^\/tp_races(?:@\w+)?(?:\s+|$)/;
 const TP_JOBS_COMMAND_PATTERN = /^\/tp_jobs(?:@\w+)?(?:\s+|$)/;
 const TP_ATTENTION_COMMAND_PATTERN = /^\/tp_attention(?:@\w+)?(?:\s+|$)/;
+const TP_HEALTH_COMMAND_PATTERN = /^\/tp_health(?:@\w+)?(?:\s+|$)/;
 const TP_CRON_STATUS_COMMAND_PATTERN = /^\/tp_cron_status(?:@\w+)?(?:\s+|$)/;
 const TP_WEEKLY_COMMAND_PATTERN = /^\/tp_weekly(?:@\w+)?(?:\s+|$)/;
 const TP_BUSINESS_TEST_COMMAND_PATTERN = /^\/tp_business_test(?:@\w+)?(?:\s+|$)/;
@@ -245,6 +248,7 @@ type TrainingPeaksCommand =
   | "tp_races"
   | "tp_jobs"
   | "tp_attention"
+  | "tp_health"
   | "tp_cron_status"
   | "tp_weekly"
   | "tp_business_test"
@@ -451,6 +455,10 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
 
   if (TP_ATTENTION_COMMAND_PATTERN.test(text)) {
     return "tp_attention";
+  }
+
+  if (TP_HEALTH_COMMAND_PATTERN.test(text)) {
+    return "tp_health";
   }
 
   if (TP_CRON_STATUS_COMMAND_PATTERN.test(text)) {
@@ -1926,6 +1934,21 @@ function formatTrainingPeaksCronStatusMessage(input: {
   return lines.join("\n");
 }
 
+async function handleTrainingPeaksHealth(parsedMessage: ParsedTelegramUpdate): Promise<void> {
+  const health = await getTrainingPeaksHealthSnapshot();
+  const lines = [
+    "TP health",
+    `webhook secret configured: ${process.env.TELEGRAM_WEBHOOK_SECRET?.trim() ? "yes" : "no"}`,
+    `business connection id configured: ${process.env.TELEGRAM_BUSINESS_CONNECTION_ID?.trim() ? "yes" : "no"}`,
+    `openai api key configured: ${process.env.OPENAI_API_KEY?.trim() ? "yes" : "no"}`,
+    `context observer enabled: ${isTrainingPeaksContextObserverEnabled() ? "yes" : "no"}`,
+    `last attention-digest cron status: ${health.lastAttentionDigestCronStatus ?? "none"}`,
+    `running jobs > 6h old: ${health.runningJobsOlderThanSixHours}`,
+  ];
+
+  await sendTrainingPeaksMessage(parsedMessage.chatId, lines.join("\n"));
+}
+
 async function handleTrainingPeaksCronStatus(parsedMessage: ParsedTelegramUpdate): Promise<void> {
   const [lastAttempt, lastSent, recentLogs] = await Promise.all([
     getLatestTrainingPeaksCronRunLog({
@@ -2034,6 +2057,7 @@ export function getTrainingPeaksHelpLines(): string[] {
     "/tp_intents — triage непонятых TP-сообщений (read-only)",
     "/tp_races YYYY-MM-DD YYYY-MM-DD — скан забегов за период",
     "/tp_reply_draft <ученик> — черновик ответа ученику (без автоотправки)",
+    "/tp_health — краткая проверка production-конфига и зависших jobs",
     "",
     "Служебные (редко нужны):",
     "/tp_set_telegram — привязка Telegram вручную",
@@ -6905,6 +6929,11 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_attention") {
       await handleTrainingPeaksAttention(parsedMessage);
+      return "handled";
+    }
+
+    if (command === "tp_health") {
+      await handleTrainingPeaksHealth(parsedMessage);
       return "handled";
     }
 

@@ -3773,6 +3773,21 @@ export async function listRecentTrainingPeaksJobs(limit = 10): Promise<TrainingP
   return ((data as TrainingPeaksJobRow[]) ?? []).map(mapTrainingPeaksJobRow);
 }
 
+export async function countRunningTrainingPeaksJobsUpdatedBefore(cutoffIso: string): Promise<number> {
+  const supabase = createSupabaseServerClient();
+  const { count, error } = await supabase
+    .from("trainingpeaks_jobs")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "running")
+    .lt("updated_at", cutoffIso);
+
+  if (error) {
+    throw new Error(`Failed to count stale running TrainingPeaks jobs: ${error.message}`);
+  }
+
+  return count ?? 0;
+}
+
 export async function claimNextQueuedTrainingPeaksJob(): Promise<TrainingPeaksJob | null> {
   return claimNextQueuedTrainingPeaksJobByType("weekly_reports");
 }
@@ -3944,6 +3959,7 @@ export async function cancelQueuedTrainingPeaksJob(jobId: string): Promise<Train
 }
 
 export const TRAININGPEAKS_ATTENTION_DIGEST_CRON_JOB_NAME = "attention_digest";
+export const TRAININGPEAKS_STALE_JOB_SWEEPER_CRON_JOB_NAME = "stale_job_sweeper";
 
 export type TrainingPeaksCronRunLogSource = "vercel_cron" | "manual" | "unknown";
 export type TrainingPeaksCronRunLogStatus =
