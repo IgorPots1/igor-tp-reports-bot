@@ -6460,26 +6460,11 @@ function normalizeTrustedDryRunLog(logJson: unknown, parsedPayload?: unknown): T
     typeof payload.resolvedDates?.sourceDate === "string" ? payload.resolvedDates.sourceDate.trim() : "";
   const targetDate =
     typeof payload.resolvedDates?.targetDate === "string" ? payload.resolvedDates.targetDate.trim() : "";
-  const fingerprint =
-    typeof payload.candidate?.fingerprint === "string" ? payload.candidate.fingerprint.trim() : "";
-  const matchedBy = payload.identityCheck?.matchedBy;
 
   if (payload.dryRunResult !== "candidate_found") {
     return null;
   }
   if (payload.canExecute !== true) {
-    return null;
-  }
-  if (!Number.isFinite(confidence) || confidence < 0.8) {
-    return null;
-  }
-  if (!fingerprint) {
-    return null;
-  }
-  if (!sourceDate || !targetDate) {
-    return null;
-  }
-  if (!payload.identityCheck || matchedBy === "mismatch" || matchedBy === undefined) {
     return null;
   }
   if (!payload.candidate) {
@@ -6488,12 +6473,7 @@ function normalizeTrustedDryRunLog(logJson: unknown, parsedPayload?: unknown): T
 
   const selectedSourceDatePolicy =
     typeof payload.selectedSourceDatePolicy === "string" ? payload.selectedSourceDatePolicy : null;
-  const moveSourceValidation = moveSourcePolicy.validateMoveSourceForExecution({
-    selectedSourceDatePolicy,
-    parsedPayload: parsedPayload ?? null,
-    dryRunLog: logJson,
-  });
-  if (!moveSourceValidation.ok) {
+  if (!moveSourcePolicy.validateDryRunLogReadiness(logJson, parsedPayload).ok) {
     return null;
   }
 

@@ -17,5 +17,8 @@ if (typeof moveSourcePolicy.getSelectedSourceDatePolicyFromDryRunLog !== "functi
 if (typeof moveSourcePolicy.validateStrongFutureDescriptorMoveSourceForExecution !== "function") {
   throw new Error("validateStrongFutureDescriptorMoveSourceForExecution must be a function.");
 }
+if (typeof moveSourcePolicy.validateDryRunLogReadiness !== "function") {
+  throw new Error("validateDryRunLogReadiness must be a function.");
+}
 
 console.log("check-trainingpeaks-move-source-policy-import: ok");

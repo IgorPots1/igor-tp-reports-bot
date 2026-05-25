@@ -5,6 +5,7 @@ import {
   hasExplicitMoveSourceInParsedPayload,
   isMoveSourceExplicitEnough,
   isTrustedMoveSourcePolicy,
+  validateDryRunLogReadiness,
   validateMoveSourceForExecution,
   validateStrongFutureDescriptorMoveSourceForExecution,
 } from "@/features/trainingpeaks/move-source-policy";
@@ -43,6 +44,16 @@ const inferredSourceCases: InferredSourceCase[] = [
   {
     name: "target_tomorrow_prefers_today without sourceDate",
     selectedSourceDatePolicy: "target_tomorrow_prefers_today",
+    parsedPayload: viktoriaLikePayload,
+  },
+  {
+    name: "target_today_prefers_yesterday without sourceDate",
+    selectedSourceDatePolicy: "target_today_prefers_yesterday",
+    parsedPayload: viktoriaLikePayload,
+  },
+  {
+    name: "weak_descriptor_match without sourceDate",
+    selectedSourceDatePolicy: "weak_descriptor_match",
     parsedPayload: viktoriaLikePayload,
   },
   {
@@ -489,6 +500,81 @@ async function run(): Promise<void> {
       console.log(
         `FAIL: cache preview alone must fail with cache preview reason, got ${JSON.stringify(cachePreviewOnlyValidation.reason)}`
       );
+    }
+
+    const viktoriaProductionReadiness = validateDryRunLogReadiness(
+      viktoriaProductionDryRunLog,
+      viktoriaProductionPayload
+    );
+    if (!viktoriaProductionReadiness.ok) {
+      failed += 1;
+      console.log(
+        `FAIL: production-shaped Viktoria dry-run log must pass shared readiness (${viktoriaProductionReadiness.reason})`
+      );
+    }
+
+    const withoutProvenanceLog = buildViktoriaStrongDryRunLog({
+      fingerprint,
+      canExecute: true,
+      confidence: 0.73,
+      provenanceScore: 0.73,
+    });
+    delete withoutProvenanceLog.sourceInferenceProvenance;
+    const viktoriaWithoutProvenanceReadiness = validateDryRunLogReadiness(
+      withoutProvenanceLog,
+      viktoriaProductionPayload
+    );
+    if (viktoriaWithoutProvenanceReadiness.ok) {
+      failed += 1;
+      console.log("FAIL: strong dry-run log without provenance must fail shared readiness");
+    }
+
+    const explicitDryRunLog = {
+      dryRunResult: "candidate_found",
+      canExecute: true,
+      confidence: 0.92,
+      candidate: { fingerprint: "student:2026-05-25:run", title: "Темп / легко", type: "run" },
+      resolvedDates: { sourceDate: "2026-05-25", targetDate: "2026-05-26" },
+      selectedSourceDatePolicy: "explicit_source_ref",
+      identityCheck: { matchedBy: "name" },
+    };
+    const explicitReadiness = validateDryRunLogReadiness(explicitDryRunLog, explicitSourcePayload);
+    if (!explicitReadiness.ok) {
+      failed += 1;
+      console.log(`FAIL: explicit source dry-run log must pass shared readiness (${explicitReadiness.reason})`);
+    }
+
+    const cachePreviewDryRunLog = {
+      dryRunResult: "candidate_found",
+      canExecute: true,
+      confidence: 0.91,
+      candidate: { fingerprint, title: "6 × 6 мин", type: "run" },
+      resolvedDates: { sourceDate: "2026-05-28", targetDate: "2026-05-26" },
+      selectedSourceDatePolicy: STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY,
+      identityCheck: { matchedBy: "name" },
+    };
+    const cachePreviewReadiness = validateDryRunLogReadiness(cachePreviewDryRunLog, cachePreviewPayload);
+    if (cachePreviewReadiness.ok) {
+      failed += 1;
+      console.log("FAIL: cache preview dry-run log must fail shared readiness");
+    }
+
+    for (const blockedPolicy of [
+      "nearest_prior_within_3_days",
+      "target_tomorrow_prefers_today",
+      "target_today_prefers_yesterday",
+    ] as const) {
+      const blockedDryRunLog = buildViktoriaStrongDryRunLog({
+        fingerprint,
+        canExecute: true,
+        selectedSourceDatePolicy: blockedPolicy,
+        confidence: 0.91,
+      });
+      const blockedReadiness = validateDryRunLogReadiness(blockedDryRunLog, viktoriaLikePayload);
+      if (blockedReadiness.ok) {
+        failed += 1;
+        console.log(`FAIL: ${blockedPolicy} dry-run log must fail shared readiness`);
+      }
     }
   }
 

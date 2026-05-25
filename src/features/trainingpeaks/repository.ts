@@ -1,8 +1,5 @@
 import { createSupabaseServerClient } from "@/features/supabase/server";
-import {
-  getSelectedSourceDatePolicyFromDryRunLog,
-  validateMoveSourceForExecution,
-} from "@/features/trainingpeaks/move-source-policy";
+import { validateDryRunLogReadiness } from "@/features/trainingpeaks/move-source-policy";
 
 export type TrainingPeaksTelegramFormality = "ty" | "vy" | "unknown";
 
@@ -1143,61 +1140,6 @@ function mapTrainingPeaksActionRow(row: TrainingPeaksActionRow): TrainingPeaksAc
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
-}
-
-function toNumericConfidence(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
-
-function validateDryRunLogReadiness(
-  logJson: unknown,
-  parsedPayload?: unknown
-): { ok: true } | { ok: false; reason: string } {
-  if (!logJson || typeof logJson !== "object") {
-    return { ok: false, reason: "Dry-run log not found." };
-  }
-
-  const payload = logJson as {
-    dryRunResult?: unknown;
-    canExecute?: unknown;
-    candidate?: { fingerprint?: unknown } | null;
-    confidence?: unknown;
-  };
-
-  if (payload.dryRunResult !== "candidate_found") {
-    return { ok: false, reason: "Dry-run did not find a unique candidate." };
-  }
-  if (payload.canExecute !== true) {
-    return { ok: false, reason: "Dry-run marked action as unsafe for execution." };
-  }
-
-  const fingerprint = payload.candidate?.fingerprint;
-  if (typeof fingerprint !== "string" || !fingerprint.trim()) {
-    return { ok: false, reason: "Dry-run candidate fingerprint is missing." };
-  }
-
-  const confidence = toNumericConfidence(payload.confidence);
-  if (confidence === null || confidence < 0.8) {
-    return { ok: false, reason: "Dry-run confidence is below 0.8." };
-  }
-
-  const moveSourceValidation = validateMoveSourceForExecution({
-    selectedSourceDatePolicy: getSelectedSourceDatePolicyFromDryRunLog(logJson),
-    parsedPayload: parsedPayload ?? null,
-    dryRunLog: logJson,
-  });
-  if (!moveSourceValidation.ok) {
-    return { ok: false, reason: moveSourceValidation.reason };
-  }
-
-  return { ok: true };
 }
 
 export async function getTrainingPeaksActionById(actionId: string): Promise<TrainingPeaksAction | null> {

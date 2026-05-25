@@ -10,6 +10,8 @@ export const STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY = "strong_future_descriptor_m
 
 export const STRONG_FUTURE_DESCRIPTOR_EXECUTION_CONFIDENCE_THRESHOLD = 0.7;
 
+export const DEFAULT_DRY_RUN_EXECUTION_CONFIDENCE_THRESHOLD = 0.8;
+
 export const EXECUTABLE_MOVE_SOURCE_POLICIES = new Set([
   ...TRUSTED_MOVE_SOURCE_POLICIES,
   STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY,
@@ -388,4 +390,68 @@ export function validateMoveSourceForExecution(input: {
     ok: false,
     reason: "Dry-run move source is not explicit enough in parsed payload.",
   };
+}
+
+export function validateDryRunLogReadiness(
+  logJson: unknown,
+  parsedPayload?: unknown
+): { ok: true } | { ok: false; reason: string } {
+  if (!logJson || typeof logJson !== "object") {
+    return { ok: false, reason: "Dry-run log not found." };
+  }
+
+  const payload = logJson as {
+    dryRunResult?: unknown;
+    canExecute?: unknown;
+    candidate?: { fingerprint?: unknown } | null;
+    confidence?: unknown;
+    resolvedDates?: { sourceDate?: unknown; targetDate?: unknown } | null;
+    identityCheck?: { matchedBy?: unknown } | null;
+  };
+
+  if (payload.dryRunResult !== "candidate_found") {
+    return { ok: false, reason: "Dry-run did not find a unique candidate." };
+  }
+  if (payload.canExecute !== true) {
+    return { ok: false, reason: "Dry-run marked action as unsafe for execution." };
+  }
+
+  const fingerprint = payload.candidate?.fingerprint;
+  if (typeof fingerprint !== "string" || !fingerprint.trim()) {
+    return { ok: false, reason: "Dry-run candidate fingerprint is missing." };
+  }
+
+  const sourceDate = trimOrNull(payload.resolvedDates?.sourceDate);
+  const targetDate = trimOrNull(payload.resolvedDates?.targetDate);
+  if (!sourceDate || !targetDate) {
+    return { ok: false, reason: "Resolved source or target date is missing." };
+  }
+
+  const identityMatchedBy =
+    typeof payload.identityCheck?.matchedBy === "string" ? payload.identityCheck.matchedBy : null;
+  if (!identityMatchedBy || identityMatchedBy === "mismatch") {
+    return { ok: false, reason: "Athlete identity check is missing or mismatched." };
+  }
+
+  const policy = getSelectedSourceDatePolicyFromDryRunLog(logJson);
+  const moveSourceValidation = validateMoveSourceForExecution({
+    selectedSourceDatePolicy: policy,
+    parsedPayload: parsedPayload ?? null,
+    dryRunLog: logJson,
+  });
+  if (!moveSourceValidation.ok) {
+    return { ok: false, reason: moveSourceValidation.reason };
+  }
+
+  if (policy !== STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY) {
+    const confidence = toNumericConfidence(payload.confidence);
+    if (confidence === null || confidence < DEFAULT_DRY_RUN_EXECUTION_CONFIDENCE_THRESHOLD) {
+      return {
+        ok: false,
+        reason: `Dry-run confidence is below ${DEFAULT_DRY_RUN_EXECUTION_CONFIDENCE_THRESHOLD}.`,
+      };
+    }
+  }
+
+  return { ok: true };
 }

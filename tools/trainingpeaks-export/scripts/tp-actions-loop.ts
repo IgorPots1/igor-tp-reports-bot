@@ -214,30 +214,8 @@ async function runCommand(
   });
 }
 
-function hasTrustedDryRunLog(logJson: unknown): boolean {
-  if (!logJson || typeof logJson !== "object") {
-    return false;
-  }
-  const payload = logJson as {
-    dryRunResult?: unknown;
-    canExecute?: unknown;
-    confidence?: unknown;
-    candidate?: { fingerprint?: unknown } | null;
-  };
-  const confidence =
-    typeof payload.confidence === "number"
-      ? payload.confidence
-      : typeof payload.confidence === "string"
-        ? Number(payload.confidence)
-        : NaN;
-  return (
-    payload.dryRunResult === "candidate_found" &&
-    payload.canExecute === true &&
-    Number.isFinite(confidence) &&
-    confidence >= 0.8 &&
-    typeof payload.candidate?.fingerprint === "string" &&
-    payload.candidate.fingerprint.trim().length > 0
-  );
+function hasTrustedDryRunLog(logJson: unknown, parsedPayload?: unknown): boolean {
+  return moveSourcePolicy.validateDryRunLogReadiness(logJson, parsedPayload).ok;
 }
 
 function inspectTrustedDryRunLog(
@@ -309,10 +287,12 @@ function inspectTrustedDryRunLog(
       identityMatchedBy,
     };
   }
-  if (!Number.isFinite(confidence) || confidence < 0.8) {
+
+  const readiness = moveSourcePolicy.validateDryRunLogReadiness(logJson, parsedPayload);
+  if (!readiness.ok) {
     return {
       trusted: false,
-      reason: "confidence_below_threshold",
+      reason: readiness.reason,
       dryRunResult,
       canExecute,
       confidence: Number.isFinite(confidence) ? confidence : null,
@@ -322,74 +302,16 @@ function inspectTrustedDryRunLog(
       identityMatchedBy,
     };
   }
-  if (!fingerprint) {
-    return {
-      trusted: false,
-      reason: "missing_fingerprint",
-      dryRunResult,
-      canExecute,
-      confidence,
-      fingerprintExists: false,
-      sourceDateExists: sourceDate.length > 0,
-      targetDateExists: targetDate.length > 0,
-      identityMatchedBy,
-    };
-  }
-  if (!sourceDate || !targetDate) {
-    return {
-      trusted: false,
-      reason: "missing_resolved_dates",
-      dryRunResult,
-      canExecute,
-      confidence,
-      fingerprintExists: true,
-      sourceDateExists: sourceDate.length > 0,
-      targetDateExists: targetDate.length > 0,
-      identityMatchedBy,
-    };
-  }
-  if (!identityMatchedBy || identityMatchedBy === "mismatch") {
-    return {
-      trusted: false,
-      reason: `identity_check_${identityMatchedBy ?? "missing"}`,
-      dryRunResult,
-      canExecute,
-      confidence,
-      fingerprintExists: true,
-      sourceDateExists: true,
-      targetDateExists: true,
-      identityMatchedBy,
-    };
-  }
-
-  const moveSourceValidation = moveSourcePolicy.validateMoveSourceForExecution({
-    selectedSourceDatePolicy: moveSourcePolicy.getSelectedSourceDatePolicyFromDryRunLog(logJson),
-    parsedPayload: parsedPayload ?? null,
-    dryRunLog: logJson,
-  });
-  if (!moveSourceValidation.ok) {
-    return {
-      trusted: false,
-      reason: "inferred_move_source",
-      dryRunResult,
-      canExecute,
-      confidence,
-      fingerprintExists: true,
-      sourceDateExists: true,
-      targetDateExists: true,
-      identityMatchedBy,
-    };
-  }
 
   return {
     trusted: true,
     reason: "trusted",
     dryRunResult,
     canExecute,
-    confidence,
-    fingerprintExists: true,
-    sourceDateExists: true,
-    targetDateExists: true,
+    confidence: Number.isFinite(confidence) ? confidence : null,
+    fingerprintExists: fingerprint.length > 0,
+    sourceDateExists: sourceDate.length > 0,
+    targetDateExists: targetDate.length > 0,
     identityMatchedBy,
   };
 }
@@ -527,7 +449,10 @@ async function autoQueueTrustedActions(since: string | null): Promise<number> {
       (runData as { log_json?: unknown }).log_json,
       row.parsed_payload
     );
-    if (!trustedInspection.trusted || !hasTrustedDryRunLog((runData as { log_json?: unknown }).log_json)) {
+    if (
+      !trustedInspection.trusted ||
+      !hasTrustedDryRunLog((runData as { log_json?: unknown }).log_json, row.parsed_payload)
+    ) {
       await retireUnsafeDryRunAction(row, trustedInspection.reason);
       continue;
     }
