@@ -1191,6 +1191,7 @@ function validateDryRunLogReadiness(
   const moveSourceValidation = validateMoveSourceForExecution({
     selectedSourceDatePolicy: getSelectedSourceDatePolicyFromDryRunLog(logJson),
     parsedPayload: parsedPayload ?? null,
+    dryRunLog: logJson,
   });
   if (!moveSourceValidation.ok) {
     return { ok: false, reason: moveSourceValidation.reason };

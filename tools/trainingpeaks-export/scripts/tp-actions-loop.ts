@@ -365,6 +365,7 @@ function inspectTrustedDryRunLog(
   const moveSourceValidation = moveSourcePolicy.validateMoveSourceForExecution({
     selectedSourceDatePolicy: moveSourcePolicy.getSelectedSourceDatePolicyFromDryRunLog(logJson),
     parsedPayload: parsedPayload ?? null,
+    dryRunLog: logJson,
   });
   if (!moveSourceValidation.ok) {
     return {

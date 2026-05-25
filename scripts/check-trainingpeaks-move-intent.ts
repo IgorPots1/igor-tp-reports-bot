@@ -1,9 +1,12 @@
 import {
   INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON,
+  STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY,
+  extractMoveSourceExecutionContextFromDryRunLog,
   hasExplicitMoveSourceInParsedPayload,
   isMoveSourceExplicitEnough,
   isTrustedMoveSourcePolicy,
   validateMoveSourceForExecution,
+  validateStrongFutureDescriptorMoveSourceForExecution,
 } from "@/features/trainingpeaks/move-source-policy";
 import {
   buildMoveSourceInferencePreviewFromCacheCandidates,
@@ -105,6 +108,41 @@ const legacyCacheMasqueradePayload = {
   source_date: "2026-05-28",
 };
 
+function buildViktoriaStrongDryRunLog(input: {
+  fingerprint: string;
+  canExecute: boolean;
+  selectedSourceDatePolicy?: string;
+}): Record<string, unknown> {
+  return {
+    dryRunResult: "candidate_found",
+    canExecute: input.canExecute,
+    confidence: 0.91,
+    candidate: { fingerprint: input.fingerprint, title: "6 × 6 мин", type: "run" },
+    resolvedDates: { sourceDate: "2026-05-28", targetDate: "2026-05-26" },
+    selectedSourceDatePolicy: input.selectedSourceDatePolicy ?? STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY,
+    candidateAlternativesCount: 0,
+    identityCheck: { matchedBy: "name" },
+    sourceInferenceProvenance: {
+      descriptorType: "interval",
+      sourceInferencePolicy: STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY,
+      selectedSourceDate: "2026-05-28",
+      targetDate: "2026-05-26",
+      candidate: {
+        title: "6 × 6 мин",
+        type: "run",
+        date: "2026-05-28",
+        fingerprint: input.fingerprint,
+        workoutId: 4,
+      },
+      candidateCount: 1,
+      candidateAlternativesCount: 0,
+      score: 0.91,
+      margin: null,
+      warnings: ["target day already has workout", "hard workout moved earlier", "week may need manual adjustment"],
+    },
+  };
+}
+
 function simulateCanExecute(input: {
   dryRunResult: "candidate_found";
   selectedSourceDatePolicy: string;
@@ -112,10 +150,12 @@ function simulateCanExecute(input: {
   confidence: number;
   safeCandidateCount: number;
   identityMatchedBy: string;
+  dryRunLog?: Record<string, unknown>;
 }): boolean {
-  const moveSourceExplicitEnough = isMoveSourceExplicitEnough({
+  const moveSourceValidation = validateMoveSourceForExecution({
     selectedSourceDatePolicy: input.selectedSourceDatePolicy,
     parsedPayload: input.parsedPayload,
+    dryRunLog: input.dryRunLog,
   });
 
   return (
@@ -123,7 +163,7 @@ function simulateCanExecute(input: {
     input.safeCandidateCount === 1 &&
     input.confidence >= 0.8 &&
     input.identityMatchedBy !== "mismatch" &&
-    moveSourceExplicitEnough
+    moveSourceValidation.ok
   );
 }
 
@@ -182,7 +222,7 @@ async function run(): Promise<void> {
   for (const policy of [
     "explicit_source_date",
     "explicit_source_ref",
-    "strong_future_descriptor_match",
+    STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY,
     "nearest_prior_within_3_days",
     "target_tomorrow_prefers_today",
     "unresolved",
@@ -229,6 +269,7 @@ async function run(): Promise<void> {
     const validation = validateMoveSourceForExecution({
       selectedSourceDatePolicy: testCase.selectedSourceDatePolicy,
       parsedPayload: testCase.parsedPayload,
+      dryRunLog,
     });
     if (validation.ok) {
       failed += 1;
@@ -324,7 +365,7 @@ async function run(): Promise<void> {
     failed += 1;
     console.log("FAIL: Viktoria-like interval request must run strong future resolver");
   } else {
-    if (viktoriaStrong.selectedSourceDatePolicy !== "strong_future_descriptor_match") {
+    if (viktoriaStrong.selectedSourceDatePolicy !== STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY) {
       failed += 1;
       console.log(
         `FAIL: Viktoria-like policy expected strong_future_descriptor_match, got ${viktoriaStrong.selectedSourceDatePolicy}`
@@ -342,6 +383,18 @@ async function run(): Promise<void> {
       failed += 1;
       console.log("FAIL: Viktoria-like warnings must include target day already has workout");
     }
+
+    const viktoriaDryRunLog = buildViktoriaStrongDryRunLog({ fingerprint, canExecute: true });
+    const viktoriaStrongValidation = validateStrongFutureDescriptorMoveSourceForExecution({
+      selectedSourceDatePolicy: STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY,
+      parsedPayload: viktoriaLikePayload,
+      ...extractMoveSourceExecutionContextFromDryRunLog(viktoriaDryRunLog)!,
+    });
+    if (!viktoriaStrongValidation.ok) {
+      failed += 1;
+      console.log(`FAIL: Viktoria-like strong provenance must pass (${viktoriaStrongValidation.reason})`);
+    }
+
     const viktoriaCanExecute = simulateCanExecute({
       dryRunResult: "candidate_found",
       selectedSourceDatePolicy: viktoriaStrong.selectedSourceDatePolicy,
@@ -349,10 +402,33 @@ async function run(): Promise<void> {
       confidence: 0.91,
       safeCandidateCount: 1,
       identityMatchedBy: "name",
+      dryRunLog: viktoriaDryRunLog,
     });
-    if (viktoriaCanExecute) {
+    if (!viktoriaCanExecute) {
       failed += 1;
-      console.log("FAIL: Viktoria-like strong_future_descriptor_match must keep canExecute false");
+      console.log("FAIL: Viktoria-like strong_future_descriptor_match must allow canExecute after provenance");
+    }
+
+    const viktoriaExecuteValidation = validateMoveSourceForExecution({
+      selectedSourceDatePolicy: STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY,
+      parsedPayload: viktoriaLikePayload,
+      dryRunLog: viktoriaDryRunLog,
+    });
+    if (!viktoriaExecuteValidation.ok) {
+      failed += 1;
+      console.log(`FAIL: Viktoria-like execute readiness must be accepted (${viktoriaExecuteValidation.reason})`);
+    }
+
+    const incompleteStrongLog = buildViktoriaStrongDryRunLog({ fingerprint, canExecute: true });
+    delete (incompleteStrongLog.sourceInferenceProvenance as Record<string, unknown>).candidate;
+    const incompleteValidation = validateMoveSourceForExecution({
+      selectedSourceDatePolicy: STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY,
+      parsedPayload: viktoriaLikePayload,
+      dryRunLog: incompleteStrongLog,
+    });
+    if (incompleteValidation.ok) {
+      failed += 1;
+      console.log("FAIL: incomplete strong provenance must fail closed");
     }
   }
 
@@ -410,6 +486,31 @@ async function run(): Promise<void> {
   if (tomorrowOnlyStrong !== null) {
     failed += 1;
     console.log('FAIL: "завтра сделаю" without descriptor must not use strong future resolver');
+  }
+
+  const revalidationMismatchLogA = buildViktoriaStrongDryRunLog({ fingerprint: "fp-a", canExecute: true });
+  const revalidationMismatchLogB = buildViktoriaStrongDryRunLog({ fingerprint: "fp-b", canExecute: true });
+  const trustedContextA = extractMoveSourceExecutionContextFromDryRunLog(revalidationMismatchLogA);
+  const trustedContextB = extractMoveSourceExecutionContextFromDryRunLog(revalidationMismatchLogB);
+  if (
+    trustedContextA &&
+    trustedContextB &&
+    validateStrongFutureDescriptorMoveSourceForExecution({
+      selectedSourceDatePolicy: STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY,
+      parsedPayload: viktoriaLikePayload,
+      ...trustedContextA,
+    }).ok &&
+    validateStrongFutureDescriptorMoveSourceForExecution({
+      selectedSourceDatePolicy: STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY,
+      parsedPayload: viktoriaLikePayload,
+      ...trustedContextB,
+    }).ok &&
+    trustedContextA.candidateFingerprint !== trustedContextB.candidateFingerprint
+  ) {
+    // expected mismatch scenario for execute revalidation
+  } else {
+    failed += 1;
+    console.log("FAIL: revalidation mismatch fixture must produce two valid but different fingerprints");
   }
 
   if (failed > 0) {

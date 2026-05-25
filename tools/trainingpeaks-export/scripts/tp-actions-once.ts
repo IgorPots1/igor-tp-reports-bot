@@ -101,6 +101,7 @@ type TrustedDryRunLog = {
     timezone: string | null;
   };
   identityCheck: DryRunIdentityCheck;
+  selectedSourceDatePolicy: string | null;
 };
 
 type ClaimedRealAction = ClaimedAction & {
@@ -574,6 +575,7 @@ type WorkoutExtractionResult = {
 
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
 const TP_CALLBACK_ACTION_CANCEL_PREFIX = "tp:ta:c:";
+const TP_CALLBACK_ACTION_EXECUTE_PREFIX = "tp:ta:x:";
 const ACTION_ARTIFACTS_ROOT = path.join(toolRoot, "action-artifacts");
 const TP_ACTIONS_EXECUTE_REAL_FLAG = "--execute-real";
 const TP_ACTIONS_ACTION_ID_PREFIX = "--action-id=";
@@ -2008,17 +2010,37 @@ async function notifyCoachDryRunResult(input: {
   const inferredSourceBlocked =
     evaluation?.canExecuteReasons.includes(moveSourcePolicy.INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON) === true;
   const strongFutureDescriptorMatch =
-    evaluation?.selectedSourceDatePolicy === "strong_future_descriptor_match";
+    evaluation?.selectedSourceDatePolicy === moveSourcePolicy.STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY;
   const likelySourceTitle = evaluation?.candidate?.title?.trim() || evaluation?.sourceInferenceProvenance?.candidate?.title?.trim();
+  const sourceDateLabel = formatCompactDateShort(evaluation?.resolvedDates.sourceDate ?? null);
+  const targetDateLabel = formatCompactDateShort(evaluation?.resolvedDates.targetDate ?? null);
 
   if (
     evaluation &&
     evaluation.dryRunResult === "candidate_found" &&
     evaluation.canExecute === true
   ) {
-    lines.push(
-      `✅ Проверка пройдена. ${input.studentName}: ${route}. Перенос поставлен в очередь на выполнение.`
-    );
+    if (strongFutureDescriptorMatch && likelySourceTitle && sourceDateLabel !== "?" && targetDateLabel !== "?") {
+      lines.push(
+        `✅ Проверка пройдена. ${input.studentName}: ${route}. Перенос поставлен в очередь на выполнение.`
+      );
+      lines.push(`Нашёл вероятную интервалку: ${sourceDateLabel} — ${likelySourceTitle} → ${targetDateLabel}`);
+      lines.push("Источник определён по сильному совпадению.");
+      const provenanceWarnings = evaluation.sourceInferenceProvenance?.warnings ?? [];
+      for (const warning of provenanceWarnings) {
+        if (warning === "target day already has workout") {
+          lines.push("⚠️ На целевой день уже есть тренировка.");
+        } else if (warning === "hard workout moved earlier") {
+          lines.push("⚠️ Тяжёлая тренировка переносится на более ранний день.");
+        } else if (warning === "week may need manual adjustment") {
+          lines.push("⚠️ Неделя может потребовать ручной корректировки.");
+        }
+      }
+    } else {
+      lines.push(
+        `✅ Проверка пройдена. ${input.studentName}: ${route}. Перенос поставлен в очередь на выполнение.`
+      );
+    }
   } else if (
     evaluation &&
     evaluation.dryRunResult === "candidate_found" &&
@@ -2046,7 +2068,19 @@ async function notifyCoachDryRunResult(input: {
       text: "❌ Отменить",
       callback_data: `${TP_CALLBACK_ACTION_CANCEL_PREFIX}${actionId}`,
     };
-    inlineKeyboardRows = [[cancelButton]];
+    if (evaluation.canExecute === true) {
+      inlineKeyboardRows = [
+        [
+          {
+            text: "✅ Выполнить",
+            callback_data: `${TP_CALLBACK_ACTION_EXECUTE_PREFIX}${actionId}`,
+          },
+          cancelButton,
+        ],
+      ];
+    } else {
+      inlineKeyboardRows = [[cancelButton]];
+    }
   }
 
   try {
@@ -6274,12 +6308,34 @@ function evaluateDryRunOutcome(input: {
     reasons.push(...input.identityCheck.warnings);
   }
 
-  const moveSourceExplicitEnough = moveSourcePolicy.isMoveSourceExplicitEnough({
+  const moveSourceValidation = moveSourcePolicy.validateMoveSourceForExecution({
     selectedSourceDatePolicy,
     parsedPayload: input.action.parsed_payload,
+    dryRunLog: {
+      dryRunResult,
+      resolvedDates: { sourceDate, targetDate },
+      candidate,
+      confidence,
+      identityCheck: input.identityCheck,
+      candidateAlternativesCount: alternativesCount,
+      sourceInferenceProvenance,
+      selectedSourceDatePolicy,
+    },
   });
-  if (!moveSourceExplicitEnough) {
-    reasons.push(moveSourcePolicy.INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON);
+  const moveSourceTrustedForExecution = moveSourceValidation.ok;
+  if (!moveSourceTrustedForExecution) {
+    if (selectedSourceDatePolicy === moveSourcePolicy.STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY) {
+      reasons.push(moveSourceValidation.reason);
+    } else if (
+      !moveSourcePolicy.isMoveSourceExplicitEnough({
+        selectedSourceDatePolicy,
+        parsedPayload: input.action.parsed_payload,
+      })
+    ) {
+      reasons.push(moveSourcePolicy.INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON);
+    } else {
+      reasons.push(moveSourceValidation.reason);
+    }
   }
 
   const canExecute =
@@ -6290,13 +6346,13 @@ function evaluateDryRunOutcome(input: {
     Boolean(candidate.fingerprint) &&
     confidence >= 0.8 &&
     input.identityCheck.matchedBy !== "mismatch" &&
-    moveSourceExplicitEnough;
+    moveSourceTrustedForExecution;
 
   if (!canExecute && reasons.length === 0) {
     reasons.push("safety policy conditions not met");
   }
 
-  if (dryRunResult === "candidate_found" && !canExecute && moveSourceExplicitEnough) {
+  if (dryRunResult === "candidate_found" && !canExecute && moveSourceTrustedForExecution) {
     dryRunResult = sortedBucketCandidates.length > 1 ? "ambiguous" : "not_found";
   }
 
@@ -6401,6 +6457,7 @@ function normalizeTrustedDryRunLog(logJson: unknown, parsedPayload?: unknown): T
   const moveSourceValidation = moveSourcePolicy.validateMoveSourceForExecution({
     selectedSourceDatePolicy,
     parsedPayload: parsedPayload ?? null,
+    dryRunLog: logJson,
   });
   if (!moveSourceValidation.ok) {
     return null;
@@ -6423,6 +6480,7 @@ function normalizeTrustedDryRunLog(logJson: unknown, parsedPayload?: unknown): T
       timezone: typeof payload.resolvedDates?.timezone === "string" ? payload.resolvedDates.timezone : null,
     },
     identityCheck: payload.identityCheck,
+    selectedSourceDatePolicy,
   };
 }
 
@@ -6451,6 +6509,7 @@ function compareOptionalField<T>(trusted: T | null, current: T | null): Revalida
 function buildRevalidationComparison(input: {
   trusted: TrustedDryRunLog;
   current: DryRunEvaluation;
+  parsedPayload?: unknown;
 }): RevalidationComparison {
   const mismatchReasons: string[] = [];
   const trustedCandidate = input.trusted.candidate;
@@ -6479,6 +6538,33 @@ function buildRevalidationComparison(input: {
     trustedCandidate.startTimeLocal,
     currentCandidate?.startTimeLocal ?? null
   );
+
+  if (
+    input.trusted.selectedSourceDatePolicy === moveSourcePolicy.STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY &&
+    input.current.selectedSourceDatePolicy !== moveSourcePolicy.STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY
+  ) {
+    mismatchReasons.push("selectedSourceDatePolicy mismatch for strong inferred move");
+  }
+
+  if (input.trusted.selectedSourceDatePolicy === moveSourcePolicy.STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY) {
+    const currentMoveSourceValidation = moveSourcePolicy.validateMoveSourceForExecution({
+      selectedSourceDatePolicy: input.current.selectedSourceDatePolicy,
+      parsedPayload: input.parsedPayload ?? null,
+      dryRunLog: {
+        dryRunResult: input.current.dryRunResult,
+        resolvedDates: input.current.resolvedDates,
+        candidate: input.current.candidate,
+        confidence: input.current.confidence,
+        identityCheck: input.current.identityCheck,
+        candidateAlternativesCount: input.current.candidateAlternativesCount,
+        sourceInferenceProvenance: input.current.sourceInferenceProvenance ?? null,
+        selectedSourceDatePolicy: input.current.selectedSourceDatePolicy,
+      },
+    });
+    if (!currentMoveSourceValidation.ok) {
+      mismatchReasons.push(`strong inferred revalidation failed: ${currentMoveSourceValidation.reason}`);
+    }
+  }
 
   if (input.current.identityCheck.matchedBy === "mismatch") {
     mismatchReasons.push("identityCheck.matchedBy became mismatch");
@@ -7811,6 +7897,7 @@ async function main(): Promise<void> {
     const comparison = buildRevalidationComparison({
       trusted: claimed.trustedDryRunLog,
       current: evaluation,
+      parsedPayload: claimed.action.parsed_payload,
     });
 
     if (!comparison.revalidationPassed) {
