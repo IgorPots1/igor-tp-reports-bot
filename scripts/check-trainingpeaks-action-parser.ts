@@ -3,9 +3,13 @@ import {
   passesTrainingPeaksStrictMoveWorkoutIntentGate,
 } from "@/features/trainingpeaks/service";
 
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
 type ParseCase = {
   text: string;
   expectOk: boolean;
+  messageDateUnix?: number;
+  expectedReason?: string;
 };
 
 type DeterministicResolveCase = {
@@ -30,6 +34,26 @@ const expectOkCases: ParseCase[] = [
   { text: "Привет, давай Лонг перенесем на завтра", expectOk: true },
   { text: "Лонг давай завтра", expectOk: true },
   { text: "перенеси длительную на завтра", expectOk: true },
+  {
+    text: "Поставьте интервалы на завтра",
+    expectOk: true,
+    messageDateUnix: Math.floor(Date.parse("2026-05-25T09:00:00+02:00") / 1000),
+  },
+  {
+    text: "Интервальную завтра сделаю",
+    expectOk: true,
+    messageDateUnix: Math.floor(Date.parse("2026-05-25T09:00:00+02:00") / 1000),
+  },
+  {
+    text: "Лучше 6х6 завтра",
+    expectOk: true,
+    messageDateUnix: Math.floor(Date.parse("2026-05-25T09:00:00+02:00") / 1000),
+  },
+  {
+    text: "Можно завтра отработать интервалы?",
+    expectOk: true,
+    messageDateUnix: Math.floor(Date.parse("2026-05-25T09:00:00+02:00") / 1000),
+  },
 ];
 
 /**
@@ -54,6 +78,20 @@ const expectRejectCases: ParseCase[] = [
   { text: "перенеси тренировку", expectOk: false },
   { text: "завтра или в пятницу", expectOk: false },
 ];
+
+const expectNeedsReviewCases: ParseCase[] = [
+  {
+    text: "Интервалы на завтра поставьте пожалуйста 🙏 Эта неделя у меня какая-то не понятная. Возможно в середине недели уеду в деревню. Лучше отработаю заранее.",
+    expectOk: true,
+    messageDateUnix: Math.floor(Date.parse("2026-05-25T09:00:00+02:00") / 1000),
+  },
+];
+
+const targetedTimestampCase: ParseCase = {
+  text: "Поставьте интервалы на завтра",
+  expectOk: true,
+  messageDateUnix: Math.floor(Date.parse("2026-05-25T09:00:00+02:00") / 1000),
+};
 
 const deterministicCases: DeterministicResolveCase[] = [
   {
@@ -96,10 +134,12 @@ async function run(): Promise<void> {
     }
   }
 
-  const parseCases = [...expectOkCases, ...expectRejectCases];
+  const parseCases = [...expectOkCases, ...expectRejectCases, ...expectNeedsReviewCases];
 
   for (const testCase of parseCases) {
-    const result = await parseTrainingPeaksMoveWorkoutRequest(testCase.text);
+    const result = await parseTrainingPeaksMoveWorkoutRequest(testCase.text, {
+      messageDateUnix: testCase.messageDateUnix ?? null,
+    });
     const ok = result.ok === testCase.expectOk;
     if (!ok) {
       failed += 1;
@@ -114,6 +154,9 @@ async function run(): Promise<void> {
             workoutDescriptor: result.payload.workoutDescriptor,
             confidence: result.payload.confidence,
             needsClarification: result.payload.needsClarification,
+            clarificationReason: result.payload.clarificationReason,
+            warnings: result.payload.warnings ?? [],
+            sourceInference: result.payload.sourceInference ?? null,
             parser: result.payload.parser,
           },
           null,
@@ -121,6 +164,34 @@ async function run(): Promise<void> {
         )
       : JSON.stringify({ reason: result.reason });
     console.log(`${badge}: "${testCase.text}" -> ${details}`);
+  }
+
+  const targetedResult = await parseTrainingPeaksMoveWorkoutRequest(targetedTimestampCase.text, {
+    messageDateUnix: targetedTimestampCase.messageDateUnix,
+  });
+  if (!targetedResult.ok) {
+    failed += 1;
+    console.log(`FAIL (timestamp target): "${targetedTimestampCase.text}" -> ${JSON.stringify({ reason: targetedResult.reason })}`);
+  } else {
+    const targetOk = targetedResult.payload.target.kind === "date" && targetedResult.payload.target.value === "2026-05-26";
+    const sourceDate = targetedResult.payload.sourceDate ?? targetedResult.payload.source_date ?? null;
+    const sourceOk = sourceDate === null || ISO_DATE_PATTERN.test(sourceDate);
+    const diagnosticsOk = targetedResult.payload.parsingDiagnostics?.parserBaseDateSource === "message_timestamp";
+    const ok = targetOk && sourceOk && diagnosticsOk;
+    if (!ok) {
+      failed += 1;
+    }
+    console.log(
+      `${ok ? "PASS" : "FAIL"} (timestamp target): "${targetedTimestampCase.text}" -> ${JSON.stringify(
+        {
+          target: targetedResult.payload.target,
+          sourceDate,
+          diagnostics: targetedResult.payload.parsingDiagnostics ?? null,
+        },
+        null,
+        2
+      )}`
+    );
   }
 
   /*

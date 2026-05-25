@@ -3559,6 +3559,17 @@ function extractMoveDateRangeFromParsedPayload(
   };
 }
 
+function extractMoveWarningsFromParsedPayload(parsedPayload: unknown): string[] {
+  if (!parsedPayload || typeof parsedPayload !== "object") {
+    return [];
+  }
+  const payload = parsedPayload as { warnings?: unknown };
+  if (!Array.isArray(payload.warnings)) {
+    return [];
+  }
+  return payload.warnings.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
 function truncateActionMessage(value: string, maxLength = 90): string {
   const normalized = value.replace(/\s+/g, " ").trim();
   if (normalized.length <= maxLength) {
@@ -3848,6 +3859,7 @@ function getTpActionDetailText(
   const dates = extractMoveDateRangeFromParsedPayload(action.parsedPayload);
   const src = formatCompactDateShort(dates.sourceDate);
   const tgt = formatCompactDateShort(dates.targetDate);
+  const warnings = extractMoveWarningsFromParsedPayload(action.parsedPayload);
   const lines = [
     `📋 Действие #${shortenActionId(action.id)}`,
     "",
@@ -3858,6 +3870,12 @@ function getTpActionDetailText(
     `Run: ${action.lastRunId ? "yes" : "no"}`,
     `Создано: ${formatActionCompactDate(action.createdAt)}`,
   ];
+  if (warnings.length > 0) {
+    lines.push("", "Предупреждения:");
+    for (const warning of warnings.slice(0, 3)) {
+      lines.push(`- ${warning}`);
+    }
+  }
   if (action.approvedAt) {
     lines.push(`Одобрено: ${formatActionCompactDate(action.approvedAt)}`);
   }
@@ -3975,7 +3993,7 @@ async function handleTpActionsCancelCallback(
 export async function handleTrainingPeaksTelegramBusinessMessage(
   message: Pick<
     TelegramMessage,
-    "business_connection_id" | "chat" | "text" | "caption" | "message_id" | "from"
+    "business_connection_id" | "chat" | "text" | "caption" | "message_id" | "from" | "date"
   >
 ): Promise<void> {
   const persistedChat = await upsertTrainingPeaksBusinessChatFromMessage(message);
@@ -4040,6 +4058,7 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
       messageId: String(message.message_id),
       userId: message.from?.id === undefined ? null : String(message.from.id),
       text: messageText,
+      messageDateUnix: message.date ?? null,
     });
 
     try {

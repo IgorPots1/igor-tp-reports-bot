@@ -49,6 +49,7 @@ import {
   listTrainingPeaksStudentThreads as listTrainingPeaksStudentThreadsFromRepository,
   listTrainingPeaksWeeklyReportEligibleStudents as listTrainingPeaksWeeklyReportEligibleStudentsFromRepository,
   listTrainingPeaksWorkoutCacheForDateRange,
+  listTrainingPeaksWorkoutCacheForStudentDateRange,
   listTrainingPeaksWorkoutCacheScanStatusesForRange,
   listTrainingPeaksStudentsEligibleForHealthMetrics,
   listTrainingPeaksHealthMetricsForStudentDateRange,
@@ -70,6 +71,7 @@ import {
   type CancelTrainingPeaksActionExecutionResultExtended,
   type TrainingPeaksBusinessChat,
   type TrainingPeaksAction,
+  type TrainingPeaksWorkoutCacheRow,
   type TrainingPeaksActionWithStudent,
   type TrainingPeaksActionRun,
   type ClaimedTrainingPeaksDryRunAction,
@@ -278,6 +280,24 @@ export type ParsedTrainingPeaksMoveWorkoutPayload = {
   parser: "deterministic" | "ai_fallback";
   sourceDate?: string;
   source_date?: string;
+  warnings?: string[];
+  suggestedAdjustments?: string[];
+  sourceInference?: {
+    strategy: "future_workout_cache";
+    candidateCount: number;
+    selectedWorkoutId?: number;
+    candidates?: Array<{
+      workoutId: number;
+      workoutDate: string;
+      title: string | null;
+      score: number;
+    }>;
+  };
+  parsingDiagnostics?: {
+    parserBaseDateSource: "message_timestamp" | "env_override" | "server_now";
+    parserBaseDateIso: string;
+    messageTimestampAvailable: boolean;
+  };
 };
 
 export type ParseTrainingPeaksMoveWorkoutResult =
@@ -299,6 +319,7 @@ export type CreateTrainingPeaksMoveWorkoutActionFromTelegramInput = {
   userId?: string | null;
   text: string;
   coachChatId?: string | null;
+  messageDateUnix?: number | null;
 };
 
 export type CreateTrainingPeaksMoveWorkoutActionFromTelegramResult =
@@ -583,6 +604,12 @@ const TP_STRICT_MOVE_VERBS = [
   "перенесем",
   "сместим",
   "можно перенести",
+  "перенесите",
+  "поставьте",
+  "поставить",
+  "поставим",
+  "сделаю",
+  "отработаю",
   "поставь на",
 ];
 
@@ -590,7 +617,16 @@ const TP_STRICT_MOVE_VERBS = [
 const TP_SOFT_MOVE_INTENT_PATTERNS: RegExp[] = [
   /(?:^|[\s,.])давай\s+.+\s+(?:на\s+)?завтра(?:[\s,.]|$)/u,
   /(?:^|[\s,.])(?:можно|лучше)\s+.+\s+(?:на\s+)?завтра(?:[\s,.]|$)/u,
+  /(?:^|[\s,.])(?:можно|давайте|лучше)\s+интерв[\p{L}\p{N}_-]*(?:\s+.+)?\s+(?:на\s+)?завтра(?:[\s,.]|$)/u,
+  /(?:^|[\s,.])интерв[\p{L}\p{N}_-]+(?:\s+.+)?\s+(?:на\s+)?завтра(?:[\s,.]|$)/u,
+  /(?:^|[\s,.])(?:\d{1,2}\s*[xх×]\s*\d{1,2}|\d{1,2}\s+по\s+\d{1,2})(?:\s+.+)?\s+(?:на\s+)?завтра(?:[\s,.]|$)/u,
+  /(?:^|[\s,.])интервальн[\p{L}\p{N}_-]+\s+(?:на\s+)?завтра(?:[\s,.]|$)/u,
+  /(?:^|[\s,.])(?:лучше\s+)?(?:сделаю|отработаю)\s+.+\s+заранее(?:[\s,.]|$)/u,
+  /(?:^|[\s,.])(?:сделаю|отработаю)\s+.+\s+(?:на\s+)?завтра(?:[\s,.]|$)/u,
+  /(?:^|[\s,.])(?:можно|давайте)\s+(?:на\s+)?завтра\s+(?:сделаю|отработаю)?\s*.+(?:[\s,.]|$)/u,
+  /(?:^|[\s,.])(?:лучше\s+)?(?:сделаю|отработаю)\s+интерв[\p{L}\p{N}_-]*(?:\s+заранее)?(?:[\s,.]|$)/u,
   /(?:^|[\s,.])поставь\s+.+\s+на\s+/u,
+  /(?:^|[\s,.])поставьте\s+.+\s+(?:на\s+)?(?:завтра|[а-яa-z0-9./-]+)/u,
   /(?:^|[\s,.])[\p{L}\p{N}_-]+\s+давай\s+(?:на\s+)?завтра(?:[\s,.]|$)/u,
   /(?:^|[\s,.])давай\s+(?:на\s+)?завтра(?:[\s,.]|$)/u,
 ];
@@ -600,13 +636,13 @@ const MOVE_WORKOUT_MIN_ACCEPT_CONFIDENCE = 0.75;
 const TP_MOVE_WORKOUT_BLOCKED_CASUAL_PATTERNS: RegExp[] = [
   /^ок(?:\s*[!.]*)?$/,
   /^спасибо\b/,
-  /\bзавтра\s+сделаю\b/,
+  /^завтра\s+сделаю(?:[\s!.?]*)$/u,
   /\bсегодня\s+не\s+успеваю\b/,
   /^можно\s+завтра\??$/,
   /\bя\s+сегодня\s+не\s+бегу\b/,
   /\bотчет\s+отправил\b/,
   /\bотчёт\s+отправил\b/,
-  /\bзавтра\s+пробегу\b/,
+  /^завтра\s+пробегу(?:[\s!.?]*)$/u,
   /^а\s+можно\s+завтра\??$/,
   /^давай\s+завтра$/,
   /\bсегодня\s+не\s+получится\b/,
@@ -707,7 +743,11 @@ function addLocalDaysIso(isoDate: string, days: number): string {
   return toIsoDate(parts.year, parts.month, parts.day);
 }
 
-function getParserBaseDate(): Date {
+function getParserBaseDate(context?: { messageDateUnix?: number | null }): Date {
+  const messageUnix = context?.messageDateUnix;
+  if (typeof messageUnix === "number" && Number.isFinite(messageUnix) && messageUnix > 0) {
+    return new Date(messageUnix * 1000);
+  }
   const envBaseDate = process.env.TP_MOVE_DATE_BASE_DATE?.trim();
   if (envBaseDate && ISO_DATE_PATTERN.test(envBaseDate)) {
     const match = envBaseDate.match(ISO_YMD_PATTERN);
@@ -716,6 +756,20 @@ function getParserBaseDate(): Date {
     }
   }
   return new Date();
+}
+
+function getParserBaseDateSource(
+  context?: { messageDateUnix?: number | null }
+): "message_timestamp" | "env_override" | "server_now" {
+  const messageUnix = context?.messageDateUnix;
+  if (typeof messageUnix === "number" && Number.isFinite(messageUnix) && messageUnix > 0) {
+    return "message_timestamp";
+  }
+  const envBaseDate = process.env.TP_MOVE_DATE_BASE_DATE?.trim();
+  if (envBaseDate && ISO_DATE_PATTERN.test(envBaseDate)) {
+    return "env_override";
+  }
+  return "server_now";
 }
 
 function resolveRelativeDayIso(
@@ -1010,6 +1064,9 @@ function hasExplicitMoveTargetReference(normalized: string): boolean {
       return true;
     }
   }
+  if (normalized.includes("заранее")) {
+    return true;
+  }
   const weekdayNeedles = [
     "понедельник",
     "понедельника",
@@ -1090,9 +1147,10 @@ function acceptsMoveWorkoutParseResult(
 }
 
 function resolveDeterministicMoveWorkout(
-  rawText: string
+  rawText: string,
+  context?: { messageDateUnix?: number | null }
 ): ParseTrainingPeaksMoveWorkoutResult & { deterministicReason?: string } {
-  const parserBaseDate = getParserBaseDate();
+  const parserBaseDate = getParserBaseDate(context);
   const normalized = normalizeRussianText(rawText);
   if (!normalized || !passesStrictMoveWorkoutIntentGate(normalized)) {
     return { ok: false, reason: "not_move_request" };
@@ -1177,6 +1235,14 @@ function resolveDeterministicMoveWorkout(
     }
   }
 
+  if (!target && normalized.includes("заранее")) {
+    target = {
+      kind: "relative_day",
+      value: "tomorrow",
+      sourceText: "заранее",
+    };
+  }
+
   if (!target) {
     return { ok: false, reason: "no_target_day" };
   }
@@ -1203,6 +1269,21 @@ function resolveDeterministicMoveWorkout(
     needsClarification,
     clarificationReason,
     parser: "deterministic",
+    parsingDiagnostics: {
+      parserBaseDateSource: getParserBaseDateSource(context),
+      parserBaseDateIso: toIsoDate(
+        getBelgradeDateParts(parserBaseDate).year,
+        getBelgradeDateParts(parserBaseDate).month,
+        getBelgradeDateParts(parserBaseDate).day
+      ),
+      messageTimestampAvailable:
+        typeof context?.messageDateUnix === "number" &&
+        Number.isFinite(context.messageDateUnix) &&
+        context.messageDateUnix > 0,
+    },
+    warnings: normalized.includes("заранее")
+      ? ["Целевая дата выведена из формулировки «заранее». Проверь вручную."]
+      : undefined,
   };
 
   const targetDateIso = resolveTimeRefToDateIso(normalizedTarget, parserBaseDate, "next");
@@ -1227,8 +1308,13 @@ function resolveDeterministicMoveWorkout(
   };
 }
 
+type ParseTrainingPeaksMoveWorkoutRequestContext = {
+  messageDateUnix?: number | null;
+};
+
 export async function parseTrainingPeaksMoveWorkoutRequest(
-  rawText: string
+  rawText: string,
+  context?: ParseTrainingPeaksMoveWorkoutRequestContext
 ): Promise<ParseTrainingPeaksMoveWorkoutResult> {
   const normalized = normalizeRussianText(rawText);
   if (!normalized || !passesStrictMoveWorkoutIntentGate(normalized)) {
@@ -1236,15 +1322,11 @@ export async function parseTrainingPeaksMoveWorkoutRequest(
     return { ok: false, reason: "not_explicit_move_request" };
   }
 
-  const deterministic = resolveDeterministicMoveWorkout(rawText);
-
-  if (deterministic.ok && deterministic.payload.needsClarification) {
-    logIgnoredTrainingPeaksMoveParser("deterministic_needs_clarification", rawText);
-    return { ok: false, reason: "needs_clarification" };
-  }
+  const deterministic = resolveDeterministicMoveWorkout(rawText, context);
 
   if (
     deterministic.ok &&
+    !deterministic.payload.needsClarification &&
     acceptsMoveWorkoutParseResult(deterministic.payload, deterministic.confidence, normalized)
   ) {
     return deterministic;
@@ -1262,21 +1344,28 @@ export async function parseTrainingPeaksMoveWorkoutRequest(
     return deterministic.ok ? { ok: false, reason: "parse_rejected" } : { ok: false, reason: deterministic.reason };
   }
 
-  if (aiFallback.needsClarification) {
-    logIgnoredTrainingPeaksMoveParser("ai_needs_clarification", rawText);
-    return { ok: false, reason: "needs_clarification" };
-  }
-
   const aiConfidence = clampMoveWorkoutConfidence(aiFallback.confidence);
+  const aiNeedsClarification = aiFallback.needsClarification;
+  const parserBaseDate = getParserBaseDate(context);
   const aiPayload: ParsedTrainingPeaksMoveWorkoutPayload = {
     ...aiFallback,
     actionType: "move_workout",
     parser: "ai_fallback",
     sourceDate: aiFallback.source?.kind === "date" ? aiFallback.source.value : undefined,
     source_date: aiFallback.source?.kind === "date" ? aiFallback.source.value : undefined,
+    parsingDiagnostics: {
+      parserBaseDateSource: getParserBaseDateSource(context),
+      parserBaseDateIso: toIsoDate(
+        getBelgradeDateParts(parserBaseDate).year,
+        getBelgradeDateParts(parserBaseDate).month,
+        getBelgradeDateParts(parserBaseDate).day
+      ),
+      messageTimestampAvailable:
+        typeof context?.messageDateUnix === "number" &&
+        Number.isFinite(context.messageDateUnix) &&
+        context.messageDateUnix > 0,
+    },
   };
-
-  const parserBaseDate = getParserBaseDate();
   const aiResolvedTargetDate = resolveTimeRefToDateIso(aiPayload.target, parserBaseDate, "next");
   if (aiResolvedTargetDate && aiPayload.target.kind !== "date") {
     aiPayload.target = { ...aiPayload.target, kind: "date", value: aiResolvedTargetDate };
@@ -1290,8 +1379,19 @@ export async function parseTrainingPeaksMoveWorkoutRequest(
     }
   }
 
+  if (aiNeedsClarification) {
+    return {
+      ok: true,
+      payload: aiPayload,
+      confidence: aiConfidence,
+    };
+  }
+
   if (!acceptsMoveWorkoutParseResult(aiPayload, aiConfidence, normalized)) {
     logIgnoredTrainingPeaksMoveParser("parse_acceptance_failed", rawText);
+    if (deterministic.ok) {
+      return deterministic;
+    }
     return { ok: false, reason: "parse_rejected" };
   }
 
@@ -1300,6 +1400,230 @@ export async function parseTrainingPeaksMoveWorkoutRequest(
     payload: aiPayload,
     confidence: aiConfidence,
   };
+}
+
+function normalizeForMatching(value: string | null | undefined): string {
+  return (value ?? "")
+    .toLocaleLowerCase("ru")
+    .replace(/ё/g, "е")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function hasIntervalPattern(text: string): boolean {
+  const normalized = normalizeForMatching(text);
+  if (!normalized) {
+    return false;
+  }
+  return (
+    normalized.includes("интервал") ||
+    /\b\d{1,2}\s*[xх×]\s*\d{1,2}\b/u.test(normalized) ||
+    /\b\d{1,2}\s+по\s+\d{1,2}\b/u.test(normalized) ||
+    /\bпо\s+\d{1,2}\s*мин\b/u.test(normalized)
+  );
+}
+
+function inferWorkoutKindFromText(text: string): "interval" | "tempo" | "long_run" | "run" | "unknown" {
+  const normalizedRef = normalizeWorkoutReference(text);
+  if (normalizedRef.kind === "intervals") {
+    return "interval";
+  }
+  if (normalizedRef.kind === "tempo") {
+    return "tempo";
+  }
+  if (normalizedRef.kind === "long_run") {
+    return "long_run";
+  }
+  if (normalizedRef.kind === "workout") {
+    return "run";
+  }
+  if (hasIntervalPattern(text)) {
+    return "interval";
+  }
+  return "unknown";
+}
+
+function scoreWorkoutCandidate(input: {
+  row: TrainingPeaksWorkoutCacheRow;
+  targetDateIso: string;
+  inferredKind: "interval" | "tempo" | "long_run" | "run" | "unknown";
+  rawText: string;
+}): number {
+  const { row, targetDateIso, inferredKind, rawText } = input;
+  let score = 0;
+  const titleNormalized = normalizeForMatching(row.title);
+
+  if (row.workoutDate >= targetDateIso) {
+    score += 0.2;
+  }
+
+  const activity = classifyTrainingPeaksWorkoutActivity({
+    title: row.title,
+    sportOrTypeCode: row.sportOrTypeCode,
+    workoutTypeValueId: row.workoutTypeValueId,
+    workoutSubTypeId: row.workoutSubTypeId,
+    sourceSnapshot: row.sourceSnapshot,
+  });
+  if (activity.isRunning) {
+    score += 0.1;
+  } else {
+    score -= 0.3;
+  }
+
+  if (inferredKind === "interval") {
+    if (hasIntervalPattern(row.title ?? "")) {
+      score += 0.9;
+    }
+    if (hasIntervalPattern(JSON.stringify(row.sourceSnapshot ?? {}))) {
+      score += 0.5;
+    }
+  } else if (inferredKind === "tempo" && titleNormalized.includes("темп")) {
+    score += 0.7;
+  } else if (inferredKind === "long_run" && (titleNormalized.includes("длитель") || titleNormalized.includes("лонг"))) {
+    score += 0.7;
+  } else if (inferredKind === "run" && activity.isRunning) {
+    score += 0.2;
+  }
+
+  const rawRef = normalizeWorkoutReference(rawText);
+  const rowRef = normalizeWorkoutReference(row.title ?? "");
+  if (rawRef.kind !== "unknown" && rowRef.kind !== "unknown") {
+    if (rawRef.kind === rowRef.kind) {
+      score += 0.4;
+    }
+  }
+
+  return Number(score.toFixed(3));
+}
+
+function isLikelyHardOrIntervalWorkout(row: TrainingPeaksWorkoutCacheRow): boolean {
+  const title = normalizeForMatching(row.title);
+  if (hasIntervalPattern(title)) {
+    return true;
+  }
+  return title.includes("темп") || title.includes("порог") || title.includes("фартлек");
+}
+
+async function enrichParsedMovePayloadWithWorkoutInference(input: {
+  studentId: string;
+  rawText: string;
+  parsedPayload: ParsedTrainingPeaksMoveWorkoutPayload;
+}): Promise<ParsedTrainingPeaksMoveWorkoutPayload> {
+  const payload: ParsedTrainingPeaksMoveWorkoutPayload = {
+    ...input.parsedPayload,
+    warnings: [...(input.parsedPayload.warnings ?? [])],
+    suggestedAdjustments: [...(input.parsedPayload.suggestedAdjustments ?? [])],
+  };
+
+  const targetDateIso =
+    payload.target.kind === "date" && ISO_DATE_PATTERN.test(payload.target.value) ? payload.target.value : null;
+  if (!targetDateIso) {
+    return payload;
+  }
+
+  const searchTo = addLocalDaysIso(targetDateIso, 10);
+  const searchFrom = addLocalDaysIso(targetDateIso, -1);
+  const rows = await listTrainingPeaksWorkoutCacheForStudentDateRange({
+    studentId: input.studentId,
+    from: searchFrom,
+    to: searchTo,
+  });
+
+  if (!payload.sourceDate && !payload.source_date) {
+    const inferredKind = inferWorkoutKindFromText(input.rawText);
+    const candidates = rows
+      .filter((row) => row.isPlanned && row.workoutDate >= targetDateIso)
+      .map((row) => ({
+        row,
+        score: scoreWorkoutCandidate({
+          row,
+          targetDateIso,
+          inferredKind,
+          rawText: input.rawText,
+        }),
+      }))
+      .filter((entry) => entry.score >= 0.8)
+      .sort((a, b) => a.row.workoutDate.localeCompare(b.row.workoutDate) || b.score - a.score);
+
+    if (candidates.length === 1) {
+      const selected = candidates[0]!;
+      payload.source = {
+        kind: "date",
+        value: selected.row.workoutDate,
+        sourceText: selected.row.title ?? selected.row.workoutDate,
+      };
+      payload.sourceDate = selected.row.workoutDate;
+      payload.source_date = selected.row.workoutDate;
+      payload.sourceInference = {
+        strategy: "future_workout_cache",
+        candidateCount: 1,
+        selectedWorkoutId: selected.row.trainingPeaksWorkoutId,
+        candidates: [
+          {
+            workoutId: selected.row.trainingPeaksWorkoutId,
+            workoutDate: selected.row.workoutDate,
+            title: selected.row.title,
+            score: selected.score,
+          },
+        ],
+      };
+    } else if (candidates.length > 1) {
+      payload.needsClarification = true;
+      payload.clarificationReason = "multiple source workout candidates";
+      payload.sourceInference = {
+        strategy: "future_workout_cache",
+        candidateCount: candidates.length,
+        candidates: candidates.slice(0, 5).map((entry) => ({
+          workoutId: entry.row.trainingPeaksWorkoutId,
+          workoutDate: entry.row.workoutDate,
+          title: entry.row.title,
+          score: entry.score,
+        })),
+      };
+    } else {
+      payload.needsClarification = true;
+      payload.clarificationReason = "unresolved_workout";
+      payload.sourceInference = {
+        strategy: "future_workout_cache",
+        candidateCount: 0,
+      };
+    }
+  }
+
+  const targetDayRows = rows.filter((row) => row.workoutDate === targetDateIso && row.isPlanned);
+  if (targetDayRows.length > 0) {
+    payload.warnings?.push("На целевой день уже есть тренировка. Проверь расписание недели.");
+  }
+
+  const sourceIso = payload.sourceDate ?? payload.source_date;
+  const sourceRow = sourceIso
+    ? rows.find((row) => row.workoutDate === sourceIso && row.isPlanned && row.trainingPeaksWorkoutId === payload.sourceInference?.selectedWorkoutId) ??
+      rows.find((row) => row.workoutDate === sourceIso && row.isPlanned)
+    : null;
+  if (sourceRow && isLikelyHardOrIntervalWorkout(sourceRow)) {
+    const aroundTarget = rows.filter((row) => {
+      if (!row.isPlanned || row.workoutDate === targetDateIso) {
+        return false;
+      }
+      const distanceDays =
+        Math.abs(
+          Date.parse(`${row.workoutDate}T12:00:00Z`) - Date.parse(`${targetDateIso}T12:00:00Z`)
+        ) / (1000 * 60 * 60 * 24);
+      return distanceDays > 0 && distanceDays <= 1.5;
+    });
+    if (aroundTarget.length > 0) {
+      payload.warnings?.push("Перенос интервальной тренировки раньше может потребовать корректировки недели.");
+      const suggestedDate = addLocalDaysIso(targetDateIso, 3);
+      const hasNearSuggested = rows.some((row) => row.workoutDate === suggestedDate);
+      if (!hasNearSuggested) {
+        payload.suggestedAdjustments?.push(
+          `Возможно, стоит сдвинуть тренировку ${addLocalDaysIso(targetDateIso, 1)} на ${suggestedDate}.`
+        );
+      }
+    }
+  }
+
+  return payload;
 }
 
 function formatTrainingPeaksMoveWorkoutTargetSummary(target: TrainingPeaksMoveWorkoutTimeRef): string {
@@ -3043,9 +3367,31 @@ export async function createTrainingPeaksMoveWorkoutActionFromTelegram(
     return { ok: false, reason: "student_not_found" };
   }
 
-  const parsed = await parseTrainingPeaksMoveWorkoutRequest(trimmedText);
+  const parsed = await parseTrainingPeaksMoveWorkoutRequest(trimmedText, {
+    messageDateUnix: input.messageDateUnix ?? null,
+  });
   if (!parsed.ok) {
     return { ok: false, reason: parsed.reason, student };
+  }
+
+  let enrichedParsed = parsed.payload;
+  try {
+    enrichedParsed = await enrichParsedMovePayloadWithWorkoutInference({
+      studentId: student.id,
+      rawText: trimmedText,
+      parsedPayload: parsed.payload,
+    });
+  } catch (error) {
+    console.warn("Failed to enrich move workout payload with workout cache inference", {
+      studentId: student.id,
+      chatId: input.chatId,
+      messageId: input.messageId,
+      error,
+    });
+    enrichedParsed = {
+      ...parsed.payload,
+      warnings: [...(parsed.payload.warnings ?? []), "Не удалось автоматически подобрать исходную тренировку. Нужна ручная проверка."],
+    };
   }
 
   const action = await createTrainingPeaksActionInRepository({
@@ -3056,8 +3402,8 @@ export async function createTrainingPeaksMoveWorkoutActionFromTelegram(
     sourceMessageId: input.messageId,
     sourceUserId: input.userId ?? null,
     rawText: trimmedText,
-    parsedPayload: parsed.payload,
-    confidence: String(parsed.confidence),
+    parsedPayload: enrichedParsed,
+    confidence: String(enrichedParsed.confidence ?? parsed.confidence),
     coachChatId: input.coachChatId ?? null,
   });
 
@@ -3065,7 +3411,7 @@ export async function createTrainingPeaksMoveWorkoutActionFromTelegram(
     ok: true,
     action,
     student,
-    parsed: parsed.payload,
+    parsed: enrichedParsed,
   };
 }
 

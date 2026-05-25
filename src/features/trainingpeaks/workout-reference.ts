@@ -28,6 +28,7 @@ const WORKOUT_ALIAS_RULES: WorkoutAliasRule[] = [
   { kind: "long_run", alias: "long", confidence: "high" },
   { kind: "intervals", alias: "интервальн", confidence: "high", stem: true },
   { kind: "intervals", alias: "интервалы", confidence: "high" },
+  { kind: "intervals", alias: "интервал", confidence: "high", stem: true },
   { kind: "tempo", alias: "темпов", confidence: "high", stem: true },
   { kind: "tempo", alias: "темп", confidence: "medium" },
   { kind: "workout", alias: "трениров", confidence: "medium", stem: true },
@@ -85,6 +86,13 @@ export function normalizeWorkoutReference(text: string): NormalizeWorkoutReferen
         confidence: rule.confidence,
       };
     }
+  }
+
+  if (/\b\d{1,2}\s*[xх×]\s*\d{1,2}\b/u.test(normalized) || /\b\d{1,2}\s+по\s+\d{1,2}\b/u.test(normalized)) {
+    return { kind: "intervals", matchedAlias: "repeat_set", confidence: "high" };
+  }
+  if (/\bпо\s+\d{1,2}\s*мин\b/u.test(normalized)) {
+    return { kind: "intervals", matchedAlias: "по_минутам", confidence: "medium" };
   }
 
   if (/(?:^|[\s,.])(?:легкий\s+|легк\w*\s+)?бег(?:[\s,.]|$)/u.test(normalized) || normalized.includes("легк")) {
