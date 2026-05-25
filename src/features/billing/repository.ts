@@ -2,6 +2,9 @@ import { createSupabaseServerClient } from "@/features/supabase/server";
 import type {
   BillingClient,
   BillingCurrency,
+  BillingImportedPayment,
+  BillingImportedPaymentRawRow,
+  BillingImportedPaymentStatus,
   BillingClientUpdateInput,
   BillingMonthlyPayment,
   BillingMonthlyPaymentWithClient,
@@ -87,6 +90,44 @@ type UpdateBillingClientRow = Partial<{
   updated_by: string | null;
 }>;
 
+type BillingImportedPaymentRow = {
+  id: string;
+  import_batch_id: string;
+  payment_date: string;
+  amount: number;
+  currency: BillingCurrency;
+  payer_hint: string | null;
+  description: string | null;
+  raw_row: BillingImportedPaymentRawRow;
+  external_hash: string;
+  status: BillingImportedPaymentStatus;
+  matched_monthly_payment_id: string | null;
+  matched_at: string | null;
+  matched_by_coach_chat_id: string | null;
+  source_file_name: string | null;
+  email_message_id: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type InsertBillingImportedPaymentRow = {
+  import_batch_id: string;
+  payment_date: string;
+  amount: number;
+  currency: BillingCurrency;
+  payer_hint: string | null;
+  description: string | null;
+  raw_row: BillingImportedPaymentRawRow;
+  external_hash: string;
+  status: "new";
+  matched_monthly_payment_id: null;
+  matched_at: null;
+  matched_by_coach_chat_id: null;
+  source_file_name: string | null;
+  email_message_id: null;
+};
+
 function mapBillingClientRow(row: BillingClientRow): BillingClient {
   return {
     id: row.id,
@@ -124,6 +165,29 @@ function mapBillingMonthlyPaymentRow(row: BillingMonthlyPaymentRow): BillingMont
     notes: row.notes,
     createdBy: row.created_by,
     updatedBy: row.updated_by,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapBillingImportedPaymentRow(row: BillingImportedPaymentRow): BillingImportedPayment {
+  return {
+    id: row.id,
+    importBatchId: row.import_batch_id,
+    paymentDate: row.payment_date,
+    amount: row.amount,
+    currency: row.currency,
+    payerHint: row.payer_hint,
+    description: row.description,
+    rawRow: row.raw_row,
+    externalHash: row.external_hash,
+    status: row.status,
+    matchedMonthlyPaymentId: row.matched_monthly_payment_id,
+    matchedAt: row.matched_at,
+    matchedByCoachChatId: row.matched_by_coach_chat_id,
+    sourceFileName: row.source_file_name,
+    emailMessageId: row.email_message_id,
+    notes: row.notes,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -415,4 +479,44 @@ export async function updateBillingMonthlyPaymentById(
   }
 
   return mapBillingMonthlyPaymentRow(data as BillingMonthlyPaymentRow);
+}
+
+export async function getBillingImportedPaymentsByExternalHashes(
+  externalHashes: string[]
+): Promise<BillingImportedPayment[]> {
+  if (externalHashes.length === 0) {
+    return [];
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("billing_imported_payments")
+    .select("*")
+    .in("external_hash", externalHashes);
+
+  if (error) {
+    throw new Error(`Failed to get imported billing payments by hash: ${error.message}`);
+  }
+
+  return ((data as BillingImportedPaymentRow[]) ?? []).map(mapBillingImportedPaymentRow);
+}
+
+export async function insertBillingImportedPayments(
+  rows: InsertBillingImportedPaymentRow[]
+): Promise<BillingImportedPayment[]> {
+  if (rows.length === 0) {
+    return [];
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("billing_imported_payments")
+    .upsert(rows, { onConflict: "external_hash", ignoreDuplicates: true })
+    .select("*");
+
+  if (error) {
+    throw new Error(`Failed to insert imported billing payments: ${error.message}`);
+  }
+
+  return ((data as BillingImportedPaymentRow[]) ?? []).map(mapBillingImportedPaymentRow);
 }

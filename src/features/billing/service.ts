@@ -1,5 +1,7 @@
 import {
+  getBillingImportedPaymentsByExternalHashes,
   getBillingClientById,
+  insertBillingImportedPayments,
   listBillingClientsByStudentId,
   getBillingMonthlyPaymentForClientMonth,
   insertBillingMonthlyPayments,
@@ -15,6 +17,8 @@ import {
   type BillingClient,
   type BillingClientUpdateInput,
   type BillingDateInput,
+  type ImportBillingPaymentsInput,
+  type ImportBillingPaymentsResult,
   type BillingMonthGenerationPreview,
   type BillingMonthInput,
   type BillingMonthStatusRow,
@@ -26,6 +30,8 @@ import {
   type MarkBillingClientPaidResult,
   type MarkBillingClientUnpaidInput,
 } from "@/features/billing/types";
+import { basename } from "node:path";
+import { randomUUID } from "node:crypto";
 
 function getDateParts(date: Date, timeZone = BILLING_TIME_ZONE): { year: number; month: number; day: number } {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -507,4 +513,66 @@ export async function unlinkBillingClientFromStudent(
   }
 
   return updated;
+}
+
+function sanitizeSourceFileName(fileName: string): string {
+  return basename(fileName).trim();
+}
+
+export async function importBillingPaymentsFromParsedRows(
+  input: ImportBillingPaymentsInput
+): Promise<ImportBillingPaymentsResult> {
+  const importBatchId = input.importBatchId ?? randomUUID();
+  const sourceFileName = sanitizeSourceFileName(input.sourceFileName);
+  const receivedRowCount = input.parsedRows.length;
+
+  if (receivedRowCount === 0) {
+    return {
+      importBatchId,
+      sourceFileName,
+      receivedRowCount,
+      parsedRowCount: 0,
+      insertedRowCount: 0,
+      duplicateRowCount: 0,
+    };
+  }
+
+  const dedupedRows = Array.from(
+    new Map(input.parsedRows.map((row) => [row.externalHash, row])).values()
+  );
+  const existingRows = await getBillingImportedPaymentsByExternalHashes(
+    dedupedRows.map((row) => row.externalHash)
+  );
+  const existingHashes = new Set(existingRows.map((row) => row.externalHash));
+
+  const rowsToInsert = dedupedRows
+    .filter((row) => !existingHashes.has(row.externalHash))
+    .map((row) => ({
+      import_batch_id: importBatchId,
+      payment_date: row.paymentDate,
+      amount: row.amount,
+      currency: row.currency,
+      payer_hint: row.payerHint,
+      description: row.description,
+      raw_row: row.rawRow,
+      external_hash: row.externalHash,
+      status: "new" as const,
+      matched_monthly_payment_id: null,
+      matched_at: null,
+      matched_by_coach_chat_id: null,
+      source_file_name: sourceFileName,
+      email_message_id: null,
+    }));
+
+  const insertedRows = await insertBillingImportedPayments(rowsToInsert);
+  const duplicateRowCount = dedupedRows.length - insertedRows.length;
+
+  return {
+    importBatchId,
+    sourceFileName,
+    receivedRowCount,
+    parsedRowCount: dedupedRows.length,
+    insertedRowCount: insertedRows.length,
+    duplicateRowCount,
+  };
 }

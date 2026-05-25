@@ -33,6 +33,7 @@ export type BillingPaymentStatus =
   | "manual_review"
   | "refunded";
 export type BillingPaymentSource = "manual" | "email_import";
+export type BillingImportedPaymentStatus = "new" | "matched" | "ignored";
 
 export type BillingClient = {
   id: string;
@@ -81,6 +82,73 @@ export type BillingMonthlyPayment = {
   updatedBy: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type BillingImportedPaymentRawRow = {
+  rowNumber: number;
+  originalDate: string;
+  originalAmount: string;
+  payerCell: string | null;
+  descriptionCell: string | null;
+  parseWarnings: string[];
+};
+
+export type BillingImportedPayment = {
+  id: string;
+  importBatchId: string;
+  paymentDate: string;
+  amount: number;
+  currency: BillingCurrency;
+  payerHint: string | null;
+  description: string | null;
+  rawRow: BillingImportedPaymentRawRow;
+  externalHash: string;
+  status: BillingImportedPaymentStatus;
+  matchedMonthlyPaymentId: string | null;
+  matchedAt: string | null;
+  matchedByCoachChatId: string | null;
+  sourceFileName: string | null;
+  emailMessageId: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ParsedBillingImportedPaymentRow = {
+  paymentDate: string;
+  amount: number;
+  currency: BillingCurrency;
+  payerHint: string | null;
+  description: string | null;
+  rawRow: BillingImportedPaymentRawRow;
+  externalHash: string;
+};
+
+export type ParsedBillingImportedPaymentSkippedRow = {
+  rowNumber: number;
+  reason: string;
+};
+
+export type ParseTBankStatementResult = {
+  provider: "tbank";
+  parsedRows: ParsedBillingImportedPaymentRow[];
+  skippedRows: ParsedBillingImportedPaymentSkippedRow[];
+  warnings: string[];
+};
+
+export type ImportBillingPaymentsInput = {
+  parsedRows: ParsedBillingImportedPaymentRow[];
+  sourceFileName: string;
+  importBatchId?: string;
+};
+
+export type ImportBillingPaymentsResult = {
+  importBatchId: string;
+  sourceFileName: string;
+  receivedRowCount: number;
+  parsedRowCount: number;
+  insertedRowCount: number;
+  duplicateRowCount: number;
 };
 
 export type BillingMonthlyPaymentWithClient = BillingMonthlyPayment & {
