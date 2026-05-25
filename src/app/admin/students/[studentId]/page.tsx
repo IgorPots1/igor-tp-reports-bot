@@ -16,11 +16,14 @@ import {
 } from "@/app/admin/actions";
 import {
   formatIsoDate,
+  formatBillingAmount,
+  getBillingPaymentStatusLabel,
   formatWeekRange,
   getRegistryStatusLabel,
   getReviewStatusLabel,
   getSingleSearchParam,
 } from "@/app/admin/lib";
+import { getBillingClientForStudent, getBillingClientDetail } from "@/features/billing/admin";
 import {
   buildTrainingPeaksAdminStudentTelegramMismatchStatus,
   findTrainingPeaksAdminBusinessChatsByUsername,
@@ -208,6 +211,8 @@ export default async function AdminStudentDetailPage({
     listTrainingPeaksAdminStudentThreads(student.id),
   ]);
   const primaryStudentThread = studentThreads[0] ?? null;
+  const billingClient = await getBillingClientForStudent(student.id);
+  const billingDetail = billingClient ? await getBillingClientDetail(billingClient.id) : null;
 
   const [lastKnownBusinessChat, capturedBusinessChat, suggestedTelegramMatches, recentChats, usernameLookup, contextObservations] =
     await Promise.all([
@@ -426,6 +431,74 @@ export default async function AdminStudentDetailPage({
               <dd>{student.notes ?? "—"}</dd>
             </div>
           </dl>
+        </article>
+
+        <article className="admin-card admin-card-compact">
+          <h3>Оплаты</h3>
+          {billingDetail ? (
+            <>
+              <dl className="admin-meta-list admin-meta-list-compact">
+                <div>
+                  <dt>Billing-клиент</dt>
+                  <dd>
+                    <div className="admin-table-primary">
+                      <Link href={`/admin/billing/clients/${billingDetail.client.id}`}>{billingDetail.client.clientName}</Link>
+                      <span className="admin-muted">{billingDetail.client.groupName ?? "Без группы"}</span>
+                    </div>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Сумма</dt>
+                  <dd>{formatBillingAmount(billingDetail.client.monthlyAmount, billingDetail.client.currency)}</dd>
+                </div>
+                <div>
+                  <dt>Плановый день оплаты</dt>
+                  <dd>{billingDetail.client.plannedPaymentDay} число</dd>
+                </div>
+                <div>
+                  <dt>Статус текущего месяца</dt>
+                  <dd>
+                    {billingDetail.currentMonthStatus
+                      ? getBillingPaymentStatusLabel(
+                          billingDetail.currentMonthStatus.status === "pending" &&
+                            billingDetail.currentMonthStatus.daysOverdue != null &&
+                            billingDetail.currentMonthStatus.daysOverdue > 0
+                            ? "overdue"
+                            : billingDetail.currentMonthStatus.status
+                        )
+                      : "Строка ещё не создана"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Фактическая дата оплаты</dt>
+                  <dd>
+                    {billingDetail.currentMonthStatus?.actualPaymentDate
+                      ? billingDetail.currentMonthStatus.actualPaymentDate
+                      : "—"}
+                  </dd>
+                </div>
+              </dl>
+              <div className="admin-card-actions admin-card-actions-compact">
+                <Link className="admin-button admin-button-secondary" href={`/admin/billing/clients/${billingDetail.client.id}`}>
+                  Открыть billing-клиента
+                </Link>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="admin-muted">
+                Billing-клиент для этого ученика пока не привязан. Привязка делается отдельно и только вручную.
+              </p>
+              <div className="admin-card-actions admin-card-actions-compact">
+                <Link className="admin-button admin-button-secondary" href="/admin/billing/matching">
+                  Открыть matching
+                </Link>
+                <Link className="admin-button admin-button-secondary" href="/admin/billing">
+                  Перейти в биллинг
+                </Link>
+              </div>
+            </>
+          )}
         </article>
 
         <article className="admin-card admin-card-compact">

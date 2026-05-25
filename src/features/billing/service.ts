@@ -1,16 +1,19 @@
 import {
   getBillingClientById,
+  listBillingClientsByStudentId,
   getBillingMonthlyPaymentForClientMonth,
   insertBillingMonthlyPayments,
   listActiveBillingClients,
   listBillingMonthlyPaymentsForMonth,
   listBillingMonthlyPaymentsWithClientsForMonth,
+  updateBillingClientById as updateBillingClientByIdInRepository,
   updateBillingMonthlyPaymentById,
 } from "@/features/billing/repository";
 import {
   BILLING_CSV_COLUMNS,
   BILLING_TIME_ZONE,
   type BillingClient,
+  type BillingClientUpdateInput,
   type BillingDateInput,
   type BillingMonthGenerationPreview,
   type BillingMonthInput,
@@ -397,4 +400,107 @@ export async function buildBillingCsvForMonth(
 
 export function getCurrentBelgradeDateIso(now = new Date()): string {
   return getTodayIsoInBelgrade(now);
+}
+
+function validateBillingClientUpdateInput(input: BillingClientUpdateInput): void {
+  if ("clientName" in input && !input.clientName?.trim()) {
+    throw new Error("Имя клиента не может быть пустым.");
+  }
+
+  if ("monthlyAmount" in input) {
+    const monthlyAmount = input.monthlyAmount;
+    if (!Number.isInteger(monthlyAmount) || (monthlyAmount ?? 0) <= 0) {
+      throw new Error("Сумма должна быть положительным целым числом.");
+    }
+  }
+
+  if ("plannedPaymentDay" in input) {
+    const plannedPaymentDay = input.plannedPaymentDay;
+    if (
+      !Number.isInteger(plannedPaymentDay) ||
+      (plannedPaymentDay ?? 0) < 1 ||
+      (plannedPaymentDay ?? 0) > 28
+    ) {
+      throw new Error("Плановый день оплаты должен быть в диапазоне 1-28.");
+    }
+  }
+}
+
+export async function updateBillingClientById(
+  id: string,
+  patch: BillingClientUpdateInput
+): Promise<BillingClient> {
+  const client = await getBillingClientById(id);
+  if (!client) {
+    throw new Error(`Billing client ${id} not found.`);
+  }
+
+  validateBillingClientUpdateInput(patch);
+
+  const normalizedPatch: BillingClientUpdateInput = { ...patch };
+  if ("clientName" in patch) {
+    normalizedPatch.clientName = patch.clientName?.trim() ?? "";
+  }
+  if ("groupName" in patch) {
+    normalizedPatch.groupName = patch.groupName?.trim() || null;
+  }
+
+  const updated = await updateBillingClientByIdInRepository(id, normalizedPatch);
+
+  if (!updated) {
+    throw new Error(`Billing client ${id} disappeared while updating.`);
+  }
+
+  return updated;
+}
+
+export async function linkBillingClientToStudent(
+  billingClientId: string,
+  studentId: string,
+  actor?: string | null
+): Promise<BillingClient> {
+  const client = await getBillingClientById(billingClientId);
+  if (!client) {
+    throw new Error(`Billing client ${billingClientId} not found.`);
+  }
+
+  const existingClients = await listBillingClientsByStudentId(studentId);
+  const conflictingClient = existingClients.find((existingClient) => existingClient.id !== billingClientId) ?? null;
+  if (conflictingClient) {
+    throw new Error(
+      `У этого ученика уже есть billing-клиент: ${conflictingClient.clientName}. Сначала отвяжи текущую связь.`
+    );
+  }
+
+  const updated = await updateBillingClientByIdInRepository(billingClientId, {
+    studentId,
+    updatedBy: actor ?? null,
+  });
+
+  if (!updated) {
+    throw new Error(`Billing client ${billingClientId} disappeared while linking.`);
+  }
+
+  return updated;
+}
+
+export async function unlinkBillingClientFromStudent(
+  billingClientId: string,
+  actor?: string | null
+): Promise<BillingClient> {
+  const client = await getBillingClientById(billingClientId);
+  if (!client) {
+    throw new Error(`Billing client ${billingClientId} not found.`);
+  }
+
+  const updated = await updateBillingClientByIdInRepository(billingClientId, {
+    studentId: null,
+    updatedBy: actor ?? null,
+  });
+
+  if (!updated) {
+    throw new Error(`Billing client ${billingClientId} disappeared while unlinking.`);
+  }
+
+  return updated;
 }
