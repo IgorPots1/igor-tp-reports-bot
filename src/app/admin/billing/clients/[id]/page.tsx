@@ -17,7 +17,7 @@ import {
   getBillingPaymentStatusLabel,
   getSingleSearchParam,
 } from "@/app/admin/lib";
-import { getBillingClientDetail, listBillingActiveStudentsForManualLink } from "@/features/billing/admin";
+import { getBillingClientDetail, listBillingAvailableStudentsForManualLink } from "@/features/billing/admin";
 import { BILLING_TIME_ZONE, type BillingMonthStatusRow } from "@/features/billing/types";
 import { getTrainingPeaksAdminStudentById } from "@/features/trainingpeaks/admin";
 
@@ -89,8 +89,8 @@ export default async function BillingClientDetailPage({
   }
 
   const redirectTo = `/admin/billing/clients/${detail.client.id}`;
-  const [activeStudents, linkedStudent] = await Promise.all([
-    listBillingActiveStudentsForManualLink(),
+  const [availableStudents, linkedStudent] = await Promise.all([
+    detail.client.studentId ? Promise.resolve([]) : listBillingAvailableStudentsForManualLink(),
     detail.client.studentId ? getTrainingPeaksAdminStudentById(detail.client.studentId) : Promise.resolve(null),
   ]);
   const currentMonthStatus = detail.currentMonthStatus;
@@ -181,20 +181,6 @@ export default async function BillingClientDetailPage({
                 {detail.client.isActive ? "Пауза клиента" : "Активировать клиента"}
               </FormActionButton>
             </form>
-            {detail.client.studentId && (
-              <form action={unlinkBillingClientFromStudentAction}>
-                <input type="hidden" name="clientId" value={detail.client.id} />
-                <input type="hidden" name="studentId" value={detail.client.studentId} />
-                <input type="hidden" name="redirectTo" value={redirectTo} />
-                <FormActionButton
-                  className="admin-button admin-button-secondary"
-                  pendingText="Отвязка..."
-                  confirmMessage="Отвязать billing-клиента от ученика?"
-                >
-                  Отвязать ученика
-                </FormActionButton>
-              </form>
-            )}
           </div>
         </article>
 
@@ -365,30 +351,77 @@ export default async function BillingClientDetailPage({
           <p className="admin-muted">
             Billing остаётся отдельной сущностью. Привязка делается только вручную и не создаётся автоматически по имени.
           </p>
-          <form className="admin-form-stack" action={linkBillingClientToStudentAction}>
-            <input type="hidden" name="clientId" value={detail.client.id} />
-            <input type="hidden" name="redirectTo" value={redirectTo} />
-            <label className="admin-field">
-              <span>Активный ученик TrainingPeaks</span>
-              <select className="admin-input" name="studentId" defaultValue={detail.client.studentId ?? ""} required>
-                <option value="" disabled>
-                  Выбери ученика
-                </option>
-                {activeStudents.map((student) => (
-                  <option key={student.id} value={student.id}>
-                    {student.studentName} ({student.studentId})
-                  </option>
-                ))}
-              </select>
-            </label>
-            <FormActionButton className="admin-button" pendingText="Привязка...">
-              Привязать к ученику
-            </FormActionButton>
-          </form>
-          {!detail.client.studentId && (
-            <p className="admin-muted">
-              Для массовой ручной проверки открой <Link href="/admin/billing/matching">matching-очередь</Link>.
-            </p>
+          {detail.client.studentId ? (
+            <>
+              <dl className="admin-meta-list admin-meta-list-compact">
+                <div>
+                  <dt>Текущий ученик</dt>
+                  <dd>
+                    {linkedStudent ? (
+                      <div className="admin-table-primary">
+                        <Link href={`/admin/students/${linkedStudent.id}`}>{linkedStudent.studentName}</Link>
+                        <span className="admin-muted">{linkedStudent.studentId}</span>
+                      </div>
+                    ) : (
+                      detail.client.studentId
+                    )}
+                  </dd>
+                </div>
+              </dl>
+              <p className="admin-muted">Чтобы привязать другого ученика, сначала отвяжи текущего.</p>
+              <form action={unlinkBillingClientFromStudentAction}>
+                <input type="hidden" name="clientId" value={detail.client.id} />
+                <input type="hidden" name="studentId" value={detail.client.studentId} />
+                <input type="hidden" name="redirectTo" value={redirectTo} />
+                <FormActionButton
+                  className="admin-button"
+                  pendingText="Отвязка..."
+                  confirmMessage="Отвязать billing-клиента от ученика?"
+                >
+                  Отвязать
+                </FormActionButton>
+              </form>
+            </>
+          ) : availableStudents.length === 0 ? (
+            <>
+              <p className="admin-muted">
+                Сейчас нет доступных активных учеников без billing-связи. Сначала отвяжи ученика от другого
+                billing-клиента или проверь matching-очередь.
+              </p>
+              <p className="admin-muted">
+                Для массовой ручной проверки открой <Link href="/admin/billing/matching">matching-очередь</Link>.
+              </p>
+            </>
+          ) : (
+            <>
+              <form className="admin-form-stack" action={linkBillingClientToStudentAction}>
+                <input type="hidden" name="clientId" value={detail.client.id} />
+                <input type="hidden" name="redirectTo" value={redirectTo} />
+                <label className="admin-field">
+                  <span>Активный ученик TrainingPeaks</span>
+                  <select className="admin-input" name="studentId" defaultValue="" required>
+                    <option value="" disabled>
+                      Выбери ученика
+                    </option>
+                    {availableStudents.map((student) => (
+                      <option key={student.id} value={student.id}>
+                        {student.studentName} ({student.studentId})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <FormActionButton
+                  className="admin-button"
+                  pendingText="Привязка..."
+                  confirmMessage="Привязать billing-клиента к выбранному ученику?"
+                >
+                  Привязать к ученику
+                </FormActionButton>
+              </form>
+              <p className="admin-muted">
+                Для массовой ручной проверки открой <Link href="/admin/billing/matching">matching-очередь</Link>.
+              </p>
+            </>
           )}
         </article>
       </div>

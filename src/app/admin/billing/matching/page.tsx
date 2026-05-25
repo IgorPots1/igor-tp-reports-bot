@@ -4,7 +4,7 @@ import FormActionButton from "@/app/admin/FormActionButton";
 import { linkBillingClientToStudentAction } from "@/app/admin/billing/actions";
 import { formatBillingAmount, getBillingPaymentMethodLabel, getSingleSearchParam } from "@/app/admin/lib";
 import {
-  listBillingActiveStudentsForManualLink,
+  listBillingAvailableStudentsForManualLink,
   listUnlinkedBillingClientsWithSuggestions,
 } from "@/features/billing/admin";
 
@@ -16,10 +16,11 @@ export default async function BillingMatchingPage({ searchParams }: BillingMatch
   const resolvedSearchParams = (await searchParams) ?? {};
   const notice = getSingleSearchParam(resolvedSearchParams.notice);
   const error = getSingleSearchParam(resolvedSearchParams.error);
-  const [records, activeStudents] = await Promise.all([
+  const [records, availableStudents] = await Promise.all([
     listUnlinkedBillingClientsWithSuggestions(),
-    listBillingActiveStudentsForManualLink(),
+    listBillingAvailableStudentsForManualLink(),
   ]);
+  const hasAvailableStudents = availableStudents.length > 0;
 
   return (
     <section className="admin-section">
@@ -38,6 +39,13 @@ export default async function BillingMatchingPage({ searchParams }: BillingMatch
 
       {(notice || error) && (
         <div className={`admin-alert ${error ? "admin-alert-error" : "admin-alert-success"}`}>{error ?? notice}</div>
+      )}
+
+      {!hasAvailableStudents && records.length > 0 && (
+        <div className="admin-alert admin-alert-warning">
+          Сейчас нет доступных активных учеников без billing-связи. Ниже остаются непривязанные клиенты, но ручная
+          привязка временно недоступна, пока не освободится ученик.
+        </div>
       )}
 
       <article className="admin-card">
@@ -101,7 +109,11 @@ export default async function BillingMatchingPage({ searchParams }: BillingMatch
                                     {suggestion.explanation ? ` · ${suggestion.explanation}` : ""}
                                   </span>
                                 </div>
-                                <FormActionButton className="admin-button admin-button-secondary" pendingText="Привязка...">
+                                <FormActionButton
+                                  className="admin-button admin-button-secondary"
+                                  pendingText="Привязка..."
+                                  confirmMessage="Привязать billing-клиента к выбранному ученику?"
+                                >
                                   Подтвердить
                                 </FormActionButton>
                               </form>
@@ -110,26 +122,34 @@ export default async function BillingMatchingPage({ searchParams }: BillingMatch
                         )}
                       </td>
                       <td>
-                        <form className="admin-form-stack" action={linkBillingClientToStudentAction}>
-                          <input type="hidden" name="clientId" value={record.client.id} />
-                          <input type="hidden" name="redirectTo" value={redirectTo} />
-                          <label className="admin-field">
-                            <span>Выбрать ученика вручную</span>
-                            <select className="admin-input" name="studentId" defaultValue="" required>
-                              <option value="" disabled>
-                                Выбери ученика
-                              </option>
-                              {activeStudents.map((student) => (
-                                <option key={student.id} value={student.id}>
-                                  {student.studentName} ({student.studentId})
+                        {hasAvailableStudents ? (
+                          <form className="admin-form-stack" action={linkBillingClientToStudentAction}>
+                            <input type="hidden" name="clientId" value={record.client.id} />
+                            <input type="hidden" name="redirectTo" value={redirectTo} />
+                            <label className="admin-field">
+                              <span>Выбрать ученика вручную</span>
+                              <select className="admin-input" name="studentId" defaultValue="" required>
+                                <option value="" disabled>
+                                  Выбери ученика
                                 </option>
-                              ))}
-                            </select>
-                          </label>
-                          <FormActionButton className="admin-button" pendingText="Привязка...">
-                            Привязать вручную
-                          </FormActionButton>
-                        </form>
+                                {availableStudents.map((student) => (
+                                  <option key={student.id} value={student.id}>
+                                    {student.studentName} ({student.studentId})
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <FormActionButton
+                              className="admin-button"
+                              pendingText="Привязка..."
+                              confirmMessage="Привязать billing-клиента к выбранному ученику?"
+                            >
+                              Привязать вручную
+                            </FormActionButton>
+                          </form>
+                        ) : (
+                          <span className="admin-muted">Нет доступных учеников для ручной привязки.</span>
+                        )}
                       </td>
                     </tr>
                   );
