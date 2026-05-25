@@ -23,10 +23,13 @@ import {
 } from "./lib/trainingpeaks-api-move.ts";
 import * as moveSourcePolicyNamespace from "../../../src/features/trainingpeaks/move-source-policy.ts";
 import * as moveSourceInferencePreviewNamespace from "../../../src/features/trainingpeaks/move-source-inference-preview.ts";
+import * as strongFutureDescriptorMoveSourceNamespace from "../../../src/features/trainingpeaks/strong-future-descriptor-move-source.ts";
 
 const moveSourcePolicy = moveSourcePolicyNamespace.default ?? moveSourcePolicyNamespace;
 const moveSourceInferencePreview =
   moveSourceInferencePreviewNamespace.default ?? moveSourceInferencePreviewNamespace;
+const strongFutureDescriptorMoveSource =
+  strongFutureDescriptorMoveSourceNamespace.default ?? strongFutureDescriptorMoveSourceNamespace;
 
 type ActionExecutionStatus =
   | "not_started"
@@ -386,6 +389,31 @@ type ParsedMoveWorkoutPayload = {
   source?: TrainingPeaksMoveWorkoutTarget | { date?: string; isoDate?: string };
   sourceDate?: string;
   source_date?: string;
+  workoutDescriptor?: {
+    raw?: string;
+    type?: string;
+    confidence?: number;
+  } | null;
+};
+
+type DryRunSourceInferenceProvenance = {
+  descriptorType: string | null;
+  descriptorConfidence: number | null;
+  sourceInferencePolicy: string | null;
+  selectedSourceDate: string | null;
+  targetDate: string | null;
+  candidate: {
+    title: string | null;
+    type: string | null;
+    date: string | null;
+    fingerprint: string | null;
+    workoutId: number | null;
+  } | null;
+  candidateCount: number;
+  candidateAlternativesCount: number;
+  score: number | null;
+  margin: number | null;
+  warnings: string[];
 };
 
 type DryRunResult = "candidate_found" | "ambiguous" | "not_found" | "failed";
@@ -468,6 +496,7 @@ type DryRunEvaluation = {
   selectedSourceDateCandidateCount?: number;
   globalCandidateCount?: number;
   sourceDateBucketCounts?: Record<string, number>;
+  sourceInferenceProvenance?: DryRunSourceInferenceProvenance | null;
 };
 
 type RawWorkoutCandidate = {
@@ -1978,6 +2007,9 @@ async function notifyCoachDryRunResult(input: {
 
   const inferredSourceBlocked =
     evaluation?.canExecuteReasons.includes(moveSourcePolicy.INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON) === true;
+  const strongFutureDescriptorMatch =
+    evaluation?.selectedSourceDatePolicy === "strong_future_descriptor_match";
+  const likelySourceTitle = evaluation?.candidate?.title?.trim() || evaluation?.sourceInferenceProvenance?.candidate?.title?.trim();
 
   if (
     evaluation &&
@@ -1993,6 +2025,11 @@ async function notifyCoachDryRunResult(input: {
     inferredSourceBlocked
   ) {
     lines.push(`⚠️ Проверка нашла кандидата. ${input.studentName}: ${route}.`);
+    if (strongFutureDescriptorMatch && likelySourceTitle) {
+      lines.push(
+        `Вероятный источник (сильное совпадение): ${likelySourceTitle}. Выполнение пока заблокировано до следующего safety-слоя.`
+      );
+    }
     lines.push(moveSourcePolicy.INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU);
     lines.push("TrainingPeaks не изменён. Проверь заявку в /tp_actions.");
   } else {
@@ -5997,6 +6034,66 @@ function evaluateDryRunOutcome(input: {
     sourceDateBucketCounts[candidate.dateIso] = (sourceDateBucketCounts[candidate.dateIso] ?? 0) + 1;
   }
 
+  let sourceInferenceProvenance: DryRunSourceInferenceProvenance | null = null;
+  if (!selectedSourceDate && targetDate) {
+    const targetDayHasWorkout = strictGlobalCandidates.some((candidate) => candidate.dateIso === targetDate);
+    const strongFutureResolution = strongFutureDescriptorMoveSource.resolveStrongFutureIntervalMoveSource({
+      targetDate,
+      parsedPayload: input.action.parsed_payload,
+      targetDayHasWorkout,
+      candidates: strictGlobalCandidates
+        .filter((candidate) => Boolean(candidate.dateIso))
+        .map((candidate) => ({
+          dateIso: candidate.dateIso!,
+          title: candidate.title,
+          type: candidate.type,
+          rawTextSnippet: candidate.rawTextSnippet,
+          workoutId: candidate.workoutId ?? null,
+          fingerprint: buildCandidateFingerprint({
+            studentId: input.student?.id ?? null,
+            dateIso: candidate.dateIso,
+            title: candidate.title,
+            type: candidate.type,
+            startTimeLocal: candidate.startTimeLocal,
+            plannedDurationSec: candidate.plannedDurationSec,
+            plannedDistance: candidate.plannedDistance,
+          }),
+          rawScore: candidate.rawScore,
+        })),
+    });
+    if (strongFutureResolution) {
+      selectedSourceDatePolicy = strongFutureResolution.selectedSourceDatePolicy;
+      if (strongFutureResolution.selectedSourceDate) {
+        selectedSourceDate = strongFutureResolution.selectedSourceDate;
+      }
+      const selected = strongFutureResolution.selectedCandidate;
+      sourceInferenceProvenance = {
+        descriptorType: strongFutureResolution.descriptorType,
+        descriptorConfidence: strongFutureResolution.descriptorConfidence,
+        sourceInferencePolicy: strongFutureResolution.sourceInferencePolicy,
+        selectedSourceDate: strongFutureResolution.selectedSourceDate,
+        targetDate,
+        candidate: selected
+          ? {
+              title: selected.title,
+              type: selected.type,
+              date: selected.dateIso,
+              fingerprint: selected.fingerprint,
+              workoutId: selected.workoutId,
+            }
+          : null,
+        candidateCount: strongFutureResolution.candidateCount,
+        candidateAlternativesCount: strongFutureResolution.candidateAlternativesCount,
+        score: strongFutureResolution.score,
+        margin: strongFutureResolution.margin,
+        warnings: strongFutureResolution.warnings,
+      };
+      if (strongFutureResolution.warnings.length > 0) {
+        parseWarnings.push(...strongFutureResolution.warnings);
+      }
+    }
+  }
+
   if (!selectedSourceDate && targetDate && isTargetTomorrow(input.action)) {
     selectedSourceDate = getRelativeLocalIsoDate("today", baseDate);
     selectedSourceDatePolicy = "target_tomorrow_prefers_today";
@@ -6064,6 +6161,7 @@ function evaluateDryRunOutcome(input: {
         globalCandidateCount,
         sourceDateBucketCounts,
       },
+      sourceInferenceProvenance,
     };
   }
 
@@ -6106,6 +6204,7 @@ function evaluateDryRunOutcome(input: {
         globalCandidateCount,
         sourceDateBucketCounts,
       },
+      sourceInferenceProvenance,
     };
   }
 
@@ -6242,6 +6341,7 @@ function evaluateDryRunOutcome(input: {
       globalCandidateCount,
       sourceDateBucketCounts,
     },
+    sourceInferenceProvenance,
   };
 }
 
@@ -7545,6 +7645,7 @@ async function main(): Promise<void> {
         selectedSourceDateCandidateCount: evaluation.selectedSourceDateCandidateCount,
         globalCandidateCount: evaluation.globalCandidateCount,
         sourceDateBucketCounts: evaluation.sourceDateBucketCounts,
+        sourceInferenceProvenance: evaluation.sourceInferenceProvenance ?? null,
         note: "Ничего не изменено в TrainingPeaks",
       };
 

@@ -10,6 +10,10 @@ import {
   formatMoveSourceInferencePreviewRu,
   hasUntrustedMoveSourceInferencePreview,
 } from "@/features/trainingpeaks/move-source-inference-preview";
+import {
+  resolveStrongFutureIntervalMoveSource,
+  type StrongFutureDescriptorMoveSourceCandidate,
+} from "@/features/trainingpeaks/strong-future-descriptor-move-source";
 
 type InferredSourceCase = {
   name: string;
@@ -178,6 +182,7 @@ async function run(): Promise<void> {
   for (const policy of [
     "explicit_source_date",
     "explicit_source_ref",
+    "strong_future_descriptor_match",
     "nearest_prior_within_3_days",
     "target_tomorrow_prefers_today",
     "unresolved",
@@ -261,6 +266,150 @@ async function run(): Promise<void> {
   if (INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON.length === 0) {
     failed += 1;
     console.log("FAIL: inferred source block reason must be non-empty");
+  }
+
+  const viktoriaTargetDate = "2026-05-26";
+  const fingerprint = "student:test:interval";
+  const viktoriaCalendarCandidates: StrongFutureDescriptorMoveSourceCandidate[] = [
+    {
+      dateIso: "2026-05-25",
+      title: "Темп / легко",
+      type: "run",
+      rawTextSnippet: "Темп / легко",
+      workoutId: 1,
+      fingerprint,
+    },
+    {
+      dateIso: "2026-05-26",
+      title: "Силовая",
+      type: "strength",
+      rawTextSnippet: "Силовая",
+      workoutId: 2,
+      fingerprint,
+    },
+    {
+      dateIso: "2026-05-27",
+      title: "Темп / легко",
+      type: "run",
+      rawTextSnippet: "Темп / легко",
+      workoutId: 3,
+      fingerprint,
+    },
+    {
+      dateIso: "2026-05-28",
+      title: "6 × 6 мин",
+      type: "run",
+      rawTextSnippet: "6 × 6 мин",
+      workoutId: 4,
+      fingerprint,
+      rawScore: 0.91,
+    },
+    {
+      dateIso: "2026-05-30",
+      title: "Длительный / легко",
+      type: "run",
+      rawTextSnippet: "Длительный / легко",
+      workoutId: 5,
+      fingerprint,
+    },
+  ];
+
+  const viktoriaStrong = resolveStrongFutureIntervalMoveSource({
+    targetDate: viktoriaTargetDate,
+    parsedPayload: viktoriaLikePayload,
+    candidates: viktoriaCalendarCandidates,
+    targetDayHasWorkout: true,
+  });
+  if (!viktoriaStrong) {
+    failed += 1;
+    console.log("FAIL: Viktoria-like interval request must run strong future resolver");
+  } else {
+    if (viktoriaStrong.selectedSourceDatePolicy !== "strong_future_descriptor_match") {
+      failed += 1;
+      console.log(
+        `FAIL: Viktoria-like policy expected strong_future_descriptor_match, got ${viktoriaStrong.selectedSourceDatePolicy}`
+      );
+    }
+    if (viktoriaStrong.selectedSourceDate !== "2026-05-28") {
+      failed += 1;
+      console.log(`FAIL: Viktoria-like source expected 2026-05-28, got ${viktoriaStrong.selectedSourceDate}`);
+    }
+    if (viktoriaStrong.selectedCandidate?.title !== "6 × 6 мин") {
+      failed += 1;
+      console.log("FAIL: Viktoria-like candidate title must be 6 × 6 мин");
+    }
+    if (!viktoriaStrong.warnings.includes("target day already has workout")) {
+      failed += 1;
+      console.log("FAIL: Viktoria-like warnings must include target day already has workout");
+    }
+    const viktoriaCanExecute = simulateCanExecute({
+      dryRunResult: "candidate_found",
+      selectedSourceDatePolicy: viktoriaStrong.selectedSourceDatePolicy,
+      parsedPayload: viktoriaLikePayload,
+      confidence: 0.91,
+      safeCandidateCount: 1,
+      identityMatchedBy: "name",
+    });
+    if (viktoriaCanExecute) {
+      failed += 1;
+      console.log("FAIL: Viktoria-like strong_future_descriptor_match must keep canExecute false");
+    }
+  }
+
+  const twoIntervalCandidates: StrongFutureDescriptorMoveSourceCandidate[] = [
+    ...viktoriaCalendarCandidates.filter((candidate) => candidate.dateIso !== "2026-05-30"),
+    {
+      dateIso: "2026-05-29",
+      title: "интервалы 5x5",
+      type: "run",
+      rawTextSnippet: "интервалы 5x5",
+      workoutId: 6,
+      fingerprint,
+      rawScore: 0.9,
+    },
+  ];
+  const twoIntervalStrong = resolveStrongFutureIntervalMoveSource({
+    targetDate: viktoriaTargetDate,
+    parsedPayload: viktoriaLikePayload,
+    candidates: twoIntervalCandidates,
+    targetDayHasWorkout: true,
+  });
+  if (twoIntervalStrong?.selectedSourceDatePolicy !== "multiple_candidates") {
+    failed += 1;
+    console.log("FAIL: two future interval candidates must block with multiple_candidates");
+  }
+
+  const noIntervalStrong = resolveStrongFutureIntervalMoveSource({
+    targetDate: viktoriaTargetDate,
+    parsedPayload: viktoriaLikePayload,
+    candidates: viktoriaCalendarCandidates.filter(
+      (candidate) => candidate.dateIso !== "2026-05-28"
+    ),
+    targetDayHasWorkout: true,
+  });
+  if (noIntervalStrong?.selectedSourceDatePolicy !== "no_candidate") {
+    failed += 1;
+    console.log("FAIL: no future interval candidate must use no_candidate policy");
+  }
+
+  const tomorrowOnlyPayload = {
+    actionType: "move_workout",
+    target: { kind: "relative_day", value: "tomorrow" },
+    workoutDescriptor: null,
+    confidence: 0.8,
+    needsClarification: false,
+    clarificationReason: null,
+    parser: "ai_fallback",
+  };
+  const tomorrowOnlyStrong = resolveStrongFutureIntervalMoveSource({
+    targetDate: viktoriaTargetDate,
+    parsedPayload: tomorrowOnlyPayload,
+    candidates: viktoriaCalendarCandidates,
+    targetDayHasWorkout: true,
+  });
+  if (tomorrowOnlyStrong !== null) {
+    failed += 1;
+    console.log('FAIL: "завтра сделаю" without descriptor must not use strong future resolver');
   }
 
   if (failed > 0) {
