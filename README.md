@@ -57,7 +57,7 @@ Vercel cron uses UTC. The configured schedule is `0 9 * * *`, which matches 11:0
 Operational note:
 
 - `/tp_health` gives a compact coach-only health check for production config plus stale running jobs.
-- `/api/cron/trainingpeaks-stale-job-sweeper` runs every 30 minutes on Vercel and marks stale TrainingPeaks jobs as failed via existing recovery helpers.
+- `/api/cron/trainingpeaks-stale-job-sweeper` marks stale TrainingPeaks jobs as failed via existing recovery helpers. The endpoint is deployed on Vercel but is not scheduled there: Hobby cron is daily-only, so trigger it manually or from an external scheduler.
 - Local TrainingPeaks backup/debug/export artifacts under `tools/trainingpeaks-export/` are intentionally git-ignored.
 
 ## Local Workout Cache Scan Automation (Mac)
