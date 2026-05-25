@@ -18,7 +18,12 @@ export type BillingMonthInput = string | Date;
 export type BillingDateInput = string | Date;
 
 export type BillingCurrency = "RUB" | "EUR" | "OTHER";
-export type BillingPaymentMethod = "tbank_link_a" | "tbank_link_b" | "manual_eur" | "manual_other";
+export type BillingPaymentMethod =
+  | "tbank_link_a"
+  | "tbank_link_b"
+  | "tbank_link_c"
+  | "manual_eur"
+  | "manual_other";
 export type BillingPaymentStatus =
   | "pending"
   | "paid"

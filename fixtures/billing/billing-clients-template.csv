@@ -1,0 +1,4 @@
+group,name,monthly_amount,currency,planned_payment_day,payment_method,student_id,notes
+Основная группа,Иван тест,4000,RUB,10,tbank_link_a,,Имя из старой таблицы
+Основная группа,Мария тест,5000,RUB,15,tbank_link_b,,Имя из старой таблицы
+Основная группа,Пётр тест,6000,RUB,31,tbank_link_c,,Имя из старой таблицы

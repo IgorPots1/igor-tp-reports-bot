@@ -134,11 +134,32 @@ export function getBillingMonthGenerationPreview(
   })();
 }
 
+function getLastDayOfMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+export function computePlannedPaymentDate(billingMonth: string, plannedPaymentDay: number): string {
+  const match = billingMonth.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    throw new Error(`Invalid billing month: ${billingMonth}`);
+  }
+
+  if (!Number.isSafeInteger(plannedPaymentDay) || plannedPaymentDay < 1 || plannedPaymentDay > 31) {
+    throw new Error(`Invalid planned payment day: ${plannedPaymentDay}`);
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const effectiveDay = Math.min(plannedPaymentDay, getLastDayOfMonth(year, month));
+
+  return formatIsoDate(buildUtcDate(year, month, effectiveDay));
+}
+
 function buildMonthlyInsertRow(client: BillingClient, billingMonth: string, actor?: string | null) {
   return {
     billing_client_id: client.id,
     billing_month: billingMonth,
-    planned_payment_date: shiftIsoDate(billingMonth, client.plannedPaymentDay - 1),
+    planned_payment_date: computePlannedPaymentDate(billingMonth, client.plannedPaymentDay),
     planned_amount: client.monthlyAmount,
     currency: client.currency,
     status: "pending" as const,
