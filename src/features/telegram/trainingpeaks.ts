@@ -5500,6 +5500,22 @@ async function handleTrainingPeaksReplyDraft(
     studentName: studentMatch.student.studentName,
   });
 
+  if (draftContext.cacheStatus !== "ok") {
+    await sendTrainingPeaksMessage(
+      parsedMessage.chatId,
+      [
+        `Черновик ответа для ${studentMatch.student.studentName} не сгенерирован.`,
+        "",
+        "Причина: workout context в кэше TrainingPeaks устарел или отсутствует.",
+        draftContext.cacheStatusNote,
+        "",
+        "Ничего ученику не отправлено.",
+        "Обнови кэш/синхронизацию TrainingPeaks и повтори /tp_reply_draft.",
+      ].join("\n")
+    );
+    return;
+  }
+
   const draftResult = await generateTrainingPeaksReplyDraft({
     studentMessage,
     context: draftContext,

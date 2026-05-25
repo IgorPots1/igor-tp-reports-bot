@@ -4720,6 +4720,51 @@ export async function listTrainingPeaksStudentContactStatus(): Promise<TrainingP
   );
 }
 
+export async function getTrainingPeaksStudentContactStatus(
+  studentId: string
+): Promise<TrainingPeaksStudentContactStatus | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_contact_status")
+    .select("*")
+    .eq("student_id", studentId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to get TrainingPeaks student contact status for ${studentId}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksStudentContactStatusRow(data as TrainingPeaksStudentContactStatusRow);
+}
+
+export async function listRecentTrainingPeaksStudentContactEvents(input: {
+  studentId: string;
+  limit?: number;
+}): Promise<TrainingPeaksStudentContactEvent[]> {
+  const supabase = createSupabaseServerClient();
+  const safeLimit = Math.max(1, Math.min(input.limit ?? 5, 20));
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_contact_events")
+    .select("*")
+    .eq("student_id", input.studentId)
+    .order("occurred_at", { ascending: false })
+    .limit(safeLimit);
+
+  if (error) {
+    throw new Error(
+      `Failed to list recent TrainingPeaks student contact events for ${input.studentId}: ${error.message}`
+    );
+  }
+
+  return ((data as TrainingPeaksStudentContactEventRow[]) ?? []).map(
+    mapTrainingPeaksStudentContactEventRow
+  );
+}
+
 export async function countTrainingPeaksSilentStudents(input: {
   minimumSilenceDays: number;
 }): Promise<number> {

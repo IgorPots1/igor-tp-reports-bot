@@ -1,10 +1,14 @@
 import { evaluateTrainingPeaksRecoveryAlert } from "@/features/trainingpeaks/recovery-alerts";
 import {
   getTrainingPeaksStudentById,
+  getTrainingPeaksStudentContactStatus,
   listTrainingPeaksTelegramContextObservationsForStudent,
   listTrainingPeaksHealthMetricsForStudentDateRange,
+  listRecentTrainingPeaksStudentContactEvents,
   listTrainingPeaksStudentHealthMetricProfiles,
   listTrainingPeaksWorkoutCacheForStudentDateRange,
+  type TrainingPeaksStudentContactEvent,
+  type TrainingPeaksStudentContactStatus,
   type TrainingPeaksWorkoutCacheRow,
 } from "@/features/trainingpeaks/repository";
 import { classifyTrainingPeaksWorkoutActivity } from "@/features/trainingpeaks/workout-activity-classification";
@@ -63,9 +67,14 @@ export async function buildTrainingPeaksReplyDraftContext(
     }),
     listTrainingPeaksStudentHealthMetricProfiles(),
   ]);
-  const [student, recentContextObservations] = await Promise.all([
+  const [student, recentContextObservations, contactStatus, recentContactEvents] = await Promise.all([
     getTrainingPeaksStudentById(input.studentUuid),
     listTrainingPeaksTelegramContextObservationsForStudent(input.studentUuid, 10),
+    getTrainingPeaksStudentContactStatus(input.studentUuid),
+    listRecentTrainingPeaksStudentContactEvents({
+      studentId: input.studentUuid,
+      limit: 5,
+    }),
   ]);
 
   const cacheStatus = resolveCacheStatus(workoutRows);
@@ -88,6 +97,8 @@ export async function buildTrainingPeaksReplyDraftContext(
     missedPlannedRunningDates,
     recoveryAlertMessage: recovery.message,
     recoveryAlertAvailable: recovery.available,
+    contactStatus,
+    recentContactEvents,
     recentObservationLabels,
   });
 
@@ -104,6 +115,8 @@ export async function buildTrainingPeaksReplyDraftContext(
     recoveryAlertMessage: recovery.message,
     recoveryAlertAvailable: recovery.available,
     telegramContextNotes,
+    contactStatus,
+    recentContactEvents,
     recentObservationLabels,
   });
 
@@ -267,6 +280,8 @@ function buildTelegramContextBullets(input: {
   missedPlannedRunningDates: string[];
   recoveryAlertMessage: string | null;
   recoveryAlertAvailable: boolean;
+  contactStatus: TrainingPeaksStudentContactStatus | null;
+  recentContactEvents: TrainingPeaksStudentContactEvent[];
   recentObservationLabels: string[];
 }): string[] {
   const bullets: string[] = [];
@@ -303,7 +318,8 @@ function buildTelegramContextBullets(input: {
     bullets.push(input.recoveryAlertMessage);
   }
 
-  const limitedBullets = bullets.slice(0, 3);
+  const contactBullets = buildContactStatusBullets(input.contactStatus, input.recentContactEvents);
+  const limitedBullets = [...bullets, ...contactBullets].slice(0, 3);
   if (input.recentObservationLabels.length > 0) {
     limitedBullets.push(`Недавние Telegram-наблюдения: ${input.recentObservationLabels.join(", ")}.`);
   }
@@ -324,6 +340,8 @@ function buildPromptContext(input: {
   recoveryAlertMessage: string | null;
   recoveryAlertAvailable: boolean;
   telegramContextNotes: string | null;
+  contactStatus: TrainingPeaksStudentContactStatus | null;
+  recentContactEvents: TrainingPeaksStudentContactEvent[];
   recentObservationLabels: string[];
 }): string {
   const workoutLines =
@@ -343,6 +361,7 @@ function buildPromptContext(input: {
             return `- ${workout.workoutDate} | ${workout.status} | ${workout.activityLabel} | ${workout.title}${metrics ? ` | ${metrics}` : ""}`;
           }),
         ];
+  const recentContactEventsSummary = formatRecentContactEventsSummary(input.recentContactEvents);
 
   return [
     `student_name=${input.studentName}`,
@@ -355,6 +374,8 @@ function buildPromptContext(input: {
     ...(input.recentObservationLabels.length > 0
       ? [`recent_observation_labels=${input.recentObservationLabels.join(", ")}`]
       : []),
+    ...buildContactStatusPromptLines(input.contactStatus),
+    ...(recentContactEventsSummary ? [`recent_contact_events=${recentContactEventsSummary}`] : []),
     ...workoutLines,
     input.missedPlannedRunningDates.length > 0
       ? `missed_planned_running_dates=${input.missedPlannedRunningDates.join(", ")}`
@@ -397,6 +418,112 @@ function collectRecentObservationLabels(
   }
 
   return [...labels];
+}
+
+function buildContactStatusPromptLines(
+  status: TrainingPeaksStudentContactStatus | null
+): string[] {
+  if (!status) {
+    return [];
+  }
+
+  return [
+    status.silenceDays !== null ? `contact_silence_days=${status.silenceDays}` : null,
+    status.lastAthleteMessageAt
+      ? `contact_last_athlete_message_at=${status.lastAthleteMessageAt}`
+      : null,
+    status.lastCoachTouchAt ? `contact_last_coach_touch_at=${status.lastCoachTouchAt}` : null,
+    status.unansweredSince ? `contact_unanswered_since=${status.unansweredSince}` : null,
+    status.unansweredSeconds !== null
+      ? `contact_unanswered_seconds=${status.unansweredSeconds}`
+      : null,
+  ].filter((line): line is string => Boolean(line));
+}
+
+function buildContactStatusBullets(
+  status: TrainingPeaksStudentContactStatus | null,
+  recentEvents: TrainingPeaksStudentContactEvent[]
+): string[] {
+  const bullets: string[] = [];
+
+  if (status?.unansweredSince) {
+    const daysLabel =
+      status.silenceDays === null
+        ? "недавно"
+        : status.silenceDays === 0
+          ? "сегодня"
+          : `${status.silenceDays} дн. назад`;
+    bullets.push(`Контакт: ученик писал ${daysLabel}, ответа или касания тренера после этого пока не было.`);
+  } else if (status?.silenceDays !== null && status?.silenceDays !== undefined) {
+    const daysText =
+      status.silenceDays === 0 ? "сегодня" : `${status.silenceDays} ${pluralizeRuDays(status.silenceDays)}`;
+    bullets.push(`Контакт: ученик не писал ${daysText}.`);
+  }
+
+  if (status?.lastCoachTouchAt) {
+    const latestCoachEvent = recentEvents.find((event) =>
+      event.eventType === "coach_message" ||
+      event.eventType === "report_sent" ||
+      event.eventType === "coach_action_decision"
+    );
+    const sourceLabel = latestCoachEvent ? formatContactEventBulletLabel(latestCoachEvent) : "касание";
+    bullets.push(`Последнее касание тренера: ${sourceLabel}, ${formatIsoDateShort(status.lastCoachTouchAt)}.`);
+  }
+
+  return bullets;
+}
+
+function formatRecentContactEventsSummary(events: TrainingPeaksStudentContactEvent[]): string | null {
+  if (events.length === 0) {
+    return null;
+  }
+
+  return events
+    .map((event) => `${event.eventType}:${event.source}:${formatIsoDateOnly(event.occurredAt)}`)
+    .join(", ");
+}
+
+function formatContactEventBulletLabel(event: TrainingPeaksStudentContactEvent): string {
+  if (event.eventType === "report_sent") {
+    return "отчёт";
+  }
+  if (event.eventType === "coach_action_decision") {
+    return "действие";
+  }
+  if (event.eventType === "coach_message") {
+    return "сообщение";
+  }
+  return "касание";
+}
+
+function formatIsoDateOnly(value: string): string {
+  return value.slice(0, 10);
+}
+
+function formatIsoDateShort(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return formatIsoDateOnly(value);
+  }
+
+  return new Intl.DateTimeFormat("ru-RU", {
+    timeZone: BELGRADE_TIMEZONE,
+    day: "numeric",
+    month: "short",
+  }).format(parsed);
+}
+
+function pluralizeRuDays(value: number): string {
+  const mod10 = value % 10;
+  const mod100 = value % 100;
+
+  if (mod10 === 1 && mod100 !== 11) {
+    return "день";
+  }
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+    return "дня";
+  }
+  return "дней";
 }
 
 function formatActivityFamilyLabel(family: string): string {
