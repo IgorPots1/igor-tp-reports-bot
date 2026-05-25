@@ -90,6 +90,11 @@ export default async function AdminBillingPage({ searchParams }: AdminBillingPag
             Coach-only обзор по платежам: кто уже оплачен, кто ожидается и у каких клиентов ещё нет связи с учеником.
           </p>
         </div>
+        <div className="admin-actions">
+          <Link className="admin-button admin-button-secondary" href="/admin/billing/matching">
+            Связка клиентов
+          </Link>
+        </div>
       </div>
 
       <article className="admin-card">

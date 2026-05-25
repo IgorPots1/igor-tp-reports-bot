@@ -56,7 +56,7 @@ export function getBillingPaymentMethodLabel(method: string | null | undefined):
     case "manual_other":
       return "Вручную / другое";
     default:
-      return "Не указано";
+      return method?.trim() ? method : "Не указано";
   }
 }
 

@@ -18,7 +18,13 @@ export type BillingMonthInput = string | Date;
 export type BillingDateInput = string | Date;
 
 export type BillingCurrency = "RUB" | "EUR" | "OTHER";
-export type BillingPaymentMethod = "tbank_link_a" | "tbank_link_b" | "manual_eur" | "manual_other";
+export type BillingPaymentMethod =
+  | "tbank_link_a"
+  | "tbank_link_b"
+  | "tbank_link_c"
+  | "manual_eur"
+  | "manual_other"
+  | (string & {});
 export type BillingPaymentStatus =
   | "pending"
   | "paid"
@@ -44,6 +50,17 @@ export type BillingClient = {
   createdAt: string;
   updatedAt: string;
 };
+
+export type BillingClientUpdateInput = Partial<{
+  studentId: string | null;
+  clientName: string;
+  groupName: string | null;
+  monthlyAmount: number;
+  plannedPaymentDay: number;
+  paymentMethod: BillingPaymentMethod;
+  isActive: boolean;
+  updatedBy: string | null;
+}>;
 
 export type BillingMonthlyPayment = {
   id: string;
