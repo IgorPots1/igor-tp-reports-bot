@@ -84,13 +84,26 @@ export type BillingMonthlyPayment = {
   updatedAt: string;
 };
 
+export type BillingImportedPaymentDataFlags = {
+  hasEmail: boolean;
+  hasPhone: boolean;
+  hasName: boolean;
+};
+
 export type BillingImportedPaymentRawRow = {
+  sourceFormat: "tbank_csv";
   rowNumber: number;
-  originalDate: string;
-  originalAmount: string;
-  payerCell: string | null;
-  descriptionCell: string | null;
-  parseWarnings: string[];
+  orderNumber: string | null;
+  operationDateRaw: string | null;
+  operationTimeRaw: string | null;
+  amountRaw: string | null;
+  commissionRaw: string | null;
+  payoutAmountRaw: string | null;
+  operationType: string | null;
+  paymentId: string | null;
+  terminalName: string | null;
+  descriptionRaw: string | null;
+  dataFlags: BillingImportedPaymentDataFlags;
 };
 
 export type BillingImportedPayment = {
@@ -131,6 +144,7 @@ export type ParsedBillingImportedPaymentSkippedRow = {
 
 export type ParseTBankStatementResult = {
   provider: "tbank";
+  sourceFormat: "tbank_csv";
   parsedRows: ParsedBillingImportedPaymentRow[];
   skippedRows: ParsedBillingImportedPaymentSkippedRow[];
   warnings: string[];

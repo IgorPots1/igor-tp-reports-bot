@@ -2,7 +2,7 @@ import process from "node:process";
 import { access } from "node:fs/promises";
 import { constants } from "node:fs";
 
-import { parseTBankStatementXlsx } from "@/features/billing/import/parse-tbank-statement";
+import { parseTBankStatement } from "@/features/billing/import/parse-tbank-statement";
 import { importBillingPaymentsFromParsedRows } from "@/features/billing/service";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
@@ -50,7 +50,7 @@ function getEnvValue(name: "NEXT_PUBLIC_SUPABASE_URL" | "SUPABASE_URL" | "SUPABA
 
 function printUsage(): void {
   console.log("Usage:");
-  console.log("  npm run billing:import-payments -- --file ./path/to/statement.xlsx [--dry-run|--apply]");
+  console.log("  npm run billing:import-payments -- --file ./path/to/statement.csv [--dry-run|--apply]");
 }
 
 async function ensureFileReadable(filePath: string): Promise<void> {
@@ -66,16 +66,20 @@ async function run(): Promise<void> {
   }
 
   await ensureFileReadable(options.filePath);
-  const parsed = await parseTBankStatementXlsx(options.filePath);
+  const parsed = await parseTBankStatement(options.filePath);
 
   if (!options.apply) {
     console.log("[billing-import-payments] DRY RUN");
     console.log(`file=${options.filePath.split(/[\\/]/).pop() ?? options.filePath}`);
+    console.log(`format=${parsed.sourceFormat}`);
     console.log(`parsed_rows=${parsed.parsedRows.length}`);
     console.log(`skipped_rows=${parsed.skippedRows.length}`);
     console.log("inserted_rows=0");
     console.log("duplicate_rows=0");
     console.log("batch_id=n/a (dry-run)");
+    console.log(`rows_with_name_flag=${parsed.parsedRows.filter((row) => row.rawRow.dataFlags.hasName).length}`);
+    console.log(`rows_with_email_flag=${parsed.parsedRows.filter((row) => row.rawRow.dataFlags.hasEmail).length}`);
+    console.log(`rows_with_phone_flag=${parsed.parsedRows.filter((row) => row.rawRow.dataFlags.hasPhone).length}`);
     if (parsed.warnings.length > 0) {
       console.log(`warnings=${parsed.warnings.length}`);
     }
@@ -107,6 +111,7 @@ async function run(): Promise<void> {
 
   console.log("[billing-import-payments] APPLIED");
   console.log(`file=${importResult.sourceFileName}`);
+  console.log(`format=${parsed.sourceFormat}`);
   console.log(`parsed_rows=${parsed.parsedRows.length}`);
   console.log(`skipped_rows=${parsed.skippedRows.length}`);
   console.log(`inserted_rows=${importResult.insertedRowCount}`);
