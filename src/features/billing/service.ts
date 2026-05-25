@@ -213,6 +213,7 @@ export async function listBillingMonthStatus(targetMonth: BillingMonthInput): Pr
 
   return rows.map((row) => ({
     clientId: row.client.id,
+    studentId: row.client.studentId,
     clientName: row.client.clientName,
     groupName: row.client.groupName,
     plannedAmount: row.plannedAmount,
