@@ -110,6 +110,11 @@ const deterministicCases: DeterministicResolveCase[] = [
     expectedTargetDate: "2026-05-17",
   },
   {
+    text: "перенеси тренировку с 28 мая на завтра",
+    expectedSourceDate: "2026-05-28",
+    expectedTargetDate: "2026-05-26",
+  },
+  {
     text: "перенеси сегодняшнюю тренировку на завтра",
     expectedSourceDate: "2026-05-17",
     expectedTargetDate: "2026-05-18",
@@ -157,6 +162,7 @@ async function run(): Promise<void> {
             clarificationReason: result.payload.clarificationReason,
             warnings: result.payload.warnings ?? [],
             sourceInference: result.payload.sourceInference ?? null,
+            sourceInferencePreview: result.payload.sourceInferencePreview ?? null,
             parser: result.payload.parser,
           },
           null,
@@ -214,7 +220,43 @@ async function run(): Promise<void> {
   process.env.TZ = "Europe/Belgrade";
   process.env.TP_MOVE_DATE_BASE_DATE = "2026-05-17";
 
-  for (const testCase of deterministicCases) {
+  process.env.TZ = "Europe/Belgrade";
+  process.env.TP_MOVE_DATE_BASE_DATE = "2026-05-25";
+
+  for (const testCase of deterministicCases.filter((item) => item.text.includes("28 мая"))) {
+    const result = await parseTrainingPeaksMoveWorkoutRequest(testCase.text);
+    if (!result.ok) {
+      failed += 1;
+      console.log(`FAIL (deterministic parse): "${testCase.text}" -> ${JSON.stringify({ reason: result.reason })}`);
+      continue;
+    }
+
+    const sourceDate = result.payload.sourceDate ?? result.payload.source_date ?? null;
+    const target = result.payload.target;
+    const sourceOk = sourceDate === testCase.expectedSourceDate;
+    const targetOk = target.kind === "date" && target.value === testCase.expectedTargetDate;
+    const previewAbsent = !result.payload.sourceInferencePreview;
+    const ok = sourceOk && targetOk && previewAbsent;
+
+    if (!ok) {
+      failed += 1;
+    }
+    console.log(
+      `${ok ? "PASS" : "FAIL"} (explicit source May 28): "${testCase.text}" -> ${JSON.stringify(
+        {
+          sourceDate,
+          target: target.kind === "date" ? target.value : `${target.kind}:${target.value}`,
+          sourceInferencePreview: result.payload.sourceInferencePreview ?? null,
+        },
+        null,
+        2
+      )}`
+    );
+  }
+
+  process.env.TP_MOVE_DATE_BASE_DATE = "2026-05-17";
+
+  for (const testCase of deterministicCases.filter((item) => !item.text.includes("28 мая"))) {
     const result = await parseTrainingPeaksMoveWorkoutRequest(testCase.text);
     if (!result.ok) {
       failed += 1;

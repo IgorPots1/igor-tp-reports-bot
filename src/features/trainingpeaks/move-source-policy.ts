@@ -1,3 +1,5 @@
+import { hasUntrustedMoveSourceInferencePreview } from "@/features/trainingpeaks/move-source-inference-preview";
+
 export const TRUSTED_MOVE_SOURCE_POLICIES = new Set([
   "explicit_source_date",
   "explicit_source_ref",
@@ -15,6 +17,10 @@ export function isTrustedMoveSourcePolicy(policy: string | null | undefined): bo
 
 export function hasExplicitMoveSourceInParsedPayload(parsedPayload: unknown): boolean {
   if (!parsedPayload || typeof parsedPayload !== "object") {
+    return false;
+  }
+
+  if (hasUntrustedMoveSourceInferencePreview(parsedPayload)) {
     return false;
   }
 

@@ -22,8 +22,11 @@ import {
   verifyWorkoutMoved,
 } from "./lib/trainingpeaks-api-move.ts";
 import * as moveSourcePolicyNamespace from "../../../src/features/trainingpeaks/move-source-policy.ts";
+import * as moveSourceInferencePreviewNamespace from "../../../src/features/trainingpeaks/move-source-inference-preview.ts";
 
 const moveSourcePolicy = moveSourcePolicyNamespace.default ?? moveSourcePolicyNamespace;
+const moveSourceInferencePreview =
+  moveSourceInferencePreviewNamespace.default ?? moveSourceInferencePreviewNamespace;
 
 type ActionExecutionStatus =
   | "not_started"
@@ -1043,26 +1046,30 @@ function extractExplicitSourceDate(input: { rawText: string; parsedPayload: unkn
   const payload = input.parsedPayload && typeof input.parsedPayload === "object"
     ? (input.parsedPayload as ParsedMoveWorkoutPayload)
     : null;
-  const payloadDateCandidates = [
-    payload?.sourceDate,
-    payload?.source_date,
-    payload?.source && typeof payload.source === "object" && "kind" in payload.source && payload.source.kind === "date" && "value" in payload.source
-      ? payload.source.value
-      : null,
-    (payload?.source && typeof payload.source === "object" && "date" in payload.source
-      ? payload.source.date
-      : null) ?? null,
-    (payload?.source && typeof payload.source === "object" && "isoDate" in payload.source
-      ? payload.source.isoDate
-      : null) ?? null,
-  ];
-  for (const candidate of payloadDateCandidates) {
-    if (!candidate) {
-      continue;
-    }
-    const normalized = normalizeDateCandidate(candidate);
-    if (normalized) {
-      return normalized;
+  const ignorePayloadSourceFields = moveSourceInferencePreview.hasUntrustedMoveSourceInferencePreview(payload);
+
+  if (!ignorePayloadSourceFields) {
+    const payloadDateCandidates = [
+      payload?.sourceDate,
+      payload?.source_date,
+      payload?.source && typeof payload.source === "object" && "kind" in payload.source && payload.source.kind === "date" && "value" in payload.source
+        ? payload.source.value
+        : null,
+      (payload?.source && typeof payload.source === "object" && "date" in payload.source
+        ? payload.source.date
+        : null) ?? null,
+      (payload?.source && typeof payload.source === "object" && "isoDate" in payload.source
+        ? payload.source.isoDate
+        : null) ?? null,
+    ];
+    for (const candidate of payloadDateCandidates) {
+      if (!candidate) {
+        continue;
+      }
+      const normalized = normalizeDateCandidate(candidate);
+      if (normalized) {
+        return normalized;
+      }
     }
   }
 
@@ -1086,6 +1093,9 @@ function extractExplicitSourceTimeRef(input: {
   const payload = input.parsedPayload && typeof input.parsedPayload === "object"
     ? (input.parsedPayload as ParsedMoveWorkoutPayload)
     : null;
+  if (moveSourceInferencePreview.hasUntrustedMoveSourceInferencePreview(payload)) {
+    return null;
+  }
   const source = payload?.source;
   if (!source || typeof source !== "object" || !("kind" in source) || !("value" in source)) {
     return null;

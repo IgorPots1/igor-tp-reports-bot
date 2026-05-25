@@ -110,6 +110,12 @@ import { evaluateTrainingPeaksRecoveryAlert } from "@/features/trainingpeaks/rec
 import { classifyTrainingPeaksWorkoutActivity } from "@/features/trainingpeaks/workout-activity-classification";
 import { parseMoveWorkoutWithAiFallback } from "@/features/trainingpeaks/move-workout-parser-ai";
 import {
+  buildMoveSourceInferencePreviewFromCacheCandidates,
+  formatMoveSourceInferencePreviewRu,
+  type TrainingPeaksMoveSourceInferencePreview,
+} from "@/features/trainingpeaks/move-source-inference-preview";
+import {
+  hasIntervalDescriptorPattern,
   hasRecognizedWorkoutReference,
   normalizeWorkoutReference,
 } from "@/features/trainingpeaks/workout-reference";
@@ -282,8 +288,11 @@ export type ParsedTrainingPeaksMoveWorkoutPayload = {
   source_date?: string;
   warnings?: string[];
   suggestedAdjustments?: string[];
+  sourceInferencePreview?: TrainingPeaksMoveSourceInferencePreview;
   sourceInference?: {
-    strategy: "future_workout_cache";
+    strategy: "future_workout_cache_preview";
+    trusted: false;
+    source: "trainingpeaks_workout_cache";
     candidateCount: number;
     selectedWorkoutId?: number;
     candidates?: Array<{
@@ -292,6 +301,8 @@ export type ParsedTrainingPeaksMoveWorkoutPayload = {
       title: string | null;
       score: number;
     }>;
+    reason?: string | null;
+    warnings?: string[];
   };
   parsingDiagnostics?: {
     parserBaseDateSource: "message_timestamp" | "env_override" | "server_now";
@@ -1410,19 +1421,6 @@ function normalizeForMatching(value: string | null | undefined): string {
     .trim();
 }
 
-function hasIntervalPattern(text: string): boolean {
-  const normalized = normalizeForMatching(text);
-  if (!normalized) {
-    return false;
-  }
-  return (
-    normalized.includes("интервал") ||
-    /\b\d{1,2}\s*[xх×]\s*\d{1,2}\b/u.test(normalized) ||
-    /\b\d{1,2}\s+по\s+\d{1,2}\b/u.test(normalized) ||
-    /\bпо\s+\d{1,2}\s*мин\b/u.test(normalized)
-  );
-}
-
 function inferWorkoutKindFromText(text: string): "interval" | "tempo" | "long_run" | "run" | "unknown" {
   const normalizedRef = normalizeWorkoutReference(text);
   if (normalizedRef.kind === "intervals") {
@@ -1437,7 +1435,7 @@ function inferWorkoutKindFromText(text: string): "interval" | "tempo" | "long_ru
   if (normalizedRef.kind === "workout") {
     return "run";
   }
-  if (hasIntervalPattern(text)) {
+  if (hasIntervalDescriptorPattern(text)) {
     return "interval";
   }
   return "unknown";
@@ -1471,10 +1469,10 @@ function scoreWorkoutCandidate(input: {
   }
 
   if (inferredKind === "interval") {
-    if (hasIntervalPattern(row.title ?? "")) {
+    if (hasIntervalDescriptorPattern(row.title ?? "")) {
       score += 0.9;
     }
-    if (hasIntervalPattern(JSON.stringify(row.sourceSnapshot ?? {}))) {
+    if (hasIntervalDescriptorPattern(JSON.stringify(row.sourceSnapshot ?? {}))) {
       score += 0.5;
     }
   } else if (inferredKind === "tempo" && titleNormalized.includes("темп")) {
@@ -1498,7 +1496,7 @@ function scoreWorkoutCandidate(input: {
 
 function isLikelyHardOrIntervalWorkout(row: TrainingPeaksWorkoutCacheRow): boolean {
   const title = normalizeForMatching(row.title);
-  if (hasIntervalPattern(title)) {
+  if (hasIntervalDescriptorPattern(title)) {
     return true;
   }
   return title.includes("темп") || title.includes("порог") || title.includes("фартлек");
@@ -1545,48 +1543,36 @@ async function enrichParsedMovePayloadWithWorkoutInference(input: {
       .filter((entry) => entry.score >= 0.8)
       .sort((a, b) => a.row.workoutDate.localeCompare(b.row.workoutDate) || b.score - a.score);
 
-    if (candidates.length === 1) {
-      const selected = candidates[0]!;
-      payload.source = {
-        kind: "date",
-        value: selected.row.workoutDate,
-        sourceText: selected.row.title ?? selected.row.workoutDate,
-      };
-      payload.sourceDate = selected.row.workoutDate;
-      payload.source_date = selected.row.workoutDate;
-      payload.sourceInference = {
-        strategy: "future_workout_cache",
-        candidateCount: 1,
-        selectedWorkoutId: selected.row.trainingPeaksWorkoutId,
-        candidates: [
-          {
-            workoutId: selected.row.trainingPeaksWorkoutId,
-            workoutDate: selected.row.workoutDate,
-            title: selected.row.title,
-            score: selected.score,
-          },
-        ],
-      };
-    } else if (candidates.length > 1) {
+    const previewCandidates = candidates.map((entry) => ({
+      workoutId: entry.row.trainingPeaksWorkoutId,
+      workoutDate: entry.row.workoutDate,
+      title: entry.row.title,
+      score: entry.score,
+    }));
+    const sourceInferencePreview = buildMoveSourceInferencePreviewFromCacheCandidates({
+      candidates: previewCandidates,
+    });
+    payload.sourceInferencePreview = sourceInferencePreview;
+    payload.sourceInference = {
+      strategy: "future_workout_cache_preview",
+      trusted: false,
+      source: "trainingpeaks_workout_cache",
+      candidateCount: sourceInferencePreview.candidateCount,
+      selectedWorkoutId: sourceInferencePreview.selectedCandidate?.workoutId,
+      candidates: sourceInferencePreview.candidates,
+      reason: sourceInferencePreview.reason ?? null,
+      warnings: sourceInferencePreview.warnings,
+    };
+
+    if (sourceInferencePreview.warnings?.length) {
+      payload.warnings?.push(...sourceInferencePreview.warnings);
+    }
+    if (sourceInferencePreview.reason === "multiple source workout candidates") {
       payload.needsClarification = true;
-      payload.clarificationReason = "multiple source workout candidates";
-      payload.sourceInference = {
-        strategy: "future_workout_cache",
-        candidateCount: candidates.length,
-        candidates: candidates.slice(0, 5).map((entry) => ({
-          workoutId: entry.row.trainingPeaksWorkoutId,
-          workoutDate: entry.row.workoutDate,
-          title: entry.row.title,
-          score: entry.score,
-        })),
-      };
-    } else {
+      payload.clarificationReason = sourceInferencePreview.reason;
+    } else if (sourceInferencePreview.candidateCount === 0) {
       payload.needsClarification = true;
       payload.clarificationReason = "unresolved_workout";
-      payload.sourceInference = {
-        strategy: "future_workout_cache",
-        candidateCount: 0,
-      };
     }
   }
 
@@ -1595,10 +1581,15 @@ async function enrichParsedMovePayloadWithWorkoutInference(input: {
     payload.warnings?.push("На целевой день уже есть тренировка. Проверь расписание недели.");
   }
 
-  const sourceIso = payload.sourceDate ?? payload.source_date;
-  const sourceRow = sourceIso
-    ? rows.find((row) => row.workoutDate === sourceIso && row.isPlanned && row.trainingPeaksWorkoutId === payload.sourceInference?.selectedWorkoutId) ??
-      rows.find((row) => row.workoutDate === sourceIso && row.isPlanned)
+  const explicitSourceIso = payload.sourceDate ?? payload.source_date;
+  const previewSelectedWorkoutId = payload.sourceInferencePreview?.selectedCandidate?.workoutId;
+  const sourceRow = explicitSourceIso
+    ? rows.find(
+        (row) =>
+          row.workoutDate === explicitSourceIso &&
+          row.isPlanned &&
+          (previewSelectedWorkoutId ? row.trainingPeaksWorkoutId === previewSelectedWorkoutId : true)
+      ) ?? rows.find((row) => row.workoutDate === explicitSourceIso && row.isPlanned)
     : null;
   if (sourceRow && isLikelyHardOrIntervalWorkout(sourceRow)) {
     const aroundTarget = rows.filter((row) => {
@@ -3418,7 +3409,9 @@ export async function createTrainingPeaksMoveWorkoutActionFromTelegram(
 export function formatTrainingPeaksMoveWorkoutActionSummary(
   payload: ParsedTrainingPeaksMoveWorkoutPayload
 ): string {
-  return `move_workout ${formatTrainingPeaksMoveWorkoutTargetSummary(payload.target)}`;
+  const previewLine = formatMoveSourceInferencePreviewRu(payload.sourceInferencePreview);
+  const base = `move_workout ${formatTrainingPeaksMoveWorkoutTargetSummary(payload.target)}`;
+  return previewLine ? `${base}\n${previewLine}` : base;
 }
 
 export async function approveTrainingPeaksAction(

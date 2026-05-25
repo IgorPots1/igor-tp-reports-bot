@@ -106,6 +106,25 @@ export function hasRecognizedWorkoutReference(text: string): boolean {
   return normalizeWorkoutReference(text).kind !== "unknown";
 }
 
+export function hasIntervalDescriptorPattern(text: string): boolean {
+  const normalized = text
+    .toLocaleLowerCase("ru")
+    .replace(/ё/g, "е")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalized) {
+    return false;
+  }
+
+  return (
+    normalized.includes("интервал") ||
+    /\b\d{1,2}\s*[xх×]\s*\d{1,2}\b/u.test(normalized) ||
+    /\b\d{1,2}\s+по\s+\d{1,2}\b/u.test(normalized) ||
+    /\bпо\s+\d{1,2}\s*мин\b/u.test(normalized)
+  );
+}
+
 export function listKnownWorkoutAliasesForAiPrompt(): string {
   const grouped = new Map<string, string[]>();
 

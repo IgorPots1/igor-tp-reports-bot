@@ -5,6 +5,11 @@ import {
   isTrustedMoveSourcePolicy,
   validateMoveSourceForExecution,
 } from "@/features/trainingpeaks/move-source-policy";
+import {
+  buildMoveSourceInferencePreviewFromCacheCandidates,
+  formatMoveSourceInferencePreviewRu,
+  hasUntrustedMoveSourceInferencePreview,
+} from "@/features/trainingpeaks/move-source-inference-preview";
 
 type InferredSourceCase = {
   name: string;
@@ -53,6 +58,49 @@ const explicitSourcePayload = {
   parser: "deterministic",
 };
 
+const cachePreviewPayload = {
+  actionType: "move_workout",
+  source: null,
+  target: { kind: "date", value: "2026-05-26" },
+  workoutDescriptor: { raw: "интервалы", type: "interval", confidence: 0.9 },
+  confidence: 0.84,
+  needsClarification: false,
+  clarificationReason: null,
+  parser: "ai_fallback",
+  sourceInferencePreview: buildMoveSourceInferencePreviewFromCacheCandidates({
+    candidates: [
+      {
+        workoutId: 12345,
+        workoutDate: "2026-05-28",
+        title: "6 × 6 мин",
+        score: 1.1,
+      },
+    ],
+  }),
+  sourceInference: {
+    strategy: "future_workout_cache_preview",
+    trusted: false as const,
+    source: "trainingpeaks_workout_cache" as const,
+    candidateCount: 1,
+    selectedWorkoutId: 12345,
+    candidates: [
+      {
+        workoutId: 12345,
+        workoutDate: "2026-05-28",
+        title: "6 × 6 мин",
+        score: 1.1,
+      },
+    ],
+  },
+};
+
+const legacyCacheMasqueradePayload = {
+  ...cachePreviewPayload,
+  source: { kind: "date", value: "2026-05-28", sourceText: "6 × 6 мин" },
+  sourceDate: "2026-05-28",
+  source_date: "2026-05-28",
+};
+
 function simulateCanExecute(input: {
   dryRunResult: "candidate_found";
   selectedSourceDatePolicy: string;
@@ -86,6 +134,45 @@ async function run(): Promise<void> {
   if (hasExplicitMoveSourceInParsedPayload(explicitSourcePayload) !== true) {
     failed += 1;
     console.log("FAIL: explicit source payload must be recognized");
+  }
+
+  if (!hasUntrustedMoveSourceInferencePreview(cachePreviewPayload)) {
+    failed += 1;
+    console.log("FAIL: cache preview payload must be marked untrusted");
+  }
+
+  if (hasExplicitMoveSourceInParsedPayload(cachePreviewPayload)) {
+    failed += 1;
+    console.log("FAIL: cache preview payload must not look like explicit move source");
+  }
+
+  if (hasExplicitMoveSourceInParsedPayload(legacyCacheMasqueradePayload)) {
+    failed += 1;
+    console.log("FAIL: legacy cache masquerade payload must not look like explicit move source");
+  }
+
+  const previewLabel = formatMoveSourceInferencePreviewRu(cachePreviewPayload.sourceInferencePreview);
+  if (previewLabel !== "Вероятный источник: 28.05 — 6 × 6 мин") {
+    failed += 1;
+    console.log(`FAIL: cache preview label expected advisory text, got ${JSON.stringify(previewLabel)}`);
+  }
+
+  const cachePreviewExplicitEnough = isMoveSourceExplicitEnough({
+    selectedSourceDatePolicy: "explicit_source_date",
+    parsedPayload: cachePreviewPayload,
+  });
+  if (cachePreviewExplicitEnough) {
+    failed += 1;
+    console.log("FAIL: cache preview must not become explicit_source_date via policy + payload");
+  }
+
+  const cachePreviewValidation = validateMoveSourceForExecution({
+    selectedSourceDatePolicy: "explicit_source_date",
+    parsedPayload: cachePreviewPayload,
+  });
+  if (cachePreviewValidation.ok) {
+    failed += 1;
+    console.log("FAIL: cache preview must stay blocked even if dry-run policy is explicit_source_date");
   }
 
   for (const policy of [
