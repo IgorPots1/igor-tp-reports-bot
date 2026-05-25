@@ -33,6 +33,7 @@ export type BillingPaymentStatus =
   | "manual_review"
   | "refunded";
 export type BillingPaymentSource = "manual" | "email_import";
+export type BillingImportedPaymentStatus = "new" | "matched" | "ignored";
 
 export type BillingClient = {
   id: string;
@@ -81,6 +82,87 @@ export type BillingMonthlyPayment = {
   updatedBy: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type BillingImportedPaymentDataFlags = {
+  hasEmail: boolean;
+  hasPhone: boolean;
+  hasName: boolean;
+};
+
+export type BillingImportedPaymentRawRow = {
+  sourceFormat: "tbank_csv";
+  rowNumber: number;
+  orderNumber: string | null;
+  operationDateRaw: string | null;
+  operationTimeRaw: string | null;
+  amountRaw: string | null;
+  commissionRaw: string | null;
+  payoutAmountRaw: string | null;
+  operationType: string | null;
+  paymentId: string | null;
+  terminalName: string | null;
+  descriptionRaw: string | null;
+  dataFlags: BillingImportedPaymentDataFlags;
+};
+
+export type BillingImportedPayment = {
+  id: string;
+  importBatchId: string;
+  paymentDate: string;
+  amount: number;
+  currency: BillingCurrency;
+  payerHint: string | null;
+  description: string | null;
+  rawRow: BillingImportedPaymentRawRow;
+  externalHash: string;
+  status: BillingImportedPaymentStatus;
+  matchedMonthlyPaymentId: string | null;
+  matchedAt: string | null;
+  matchedByCoachChatId: string | null;
+  sourceFileName: string | null;
+  emailMessageId: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ParsedBillingImportedPaymentRow = {
+  paymentDate: string;
+  amount: number;
+  currency: BillingCurrency;
+  payerHint: string | null;
+  description: string | null;
+  rawRow: BillingImportedPaymentRawRow;
+  externalHash: string;
+};
+
+export type ParsedBillingImportedPaymentSkippedRow = {
+  rowNumber: number;
+  reason: string;
+};
+
+export type ParseTBankStatementResult = {
+  provider: "tbank";
+  sourceFormat: "tbank_csv";
+  parsedRows: ParsedBillingImportedPaymentRow[];
+  skippedRows: ParsedBillingImportedPaymentSkippedRow[];
+  warnings: string[];
+};
+
+export type ImportBillingPaymentsInput = {
+  parsedRows: ParsedBillingImportedPaymentRow[];
+  sourceFileName: string;
+  importBatchId?: string;
+};
+
+export type ImportBillingPaymentsResult = {
+  importBatchId: string;
+  sourceFileName: string;
+  receivedRowCount: number;
+  parsedRowCount: number;
+  insertedRowCount: number;
+  duplicateRowCount: number;
 };
 
 export type BillingMonthlyPaymentWithClient = BillingMonthlyPayment & {

@@ -36,6 +36,7 @@
     "check-trainingpeaks-ai-intent-log-only": "npx tsx scripts/check-trainingpeaks-ai-intent-log-only.ts",
     "tp-intent-logs-recent": "npx tsx scripts/tp-intent-logs-recent.ts",
     "tp-intent-logs-triage": "npx tsx scripts/tp-intent-logs-triage.ts",
+    "billing:import-payments": "npx tsx scripts/billing-import-payments.ts",
     "check-trainingpeaks-recovery-alerts": "npx tsx scripts/check-trainingpeaks-recovery-alerts.ts",
     "check-trainingpeaks-coach-notes-delivery": "npx tsx scripts/check-trainingpeaks-coach-notes-delivery.ts",
     "check-trainingpeaks-attention-digest": "npx tsx scripts/check-trainingpeaks-attention-digest.ts",
