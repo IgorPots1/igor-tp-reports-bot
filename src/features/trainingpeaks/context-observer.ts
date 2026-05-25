@@ -1,14 +1,15 @@
-import { createHash } from "node:crypto";
-
 import {
   getTrainingPeaksStudentById,
   getTrainingPeaksStudentByTelegramChatId,
   getTrainingPeaksStudentByTelegramUsername,
   getTrainingPeaksStudentThreadByChatThread,
+  hasTrainingPeaksTelegramContextObservationForChatTextHash,
+  insertTrainingPeaksTelegramContextObservation,
   type TrainingPeaksStudent,
 } from "@/features/trainingpeaks/repository";
 import { getTrainingPeaksCoachChatIds } from "@/features/trainingpeaks/attention-telegram";
 import { passesTrainingPeaksStrictMoveWorkoutIntentGate } from "@/features/trainingpeaks/service";
+import { buildTelegramContextTextPreview, sha256TelegramContextText } from "@/features/trainingpeaks/telegram-context";
 import { tryAutoLinkTrainingPeaksTopic } from "@/features/trainingpeaks/topic-auto-link";
 import type { TelegramMessage } from "@/features/telegram/types";
 
@@ -24,6 +25,16 @@ export type TrainingPeaksObserverLabel =
 type TrainingPeaksObserverSourceType = "private_dm" | "group_topic";
 type ObserverSenderRole = "linked_student" | "third_party_in_linked_topic";
 type ObserverSenderMatchMethod = "telegram_chat_id" | "telegram_username" | "no_reliable_match";
+type PersistedObservationLabel =
+  | "question_to_coach"
+  | "move_workout_candidate"
+  | "pain_or_health"
+  | "race_context"
+  | "schedule_context"
+  | "report_like"
+  | "ack_or_noise"
+  | "unknown"
+  | "third_party_in_linked_topic";
 
 type BuildObservationLogPayloadInput = {
   studentId: string | null;
@@ -146,14 +157,6 @@ function detectTelegramAttachment(message: TelegramMessage): boolean {
   ].some((key) => rawMessage[key] !== undefined);
 }
 
-function sha256Text(value: string | null): string | null {
-  if (!value) {
-    return null;
-  }
-
-  return createHash("sha256").update(value).digest("hex");
-}
-
 export function isTrainingPeaksContextObserverEnabled(): boolean {
   const value = process.env.TRAININGPEAKS_CONTEXT_OBSERVER_ENABLED?.trim();
   return value === "true" || value === "1";
@@ -173,10 +176,39 @@ export function buildObservationLogPayload(input: BuildObservationLogPayloadInpu
     scores: input.scores ?? {},
     messageLength: input.messageLength,
     hasAttachment: input.hasAttachment,
-    textSha256: sha256Text(input.text),
+    textSha256: sha256TelegramContextText(input.text),
+    textPreview: buildTelegramContextTextPreview(input.text),
     senderRole: input.senderRole ?? null,
     senderMatchMethod: input.senderMatchMethod ?? null,
   };
+}
+
+function mapObserverLabelsToPersistedLabels(labels: TrainingPeaksObserverLabel[]): PersistedObservationLabel[] {
+  const mapped = new Set<PersistedObservationLabel>();
+
+  for (const label of labels) {
+    switch (label) {
+      case "noise_or_ack":
+        mapped.add("ack_or_noise");
+        break;
+      case "possibly_training_report":
+        mapped.add("report_like");
+        break;
+      case "possibly_pain_or_health":
+        mapped.add("pain_or_health");
+        break;
+      case "unclassified":
+        mapped.add("unknown");
+        break;
+      case "question_to_coach":
+      case "move_workout_candidate":
+      case "third_party_in_linked_topic":
+        mapped.add(label);
+        break;
+    }
+  }
+
+  return mapped.size > 0 ? [...mapped] : ["unknown"];
 }
 
 function classifyObserverText(text: string | null): {
@@ -263,11 +295,47 @@ async function resolveStudentByTelegramIdentity(input: {
   };
 }
 
-function logObserverObservation(input: BuildObservationLogPayloadInput): void {
-  console.info(
-    "TrainingPeaks context observer dry run",
-    buildObservationLogPayload(input)
+async function persistObserverObservation(input: BuildObservationLogPayloadInput): Promise<void> {
+  const payload = buildObservationLogPayload(input);
+  const persistedLabels =
+    input.senderRole === "third_party_in_linked_topic"
+      ? (["third_party_in_linked_topic"] as PersistedObservationLabel[])
+      : mapObserverLabelsToPersistedLabels(input.labels);
+  const dedupSkipped = Boolean(
+    payload.textSha256 &&
+      (await hasTrainingPeaksTelegramContextObservationForChatTextHash(input.chatId, payload.textSha256))
   );
+
+  if (!dedupSkipped) {
+    await insertTrainingPeaksTelegramContextObservation({
+      studentId: input.studentId,
+      sourceType: input.sourceType,
+      chatId: input.chatId,
+      messageThreadId: input.messageThreadId,
+      messageId: String(input.messageId),
+      labels: persistedLabels,
+      textSha256: payload.textSha256,
+      textPreview: payload.textPreview,
+      metadata: {
+        scores: input.scores ?? {},
+        fromId: input.fromId,
+        fromUsername: input.fromUsername,
+        isTopicMessage: input.isTopicMessage,
+        messageLength: input.messageLength,
+        hasAttachment: input.hasAttachment,
+        senderRole: input.senderRole ?? null,
+        senderMatchMethod: input.senderMatchMethod ?? null,
+      },
+    });
+  }
+
+  console.info("TrainingPeaks context observation", {
+    event: "trainingpeaks_context_observation_persisted_or_skipped",
+    studentId: input.studentId,
+    sourceType: input.sourceType,
+    labels: persistedLabels,
+    dedupSkipped,
+  });
 }
 
 async function observeLinkedGroupTopicMessage(input: {
@@ -288,7 +356,7 @@ async function observeLinkedGroupTopicMessage(input: {
     senderIdentity.student !== null && senderIdentity.student.id === input.linkedStudent.id;
 
   if (!senderMatchesLinkedStudent) {
-    logObserverObservation({
+    await persistObserverObservation({
       studentId: input.linkedStudent.id,
       sourceType: "group_topic",
       chatId: String(input.message.chat.id),
@@ -313,7 +381,7 @@ async function observeLinkedGroupTopicMessage(input: {
   }
 
   const classified = classifyObserverText(input.text);
-  logObserverObservation({
+  await persistObserverObservation({
     studentId: input.linkedStudent.id,
     sourceType: "group_topic",
     chatId: String(input.message.chat.id),
@@ -369,7 +437,7 @@ export async function handleTrainingPeaksContextObserverMessage(
     }
 
     const classified = classifyObserverText(text);
-    logObserverObservation({
+    await persistObserverObservation({
       studentId: student.id,
       sourceType: "private_dm",
       chatId: String(message.chat.id),

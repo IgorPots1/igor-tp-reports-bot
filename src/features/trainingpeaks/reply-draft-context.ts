@@ -1,5 +1,7 @@
 import { evaluateTrainingPeaksRecoveryAlert } from "@/features/trainingpeaks/recovery-alerts";
 import {
+  getTrainingPeaksStudentById,
+  listTrainingPeaksTelegramContextObservationsForStudent,
   listTrainingPeaksHealthMetricsForStudentDateRange,
   listTrainingPeaksStudentHealthMetricProfiles,
   listTrainingPeaksWorkoutCacheForStudentDateRange,
@@ -10,6 +12,8 @@ import { classifyTrainingPeaksWorkoutActivity } from "@/features/trainingpeaks/w
 const BELGRADE_TIMEZONE = "Europe/Belgrade";
 const LOOKBACK_DAYS = 7;
 const CACHE_STALE_AFTER_MS = 48 * 60 * 60 * 1000;
+const TELEGRAM_CONTEXT_NOTES_MAX_LENGTH = 500;
+const RECENT_OBSERVATION_LABELS_MAX_COUNT = 6;
 
 export type TrainingPeaksReplyDraftWorkoutSummary = {
   workoutDate: string;
@@ -59,10 +63,16 @@ export async function buildTrainingPeaksReplyDraftContext(
     }),
     listTrainingPeaksStudentHealthMetricProfiles(),
   ]);
+  const [student, recentContextObservations] = await Promise.all([
+    getTrainingPeaksStudentById(input.studentUuid),
+    listTrainingPeaksTelegramContextObservationsForStudent(input.studentUuid, 10),
+  ]);
 
   const cacheStatus = resolveCacheStatus(workoutRows);
   const workouts = workoutRows.map(summarizeWorkoutRow);
   const missedPlannedRunningDates = collectMissedPlannedRunningDates(workoutRows);
+  const telegramContextNotes = trimTelegramContextNotes(student?.telegramContextNotes ?? null);
+  const recentObservationLabels = collectRecentObservationLabels(recentContextObservations);
   const recovery = await resolveRecoveryAlert({
     studentUuid: input.studentUuid,
     studentName: input.studentName,
@@ -78,6 +88,7 @@ export async function buildTrainingPeaksReplyDraftContext(
     missedPlannedRunningDates,
     recoveryAlertMessage: recovery.message,
     recoveryAlertAvailable: recovery.available,
+    recentObservationLabels,
   });
 
   const promptContext = buildPromptContext({
@@ -92,6 +103,8 @@ export async function buildTrainingPeaksReplyDraftContext(
     missedPlannedRunningDates,
     recoveryAlertMessage: recovery.message,
     recoveryAlertAvailable: recovery.available,
+    telegramContextNotes,
+    recentObservationLabels,
   });
 
   return {
@@ -254,6 +267,7 @@ function buildTelegramContextBullets(input: {
   missedPlannedRunningDates: string[];
   recoveryAlertMessage: string | null;
   recoveryAlertAvailable: boolean;
+  recentObservationLabels: string[];
 }): string[] {
   const bullets: string[] = [];
 
@@ -289,7 +303,12 @@ function buildTelegramContextBullets(input: {
     bullets.push(input.recoveryAlertMessage);
   }
 
-  return bullets.slice(0, 4);
+  const limitedBullets = bullets.slice(0, 3);
+  if (input.recentObservationLabels.length > 0) {
+    limitedBullets.push(`Недавние Telegram-наблюдения: ${input.recentObservationLabels.join(", ")}.`);
+  }
+
+  return limitedBullets.slice(0, 4);
 }
 
 function buildPromptContext(input: {
@@ -304,6 +323,8 @@ function buildPromptContext(input: {
   missedPlannedRunningDates: string[];
   recoveryAlertMessage: string | null;
   recoveryAlertAvailable: boolean;
+  telegramContextNotes: string | null;
+  recentObservationLabels: string[];
 }): string {
   const workoutLines =
     input.workouts.length === 0
@@ -330,6 +351,10 @@ function buildPromptContext(input: {
     `period=${input.periodFrom}..${input.periodTo}`,
     `cache_status=${input.cacheStatus.kind}`,
     `cache_note=${input.cacheStatusNote}`,
+    ...(input.telegramContextNotes ? [`telegram_context_notes=${input.telegramContextNotes}`] : []),
+    ...(input.recentObservationLabels.length > 0
+      ? [`recent_observation_labels=${input.recentObservationLabels.join(", ")}`]
+      : []),
     ...workoutLines,
     input.missedPlannedRunningDates.length > 0
       ? `missed_planned_running_dates=${input.missedPlannedRunningDates.join(", ")}`
@@ -338,6 +363,40 @@ function buildPromptContext(input: {
       ? `recovery_alert=${input.recoveryAlertMessage ?? "none"}`
       : "recovery_alert=not_available",
   ].join("\n");
+}
+
+function trimTelegramContextNotes(value: string | null): string | null {
+  const normalized = value?.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.length <= TELEGRAM_CONTEXT_NOTES_MAX_LENGTH) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, TELEGRAM_CONTEXT_NOTES_MAX_LENGTH - 1)}…`;
+}
+
+function collectRecentObservationLabels(
+  observations: Awaited<ReturnType<typeof listTrainingPeaksTelegramContextObservationsForStudent>>
+): string[] {
+  const labels = new Set<string>();
+
+  for (const observation of observations) {
+    for (const label of observation.labels) {
+      if (!label || labels.has(label)) {
+        continue;
+      }
+
+      labels.add(label);
+      if (labels.size >= RECENT_OBSERVATION_LABELS_MAX_COUNT) {
+        return [...labels];
+      }
+    }
+  }
+
+  return [...labels];
 }
 
 function formatActivityFamilyLabel(family: string): string {

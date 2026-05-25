@@ -149,6 +149,7 @@ export async function resolveConfidentStudentMatchForAutoLink(input: {
   const normalizedUsername = normalizeTelegramUsername(input.fromUsername);
 
   if (normalizedUsername) {
+    // Telegram usernames are mutable, so username-only matches still need coach confirmation.
     const studentsByUsername = await listTrainingPeaksStudentsByTelegramUsername(normalizedUsername);
 
     if (studentsByUsername.length > 1) {
@@ -156,14 +157,6 @@ export async function resolveConfidentStudentMatchForAutoLink(input: {
         kind: "ambiguous",
         matchMethod: "telegram_username",
         candidateCount: studentsByUsername.length,
-      };
-    }
-
-    if (studentsByUsername.length === 1) {
-      return {
-        kind: "one",
-        student: studentsByUsername[0]!,
-        matchMethod: "telegram_username",
       };
     }
   }
