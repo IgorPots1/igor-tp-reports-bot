@@ -407,6 +407,74 @@ code {
   font-weight: 600;
 }
 
+.admin-import-card {
+  display: grid;
+  gap: 16px;
+}
+
+.admin-import-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-import-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 18px;
+}
+
+.admin-import-meta {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.admin-import-suggestions {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-import-suggestion {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.admin-import-suggestion-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.admin-import-manual,
+.admin-import-actions,
+.admin-import-result {
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.admin-import-manual-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.admin-import-actions {
+  display: flex;
+  gap: 10px;
+}
+
 .admin-markdown-preview {
   margin: 0;
   white-space: pre-wrap;
@@ -616,8 +684,14 @@ code {
 
   .admin-report-card-header,
   .admin-report-card-top,
-  .admin-report-toolbar {
+  .admin-report-toolbar,
+  .admin-import-header,
+  .admin-import-suggestion {
     flex-direction: column;
+  }
+
+  .admin-import-manual-actions {
+    justify-content: flex-start;
   }
 
   .admin-report-meta,

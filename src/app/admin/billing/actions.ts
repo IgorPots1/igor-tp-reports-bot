@@ -283,20 +283,23 @@ export async function confirmImportedPaymentAction(formData: FormData): Promise<
 
   await ensureAdminAccess(redirectTo);
 
+  let clientId: string | undefined;
+
   try {
     const result = await confirmImportedPaymentMatch({
       importedPaymentId,
       monthlyPaymentId,
       actor: BILLING_IMPORTS_ACTION_ACTOR,
     });
-
-    revalidateBillingPaths(result.monthlyPayment.client.id);
-    redirect(withNotice(redirectTo, "notice", "Импортированный платёж засчитан."));
+    clientId = result.monthlyPayment.client.id;
   } catch (error) {
     revalidatePath("/admin/billing/imports");
     const message = error instanceof Error ? error.message : "Не удалось засчитать импортированный платёж.";
     redirect(withNotice(redirectTo, "error", message));
   }
+
+  revalidateBillingPaths(clientId);
+  redirect(withNotice(redirectTo, "notice", "Импортированный платёж засчитан."));
 }
 
 export async function ignoreImportedPaymentAction(formData: FormData): Promise<void> {
