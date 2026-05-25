@@ -4,6 +4,7 @@ import type {
 } from "@/features/telegram/types";
 
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
+const TELEGRAM_DOCUMENT_BOUNDARY = "----cursor-telegram-document";
 
 type SendTelegramMessageOptions = {
   replyMarkup?: TelegramReplyMarkup;
@@ -21,6 +22,12 @@ function isTelegramTopicClosedError(error: unknown): boolean {
 
 type EditTelegramMessageTextOptions = {
   replyMarkup?: TelegramInlineKeyboardMarkup;
+};
+
+type SendTelegramDocumentOptions = {
+  filename: string;
+  caption?: string;
+  contentType?: string;
 };
 
 function getTelegramBotToken(): string {
@@ -42,6 +49,47 @@ async function postTelegramApi(method: string, body: Record<string, unknown>): P
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
+  });
+  const responseText = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`Telegram ${method} failed (${response.status}): ${responseText}`);
+  }
+
+  if (!responseText) {
+    return;
+  }
+
+  try {
+    const responseJson = JSON.parse(responseText) as { ok?: boolean; description?: string };
+
+    if (responseJson.ok === false) {
+      throw new Error(
+        `Telegram ${method} failed: ${responseJson.description ?? "Unknown Telegram API error"}`
+      );
+    }
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return;
+    }
+
+    throw error;
+  }
+}
+
+async function postTelegramMultipartApi(
+  method: string,
+  body: ArrayBuffer,
+  contentType: string
+): Promise<void> {
+  const token = getTelegramBotToken();
+
+  const response = await fetch(`${TELEGRAM_API_BASE_URL}/bot${token}/${method}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": contentType,
+    },
+    body,
   });
   const responseText = await response.text();
 
@@ -156,6 +204,59 @@ export async function sendTelegramMessage(
       chatId,
       error: message,
     });
+  }
+}
+
+function buildTelegramDocumentPayload(
+  chatId: string | number,
+  content: string,
+  options: SendTelegramDocumentOptions
+): {
+  body: ArrayBuffer;
+  contentType: string;
+} {
+  const encoder = new TextEncoder();
+  const fileBytes = encoder.encode(content);
+  const parts = [
+    `--${TELEGRAM_DOCUMENT_BOUNDARY}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n${String(chatId)}\r\n`,
+    options.caption
+      ? `--${TELEGRAM_DOCUMENT_BOUNDARY}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n${options.caption}\r\n`
+      : "",
+    `--${TELEGRAM_DOCUMENT_BOUNDARY}\r\nContent-Disposition: form-data; name="document"; filename="${options.filename}"\r\nContent-Type: ${options.contentType ?? "text/plain;charset=utf-8"}\r\n\r\n`,
+  ];
+  const closing = `\r\n--${TELEGRAM_DOCUMENT_BOUNDARY}--\r\n`;
+
+  const headerBytes = encoder.encode(parts.join(""));
+  const closingBytes = encoder.encode(closing);
+  const body = new Uint8Array(headerBytes.length + fileBytes.length + closingBytes.length);
+  body.set(headerBytes, 0);
+  body.set(fileBytes, headerBytes.length);
+  body.set(closingBytes, headerBytes.length + fileBytes.length);
+
+  return {
+    body: body.buffer,
+    contentType: `multipart/form-data; boundary=${TELEGRAM_DOCUMENT_BOUNDARY}`,
+  };
+}
+
+export async function sendTelegramDocument(
+  chatId: string | number,
+  content: string,
+  options: SendTelegramDocumentOptions
+) {
+  try {
+    const payload = buildTelegramDocumentPayload(chatId, content, options);
+    await postTelegramMultipartApi("sendDocument", payload.body, payload.contentType);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unknown error while sending Telegram document";
+
+    console.error("Telegram sendDocument request failed", {
+      chatId,
+      filename: options.filename,
+      error: message,
+    });
+    throw error;
   }
 }
 

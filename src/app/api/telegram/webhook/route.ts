@@ -1,5 +1,9 @@
 import { parseTelegramUpdate } from "@/features/telegram/parser";
 import { logTelegramUpdateIngress } from "@/features/telegram/ingress-logging";
+import {
+  handleBillingTelegramCommand,
+  isBillingCommand,
+} from "@/features/telegram/billing";
 import { buildTelegramContextTextPreview } from "@/features/trainingpeaks/telegram-context";
 import {
   answerTelegramCallbackQuery,
@@ -209,6 +213,11 @@ export async function POST(request: Request) {
   }
 
   if ((await handleTrainingPeaksTelegramReplyKeyboardMessage(parsedMessage, messageText)) === "handled") {
+    return okResponse();
+  }
+
+  if (isBillingCommand(messageText)) {
+    await handleBillingTelegramCommand(parsedMessage, messageText);
     return okResponse();
   }
 
