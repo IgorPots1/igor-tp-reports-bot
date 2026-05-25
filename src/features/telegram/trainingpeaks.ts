@@ -3823,6 +3823,25 @@ function isActionCancellable(
   return ACTION_CANCELLABLE_EXECUTION_STATUSES.has(action.executionStatus);
 }
 
+function getTrainingPeaksActionExecuteFinalStateMessage(action: {
+  status: string;
+  executionStatus: string;
+}): string {
+  if (action.status === "rejected") {
+    return "Эта заявка отменена.";
+  }
+  if (action.executionStatus === "completed") {
+    return "Эта заявка уже выполнена.";
+  }
+  if (action.executionStatus === "running_local") {
+    return "Перенос уже выполняется.";
+  }
+  if (action.executionStatus === "failed") {
+    return "Эта заявка уже завершилась ошибкой. Проверьте /tp_actions.";
+  }
+  return "Эта заявка уже в финальном состоянии.";
+}
+
 function formatActionStatusLabel(action: NonNullable<Awaited<ReturnType<typeof getTrainingPeaksActionWithStudentById>>>): string {
   if (action.status === "rejected") {
     return "❌ Отклонено";
@@ -4415,7 +4434,7 @@ async function handleTrainingPeaksActionExecuteRequestCallback(
     await editTrainingPeaksMenuMessage(
       parsedMessage.chatId,
       parsedMessage.messageId,
-      "Эта заявка уже в финальном состоянии и больше не может быть поставлена в очередь.",
+      getTrainingPeaksActionExecuteFinalStateMessage(result.action),
       getTrainingPeaksActionResolvedMarkup()
     );
     return;
@@ -4472,6 +4491,24 @@ async function handleTrainingPeaksActionExecuteCancelCallback(
       parsedMessage.chatId,
       parsedMessage.messageId,
       "Заявка уже отменена. Ничего не изменено в TrainingPeaks.",
+      getTrainingPeaksActionResolvedMarkup()
+    );
+    return;
+  }
+
+  if (result.kind === "not_cancellable") {
+    let statusText = `Отмена недоступна: ${result.reason}`;
+    if (result.action.executionStatus === "completed") {
+      statusText = "Эта заявка уже выполнена, отмена недоступна.";
+    } else if (result.action.executionStatus === "running_local") {
+      statusText = "Перенос уже выполняется, отмена недоступна.";
+    } else if (result.action.status === "rejected") {
+      statusText = "Заявка уже отменена.";
+    }
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      statusText,
       getTrainingPeaksActionResolvedMarkup()
     );
     return;

@@ -173,6 +173,10 @@ function isTruthy(value: string | undefined): boolean {
   return /^(1|true|yes|on)$/i.test(String(value ?? "").trim());
 }
 
+function isAutoQueueTrustedEnabled(): boolean {
+  return isTruthy(process.env.TP_ACTIONS_AUTO_QUEUE_TRUSTED);
+}
+
 function getRequiredEnv(name: "SUPABASE_URL" | "SUPABASE_SERVICE_ROLE_KEY"): string {
   const value = process.env[name]?.trim();
   if (!value) {
@@ -680,11 +684,18 @@ async function runTick(options: LoopOptions, tickNo: number): Promise<void> {
   console.log(`[tp-actions-loop] tick ${tickNo} started`);
   await markStaleRunningLocalActions();
   await runDryRunPass(options);
-  const queuedCount = await autoQueueTrustedActions(options.since);
-  if (queuedCount > 0) {
-    console.log(`[tp-actions-loop] auto-queued ${queuedCount} trusted action(s)`);
+  let queuedCount = 0;
+  if (isAutoQueueTrustedEnabled()) {
+    queuedCount = await autoQueueTrustedActions(options.since);
+    if (queuedCount > 0) {
+      console.log(`[tp-actions-loop] auto-queued ${queuedCount} trusted action(s)`);
+    } else {
+      console.log("[tp-actions-loop] no trusted actions to auto-queue");
+    }
   } else {
-    console.log("[tp-actions-loop] no trusted actions to auto-queue");
+    console.log(
+      "[tp-actions-loop] auto-queue disabled (coach must confirm execute; set TP_ACTIONS_AUTO_QUEUE_TRUSTED=true to enable)"
+    );
   }
 
   if (canExecuteRealInLoop(options.executeReal)) {
@@ -701,7 +712,7 @@ async function main(): Promise<void> {
   loadLocalEnv();
   const options = parseOptions();
   console.log(
-    `[tp-actions-loop] started interval=${options.intervalSeconds}s once=${options.once ? "yes" : "no"} executeReal=${options.executeReal ? "yes" : "no"} since=${options.since ?? "none"}`
+    `[tp-actions-loop] started interval=${options.intervalSeconds}s once=${options.once ? "yes" : "no"} executeReal=${options.executeReal ? "yes" : "no"} autoQueueTrusted=${isAutoQueueTrustedEnabled() ? "yes" : "no"} since=${options.since ?? "none"}`
   );
 
   let tickNo = 0;

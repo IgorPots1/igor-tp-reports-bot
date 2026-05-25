@@ -2022,7 +2022,7 @@ async function notifyCoachDryRunResult(input: {
   ) {
     if (strongFutureDescriptorMatch && likelySourceTitle && sourceDateLabel !== "?" && targetDateLabel !== "?") {
       lines.push(
-        `✅ Проверка пройдена. ${input.studentName}: ${route}. Перенос поставлен в очередь на выполнение.`
+        `✅ Проверка пройдена. ${input.studentName}: ${route}. Можно выполнить перенос.`
       );
       lines.push(`Нашёл вероятную интервалку: ${sourceDateLabel} — ${likelySourceTitle} → ${targetDateLabel}`);
       lines.push("Источник определён по сильному совпадению.");
@@ -2038,7 +2038,7 @@ async function notifyCoachDryRunResult(input: {
       }
     } else {
       lines.push(
-        `✅ Проверка пройдена. ${input.studentName}: ${route}. Перенос поставлен в очередь на выполнение.`
+        `✅ Проверка пройдена. ${input.studentName}: ${route}. Можно выполнить перенос.`
       );
     }
   } else if (
