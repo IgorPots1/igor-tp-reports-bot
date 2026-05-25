@@ -187,6 +187,18 @@ export function getTrainingPeaksReplyDraftFormalityInstruction(
   }
 }
 
+export function isAthleteIncomingBusinessDmMessage(message: {
+  from?: { id?: number | string | null };
+  chat?: { id?: number | string | null };
+}): boolean {
+  const fromId = message.from?.id;
+  const chatId = message.chat?.id;
+  if (fromId === undefined || fromId === null || chatId === undefined || chatId === null) {
+    return false;
+  }
+  return String(fromId) === String(chatId);
+}
+
 export async function recordTrainingPeaksTelegramBusinessContextObservation(input: {
   chatId: string;
   messageId: string | number | null | undefined;

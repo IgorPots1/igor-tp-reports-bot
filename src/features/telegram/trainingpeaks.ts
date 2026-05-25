@@ -70,6 +70,7 @@ import {
 } from "@/features/trainingpeaks/reply-draft-generator";
 import {
   classifyTelegramContextLabels,
+  isAthleteIncomingBusinessDmMessage,
   recordTrainingPeaksTelegramBusinessContextObservation,
 } from "@/features/trainingpeaks/telegram-context";
 import { logTrainingPeaksBusinessMessageIntentDecision } from "@/features/trainingpeaks/message-intent-log";
@@ -3982,7 +3983,7 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
   const messageText = (message.text ?? message.caption ?? "").trim();
   const contextLabels = messageText ? classifyTelegramContextLabels(messageText) : [];
 
-  if (chatId && messageText) {
+  if (chatId && messageText && isAthleteIncomingBusinessDmMessage(message)) {
     try {
       await recordTrainingPeaksTelegramBusinessContextObservation({
         chatId,
