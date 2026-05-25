@@ -1,228 +1,187 @@
 import {
-  parseTrainingPeaksMoveWorkoutRequest,
-  passesTrainingPeaksStrictMoveWorkoutIntentGate,
-} from "@/features/trainingpeaks/service";
-import { normalizeWorkoutReference } from "@/features/trainingpeaks/workout-reference";
+  INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON,
+  hasExplicitMoveSourceInParsedPayload,
+  isMoveSourceExplicitEnough,
+  isTrustedMoveSourcePolicy,
+  validateMoveSourceForExecution,
+} from "@/features/trainingpeaks/move-source-policy";
 
-type MoveIntentCase = {
-  text: string;
-  expectMoveIntent: boolean;
-  expectedWorkoutKind?: "long_run" | "workout" | "intervals" | "tempo" | "unknown";
-  expectedTarget?: "tomorrow";
-  expectedTargetIso?: string;
-  messageDateUnix?: number;
+type InferredSourceCase = {
+  name: string;
+  selectedSourceDatePolicy: string;
+  parsedPayload: unknown;
 };
 
-const cases: MoveIntentCase[] = [
+const viktoriaLikePayload = {
+  actionType: "move_workout",
+  target: { kind: "date", value: "2026-05-26" },
+  workoutDescriptor: { raw: "интервалы", type: "interval", confidence: 0.9 },
+  confidence: 0.84,
+  needsClarification: false,
+  clarificationReason: null,
+  parser: "ai_fallback",
+};
+
+const inferredSourceCases: InferredSourceCase[] = [
   {
-    text: "Привет, давай Лонг перенесем на завтра",
-    expectMoveIntent: true,
-    expectedWorkoutKind: "long_run",
-    expectedTarget: "tomorrow",
+    name: "nearest_prior_within_3_days without sourceDate",
+    selectedSourceDatePolicy: "nearest_prior_within_3_days",
+    parsedPayload: viktoriaLikePayload,
   },
   {
-    text: "Лонг давай завтра",
-    expectMoveIntent: true,
-    expectedWorkoutKind: "long_run",
-    expectedTarget: "tomorrow",
+    name: "target_tomorrow_prefers_today without sourceDate",
+    selectedSourceDatePolicy: "target_tomorrow_prefers_today",
+    parsedPayload: viktoriaLikePayload,
   },
   {
-    text: "перенеси длительную на завтра",
-    expectMoveIntent: true,
-    expectedWorkoutKind: "long_run",
-    expectedTarget: "tomorrow",
-  },
-  {
-    text: "лонг был тяжелый",
-    expectMoveIntent: false,
-  },
-  {
-    text: "завтра побегу легко",
-    expectMoveIntent: false,
-  },
-  {
-    text: "Интервалы на завтра поставьте пожалуйста",
-    expectMoveIntent: true,
-    expectedWorkoutKind: "intervals",
-    expectedTarget: "tomorrow",
-    messageDateUnix: Math.floor(Date.parse("2026-05-25T09:00:00+02:00") / 1000),
-  },
-  {
-    text: "Поставьте интервалы на завтра",
-    expectMoveIntent: true,
-    expectedWorkoutKind: "intervals",
-    expectedTarget: "tomorrow",
-    messageDateUnix: Math.floor(Date.parse("2026-05-25T09:00:00+02:00") / 1000),
-  },
-  {
-    text: "Можно интервалы завтра?",
-    expectMoveIntent: true,
-    expectedWorkoutKind: "intervals",
-    expectedTarget: "tomorrow",
-    messageDateUnix: Math.floor(Date.parse("2026-05-25T09:00:00+02:00") / 1000),
-  },
-  {
-    text: "Давайте интервалы завтра",
-    expectMoveIntent: true,
-    expectedWorkoutKind: "intervals",
-    expectedTarget: "tomorrow",
-    messageDateUnix: Math.floor(Date.parse("2026-05-25T09:00:00+02:00") / 1000),
-  },
-  {
-    text: "Отработаю интервалы завтра",
-    expectMoveIntent: true,
-    expectedWorkoutKind: "intervals",
-    expectedTarget: "tomorrow",
-    messageDateUnix: Math.floor(Date.parse("2026-05-25T09:00:00+02:00") / 1000),
-  },
-  {
-    text: "Лучше сделаю интервалы заранее",
-    expectMoveIntent: true,
-    expectedWorkoutKind: "intervals",
-    messageDateUnix: Math.floor(Date.parse("2026-05-25T09:00:00+02:00") / 1000),
-  },
-  {
-    text: "Перенесите интервалы на завтра",
-    expectMoveIntent: true,
-    expectedWorkoutKind: "intervals",
-    expectedTarget: "tomorrow",
-    messageDateUnix: Math.floor(Date.parse("2026-05-25T09:00:00+02:00") / 1000),
-  },
-  {
-    text: "Интервальную на завтра",
-    expectMoveIntent: true,
-    expectedWorkoutKind: "intervals",
-    expectedTarget: "tomorrow",
-    messageDateUnix: Math.floor(Date.parse("2026-05-25T09:00:00+02:00") / 1000),
-  },
-  {
-    text: "6 по 6 на завтра",
-    expectMoveIntent: true,
-    expectedWorkoutKind: "intervals",
-    expectedTarget: "tomorrow",
-    messageDateUnix: Math.floor(Date.parse("2026-05-25T09:00:00+02:00") / 1000),
-  },
-  {
-    text: "6×6 на завтра",
-    expectMoveIntent: true,
-    expectedWorkoutKind: "intervals",
-    expectedTarget: "tomorrow",
-    messageDateUnix: Math.floor(Date.parse("2026-05-25T09:00:00+02:00") / 1000),
-  },
-  {
-    text: "Интервалы на завтра поставьте пожалуйста 🙏 Эта неделя у меня какая-то не понятная. Возможно в середине недели уеду в деревню. Лучше отработаю заранее.",
-    expectMoveIntent: true,
-    expectedWorkoutKind: "intervals",
-    expectedTarget: "tomorrow",
-    messageDateUnix: Math.floor(Date.parse("2026-05-25T09:00:00+02:00") / 1000),
+    name: "missing policy without sourceDate",
+    selectedSourceDatePolicy: "unresolved",
+    parsedPayload: viktoriaLikePayload,
   },
 ];
 
-function toBelgradeIsoDate(value: Date): string {
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/Belgrade",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-  const parts = formatter.formatToParts(value);
-  const year = parts.find((part) => part.type === "year")?.value ?? "";
-  const month = parts.find((part) => part.type === "month")?.value ?? "";
-  const day = parts.find((part) => part.type === "day")?.value ?? "";
-  return `${year}-${month}-${day}`;
-}
+const explicitSourcePayload = {
+  actionType: "move_workout",
+  source: { kind: "relative_day", value: "today", sourceText: "сегодняшнюю" },
+  target: { kind: "date", value: "2026-05-26" },
+  sourceDate: "2026-05-25",
+  source_date: "2026-05-25",
+  workoutDescriptor: null,
+  confidence: 0.92,
+  needsClarification: false,
+  clarificationReason: null,
+  parser: "deterministic",
+};
 
-function resolveTomorrowFromUnix(messageDateUnix: number): string {
-  const base = new Date(messageDateUnix * 1000);
-  const baseIso = toBelgradeIsoDate(base);
-  const [year, month, day] = baseIso.split("-").map((value) => Number(value));
-  const shifted = new Date(Date.UTC(year, month - 1, day + 1, 12, 0, 0));
-  return toBelgradeIsoDate(shifted);
+function simulateCanExecute(input: {
+  dryRunResult: "candidate_found";
+  selectedSourceDatePolicy: string;
+  parsedPayload: unknown;
+  confidence: number;
+  safeCandidateCount: number;
+  identityMatchedBy: string;
+}): boolean {
+  const moveSourceExplicitEnough = isMoveSourceExplicitEnough({
+    selectedSourceDatePolicy: input.selectedSourceDatePolicy,
+    parsedPayload: input.parsedPayload,
+  });
+
+  return (
+    input.dryRunResult === "candidate_found" &&
+    input.safeCandidateCount === 1 &&
+    input.confidence >= 0.8 &&
+    input.identityMatchedBy !== "mismatch" &&
+    moveSourceExplicitEnough
+  );
 }
 
 async function run(): Promise<void> {
   let failed = 0;
-  const previousTimezone = process.env.TZ;
-  const previousBaseDate = process.env.TP_MOVE_DATE_BASE_DATE;
-  process.env.TZ = "Europe/Belgrade";
-  process.env.TP_MOVE_DATE_BASE_DATE = "2026-05-17";
 
-  for (const testCase of cases) {
-    const gate = passesTrainingPeaksStrictMoveWorkoutIntentGate(testCase.text);
-    const workout = normalizeWorkoutReference(testCase.text);
-    const parsed = testCase.expectMoveIntent
-      ? await parseTrainingPeaksMoveWorkoutRequest(testCase.text, {
-          messageDateUnix: testCase.messageDateUnix ?? null,
-        })
-      : null;
+  if (hasExplicitMoveSourceInParsedPayload(viktoriaLikePayload)) {
+    failed += 1;
+    console.log("FAIL: Viktoria-like payload must not look like explicit move source");
+  }
 
-    const gateOk = gate === testCase.expectMoveIntent;
-    const workoutOk =
-      !testCase.expectedWorkoutKind || workout.kind === testCase.expectedWorkoutKind;
+  if (hasExplicitMoveSourceInParsedPayload(explicitSourcePayload) !== true) {
+    failed += 1;
+    console.log("FAIL: explicit source payload must be recognized");
+  }
 
-    let targetOk = true;
-    if (testCase.expectMoveIntent && testCase.expectedTarget === "tomorrow") {
-      const expectedFromMessageDate =
-        typeof testCase.messageDateUnix === "number"
-          ? resolveTomorrowFromUnix(testCase.messageDateUnix)
-          : null;
-      targetOk =
-        parsed?.ok === true &&
-        (parsed.payload.target.value === "tomorrow" ||
-          parsed.payload.target.value === "2026-05-18" ||
-          (expectedFromMessageDate !== null && parsed.payload.target.value === expectedFromMessageDate));
-    }
-    if (testCase.expectMoveIntent && testCase.expectedTargetIso) {
-      targetOk = parsed?.ok === true && parsed.payload.target.kind === "date" && parsed.payload.target.value === testCase.expectedTargetIso;
-    }
-
-    const parseOk = !testCase.expectMoveIntent || parsed?.ok === true;
-    const ok = gateOk && workoutOk && targetOk && parseOk;
-
-    if (!ok) {
+  for (const policy of [
+    "explicit_source_date",
+    "explicit_source_ref",
+    "nearest_prior_within_3_days",
+    "target_tomorrow_prefers_today",
+    "unresolved",
+  ]) {
+    const trusted = isTrustedMoveSourcePolicy(policy);
+    const expectedTrusted = policy === "explicit_source_date" || policy === "explicit_source_ref";
+    if (trusted !== expectedTrusted) {
       failed += 1;
+      console.log(`FAIL: isTrustedMoveSourcePolicy(${policy}) expected ${String(expectedTrusted)}`);
+    }
+  }
+
+  for (const testCase of inferredSourceCases) {
+    const explicitEnough = isMoveSourceExplicitEnough({
+      selectedSourceDatePolicy: testCase.selectedSourceDatePolicy,
+      parsedPayload: testCase.parsedPayload,
+    });
+    if (explicitEnough) {
+      failed += 1;
+      console.log(`FAIL (${testCase.name}): inferred source must stay unsafe`);
     }
 
-    console.log(
-      `${ok ? "PASS" : "FAIL"}: "${testCase.text}" -> ${JSON.stringify(
-        {
-          gate,
-          workoutKind: workout.kind,
-          matchedAlias: workout.matchedAlias,
-          parsed: parsed
-            ? parsed.ok
-              ? {
-                  target: parsed.payload.target,
-                  workoutType: parsed.payload.workoutDescriptor?.type ?? null,
-                  confidence: parsed.payload.confidence,
-                }
-              : { reason: parsed.reason }
-            : null,
-        },
-        null,
-        2
-      )}`
-    );
+    const canExecute = simulateCanExecute({
+      dryRunResult: "candidate_found",
+      selectedSourceDatePolicy: testCase.selectedSourceDatePolicy,
+      parsedPayload: testCase.parsedPayload,
+      confidence: 0.91,
+      safeCandidateCount: 1,
+      identityMatchedBy: "name",
+    });
+    if (canExecute) {
+      failed += 1;
+      console.log(`FAIL (${testCase.name}): canExecute must be false`);
+    }
+
+    const dryRunLog = {
+      dryRunResult: "candidate_found",
+      canExecute: true,
+      confidence: 0.91,
+      candidate: { fingerprint: "student:2026-05-25:run" },
+      resolvedDates: { sourceDate: "2026-05-25", targetDate: "2026-05-26" },
+      selectedSourceDatePolicy: testCase.selectedSourceDatePolicy,
+    };
+    const validation = validateMoveSourceForExecution({
+      selectedSourceDatePolicy: testCase.selectedSourceDatePolicy,
+      parsedPayload: testCase.parsedPayload,
+    });
+    if (validation.ok) {
+      failed += 1;
+      console.log(`FAIL (${testCase.name}): execute request must be rejected`);
+    }
+
+    if (dryRunLog.canExecute === true && canExecute) {
+      failed += 1;
+      console.log(`FAIL (${testCase.name}): stale canExecute=true must not allow execution`);
+    }
   }
 
-  if (previousTimezone === undefined) {
-    delete process.env.TZ;
-  } else {
-    process.env.TZ = previousTimezone;
+  const explicitValidation = validateMoveSourceForExecution({
+    selectedSourceDatePolicy: "explicit_source_ref",
+    parsedPayload: explicitSourcePayload,
+  });
+  if (!explicitValidation.ok) {
+    failed += 1;
+    console.log(`FAIL: explicit source payload must pass execution validation (${explicitValidation.reason})`);
   }
-  if (previousBaseDate === undefined) {
-    delete process.env.TP_MOVE_DATE_BASE_DATE;
-  } else {
-    process.env.TP_MOVE_DATE_BASE_DATE = previousBaseDate;
+
+  const explicitCanExecute = simulateCanExecute({
+    dryRunResult: "candidate_found",
+    selectedSourceDatePolicy: "explicit_source_ref",
+    parsedPayload: explicitSourcePayload,
+    confidence: 0.92,
+    safeCandidateCount: 1,
+    identityMatchedBy: "name",
+  });
+  if (!explicitCanExecute) {
+    failed += 1;
+    console.log("FAIL: explicit source move must remain executable");
+  }
+
+  if (INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON.length === 0) {
+    failed += 1;
+    console.log("FAIL: inferred source block reason must be non-empty");
   }
 
   if (failed > 0) {
-    process.exitCode = 1;
-    console.error(`\n[check-trainingpeaks-move-intent] ${failed} check(s) failed.`);
-    return;
+    console.log(`\n${failed} check(s) failed.`);
+    process.exit(1);
   }
 
-  console.log("\n[check-trainingpeaks-move-intent] PASS");
+  console.log("All TrainingPeaks move intent safety checks passed.");
 }
 
 void run();

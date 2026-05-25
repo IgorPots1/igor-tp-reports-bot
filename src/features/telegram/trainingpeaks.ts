@@ -3,6 +3,7 @@ import type {
   ParsedTelegramMessageUpdate,
   ParsedTelegramUpdate,
 } from "@/features/telegram/parser";
+import { INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU } from "@/features/trainingpeaks/move-source-policy";
 import {
   addTrainingPeaksStudentFromCommand,
   approveTrainingPeaksAction,
@@ -4420,10 +4421,17 @@ async function handleTrainingPeaksActionExecuteRequestCallback(
     return;
   }
 
+  const blockedText =
+    result.kind === "blocked" &&
+    (result.reason === INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU ||
+      result.reason.includes("Dry-run marked action as unsafe for execution"))
+      ? `⚠️ ${INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU}`
+      : "⚠️ Перенос не выполнен. TrainingPeaks не изменён. Проверь заявку в /tp_actions.";
+
   await editTrainingPeaksMenuMessage(
     parsedMessage.chatId,
     parsedMessage.messageId,
-    "⚠️ Перенос не выполнен. TrainingPeaks не изменён. Проверь заявку в /tp_actions.",
+    blockedText,
     getTrainingPeaksActionResolvedMarkup()
   );
 }

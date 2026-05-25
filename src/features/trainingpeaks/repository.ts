@@ -1,4 +1,8 @@
 import { createSupabaseServerClient } from "@/features/supabase/server";
+import {
+  getSelectedSourceDatePolicyFromDryRunLog,
+  validateMoveSourceForExecution,
+} from "@/features/trainingpeaks/move-source-policy";
 
 export type TrainingPeaksTelegramFormality = "ty" | "vy" | "unknown";
 
@@ -1152,7 +1156,10 @@ function toNumericConfidence(value: unknown): number | null {
   return null;
 }
 
-function validateDryRunLogReadiness(logJson: unknown): { ok: true } | { ok: false; reason: string } {
+function validateDryRunLogReadiness(
+  logJson: unknown,
+  parsedPayload?: unknown
+): { ok: true } | { ok: false; reason: string } {
   if (!logJson || typeof logJson !== "object") {
     return { ok: false, reason: "Dry-run log not found." };
   }
@@ -1179,6 +1186,14 @@ function validateDryRunLogReadiness(logJson: unknown): { ok: true } | { ok: fals
   const confidence = toNumericConfidence(payload.confidence);
   if (confidence === null || confidence < 0.8) {
     return { ok: false, reason: "Dry-run confidence is below 0.8." };
+  }
+
+  const moveSourceValidation = validateMoveSourceForExecution({
+    selectedSourceDatePolicy: getSelectedSourceDatePolicyFromDryRunLog(logJson),
+    parsedPayload: parsedPayload ?? null,
+  });
+  if (!moveSourceValidation.ok) {
+    return { ok: false, reason: moveSourceValidation.reason };
   }
 
   return { ok: true };
@@ -3363,7 +3378,10 @@ export async function requestTrainingPeaksActionExecution(
     return { kind: "blocked", action, reason: "Trusted dry-run run is missing." };
   }
 
-  const dryRunValidation = validateDryRunLogReadiness((dryRunRun as { log_json?: unknown }).log_json);
+  const dryRunValidation = validateDryRunLogReadiness(
+    (dryRunRun as { log_json?: unknown }).log_json,
+    action.parsedPayload
+  );
   if (!dryRunValidation.ok) {
     return { kind: "blocked", action, reason: dryRunValidation.reason };
   }

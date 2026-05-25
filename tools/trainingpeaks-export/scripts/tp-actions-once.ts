@@ -21,6 +21,12 @@ import {
   redactUnknown,
   verifyWorkoutMoved,
 } from "./lib/trainingpeaks-api-move.ts";
+import {
+  INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU,
+  INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON,
+  isMoveSourceExplicitEnough,
+  validateMoveSourceForExecution,
+} from "../../../src/features/trainingpeaks/move-source-policy.ts";
 
 type ActionExecutionStatus =
   | "not_started"
@@ -1963,6 +1969,9 @@ async function notifyCoachDryRunResult(input: {
   });
   const lines: string[] = [];
 
+  const inferredSourceBlocked =
+    evaluation?.canExecuteReasons.includes(INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON) === true;
+
   if (
     evaluation &&
     evaluation.dryRunResult === "candidate_found" &&
@@ -1971,6 +1980,14 @@ async function notifyCoachDryRunResult(input: {
     lines.push(
       `✅ Проверка пройдена. ${input.studentName}: ${route}. Перенос поставлен в очередь на выполнение.`
     );
+  } else if (
+    evaluation &&
+    evaluation.dryRunResult === "candidate_found" &&
+    inferredSourceBlocked
+  ) {
+    lines.push(`⚠️ Проверка нашла кандидата. ${input.studentName}: ${route}.`);
+    lines.push(INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU);
+    lines.push("TrainingPeaks не изменён. Проверь заявку в /tp_actions.");
   } else {
     lines.push(
       `⚠️ Проверка не пройдена. ${input.studentName}: ${route}. Перенос не выполнен.`
@@ -2222,7 +2239,10 @@ async function claimOneExecutePendingActionForRealMode(
     }
 
     const trustedDryRunRun = trustedRunData as TrainingPeaksActionRunRow;
-    const trustedDryRunLog = normalizeTrustedDryRunLog(trustedDryRunRun.log_json);
+    const trustedDryRunLog = normalizeTrustedDryRunLog(
+      trustedDryRunRun.log_json,
+      requestedAction.parsed_payload
+    );
     if (!trustedDryRunLog) {
       throw new Error(
         `Requested action ${requestedAction.id} has an unsafe trusted dry-run log in ${requestedAction.last_run_id}. Re-run dry-run and request execute again.`
@@ -2369,7 +2389,7 @@ async function claimOneExecutePendingActionForRealMode(
     }
 
     const trustedDryRunRun = trustedRunData as TrainingPeaksActionRunRow;
-    const trustedDryRunLog = normalizeTrustedDryRunLog(trustedDryRunRun.log_json);
+    const trustedDryRunLog = normalizeTrustedDryRunLog(trustedDryRunRun.log_json, action.parsed_payload);
     if (!trustedDryRunLog) {
       console.warn(
         `[execute-real] skipping id=${action.id} status=${action.status} execution_status=${action.execution_status}: trusted dry-run log is not safe for real-mode revalidation`
@@ -6141,14 +6161,19 @@ function evaluateDryRunOutcome(input: {
   if (safeCandidates.length !== 1) {
     reasons.push("multiple candidates on selected source date");
   }
-  if (selectedSourceDatePolicy === "nearest_prior_within_3_days") {
-    reasons.push("source date inferred with low confidence");
-  }
   if (second && top.rawScore - second.rawScore < 0.12) {
     reasons.push("top candidate margin too small");
   }
   if (input.identityCheck.matchedBy === "mismatch") {
     reasons.push(...input.identityCheck.warnings);
+  }
+
+  const moveSourceExplicitEnough = isMoveSourceExplicitEnough({
+    selectedSourceDatePolicy,
+    parsedPayload: input.action.parsed_payload,
+  });
+  if (!moveSourceExplicitEnough) {
+    reasons.push(INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON);
   }
 
   const canExecute =
@@ -6158,13 +6183,14 @@ function evaluateDryRunOutcome(input: {
     Boolean(selectedSourceDate) &&
     Boolean(candidate.fingerprint) &&
     confidence >= 0.8 &&
-    input.identityCheck.matchedBy !== "mismatch";
+    input.identityCheck.matchedBy !== "mismatch" &&
+    moveSourceExplicitEnough;
 
   if (!canExecute && reasons.length === 0) {
     reasons.push("safety policy conditions not met");
   }
 
-  if (dryRunResult === "candidate_found" && !canExecute) {
+  if (dryRunResult === "candidate_found" && !canExecute && moveSourceExplicitEnough) {
     dryRunResult = sortedBucketCandidates.length > 1 ? "ambiguous" : "not_found";
   }
 
@@ -6212,7 +6238,7 @@ function evaluateDryRunOutcome(input: {
   };
 }
 
-function normalizeTrustedDryRunLog(logJson: unknown): TrustedDryRunLog | null {
+function normalizeTrustedDryRunLog(logJson: unknown, parsedPayload?: unknown): TrustedDryRunLog | null {
   if (!logJson || typeof logJson !== "object") {
     return null;
   }
@@ -6224,6 +6250,7 @@ function normalizeTrustedDryRunLog(logJson: unknown): TrustedDryRunLog | null {
     candidate?: DryRunCandidate | null;
     resolvedDates?: { sourceDate?: unknown; targetDate?: unknown; timezone?: unknown } | null;
     identityCheck?: DryRunIdentityCheck | null;
+    selectedSourceDatePolicy?: unknown;
   };
 
   const confidence =
@@ -6259,6 +6286,16 @@ function normalizeTrustedDryRunLog(logJson: unknown): TrustedDryRunLog | null {
     return null;
   }
   if (!payload.candidate) {
+    return null;
+  }
+
+  const selectedSourceDatePolicy =
+    typeof payload.selectedSourceDatePolicy === "string" ? payload.selectedSourceDatePolicy : null;
+  const moveSourceValidation = validateMoveSourceForExecution({
+    selectedSourceDatePolicy,
+    parsedPayload: parsedPayload ?? null,
+  });
+  if (!moveSourceValidation.ok) {
     return null;
   }
 

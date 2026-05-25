@@ -3,6 +3,10 @@ import { createClient } from "@supabase/supabase-js";
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import {
+  getSelectedSourceDatePolicyFromDryRunLog,
+  validateMoveSourceForExecution,
+} from "../../../src/features/trainingpeaks/move-source-policy.ts";
 
 type LoopOptions = {
   intervalSeconds: number;
@@ -19,6 +23,7 @@ type QueueCandidate = {
   approved_at: string | null;
   created_at: string;
   last_run_id: string | null;
+  parsed_payload: unknown;
 };
 
 type ActionSelectorRow = {
@@ -236,7 +241,10 @@ function hasTrustedDryRunLog(logJson: unknown): boolean {
   );
 }
 
-function inspectTrustedDryRunLog(logJson: unknown): TrustedDryRunInspection {
+function inspectTrustedDryRunLog(
+  logJson: unknown,
+  parsedPayload?: unknown
+): TrustedDryRunInspection {
   if (!logJson || typeof logJson !== "object") {
     return {
       trusted: false,
@@ -354,6 +362,25 @@ function inspectTrustedDryRunLog(logJson: unknown): TrustedDryRunInspection {
       identityMatchedBy,
     };
   }
+
+  const moveSourceValidation = validateMoveSourceForExecution({
+    selectedSourceDatePolicy: getSelectedSourceDatePolicyFromDryRunLog(logJson),
+    parsedPayload: parsedPayload ?? null,
+  });
+  if (!moveSourceValidation.ok) {
+    return {
+      trusted: false,
+      reason: "inferred_move_source",
+      dryRunResult,
+      canExecute,
+      confidence,
+      fingerprintExists: true,
+      sourceDateExists: true,
+      targetDateExists: true,
+      identityMatchedBy,
+    };
+  }
+
   return {
     trusted: true,
     reason: "trusted",
@@ -392,7 +419,7 @@ async function autoQueueTrustedActions(since: string | null): Promise<number> {
   const supabase = getSupabase();
   let query = supabase
     .from("trainingpeaks_actions")
-    .select("id,status,execution_status,execution_mode,approved_at,created_at,last_run_id")
+    .select("id,status,execution_status,execution_mode,approved_at,created_at,last_run_id,parsed_payload")
     .eq("action_type", "move_workout")
     .eq("status", "approved")
     .eq("execution_status", "dry_run_completed")
@@ -496,7 +523,10 @@ async function autoQueueTrustedActions(since: string | null): Promise<number> {
       continue;
     }
 
-    const trustedInspection = inspectTrustedDryRunLog((runData as { log_json?: unknown }).log_json);
+    const trustedInspection = inspectTrustedDryRunLog(
+      (runData as { log_json?: unknown }).log_json,
+      row.parsed_payload
+    );
     if (!trustedInspection.trusted || !hasTrustedDryRunLog((runData as { log_json?: unknown }).log_json)) {
       await retireUnsafeDryRunAction(row, trustedInspection.reason);
       continue;
