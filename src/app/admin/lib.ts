@@ -24,6 +24,64 @@ export function getSingleSearchParam(
   return value ?? null;
 }
 
+export function getBillingPaymentStatusLabel(status: string | null | undefined): string {
+  switch (status) {
+    case "pending":
+      return "Ожидаем";
+    case "paid":
+      return "Оплачено";
+    case "overdue":
+      return "Просрочено";
+    case "paused":
+      return "Пауза";
+    case "manual_review":
+      return "Проверить";
+    case "refunded":
+      return "Возврат";
+    default:
+      return status ?? "Не указано";
+  }
+}
+
+export function getBillingPaymentMethodLabel(method: string | null | undefined): string {
+  switch (method) {
+    case "tbank_link_a":
+      return "T-Банк A";
+    case "tbank_link_b":
+      return "T-Банк B";
+    case "tbank_link_c":
+      return "T-Банк C";
+    case "manual_eur":
+      return "EUR вручную";
+    case "manual_other":
+      return "Вручную / другое";
+    default:
+      return "Не указано";
+  }
+}
+
+export function formatBillingAmount(amount: number | null | undefined, currency: string | null | undefined): string {
+  if (amount == null) {
+    return "—";
+  }
+
+  if (currency === "RUB" || currency === "EUR") {
+    return new Intl.NumberFormat("ru-RU", {
+      style: "currency",
+      currency,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount);
+  }
+
+  const value = new Intl.NumberFormat("ru-RU", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(amount);
+
+  return currency ? `${value} ${currency}` : value;
+}
+
 export function getReviewStatusLabel(status: string): string {
   switch (status) {
     case "draft":

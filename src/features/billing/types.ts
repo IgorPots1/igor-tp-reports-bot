@@ -72,6 +72,7 @@ export type BillingMonthlyPaymentWithClient = BillingMonthlyPayment & {
 
 export type BillingMonthStatusRow = {
   clientId: string;
+  studentId: string | null;
   clientName: string;
   groupName: string | null;
   plannedAmount: number;
