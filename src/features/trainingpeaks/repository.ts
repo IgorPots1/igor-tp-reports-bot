@@ -1,5 +1,8 @@
 import { createSupabaseServerClient } from "@/features/supabase/server";
-import { validateDryRunLogReadiness } from "@/features/trainingpeaks/move-source-policy";
+import {
+  extractMoveSourceExecutionContextFromDryRunLog,
+  validateDryRunLogReadiness,
+} from "@/features/trainingpeaks/move-source-policy";
 
 export type TrainingPeaksTelegramFormality = "ty" | "vy" | "unknown";
 
@@ -518,10 +521,17 @@ export type RequestTrainingPeaksActionExecutionInput = {
   requestMessageId?: string | null;
 };
 
+export type TrainingPeaksActionExecutionQueuedDisplayContext = {
+  studentName: string | null;
+  trustedSourceDate: string;
+  trustedTargetDate: string;
+};
+
 export type RequestTrainingPeaksActionExecutionResult =
   | {
       kind: "queued";
       action: TrainingPeaksAction;
+      queuedDisplay: TrainingPeaksActionExecutionQueuedDisplayContext;
     }
   | {
       kind: "already_queued";
@@ -3262,6 +3272,30 @@ export async function rejectTrainingPeaksAction(
   return decideTrainingPeaksActionStatus(input, "rejected");
 }
 
+async function resolveActionExecutionQueuedDisplayContext(
+  action: TrainingPeaksAction,
+  dryRunLogJson: unknown
+): Promise<TrainingPeaksActionExecutionQueuedDisplayContext> {
+  const dryRunContext = extractMoveSourceExecutionContextFromDryRunLog(dryRunLogJson);
+  const trustedSourceDate = dryRunContext?.resolvedSourceDate ?? null;
+  const trustedTargetDate = dryRunContext?.resolvedTargetDate ?? null;
+  if (!trustedSourceDate || !trustedTargetDate) {
+    throw new Error(`Trusted dry-run resolved dates missing for action ${action.id}`);
+  }
+
+  let studentName: string | null = null;
+  if (action.studentId) {
+    const student = await getTrainingPeaksStudentById(action.studentId);
+    studentName = student?.studentName ?? null;
+  }
+
+  return {
+    studentName,
+    trustedSourceDate,
+    trustedTargetDate,
+  };
+}
+
 export async function requestTrainingPeaksActionExecution(
   input: RequestTrainingPeaksActionExecutionInput
 ): Promise<RequestTrainingPeaksActionExecutionResult> {
@@ -3351,7 +3385,12 @@ export async function requestTrainingPeaksActionExecution(
   }
 
   if (queuedRow) {
-    return { kind: "queued", action: mapTrainingPeaksActionRow(queuedRow as TrainingPeaksActionRow) };
+    const action = mapTrainingPeaksActionRow(queuedRow as TrainingPeaksActionRow);
+    const queuedDisplay = await resolveActionExecutionQueuedDisplayContext(
+      action,
+      (dryRunRun as { log_json?: unknown }).log_json
+    );
+    return { kind: "queued", action, queuedDisplay };
   }
 
   const latest = await getTrainingPeaksActionByIdInternal(input.actionId);

@@ -4,6 +4,7 @@ import type {
   ParsedTelegramUpdate,
 } from "@/features/telegram/parser";
 import { INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU } from "@/features/trainingpeaks/move-source-policy";
+import { formatTrainingPeaksExecuteQueuedMessage } from "@/features/trainingpeaks/action-execute-telegram-copy";
 import {
   addTrainingPeaksStudentFromCommand,
   approveTrainingPeaksAction,
@@ -3509,16 +3510,6 @@ function getTrainingPeaksActionResolvedMarkup(): TelegramInlineKeyboardMarkup {
   return createInlineKeyboardMarkup([]);
 }
 
-function formatActionMoveRoute(
-  action: { parsedPayload: unknown } | null
-): string {
-  if (!action) {
-    return "? → ?";
-  }
-  const dates = extractMoveDateRangeFromParsedPayload(action.parsedPayload);
-  return `${formatCompactDateShort(dates.sourceDate)} → ${formatCompactDateShort(dates.targetDate)}`;
-}
-
 function formatActionCompactDate(value: string | null): string {
   if (!value) {
     return "—";
@@ -4409,12 +4400,16 @@ async function handleTrainingPeaksActionExecuteRequestCallback(
   }
 
   if (result.kind === "queued") {
-    const action = result.action;
-    const route = formatActionMoveRoute(action);
+    const queuedText = formatTrainingPeaksExecuteQueuedMessage({
+      studentName: result.queuedDisplay.studentName,
+      parsedPayload: result.action.parsedPayload,
+      trustedSourceDate: result.queuedDisplay.trustedSourceDate,
+      trustedTargetDate: result.queuedDisplay.trustedTargetDate,
+    });
     await editTrainingPeaksMenuMessage(
       parsedMessage.chatId,
       parsedMessage.messageId,
-      `✅ Проверка пройдена. Ученик: ${route}. Перенос поставлен в очередь на выполнение.`,
+      queuedText,
       getTrainingPeaksActionResolvedMarkup()
     );
     return;

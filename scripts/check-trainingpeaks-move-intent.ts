@@ -9,6 +9,7 @@ import {
   validateMoveSourceForExecution,
   validateStrongFutureDescriptorMoveSourceForExecution,
 } from "@/features/trainingpeaks/move-source-policy";
+import { formatTrainingPeaksExecuteQueuedMessage } from "@/features/trainingpeaks/action-execute-telegram-copy";
 import {
   buildMoveSourceInferencePreviewFromCacheCandidates,
   formatMoveSourceInferencePreviewRu,
@@ -657,6 +658,38 @@ async function run(): Promise<void> {
   } else {
     failed += 1;
     console.log("FAIL: revalidation mismatch fixture must produce two valid but different fingerprints");
+  }
+
+  const viktoriaQueuedMessage = formatTrainingPeaksExecuteQueuedMessage({
+    studentName: "Viktoria Sergeeva",
+    parsedPayload: viktoriaLikePayload,
+    trustedSourceDate: "2026-05-28",
+    trustedTargetDate: "2026-05-26",
+  });
+  if (!viktoriaQueuedMessage.includes("Viktoria Sergeeva")) {
+    failed += 1;
+    console.log("FAIL: execute queued message must include student display name");
+  }
+  if (!viktoriaQueuedMessage.includes("28.05 → 26.05")) {
+    failed += 1;
+    console.log(`FAIL: execute queued message must include trusted dry-run route, got ${JSON.stringify(viktoriaQueuedMessage)}`);
+  }
+  if (viktoriaQueuedMessage.includes("Ученик: ?")) {
+    failed += 1;
+    console.log("FAIL: execute queued message must not include placeholder student label");
+  }
+
+  const viktoriaDryRunLogForCopy = buildViktoriaStrongDryRunLog({ fingerprint, canExecute: true });
+  const viktoriaDryRunContext = extractMoveSourceExecutionContextFromDryRunLog(viktoriaDryRunLogForCopy);
+  const viktoriaQueuedFromDryRun = formatTrainingPeaksExecuteQueuedMessage({
+    studentName: "Viktoria Sergeeva",
+    parsedPayload: viktoriaLikePayload,
+    trustedSourceDate: viktoriaDryRunContext?.resolvedSourceDate,
+    trustedTargetDate: viktoriaDryRunContext?.resolvedTargetDate,
+  });
+  if (!viktoriaQueuedFromDryRun.includes("28.05 → 26.05")) {
+    failed += 1;
+    console.log("FAIL: execute queued message must use trusted dry-run resolved dates over parsed payload");
   }
 
   if (failed > 0) {
