@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import FormActionButton from "@/app/admin/FormActionButton";
+import { markBillingPaidAction, markBillingUnpaidAction } from "@/app/admin/billing/actions";
 import {
   formatBillingAmount,
   getBillingPaymentMethodLabel,
@@ -73,6 +75,8 @@ function getStudentLinkBadgeClass(isLinked: boolean): string {
 export default async function AdminBillingPage({ searchParams }: AdminBillingPageProps) {
   const resolvedSearchParams = (await searchParams) ?? {};
   const month = getSingleSearchParam(resolvedSearchParams.month) ?? undefined;
+  const notice = getSingleSearchParam(resolvedSearchParams.notice);
+  const error = getSingleSearchParam(resolvedSearchParams.error);
   const overview = await getAdminBillingMonthOverview(month);
   const previousMonth = shiftBillingMonth(overview.billingMonth, -1).slice(0, 7);
   const nextMonth = shiftBillingMonth(overview.billingMonth, 1).slice(0, 7);
@@ -107,6 +111,12 @@ export default async function AdminBillingPage({ searchParams }: AdminBillingPag
           </div>
         </div>
       </article>
+
+      {(notice || error) && (
+        <div className={`admin-alert ${error ? "admin-alert-error" : "admin-alert-success"}`}>
+          {error ?? notice}
+        </div>
+      )}
 
       <div className="admin-summary-grid">
         <article className="admin-card admin-summary-card">
@@ -146,12 +156,13 @@ export default async function AdminBillingPage({ searchParams }: AdminBillingPag
               <th>Статус</th>
               <th>Метод оплаты</th>
               <th>Связь с учеником</th>
+              <th>Действие</th>
             </tr>
           </thead>
           <tbody>
             {overview.rows.length === 0 ? (
               <tr>
-                <td className="admin-empty-cell" colSpan={7}>
+                <td className="admin-empty-cell" colSpan={8}>
                   Для выбранного месяца пока нет строк биллинга.
                 </td>
               </tr>
@@ -194,6 +205,36 @@ export default async function AdminBillingPage({ searchParams }: AdminBillingPag
                           {isLinked ? "Привязан к ученику" : "Нужна ручная привязка к ученику"}
                         </span>
                       </div>
+                    </td>
+                    <td>
+                      {effectiveStatus === "paid" ? (
+                        <form action={markBillingUnpaidAction} className="admin-actions admin-inline-actions">
+                          <input type="hidden" name="clientId" value={row.clientId} />
+                          <input type="hidden" name="month" value={overview.billingMonth.slice(0, 7)} />
+                          <FormActionButton
+                            className="admin-button admin-button-secondary"
+                            confirmMessage="Снять оплату и вернуть статус в ожидание?"
+                            pendingText="Снятие..."
+                          >
+                            Снять оплату
+                          </FormActionButton>
+                        </form>
+                      ) : effectiveStatus === "pending" ||
+                        effectiveStatus === "overdue" ||
+                        effectiveStatus === "manual_review" ? (
+                        <form action={markBillingPaidAction} className="admin-actions admin-inline-actions">
+                          <input type="hidden" name="clientId" value={row.clientId} />
+                          <input type="hidden" name="month" value={overview.billingMonth.slice(0, 7)} />
+                          {row.plannedAmount != null && (
+                            <input type="hidden" name="amount" value={String(row.plannedAmount)} />
+                          )}
+                          <FormActionButton className="admin-button admin-button-secondary" pendingText="Сохранение...">
+                            Оплачено
+                          </FormActionButton>
+                        </form>
+                      ) : (
+                        <span className="admin-muted">—</span>
+                      )}
                     </td>
                   </tr>
                 );
