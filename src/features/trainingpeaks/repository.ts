@@ -213,6 +213,18 @@ export type TrainingPeaksActionExecutionMode = "dry_run" | "real";
 export type TrainingPeaksActionRunType = "dry_run" | "real";
 export type TrainingPeaksActionRunStatus = "running" | "completed" | "failed";
 
+export type TrainingPeaksStudentContactEventType =
+  | "athlete_message"
+  | "coach_message"
+  | "report_sent"
+  | "coach_action_decision";
+export type TrainingPeaksStudentContactEventSource =
+  | "telegram_business_dm"
+  | "telegram_private_dm"
+  | "telegram_group_topic"
+  | "admin_report_send"
+  | "admin_action";
+
 export type TrainingPeaksRaceResultsProbeRequestJson = {
   distance: string;
   preset: string;
@@ -346,6 +358,57 @@ export type TrainingPeaksActionRun = {
   screenshotBeforePath: string | null;
   screenshotAfterPath: string | null;
   createdAt: string;
+};
+
+export type TrainingPeaksStudentContactEvent = {
+  id: string;
+  studentId: string;
+  eventType: TrainingPeaksStudentContactEventType;
+  source: TrainingPeaksStudentContactEventSource;
+  occurredAt: string;
+  referenceId: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
+type TrainingPeaksStudentContactEventRow = {
+  id: string;
+  student_id: string;
+  event_type: string;
+  source: string;
+  occurred_at: string;
+  reference_id: string | null;
+  metadata: unknown;
+  created_at: string;
+};
+
+export type InsertTrainingPeaksStudentContactEventInput = {
+  studentId: string;
+  eventType: TrainingPeaksStudentContactEventType;
+  source: TrainingPeaksStudentContactEventSource;
+  occurredAt?: string;
+  referenceId?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
+export type TrainingPeaksStudentContactStatus = {
+  studentId: string;
+  lastAthleteMessageAt: string | null;
+  lastCoachTouchAt: string | null;
+  lastContactEventAt: string | null;
+  silenceDays: number | null;
+  unansweredSince: string | null;
+  unansweredSeconds: number | null;
+};
+
+type TrainingPeaksStudentContactStatusRow = {
+  student_id: string;
+  last_athlete_message_at: string | null;
+  last_coach_touch_at: string | null;
+  last_contact_event_at: string | null;
+  silence_days: number | null;
+  unanswered_since: string | null;
+  unanswered_seconds: number | null;
 };
 
 type TrainingPeaksActionRunRow = {
@@ -1007,6 +1070,38 @@ function mapTrainingPeaksJobRow(row: TrainingPeaksJobRow): TrainingPeaksJob {
     startedAt: row.started_at,
     finishedAt: row.finished_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function mapTrainingPeaksStudentContactEventRow(
+  row: TrainingPeaksStudentContactEventRow
+): TrainingPeaksStudentContactEvent {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    eventType: row.event_type as TrainingPeaksStudentContactEventType,
+    source: row.source as TrainingPeaksStudentContactEventSource,
+    occurredAt: row.occurred_at,
+    referenceId: row.reference_id,
+    metadata:
+      row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? (row.metadata as Record<string, unknown>)
+        : {},
+    createdAt: row.created_at,
+  };
+}
+
+function mapTrainingPeaksStudentContactStatusRow(
+  row: TrainingPeaksStudentContactStatusRow
+): TrainingPeaksStudentContactStatus {
+  return {
+    studentId: row.student_id,
+    lastAthleteMessageAt: row.last_athlete_message_at,
+    lastCoachTouchAt: row.last_coach_touch_at,
+    lastContactEventAt: row.last_contact_event_at,
+    silenceDays: row.silence_days,
+    unansweredSince: row.unanswered_since,
+    unansweredSeconds: row.unanswered_seconds,
   };
 }
 
@@ -4232,6 +4327,34 @@ export async function insertTrainingPeaksTelegramContextObservation(
     throw new Error(`Failed to insert TrainingPeaks telegram context observation: ${error.message}`);
   }
 
+  if (input.studentId && (input.sourceType === "private_dm" || input.sourceType === "group_topic")) {
+    const contactSource: TrainingPeaksStudentContactEventSource =
+      input.sourceType === "private_dm" ? "telegram_private_dm" : "telegram_group_topic";
+
+    try {
+      await recordTrainingPeaksStudentContactEvent({
+        studentId: input.studentId,
+        eventType: "athlete_message",
+        source: contactSource,
+        occurredAt: input.observedAt,
+        referenceId: input.messageId ?? null,
+        metadata: {
+          chat_id: input.chatId,
+          message_id: input.messageId ?? null,
+          message_thread_id: input.messageThreadId ?? null,
+        },
+      });
+    } catch (contactError) {
+      console.warn("Failed to record TrainingPeaks contact event from context observation", {
+        studentId: input.studentId,
+        sourceType: input.sourceType,
+        chatId: input.chatId,
+        messageId: input.messageId ?? null,
+        error: contactError,
+      });
+    }
+  }
+
   return mapTrainingPeaksTelegramContextObservationRow(
     data as TrainingPeaksTelegramContextObservationRow
   );
@@ -4554,6 +4677,64 @@ export async function updateTrainingPeaksMessageIntentLogAiFields(
   }
 
   return mapTrainingPeaksMessageIntentLogRow(data as TrainingPeaksMessageIntentLogRow);
+}
+
+export async function recordTrainingPeaksStudentContactEvent(
+  input: InsertTrainingPeaksStudentContactEventInput
+): Promise<TrainingPeaksStudentContactEvent> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_contact_events")
+    .insert({
+      student_id: input.studentId,
+      event_type: input.eventType,
+      source: input.source,
+      occurred_at: input.occurredAt ?? new Date().toISOString(),
+      reference_id: input.referenceId ?? null,
+      metadata: input.metadata ?? {},
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to record TrainingPeaks student contact event: ${error.message}`);
+  }
+
+  return mapTrainingPeaksStudentContactEventRow(data as TrainingPeaksStudentContactEventRow);
+}
+
+export async function listTrainingPeaksStudentContactStatus(): Promise<TrainingPeaksStudentContactStatus[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_contact_status")
+    .select("*")
+    .order("silence_days", { ascending: false, nullsFirst: false })
+    .order("student_id", { ascending: true });
+
+  if (error) {
+    throw new Error(`Failed to list TrainingPeaks student contact status: ${error.message}`);
+  }
+
+  return ((data as TrainingPeaksStudentContactStatusRow[]) ?? []).map(
+    mapTrainingPeaksStudentContactStatusRow
+  );
+}
+
+export async function countTrainingPeaksSilentStudents(input: {
+  minimumSilenceDays: number;
+}): Promise<number> {
+  const minimumSilenceDays = Math.max(0, Math.trunc(input.minimumSilenceDays));
+  const supabase = createSupabaseServerClient();
+  const { count, error } = await supabase
+    .from("trainingpeaks_student_contact_status")
+    .select("student_id", { count: "exact", head: true })
+    .gte("silence_days", minimumSilenceDays);
+
+  if (error) {
+    throw new Error(`Failed to count TrainingPeaks silent students: ${error.message}`);
+  }
+
+  return count ?? 0;
 }
 
 export async function listRecentTrainingPeaksMessageIntentLogs(

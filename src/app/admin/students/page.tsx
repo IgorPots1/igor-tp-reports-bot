@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import FormActionButton from "@/app/admin/FormActionButton";
+import { formatIsoDate } from "@/app/admin/lib";
 import {
   archiveTrainingPeaksStudentAction,
   restoreTrainingPeaksStudentAction,
@@ -37,6 +38,23 @@ function getTelegramBindingText(
   }
 
   return "Telegram привязан, доставка включена";
+}
+
+function formatSilenceDays(
+  student: Awaited<ReturnType<typeof listTrainingPeaksAdminStudents>>[number]
+): string {
+  const silenceDays = student.contactStatus?.silenceDays;
+  if (silenceDays === null || silenceDays === undefined) {
+    return "—";
+  }
+
+  return `${silenceDays}д`;
+}
+
+function formatLastCoachTouch(
+  student: Awaited<ReturnType<typeof listTrainingPeaksAdminStudents>>[number]
+): string {
+  return formatIsoDate(student.contactStatus?.lastCoachTouchAt ?? null);
 }
 
 export default async function AdminStudentsPage({ searchParams }: StudentsPageProps) {
@@ -96,6 +114,8 @@ export default async function AdminStudentsPage({ searchParams }: StudentsPagePr
               <th>Ученик</th>
               <th>Статус</th>
               <th>Telegram</th>
+              <th>Silence</th>
+              <th>Last coach touch</th>
               <th>Последний отчёт</th>
               <th>Действия</th>
             </tr>
@@ -103,7 +123,7 @@ export default async function AdminStudentsPage({ searchParams }: StudentsPagePr
           <tbody>
             {students.length === 0 ? (
               <tr>
-                <td colSpan={5} className="admin-empty-cell">
+                <td colSpan={7} className="admin-empty-cell">
                   Список пуст.
                 </td>
               </tr>
@@ -153,6 +173,12 @@ export default async function AdminStudentsPage({ searchParams }: StudentsPagePr
                       <span className="admin-muted">{getTelegramBindingText(student)}</span>
                       <span className="admin-muted">{getTrainingPeaksAdminStudentGroupTopicListText(student)}</span>
                     </div>
+                  </td>
+                  <td>
+                    <span className="admin-muted">{formatSilenceDays(student)}</span>
+                  </td>
+                  <td>
+                    <span className="admin-muted">{formatLastCoachTouch(student)}</span>
                   </td>
                   <td>
                     {student.latestWeekFrom && student.latestWeekTo ? (

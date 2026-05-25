@@ -80,9 +80,11 @@ import {
 } from "@/features/trainingpeaks/message-intent-log-triage";
 import {
   getLatestTrainingPeaksCronRunLog,
+  getTrainingPeaksStudentByTelegramChatId,
   listTrainingPeaksMessageIntentLogsForTriage,
   listTrainingPeaksCronRunLogs,
   TRAININGPEAKS_ATTENTION_DIGEST_CRON_JOB_NAME,
+  recordTrainingPeaksStudentContactEvent,
   type TrainingPeaksCronRunLog,
 } from "@/features/trainingpeaks/repository";
 import { isTrainingPeaksContextObserverEnabled } from "@/features/trainingpeaks/context-observer";
@@ -3993,6 +3995,30 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
     } catch (error) {
       console.warn("Failed to record TrainingPeaks telegram business context observation", {
         chatId,
+        error,
+      });
+    }
+
+    try {
+      const student = await getTrainingPeaksStudentByTelegramChatId(chatId);
+      if (student) {
+        await recordTrainingPeaksStudentContactEvent({
+          studentId: student.id,
+          eventType: "athlete_message",
+          source: "telegram_business_dm",
+          referenceId: String(message.message_id),
+          metadata: {
+            chat_id: chatId,
+            message_id: message.message_id,
+            direction: "athlete_incoming",
+            has_business_connection_id: Boolean(businessConnectionId),
+          },
+        });
+      }
+    } catch (error) {
+      console.warn("Failed to record TrainingPeaks business DM contact event", {
+        chatId,
+        messageId: message.message_id,
         error,
       });
     }

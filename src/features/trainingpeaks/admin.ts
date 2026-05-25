@@ -1,4 +1,5 @@
 import {
+  listTrainingPeaksStudentContactStatus as listTrainingPeaksStudentContactStatusInService,
   createTrainingPeaksStudent as createTrainingPeaksStudentInService,
   deleteTrainingPeaksOrphanReportByInternalId,
   deleteTrainingPeaksOrphanReportsForWeek as deleteTrainingPeaksOrphanReportsForWeekInService,
@@ -15,6 +16,7 @@ import { getFinalTrainingPeaksReportMarkdown, sendTrainingPeaksWeeklyReportToStu
 import type { TrainingPeaksRegistryStudentSnapshot } from "@/features/trainingpeaks/service";
 import {
   listAllTrainingPeaksReports,
+  type TrainingPeaksStudentContactStatus,
   type TrainingPeaksWeeklyReport,
 } from "@/features/trainingpeaks/repository";
 
@@ -23,7 +25,20 @@ export type TrainingPeaksAdminReportStatusFilter = "all" | "ready" | "sent" | "f
 export type TrainingPeaksAdminTelegramFilter = "all" | "linked" | "unlinked";
 export type TrainingPeaksAdminStudentStateFilter = "active" | "archived" | "orphan" | "all";
 
-export type TrainingPeaksAdminStudentRecord = TrainingPeaksRegistryStudentSnapshot;
+export type TrainingPeaksAdminStudentRecord = TrainingPeaksRegistryStudentSnapshot & {
+  contactStatus: TrainingPeaksStudentContactStatus | null;
+};
+
+function mergeTrainingPeaksAdminStudentContactStatus(
+  students: TrainingPeaksRegistryStudentSnapshot[],
+  contactStatuses: TrainingPeaksStudentContactStatus[]
+): TrainingPeaksAdminStudentRecord[] {
+  const contactStatusByStudentId = new Map(contactStatuses.map((row) => [row.studentId, row] as const));
+  return students.map((student) => ({
+    ...student,
+    contactStatus: contactStatusByStudentId.get(student.id) ?? null,
+  }));
+}
 
 export function getTrainingPeaksAdminStudentGroupTopicListText(
   student: Pick<TrainingPeaksAdminStudentRecord, "hasGroupTopic" | "groupTopicCount">
@@ -326,15 +341,19 @@ export type TrainingPeaksAdminWeeklyReportRoster = {
 };
 
 export async function listTrainingPeaksAdminWeeklyReportRoster(): Promise<TrainingPeaksAdminWeeklyReportRoster> {
-  const students = await getTrainingPeaksStudentsRegistryWithLatestReportStatus({
-    includeArchived: true,
-  });
+  const [students, contactStatuses] = await Promise.all([
+    getTrainingPeaksStudentsRegistryWithLatestReportStatus({
+      includeArchived: true,
+    }),
+    listTrainingPeaksStudentContactStatusInService(),
+  ]);
+  const hydratedStudents = mergeTrainingPeaksAdminStudentContactStatus(students, contactStatuses);
 
   const inGeneration: TrainingPeaksAdminStudentRecord[] = [];
   const activeReportsDisabled: TrainingPeaksAdminStudentRecord[] = [];
   const archived: TrainingPeaksAdminStudentRecord[] = [];
 
-  for (const student of students) {
+  for (const student of hydratedStudents) {
     if (!student.isActive) {
       archived.push(student);
       continue;
@@ -354,19 +373,23 @@ export async function listTrainingPeaksAdminWeeklyReportRoster(): Promise<Traini
 export async function listTrainingPeaksAdminStudents(
   view: TrainingPeaksAdminStudentsView = "active"
 ): Promise<TrainingPeaksAdminStudentRecord[]> {
-  const students = await getTrainingPeaksStudentsRegistryWithLatestReportStatus({
-    includeArchived: view !== "active",
-  });
+  const [students, contactStatuses] = await Promise.all([
+    getTrainingPeaksStudentsRegistryWithLatestReportStatus({
+      includeArchived: view !== "active",
+    }),
+    listTrainingPeaksStudentContactStatusInService(),
+  ]);
+  const hydratedStudents = mergeTrainingPeaksAdminStudentContactStatus(students, contactStatuses);
 
   if (view === "archived") {
-    return students.filter((student) => !student.isActive);
+    return hydratedStudents.filter((student) => !student.isActive);
   }
 
   if (view === "all") {
-    return students;
+    return hydratedStudents;
   }
 
-  return students.filter((student) => student.isActive);
+  return hydratedStudents.filter((student) => student.isActive);
 }
 
 export async function listTrainingPeaksAdminReports(options?: {
@@ -462,11 +485,15 @@ export async function getTrainingPeaksAdminReportById(
 export async function getTrainingPeaksAdminStudentById(
   studentId: string
 ): Promise<TrainingPeaksAdminStudentRecord | null> {
-  const students = await getTrainingPeaksStudentsRegistryWithLatestReportStatus({
-    includeArchived: true,
-  });
+  const [students, contactStatuses] = await Promise.all([
+    getTrainingPeaksStudentsRegistryWithLatestReportStatus({
+      includeArchived: true,
+    }),
+    listTrainingPeaksStudentContactStatusInService(),
+  ]);
+  const hydratedStudents = mergeTrainingPeaksAdminStudentContactStatus(students, contactStatuses);
 
-  return students.find((student) => student.id === studentId) ?? null;
+  return hydratedStudents.find((student) => student.id === studentId) ?? null;
 }
 
 export async function listTrainingPeaksAdminReportsForStudent(

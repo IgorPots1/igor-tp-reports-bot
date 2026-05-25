@@ -4,7 +4,10 @@ import {
   getTrainingPeaksWeeklyReportByInternalId,
   updateTrainingPeaksWeeklyReportStateByInternalId,
 } from "@/features/trainingpeaks/service";
-import type { TrainingPeaksWeeklyReport } from "@/features/trainingpeaks/repository";
+import {
+  recordTrainingPeaksStudentContactEvent,
+  type TrainingPeaksWeeklyReport,
+} from "@/features/trainingpeaks/repository";
 import {
   getRequiredTrainingPeaksBusinessConnectionId,
   sendTrainingPeaksTelegramBusinessMessage,
@@ -200,6 +203,27 @@ export async function sendTrainingPeaksWeeklyReportToStudent(
       sentToChatId: student.telegramChatId,
       deliveryError: null,
     });
+
+    try {
+      await recordTrainingPeaksStudentContactEvent({
+        studentId: student.id,
+        eventType: "report_sent",
+        source: "admin_report_send",
+        referenceId: claimedReport.id,
+        metadata: {
+          report_id: claimedReport.id,
+          telegram_chat_id: student.telegramChatId,
+          delivered_chunks: deliveredChunks,
+          used_edited_report: Boolean(persistedReport?.editedReportMarkdown?.trim()),
+        },
+      });
+    } catch (contactError) {
+      console.warn("Failed to record TrainingPeaks report_sent contact event", {
+        reportId: claimedReport.id,
+        studentId: student.id,
+        error: contactError,
+      });
+    }
 
     return {
       ok: true,

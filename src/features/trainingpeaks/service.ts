@@ -3,6 +3,7 @@ import {
   approveTrainingPeaksWeeklyReportIfDraft,
   cancelQueuedTrainingPeaksJob,
   countRunningTrainingPeaksJobsUpdatedBefore,
+  countTrainingPeaksSilentStudents as countTrainingPeaksSilentStudentsInRepository,
   claimTrainingPeaksWeeklyReportForSend as claimTrainingPeaksWeeklyReportForSendInRepository,
   createTrainingPeaksAction as createTrainingPeaksActionInRepository,
   createTrainingPeaksActionRun as createTrainingPeaksActionRunInRepository,
@@ -37,6 +38,7 @@ import {
   listTrainingPeaksBusinessChatsByUsername as listTrainingPeaksBusinessChatsByUsernameFromRepository,
   listTrainingPeaksBusinessChatsForTelegramLinking as listTrainingPeaksBusinessChatsForTelegramLinkingFromRepository,
   listRecentTrainingPeaksBusinessChats as listRecentTrainingPeaksBusinessChatsFromRepository,
+  listTrainingPeaksStudentContactStatus as listTrainingPeaksStudentContactStatusFromRepository,
   listTrainingPeaksStudentTelegramLinkCodesByCode,
   listRecentTrainingPeaksJobs,
   listRecentTrainingPeaksActions as listRecentTrainingPeaksActionsFromRepository,
@@ -52,6 +54,7 @@ import {
   listTrainingPeaksHealthMetricsForStudentDateRange,
   markTrainingPeaksStudentTelegramLinkCodeUsed,
   rejectTrainingPeaksAction as rejectTrainingPeaksActionInRepository,
+  recordTrainingPeaksStudentContactEvent,
   requestTrainingPeaksActionExecution as requestTrainingPeaksActionExecutionInRepository,
   cancelTrainingPeaksActionExecution as cancelTrainingPeaksActionExecutionInRepository,
   getTrainingPeaksActionById as getTrainingPeaksActionByIdInRepository,
@@ -70,6 +73,7 @@ import {
   type TrainingPeaksActionWithStudent,
   type TrainingPeaksActionRun,
   type ClaimedTrainingPeaksDryRunAction,
+  type TrainingPeaksStudentContactStatus,
   TrainingPeaksJobConflictError,
   type TrainingPeaksStudentTelegramLinkCode,
   TrainingPeaksTelegramLinkCodeConflictError,
@@ -531,6 +535,37 @@ export type TrainingPeaksHealthSnapshot = {
   lastAttentionDigestCronStatus: string | null;
   runningJobsOlderThanSixHours: number;
 };
+
+async function recordTrainingPeaksCoachActionDecisionContactEvent(
+  result: DecideTrainingPeaksActionResult
+): Promise<void> {
+  if (result.kind === "not_found" || !result.action.studentId) {
+    return;
+  }
+
+  try {
+    await recordTrainingPeaksStudentContactEvent({
+      studentId: result.action.studentId,
+      eventType: "coach_action_decision",
+      source: "admin_action",
+      referenceId: result.action.id,
+      metadata: {
+        action_id: result.action.id,
+        action_type: result.action.actionType,
+        status: result.action.status,
+        decided_by_chat_id: result.action.decidedByChatId,
+        decision_message_id: result.action.decisionMessageId,
+      },
+    });
+  } catch (error) {
+    console.warn("Failed to record TrainingPeaks coach action decision contact event", {
+      actionId: result.action.id,
+      studentId: result.action.studentId,
+      status: result.action.status,
+      error,
+    });
+  }
+}
 
 const TP_ADD_STUDENT_COMMAND_PATTERN = /^\/tp_add_student(?:@\w+)?(?:\s+|$)/;
 const TP_RUN_WEEK_COMMAND_PATTERN = /^\/tp_run_week(?:@\w+)?(?:\s+|$)/;
@@ -2682,6 +2717,23 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     });
   }
 
+  try {
+    const silentStudentsCount = await countTrainingPeaksSilentStudentsInRepository({
+      minimumSilenceDays: 5,
+    });
+    if (silentStudentsCount > 0) {
+      pushUniqueAttentionSignal(fyi, {
+        level: "fyi",
+        studentName: null,
+        reason: `Без активности 5+ дней: ${silentStudentsCount} учеников`,
+      });
+    }
+  } catch (error) {
+    console.warn("Failed to count TrainingPeaks silent students for attention snapshot", {
+      error,
+    });
+  }
+
   const recoveryAlertTargetDate = yesterdayDate;
   const recoveryAlertFromDate = shiftBelgradeIsoDate(recoveryAlertTargetDate, -2);
   const eligibleRecoveryProfiles = await listTrainingPeaksStudentsEligibleForHealthMetrics();
@@ -3026,23 +3078,27 @@ export function formatTrainingPeaksMoveWorkoutActionSummary(
 export async function approveTrainingPeaksAction(
   input: DecideTrainingPeaksActionInput
 ): Promise<DecideTrainingPeaksActionResultSnapshot> {
-  return approveTrainingPeaksActionInRepository({
+  const result = await approveTrainingPeaksActionInRepository({
     actionId: input.actionId,
     decidedByChatId: input.decidedByChatId,
     decidedByUserId: input.decidedByUserId ?? null,
     decisionMessageId: input.decisionMessageId ?? null,
   });
+  await recordTrainingPeaksCoachActionDecisionContactEvent(result);
+  return result;
 }
 
 export async function rejectTrainingPeaksAction(
   input: DecideTrainingPeaksActionInput
 ): Promise<DecideTrainingPeaksActionResultSnapshot> {
-  return rejectTrainingPeaksActionInRepository({
+  const result = await rejectTrainingPeaksActionInRepository({
     actionId: input.actionId,
     decidedByChatId: input.decidedByChatId,
     decidedByUserId: input.decidedByUserId ?? null,
     decisionMessageId: input.decisionMessageId ?? null,
   });
+  await recordTrainingPeaksCoachActionDecisionContactEvent(result);
+  return result;
 }
 
 export async function requestTrainingPeaksActionExecution(input: {
@@ -3147,6 +3203,10 @@ export async function countTrainingPeaksStudentThreadsByStudentIds(
   studentIds: string[]
 ): Promise<Map<string, number>> {
   return countTrainingPeaksStudentThreadsByStudentIdsFromRepository(studentIds);
+}
+
+export async function listTrainingPeaksStudentContactStatus(): Promise<TrainingPeaksStudentContactStatus[]> {
+  return listTrainingPeaksStudentContactStatusFromRepository();
 }
 
 export async function getTrainingPeaksStudentsRegistryWithLatestReportStatus(options?: {
