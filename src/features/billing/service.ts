@@ -1,6 +1,8 @@
 import {
   getBillingImportedPaymentsByExternalHashes,
   getBillingClientById,
+  getBillingImportedPaymentById,
+  getBillingMonthlyPaymentWithClientById,
   insertBillingImportedPayments,
   listBillingClientsByStudentId,
   getBillingMonthlyPaymentForClientMonth,
@@ -9,6 +11,7 @@ import {
   listBillingMonthlyPaymentsForMonth,
   listBillingMonthlyPaymentsWithClientsForMonth,
   updateBillingClientById as updateBillingClientByIdInRepository,
+  updateBillingImportedPaymentById,
   updateBillingMonthlyPaymentById,
 } from "@/features/billing/repository";
 import {
@@ -17,11 +20,15 @@ import {
   type BillingClient,
   type BillingClientUpdateInput,
   type BillingDateInput,
+  type ConfirmImportedPaymentMatchInput,
+  type ConfirmImportedPaymentMatchResult,
+  type IgnoreImportedPaymentInput,
   type ImportBillingPaymentsInput,
   type ImportBillingPaymentsResult,
   type BillingMonthGenerationPreview,
   type BillingMonthInput,
   type BillingMonthStatusRow,
+  type BillingImportedPayment,
   type BillingMonthlyPayment,
   type BuildBillingCsvForMonthResult,
   type EnsureBillingMonthRowsResult,
@@ -575,4 +582,93 @@ export async function importBillingPaymentsFromParsedRows(
     insertedRowCount: insertedRows.length,
     duplicateRowCount,
   };
+}
+
+export async function confirmImportedPaymentMatch(
+  input: ConfirmImportedPaymentMatchInput
+): Promise<ConfirmImportedPaymentMatchResult> {
+  const imported = await getBillingImportedPaymentById(input.importedPaymentId);
+  if (!imported) {
+    throw new Error(`Imported payment ${input.importedPaymentId} not found.`);
+  }
+
+  if (imported.status !== "new") {
+    throw new Error("Этот платёж уже обработан.");
+  }
+
+  const monthly = await getBillingMonthlyPaymentWithClientById(input.monthlyPaymentId);
+  if (!monthly) {
+    throw new Error(`Billing payment ${input.monthlyPaymentId} not found.`);
+  }
+
+  if (monthly.status === "paid") {
+    throw new Error("Этот месяц уже оплачен для данного клиента.");
+  }
+
+  if (monthly.externalPaymentHash) {
+    throw new Error("Этот месячный платёж уже связан с другой импортированной оплатой.");
+  }
+
+  if (imported.currency !== monthly.currency) {
+    throw new Error(
+      `Валюта импортированного платежа (${imported.currency}) не совпадает с валютой месяца (${monthly.currency}).`
+    );
+  }
+
+  const matchedAt = new Date().toISOString();
+  const updatedMonthly = await updateBillingMonthlyPaymentById(monthly.id, {
+    status: "paid",
+    paid_amount: imported.amount,
+    actual_payment_date: imported.paymentDate,
+    source: "email_import",
+    external_payment_hash: imported.externalHash,
+    marked_paid_by: input.actor,
+    updated_by: input.actor,
+  });
+
+  if (!updatedMonthly) {
+    throw new Error(`Billing payment ${monthly.id} disappeared while confirming imported match.`);
+  }
+
+  const updatedImported = await updateBillingImportedPaymentById(imported.id, {
+    status: "matched",
+    matchedMonthlyPaymentId: monthly.id,
+    matchedAt,
+    matchedByCoachChatId: input.actor,
+  });
+
+  if (!updatedImported) {
+    throw new Error(`Imported payment ${imported.id} disappeared while confirming match.`);
+  }
+
+  return {
+    importedPayment: updatedImported,
+    monthlyPayment: {
+      ...updatedMonthly,
+      client: monthly.client,
+    },
+  };
+}
+
+export async function ignoreImportedPayment(input: IgnoreImportedPaymentInput): Promise<BillingImportedPayment> {
+  const imported = await getBillingImportedPaymentById(input.importedPaymentId);
+  if (!imported) {
+    throw new Error(`Imported payment ${input.importedPaymentId} not found.`);
+  }
+
+  if (imported.status !== "new") {
+    throw new Error("Этот платёж уже обработан.");
+  }
+
+  const updated = await updateBillingImportedPaymentById(imported.id, {
+    status: "ignored",
+    matchedByCoachChatId: input.actor,
+    notes: input.notes ?? null,
+  });
+
+  if (!updated) {
+    throw new Error(`Imported payment ${imported.id} disappeared while ignoring.`);
+  }
+
+  return updated;
 }

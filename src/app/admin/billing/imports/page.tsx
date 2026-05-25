@@ -1,0 +1,261 @@
+import Link from "next/link";
+
+import FormActionButton from "@/app/admin/FormActionButton";
+import { confirmImportedPaymentAction, ignoreImportedPaymentAction } from "@/app/admin/billing/actions";
+import {
+  formatBillingAmount,
+  getBillingImportedPaymentStatusLabel,
+  getSingleSearchParam,
+} from "@/app/admin/lib";
+import { getAdminImportedPaymentsOverview } from "@/features/billing/admin";
+import { BILLING_TIME_ZONE, type BillingImportedPaymentReviewStatusFilter } from "@/features/billing/types";
+
+type AdminBillingImportsPageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+
+const STATUS_FILTERS: Array<{ value: BillingImportedPaymentReviewStatusFilter; label: string }> = [
+  { value: "new", label: "Новые" },
+  { value: "matched", label: "Засчитано" },
+  { value: "ignored", label: "Игнорировано" },
+  { value: "all", label: "Все" },
+];
+
+function formatBillingDate(isoDate: string | null): string {
+  if (!isoDate) {
+    return "—";
+  }
+
+  return new Intl.DateTimeFormat("ru-RU", {
+    timeZone: BILLING_TIME_ZONE,
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(new Date(`${isoDate}T12:00:00.000Z`));
+}
+
+function formatBillingMonthLabel(billingMonth: string): string {
+  return billingMonth.slice(0, 7);
+}
+
+function getImportedStatusBadgeClass(status: string): string {
+  switch (status) {
+    case "matched":
+      return "admin-badge-success";
+    case "ignored":
+      return "admin-badge-muted";
+    default:
+      return "admin-badge-warning";
+  }
+}
+
+function buildImportsRedirect(status: BillingImportedPaymentReviewStatusFilter): string {
+  if (status === "new") {
+    return "/admin/billing/imports";
+  }
+
+  const params = new URLSearchParams();
+  params.set("status", status);
+  return `/admin/billing/imports?${params.toString()}`;
+}
+
+function parseStatusFilter(value: string | null): BillingImportedPaymentReviewStatusFilter {
+  if (value === "matched" || value === "ignored" || value === "all") {
+    return value;
+  }
+
+  return "new";
+}
+
+export default async function AdminBillingImportsPage({ searchParams }: AdminBillingImportsPageProps) {
+  const resolvedSearchParams = (await searchParams) ?? {};
+  const statusFilter = parseStatusFilter(getSingleSearchParam(resolvedSearchParams.status));
+  const notice = getSingleSearchParam(resolvedSearchParams.notice);
+  const error = getSingleSearchParam(resolvedSearchParams.error);
+  const overview = await getAdminImportedPaymentsOverview(statusFilter);
+  const redirectTo = buildImportsRedirect(statusFilter);
+
+  return (
+    <section className="admin-section">
+      <div className="admin-section-header">
+        <div>
+          <Link className="admin-backlink" href="/admin/billing">
+            ← К биллингу
+          </Link>
+          <h2>Импорт оплат</h2>
+          <p className="admin-muted">
+            Строки из выписки Т-Банка. Ничего не засчитывается автоматически.
+          </p>
+        </div>
+      </div>
+
+      {(notice || error) && (
+        <div className={`admin-alert ${error ? "admin-alert-error" : "admin-alert-success"}`}>{error ?? notice}</div>
+      )}
+
+      <div className="admin-actions">
+        {STATUS_FILTERS.map((filter) => (
+          <Link
+            key={filter.value}
+            className={`admin-button ${statusFilter === filter.value ? "" : "admin-button-secondary"}`}
+            href={buildImportsRedirect(filter.value)}
+          >
+            {filter.label}
+          </Link>
+        ))}
+      </div>
+
+      <div className="admin-summary-grid">
+        <article className="admin-card admin-summary-card">
+          <span className="admin-summary-label">Новые</span>
+          <strong className="admin-summary-value">{overview.counts.new}</strong>
+        </article>
+        <article className="admin-card admin-summary-card">
+          <span className="admin-summary-label">Засчитано</span>
+          <strong className="admin-summary-value">{overview.counts.matched}</strong>
+        </article>
+        <article className="admin-card admin-summary-card">
+          <span className="admin-summary-label">Игнорировано</span>
+          <strong className="admin-summary-value">{overview.counts.ignored}</strong>
+        </article>
+        <article className="admin-card admin-summary-card">
+          <span className="admin-summary-label">Всего</span>
+          <strong className="admin-summary-value">{overview.counts.total}</strong>
+        </article>
+      </div>
+
+      {overview.rows.length === 0 ? (
+        <article className="admin-card">
+          <p className="admin-muted">
+            Нет строк для просмотра. Для импорта используйте CLI: npm run billing:import-payments.
+          </p>
+        </article>
+      ) : (
+        overview.rows.map((row) => {
+          const { imported, suggestions, matchedMonthlyPayment } = row;
+
+          return (
+            <article key={imported.id} className="admin-card">
+              <div className="admin-section-header">
+                <div className="admin-table-primary">
+                  <strong>{formatBillingDate(imported.paymentDate)}</strong>
+                  <span>{formatBillingAmount(imported.amount, imported.currency)}</span>
+                  <span className="admin-muted">Плательщик: {imported.payerHint ?? "—"}</span>
+                  <span className="admin-muted">Описание: {imported.description ?? "—"}</span>
+                  <span className="admin-muted">Файл: {imported.sourceFileName ?? "—"}</span>
+                </div>
+                <span className={`admin-badge ${getImportedStatusBadgeClass(imported.status)}`}>
+                  {getBillingImportedPaymentStatusLabel(imported.status)}
+                </span>
+              </div>
+
+              {imported.status === "new" && (
+                <div className="admin-form-stack">
+                  {suggestions.length === 0 ? (
+                    <p className="admin-muted">Совпадений не найдено</p>
+                  ) : (
+                    <div className="admin-table-primary">
+                      <strong>Подсказки</strong>
+                      {suggestions.map((suggestion) => (
+                        <form
+                          key={suggestion.monthlyPayment.id}
+                          action={confirmImportedPaymentAction}
+                          className="admin-actions admin-inline-actions"
+                        >
+                          <input type="hidden" name="importedPaymentId" value={imported.id} />
+                          <input type="hidden" name="monthlyPaymentId" value={suggestion.monthlyPayment.id} />
+                          <input type="hidden" name="redirectTo" value={redirectTo} />
+                          <div className="admin-table-primary">
+                            <span>
+                              <strong>{suggestion.monthlyPayment.client.clientName}</strong> ·{" "}
+                              {formatBillingMonthLabel(suggestion.monthlyPayment.billingMonth)} ·{" "}
+                              {formatBillingAmount(
+                                suggestion.monthlyPayment.plannedAmount,
+                                suggestion.monthlyPayment.currency
+                              )}
+                            </span>
+                            <span className="admin-muted">
+                              score {suggestion.score}
+                              {suggestion.reasons.length > 0 ? ` · ${suggestion.reasons.join("; ")}` : ""}
+                            </span>
+                          </div>
+                          <FormActionButton
+                            className="admin-button admin-button-secondary"
+                            pendingText="Засчитывание..."
+                            confirmMessage="Засчитать импортированный платёж для выбранного клиента и месяца?"
+                          >
+                            Засчитать
+                          </FormActionButton>
+                        </form>
+                      ))}
+                    </div>
+                  )}
+
+                  <form action={confirmImportedPaymentAction} className="admin-form-stack">
+                    <input type="hidden" name="importedPaymentId" value={imported.id} />
+                    <input type="hidden" name="redirectTo" value={redirectTo} />
+                    <label className="admin-field">
+                      <span>Засчитать вручную</span>
+                      <select className="admin-input" name="monthlyPaymentId" defaultValue="" required>
+                        <option value="" disabled>
+                          Выбери месячный платёж
+                        </option>
+                        {overview.candidates.map((candidate) => (
+                          <option key={candidate.id} value={candidate.id}>
+                            {candidate.client.clientName} — {formatBillingMonthLabel(candidate.billingMonth)} —{" "}
+                            {formatBillingAmount(candidate.plannedAmount, candidate.currency)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <FormActionButton
+                      className="admin-button"
+                      pendingText="Засчитывание..."
+                      confirmMessage="Засчитать импортированный платёж для выбранного клиента и месяца?"
+                    >
+                      Засчитать вручную
+                    </FormActionButton>
+                  </form>
+
+                  <form action={ignoreImportedPaymentAction} className="admin-actions admin-inline-actions">
+                    <input type="hidden" name="importedPaymentId" value={imported.id} />
+                    <input type="hidden" name="redirectTo" value={redirectTo} />
+                    <FormActionButton
+                      className="admin-button admin-button-secondary"
+                      pendingText="Игнорирование..."
+                      confirmMessage="Игнорировать эту строку импорта?"
+                    >
+                      Игнорировать
+                    </FormActionButton>
+                  </form>
+                </div>
+              )}
+
+              {imported.status === "matched" && (
+                <div className="admin-table-primary">
+                  <span className={`admin-badge ${getImportedStatusBadgeClass(imported.status)}`}>Засчитано</span>
+                  {matchedMonthlyPayment ? (
+                    <span className="admin-muted">
+                      {matchedMonthlyPayment.client.clientName} ·{" "}
+                      {formatBillingMonthLabel(matchedMonthlyPayment.billingMonth)} ·{" "}
+                      {formatBillingAmount(matchedMonthlyPayment.plannedAmount, matchedMonthlyPayment.currency)}
+                    </span>
+                  ) : (
+                    <span className="admin-muted">Связанный месячный платёж недоступен.</span>
+                  )}
+                </div>
+              )}
+
+              {imported.status === "ignored" && (
+                <div className="admin-table-primary">
+                  <span className={`admin-badge ${getImportedStatusBadgeClass(imported.status)}`}>Игнорировано</span>
+                  {imported.notes && <span className="admin-muted">{imported.notes}</span>}
+                </div>
+              )}
+            </article>
+          );
+        })
+      )}
+    </section>
+  );
+}

@@ -91,6 +91,9 @@ export default async function AdminBillingPage({ searchParams }: AdminBillingPag
           </p>
         </div>
         <div className="admin-actions">
+          <Link className="admin-button admin-button-secondary" href="/admin/billing/imports">
+            Импорт оплат
+          </Link>
           <Link className="admin-button admin-button-secondary" href="/admin/billing/matching">
             Связка клиентов
           </Link>

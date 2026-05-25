@@ -235,3 +235,54 @@ export type BuildBillingCsvForMonthResult = {
   rowCount: number;
   content: string;
 };
+
+export type BillingImportedPaymentReviewStatusFilter = BillingImportedPaymentStatus | "all";
+
+export type BillingImportedPaymentUpdateInput = Partial<{
+  status: BillingImportedPaymentStatus;
+  matchedMonthlyPaymentId: string | null;
+  matchedAt: string | null;
+  matchedByCoachChatId: string | null;
+  notes: string | null;
+}>;
+
+export type ImportedPaymentSuggestion = {
+  monthlyPayment: BillingMonthlyPaymentWithClient;
+  score: number;
+  reasons: string[];
+};
+
+export type ImportedPaymentReviewRow = {
+  imported: BillingImportedPayment;
+  suggestions: ImportedPaymentSuggestion[];
+  matchedMonthlyPayment: BillingMonthlyPaymentWithClient | null;
+};
+
+export type AdminImportedPaymentsOverview = {
+  statusFilter: BillingImportedPaymentReviewStatusFilter;
+  counts: {
+    new: number;
+    matched: number;
+    ignored: number;
+    total: number;
+  };
+  rows: ImportedPaymentReviewRow[];
+  candidates: BillingMonthlyPaymentWithClient[];
+};
+
+export type ConfirmImportedPaymentMatchInput = {
+  importedPaymentId: string;
+  monthlyPaymentId: string;
+  actor: string;
+};
+
+export type ConfirmImportedPaymentMatchResult = {
+  importedPayment: BillingImportedPayment;
+  monthlyPayment: BillingMonthlyPaymentWithClient;
+};
+
+export type IgnoreImportedPaymentInput = {
+  importedPaymentId: string;
+  actor: string;
+  notes?: string | null;
+};

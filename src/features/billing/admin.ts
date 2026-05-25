@@ -1,12 +1,25 @@
 import {
   getBillingClientById,
   getBillingClientByStudentId,
+  getBillingMonthlyPaymentWithClientById,
   listActiveBillingClients,
   listBillingClientsByStudentId,
   listBillingClientsIncludingInactive,
+  listBillingImportedPayments,
   listBillingMonthlyPaymentsForClient,
+  listUnpaidBillingMonthlyPaymentsWithClients,
 } from "@/features/billing/repository";
-import { BILLING_TIME_ZONE, type BillingClient, type BillingMonthStatusRow } from "@/features/billing/types";
+import {
+  BILLING_TIME_ZONE,
+  type AdminImportedPaymentsOverview,
+  type BillingClient,
+  type BillingImportedPayment,
+  type BillingImportedPaymentReviewStatusFilter,
+  type BillingMonthlyPaymentWithClient,
+  type BillingMonthStatusRow,
+  type ImportedPaymentReviewRow,
+  type ImportedPaymentSuggestion,
+} from "@/features/billing/types";
 import { getCurrentBelgradeDateIso, listBillingMonthStatus, resolveBillingMonth } from "@/features/billing/service";
 import { listTrainingPeaksAdminStudents, type TrainingPeaksAdminStudentRecord } from "@/features/trainingpeaks/admin";
 
@@ -249,4 +262,160 @@ export async function listUnlinkedBillingClientsWithSuggestions(): Promise<Unlin
       .sort((left, right) => right.score - left.score)
       .slice(0, 3),
   }));
+}
+
+function parseBillingIsoDate(value: string): Date {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    throw new Error(`Invalid billing ISO date: ${value}`);
+  }
+
+  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12, 0, 0));
+}
+
+function getDaysBetween(leftIso: string, rightIso: string): number {
+  const diffMs = Math.abs(parseBillingIsoDate(leftIso).getTime() - parseBillingIsoDate(rightIso).getTime());
+  return Math.floor(diffMs / 86400000);
+}
+
+function getBillingMonthEndIso(billingMonth: string): string {
+  const date = parseBillingIsoDate(billingMonth);
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0, 12, 0, 0)).toISOString().slice(0, 10);
+}
+
+function isPaymentDateWithinBillingMonth(paymentDate: string, billingMonth: string): boolean {
+  const monthEnd = getBillingMonthEndIso(billingMonth);
+  return paymentDate >= billingMonth && paymentDate <= monthEnd;
+}
+
+function buildImportedPaymentSuggestion(
+  imported: BillingImportedPayment,
+  candidate: BillingMonthlyPaymentWithClient
+): ImportedPaymentSuggestion | null {
+  if (imported.currency !== candidate.currency) {
+    return null;
+  }
+
+  let score = 0;
+  const reasons: string[] = [];
+
+  score += 10;
+  reasons.push("валюта совпадает");
+
+  if (imported.amount === candidate.plannedAmount) {
+    score += 50;
+    reasons.push("точная сумма");
+  } else {
+    const tolerance = Math.max(Math.round(candidate.plannedAmount * 0.05), 100);
+    if (Math.abs(imported.amount - candidate.plannedAmount) <= tolerance) {
+      score += 20;
+      reasons.push("сумма близка");
+    }
+  }
+
+  const dayDiff = getDaysBetween(imported.paymentDate, candidate.plannedPaymentDate);
+  if (dayDiff <= 5) {
+    score += 30;
+    reasons.push("дата в пределах 5 дней от плана");
+  } else if (dayDiff <= 15) {
+    score += 15;
+    reasons.push("дата в пределах 6–15 дней от плана");
+  }
+
+  if (isPaymentDateWithinBillingMonth(imported.paymentDate, candidate.billingMonth)) {
+    score += 5;
+    reasons.push("дата внутри месяца биллинга");
+  }
+
+  const payerNormalized = normalizeNamePart(imported.payerHint);
+  const clientNormalized = normalizeNamePart(candidate.client.clientName);
+  const payerTokens = tokenizeName(imported.payerHint);
+  const clientTokens = tokenizeName(candidate.client.clientName);
+
+  if (payerNormalized && clientNormalized && payerNormalized === clientNormalized) {
+    score += 40;
+    reasons.push("полное совпадение имени плательщика");
+  } else {
+    const sharedTokens = payerTokens.filter((token) => clientTokens.includes(token));
+    if (sharedTokens.length > 0) {
+      score += sharedTokens.length * 15;
+      reasons.push(`общие части имени: ${sharedTokens.join(", ")}`);
+    }
+
+    if (
+      payerNormalized &&
+      clientNormalized &&
+      (payerNormalized.includes(clientNormalized) || clientNormalized.includes(payerNormalized))
+    ) {
+      score += 10;
+      reasons.push("имя плательщика частично совпадает");
+    }
+  }
+
+  if (candidate.client.paymentMethod.startsWith("tbank_")) {
+    score += 5;
+    reasons.push("метод оплаты T-Банк");
+  }
+
+  if (score < 25) {
+    return null;
+  }
+
+  return {
+    monthlyPayment: candidate,
+    score,
+    reasons,
+  };
+}
+
+function buildImportedPaymentSuggestions(
+  imported: BillingImportedPayment,
+  candidates: BillingMonthlyPaymentWithClient[]
+): ImportedPaymentSuggestion[] {
+  return candidates
+    .map((candidate) => buildImportedPaymentSuggestion(imported, candidate))
+    .filter((suggestion): suggestion is ImportedPaymentSuggestion => suggestion !== null)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 3);
+}
+
+export async function getAdminImportedPaymentsOverview(
+  statusFilter: BillingImportedPaymentReviewStatusFilter = "new"
+): Promise<AdminImportedPaymentsOverview> {
+  const [allImported, filteredImported, candidates] = await Promise.all([
+    listBillingImportedPayments(),
+    statusFilter === "all" ? listBillingImportedPayments() : listBillingImportedPayments({ status: statusFilter }),
+    listUnpaidBillingMonthlyPaymentsWithClients(),
+  ]);
+
+  const counts = {
+    new: allImported.filter((row) => row.status === "new").length,
+    matched: allImported.filter((row) => row.status === "matched").length,
+    ignored: allImported.filter((row) => row.status === "ignored").length,
+    total: allImported.length,
+  };
+
+  const matchedMonthlyIds = filteredImported
+    .flatMap((row) => (row.matchedMonthlyPaymentId ? [row.matchedMonthlyPaymentId] : []));
+  const matchedMonthlyPayments = await Promise.all(
+    matchedMonthlyIds.map((id) => getBillingMonthlyPaymentWithClientById(id))
+  );
+  const matchedMonthlyById = new Map(
+    matchedMonthlyPayments.flatMap((payment) => (payment ? [[payment.id, payment] as const] : []))
+  );
+
+  const rows: ImportedPaymentReviewRow[] = filteredImported.map((imported) => ({
+    imported,
+    suggestions: imported.status === "new" ? buildImportedPaymentSuggestions(imported, candidates) : [],
+    matchedMonthlyPayment: imported.matchedMonthlyPaymentId
+      ? matchedMonthlyById.get(imported.matchedMonthlyPaymentId) ?? null
+      : null,
+  }));
+
+  return {
+    statusFilter,
+    counts,
+    rows,
+    candidates,
+  };
 }
