@@ -464,6 +464,10 @@ export async function linkBillingClientToStudent(
     throw new Error(`Billing client ${billingClientId} not found.`);
   }
 
+  if (client.studentId && client.studentId !== studentId) {
+    throw new Error("Клиент уже привязан к другому ученику. Сначала отвяжи текущую связь.");
+  }
+
   const existingClients = await listBillingClientsByStudentId(studentId);
   const conflictingClient = existingClients.find((existingClient) => existingClient.id !== billingClientId) ?? null;
   if (conflictingClient) {

@@ -3,6 +3,7 @@ import {
   getBillingClientByStudentId,
   listActiveBillingClients,
   listBillingClientsByStudentId,
+  listBillingClientsIncludingInactive,
   listBillingMonthlyPaymentsForClient,
 } from "@/features/billing/repository";
 import { BILLING_TIME_ZONE, type BillingClient, type BillingMonthStatusRow } from "@/features/billing/types";
@@ -132,6 +133,19 @@ export async function listBillingActiveStudentsForManualLink(): Promise<Training
   return students.filter((student) => student.isActive);
 }
 
+export async function listBillingAvailableStudentsForManualLink(): Promise<TrainingPeaksAdminStudentRecord[]> {
+  const [students, billingClients] = await Promise.all([
+    listBillingActiveStudentsForManualLink(),
+    listBillingClientsIncludingInactive(),
+  ]);
+
+  const linkedStudentIds = new Set(
+    billingClients.flatMap((client) => (client.studentId ? [client.studentId] : []))
+  );
+
+  return students.filter((student) => !linkedStudentIds.has(student.id));
+}
+
 export async function getAdminBillingMonthOverview(month?: string): Promise<AdminBillingMonthOverview> {
   const billingMonth = month ? resolveBillingMonth(month) : getCurrentBelgradeMonth();
   const [rows, activeClients] = await Promise.all([
@@ -224,7 +238,7 @@ export async function listUnlinkedBillingClients(): Promise<BillingClient[]> {
 export async function listUnlinkedBillingClientsWithSuggestions(): Promise<UnlinkedBillingClientMatchRecord[]> {
   const [clients, students] = await Promise.all([
     listUnlinkedBillingClients(),
-    listBillingActiveStudentsForManualLink(),
+    listBillingAvailableStudentsForManualLink(),
   ]);
 
   return clients.map((client) => ({
