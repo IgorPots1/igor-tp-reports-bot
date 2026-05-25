@@ -8,6 +8,8 @@ export const TRUSTED_MOVE_SOURCE_POLICIES = new Set([
 
 export const STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY = "strong_future_descriptor_match";
 
+export const STRONG_FUTURE_DESCRIPTOR_EXECUTION_CONFIDENCE_THRESHOLD = 0.7;
+
 export const EXECUTABLE_MOVE_SOURCE_POLICIES = new Set([
   ...TRUSTED_MOVE_SOURCE_POLICIES,
   STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY,
@@ -158,6 +160,83 @@ export function extractMoveSourceExecutionContextFromDryRunLog(logJson: unknown)
   };
 }
 
+function isLiveStrongFutureDescriptorProvenanceMissingOrIncomplete(
+  input: ValidateStrongFutureDescriptorMoveSourceInput
+): boolean {
+  const provenance = input.sourceInferenceProvenance;
+  if (!provenance || typeof provenance !== "object") {
+    return true;
+  }
+
+  if (provenance.sourceInferencePolicy !== STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY) {
+    return true;
+  }
+  if (provenance.descriptorType !== "interval") {
+    return true;
+  }
+  if (provenance.candidateCount !== 1) {
+    return true;
+  }
+
+  const provenanceAlternativesCount = provenance.candidateAlternativesCount;
+  if (
+    typeof provenanceAlternativesCount === "number" &&
+    Number.isFinite(provenanceAlternativesCount) &&
+    provenanceAlternativesCount !== 0
+  ) {
+    return true;
+  }
+
+  const sourceDate = trimOrNull(input.resolvedSourceDate);
+  const fingerprint = trimOrNull(input.candidateFingerprint);
+  const candidateTitle = trimOrNull(input.candidateTitle);
+  const provenanceCandidate = provenance.candidate;
+  if (!provenanceCandidate || typeof provenanceCandidate !== "object") {
+    return true;
+  }
+
+  const provenanceCandidateDate = trimOrNull(provenanceCandidate.date);
+  if (!sourceDate || provenanceCandidateDate !== sourceDate) {
+    return true;
+  }
+
+  const provenanceCandidateTitle = trimOrNull(provenanceCandidate.title);
+  const intervalTitle = provenanceCandidateTitle ?? candidateTitle;
+  if (!intervalTitle || !hasIntervalDescriptorPattern(intervalTitle)) {
+    return true;
+  }
+
+  const provenanceFingerprint = trimOrNull(provenanceCandidate.fingerprint);
+  if (!provenanceFingerprint && !provenanceCandidateTitle) {
+    return true;
+  }
+  if (provenanceFingerprint && fingerprint && provenanceFingerprint !== fingerprint) {
+    return true;
+  }
+
+  return false;
+}
+
+export function getStrongFutureDescriptorExecutionConfidence(
+  input: ValidateStrongFutureDescriptorMoveSourceInput
+): number | null {
+  const provenanceScore = toNumericConfidence(input.sourceInferenceProvenance?.score);
+  if (provenanceScore !== null) {
+    return provenanceScore;
+  }
+  return toNumericConfidence(input.confidence);
+}
+
+export function isStrongFutureDescriptorLiveProvenanceComplete(
+  input: ValidateStrongFutureDescriptorMoveSourceInput
+): boolean {
+  if (input.selectedSourceDatePolicy !== STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY) {
+    return false;
+  }
+
+  return validateStrongFutureDescriptorMoveSourceForExecution(input).ok;
+}
+
 export function validateStrongFutureDescriptorMoveSourceForExecution(
   input: ValidateStrongFutureDescriptorMoveSourceInput
 ): { ok: true } | { ok: false; reason: string } {
@@ -165,7 +244,10 @@ export function validateStrongFutureDescriptorMoveSourceForExecution(
     return { ok: false, reason: "Move source policy is not strong_future_descriptor_match." };
   }
 
-  if (hasUntrustedMoveSourceInferencePreview(input.parsedPayload)) {
+  if (
+    hasUntrustedMoveSourceInferencePreview(input.parsedPayload) &&
+    isLiveStrongFutureDescriptorProvenanceMissingOrIncomplete(input)
+  ) {
     return { ok: false, reason: "Cache preview alone cannot make execution trusted." };
   }
 
@@ -242,9 +324,15 @@ export function validateStrongFutureDescriptorMoveSourceForExecution(
     return { ok: false, reason: "Provenance candidate fingerprint mismatch." };
   }
 
-  const confidence = toNumericConfidence(input.confidence);
-  if (confidence === null || confidence < 0.8) {
-    return { ok: false, reason: "Dry-run confidence is below 0.8." };
+  const executionConfidence = getStrongFutureDescriptorExecutionConfidence(input);
+  if (
+    executionConfidence === null ||
+    executionConfidence < STRONG_FUTURE_DESCRIPTOR_EXECUTION_CONFIDENCE_THRESHOLD
+  ) {
+    return {
+      ok: false,
+      reason: `Dry-run confidence is below ${STRONG_FUTURE_DESCRIPTOR_EXECUTION_CONFIDENCE_THRESHOLD}.`,
+    };
   }
 
   if (input.identityMatchedBy === "mismatch") {
@@ -280,6 +368,9 @@ export function validateMoveSourceForExecution(input: {
   if (policy === STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY) {
     const context = input.dryRunLog ? extractMoveSourceExecutionContextFromDryRunLog(input.dryRunLog) : null;
     if (!context) {
+      if (hasUntrustedMoveSourceInferencePreview(input.parsedPayload)) {
+        return { ok: false, reason: "Cache preview alone cannot make execution trusted." };
+      }
       return { ok: false, reason: "Strong inferred move source dry-run provenance is incomplete." };
     }
     return validateStrongFutureDescriptorMoveSourceForExecution({

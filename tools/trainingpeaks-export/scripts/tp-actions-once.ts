@@ -6278,6 +6278,36 @@ function evaluateDryRunOutcome(input: {
   let dryRunResult: DryRunResult = "candidate_found";
   const reasons: string[] = [];
 
+  const strongFutureExecutionContext =
+    selectedSourceDatePolicy === moveSourcePolicy.STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY
+      ? {
+          selectedSourceDatePolicy,
+          parsedPayload: input.action.parsed_payload,
+          resolvedSourceDate: sourceDate,
+          resolvedTargetDate: targetDate,
+          candidateFingerprint: candidate.fingerprint,
+          candidateTitle: candidate.title,
+          candidateType: candidate.type,
+          sourceInferenceProvenance,
+          confidence,
+          identityMatchedBy: input.identityCheck.matchedBy,
+          candidateAlternativesCount: alternativesCount,
+        }
+      : null;
+  const strongFutureStructurallyConfirmed =
+    strongFutureExecutionContext !== null &&
+    moveSourcePolicy.validateStrongFutureDescriptorMoveSourceForExecution(strongFutureExecutionContext).ok;
+  const executionConfidence =
+    strongFutureStructurallyConfirmed &&
+    typeof sourceInferenceProvenance?.score === "number" &&
+    Number.isFinite(sourceInferenceProvenance.score)
+      ? sourceInferenceProvenance.score
+      : confidence;
+  const executionConfidenceThreshold = strongFutureStructurallyConfirmed
+    ? moveSourcePolicy.STRONG_FUTURE_DESCRIPTOR_EXECUTION_CONFIDENCE_THRESHOLD
+    : 0.8;
+  const effectiveSafeCandidateCount = strongFutureStructurallyConfirmed ? 1 : safeCandidates.length;
+
   if (input.candidates.length > 1 && second && Math.abs(top.rawScore - second.rawScore) < 0.12) {
     dryRunResult = "ambiguous";
     reasons.push("top candidate margin too small");
@@ -6295,11 +6325,15 @@ function evaluateDryRunOutcome(input: {
   if (!candidate.fingerprint) {
     reasons.push("candidate fingerprint missing");
   }
-  if (confidence < 0.8) {
-    reasons.push("confidence below threshold 0.8");
+  if (executionConfidence < executionConfidenceThreshold) {
+    reasons.push(`confidence below threshold ${executionConfidenceThreshold}`);
   }
-  if (safeCandidates.length !== 1) {
-    reasons.push("multiple candidates on selected source date");
+  if (effectiveSafeCandidateCount !== 1) {
+    if (safeCandidates.length === 0) {
+      reasons.push("no candidate meets safe score threshold");
+    } else {
+      reasons.push("multiple candidates on selected source date");
+    }
   }
   if (second && top.rawScore - second.rawScore < 0.12) {
     reasons.push("top candidate margin too small");
@@ -6340,11 +6374,11 @@ function evaluateDryRunOutcome(input: {
 
   const canExecute =
     dryRunResult === "candidate_found" &&
-    safeCandidates.length === 1 &&
+    effectiveSafeCandidateCount === 1 &&
     Boolean(targetDate) &&
     Boolean(selectedSourceDate) &&
     Boolean(candidate.fingerprint) &&
-    confidence >= 0.8 &&
+    executionConfidence >= executionConfidenceThreshold &&
     input.identityCheck.matchedBy !== "mismatch" &&
     moveSourceTrustedForExecution;
 
@@ -6575,8 +6609,35 @@ function buildRevalidationComparison(input: {
   if (!input.current.canExecute) {
     mismatchReasons.push("current revalidation marked action unsafe");
   }
-  if (input.current.confidence < 0.8) {
-    mismatchReasons.push(`current confidence below threshold: ${input.current.confidence.toFixed(2)}`);
+  const strongFutureRevalidationTrusted =
+    input.trusted.selectedSourceDatePolicy === moveSourcePolicy.STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY &&
+    moveSourcePolicy.validateMoveSourceForExecution({
+      selectedSourceDatePolicy: input.current.selectedSourceDatePolicy,
+      parsedPayload: input.parsedPayload ?? null,
+      dryRunLog: {
+        dryRunResult: input.current.dryRunResult,
+        resolvedDates: input.current.resolvedDates,
+        candidate: input.current.candidate,
+        confidence: input.current.confidence,
+        identityCheck: input.current.identityCheck,
+        candidateAlternativesCount: input.current.candidateAlternativesCount,
+        sourceInferenceProvenance: input.current.sourceInferenceProvenance ?? null,
+        selectedSourceDatePolicy: input.current.selectedSourceDatePolicy,
+      },
+    }).ok;
+  const currentExecutionConfidence =
+    strongFutureRevalidationTrusted &&
+    typeof input.current.sourceInferenceProvenance?.score === "number" &&
+    Number.isFinite(input.current.sourceInferenceProvenance.score)
+      ? input.current.sourceInferenceProvenance.score
+      : input.current.confidence;
+  const currentExecutionConfidenceThreshold = strongFutureRevalidationTrusted
+    ? moveSourcePolicy.STRONG_FUTURE_DESCRIPTOR_EXECUTION_CONFIDENCE_THRESHOLD
+    : 0.8;
+  if (currentExecutionConfidence < currentExecutionConfidenceThreshold) {
+    mismatchReasons.push(
+      `current confidence below threshold: ${currentExecutionConfidence.toFixed(2)}`
+    );
   }
   if (input.current.candidateAlternativesCount > 0) {
     mismatchReasons.push(`current evaluation ambiguous: alternatives=${input.current.candidateAlternativesCount}`);

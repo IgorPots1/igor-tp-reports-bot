@@ -108,15 +108,25 @@ const legacyCacheMasqueradePayload = {
   source_date: "2026-05-28",
 };
 
+const viktoriaProductionPayload = {
+  ...viktoriaLikePayload,
+  sourceInferencePreview: cachePreviewPayload.sourceInferencePreview,
+  sourceInference: cachePreviewPayload.sourceInference,
+};
+
 function buildViktoriaStrongDryRunLog(input: {
   fingerprint: string;
   canExecute: boolean;
   selectedSourceDatePolicy?: string;
+  confidence?: number;
+  provenanceScore?: number;
 }): Record<string, unknown> {
+  const confidence = input.confidence ?? 0.91;
+  const provenanceScore = input.provenanceScore ?? confidence;
   return {
     dryRunResult: "candidate_found",
     canExecute: input.canExecute,
-    confidence: 0.91,
+    confidence,
     candidate: { fingerprint: input.fingerprint, title: "6 × 6 мин", type: "run" },
     resolvedDates: { sourceDate: "2026-05-28", targetDate: "2026-05-26" },
     selectedSourceDatePolicy: input.selectedSourceDatePolicy ?? STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY,
@@ -136,7 +146,7 @@ function buildViktoriaStrongDryRunLog(input: {
       },
       candidateCount: 1,
       candidateAlternativesCount: 0,
-      score: 0.91,
+      score: provenanceScore,
       margin: null,
       warnings: ["target day already has workout", "hard workout moved earlier", "week may need manual adjustment"],
     },
@@ -157,11 +167,15 @@ function simulateCanExecute(input: {
     parsedPayload: input.parsedPayload,
     dryRunLog: input.dryRunLog,
   });
+  const strongFutureConfirmed =
+    input.selectedSourceDatePolicy === STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY && moveSourceValidation.ok;
+  const confidenceThreshold = strongFutureConfirmed ? 0.7 : 0.8;
+  const safeCandidateCount = strongFutureConfirmed ? 1 : input.safeCandidateCount;
 
   return (
     input.dryRunResult === "candidate_found" &&
-    input.safeCandidateCount === 1 &&
-    input.confidence >= 0.8 &&
+    safeCandidateCount === 1 &&
+    input.confidence >= confidenceThreshold &&
     input.identityMatchedBy !== "mismatch" &&
     moveSourceValidation.ok
   );
@@ -429,6 +443,52 @@ async function run(): Promise<void> {
     if (incompleteValidation.ok) {
       failed += 1;
       console.log("FAIL: incomplete strong provenance must fail closed");
+    }
+
+    const viktoriaProductionDryRunLog = buildViktoriaStrongDryRunLog({
+      fingerprint,
+      canExecute: true,
+      confidence: 0.73,
+      provenanceScore: 0.73,
+    });
+    const viktoriaProductionValidation = validateMoveSourceForExecution({
+      selectedSourceDatePolicy: STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY,
+      parsedPayload: viktoriaProductionPayload,
+      dryRunLog: viktoriaProductionDryRunLog,
+    });
+    if (!viktoriaProductionValidation.ok) {
+      failed += 1;
+      console.log(
+        `FAIL: production-shaped Viktoria payload with live provenance must pass (${viktoriaProductionValidation.reason})`
+      );
+    }
+
+    const viktoriaProductionCanExecute = simulateCanExecute({
+      dryRunResult: "candidate_found",
+      selectedSourceDatePolicy: STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY,
+      parsedPayload: viktoriaProductionPayload,
+      confidence: 0.73,
+      safeCandidateCount: 0,
+      identityMatchedBy: "name",
+      dryRunLog: viktoriaProductionDryRunLog,
+    });
+    if (!viktoriaProductionCanExecute) {
+      failed += 1;
+      console.log("FAIL: production-shaped Viktoria payload must allow canExecute with score 0.73");
+    }
+
+    const cachePreviewOnlyValidation = validateMoveSourceForExecution({
+      selectedSourceDatePolicy: STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY,
+      parsedPayload: viktoriaProductionPayload,
+    });
+    if (cachePreviewOnlyValidation.ok) {
+      failed += 1;
+      console.log("FAIL: cache preview alone without live provenance must stay blocked");
+    } else if (cachePreviewOnlyValidation.reason !== "Cache preview alone cannot make execution trusted.") {
+      failed += 1;
+      console.log(
+        `FAIL: cache preview alone must fail with cache preview reason, got ${JSON.stringify(cachePreviewOnlyValidation.reason)}`
+      );
     }
   }
 
