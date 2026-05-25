@@ -33,6 +33,7 @@
     "tp-custom-metrics-profile-sync": "tsx scripts/tp-custom-metrics-profile-sync.ts",
     "tp-health-metrics-scan": "tsx scripts/tp-health-metrics-scan.ts",
     "tp-health-metrics-cache-report": "tsx scripts/tp-health-metrics-cache-report.ts",
+    "check-trainingpeaks-move-source-policy-import": "tsx scripts/check-trainingpeaks-move-source-policy-import.ts",
     "check-trainingpeaks-recovery-summary": "tsx scripts/check-trainingpeaks-recovery-summary.ts",
     "check-trainingpeaks-coach-notes": "tsx scripts/check-trainingpeaks-coach-notes.ts",
     "check-trainingpeaks-custom-metrics-normalization": "tsx scripts/check-trainingpeaks-custom-metrics-normalization.ts",

@@ -21,12 +21,9 @@ import {
   redactUnknown,
   verifyWorkoutMoved,
 } from "./lib/trainingpeaks-api-move.ts";
-import {
-  INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU,
-  INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON,
-  isMoveSourceExplicitEnough,
-  validateMoveSourceForExecution,
-} from "../../../src/features/trainingpeaks/move-source-policy.ts";
+import * as moveSourcePolicyNamespace from "../../../src/features/trainingpeaks/move-source-policy.ts";
+
+const moveSourcePolicy = moveSourcePolicyNamespace.default ?? moveSourcePolicyNamespace;
 
 type ActionExecutionStatus =
   | "not_started"
@@ -1970,7 +1967,7 @@ async function notifyCoachDryRunResult(input: {
   const lines: string[] = [];
 
   const inferredSourceBlocked =
-    evaluation?.canExecuteReasons.includes(INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON) === true;
+    evaluation?.canExecuteReasons.includes(moveSourcePolicy.INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON) === true;
 
   if (
     evaluation &&
@@ -1986,7 +1983,7 @@ async function notifyCoachDryRunResult(input: {
     inferredSourceBlocked
   ) {
     lines.push(`⚠️ Проверка нашла кандидата. ${input.studentName}: ${route}.`);
-    lines.push(INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU);
+    lines.push(moveSourcePolicy.INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU);
     lines.push("TrainingPeaks не изменён. Проверь заявку в /tp_actions.");
   } else {
     lines.push(
@@ -6168,12 +6165,12 @@ function evaluateDryRunOutcome(input: {
     reasons.push(...input.identityCheck.warnings);
   }
 
-  const moveSourceExplicitEnough = isMoveSourceExplicitEnough({
+  const moveSourceExplicitEnough = moveSourcePolicy.isMoveSourceExplicitEnough({
     selectedSourceDatePolicy,
     parsedPayload: input.action.parsed_payload,
   });
   if (!moveSourceExplicitEnough) {
-    reasons.push(INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON);
+    reasons.push(moveSourcePolicy.INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON);
   }
 
   const canExecute =
@@ -6291,7 +6288,7 @@ function normalizeTrustedDryRunLog(logJson: unknown, parsedPayload?: unknown): T
 
   const selectedSourceDatePolicy =
     typeof payload.selectedSourceDatePolicy === "string" ? payload.selectedSourceDatePolicy : null;
-  const moveSourceValidation = validateMoveSourceForExecution({
+  const moveSourceValidation = moveSourcePolicy.validateMoveSourceForExecution({
     selectedSourceDatePolicy,
     parsedPayload: parsedPayload ?? null,
   });

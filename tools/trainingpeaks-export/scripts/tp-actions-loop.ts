@@ -3,10 +3,9 @@ import { createClient } from "@supabase/supabase-js";
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import {
-  getSelectedSourceDatePolicyFromDryRunLog,
-  validateMoveSourceForExecution,
-} from "../../../src/features/trainingpeaks/move-source-policy.ts";
+import * as moveSourcePolicyNamespace from "../../../src/features/trainingpeaks/move-source-policy.ts";
+
+const moveSourcePolicy = moveSourcePolicyNamespace.default ?? moveSourcePolicyNamespace;
 
 type LoopOptions = {
   intervalSeconds: number;
@@ -363,8 +362,8 @@ function inspectTrustedDryRunLog(
     };
   }
 
-  const moveSourceValidation = validateMoveSourceForExecution({
-    selectedSourceDatePolicy: getSelectedSourceDatePolicyFromDryRunLog(logJson),
+  const moveSourceValidation = moveSourcePolicy.validateMoveSourceForExecution({
+    selectedSourceDatePolicy: moveSourcePolicy.getSelectedSourceDatePolicyFromDryRunLog(logJson),
     parsedPayload: parsedPayload ?? null,
   });
   if (!moveSourceValidation.ok) {
