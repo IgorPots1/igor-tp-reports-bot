@@ -5,6 +5,7 @@ import type {
   BillingImportedPayment,
   BillingImportedPaymentRawRow,
   BillingImportedPaymentStatus,
+  BillingImportedPaymentUpdateInput,
   BillingClientUpdateInput,
   BillingMonthlyPayment,
   BillingMonthlyPaymentWithClient,
@@ -127,6 +128,14 @@ type InsertBillingImportedPaymentRow = {
   source_file_name: string | null;
   email_message_id: null;
 };
+
+type UpdateBillingImportedPaymentRow = Partial<{
+  status: BillingImportedPaymentStatus;
+  matched_monthly_payment_id: string | null;
+  matched_at: string | null;
+  matched_by_coach_chat_id: string | null;
+  notes: string | null;
+}>;
 
 function mapBillingClientRow(row: BillingClientRow): BillingClient {
   return {
@@ -519,4 +528,156 @@ export async function insertBillingImportedPayments(
   }
 
   return ((data as BillingImportedPaymentRow[]) ?? []).map(mapBillingImportedPaymentRow);
+}
+
+function mapBillingImportedPaymentUpdateInput(
+  patch: BillingImportedPaymentUpdateInput
+): UpdateBillingImportedPaymentRow {
+  const rowPatch: UpdateBillingImportedPaymentRow = {};
+
+  if ("status" in patch) {
+    rowPatch.status = patch.status;
+  }
+  if ("matchedMonthlyPaymentId" in patch) {
+    rowPatch.matched_monthly_payment_id = patch.matchedMonthlyPaymentId ?? null;
+  }
+  if ("matchedAt" in patch) {
+    rowPatch.matched_at = patch.matchedAt ?? null;
+  }
+  if ("matchedByCoachChatId" in patch) {
+    rowPatch.matched_by_coach_chat_id = patch.matchedByCoachChatId ?? null;
+  }
+  if ("notes" in patch) {
+    rowPatch.notes = patch.notes ?? null;
+  }
+
+  return rowPatch;
+}
+
+export async function listBillingImportedPayments(options?: {
+  status?: BillingImportedPaymentStatus;
+}): Promise<BillingImportedPayment[]> {
+  const supabase = createSupabaseServerClient();
+  let query = supabase
+    .from("billing_imported_payments")
+    .select("*")
+    .order("payment_date", { ascending: false })
+    .order("created_at", { ascending: false });
+
+  if (options?.status) {
+    query = query.eq("status", options.status);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw new Error(`Failed to list imported billing payments: ${error.message}`);
+  }
+
+  return ((data as BillingImportedPaymentRow[]) ?? []).map(mapBillingImportedPaymentRow);
+}
+
+export async function getBillingImportedPaymentById(id: string): Promise<BillingImportedPayment | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("billing_imported_payments")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to get imported billing payment ${id}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapBillingImportedPaymentRow(data as BillingImportedPaymentRow);
+}
+
+export async function updateBillingImportedPaymentById(
+  id: string,
+  patch: BillingImportedPaymentUpdateInput
+): Promise<BillingImportedPayment | null> {
+  const supabase = createSupabaseServerClient();
+  const rowPatch = mapBillingImportedPaymentUpdateInput(patch);
+  const { data, error } = await supabase
+    .from("billing_imported_payments")
+    .update(rowPatch)
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to update imported billing payment ${id}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapBillingImportedPaymentRow(data as BillingImportedPaymentRow);
+}
+
+export async function getBillingMonthlyPaymentWithClientById(
+  id: string
+): Promise<BillingMonthlyPaymentWithClient | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("billing_monthly_payments")
+    .select("*, billing_clients(*)")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to get billing payment ${id}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapBillingMonthlyPaymentWithClientRow(data as BillingMonthlyPaymentWithClientRow);
+}
+
+export async function listUnpaidBillingMonthlyPaymentsWithClients(): Promise<BillingMonthlyPaymentWithClient[]> {
+  const supabase = createSupabaseServerClient();
+  const minBillingMonth = shiftBillingMonthIso(getCurrentBillingMonthIso(), -3);
+  const { data, error } = await supabase
+    .from("billing_monthly_payments")
+    .select("*, billing_clients(*)")
+    .in("status", ["pending", "overdue", "manual_review"])
+    .gte("billing_month", minBillingMonth)
+    .order("planned_payment_date", { ascending: false });
+
+  if (error) {
+    throw new Error(`Failed to list unpaid billing monthly payments: ${error.message}`);
+  }
+
+  return ((data as BillingMonthlyPaymentWithClientRow[]) ?? []).map(mapBillingMonthlyPaymentWithClientRow);
+}
+
+function getCurrentBillingMonthIso(now = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Belgrade",
+    year: "numeric",
+    month: "2-digit",
+  }).formatToParts(now);
+
+  const year = Number.parseInt(parts.find((part) => part.type === "year")?.value ?? "", 10);
+  const month = Number.parseInt(parts.find((part) => part.type === "month")?.value ?? "", 10);
+
+  if (!Number.isInteger(year) || !Number.isInteger(month)) {
+    throw new Error(`Unable to derive current billing month for ${now.toISOString()}.`);
+  }
+
+  return `${year}-${String(month).padStart(2, "0")}-01`;
+}
+
+function shiftBillingMonthIso(monthIso: string, delta: number): string {
+  const date = new Date(`${monthIso}T12:00:00.000Z`);
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + delta, 1, 12, 0, 0))
+    .toISOString()
+    .slice(0, 10);
 }

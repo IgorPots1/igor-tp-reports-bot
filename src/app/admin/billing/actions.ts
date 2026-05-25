@@ -5,6 +5,8 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import {
+  confirmImportedPaymentMatch,
+  ignoreImportedPayment,
   linkBillingClientToStudent,
   markBillingClientPaid,
   markBillingClientUnpaid,
@@ -56,6 +58,7 @@ function withNotice(pathname: string, key: "notice" | "error", value: string): s
 function revalidateBillingPaths(clientId?: string, studentId?: string): void {
   revalidatePath("/admin/billing");
   revalidatePath("/admin/billing/matching");
+  revalidatePath("/admin/billing/imports");
 
   if (clientId) {
     revalidatePath(`/admin/billing/clients/${clientId}`);
@@ -94,6 +97,16 @@ function parseOptionalAmount(rawAmount: string | null): number | null {
 }
 
 const BILLING_ACTION_ACTOR = "admin:/admin/billing";
+const BILLING_IMPORTS_ACTION_ACTOR = "admin:/admin/billing/imports";
+
+function buildBillingImportsRedirect(status?: string | null): string {
+  const params = new URLSearchParams();
+  if (status && status !== "new") {
+    params.set("status", status);
+  }
+  const query = params.toString();
+  return query ? `/admin/billing/imports?${query}` : "/admin/billing/imports";
+}
 
 export async function markBillingPaidAction(formData: FormData): Promise<void> {
   const clientId = getRequiredFormValue(formData, "clientId");
@@ -261,4 +274,50 @@ export async function unlinkBillingClientFromStudentAction(formData: FormData): 
 
   revalidateBillingPaths(clientId, studentId);
   redirect(withNotice(redirectTo, "notice", "Billing-клиент отвязан от ученика."));
+}
+
+export async function confirmImportedPaymentAction(formData: FormData): Promise<void> {
+  const importedPaymentId = getRequiredFormValue(formData, "importedPaymentId");
+  const monthlyPaymentId = getRequiredFormValue(formData, "monthlyPaymentId");
+  const redirectTo = getOptionalFormValue(formData, "redirectTo") ?? buildBillingImportsRedirect("new");
+
+  await ensureAdminAccess(redirectTo);
+
+  try {
+    const result = await confirmImportedPaymentMatch({
+      importedPaymentId,
+      monthlyPaymentId,
+      actor: BILLING_IMPORTS_ACTION_ACTOR,
+    });
+
+    revalidateBillingPaths(result.monthlyPayment.client.id);
+    redirect(withNotice(redirectTo, "notice", "Импортированный платёж засчитан."));
+  } catch (error) {
+    revalidatePath("/admin/billing/imports");
+    const message = error instanceof Error ? error.message : "Не удалось засчитать импортированный платёж.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+}
+
+export async function ignoreImportedPaymentAction(formData: FormData): Promise<void> {
+  const importedPaymentId = getRequiredFormValue(formData, "importedPaymentId");
+  const redirectTo = getOptionalFormValue(formData, "redirectTo") ?? buildBillingImportsRedirect("new");
+  const notes = getOptionalFormValue(formData, "notes");
+
+  await ensureAdminAccess(redirectTo);
+
+  try {
+    await ignoreImportedPayment({
+      importedPaymentId,
+      actor: BILLING_IMPORTS_ACTION_ACTOR,
+      notes,
+    });
+  } catch (error) {
+    revalidatePath("/admin/billing/imports");
+    const message = error instanceof Error ? error.message : "Не удалось игнорировать импортированный платёж.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+
+  revalidatePath("/admin/billing/imports");
+  redirect(withNotice(redirectTo, "notice", "Импортированный платёж помечен как игнорированный."));
 }

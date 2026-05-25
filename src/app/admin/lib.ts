@@ -43,6 +43,19 @@ export function getBillingPaymentStatusLabel(status: string | null | undefined):
   }
 }
 
+export function getBillingImportedPaymentStatusLabel(status: string | null | undefined): string {
+  switch (status) {
+    case "new":
+      return "На проверке";
+    case "matched":
+      return "Засчитано";
+    case "ignored":
+      return "Игнорировано";
+    default:
+      return status ?? "Не указано";
+  }
+}
+
 export function getBillingPaymentMethodLabel(method: string | null | undefined): string {
   switch (method) {
     case "tbank_link_a":
