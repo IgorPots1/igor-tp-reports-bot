@@ -284,6 +284,7 @@ export async function confirmImportedPaymentAction(formData: FormData): Promise<
   await ensureAdminAccess(redirectTo);
 
   let clientId: string | undefined;
+  let notice = "Импортированный платёж засчитан.";
 
   try {
     const result = await confirmImportedPaymentMatch({
@@ -292,6 +293,9 @@ export async function confirmImportedPaymentAction(formData: FormData): Promise<
       actor: BILLING_IMPORTS_ACTION_ACTOR,
     });
     clientId = result.monthlyPayment.client.id;
+    if (result.identityLearningWarnings.length > 0) {
+      notice = `${notice} Обучение идентификаторов: ${result.identityLearningWarnings.length} предупрежд.`;
+    }
   } catch (error) {
     revalidatePath("/admin/billing/imports");
     const message = error instanceof Error ? error.message : "Не удалось засчитать импортированный платёж.";
@@ -299,7 +303,7 @@ export async function confirmImportedPaymentAction(formData: FormData): Promise<
   }
 
   revalidateBillingPaths(clientId);
-  redirect(withNotice(redirectTo, "notice", "Импортированный платёж засчитан."));
+  redirect(withNotice(redirectTo, "notice", notice));
 }
 
 export async function ignoreImportedPaymentAction(formData: FormData): Promise<void> {

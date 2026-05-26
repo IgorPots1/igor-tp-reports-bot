@@ -36,6 +36,8 @@ export type BillingPaymentStatus =
   | "refunded";
 export type BillingPaymentSource = "manual" | "email_import";
 export type BillingImportedPaymentStatus = "new" | "matched" | "ignored";
+export type BillingPayerIdentityType = "payer_hint" | "description_hint" | "payment_description";
+export type BillingPayerIdentityConfidence = "trusted_manual";
 
 export type BillingClient = {
   id: string;
@@ -125,6 +127,21 @@ export type BillingImportedPayment = {
   sourceFileName: string | null;
   emailMessageId: string | null;
   notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type BillingPayerIdentity = {
+  id: string;
+  billingClientId: string;
+  identityType: BillingPayerIdentityType;
+  identityHash: string;
+  displayHint: string | null;
+  sourceImportedPaymentId: string | null;
+  confidence: BillingPayerIdentityConfidence;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  matchCount: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -281,6 +298,7 @@ export type ConfirmImportedPaymentMatchInput = {
 export type ConfirmImportedPaymentMatchResult = {
   importedPayment: BillingImportedPayment;
   monthlyPayment: BillingMonthlyPaymentWithClient;
+  identityLearningWarnings: string[];
 };
 
 export type IgnoreImportedPaymentInput = {

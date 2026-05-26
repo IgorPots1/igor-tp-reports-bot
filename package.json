@@ -43,6 +43,7 @@
     "check-trainingpeaks-recovery-alerts": "npx tsx scripts/check-trainingpeaks-recovery-alerts.ts",
     "check-trainingpeaks-coach-notes-delivery": "npx tsx scripts/check-trainingpeaks-coach-notes-delivery.ts",
     "check-trainingpeaks-attention-digest": "npx tsx scripts/check-trainingpeaks-attention-digest.ts",
+    "check-billing-payer-identities": "npx tsx scripts/check-billing-payer-identities.ts",
     "check-e-predictor-constants": "npm --prefix tools/trainingpeaks-export run check-e-predictor-constants --",
     "check-sustained-effort-classification": "npm --prefix tools/trainingpeaks-export run check-sustained-effort-classification --",
     "check-vdot-style": "npm --prefix tools/trainingpeaks-export run check-vdot-style --",

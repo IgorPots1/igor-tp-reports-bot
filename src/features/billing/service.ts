@@ -2,7 +2,9 @@ import {
   getBillingImportedPaymentsByExternalHashes,
   getBillingClientById,
   getBillingImportedPaymentById,
+  getBillingPayerIdentityByTypeHash,
   getBillingMonthlyPaymentWithClientById,
+  insertBillingPayerIdentity,
   insertBillingImportedPayments,
   listBillingClientsByStudentId,
   getBillingMonthlyPaymentForClientMonth,
@@ -13,7 +15,9 @@ import {
   updateBillingClientById as updateBillingClientByIdInRepository,
   updateBillingImportedPaymentById,
   updateBillingMonthlyPaymentById,
+  updateBillingPayerIdentityById,
 } from "@/features/billing/repository";
+import { derivePayerIdentitiesFromImportedPayment } from "@/features/billing/payer-identity";
 import {
   BILLING_CSV_COLUMNS,
   BILLING_TIME_ZONE,
@@ -39,6 +43,93 @@ import {
 } from "@/features/billing/types";
 import { basename } from "node:path";
 import { randomUUID } from "node:crypto";
+
+type BillingIdentityLearningWarningCode =
+  | "identity_conflict_other_client"
+  | "identity_upsert_failed"
+  | "identity_lookup_failed";
+
+type BillingIdentityLearningWarning = {
+  code: BillingIdentityLearningWarningCode;
+  message: string;
+};
+
+async function learnPayerIdentitiesFromConfirmedImport(input: {
+  imported: BillingImportedPayment;
+  billingClientId: string;
+}): Promise<BillingIdentityLearningWarning[]> {
+  const warnings: BillingIdentityLearningWarning[] = [];
+  const derivedIdentities = derivePayerIdentitiesFromImportedPayment(input.imported);
+
+  for (const identity of derivedIdentities) {
+    let existingIdentity: Awaited<ReturnType<typeof getBillingPayerIdentityByTypeHash>> | null = null;
+
+    try {
+      existingIdentity = await getBillingPayerIdentityByTypeHash({
+        identityType: identity.identityType,
+        identityHash: identity.identityHash,
+      });
+    } catch (error) {
+      warnings.push({
+        code: "identity_lookup_failed",
+        message:
+          error instanceof Error
+            ? `Payer identity lookup failed (${identity.identityType}). ${error.message}`
+            : `Payer identity lookup failed (${identity.identityType}).`,
+      });
+      continue;
+    }
+
+    if (!existingIdentity) {
+      try {
+        await insertBillingPayerIdentity({
+          billing_client_id: input.billingClientId,
+          identity_type: identity.identityType,
+          identity_hash: identity.identityHash,
+          display_hint: identity.displayHint,
+          source_imported_payment_id: input.imported.id,
+          confidence: "trusted_manual",
+        });
+      } catch (error) {
+        warnings.push({
+          code: "identity_upsert_failed",
+          message:
+            error instanceof Error
+              ? `Payer identity insert failed (${identity.identityType}). ${error.message}`
+              : `Payer identity insert failed (${identity.identityType}).`,
+        });
+      }
+      continue;
+    }
+
+    if (existingIdentity.billingClientId !== input.billingClientId) {
+      warnings.push({
+        code: "identity_conflict_other_client",
+        message: `Payer identity conflict (${identity.identityType}): already assigned to another billing client.`,
+      });
+      continue;
+    }
+
+    try {
+      await updateBillingPayerIdentityById(existingIdentity.id, {
+        display_hint: identity.displayHint ?? existingIdentity.displayHint,
+        source_imported_payment_id: input.imported.id,
+        last_seen_at: new Date().toISOString(),
+        match_count: existingIdentity.matchCount + 1,
+      });
+    } catch (error) {
+      warnings.push({
+        code: "identity_upsert_failed",
+        message:
+          error instanceof Error
+            ? `Payer identity update failed (${identity.identityType}). ${error.message}`
+            : `Payer identity update failed (${identity.identityType}).`,
+      });
+    }
+  }
+
+  return warnings;
+}
 
 function getDateParts(date: Date, timeZone = BILLING_TIME_ZONE): { year: number; month: number; day: number } {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -641,12 +732,18 @@ export async function confirmImportedPaymentMatch(
     throw new Error(`Imported payment ${imported.id} disappeared while confirming match.`);
   }
 
+  const learningWarnings = await learnPayerIdentitiesFromConfirmedImport({
+    imported,
+    billingClientId: monthly.client.id,
+  });
+
   return {
     importedPayment: updatedImported,
     monthlyPayment: {
       ...updatedMonthly,
       client: monthly.client,
     },
+    identityLearningWarnings: learningWarnings.map((warning) => warning.message),
   };
 }
 

@@ -2,6 +2,7 @@ import {
   getBillingClientById,
   getBillingClientByStudentId,
   getBillingMonthlyPaymentWithClientById,
+  listBillingPayerIdentitiesForClient,
   listActiveBillingClients,
   listBillingClientsByStudentId,
   listBillingClientsIncludingInactive,
@@ -13,6 +14,7 @@ import {
   BILLING_TIME_ZONE,
   type AdminImportedPaymentsOverview,
   type BillingClient,
+  type BillingPayerIdentity,
   type BillingImportedPayment,
   type BillingImportedPaymentReviewStatusFilter,
   type BillingMonthlyPaymentWithClient,
@@ -40,6 +42,7 @@ export type BillingClientDetail = {
   currentMonth: string;
   currentMonthStatus: BillingMonthStatusRow | null;
   paymentHistory: BillingMonthStatusRow[];
+  payerIdentities: BillingPayerIdentity[];
 };
 
 export type BillingClientSuggestion = {
@@ -190,6 +193,7 @@ export async function getBillingClientDetail(id: string): Promise<BillingClientD
     listBillingMonthlyPaymentsForClient(client.id),
     listBillingMonthStatus(currentMonth),
   ]);
+  const payerIdentities = await listBillingPayerIdentitiesForClient(client.id);
   const currentMonthStatus = currentMonthRows.find((row) => row.clientId === client.id) ?? null;
   const todayIso = getCurrentBelgradeDateIso();
 
@@ -227,6 +231,7 @@ export async function getBillingClientDetail(id: string): Promise<BillingClientD
     currentMonth,
     currentMonthStatus,
     paymentHistory,
+    payerIdentities,
   };
 }
 

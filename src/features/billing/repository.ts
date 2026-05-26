@@ -3,6 +3,9 @@ import type {
   BillingClient,
   BillingCurrency,
   BillingImportedPayment,
+  BillingPayerIdentity,
+  BillingPayerIdentityConfidence,
+  BillingPayerIdentityType,
   BillingImportedPaymentRawRow,
   BillingImportedPaymentStatus,
   BillingImportedPaymentUpdateInput,
@@ -137,6 +140,37 @@ type UpdateBillingImportedPaymentRow = Partial<{
   notes: string | null;
 }>;
 
+type BillingPayerIdentityRow = {
+  id: string;
+  billing_client_id: string;
+  identity_type: BillingPayerIdentityType;
+  identity_hash: string;
+  display_hint: string | null;
+  source_imported_payment_id: string | null;
+  confidence: BillingPayerIdentityConfidence;
+  first_seen_at: string;
+  last_seen_at: string;
+  match_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+type InsertBillingPayerIdentityRow = {
+  billing_client_id: string;
+  identity_type: BillingPayerIdentityType;
+  identity_hash: string;
+  display_hint: string | null;
+  source_imported_payment_id: string | null;
+  confidence: BillingPayerIdentityConfidence;
+};
+
+type UpdateBillingPayerIdentityRow = Partial<{
+  display_hint: string | null;
+  source_imported_payment_id: string | null;
+  last_seen_at: string;
+  match_count: number;
+}>;
+
 function mapBillingClientRow(row: BillingClientRow): BillingClient {
   return {
     id: row.id,
@@ -197,6 +231,23 @@ function mapBillingImportedPaymentRow(row: BillingImportedPaymentRow): BillingIm
     sourceFileName: row.source_file_name,
     emailMessageId: row.email_message_id,
     notes: row.notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapBillingPayerIdentityRow(row: BillingPayerIdentityRow): BillingPayerIdentity {
+  return {
+    id: row.id,
+    billingClientId: row.billing_client_id,
+    identityType: row.identity_type,
+    identityHash: row.identity_hash,
+    displayHint: row.display_hint,
+    sourceImportedPaymentId: row.source_imported_payment_id,
+    confidence: row.confidence,
+    firstSeenAt: row.first_seen_at,
+    lastSeenAt: row.last_seen_at,
+    matchCount: row.match_count,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -618,6 +669,89 @@ export async function updateBillingImportedPaymentById(
   }
 
   return mapBillingImportedPaymentRow(data as BillingImportedPaymentRow);
+}
+
+export async function getBillingPayerIdentityByTypeHash(input: {
+  identityType: BillingPayerIdentityType;
+  identityHash: string;
+}): Promise<BillingPayerIdentity | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("billing_payer_identities")
+    .select("*")
+    .eq("identity_type", input.identityType)
+    .eq("identity_hash", input.identityHash)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to get billing payer identity ${input.identityType}/${input.identityHash}: ${error.message}`
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapBillingPayerIdentityRow(data as BillingPayerIdentityRow);
+}
+
+export async function insertBillingPayerIdentity(
+  row: InsertBillingPayerIdentityRow
+): Promise<BillingPayerIdentity> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("billing_payer_identities")
+    .insert(row)
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to insert billing payer identity: ${error.message}`);
+  }
+
+  return mapBillingPayerIdentityRow(data as BillingPayerIdentityRow);
+}
+
+export async function updateBillingPayerIdentityById(
+  id: string,
+  patch: UpdateBillingPayerIdentityRow
+): Promise<BillingPayerIdentity | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("billing_payer_identities")
+    .update(patch)
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to update billing payer identity ${id}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapBillingPayerIdentityRow(data as BillingPayerIdentityRow);
+}
+
+export async function listBillingPayerIdentitiesForClient(
+  billingClientId: string
+): Promise<BillingPayerIdentity[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("billing_payer_identities")
+    .select("*")
+    .eq("billing_client_id", billingClientId)
+    .order("match_count", { ascending: false })
+    .order("last_seen_at", { ascending: false });
+
+  if (error) {
+    throw new Error(`Failed to list billing payer identities for ${billingClientId}: ${error.message}`);
+  }
+
+  return ((data as BillingPayerIdentityRow[]) ?? []).map(mapBillingPayerIdentityRow);
 }
 
 export async function getBillingMonthlyPaymentWithClientById(

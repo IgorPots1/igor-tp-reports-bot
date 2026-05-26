@@ -427,6 +427,40 @@ export default async function BillingClientDetailPage({
       </div>
 
       <article className="admin-card">
+        <details>
+          <summary>
+            <strong>Изученные идентификаторы плательщика</strong>
+          </summary>
+          {detail.payerIdentities.length === 0 ? (
+            <p className="admin-muted">Пока нет подтверждённых паттернов для этого клиента.</p>
+          ) : (
+            <div className="admin-table-wrap">
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>Подсказка</th>
+                    <th>Тип</th>
+                    <th>Совпадения</th>
+                    <th>Последний раз</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detail.payerIdentities.map((identity) => (
+                    <tr key={identity.id}>
+                      <td>{identity.displayHint ?? "—"}</td>
+                      <td>{identity.identityType}</td>
+                      <td>{identity.matchCount}</td>
+                      <td>{formatIsoDate(identity.lastSeenAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </details>
+      </article>
+
+      <article className="admin-card">
         <div className="admin-section-header">
           <div>
             <h3>История оплат</h3>
