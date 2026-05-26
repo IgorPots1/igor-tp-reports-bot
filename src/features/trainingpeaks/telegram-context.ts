@@ -243,6 +243,8 @@ export function formatTrainingPeaksTelegramContextSourceType(
       return "Личка";
     case "group_topic":
       return "Тема группы";
+    case "group_general":
+      return "Общая группа";
     default:
       return sourceType;
   }

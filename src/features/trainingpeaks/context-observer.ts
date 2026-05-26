@@ -5,6 +5,7 @@ import {
   getTrainingPeaksStudentThreadByChatThread,
   hasTrainingPeaksTelegramContextObservationForChatTextHash,
   insertTrainingPeaksTelegramContextObservation,
+  listTrainingPeaksStudentsByTelegramChatId,
   type TrainingPeaksStudent,
 } from "@/features/trainingpeaks/repository";
 import { getTrainingPeaksCoachChatIds } from "@/features/trainingpeaks/attention-telegram";
@@ -22,8 +23,8 @@ export type TrainingPeaksObserverLabel =
   | "unclassified"
   | "third_party_in_linked_topic";
 
-type TrainingPeaksObserverSourceType = "private_dm" | "group_topic";
-type ObserverSenderRole = "linked_student" | "third_party_in_linked_topic";
+type TrainingPeaksObserverSourceType = "private_dm" | "group_topic" | "group_general";
+type ObserverSenderRole = "linked_student" | "third_party_in_linked_topic" | "known_student";
 type ObserverSenderMatchMethod = "telegram_chat_id" | "telegram_username" | "no_reliable_match";
 type PersistedObservationLabel =
   | "question_to_coach"
@@ -62,7 +63,9 @@ type TrainingPeaksObserverRouteResult =
         | "known_student_private_dm"
         | "unknown_private_dm"
         | "linked_group_topic"
-        | "unlinked_group_topic_auto_link";
+        | "unlinked_group_topic_auto_link"
+        | "known_student_group_general"
+        | "skipped_group_general";
     };
 
 const TRAINING_REPORT_KEYWORDS = [
@@ -117,6 +120,30 @@ const NOISE_ACK_PATTERNS: RegExp[] = [
   /^[👍👌🙏]$/u,
 ];
 const OBSERVER_TRAINING_REPORT_MIN_LENGTH = 24;
+const TELEGRAM_SERVICE_MESSAGE_KEYS = [
+  "new_chat_members",
+  "left_chat_member",
+  "new_chat_title",
+  "new_chat_photo",
+  "delete_chat_photo",
+  "group_chat_created",
+  "supergroup_chat_created",
+  "channel_chat_created",
+  "migrate_to_chat_id",
+  "migrate_from_chat_id",
+  "pinned_message",
+  "forum_topic_created",
+  "forum_topic_edited",
+  "forum_topic_closed",
+  "forum_topic_reopened",
+  "general_forum_topic_hidden",
+  "general_forum_topic_unhidden",
+  "write_access_allowed",
+  "video_chat_scheduled",
+  "video_chat_started",
+  "video_chat_ended",
+  "video_chat_participants_invited",
+] as const;
 
 function normalizeObserverText(value: string): string {
   return value
@@ -155,6 +182,42 @@ function detectTelegramAttachment(message: TelegramMessage): boolean {
     "venue",
     "poll",
   ].some((key) => rawMessage[key] !== undefined);
+}
+
+function isTelegramBotSender(message: TelegramMessage): boolean {
+  const rawFrom = message.from as ({ is_bot?: boolean } | undefined);
+  return rawFrom?.is_bot === true;
+}
+
+function isTelegramServiceMessage(message: TelegramMessage): boolean {
+  const rawMessage = message as Record<string, unknown>;
+  return TELEGRAM_SERVICE_MESSAGE_KEYS.some((key) => rawMessage[key] !== undefined);
+}
+
+function isGeneralGroupMessage(message: TelegramMessage): boolean {
+  const chatType = message.chat.type;
+  if (chatType !== "group" && chatType !== "supergroup") {
+    return false;
+  }
+
+  return !message.is_topic_message && message.message_thread_id === undefined;
+}
+
+function logGeneralGroupObservationEvent(input: {
+  studentId: string | null;
+  chatId: string;
+  messageId: number;
+  reason: string;
+  dedupSkipped?: boolean;
+}): void {
+  console.info("TrainingPeaks general group context observation", {
+    event: "trainingpeaks_general_group_context_observation_persisted_or_skipped",
+    studentId: input.studentId,
+    chatId: input.chatId,
+    messageId: input.messageId,
+    reason: input.reason,
+    dedupSkipped: input.dedupSkipped ?? false,
+  });
 }
 
 export function isTrainingPeaksContextObserverEnabled(): boolean {
@@ -338,6 +401,179 @@ async function persistObserverObservation(input: BuildObservationLogPayloadInput
   });
 }
 
+async function persistKnownStudentGeneralGroupObservation(input: {
+  message: TelegramMessage;
+  student: TrainingPeaksStudent;
+  text: string;
+  hasAttachment: boolean;
+  messageLength: number;
+  fromId: number;
+  fromUsername: string | null;
+}): Promise<boolean> {
+  const labelsAndScores = classifyObserverText(input.text);
+  const payload = buildObservationLogPayload({
+    studentId: input.student.id,
+    sourceType: "group_general",
+    chatId: String(input.message.chat.id),
+    messageThreadId: null,
+    messageId: input.message.message_id,
+    fromId: String(input.fromId),
+    fromUsername: input.fromUsername,
+    isTopicMessage: false,
+    labels: labelsAndScores.labels,
+    scores: labelsAndScores.scores,
+    messageLength: input.messageLength,
+    hasAttachment: input.hasAttachment,
+    text: input.text,
+    senderRole: "known_student",
+    senderMatchMethod: "telegram_chat_id",
+  });
+  const dedupSkipped = Boolean(
+    payload.textSha256 &&
+      (await hasTrainingPeaksTelegramContextObservationForChatTextHash(
+        String(input.message.chat.id),
+        payload.textSha256
+      ))
+  );
+
+  if (!dedupSkipped) {
+    await insertTrainingPeaksTelegramContextObservation({
+      studentId: input.student.id,
+      sourceType: "group_general",
+      chatId: String(input.message.chat.id),
+      messageThreadId: null,
+      messageId: String(input.message.message_id),
+      labels: mapObserverLabelsToPersistedLabels(labelsAndScores.labels),
+      textSha256: payload.textSha256,
+      textPreview: payload.textPreview,
+      metadata: {
+        scores: labelsAndScores.scores,
+        fromId: String(input.fromId),
+        fromUsername: input.fromUsername,
+        groupChatId: String(input.message.chat.id),
+        isTopicMessage: false,
+        messageLength: input.messageLength,
+        hasAttachment: input.hasAttachment,
+        senderRole: "known_student",
+        senderMatchMethod: "telegram_chat_id",
+      },
+    });
+  }
+
+  logGeneralGroupObservationEvent({
+    studentId: input.student.id,
+    chatId: String(input.message.chat.id),
+    messageId: input.message.message_id,
+    reason: dedupSkipped ? "dedup_skipped" : "persisted",
+    dedupSkipped,
+  });
+
+  return !dedupSkipped;
+}
+
+async function observeGeneralGroupMessage(input: {
+  message: TelegramMessage;
+  text: string | null;
+  hasAttachment: boolean;
+  messageLength: number;
+  fromId: number | undefined;
+  fromUsername: string | null;
+}): Promise<TrainingPeaksObserverRouteResult> {
+  const chatId = String(input.message.chat.id);
+  const messageId = input.message.message_id;
+
+  if (!isGeneralGroupMessage(input.message)) {
+    return { handled: false };
+  }
+
+  if (input.fromId === undefined) {
+    logGeneralGroupObservationEvent({
+      studentId: null,
+      chatId,
+      messageId,
+      reason: "missing_from_id",
+    });
+    return { handled: false };
+  }
+
+  if (isTelegramBotSender(input.message)) {
+    logGeneralGroupObservationEvent({
+      studentId: null,
+      chatId,
+      messageId,
+      reason: "bot_sender",
+    });
+    return { handled: false };
+  }
+
+  if (isCoachTelegramId(input.fromId)) {
+    logGeneralGroupObservationEvent({
+      studentId: null,
+      chatId,
+      messageId,
+      reason: "coach_sender",
+    });
+    return { handled: false };
+  }
+
+  if (isTelegramServiceMessage(input.message)) {
+    logGeneralGroupObservationEvent({
+      studentId: null,
+      chatId,
+      messageId,
+      reason: "service_message",
+    });
+    return { handled: false };
+  }
+
+  if (!input.text) {
+    logGeneralGroupObservationEvent({
+      studentId: null,
+      chatId,
+      messageId,
+      reason: input.hasAttachment ? "media_without_caption" : "empty_text",
+    });
+    return { handled: false };
+  }
+
+  if (input.text.startsWith("/")) {
+    logGeneralGroupObservationEvent({
+      studentId: null,
+      chatId,
+      messageId,
+      reason: "command",
+    });
+    return { handled: false };
+  }
+
+  const matchedStudents = await listTrainingPeaksStudentsByTelegramChatId(String(input.fromId));
+  if (matchedStudents.length !== 1) {
+    logGeneralGroupObservationEvent({
+      studentId: null,
+      chatId,
+      messageId,
+      reason: matchedStudents.length === 0 ? "unknown_sender" : "ambiguous_chat_id_match",
+    });
+    return { handled: false };
+  }
+
+  const student = matchedStudents[0]!;
+  await persistKnownStudentGeneralGroupObservation({
+    message: input.message,
+    student,
+    text: input.text,
+    hasAttachment: input.hasAttachment,
+    messageLength: input.messageLength,
+    fromId: input.fromId,
+    fromUsername: input.fromUsername,
+  });
+
+  return {
+    handled: true,
+    reason: "known_student_group_general",
+  };
+}
+
 async function observeLinkedGroupTopicMessage(input: {
   message: TelegramMessage;
   linkedStudent: TrainingPeaksStudent;
@@ -463,6 +699,17 @@ export async function handleTrainingPeaksContextObserverMessage(
 
   if (chatType !== "group" && chatType !== "supergroup") {
     return { handled: false };
+  }
+
+  if (!message.is_topic_message && message.message_thread_id === undefined) {
+    return observeGeneralGroupMessage({
+      message,
+      text,
+      hasAttachment,
+      messageLength,
+      fromId,
+      fromUsername,
+    });
   }
 
   if (!message.is_topic_message || message.message_thread_id === undefined) {
