@@ -39,6 +39,7 @@
     "billing:import-payments": "npx tsx scripts/billing-import-payments.ts",
     "billing:reset": "npx tsx scripts/billing-reset.ts",
     "billing:import-clients": "npx tsx scripts/billing-import-clients.ts",
+    "billing:auto-link-tp-students": "npx tsx scripts/billing-auto-link-trainingpeaks-students.ts",
     "check-trainingpeaks-recovery-alerts": "npx tsx scripts/check-trainingpeaks-recovery-alerts.ts",
     "check-trainingpeaks-coach-notes-delivery": "npx tsx scripts/check-trainingpeaks-coach-notes-delivery.ts",
     "check-trainingpeaks-attention-digest": "npx tsx scripts/check-trainingpeaks-attention-digest.ts",
