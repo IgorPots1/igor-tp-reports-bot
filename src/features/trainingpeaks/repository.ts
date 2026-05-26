@@ -4868,19 +4868,42 @@ export async function getTrainingPeaksCoachCaseById(
   return mapTrainingPeaksCoachCaseSummaryRow(data as TrainingPeaksCoachCaseSummaryRow);
 }
 
+const TRAININGPEAKS_CASE_ID_PREFIX_HEX_REGEX = /^[0-9a-f]{1,32}$/;
+
+function normalizeTrainingPeaksCoachCaseIdPrefix(caseIdPrefix: string): string | null {
+  const normalized = caseIdPrefix.trim().toLowerCase().replace(/-/g, "");
+  if (!normalized) {
+    return null;
+  }
+
+  if (!TRAININGPEAKS_CASE_ID_PREFIX_HEX_REGEX.test(normalized)) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function formatTrainingPeaksUuidFromHex32(hex32: string): string {
+  return `${hex32.slice(0, 8)}-${hex32.slice(8, 12)}-${hex32.slice(12, 16)}-${hex32.slice(16, 20)}-${hex32.slice(20, 32)}`;
+}
+
 export async function getTrainingPeaksCoachCaseByIdPrefix(
   caseIdPrefix: string
 ): Promise<TrainingPeaksCoachCaseSummary | null> {
-  const normalizedPrefix = caseIdPrefix.trim();
+  const normalizedPrefix = normalizeTrainingPeaksCoachCaseIdPrefix(caseIdPrefix);
   if (!normalizedPrefix) {
     return null;
   }
+
+  const minUuid = formatTrainingPeaksUuidFromHex32(normalizedPrefix.padEnd(32, "0"));
+  const maxUuid = formatTrainingPeaksUuidFromHex32(normalizedPrefix.padEnd(32, "f"));
 
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("trainingpeaks_coach_cases")
     .select("id, student_id, case_kind, status, created_at")
-    .ilike("id", `${normalizedPrefix}%`)
+    .gte("id", minUuid)
+    .lte("id", maxUuid)
     .order("created_at", { ascending: false })
     .limit(2);
 
