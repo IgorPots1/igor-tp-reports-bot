@@ -5150,22 +5150,29 @@ export async function listRecentTrainingPeaksMessageIntentLogs(
 }
 
 export async function listRecentTrainingPeaksCoachCasesForAttention(input: {
-  lookbackHours: number;
+  sinceHours: number;
   caseKinds: readonly TrainingPeaksCoachCaseKind[];
+  statuses: readonly TrainingPeaksCoachCaseStatus[];
+  limit: number;
 }): Promise<
   Array<{
     studentId: string;
     caseKind: TrainingPeaksCoachCaseKind;
+    status: TrainingPeaksCoachCaseStatus;
+    createdAt: string;
   }>
 > {
-  const cutoffIso = new Date(Date.now() - input.lookbackHours * 3_600_000).toISOString();
+  const cutoffIso = new Date(Date.now() - input.sinceHours * 3_600_000).toISOString();
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("trainingpeaks_coach_cases")
-    .select("student_id, case_kind")
+    .select("student_id, case_kind, status, created_at")
     .gte("created_at", cutoffIso)
     .in("case_kind", [...input.caseKinds])
-    .not("student_id", "is", null);
+    .in("status", [...input.statuses])
+    .not("student_id", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(input.limit);
 
   if (error) {
     throw new Error(`Failed to list TrainingPeaks coach cases for attention: ${error.message}`);
@@ -5175,10 +5182,14 @@ export async function listRecentTrainingPeaksCoachCasesForAttention(input: {
     (data as Array<{
       student_id: string;
       case_kind: TrainingPeaksCoachCaseKind;
+      status: TrainingPeaksCoachCaseStatus;
+      created_at: string;
     }>) ?? []
   ).map((row) => ({
     studentId: row.student_id,
     caseKind: row.case_kind,
+    status: row.status,
+    createdAt: row.created_at,
   }));
 }
 

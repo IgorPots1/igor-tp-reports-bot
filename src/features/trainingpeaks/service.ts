@@ -3387,51 +3387,54 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
   const activeStudentNameById = new Map(
     activeStudents.map((student) => [student.id, student.studentName?.trim() || null])
   );
+  const caseStatusesForAttention = ["logged", "open", "needs_review"] as const;
 
   try {
-    const [recent48hCases, recent24hCases] = await Promise.all([
+    const [painCases, questionCases, moveNeedsReviewCases] = await Promise.all([
       listRecentTrainingPeaksCoachCasesForAttention({
-        lookbackHours: 48,
-        caseKinds: ["pain_or_health_signal", "move_workout_needs_review"],
+        sinceHours: 48,
+        caseKinds: ["pain_or_health_signal"],
+        statuses: caseStatusesForAttention,
+        limit: 300,
       }),
       listRecentTrainingPeaksCoachCasesForAttention({
-        lookbackHours: 24,
+        sinceHours: 24,
         caseKinds: ["question_to_coach"],
+        statuses: caseStatusesForAttention,
+        limit: 300,
+      }),
+      listRecentTrainingPeaksCoachCasesForAttention({
+        sinceHours: 72,
+        caseKinds: ["move_workout_needs_review"],
+        statuses: caseStatusesForAttention,
+        limit: 300,
       }),
     ]);
 
-    for (const caseRow of recent48hCases) {
+    for (const caseRow of painCases) {
       const studentName = activeStudentNameById.get(caseRow.studentId) ?? null;
-
-      if (caseRow.caseKind === "pain_or_health_signal") {
-        pushUniqueAttentionSignal(observe, {
-          level: "observe",
-          studentName,
-          reason: "сигнал о боли или здоровье",
-        });
-        continue;
-      }
-
-      if (caseRow.caseKind === "move_workout_needs_review") {
-        pushUniqueAttentionSignal(today, {
-          level: "today",
-          studentName,
-          reason: "запрос на перенос ждёт уточнения",
-        });
-      }
+      pushUniqueAttentionSignal(urgent, {
+        level: "urgent",
+        studentName,
+        reason: "сигнал по самочувствию/боли за последние 48ч",
+      });
     }
 
-    for (const caseRow of recent24hCases) {
+    for (const caseRow of questionCases) {
       const studentName = activeStudentNameById.get(caseRow.studentId) ?? null;
-
-      if (caseRow.caseKind !== "question_to_coach") {
-        continue;
-      }
-
-      pushUniqueAttentionSignal(fyi, {
-        level: "fyi",
+      pushUniqueAttentionSignal(today, {
+        level: "today",
         studentName,
-        reason: "вопрос тренеру",
+        reason: "вопрос тренеру за последние 24ч",
+      });
+    }
+
+    for (const caseRow of moveNeedsReviewCases) {
+      const studentName = activeStudentNameById.get(caseRow.studentId) ?? null;
+      pushUniqueAttentionSignal(today, {
+        level: "today",
+        studentName,
+        reason: "перенос тренировки требует проверки",
       });
     }
   } catch (error) {
