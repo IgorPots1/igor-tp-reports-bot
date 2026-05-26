@@ -320,6 +320,7 @@ export type BuildBillingCsvForMonthResult = {
 };
 
 export type BillingImportedPaymentReviewStatusFilter = BillingImportedPaymentStatus | "all";
+export type BillingMonthStatusFilter = "all" | "unpaid" | "overdue" | "paid";
 
 export type BillingImportedPaymentUpdateInput = Partial<{
   status: BillingImportedPaymentStatus;

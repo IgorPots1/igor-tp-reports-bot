@@ -18,6 +18,7 @@ import {
   type BillingImportedPayment,
   type BillingImportedPaymentReviewStatusFilter,
   type BillingMonthlyPaymentWithClient,
+  type BillingMonthStatusFilter,
   type BillingMonthStatusRow,
   type ImportedPaymentReviewRow,
   type ImportedPaymentSuggestion,
@@ -34,6 +35,13 @@ type AdminBillingMonthOverview = {
   manualReview: number;
   paused: number;
   unlinkedCount: number;
+  statusFilter: BillingMonthStatusFilter;
+  filterCounts: {
+    all: number;
+    unpaid: number;
+    overdue: number;
+    paid: number;
+  };
   rows: BillingMonthStatusRow[];
 };
 
@@ -73,8 +81,102 @@ function getCurrentBelgradeMonth(now = new Date()): string {
   return resolveBillingMonth(`${year}-${String(month).padStart(2, "0")}`);
 }
 
-function isRowOverdue(row: BillingMonthStatusRow): boolean {
+export function isBillingRowEffectivelyOverdue(row: BillingMonthStatusRow): boolean {
   return row.status === "overdue" || (row.status === "pending" && row.daysOverdue != null && row.daysOverdue > 0);
+}
+
+export function getEffectiveBillingRowStatus(row: BillingMonthStatusRow): BillingMonthStatusRow["status"] | "overdue" {
+  if (row.status === "pending" && row.daysOverdue != null && row.daysOverdue > 0) {
+    return "overdue";
+  }
+
+  return row.status;
+}
+
+function isBillingRowUnpaid(row: BillingMonthStatusRow): boolean {
+  return (
+    row.status === "pending" ||
+    row.status === "manual_review" ||
+    row.status === "overdue" ||
+    isBillingRowEffectivelyOverdue(row)
+  );
+}
+
+function getBillingRowSortBucket(row: BillingMonthStatusRow): number {
+  if (isBillingRowEffectivelyOverdue(row)) {
+    return 0;
+  }
+
+  switch (row.status) {
+    case "manual_review":
+      return 1;
+    case "pending":
+      return 2;
+    case "paid":
+      return 3;
+    case "paused":
+    case "refunded":
+      return 4;
+    default:
+      return 5;
+  }
+}
+
+function getBillingRowNameSortKey(row: BillingMonthStatusRow): string {
+  return `${row.groupName ?? ""}\0${row.clientName}`.toLocaleLowerCase("ru-RU");
+}
+
+function compareBillingMonthStatusRows(left: BillingMonthStatusRow, right: BillingMonthStatusRow): number {
+  const bucketDiff = getBillingRowSortBucket(left) - getBillingRowSortBucket(right);
+  if (bucketDiff !== 0) {
+    return bucketDiff;
+  }
+
+  const leftDate = left.plannedPaymentDate?.trim() ?? "";
+  const rightDate = right.plannedPaymentDate?.trim() ?? "";
+  const leftHasDate = leftDate.length > 0;
+  const rightHasDate = rightDate.length > 0;
+
+  if (leftHasDate && rightHasDate && leftDate !== rightDate) {
+    return leftDate.localeCompare(rightDate);
+  }
+
+  if (leftHasDate !== rightHasDate) {
+    return leftHasDate ? -1 : 1;
+  }
+
+  return getBillingRowNameSortKey(left).localeCompare(getBillingRowNameSortKey(right), "ru-RU");
+}
+
+export function sortBillingMonthStatusRows(rows: BillingMonthStatusRow[]): BillingMonthStatusRow[] {
+  return [...rows].sort(compareBillingMonthStatusRows);
+}
+
+export function filterBillingMonthStatusRows(
+  rows: BillingMonthStatusRow[],
+  statusFilter: BillingMonthStatusFilter
+): BillingMonthStatusRow[] {
+  switch (statusFilter) {
+    case "all":
+      return rows;
+    case "unpaid":
+      return rows.filter(isBillingRowUnpaid);
+    case "overdue":
+      return rows.filter(isBillingRowEffectivelyOverdue);
+    case "paid":
+      return rows.filter((row) => row.status === "paid");
+    default:
+      return rows.filter(isBillingRowUnpaid);
+  }
+}
+
+function getBillingMonthFilterCounts(rows: BillingMonthStatusRow[]): AdminBillingMonthOverview["filterCounts"] {
+  return {
+    all: rows.length,
+    unpaid: rows.filter(isBillingRowUnpaid).length,
+    overdue: rows.filter(isBillingRowEffectivelyOverdue).length,
+    paid: rows.filter((row) => row.status === "paid").length,
+  };
 }
 
 function normalizeNamePart(value: string | null | undefined): string {
@@ -162,23 +264,30 @@ export async function listBillingAvailableStudentsForManualLink(): Promise<Train
   return students.filter((student) => !linkedStudentIds.has(student.id));
 }
 
-export async function getAdminBillingMonthOverview(month?: string): Promise<AdminBillingMonthOverview> {
+export async function getAdminBillingMonthOverview(
+  month?: string,
+  statusFilter: BillingMonthStatusFilter = "unpaid"
+): Promise<AdminBillingMonthOverview> {
   const billingMonth = month ? resolveBillingMonth(month) : getCurrentBelgradeMonth();
   const [rows, activeClients] = await Promise.all([
     listBillingMonthStatus(billingMonth),
     listActiveBillingClients(),
   ]);
+  const sortedRows = sortBillingMonthStatusRows(rows);
+  const filterCounts = getBillingMonthFilterCounts(sortedRows);
 
   return {
     billingMonth,
     total: rows.length,
     paid: rows.filter((row) => row.status === "paid").length,
-    pending: rows.filter((row) => row.status === "pending" && !isRowOverdue(row)).length,
-    overdue: rows.filter(isRowOverdue).length,
+    pending: rows.filter((row) => row.status === "pending" && !isBillingRowEffectivelyOverdue(row)).length,
+    overdue: rows.filter(isBillingRowEffectivelyOverdue).length,
     manualReview: rows.filter((row) => row.status === "manual_review").length,
     paused: rows.filter((row) => row.status === "paused").length,
     unlinkedCount: activeClients.filter((client) => !client.studentId).length,
-    rows,
+    statusFilter,
+    filterCounts,
+    rows: filterBillingMonthStatusRows(sortedRows, statusFilter),
   };
 }
 

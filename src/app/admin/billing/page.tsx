@@ -8,12 +8,42 @@ import {
   getBillingPaymentStatusLabel,
   getSingleSearchParam,
 } from "@/app/admin/lib";
-import { getAdminBillingMonthOverview } from "@/features/billing/admin";
-import { BILLING_TIME_ZONE, type BillingMonthStatusRow } from "@/features/billing/types";
+import { getAdminBillingMonthOverview, getEffectiveBillingRowStatus } from "@/features/billing/admin";
+import { BILLING_TIME_ZONE, type BillingMonthStatusFilter } from "@/features/billing/types";
 
 type AdminBillingPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
+
+const STATUS_FILTERS: Array<{ value: BillingMonthStatusFilter; label: string }> = [
+  { value: "all", label: "Все" },
+  { value: "unpaid", label: "Не оплачено" },
+  { value: "overdue", label: "Просрочено" },
+  { value: "paid", label: "Оплачено" },
+];
+
+function parseStatusFilter(value: string | null): BillingMonthStatusFilter {
+  if (value === "all" || value === "overdue" || value === "paid" || value === "unpaid") {
+    return value;
+  }
+
+  return "unpaid";
+}
+
+function buildBillingPageHref(month: string | undefined, status: BillingMonthStatusFilter): string {
+  const params = new URLSearchParams();
+
+  if (month) {
+    params.set("month", month.slice(0, 7));
+  }
+
+  if (status !== "unpaid") {
+    params.set("status", status);
+  }
+
+  const query = params.toString();
+  return query ? `/admin/billing?${query}` : "/admin/billing";
+}
 
 function formatBillingMonthLabel(billingMonth: string): string {
   return new Intl.DateTimeFormat("ru-RU", {
@@ -43,14 +73,6 @@ function shiftBillingMonth(month: string, delta: number): string {
     .slice(0, 10);
 }
 
-function getRowStatus(row: BillingMonthStatusRow): string {
-  if (row.status === "pending" && row.daysOverdue != null && row.daysOverdue > 0) {
-    return "overdue";
-  }
-
-  return row.status;
-}
-
 function getStatusBadgeClass(status: string): string {
   switch (status) {
     case "paid":
@@ -75,11 +97,13 @@ function getStudentLinkBadgeClass(isLinked: boolean): string {
 export default async function AdminBillingPage({ searchParams }: AdminBillingPageProps) {
   const resolvedSearchParams = (await searchParams) ?? {};
   const month = getSingleSearchParam(resolvedSearchParams.month) ?? undefined;
+  const statusFilter = parseStatusFilter(getSingleSearchParam(resolvedSearchParams.status));
   const notice = getSingleSearchParam(resolvedSearchParams.notice);
   const error = getSingleSearchParam(resolvedSearchParams.error);
-  const overview = await getAdminBillingMonthOverview(month);
+  const overview = await getAdminBillingMonthOverview(month, statusFilter);
   const previousMonth = shiftBillingMonth(overview.billingMonth, -1).slice(0, 7);
   const nextMonth = shiftBillingMonth(overview.billingMonth, 1).slice(0, 7);
+  const viewMonth = month?.slice(0, 7);
 
   return (
     <section className="admin-section">
@@ -107,13 +131,19 @@ export default async function AdminBillingPage({ searchParams }: AdminBillingPag
             <p className="admin-muted">Месяц биллинга в часовом поясе Europe/Belgrade.</p>
           </div>
           <div className="admin-actions">
-            <Link className="admin-button admin-button-secondary" href={`/admin/billing?month=${previousMonth}`}>
+            <Link
+              className="admin-button admin-button-secondary"
+              href={buildBillingPageHref(previousMonth, statusFilter)}
+            >
               Предыдущий
             </Link>
-            <Link className="admin-button admin-button-secondary" href="/admin/billing">
+            <Link className="admin-button admin-button-secondary" href={buildBillingPageHref(undefined, statusFilter)}>
               Текущий
             </Link>
-            <Link className="admin-button admin-button-secondary" href={`/admin/billing?month=${nextMonth}`}>
+            <Link
+              className="admin-button admin-button-secondary"
+              href={buildBillingPageHref(nextMonth, statusFilter)}
+            >
               Следующий
             </Link>
           </div>
@@ -153,6 +183,18 @@ export default async function AdminBillingPage({ searchParams }: AdminBillingPag
         </article>
       </div>
 
+      <div className="admin-actions">
+        {STATUS_FILTERS.map((filter) => (
+          <Link
+            key={filter.value}
+            className={`admin-button ${statusFilter === filter.value ? "" : "admin-button-secondary"}`}
+            href={buildBillingPageHref(viewMonth, filter.value)}
+          >
+            {filter.label} ({overview.filterCounts[filter.value]})
+          </Link>
+        ))}
+      </div>
+
       <div className="admin-card admin-table-wrap">
         <table className="admin-table">
           <thead>
@@ -171,12 +213,14 @@ export default async function AdminBillingPage({ searchParams }: AdminBillingPag
             {overview.rows.length === 0 ? (
               <tr>
                 <td className="admin-empty-cell" colSpan={8}>
-                  Для выбранного месяца пока нет строк биллинга.
+                  {statusFilter === "all"
+                    ? "Для выбранного месяца пока нет строк биллинга."
+                    : "Нет клиентов для выбранного фильтра."}
                 </td>
               </tr>
             ) : (
               overview.rows.map((row) => {
-                const effectiveStatus = getRowStatus(row);
+                const effectiveStatus = getEffectiveBillingRowStatus(row);
                 const isLinked = Boolean(row.studentId);
 
                 return (
