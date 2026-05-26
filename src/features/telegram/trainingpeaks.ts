@@ -13,6 +13,7 @@ import {
   consumeTrainingPeaksStudentTelegramLinkCode,
   createTrainingPeaksMoveWorkoutActionFromTelegram,
   createTrainingPeaksStudentTelegramLinkCode,
+  dismissTrainingPeaksCoachCase,
   disableTrainingPeaksStudent,
   disableTrainingPeaksStudentByInternalId,
   enableTrainingPeaksStudent,
@@ -35,7 +36,9 @@ import {
   linkTrainingPeaksStudentThread,
   linkTrainingPeaksStudentToBusinessChat,
   listRecentTrainingPeaksBusinessChats,
+  listRecentTrainingPeaksCoachCases,
   rejectTrainingPeaksAction,
+  resolveTrainingPeaksCoachCase,
   requestTrainingPeaksActionExecution,
   TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
   type RequestTrainingPeaksWeeklyRunResult,
@@ -213,6 +216,11 @@ const TP_RUN_WEEK_COMMAND_PATTERN = /^\/tp_run_week(?:@\w+)?(?:\s+|$)/;
 const TP_RACES_COMMAND_PATTERN = /^\/tp_races(?:@\w+)?(?:\s+|$)/;
 const TP_JOBS_COMMAND_PATTERN = /^\/tp_jobs(?:@\w+)?(?:\s+|$)/;
 const TP_ATTENTION_COMMAND_PATTERN = /^\/tp_attention(?:@\w+)?(?:\s+|$)/;
+const TP_CASES_RECENT_COMMAND_PATTERN = /^\/tp_cases_recent(?:@\w+)?(?:\s+|$)/;
+const TP_CASE_RESOLVE_COMMAND_PATTERN = /^\/tp_case_resolve(?:@\w+)?(?:\s+|$)/;
+const TP_CASE_DISMISS_COMMAND_PATTERN = /^\/tp_case_dismiss(?:@\w+)?(?:\s+|$)/;
+const TP_RESOLVE_CASE_COMMAND_PATTERN = /^\/tp_resolve_case(?:@\w+)?(?:\s+|$)/;
+const TP_DISMISS_CASE_COMMAND_PATTERN = /^\/tp_dismiss_case(?:@\w+)?(?:\s+|$)/;
 const TP_HEALTH_COMMAND_PATTERN = /^\/tp_health(?:@\w+)?(?:\s+|$)/;
 const TP_CRON_STATUS_COMMAND_PATTERN = /^\/tp_cron_status(?:@\w+)?(?:\s+|$)/;
 const TP_WEEKLY_COMMAND_PATTERN = /^\/tp_weekly(?:@\w+)?(?:\s+|$)/;
@@ -260,6 +268,9 @@ type TrainingPeaksCommand =
   | "tp_races"
   | "tp_jobs"
   | "tp_attention"
+  | "tp_cases_recent"
+  | "tp_case_resolve"
+  | "tp_case_dismiss"
   | "tp_health"
   | "tp_cron_status"
   | "tp_weekly"
@@ -467,6 +478,18 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
 
   if (TP_ATTENTION_COMMAND_PATTERN.test(text)) {
     return "tp_attention";
+  }
+
+  if (TP_CASES_RECENT_COMMAND_PATTERN.test(text)) {
+    return "tp_cases_recent";
+  }
+
+  if (TP_CASE_RESOLVE_COMMAND_PATTERN.test(text) || TP_RESOLVE_CASE_COMMAND_PATTERN.test(text)) {
+    return "tp_case_resolve";
+  }
+
+  if (TP_CASE_DISMISS_COMMAND_PATTERN.test(text) || TP_DISMISS_CASE_COMMAND_PATTERN.test(text)) {
+    return "tp_case_dismiss";
   }
 
   if (TP_HEALTH_COMMAND_PATTERN.test(text)) {
@@ -1359,6 +1382,96 @@ function getReplyDraftUsageMessage(): string {
   ].join("\n");
 }
 
+function parseTrainingPeaksCoachCaseCommand(text: string): { caseId: string | null; note: string | null } {
+  const body = text.replace(/^\/tp_(?:case_(?:resolve|dismiss)|(?:resolve|dismiss)_case)(?:@\w+)?\s*/i, "").trim();
+  if (!body) {
+    return { caseId: null, note: null };
+  }
+
+  const [caseIdToken, ...noteParts] = body.split(/\s+/);
+  return {
+    caseId: caseIdToken?.trim() || null,
+    note: noteParts.join(" ").trim() || null,
+  };
+}
+
+function formatTrainingPeaksCoachCasesRecentMessage(
+  cases: Awaited<ReturnType<typeof listRecentTrainingPeaksCoachCases>>
+): string {
+  if (cases.length === 0) {
+    return "Recent TP cases:\n\nАктивных кейсов сейчас нет.";
+  }
+
+  return [
+    "Recent TP cases:",
+    "",
+    ...cases.map(
+      (item, index) =>
+        `${index + 1}. ${item.shortId} — ${item.studentName ?? "Без имени"} — ${item.caseKind} — ${formatShortDate(
+          item.createdAt.slice(0, 10)
+        )}`
+    ),
+  ].join("\n");
+}
+
+async function handleTrainingPeaksRecentCoachCases(parsedMessage: ParsedTelegramUpdate): Promise<void> {
+  const cases = await listRecentTrainingPeaksCoachCases({
+    limit: 10,
+    statuses: ["logged", "open", "needs_review"],
+  });
+  await sendTrainingPeaksMessage(parsedMessage.chatId, formatTrainingPeaksCoachCasesRecentMessage(cases));
+}
+
+async function handleTrainingPeaksCoachCaseResolveOrDismiss(
+  parsedMessage: ParsedTelegramUpdate,
+  text: string,
+  action: "resolve" | "dismiss"
+): Promise<void> {
+  const parsed = parseTrainingPeaksCoachCaseCommand(text);
+  if (!parsed.caseId) {
+    await sendTrainingPeaksMessage(
+      parsedMessage.chatId,
+      action === "resolve"
+        ? "Используй: /tp_case_resolve <case_id> [заметка]"
+        : "Используй: /tp_case_dismiss <case_id> [заметка]"
+    );
+    return;
+  }
+
+  const result =
+    action === "resolve"
+      ? await resolveTrainingPeaksCoachCase({
+          caseId: parsed.caseId,
+          actorTelegramChatId: String(parsedMessage.chatId),
+          note: parsed.note,
+        })
+      : await dismissTrainingPeaksCoachCase({
+          caseId: parsed.caseId,
+          actorTelegramChatId: String(parsedMessage.chatId),
+          note: parsed.note,
+        });
+
+  if (result.kind === "ok") {
+    await sendTrainingPeaksMessage(
+      parsedMessage.chatId,
+      action === "resolve" ? "Кейс закрыт: resolved" : "Кейс скрыт: dismissed"
+    );
+    return;
+  }
+
+  if (result.kind === "not_found") {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "Кейс не найден.");
+    return;
+  }
+
+  if (result.kind === "already_final") {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, `Кейс уже в финальном статусе: ${result.status}.`);
+    return;
+  }
+
+  await sendTrainingPeaksMessage(parsedMessage.chatId, "Не удалось обновить кейс. Попробуй позже.");
+}
+
 function getStudentCardReportStatusLabel(status: string): string {
   if (status === "ready") {
     return "готов";
@@ -2069,6 +2182,9 @@ export function getTrainingPeaksHelpLines(): string[] {
     "/tp_report <ученик> [last|даты] — посмотреть отчёт",
     "/tp_actions — последние заявки на перенос",
     "/tp_intents — triage непонятых TP-сообщений (read-only)",
+    "/tp_cases_recent — последние активные coach cases",
+    "/tp_case_resolve <case_id> [заметка] — закрыть coach case",
+    "/tp_case_dismiss <case_id> [заметка] — скрыть coach case",
     "/tp_races YYYY-MM-DD YYYY-MM-DD — скан забегов за период",
     "/tp_reply_draft <ученик> — черновик ответа ученику (без автоотправки)",
     "/tp_health — краткая проверка production-конфига и зависших jobs",
@@ -7093,6 +7209,21 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_attention") {
       await handleTrainingPeaksAttention(parsedMessage);
+      return "handled";
+    }
+
+    if (command === "tp_cases_recent") {
+      await handleTrainingPeaksRecentCoachCases(parsedMessage);
+      return "handled";
+    }
+
+    if (command === "tp_case_resolve") {
+      await handleTrainingPeaksCoachCaseResolveOrDismiss(parsedMessage, text, "resolve");
+      return "handled";
+    }
+
+    if (command === "tp_case_dismiss") {
+      await handleTrainingPeaksCoachCaseResolveOrDismiss(parsedMessage, text, "dismiss");
       return "handled";
     }
 

@@ -1,4 +1,6 @@
 import {
+  getTrainingPeaksCoachCaseById,
+  getTrainingPeaksCoachCaseByIdPrefix,
   approveTrainingPeaksAction as approveTrainingPeaksActionInRepository,
   approveTrainingPeaksWeeklyReportIfDraft,
   cancelQueuedTrainingPeaksJob,
@@ -31,6 +33,7 @@ import {
   recoverStaleTrainingPeaksRunningJobs,
   recoverStaleTrainingPeaksRunningRaceScanJobs,
   insertTrainingPeaksStudent,
+  insertTrainingPeaksCoachActionTaken,
   insertTrainingPeaksCoachCase,
   insertTrainingPeaksStudentContextSnapshot,
   insertTrainingPeaksStudentThread,
@@ -44,6 +47,7 @@ import {
   listTrainingPeaksStudentTelegramLinkCodesByCode,
   listRecentTrainingPeaksJobs,
   listRecentTrainingPeaksCoachCasesForAttention,
+  listRecentTrainingPeaksCoachCases as listRecentTrainingPeaksCoachCasesFromRepository,
   listRecentTrainingPeaksActions as listRecentTrainingPeaksActionsFromRepository,
   listLatestTrainingPeaksActionRunsByActionIds,
   listTrainingPeaksStudents,
@@ -82,6 +86,7 @@ import {
   type TrainingPeaksStudentContextCacheStatus,
   type TrainingPeaksRecoveryAlertKind,
   type TrainingPeaksCoachCaseKind,
+  type TrainingPeaksCoachCaseStatus,
   TrainingPeaksJobConflictError,
   type TrainingPeaksStudentTelegramLinkCode,
   TrainingPeaksTelegramLinkCodeConflictError,
@@ -107,6 +112,7 @@ import {
   updateTrainingPeaksStudentTelegramContactById,
   updateTrainingPeaksStudentTelegramContextById,
   listTrainingPeaksTelegramContextObservationsForStudent,
+  updateTrainingPeaksCoachCaseStatus,
   updateTrainingPeaksStudentThreadById,
   updateTrainingPeaksWeeklyReportContentById,
   updateTrainingPeaksWeeklyReportReviewState as updateTrainingPeaksWeeklyReportReviewStateInRepository,
@@ -574,6 +580,12 @@ export type TrainingPeaksHealthSnapshot = {
   runningJobsOlderThanSixHours: number;
 };
 
+export type TrainingPeaksCoachCaseDecisionResult =
+  | { kind: "ok"; caseId: string; status: Extract<TrainingPeaksCoachCaseStatus, "resolved" | "dismissed"> }
+  | { kind: "not_found" }
+  | { kind: "already_final"; status: Extract<TrainingPeaksCoachCaseStatus, "resolved" | "dismissed"> }
+  | { kind: "failed" };
+
 export type RecordTrainingPeaksCoachCaseAndSnapshotInput = {
   studentId: string | null;
   intentLogId?: string | null;
@@ -729,6 +741,148 @@ async function recordTrainingPeaksCoachActionDecisionContactEvent(
       error,
     });
   }
+}
+
+async function finalizeTrainingPeaksCoachCase(input: {
+  caseId: string;
+  actorTelegramChatId?: string | null;
+  note?: string | null;
+  finalStatus: Extract<TrainingPeaksCoachCaseStatus, "resolved" | "dismissed">;
+  actionKind: "case_resolved" | "case_dismissed";
+}): Promise<TrainingPeaksCoachCaseDecisionResult> {
+  try {
+    const coachCase =
+      (input.caseId.length < 36
+        ? await getTrainingPeaksCoachCaseByIdPrefix(input.caseId)
+        : await getTrainingPeaksCoachCaseById(input.caseId)) ?? null;
+    if (!coachCase) {
+      return { kind: "not_found" };
+    }
+
+    if (coachCase.status === "resolved" || coachCase.status === "dismissed") {
+      return { kind: "already_final", status: coachCase.status };
+    }
+
+    const updatedCase = await updateTrainingPeaksCoachCaseStatus({
+      caseId: coachCase.id,
+      status: input.finalStatus,
+    });
+    if (!updatedCase) {
+      return { kind: "failed" };
+    }
+
+    try {
+      await insertTrainingPeaksCoachActionTaken({
+        caseId: coachCase.id,
+        studentId: coachCase.studentId,
+        actionKind: input.actionKind,
+        source: "telegram_command",
+        actorTelegramChatId: input.actorTelegramChatId ?? null,
+        note: input.note ?? null,
+        metadata: {
+          case_kind: coachCase.caseKind,
+          previous_status: coachCase.status,
+          new_status: input.finalStatus,
+        },
+      });
+    } catch (actionError) {
+      console.warn("Failed to insert TrainingPeaks coach action taken", {
+        caseId: coachCase.id,
+        studentId: coachCase.studentId,
+        actionKind: input.actionKind,
+        error: actionError,
+      });
+    }
+
+    try {
+      await recordTrainingPeaksStudentContactEvent({
+        studentId: coachCase.studentId,
+        eventType: "coach_action_decision",
+        source: "admin_action",
+        referenceId: coachCase.id,
+        metadata: {
+          case_id: coachCase.id,
+          case_kind: coachCase.caseKind,
+          action_kind: input.actionKind,
+          status: input.finalStatus,
+          actor_telegram_chat_id: input.actorTelegramChatId ?? null,
+        },
+      });
+    } catch (contactError) {
+      console.warn("Failed to record TrainingPeaks coach case decision contact event", {
+        caseId: coachCase.id,
+        studentId: coachCase.studentId,
+        status: input.finalStatus,
+        error: contactError,
+      });
+    }
+
+    return {
+      kind: "ok",
+      caseId: coachCase.id,
+      status: input.finalStatus,
+    };
+  } catch (error) {
+    console.warn("Failed to finalize TrainingPeaks coach case", {
+      caseId: input.caseId,
+      finalStatus: input.finalStatus,
+      error,
+    });
+    return { kind: "failed" };
+  }
+}
+
+export async function resolveTrainingPeaksCoachCase(input: {
+  caseId: string;
+  actorTelegramChatId?: string | null;
+  note?: string | null;
+}): Promise<TrainingPeaksCoachCaseDecisionResult> {
+  return finalizeTrainingPeaksCoachCase({
+    caseId: input.caseId,
+    actorTelegramChatId: input.actorTelegramChatId ?? null,
+    note: input.note ?? null,
+    finalStatus: "resolved",
+    actionKind: "case_resolved",
+  });
+}
+
+export async function dismissTrainingPeaksCoachCase(input: {
+  caseId: string;
+  actorTelegramChatId?: string | null;
+  note?: string | null;
+}): Promise<TrainingPeaksCoachCaseDecisionResult> {
+  return finalizeTrainingPeaksCoachCase({
+    caseId: input.caseId,
+    actorTelegramChatId: input.actorTelegramChatId ?? null,
+    note: input.note ?? null,
+    finalStatus: "dismissed",
+    actionKind: "case_dismissed",
+  });
+}
+
+export async function listRecentTrainingPeaksCoachCases(input?: {
+  limit?: number;
+  statuses?: readonly TrainingPeaksCoachCaseStatus[];
+}): Promise<
+  Array<{
+    id: string;
+    shortId: string;
+    studentId: string;
+    studentName: string | null;
+    caseKind: TrainingPeaksCoachCaseKind;
+    status: TrainingPeaksCoachCaseStatus;
+    createdAt: string;
+  }>
+> {
+  const rows = await listRecentTrainingPeaksCoachCasesFromRepository({
+    limit: input?.limit ?? 10,
+    statuses: input?.statuses,
+  });
+
+  return rows.map((row) => ({
+    ...row,
+    shortId: row.id.slice(0, 8),
+  }));
 }
 
 const TP_ADD_STUDENT_COMMAND_PATTERN = /^\/tp_add_student(?:@\w+)?(?:\s+|$)/;
@@ -3164,63 +3318,6 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     });
   }
 
-  const activeStudentNameById = new Map(
-    activeStudents.map((student) => [student.id, student.studentName?.trim() || null])
-  );
-  const caseStatusesForAttention = ["logged", "open", "needs_review"] as const;
-
-  try {
-    const [painCases, questionCases, moveNeedsReviewCases] = await Promise.all([
-      listRecentTrainingPeaksCoachCasesForAttention({
-        sinceHours: 48,
-        caseKinds: ["pain_or_health_signal"],
-        statuses: caseStatusesForAttention,
-        limit: 300,
-      }),
-      listRecentTrainingPeaksCoachCasesForAttention({
-        sinceHours: 24,
-        caseKinds: ["question_to_coach"],
-        statuses: caseStatusesForAttention,
-        limit: 300,
-      }),
-      listRecentTrainingPeaksCoachCasesForAttention({
-        sinceHours: 72,
-        caseKinds: ["move_workout_needs_review"],
-        statuses: caseStatusesForAttention,
-        limit: 300,
-      }),
-    ]);
-
-    for (const caseRow of painCases) {
-      const studentName = activeStudentNameById.get(caseRow.studentId) ?? null;
-      pushUniqueAttentionSignal(urgent, {
-        level: "urgent",
-        studentName,
-        reason: "сигнал по самочувствию/боли за последние 48ч",
-      });
-    }
-
-    for (const caseRow of questionCases) {
-      const studentName = activeStudentNameById.get(caseRow.studentId) ?? null;
-      pushUniqueAttentionSignal(today, {
-        level: "today",
-        studentName,
-        reason: "вопрос тренеру за последние 24ч",
-      });
-    }
-
-    for (const caseRow of moveNeedsReviewCases) {
-      const studentName = activeStudentNameById.get(caseRow.studentId) ?? null;
-      pushUniqueAttentionSignal(today, {
-        level: "today",
-        studentName,
-        reason: "перенос тренировки требует проверки",
-      });
-    }
-  } catch (error) {
-    console.warn("Failed to load coach case signals for attention snapshot", { error });
-  }
-
   try {
     const silentStudentsCount = await countTrainingPeaksSilentStudentsInRepository({
       minimumSilenceDays: 5,
@@ -3285,6 +3382,60 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
       studentName: null,
       reason: "последний запуск TP завершился с ошибкой",
     });
+  }
+
+  const activeStudentNameById = new Map(
+    activeStudents.map((student) => [student.id, student.studentName?.trim() || null])
+  );
+
+  try {
+    const [recent48hCases, recent24hCases] = await Promise.all([
+      listRecentTrainingPeaksCoachCasesForAttention({
+        lookbackHours: 48,
+        caseKinds: ["pain_or_health_signal", "move_workout_needs_review"],
+      }),
+      listRecentTrainingPeaksCoachCasesForAttention({
+        lookbackHours: 24,
+        caseKinds: ["question_to_coach"],
+      }),
+    ]);
+
+    for (const caseRow of recent48hCases) {
+      const studentName = activeStudentNameById.get(caseRow.studentId) ?? null;
+
+      if (caseRow.caseKind === "pain_or_health_signal") {
+        pushUniqueAttentionSignal(observe, {
+          level: "observe",
+          studentName,
+          reason: "сигнал о боли или здоровье",
+        });
+        continue;
+      }
+
+      if (caseRow.caseKind === "move_workout_needs_review") {
+        pushUniqueAttentionSignal(today, {
+          level: "today",
+          studentName,
+          reason: "запрос на перенос ждёт уточнения",
+        });
+      }
+    }
+
+    for (const caseRow of recent24hCases) {
+      const studentName = activeStudentNameById.get(caseRow.studentId) ?? null;
+
+      if (caseRow.caseKind !== "question_to_coach") {
+        continue;
+      }
+
+      pushUniqueAttentionSignal(fyi, {
+        level: "fyi",
+        studentName,
+        reason: "вопрос тренеру",
+      });
+    }
+  } catch (error) {
+    console.warn("Failed to load coach case signals for attention snapshot", { error });
   }
 
   return {
