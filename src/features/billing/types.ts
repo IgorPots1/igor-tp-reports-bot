@@ -221,16 +221,31 @@ export type BillingEmailImportAttachment = {
 export type BillingEmailImportSummary = {
   mode: BillingEmailImportMode;
   scannedMessagesCount: number;
+  matchedMessagesCount: number;
   foundAttachmentsCount: number;
   importedPaymentsCount: number;
   duplicatePaymentsCount: number;
   autoMatchedCount: number;
   reviewRequiredCount: number;
+  skippedAttachmentsCount: number;
+  alreadyProcessedAttachmentsCount: number;
   skippedCount: number;
   errorsCount: number;
   runId: string | null;
   telegramSummaryStatus: "sent" | "skipped" | "failed";
   telegramSummaryReason: string | null;
+  dateRange: {
+    since: string | null;
+    until: string | null;
+    lookbackDays: number | null;
+  };
+  filters: {
+    fromEmail: string | null;
+    subjectContains: string | null;
+    filenameContains: string | null;
+  };
+  maxMessages: number | null;
+  processingOrder: "asc" | "desc";
 };
 
 export type BillingMonthlyPaymentWithClient = BillingMonthlyPayment & {

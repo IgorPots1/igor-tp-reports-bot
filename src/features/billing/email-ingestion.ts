@@ -18,6 +18,11 @@ type BillingEmailImportOptions = {
   apply?: boolean;
   lookbackDays?: number;
   mailbox?: string;
+  since?: string;
+  until?: string;
+  fromEmail?: string;
+  subjectContains?: string;
+  maxMessages?: number;
 };
 
 type BillingEmailConfig = {
@@ -30,6 +35,12 @@ type BillingEmailConfig = {
   fromQuery: string | null;
   subjectQuery: string | null;
   filenameQuery: string | null;
+  sinceDate: Date;
+  untilDateExclusive: Date | null;
+  sinceIso: string | null;
+  untilIso: string | null;
+  maxMessages: number | null;
+  processingOrder: "asc" | "desc";
 };
 
 type ImapAttachment = {
@@ -61,6 +72,7 @@ type ImapBodyStructure = {
 type AttachmentProcessCounts = {
   importedPaymentsCount: number;
   duplicatePaymentsCount: number;
+  alreadyProcessedAttachmentsCount: number;
   skippedCount: number;
   errorsCount: number;
 };
@@ -69,6 +81,7 @@ const DEFAULT_IMAP_HOST = "imap.yandex.com";
 const DEFAULT_IMAP_PORT = 993;
 const DEFAULT_IMAP_MAILBOX = "INBOX";
 const DEFAULT_LOOKBACK_DAYS = 7;
+const DEFAULT_PROCESSING_ORDER: "asc" | "desc" = "asc";
 
 function getOptionalEnv(name: string): string | null {
   const value = process.env[name]?.trim();
@@ -119,6 +132,14 @@ function resolveConfig(options: BillingEmailImportOptions): BillingEmailConfig {
     throw new Error("BILLING_EMAIL_LOOKBACK_DAYS must be a non-negative integer.");
   }
 
+  const dateRange = resolveDateRange({
+    since: options.since,
+    until: options.until,
+    lookbackDays,
+  });
+
+  const maxMessages = resolveMaxMessages(options.maxMessages);
+
   return {
     host,
     port,
@@ -126,14 +147,71 @@ function resolveConfig(options: BillingEmailImportOptions): BillingEmailConfig {
     password: getRequiredEnv("BILLING_EMAIL_IMAP_PASSWORD"),
     mailbox: options.mailbox?.trim() || getOptionalEnv("BILLING_EMAIL_MAILBOX") || DEFAULT_IMAP_MAILBOX,
     lookbackDays,
-    fromQuery: getOptionalEnv("BILLING_EMAIL_FROM_QUERY"),
-    subjectQuery: getOptionalEnv("BILLING_EMAIL_SUBJECT_QUERY"),
+    fromQuery: options.fromEmail?.trim() || getOptionalEnv("BILLING_EMAIL_FROM_QUERY"),
+    subjectQuery: options.subjectContains?.trim() || getOptionalEnv("BILLING_EMAIL_SUBJECT_QUERY"),
     filenameQuery: getOptionalEnv("BILLING_EMAIL_FILENAME_QUERY"),
+    sinceDate: dateRange.sinceDate,
+    untilDateExclusive: dateRange.untilDateExclusive,
+    sinceIso: dateRange.sinceIso,
+    untilIso: dateRange.untilIso,
+    maxMessages,
+    processingOrder: DEFAULT_PROCESSING_ORDER,
   };
 }
 
 function getLookbackSinceDate(lookbackDays: number): Date {
   return new Date(Date.now() - lookbackDays * 86400000);
+}
+
+function parseIsoDateOnly(value: string, name: "since" | "until"): Date {
+  const trimmed = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    throw new Error(`Invalid --${name} value "${value}". Expected YYYY-MM-DD.`);
+  }
+
+  const date = new Date(`${trimmed}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== trimmed) {
+    throw new Error(`Invalid --${name} value "${value}". Expected a valid calendar date in YYYY-MM-DD format.`);
+  }
+  return date;
+}
+
+function resolveDateRange(input: {
+  since?: string;
+  until?: string;
+  lookbackDays: number;
+}): {
+  sinceDate: Date;
+  untilDateExclusive: Date | null;
+  sinceIso: string | null;
+  untilIso: string | null;
+} {
+  const hasSince = Boolean(input.since?.trim());
+  const hasUntil = Boolean(input.until?.trim());
+  const sinceDate = hasSince ? parseIsoDateOnly(String(input.since), "since") : getLookbackSinceDate(input.lookbackDays);
+  const untilDate = hasUntil ? parseIsoDateOnly(String(input.until), "until") : null;
+
+  if (untilDate && sinceDate.getTime() > untilDate.getTime()) {
+    throw new Error(`Invalid date range: --since (${input.since}) cannot be later than --until (${input.until}).`);
+  }
+
+  const untilDateExclusive = untilDate ? new Date(untilDate.getTime() + 86400000) : null;
+  return {
+    sinceDate,
+    untilDateExclusive,
+    sinceIso: hasSince ? String(input.since).trim() : null,
+    untilIso: hasUntil ? String(input.until).trim() : null,
+  };
+}
+
+function resolveMaxMessages(maxMessagesInput: number | undefined): number | null {
+  if (maxMessagesInput == null) {
+    return null;
+  }
+  if (!Number.isInteger(maxMessagesInput) || maxMessagesInput <= 0) {
+    throw new Error("--max-messages must be a positive integer.");
+  }
+  return maxMessagesInput;
 }
 
 function normalizeForContains(value: string | null | undefined): string {
@@ -263,6 +341,7 @@ async function processAttachment(input: {
     return {
       importedPaymentsCount: 0,
       duplicatePaymentsCount: 0,
+      alreadyProcessedAttachmentsCount: 1,
       skippedCount: 1,
       errorsCount: 0,
     };
@@ -276,6 +355,7 @@ async function processAttachment(input: {
     return {
       importedPaymentsCount: dedupedWithinAttachment,
       duplicatePaymentsCount: duplicateWithinAttachment,
+      alreadyProcessedAttachmentsCount: 0,
       skippedCount: parsed.skippedRows.length,
       errorsCount: 0,
     };
@@ -306,6 +386,7 @@ async function processAttachment(input: {
     return {
       importedPaymentsCount: importResult.insertedRowCount,
       duplicatePaymentsCount: importResult.duplicateRowCount + duplicateWithinAttachment,
+      alreadyProcessedAttachmentsCount: 0,
       skippedCount: parsed.skippedRows.length,
       errorsCount: 0,
     };
@@ -320,6 +401,7 @@ async function processAttachment(input: {
     return {
       importedPaymentsCount: 0,
       duplicatePaymentsCount: duplicateWithinAttachment,
+      alreadyProcessedAttachmentsCount: 0,
       skippedCount: parsed.skippedRows.length,
       errorsCount: 1,
     };
@@ -378,16 +460,31 @@ export async function runBillingEmailImport(
   const summary: BillingEmailImportSummary = {
     mode,
     scannedMessagesCount: 0,
+    matchedMessagesCount: 0,
     foundAttachmentsCount: 0,
     importedPaymentsCount: 0,
     duplicatePaymentsCount: 0,
     autoMatchedCount: 0,
     reviewRequiredCount: 0,
+    skippedAttachmentsCount: 0,
+    alreadyProcessedAttachmentsCount: 0,
     skippedCount: 0,
     errorsCount: 0,
     runId,
     telegramSummaryStatus: "skipped",
     telegramSummaryReason: null,
+    dateRange: {
+      since: config.sinceIso,
+      until: config.untilIso,
+      lookbackDays: config.sinceIso ? null : config.lookbackDays,
+    },
+    filters: {
+      fromEmail: config.fromQuery,
+      subjectContains: config.subjectQuery,
+      filenameContains: config.filenameQuery,
+    },
+    maxMessages: config.maxMessages,
+    processingOrder: config.processingOrder,
   };
 
   const client = new ImapFlow({
@@ -407,8 +504,11 @@ export async function runBillingEmailImport(
 
     try {
       const searchQuery: Record<string, unknown> = {
-        since: getLookbackSinceDate(config.lookbackDays),
+        since: config.sinceDate,
       };
+      if (config.untilDateExclusive) {
+        searchQuery.before = config.untilDateExclusive;
+      }
 
       if (config.fromQuery) {
         searchQuery.from = config.fromQuery;
@@ -418,7 +518,11 @@ export async function runBillingEmailImport(
       }
 
       const messageUidsResult = await client.search(searchQuery, { uid: true });
-      const messageUids = Array.isArray(messageUidsResult) ? messageUidsResult : [];
+      const searchedUids = Array.isArray(messageUidsResult) ? messageUidsResult : [];
+      const orderedUids = [...searchedUids].sort((left, right) =>
+        config.processingOrder === "asc" ? left - right : right - left
+      );
+      const messageUids = config.maxMessages != null ? orderedUids.slice(0, config.maxMessages) : orderedUids;
       summary.scannedMessagesCount = messageUids.length;
 
       for (const messageUid of messageUids) {
@@ -432,9 +536,21 @@ export async function runBillingEmailImport(
           { uid: true }
         );
 
-        if (!message || !matchesEnvelopeQueries(message.envelope as ImapEnvelope, config)) {
+        if (!message) {
           continue;
         }
+
+        if (config.untilDateExclusive) {
+          const internalDate = message.internalDate instanceof Date ? message.internalDate : null;
+          if (internalDate && internalDate.getTime() >= config.untilDateExclusive.getTime()) {
+            continue;
+          }
+        }
+
+        if (!matchesEnvelopeQueries(message.envelope as ImapEnvelope, config)) {
+          continue;
+        }
+        summary.matchedMessagesCount += 1;
 
         const attachments = findAttachments(message.bodyStructure as ImapBodyStructure).filter(
           (attachment) =>
@@ -456,6 +572,7 @@ export async function runBillingEmailImport(
             }
 
             if (!parsedLooksValid) {
+              summary.skippedAttachmentsCount += 1;
               summary.skippedCount += 1;
               continue;
             }
@@ -472,9 +589,11 @@ export async function runBillingEmailImport(
 
             summary.importedPaymentsCount += counts.importedPaymentsCount;
             summary.duplicatePaymentsCount += counts.duplicatePaymentsCount;
+            summary.alreadyProcessedAttachmentsCount += counts.alreadyProcessedAttachmentsCount;
             summary.skippedCount += counts.skippedCount;
             summary.errorsCount += counts.errorsCount;
           } catch {
+            summary.skippedAttachmentsCount += 1;
             summary.errorsCount += 1;
           }
         }
