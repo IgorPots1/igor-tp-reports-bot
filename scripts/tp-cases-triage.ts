@@ -4,6 +4,8 @@ import { createSupabaseServerClient } from "@/features/supabase/server";
 import type { TrainingPeaksCoachCaseKind, TrainingPeaksCoachCaseStatus } from "@/features/trainingpeaks/repository";
 
 const LOG_PREFIX = "[tp-cases-triage]";
+const PAGE_SIZE = 500;
+const SINCE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const CASE_KINDS: readonly TrainingPeaksCoachCaseKind[] = [
   "move_workout_requested",
@@ -30,6 +32,9 @@ const UNSAFE_OUTPUT_TOKENS = [
   "content",
   "prompt",
   "raw_payload",
+  "athlete_url",
+  "email",
+  "phone",
 ] as const;
 
 type CliOptions = {
@@ -37,6 +42,8 @@ type CliOptions = {
   status?: TrainingPeaksCoachCaseStatus;
   caseKind?: TrainingPeaksCoachCaseKind;
   studentId?: string;
+  since?: string;
+  summaryOnly: boolean;
 };
 
 type CoachCaseRow = {
@@ -83,7 +90,7 @@ function parseNextValue(argv: string[], index: number, argName: string): string 
 }
 
 function parseCliOptions(argv: string[]): CliOptions {
-  const options: CliOptions = { limit: 20 };
+  const options: CliOptions = { limit: 20, summaryOnly: false };
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -154,6 +161,30 @@ function parseCliOptions(argv: string[]): CliOptions {
       continue;
     }
 
+    if (arg.startsWith("--since=")) {
+      const value = arg.slice("--since=".length).trim();
+      if (!SINCE_PATTERN.test(value)) {
+        throw new Error(`${LOG_PREFIX} FAIL: invalid --since value, expected YYYY-MM-DD`);
+      }
+      options.since = value;
+      continue;
+    }
+
+    if (arg === "--since") {
+      const value = parseNextValue(argv, index, "--since");
+      if (!SINCE_PATTERN.test(value)) {
+        throw new Error(`${LOG_PREFIX} FAIL: invalid --since value, expected YYYY-MM-DD`);
+      }
+      options.since = value;
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--summary-only") {
+      options.summaryOnly = true;
+      continue;
+    }
+
     throw new Error(`${LOG_PREFIX} FAIL: unknown argument ${arg}`);
   }
 
@@ -201,6 +232,11 @@ function safeLog(line: string): void {
   console.log(line);
 }
 
+function safeError(line: string): void {
+  assertSafeOutput(line);
+  console.error(line);
+}
+
 function extractLabelSummaryKeys(labelSummary: unknown): string[] {
   if (!labelSummary || typeof labelSummary !== "object" || Array.isArray(labelSummary)) {
     return [];
@@ -220,26 +256,82 @@ function initCounter<T extends string>(keys: readonly T[]): Record<T, number> {
   return counter;
 }
 
-async function run(): Promise<void> {
-  const supabaseUrl = getEnvValue("NEXT_PUBLIC_SUPABASE_URL");
-  const serviceRoleKey = getEnvValue("SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !serviceRoleKey) {
-    console.log(`${LOG_PREFIX} SKIP: missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY`);
-    return;
+function sinceStartIso(since: string): string {
+  return `${since}T00:00:00.000Z`;
+}
+
+function chunkArray<T>(values: readonly T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
+}
+
+function formatCountLine<T extends string>(prefix: string, keys: readonly T[], counter: Record<T, number>): string {
+  return `${LOG_PREFIX} ${prefix} ${keys.map((key) => `${key}=${counter[key]}`).join(" ")}`;
+}
+
+function formatPercent(numerator: number, denominator: number): string {
+  if (denominator <= 0) {
+    return "0%";
+  }
+  return `${Math.round((numerator / denominator) * 100)}%`;
+}
+
+function formatCoverageLine(
+  prefix: string,
+  valuesByKind: Record<TrainingPeaksCoachCaseKind, number>,
+  totalsByKind: Record<TrainingPeaksCoachCaseKind, number>
+): string {
+  return `${LOG_PREFIX} ${prefix} ${CASE_KINDS.map((kind) => `${kind}=${formatPercent(valuesByKind[kind], totalsByKind[kind])}`).join(" ")}`;
+}
+
+function detectCluster(rows: readonly CoachCaseRow[]): { count: number; firstCreatedAt: string } | null {
+  if (rows.length < 3) {
+    return null;
   }
 
-  if (!process.env.SUPABASE_URL) {
-    process.env.SUPABASE_URL = supabaseUrl;
+  const sorted = [...rows].sort((left, right) => Date.parse(left.created_at) - Date.parse(right.created_at));
+  let bestCount = 0;
+  let bestStartIndex = -1;
+  let windowStartIndex = 0;
+
+  for (let windowEndIndex = 0; windowEndIndex < sorted.length; windowEndIndex += 1) {
+    const windowEndTime = Date.parse(sorted[windowEndIndex].created_at);
+    while (windowStartIndex <= windowEndIndex) {
+      const windowStartTime = Date.parse(sorted[windowStartIndex].created_at);
+      if (!Number.isFinite(windowEndTime) || !Number.isFinite(windowStartTime) || windowEndTime - windowStartTime <= 86_400_000) {
+        break;
+      }
+      windowStartIndex += 1;
+    }
+
+    const windowCount = windowEndIndex - windowStartIndex + 1;
+    if (windowCount > bestCount) {
+      bestCount = windowCount;
+      bestStartIndex = windowStartIndex;
+    }
   }
 
-  const options = parseCliOptions(process.argv.slice(2));
+  if (bestCount < 3 || bestStartIndex < 0) {
+    return null;
+  }
+
+  return {
+    count: bestCount,
+    firstCreatedAt: sorted[bestStartIndex].created_at,
+  };
+}
+
+async function fetchMatchingCasesPage(options: CliOptions, offset: number, limit: number): Promise<CoachCaseRow[]> {
   const supabase = createSupabaseServerClient();
-
   let query = supabase
     .from("trainingpeaks_coach_cases")
     .select("id, student_id, case_kind, status, created_at, intent_log_id, action_id, snapshot_id")
     .order("created_at", { ascending: false })
-    .limit(options.limit);
+    .order("id", { ascending: false })
+    .range(offset, offset + limit - 1);
 
   if (options.status) {
     query = query.eq("status", options.status);
@@ -250,19 +342,40 @@ async function run(): Promise<void> {
   if (options.studentId) {
     query = query.eq("student_id", options.studentId);
   }
-
-  const { data: caseData, error: caseError } = await query;
-  if (caseError) {
-    throw new Error(`${LOG_PREFIX} FAIL: ${caseError.message}`);
+  if (options.since) {
+    query = query.gte("created_at", sinceStartIso(options.since));
   }
 
-  const cases = (caseData as CoachCaseRow[] | null) ?? [];
-  const studentIds = [...new Set(cases.map((row) => row.student_id).filter(Boolean))];
-  const snapshotIds = [...new Set(cases.map((row) => row.snapshot_id).filter((value): value is string => Boolean(value)))];
+  const { data, error } = await query;
+  if (error) {
+    throw new Error(`${LOG_PREFIX} FAIL: ${error.message}`);
+  }
 
+  return (data as CoachCaseRow[] | null) ?? [];
+}
+
+async function fetchAllMatchingCases(options: CliOptions): Promise<CoachCaseRow[]> {
+  const allRows: CoachCaseRow[] = [];
+  let offset = 0;
+
+  while (true) {
+    const page = await fetchMatchingCasesPage(options, offset, PAGE_SIZE);
+    allRows.push(...page);
+
+    if (page.length < PAGE_SIZE) {
+      return allRows;
+    }
+
+    offset += page.length;
+  }
+}
+
+async function fetchStudentNamesById(studentIds: readonly string[]): Promise<Map<string, string>> {
+  const supabase = createSupabaseServerClient();
   const studentNamesById = new Map<string, string>();
-  if (studentIds.length > 0) {
-    const { data, error } = await supabase.from("trainingpeaks_students").select("id, student_name").in("id", studentIds);
+
+  for (const chunk of chunkArray(studentIds, PAGE_SIZE)) {
+    const { data, error } = await supabase.from("trainingpeaks_students").select("id, student_name").in("id", chunk);
     if (error) {
       throw new Error(`${LOG_PREFIX} FAIL: ${error.message}`);
     }
@@ -271,12 +384,18 @@ async function run(): Promise<void> {
     }
   }
 
+  return studentNamesById;
+}
+
+async function fetchSnapshotLabelKeysById(snapshotIds: readonly string[]): Promise<Map<string, string[]>> {
+  const supabase = createSupabaseServerClient();
   const snapshotLabelKeysById = new Map<string, string[]>();
-  if (snapshotIds.length > 0) {
+
+  for (const chunk of chunkArray(snapshotIds, PAGE_SIZE)) {
     const { data, error } = await supabase
       .from("trainingpeaks_student_context_snapshots")
       .select("id, label_summary")
-      .in("id", snapshotIds);
+      .in("id", chunk);
     if (error) {
       throw new Error(`${LOG_PREFIX} FAIL: ${error.message}`);
     }
@@ -284,6 +403,114 @@ async function run(): Promise<void> {
       snapshotLabelKeysById.set(row.id, extractLabelSummaryKeys(row.label_summary));
     }
   }
+
+  return snapshotLabelKeysById;
+}
+
+async function printSummaryOnly(options: CliOptions): Promise<void> {
+  const cases = await fetchAllMatchingCases(options);
+  const byCaseKind = initCounter(CASE_KINDS);
+  const byStatus = initCounter(STATUSES);
+  const intentLinkedByCaseKind = initCounter(CASE_KINDS);
+  const actionLinkedByCaseKind = initCounter(CASE_KINDS);
+  const snapshotLinkedByCaseKind = initCounter(CASE_KINDS);
+
+  const studentIds = [...new Set(cases.map((row) => row.student_id).filter(Boolean))];
+  const snapshotIds = [...new Set(cases.map((row) => row.snapshot_id).filter((value): value is string => Boolean(value)))];
+  const studentNamesById = studentIds.length > 0 ? await fetchStudentNamesById(studentIds) : new Map<string, string>();
+  const snapshotLabelKeysById = snapshotIds.length > 0 ? await fetchSnapshotLabelKeysById(snapshotIds) : new Map<string, string[]>();
+  const labelCounts = new Map<string, number>();
+  const clustersByStudentAndKind = new Map<string, CoachCaseRow[]>();
+
+  for (const row of cases) {
+    byCaseKind[row.case_kind] += 1;
+    byStatus[row.status] += 1;
+
+    if (row.intent_log_id) {
+      intentLinkedByCaseKind[row.case_kind] += 1;
+    }
+    if (row.action_id) {
+      actionLinkedByCaseKind[row.case_kind] += 1;
+    }
+    if (row.snapshot_id) {
+      snapshotLinkedByCaseKind[row.case_kind] += 1;
+      for (const label of snapshotLabelKeysById.get(row.snapshot_id) ?? []) {
+        labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+      }
+    }
+
+    const clusterKey = `${row.student_id}::${row.case_kind}`;
+    const clusterRows = clustersByStudentAndKind.get(clusterKey) ?? [];
+    clusterRows.push(row);
+    clustersByStudentAndKind.set(clusterKey, clusterRows);
+  }
+
+  safeLog(`${LOG_PREFIX} total_cases=${cases.length}`);
+  safeLog(formatCountLine("by_case_kind", CASE_KINDS, byCaseKind));
+  safeLog(formatCountLine("by_status", STATUSES, byStatus));
+  safeLog(formatCoverageLine("coverage_intent_linked", intentLinkedByCaseKind, byCaseKind));
+  safeLog(formatCoverageLine("coverage_action_linked", actionLinkedByCaseKind, byCaseKind));
+  safeLog(formatCoverageLine("coverage_snapshot_linked", snapshotLinkedByCaseKind, byCaseKind));
+
+  const topLabels = [...labelCounts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 10);
+  if (topLabels.length === 0) {
+    safeLog(`${LOG_PREFIX} top_labels none`);
+  } else {
+    safeLog(`${LOG_PREFIX} top_labels ${topLabels.map(([label, count]) => `${label}=${count}`).join(" ")}`);
+  }
+
+  const clusterLines: string[] = [];
+  for (const rows of clustersByStudentAndKind.values()) {
+    const cluster = detectCluster(rows);
+    if (!cluster) {
+      continue;
+    }
+
+    const sample = rows[0];
+    const studentName = studentNamesById.get(sample.student_id) ?? "—";
+    clusterLines.push(
+      `${LOG_PREFIX} cluster_alert student=${JSON.stringify(studentName)} kind=${sample.case_kind} count=${cluster.count} window=24h first=${formatRelativeAge(cluster.firstCreatedAt)}`
+    );
+  }
+
+  if (clusterLines.length === 0) {
+    safeLog(`${LOG_PREFIX} cluster_alert none`);
+    return;
+  }
+
+  clusterLines.sort((left, right) => left.localeCompare(right));
+  for (const line of clusterLines) {
+    safeLog(line);
+  }
+}
+
+async function run(): Promise<void> {
+  const supabaseUrl = getEnvValue("NEXT_PUBLIC_SUPABASE_URL");
+  const serviceRoleKey = getEnvValue("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !serviceRoleKey) {
+    safeLog(`${LOG_PREFIX} SKIP: missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY`);
+    return;
+  }
+
+  if (!process.env.SUPABASE_URL) {
+    process.env.SUPABASE_URL = supabaseUrl;
+  }
+
+  const options = parseCliOptions(process.argv.slice(2));
+
+  if (options.summaryOnly) {
+    await printSummaryOnly(options);
+    return;
+  }
+
+  const cases = await fetchMatchingCasesPage(options, 0, options.limit);
+  const studentIds = [...new Set(cases.map((row) => row.student_id).filter(Boolean))];
+  const snapshotIds = [...new Set(cases.map((row) => row.snapshot_id).filter((value): value is string => Boolean(value)))];
+  const studentNamesById = studentIds.length > 0 ? await fetchStudentNamesById(studentIds) : new Map<string, string>();
+  const snapshotLabelKeysById =
+    snapshotIds.length > 0 ? await fetchSnapshotLabelKeysById(snapshotIds) : new Map<string, string[]>();
 
   const byCaseKind = initCounter(CASE_KINDS);
   const byStatus = initCounter(STATUSES);
@@ -305,19 +532,18 @@ async function run(): Promise<void> {
     );
   }
 
-  safeLog(`${LOG_PREFIX} total_cases=${cases.length}`);
-  safeLog(
-    `${LOG_PREFIX} by_case_kind ${CASE_KINDS.map((caseKind) => `${caseKind}=${byCaseKind[caseKind]}`).join(" ")}`
-  );
-  safeLog(`${LOG_PREFIX} by_status ${STATUSES.map((status) => `${status}=${byStatus[status]}`).join(" ")}`);
+  safeLog(`${LOG_PREFIX} total_cases_window=${cases.length}`);
+  safeLog(formatCountLine("by_case_kind_window", CASE_KINDS, byCaseKind));
+  safeLog(formatCountLine("by_status_window", STATUSES, byStatus));
+  safeLog(`${LOG_PREFIX} note=window_scoped_use_summary_only_for_global_counts`);
 }
 
 void run().catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
   if (message.startsWith(`${LOG_PREFIX} FAIL:`)) {
-    console.error(message);
+    safeError(message);
   } else {
-    console.error(`${LOG_PREFIX} FAIL: ${message}`);
+    safeError(`${LOG_PREFIX} FAIL: ${message}`);
   }
   process.exit(1);
 });
