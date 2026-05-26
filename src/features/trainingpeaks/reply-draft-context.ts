@@ -18,6 +18,14 @@ const LOOKBACK_DAYS = 7;
 const CACHE_STALE_AFTER_MS = 48 * 60 * 60 * 1000;
 const TELEGRAM_CONTEXT_NOTES_MAX_LENGTH = 500;
 const RECENT_OBSERVATION_LABELS_MAX_COUNT = 6;
+const HUMANIZED_OBSERVATION_LABELS: Partial<Record<string, string>> = {
+  question_to_coach: "ученик задавал вопрос",
+  pain_or_health: "был сигнал по самочувствию/дискомфорту",
+  schedule_context: "обсуждался перенос или расписание",
+  report_like: "был отчёт/сообщение о тренировке",
+  race_context: "обсуждался старт",
+  move_workout_candidate: "возможный запрос на перенос тренировки",
+};
 
 export type TrainingPeaksReplyDraftWorkoutSummary = {
   workoutDate: string;
@@ -320,8 +328,9 @@ function buildTelegramContextBullets(input: {
 
   const contactBullets = buildContactStatusBullets(input.contactStatus, input.recentContactEvents);
   const limitedBullets = [...bullets, ...contactBullets].slice(0, 3);
-  if (input.recentObservationLabels.length > 0) {
-    limitedBullets.push(`Недавние Telegram-наблюдения: ${input.recentObservationLabels.join(", ")}.`);
+  const humanizedObservationLabels = humanizeRecentObservationLabels(input.recentObservationLabels);
+  if (humanizedObservationLabels.length > 0) {
+    limitedBullets.push(`Недавние Telegram-наблюдения: ${humanizedObservationLabels.join(", ")}.`);
   }
 
   return limitedBullets.slice(0, 4);
@@ -418,6 +427,23 @@ function collectRecentObservationLabels(
   }
 
   return [...labels];
+}
+
+function humanizeRecentObservationLabels(labels: string[]): string[] {
+  const humanized = new Set<string>();
+
+  for (const label of labels) {
+    if (!label || label === "unknown") {
+      continue;
+    }
+
+    const mapped = HUMANIZED_OBSERVATION_LABELS[label];
+    if (mapped) {
+      humanized.add(mapped);
+    }
+  }
+
+  return [...humanized];
 }
 
 function buildContactStatusPromptLines(

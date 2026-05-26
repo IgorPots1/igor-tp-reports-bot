@@ -1318,42 +1318,44 @@ function parseReplyDraftCommand(text: string): {
   studentQuery: string | null;
   studentMessage: string | null;
 } {
-  const body = text.replace(/^\/tp_reply_draft(?:@\w+)?\s*/i, "").trim();
+  const rawBody = text.replace(/^\/tp_reply_draft(?:@\w+)?\s*/i, "");
+  const body = rawBody.trim();
 
   if (!body) {
     return { studentQuery: null, studentMessage: null };
   }
 
-  const newlineIndex = body.indexOf("\n");
-  if (newlineIndex === -1) {
-    const tokens = body.split(/\s+/);
-    if (tokens.length <= 1) {
-      return {
-        studentQuery: tokens[0]?.trim() || null,
-        studentMessage: null,
-      };
-    }
+  const lines = body.split(/\r?\n/);
+  const firstLine = lines[0]?.trim() ?? "";
+  const remainingLines = lines.slice(1);
+  const firstLineTokens = firstLine.split(/\s+/).filter(Boolean);
+  const studentQuery = firstLineTokens[0] ?? null;
 
-    return {
-      studentQuery: tokens[0]?.trim() || null,
-      studentMessage: tokens.slice(1).join(" ").trim() || null,
-    };
+  if (!studentQuery) {
+    return { studentQuery: null, studentMessage: null };
   }
 
-  const studentQuery = body.slice(0, newlineIndex).trim();
-  const studentMessage = body.slice(newlineIndex + 1).trim();
+  const firstLineRemainder = firstLine.slice(studentQuery.length).trim();
+  const studentMessage = [firstLineRemainder, ...remainingLines].join("\n").trim();
 
   return {
-    studentQuery: studentQuery || null,
+    studentQuery,
     studentMessage: studentMessage || null,
   };
 }
 
 function getReplyDraftUsageMessage(): string {
   return [
-    "Напиши так:",
-    "/tp_reply_draft alexander-lavrentyev",
-    "Пробежал, было тяжело, пульс высокий, ноги ватные.",
+    "Использование /tp_reply_draft:",
+    "",
+    "A) /tp_reply_draft",
+    "alena-grill",
+    "Можно сегодня перенести тренировку на пятницу?",
+    "",
+    "B) /tp_reply_draft alena-grill",
+    "Можно сегодня перенести тренировку на пятницу?",
+    "",
+    "C) /tp_reply_draft alena-grill Можно сегодня перенести тренировку на пятницу?",
   ].join("\n");
 }
 
@@ -5587,10 +5589,7 @@ async function handleTrainingPeaksReplyDraft(
   }
 
   if (!studentMessage) {
-    await sendTrainingPeaksMessage(
-      parsedMessage.chatId,
-      "Вставь сообщение ученика после строки с учеником (можно несколько строк)."
-    );
+    await sendTrainingPeaksMessage(parsedMessage.chatId, getReplyDraftUsageMessage());
     return;
   }
 
