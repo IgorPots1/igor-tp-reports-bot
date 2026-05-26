@@ -228,6 +228,23 @@ export type TrainingPeaksStudentContactEventSource =
   | "telegram_group_topic"
   | "admin_report_send"
   | "admin_action";
+export type TrainingPeaksStudentContextCacheStatus = "ok" | "empty" | "stale";
+export type TrainingPeaksRecoveryAlertKind =
+  | "short_sleep_streak"
+  | "short_sleep_plus_low_body_battery";
+export type TrainingPeaksCoachCaseKind =
+  | "move_workout_requested"
+  | "move_workout_needs_review"
+  | "question_to_coach"
+  | "pain_or_health_signal"
+  | "unrecognized_intent"
+  | "observation_only";
+export type TrainingPeaksCoachCaseStatus =
+  | "logged"
+  | "open"
+  | "needs_review"
+  | "resolved"
+  | "dismissed";
 
 export type TrainingPeaksRaceResultsProbeRequestJson = {
   distance: string;
@@ -4520,6 +4537,31 @@ export type InsertTrainingPeaksMessageIntentLogInput = {
   metadata?: Record<string, unknown>;
 };
 
+export type InsertTrainingPeaksStudentContextSnapshotInput = {
+  studentId: string | null;
+  sourceIntentLogId?: string | null;
+  cacheStatus: TrainingPeaksStudentContextCacheStatus;
+  silenceDays?: number | null;
+  lastCoachTouchAt?: string | null;
+  unansweredSeconds?: number | null;
+  recoveryAlertKind?: TrainingPeaksRecoveryAlertKind | null;
+  missedPlannedDates?: string[] | null;
+  labelSummary?: Record<string, boolean>;
+};
+
+export type InsertTrainingPeaksCoachCaseInput = {
+  studentId: string;
+  caseKind: TrainingPeaksCoachCaseKind;
+  intentLogId?: string | null;
+  actionId?: string | null;
+  contextObsId?: string | null;
+  snapshotId?: string | null;
+  telegramChatId?: string | null;
+  telegramMessageId?: number | null;
+  status?: TrainingPeaksCoachCaseStatus;
+  coachNotesJson?: Record<string, unknown> | null;
+};
+
 function mapTrainingPeaksMessageIntentLogRow(
   row: TrainingPeaksMessageIntentLogRow
 ): TrainingPeaksMessageIntentLog {
@@ -4601,6 +4643,67 @@ export async function insertTrainingPeaksMessageIntentLog(
   }
 
   return mapTrainingPeaksMessageIntentLogRow(data as TrainingPeaksMessageIntentLogRow);
+}
+
+export async function insertTrainingPeaksStudentContextSnapshot(
+  input: InsertTrainingPeaksStudentContextSnapshotInput
+): Promise<{ id: string }> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_context_snapshots")
+    .insert({
+      student_id: input.studentId,
+      source_intent_log_id: input.sourceIntentLogId ?? null,
+      cache_status: input.cacheStatus,
+      silence_days: input.silenceDays ?? null,
+      last_coach_touch_at: input.lastCoachTouchAt ?? null,
+      unanswered_seconds: input.unansweredSeconds ?? null,
+      recovery_alert_kind: input.recoveryAlertKind ?? null,
+      missed_planned_dates: input.missedPlannedDates ?? null,
+      label_summary: input.labelSummary ?? {},
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to insert TrainingPeaks student context snapshot: ${error.message}`);
+  }
+
+  return data as { id: string };
+}
+
+export async function insertTrainingPeaksCoachCase(
+  input: InsertTrainingPeaksCoachCaseInput
+): Promise<{ id: string } | null> {
+  const insertPayload = pickDefinedValues({
+    student_id: input.studentId,
+    case_kind: input.caseKind,
+    intent_log_id: input.intentLogId ?? null,
+    action_id: input.actionId ?? null,
+    context_obs_id: input.contextObsId ?? null,
+    snapshot_id: input.snapshotId ?? null,
+    telegram_chat_id: input.telegramChatId ?? null,
+    telegram_message_id: input.telegramMessageId ?? null,
+    status: input.status,
+    coach_notes_json: input.coachNotesJson ?? null,
+  });
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_coach_cases")
+    .insert(insertPayload)
+    .select("id")
+    .single();
+
+  if (error) {
+    if (error.code === "23505") {
+      return null;
+    }
+
+    throw new Error(`Failed to insert TrainingPeaks coach case: ${error.message}`);
+  }
+
+  return data as { id: string };
 }
 
 export type UpdateTrainingPeaksMessageIntentLogAiInput = {
