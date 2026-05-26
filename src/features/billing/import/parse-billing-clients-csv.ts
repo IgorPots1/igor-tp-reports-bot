@@ -21,7 +21,7 @@ type ParsedBillingClientCsvRow = {
   groupName: string | null;
   monthlyAmount: number;
   currency: BillingCurrency;
-  plannedPaymentDay: number;
+  plannedPaymentDay: number | null;
   paymentMethod: BillingPaymentMethod;
   notes: string | null;
   trainingpeaksStudentId: string | null;
@@ -226,10 +226,13 @@ export async function parseBillingClientsCsv(filePath: string): Promise<ParseBil
       continue;
     }
 
-    const plannedPaymentDay = parsePlannedPaymentDay(plannedPaymentDayRaw);
-    if (plannedPaymentDay == null) {
-      errors.push({ rowNumber, message: "planned_payment_day must be an integer in range 1..31." });
-      continue;
+    let plannedPaymentDay: number | null = null;
+    if (plannedPaymentDayRaw) {
+      plannedPaymentDay = parsePlannedPaymentDay(plannedPaymentDayRaw);
+      if (plannedPaymentDay == null) {
+        errors.push({ rowNumber, message: "planned_payment_day must be an integer in range 1..31." });
+        continue;
+      }
     }
 
     const paymentMethod = parsePaymentMethod(paymentMethodRaw);
