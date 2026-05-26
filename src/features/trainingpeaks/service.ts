@@ -31,6 +31,8 @@ import {
   recoverStaleTrainingPeaksRunningJobs,
   recoverStaleTrainingPeaksRunningRaceScanJobs,
   insertTrainingPeaksStudent,
+  insertTrainingPeaksCoachCase,
+  insertTrainingPeaksStudentContextSnapshot,
   insertTrainingPeaksStudentThread,
   insertTrainingPeaksStudentTelegramLinkCode,
   linkTrainingPeaksStudentToBusinessChat as linkTrainingPeaksStudentToBusinessChatInRepository,
@@ -76,6 +78,9 @@ import {
   type TrainingPeaksActionRun,
   type ClaimedTrainingPeaksDryRunAction,
   type TrainingPeaksStudentContactStatus,
+  type TrainingPeaksStudentContextCacheStatus,
+  type TrainingPeaksRecoveryAlertKind,
+  type TrainingPeaksCoachCaseKind,
   TrainingPeaksJobConflictError,
   type TrainingPeaksStudentTelegramLinkCode,
   TrainingPeaksTelegramLinkCodeConflictError,
@@ -567,6 +572,132 @@ export type TrainingPeaksHealthSnapshot = {
   lastAttentionDigestCronStatus: string | null;
   runningJobsOlderThanSixHours: number;
 };
+
+export type RecordTrainingPeaksCoachCaseAndSnapshotInput = {
+  studentId: string | null;
+  intentLogId?: string | null;
+  actionId?: string | null;
+  contextObsId?: string | null;
+  telegramChatId?: string | null;
+  telegramMessageId?: number | null;
+  intentStatus?: string | null;
+  labels?: readonly string[] | null;
+  cacheStatus?: TrainingPeaksStudentContextCacheStatus;
+  silenceDays?: number | null;
+  lastCoachTouchAt?: string | null;
+  unansweredSeconds?: number | null;
+  recoveryAlertKind?: TrainingPeaksRecoveryAlertKind | null;
+  missedPlannedDates?: string[] | null;
+};
+
+export type RecordTrainingPeaksCoachCaseAndSnapshotResult = {
+  snapshotId: string | null;
+  caseIds: string[];
+};
+
+function buildTrainingPeaksCoachCaseLabelSummary(
+  labels: readonly string[] | null | undefined
+): Record<string, boolean> {
+  const summary: Record<string, boolean> = {};
+  for (const label of labels ?? []) {
+    if (typeof label !== "string") {
+      continue;
+    }
+    const normalized = label.trim();
+    if (!normalized) {
+      continue;
+    }
+    summary[normalized] = true;
+  }
+  return summary;
+}
+
+function deriveTrainingPeaksCoachCaseKinds(input: {
+  intentStatus?: string | null;
+  actionId?: string | null;
+  labels?: readonly string[] | null;
+}): TrainingPeaksCoachCaseKind[] {
+  const kinds = new Set<TrainingPeaksCoachCaseKind>();
+  const labels = input.labels ?? [];
+
+  if (input.intentStatus === "action_created" && input.actionId) {
+    kinds.add("move_workout_requested");
+  }
+  if (input.intentStatus === "needs_review") {
+    kinds.add("move_workout_needs_review");
+  }
+  if (input.intentStatus === "unrecognized") {
+    kinds.add("unrecognized_intent");
+  }
+  if (labels.includes("pain_or_health")) {
+    kinds.add("pain_or_health_signal");
+  }
+  if (labels.includes("question_to_coach")) {
+    kinds.add("question_to_coach");
+  }
+
+  return [...kinds];
+}
+
+export async function recordTrainingPeaksCoachCaseAndSnapshot(
+  input: RecordTrainingPeaksCoachCaseAndSnapshotInput
+): Promise<RecordTrainingPeaksCoachCaseAndSnapshotResult | null> {
+  try {
+    if (!input.studentId) {
+      return null;
+    }
+
+    const snapshot = await insertTrainingPeaksStudentContextSnapshot({
+      studentId: input.studentId,
+      sourceIntentLogId: input.intentLogId ?? null,
+      cacheStatus: input.cacheStatus ?? "empty",
+      silenceDays: input.silenceDays ?? null,
+      lastCoachTouchAt: input.lastCoachTouchAt ?? null,
+      unansweredSeconds: input.unansweredSeconds ?? null,
+      recoveryAlertKind: input.recoveryAlertKind ?? null,
+      missedPlannedDates: input.missedPlannedDates ?? null,
+      labelSummary: buildTrainingPeaksCoachCaseLabelSummary(input.labels),
+    });
+
+    const caseIds: string[] = [];
+    const caseKinds = deriveTrainingPeaksCoachCaseKinds({
+      intentStatus: input.intentStatus,
+      actionId: input.actionId ?? null,
+      labels: input.labels ?? null,
+    });
+
+    for (const caseKind of caseKinds) {
+      const inserted = await insertTrainingPeaksCoachCase({
+        studentId: input.studentId,
+        caseKind,
+        intentLogId: input.intentLogId ?? null,
+        actionId: input.actionId ?? null,
+        contextObsId: input.contextObsId ?? null,
+        snapshotId: snapshot.id,
+        telegramChatId: input.telegramChatId ?? null,
+        telegramMessageId: input.telegramMessageId ?? null,
+      });
+      if (inserted?.id) {
+        caseIds.push(inserted.id);
+      }
+    }
+
+    return {
+      snapshotId: snapshot.id,
+      caseIds,
+    };
+  } catch (error) {
+    console.warn("[trainingpeaks-coach-cases] failed to record case ledger", {
+      studentId: input.studentId,
+      intentLogId: input.intentLogId ?? null,
+      actionId: input.actionId ?? null,
+      telegramChatId: input.telegramChatId ?? null,
+      telegramMessageId: input.telegramMessageId ?? null,
+      error,
+    });
+    return null;
+  }
+}
 
 async function recordTrainingPeaksCoachActionDecisionContactEvent(
   result: DecideTrainingPeaksActionResult

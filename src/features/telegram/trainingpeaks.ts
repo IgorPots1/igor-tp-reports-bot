@@ -47,6 +47,7 @@ import {
   requestTrainingPeaksWeeklyRunForStudentByInternalId,
   requestTrainingPeaksRaceScan,
   requestTrainingPeaksRaceResultsProbeJob,
+  recordTrainingPeaksCoachCaseAndSnapshot,
   type RequestTrainingPeaksWeeklyRunForStudentResult,
   unlinkTrainingPeaksStudentThread,
   updateTrainingPeaksWeeklyReportStateByInternalId,
@@ -75,19 +76,25 @@ import {
   isAthleteIncomingBusinessDmMessage,
   recordTrainingPeaksTelegramBusinessContextObservation,
 } from "@/features/trainingpeaks/telegram-context";
-import { logTrainingPeaksBusinessMessageIntentDecision } from "@/features/trainingpeaks/message-intent-log";
+import {
+  hasTrainingPeaksMessageIntentLoggingRelevance,
+  logTrainingPeaksBusinessMessageIntentDecision,
+  resolveTrainingPeaksMessageIntentLogStatus,
+} from "@/features/trainingpeaks/message-intent-log";
 import {
   formatTrainingPeaksMessageIntentLogsTriageTelegram,
   parseTrainingPeaksIntentsCommandArgs,
 } from "@/features/trainingpeaks/message-intent-log-triage";
 import {
   getLatestTrainingPeaksCronRunLog,
+  getTrainingPeaksMessageIntentLogByTelegramMessage,
   getTrainingPeaksStudentByTelegramChatId,
   listTrainingPeaksMessageIntentLogsForTriage,
   listTrainingPeaksCronRunLogs,
   TRAININGPEAKS_ATTENTION_DIGEST_CRON_JOB_NAME,
   recordTrainingPeaksStudentContactEvent,
   type TrainingPeaksCronRunLog,
+  type TrainingPeaksMessageIntentLogStatus,
 } from "@/features/trainingpeaks/repository";
 import { isTrainingPeaksContextObserverEnabled } from "@/features/trainingpeaks/context-observer";
 import {
@@ -4013,14 +4020,16 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
     message.chat?.id === undefined || message.chat?.id === null ? null : String(message.chat.id);
   const messageText = (message.text ?? message.caption ?? "").trim();
   const contextLabels = messageText ? classifyTelegramContextLabels(messageText) : [];
+  let contextObsId: string | null = null;
 
   if (chatId && messageText && isAthleteIncomingBusinessDmMessage(message)) {
     try {
-      await recordTrainingPeaksTelegramBusinessContextObservation({
+      const observation = await recordTrainingPeaksTelegramBusinessContextObservation({
         chatId,
         messageId: message.message_id,
         text: messageText,
       });
+      contextObsId = observation?.id ?? null;
     } catch (error) {
       console.warn("Failed to record TrainingPeaks telegram business context observation", {
         chatId,
@@ -4089,7 +4098,53 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
       });
     }
 
+    let intentStatus: TrainingPeaksMessageIntentLogStatus | null = null;
+    if (moveActionResult.ok) {
+      intentStatus = "action_created";
+    } else {
+      intentStatus = resolveTrainingPeaksMessageIntentLogStatus({
+        reason: moveActionResult.reason,
+        hasRelevance: hasTrainingPeaksMessageIntentLoggingRelevance(messageText, contextLabels),
+      });
+    }
+
+    let intentLogId: string | null = null;
+    try {
+      const intentLog = await getTrainingPeaksMessageIntentLogByTelegramMessage(
+        chatId,
+        String(message.message_id)
+      );
+      intentLogId = intentLog?.id ?? null;
+      if (!intentStatus) {
+        intentStatus = intentLog?.status ?? null;
+      }
+    } catch (error) {
+      console.warn("Failed to read TrainingPeaks business message intent log row", {
+        chatId,
+        error,
+      });
+    }
+
+    const caseInput = {
+      studentId: moveActionResult.ok ? moveActionResult.student.id : moveActionResult.student?.id ?? null,
+      intentLogId,
+      actionId: moveActionResult.ok ? moveActionResult.action.id : null,
+      contextObsId,
+      telegramChatId: chatId,
+      telegramMessageId: message.message_id,
+      intentStatus,
+      labels: contextLabels,
+    } as const;
+
     if (!moveActionResult.ok) {
+      try {
+        await recordTrainingPeaksCoachCaseAndSnapshot(caseInput);
+      } catch (error) {
+        console.warn("Failed to record TrainingPeaks business DM coach case and snapshot", {
+          chatId,
+          error,
+        });
+      }
       return;
     }
 
@@ -4105,6 +4160,14 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
       ].join("\n"),
       getTrainingPeaksActionDecisionMarkup(moveActionResult.action.id)
     );
+    try {
+      await recordTrainingPeaksCoachCaseAndSnapshot(caseInput);
+    } catch (error) {
+      console.warn("Failed to record TrainingPeaks business DM coach case and snapshot", {
+        chatId,
+        error,
+      });
+    }
     return;
   }
 
