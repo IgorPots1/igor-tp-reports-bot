@@ -133,6 +133,9 @@ export default async function AdminBillingImportsPage({ searchParams }: AdminBil
       ) : (
         overview.rows.map((row) => {
           const { imported, suggestions, matchedMonthlyPayment } = row;
+          const manualCandidates = overview.candidates.filter(
+            (candidate) => candidate.currency === imported.currency
+          );
 
           return (
             <article key={imported.id} className="admin-card admin-import-card">
@@ -204,8 +207,10 @@ export default async function AdminBillingImportsPage({ searchParams }: AdminBil
 
                   <div className="admin-import-manual">
                     <h3 className="admin-eyebrow">Засчитать вручную</h3>
-                    {overview.candidates.length === 0 ? (
-                      <p className="admin-muted">Нет доступных месячных платежей для ручного выбора.</p>
+                    {manualCandidates.length === 0 ? (
+                      <p className="admin-muted">
+                        Для валюты {imported.currency} нет доступных месячных платежей для ручного выбора.
+                      </p>
                     ) : (
                       <form action={confirmImportedPaymentAction} className="admin-form-stack">
                         <input type="hidden" name="importedPaymentId" value={imported.id} />
@@ -216,7 +221,7 @@ export default async function AdminBillingImportsPage({ searchParams }: AdminBil
                             <option value="" disabled>
                               Выбери месячный платёж
                             </option>
-                            {overview.candidates.map((candidate) => (
+                            {manualCandidates.map((candidate) => (
                               <option key={candidate.id} value={candidate.id}>
                                 {candidate.client.clientName} — {formatBillingMonthLabel(candidate.billingMonth)} —{" "}
                                 {formatBillingAmount(candidate.plannedAmount, candidate.currency)}

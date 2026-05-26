@@ -1,4 +1,12 @@
 export const BILLING_TIME_ZONE = "Europe/Belgrade";
+export const BILLING_CURRENCY_VALUES = ["RUB", "EUR", "OTHER"] as const;
+export const BILLING_PAYMENT_METHOD_VALUES = [
+  "tbank_link_a",
+  "tbank_link_b",
+  "tbank_link_c",
+  "manual_eur",
+  "manual_other",
+] as const;
 
 export const BILLING_CSV_COLUMNS = [
   "group_name",
@@ -17,14 +25,8 @@ export const BILLING_CSV_COLUMNS = [
 export type BillingMonthInput = string | Date;
 export type BillingDateInput = string | Date;
 
-export type BillingCurrency = "RUB" | "EUR" | "OTHER";
-export type BillingPaymentMethod =
-  | "tbank_link_a"
-  | "tbank_link_b"
-  | "tbank_link_c"
-  | "manual_eur"
-  | "manual_other"
-  | (string & {});
+export type BillingCurrency = (typeof BILLING_CURRENCY_VALUES)[number];
+export type BillingPaymentMethod = (typeof BILLING_PAYMENT_METHOD_VALUES)[number] | (string & {});
 export type BillingPaymentStatus =
   | "pending"
   | "paid"

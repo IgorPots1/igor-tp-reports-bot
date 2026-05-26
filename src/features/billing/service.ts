@@ -432,9 +432,9 @@ function validateBillingClientUpdateInput(input: BillingClientUpdateInput): void
     if (
       !Number.isInteger(plannedPaymentDay) ||
       (plannedPaymentDay ?? 0) < 1 ||
-      (plannedPaymentDay ?? 0) > 28
+      (plannedPaymentDay ?? 0) > 31
     ) {
-      throw new Error("Плановый день оплаты должен быть в диапазоне 1-28.");
+      throw new Error("Плановый день оплаты должен быть в диапазоне 1-31.");
     }
   }
 }
