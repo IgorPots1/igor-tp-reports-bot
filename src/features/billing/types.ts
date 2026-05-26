@@ -306,3 +306,47 @@ export type IgnoreImportedPaymentInput = {
   actor: string;
   notes?: string | null;
 };
+
+export type BillingTrustedAutoMatchSkipReason =
+  | "skipped_no_identity"
+  | "skipped_multiple_identities"
+  | "skipped_inactive_client"
+  | "skipped_non_rub"
+  | "skipped_amount_mismatch"
+  | "skipped_already_paid"
+  | "skipped_no_monthly_payment"
+  | "skipped_ambiguous";
+
+export type BillingTrustedAutoMatchDetail = {
+  importedPaymentId: string;
+  paymentDate: string;
+  amount: number;
+  currency: BillingCurrency;
+  billingClientId: string;
+  billingClientName: string;
+  targetMonth: string;
+  monthlyPaymentId: string;
+};
+
+export type AutoMatchTrustedImportedPaymentsInput = {
+  apply: boolean;
+  month?: string;
+};
+
+export type AutoMatchTrustedImportedPaymentsResult = {
+  mode: "dry-run" | "apply";
+  scannedNewImportedPayments: number;
+  trustedMatches: number;
+  wouldMatch: number;
+  matched: number;
+  skippedNoIdentity: number;
+  skippedMultipleIdentities: number;
+  skippedInactiveClient: number;
+  skippedNonRub: number;
+  skippedAmountMismatch: number;
+  skippedAlreadyPaid: number;
+  skippedNoMonthlyPayment: number;
+  skippedAmbiguous: number;
+  errors: number;
+  trustedMatchDetails: BillingTrustedAutoMatchDetail[];
+};

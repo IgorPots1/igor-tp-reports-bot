@@ -6,7 +6,9 @@ import {
   getBillingMonthlyPaymentWithClientById,
   insertBillingPayerIdentity,
   insertBillingImportedPayments,
+  listBillingImportedPayments,
   listBillingClientsByStudentId,
+  listBillingPayerIdentitiesByTypeHash,
   getBillingMonthlyPaymentForClientMonth,
   insertBillingMonthlyPayments,
   listActiveBillingClients,
@@ -26,6 +28,8 @@ import {
   type BillingDateInput,
   type ConfirmImportedPaymentMatchInput,
   type ConfirmImportedPaymentMatchResult,
+  type AutoMatchTrustedImportedPaymentsInput,
+  type AutoMatchTrustedImportedPaymentsResult,
   type IgnoreImportedPaymentInput,
   type ImportBillingPaymentsInput,
   type ImportBillingPaymentsResult,
@@ -768,4 +772,286 @@ export async function ignoreImportedPayment(input: IgnoreImportedPaymentInput): 
   }
 
   return updated;
+}
+
+const BILLING_AUTO_MATCH_SCRIPT_ACTOR = "script:billing-auto-match-payments";
+
+function incrementTrustedAutoMatchSkipCounter(
+  counters: Pick<
+    AutoMatchTrustedImportedPaymentsResult,
+    | "skippedNoIdentity"
+    | "skippedMultipleIdentities"
+    | "skippedInactiveClient"
+    | "skippedNonRub"
+    | "skippedAmountMismatch"
+    | "skippedAlreadyPaid"
+    | "skippedNoMonthlyPayment"
+    | "skippedAmbiguous"
+  >,
+  reason:
+    | "skipped_no_identity"
+    | "skipped_multiple_identities"
+    | "skipped_inactive_client"
+    | "skipped_non_rub"
+    | "skipped_amount_mismatch"
+    | "skipped_already_paid"
+    | "skipped_no_monthly_payment"
+    | "skipped_ambiguous"
+): void {
+  switch (reason) {
+    case "skipped_no_identity":
+      counters.skippedNoIdentity += 1;
+      return;
+    case "skipped_multiple_identities":
+      counters.skippedMultipleIdentities += 1;
+      return;
+    case "skipped_inactive_client":
+      counters.skippedInactiveClient += 1;
+      return;
+    case "skipped_non_rub":
+      counters.skippedNonRub += 1;
+      return;
+    case "skipped_amount_mismatch":
+      counters.skippedAmountMismatch += 1;
+      return;
+    case "skipped_already_paid":
+      counters.skippedAlreadyPaid += 1;
+      return;
+    case "skipped_no_monthly_payment":
+      counters.skippedNoMonthlyPayment += 1;
+      return;
+    case "skipped_ambiguous":
+      counters.skippedAmbiguous += 1;
+      return;
+  }
+}
+
+type TrustedAutoMatchCandidate = {
+  importedPaymentId: string;
+  monthlyPaymentId: string;
+  paymentDate: string;
+  amount: number;
+  currency: "RUB";
+  billingClientId: string;
+  billingClientName: string;
+  targetMonth: string;
+};
+
+type TrustedAutoMatchDecision =
+  | { kind: "match"; candidate: TrustedAutoMatchCandidate }
+  | {
+      kind: "skip";
+      reason:
+        | "skipped_no_identity"
+        | "skipped_multiple_identities"
+        | "skipped_inactive_client"
+        | "skipped_non_rub"
+        | "skipped_amount_mismatch"
+        | "skipped_already_paid"
+        | "skipped_no_monthly_payment"
+        | "skipped_ambiguous";
+    };
+
+async function buildTrustedAutoMatchDecision(input: {
+  importedPayment: BillingImportedPayment;
+  targetMonth: string;
+}): Promise<TrustedAutoMatchDecision> {
+  const imported = input.importedPayment;
+  if (imported.status !== "new") {
+    return { kind: "skip", reason: "skipped_ambiguous" };
+  }
+
+  if (imported.currency !== "RUB") {
+    return { kind: "skip", reason: "skipped_non_rub" };
+  }
+
+  if (imported.matchedMonthlyPaymentId || imported.matchedAt || imported.matchedByCoachChatId) {
+    return { kind: "skip", reason: "skipped_ambiguous" };
+  }
+
+  const derivedIdentities = derivePayerIdentitiesFromImportedPayment(imported);
+  if (derivedIdentities.length === 0) {
+    return { kind: "skip", reason: "skipped_no_identity" };
+  }
+
+  const matchedIdentities = (
+    await Promise.all(
+      derivedIdentities.map((identity) =>
+        listBillingPayerIdentitiesByTypeHash({
+          identityType: identity.identityType,
+          identityHash: identity.identityHash,
+        })
+      )
+    )
+  ).flat();
+
+  if (matchedIdentities.length === 0) {
+    return { kind: "skip", reason: "skipped_no_identity" };
+  }
+
+  const identityKeys = new Set(matchedIdentities.map((identity) => `${identity.identityType}:${identity.identityHash}`));
+  if (identityKeys.size !== 1) {
+    return { kind: "skip", reason: "skipped_multiple_identities" };
+  }
+
+  const clientIds = Array.from(new Set(matchedIdentities.map((identity) => identity.billingClientId)));
+  if (clientIds.length !== 1) {
+    return { kind: "skip", reason: "skipped_ambiguous" };
+  }
+
+  const billingClient = await getBillingClientById(clientIds[0]);
+  if (!billingClient || !billingClient.isActive) {
+    return { kind: "skip", reason: "skipped_inactive_client" };
+  }
+
+  if (billingClient.currency !== "RUB") {
+    return { kind: "skip", reason: "skipped_non_rub" };
+  }
+
+  if (billingClient.monthlyAmount !== imported.amount) {
+    return { kind: "skip", reason: "skipped_amount_mismatch" };
+  }
+
+  const monthlyPayment = await getBillingMonthlyPaymentForClientMonth({
+    billingClientId: billingClient.id,
+    billingMonth: input.targetMonth,
+  });
+  if (!monthlyPayment) {
+    return { kind: "skip", reason: "skipped_no_monthly_payment" };
+  }
+
+  if (monthlyPayment.status === "paid") {
+    return { kind: "skip", reason: "skipped_already_paid" };
+  }
+
+  if (
+    monthlyPayment.externalPaymentHash ||
+    (monthlyPayment.paidAmount != null && monthlyPayment.paidAmount !== 0) ||
+    monthlyPayment.status === "refunded"
+  ) {
+    return { kind: "skip", reason: "skipped_ambiguous" };
+  }
+
+  if (monthlyPayment.currency !== "RUB") {
+    return { kind: "skip", reason: "skipped_non_rub" };
+  }
+
+  return {
+    kind: "match",
+    candidate: {
+      importedPaymentId: imported.id,
+      monthlyPaymentId: monthlyPayment.id,
+      paymentDate: imported.paymentDate,
+      amount: imported.amount,
+      currency: "RUB",
+      billingClientId: billingClient.id,
+      billingClientName: billingClient.clientName,
+      targetMonth: input.targetMonth,
+    },
+  };
+}
+
+export async function autoMatchTrustedImportedPayments(
+  input: AutoMatchTrustedImportedPaymentsInput
+): Promise<AutoMatchTrustedImportedPaymentsResult> {
+  const mode = input.apply ? "apply" : "dry-run";
+  const importedPayments = await listBillingImportedPayments({ status: "new" });
+  const result: AutoMatchTrustedImportedPaymentsResult = {
+    mode,
+    scannedNewImportedPayments: importedPayments.length,
+    trustedMatches: 0,
+    wouldMatch: 0,
+    matched: 0,
+    skippedNoIdentity: 0,
+    skippedMultipleIdentities: 0,
+    skippedInactiveClient: 0,
+    skippedNonRub: 0,
+    skippedAmountMismatch: 0,
+    skippedAlreadyPaid: 0,
+    skippedNoMonthlyPayment: 0,
+    skippedAmbiguous: 0,
+    errors: 0,
+    trustedMatchDetails: [],
+  };
+
+  const candidates: TrustedAutoMatchCandidate[] = [];
+  const competingImportedIds = new Set<string>();
+  const competingMonthlyIds = new Set<string>();
+  const perImported = new Map<string, TrustedAutoMatchCandidate[]>();
+  const perMonthly = new Map<string, TrustedAutoMatchCandidate[]>();
+
+  for (const imported of importedPayments) {
+    const targetMonth = input.month ? resolveBillingMonth(input.month) : resolveBillingMonth(imported.paymentDate);
+    try {
+      const decision = await buildTrustedAutoMatchDecision({
+        importedPayment: imported,
+        targetMonth,
+      });
+      if (decision.kind === "skip") {
+        incrementTrustedAutoMatchSkipCounter(result, decision.reason);
+        continue;
+      }
+
+      candidates.push(decision.candidate);
+      const importedList = perImported.get(decision.candidate.importedPaymentId) ?? [];
+      importedList.push(decision.candidate);
+      perImported.set(decision.candidate.importedPaymentId, importedList);
+
+      const monthlyList = perMonthly.get(decision.candidate.monthlyPaymentId) ?? [];
+      monthlyList.push(decision.candidate);
+      perMonthly.set(decision.candidate.monthlyPaymentId, monthlyList);
+    } catch {
+      result.errors += 1;
+    }
+  }
+
+  for (const [importedPaymentId, mapped] of perImported.entries()) {
+    if (mapped.length > 1) {
+      competingImportedIds.add(importedPaymentId);
+    }
+  }
+  for (const [monthlyPaymentId, mapped] of perMonthly.entries()) {
+    if (mapped.length > 1) {
+      competingMonthlyIds.add(monthlyPaymentId);
+    }
+  }
+
+  const trustedCandidates = candidates.filter(
+    (candidate) =>
+      !competingImportedIds.has(candidate.importedPaymentId) && !competingMonthlyIds.has(candidate.monthlyPaymentId)
+  );
+
+  const ambiguousCompetingCount = candidates.length - trustedCandidates.length;
+  result.skippedAmbiguous += ambiguousCompetingCount;
+  result.trustedMatches = trustedCandidates.length;
+  result.wouldMatch = trustedCandidates.length;
+  result.trustedMatchDetails = trustedCandidates.map((candidate) => ({
+    importedPaymentId: candidate.importedPaymentId,
+    paymentDate: candidate.paymentDate,
+    amount: candidate.amount,
+    currency: candidate.currency,
+    billingClientId: candidate.billingClientId,
+    billingClientName: candidate.billingClientName,
+    targetMonth: candidate.targetMonth,
+    monthlyPaymentId: candidate.monthlyPaymentId,
+  }));
+
+  if (!input.apply) {
+    return result;
+  }
+
+  for (const candidate of trustedCandidates) {
+    try {
+      await confirmImportedPaymentMatch({
+        importedPaymentId: candidate.importedPaymentId,
+        monthlyPaymentId: candidate.monthlyPaymentId,
+        actor: BILLING_AUTO_MATCH_SCRIPT_ACTOR,
+      });
+      result.matched += 1;
+    } catch {
+      result.errors += 1;
+    }
+  }
+
+  return result;
 }

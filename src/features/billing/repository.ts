@@ -696,6 +696,26 @@ export async function getBillingPayerIdentityByTypeHash(input: {
   return mapBillingPayerIdentityRow(data as BillingPayerIdentityRow);
 }
 
+export async function listBillingPayerIdentitiesByTypeHash(input: {
+  identityType: BillingPayerIdentityType;
+  identityHash: string;
+}): Promise<BillingPayerIdentity[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("billing_payer_identities")
+    .select("*")
+    .eq("identity_type", input.identityType)
+    .eq("identity_hash", input.identityHash);
+
+  if (error) {
+    throw new Error(
+      `Failed to list billing payer identities ${input.identityType}/${input.identityHash}: ${error.message}`
+    );
+  }
+
+  return ((data as BillingPayerIdentityRow[]) ?? []).map(mapBillingPayerIdentityRow);
+}
+
 export async function insertBillingPayerIdentity(
   row: InsertBillingPayerIdentityRow
 ): Promise<BillingPayerIdentity> {
