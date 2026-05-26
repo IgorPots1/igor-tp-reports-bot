@@ -142,7 +142,7 @@ export default async function BillingClientDetailPage({
             </div>
             <div>
               <dt>Плановый день оплаты</dt>
-              <dd>{detail.client.plannedPaymentDay}</dd>
+              <dd>{detail.client.plannedPaymentDay ?? "—"}</dd>
             </div>
             <div>
               <dt>Метод оплаты</dt>
@@ -309,7 +309,9 @@ export default async function BillingClientDetailPage({
                   min="1"
                   max="28"
                   step="1"
-                  defaultValue={String(detail.client.plannedPaymentDay)}
+                  defaultValue={
+                    detail.client.plannedPaymentDay == null ? "" : String(detail.client.plannedPaymentDay)
+                  }
                   required
                 />
               </label>
@@ -488,10 +490,11 @@ export default async function BillingClientDetailPage({
               ) : (
                 detail.paymentHistory.map((row) => {
                   const effectiveStatus = getRowStatus(row);
+                  const historyRowKey = `${row.clientId}:${row.plannedPaymentDate ?? "no-planned-date"}:${row.status}`;
 
                   return (
-                    <tr key={`${row.clientId}:${row.plannedPaymentDate}`}>
-                      <td>{formatBillingMonthLabel(row.plannedPaymentDate.slice(0, 7))}</td>
+                    <tr key={historyRowKey}>
+                      <td>{row.plannedPaymentDate ? formatBillingMonthLabel(row.plannedPaymentDate.slice(0, 7)) : "—"}</td>
                       <td>{formatBillingDate(row.plannedPaymentDate)}</td>
                       <td>{formatBillingAmount(row.plannedAmount, row.currency)}</td>
                       <td>

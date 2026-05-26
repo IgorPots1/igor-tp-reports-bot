@@ -28,7 +28,7 @@ type BillingClientRow = {
   group_name: string | null;
   monthly_amount: number;
   currency: BillingCurrency;
-  planned_payment_day: number;
+  planned_payment_day: number | null;
   payment_method: BillingPaymentMethod;
   is_active: boolean;
   notes: string | null;
@@ -42,7 +42,7 @@ type BillingMonthlyPaymentRow = {
   id: string;
   billing_client_id: string;
   billing_month: string;
-  planned_payment_date: string;
+  planned_payment_date: string | null;
   actual_payment_date: string | null;
   planned_amount: number;
   paid_amount: number | null;
@@ -66,7 +66,7 @@ type BillingMonthlyPaymentWithClientRow = BillingMonthlyPaymentRow & {
 type InsertBillingMonthlyPaymentRow = {
   billing_client_id: string;
   billing_month: string;
-  planned_payment_date: string;
+  planned_payment_date: string | null;
   planned_amount: number;
   currency: BillingCurrency;
   status: BillingPaymentStatus;
@@ -92,7 +92,7 @@ type UpdateBillingClientRow = Partial<{
   client_name: string;
   group_name: string | null;
   monthly_amount: number;
-  planned_payment_day: number;
+  planned_payment_day: number | null;
   payment_method: BillingPaymentMethod;
   is_active: boolean;
   updated_by: string | null;
@@ -575,7 +575,19 @@ export async function listBillingMonthlyPaymentsWithClientsForMonth(
         return nameCompare;
       }
 
-      return left.plannedPaymentDate.localeCompare(right.plannedPaymentDate);
+      const leftDate = left.plannedPaymentDate?.trim() ?? "";
+      const rightDate = right.plannedPaymentDate?.trim() ?? "";
+      const leftHasDate = leftDate.length > 0;
+      const rightHasDate = rightDate.length > 0;
+
+      if (leftHasDate && rightHasDate && leftDate !== rightDate) {
+        return leftDate.localeCompare(rightDate);
+      }
+      if (leftHasDate !== rightHasDate) {
+        return leftHasDate ? -1 : 1;
+      }
+
+      return 0;
     });
 }
 

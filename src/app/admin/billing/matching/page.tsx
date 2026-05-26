@@ -82,7 +82,10 @@ export default async function BillingMatchingPage({ searchParams }: BillingMatch
                             {formatBillingAmount(record.client.monthlyAmount, record.client.currency)}
                           </span>
                           <span className="admin-muted">
-                            {record.client.plannedPaymentDay} число · {getBillingPaymentMethodLabel(record.client.paymentMethod)}
+                            {record.client.plannedPaymentDay != null
+                              ? `${record.client.plannedPaymentDay} число`
+                              : "Плановый день не задан"}{" "}
+                            · {getBillingPaymentMethodLabel(record.client.paymentMethod)}
                           </span>
                         </div>
                       </td>

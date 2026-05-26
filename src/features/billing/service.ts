@@ -249,7 +249,8 @@ function buildMonthlyInsertRow(client: BillingClient, billingMonth: string, acto
   return {
     billing_client_id: client.id,
     billing_month: billingMonth,
-    planned_payment_date: shiftIsoDate(billingMonth, client.plannedPaymentDay - 1),
+    planned_payment_date:
+      client.plannedPaymentDay == null ? null : shiftIsoDate(billingMonth, client.plannedPaymentDay - 1),
     planned_amount: client.monthlyAmount,
     currency: client.currency,
     status: "pending" as const,
@@ -284,8 +285,15 @@ export async function ensureBillingMonthRows(input: {
   };
 }
 
-function getDaysOverdue(todayIso: string, plannedPaymentDate: string, status: BillingMonthlyPayment["status"]): number | null {
+function getDaysOverdue(
+  todayIso: string,
+  plannedPaymentDate: string | null,
+  status: BillingMonthlyPayment["status"]
+): number | null {
   if (status === "paid") {
+    return null;
+  }
+  if (!plannedPaymentDate) {
     return null;
   }
 
@@ -310,6 +318,9 @@ function isBillingPaymentOverdueCandidate(
   }
 
   if (!includeAlreadyReminded && payment.overdueRemindedAt) {
+    return false;
+  }
+  if (!payment.plannedPaymentDate) {
     return false;
   }
 

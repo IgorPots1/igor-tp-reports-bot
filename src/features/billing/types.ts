@@ -46,7 +46,7 @@ export type BillingClient = {
   groupName: string | null;
   monthlyAmount: number;
   currency: BillingCurrency;
-  plannedPaymentDay: number;
+  plannedPaymentDay: number | null;
   paymentMethod: BillingPaymentMethod;
   isActive: boolean;
   notes: string | null;
@@ -61,7 +61,7 @@ export type BillingClientUpdateInput = Partial<{
   clientName: string;
   groupName: string | null;
   monthlyAmount: number;
-  plannedPaymentDay: number;
+  plannedPaymentDay: number | null;
   paymentMethod: BillingPaymentMethod;
   isActive: boolean;
   updatedBy: string | null;
@@ -71,7 +71,7 @@ export type BillingMonthlyPayment = {
   id: string;
   billingClientId: string;
   billingMonth: string;
-  plannedPaymentDate: string;
+  plannedPaymentDate: string | null;
   actualPaymentDate: string | null;
   plannedAmount: number;
   paidAmount: number | null;
@@ -260,8 +260,8 @@ export type BillingMonthStatusRow = {
   plannedAmount: number;
   paidAmount: number | null;
   currency: BillingCurrency;
-  plannedPaymentDay: number;
-  plannedPaymentDate: string;
+  plannedPaymentDay: number | null;
+  plannedPaymentDate: string | null;
   actualPaymentDate: string | null;
   status: BillingPaymentStatus;
   paymentMethod: BillingPaymentMethod;

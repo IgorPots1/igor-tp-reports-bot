@@ -78,6 +78,9 @@ async function getDryRunOverdueCandidateCount(now: Date): Promise<number> {
     if (!isCandidateStatus || row.overdueRemindedAt) {
       return false;
     }
+    if (!row.plannedPaymentDate) {
+      return false;
+    }
 
     const thresholdDate = new Date(`${row.plannedPaymentDate}T12:00:00.000Z`);
     thresholdDate.setUTCDate(thresholdDate.getUTCDate() + 2);

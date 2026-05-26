@@ -180,7 +180,11 @@ function formatMonthLabel(billingMonth: string): string {
   }).format(new Date(`${billingMonth}T12:00:00.000Z`));
 }
 
-function formatShortDate(isoDate: string): string {
+function formatShortDate(isoDate: string | null): string {
+  if (!isoDate) {
+    return "—";
+  }
+
   return new Intl.DateTimeFormat("ru-RU", {
     timeZone: BILLING_TIME_ZONE,
     day: "2-digit",

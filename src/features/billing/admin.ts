@@ -321,7 +321,7 @@ export async function getBillingClientDetail(id: string): Promise<BillingClientD
     paymentMethod: client.paymentMethod,
     notes: row.notes ?? client.notes,
     daysOverdue:
-      row.status === "paid"
+      row.status === "paid" || !row.plannedPaymentDate
         ? null
         : row.plannedPaymentDate < todayIso
           ? Math.max(
@@ -406,6 +406,10 @@ function buildImportedPaymentSuggestion(
   imported: BillingImportedPayment,
   candidate: BillingMonthlyPaymentWithClient
 ): ImportedPaymentSuggestion | null {
+  if (!candidate.plannedPaymentDate) {
+    return null;
+  }
+
   if (imported.currency !== candidate.currency) {
     return null;
   }

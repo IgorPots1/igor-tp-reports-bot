@@ -453,7 +453,11 @@ export default async function AdminStudentDetailPage({
                 </div>
                 <div>
                   <dt>Плановый день оплаты</dt>
-                  <dd>{billingDetail.client.plannedPaymentDay} число</dd>
+                  <dd>
+                    {billingDetail.client.plannedPaymentDay != null
+                      ? `${billingDetail.client.plannedPaymentDay} число`
+                      : "—"}
+                  </dd>
                 </div>
                 <div>
                   <dt>Статус текущего месяца</dt>
