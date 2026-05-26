@@ -43,6 +43,7 @@ import {
   listTrainingPeaksStudentContactStatus as listTrainingPeaksStudentContactStatusFromRepository,
   listTrainingPeaksStudentTelegramLinkCodesByCode,
   listRecentTrainingPeaksJobs,
+  listRecentTrainingPeaksCoachCasesForAttention,
   listRecentTrainingPeaksActions as listRecentTrainingPeaksActionsFromRepository,
   listLatestTrainingPeaksActionRunsByActionIds,
   listTrainingPeaksStudents,
@@ -3161,6 +3162,63 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
       studentName: null,
       reason: `Нет свежего скана тренировок за вчера для ${missingScanCount} учеников`,
     });
+  }
+
+  const activeStudentNameById = new Map(
+    activeStudents.map((student) => [student.id, student.studentName?.trim() || null])
+  );
+  const caseStatusesForAttention = ["logged", "open", "needs_review"] as const;
+
+  try {
+    const [painCases, questionCases, moveNeedsReviewCases] = await Promise.all([
+      listRecentTrainingPeaksCoachCasesForAttention({
+        sinceHours: 48,
+        caseKinds: ["pain_or_health_signal"],
+        statuses: caseStatusesForAttention,
+        limit: 300,
+      }),
+      listRecentTrainingPeaksCoachCasesForAttention({
+        sinceHours: 24,
+        caseKinds: ["question_to_coach"],
+        statuses: caseStatusesForAttention,
+        limit: 300,
+      }),
+      listRecentTrainingPeaksCoachCasesForAttention({
+        sinceHours: 72,
+        caseKinds: ["move_workout_needs_review"],
+        statuses: caseStatusesForAttention,
+        limit: 300,
+      }),
+    ]);
+
+    for (const caseRow of painCases) {
+      const studentName = activeStudentNameById.get(caseRow.studentId) ?? null;
+      pushUniqueAttentionSignal(urgent, {
+        level: "urgent",
+        studentName,
+        reason: "сигнал по самочувствию/боли за последние 48ч",
+      });
+    }
+
+    for (const caseRow of questionCases) {
+      const studentName = activeStudentNameById.get(caseRow.studentId) ?? null;
+      pushUniqueAttentionSignal(today, {
+        level: "today",
+        studentName,
+        reason: "вопрос тренеру за последние 24ч",
+      });
+    }
+
+    for (const caseRow of moveNeedsReviewCases) {
+      const studentName = activeStudentNameById.get(caseRow.studentId) ?? null;
+      pushUniqueAttentionSignal(today, {
+        level: "today",
+        studentName,
+        reason: "перенос тренировки требует проверки",
+      });
+    }
+  } catch (error) {
+    console.warn("Failed to load coach case signals for attention snapshot", { error });
   }
 
   try {
