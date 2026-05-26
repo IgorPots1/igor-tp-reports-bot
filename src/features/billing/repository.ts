@@ -2,6 +2,10 @@ import { createSupabaseServerClient } from "@/features/supabase/server";
 import type {
   BillingClient,
   BillingCurrency,
+  BillingEmailImportAttachment,
+  BillingEmailImportAttachmentStatus,
+  BillingEmailImportRun,
+  BillingEmailImportRunStatus,
   BillingImportedPayment,
   BillingPayerIdentity,
   BillingPayerIdentityConfidence,
@@ -129,7 +133,7 @@ type InsertBillingImportedPaymentRow = {
   matched_at: null;
   matched_by_coach_chat_id: null;
   source_file_name: string | null;
-  email_message_id: null;
+  email_message_id: string | null;
 };
 
 type UpdateBillingImportedPaymentRow = Partial<{
@@ -154,6 +158,71 @@ type BillingPayerIdentityRow = {
   created_at: string;
   updated_at: string;
 };
+
+type BillingEmailImportRunRow = {
+  id: string;
+  started_at: string;
+  finished_at: string | null;
+  status: BillingEmailImportRunStatus;
+  mode: "dry_run" | "apply";
+  scanned_messages_count: number;
+  found_attachments_count: number;
+  imported_payments_count: number;
+  duplicate_payments_count: number;
+  auto_matched_count: number;
+  review_required_count: number;
+  error_message: string | null;
+  created_at: string;
+};
+
+type InsertBillingEmailImportRunRow = {
+  status: BillingEmailImportRunStatus;
+  mode: "dry_run" | "apply";
+};
+
+type UpdateBillingEmailImportRunRow = Partial<{
+  finished_at: string | null;
+  status: BillingEmailImportRunStatus;
+  scanned_messages_count: number;
+  found_attachments_count: number;
+  imported_payments_count: number;
+  duplicate_payments_count: number;
+  auto_matched_count: number;
+  review_required_count: number;
+  error_message: string | null;
+}>;
+
+type BillingEmailImportAttachmentRow = {
+  id: string;
+  run_id: string | null;
+  message_uid: string;
+  attachment_filename: string;
+  attachment_hash: string;
+  status: BillingEmailImportAttachmentStatus;
+  imported_count: number;
+  duplicate_count: number;
+  error_message: string | null;
+  created_at: string;
+};
+
+type InsertBillingEmailImportAttachmentRow = {
+  run_id: string | null;
+  message_uid: string;
+  attachment_filename: string;
+  attachment_hash: string;
+  status: BillingEmailImportAttachmentStatus;
+  imported_count?: number;
+  duplicate_count?: number;
+  error_message?: string | null;
+};
+
+type UpdateBillingEmailImportAttachmentRow = Partial<{
+  run_id: string | null;
+  status: BillingEmailImportAttachmentStatus;
+  imported_count: number;
+  duplicate_count: number;
+  error_message: string | null;
+}>;
 
 type InsertBillingPayerIdentityRow = {
   billing_client_id: string;
@@ -250,6 +319,41 @@ function mapBillingPayerIdentityRow(row: BillingPayerIdentityRow): BillingPayerI
     matchCount: row.match_count,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function mapBillingEmailImportRunRow(row: BillingEmailImportRunRow): BillingEmailImportRun {
+  return {
+    id: row.id,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    status: row.status,
+    mode: row.mode,
+    scannedMessagesCount: row.scanned_messages_count,
+    foundAttachmentsCount: row.found_attachments_count,
+    importedPaymentsCount: row.imported_payments_count,
+    duplicatePaymentsCount: row.duplicate_payments_count,
+    autoMatchedCount: row.auto_matched_count,
+    reviewRequiredCount: row.review_required_count,
+    errorMessage: row.error_message,
+    createdAt: row.created_at,
+  };
+}
+
+function mapBillingEmailImportAttachmentRow(
+  row: BillingEmailImportAttachmentRow
+): BillingEmailImportAttachment {
+  return {
+    id: row.id,
+    runId: row.run_id,
+    messageUid: row.message_uid,
+    attachmentFilename: row.attachment_filename,
+    attachmentHash: row.attachment_hash,
+    status: row.status,
+    importedCount: row.imported_count,
+    duplicateCount: row.duplicate_count,
+    errorMessage: row.error_message,
+    createdAt: row.created_at,
   };
 }
 
@@ -579,6 +683,107 @@ export async function insertBillingImportedPayments(
   }
 
   return ((data as BillingImportedPaymentRow[]) ?? []).map(mapBillingImportedPaymentRow);
+}
+
+export async function createBillingEmailImportRun(
+  row: InsertBillingEmailImportRunRow
+): Promise<BillingEmailImportRun> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase.from("billing_email_import_runs").insert(row).select("*").single();
+
+  if (error) {
+    throw new Error(`Failed to create billing email import run: ${error.message}`);
+  }
+
+  return mapBillingEmailImportRunRow(data as BillingEmailImportRunRow);
+}
+
+export async function updateBillingEmailImportRunById(
+  id: string,
+  patch: UpdateBillingEmailImportRunRow
+): Promise<BillingEmailImportRun | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("billing_email_import_runs")
+    .update(patch)
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to update billing email import run ${id}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapBillingEmailImportRunRow(data as BillingEmailImportRunRow);
+}
+
+export async function getBillingEmailImportAttachmentByMessageUidHash(input: {
+  messageUid: string;
+  attachmentHash: string;
+}): Promise<BillingEmailImportAttachment | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("billing_email_import_attachments")
+    .select("*")
+    .eq("message_uid", input.messageUid)
+    .eq("attachment_hash", input.attachmentHash)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to get billing email import attachment ${input.messageUid}/${input.attachmentHash}: ${error.message}`
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapBillingEmailImportAttachmentRow(data as BillingEmailImportAttachmentRow);
+}
+
+export async function createBillingEmailImportAttachment(
+  row: InsertBillingEmailImportAttachmentRow
+): Promise<BillingEmailImportAttachment> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("billing_email_import_attachments")
+    .insert(row)
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to create billing email import attachment: ${error.message}`);
+  }
+
+  return mapBillingEmailImportAttachmentRow(data as BillingEmailImportAttachmentRow);
+}
+
+export async function updateBillingEmailImportAttachmentById(
+  id: string,
+  patch: UpdateBillingEmailImportAttachmentRow
+): Promise<BillingEmailImportAttachment | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("billing_email_import_attachments")
+    .update(patch)
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to update billing email import attachment ${id}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapBillingEmailImportAttachmentRow(data as BillingEmailImportAttachmentRow);
 }
 
 function mapBillingImportedPaymentUpdateInput(

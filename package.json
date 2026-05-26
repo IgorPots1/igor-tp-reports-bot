@@ -39,6 +39,7 @@
     "tp-intent-logs-recent": "npx tsx scripts/tp-intent-logs-recent.ts",
     "tp-intent-logs-triage": "npx tsx scripts/tp-intent-logs-triage.ts",
     "billing:import-payments": "npx tsx scripts/billing-import-payments.ts",
+    "billing:email-import": "npx tsx scripts/billing-email-import.ts",
     "billing:auto-match-payments": "npx tsx scripts/billing-auto-match-payments.ts",
     "billing:reset": "npx tsx scripts/billing-reset.ts",
     "billing:import-clients": "npx tsx scripts/billing-import-clients.ts",
@@ -56,6 +57,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.3",
+    "imapflow": "^1.3.3",
     "next": "^15.3.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

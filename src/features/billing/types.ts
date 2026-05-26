@@ -173,6 +173,7 @@ export type ImportBillingPaymentsInput = {
   parsedRows: ParsedBillingImportedPaymentRow[];
   sourceFileName: string;
   importBatchId?: string;
+  emailMessageId?: string | null;
 };
 
 export type ImportBillingPaymentsResult = {
@@ -182,6 +183,54 @@ export type ImportBillingPaymentsResult = {
   parsedRowCount: number;
   insertedRowCount: number;
   duplicateRowCount: number;
+};
+
+export type BillingEmailImportMode = "dry_run" | "apply";
+export type BillingEmailImportRunStatus = "running" | "success" | "failed" | "dry_run";
+export type BillingEmailImportAttachmentStatus = "found" | "imported" | "duplicate" | "failed" | "skipped";
+
+export type BillingEmailImportRun = {
+  id: string;
+  startedAt: string;
+  finishedAt: string | null;
+  status: BillingEmailImportRunStatus;
+  mode: BillingEmailImportMode;
+  scannedMessagesCount: number;
+  foundAttachmentsCount: number;
+  importedPaymentsCount: number;
+  duplicatePaymentsCount: number;
+  autoMatchedCount: number;
+  reviewRequiredCount: number;
+  errorMessage: string | null;
+  createdAt: string;
+};
+
+export type BillingEmailImportAttachment = {
+  id: string;
+  runId: string | null;
+  messageUid: string;
+  attachmentFilename: string;
+  attachmentHash: string;
+  status: BillingEmailImportAttachmentStatus;
+  importedCount: number;
+  duplicateCount: number;
+  errorMessage: string | null;
+  createdAt: string;
+};
+
+export type BillingEmailImportSummary = {
+  mode: BillingEmailImportMode;
+  scannedMessagesCount: number;
+  foundAttachmentsCount: number;
+  importedPaymentsCount: number;
+  duplicatePaymentsCount: number;
+  autoMatchedCount: number;
+  reviewRequiredCount: number;
+  skippedCount: number;
+  errorsCount: number;
+  runId: string | null;
+  telegramSummaryStatus: "sent" | "skipped" | "failed";
+  telegramSummaryReason: string | null;
 };
 
 export type BillingMonthlyPaymentWithClient = BillingMonthlyPayment & {

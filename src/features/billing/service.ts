@@ -663,7 +663,7 @@ export async function importBillingPaymentsFromParsedRows(
       matched_at: null,
       matched_by_coach_chat_id: null,
       source_file_name: sourceFileName,
-      email_message_id: null,
+      email_message_id: input.emailMessageId ?? null,
     }));
 
   const insertedRows = await insertBillingImportedPayments(rowsToInsert);

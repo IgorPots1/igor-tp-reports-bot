@@ -296,8 +296,7 @@ function isEmptyDataRow(cells: Array<string | null>): boolean {
   return cells.every((cell) => cell == null);
 }
 
-export async function parseTBankStatement(filePath: string): Promise<ParseTBankStatementResult> {
-  const buffer = await readFile(filePath);
+export function parseTBankStatementBuffer(buffer: Buffer): ParseTBankStatementResult {
   assertTextCsvBuffer(buffer);
 
   const text = decodeStatementText(buffer);
@@ -413,4 +412,9 @@ export async function parseTBankStatement(filePath: string): Promise<ParseTBankS
     skippedRows,
     warnings,
   };
+}
+
+export async function parseTBankStatement(filePath: string): Promise<ParseTBankStatementResult> {
+  const buffer = await readFile(filePath);
+  return parseTBankStatementBuffer(buffer);
 }
