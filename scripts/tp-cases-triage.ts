@@ -16,6 +16,13 @@ const CASE_KINDS: readonly TrainingPeaksCoachCaseKind[] = [
   "observation_only",
 ];
 
+const ATTENTION_DB_CASE_KINDS: readonly TrainingPeaksCoachCaseKind[] = [
+  "pain_or_health_signal",
+  "question_to_coach",
+  "move_workout_needs_review",
+  "move_workout_requested",
+];
+
 const STATUSES: readonly TrainingPeaksCoachCaseStatus[] = ["logged", "open", "needs_review", "resolved", "dismissed"];
 
 const UNSAFE_OUTPUT_TOKENS = [
@@ -38,6 +45,7 @@ const UNSAFE_OUTPUT_TOKENS = [
 ] as const;
 
 type CliOptions = {
+  attention: boolean;
   limit: number;
   status?: TrainingPeaksCoachCaseStatus;
   caseKind?: TrainingPeaksCoachCaseKind;
@@ -90,7 +98,7 @@ function parseNextValue(argv: string[], index: number, argName: string): string 
 }
 
 function parseCliOptions(argv: string[]): CliOptions {
-  const options: CliOptions = { limit: 20, summaryOnly: false };
+  const options: CliOptions = { attention: false, limit: 20, summaryOnly: false };
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -185,6 +193,11 @@ function parseCliOptions(argv: string[]): CliOptions {
       continue;
     }
 
+    if (arg === "--attention") {
+      options.attention = true;
+      continue;
+    }
+
     throw new Error(`${LOG_PREFIX} FAIL: unknown argument ${arg}`);
   }
 
@@ -260,6 +273,41 @@ function sinceStartIso(since: string): string {
   return `${since}T00:00:00.000Z`;
 }
 
+function resolveQueryCaseKinds(options: CliOptions): TrainingPeaksCoachCaseKind[] | null {
+  if (!options.attention) {
+    return options.caseKind ? [options.caseKind] : null;
+  }
+
+  if (options.caseKind) {
+    return ATTENTION_DB_CASE_KINDS.includes(options.caseKind) ? [options.caseKind] : [];
+  }
+
+  return [...ATTENTION_DB_CASE_KINDS];
+}
+
+function isAttentionCase(row: CoachCaseRow): boolean {
+  switch (row.case_kind) {
+    case "pain_or_health_signal":
+    case "question_to_coach":
+    case "move_workout_needs_review":
+      return true;
+    case "move_workout_requested":
+      // Normal move requests are already handled by linked action flow.
+      return !row.intent_log_id || !row.action_id || !row.snapshot_id;
+    case "unrecognized_intent":
+    case "observation_only":
+      return false;
+    default: {
+      const exhaustiveCheck: never = row.case_kind;
+      return exhaustiveCheck;
+    }
+  }
+}
+
+function applyAttentionFilter(rows: readonly CoachCaseRow[]): CoachCaseRow[] {
+  return rows.filter((row) => isAttentionCase(row));
+}
+
 function chunkArray<T>(values: readonly T[], size: number): T[][] {
   const chunks: T[][] = [];
   for (let index = 0; index < values.length; index += size) {
@@ -326,6 +374,11 @@ function detectCluster(rows: readonly CoachCaseRow[]): { count: number; firstCre
 
 async function fetchMatchingCasesPage(options: CliOptions, offset: number, limit: number): Promise<CoachCaseRow[]> {
   const supabase = createSupabaseServerClient();
+  const queryCaseKinds = resolveQueryCaseKinds(options);
+  if (queryCaseKinds && queryCaseKinds.length === 0) {
+    return [];
+  }
+
   let query = supabase
     .from("trainingpeaks_coach_cases")
     .select("id, student_id, case_kind, status, created_at, intent_log_id, action_id, snapshot_id")
@@ -336,8 +389,11 @@ async function fetchMatchingCasesPage(options: CliOptions, offset: number, limit
   if (options.status) {
     query = query.eq("status", options.status);
   }
-  if (options.caseKind) {
-    query = query.eq("case_kind", options.caseKind);
+  if (queryCaseKinds?.length === 1) {
+    query = query.eq("case_kind", queryCaseKinds[0]);
+  }
+  if (queryCaseKinds && queryCaseKinds.length > 1) {
+    query = query.in("case_kind", queryCaseKinds);
   }
   if (options.studentId) {
     query = query.eq("student_id", options.studentId);
@@ -368,6 +424,38 @@ async function fetchAllMatchingCases(options: CliOptions): Promise<CoachCaseRow[
 
     offset += page.length;
   }
+}
+
+async function fetchMatchingCasesWindow(options: CliOptions): Promise<CoachCaseRow[]> {
+  if (!options.attention) {
+    return fetchMatchingCasesPage(options, 0, options.limit);
+  }
+
+  const windowRows: CoachCaseRow[] = [];
+  let offset = 0;
+
+  while (windowRows.length < options.limit) {
+    const page = await fetchMatchingCasesPage(options, offset, PAGE_SIZE);
+    if (page.length === 0) {
+      break;
+    }
+
+    const attentionPage = applyAttentionFilter(page);
+    for (const row of attentionPage) {
+      windowRows.push(row);
+      if (windowRows.length >= options.limit) {
+        return windowRows;
+      }
+    }
+
+    if (page.length < PAGE_SIZE) {
+      break;
+    }
+
+    offset += page.length;
+  }
+
+  return windowRows;
 }
 
 async function fetchStudentNamesById(studentIds: readonly string[]): Promise<Map<string, string>> {
@@ -408,7 +496,13 @@ async function fetchSnapshotLabelKeysById(snapshotIds: readonly string[]): Promi
 }
 
 async function printSummaryOnly(options: CliOptions): Promise<void> {
-  const cases = await fetchAllMatchingCases(options);
+  const matchingCases = await fetchAllMatchingCases(options);
+  const cases = options.attention ? applyAttentionFilter(matchingCases) : matchingCases;
+  if (options.attention && cases.length === 0) {
+    safeLog(`${LOG_PREFIX} no_attention_cases`);
+    return;
+  }
+
   const byCaseKind = initCounter(CASE_KINDS);
   const byStatus = initCounter(STATUSES);
   const intentLinkedByCaseKind = initCounter(CASE_KINDS);
@@ -499,13 +593,21 @@ async function run(): Promise<void> {
   }
 
   const options = parseCliOptions(process.argv.slice(2));
+  if (options.attention) {
+    safeLog(`${LOG_PREFIX} mode=attention`);
+  }
 
   if (options.summaryOnly) {
     await printSummaryOnly(options);
     return;
   }
 
-  const cases = await fetchMatchingCasesPage(options, 0, options.limit);
+  const cases = await fetchMatchingCasesWindow(options);
+  if (options.attention && cases.length === 0) {
+    safeLog(`${LOG_PREFIX} no_attention_cases`);
+    return;
+  }
+
   const studentIds = [...new Set(cases.map((row) => row.student_id).filter(Boolean))];
   const snapshotIds = [...new Set(cases.map((row) => row.snapshot_id).filter((value): value is string => Boolean(value)))];
   const studentNamesById = studentIds.length > 0 ? await fetchStudentNamesById(studentIds) : new Map<string, string>();
