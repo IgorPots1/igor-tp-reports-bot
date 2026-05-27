@@ -175,6 +175,8 @@ const TP_CALLBACK_ACTION_LIST_CANCEL_PREFIX = "tp:ta:lc:";
 const TP_CALLBACK_ACTION_DETAIL_PREFIX = "tp:ta:d:";
 const TP_CALLBACK_ACTION_DETAIL_CANCEL_PREFIX = "tp:ta:dc:";
 const TP_CALLBACK_ACTION_DETAIL_BACK = "tp:ta:back";
+const TP_CALLBACK_CASE_RESOLVE_PREFIX = "tp:case:r:";
+const TP_CALLBACK_CASE_DISMISS_PREFIX = "tp:case:d:";
 const TP_REPLY_BUTTON_MENU = "🏠 Меню";
 const TP_REPLY_BUTTON_STUDENTS = "👥 Ученики";
 const TP_REPLY_BUTTON_ADD = "➕ Добавить";
@@ -333,6 +335,8 @@ type ParsedTrainingPeaksCallback =
   | { kind: "action_detail"; actionId: string }
   | { kind: "action_detail_cancel"; actionId: string }
   | { kind: "action_detail_back" }
+  | { kind: "case_resolve"; shortId: string }
+  | { kind: "case_dismiss"; shortId: string }
   | { kind: "actions_list" }
   | { kind: "week_menu" }
   | { kind: "week_last" }
@@ -1472,12 +1476,31 @@ function formatTrainingPeaksCoachCasesRecentMessage(
   ].join("\n");
 }
 
+function getCasesRecentInlineMarkup(
+  cases: Array<{ shortId: string }>
+): TelegramInlineKeyboardMarkup {
+  return createInlineKeyboardMarkup(
+    cases.map((c) => [
+      createMenuButton(`✅ Закрыть ${c.shortId}`, `${TP_CALLBACK_CASE_RESOLVE_PREFIX}${c.shortId}`),
+      createMenuButton(`🗑 Шум ${c.shortId}`, `${TP_CALLBACK_CASE_DISMISS_PREFIX}${c.shortId}`),
+    ])
+  );
+}
+
 async function handleTrainingPeaksRecentCoachCases(parsedMessage: ParsedTelegramUpdate): Promise<void> {
   const cases = await listRecentTrainingPeaksCoachCases({
     limit: 10,
     statuses: ["logged", "open", "needs_review"],
   });
-  await sendTrainingPeaksMessage(parsedMessage.chatId, formatTrainingPeaksCoachCasesRecentMessage(cases));
+  if (cases.length === 0) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, formatTrainingPeaksCoachCasesRecentMessage(cases));
+    return;
+  }
+  await sendTrainingPeaksMenuMessage(
+    parsedMessage.chatId,
+    formatTrainingPeaksCoachCasesRecentMessage(cases),
+    getCasesRecentInlineMarkup(cases)
+  );
 }
 
 async function handleTrainingPeaksCoachCaseResolveOrDismiss(
@@ -2525,6 +2548,16 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
 
   if (data === TP_CALLBACK_ACTION_DETAIL_BACK) {
     return { kind: "action_detail_back" };
+  }
+
+  if (data.startsWith(TP_CALLBACK_CASE_RESOLVE_PREFIX)) {
+    const shortId = data.slice(TP_CALLBACK_CASE_RESOLVE_PREFIX.length).trim();
+    return shortId ? { kind: "case_resolve", shortId } : null;
+  }
+
+  if (data.startsWith(TP_CALLBACK_CASE_DISMISS_PREFIX)) {
+    const shortId = data.slice(TP_CALLBACK_CASE_DISMISS_PREFIX.length).trim();
+    return shortId ? { kind: "case_dismiss", shortId } : null;
   }
 
   if (data.startsWith("tp:s:")) {
@@ -4289,6 +4322,10 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
   }
 
   if (!persistedChat || !businessConnectionId || !chatId || !messageText) {
+    return;
+  }
+
+  if (!isAthleteIncomingBusinessDmMessage(message)) {
     return;
   }
 
@@ -7127,6 +7164,70 @@ export async function handleTrainingPeaksTelegramCallback(
 
     if (callback.kind === "action_detail_back") {
       await showTpActionsList(parsedMessage);
+      return "handled";
+    }
+
+    if (callback.kind === "case_resolve") {
+      const result = await resolveTrainingPeaksCoachCase({
+        caseId: callback.shortId,
+        actorTelegramChatId: String(parsedMessage.chatId),
+        note: "closed via Telegram button",
+      });
+
+      if (result.kind === "ok") {
+        await sendTrainingPeaksMessage(parsedMessage.chatId, `✅ Кейс ${callback.shortId} закрыт.`);
+        return "handled";
+      }
+
+      if (result.kind === "already_final") {
+        await sendTrainingPeaksMessage(
+          parsedMessage.chatId,
+          `Кейс ${callback.shortId} уже в статусе: ${result.status}.`
+        );
+        return "handled";
+      }
+
+      if (result.kind === "not_found") {
+        await sendTrainingPeaksMessage(parsedMessage.chatId, `Кейс ${callback.shortId} не найден.`);
+        return "handled";
+      }
+
+      await sendTrainingPeaksMessage(
+        parsedMessage.chatId,
+        `Ошибка. Попробуй: /tp_case_resolve ${callback.shortId}`
+      );
+      return "handled";
+    }
+
+    if (callback.kind === "case_dismiss") {
+      const result = await dismissTrainingPeaksCoachCase({
+        caseId: callback.shortId,
+        actorTelegramChatId: String(parsedMessage.chatId),
+        note: "dismissed as noise via Telegram button",
+      });
+
+      if (result.kind === "ok") {
+        await sendTrainingPeaksMessage(parsedMessage.chatId, `🗑 Кейс ${callback.shortId} скрыт как шум.`);
+        return "handled";
+      }
+
+      if (result.kind === "already_final") {
+        await sendTrainingPeaksMessage(
+          parsedMessage.chatId,
+          `Кейс ${callback.shortId} уже в статусе: ${result.status}.`
+        );
+        return "handled";
+      }
+
+      if (result.kind === "not_found") {
+        await sendTrainingPeaksMessage(parsedMessage.chatId, `Кейс ${callback.shortId} не найден.`);
+        return "handled";
+      }
+
+      await sendTrainingPeaksMessage(
+        parsedMessage.chatId,
+        `Ошибка. Попробуй: /tp_case_dismiss ${callback.shortId}`
+      );
       return "handled";
     }
 
