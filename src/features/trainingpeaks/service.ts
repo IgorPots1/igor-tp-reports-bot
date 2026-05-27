@@ -994,10 +994,11 @@ export async function listRecentTrainingPeaksCoachCases(input?: {
     caseKind: TrainingPeaksCoachCaseKind;
     status: TrainingPeaksCoachCaseStatus;
     createdAt: string;
+    previewText: string | null;
   }>
 > {
   const rows = await listRecentTrainingPeaksCoachCasesFromRepository({
-    limit: input?.limit ?? 10,
+    limit: input?.limit ?? 5,
     statuses: input?.statuses,
   });
 

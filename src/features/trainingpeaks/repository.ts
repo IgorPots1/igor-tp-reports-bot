@@ -5540,13 +5540,16 @@ export async function listRecentTrainingPeaksCoachCases(input: {
     caseKind: TrainingPeaksCoachCaseKind;
     status: TrainingPeaksCoachCaseStatus;
     createdAt: string;
+    previewText: string | null;
   }>
 > {
   const safeLimit = Math.max(1, Math.min(input.limit ?? 10, 50));
   const supabase = createSupabaseServerClient();
   let query = supabase
     .from("trainingpeaks_coach_cases")
-    .select("id, student_id, case_kind, status, created_at, trainingpeaks_students(student_name)")
+    .select(
+      "id, student_id, case_kind, status, created_at, trainingpeaks_students(student_name), trainingpeaks_telegram_context_observations(text_preview), trainingpeaks_message_intent_logs(text_preview)"
+    )
     .order("created_at", { ascending: false })
     .limit(safeLimit)
     .not("student_id", "is", null);
@@ -5568,11 +5571,25 @@ export async function listRecentTrainingPeaksCoachCases(input: {
       status: TrainingPeaksCoachCaseStatus;
       created_at: string;
       trainingpeaks_students?: { student_name?: string | null } | Array<{ student_name?: string | null }> | null;
+      trainingpeaks_telegram_context_observations?:
+        | { text_preview?: string | null }
+        | Array<{ text_preview?: string | null }>
+        | null;
+      trainingpeaks_message_intent_logs?:
+        | { text_preview?: string | null }
+        | Array<{ text_preview?: string | null }>
+        | null;
     }>) ?? []
   ).map((row) => {
     const joinedStudent = Array.isArray(row.trainingpeaks_students)
       ? row.trainingpeaks_students[0]
       : row.trainingpeaks_students;
+    const joinedContextObservation = Array.isArray(row.trainingpeaks_telegram_context_observations)
+      ? row.trainingpeaks_telegram_context_observations[0]
+      : row.trainingpeaks_telegram_context_observations;
+    const joinedIntentLog = Array.isArray(row.trainingpeaks_message_intent_logs)
+      ? row.trainingpeaks_message_intent_logs[0]
+      : row.trainingpeaks_message_intent_logs;
 
     return {
       id: row.id,
@@ -5581,6 +5598,7 @@ export async function listRecentTrainingPeaksCoachCases(input: {
       caseKind: row.case_kind,
       status: row.status,
       createdAt: row.created_at,
+      previewText: joinedContextObservation?.text_preview?.trim() || joinedIntentLog?.text_preview?.trim() || null,
     };
   });
 }

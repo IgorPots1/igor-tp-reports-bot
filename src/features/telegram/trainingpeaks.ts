@@ -1457,50 +1457,110 @@ function parseTrainingPeaksCoachCaseCommand(text: string): { caseId: string | nu
   };
 }
 
-function formatTrainingPeaksCoachCasesRecentMessage(
+function getTrainingPeaksCoachCaseKindLabel(
+  caseKind: Awaited<ReturnType<typeof listRecentTrainingPeaksCoachCases>>[number]["caseKind"]
+): string {
+  switch (caseKind) {
+    case "question_to_coach":
+      return "Вопрос тренеру";
+    case "pain_or_health_signal":
+      return "Самочувствие / боль";
+    case "move_workout_needs_review":
+      return "Перенос требует проверки";
+    case "move_workout_requested":
+      return "Запрос на перенос";
+    case "unrecognized_intent":
+      return "Нераспознанное сообщение";
+    case "observation_only":
+      return "Наблюдение";
+    default:
+      return caseKind;
+  }
+}
+
+function getTrainingPeaksCoachCaseStatusLabel(
+  status: Awaited<ReturnType<typeof listRecentTrainingPeaksCoachCases>>[number]["status"]
+): string {
+  switch (status) {
+    case "logged":
+      return "новый";
+    case "open":
+      return "открыт";
+    case "needs_review":
+      return "нужна проверка";
+    default:
+      return status;
+  }
+}
+
+function formatTrainingPeaksCoachCaseCreatedAt(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Europe/Berlin",
+  }).format(date);
+}
+
+function getTrainingPeaksCoachCasePreviewText(previewText: string | null): string {
+  return previewText?.trim() || "без текстового превью";
+}
+
+function formatTrainingPeaksCoachCaseCard(
+  item: Awaited<ReturnType<typeof listRecentTrainingPeaksCoachCases>>[number]
+): string {
+  return [
+    item.studentName ?? "Без имени",
+    `${getTrainingPeaksCoachCaseKindLabel(item.caseKind)} · ${formatTrainingPeaksCoachCaseCreatedAt(item.createdAt)} · ${getTrainingPeaksCoachCaseStatusLabel(item.status)}`,
+    `Контекст: ${getTrainingPeaksCoachCasePreviewText(item.previewText)}`,
+    `#${item.shortId}`,
+  ].join("\n");
+}
+
+function formatTrainingPeaksCoachCasesRecentEmptyMessage(
   cases: Awaited<ReturnType<typeof listRecentTrainingPeaksCoachCases>>
 ): string {
   if (cases.length === 0) {
     return "Recent TP cases:\n\nАктивных кейсов сейчас нет.";
   }
 
-  return [
-    "Recent TP cases:",
-    "",
-    ...cases.map(
-      (item, index) =>
-        `${index + 1}. ${item.shortId} — ${item.studentName ?? "Без имени"} — ${item.caseKind} — ${formatShortDate(
-          item.createdAt.slice(0, 10)
-        )}`
-    ),
-  ].join("\n");
+  return "Recent TP cases:";
 }
 
-function getCasesRecentInlineMarkup(
-  cases: Array<{ shortId: string }>
-): TelegramInlineKeyboardMarkup {
+function getTrainingPeaksCoachCaseInlineMarkup(shortId: string): TelegramInlineKeyboardMarkup {
   return createInlineKeyboardMarkup(
-    cases.map((c) => [
-      createMenuButton(`✅ Закрыть ${c.shortId}`, `${TP_CALLBACK_CASE_RESOLVE_PREFIX}${c.shortId}`),
-      createMenuButton(`🗑 Шум ${c.shortId}`, `${TP_CALLBACK_CASE_DISMISS_PREFIX}${c.shortId}`),
-    ])
+    [[
+      createMenuButton("✅ Закрыть", `${TP_CALLBACK_CASE_RESOLVE_PREFIX}${shortId}`),
+      createMenuButton("🗑 Шум", `${TP_CALLBACK_CASE_DISMISS_PREFIX}${shortId}`),
+    ]]
   );
 }
 
 async function handleTrainingPeaksRecentCoachCases(parsedMessage: ParsedTelegramUpdate): Promise<void> {
   const cases = await listRecentTrainingPeaksCoachCases({
-    limit: 10,
+    limit: 5,
     statuses: ["logged", "open", "needs_review"],
   });
   if (cases.length === 0) {
-    await sendTrainingPeaksMessage(parsedMessage.chatId, formatTrainingPeaksCoachCasesRecentMessage(cases));
+    await sendTrainingPeaksMessage(parsedMessage.chatId, formatTrainingPeaksCoachCasesRecentEmptyMessage(cases));
     return;
   }
-  await sendTrainingPeaksMenuMessage(
-    parsedMessage.chatId,
-    formatTrainingPeaksCoachCasesRecentMessage(cases),
-    getCasesRecentInlineMarkup(cases)
-  );
+
+  await sendTrainingPeaksMessage(parsedMessage.chatId, "Последние TP-кейсы:");
+
+  for (const item of cases) {
+    await sendTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      formatTrainingPeaksCoachCaseCard(item),
+      getTrainingPeaksCoachCaseInlineMarkup(item.shortId)
+    );
+  }
 }
 
 async function handleTrainingPeaksCoachCaseResolveOrDismiss(
