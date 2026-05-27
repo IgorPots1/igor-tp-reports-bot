@@ -37,6 +37,13 @@ type PersistedObservationLabel =
   | "unknown"
   | "third_party_in_linked_topic";
 
+const GROUP_GENERAL_MEANINGFUL_LABELS: TrainingPeaksObserverLabel[] = [
+  "question_to_coach",
+  "possibly_pain_or_health",
+  "possibly_training_report",
+  "move_workout_candidate",
+];
+
 type BuildObservationLogPayloadInput = {
   studentId: string | null;
   sourceType: TrainingPeaksObserverSourceType;
@@ -274,6 +281,14 @@ function mapObserverLabelsToPersistedLabels(labels: TrainingPeaksObserverLabel[]
   return mapped.size > 0 ? [...mapped] : ["unknown"];
 }
 
+function shouldSkipGroupGeneralAckOrNoise(labels: TrainingPeaksObserverLabel[]): boolean {
+  if (!labels.includes("noise_or_ack")) {
+    return false;
+  }
+
+  return !GROUP_GENERAL_MEANINGFUL_LABELS.some((label) => labels.includes(label));
+}
+
 function classifyObserverText(text: string | null): {
   labels: TrainingPeaksObserverLabel[];
   scores: Partial<Record<TrainingPeaksObserverLabel, number>>;
@@ -409,8 +424,19 @@ async function persistKnownStudentGeneralGroupObservation(input: {
   messageLength: number;
   fromId: number;
   fromUsername: string | null;
-}): Promise<boolean> {
+}): Promise<"persisted" | "dedup_skipped" | "ack_or_noise_skipped"> {
   const labelsAndScores = classifyObserverText(input.text);
+  if (shouldSkipGroupGeneralAckOrNoise(labelsAndScores.labels)) {
+    logGeneralGroupObservationEvent({
+      studentId: input.student.id,
+      chatId: String(input.message.chat.id),
+      messageId: input.message.message_id,
+      reason: "group_general_ack_or_noise_skipped",
+    });
+
+    return "ack_or_noise_skipped";
+  }
+
   const payload = buildObservationLogPayload({
     studentId: input.student.id,
     sourceType: "group_general",
@@ -468,7 +494,7 @@ async function persistKnownStudentGeneralGroupObservation(input: {
     dedupSkipped,
   });
 
-  return !dedupSkipped;
+  return dedupSkipped ? "dedup_skipped" : "persisted";
 }
 
 async function observeGeneralGroupMessage(input: {
@@ -558,7 +584,7 @@ async function observeGeneralGroupMessage(input: {
   }
 
   const student = matchedStudents[0]!;
-  await persistKnownStudentGeneralGroupObservation({
+  const observationResult = await persistKnownStudentGeneralGroupObservation({
     message: input.message,
     student,
     text: input.text,
@@ -567,6 +593,13 @@ async function observeGeneralGroupMessage(input: {
     fromId: input.fromId,
     fromUsername: input.fromUsername,
   });
+
+  if (observationResult === "ack_or_noise_skipped") {
+    return {
+      handled: true,
+      reason: "skipped_group_general",
+    };
+  }
 
   return {
     handled: true,
