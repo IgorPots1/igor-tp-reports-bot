@@ -2,6 +2,10 @@ import {
   parseTrainingPeaksMoveWorkoutRequest,
   passesTrainingPeaksStrictMoveWorkoutIntentGate,
 } from "@/features/trainingpeaks/service";
+import {
+  assembleTrainingPeaksMoveIntentContext,
+  triggerHasStrictMoveVerb,
+} from "@/features/trainingpeaks/move-multi-message-context";
 
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -199,6 +203,262 @@ async function run(): Promise<void> {
       )}`
     );
   }
+
+  // ─── Multi-message move-intent context assembly checks ──────────────────
+  //
+  // Safety contract: a bare verb like "Перенеси пожалуйста" must NEVER parse as
+  // a move action on its own. The assembled-text fallback is gated on (a) a
+  // strict move verb in the trigger and (b) relevant prior context messages.
+  //
+  // These checks pin the pure helper behavior; runtime wiring lives in
+  // createTrainingPeaksMoveWorkoutActionFromTelegram and reuses the helper.
+  const baseUnix = Math.floor(Date.parse("2026-05-25T09:00:00+02:00") / 1000);
+  const baseMs = baseUnix * 1000;
+  const isoAt = (offsetMs: number): string => new Date(baseMs + offsetMs).toISOString();
+
+  // (A) Single-message rejection: bare verb must fail strict gate + parse.
+  const bareTrigger = "Перенеси пожалуйста";
+  const bareGate = passesTrainingPeaksStrictMoveWorkoutIntentGate(bareTrigger);
+  const bareParse = await parseTrainingPeaksMoveWorkoutRequest(bareTrigger, {
+    messageDateUnix: baseUnix,
+  });
+  const bareHelper = assembleTrainingPeaksMoveIntentContext({
+    triggerText: bareTrigger,
+    recentMessages: [],
+  });
+  const bareOk =
+    bareGate === false &&
+    bareParse.ok === false &&
+    bareParse.reason === "not_explicit_move_request" &&
+    triggerHasStrictMoveVerb(bareTrigger) === true &&
+    bareHelper === null;
+  if (!bareOk) {
+    failed += 1;
+  }
+  console.log(
+    `${bareOk ? "PASS" : "FAIL"} (multi-msg/A bare trigger): "${bareTrigger}" -> ${JSON.stringify(
+      {
+        gate: bareGate,
+        parse: bareParse.ok ? "unexpected ok" : bareParse.reason,
+        helper: bareHelper,
+      }
+    )}`
+  );
+
+  // (B) Yulia useful burst: workout + tomorrow context + bare verb assembles
+  // into a valid strict parse anchored on the trigger timestamp.
+  const yuliaUsefulRecent = [
+    {
+      textPreview: "Не смогла я сегодня сделать свои интервалы",
+      messageId: 101,
+      observedAt: isoAt(-170_000),
+      labels: ["report_like", "schedule_context"],
+    },
+    {
+      textPreview: "Завтра постараюсь",
+      messageId: 102,
+      observedAt: isoAt(-60_000),
+      labels: ["schedule_context"],
+    },
+  ];
+  const yuliaUsefulAssembled = assembleTrainingPeaksMoveIntentContext({
+    triggerText: bareTrigger,
+    triggerMessageId: 103,
+    recentMessages: yuliaUsefulRecent,
+  });
+  let yuliaUsefulOk = false;
+  const yuliaUsefulAssembledLower = yuliaUsefulAssembled?.assembledText.toLowerCase() ?? "";
+  if (
+    yuliaUsefulAssembled &&
+    yuliaUsefulAssembledLower.includes("интервалы") &&
+    yuliaUsefulAssembledLower.includes("сегодня") &&
+    yuliaUsefulAssembledLower.includes("завтра") &&
+    yuliaUsefulAssembled.contextMessageIds.length === 2
+  ) {
+    const yuliaUsefulParse = await parseTrainingPeaksMoveWorkoutRequest(
+      yuliaUsefulAssembled.assembledText,
+      { messageDateUnix: baseUnix }
+    );
+    if (yuliaUsefulParse.ok) {
+      const sourceDate =
+        yuliaUsefulParse.payload.sourceDate ?? yuliaUsefulParse.payload.source_date ?? null;
+      const target = yuliaUsefulParse.payload.target;
+      const sourceOk = sourceDate === "2026-05-25";
+      const targetOk = target.kind === "date" && target.value === "2026-05-26";
+      const descriptorOk = yuliaUsefulParse.payload.workoutDescriptor !== null;
+      yuliaUsefulOk = sourceOk && targetOk && descriptorOk;
+      if (!yuliaUsefulOk) {
+        console.log(
+          `(multi-msg/B detail) parsed -> ${JSON.stringify({
+            sourceDate,
+            target,
+            workoutDescriptor: yuliaUsefulParse.payload.workoutDescriptor,
+          })}`
+        );
+      }
+    } else {
+      console.log(`(multi-msg/B detail) parse failed -> ${JSON.stringify({ reason: yuliaUsefulParse.reason })}`);
+    }
+  } else {
+    console.log(
+      `(multi-msg/B detail) assembly missing context -> ${JSON.stringify(yuliaUsefulAssembled)}`
+    );
+  }
+  if (!yuliaUsefulOk) {
+    failed += 1;
+  }
+  console.log(
+    `${yuliaUsefulOk ? "PASS" : "FAIL"} (multi-msg/B useful burst): assembled "${
+      yuliaUsefulAssembled?.assembledText ?? "<null>"
+    }"`
+  );
+
+  // (C) Noisy full burst: helper must exclude obvious ack/noise messages and
+  // must NOT produce an ambiguous unsafe parse.
+  const noisyRecent = [
+    {
+      textPreview: "Привет",
+      messageId: 200,
+      observedAt: isoAt(-175_000),
+      labels: ["ack_or_noise"],
+    },
+    {
+      textPreview: "Не смогла я сегодня сделать свои интервалы",
+      messageId: 201,
+      observedAt: isoAt(-240_000),
+      labels: ["report_like", "schedule_context"],
+    },
+    {
+      textPreview: "Сегодня один из дней сборов был",
+      messageId: 202,
+      observedAt: isoAt(-180_000),
+      labels: ["schedule_context"],
+    },
+    {
+      textPreview: "Активный что-то прям",
+      messageId: 203,
+      observedAt: isoAt(-120_000),
+      labels: ["unknown"],
+    },
+    {
+      textPreview: "Завтра постараюсь",
+      messageId: 204,
+      observedAt: isoAt(-60_000),
+      labels: ["schedule_context"],
+    },
+  ];
+  const noisyAssembled = assembleTrainingPeaksMoveIntentContext({
+    triggerText: bareTrigger,
+    triggerMessageId: 205,
+    recentMessages: noisyRecent,
+  });
+  const includedIds = new Set(noisyAssembled?.contextMessageIds.map(String) ?? []);
+  const excludedNoiseOk =
+    noisyAssembled !== null && !includedIds.has("200") && !includedIds.has("203");
+  let noisyParseSafeOk = false;
+  if (noisyAssembled) {
+    const noisyParse = await parseTrainingPeaksMoveWorkoutRequest(noisyAssembled.assembledText, {
+      messageDateUnix: baseUnix,
+    });
+    if (noisyParse.ok) {
+      const target = noisyParse.payload.target;
+      const sourceDate =
+        noisyParse.payload.sourceDate ?? noisyParse.payload.source_date ?? null;
+      noisyParseSafeOk =
+        target.kind === "date" &&
+        target.value === "2026-05-26" &&
+        sourceDate === "2026-05-25";
+    } else {
+      // Reject is acceptable too: the requirement is "no unsafe ambiguous action".
+      noisyParseSafeOk = true;
+    }
+  }
+  const noisyOk = excludedNoiseOk && noisyParseSafeOk;
+  if (!noisyOk) {
+    failed += 1;
+  }
+  console.log(
+    `${noisyOk ? "PASS" : "FAIL"} (multi-msg/C noisy burst): includedIds=${JSON.stringify([
+      ...includedIds,
+    ])}`
+  );
+
+  // (C2) Context previews persisted by runtime are expected to be capped to 3.
+  const previewCapAssembled = assembleTrainingPeaksMoveIntentContext({
+    triggerText: bareTrigger,
+    triggerMessageId: 999,
+    recentMessages: [
+      {
+        textPreview: "Не смогла я сегодня сделать свои интервалы",
+        messageId: 401,
+        observedAt: isoAt(-170_000),
+        labels: ["report_like", "schedule_context"],
+      },
+      {
+        textPreview: "Сегодня один из дней сборов был",
+        messageId: 402,
+        observedAt: isoAt(-140_000),
+        labels: ["schedule_context"],
+      },
+      {
+        textPreview: "Завтра постараюсь",
+        messageId: 403,
+        observedAt: isoAt(-110_000),
+        labels: ["schedule_context"],
+      },
+      {
+        textPreview: "Темповая в ногах осталась",
+        messageId: 404,
+        observedAt: isoAt(-80_000),
+        labels: ["report_like"],
+      },
+    ],
+  });
+  const previewCapOk =
+    previewCapAssembled !== null && previewCapAssembled.contextPreviews.length >= 3;
+  if (!previewCapOk) {
+    failed += 1;
+  }
+  console.log(
+    `${previewCapOk ? "PASS" : "FAIL"} (multi-msg/C2 preview source ready): previewCount=${
+      previewCapAssembled?.contextPreviews.length ?? 0
+    }`
+  );
+
+  // (D) Insufficient context: only noise messages → helper must return null.
+  const insufficientAssembled = assembleTrainingPeaksMoveIntentContext({
+    triggerText: bareTrigger,
+    recentMessages: [
+      {
+        textPreview: "Привет",
+        messageId: 300,
+        observedAt: isoAt(-60_000),
+        labels: ["ack_or_noise"],
+      },
+    ],
+  });
+  const insufficientOk = insufficientAssembled === null;
+  if (!insufficientOk) {
+    failed += 1;
+  }
+  console.log(
+    `${insufficientOk ? "PASS" : "FAIL"} (multi-msg/D insufficient): ${JSON.stringify(
+      insufficientAssembled
+    )}`
+  );
+
+  // (E) Trigger without strict verb must never assemble even if context exists.
+  const noVerbAssembled = assembleTrainingPeaksMoveIntentContext({
+    triggerText: "Завтра постараюсь",
+    recentMessages: yuliaUsefulRecent,
+  });
+  const noVerbOk = noVerbAssembled === null;
+  if (!noVerbOk) {
+    failed += 1;
+  }
+  console.log(
+    `${noVerbOk ? "PASS" : "FAIL"} (multi-msg/E no strict verb): ${JSON.stringify(noVerbAssembled)}`
+  );
 
   /*
    * AI fallback is skipped when the strict gate fails (implementation returns early).

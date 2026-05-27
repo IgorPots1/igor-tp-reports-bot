@@ -112,6 +112,8 @@ import {
   updateTrainingPeaksStudentTelegramContactById,
   updateTrainingPeaksStudentTelegramContextById,
   listTrainingPeaksTelegramContextObservationsForStudent,
+  listRecentTrainingPeaksTelegramContextObservationsForChat,
+  listRecentPendingTrainingPeaksMoveActionsForStudentChat,
   updateTrainingPeaksCoachCaseStatus,
   updateTrainingPeaksStudentThreadById,
   updateTrainingPeaksWeeklyReportContentById,
@@ -121,6 +123,10 @@ import {
 import { evaluateTrainingPeaksRecoveryAlert } from "@/features/trainingpeaks/recovery-alerts";
 import { classifyTrainingPeaksWorkoutActivity } from "@/features/trainingpeaks/workout-activity-classification";
 import { parseMoveWorkoutWithAiFallback } from "@/features/trainingpeaks/move-workout-parser-ai";
+import {
+  assembleTrainingPeaksMoveIntentContext,
+  triggerHasStrictMoveVerb,
+} from "@/features/trainingpeaks/move-multi-message-context";
 import {
   buildMoveSourceInferencePreviewFromCacheCandidates,
   formatMoveSourceInferencePreviewRu,
@@ -320,6 +326,9 @@ export type ParsedTrainingPeaksMoveWorkoutPayload = {
     parserBaseDateSource: "message_timestamp" | "env_override" | "server_now";
     parserBaseDateIso: string;
     messageTimestampAvailable: boolean;
+    assemblyKind?: "single_message" | "multi_message";
+    contextMessageIds?: Array<string | number>;
+    contextPreviews?: string[];
   };
 };
 
@@ -3687,6 +3696,129 @@ export async function consumeTrainingPeaksStudentTelegramLinkCode(
   };
 }
 
+const MULTI_MESSAGE_MOVE_INTENT_CONFIDENCE_CAP = 0.85;
+const MULTI_MESSAGE_MOVE_INTENT_DEDUPE_MINUTES = 10;
+const MULTI_MESSAGE_MOVE_INTENT_CONTEXT_MINUTES = 3;
+const MULTI_MESSAGE_MOVE_INTENT_CONTEXT_LIMIT = 5;
+const MULTI_MESSAGE_MOVE_INTENT_CONTEXT_PREVIEW_LIMIT = 3;
+
+type AssembledMoveIntentParseResult = {
+  parsed: ParsedTrainingPeaksMoveWorkoutPayload;
+  confidence: number;
+  contextMessageIds: Array<string | number>;
+  contextPreviews: string[];
+};
+
+async function tryAssembleMultiMessageMoveIntent(input: {
+  chatId: string;
+  triggerText: string;
+  triggerMessageId: string;
+  messageDateUnix?: number | null;
+}): Promise<AssembledMoveIntentParseResult | null> {
+  if (!triggerHasStrictMoveVerb(input.triggerText)) {
+    return null;
+  }
+
+  let recent: Awaited<
+    ReturnType<typeof listRecentTrainingPeaksTelegramContextObservationsForChat>
+  > = [];
+  try {
+    recent = await listRecentTrainingPeaksTelegramContextObservationsForChat({
+      telegramChatId: input.chatId,
+      sinceMinutes: MULTI_MESSAGE_MOVE_INTENT_CONTEXT_MINUTES,
+      limit: MULTI_MESSAGE_MOVE_INTENT_CONTEXT_LIMIT,
+    });
+  } catch (error) {
+    console.warn("Failed to list recent TrainingPeaks telegram context observations for multi-message move intent", {
+      chatId: input.chatId,
+      messageId: input.triggerMessageId,
+      error,
+    });
+    return null;
+  }
+
+  const assembled = assembleTrainingPeaksMoveIntentContext({
+    triggerText: input.triggerText,
+    triggerMessageId: input.triggerMessageId,
+    recentMessages: recent.map((row) => ({
+      textPreview: row.textPreview ?? "",
+      messageId: row.messageId,
+      observedAt: row.observedAt,
+      labels: row.labels,
+    })),
+  });
+
+  if (!assembled) {
+    return null;
+  }
+
+  const assembledParse = await parseTrainingPeaksMoveWorkoutRequest(assembled.assembledText, {
+    messageDateUnix: input.messageDateUnix ?? null,
+  });
+
+  if (!assembledParse.ok) {
+    return null;
+  }
+
+  // Safety: even if the parser accepted the assembled text, reject any
+  // ambiguous-source/target situations explicitly. We want the assembled
+  // path to be at least as conservative as the single-message path.
+  if (
+    assembledParse.payload.clarificationReason === "source day is ambiguous" ||
+    assembledParse.payload.clarificationReason === "ambiguous_target_day"
+  ) {
+    return null;
+  }
+
+  return {
+    parsed: assembledParse.payload,
+    confidence: assembledParse.confidence,
+    contextMessageIds: assembled.contextMessageIds,
+    contextPreviews: assembled.contextPreviews,
+  };
+}
+
+function applyMultiMessageMoveIntentCaution(input: {
+  parsed: ParsedTrainingPeaksMoveWorkoutPayload;
+  contextMessageIds: Array<string | number>;
+  contextPreviews: string[];
+}): ParsedTrainingPeaksMoveWorkoutPayload {
+  const cappedConfidence = Math.min(
+    input.parsed.confidence,
+    MULTI_MESSAGE_MOVE_INTENT_CONFIDENCE_CAP
+  );
+  const cautionWarning =
+    "Собрано из нескольких сообщений. Проверь источник и целевой день вручную.";
+  const warnings = [...(input.parsed.warnings ?? [])];
+  if (!warnings.includes(cautionWarning)) {
+    warnings.push(cautionWarning);
+  }
+
+  const safeContextPreviews = input.contextPreviews
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0)
+    .slice(0, MULTI_MESSAGE_MOVE_INTENT_CONTEXT_PREVIEW_LIMIT);
+
+  return {
+    ...input.parsed,
+    confidence: cappedConfidence,
+    needsClarification: true,
+    clarificationReason:
+      input.parsed.clarificationReason ?? "assembled_from_multiple_messages",
+    warnings,
+    parsingDiagnostics: {
+      ...(input.parsed.parsingDiagnostics ?? {
+        parserBaseDateSource: "server_now",
+        parserBaseDateIso: "",
+        messageTimestampAvailable: false,
+      }),
+      assemblyKind: "multi_message",
+      contextMessageIds: input.contextMessageIds,
+      contextPreviews: safeContextPreviews,
+    },
+  };
+}
+
 export async function createTrainingPeaksMoveWorkoutActionFromTelegram(
   input: CreateTrainingPeaksMoveWorkoutActionFromTelegramInput
 ): Promise<CreateTrainingPeaksMoveWorkoutActionFromTelegramResult> {
@@ -3704,16 +3836,70 @@ export async function createTrainingPeaksMoveWorkoutActionFromTelegram(
   const parsed = await parseTrainingPeaksMoveWorkoutRequest(trimmedText, {
     messageDateUnix: input.messageDateUnix ?? null,
   });
-  if (!parsed.ok) {
+
+  let parsedPayload: ParsedTrainingPeaksMoveWorkoutPayload | null = null;
+  let parsedConfidence: number | null = null;
+  let assemblyKind: "single_message" | "multi_message" = "single_message";
+
+  if (parsed.ok) {
+    parsedPayload = parsed.payload;
+    parsedConfidence = parsed.confidence;
+  } else if (parsed.reason === "not_explicit_move_request") {
+    const assembled = await tryAssembleMultiMessageMoveIntent({
+      chatId: input.chatId,
+      triggerText: trimmedText,
+      triggerMessageId: input.messageId,
+      messageDateUnix: input.messageDateUnix ?? null,
+    });
+    if (!assembled) {
+      return { ok: false, reason: parsed.reason, student };
+    }
+
+    // Dedupe: if a pending coach-gated move action already exists for this
+    // student + chat in the past few minutes, skip creating another one to
+    // avoid surfacing duplicate requests when a burst keeps arriving.
+    try {
+      const recentPending = await listRecentPendingTrainingPeaksMoveActionsForStudentChat({
+        studentId: student.id,
+        sourceChatId: input.chatId,
+        sinceMinutes: MULTI_MESSAGE_MOVE_INTENT_DEDUPE_MINUTES,
+      });
+      if (recentPending.length > 0) {
+        console.info("Skipping multi-message TrainingPeaks move action — existing pending action present", {
+          studentId: student.id,
+          chatId: input.chatId,
+          messageId: input.messageId,
+          existingActionIds: recentPending.map((row) => row.id),
+        });
+        return { ok: false, reason: "parse_rejected", student };
+      }
+    } catch (error) {
+      console.warn("Failed to dedupe recent pending TrainingPeaks move actions; skipping multi-message creation", {
+        studentId: student.id,
+        chatId: input.chatId,
+        messageId: input.messageId,
+        error,
+      });
+      return { ok: false, reason: "parse_rejected", student };
+    }
+
+    parsedPayload = applyMultiMessageMoveIntentCaution({
+      parsed: assembled.parsed,
+      contextMessageIds: assembled.contextMessageIds,
+      contextPreviews: assembled.contextPreviews,
+    });
+    parsedConfidence = parsedPayload.confidence;
+    assemblyKind = "multi_message";
+  } else {
     return { ok: false, reason: parsed.reason, student };
   }
 
-  let enrichedParsed = parsed.payload;
+  let enrichedParsed = parsedPayload;
   try {
     enrichedParsed = await enrichParsedMovePayloadWithWorkoutInference({
       studentId: student.id,
       rawText: trimmedText,
-      parsedPayload: parsed.payload,
+      parsedPayload: parsedPayload,
     });
   } catch (error) {
     console.warn("Failed to enrich move workout payload with workout cache inference", {
@@ -3723,8 +3909,32 @@ export async function createTrainingPeaksMoveWorkoutActionFromTelegram(
       error,
     });
     enrichedParsed = {
-      ...parsed.payload,
-      warnings: [...(parsed.payload.warnings ?? []), "Не удалось автоматически подобрать исходную тренировку. Нужна ручная проверка."],
+      ...parsedPayload,
+      warnings: [...(parsedPayload.warnings ?? []), "Не удалось автоматически подобрать исходную тренировку. Нужна ручная проверка."],
+    };
+  }
+
+  if (assemblyKind === "multi_message") {
+    // Re-apply caution metadata in case enrichment dropped or overwrote it.
+    const enrichmentLostAssemblyDiagnostics =
+      enrichedParsed.parsingDiagnostics?.assemblyKind !== "multi_message";
+    if (enrichmentLostAssemblyDiagnostics) {
+      enrichedParsed = applyMultiMessageMoveIntentCaution({
+        parsed: enrichedParsed,
+        contextMessageIds:
+          parsedPayload.parsingDiagnostics?.contextMessageIds ?? [],
+        contextPreviews:
+          parsedPayload.parsingDiagnostics?.contextPreviews ?? [],
+      });
+    }
+    // Confidence cap must always apply after enrichment.
+    enrichedParsed = {
+      ...enrichedParsed,
+      confidence: Math.min(
+        enrichedParsed.confidence ?? parsedConfidence ?? 0,
+        MULTI_MESSAGE_MOVE_INTENT_CONFIDENCE_CAP
+      ),
+      needsClarification: true,
     };
   }
 
@@ -3737,7 +3947,7 @@ export async function createTrainingPeaksMoveWorkoutActionFromTelegram(
     sourceUserId: input.userId ?? null,
     rawText: trimmedText,
     parsedPayload: enrichedParsed,
-    confidence: String(enrichedParsed.confidence ?? parsed.confidence),
+    confidence: String(enrichedParsed.confidence ?? parsedConfidence ?? 0),
     coachChatId: input.coachChatId ?? null,
   });
 
@@ -3754,7 +3964,11 @@ export function formatTrainingPeaksMoveWorkoutActionSummary(
 ): string {
   const previewLine = formatMoveSourceInferencePreviewRu(payload.sourceInferencePreview);
   const base = `move_workout ${formatTrainingPeaksMoveWorkoutTargetSummary(payload.target)}`;
-  return previewLine ? `${base}\n${previewLine}` : base;
+  const assemblyLine =
+    payload.parsingDiagnostics?.assemblyKind === "multi_message"
+      ? "⚠️ Собрано из нескольких сообщений — проверь источник и день."
+      : null;
+  return [base, previewLine, assemblyLine].filter(Boolean).join("\n");
 }
 
 export async function approveTrainingPeaksAction(

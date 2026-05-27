@@ -4429,6 +4429,95 @@ export async function listTrainingPeaksTelegramContextObservationsForStudent(
   );
 }
 
+/**
+ * Read-only helper used by the multi-message move-intent context assembly. Returns
+ * only the minimal safe fields needed by the assembler so we never widen access
+ * to raw athlete text or hashes from runtime code.
+ *
+ * NOTE: We do not filter by sender role at the SQL layer because the
+ * observation rows do not reliably encode "incoming athlete" vs other sender
+ * roles for every source type. For the runtime caller (Telegram Business DM
+ * handler) the chat_id is the athlete's own chat, which is the desired scope.
+ */
+export async function listRecentTrainingPeaksTelegramContextObservationsForChat(input: {
+  telegramChatId: string;
+  sinceMinutes?: number;
+  limit?: number;
+}): Promise<
+  Array<{
+    messageId: string | null;
+    textPreview: string | null;
+    labels: string[];
+    observedAt: string;
+  }>
+> {
+  const safeLimit = Math.max(1, Math.min(input.limit ?? 5, 5));
+  const sinceMinutes = Math.max(1, Math.min(input.sinceMinutes ?? 3, 5));
+  const sinceIso = new Date(Date.now() - sinceMinutes * 60_000).toISOString();
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_telegram_context_observations")
+    .select("message_id, text_preview, labels, observed_at")
+    .eq("chat_id", input.telegramChatId)
+    .gte("observed_at", sinceIso)
+    .order("observed_at", { ascending: false })
+    .limit(safeLimit);
+
+  if (error) {
+    throw new Error(
+      `Failed to list recent TrainingPeaks telegram context observations for chat ${input.telegramChatId}: ${error.message}`
+    );
+  }
+
+  const rows = (data as Array<{
+    message_id: string | null;
+    text_preview: string | null;
+    labels: unknown;
+    observed_at: string;
+  }>) ?? [];
+
+  return rows.map((row) => ({
+    messageId: row.message_id,
+    textPreview: row.text_preview,
+    labels: Array.isArray(row.labels) ? row.labels.map(String) : [],
+    observedAt: row.observed_at,
+  }));
+}
+
+/**
+ * Lookup helper used to dedupe pending coach-gated move actions that may
+ * otherwise be created twice in the same multi-bubble burst.
+ */
+export async function listRecentPendingTrainingPeaksMoveActionsForStudentChat(input: {
+  studentId: string;
+  sourceChatId: string;
+  sinceMinutes?: number;
+}): Promise<TrainingPeaksAction[]> {
+  const sinceMinutes = Math.max(1, Math.min(input.sinceMinutes ?? 10, 60));
+  const sinceIso = new Date(Date.now() - sinceMinutes * 60_000).toISOString();
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_actions")
+    .select("*")
+    .eq("action_type", "move_workout")
+    .eq("status", "pending_coach")
+    .eq("student_id", input.studentId)
+    .eq("source_chat_id", input.sourceChatId)
+    .gte("created_at", sinceIso)
+    .order("created_at", { ascending: false })
+    .limit(5);
+
+  if (error) {
+    throw new Error(
+      `Failed to list recent pending TrainingPeaks move actions for student ${input.studentId} chat ${input.sourceChatId}: ${error.message}`
+    );
+  }
+
+  return ((data as TrainingPeaksActionRow[]) ?? []).map(mapTrainingPeaksActionRow);
+}
+
 export async function hasTrainingPeaksTelegramContextObservationForChatTextHash(
   chatId: string,
   textSha256: string
