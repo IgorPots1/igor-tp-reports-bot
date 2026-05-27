@@ -235,6 +235,8 @@ const TP_CASE_RESOLVE_COMMAND_PATTERN = /^\/tp_case_resolve(?:@\w+)?(?:\s+|$)/;
 const TP_CASE_DISMISS_COMMAND_PATTERN = /^\/tp_case_dismiss(?:@\w+)?(?:\s+|$)/;
 const TP_RESOLVE_CASE_COMMAND_PATTERN = /^\/tp_resolve_case(?:@\w+)?(?:\s+|$)/;
 const TP_DISMISS_CASE_COMMAND_PATTERN = /^\/tp_dismiss_case(?:@\w+)?(?:\s+|$)/;
+const TP_CASE_RESOLVE_V2_COMMAND_PATTERN = /^\/tp(?:@\w+)?\s+case\s+resolve(?:\s+|$)/i;
+const TP_CASE_DISMISS_V2_COMMAND_PATTERN = /^\/tp(?:@\w+)?\s+case\s+dismiss(?:\s+|$)/i;
 const TP_HEALTH_COMMAND_PATTERN = /^\/tp_health(?:@\w+)?(?:\s+|$)/;
 const TP_CRON_STATUS_COMMAND_PATTERN = /^\/tp_cron_status(?:@\w+)?(?:\s+|$)/;
 const TP_DIGEST_NOW_COMMAND_PATTERN = /^\/tp_digest_now(?:@\w+)?(?:\s+|$)/;
@@ -438,6 +440,14 @@ const trainingPeaksTelegramLinkContextByChatId = new Map<string, TrainingPeaksTe
 const pendingAllEnabledWeeklyRunByChatId = new Map<string, PendingAllEnabledWeeklyRunContext>();
 
 function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
+  if (TP_CASE_RESOLVE_V2_COMMAND_PATTERN.test(text)) {
+    return "tp_case_resolve";
+  }
+
+  if (TP_CASE_DISMISS_V2_COMMAND_PATTERN.test(text)) {
+    return "tp_case_dismiss";
+  }
+
   if (TP_MAIN_COMMAND_PATTERN.test(text)) {
     return "tp";
   }
@@ -1450,7 +1460,10 @@ function parseReplyDraftFeedbackCommand(text: string): {
 }
 
 function parseTrainingPeaksCoachCaseCommand(text: string): { caseId: string | null; note: string | null } {
-  const body = text.replace(/^\/tp_(?:case_(?:resolve|dismiss)|(?:resolve|dismiss)_case)(?:@\w+)?\s*/i, "").trim();
+  const body = text
+    .replace(/^\/tp(?:@\w+)?\s+case\s+(?:resolve|dismiss)\s*/i, "")
+    .replace(/^\/tp_(?:case_(?:resolve|dismiss)|(?:resolve|dismiss)_case)(?:@\w+)?\s*/i, "")
+    .trim();
   if (!body) {
     return { caseId: null, note: null };
   }
@@ -1585,8 +1598,8 @@ async function handleTrainingPeaksCoachCaseResolveOrDismiss(
     await sendTrainingPeaksMessage(
       parsedMessage.chatId,
       action === "resolve"
-        ? "Используй: /tp_case_resolve <case_id> [заметка]"
-        : "Используй: /tp_case_dismiss <case_id> [заметка]"
+        ? "Usage: /tp case resolve <case_id>"
+        : "Usage: /tp case dismiss <case_id>"
     );
     return;
   }
@@ -1604,25 +1617,35 @@ async function handleTrainingPeaksCoachCaseResolveOrDismiss(
           note: parsed.note,
         });
 
-  if (result.kind === "ok") {
+  if (result.kind === "resolved" || result.kind === "dismissed") {
     await sendTrainingPeaksMessage(
       parsedMessage.chatId,
-      action === "resolve" ? "Кейс закрыт: resolved" : "Кейс скрыт: dismissed"
+      action === "resolve"
+        ? `✓ Case ${result.shortId} resolved.`
+        : `✓ Case ${result.shortId} dismissed.`
     );
     return;
   }
 
+  if (result.kind === "invalid_prefix") {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "Invalid case ID.");
+    return;
+  }
+
   if (result.kind === "not_found") {
-    await sendTrainingPeaksMessage(parsedMessage.chatId, "Кейс не найден.");
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "Case not found.");
     return;
   }
 
-  if (result.kind === "already_final") {
-    await sendTrainingPeaksMessage(parsedMessage.chatId, `Кейс уже в финальном статусе: ${result.status}.`);
+  if (result.kind === "ambiguous") {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "Ambiguous case ID, use more characters.");
     return;
   }
 
-  await sendTrainingPeaksMessage(parsedMessage.chatId, "Не удалось обновить кейс. Попробуй позже.");
+  await sendTrainingPeaksMessage(
+    parsedMessage.chatId,
+    action === "resolve" ? "Error resolving case, try again." : "Error dismissing case, try again."
+  );
 }
 
 function getStudentCardReportStatusLabel(status: string): string {
@@ -2384,8 +2407,8 @@ export function getTrainingPeaksHelpLines(): string[] {
     "/tp_actions — последние заявки на перенос",
     "/tp_intents — triage непонятых TP-сообщений (read-only)",
     "/tp_cases_recent — последние активные coach cases",
-    "/tp_case_resolve <case_id> [заметка] — закрыть coach case",
-    "/tp_case_dismiss <case_id> [заметка] — скрыть coach case",
+    "/tp case resolve <case_id> — закрыть coach case",
+    "/tp case dismiss <case_id> — скрыть coach case",
     "/tp_races YYYY-MM-DD YYYY-MM-DD — скан забегов за период",
     "/tp_reply_draft <ученик> — черновик ответа ученику (без автоотправки)",
     "/tp_draft_feedback <draft_id> used|edited|ignored [заметка] — фидбек по черновику",
@@ -7260,15 +7283,15 @@ export async function handleTrainingPeaksTelegramCallback(
         note: "closed via Telegram button",
       });
 
-      if (result.kind === "ok") {
+      if (result.kind === "resolved" || result.kind === "dismissed") {
         await sendTrainingPeaksMessage(parsedMessage.chatId, `✅ Кейс ${callback.shortId} закрыт.`);
         return "handled";
       }
 
-      if (result.kind === "already_final") {
+      if (result.kind === "ambiguous") {
         await sendTrainingPeaksMessage(
           parsedMessage.chatId,
-          `Кейс ${callback.shortId} уже в статусе: ${result.status}.`
+          `Неоднозначный ID кейса ${callback.shortId}, укажи больше символов.`
         );
         return "handled";
       }
@@ -7278,9 +7301,14 @@ export async function handleTrainingPeaksTelegramCallback(
         return "handled";
       }
 
+      if (result.kind === "invalid_prefix") {
+        await sendTrainingPeaksMessage(parsedMessage.chatId, `Некорректный ID кейса ${callback.shortId}.`);
+        return "handled";
+      }
+
       await sendTrainingPeaksMessage(
         parsedMessage.chatId,
-        `Ошибка. Попробуй: /tp_case_resolve ${callback.shortId}`
+        `Ошибка. Попробуй: /tp case resolve ${callback.shortId}`
       );
       return "handled";
     }
@@ -7292,15 +7320,15 @@ export async function handleTrainingPeaksTelegramCallback(
         note: "dismissed as noise via Telegram button",
       });
 
-      if (result.kind === "ok") {
+      if (result.kind === "dismissed" || result.kind === "resolved") {
         await sendTrainingPeaksMessage(parsedMessage.chatId, `🗑 Кейс ${callback.shortId} скрыт как шум.`);
         return "handled";
       }
 
-      if (result.kind === "already_final") {
+      if (result.kind === "ambiguous") {
         await sendTrainingPeaksMessage(
           parsedMessage.chatId,
-          `Кейс ${callback.shortId} уже в статусе: ${result.status}.`
+          `Неоднозначный ID кейса ${callback.shortId}, укажи больше символов.`
         );
         return "handled";
       }
@@ -7310,9 +7338,14 @@ export async function handleTrainingPeaksTelegramCallback(
         return "handled";
       }
 
+      if (result.kind === "invalid_prefix") {
+        await sendTrainingPeaksMessage(parsedMessage.chatId, `Некорректный ID кейса ${callback.shortId}.`);
+        return "handled";
+      }
+
       await sendTrainingPeaksMessage(
         parsedMessage.chatId,
-        `Ошибка. Попробуй: /tp_case_dismiss ${callback.shortId}`
+        `Ошибка. Попробуй: /tp case dismiss ${callback.shortId}`
       );
       return "handled";
     }

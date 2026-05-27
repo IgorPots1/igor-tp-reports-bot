@@ -89,6 +89,7 @@ import {
   type TrainingPeaksStudentContextCacheStatus,
   type TrainingPeaksRecoveryAlertKind,
   type TrainingPeaksCoachCaseKind,
+  type TrainingPeaksCoachCasePrefixLookupResult,
   type TrainingPeaksCoachCaseStatus,
   type InsertTrainingPeaksReplyDraftInput,
   type TrainingPeaksReplyDraft,
@@ -597,10 +598,16 @@ export type TrainingPeaksHealthSnapshot = {
 };
 
 export type TrainingPeaksCoachCaseDecisionResult =
-  | { kind: "ok"; caseId: string; status: Extract<TrainingPeaksCoachCaseStatus, "resolved" | "dismissed"> }
+  | {
+      kind: "resolved" | "dismissed";
+      caseId: string;
+      shortId: string;
+      status: Extract<TrainingPeaksCoachCaseStatus, "resolved" | "dismissed">;
+    }
   | { kind: "not_found" }
-  | { kind: "already_final"; status: Extract<TrainingPeaksCoachCaseStatus, "resolved" | "dismissed"> }
-  | { kind: "failed" };
+  | { kind: "ambiguous" }
+  | { kind: "invalid_prefix" }
+  | { kind: "error" };
 
 export type RecordTrainingPeaksReplyDraftFeedbackResult =
   | { kind: "ok"; outcome: "used" | "edited" | "ignored"; draftId: string }
@@ -773,24 +780,43 @@ async function finalizeTrainingPeaksCoachCase(input: {
   actionKind: "case_resolved" | "case_dismissed";
 }): Promise<TrainingPeaksCoachCaseDecisionResult> {
   try {
-    const coachCase =
-      (input.caseId.length < 36
+    const resolvedLookup: TrainingPeaksCoachCasePrefixLookupResult | { kind: "found"; case: NonNullable<Awaited<ReturnType<typeof getTrainingPeaksCoachCaseById>>> } | { kind: "not_found" } =
+      input.caseId.length < 36
         ? await getTrainingPeaksCoachCaseByIdPrefix(input.caseId)
-        : await getTrainingPeaksCoachCaseById(input.caseId)) ?? null;
-    if (!coachCase) {
+        : await (async () => {
+            const coachCase = await getTrainingPeaksCoachCaseById(input.caseId);
+            return coachCase ? { kind: "found" as const, case: coachCase } : { kind: "not_found" as const };
+          })();
+
+    if (resolvedLookup.kind === "invalid_prefix") {
+      return { kind: "invalid_prefix" };
+    }
+
+    if (resolvedLookup.kind === "ambiguous") {
+      return { kind: "ambiguous" };
+    }
+
+    if (resolvedLookup.kind === "not_found") {
       return { kind: "not_found" };
     }
 
+    const coachCase = resolvedLookup.case;
     if (coachCase.status === "resolved" || coachCase.status === "dismissed") {
-      return { kind: "already_final", status: coachCase.status };
+      return {
+        kind: coachCase.status,
+        caseId: coachCase.id,
+        shortId: coachCase.id.slice(0, 8),
+        status: coachCase.status,
+      };
     }
 
-    const updatedCase = await updateTrainingPeaksCoachCaseStatus({
-      caseId: coachCase.id,
-      status: input.finalStatus,
-    });
+    const updatedCase = await updateTrainingPeaksCoachCaseStatus(
+      coachCase.id,
+      input.finalStatus,
+      input.actorTelegramChatId ?? null
+    );
     if (!updatedCase) {
-      return { kind: "failed" };
+      return { kind: "error" };
     }
 
     try {
@@ -840,17 +866,17 @@ async function finalizeTrainingPeaksCoachCase(input: {
     }
 
     return {
-      kind: "ok",
+      kind: input.finalStatus,
       caseId: coachCase.id,
+      shortId: coachCase.id.slice(0, 8),
       status: input.finalStatus,
     };
   } catch (error) {
     console.warn("Failed to finalize TrainingPeaks coach case", {
-      caseId: input.caseId,
       finalStatus: input.finalStatus,
       error,
     });
-    return { kind: "failed" };
+    return { kind: "error" };
   }
 }
 
@@ -3546,7 +3572,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
       pushUniqueAttentionSignal(urgent, {
         level: "urgent",
         studentName,
-        reason: "сигнал по самочувствию/боли за последние 48ч",
+        reason: `сигнал по самочувствию/боли за последние 48ч (case: ${caseRow.id.slice(0, 8)})`,
       });
     }
 
@@ -3555,7 +3581,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
       pushUniqueAttentionSignal(today, {
         level: "today",
         studentName,
-        reason: "вопрос тренеру за последние 24ч",
+        reason: `вопрос тренеру за последние 24ч (case: ${caseRow.id.slice(0, 8)})`,
       });
     }
 
@@ -3564,7 +3590,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
       pushUniqueAttentionSignal(today, {
         level: "today",
         studentName,
-        reason: "перенос тренировки требует проверки",
+        reason: `перенос тренировки требует проверки (case: ${caseRow.id.slice(0, 8)})`,
       });
     }
   } catch (error) {

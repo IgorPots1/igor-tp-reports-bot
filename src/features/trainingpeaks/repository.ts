@@ -4691,6 +4691,7 @@ export type TrainingPeaksCoachCaseSummary = {
   caseKind: TrainingPeaksCoachCaseKind;
   status: TrainingPeaksCoachCaseStatus;
   createdAt: string;
+  updatedAt: string;
 };
 
 type TrainingPeaksCoachCaseSummaryRow = {
@@ -4699,7 +4700,14 @@ type TrainingPeaksCoachCaseSummaryRow = {
   case_kind: TrainingPeaksCoachCaseKind;
   status: TrainingPeaksCoachCaseStatus;
   created_at: string;
+  updated_at: string;
 };
+
+export type TrainingPeaksCoachCasePrefixLookupResult =
+  | { kind: "found"; case: TrainingPeaksCoachCaseSummary }
+  | { kind: "not_found" }
+  | { kind: "ambiguous" }
+  | { kind: "invalid_prefix" };
 
 export type TrainingPeaksReplyDraftSource = "telegram_command" | "attention_digest" | "system";
 export type TrainingPeaksReplyDraftOutcome = "generated" | "used" | "edited" | "ignored";
@@ -4897,6 +4905,7 @@ function mapTrainingPeaksCoachCaseSummaryRow(
     caseKind: row.case_kind,
     status: row.status,
     createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -5035,7 +5044,7 @@ export async function insertTrainingPeaksCoachCase(
   const { data, error } = await supabase
     .from("trainingpeaks_coach_cases")
     .insert(insertPayload)
-    .select("id")
+    .select("id, student_id, case_kind, status, created_at, updated_at")
     .single();
 
   if (error) {
@@ -5046,7 +5055,7 @@ export async function insertTrainingPeaksCoachCase(
     throw new Error(`Failed to insert TrainingPeaks coach case: ${error.message}`);
   }
 
-  return data as { id: string };
+  return { id: (data as TrainingPeaksCoachCaseSummaryRow).id };
 }
 
 export async function getTrainingPeaksCoachCaseById(
@@ -5055,7 +5064,7 @@ export async function getTrainingPeaksCoachCaseById(
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("trainingpeaks_coach_cases")
-    .select("id, student_id, case_kind, status, created_at")
+    .select("id, student_id, case_kind, status, created_at, updated_at")
     .eq("id", caseId)
     .maybeSingle();
 
@@ -5202,10 +5211,10 @@ function formatTrainingPeaksUuidFromHex32(hex32: string): string {
 
 export async function getTrainingPeaksCoachCaseByIdPrefix(
   caseIdPrefix: string
-): Promise<TrainingPeaksCoachCaseSummary | null> {
+): Promise<TrainingPeaksCoachCasePrefixLookupResult> {
   const normalizedPrefix = normalizeTrainingPeaksCoachCaseIdPrefix(caseIdPrefix);
   if (!normalizedPrefix) {
-    return null;
+    return { kind: "invalid_prefix" };
   }
 
   const minUuid = formatTrainingPeaksUuidFromHex32(normalizedPrefix.padEnd(32, "0"));
@@ -5214,7 +5223,7 @@ export async function getTrainingPeaksCoachCaseByIdPrefix(
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("trainingpeaks_coach_cases")
-    .select("id, student_id, case_kind, status, created_at")
+    .select("id, student_id, case_kind, status, created_at, updated_at")
     .gte("id", minUuid)
     .lte("id", maxUuid)
     .order("created_at", { ascending: false })
@@ -5225,33 +5234,37 @@ export async function getTrainingPeaksCoachCaseByIdPrefix(
   }
 
   const rows = (data as TrainingPeaksCoachCaseSummaryRow[] | null) ?? [];
-  if (rows.length !== 1) {
-    return null;
+  if (rows.length === 0) {
+    return { kind: "not_found" };
   }
 
-  return mapTrainingPeaksCoachCaseSummaryRow(rows[0]);
+  if (rows.length > 1) {
+    return { kind: "ambiguous" };
+  }
+
+  return { kind: "found", case: mapTrainingPeaksCoachCaseSummaryRow(rows[0]) };
 }
 
-export async function updateTrainingPeaksCoachCaseStatus(input: {
-  caseId: string;
-  status: Extract<TrainingPeaksCoachCaseStatus, "resolved" | "dismissed">;
-  updatedAt?: string;
-}): Promise<TrainingPeaksCoachCaseSummary | null> {
+export async function updateTrainingPeaksCoachCaseStatus(
+  caseId: string,
+  status: TrainingPeaksCoachCaseStatus,
+  actor: string | null
+): Promise<TrainingPeaksCoachCaseSummary | null> {
+  void actor;
   const updatePayload = pickDefinedValues({
-    status: input.status,
-    updated_at: input.updatedAt,
+    status,
   });
 
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("trainingpeaks_coach_cases")
     .update(updatePayload)
-    .eq("id", input.caseId)
-    .select("id, student_id, case_kind, status, created_at")
+    .eq("id", caseId)
+    .select("id, student_id, case_kind, status, created_at, updated_at")
     .maybeSingle();
 
   if (error) {
-    throw new Error(`Failed to update TrainingPeaks coach case ${input.caseId}: ${error.message}`);
+    throw new Error(`Failed to update TrainingPeaks coach case ${caseId}: ${error.message}`);
   }
 
   if (!data) {
@@ -5492,6 +5505,7 @@ export async function listRecentTrainingPeaksCoachCasesForAttention(input: {
   limit: number;
 }): Promise<
   Array<{
+    id: string;
     studentId: string;
     caseKind: TrainingPeaksCoachCaseKind;
     status: TrainingPeaksCoachCaseStatus;
@@ -5502,7 +5516,7 @@ export async function listRecentTrainingPeaksCoachCasesForAttention(input: {
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("trainingpeaks_coach_cases")
-    .select("student_id, case_kind, status, created_at")
+    .select("id, student_id, case_kind, status, created_at")
     .gte("created_at", cutoffIso)
     .in("case_kind", [...input.caseKinds])
     .in("status", [...input.statuses])
@@ -5516,12 +5530,14 @@ export async function listRecentTrainingPeaksCoachCasesForAttention(input: {
 
   return (
     (data as Array<{
+      id: string;
       student_id: string;
       case_kind: TrainingPeaksCoachCaseKind;
       status: TrainingPeaksCoachCaseStatus;
       created_at: string;
     }>) ?? []
   ).map((row) => ({
+    id: row.id,
     studentId: row.student_id,
     caseKind: row.case_kind,
     status: row.status,
