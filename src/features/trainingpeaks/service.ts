@@ -6,6 +6,7 @@ import {
   approveTrainingPeaksWeeklyReportIfDraft,
   cancelQueuedTrainingPeaksJob,
   countRunningTrainingPeaksJobsUpdatedBefore,
+  countActiveTrainingPeaksCoachCases as countActiveTrainingPeaksCoachCasesInRepository,
   countTrainingPeaksSilentStudents as countTrainingPeaksSilentStudentsInRepository,
   claimTrainingPeaksWeeklyReportForSend as claimTrainingPeaksWeeklyReportForSendInRepository,
   createTrainingPeaksAction as createTrainingPeaksActionInRepository,
@@ -1006,6 +1007,12 @@ export async function listRecentTrainingPeaksCoachCases(input?: {
     ...row,
     shortId: row.id.slice(0, 8),
   }));
+}
+
+export async function countActiveTrainingPeaksCoachCases(
+  statuses: readonly TrainingPeaksCoachCaseStatus[]
+): Promise<number> {
+  return countActiveTrainingPeaksCoachCasesInRepository(statuses);
 }
 
 const TP_ADD_STUDENT_COMMAND_PATTERN = /^\/tp_add_student(?:@\w+)?(?:\s+|$)/;

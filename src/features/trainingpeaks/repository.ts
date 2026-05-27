@@ -5529,6 +5529,23 @@ export async function listRecentTrainingPeaksCoachCasesForAttention(input: {
   }));
 }
 
+export async function countActiveTrainingPeaksCoachCases(
+  statuses: readonly TrainingPeaksCoachCaseStatus[]
+): Promise<number> {
+  const supabase = createSupabaseServerClient();
+  const { count, error } = await supabase
+    .from("trainingpeaks_coach_cases")
+    .select("id", { count: "exact", head: true })
+    .in("status", [...statuses])
+    .not("student_id", "is", null);
+
+  if (error) {
+    throw new Error(`Failed to count active TrainingPeaks coach cases: ${error.message}`);
+  }
+
+  return count ?? 0;
+}
+
 export async function listRecentTrainingPeaksCoachCases(input: {
   limit?: number;
   statuses?: readonly TrainingPeaksCoachCaseStatus[];

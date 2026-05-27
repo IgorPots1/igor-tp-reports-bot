@@ -10,6 +10,7 @@ import {
   approveTrainingPeaksAction,
   cancelTrainingPeaksActionExecution,
   cancelTrainingPeaksWeeklyRun,
+  countActiveTrainingPeaksCoachCases,
   consumeTrainingPeaksStudentTelegramLinkCode,
   createTrainingPeaksMoveWorkoutActionFromTelegram,
   createTrainingPeaksStudentTelegramLinkCode,
@@ -143,6 +144,7 @@ const TP_CALLBACK_RACES_7_DAYS = "tp:races:7d";
 const TP_CALLBACK_RACES_30_DAYS = "tp:races:30d";
 const TP_CALLBACK_RACES_TO_AUGUST = "tp:races:aug1";
 const TP_CALLBACK_JOBS = "tp:j";
+const TP_CALLBACK_CASES_RECENT = "tp:cases:recent";
 const TP_CALLBACK_WEEK_RUN_CONFIRM = "tp:wr:confirm";
 const TP_CALLBACK_WEEK_RUN_CANCEL = "tp:wr:cancel";
 const TP_CALLBACK_JOB_CANCEL_PREFIX = "tp:jc:";
@@ -184,6 +186,7 @@ const TP_REPLY_BUTTON_REPORTS = "📊 Отчёты";
 const TP_REPLY_BUTTON_WEEK_LEGACY = "▶️ Неделя";
 const TP_REPLY_BUTTON_RACES = "🏁 Забеги";
 const TP_REPLY_BUTTON_JOBS = "🧾 Задачи";
+const TP_REPLY_BUTTON_CASES = "🧩 Кейсы";
 const TP_REPLY_BUTTON_BACK = "⬅️ Назад";
 const TP_REPLY_BUTTON_STUDENTS_BACK = "⬅️ Ученики";
 const TP_REPLY_BUTTON_WEEK_LAST = "Прошлая неделя";
@@ -347,6 +350,7 @@ type ParsedTrainingPeaksCallback =
   | { kind: "races_30_days" }
   | { kind: "races_to_august" }
   | { kind: "jobs" }
+  | { kind: "cases_recent" }
   | { kind: "week_run_confirm" }
   | { kind: "week_run_cancel" }
   | { kind: "job_cancel"; jobId: string }
@@ -409,6 +413,7 @@ type TrainingPeaksReplyKeyboardAction =
   | "week_menu"
   | "races_menu"
   | "jobs"
+  | "cases_recent"
   | "back"
   | "students_back"
   | "week_last"
@@ -983,7 +988,7 @@ function getTrainingPeaksMainReplyKeyboardMarkup(): TelegramReplyKeyboardMarkup 
   return createReplyKeyboardMarkup([
     [TP_REPLY_BUTTON_MENU, TP_REPLY_BUTTON_STUDENTS],
     [TP_REPLY_BUTTON_REPORTS, TP_REPLY_BUTTON_RACES],
-    [TP_REPLY_BUTTON_JOBS],
+    [TP_REPLY_BUTTON_JOBS, TP_REPLY_BUTTON_CASES],
   ]);
 }
 
@@ -1543,16 +1548,23 @@ function getTrainingPeaksCoachCaseInlineMarkup(shortId: string): TelegramInlineK
 }
 
 async function handleTrainingPeaksRecentCoachCases(parsedMessage: ParsedTelegramUpdate): Promise<void> {
-  const cases = await listRecentTrainingPeaksCoachCases({
-    limit: 5,
-    statuses: ["logged", "open", "needs_review"],
-  });
+  const activeStatuses = ["logged", "open", "needs_review"] as const;
+  const [cases, totalActiveCases] = await Promise.all([
+    listRecentTrainingPeaksCoachCases({
+      limit: 5,
+      statuses: activeStatuses,
+    }),
+    countActiveTrainingPeaksCoachCases(activeStatuses),
+  ]);
   if (cases.length === 0) {
     await sendTrainingPeaksMessage(parsedMessage.chatId, formatTrainingPeaksCoachCasesRecentEmptyMessage(cases));
     return;
   }
 
-  await sendTrainingPeaksMessage(parsedMessage.chatId, "Последние TP-кейсы:");
+  await sendTrainingPeaksMessage(
+    parsedMessage.chatId,
+    `Последние TP-кейсы:\nПоказано ${cases.length} из ${totalActiveCases} активных кейсов`
+  );
 
   for (const item of cases) {
     await sendTrainingPeaksMenuMessage(
@@ -2415,6 +2427,10 @@ function getTrainingPeaksReplyKeyboardAction(text: string): TrainingPeaksReplyKe
     return "jobs";
   }
 
+  if (text === TP_REPLY_BUTTON_CASES) {
+    return "cases_recent";
+  }
+
   if (text === TP_REPLY_BUTTON_BACK) {
     return "back";
   }
@@ -2537,6 +2553,10 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
 
   if (data === TP_CALLBACK_JOBS) {
     return { kind: "jobs" };
+  }
+
+  if (data === TP_CALLBACK_CASES_RECENT) {
+    return { kind: "cases_recent" };
   }
 
   if (data === TP_CALLBACK_WEEK_RUN_CONFIRM) {
@@ -2700,6 +2720,7 @@ function getTrainingPeaksMainMenuMarkup(): TelegramInlineKeyboardMarkup {
     [createMenuButton("📊 Отчёты", TP_CALLBACK_REPORTS_MENU)],
     [createMenuButton("🏁 Забеги", TP_CALLBACK_RACES_MENU)],
     [createMenuButton("🧾 Задачи", TP_CALLBACK_JOBS)],
+    [createMenuButton("🧩 Кейсы", TP_CALLBACK_CASES_RECENT)],
     [createMenuButton("⚙️ Ещё", TP_CALLBACK_MORE_MENU)],
   ]);
 }
@@ -5505,6 +5526,11 @@ export async function handleTrainingPeaksTelegramReplyKeyboardMessage(
       return "handled";
     }
 
+    if (action === "cases_recent") {
+      await handleTrainingPeaksRecentCoachCases(parsedMessage);
+      return "handled";
+    }
+
     if (action === "back") {
       await showTrainingPeaksMainMenu(parsedMessage);
       return "handled";
@@ -7359,6 +7385,11 @@ export async function handleTrainingPeaksTelegramCallback(
 
     if (callback.kind === "jobs") {
       await showTrainingPeaksJobsMenu(parsedMessage);
+      return "handled";
+    }
+
+    if (callback.kind === "cases_recent") {
+      await handleTrainingPeaksRecentCoachCases(parsedMessage);
       return "handled";
     }
 
