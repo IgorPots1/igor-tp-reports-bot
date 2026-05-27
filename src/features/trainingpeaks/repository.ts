@@ -564,6 +564,7 @@ export type ConfirmTrainingPeaksActionSourceDateResult =
       action: TrainingPeaksAction;
       confirmedSourceDate: string;
       latestDryRun: TrainingPeaksActionRunContextSummary;
+      dryRunRequeueRequested: boolean;
     }
   | {
       kind: "not_found";
@@ -3673,6 +3674,48 @@ function isDryRunEligibleForCoachSourceDateConfirmation(
   return isBlockedOnlyByInferredSource(dryRun.logJson);
 }
 
+function shouldShowCoachConfirmSourceDateAction(latestRunContext: TrainingPeaksActionLatestRunContext | null): boolean {
+  return isDryRunEligibleForCoachSourceDateConfirmation(latestRunContext?.latestDryRun ?? null);
+}
+
+async function requestFreshDryRunAfterCoachSourceConfirmation(
+  action: TrainingPeaksAction
+): Promise<boolean> {
+  if (action.status !== "approved") {
+    return false;
+  }
+  if (action.executionStatus !== "dry_run_completed") {
+    return false;
+  }
+
+  const supabase = createSupabaseServerClient();
+  const nowIso = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("trainingpeaks_actions")
+    .update({
+      execution_status: "not_started",
+      execution_mode: "dry_run",
+      claimed_by: null,
+      claimed_at: null,
+      last_run_id: null,
+      execution_requested_at: null,
+      execution_requested_by_chat_id: null,
+      execution_requested_by_user_id: null,
+      execution_request_message_id: null,
+      updated_at: nowIso,
+    })
+    .eq("id", action.id)
+    .eq("action_type", "move_workout")
+    .eq("status", "approved")
+    .eq("execution_status", "dry_run_completed")
+    .select("id")
+    .maybeSingle();
+  if (error) {
+    throw new Error(`Failed to requeue dry-run after source date confirmation for action ${action.id}: ${error.message}`);
+  }
+  return Boolean(data);
+}
+
 function buildActionParsedPayloadWithCoachSourceConfirmation(input: {
   parsedPayload: unknown;
   confirmedSourceDate: string;
@@ -3701,7 +3744,7 @@ export async function confirmTrainingPeaksActionSourceDate(
   }
 
   const latestDryRun = context.latestDryRun;
-  if (!isDryRunEligibleForCoachSourceDateConfirmation(latestDryRun)) {
+  if (!latestDryRun || !shouldShowCoachConfirmSourceDateAction(context)) {
     const blockedReason =
       context.latestDryRun && typeof context.latestDryRun.blockedReason === "string"
         ? context.latestDryRun.blockedReason
@@ -3742,11 +3785,15 @@ export async function confirmTrainingPeaksActionSourceDate(
     return { kind: "not_found" };
   }
 
+  const mappedAction = mapTrainingPeaksActionRow(data as TrainingPeaksActionRow);
+  const dryRunRequeueRequested = await requestFreshDryRunAfterCoachSourceConfirmation(mappedAction);
+
   return {
     kind: "confirmed",
-    action: mapTrainingPeaksActionRow(data as TrainingPeaksActionRow),
+    action: mappedAction,
     confirmedSourceDate,
     latestDryRun,
+    dryRunRequeueRequested,
   };
 }
 

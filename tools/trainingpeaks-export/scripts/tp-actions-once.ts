@@ -115,6 +115,8 @@ type DryRunArtifacts = {
   screenshotBeforePath: string;
   screenshotAfterPath: string | null;
   dryRunEvaluation: DryRunEvaluation;
+  artifactDir: string;
+  openedAthleteUrl: string | null;
   pageMeta: {
     url: string;
     title: string;
@@ -447,6 +449,30 @@ type DryRunDiagnostics = {
   trainingPeaksContextOk: boolean;
   parseWarnings: string[];
   domDebug?: DryRunDomDebug | null;
+  zeroCandidates?: {
+    pageUrlOpened: string | null;
+    pageUrlAfterLoad: string | null;
+    pageTitle: string | null;
+    expectedSourceDate: string | null;
+    expectedTargetDate: string | null;
+    athletePageLikelyReachable: boolean;
+    trainingPeaksContextLikely: boolean;
+    loginRequired: boolean;
+    calendarRootCount: number;
+    dayCellCount: number;
+    workoutCardCounts: DryRunDomDebugSelectorCounts;
+    visibleCalendarHeaderText: string | null;
+    inferredCalendarMonth: number | null;
+    inferredCalendarYear: number | null;
+    inferredCalendarMonthYearReason: string | null;
+    waitForCardAttempted: boolean;
+    waitForCardTimedOut: boolean;
+    parseWarnings: string[];
+    extractionError: string | null;
+    screenshotBeforePath: string | null;
+    screenshotAfterPath: string | null;
+    artifactDir: string | null;
+  } | null;
 };
 
 type IdentityMatchType = "athlete_id" | "trainingpeaks_name" | "inconclusive" | "mismatch";
@@ -577,6 +603,14 @@ type WorkoutExtractionResult = {
   domDebug: DryRunDomDebug | null;
   parseWarnings: string[];
   extractionError: string | null;
+  readiness: {
+    waitForCalendarRootAttempted: boolean;
+    waitForCalendarRootTimedOut: boolean;
+    waitForDayCellsAttempted: boolean;
+    waitForDayCellsTimedOut: boolean;
+    waitForWorkoutCardAttempted: boolean;
+    waitForWorkoutCardTimedOut: boolean;
+  };
 };
 
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
@@ -5505,6 +5539,14 @@ async function extractWorkoutCandidatesFromPage(
   const domDebugEnabled = isTruthyEnvFlag("TP_DRY_RUN_DOM_DEBUG");
   const parseWarnings: string[] = [];
   const checkpoints: DryRunDomDebugCheckpoint[] = [];
+  const readiness = {
+    waitForCalendarRootAttempted: false,
+    waitForCalendarRootTimedOut: false,
+    waitForDayCellsAttempted: false,
+    waitForDayCellsTimedOut: false,
+    waitForWorkoutCardAttempted: false,
+    waitForWorkoutCardTimedOut: false,
+  };
 
   const recordSnapshot = async (label: string, includeCardSnippets = false) => {
     const snapshot = await captureCalendarDomSnapshot(page, includeCardSnippets);
@@ -5521,21 +5563,26 @@ async function extractWorkoutCandidatesFromPage(
   await recordSnapshot("after goto");
 
   try {
+    readiness.waitForCalendarRootAttempted = true;
     await page.locator(TP_CALENDAR_ROOT_SELECTOR).first().waitFor({ state: "attached", timeout: 5_000 });
   } catch (error) {
+    readiness.waitForCalendarRootTimedOut = true;
     parseWarnings.push(`calendar root wait failed: ${toShortErrorMessage(error)}`);
   }
 
   try {
+    readiness.waitForDayCellsAttempted = true;
     await page
       .locator(`${TP_CALENDAR_ROOT_SELECTOR} ${TP_DAY_CELL_SELECTOR}`)
       .first()
       .waitFor({ state: "attached", timeout: 5_000 });
   } catch (error) {
+    readiness.waitForDayCellsTimedOut = true;
     parseWarnings.push(`calendar day cells wait failed: ${toShortErrorMessage(error)}`);
   }
 
   try {
+    readiness.waitForWorkoutCardAttempted = true;
     await Promise.any([
       page.locator(`${TP_CALENDAR_ROOT_SELECTOR} ${TP_PRIMARY_WORKOUT_CARD_WITHIN_DAY_SELECTOR}`).first().waitFor({
         state: "attached",
@@ -5547,6 +5594,7 @@ async function extractWorkoutCandidatesFromPage(
       }),
     ]);
   } catch (error) {
+    readiness.waitForWorkoutCardTimedOut = true;
     parseWarnings.push(`calendar workout card wait finished without visible card roots: ${toShortErrorMessage(error)}`);
   }
 
@@ -5807,6 +5855,89 @@ async function extractWorkoutCandidatesFromPage(
         : null,
     parseWarnings,
     extractionError,
+    readiness,
+  };
+}
+
+async function buildZeroCandidatesDiagnostics(input: {
+  page: import("playwright").Page;
+  extraction: WorkoutExtractionResult;
+  pageMeta: {
+    url: string;
+    title: string;
+    loginRequired: boolean;
+    athletePageLikelyReachable: boolean;
+    trainingPeaksContextLikely: boolean;
+  };
+  sourceDate: string | null;
+  targetDate: string | null;
+  screenshotBeforePath: string | null;
+  screenshotAfterPath: string | null;
+  artifactDir: string | null;
+  openedAthleteUrl: string | null;
+}): Promise<NonNullable<DryRunDiagnostics["zeroCandidates"]>> {
+  let calendarRootCount = 0;
+  let dayCellCount = 0;
+  let workoutCardCounts: DryRunDomDebugSelectorCounts = emptyDomSelectorCounts();
+  let visibleCalendarHeaderText: string | null = null;
+  let inferredCalendarMonth: number | null = null;
+  let inferredCalendarYear: number | null = null;
+  let inferredCalendarMonthYearReason: string | null = null;
+
+  try {
+    const calendarRoots = input.page.locator(TP_CALENDAR_ROOT_SELECTOR);
+    calendarRootCount = await calendarRoots.count();
+    if (calendarRootCount > 0) {
+      const calendarRoot = calendarRoots.first();
+      dayCellCount = await calendarRoot.locator(TP_DAY_CELL_SELECTOR).count();
+      const domSnapshot = await captureCalendarDomSnapshot(input.page, true);
+      workoutCardCounts = domSnapshot.selectorCounts;
+
+      const monthYear = await inferCalendarMonthYear(calendarRoot);
+      inferredCalendarMonth = monthYear.month;
+      inferredCalendarYear = monthYear.year;
+      inferredCalendarMonthYearReason = monthYear.reason;
+
+      const headerCandidates = await calendarRoot
+        .locator("h1, h2, h3, h4, [class*='month' i], [data-test*='month' i]")
+        .allInnerTexts()
+        .catch(() => []);
+      visibleCalendarHeaderText = headerCandidates
+        .map((value) => normalizeWhitespace(value))
+        .filter(Boolean)
+        .slice(0, 3)
+        .join(" | ");
+      if (!visibleCalendarHeaderText) {
+        visibleCalendarHeaderText = null;
+      }
+    }
+  } catch (error) {
+    input.extraction.parseWarnings.push(`zero-candidates diagnostics failed: ${toShortErrorMessage(error)}`);
+  }
+
+  return {
+    pageUrlOpened: input.openedAthleteUrl,
+    pageUrlAfterLoad: input.page.url(),
+    pageTitle: input.pageMeta.title || null,
+    expectedSourceDate: input.sourceDate,
+    expectedTargetDate: input.targetDate,
+    athletePageLikelyReachable: input.pageMeta.athletePageLikelyReachable,
+    trainingPeaksContextLikely: input.pageMeta.trainingPeaksContextLikely,
+    loginRequired: input.pageMeta.loginRequired,
+    calendarRootCount,
+    dayCellCount,
+    workoutCardCounts,
+    visibleCalendarHeaderText,
+    inferredCalendarMonth,
+    inferredCalendarYear,
+    inferredCalendarMonthYearReason,
+    waitForCardAttempted: input.extraction.readiness.waitForWorkoutCardAttempted,
+    waitForCardTimedOut: input.extraction.readiness.waitForWorkoutCardTimedOut,
+    parseWarnings: [...input.extraction.parseWarnings],
+    extractionError: input.extraction.extractionError,
+    screenshotBeforePath: input.screenshotBeforePath,
+    screenshotAfterPath: input.screenshotAfterPath,
+    artifactDir: input.artifactDir,
   };
 }
 
@@ -5948,6 +6079,7 @@ function evaluateDryRunOutcome(input: {
     trainingPeaksContextOk: input.pageMeta.trainingPeaksContextLikely,
     parseWarnings: [...parseWarnings, ...input.extraction.parseWarnings, ...input.identityCheck.warnings],
     domDebug: input.extraction.domDebug,
+    zeroCandidates: null,
   };
 
   const canExecuteReasons: string[] = [];
@@ -6790,6 +6922,8 @@ async function inspectActionCalendar(claimed: ClaimedAction, runId: string): Pro
       screenshotBeforePath,
       screenshotAfterPath,
       dryRunEvaluation,
+      artifactDir,
+      openedAthleteUrl: student.trainingpeaks_athlete_url,
       pageMeta: {
         url: page.url(),
         title: await page.title().catch(() => ""),
@@ -7797,6 +7931,37 @@ async function main(): Promise<void> {
     try {
       const artifacts = await runDryRunInspection(claimed, run.id);
       const evaluation = artifacts.dryRunEvaluation;
+      if (evaluation.dryRunResult === "not_found" && (evaluation.globalCandidateCount ?? 0) === 0) {
+        const page = await chromium.launchPersistentContext(profileDir, {
+          headless: true,
+          viewport: null,
+        });
+        try {
+          const probePage = page.pages()[0] ?? (await page.newPage());
+          const openUrl = artifacts.openedAthleteUrl ?? artifacts.pageMeta.url;
+          if (openUrl) {
+            await probePage.goto(openUrl, { waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => {});
+          }
+          const parsedPayload = parseMoveWorkoutPayload(claimed.action.parsed_payload);
+          const resolvedTargetDate = parsedPayload?.target
+            ? resolveTargetDateFromPayload(parsedPayload.target, new Date()).targetDate
+            : null;
+          const zeroExtraction = await extractWorkoutCandidatesFromPage(probePage, resolvedTargetDate);
+          evaluation.diagnostics.zeroCandidates = await buildZeroCandidatesDiagnostics({
+            page: probePage,
+            extraction: zeroExtraction,
+            pageMeta: artifacts.pageMeta,
+            sourceDate: evaluation.selectedSourceDate ?? evaluation.resolvedDates.sourceDate,
+            targetDate: evaluation.resolvedDates.targetDate,
+            screenshotBeforePath: artifacts.screenshotBeforePath,
+            screenshotAfterPath: artifacts.screenshotAfterPath,
+            artifactDir: artifacts.artifactDir ?? null,
+            openedAthleteUrl: artifacts.openedAthleteUrl ?? null,
+          });
+        } finally {
+          await page.close().catch(() => {});
+        }
+      }
       const logJson = {
         ...baseLog,
         status: "dry_run_completed",

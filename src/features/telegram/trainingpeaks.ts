@@ -3,7 +3,10 @@ import type {
   ParsedTelegramMessageUpdate,
   ParsedTelegramUpdate,
 } from "@/features/telegram/parser";
-import { INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU } from "@/features/trainingpeaks/move-source-policy";
+import {
+  INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU,
+  INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON,
+} from "@/features/trainingpeaks/move-source-policy";
 import { formatTrainingPeaksExecuteQueuedMessage } from "@/features/trainingpeaks/action-execute-telegram-copy";
 import {
   addTrainingPeaksStudentFromCommand,
@@ -117,6 +120,7 @@ import {
   resolveTrainingPeaksWeekKeyword,
 } from "@/features/trainingpeaks/week";
 import {
+  answerTelegramCallbackQuery,
   editTelegramMessageText,
   sendTelegramMessage,
   sendTelegramMessageStrict,
@@ -4085,6 +4089,7 @@ function shouldShowCoachConfirmSourceButton(latestRunContext: unknown): boolean 
     selectedSourceDate?: unknown;
     selectedSourceDatePolicy?: unknown;
     blockedReason?: unknown;
+    logJson?: unknown;
   };
   const policy =
     typeof run.selectedSourceDatePolicy === "string" && run.selectedSourceDatePolicy.trim()
@@ -4092,19 +4097,70 @@ function shouldShowCoachConfirmSourceButton(latestRunContext: unknown): boolean 
       : null;
   const blockedReason =
     typeof run.blockedReason === "string" && run.blockedReason.trim() ? run.blockedReason.trim() : null;
+  const selectedSourceDate =
+    typeof run.selectedSourceDate === "string" && run.selectedSourceDate.trim() ? run.selectedSourceDate.trim() : null;
+  const targetDateFromLog = (() => {
+    if (!run.logJson || typeof run.logJson !== "object") {
+      return null;
+    }
+    const resolvedDates = (run.logJson as { resolvedDates?: { targetDate?: unknown } | null }).resolvedDates;
+    return typeof resolvedDates?.targetDate === "string" && resolvedDates.targetDate.trim()
+      ? resolvedDates.targetDate.trim()
+      : null;
+  })();
+  const inferredOnlyReasons = (() => {
+    if (!run.logJson || typeof run.logJson !== "object") {
+      return false;
+    }
+    const reasons = (run.logJson as { canExecuteReasons?: unknown }).canExecuteReasons;
+    if (!Array.isArray(reasons) || reasons.length === 0) {
+      return false;
+    }
+    const normalizedReasons = reasons
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter((value) => value.length > 0);
+    if (normalizedReasons.length === 0) {
+      return false;
+    }
+    return normalizedReasons.every(
+      (reason) =>
+        reason === INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON ||
+        reason === INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU
+    );
+  })();
   return (
     run.runType === "dry_run" &&
     run.status === "completed" &&
     run.dryRunResult === "candidate_found" &&
     run.canExecute === false &&
-    typeof run.selectedSourceDate === "string" &&
-    run.selectedSourceDate.length > 0 &&
+    Boolean(selectedSourceDate) &&
+    Boolean(targetDateFromLog) &&
     Boolean(policy) &&
     policy !== "coach_confirmed_source_date" &&
     policy !== "explicit_source_date" &&
     policy !== "explicit_source_ref" &&
-    blockedReason === INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU
+    blockedReason === INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU &&
+    inferredOnlyReasons
   );
+}
+
+function formatActionDetailFreshnessLabel(date = new Date()): string {
+  return `Проверено: ${date.toLocaleTimeString("ru-RU", {
+    timeZone: "Europe/Belgrade",
+    hour: "2-digit",
+    minute: "2-digit",
+  })}`;
+}
+
+function stripActionDetailFreshness(text: string | null | undefined): string {
+  if (!text) {
+    return "";
+  }
+  return text
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("Проверено: "))
+    .join("\n")
+    .trim();
 }
 
 function formatRunResultLine(label: string, run: unknown): string {
@@ -4373,7 +4429,8 @@ function formatActionStatusLabel(action: NonNullable<Awaited<ReturnType<typeof g
 }
 
 function getTpActionDetailText(
-  action: NonNullable<Awaited<ReturnType<typeof getTrainingPeaksActionWithStudentAndLatestRunContextById>>>
+  action: NonNullable<Awaited<ReturnType<typeof getTrainingPeaksActionWithStudentAndLatestRunContextById>>>,
+  options?: { includeFreshness?: boolean; freshnessLabel?: string }
 ): string {
   const dates = extractMoveDateRangeFromParsedPayload(action.parsedPayload);
   const src = formatCompactDateShort(dates.sourceDate);
@@ -4408,6 +4465,9 @@ function getTpActionDetailText(
   }
   if (action.rejectedAt) {
     lines.push(`Отклонено: ${formatActionCompactDate(action.rejectedAt)}`);
+  }
+  if (options?.includeFreshness) {
+    lines.push("", options.freshnessLabel ?? formatActionDetailFreshnessLabel());
   }
   return lines.join("\n");
 }
@@ -4458,10 +4518,24 @@ async function showTpActionDetail(
     );
     return;
   }
+  const detailText = getTpActionDetailText(action, {
+    includeFreshness: true,
+  });
+  const previousText = typeof parsedMessage.messageText === "string" ? parsedMessage.messageText.trim() : null;
+  const previousLogicalText = stripActionDetailFreshness(previousText);
+  const currentLogicalText = stripActionDetailFreshness(detailText);
+  const noNewRunOrStateChange = previousText !== null && previousLogicalText === currentLogicalText;
+  if (noNewRunOrStateChange) {
+    await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, "Изменений нет — нового запуска ещё не было.");
+  }
+  if (previousText && previousText === detailText.trim()) {
+    return;
+  }
+
   await editTrainingPeaksMenuMessage(
     parsedMessage.chatId,
     parsedMessage.messageId,
-    getTpActionDetailText(action),
+    detailText,
     getTpActionDetailMarkup(action)
   );
 }
@@ -4562,10 +4636,13 @@ async function handleTrainingPeaksActionConfirmSourceDateCallback(
   }
 
   const formattedDate = formatCompactDateShort(result.confirmedSourceDate);
+  const rerunLine = result.dryRunRequeueRequested
+    ? "Запрошен новый dry-run с подтверждённой исходной датой."
+    : "Новый dry-run не поставлен автоматически. Нажми «Выполнить», и будет использована подтверждённая дата с live re-validation.";
   await editTrainingPeaksMenuMessage(
     parsedMessage.chatId,
     parsedMessage.messageId,
-    `✅ Исходная дата подтверждена: ${formattedDate}. Теперь можно запустить безопасное выполнение.`,
+    `✅ Исходная дата подтверждена: ${formattedDate}.\n${rerunLine}`,
     createInlineKeyboardMarkup([
       [createMenuButton("✅ Выполнить", `${TP_CALLBACK_ACTION_EXECUTE_PREFIX}${actionId}`)],
       [createMenuButton("◀ К заявке", `${TP_CALLBACK_ACTION_DETAIL_PREFIX}${actionId}`)],

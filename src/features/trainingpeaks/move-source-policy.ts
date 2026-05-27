@@ -70,6 +70,78 @@ function toNumericConfidence(value: unknown): number | null {
   return null;
 }
 
+function extractCoachConfirmedSourceDate(parsedPayload: unknown): string | null {
+  if (!parsedPayload || typeof parsedPayload !== "object") {
+    return null;
+  }
+  const value = (parsedPayload as { coach_confirmed_source_date?: unknown }).coach_confirmed_source_date;
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function isBlockedOnlyByInferredSourceReasons(canExecuteReasons: unknown): boolean {
+  if (!Array.isArray(canExecuteReasons) || canExecuteReasons.length === 0) {
+    return false;
+  }
+  const normalized = canExecuteReasons
+    .map((item) => trimOrNull(item))
+    .filter((item): item is string => Boolean(item));
+  if (normalized.length === 0) {
+    return false;
+  }
+  return normalized.every(
+    (reason) =>
+      reason === INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON ||
+      reason === INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU
+  );
+}
+
+function shouldAllowCoachConfirmedSourceDateReadinessBypass(
+  logJson: unknown,
+  parsedPayload: unknown
+): boolean {
+  if (!logJson || typeof logJson !== "object") {
+    return false;
+  }
+
+  const confirmedSourceDate = extractCoachConfirmedSourceDate(parsedPayload);
+  if (!confirmedSourceDate) {
+    return false;
+  }
+
+  const payload = logJson as {
+    dryRunResult?: unknown;
+    canExecute?: unknown;
+    canExecuteReasons?: unknown;
+    selectedSourceDate?: unknown;
+    resolvedDates?: { sourceDate?: unknown } | null;
+  };
+  if (payload.dryRunResult !== "candidate_found") {
+    return false;
+  }
+  if (payload.canExecute !== false) {
+    return false;
+  }
+  if (!isBlockedOnlyByInferredSourceReasons(payload.canExecuteReasons)) {
+    return false;
+  }
+
+  const selectedSourceDate = trimOrNull(payload.selectedSourceDate);
+  const resolvedSourceDate = trimOrNull(payload.resolvedDates?.sourceDate) ?? selectedSourceDate;
+  if (!resolvedSourceDate || resolvedSourceDate !== confirmedSourceDate) {
+    return false;
+  }
+  if (selectedSourceDate && selectedSourceDate !== confirmedSourceDate) {
+    return false;
+  }
+
+  const policy = getSelectedSourceDatePolicyFromDryRunLog(logJson);
+  if (!policy || isTrustedMoveSourcePolicy(policy)) {
+    return false;
+  }
+
+  return true;
+}
+
 export function isTrustedMoveSourcePolicy(policy: string | null | undefined): boolean {
   return typeof policy === "string" && TRUSTED_MOVE_SOURCE_POLICIES.has(policy);
 }
@@ -433,7 +505,11 @@ export function validateDryRunLogReadiness(
   if (payload.dryRunResult !== "candidate_found") {
     return { ok: false, reason: "Dry-run did not find a unique candidate." };
   }
-  if (payload.canExecute !== true) {
+  const allowCoachConfirmedBypass = shouldAllowCoachConfirmedSourceDateReadinessBypass(
+    logJson,
+    parsedPayload ?? null
+  );
+  if (payload.canExecute !== true && !allowCoachConfirmedBypass) {
     return { ok: false, reason: "Dry-run marked action as unsafe for execution." };
   }
 
@@ -454,7 +530,8 @@ export function validateDryRunLogReadiness(
     return { ok: false, reason: "Athlete identity check is missing or mismatched." };
   }
 
-  const policy = getSelectedSourceDatePolicyFromDryRunLog(logJson);
+  const policyFromLog = getSelectedSourceDatePolicyFromDryRunLog(logJson);
+  const policy = allowCoachConfirmedBypass ? "coach_confirmed_source_date" : policyFromLog;
   const moveSourceValidation = validateMoveSourceForExecution({
     selectedSourceDatePolicy: policy,
     parsedPayload: parsedPayload ?? null,
