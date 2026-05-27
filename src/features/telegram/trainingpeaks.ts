@@ -1555,9 +1555,26 @@ function getTrainingPeaksCoachCaseInlineMarkup(shortId: string): TelegramInlineK
   return createInlineKeyboardMarkup(
     [[
       createMenuButton("✅ Закрыть", `${TP_CALLBACK_CASE_RESOLVE_PREFIX}${shortId}`),
-      createMenuButton("🗑 Шум", `${TP_CALLBACK_CASE_DISMISS_PREFIX}${shortId}`),
+      createMenuButton("🙈 Скрыть", `${TP_CALLBACK_CASE_DISMISS_PREFIX}${shortId}`),
     ]]
   );
+}
+
+function getTrainingPeaksCoachCaseResolvedMarkup(): TelegramInlineKeyboardMarkup {
+  return createInlineKeyboardMarkup([]);
+}
+
+function appendTrainingPeaksCoachCaseFinalState(
+  messageText: string | null,
+  finalStateLine: "✓ Закрыто" | "🙈 Скрыто",
+  shortId: string
+): string {
+  const baseText = (messageText ?? `#${shortId}`).trim();
+  const lines = baseText
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0 && line !== "✓ Закрыто" && line !== "🙈 Скрыто");
+  return [...lines, finalStateLine].join("\n");
 }
 
 async function handleTrainingPeaksRecentCoachCases(parsedMessage: ParsedTelegramUpdate): Promise<void> {
@@ -7284,7 +7301,12 @@ export async function handleTrainingPeaksTelegramCallback(
       });
 
       if (result.kind === "resolved" || result.kind === "dismissed") {
-        await sendTrainingPeaksMessage(parsedMessage.chatId, `✅ Кейс ${callback.shortId} закрыт.`);
+        await editTrainingPeaksMenuMessage(
+          parsedMessage.chatId,
+          parsedMessage.messageId,
+          appendTrainingPeaksCoachCaseFinalState(parsedMessage.messageText, "✓ Закрыто", callback.shortId),
+          getTrainingPeaksCoachCaseResolvedMarkup()
+        );
         return "handled";
       }
 
@@ -7321,7 +7343,12 @@ export async function handleTrainingPeaksTelegramCallback(
       });
 
       if (result.kind === "dismissed" || result.kind === "resolved") {
-        await sendTrainingPeaksMessage(parsedMessage.chatId, `🗑 Кейс ${callback.shortId} скрыт как шум.`);
+        await editTrainingPeaksMenuMessage(
+          parsedMessage.chatId,
+          parsedMessage.messageId,
+          appendTrainingPeaksCoachCaseFinalState(parsedMessage.messageText, "🙈 Скрыто", callback.shortId),
+          getTrainingPeaksCoachCaseResolvedMarkup()
+        );
         return "handled";
       }
 
