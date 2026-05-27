@@ -55,7 +55,7 @@ function formatBillingMonthLabel(billingMonth: string): string {
 
 function formatBillingDate(isoDate: string | null): string {
   if (!isoDate) {
-    return "—";
+    return "Дата не указана";
   }
 
   return new Intl.DateTimeFormat("ru-RU", {

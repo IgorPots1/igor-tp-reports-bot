@@ -273,7 +273,18 @@ export type EnsureBillingMonthRowsResult = {
   billingMonth: string;
   activeClientCount: number;
   existingPaymentCount: number;
+  missingClientCount: number;
+  creatableRowCount: number;
+  rowsWithPlannedDateCount: number;
+  rowsWithoutPlannedDateCount: number;
+  skippedInvalidClientCount: number;
   insertedCount: number;
+};
+
+export type BillingMonthGenerationSkippedClient = {
+  clientId: string;
+  clientName: string;
+  reason: "invalid_planned_payment_day" | "invalid_monthly_amount";
 };
 
 export type BillingMonthGenerationPreview = {
@@ -281,6 +292,11 @@ export type BillingMonthGenerationPreview = {
   activeClientCount: number;
   existingPaymentCount: number;
   missingClientCount: number;
+  creatableRowCount: number;
+  rowsWithPlannedDateCount: number;
+  rowsWithoutPlannedDateCount: number;
+  skippedInvalidClientCount: number;
+  skippedInvalidClients: BillingMonthGenerationSkippedClient[];
   wouldGenerateRows: boolean;
 };
 

@@ -38,7 +38,7 @@ function formatBillingMonthLabel(billingMonth: string): string {
 
 function formatBillingDate(value: string | null): string {
   if (!value) {
-    return "—";
+    return "Появится после зачёта оплаты";
   }
 
   return new Intl.DateTimeFormat("ru-RU", {
@@ -494,7 +494,7 @@ export default async function BillingClientDetailPage({
 
                   return (
                     <tr key={historyRowKey}>
-                      <td>{row.plannedPaymentDate ? formatBillingMonthLabel(row.plannedPaymentDate.slice(0, 7)) : "—"}</td>
+                      <td>{row.plannedPaymentDate ? formatBillingMonthLabel(row.plannedPaymentDate) : "—"}</td>
                       <td>{formatBillingDate(row.plannedPaymentDate)}</td>
                       <td>{formatBillingAmount(row.plannedAmount, row.currency)}</td>
                       <td>

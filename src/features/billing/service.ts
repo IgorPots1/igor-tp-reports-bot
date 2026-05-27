@@ -34,6 +34,7 @@ import {
   type ImportBillingPaymentsInput,
   type ImportBillingPaymentsResult,
   type BillingMonthGenerationPreview,
+  type BillingMonthGenerationSkippedClient,
   type BillingMonthInput,
   type BillingMonthStatusRow,
   type BillingImportedPayment,
@@ -174,6 +175,26 @@ function shiftIsoDate(isoDate: string, days: number): string {
   return formatIsoDate(shifted);
 }
 
+function daysInMonth(billingMonth: string): number {
+  const match = billingMonth.match(/^(\d{4})-(\d{2})-01$/);
+  if (!match) {
+    throw new Error(`Invalid billing month ISO date: ${billingMonth}`);
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  return new Date(Date.UTC(year, month, 0, 12, 0, 0)).getUTCDate();
+}
+
+function computePlannedPaymentDate(billingMonth: string, plannedPaymentDay: number): string {
+  if (!Number.isInteger(plannedPaymentDay) || plannedPaymentDay < 1) {
+    throw new Error(`Invalid planned payment day: ${plannedPaymentDay}`);
+  }
+
+  const cappedDay = Math.min(plannedPaymentDay, daysInMonth(billingMonth));
+  return shiftIsoDate(billingMonth, cappedDay - 1);
+}
+
 function parseIsoDate(value: string): Date {
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) {
@@ -233,30 +254,108 @@ export function getBillingMonthGenerationPreview(
     ]);
 
     const existingClientIds = new Set(existingRows.map((row) => row.billingClientId));
-    const missingClientCount = clients.filter((client) => !existingClientIds.has(client.id)).length;
+    const missingClients = clients.filter((client) => !existingClientIds.has(client.id));
+    const prepared = missingClients.map((client) => buildMonthlyInsertRow(client, billingMonth));
+    const creatableRows = prepared.filter((row): row is Extract<MonthlyInsertPreparationResult, { kind: "creatable" }> => row.kind === "creatable");
+    const skippedInvalidClients = prepared
+      .filter(
+        (row): row is Extract<MonthlyInsertPreparationResult, { kind: "skipped_invalid" }> =>
+          row.kind === "skipped_invalid"
+      )
+      .map((row) => row.skippedClient);
 
     return {
       billingMonth,
       activeClientCount: clients.length,
       existingPaymentCount: existingRows.length,
-      missingClientCount,
-      wouldGenerateRows: missingClientCount > 0,
+      missingClientCount: missingClients.length,
+      creatableRowCount: creatableRows.length,
+      rowsWithPlannedDateCount: creatableRows.filter((row) => row.row.planned_payment_date != null).length,
+      rowsWithoutPlannedDateCount: creatableRows.filter((row) => row.row.planned_payment_date == null).length,
+      skippedInvalidClientCount: skippedInvalidClients.length,
+      skippedInvalidClients,
+      wouldGenerateRows: creatableRows.length > 0,
     };
   })();
 }
 
-function buildMonthlyInsertRow(client: BillingClient, billingMonth: string, actor?: string | null) {
+type MonthlyInsertPreparationResult =
+  | {
+      kind: "creatable";
+      row: {
+        billing_client_id: string;
+        billing_month: string;
+        planned_payment_date: string | null;
+        planned_amount: number;
+        currency: BillingClient["currency"];
+        status: "pending" | "manual_review";
+        source: "manual";
+        created_by: string | null;
+        updated_by: string | null;
+      };
+    }
+  | {
+      kind: "skipped_invalid";
+      skippedClient: BillingMonthGenerationSkippedClient;
+    };
+
+function buildMonthlyInsertRow(
+  client: BillingClient,
+  billingMonth: string,
+  actor?: string | null
+): MonthlyInsertPreparationResult {
+  if (!Number.isInteger(client.monthlyAmount) || client.monthlyAmount <= 0) {
+    return {
+      kind: "skipped_invalid",
+      skippedClient: {
+        clientId: client.id,
+        clientName: client.clientName,
+        reason: "invalid_monthly_amount",
+      },
+    };
+  }
+
+  if (client.plannedPaymentDay == null) {
+    return {
+      kind: "creatable",
+      row: {
+        billing_client_id: client.id,
+        billing_month: billingMonth,
+        planned_payment_date: null,
+        planned_amount: client.monthlyAmount,
+        currency: client.currency,
+        status: "manual_review",
+        source: "manual",
+        created_by: actor ?? null,
+        updated_by: actor ?? null,
+      },
+    };
+  }
+
+  if (!Number.isInteger(client.plannedPaymentDay) || client.plannedPaymentDay < 1) {
+    return {
+      kind: "skipped_invalid",
+      skippedClient: {
+        clientId: client.id,
+        clientName: client.clientName,
+        reason: "invalid_planned_payment_day",
+      },
+    };
+  }
+
   return {
-    billing_client_id: client.id,
-    billing_month: billingMonth,
-    planned_payment_date:
-      client.plannedPaymentDay == null ? null : shiftIsoDate(billingMonth, client.plannedPaymentDay - 1),
-    planned_amount: client.monthlyAmount,
-    currency: client.currency,
-    status: "pending" as const,
-    source: "manual" as const,
-    created_by: actor ?? null,
-    updated_by: actor ?? null,
+    kind: "creatable",
+    row: {
+      billing_client_id: client.id,
+      billing_month: billingMonth,
+      planned_payment_date: computePlannedPaymentDate(billingMonth, client.plannedPaymentDay),
+      planned_amount: client.monthlyAmount,
+      currency: client.currency,
+      status: "pending",
+      source: "manual",
+      created_by: actor ?? null,
+      updated_by: actor ?? null,
+    },
   };
 }
 
@@ -271,9 +370,14 @@ export async function ensureBillingMonthRows(input: {
   ]);
 
   const existingClientIds = new Set(existingRows.map((row) => row.billingClientId));
-  const rowsToInsert = clients
-    .filter((client) => !existingClientIds.has(client.id))
-    .map((client) => buildMonthlyInsertRow(client, billingMonth, input.actor));
+  const missingClients = clients.filter((client) => !existingClientIds.has(client.id));
+  const prepared = missingClients.map((client) => buildMonthlyInsertRow(client, billingMonth, input.actor));
+  const rowsToInsert = prepared
+    .filter((row): row is Extract<MonthlyInsertPreparationResult, { kind: "creatable" }> => row.kind === "creatable")
+    .map((row) => row.row);
+  const rowsWithPlannedDateCount = rowsToInsert.filter((row) => row.planned_payment_date != null).length;
+  const rowsWithoutPlannedDateCount = rowsToInsert.filter((row) => row.planned_payment_date == null).length;
+  const skippedInvalidClientCount = prepared.filter((row) => row.kind === "skipped_invalid").length;
 
   await insertBillingMonthlyPayments(rowsToInsert);
 
@@ -281,6 +385,11 @@ export async function ensureBillingMonthRows(input: {
     billingMonth,
     activeClientCount: clients.length,
     existingPaymentCount: existingRows.length,
+    missingClientCount: missingClients.length,
+    creatableRowCount: rowsToInsert.length,
+    rowsWithPlannedDateCount,
+    rowsWithoutPlannedDateCount,
+    skippedInvalidClientCount,
     insertedCount: rowsToInsert.length,
   };
 }
