@@ -59,7 +59,13 @@ import {
   formatTrainingPeaksMoveWorkoutActionSummary,
   listRecentTrainingPeaksActions,
   getTrainingPeaksActionWithStudentById,
+  insertTrainingPeaksReplyDraft,
+  recordTrainingPeaksReplyDraftFeedback,
 } from "@/features/trainingpeaks/service";
+import {
+  hasTrainingPeaksAttentionDigestSentForBelgradeDate,
+  runTrainingPeaksAttentionDigest,
+} from "@/features/trainingpeaks/attention-digest-run";
 import {
   formatTrainingPeaksAttentionSnapshotMessage,
   getTrainingPeaksCoachChatIds,
@@ -73,11 +79,14 @@ import { buildTrainingPeaksReplyDraftContext } from "@/features/trainingpeaks/re
 import {
   formatTrainingPeaksReplyDraftTelegramMessage,
   generateTrainingPeaksReplyDraft,
+  getTrainingPeaksReplyDraftModel,
 } from "@/features/trainingpeaks/reply-draft-generator";
 import {
+  buildTelegramContextTextPreview,
   classifyTelegramContextLabels,
   isAthleteIncomingBusinessDmMessage,
   recordTrainingPeaksTelegramBusinessContextObservation,
+  sha256TelegramContextText,
 } from "@/features/trainingpeaks/telegram-context";
 import {
   hasTrainingPeaksMessageIntentLoggingRelevance,
@@ -223,6 +232,7 @@ const TP_RESOLVE_CASE_COMMAND_PATTERN = /^\/tp_resolve_case(?:@\w+)?(?:\s+|$)/;
 const TP_DISMISS_CASE_COMMAND_PATTERN = /^\/tp_dismiss_case(?:@\w+)?(?:\s+|$)/;
 const TP_HEALTH_COMMAND_PATTERN = /^\/tp_health(?:@\w+)?(?:\s+|$)/;
 const TP_CRON_STATUS_COMMAND_PATTERN = /^\/tp_cron_status(?:@\w+)?(?:\s+|$)/;
+const TP_DIGEST_NOW_COMMAND_PATTERN = /^\/tp_digest_now(?:@\w+)?(?:\s+|$)/;
 const TP_WEEKLY_COMMAND_PATTERN = /^\/tp_weekly(?:@\w+)?(?:\s+|$)/;
 const TP_BUSINESS_TEST_COMMAND_PATTERN = /^\/tp_business_test(?:@\w+)?(?:\s+|$)/;
 const TP_GROUP_TEST_COMMAND_PATTERN = /^\/tp_group_test(?:@\w+)?(?:\s+|$)/;
@@ -234,6 +244,7 @@ const TP_INTENT_LOGS_COMMAND_PATTERN = /^\/tp_intent_logs(?:@\w+)?(?:\s+|$)/;
 const TP_UNKNOWN_INTENTS_COMMAND_PATTERN = /^\/tp_unknown(?:@\w+)?(?:\s+|$)/;
 const TP_AI_INTENTS_COMMAND_PATTERN = /^\/tp_ai_intents(?:@\w+)?(?:\s+|$)/;
 const TP_REPLY_DRAFT_COMMAND_PATTERN = /^\/tp_reply_draft(?:@\w+)?(?:\s+|$)/;
+const TP_DRAFT_FEEDBACK_COMMAND_PATTERN = /^\/tp_draft_feedback(?:@\w+)?(?:\s+|$)/;
 const TP_LINK_THREAD_COMMAND_PATTERN = /^\/tp_link_thread(?:@\w+)?(?:\s+|$)/;
 const TP_THREAD_INFO_COMMAND_PATTERN = /^\/tp_thread_info(?:@\w+)?(?:\s+|$)/;
 const TP_UNLINK_THREAD_COMMAND_PATTERN = /^\/tp_unlink_thread(?:@\w+)?(?:\s+|$)/;
@@ -273,6 +284,7 @@ type TrainingPeaksCommand =
   | "tp_case_dismiss"
   | "tp_health"
   | "tp_cron_status"
+  | "tp_digest_now"
   | "tp_weekly"
   | "tp_business_test"
   | "tp_group_test"
@@ -281,6 +293,7 @@ type TrainingPeaksCommand =
   | "tp_actions"
   | "tp_intents"
   | "tp_reply_draft"
+  | "tp_draft_feedback"
   | "tp_link_thread"
   | "tp_thread_info"
   | "tp_unlink_thread"
@@ -500,6 +513,10 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
     return "tp_cron_status";
   }
 
+  if (TP_DIGEST_NOW_COMMAND_PATTERN.test(text)) {
+    return "tp_digest_now";
+  }
+
   if (TP_WEEKLY_COMMAND_PATTERN.test(text)) {
     return "tp_weekly";
   }
@@ -535,6 +552,10 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
 
   if (TP_REPLY_DRAFT_COMMAND_PATTERN.test(text)) {
     return "tp_reply_draft";
+  }
+
+  if (TP_DRAFT_FEEDBACK_COMMAND_PATTERN.test(text)) {
+    return "tp_draft_feedback";
   }
 
   if (TP_LINK_THREAD_COMMAND_PATTERN.test(text)) {
@@ -1382,6 +1403,43 @@ function getReplyDraftUsageMessage(): string {
   ].join("\n");
 }
 
+function getReplyDraftFeedbackUsageMessage(): string {
+  return [
+    "Используй:",
+    "/tp_draft_feedback <draft_id> used",
+    "/tp_draft_feedback <draft_id> edited [заметка]",
+    "/tp_draft_feedback <draft_id> ignored [заметка]",
+  ].join("\n");
+}
+
+function parseReplyDraftFeedbackCommand(text: string): {
+  draftIdOrPrefix: string | null;
+  outcome: "used" | "edited" | "ignored" | null;
+  note: string | null;
+} {
+  const body = text.replace(/^\/tp_draft_feedback(?:@\w+)?\s*/i, "").trim();
+  if (!body) {
+    return {
+      draftIdOrPrefix: null,
+      outcome: null,
+      note: null,
+    };
+  }
+
+  const [draftIdOrPrefixRaw, outcomeRaw, ...noteParts] = body.split(/\s+/);
+  const normalizedOutcome = outcomeRaw?.trim().toLowerCase();
+  const outcome =
+    normalizedOutcome === "used" || normalizedOutcome === "edited" || normalizedOutcome === "ignored"
+      ? normalizedOutcome
+      : null;
+
+  return {
+    draftIdOrPrefix: draftIdOrPrefixRaw?.trim() || null,
+    outcome,
+    note: noteParts.join(" ").trim() || null,
+  };
+}
+
 function parseTrainingPeaksCoachCaseCommand(text: string): { caseId: string | null; note: string | null } {
   const body = text.replace(/^\/tp_(?:case_(?:resolve|dismiss)|(?:resolve|dismiss)_case)(?:@\w+)?\s*/i, "").trim();
   if (!body) {
@@ -2023,12 +2081,25 @@ function formatTrainingPeaksCronRunLogLine(log: TrainingPeaksCronRunLog, index: 
   return [`${index + 1}. ${formatTrainingPeaksCronRunSummary(log)}`].join("\n");
 }
 
+function getBelgradeIsoDateFromTimestamp(timestamp: string): string | null {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const parts = getBelgradeDateParts(date);
+  return toIsoDate(parts.year, parts.month, parts.day);
+}
+
 function formatTrainingPeaksCronStatusMessage(input: {
   lastAttempt: TrainingPeaksCronRunLog | null;
   lastSent: TrainingPeaksCronRunLog | null;
   recentLogs: TrainingPeaksCronRunLog[];
 }): string {
   const { lastAttempt, lastSent, recentLogs } = input;
+  const todayIso = getBelgradeTodayIso();
+  const lastAttemptDate = lastAttempt ? getBelgradeIsoDateFromTimestamp(lastAttempt.startedAt) : null;
+  const noAttemptToday = lastAttemptDate !== todayIso;
   const lines = [
     "Cron status: attention_digest",
     `Расписание: ${TP_CRON_STATUS_SCHEDULE_TEXT}`,
@@ -2037,14 +2108,19 @@ function formatTrainingPeaksCronStatusMessage(input: {
     lastSent ? formatTrainingPeaksCronRunSummary(lastSent) : "— нет записей",
   ];
 
+  let lastSentAgeMs: number | null = null;
   if (lastSent) {
-    const ageMs = Date.now() - new Date(lastSent.startedAt).getTime();
-    lines.push("", `Возраст последней sent: ${formatTrainingPeaksCronAgeMs(ageMs)}`);
-    if (ageMs > TP_CRON_STATUS_SENT_STALE_MS) {
+    lastSentAgeMs = Date.now() - new Date(lastSent.startedAt).getTime();
+    lines.push("", `Возраст последней sent: ${formatTrainingPeaksCronAgeMs(lastSentAgeMs)}`);
+    if (lastSentAgeMs > TP_CRON_STATUS_SENT_STALE_MS) {
       lines.push("⚠️ Нет успешной отправки attention_digest более 26 часов.");
     }
   } else {
     lines.push("", "⚠️ Успешных отправок (sent) пока не было.");
+  }
+
+  if (noAttemptToday && (lastSentAgeMs === null || lastSentAgeMs > TP_CRON_STATUS_SENT_STALE_MS)) {
+    lines.push("", "Сегодня cron ещё не вызывался — можно запустить /tp_digest_now.");
   }
 
   lines.push("", "Последняя попытка (любой status):");
@@ -2098,6 +2174,36 @@ async function handleTrainingPeaksCronStatus(parsedMessage: ParsedTelegramUpdate
       lastSent,
       recentLogs,
     })
+  );
+}
+
+async function handleTrainingPeaksDigestNow(parsedMessage: ParsedTelegramUpdate): Promise<void> {
+  const todayIso = getBelgradeTodayIso();
+  if (await hasTrainingPeaksAttentionDigestSentForBelgradeDate(todayIso)) {
+    await sendTrainingPeaksMessage(
+      parsedMessage.chatId,
+      "Сегодня утренний обзор уже был отправлен. Повторная отправка отключена."
+    );
+    return;
+  }
+
+  const result = await runTrainingPeaksAttentionDigest({
+    source: "manual",
+    requestPath: "/telegram/tp_digest_now",
+    userAgent: "telegram_command/tp_digest_now",
+  });
+
+  if (result.ok) {
+    await sendTrainingPeaksMessage(
+      parsedMessage.chatId,
+      `✅ Утренний обзор отправлен в ${result.counts.sent} coach chat(ов).`
+    );
+    return;
+  }
+
+  await sendTrainingPeaksMessage(
+    parsedMessage.chatId,
+    `❌ Не удалось отправить утренний обзор: ${result.errorMessage ?? "ошибка"}`
   );
 }
 
@@ -2187,12 +2293,14 @@ export function getTrainingPeaksHelpLines(): string[] {
     "/tp_case_dismiss <case_id> [заметка] — скрыть coach case",
     "/tp_races YYYY-MM-DD YYYY-MM-DD — скан забегов за период",
     "/tp_reply_draft <ученик> — черновик ответа ученику (без автоотправки)",
+    "/tp_draft_feedback <draft_id> used|edited|ignored [заметка] — фидбек по черновику",
     "/tp_health — краткая проверка production-конфига и зависших jobs",
     "",
     "Служебные (редко нужны):",
     "/tp_set_telegram — привязка Telegram вручную",
     "/tp_business_test — тест Business API",
     "/tp_cron_status — статус cron attention_digest",
+    "/tp_digest_now — вручную отправить утренний обзор (если cron пропустил)",
     "/tp_link_thread <ученик> — привязать текущую тему к ученику",
     "/tp_thread_info — показать привязку текущей темы",
     "/tp_unlink_thread — отвязать текущую тему",
@@ -5775,13 +5883,105 @@ async function handleTrainingPeaksReplyDraft(
     return;
   }
 
+  let savedDraftShortId: string | null = null;
+  let saveWarning: string | null = null;
+  try {
+    const promptContextSha256 = sha256TelegramContextText(draftContext.promptContext);
+    const studentMessageSha256 = sha256TelegramContextText(studentMessage);
+    const draftSha256 = sha256TelegramContextText(draftResult.draftText);
+    if (!promptContextSha256 || !studentMessageSha256 || !draftSha256) {
+      throw new Error("missing reply draft hash payload");
+    }
+
+    const savedDraft = await insertTrainingPeaksReplyDraft({
+      studentId: studentMatch.student.id,
+      caseId: null,
+      source: "telegram_command",
+      actorTelegramChatId: String(parsedMessage.chatId),
+      aiModel: getTrainingPeaksReplyDraftModel(),
+      promptContextSha256,
+      studentMessageSha256,
+      studentMessagePreview: buildTelegramContextTextPreview(studentMessage)?.slice(0, 80) ?? null,
+      draftSha256,
+      draftPreview: buildTelegramContextTextPreview(draftResult.draftText),
+      draftCharCount: draftResult.draftText.trim().length,
+      metadata: {
+        cache_status: draftContext.cacheStatus,
+        student_slug: studentMatch.student.studentId,
+        student_name: studentMatch.student.studentName,
+      },
+    });
+    savedDraftShortId = savedDraft.id.slice(0, 8);
+  } catch (saveError) {
+    console.warn("Failed to persist TrainingPeaks reply draft", {
+      chatId: parsedMessage.chatId,
+      studentId: studentMatch.student.id,
+      error: saveError,
+    });
+    saveWarning =
+      "⚠️ Черновик показан, но трекинг фидбека не сохранён. Попробуй сгенерировать заново позже.";
+  }
+
+  const draftMessage = formatTrainingPeaksReplyDraftTelegramMessage({
+    studentName: studentMatch.student.studentName,
+    contextBullets: draftContext.telegramContextBullets,
+    draftText: draftResult.draftText,
+    draftShortId: savedDraftShortId,
+  });
+
   await sendTrainingPeaksMessage(
     parsedMessage.chatId,
-    formatTrainingPeaksReplyDraftTelegramMessage({
-      studentName: studentMatch.student.studentName,
-      contextBullets: draftContext.telegramContextBullets,
-      draftText: draftResult.draftText,
-    })
+    saveWarning ? `${draftMessage}\n\n${saveWarning}` : draftMessage
+  );
+}
+
+async function handleTrainingPeaksReplyDraftFeedback(
+  parsedMessage: ParsedTelegramUpdate,
+  text: string
+): Promise<void> {
+  const parsed = parseReplyDraftFeedbackCommand(text);
+  if (!parsed.draftIdOrPrefix || !parsed.outcome) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, getReplyDraftFeedbackUsageMessage());
+    return;
+  }
+
+  const result = await recordTrainingPeaksReplyDraftFeedback({
+    draftIdOrPrefix: parsed.draftIdOrPrefix,
+    outcome: parsed.outcome,
+    actorTelegramChatId: String(parsedMessage.chatId),
+    note: parsed.note,
+  });
+
+  if (result.kind === "ok") {
+    const okMessage =
+      parsed.outcome === "used"
+        ? "Фидбек сохранён: черновик использован."
+        : parsed.outcome === "edited"
+          ? "Фидбек сохранён: черновик использован с правками."
+          : "Фидбек сохранён: черновик проигнорирован.";
+    await sendTrainingPeaksMessage(parsedMessage.chatId, okMessage);
+    return;
+  }
+
+  if (result.kind === "not_found") {
+    await sendTrainingPeaksMessage(
+      parsedMessage.chatId,
+      `Черновик "${parsed.draftIdOrPrefix}" не найден.\n\n${getReplyDraftFeedbackUsageMessage()}`
+    );
+    return;
+  }
+
+  if (result.kind === "already_final") {
+    await sendTrainingPeaksMessage(
+      parsedMessage.chatId,
+      `Для этого черновика фидбек уже зафиксирован (${result.outcome}).`
+    );
+    return;
+  }
+
+  await sendTrainingPeaksMessage(
+    parsedMessage.chatId,
+    `Не удалось сохранить фидбек.\n\n${getReplyDraftFeedbackUsageMessage()}`
   );
 }
 
@@ -7237,6 +7437,11 @@ export async function handleTrainingPeaksTelegramCommand(
       return "handled";
     }
 
+    if (command === "tp_digest_now") {
+      await handleTrainingPeaksDigestNow(parsedMessage);
+      return "handled";
+    }
+
     if (command === "tp_weekly") {
       await sendTrainingPeaksMessage(parsedMessage.chatId, TP_WEEKLY_DISABLED_MESSAGE);
       return "handled";
@@ -7269,6 +7474,11 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_reply_draft") {
       await handleTrainingPeaksReplyDraft(parsedMessage, text);
+      return "handled";
+    }
+
+    if (command === "tp_draft_feedback") {
+      await handleTrainingPeaksReplyDraftFeedback(parsedMessage, text);
       return "handled";
     }
 
