@@ -248,7 +248,12 @@ export type TrainingPeaksCoachCaseStatus =
   | "needs_review"
   | "resolved"
   | "dismissed";
-export type TrainingPeaksCoachActionKind = "case_resolved" | "case_dismissed";
+export type TrainingPeaksCoachActionKind =
+  | "case_resolved"
+  | "case_dismissed"
+  | "reply_draft_used"
+  | "reply_draft_edited"
+  | "reply_draft_ignored";
 export type TrainingPeaksCoachActionSource = "telegram_command" | "admin_ui" | "system_backfill";
 
 export type TrainingPeaksRaceResultsProbeRequestJson = {
@@ -4696,6 +4701,74 @@ type TrainingPeaksCoachCaseSummaryRow = {
   created_at: string;
 };
 
+export type TrainingPeaksReplyDraftSource = "telegram_command" | "attention_digest" | "system";
+export type TrainingPeaksReplyDraftOutcome = "generated" | "used" | "edited" | "ignored";
+
+export type InsertTrainingPeaksReplyDraftInput = {
+  studentId: string;
+  caseId?: string | null;
+  source?: TrainingPeaksReplyDraftSource;
+  actorTelegramChatId?: string | null;
+  aiModel: string;
+  promptContextSha256: string;
+  studentMessageSha256: string;
+  studentMessagePreview?: string | null;
+  draftSha256: string;
+  draftPreview?: string | null;
+  draftCharCount?: number;
+  metadata?: Record<string, unknown>;
+  createdAt?: string;
+};
+
+export type TrainingPeaksReplyDraft = {
+  id: string;
+  studentId: string;
+  caseId: string | null;
+  source: TrainingPeaksReplyDraftSource;
+  actorTelegramChatId: string | null;
+  aiModel: string;
+  promptContextSha256: string;
+  studentMessageSha256: string;
+  studentMessagePreview: string | null;
+  draftSha256: string;
+  draftPreview: string | null;
+  draftCharCount: number;
+  outcome: TrainingPeaksReplyDraftOutcome;
+  outcomeRecordedAt: string | null;
+  coachNotePreview: string | null;
+  coachNoteSha256: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
+type TrainingPeaksReplyDraftRow = {
+  id: string;
+  student_id: string;
+  case_id: string | null;
+  source: TrainingPeaksReplyDraftSource;
+  actor_telegram_chat_id: string | null;
+  ai_model: string;
+  prompt_context_sha256: string;
+  student_message_sha256: string;
+  student_message_preview: string | null;
+  draft_sha256: string;
+  draft_preview: string | null;
+  draft_char_count: number;
+  outcome: TrainingPeaksReplyDraftOutcome;
+  outcome_recorded_at: string | null;
+  coach_note_preview: string | null;
+  coach_note_sha256: string | null;
+  metadata: unknown;
+  created_at: string;
+};
+
+export type UpdateTrainingPeaksReplyDraftOutcomeInput = {
+  draftId: string;
+  outcome: Extract<TrainingPeaksReplyDraftOutcome, "used" | "edited" | "ignored">;
+  coachNote?: string | null;
+  outcomeRecordedAt?: string;
+};
+
 export type InsertTrainingPeaksCoachActionTakenInput = {
   caseId?: string | null;
   studentId?: string | null;
@@ -4801,6 +4874,20 @@ function sha256TrainingPeaksCoachActionNote(value: string | null | undefined): s
   return createHash("sha256").update(normalized).digest("hex");
 }
 
+function buildTrainingPeaksReplyDraftPreview(
+  value: string | null | undefined,
+  maxLength: number
+): string | null {
+  const normalized = value?.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 1)}…`;
+}
+
 function mapTrainingPeaksCoachCaseSummaryRow(
   row: TrainingPeaksCoachCaseSummaryRow
 ): TrainingPeaksCoachCaseSummary {
@@ -4825,6 +4912,32 @@ function mapTrainingPeaksCoachActionTakenRow(
     actorTelegramChatId: row.actor_telegram_chat_id,
     notePreview: row.note_preview,
     noteSha256: row.note_sha256,
+    metadata:
+      row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? (row.metadata as Record<string, unknown>)
+        : {},
+    createdAt: row.created_at,
+  };
+}
+
+function mapTrainingPeaksReplyDraftRow(row: TrainingPeaksReplyDraftRow): TrainingPeaksReplyDraft {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    caseId: row.case_id,
+    source: row.source,
+    actorTelegramChatId: row.actor_telegram_chat_id,
+    aiModel: row.ai_model,
+    promptContextSha256: row.prompt_context_sha256,
+    studentMessageSha256: row.student_message_sha256,
+    studentMessagePreview: row.student_message_preview,
+    draftSha256: row.draft_sha256,
+    draftPreview: row.draft_preview,
+    draftCharCount: row.draft_char_count,
+    outcome: row.outcome,
+    outcomeRecordedAt: row.outcome_recorded_at,
+    coachNotePreview: row.coach_note_preview,
+    coachNoteSha256: row.coach_note_sha256,
     metadata:
       row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
         ? (row.metadata as Record<string, unknown>)
@@ -4957,6 +5070,102 @@ export async function getTrainingPeaksCoachCaseById(
   return mapTrainingPeaksCoachCaseSummaryRow(data as TrainingPeaksCoachCaseSummaryRow);
 }
 
+export async function insertTrainingPeaksReplyDraft(
+  input: InsertTrainingPeaksReplyDraftInput
+): Promise<TrainingPeaksReplyDraft> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_reply_drafts")
+    .insert({
+      student_id: input.studentId,
+      case_id: input.caseId ?? null,
+      source: input.source ?? "telegram_command",
+      actor_telegram_chat_id: input.actorTelegramChatId ?? null,
+      ai_model: input.aiModel,
+      prompt_context_sha256: input.promptContextSha256,
+      student_message_sha256: input.studentMessageSha256,
+      student_message_preview: buildTrainingPeaksReplyDraftPreview(input.studentMessagePreview ?? null, 80),
+      draft_sha256: input.draftSha256,
+      draft_preview: buildTrainingPeaksReplyDraftPreview(input.draftPreview ?? null, 120),
+      draft_char_count: Math.max(0, Math.trunc(input.draftCharCount ?? 0)),
+      metadata: input.metadata ?? {},
+      created_at: input.createdAt ?? new Date().toISOString(),
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to insert TrainingPeaks reply draft: ${error.message}`);
+  }
+
+  return mapTrainingPeaksReplyDraftRow(data as TrainingPeaksReplyDraftRow);
+}
+
+export async function getTrainingPeaksReplyDraftByIdPrefix(
+  draftIdPrefix: string
+): Promise<TrainingPeaksReplyDraft | null> {
+  const normalizedPrefix = normalizeTrainingPeaksReplyDraftIdPrefix(draftIdPrefix);
+  if (!normalizedPrefix) {
+    return null;
+  }
+
+  const minUuid = formatTrainingPeaksUuidFromHex32(normalizedPrefix.padEnd(32, "0"));
+  const maxUuid = formatTrainingPeaksUuidFromHex32(normalizedPrefix.padEnd(32, "f"));
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_reply_drafts")
+    .select("*")
+    .gte("id", minUuid)
+    .lte("id", maxUuid)
+    .order("created_at", { ascending: false })
+    .limit(2);
+
+  if (error) {
+    throw new Error(
+      `Failed to get TrainingPeaks reply draft by prefix ${normalizedPrefix}: ${error.message}`
+    );
+  }
+
+  const rows = (data as TrainingPeaksReplyDraftRow[] | null) ?? [];
+  if (rows.length !== 1) {
+    return null;
+  }
+
+  return mapTrainingPeaksReplyDraftRow(rows[0]);
+}
+
+export async function updateTrainingPeaksReplyDraftOutcome(
+  input: UpdateTrainingPeaksReplyDraftOutcomeInput
+): Promise<TrainingPeaksReplyDraft | null> {
+  const normalizedNote = normalizeTrainingPeaksCoachActionNote(input.coachNote);
+  const updates = pickDefinedValues({
+    outcome: input.outcome,
+    outcome_recorded_at: input.outcomeRecordedAt ?? new Date().toISOString(),
+    coach_note_preview: buildTrainingPeaksCoachActionNotePreview(normalizedNote),
+    coach_note_sha256: sha256TrainingPeaksCoachActionNote(normalizedNote),
+  });
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_reply_drafts")
+    .update(updates)
+    .eq("id", input.draftId)
+    .eq("outcome", "generated")
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to update TrainingPeaks reply draft ${input.draftId}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksReplyDraftRow(data as TrainingPeaksReplyDraftRow);
+}
+
 const TRAININGPEAKS_CASE_ID_PREFIX_HEX_REGEX = /^[0-9a-f]{1,32}$/;
 
 function normalizeTrainingPeaksCoachCaseIdPrefix(caseIdPrefix: string): string | null {
@@ -4966,6 +5175,21 @@ function normalizeTrainingPeaksCoachCaseIdPrefix(caseIdPrefix: string): string |
   }
 
   if (!TRAININGPEAKS_CASE_ID_PREFIX_HEX_REGEX.test(normalized)) {
+    return null;
+  }
+
+  return normalized;
+}
+
+const TRAININGPEAKS_REPLY_DRAFT_ID_PREFIX_HEX_REGEX = /^[0-9a-f]{1,32}$/;
+
+function normalizeTrainingPeaksReplyDraftIdPrefix(draftIdPrefix: string): string | null {
+  const normalized = draftIdPrefix.trim().toLowerCase().replace(/-/g, "");
+  if (!normalized) {
+    return null;
+  }
+
+  if (!TRAININGPEAKS_REPLY_DRAFT_ID_PREFIX_HEX_REGEX.test(normalized)) {
     return null;
   }
 

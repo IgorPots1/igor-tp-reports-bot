@@ -5,6 +5,10 @@ import type { TrainingPeaksTelegramFormality } from "@/features/trainingpeaks/re
 const AI_MODEL = process.env.OPENAI_REPLY_DRAFT_MODEL?.trim() || "gpt-4o-mini";
 const OPENAI_API_URL = process.env.OPENAI_API_URL?.trim() || "https://api.openai.com/v1/chat/completions";
 
+export function getTrainingPeaksReplyDraftModel(): string {
+  return AI_MODEL;
+}
+
 export type GenerateTrainingPeaksReplyDraftResult =
   | { ok: true; draftText: string }
   | { ok: false; reason: "missing_api_key" | "request_failed" | "empty_response" };
@@ -93,11 +97,24 @@ export function formatTrainingPeaksReplyDraftTelegramMessage(input: {
   studentName: string;
   contextBullets: string[];
   draftText: string;
+  draftShortId?: string | null;
 }): string {
   const bullets =
     input.contextBullets.length > 0
       ? input.contextBullets.map((bullet) => `• ${bullet}`).join("\n")
       : "• Контекст недоступен.";
+
+  const feedbackLines =
+    input.draftShortId && input.draftShortId.trim()
+      ? [
+          "",
+          `Черновик: ${input.draftShortId.trim()}`,
+          "Обратная связь:",
+          ` /tp_draft_feedback ${input.draftShortId.trim()} used`,
+          ` /tp_draft_feedback ${input.draftShortId.trim()} edited [заметка]`,
+          ` /tp_draft_feedback ${input.draftShortId.trim()} ignored [заметка]`,
+        ]
+      : [];
 
   return [
     `Черновик ответа для ${input.studentName}`,
@@ -107,6 +124,7 @@ export function formatTrainingPeaksReplyDraftTelegramMessage(input: {
     "",
     "Ответ:",
     input.draftText.trim(),
+    ...feedbackLines,
     "",
     "Только для тренера. Проверь перед отправкой.",
   ].join("\n");

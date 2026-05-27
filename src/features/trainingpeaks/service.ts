@@ -1,6 +1,7 @@
 import {
   getTrainingPeaksCoachCaseById,
   getTrainingPeaksCoachCaseByIdPrefix,
+  getTrainingPeaksReplyDraftByIdPrefix as getTrainingPeaksReplyDraftByIdPrefixFromRepository,
   approveTrainingPeaksAction as approveTrainingPeaksActionInRepository,
   approveTrainingPeaksWeeklyReportIfDraft,
   cancelQueuedTrainingPeaksJob,
@@ -33,6 +34,7 @@ import {
   recoverStaleTrainingPeaksRunningJobs,
   recoverStaleTrainingPeaksRunningRaceScanJobs,
   insertTrainingPeaksStudent,
+  insertTrainingPeaksReplyDraft as insertTrainingPeaksReplyDraftInRepository,
   insertTrainingPeaksCoachActionTaken,
   insertTrainingPeaksCoachCase,
   insertTrainingPeaksStudentContextSnapshot,
@@ -87,6 +89,9 @@ import {
   type TrainingPeaksRecoveryAlertKind,
   type TrainingPeaksCoachCaseKind,
   type TrainingPeaksCoachCaseStatus,
+  type InsertTrainingPeaksReplyDraftInput,
+  type TrainingPeaksReplyDraft,
+  type UpdateTrainingPeaksReplyDraftOutcomeInput,
   TrainingPeaksJobConflictError,
   type TrainingPeaksStudentTelegramLinkCode,
   TrainingPeaksTelegramLinkCodeConflictError,
@@ -115,6 +120,7 @@ import {
   listRecentTrainingPeaksTelegramContextObservationsForChat,
   listRecentPendingTrainingPeaksMoveActionsForStudentChat,
   updateTrainingPeaksCoachCaseStatus,
+  updateTrainingPeaksReplyDraftOutcome as updateTrainingPeaksReplyDraftOutcomeInRepository,
   updateTrainingPeaksStudentThreadById,
   updateTrainingPeaksWeeklyReportContentById,
   updateTrainingPeaksWeeklyReportReviewState as updateTrainingPeaksWeeklyReportReviewStateInRepository,
@@ -595,6 +601,12 @@ export type TrainingPeaksCoachCaseDecisionResult =
   | { kind: "already_final"; status: Extract<TrainingPeaksCoachCaseStatus, "resolved" | "dismissed"> }
   | { kind: "failed" };
 
+export type RecordTrainingPeaksReplyDraftFeedbackResult =
+  | { kind: "ok"; outcome: "used" | "edited" | "ignored"; draftId: string }
+  | { kind: "not_found" }
+  | { kind: "already_final"; outcome: TrainingPeaksReplyDraft["outcome"] }
+  | { kind: "failed" };
+
 export type RecordTrainingPeaksCoachCaseAndSnapshotInput = {
   studentId: string | null;
   intentLogId?: string | null;
@@ -867,6 +879,107 @@ export async function dismissTrainingPeaksCoachCase(input: {
     finalStatus: "dismissed",
     actionKind: "case_dismissed",
   });
+}
+
+export async function insertTrainingPeaksReplyDraft(
+  input: InsertTrainingPeaksReplyDraftInput
+): Promise<TrainingPeaksReplyDraft> {
+  return insertTrainingPeaksReplyDraftInRepository(input);
+}
+
+export async function recordTrainingPeaksReplyDraftFeedback(input: {
+  draftIdOrPrefix: string;
+  outcome: "used" | "edited" | "ignored";
+  actorTelegramChatId?: string | null;
+  note?: string | null;
+}): Promise<RecordTrainingPeaksReplyDraftFeedbackResult> {
+  try {
+    const draft = await getTrainingPeaksReplyDraftByIdPrefixFromRepository(input.draftIdOrPrefix);
+    if (!draft) {
+      return { kind: "not_found" };
+    }
+
+    if (draft.outcome !== "generated") {
+      return { kind: "already_final", outcome: draft.outcome };
+    }
+
+    const updatedDraft = await updateTrainingPeaksReplyDraftOutcomeInRepository({
+      draftId: draft.id,
+      outcome: input.outcome,
+      coachNote: input.note ?? null,
+    } satisfies UpdateTrainingPeaksReplyDraftOutcomeInput);
+    if (!updatedDraft) {
+      const reloadedDraft = await getTrainingPeaksReplyDraftByIdPrefixFromRepository(draft.id);
+      if (reloadedDraft && reloadedDraft.outcome !== "generated") {
+        return { kind: "already_final", outcome: reloadedDraft.outcome };
+      }
+      return { kind: "failed" };
+    }
+
+    const actionKind =
+      input.outcome === "used"
+        ? "reply_draft_used"
+        : input.outcome === "edited"
+          ? "reply_draft_edited"
+          : "reply_draft_ignored";
+
+    try {
+      await insertTrainingPeaksCoachActionTaken({
+        caseId: updatedDraft.caseId,
+        studentId: updatedDraft.studentId,
+        actionKind,
+        source: "telegram_command",
+        actorTelegramChatId: input.actorTelegramChatId ?? null,
+        note: input.note ?? null,
+        metadata: {
+          draft_id: updatedDraft.id,
+          outcome: input.outcome,
+        },
+      });
+    } catch (actionError) {
+      console.warn("Failed to insert TrainingPeaks reply draft feedback action", {
+        draftId: updatedDraft.id,
+        studentId: updatedDraft.studentId,
+        actionKind,
+        error: actionError,
+      });
+    }
+
+    if (input.outcome === "used" || input.outcome === "edited") {
+      try {
+        await recordTrainingPeaksStudentContactEvent({
+          studentId: updatedDraft.studentId,
+          eventType: "coach_action_decision",
+          source: "admin_action",
+          referenceId: updatedDraft.id,
+          metadata: {
+            kind: "reply_draft_feedback",
+            outcome: input.outcome,
+          },
+        });
+      } catch (contactError) {
+        console.warn("Failed to record TrainingPeaks reply draft feedback contact event", {
+          draftId: updatedDraft.id,
+          studentId: updatedDraft.studentId,
+          outcome: input.outcome,
+          error: contactError,
+        });
+      }
+    }
+
+    return {
+      kind: "ok",
+      outcome: input.outcome,
+      draftId: updatedDraft.id,
+    };
+  } catch (error) {
+    console.warn("Failed to record TrainingPeaks reply draft feedback", {
+      draftIdOrPrefix: input.draftIdOrPrefix,
+      outcome: input.outcome,
+      error,
+    });
+    return { kind: "failed" };
+  }
 }
 
 export async function listRecentTrainingPeaksCoachCases(input?: {
