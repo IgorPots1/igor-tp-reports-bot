@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/cron/billing-email-import",
-      "schedule": "0 0 * * *"
+      "schedule": "30 8 * * *"
     }
   ]
 }
