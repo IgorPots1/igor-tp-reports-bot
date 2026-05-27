@@ -70,6 +70,8 @@ type TrainingPeaksActionRow = {
   execution_requested_at: string | null;
 };
 
+const COACH_CONFIRMED_SOURCE_DATE_POLICY = "coach_confirmed_source_date";
+
 type TrainingPeaksActionRunRow = {
   id: string;
   action_id: string;
@@ -390,6 +392,10 @@ type ParsedMoveWorkoutPayload = {
   source?: TrainingPeaksMoveWorkoutTarget | { date?: string; isoDate?: string };
   sourceDate?: string;
   source_date?: string;
+  coach_confirmed_source_date?: string;
+  coach_confirmed_source_date_at?: string;
+  coach_confirmed_source_date_by?: string;
+  source_date_policy_override?: string;
   workoutDescriptor?: {
     raw?: string;
     type?: string;
@@ -955,6 +961,20 @@ function parseMoveWorkoutPayload(parsedPayload: unknown): ParsedMoveWorkoutPaylo
     return null;
   }
   return payload;
+}
+
+function extractCoachConfirmedSourceDate(parsedPayload: ParsedMoveWorkoutPayload | null): string | null {
+  if (!parsedPayload) {
+    return null;
+  }
+  if (parsedPayload.source_date_policy_override !== COACH_CONFIRMED_SOURCE_DATE_POLICY) {
+    return null;
+  }
+  const rawDate = parsedPayload.coach_confirmed_source_date;
+  if (typeof rawDate !== "string" || !rawDate.trim()) {
+    return null;
+  }
+  return normalizeDateCandidate(rawDate.trim());
 }
 
 function resolveTargetDateFromPayload(
@@ -5880,6 +5900,7 @@ function evaluateDryRunOutcome(input: {
 }): DryRunEvaluation {
   const parseWarnings: string[] = [];
   const payload = parseMoveWorkoutPayload(input.action.parsed_payload);
+  const coachConfirmedSourceDate = extractCoachConfirmedSourceDate(payload);
   const timezone = MOVE_DATE_TIMEZONE;
   const baseDate = new Date();
   let targetDate: string | null = null;
@@ -5914,6 +5935,11 @@ function evaluateDryRunOutcome(input: {
         selectedSourceDate = resolvedSource.sourceDate;
       }
     }
+  }
+
+  if (coachConfirmedSourceDate) {
+    selectedSourceDate = coachConfirmedSourceDate;
+    selectedSourceDatePolicy = COACH_CONFIRMED_SOURCE_DATE_POLICY;
   }
 
   const diagnostics: DryRunDiagnostics = {
@@ -6200,7 +6226,13 @@ function evaluateDryRunOutcome(input: {
   }
 
   if (selectedBucketCandidates.length === 0) {
-    const reasons = ["no planned candidate on inferred source date", "Нужна конкретная тренировка"];
+    const reasons =
+      selectedSourceDatePolicy === COACH_CONFIRMED_SOURCE_DATE_POLICY
+        ? [
+            "Coach-confirmed source date no longer matches detected workout candidate.",
+            "Подтверждённая исходная дата больше не совпадает с найденной тренировкой.",
+          ]
+        : ["no planned candidate on inferred source date", "Нужна конкретная тренировка"];
     return {
       dryRunResult: "not_found",
       resolvedDates: { sourceDate: selectedSourceDate, targetDate, timezone },
@@ -6471,8 +6503,15 @@ function normalizeTrustedDryRunLog(logJson: unknown, parsedPayload?: unknown): T
     return null;
   }
 
-  const selectedSourceDatePolicy =
+  const selectedSourceDatePolicyFromDryRun =
     typeof payload.selectedSourceDatePolicy === "string" ? payload.selectedSourceDatePolicy : null;
+  if (selectedSourceDatePolicyFromDryRun === COACH_CONFIRMED_SOURCE_DATE_POLICY) {
+    const parsed = parseMoveWorkoutPayload(parsedPayload ?? null);
+    const confirmedSourceDate = extractCoachConfirmedSourceDate(parsed);
+    if (!confirmedSourceDate || confirmedSourceDate !== sourceDate) {
+      return null;
+    }
+  }
   if (!moveSourcePolicy.validateDryRunLogReadiness(logJson, parsedPayload).ok) {
     return null;
   }
@@ -6494,7 +6533,7 @@ function normalizeTrustedDryRunLog(logJson: unknown, parsedPayload?: unknown): T
       timezone: typeof payload.resolvedDates?.timezone === "string" ? payload.resolvedDates.timezone : null,
     },
     identityCheck: payload.identityCheck,
-    selectedSourceDatePolicy,
+    selectedSourceDatePolicy: selectedSourceDatePolicyFromDryRun,
   };
 }
 
@@ -6558,6 +6597,13 @@ function buildRevalidationComparison(input: {
     input.current.selectedSourceDatePolicy !== moveSourcePolicy.STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY
   ) {
     mismatchReasons.push("selectedSourceDatePolicy mismatch for strong inferred move");
+  }
+
+  if (
+    input.trusted.selectedSourceDatePolicy === COACH_CONFIRMED_SOURCE_DATE_POLICY &&
+    input.current.selectedSourceDatePolicy !== COACH_CONFIRMED_SOURCE_DATE_POLICY
+  ) {
+    mismatchReasons.push("selectedSourceDatePolicy mismatch for coach-confirmed source date");
   }
 
   if (input.trusted.selectedSourceDatePolicy === moveSourcePolicy.STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY) {
@@ -7769,6 +7815,10 @@ async function main(): Promise<void> {
         rankingDebug: evaluation.rankingDebug,
         selectedSourceDatePolicy: evaluation.selectedSourceDatePolicy,
         selectedSourceDate: evaluation.selectedSourceDate,
+        sourceDatePolicyOverride:
+          evaluation.selectedSourceDatePolicy === COACH_CONFIRMED_SOURCE_DATE_POLICY
+            ? COACH_CONFIRMED_SOURCE_DATE_POLICY
+            : null,
         selectedSourceDateCandidateCount: evaluation.selectedSourceDateCandidateCount,
         globalCandidateCount: evaluation.globalCandidateCount,
         sourceDateBucketCounts: evaluation.sourceDateBucketCounts,
@@ -8153,6 +8203,12 @@ async function main(): Promise<void> {
       revalidationPassed: true,
       revalidationComparison: comparison,
       currentEvaluation: evaluation,
+      selectedSourceDatePolicy: evaluation.selectedSourceDatePolicy,
+      selectedSourceDate: evaluation.selectedSourceDate,
+      sourceDatePolicyOverride:
+        evaluation.selectedSourceDatePolicy === COACH_CONFIRMED_SOURCE_DATE_POLICY
+          ? COACH_CONFIRMED_SOURCE_DATE_POLICY
+          : null,
       mutationOccurred: apiExecution.apiMoveExecuted,
       durableMutationOccurred: apiExecution.apiMoveExecuted,
       apiMove: {

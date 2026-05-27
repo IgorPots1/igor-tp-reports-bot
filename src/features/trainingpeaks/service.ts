@@ -52,6 +52,8 @@ import {
   listRecentTrainingPeaksCoachCasesForAttention,
   listRecentTrainingPeaksCoachCases as listRecentTrainingPeaksCoachCasesFromRepository,
   listRecentTrainingPeaksActions as listRecentTrainingPeaksActionsFromRepository,
+  listTrainingPeaksActionLatestRunContexts,
+  getTrainingPeaksActionLatestRunContext,
   listLatestTrainingPeaksActionRunsByActionIds,
   listTrainingPeaksStudents,
   listTrainingPeaksStudentsIncludingArchived,
@@ -67,6 +69,7 @@ import {
   rejectTrainingPeaksAction as rejectTrainingPeaksActionInRepository,
   recordTrainingPeaksStudentContactEvent,
   requestTrainingPeaksActionExecution as requestTrainingPeaksActionExecutionInRepository,
+  confirmTrainingPeaksActionSourceDate as confirmTrainingPeaksActionSourceDateInRepository,
   cancelTrainingPeaksActionExecution as cancelTrainingPeaksActionExecutionInRepository,
   getTrainingPeaksActionById as getTrainingPeaksActionByIdInRepository,
   getLatestTrainingPeaksCronRunLog,
@@ -78,11 +81,13 @@ import {
   TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
   type DecideTrainingPeaksActionResult,
   type RequestTrainingPeaksActionExecutionResult,
+  type ConfirmTrainingPeaksActionSourceDateResult,
   type CancelTrainingPeaksActionExecutionResultExtended,
   type TrainingPeaksBusinessChat,
   type TrainingPeaksAction,
   type TrainingPeaksWorkoutCacheRow,
   type TrainingPeaksActionWithStudent,
+  type TrainingPeaksActionLatestRunContext,
   type TrainingPeaksActionRun,
   type ClaimedTrainingPeaksDryRunAction,
   type TrainingPeaksStudentContactStatus,
@@ -392,10 +397,12 @@ export type DecideTrainingPeaksActionInput = {
 
 export type DecideTrainingPeaksActionResultSnapshot = DecideTrainingPeaksActionResult;
 export type RequestTrainingPeaksActionExecutionResultSnapshot = RequestTrainingPeaksActionExecutionResult;
+export type ConfirmTrainingPeaksActionSourceDateResultSnapshot = ConfirmTrainingPeaksActionSourceDateResult;
 export type CancelTrainingPeaksActionExecutionResultSnapshot = CancelTrainingPeaksActionExecutionResultExtended;
 export type TrainingPeaksActionRunSnapshot = TrainingPeaksActionRun;
 export type ClaimedTrainingPeaksDryRunActionSnapshot = ClaimedTrainingPeaksDryRunAction;
 export type TrainingPeaksActionWithStudentSnapshot = TrainingPeaksActionWithStudent;
+export type TrainingPeaksActionLatestRunContextSnapshot = TrainingPeaksActionLatestRunContext;
 
 export type TrainingPeaksBusinessChatSnapshot = TrainingPeaksBusinessChat;
 export type TrainingPeaksStudentTelegramLinkCodeSnapshot = TrainingPeaksStudentTelegramLinkCode;
@@ -4158,6 +4165,20 @@ export async function requestTrainingPeaksActionExecution(input: {
   });
 }
 
+export async function confirmTrainingPeaksActionSourceDate(input: {
+  actionId: string;
+  confirmedByChatId: string;
+  confirmedByUserId?: string | null;
+  confirmationMessageId?: string | null;
+}): Promise<ConfirmTrainingPeaksActionSourceDateResultSnapshot> {
+  return confirmTrainingPeaksActionSourceDateInRepository({
+    actionId: input.actionId,
+    confirmedByChatId: input.confirmedByChatId,
+    confirmedByUserId: input.confirmedByUserId ?? null,
+    confirmationMessageId: input.confirmationMessageId ?? null,
+  });
+}
+
 export async function cancelTrainingPeaksActionExecution(input: {
   actionId: string;
   cancelledByChatId: string;
@@ -4178,6 +4199,21 @@ export async function listRecentTrainingPeaksActions(
   return listRecentTrainingPeaksActionsFromRepository(limit);
 }
 
+export async function listRecentTrainingPeaksActionsWithLatestRunContext(limit = 15): Promise<
+  Array<
+    TrainingPeaksActionWithStudentSnapshot & {
+      latestRunContext: TrainingPeaksActionLatestRunContextSnapshot | null;
+    }
+  >
+> {
+  const actions = await listRecentTrainingPeaksActionsFromRepository(limit);
+  const latestRunContexts = await listTrainingPeaksActionLatestRunContexts(actions.map((action) => action.id));
+  return actions.map((action) => ({
+    ...action,
+    latestRunContext: latestRunContexts.get(action.id) ?? null,
+  }));
+}
+
 export async function getTrainingPeaksActionWithStudentById(
   actionId: string
 ): Promise<TrainingPeaksActionWithStudentSnapshot | null> {
@@ -4191,6 +4227,24 @@ export async function getTrainingPeaksActionWithStudentById(
     studentName = student?.studentName ?? null;
   }
   return { ...action, studentName };
+}
+
+export async function getTrainingPeaksActionWithStudentAndLatestRunContextById(actionId: string): Promise<
+  (TrainingPeaksActionWithStudentSnapshot & {
+    latestRunContext: TrainingPeaksActionLatestRunContextSnapshot | null;
+  }) | null
+> {
+  const [action, latestRunContext] = await Promise.all([
+    getTrainingPeaksActionWithStudentById(actionId),
+    getTrainingPeaksActionLatestRunContext(actionId),
+  ]);
+  if (!action) {
+    return null;
+  }
+  return {
+    ...action,
+    latestRunContext,
+  };
 }
 
 export async function claimOneApprovedTrainingPeaksActionForDryRun(

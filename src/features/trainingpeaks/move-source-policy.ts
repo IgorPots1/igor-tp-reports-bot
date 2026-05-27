@@ -4,6 +4,7 @@ import { hasIntervalDescriptorPattern } from "@/features/trainingpeaks/workout-r
 export const TRUSTED_MOVE_SOURCE_POLICIES = new Set([
   "explicit_source_date",
   "explicit_source_ref",
+  "coach_confirmed_source_date",
 ]);
 
 export const STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY = "strong_future_descriptor_match";
@@ -380,6 +381,26 @@ export function validateMoveSourceForExecution(input: {
       parsedPayload: input.parsedPayload,
       ...context,
     });
+  }
+
+  if (policy === "coach_confirmed_source_date") {
+    const parsedPayload =
+      input.parsedPayload && typeof input.parsedPayload === "object" ? (input.parsedPayload as Record<string, unknown>) : null;
+    const confirmedSourceDate =
+      parsedPayload && typeof parsedPayload.coach_confirmed_source_date === "string"
+        ? parsedPayload.coach_confirmed_source_date.trim()
+        : "";
+    if (!confirmedSourceDate) {
+      return { ok: false, reason: "Coach-confirmed source date is missing in parsed payload." };
+    }
+    const context = input.dryRunLog ? extractMoveSourceExecutionContextFromDryRunLog(input.dryRunLog) : null;
+    if (!context?.resolvedSourceDate) {
+      return { ok: false, reason: "Dry-run source date is missing for coach-confirmed policy." };
+    }
+    if (context.resolvedSourceDate !== confirmedSourceDate) {
+      return { ok: false, reason: "Coach-confirmed source date does not match dry-run source date." };
+    }
+    return { ok: true };
   }
 
   if (!isTrustedMoveSourcePolicy(policy)) {

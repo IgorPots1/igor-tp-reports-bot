@@ -3,6 +3,9 @@ import { createHash } from "node:crypto";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import {
   extractMoveSourceExecutionContextFromDryRunLog,
+  INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU,
+  INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON,
+  isExecutableMoveSourcePolicy,
   validateDryRunLogReadiness,
 } from "@/features/trainingpeaks/move-source-policy";
 
@@ -548,10 +551,57 @@ export type RequestTrainingPeaksActionExecutionInput = {
   requestMessageId?: string | null;
 };
 
+export type ConfirmTrainingPeaksActionSourceDateInput = {
+  actionId: string;
+  confirmedByChatId: string;
+  confirmedByUserId?: string | null;
+  confirmationMessageId?: string | null;
+};
+
+export type ConfirmTrainingPeaksActionSourceDateResult =
+  | {
+      kind: "confirmed";
+      action: TrainingPeaksAction;
+      confirmedSourceDate: string;
+      latestDryRun: TrainingPeaksActionRunContextSummary;
+    }
+  | {
+      kind: "not_found";
+    }
+  | {
+      kind: "blocked";
+      action: TrainingPeaksAction;
+      reason: string;
+      latestDryRun: TrainingPeaksActionRunContextSummary | null;
+    };
+
 export type TrainingPeaksActionExecutionQueuedDisplayContext = {
   studentName: string | null;
   trustedSourceDate: string;
   trustedTargetDate: string;
+};
+
+export type TrainingPeaksActionRunContextSummary = {
+  runId: string;
+  runType: TrainingPeaksActionRunType;
+  status: TrainingPeaksActionRunStatus;
+  startedAt: string;
+  finishedAt: string | null;
+  errorMessage: string | null;
+  dryRunResult: string | null;
+  canExecute: boolean | null;
+  selectedSourceDate: string | null;
+  selectedSourceDatePolicy: string | null;
+  failureReason: string | null;
+  blockedReason: string | null;
+  logJson: unknown;
+};
+
+export type TrainingPeaksActionLatestRunContext = {
+  action: TrainingPeaksAction;
+  latestDryRun: TrainingPeaksActionRunContextSummary | null;
+  latestExecute: TrainingPeaksActionRunContextSummary | null;
+  latestRelevant: TrainingPeaksActionRunContextSummary | null;
 };
 
 export type RequestTrainingPeaksActionExecutionResult =
@@ -572,6 +622,7 @@ export type RequestTrainingPeaksActionExecutionResult =
       kind: "blocked";
       action: TrainingPeaksAction;
       reason: string;
+      latestRunContext: TrainingPeaksActionLatestRunContext | null;
     }
   | {
       kind: "not_found";
@@ -1217,6 +1268,112 @@ function mapTrainingPeaksActionRunRow(row: TrainingPeaksActionRunRow): TrainingP
     screenshotBeforePath: row.screenshot_before_path,
     screenshotAfterPath: row.screenshot_after_path,
     createdAt: row.created_at,
+  };
+}
+
+function trimOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function toBooleanOrNull(value: unknown): boolean | null {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  return null;
+}
+
+function extractFirstReason(logJson: unknown): string | null {
+  if (!logJson || typeof logJson !== "object") {
+    return null;
+  }
+  const payload = logJson as {
+    error?: unknown;
+    note?: unknown;
+    failureReason?: unknown;
+    blockedReason?: unknown;
+    reason?: unknown;
+    canExecuteReasons?: unknown;
+    mismatchReasons?: unknown;
+    revalidationComparison?: { mismatchReasons?: unknown } | null;
+  };
+  const direct =
+    trimOrNull(payload.failureReason) ??
+    trimOrNull(payload.blockedReason) ??
+    trimOrNull(payload.error) ??
+    trimOrNull(payload.reason);
+  if (direct) {
+    return direct;
+  }
+  if (Array.isArray(payload.canExecuteReasons)) {
+    for (const item of payload.canExecuteReasons) {
+      const candidate = trimOrNull(item);
+      if (candidate) {
+        return candidate;
+      }
+    }
+  }
+  if (Array.isArray(payload.mismatchReasons)) {
+    for (const item of payload.mismatchReasons) {
+      const candidate = trimOrNull(item);
+      if (candidate) {
+        return candidate;
+      }
+    }
+  }
+  if (Array.isArray(payload.revalidationComparison?.mismatchReasons)) {
+    for (const item of payload.revalidationComparison?.mismatchReasons ?? []) {
+      const candidate = trimOrNull(item);
+      if (candidate) {
+        return candidate;
+      }
+    }
+  }
+  const note = trimOrNull(payload.note);
+  if (note && !/not changed|не изменен|не изменён/i.test(note)) {
+    return note;
+  }
+  return null;
+}
+
+function mapActionRunContextSummary(row: TrainingPeaksActionRunRow): TrainingPeaksActionRunContextSummary {
+  const log = row.log_json;
+  const payload = (log && typeof log === "object" ? log : null) as
+    | {
+        dryRunResult?: unknown;
+        canExecute?: unknown;
+        selectedSourceDate?: unknown;
+        selectedSourceDatePolicy?: unknown;
+        canExecuteReasons?: unknown;
+        resolvedDates?: { sourceDate?: unknown } | null;
+      }
+    | null;
+  const selectedSourceDate = trimOrNull(payload?.selectedSourceDate) ?? trimOrNull(payload?.resolvedDates?.sourceDate);
+  const selectedSourceDatePolicy = trimOrNull(payload?.selectedSourceDatePolicy);
+  const canExecute = toBooleanOrNull(payload?.canExecute);
+  const failureReason = extractFirstReason(log) ?? row.error_message;
+  const hasInferenceBlockReason =
+    Array.isArray(payload?.canExecuteReasons) &&
+    (payload!.canExecuteReasons as unknown[]).some((item) => trimOrNull(item) === INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON);
+  const blockedReason =
+    hasInferenceBlockReason || failureReason === INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON
+      ? INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU
+      : canExecute === false
+        ? failureReason
+        : null;
+  return {
+    runId: row.id,
+    runType: row.run_type,
+    status: row.status,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    errorMessage: row.error_message,
+    dryRunResult: trimOrNull(payload?.dryRunResult),
+    canExecute,
+    selectedSourceDate,
+    selectedSourceDatePolicy,
+    failureReason,
+    blockedReason,
+    logJson: row.log_json,
   };
 }
 
@@ -3345,11 +3502,21 @@ export async function requestTrainingPeaksActionExecution(
   }
 
   if (action.status !== "approved") {
-    return { kind: "blocked", action, reason: "Action is not approved." };
+    return {
+      kind: "blocked",
+      action,
+      reason: "Action is not approved.",
+      latestRunContext: await getTrainingPeaksActionLatestRunContext(action.id),
+    };
   }
 
   if (action.executionStatus !== "dry_run_completed") {
-    return { kind: "blocked", action, reason: "Dry-run is not completed yet." };
+    return {
+      kind: "blocked",
+      action,
+      reason: "Dry-run is not completed yet.",
+      latestRunContext: await getTrainingPeaksActionLatestRunContext(action.id),
+    };
   }
 
   const dryRunRunQuery = action.lastRunId
@@ -3379,7 +3546,12 @@ export async function requestTrainingPeaksActionExecution(
   }
 
   if (!dryRunRun) {
-    return { kind: "blocked", action, reason: "Trusted dry-run run is missing." };
+    return {
+      kind: "blocked",
+      action,
+      reason: "Trusted dry-run run is missing.",
+      latestRunContext: await getTrainingPeaksActionLatestRunContext(action.id),
+    };
   }
 
   const dryRunValidation = validateDryRunLogReadiness(
@@ -3387,7 +3559,12 @@ export async function requestTrainingPeaksActionExecution(
     action.parsedPayload
   );
   if (!dryRunValidation.ok) {
-    return { kind: "blocked", action, reason: dryRunValidation.reason };
+    return {
+      kind: "blocked",
+      action,
+      reason: dryRunValidation.reason,
+      latestRunContext: await getTrainingPeaksActionLatestRunContext(action.id),
+    };
   }
 
   const nowIso = new Date().toISOString();
@@ -3434,7 +3611,143 @@ export async function requestTrainingPeaksActionExecution(
   ) {
     return { kind: "final_state", action: latest };
   }
-  return { kind: "blocked", action: latest, reason: "Action state changed. Please refresh and try again." };
+  return {
+    kind: "blocked",
+    action: latest,
+    reason: "Action state changed. Please refresh and try again.",
+    latestRunContext: await getTrainingPeaksActionLatestRunContext(latest.id),
+  };
+}
+
+function extractIsoDateFromLogJson(logJson: unknown, key: "sourceDate" | "targetDate"): string | null {
+  if (!logJson || typeof logJson !== "object") {
+    return null;
+  }
+  const resolvedDates = (logJson as { resolvedDates?: { sourceDate?: unknown; targetDate?: unknown } | null })
+    .resolvedDates;
+  return trimOrNull(key === "sourceDate" ? resolvedDates?.sourceDate : resolvedDates?.targetDate);
+}
+
+function isBlockedOnlyByInferredSource(logJson: unknown): boolean {
+  if (!logJson || typeof logJson !== "object") {
+    return false;
+  }
+  const canExecuteReasons = (logJson as { canExecuteReasons?: unknown }).canExecuteReasons;
+  if (!Array.isArray(canExecuteReasons) || canExecuteReasons.length === 0) {
+    return false;
+  }
+  const normalizedReasons = canExecuteReasons
+    .map((item) => trimOrNull(item))
+    .filter((item): item is string => Boolean(item));
+  if (normalizedReasons.length === 0) {
+    return false;
+  }
+  return normalizedReasons.every(
+    (reason) =>
+      reason === INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON ||
+      reason === INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU
+  );
+}
+
+function isDryRunEligibleForCoachSourceDateConfirmation(
+  dryRun: TrainingPeaksActionRunContextSummary | null
+): dryRun is TrainingPeaksActionRunContextSummary {
+  if (!dryRun) {
+    return false;
+  }
+  if (dryRun.runType !== "dry_run" || dryRun.status !== "completed") {
+    return false;
+  }
+  if (dryRun.dryRunResult !== "candidate_found" || dryRun.canExecute !== false) {
+    return false;
+  }
+  if (!dryRun.selectedSourceDate) {
+    return false;
+  }
+  if (!extractIsoDateFromLogJson(dryRun.logJson, "targetDate")) {
+    return false;
+  }
+  if (!dryRun.selectedSourceDatePolicy || isExecutableMoveSourcePolicy(dryRun.selectedSourceDatePolicy)) {
+    return false;
+  }
+  return isBlockedOnlyByInferredSource(dryRun.logJson);
+}
+
+function buildActionParsedPayloadWithCoachSourceConfirmation(input: {
+  parsedPayload: unknown;
+  confirmedSourceDate: string;
+  confirmedAtIso: string;
+  confirmedByUserId: string | null;
+}): Record<string, unknown> {
+  const basePayload =
+    input.parsedPayload && typeof input.parsedPayload === "object" && !Array.isArray(input.parsedPayload)
+      ? (input.parsedPayload as Record<string, unknown>)
+      : {};
+  return {
+    ...basePayload,
+    coach_confirmed_source_date: input.confirmedSourceDate,
+    coach_confirmed_source_date_at: input.confirmedAtIso,
+    coach_confirmed_source_date_by: input.confirmedByUserId,
+    source_date_policy_override: "coach_confirmed_source_date",
+  };
+}
+
+export async function confirmTrainingPeaksActionSourceDate(
+  input: ConfirmTrainingPeaksActionSourceDateInput
+): Promise<ConfirmTrainingPeaksActionSourceDateResult> {
+  const context = await getTrainingPeaksActionLatestRunContext(input.actionId);
+  if (!context) {
+    return { kind: "not_found" };
+  }
+
+  const latestDryRun = context.latestDryRun;
+  if (!isDryRunEligibleForCoachSourceDateConfirmation(latestDryRun)) {
+    const blockedReason =
+      context.latestDryRun && typeof context.latestDryRun.blockedReason === "string"
+        ? context.latestDryRun.blockedReason
+        : "Latest dry-run is not eligible for source date confirmation.";
+    return {
+      kind: "blocked",
+      action: context.action,
+      reason: blockedReason,
+      latestDryRun: context.latestDryRun,
+    };
+  }
+
+  const confirmedSourceDate = latestDryRun.selectedSourceDate!;
+  const nowIso = new Date().toISOString();
+  const parsedPayload = buildActionParsedPayloadWithCoachSourceConfirmation({
+    parsedPayload: context.action.parsedPayload,
+    confirmedSourceDate,
+    confirmedAtIso: nowIso,
+    confirmedByUserId: input.confirmedByUserId ?? null,
+  });
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_actions")
+    .update({
+      parsed_payload: parsedPayload,
+      updated_at: nowIso,
+    })
+    .eq("id", input.actionId)
+    .eq("action_type", "move_workout")
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to confirm source date for TrainingPeaks action ${input.actionId}: ${error.message}`);
+  }
+  if (!data) {
+    return { kind: "not_found" };
+  }
+
+  return {
+    kind: "confirmed",
+    action: mapTrainingPeaksActionRow(data as TrainingPeaksActionRow),
+    confirmedSourceDate,
+    latestDryRun,
+  };
 }
 
 export type CancelTrainingPeaksActionExecutionResultExtended =
@@ -3663,6 +3976,112 @@ export async function listLatestTrainingPeaksActionRunsByActionIds(
   }
 
   return latestByActionId;
+}
+
+async function getLatestTrainingPeaksActionRunSummary(
+  actionId: string,
+  runType: TrainingPeaksActionRunType
+): Promise<TrainingPeaksActionRunContextSummary | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_action_runs")
+    .select("*")
+    .eq("action_id", actionId)
+    .eq("run_type", runType)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    throw new Error(
+      `Failed to load latest ${runType} TrainingPeaks action run for action ${actionId}: ${error.message}`
+    );
+  }
+  if (!data) {
+    return null;
+  }
+  return mapActionRunContextSummary(data as TrainingPeaksActionRunRow);
+}
+
+export async function getTrainingPeaksActionLatestRunContext(
+  actionId: string
+): Promise<TrainingPeaksActionLatestRunContext | null> {
+  const action = await getTrainingPeaksActionByIdInternal(actionId);
+  if (!action) {
+    return null;
+  }
+  const [latestDryRun, latestExecute] = await Promise.all([
+    getLatestTrainingPeaksActionRunSummary(actionId, "dry_run"),
+    getLatestTrainingPeaksActionRunSummary(actionId, "real"),
+  ]);
+  return {
+    action,
+    latestDryRun,
+    latestExecute,
+    latestRelevant: latestExecute ?? latestDryRun,
+  };
+}
+
+export async function listTrainingPeaksActionLatestRunContexts(
+  actionIds: string[]
+): Promise<Map<string, TrainingPeaksActionLatestRunContext>> {
+  const normalizedActionIds = Array.from(new Set(actionIds.map((id) => id.trim()).filter(Boolean)));
+  if (normalizedActionIds.length === 0) {
+    return new Map();
+  }
+
+  const supabase = createSupabaseServerClient();
+  const [actionsRows, runsRows] = await Promise.all([
+    supabase
+      .from("trainingpeaks_actions")
+      .select("*")
+      .in("id", normalizedActionIds),
+    supabase
+      .from("trainingpeaks_action_runs")
+      .select("*")
+      .in("action_id", normalizedActionIds)
+      .order("created_at", { ascending: false }),
+  ]);
+
+  if (actionsRows.error) {
+    throw new Error(`Failed to load TrainingPeaks actions for run contexts: ${actionsRows.error.message}`);
+  }
+  if (runsRows.error) {
+    throw new Error(`Failed to load TrainingPeaks action runs for run contexts: ${runsRows.error.message}`);
+  }
+
+  const actionsById = new Map<string, TrainingPeaksAction>();
+  for (const row of (actionsRows.data as TrainingPeaksActionRow[] | null) ?? []) {
+    actionsById.set(row.id, mapTrainingPeaksActionRow(row));
+  }
+
+  const latestDryRunByActionId = new Map<string, TrainingPeaksActionRunContextSummary>();
+  const latestExecuteByActionId = new Map<string, TrainingPeaksActionRunContextSummary>();
+  for (const row of (runsRows.data as TrainingPeaksActionRunRow[] | null) ?? []) {
+    if (row.run_type === "dry_run" && !latestDryRunByActionId.has(row.action_id)) {
+      latestDryRunByActionId.set(row.action_id, mapActionRunContextSummary(row));
+      continue;
+    }
+    if (row.run_type === "real" && !latestExecuteByActionId.has(row.action_id)) {
+      latestExecuteByActionId.set(row.action_id, mapActionRunContextSummary(row));
+    }
+  }
+
+  const contexts = new Map<string, TrainingPeaksActionLatestRunContext>();
+  for (const actionId of normalizedActionIds) {
+    const action = actionsById.get(actionId);
+    if (!action) {
+      continue;
+    }
+    const latestDryRun = latestDryRunByActionId.get(actionId) ?? null;
+    const latestExecute = latestExecuteByActionId.get(actionId) ?? null;
+    contexts.set(actionId, {
+      action,
+      latestDryRun,
+      latestExecute,
+      latestRelevant: latestExecute ?? latestDryRun,
+    });
+  }
+  return contexts;
 }
 
 export async function completeTrainingPeaksActionDryRun(
