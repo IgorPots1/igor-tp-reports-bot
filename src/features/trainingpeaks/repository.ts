@@ -3643,6 +3643,8 @@ export async function requestTrainingPeaksActionExecution(
   };
 }
 
+const TRAININGPEAKS_DRY_RUN_RECHECK_SOURCE_EXECUTION_STATUSES = ["dry_run_completed", "failed"] as const;
+
 function isTrainingPeaksActionDryRunRecheckEligible(
   action: TrainingPeaksAction,
   latestRunContext: TrainingPeaksActionLatestRunContext | null
@@ -3653,11 +3655,18 @@ function isTrainingPeaksActionDryRunRecheckEligible(
   if (action.executionStatus === "running_local" || action.executionStatus === "dry_run_running") {
     return { ok: false, reason: "Заявка уже выполняется локальным runner." };
   }
-  if (action.claimedBy || action.claimedAt) {
-    return { ok: false, reason: "Заявка уже занята runner. Обновите список позже." };
-  }
   if (action.status === "rejected") {
     return { ok: false, reason: "Заявка отменена, повторная проверка недоступна." };
+  }
+  if (action.status !== "approved") {
+    return { ok: false, reason: "Заявка не одобрена, повторная проверка недоступна." };
+  }
+  if (
+    !TRAININGPEAKS_DRY_RUN_RECHECK_SOURCE_EXECUTION_STATUSES.includes(
+      action.executionStatus as (typeof TRAININGPEAKS_DRY_RUN_RECHECK_SOURCE_EXECUTION_STATUSES)[number]
+    )
+  ) {
+    return { ok: false, reason: "Заявка не в состоянии завершённого dry-run для повторной проверки." };
   }
   if (action.executionStatus === "completed") {
     return { ok: false, reason: "Заявка уже успешно выполнена." };
@@ -3707,6 +3716,28 @@ export async function requestTrainingPeaksActionDryRunRecheck(
 
   const supabase = createSupabaseServerClient();
   const nowIso = new Date().toISOString();
+  // #region agent log
+  fetch("http://127.0.0.1:7521/ingest/adcbf755-c5c9-4a78-9e7d-4a590fbeae5c", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "d02278" },
+    body: JSON.stringify({
+      sessionId: "d02278",
+      runId: "pre-fix",
+      hypothesisId: "A",
+      location: "repository.ts:requestTrainingPeaksActionDryRunRecheck:before-update",
+      message: "recheck before requeue update",
+      data: {
+        actionId: action.id,
+        status: action.status,
+        executionStatus: action.executionStatus,
+        claimedBySet: Boolean(action.claimedBy),
+        claimedAtSet: Boolean(action.claimedAt),
+        lastRunId: action.lastRunId,
+      },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+  // #endregion
   const { data: requeued, error } = await supabase
     .from("trainingpeaks_actions")
     .update({
@@ -3723,16 +3754,34 @@ export async function requestTrainingPeaksActionDryRunRecheck(
     })
     .eq("id", action.id)
     .eq("action_type", "move_workout")
-    .eq("status", action.status)
-    .eq("execution_status", action.executionStatus)
-    .is("claimed_by", null)
-    .is("claimed_at", null)
+    .eq("status", "approved")
+    .in("execution_status", [...TRAININGPEAKS_DRY_RUN_RECHECK_SOURCE_EXECUTION_STATUSES])
     .select("*")
     .maybeSingle();
 
   if (error) {
     throw new Error(`Failed to requeue TrainingPeaks action dry-run ${action.id}: ${error.message}`);
   }
+
+  // #region agent log
+  fetch("http://127.0.0.1:7521/ingest/adcbf755-c5c9-4a78-9e7d-4a590fbeae5c", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "d02278" },
+    body: JSON.stringify({
+      sessionId: "d02278",
+      runId: "pre-fix",
+      hypothesisId: "A",
+      location: "repository.ts:requestTrainingPeaksActionDryRunRecheck:after-update",
+      message: "recheck requeue update result",
+      data: {
+        actionId: action.id,
+        requeued: Boolean(requeued),
+        nextExecutionStatus: requeued ? mapTrainingPeaksActionRow(requeued as TrainingPeaksActionRow).executionStatus : null,
+      },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+  // #endregion
 
   if (requeued) {
     return {

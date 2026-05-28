@@ -4175,9 +4175,6 @@ function shouldShowActionDryRunRecheckButton(
   if (action.executionStatus === "completed" || action.executionStatus === "running_local" || action.executionStatus === "dry_run_running") {
     return false;
   }
-  if (action.claimedBy || action.claimedAt) {
-    return false;
-  }
   const latestDryRun = action.latestRunContext?.latestDryRun ?? null;
   if (!latestDryRun || latestDryRun.status !== "completed") {
     return false;
