@@ -1029,6 +1029,15 @@ async function finalizeTrainingPeaksCoachCase(input: {
       input.actorTelegramChatId ?? null
     );
     if (!updatedCase) {
+      const latestCase = await getTrainingPeaksCoachCaseById(coachCase.id);
+      if (latestCase?.status === "resolved" || latestCase?.status === "dismissed") {
+        return {
+          kind: latestCase.status,
+          caseId: latestCase.id,
+          shortId: latestCase.id.slice(0, 8),
+          status: latestCase.status,
+        };
+      }
       return { kind: "error" };
     }
 

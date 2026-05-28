@@ -137,7 +137,7 @@ import type {
 
 const COACH_ONLY_MESSAGE = "⛔ Эта команда доступна только тренеру.";
 const TP_WEEKLY_DISABLED_MESSAGE =
-  "⚙️ Запуск TrainingPeaks workflow из Telegram отключён. TrainingPeaks остаётся только в read-only режиме.";
+  "⚙️ /tp_weekly отключён. Для отчётов используй «📊 Отчёты», а запуск workflow оставлен через явные preview/confirm-кнопки.";
 const TP_UNKNOWN_COMMAND_MESSAGE = "Не поняла команду. Используй кнопки внизу или отправь /start.";
 const TELEGRAM_MESSAGE_LIMIT = 4000;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -196,7 +196,6 @@ const TP_REPLY_BUTTON_MENU = "🏠 Меню";
 const TP_REPLY_BUTTON_STUDENTS = "👥 Ученики";
 const TP_REPLY_BUTTON_ADD = "➕ Добавить";
 const TP_REPLY_BUTTON_REPORTS = "📊 Отчёты";
-const TP_REPLY_BUTTON_WEEK_LEGACY = "▶️ Неделя";
 const TP_REPLY_BUTTON_RACES = "🏁 Забеги";
 const TP_REPLY_BUTTON_JOBS = "🧾 Задачи";
 const TP_REPLY_BUTTON_CASES = "🧩 Кейсы";
@@ -208,7 +207,6 @@ const TP_REPLY_BUTTON_RACES_NEXT_WEEK = "🗓 Следующая неделя";
 const TP_REPLY_BUTTON_RACES_7_DAYS = "7 дней";
 const TP_REPLY_BUTTON_RACES_30_DAYS = "30 дней";
 const TP_REPLY_BUTTON_RACES_TO_AUGUST = "До 1 августа";
-const TP_REPLY_BUTTON_RACES_CUSTOM = "Свой период";
 const TP_REPLY_BUTTON_JOBS_REFRESH = "🔄 Обновить задачи";
 const TP_REPLY_BUTTON_CANCEL_JOB = "❌ Отменить задачу";
 const TP_REPLY_BUTTON_REPORT = "📄 Отчёт";
@@ -372,6 +370,7 @@ type ParsedTrainingPeaksCallback =
   | { kind: "races_7_days" }
   | { kind: "races_30_days" }
   | { kind: "races_to_august" }
+  | { kind: "races_custom" }
   | { kind: "jobs" }
   | { kind: "cases_recent" }
   | { kind: "week_run_confirm" }
@@ -445,7 +444,6 @@ type TrainingPeaksReplyKeyboardAction =
   | "races_7_days"
   | "races_30_days"
   | "races_to_august"
-  | "races_custom"
   | "jobs_refresh"
   | "cancel_job"
   | "student_report"
@@ -2824,7 +2822,7 @@ function getTrainingPeaksReplyKeyboardAction(text: string): TrainingPeaksReplyKe
     return "add_student_help";
   }
 
-  if (text === TP_REPLY_BUTTON_REPORTS || text === TP_REPLY_BUTTON_WEEK_LEGACY) {
+  if (text === TP_REPLY_BUTTON_REPORTS) {
     return "reports_menu";
   }
 
@@ -2870,10 +2868,6 @@ function getTrainingPeaksReplyKeyboardAction(text: string): TrainingPeaksReplyKe
 
   if (text === TP_REPLY_BUTTON_RACES_TO_AUGUST) {
     return "races_to_august";
-  }
-
-  if (text === TP_REPLY_BUTTON_RACES_CUSTOM) {
-    return "races_custom";
   }
 
   if (text === TP_REPLY_BUTTON_JOBS_REFRESH) {
@@ -2958,6 +2952,10 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
 
   if (data === TP_CALLBACK_RACES_TO_AUGUST) {
     return { kind: "races_to_august" };
+  }
+
+  if (data === `${TP_CALLBACK_RACES_MENU}:custom`) {
+    return { kind: "races_custom" };
   }
 
   if (data === TP_CALLBACK_JOBS) {
@@ -3488,6 +3486,7 @@ function getRacesMenuMarkup(): TelegramInlineKeyboardMarkup {
       createMenuButton("30 дней", TP_CALLBACK_RACES_30_DAYS),
     ],
     [createMenuButton("До 1 августа", TP_CALLBACK_RACES_TO_AUGUST)],
+    [createMenuButton("Свой период", `${TP_CALLBACK_RACES_MENU}:custom`)],
     [createMenuButton("⬅️ Назад", TP_CALLBACK_MAIN_MENU)],
   ]);
 }
@@ -4559,6 +4558,23 @@ function shouldShowActionDryRunRecheckButton(
   return false;
 }
 
+function shouldShowActionExecuteButton(
+  action: NonNullable<Awaited<ReturnType<typeof getTrainingPeaksActionWithStudentAndLatestRunContextById>>>
+): boolean {
+  if (action.actionType !== "move_workout" || action.status !== "approved") {
+    return false;
+  }
+  if (action.executionStatus !== "dry_run_completed") {
+    return false;
+  }
+  const latestDryRun = action.latestRunContext?.latestDryRun ?? null;
+  return (
+    latestDryRun?.status === "completed" &&
+    latestDryRun.dryRunResult === "candidate_found" &&
+    latestDryRun.canExecute === true
+  );
+}
+
 function formatActionDetailFreshnessLabel(date = new Date()): string {
   return `Проверено: ${date.toLocaleTimeString("ru-RU", {
     timeZone: "Europe/Belgrade",
@@ -4913,6 +4929,12 @@ function getTpActionDetailMarkup(
   if (shouldShowActionDryRunRecheckButton(action)) {
     rows.push([
       createMenuButton("🔁 Повторить проверку", `${TP_CALLBACK_ACTION_RECHECK_DRY_RUN_PREFIX}${action.id}`),
+    ]);
+  }
+
+  if (shouldShowActionExecuteButton(action)) {
+    rows.push([
+      createMenuButton("✅ Выполнить", `${TP_CALLBACK_ACTION_EXECUTE_PREFIX}${action.id}`),
     ]);
   }
 
@@ -6368,16 +6390,6 @@ export async function handleTrainingPeaksTelegramReplyKeyboardMessage(
       return "handled";
     }
 
-    if (action === "races_custom") {
-      await showTrainingPeaksMenuScreen(
-        parsedMessage,
-        [getRacesMenuText(), "", getRaceScanManualUsageMessage()].join("\n"),
-        getRacesMenuMarkup()
-      );
-      setTrainingPeaksScreenContext(parsedMessage.chatId, "races");
-      return "handled";
-    }
-
     if (action === "jobs_refresh") {
       await showTrainingPeaksJobsMenu(parsedMessage);
       return "handled";
@@ -6954,6 +6966,16 @@ async function handleTrainingPeaksRacesMenu(parsedMessage: ParsedTelegramUpdate)
   await showTrainingPeaksMenuScreen(
     parsedMessage,
     [getRacesMenuText(), "", getRaceScanManualUsageMessage()].join("\n"),
+    getRacesMenuMarkup()
+  );
+}
+
+async function handleTrainingPeaksRacesCustomPeriod(parsedMessage: ParsedTelegramCallbackUpdate): Promise<void> {
+  setTrainingPeaksScreenContext(parsedMessage.chatId, "races");
+  await editTrainingPeaksMenuMessage(
+    parsedMessage.chatId,
+    parsedMessage.messageId,
+    [getRacesMenuText(), "", "Для своего периода пока используй команду:", "/tp_races YYYY-MM-DD YYYY-MM-DD"].join("\n"),
     getRacesMenuMarkup()
   );
 }
@@ -8214,6 +8236,11 @@ export async function handleTrainingPeaksTelegramCallback(
       await requestTrainingPeaksRaceScanAndReply(parsedMessage, getRacesToAugustPeriod(), {
         callbackMessageId: parsedMessage.messageId,
       });
+      return "handled";
+    }
+
+    if (callback.kind === "races_custom") {
+      await handleTrainingPeaksRacesCustomPeriod(parsedMessage);
       return "handled";
     }
 

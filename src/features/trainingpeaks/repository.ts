@@ -3716,28 +3716,6 @@ export async function requestTrainingPeaksActionDryRunRecheck(
 
   const supabase = createSupabaseServerClient();
   const nowIso = new Date().toISOString();
-  // #region agent log
-  fetch("http://127.0.0.1:7521/ingest/adcbf755-c5c9-4a78-9e7d-4a590fbeae5c", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "d02278" },
-    body: JSON.stringify({
-      sessionId: "d02278",
-      runId: "pre-fix",
-      hypothesisId: "A",
-      location: "repository.ts:requestTrainingPeaksActionDryRunRecheck:before-update",
-      message: "recheck before requeue update",
-      data: {
-        actionId: action.id,
-        status: action.status,
-        executionStatus: action.executionStatus,
-        claimedBySet: Boolean(action.claimedBy),
-        claimedAtSet: Boolean(action.claimedAt),
-        lastRunId: action.lastRunId,
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
   const { data: requeued, error } = await supabase
     .from("trainingpeaks_actions")
     .update({
@@ -3762,26 +3740,6 @@ export async function requestTrainingPeaksActionDryRunRecheck(
   if (error) {
     throw new Error(`Failed to requeue TrainingPeaks action dry-run ${action.id}: ${error.message}`);
   }
-
-  // #region agent log
-  fetch("http://127.0.0.1:7521/ingest/adcbf755-c5c9-4a78-9e7d-4a590fbeae5c", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "d02278" },
-    body: JSON.stringify({
-      sessionId: "d02278",
-      runId: "pre-fix",
-      hypothesisId: "A",
-      location: "repository.ts:requestTrainingPeaksActionDryRunRecheck:after-update",
-      message: "recheck requeue update result",
-      data: {
-        actionId: action.id,
-        requeued: Boolean(requeued),
-        nextExecutionStatus: requeued ? mapTrainingPeaksActionRow(requeued as TrainingPeaksActionRow).executionStatus : null,
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
 
   if (requeued) {
     return {
@@ -6052,6 +6010,7 @@ export async function updateTrainingPeaksCoachCaseStatus(
     .from("trainingpeaks_coach_cases")
     .update(updatePayload)
     .eq("id", caseId)
+    .in("status", ["logged", "open", "needs_review"])
     .select("id, student_id, case_kind, status, created_at, updated_at")
     .maybeSingle();
 
