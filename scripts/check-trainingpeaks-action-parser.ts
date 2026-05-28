@@ -81,6 +81,34 @@ const expectRejectCases: ParseCase[] = [
   { text: "сегодня не успеваю, можно завтра?", expectOk: false },
   { text: "перенеси тренировку", expectOk: false },
   { text: "завтра или в пятницу", expectOk: false },
+  {
+    text: "Отлично! :) спасибо большое! Как сделаю завтра интервал отпишу",
+    expectOk: false,
+    messageDateUnix: Math.floor(Date.parse("2026-05-25T09:00:00+02:00") / 1000),
+  },
+  {
+    text: "Сделаю завтра интервал и отпишусь",
+    expectOk: false,
+    messageDateUnix: Math.floor(Date.parse("2026-05-25T09:00:00+02:00") / 1000),
+  },
+  {
+    text: "Завтра сделаю тренировку, потом напишу",
+    expectOk: false,
+    messageDateUnix: Math.floor(Date.parse("2026-05-25T09:00:00+02:00") / 1000),
+  },
+  { text: "После тренировки отпишу как прошло", expectOk: false },
+  {
+    text: "Как пробегу интервалы завтра — напишу результат",
+    expectOk: false,
+    messageDateUnix: Math.floor(Date.parse("2026-05-25T09:00:00+02:00") / 1000),
+  },
+  { text: "Спасибо! Как сделаю — отпишусь", expectOk: false },
+  {
+    text: "Буду делать интервалы завтра, отпишу потом",
+    expectOk: false,
+    messageDateUnix: Math.floor(Date.parse("2026-05-25T09:00:00+02:00") / 1000),
+  },
+  { text: "Завтра сделаю и сообщу", expectOk: false },
 ];
 
 const expectNeedsReviewCases: ParseCase[] = [

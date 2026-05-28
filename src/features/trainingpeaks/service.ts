@@ -1111,6 +1111,15 @@ const TP_MOVE_WORKOUT_BLOCKED_CASUAL_PATTERNS: RegExp[] = [
   /\bсегодня\s+не\s+получится\b/,
   /\bу\s+меня\s+болит\s+ног/,
 ];
+const TP_MOVE_WORKOUT_FUTURE_REPORT_PROMISE_PATTERNS: RegExp[] = [
+  /(?:^|\s)как\s+(?:сделаю|пробегу)(?:\s|$).*?(?:^|\s)(?:отпишу(?:сь)?|напишу|сообщу)(?:\s|$)/u,
+  /(?:^|\s)сделаю(?:\s|$).*?(?:^|\s)и\s+отпишусь(?:\s|$)/u,
+  /(?:^|\s)сделаю(?:\s|$).*?(?:^|\s)(?:отпишу(?:сь)?|напишу|сообщу)(?:\s|$)/u,
+  /(?:^|\s)после\s+(?:тренировки|пробежки)(?:\s|$).*?(?:^|\s)(?:отпишу(?:сь)?|напишу|сообщу)(?:\s|$)/u,
+  /(?:^|\s)потом\s+(?:отпишу(?:сь)?|напишу|сообщу)(?:\s|$)/u,
+  /(?:^|\s)буду\s+делать(?:\s|$).*?(?:^|\s)(?:отпишу(?:сь)?|напишу|сообщу)(?:\s|$)/u,
+  /(?:^|\s)спасибо(?:\s|$).*?(?:^|\s)(?:отпишу(?:сь)?|напишу|сообщу)(?:\s|$)/u,
+];
 const TP_RUN_WEEK_USAGE_MESSAGE = [
   "Напиши так:",
   "/tp_run_week last",
@@ -1491,7 +1500,14 @@ function logIgnoredTrainingPeaksMoveParser(kind: string, rawText: string): void 
 }
 
 function matchesCasualNonMoveTrainingChat(normalized: string): boolean {
-  return TP_MOVE_WORKOUT_BLOCKED_CASUAL_PATTERNS.some((pattern) => pattern.test(normalized));
+  return (
+    TP_MOVE_WORKOUT_BLOCKED_CASUAL_PATTERNS.some((pattern) => pattern.test(normalized)) ||
+    matchesFutureReportPromise(normalized)
+  );
+}
+
+function matchesFutureReportPromise(normalized: string): boolean {
+  return TP_MOVE_WORKOUT_FUTURE_REPORT_PROMISE_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
 function hasStrictMoveVerb(normalized: string): boolean {
