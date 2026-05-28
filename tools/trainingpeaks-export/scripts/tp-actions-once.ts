@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import { chromium } from "playwright";
 
@@ -569,6 +570,11 @@ type DryRunEvaluation = {
     selectedSourceDateCandidateCount: number;
     globalCandidateCount: number;
     sourceDateBucketCounts: Record<string, number>;
+    descriptorType?: string | null;
+    plausibleSelectedSourceDateCandidateCount?: number;
+    safeSelectedSourceDateCandidateCount?: number;
+    ignoredSameDateCompetitorCount?: number;
+    topPlausibleMargin?: number | null;
   };
   selectedSourceDatePolicy?: string;
   selectedSourceDate?: string | null;
@@ -593,6 +599,218 @@ type RawWorkoutCandidate = {
   fromFallback: boolean;
   rawScore: number;
 };
+
+type MoveRequestRankingProfile = {
+  descriptorType: string | null;
+  isTempoRunRequest: boolean;
+};
+
+type RankedSameDateCandidate = {
+  candidate: RawWorkoutCandidate;
+  effectiveScore: number;
+  scoreReasons: string[];
+  isRunCard: boolean;
+  strongRunTempoMatch: boolean;
+  clearlyNonRunForTempoRequest: boolean;
+  plausibleSameDateCompetitor: boolean;
+  ignoredAsSameDateCompetitor: boolean;
+  safeCandidate: boolean;
+};
+
+type SelectedSourceDateMoveRanking = {
+  descriptorType: string | null;
+  isTempoRunRequest: boolean;
+  rankedCandidates: RankedSameDateCandidate[];
+  topCandidate: RankedSameDateCandidate | null;
+  plausibleCandidateCount: number;
+  safeCandidateCount: number;
+  ignoredSameDateCompetitorCount: number;
+  confidence: number;
+  margin: number | null;
+  helpfulAmbiguityReason: string | null;
+};
+
+const RUN_CARD_PATTERN = /(^|\b)(run|running)(\b|$)|бег|пробеж/iu;
+const RUN_CLASS_HINT_PATTERN = /(^|\b)run(\b|$)/iu;
+const TEMPO_LIKE_PATTERN =
+  /темп|tempo|threshold|пано|интервал|interval|\/км|км\/|мин\/км|\b\d+\s*[xх]\s*\d+\b|\b\d+\s*мин\b/iu;
+const NON_RUN_CROSS_TRAINING_PATTERN =
+  /pilates|пилат|strength|силов|yoga|йог|mobility|мобил|swim|плав|bike|cycling|cycle|ride|velo|вел|walk|ходьб|other/iu;
+const OTHER_CLASS_HINT_PATTERN = /(^|\b)other(\b|$)/iu;
+
+function normalizeMoveRankingText(value: string | null | undefined): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function buildMoveRequestRankingProfile(parsedPayload: unknown): MoveRequestRankingProfile {
+  const payload = parseMoveWorkoutPayload(parsedPayload);
+  const descriptorType = normalizeMoveRankingText(payload?.workoutDescriptor?.type) || null;
+  return {
+    descriptorType,
+    isTempoRunRequest: descriptorType === "tempo" || descriptorType === "run",
+  };
+}
+
+function buildSameDateCandidateDebugKey(candidate: RawWorkoutCandidate): string {
+  return [
+    candidate.workoutId ?? "na",
+    candidate.dateIso ?? "na",
+    candidate.title ?? "na",
+    candidate.type ?? "na",
+    candidate.startTimeLocal ?? "na",
+  ].join("|");
+}
+
+export function evaluateSelectedSourceDateMoveRanking(input: {
+  parsedPayload: unknown;
+  selectedSourceDate: string;
+  selectedSourceDatePolicy?: string | null;
+  candidates: RawWorkoutCandidate[];
+}): SelectedSourceDateMoveRanking {
+  const profile = buildMoveRequestRankingProfile(input.parsedPayload);
+  const sourceDateExplicitEnough = moveSourcePolicy.isMoveSourceExplicitEnough({
+    selectedSourceDatePolicy: input.selectedSourceDatePolicy ?? "unresolved",
+    parsedPayload: input.parsedPayload,
+  });
+
+  const baseRanked = input.candidates.map((candidate) => {
+    const scoreReasons = ["positive: source date exact"];
+    let effectiveScore = candidate.rawScore;
+    const combinedText = [
+      candidate.title,
+      candidate.type,
+      candidate.classHint,
+      candidate.rawTextSnippet,
+    ]
+      .map((value) => normalizeMoveRankingText(value))
+      .filter(Boolean)
+      .join(" ");
+    const normalizedType = normalizeMoveRankingText(candidate.type);
+    const normalizedClassHint = normalizeMoveRankingText(candidate.classHint);
+    const isRunCard = normalizedType === "run" || RUN_CARD_PATTERN.test(combinedText) || RUN_CLASS_HINT_PATTERN.test(normalizedClassHint);
+    const tempoLikeTitleOrBody = TEMPO_LIKE_PATTERN.test(combinedText);
+    const nonRunCrossTraining = NON_RUN_CROSS_TRAINING_PATTERN.test(combinedText);
+    const otherClassHint = OTHER_CLASS_HINT_PATTERN.test(normalizedClassHint);
+    const distanceZero = candidate.plannedDistance === 0;
+
+    let strongRunTempoMatch = false;
+    let clearlyNonRunForTempoRequest = false;
+
+    if (profile.isTempoRunRequest) {
+      if (normalizedType === "run") {
+        effectiveScore += 0.18;
+        strongRunTempoMatch = true;
+        scoreReasons.push("positive: run card for tempo request");
+      }
+      if (RUN_CLASS_HINT_PATTERN.test(normalizedClassHint)) {
+        effectiveScore += 0.08;
+        strongRunTempoMatch = true;
+        scoreReasons.push("positive: class hint suggests Run");
+      }
+      if (tempoLikeTitleOrBody) {
+        effectiveScore += 0.14;
+        strongRunTempoMatch = true;
+        scoreReasons.push("positive: tempo-like title/body");
+      }
+      if (typeof candidate.plannedDistance === "number" && candidate.plannedDistance > 0) {
+        effectiveScore += 0.04;
+        scoreReasons.push("positive: running distance present");
+      }
+      if (nonRunCrossTraining) {
+        effectiveScore -= 0.35;
+        clearlyNonRunForTempoRequest = true;
+        scoreReasons.push("negative: Pilates/Other is incompatible with tempo request");
+      }
+      if (otherClassHint) {
+        effectiveScore -= 0.15;
+        clearlyNonRunForTempoRequest = true;
+        scoreReasons.push("negative: class hint Other is incompatible with tempo request");
+      }
+      if (distanceZero) {
+        effectiveScore -= 0.12;
+        scoreReasons.push("negative: planned distance is zero for tempo request");
+      }
+      if (!strongRunTempoMatch && isRunCard) {
+        scoreReasons.push("positive: run-like card without explicit tempo markers");
+      }
+    }
+
+    return {
+      candidate,
+      effectiveScore: clampConfidence(effectiveScore),
+      scoreReasons,
+      isRunCard,
+      strongRunTempoMatch,
+      clearlyNonRunForTempoRequest,
+      plausibleSameDateCompetitor: false,
+      ignoredAsSameDateCompetitor: false,
+      safeCandidate: false,
+    } satisfies RankedSameDateCandidate;
+  });
+
+  const rankedCandidates = [...baseRanked].sort((left, right) => right.effectiveScore - left.effectiveScore);
+  const topCandidate = rankedCandidates[0] ?? null;
+  const topScore = topCandidate?.effectiveScore ?? 0;
+  const plausibleScoreFloor = profile.isTempoRunRequest ? Math.max(0.72, topScore - 0.14) : Math.max(0.6, topScore - 0.1);
+
+  for (const entry of rankedCandidates) {
+    const plausibleSameDateCompetitor = profile.isTempoRunRequest
+      ? !entry.clearlyNonRunForTempoRequest &&
+        entry.effectiveScore >= plausibleScoreFloor &&
+        (entry.strongRunTempoMatch || entry.isRunCard)
+      : entry.effectiveScore >= plausibleScoreFloor;
+    const ignoredAsSameDateCompetitor =
+      profile.isTempoRunRequest && !plausibleSameDateCompetitor && entry.clearlyNonRunForTempoRequest;
+    if (ignoredAsSameDateCompetitor) {
+      entry.scoreReasons.push("ignored as same-date competitor: non-run candidate for run request");
+    }
+    entry.plausibleSameDateCompetitor = plausibleSameDateCompetitor;
+    entry.ignoredAsSameDateCompetitor = ignoredAsSameDateCompetitor;
+    entry.safeCandidate =
+      !entry.candidate.fromFallback &&
+      Boolean(entry.candidate.dateIso) &&
+      entry.effectiveScore >= 0.75 &&
+      (!profile.isTempoRunRequest || (entry.strongRunTempoMatch && !entry.clearlyNonRunForTempoRequest));
+  }
+
+  const plausibleCandidates = rankedCandidates.filter((entry) => entry.plausibleSameDateCompetitor);
+  const secondPlausible = plausibleCandidates[1] ?? null;
+  let confidence = clampConfidence(
+    (topCandidate?.effectiveScore ?? 0) - (secondPlausible ? Math.min(0.18, Math.max(0, secondPlausible.effectiveScore - 0.45)) : 0)
+  );
+  const ignoredSameDateCompetitorCount = rankedCandidates.filter((entry) => entry.ignoredAsSameDateCompetitor).length;
+  if (
+    profile.isTempoRunRequest &&
+    sourceDateExplicitEnough &&
+    topCandidate?.strongRunTempoMatch &&
+    plausibleCandidates.length === 1 &&
+    ignoredSameDateCompetitorCount > 0
+  ) {
+    confidence = clampConfidence(confidence + 0.05);
+  }
+  if (profile.isTempoRunRequest && !sourceDateExplicitEnough) {
+    confidence = Math.min(confidence, 0.79);
+    for (const entry of rankedCandidates) {
+      entry.scoreReasons.push("negative: source date inferred, execution confidence capped");
+    }
+  }
+
+  return {
+    descriptorType: profile.descriptorType,
+    isTempoRunRequest: profile.isTempoRunRequest,
+    rankedCandidates,
+    topCandidate,
+    plausibleCandidateCount: plausibleCandidates.length,
+    safeCandidateCount: rankedCandidates.filter((entry) => entry.safeCandidate).length,
+    ignoredSameDateCompetitorCount,
+    confidence,
+    margin: topCandidate && secondPlausible ? topCandidate.effectiveScore - secondPlausible.effectiveScore : null,
+    helpfulAmbiguityReason:
+      profile.isTempoRunRequest && plausibleCandidates.length > 1
+        ? `На ${formatCompactDateShort(input.selectedSourceDate)} найдено несколько похожих беговых тренировок. Нужен выбор.`
+        : null,
+  };
+}
 
 type ApiMoveExecutionArtifacts = {
   requestArtifactPath: string;
@@ -6654,20 +6872,66 @@ function evaluateDryRunOutcome(input: {
     };
   }
 
-  const sortedBucketCandidates = [...selectedBucketCandidates].sort((left, right) => right.rawScore - left.rawScore);
-  const top = sortedBucketCandidates[0]!;
-  const second = sortedBucketCandidates[1] ?? null;
-  const confidence = clampConfidence(
-    top.rawScore - (second ? Math.min(0.18, Math.max(0, second.rawScore - 0.45)) : 0)
-  );
+  const sameDateRanking = evaluateSelectedSourceDateMoveRanking({
+    parsedPayload: input.action.parsed_payload,
+    selectedSourceDate,
+    selectedSourceDatePolicy,
+    candidates: selectedBucketCandidates,
+  });
+  const rankedBucketCandidates = sameDateRanking.rankedCandidates;
+  const topRanked = sameDateRanking.topCandidate;
+  if (!topRanked) {
+    return {
+      dryRunResult: "not_found",
+      resolvedDates: { sourceDate: selectedSourceDate, targetDate, timezone },
+      candidate: null,
+      candidateAlternativesCount: 0,
+      confidence: 0,
+      canExecute: false,
+      canExecuteReasons: ["Нужна конкретная тренировка"],
+      diagnostics,
+      identityCheck: input.identityCheck,
+      debugCandidatesTopN: input.candidates.slice(0, 10).map((candidate) => ({
+        rawTextSnippet: candidate.rawTextSnippet,
+        selectorHint: candidate.selectorHint,
+        classHint: candidate.classHint,
+        title: candidate.title,
+        type: candidate.type,
+        plannedDurationSec: candidate.plannedDurationSec,
+        plannedDistance: candidate.plannedDistance,
+        startTimeLocal: candidate.startTimeLocal,
+        sourceDate: candidate.dateIso,
+        workoutId: candidate.workoutId ?? null,
+        score: candidate.rawScore,
+        reasons: candidate.reasons,
+      })),
+      selectedSourceDatePolicy,
+      selectedSourceDate,
+      selectedSourceDateCandidateCount,
+      globalCandidateCount,
+      sourceDateBucketCounts,
+      rankingDebug: {
+        strictGlobalCount: strictGlobalCandidates.length,
+        selectedSourceDatePolicy,
+        selectedSourceDate,
+        selectedSourceDateCandidateCount,
+        globalCandidateCount,
+        sourceDateBucketCounts,
+        descriptorType: sameDateRanking.descriptorType,
+        plausibleSelectedSourceDateCandidateCount: sameDateRanking.plausibleCandidateCount,
+        safeSelectedSourceDateCandidateCount: sameDateRanking.safeCandidateCount,
+        ignoredSameDateCompetitorCount: sameDateRanking.ignoredSameDateCompetitorCount,
+        topPlausibleMargin: sameDateRanking.margin,
+      },
+      sourceInferenceProvenance,
+    };
+  }
+  const top = topRanked.candidate;
+  const confidence = sameDateRanking.confidence;
   sourceDate = selectedSourceDate;
-  const plausibleCandidates = sortedBucketCandidates.filter(
-    (candidate) => candidate.rawScore >= Math.max(0.6, top.rawScore - 0.1)
-  );
-  const safeCandidates = sortedBucketCandidates.filter(
-    (candidate) => !candidate.fromFallback && Boolean(candidate.dateIso) && candidate.rawScore >= 0.75
-  );
-  const alternativesCount = Math.max(0, sortedBucketCandidates.length - 1);
+  const plausibleCandidates = rankedBucketCandidates.filter((entry) => entry.plausibleSameDateCompetitor);
+  const safeCandidates = rankedBucketCandidates.filter((entry) => entry.safeCandidate);
+  const alternativesCount = Math.max(0, plausibleCandidates.length - 1);
 
   const candidate: DryRunCandidate = {
     title: top.title,
@@ -6689,6 +6953,13 @@ function evaluateDryRunOutcome(input: {
 
   let dryRunResult: DryRunResult = "candidate_found";
   const reasons: string[] = [];
+  const pushReason = (reason: string | null | undefined): void => {
+    const normalized = typeof reason === "string" ? reason.trim() : "";
+    if (!normalized || reasons.includes(normalized)) {
+      return;
+    }
+    reasons.push(normalized);
+  };
 
   const strongFutureExecutionContext =
     selectedSourceDatePolicy === moveSourcePolicy.STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY
@@ -6720,38 +6991,40 @@ function evaluateDryRunOutcome(input: {
     : 0.8;
   const effectiveSafeCandidateCount = strongFutureStructurallyConfirmed ? 1 : safeCandidates.length;
 
-  if (input.candidates.length > 1 && second && Math.abs(top.rawScore - second.rawScore) < 0.12) {
-    dryRunResult = "ambiguous";
-    reasons.push("top candidate margin too small");
-  }
   if (plausibleCandidates.length > 1) {
     dryRunResult = "ambiguous";
-    reasons.push("multiple candidates on selected source date");
+    pushReason(sameDateRanking.helpfulAmbiguityReason ?? "multiple candidates on selected source date");
+  }
+  if (sameDateRanking.margin !== null && sameDateRanking.margin < 0.12) {
+    dryRunResult = "ambiguous";
+    pushReason("top candidate margin too small");
   }
   if (!targetDate) {
-    reasons.push("target date could not be resolved");
+    pushReason("target date could not be resolved");
   }
   if (!sourceDate) {
-    reasons.push("source date could not be resolved safely");
+    pushReason("source date could not be resolved safely");
   }
   if (!candidate.fingerprint) {
-    reasons.push("candidate fingerprint missing");
+    pushReason("candidate fingerprint missing");
   }
   if (executionConfidence < executionConfidenceThreshold) {
-    reasons.push(`confidence below threshold ${executionConfidenceThreshold}`);
+    pushReason(`confidence below threshold ${executionConfidenceThreshold}`);
   }
   if (effectiveSafeCandidateCount !== 1) {
     if (safeCandidates.length === 0) {
-      reasons.push("no candidate meets safe score threshold");
+      pushReason("no candidate meets safe score threshold");
     } else {
-      reasons.push("multiple candidates on selected source date");
+      pushReason(sameDateRanking.helpfulAmbiguityReason ?? "multiple candidates on selected source date");
     }
   }
-  if (second && top.rawScore - second.rawScore < 0.12) {
-    reasons.push("top candidate margin too small");
+  if (sameDateRanking.margin !== null && sameDateRanking.margin < 0.12) {
+    pushReason("top candidate margin too small");
   }
   if (input.identityCheck.matchedBy === "mismatch") {
-    reasons.push(...input.identityCheck.warnings);
+    for (const warning of input.identityCheck.warnings) {
+      pushReason(warning);
+    }
   }
 
   const moveSourceValidation = moveSourcePolicy.validateMoveSourceForExecution({
@@ -6771,16 +7044,16 @@ function evaluateDryRunOutcome(input: {
   const moveSourceTrustedForExecution = moveSourceValidation.ok;
   if (!moveSourceTrustedForExecution) {
     if (selectedSourceDatePolicy === moveSourcePolicy.STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY) {
-      reasons.push(moveSourceValidation.reason);
+      pushReason(moveSourceValidation.reason);
     } else if (
       !moveSourcePolicy.isMoveSourceExplicitEnough({
         selectedSourceDatePolicy,
         parsedPayload: input.action.parsed_payload,
       })
     ) {
-      reasons.push(moveSourcePolicy.INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON);
+      pushReason(moveSourcePolicy.INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON);
     } else {
-      reasons.push(moveSourceValidation.reason);
+      pushReason(moveSourceValidation.reason);
     }
   }
 
@@ -6795,11 +7068,11 @@ function evaluateDryRunOutcome(input: {
     moveSourceTrustedForExecution;
 
   if (!canExecute && reasons.length === 0) {
-    reasons.push("safety policy conditions not met");
+    pushReason("safety policy conditions not met");
   }
 
   if (dryRunResult === "candidate_found" && !canExecute && moveSourceTrustedForExecution) {
-    dryRunResult = sortedBucketCandidates.length > 1 ? "ambiguous" : "not_found";
+    dryRunResult = plausibleCandidates.length > 1 ? "ambiguous" : "not_found";
   }
 
   return {
@@ -6816,20 +7089,27 @@ function evaluateDryRunOutcome(input: {
     canExecuteReasons: canExecute ? [] : reasons,
     diagnostics,
     identityCheck: input.identityCheck,
-    debugCandidatesTopN: input.candidates.slice(0, 10).map((candidate) => ({
-      rawTextSnippet: candidate.rawTextSnippet,
-      selectorHint: candidate.selectorHint,
-      classHint: candidate.classHint,
-      title: candidate.title,
-      type: candidate.type,
-      plannedDurationSec: candidate.plannedDurationSec,
-      plannedDistance: candidate.plannedDistance,
-      startTimeLocal: candidate.startTimeLocal,
-      sourceDate: candidate.dateIso,
-      workoutId: candidate.workoutId ?? null,
-      score: candidate.rawScore,
-      reasons: candidate.reasons,
-    })),
+    debugCandidatesTopN: input.candidates
+      .slice(0, 10)
+      .map((candidate) => {
+        const ranked = rankedBucketCandidates.find(
+          (entry) => buildSameDateCandidateDebugKey(entry.candidate) === buildSameDateCandidateDebugKey(candidate)
+        );
+        return {
+          rawTextSnippet: candidate.rawTextSnippet,
+          selectorHint: candidate.selectorHint,
+          classHint: candidate.classHint,
+          title: candidate.title,
+          type: candidate.type,
+          plannedDurationSec: candidate.plannedDurationSec,
+          plannedDistance: candidate.plannedDistance,
+          startTimeLocal: candidate.startTimeLocal,
+          sourceDate: candidate.dateIso,
+          workoutId: candidate.workoutId ?? null,
+          score: ranked?.effectiveScore ?? candidate.rawScore,
+          reasons: ranked ? [...candidate.reasons, ...ranked.scoreReasons] : candidate.reasons,
+        };
+      }),
     selectedSourceDatePolicy,
     selectedSourceDate,
     selectedSourceDateCandidateCount,
@@ -6842,6 +7122,11 @@ function evaluateDryRunOutcome(input: {
       selectedSourceDateCandidateCount,
       globalCandidateCount,
       sourceDateBucketCounts,
+      descriptorType: sameDateRanking.descriptorType,
+      plausibleSelectedSourceDateCandidateCount: sameDateRanking.plausibleCandidateCount,
+      safeSelectedSourceDateCandidateCount: sameDateRanking.safeCandidateCount,
+      ignoredSameDateCompetitorCount: sameDateRanking.ignoredSameDateCompetitorCount,
+      topPlausibleMargin: sameDateRanking.margin,
     },
     sourceInferenceProvenance,
   };
@@ -8779,11 +9064,25 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error: unknown) => {
-  if (error instanceof Error) {
-    console.error(error.message);
-  } else {
-    console.error(error);
+const isDirectRun = (() => {
+  const entry = process.argv[1];
+  if (!entry) {
+    return false;
   }
-  process.exit(1);
-});
+  try {
+    return fileURLToPath(import.meta.url) === path.resolve(entry);
+  } catch {
+    return false;
+  }
+})();
+
+if (isDirectRun) {
+  main().catch((error: unknown) => {
+    if (error instanceof Error) {
+      console.error(error.message);
+    } else {
+      console.error(error);
+    }
+    process.exit(1);
+  });
+}
