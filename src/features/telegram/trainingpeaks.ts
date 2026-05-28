@@ -200,12 +200,14 @@ const TP_CALLBACK_CASE_RESOLVE_PREFIX = "tp:case:r:";
 const TP_CALLBACK_CASE_DISMISS_PREFIX = "tp:case:d:";
 const TP_CALLBACK_CASE_PROPOSE_PREFIX = "tp:case:p:";
 const TP_REPLY_BUTTON_MENU = "🏠 Меню";
+const TP_REPLY_BUTTON_TODAY = "🌅 Сегодня";
 const TP_REPLY_BUTTON_STUDENTS = "👥 Ученики";
 const TP_REPLY_BUTTON_ADD = "➕ Добавить";
 const TP_REPLY_BUTTON_REPORTS = "📊 Отчёты";
 const TP_REPLY_BUTTON_RACES = "🏁 Забеги";
 const TP_REPLY_BUTTON_JOBS = "🧾 Задачи";
 const TP_REPLY_BUTTON_CASES = "🧩 Кейсы";
+const TP_REPLY_BUTTON_ACTIONS = "📋 Заявки";
 const TP_REPLY_BUTTON_SERVICE = "⚙️ Служебное";
 const TP_REPLY_BUTTON_BACK = "⬅️ Назад";
 const TP_REPLY_BUTTON_STUDENTS_BACK = "⬅️ Ученики";
@@ -444,6 +446,7 @@ type TrainingPeaksTelegramLinkContext = {
 
 type TrainingPeaksReplyKeyboardAction =
   | "main_menu"
+  | "today"
   | "students"
   | "add_student_help"
   | "reports_menu"
@@ -462,6 +465,7 @@ type TrainingPeaksReplyKeyboardAction =
   | "races_to_august"
   | "jobs_refresh"
   | "cancel_job"
+  | "actions"
   | "student_report"
   | "student_link"
   | "student_username"
@@ -1041,10 +1045,9 @@ function createReplyKeyboardMarkup(rows: string[][]): TelegramReplyKeyboardMarku
 
 function getTrainingPeaksMainReplyKeyboardMarkup(): TelegramReplyKeyboardMarkup {
   return createReplyKeyboardMarkup([
-    [TP_REPLY_BUTTON_MENU, TP_REPLY_BUTTON_STUDENTS],
-    [TP_REPLY_BUTTON_REPORTS, TP_REPLY_BUTTON_RACES],
-    [TP_REPLY_BUTTON_JOBS, TP_REPLY_BUTTON_CASES],
-    [TP_REPLY_BUTTON_SERVICE],
+    [TP_REPLY_BUTTON_MENU, TP_REPLY_BUTTON_TODAY],
+    [TP_REPLY_BUTTON_CASES, TP_REPLY_BUTTON_ACTIONS],
+    [TP_REPLY_BUTTON_STUDENTS, TP_REPLY_BUTTON_REPORTS],
   ]);
 }
 
@@ -2888,6 +2891,10 @@ function getTrainingPeaksReplyKeyboardAction(text: string): TrainingPeaksReplyKe
     return "main_menu";
   }
 
+  if (text === TP_REPLY_BUTTON_TODAY) {
+    return "today";
+  }
+
   if (text === TP_REPLY_BUTTON_STUDENTS) {
     return "students";
   }
@@ -2910,6 +2917,10 @@ function getTrainingPeaksReplyKeyboardAction(text: string): TrainingPeaksReplyKe
 
   if (text === TP_REPLY_BUTTON_CASES) {
     return "cases_recent";
+  }
+
+  if (text === TP_REPLY_BUTTON_ACTIONS) {
+    return "actions";
   }
 
   if (text === TP_REPLY_BUTTON_SERVICE) {
@@ -3708,7 +3719,7 @@ function getMoreMenuMarkup(): TelegramInlineKeyboardMarkup {
   return createInlineKeyboardMarkup([
     [createMenuButton("🩺 Health", TP_CALLBACK_HEALTH)],
     [createMenuButton("🕓 Cron status", TP_CALLBACK_CRON_STATUS)],
-    [createMenuButton("🧾 Jobs", TP_CALLBACK_JOBS)],
+    [createMenuButton("🧾 Очередь задач", TP_CALLBACK_JOBS)],
     [createMenuButton("🧠 Intent logs", TP_CALLBACK_INTENTS)],
     [createMenuButton("🏁 Забеги", TP_CALLBACK_RACES_MENU)],
     [createMenuButton("🔗 Telegram links", TP_CALLBACK_TELEGRAM_LINKS_HINT)],
@@ -6045,16 +6056,7 @@ async function showTrainingPeaksReportsFromStudent(
 async function showTrainingPeaksMoreMenu(
   parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate
 ): Promise<void> {
-  if (parsedMessage.kind === "callback_query") {
-    await showTrainingPeaksMenuScreen(parsedMessage, getMoreMenuText(), getMoreMenuMarkup());
-    return;
-  }
-
-  await sendTrainingPeaksReplyScreen(
-    parsedMessage.chatId,
-    getMoreMenuText(),
-    getTrainingPeaksMainReplyKeyboardMarkup()
-  );
+  await showTrainingPeaksMenuScreen(parsedMessage, getMoreMenuText(), getMoreMenuMarkup());
 }
 
 async function handleTrainingPeaksReportsStatusLast(
@@ -6540,6 +6542,11 @@ export async function handleTrainingPeaksTelegramReplyKeyboardMessage(
       return "handled";
     }
 
+    if (action === "today") {
+      await handleTrainingPeaksAttention(parsedMessage);
+      return "handled";
+    }
+
     if (action === "students") {
       await showTrainingPeaksStudentsPage(parsedMessage, 0);
       return "handled";
@@ -6572,6 +6579,11 @@ export async function handleTrainingPeaksTelegramReplyKeyboardMessage(
 
     if (action === "cases_recent") {
       await handleTrainingPeaksRecentCoachCases(parsedMessage);
+      return "handled";
+    }
+
+    if (action === "actions") {
+      await showTpActionsList(parsedMessage);
       return "handled";
     }
 
