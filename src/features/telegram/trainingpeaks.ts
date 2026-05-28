@@ -47,6 +47,7 @@ import {
   resolveTrainingPeaksCoachCase,
   requestTrainingPeaksActionExecution,
   requestTrainingPeaksActionDryRunRecheck,
+  validateTrainingPeaksGroupMovePairsPreview,
   TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
   type RequestTrainingPeaksWeeklyRunResult,
   type RequestTrainingPeaksRaceScanResult,
@@ -1637,6 +1638,10 @@ function shouldShowCreateActionProposalsButton(
   if (sourceType !== "group_topic" && sourceType !== "group_general") {
     return false;
   }
+  const validatedPairs = validateTrainingPeaksGroupMovePairsPreview(item.coachNotesJson.move_pairs_preview);
+  if (!validatedPairs.isSafe) {
+    return false;
+  }
   return item.coachNotesJson.action_proposals_created !== true;
 }
 
@@ -1663,21 +1668,12 @@ function formatTrainingPeaksCoachCaseCard(
     }
 
     const multiMovePossible = item.coachNotesJson.multi_move_possible === true;
-    const rawPairs = item.coachNotesJson.move_pairs_preview;
-    const pairs = Array.isArray(rawPairs)
-      ? rawPairs
-          .map((pair) => {
-            if (!pair || typeof pair !== "object") {
-              return null;
-            }
-            const pairRecord = pair as Record<string, unknown>;
-            const source = typeof pairRecord.source === "string" ? pairRecord.source.trim() : "";
-            const target = typeof pairRecord.target === "string" ? pairRecord.target.trim() : "";
-            return source && target ? `${source} -> ${target}` : null;
-          })
-          .filter((value): value is string => Boolean(value))
-      : [];
+    const validatedPairs = validateTrainingPeaksGroupMovePairsPreview(item.coachNotesJson.move_pairs_preview);
+    const pairs = validatedPairs.pairs.map((pair) => `${pair.source} -> ${pair.target}`);
     lines.push(`multi_move_possible: ${multiMovePossible ? "yes" : "no"}${pairs.length > 0 ? ` / pairs: ${pairs.join("; ")}` : ""}`);
+    if (!validatedPairs.isSafe) {
+      lines.push("Пары переноса разобраны неуверенно — нужна ручная проверка");
+    }
 
     const createdActionIds = Array.isArray(item.coachNotesJson.created_action_ids)
       ? item.coachNotesJson.created_action_ids.filter((value): value is string => typeof value === "string" && value.length > 0)

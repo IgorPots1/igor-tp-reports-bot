@@ -19,16 +19,72 @@ function detectMovePairsPreview(rawText: string): Array<{ source: string; target
     return [];
   }
 
-  const pairs: Array<{ source: string; target: string }> = [];
-  const pairPattern = /([а-яa-z0-9_-]{3,}(?:\s+[а-яa-z0-9_-]{2,}){0,3})\s+на\s+([а-яa-z0-9_-]{3,}(?:\s+[а-яa-z0-9_-]{2,}){0,2})/giu;
-  let match = pairPattern.exec(normalized);
-  while (match) {
-    const source = (match[1] ?? "").trim();
-    const target = (match[2] ?? "").trim();
-    if (source && target) {
-      pairs.push({ source, target });
+  const tokens = normalized.split(" ").filter((token) => token.length > 0);
+  const pairSideTokenPattern = /^[а-яa-z0-9_-]{2,}$/iu;
+  const blockedWords = new Set([
+    "можешь",
+    "можно",
+    "сдвинуть",
+    "сдвинь",
+    "перенести",
+    "перенеси",
+    "перенесите",
+    "поставить",
+    "поставь",
+    "поставьте",
+    "переставить",
+    "переставь",
+    "сместить",
+    "тренировку",
+    "тренировки",
+  ]);
+  const isCompactSide = (raw: string): boolean => {
+    const sideTokens = raw
+      .trim()
+      .split(/\s+/)
+      .filter((token) => token.length > 0);
+    if (sideTokens.length < 1 || sideTokens.length > 2) {
+      return false;
     }
-    match = pairPattern.exec(normalized);
+    return sideTokens.every((token) => pairSideTokenPattern.test(token) && !blockedWords.has(token));
+  };
+
+  const pairs: Array<{ source: string; target: string }> = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (tokens[index] !== "на") {
+      continue;
+    }
+
+    let extracted: { source: string; target: string } | null = null;
+    for (const sourceLength of [1, 2]) {
+      const sourceStart = index - sourceLength;
+      if (sourceStart < 0) {
+        continue;
+      }
+      const source = tokens.slice(sourceStart, index).join(" ").trim();
+      if (!isCompactSide(source)) {
+        continue;
+      }
+      for (const targetLength of [1, 2]) {
+        const targetEnd = index + 1 + targetLength;
+        if (targetEnd > tokens.length) {
+          continue;
+        }
+        const target = tokens.slice(index + 1, targetEnd).join(" ").trim();
+        if (!isCompactSide(target)) {
+          continue;
+        }
+        extracted = { source, target };
+        break;
+      }
+      if (extracted) {
+        break;
+      }
+    }
+
+    if (extracted) {
+      pairs.push(extracted);
+    }
   }
   return pairs.slice(0, 3);
 }
@@ -123,10 +179,15 @@ async function run(): Promise<void> {
     tanyaResult.shouldCreateCase &&
     tanyaResult.strictMoveIntent &&
     tanyaResult.moveWorkoutCandidate &&
-    tanyaResult.multiMove.possible;
+    tanyaResult.multiMove.possible &&
+    tanyaResult.multiMove.movePairsPreview.length === 2 &&
+    tanyaResult.multiMove.movePairsPreview[0]?.source === "сегодняшнюю" &&
+    tanyaResult.multiMove.movePairsPreview[0]?.target === "пятницу" &&
+    tanyaResult.multiMove.movePairsPreview[1]?.source === "субботнюю" &&
+    tanyaResult.multiMove.movePairsPreview[1]?.target === "воскресенье";
   if (!tanyaOk) {
     failed += 1;
-    console.log("FAIL: Tanya-style text must route to case-only intake");
+    console.log("FAIL: Tanya-style text must route to case-only intake with strict compact pairs");
   }
 
   const futureReportText = "Отлично! :) спасибо большое! Как сделаю завтра интервал отпишу";

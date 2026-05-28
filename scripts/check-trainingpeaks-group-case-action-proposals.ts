@@ -1,6 +1,7 @@
 import {
   buildGroupCaseMovePairProposal,
   type ParsedTrainingPeaksMoveWorkoutPayload,
+  validateTrainingPeaksGroupMovePairsPreview,
 } from "@/features/trainingpeaks/service";
 
 function assert(condition: unknown, message: string): void {
@@ -87,5 +88,19 @@ const futureReportLike = buildGroupCaseMovePairProposal({
   messageDateUnix: baseDateUnix,
 });
 assert(futureReportLike === null, "future-report style text must not create move proposals");
+
+const safePairs = validateTrainingPeaksGroupMovePairsPreview([
+  { source: "сегодняшнюю", target: "пятницу" },
+  { source: "субботнюю", target: "воскресенье" },
+]);
+assert(safePairs.isSafe === true, "compact weekday pairs must be marked safe");
+assert(safePairs.pairs.length === 2, "safe pair validator must preserve both pairs");
+
+const unsafePairs = validateTrainingPeaksGroupMovePairsPreview([
+  { source: "сдвинуть тренировки поставить сегодняшнюю", target: "пятницу" },
+  { source: "субботнюю", target: "воскресенье вообще нет" },
+]);
+assert(unsafePairs.isSafe === false, "greedy multi-word pair sides must be rejected as unsafe");
+assert(unsafePairs.pairs.length === 0, "unsafe greedy pair metadata must not be trusted");
 
 console.log("check-trainingpeaks-group-case-action-proposals: ok");

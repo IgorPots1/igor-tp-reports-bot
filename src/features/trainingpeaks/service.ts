@@ -737,6 +737,15 @@ function buildTrainingPeaksGroupMoveCaseObservationMetadata(input: {
   };
 }
 
+function normalizeMovePairsForCaseStorage(
+  rawPairs: CreateTrainingPeaksGroupMoveRequestCaseInput["multiMove"]["movePairsPreview"]
+): {
+  pairs: TrainingPeaksGroupMovePreviewPair[];
+  isSafe: boolean;
+} {
+  return validateTrainingPeaksGroupMovePairsPreview(rawPairs);
+}
+
 export async function createTrainingPeaksGroupMoveRequestCase(
   input: CreateTrainingPeaksGroupMoveRequestCaseInput
 ): Promise<CreateTrainingPeaksGroupMoveRequestCaseResult> {
@@ -744,6 +753,7 @@ export async function createTrainingPeaksGroupMoveRequestCase(
   const messageId = input.message.message_id;
   const rawText = (input.message.text ?? input.message.caption ?? "").trim();
   const textPreview = buildTrainingPeaksGroupMoveCaseNoteTextPreview(rawText || null);
+  const normalizedMovePairs = normalizeMovePairsForCaseStorage(input.multiMove.movePairsPreview);
 
   try {
     const existingCase = await getTrainingPeaksCoachCaseByTelegramMessageAndKind({
@@ -814,7 +824,8 @@ export async function createTrainingPeaksGroupMoveRequestCase(
         parse_gate: input.parseGateResult,
         multi_move_detected: input.multiMove.detected,
         multi_move_possible: input.multiMove.possible,
-        move_pairs_preview: input.multiMove.movePairsPreview,
+        move_pairs_preview: normalizedMovePairs.pairs,
+        move_pairs_preview_safe: normalizedMovePairs.isSafe,
         multi_move_reason: input.multiMove.reason,
       },
     });
@@ -2150,6 +2161,11 @@ export type GroupMovePairProposal = {
   confidence: number;
 };
 
+export type TrainingPeaksGroupMovePreviewPair = {
+  source: string;
+  target: string;
+};
+
 type CreateTrainingPeaksActionsFromGroupMoveCaseResult =
   | {
       kind: "created";
@@ -2198,6 +2214,71 @@ function toStringArray(value: unknown): string[] {
   return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
 }
 
+const GROUP_MOVE_PAIR_TEXT_PATTERN = /^[a-zа-я0-9_-]+(?:\s+[a-zа-я0-9_-]+)?$/iu;
+const GROUP_MOVE_PAIR_BLOCKED_WORDS = new Set([
+  "можешь",
+  "можно",
+  "сдвинуть",
+  "сдвинь",
+  "перенести",
+  "перенеси",
+  "перенесите",
+  "поставить",
+  "поставь",
+  "поставьте",
+  "переставить",
+  "переставь",
+  "сместить",
+  "тренировку",
+  "тренировки",
+]);
+
+function isSafeGroupMovePairText(value: string): boolean {
+  if (!GROUP_MOVE_PAIR_TEXT_PATTERN.test(value)) {
+    return false;
+  }
+  const tokens = value
+    .toLocaleLowerCase("ru")
+    .split(/\s+/)
+    .filter((token) => token.length > 0);
+  if (tokens.length < 1 || tokens.length > 2) {
+    return false;
+  }
+  return !tokens.some((token) => GROUP_MOVE_PAIR_BLOCKED_WORDS.has(token));
+}
+
+export function validateTrainingPeaksGroupMovePairsPreview(
+  rawValue: unknown
+): {
+  pairs: TrainingPeaksGroupMovePreviewPair[];
+  isSafe: boolean;
+} {
+  if (!Array.isArray(rawValue) || rawValue.length === 0) {
+    return { pairs: [], isSafe: false };
+  }
+
+  const pairs: TrainingPeaksGroupMovePreviewPair[] = [];
+  let isSafe = true;
+  for (const item of rawValue) {
+    if (!isRecordLike(item)) {
+      isSafe = false;
+      continue;
+    }
+    const source = toNonEmptyStringOrNull(item.source);
+    const target = toNonEmptyStringOrNull(item.target);
+    if (!source || !target || !isSafeGroupMovePairText(source) || !isSafeGroupMovePairText(target)) {
+      isSafe = false;
+      continue;
+    }
+    pairs.push({ source, target });
+  }
+
+  if (pairs.length === 0) {
+    return { pairs: [], isSafe: false };
+  }
+  return { pairs, isSafe };
+}
+
 function extractGroupCaseMessageDateUnix(input: {
   coachNotesJson: Record<string, unknown>;
   createdAt: string;
@@ -2214,24 +2295,10 @@ function extractGroupCaseMessageDateUnix(input: {
   return Math.floor(createdAtDate.getTime() / 1000);
 }
 
-function extractMovePairsPreviewFromGroupCaseMetadata(coachNotesJson: Record<string, unknown>): Array<{
-  source: string;
-  target: string;
-}> {
-  const raw = coachNotesJson.move_pairs_preview;
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  return raw
-    .map((item) => {
-      if (!isRecordLike(item)) {
-        return null;
-      }
-      const source = toNonEmptyStringOrNull(item.source);
-      const target = toNonEmptyStringOrNull(item.target);
-      return source && target ? { source, target } : null;
-    })
-    .filter((item): item is { source: string; target: string } => Boolean(item));
+function extractMovePairsPreviewFromGroupCaseMetadata(
+  coachNotesJson: Record<string, unknown>
+): TrainingPeaksGroupMovePreviewPair[] {
+  return validateTrainingPeaksGroupMovePairsPreview(coachNotesJson.move_pairs_preview).pairs;
 }
 
 function parseGroupCasePairRef(raw: string): TrainingPeaksMoveWorkoutTimeRef | null {
@@ -2340,10 +2407,15 @@ export async function createTrainingPeaksActionsFromGroupMoveCase(input: {
       };
     }
 
-    const movePairsPreview = extractMovePairsPreviewFromGroupCaseMetadata(metadata);
-    if (movePairsPreview.length === 0) {
+    const validatedPairs = validateTrainingPeaksGroupMovePairsPreview(metadata.move_pairs_preview);
+    const validatedMetadata: Record<string, unknown> = {
+      ...metadata,
+      move_pairs_preview: validatedPairs.pairs,
+      move_pairs_preview_safe: validatedPairs.isSafe,
+    };
+    if (!validatedPairs.isSafe || validatedPairs.pairs.length === 0) {
       const nextMetadata = {
-        ...metadata,
+        ...validatedMetadata,
         proposal_creation_error: "No safe move pairs stored in case metadata.",
       };
       await updateTrainingPeaksCoachCaseMetadata({
@@ -2358,8 +2430,9 @@ export async function createTrainingPeaksActionsFromGroupMoveCase(input: {
       };
     }
 
+    const movePairsPreview = validatedPairs.pairs;
     const messageDateUnix = extractGroupCaseMessageDateUnix({
-      coachNotesJson: metadata,
+      coachNotesJson: validatedMetadata,
       createdAt: groupCase.createdAt,
     });
     const proposals = movePairsPreview
@@ -2374,7 +2447,7 @@ export async function createTrainingPeaksActionsFromGroupMoveCase(input: {
 
     if (proposals.length === 0 || proposals.length !== movePairsPreview.length) {
       const nextMetadata = {
-        ...metadata,
+        ...validatedMetadata,
         proposal_creation_error: "Could not deterministically resolve all stored group move pairs.",
       };
       await updateTrainingPeaksCoachCaseMetadata({
@@ -2393,7 +2466,7 @@ export async function createTrainingPeaksActionsFromGroupMoveCase(input: {
     const sourceMessageId = groupCase.telegramMessageId != null ? String(groupCase.telegramMessageId) : null;
     if (!sourceChatId || !sourceMessageId) {
       const nextMetadata = {
-        ...metadata,
+        ...validatedMetadata,
         proposal_creation_error: "Case is missing original Telegram source pointers.",
       };
       await updateTrainingPeaksCoachCaseMetadata({
@@ -2408,7 +2481,8 @@ export async function createTrainingPeaksActionsFromGroupMoveCase(input: {
       };
     }
 
-    const rawTextPreview = buildTelegramContextTextPreview(toNonEmptyStringOrNull(metadata.text_preview)) ?? "group move case";
+    const rawTextPreview =
+      buildTelegramContextTextPreview(toNonEmptyStringOrNull(validatedMetadata.text_preview)) ?? "group move case";
     const summaries = proposals.map(formatGroupCaseProposalSummary);
     const actionIds = [...existingActionIds];
     let createdCount = 0;
@@ -2454,8 +2528,8 @@ export async function createTrainingPeaksActionsFromGroupMoveCase(input: {
           source: "group_case",
           groupCaseId: groupCase.id,
           sourceType:
-            metadata.source_type === "group_topic" || metadata.source_type === "group_general"
-              ? metadata.source_type
+            validatedMetadata.source_type === "group_topic" || validatedMetadata.source_type === "group_general"
+              ? validatedMetadata.source_type
               : "group_general",
         } as ParsedTrainingPeaksMoveWorkoutPayload["parsingDiagnostics"] & Record<string, unknown>,
       };
@@ -2477,12 +2551,12 @@ export async function createTrainingPeaksActionsFromGroupMoveCase(input: {
     }
 
     const nextMetadata: Record<string, unknown> = {
-      ...metadata,
+      ...validatedMetadata,
       action_proposals_created: actionIds.length > 0,
       created_action_ids: actionIds,
       proposal_creation_error: null,
     };
-    if (!metadata.action_id && actionIds.length > 0) {
+    if (!validatedMetadata.action_id && actionIds.length > 0) {
       nextMetadata.action_id = actionIds[0]!;
     }
     await updateTrainingPeaksCoachCaseMetadata({
