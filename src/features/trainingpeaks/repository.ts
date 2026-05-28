@@ -5195,6 +5195,33 @@ export async function hasTrainingPeaksTelegramContextObservationForChatTextHash(
   return Boolean(data);
 }
 
+export async function getTrainingPeaksTelegramContextObservationByChatMessage(input: {
+  chatId: string;
+  messageId: string;
+}): Promise<{ id: string } | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_telegram_context_observations")
+    .select("id")
+    .eq("chat_id", input.chatId)
+    .eq("message_id", input.messageId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to get TrainingPeaks context observation by chat/message ${input.chatId}/${input.messageId}: ${error.message}`
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return { id: (data as { id: string }).id };
+}
+
 export async function updateTrainingPeaksStudentTelegramContextById(
   id: string,
   input: UpdateTrainingPeaksStudentTelegramContextInput
@@ -5706,6 +5733,39 @@ export async function insertTrainingPeaksCoachCase(
   }
 
   return { id: (data as TrainingPeaksCoachCaseSummaryRow).id };
+}
+
+export async function getTrainingPeaksCoachCaseByTelegramMessageAndKind(input: {
+  telegramChatId: string;
+  telegramMessageId: number;
+  caseKind: TrainingPeaksCoachCaseKind;
+}): Promise<{ id: string; status: TrainingPeaksCoachCaseStatus } | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_coach_cases")
+    .select("id, status")
+    .eq("telegram_chat_id", input.telegramChatId)
+    .eq("telegram_message_id", input.telegramMessageId)
+    .eq("case_kind", input.caseKind)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to get TrainingPeaks coach case by message ${input.telegramChatId}/${input.telegramMessageId}: ${error.message}`
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  const typedRow = data as { id: string; status: TrainingPeaksCoachCaseStatus };
+  return {
+    id: typedRow.id,
+    status: typedRow.status,
+  };
 }
 
 export async function getTrainingPeaksCoachCaseById(

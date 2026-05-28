@@ -74,6 +74,8 @@ import {
   cancelTrainingPeaksActionExecution as cancelTrainingPeaksActionExecutionInRepository,
   getTrainingPeaksActionById as getTrainingPeaksActionByIdInRepository,
   getLatestTrainingPeaksCronRunLog,
+  getTrainingPeaksCoachCaseByTelegramMessageAndKind,
+  getTrainingPeaksTelegramContextObservationByChatMessage,
   claimOneApprovedTrainingPeaksActionForDryRun as claimOneApprovedTrainingPeaksActionForDryRunInRepository,
   completeTrainingPeaksActionDryRun as completeTrainingPeaksActionDryRunInRepository,
   failTrainingPeaksActionDryRun as failTrainingPeaksActionDryRunInRepository,
@@ -128,6 +130,7 @@ import {
   listTrainingPeaksTelegramContextObservationsForStudent,
   listRecentTrainingPeaksTelegramContextObservationsForChat,
   listRecentPendingTrainingPeaksMoveActionsForStudentChat,
+  insertTrainingPeaksTelegramContextObservation,
   updateTrainingPeaksCoachCaseStatus,
   updateTrainingPeaksReplyDraftOutcome as updateTrainingPeaksReplyDraftOutcomeInRepository,
   updateTrainingPeaksStudentThreadById,
@@ -154,6 +157,7 @@ import {
 } from "@/features/trainingpeaks/workout-reference";
 import { TRAININGPEAKS_TIME_ZONE, resolveTrainingPeaksWeekKeyword } from "@/features/trainingpeaks/week";
 import type { TelegramMessage } from "@/features/telegram/types";
+import { buildTelegramContextTextPreview, sha256TelegramContextText } from "@/features/trainingpeaks/telegram-context";
 import {
   normalizeTrainingPeaksStudentId,
   validateTrainingPeaksStudentId,
@@ -647,6 +651,42 @@ export type RecordTrainingPeaksCoachCaseAndSnapshotResult = {
   caseIds: string[];
 };
 
+export type CreateTrainingPeaksGroupMoveRequestCaseInput = {
+  message: TelegramMessage;
+  student: TrainingPeaksStudent;
+  sourceType: "group_topic" | "group_general";
+  senderMatchMethod: "telegram_chat_id" | "telegram_username";
+  parseGateResult: {
+    strictMoveIntent: boolean;
+    moveWorkoutCandidate: boolean;
+    directMoveWording: boolean;
+    coachMentioned: boolean;
+    reason: string;
+  };
+  multiMove: {
+    detected: boolean;
+    possible: boolean;
+    reason: string | null;
+    movePairsPreview: Array<{ source: string; target: string }>;
+  };
+};
+
+export type CreateTrainingPeaksGroupMoveRequestCaseResult =
+  | {
+      kind: "created";
+      caseId: string;
+      shortId: string;
+      status: TrainingPeaksCoachCaseStatus;
+      textPreview: string | null;
+    }
+  | {
+      kind: "duplicate";
+      caseId: string;
+      shortId: string;
+      status: TrainingPeaksCoachCaseStatus;
+    }
+  | { kind: "failed" };
+
 function buildTrainingPeaksCoachCaseLabelSummary(
   labels: readonly string[] | null | undefined
 ): Record<string, boolean> {
@@ -662,6 +702,152 @@ function buildTrainingPeaksCoachCaseLabelSummary(
     summary[normalized] = true;
   }
   return summary;
+}
+
+function buildTrainingPeaksGroupMoveCaseNoteTextPreview(text: string | null): string | null {
+  return buildTelegramContextTextPreview(text);
+}
+
+function buildTrainingPeaksGroupMoveCaseObservationMetadata(input: {
+  message: TelegramMessage;
+  sourceType: "group_topic" | "group_general";
+  senderMatchMethod: "telegram_chat_id" | "telegram_username";
+  parseGateResult: CreateTrainingPeaksGroupMoveRequestCaseInput["parseGateResult"];
+  multiMove: CreateTrainingPeaksGroupMoveRequestCaseInput["multiMove"];
+}): Record<string, unknown> {
+  return {
+    scores: {
+      move_workout_candidate: 0.91,
+    },
+    fromId: input.message.from?.id != null ? String(input.message.from.id) : null,
+    fromUsername: input.message.from?.username?.trim() || null,
+    isTopicMessage: Boolean(input.message.is_topic_message),
+    messageLength: (input.message.text ?? input.message.caption ?? "").trim().length,
+    hasAttachment: false,
+    senderRole: "known_student",
+    senderMatchMethod: input.senderMatchMethod,
+    parseGateResult: input.parseGateResult,
+    multiMove: input.multiMove,
+  };
+}
+
+export async function createTrainingPeaksGroupMoveRequestCase(
+  input: CreateTrainingPeaksGroupMoveRequestCaseInput
+): Promise<CreateTrainingPeaksGroupMoveRequestCaseResult> {
+  const chatId = String(input.message.chat.id);
+  const messageId = input.message.message_id;
+  const rawText = (input.message.text ?? input.message.caption ?? "").trim();
+  const textPreview = buildTrainingPeaksGroupMoveCaseNoteTextPreview(rawText || null);
+
+  try {
+    const existingCase = await getTrainingPeaksCoachCaseByTelegramMessageAndKind({
+      telegramChatId: chatId,
+      telegramMessageId: messageId,
+      caseKind: "move_workout_needs_review",
+    });
+
+    if (existingCase) {
+      return {
+        kind: "duplicate",
+        caseId: existingCase.id,
+        shortId: existingCase.id.slice(0, 8),
+        status: existingCase.status,
+      };
+    }
+
+    const existingObservation = await getTrainingPeaksTelegramContextObservationByChatMessage({
+      chatId,
+      messageId: String(messageId),
+    });
+
+    const contextObservationId =
+      existingObservation?.id ??
+      (
+        await insertTrainingPeaksTelegramContextObservation({
+          studentId: input.student.id,
+          sourceType: input.sourceType,
+          chatId,
+          messageThreadId: input.message.message_thread_id ?? null,
+          messageId: String(messageId),
+          labels: ["move_workout_candidate"],
+          textSha256: sha256TelegramContextText(rawText || null),
+          textPreview,
+          metadata: buildTrainingPeaksGroupMoveCaseObservationMetadata({
+            message: input.message,
+            sourceType: input.sourceType,
+            senderMatchMethod: input.senderMatchMethod,
+            parseGateResult: input.parseGateResult,
+            multiMove: input.multiMove,
+          }),
+        })
+      ).id;
+
+    const snapshot = await insertTrainingPeaksStudentContextSnapshot({
+      studentId: input.student.id,
+      cacheStatus: "empty",
+      labelSummary: {
+        move_workout_candidate: true,
+      },
+    });
+
+    const insertedCase = await insertTrainingPeaksCoachCase({
+      studentId: input.student.id,
+      caseKind: "move_workout_needs_review",
+      contextObsId: contextObservationId,
+      snapshotId: snapshot.id,
+      telegramChatId: chatId,
+      telegramMessageId: messageId,
+      status: "needs_review",
+      coachNotesJson: {
+        source_type: input.sourceType,
+        group_title: input.message.chat.title?.trim() || null,
+        message_thread_id: input.message.message_thread_id ?? null,
+        sender_user_id: input.message.from?.id ?? null,
+        sender_username: input.message.from?.username?.trim() || null,
+        text_preview: textPreview,
+        parse_gate: input.parseGateResult,
+        multi_move_detected: input.multiMove.detected,
+        multi_move_possible: input.multiMove.possible,
+        move_pairs_preview: input.multiMove.movePairsPreview,
+        multi_move_reason: input.multiMove.reason,
+      },
+    });
+
+    if (!insertedCase?.id) {
+      const caseAfterConflict = await getTrainingPeaksCoachCaseByTelegramMessageAndKind({
+        telegramChatId: chatId,
+        telegramMessageId: messageId,
+        caseKind: "move_workout_needs_review",
+      });
+      if (caseAfterConflict) {
+        return {
+          kind: "duplicate",
+          caseId: caseAfterConflict.id,
+          shortId: caseAfterConflict.id.slice(0, 8),
+          status: caseAfterConflict.status,
+        };
+      }
+
+      return { kind: "failed" };
+    }
+
+    return {
+      kind: "created",
+      caseId: insertedCase.id,
+      shortId: insertedCase.id.slice(0, 8),
+      status: "needs_review",
+      textPreview,
+    };
+  } catch (error) {
+    console.warn("Failed to create TrainingPeaks group move review case", {
+      studentId: input.student.id,
+      chatId,
+      messageId,
+      sourceType: input.sourceType,
+      error,
+    });
+    return { kind: "failed" };
+  }
 }
 
 function deriveTrainingPeaksCoachCaseKinds(input: {

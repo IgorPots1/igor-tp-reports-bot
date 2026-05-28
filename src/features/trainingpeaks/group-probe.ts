@@ -3,11 +3,46 @@ import {
   getTrainingPeaksStudentByTelegramUsername,
   type TrainingPeaksStudent,
 } from "@/features/trainingpeaks/repository";
+import {
+  createTrainingPeaksGroupMoveRequestCase,
+  passesTrainingPeaksStrictMoveWorkoutIntentGate,
+} from "@/features/trainingpeaks/service";
+import { buildTelegramContextTextPreview } from "@/features/trainingpeaks/telegram-context";
 import { getTrainingPeaksCoachChatIds } from "@/features/trainingpeaks/attention-telegram";
 import { sendTelegramMessage } from "@/features/telegram/telegram-client";
-import type { TelegramMessage } from "@/features/telegram/types";
+import type { TelegramInlineKeyboardMarkup, TelegramMessage } from "@/features/telegram/types";
 
 const PREVIEW_MAX_LENGTH = 120;
+const TP_CALLBACK_CASES_RECENT = "tp:cases:recent";
+const TP_CALLBACK_CASE_RESOLVE_PREFIX = "tp:case:r:";
+const TP_CALLBACK_CASE_DISMISS_PREFIX = "tp:case:d:";
+const TELEGRAM_SERVICE_MESSAGE_KEYS = [
+  "new_chat_members",
+  "left_chat_member",
+  "new_chat_title",
+  "new_chat_photo",
+  "delete_chat_photo",
+  "group_chat_created",
+  "supergroup_chat_created",
+  "channel_chat_created",
+  "migrate_to_chat_id",
+  "migrate_from_chat_id",
+  "pinned_message",
+  "forum_topic_created",
+  "forum_topic_edited",
+  "forum_topic_closed",
+  "forum_topic_reopened",
+  "general_forum_topic_hidden",
+  "general_forum_topic_unhidden",
+  "write_access_allowed",
+  "video_chat_scheduled",
+  "video_chat_started",
+  "video_chat_ended",
+  "video_chat_participants_invited",
+] as const;
+const DIRECT_MOVE_WORDING_PATTERN =
+  /(?:^|[\s,.!?;:()"'`])(?:можешь|можно|сдвин(?:уть|ь)|перенести|перенеси|перенесите|поставить|поставь|поставьте|переставить|переставь|сместить)(?:$|[\s,.!?;:()"'`])/u;
+const COACH_MENTION_PATTERN = /@\w+/u;
 
 type GroupProbeMatchMethod = "telegram_chat_id" | "telegram_username";
 
@@ -24,6 +59,10 @@ function buildGroupProbePreview(message: TelegramMessage): string {
   }
 
   return `${raw.slice(0, PREVIEW_MAX_LENGTH)}…`;
+}
+
+function buildGroupMovePreview(message: TelegramMessage): string | null {
+  return buildTelegramContextTextPreview((message.text ?? message.caption ?? "").trim() || null);
 }
 
 function normalizeTelegramUsername(username: string | undefined): string | null {
@@ -71,9 +110,141 @@ async function notifyCoachGroupProbe(text: string): Promise<void> {
   );
 }
 
+function normalizeMoveDetectText(value: string): string {
+  return value
+    .toLocaleLowerCase("ru")
+    .replace(/ё/g, "е")
+    .replace(/[.,!?;:()"']/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function detectMovePairsPreview(rawText: string): Array<{ source: string; target: string }> {
+  const normalized = normalizeMoveDetectText(rawText);
+  if (!normalized) {
+    return [];
+  }
+
+  const pairs: Array<{ source: string; target: string }> = [];
+  const pairPattern = /([а-яa-z0-9_-]{3,}(?:\s+[а-яa-z0-9_-]{2,}){0,3})\s+на\s+([а-яa-z0-9_-]{3,}(?:\s+[а-яa-z0-9_-]{2,}){0,2})/giu;
+  let match = pairPattern.exec(normalized);
+  while (match) {
+    const source = (match[1] ?? "").trim();
+    const target = (match[2] ?? "").trim();
+    if (source && target) {
+      pairs.push({ source, target });
+    }
+    match = pairPattern.exec(normalized);
+  }
+
+  return pairs.slice(0, 3);
+}
+
+function detectGroupMoveMultiMove(rawText: string): {
+  detected: boolean;
+  possible: boolean;
+  reason: string | null;
+  movePairsPreview: Array<{ source: string; target: string }>;
+} {
+  const pairs = detectMovePairsPreview(rawText);
+  if (pairs.length >= 2) {
+    return {
+      detected: true,
+      possible: true,
+      reason: "multiple source-target phrases",
+      movePairsPreview: pairs,
+    };
+  }
+
+  const normalized = normalizeMoveDetectText(rawText);
+  const hasConjunctionSplit = /\b(а|и)\b/.test(normalized);
+  const naMatches = normalized.match(/\bна\b/g)?.length ?? 0;
+  if (hasConjunctionSplit && naMatches >= 2) {
+    return {
+      detected: false,
+      possible: true,
+      reason: "multiple source-target phrases",
+      movePairsPreview: pairs,
+    };
+  }
+
+  return {
+    detected: false,
+    possible: false,
+    reason: null,
+    movePairsPreview: pairs,
+  };
+}
+
+function isCoachTelegramId(value: number | undefined): boolean {
+  if (value === undefined) {
+    return false;
+  }
+  return new Set(getTrainingPeaksCoachChatIds()).has(String(value));
+}
+
+function isTelegramBotSender(message: TelegramMessage): boolean {
+  const rawFrom = message.from as ({ is_bot?: boolean } | undefined);
+  return rawFrom?.is_bot === true;
+}
+
+function isTelegramServiceMessage(message: TelegramMessage): boolean {
+  const rawMessage = message as Record<string, unknown>;
+  return TELEGRAM_SERVICE_MESSAGE_KEYS.some((key) => rawMessage[key] !== undefined);
+}
+
+function getGroupMoveCoachMarkup(caseShortId: string): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [{ text: "🧩 Открыть кейсы", callback_data: TP_CALLBACK_CASES_RECENT }],
+      [
+        { text: "✅ Закрыть", callback_data: `${TP_CALLBACK_CASE_RESOLVE_PREFIX}${caseShortId}` },
+        { text: "🙈 Скрыть", callback_data: `${TP_CALLBACK_CASE_DISMISS_PREFIX}${caseShortId}` },
+      ],
+    ],
+  };
+}
+
+async function notifyCoachGroupMoveCase(input: {
+  student: TrainingPeaksStudent;
+  message: TelegramMessage;
+  sourceType: "group_topic" | "group_general";
+  parseReason: string;
+  preview: string | null;
+  caseShortId: string;
+}): Promise<void> {
+  const coachChatIds = getTrainingPeaksCoachChatIds();
+  if (coachChatIds.length === 0) {
+    return;
+  }
+
+  const sourceLabel = input.message.chat.title?.trim() || String(input.message.chat.id);
+  const topicSuffix =
+    input.sourceType === "group_topic" && input.message.message_thread_id !== undefined
+      ? ` / topic ${input.message.message_thread_id}`
+      : "";
+  const text = [
+    "📌 Групповой запрос TrainingPeaks",
+    `Ученик: ${input.student.studentName}`,
+    `Источник: ${sourceLabel}${topicSuffix}`,
+    `Сообщение: ${input.preview || "(без текста)"}`,
+    `Определение: ${input.parseReason}`,
+    "Статус: needs review",
+    `#${input.caseShortId}`,
+  ].join("\n");
+
+  const markup = getGroupMoveCoachMarkup(input.caseShortId);
+  await Promise.allSettled(
+    coachChatIds.map(async (chatId) => {
+      await sendTelegramMessage(chatId, text, { replyMarkup: markup });
+    })
+  );
+}
+
 export async function handleTrainingPeaksGroupProbe(message: TelegramMessage): Promise<void> {
   const from = message.from;
   const preview = buildGroupProbePreview(message);
+  const rawText = (message.text ?? message.caption ?? "").trim();
 
   const safeMetadata = {
     chatId: message.chat.id,
@@ -96,6 +267,64 @@ export async function handleTrainingPeaksGroupProbe(message: TelegramMessage): P
     studentId: student?.studentId ?? null,
     studentName: student?.studentName ?? null,
   });
+
+  const sourceType: "group_topic" | "group_general" =
+    message.is_topic_message || message.message_thread_id !== undefined ? "group_topic" : "group_general";
+
+  if (
+    student &&
+    matchMethod &&
+    rawText &&
+    !rawText.startsWith("/") &&
+    !isTelegramBotSender(message) &&
+    !isCoachTelegramId(from?.id) &&
+    !isTelegramServiceMessage(message)
+  ) {
+    const strictMoveIntent = passesTrainingPeaksStrictMoveWorkoutIntentGate(rawText);
+    const directMoveWording = DIRECT_MOVE_WORDING_PATTERN.test(normalizeMoveDetectText(rawText));
+    const coachMentioned = COACH_MENTION_PATTERN.test(rawText);
+    const moveWorkoutCandidate = strictMoveIntent;
+
+    if (moveWorkoutCandidate && (coachMentioned || directMoveWording)) {
+      const multiMove = detectGroupMoveMultiMove(rawText);
+      const parseReason =
+        multiMove.detected || multiMove.possible
+          ? "possible move request (multi-move)"
+          : "possible move request";
+      const caseResult = await createTrainingPeaksGroupMoveRequestCase({
+        message,
+        student,
+        sourceType,
+        senderMatchMethod: matchMethod,
+        parseGateResult: {
+          strictMoveIntent,
+          moveWorkoutCandidate,
+          directMoveWording,
+          coachMentioned,
+          reason: parseReason,
+        },
+        multiMove,
+      });
+
+      if (caseResult.kind === "created") {
+        await notifyCoachGroupMoveCase({
+          student,
+          message,
+          sourceType,
+          parseReason,
+          preview: buildGroupMovePreview(message),
+          caseShortId: caseResult.shortId,
+        });
+      } else if (caseResult.kind === "duplicate") {
+        console.info("TrainingPeaks group probe: duplicate move review case skipped", {
+          studentId: student.id,
+          chatId: message.chat.id,
+          messageId: message.message_id,
+          caseId: caseResult.caseId,
+        });
+      }
+    }
+  }
 
   if (!isTrainingPeaksGroupProbeCoachNotificationEnabled()) {
     return;

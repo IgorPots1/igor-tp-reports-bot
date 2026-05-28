@@ -232,7 +232,7 @@ export async function POST(request: Request) {
   if (rawMessage && observerEnabled) {
     try {
       const observerResult = await handleTrainingPeaksContextObserverMessage(rawMessage);
-      if (observerResult.handled) {
+      if (observerResult.handled && !isTelegramGroupChat(rawMessage)) {
         return okResponse();
       }
     } catch (error) {
