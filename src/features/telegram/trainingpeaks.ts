@@ -165,6 +165,13 @@ const TP_CALLBACK_REPORTS_FROM_STUDENT = "tp:reports:from_student";
 const TP_CALLBACK_REPORTS_ELIGIBLE = "tp:reports:eligible";
 const TP_REPLY_BUTTON_TELEGRAM_USERNAME_LEGACY = "🔎 Найти username";
 const TP_CALLBACK_MORE_MENU = "tp:menu:more";
+const TP_CALLBACK_ATTENTION = "tp:attention";
+const TP_CALLBACK_REPLY_DRAFT_HINT = "tp:reply_draft:hint";
+const TP_CALLBACK_BILLING_HINT = "tp:billing:hint";
+const TP_CALLBACK_HEALTH = "tp:health";
+const TP_CALLBACK_CRON_STATUS = "tp:cron_status";
+const TP_CALLBACK_INTENTS = "tp:intents";
+const TP_CALLBACK_TELEGRAM_LINKS_HINT = "tp:telegram_links:hint";
 const TP_CALLBACK_STUDENT_WEEKLY_HINT_PREFIX = "tp:student:weekly_hint:";
 const TP_CALLBACK_STUDENT_RUN_PREFIX = "tp:run:";
 const TP_ALL_ENABLED_WEEKLY_PREVIEW_NAME_LIMIT = 10;
@@ -199,6 +206,7 @@ const TP_REPLY_BUTTON_REPORTS = "📊 Отчёты";
 const TP_REPLY_BUTTON_RACES = "🏁 Забеги";
 const TP_REPLY_BUTTON_JOBS = "🧾 Задачи";
 const TP_REPLY_BUTTON_CASES = "🧩 Кейсы";
+const TP_REPLY_BUTTON_SERVICE = "⚙️ Служебное";
 const TP_REPLY_BUTTON_BACK = "⬅️ Назад";
 const TP_REPLY_BUTTON_STUDENTS_BACK = "⬅️ Ученики";
 const TP_REPLY_BUTTON_WEEK_LAST = "Прошлая неделя";
@@ -382,6 +390,13 @@ type ParsedTrainingPeaksCallback =
   | { kind: "reports_from_student" }
   | { kind: "reports_eligible" }
   | { kind: "more_menu" }
+  | { kind: "attention" }
+  | { kind: "reply_draft_hint" }
+  | { kind: "billing_hint" }
+  | { kind: "health" }
+  | { kind: "cron_status" }
+  | { kind: "intents" }
+  | { kind: "telegram_links_hint" }
   | { kind: "student_weekly_hint"; studentId: string }
   | { kind: "student_weekly_run"; studentId: string; weekKeyword: "last" | "current" };
 
@@ -436,6 +451,7 @@ type TrainingPeaksReplyKeyboardAction =
   | "races_menu"
   | "jobs"
   | "cases_recent"
+  | "more_menu"
   | "back"
   | "students_back"
   | "week_last"
@@ -1028,6 +1044,7 @@ function getTrainingPeaksMainReplyKeyboardMarkup(): TelegramReplyKeyboardMarkup 
     [TP_REPLY_BUTTON_MENU, TP_REPLY_BUTTON_STUDENTS],
     [TP_REPLY_BUTTON_REPORTS, TP_REPLY_BUTTON_RACES],
     [TP_REPLY_BUTTON_JOBS, TP_REPLY_BUTTON_CASES],
+    [TP_REPLY_BUTTON_SERVICE],
   ]);
 }
 
@@ -2485,12 +2502,25 @@ function formatJobsMessage(
   ].join("\n");
 }
 
-async function handleTrainingPeaksAttention(parsedMessage: ParsedTelegramUpdate): Promise<void> {
+async function handleTrainingPeaksAttention(
+  parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate
+): Promise<void> {
   const snapshot = await getTrainingPeaksAttentionSnapshot();
-  await sendTrainingPeaksMessage(
-    parsedMessage.chatId,
-    formatTrainingPeaksAttentionSnapshotMessage(snapshot, "Внимание на сегодня")
-  );
+  const text = formatTrainingPeaksAttentionSnapshotMessage(snapshot, "Внимание на сегодня");
+
+  if (parsedMessage.kind === "callback_query") {
+    await showTrainingPeaksMenuScreen(
+      parsedMessage,
+      text,
+      createInlineKeyboardMarkup([
+        [createMenuButton("🔄 Обновить", TP_CALLBACK_ATTENTION)],
+        [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
+      ])
+    );
+    return;
+  }
+
+  await sendTrainingPeaksMessage(parsedMessage.chatId, text);
 }
 
 const TP_CRON_STATUS_BELGRADE_FORMATTER = new Intl.DateTimeFormat("ru-RU", {
@@ -2637,7 +2667,9 @@ function formatTrainingPeaksCronStatusMessage(input: {
   return lines.join("\n");
 }
 
-async function handleTrainingPeaksHealth(parsedMessage: ParsedTelegramUpdate): Promise<void> {
+async function handleTrainingPeaksHealth(
+  parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate
+): Promise<void> {
   const health = await getTrainingPeaksHealthSnapshot();
   const lines = [
     "TP health",
@@ -2649,10 +2681,25 @@ async function handleTrainingPeaksHealth(parsedMessage: ParsedTelegramUpdate): P
     `running jobs > 6h old: ${health.runningJobsOlderThanSixHours}`,
   ];
 
+  if (parsedMessage.kind === "callback_query") {
+    await showTrainingPeaksMenuScreen(
+      parsedMessage,
+      lines.join("\n"),
+      createInlineKeyboardMarkup([
+        [createMenuButton("🔄 Обновить", TP_CALLBACK_HEALTH)],
+        [createMenuButton("⬅️ Служебное", TP_CALLBACK_MORE_MENU)],
+        [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
+      ])
+    );
+    return;
+  }
+
   await sendTrainingPeaksMessage(parsedMessage.chatId, lines.join("\n"));
 }
 
-async function handleTrainingPeaksCronStatus(parsedMessage: ParsedTelegramUpdate): Promise<void> {
+async function handleTrainingPeaksCronStatus(
+  parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate
+): Promise<void> {
   const [lastAttempt, lastSent, recentLogs] = await Promise.all([
     getLatestTrainingPeaksCronRunLog({
       jobName: TRAININGPEAKS_ATTENTION_DIGEST_CRON_JOB_NAME,
@@ -2667,14 +2714,26 @@ async function handleTrainingPeaksCronStatus(parsedMessage: ParsedTelegramUpdate
     }),
   ]);
 
-  await sendTrainingPeaksMessage(
-    parsedMessage.chatId,
-    formatTrainingPeaksCronStatusMessage({
-      lastAttempt,
-      lastSent,
-      recentLogs,
-    })
-  );
+  const text = formatTrainingPeaksCronStatusMessage({
+    lastAttempt,
+    lastSent,
+    recentLogs,
+  });
+
+  if (parsedMessage.kind === "callback_query") {
+    await showTrainingPeaksMenuScreen(
+      parsedMessage,
+      text,
+      createInlineKeyboardMarkup([
+        [createMenuButton("🔄 Обновить", TP_CALLBACK_CRON_STATUS)],
+        [createMenuButton("⬅️ Служебное", TP_CALLBACK_MORE_MENU)],
+        [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
+      ])
+    );
+    return;
+  }
+
+  await sendTrainingPeaksMessage(parsedMessage.chatId, text);
 }
 
 async function handleTrainingPeaksDigestNow(parsedMessage: ParsedTelegramUpdate): Promise<void> {
@@ -2769,43 +2828,58 @@ export function isTrainingPeaksCommand(text: string): boolean {
 
 export function getTrainingPeaksHelpLines(): string[] {
   return [
-    "Что можно сделать:",
+    "Coach Command Center",
     "",
-    "🏠 Меню — открыть главное меню",
-    "👥 Ученики — открыть список учеников",
-    "📊 Отчёты — недельные отчёты, статус и запуск",
-    "🏁 Забеги — запросить сканирование забегов",
-    "🧾 Задачи — посмотреть последние запуски",
-    "⚙️ Ещё — переносы тренировок и эта справка",
+    "Обычные рабочие сценарии доступны через /tp и кнопки. Команды ниже нужны как быстрые fallback-пути.",
     "",
-    "Управление учениками и Telegram-привязкой теперь выполняется в Web Admin.",
-    "🔎 Найти по username / 🔗 Код привязки остаются fallback-инструментами в карточке ученика",
+    "1. Утренний обзор",
+    "🌅 /tp_attention — текущий digest внимания",
+    "/tp_digest_now — ручная отправка digest только тренерским чатам, с защитой от повторной отправки за день",
     "",
-    "Команды тоже работают, но обычно быстрее пользоваться кнопками.",
-    "",
-    "Команды (расширенные):",
-    "/tp_run_student <slug> YYYY-MM-DD YYYY-MM-DD — черновик отчёта одного ученика",
-    "/tp_report <ученик> [last|даты] — посмотреть отчёт",
-    "/tp_actions — последние заявки на перенос",
-    "/tp_intents — triage непонятых TP-сообщений (read-only)",
-    "/tp_cases [query] — активные coach cases с фильтром и пагинацией",
+    "2. Кейсы",
+    "🧩 /tp_cases — активные coach cases с фильтром и пагинацией",
     "/tp_case <case_id_prefix> — открыть один кейс по short ID",
-    "/tp_cases_recent — последние активные coach cases",
     "/tp case resolve <case_id> — закрыть coach case",
     "/tp case dismiss <case_id> — скрыть coach case",
-    "/tp_races YYYY-MM-DD YYYY-MM-DD — скан забегов за период",
-    "/tp_reply_draft <ученик> — черновик ответа ученику (без автоотправки)",
-    "/tp_draft_feedback <draft_id> used|edited|ignored [заметка] — фидбек по черновику",
-    "/tp_health — краткая проверка production-конфига и зависших jobs",
     "",
-    "Служебные (редко нужны):",
-    "/tp_set_telegram — привязка Telegram вручную",
-    "/tp_business_test — тест Business API",
+    "3. Заявки на перенос",
+    "📋 /tp_actions — последние заявки на перенос",
+    "Approve/reject/execute остаются на существующих кнопках заявки. Реальные изменения TrainingPeaks требуют подтверждения и локального executor.",
+    "",
+    "4. Отчёты",
+    "📊 /tp_report <ученик> [last|даты] — посмотреть отчёт",
+    "/tp_run_student <slug> YYYY-MM-DD YYYY-MM-DD — создать черновик отчёта одного ученика",
+    "/tp_run_week last|current — preview перед постановкой пачки в очередь",
+    "Отчёты ученикам не отправляются автоматически.",
+    "",
+    "5. Ученики",
+    "👥 /tp_students — список учеников",
+    "/tp_student <ученик> — карточка ученика",
+    "Управление учениками и Telegram-привязкой в основном выполняется в Web Admin.",
+    "Fallback-инструменты привязки доступны из карточки ученика.",
+    "",
+    "6. Биллинг",
+    "💳 /bill — сводка",
+    "/bill_list — список оплат",
+    "/bill_paid и /bill_unpaid — ручные write-команды, без автоимпорта и автомэтчинга.",
+    "",
+    "7. Служебное",
+    "⚙️ /tp_health — краткая проверка production-конфига и зависших jobs",
     "/tp_cron_status — статус cron attention_digest",
-    "/tp_digest_now — вручную отправить утренний обзор (если cron пропустил)",
+    "/tp_jobs — последние задачи",
+    "/tp_intents — triage непонятых TP-сообщений (read-only)",
+    "/tp_races YYYY-MM-DD YYYY-MM-DD — запросить сканирование забегов за период",
     "/tp_link_thread <ученик> — привязать текущую тему к ученику",
     "/tp_thread_info — показать привязку текущей темы",
     "/tp_unlink_thread — отвязать текущую тему",
+    "",
+    "Черновики ответов",
+    "/tp_reply_draft <ученик> <сообщение ученика> — создать черновик ответа без автоотправки",
+    "/tp_draft_feedback <draft_id> used|edited|ignored [заметка] — фидбек по черновику",
+    "",
+    "Скрыто из обычного меню:",
+    "/tp_weekly — legacy alias, отключён",
+    "/tp_set_telegram и /tp_business_test — service-only fallback/debug",
   ];
 }
 
@@ -2836,6 +2910,10 @@ function getTrainingPeaksReplyKeyboardAction(text: string): TrainingPeaksReplyKe
 
   if (text === TP_REPLY_BUTTON_CASES) {
     return "cases_recent";
+  }
+
+  if (text === TP_REPLY_BUTTON_SERVICE) {
+    return "more_menu";
   }
 
   if (text === TP_REPLY_BUTTON_BACK) {
@@ -3008,6 +3086,34 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
     return { kind: "more_menu" };
   }
 
+  if (data === TP_CALLBACK_ATTENTION) {
+    return { kind: "attention" };
+  }
+
+  if (data === TP_CALLBACK_REPLY_DRAFT_HINT) {
+    return { kind: "reply_draft_hint" };
+  }
+
+  if (data === TP_CALLBACK_BILLING_HINT) {
+    return { kind: "billing_hint" };
+  }
+
+  if (data === TP_CALLBACK_HEALTH) {
+    return { kind: "health" };
+  }
+
+  if (data === TP_CALLBACK_CRON_STATUS) {
+    return { kind: "cron_status" };
+  }
+
+  if (data === TP_CALLBACK_INTENTS) {
+    return { kind: "intents" };
+  }
+
+  if (data === TP_CALLBACK_TELEGRAM_LINKS_HINT) {
+    return { kind: "telegram_links_hint" };
+  }
+
   if (data.startsWith(TP_CALLBACK_STUDENT_WEEKLY_HINT_PREFIX)) {
     const studentId = data.slice(TP_CALLBACK_STUDENT_WEEKLY_HINT_PREFIX.length).trim();
     return studentId ? { kind: "student_weekly_hint", studentId } : null;
@@ -3130,17 +3236,23 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
 }
 
 function getTrainingPeaksMainMenuText(): string {
-  return ["🏠 Главное меню", "Выберите действие:"].join("\n");
+  return [
+    "🏠 TrainingPeaks Coach Command Center",
+    "",
+    "Выберите рабочий сценарий. Кнопки ниже ведут в существующие безопасные экраны или показывают команду-fallback.",
+  ].join("\n");
 }
 
 function getTrainingPeaksMainMenuMarkup(): TelegramInlineKeyboardMarkup {
   return createInlineKeyboardMarkup([
-    [createMenuButton("👥 Ученики", "tp:s:0")],
-    [createMenuButton("📊 Отчёты", TP_CALLBACK_REPORTS_MENU)],
-    [createMenuButton("🏁 Забеги", TP_CALLBACK_RACES_MENU)],
-    [createMenuButton("🧾 Задачи", TP_CALLBACK_JOBS)],
+    [createMenuButton("🌅 Утренний обзор", TP_CALLBACK_ATTENTION)],
     [createMenuButton("🧩 Кейсы", TP_CALLBACK_CASES_RECENT)],
-    [createMenuButton("⚙️ Ещё", TP_CALLBACK_MORE_MENU)],
+    [createMenuButton("📋 Заявки на перенос", "tp:actions:list")],
+    [createMenuButton("✉️ Черновики ответов", TP_CALLBACK_REPLY_DRAFT_HINT)],
+    [createMenuButton("📊 Отчёты", TP_CALLBACK_REPORTS_MENU)],
+    [createMenuButton("👥 Ученики", "tp:s:0")],
+    [createMenuButton("💳 Биллинг", TP_CALLBACK_BILLING_HINT)],
+    [createMenuButton("⚙️ Служебное", TP_CALLBACK_MORE_MENU)],
   ]);
 }
 
@@ -3520,7 +3632,11 @@ function getJobsMenuMarkup(
 }
 
 function getReportsMenuText(): string {
-  return ["📊 Отчёты", "Выберите действие:"].join("\n");
+  return [
+    "📊 Отчёты",
+    "",
+    "Просмотр и постановка отчётов в очередь. Пачка всегда показывает preview перед confirm, ученикам ничего не отправляется автоматически.",
+  ].join("\n");
 }
 
 function getReportsMenuMarkup(): TelegramInlineKeyboardMarkup {
@@ -3581,12 +3697,21 @@ function getReportsFromStudentMarkup(): TelegramInlineKeyboardMarkup {
 }
 
 function getMoreMenuText(): string {
-  return ["⚙️ Ещё", "Дополнительные действия."].join("\n");
+  return [
+    "⚙️ Служебное",
+    "",
+    "Редкие и диагностические инструменты. Кнопки ниже не запускают TrainingPeaks execute напрямую.",
+  ].join("\n");
 }
 
 function getMoreMenuMarkup(): TelegramInlineKeyboardMarkup {
   return createInlineKeyboardMarkup([
-    [createMenuButton("📋 Переносы", "tp:actions:list")],
+    [createMenuButton("🩺 Health", TP_CALLBACK_HEALTH)],
+    [createMenuButton("🕓 Cron status", TP_CALLBACK_CRON_STATUS)],
+    [createMenuButton("🧾 Jobs", TP_CALLBACK_JOBS)],
+    [createMenuButton("🧠 Intent logs", TP_CALLBACK_INTENTS)],
+    [createMenuButton("🏁 Забеги", TP_CALLBACK_RACES_MENU)],
+    [createMenuButton("🔗 Telegram links", TP_CALLBACK_TELEGRAM_LINKS_HINT)],
     [createMenuButton("❓ Помощь", TP_CALLBACK_HELP)],
     [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
   ]);
@@ -3597,7 +3722,105 @@ function getHelpMenuText(): string {
 }
 
 function getHelpMenuMarkup(): TelegramInlineKeyboardMarkup {
-  return createInlineKeyboardMarkup([[createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)]]);
+  return createInlineKeyboardMarkup([
+    [createMenuButton("⬅️ Служебное", TP_CALLBACK_MORE_MENU)],
+    [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
+  ]);
+}
+
+function getReplyDraftHintText(): string {
+  return [
+    "✉️ Черновики ответов",
+    "",
+    "Сейчас это command-only workflow, потому что нужен текст сообщения ученика.",
+    "",
+    "Создать черновик:",
+    "/tp_reply_draft <ученик> <сообщение ученика>",
+    "",
+    "Зафиксировать фидбек:",
+    "/tp_draft_feedback <draft_id> used|edited|ignored [заметка]",
+    "",
+    "Черновик только показывается тренеру. Ученику ничего не отправляется автоматически.",
+  ].join("\n");
+}
+
+function getReplyDraftHintMarkup(): TelegramInlineKeyboardMarkup {
+  return createInlineKeyboardMarkup([
+    [createMenuButton("👥 Ученики", "tp:s:0")],
+    [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
+  ]);
+}
+
+function getBillingHintText(): string {
+  return [
+    "💳 Биллинг",
+    "",
+    "Биллинг живёт в отдельном наборе команд /bill.",
+    "",
+    "Открыть сводку: /bill",
+    "Список оплат: /bill_list",
+    "Справка: /bill_help",
+    "",
+    "Команды отметки оплат остаются ручными:",
+    "/bill_paid <name_or_id> [amount]",
+    "/bill_unpaid <name_or_id> [YYYY-MM]",
+    "",
+    "Из этого меню не запускается email import, auto-match или изменение оплат.",
+  ].join("\n");
+}
+
+function getBillingHintMarkup(): TelegramInlineKeyboardMarkup {
+  return createInlineKeyboardMarkup([
+    [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
+  ]);
+}
+
+function getIntentsHintText(): string {
+  return [
+    "🧠 Intent logs",
+    "",
+    "Read-only triage непонятых TrainingPeaks сообщений.",
+    "",
+    "Команда:",
+    "/tp_intents",
+    "",
+    "Фильтры:",
+    "/tp_intents unknown",
+    "/tp_intents ai",
+  ].join("\n");
+}
+
+function getIntentsHintMarkup(): TelegramInlineKeyboardMarkup {
+  return createInlineKeyboardMarkup([
+    [createMenuButton("⬅️ Служебное", TP_CALLBACK_MORE_MENU)],
+    [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
+  ]);
+}
+
+function getTelegramLinksHintText(): string {
+  return [
+    "🔗 Telegram links",
+    "",
+    "Основной путь: Web Admin или карточка ученика.",
+    "",
+    "В карточке ученика доступны fallback-кнопки:",
+    "🔗 Привязать Telegram",
+    "🔎 Найти username",
+    "🔗 Код привязки",
+    "",
+    "Топики групп:",
+    "/tp_link_thread <ученик>",
+    "/tp_thread_info",
+    "/tp_unlink_thread",
+  ].join("\n");
+}
+
+function getTelegramLinksHintMarkup(): TelegramInlineKeyboardMarkup {
+  return createInlineKeyboardMarkup([
+    [createMenuButton("👥 Ученики", "tp:s:0")],
+    [createMenuButton("⬅️ Служебное", TP_CALLBACK_MORE_MENU)],
+    [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
+  ]);
 }
 
 function getAddStudentInstructionsText(): string {
@@ -6352,6 +6575,11 @@ export async function handleTrainingPeaksTelegramReplyKeyboardMessage(
       return "handled";
     }
 
+    if (action === "more_menu") {
+      await showTrainingPeaksMoreMenu(parsedMessage);
+      return "handled";
+    }
+
     if (action === "back") {
       await showTrainingPeaksMainMenu(parsedMessage);
       return "handled";
@@ -8289,6 +8517,49 @@ export async function handleTrainingPeaksTelegramCallback(
 
     if (callback.kind === "more_menu") {
       await showTrainingPeaksMoreMenu(parsedMessage);
+      return "handled";
+    }
+
+    if (callback.kind === "attention") {
+      await handleTrainingPeaksAttention(parsedMessage);
+      return "handled";
+    }
+
+    if (callback.kind === "reply_draft_hint") {
+      await showTrainingPeaksMenuScreen(
+        parsedMessage,
+        getReplyDraftHintText(),
+        getReplyDraftHintMarkup()
+      );
+      return "handled";
+    }
+
+    if (callback.kind === "billing_hint") {
+      await showTrainingPeaksMenuScreen(parsedMessage, getBillingHintText(), getBillingHintMarkup());
+      return "handled";
+    }
+
+    if (callback.kind === "health") {
+      await handleTrainingPeaksHealth(parsedMessage);
+      return "handled";
+    }
+
+    if (callback.kind === "cron_status") {
+      await handleTrainingPeaksCronStatus(parsedMessage);
+      return "handled";
+    }
+
+    if (callback.kind === "intents") {
+      await showTrainingPeaksMenuScreen(parsedMessage, getIntentsHintText(), getIntentsHintMarkup());
+      return "handled";
+    }
+
+    if (callback.kind === "telegram_links_hint") {
+      await showTrainingPeaksMenuScreen(
+        parsedMessage,
+        getTelegramLinksHintText(),
+        getTelegramLinksHintMarkup()
+      );
       return "handled";
     }
 
