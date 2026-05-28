@@ -52,6 +52,7 @@ import {
   listRecentTrainingPeaksJobs,
   listRecentTrainingPeaksCoachCasesForAttention,
   listRecentTrainingPeaksCoachCases as listRecentTrainingPeaksCoachCasesFromRepository,
+  listTrainingPeaksCoachCases as listTrainingPeaksCoachCasesFromRepository,
   listRecentTrainingPeaksActions as listRecentTrainingPeaksActionsFromRepository,
   listTrainingPeaksActionLatestRunContexts,
   getTrainingPeaksActionLatestRunContext,
@@ -91,6 +92,7 @@ import {
   type CancelTrainingPeaksActionExecutionResultExtended,
   type TrainingPeaksBusinessChat,
   type TrainingPeaksAction,
+  type TrainingPeaksCoachCase,
   type TrainingPeaksWorkoutCacheRow,
   type TrainingPeaksActionWithStudent,
   type TrainingPeaksActionLatestRunContext,
@@ -1234,6 +1236,69 @@ export async function listRecentTrainingPeaksCoachCases(input?: {
     ...row,
     shortId: row.id.slice(0, 8),
   }));
+}
+
+export async function listTrainingPeaksCoachCases(input?: {
+  limit?: number;
+  offset?: number;
+  statusFilter?: readonly TrainingPeaksCoachCaseStatus[];
+  caseKindFilter?: readonly TrainingPeaksCoachCaseKind[];
+  studentQuery?: string | null;
+}): Promise<{
+  items: Array<{
+    id: string;
+    shortId: string;
+    studentId: string;
+    studentName: string | null;
+    caseKind: TrainingPeaksCoachCaseKind;
+    status: TrainingPeaksCoachCaseStatus;
+    createdAt: string;
+    previewText: string | null;
+    coachNotesJson: Record<string, unknown>;
+  }>;
+  total: number;
+}> {
+  const result = await listTrainingPeaksCoachCasesFromRepository({
+    limit: input?.limit ?? 5,
+    offset: input?.offset ?? 0,
+    statusFilter: input?.statusFilter,
+    caseKindFilter: input?.caseKindFilter,
+    studentQuery: input?.studentQuery,
+  });
+
+  return {
+    items: result.items.map((row) => ({
+      ...row,
+      shortId: row.id.slice(0, 8),
+    })),
+    total: result.total,
+  };
+}
+
+export async function getTrainingPeaksCoachCaseByShortId(input: {
+  prefix: string;
+}): Promise<
+  | { kind: "found"; case: TrainingPeaksCoachCase }
+  | { kind: "not_found" }
+  | { kind: "ambiguous" }
+  | { kind: "invalid_prefix" }
+> {
+  const lookup = await getTrainingPeaksCoachCaseByIdPrefix(input.prefix);
+  if (lookup.kind === "invalid_prefix") {
+    return { kind: "invalid_prefix" };
+  }
+  if (lookup.kind === "not_found") {
+    return { kind: "not_found" };
+  }
+  if (lookup.kind === "ambiguous") {
+    return { kind: "ambiguous" };
+  }
+
+  const details = await getTrainingPeaksCoachCaseDetailsById(lookup.case.id);
+  if (!details) {
+    return { kind: "not_found" };
+  }
+  return { kind: "found", case: details };
 }
 
 export async function countActiveTrainingPeaksCoachCases(

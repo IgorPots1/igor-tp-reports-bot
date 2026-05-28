@@ -6381,42 +6381,77 @@ export async function countActiveTrainingPeaksCoachCases(
   return count ?? 0;
 }
 
-export async function listRecentTrainingPeaksCoachCases(input: {
+type TrainingPeaksCoachCaseListItem = {
+  id: string;
+  studentId: string;
+  studentName: string | null;
+  caseKind: TrainingPeaksCoachCaseKind;
+  status: TrainingPeaksCoachCaseStatus;
+  createdAt: string;
+  previewText: string | null;
+  coachNotesJson: Record<string, unknown>;
+};
+
+export async function listTrainingPeaksCoachCases(input: {
   limit?: number;
-  statuses?: readonly TrainingPeaksCoachCaseStatus[];
-}): Promise<
-  Array<{
-    id: string;
-    studentId: string;
-    studentName: string | null;
-    caseKind: TrainingPeaksCoachCaseKind;
-    status: TrainingPeaksCoachCaseStatus;
-    createdAt: string;
-    previewText: string | null;
-    coachNotesJson: Record<string, unknown>;
-  }>
-> {
+  offset?: number;
+  statusFilter?: readonly TrainingPeaksCoachCaseStatus[];
+  caseKindFilter?: readonly TrainingPeaksCoachCaseKind[];
+  studentQuery?: string | null;
+}): Promise<{ items: TrainingPeaksCoachCaseListItem[]; total: number }> {
   const safeLimit = Math.max(1, Math.min(input.limit ?? 10, 50));
+  const safeOffset = Math.max(0, Math.trunc(input.offset ?? 0));
+  const normalizedStudentQuery = input.studentQuery?.trim() ?? "";
   const supabase = createSupabaseServerClient();
+
+  let studentIdFilter: string[] | null = null;
+  if (normalizedStudentQuery.length > 0) {
+    const { data: matchedStudents, error: studentsError } = await supabase
+      .from("trainingpeaks_students")
+      .select("id")
+      .ilike("student_name", `%${normalizedStudentQuery}%`)
+      .limit(200);
+
+    if (studentsError) {
+      throw new Error(`Failed to filter TrainingPeaks coach cases by student name: ${studentsError.message}`);
+    }
+
+    studentIdFilter = ((matchedStudents as Array<{ id: string }> | null) ?? [])
+      .map((row) => row.id)
+      .filter((value) => typeof value === "string" && value.length > 0);
+    if (studentIdFilter.length === 0) {
+      return { items: [], total: 0 };
+    }
+  }
+
   let query = supabase
     .from("trainingpeaks_coach_cases")
     .select(
-      "id, student_id, case_kind, status, created_at, coach_notes_json, trainingpeaks_students(student_name), trainingpeaks_telegram_context_observations(text_preview), trainingpeaks_message_intent_logs(text_preview)"
+      "id, student_id, case_kind, status, created_at, coach_notes_json, trainingpeaks_students(student_name), trainingpeaks_telegram_context_observations(text_preview), trainingpeaks_message_intent_logs(text_preview)",
+      { count: "exact" }
     )
     .order("created_at", { ascending: false })
-    .limit(safeLimit)
+    .range(safeOffset, safeOffset + safeLimit - 1)
     .not("student_id", "is", null);
 
-  if (input.statuses && input.statuses.length > 0) {
-    query = query.in("status", [...input.statuses]);
+  if (input.statusFilter && input.statusFilter.length > 0) {
+    query = query.in("status", [...input.statusFilter]);
   }
 
-  const { data, error } = await query;
+  if (input.caseKindFilter && input.caseKindFilter.length > 0) {
+    query = query.in("case_kind", [...input.caseKindFilter]);
+  }
+
+  if (studentIdFilter && studentIdFilter.length > 0) {
+    query = query.in("student_id", studentIdFilter);
+  }
+
+  const { data, error, count } = await query;
   if (error) {
-    throw new Error(`Failed to list recent TrainingPeaks coach cases: ${error.message}`);
+    throw new Error(`Failed to list TrainingPeaks coach cases: ${error.message}`);
   }
 
-  return (
+  const items = (
     (data as Array<{
       id: string;
       student_id: string;
@@ -6459,6 +6494,21 @@ export async function listRecentTrainingPeaksCoachCases(input: {
           : {},
     };
   });
+  return {
+    items,
+    total: count ?? items.length,
+  };
+}
+
+export async function listRecentTrainingPeaksCoachCases(input: {
+  limit?: number;
+  statuses?: readonly TrainingPeaksCoachCaseStatus[];
+}): Promise<TrainingPeaksCoachCaseListItem[]> {
+  const result = await listTrainingPeaksCoachCases({
+    limit: input.limit,
+    statusFilter: input.statuses,
+  });
+  return result.items;
 }
 
 const TRAININGPEAKS_MESSAGE_INTENT_LOG_TRIAGE_STATUSES: TrainingPeaksMessageIntentLogStatus[] = [

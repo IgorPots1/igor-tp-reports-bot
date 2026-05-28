@@ -13,7 +13,6 @@ import {
   approveTrainingPeaksAction,
   cancelTrainingPeaksActionExecution,
   cancelTrainingPeaksWeeklyRun,
-  countActiveTrainingPeaksCoachCases,
   consumeTrainingPeaksStudentTelegramLinkCode,
   createTrainingPeaksActionsFromGroupMoveCase,
   createTrainingPeaksMoveWorkoutActionFromTelegram,
@@ -36,13 +35,14 @@ import {
   getTrainingPeaksStudentCardByInternalId,
   getTrainingPeaksStudentById,
   getTrainingPeaksBusinessChatByChatId,
+  getTrainingPeaksCoachCaseByShortId,
   getTrainingPeaksStudentsRegistryWithLatestReportStatus,
   getTrainingPeaksThreadInfo,
   getTrainingPeaksWeeklyReportByInternalId,
   linkTrainingPeaksStudentThread,
   linkTrainingPeaksStudentToBusinessChat,
   listRecentTrainingPeaksBusinessChats,
-  listRecentTrainingPeaksCoachCases,
+  listTrainingPeaksCoachCases,
   rejectTrainingPeaksAction,
   resolveTrainingPeaksCoachCase,
   requestTrainingPeaksActionExecution,
@@ -153,6 +153,7 @@ const TP_CALLBACK_RACES_30_DAYS = "tp:races:30d";
 const TP_CALLBACK_RACES_TO_AUGUST = "tp:races:aug1";
 const TP_CALLBACK_JOBS = "tp:j";
 const TP_CALLBACK_CASES_RECENT = "tp:cases:recent";
+const TP_CALLBACK_CASES_PAGE_PREFIX = "tp:cases:page:";
 const TP_CALLBACK_WEEK_RUN_CONFIRM = "tp:wr:confirm";
 const TP_CALLBACK_WEEK_RUN_CANCEL = "tp:wr:cancel";
 const TP_CALLBACK_JOB_CANCEL_PREFIX = "tp:jc:";
@@ -242,6 +243,8 @@ const TP_RACES_COMMAND_PATTERN = /^\/tp_races(?:@\w+)?(?:\s+|$)/;
 const TP_JOBS_COMMAND_PATTERN = /^\/tp_jobs(?:@\w+)?(?:\s+|$)/;
 const TP_ATTENTION_COMMAND_PATTERN = /^\/tp_attention(?:@\w+)?(?:\s+|$)/;
 const TP_CASES_RECENT_COMMAND_PATTERN = /^\/tp_cases_recent(?:@\w+)?(?:\s+|$)/;
+const TP_CASES_COMMAND_PATTERN = /^\/tp_cases(?:@\w+)?(?:\s+|$)/;
+const TP_CASE_COMMAND_PATTERN = /^\/tp_case(?:@\w+)?(?:\s+|$)/;
 const TP_CASE_RESOLVE_COMMAND_PATTERN = /^\/tp_case_resolve(?:@\w+)?(?:\s+|$)/;
 const TP_CASE_DISMISS_COMMAND_PATTERN = /^\/tp_case_dismiss(?:@\w+)?(?:\s+|$)/;
 const TP_RESOLVE_CASE_COMMAND_PATTERN = /^\/tp_resolve_case(?:@\w+)?(?:\s+|$)/;
@@ -298,6 +301,8 @@ type TrainingPeaksCommand =
   | "tp_jobs"
   | "tp_attention"
   | "tp_cases_recent"
+  | "tp_cases"
+  | "tp_case"
   | "tp_case_resolve"
   | "tp_case_dismiss"
   | "tp_health"
@@ -356,6 +361,7 @@ type ParsedTrainingPeaksCallback =
   | { kind: "case_resolve"; shortId: string }
   | { kind: "case_dismiss"; shortId: string }
   | { kind: "case_create_proposals"; shortId: string }
+  | { kind: "cases_page"; offset: number; query: string | null }
   | { kind: "actions_list" }
   | { kind: "week_menu" }
   | { kind: "week_last" }
@@ -449,6 +455,8 @@ type TrainingPeaksReplyKeyboardAction =
   | "student_disable"
   | "student_enable";
 
+type TrainingPeaksCaseListItem = Awaited<ReturnType<typeof listTrainingPeaksCoachCases>>["items"][number];
+
 const trainingPeaksChatContextByChatId = new Map<string, TrainingPeaksChatContext>();
 const trainingPeaksTelegramLinkContextByChatId = new Map<string, TrainingPeaksTelegramLinkContext>();
 const pendingAllEnabledWeeklyRunByChatId = new Map<string, PendingAllEnabledWeeklyRunContext>();
@@ -528,6 +536,14 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
 
   if (TP_CASES_RECENT_COMMAND_PATTERN.test(text)) {
     return "tp_cases_recent";
+  }
+
+  if (TP_CASES_COMMAND_PATTERN.test(text)) {
+    return "tp_cases";
+  }
+
+  if (TP_CASE_COMMAND_PATTERN.test(text)) {
+    return "tp_case";
   }
 
   if (TP_CASE_RESOLVE_COMMAND_PATTERN.test(text) || TP_RESOLVE_CASE_COMMAND_PATTERN.test(text)) {
@@ -1489,8 +1505,75 @@ function parseTrainingPeaksCoachCaseCommand(text: string): { caseId: string | nu
   };
 }
 
+type TrainingPeaksCasesQueryFilters = {
+  normalizedQuery: string;
+  studentQuery: string | null;
+  caseKindFilter: Array<
+    | "move_workout_requested"
+    | "move_workout_needs_review"
+    | "question_to_coach"
+    | "pain_or_health_signal"
+    | "unrecognized_intent"
+  >;
+};
+
+const TP_CASES_ACTIVE_STATUSES = ["logged", "open", "needs_review"] as const;
+const TP_CASES_PAGE_LIMIT = 5;
+
+function parseTrainingPeaksCasesCommandQuery(text: string): string {
+  return text.replace(/^\/tp_cases(?:@\w+)?\s*/i, "").trim();
+}
+
+function parseTrainingPeaksCaseCommandId(text: string): string {
+  return text.replace(/^\/tp_case(?:@\w+)?\s*/i, "").trim();
+}
+
+function deriveTrainingPeaksCasesFilters(rawQuery: string): TrainingPeaksCasesQueryFilters {
+  const normalizedQuery = rawQuery
+    .toLocaleLowerCase("ru")
+    .replace(/ё/g, "е")
+    .replace(/\s+/g, " ")
+    .trim();
+  const tokens = normalizedQuery.length > 0 ? normalizedQuery.split(" ") : [];
+
+  const hasMove = tokens.some((token) => token === "move" || token.startsWith("перенос"));
+  const hasQuestion = tokens.some(
+    (token) => token === "question" || token === "questions" || token.startsWith("вопрос")
+  );
+  const hasHealth = tokens.some(
+    (token) => token === "health" || token.startsWith("бол") || token.startsWith("здоров")
+  );
+  const hasUnrecognized = tokens.some(
+    (token) => token === "unrecognized" || token.startsWith("неразоб") || token.startsWith("непонят")
+  );
+
+  const caseKindFilter: TrainingPeaksCasesQueryFilters["caseKindFilter"] = [];
+  if (hasMove) {
+    caseKindFilter.push("move_workout_needs_review", "move_workout_requested");
+  }
+  if (hasQuestion) {
+    caseKindFilter.push("question_to_coach");
+  }
+  if (hasHealth) {
+    caseKindFilter.push("pain_or_health_signal");
+  }
+  if (hasUnrecognized) {
+    caseKindFilter.push("unrecognized_intent");
+  }
+
+  const keywordRegex = /^(move|questions?|health|unrecognized|перенос\p{L}*|вопрос\p{L}*|бол\p{L}*|здоров\p{L}*|неразоб\p{L}*|непонят\p{L}*)$/u;
+  const studentTokens = tokens.filter((token) => !keywordRegex.test(token));
+  const studentQuery = studentTokens.length > 0 ? studentTokens.join(" ") : null;
+
+  return {
+    normalizedQuery,
+    studentQuery,
+    caseKindFilter: [...new Set(caseKindFilter)],
+  };
+}
+
 function getTrainingPeaksCoachCaseKindLabel(
-  caseKind: Awaited<ReturnType<typeof listRecentTrainingPeaksCoachCases>>[number]["caseKind"]
+  caseKind: TrainingPeaksCaseListItem["caseKind"]
 ): string {
   switch (caseKind) {
     case "question_to_coach":
@@ -1511,7 +1594,7 @@ function getTrainingPeaksCoachCaseKindLabel(
 }
 
 function getTrainingPeaksCoachCaseStatusLabel(
-  status: Awaited<ReturnType<typeof listRecentTrainingPeaksCoachCases>>[number]["status"]
+  status: TrainingPeaksCaseListItem["status"]
 ): string {
   switch (status) {
     case "logged":
@@ -1545,7 +1628,7 @@ function getTrainingPeaksCoachCasePreviewText(previewText: string | null): strin
 }
 
 function shouldShowCreateActionProposalsButton(
-  item: Awaited<ReturnType<typeof listRecentTrainingPeaksCoachCases>>[number]
+  item: TrainingPeaksCaseListItem
 ): boolean {
   if (item.caseKind !== "move_workout_needs_review") {
     return false;
@@ -1558,28 +1641,116 @@ function shouldShowCreateActionProposalsButton(
 }
 
 function formatTrainingPeaksCoachCaseCard(
-  item: Awaited<ReturnType<typeof listRecentTrainingPeaksCoachCases>>[number]
+  item: TrainingPeaksCaseListItem
 ): string {
-  return [
+  const lines = [
     item.studentName ?? "Без имени",
     `${getTrainingPeaksCoachCaseKindLabel(item.caseKind)} · ${formatTrainingPeaksCoachCaseCreatedAt(item.createdAt)} · ${getTrainingPeaksCoachCaseStatusLabel(item.status)}`,
     `Контекст: ${getTrainingPeaksCoachCasePreviewText(item.previewText)}`,
-    `#${item.shortId}`,
-  ].join("\n");
-}
+  ];
 
-function formatTrainingPeaksCoachCasesRecentEmptyMessage(
-  cases: Awaited<ReturnType<typeof listRecentTrainingPeaksCoachCases>>
-): string {
-  if (cases.length === 0) {
-    return "Recent TP cases:\n\nАктивных кейсов сейчас нет.";
+  if (item.caseKind === "move_workout_needs_review") {
+    const sourceType = typeof item.coachNotesJson.source_type === "string" ? item.coachNotesJson.source_type : null;
+    const sourceGroupTitle =
+      typeof item.coachNotesJson.group_title === "string" ? item.coachNotesJson.group_title.trim() : "";
+    const sourceTopicId =
+      typeof item.coachNotesJson.message_thread_id === "number" ? String(item.coachNotesJson.message_thread_id) : null;
+    const sourceLabel = sourceType === "group_topic" ? "group topic" : sourceType === "group_general" ? "group" : null;
+    if (sourceLabel) {
+      const groupPart = sourceGroupTitle.length > 0 ? sourceGroupTitle : "без названия";
+      const topicPart = sourceType === "group_topic" ? ` / topic ${sourceTopicId ?? "?"}` : "";
+      lines.push(`Источник: ${sourceLabel} (${groupPart}${topicPart})`);
+    }
+
+    const multiMovePossible = item.coachNotesJson.multi_move_possible === true;
+    const rawPairs = item.coachNotesJson.move_pairs_preview;
+    const pairs = Array.isArray(rawPairs)
+      ? rawPairs
+          .map((pair) => {
+            if (!pair || typeof pair !== "object") {
+              return null;
+            }
+            const pairRecord = pair as Record<string, unknown>;
+            const source = typeof pairRecord.source === "string" ? pairRecord.source.trim() : "";
+            const target = typeof pairRecord.target === "string" ? pairRecord.target.trim() : "";
+            return source && target ? `${source} -> ${target}` : null;
+          })
+          .filter((value): value is string => Boolean(value))
+      : [];
+    lines.push(`multi_move_possible: ${multiMovePossible ? "yes" : "no"}${pairs.length > 0 ? ` / pairs: ${pairs.join("; ")}` : ""}`);
+
+    const createdActionIds = Array.isArray(item.coachNotesJson.created_action_ids)
+      ? item.coachNotesJson.created_action_ids.filter((value): value is string => typeof value === "string" && value.length > 0)
+      : [];
+    if (createdActionIds.length > 0 || item.coachNotesJson.action_proposals_created === true) {
+      lines.push(`created_action_ids: ${createdActionIds.length > 0 ? createdActionIds.join(", ") : "есть"}`);
+      lines.push("Заявки уже созданы — проверь /tp_actions");
+    }
   }
 
-  return "Recent TP cases:";
+  lines.push(`#${item.shortId}`);
+  return lines.join("\n");
+}
+
+function buildTrainingPeaksCasesPageCallbackData(offset: number, query: string | null): string {
+  const safeOffset = Math.max(0, Math.trunc(offset));
+  const normalizedQuery = query?.trim() ?? "";
+  const queryPart = normalizedQuery.length > 0 ? encodeURIComponent(normalizedQuery) : "-";
+  return `${TP_CALLBACK_CASES_PAGE_PREFIX}${safeOffset}:${queryPart}`;
+}
+
+function parseTrainingPeaksCasesPageCallbackData(data: string): { offset: number; query: string | null } | null {
+  const rest = data.slice(TP_CALLBACK_CASES_PAGE_PREFIX.length).trim();
+  const separatorIndex = rest.indexOf(":");
+  if (separatorIndex < 1) {
+    return null;
+  }
+  const offsetPart = rest.slice(0, separatorIndex).trim();
+  const rawQueryPart = rest.slice(separatorIndex + 1).trim();
+  const offset = Number.parseInt(offsetPart, 10);
+  if (!Number.isInteger(offset) || offset < 0) {
+    return null;
+  }
+  if (!rawQueryPart || rawQueryPart === "-") {
+    return { offset, query: null };
+  }
+  try {
+    const query = decodeURIComponent(rawQueryPart).trim();
+    return { offset, query: query.length > 0 ? query : null };
+  } catch {
+    return null;
+  }
+}
+
+function getTrainingPeaksCasesPaginationMarkup(input: {
+  offset: number;
+  limit: number;
+  total: number;
+  query: string | null;
+}): TelegramInlineKeyboardMarkup {
+  const rows: TrainingPeaksMenuButton[][] = [];
+  const navRow: TrainingPeaksMenuButton[] = [];
+  if (input.offset > 0) {
+    navRow.push(
+      createMenuButton(
+        "⬅️ Назад",
+        buildTrainingPeaksCasesPageCallbackData(Math.max(0, input.offset - input.limit), input.query)
+      )
+    );
+  }
+  if (input.offset + input.limit < input.total) {
+    navRow.push(
+      createMenuButton("➡️ Ещё", buildTrainingPeaksCasesPageCallbackData(input.offset + input.limit, input.query))
+    );
+  }
+  if (navRow.length > 0) {
+    rows.push(navRow);
+  }
+  return createInlineKeyboardMarkup(rows);
 }
 
 function getTrainingPeaksCoachCaseInlineMarkup(
-  item: Awaited<ReturnType<typeof listRecentTrainingPeaksCoachCases>>[number]
+  item: TrainingPeaksCaseListItem
 ): TelegramInlineKeyboardMarkup {
   const rows: TrainingPeaksMenuButton[][] = [];
   if (shouldShowCreateActionProposalsButton(item)) {
@@ -1616,32 +1787,110 @@ function appendTrainingPeaksCoachCaseFinalState(
   return [...lines, finalStateLine].join("\n");
 }
 
-async function handleTrainingPeaksRecentCoachCases(parsedMessage: ParsedTelegramUpdate): Promise<void> {
-  const activeStatuses = ["logged", "open", "needs_review"] as const;
-  const [cases, totalActiveCases] = await Promise.all([
-    listRecentTrainingPeaksCoachCases({
-      limit: 5,
-      statuses: activeStatuses,
-    }),
-    countActiveTrainingPeaksCoachCases(activeStatuses),
-  ]);
-  if (cases.length === 0) {
-    await sendTrainingPeaksMessage(parsedMessage.chatId, formatTrainingPeaksCoachCasesRecentEmptyMessage(cases));
+async function handleTrainingPeaksCasesList(
+  parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate,
+  input?: { query?: string | null; offset?: number }
+): Promise<void> {
+  const rawQuery = input?.query?.trim() ?? "";
+  const offset = Math.max(0, Math.trunc(input?.offset ?? 0));
+  const filters = deriveTrainingPeaksCasesFilters(rawQuery);
+  const listResult = await listTrainingPeaksCoachCases({
+    limit: TP_CASES_PAGE_LIMIT,
+    offset,
+    statusFilter: TP_CASES_ACTIVE_STATUSES,
+    caseKindFilter: filters.caseKindFilter.length > 0 ? filters.caseKindFilter : undefined,
+    studentQuery: filters.studentQuery,
+  });
+  const title =
+    rawQuery.length > 0 ? `TP-кейсы по запросу: "${rawQuery}"` : "Последние TP-кейсы";
+
+  if (listResult.items.length === 0) {
+    await sendTrainingPeaksMessage(
+      parsedMessage.chatId,
+      `${title}\nПоказано 0 из ${listResult.total} активных кейсов.`
+    );
     return;
   }
 
-  await sendTrainingPeaksMessage(
-    parsedMessage.chatId,
-    `Последние TP-кейсы:\nПоказано ${cases.length} из ${totalActiveCases} активных кейсов`
+  const shownTo = Math.min(offset + listResult.items.length, listResult.total);
+  await showTrainingPeaksMenuScreen(
+    parsedMessage,
+    `${title}\nПоказано ${offset + 1}-${shownTo} из ${listResult.total} активных кейсов.`,
+    getTrainingPeaksCasesPaginationMarkup({
+      offset,
+      limit: TP_CASES_PAGE_LIMIT,
+      total: listResult.total,
+      query: rawQuery.length > 0 ? rawQuery : null,
+    })
   );
 
-  for (const item of cases) {
+  for (const item of listResult.items) {
     await sendTrainingPeaksMenuMessage(
       parsedMessage.chatId,
       formatTrainingPeaksCoachCaseCard(item),
       getTrainingPeaksCoachCaseInlineMarkup(item)
     );
   }
+}
+
+async function handleTrainingPeaksRecentCoachCases(parsedMessage: ParsedTelegramUpdate): Promise<void> {
+  await handleTrainingPeaksCasesList(parsedMessage, { query: null, offset: 0 });
+}
+
+async function handleTrainingPeaksCasesCommand(parsedMessage: ParsedTelegramUpdate, text: string): Promise<void> {
+  const query = parseTrainingPeaksCasesCommandQuery(text);
+  await handleTrainingPeaksCasesList(parsedMessage, {
+    query: query.length > 0 ? query : null,
+    offset: 0,
+  });
+}
+
+async function handleTrainingPeaksCaseCommand(parsedMessage: ParsedTelegramUpdate, text: string): Promise<void> {
+  const caseIdPrefix = parseTrainingPeaksCaseCommandId(text);
+  if (!caseIdPrefix) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "Usage: /tp_case <short_id>");
+    return;
+  }
+
+  const lookup = await getTrainingPeaksCoachCaseByShortId({ prefix: caseIdPrefix });
+  if (lookup.kind === "invalid_prefix") {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "Некорректный ID кейса.");
+    return;
+  }
+  if (lookup.kind === "not_found") {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, `Кейс ${caseIdPrefix} не найден.`);
+    return;
+  }
+  if (lookup.kind === "ambiguous") {
+    await sendTrainingPeaksMessage(
+      parsedMessage.chatId,
+      `Префикс ${caseIdPrefix} неоднозначен, укажи больше символов.`
+    );
+    return;
+  }
+
+  const item: TrainingPeaksCaseListItem = {
+    id: lookup.case.id,
+    shortId: lookup.case.id.slice(0, 8),
+    studentId: lookup.case.studentId,
+    studentName: null,
+    caseKind: lookup.case.caseKind,
+    status: lookup.case.status,
+    createdAt: lookup.case.createdAt,
+    previewText:
+      typeof lookup.case.coachNotesJson.text_preview === "string" ? lookup.case.coachNotesJson.text_preview : null,
+    coachNotesJson: lookup.case.coachNotesJson,
+  };
+  if (item.studentId) {
+    const student = await getTrainingPeaksStudentById(item.studentId);
+    item.studentName = student?.studentName ?? null;
+  }
+
+  await sendTrainingPeaksMenuMessage(
+    parsedMessage.chatId,
+    formatTrainingPeaksCoachCaseCard(item),
+    getTrainingPeaksCoachCaseInlineMarkup(item)
+  );
 }
 
 async function handleTrainingPeaksCoachCaseResolveOrDismiss(
@@ -2538,6 +2787,8 @@ export function getTrainingPeaksHelpLines(): string[] {
     "/tp_report <ученик> [last|даты] — посмотреть отчёт",
     "/tp_actions — последние заявки на перенос",
     "/tp_intents — triage непонятых TP-сообщений (read-only)",
+    "/tp_cases [query] — активные coach cases с фильтром и пагинацией",
+    "/tp_case <case_id_prefix> — открыть один кейс по short ID",
     "/tp_cases_recent — последние активные coach cases",
     "/tp case resolve <case_id> — закрыть coach case",
     "/tp case dismiss <case_id> — скрыть coach case",
@@ -2712,6 +2963,11 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
 
   if (data === TP_CALLBACK_CASES_RECENT) {
     return { kind: "cases_recent" };
+  }
+
+  if (data.startsWith(TP_CALLBACK_CASES_PAGE_PREFIX)) {
+    const parsedCasesPage = parseTrainingPeaksCasesPageCallbackData(data);
+    return parsedCasesPage ? { kind: "cases_page", ...parsedCasesPage } : null;
   }
 
   if (data === TP_CALLBACK_WEEK_RUN_CONFIRM) {
@@ -7968,6 +8224,14 @@ export async function handleTrainingPeaksTelegramCallback(
       return "handled";
     }
 
+    if (callback.kind === "cases_page") {
+      await handleTrainingPeaksCasesList(parsedMessage, {
+        query: callback.query,
+        offset: callback.offset,
+      });
+      return "handled";
+    }
+
     if (callback.kind === "help") {
       await showTrainingPeaksHelpMenu(parsedMessage);
       return "handled";
@@ -8181,6 +8445,16 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_cases_recent") {
       await handleTrainingPeaksRecentCoachCases(parsedMessage);
+      return "handled";
+    }
+
+    if (command === "tp_cases") {
+      await handleTrainingPeaksCasesCommand(parsedMessage, text);
+      return "handled";
+    }
+
+    if (command === "tp_case") {
+      await handleTrainingPeaksCaseCommand(parsedMessage, text);
       return "handled";
     }
 
