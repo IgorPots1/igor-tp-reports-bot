@@ -45,6 +45,7 @@ import {
   rejectTrainingPeaksAction,
   resolveTrainingPeaksCoachCase,
   requestTrainingPeaksActionExecution,
+  requestTrainingPeaksActionDryRunRecheck,
   TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
   type RequestTrainingPeaksWeeklyRunResult,
   type RequestTrainingPeaksRaceScanResult,
@@ -178,6 +179,7 @@ const TP_CALLBACK_STUDENT_RACE_RESULTS_PROBE_PREFIX = "tp:sprobe:race:";
 const TP_CALLBACK_ACTION_APPROVE_PREFIX = "tp:ta:a:";
 const TP_CALLBACK_ACTION_REJECT_PREFIX = "tp:ta:r:";
 const TP_CALLBACK_ACTION_EXECUTE_PREFIX = "tp:ta:x:";
+const TP_CALLBACK_ACTION_RECHECK_DRY_RUN_PREFIX = "tp:ta:rd:";
 const TP_CALLBACK_ACTION_CANCEL_PREFIX = "tp:ta:c:";
 const TP_CALLBACK_ACTION_LIST_CANCEL_PREFIX = "tp:ta:lc:";
 const TP_CALLBACK_ACTION_DETAIL_PREFIX = "tp:ta:d:";
@@ -342,6 +344,7 @@ type ParsedTrainingPeaksCallback =
   | { kind: "action_approve"; actionId: string }
   | { kind: "action_reject"; actionId: string }
   | { kind: "action_execute_request"; actionId: string }
+  | { kind: "action_recheck_dry_run"; actionId: string }
   | { kind: "action_execute_cancel"; actionId: string }
   | { kind: "action_list_cancel"; actionId: string }
   | { kind: "action_detail"; actionId: string }
@@ -2735,6 +2738,7 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
     [TP_CALLBACK_ACTION_APPROVE_PREFIX, "action_approve"],
     [TP_CALLBACK_ACTION_REJECT_PREFIX, "action_reject"],
     [TP_CALLBACK_ACTION_EXECUTE_PREFIX, "action_execute_request"],
+    [TP_CALLBACK_ACTION_RECHECK_DRY_RUN_PREFIX, "action_recheck_dry_run"],
     [TP_CALLBACK_ACTION_CANCEL_PREFIX, "action_execute_cancel"],
     [TP_CALLBACK_ACTION_LIST_CANCEL_PREFIX, "action_list_cancel"],
     [TP_CALLBACK_ACTION_DETAIL_PREFIX, "action_detail"],
@@ -4014,6 +4018,21 @@ function formatCompactDateShort(value: string | null): string {
   return `${match[3]}.${match[2]}`;
 }
 
+function isActionWaitingDryRunRecheck(action: {
+  executionStatus: string;
+  executionMode: string | null;
+  latestRunContext?: { latestDryRun?: unknown } | null;
+}): boolean {
+  if (action.executionStatus !== "not_started") {
+    return false;
+  }
+  if (action.executionMode !== "dry_run") {
+    return false;
+  }
+  const latestDryRun = action.latestRunContext?.latestDryRun;
+  return Boolean(latestDryRun && typeof latestDryRun === "object");
+}
+
 function formatExecutionStatusLabel(executionStatus: string): string {
   const labels: Record<string, string> = {
     not_started: "не начато",
@@ -4144,6 +4163,37 @@ function shouldShowCoachConfirmSourceButton(latestRunContext: unknown): boolean 
   );
 }
 
+function shouldShowActionDryRunRecheckButton(
+  action: NonNullable<Awaited<ReturnType<typeof getTrainingPeaksActionWithStudentAndLatestRunContextById>>>
+): boolean {
+  if (action.actionType !== "move_workout") {
+    return false;
+  }
+  if (action.status === "rejected") {
+    return false;
+  }
+  if (action.executionStatus === "completed" || action.executionStatus === "running_local" || action.executionStatus === "dry_run_running") {
+    return false;
+  }
+  if (action.claimedBy || action.claimedAt) {
+    return false;
+  }
+  const latestDryRun = action.latestRunContext?.latestDryRun ?? null;
+  if (!latestDryRun || latestDryRun.status !== "completed") {
+    return false;
+  }
+  if (latestDryRun.dryRunResult === "not_found" || latestDryRun.dryRunResult === "failed" || latestDryRun.dryRunResult === "ambiguous") {
+    return true;
+  }
+  if (latestDryRun.canExecute === false) {
+    return true;
+  }
+  if (latestDryRun.blockedReason || latestDryRun.failureReason) {
+    return true;
+  }
+  return false;
+}
+
 function formatActionDetailFreshnessLabel(date = new Date()): string {
   return `Проверено: ${date.toLocaleTimeString("ru-RU", {
     timeZone: "Europe/Belgrade",
@@ -4197,9 +4247,12 @@ function formatCompactActionLine(
   const executeRun = action.latestRunContext?.latestExecute ?? null;
   const policy = dryRun?.selectedSourceDatePolicy ?? null;
   const reason = getActionLatestReasonOrFallback(action.latestRunContext);
+  const statusLabel = isActionWaitingDryRunRecheck(action)
+    ? "ожидает повторной проверки"
+    : formatExecutionStatusLabel(action.executionStatus);
   return [
     `${index + 1}. ${name} | ${src} → ${tgt}`,
-    `Статус: ${action.status}/${formatExecutionStatusLabel(action.executionStatus)}`,
+    `Статус: ${action.status}/${statusLabel}`,
     formatRunResultLine("Dry-run", dryRun),
     formatRunResultLine("Выполнение", executeRun),
     `Источник: ${formatCompactDateShort(dryRun?.selectedSourceDate ?? dates.sourceDate)} — ${formatSourcePolicyLabel(policy)}`,
@@ -4423,6 +4476,9 @@ function formatActionStatusLabel(action: NonNullable<Awaited<ReturnType<typeof g
     return "🔄 Dry-run завершён";
   }
   if (action.executionStatus === "not_started") {
+    if (isActionWaitingDryRunRecheck(action)) {
+      return "🔁 Ожидает повторной проверки";
+    }
     return "🔄 Одобрено, не начато";
   }
   return `${action.status} / ${action.executionStatus}`;
@@ -4486,6 +4542,12 @@ function getTpActionDetailMarkup(
         `✅ Подтвердить ${formatCompactDateShort(sourceDate)} как исходную`,
         `${TP_CALLBACK_ACTION_CONFIRM_SOURCE_PREFIX}${action.id}`
       ),
+    ]);
+  }
+
+  if (shouldShowActionDryRunRecheckButton(action)) {
+    rows.push([
+      createMenuButton("🔁 Повторить проверку", `${TP_CALLBACK_ACTION_RECHECK_DRY_RUN_PREFIX}${action.id}`),
     ]);
   }
 
@@ -5168,6 +5230,64 @@ async function handleTrainingPeaksActionExecuteRequestCallback(
     parsedMessage.messageId,
     blockedText,
     getTrainingPeaksActionResolvedMarkup()
+  );
+}
+
+async function handleTrainingPeaksActionDryRunRecheckCallback(
+  parsedMessage: ParsedTelegramCallbackUpdate,
+  actionId: string
+): Promise<void> {
+  const result = await requestTrainingPeaksActionDryRunRecheck({
+    actionId,
+    requestedByChatId: String(parsedMessage.chatId),
+  });
+
+  if (result.kind === "not_found") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      result.message,
+      createInlineKeyboardMarkup([[createMenuButton("◀ Назад к списку", "tp:actions:list")]])
+    );
+    return;
+  }
+
+  if (result.kind === "blocked") {
+    const detailAction = await getTrainingPeaksActionWithStudentAndLatestRunContextById(actionId);
+    if (!detailAction) {
+      await editTrainingPeaksMenuMessage(
+        parsedMessage.chatId,
+        parsedMessage.messageId,
+        result.message,
+        createInlineKeyboardMarkup([[createMenuButton("◀ Назад к списку", "tp:actions:list")]])
+      );
+      return;
+    }
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      `${result.message}\n\n${getTpActionDetailText(detailAction, { includeFreshness: true })}`,
+      getTpActionDetailMarkup(detailAction)
+    );
+    return;
+  }
+
+  const refreshedAction = await getTrainingPeaksActionWithStudentAndLatestRunContextById(result.action.id);
+  if (!refreshedAction) {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      result.message,
+      createInlineKeyboardMarkup([[createMenuButton("◀ Назад к списку", "tp:actions:list")]])
+    );
+    return;
+  }
+
+  await editTrainingPeaksMenuMessage(
+    parsedMessage.chatId,
+    parsedMessage.messageId,
+    `${result.message}\n\n${getTpActionDetailText(refreshedAction, { includeFreshness: true })}`,
+    getTpActionDetailMarkup(refreshedAction)
   );
 }
 
@@ -7539,6 +7659,11 @@ export async function handleTrainingPeaksTelegramCallback(
 
     if (callback.kind === "action_execute_request") {
       await handleTrainingPeaksActionExecuteRequestCallback(parsedMessage, callback.actionId);
+      return "handled";
+    }
+
+    if (callback.kind === "action_recheck_dry_run") {
+      await handleTrainingPeaksActionDryRunRecheckCallback(parsedMessage, callback.actionId);
       return "handled";
     }
 

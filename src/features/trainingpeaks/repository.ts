@@ -551,6 +551,11 @@ export type RequestTrainingPeaksActionExecutionInput = {
   requestMessageId?: string | null;
 };
 
+export type RequestTrainingPeaksActionDryRunRecheckInput = {
+  actionId: string;
+  requestedByChatId: string;
+};
+
 export type ConfirmTrainingPeaksActionSourceDateInput = {
   actionId: string;
   confirmedByChatId: string;
@@ -627,6 +632,24 @@ export type RequestTrainingPeaksActionExecutionResult =
     }
   | {
       kind: "not_found";
+    };
+
+export type RequestTrainingPeaksActionDryRunRecheckResult =
+  | {
+      kind: "requeued";
+      action: TrainingPeaksAction;
+      message: string;
+    }
+  | {
+      kind: "blocked";
+      action: TrainingPeaksAction;
+      reason: string;
+      message: string;
+      latestRunContext: TrainingPeaksActionLatestRunContext | null;
+    }
+  | {
+      kind: "not_found";
+      message: string;
     };
 
 export type CancelTrainingPeaksActionExecutionInput = {
@@ -3616,6 +3639,118 @@ export async function requestTrainingPeaksActionExecution(
     kind: "blocked",
     action: latest,
     reason: "Action state changed. Please refresh and try again.",
+    latestRunContext: await getTrainingPeaksActionLatestRunContext(latest.id),
+  };
+}
+
+function isTrainingPeaksActionDryRunRecheckEligible(
+  action: TrainingPeaksAction,
+  latestRunContext: TrainingPeaksActionLatestRunContext | null
+): { ok: true } | { ok: false; reason: string } {
+  if (action.actionType !== "move_workout") {
+    return { ok: false, reason: "Поддерживается только для move-заявок." };
+  }
+  if (action.executionStatus === "running_local" || action.executionStatus === "dry_run_running") {
+    return { ok: false, reason: "Заявка уже выполняется локальным runner." };
+  }
+  if (action.claimedBy || action.claimedAt) {
+    return { ok: false, reason: "Заявка уже занята runner. Обновите список позже." };
+  }
+  if (action.status === "rejected") {
+    return { ok: false, reason: "Заявка отменена, повторная проверка недоступна." };
+  }
+  if (action.executionStatus === "completed") {
+    return { ok: false, reason: "Заявка уже успешно выполнена." };
+  }
+  const latestDryRun = latestRunContext?.latestDryRun ?? null;
+  if (!latestDryRun) {
+    return { ok: false, reason: "Нет завершённого dry-run для повторной проверки." };
+  }
+  if (latestDryRun.status !== "completed") {
+    return { ok: false, reason: "Последний dry-run ещё не завершён." };
+  }
+  if (latestDryRun.canExecute === true && latestDryRun.dryRunResult === "candidate_found") {
+    return { ok: false, reason: "Последний dry-run успешный и готов к выполнению." };
+  }
+  if (
+    latestDryRun.dryRunResult === "not_found" ||
+    latestDryRun.dryRunResult === "failed" ||
+    latestDryRun.dryRunResult === "ambiguous"
+  ) {
+    return { ok: true };
+  }
+  if (latestDryRun.canExecute === false || Boolean(latestDryRun.blockedReason) || Boolean(latestDryRun.failureReason)) {
+    return { ok: true };
+  }
+  return { ok: false, reason: "Повторная проверка доступна только для blocked/not_found/failed dry-run." };
+}
+
+export async function requestTrainingPeaksActionDryRunRecheck(
+  input: RequestTrainingPeaksActionDryRunRecheckInput
+): Promise<RequestTrainingPeaksActionDryRunRecheckResult> {
+  const action = await getTrainingPeaksActionByIdInternal(input.actionId);
+  if (!action) {
+    return { kind: "not_found", message: "Заявка не найдена или уже недоступна." };
+  }
+
+  const latestRunContext = await getTrainingPeaksActionLatestRunContext(action.id);
+  const eligibility = isTrainingPeaksActionDryRunRecheckEligible(action, latestRunContext);
+  if (!eligibility.ok) {
+    return {
+      kind: "blocked",
+      action,
+      reason: eligibility.reason,
+      message: `⚠️ Повторная проверка недоступна: ${eligibility.reason}`,
+      latestRunContext,
+    };
+  }
+
+  const supabase = createSupabaseServerClient();
+  const nowIso = new Date().toISOString();
+  const { data: requeued, error } = await supabase
+    .from("trainingpeaks_actions")
+    .update({
+      execution_status: "not_started",
+      execution_mode: "dry_run",
+      claimed_by: null,
+      claimed_at: null,
+      last_run_id: null,
+      execution_requested_at: null,
+      execution_requested_by_chat_id: null,
+      execution_requested_by_user_id: null,
+      execution_request_message_id: null,
+      updated_at: nowIso,
+    })
+    .eq("id", action.id)
+    .eq("action_type", "move_workout")
+    .eq("status", action.status)
+    .eq("execution_status", action.executionStatus)
+    .is("claimed_by", null)
+    .is("claimed_at", null)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to requeue TrainingPeaks action dry-run ${action.id}: ${error.message}`);
+  }
+
+  if (requeued) {
+    return {
+      kind: "requeued",
+      action: mapTrainingPeaksActionRow(requeued as TrainingPeaksActionRow),
+      message: "🔁 Проверка поставлена в очередь. Запусти локальный runner, чтобы обновить результат.",
+    };
+  }
+
+  const latest = await getTrainingPeaksActionByIdInternal(action.id);
+  if (!latest) {
+    return { kind: "not_found", message: "Заявка не найдена или уже недоступна." };
+  }
+  return {
+    kind: "blocked",
+    action: latest,
+    reason: "Состояние заявки изменилось. Обновите карточку и попробуйте снова.",
+    message: "⚠️ Повторная проверка недоступна: состояние заявки изменилось. Обновите карточку и попробуйте снова.",
     latestRunContext: await getTrainingPeaksActionLatestRunContext(latest.id),
   };
 }
