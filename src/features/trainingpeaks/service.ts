@@ -69,6 +69,7 @@ import {
   rejectTrainingPeaksAction as rejectTrainingPeaksActionInRepository,
   recordTrainingPeaksStudentContactEvent,
   requestTrainingPeaksActionExecution as requestTrainingPeaksActionExecutionInRepository,
+  requestTrainingPeaksActionDryRunRecheck as requestTrainingPeaksActionDryRunRecheckInRepository,
   confirmTrainingPeaksActionSourceDate as confirmTrainingPeaksActionSourceDateInRepository,
   cancelTrainingPeaksActionExecution as cancelTrainingPeaksActionExecutionInRepository,
   getTrainingPeaksActionById as getTrainingPeaksActionByIdInRepository,
@@ -81,6 +82,7 @@ import {
   TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
   type DecideTrainingPeaksActionResult,
   type RequestTrainingPeaksActionExecutionResult,
+  type RequestTrainingPeaksActionDryRunRecheckResult,
   type ConfirmTrainingPeaksActionSourceDateResult,
   type CancelTrainingPeaksActionExecutionResultExtended,
   type TrainingPeaksBusinessChat,
@@ -397,6 +399,7 @@ export type DecideTrainingPeaksActionInput = {
 
 export type DecideTrainingPeaksActionResultSnapshot = DecideTrainingPeaksActionResult;
 export type RequestTrainingPeaksActionExecutionResultSnapshot = RequestTrainingPeaksActionExecutionResult;
+export type RequestTrainingPeaksActionDryRunRecheckResultSnapshot = RequestTrainingPeaksActionDryRunRecheckResult;
 export type ConfirmTrainingPeaksActionSourceDateResultSnapshot = ConfirmTrainingPeaksActionSourceDateResult;
 export type CancelTrainingPeaksActionExecutionResultSnapshot = CancelTrainingPeaksActionExecutionResultExtended;
 export type TrainingPeaksActionRunSnapshot = TrainingPeaksActionRun;
@@ -4162,6 +4165,16 @@ export async function requestTrainingPeaksActionExecution(input: {
     requestedByChatId: input.requestedByChatId,
     requestedByUserId: input.requestedByUserId ?? null,
     requestMessageId: input.requestMessageId ?? null,
+  });
+}
+
+export async function requestTrainingPeaksActionDryRunRecheck(input: {
+  actionId: string;
+  requestedByChatId: string;
+}): Promise<RequestTrainingPeaksActionDryRunRecheckResultSnapshot> {
+  return requestTrainingPeaksActionDryRunRecheckInRepository({
+    actionId: input.actionId,
+    requestedByChatId: input.requestedByChatId,
   });
 }
 
