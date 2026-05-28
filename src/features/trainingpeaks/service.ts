@@ -1,5 +1,6 @@
 import {
   getTrainingPeaksCoachCaseById,
+  getTrainingPeaksCoachCaseDetailsById,
   getTrainingPeaksCoachCaseByIdPrefix,
   getTrainingPeaksReplyDraftByIdPrefix as getTrainingPeaksReplyDraftByIdPrefixFromRepository,
   approveTrainingPeaksAction as approveTrainingPeaksActionInRepository,
@@ -76,6 +77,7 @@ import {
   getLatestTrainingPeaksCronRunLog,
   getTrainingPeaksCoachCaseByTelegramMessageAndKind,
   getTrainingPeaksTelegramContextObservationByChatMessage,
+  findTrainingPeaksMoveActionBySourceMessageAndDates,
   claimOneApprovedTrainingPeaksActionForDryRun as claimOneApprovedTrainingPeaksActionForDryRunInRepository,
   completeTrainingPeaksActionDryRun as completeTrainingPeaksActionDryRunInRepository,
   failTrainingPeaksActionDryRun as failTrainingPeaksActionDryRunInRepository,
@@ -132,6 +134,7 @@ import {
   listRecentPendingTrainingPeaksMoveActionsForStudentChat,
   insertTrainingPeaksTelegramContextObservation,
   updateTrainingPeaksCoachCaseStatus,
+  updateTrainingPeaksCoachCaseMetadata,
   updateTrainingPeaksReplyDraftOutcome as updateTrainingPeaksReplyDraftOutcomeInRepository,
   updateTrainingPeaksStudentThreadById,
   updateTrainingPeaksWeeklyReportContentById,
@@ -320,7 +323,7 @@ export type ParsedTrainingPeaksMoveWorkoutPayload = {
   confidence: number;
   needsClarification: boolean;
   clarificationReason: string | null;
-  parser: "deterministic" | "ai_fallback";
+  parser: "deterministic" | "ai_fallback" | "group_case_proposal";
   sourceDate?: string;
   source_date?: string;
   warnings?: string[];
@@ -410,6 +413,7 @@ export type TrainingPeaksActionRunSnapshot = TrainingPeaksActionRun;
 export type ClaimedTrainingPeaksDryRunActionSnapshot = ClaimedTrainingPeaksDryRunAction;
 export type TrainingPeaksActionWithStudentSnapshot = TrainingPeaksActionWithStudent;
 export type TrainingPeaksActionLatestRunContextSnapshot = TrainingPeaksActionLatestRunContext;
+export type CreateTrainingPeaksActionsFromGroupMoveCaseResultSnapshot = CreateTrainingPeaksActionsFromGroupMoveCaseResult;
 
 export type TrainingPeaksBusinessChatSnapshot = TrainingPeaksBusinessChat;
 export type TrainingPeaksStudentTelegramLinkCodeSnapshot = TrainingPeaksStudentTelegramLinkCode;
@@ -1218,6 +1222,7 @@ export async function listRecentTrainingPeaksCoachCases(input?: {
     status: TrainingPeaksCoachCaseStatus;
     createdAt: string;
     previewText: string | null;
+    coachNotesJson: Record<string, unknown>;
   }>
 > {
   const rows = await listRecentTrainingPeaksCoachCasesFromRepository({
@@ -1344,13 +1349,16 @@ const TP_WEEKDAY_ALIASES: Record<string, string> = {
   пятница: "friday",
   пятницу: "friday",
   пятницы: "friday",
+  пятничную: "friday",
   сб: "saturday",
   суббота: "saturday",
   субботу: "saturday",
   субботы: "saturday",
+  субботнюю: "saturday",
   вс: "sunday",
   воскресенье: "sunday",
   воскресенья: "sunday",
+  воскресную: "sunday",
   воскресеньею: "sunday",
   воскресеньея: "sunday",
 };
@@ -2065,6 +2073,384 @@ export async function parseTrainingPeaksMoveWorkoutRequest(
     payload: aiPayload,
     confidence: aiConfidence,
   };
+}
+
+export type GroupMovePairProposal = {
+  sourceText: string;
+  targetText: string;
+  source: TrainingPeaksMoveWorkoutTimeRef;
+  target: TrainingPeaksMoveWorkoutTimeRef;
+  sourceDate: string;
+  targetDate: string;
+  confidence: number;
+};
+
+type CreateTrainingPeaksActionsFromGroupMoveCaseResult =
+  | {
+      kind: "created";
+      actionIds: string[];
+      createdCount: number;
+      summaries: string[];
+      caseStatus: TrainingPeaksCoachCaseStatus;
+    }
+  | {
+      kind: "duplicate";
+      actionIds: string[];
+      createdCount: number;
+      summaries: string[];
+      caseStatus: TrainingPeaksCoachCaseStatus;
+    }
+  | {
+      kind: "needs_manual_review";
+      reason: string;
+      actionIds: string[];
+      caseStatus: TrainingPeaksCoachCaseStatus;
+    }
+  | { kind: "not_found" }
+  | { kind: "ambiguous_case_id" }
+  | { kind: "invalid_case_id" }
+  | { kind: "invalid_case_kind"; caseKind: TrainingPeaksCoachCaseKind }
+  | { kind: "missing_student" }
+  | { kind: "case_closed"; status: TrainingPeaksCoachCaseStatus }
+  | { kind: "failed" };
+
+function isRecordLike(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function toFiniteNumberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function toNonEmptyStringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function extractGroupCaseMessageDateUnix(input: {
+  coachNotesJson: Record<string, unknown>;
+  createdAt: string;
+}): number | null {
+  const parseGate = isRecordLike(input.coachNotesJson.parse_gate) ? input.coachNotesJson.parse_gate : null;
+  const metadataDate = toFiniteNumberOrNull(parseGate?.message_date_unix);
+  if (metadataDate) {
+    return metadataDate;
+  }
+  const createdAtDate = new Date(input.createdAt);
+  if (Number.isNaN(createdAtDate.getTime())) {
+    return null;
+  }
+  return Math.floor(createdAtDate.getTime() / 1000);
+}
+
+function extractMovePairsPreviewFromGroupCaseMetadata(coachNotesJson: Record<string, unknown>): Array<{
+  source: string;
+  target: string;
+}> {
+  const raw = coachNotesJson.move_pairs_preview;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw
+    .map((item) => {
+      if (!isRecordLike(item)) {
+        return null;
+      }
+      const source = toNonEmptyStringOrNull(item.source);
+      const target = toNonEmptyStringOrNull(item.target);
+      return source && target ? { source, target } : null;
+    })
+    .filter((item): item is { source: string; target: string } => Boolean(item));
+}
+
+function parseGroupCasePairRef(raw: string): TrainingPeaksMoveWorkoutTimeRef | null {
+  const normalized = normalizeRussianText(raw);
+  if (!normalized) {
+    return null;
+  }
+  const refs = uniqueTimeRefs([...extractDateRefs(normalized), ...extractWeekdayAndRelativeRefs(normalized)]);
+  if (refs.length !== 1) {
+    return null;
+  }
+  return toTimeRefWithoutIndex(refs[0]!);
+}
+
+function shouldResolveGroupCaseSourceWeekdayForward(rawSourceText: string): boolean {
+  const normalized = normalizeRussianText(rawSourceText);
+  return normalized.endsWith("нюю") || normalized.endsWith("нюю тренировку");
+}
+
+export function buildGroupCaseMovePairProposal(input: {
+  sourceText: string;
+  targetText: string;
+  messageDateUnix?: number | null;
+}): GroupMovePairProposal | null {
+  const source = parseGroupCasePairRef(input.sourceText);
+  const target = parseGroupCasePairRef(input.targetText);
+  if (!source || !target) {
+    return null;
+  }
+
+  const parserBaseDate = getParserBaseDate({ messageDateUnix: input.messageDateUnix ?? null });
+  const sourceDirection =
+    source.kind === "weekday" && shouldResolveGroupCaseSourceWeekdayForward(input.sourceText) ? "next" : "previous";
+  const sourceDate = resolveTimeRefToDateIso(source, parserBaseDate, sourceDirection);
+  const targetDate = resolveTimeRefToDateIso(target, parserBaseDate, "next");
+  if (!sourceDate || !targetDate) {
+    return null;
+  }
+
+  if (!ISO_DATE_PATTERN.test(sourceDate) || !ISO_DATE_PATTERN.test(targetDate) || sourceDate === targetDate) {
+    return null;
+  }
+
+  return {
+    sourceText: input.sourceText,
+    targetText: input.targetText,
+    source: { ...source, kind: "date", value: sourceDate },
+    target: { ...target, kind: "date", value: targetDate },
+    sourceDate,
+    targetDate,
+    confidence: clampMoveWorkoutConfidence(0.84),
+  };
+}
+
+function formatGroupCaseProposalSummary(pair: GroupMovePairProposal): string {
+  return `${pair.sourceText} -> ${pair.targetText}`;
+}
+
+export async function createTrainingPeaksActionsFromGroupMoveCase(input: {
+  caseId: string;
+  coachChatId: string;
+  coachUserId?: string | null;
+}): Promise<CreateTrainingPeaksActionsFromGroupMoveCaseResult> {
+  try {
+    let groupCase = await getTrainingPeaksCoachCaseDetailsById(input.caseId);
+    if (!groupCase) {
+      const lookup = await getTrainingPeaksCoachCaseByIdPrefix(input.caseId);
+      if (lookup.kind !== "found") {
+        if (lookup.kind === "not_found") {
+          return { kind: "not_found" };
+        }
+        if (lookup.kind === "ambiguous") {
+          return { kind: "ambiguous_case_id" };
+        }
+        if (lookup.kind === "invalid_prefix") {
+          return { kind: "invalid_case_id" };
+        }
+        return { kind: "failed" };
+      }
+      groupCase = await getTrainingPeaksCoachCaseDetailsById(lookup.case.id);
+      if (!groupCase) {
+        return { kind: "not_found" };
+      }
+    }
+    if (groupCase.caseKind !== "move_workout_needs_review") {
+      return { kind: "invalid_case_kind", caseKind: groupCase.caseKind };
+    }
+    if (!groupCase.studentId) {
+      return { kind: "missing_student" };
+    }
+    if (groupCase.status === "resolved" || groupCase.status === "dismissed") {
+      return { kind: "case_closed", status: groupCase.status };
+    }
+
+    const metadata = isRecordLike(groupCase.coachNotesJson) ? groupCase.coachNotesJson : {};
+    const existingActionIds = toStringArray(metadata.created_action_ids);
+    const existingActionProposalsCreated = metadata.action_proposals_created === true;
+    if (existingActionProposalsCreated && existingActionIds.length > 0) {
+      const movePairsPreview = extractMovePairsPreviewFromGroupCaseMetadata(metadata);
+      return {
+        kind: "duplicate",
+        actionIds: existingActionIds,
+        createdCount: existingActionIds.length,
+        summaries: movePairsPreview.map((pair) => `${pair.source} -> ${pair.target}`),
+        caseStatus: groupCase.status,
+      };
+    }
+
+    const movePairsPreview = extractMovePairsPreviewFromGroupCaseMetadata(metadata);
+    if (movePairsPreview.length === 0) {
+      const nextMetadata = {
+        ...metadata,
+        proposal_creation_error: "No safe move pairs stored in case metadata.",
+      };
+      await updateTrainingPeaksCoachCaseMetadata({
+        caseId: groupCase.id,
+        coachNotesJson: nextMetadata,
+      });
+      return {
+        kind: "needs_manual_review",
+        reason: "no_safe_pairs",
+        actionIds: existingActionIds,
+        caseStatus: groupCase.status,
+      };
+    }
+
+    const messageDateUnix = extractGroupCaseMessageDateUnix({
+      coachNotesJson: metadata,
+      createdAt: groupCase.createdAt,
+    });
+    const proposals = movePairsPreview
+      .map((pair) =>
+        buildGroupCaseMovePairProposal({
+          sourceText: pair.source,
+          targetText: pair.target,
+          messageDateUnix,
+        })
+      )
+      .filter((pair): pair is GroupMovePairProposal => Boolean(pair));
+
+    if (proposals.length === 0 || proposals.length !== movePairsPreview.length) {
+      const nextMetadata = {
+        ...metadata,
+        proposal_creation_error: "Could not deterministically resolve all stored group move pairs.",
+      };
+      await updateTrainingPeaksCoachCaseMetadata({
+        caseId: groupCase.id,
+        coachNotesJson: nextMetadata,
+      });
+      return {
+        kind: "needs_manual_review",
+        reason: "uncertain_pairs",
+        actionIds: existingActionIds,
+        caseStatus: groupCase.status,
+      };
+    }
+
+    const sourceChatId = groupCase.telegramChatId;
+    const sourceMessageId = groupCase.telegramMessageId != null ? String(groupCase.telegramMessageId) : null;
+    if (!sourceChatId || !sourceMessageId) {
+      const nextMetadata = {
+        ...metadata,
+        proposal_creation_error: "Case is missing original Telegram source pointers.",
+      };
+      await updateTrainingPeaksCoachCaseMetadata({
+        caseId: groupCase.id,
+        coachNotesJson: nextMetadata,
+      });
+      return {
+        kind: "needs_manual_review",
+        reason: "missing_source_message",
+        actionIds: existingActionIds,
+        caseStatus: groupCase.status,
+      };
+    }
+
+    const rawTextPreview = buildTelegramContextTextPreview(toNonEmptyStringOrNull(metadata.text_preview)) ?? "group move case";
+    const summaries = proposals.map(formatGroupCaseProposalSummary);
+    const actionIds = [...existingActionIds];
+    let createdCount = 0;
+
+    for (const proposal of proposals) {
+      const duplicate = await findTrainingPeaksMoveActionBySourceMessageAndDates({
+        studentId: groupCase.studentId,
+        sourceChatId,
+        sourceMessageId,
+        sourceDate: proposal.sourceDate,
+        targetDate: proposal.targetDate,
+      });
+
+      if (duplicate) {
+        if (!actionIds.includes(duplicate.id)) {
+          actionIds.push(duplicate.id);
+        }
+        continue;
+      }
+
+      const parsedPayload: ParsedTrainingPeaksMoveWorkoutPayload = {
+        actionType: "move_workout",
+        source: proposal.source,
+        target: proposal.target,
+        workoutDescriptor: null,
+        confidence: proposal.confidence,
+        needsClarification: false,
+        clarificationReason: null,
+        parser: "group_case_proposal",
+        sourceDate: proposal.sourceDate,
+        source_date: proposal.sourceDate,
+        parsingDiagnostics: {
+          parserBaseDateSource:
+            typeof messageDateUnix === "number" && Number.isFinite(messageDateUnix) && messageDateUnix > 0
+              ? "message_timestamp"
+              : "server_now",
+          parserBaseDateIso:
+            typeof messageDateUnix === "number" && Number.isFinite(messageDateUnix) && messageDateUnix > 0
+              ? getBelgradeIsoDate(new Date(messageDateUnix * 1000))
+              : getBelgradeIsoDate(new Date(groupCase.createdAt)),
+          messageTimestampAvailable:
+            typeof messageDateUnix === "number" && Number.isFinite(messageDateUnix) && messageDateUnix > 0,
+          source: "group_case",
+          groupCaseId: groupCase.id,
+          sourceType:
+            metadata.source_type === "group_topic" || metadata.source_type === "group_general"
+              ? metadata.source_type
+              : "group_general",
+        } as ParsedTrainingPeaksMoveWorkoutPayload["parsingDiagnostics"] & Record<string, unknown>,
+      };
+
+      const action = await createTrainingPeaksActionInRepository({
+        studentId: groupCase.studentId,
+        actionType: "move_workout",
+        status: "pending_coach",
+        sourceChatId,
+        sourceMessageId,
+        sourceUserId: input.coachUserId ?? null,
+        rawText: rawTextPreview,
+        parsedPayload,
+        confidence: String(proposal.confidence),
+        coachChatId: input.coachChatId,
+      });
+      actionIds.push(action.id);
+      createdCount += 1;
+    }
+
+    const nextMetadata: Record<string, unknown> = {
+      ...metadata,
+      action_proposals_created: actionIds.length > 0,
+      created_action_ids: actionIds,
+      proposal_creation_error: null,
+    };
+    if (!metadata.action_id && actionIds.length > 0) {
+      nextMetadata.action_id = actionIds[0]!;
+    }
+    await updateTrainingPeaksCoachCaseMetadata({
+      caseId: groupCase.id,
+      coachNotesJson: nextMetadata,
+    });
+
+    if (createdCount > 0) {
+      return {
+        kind: "created",
+        actionIds,
+        createdCount,
+        summaries,
+        caseStatus: groupCase.status,
+      };
+    }
+
+    return {
+      kind: "duplicate",
+      actionIds,
+      createdCount: 0,
+      summaries,
+      caseStatus: groupCase.status,
+    };
+  } catch (error) {
+    console.warn("Failed to create TrainingPeaks actions from group move case", {
+      caseId: input.caseId,
+      coachChatId: input.coachChatId,
+      coachUserId: input.coachUserId ?? null,
+      error,
+    });
+    return { kind: "failed" };
+  }
 }
 
 function normalizeForMatching(value: string | null | undefined): string {

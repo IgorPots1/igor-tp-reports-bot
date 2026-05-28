@@ -15,6 +15,7 @@ import {
   cancelTrainingPeaksWeeklyRun,
   countActiveTrainingPeaksCoachCases,
   consumeTrainingPeaksStudentTelegramLinkCode,
+  createTrainingPeaksActionsFromGroupMoveCase,
   createTrainingPeaksMoveWorkoutActionFromTelegram,
   confirmTrainingPeaksActionSourceDate,
   createTrainingPeaksStudentTelegramLinkCode,
@@ -188,6 +189,7 @@ const TP_CALLBACK_ACTION_CONFIRM_SOURCE_PREFIX = "tp:ta:cs:";
 const TP_CALLBACK_ACTION_DETAIL_BACK = "tp:ta:back";
 const TP_CALLBACK_CASE_RESOLVE_PREFIX = "tp:case:r:";
 const TP_CALLBACK_CASE_DISMISS_PREFIX = "tp:case:d:";
+const TP_CALLBACK_CASE_PROPOSE_PREFIX = "tp:case:p:";
 const TP_REPLY_BUTTON_MENU = "🏠 Меню";
 const TP_REPLY_BUTTON_STUDENTS = "👥 Ученики";
 const TP_REPLY_BUTTON_ADD = "➕ Добавить";
@@ -353,6 +355,7 @@ type ParsedTrainingPeaksCallback =
   | { kind: "action_detail_back" }
   | { kind: "case_resolve"; shortId: string }
   | { kind: "case_dismiss"; shortId: string }
+  | { kind: "case_create_proposals"; shortId: string }
   | { kind: "actions_list" }
   | { kind: "week_menu" }
   | { kind: "week_last" }
@@ -1541,6 +1544,19 @@ function getTrainingPeaksCoachCasePreviewText(previewText: string | null): strin
   return previewText?.trim() || "без текстового превью";
 }
 
+function shouldShowCreateActionProposalsButton(
+  item: Awaited<ReturnType<typeof listRecentTrainingPeaksCoachCases>>[number]
+): boolean {
+  if (item.caseKind !== "move_workout_needs_review") {
+    return false;
+  }
+  const sourceType = typeof item.coachNotesJson.source_type === "string" ? item.coachNotesJson.source_type : null;
+  if (sourceType !== "group_topic" && sourceType !== "group_general") {
+    return false;
+  }
+  return item.coachNotesJson.action_proposals_created !== true;
+}
+
 function formatTrainingPeaksCoachCaseCard(
   item: Awaited<ReturnType<typeof listRecentTrainingPeaksCoachCases>>[number]
 ): string {
@@ -1562,17 +1578,29 @@ function formatTrainingPeaksCoachCasesRecentEmptyMessage(
   return "Recent TP cases:";
 }
 
-function getTrainingPeaksCoachCaseInlineMarkup(shortId: string): TelegramInlineKeyboardMarkup {
-  return createInlineKeyboardMarkup(
-    [[
-      createMenuButton("✅ Закрыть", `${TP_CALLBACK_CASE_RESOLVE_PREFIX}${shortId}`),
-      createMenuButton("🙈 Скрыть", `${TP_CALLBACK_CASE_DISMISS_PREFIX}${shortId}`),
-    ]]
-  );
+function getTrainingPeaksCoachCaseInlineMarkup(
+  item: Awaited<ReturnType<typeof listRecentTrainingPeaksCoachCases>>[number]
+): TelegramInlineKeyboardMarkup {
+  const rows: TrainingPeaksMenuButton[][] = [];
+  if (shouldShowCreateActionProposalsButton(item)) {
+    rows.push([createMenuButton("🧩 Создать заявки", `${TP_CALLBACK_CASE_PROPOSE_PREFIX}${item.shortId}`)]);
+  }
+  rows.push([
+    createMenuButton("✅ Закрыть", `${TP_CALLBACK_CASE_RESOLVE_PREFIX}${item.shortId}`),
+    createMenuButton("🙈 Скрыть", `${TP_CALLBACK_CASE_DISMISS_PREFIX}${item.shortId}`),
+  ]);
+  return createInlineKeyboardMarkup(rows);
 }
 
 function getTrainingPeaksCoachCaseResolvedMarkup(): TelegramInlineKeyboardMarkup {
   return createInlineKeyboardMarkup([]);
+}
+
+function getTrainingPeaksCoachCasePostProposalMarkup(shortId: string): TelegramInlineKeyboardMarkup {
+  return createInlineKeyboardMarkup([[
+    createMenuButton("✅ Закрыть", `${TP_CALLBACK_CASE_RESOLVE_PREFIX}${shortId}`),
+    createMenuButton("🙈 Скрыть", `${TP_CALLBACK_CASE_DISMISS_PREFIX}${shortId}`),
+  ]]);
 }
 
 function appendTrainingPeaksCoachCaseFinalState(
@@ -1611,7 +1639,7 @@ async function handleTrainingPeaksRecentCoachCases(parsedMessage: ParsedTelegram
     await sendTrainingPeaksMenuMessage(
       parsedMessage.chatId,
       formatTrainingPeaksCoachCaseCard(item),
-      getTrainingPeaksCoachCaseInlineMarkup(item.shortId)
+      getTrainingPeaksCoachCaseInlineMarkup(item)
     );
   }
 }
@@ -1674,6 +1702,82 @@ async function handleTrainingPeaksCoachCaseResolveOrDismiss(
     parsedMessage.chatId,
     action === "resolve" ? "Error resolving case, try again." : "Error dismissing case, try again."
   );
+}
+
+async function handleTrainingPeaksCoachCaseCreateProposalsCallback(
+  parsedMessage: ParsedTelegramCallbackUpdate,
+  shortId: string
+): Promise<void> {
+  const result = await createTrainingPeaksActionsFromGroupMoveCase({
+    caseId: shortId,
+    coachChatId: String(parsedMessage.chatId),
+    coachUserId: parsedMessage.userId !== null ? String(parsedMessage.userId) : null,
+  });
+
+  if (result.kind === "created") {
+    await answerTelegramCallbackQuery(
+      parsedMessage.callbackQueryId,
+      `✅ Созданы заявки на перенос: ${result.createdCount}. Проверь их в /tp_actions.`
+    );
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      `${parsedMessage.messageText ?? `#${shortId}`}\n🧩 Заявки созданы: ${result.createdCount}`,
+      getTrainingPeaksCoachCasePostProposalMarkup(shortId)
+    );
+    await sendTrainingPeaksMessage(
+      parsedMessage.chatId,
+      [`✅ Созданы заявки на перенос: ${result.createdCount}. Проверь их в /tp_actions.`, ...result.summaries].join("\n")
+    );
+    return;
+  }
+
+  if (result.kind === "duplicate") {
+    await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, "Заявки уже созданы. Проверь /tp_actions.");
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "Заявки уже созданы. Проверь /tp_actions.");
+    return;
+  }
+
+  if (result.kind === "needs_manual_review") {
+    await answerTelegramCallbackQuery(
+      parsedMessage.callbackQueryId,
+      "Не удалось безопасно разобрать переносы. Проверь кейс вручную."
+    );
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "Не удалось безопасно разобрать переносы. Проверь кейс вручную.");
+    return;
+  }
+
+  if (result.kind === "not_found") {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, `Кейс ${shortId} не найден.`);
+    return;
+  }
+
+  if (result.kind === "ambiguous_case_id") {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, `Неоднозначный ID кейса ${shortId}, укажи больше символов.`);
+    return;
+  }
+
+  if (result.kind === "invalid_case_id") {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, `Некорректный ID кейса ${shortId}.`);
+    return;
+  }
+
+  if (result.kind === "invalid_case_kind") {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "Для этого кейса создание заявок недоступно.");
+    return;
+  }
+
+  if (result.kind === "missing_student") {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "У кейса нет привязанного ученика.");
+    return;
+  }
+
+  if (result.kind === "case_closed") {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "Кейс уже закрыт.");
+    return;
+  }
+
+  await sendTrainingPeaksMessage(parsedMessage.chatId, "Не удалось создать заявки. Проверь кейс вручную.");
 }
 
 function getStudentCardReportStatusLabel(status: string): string {
@@ -2689,6 +2793,11 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
   if (data.startsWith(TP_CALLBACK_CASE_DISMISS_PREFIX)) {
     const shortId = data.slice(TP_CALLBACK_CASE_DISMISS_PREFIX.length).trim();
     return shortId ? { kind: "case_dismiss", shortId } : null;
+  }
+
+  if (data.startsWith(TP_CALLBACK_CASE_PROPOSE_PREFIX)) {
+    const shortId = data.slice(TP_CALLBACK_CASE_PROPOSE_PREFIX.length).trim();
+    return shortId ? { kind: "case_create_proposals", shortId } : null;
   }
 
   if (data.startsWith("tp:s:")) {
@@ -7775,6 +7884,11 @@ export async function handleTrainingPeaksTelegramCallback(
         parsedMessage.chatId,
         `Ошибка. Попробуй: /tp case dismiss ${callback.shortId}`
       );
+      return "handled";
+    }
+
+    if (callback.kind === "case_create_proposals") {
+      await handleTrainingPeaksCoachCaseCreateProposalsCallback(parsedMessage, callback.shortId);
       return "handled";
     }
 

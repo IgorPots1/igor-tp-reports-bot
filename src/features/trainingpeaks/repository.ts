@@ -5173,6 +5173,40 @@ export async function listRecentPendingTrainingPeaksMoveActionsForStudentChat(in
   return ((data as TrainingPeaksActionRow[]) ?? []).map(mapTrainingPeaksActionRow);
 }
 
+export async function findTrainingPeaksMoveActionBySourceMessageAndDates(input: {
+  studentId: string;
+  sourceChatId: string;
+  sourceMessageId: string;
+  sourceDate: string;
+  targetDate: string;
+}): Promise<TrainingPeaksAction | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_actions")
+    .select("*")
+    .eq("action_type", "move_workout")
+    .eq("student_id", input.studentId)
+    .eq("source_chat_id", input.sourceChatId)
+    .eq("source_message_id", input.sourceMessageId)
+    .eq("parsed_payload->>sourceDate", input.sourceDate)
+    .eq("parsed_payload->target->>value", input.targetDate)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to find TrainingPeaks move action by source message/date pair ${input.studentId}/${input.sourceChatId}/${input.sourceMessageId}: ${error.message}`
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksActionRow(data as TrainingPeaksActionRow);
+}
+
 export async function hasTrainingPeaksTelegramContextObservationForChatTextHash(
   chatId: string,
   textSha256: string
@@ -5371,6 +5405,13 @@ export type TrainingPeaksCoachCaseSummary = {
   updatedAt: string;
 };
 
+export type TrainingPeaksCoachCase = TrainingPeaksCoachCaseSummary & {
+  telegramChatId: string | null;
+  telegramMessageId: number | null;
+  actionId: string | null;
+  coachNotesJson: Record<string, unknown>;
+};
+
 type TrainingPeaksCoachCaseSummaryRow = {
   id: string;
   student_id: string;
@@ -5378,6 +5419,13 @@ type TrainingPeaksCoachCaseSummaryRow = {
   status: TrainingPeaksCoachCaseStatus;
   created_at: string;
   updated_at: string;
+};
+
+type TrainingPeaksCoachCaseRow = TrainingPeaksCoachCaseSummaryRow & {
+  telegram_chat_id: string | null;
+  telegram_message_id: number | null;
+  action_id: string | null;
+  coach_notes_json: unknown | null;
 };
 
 export type TrainingPeaksCoachCasePrefixLookupResult =
@@ -5586,6 +5634,19 @@ function mapTrainingPeaksCoachCaseSummaryRow(
   };
 }
 
+function mapTrainingPeaksCoachCaseRow(row: TrainingPeaksCoachCaseRow): TrainingPeaksCoachCase {
+  return {
+    ...mapTrainingPeaksCoachCaseSummaryRow(row),
+    telegramChatId: row.telegram_chat_id,
+    telegramMessageId: row.telegram_message_id,
+    actionId: row.action_id,
+    coachNotesJson:
+      row.coach_notes_json && typeof row.coach_notes_json === "object" && !Array.isArray(row.coach_notes_json)
+        ? (row.coach_notes_json as Record<string, unknown>)
+        : {},
+  };
+}
+
 function mapTrainingPeaksCoachActionTakenRow(
   row: TrainingPeaksCoachActionTakenRow
 ): TrainingPeaksCoachActionTaken {
@@ -5789,6 +5850,27 @@ export async function getTrainingPeaksCoachCaseById(
   return mapTrainingPeaksCoachCaseSummaryRow(data as TrainingPeaksCoachCaseSummaryRow);
 }
 
+export async function getTrainingPeaksCoachCaseDetailsById(
+  caseId: string
+): Promise<TrainingPeaksCoachCase | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_coach_cases")
+    .select("id, student_id, case_kind, status, created_at, updated_at, telegram_chat_id, telegram_message_id, action_id, coach_notes_json")
+    .eq("id", caseId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to get TrainingPeaks coach case details ${caseId}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksCoachCaseRow(data as TrainingPeaksCoachCaseRow);
+}
+
 export async function insertTrainingPeaksReplyDraft(
   input: InsertTrainingPeaksReplyDraftInput
 ): Promise<TrainingPeaksReplyDraft> {
@@ -5982,6 +6064,33 @@ export async function updateTrainingPeaksCoachCaseStatus(
   }
 
   return mapTrainingPeaksCoachCaseSummaryRow(data as TrainingPeaksCoachCaseSummaryRow);
+}
+
+export async function updateTrainingPeaksCoachCaseMetadata(input: {
+  caseId: string;
+  coachNotesJson: Record<string, unknown>;
+}): Promise<TrainingPeaksCoachCase | null> {
+  const supabase = createSupabaseServerClient();
+  const updatePayload = pickDefinedValues({
+    coach_notes_json: input.coachNotesJson,
+  });
+
+  const { data, error } = await supabase
+    .from("trainingpeaks_coach_cases")
+    .update(updatePayload)
+    .eq("id", input.caseId)
+    .select("id, student_id, case_kind, status, created_at, updated_at, telegram_chat_id, telegram_message_id, action_id, coach_notes_json")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to update TrainingPeaks coach case metadata ${input.caseId}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksCoachCaseRow(data as TrainingPeaksCoachCaseRow);
 }
 
 export async function insertTrainingPeaksCoachActionTaken(
@@ -6284,6 +6393,7 @@ export async function listRecentTrainingPeaksCoachCases(input: {
     status: TrainingPeaksCoachCaseStatus;
     createdAt: string;
     previewText: string | null;
+    coachNotesJson: Record<string, unknown>;
   }>
 > {
   const safeLimit = Math.max(1, Math.min(input.limit ?? 10, 50));
@@ -6291,7 +6401,7 @@ export async function listRecentTrainingPeaksCoachCases(input: {
   let query = supabase
     .from("trainingpeaks_coach_cases")
     .select(
-      "id, student_id, case_kind, status, created_at, trainingpeaks_students(student_name), trainingpeaks_telegram_context_observations(text_preview), trainingpeaks_message_intent_logs(text_preview)"
+      "id, student_id, case_kind, status, created_at, coach_notes_json, trainingpeaks_students(student_name), trainingpeaks_telegram_context_observations(text_preview), trainingpeaks_message_intent_logs(text_preview)"
     )
     .order("created_at", { ascending: false })
     .limit(safeLimit)
@@ -6313,6 +6423,7 @@ export async function listRecentTrainingPeaksCoachCases(input: {
       case_kind: TrainingPeaksCoachCaseKind;
       status: TrainingPeaksCoachCaseStatus;
       created_at: string;
+      coach_notes_json: unknown | null;
       trainingpeaks_students?: { student_name?: string | null } | Array<{ student_name?: string | null }> | null;
       trainingpeaks_telegram_context_observations?:
         | { text_preview?: string | null }
@@ -6342,6 +6453,10 @@ export async function listRecentTrainingPeaksCoachCases(input: {
       status: row.status,
       createdAt: row.created_at,
       previewText: joinedContextObservation?.text_preview?.trim() || joinedIntentLog?.text_preview?.trim() || null,
+      coachNotesJson:
+        row.coach_notes_json && typeof row.coach_notes_json === "object" && !Array.isArray(row.coach_notes_json)
+          ? (row.coach_notes_json as Record<string, unknown>)
+          : {},
     };
   });
 }
