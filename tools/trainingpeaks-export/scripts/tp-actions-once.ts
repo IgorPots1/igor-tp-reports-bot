@@ -443,6 +443,44 @@ type DryRunCandidate = {
   workoutId?: number | null;
 };
 
+type DryRunDateAttributionDayCellSample = {
+  index: number;
+  visible: boolean;
+  dayNumber: number | null;
+  cardCount: number;
+  dayTextSnippet: string;
+  dayClass: string | null;
+  dayId: string | null;
+  attributes: {
+    dataDate: string | null;
+    datetime: string | null;
+    ariaLabel: string | null;
+    title: string | null;
+  };
+  descendantDateSamples: string[];
+  resolvedDate: string | null;
+  resolvedReason: string;
+};
+
+type DryRunDateAttributionCardSample = {
+  rawTextSnippet: string;
+  selectorHint: string | null;
+  dateIso: string | null;
+  dateReason: string;
+  droppedReasons: string[];
+};
+
+type DryRunDateAttributionDebug = {
+  selectedStrategy: string | null;
+  sourceDateVisibleInDayCellLabels: boolean;
+  targetDateVisibleInDayCellLabels: boolean;
+  cardsVisible: number;
+  cardsWithDateIso: number;
+  cardsWithoutDateIso: number;
+  rawDayCellSamples: DryRunDateAttributionDayCellSample[];
+  cardSamplesBeforeFiltering: DryRunDateAttributionCardSample[];
+};
+
 type DryRunDiagnostics = {
   loginRequired: boolean;
   athleteReachable: boolean;
@@ -467,6 +505,14 @@ type DryRunDiagnostics = {
     inferredCalendarMonthYearReason: string | null;
     waitForCardAttempted: boolean;
     waitForCardTimedOut: boolean;
+    selectedDateAttributionStrategy: string | null;
+    sourceDateVisibleInDayCellLabels: boolean;
+    targetDateVisibleInDayCellLabels: boolean;
+    cardsVisible: number;
+    cardsWithDateIso: number;
+    cardsWithoutDateIso: number;
+    rawDayCellSamples: DryRunDateAttributionDayCellSample[];
+    cardSamplesBeforeFiltering: DryRunDateAttributionCardSample[];
     parseWarnings: string[];
     extractionError: string | null;
     screenshotBeforePath: string | null;
@@ -601,6 +647,7 @@ type DryRunDomDebug = {
 type WorkoutExtractionResult = {
   candidates: RawWorkoutCandidate[];
   domDebug: DryRunDomDebug | null;
+  dateAttributionDebug: DryRunDateAttributionDebug | null;
   parseWarnings: string[];
   extractionError: string | null;
   readiness: {
@@ -1558,6 +1605,10 @@ function parseDateFromCalendarAttr(value: string | null | undefined, defaultYear
   if (slash) {
     return parseDateFromCalendarText(slash, defaultYear);
   }
+  const naturalIso = extractIsoFromNaturalDateText(value);
+  if (naturalIso) {
+    return naturalIso;
+  }
   return null;
 }
 
@@ -1701,6 +1752,202 @@ async function inferCalendarMonthYear(
     year: null,
     month: null,
     reason: "calendar month/year unresolved from visible calendar context",
+  };
+}
+
+function shiftMonthYear(
+  input: { year: number; month: number },
+  monthDelta: number
+): { year: number; month: number } {
+  const base = new Date(Date.UTC(input.year, input.month - 1 + monthDelta, 15));
+  return {
+    year: base.getUTCFullYear(),
+    month: base.getUTCMonth() + 1,
+  };
+}
+
+function inferMonthYearFromAnchorDate(
+  dayNumber: number,
+  anchorDateIso: string
+): { year: number; month: number; reason: string } | null {
+  const anchor = parseIsoDateParts(anchorDateIso);
+  if (!anchor) {
+    return null;
+  }
+  const candidates = [
+    { ...shiftMonthYear({ year: anchor.year, month: anchor.month }, -1), reason: "previous_month_from_anchor" },
+    { year: anchor.year, month: anchor.month, reason: "anchor_month" },
+    { ...shiftMonthYear({ year: anchor.year, month: anchor.month }, 1), reason: "next_month_from_anchor" },
+  ];
+  for (const candidate of candidates) {
+    const iso = toIsoFromDateParts(candidate.year, candidate.month, dayNumber);
+    if (iso === anchorDateIso) {
+      return {
+        year: candidate.year,
+        month: candidate.month,
+        reason: candidate.reason,
+      };
+    }
+  }
+  return null;
+}
+
+function chooseMonthYearForVisibleDay(
+  input: {
+    dayNumber: number | null;
+    headerMonthYear: { year: number | null; month: number | null; reason: string };
+    expectedSourceDate: string | null;
+    expectedTargetDate: string | null;
+  }
+): { year: number; month: number; reason: string } | null {
+  if (input.dayNumber === null) {
+    return null;
+  }
+  const anchorCandidates = [
+    input.expectedSourceDate ? inferMonthYearFromAnchorDate(input.dayNumber, input.expectedSourceDate) : null,
+    input.expectedTargetDate ? inferMonthYearFromAnchorDate(input.dayNumber, input.expectedTargetDate) : null,
+  ].filter(Boolean) as { year: number; month: number; reason: string }[];
+  if (anchorCandidates.length > 0) {
+    const [preferred] = anchorCandidates;
+    if (
+      input.headerMonthYear.month &&
+      input.headerMonthYear.year &&
+      preferred.year === input.headerMonthYear.year &&
+      preferred.month === input.headerMonthYear.month
+    ) {
+      return {
+        year: preferred.year,
+        month: preferred.month,
+        reason: "header month/year matched expected date anchor",
+      };
+    }
+    if (input.headerMonthYear.month && preferred.month !== input.headerMonthYear.month) {
+      return {
+        year: preferred.year,
+        month: preferred.month,
+        reason: "expected source/target date anchor overrode visible month-only header",
+      };
+    }
+    return {
+      year: preferred.year,
+      month: preferred.month,
+      reason: "expected source/target date anchor resolved visible day month/year",
+    };
+  }
+  if (input.headerMonthYear.month && input.headerMonthYear.year) {
+    return {
+      year: input.headerMonthYear.year,
+      month: input.headerMonthYear.month,
+      reason: "visible calendar header month/year",
+    };
+  }
+  return null;
+}
+
+type ResolvedCalendarDayCellDate = {
+  dateIso: string | null;
+  reason: string;
+  dayNumber: number | null;
+  descendantDateSamples: string[];
+  dayTextSnippet: string;
+};
+
+async function resolveCalendarDayCellDate(input: {
+  dayCell: import("playwright").Locator;
+  headerMonthYear: { year: number | null; month: number | null; reason: string };
+  expectedSourceDate: string | null;
+  expectedTargetDate: string | null;
+}): Promise<ResolvedCalendarDayCellDate> {
+  const dayTextRaw = (await input.dayCell.innerText().catch(() => "")) ?? "";
+  const dayText = dayTextRaw.trim();
+  const dayAttributes = {
+    dataDate: await getAttributeSafe(input.dayCell, "data-date"),
+    datetime: await getAttributeSafe(input.dayCell, "datetime"),
+    ariaLabel: await getAttributeSafe(input.dayCell, "aria-label"),
+    title: await getAttributeSafe(input.dayCell, "title"),
+  };
+
+  for (const [attrName, attrValue] of Object.entries(dayAttributes)) {
+    const dateIso = parseDateFromCalendarAttr(attrValue);
+    if (dateIso) {
+      return {
+        dateIso,
+        reason: `source date from day cell ${attrName}`,
+        dayNumber: extractDayNumberCandidate(dayText),
+        descendantDateSamples: [],
+        dayTextSnippet: toTextSnippet(dayText, 180),
+      };
+    }
+  }
+
+  const descendantDateLocators = input.dayCell.locator(
+    "[data-date],[datetime],[aria-label],[title],[class*='day' i],[class*='date' i],header,time"
+  );
+  const descendantCount = await descendantDateLocators.count();
+  const descendantDateSamples: string[] = [];
+  for (let descendantIndex = 0; descendantIndex < descendantCount; descendantIndex += 1) {
+    const descendant = descendantDateLocators.nth(descendantIndex);
+    for (const attrName of ["data-date", "datetime", "aria-label", "title"] as const) {
+      const attrValue = await getAttributeSafe(descendant, attrName);
+      if (attrValue && descendantDateSamples.length < 6 && !descendantDateSamples.includes(`${attrName}: ${attrValue}`)) {
+        descendantDateSamples.push(`${attrName}: ${attrValue}`);
+      }
+      const dateIso = parseDateFromCalendarAttr(attrValue);
+      if (dateIso) {
+        return {
+          dateIso,
+          reason: `source date from day cell descendant ${attrName}`,
+          dayNumber: extractDayNumberCandidate(dayText),
+          descendantDateSamples,
+          dayTextSnippet: toTextSnippet(dayText, 180),
+        };
+      }
+    }
+    const descendantText = await getInnerTextSafe(descendant);
+    const descendantNaturalIso = extractIsoFromNaturalDateText(descendantText);
+    if (descendantText && descendantDateSamples.length < 6 && !descendantDateSamples.includes(`text: ${toTextSnippet(descendantText, 100)}`)) {
+      descendantDateSamples.push(`text: ${toTextSnippet(descendantText, 100)}`);
+    }
+    if (descendantNaturalIso) {
+      return {
+        dateIso: descendantNaturalIso,
+        reason: "source date from day cell descendant text",
+        dayNumber: extractDayNumberCandidate(dayText),
+        descendantDateSamples,
+        dayTextSnippet: toTextSnippet(dayText, 180),
+      };
+    }
+  }
+
+  const dayNumber = extractDayNumberCandidate(dayText);
+  const monthYear = chooseMonthYearForVisibleDay({
+    dayNumber,
+    headerMonthYear: input.headerMonthYear,
+    expectedSourceDate: input.expectedSourceDate,
+    expectedTargetDate: input.expectedTargetDate,
+  });
+  if (dayNumber !== null && monthYear) {
+    const derivedDate = toIsoFromDateParts(monthYear.year, monthYear.month, dayNumber);
+    if (derivedDate) {
+      return {
+        dateIso: derivedDate,
+        reason: `source date derived from day cell number and ${monthYear.reason}`,
+        dayNumber,
+        descendantDateSamples,
+        dayTextSnippet: toTextSnippet(dayText, 180),
+      };
+    }
+  }
+
+  return {
+    dateIso: null,
+    reason:
+      dayNumber === null
+        ? "day number could not be extracted from visible day cell"
+        : "Calendar cards found, but dates could not be assigned safely.",
+    dayNumber,
+    descendantDateSamples,
+    dayTextSnippet: toTextSnippet(dayText, 180),
   };
 }
 
@@ -3002,66 +3249,17 @@ async function waitForTrainingPeaksCalendarReadiness(
 
 async function resolveDayCellDateForProbe(
   dayCell: import("playwright").Locator,
-  calendarMonthYear: { year: number | null; month: number | null }
+  calendarMonthYear: { year: number | null; month: number | null },
+  expectedSourceDate: string | null = null,
+  expectedTargetDate: string | null = null
 ): Promise<string | null> {
-  const dayTextRaw = (await dayCell.innerText().catch(() => "")) ?? "";
-  const dayText = dayTextRaw.trim();
-  const dayAttributes = {
-    dataDate: await getAttributeSafe(dayCell, "data-date"),
-    datetime: await getAttributeSafe(dayCell, "datetime"),
-    ariaLabel: await getAttributeSafe(dayCell, "aria-label"),
-    title: await getAttributeSafe(dayCell, "title"),
-  };
-
-  for (const attrValue of Object.values(dayAttributes)) {
-    const dateIso = parseDateFromCalendarAttr(attrValue);
-    if (dateIso) {
-      return dateIso;
-    }
-  }
-
-  const descendantDateLocators = dayCell.locator(
-    "[data-date],[datetime],[aria-label],[title],[class*='day' i],[class*='date' i],header,time"
-  );
-  const descendantCount = await descendantDateLocators.count();
-  for (let descendantIndex = 0; descendantIndex < descendantCount; descendantIndex += 1) {
-    const descendant = descendantDateLocators.nth(descendantIndex);
-    for (const attrName of ["data-date", "datetime", "aria-label", "title"] as const) {
-      const attrValue = await getAttributeSafe(descendant, attrName);
-      const dateIso = parseDateFromCalendarAttr(attrValue);
-      if (dateIso) {
-        return dateIso;
-      }
-    }
-  }
-
-  if (!calendarMonthYear.month || !calendarMonthYear.year) {
-    return null;
-  }
-
-  const primaryCards = dayCell.locator(TP_PRIMARY_WORKOUT_CARD_WITHIN_DAY_SELECTOR);
-  const fallbackCards = dayCell.locator(TP_FALLBACK_WORKOUT_CARD_WITHIN_DAY_SELECTOR);
-  const dayCardTexts: string[] = [];
-  for (const locator of [primaryCards, fallbackCards]) {
-    const count = await locator.count();
-    for (let index = 0; index < count; index += 1) {
-      const cardText = await getInnerTextSafe(locator.nth(index));
-      if (cardText) {
-        dayCardTexts.push(cardText);
-      }
-    }
-  }
-
-  let dayContextText = dayText;
-  for (const cardText of dayCardTexts) {
-    dayContextText = dayContextText.replace(cardText, " ");
-  }
-  const derivedDayNumber = extractDayNumberCandidate(dayContextText);
-  if (derivedDayNumber === null) {
-    return null;
-  }
-
-  return toIsoFromDateParts(calendarMonthYear.year, calendarMonthYear.month, derivedDayNumber);
+  const resolved = await resolveCalendarDayCellDate({
+    dayCell,
+    headerMonthYear: calendarMonthYear,
+    expectedSourceDate,
+    expectedTargetDate,
+  });
+  return resolved.dateIso;
 }
 
 async function locateWorkoutCardForProbe(
@@ -3097,7 +3295,7 @@ async function locateWorkoutCardForProbe(
 
   for (let dayIndex = 0; dayIndex < dayCellCount; dayIndex += 1) {
     const dayCell = dayCells.nth(dayIndex);
-    const dayDate = await resolveDayCellDateForProbe(dayCell, calendarMonthYear);
+    const dayDate = await resolveDayCellDateForProbe(dayCell, calendarMonthYear, input.sourceDate, null);
     if (dayDate !== input.sourceDate) {
       continue;
     }
@@ -5533,7 +5731,8 @@ async function probeTrainingPeaksMoveCapabilities(
 
 async function extractWorkoutCandidatesFromPage(
   page: import("playwright").Page,
-  targetDateIso: string | null
+  targetDateIso: string | null,
+  expectedSourceDate: string | null = null
 ): Promise<WorkoutExtractionResult> {
   const nowIso = toBelgradeIsoDate(new Date());
   const domDebugEnabled = isTruthyEnvFlag("TP_DRY_RUN_DOM_DEBUG");
@@ -5618,6 +5817,7 @@ async function extractWorkoutCandidatesFromPage(
 
   const extracted: EvaluatedWorkoutCandidate[] = [];
   let extractionError: string | null = null;
+  let dateAttributionDebug: DryRunDateAttributionDebug | null = null;
 
   try {
     const calendarRoot = page.locator(TP_CALENDAR_ROOT_SELECTOR).first();
@@ -5629,12 +5829,21 @@ async function extractWorkoutCandidatesFromPage(
     const calendarMonthYear = await inferCalendarMonthYear(calendarRoot);
     const dayCells = calendarRoot.locator(TP_DAY_CELL_SELECTOR);
     const dayCellCount = await dayCells.count();
+    const rawDayCellSamples: DryRunDateAttributionDayCellSample[] = [];
+    const cardSamplesBeforeFiltering: DryRunDateAttributionCardSample[] = [];
+    let cardsVisible = 0;
+    let cardsWithDateIso = 0;
+    let cardsWithoutDateIso = 0;
+    let selectedDateAttributionStrategy: string | null = null;
+    let sourceDateVisibleInDayCellLabels = false;
+    let targetDateVisibleInDayCellLabels = false;
 
-    for (let dayIndex = 0; dayIndex < dayCellCount && extracted.length < 80; dayIndex += 1) {
+    for (let dayIndex = 0; dayIndex < dayCellCount; dayIndex += 1) {
       const dayCell = dayCells.nth(dayIndex);
       const dayTextRaw = (await dayCell.innerText().catch(() => "")) ?? "";
       const dayText = dayTextRaw.trim();
       const dayClass = await getAttributeSafe(dayCell, "class");
+      const dayId = await getAttributeSafe(dayCell, "id");
       const dayAttributes = {
         dataDate: await getAttributeSafe(dayCell, "data-date"),
         datetime: await getAttributeSafe(dayCell, "datetime"),
@@ -5642,79 +5851,50 @@ async function extractWorkoutCandidatesFromPage(
         title: await getAttributeSafe(dayCell, "title"),
       };
 
-      let resolvedSourceDate: string | null = null;
-      let resolvedSourceDateReason = "source date unresolved";
-
-      for (const [attrName, attrValue] of Object.entries(dayAttributes)) {
-        const dateIso = parseDateFromCalendarAttr(attrValue);
-        if (dateIso) {
-          resolvedSourceDate = dateIso;
-          resolvedSourceDateReason = `source date from day cell ${attrName}`;
-          break;
-        }
-      }
-
-      if (!resolvedSourceDate) {
-        const descendantDateLocators = dayCell.locator(
-          "[data-date],[datetime],[aria-label],[title],[class*='day' i],[class*='date' i],header,time"
-        );
-        const descendantCount = await descendantDateLocators.count();
-        for (let descendantIndex = 0; descendantIndex < descendantCount; descendantIndex += 1) {
-          const descendant = descendantDateLocators.nth(descendantIndex);
-          for (const attrName of ["data-date", "datetime", "aria-label", "title"] as const) {
-            const attrValue = await getAttributeSafe(descendant, attrName);
-            const dateIso = parseDateFromCalendarAttr(attrValue);
-            if (dateIso) {
-              resolvedSourceDate = dateIso;
-              resolvedSourceDateReason = `source date from day cell descendant ${attrName}`;
-              break;
-            }
-          }
-          if (resolvedSourceDate) {
-            break;
-          }
-        }
-      }
-
       const primaryCards = dayCell.locator(TP_PRIMARY_WORKOUT_CARD_WITHIN_DAY_SELECTOR);
       const fallbackCards = dayCell.locator(TP_FALLBACK_WORKOUT_CARD_WITHIN_DAY_SELECTOR);
       const primaryCount = await primaryCards.count();
       const fallbackCount = await fallbackCards.count();
+      const resolvedDay = await resolveCalendarDayCellDate({
+        dayCell,
+        headerMonthYear: calendarMonthYear,
+        expectedSourceDate,
+        expectedTargetDate: targetDateIso,
+      });
+      const resolvedSourceDate = resolvedDay.dateIso;
+      const resolvedSourceDateReason = resolvedDay.reason;
 
-      const dayCardTexts: string[] = [];
-      for (let cardIndex = 0; cardIndex < primaryCount; cardIndex += 1) {
-        const cardText = await getInnerTextSafe(primaryCards.nth(cardIndex));
-        if (cardText) {
-          dayCardTexts.push(cardText);
-        }
+      if (!selectedDateAttributionStrategy && resolvedSourceDateReason) {
+        selectedDateAttributionStrategy = resolvedSourceDateReason;
       }
-      for (let cardIndex = 0; cardIndex < fallbackCount; cardIndex += 1) {
-        const cardText = await getInnerTextSafe(fallbackCards.nth(cardIndex));
-        if (cardText) {
-          dayCardTexts.push(cardText);
-        }
+      const labelFragments = [
+        dayText,
+        dayAttributes.dataDate,
+        dayAttributes.datetime,
+        dayAttributes.ariaLabel,
+        dayAttributes.title,
+        ...resolvedDay.descendantDateSamples,
+      ];
+      if (expectedSourceDate && visibleAnyTextReferencesIsoTarget(labelFragments, expectedSourceDate)) {
+        sourceDateVisibleInDayCellLabels = true;
       }
-
-      if (!resolvedSourceDate && calendarMonthYear.month && calendarMonthYear.year) {
-        let dayContextText = dayText;
-        for (const cardText of dayCardTexts) {
-          if (!cardText) {
-            continue;
-          }
-          dayContextText = dayContextText.replace(cardText, " ");
-        }
-        const derivedDayNumber = extractDayNumberCandidate(dayContextText);
-        if (derivedDayNumber !== null) {
-          const derivedDate = toIsoFromDateParts(calendarMonthYear.year, calendarMonthYear.month, derivedDayNumber);
-          if (derivedDate) {
-            resolvedSourceDate = derivedDate;
-            resolvedSourceDateReason = "source date derived from day cell number and visible calendar month/year";
-          }
-        }
+      if (targetDateIso && visibleAnyTextReferencesIsoTarget(labelFragments, targetDateIso)) {
+        targetDateVisibleInDayCellLabels = true;
       }
-
-      if (!resolvedSourceDate && !calendarMonthYear.month) {
-        resolvedSourceDateReason = calendarMonthYear.reason;
+      if (rawDayCellSamples.length < 12) {
+        rawDayCellSamples.push({
+          index: dayIndex,
+          visible: await dayCell.isVisible().catch(() => false),
+          dayNumber: resolvedDay.dayNumber,
+          cardCount: primaryCount + fallbackCount,
+          dayTextSnippet: resolvedDay.dayTextSnippet,
+          dayClass,
+          dayId,
+          attributes: dayAttributes,
+          descendantDateSamples: resolvedDay.descendantDateSamples,
+          resolvedDate: resolvedSourceDate,
+          resolvedReason: resolvedSourceDateReason,
+        });
       }
 
       const buildCandidate = async (
@@ -5741,6 +5921,31 @@ async function extractWorkoutCandidatesFromPage(
         const plannedDistanceRaw =
           text.match(/\b\d+(?:[.,]\d+)?\s*(?:km|км|mi|mile|miles|m|м|meter|meters)\b/i)?.[0] ?? null;
         const startTimeLocal = text.match(/\b\d{1,2}:\d{2}(?::\d{2})?\b/)?.[0] ?? null;
+        cardsVisible += 1;
+        if (resolvedSourceDate) {
+          cardsWithDateIso += 1;
+        } else {
+          cardsWithoutDateIso += 1;
+        }
+        if (cardSamplesBeforeFiltering.length < 12) {
+          const droppedReasons: string[] = [];
+          if (!resolvedSourceDate) {
+            droppedReasons.push("dateIso unresolved before filtering");
+          }
+          if (targetDateIso && resolvedSourceDate && dateDistanceDays(resolvedSourceDate, targetDateIso) > 14) {
+            droppedReasons.push("outside 14-day target window");
+          }
+          if (fromFallback) {
+            droppedReasons.push("fallback card root");
+          }
+          cardSamplesBeforeFiltering.push({
+            rawTextSnippet: text,
+            selectorHint,
+            dateIso: resolvedSourceDate,
+            dateReason: resolvedSourceDateReason,
+            droppedReasons,
+          });
+        }
 
         return {
           rawTextSnippet: text,
@@ -5762,7 +5967,7 @@ async function extractWorkoutCandidatesFromPage(
         };
       };
 
-      for (let cardIndex = 0; cardIndex < primaryCount && extracted.length < 80; cardIndex += 1) {
+      for (let cardIndex = 0; cardIndex < primaryCount; cardIndex += 1) {
         const candidate = await buildCandidate(
           primaryCards.nth(cardIndex),
           TP_PRIMARY_WORKOUT_CARD_SELECTOR,
@@ -5773,7 +5978,7 @@ async function extractWorkoutCandidatesFromPage(
         }
       }
 
-      for (let cardIndex = 0; cardIndex < fallbackCount && extracted.length < 80; cardIndex += 1) {
+      for (let cardIndex = 0; cardIndex < fallbackCount; cardIndex += 1) {
         const candidate = await buildCandidate(
           fallbackCards.nth(cardIndex),
           TP_FALLBACK_WORKOUT_CARD_SELECTOR,
@@ -5784,6 +5989,16 @@ async function extractWorkoutCandidatesFromPage(
         }
       }
     }
+    dateAttributionDebug = {
+      selectedStrategy: selectedDateAttributionStrategy,
+      sourceDateVisibleInDayCellLabels,
+      targetDateVisibleInDayCellLabels,
+      cardsVisible,
+      cardsWithDateIso,
+      cardsWithoutDateIso,
+      rawDayCellSamples,
+      cardSamplesBeforeFiltering,
+    };
   } catch (error) {
     extractionError = `calendar extraction failed: ${toShortErrorMessage(error)}`;
     parseWarnings.push(extractionError);
@@ -5853,6 +6068,7 @@ async function extractWorkoutCandidatesFromPage(
             extractionError,
           }
         : null,
+    dateAttributionDebug,
     parseWarnings,
     extractionError,
     readiness,
@@ -5883,6 +6099,7 @@ async function buildZeroCandidatesDiagnostics(input: {
   let inferredCalendarMonth: number | null = null;
   let inferredCalendarYear: number | null = null;
   let inferredCalendarMonthYearReason: string | null = null;
+  const dateAttributionDebug = input.extraction.dateAttributionDebug;
 
   try {
     const calendarRoots = input.page.locator(TP_CALENDAR_ROOT_SELECTOR);
@@ -5933,6 +6150,16 @@ async function buildZeroCandidatesDiagnostics(input: {
     inferredCalendarMonthYearReason,
     waitForCardAttempted: input.extraction.readiness.waitForWorkoutCardAttempted,
     waitForCardTimedOut: input.extraction.readiness.waitForWorkoutCardTimedOut,
+    selectedDateAttributionStrategy: dateAttributionDebug?.selectedStrategy ?? null,
+    sourceDateVisibleInDayCellLabels: dateAttributionDebug?.sourceDateVisibleInDayCellLabels ?? false,
+    targetDateVisibleInDayCellLabels: dateAttributionDebug?.targetDateVisibleInDayCellLabels ?? false,
+    cardsVisible: dateAttributionDebug?.cardsVisible ?? input.extraction.candidates.length,
+    cardsWithDateIso: dateAttributionDebug?.cardsWithDateIso ?? input.extraction.candidates.filter((candidate) => Boolean(candidate.dateIso)).length,
+    cardsWithoutDateIso:
+      dateAttributionDebug?.cardsWithoutDateIso ??
+      input.extraction.candidates.filter((candidate) => !candidate.dateIso).length,
+    rawDayCellSamples: dateAttributionDebug?.rawDayCellSamples ?? [],
+    cardSamplesBeforeFiltering: dateAttributionDebug?.cardSamplesBeforeFiltering ?? [],
     parseWarnings: [...input.extraction.parseWarnings],
     extractionError: input.extraction.extractionError,
     screenshotBeforePath: input.screenshotBeforePath,
@@ -6166,6 +6393,9 @@ function evaluateDryRunOutcome(input: {
   }
 
   if (input.candidates.length === 0) {
+    const cardsVisible = input.extraction.dateAttributionDebug?.cardsVisible ?? 0;
+    const cardsWithoutDateIso = input.extraction.dateAttributionDebug?.cardsWithoutDateIso ?? 0;
+    const dateAttributionFailed = cardsVisible > 0 && cardsWithoutDateIso >= cardsVisible;
     return {
       dryRunResult: "not_found",
       resolvedDates: { sourceDate: null, targetDate, timezone },
@@ -6173,7 +6403,11 @@ function evaluateDryRunOutcome(input: {
       candidateAlternativesCount: 0,
       confidence: 0.2,
       canExecute: false,
-      canExecuteReasons: ["Карточки тренировок не найдены в календаре"],
+      canExecuteReasons: [
+        dateAttributionFailed
+          ? "Карточки тренировок найдены, но не удалось надёжно определить даты карточек."
+          : "Карточки тренировок не найдены в календаре",
+      ],
       diagnostics,
       identityCheck: input.identityCheck,
       debugCandidatesTopN: [],
@@ -6218,6 +6452,9 @@ function evaluateDryRunOutcome(input: {
     return Boolean(fingerprint);
   });
   const globalCandidateCount = input.candidates.length;
+  const cardsVisible = input.extraction.dateAttributionDebug?.cardsVisible ?? input.candidates.length;
+  const cardsWithDateIso = input.extraction.dateAttributionDebug?.cardsWithDateIso ?? input.candidates.filter((candidate) => Boolean(candidate.dateIso)).length;
+  const cardsWithoutDateIso = input.extraction.dateAttributionDebug?.cardsWithoutDateIso ?? Math.max(0, cardsVisible - cardsWithDateIso);
   const sourceDateBucketCounts: Record<string, number> = {};
   for (const candidate of strictGlobalCandidates) {
     if (!candidate.dateIso) {
@@ -6315,7 +6552,13 @@ function evaluateDryRunOutcome(input: {
   const selectedSourceDateCandidateCount = selectedBucketCandidates.length;
 
   if (!selectedSourceDate) {
-    const reasons = ["source date could not be resolved safely", "Нужна исходная дата"];
+    const reasons =
+      strictGlobalCandidates.length === 0 && cardsVisible > 0 && cardsWithoutDateIso > 0
+        ? [
+            "Calendar cards found, but dates could not be assigned safely.",
+            "Карточки тренировок найдены, но не удалось надёжно определить даты карточек.",
+          ]
+        : ["source date could not be resolved safely", "Нужна исходная дата"];
     return {
       dryRunResult: strictGlobalCandidates.length > 0 ? "ambiguous" : "not_found",
       resolvedDates: { sourceDate: null, targetDate, timezone },
@@ -6364,6 +6607,11 @@ function evaluateDryRunOutcome(input: {
             "Coach-confirmed source date no longer matches detected workout candidate.",
             "Подтверждённая исходная дата больше не совпадает с найденной тренировкой.",
           ]
+        : cardsVisible > 0 && cardsWithDateIso === 0
+          ? [
+              "Calendar cards found, but dates could not be assigned safely.",
+              "Карточки тренировок найдены, но не удалось надёжно определить даты карточек.",
+            ]
         : ["no planned candidate on inferred source date", "Нужна конкретная тренировка"];
     return {
       dryRunResult: "not_found",
@@ -6905,7 +7153,12 @@ async function inspectActionCalendar(claimed: ClaimedAction, runId: string): Pro
     const resolvedTargetDate = parsedPayload?.target
       ? resolveTargetDateFromPayload(parsedPayload.target, new Date()).targetDate
       : null;
-    const extraction = await extractWorkoutCandidatesFromPage(page, resolvedTargetDate);
+    const expectedSourceDate = extractCoachConfirmedSourceDate(parsedPayload)
+      ?? extractExplicitSourceDate({
+        rawText: claimed.action.raw_text,
+        parsedPayload: claimed.action.parsed_payload,
+      });
+    const extraction = await extractWorkoutCandidatesFromPage(page, resolvedTargetDate, expectedSourceDate);
     const dryRunEvaluation = evaluateDryRunOutcome({
       action: claimed.action,
       student,
@@ -7946,7 +8199,16 @@ async function main(): Promise<void> {
           const resolvedTargetDate = parsedPayload?.target
             ? resolveTargetDateFromPayload(parsedPayload.target, new Date()).targetDate
             : null;
-          const zeroExtraction = await extractWorkoutCandidatesFromPage(probePage, resolvedTargetDate);
+          const expectedSourceDate = extractCoachConfirmedSourceDate(parsedPayload)
+            ?? extractExplicitSourceDate({
+              rawText: claimed.action.raw_text,
+              parsedPayload: claimed.action.parsed_payload,
+            });
+          const zeroExtraction = await extractWorkoutCandidatesFromPage(
+            probePage,
+            resolvedTargetDate,
+            expectedSourceDate
+          );
           evaluation.diagnostics.zeroCandidates = await buildZeroCandidatesDiagnostics({
             page: probePage,
             extraction: zeroExtraction,
