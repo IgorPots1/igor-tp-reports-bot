@@ -2022,6 +2022,13 @@ async function handleTrainingPeaksCoachCaseCreateProposalsCallback(
     return;
   }
 
+  if (result.kind === "failed") {
+    const message = `Не удалось создать заявки: ${result.humanMessage}`;
+    await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, message);
+    await sendTrainingPeaksMessage(parsedMessage.chatId, message);
+    return;
+  }
+
   await sendTrainingPeaksMessage(parsedMessage.chatId, "Не удалось создать заявки. Проверь кейс вручную.");
 }
 

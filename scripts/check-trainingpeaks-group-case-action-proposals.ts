@@ -1,6 +1,8 @@
 import {
+  buildCreateTrainingPeaksActionsFromGroupMoveCaseFailure,
   buildGroupCaseMovePairProposal,
   type ParsedTrainingPeaksMoveWorkoutPayload,
+  shouldResolveTrainingPeaksCoachCaseByPrefix,
   validateTrainingPeaksGroupMovePairsPreview,
 } from "@/features/trainingpeaks/service";
 
@@ -32,6 +34,21 @@ function buildProposalPayload(pair: NonNullable<ReturnType<typeof buildGroupCase
     } as ParsedTrainingPeaksMoveWorkoutPayload["parsingDiagnostics"] & Record<string, unknown>,
   };
 }
+
+assert(shouldResolveTrainingPeaksCoachCaseByPrefix("64025a5a") === true, "8-char case short id must use prefix lookup");
+assert(
+  shouldResolveTrainingPeaksCoachCaseByPrefix("64025a5a-0000-4000-8000-000000000000") === false,
+  "full UUID must use direct lookup"
+);
+
+const structuredFailure = buildCreateTrainingPeaksActionsFromGroupMoveCaseFailure({
+  reasonCode: "invalid_uuid_syntax",
+  humanMessage: "Некорректный ID кейса.",
+  failedStage: "resolve_case",
+});
+assert(structuredFailure.kind === "failed", "failure builder must return failed kind");
+assert(structuredFailure.humanMessage.length > 0, "failure must include humanMessage");
+assert(structuredFailure.failedStage === "resolve_case", "failure must include failedStage");
 
 const baseDateUnix = Math.floor(new Date("2026-05-28T10:00:00+02:00").getTime() / 1000);
 

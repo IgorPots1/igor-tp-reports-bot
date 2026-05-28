@@ -2166,7 +2166,7 @@ export type TrainingPeaksGroupMovePreviewPair = {
   target: string;
 };
 
-type CreateTrainingPeaksActionsFromGroupMoveCaseResult =
+export type CreateTrainingPeaksActionsFromGroupMoveCaseResult =
   | {
       kind: "created";
       actionIds: string[];
@@ -2193,7 +2193,63 @@ type CreateTrainingPeaksActionsFromGroupMoveCaseResult =
   | { kind: "invalid_case_kind"; caseKind: TrainingPeaksCoachCaseKind }
   | { kind: "missing_student" }
   | { kind: "case_closed"; status: TrainingPeaksCoachCaseStatus }
-  | { kind: "failed" };
+  | {
+      kind: "failed";
+      reasonCode: string;
+      humanMessage: string;
+      failedStage: string;
+    };
+
+export function shouldResolveTrainingPeaksCoachCaseByPrefix(caseId: string): boolean {
+  return caseId.trim().length < 36;
+}
+
+export function buildCreateTrainingPeaksActionsFromGroupMoveCaseFailure(input: {
+  reasonCode: string;
+  humanMessage: string;
+  failedStage: string;
+}): Extract<CreateTrainingPeaksActionsFromGroupMoveCaseResult, { kind: "failed" }> {
+  return {
+    kind: "failed",
+    reasonCode: input.reasonCode,
+    humanMessage: input.humanMessage,
+    failedStage: input.failedStage,
+  };
+}
+
+type ResolveTrainingPeaksCoachCaseDetailsForGroupMoveResult =
+  | { kind: "found"; case: TrainingPeaksCoachCase }
+  | { kind: "not_found" }
+  | { kind: "ambiguous_case_id" }
+  | { kind: "invalid_case_id" };
+
+async function resolveTrainingPeaksCoachCaseDetailsForGroupMove(
+  caseId: string
+): Promise<ResolveTrainingPeaksCoachCaseDetailsForGroupMoveResult> {
+  if (shouldResolveTrainingPeaksCoachCaseByPrefix(caseId)) {
+    const lookup = await getTrainingPeaksCoachCaseByIdPrefix(caseId);
+    if (lookup.kind === "invalid_prefix") {
+      return { kind: "invalid_case_id" };
+    }
+    if (lookup.kind === "ambiguous") {
+      return { kind: "ambiguous_case_id" };
+    }
+    if (lookup.kind === "not_found") {
+      return { kind: "not_found" };
+    }
+    const details = await getTrainingPeaksCoachCaseDetailsById(lookup.case.id);
+    if (!details) {
+      return { kind: "not_found" };
+    }
+    return { kind: "found", case: details };
+  }
+
+  const details = await getTrainingPeaksCoachCaseDetailsById(caseId);
+  if (!details) {
+    return { kind: "not_found" };
+  }
+  return { kind: "found", case: details };
+}
 
 function isRecordLike(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -2363,26 +2419,17 @@ export async function createTrainingPeaksActionsFromGroupMoveCase(input: {
   coachUserId?: string | null;
 }): Promise<CreateTrainingPeaksActionsFromGroupMoveCaseResult> {
   try {
-    let groupCase = await getTrainingPeaksCoachCaseDetailsById(input.caseId);
-    if (!groupCase) {
-      const lookup = await getTrainingPeaksCoachCaseByIdPrefix(input.caseId);
-      if (lookup.kind !== "found") {
-        if (lookup.kind === "not_found") {
-          return { kind: "not_found" };
-        }
-        if (lookup.kind === "ambiguous") {
-          return { kind: "ambiguous_case_id" };
-        }
-        if (lookup.kind === "invalid_prefix") {
-          return { kind: "invalid_case_id" };
-        }
-        return { kind: "failed" };
-      }
-      groupCase = await getTrainingPeaksCoachCaseDetailsById(lookup.case.id);
-      if (!groupCase) {
-        return { kind: "not_found" };
-      }
+    const resolvedCase = await resolveTrainingPeaksCoachCaseDetailsForGroupMove(input.caseId);
+    if (resolvedCase.kind === "not_found") {
+      return { kind: "not_found" };
     }
+    if (resolvedCase.kind === "ambiguous_case_id") {
+      return { kind: "ambiguous_case_id" };
+    }
+    if (resolvedCase.kind === "invalid_case_id") {
+      return { kind: "invalid_case_id" };
+    }
+    const groupCase = resolvedCase.case;
     if (groupCase.caseKind !== "move_workout_needs_review") {
       return { kind: "invalid_case_kind", caseKind: groupCase.caseKind };
     }
@@ -2588,7 +2635,11 @@ export async function createTrainingPeaksActionsFromGroupMoveCase(input: {
       coachUserId: input.coachUserId ?? null,
       error,
     });
-    return { kind: "failed" };
+    return buildCreateTrainingPeaksActionsFromGroupMoveCaseFailure({
+      reasonCode: "unexpected_error",
+      humanMessage: "Внутренняя ошибка при создании заявок.",
+      failedStage: "create_actions",
+    });
   }
 }
 
