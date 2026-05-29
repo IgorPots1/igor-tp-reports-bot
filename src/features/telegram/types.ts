@@ -56,12 +56,31 @@ export type TelegramForumTopicReopened = {
   [key: string]: unknown;
 };
 
+export type TelegramVoice = {
+  file_id: string;
+  file_unique_id: string;
+  duration: number;
+  mime_type?: string;
+  file_size?: number;
+};
+
+export type TelegramAudio = {
+  file_id: string;
+  file_unique_id: string;
+  duration: number;
+  mime_type?: string;
+  file_size?: number;
+  file_name?: string;
+};
+
 export type TelegramMessage = {
   message_id: number;
   chat: TelegramChat;
   from?: TelegramUser;
   text?: string;
   caption?: string;
+  voice?: TelegramVoice;
+  audio?: TelegramAudio;
   date?: number;
   business_connection_id?: string;
   is_topic_message?: boolean;

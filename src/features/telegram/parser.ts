@@ -12,6 +12,10 @@ export type ParsedTelegramMessageUpdate = {
   isTopicMessage: boolean | null;
   messageThreadId: number | null;
   threadTitle: string | null;
+  voiceFileId: string | null;
+  voiceDuration: number | null;
+  voiceMimeType: string | null;
+  voiceKind: "voice" | "audio" | null;
 };
 
 export type ParsedTelegramCallbackUpdate = {
@@ -54,6 +58,11 @@ export function parseTelegramUpdate(
     return null;
   }
 
+  const voiceFileId = message.voice?.file_id ?? message.audio?.file_id ?? null;
+  const voiceDuration = message.voice?.duration ?? message.audio?.duration ?? null;
+  const voiceMimeType = message.voice?.mime_type ?? message.audio?.mime_type ?? null;
+  const voiceKind = message.voice ? "voice" : message.audio ? "audio" : null;
+
   return {
     kind: "message",
     updateId: update.update_id,
@@ -70,5 +79,9 @@ export function parseTelegramUpdate(
         ? message.message_thread_id
         : null,
     threadTitle: message.forum_topic_created?.name ?? message.forum_topic_edited?.name ?? null,
+    voiceFileId,
+    voiceDuration,
+    voiceMimeType,
+    voiceKind,
   };
 }

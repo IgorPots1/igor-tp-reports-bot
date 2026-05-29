@@ -6,6 +6,14 @@ import type {
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
 const TELEGRAM_DOCUMENT_BOUNDARY = "----cursor-telegram-document";
 
+type TelegramGetFileResponse = {
+  ok?: boolean;
+  description?: string;
+  result?: {
+    file_path?: string;
+  };
+};
+
 type SendTelegramMessageOptions = {
   replyMarkup?: TelegramReplyMarkup;
   businessConnectionId?: string;
@@ -302,4 +310,48 @@ export async function answerTelegramCallbackQuery(callbackQueryId: string, text?
       error: message,
     });
   }
+}
+
+export async function getTelegramFilePath(fileId: string): Promise<string> {
+  const token = getTelegramBotToken();
+
+  const response = await fetch(`${TELEGRAM_API_BASE_URL}/bot${token}/getFile`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      file_id: fileId,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Telegram getFile failed (${response.status})`);
+  }
+
+  const payload = (await response.json()) as TelegramGetFileResponse;
+  if (payload.ok === false) {
+    throw new Error(`Telegram getFile failed: ${payload.description ?? "Unknown Telegram API error"}`);
+  }
+
+  const filePath = payload.result?.file_path?.trim();
+  if (!filePath) {
+    throw new Error("Telegram getFile returned empty file_path");
+  }
+
+  return filePath;
+}
+
+export async function downloadTelegramFile(fileId: string): Promise<Buffer> {
+  const token = getTelegramBotToken();
+  const filePath = await getTelegramFilePath(fileId);
+  const safePath = filePath.replace(/^\/+/, "");
+  const response = await fetch(`${TELEGRAM_API_BASE_URL}/file/bot${token}/${safePath}`);
+
+  if (!response.ok) {
+    throw new Error(`Telegram file download failed (${response.status})`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  return Buffer.from(arrayBuffer);
 }

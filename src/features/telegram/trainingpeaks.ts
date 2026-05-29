@@ -124,10 +124,12 @@ import {
 } from "@/features/trainingpeaks/week";
 import {
   answerTelegramCallbackQuery,
+  downloadTelegramFile,
   editTelegramMessageText,
   sendTelegramMessage,
   sendTelegramMessageStrict,
 } from "@/features/telegram/telegram-client";
+import { transcribeTelegramVoiceMessage } from "@/features/telegram/voice-transcription";
 import type {
   TelegramChatType,
   TelegramInlineKeyboardMarkup,
@@ -136,6 +138,10 @@ import type {
 } from "@/features/telegram/types";
 
 const COACH_ONLY_MESSAGE = "⛔ Эта команда доступна только тренеру.";
+const VOICE_COMMANDS_DISABLED_MESSAGE = "Голосовые команды пока выключены.";
+const VOICE_TRANSCRIPTION_IN_PROGRESS_MESSAGE = "🎤 Распознаю голосовое сообщение…";
+const VOICE_TRANSCRIPTION_FAILED_MESSAGE =
+  "Не удалось распознать голосовое сообщение. Попробуй ещё раз или напиши текстом.";
 const TP_WEEKLY_DISABLED_MESSAGE =
   "⚙️ /tp_weekly отключён. Для отчётов используй «📊 Отчёты», а запуск workflow оставлен через явные preview/confirm-кнопки.";
 const TP_UNKNOWN_COMMAND_MESSAGE = "Не поняла команду. Используй кнопки внизу или отправь /start.";
@@ -1062,6 +1068,62 @@ async function sendTrainingPeaksReplyScreen(
   await sendTrainingPeaksMessage(chatId, text, {
     replyMarkup,
   });
+}
+
+function isVoiceCommandsEnabled(): boolean {
+  return process.env.VOICE_COMMANDS_ENABLED === "true";
+}
+
+function isPrivateTelegramChat(parsedMessage: ParsedTelegramMessageUpdate): boolean {
+  return parsedMessage.userId !== null && String(parsedMessage.chatId) === String(parsedMessage.userId);
+}
+
+async function handleTrainingPeaksCoachVoiceTranscription(
+  parsedMessage: ParsedTelegramMessageUpdate
+): Promise<"handled" | "ignored"> {
+  if (!parsedMessage.voiceFileId) {
+    return "ignored";
+  }
+
+  if (!isCoachChat(parsedMessage.chatId) || !isPrivateTelegramChat(parsedMessage)) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, COACH_ONLY_MESSAGE);
+    return "handled";
+  }
+
+  if (!isVoiceCommandsEnabled()) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, VOICE_COMMANDS_DISABLED_MESSAGE);
+    return "handled";
+  }
+
+  try {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, VOICE_TRANSCRIPTION_IN_PROGRESS_MESSAGE);
+
+    const audioBuffer = await downloadTelegramFile(parsedMessage.voiceFileId);
+    const transcript = await transcribeTelegramVoiceMessage({
+      audioBuffer,
+      mimeType: parsedMessage.voiceMimeType,
+      fileName: parsedMessage.voiceKind === "audio" ? "audio-message" : "voice-message",
+    });
+
+    const replyText = [
+      "🎤 Расшифровка:",
+      `«${transcript}»`,
+      "",
+      "Пока это только распознавание. На следующем шаге я смогу превратить это в черновики сообщений.",
+    ].join("\n");
+    await sendTrainingPeaksMessage(parsedMessage.chatId, replyText);
+  } catch (error) {
+    console.warn("TrainingPeaks voice transcription failed", {
+      chatId: parsedMessage.chatId,
+      messageId: parsedMessage.messageId,
+      voiceKind: parsedMessage.voiceKind,
+      voiceDuration: parsedMessage.voiceDuration,
+      error: error instanceof Error ? error.message : "Unknown voice transcription error",
+    });
+    await sendTrainingPeaksMessage(parsedMessage.chatId, VOICE_TRANSCRIPTION_FAILED_MESSAGE);
+  }
+
+  return "handled";
 }
 
 async function sendTrainingPeaksMenuMessage(
@@ -6462,6 +6524,11 @@ export async function handleTrainingPeaksTelegramReplyKeyboardMessage(
   parsedMessage: ParsedTelegramMessageUpdate,
   text: string
 ): Promise<"handled" | "ignored"> {
+  const voiceHandled = await handleTrainingPeaksCoachVoiceTranscription(parsedMessage);
+  if (voiceHandled === "handled") {
+    return "handled";
+  }
+
   const action = getTrainingPeaksReplyKeyboardAction(text);
 
   if (!isCoachChat(parsedMessage.chatId)) {
