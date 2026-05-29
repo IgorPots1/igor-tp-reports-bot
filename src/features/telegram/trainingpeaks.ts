@@ -104,6 +104,7 @@ import {
   extractStudentMessagesFromVoiceTranscriptDetailed,
   type ExtractedVoiceStudentMessage,
 } from "@/features/telegram/voice-command-extraction";
+import { matchStudentByIdentity } from "@/features/trainingpeaks/student-identity-match";
 import {
   hasTrainingPeaksMessageIntentLoggingRelevance,
   logTrainingPeaksBusinessMessageIntentDecision,
@@ -427,13 +428,18 @@ type PendingAllEnabledWeeklyRunContext = {
   expiresAt: number;
 };
 
-type VoiceStudentMatchStatus = "matched" | "ambiguous" | "unmatched";
-
 type VoiceStudentMatchResult = {
   extracted: ExtractedVoiceStudentMessage;
-  status: VoiceStudentMatchStatus;
-  student: ReturnType<typeof buildVoiceStudentSearchIndex>[number] | null;
-  candidates: ReturnType<typeof buildVoiceStudentSearchIndex>;
+  status: "matched" | "ambiguous" | "unmatched";
+  student: TrainingPeaksRegistryStudentSnapshot | null;
+  candidates: Array<{
+    id: string;
+    studentId: string;
+    studentName: string;
+    score: number;
+    matchedBy: string;
+    matchedValuePreview: string;
+  }>;
 };
 
 type VoiceDraftCreationResult = {
@@ -1077,98 +1083,81 @@ function createReplyKeyboardMarkup(rows: string[][]): TelegramReplyKeyboardMarku
   };
 }
 
-function normalizeVoiceNameToken(value: string): string {
-  return value
-    .toLocaleLowerCase("ru")
-    .replace(/ё/g, "е")
-    .replace(/[.,!?;:()[\]{}"'`«»]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function buildVoiceStudentSearchIndex(students: TrainingPeaksRegistryStudentSnapshot[]) {
-  return students.map((student) => {
-    const normalizedName = normalizeVoiceNameToken(student.studentName);
-    const normalizedSlug = normalizeVoiceNameToken(student.studentId);
-    return {
-      id: student.id,
-      studentId: student.studentId,
-      studentName: student.studentName,
-      normalizedName,
-      normalizedSlug,
-    };
-  });
-}
-
-function getVoiceRecipientAliasCandidates(recipientQuery: string): string[] {
-  const normalized = normalizeVoiceNameToken(recipientQuery);
-  if (!normalized) {
-    return [];
-  }
-
-  const aliasesByToken = new Map<string, string[]>([
-    ["маша", ["мария"]],
-    ["димa", ["дмитрий"]],
-    ["дима", ["дмитрий"]],
-    ["вика", ["виктория"]],
-    ["саша", ["александр", "александра"]],
-    ["катя", ["екатерина"]],
-    ["лена", ["елена"]],
-    ["настя", ["анастасия"]],
-    ["таня", ["татьяна"]],
-  ]);
-
-  const aliasTokens = aliasesByToken.get(normalized) ?? [];
-  return Array.from(new Set([normalized, ...aliasTokens]));
-}
-
 function matchVoiceRecipientToStudent(
   extracted: ExtractedVoiceStudentMessage,
   students: TrainingPeaksRegistryStudentSnapshot[]
 ): VoiceStudentMatchResult {
-  const index = buildVoiceStudentSearchIndex(students);
-  const queryTokens = getVoiceRecipientAliasCandidates(extracted.recipientQuery);
+  const matched = matchStudentByIdentity({
+    query: extracted.recipientQuery,
+    students,
+    buildIdentities: (student) => [
+      {
+        value: student.studentName,
+        kind: "trainingpeaks_name",
+        weight: 1,
+      },
+      {
+        value: student.studentId,
+        kind: "trainingpeaks_id",
+        weight: 1,
+      },
+      {
+        value: student.telegramUsername,
+        kind: "telegram_username",
+        weight: 1.1,
+      },
+    ],
+  });
 
-  if (queryTokens.length === 0) {
+  const toCandidateView = (
+    candidates: Array<{
+      student: TrainingPeaksRegistryStudentSnapshot;
+      score: number;
+      matchedBy: string;
+      matchedValuePreview: string;
+    }>
+  ) =>
+    candidates.map((candidate) => ({
+      id: candidate.student.id,
+      studentId: candidate.student.studentId,
+      studentName: candidate.student.studentName,
+      score: candidate.score,
+      matchedBy: candidate.matchedBy,
+      matchedValuePreview: candidate.matchedValuePreview,
+    }));
+
+  if (matched.status === "unmatched") {
     return {
       extracted,
       status: "unmatched",
       student: null,
-      candidates: [],
+      candidates: toCandidateView(matched.candidates),
     };
   }
 
-  const exactCandidates = index.filter((student) =>
-    queryTokens.some((token) => token === student.normalizedName || token === student.normalizedSlug)
-  );
-  const substringCandidates = index.filter((student) =>
-    queryTokens.some((token) => student.normalizedName.includes(token) || student.normalizedSlug.includes(token))
-  );
-  const candidates = exactCandidates.length > 0 ? exactCandidates : substringCandidates;
-
-  if (candidates.length === 0) {
-    return {
-      extracted,
-      status: "unmatched",
-      student: null,
-      candidates: [],
-    };
-  }
-
-  if (candidates.length > 1) {
+  if (matched.status === "ambiguous") {
     return {
       extracted,
       status: "ambiguous",
       student: null,
-      candidates,
+      candidates: toCandidateView(matched.candidates),
     };
   }
 
   return {
     extracted,
     status: "matched",
-    student: candidates[0] ?? null,
-    candidates,
+    student: matched.student,
+    candidates: [
+      {
+        id: matched.student.id,
+        studentId: matched.student.studentId,
+        studentName: matched.student.studentName,
+        score: matched.score,
+        matchedBy: matched.matchedBy,
+        matchedValuePreview: matched.matchedValuePreview,
+      },
+    ],
   };
 }
 
@@ -1198,9 +1187,22 @@ function formatVoiceMatchIssuesText(matchResults: VoiceStudentMatchResult[]): st
       if (item.status === "ambiguous") {
         const candidatesText = item.candidates
           .slice(0, 4)
-          .map((candidate) => candidate.studentName)
+          .map(
+            (candidate) =>
+              `${candidate.studentName} (${candidate.studentId}; ${candidate.matchedBy}; ${candidate.matchedValuePreview})`
+          )
           .join(", ");
         return `- «${item.extracted.recipientQuery}» — найдено несколько: ${candidatesText}`;
+      }
+      if (item.candidates.length > 0) {
+        const weakCandidates = item.candidates
+          .slice(0, 3)
+          .map(
+            (candidate) =>
+              `${candidate.studentName} (${candidate.studentId}; ${candidate.matchedBy}; ${candidate.matchedValuePreview})`
+          )
+          .join(", ");
+        return `- «${item.extracted.recipientQuery}» — ученик не найден (слабые совпадения: ${weakCandidates})`;
       }
       return `- «${item.extracted.recipientQuery}» — ученик не найден`;
     });
@@ -8980,6 +8982,20 @@ export async function handleTrainingPeaksTelegramCallback(
 
     if (callback.kind === "voice_drafts_close") {
       await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, "Закрыто");
+      try {
+        await editTrainingPeaksMenuMessage(
+          parsedMessage.chatId,
+          parsedMessage.messageId,
+          "Предпросмотр голосовых черновиков закрыт.",
+          createInlineKeyboardMarkup([[createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)]])
+        );
+      } catch {
+        await sendTrainingPeaksMenuMessage(
+          parsedMessage.chatId,
+          "Предпросмотр голосовых черновиков закрыт.",
+          createInlineKeyboardMarkup([[createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)]])
+        );
+      }
       return "handled";
     }
 
