@@ -1292,6 +1292,21 @@ function getVoiceDraftPreviewMarkup(): TelegramInlineKeyboardMarkup {
   ]);
 }
 
+function getVoicePickSuccessMarkup(): TelegramInlineKeyboardMarkup {
+  return createInlineKeyboardMarkup([
+    [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
+    [createMenuButton("✉️ Черновики", TP_CALLBACK_REPLY_DRAFT_HINT)],
+    [createMenuButton("❌ Закрыть", TP_CALLBACK_VOICE_DRAFTS_CLOSE)],
+  ]);
+}
+
+function getVoicePickNoneMarkup(): TelegramInlineKeyboardMarkup {
+  return createInlineKeyboardMarkup([
+    [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
+    [createMenuButton("❌ Закрыть", TP_CALLBACK_VOICE_DRAFTS_CLOSE)],
+  ]);
+}
+
 function formatVoiceExtractionNoMessagesText(transcript: string): string {
   return [
     "Я расшифровал голосовое, но не нашёл понятных сообщений ученикам.",
@@ -1535,7 +1550,23 @@ async function handleTrainingPeaksCoachVoiceTranscription(
       );
     }
 
+    const hasOnlyAmbiguousResults = ambiguousResults.length > 0 && matchResults.every((item) => item.status === "ambiguous");
     if (createdDrafts.length === 0) {
+      if (hasOnlyAmbiguousResults) {
+        await sendTrainingPeaksMessage(
+          parsedMessage.chatId,
+          [
+            "Нужно уточнение, чтобы создать черновик.",
+            "Выбери ученика кнопкой ниже.",
+            "",
+            "Ничего не отправлено ученикам.",
+          ].join("\n"),
+          {
+            replyMarkup: getVoiceDraftPreviewMarkup(),
+          }
+        );
+        return "handled";
+      }
       const issuesText = formatVoiceMatchIssuesText(matchResults);
       await sendTrainingPeaksMessage(
         parsedMessage.chatId,
@@ -9183,12 +9214,22 @@ export async function handleTrainingPeaksTelegramCallback(
         return "handled";
       }
 
-      await editTrainingPeaksMenuMessage(
-        parsedMessage.chatId,
-        parsedMessage.messageId,
-        `Принято: никого не выбираю для «${context.recipientQuery}».`,
-        createInlineKeyboardMarkup([[createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)]])
-      );
+      const noneText = [
+        "Черновик не создан.",
+        `Я не выбрал ученика для «${context.recipientQuery}».`,
+        "",
+        "Ничего не отправлено ученикам.",
+      ].join("\n");
+      try {
+        await editTrainingPeaksMenuMessage(
+          parsedMessage.chatId,
+          parsedMessage.messageId,
+          noneText,
+          getVoicePickNoneMarkup()
+        );
+      } catch {
+        await sendTrainingPeaksMenuMessage(parsedMessage.chatId, noneText, getVoicePickNoneMarkup());
+      }
       return "handled";
     }
 
@@ -9262,21 +9303,29 @@ export async function handleTrainingPeaksTelegramCallback(
           );
           return "handled";
         }
-        await editTrainingPeaksMenuMessage(
-          parsedMessage.chatId,
-          parsedMessage.messageId,
-          [
-            `Черновик создан для ${created.studentName}.`,
-            `Текст: «${created.draftPreview}»`,
-            `ID: ${created.draftIdShort}`,
-            "",
-            "Ничего не отправлено ученику.",
-          ].join("\n"),
-          createInlineKeyboardMarkup([
-            [createMenuButton("✉️ Черновики", TP_CALLBACK_REPLY_DRAFT_HINT)],
-            [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
-          ])
-        );
+        const successText = [
+          "✅ Черновик создан.",
+          "",
+          "Ученик:",
+          created.studentName,
+          "",
+          "Текст:",
+          `«${created.draftPreview}»`,
+          "",
+          "Ничего не отправлено ученику.",
+          "",
+          "Отправку добавим следующим шагом.",
+        ].join("\n");
+        try {
+          await editTrainingPeaksMenuMessage(
+            parsedMessage.chatId,
+            parsedMessage.messageId,
+            successText,
+            getVoicePickSuccessMarkup()
+          );
+        } catch {
+          await sendTrainingPeaksMenuMessage(parsedMessage.chatId, successText, getVoicePickSuccessMarkup());
+        }
       } catch {
         await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, "Ошибка");
         await editTrainingPeaksMenuMessage(
