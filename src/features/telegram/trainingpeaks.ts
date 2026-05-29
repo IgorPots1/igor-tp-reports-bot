@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type {
   ParsedTelegramCallbackUpdate,
   ParsedTelegramMessageUpdate,
@@ -59,6 +61,7 @@ import {
   requestTrainingPeaksRaceScan,
   requestTrainingPeaksRaceResultsProbeJob,
   recordTrainingPeaksCoachCaseAndSnapshot,
+  type TrainingPeaksRegistryStudentSnapshot,
   type RequestTrainingPeaksWeeklyRunForStudentResult,
   unlinkTrainingPeaksStudentThread,
   updateTrainingPeaksWeeklyReportStateByInternalId,
@@ -97,6 +100,10 @@ import {
   recordTrainingPeaksTelegramBusinessContextObservation,
   sha256TelegramContextText,
 } from "@/features/trainingpeaks/telegram-context";
+import {
+  extractStudentMessagesFromVoiceTranscriptDetailed,
+  type ExtractedVoiceStudentMessage,
+} from "@/features/telegram/voice-command-extraction";
 import {
   hasTrainingPeaksMessageIntentLoggingRelevance,
   logTrainingPeaksBusinessMessageIntentDecision,
@@ -142,6 +149,8 @@ const VOICE_COMMANDS_DISABLED_MESSAGE = "Голосовые команды по�
 const VOICE_TRANSCRIPTION_IN_PROGRESS_MESSAGE = "🎤 Распознаю голосовое сообщение…";
 const VOICE_TRANSCRIPTION_FAILED_MESSAGE =
   "Не удалось распознать голосовое сообщение. Попробуй ещё раз или напиши текстом.";
+const VOICE_EXTRACTION_FAILED_MESSAGE =
+  "Расшифровал голосовое, но не смог разобрать команды для учеников. Попробуй переформулировать.";
 const TP_WEEKLY_DISABLED_MESSAGE =
   "⚙️ /tp_weekly отключён. Для отчётов используй «📊 Отчёты», а запуск workflow оставлен через явные preview/confirm-кнопки.";
 const TP_UNKNOWN_COMMAND_MESSAGE = "Не поняла команду. Используй кнопки внизу или отправь /start.";
@@ -178,6 +187,7 @@ const TP_CALLBACK_HEALTH = "tp:health";
 const TP_CALLBACK_CRON_STATUS = "tp:cron_status";
 const TP_CALLBACK_INTENTS = "tp:intents";
 const TP_CALLBACK_TELEGRAM_LINKS_HINT = "tp:telegram_links:hint";
+const TP_CALLBACK_VOICE_DRAFTS_CLOSE = "tp:voice_drafts:close";
 const TP_CALLBACK_STUDENT_WEEKLY_HINT_PREFIX = "tp:student:weekly_hint:";
 const TP_CALLBACK_STUDENT_RUN_PREFIX = "tp:run:";
 const TP_ALL_ENABLED_WEEKLY_PREVIEW_NAME_LIMIT = 10;
@@ -406,6 +416,7 @@ type ParsedTrainingPeaksCallback =
   | { kind: "cron_status" }
   | { kind: "intents" }
   | { kind: "telegram_links_hint" }
+  | { kind: "voice_drafts_close" }
   | { kind: "student_weekly_hint"; studentId: string }
   | { kind: "student_weekly_run"; studentId: string; weekKeyword: "last" | "current" };
 
@@ -414,6 +425,21 @@ type PendingAllEnabledWeeklyRunContext = {
   weekTo: string;
   previewCount: number;
   expiresAt: number;
+};
+
+type VoiceStudentMatchStatus = "matched" | "ambiguous" | "unmatched";
+
+type VoiceStudentMatchResult = {
+  extracted: ExtractedVoiceStudentMessage;
+  status: VoiceStudentMatchStatus;
+  student: ReturnType<typeof buildVoiceStudentSearchIndex>[number] | null;
+  candidates: ReturnType<typeof buildVoiceStudentSearchIndex>;
+};
+
+type VoiceDraftCreationResult = {
+  studentName: string;
+  draftPreview: string;
+  draftIdShort: string;
 };
 
 type TrainingPeaksScreen =
@@ -1014,7 +1040,7 @@ async function sendTrainingPeaksMessage(
   chatId: number | string,
   text: string,
   options?: {
-    replyMarkup?: TelegramReplyKeyboardMarkup;
+    replyMarkup?: TelegramReplyKeyboardMarkup | TelegramInlineKeyboardMarkup;
     messageThreadId?: number;
   }
 ): Promise<void> {
@@ -1049,6 +1075,168 @@ function createReplyKeyboardMarkup(rows: string[][]): TelegramReplyKeyboardMarku
     resize_keyboard: true,
     is_persistent: true,
   };
+}
+
+function normalizeVoiceNameToken(value: string): string {
+  return value
+    .toLocaleLowerCase("ru")
+    .replace(/ё/g, "е")
+    .replace(/[.,!?;:()[\]{}"'`«»]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildVoiceStudentSearchIndex(students: TrainingPeaksRegistryStudentSnapshot[]) {
+  return students.map((student) => {
+    const normalizedName = normalizeVoiceNameToken(student.studentName);
+    const normalizedSlug = normalizeVoiceNameToken(student.studentId);
+    return {
+      id: student.id,
+      studentId: student.studentId,
+      studentName: student.studentName,
+      normalizedName,
+      normalizedSlug,
+    };
+  });
+}
+
+function getVoiceRecipientAliasCandidates(recipientQuery: string): string[] {
+  const normalized = normalizeVoiceNameToken(recipientQuery);
+  if (!normalized) {
+    return [];
+  }
+
+  const aliasesByToken = new Map<string, string[]>([
+    ["маша", ["мария"]],
+    ["димa", ["дмитрий"]],
+    ["дима", ["дмитрий"]],
+    ["вика", ["виктория"]],
+    ["саша", ["александр", "александра"]],
+    ["катя", ["екатерина"]],
+    ["лена", ["елена"]],
+    ["настя", ["анастасия"]],
+    ["таня", ["татьяна"]],
+  ]);
+
+  const aliasTokens = aliasesByToken.get(normalized) ?? [];
+  return Array.from(new Set([normalized, ...aliasTokens]));
+}
+
+function matchVoiceRecipientToStudent(
+  extracted: ExtractedVoiceStudentMessage,
+  students: TrainingPeaksRegistryStudentSnapshot[]
+): VoiceStudentMatchResult {
+  const index = buildVoiceStudentSearchIndex(students);
+  const queryTokens = getVoiceRecipientAliasCandidates(extracted.recipientQuery);
+
+  if (queryTokens.length === 0) {
+    return {
+      extracted,
+      status: "unmatched",
+      student: null,
+      candidates: [],
+    };
+  }
+
+  const exactCandidates = index.filter((student) =>
+    queryTokens.some((token) => token === student.normalizedName || token === student.normalizedSlug)
+  );
+  const substringCandidates = index.filter((student) =>
+    queryTokens.some((token) => student.normalizedName.includes(token) || student.normalizedSlug.includes(token))
+  );
+  const candidates = exactCandidates.length > 0 ? exactCandidates : substringCandidates;
+
+  if (candidates.length === 0) {
+    return {
+      extracted,
+      status: "unmatched",
+      student: null,
+      candidates: [],
+    };
+  }
+
+  if (candidates.length > 1) {
+    return {
+      extracted,
+      status: "ambiguous",
+      student: null,
+      candidates,
+    };
+  }
+
+  return {
+    extracted,
+    status: "matched",
+    student: candidates[0] ?? null,
+    candidates,
+  };
+}
+
+function getVoiceDraftPreviewMarkup(): TelegramInlineKeyboardMarkup {
+  return createInlineKeyboardMarkup([
+    [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
+    [createMenuButton("✉️ Черновики", TP_CALLBACK_REPLY_DRAFT_HINT)],
+    [createMenuButton("❌ Закрыть", TP_CALLBACK_VOICE_DRAFTS_CLOSE)],
+  ]);
+}
+
+function formatVoiceExtractionNoMessagesText(transcript: string): string {
+  return [
+    "Я расшифровал голосовое, но не нашёл понятных сообщений ученикам.",
+    "",
+    "Расшифровка:",
+    `«${transcript}»`,
+    "",
+    "Скажи, например: “Напиши Маше: ...”",
+  ].join("\n");
+}
+
+function formatVoiceMatchIssuesText(matchResults: VoiceStudentMatchResult[]): string {
+  const issueLines = matchResults
+    .filter((item) => item.status !== "matched")
+    .map((item) => {
+      if (item.status === "ambiguous") {
+        const candidatesText = item.candidates
+          .slice(0, 4)
+          .map((candidate) => candidate.studentName)
+          .join(", ");
+        return `- «${item.extracted.recipientQuery}» — найдено несколько: ${candidatesText}`;
+      }
+      return `- «${item.extracted.recipientQuery}» — ученик не найден`;
+    });
+
+  if (issueLines.length === 0) {
+    return "";
+  }
+
+  return [
+    "Не смог уверенно сопоставить:",
+    ...issueLines,
+    "",
+    "Черновики созданы только для уверенно найденных учеников.",
+  ].join("\n");
+}
+
+function formatVoiceDraftsCreatedText(input: {
+  createdDrafts: VoiceDraftCreationResult[];
+  transcript: string;
+}): string {
+  const draftItems = input.createdDrafts.map((item, index) =>
+    [`${index + 1}. ${item.studentName}`, `«${item.draftPreview}»`].join("\n")
+  );
+
+  return [
+    "🎤 Голосовая команда разобрана.",
+    "",
+    "Расшифровка:",
+    `«${input.transcript}»`,
+    "",
+    `Создано черновиков: ${input.createdDrafts.length}`,
+    "",
+    ...draftItems.flatMap((item, index) => (index === 0 ? [item] : ["", item])),
+    "",
+    "Пока я ничего не отправляю ученикам. Отправку добавим следующим шагом.",
+  ].join("\n");
 }
 
 function getTrainingPeaksMainReplyKeyboardMarkup(): TelegramReplyKeyboardMarkup {
@@ -1104,23 +1292,155 @@ async function handleTrainingPeaksCoachVoiceTranscription(
       mimeType: parsedMessage.voiceMimeType,
       fileName: parsedMessage.voiceKind === "audio" ? "audio-message" : "voice-message",
     });
+    const extractionResult = await extractStudentMessagesFromVoiceTranscriptDetailed({
+      transcript,
+    });
 
-    const replyText = [
-      "🎤 Расшифровка:",
-      `«${transcript}»`,
-      "",
-      "Пока это только распознавание. На следующем шаге я смогу превратить это в черновики сообщений.",
-    ].join("\n");
-    await sendTrainingPeaksMessage(parsedMessage.chatId, replyText);
+    if (extractionResult.messages.length === 0) {
+      await sendTrainingPeaksMessage(
+        parsedMessage.chatId,
+        formatVoiceExtractionNoMessagesText(transcript),
+        {
+          replyMarkup: getVoiceDraftPreviewMarkup(),
+        }
+      );
+      return "handled";
+    }
+
+    const studentsRegistry = await getTrainingPeaksStudentsRegistryWithLatestReportStatus();
+    const activeStudents = studentsRegistry.filter((student) => student.isActive);
+    if (activeStudents.length === 0) {
+      await sendTrainingPeaksMessage(
+        parsedMessage.chatId,
+        [
+          "Расшифровал голосовое, но сейчас нет активных учеников для сопоставления.",
+          "",
+          "Ничего не отправлено и черновики не созданы.",
+        ].join("\n"),
+        {
+          replyMarkup: getVoiceDraftPreviewMarkup(),
+        }
+      );
+      return "handled";
+    }
+
+    const matchResults = extractionResult.messages.map((message) =>
+      matchVoiceRecipientToStudent(message, activeStudents)
+    );
+    const matchedResults = matchResults.filter((item) => item.status === "matched" && item.student);
+
+    const batchKey = randomUUID().slice(0, 8);
+    const transcriptPreview = buildTelegramContextTextPreview(transcript) ?? transcript.slice(0, 120);
+    const batchTotal = matchedResults.length;
+    const createdDrafts: VoiceDraftCreationResult[] = [];
+
+    let draftInsertFailed = false;
+    for (const [index, match] of matchedResults.entries()) {
+      const student = match.student;
+      if (!student) {
+        continue;
+      }
+      const promptContextSha256 = sha256TelegramContextText(transcript);
+      const studentMessageSha256 = sha256TelegramContextText(match.extracted.messageText);
+      const draftSha256 = sha256TelegramContextText(match.extracted.messageText);
+      if (!promptContextSha256 || !studentMessageSha256 || !draftSha256) {
+        continue;
+      }
+
+      try {
+        const savedDraft = await insertTrainingPeaksReplyDraft({
+          studentId: student.id,
+          caseId: null,
+          source: "telegram_command",
+          actorTelegramChatId: String(parsedMessage.chatId),
+          aiModel: extractionResult.model,
+          promptContextSha256,
+          studentMessageSha256,
+          studentMessagePreview: transcriptPreview,
+          draftSha256,
+          draftPreview: buildTelegramContextTextPreview(match.extracted.messageText),
+          draftCharCount: match.extracted.messageText.length,
+          metadata: {
+            origin: "voice",
+            voice_transcript_preview: transcriptPreview,
+            voice_command_message_id:
+              parsedMessage.messageId !== null && parsedMessage.messageId !== undefined
+                ? String(parsedMessage.messageId)
+                : null,
+            voice_batch_key: batchKey,
+            batch_index: index + 1,
+            batch_total: batchTotal,
+            recipient_query: match.extracted.recipientQuery,
+            extraction_confidence: match.extracted.confidence,
+            extraction_model: extractionResult.model,
+          },
+        });
+        createdDrafts.push({
+          studentName: student.studentName,
+          draftPreview: match.extracted.messageText,
+          draftIdShort: savedDraft.id.slice(0, 8),
+        });
+      } catch {
+        draftInsertFailed = true;
+      }
+    }
+
+    if (createdDrafts.length === 0) {
+      const issuesText = formatVoiceMatchIssuesText(matchResults);
+      await sendTrainingPeaksMessage(
+        parsedMessage.chatId,
+        [
+          "Расшифровал голосовое, но не смог создать черновики.",
+          issuesText,
+          "",
+          "Ничего не отправлено ученикам.",
+        ]
+          .filter((line) => line !== "")
+          .join("\n"),
+        {
+          replyMarkup: getVoiceDraftPreviewMarkup(),
+        }
+      );
+      return "handled";
+    }
+
+    const previewParts: string[] = [formatVoiceDraftsCreatedText({ createdDrafts, transcript })];
+    const issuesText = formatVoiceMatchIssuesText(matchResults);
+    if (issuesText) {
+      previewParts.push("", issuesText);
+    }
+    if (draftInsertFailed) {
+      previewParts.push(
+        "",
+        "⚠️ Для части сообщений черновики не сохранились. Повтори голосовую команду или используй /tp_reply_draft."
+      );
+    }
+
+    await sendTrainingPeaksMessage(parsedMessage.chatId, previewParts.join("\n"), {
+      replyMarkup: getVoiceDraftPreviewMarkup(),
+    });
   } catch (error) {
+    const isExtractionError =
+      error instanceof Error &&
+      (error.message.includes("Voice command extraction") ||
+        error.message.includes("Voice extraction payload") ||
+        error.message.includes("OPENAI_API_KEY"));
+
     console.warn("TrainingPeaks voice transcription failed", {
       chatId: parsedMessage.chatId,
       messageId: parsedMessage.messageId,
       voiceKind: parsedMessage.voiceKind,
       voiceDuration: parsedMessage.voiceDuration,
+      stage: isExtractionError ? "voice_extraction" : "voice_transcription",
       error: error instanceof Error ? error.message : "Unknown voice transcription error",
     });
-    await sendTrainingPeaksMessage(parsedMessage.chatId, VOICE_TRANSCRIPTION_FAILED_MESSAGE);
+    await sendTrainingPeaksMessage(
+      parsedMessage.chatId,
+      isExtractionError ? VOICE_EXTRACTION_FAILED_MESSAGE : VOICE_TRANSCRIPTION_FAILED_MESSAGE,
+      {
+        replyMarkup: getVoiceDraftPreviewMarkup(),
+      }
+    );
   }
 
   return "handled";
@@ -3192,6 +3512,10 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
 
   if (data === TP_CALLBACK_TELEGRAM_LINKS_HINT) {
     return { kind: "telegram_links_hint" };
+  }
+
+  if (data === TP_CALLBACK_VOICE_DRAFTS_CLOSE) {
+    return { kind: "voice_drafts_close" };
   }
 
   if (data.startsWith(TP_CALLBACK_STUDENT_WEEKLY_HINT_PREFIX)) {
@@ -8651,6 +8975,11 @@ export async function handleTrainingPeaksTelegramCallback(
         getTelegramLinksHintText(),
         getTelegramLinksHintMarkup()
       );
+      return "handled";
+    }
+
+    if (callback.kind === "voice_drafts_close") {
+      await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, "Закрыто");
       return "handled";
     }
 
