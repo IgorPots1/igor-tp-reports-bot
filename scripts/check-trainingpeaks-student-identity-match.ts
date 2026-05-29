@@ -12,49 +12,73 @@ const students: MockStudent[] = [
   {
     id: "1",
     studentId: "ivanov-i",
-    studentName: "Иван Иванов",
+    studentName: "Ivan Ivanov",
     telegramUsername: "ivan_runner",
     isActive: true,
   },
   {
     id: "2",
     studentId: "petrova-m",
-    studentName: "Мария Петрова",
+    studentName: "Maria Petrova",
     telegramUsername: "maria_track",
     isActive: true,
   },
   {
     id: "3",
-    studentId: "sidorova-o",
-    studentName: "Ольга Сидорова",
+    studentId: "olga-ivanova",
+    studentName: "Olga Ivanova",
     telegramUsername: "olga_longrun",
     isActive: true,
   },
   {
     id: "4",
-    studentId: "alex-s",
-    studentName: "Александр Смирнов",
-    telegramUsername: "alex_smirnov",
+    studentId: "sidorova-e",
+    studentName: "Ekaterina Sidorova",
+    telegramUsername: "katya_track",
     isActive: true,
   },
   {
     id: "5",
-    studentId: "alexandra-s",
-    studentName: "Александра Соколова",
-    telegramUsername: "alexandra_s",
+    studentId: "alex-s",
+    studentName: "Alexander Smirnov",
+    telegramUsername: "alex_smirnov",
     isActive: true,
   },
   {
     id: "6",
+    studentId: "alexandra-s",
+    studentName: "Alexandra Sokolova",
+    telegramUsername: "alexandra_s",
+    isActive: true,
+  },
+  {
+    id: "7",
+    studentId: "polyakova-a",
+    studentName: "Polyakova Anastasia",
+    telegramUsername: "poly_anastasia",
+    isActive: true,
+  },
+  {
+    id: "8",
+    studentId: "olga-petrova",
+    studentName: "Olga Petrova",
+    telegramUsername: "olga_pace",
+    isActive: true,
+  },
+  {
+    id: "9",
     studentId: "orlov-d",
-    studentName: "Дмитрий Орлов",
+    studentName: "Dmitry Orlov",
     telegramUsername: "dima_orlov",
     isActive: false,
   },
 ];
 
-function runMatch(query: string): ReturnType<typeof matchStudentByIdentity<MockStudent>> {
-  const active = students.filter((student) => student.isActive);
+function runMatch(
+  query: string,
+  customStudents: MockStudent[] = students
+): ReturnType<typeof matchStudentByIdentity<MockStudent>> {
+  const active = customStudents.filter((student) => student.isActive);
   return matchStudentByIdentity({
     query,
     students: active,
@@ -66,8 +90,13 @@ function runMatch(query: string): ReturnType<typeof matchStudentByIdentity<MockS
   });
 }
 
-function assertMatched(query: string, expectedStudentId: string, reason: string): number {
-  const result = runMatch(query);
+function assertMatched(
+  query: string,
+  expectedStudentId: string,
+  reason: string,
+  customStudents: MockStudent[] = students
+): number {
+  const result = runMatch(query, customStudents);
   if (result.status !== "matched") {
     console.log(`FAIL: ${reason} | expected matched, got ${result.status}`);
     return 1;
@@ -85,9 +114,10 @@ function assertMatched(query: string, expectedStudentId: string, reason: string)
 function assertStatus(
   query: string,
   expectedStatus: "ambiguous" | "unmatched",
-  reason: string
+  reason: string,
+  customStudents: MockStudent[] = students
 ): number {
-  const result = runMatch(query);
+  const result = runMatch(query, customStudents);
   if (result.status !== expectedStatus) {
     console.log(`FAIL: ${reason} | expected ${expectedStatus}, got ${result.status}`);
     return 1;
@@ -106,12 +136,25 @@ function assertStatus(
 async function run(): Promise<void> {
   let failed = 0;
 
-  failed += assertMatched("Мария Петрова", "petrova-m", "exact TrainingPeaks name");
+  failed += assertMatched("Maria Petrova", "petrova-m", "exact TrainingPeaks name");
   failed += assertMatched("Иванов Иван", "ivanov-i", "swapped first/last order");
   failed += assertMatched("@maria_track", "petrova-m", "telegram username with @");
   failed += assertMatched("Маша", "petrova-m", "nickname Маша -> Мария");
-  failed += assertMatched("Оля", "sidorova-o", "nickname Оля -> Ольга");
+  const uniqueOlgaStudents = students.filter((student) => student.studentId !== "olga-petrova");
+  failed += assertMatched("Оле", "olga-ivanova", "dative Оле -> Olga Ivanova (unique)", uniqueOlgaStudents);
+  failed += assertMatched("Ольге", "olga-ivanova", "dative Ольге -> Olga Ivanova (unique)", uniqueOlgaStudents);
+  failed += assertMatched("Оля", "olga-ivanova", "nickname Оля -> Olga Ivanova (unique)", uniqueOlgaStudents);
+  failed += assertMatched("Маше", "petrova-m", "dative Маше -> Maria Petrova");
+  failed += assertMatched("Кате", "sidorova-e", "dative Кате -> Ekaterina Sidorova");
   failed += assertStatus("Саша", "ambiguous", "ambiguous Саша with Александр + Александра");
+  failed += assertStatus("Саше", "ambiguous", "ambiguous Саше with Alexander + Alexandra");
+  failed += assertMatched("Иванова", "olga-ivanova", "surname token Иванова -> Ivanova");
+  failed += assertStatus("Оле", "ambiguous", "ambiguous Оле with multiple Olga candidates");
+  failed += assertStatus(
+    "Оля",
+    "ambiguous",
+    "false positive Polyakova should not beat real Olga candidates"
+  );
   failed += assertStatus("Орлов", "unmatched", "inactive excluded by caller wrapper");
   failed += assertStatus("Неизвестный Ученик", "unmatched", "unknown name unmatched");
 

@@ -55,6 +55,7 @@ type QueryVariant = {
   tokens: string[];
   sortedTokenKey: string;
   nicknameExpanded: boolean;
+  transliterated: boolean;
 };
 
 type NormalizedIdentity = {
@@ -72,23 +73,93 @@ const AMBIGUOUS_SCORE_MARGIN = 9;
 const MEDIUM_CONFIDENCE_SCORE = 112;
 const MAX_CANDIDATES = 5;
 
-const RUSSIAN_NICKNAME_MAP: Record<string, string[]> = {
-  маша: ["мария"],
-  дима: ["дмитрий"],
-  вика: ["виктория"],
-  саша: ["александр", "александра"],
-  катя: ["екатерина"],
-  лена: ["елена"],
-  настя: ["анастасия"],
-  таня: ["татьяна"],
-  оля: ["ольга"],
-  леша: ["алексей"],
-  алеша: ["алексей"],
-  женя: ["евгений", "евгения"],
-  наташа: ["наталья"],
-  юля: ["юлия"],
-  валя: ["валентин", "валентина"],
-  люба: ["любовь"],
+const RUSSIAN_NAME_VARIANT_MAP: Record<string, string[]> = {
+  оля: ["ольга", "olga", "olya", "olha"],
+  оле: ["ольга", "olga", "olya", "olha"],
+  ольге: ["ольга", "olga", "olya", "olha"],
+  ольга: ["ольга", "olga", "olya", "olha"],
+  мария: ["мария", "maria", "mariya", "masha"],
+  маша: ["мария", "maria", "mariya", "masha"],
+  маше: ["мария", "maria", "mariya", "masha"],
+  дмитрий: ["дмитрий", "dmitry", "dmitrii", "dimitry", "dima"],
+  дима: ["дмитрий", "dmitry", "dmitrii", "dimitry", "dima"],
+  диме: ["дмитрий", "dmitry", "dmitrii", "dimitry", "dima"],
+  виктория: ["виктория", "victoria", "viktoria", "vika"],
+  вика: ["виктория", "victoria", "viktoria", "vika"],
+  вике: ["виктория", "victoria", "viktoria", "vika"],
+  екатерина: ["екатерина", "ekaterina", "katerina", "katya"],
+  катя: ["екатерина", "ekaterina", "katerina", "katya"],
+  кате: ["екатерина", "ekaterina", "katerina", "katya"],
+  елена: ["елена", "elena", "lena"],
+  лена: ["елена", "elena", "lena"],
+  лене: ["елена", "elena", "lena"],
+  анастасия: ["анастасия", "anastasia", "nastya"],
+  настя: ["анастасия", "anastasia", "nastya"],
+  насте: ["анастасия", "anastasia", "nastya"],
+  татьяна: ["татьяна", "tatiana", "tatyana", "tanya"],
+  таня: ["татьяна", "tatiana", "tatyana", "tanya"],
+  тане: ["татьяна", "tatiana", "tatyana", "tanya"],
+  александр: ["александр", "alexander", "aleksandr", "sasha"],
+  александра: ["александра", "alexandra", "aleksandra", "sasha"],
+  саша: ["александр", "александра", "alexander", "aleksandr", "alexandra", "aleksandra", "sasha"],
+  саше: ["александр", "александра", "alexander", "aleksandr", "alexandra", "aleksandra", "sasha"],
+  алексей: ["алексей", "alexey", "alexei", "aleksei", "lesha", "alyosha"],
+  леша: ["алексей", "alexey", "alexei", "aleksei", "lesha", "alyosha"],
+  алеша: ["алексей", "alexey", "alexei", "aleksei", "lesha", "alyosha"],
+  леше: ["алексей", "alexey", "alexei", "aleksei", "lesha", "alyosha"],
+  алеше: ["алексей", "alexey", "alexei", "aleksei", "lesha", "alyosha"],
+  евгений: ["евгений", "evgeny", "evgenii", "yevgeny", "zhenya"],
+  евгения: ["евгения", "evgenia", "yevgenia", "zhenya"],
+  женя: ["евгений", "евгения", "evgeny", "evgenii", "yevgeny", "evgenia", "yevgenia", "zhenya"],
+  жене: ["евгений", "евгения", "evgeny", "evgenii", "yevgeny", "evgenia", "yevgenia", "zhenya"],
+  наталья: ["наталья", "natalia", "natalya", "natasha"],
+  наташа: ["наталья", "natalia", "natalya", "natasha"],
+  наташе: ["наталья", "natalia", "natalya", "natasha"],
+  юлия: ["юлия", "yulia", "julia", "yulya", "julya"],
+  юля: ["юлия", "yulia", "julia", "yulya", "julya"],
+  юле: ["юлия", "yulia", "julia", "yulya", "julya"],
+  валентин: ["валентин", "valentin", "valya"],
+  валентина: ["валентина", "valentina", "valya"],
+  валя: ["валентин", "валентина", "valentin", "valentina", "valya"],
+  вале: ["валентин", "валентина", "valentin", "valentina", "valya"],
+  любовь: ["любовь", "lubov", "lyubov", "luba"],
+  люба: ["любовь", "lubov", "lyubov", "luba"],
+  любе: ["любовь", "lubov", "lyubov", "luba"],
+};
+
+const CYRILLIC_TO_LATIN_MAP: Record<string, string> = {
+  а: "a",
+  б: "b",
+  в: "v",
+  г: "g",
+  д: "d",
+  е: "e",
+  ж: "zh",
+  з: "z",
+  и: "i",
+  й: "y",
+  к: "k",
+  л: "l",
+  м: "m",
+  н: "n",
+  о: "o",
+  п: "p",
+  р: "r",
+  с: "s",
+  т: "t",
+  у: "u",
+  ф: "f",
+  х: "kh",
+  ц: "ts",
+  ч: "ch",
+  ш: "sh",
+  щ: "sch",
+  ы: "y",
+  э: "e",
+  ю: "yu",
+  я: "ya",
+  ь: "",
+  ъ: "",
 };
 
 function normalizeGeneralValue(input: string): string {
@@ -130,7 +201,22 @@ function formatMatchedValuePreview(rawValue: string): string {
   return `${compact.slice(0, 33)}...`;
 }
 
-function expandNicknameTokenSequences(tokens: string[]): string[][] {
+function transliterateCyrillicToken(token: string): string {
+  if (!/[а-я]/u.test(token)) {
+    return token;
+  }
+  let result = "";
+  for (const char of token) {
+    result += CYRILLIC_TO_LATIN_MAP[char] ?? char;
+  }
+  return result;
+}
+
+function transliterateSequence(sequence: string[]): string[] {
+  return sequence.map((token) => transliterateCyrillicToken(token));
+}
+
+function expandNameVariantTokenSequences(tokens: string[]): string[][] {
   if (tokens.length === 0) {
     return [];
   }
@@ -141,7 +227,7 @@ function expandNicknameTokenSequences(tokens: string[]): string[][] {
     if (!token) {
       continue;
     }
-    const expansions = RUSSIAN_NICKNAME_MAP[token];
+    const expansions = RUSSIAN_NAME_VARIANT_MAP[token];
     if (!expansions || expansions.length === 0) {
       continue;
     }
@@ -153,7 +239,7 @@ function expandNicknameTokenSequences(tokens: string[]): string[][] {
         next.push(copy);
       }
     }
-    sequences.splice(0, sequences.length, ...next.slice(0, 24));
+    sequences.splice(0, sequences.length, ...next.slice(0, 28));
   }
 
   const unique = new Map<string, string[]>();
@@ -171,11 +257,11 @@ function buildQueryVariants(query: string): QueryVariant[] {
   const normalized = normalizeGeneralValue(query);
   const usernameNormalized = normalizeTelegramUsername(query);
   const tokens = tokenize(normalized);
-  const expandedSequences = expandNicknameTokenSequences(tokens);
+  const expandedSequences = expandNameVariantTokenSequences(tokens);
   const variants: QueryVariant[] = [];
   const seen = new Set<string>();
 
-  for (const sequence of expandedSequences) {
+  const pushVariant = (sequence: string[], inputOptions?: { nicknameExpanded?: boolean; transliterated?: boolean }) => {
     const variantNormalized = sequence.join(" ").trim();
     const variantTokens = tokenize(variantNormalized);
     const variant: QueryVariant = {
@@ -183,12 +269,25 @@ function buildQueryVariants(query: string): QueryVariant[] {
       usernameNormalized,
       tokens: variantTokens,
       sortedTokenKey: toSortedTokenKey(variantTokens),
-      nicknameExpanded: variantNormalized !== normalized,
+      nicknameExpanded: inputOptions?.nicknameExpanded ?? variantNormalized !== normalized,
+      transliterated: inputOptions?.transliterated ?? false,
     };
     const dedupeKey = `${variant.normalized}::${variant.usernameNormalized}`;
     if (variant.normalized && !seen.has(dedupeKey)) {
       seen.add(dedupeKey);
       variants.push(variant);
+    }
+  };
+
+  for (const sequence of expandedSequences) {
+    pushVariant(sequence, { nicknameExpanded: sequence.join(" ").trim() !== normalized, transliterated: false });
+    const transliteratedSequence = transliterateSequence(sequence);
+    const transliterated = transliteratedSequence.join(" ").trim();
+    if (transliterated && transliterated !== sequence.join(" ").trim()) {
+      pushVariant(transliteratedSequence, {
+        nicknameExpanded: sequence.join(" ").trim() !== normalized,
+        transliterated: true,
+      });
     }
   }
 
@@ -199,6 +298,7 @@ function buildQueryVariants(query: string): QueryVariant[] {
       tokens,
       sortedTokenKey: toSortedTokenKey(tokens),
       nicknameExpanded: false,
+      transliterated: false,
     });
   }
 
@@ -235,7 +335,9 @@ function scoreIdentityAgainstQuery(
   variant: QueryVariant
 ): { score: number; strength: MatchStrength } | null {
   const weightFactor = Math.max(0.2, Math.min(identity.weight, 1.5));
-  const applyWeight = (baseScore: number): number => Math.round(baseScore * weightFactor);
+  const variantPenalty = variant.transliterated ? 10 : 0;
+  const applyWeight = (baseScore: number): number =>
+    Math.round(Math.max(12, baseScore - variantPenalty) * weightFactor);
   const isNicknameKind = identity.kind === "nickname";
 
   if (
@@ -284,7 +386,7 @@ function scoreIdentityAgainstQuery(
   }
 
   if (variant.normalized.length >= 3 && identity.normalized.includes(variant.normalized)) {
-    return { score: applyWeight(78), strength: "substring" };
+    return { score: applyWeight(72), strength: "substring" };
   }
 
   return null;
