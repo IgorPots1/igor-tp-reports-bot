@@ -34,6 +34,7 @@
     "check-trainingpeaks-action-parser": "npx tsx scripts/check-trainingpeaks-action-parser.ts",
     "check-trainingpeaks-move-intent": "npx tsx scripts/check-trainingpeaks-move-intent.ts",
     "check-trainingpeaks-student-identity-match": "npx tsx scripts/check-trainingpeaks-student-identity-match.ts",
+    "check-trainingpeaks-student-identity-sources": "npx tsx scripts/check-trainingpeaks-student-identity-sources.ts",
     "check-trainingpeaks-coach-cases": "npx tsx scripts/check-trainingpeaks-coach-cases.ts",
     "replay-trainingpeaks-coach-cases": "npx tsx scripts/replay-trainingpeaks-coach-cases.ts",
     "check-trainingpeaks-ai-intent-log-only": "npx tsx scripts/check-trainingpeaks-ai-intent-log-only.ts",
