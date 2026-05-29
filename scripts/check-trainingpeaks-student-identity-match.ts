@@ -76,12 +76,14 @@ const students: MockStudent[] = [
 
 function runMatch(
   query: string,
-  customStudents: MockStudent[] = students
+  customStudents: MockStudent[] = students,
+  options?: { forceAmbiguousForFirstNameOnly?: boolean }
 ): ReturnType<typeof matchStudentByIdentity<MockStudent>> {
   const active = customStudents.filter((student) => student.isActive);
   return matchStudentByIdentity({
     query,
     students: active,
+    forceAmbiguousForFirstNameOnly: options?.forceAmbiguousForFirstNameOnly,
     buildIdentities: (student) => [
       { value: student.studentName, kind: "trainingpeaks_name", weight: 1 },
       { value: student.studentId, kind: "trainingpeaks_id", weight: 1 },
@@ -94,9 +96,10 @@ function assertMatched(
   query: string,
   expectedStudentId: string,
   reason: string,
-  customStudents: MockStudent[] = students
+  customStudents: MockStudent[] = students,
+  options?: { forceAmbiguousForFirstNameOnly?: boolean }
 ): number {
-  const result = runMatch(query, customStudents);
+  const result = runMatch(query, customStudents, options);
   if (result.status !== "matched") {
     console.log(`FAIL: ${reason} | expected matched, got ${result.status}`);
     return 1;
@@ -115,9 +118,10 @@ function assertStatus(
   query: string,
   expectedStatus: "ambiguous" | "unmatched",
   reason: string,
-  customStudents: MockStudent[] = students
+  customStudents: MockStudent[] = students,
+  options?: { forceAmbiguousForFirstNameOnly?: boolean }
 ): number {
-  const result = runMatch(query, customStudents);
+  const result = runMatch(query, customStudents, options);
   if (result.status !== expectedStatus) {
     console.log(`FAIL: ${reason} | expected ${expectedStatus}, got ${result.status}`);
     return 1;
@@ -135,25 +139,59 @@ function assertStatus(
 
 async function run(): Promise<void> {
   let failed = 0;
+  const voiceSafe = { forceAmbiguousForFirstNameOnly: true };
 
   failed += assertMatched("Maria Petrova", "petrova-m", "exact TrainingPeaks name");
   failed += assertMatched("Иванов Иван", "ivanov-i", "swapped first/last order");
   failed += assertMatched("@maria_track", "petrova-m", "telegram username with @");
   failed += assertMatched("Маша", "petrova-m", "nickname Маша -> Мария");
   const uniqueOlgaStudents = students.filter((student) => student.studentId !== "olga-petrova");
-  failed += assertMatched("Оле", "olga-ivanova", "dative Оле -> Olga Ivanova (unique)", uniqueOlgaStudents);
-  failed += assertMatched("Ольге", "olga-ivanova", "dative Ольге -> Olga Ivanova (unique)", uniqueOlgaStudents);
-  failed += assertMatched("Оля", "olga-ivanova", "nickname Оля -> Olga Ivanova (unique)", uniqueOlgaStudents);
+  failed += assertMatched(
+    "Оле",
+    "olga-ivanova",
+    "dative Оле -> Olga Ivanova (unique)",
+    uniqueOlgaStudents,
+    voiceSafe
+  );
+  failed += assertMatched(
+    "Ольге",
+    "olga-ivanova",
+    "dative Ольге -> Olga Ivanova (unique)",
+    uniqueOlgaStudents,
+    voiceSafe
+  );
+  failed += assertMatched(
+    "Оля",
+    "olga-ivanova",
+    "nickname Оля -> Olga Ivanova (unique)",
+    uniqueOlgaStudents,
+    voiceSafe
+  );
+  failed += assertMatched("Olga", "olga-ivanova", "latin Olga -> Olga Ivanova (unique)", uniqueOlgaStudents, voiceSafe);
   failed += assertMatched("Маше", "petrova-m", "dative Маше -> Maria Petrova");
   failed += assertMatched("Кате", "sidorova-e", "dative Кате -> Ekaterina Sidorova");
   failed += assertStatus("Саша", "ambiguous", "ambiguous Саша with Александр + Александра");
-  failed += assertStatus("Саше", "ambiguous", "ambiguous Саше with Alexander + Alexandra");
+  failed += assertStatus("Саше", "ambiguous", "ambiguous Саше with Alexander + Alexandra", students, voiceSafe);
   failed += assertMatched("Иванова", "olga-ivanova", "surname token Иванова -> Ivanova");
-  failed += assertStatus("Оле", "ambiguous", "ambiguous Оле with multiple Olga candidates");
+  failed += assertStatus("Оле", "ambiguous", "ambiguous Оле with multiple Olga candidates", students, voiceSafe);
+  failed += assertStatus("Ольге", "ambiguous", "ambiguous Ольге with multiple Olga candidates", students, voiceSafe);
+  failed += assertStatus("Оля", "ambiguous", "ambiguous Оля with multiple Olga candidates", students, voiceSafe);
+  failed += assertStatus("Olga", "ambiguous", "ambiguous Olga with multiple Olga candidates", students, voiceSafe);
+  failed += assertMatched("Olga Ivanova", "olga-ivanova", "full name Olga Ivanova resolves directly", students, voiceSafe);
+  failed += assertMatched(
+    "Ольге Ивановой",
+    "olga-ivanova",
+    "full name in Russian case resolves directly",
+    students,
+    voiceSafe
+  );
+  failed += assertMatched("@olga_longrun", "olga-ivanova", "exact @username resolves directly", students, voiceSafe);
   failed += assertStatus(
     "Оля",
     "ambiguous",
-    "false positive Polyakova should not beat real Olga candidates"
+    "false positive Polyakova should not beat real Olga candidates",
+    students,
+    voiceSafe
   );
   failed += assertStatus("Орлов", "unmatched", "inactive excluded by caller wrapper");
   failed += assertStatus("Неизвестный Ученик", "unmatched", "unknown name unmatched");

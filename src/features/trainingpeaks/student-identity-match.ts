@@ -72,6 +72,7 @@ const MIN_MATCH_SCORE = 82;
 const AMBIGUOUS_SCORE_MARGIN = 9;
 const MEDIUM_CONFIDENCE_SCORE = 112;
 const MAX_CANDIDATES = 5;
+const NAME_CLUSTER_MIN_TOKEN_LENGTH = 3;
 
 const RUSSIAN_NAME_VARIANT_MAP: Record<string, string[]> = {
   оля: ["ольга", "olga", "olya", "olha"],
@@ -253,6 +254,56 @@ function expandNameVariantTokenSequences(tokens: string[]): string[][] {
   return [...unique.values()];
 }
 
+function expandCaseNormalizedTokenSequences(tokens: string[]): string[][] {
+  if (tokens.length < 2) {
+    return [];
+  }
+
+  const sequences: string[][] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (!token) {
+      continue;
+    }
+
+    const replacements: string[] = [];
+    if (token.endsWith("овой") && token.length > 5) {
+      replacements.push(`${token.slice(0, -4)}ова`);
+    }
+    if (token.endsWith("евой") && token.length > 5) {
+      replacements.push(`${token.slice(0, -4)}ева`);
+    }
+    if (token.endsWith("иной") && token.length > 5) {
+      replacements.push(`${token.slice(0, -4)}ина`);
+    }
+    if (token.endsWith("ovoy") && token.length > 5) {
+      replacements.push(`${token.slice(0, -4)}ova`);
+    }
+    if (token.endsWith("evoy") && token.length > 5) {
+      replacements.push(`${token.slice(0, -4)}eva`);
+    }
+    if (token.endsWith("inoy") && token.length > 5) {
+      replacements.push(`${token.slice(0, -4)}ina`);
+    }
+
+    for (const replacement of replacements) {
+      const copy = [...tokens];
+      copy[index] = replacement;
+      sequences.push(copy);
+    }
+  }
+
+  const unique = new Map<string, string[]>();
+  for (const sequence of sequences) {
+    const normalized = sequence.join(" ").trim();
+    if (!normalized) {
+      continue;
+    }
+    unique.set(normalized, sequence);
+  }
+  return [...unique.values()];
+}
+
 function buildQueryVariants(query: string): QueryVariant[] {
   const normalized = normalizeGeneralValue(query);
   const usernameNormalized = normalizeTelegramUsername(query);
@@ -289,6 +340,19 @@ function buildQueryVariants(query: string): QueryVariant[] {
         transliterated: true,
       });
     }
+
+    const caseNormalizedSequences = expandCaseNormalizedTokenSequences(sequence);
+    for (const caseSequence of caseNormalizedSequences) {
+      pushVariant(caseSequence, { nicknameExpanded: true, transliterated: false });
+      const caseTransliteratedSequence = transliterateSequence(caseSequence);
+      const caseTransliterated = caseTransliteratedSequence.join(" ").trim();
+      if (caseTransliterated && caseTransliterated !== caseSequence.join(" ").trim()) {
+        pushVariant(caseTransliteratedSequence, {
+          nicknameExpanded: true,
+          transliterated: true,
+        });
+      }
+    }
   }
 
   if (variants.length === 0 && normalized) {
@@ -303,6 +367,71 @@ function buildQueryVariants(query: string): QueryVariant[] {
   }
 
   return variants;
+}
+
+function looksLikeExplicitUsernameQuery(query: string): boolean {
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (trimmed.startsWith("@")) {
+    return true;
+  }
+  return /^[a-z0-9_]+$/i.test(trimmed) && trimmed.includes("_");
+}
+
+function collectNameClusterTokens(seedToken: string): Set<string> {
+  const normalizedSeed = normalizeGeneralValue(seedToken);
+  const tokens = tokenize(normalizedSeed);
+  if (tokens.length !== 1) {
+    return new Set();
+  }
+
+  const seed = tokens[0]!;
+  const cluster = new Set<string>([seed]);
+
+  const directExpansions = RUSSIAN_NAME_VARIANT_MAP[seed];
+  if (directExpansions) {
+    for (const token of directExpansions) {
+      cluster.add(token);
+    }
+  }
+
+  for (const [key, expansions] of Object.entries(RUSSIAN_NAME_VARIANT_MAP)) {
+    if (key === seed || expansions.includes(seed)) {
+      cluster.add(key);
+      for (const token of expansions) {
+        cluster.add(token);
+      }
+    }
+  }
+
+  for (const token of [...cluster]) {
+    cluster.add(transliterateCyrillicToken(token));
+  }
+
+  return new Set(
+    [...cluster].filter((token) => token.length >= NAME_CLUSTER_MIN_TOKEN_LENGTH)
+  );
+}
+
+function detectFirstNameOnlyCluster(query: string): Set<string> | null {
+  if (looksLikeExplicitUsernameQuery(query)) {
+    return null;
+  }
+
+  const normalized = normalizeGeneralValue(query);
+  const tokens = tokenize(normalized);
+  if (tokens.length !== 1) {
+    return null;
+  }
+
+  const cluster = collectNameClusterTokens(tokens[0]!);
+  if (cluster.size <= 1) {
+    return null;
+  }
+
+  return cluster;
 }
 
 function normalizeIdentity(identity: StudentIdentityInput): NormalizedIdentity | null {
@@ -425,8 +554,12 @@ export function matchStudentByIdentity<TStudent>(input: {
   query: string;
   students: TStudent[];
   buildIdentities: (student: TStudent) => StudentIdentityInput[];
+  forceAmbiguousForFirstNameOnly?: boolean;
 }): StudentIdentityMatchResult<TStudent> {
   const variants = buildQueryVariants(input.query);
+  const firstNameOnlyCluster = input.forceAmbiguousForFirstNameOnly
+    ? detectFirstNameOnlyCluster(input.query)
+    : null;
   if (variants.length === 0) {
     return { status: "unmatched", candidates: [] };
   }
@@ -470,6 +603,7 @@ export function matchStudentByIdentity<TStudent>(input: {
 
       return {
         student,
+        identities,
         score: best.score,
         strength: best.strength,
         matchedBy: best.matchedBy,
@@ -481,6 +615,7 @@ export function matchStudentByIdentity<TStudent>(input: {
         candidate
       ): candidate is {
         student: TStudent;
+        identities: NormalizedIdentity[];
         score: number;
         strength: MatchStrength;
         matchedBy: string;
@@ -502,6 +637,22 @@ export function matchStudentByIdentity<TStudent>(input: {
       status: "unmatched",
       candidates: visibleCandidates,
     };
+  }
+
+  if (firstNameOnlyCluster && ranked.length >= 2) {
+    const plausible = ranked.filter(
+      (candidate) =>
+        candidate.score >= MIN_MATCH_SCORE &&
+        candidate.identities.some((identity) =>
+          identity.tokens.some((token) => firstNameOnlyCluster.has(token))
+        )
+    );
+    if (plausible.length >= 2) {
+      return {
+        status: "ambiguous",
+        candidates: toResultCandidates(plausible),
+      };
+    }
   }
 
   if (second) {

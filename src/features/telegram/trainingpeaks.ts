@@ -1195,6 +1195,7 @@ function matchVoiceRecipientToStudent(
   const matched = matchStudentByIdentity({
     query: extracted.recipientQuery,
     students,
+    forceAmbiguousForFirstNameOnly: true,
     buildIdentities: (student) => [
       {
         value: student.studentName,
