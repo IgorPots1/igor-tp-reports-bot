@@ -208,6 +208,7 @@ const TP_REPLY_BUTTON_RACES = "🏁 Забеги";
 const TP_REPLY_BUTTON_JOBS = "🧾 Задачи";
 const TP_REPLY_BUTTON_CASES = "🧩 Кейсы";
 const TP_REPLY_BUTTON_ACTIONS = "📋 Заявки";
+const TP_REPLY_BUTTON_PAYMENTS = "💳 Оплаты";
 const TP_REPLY_BUTTON_SERVICE = "⚙️ Служебное";
 const TP_REPLY_BUTTON_BACK = "⬅️ Назад";
 const TP_REPLY_BUTTON_STUDENTS_BACK = "⬅️ Ученики";
@@ -466,6 +467,7 @@ type TrainingPeaksReplyKeyboardAction =
   | "jobs_refresh"
   | "cancel_job"
   | "actions"
+  | "billing_hint"
   | "student_report"
   | "student_link"
   | "student_username"
@@ -1045,9 +1047,10 @@ function createReplyKeyboardMarkup(rows: string[][]): TelegramReplyKeyboardMarku
 
 function getTrainingPeaksMainReplyKeyboardMarkup(): TelegramReplyKeyboardMarkup {
   return createReplyKeyboardMarkup([
-    [TP_REPLY_BUTTON_MENU, TP_REPLY_BUTTON_TODAY],
-    [TP_REPLY_BUTTON_CASES, TP_REPLY_BUTTON_ACTIONS],
-    [TP_REPLY_BUTTON_STUDENTS, TP_REPLY_BUTTON_REPORTS],
+    [TP_REPLY_BUTTON_TODAY, TP_REPLY_BUTTON_CASES],
+    [TP_REPLY_BUTTON_ACTIONS, TP_REPLY_BUTTON_REPORTS],
+    [TP_REPLY_BUTTON_STUDENTS, TP_REPLY_BUTTON_PAYMENTS],
+    [TP_REPLY_BUTTON_SERVICE],
   ]);
 }
 
@@ -2921,6 +2924,10 @@ function getTrainingPeaksReplyKeyboardAction(text: string): TrainingPeaksReplyKe
 
   if (text === TP_REPLY_BUTTON_ACTIONS) {
     return "actions";
+  }
+
+  if (text === TP_REPLY_BUTTON_PAYMENTS) {
+    return "billing_hint";
   }
 
   if (text === TP_REPLY_BUTTON_SERVICE) {
@@ -6584,6 +6591,11 @@ export async function handleTrainingPeaksTelegramReplyKeyboardMessage(
 
     if (action === "actions") {
       await showTpActionsList(parsedMessage);
+      return "handled";
+    }
+
+    if (action === "billing_hint") {
+      await showTrainingPeaksMenuScreen(parsedMessage, getBillingHintText(), getBillingHintMarkup());
       return "handled";
     }
 
