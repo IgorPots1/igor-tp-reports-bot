@@ -353,6 +353,7 @@ export type ParsedTrainingPeaksMoveWorkoutPayload = {
     assemblyKind?: "single_message" | "multi_message";
     contextMessageIds?: Array<string | number>;
     contextPreviews?: string[];
+    autoApprovedForDryRun?: boolean;
   };
 };
 
@@ -4919,12 +4920,24 @@ export async function createTrainingPeaksMoveWorkoutActionFromTelegram(
   const action = await createTrainingPeaksActionInRepository({
     studentId: student.id,
     actionType: "move_workout",
-    status: "pending_coach",
+    status: "approved",
+    executionStatus: "not_started",
+    approvedAt: new Date().toISOString(),
     sourceChatId: input.chatId,
     sourceMessageId: input.messageId,
     sourceUserId: input.userId ?? null,
     rawText: trimmedText,
-    parsedPayload: enrichedParsed,
+    parsedPayload: {
+      ...enrichedParsed,
+      parsingDiagnostics: {
+        ...(enrichedParsed.parsingDiagnostics ?? {
+          parserBaseDateSource: "server_now",
+          parserBaseDateIso: "",
+          messageTimestampAvailable: false,
+        }),
+        autoApprovedForDryRun: true,
+      },
+    },
     confidence: String(enrichedParsed.confidence ?? parsedConfidence ?? 0),
     coachChatId: input.coachChatId ?? null,
   });

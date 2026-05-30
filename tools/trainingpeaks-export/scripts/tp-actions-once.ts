@@ -25,6 +25,11 @@ import {
 import * as moveSourcePolicyNamespace from "../../../src/features/trainingpeaks/move-source-policy.ts";
 import * as moveSourceInferencePreviewNamespace from "../../../src/features/trainingpeaks/move-source-inference-preview.ts";
 import * as strongFutureDescriptorMoveSourceNamespace from "../../../src/features/trainingpeaks/strong-future-descriptor-move-source.ts";
+import {
+  getRequiredTrainingPeaksBusinessConnectionId,
+  sendTrainingPeaksTelegramBusinessMessage,
+} from "../../../src/features/trainingpeaks/telegram-business.ts";
+import { getTrainingPeaksBusinessChatByChatId } from "../../../src/features/trainingpeaks/repository.ts";
 
 const moveSourcePolicy = moveSourcePolicyNamespace.default ?? moveSourcePolicyNamespace;
 const moveSourceInferencePreview =
@@ -51,6 +56,7 @@ type TrainingPeaksStudentRow = {
   student_id: string;
   student_name: string;
   telegram_chat_id: string | null;
+  telegram_formality?: "ty" | "vy" | "unknown" | null;
   trainingpeaks_athlete_url: string;
 };
 
@@ -63,6 +69,8 @@ type TrainingPeaksActionRow = {
   parsed_payload: unknown;
   coach_chat_id: string | null;
   decided_by_chat_id: string | null;
+  source_chat_id?: string;
+  source_message_id?: string;
   execution_status: ActionExecutionStatus;
   execution_mode: ActionExecutionMode | null;
   claimed_by: string | null;
@@ -2453,6 +2461,78 @@ function formatCompactDateShort(value: string | null): string {
   return `${match[3]}.${match[2]}`;
 }
 
+function formatMoveCompletionStudentReply(formality: "ty" | "vy" | "unknown" | null | undefined): string {
+  return formality === "ty" ? "Готово, проверяй." : "Готово, проверяйте.";
+}
+
+function getDryRunConfidenceDetail(evaluation: DryRunEvaluation | null): string | null {
+  if (!evaluation) {
+    return null;
+  }
+
+  const percent = Math.round((evaluation.confidence ?? 0) * 100);
+  const policy = evaluation.selectedSourceDatePolicy?.trim() || null;
+  return policy ? `${percent}% (${policy})` : `${percent}%`;
+}
+
+async function trySendMoveCompletionReply(input: {
+  action: TrainingPeaksActionRow;
+  student: TrainingPeaksStudentRow | null;
+}): Promise<{
+  attempted: boolean;
+  sent: boolean;
+  skippedReason:
+    | "missing_student"
+    | "missing_chat"
+    | "missing_business_connection"
+    | "business_chat_not_found"
+    | "send_failed"
+    | null;
+}> {
+  if (!input.student) {
+    console.warn(`Student move completion reply skipped for action ${input.action.id}: missing student`);
+    return { attempted: false, sent: false, skippedReason: "missing_student" };
+  }
+
+  const chatId = input.student.telegram_chat_id?.trim() || input.action.source_chat_id?.trim() || null;
+  if (!chatId) {
+    console.warn(`Student move completion reply skipped for action ${input.action.id}: missing chat`);
+    return { attempted: false, sent: false, skippedReason: "missing_chat" };
+  }
+
+  let businessConnectionId: string;
+  try {
+    businessConnectionId = getRequiredTrainingPeaksBusinessConnectionId();
+  } catch (error) {
+    console.warn(
+      `Student move completion reply skipped for action ${input.action.id}: ${toShortErrorMessage(error)}`
+    );
+    return { attempted: false, sent: false, skippedReason: "missing_business_connection" };
+  }
+
+  try {
+    const businessChat = await getTrainingPeaksBusinessChatByChatId(chatId);
+    if (!businessChat) {
+      console.warn(`Student move completion reply skipped for action ${input.action.id}: business chat not found`);
+      return { attempted: false, sent: false, skippedReason: "business_chat_not_found" };
+    }
+  } catch (error) {
+    console.warn(
+      `Student move completion reply skipped for action ${input.action.id}: business chat lookup failed (${toShortErrorMessage(error)})`
+    );
+    return { attempted: false, sent: false, skippedReason: "business_chat_not_found" };
+  }
+
+  const text = formatMoveCompletionStudentReply(input.student.telegram_formality ?? "unknown");
+  try {
+    await sendTrainingPeaksTelegramBusinessMessage(chatId, text, businessConnectionId);
+    return { attempted: true, sent: true, skippedReason: null };
+  } catch (error) {
+    console.warn(`Student move completion reply failed for action ${input.action.id}: ${toShortErrorMessage(error)}`);
+    return { attempted: true, sent: false, skippedReason: "send_failed" };
+  }
+}
+
 function formatMoveRouteForCoach(
   action: TrainingPeaksActionRow,
   options?: { sourceDate?: string | null; targetDate?: string | null }
@@ -2531,34 +2611,36 @@ async function notifyCoachDryRunResult(input: {
   const strongFutureDescriptorMatch =
     evaluation?.selectedSourceDatePolicy === moveSourcePolicy.STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY;
   const likelySourceTitle = evaluation?.candidate?.title?.trim() || evaluation?.sourceInferenceProvenance?.candidate?.title?.trim();
-  const sourceDateLabel = formatCompactDateShort(evaluation?.resolvedDates.sourceDate ?? null);
-  const targetDateLabel = formatCompactDateShort(evaluation?.resolvedDates.targetDate ?? null);
 
   if (
     evaluation &&
     evaluation.dryRunResult === "candidate_found" &&
     evaluation.canExecute === true
   ) {
-    if (strongFutureDescriptorMatch && likelySourceTitle && sourceDateLabel !== "?" && targetDateLabel !== "?") {
-      lines.push(
-        `✅ Проверка пройдена. ${input.studentName}: ${route}. Можно выполнить перенос.`
-      );
-      lines.push(`Нашёл вероятную интервалку: ${sourceDateLabel} — ${likelySourceTitle} → ${targetDateLabel}`);
+    lines.push("✅ Можно выполнить перенос");
+    lines.push("");
+    lines.push(`Ученик: ${input.studentName}`);
+    lines.push(`Маршрут: ${route}`);
+    if (likelySourceTitle) {
+      lines.push(`Тренировка: ${likelySourceTitle}`);
+    }
+    lines.push("Проверка: безопасно");
+    const confidenceDetail = getDryRunConfidenceDetail(evaluation);
+    if (confidenceDetail) {
+      lines.push(`Уверенность: ${confidenceDetail}`);
+    }
+    if (strongFutureDescriptorMatch) {
       lines.push("Источник определён по сильному совпадению.");
-      const provenanceWarnings = evaluation.sourceInferenceProvenance?.warnings ?? [];
-      for (const warning of provenanceWarnings) {
-        if (warning === "target day already has workout") {
-          lines.push("⚠️ На целевой день уже есть тренировка.");
-        } else if (warning === "hard workout moved earlier") {
-          lines.push("⚠️ Тяжёлая тренировка переносится на более ранний день.");
-        } else if (warning === "week may need manual adjustment") {
-          lines.push("⚠️ Неделя может потребовать ручной корректировки.");
-        }
+    }
+    const provenanceWarnings = evaluation.sourceInferenceProvenance?.warnings ?? [];
+    for (const warning of provenanceWarnings) {
+      if (warning === "target day already has workout") {
+        lines.push("⚠️ На целевой день уже есть тренировка.");
+      } else if (warning === "hard workout moved earlier") {
+        lines.push("⚠️ Тяжёлая тренировка переносится на более ранний день.");
+      } else if (warning === "week may need manual adjustment") {
+        lines.push("⚠️ Неделя может потребовать ручной корректировки.");
       }
-    } else {
-      lines.push(
-        `✅ Проверка пройдена. ${input.studentName}: ${route}. Можно выполнить перенос.`
-      );
     }
   } else if (
     evaluation &&
@@ -2591,7 +2673,7 @@ async function notifyCoachDryRunResult(input: {
       inlineKeyboardRows = [
         [
           {
-            text: "✅ Выполнить",
+            text: "✅ Выполнить перенос",
             callback_data: `${TP_CALLBACK_ACTION_EXECUTE_PREFIX}${actionId}`,
           },
           cancelButton,
@@ -2763,7 +2845,7 @@ async function claimOneApprovedActionForDryRun(
     if (action.student_id) {
       const { data: studentData, error: studentError } = await supabase
         .from("trainingpeaks_students")
-        .select("id, student_id, student_name, telegram_chat_id, trainingpeaks_athlete_url")
+        .select("id, student_id, student_name, telegram_chat_id, telegram_formality, trainingpeaks_athlete_url")
         .eq("id", action.student_id)
         .maybeSingle();
       if (studentError) {
@@ -2874,7 +2956,7 @@ async function claimOneExecutePendingActionForRealMode(
     if (claimedAction.student_id) {
       const { data: studentData, error: studentError } = await supabase
         .from("trainingpeaks_students")
-        .select("id, student_id, student_name, telegram_chat_id, trainingpeaks_athlete_url")
+        .select("id, student_id, student_name, telegram_chat_id, telegram_formality, trainingpeaks_athlete_url")
         .eq("id", claimedAction.student_id)
         .maybeSingle();
       if (studentError) {
@@ -3028,7 +3110,7 @@ async function claimOneExecutePendingActionForRealMode(
     if (claimedAction.student_id) {
       const { data: studentData, error: studentError } = await supabase
         .from("trainingpeaks_students")
-        .select("id, student_id, student_name, telegram_chat_id, trainingpeaks_athlete_url")
+        .select("id, student_id, student_name, telegram_chat_id, telegram_formality, trainingpeaks_athlete_url")
         .eq("id", claimedAction.student_id)
         .maybeSingle();
       if (studentError) {
@@ -9014,6 +9096,34 @@ async function main(): Promise<void> {
       screenshotBeforePath: apiExecution.screenshotBeforePath ?? artifacts.screenshotBeforePath,
       screenshotAfterPath: apiExecution.screenshotAfterPath ?? artifacts.screenshotAfterPath,
     });
+    const studentReply = await trySendMoveCompletionReply({
+      action: claimed.action,
+      student: claimed.student,
+    });
+    if (
+      studentReply.attempted ||
+      studentReply.sent ||
+      studentReply.skippedReason
+    ) {
+      const supabase = getSupabase();
+      const { error: updateReplyLogError } = await supabase
+        .from("trainingpeaks_action_runs")
+        .update({
+          log_json: {
+            ...logJson,
+            studentReplyAttempted: studentReply.attempted,
+            studentReplySent: studentReply.sent,
+            studentReplySkippedReason: studentReply.skippedReason,
+          },
+        })
+        .eq("id", run.id)
+        .eq("action_id", claimed.action.id);
+      if (updateReplyLogError) {
+        console.warn(
+          `Failed to append student move completion reply log for action ${claimed.action.id}: ${updateReplyLogError.message}`
+        );
+      }
+    }
     await notifyCoachRealModeResult({
       chatId: resolveDryRunNotificationChatId(claimed.action),
       action: claimed.action,

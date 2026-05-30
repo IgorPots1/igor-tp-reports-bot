@@ -515,6 +515,8 @@ export type CreateTrainingPeaksActionInput = {
   studentId?: string | null;
   actionType?: TrainingPeaksActionType;
   status?: TrainingPeaksActionStatus;
+  executionStatus?: TrainingPeaksActionExecutionStatus;
+  approvedAt?: string | null;
   sourceChatId: string;
   sourceMessageId: string;
   sourceUserId?: string | null;
@@ -3349,6 +3351,8 @@ export async function createTrainingPeaksAction(
       student_id: input.studentId ?? null,
       action_type: input.actionType ?? "move_workout",
       status: input.status ?? "pending_coach",
+      execution_status: input.executionStatus ?? "not_started",
+      approved_at: input.approvedAt ?? null,
       source_chat_id: input.sourceChatId,
       source_message_id: input.sourceMessageId,
       source_user_id: input.sourceUserId ?? null,

@@ -5452,6 +5452,18 @@ function getTrainingPeaksActionResolvedMarkup(): TelegramInlineKeyboardMarkup {
   return createInlineKeyboardMarkup([]);
 }
 
+function isMoveActionAutoApprovedForDryRun(parsedPayload: unknown): boolean {
+  if (!parsedPayload || typeof parsedPayload !== "object") {
+    return false;
+  }
+  const payload = parsedPayload as {
+    parsingDiagnostics?: {
+      autoApprovedForDryRun?: unknown;
+    };
+  };
+  return payload.parsingDiagnostics?.autoApprovedForDryRun === true;
+}
+
 function formatActionCompactDate(value: string | null): string {
   if (!value) {
     return "—";
@@ -5502,6 +5514,28 @@ function extractMoveWarningsFromParsedPayload(parsedPayload: unknown): string[] 
     return [];
   }
   return payload.warnings.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function formatTrainingPeaksMoveActionProcessingMessage(input: {
+  studentName: string;
+  rawText: string;
+  parsedPayload: unknown;
+}): string {
+  const preview = extractMoveDateRangeFromParsedPayload(input.parsedPayload);
+  const previewLine =
+    preview.sourceDate || preview.targetDate
+      ? `Предварительно: ${formatCompactDateShort(preview.sourceDate)} → ${formatCompactDateShort(preview.targetDate)}`
+      : null;
+
+  return [
+    "⏳ Заявка на перенос создана. Проверяю в TrainingPeaks...",
+    "",
+    `Ученик: ${input.studentName}`,
+    `Запрос: «${truncateActionMessage(input.rawText, 160)}»`,
+    previewLine,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
 }
 
 function truncateActionMessage(value: string, maxLength = 90): string {
@@ -6419,17 +6453,27 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
     }
 
     const summary = formatTrainingPeaksMoveWorkoutActionSummary(moveActionResult.parsed);
-    await notifyCoachChatsWithMarkup(
-      [
-        "Новая заявка TrainingPeaks",
-        `Ученик: ${moveActionResult.student.studentName}`,
-        `Сообщение: ${moveActionResult.action.rawText}`,
-        `Действие: ${summary}`,
-        "Статус: waiting for coach review",
-        `Action ID: ${moveActionResult.action.id}`,
-      ].join("\n"),
-      getTrainingPeaksActionDecisionMarkup(moveActionResult.action.id)
-    );
+    if (isMoveActionAutoApprovedForDryRun(moveActionResult.action.parsedPayload)) {
+      await notifyCoachChats(
+        formatTrainingPeaksMoveActionProcessingMessage({
+          studentName: moveActionResult.student.studentName,
+          rawText: moveActionResult.action.rawText,
+          parsedPayload: moveActionResult.action.parsedPayload,
+        })
+      );
+    } else {
+      await notifyCoachChatsWithMarkup(
+        [
+          "Новая заявка TrainingPeaks",
+          `Ученик: ${moveActionResult.student.studentName}`,
+          `Сообщение: ${moveActionResult.action.rawText}`,
+          `Действие: ${summary}`,
+          "Статус: waiting for coach review",
+          `Action ID: ${moveActionResult.action.id}`,
+        ].join("\n"),
+        getTrainingPeaksActionDecisionMarkup(moveActionResult.action.id)
+      );
+    }
     try {
       await recordTrainingPeaksCoachCaseAndSnapshot(caseInput);
     } catch (error) {
