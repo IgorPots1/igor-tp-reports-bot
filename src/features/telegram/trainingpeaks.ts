@@ -3224,11 +3224,17 @@ async function handleTrainingPeaksAttention(
   const markup = getTrainingPeaksAttentionDigestMarkup();
 
   if (parsedMessage.kind === "callback_query") {
-    await showTrainingPeaksMenuScreen(parsedMessage, text, markup);
+    await editTelegramMessageText(parsedMessage.chatId, parsedMessage.messageId, text, {
+      replyMarkup: markup,
+      parseMode: "HTML",
+    });
     return;
   }
 
-  await sendTrainingPeaksMenuMessage(parsedMessage.chatId, text, markup);
+  await sendTelegramMessage(parsedMessage.chatId, text, {
+    replyMarkup: markup,
+    parseMode: "HTML",
+  });
 }
 
 function getTrainingPeaksBotUsername(): string | null {
@@ -3262,6 +3268,13 @@ function toAttentionStudentDeepLinkId(studentId: string): string {
     return normalized;
   }
   return normalized.slice(0, 40);
+}
+
+function escapeTelegramHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function getAttentionSignalLabel(signal: TrainingPeaksAttentionSignal): string {
@@ -3307,13 +3320,14 @@ function formatAttentionSignalNameWithOptionalLink(
   signal: TrainingPeaksAttentionSignal,
   botUsername: string | null
 ): string {
-  const label = getAttentionSignalLabel(signal);
+  const label = escapeTelegramHtml(getAttentionSignalLabel(signal));
   const payload = getAttentionSignalDeepLinkPayload(signal);
   if (!botUsername || !payload) {
     return label;
   }
 
-  return `${label}: https://t.me/${botUsername}?start=${encodeURIComponent(payload)}`;
+  const href = `https://t.me/${botUsername}?start=${encodeURIComponent(payload)}`;
+  return `<a href="${href}">${label}</a>`;
 }
 
 function formatAttentionSectionHtml(
@@ -3321,7 +3335,7 @@ function formatAttentionSectionHtml(
   signals: TrainingPeaksAttentionSignal[],
   botUsername: string | null
 ): string[] {
-  const lines = [title];
+  const lines = [escapeTelegramHtml(title)];
   if (signals.length === 0) {
     lines.push("• Нет");
     return lines;
@@ -3329,7 +3343,7 @@ function formatAttentionSectionHtml(
 
   for (const signal of signals) {
     const name = formatAttentionSignalNameWithOptionalLink(signal, botUsername);
-    const reason = getAttentionSignalReason(signal);
+    const reason = escapeTelegramHtml(getAttentionSignalReason(signal));
     lines.push(`• ${name} — ${reason}`);
   }
 

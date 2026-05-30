@@ -18,6 +18,7 @@ type SendTelegramMessageOptions = {
   replyMarkup?: TelegramReplyMarkup;
   businessConnectionId?: string;
   messageThreadId?: number;
+  parseMode?: "HTML";
 };
 
 function isTelegramTopicClosedError(error: unknown): boolean {
@@ -30,6 +31,7 @@ function isTelegramTopicClosedError(error: unknown): boolean {
 
 type EditTelegramMessageTextOptions = {
   replyMarkup?: TelegramInlineKeyboardMarkup;
+  parseMode?: "HTML";
 };
 
 type SendTelegramDocumentOptions = {
@@ -143,6 +145,10 @@ function buildTelegramSendMessageBody(
 
   if (options?.messageThreadId !== undefined) {
     body.message_thread_id = options.messageThreadId;
+  }
+
+  if (options?.parseMode) {
+    body.parse_mode = options.parseMode;
   }
 
   return body;
@@ -280,6 +286,7 @@ export async function editTelegramMessageText(
       message_id: messageId,
       text,
       reply_markup: options?.replyMarkup,
+      parse_mode: options?.parseMode,
     });
   } catch (error) {
     const message =

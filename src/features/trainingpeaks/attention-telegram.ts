@@ -13,7 +13,7 @@ function formatAttentionSignalLine(signal: {
   const payload = getAttentionSignalDeepLinkPayload(signal);
   const linkedName =
     name && botUsername && payload
-      ? `${name}: https://t.me/${botUsername}?start=${encodeURIComponent(payload)}`
+      ? name
       : name;
 
   if (linkedName) {
