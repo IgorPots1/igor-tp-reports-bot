@@ -83,6 +83,7 @@ import {
   getTrainingPeaksCoachChatIds,
 } from "@/features/trainingpeaks/attention-telegram";
 import { sendTrainingPeaksWeeklyReportToStudent } from "@/features/trainingpeaks/report-delivery";
+import { sendTrainingPeaksReplyDraftToStudent } from "@/features/trainingpeaks/reply-draft-delivery";
 import {
   isTrainingPeaksTelegramBusinessPeerMissingError,
   shortenTrainingPeaksTelegramDeliveryError,
@@ -115,6 +116,7 @@ import {
   parseTrainingPeaksIntentsCommandArgs,
 } from "@/features/trainingpeaks/message-intent-log-triage";
 import {
+  getTrainingPeaksReplyDraftByIdPrefix,
   getLatestTrainingPeaksCronRunLog,
   getTrainingPeaksMessageIntentLogByTelegramMessage,
   getTrainingPeaksStudentByTelegramChatId,
@@ -124,6 +126,7 @@ import {
   recordTrainingPeaksStudentContactEvent,
   type TrainingPeaksCronRunLog,
   type TrainingPeaksMessageIntentLogStatus,
+  updateTrainingPeaksReplyDraftOutcome,
 } from "@/features/trainingpeaks/repository";
 import { isTrainingPeaksContextObserverEnabled } from "@/features/trainingpeaks/context-observer";
 import {
@@ -191,6 +194,9 @@ const TP_CALLBACK_TELEGRAM_LINKS_HINT = "tp:telegram_links:hint";
 const TP_CALLBACK_VOICE_DRAFTS_CLOSE = "tp:voice_drafts:close";
 const TP_CALLBACK_VOICE_PICK_PREFIX = "tp:voice_pick:";
 const TP_CALLBACK_VOICE_PICK_NONE_PREFIX = "tp:voice_pick_none:";
+const TP_CALLBACK_REPLY_DRAFT_SEND_PREFIX = "tp:rd:s:";
+const TP_CALLBACK_REPLY_DRAFT_CANCEL_PREFIX = "tp:rd:x:";
+const TP_CALLBACK_REPLY_DRAFT_CLOSE = "tp:rd:close";
 const TP_CALLBACK_STUDENT_WEEKLY_HINT_PREFIX = "tp:student:weekly_hint:";
 const TP_CALLBACK_STUDENT_RUN_PREFIX = "tp:run:";
 const TP_ALL_ENABLED_WEEKLY_PREVIEW_NAME_LIMIT = 10;
@@ -415,6 +421,9 @@ type ParsedTrainingPeaksCallback =
   | { kind: "more_menu" }
   | { kind: "attention" }
   | { kind: "reply_draft_hint" }
+  | { kind: "reply_draft_send"; draftIdPrefix: string }
+  | { kind: "reply_draft_cancel"; draftIdPrefix: string }
+  | { kind: "reply_draft_close" }
   | { kind: "billing_hint" }
   | { kind: "health" }
   | { kind: "cron_status" }
@@ -464,6 +473,7 @@ type VoiceDraftCreationResult = {
   studentName: string;
   draftPreview: string;
   draftIdShort: string;
+  hasDraftText: boolean;
 };
 
 async function createVoiceDraftFromMatch(input: {
@@ -516,6 +526,7 @@ async function createVoiceDraftFromMatch(input: {
     studentName: input.student.studentName,
     draftPreview: input.extracted.messageText,
     draftIdShort: savedDraft.id.slice(0, 8),
+    hasDraftText: Boolean(savedDraft.draftText?.trim()),
   };
 }
 
@@ -1293,12 +1304,18 @@ function getVoiceDraftPreviewMarkup(): TelegramInlineKeyboardMarkup {
   ]);
 }
 
-function getVoicePickSuccessMarkup(): TelegramInlineKeyboardMarkup {
-  return createInlineKeyboardMarkup([
-    [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
-    [createMenuButton("✉️ Черновики", TP_CALLBACK_REPLY_DRAFT_HINT)],
-    [createMenuButton("❌ Закрыть", TP_CALLBACK_VOICE_DRAFTS_CLOSE)],
-  ]);
+function getReplyDraftPreviewMarkup(draftIdShort: string, includeSend: boolean): TelegramInlineKeyboardMarkup {
+  const rows: TrainingPeaksMenuButton[][] = [];
+  if (includeSend) {
+    rows.push([createMenuButton("✅ Отправить", `${TP_CALLBACK_REPLY_DRAFT_SEND_PREFIX}${draftIdShort}`)]);
+  }
+  rows.push([createMenuButton("❌ Отменить", `${TP_CALLBACK_REPLY_DRAFT_CANCEL_PREFIX}${draftIdShort}`)]);
+  rows.push([createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)]);
+  return createInlineKeyboardMarkup(rows);
+}
+
+function getReplyDraftFinalMarkup(): TelegramInlineKeyboardMarkup {
+  return createInlineKeyboardMarkup([[createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)]]);
 }
 
 function getVoicePickNoneMarkup(): TelegramInlineKeyboardMarkup {
@@ -1376,7 +1393,7 @@ function formatVoiceDraftsCreatedText(input: {
     "",
     ...draftItems.flatMap((item, index) => (index === 0 ? [item] : ["", item])),
     "",
-    "Пока я ничего не отправляю ученикам. Отправку добавим следующим шагом.",
+    "Пока я ничего не отправляю ученикам без явного подтверждения.",
   ].join("\n");
 }
 
@@ -3676,6 +3693,20 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
     return { kind: "reply_draft_hint" };
   }
 
+  if (data === TP_CALLBACK_REPLY_DRAFT_CLOSE) {
+    return { kind: "reply_draft_close" };
+  }
+
+  if (data.startsWith(TP_CALLBACK_REPLY_DRAFT_SEND_PREFIX)) {
+    const draftIdPrefix = data.slice(TP_CALLBACK_REPLY_DRAFT_SEND_PREFIX.length).trim();
+    return draftIdPrefix ? { kind: "reply_draft_send", draftIdPrefix } : null;
+  }
+
+  if (data.startsWith(TP_CALLBACK_REPLY_DRAFT_CANCEL_PREFIX)) {
+    const draftIdPrefix = data.slice(TP_CALLBACK_REPLY_DRAFT_CANCEL_PREFIX.length).trim();
+    return draftIdPrefix ? { kind: "reply_draft_cancel", draftIdPrefix } : null;
+  }
+
   if (data === TP_CALLBACK_BILLING_HINT) {
     return { kind: "billing_hint" };
   }
@@ -4357,6 +4388,49 @@ function getReplyDraftHintMarkup(): TelegramInlineKeyboardMarkup {
     [createMenuButton("👥 Ученики", "tp:s:0")],
     [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
   ]);
+}
+
+function formatReplyDraftSendCallbackResultText(input: {
+  result: Awaited<ReturnType<typeof sendTrainingPeaksReplyDraftToStudent>>;
+}): string {
+  const { result } = input;
+  if (result.kind === "sent") {
+    return ["Отправлено ✅", "", "Ученик:", result.studentName, "", "Ничего больше делать не нужно."].join(
+      "\n"
+    );
+  }
+
+  if (result.kind === "already_final") {
+    return "Черновик уже обработан. Повторная отправка недоступна.";
+  }
+  if (result.kind === "missing_draft_text") {
+    return "Черновик нельзя отправить: отсутствует текст.";
+  }
+  if (result.kind === "student_missing") {
+    return "Не удалось отправить: ученик не найден.";
+  }
+  if (result.kind === "student_inactive") {
+    return "Не удалось отправить: ученик неактивен.";
+  }
+  if (result.kind === "telegram_not_linked") {
+    return "Не удалось отправить: Telegram у ученика не привязан.";
+  }
+  if (result.kind === "delivery_disabled") {
+    return "Не удалось отправить: доставка ученику отключена.";
+  }
+  if (result.kind === "missing_business_connection") {
+    return "Не удалось отправить: не настроено подключение Telegram Business.";
+  }
+  if (result.kind === "peer_usage_missing") {
+    return "Telegram Business пока не может написать этому ученику. Попроси его написать в Business-чат и попробуй снова с новым черновиком.";
+  }
+  if (result.kind === "delivery_failed") {
+    return "Не удалось отправить сообщение через Telegram Business.";
+  }
+  if (result.kind === "state_conflict") {
+    return "Черновик сейчас нельзя обработать из-за конфликта состояния. Попробуй позже.";
+  }
+  return "Черновик не найден.";
 }
 
 function getBillingHintText(): string {
@@ -7710,10 +7784,16 @@ async function handleTrainingPeaksReplyDraft(
     draftText: draftResult.draftText,
     draftShortId: savedDraftShortId,
   });
+  const draftMarkup = savedDraftShortId
+    ? getReplyDraftPreviewMarkup(savedDraftShortId, Boolean(draftResult.draftText?.trim()))
+    : undefined;
 
   await sendTrainingPeaksMessage(
     parsedMessage.chatId,
-    saveWarning ? `${draftMessage}\n\n${saveWarning}` : draftMessage
+    saveWarning ? `${draftMessage}\n\n${saveWarning}` : draftMessage,
+    {
+      replyMarkup: draftMarkup,
+    }
   );
 }
 
@@ -8727,6 +8807,74 @@ async function handleTrainingPeaksSkipReportCallback(
   await notifyCoachReportAction(parsedMessage.chatId, `Отчёт пропущен: ${report.studentName}.`);
 }
 
+async function handleTrainingPeaksReplyDraftSendCallback(
+  parsedMessage: ParsedTelegramCallbackUpdate,
+  draftIdPrefix: string
+): Promise<void> {
+  await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, "Отправляю…");
+  const result = await sendTrainingPeaksReplyDraftToStudent({
+    draftId: draftIdPrefix,
+    actorTelegramChatId: String(parsedMessage.chatId),
+  });
+
+  await editTrainingPeaksMenuMessage(
+    parsedMessage.chatId,
+    parsedMessage.messageId,
+    formatReplyDraftSendCallbackResultText({ result }),
+    getReplyDraftFinalMarkup()
+  );
+}
+
+async function handleTrainingPeaksReplyDraftCancelCallback(
+  parsedMessage: ParsedTelegramCallbackUpdate,
+  draftIdPrefix: string
+): Promise<void> {
+  await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, "Отменяю…");
+  const draft = await getTrainingPeaksReplyDraftByIdPrefix(draftIdPrefix);
+  if (!draft) {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      "Черновик не найден.",
+      getReplyDraftFinalMarkup()
+    );
+    return;
+  }
+
+  if (draft.outcome !== "generated") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      "Черновик уже обработан.",
+      getReplyDraftFinalMarkup()
+    );
+    return;
+  }
+
+  const updatedDraft = await updateTrainingPeaksReplyDraftOutcome({
+    draftId: draft.id,
+    outcome: "ignored",
+  });
+  if (!updatedDraft) {
+    const reloaded = await getTrainingPeaksReplyDraftByIdPrefix(draft.id);
+    const alreadyFinal = reloaded && reloaded.outcome !== "generated";
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      alreadyFinal ? "Черновик уже обработан." : "Не удалось отменить черновик. Попробуй позже.",
+      getReplyDraftFinalMarkup()
+    );
+    return;
+  }
+
+  await editTrainingPeaksMenuMessage(
+    parsedMessage.chatId,
+    parsedMessage.messageId,
+    ["Черновик отменён.", "Ничего не отправлено ученику."].join("\n"),
+    getReplyDraftFinalMarkup()
+  );
+}
+
 export async function handleTrainingPeaksTelegramCallback(
   parsedMessage: ParsedTelegramCallbackUpdate
 ): Promise<"handled" | "ignored"> {
@@ -8879,6 +9027,27 @@ export async function handleTrainingPeaksTelegramCallback(
 
     if (callback.kind === "report_skip") {
       await handleTrainingPeaksSkipReportCallback(parsedMessage, callback.reportId);
+      return "handled";
+    }
+
+    if (callback.kind === "reply_draft_send") {
+      await handleTrainingPeaksReplyDraftSendCallback(parsedMessage, callback.draftIdPrefix);
+      return "handled";
+    }
+
+    if (callback.kind === "reply_draft_cancel") {
+      await handleTrainingPeaksReplyDraftCancelCallback(parsedMessage, callback.draftIdPrefix);
+      return "handled";
+    }
+
+    if (callback.kind === "reply_draft_close") {
+      await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, "Закрыто");
+      await editTrainingPeaksMenuMessage(
+        parsedMessage.chatId,
+        parsedMessage.messageId,
+        "Предпросмотр черновика закрыт.",
+        getReplyDraftFinalMarkup()
+      );
       return "handled";
     }
 
@@ -9314,19 +9483,18 @@ export async function handleTrainingPeaksTelegramCallback(
           "Текст:",
           `«${created.draftPreview}»`,
           "",
-          "Ничего не отправлено ученику.",
-          "",
-          "Отправку добавим следующим шагом.",
+          "Ничего не отправлено ученику без подтверждения.",
         ].join("\n");
+        const successMarkup = getReplyDraftPreviewMarkup(created.draftIdShort, created.hasDraftText);
         try {
           await editTrainingPeaksMenuMessage(
             parsedMessage.chatId,
             parsedMessage.messageId,
             successText,
-            getVoicePickSuccessMarkup()
+            successMarkup
           );
         } catch {
-          await sendTrainingPeaksMenuMessage(parsedMessage.chatId, successText, getVoicePickSuccessMarkup());
+          await sendTrainingPeaksMenuMessage(parsedMessage.chatId, successText, successMarkup);
         }
       } catch {
         await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, "Ошибка");

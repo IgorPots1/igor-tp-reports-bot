@@ -5463,6 +5463,15 @@ export type UpdateTrainingPeaksReplyDraftOutcomeInput = {
   outcomeRecordedAt?: string;
 };
 
+export type MarkTrainingPeaksReplyDraftSendOutcomeInput = {
+  draftId: string;
+  sendStatus: "sent" | "failed";
+  deliveredChunks?: number;
+  errorClass?: string;
+  errorPreview?: string;
+  actorTelegramChatId?: string | null;
+};
+
 export type InsertTrainingPeaksCoachActionTakenInput = {
   caseId?: string | null;
   studentId?: string | null;
@@ -6159,6 +6168,86 @@ export async function updateTrainingPeaksMessageIntentLogAiFields(
   }
 
   return mapTrainingPeaksMessageIntentLogRow(data as TrainingPeaksMessageIntentLogRow);
+}
+
+export async function markTrainingPeaksReplyDraftSendOutcome(
+  input: MarkTrainingPeaksReplyDraftSendOutcomeInput
+): Promise<TrainingPeaksReplyDraft | null> {
+  const supabase = createSupabaseServerClient();
+  const existing = await supabase
+    .from("trainingpeaks_reply_drafts")
+    .select("metadata")
+    .eq("id", input.draftId)
+    .maybeSingle();
+
+  if (existing.error) {
+    throw new Error(
+      `Failed to load TrainingPeaks reply draft metadata ${input.draftId}: ${existing.error.message}`
+    );
+  }
+
+  if (!existing.data) {
+    return null;
+  }
+
+  const previousMetadata =
+    existing.data.metadata &&
+    typeof existing.data.metadata === "object" &&
+    !Array.isArray(existing.data.metadata)
+      ? (existing.data.metadata as Record<string, unknown>)
+      : {};
+  const nowIso = new Date().toISOString();
+  const nextSendMetadata: Record<string, unknown> = {
+    status: input.sendStatus,
+    at: nowIso,
+  };
+
+  if (typeof input.deliveredChunks === "number" && Number.isFinite(input.deliveredChunks)) {
+    nextSendMetadata.deliveredChunks = Math.max(0, Math.trunc(input.deliveredChunks));
+  }
+  if (input.errorClass) {
+    nextSendMetadata.errorClass = input.errorClass.trim();
+  }
+  if (input.errorPreview) {
+    nextSendMetadata.errorPreview = input.errorPreview.trim();
+  }
+  if (input.actorTelegramChatId) {
+    nextSendMetadata.actorTelegramChatId = input.actorTelegramChatId;
+  }
+
+  const previousSendMetadata =
+    previousMetadata.send &&
+    typeof previousMetadata.send === "object" &&
+    !Array.isArray(previousMetadata.send)
+      ? (previousMetadata.send as Record<string, unknown>)
+      : {};
+
+  const { data, error } = await supabase
+    .from("trainingpeaks_reply_drafts")
+    .update({
+      metadata: {
+        ...previousMetadata,
+        send: {
+          ...previousSendMetadata,
+          ...nextSendMetadata,
+        },
+      },
+    })
+    .eq("id", input.draftId)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to update TrainingPeaks reply draft send metadata ${input.draftId}: ${error.message}`
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksReplyDraftRow(data as TrainingPeaksReplyDraftRow);
 }
 
 export async function recordTrainingPeaksStudentContactEvent(
