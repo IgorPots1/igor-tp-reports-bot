@@ -5,12 +5,64 @@ export const TRAININGPEAKS_ATTENTION_DIGEST_CHUNK_LIMIT = 3500;
 function formatAttentionSignalLine(signal: {
   studentName: string | null;
   reason: string;
-}): string {
-  if (signal.studentName) {
-    return `• ${signal.studentName} — ${signal.reason}`;
+  studentId?: string | null;
+  caseId?: string | null;
+  actionId?: string | null;
+}, botUsername: string | null): string {
+  const name = signal.studentName?.trim();
+  const payload = getAttentionSignalDeepLinkPayload(signal);
+  const linkedName =
+    name && botUsername && payload
+      ? `${name}: https://t.me/${botUsername}?start=${encodeURIComponent(payload)}`
+      : name;
+
+  if (linkedName) {
+    return `• ${linkedName} — ${signal.reason}`;
   }
 
   return `• ${signal.reason}`;
+}
+
+function getTrainingPeaksBotUsername(): string | null {
+  const value = process.env.TELEGRAM_BOT_USERNAME?.trim() ?? "";
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.replace(/^@+/, "").trim();
+  return normalized || null;
+}
+
+function toShortId(value: string | null | undefined, limit: number): string | null {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  return normalized.length > limit ? normalized.slice(0, limit) : normalized;
+}
+
+function getAttentionSignalDeepLinkPayload(signal: {
+  studentId?: string | null;
+  caseId?: string | null;
+  actionId?: string | null;
+}): string | null {
+  const caseShort = toShortId(signal.caseId, 8);
+  if (caseShort) {
+    return `case_${caseShort}`;
+  }
+
+  const actionShort = toShortId(signal.actionId, 8);
+  if (actionShort) {
+    return `action_${actionShort}`;
+  }
+
+  const studentShort = toShortId(signal.studentId, 40);
+  if (studentShort) {
+    return `student_${studentShort}`;
+  }
+
+  return null;
 }
 
 function buildAttentionSection(
@@ -18,7 +70,11 @@ function buildAttentionSection(
   signals: Array<{
     studentName: string | null;
     reason: string;
-  }>
+    studentId?: string | null;
+    caseId?: string | null;
+    actionId?: string | null;
+  }>,
+  botUsername: string | null
 ): string[] {
   const lines = [title];
   if (signals.length === 0) {
@@ -27,7 +83,7 @@ function buildAttentionSection(
   }
 
   for (const signal of signals) {
-    lines.push(formatAttentionSignalLine(signal));
+    lines.push(formatAttentionSignalLine(signal, botUsername));
   }
 
   return lines;
@@ -151,12 +207,13 @@ function buildAttentionDigestBlocks(
   snapshot: TrainingPeaksAttentionSnapshot,
   title: string
 ): string[][] {
-  const urgent = buildAttentionSection("Срочно", snapshot.urgent);
-  const today = buildAttentionSection("Сегодня", snapshot.today);
-  const observe = buildAttentionSection("Наблюдать", snapshot.observe);
+  const botUsername = getTrainingPeaksBotUsername();
+  const urgent = buildAttentionSection("Срочно", snapshot.urgent, botUsername);
+  const today = buildAttentionSection("Сегодня", snapshot.today, botUsername);
+  const observe = buildAttentionSection("Наблюдать", snapshot.observe, botUsername);
 
   const hasSignals = snapshot.urgent.length > 0 || snapshot.today.length > 0 || snapshot.observe.length > 0;
-  const fyi = buildAttentionSection("FYI", snapshot.fyi);
+  const fyi = buildAttentionSection("FYI", snapshot.fyi, botUsername);
   if (snapshot.fyi.length === 0 && !hasSignals) {
     fyi.splice(1, fyi.length - 1, "• Активных сигналов больше нет");
   }
