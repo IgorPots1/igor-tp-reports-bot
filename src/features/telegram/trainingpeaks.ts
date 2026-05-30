@@ -73,13 +73,13 @@ import {
   getTrainingPeaksActionWithStudentAndLatestRunContextById,
   insertTrainingPeaksReplyDraft,
   recordTrainingPeaksReplyDraftFeedback,
+  type TrainingPeaksAttentionSignal,
 } from "@/features/trainingpeaks/service";
 import {
   hasTrainingPeaksAttentionDigestSentForBelgradeDate,
   runTrainingPeaksAttentionDigest,
 } from "@/features/trainingpeaks/attention-digest-run";
 import {
-  formatTrainingPeaksAttentionSnapshotMessage,
   getTrainingPeaksCoachChatIds,
 } from "@/features/trainingpeaks/attention-telegram";
 import { sendTrainingPeaksWeeklyReportToStudent } from "@/features/trainingpeaks/report-delivery";
@@ -225,6 +225,11 @@ const TP_CALLBACK_ACTION_DETAIL_BACK = "tp:ta:back";
 const TP_CALLBACK_CASE_RESOLVE_PREFIX = "tp:case:r:";
 const TP_CALLBACK_CASE_DISMISS_PREFIX = "tp:case:d:";
 const TP_CALLBACK_CASE_PROPOSE_PREFIX = "tp:case:p:";
+const TP_CALLBACK_ATTENTION_CASE_PREFIX = "tp:attn:c:";
+const TP_CALLBACK_ATTENTION_ACTION_PREFIX = "tp:attn:a:";
+const TP_CALLBACK_ATTENTION_STUDENT_PREFIX = "tp:attn:s:";
+const TP_CALLBACK_ATTENTION_RESOLVE_PREFIX = "tp:attn:res:";
+const TP_CALLBACK_ATTENTION_DISMISS_PREFIX = "tp:attn:dis:";
 const TP_REPLY_BUTTON_MENU = "🏠 Меню";
 const TP_REPLY_BUTTON_TODAY = "🌅 Сегодня";
 const TP_REPLY_BUTTON_STUDENTS = "👥 Ученики";
@@ -397,6 +402,11 @@ type ParsedTrainingPeaksCallback =
   | { kind: "case_resolve"; shortId: string }
   | { kind: "case_dismiss"; shortId: string }
   | { kind: "case_create_proposals"; shortId: string }
+  | { kind: "attention_case"; shortId: string }
+  | { kind: "attention_action"; actionId: string }
+  | { kind: "attention_student"; studentId: string }
+  | { kind: "attention_case_resolve"; shortId: string }
+  | { kind: "attention_case_dismiss"; shortId: string }
   | { kind: "cases_page"; offset: number; query: string | null }
   | { kind: "actions_list" }
   | { kind: "week_menu" }
@@ -2443,7 +2453,10 @@ async function handleTrainingPeaksCasesCommand(parsedMessage: ParsedTelegramUpda
   });
 }
 
-async function handleTrainingPeaksCaseCommand(parsedMessage: ParsedTelegramUpdate, text: string): Promise<void> {
+async function handleTrainingPeaksCaseCommand(
+  parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate,
+  text: string
+): Promise<void> {
   const caseIdPrefix = parseTrainingPeaksCaseCommandId(text);
   if (!caseIdPrefix) {
     await sendTrainingPeaksMessage(parsedMessage.chatId, "Usage: /tp_case <short_id>");
@@ -2548,6 +2561,59 @@ async function handleTrainingPeaksCoachCaseResolveOrDismiss(
   await sendTrainingPeaksMessage(
     parsedMessage.chatId,
     action === "resolve" ? "Error resolving case, try again." : "Error dismissing case, try again."
+  );
+}
+
+async function resolveOrDismissAttentionCase(
+  parsedMessage: ParsedTelegramCallbackUpdate,
+  shortId: string,
+  action: "resolve" | "dismiss"
+): Promise<void> {
+  const result =
+    action === "resolve"
+      ? await resolveTrainingPeaksCoachCase({
+          caseId: shortId,
+          actorTelegramChatId: String(parsedMessage.chatId),
+          note: "closed via attention digest card",
+        })
+      : await dismissTrainingPeaksCoachCase({
+          caseId: shortId,
+          actorTelegramChatId: String(parsedMessage.chatId),
+          note: "dismissed via attention digest card",
+        });
+
+  if (result.kind === "resolved" || result.kind === "dismissed") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      appendTrainingPeaksCoachCaseFinalState(
+        parsedMessage.messageText,
+        action === "resolve" ? "✓ Закрыто" : "🙈 Скрыто",
+        shortId
+      ),
+      createInlineKeyboardMarkup([[createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)]])
+    );
+    return;
+  }
+
+  if (result.kind === "invalid_prefix") {
+    await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, "Некорректный ID кейса.");
+    return;
+  }
+
+  if (result.kind === "not_found") {
+    await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, "Кейс уже не найден.");
+    return;
+  }
+
+  if (result.kind === "ambiguous") {
+    await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, "ID кейса неоднозначен.");
+    return;
+  }
+
+  await answerTelegramCallbackQuery(
+    parsedMessage.callbackQueryId,
+    action === "resolve" ? "Не удалось закрыть кейс." : "Не удалось скрыть кейс."
   );
 }
 
@@ -3093,21 +3159,111 @@ async function handleTrainingPeaksAttention(
   parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate
 ): Promise<void> {
   const snapshot = await getTrainingPeaksAttentionSnapshot();
-  const text = formatTrainingPeaksAttentionSnapshotMessage(snapshot, "Внимание на сегодня");
+  const summaryLines = [
+    "🌅 Внимание на сегодня",
+    "",
+    `Срочно: ${snapshot.urgent.length}`,
+    `Сегодня: ${snapshot.today.length}`,
+    `Наблюдать: ${snapshot.observe.length}`,
+    `FYI: ${snapshot.fyi.length}`,
+  ];
 
   if (parsedMessage.kind === "callback_query") {
     await showTrainingPeaksMenuScreen(
       parsedMessage,
-      text,
+      summaryLines.join("\n"),
       createInlineKeyboardMarkup([
         [createMenuButton("🔄 Обновить", TP_CALLBACK_ATTENTION)],
         [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
       ])
     );
+    await sendTrainingPeaksAttentionSignalCards(parsedMessage.chatId, snapshot);
     return;
   }
 
-  await sendTrainingPeaksMessage(parsedMessage.chatId, text);
+  await sendTrainingPeaksMenuMessage(
+    parsedMessage.chatId,
+    summaryLines.join("\n"),
+    createInlineKeyboardMarkup([
+      [createMenuButton("🔄 Обновить", TP_CALLBACK_ATTENTION)],
+      [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
+    ])
+  );
+  await sendTrainingPeaksAttentionSignalCards(parsedMessage.chatId, snapshot);
+}
+
+function getAttentionSignalIcon(level: TrainingPeaksAttentionSignal["level"]): string {
+  if (level === "urgent") {
+    return "🚨";
+  }
+  if (level === "today") {
+    return "🟡";
+  }
+  if (level === "observe") {
+    return "👀";
+  }
+  return "ℹ️";
+}
+
+function buildTrainingPeaksAttentionSignalCardText(signal: TrainingPeaksAttentionSignal): string {
+  const title = signal.studentName ? `${getAttentionSignalIcon(signal.level)} ${signal.studentName}` : "ℹ️ Система";
+  return [title, signal.reason].join("\n");
+}
+
+function toShortIdForAttention(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return null;
+  }
+  return normalized.slice(0, 8);
+}
+
+function getTrainingPeaksAttentionSignalMarkup(
+  signal: TrainingPeaksAttentionSignal
+): TelegramInlineKeyboardMarkup {
+  const rows: TrainingPeaksMenuButton[][] = [];
+  const navRow: TrainingPeaksMenuButton[] = [];
+  const caseShort = toShortIdForAttention(signal.caseId);
+  const actionId = signal.actionId?.trim() || null;
+  const studentId = signal.studentId?.trim() || null;
+
+  if (caseShort) {
+    navRow.push(createMenuButton("🧩 Кейс", `${TP_CALLBACK_ATTENTION_CASE_PREFIX}${caseShort}`));
+  }
+  if (actionId) {
+    navRow.push(createMenuButton("📋 Заявка", `${TP_CALLBACK_ATTENTION_ACTION_PREFIX}${actionId}`));
+  }
+  if (navRow.length > 0) {
+    rows.push(navRow);
+  }
+
+  if (studentId) {
+    rows.push([createMenuButton("👤 Ученик", `${TP_CALLBACK_ATTENTION_STUDENT_PREFIX}${studentId}`)]);
+  }
+
+  if (caseShort) {
+    rows.push([
+      createMenuButton("✅ Закрыть", `${TP_CALLBACK_ATTENTION_RESOLVE_PREFIX}${caseShort}`),
+      createMenuButton("🙈 Скрыть", `${TP_CALLBACK_ATTENTION_DISMISS_PREFIX}${caseShort}`),
+    ]);
+  }
+
+  rows.push([createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)]);
+  return createInlineKeyboardMarkup(rows);
+}
+
+async function sendTrainingPeaksAttentionSignalCards(
+  chatId: number | string,
+  snapshot: Awaited<ReturnType<typeof getTrainingPeaksAttentionSnapshot>>
+): Promise<void> {
+  const items = [...snapshot.urgent, ...snapshot.today, ...snapshot.observe, ...snapshot.fyi];
+  for (const signal of items) {
+    await sendTrainingPeaksMenuMessage(
+      chatId,
+      buildTrainingPeaksAttentionSignalCardText(signal),
+      getTrainingPeaksAttentionSignalMarkup(signal)
+    );
+  }
 }
 
 const TP_CRON_STATUS_BELGRADE_FORMATTER = new Intl.DateTimeFormat("ru-RU", {
@@ -3800,6 +3956,31 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
   if (data.startsWith(TP_CALLBACK_CASE_PROPOSE_PREFIX)) {
     const shortId = data.slice(TP_CALLBACK_CASE_PROPOSE_PREFIX.length).trim();
     return shortId ? { kind: "case_create_proposals", shortId } : null;
+  }
+
+  if (data.startsWith(TP_CALLBACK_ATTENTION_CASE_PREFIX)) {
+    const shortId = data.slice(TP_CALLBACK_ATTENTION_CASE_PREFIX.length).trim();
+    return shortId ? { kind: "attention_case", shortId } : null;
+  }
+
+  if (data.startsWith(TP_CALLBACK_ATTENTION_ACTION_PREFIX)) {
+    const actionId = data.slice(TP_CALLBACK_ATTENTION_ACTION_PREFIX.length).trim();
+    return actionId ? { kind: "attention_action", actionId } : null;
+  }
+
+  if (data.startsWith(TP_CALLBACK_ATTENTION_STUDENT_PREFIX)) {
+    const studentId = data.slice(TP_CALLBACK_ATTENTION_STUDENT_PREFIX.length).trim();
+    return studentId ? { kind: "attention_student", studentId } : null;
+  }
+
+  if (data.startsWith(TP_CALLBACK_ATTENTION_RESOLVE_PREFIX)) {
+    const shortId = data.slice(TP_CALLBACK_ATTENTION_RESOLVE_PREFIX.length).trim();
+    return shortId ? { kind: "attention_case_resolve", shortId } : null;
+  }
+
+  if (data.startsWith(TP_CALLBACK_ATTENTION_DISMISS_PREFIX)) {
+    const shortId = data.slice(TP_CALLBACK_ATTENTION_DISMISS_PREFIX.length).trim();
+    return shortId ? { kind: "attention_case_dismiss", shortId } : null;
   }
 
   if (data.startsWith("tp:s:")) {
@@ -9187,6 +9368,31 @@ export async function handleTrainingPeaksTelegramCallback(
 
     if (callback.kind === "case_create_proposals") {
       await handleTrainingPeaksCoachCaseCreateProposalsCallback(parsedMessage, callback.shortId);
+      return "handled";
+    }
+
+    if (callback.kind === "attention_case") {
+      await handleTrainingPeaksCaseCommand(parsedMessage, `/tp_case ${callback.shortId}`);
+      return "handled";
+    }
+
+    if (callback.kind === "attention_action") {
+      await showTpActionDetail(parsedMessage, callback.actionId);
+      return "handled";
+    }
+
+    if (callback.kind === "attention_student") {
+      await showTrainingPeaksStudentCardMenu(parsedMessage, callback.studentId);
+      return "handled";
+    }
+
+    if (callback.kind === "attention_case_resolve") {
+      await resolveOrDismissAttentionCase(parsedMessage, callback.shortId, "resolve");
+      return "handled";
+    }
+
+    if (callback.kind === "attention_case_dismiss") {
+      await resolveOrDismissAttentionCase(parsedMessage, callback.shortId, "dismiss");
       return "handled";
     }
 

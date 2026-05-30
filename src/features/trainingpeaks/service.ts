@@ -603,6 +603,10 @@ export type TrainingPeaksAttentionSignal = {
   level: TrainingPeaksAttentionLevel;
   studentName: string | null;
   reason: string;
+  studentId?: string | null;
+  caseId?: string | null;
+  actionId?: string | null;
+  signalKind?: string;
 };
 
 export type TrainingPeaksAttentionSnapshot = {
@@ -4131,6 +4135,9 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
         level: "today",
         studentName,
         reason: "ждёт решения по переносу тренировки",
+        studentId: action.studentId ?? null,
+        actionId: action.id,
+        signalKind: "move_pending_action",
       });
     }
 
@@ -4155,6 +4162,9 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
             level: "urgent",
             studentName,
             reason: "выполнение переноса завершилось с ошибкой",
+            studentId: action.studentId ?? null,
+            actionId: action.id,
+            signalKind: "move_failed_action",
           });
         }
         continue;
@@ -4164,6 +4174,9 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
         level: "urgent",
         studentName,
         reason: "выполнение переноса завершилось с ошибкой",
+        studentId: action.studentId ?? null,
+        actionId: action.id,
+        signalKind: "move_failed_action",
       });
     }
 
@@ -4213,6 +4226,8 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
         level: "observe",
         studentName,
         reason: "скан тренировок за вчера завершился с ошибкой",
+        studentId: student.id,
+        signalKind: "scan_failed",
       });
       continue;
     }
@@ -4250,6 +4265,8 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
         level: "today",
         studentName,
         reason: "вчера была беговая тренировка, выполнения не найдено",
+        studentId: student.id,
+        signalKind: "missed_workout",
       });
       continue;
     }
@@ -4259,6 +4276,8 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
         level: "today",
         studentName,
         reason: formatMissedRunningWorkoutReason(missedRunningPlannedCount),
+        studentId: student.id,
+        signalKind: "missed_workout",
       });
     }
   }
@@ -4268,6 +4287,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
       level: "fyi",
       studentName: null,
       reason: `Нет свежего скана тренировок за вчера для ${missingScanCount} учеников`,
+      signalKind: "fyi",
     });
   }
 
@@ -4280,6 +4300,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
         level: "fyi",
         studentName: null,
         reason: `Без активности 5+ дней: ${silentStudentsCount} учеников`,
+        signalKind: "silent_student",
       });
     }
   } catch (error) {
@@ -4310,6 +4331,8 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
       level: "observe",
       studentName: profile.studentName?.trim() || null,
       reason: alert.message,
+      studentId: profile.studentId,
+      signalKind: "recovery_alert",
     });
   }
 
@@ -4326,6 +4349,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
         level: "urgent",
         studentName: null,
         reason: "последний запуск сканирования забегов завершился с ошибкой",
+        signalKind: "failed_job",
       });
       continue;
     }
@@ -4334,6 +4358,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
       level: "urgent",
       studentName: null,
       reason: "последний запуск TP завершился с ошибкой",
+      signalKind: "failed_job",
     });
   }
 
@@ -4370,6 +4395,9 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
         level: "urgent",
         studentName,
         reason: `сигнал по самочувствию/боли за последние 48ч (case: ${caseRow.id.slice(0, 8)})`,
+        studentId: caseRow.studentId,
+        caseId: caseRow.id,
+        signalKind: "pain_case",
       });
     }
 
@@ -4379,6 +4407,9 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
         level: "today",
         studentName,
         reason: `вопрос тренеру за последние 24ч (case: ${caseRow.id.slice(0, 8)})`,
+        studentId: caseRow.studentId,
+        caseId: caseRow.id,
+        signalKind: "question_case",
       });
     }
 
@@ -4388,6 +4419,9 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
         level: "today",
         studentName,
         reason: `перенос тренировки требует проверки (case: ${caseRow.id.slice(0, 8)})`,
+        studentId: caseRow.studentId,
+        caseId: caseRow.id,
+        signalKind: "move_needs_review_case",
       });
     }
   } catch (error) {
