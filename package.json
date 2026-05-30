@@ -60,7 +60,8 @@
     "check-e-predictor-constants": "npm --prefix tools/trainingpeaks-export run check-e-predictor-constants --",
     "check-sustained-effort-classification": "npm --prefix tools/trainingpeaks-export run check-sustained-effort-classification --",
     "check-vdot-style": "npm --prefix tools/trainingpeaks-export run check-vdot-style --",
-    "check-prediction-validation-log": "npm --prefix tools/trainingpeaks-export run check-prediction-validation-log --"
+    "check-prediction-validation-log": "npm --prefix tools/trainingpeaks-export run check-prediction-validation-log --",
+    "check-trainingpeaks-context-coverage": "npx tsx scripts/check-trainingpeaks-context-coverage.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.3",
