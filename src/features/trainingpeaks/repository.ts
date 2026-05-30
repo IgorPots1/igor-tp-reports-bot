@@ -5405,6 +5405,7 @@ export type InsertTrainingPeaksReplyDraftInput = {
   studentMessageSha256: string;
   studentMessagePreview?: string | null;
   draftSha256: string;
+  draftText: string;
   draftPreview?: string | null;
   draftCharCount?: number;
   metadata?: Record<string, unknown>;
@@ -5422,6 +5423,7 @@ export type TrainingPeaksReplyDraft = {
   studentMessageSha256: string;
   studentMessagePreview: string | null;
   draftSha256: string;
+  draftText: string | null;
   draftPreview: string | null;
   draftCharCount: number;
   outcome: TrainingPeaksReplyDraftOutcome;
@@ -5443,6 +5445,7 @@ type TrainingPeaksReplyDraftRow = {
   student_message_sha256: string;
   student_message_preview: string | null;
   draft_sha256: string;
+  draft_text: string | null;
   draft_preview: string | null;
   draft_char_count: number;
   outcome: TrainingPeaksReplyDraftOutcome;
@@ -5637,6 +5640,7 @@ function mapTrainingPeaksReplyDraftRow(row: TrainingPeaksReplyDraftRow): Trainin
     studentMessageSha256: row.student_message_sha256,
     studentMessagePreview: row.student_message_preview,
     draftSha256: row.draft_sha256,
+    draftText: row.draft_text,
     draftPreview: row.draft_preview,
     draftCharCount: row.draft_char_count,
     outcome: row.outcome,
@@ -5845,6 +5849,7 @@ export async function insertTrainingPeaksReplyDraft(
       student_message_sha256: input.studentMessageSha256,
       student_message_preview: buildTrainingPeaksReplyDraftPreview(input.studentMessagePreview ?? null, 80),
       draft_sha256: input.draftSha256,
+      draft_text: input.draftText,
       draft_preview: buildTrainingPeaksReplyDraftPreview(input.draftPreview ?? null, 120),
       draft_char_count: Math.max(0, Math.trunc(input.draftCharCount ?? 0)),
       metadata: input.metadata ?? {},

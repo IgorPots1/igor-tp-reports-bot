@@ -495,6 +495,7 @@ async function createVoiceDraftFromMatch(input: {
     studentMessageSha256,
     studentMessagePreview: input.transcriptPreview,
     draftSha256,
+    draftText: input.extracted.messageText,
     draftPreview: buildTelegramContextTextPreview(input.extracted.messageText),
     draftCharCount: input.extracted.messageText.length,
     metadata: {
@@ -7683,6 +7684,7 @@ async function handleTrainingPeaksReplyDraft(
       studentMessageSha256,
       studentMessagePreview: buildTelegramContextTextPreview(studentMessage)?.slice(0, 80) ?? null,
       draftSha256,
+      draftText: draftResult.draftText,
       draftPreview: buildTelegramContextTextPreview(draftResult.draftText),
       draftCharCount: draftResult.draftText.trim().length,
       metadata: {
