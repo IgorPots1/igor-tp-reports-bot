@@ -61,6 +61,15 @@ function getTelegramMessageTextOrCaption(message: TelegramMessage): string {
   return (message.text ?? message.caption ?? "").trim();
 }
 
+function mapStartMessageToTrainingPeaksCommand(messageText: string): string {
+  const payload = messageText.replace(START_COMMAND_PATTERN, "").trim();
+  if (!payload) {
+    return "/tp";
+  }
+
+  return `/tp_start ${payload}`;
+}
+
 type WebhookAuthorizationResult =
   | { authorized: true }
   | { authorized: false; status: 401 | 403; error: string; logMessage: string };
@@ -208,7 +217,11 @@ export async function POST(request: Request) {
   }
 
   if (START_COMMAND_PATTERN.test(messageText)) {
-    await handleTrainingPeaksTelegramCommand(parsedMessage, "/tp", messageChatType);
+    await handleTrainingPeaksTelegramCommand(
+      parsedMessage,
+      mapStartMessageToTrainingPeaksCommand(messageText),
+      messageChatType
+    );
     return okResponse();
   }
 
