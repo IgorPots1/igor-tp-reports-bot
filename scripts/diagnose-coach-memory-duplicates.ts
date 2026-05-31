@@ -5,6 +5,15 @@ import process from "node:process";
 import type { PostgrestError } from "@supabase/supabase-js";
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
+import {
+  buildIllnessMergedSummary,
+  collectIllnessClusterItems,
+  HEALTH_MEMORY_TYPES,
+  parseMemoryDuplicateSignals,
+  passesIllnessClusterFilter,
+  resolveIllnessEpisodeKey,
+  type ParsedMemoryDuplicateSignals,
+} from "@/features/trainingpeaks/coach-memory-duplicate-clustering";
 import type { TrainingPeaksStudentMemoryType } from "@/features/trainingpeaks/repository";
 
 const LOG_PREFIX = "[diagnose-coach-memory-duplicates]";
@@ -32,19 +41,6 @@ type MemoryItemRow = {
   valid_from: string | null;
   valid_until: string | null;
   last_seen_at: string;
-};
-
-type ParsedSignals = {
-  normalizedSummary: string;
-  hasIllnessSignal: boolean;
-  illnessSubtype: "upper_respiratory" | "general" | null;
-  bodyPart: string | null;
-  hasPainSignal: boolean;
-  hasLoadFatigueSignal: boolean;
-  scheduleAnchor: string | null;
-  raceAnchor: string | null;
-  raceDiscipline: string | null;
-  hasSickLeaveSignal: boolean;
 };
 
 type ClusterConfidence = "low" | "medium" | "high";
@@ -88,52 +84,11 @@ const ALL_MEMORY_TYPES: TrainingPeaksStudentMemoryType[] = [
   "equipment_or_device_note",
 ];
 
-const ILLNESS_KEYWORDS = [
-  "болезнь",
-  "болеет",
-  "заболел",
-  "заболела",
-  "горло",
-  "першит",
-  "простуда",
-  "температура",
-  "орви",
-  "больничный",
-  "sick",
-  "illness",
-  "cold",
-  "throat",
-];
-
-const UPPER_RESPIRATORY_KEYWORDS = ["горло", "першит", "простуда", "орви", "throat", "cold"];
-
-const BODY_PART_PATTERNS: Array<{ part: string; keywords: string[] }> = [
-  { part: "knee", keywords: ["колено", "knee"] },
-  { part: "achilles", keywords: ["ахилл", "achilles"] },
-  { part: "shin", keywords: ["голень", "shin"] },
-  { part: "foot", keywords: ["стопа", "foot"] },
-  { part: "back", keywords: ["спина", "back"] },
-  { part: "hip", keywords: ["бедро", "таз", "hip"] },
-];
-
-const PAIN_KEYWORDS = ["боль", "болит", "дискомфорт", "тянет", "ноет", "pain", "injury"];
-const LOAD_FATIGUE_KEYWORDS = ["усталость", "нет сил", "перегруз", "fatigue", "overload"];
-const SICK_LEAVE_KEYWORDS = ["больничный", "sick leave", "на больничном"];
-
 const SCHEDULE_TYPES = new Set<TrainingPeaksStudentMemoryType>([
   "schedule_constraint",
   "availability_preference",
   "planning_preference",
 ]);
-
-const HEALTH_TYPES = new Set<TrainingPeaksStudentMemoryType>(["health_status", "pain_or_injury"]);
-
-const RACE_DISCIPLINE_PATTERNS: Array<{ discipline: string; keywords: string[] }> = [
-  { discipline: "half_marathon", keywords: ["полумарафон", "half marathon"] },
-  { discipline: "marathon", keywords: ["марафон", "marathon"] },
-  { discipline: "10k", keywords: ["10к", "10k"] },
-  { discipline: "5k", keywords: ["5к", "5k"] },
-];
 
 function loadLocalEnvFiles(): void {
   const repoRoot = path.resolve(process.cwd());
@@ -253,89 +208,6 @@ function normalizeText(input: string): string {
   return input.toLowerCase().replace(/\s+/gu, " ").trim();
 }
 
-function containsAny(text: string, keywords: readonly string[]): boolean {
-  return keywords.some((keyword) => text.includes(keyword));
-}
-
-function extractBodyPart(text: string): string | null {
-  const matchedParts = BODY_PART_PATTERNS.filter((entry) => containsAny(text, entry.keywords)).map(
-    (entry) => entry.part
-  );
-  if (matchedParts.length !== 1) {
-    return null;
-  }
-  return matchedParts[0];
-}
-
-function extractRaceDiscipline(text: string): string | null {
-  for (const pattern of RACE_DISCIPLINE_PATTERNS) {
-    if (containsAny(text, pattern.keywords)) {
-      return pattern.discipline;
-    }
-  }
-  return null;
-}
-
-function extractScheduleAnchor(text: string): string | null {
-  const isoMatch = text.match(/\b(20\d{2}-\d{2}-\d{2})\b/u);
-  if (isoMatch?.[1]) {
-    return isoMatch[1];
-  }
-
-  const ruDateMatch = text.match(/\b([0-3]?\d)\.([01]?\d)\.(20\d{2})\b/u);
-  if (ruDateMatch) {
-    const day = ruDateMatch[1].padStart(2, "0");
-    const month = ruDateMatch[2].padStart(2, "0");
-    const year = ruDateMatch[3];
-    return `${year}-${month}-${day}`;
-  }
-
-  if (text.includes("послезавтра") || text.includes("day after tomorrow")) {
-    return "relative:day_after_tomorrow";
-  }
-  if (text.includes("завтра") || text.includes("tomorrow")) {
-    return "relative:tomorrow";
-  }
-  if (text.includes("сегодня") || text.includes("today")) {
-    return "relative:today";
-  }
-  if (text.includes("выходные") || text.includes("weekend")) {
-    return "relative:weekend";
-  }
-  if (text.includes("следующ") || text.includes("next week")) {
-    return "relative:next_week";
-  }
-  return null;
-}
-
-function extractRaceAnchor(text: string): string | null {
-  const isoMatch = text.match(/\b(20\d{2}-\d{2}-\d{2})\b/u);
-  return isoMatch?.[1] ?? null;
-}
-
-function parseSignals(item: MemoryItemRow): ParsedSignals {
-  const normalizedSummary = normalizeText(item.summary_text);
-  const hasIllnessSignal = containsAny(normalizedSummary, ILLNESS_KEYWORDS);
-  const illnessSubtype = hasIllnessSignal
-    ? containsAny(normalizedSummary, UPPER_RESPIRATORY_KEYWORDS)
-      ? "upper_respiratory"
-      : "general"
-    : null;
-
-  return {
-    normalizedSummary,
-    hasIllnessSignal,
-    illnessSubtype,
-    bodyPart: extractBodyPart(normalizedSummary),
-    hasPainSignal: containsAny(normalizedSummary, PAIN_KEYWORDS),
-    hasLoadFatigueSignal: containsAny(normalizedSummary, LOAD_FATIGUE_KEYWORDS),
-    scheduleAnchor: extractScheduleAnchor(normalizedSummary),
-    raceAnchor: extractRaceAnchor(normalizedSummary),
-    raceDiscipline: extractRaceDiscipline(normalizedSummary),
-    hasSickLeaveSignal: containsAny(normalizedSummary, SICK_LEAVE_KEYWORDS),
-  };
-}
-
 function isMissingRelationError(error: PostgrestError): boolean {
   const code = (error.code ?? "").toUpperCase();
   const message = (error.message ?? "").toLowerCase();
@@ -420,7 +292,7 @@ function typesInCluster(items: MemoryItemRow[]): TrainingPeaksStudentMemoryType[
 function clusterConfidence(
   episodeKey: string,
   items: MemoryItemRow[],
-  signalsById: Map<string, ParsedSignals>
+  signalsById: Map<string, ParsedMemoryDuplicateSignals>
 ): ClusterConfidence {
   const count = items.length;
   if (episodeKey.startsWith("health:pain:")) {
@@ -454,16 +326,13 @@ function clusterConfidence(
 function buildMergedSummary(
   episodeKey: string,
   items: MemoryItemRow[],
-  signalsById: Map<string, ParsedSignals>
+  signalsById: Map<string, ParsedMemoryDuplicateSignals>
 ): string {
-  if (episodeKey === "health:illness:upper_respiratory") {
-    const hasSickLeave = items.some((item) => signalsById.get(item.id)?.hasSickLeaveSignal);
-    return hasSickLeave
-      ? "Болезнь / першение в горле, планирует больничный."
-      : "Признаки болезни верхних дыхательных путей (простуда/горло).";
-  }
-  if (episodeKey === "health:illness:general") {
-    return "Эпизод болезни: повторяющиеся сигналы о плохом самочувствии.";
+  if (episodeKey === "health:illness:upper_respiratory" || episodeKey === "health:illness:general") {
+    const signalsList = items
+      .map((item) => signalsById.get(item.id))
+      .filter((signals): signals is ParsedMemoryDuplicateSignals => Boolean(signals));
+    return buildIllnessMergedSummary(episodeKey, signalsList);
   }
   if (episodeKey.startsWith("health:pain:")) {
     const bodyPart = episodeKey.slice("health:pain:".length);
@@ -489,13 +358,13 @@ function conservativeClusterFilter(episodeKey: string, items: MemoryItemRow[]): 
   }
   if (episodeKey.startsWith("health:pain:")) {
     const types = new Set(items.map((item) => item.memory_type));
-    return [...types].every((type) => HEALTH_TYPES.has(type));
+    return [...types].every((type) => HEALTH_MEMORY_TYPES.has(type));
   }
   if (episodeKey.startsWith("schedule:")) {
     return items.every((item) => SCHEDULE_TYPES.has(item.memory_type));
   }
   if (episodeKey.startsWith("health:illness:")) {
-    return items.some((item) => item.memory_type === "health_status");
+    return passesIllnessClusterFilter(items);
   }
   if (episodeKey === "load:fatigue") {
     return items.every((item) => item.memory_type === "load_tolerance" || item.memory_type === "emotional_state");
@@ -508,19 +377,20 @@ function conservativeClusterFilter(episodeKey: string, items: MemoryItemRow[]): 
 
 function buildClustersForStudent(studentItems: MemoryItemRow[]): Map<string, MemoryItemRow[]> {
   const clusters = new Map<string, MemoryItemRow[]>();
-  const signalsById = new Map<string, ParsedSignals>();
+  const { items: illnessItems, signalsById: illnessSignalsById } = collectIllnessClusterItems(studentItems);
+
+  if (illnessItems.length >= 2) {
+    const illnessSignals = illnessItems
+      .map((item) => illnessSignalsById.get(item.id))
+      .filter((signals): signals is ParsedMemoryDuplicateSignals => Boolean(signals));
+    const illnessEpisodeKey = resolveIllnessEpisodeKey(illnessSignals);
+    clusters.set(illnessEpisodeKey, illnessItems);
+  }
 
   for (const item of studentItems) {
-    const signals = parseSignals(item);
-    signalsById.set(item.id, signals);
+    const signals = illnessSignalsById.get(item.id) ?? parseMemoryDuplicateSignals(item.summary_text);
 
-    if (HEALTH_TYPES.has(item.memory_type) && signals.hasIllnessSignal) {
-      const subtype = signals.illnessSubtype ?? "general";
-      const key = `health:illness:${subtype}`;
-      clusters.set(key, [...(clusters.get(key) ?? []), item]);
-    }
-
-    if (HEALTH_TYPES.has(item.memory_type) && signals.hasPainSignal && signals.bodyPart) {
+    if (HEALTH_MEMORY_TYPES.has(item.memory_type) && signals.hasPainSignal && signals.bodyPart) {
       const key = `health:pain:${signals.bodyPart}`;
       clusters.set(key, [...(clusters.get(key) ?? []), item]);
     }
@@ -569,7 +439,9 @@ function buildProposals(students: StudentRow[], items: MemoryItemRow[]): Cluster
     }
 
     const clusters = buildClustersForStudent(studentItems);
-    const signalsById = new Map(studentItems.map((item) => [item.id, parseSignals(item)]));
+    const signalsById = new Map(
+      studentItems.map((item) => [item.id, parseMemoryDuplicateSignals(item.summary_text)])
+    );
 
     for (const [episodeKey, clusterItems] of clusters.entries()) {
       if (clusterItems.length < 2) {
