@@ -122,10 +122,13 @@ import {
   getLatestTrainingPeaksCronRunLog,
   getTrainingPeaksMessageIntentLogByTelegramMessage,
   getTrainingPeaksStudentByTelegramChatId,
+  listActiveTrainingPeaksStudentMemoryItems,
   listTrainingPeaksMessageIntentLogsForTriage,
   listTrainingPeaksCronRunLogs,
   TRAININGPEAKS_ATTENTION_DIGEST_CRON_JOB_NAME,
   recordTrainingPeaksStudentContactEvent,
+  type TrainingPeaksStudentMemoryItem,
+  type TrainingPeaksStudentMemoryType,
   type TrainingPeaksCronRunLog,
   type TrainingPeaksMessageIntentLogStatus,
   updateTrainingPeaksReplyDraftOutcome,
@@ -214,6 +217,7 @@ const TP_CALLBACK_STUDENT_SELECT_CHAT_PREFIX = "tp:sc:";
 const TP_CALLBACK_STUDENT_TEST_PREFIX = "tp:st:";
 const TP_CALLBACK_STUDENT_TOOLS_PREFIX = "tp:stools:";
 const TP_CALLBACK_STUDENT_RACE_RESULTS_PROBE_PREFIX = "tp:sprobe:race:";
+const TP_CALLBACK_STUDENT_CONTEXT_PREFIX = "tp:ctx:";
 const TP_CALLBACK_ACTION_APPROVE_PREFIX = "tp:ta:a:";
 const TP_CALLBACK_ACTION_REJECT_PREFIX = "tp:ta:r:";
 const TP_CALLBACK_ACTION_EXECUTE_PREFIX = "tp:ta:x:";
@@ -299,6 +303,7 @@ const TP_GROUP_TEST_COMMAND_PATTERN = /^\/tp_group_test(?:@\w+)?(?:\s+|$)/;
 const TP_SET_TELEGRAM_COMMAND_PATTERN = /^\/tp_set_telegram(?:@\w+)?(?:\s+|$)/;
 const TP_BIND_COMMAND_PATTERN = /^\/tp_bind(?:@\w+)?(?:\s+|$)/;
 const TP_ACTIONS_COMMAND_PATTERN = /^\/tp_actions(?:@\w+)?(?:\s+|$)/;
+const TP_CONTEXT_COMMAND_PATTERN = /^\/tp_context(?:@\w+)?(?:\s+|$)/;
 const TP_INTENTS_COMMAND_PATTERN = /^\/tp_intents(?:@\w+)?(?:\s+|$)/;
 const TP_INTENT_LOGS_COMMAND_PATTERN = /^\/tp_intent_logs(?:@\w+)?(?:\s+|$)/;
 const TP_UNKNOWN_INTENTS_COMMAND_PATTERN = /^\/tp_unknown(?:@\w+)?(?:\s+|$)/;
@@ -354,6 +359,7 @@ type TrainingPeaksCommand =
   | "tp_set_telegram"
   | "tp_bind"
   | "tp_actions"
+  | "tp_context"
   | "tp_intents"
   | "tp_reply_draft"
   | "tp_draft_feedback"
@@ -386,6 +392,7 @@ type ParsedTrainingPeaksCallback =
   | { kind: "student_test"; studentId: string }
   | { kind: "student_tools_menu"; studentId: string }
   | { kind: "student_race_results_probe"; studentId: string }
+  | { kind: "student_context"; studentId: string }
   | { kind: "report_send"; reportId: string }
   | { kind: "report_skip"; reportId: string }
   | { kind: "action_approve"; actionId: string }
@@ -738,6 +745,10 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
 
   if (TP_ACTIONS_COMMAND_PATTERN.test(text)) {
     return "tp_actions";
+  }
+
+  if (TP_CONTEXT_COMMAND_PATTERN.test(text)) {
+    return "tp_context";
   }
 
   if (
@@ -2010,6 +2021,10 @@ function parseStudentCommand(text: string): string {
   return text.replace(TP_STUDENT_COMMAND_PATTERN, "").trim();
 }
 
+function parseTpContextCommand(text: string): string {
+  return text.replace(TP_CONTEXT_COMMAND_PATTERN, "").trim();
+}
+
 function parseDisableStudentCommand(text: string): string {
   return text.replace(TP_DISABLE_STUDENT_COMMAND_PATTERN, "").trim();
 }
@@ -2921,6 +2936,240 @@ function formatStudentAmbiguityMessage(
   ].join("\n");
 }
 
+function formatTpContextStudentLabel(student: { studentName: string; studentId: string }): string {
+  return student.studentId !== student.studentName
+    ? `${student.studentName} (${student.studentId})`
+    : student.studentName;
+}
+
+function formatTpContextAmbiguousMessage(
+  matches: {
+    studentId: string;
+    studentName: string;
+  }[]
+): string {
+  const visible = matches.slice(0, 5).map((student) => `• ${formatTpContextStudentLabel(student)}`);
+  const hiddenCount = Math.max(0, matches.length - visible.length);
+  return [
+    "Нашлось несколько учеников:",
+    ...visible,
+    ...(hiddenCount > 0 ? [`• ... и ещё ${hiddenCount}`] : []),
+    "Уточни имя.",
+  ].join("\n");
+}
+
+function resolveTpContextStudentByPrefix(
+  students: TrainingPeaksRegistryStudentSnapshot[],
+  query: string
+): TrainingPeaksRegistryStudentSnapshot | null {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  const matches = students.filter((student) => student.id.toLowerCase().startsWith(normalized));
+  if (matches.length !== 1) {
+    return null;
+  }
+
+  return matches[0] ?? null;
+}
+
+function getTpContextStudentLookupResult(
+  students: TrainingPeaksRegistryStudentSnapshot[],
+  query: string
+):
+  | { kind: "not_found" }
+  | { kind: "ambiguous"; matches: { studentId: string; studentName: string }[] }
+  | { kind: "student"; student: TrainingPeaksRegistryStudentSnapshot } {
+  const normalized = query.trim();
+  if (!normalized) {
+    return { kind: "not_found" };
+  }
+
+  const normalizedLower = normalized.toLowerCase();
+  const exactByInternalId = students.find((student) => student.id.toLowerCase() === normalizedLower);
+  if (exactByInternalId) {
+    return { kind: "student", student: exactByInternalId };
+  }
+
+  if (/^[0-9a-f-]{6,}$/i.test(normalized)) {
+    const byInternalIdPrefix = students.filter((student) =>
+      student.id.toLowerCase().startsWith(normalizedLower)
+    );
+    if (byInternalIdPrefix.length === 1) {
+      return { kind: "student", student: byInternalIdPrefix[0]! };
+    }
+    if (byInternalIdPrefix.length > 1) {
+      return {
+        kind: "ambiguous",
+        matches: byInternalIdPrefix.map((student) => ({
+          studentId: student.studentId,
+          studentName: student.studentName,
+        })),
+      };
+    }
+  }
+
+  const exactBySlug = students.find((student) => student.studentId.toLowerCase() === normalizedLower);
+  if (exactBySlug) {
+    return { kind: "student", student: exactBySlug };
+  }
+
+  const prefixBySlug = students.filter((student) => student.studentId.toLowerCase().startsWith(normalizedLower));
+  if (prefixBySlug.length === 1) {
+    return { kind: "student", student: prefixBySlug[0]! };
+  }
+  if (prefixBySlug.length > 1) {
+    return {
+      kind: "ambiguous",
+      matches: prefixBySlug.map((student) => ({
+        studentId: student.studentId,
+        studentName: student.studentName,
+      })),
+    };
+  }
+
+  const identityMatch = matchStudentByIdentity({
+    query: normalized,
+    students,
+    forceAmbiguousForFirstNameOnly: true,
+    buildIdentities: (student) => [
+      { value: student.studentName, kind: "trainingpeaks_name", weight: 1 },
+      { value: student.studentId, kind: "trainingpeaks_id", weight: 1 },
+      { value: student.telegramUsername, kind: "telegram_username", weight: 1.1 },
+    ],
+  });
+
+  if (identityMatch.status === "matched") {
+    return { kind: "student", student: identityMatch.student };
+  }
+
+  if (identityMatch.status === "ambiguous") {
+    return {
+      kind: "ambiguous",
+      matches: identityMatch.candidates.map((candidate) => ({
+        studentId: candidate.student.studentId,
+        studentName: candidate.student.studentName,
+      })),
+    };
+  }
+
+  return { kind: "not_found" };
+}
+
+function getTpContextGroupLabel(memoryType: TrainingPeaksStudentMemoryType): string {
+  if (memoryType === "communication_style") {
+    return "Стиль общения";
+  }
+
+  if (
+    memoryType === "schedule_constraint" ||
+    memoryType === "availability_preference" ||
+    memoryType === "planning_preference" ||
+    memoryType === "travel_or_life_event"
+  ) {
+    return "Расписание / планирование";
+  }
+
+  if (memoryType === "pain_or_injury" || memoryType === "health_status") {
+    return "Здоровье / травмы";
+  }
+
+  if (memoryType === "emotional_state" || memoryType === "load_tolerance") {
+    return "Эмоции / нагрузка";
+  }
+
+  if (memoryType === "race_or_goal") {
+    return "Цели / старты";
+  }
+
+  return "Экипировка";
+}
+
+function formatTpContextValidUntil(validUntil: string | null): string | null {
+  const normalized = validUntil?.trim() ?? "";
+  if (!normalized) {
+    return null;
+  }
+
+  return normalized.length >= 10 ? normalized.slice(0, 10) : normalized;
+}
+
+function getTpContextBulletText(item: TrainingPeaksStudentMemoryItem): string {
+  const summary = item.summaryText.replace(/\s+/g, " ").trim();
+  const suffixes: string[] = [];
+  const validUntil = formatTpContextValidUntil(item.validUntil);
+  if (validUntil) {
+    suffixes.push(`до ${validUntil}`);
+  }
+  if (item.confidence !== null && item.confidence < 0.7) {
+    suffixes.push("низкая уверенность");
+  }
+
+  if (suffixes.length === 0) {
+    return `• ${summary}`;
+  }
+
+  return `• ${summary} (${suffixes.join(", ")})`;
+}
+
+function formatTrainingPeaksContextCardText(
+  student: { studentName: string },
+  items: TrainingPeaksStudentMemoryItem[]
+): string {
+  const lines: string[] = [`🧠 Память: ${student.studentName}`];
+
+  if (items.length === 0) {
+    lines.push("Пока активных заметок нет.");
+    return lines.join("\n");
+  }
+
+  const sectionOrder = [
+    "Стиль общения",
+    "Расписание / планирование",
+    "Здоровье / травмы",
+    "Эмоции / нагрузка",
+    "Цели / старты",
+    "Экипировка",
+  ] as const;
+  const grouped = new Map<string, string[]>();
+  for (const item of items) {
+    const section = getTpContextGroupLabel(item.memoryType);
+    const current = grouped.get(section) ?? [];
+    current.push(getTpContextBulletText(item));
+    grouped.set(section, current);
+  }
+
+  for (const section of sectionOrder) {
+    const bullets = grouped.get(section);
+    if (!bullets || bullets.length === 0) {
+      continue;
+    }
+    lines.push("", `${section}:`, ...bullets);
+  }
+
+  return lines.join("\n");
+}
+
+function getTrainingPeaksStudentContextMarkup(studentId: string): TelegramInlineKeyboardMarkup {
+  return createInlineKeyboardMarkup([
+    [createMenuButton("👤 Ученик", `tp:i:${studentId}`)],
+    [createMenuButton("🔄 Обновить", `${TP_CALLBACK_STUDENT_CONTEXT_PREFIX}${studentId.slice(0, 12)}`)],
+    [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
+  ]);
+}
+
+async function showTrainingPeaksStudentContext(
+  parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate,
+  student: TrainingPeaksRegistryStudentSnapshot
+): Promise<void> {
+  const items = await listActiveTrainingPeaksStudentMemoryItems(student.id);
+  const text = formatTrainingPeaksContextCardText(student, items);
+  const markup = getTrainingPeaksStudentContextMarkup(student.id);
+  await showTrainingPeaksMenuScreen(parsedMessage, text, markup);
+}
+
 function shortenJobError(errorMessage: string | null): string | null {
   const normalized = errorMessage?.replace(/\s+/g, " ").trim();
 
@@ -3710,6 +3959,7 @@ export function getTrainingPeaksHelpLines(): string[] {
     "5. Ученики",
     "👥 /tp_students — список учеников",
     "/tp_student <ученик> — карточка ученика",
+    "/tp_context <ученик> — активная Coach Memory v1 по ученику (read-only)",
     "Управление учениками и Telegram-привязкой в основном выполняется в Web Admin.",
     "Fallback-инструменты привязки доступны из карточки ученика.",
     "",
@@ -4096,6 +4346,11 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
       const studentId = data.slice(prefix.length).trim();
       return studentId ? { kind, studentId } : null;
     }
+  }
+
+  if (data.startsWith(TP_CALLBACK_STUDENT_CONTEXT_PREFIX)) {
+    const studentIdPrefix = data.slice(TP_CALLBACK_STUDENT_CONTEXT_PREFIX.length).trim();
+    return studentIdPrefix ? { kind: "student_context", studentId: studentIdPrefix } : null;
   }
 
   if (data.startsWith(TP_CALLBACK_STUDENT_SELECT_CHAT_PREFIX)) {
@@ -8080,6 +8335,31 @@ async function handleTrainingPeaksReplyDraft(
   );
 }
 
+async function handleTrainingPeaksContextCommand(
+  parsedMessage: ParsedTelegramUpdate,
+  text: string
+): Promise<void> {
+  const studentQuery = parseTpContextCommand(text);
+  if (!studentQuery) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "Использование: /tp_context <имя ученика>");
+    return;
+  }
+
+  const students = await getTrainingPeaksStudentsRegistryWithLatestReportStatus();
+  const lookup = getTpContextStudentLookupResult(students, studentQuery);
+  if (lookup.kind === "not_found") {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, "Не нашёл ученика. Уточни имя.");
+    return;
+  }
+
+  if (lookup.kind === "ambiguous") {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, formatTpContextAmbiguousMessage(lookup.matches));
+    return;
+  }
+
+  await showTrainingPeaksStudentContext(parsedMessage, lookup.student);
+}
+
 async function handleTrainingPeaksReplyDraftFeedback(
   parsedMessage: ParsedTelegramUpdate,
   text: string
@@ -9222,6 +9502,22 @@ export async function handleTrainingPeaksTelegramCallback(
       return "handled";
     }
 
+    if (callback.kind === "student_context") {
+      const students = await getTrainingPeaksStudentsRegistryWithLatestReportStatus();
+      const student = resolveTpContextStudentByPrefix(students, callback.studentId);
+      if (!student) {
+        await editTrainingPeaksMenuMessage(
+          parsedMessage.chatId,
+          parsedMessage.messageId,
+          "Ученик не найден. Запусти /tp_context <имя ученика> заново.",
+          getStudentNotFoundMarkup()
+        );
+        return "handled";
+      }
+      await showTrainingPeaksStudentContext(parsedMessage, student);
+      return "handled";
+    }
+
     if (callback.kind === "student_race_results_probe") {
       await handleTrainingPeaksStudentRaceResultsProbeCallback(parsedMessage, callback.studentId);
       return "handled";
@@ -10043,6 +10339,11 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_actions") {
       await showTpActionsList(parsedMessage);
+      return "handled";
+    }
+
+    if (command === "tp_context") {
+      await handleTrainingPeaksContextCommand(parsedMessage, text);
       return "handled";
     }
 
