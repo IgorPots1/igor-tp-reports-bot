@@ -5333,6 +5333,113 @@ export type InsertTrainingPeaksMessageIntentLogInput = {
   metadata?: Record<string, unknown>;
 };
 
+export type TrainingPeaksStudentMemoryType =
+  | "communication_style"
+  | "schedule_constraint"
+  | "availability_preference"
+  | "pain_or_injury"
+  | "health_status"
+  | "emotional_state"
+  | "load_tolerance"
+  | "planning_preference"
+  | "race_or_goal"
+  | "travel_or_life_event"
+  | "equipment_or_device_note";
+
+export type TrainingPeaksStudentMemorySource =
+  | "ai_extraction"
+  | "coach_manual"
+  | "system"
+  | "observation_import"
+  | "telegram_command";
+
+export type TrainingPeaksStudentMemoryItem = {
+  id: string;
+  studentId: string;
+  memoryType: TrainingPeaksStudentMemoryType;
+  summaryText: string;
+  structured: Record<string, unknown>;
+  source: TrainingPeaksStudentMemorySource;
+  confidence: number | null;
+  validFrom: string | null;
+  validUntil: string | null;
+  isActive: boolean;
+  supersededBy: string | null;
+  sourceObservationId: string | null;
+  sourceMessagePreview: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type TrainingPeaksStudentMemoryItemRow = {
+  id: string;
+  student_id: string;
+  memory_type: string;
+  summary_text: string;
+  structured: unknown;
+  source: string;
+  confidence: number | null;
+  valid_from: string | null;
+  valid_until: string | null;
+  is_active: boolean;
+  superseded_by: string | null;
+  source_observation_id: string | null;
+  source_message_preview: string | null;
+  first_seen_at: string;
+  last_seen_at: string;
+  metadata: unknown;
+  created_at: string;
+  updated_at: string;
+};
+
+export type InsertTrainingPeaksStudentMemoryItemInput = {
+  studentId: string;
+  memoryType: TrainingPeaksStudentMemoryType;
+  summaryText: string;
+  structured?: Record<string, unknown>;
+  source?: TrainingPeaksStudentMemorySource;
+  confidence?: number | null;
+  validFrom?: string | null;
+  validUntil?: string | null;
+  isActive?: boolean;
+  supersededBy?: string | null;
+  sourceObservationId?: string | null;
+  sourceMessagePreview?: string | null;
+  firstSeenAt?: string;
+  lastSeenAt?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type UpdateTrainingPeaksStudentMemoryItemInput = {
+  summaryText?: string;
+  structured?: Record<string, unknown>;
+  source?: TrainingPeaksStudentMemorySource;
+  confidence?: number | null;
+  validFrom?: string | null;
+  validUntil?: string | null;
+  isActive?: boolean;
+  supersededBy?: string | null;
+  sourceObservationId?: string | null;
+  sourceMessagePreview?: string | null;
+  lastSeenAt?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type ListTrainingPeaksStudentMemoryItemsOptions = {
+  includeExpired?: boolean;
+  memoryTypes?: readonly TrainingPeaksStudentMemoryType[];
+  asOfDate?: string;
+  limit?: number;
+};
+
+export type ListTrainingPeaksStudentMemoryItemsForStudentsOptions =
+  ListTrainingPeaksStudentMemoryItemsOptions & {
+    activeOnly?: boolean;
+  };
+
 export type InsertTrainingPeaksStudentContextSnapshotInput = {
   studentId: string | null;
   sourceIntentLogId?: string | null;
@@ -5554,6 +5661,45 @@ function mapTrainingPeaksMessageIntentLogRow(
   };
 }
 
+function mapTrainingPeaksStudentMemoryItemRow(
+  row: TrainingPeaksStudentMemoryItemRow
+): TrainingPeaksStudentMemoryItem {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    memoryType: row.memory_type as TrainingPeaksStudentMemoryType,
+    summaryText: row.summary_text,
+    structured:
+      row.structured && typeof row.structured === "object" && !Array.isArray(row.structured)
+        ? (row.structured as Record<string, unknown>)
+        : {},
+    source: row.source as TrainingPeaksStudentMemorySource,
+    confidence: row.confidence,
+    validFrom: row.valid_from,
+    validUntil: row.valid_until,
+    isActive: row.is_active,
+    supersededBy: row.superseded_by,
+    sourceObservationId: row.source_observation_id,
+    sourceMessagePreview: row.source_message_preview,
+    firstSeenAt: row.first_seen_at,
+    lastSeenAt: row.last_seen_at,
+    metadata:
+      row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? (row.metadata as Record<string, unknown>)
+        : {},
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function normalizeTrainingPeaksMemoryReferenceDate(referenceDate?: string): string {
+  const normalized = referenceDate?.trim() ?? "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    return normalized;
+  }
+  return new Date().toISOString().slice(0, 10);
+}
+
 function normalizeTrainingPeaksCoachActionNote(value: string | null | undefined): string | null {
   const normalized = value?.replace(/\s+/g, " ").trim();
   return normalized ? normalized : null;
@@ -5735,6 +5881,243 @@ export async function insertTrainingPeaksStudentContextSnapshot(
   }
 
   return data as { id: string };
+}
+
+export async function insertTrainingPeaksStudentMemoryItem(
+  input: InsertTrainingPeaksStudentMemoryItemInput
+): Promise<TrainingPeaksStudentMemoryItem> {
+  const supabase = createSupabaseServerClient();
+  const nowIso = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_memory_items")
+    .insert({
+      student_id: input.studentId,
+      memory_type: input.memoryType,
+      summary_text: input.summaryText,
+      structured: input.structured ?? {},
+      source: input.source ?? "ai_extraction",
+      confidence: input.confidence ?? null,
+      valid_from: input.validFrom ?? null,
+      valid_until: input.validUntil ?? null,
+      is_active: input.isActive ?? true,
+      superseded_by: input.supersededBy ?? null,
+      source_observation_id: input.sourceObservationId ?? null,
+      source_message_preview: input.sourceMessagePreview ?? null,
+      first_seen_at: input.firstSeenAt ?? nowIso,
+      last_seen_at: input.lastSeenAt ?? nowIso,
+      metadata: input.metadata ?? {},
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to insert TrainingPeaks student memory item: ${error.message}`);
+  }
+
+  return mapTrainingPeaksStudentMemoryItemRow(data as TrainingPeaksStudentMemoryItemRow);
+}
+
+export async function listActiveTrainingPeaksStudentMemoryItems(
+  studentId: string,
+  options: ListTrainingPeaksStudentMemoryItemsOptions = {}
+): Promise<TrainingPeaksStudentMemoryItem[]> {
+  const supabase = createSupabaseServerClient();
+  const safeLimit = Math.max(1, Math.min(options.limit ?? 200, 1000));
+  const asOfDate = normalizeTrainingPeaksMemoryReferenceDate(options.asOfDate);
+
+  let query = supabase
+    .from("trainingpeaks_student_memory_items")
+    .select("*")
+    .eq("student_id", studentId)
+    .eq("is_active", true)
+    .order("memory_type", { ascending: true })
+    .order("last_seen_at", { ascending: false })
+    .limit(safeLimit);
+
+  if (!options.includeExpired) {
+    query = query.or(`valid_until.is.null,valid_until.gte.${asOfDate}`);
+  }
+  if (options.memoryTypes && options.memoryTypes.length > 0) {
+    query = query.in("memory_type", [...options.memoryTypes]);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    throw new Error(`Failed to list active TrainingPeaks student memory items: ${error.message}`);
+  }
+
+  return ((data as TrainingPeaksStudentMemoryItemRow[]) ?? []).map(mapTrainingPeaksStudentMemoryItemRow);
+}
+
+export async function listTrainingPeaksStudentMemoryItemsForStudents(
+  studentIds: readonly string[],
+  options: ListTrainingPeaksStudentMemoryItemsForStudentsOptions = {}
+): Promise<TrainingPeaksStudentMemoryItem[]> {
+  const normalizedStudentIds = [...new Set(studentIds.map((value) => value.trim()).filter(Boolean))];
+  if (normalizedStudentIds.length === 0) {
+    return [];
+  }
+
+  const supabase = createSupabaseServerClient();
+  const safeLimit = Math.max(1, Math.min(options.limit ?? 2000, 5000));
+  const asOfDate = normalizeTrainingPeaksMemoryReferenceDate(options.asOfDate);
+  const activeOnly = options.activeOnly ?? true;
+
+  let query = supabase
+    .from("trainingpeaks_student_memory_items")
+    .select("*")
+    .in("student_id", normalizedStudentIds)
+    .order("memory_type", { ascending: true })
+    .order("last_seen_at", { ascending: false })
+    .limit(safeLimit);
+
+  if (activeOnly) {
+    query = query.eq("is_active", true);
+  }
+  if (!options.includeExpired) {
+    query = query.or(`valid_until.is.null,valid_until.gte.${asOfDate}`);
+  }
+  if (options.memoryTypes && options.memoryTypes.length > 0) {
+    query = query.in("memory_type", [...options.memoryTypes]);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    throw new Error(`Failed to list TrainingPeaks student memory items for students: ${error.message}`);
+  }
+
+  return ((data as TrainingPeaksStudentMemoryItemRow[]) ?? []).map(mapTrainingPeaksStudentMemoryItemRow);
+}
+
+export async function deactivateTrainingPeaksStudentMemoryItem(
+  id: string,
+  reason?: string
+): Promise<TrainingPeaksStudentMemoryItem | null> {
+  const normalizedReason = reason?.trim() ?? "";
+  const supabase = createSupabaseServerClient();
+  const nowIso = new Date().toISOString();
+  let metadataToSave: Record<string, unknown> | undefined;
+
+  if (normalizedReason.length > 0) {
+    const existing = await supabase
+      .from("trainingpeaks_student_memory_items")
+      .select("metadata")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (existing.error) {
+      throw new Error(`Failed to load TrainingPeaks student memory metadata ${id}: ${existing.error.message}`);
+    }
+
+    if (existing.data) {
+      const existingMetadata =
+        existing.data.metadata &&
+        typeof existing.data.metadata === "object" &&
+        !Array.isArray(existing.data.metadata)
+          ? (existing.data.metadata as Record<string, unknown>)
+          : {};
+      metadataToSave = {
+        ...existingMetadata,
+        deactivated_reason: normalizedReason,
+      };
+    }
+  }
+
+  const updates = pickDefinedValues({
+    is_active: false,
+    updated_at: nowIso,
+    metadata: metadataToSave,
+  });
+
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_memory_items")
+    .update(updates)
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to deactivate TrainingPeaks student memory item ${id}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksStudentMemoryItemRow(data as TrainingPeaksStudentMemoryItemRow);
+}
+
+export async function supersedeTrainingPeaksStudentMemoryItem(
+  oldId: string,
+  newId: string
+): Promise<TrainingPeaksStudentMemoryItem | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_memory_items")
+    .update({
+      is_active: false,
+      superseded_by: newId,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", oldId)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to supersede TrainingPeaks student memory item ${oldId}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksStudentMemoryItemRow(data as TrainingPeaksStudentMemoryItemRow);
+}
+
+export async function touchTrainingPeaksStudentMemoryItem(
+  id: string
+): Promise<TrainingPeaksStudentMemoryItem | null> {
+  const nowIso = new Date().toISOString();
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_memory_items")
+    .update({
+      last_seen_at: nowIso,
+      updated_at: nowIso,
+    })
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to touch TrainingPeaks student memory item ${id}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksStudentMemoryItemRow(data as TrainingPeaksStudentMemoryItemRow);
+}
+
+export async function expireTrainingPeaksStudentMemoryItems(referenceDate?: string): Promise<number> {
+  const supabase = createSupabaseServerClient();
+  const asOfDate = normalizeTrainingPeaksMemoryReferenceDate(referenceDate);
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_memory_items")
+    .update({
+      is_active: false,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("is_active", true)
+    .lt("valid_until", asOfDate)
+    .select("id");
+
+  if (error) {
+    throw new Error(`Failed to expire TrainingPeaks student memory items: ${error.message}`);
+  }
+
+  return (data ?? []).length;
 }
 
 export async function insertTrainingPeaksCoachCase(
