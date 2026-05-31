@@ -63,6 +63,7 @@
     "check-prediction-validation-log": "npm --prefix tools/trainingpeaks-export run check-prediction-validation-log --",
     "check-trainingpeaks-context-coverage": "npx tsx scripts/check-trainingpeaks-context-coverage.ts",
     "check-coach-memory-v1-estimate": "npx tsx scripts/check-coach-memory-v1-estimate.ts",
+    "check-coach-memory-v1-ai-dry-run": "npx tsx scripts/check-coach-memory-v1-ai-dry-run.ts",
     "check:move-phrase-coverage": "npx tsx scripts/check-move-phrase-coverage.ts"
   },
   "dependencies": {
