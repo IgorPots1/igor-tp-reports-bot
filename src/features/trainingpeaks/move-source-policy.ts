@@ -108,6 +108,97 @@ function isBlockedOnlyByInferredSourceReasons(canExecuteReasons: unknown): boole
   );
 }
 
+function isConfidenceThresholdReason(reason: string): boolean {
+  return /^confidence below threshold \d+(?:\.\d+)?$/i.test(reason);
+}
+
+function isBlockedOnlyByConfidenceThresholdReasons(canExecuteReasons: unknown): boolean {
+  const normalized = normalizeCanExecuteReasons(canExecuteReasons);
+  if (normalized.length === 0) {
+    return false;
+  }
+  return normalized.every((reason) => isConfidenceThresholdReason(reason));
+}
+
+export function isCoachConfirmedSourceDateManualExecuteReady(input: unknown, parsedPayload?: unknown): boolean {
+  if (!input || typeof input !== "object") {
+    return false;
+  }
+
+  const payload = input as {
+    dryRunResult?: unknown;
+    canExecute?: unknown;
+    canExecuteReasons?: unknown;
+    candidate?: { fingerprint?: unknown } | null;
+    selectedSourceDate?: unknown;
+    selectedSourceDatePolicy?: unknown;
+    resolvedDates?: { sourceDate?: unknown; targetDate?: unknown } | null;
+    identityCheck?: { matchedBy?: unknown } | null;
+    candidateAlternativesCount?: unknown;
+  };
+
+  if (payload.dryRunResult !== "candidate_found") {
+    return false;
+  }
+
+  const sourceDate = trimOrNull(payload.resolvedDates?.sourceDate) ?? trimOrNull(payload.selectedSourceDate);
+  const targetDate = trimOrNull(payload.resolvedDates?.targetDate);
+  if (!sourceDate || !targetDate) {
+    return false;
+  }
+
+  const fingerprint = trimOrNull(payload.candidate?.fingerprint);
+  if (!fingerprint) {
+    return false;
+  }
+
+  const identityMatchedBy =
+    typeof payload.identityCheck?.matchedBy === "string" ? payload.identityCheck.matchedBy : null;
+  if (!identityMatchedBy || identityMatchedBy === "mismatch") {
+    return false;
+  }
+
+  if (
+    typeof payload.candidateAlternativesCount === "number" &&
+    Number.isFinite(payload.candidateAlternativesCount) &&
+    payload.candidateAlternativesCount > 0
+  ) {
+    return false;
+  }
+
+  const policy =
+    typeof payload.selectedSourceDatePolicy === "string" && payload.selectedSourceDatePolicy.trim()
+      ? payload.selectedSourceDatePolicy.trim()
+      : null;
+  if (policy !== "coach_confirmed_source_date") {
+    return false;
+  }
+
+  const confirmedSourceDate = extractCoachConfirmedSourceDate(parsedPayload ?? null);
+  if (!confirmedSourceDate || confirmedSourceDate !== sourceDate) {
+    return false;
+  }
+
+  const moveSourceValidation = validateMoveSourceForExecution({
+    selectedSourceDatePolicy: policy,
+    parsedPayload: parsedPayload ?? null,
+    dryRunLog: input,
+  });
+  if (!moveSourceValidation.ok) {
+    return false;
+  }
+
+  if (payload.canExecute === true) {
+    return true;
+  }
+
+  if (payload.canExecute !== false) {
+    return false;
+  }
+
+  return isBlockedOnlyByConfidenceThresholdReasons(payload.canExecuteReasons);
+}
+
 export function isEligibleForCoachSourceDateConfirmation(input: unknown): boolean {
   if (!input || typeof input !== "object") {
     return false;
@@ -169,6 +260,9 @@ function shouldAllowCoachConfirmedSourceDateReadinessBypass(
   logJson: unknown,
   parsedPayload: unknown
 ): boolean {
+  if (isCoachConfirmedSourceDateManualExecuteReady(logJson, parsedPayload)) {
+    return true;
+  }
   if (!logJson || typeof logJson !== "object") {
     return false;
   }
@@ -611,7 +705,7 @@ export function validateDryRunLogReadiness(
     return { ok: false, reason: moveSourceValidation.reason };
   }
 
-  if (policy !== STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY) {
+  if (policy !== STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY && !allowCoachConfirmedBypass) {
     const confidence = toNumericConfidence(payload.confidence);
     if (confidence === null || confidence < DEFAULT_DRY_RUN_EXECUTION_CONFIDENCE_THRESHOLD) {
       return {

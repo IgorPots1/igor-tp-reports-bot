@@ -8,6 +8,8 @@ import type {
 import {
   INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU,
   isEligibleForCoachSourceDateConfirmation,
+  isCoachConfirmedSourceDateManualExecuteReady,
+  validateDryRunLogReadiness,
 } from "@/features/trainingpeaks/move-source-policy";
 import { formatTrainingPeaksExecuteQueuedMessage } from "@/features/trainingpeaks/action-execute-telegram-copy";
 import {
@@ -5739,10 +5741,15 @@ function shouldShowActionExecuteButton(
     return false;
   }
   const latestDryRun = action.latestRunContext?.latestDryRun ?? null;
+  const manualExecuteReady =
+    latestDryRun?.status === "completed" &&
+    Boolean(latestDryRun.logJson) &&
+    validateDryRunLogReadiness(latestDryRun.logJson, action.parsedPayload).ok &&
+    isCoachConfirmedSourceDateManualExecuteReady(latestDryRun.logJson, action.parsedPayload);
   return (
     latestDryRun?.status === "completed" &&
     latestDryRun.dryRunResult === "candidate_found" &&
-    latestDryRun.canExecute === true
+    (latestDryRun.canExecute === true || manualExecuteReady)
   );
 }
 

@@ -2710,6 +2710,9 @@ async function notifyCoachDryRunResult(input: {
     }
     lines.push("Источник тренировки определён автоматически. Подтвердите исходную дату перед выполнением.");
     lines.push("TrainingPeaks не изменён.");
+  } else if (evaluation?.dryRunResult === "candidate_found") {
+    lines.push(`ℹ️ Тренировка найдена, но требуется ручная проверка. ${input.studentName}: ${route}.`);
+    lines.push("TrainingPeaks не изменён. Проверь заявку в /tp_actions.");
   } else {
     lines.push(
       `⚠️ Проверка не пройдена. ${input.studentName}: ${route}. Перенос не выполнен.`
@@ -6656,7 +6659,7 @@ function buildIdentityCheck(input: {
   };
 }
 
-function evaluateDryRunOutcome(input: {
+export function evaluateDryRunOutcome(input: {
   action: TrainingPeaksActionRow;
   student: TrainingPeaksStudentRow | null;
   pageMeta: {
@@ -7251,13 +7254,25 @@ function evaluateDryRunOutcome(input: {
     }
   }
 
+  const coachConfirmedManualExecuteReady =
+    selectedSourceDatePolicy === COACH_CONFIRMED_SOURCE_DATE_POLICY &&
+    dryRunResult === "candidate_found" &&
+    effectiveSafeCandidateCount === 1 &&
+    Boolean(targetDate) &&
+    Boolean(selectedSourceDate) &&
+    Boolean(candidate.fingerprint) &&
+    input.identityCheck.matchedBy !== "mismatch" &&
+    moveSourceTrustedForExecution &&
+    reasons.length === 1 &&
+    /^confidence below threshold \d+(?:\.\d+)?$/i.test(reasons[0] ?? "");
+
   const canExecute =
     dryRunResult === "candidate_found" &&
     effectiveSafeCandidateCount === 1 &&
     Boolean(targetDate) &&
     Boolean(selectedSourceDate) &&
     Boolean(candidate.fingerprint) &&
-    executionConfidence >= executionConfidenceThreshold &&
+    (executionConfidence >= executionConfidenceThreshold || coachConfirmedManualExecuteReady) &&
     input.identityCheck.matchedBy !== "mismatch" &&
     moveSourceTrustedForExecution;
 
@@ -7265,8 +7280,13 @@ function evaluateDryRunOutcome(input: {
     pushReason("safety policy conditions not met");
   }
 
-  if (dryRunResult === "candidate_found" && !canExecute && moveSourceTrustedForExecution) {
-    dryRunResult = plausibleCandidates.length > 1 ? "ambiguous" : "not_found";
+  if (
+    dryRunResult === "candidate_found" &&
+    !canExecute &&
+    moveSourceTrustedForExecution &&
+    plausibleCandidates.length > 1
+  ) {
+    dryRunResult = "ambiguous";
   }
 
   return {
