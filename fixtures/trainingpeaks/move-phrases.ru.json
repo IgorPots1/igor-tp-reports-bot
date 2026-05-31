@@ -41,12 +41,11 @@
     "input": "перенеси тренировку с 30 на 31 мая",
     "baseDate": "2026-05-30",
     "expectedIntentGatePass": true,
-    "expectedParseOk": false,
+    "expectedParseOk": true,
     "expectedSourceDate": "2026-05-30",
     "expectedTargetDate": "2026-05-31",
-    "expectedWorkoutKind": "workout",
-    "knownCurrentFailure": true,
-    "notes": "Shared-month source day is currently not parsed from bare day token"
+    "expectedWorkoutKind": "unknown",
+    "notes": "Shared-month source day should infer source month from target month"
   },
   {
     "id": "explicit-date-005",

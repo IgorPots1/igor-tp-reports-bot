@@ -350,6 +350,8 @@ export type ParsedTrainingPeaksMoveWorkoutPayload = {
     parserBaseDateSource: "message_timestamp" | "env_override" | "server_now";
     parserBaseDateIso: string;
     messageTimestampAvailable: boolean;
+    sourceDateInferredFromTargetMonth?: boolean;
+    sourceDateInferencePattern?: "day_only_source_target_month";
     assemblyKind?: "single_message" | "multi_message";
     contextMessageIds?: Array<string | number>;
     contextPreviews?: string[];
@@ -1650,6 +1652,33 @@ function normalizeTimeRef(ref: TrainingPeaksMoveWorkoutTimeRef): TrainingPeaksMo
   return ref;
 }
 
+function inferSharedMonthSourceRef(sourceSegment: string, targetRef: IndexedTimeRef): IndexedTimeRef | null {
+  if (targetRef.kind !== "date") {
+    return null;
+  }
+  const sourceDayMatch = sourceSegment.trim().match(/^(\d{1,2})$/);
+  if (!sourceDayMatch) {
+    return null;
+  }
+  const sourceDay = Number(sourceDayMatch[1]);
+  const targetDateMatch = targetRef.value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!targetDateMatch) {
+    return null;
+  }
+  const year = Number(targetDateMatch[1]);
+  const month = Number(targetDateMatch[2]);
+  const inferredIso = parseIsoDateParts(year, month, sourceDay);
+  if (!inferredIso) {
+    return null;
+  }
+  return {
+    kind: "date",
+    value: inferredIso,
+    sourceText: sourceDayMatch[1] ?? sourceSegment.trim(),
+    index: 0,
+  };
+}
+
 function toTimeRefWithoutIndex(ref: IndexedTimeRef): TrainingPeaksMoveWorkoutTimeRef {
   return {
     kind: ref.kind,
@@ -1922,18 +1951,31 @@ function resolveDeterministicMoveWorkout(
   const refs = uniqueTimeRefs([...extractDateRefs(normalized), ...extractWeekdayAndRelativeRefs(normalized)]);
   const pairPattern = /с\s+(.+?)\s+на\s+(.+?)(?=$|[,.!?])/g;
   const pairMatches: Array<{ source: IndexedTimeRef; target: IndexedTimeRef }> = [];
+  let sourceDateInferredFromTargetMonth = false;
   let pairMatch = pairPattern.exec(normalized);
   while (pairMatch) {
+    const sourceSegment = pairMatch[1] ?? "";
+    const targetSegment = pairMatch[2] ?? "";
     const sourceInSegment = uniqueTimeRefs([
-      ...extractDateRefs(pairMatch[1] ?? ""),
-      ...extractWeekdayAndRelativeRefs(pairMatch[1] ?? ""),
+      ...extractDateRefs(sourceSegment),
+      ...extractWeekdayAndRelativeRefs(sourceSegment),
     ]);
     const targetInSegment = uniqueTimeRefs([
-      ...extractDateRefs(pairMatch[2] ?? ""),
-      ...extractWeekdayAndRelativeRefs(pairMatch[2] ?? ""),
+      ...extractDateRefs(targetSegment),
+      ...extractWeekdayAndRelativeRefs(targetSegment),
     ]);
     if (sourceInSegment.length === 1 && targetInSegment.length === 1) {
       pairMatches.push({ source: sourceInSegment[0]!, target: targetInSegment[0]! });
+    } else if (
+      sourceInSegment.length === 0 &&
+      targetInSegment.length === 1 &&
+      targetInSegment[0]!.kind === "date"
+    ) {
+      const inferredSource = inferSharedMonthSourceRef(sourceSegment, targetInSegment[0]!);
+      if (inferredSource) {
+        pairMatches.push({ source: inferredSource, target: targetInSegment[0]! });
+        sourceDateInferredFromTargetMonth = true;
+      }
     }
     pairMatch = pairPattern.exec(normalized);
   }
@@ -2043,6 +2085,12 @@ function resolveDeterministicMoveWorkout(
         typeof context?.messageDateUnix === "number" &&
         Number.isFinite(context.messageDateUnix) &&
         context.messageDateUnix > 0,
+      ...(sourceDateInferredFromTargetMonth
+        ? {
+            sourceDateInferredFromTargetMonth: true,
+            sourceDateInferencePattern: "day_only_source_target_month" as const,
+          }
+        : {}),
     },
     warnings: normalized.includes("заранее")
       ? ["Целевая дата выведена из формулировки «заранее». Проверь вручную."]
