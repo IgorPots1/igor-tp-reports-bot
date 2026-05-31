@@ -197,6 +197,8 @@ type RevalidationComparisonField<T> = {
 type RevalidationComparison = {
   revalidationPassed: boolean;
   mismatchReasons: string[];
+  confidenceThresholdBypassed: boolean;
+  confidenceThresholdBypassReason: string | null;
   trustedDryRunResult: string;
   currentDryRunResult: string;
   trustedCanExecute: boolean;
@@ -7466,14 +7468,70 @@ function compareOptionalField<T>(trusted: T | null, current: T | null): Revalida
   };
 }
 
+function hasCoachConfirmedSourceDateOverride(parsedPayload: unknown): boolean {
+  if (!parsedPayload || typeof parsedPayload !== "object") {
+    return false;
+  }
+  const payload = parsedPayload as {
+    coach_confirmed_source_date?: unknown;
+    source_date_policy_override?: unknown;
+  };
+  const confirmedSourceDate =
+    typeof payload.coach_confirmed_source_date === "string"
+      ? payload.coach_confirmed_source_date.trim()
+      : "";
+  const sourceDatePolicyOverride =
+    typeof payload.source_date_policy_override === "string"
+      ? payload.source_date_policy_override.trim()
+      : "";
+  return Boolean(confirmedSourceDate) || sourceDatePolicyOverride === COACH_CONFIRMED_SOURCE_DATE_POLICY;
+}
+
+export function shouldBypassConfidenceThresholdForCoachConfirmedRevalidation(input: {
+  parsedPayload?: unknown;
+  trustedSelectedSourceDatePolicy: string | null;
+  currentSelectedSourceDatePolicy: string | null;
+  trustedSourceDate: string | null;
+  trustedTargetDate: string | null;
+  currentSourceDate: string | null;
+  currentTargetDate: string | null;
+  actionStatus: TrainingPeaksActionRow["status"];
+  actionExecutionStatus: TrainingPeaksActionRow["execution_status"];
+}): boolean {
+  if (!hasCoachConfirmedSourceDateOverride(input.parsedPayload ?? null)) {
+    return false;
+  }
+  if (
+    input.trustedSelectedSourceDatePolicy !== COACH_CONFIRMED_SOURCE_DATE_POLICY ||
+    input.currentSelectedSourceDatePolicy !== COACH_CONFIRMED_SOURCE_DATE_POLICY
+  ) {
+    return false;
+  }
+  if (
+    !input.trustedSourceDate ||
+    !input.trustedTargetDate ||
+    !input.currentSourceDate ||
+    !input.currentTargetDate
+  ) {
+    return false;
+  }
+  if (input.actionStatus !== "approved") {
+    return false;
+  }
+  return input.actionExecutionStatus === "execute_pending" || input.actionExecutionStatus === "running_local";
+}
+
 function buildRevalidationComparison(input: {
   trusted: TrustedDryRunLog;
   current: DryRunEvaluation;
   parsedPayload?: unknown;
+  actionStatus: TrainingPeaksActionRow["status"];
+  actionExecutionStatus: TrainingPeaksActionRow["execution_status"];
 }): RevalidationComparison {
   const mismatchReasons: string[] = [];
   const trustedCandidate = input.trusted.candidate;
   const currentCandidate = input.current.candidate;
+  let confidenceThresholdBypassReason: string | null = null;
 
   const sourceDate = compareOptionalField(
     input.trusted.resolvedDates.sourceDate,
@@ -7567,10 +7625,24 @@ function buildRevalidationComparison(input: {
   const currentExecutionConfidenceThreshold = strongFutureRevalidationTrusted
     ? moveSourcePolicy.STRONG_FUTURE_DESCRIPTOR_EXECUTION_CONFIDENCE_THRESHOLD
     : 0.8;
+  const shouldBypassConfidenceThreshold = shouldBypassConfidenceThresholdForCoachConfirmedRevalidation({
+    parsedPayload: input.parsedPayload ?? null,
+    trustedSelectedSourceDatePolicy: input.trusted.selectedSourceDatePolicy,
+    currentSelectedSourceDatePolicy: input.current.selectedSourceDatePolicy,
+    trustedSourceDate: input.trusted.resolvedDates.sourceDate,
+    trustedTargetDate: input.trusted.resolvedDates.targetDate,
+    currentSourceDate: input.current.resolvedDates.sourceDate,
+    currentTargetDate: input.current.resolvedDates.targetDate,
+    actionStatus: input.actionStatus,
+    actionExecutionStatus: input.actionExecutionStatus,
+  });
   if (currentExecutionConfidence < currentExecutionConfidenceThreshold) {
-    mismatchReasons.push(
-      `current confidence below threshold: ${currentExecutionConfidence.toFixed(2)}`
-    );
+    if (shouldBypassConfidenceThreshold) {
+      confidenceThresholdBypassReason =
+        "current confidence below threshold ignored because source was coach-confirmed";
+    } else {
+      mismatchReasons.push(`current confidence below threshold: ${currentExecutionConfidence.toFixed(2)}`);
+    }
   }
   if (input.current.candidateAlternativesCount > 0) {
     mismatchReasons.push(`current evaluation ambiguous: alternatives=${input.current.candidateAlternativesCount}`);
@@ -7603,6 +7675,8 @@ function buildRevalidationComparison(input: {
   return {
     revalidationPassed: mismatchReasons.length === 0,
     mismatchReasons,
+    confidenceThresholdBypassed: Boolean(confidenceThresholdBypassReason),
+    confidenceThresholdBypassReason,
     trustedDryRunResult: input.trusted.dryRunResult,
     currentDryRunResult: input.current.dryRunResult,
     trustedCanExecute: input.trusted.canExecute,
@@ -8986,7 +9060,14 @@ async function main(): Promise<void> {
       trusted: claimed.trustedDryRunLog,
       current: evaluation,
       parsedPayload: claimed.action.parsed_payload,
+      actionStatus: claimed.action.status,
+      actionExecutionStatus: claimed.action.execution_status,
     });
+    if (comparison.confidenceThresholdBypassed && comparison.confidenceThresholdBypassReason) {
+      console.log(
+        `[execute-real] action=${claimed.action.id} ${comparison.confidenceThresholdBypassReason} (${evaluation.confidence.toFixed(2)})`
+      );
+    }
 
     if (!comparison.revalidationPassed) {
       const errorMessage = `Revalidation failed: ${comparison.mismatchReasons.join("; ") || "unknown mismatch"}`;

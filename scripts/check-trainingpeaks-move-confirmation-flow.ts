@@ -3,7 +3,10 @@ import {
   isCoachConfirmedSourceDateManualExecuteReady,
   validateDryRunLogReadiness,
 } from "@/features/trainingpeaks/move-source-policy";
-import { evaluateDryRunOutcome } from "../tools/trainingpeaks-export/scripts/tp-actions-once";
+import {
+  evaluateDryRunOutcome,
+  shouldBypassConfidenceThresholdForCoachConfirmedRevalidation,
+} from "../tools/trainingpeaks-export/scripts/tp-actions-once";
 
 type ParsedPayload = {
   parsingDiagnostics?: {
@@ -315,6 +318,40 @@ function run(): void {
     false
   );
   assert.equal(validateDryRunLogReadiness(noCandidateLog, coachConfirmedPayload).ok, false);
+
+  const coachConfirmedBypassAllowed = shouldBypassConfidenceThresholdForCoachConfirmedRevalidation({
+    parsedPayload: coachConfirmedPayload,
+    trustedSelectedSourceDatePolicy: "coach_confirmed_source_date",
+    currentSelectedSourceDatePolicy: "coach_confirmed_source_date",
+    trustedSourceDate: "2026-05-31",
+    trustedTargetDate: "2026-06-01",
+    currentSourceDate: "2026-05-31",
+    currentTargetDate: "2026-06-01",
+    actionStatus: "approved",
+    actionExecutionStatus: "running_local",
+  });
+  assert.equal(
+    coachConfirmedBypassAllowed,
+    true,
+    "coach-confirmed source date should allow confidence bypass in real-mode revalidation"
+  );
+
+  const inferredBypassBlocked = shouldBypassConfidenceThresholdForCoachConfirmedRevalidation({
+    parsedPayload: inferredPayload,
+    trustedSelectedSourceDatePolicy: "nearest_prior_within_3_days",
+    currentSelectedSourceDatePolicy: "nearest_prior_within_3_days",
+    trustedSourceDate: "2026-05-31",
+    trustedTargetDate: "2026-06-01",
+    currentSourceDate: "2026-05-31",
+    currentTargetDate: "2026-06-01",
+    actionStatus: "approved",
+    actionExecutionStatus: "running_local",
+  });
+  assert.equal(
+    inferredBypassBlocked,
+    false,
+    "inferred source moves without coach confirmation must remain confidence-gated"
+  );
 
   console.log("PASS check-trainingpeaks-move-confirmation-flow");
 }
