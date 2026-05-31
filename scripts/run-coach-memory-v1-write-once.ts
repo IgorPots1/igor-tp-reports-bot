@@ -15,6 +15,11 @@ const DEFAULT_ENV_WRITE_LIMIT = 5;
 
 type CliOptions = {
   apply: boolean;
+  onlyCandidates: boolean;
+  allowLarge: boolean;
+  requestedLimit: number;
+  effectiveLimit: number;
+  capSource: "COACH_MEMORY_WRITE_LIMIT_PER_RUN" | "default" | "allow_large";
   limit: number;
   studentQuery: string | null;
 };
@@ -38,10 +43,46 @@ type Counters = {
   processed: number;
   inserted: number;
   touched: number;
+  wouldInsert: number;
+  wouldTouch: number;
+  noMemory: number;
+  belowConfidence: number;
+  duplicate: number;
   skipped: number;
   disabled: number;
   errors: number;
 };
+
+const CANDIDATE_LABELS = new Set([
+  "pain_or_health",
+  "schedule_context",
+  "race_context",
+  "move_workout_candidate",
+  "question_to_coach",
+]);
+
+const CANDIDATE_KEYWORDS = [
+  "боль",
+  "болит",
+  "дискомфорт",
+  "заболел",
+  "температура",
+  "не могу",
+  "не смогу",
+  "график",
+  "во вторник",
+  "в среду",
+  "длительную",
+  "интервалы",
+  "отпуск",
+  "командировка",
+  "тяжело",
+  "нет сил",
+  "усталость",
+  "старт",
+  "марафон",
+  "пульсометр",
+];
 
 function loadLocalEnvFiles(): void {
   const repoRoot = path.resolve(process.cwd());
@@ -93,6 +134,11 @@ function parsePositiveInt(rawValue: string, flag: string): number {
 function parseCliOptions(argv: string[]): CliOptions {
   const options: CliOptions = {
     apply: false,
+    onlyCandidates: false,
+    allowLarge: false,
+    requestedLimit: DEFAULT_LIMIT,
+    effectiveLimit: DEFAULT_LIMIT,
+    capSource: "default",
     limit: DEFAULT_LIMIT,
     studentQuery: null,
   };
@@ -104,9 +150,17 @@ function parseCliOptions(argv: string[]): CliOptions {
       options.apply = true;
       continue;
     }
+    if (arg === "--only-candidates") {
+      options.onlyCandidates = true;
+      continue;
+    }
+    if (arg === "--allow-large") {
+      options.allowLarge = true;
+      continue;
+    }
 
     if (arg.startsWith("--limit=")) {
-      options.limit = parsePositiveInt(arg.slice("--limit=".length).trim(), "--limit");
+      options.requestedLimit = parsePositiveInt(arg.slice("--limit=".length).trim(), "--limit");
       continue;
     }
     if (arg === "--limit") {
@@ -114,7 +168,7 @@ function parseCliOptions(argv: string[]): CliOptions {
       if (!next || next.startsWith("--")) {
         throw new Error(`${LOG_PREFIX} FAIL: missing value for --limit`);
       }
-      options.limit = parsePositiveInt(next, "--limit");
+      options.requestedLimit = parsePositiveInt(next, "--limit");
       index += 1;
       continue;
     }
@@ -137,9 +191,12 @@ function parseCliOptions(argv: string[]): CliOptions {
 
   const envCapRaw = process.env.COACH_MEMORY_WRITE_LIMIT_PER_RUN?.trim();
   const envCapParsed = envCapRaw ? Number(envCapRaw) : Number.NaN;
+  const capSource = Number.isFinite(envCapParsed) && envCapParsed > 0 ? "COACH_MEMORY_WRITE_LIMIT_PER_RUN" : "default";
   const envCap = Number.isFinite(envCapParsed) && envCapParsed > 0 ? Math.floor(envCapParsed) : DEFAULT_ENV_WRITE_LIMIT;
   const hardCap = Math.max(1, Math.min(envCap, MAX_DEFAULT_LIMIT));
-  options.limit = Math.min(options.limit, hardCap);
+  options.capSource = options.allowLarge ? "allow_large" : capSource;
+  options.effectiveLimit = options.allowLarge ? options.requestedLimit : Math.min(options.requestedLimit, hardCap);
+  options.limit = options.effectiveLimit;
   return options;
 }
 
@@ -215,6 +272,43 @@ async function fetchRecentObservations(limit: number, studentIds: string[]): Pro
   return ((data as ObservationRow[] | null) ?? []).filter((row) => Boolean(row.student_id)).slice(0, limit);
 }
 
+function isCandidateObservation(observation: ObservationRow): boolean {
+  const labels = coerceStringArray(observation.labels).map((value) => value.toLowerCase());
+  if (labels.some((label) => CANDIDATE_LABELS.has(label))) {
+    return true;
+  }
+  const preview = (observation.text_preview ?? "").toLowerCase();
+  if (!preview) {
+    return false;
+  }
+  return CANDIDATE_KEYWORDS.some((keyword) => preview.includes(keyword));
+}
+
+function mapObservationStatus(
+  result: Awaited<ReturnType<typeof processCoachMemoryForObservation>>,
+  apply: boolean
+): "no_memory" | "would_insert" | "would_touch" | "inserted" | "touched" | "below_confidence" | "duplicate" | "error" {
+  if (result.status === "disabled") {
+    return "no_memory";
+  }
+  if (result.status === "no_memory") {
+    return "no_memory";
+  }
+  if (result.inserted > 0) {
+    return apply ? "inserted" : "would_insert";
+  }
+  if (result.touched > 0) {
+    return apply ? "touched" : "would_touch";
+  }
+  if (result.belowConfidence > 0) {
+    return "below_confidence";
+  }
+  if (result.duplicate > 0) {
+    return "duplicate";
+  }
+  return "no_memory";
+}
+
 async function run(): Promise<void> {
   loadLocalEnvFiles();
   const options = parseCliOptions(process.argv.slice(2));
@@ -224,18 +318,30 @@ async function run(): Promise<void> {
   }
 
   const studentById = await fetchStudents(options.studentQuery);
-  const observations = await fetchRecentObservations(options.limit, [...studentById.keys()]);
+  const observationFetchLimit = options.onlyCandidates ? Math.max(options.limit * 8, 40) : options.limit;
+  const recentObservations = await fetchRecentObservations(observationFetchLimit, [...studentById.keys()]);
+  const observations = options.onlyCandidates
+    ? recentObservations.filter((observation) => isCandidateObservation(observation)).slice(0, options.limit)
+    : recentObservations.slice(0, options.limit);
   const counters: Counters = {
     processed: 0,
     inserted: 0,
     touched: 0,
+    wouldInsert: 0,
+    wouldTouch: 0,
+    noMemory: 0,
+    belowConfidence: 0,
+    duplicate: 0,
     skipped: 0,
     disabled: 0,
     errors: 0,
   };
 
   console.log(`${LOG_PREFIX} mode=${options.apply ? "apply" : "dry-run"}`);
-  console.log(`${LOG_PREFIX} limit=${options.limit}`);
+  console.log(`${LOG_PREFIX} requestedLimit=${options.requestedLimit}`);
+  console.log(`${LOG_PREFIX} effectiveLimit=${options.effectiveLimit}`);
+  console.log(`${LOG_PREFIX} capSource=${options.capSource}`);
+  console.log(`${LOG_PREFIX} candidateMode=${options.onlyCandidates ? "only_candidates" : "latest"}`);
   if (!options.apply) {
     console.log(`${LOG_PREFIX} apply=false (no DB writes)`);
   }
@@ -273,14 +379,33 @@ async function run(): Promise<void> {
 
       if (result.status === "disabled") {
         counters.disabled += 1;
+        counters.noMemory += 1;
       } else {
-        counters.inserted += result.inserted;
-        counters.touched += result.touched;
+        if (options.apply) {
+          counters.inserted += result.inserted;
+          counters.touched += result.touched;
+        } else {
+          counters.wouldInsert += result.inserted;
+          counters.wouldTouch += result.touched;
+        }
+        counters.belowConfidence += result.belowConfidence;
+        counters.duplicate += result.duplicate;
         counters.skipped += result.skipped;
+        if (result.status === "no_memory") {
+          counters.noMemory += 1;
+        } else if (
+          result.inserted === 0 &&
+          result.touched === 0 &&
+          result.belowConfidence === 0 &&
+          result.duplicate === 0
+        ) {
+          counters.noMemory += 1;
+        }
       }
 
+      const status = mapObservationStatus(result, options.apply);
       console.log(
-        `${LOG_PREFIX} obs=${observation.id.slice(0, 8)} student=${studentSafeRef(student, studentId)} status=${result.status}`
+        `${LOG_PREFIX} obs=${observation.id.slice(0, 8)} student=${studentSafeRef(student, studentId)} status=${status}`
       );
     } catch (error) {
       counters.errors += 1;
@@ -290,6 +415,9 @@ async function run(): Promise<void> {
         studentIdPrefix: studentId.slice(0, 8),
         errorClass: errorName,
       });
+      console.log(
+        `${LOG_PREFIX} obs=${observation.id.slice(0, 8)} student=${studentSafeRef(student, studentId)} status=error`
+      );
     }
   }
 
@@ -298,6 +426,11 @@ async function run(): Promise<void> {
   console.log(`processed=${counters.processed}`);
   console.log(`inserted=${counters.inserted}`);
   console.log(`touched=${counters.touched}`);
+  console.log(`wouldInsert=${counters.wouldInsert}`);
+  console.log(`wouldTouch=${counters.wouldTouch}`);
+  console.log(`noMemory=${counters.noMemory}`);
+  console.log(`belowConfidence=${counters.belowConfidence}`);
+  console.log(`duplicate=${counters.duplicate}`);
   console.log(`skipped=${counters.skipped}`);
   console.log(`disabled=${counters.disabled}`);
   console.log(`errors=${counters.errors}`);

@@ -120,6 +120,8 @@ export type ProcessCoachMemoryForObservationResult =
       inserted: 0;
       touched: 0;
       skipped: 0;
+      belowConfidence: 0;
+      duplicate: 0;
       reason: string;
     }
   | {
@@ -127,6 +129,8 @@ export type ProcessCoachMemoryForObservationResult =
       inserted: 0;
       touched: 0;
       skipped: number;
+      belowConfidence: 0;
+      duplicate: 0;
       reason: string;
     }
   | {
@@ -134,6 +138,8 @@ export type ProcessCoachMemoryForObservationResult =
       inserted: number;
       touched: number;
       skipped: number;
+      belowConfidence: number;
+      duplicate: number;
       reason: string;
       applyWrites: boolean;
     };
@@ -914,6 +920,8 @@ export async function processCoachMemoryForObservation(
       inserted: 0,
       touched: 0,
       skipped: 0,
+      belowConfidence: 0,
+      duplicate: 0,
       reason: "COACH_MEMORY_EXTRACTION_ENABLED is not true.",
     };
   }
@@ -938,6 +946,8 @@ export async function processCoachMemoryForObservation(
       inserted: 0,
       touched: 0,
       skipped: extraction.memoryItems.length,
+      belowConfidence: 0,
+      duplicate: 0,
       reason: extraction.reason,
     };
   }
@@ -966,10 +976,13 @@ export async function processCoachMemoryForObservation(
   let inserted = 0;
   let touched = 0;
   let skipped = 0;
+  let belowConfidence = 0;
+  let duplicate = 0;
 
   for (const item of extraction.memoryItems) {
     if (item.confidence < minConfidence) {
       skipped += 1;
+      belowConfidence += 1;
       continue;
     }
     if (!MEMORY_TYPES.has(item.memoryType)) {
@@ -1006,6 +1019,7 @@ export async function processCoachMemoryForObservation(
         await touchTrainingPeaksStudentMemoryItem(exactDuplicate.id);
       }
       touched += 1;
+      duplicate += 1;
       continue;
     }
 
@@ -1016,6 +1030,7 @@ export async function processCoachMemoryForObservation(
         await touchTrainingPeaksStudentMemoryItem(structuredDuplicate.id);
       }
       touched += 1;
+      duplicate += 1;
       continue;
     }
 
@@ -1050,6 +1065,8 @@ export async function processCoachMemoryForObservation(
     inserted,
     touched,
     skipped,
+    belowConfidence,
+    duplicate,
     reason: extraction.reason,
     applyWrites,
   };
