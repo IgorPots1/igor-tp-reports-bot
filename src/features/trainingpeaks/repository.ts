@@ -5,6 +5,7 @@ import {
   extractMoveSourceExecutionContextFromDryRunLog,
   INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU,
   INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON,
+  isEligibleForCoachSourceDateConfirmation,
   isExecutableMoveSourcePolicy,
   validateDryRunLogReadiness,
 } from "@/features/trainingpeaks/move-source-policy";
@@ -3775,27 +3776,6 @@ function extractIsoDateFromLogJson(logJson: unknown, key: "sourceDate" | "target
   return trimOrNull(key === "sourceDate" ? resolvedDates?.sourceDate : resolvedDates?.targetDate);
 }
 
-function isBlockedOnlyByInferredSource(logJson: unknown): boolean {
-  if (!logJson || typeof logJson !== "object") {
-    return false;
-  }
-  const canExecuteReasons = (logJson as { canExecuteReasons?: unknown }).canExecuteReasons;
-  if (!Array.isArray(canExecuteReasons) || canExecuteReasons.length === 0) {
-    return false;
-  }
-  const normalizedReasons = canExecuteReasons
-    .map((item) => trimOrNull(item))
-    .filter((item): item is string => Boolean(item));
-  if (normalizedReasons.length === 0) {
-    return false;
-  }
-  return normalizedReasons.every(
-    (reason) =>
-      reason === INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON ||
-      reason === INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU
-  );
-}
-
 function isDryRunEligibleForCoachSourceDateConfirmation(
   dryRun: TrainingPeaksActionRunContextSummary | null
 ): dryRun is TrainingPeaksActionRunContextSummary {
@@ -3817,7 +3797,7 @@ function isDryRunEligibleForCoachSourceDateConfirmation(
   if (!dryRun.selectedSourceDatePolicy || isExecutableMoveSourcePolicy(dryRun.selectedSourceDatePolicy)) {
     return false;
   }
-  return isBlockedOnlyByInferredSource(dryRun.logJson);
+  return isEligibleForCoachSourceDateConfirmation(dryRun.logJson);
 }
 
 function shouldShowCoachConfirmSourceDateAction(latestRunContext: TrainingPeaksActionLatestRunContext | null): boolean {

@@ -1,4 +1,5 @@
 import {
+  isEligibleForCoachSourceDateConfirmation,
   validateMoveSourceForExecution,
   INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU,
 } from "@/features/trainingpeaks/move-source-policy";
@@ -95,5 +96,54 @@ const noSourceBlocked = validateMoveSourceForExecution({
   },
 });
 assert(!noSourceBlocked.ok, "missing source date must remain blocked");
+
+const coachConfirmEligibleWithConfidenceBlock = isEligibleForCoachSourceDateConfirmation({
+  dryRunResult: "candidate_found",
+  canExecute: false,
+  canExecuteReasons: [
+    "confidence below threshold 0.8",
+    "source date inferred; real execution blocked",
+  ],
+  resolvedDates: {
+    sourceDate: "2026-05-31",
+    targetDate: "2026-06-01",
+  },
+  selectedSourceDatePolicy: "nearest_prior_within_3_days",
+});
+assert(
+  coachConfirmEligibleWithConfidenceBlock === true,
+  "coach source confirmation should remain eligible when confidence is below execute threshold"
+);
+
+const coachConfirmIneligibleAmbiguous = isEligibleForCoachSourceDateConfirmation({
+  dryRunResult: "ambiguous",
+  canExecute: false,
+  canExecuteReasons: [
+    "source date inferred; real execution blocked",
+  ],
+  resolvedDates: {
+    sourceDate: "2026-05-31",
+    targetDate: "2026-06-01",
+  },
+  selectedSourceDatePolicy: "nearest_prior_within_3_days",
+});
+assert(coachConfirmIneligibleAmbiguous === false, "ambiguous dry run must not allow source confirmation");
+
+const coachConfirmIneligibleMissingSourceDate = isEligibleForCoachSourceDateConfirmation({
+  dryRunResult: "candidate_found",
+  canExecute: false,
+  canExecuteReasons: [
+    "source date inferred; real execution blocked",
+  ],
+  resolvedDates: {
+    sourceDate: null,
+    targetDate: "2026-06-01",
+  },
+  selectedSourceDatePolicy: "nearest_prior_within_3_days",
+});
+assert(
+  coachConfirmIneligibleMissingSourceDate === false,
+  "missing source date must block source confirmation eligibility"
+);
 
 console.log("check-trainingpeaks-move-source-policy: ok");

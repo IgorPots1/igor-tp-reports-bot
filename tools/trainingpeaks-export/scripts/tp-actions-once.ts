@@ -2660,13 +2660,9 @@ async function notifyCoachDryRunResult(input: {
   });
   const lines: string[] = [];
 
-  const inferredSourceBlocked =
-    Array.isArray(evaluation?.canExecuteReasons) &&
-    evaluation.canExecuteReasons.some(
-      (reason) =>
-        reason === moveSourcePolicy.INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON ||
-        reason === moveSourcePolicy.INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU
-    );
+  const inferredSourceBlocked = moveSourcePolicy.hasInferredMoveSourceBlockReason(
+    evaluation?.canExecuteReasons ?? null
+  );
   const strongFutureDescriptorMatch =
     evaluation?.selectedSourceDatePolicy === moveSourcePolicy.STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY;
   const likelySourceTitle = evaluation?.candidate?.title?.trim() || evaluation?.sourceInferenceProvenance?.candidate?.title?.trim();
@@ -2738,16 +2734,7 @@ async function notifyCoachDryRunResult(input: {
           cancelButton,
         ],
       ];
-    } else if (
-      inferredSourceBlocked &&
-      typeof evaluation.resolvedDates.sourceDate === "string" &&
-      evaluation.resolvedDates.sourceDate.trim() &&
-      typeof evaluation.resolvedDates.targetDate === "string" &&
-      evaluation.resolvedDates.targetDate.trim() &&
-      typeof evaluation.selectedSourceDatePolicy === "string" &&
-      evaluation.selectedSourceDatePolicy.trim() &&
-      !moveSourcePolicy.isExecutableMoveSourcePolicy(evaluation.selectedSourceDatePolicy.trim())
-    ) {
+    } else if (moveSourcePolicy.isEligibleForCoachSourceDateConfirmation(evaluation)) {
       inlineKeyboardRows = [
         [
           {

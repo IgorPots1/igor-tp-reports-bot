@@ -78,13 +78,26 @@ function extractCoachConfirmedSourceDate(parsedPayload: unknown): string | null 
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function isBlockedOnlyByInferredSourceReasons(canExecuteReasons: unknown): boolean {
+function normalizeCanExecuteReasons(canExecuteReasons: unknown): string[] {
   if (!Array.isArray(canExecuteReasons) || canExecuteReasons.length === 0) {
-    return false;
+    return [];
   }
-  const normalized = canExecuteReasons
+  return canExecuteReasons
     .map((item) => trimOrNull(item))
     .filter((item): item is string => Boolean(item));
+}
+
+export function hasInferredMoveSourceBlockReason(canExecuteReasons: unknown): boolean {
+  const normalized = normalizeCanExecuteReasons(canExecuteReasons);
+  return normalized.some(
+    (reason) =>
+      reason === INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON ||
+      reason === INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU
+  );
+}
+
+function isBlockedOnlyByInferredSourceReasons(canExecuteReasons: unknown): boolean {
+  const normalized = normalizeCanExecuteReasons(canExecuteReasons);
   if (normalized.length === 0) {
     return false;
   }
@@ -93,6 +106,63 @@ function isBlockedOnlyByInferredSourceReasons(canExecuteReasons: unknown): boole
       reason === INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON ||
       reason === INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU
   );
+}
+
+export function isEligibleForCoachSourceDateConfirmation(input: unknown): boolean {
+  if (!input || typeof input !== "object") {
+    return false;
+  }
+
+  const payload = input as {
+    dryRunResult?: unknown;
+    canExecute?: unknown;
+    canExecuteReasons?: unknown;
+    selectedSourceDatePolicy?: unknown;
+    resolvedDates?: { sourceDate?: unknown; targetDate?: unknown } | null;
+    identityCheck?: { matchedBy?: unknown } | null;
+    candidateAlternativesCount?: unknown;
+  };
+
+  if (payload.dryRunResult !== "candidate_found") {
+    return false;
+  }
+  if (payload.canExecute !== false) {
+    return false;
+  }
+
+  const sourceDate = trimOrNull(payload.resolvedDates?.sourceDate);
+  const targetDate = trimOrNull(payload.resolvedDates?.targetDate);
+  if (!sourceDate || !targetDate) {
+    return false;
+  }
+
+  const policy =
+    typeof payload.selectedSourceDatePolicy === "string" && payload.selectedSourceDatePolicy.trim()
+      ? payload.selectedSourceDatePolicy.trim()
+      : null;
+  if (!policy || isExecutableMoveSourcePolicy(policy)) {
+    return false;
+  }
+
+  if (!hasInferredMoveSourceBlockReason(payload.canExecuteReasons)) {
+    return false;
+  }
+
+  const identityMatchedBy =
+    typeof payload.identityCheck?.matchedBy === "string" ? payload.identityCheck.matchedBy : null;
+  if (identityMatchedBy === "mismatch") {
+    return false;
+  }
+
+  if (
+    typeof payload.candidateAlternativesCount === "number" &&
+    Number.isFinite(payload.candidateAlternativesCount) &&
+    payload.candidateAlternativesCount > 0
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 function shouldAllowCoachConfirmedSourceDateReadinessBypass(

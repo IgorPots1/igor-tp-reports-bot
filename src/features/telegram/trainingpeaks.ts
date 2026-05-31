@@ -7,7 +7,7 @@ import type {
 } from "@/features/telegram/parser";
 import {
   INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU,
-  INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON,
+  isEligibleForCoachSourceDateConfirmation,
 } from "@/features/trainingpeaks/move-source-policy";
 import { formatTrainingPeaksExecuteQueuedMessage } from "@/features/trainingpeaks/action-execute-telegram-copy";
 import {
@@ -5690,52 +5690,14 @@ function shouldShowCoachConfirmSourceButton(latestRunContext: unknown): boolean 
     typeof run.selectedSourceDatePolicy === "string" && run.selectedSourceDatePolicy.trim()
       ? run.selectedSourceDatePolicy.trim()
       : null;
-  const blockedReason =
-    typeof run.blockedReason === "string" && run.blockedReason.trim() ? run.blockedReason.trim() : null;
-  const selectedSourceDate =
-    typeof run.selectedSourceDate === "string" && run.selectedSourceDate.trim() ? run.selectedSourceDate.trim() : null;
-  const targetDateFromLog = (() => {
-    if (!run.logJson || typeof run.logJson !== "object") {
-      return null;
-    }
-    const resolvedDates = (run.logJson as { resolvedDates?: { targetDate?: unknown } | null }).resolvedDates;
-    return typeof resolvedDates?.targetDate === "string" && resolvedDates.targetDate.trim()
-      ? resolvedDates.targetDate.trim()
-      : null;
-  })();
-  const inferredOnlyReasons = (() => {
-    if (!run.logJson || typeof run.logJson !== "object") {
-      return false;
-    }
-    const reasons = (run.logJson as { canExecuteReasons?: unknown }).canExecuteReasons;
-    if (!Array.isArray(reasons) || reasons.length === 0) {
-      return false;
-    }
-    const normalizedReasons = reasons
-      .map((value) => (typeof value === "string" ? value.trim() : ""))
-      .filter((value) => value.length > 0);
-    if (normalizedReasons.length === 0) {
-      return false;
-    }
-    return normalizedReasons.every(
-      (reason) =>
-        reason === INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON ||
-        reason === INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU
-    );
-  })();
   return (
     run.runType === "dry_run" &&
     run.status === "completed" &&
-    run.dryRunResult === "candidate_found" &&
-    run.canExecute === false &&
-    Boolean(selectedSourceDate) &&
-    Boolean(targetDateFromLog) &&
     Boolean(policy) &&
     policy !== "coach_confirmed_source_date" &&
     policy !== "explicit_source_date" &&
     policy !== "explicit_source_ref" &&
-    blockedReason === INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU &&
-    inferredOnlyReasons
+    isEligibleForCoachSourceDateConfirmation(run.logJson)
   );
 }
 
