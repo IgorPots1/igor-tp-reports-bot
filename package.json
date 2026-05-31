@@ -69,6 +69,7 @@
     "backfill-coach-memory-v1": "npx tsx scripts/backfill-coach-memory-v1.ts",
     "diagnose-coach-memory-duplicates": "npx tsx scripts/diagnose-coach-memory-duplicates.ts",
     "check:coach-memory-duplicate-clustering": "npx tsx scripts/check-coach-memory-duplicate-clustering.ts",
+    "merge-coach-memory-duplicates": "npx tsx scripts/merge-coach-memory-duplicates.ts",
     "check:move-phrase-coverage": "npx tsx scripts/check-move-phrase-coverage.ts"
   },
   "dependencies": {
