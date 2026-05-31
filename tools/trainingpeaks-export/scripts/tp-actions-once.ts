@@ -2455,6 +2455,24 @@ function isAutoApprovedDryRunFallbackEligible(action: TrainingPeaksActionRow): b
   return payload.parsingDiagnostics?.autoApprovedForDryRun === true;
 }
 
+function resolveActionCoachNotificationChatIds(action: TrainingPeaksActionRow): string[] {
+  const directChatId = action.coach_chat_id ?? action.decided_by_chat_id;
+  if (directChatId) {
+    return [directChatId];
+  }
+
+  if (!isAutoApprovedDryRunFallbackEligible(action)) {
+    return [];
+  }
+
+  const fallbackChatIds = getTrainingPeaksCoachChatIds();
+  if (fallbackChatIds.length === 0) {
+    return [];
+  }
+
+  return Array.from(new Set(fallbackChatIds));
+}
+
 function toShortActionId(actionId: string): string {
   return actionId.slice(0, 8);
 }
@@ -7766,6 +7784,51 @@ async function notifyCoachRealModeResult(input: {
   }
 }
 
+async function notifyCoachRealModeResultWithFallback(input: {
+  action: TrainingPeaksActionRow;
+  studentName: string;
+  trustedDryRun: TrustedDryRunLog;
+  currentEvaluation: DryRunEvaluation | null;
+  comparison: RevalidationComparison | null;
+  revalidationPassed: boolean;
+  errorMessage: string;
+  candidate: DryRunCandidate | null;
+  includeNotChangedNote?: boolean;
+}): Promise<void> {
+  const chatIds = resolveActionCoachNotificationChatIds(input.action);
+  if (chatIds.length === 0) {
+    console.warn(
+      `TrainingPeaks real-mode: skipping coach Telegram notification — no direct chat id${
+        isAutoApprovedDryRunFallbackEligible(input.action) ? " and no configured fallback chats" : ""
+      } for action ${toShortActionId(input.action.id)}`
+    );
+    return;
+  }
+
+  await Promise.allSettled(
+    chatIds.map(async (chatId) => {
+      await notifyCoachRealModeResult({
+        chatId,
+        action: input.action,
+        studentName: input.studentName,
+        trustedDryRun: input.trustedDryRun,
+        currentEvaluation: input.currentEvaluation,
+        comparison: input.comparison,
+        revalidationPassed: input.revalidationPassed,
+        errorMessage: input.errorMessage,
+        candidate: input.candidate,
+        includeNotChangedNote: input.includeNotChangedNote,
+      });
+    })
+  );
+
+  if (!input.action.coach_chat_id && !input.action.decided_by_chat_id && isAutoApprovedDryRunFallbackEligible(input.action)) {
+    console.log(
+      `TrainingPeaks real-mode: sent coach notification via auto-approved fallback for action ${toShortActionId(input.action.id)}`
+    );
+  }
+}
+
 async function selectAndConfirmTargetDateInCurrentModalSession(input: {
   page: import("playwright").Page;
   actionId: string;
@@ -8887,8 +8950,7 @@ async function main(): Promise<void> {
       });
 
       if (!prepareOnly) {
-        await notifyCoachRealModeResult({
-          chatId: resolveDryRunNotificationChatId(claimed.action),
+        await notifyCoachRealModeResultWithFallback({
           action: claimed.action,
           studentName,
           trustedDryRun: claimed.trustedDryRunLog,
@@ -8986,8 +9048,7 @@ async function main(): Promise<void> {
       });
 
       if (!prepareOnly) {
-        await notifyCoachRealModeResult({
-          chatId: resolveDryRunNotificationChatId(claimed.action),
+        await notifyCoachRealModeResultWithFallback({
           action: claimed.action,
           studentName,
           trustedDryRun: claimed.trustedDryRunLog,
@@ -9126,8 +9187,7 @@ async function main(): Promise<void> {
         screenshotBeforePath: apiExecution.screenshotBeforePath ?? artifacts.screenshotBeforePath,
         screenshotAfterPath: apiExecution.screenshotAfterPath ?? artifacts.screenshotAfterPath,
       });
-      await notifyCoachRealModeResult({
-        chatId: resolveDryRunNotificationChatId(claimed.action),
+      await notifyCoachRealModeResultWithFallback({
         action: claimed.action,
         studentName,
         trustedDryRun: claimed.trustedDryRunLog,
@@ -9156,8 +9216,7 @@ async function main(): Promise<void> {
         screenshotBeforePath: apiExecution.screenshotBeforePath ?? artifacts.screenshotBeforePath,
         screenshotAfterPath: apiExecution.screenshotAfterPath ?? artifacts.screenshotAfterPath,
       });
-      await notifyCoachRealModeResult({
-        chatId: resolveDryRunNotificationChatId(claimed.action),
+      await notifyCoachRealModeResultWithFallback({
         action: claimed.action,
         studentName,
         trustedDryRun: claimed.trustedDryRunLog,
@@ -9204,8 +9263,7 @@ async function main(): Promise<void> {
         );
       }
     }
-    await notifyCoachRealModeResult({
-      chatId: resolveDryRunNotificationChatId(claimed.action),
+    await notifyCoachRealModeResultWithFallback({
       action: claimed.action,
       studentName,
       trustedDryRun: claimed.trustedDryRunLog,
@@ -9237,8 +9295,7 @@ async function main(): Promise<void> {
     });
 
     if (!prepareOnly) {
-      await notifyCoachRealModeResult({
-        chatId: resolveDryRunNotificationChatId(claimed.action),
+      await notifyCoachRealModeResultWithFallback({
         action: claimed.action,
         studentName,
         trustedDryRun: claimed.trustedDryRunLog,
