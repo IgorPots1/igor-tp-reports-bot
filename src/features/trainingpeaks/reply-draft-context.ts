@@ -2,6 +2,9 @@ import { evaluateTrainingPeaksRecoveryAlert } from "@/features/trainingpeaks/rec
 import {
   getTrainingPeaksStudentById,
   getTrainingPeaksStudentContactStatus,
+  listActiveTrainingPeaksStudentMemoryItems,
+  type TrainingPeaksStudentMemoryItem,
+  type TrainingPeaksStudentMemoryType,
   listTrainingPeaksTelegramContextObservationsForStudent,
   listTrainingPeaksHealthMetricsForStudentDateRange,
   listRecentTrainingPeaksStudentContactEvents,
@@ -18,6 +21,8 @@ const LOOKBACK_DAYS = 7;
 const CACHE_STALE_AFTER_MS = 48 * 60 * 60 * 1000;
 const TELEGRAM_CONTEXT_NOTES_MAX_LENGTH = 500;
 const RECENT_OBSERVATION_LABELS_MAX_COUNT = 6;
+const COACH_MEMORY_MAX_TOTAL_ITEMS = 12;
+const COACH_MEMORY_MAX_ITEMS_PER_GROUP = 3;
 const HUMANIZED_OBSERVATION_LABELS: Partial<Record<string, string>> = {
   question_to_coach: "ученик задавал вопрос",
   pain_or_health: "был сигнал по самочувствию/дискомфорту",
@@ -51,6 +56,7 @@ export type TrainingPeaksReplyDraftContext = {
   recoveryAlertMessage: string | null;
   recoveryAlertAvailable: boolean;
   telegramContextBullets: string[];
+  coachMemoryPromptBlock: string | null;
   promptContext: string;
 };
 
@@ -84,6 +90,7 @@ export async function buildTrainingPeaksReplyDraftContext(
       limit: 5,
     }),
   ]);
+  const activeMemoryItems = await safelyListActiveCoachMemoryItems(input.studentUuid);
 
   const cacheStatus = resolveCacheStatus(workoutRows);
   const workouts = workoutRows.map(summarizeWorkoutRow);
@@ -126,6 +133,7 @@ export async function buildTrainingPeaksReplyDraftContext(
     contactStatus,
     recentContactEvents,
     recentObservationLabels,
+    activeMemoryItems,
   });
 
   return {
@@ -141,8 +149,33 @@ export async function buildTrainingPeaksReplyDraftContext(
     recoveryAlertMessage: recovery.message,
     recoveryAlertAvailable: recovery.available,
     telegramContextBullets,
+    coachMemoryPromptBlock: buildCoachMemoryPromptBlock(activeMemoryItems),
     promptContext,
   };
+}
+
+async function safelyListActiveCoachMemoryItems(studentId: string): Promise<TrainingPeaksStudentMemoryItem[]> {
+  try {
+    return await listActiveTrainingPeaksStudentMemoryItems(studentId);
+  } catch (error) {
+    if (isMissingCoachMemoryTableError(error)) {
+      console.warn("TrainingPeaks reply draft context coach memory table unavailable; continuing without memory", {
+        studentId,
+      });
+      return [];
+    }
+    throw error;
+  }
+}
+
+function isMissingCoachMemoryTableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const normalized = message.toLowerCase();
+  return normalized.includes("trainingpeaks_student_memory_items") && (
+    normalized.includes("does not exist") ||
+    normalized.includes("relation") ||
+    normalized.includes("42p01")
+  );
 }
 
 function resolveCacheStatus(rows: TrainingPeaksWorkoutCacheRow[]): {
@@ -352,6 +385,7 @@ function buildPromptContext(input: {
   contactStatus: TrainingPeaksStudentContactStatus | null;
   recentContactEvents: TrainingPeaksStudentContactEvent[];
   recentObservationLabels: string[];
+  activeMemoryItems: TrainingPeaksStudentMemoryItem[];
 }): string {
   const workoutLines =
     input.workouts.length === 0
@@ -371,6 +405,7 @@ function buildPromptContext(input: {
           }),
         ];
   const recentContactEventsSummary = formatRecentContactEventsSummary(input.recentContactEvents);
+  const coachMemoryPromptBlock = buildCoachMemoryPromptBlock(input.activeMemoryItems);
 
   return [
     `student_name=${input.studentName}`,
@@ -385,6 +420,7 @@ function buildPromptContext(input: {
       : []),
     ...buildContactStatusPromptLines(input.contactStatus),
     ...(recentContactEventsSummary ? [`recent_contact_events=${recentContactEventsSummary}`] : []),
+    ...(coachMemoryPromptBlock ? ["", coachMemoryPromptBlock] : []),
     ...workoutLines,
     input.missedPlannedRunningDates.length > 0
       ? `missed_planned_running_dates=${input.missedPlannedRunningDates.join(", ")}`
@@ -393,6 +429,136 @@ function buildPromptContext(input: {
       ? `recovery_alert=${input.recoveryAlertMessage ?? "none"}`
       : "recovery_alert=not_available",
   ].join("\n");
+}
+
+function buildCoachMemoryPromptBlock(items: TrainingPeaksStudentMemoryItem[]): string | null {
+  if (items.length === 0) {
+    return null;
+  }
+
+  const totalItems = items.slice(0, COACH_MEMORY_MAX_TOTAL_ITEMS);
+  if (totalItems.length === 0) {
+    return null;
+  }
+
+  const groupOrder = [
+    "Communication style",
+    "Schedule / planning",
+    "Health / injury",
+    "Emotional / load",
+    "Goals / races",
+    "Equipment",
+  ] as const;
+  const grouped = new Map<(typeof groupOrder)[number], string[]>();
+
+  for (const item of totalItems) {
+    const group = getCoachMemoryGroupLabel(item.memoryType);
+    const current = grouped.get(group) ?? [];
+    if (current.length >= COACH_MEMORY_MAX_ITEMS_PER_GROUP) {
+      continue;
+    }
+    current.push(formatCoachMemoryItemLine(item));
+    grouped.set(group, current);
+  }
+
+  const lines: string[] = ["Coach Memory:"];
+  let shownCount = 0;
+  for (const group of groupOrder) {
+    const entries = grouped.get(group);
+    if (!entries || entries.length === 0) {
+      continue;
+    }
+    lines.push(`${group}:`);
+    for (const entry of entries) {
+      lines.push(`- ${entry}`);
+    }
+    shownCount += entries.length;
+  }
+
+  if (shownCount === 0) {
+    return null;
+  }
+
+  const hiddenCount = items.length - shownCount;
+  if (hiddenCount > 0) {
+    lines.push(`+ еще ${hiddenCount} заметок`);
+  }
+
+  return lines.join("\n");
+}
+
+function getCoachMemoryGroupLabel(
+  memoryType: TrainingPeaksStudentMemoryType
+): "Communication style" | "Schedule / planning" | "Health / injury" | "Emotional / load" | "Goals / races" | "Equipment" {
+  if (memoryType === "communication_style") {
+    return "Communication style";
+  }
+  if (
+    memoryType === "schedule_constraint" ||
+    memoryType === "availability_preference" ||
+    memoryType === "planning_preference" ||
+    memoryType === "travel_or_life_event"
+  ) {
+    return "Schedule / planning";
+  }
+  if (memoryType === "pain_or_injury" || memoryType === "health_status") {
+    return "Health / injury";
+  }
+  if (memoryType === "emotional_state" || memoryType === "load_tolerance") {
+    return "Emotional / load";
+  }
+  if (memoryType === "race_or_goal") {
+    return "Goals / races";
+  }
+  return "Equipment";
+}
+
+function formatCoachMemoryItemLine(item: TrainingPeaksStudentMemoryItem): string {
+  const summary = item.summaryText.replace(/\s+/g, " ").trim();
+  const normalizedSummary = summary || "Без описания";
+  const extras: string[] = [];
+
+  if (item.memoryType === "communication_style") {
+    const formality = readStructuredString(item.structured, "formality");
+    const tone = readStructuredString(item.structured, "tone");
+    const preferredGreeting = readStructuredString(item.structured, "preferred_greeting");
+
+    if (formality === "ty") {
+      extras.push("формальность: на ты");
+    } else if (formality === "vy") {
+      extras.push("формальность: на вы");
+    }
+    if (tone) {
+      extras.push(`тон: ${tone}`);
+    }
+    if (preferredGreeting) {
+      extras.push(`приветствие: "${preferredGreeting}"`);
+    }
+  }
+
+  const validUntil = formatCoachMemoryValidUntil(item.validUntil);
+  if (validUntil) {
+    extras.push(`до ${validUntil}`);
+  }
+
+  return extras.length > 0 ? `${normalizedSummary} (${extras.join(", ")})` : normalizedSummary;
+}
+
+function formatCoachMemoryValidUntil(value: string | null): string | null {
+  const normalized = value?.trim() ?? "";
+  if (!normalized) {
+    return null;
+  }
+  return normalized.length >= 10 ? normalized.slice(0, 10) : normalized;
+}
+
+function readStructuredString(structured: Record<string, unknown>, key: string): string | null {
+  const value = structured[key];
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized || null;
 }
 
 function trimTelegramContextNotes(value: string | null): string | null {
