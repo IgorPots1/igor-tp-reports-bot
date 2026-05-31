@@ -1,8 +1,18 @@
-import type { TrainingPeaksStudentMemoryType } from "@/features/trainingpeaks/repository";
+import {
+  insertTrainingPeaksStudentMemoryItem,
+  touchTrainingPeaksStudentMemoryItem,
+  type TrainingPeaksStudentMemoryItem,
+  type TrainingPeaksStudentMemoryType,
+} from "@/features/trainingpeaks/repository";
 
 const OPENAI_API_URL = process.env.OPENAI_API_URL?.trim() || "https://api.openai.com/v1/chat/completions";
-const OPENAI_MODEL = process.env.OPENAI_COACH_MEMORY_MODEL?.trim() || "gpt-5.5";
+const OPENAI_MODEL =
+  process.env.COACH_MEMORY_EXTRACTION_MODEL?.trim() ||
+  process.env.OPENAI_COACH_MEMORY_MODEL?.trim() ||
+  "gpt-5.5";
 const DRY_RUN_GUARD_ENV = "COACH_MEMORY_AI_DRY_RUN_MODE";
+const EXTRACTION_ENABLED_ENV = "COACH_MEMORY_EXTRACTION_ENABLED";
+const MIN_CONFIDENCE_ENV = "COACH_MEMORY_MIN_CONFIDENCE";
 
 const MEMORY_TYPES = new Set<TrainingPeaksStudentMemoryType>([
   "communication_style",
@@ -88,6 +98,45 @@ type ExtractionInput = {
   }>;
   referenceDate?: string;
 };
+
+export type ProcessCoachMemoryForObservationInput = {
+  observationId: string;
+  studentId: string;
+  studentName: string;
+  textPreview: string | null;
+  labels: string[];
+  sourceType: string | null;
+  observedAt: string;
+  currentActiveMemoryItems: Pick<
+    TrainingPeaksStudentMemoryItem,
+    "id" | "memoryType" | "summaryText" | "structured" | "validUntil"
+  >[];
+  applyWrites?: boolean;
+};
+
+export type ProcessCoachMemoryForObservationResult =
+  | {
+      status: "disabled";
+      inserted: 0;
+      touched: 0;
+      skipped: 0;
+      reason: string;
+    }
+  | {
+      status: "no_memory";
+      inserted: 0;
+      touched: 0;
+      skipped: number;
+      reason: string;
+    }
+  | {
+      status: "processed";
+      inserted: number;
+      touched: number;
+      skipped: number;
+      reason: string;
+      applyWrites: boolean;
+    };
 
 type OpenAiChatResponse = {
   choices?: Array<{ message?: { content?: string | null } }>;
@@ -195,6 +244,71 @@ const URGENT_SCHEDULE_KEYWORDS = ["сегодня", "завтра", "ближа�
 
 function normalizeForRules(input: string): string {
   return input.toLowerCase().replace(/\s+/gu, " ").trim();
+}
+
+function getCoachMemoryMinConfidence(): number {
+  const raw = process.env[MIN_CONFIDENCE_ENV]?.trim();
+  if (!raw) {
+    return 0.7;
+  }
+
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return 0.7;
+  }
+
+  return Math.max(0, Math.min(1, parsed));
+}
+
+function isCoachMemoryExtractionEnabled(): boolean {
+  return process.env[EXTRACTION_ENABLED_ENV]?.trim() === "true";
+}
+
+function normalizeSummaryForDedupe(input: string): string {
+  return input.toLowerCase().replace(/\s+/gu, " ").trim();
+}
+
+function toLowerString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = normalizeForRules(value);
+  return normalized || null;
+}
+
+function buildStructuredDedupeKey(memoryType: CoachMemoryExtractionMemoryType, structured: Record<string, unknown>): string | null {
+  if (memoryType === "schedule_constraint") {
+    const dayOfWeek = toLowerString(structured.day_of_week);
+    const constraint = toLowerString(structured.constraint);
+    if (dayOfWeek && constraint) {
+      return `schedule_constraint:${dayOfWeek}:${constraint}`;
+    }
+  }
+
+  if (memoryType === "pain_or_injury") {
+    const bodyPart = toLowerString(structured.body_part);
+    const symptom = toLowerString(structured.symptom);
+    if (bodyPart && symptom) {
+      return `pain_or_injury:${bodyPart}:${symptom}`;
+    }
+  }
+
+  if (memoryType === "race_or_goal") {
+    const eventDate = toLowerString(structured.event_date) ?? toLowerString(structured.date);
+    if (eventDate) {
+      return `race_or_goal:${eventDate}`;
+    }
+  }
+
+  return null;
+}
+
+function isPastDate(value: string | null, referenceIso: string): boolean {
+  if (!value) {
+    return false;
+  }
+
+  return value < referenceIso.slice(0, 10);
 }
 
 function textHasAny(text: string, keywords: readonly string[]): boolean {
@@ -679,6 +793,11 @@ export async function extractCoachMemoryItemsDryRun(input: ExtractionInput): Pro
     };
   }
 
+  return extractCoachMemoryItems(input);
+}
+
+async function extractCoachMemoryItems(input: ExtractionInput): Promise<CoachMemoryExtractionResult> {
+
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
     return {
@@ -783,5 +902,155 @@ export async function extractCoachMemoryItemsDryRun(input: ExtractionInput): Pro
     memoryItems,
     caseCandidate,
     reason,
+  };
+}
+
+export async function processCoachMemoryForObservation(
+  input: ProcessCoachMemoryForObservationInput
+): Promise<ProcessCoachMemoryForObservationResult> {
+  if (!isCoachMemoryExtractionEnabled()) {
+    return {
+      status: "disabled",
+      inserted: 0,
+      touched: 0,
+      skipped: 0,
+      reason: "COACH_MEMORY_EXTRACTION_ENABLED is not true.",
+    };
+  }
+
+  const extraction = await extractCoachMemoryItems({
+    studentName: input.studentName,
+    observationPreview: input.textPreview ?? "",
+    observationLabels: input.labels,
+    sourceType: input.sourceType,
+    observedAt: input.observedAt,
+    currentActiveMemoryItems: input.currentActiveMemoryItems.map((item) => ({
+      memoryType: item.memoryType,
+      summaryText: item.summaryText,
+      structured: item.structured,
+      validUntil: item.validUntil,
+    })),
+  });
+
+  if (!extraction.shouldRemember || extraction.memoryItems.length === 0) {
+    return {
+      status: "no_memory",
+      inserted: 0,
+      touched: 0,
+      skipped: extraction.memoryItems.length,
+      reason: extraction.reason,
+    };
+  }
+
+  const minConfidence = getCoachMemoryMinConfidence();
+  const observationText = normalizeForRules(input.textPreview ?? "");
+  const labels = input.labels.map((label) => label.toLowerCase());
+  const sourceType = (input.sourceType ?? "").toLowerCase();
+  const inboundBusinessDm = sourceType === "business_dm";
+  const applyWrites = input.applyWrites ?? true;
+  const referenceDate = input.observedAt;
+
+  const exactByTypeAndSummary = new Map<string, ProcessCoachMemoryForObservationInput["currentActiveMemoryItems"][number]>();
+  const structuredByTypeAndKey = new Map<string, ProcessCoachMemoryForObservationInput["currentActiveMemoryItems"][number]>();
+  for (const activeItem of input.currentActiveMemoryItems) {
+    const normalizedSummary = normalizeSummaryForDedupe(activeItem.summaryText);
+    if (normalizedSummary) {
+      exactByTypeAndSummary.set(`${activeItem.memoryType}:${normalizedSummary}`, activeItem);
+    }
+    const structuredKey = buildStructuredDedupeKey(activeItem.memoryType, activeItem.structured);
+    if (structuredKey) {
+      structuredByTypeAndKey.set(structuredKey, activeItem);
+    }
+  }
+
+  let inserted = 0;
+  let touched = 0;
+  let skipped = 0;
+
+  for (const item of extraction.memoryItems) {
+    if (item.confidence < minConfidence) {
+      skipped += 1;
+      continue;
+    }
+    if (!MEMORY_TYPES.has(item.memoryType)) {
+      skipped += 1;
+      continue;
+    }
+    if (!item.summaryText.trim()) {
+      skipped += 1;
+      continue;
+    }
+    if (isPastDate(item.validUntil, referenceDate)) {
+      skipped += 1;
+      continue;
+    }
+    if (item.memoryType === "communication_style" && inboundBusinessDm) {
+      const hasCoachStyleEvidenceLabel = labels.some(
+        (label) => label.includes("coach_outgoing") || label.includes("coach_style")
+      );
+      if (!hasCoachStyleEvidenceLabel) {
+        skipped += 1;
+        continue;
+      }
+    }
+    if (item.memoryType === "schedule_constraint" && isOneOffMoveRequest(observationText) && !looksLikeDurableScheduleConstraint(observationText)) {
+      skipped += 1;
+      continue;
+    }
+
+    const normalizedSummary = normalizeSummaryForDedupe(item.summaryText);
+    const exactKey = `${item.memoryType}:${normalizedSummary}`;
+    const exactDuplicate = exactByTypeAndSummary.get(exactKey);
+    if (exactDuplicate) {
+      if (applyWrites) {
+        await touchTrainingPeaksStudentMemoryItem(exactDuplicate.id);
+      }
+      touched += 1;
+      continue;
+    }
+
+    const structuredKey = buildStructuredDedupeKey(item.memoryType, item.structured);
+    const structuredDuplicate = structuredKey ? structuredByTypeAndKey.get(structuredKey) : null;
+    if (structuredDuplicate) {
+      if (applyWrites) {
+        await touchTrainingPeaksStudentMemoryItem(structuredDuplicate.id);
+      }
+      touched += 1;
+      continue;
+    }
+
+    if (applyWrites) {
+      const insertedItem = await insertTrainingPeaksStudentMemoryItem({
+        studentId: input.studentId,
+        memoryType: item.memoryType,
+        summaryText: item.summaryText,
+        structured: item.structured,
+        source: "ai_extraction",
+        confidence: item.confidence,
+        validFrom: item.validFrom,
+        validUntil: item.validUntil,
+        sourceObservationId: input.observationId,
+        sourceMessagePreview: input.textPreview?.slice(0, 500) ?? null,
+        metadata: {
+          affects_planning: item.affectsPlanning,
+          requires_coach_attention: item.requiresCoachAttention,
+          notification_level: item.notificationLevel,
+        },
+      });
+      exactByTypeAndSummary.set(exactKey, insertedItem);
+      if (structuredKey) {
+        structuredByTypeAndKey.set(structuredKey, insertedItem);
+      }
+    }
+    inserted += 1;
+  }
+
+  return {
+    status: "processed",
+    inserted,
+    touched,
+    skipped,
+    reason: extraction.reason,
+    applyWrites,
   };
 }

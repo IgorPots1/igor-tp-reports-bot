@@ -11,8 +11,8 @@ import {
   PlaywrightOnlyTrainingPeaksDriver,
   derivePrepareMoveWorkoutResultFromProbe,
   type ProbeLike as TrainingPeaksProbeLikeForDriver,
-} from "./lib/playwright-only-trainingpeaks-driver.ts";
-import { profileDir, toolRoot } from "./lib/paths.ts";
+} from "./lib/playwright-only-trainingpeaks-driver";
+import { profileDir, toolRoot } from "./lib/paths";
 import {
   buildTpApiWorkoutUrl,
   buildWorkoutMovePayload,
@@ -21,20 +21,43 @@ import {
   performApiJsonRequest,
   redactUnknown,
   verifyWorkoutMoved,
-} from "./lib/trainingpeaks-api-move.ts";
-import * as moveSourcePolicyNamespace from "../../../src/features/trainingpeaks/move-source-policy.ts";
-import * as moveSourceInferencePreviewNamespace from "../../../src/features/trainingpeaks/move-source-inference-preview.ts";
-import * as strongFutureDescriptorMoveSourceNamespace from "../../../src/features/trainingpeaks/strong-future-descriptor-move-source.ts";
-import * as trainingPeaksAttentionTelegramModule from "../../../src/features/trainingpeaks/attention-telegram.ts";
-import * as trainingPeaksTelegramBusinessModule from "../../../src/features/trainingpeaks/telegram-business.ts";
-import * as trainingPeaksRepositoryModule from "../../../src/features/trainingpeaks/repository.ts";
+} from "./lib/trainingpeaks-api-move";
+import * as moveSourcePolicyNamespace from "../../../src/features/trainingpeaks/move-source-policy";
+import * as moveSourceInferencePreviewNamespace from "../../../src/features/trainingpeaks/move-source-inference-preview";
+import * as strongFutureDescriptorMoveSourceNamespace from "../../../src/features/trainingpeaks/strong-future-descriptor-move-source";
+import * as trainingPeaksAttentionTelegramModule from "../../../src/features/trainingpeaks/attention-telegram";
+import * as trainingPeaksTelegramBusinessModule from "../../../src/features/trainingpeaks/telegram-business";
+import * as trainingPeaksRepositoryModule from "../../../src/features/trainingpeaks/repository";
+
+type NamespaceWithOptionalDefault<T> = T & { default?: T };
+
+const trainingPeaksTelegramBusinessModuleCompat =
+  trainingPeaksTelegramBusinessModule as NamespaceWithOptionalDefault<
+    typeof trainingPeaksTelegramBusinessModule
+  >;
+const trainingPeaksRepositoryModuleCompat =
+  trainingPeaksRepositoryModule as NamespaceWithOptionalDefault<typeof trainingPeaksRepositoryModule>;
+const trainingPeaksAttentionTelegramModuleCompat =
+  trainingPeaksAttentionTelegramModule as NamespaceWithOptionalDefault<
+    typeof trainingPeaksAttentionTelegramModule
+  >;
+const moveSourcePolicyNamespaceCompat =
+  moveSourcePolicyNamespace as NamespaceWithOptionalDefault<typeof moveSourcePolicyNamespace>;
+const moveSourceInferencePreviewNamespaceCompat =
+  moveSourceInferencePreviewNamespace as NamespaceWithOptionalDefault<
+    typeof moveSourceInferencePreviewNamespace
+  >;
+const strongFutureDescriptorMoveSourceNamespaceCompat =
+  strongFutureDescriptorMoveSourceNamespace as NamespaceWithOptionalDefault<
+    typeof strongFutureDescriptorMoveSourceNamespace
+  >;
 
 const getRequiredTrainingPeaksBusinessConnectionId =
-  trainingPeaksTelegramBusinessModule.getRequiredTrainingPeaksBusinessConnectionId ??
-  trainingPeaksTelegramBusinessModule.default?.getRequiredTrainingPeaksBusinessConnectionId;
+  trainingPeaksTelegramBusinessModuleCompat.getRequiredTrainingPeaksBusinessConnectionId ??
+  trainingPeaksTelegramBusinessModuleCompat.default?.getRequiredTrainingPeaksBusinessConnectionId;
 const sendTrainingPeaksTelegramBusinessMessage =
-  trainingPeaksTelegramBusinessModule.sendTrainingPeaksTelegramBusinessMessage ??
-  trainingPeaksTelegramBusinessModule.default?.sendTrainingPeaksTelegramBusinessMessage;
+  trainingPeaksTelegramBusinessModuleCompat.sendTrainingPeaksTelegramBusinessMessage ??
+  trainingPeaksTelegramBusinessModuleCompat.default?.sendTrainingPeaksTelegramBusinessMessage;
 
 if (
   typeof getRequiredTrainingPeaksBusinessConnectionId !== "function" ||
@@ -44,26 +67,28 @@ if (
 }
 
 const getTrainingPeaksBusinessChatByChatId =
-  trainingPeaksRepositoryModule.getTrainingPeaksBusinessChatByChatId ??
-  trainingPeaksRepositoryModule.default?.getTrainingPeaksBusinessChatByChatId;
+  trainingPeaksRepositoryModuleCompat.getTrainingPeaksBusinessChatByChatId ??
+  trainingPeaksRepositoryModuleCompat.default?.getTrainingPeaksBusinessChatByChatId;
 
 if (typeof getTrainingPeaksBusinessChatByChatId !== "function") {
   throw new Error("TrainingPeaks repository business chat helper is unavailable.");
 }
 
 const getTrainingPeaksCoachChatIds =
-  trainingPeaksAttentionTelegramModule.getTrainingPeaksCoachChatIds ??
-  trainingPeaksAttentionTelegramModule.default?.getTrainingPeaksCoachChatIds;
+  trainingPeaksAttentionTelegramModuleCompat.getTrainingPeaksCoachChatIds ??
+  trainingPeaksAttentionTelegramModuleCompat.default?.getTrainingPeaksCoachChatIds;
 
 if (typeof getTrainingPeaksCoachChatIds !== "function") {
   throw new Error("TrainingPeaks coach chat ids helper is unavailable.");
 }
 
-const moveSourcePolicy = moveSourcePolicyNamespace.default ?? moveSourcePolicyNamespace;
+const moveSourcePolicy =
+  moveSourcePolicyNamespaceCompat.default ?? moveSourcePolicyNamespaceCompat;
 const moveSourceInferencePreview =
-  moveSourceInferencePreviewNamespace.default ?? moveSourceInferencePreviewNamespace;
+  moveSourceInferencePreviewNamespaceCompat.default ?? moveSourceInferencePreviewNamespaceCompat;
 const strongFutureDescriptorMoveSource =
-  strongFutureDescriptorMoveSourceNamespace.default ?? strongFutureDescriptorMoveSourceNamespace;
+  strongFutureDescriptorMoveSourceNamespaceCompat.default ??
+  strongFutureDescriptorMoveSourceNamespaceCompat;
 
 type ActionExecutionStatus =
   | "not_started"
@@ -778,9 +803,9 @@ export function evaluateSelectedSourceDateMoveRanking(input: {
       isRunCard,
       strongRunTempoMatch,
       clearlyNonRunForTempoRequest,
-      plausibleSameDateCompetitor: false,
-      ignoredAsSameDateCompetitor: false,
-      safeCandidate: false,
+      plausibleSameDateCompetitor: false as boolean,
+      ignoredAsSameDateCompetitor: false as boolean,
+      safeCandidate: false as boolean,
     } satisfies RankedSameDateCandidate;
   });
 
@@ -3664,7 +3689,7 @@ async function waitForTrainingPeaksCalendarReadiness(
 
 async function resolveDayCellDateForProbe(
   dayCell: import("playwright").Locator,
-  calendarMonthYear: { year: number | null; month: number | null },
+  calendarMonthYear: { year: number | null; month: number | null; reason: string },
   expectedSourceDate: string | null = null,
   expectedTargetDate: string | null = null
 ): Promise<string | null> {
@@ -7392,6 +7417,9 @@ function normalizeTrustedDryRunLog(logJson: unknown, parsedPayload?: unknown): T
     }
   }
   if (!moveSourcePolicy.validateDryRunLogReadiness(logJson, parsedPayload).ok) {
+    return null;
+  }
+  if (!payload.identityCheck) {
     return null;
   }
 
