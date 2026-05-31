@@ -1,52 +1,151 @@
-# Claude Code Notes
+# CLAUDE.md - High-Risk Operating Instructions
 
-## Project Purpose
+This file defines stable Claude Code / Cursor operating instructions for `igor-tp-reports-bot`.
 
-`igor-tp-reports-bot` is the production Coach OS repository for Telegram-driven coaching operations, TrainingPeaks report automation, local Mac runner workflows, and Supabase-backed storage/admin flows.
+## 1. Project purpose
 
-## Main Architecture Layers
+`igor-tp-reports-bot` powers Igor's coach operating system in real workflows:
 
-- `src/`: Next.js app, Telegram webhook/admin flows, bot commands, and Supabase-backed runtime behavior.
-- `tools/trainingpeaks-export/`: local Mac runner, Playwright/TrainingPeaks scripts, report generation, local automation, and debug tooling.
-- `supabase/`: SQL migrations and database policy/schema changes.
-- `scripts/`: focused checks and local verification helpers.
-- `docs/`: project notes and launch packet templates.
+- TrainingPeaks reports and automation
+- Telegram coach/student workflows
+- billing/payment admin
+- reminders, digests, and attention signals
+- local runner workflows for sensitive TrainingPeaks actions
 
-## Critical Safety Rules
+This is production-like coach infrastructure, not a toy app and not a generic demo repo.
 
-- Respect `.cursor/rules/*` first.
-- No auto-send to athletes.
-- No real TrainingPeaks mutation without explicit approval and preserved gates.
-- Coach-only and admin-only paths must stay gated.
-- Prefer student matching by `chat_id`; username-only matching is high risk.
-- Treat AI prompt/model/schema changes as logic changes.
-- Do not commit, push, or widen scope unless explicitly asked.
+Primary workflow must stay attended:
+planning -> task prompt -> Cursor/Claude Code implementation -> checks -> human review -> manual commit/push.
 
-## Do Not Touch Casually
+No autonomous high-risk execution.
 
-- Telegram webhook and Business message handling
-- student linking and callback approval paths
-- `tools/trainingpeaks-export` execution flows and LaunchAgent automation
-- Supabase migrations, RLS, and grants
-- AI prompts, schemas, and athlete-facing wording
+## 2. Risk level
 
-## Working Modes
+This is a high-risk repository.
 
-- `ASK`: read-only audit first. Summarize current state, gaps, minimal safe plan, risks, and likely files.
-- `TASK`: implement only the approved scoped change. Stop if work escapes scope.
-- `DEBUG`: trace end-to-end before fixing: input -> parsing -> logic -> storage/output -> UI/delivery.
-- `REVIEW`: prioritize bugs, safety regressions, wrong-student risk, send risk, and missing QA.
+Reasons include:
 
-## Standard Checks
+- real student data
+- real Telegram messages
+- real billing/payment logic
+- real TrainingPeaks plans/actions
+- real production integrations
+- local secrets and cookies may exist outside git
+
+## 3. Hard safety rules
+
+- Never commit unless explicitly asked.
+- Never push unless explicitly asked.
+- Never deploy unless explicitly asked.
+- Never modify `.env*` files or print secrets.
+- Never loosen auth, cron, token, webhook, Telegram, billing, or TrainingPeaks safety checks.
+- Never run destructive database operations.
+- Never run production migrations unless explicitly requested.
+- Never send Telegram messages unless explicitly requested.
+- Never perform real TrainingPeaks mutations unless explicitly requested.
+- Never change billing/payment allocation logic casually.
+- Never broaden automation permissions without explicit approval.
+- Never add autonomous execution for high-risk actions.
+- Prefer dry-run, read-only, or prepare-only modes when available.
+
+## 4. TrainingPeaks rules
+
+TrainingPeaks mutations are high-risk.
+
+Local Mac runner and browser/API automation must remain guarded. Prefer dry-run and verification-first behavior.
+
+Fingerprints, source date checks, confidence gates, and human confirmation must not be weakened.
+
+Move-workout automation must remain conservative.
+
+If uncertain, ask for clarification or create a review case instead of executing.
+
+Sensitive areas include:
+
+- workout move actions
+- source date inference
+- TrainingPeaks API calls
+- race/event scanner
+- weekly report generation
+- FIT parsing and segment analysis
+- E-Predictor logic
+
+## 5. Telegram rules
+
+Telegram messages may contain private student context.
+
+- Do not add broad group replies.
+- Do not send messages automatically unless the task explicitly requires it.
+- Do not weaken allowlists or coach-only protections.
+- Preserve formality and tone logic when present.
+- Prefer coach review before student-facing replies.
+- Handle Business DM workflows and topic/group workflows carefully.
+
+## 6. Billing rules
+
+Billing and payment logic is sensitive.
+
+- Do not auto-match payments more aggressively without explicit instruction.
+- Do not modify payment allocation, payer identities, monthly payment state, or cron import behavior casually.
+- Prefer manual review for ambiguous payments.
+- Never print bank or payment secrets.
+
+## 7. Development workflow
+
+Claude/Cursor should:
+
+- keep changes narrow
+- inspect current code before editing
+- avoid unrelated refactors
+- preserve existing contracts
+- update focused tests for behavior changes
+- run the smallest relevant checks first
+- run full checks when risk is high or broad files changed
+- report exact files changed and commands run
+
+Default checks:
 
 - `npm run lint`
 - `npm run build`
-- focused `check-*` scripts when touching parser, intent, digest, or attention logic
-- report what ran, what failed, and whether failures are unrelated
 
-## Repo-Specific Notes
+When relevant:
 
-- Telegram paths are safety-critical because they can reach real coaches and athletes.
-- Supabase changes need migrations and explicit RLS/grant review.
-- Local runner changes can affect real TrainingPeaks data and local browser state.
-- AI prompts and schemas require consumer review and tone preservation, especially for Russian coach/athlete copy.
+- focused scripts/checks from `package.json`
+- focused parser/TrainingPeaks/Billing checks
+- TypeScript checks if available
+- no real external mutations unless explicitly requested
+
+## 8. Expected report format
+
+Every task report should include:
+
+1. Summary of changes
+2. Files changed
+3. Behavior before/after
+4. Checks run and results
+5. Safety confirmation:
+   - no secrets touched
+   - no push
+   - no deploy
+   - no unintended Telegram sends
+   - no unintended TrainingPeaks mutations
+   - no unintended billing imports or allocations
+6. Commit hash only if explicitly asked to commit
+
+## 9. What not to build
+
+- no custom multi-agent runtime inside this repo
+- no autonomous high-risk TrainingPeaks execution without human approval
+- no broad Telegram auto-reply system without review gates
+- no aggressive billing auto-matching without manual review
+- no hidden background jobs that mutate production state without clear cron/auth guards
+- no large dashboard/product expansion unless explicitly requested
+
+## 10. Igor's preferred implementation style
+
+- simple, narrow, production-minded changes
+- no big rewrite unless explicitly requested
+- avoid clever abstractions
+- preserve working flows
+- prefer readable code and practical checks
+- communicate in clear summaries
