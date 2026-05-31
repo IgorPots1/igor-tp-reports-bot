@@ -917,6 +917,7 @@ type WorkoutExtractionResult = {
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
 const TP_CALLBACK_ACTION_CANCEL_PREFIX = "tp:ta:c:";
 const TP_CALLBACK_ACTION_EXECUTE_PREFIX = "tp:ta:x:";
+const TP_CALLBACK_ACTION_CONFIRM_SOURCE_PREFIX = "tp:ta:cs:";
 const ACTION_ARTIFACTS_ROOT = path.join(toolRoot, "action-artifacts");
 const TP_ACTIONS_EXECUTE_REAL_FLAG = "--execute-real";
 const TP_ACTIONS_ACTION_ID_PREFIX = "--action-id=";
@@ -2661,6 +2662,15 @@ async function notifyCoachDryRunResult(input: {
 
   const inferredSourceBlocked =
     evaluation?.canExecuteReasons.includes(moveSourcePolicy.INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON) === true;
+  const inferredSourceBlockedOnly =
+    inferredSourceBlocked &&
+    Array.isArray(evaluation?.canExecuteReasons) &&
+    evaluation.canExecuteReasons.length > 0 &&
+    evaluation.canExecuteReasons.every(
+      (reason) =>
+        reason === moveSourcePolicy.INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON ||
+        reason === moveSourcePolicy.INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU
+    );
   const strongFutureDescriptorMatch =
     evaluation?.selectedSourceDatePolicy === moveSourcePolicy.STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY;
   const likelySourceTitle = evaluation?.candidate?.title?.trim() || evaluation?.sourceInferenceProvenance?.candidate?.title?.trim();
@@ -2706,7 +2716,7 @@ async function notifyCoachDryRunResult(input: {
         `Вероятный источник (сильное совпадение): ${likelySourceTitle}. Выполнение пока заблокировано до следующего safety-слоя.`
       );
     }
-    lines.push(moveSourcePolicy.INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU);
+    lines.push("Источник тренировки определён автоматически. Подтвердите исходную дату перед выполнением.");
     lines.push("TrainingPeaks не изменён. Проверь заявку в /tp_actions.");
   } else {
     lines.push(
@@ -2731,6 +2741,25 @@ async function notifyCoachDryRunResult(input: {
           },
           cancelButton,
         ],
+      ];
+    } else if (
+      inferredSourceBlockedOnly &&
+      typeof evaluation.resolvedDates.sourceDate === "string" &&
+      evaluation.resolvedDates.sourceDate.trim() &&
+      typeof evaluation.resolvedDates.targetDate === "string" &&
+      evaluation.resolvedDates.targetDate.trim() &&
+      typeof evaluation.selectedSourceDatePolicy === "string" &&
+      evaluation.selectedSourceDatePolicy.trim() &&
+      !moveSourcePolicy.isExecutableMoveSourcePolicy(evaluation.selectedSourceDatePolicy.trim())
+    ) {
+      inlineKeyboardRows = [
+        [
+          {
+            text: `✅ Подтвердить ${formatCompactDateShort(evaluation.resolvedDates.sourceDate)} как исходную`,
+            callback_data: `${TP_CALLBACK_ACTION_CONFIRM_SOURCE_PREFIX}${actionId}`,
+          },
+        ],
+        [cancelButton],
       ];
     } else {
       inlineKeyboardRows = [[cancelButton]];
