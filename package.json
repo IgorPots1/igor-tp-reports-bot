@@ -67,6 +67,7 @@
     "check-coach-memory-ingestion-coverage": "npx tsx scripts/check-coach-memory-ingestion-coverage.ts",
     "coach-memory-v1-write-once": "npx tsx scripts/run-coach-memory-v1-write-once.ts",
     "backfill-coach-memory-v1": "npx tsx scripts/backfill-coach-memory-v1.ts",
+    "diagnose-coach-memory-duplicates": "npx tsx scripts/diagnose-coach-memory-duplicates.ts",
     "check:move-phrase-coverage": "npx tsx scripts/check-move-phrase-coverage.ts"
   },
   "dependencies": {
