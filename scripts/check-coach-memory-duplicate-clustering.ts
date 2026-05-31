@@ -2,10 +2,9 @@ import process from "node:process";
 
 import {
   buildIllnessMergedSummary,
-  collectIllnessClusterItems,
+  collectIllnessClusterEpisodes,
   matchesIllnessSignal,
   matchesUpperRespiratorySignal,
-  parseMemoryDuplicateSignals,
   resolveIllnessEpisodeKey,
 } from "@/features/trainingpeaks/coach-memory-duplicate-clustering";
 import type { TrainingPeaksStudentMemoryType } from "@/features/trainingpeaks/repository";
@@ -22,9 +21,11 @@ type SignalCase = {
 type ClusterCase = {
   id: string;
   items: Array<{ id: string; memory_type: TrainingPeaksStudentMemoryType; summary_text: string }>;
-  expectEpisodeKey: "health:illness:upper_respiratory" | "health:illness:general" | null;
-  expectItemCount: number;
-  expectMergedSummary?: string;
+  expectEpisodes: Array<{
+    episodeKey: "health:illness:upper_respiratory" | "health:illness:general";
+    itemCount: number;
+    expectMergedSummary?: string;
+  }>;
 };
 
 const SIGNAL_CASES: SignalCase[] = [
@@ -54,7 +55,13 @@ const SIGNAL_CASES: SignalCase[] = [
   },
   {
     id: "knee-pain-only",
-    summary: "Данил жалуется на боль в колене.",
+    summary: "После горок заболело колено.",
+    expectIllness: false,
+    expectUpperRespiratory: false,
+  },
+  {
+    id: "dry-throat-after-training",
+    summary: "Горло пересохло после тренировки.",
     expectIllness: false,
     expectUpperRespiratory: false,
   },
@@ -63,6 +70,12 @@ const SIGNAL_CASES: SignalCase[] = [
     summary: "Данил пишет об усталости после недели.",
     expectIllness: false,
     expectUpperRespiratory: false,
+  },
+  {
+    id: "flu-russian",
+    summary: "Температура и грипп, врач подтвердил ОРВИ.",
+    expectIllness: true,
+    expectUpperRespiratory: true,
   },
 ];
 
@@ -75,27 +88,70 @@ const CLUSTER_CASES: ClusterCase[] = [
       { id: "3", memory_type: "health_status", summary_text: "Данил собирается брать больничный." },
       { id: "4", memory_type: "health_status", summary_text: "Данил сообщает о болезни." },
     ],
-    expectEpisodeKey: "health:illness:upper_respiratory",
-    expectItemCount: 4,
-    expectMergedSummary: "Болезнь / першение в горле, планирует взять больничный.",
+    expectEpisodes: [
+      {
+        episodeKey: "health:illness:upper_respiratory",
+        itemCount: 4,
+        expectMergedSummary: "Болезнь / першение в горле, планирует взять больничный.",
+      },
+    ],
   },
   {
     id: "knee-pain-not-illness",
     items: [
-      { id: "a", memory_type: "pain_or_injury", summary_text: "Болит левое колено после пробежки." },
+      { id: "a", memory_type: "pain_or_injury", summary_text: "После горок заболело колено." },
       { id: "b", memory_type: "pain_or_injury", summary_text: "Колено ноет на спусках." },
     ],
-    expectEpisodeKey: null,
-    expectItemCount: 0,
+    expectEpisodes: [],
+  },
+  {
+    id: "dry-throat-not-illness",
+    items: [
+      { id: "a", memory_type: "health_status", summary_text: "Горло пересохло после тренировки." },
+      { id: "b", memory_type: "health_status", summary_text: "Усталость и жажда после интервального дня." },
+    ],
+    expectEpisodes: [],
   },
   {
     id: "fatigue-not-illness",
     items: [
-      { id: "a", memory_type: "load_tolerance", summary_text: "Сильная усталость после блока." },
-      { id: "b", memory_type: "emotional_state", summary_text: "Нет сил на тренировки." },
+      { id: "a", memory_type: "load_tolerance", summary_text: "усталость, нет сил после работы" },
+      { id: "b", memory_type: "emotional_state", summary_text: "Нет сил на тренировки после долгого дня." },
     ],
-    expectEpisodeKey: null,
-    expectItemCount: 0,
+    expectEpisodes: [],
+  },
+  {
+    id: "distant-illness-episodes-split",
+    items: [
+      {
+        id: "jan-1",
+        memory_type: "health_status",
+        summary_text: "Январь: температура, больничный и сильная простуда.",
+        valid_from: "2026-01-10",
+      },
+      {
+        id: "jan-2",
+        memory_type: "health_status",
+        summary_text: "Январь: горло болит, продолжается ОРВИ.",
+        valid_from: "2026-01-16",
+      },
+      {
+        id: "apr-1",
+        memory_type: "health_status",
+        summary_text: "Апрель: снова температура и грипп.",
+        valid_from: "2026-04-11",
+      },
+      {
+        id: "apr-2",
+        memory_type: "health_status",
+        summary_text: "Апрель: больничный на фоне вируса.",
+        valid_from: "2026-04-18",
+      },
+    ],
+    expectEpisodes: [
+      { episodeKey: "health:illness:upper_respiratory", itemCount: 2 },
+      { episodeKey: "health:illness:upper_respiratory", itemCount: 2 },
+    ],
   },
 ];
 
@@ -123,26 +179,39 @@ function runClusterCases(): string[] {
   const failures: string[] = [];
 
   for (const testCase of CLUSTER_CASES) {
-    const { items } = collectIllnessClusterItems(testCase.items);
-    const signals = items
-      .map((item) => parseMemoryDuplicateSignals(item.summary_text))
-      .filter(Boolean);
-    const episodeKey = items.length >= 2 ? resolveIllnessEpisodeKey(signals) : null;
+    const episodes = collectIllnessClusterEpisodes(testCase.items).filter((episode) => episode.items.length >= 2);
+    const actualEpisodes = episodes.map((episode) => ({
+      episodeKey: resolveIllnessEpisodeKey(episode.signals),
+      itemCount: episode.items.length,
+      mergedSummary: buildIllnessMergedSummary(resolveIllnessEpisodeKey(episode.signals), episode.signals),
+    }));
 
-    if (episodeKey !== testCase.expectEpisodeKey) {
+    if (actualEpisodes.length !== testCase.expectEpisodes.length) {
       failures.push(
-        `${testCase.id}: episode_key expected=${String(testCase.expectEpisodeKey)} actual=${String(episodeKey)}`
+        `${testCase.id}: episode_count expected=${testCase.expectEpisodes.length} actual=${actualEpisodes.length}`
       );
+      continue;
     }
-    if (items.length !== testCase.expectItemCount) {
-      failures.push(
-        `${testCase.id}: item_count expected=${testCase.expectItemCount} actual=${items.length}`
-      );
-    }
-    if (testCase.expectMergedSummary && episodeKey) {
-      const merged = buildIllnessMergedSummary(episodeKey, signals);
-      if (merged !== testCase.expectMergedSummary) {
-        failures.push(`${testCase.id}: merged_summary expected=${JSON.stringify(testCase.expectMergedSummary)} actual=${JSON.stringify(merged)}`);
+
+    for (let index = 0; index < testCase.expectEpisodes.length; index += 1) {
+      const expected = testCase.expectEpisodes[index];
+      const actual = actualEpisodes[index];
+      if (!actual) {
+        failures.push(`${testCase.id}: missing episode index=${index}`);
+        continue;
+      }
+      if (actual.episodeKey !== expected.episodeKey) {
+        failures.push(
+          `${testCase.id}: episode_key[${index}] expected=${expected.episodeKey} actual=${actual.episodeKey}`
+        );
+      }
+      if (actual.itemCount !== expected.itemCount) {
+        failures.push(`${testCase.id}: item_count[${index}] expected=${expected.itemCount} actual=${actual.itemCount}`);
+      }
+      if (expected.expectMergedSummary && actual.mergedSummary !== expected.expectMergedSummary) {
+        failures.push(
+          `${testCase.id}: merged_summary[${index}] expected=${JSON.stringify(expected.expectMergedSummary)} actual=${JSON.stringify(actual.mergedSummary)}`
+        );
       }
     }
   }

@@ -12,43 +12,69 @@ export type ParsedMemoryDuplicateSignals = {
   raceDiscipline: string | null;
   hasSickLeaveSignal: boolean;
   hasUpperRespiratorySignal: boolean;
+  hasIllnessStrongMarker: boolean;
+  hasExplicitRespiratoryIllnessSignal: boolean;
 };
 
 type MemoryItemLike = {
   id: string;
   memory_type: TrainingPeaksStudentMemoryType;
   summary_text: string;
+  valid_from?: string | null;
+  first_seen_at?: string | null;
+  last_seen_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 export const ILLNESS_KEYWORD_STEMS = [
   "болезн",
-  "болеет",
-  "заболел",
-  "заболела",
-  "заболели",
-  "горло",
-  "перш",
-  "заперш",
   "простуд",
+  "кашл",
+  "насморк",
   "температур",
   "орви",
-  "больничн",
+  "грипп",
+  "вирус",
+  "ангин",
   "sick",
   "illness",
   "cold",
-  "throat",
   "fever",
+  "flu",
 ] as const;
 
 export const UPPER_RESPIRATORY_KEYWORD_STEMS = [
   "горло",
   "перш",
   "заперш",
+  "кашл",
+  "насморк",
   "простуд",
   "орви",
+  "ангин",
   "throat",
   "cold",
 ] as const;
+
+const ILLNESS_STRONG_MARKER_STEMS = [
+  "больничн",
+  "температур",
+  "орви",
+  "грипп",
+  "вирус",
+  "ангин",
+  "fever",
+  "flu",
+  "sick leave",
+] as const;
+
+const THROAT_CONTEXT_STEMS = ["горло", "throat"] as const;
+const RESPIRATORY_DISEASE_STEMS = ["простуд", "орви", "грипп", "flu", "cold"] as const;
+const RESPIRATORY_SYMPTOM_STEMS = ["перш", "заперш", "кашл", "насморк"] as const;
+const THROAT_PAIN_PATTERNS = [/\bбол(?:ь|ит)\s+в\s+горл/u, /\bболь\s+горл/u, /\bsore throat\b/u];
+const ILLNESS_EPISODE_MAX_GAP_DAYS = 21;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const BODY_PART_PATTERNS: Array<{ part: string; keywords: string[] }> = [
   { part: "knee", keywords: ["колено", "knee"] },
@@ -83,14 +109,62 @@ function containsAny(text: string, keywords: readonly string[]): boolean {
   return keywords.some((keyword) => text.includes(keyword));
 }
 
+function matchesThroatPainPattern(text: string): boolean {
+  return THROAT_PAIN_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function hasExplicitRespiratoryIllnessSignal(text: string): boolean {
+  const hasUpperRespKeywords = containsAny(text, UPPER_RESPIRATORY_KEYWORD_STEMS);
+  const hasThroatContext = containsAny(text, THROAT_CONTEXT_STEMS);
+  const hasRespiratoryDiseaseMarker = containsAny(text, RESPIRATORY_DISEASE_STEMS);
+  const hasRespiratorySymptom = containsAny(text, RESPIRATORY_SYMPTOM_STEMS);
+  const hasIllnessCore = containsAny(text, ILLNESS_KEYWORD_STEMS);
+  const hasStrongMarkers = containsAny(text, ILLNESS_STRONG_MARKER_STEMS);
+  const hasThroatPain = matchesThroatPainPattern(text);
+
+  if (hasThroatPain) {
+    return true;
+  }
+  if (hasRespiratoryDiseaseMarker) {
+    return true;
+  }
+  if (hasThroatContext && hasRespiratorySymptom) {
+    return true;
+  }
+  if (hasUpperRespKeywords && hasRespiratorySymptom) {
+    return true;
+  }
+  if (hasUpperRespKeywords && (hasIllnessCore || hasStrongMarkers)) {
+    return true;
+  }
+  if (hasThroatContext && (hasIllnessCore || hasStrongMarkers)) {
+    return true;
+  }
+  return false;
+}
+
+function hasMusculoskeletalPainContext(text: string): boolean {
+  const bodyPartMatched = BODY_PART_PATTERNS.some((entry) => containsAny(text, entry.keywords));
+  if (!bodyPartMatched) {
+    return false;
+  }
+  return /\b(болит|болело|заболело|ноет|тянет|pain|injury)\b/u.test(text);
+}
+
 export function matchesIllnessSignal(text: string): boolean {
   const normalized = normalizeMemoryDuplicateText(text);
-  return containsAny(normalized, ILLNESS_KEYWORD_STEMS);
+  const hasIllnessCore = containsAny(normalized, ILLNESS_KEYWORD_STEMS);
+  const hasStrongMarkers = containsAny(normalized, ILLNESS_STRONG_MARKER_STEMS);
+  const respiratoryIllness = hasExplicitRespiratoryIllnessSignal(normalized);
+  if (!respiratoryIllness && !hasStrongMarkers && hasMusculoskeletalPainContext(normalized)) {
+    return false;
+  }
+  return hasIllnessCore || hasStrongMarkers || respiratoryIllness;
 }
 
 export function matchesUpperRespiratorySignal(text: string): boolean {
   const normalized = normalizeMemoryDuplicateText(text);
-  return containsAny(normalized, UPPER_RESPIRATORY_KEYWORD_STEMS);
+  return hasExplicitRespiratoryIllnessSignal(normalized);
 }
 
 function extractBodyPart(text: string): string | null {
@@ -151,8 +225,13 @@ function extractRaceAnchor(text: string): string | null {
 
 export function parseMemoryDuplicateSignals(summaryText: string): ParsedMemoryDuplicateSignals {
   const normalizedSummary = normalizeMemoryDuplicateText(summaryText);
-  const hasUpperRespiratorySignal = matchesUpperRespiratorySignal(normalizedSummary);
-  const hasIllnessSignal = matchesIllnessSignal(normalizedSummary);
+  const explicitRespiratoryIllness = hasExplicitRespiratoryIllnessSignal(normalizedSummary);
+  const hasIllnessStrongMarker = containsAny(normalizedSummary, ILLNESS_STRONG_MARKER_STEMS);
+  const hasUpperRespiratorySignal = explicitRespiratoryIllness;
+  const hasIllnessSignal =
+    containsAny(normalizedSummary, ILLNESS_KEYWORD_STEMS) ||
+    hasIllnessStrongMarker ||
+    hasUpperRespiratorySignal;
   const illnessSubtype = hasIllnessSignal
     ? hasUpperRespiratorySignal
       ? "upper_respiratory"
@@ -171,6 +250,8 @@ export function parseMemoryDuplicateSignals(summaryText: string): ParsedMemoryDu
     raceDiscipline: extractRaceDiscipline(normalizedSummary),
     hasSickLeaveSignal: containsAny(normalizedSummary, SICK_LEAVE_KEYWORDS),
     hasUpperRespiratorySignal,
+    hasIllnessStrongMarker,
+    hasExplicitRespiratoryIllnessSignal: explicitRespiratoryIllness,
   };
 }
 
@@ -180,6 +261,9 @@ export function isIllnessClusterCandidate(
 ): boolean {
   if (!HEALTH_MEMORY_TYPES.has(item.memory_type)) {
     return false;
+  }
+  if (item.memory_type === "pain_or_injury") {
+    return signals.hasExplicitRespiratoryIllnessSignal;
   }
   return signals.hasIllnessSignal;
 }
@@ -238,4 +322,85 @@ export function collectIllnessClusterItems(
   }
 
   return { items: illnessItems, signalsById };
+}
+
+function parseTimestampToMs(value: string | null | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+  const timestampMs = Date.parse(value);
+  return Number.isFinite(timestampMs) ? timestampMs : null;
+}
+
+function bestAvailableTimestampMs(item: MemoryItemLike): number | null {
+  return (
+    parseTimestampToMs(item.valid_from) ??
+    parseTimestampToMs(item.first_seen_at) ??
+    parseTimestampToMs(item.last_seen_at) ??
+    parseTimestampToMs(item.created_at) ??
+    parseTimestampToMs(item.updated_at)
+  );
+}
+
+export type IllnessEpisodeCluster = {
+  items: MemoryItemLike[];
+  signals: ParsedMemoryDuplicateSignals[];
+};
+
+export function collectIllnessClusterEpisodes(studentItems: MemoryItemLike[]): IllnessEpisodeCluster[] {
+  const { items, signalsById } = collectIllnessClusterItems(studentItems);
+  if (items.length === 0) {
+    return [];
+  }
+
+  const datedItems = items
+    .map((item) => ({ item, timestampMs: bestAvailableTimestampMs(item) }))
+    .filter((entry): entry is { item: MemoryItemLike; timestampMs: number } => entry.timestampMs !== null)
+    .sort((a, b) => a.timestampMs - b.timestampMs);
+
+  const unknownTimeItems = items.filter((item) => bestAvailableTimestampMs(item) === null);
+  const episodes: MemoryItemLike[][] = [];
+
+  for (const entry of datedItems) {
+    const current = episodes[episodes.length - 1];
+    if (!current || current.length === 0) {
+      episodes.push([entry.item]);
+      continue;
+    }
+
+    const previousTimestamp = bestAvailableTimestampMs(current[current.length - 1]);
+    if (previousTimestamp === null) {
+      episodes.push([entry.item]);
+      continue;
+    }
+
+    const gapDays = Math.abs(entry.timestampMs - previousTimestamp) / DAY_MS;
+    if (gapDays > ILLNESS_EPISODE_MAX_GAP_DAYS) {
+      episodes.push([entry.item]);
+      continue;
+    }
+
+    current.push(entry.item);
+  }
+
+  const strongUnknownItems = unknownTimeItems.filter((item) => {
+    const signals = signalsById.get(item.id);
+    return Boolean(signals?.hasIllnessStrongMarker || signals?.hasSickLeaveSignal);
+  });
+
+  // Unknown timestamps are merged only with strong repeated evidence, otherwise kept isolated.
+  if (unknownTimeItems.length >= 3 && strongUnknownItems.length >= 2) {
+    episodes.push(unknownTimeItems);
+  } else {
+    for (const item of unknownTimeItems) {
+      episodes.push([item]);
+    }
+  }
+
+  return episodes.map((episodeItems) => ({
+    items: episodeItems,
+    signals: episodeItems
+      .map((item) => signalsById.get(item.id))
+      .filter((signals): signals is ParsedMemoryDuplicateSignals => Boolean(signals)),
+  }));
 }

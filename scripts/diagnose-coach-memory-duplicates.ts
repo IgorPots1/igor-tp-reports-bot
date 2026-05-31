@@ -7,7 +7,7 @@ import type { PostgrestError } from "@supabase/supabase-js";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import {
   buildIllnessMergedSummary,
-  collectIllnessClusterItems,
+  collectIllnessClusterEpisodes,
   HEALTH_MEMORY_TYPES,
   parseMemoryDuplicateSignals,
   passesIllnessClusterFilter,
@@ -40,7 +40,10 @@ type MemoryItemRow = {
   confidence: number | null;
   valid_from: string | null;
   valid_until: string | null;
-  last_seen_at: string;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
 };
 
 type ClusterConfidence = "low" | "medium" | "high";
@@ -250,7 +253,9 @@ async function fetchActiveMemoryItems(
   const supabase = createSupabaseServerClient();
   let query = supabase
     .from("trainingpeaks_student_memory_items")
-    .select("id, student_id, memory_type, summary_text, confidence, valid_from, valid_until, last_seen_at")
+    .select(
+      "id, student_id, memory_type, summary_text, confidence, valid_from, valid_until, first_seen_at, last_seen_at, created_at, updated_at"
+    )
     .eq("is_active", true)
     .order("student_id", { ascending: true })
     .order("memory_type", { ascending: true })
@@ -301,12 +306,26 @@ function clusterConfidence(
     }
     return "medium";
   }
-  if (episodeKey === "health:illness:upper_respiratory") {
-    const hasSickLeave = items.some((item) => signalsById.get(item.id)?.hasSickLeaveSignal);
-    if (hasSickLeave || count >= 3) {
+  if (episodeKey.startsWith("health:illness:upper_respiratory")) {
+    const hasStrongMarker = items.some((item) => {
+      const signals = signalsById.get(item.id);
+      return signals?.hasIllnessStrongMarker || signals?.hasSickLeaveSignal;
+    });
+    if (count >= 3 && hasStrongMarker) {
       return "high";
     }
     return "medium";
+  }
+  if (episodeKey.startsWith("health:illness:general")) {
+    const hasMultipleStrongMarkers =
+      items.filter((item) => {
+        const signals = signalsById.get(item.id);
+        return signals?.hasIllnessStrongMarker || signals?.hasSickLeaveSignal;
+      }).length >= 2;
+    if (count >= 4 && hasMultipleStrongMarkers) {
+      return "high";
+    }
+    return count >= 3 && hasMultipleStrongMarkers ? "medium" : "low";
   }
   if (episodeKey.startsWith("schedule:")) {
     if (episodeKey.includes("relative:")) {
@@ -328,11 +347,14 @@ function buildMergedSummary(
   items: MemoryItemRow[],
   signalsById: Map<string, ParsedMemoryDuplicateSignals>
 ): string {
-  if (episodeKey === "health:illness:upper_respiratory" || episodeKey === "health:illness:general") {
+  if (episodeKey.startsWith("health:illness:upper_respiratory") || episodeKey.startsWith("health:illness:general")) {
+    const illnessBaseKey = episodeKey.startsWith("health:illness:upper_respiratory")
+      ? "health:illness:upper_respiratory"
+      : "health:illness:general";
     const signalsList = items
       .map((item) => signalsById.get(item.id))
       .filter((signals): signals is ParsedMemoryDuplicateSignals => Boolean(signals));
-    return buildIllnessMergedSummary(episodeKey, signalsList);
+    return buildIllnessMergedSummary(illnessBaseKey, signalsList);
   }
   if (episodeKey.startsWith("health:pain:")) {
     const bodyPart = episodeKey.slice("health:pain:".length);
@@ -377,14 +399,24 @@ function conservativeClusterFilter(episodeKey: string, items: MemoryItemRow[]): 
 
 function buildClustersForStudent(studentItems: MemoryItemRow[]): Map<string, MemoryItemRow[]> {
   const clusters = new Map<string, MemoryItemRow[]>();
-  const { items: illnessItems, signalsById: illnessSignalsById } = collectIllnessClusterItems(studentItems);
+  const illnessEpisodes = collectIllnessClusterEpisodes(studentItems);
+  const illnessSignalsById = new Map<string, ParsedMemoryDuplicateSignals>();
+  for (const item of studentItems) {
+    illnessSignalsById.set(item.id, parseMemoryDuplicateSignals(item.summary_text));
+  }
 
-  if (illnessItems.length >= 2) {
-    const illnessSignals = illnessItems
-      .map((item) => illnessSignalsById.get(item.id))
-      .filter((signals): signals is ParsedMemoryDuplicateSignals => Boolean(signals));
-    const illnessEpisodeKey = resolveIllnessEpisodeKey(illnessSignals);
-    clusters.set(illnessEpisodeKey, illnessItems);
+  const illnessKeyCounts = new Map<string, number>();
+  for (const illnessEpisode of illnessEpisodes) {
+    if (illnessEpisode.items.length < 2 || !passesIllnessClusterFilter(illnessEpisode.items)) {
+      continue;
+    }
+    const illnessBaseKey = resolveIllnessEpisodeKey(illnessEpisode.signals);
+    const occurrence = (illnessKeyCounts.get(illnessBaseKey) ?? 0) + 1;
+    illnessKeyCounts.set(illnessBaseKey, occurrence);
+    const illnessEpisodeKey =
+      occurrence === 1 ? illnessBaseKey : `${illnessBaseKey}:episode_${String(occurrence)}`;
+    const clusterItems = illnessEpisode.items as MemoryItemRow[];
+    clusters.set(illnessEpisodeKey, clusterItems);
   }
 
   for (const item of studentItems) {
