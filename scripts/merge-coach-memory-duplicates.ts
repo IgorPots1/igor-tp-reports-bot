@@ -14,7 +14,11 @@ import {
   resolveIllnessEpisodeKey,
   type ParsedMemoryDuplicateSignals,
 } from "@/features/trainingpeaks/coach-memory-duplicate-clustering";
-import type { TrainingPeaksStudentMemoryType } from "@/features/trainingpeaks/repository";
+import {
+  insertTrainingPeaksStudentMemoryItem,
+  supersedeTrainingPeaksStudentMemoryItem,
+  type TrainingPeaksStudentMemoryType,
+} from "@/features/trainingpeaks/repository";
 
 const LOG_PREFIX = "[merge-coach-memory-duplicates]";
 
@@ -35,6 +39,7 @@ type StudentRow = {
 type MemoryItemRow = {
   id: string;
   student_id: string;
+  is_active: boolean;
   memory_type: TrainingPeaksStudentMemoryType;
   summary_text: string;
   confidence: number | null;
@@ -223,6 +228,12 @@ function parseCliOptions(argv: string[]): CliOptions {
   if (episodeKey && clusterId) {
     throw new Error(`${LOG_PREFIX} FAIL: pass only one targeting flag: --episode-key or --cluster-id`);
   }
+  if (apply && episodeKey) {
+    throw new Error(`${LOG_PREFIX} FAIL: --apply rejects --episode-key; use exact --cluster-id`);
+  }
+  if (apply && !clusterId) {
+    throw new Error(`${LOG_PREFIX} FAIL: --apply requires --cluster-id`);
+  }
 
   return {
     studentQuery,
@@ -280,6 +291,11 @@ function resolveStudentMatches(students: StudentRow[], query: string): StudentRo
   });
 }
 
+function resolveStudentMatchesForApply(students: StudentRow[], query: string): StudentRow[] {
+  const normalized = query.trim().toLowerCase();
+  return students.filter((student) => student.student_id.toLowerCase() === normalized);
+}
+
 function confidenceToNumeric(confidence: ClusterConfidence): number {
   if (confidence === "high") {
     return 0.9;
@@ -295,7 +311,7 @@ async function fetchActiveMemoryItems(studentId: string): Promise<MemoryItemRow[
   const { data, error } = await supabase
     .from("trainingpeaks_student_memory_items")
     .select(
-      "id, student_id, memory_type, summary_text, confidence, valid_from, valid_until, first_seen_at, last_seen_at, created_at, updated_at, structured"
+      "id, student_id, is_active, memory_type, summary_text, confidence, valid_from, valid_until, first_seen_at, last_seen_at, created_at, updated_at, structured"
     )
     .eq("is_active", true)
     .eq("student_id", studentId)
@@ -310,6 +326,218 @@ async function fetchActiveMemoryItems(studentId: string): Promise<MemoryItemRow[
     throw new Error(`${LOG_PREFIX} FAIL: trainingpeaks_student_memory_items: ${error.message}`);
   }
   return (data as MemoryItemRow[] | null) ?? [];
+}
+
+async function fetchMemoryItemsByIds(ids: readonly string[]): Promise<MemoryItemRow[]> {
+  if (ids.length === 0) {
+    return [];
+  }
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_memory_items")
+    .select(
+      "id, student_id, is_active, memory_type, summary_text, confidence, valid_from, valid_until, first_seen_at, last_seen_at, created_at, updated_at, structured"
+    )
+    .in("id", [...ids])
+    .limit(5000);
+
+  if (error) {
+    throw new Error(`${LOG_PREFIX} FAIL: trainingpeaks_student_memory_items by ids: ${error.message}`);
+  }
+  return (data as MemoryItemRow[] | null) ?? [];
+}
+
+function sortedIds(ids: readonly string[]): string[] {
+  return [...ids].sort((a, b) => a.localeCompare(b));
+}
+
+function equalIdSets(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  const sortedLeft = sortedIds(left);
+  const sortedRight = sortedIds(right);
+  return sortedLeft.every((id, index) => id === sortedRight[index]);
+}
+
+function readStructuredString(structured: Record<string, unknown> | null, key: string): string | null {
+  const value = structured?.[key];
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function readStructuredNumber(structured: Record<string, unknown> | null, key: string): number | null {
+  const value = structured?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function minIsoValue(values: Array<string | null>): string | undefined {
+  const nonNull = values.filter((value): value is string => Boolean(value));
+  if (nonNull.length === 0) {
+    return undefined;
+  }
+  return nonNull.reduce((min, value) => (value < min ? value : min));
+}
+
+function maxIsoValue(values: Array<string | null>): string | undefined {
+  const nonNull = values.filter((value): value is string => Boolean(value));
+  if (nonNull.length === 0) {
+    return undefined;
+  }
+  return nonNull.reduce((max, value) => (value > max ? value : max));
+}
+
+function sharedValidUntilOrNull(items: readonly MemoryItemRow[]): string | null {
+  if (items.length === 0) {
+    return null;
+  }
+  const first = items[0]?.valid_until ?? null;
+  if (first === null) {
+    return null;
+  }
+  return items.every((item) => item.valid_until === first) ? first : null;
+}
+
+async function runGuardedApply(options: CliOptions, selected: ClusterTarget): Promise<void> {
+  if (!options.clusterId) {
+    throw new Error(`${LOG_PREFIX} FAIL: --apply requires --cluster-id`);
+  }
+
+  if (selected.confidenceRisk === "low") {
+    throw new Error(`${LOG_PREFIX} FAIL: confidence_risk=low; apply is blocked`);
+  }
+
+  const selectedSourceIds = sortedIds(selected.proposedSourceItemIds);
+  const selectedStudent: StudentRow = {
+    id: selected.studentId,
+    student_id: selected.studentSlug,
+    student_name: selected.studentName,
+  };
+
+  // Guard 1: recompute clusters from live DB right before write.
+  const liveActiveItems = await fetchActiveMemoryItems(selected.studentId);
+  const liveClusters = buildClusterTargets(selectedStudent, liveActiveItems);
+  const liveMatches = liveClusters.filter((cluster) => cluster.clusterId === options.clusterId);
+  if (liveMatches.length !== 1) {
+    throw new Error(
+      `${LOG_PREFIX} FAIL: live --cluster-id match_count=${liveMatches.length}; expected exactly 1 before apply`
+    );
+  }
+  const liveCluster = liveMatches[0];
+  const liveClusterSourceIds = sortedIds(liveCluster.proposedSourceItemIds);
+
+  if (!equalIdSets(selectedSourceIds, liveClusterSourceIds)) {
+    throw new Error(
+      `${LOG_PREFIX} FAIL: cluster drift detected; live source IDs changed for cluster_id=${options.clusterId}`
+    );
+  }
+
+  if (liveCluster.confidenceRisk === "low") {
+    throw new Error(`${LOG_PREFIX} FAIL: live confidence_risk=low; apply is blocked`);
+  }
+
+  // Guard 7: idempotency - stop if merged active row already exists.
+  const existingMerged = liveActiveItems.find(
+    (item) => readStructuredString(item.structured, "merge_cluster_id") === options.clusterId
+  );
+  if (existingMerged) {
+    throw new Error(
+      `${LOG_PREFIX} FAIL: idempotency guard hit; active merged row already exists for cluster_id=${options.clusterId} (id=${existingMerged.id})`
+    );
+  }
+
+  // Guards 3/4/5: reload source rows by ID and assert exact live set + ownership/activity.
+  const sourceRows = await fetchMemoryItemsByIds(liveClusterSourceIds);
+  const sourceRowIds = sourceRows.map((row) => row.id);
+  if (!equalIdSets(liveClusterSourceIds, sourceRowIds)) {
+    throw new Error(`${LOG_PREFIX} FAIL: source rows re-read mismatch; missing or extra IDs detected`);
+  }
+  for (const row of sourceRows) {
+    if (!row.is_active) {
+      throw new Error(`${LOG_PREFIX} FAIL: source row is not active: ${row.id}`);
+    }
+    if (row.student_id !== selected.studentId) {
+      throw new Error(
+        `${LOG_PREFIX} FAIL: source row belongs to different student: ${row.id} student_id=${row.student_id}`
+      );
+    }
+  }
+
+  // Guard 6: re-cluster current source rows must still resolve to same cluster + same IDs.
+  const reClusterTargets = buildClusterTargets(selectedStudent, sourceRows);
+  const reClusterMatch = reClusterTargets.filter((cluster) => cluster.clusterId === options.clusterId);
+  if (reClusterMatch.length !== 1) {
+    throw new Error(
+      `${LOG_PREFIX} FAIL: source-row recluster mismatch for cluster_id=${options.clusterId}; match_count=${reClusterMatch.length}`
+    );
+  }
+  if (!equalIdSets(reClusterMatch[0].proposedSourceItemIds, liveClusterSourceIds)) {
+    throw new Error(`${LOG_PREFIX} FAIL: source-row recluster IDs drifted for selected cluster`);
+  }
+
+  const appliedAt = new Date().toISOString();
+  const mergeStrategy = "coach_memory_duplicate_cluster_v1";
+  const inserted = await insertTrainingPeaksStudentMemoryItem({
+    studentId: selected.studentId,
+    memoryType: liveCluster.proposedMergedMemoryType,
+    summaryText: liveCluster.proposedMergedSummary,
+    structured: liveCluster.proposedStructuredAdditions,
+    source: "system",
+    confidence: readStructuredNumber(liveCluster.proposedStructuredAdditions, "proposed_confidence"),
+    validFrom: minIsoValue(sourceRows.map((row) => row.valid_from)) ?? null,
+    validUntil: sharedValidUntilOrNull(sourceRows),
+    firstSeenAt: minIsoValue(sourceRows.map((row) => row.first_seen_at)),
+    lastSeenAt: maxIsoValue(sourceRows.map((row) => row.last_seen_at)),
+    isActive: true,
+    metadata: {
+      applied_at: appliedAt,
+      merge_cluster_id: options.clusterId,
+      merge_strategy: mergeStrategy,
+      source_item_ids: liveClusterSourceIds,
+      apply_source: "merge-coach-memory-duplicates",
+    },
+  });
+
+  const supersededIds: string[] = [];
+  const failedSupersedes: Array<{ itemId: string; reason: string }> = [];
+  for (const sourceId of liveClusterSourceIds) {
+    try {
+      const superseded = await supersedeTrainingPeaksStudentMemoryItem(sourceId, inserted.id);
+      if (!superseded) {
+        failedSupersedes.push({ itemId: sourceId, reason: "supersede returned null" });
+        continue;
+      }
+      supersededIds.push(sourceId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failedSupersedes.push({ itemId: sourceId, reason: message });
+    }
+  }
+
+  console.log(`${LOG_PREFIX} mode=apply`);
+  if (failedSupersedes.length === 0) {
+    console.log(`${LOG_PREFIX} write_status=completed`);
+  } else {
+    console.log(`${LOG_PREFIX} write_status=partial_failure`);
+  }
+  console.log(`${LOG_PREFIX} new_merged_item_id=${inserted.id}`);
+  for (const supersededId of supersededIds) {
+    console.log(`${LOG_PREFIX} superseded_item_id=${supersededId}`);
+  }
+  console.log(`${LOG_PREFIX} no deletes performed`);
+
+  if (failedSupersedes.length > 0) {
+    console.error(`${LOG_PREFIX} WARNING partial supersede failure`);
+    console.error(`${LOG_PREFIX} warning_new_merged_item_id=${inserted.id}`);
+    console.error(
+      `${LOG_PREFIX} warning_superseded_item_ids=${supersededIds.length > 0 ? supersededIds.join(",") : "<none>"}`
+    );
+    for (const failed of failedSupersedes) {
+      console.error(`${LOG_PREFIX} warning_failed_source_item_id=${failed.itemId}`);
+      console.error(`${LOG_PREFIX} warning_failed_reason=${JSON.stringify(failed.reason)}`);
+    }
+    console.error(`${LOG_PREFIX} warning_manual_cleanup=may_be_required`);
+    process.exitCode = 1;
+  }
 }
 
 function dedupeSummaries(items: MemoryItemRow[]): string[] {
@@ -680,11 +908,6 @@ async function run(): Promise<void> {
   loadLocalEnvFiles();
   const options = parseCliOptions(process.argv.slice(2));
 
-  if (options.apply) {
-    console.error(`${LOG_PREFIX} Apply mode is not implemented yet. Run dry-run and review output first.`);
-    process.exit(1);
-  }
-
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || process.env.SUPABASE_URL?.trim();
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
   if (!supabaseUrl || !serviceRoleKey) {
@@ -696,8 +919,15 @@ async function run(): Promise<void> {
   }
 
   const students = await fetchStudents();
-  const matches = resolveStudentMatches(students, options.studentQuery);
+  const matches = options.apply
+    ? resolveStudentMatchesForApply(students, options.studentQuery)
+    : resolveStudentMatches(students, options.studentQuery);
   if (matches.length === 0) {
+    if (options.apply) {
+      throw new Error(
+        `${LOG_PREFIX} FAIL: --apply requires exact student slug match via --student <exact-student-slug>`
+      );
+    }
     throw new Error(`${LOG_PREFIX} FAIL: no students match --student query`);
   }
   if (matches.length > 1) {
@@ -709,6 +939,11 @@ async function run(): Promise<void> {
     clusters.push(...buildClusterTargets(student, activeItems));
   }
   const selected = selectClusterOrFail(options, clusters);
+
+  if (options.apply) {
+    await runGuardedApply(options, selected);
+    return;
+  }
 
   const result: JsonOutput = {
     mode: "dry-run",
