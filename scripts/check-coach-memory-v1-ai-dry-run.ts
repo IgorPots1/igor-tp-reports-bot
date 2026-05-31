@@ -73,13 +73,19 @@ type ObservationResult = {
 };
 
 type SummaryCounters = {
+  observationsTotal: number;
+  memoryItemsTotal: number;
   shouldRememberCount: number;
   itemsByMemoryType: Record<string, number>;
   notificationTierCounts: Record<CoachMemoryExtractionNotificationLevel, number>;
   affectsPlanningCount: number;
   requiresCoachAttentionCount: number;
   lowConfidenceCount: number;
+  communicationStyleFromBusinessDmCount: number;
+  oneOffMoveDominantCount: number;
+  oneOffMoveObservationsCount: number;
   likelyFalsePositiveNotes: string[];
+  qualityWarnings: string[];
 };
 
 function loadLocalEnvFiles(): void {
@@ -360,6 +366,25 @@ const PAIN_HEALTH_HINT_KEYWORDS = [
   "простуд",
 ];
 
+const ONE_OFF_MOVE_REQUEST_KEYWORDS = [
+  "перенести",
+  "перенесу",
+  "перенес",
+  "перенос",
+  "на завтра",
+  "можно завтра",
+  "попробую завтра",
+  "побегу завтра",
+  "не побегу сегодня",
+  "из-за дождя",
+  "move to tomorrow",
+];
+
+function isOneOffMoveRequest(textPreview: string | null): boolean {
+  const preview = normalizeForKeywords(textPreview ?? "");
+  return containsAny(preview, ONE_OFF_MOVE_REQUEST_KEYWORDS);
+}
+
 function scoreObservationCandidate(row: ObservationRow): {
   selected: boolean;
   score: number;
@@ -519,6 +544,8 @@ function printObservationResult(result: ObservationResult, noAiMode: boolean, sa
 
 function summarizeResults(results: ObservationResult[]): SummaryCounters {
   const summary: SummaryCounters = {
+    observationsTotal: results.length,
+    memoryItemsTotal: 0,
     shouldRememberCount: 0,
     itemsByMemoryType: {},
     notificationTierCounts: {
@@ -530,11 +557,19 @@ function summarizeResults(results: ObservationResult[]): SummaryCounters {
     affectsPlanningCount: 0,
     requiresCoachAttentionCount: 0,
     lowConfidenceCount: 0,
+    communicationStyleFromBusinessDmCount: 0,
+    oneOffMoveDominantCount: 0,
+    oneOffMoveObservationsCount: 0,
     likelyFalsePositiveNotes: [],
+    qualityWarnings: [],
   };
 
   for (const result of results) {
     const extraction = result.extraction;
+    const isOneOffMove = isOneOffMoveRequest(result.selected.row.text_preview);
+    if (isOneOffMove) {
+      summary.oneOffMoveObservationsCount += 1;
+    }
     if (!extraction) {
       continue;
     }
@@ -548,6 +583,7 @@ function summarizeResults(results: ObservationResult[]): SummaryCounters {
     }
 
     for (const item of extraction.memoryItems) {
+      summary.memoryItemsTotal += 1;
       summary.itemsByMemoryType[item.memoryType] = (summary.itemsByMemoryType[item.memoryType] ?? 0) + 1;
       summary.notificationTierCounts[item.notificationLevel] += 1;
       if (item.affectsPlanning) {
@@ -561,6 +597,12 @@ function summarizeResults(results: ObservationResult[]): SummaryCounters {
       }
       if (
         item.memoryType === "communication_style" &&
+        result.selected.row.source_type?.toLowerCase() === "business_dm"
+      ) {
+        summary.communicationStyleFromBusinessDmCount += 1;
+      }
+      if (
+        item.memoryType === "communication_style" &&
         item.structured.preferred_greeting == null &&
         item.structured.greeting_confidence != null &&
         Number(item.structured.greeting_confidence) > 0.7
@@ -570,10 +612,41 @@ function summarizeResults(results: ObservationResult[]): SummaryCounters {
         );
       }
     }
+
+    if (isOneOffMove && extraction.memoryItems.length > 0) {
+      summary.oneOffMoveDominantCount += 1;
+    }
   }
 
   if (summary.likelyFalsePositiveNotes.length > MAX_SUMMARY_LINES) {
     summary.likelyFalsePositiveNotes = summary.likelyFalsePositiveNotes.slice(0, MAX_SUMMARY_LINES);
+  }
+
+  const shouldRememberRatio = summary.observationsTotal > 0 ? summary.shouldRememberCount / summary.observationsTotal : 0;
+  const immediateRatio = summary.memoryItemsTotal > 0 ? summary.notificationTierCounts.immediate / summary.memoryItemsTotal : 0;
+
+  if (shouldRememberRatio > 0.6) {
+    summary.qualityWarnings.push(
+      `shouldRemember ratio high: ${(shouldRememberRatio * 100).toFixed(1)}% > 60%`
+    );
+  }
+  if (immediateRatio > 0.4) {
+    summary.qualityWarnings.push(
+      `immediate ratio high: ${(immediateRatio * 100).toFixed(1)}% > 40%`
+    );
+  }
+  if (summary.communicationStyleFromBusinessDmCount > 0) {
+    summary.qualityWarnings.push(
+      `communication_style emitted from business_dm: ${summary.communicationStyleFromBusinessDmCount}`
+    );
+  }
+  if (summary.oneOffMoveDominantCount > 0 && summary.oneOffMoveObservationsCount > 0) {
+    const oneOffMemoryRatio = summary.oneOffMoveDominantCount / summary.oneOffMoveObservationsCount;
+    if (oneOffMemoryRatio > 0.5) {
+      summary.qualityWarnings.push(
+        `one-off move requests dominating memory candidates: ${(oneOffMemoryRatio * 100).toFixed(1)}%`
+      );
+    }
   }
 
   return summary;
@@ -784,10 +857,21 @@ async function run(): Promise<void> {
   console.log(`- affectsPlanning count: ${summary.affectsPlanningCount}`);
   console.log(`- requiresCoachAttention count: ${summary.requiresCoachAttentionCount}`);
   console.log(`- low confidence count: ${summary.lowConfidenceCount}`);
+  console.log(
+    `- communication_style from business_dm: ${summary.communicationStyleFromBusinessDmCount}`
+  );
+  console.log(
+    `- one-off move observations with memory: ${summary.oneOffMoveDominantCount}/${summary.oneOffMoveObservationsCount}`
+  );
   if (summary.likelyFalsePositiveNotes.length === 0) {
     console.log("- likely false positive notes: none");
   } else {
     console.log(`- likely false positive notes: ${summary.likelyFalsePositiveNotes.join("; ")}`);
+  }
+  if (summary.qualityWarnings.length === 0) {
+    console.log("- quality warnings: none");
+  } else {
+    console.log(`- quality warnings: ${summary.qualityWarnings.join("; ")}`);
   }
 
   console.log("");

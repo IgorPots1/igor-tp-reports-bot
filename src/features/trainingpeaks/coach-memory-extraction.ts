@@ -93,6 +93,233 @@ type OpenAiChatResponse = {
   choices?: Array<{ message?: { content?: string | null } }>;
 };
 
+const BODY_PAIN_OR_HEALTH_KEYWORDS = [
+  "болит",
+  "боль",
+  "болезнен",
+  "травм",
+  "колено",
+  "ахилл",
+  "икра",
+  "бедро",
+  "спина",
+  "голеностоп",
+  "стоп",
+  "пятк",
+  "сустав",
+  "мышц",
+  "сухожил",
+  "горло",
+  "температур",
+  "забол",
+  "простуд",
+  "кашель",
+  "насморк",
+  "головн",
+  "тошн",
+  "ill",
+  "injur",
+  "pain",
+  "sick",
+  "fever",
+];
+
+const NON_BODY_DISCOMFORT_KEYWORDS = [
+  "телефон",
+  "карман",
+  "кроссовк",
+  "шнур",
+  "одежд",
+  "майк",
+  "тайтс",
+  "дожд",
+  "жарк",
+  "холод",
+  "ветер",
+  "phone",
+  "shoe",
+  "weather",
+  "pocket",
+];
+
+const ONE_OFF_MOVE_REQUEST_KEYWORDS = [
+  "перенести",
+  "перенесу",
+  "перенес",
+  "перенос",
+  "на завтра",
+  "можно завтра",
+  "попробую завтра",
+  "побегу завтра",
+  "не побегу сегодня",
+  "из-за дождя",
+  "move to tomorrow",
+];
+
+const SCHEDULE_CONSTRAINT_KEYWORDS = [
+  "не могу",
+  "не смогу",
+  "не получается",
+  "не получится",
+  "недоступ",
+  "нет возможности",
+  "график меняется",
+  "меняется график",
+  "по вторникам",
+  "по средам",
+  "по четвергам",
+  "по пятницам",
+  "по субботам",
+  "по воскресеньям",
+  "по понедельникам",
+  "каждый вторник",
+  "каждую неделю",
+  "в отпуске",
+  "командировк",
+  "работ",
+  "смена",
+  "семейн",
+];
+
+const SCHEDULE_INFO_REQUEST_KEYWORDS = [
+  "интересуюсь расписанием",
+  "что по плану",
+  "какая тренировка",
+  "что запланировано",
+  "что на субботу",
+  "что в субботу",
+];
+
+const RECURRENT_LOAD_KEYWORDS = ["третий раз", "повтор", "снова", "каждый раз", "не вывожу", "слишком тяжело"];
+const URGENT_SCHEDULE_KEYWORDS = ["сегодня", "завтра", "ближайш", "сейчас", "утром", "вечером"];
+
+function normalizeForRules(input: string): string {
+  return input.toLowerCase().replace(/\s+/gu, " ").trim();
+}
+
+function textHasAny(text: string, keywords: readonly string[]): boolean {
+  return keywords.some((keyword) => text.includes(keyword));
+}
+
+function isOneOffMoveRequest(text: string): boolean {
+  return textHasAny(text, ONE_OFF_MOVE_REQUEST_KEYWORDS);
+}
+
+function looksLikeScheduleInfoRequest(text: string): boolean {
+  return textHasAny(text, SCHEDULE_INFO_REQUEST_KEYWORDS);
+}
+
+function looksLikeDurableScheduleConstraint(text: string): boolean {
+  return textHasAny(text, SCHEDULE_CONSTRAINT_KEYWORDS);
+}
+
+function hasBodyPainOrHealthSignal(text: string): boolean {
+  return textHasAny(text, BODY_PAIN_OR_HEALTH_KEYWORDS);
+}
+
+function hasOnlyNonBodyDiscomfort(text: string): boolean {
+  return textHasAny(text, NON_BODY_DISCOMFORT_KEYWORDS) && !hasBodyPainOrHealthSignal(text);
+}
+
+function normalizeNotificationLevelWithRules(
+  item: CoachMemoryExtractionItem,
+  text: string
+): CoachMemoryExtractionNotificationLevel {
+  if (item.memoryType === "communication_style" || item.memoryType === "equipment_or_device_note") {
+    return "silent";
+  }
+
+  if (item.memoryType === "planning_preference" || item.memoryType === "availability_preference") {
+    return "silent";
+  }
+
+  if (item.memoryType === "pain_or_injury" || item.memoryType === "health_status") {
+    return "immediate";
+  }
+
+  if (item.memoryType === "load_tolerance") {
+    return textHasAny(text, RECURRENT_LOAD_KEYWORDS) ? "immediate" : "digest";
+  }
+
+  if (item.memoryType === "schedule_constraint") {
+    const urgent = textHasAny(text, URGENT_SCHEDULE_KEYWORDS);
+    const constraint = looksLikeDurableScheduleConstraint(text);
+    return urgent && constraint ? "immediate" : "digest";
+  }
+
+  if (item.memoryType === "emotional_state" || item.memoryType === "race_or_goal" || item.memoryType === "travel_or_life_event") {
+    return "digest";
+  }
+
+  return item.notificationLevel;
+}
+
+function applyDryRunMemoryGuards(
+  rawItems: CoachMemoryExtractionItem[],
+  input: ExtractionInput
+): { memoryItems: CoachMemoryExtractionItem[]; forcedCaseCandidate: CoachMemoryExtractionResult["caseCandidate"] | null } {
+  const observationText = normalizeForRules(input.observationPreview);
+  const labels = input.observationLabels.map((label) => label.toLowerCase());
+  const sourceType = (input.sourceType ?? "").toLowerCase();
+  const oneOffMoveRequest = isOneOffMoveRequest(observationText);
+  const scheduleInfoRequest = looksLikeScheduleInfoRequest(observationText);
+  const durableScheduleConstraint = looksLikeDurableScheduleConstraint(observationText);
+  const inboundBusinessDm = sourceType === "business_dm";
+
+  const filtered = rawItems
+    .filter((item) => {
+      if (item.memoryType === "communication_style" && inboundBusinessDm) {
+        const hasCoachStyleEvidenceLabel = labels.some(
+          (label) => label.includes("coach_outgoing") || label.includes("coach_style")
+        );
+        if (!hasCoachStyleEvidenceLabel) {
+          return false;
+        }
+      }
+
+      if (item.memoryType === "pain_or_injury") {
+        const combinedPainEvidenceText = `${observationText} ${normalizeForRules(item.summaryText)}`;
+        const hasBodySignal = hasBodyPainOrHealthSignal(combinedPainEvidenceText);
+        if (!hasBodySignal || hasOnlyNonBodyDiscomfort(combinedPainEvidenceText)) {
+          return false;
+        }
+      }
+
+      if (item.memoryType === "schedule_constraint") {
+        if (scheduleInfoRequest) {
+          return false;
+        }
+        if (oneOffMoveRequest && !durableScheduleConstraint) {
+          return false;
+        }
+        if (!durableScheduleConstraint && observationText.includes("попробую завтра")) {
+          return false;
+        }
+      }
+
+      return true;
+    })
+    .map((item) => ({
+      ...item,
+      notificationLevel: normalizeNotificationLevelWithRules(item, observationText),
+    }));
+
+  if (oneOffMoveRequest && !durableScheduleConstraint) {
+    return {
+      memoryItems: filtered,
+      forcedCaseCandidate: {
+        kind: "move_workout_needs_review",
+        priority: "normal",
+      },
+    };
+  }
+
+  return {
+    memoryItems: filtered,
+    forcedCaseCandidate: null,
+  };
+}
+
 function resolveCandidateModels(): string[] {
   const preferred = OPENAI_MODEL.trim();
   const fallback = "gpt-4o-mini";
@@ -303,15 +530,19 @@ function buildSystemPrompt(referenceDate: string): string {
     "- travel_or_life_event",
     "- equipment_or_device_note",
     "",
-    "Запоминать ТОЛЬКО:",
-    "1) стиль коммуникации / приветствие / ты-вы / тон",
-    "2) ограничения по расписанию / доступность",
-    "3) боль / дискомфорт / травма / здоровье",
-    "4) эмоциональное состояние / усталость / мотивация / переносимость нагрузки",
-    "5) устойчивые предпочтения планирования",
-    "6) старт/цель",
-    "7) поездки/жизненные события",
-    "8) ограничения по устройствам/экипировке",
+    "Ключевое различие:",
+    "- Durable memory: факт, который должен влиять на будущие ответы тренера, будущий план или будущие решения.",
+    "- Operational request: разовая просьба/вопрос, который может стать caseCandidate, но обычно НЕ память.",
+    "",
+    "Запоминать ТОЛЬКО durable memory:",
+    "1) ограничения по расписанию / доступность (особенно повторяющиеся или на период)",
+    "2) боль/травма/болезнь/физические симптомы",
+    "3) эмоциональное состояние/переносимость нагрузки при явной значимости",
+    "4) устойчивые предпочтения планирования",
+    "5) старт/цель",
+    "6) поездки/жизненные события, влияющие на тренировки",
+    "7) ограничения по устройствам/экипировке",
+    "8) communication_style только при надежном evidence coach-to-student",
     "",
     "НЕ запоминать:",
     "- простые подтверждения и благодарности",
@@ -320,6 +551,16 @@ function buildSystemPrompt(referenceDate: string): string {
     "- общие комментарии без практического влияния",
     "- дубли без новых деталей",
     "- шум о третьих лицах",
+    "- разовые запросы на перенос без устойчивого ограничения",
+    "- вопросы о расписании без факта ограничения",
+    "",
+    "Operational request examples (обычно caseCandidate, НЕ memory):",
+    "- 'перенеси бег на завтра'",
+    "- 'можно завтра?'",
+    "- 'попробую завтра'",
+    "- 'интересуюсь расписанием на субботу'",
+    "- 'из-за дождя сегодня не побегу, перенесу на завтра'",
+    "- Для таких случаев memoryItems обычно пустой, если нет явного повторяющегося ограничения/предпочтения.",
     "",
     "Правила:",
     "- summaryText на русском, коротко, <=200 символов.",
@@ -328,11 +569,14 @@ function buildSystemPrompt(referenceDate: string): string {
     "- Уверенность отражает неопределенность (0..1).",
     "- Ограничения расписания/поездки: укажи validFrom/validUntil если возможно.",
     "- Долгие предпочтения: validUntil=null.",
-    "- pain_or_injury / health_status обычно requiresCoachAttention=true и notificationLevel=immediate.",
-    "- communication_style обычно notificationLevel=silent.",
-    "- planning_preference обычно silent или digest.",
-    "- emotional_state обычно digest, immediate только если повтор/серьезность.",
-    "- load_tolerance immediate только при повторе/серьезности.",
+    "- communication_style НЕ создавай из одного inbound-сообщения ученика.",
+    "- communication_style допустим только при явном coach-to-student evidence или явном контексте стиля тренера.",
+    "- pain_or_injury не создавай для нефизического дискомфорта (телефон, одежда, погода, обувь без боли в теле).",
+    "- schedule_constraint создавай только при недоступности/ограничении/изменении графика/жизненном конфликте.",
+    "- schedule_constraint НЕ создавай для 'просто спросил расписание' или 'разово перенести на завтра' без ограничения.",
+    "- immediate только для pain_or_injury, health_status, тяжелого/повторяющегося load_tolerance, или срочного near-term конфликта расписания.",
+    "- digest для не-срочных schedule/life/race/emotion.",
+    "- silent для стабильных planning_preference, equipment_or_device_note, communication_style.",
     "",
     "Критично про greeting style:",
     "- 'Привет, Игорь' от ученика сам по себе обычно НЕ является coach greeting style.",
@@ -510,8 +754,10 @@ export async function extractCoachMemoryItemsDryRun(input: ExtractionInput): Pro
 
   const shouldRemember = parsed.shouldRemember === true;
   const rawItems = Array.isArray(parsed.memoryItems) ? parsed.memoryItems : [];
-  const memoryItems = rawItems.map(sanitizeExtractionItem).filter((item): item is CoachMemoryExtractionItem => Boolean(item));
-  const caseCandidate = sanitizeCaseCandidate(parsed.caseCandidate);
+  const sanitizedItems = rawItems.map(sanitizeExtractionItem).filter((item): item is CoachMemoryExtractionItem => Boolean(item));
+  const guarded = applyDryRunMemoryGuards(sanitizedItems, input);
+  const memoryItems = guarded.memoryItems;
+  const caseCandidate = guarded.forcedCaseCandidate ?? sanitizeCaseCandidate(parsed.caseCandidate);
   const reason = toTrimmedString(parsed.reason, 240) ?? "No reason provided.";
 
   if (!shouldRemember) {
