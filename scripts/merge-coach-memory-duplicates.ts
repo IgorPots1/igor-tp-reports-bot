@@ -40,6 +40,7 @@ type MemoryItemRow = {
   id: string;
   student_id: string;
   is_active: boolean;
+  superseded_by: string | null;
   memory_type: TrainingPeaksStudentMemoryType;
   summary_text: string;
   confidence: number | null;
@@ -50,6 +51,7 @@ type MemoryItemRow = {
   created_at: string | null;
   updated_at: string | null;
   structured: Record<string, unknown> | null;
+  metadata: Record<string, unknown> | null;
 };
 
 type ClusterConfidence = "low" | "medium" | "high";
@@ -125,6 +127,8 @@ const SCHEDULE_TYPES = new Set<TrainingPeaksStudentMemoryType>([
   "availability_preference",
   "planning_preference",
 ]);
+const MEMORY_ITEM_SELECT =
+  "id, student_id, is_active, superseded_by, memory_type, summary_text, confidence, valid_from, valid_until, first_seen_at, last_seen_at, created_at, updated_at, structured, metadata";
 
 function loadLocalEnvFiles(): void {
   const repoRoot = path.resolve(process.cwd());
@@ -310,9 +314,7 @@ async function fetchActiveMemoryItems(studentId: string): Promise<MemoryItemRow[
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("trainingpeaks_student_memory_items")
-    .select(
-      "id, student_id, is_active, memory_type, summary_text, confidence, valid_from, valid_until, first_seen_at, last_seen_at, created_at, updated_at, structured"
-    )
+    .select(MEMORY_ITEM_SELECT)
     .eq("is_active", true)
     .eq("student_id", studentId)
     .order("memory_type", { ascending: true })
@@ -335,9 +337,7 @@ async function fetchMemoryItemsByIds(ids: readonly string[]): Promise<MemoryItem
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("trainingpeaks_student_memory_items")
-    .select(
-      "id, student_id, is_active, memory_type, summary_text, confidence, valid_from, valid_until, first_seen_at, last_seen_at, created_at, updated_at, structured"
-    )
+    .select(MEMORY_ITEM_SELECT)
     .in("id", [...ids])
     .limit(5000);
 
@@ -345,6 +345,38 @@ async function fetchMemoryItemsByIds(ids: readonly string[]): Promise<MemoryItem
     throw new Error(`${LOG_PREFIX} FAIL: trainingpeaks_student_memory_items by ids: ${error.message}`);
   }
   return (data as MemoryItemRow[] | null) ?? [];
+}
+
+async function fetchMemoryItemById(id: string): Promise<MemoryItemRow | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_memory_items")
+    .select(MEMORY_ITEM_SELECT)
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`${LOG_PREFIX} FAIL: trainingpeaks_student_memory_items by id: ${error.message}`);
+  }
+  return (data as MemoryItemRow | null) ?? null;
+}
+
+async function findActiveMergedItemByClusterId(studentId: string, clusterId: string): Promise<MemoryItemRow | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_memory_items")
+    .select(MEMORY_ITEM_SELECT)
+    .eq("student_id", studentId)
+    .eq("is_active", true)
+    .contains("structured", { merge_cluster_id: clusterId })
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`${LOG_PREFIX} FAIL: active merged row lookup: ${error.message}`);
+  }
+  return (data as MemoryItemRow | null) ?? null;
 }
 
 function sortedIds(ids: readonly string[]): string[] {
@@ -368,6 +400,67 @@ function readStructuredString(structured: Record<string, unknown> | null, key: s
 function readStructuredNumber(structured: Record<string, unknown> | null, key: string): number | null {
   const value = structured?.[key];
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function printAlreadyMergedNoop(existingMergedItemId: string): void {
+  console.error(`${LOG_PREFIX} already_merged=true`);
+  console.error(`${LOG_PREFIX} existing_merged_item_id=${existingMergedItemId}`);
+  console.error(`${LOG_PREFIX} write_status=noop`);
+}
+
+async function verifyApplyResult(input: {
+  clusterId: string;
+  mergedItemId: string;
+  sourceItemIds: readonly string[];
+}): Promise<{ ok: boolean; failedIds: string[]; errors: string[] }> {
+  const errors: string[] = [];
+  const failedIds = new Set<string>();
+  const sourceIds = sortedIds(input.sourceItemIds);
+
+  const mergedItem = await fetchMemoryItemById(input.mergedItemId);
+  if (!mergedItem) {
+    errors.push(`missing_merged_item_id=${input.mergedItemId}`);
+    failedIds.add(input.mergedItemId);
+  } else {
+    if (!mergedItem.is_active) {
+      errors.push(`merged_item_not_active=${mergedItem.id}`);
+      failedIds.add(mergedItem.id);
+    }
+    const mergedClusterId = readStructuredString(mergedItem.structured, "merge_cluster_id");
+    if (mergedClusterId !== input.clusterId) {
+      errors.push(
+        `merged_cluster_id_mismatch=${mergedItem.id}: expected=${input.clusterId} actual=${mergedClusterId ?? "<null>"}`
+      );
+      failedIds.add(mergedItem.id);
+    }
+  }
+
+  const sourceRows = await fetchMemoryItemsByIds(sourceIds);
+  const sourceRowById = new Map(sourceRows.map((row) => [row.id, row]));
+  for (const sourceId of sourceIds) {
+    const sourceRow = sourceRowById.get(sourceId);
+    if (!sourceRow) {
+      errors.push(`missing_source_item_id=${sourceId}`);
+      failedIds.add(sourceId);
+      continue;
+    }
+    if (sourceRow.is_active) {
+      errors.push(`source_item_still_active=${sourceId}`);
+      failedIds.add(sourceId);
+    }
+    if (sourceRow.superseded_by !== input.mergedItemId) {
+      errors.push(
+        `source_item_superseded_by_mismatch=${sourceId}: expected=${input.mergedItemId} actual=${sourceRow.superseded_by ?? "<null>"}`
+      );
+      failedIds.add(sourceId);
+    }
+  }
+
+  return {
+    ok: errors.length === 0,
+    failedIds: sortedIds([...failedIds]),
+    errors,
+  };
 }
 
 function minIsoValue(values: Array<string | null>): string | undefined {
@@ -418,6 +511,15 @@ async function runGuardedApply(options: CliOptions, selected: ClusterTarget): Pr
   const liveClusters = buildClusterTargets(selectedStudent, liveActiveItems);
   const liveMatches = liveClusters.filter((cluster) => cluster.clusterId === options.clusterId);
   if (liveMatches.length !== 1) {
+    if (liveMatches.length === 0) {
+      const existingMerged = await findActiveMergedItemByClusterId(selected.studentId, options.clusterId);
+      if (existingMerged) {
+        printAlreadyMergedNoop(existingMerged.id);
+        throw new Error(
+          `${LOG_PREFIX} FAIL: selected cluster not found because it was already merged for cluster_id=${options.clusterId}`
+        );
+      }
+    }
     throw new Error(
       `${LOG_PREFIX} FAIL: live --cluster-id match_count=${liveMatches.length}; expected exactly 1 before apply`
     );
@@ -536,6 +638,24 @@ async function runGuardedApply(options: CliOptions, selected: ClusterTarget): Pr
       console.error(`${LOG_PREFIX} warning_failed_reason=${JSON.stringify(failed.reason)}`);
     }
     console.error(`${LOG_PREFIX} warning_manual_cleanup=may_be_required`);
+    process.exitCode = 1;
+  }
+
+  const verify = await verifyApplyResult({
+    clusterId: options.clusterId,
+    mergedItemId: inserted.id,
+    sourceItemIds: liveClusterSourceIds,
+  });
+  if (verify.ok) {
+    console.log(`${LOG_PREFIX} verify_status=ok`);
+  } else {
+    console.error(`${LOG_PREFIX} verify_status=failed`);
+    console.error(
+      `${LOG_PREFIX} verify_failed_ids=${verify.failedIds.length > 0 ? verify.failedIds.join(",") : "<unknown>"}`
+    );
+    for (const error of verify.errors) {
+      console.error(`${LOG_PREFIX} verify_error=${error}`);
+    }
     process.exitCode = 1;
   }
 }
@@ -938,12 +1058,31 @@ async function run(): Promise<void> {
     const activeItems = await fetchActiveMemoryItems(student.id);
     clusters.push(...buildClusterTargets(student, activeItems));
   }
-  const selected = selectClusterOrFail(options, clusters);
 
   if (options.apply) {
-    await runGuardedApply(options, selected);
+    const applyMatches = clusters.filter((cluster) => cluster.clusterId === options.clusterId);
+    if (applyMatches.length === 0) {
+      const selectedStudent = matches[0];
+      if (selectedStudent && options.clusterId) {
+        const existingMerged = await findActiveMergedItemByClusterId(selectedStudent.id, options.clusterId);
+        if (existingMerged) {
+          printAlreadyMergedNoop(existingMerged.id);
+          throw new Error(
+            `${LOG_PREFIX} FAIL: selected cluster not found because it was already merged for cluster_id=${options.clusterId}`
+          );
+        }
+      }
+    }
+    if (applyMatches.length !== 1) {
+      throw new Error(
+        `${LOG_PREFIX} FAIL: --cluster-id match_count=${applyMatches.length}; expected exactly 1 for selected student`
+      );
+    }
+    await runGuardedApply(options, applyMatches[0]);
     return;
   }
+
+  const selected = selectClusterOrFail(options, clusters);
 
   const result: JsonOutput = {
     mode: "dry-run",
