@@ -2667,15 +2667,6 @@ async function notifyCoachDryRunResult(input: {
         reason === moveSourcePolicy.INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON ||
         reason === moveSourcePolicy.INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU
     );
-  const inferredSourceBlockedOnly =
-    inferredSourceBlocked &&
-    Array.isArray(evaluation?.canExecuteReasons) &&
-    evaluation.canExecuteReasons.length > 0 &&
-    evaluation.canExecuteReasons.every(
-      (reason) =>
-        reason === moveSourcePolicy.INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON ||
-        reason === moveSourcePolicy.INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU
-    );
   const strongFutureDescriptorMatch =
     evaluation?.selectedSourceDatePolicy === moveSourcePolicy.STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY;
   const likelySourceTitle = evaluation?.candidate?.title?.trim() || evaluation?.sourceInferenceProvenance?.candidate?.title?.trim();
@@ -2748,7 +2739,7 @@ async function notifyCoachDryRunResult(input: {
         ],
       ];
     } else if (
-      inferredSourceBlockedOnly &&
+      inferredSourceBlocked &&
       typeof evaluation.resolvedDates.sourceDate === "string" &&
       evaluation.resolvedDates.sourceDate.trim() &&
       typeof evaluation.resolvedDates.targetDate === "string" &&
