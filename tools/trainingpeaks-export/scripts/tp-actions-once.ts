@@ -25,6 +25,7 @@ import {
 import * as moveSourcePolicyNamespace from "../../../src/features/trainingpeaks/move-source-policy.ts";
 import * as moveSourceInferencePreviewNamespace from "../../../src/features/trainingpeaks/move-source-inference-preview.ts";
 import * as strongFutureDescriptorMoveSourceNamespace from "../../../src/features/trainingpeaks/strong-future-descriptor-move-source.ts";
+import * as trainingPeaksAttentionTelegramModule from "../../../src/features/trainingpeaks/attention-telegram.ts";
 import * as trainingPeaksTelegramBusinessModule from "../../../src/features/trainingpeaks/telegram-business.ts";
 import * as trainingPeaksRepositoryModule from "../../../src/features/trainingpeaks/repository.ts";
 
@@ -48,6 +49,14 @@ const getTrainingPeaksBusinessChatByChatId =
 
 if (typeof getTrainingPeaksBusinessChatByChatId !== "function") {
   throw new Error("TrainingPeaks repository business chat helper is unavailable.");
+}
+
+const getTrainingPeaksCoachChatIds =
+  trainingPeaksAttentionTelegramModule.getTrainingPeaksCoachChatIds ??
+  trainingPeaksAttentionTelegramModule.default?.getTrainingPeaksCoachChatIds;
+
+if (typeof getTrainingPeaksCoachChatIds !== "function") {
+  throw new Error("TrainingPeaks coach chat ids helper is unavailable.");
 }
 
 const moveSourcePolicy = moveSourcePolicyNamespace.default ?? moveSourcePolicyNamespace;
@@ -2433,14 +2442,21 @@ async function extractWorkoutIdFromCard(card: import("playwright").Locator): Pro
   return extractWorkoutIdFromText(text);
 }
 
-function resolveDryRunNotificationChatId(action: TrainingPeaksActionRow): string | null {
-  const chatId = action.coach_chat_id ?? action.decided_by_chat_id;
-  if (!chatId) {
-    console.warn(
-      `TrainingPeaks dry-run: skipping coach Telegram notification — no chat id (coach_chat_id and decided_by_chat_id both null) for action ${action.id}, status=${action.status}`
-    );
+function isAutoApprovedDryRunFallbackEligible(action: TrainingPeaksActionRow): boolean {
+  if (!action.parsed_payload || typeof action.parsed_payload !== "object") {
+    return false;
   }
-  return chatId;
+
+  const payload = action.parsed_payload as {
+    parsingDiagnostics?: {
+      autoApprovedForDryRun?: unknown;
+    };
+  };
+  return payload.parsingDiagnostics?.autoApprovedForDryRun === true;
+}
+
+function toShortActionId(actionId: string): string {
+  return actionId.slice(0, 8);
 }
 
 function extractMoveDateRangeFromParsedPayload(
@@ -2708,6 +2724,53 @@ async function notifyCoachDryRunResult(input: {
   } catch (error) {
     console.warn(`Telegram action dry-run summary warning: ${toShortErrorMessage(error)}`);
   }
+}
+
+async function notifyCoachDryRunResultWithFallback(input: {
+  action: TrainingPeaksActionRow;
+  studentName: string;
+  dryRunEvaluation?: DryRunEvaluation | null;
+}): Promise<void> {
+  const directChatId = input.action.coach_chat_id ?? input.action.decided_by_chat_id;
+  if (directChatId) {
+    await notifyCoachDryRunResult({
+      chatId: directChatId,
+      action: input.action,
+      studentName: input.studentName,
+      dryRunEvaluation: input.dryRunEvaluation,
+    });
+    return;
+  }
+
+  if (!isAutoApprovedDryRunFallbackEligible(input.action)) {
+    console.warn(
+      "TrainingPeaks dry-run: skipping coach Telegram notification — no chat id and action is not auto-approved fallback eligible"
+    );
+    return;
+  }
+
+  const coachChatIds = getTrainingPeaksCoachChatIds();
+  if (coachChatIds.length === 0) {
+    console.warn(
+      `TrainingPeaks dry-run: skipping coach Telegram notification — auto-approved fallback has no configured coach chats for action ${toShortActionId(input.action.id)}`
+    );
+    return;
+  }
+
+  await Promise.allSettled(
+    coachChatIds.map(async (chatId) => {
+      await notifyCoachDryRunResult({
+        chatId,
+        action: input.action,
+        studentName: input.studentName,
+        dryRunEvaluation: input.dryRunEvaluation,
+      });
+    })
+  );
+
+  console.log(
+    `TrainingPeaks dry-run: sent coach notification via auto-approved fallback for action ${toShortActionId(input.action.id)}`
+  );
 }
 
 async function claimOneApprovedActionForDryRun(
@@ -8645,8 +8708,7 @@ async function main(): Promise<void> {
         screenshotAfterPath: artifacts.screenshotAfterPath,
       });
 
-      await notifyCoachDryRunResult({
-        chatId: resolveDryRunNotificationChatId(claimed.action),
+      await notifyCoachDryRunResultWithFallback({
         action: claimed.action,
         studentName,
         dryRunEvaluation: evaluation,
@@ -8717,8 +8779,7 @@ async function main(): Promise<void> {
         logJson: failedLog,
       });
 
-      await notifyCoachDryRunResult({
-        chatId: resolveDryRunNotificationChatId(claimed.action),
+      await notifyCoachDryRunResultWithFallback({
         action: claimed.action,
         studentName,
         dryRunEvaluation: failedEvaluation,
