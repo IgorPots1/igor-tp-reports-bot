@@ -63,6 +63,12 @@ type ClusterTarget = {
   proposedMergedSummary: string;
   proposedMergedMemoryType: TrainingPeaksStudentMemoryType;
   proposedStructuredAdditions: Record<string, unknown>;
+  proposedSupersedeMetadata: {
+    reason: "duplicate_cluster_merge";
+    merge_cluster_id: string;
+    new_merged_item_id: "<new_merged_item_id>";
+    superseded_at: "<apply_timestamp>";
+  };
   proposedSourceItemIds: string[];
   proposedDeactivateOperations: Array<{
     itemId: string;
@@ -87,6 +93,12 @@ type JsonOutput = {
     episodeKey: string | null;
     clusterId: string | null;
   };
+  preferredTargeting: {
+    recommended_cluster_id: string;
+    recommended_cluster_command: string;
+    apply_safety_note: string;
+  };
+  futureApplyPlan: string[];
 };
 
 const ALL_MEMORY_TYPES: TrainingPeaksStudentMemoryType[] = [
@@ -248,6 +260,17 @@ async function fetchStudents(): Promise<StudentRow[]> {
 
 function resolveStudentMatches(students: StudentRow[], query: string): StudentRow[] {
   const normalized = normalizeText(query);
+  const exactMatches = students.filter((student) => {
+    return (
+      student.id.toLowerCase() === normalized ||
+      student.student_id.toLowerCase() === normalized ||
+      normalizeText(student.student_name) === normalized
+    );
+  });
+  if (exactMatches.length > 0) {
+    return exactMatches;
+  }
+
   return students.filter((student) => {
     return (
       student.id.toLowerCase().startsWith(normalized) ||
@@ -255,6 +278,16 @@ function resolveStudentMatches(students: StudentRow[], query: string): StudentRo
       student.student_name.toLowerCase().includes(normalized)
     );
   });
+}
+
+function confidenceToNumeric(confidence: ClusterConfidence): number {
+  if (confidence === "high") {
+    return 0.9;
+  }
+  if (confidence === "medium") {
+    return 0.7;
+  }
+  return 0.5;
 }
 
 async function fetchActiveMemoryItems(studentId: string): Promise<MemoryItemRow[]> {
@@ -494,13 +527,15 @@ function buildClusterTargets(student: StudentRow, studentItems: MemoryItemRow[])
     }
     const proposedMergedMemoryType = resolveProposedMergedMemoryType(episodeKey, clusterItems);
     const sourceIds = clusterItems.map((item) => item.id);
+    const confidenceRisk = clusterConfidence(episodeKey, clusterItems, signalsById);
+    const mergedClusterId = `${student.student_id}:${episodeKey}`;
     targets.push({
-      clusterId: `${student.student_id}:${episodeKey}`,
+      clusterId: mergedClusterId,
       studentId: student.id,
       studentSlug: student.student_id,
       studentName: student.student_name,
       episodeKey,
-      confidenceRisk: clusterConfidence(episodeKey, clusterItems, signalsById),
+      confidenceRisk,
       itemCount: clusterItems.length,
       items: clusterItems,
       memoryTypes: typesInCluster(clusterItems),
@@ -509,10 +544,21 @@ function buildClusterTargets(student: StudentRow, studentItems: MemoryItemRow[])
       proposedMergedMemoryType,
       proposedStructuredAdditions: {
         episode_key: episodeKey,
-        merge_cluster_id: `${student.student_id}:${episodeKey}`,
-        merge_confidence_risk: clusterConfidence(episodeKey, clusterItems, signalsById),
+        merge_source: "duplicate_cluster_merge",
+        merge_cluster_id: mergedClusterId,
+        merge_confidence_risk: confidenceRisk,
         merge_source_item_ids: sourceIds,
         merge_strategy: "coach_memory_duplicate_cluster_v1",
+        source_memory_types: typesInCluster(clusterItems),
+        source_item_count: clusterItems.length,
+        source_summary_count: summaries.length,
+        proposed_confidence: confidenceToNumeric(confidenceRisk),
+      },
+      proposedSupersedeMetadata: {
+        reason: "duplicate_cluster_merge",
+        merge_cluster_id: mergedClusterId,
+        new_merged_item_id: "<new_merged_item_id>",
+        superseded_at: "<apply_timestamp>",
       },
       proposedSourceItemIds: sourceIds,
       proposedDeactivateOperations: sourceIds.map((itemId) => ({
@@ -545,8 +591,10 @@ function selectClusterOrFail(options: CliOptions, clusters: ClusterTarget[]): Cl
   if (options.episodeKey) {
     const matched = clusters.filter((cluster) => cluster.episodeKey === options.episodeKey);
     if (matched.length !== 1) {
+      const available = clusters.map((cluster) => cluster.clusterId).join(", ");
       throw new Error(
-        `${LOG_PREFIX} FAIL: --episode-key match_count=${matched.length}; expected exactly 1 for selected student`
+        `${LOG_PREFIX} FAIL: --episode-key match_count=${matched.length}; expected exactly 1 for selected student. ` +
+          `Prefer exact --cluster-id targeting. available_cluster_ids=${available}`
       );
     }
     return matched[0];
@@ -598,11 +646,34 @@ function printReadableOutput(result: JsonOutput): void {
   console.log(
     `${LOG_PREFIX} proposed_structured_additions=${JSON.stringify(result.selectedCluster.proposedStructuredAdditions)}`
   );
+  console.log(
+    `${LOG_PREFIX} proposed_supersede_metadata=${JSON.stringify(result.selectedCluster.proposedSupersedeMetadata)}`
+  );
   console.log(`${LOG_PREFIX} proposed_source_item_ids=${result.selectedCluster.proposedSourceItemIds.join(",")}`);
   for (const operation of result.selectedCluster.proposedDeactivateOperations) {
     console.log(`${LOG_PREFIX} proposed_deactivate=${JSON.stringify(operation)}`);
   }
+  console.log(`${LOG_PREFIX} preferred_targeting=cluster_id`);
+  console.log(`${LOG_PREFIX} recommended_cluster_id=${result.preferredTargeting.recommended_cluster_id}`);
+  console.log(`${LOG_PREFIX} recommended_cluster_command=${result.preferredTargeting.recommended_cluster_command}`);
+  console.log(`${LOG_PREFIX} apply_safety_note=${JSON.stringify(result.preferredTargeting.apply_safety_note)}`);
+  for (const planStep of result.futureApplyPlan) {
+    console.log(`${LOG_PREFIX} future_apply_plan=${JSON.stringify(planStep)}`);
+  }
   console.log(`${LOG_PREFIX} no DB writes were performed`);
+}
+
+function printAmbiguousStudentMatchAndFail(matches: StudentRow[], query: string): never {
+  console.error(`${LOG_PREFIX} matched_students_count=${matches.length}`);
+  for (const student of matches) {
+    console.error(`${LOG_PREFIX} matched_student=${student.student_name} (${student.student_id}; ${student.id.slice(0, 8)})`);
+  }
+  console.error(`${LOG_PREFIX} error=ambiguous_student_match`);
+  const firstSuggestion = matches[0]?.student_id ?? "<student-slug>";
+  console.error(
+    `${LOG_PREFIX} hint=Use a more specific student slug/id/full name, e.g. ${firstSuggestion}`
+  );
+  throw new Error(`${LOG_PREFIX} FAIL: ambiguous --student match for query=${JSON.stringify(query)}`);
 }
 
 async function run(): Promise<void> {
@@ -628,6 +699,9 @@ async function run(): Promise<void> {
   const matches = resolveStudentMatches(students, options.studentQuery);
   if (matches.length === 0) {
     throw new Error(`${LOG_PREFIX} FAIL: no students match --student query`);
+  }
+  if (matches.length > 1) {
+    printAmbiguousStudentMatchAndFail(matches, options.studentQuery);
   }
   const clusters: ClusterTarget[] = [];
   for (const student of matches) {
@@ -655,6 +729,20 @@ async function run(): Promise<void> {
       episodeKey: options.episodeKey,
       clusterId: options.clusterId,
     },
+    preferredTargeting: {
+      recommended_cluster_id: selected.clusterId,
+      recommended_cluster_command:
+        `npm run merge-coach-memory-duplicates -- --student ${selected.studentSlug} --cluster-id ${selected.clusterId}`,
+      apply_safety_note:
+        "Future --apply should always use exact --cluster-id after reviewing dry-run output.",
+    },
+    futureApplyPlan: [
+      "insert one new active trainingpeaks_student_memory_items row for merged summary",
+      "supersede old rows via supersedeTrainingPeaksStudentMemoryItem",
+      "never delete source rows",
+      "re-read source rows before write",
+      "abort if any source row is inactive, belongs to another student, or no longer matches selected cluster",
+    ],
   };
 
   if (options.json) {
