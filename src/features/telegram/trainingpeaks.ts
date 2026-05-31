@@ -6264,15 +6264,15 @@ async function handleTrainingPeaksActionConfirmSourceDateCallback(
 
   const formattedDate = formatCompactDateShort(result.confirmedSourceDate);
   const rerunLine = result.dryRunRequeueRequested
-    ? "Запрошен новый dry-run с подтверждённой исходной датой."
-    : "Новый dry-run не поставлен автоматически. Нажми «Выполнить», и будет использована подтверждённая дата с live re-validation.";
+    ? "Запущен повторный dry-run — кнопка «Выполнить» появится в новом уведомлении после проверки."
+    : "Перейди к заявке, чтобы проверить статус.";
   await editTrainingPeaksMenuMessage(
     parsedMessage.chatId,
     parsedMessage.messageId,
     `✅ Исходная дата подтверждена: ${formattedDate}.\n${rerunLine}`,
     createInlineKeyboardMarkup([
-      [createMenuButton("✅ Выполнить", `${TP_CALLBACK_ACTION_EXECUTE_PREFIX}${actionId}`)],
       [createMenuButton("◀ К заявке", `${TP_CALLBACK_ACTION_DETAIL_PREFIX}${actionId}`)],
+      [createMenuButton("📋 К списку заявок", "tp:actions:list")],
     ])
   );
 }
