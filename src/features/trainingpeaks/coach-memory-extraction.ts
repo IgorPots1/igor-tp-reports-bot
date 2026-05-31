@@ -1045,7 +1045,7 @@ export async function processCoachMemoryForObservation(
         validFrom: item.validFrom,
         validUntil: item.validUntil,
         sourceObservationId: input.observationId,
-        sourceMessagePreview: input.textPreview?.slice(0, 500) ?? null,
+        sourceMessagePreview: input.textPreview?.slice(0, 160) ?? null,
         metadata: {
           affects_planning: item.affectsPlanning,
           requires_coach_attention: item.requiresCoachAttention,
