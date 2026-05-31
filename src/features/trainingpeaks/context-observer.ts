@@ -5,9 +5,11 @@ import {
   getTrainingPeaksStudentThreadByChatThread,
   hasTrainingPeaksTelegramContextObservationForChatTextHash,
   insertTrainingPeaksTelegramContextObservation,
+  listActiveTrainingPeaksStudentMemoryItems,
   listTrainingPeaksStudentsByTelegramChatId,
   type TrainingPeaksStudent,
 } from "@/features/trainingpeaks/repository";
+import { processCoachMemoryForObservation } from "@/features/trainingpeaks/coach-memory-extraction";
 import { getTrainingPeaksCoachChatIds } from "@/features/trainingpeaks/attention-telegram";
 import { passesTrainingPeaksStrictMoveWorkoutIntentGate } from "@/features/trainingpeaks/service";
 import { buildTelegramContextTextPreview, sha256TelegramContextText } from "@/features/trainingpeaks/telegram-context";
@@ -385,7 +387,7 @@ async function persistObserverObservation(input: BuildObservationLogPayloadInput
   );
 
   if (!dedupSkipped) {
-    await insertTrainingPeaksTelegramContextObservation({
+    const insertedObservation = await insertTrainingPeaksTelegramContextObservation({
       studentId: input.studentId,
       sourceType: input.sourceType,
       chatId: input.chatId,
@@ -405,6 +407,50 @@ async function persistObserverObservation(input: BuildObservationLogPayloadInput
         senderMatchMethod: input.senderMatchMethod ?? null,
       },
     });
+
+    if (input.studentId && process.env.COACH_MEMORY_EXTRACTION_ENABLED?.trim() === "true") {
+      try {
+        const student = await getTrainingPeaksStudentById(input.studentId);
+        const activeMemoryItems = await listActiveTrainingPeaksStudentMemoryItems(input.studentId, {
+          limit: 200,
+        });
+        const memoryResult = await processCoachMemoryForObservation({
+          observationId: insertedObservation.id,
+          studentId: input.studentId,
+          studentName: student?.studentName ?? "Unknown student",
+          textPreview: payload.textPreview,
+          labels: persistedLabels,
+          sourceType: input.sourceType,
+          observedAt: insertedObservation.observedAt,
+          currentActiveMemoryItems: activeMemoryItems.map((item) => ({
+            id: item.id,
+            memoryType: item.memoryType,
+            summaryText: item.summaryText,
+            structured: item.structured,
+            validUntil: item.validUntil,
+          })),
+        });
+
+        if (memoryResult.status === "processed" && (memoryResult.inserted > 0 || memoryResult.touched > 0)) {
+          console.info("TrainingPeaks coach memory observation write", {
+            event: "trainingpeaks_coach_memory_observation_processed",
+            observationIdPrefix: insertedObservation.id.slice(0, 8),
+            studentIdPrefix: input.studentId.slice(0, 8),
+            inserted: memoryResult.inserted,
+            touched: memoryResult.touched,
+            skipped: memoryResult.skipped,
+          });
+        }
+      } catch (error) {
+        const errorName = error instanceof Error ? error.name : "UnknownError";
+        console.warn("TrainingPeaks coach memory observation processing failed", {
+          event: "trainingpeaks_coach_memory_observation_failed",
+          observationIdPrefix: insertedObservation.id.slice(0, 8),
+          studentIdPrefix: input.studentId.slice(0, 8),
+          errorClass: errorName,
+        });
+      }
+    }
   }
 
   console.info("TrainingPeaks context observation", {
