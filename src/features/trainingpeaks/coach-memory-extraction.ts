@@ -112,6 +112,7 @@ export type ProcessCoachMemoryForObservationInput = {
     "id" | "memoryType" | "summaryText" | "structured" | "validUntil"
   >[];
   applyWrites?: boolean;
+  precomputedExtraction?: CoachMemoryExtractionResult;
 };
 
 export type ProcessCoachMemoryForObservationResult =
@@ -926,19 +927,21 @@ export async function processCoachMemoryForObservation(
     };
   }
 
-  const extraction = await extractCoachMemoryItems({
-    studentName: input.studentName,
-    observationPreview: input.textPreview ?? "",
-    observationLabels: input.labels,
-    sourceType: input.sourceType,
-    observedAt: input.observedAt,
-    currentActiveMemoryItems: input.currentActiveMemoryItems.map((item) => ({
-      memoryType: item.memoryType,
-      summaryText: item.summaryText,
-      structured: item.structured,
-      validUntil: item.validUntil,
-    })),
-  });
+  const extraction =
+    input.precomputedExtraction ??
+    (await extractCoachMemoryItems({
+      studentName: input.studentName,
+      observationPreview: input.textPreview ?? "",
+      observationLabels: input.labels,
+      sourceType: input.sourceType,
+      observedAt: input.observedAt,
+      currentActiveMemoryItems: input.currentActiveMemoryItems.map((item) => ({
+        memoryType: item.memoryType,
+        summaryText: item.summaryText,
+        structured: item.structured,
+        validUntil: item.validUntil,
+      })),
+    }));
 
   if (!extraction.shouldRemember || extraction.memoryItems.length === 0) {
     return {
