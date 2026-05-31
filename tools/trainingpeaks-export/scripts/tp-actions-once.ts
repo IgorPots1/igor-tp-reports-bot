@@ -25,11 +25,30 @@ import {
 import * as moveSourcePolicyNamespace from "../../../src/features/trainingpeaks/move-source-policy.ts";
 import * as moveSourceInferencePreviewNamespace from "../../../src/features/trainingpeaks/move-source-inference-preview.ts";
 import * as strongFutureDescriptorMoveSourceNamespace from "../../../src/features/trainingpeaks/strong-future-descriptor-move-source.ts";
-import {
-  getRequiredTrainingPeaksBusinessConnectionId,
-  sendTrainingPeaksTelegramBusinessMessage,
-} from "../../../src/features/trainingpeaks/telegram-business.ts";
-import { getTrainingPeaksBusinessChatByChatId } from "../../../src/features/trainingpeaks/repository.ts";
+import * as trainingPeaksTelegramBusinessModule from "../../../src/features/trainingpeaks/telegram-business.ts";
+import * as trainingPeaksRepositoryModule from "../../../src/features/trainingpeaks/repository.ts";
+
+const getRequiredTrainingPeaksBusinessConnectionId =
+  trainingPeaksTelegramBusinessModule.getRequiredTrainingPeaksBusinessConnectionId ??
+  trainingPeaksTelegramBusinessModule.default?.getRequiredTrainingPeaksBusinessConnectionId;
+const sendTrainingPeaksTelegramBusinessMessage =
+  trainingPeaksTelegramBusinessModule.sendTrainingPeaksTelegramBusinessMessage ??
+  trainingPeaksTelegramBusinessModule.default?.sendTrainingPeaksTelegramBusinessMessage;
+
+if (
+  typeof getRequiredTrainingPeaksBusinessConnectionId !== "function" ||
+  typeof sendTrainingPeaksTelegramBusinessMessage !== "function"
+) {
+  throw new Error("TrainingPeaks Telegram business helpers are unavailable.");
+}
+
+const getTrainingPeaksBusinessChatByChatId =
+  trainingPeaksRepositoryModule.getTrainingPeaksBusinessChatByChatId ??
+  trainingPeaksRepositoryModule.default?.getTrainingPeaksBusinessChatByChatId;
+
+if (typeof getTrainingPeaksBusinessChatByChatId !== "function") {
+  throw new Error("TrainingPeaks repository business chat helper is unavailable.");
+}
 
 const moveSourcePolicy = moveSourcePolicyNamespace.default ?? moveSourcePolicyNamespace;
 const moveSourceInferencePreview =
