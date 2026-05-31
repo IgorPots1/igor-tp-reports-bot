@@ -85,6 +85,7 @@ export async function parseMoveWorkoutWithAiFallback(rawText: string): Promise<A
     "Верни только JSON без markdown и без пояснений.",
     "Если target неясен или есть несколько целей, needsClarification=true и clarificationReason.",
     "Не выдумывай данные. Если source непонятен, source=null.",
+    "Если дата ('вчера', 'сегодня') указана как причина/контекст (например, 'вчера был хайкинг'), а не как исходная дата тренировки, ставь source=null.",
     `Текущая дата UTC: ${now.toISOString().slice(0, 10)}; timezone: ${timezone}.`,
     `Схема: ${JSON.stringify(schemaHint)}.`,
     `Сообщение: ${rawText}`,

@@ -459,5 +459,77 @@
     "expectedTargetDate": null,
     "expectedWorkoutKind": null,
     "notes": "Intent without target should fail gate"
+  },
+  {
+    "id": "context-date-001",
+    "category": "contextual_reason_date_suppression",
+    "input": "Вчера был хайкинг, перенеси на завтра бег",
+    "baseDate": "2026-05-31",
+    "expectedIntentGatePass": true,
+    "expectedParseOk": true,
+    "expectedSourceDate": null,
+    "expectedTargetDate": "2026-06-01",
+    "expectedWorkoutKind": "run",
+    "notes": "Past activity context should not become source date"
+  },
+  {
+    "id": "context-date-002",
+    "category": "contextual_reason_date_suppression",
+    "input": "Вчера был хайкинг, перенеси бег на завтра",
+    "baseDate": "2026-05-31",
+    "expectedIntentGatePass": true,
+    "expectedParseOk": true,
+    "expectedSourceDate": null,
+    "expectedTargetDate": "2026-06-01",
+    "expectedWorkoutKind": "run",
+    "notes": "Variant with workout after move verb"
+  },
+  {
+    "id": "context-date-003",
+    "category": "contextual_reason_date_suppression",
+    "input": "После вчерашней гонки перенеси бег на завтра",
+    "baseDate": "2026-05-31",
+    "expectedIntentGatePass": true,
+    "expectedParseOk": true,
+    "expectedSourceDate": null,
+    "expectedTargetDate": "2026-06-01",
+    "expectedWorkoutKind": "run",
+    "notes": "Reason marker should suppress contextual date"
+  },
+  {
+    "id": "context-date-004",
+    "category": "contextual_reason_date_suppression",
+    "input": "Сегодня не успеваю, перенеси бег на завтра",
+    "baseDate": "2026-05-31",
+    "expectedIntentGatePass": true,
+    "expectedParseOk": true,
+    "expectedSourceDate": null,
+    "expectedTargetDate": "2026-06-01",
+    "expectedWorkoutKind": "run",
+    "notes": "Today as context/reason should not become source date"
+  },
+  {
+    "id": "context-date-005",
+    "category": "contextual_reason_date_suppression",
+    "input": "Перенеси вчерашний бег на завтра",
+    "baseDate": "2026-05-31",
+    "expectedIntentGatePass": true,
+    "expectedParseOk": true,
+    "expectedSourceDate": "2026-05-30",
+    "expectedTargetDate": "2026-06-01",
+    "expectedWorkoutKind": "run",
+    "notes": "Explicit adjectival source must remain source date"
+  },
+  {
+    "id": "context-date-006",
+    "category": "contextual_reason_date_suppression",
+    "input": "Перенеси бег со вчера на завтра",
+    "baseDate": "2026-05-31",
+    "expectedIntentGatePass": true,
+    "expectedParseOk": true,
+    "expectedSourceDate": "2026-05-30",
+    "expectedTargetDate": "2026-06-01",
+    "expectedWorkoutKind": "run",
+    "notes": "Explicit source-target pair must preserve source date"
   }
 ]

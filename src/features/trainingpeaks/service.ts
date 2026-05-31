@@ -1598,6 +1598,8 @@ function resolveTimeRefToDateIso(
 const TP_RELATIVE_DAY_ALIASES: Record<string, string> = {
   сегодня: "today",
   сегодняшнюю: "today",
+  сегодняшний: "today",
+  сегодняшней: "today",
   "сегодняшнюю тренировку": "today",
   завтра: "tomorrow",
   завтрашнюю: "tomorrow",
@@ -1605,6 +1607,7 @@ const TP_RELATIVE_DAY_ALIASES: Record<string, string> = {
   вчера: "yesterday",
   вчерашнюю: "yesterday",
   вчерашний: "yesterday",
+  вчерашней: "yesterday",
 };
 
 const TP_MONTH_ALIASES: Record<string, number> = {
@@ -1623,6 +1626,7 @@ const TP_MONTH_ALIASES: Record<string, number> = {
 };
 
 type IndexedTimeRef = TrainingPeaksMoveWorkoutTimeRef & { index: number };
+type IndexedWordToken = { token: string; index: number };
 
 function clampMoveWorkoutConfidence(value: number): number {
   if (!Number.isFinite(value)) {
@@ -1699,6 +1703,116 @@ function uniqueTimeRefs(refs: IndexedTimeRef[]): IndexedTimeRef[] {
     deduped.push(item);
   }
   return deduped.sort((a, b) => a.index - b.index);
+}
+
+function extractWordTokens(normalized: string): IndexedWordToken[] {
+  const tokens: IndexedWordToken[] = [];
+  const tokenPattern = /[а-яёa-z-]+/g;
+  let match = tokenPattern.exec(normalized);
+  while (match) {
+    tokens.push({ token: match[0] ?? "", index: match.index });
+    match = tokenPattern.exec(normalized);
+  }
+  return tokens;
+}
+
+function tokenLooksLikeWorkoutSourceAttachment(token: string | undefined): boolean {
+  if (!token) {
+    return false;
+  }
+  const workoutNeedles = ["бег", "пробеж", "трениров", "интервал", "темпов", "длительн", "легк", "заняти"];
+  return workoutNeedles.some((needle) => token.includes(needle));
+}
+
+function isInsideExplicitSourceTargetPair(normalized: string, tokenIndex: number): boolean {
+  const pairPattern = /с(?:о)?\s+(.+?)\s+на\s+(.+?)(?=$|[,.!?])/g;
+  let pairMatch = pairPattern.exec(normalized);
+  while (pairMatch) {
+    const fullMatch = pairMatch[0] ?? "";
+    const pairStart = pairMatch.index;
+    const pairEnd = pairStart + fullMatch.length;
+    if (tokenIndex >= pairStart && tokenIndex < pairEnd) {
+      return true;
+    }
+    pairMatch = pairPattern.exec(normalized);
+  }
+  return false;
+}
+
+function isContextDateToken(normalized: string, tokenIndex: number): boolean {
+  if (isInsideExplicitSourceTargetPair(normalized, tokenIndex)) {
+    return false;
+  }
+
+  const tokens = extractWordTokens(normalized);
+  const tokenPos = tokens.findIndex((item) => item.index === tokenIndex);
+  if (tokenPos < 0) {
+    return false;
+  }
+
+  const token = tokens[tokenPos]?.token ?? "";
+  const prev = tokens[tokenPos - 1]?.token;
+  const next = tokens[tokenPos + 1]?.token;
+  const window = tokens.slice(Math.max(0, tokenPos - 3), Math.min(tokens.length, tokenPos + 4)).map((item) => item.token);
+
+  const hasReasonMarker = prev === "после" || prev === "из-за" || prev === "изза";
+  const hasMoveVerbNearby = window.some(
+    (item) =>
+      item.startsWith("перенес") || item.startsWith("перенести") || item.startsWith("перенош") || item.startsWith("сдвин")
+  );
+  const hasContextStateWord = window.some((item) =>
+    [
+      "был",
+      "была",
+      "было",
+      "были",
+      "делал",
+      "делала",
+      "делали",
+      "ходил",
+      "ходила",
+      "ходили",
+      "бегал",
+      "бегала",
+      "бегали",
+      "устал",
+      "устала",
+      "устали",
+      "плохо",
+      "болит",
+      "болел",
+      "болела",
+      "болели",
+      "успеваю",
+      "восстановился",
+      "восстановилась",
+      "восстановились",
+      "спал",
+      "спала",
+      "спали",
+      "выспался",
+      "выспалась",
+      "выспались",
+    ].includes(item)
+  );
+  const hasContextActivity = window.some((item) =>
+    ["хайкинг", "гонка", "гонки", "забег", "соревнования", "марафон"].includes(item)
+  );
+  const hasNegatedRecoveryState =
+    window.includes("не") &&
+    window.some((item) => item.includes("успева") || item.includes("спал") || item.includes("выспал") || item.includes("восстанов"));
+  const hasWorkoutAttachment = tokenLooksLikeWorkoutSourceAttachment(next) || tokenLooksLikeWorkoutSourceAttachment(prev);
+  const isAdjectivalSourceToken = token.startsWith("вчераш") || token.startsWith("сегодняш");
+
+  if (hasWorkoutAttachment) {
+    return false;
+  }
+
+  if (isAdjectivalSourceToken && hasMoveVerbNearby && !hasReasonMarker) {
+    return false;
+  }
+
+  return hasReasonMarker || hasContextStateWord || hasContextActivity || hasNegatedRecoveryState;
 }
 
 function extractDateRefs(normalized: string): IndexedTimeRef[] {
@@ -1949,7 +2063,7 @@ function resolveDeterministicMoveWorkout(
   }
 
   const refs = uniqueTimeRefs([...extractDateRefs(normalized), ...extractWeekdayAndRelativeRefs(normalized)]);
-  const pairPattern = /с\s+(.+?)\s+на\s+(.+?)(?=$|[,.!?])/g;
+  const pairPattern = /с(?:о)?\s+(.+?)\s+на\s+(.+?)(?=$|[,.!?])/g;
   const pairMatches: Array<{ source: IndexedTimeRef; target: IndexedTimeRef }> = [];
   let sourceDateInferredFromTargetMonth = false;
   let pairMatch = pairPattern.exec(normalized);
@@ -2015,7 +2129,17 @@ function resolveDeterministicMoveWorkout(
         if (item.index === uniqueTargets[0]!.index) {
           return false;
         }
-        return !(item.kind === uniqueTargets[0]!.kind && item.value === uniqueTargets[0]!.value);
+        if (item.kind === uniqueTargets[0]!.kind && item.value === uniqueTargets[0]!.value) {
+          return false;
+        }
+        if (
+          item.kind === "relative_day" &&
+          (item.value === "yesterday" || item.value === "today") &&
+          isContextDateToken(normalized, item.index)
+        ) {
+          return false;
+        }
+        return true;
       });
       if (sourceCandidates.length === 1) {
         source = normalizeTimeRef(sourceCandidates[0]!);
