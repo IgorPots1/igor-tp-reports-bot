@@ -1,6 +1,7 @@
 import process from "node:process";
 
 import {
+  bestAvailableTimestampMs,
   buildIllnessMergedSummary,
   collectIllnessClusterEpisodes,
   matchesIllnessSignal,
@@ -155,6 +156,28 @@ const CLUSTER_CASES: ClusterCase[] = [
   },
 ];
 
+function runTimestampFallbackCases(): string[] {
+  const failures: string[] = [];
+
+  const item = {
+    id: "ts-fallback",
+    memory_type: "health_status" as TrainingPeaksStudentMemoryType,
+    summary_text: "Данил сообщает о болезни.",
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-03-15T00:00:00.000Z",
+  };
+
+  const timestampMs = bestAvailableTimestampMs(item);
+  const expectedMs = Date.parse("2026-03-15T00:00:00.000Z");
+  if (timestampMs !== expectedMs) {
+    failures.push(
+      `timestamp-fallback-updated-at: expected=${expectedMs} actual=${String(timestampMs)}`
+    );
+  }
+
+  return failures;
+}
+
 function runSignalCases(): string[] {
   const failures: string[] = [];
 
@@ -220,7 +243,7 @@ function runClusterCases(): string[] {
 }
 
 function main(): void {
-  const failures = [...runSignalCases(), ...runClusterCases()];
+  const failures = [...runTimestampFallbackCases(), ...runSignalCases(), ...runClusterCases()];
   if (failures.length > 0) {
     console.error(`${LOG_PREFIX} FAIL`);
     for (const failure of failures) {

@@ -332,13 +332,13 @@ function parseTimestampToMs(value: string | null | undefined): number | null {
   return Number.isFinite(timestampMs) ? timestampMs : null;
 }
 
-function bestAvailableTimestampMs(item: MemoryItemLike): number | null {
+export function bestAvailableTimestampMs(item: MemoryItemLike): number | null {
   return (
     parseTimestampToMs(item.valid_from) ??
     parseTimestampToMs(item.first_seen_at) ??
     parseTimestampToMs(item.last_seen_at) ??
-    parseTimestampToMs(item.created_at) ??
-    parseTimestampToMs(item.updated_at)
+    parseTimestampToMs(item.updated_at) ??
+    parseTimestampToMs(item.created_at)
   );
 }
 
