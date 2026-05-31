@@ -2661,7 +2661,12 @@ async function notifyCoachDryRunResult(input: {
   const lines: string[] = [];
 
   const inferredSourceBlocked =
-    evaluation?.canExecuteReasons.includes(moveSourcePolicy.INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON) === true;
+    Array.isArray(evaluation?.canExecuteReasons) &&
+    evaluation.canExecuteReasons.some(
+      (reason) =>
+        reason === moveSourcePolicy.INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON ||
+        reason === moveSourcePolicy.INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU
+    );
   const inferredSourceBlockedOnly =
     inferredSourceBlocked &&
     Array.isArray(evaluation?.canExecuteReasons) &&
@@ -2717,7 +2722,7 @@ async function notifyCoachDryRunResult(input: {
       );
     }
     lines.push("Источник тренировки определён автоматически. Подтвердите исходную дату перед выполнением.");
-    lines.push("TrainingPeaks не изменён. Проверь заявку в /tp_actions.");
+    lines.push("TrainingPeaks не изменён.");
   } else {
     lines.push(
       `⚠️ Проверка не пройдена. ${input.studentName}: ${route}. Перенос не выполнен.`
@@ -2755,11 +2760,11 @@ async function notifyCoachDryRunResult(input: {
       inlineKeyboardRows = [
         [
           {
-            text: `✅ Подтвердить ${formatCompactDateShort(evaluation.resolvedDates.sourceDate)} как исходную`,
+            text: `✅ Да, подтвердить ${formatCompactDateShort(evaluation.resolvedDates.sourceDate)}`,
             callback_data: `${TP_CALLBACK_ACTION_CONFIRM_SOURCE_PREFIX}${actionId}`,
           },
         ],
-        [cancelButton],
+        [{ ...cancelButton, text: "❌ Нет, отменить" }],
       ];
     } else {
       inlineKeyboardRows = [[cancelButton]];
