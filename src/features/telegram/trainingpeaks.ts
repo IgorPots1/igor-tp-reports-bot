@@ -6532,6 +6532,10 @@ async function handleTrainingPeaksActionConfirmSourceDateCallback(
   );
 }
 
+function isTrainingPeaksReplyDraftAutoDetectEnabled(): boolean {
+  return process.env.TP_REPLY_DRAFT_AUTO_ENABLED?.trim() === "dry_run";
+}
+
 export async function handleTrainingPeaksTelegramBusinessMessage(
   message: Pick<
     TelegramMessage,
@@ -6673,6 +6677,19 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
           error,
         });
       }
+
+      if (isTrainingPeaksReplyDraftAutoDetectEnabled() && contextLabels.includes("report_like")) {
+        console.info("TrainingPeaks reply draft auto [dry-run]: report-like business DM detected", {
+          event: "tp_reply_draft_auto_dry_run_triggered",
+          chatId,
+          messageId: message.message_id,
+          studentId: moveActionResult.student?.id ?? null,
+          studentName: moveActionResult.student?.studentName ?? null,
+          labels: contextLabels,
+          note: "Stage 0: detection only. No context built, no draft generated, no coach/student messages sent.",
+        });
+      }
+
       return;
     }
 
