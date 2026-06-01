@@ -5,7 +5,7 @@ import process from "node:process";
 import { stdin as input, stdout as output } from "node:process";
 import { createInterface } from "node:readline/promises";
 
-import { chromium, type Locator, type Page } from "playwright";
+import { chromium, type Frame, type Locator, type Page } from "playwright";
 
 import { profileDir, toolRoot } from "./lib/paths.ts";
 import {
@@ -114,6 +114,53 @@ type RunState = {
   pickerSearchFound: boolean;
   saveClicked: boolean;
   visualFieldVerification?: StrengthWorkoutRunSummary["visualFieldVerification"];
+};
+
+type PageLike = Page | Frame;
+
+type BuilderFrameProbe = {
+  url: string;
+  title?: string;
+  visibleTextSample: string[];
+  hasAddBlock: boolean;
+  hasSearchExercisesInput: boolean;
+  hasWorkoutTitle: boolean;
+  hasStrengthExerciseNames: boolean;
+};
+
+type BuilderFrameProbeReport = {
+  selectedFrameUrl: string;
+  selectedFrameTitle?: string;
+  frames: BuilderFrameProbe[];
+};
+
+type CardFieldDebugEntry = {
+  index: number;
+  text?: string;
+  type?: string;
+  value?: string;
+  placeholder?: string;
+  ariaLabel?: string;
+  nearbyText?: string;
+  rect?: { x: number; y: number; width: number; height: number };
+};
+
+type CardCandidateDebug = {
+  index: number;
+  exactNameFound: boolean;
+  textSample: string[];
+  rect: { x: number; y: number; width: number; height: number };
+  inputs: CardFieldDebugEntry[];
+  textareas: CardFieldDebugEntry[];
+  buttons: CardFieldDebugEntry[];
+  possibleLabels: string[];
+  dataAttrs: string[];
+  className?: string;
+};
+
+type CardCandidateInternal = CardCandidateDebug & {
+  locatorIndex: number;
+  signature: string;
 };
 
 function printHelp(): void {
@@ -382,6 +429,113 @@ async function waitForTypedYes(promptText: string): Promise<boolean> {
   }
 }
 
+function getMainFrame(page: Page): Frame {
+  return page.mainFrame();
+}
+
+function listFramesWithMainFirst(page: Page): Frame[] {
+  const all = page.frames();
+  const main = getMainFrame(page);
+  const rest = all.filter((frame) => frame !== main);
+  return [main, ...rest];
+}
+
+async function probeBuilderFrames(
+  page: Page,
+  expectedExerciseNames: string[],
+  selectedFrame: Frame
+): Promise<BuilderFrameProbeReport> {
+  const frameReports: BuilderFrameProbe[] = [];
+  const names = expectedExerciseNames.map((name) => name.trim()).filter(Boolean);
+  const frames = listFramesWithMainFirst(page);
+  for (const frame of frames) {
+    const probe = await frame
+      .evaluate((input) => {
+        const normalize = (value: unknown) => String(value ?? "").replace(/\s+/g, " ").trim();
+        const textNodes = Array.from(document.querySelectorAll("h1,h2,h3,h4,button,label,span,div,input,textarea"));
+        const visibleTextSample: string[] = [];
+        for (const node of textNodes) {
+          if (visibleTextSample.length >= 18) break;
+          const el = node as HTMLElement;
+          const rect = el.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) continue;
+          const text = normalize(
+            node.tagName.toLowerCase() === "input"
+              ? (node as HTMLInputElement).value || (node as HTMLInputElement).placeholder || ""
+              : node.textContent
+          );
+          if (!text || text.length > 90) continue;
+          if (!visibleTextSample.includes(text)) {
+            visibleTextSample.push(text);
+          }
+        }
+        const allText = normalize(document.body?.textContent ?? "");
+        const hasAddBlock = Array.from(document.querySelectorAll("button,[role='button']")).some((node) => {
+          const text = normalize(node.textContent);
+          const aria = normalize((node as HTMLElement).getAttribute("aria-label"));
+          return /add block/i.test(text) || /add block/i.test(aria);
+        });
+        const hasSearchExercisesInput = Array.from(document.querySelectorAll("input,textarea,[role='textbox']")).some((node) => {
+          const aria = normalize((node as HTMLElement).getAttribute("aria-label"));
+          const placeholder =
+            node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement
+              ? normalize(node.placeholder)
+              : "";
+          return /search exercises|circuits|saved items/i.test(`${aria} ${placeholder}`);
+        });
+        const hasWorkoutTitle = Array.from(document.querySelectorAll("input,textarea,[role='textbox']")).some((node) => {
+          const aria = normalize((node as HTMLElement).getAttribute("aria-label"));
+          const placeholder =
+            node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement
+              ? normalize(node.placeholder)
+              : "";
+          return /workout title|title/i.test(`${aria} ${placeholder}`);
+        });
+        const hasStrengthExerciseNames = input.names.some((name: string) => allText.includes(name));
+        return {
+          visibleTextSample,
+          hasAddBlock,
+          hasSearchExercisesInput,
+          hasWorkoutTitle,
+          hasStrengthExerciseNames,
+          title: document.title ? normalize(document.title) : undefined,
+        };
+      }, { names })
+      .catch(() => ({
+        visibleTextSample: [],
+        hasAddBlock: false,
+        hasSearchExercisesInput: false,
+        hasWorkoutTitle: false,
+        hasStrengthExerciseNames: false,
+        title: undefined,
+      }));
+    frameReports.push({
+      url: frame.url(),
+      title: probe.title,
+      visibleTextSample: probe.visibleTextSample,
+      hasAddBlock: probe.hasAddBlock,
+      hasSearchExercisesInput: probe.hasSearchExercisesInput,
+      hasWorkoutTitle: probe.hasWorkoutTitle,
+      hasStrengthExerciseNames: probe.hasStrengthExerciseNames,
+    });
+  }
+  return {
+    selectedFrameUrl: selectedFrame.url(),
+    selectedFrameTitle: frameReports.find((entry) => entry.url === selectedFrame.url())?.title,
+    frames: frameReports,
+  };
+}
+
+async function saveBuilderFrameProbeReport(
+  report: BuilderFrameProbeReport,
+  reason: string
+): Promise<string> {
+  await mkdir(fieldDebugDir, { recursive: true });
+  const filePath = path.join(fieldDebugDir, `builder-frame-probe-${slugify(reason)}.json`);
+  await writeFile(filePath, `${JSON.stringify(redactUnknown(report), null, 2)}\n`, "utf8");
+  return relativizeArtifactPath(repoRoot, filePath);
+}
+
 function sanitizeDebugText(value: string | null | undefined, maxLength = 240): string {
   return String(value ?? "")
     .replace(/\s+/g, " ")
@@ -398,98 +552,143 @@ async function saveScreenshot(page: Page, state: RunState, label: string): Promi
   return relative;
 }
 
-async function saveFieldDebug(page: Page, exerciseName: string, reason: string): Promise<string> {
+async function collectCardCandidates(scope: PageLike, exerciseName: string): Promise<CardCandidateInternal[]> {
+  const normalizedName = normalizeVisibleText(exerciseName).toLowerCase();
+  const container = scope.locator("section,article,li,tr,[role='row'],[role='group'],[data-testid],div");
+  const count = await container.count();
+  const candidates: CardCandidateInternal[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const card = container.nth(index);
+    if (!(await card.isVisible().catch(() => false))) continue;
+    const snapshot = await card
+      .evaluate((node, inputName) => {
+        const normalize = (value: unknown) => String(value ?? "").replace(/\s+/g, " ").trim();
+        const compact = (value: unknown, max = 220) => normalize(value).slice(0, max);
+        const root = node as HTMLElement;
+        const text = compact(root.textContent, 1600);
+        const lowered = text.toLowerCase();
+        const rect = root.getBoundingClientRect();
+        const readFields = (selector: string, maxItems: number) =>
+          Array.from(root.querySelectorAll(selector))
+            .slice(0, maxItems)
+            .map((entry, fieldIndex) => {
+              const el = entry as HTMLElement;
+              const r = el.getBoundingClientRect();
+              const value =
+                entry instanceof HTMLInputElement || entry instanceof HTMLTextAreaElement
+                  ? compact(entry.value, 120)
+                  : compact(entry.textContent, 120);
+              return {
+                index: fieldIndex,
+                type: entry instanceof HTMLInputElement ? entry.type : undefined,
+                value,
+                placeholder:
+                  entry instanceof HTMLInputElement || entry instanceof HTMLTextAreaElement
+                    ? compact(entry.placeholder, 80)
+                    : undefined,
+                ariaLabel: compact(el.getAttribute("aria-label"), 80) || undefined,
+                nearbyText: compact((el.closest("label, td, th, div, section, article, li")?.textContent ?? ""), 160),
+                rect: {
+                  x: Math.round(r.x),
+                  y: Math.round(r.y),
+                  width: Math.round(r.width),
+                  height: Math.round(r.height),
+                },
+              };
+            });
+        const inputs = readFields("input", 24);
+        const textareas = readFields("textarea,[contenteditable='true'],[role='textbox']", 12);
+        const buttons = Array.from(root.querySelectorAll("button,[role='button']"))
+          .slice(0, 18)
+          .map((entry, buttonIndex) => {
+            const el = entry as HTMLElement;
+            const r = el.getBoundingClientRect();
+            return {
+              index: buttonIndex,
+              text: compact(el.textContent, 100),
+              ariaLabel: compact(el.getAttribute("aria-label"), 80) || undefined,
+              nearbyText: compact((el.closest("label, td, th, div, section, article, li")?.textContent ?? ""), 120),
+              rect: {
+                x: Math.round(r.x),
+                y: Math.round(r.y),
+                width: Math.round(r.width),
+                height: Math.round(r.height),
+              },
+            };
+          });
+        const possibleLabels = Array.from(root.querySelectorAll("label,[aria-label],[title],th,dt,strong"))
+          .map((entry) => compact((entry as HTMLElement).textContent || (entry as HTMLElement).getAttribute("aria-label"), 90))
+          .filter(Boolean)
+          .slice(0, 24);
+        const dataAttrs = Array.from(root.attributes)
+          .filter((attr) => attr.name.startsWith("data-"))
+          .slice(0, 8)
+          .map((attr) => `${attr.name}=${attr.value.slice(0, 80)}`);
+        return {
+          textSample: text ? text.split(" ").slice(0, 60) : [],
+          exactNameFound: lowered.includes(inputName),
+          hasControls: inputs.length > 0 || textareas.length > 0 || buttons.length > 0,
+          rect: {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          },
+          inputs,
+          textareas,
+          buttons,
+          possibleLabels,
+          dataAttrs,
+          className: compact(root.className, 120) || undefined,
+          signature: `${Math.round(rect.x)}:${Math.round(rect.y)}:${Math.round(rect.width)}:${Math.round(rect.height)}:${text.slice(0, 80)}`,
+        };
+      }, normalizedName)
+      .catch(() => null);
+    if (!snapshot) continue;
+    if (!snapshot.hasControls) continue;
+    candidates.push({
+      index: candidates.length,
+      exactNameFound: snapshot.exactNameFound,
+      textSample: snapshot.textSample,
+      rect: snapshot.rect,
+      inputs: snapshot.inputs,
+      textareas: snapshot.textareas,
+      buttons: snapshot.buttons,
+      possibleLabels: snapshot.possibleLabels,
+      dataAttrs: snapshot.dataAttrs,
+      className: snapshot.className,
+      locatorIndex: index,
+      signature: snapshot.signature,
+    });
+  }
+  return candidates;
+}
+
+async function saveCardCandidatesDebug(
+  exerciseName: string,
+  builderRootFound: boolean,
+  candidates: CardCandidateInternal[],
+  selectedCardIndex?: number
+): Promise<string> {
   await mkdir(fieldDebugDir, { recursive: true });
-  const filePath = path.join(fieldDebugDir, `${slugify(exerciseName)}-${slugify(reason)}.json`);
-  const payload = await page.evaluate((targetExerciseName) => {
-    const blocks = Array.from(
-      document.querySelectorAll("section,article,div,li,tr,[role='row'],[role='group'],[data-testid]")
-    );
-    const matched = blocks.find((node) => (node.textContent ?? "").replace(/\s+/g, " ").trim().includes(targetExerciseName));
-    const host = matched ?? document.body;
-    const textSample = ((host.textContent ?? "").replace(/\s+/g, " ").trim()).slice(0, 1200);
-    const possibleLabels = Array.from(host.querySelectorAll("label, [aria-label], [title], [data-testid], th, dt, strong"))
-      .map((node) => {
-        const text = (node.textContent ?? "").replace(/\s+/g, " ").trim();
-        const aria = node.getAttribute("aria-label") ?? "";
-        const title = node.getAttribute("title") ?? "";
-        return `${text} ${aria} ${title}`.replace(/\s+/g, " ").trim();
-      })
-      .filter((entry) => entry.length >= 3)
-      .slice(0, 40);
-    const inputs = Array.from(host.querySelectorAll("input"))
-      .slice(0, 40)
-      .map((node) => {
-        const el = node as HTMLElement;
-        const inputEl = node as HTMLInputElement;
-        const rect = el.getBoundingClientRect();
-        return {
-          index: -1,
-          type: inputEl.type,
-          ariaLabel: inputEl.getAttribute("aria-label") ?? undefined,
-          placeholder: inputEl.getAttribute("placeholder") ?? undefined,
-          title: inputEl.getAttribute("title") ?? undefined,
-          value: "value" in inputEl ? String(inputEl.value ?? "").slice(0, 180) : undefined,
-          nearbyText: ((el.closest("label, td, th, div, section, article")?.textContent ?? "").replace(/\s+/g, " ").trim()).slice(0, 240),
-          rect: {
-            x: Math.round(rect.x),
-            y: Math.round(rect.y),
-            width: Math.round(rect.width),
-            height: Math.round(rect.height),
-          },
-        };
-      });
-    const textareas = Array.from(host.querySelectorAll("textarea, [contenteditable='true'], [role='textbox']"))
-      .slice(0, 20)
-      .map((node) => {
-        const el = node as HTMLElement;
-        const rect = el.getBoundingClientRect();
-        const textareaEl = node as HTMLTextAreaElement;
-        return {
-          index: -1,
-          ariaLabel: textareaEl.getAttribute("aria-label") ?? undefined,
-          placeholder: textareaEl.getAttribute("placeholder") ?? undefined,
-          title: textareaEl.getAttribute("title") ?? undefined,
-          value: ("value" in textareaEl ? String(textareaEl.value ?? "") : String(textareaEl.textContent ?? "")).slice(0, 180),
-          nearbyText: ((el.closest("label, td, th, div, section, article")?.textContent ?? "").replace(/\s+/g, " ").trim()).slice(0, 240),
-          rect: {
-            x: Math.round(rect.x),
-            y: Math.round(rect.y),
-            width: Math.round(rect.width),
-            height: Math.round(rect.height),
-          },
-        };
-      });
-    const buttons = Array.from(host.querySelectorAll("button, [role='button']"))
-      .slice(0, 20)
-      .map((node) => {
-        const el = node as HTMLElement;
-        const rect = el.getBoundingClientRect();
-        return {
-          index: -1,
-          text: (el.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 120),
-          ariaLabel: el.getAttribute("aria-label") ?? undefined,
-          title: el.getAttribute("title") ?? undefined,
-          rect: {
-            x: Math.round(rect.x),
-            y: Math.round(rect.y),
-            width: Math.round(rect.width),
-            height: Math.round(rect.height),
-          },
-        };
-      });
-    for (let index = 0; index < inputs.length; index += 1) inputs[index].index = index;
-    for (let index = 0; index < textareas.length; index += 1) textareas[index].index = index;
-    for (let index = 0; index < buttons.length; index += 1) buttons[index].index = index;
-    return {
-      exerciseName: targetExerciseName,
-      blockTextSample: textSample ? textSample.split(" ").slice(0, 80) : [],
-      inputs,
-      textareas,
-      buttons,
-      possibleLabels,
-    };
-  }, exerciseName);
+  const filePath = path.join(fieldDebugDir, `${slugify(exerciseName)}-card-candidates.json`);
+  const payload = {
+    exerciseName,
+    builderRootFound,
+    candidateCards: candidates.map((entry) => ({
+      index: entry.index,
+      exactNameFound: entry.exactNameFound,
+      textSample: entry.textSample,
+      rect: entry.rect,
+      inputs: entry.inputs,
+      textareas: entry.textareas,
+      buttons: entry.buttons,
+      possibleLabels: entry.possibleLabels,
+      dataAttrs: entry.dataAttrs,
+      className: entry.className,
+    })),
+    selectedCardIndex,
+  };
   await writeFile(filePath, `${JSON.stringify(redactUnknown(payload), null, 2)}\n`, "utf8");
   return relativizeArtifactPath(repoRoot, filePath);
 }
@@ -527,11 +726,11 @@ async function closeAndReopenWorkoutIfPossible(page: Page, title: string): Promi
   return false;
 }
 
-async function locateBuilderRoot(page: Page): Promise<Locator | null> {
+async function locateBuilderRoot(scope: PageLike): Promise<Locator | null> {
   const candidates = [
-    page.getByRole("dialog").filter({ hasText: /Strength|Add Block|Search Exercises/i }).first(),
-    page.locator("[data-testid*='strength']").first(),
-    page.locator("section, div").filter({ hasText: /Add Block/i }).first(),
+    scope.getByRole("dialog").filter({ hasText: /Strength|Add Block|Search Exercises/i }).first(),
+    scope.locator("[data-testid*='strength']").first(),
+    scope.locator("section, div").filter({ hasText: /Add Block/i }).first(),
   ];
   for (const candidate of candidates) {
     if ((await candidate.count()) > 0 && (await candidate.first().isVisible().catch(() => false))) {
@@ -541,10 +740,10 @@ async function locateBuilderRoot(page: Page): Promise<Locator | null> {
   return null;
 }
 
-async function locateAddBlockButton(page: Page): Promise<Locator | null> {
+async function locateAddBlockButton(scope: PageLike): Promise<Locator | null> {
   const candidates = [
-    page.getByRole("button", { name: /Add Block/i }).first(),
-    page.getByText(/^Add Block$/i).first(),
+    scope.getByRole("button", { name: /Add Block/i }).first(),
+    scope.getByText(/^Add Block$/i).first(),
   ];
   for (const candidate of candidates) {
     if ((await candidate.count()) > 0 && (await candidate.isVisible().catch(() => false))) {
@@ -555,8 +754,8 @@ async function locateAddBlockButton(page: Page): Promise<Locator | null> {
 }
 
 async function openExistingBuilderIfPresent(page: Page, state: RunState): Promise<boolean> {
-  const root = await locateBuilderRoot(page);
-  if (root) {
+  const resolved = await resolveBuilderScope(page);
+  if (resolved) {
     state.builderOpened = true;
     return true;
   }
@@ -615,11 +814,26 @@ async function waitForManualBuilderOpen(page: Page, state: RunState, timeoutMs: 
   return false;
 }
 
-async function locateSearchInput(page: Page): Promise<Locator | null> {
+async function resolveBuilderScope(page: Page): Promise<{ scope: PageLike; frame: Frame } | null> {
+  const frameCandidates = listFramesWithMainFirst(page);
+  for (const frame of frameCandidates) {
+    const hasBuilder = await locateBuilderRoot(frame);
+    if (hasBuilder) {
+      return { scope: frame, frame };
+    }
+  }
+  const hasBuilderOnPage = await locateBuilderRoot(page);
+  if (hasBuilderOnPage) {
+    return { scope: page, frame: getMainFrame(page) };
+  }
+  return null;
+}
+
+async function locateSearchInput(scope: PageLike): Promise<Locator | null> {
   const candidates = [
-    page.getByPlaceholder(/Search Exercises, Circuits, or Saved Items/i).first(),
-    page.getByRole("textbox", { name: /Search Exercises, Circuits, or Saved Items/i }).first(),
-    page.locator("input[placeholder*='Search Exercises']").first(),
+    scope.getByPlaceholder(/Search Exercises, Circuits, or Saved Items/i).first(),
+    scope.getByRole("textbox", { name: /Search Exercises, Circuits, or Saved Items/i }).first(),
+    scope.locator("input[placeholder*='Search Exercises']").first(),
   ];
   for (const candidate of candidates) {
     if ((await candidate.count()) > 0 && (await candidate.isVisible().catch(() => false))) {
@@ -629,8 +843,8 @@ async function locateSearchInput(page: Page): Promise<Locator | null> {
   return null;
 }
 
-async function collectCandidateRows(page: Page): Promise<string[]> {
-  const optionRows = page.locator("[role='option']");
+async function collectCandidateRows(scope: PageLike): Promise<string[]> {
+  const optionRows = scope.locator("[role='option']");
   const count = await optionRows.count();
   const rows: string[] = [];
   for (let index = 0; index < count; index += 1) {
@@ -649,8 +863,12 @@ type PickerSelectionResult = {
   clicked: boolean;
 };
 
-async function clickExactSearchResult(page: Page, requestedName: string, shouldClick: boolean): Promise<PickerSelectionResult> {
-  const candidateRows = await collectCandidateRows(page);
+async function clickExactSearchResult(
+  scope: PageLike,
+  requestedName: string,
+  shouldClick: boolean
+): Promise<PickerSelectionResult> {
+  const candidateRows = await collectCandidateRows(scope);
   const normalizedRequested = normalizeVisibleText(requestedName);
   const matchingIndexes = candidateRows
     .map((text, index) => ({ text, index }))
@@ -673,7 +891,7 @@ async function clickExactSearchResult(page: Page, requestedName: string, shouldC
     return { decision: { ...decision, status: "missing" }, clicked: false };
   }
 
-  const targetRow = page.locator("[role='option']").nth(targetIndex);
+  const targetRow = scope.locator("[role='option']").nth(targetIndex);
   if (!(await targetRow.isVisible().catch(() => false))) {
     return { decision: { ...decision, status: "missing" }, clicked: false };
   }
@@ -865,16 +1083,16 @@ function emptyField(required: boolean, value?: string): FieldWriteResult {
   return { attempted: false, required, status: "not_attempted", value };
 }
 
-async function fillWorkoutTitle(page: Page, title: string): Promise<boolean> {
-  const scope = page.locator("body").first();
-  const result = await writeFieldValueInScope(scope, { labels: /Title/i, placeholders: /Title/i, allowAnyInput: true }, title);
+async function fillWorkoutTitle(scope: PageLike, title: string): Promise<boolean> {
+  const root = scope.locator("body").first();
+  const result = await writeFieldValueInScope(root, { labels: /Title/i, placeholders: /Title/i, allowAnyInput: true }, title);
   return result.ok;
 }
 
-async function fillWorkoutInstructions(page: Page, instructions: string): Promise<boolean> {
-  const scope = page.locator("body").first();
+async function fillWorkoutInstructions(scope: PageLike, instructions: string): Promise<boolean> {
+  const root = scope.locator("body").first();
   const result = await writeFieldValueInScope(
-    scope,
+    root,
     { labels: /Instructions|Description|Coach Notes/i, placeholders: /Instructions|Description|Coach Notes/i, allowTextarea: true },
     instructions
   );
@@ -916,16 +1134,16 @@ function buildAttempt(exercise: StrengthWorkoutExerciseSpec & { blockName: strin
   };
 }
 
-async function ensurePickerReady(page: Page, state: RunState): Promise<Locator | null> {
-  const addBlockButton = await locateAddBlockButton(page);
+async function ensurePickerReady(scope: PageLike, state: RunState): Promise<Locator | null> {
+  const addBlockButton = await locateAddBlockButton(scope);
   if (!addBlockButton) {
     state.errors.push("Add Block button was not found.");
     return null;
   }
   state.addBlockButtonFound = true;
   await addBlockButton.click();
-  await page.waitForTimeout(600);
-  const searchInput = await locateSearchInput(page);
+  await addBlockButton.page().waitForTimeout(600);
+  const searchInput = await locateSearchInput(scope);
   if (!searchInput) {
     state.errors.push("Exercise picker search input was not found after Add Block.");
     return null;
@@ -934,34 +1152,18 @@ async function ensurePickerReady(page: Page, state: RunState): Promise<Locator |
   return searchInput;
 }
 
-async function locateExerciseBlock(page: Page, exerciseName: string): Promise<Locator | null> {
-  const normalized = normalizeVisibleText(exerciseName);
-  const candidates = [
-    page
-      .locator("section,article,li,tr,[role='row'],[role='group'],[data-testid],div")
-      .filter({ hasText: new RegExp(`^\\s*${escapeRegex(normalized)}\\s*$`, "i") })
-      .filter({ has: page.locator("input, textarea, [contenteditable='true'], [role='textbox'], button") }),
-    page
-      .locator("section,article,li,tr,[role='row'],[role='group'],[data-testid],div")
-      .filter({ hasText: new RegExp(escapeRegex(normalized), "i") })
-      .filter({ has: page.locator("input, textarea, [contenteditable='true'], [role='textbox'], button") }),
-  ];
-  for (const candidate of candidates) {
-    const count = await candidate.count();
-    let best: { index: number; textLength: number } | null = null;
-    for (let index = 0; index < count; index += 1) {
-      const item = candidate.nth(index);
-      if (!(await item.isVisible().catch(() => false))) continue;
-      const textLength = sanitizeDebugText(await item.innerText().catch(() => ""), 4000).length;
-      if (!best || textLength < best.textLength) {
-        best = { index, textLength };
-      }
-    }
-    if (best) {
-      const located = candidate.nth(best.index);
-      await revealExercisePanel(located);
-      return located;
-    }
+function selectCardCandidate(
+  before: CardCandidateInternal[],
+  after: CardCandidateInternal[]
+): CardCandidateInternal | null {
+  const beforeSignatures = new Set(before.map((entry) => entry.signature));
+  const exactNew = after.filter((entry) => entry.exactNameFound && !beforeSignatures.has(entry.signature));
+  if (exactNew.length > 0) {
+    return exactNew.sort((left, right) => right.rect.y - left.rect.y)[0];
+  }
+  const exactAny = after.filter((entry) => entry.exactNameFound);
+  if (exactAny.length > 0) {
+    return exactAny.sort((left, right) => right.rect.y - left.rect.y)[0];
   }
   return null;
 }
@@ -976,16 +1178,33 @@ function markNotFound(field: FieldWriteResult, detail: string): void {
   field.detail = detail;
 }
 
-async function populateExerciseCard(page: Page, exercise: StrengthWorkoutExerciseSpec, attempt: ExerciseAttempt): Promise<void> {
-  const block = await locateExerciseBlock(page, attempt.name);
-  if (!block) {
-    markNotFound(attempt.fields.sets, "Exercise block not located.");
-    if (attempt.fields.reps.required) markNotFound(attempt.fields.reps, "Exercise block not located.");
-    if (attempt.fields.duration.required) markNotFound(attempt.fields.duration, "Exercise block not located.");
-    if (attempt.fields.coachNote.required) markNotFound(attempt.fields.coachNote, "Exercise block not located.");
-    return;
+async function locateSelectedExerciseCard(
+  scope: PageLike,
+  exerciseName: string,
+  beforeCandidates: CardCandidateInternal[]
+): Promise<{ locator: Locator | null; candidates: CardCandidateInternal[]; selectedCandidateIndex?: number }> {
+  const afterCandidates = await collectCardCandidates(scope, exerciseName);
+  const selected = selectCardCandidate(beforeCandidates, afterCandidates);
+  if (!selected) {
+    return { locator: null, candidates: afterCandidates };
   }
+  const locator = scope.locator("section,article,li,tr,[role='row'],[role='group'],[data-testid],div").nth(selected.locatorIndex);
+  await revealExercisePanel(locator);
+  return { locator, candidates: afterCandidates, selectedCandidateIndex: selected.index };
+}
 
+function markExerciseCardNotFound(attempt: ExerciseAttempt): void {
+  markNotFound(attempt.fields.sets, "Exercise card/root not found; field writing skipped.");
+  if (attempt.fields.reps.required) markNotFound(attempt.fields.reps, "Exercise card/root not found; field writing skipped.");
+  if (attempt.fields.duration.required) markNotFound(attempt.fields.duration, "Exercise card/root not found; field writing skipped.");
+  if (attempt.fields.coachNote.required) markNotFound(attempt.fields.coachNote, "Exercise card/root not found; field writing skipped.");
+}
+
+async function populateExerciseCard(
+  block: Locator,
+  exercise: StrengthWorkoutExerciseSpec,
+  attempt: ExerciseAttempt
+): Promise<void> {
   const setsResult = await writeSemanticFieldInExerciseBlock(block, {
     kind: "sets",
     value: attempt.sets,
@@ -1083,9 +1302,19 @@ async function runDryRunFlow(
     }
     return;
   }
+  const resolved = await resolveBuilderScope(page);
+  if (!resolved) {
+    state.errors.push("Could not resolve Strength Builder root/frame after opening builder.");
+    const probe = await probeBuilderFrames(page, flattenWorkoutExercises(template).map((entry) => entry.name), getMainFrame(page));
+    const probePath = await saveBuilderFrameProbeReport(probe, "dry-run-builder-not-found");
+    state.warnings.push(`Builder frame probe saved: ${probePath}`);
+    return;
+  }
+  const builderScope = resolved.scope;
+  const builderFrame = resolved.frame;
   await saveScreenshot(page, state, "dry-run-builder");
 
-  const searchInput = await ensurePickerReady(page, state);
+  const searchInput = await ensurePickerReady(builderScope, state);
   if (!searchInput) {
     return;
   }
@@ -1093,7 +1322,7 @@ async function runDryRunFlow(
   await searchInput.fill(firstExerciseName);
   await page.waitForTimeout(900);
   const typedValue = await searchInput.inputValue().catch(() => "");
-  const pickerDecision = await clickExactSearchResult(page, firstExerciseName, false);
+  const pickerDecision = await clickExactSearchResult(builderScope, firstExerciseName, false);
   state.attemptedExercises.push({
     blockName: template.blocks[1]?.name ?? "Activation",
     name: firstExerciseName,
@@ -1114,6 +1343,16 @@ async function runDryRunFlow(
     },
   });
   await saveScreenshot(page, state, "dry-run-picker");
+  const frameProbe = await probeBuilderFrames(
+    page,
+    flattenWorkoutExercises(template).map((entry) => entry.name),
+    builderFrame
+  );
+  const frameProbePath = await saveBuilderFrameProbeReport(frameProbe, "dry-run");
+  state.warnings.push(`Builder frame probe saved: ${frameProbePath}`);
+  const cardCandidates = await collectCardCandidates(builderScope, firstExerciseName);
+  const candidatesPath = await saveCardCandidatesDebug(firstExerciseName, true, cardCandidates);
+  state.warnings.push(`Card candidates saved (dry-run): ${candidatesPath}`);
 }
 
 async function runApplyFlow(
@@ -1138,10 +1377,27 @@ async function runApplyFlow(
     }
     return;
   }
+  const resolved = await resolveBuilderScope(page);
+  if (!resolved) {
+    state.errors.push("Could not resolve Strength Builder root/frame after opening builder.");
+    const probe = await probeBuilderFrames(page, flattenWorkoutExercises(template).map((entry) => entry.name), getMainFrame(page));
+    const probePath = await saveBuilderFrameProbeReport(probe, "apply-builder-not-found");
+    state.warnings.push(`Builder frame probe saved: ${probePath}`);
+    return;
+  }
+  const builderScope = resolved.scope;
+  const builderFrame = resolved.frame;
 
-  await fillWorkoutTitle(page, template.title).catch(() => {});
-  await fillWorkoutInstructions(page, template.workoutInstructions).catch(() => {});
+  await fillWorkoutTitle(builderScope, template.title).catch(() => {});
+  await fillWorkoutInstructions(builderScope, template.workoutInstructions).catch(() => {});
   await saveScreenshot(page, state, "apply-before-add");
+  const frameProbe = await probeBuilderFrames(
+    page,
+    flattenWorkoutExercises(template).map((entry) => entry.name),
+    builderFrame
+  );
+  const frameProbePath = await saveBuilderFrameProbeReport(frameProbe, "apply-before-add");
+  state.warnings.push(`Builder frame probe saved: ${frameProbePath}`);
 
   let requiredWriteFailure = false;
   const flatExercises = flattenWorkoutExercises(template);
@@ -1150,7 +1406,7 @@ async function runApplyFlow(
     const attempt = buildAttempt(exercise);
     state.attemptedExercises.push(attempt);
 
-    const searchInput = await ensurePickerReady(page, state);
+    const searchInput = await ensurePickerReady(builderScope, state);
     if (!searchInput) {
       break;
     }
@@ -1158,7 +1414,7 @@ async function runApplyFlow(
     await searchInput.fill(exercise.name);
     await page.waitForTimeout(900);
     const typedValue = await searchInput.inputValue().catch(() => "");
-    const selection = await clickExactSearchResult(page, exercise.name, args.mode === "apply");
+    const selection = await clickExactSearchResult(builderScope, exercise.name, args.mode === "apply");
     const decision = selection.decision;
     const candidateRows = decision.visibleTexts;
     attempt.selectionStatus = decision.status;
@@ -1182,30 +1438,29 @@ async function runApplyFlow(
       return;
     }
 
+    const beforeCandidates = await collectCardCandidates(builderScope, exercise.name);
     attempt.clicked = true;
     attempt.exactMatchClicked = exercise.name;
     await page.waitForTimeout(700);
-    await populateExerciseCard(page, exercise, attempt);
-    if (!isWrittenFieldStatus(attempt.fields.sets.status)) {
+    const locatedCard = await locateSelectedExerciseCard(builderScope, exercise.name, beforeCandidates);
+    const cardDebugPath = await saveCardCandidatesDebug(
+      exercise.name,
+      true,
+      locatedCard.candidates,
+      locatedCard.selectedCandidateIndex
+    );
+    state.warnings.push(`Card candidates saved for "${attempt.name}": ${cardDebugPath}`);
+    if (!locatedCard.locator) {
+      markExerciseCardNotFound(attempt);
       requiredWriteFailure = true;
-      const debugPath = await saveFieldDebug(page, attempt.name, "sets-not-written");
-      state.warnings.push(`Field debug captured for "${attempt.name}" sets: ${debugPath}`);
+      attempt.added = true;
+      continue;
     }
-    if (attempt.fields.reps.required && !isWrittenFieldStatus(attempt.fields.reps.status)) {
-      requiredWriteFailure = true;
-      const debugPath = await saveFieldDebug(page, attempt.name, "reps-not-written");
-      state.warnings.push(`Field debug captured for "${attempt.name}" reps: ${debugPath}`);
-    }
-    if (attempt.fields.duration.required && !isWrittenFieldStatus(attempt.fields.duration.status)) {
-      requiredWriteFailure = true;
-      const debugPath = await saveFieldDebug(page, attempt.name, "duration-not-written");
-      state.warnings.push(`Field debug captured for "${attempt.name}" duration: ${debugPath}`);
-    }
-    if (attempt.fields.coachNote.required && !isWrittenFieldStatus(attempt.fields.coachNote.status)) {
-      requiredWriteFailure = true;
-      const debugPath = await saveFieldDebug(page, attempt.name, "coach-note-not-written");
-      state.warnings.push(`Field debug captured for "${attempt.name}" coachNote: ${debugPath}`);
-    }
+    await populateExerciseCard(locatedCard.locator, exercise, attempt);
+    if (!isWrittenFieldStatus(attempt.fields.sets.status)) requiredWriteFailure = true;
+    if (attempt.fields.reps.required && !isWrittenFieldStatus(attempt.fields.reps.status)) requiredWriteFailure = true;
+    if (attempt.fields.duration.required && !isWrittenFieldStatus(attempt.fields.duration.status)) requiredWriteFailure = true;
+    if (attempt.fields.coachNote.required && !isWrittenFieldStatus(attempt.fields.coachNote.status)) requiredWriteFailure = true;
     attempt.added = true;
   }
 
