@@ -17,6 +17,8 @@ type CliOptions = {
   validUntil: string | null;
   memoryType: TrainingPeaksStudentMemoryType | null;
   apply: boolean;
+  confirm: boolean;
+  reason: string | null;
   json: boolean;
 };
 
@@ -30,6 +32,7 @@ type MemoryItemRow = {
   valid_until: string | null;
   source: string;
   is_active: boolean;
+  metadata: unknown;
 };
 
 type StudentRow = {
@@ -153,6 +156,8 @@ function parseCliOptions(argv: string[]): CliOptions {
   let validUntil: string | null = null;
   let memoryType: TrainingPeaksStudentMemoryType | null = null;
   let apply = false;
+  let confirm = false;
+  let reason: string | null = null;
   let json = false;
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -163,6 +168,10 @@ function parseCliOptions(argv: string[]): CliOptions {
     }
     if (arg === "--apply") {
       apply = true;
+      continue;
+    }
+    if (arg === "--confirm") {
+      confirm = true;
       continue;
     }
     if (arg.startsWith("--item-id=")) {
@@ -217,6 +226,19 @@ function parseCliOptions(argv: string[]): CliOptions {
       index += 1;
       continue;
     }
+    if (arg.startsWith("--reason=")) {
+      reason = arg.slice("--reason=".length).trim() || null;
+      continue;
+    }
+    if (arg === "--reason") {
+      const next = argv[index + 1];
+      if (next === undefined || next.trim().startsWith("--")) {
+        throw new Error(`${LOG_PREFIX} FAIL: missing value for --reason`);
+      }
+      reason = next.trim() || null;
+      index += 1;
+      continue;
+    }
     throw new Error(`${LOG_PREFIX} FAIL: unknown argument: ${arg}`);
   }
 
@@ -246,6 +268,12 @@ function parseCliOptions(argv: string[]): CliOptions {
   if (action !== "retype" && memoryType) {
     throw new Error(`${LOG_PREFIX} FAIL: --memory-type is only allowed when --action=retype`);
   }
+  if (apply && action === "keep") {
+    throw new Error(`${LOG_PREFIX} FAIL: --apply does not allow --action=keep`);
+  }
+  if (apply && !confirm) {
+    throw new Error(`${LOG_PREFIX} FAIL: --apply requires --confirm`);
+  }
 
   return {
     itemId,
@@ -253,6 +281,8 @@ function parseCliOptions(argv: string[]): CliOptions {
     validUntil,
     memoryType,
     apply,
+    confirm,
+    reason,
     json,
   };
 }
@@ -261,7 +291,7 @@ async function fetchMemoryItem(itemId: string): Promise<MemoryItemRow | null> {
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("trainingpeaks_student_memory_items")
-    .select("id, student_id, memory_type, summary_text, confidence, valid_from, valid_until, source, is_active")
+    .select("id, student_id, memory_type, summary_text, confidence, valid_from, valid_until, source, is_active, metadata")
     .eq("id", itemId)
     .maybeSingle();
   if (error) {
@@ -328,6 +358,150 @@ function buildReport(memoryItem: MemoryItemRow, student: StudentRow, options: Cl
   };
 }
 
+function sanitizeReason(rawReason: string | null): string | null {
+  if (!rawReason) {
+    return null;
+  }
+  const normalized = rawReason.trim();
+  if (!normalized) {
+    return null;
+  }
+  const MAX_REASON_LENGTH = 300;
+  return normalized.length > MAX_REASON_LENGTH ? normalized.slice(0, MAX_REASON_LENGTH) : normalized;
+}
+
+function normalizeMetadata(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+function buildApplyMetadata(input: {
+  existingMetadata: unknown;
+  action: Exclude<Action, "keep">;
+  appliedAtIso: string;
+  reason: string | null;
+  previousMemoryType?: TrainingPeaksStudentMemoryType;
+}): Record<string, unknown> {
+  const metadata = {
+    ...normalizeMetadata(input.existingMetadata),
+    quality_cleanup_action: input.action,
+    quality_cleanup_applied_at: input.appliedAtIso,
+  };
+  if (input.reason) {
+    metadata.quality_cleanup_reason = input.reason;
+  }
+  if (input.previousMemoryType) {
+    metadata.previous_memory_type = input.previousMemoryType;
+  }
+  return metadata;
+}
+
+async function applyQualityCleanup(
+  memoryItem: MemoryItemRow,
+  options: CliOptions
+): Promise<{ updated: MemoryItemRow; verifyStatus: "ok" }> {
+  if (!options.apply) {
+    throw new Error(`${LOG_PREFIX} FAIL: applyQualityCleanup called without --apply`);
+  }
+  if (options.action === "keep") {
+    throw new Error(`${LOG_PREFIX} FAIL: --action=keep is not allowed in apply mode`);
+  }
+  if (!memoryItem.is_active) {
+    throw new Error(`${LOG_PREFIX} FAIL: item is inactive; apply mode currently supports active items only`);
+  }
+
+  const supabase = createSupabaseServerClient();
+  const appliedAtIso = new Date().toISOString();
+  const reason = sanitizeReason(options.reason);
+  const action = options.action;
+  let updates: Record<string, unknown>;
+
+  if (action === "deactivate") {
+    updates = {
+      is_active: false,
+      updated_at: appliedAtIso,
+      metadata: buildApplyMetadata({
+        existingMetadata: memoryItem.metadata,
+        action,
+        appliedAtIso,
+        reason,
+      }),
+    };
+  } else if (action === "expire") {
+    updates = {
+      valid_until: options.validUntil,
+      updated_at: appliedAtIso,
+      metadata: buildApplyMetadata({
+        existingMetadata: memoryItem.metadata,
+        action,
+        appliedAtIso,
+        reason,
+      }),
+    };
+  } else {
+    updates = {
+      memory_type: options.memoryType,
+      updated_at: appliedAtIso,
+      metadata: buildApplyMetadata({
+        existingMetadata: memoryItem.metadata,
+        action,
+        appliedAtIso,
+        reason,
+        previousMemoryType: memoryItem.memory_type,
+      }),
+    };
+  }
+
+  const writeResult = await supabase
+    .from("trainingpeaks_student_memory_items")
+    .update(updates)
+    .eq("id", memoryItem.id)
+    .select("id, student_id, memory_type, summary_text, confidence, valid_from, valid_until, source, is_active, metadata")
+    .maybeSingle();
+
+  if (writeResult.error) {
+    throw new Error(`${LOG_PREFIX} FAIL: failed to apply quality cleanup write: ${writeResult.error.message}`);
+  }
+  if (!writeResult.data) {
+    throw new Error(`${LOG_PREFIX} FAIL: write did not return updated row for --item-id=${memoryItem.id}`);
+  }
+
+  const updated = writeResult.data as MemoryItemRow;
+  const updatedMetadata = normalizeMetadata(updated.metadata);
+
+  if (updated.id !== memoryItem.id) {
+    throw new Error(`${LOG_PREFIX} FAIL: verification mismatch for updated row id`);
+  }
+  if (updatedMetadata.quality_cleanup_action !== action) {
+    throw new Error(`${LOG_PREFIX} FAIL: verification mismatch for metadata.quality_cleanup_action`);
+  }
+  if (typeof updatedMetadata.quality_cleanup_applied_at !== "string") {
+    throw new Error(`${LOG_PREFIX} FAIL: verification missing metadata.quality_cleanup_applied_at`);
+  }
+  if (reason && updatedMetadata.quality_cleanup_reason !== reason) {
+    throw new Error(`${LOG_PREFIX} FAIL: verification mismatch for metadata.quality_cleanup_reason`);
+  }
+
+  if (action === "deactivate" && updated.is_active !== false) {
+    throw new Error(`${LOG_PREFIX} FAIL: verification mismatch for is_active=false`);
+  }
+  if (action === "expire" && updated.valid_until !== options.validUntil) {
+    throw new Error(`${LOG_PREFIX} FAIL: verification mismatch for valid_until`);
+  }
+  if (action === "retype") {
+    if (updated.memory_type !== options.memoryType) {
+      throw new Error(`${LOG_PREFIX} FAIL: verification mismatch for memory_type`);
+    }
+    if (updatedMetadata.previous_memory_type !== memoryItem.memory_type) {
+      throw new Error(`${LOG_PREFIX} FAIL: verification mismatch for metadata.previous_memory_type`);
+    }
+  }
+
+  return { updated, verifyStatus: "ok" };
+}
+
 function printReadableOutput(report: Report): void {
   console.log(`${LOG_PREFIX} mode=${report.mode}`);
   console.log(`${LOG_PREFIX} policy=${report.policy}`);
@@ -352,10 +526,6 @@ async function run(): Promise<void> {
   loadLocalEnvFiles();
   const options = parseCliOptions(process.argv.slice(2));
 
-  if (options.apply) {
-    throw new Error("Apply mode is not implemented yet. Review dry-run output first.");
-  }
-
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || process.env.SUPABASE_URL?.trim();
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
   if (!supabaseUrl || !serviceRoleKey) {
@@ -374,6 +544,30 @@ async function run(): Promise<void> {
   const student = await fetchStudentById(memoryItem.student_id);
   if (!student) {
     throw new Error(`${LOG_PREFIX} FAIL: student not found for memory item --item-id=${options.itemId}`);
+  }
+
+  if (options.apply) {
+    const beforeWrite = await fetchMemoryItem(options.itemId);
+    if (!beforeWrite) {
+      throw new Error(`${LOG_PREFIX} FAIL: memory item disappeared before apply for --item-id=${options.itemId}`);
+    }
+
+    const applyResult = await applyQualityCleanup(beforeWrite, options);
+    const afterWrite = await fetchMemoryItem(options.itemId);
+    if (!afterWrite) {
+      throw new Error(`${LOG_PREFIX} FAIL: memory item missing after apply for --item-id=${options.itemId}`);
+    }
+
+    if (afterWrite.id !== applyResult.updated.id) {
+      throw new Error(`${LOG_PREFIX} FAIL: verification mismatch between write result and post-write reread`);
+    }
+
+    console.log(`${LOG_PREFIX} mode=apply`);
+    console.log(`${LOG_PREFIX} write_status=completed`);
+    console.log(`${LOG_PREFIX} item_id=${options.itemId}`);
+    console.log(`${LOG_PREFIX} action=${options.action}`);
+    console.log(`${LOG_PREFIX} verify_status=${applyResult.verifyStatus}`);
+    return;
   }
 
   const report = buildReport(memoryItem, student, options);
