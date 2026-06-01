@@ -13,6 +13,7 @@
     "tp-discover-workouts-api": "npm --prefix tools/trainingpeaks-export run tp-discover-workouts-api --",
     "tp-discover-custom-metrics-api": "npm --prefix tools/trainingpeaks-export run tp-discover-custom-metrics-api --",
     "tp-discover-athletes": "npm --prefix tools/trainingpeaks-export run tp-discover-athletes --",
+    "tp:capture-strength-builder": "npm --prefix tools/trainingpeaks-export run tp-capture-strength-builder --",
     "tp-enable-weekly-reports": "npm --prefix tools/trainingpeaks-export run tp-enable-weekly-reports --",
     "tp-telegram-context-backfill": "npm --prefix tools/trainingpeaks-export run tp-telegram-context-backfill --",
     "tp-custom-metrics-availability-report": "npm --prefix tools/trainingpeaks-export run tp-custom-metrics-availability-report --",
