@@ -48,7 +48,12 @@ type GroupProbeMatchMethod = "telegram_chat_id" | "telegram_username";
 
 function isTrainingPeaksGroupProbeCoachNotificationEnabled(): boolean {
   const value = process.env.TRAININGPEAKS_GROUP_PROBE_ENABLED?.trim();
-  return value === "true" || value === "1";
+  if (value !== "true") {
+    return false;
+  }
+
+  // Probe notifications are strictly debug-only and must stay disabled in production.
+  return process.env.NODE_ENV !== "production";
 }
 
 function buildGroupProbePreview(message: TelegramMessage): string {
