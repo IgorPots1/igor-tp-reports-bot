@@ -8,6 +8,10 @@ import { createInterface } from "node:readline/promises";
 import { chromium, type Locator, type Page } from "playwright";
 
 import { profileDir, toolRoot } from "./lib/paths.ts";
+import {
+  assertVisualFieldEvidenceBrowserScriptIsSafe,
+  collectVisualFieldEvidence,
+} from "./lib/strength-visual-field-evidence-scrape.ts";
 import { redactUnknown } from "./lib/trainingpeaks-api-move.ts";
 import {
   buildCatalogPreflight,
@@ -39,6 +43,12 @@ const runnerStrengthFieldsProbeFixturePath = path.join(
   "fixtures",
   "strength-workout-template.runner-strength-fields-probe.fixture.json"
 );
+const visualFieldProbeFixturePath = path.join(
+  toolRoot,
+  "scripts",
+  "fixtures",
+  "strength-workout-template.visual-field-probe.fixture.json"
+);
 const renderedCatalogPath = path.join(repoRoot, "reports", "strength-builder-ai-audit-input", "raw-rendered-exercises.json");
 const defaultOutDir = path.join(repoRoot, "reports", "strength-builder-create-test-workout");
 const summaryPath = path.join(defaultOutDir, "CREATE_TEST_WORKOUT_SUMMARY.md");
@@ -53,7 +63,8 @@ type CliArgs = {
   headless: boolean;
   mode: "dry-run" | "apply";
   manualBuilder: boolean;
-  template: "default" | "minimal-strength" | "runner-strength-fields-probe";
+  template: "default" | "minimal-strength" | "runner-strength-fields-probe" | "visual-field-probe";
+  visualConfirmBeforeSave: boolean;
   nonInteractive: boolean;
   manualBuilderTimeoutSeconds: number;
   applyConfirmation?: string;
@@ -95,6 +106,7 @@ type RunState = {
   addBlockButtonFound: boolean;
   pickerSearchFound: boolean;
   saveClicked: boolean;
+  visualFieldVerification?: StrengthWorkoutRunSummary["visualFieldVerification"];
 };
 
 function printHelp(): void {
@@ -114,7 +126,11 @@ function printHelp(): void {
   console.log("  --headed | --headless  Browser mode");
   console.log("  --dry-run | --apply    Dry-run is default");
   console.log("  --manual-builder       Wait for manual builder open before checks");
-  console.log("  --template <name>      default | minimal-strength | runner-strength-fields-probe");
+  console.log(
+    "  --template <name>      default | minimal-strength | runner-strength-fields-probe | visual-field-probe"
+  );
+  console.log("  --visual-confirm-before-save  Pause before Save and wait for typed confirmation");
+  console.log("  --pause-before-save           Alias for --visual-confirm-before-save");
   console.log("  --non-interactive      Do not wait for Enter/typed prompt");
   console.log("  --manual-builder-timeout-seconds <n>  Wait window for manual builder open (default: 120)");
   console.log(`  --apply-confirmation   Required with --apply --non-interactive; exact value: ${REQUIRED_CONFIRMATION}`);
@@ -132,6 +148,7 @@ function parseArgs(argv: string[]): CliArgs {
     mode: "dry-run",
     manualBuilder: false,
     template: "default",
+    visualConfirmBeforeSave: false,
     nonInteractive: false,
     manualBuilderTimeoutSeconds: 120,
     help: false,
@@ -192,6 +209,10 @@ function parseArgs(argv: string[]): CliArgs {
       parsed.manualBuilder = true;
       continue;
     }
+    if (arg === "--visual-confirm-before-save" || arg === "--pause-before-save") {
+      parsed.visualConfirmBeforeSave = true;
+      continue;
+    }
     if (arg === "--non-interactive") {
       parsed.nonInteractive = true;
       continue;
@@ -229,7 +250,12 @@ function parseArgs(argv: string[]): CliArgs {
     }
     if (arg.startsWith("--template=")) {
       const value = arg.slice("--template=".length).trim();
-      if (value !== "default" && value !== "minimal-strength" && value !== "runner-strength-fields-probe") {
+      if (
+        value !== "default" &&
+        value !== "minimal-strength" &&
+        value !== "runner-strength-fields-probe" &&
+        value !== "visual-field-probe"
+      ) {
         throw new Error(`Unsupported --template value "${value}".`);
       }
       parsed.template = value;
@@ -239,7 +265,12 @@ function parseArgs(argv: string[]): CliArgs {
       const next = argv[index + 1];
       if (!next) throw new Error("Missing value after --template");
       const value = next.trim();
-      if (value !== "default" && value !== "minimal-strength" && value !== "runner-strength-fields-probe") {
+      if (
+        value !== "default" &&
+        value !== "minimal-strength" &&
+        value !== "runner-strength-fields-probe" &&
+        value !== "visual-field-probe"
+      ) {
         throw new Error(`Unsupported --template value "${value}".`);
       }
       parsed.template = value;
@@ -279,6 +310,7 @@ function parseArgs(argv: string[]): CliArgs {
 function fixturePathForTemplate(template: CliArgs["template"]): string {
   if (template === "minimal-strength") return minimalFixturePath;
   if (template === "runner-strength-fields-probe") return runnerStrengthFieldsProbeFixturePath;
+  if (template === "visual-field-probe") return visualFieldProbeFixturePath;
   return defaultFixturePath;
 }
 
@@ -333,6 +365,18 @@ async function waitForEnter(promptText: string): Promise<void> {
   }
 }
 
+async function waitForTypedYes(promptText: string): Promise<void> {
+  const rl = createInterface({ input, output });
+  try {
+    const answer = await rl.question(`${promptText}\n`);
+    if (answer.trim().toLowerCase() !== "yes") {
+      throw new Error('Visual confirmation rejected. Type "yes" to continue.');
+    }
+  } finally {
+    rl.close();
+  }
+}
+
 async function saveScreenshot(page: Page, state: RunState, label: string): Promise<string> {
   await mkdir(screenshotDir, { recursive: true });
   const filePath = path.join(screenshotDir, `${label}.png`);
@@ -374,6 +418,39 @@ async function saveFieldDebug(page: Page, exerciseName: string, reason: string):
   }, exerciseName);
   await writeFile(filePath, `${JSON.stringify(redactUnknown(payload), null, 2)}\n`, "utf8");
   return relativizeArtifactPath(repoRoot, filePath);
+}
+
+function buildMissingAfterSaveVisual(
+  beforeSave: NonNullable<StrengthWorkoutRunSummary["visualFieldVerification"]>["beforeSave"]
+): NonNullable<StrengthWorkoutRunSummary["visualFieldVerification"]>["afterSave"] {
+  return {
+    fieldsVisible: false,
+    notesVisible: false,
+    details: beforeSave.details.map((entry) => ({
+      ...entry,
+      setsVisible: false,
+      repsVisible: false,
+      durationVisible: false,
+      noteVisible: false,
+    })),
+  };
+}
+
+async function closeAndReopenWorkoutIfPossible(page: Page, title: string): Promise<boolean> {
+  const closeButton = page.getByRole("button", { name: /Close|Done/i }).first();
+  if ((await closeButton.count()) > 0 && (await closeButton.isVisible().catch(() => false))) {
+    await closeButton.click().catch(() => {});
+    await page.waitForTimeout(1200);
+  }
+  const openCandidates = [page.getByText(new RegExp(escapeRegex(title), "i")).first(), page.getByRole("button", { name: title }).first()];
+  for (const candidate of openCandidates) {
+    if ((await candidate.count()) === 0) continue;
+    if (!(await candidate.isVisible().catch(() => false))) continue;
+    await candidate.click().catch(() => {});
+    await page.waitForTimeout(1500);
+    return true;
+  }
+  return false;
 }
 
 async function locateBuilderRoot(page: Page): Promise<Locator | null> {
@@ -832,8 +909,9 @@ async function runApplyFlow(
   await saveScreenshot(page, state, "apply-before-add");
 
   let requiredWriteFailure = false;
+  const flatExercises = flattenWorkoutExercises(template);
 
-  for (const exercise of flattenWorkoutExercises(template)) {
+  for (const exercise of flatExercises) {
     const attempt = buildAttempt(exercise);
     state.attemptedExercises.push(attempt);
 
@@ -897,9 +975,28 @@ async function runApplyFlow(
   }
 
   await saveScreenshot(page, state, "apply-before-save");
+  const beforeSaveVisual = await collectVisualFieldEvidence(page, flatExercises);
   if (requiredWriteFailure) {
     state.errors.push("One or more required fields were not written/read back. Save blocked for safety.");
+    state.visualFieldVerification = {
+      beforeSave: beforeSaveVisual,
+      afterSave: buildMissingAfterSaveVisual(beforeSaveVisual),
+    };
     return;
+  }
+  if (args.visualConfirmBeforeSave) {
+    console.log("");
+    console.log("[tp-create-test-strength-workout] visual confirm required before Save.");
+    console.log("- Igor should verify sets, reps, duration/time, and coach notes in the UI.");
+    if (args.nonInteractive) {
+      state.errors.push("Visual confirm before save requires interactive mode. Remove --non-interactive.");
+      state.visualFieldVerification = {
+        beforeSave: beforeSaveVisual,
+        afterSave: buildMissingAfterSaveVisual(beforeSaveVisual),
+      };
+      return;
+    }
+    await waitForTypedYes('Type "yes" after Igor visual confirmation');
   }
   const saveButton = page.getByRole("button", { name: /Save( and Close)?/i }).first();
   if ((await saveButton.count()) > 0 && (await saveButton.isVisible().catch(() => false))) {
@@ -907,8 +1004,18 @@ async function runApplyFlow(
     state.saveClicked = true;
     await page.waitForTimeout(1500);
     await saveScreenshot(page, state, "apply-after-save");
+    await closeAndReopenWorkoutIfPossible(page, template.title).catch(() => {});
+    const afterSaveVisual = await collectVisualFieldEvidence(page, flatExercises);
+    state.visualFieldVerification = {
+      beforeSave: beforeSaveVisual,
+      afterSave: afterSaveVisual,
+    };
   } else {
     state.errors.push("Save button was not found.");
+    state.visualFieldVerification = {
+      beforeSave: beforeSaveVisual,
+      afterSave: buildMissingAfterSaveVisual(beforeSaveVisual),
+    };
   }
 }
 
@@ -977,6 +1084,7 @@ async function writeArtifacts(summary: StrengthWorkoutRunSummary): Promise<void>
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+  assertVisualFieldEvidenceBrowserScriptIsSafe();
   if (args.help) {
     printHelp();
     return;
@@ -993,6 +1101,9 @@ async function main(): Promise<void> {
   console.log(`[tp-create-test-strength-workout] title: ${template.title}`);
   console.log(`[tp-create-test-strength-workout] manual-builder: ${args.manualBuilder ? "yes" : "no"}`);
   console.log(`[tp-create-test-strength-workout] template: ${args.template}`);
+  console.log(
+    `[tp-create-test-strength-workout] visual-confirm-before-save: ${args.visualConfirmBeforeSave ? "yes" : "no"}`
+  );
   console.log(`[tp-create-test-strength-workout] exercises: ${preflight.requestedNames.join(", ")}`);
   console.log("[tp-create-test-strength-workout] WARNING: TrainingPeaks may be changed only in --apply mode after typed confirmation.");
 
@@ -1014,6 +1125,7 @@ async function main(): Promise<void> {
     addBlockButtonFound: false,
     pickerSearchFound: false,
     saveClicked: false,
+    visualFieldVerification: undefined,
   };
 
   if (preflight.missingNames.length > 0) {
@@ -1065,6 +1177,7 @@ async function main(): Promise<void> {
       pickerSearchFound: state.pickerSearchFound,
       hadErrors: state.errors.length > 0,
     }),
+    visualFieldVerification: state.visualFieldVerification,
     screenshots: state.screenshots,
     warnings: state.warnings,
     errors: state.errors,

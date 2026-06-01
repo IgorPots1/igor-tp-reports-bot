@@ -1,8 +1,15 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { chromium } from "playwright";
+
+import {
+  assertVisualFieldEvidenceBrowserScriptIsSafe,
+  collectVisualFieldEvidence,
+  VISUAL_FIELD_EVIDENCE_BROWSER_SCRIPT_PATH,
+} from "./lib/strength-visual-field-evidence-scrape.ts";
 import {
   buildCatalogPreflight,
   buildStrengthWorkoutSummaryMarkdown,
@@ -22,6 +29,8 @@ const probeFixturePath = path.join(
   "fixtures",
   "strength-workout-template.runner-strength-fields-probe.fixture.json"
 );
+const visualProbeFixturePath = path.join(__dirname, "fixtures", "strength-workout-template.visual-field-probe.fixture.json");
+const visualEvidenceFixturePath = path.join(__dirname, "fixtures", "strength-visual-field-evidence.fixture.html");
 
 function assert(condition: unknown, message: string): void {
   if (!condition) {
@@ -34,7 +43,36 @@ function loadFixtureTemplate() {
   return parseStrengthWorkoutTemplate(JSON.parse(raw) as unknown);
 }
 
-function run(): void {
+async function assertVisualFieldEvidenceFixture(
+  visualProbeFlat: ReturnType<typeof flattenWorkoutExercises>
+): Promise<void> {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(pathToFileURL(visualEvidenceFixturePath).href, { waitUntil: "domcontentloaded" });
+    const evidence = await collectVisualFieldEvidence(page, visualProbeFlat);
+    assert(evidence.fieldsVisible, "Expected visual evidence fieldsVisible=true on fixture.");
+    assert(evidence.notesVisible, "Expected visual evidence notesVisible=true on fixture.");
+    assert(evidence.details.length === 3, `Expected 3 visual evidence details, got ${evidence.details.length}.`);
+    for (const row of evidence.details) {
+      assert(row.setsVisible, `Expected sets visible for ${row.name}.`);
+      assert(row.repsVisible, `Expected reps visible (or optional) for ${row.name}.`);
+      assert(row.durationVisible, `Expected duration visible (or optional) for ${row.name}.`);
+      assert(row.noteVisible, `Expected coach note visible for ${row.name}.`);
+    }
+  } finally {
+    await browser.close().catch(() => {});
+  }
+}
+
+async function run(): Promise<void> {
+  assertVisualFieldEvidenceBrowserScriptIsSafe();
+  const visualScript = readFileSync(VISUAL_FIELD_EVIDENCE_BROWSER_SCRIPT_PATH, "utf8");
+  assert(!/\b__name\s*\(/.test(visualScript), "Visual evidence browser script must not call bundler __name helper.");
+  assert(
+    visualScript.includes("function browserCollectVisualFieldEvidence"),
+    "Visual evidence browser script must define browserCollectVisualFieldEvidence."
+  );
   const template = loadFixtureTemplate();
   const flatExercises = flattenWorkoutExercises(template);
   const minimalTemplate = parseStrengthWorkoutTemplate(
@@ -43,6 +81,10 @@ function run(): void {
   const minimalFlat = flattenWorkoutExercises(minimalTemplate);
   const probeTemplate = parseStrengthWorkoutTemplate(JSON.parse(readFileSync(probeFixturePath, "utf8")) as unknown);
   const probeFlat = flattenWorkoutExercises(probeTemplate);
+  const visualProbeTemplate = parseStrengthWorkoutTemplate(
+    JSON.parse(readFileSync(visualProbeFixturePath, "utf8")) as unknown
+  );
+  const visualProbeFlat = flattenWorkoutExercises(visualProbeTemplate);
 
   assert(template.title === "TEST - Beginner Runner Strength Foundation", "Expected fixed TEST workout title.");
   assert(flatExercises.length === 13, `Expected 13 exercises, got ${flatExercises.length}.`);
@@ -61,6 +103,13 @@ function run(): void {
   assert(probeFlat[5]?.name === "Single Leg Calf Raise", "Expected probe last exercise Single Leg Calf Raise.");
   assert(probeFlat[4]?.durationSeconds === "30", "Expected Forearm Plank durationSeconds=30.");
   assert(typeof probeFlat[4]?.reps === "undefined", "Expected Forearm Plank without reps.");
+  assert(visualProbeTemplate.id === "visual_field_probe", "Expected visual probe template id.");
+  assert(visualProbeTemplate.title === "TEST - Field Visual Probe", "Expected fixed visual probe title.");
+  assert(visualProbeFlat.length === 3, `Expected 3 visual probe exercises, got ${visualProbeFlat.length}.`);
+  assert(visualProbeFlat[0]?.name === "Glute Bridge", "Expected visual probe first exercise Glute Bridge.");
+  assert(visualProbeFlat[1]?.name === "Forearm Plank", "Expected visual probe second exercise Forearm Plank.");
+  assert(visualProbeFlat[2]?.name === "Single Leg Calf Raise", "Expected visual probe third exercise Single Leg Calf Raise.");
+  await assertVisualFieldEvidenceFixture(visualProbeFlat);
 
   const catalogPreflight = buildCatalogPreflight(template, flatExercises.map((entry) => entry.name));
   assert(catalogPreflight.missingNames.length === 0, "Expected all exact names to be present in synthetic catalog preflight.");
@@ -124,6 +173,34 @@ function run(): void {
       unexpectedExerciseCheck: "dry-run: verification not executed",
       status: "partial",
     },
+    visualFieldVerification: {
+      beforeSave: {
+        fieldsVisible: true,
+        notesVisible: true,
+        details: [
+          {
+            name: "Glute Bridge",
+            setsVisible: true,
+            repsVisible: true,
+            durationVisible: true,
+            noteVisible: true,
+          },
+        ],
+      },
+      afterSave: {
+        fieldsVisible: false,
+        notesVisible: false,
+        details: [
+          {
+            name: "Glute Bridge",
+            setsVisible: false,
+            repsVisible: false,
+            durationVisible: false,
+            noteVisible: false,
+          },
+        ],
+      },
+    },
     screenshots: ["reports/strength-builder-create-test-workout/screenshots/dry-run-home.png"],
     warnings: ["Dry-run summary fixture."],
     errors: [],
@@ -132,6 +209,7 @@ function run(): void {
   const markdown = buildStrengthWorkoutSummaryMarkdown(summary);
   assert(markdown.includes("TEST - Beginner Runner Strength Foundation"), "Expected title in summary markdown.");
   assert(markdown.includes("Missing visible exercises"), "Expected verification section in markdown.");
+  assert(markdown.includes("Visual field verification"), "Expected visual verification section in markdown.");
   const readySummary: StrengthWorkoutRunSummary = {
     ...summary,
     verification: {
@@ -143,7 +221,11 @@ function run(): void {
   const readyMarkdown = buildStrengthWorkoutSummaryMarkdown(readySummary);
   assert(readyMarkdown.includes("ready_for_apply"), "Expected ready_for_apply status in summary markdown.");
 
-  const allowedImports = ["./lib/strength-workout-ui-writer.ts"];
+  const allowedImports = [
+    "./lib/strength-workout-ui-writer.ts",
+    "./lib/strength-visual-field-evidence-scrape.ts",
+    "playwright",
+  ];
   const selfSource = readFileSync(__filename, "utf8");
   const importSpecifiers = [...selfSource.matchAll(/from\s+["']([^"']+)["']/g)].map((match) => match[1]);
   for (const specifier of importSpecifiers) {
@@ -157,11 +239,12 @@ function run(): void {
   console.log(`- exercises: ${flatExercises.length}`);
   console.log(`- minimal exercises: ${minimalFlat.length}`);
   console.log(`- probe exercises: ${probeFlat.length}`);
+  console.log(`- visual probe exercises: ${visualProbeFlat.length}`);
   console.log(`- title: ${template.title}`);
 }
 
 try {
-  run();
+  await run();
 } catch (error) {
   console.error("check-strength-workout-ui-writer failed.");
   console.error(error);

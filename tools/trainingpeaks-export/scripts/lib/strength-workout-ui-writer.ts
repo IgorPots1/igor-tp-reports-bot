@@ -72,6 +72,30 @@ export type StrengthWorkoutRunSummary = {
     unexpectedExerciseCheck: string;
     status: "passed" | "partial" | "failed" | "ready_for_apply";
   };
+  visualFieldVerification?: {
+    beforeSave: {
+      fieldsVisible: boolean;
+      notesVisible: boolean;
+      details: Array<{
+        name: string;
+        setsVisible: boolean;
+        repsVisible: boolean;
+        durationVisible: boolean;
+        noteVisible: boolean;
+      }>;
+    };
+    afterSave: {
+      fieldsVisible: boolean;
+      notesVisible: boolean;
+      details: Array<{
+        name: string;
+        setsVisible: boolean;
+        repsVisible: boolean;
+        durationVisible: boolean;
+        noteVisible: boolean;
+      }>;
+    };
+  };
   screenshots: string[];
   warnings: string[];
   errors: string[];
@@ -329,6 +353,26 @@ export function buildStrengthWorkoutSummaryMarkdown(summary: StrengthWorkoutRunS
   if (summary.verification.missingExercisesVisible.length > 0) {
     for (const missing of summary.verification.missingExercisesVisible) {
       lines.push(`- Missing on verification: ${missing}`);
+    }
+  }
+  if (summary.visualFieldVerification) {
+    lines.push("");
+    lines.push("## Visual field verification");
+    lines.push(
+      `- Fields visible before save: ${summary.visualFieldVerification.beforeSave.fieldsVisible ? "yes" : "no"}`
+    );
+    lines.push(`- Notes visible before save: ${summary.visualFieldVerification.beforeSave.notesVisible ? "yes" : "no"}`);
+    lines.push(`- Fields visible after save: ${summary.visualFieldVerification.afterSave.fieldsVisible ? "yes" : "no"}`);
+    lines.push(`- Notes visible after save: ${summary.visualFieldVerification.afterSave.notesVisible ? "yes" : "no"}`);
+    for (const row of summary.visualFieldVerification.beforeSave.details) {
+      lines.push(
+        `- [before save] ${row.name}: sets=${row.setsVisible ? "yes" : "no"}, reps=${row.repsVisible ? "yes" : "no"}, duration=${row.durationVisible ? "yes" : "no"}, note=${row.noteVisible ? "yes" : "no"}`
+      );
+    }
+    for (const row of summary.visualFieldVerification.afterSave.details) {
+      lines.push(
+        `- [after save] ${row.name}: sets=${row.setsVisible ? "yes" : "no"}, reps=${row.repsVisible ? "yes" : "no"}, duration=${row.durationVisible ? "yes" : "no"}, note=${row.noteVisible ? "yes" : "no"}`
+      );
     }
   }
   if (summary.warnings.length > 0) {

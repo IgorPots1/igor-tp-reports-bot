@@ -1,0 +1,17 @@
+{
+  "id": "minimal_strength",
+  "title": "TEST - Minimal Strength Probe",
+  "workoutInstructions": "TEST WORKOUT - do not assign to real athletes.\nMinimal strength probe for UI automation safety.\nStop if pain increases.",
+  "blocks": [
+    {
+      "name": "Main",
+      "exercises": [
+        { "name": "Glute Bridge", "sets": "2", "metricType": "reps", "metricValue": "15" },
+        { "name": "Banded Clam Shell", "sets": "2", "metricType": "reps", "metricValue": "12 per side" },
+        { "name": "Goblet Squat", "sets": "3", "metricType": "reps", "metricValue": "10" },
+        { "name": "Forearm Plank", "sets": "3", "metricType": "duration", "metricValue": "20 sec" },
+        { "name": "Single Leg Calf Raise", "sets": "2", "metricType": "reps", "metricValue": "12 per side" }
+      ]
+    }
+  ]
+}

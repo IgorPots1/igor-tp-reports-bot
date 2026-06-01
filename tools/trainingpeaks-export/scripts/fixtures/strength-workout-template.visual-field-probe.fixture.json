@@ -1,0 +1,30 @@
+{
+  "id": "visual_field_probe",
+  "title": "TEST - Field Visual Probe",
+  "workoutInstructions": "TEST WORKOUT - do not assign to real athletes.\nVisual field-writing probe.\nVerify sets/reps/duration/coach notes before and after save.",
+  "blocks": [
+    {
+      "name": "Main",
+      "exercises": [
+        {
+          "name": "Glute Bridge",
+          "sets": "2",
+          "reps": "15",
+          "coachNote": "TEST NOTE Glute Bridge - pause 1 sec at top"
+        },
+        {
+          "name": "Forearm Plank",
+          "sets": "3",
+          "durationSeconds": "30",
+          "coachNote": "TEST NOTE Forearm Plank - hips level"
+        },
+        {
+          "name": "Single Leg Calf Raise",
+          "sets": "2",
+          "reps": "12",
+          "coachNote": "TEST NOTE Calf Raise - slow 3 sec lower"
+        }
+      ]
+    }
+  ]
+}
