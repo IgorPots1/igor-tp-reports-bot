@@ -303,6 +303,85 @@ async function run(): Promise<void> {
         reason: "group message explicitly non-student-authored",
       },
     },
+    {
+      name: "pause-training-illness-window",
+      observation: mkObs(
+        "Здравствуйте. Я наверное сегодня, завтра воздержусь от бега. Кашель какой-то непонятный появился и голос осип"
+      ),
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "pause_training",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: "illness",
+        secondary_buckets_includes: ["health_lifecycle_signal"],
+        confidence_at_least: "medium",
+      },
+    },
+    {
+      name: "this-week-availability-with-days",
+      observation: mkObs(
+        "Добрый день, сорри, я пропадаю переодически. Я на прошлой неделе не бегала, на этой смогу во вторник и в четверг."
+      ),
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        available_days: ["Tuesday", "Thursday"],
+        confidence_at_least: "medium",
+      },
+    },
+    {
+      name: "bare-weekdays-still-skip",
+      observation: mkObs("Вторник и четверг"),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "travel-unavailability-duration",
+      observation: mkObs("Потом на 4 дня на винный фестиваль улетаю, точно бегать не смогу."),
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "schedule_unavailability_window",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        confidence_at_least: "medium",
+      },
+    },
+    {
+      name: "put-on-tomorrow-move-candidate",
+      observation: mkObs("Игорь привет Поставь пожалуйста на завтра 1.20 сегодня не получается с мелким некого оставить"),
+      expected: {
+        primary_bucket: "coach_case",
+        signal_type: "move_workout_candidate",
+        should_create_memory: false,
+        should_create_case: true,
+        should_create_trainingpeaks_action: true,
+        secondary_buckets_includes: ["operational_signal", "trainingpeaks_action"],
+        confidence_at_least: "medium",
+      },
+    },
+    {
+      name: "non-health-better-with-week-days-is-schedule",
+      observation: mkObs("Привет. Отбегала. Что-то было непросто. На след неделе лучше вт-чт-пт-вс?"),
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "schedule_availability_window",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        available_days: ["Tuesday", "Thursday", "Friday", "Sunday"],
+      },
+    },
   ];
 
   let failed = 0;

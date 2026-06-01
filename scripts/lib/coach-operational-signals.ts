@@ -231,7 +231,7 @@ function classifyHealthIssueKind(text: string): string | null {
   if (hasAny(text, ["нога", "колено", "ахилл", "икра", "спина", "голень", "стоп"])) {
     return "pain_or_injury";
   }
-  if (hasAny(text, ["горло", "температур", "простуд", "кашель", "боле"])) {
+  if (hasAny(text, ["горло", "температур", "простуд", "кашель", "боле", "насморк", "орви", "осип", "голос осип"])) {
     return "illness";
   }
   if (text.includes("бол")) {
@@ -293,6 +293,53 @@ function hasScheduleContext(text: string): boolean {
   ]);
 }
 
+function hasAvailabilityIntent(text: string, days: string[]): boolean {
+  const hasNegativeAbility = hasAny(text, ["не смогу", "не могу", "не получится"]);
+  if (
+    hasAny(text, [
+      "может бегать",
+      "сможет бегать",
+      "могу только",
+      "может только",
+      "можно",
+      "смогу бегать",
+      "могу бегать",
+    ])
+  ) {
+    return true;
+  }
+  if (!hasNegativeAbility && days.length > 0 && (hasToken(text, "смогу") || hasToken(text, "могу"))) {
+    return true;
+  }
+  if (
+    days.length > 0 &&
+    hasToken(text, "лучше") &&
+    hasAny(text, ["на следующей неделе", "на след неделе", "следующей неделе", "на этой неделе", "на этой"])
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function inferPauseWindow(
+  text: string,
+  observedAt: string
+): Pick<OperationalStructuredPayload, "valid_from" | "valid_until"> {
+  const observed = parseIsoDateFallback(observedAt);
+  const today = isoDate(observed);
+  const tomorrow = isoDate(addDays(observed, 1));
+  if (text.includes("сегодня") && text.includes("завтра")) {
+    return { valid_from: today, valid_until: tomorrow };
+  }
+  if (text.includes("сегодня")) {
+    return { valid_from: today, valid_until: today };
+  }
+  if (text.includes("завтра")) {
+    return { valid_from: tomorrow, valid_until: tomorrow };
+  }
+  return { valid_from: today, valid_until: null };
+}
+
 function hasMoveWorkoutIntent(text: string, labels: string[]): boolean {
   if (labels.includes("move_workout_candidate")) {
     return true;
@@ -311,6 +358,15 @@ function hasMoveWorkoutIntent(text: string, labels: string[]): boolean {
     return true;
   }
   if (/можно.*тренировк\w*.*\bв\s+(пн|вт|ср|чт|пт|сб|вс)/iu.test(text) && text.includes("не перенос")) {
+    return true;
+  }
+  if (
+    hasAny(text, ["поставь", "поставьте"]) &&
+    (
+      (text.includes("на завтра") && (/\b\d{1,2}([.:]\d{1,2})?\b/u.test(text) || text.includes("трениров"))) ||
+      text.includes("сегодня не получается")
+    )
+  ) {
     return true;
   }
   return false;
@@ -429,7 +485,24 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
     };
   }
 
-  const healthImproving = hasAny(text, ["значительно лучше", "намного лучше", "лучше", "становится лучше", "полегче"]);
+  const healthImproving =
+    hasAny(text, ["значительно лучше", "намного лучше", "становится лучше", "полегче", "лучше"]) &&
+    hasAny(text, [
+      "бол",
+      "боль",
+      "нога",
+      "колено",
+      "ахилл",
+      "стоп",
+      "голень",
+      "горло",
+      "кашель",
+      "насморк",
+      "простуд",
+      "температур",
+      "самочув",
+      "выздорав",
+    ]);
   const healthResolved =
     hasAny(text, ["без боли", "не болит", "прошло", "прошел", "прошла", "выздоров"]) &&
     hasAny(text, ["бол", "горло", "колено", "нога", "ахилл", "стоп", "простуд", "кашель", "самочув"]);
@@ -485,8 +558,38 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
     };
   }
 
+  const pauseTraining = hasAny(text, [
+    "воздержусь от бега",
+    "не буду бегать",
+    "пропущу бег",
+    "пауза от бега",
+    "пропущу тренировку",
+    "не побегу",
+  ]);
+  if (pauseTraining) {
+    const pauseWindow = inferPauseWindow(text, input.observedAt);
+    payload.valid_from = pauseWindow.valid_from;
+    payload.valid_until = pauseWindow.valid_until;
+    payload.health_issue_kind = classifyHealthIssueKind(text);
+    return {
+      primary_bucket: "operational_signal",
+      secondary_buckets: payload.health_issue_kind ? ["health_lifecycle_signal"] : [],
+      signal_type: "pause_training",
+      structured_payload: payload,
+      should_create_memory: false,
+      should_create_case: false,
+      should_create_trainingpeaks_action: false,
+      confidence: payload.health_issue_kind ? "high" : "medium",
+      reason:
+        explicitSignalReason ??
+        (payload.health_issue_kind
+          ? "explicit pause training with health context"
+          : "explicit temporary training pause"),
+    };
+  }
+
   const healthStarted =
-    hasAny(text, ["болела", "болею", "забол", "температур", "горло", "простуд", "болит"]) &&
+    hasAny(text, ["болела", "болею", "забол", "температур", "горло", "простуд", "болит", "кашель", "насморк", "орви", "осип"]) &&
     !resolvedHealth;
   if (healthStarted) {
     payload.health_issue_kind = classifyHealthIssueKind(text);
@@ -518,15 +621,7 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
   }
 
   const days = extractDays(text);
-  const scheduleAvailability = hasAny(text, [
-    "может бегать",
-    "сможет бегать",
-    "могу только",
-    "может только",
-    "можно",
-    "смогу бегать",
-    "могу бегать",
-  ]);
+  const scheduleAvailability = hasAvailabilityIntent(text, days);
   const scheduleUnavailability = hasAny(text, ["не могу", "не смогу", "не успеваю", "не может"]);
   if (days.length > 0 && hasScheduleContext(text) && (scheduleAvailability || scheduleUnavailability)) {
     if (scheduleAvailability) {
@@ -539,7 +634,7 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
     if (text.includes("на следующей неделе") || text.includes("следующей неделе")) {
       payload.valid_from = isoDate(startOfWeekMonday(addDays(observed, 7)));
       payload.valid_until = endOfNextWeek(observed);
-    } else if (text.includes("на этой неделе")) {
+    } else if (text.includes("на этой неделе") || text.includes("на этой")) {
       payload.valid_from = isoDate(startOfWeekMonday(observed));
       payload.valid_until = isoDate(endOfWeekSunday(observed));
     } else if (text.includes("сегодня")) {
@@ -566,7 +661,7 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
       primary_bucket: "operational_signal",
       secondary_buckets: [],
       signal_type:
-        scheduleAvailability && text.includes("на этой неделе")
+        scheduleAvailability && (text.includes("на этой неделе") || text.includes("на этой"))
           ? "plan_generation_constraint"
           : scheduleUnavailability
             ? "schedule_unavailability_window"
@@ -594,6 +689,48 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
       should_create_trainingpeaks_action: false,
       confidence: "high",
       reason: "single-day unavailability",
+    };
+  }
+
+  const hasRunUnavailability = hasAny(text, [
+    "точно бегать не смогу",
+    "не смогу бегать",
+    "бегать не смогу",
+    "не получится бегать",
+    "бегать не получится",
+    "тренироваться не смогу",
+  ]);
+  const hasTravelContext = hasAny(text, [
+    "улетаю",
+    "поездк",
+    "фестиваль",
+    "командировк",
+    "отпуск",
+    "в отъезде",
+    "в отезде",
+  ]);
+  const hasDurationContext = /на\s+\d{1,2}\s+дн/iu.test(text);
+  if (hasRunUnavailability && (hasTravelContext || hasDurationContext)) {
+    if (text.includes("сегодня")) {
+      const today = parseRelativeDate("сегодня", input.observedAt);
+      payload.valid_from = today;
+      if (hasDurationContext && today) {
+        const daysCount = Number(text.match(/на\s+(\d{1,2})\s+дн/iu)?.[1] ?? 0);
+        if (daysCount > 0) {
+          payload.valid_until = isoDate(addDays(parseIsoDateFallback(today), daysCount - 1));
+        }
+      }
+    }
+    return {
+      primary_bucket: "operational_signal",
+      secondary_buckets: [],
+      signal_type: "schedule_unavailability_window",
+      structured_payload: payload,
+      should_create_memory: false,
+      should_create_case: false,
+      should_create_trainingpeaks_action: false,
+      confidence: "medium",
+      reason: "travel/duration-linked temporary running unavailability",
     };
   }
 
