@@ -1,0 +1,110 @@
+{
+  "cachedAt": "2026-06-01T00:00:00.000Z",
+  "mode": "fixture",
+  "libraryCount": 1,
+  "exerciseCount": 11,
+  "exercises": [
+    {
+      "exerciseLibraryId": "fixture-lib-1",
+      "exerciseLibraryItemId": "fixture-item-1",
+      "itemName": "Glute Bridge",
+      "normalizedName": "glute bridge",
+      "description": "Hip extension on floor.",
+      "libraryName": "Fixture Library",
+      "isDefaultContent": true,
+      "ownerType": "default"
+    },
+    {
+      "exerciseLibraryId": "fixture-lib-1",
+      "exerciseLibraryItemId": "fixture-item-2",
+      "itemName": "Banded Glute Bridge",
+      "normalizedName": "banded glute bridge",
+      "description": "Glute bridge with band above knees.",
+      "libraryName": "Fixture Library",
+      "isDefaultContent": true,
+      "ownerType": "default"
+    },
+    {
+      "exerciseLibraryId": "fixture-lib-1",
+      "exerciseLibraryItemId": "fixture-item-3",
+      "itemName": "Romanian Deadlift",
+      "normalizedName": "romanian deadlift",
+      "description": "Hip hinge with barbell or dumbbells.",
+      "libraryName": "Fixture Library",
+      "isDefaultContent": true,
+      "ownerType": "default"
+    },
+    {
+      "exerciseLibraryId": "fixture-lib-1",
+      "exerciseLibraryItemId": "fixture-item-4",
+      "itemName": "Split Squat",
+      "normalizedName": "split squat",
+      "libraryName": "Fixture Library",
+      "isDefaultContent": true,
+      "ownerType": "default"
+    },
+    {
+      "exerciseLibraryId": "fixture-lib-1",
+      "exerciseLibraryItemId": "fixture-item-5",
+      "itemName": "Step Up",
+      "normalizedName": "step up",
+      "libraryName": "Fixture Library",
+      "isDefaultContent": true,
+      "ownerType": "default"
+    },
+    {
+      "exerciseLibraryId": "fixture-lib-1",
+      "exerciseLibraryItemId": "fixture-item-6",
+      "itemName": "Calf Raise",
+      "normalizedName": "calf raise",
+      "libraryName": "Fixture Library",
+      "isDefaultContent": true,
+      "ownerType": "default"
+    },
+    {
+      "exerciseLibraryId": "fixture-lib-1",
+      "exerciseLibraryItemId": "fixture-item-7",
+      "itemName": "Side Plank",
+      "normalizedName": "side plank",
+      "libraryName": "Fixture Library",
+      "isDefaultContent": true,
+      "ownerType": "default"
+    },
+    {
+      "exerciseLibraryId": "fixture-lib-1",
+      "exerciseLibraryItemId": "fixture-item-8",
+      "itemName": "Banded Clam Shell",
+      "normalizedName": "banded clam shell",
+      "libraryName": "Fixture Library",
+      "isDefaultContent": true,
+      "ownerType": "default"
+    },
+    {
+      "exerciseLibraryId": "fixture-lib-1",
+      "exerciseLibraryItemId": "fixture-item-9",
+      "itemName": "Wall Squat",
+      "normalizedName": "wall squat",
+      "libraryName": "Fixture Library",
+      "isDefaultContent": true,
+      "ownerType": "default"
+    },
+    {
+      "exerciseLibraryId": "fixture-lib-1",
+      "exerciseLibraryItemId": "fixture-item-10",
+      "itemName": "Air Squat",
+      "normalizedName": "air squat",
+      "libraryName": "Fixture Library",
+      "isDefaultContent": true,
+      "ownerType": "default"
+    },
+    {
+      "exerciseLibraryId": "fixture-lib-1",
+      "exerciseLibraryItemId": "fixture-item-11",
+      "itemName": "Missing Exercise Placeholder",
+      "normalizedName": "missing exercise placeholder",
+      "libraryName": "Fixture Library",
+      "isDefaultContent": true,
+      "ownerType": "default"
+    }
+  ]
+}
