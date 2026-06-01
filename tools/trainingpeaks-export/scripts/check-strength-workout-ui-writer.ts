@@ -6,6 +6,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "playwright";
 
 import {
+  assertStrengthWorkoutFieldWriterBrowserScriptIsSafe,
+  browserIsValueVisibleInBlock,
+  browserWriteSemanticField,
+  STRENGTH_WORKOUT_FIELD_WRITER_BROWSER_SCRIPT_PATH,
+} from "./lib/strength-workout-field-writer-scrape.ts";
+import {
   assertVisualFieldEvidenceBrowserScriptIsSafe,
   collectVisualFieldEvidence,
   VISUAL_FIELD_EVIDENCE_BROWSER_SCRIPT_PATH,
@@ -22,6 +28,7 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const tpCreateScriptPath = path.join(__dirname, "tp-create-test-strength-workout.ts");
 const fixturePath = path.join(__dirname, "fixtures", "strength-workout-template.fixture.json");
 const minimalFixturePath = path.join(__dirname, "fixtures", "strength-workout-template.minimal-strength.fixture.json");
 const probeFixturePath = path.join(
@@ -31,6 +38,7 @@ const probeFixturePath = path.join(
 );
 const visualProbeFixturePath = path.join(__dirname, "fixtures", "strength-workout-template.visual-field-probe.fixture.json");
 const visualEvidenceFixturePath = path.join(__dirname, "fixtures", "strength-visual-field-evidence.fixture.html");
+const writerSmokeFixturePath = path.join(__dirname, "fixtures", "strength-workout-field-writer.fixture.html");
 
 function assert(condition: unknown, message: string): void {
   if (!condition) {
@@ -65,8 +73,86 @@ async function assertVisualFieldEvidenceFixture(
   }
 }
 
+async function assertStrengthFieldWriterFixture(): Promise<void> {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(pathToFileURL(writerSmokeFixturePath).href, { waitUntil: "domcontentloaded" });
+    const glute = page.locator("[data-exercise='Glute Bridge']").first();
+    const plank = page.locator("[data-exercise='Forearm Plank']").first();
+
+    const setsWrite = await browserWriteSemanticField(glute, {
+      kind: "sets",
+      value: "2",
+      labelTokens: ["sets"],
+      placeholderTokens: ["sets"],
+      ariaTokens: ["sets"],
+      inputTypeAllowList: ["text", "number"],
+    });
+    assert(setsWrite.ok, "Expected sets write to succeed on writer fixture.");
+    assert(setsWrite.readBack === "2", `Expected sets readBack=2, got ${setsWrite.readBack ?? "<empty>"}.`);
+
+    const repsWrite = await browserWriteSemanticField(glute, {
+      kind: "reps",
+      value: "15",
+      labelTokens: ["reps", "count"],
+      placeholderTokens: ["reps", "count"],
+      ariaTokens: ["reps", "count"],
+      inputTypeAllowList: ["text", "number"],
+    });
+    assert(repsWrite.ok, "Expected reps write to succeed on writer fixture.");
+    assert(repsWrite.readBack === "15", `Expected reps readBack=15, got ${repsWrite.readBack ?? "<empty>"}.`);
+    assert(repsWrite.readBack !== "hh:mm:ss", "Reps writer must not report hh:mm:ss as semantic success.");
+
+    const noteWrite = await browserWriteSemanticField(glute, {
+      kind: "coachNote",
+      value: "TEST NOTE Glute Bridge - pause 1 sec at top",
+      labelTokens: ["coach note", "notes"],
+      placeholderTokens: ["coach note", "notes"],
+      ariaTokens: ["coach note", "notes"],
+      allowTextarea: true,
+      allowContentEditable: true,
+      inputTypeAllowList: ["text"],
+    });
+    assert(noteWrite.ok, "Expected coach note write to succeed on writer fixture.");
+    assert(
+      noteWrite.readBack === "TEST NOTE Glute Bridge - pause 1 sec at top",
+      `Expected note readBack to match written value, got ${noteWrite.readBack ?? "<empty>"}.`
+    );
+
+    const durationWrite = await browserWriteSemanticField(plank, {
+      kind: "duration",
+      value: "30",
+      labelTokens: ["duration", "time", "sec"],
+      placeholderTokens: ["duration", "time", "sec", "hh:mm:ss"],
+      ariaTokens: ["duration", "time", "sec"],
+      inputTypeAllowList: ["text", "number", "time"],
+    });
+    assert(durationWrite.ok, "Expected duration write to succeed on writer fixture.");
+    assert(durationWrite.readBack === "30", `Expected duration readBack=30, got ${durationWrite.readBack ?? "<empty>"}.`);
+
+    const setsVisible = await browserIsValueVisibleInBlock(glute, ["2"]);
+    const repsVisible = await browserIsValueVisibleInBlock(glute, ["15"]);
+    const noteVisible = await browserIsValueVisibleInBlock(glute, ["TEST NOTE Glute Bridge - pause 1 sec at top"]);
+    const durationVisible = await browserIsValueVisibleInBlock(plank, ["30", "30 sec", "00:30"]);
+    assert(setsVisible, "Expected sets visible after writer fixture write.");
+    assert(repsVisible, "Expected reps visible after writer fixture write.");
+    assert(noteVisible, "Expected coach note visible after writer fixture write.");
+    assert(durationVisible, "Expected duration visible after writer fixture write.");
+  } finally {
+    await browser.close().catch(() => {});
+  }
+}
+
 async function run(): Promise<void> {
+  assertStrengthWorkoutFieldWriterBrowserScriptIsSafe();
   assertVisualFieldEvidenceBrowserScriptIsSafe();
+  const writerScript = readFileSync(STRENGTH_WORKOUT_FIELD_WRITER_BROWSER_SCRIPT_PATH, "utf8");
+  assert(!/\b__name\s*\(/.test(writerScript), "Strength field writer browser script must not call bundler __name helper.");
+  assert(
+    writerScript.includes("function browserStrengthFieldAction"),
+    "Strength field writer browser script must define browserStrengthFieldAction."
+  );
   const visualScript = readFileSync(VISUAL_FIELD_EVIDENCE_BROWSER_SCRIPT_PATH, "utf8");
   assert(!/\b__name\s*\(/.test(visualScript), "Visual evidence browser script must not call bundler __name helper.");
   assert(
@@ -110,6 +196,7 @@ async function run(): Promise<void> {
   assert(visualProbeFlat[1]?.name === "Forearm Plank", "Expected visual probe second exercise Forearm Plank.");
   assert(visualProbeFlat[2]?.name === "Single Leg Calf Raise", "Expected visual probe third exercise Single Leg Calf Raise.");
   await assertVisualFieldEvidenceFixture(visualProbeFlat);
+  await assertStrengthFieldWriterFixture();
 
   const catalogPreflight = buildCatalogPreflight(template, flatExercises.map((entry) => entry.name));
   assert(catalogPreflight.missingNames.length === 0, "Expected all exact names to be present in synthetic catalog preflight.");
@@ -221,8 +308,19 @@ async function run(): Promise<void> {
   const readyMarkdown = buildStrengthWorkoutSummaryMarkdown(readySummary);
   assert(readyMarkdown.includes("ready_for_apply"), "Expected ready_for_apply status in summary markdown.");
 
+  const tpCreateSource = readFileSync(tpCreateScriptPath, "utf8");
+  assert(
+    !/block\.evaluate\s*\(/.test(tpCreateSource),
+    "tp-create-test-strength-workout.ts must not call block.evaluate directly."
+  );
+  assert(
+    !/locator\.evaluate\s*\(/.test(tpCreateSource),
+    "tp-create-test-strength-workout.ts must not call locator.evaluate directly."
+  );
+
   const allowedImports = [
     "./lib/strength-workout-ui-writer.ts",
+    "./lib/strength-workout-field-writer-scrape.ts",
     "./lib/strength-visual-field-evidence-scrape.ts",
     "playwright",
   ];

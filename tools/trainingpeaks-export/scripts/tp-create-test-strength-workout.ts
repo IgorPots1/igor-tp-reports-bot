@@ -9,6 +9,11 @@ import { chromium, type Locator, type Page } from "playwright";
 
 import { profileDir, toolRoot } from "./lib/paths.ts";
 import {
+  assertStrengthWorkoutFieldWriterBrowserScriptIsSafe,
+  browserIsValueVisibleInBlock,
+  browserWriteSemanticField,
+} from "./lib/strength-workout-field-writer-scrape.ts";
+import {
   assertVisualFieldEvidenceBrowserScriptIsSafe,
   collectVisualFieldEvidence,
 } from "./lib/strength-visual-field-evidence-scrape.ts";
@@ -779,26 +784,7 @@ async function isValueVisibleInBlock(
   expected: string
 ): Promise<boolean> {
   const expectedVariants = kind === "duration" ? normalizeDurationVariants(expected) : [expected];
-  return block.evaluate(
-    (host, input) => {
-      const normalize = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
-      const haystackParts: string[] = [];
-      const hostText = (host.textContent ?? "").replace(/\s+/g, " ").trim();
-      if (hostText) haystackParts.push(hostText);
-      const controls = Array.from(host.querySelectorAll("input, textarea, [contenteditable='true'], [role='textbox']"));
-      for (const node of controls) {
-        const inputEl = node as HTMLInputElement;
-        const value =
-          "value" in inputEl
-            ? String(inputEl.value ?? "")
-            : String((node as HTMLElement).textContent ?? "");
-        if (value.trim()) haystackParts.push(value);
-      }
-      const haystack = normalize(haystackParts.join(" | "));
-      return input.expectedVariants.some((variant) => normalize(variant) && haystack.includes(normalize(variant)));
-    },
-    { expectedVariants }
-  );
+  return browserIsValueVisibleInBlock(block, expectedVariants);
 }
 
 async function revealExercisePanel(block: Locator): Promise<void> {
@@ -832,88 +818,7 @@ async function writeSemanticFieldInExerciseBlock(
   block: Locator,
   options: SemanticFieldOptions
 ): Promise<SemanticFieldWriteAttempt> {
-  const result = await block.evaluate(
-    (host, input) => {
-      const normalize = (value: unknown) =>
-        String(value ?? "")
-          .replace(/\s+/g, " ")
-          .trim()
-          .toLowerCase();
-      const compact = (value: unknown) => String(value ?? "").replace(/\s+/g, " ").trim();
-      const tokenMatch = (value: string, tokens: string[]) => {
-        const normalizedValue = normalize(value);
-        return tokens.some((token) => normalizedValue.includes(normalize(token)));
-      };
-      const controls = Array.from(
-        host.querySelectorAll("input, textarea, [contenteditable='true'], [role='textbox']")
-      ) as Array<HTMLInputElement | HTMLTextAreaElement | HTMLElement>;
-      const scored = controls
-        .map((node, index) => {
-          const tag = node.tagName.toLowerCase();
-          const type = tag === "input" ? normalize((node as HTMLInputElement).type || "text") : "";
-          if (input.inputTypeAllowList?.length && tag === "input" && !input.inputTypeAllowList.includes(type || "text")) {
-            return null;
-          }
-          if (!input.allowTextarea && tag === "textarea") return null;
-          if (!input.allowContentEditable && node.getAttribute("contenteditable") === "true") return null;
-          const ariaLabel = compact(node.getAttribute("aria-label"));
-          const placeholder = compact(node.getAttribute("placeholder"));
-          const title = compact(node.getAttribute("title"));
-          const ownValue =
-            "value" in node ? compact((node as HTMLInputElement | HTMLTextAreaElement).value) : compact(node.textContent);
-          const containerText = compact(node.closest("label, td, th, div, section, article, li, tr")?.textContent ?? "");
-          const signatures = [ariaLabel, placeholder, title, containerText].filter(Boolean).join(" | ");
-          let score = 0;
-          if (tokenMatch(ariaLabel, input.ariaTokens)) score += 50;
-          if (tokenMatch(placeholder, input.placeholderTokens)) score += 45;
-          if (tokenMatch(signatures, input.labelTokens)) score += 35;
-          if (tokenMatch(containerText, input.labelTokens)) score += 25;
-          if (input.kind === "coachNote" && tag === "textarea") score += 20;
-          if (input.kind !== "coachNote" && tag === "input") score += 10;
-          if (ownValue && tokenMatch(ownValue, ["hh:mm:ss"]) && input.kind !== "duration") score -= 60;
-          return {
-            index,
-            score,
-            tag,
-            type,
-            ariaLabel,
-            placeholder,
-            title,
-            containerText: containerText.slice(0, 220),
-          };
-        })
-        .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
-        .filter((entry) => entry.score > 0)
-        .sort((a, b) => b.score - a.score);
-      const top = scored[0];
-      if (!top) {
-        return { ok: false, detail: "No semantic field candidate found." };
-      }
-      const target = controls[top.index];
-      const asInput = target as HTMLInputElement;
-      target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-      (target as HTMLElement).focus();
-      if ("value" in asInput) {
-        asInput.value = "";
-        asInput.dispatchEvent(new Event("input", { bubbles: true }));
-        asInput.value = input.value;
-        asInput.dispatchEvent(new Event("input", { bubbles: true }));
-        asInput.dispatchEvent(new Event("change", { bubbles: true }));
-      } else {
-        (target as HTMLElement).textContent = input.value;
-        target.dispatchEvent(new InputEvent("input", { bubbles: true }));
-      }
-      target.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
-      (target as HTMLElement).blur();
-      const readBack = "value" in asInput ? compact(asInput.value) : compact((target as HTMLElement).textContent);
-      return {
-        ok: true,
-        readBack,
-        selectorHint: `${top.tag}:${top.type || "n/a"}:${top.ariaLabel || top.placeholder || "no-label"}`,
-      };
-    },
-    options
-  );
+  const result = await browserWriteSemanticField(block, options);
 
   if (!result.ok) {
     return {
@@ -1430,6 +1335,7 @@ async function writeArtifacts(summary: StrengthWorkoutRunSummary): Promise<void>
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+  assertStrengthWorkoutFieldWriterBrowserScriptIsSafe();
   assertVisualFieldEvidenceBrowserScriptIsSafe();
   if (args.help) {
     printHelp();
