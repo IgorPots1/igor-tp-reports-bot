@@ -71,6 +71,7 @@
     "diagnose-coach-memory-duplicates": "npx tsx scripts/diagnose-coach-memory-duplicates.ts",
     "diagnose-coach-memory-health": "npx tsx scripts/diagnose-coach-memory-health.ts",
     "diagnose-coach-memory-quality": "npx tsx scripts/diagnose-coach-memory-quality.ts",
+    "cleanup-coach-memory-quality": "npx tsx scripts/cleanup-coach-memory-quality.ts",
     "review-coach-memory-contexts": "npx tsx scripts/review-coach-memory-contexts.ts",
     "check:coach-memory-duplicate-clustering": "npx tsx scripts/check-coach-memory-duplicate-clustering.ts",
     "merge-coach-memory-duplicates": "npx tsx scripts/merge-coach-memory-duplicates.ts",
