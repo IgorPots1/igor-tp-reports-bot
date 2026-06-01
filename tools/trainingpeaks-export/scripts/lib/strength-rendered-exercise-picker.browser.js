@@ -13,6 +13,26 @@ function browserPickerAction(input) {
     "Last Performance",
     "Search",
   ]);
+  const EXCLUDED_UI_LABELS = new Set([
+    SEARCH_PLACEHOLDER,
+    "Create Custom Exercise",
+    "Add Block",
+    "Add Exercise",
+    "Save",
+    "Save & Close",
+    "Summary",
+    "Library",
+    "Comments",
+    "Private Notes",
+    "Workout Title",
+    "Add Workout Instructions",
+    "Owner",
+    "Muscle Group",
+    "Last Performance",
+    "Search",
+    "Exercise Library",
+  ]);
+  const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "SVG", "PATH", "INPUT", "TEXTAREA", "NOSCRIPT"]);
 
   function normalizeWhitespace(value) {
     return String(value ?? "")
@@ -31,6 +51,24 @@ function browserPickerAction(input) {
     }
     const rect = element.getBoundingClientRect();
     return rect.width > 0 && rect.height > 0;
+  }
+
+  function isExcludedLabel(text) {
+    const normalized = normalizeWhitespace(text);
+    if (!normalized) return true;
+    if (EXCLUDED_UI_LABELS.has(normalized)) return true;
+    if (EXCLUDED_BUTTON_LABELS.has(normalized)) return true;
+    if (/^search exercises/i.test(normalized)) return true;
+    return false;
+  }
+
+  function isPlausibleExerciseName(text) {
+    const normalized = normalizeWhitespace(text);
+    if (!normalized || isExcludedLabel(normalized)) return false;
+    if (normalized.length < 2 || normalized.length > 120) return false;
+    if (/^\d+$/.test(normalized)) return false;
+    if (!normalized.includes(" ") && normalized.length < 8 && !normalized.includes("-")) return false;
+    return true;
   }
 
   function extractInputLike(element) {
@@ -86,30 +124,152 @@ function browserPickerAction(input) {
     return bestScore >= 25 ? best : null;
   }
 
-  function extractExerciseName(button) {
-    const heading = button.querySelector("h1, h2, h3, h4, h5, h6, [role='heading']");
+  function extractRowName(element) {
+    const heading = element.querySelector("h1, h2, h3, h4, h5, h6, [role='heading']");
     if (heading) {
       const text = normalizeWhitespace(heading.innerText || heading.textContent);
       if (text) return text;
     }
 
-    const ariaLabel = normalizeWhitespace(button.getAttribute("aria-label"));
+    const ariaLabel = normalizeWhitespace(element.getAttribute("aria-label"));
     if (ariaLabel) {
       return ariaLabel.split(/\s{2,}|\n/)[0]?.trim() ?? ariaLabel;
     }
 
-    const text = normalizeWhitespace(button.innerText || button.textContent);
-    return text.split("\n")[0]?.trim() ?? text;
+    const text = normalizeWhitespace(element.innerText || element.textContent);
+    if (!text) return "";
+    const lines = text
+      .split("\n")
+      .map((line) => normalizeWhitespace(line))
+      .filter(Boolean);
+    return lines[0] ?? text;
+  }
+
+  function extractExerciseName(button) {
+    return extractRowName(button);
   }
 
   function isExerciseButton(button) {
     if (!isVisible(button)) return false;
     const name = extractExerciseName(button);
-    if (!name || EXCLUDED_BUTTON_LABELS.has(name)) return false;
-    if (name.length < 2) return false;
+    if (!isPlausibleExerciseName(name)) return false;
     const heading = button.querySelector("h1, h2, h3, h4, h5, h6, [role='heading']");
     if (heading) return true;
     return button.childElementCount > 0;
+  }
+
+  function elementOverlapsListArea(rect, listRect, inputRect) {
+    const zoneTop = Math.min(listRect.top, inputRect.bottom) - 4;
+    const zoneBottom = Math.max(listRect.bottom, inputRect.bottom + 640);
+    return (
+      rect.bottom > zoneTop + 4 &&
+      rect.top < zoneBottom - 4 &&
+      rect.right > listRect.left - 48 &&
+      rect.left < listRect.right + 48 &&
+      rect.width > 0 &&
+      rect.height > 0
+    );
+  }
+
+  function isBelowSearchInput(rect, inputRect) {
+    return rect.top >= inputRect.bottom - 12;
+  }
+
+  function descendantHasCleanerExerciseName(element, text) {
+    return Array.from(element.querySelectorAll("*")).some((descendant) => {
+      if (!isHTMLElement(descendant) || descendant === element) return false;
+      if (!isVisible(descendant)) return false;
+      const childName = extractRowName(descendant);
+      if (!isPlausibleExerciseName(childName)) return false;
+      if (childName === text) return true;
+      if (nameIncludesTrailingLabel(text, childName)) return true;
+      return false;
+    });
+  }
+
+  function nameIncludesTrailingLabel(fullText, baseName) {
+    if (!baseName || fullText === baseName) return false;
+    if (fullText.startsWith(`${baseName} `)) return true;
+    return fullText.startsWith(baseName) && fullText.length > baseName.length + 1;
+  }
+
+  function isLikelyMetadataRowElement(element) {
+    const parent = element.parentElement;
+    if (!isHTMLElement(parent)) return false;
+    const siblings = Array.from(parent.children).filter(isHTMLElement);
+    if (siblings.length < 2 || siblings[siblings.length - 1] !== element) return false;
+    const primary = siblings[0];
+    if (!isHTMLElement(primary)) return false;
+    const primaryName = extractRowName(primary);
+    return isPlausibleExerciseName(primaryName);
+  }
+
+  function collectVisibleTextRows(searchInput, scopeRoot, options) {
+    const countOnly = Boolean(options?.countOnly);
+    const maxSamples = options?.maxSamples ?? 500;
+    if (!searchInput || !scopeRoot) return countOnly ? 0 : [];
+
+    const inputRect = searchInput.getBoundingClientRect();
+    const scopeRect = scopeRoot.getBoundingClientRect();
+    const candidates = [];
+    let count = 0;
+
+    const elements = scopeRoot === document.body ? Array.from(document.body.querySelectorAll("*")) : [scopeRoot, ...Array.from(scopeRoot.querySelectorAll("*"))];
+
+    for (const element of elements) {
+      if (!isHTMLElement(element)) continue;
+      if (SKIP_TAGS.has(element.tagName)) continue;
+      if (element === searchInput || searchInput.contains(element)) continue;
+      if (!isVisible(element)) continue;
+
+      const rect = element.getBoundingClientRect();
+      if (!elementOverlapsListArea(rect, scopeRect, inputRect)) continue;
+      if (!isBelowSearchInput(rect, inputRect)) continue;
+      if (rect.height < 6 || rect.height > 140) continue;
+      if (rect.width < 28) continue;
+
+      const name = extractRowName(element);
+      if (!isPlausibleExerciseName(name)) continue;
+      if (descendantHasCleanerExerciseName(element, name)) continue;
+      if (isLikelyMetadataRowElement(element)) continue;
+
+      count += 1;
+      if (countOnly) continue;
+
+      candidates.push({
+        name,
+        top: rect.top,
+        left: rect.left,
+        height: rect.height,
+        domTag: element.tagName.toLowerCase(),
+        role: normalizeWhitespace(element.getAttribute("role")) || undefined,
+        ariaLabel: normalizeWhitespace(element.getAttribute("aria-label")) || undefined,
+        dataAttributes: serializeDataAttributes(element),
+      });
+    }
+
+    if (countOnly) return count;
+
+    candidates.sort((left, right) => left.top - right.top || left.left - right.left || left.height - right.height);
+
+    const seen = new Set();
+    const rows = [];
+    for (const candidate of candidates) {
+      if (seen.has(candidate.name)) continue;
+      seen.add(candidate.name);
+      rows.push({
+        name: candidate.name,
+        top: candidate.top,
+        left: candidate.left,
+        domTag: candidate.domTag,
+        role: candidate.role,
+        ariaLabel: candidate.ariaLabel,
+        dataAttributes: candidate.dataAttributes,
+      });
+      if (rows.length >= maxSamples) break;
+    }
+
+    return rows;
   }
 
   function findPickerRoot(searchInput) {
@@ -120,13 +280,16 @@ function browserPickerAction(input) {
     let current = searchInput;
     let depth = 0;
 
-    while (current && depth < 10) {
+    while (current && depth < 12) {
       const buttons = Array.from(current.querySelectorAll("button, [role='button']")).filter(isExerciseButton);
+      const textRows = collectVisibleTextRows(searchInput, current, { countOnly: true });
+      const rowCount = Math.max(buttons.length, textRows);
       const text = normalizeWhitespace(current.textContent);
       const score =
-        buttons.length * 8 +
+        rowCount * 8 +
         (text.includes("Exercise Library") ? 30 : 0) +
-        (current.scrollHeight > current.clientHeight + 12 ? 12 : 0) -
+        (current.scrollHeight > current.clientHeight + 12 ? 14 : 0) +
+        (rowCount >= 3 ? 20 : 0) -
         depth * 2;
 
       if (score > bestScore) {
@@ -138,11 +301,17 @@ function browserPickerAction(input) {
       depth += 1;
     }
 
-    return bestScore >= 16 ? best : searchInput.parentElement;
+    return bestScore >= 12 ? best : searchInput.parentElement;
   }
 
   function countContainedExerciseButtons(container) {
     return Array.from(container.querySelectorAll("button, [role='button']")).filter(isExerciseButton).length;
+  }
+
+  function countLikelyRows(container, searchInput) {
+    const buttons = countContainedExerciseButtons(container);
+    const textRows = collectVisibleTextRows(searchInput, container, { countOnly: true });
+    return Math.max(buttons, textRows);
   }
 
   function findListContainer(searchInput, root) {
@@ -155,16 +324,18 @@ function browserPickerAction(input) {
     const candidates = [root, ...Array.from(root.querySelectorAll("*"))];
     for (const candidate of candidates) {
       if (!isVisible(candidate)) continue;
-      const exerciseCount = countContainedExerciseButtons(candidate);
-      if (exerciseCount < 3) continue;
+      const rowCount = countLikelyRows(candidate, searchInput);
+      if (rowCount < 1) continue;
+
       const rect = candidate.getBoundingClientRect();
       const isScrollable = candidate.scrollHeight > candidate.clientHeight + 12;
-      const belowInput = rect.bottom > inputRect.bottom && rect.top < inputRect.bottom + 240;
+      const belowInput = rect.bottom > inputRect.bottom && rect.top < inputRect.bottom + 320;
       const score =
-        exerciseCount * 6 +
-        (isScrollable ? 35 : 0) +
-        (belowInput ? 12 : 0) +
-        (candidate.contains(searchInput) ? 6 : 0) -
+        rowCount * 6 +
+        (isScrollable ? 40 : 0) +
+        (belowInput ? 16 : 0) +
+        (candidate.contains(searchInput) ? 8 : 0) +
+        (rowCount >= 3 ? 18 : 0) -
         Math.max(0, Math.abs(rect.top - inputRect.bottom) / 40);
 
       if (score > bestScore) {
@@ -173,14 +344,37 @@ function browserPickerAction(input) {
       }
     }
 
-    return bestScore >= 18 ? best : root;
+    return bestScore >= 10 ? best : root;
+  }
+
+  function findScrollContainer(list, searchInput) {
+    if (!list) return null;
+
+    let best = list;
+    let bestScroll = list.scrollHeight - list.clientHeight;
+    let current = list;
+
+    while (current && current !== document.body) {
+      if (current.scrollHeight > current.clientHeight + 12) {
+        const overflow = current.scrollHeight - current.clientHeight;
+        if (overflow > bestScroll) {
+          best = current;
+          bestScroll = overflow;
+        }
+      }
+      if (current === searchInput?.parentElement?.parentElement) break;
+      current = current.parentElement;
+    }
+
+    return best;
   }
 
   function buildPickerState() {
     const searchInput = findSearchInput();
     const root = findPickerRoot(searchInput);
-    const list = findListContainer(searchInput, root);
-    return { searchInput, root, list };
+    const list = findListContainer(searchInput, root) || root;
+    const scrollContainer = findScrollContainer(list, searchInput);
+    return { searchInput, root, list, scrollContainer };
   }
 
   function serializeDataAttributes(element) {
@@ -193,13 +387,13 @@ function browserPickerAction(input) {
     return Object.fromEntries(entries);
   }
 
-  function readVisibleOptions(list) {
+  function readButtonOptions(list) {
     const listRect = list.getBoundingClientRect();
-    const options = Array.from(list.querySelectorAll("button, [role='button']"));
+    const options = Array.from(list.querySelectorAll("button, [role='button'], [role='option']"));
     const visible = [];
 
     for (const option of options) {
-      if (!isExerciseButton(option)) continue;
+      if (!isExerciseButton(option) && option.getAttribute("role") !== "option") continue;
       const rect = option.getBoundingClientRect();
       const overlaps =
         rect.bottom > listRect.top + 4 &&
@@ -209,10 +403,12 @@ function browserPickerAction(input) {
       if (!overlaps) continue;
 
       const name = extractExerciseName(option);
-      if (!name) continue;
+      if (!isPlausibleExerciseName(name)) continue;
 
       visible.push({
         name,
+        top: rect.top,
+        left: rect.left,
         domTag: option.tagName.toLowerCase(),
         role: normalizeWhitespace(option.getAttribute("role")) || undefined,
         ariaLabel: normalizeWhitespace(option.getAttribute("aria-label")) || undefined,
@@ -220,7 +416,74 @@ function browserPickerAction(input) {
       });
     }
 
-    return visible;
+    visible.sort((left, right) => left.top - right.top || left.left - right.left);
+    return visible.map(({ top: _top, left: _left, ...option }) => option);
+  }
+
+  function mergeVisibleOptions(buttonOptions, textOptions) {
+    const combined = [...buttonOptions, ...textOptions].sort(
+      (left, right) => (left.top ?? 0) - (right.top ?? 0) || (left.left ?? 0) - (right.left ?? 0),
+    );
+    const merged = [];
+    const seen = new Set();
+
+    for (const option of combined) {
+      const name = normalizeWhitespace(option.name);
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      const { top: _top, left: _left, ...rest } = option;
+      merged.push({ ...rest, name });
+    }
+
+    return merged;
+  }
+
+  function readVisibleOptions(searchInput, list, root) {
+    const scope = list || root;
+    if (!searchInput || !scope) return [];
+
+    const buttonOptions = list ? readButtonOptions(list) : [];
+    const textOptions = collectVisibleTextRows(searchInput, scope);
+    return mergeVisibleOptions(buttonOptions, textOptions);
+  }
+
+  function collectDebugContainers(searchInput, root) {
+    if (!searchInput) return [];
+
+    const inputRect = searchInput.getBoundingClientRect();
+    const scopes = root ? [root, ...Array.from(root.querySelectorAll("*"))] : Array.from(document.querySelectorAll("body *"));
+    const samples = [];
+
+    for (const candidate of scopes.slice(0, 250)) {
+      if (!isHTMLElement(candidate) || !isVisible(candidate)) continue;
+      const rect = candidate.getBoundingClientRect();
+      const belowInput = rect.bottom > inputRect.bottom;
+      const isScrollable = candidate.scrollHeight > candidate.clientHeight + 12;
+      const rowCount = countLikelyRows(candidate, searchInput);
+      if (!belowInput && !isScrollable && rowCount < 2) continue;
+
+      const textSample = collectVisibleTextRows(searchInput, candidate)
+        .slice(0, 8)
+        .map((row) => row.name);
+
+      samples.push({
+        tagName: candidate.tagName.toLowerCase(),
+        role: normalizeWhitespace(candidate.getAttribute("role")) || undefined,
+        className: normalizeWhitespace(candidate.className).slice(0, 120) || undefined,
+        rect: {
+          x: Math.round(rect.x),
+          y: Math.round(rect.y),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        },
+        scrollHeight: candidate.scrollHeight,
+        clientHeight: candidate.clientHeight,
+        textSample,
+      });
+    }
+
+    samples.sort((left, right) => right.textSample.length - left.textSample.length);
+    return samples.slice(0, 12);
   }
 
   function setSearchValue(searchInput, value) {
@@ -260,7 +523,8 @@ function browserPickerAction(input) {
     return null;
   }
 
-  const { searchInput, list } = buildPickerState();
+  const state = buildPickerState();
+  const { searchInput, root, list, scrollContainer } = state;
   const inspection = {
     pickerFound: Boolean(searchInput && list),
     inputFound: Boolean(searchInput),
@@ -274,8 +538,36 @@ function browserPickerAction(input) {
     return inspection;
   }
 
+  if (input.action === "debug") {
+    const inputRect = searchInput
+      ? (() => {
+          const rect = searchInput.getBoundingClientRect();
+          return {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          };
+        })()
+      : null;
+
+    const visibleTextSamples = searchInput && list
+      ? readVisibleOptions(searchInput, list, root)
+          .slice(0, 40)
+          .map((row) => row.name)
+      : [];
+
+    return {
+      pickerDetected: inspection.pickerFound,
+      inputPlaceholder: inspection.inputPlaceholder,
+      inputRect,
+      candidateContainers: collectDebugContainers(searchInput, root),
+      visibleTextSamples,
+    };
+  }
+
   if (input.action === "read") {
-    const options = list ? readVisibleOptions(list) : [];
+    const options = searchInput && list ? readVisibleOptions(searchInput, list, root) : [];
     return {
       ...inspection,
       optionCount: options.length,
@@ -284,7 +576,8 @@ function browserPickerAction(input) {
   }
 
   if (input.action === "scroll") {
-    if (!list) {
+    const scrollTarget = scrollContainer || list;
+    if (!scrollTarget) {
       return {
         ...inspection,
         reachedEnd: true,
@@ -293,14 +586,14 @@ function browserPickerAction(input) {
       };
     }
 
-    const before = list.scrollTop;
-    const step = Math.max(120, Math.floor(list.clientHeight * 0.82));
-    list.scrollTop = Math.min(list.scrollHeight, list.scrollTop + step);
-    const after = list.scrollTop;
+    const before = scrollTarget.scrollTop;
+    const step = Math.max(120, Math.floor(scrollTarget.clientHeight * 0.82));
+    scrollTarget.scrollTop = Math.min(scrollTarget.scrollHeight, scrollTarget.scrollTop + step);
+    const after = scrollTarget.scrollTop;
 
     return {
       ...inspection,
-      reachedEnd: after === before || after + list.clientHeight >= list.scrollHeight - 4,
+      reachedEnd: after === before || after + scrollTarget.clientHeight >= scrollTarget.scrollHeight - 4,
       scrollTopBefore: before,
       scrollTopAfter: after,
     };
@@ -315,8 +608,9 @@ function browserPickerAction(input) {
   }
 
   const appliedValue = setSearchValue(searchInput, input.value ?? "");
-  if (list) {
-    list.scrollTop = 0;
+  const scrollTarget = scrollContainer || list;
+  if (scrollTarget) {
+    scrollTarget.scrollTop = 0;
   }
   return {
     ...inspection,

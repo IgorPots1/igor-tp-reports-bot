@@ -26,9 +26,27 @@ export function assertRenderedPickerBrowserScriptIsSafe(): void {
 }
 
 type PickerBrowserInput = {
-  action: "inspect" | "read" | "scroll" | "set-search";
+  action: "inspect" | "read" | "scroll" | "set-search" | "debug";
   value?: string;
 };
+
+export type PickerDebugDom = {
+  pickerDetected: boolean;
+  inputPlaceholder: string | null;
+  inputRect: { x: number; y: number; width: number; height: number } | null;
+  candidateContainers: Array<{
+    tagName: string;
+    role?: string;
+    className?: string;
+    rect: { x: number; y: number; width: number; height: number };
+    scrollHeight: number;
+    clientHeight: number;
+    textSample: string[];
+  }>;
+  visibleTextSamples: string[];
+};
+
+export const RENDERED_PICKER_DEBUG_FILENAME = "debug-picker-dom.json";
 
 async function evaluateRenderedPickerBrowser<T>(page: Page, input: PickerBrowserInput): Promise<T> {
   return page.evaluate(
@@ -170,6 +188,7 @@ export type ScrapeRenderedExerciseResult = {
   payload: RawRenderedExercisesPayload;
   summary: RawRenderedExercisesSummary;
   inspection: PickerInspection;
+  debugDom?: PickerDebugDom;
 };
 
 function sanitizeDataAttributes(dataAttributes: Record<string, string> | undefined): Record<string, string> | undefined {
@@ -326,8 +345,16 @@ export async function inspectRenderedExercisePicker(page: Page): Promise<PickerI
   return evaluateRenderedPickerBrowser<PickerInspection>(page, { action: "inspect" });
 }
 
-async function readVisibleExerciseButtons(page: Page): Promise<BrowserReadResult> {
+export async function collectRenderedPickerDebugDom(page: Page): Promise<PickerDebugDom> {
+  return evaluateRenderedPickerBrowser<PickerDebugDom>(page, { action: "debug" });
+}
+
+export async function readRenderedExercisePicker(page: Page): Promise<BrowserReadResult> {
   return evaluateRenderedPickerBrowser<BrowserReadResult>(page, { action: "read" });
+}
+
+async function readVisibleExerciseButtons(page: Page): Promise<BrowserReadResult> {
+  return readRenderedExercisePicker(page);
 }
 
 async function scrollRenderedExerciseList(page: Page): Promise<BrowserScrollResult> {
@@ -422,5 +449,7 @@ export async function scrapeRenderedExerciseCatalog(
 
   const payload = finalizePayload(records);
   const summary = buildRawRenderedExercisesSummary(payload);
-  return { payload, summary, inspection };
+  const debugDom =
+    payload.totalUniqueNames === 0 ? await collectRenderedPickerDebugDom(page).catch(() => undefined) : undefined;
+  return { payload, summary, inspection, debugDom };
 }

@@ -10,6 +10,7 @@ import { profileDir, toolRoot } from "./lib/paths.ts";
 import {
   buildSearchTerms,
   inspectRenderedExercisePicker,
+  RENDERED_PICKER_DEBUG_FILENAME,
   renderRawRenderedExercisesCsv,
   renderRawRenderedExercisesMarkdown,
   scrapeRenderedExerciseCatalog,
@@ -235,6 +236,12 @@ async function main(): Promise<void> {
       payload: result.payload,
       summary: result.summary,
     });
+
+    if (result.debugDom) {
+      const debugPath = path.join(args.outDir, RENDERED_PICKER_DEBUG_FILENAME);
+      await writeFile(debugPath, `${JSON.stringify(result.debugDom, null, 2)}\n`, "utf8");
+      console.log(`- debug artifact: ${debugPath}`);
+    }
 
     console.log("");
     console.log("[tp-scrape-strength-rendered-exercises] scrape complete.");
