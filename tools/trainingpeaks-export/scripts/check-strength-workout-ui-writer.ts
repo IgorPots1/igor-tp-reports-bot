@@ -144,6 +144,153 @@ async function assertStrengthFieldWriterFixture(): Promise<void> {
   }
 }
 
+async function assertDialogScopedCardDetectionFixtures(): Promise<void> {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    const detect = async (html: string, exerciseName: string) => {
+      await page.setContent(html, { waitUntil: "domcontentloaded" });
+      const normalizedName = exerciseName.replace(/\s+/g, " ").trim().toLowerCase();
+      const dialog = page.locator('[role="dialog"]').first();
+      const dialogCount = await dialog.count();
+      if (dialogCount === 0) return [];
+      const cards = dialog.locator("section,article,li,tr,[role='row'],[role='group'],[data-testid],div");
+      const cardCount = await cards.count();
+      const rows: Array<{
+        exactNameFound: boolean;
+        exactNameSource: "text" | "inputValue" | "textareaValue" | "selectValue" | "ariaLabel" | "placeholder" | "unknown";
+        inputValues: string[];
+        className?: string;
+        rejectedReason?: string;
+      }> = [];
+      for (let index = 0; index < cardCount; index += 1) {
+        const card = cards.nth(index);
+        if (!(await card.isVisible().catch(() => false))) continue;
+        const hasControl =
+          (await card.locator("input,textarea,select,button,[role='button']").count().catch(() => 0)) > 0;
+        if (!hasControl) continue;
+        const text = ((await card.innerText().catch(() => "")) ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+        const className = ((await card.getAttribute("class").catch(() => "")) ?? "").replace(/\s+/g, " ").trim();
+        const inputNodes = card.locator("input");
+        const textareaNodes = card.locator("textarea");
+        const selectNodes = card.locator("select");
+        const inputValues: string[] = [];
+        const textareaValues: string[] = [];
+        const selectValues: string[] = [];
+        const placeholders: string[] = [];
+        const ariaLabels: string[] = [];
+        const inputCount = await inputNodes.count();
+        for (let i = 0; i < inputCount; i += 1) {
+          const node = inputNodes.nth(i);
+          inputValues.push(((await node.inputValue().catch(() => "")) ?? "").replace(/\s+/g, " ").trim());
+          placeholders.push((((await node.getAttribute("placeholder").catch(() => "")) ?? "").replace(/\s+/g, " ").trim()));
+          ariaLabels.push((((await node.getAttribute("aria-label").catch(() => "")) ?? "").replace(/\s+/g, " ").trim()));
+        }
+        const textareaCount = await textareaNodes.count();
+        for (let i = 0; i < textareaCount; i += 1) {
+          const node = textareaNodes.nth(i);
+          textareaValues.push(((await node.inputValue().catch(() => "")) ?? "").replace(/\s+/g, " ").trim());
+          placeholders.push((((await node.getAttribute("placeholder").catch(() => "")) ?? "").replace(/\s+/g, " ").trim()));
+          ariaLabels.push((((await node.getAttribute("aria-label").catch(() => "")) ?? "").replace(/\s+/g, " ").trim()));
+        }
+        const selectCount = await selectNodes.count();
+        for (let i = 0; i < selectCount; i += 1) {
+          const node = selectNodes.nth(i);
+          selectValues.push(((await node.inputValue().catch(() => "")) ?? "").replace(/\s+/g, " ").trim());
+          placeholders.push((((await node.getAttribute("placeholder").catch(() => "")) ?? "").replace(/\s+/g, " ").trim()));
+          ariaLabels.push((((await node.getAttribute("aria-label").catch(() => "")) ?? "").replace(/\s+/g, " ").trim()));
+        }
+        let exactNameSource: "text" | "inputValue" | "textareaValue" | "selectValue" | "ariaLabel" | "placeholder" | "unknown" =
+          "unknown";
+        if (inputValues.some((value) => value.toLowerCase() === normalizedName)) exactNameSource = "inputValue";
+        else if (textareaValues.some((value) => value.toLowerCase() === normalizedName)) exactNameSource = "textareaValue";
+        else if (selectValues.some((value) => value.toLowerCase() === normalizedName)) exactNameSource = "selectValue";
+        else if (ariaLabels.some((value) => value.toLowerCase().includes(normalizedName))) exactNameSource = "ariaLabel";
+        else if (placeholders.some((value) => value.toLowerCase().includes(normalizedName))) exactNameSource = "placeholder";
+        else if (text.includes(normalizedName)) exactNameSource = "text";
+        const payload = `${className} ${text}`.toLowerCase();
+        const rejectedReason = /activitycalendarcard|activitycalendarcardblocktitle|daycontainer|daywidth/.test(payload)
+          ? "calendar_shell"
+          : undefined;
+        rows.push({
+          exactNameFound: exactNameSource !== "unknown",
+          exactNameSource,
+          inputValues: [...inputValues, ...textareaValues, ...selectValues].filter(Boolean),
+          className: className || undefined,
+          rejectedReason,
+        });
+      }
+      return rows;
+    };
+
+    // Case 1: exact name only in input value.
+    const case1 = await detect(
+      `
+      <div role="dialog">
+        <div class="exercise-card">
+          <label>Exercise</label>
+          <input value="Glute Bridge" />
+          <input value="3" />
+          <input value="Reps" />
+        </div>
+      </div>
+      `,
+      "Glute Bridge"
+    );
+    assert(case1.length >= 1, "Case 1: expected at least one candidate in dialog.");
+    assert(
+      case1.some((entry) => entry.exactNameFound === true && entry.exactNameSource === "inputValue"),
+      "Case 1: expected exactNameFound=true with exactNameSource=inputValue."
+    );
+
+    // Case 2: calendar card must be rejected and not selected over dialog card.
+    const case2 = await detect(
+      `
+      <div class="activityCalendarCard">
+        <span class="activityCalendarCardBlockTitle">Glute Bridge</span>
+      </div>
+      <div role="dialog">
+        <div class="exercise-card">
+          <label>Exercise</label>
+          <input value="Glute Bridge" />
+        </div>
+      </div>
+      `,
+      "Glute Bridge"
+    );
+    assert(case2.length >= 1, "Case 2: expected at least one dialog-scoped candidate.");
+    assert(
+      case2.every((entry) => !String(entry.className ?? "").toLowerCase().includes("activitycalendarcard")),
+      "Case 2: calendar card must not be part of dialog candidate set."
+    );
+    assert(
+      case2.some((entry) => entry.exactNameFound && entry.rejectedReason === undefined),
+      "Case 2: expected at least one non-rejected exact candidate."
+    );
+
+    // Case 3: picker/popover open should not block dialog-scoped search.
+    const case3 = await detect(
+      `
+      <div role="presentation" class="MuiPopover-root">
+        <div role="option">Glute Bridge</div>
+      </div>
+      <div role="dialog">
+        <div class="exercise-card">
+          <label>Exercise</label>
+          <input value="Glute Bridge" />
+          <button>Add Note</button>
+        </div>
+      </div>
+      `,
+      "Glute Bridge"
+    );
+    assert(case3.length >= 1, "Case 3: expected dialog candidate even when popover exists.");
+    assert(case3.some((entry) => entry.exactNameFound), "Case 3: expected exact match inside dialog.");
+  } finally {
+    await browser.close().catch(() => {});
+  }
+}
+
 async function run(): Promise<void> {
   assertStrengthWorkoutFieldWriterBrowserScriptIsSafe();
   assertVisualFieldEvidenceBrowserScriptIsSafe();
@@ -197,6 +344,7 @@ async function run(): Promise<void> {
   assert(visualProbeFlat[2]?.name === "Single Leg Calf Raise", "Expected visual probe third exercise Single Leg Calf Raise.");
   await assertVisualFieldEvidenceFixture(visualProbeFlat);
   await assertStrengthFieldWriterFixture();
+  await assertDialogScopedCardDetectionFixtures();
 
   const catalogPreflight = buildCatalogPreflight(template, flatExercises.map((entry) => entry.name));
   assert(catalogPreflight.missingNames.length === 0, "Expected all exact names to be present in synthetic catalog preflight.");

@@ -148,7 +148,9 @@ type CardFieldDebugEntry = {
 type CardCandidateDebug = {
   index: number;
   exactNameFound: boolean;
+  exactNameSource: "text" | "inputValue" | "textareaValue" | "selectValue" | "ariaLabel" | "placeholder" | "unknown";
   textSample: string[];
+  inputValues: string[];
   rect: { x: number; y: number; width: number; height: number };
   inputs: CardFieldDebugEntry[];
   textareas: CardFieldDebugEntry[];
@@ -156,11 +158,49 @@ type CardCandidateDebug = {
   possibleLabels: string[];
   dataAttrs: string[];
   className?: string;
+  rejectedReason?: string;
 };
 
 type CardCandidateInternal = CardCandidateDebug & {
   locatorIndex: number;
   signature: string;
+};
+
+type LocatorCandidateDebug = {
+  name: string;
+  selectorHint: string;
+  count: number;
+  visible: boolean;
+  textSample?: string;
+};
+
+type ParentNodeDebug = {
+  depth: number;
+  tag: string;
+  id?: string;
+  className?: string;
+  role?: string;
+  ariaLabel?: string;
+  dataTestId?: string;
+  textSample?: string;
+  rect?: { x: number; y: number; width: number; height: number };
+};
+
+type RootDiagnosticArtifact = {
+  exerciseName: string;
+  stage: "before-add" | "after-add";
+  builderRootFound: boolean;
+  addBlockCandidates: LocatorCandidateDebug[];
+  pickerSearchCandidates: LocatorCandidateDebug[];
+  exactResultCandidates?: LocatorCandidateDebug[];
+  addBlockParentChain?: ParentNodeDebug[];
+  searchInputParentChain?: ParentNodeDebug[];
+  addedExerciseNameParentChain?: ParentNodeDebug[];
+  addedExerciseNameRejectedReason?: string;
+  selectedFrameUrl: string;
+  selectedCardIndex?: number;
+  candidateCardCount?: number;
+  label?: string;
 };
 
 function printHelp(): void {
@@ -536,6 +576,217 @@ async function saveBuilderFrameProbeReport(
   return relativizeArtifactPath(repoRoot, filePath);
 }
 
+function candidateSelectorEntries(scope: PageLike): Array<{ name: string; selectorHint: string; locator: Locator }> {
+  return [
+    {
+      name: "addBlock_role_button",
+      selectorHint: "getByRole(button, /Add Block/i)",
+      locator: scope.getByRole("button", { name: /Add Block/i }).first(),
+    },
+    {
+      name: "addBlock_text_exact",
+      selectorHint: "getByText(/^Add Block$/i)",
+      locator: scope.getByText(/^Add Block$/i).first(),
+    },
+    {
+      name: "search_placeholder",
+      selectorHint: "getByPlaceholder(/Search Exercises, Circuits, or Saved Items/i)",
+      locator: scope.getByPlaceholder(/Search Exercises, Circuits, or Saved Items/i).first(),
+    },
+    {
+      name: "search_role_textbox",
+      selectorHint: "getByRole(textbox, /Search Exercises, Circuits, or Saved Items/i)",
+      locator: scope.getByRole("textbox", { name: /Search Exercises, Circuits, or Saved Items/i }).first(),
+    },
+    {
+      name: "search_css_placeholder",
+      selectorHint: "input[placeholder*='Search Exercises']",
+      locator: scope.locator("input[placeholder*='Search Exercises']").first(),
+    },
+  ];
+}
+
+async function collectLocatorCandidateDebug(
+  entries: Array<{ name: string; selectorHint: string; locator: Locator }>
+): Promise<LocatorCandidateDebug[]> {
+  const results: LocatorCandidateDebug[] = [];
+  for (const entry of entries) {
+    const count = await entry.locator.count().catch(() => 0);
+    const visible = count > 0 ? await entry.locator.isVisible().catch(() => false) : false;
+    const textSample = count > 0 ? sanitizeDebugText(await entry.locator.innerText().catch(() => ""), 160) : "";
+    results.push({
+      name: entry.name,
+      selectorHint: entry.selectorHint,
+      count,
+      visible,
+      textSample: textSample || undefined,
+    });
+  }
+  return results;
+}
+
+async function collectParentChain(locator: Locator, maxDepth = 12): Promise<ParentNodeDebug[] | undefined> {
+  if ((await locator.count().catch(() => 0)) === 0) return undefined;
+  if (!(await locator.isVisible().catch(() => false))) return undefined;
+  const handle = await locator.elementHandle().catch(() => null);
+  if (!handle) return undefined;
+  const chain = await handle.evaluate((node, inputMaxDepth) => {
+    const items: ParentNodeDebug[] = [];
+    let depth = 0;
+    let current: HTMLElement | null = node as HTMLElement;
+    while (current && depth < inputMaxDepth) {
+      const rect = current.getBoundingClientRect();
+      const className = String(current.className ?? "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 160);
+      const textSample = String(current.textContent ?? "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 180);
+      items.push({
+        depth,
+        tag: current.tagName.toLowerCase(),
+        id: current.id || undefined,
+        className: className || undefined,
+        role: current.getAttribute("role") || undefined,
+        ariaLabel: current.getAttribute("aria-label") || undefined,
+        dataTestId: current.getAttribute("data-testid") || undefined,
+        textSample: textSample || undefined,
+        rect: {
+          x: Math.round(rect.x),
+          y: Math.round(rect.y),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        },
+      });
+      current = current.parentElement;
+      depth += 1;
+    }
+    return items;
+  }, maxDepth);
+  return chain;
+}
+
+function parentChainSuggestsCalendarShell(chain: ParentNodeDebug[] | undefined): boolean {
+  if (!chain || chain.length === 0) return false;
+  const joined = chain
+    .map((entry) =>
+      [entry.tag, entry.id ?? "", entry.className ?? "", entry.role ?? "", entry.ariaLabel ?? "", entry.textSample ?? ""].join(" ")
+    )
+    .join(" ")
+    .toLowerCase();
+  const calendarSignals = [
+    "activitycalendarcard",
+    "activitycalendarcardblocktitle",
+    "daycontainer",
+    "daywidth",
+    "duration",
+    "distance",
+    "tss",
+    "el. gain",
+    "work",
+  ];
+  return calendarSignals.some((signal) => joined.includes(signal));
+}
+
+function candidateSuggestsCalendarShell(candidate: CardCandidateInternal): boolean {
+  const payload = [
+    candidate.className ?? "",
+    candidate.textSample.join(" "),
+    candidate.possibleLabels.join(" "),
+    candidate.inputValues.join(" "),
+    candidate.buttons.map((entry) => `${entry.text ?? ""} ${entry.ariaLabel ?? ""}`).join(" "),
+  ]
+    .join(" ")
+    .toLowerCase();
+  const calendarSignals = [
+    "activitycalendarcard",
+    "activitycalendarcardblocktitle",
+    "daycontainer",
+    "daywidth",
+    " duration ",
+    " distance ",
+    " tss ",
+    " run ",
+    "el. gain",
+    " work ",
+  ];
+  return calendarSignals.some((signal) => payload.includes(signal.trim()));
+}
+
+async function resolveBuilderDialogRoot(scope: PageLike): Promise<Locator | null> {
+  const dialogCandidates = [
+    scope
+      .locator('[role="dialog"]')
+      .filter({ hasText: /Add Block|Workout Title|Type or select exercise|Exercise/i })
+      .last(),
+    scope.locator('[role="dialog"]').last(),
+  ];
+  for (const dialog of dialogCandidates) {
+    const count = await dialog.count().catch(() => 0);
+    if (count === 0) continue;
+    if (!(await dialog.isVisible().catch(() => false))) continue;
+    const strong = await dialog
+      .evaluate((node) => {
+        const normalize = (value: unknown) => String(value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+        const root = node as HTMLElement;
+        const text = normalize(root.textContent);
+        const hasAddBlock = /add block/.test(text);
+        const hasWorkoutTitle = /workout title/.test(text);
+        const hasTypeOrSelect = /type or select exercise|exercise/.test(text);
+        const cardLikeCount = Array.from(
+          root.querySelectorAll("section,article,li,tr,[role='row'],[role='group'],[data-testid],div")
+        ).filter((entry) => {
+          const el = entry as HTMLElement;
+          const rect = el.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return false;
+          const controls = el.querySelector("input,textarea,select,[role='textbox'],button,[role='button']");
+          return Boolean(controls);
+        }).length;
+        return hasAddBlock || hasWorkoutTitle || hasTypeOrSelect || cardLikeCount > 0;
+      })
+      .catch(() => false);
+    if (strong) {
+      return dialog;
+    }
+  }
+  return null;
+}
+
+async function closePickerPopover(dialogRoot: Locator): Promise<void> {
+  const page = dialogRoot.page();
+  await page.keyboard.press("Escape").catch(() => {});
+  await page.waitForTimeout(450);
+  const body = page.locator("body").first();
+  await body.click({ position: { x: 40, y: 40 } }).catch(() => {});
+  await page.waitForTimeout(250);
+}
+
+async function locateVisibleExerciseName(scope: PageLike, exerciseName: string): Promise<Locator | null> {
+  const dialog = await resolveBuilderDialogRoot(scope);
+  if (!dialog) return null;
+  const exact = dialog.getByText(new RegExp(`^\\s*${escapeRegex(exerciseName)}\\s*$`, "i")).first();
+  if ((await exact.count().catch(() => 0)) > 0 && (await exact.isVisible().catch(() => false))) {
+    return exact;
+  }
+  const contains = dialog.getByText(new RegExp(escapeRegex(exerciseName), "i")).first();
+  if ((await contains.count().catch(() => 0)) > 0 && (await contains.isVisible().catch(() => false))) {
+    return contains;
+  }
+  return null;
+}
+
+async function saveRootDiagnosticArtifact(payload: RootDiagnosticArtifact): Promise<string> {
+  await mkdir(fieldDebugDir, { recursive: true });
+  const filePath = path.join(
+    fieldDebugDir,
+    `${slugify(payload.exerciseName)}-root-diagnostic-${slugify(payload.stage)}${payload.label ? `-${slugify(payload.label)}` : ""}.json`
+  );
+  await writeFile(filePath, `${JSON.stringify(redactUnknown(payload), null, 2)}\n`, "utf8");
+  return relativizeArtifactPath(repoRoot, filePath);
+}
+
 function sanitizeDebugText(value: string | null | undefined, maxLength = 240): string {
   return String(value ?? "")
     .replace(/\s+/g, " ")
@@ -554,7 +805,11 @@ async function saveScreenshot(page: Page, state: RunState, label: string): Promi
 
 async function collectCardCandidates(scope: PageLike, exerciseName: string): Promise<CardCandidateInternal[]> {
   const normalizedName = normalizeVisibleText(exerciseName).toLowerCase();
-  const container = scope.locator("section,article,li,tr,[role='row'],[role='group'],[data-testid],div");
+  const dialog = await resolveBuilderDialogRoot(scope);
+  if (!dialog) {
+    return [];
+  }
+  const container = dialog.locator("section,article,li,tr,[role='row'],[role='group'],[data-testid],div");
   const count = await container.count();
   const candidates: CardCandidateInternal[] = [];
   for (let index = 0; index < count; index += 1) {
@@ -568,6 +823,19 @@ async function collectCardCandidates(scope: PageLike, exerciseName: string): Pro
         const text = compact(root.textContent, 1600);
         const lowered = text.toLowerCase();
         const rect = root.getBoundingClientRect();
+        const matchSources: Array<{
+          source: "text" | "inputValue" | "textareaValue" | "selectValue" | "ariaLabel" | "placeholder" | "unknown";
+          value: string;
+        }> = [];
+        const pushMatchSource = (
+          source: "text" | "inputValue" | "textareaValue" | "selectValue" | "ariaLabel" | "placeholder" | "unknown",
+          value: unknown
+        ) => {
+          const normalized = normalize(value).toLowerCase();
+          if (!normalized) return;
+          matchSources.push({ source, value: normalized });
+        };
+        pushMatchSource("text", lowered);
         const readFields = (selector: string, maxItems: number) =>
           Array.from(root.querySelectorAll(selector))
             .slice(0, maxItems)
@@ -578,15 +846,17 @@ async function collectCardCandidates(scope: PageLike, exerciseName: string): Pro
                 entry instanceof HTMLInputElement || entry instanceof HTMLTextAreaElement
                   ? compact(entry.value, 120)
                   : compact(entry.textContent, 120);
+              const placeholder =
+                entry instanceof HTMLInputElement || entry instanceof HTMLTextAreaElement
+                  ? compact(entry.placeholder, 80)
+                  : undefined;
+              const ariaLabel = compact(el.getAttribute("aria-label"), 80) || undefined;
               return {
                 index: fieldIndex,
                 type: entry instanceof HTMLInputElement ? entry.type : undefined,
                 value,
-                placeholder:
-                  entry instanceof HTMLInputElement || entry instanceof HTMLTextAreaElement
-                    ? compact(entry.placeholder, 80)
-                    : undefined,
-                ariaLabel: compact(el.getAttribute("aria-label"), 80) || undefined,
+                placeholder,
+                ariaLabel,
                 nearbyText: compact((el.closest("label, td, th, div, section, article, li")?.textContent ?? ""), 160),
                 rect: {
                   x: Math.round(r.x),
@@ -597,7 +867,31 @@ async function collectCardCandidates(scope: PageLike, exerciseName: string): Pro
               };
             });
         const inputs = readFields("input", 24);
-        const textareas = readFields("textarea,[contenteditable='true'],[role='textbox']", 12);
+        const textareas = readFields("textarea,[contenteditable='true']", 12);
+        const selectEntries = Array.from(root.querySelectorAll("select"))
+          .slice(0, 12)
+          .map((entry, fieldIndex) => {
+            const el = entry as HTMLSelectElement;
+            const rect = el.getBoundingClientRect();
+            const value = compact(el.value, 120);
+            const placeholder = compact(el.getAttribute("placeholder"), 80) || undefined;
+            const ariaLabel = compact(el.getAttribute("aria-label"), 80) || undefined;
+            const nearbyText = compact((el.closest("label, td, th, div, section, article, li")?.textContent ?? ""), 160);
+            return {
+              index: fieldIndex,
+              type: "select",
+              value,
+              placeholder,
+              ariaLabel,
+              nearbyText,
+              rect: {
+                x: Math.round(rect.x),
+                y: Math.round(rect.y),
+                width: Math.round(rect.width),
+                height: Math.round(rect.height),
+              },
+            };
+          });
         const buttons = Array.from(root.querySelectorAll("button,[role='button']"))
           .slice(0, 18)
           .map((entry, buttonIndex) => {
@@ -616,18 +910,50 @@ async function collectCardCandidates(scope: PageLike, exerciseName: string): Pro
               },
             };
           });
+        for (const input of inputs) {
+          pushMatchSource("inputValue", input.value);
+          pushMatchSource("placeholder", input.placeholder);
+          pushMatchSource("ariaLabel", input.ariaLabel);
+        }
+        for (const textarea of textareas) {
+          pushMatchSource("textareaValue", textarea.value);
+          pushMatchSource("placeholder", textarea.placeholder);
+          pushMatchSource("ariaLabel", textarea.ariaLabel);
+        }
+        for (const selectEntry of selectEntries) {
+          pushMatchSource("selectValue", selectEntry.value);
+          pushMatchSource("placeholder", selectEntry.placeholder);
+          pushMatchSource("ariaLabel", selectEntry.ariaLabel);
+        }
         const possibleLabels = Array.from(root.querySelectorAll("label,[aria-label],[title],th,dt,strong"))
           .map((entry) => compact((entry as HTMLElement).textContent || (entry as HTMLElement).getAttribute("aria-label"), 90))
           .filter(Boolean)
           .slice(0, 24);
+        for (const label of possibleLabels) {
+          pushMatchSource("text", label);
+        }
         const dataAttrs = Array.from(root.attributes)
           .filter((attr) => attr.name.startsWith("data-"))
           .slice(0, 8)
           .map((attr) => `${attr.name}=${attr.value.slice(0, 80)}`);
+        const exactSource =
+          matchSources.find((entry) => entry.source === "inputValue" && entry.value === inputName)?.source ??
+          matchSources.find((entry) => entry.source === "textareaValue" && entry.value === inputName)?.source ??
+          matchSources.find((entry) => entry.source === "selectValue" && entry.value === inputName)?.source ??
+          matchSources.find((entry) => entry.source === "ariaLabel" && entry.value.includes(inputName))?.source ??
+          matchSources.find((entry) => entry.source === "placeholder" && entry.value.includes(inputName))?.source ??
+          matchSources.find((entry) => entry.source === "text" && entry.value.includes(inputName))?.source ??
+          "unknown";
+        const exactNameFound = exactSource !== "unknown";
+        const inputValues = [...inputs.map((entry) => entry.value), ...textareas.map((entry) => entry.value), ...selectEntries.map((entry) => entry.value)]
+          .filter(Boolean)
+          .slice(0, 40) as string[];
         return {
           textSample: text ? text.split(" ").slice(0, 60) : [],
-          exactNameFound: lowered.includes(inputName),
-          hasControls: inputs.length > 0 || textareas.length > 0 || buttons.length > 0,
+          exactNameFound,
+          exactNameSource: exactSource,
+          hasControls: inputs.length > 0 || textareas.length > 0 || selectEntries.length > 0 || buttons.length > 0,
+          inputValues,
           rect: {
             x: Math.round(rect.x),
             y: Math.round(rect.y),
@@ -635,7 +961,7 @@ async function collectCardCandidates(scope: PageLike, exerciseName: string): Pro
             height: Math.round(rect.height),
           },
           inputs,
-          textareas,
+          textareas: [...textareas, ...selectEntries],
           buttons,
           possibleLabels,
           dataAttrs,
@@ -646,10 +972,14 @@ async function collectCardCandidates(scope: PageLike, exerciseName: string): Pro
       .catch(() => null);
     if (!snapshot) continue;
     if (!snapshot.hasControls) continue;
+    const rootChain = await collectParentChain(card);
+    const rejectedReason = parentChainSuggestsCalendarShell(rootChain) ? "calendar_shell_parent_chain" : undefined;
     candidates.push({
       index: candidates.length,
       exactNameFound: snapshot.exactNameFound,
+      exactNameSource: snapshot.exactNameSource,
       textSample: snapshot.textSample,
+      inputValues: snapshot.inputValues,
       rect: snapshot.rect,
       inputs: snapshot.inputs,
       textareas: snapshot.textareas,
@@ -657,11 +987,19 @@ async function collectCardCandidates(scope: PageLike, exerciseName: string): Pro
       possibleLabels: snapshot.possibleLabels,
       dataAttrs: snapshot.dataAttrs,
       className: snapshot.className,
+      rejectedReason,
       locatorIndex: index,
       signature: snapshot.signature,
     });
   }
-  return candidates;
+  return candidates.map((candidate) =>
+    candidateSuggestsCalendarShell(candidate)
+      ? {
+          ...candidate,
+          rejectedReason: candidate.rejectedReason ?? "calendar_shell_signature",
+        }
+      : candidate
+  );
 }
 
 async function saveCardCandidatesDebug(
@@ -678,7 +1016,9 @@ async function saveCardCandidatesDebug(
     candidateCards: candidates.map((entry) => ({
       index: entry.index,
       exactNameFound: entry.exactNameFound,
+      exactNameSource: entry.exactNameSource,
       textSample: entry.textSample,
+      inputValues: entry.inputValues,
       rect: entry.rect,
       inputs: entry.inputs,
       textareas: entry.textareas,
@@ -686,6 +1026,7 @@ async function saveCardCandidatesDebug(
       possibleLabels: entry.possibleLabels,
       dataAttrs: entry.dataAttrs,
       className: entry.className,
+      rejectedReason: entry.rejectedReason,
     })),
     selectedCardIndex,
   };
@@ -815,15 +1156,60 @@ async function waitForManualBuilderOpen(page: Page, state: RunState, timeoutMs: 
 }
 
 async function resolveBuilderScope(page: Page): Promise<{ scope: PageLike; frame: Frame } | null> {
+  const hasWorkoutTitle = async (scope: PageLike): Promise<boolean> => {
+    const candidates = [
+      scope.getByPlaceholder(/Workout Title/i).first(),
+      scope.getByRole("textbox", { name: /Workout Title|Title/i }).first(),
+      scope.locator("input[placeholder*='Workout Title']").first(),
+    ];
+    for (const candidate of candidates) {
+      if ((await candidate.count().catch(() => 0)) > 0 && (await candidate.isVisible().catch(() => false))) {
+        return true;
+      }
+    }
+    return false;
+  };
+  const cardLikeCount = async (scope: PageLike): Promise<number> =>
+    scope
+      .evaluate(() => {
+        const normalize = (value: unknown) => String(value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+        const nodes = Array.from(
+          document.querySelectorAll("section,article,li,tr,[role='row'],[role='group'],[data-testid],div")
+        );
+        let count = 0;
+        for (const node of nodes) {
+          const el = node as HTMLElement;
+          const rect = el.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) continue;
+          const hasControl = Boolean(
+            el.querySelector("input,textarea,[contenteditable='true'],[role='textbox'],button,[role='button']")
+          );
+          if (!hasControl) continue;
+          const text = normalize(el.textContent);
+          if (/(sets|reps|duration|type or select exercise|exercise|workout title)/i.test(text)) {
+            count += 1;
+          }
+        }
+        return count;
+      })
+      .catch(() => 0);
   const frameCandidates = listFramesWithMainFirst(page);
   for (const frame of frameCandidates) {
-    const hasBuilder = await locateBuilderRoot(frame);
-    if (hasBuilder) {
+    const dialogInFrame = await resolveBuilderDialogRoot(frame);
+    const addBlock = await locateAddBlockButton(frame);
+    const hasAddBlock = Boolean(
+      addBlock && (await addBlock.count().catch(() => 0)) > 0 && (await addBlock.isVisible().catch(() => false))
+    );
+    if (dialogInFrame && (hasAddBlock || (await hasWorkoutTitle(frame)) || (await cardLikeCount(frame)) > 0)) {
       return { scope: frame, frame };
     }
   }
-  const hasBuilderOnPage = await locateBuilderRoot(page);
-  if (hasBuilderOnPage) {
+  const pageDialog = await resolveBuilderDialogRoot(page);
+  const addBlockPage = await locateAddBlockButton(page);
+  const hasAddBlockOnPage = Boolean(
+    addBlockPage && (await addBlockPage.count().catch(() => 0)) > 0 && (await addBlockPage.isVisible().catch(() => false))
+  );
+  if (pageDialog && (hasAddBlockOnPage || (await hasWorkoutTitle(page)) || (await cardLikeCount(page)) > 0)) {
     return { scope: page, frame: getMainFrame(page) };
   }
   return null;
@@ -861,6 +1247,8 @@ async function collectCandidateRows(scope: PageLike): Promise<string[]> {
 type PickerSelectionResult = {
   decision: ExactVisibleResultDecision;
   clicked: boolean;
+  exactResultCandidates: LocatorCandidateDebug[];
+  exactResultParentChain?: ParentNodeDebug[];
 };
 
 async function clickExactSearchResult(
@@ -881,28 +1269,41 @@ async function clickExactSearchResult(
     visibleTexts: candidateRows,
     status: matchingIndexes.length === 1 ? "exact" : matchingIndexes.length > 1 ? "ambiguous" : "missing",
   };
+  const exactResultCandidates: LocatorCandidateDebug[] = [];
+  for (const entry of matchingIndexes) {
+    const row = scope.locator("[role='option']").nth(entry.index);
+    const visible = await row.isVisible().catch(() => false);
+    const textSample = sanitizeDebugText(await row.innerText().catch(() => ""), 160);
+    exactResultCandidates.push({
+      name: `exact_option_${entry.index}`,
+      selectorHint: "[role='option'] exact text match",
+      count: 1,
+      visible,
+      textSample: textSample || undefined,
+    });
+  }
 
   if (!shouldClick || decision.status !== "exact") {
-    return { decision, clicked: false };
+    return { decision, clicked: false, exactResultCandidates };
   }
 
   const targetIndex = matchingIndexes[0]?.index;
   if (targetIndex === undefined) {
-    return { decision: { ...decision, status: "missing" }, clicked: false };
+    return { decision: { ...decision, status: "missing" }, clicked: false, exactResultCandidates };
   }
 
   const targetRow = scope.locator("[role='option']").nth(targetIndex);
   if (!(await targetRow.isVisible().catch(() => false))) {
-    return { decision: { ...decision, status: "missing" }, clicked: false };
+    return { decision: { ...decision, status: "missing" }, clicked: false, exactResultCandidates };
   }
 
   const textBeforeClick = normalizeVisibleText(await targetRow.innerText().catch(() => ""));
   if (textBeforeClick !== normalizedRequested) {
-    return { decision: { ...decision, status: "missing" }, clicked: false };
+    return { decision: { ...decision, status: "missing" }, clicked: false, exactResultCandidates };
   }
-
+  const exactResultParentChain = await collectParentChain(targetRow);
   await targetRow.click();
-  return { decision, clicked: true };
+  return { decision, clicked: true, exactResultCandidates, exactResultParentChain };
 }
 
 async function writeFieldValueInScope(
@@ -1152,16 +1553,98 @@ async function ensurePickerReady(scope: PageLike, state: RunState): Promise<Loca
   return searchInput;
 }
 
+async function ensurePickerReadyWithDebug(
+  scope: PageLike,
+  state: RunState,
+  exerciseName: string,
+  stage: "before-add" | "after-add",
+  selectedFrameUrl: string
+): Promise<{ searchInput: Locator | null; artifactPath?: string; addBlockLocator?: Locator }> {
+  const candidates = candidateSelectorEntries(scope);
+  const addBlockCandidates = (await collectLocatorCandidateDebug(candidates)).filter((entry) => entry.name.startsWith("addBlock_"));
+  const searchCandidates = (await collectLocatorCandidateDebug(candidates)).filter((entry) => entry.name.startsWith("search_"));
+  const addBlockButton = await locateAddBlockButton(scope);
+  if (!addBlockButton) {
+    const artifactPath = await saveRootDiagnosticArtifact({
+      exerciseName,
+      stage,
+      builderRootFound: false,
+      addBlockCandidates,
+      pickerSearchCandidates: searchCandidates,
+      selectedFrameUrl,
+    });
+    state.errors.push("Add Block button was not found.");
+    return { searchInput: null, artifactPath };
+  }
+  const addBlockChain = await collectParentChain(addBlockButton);
+  state.addBlockButtonFound = true;
+  let searchInput = await locateSearchInput(scope);
+  if (!searchInput) {
+    const clickAddBlockSafely = async (): Promise<void> => {
+      try {
+        await addBlockButton.click({ timeout: 5000 });
+      } catch (error) {
+        const message = String(error ?? "");
+        if (!/intercepts pointer events|Timeout/i.test(message)) {
+          throw error;
+        }
+        // A popover backdrop can temporarily intercept clicks; close overlays and retry once.
+        await addBlockButton.page().keyboard.press("Escape").catch(() => {});
+        await addBlockButton.page().waitForTimeout(200);
+        await addBlockButton.click({ timeout: 5000 });
+      }
+    };
+    await clickAddBlockSafely();
+    await addBlockButton.page().waitForTimeout(600);
+    searchInput = await locateSearchInput(scope);
+    if (!searchInput) {
+      await addBlockButton.page().keyboard.press("Escape").catch(() => {});
+      await addBlockButton.page().waitForTimeout(200);
+      await clickAddBlockSafely();
+      await addBlockButton.page().waitForTimeout(600);
+      searchInput = await locateSearchInput(scope);
+    }
+  }
+  const searchInputChain = searchInput ? await collectParentChain(searchInput) : undefined;
+  if (!searchInput) {
+    const artifactPath = await saveRootDiagnosticArtifact({
+      exerciseName,
+      stage,
+      builderRootFound: false,
+      addBlockCandidates,
+      pickerSearchCandidates: searchCandidates,
+      addBlockParentChain: addBlockChain,
+      searchInputParentChain: searchInputChain,
+      selectedFrameUrl,
+    });
+    state.errors.push("Exercise picker search input was not found after Add Block.");
+    return { searchInput: null, artifactPath, addBlockLocator: addBlockButton };
+  }
+  state.pickerSearchFound = true;
+  const artifactPath = await saveRootDiagnosticArtifact({
+    exerciseName,
+    stage,
+    builderRootFound: true,
+    addBlockCandidates,
+    pickerSearchCandidates: searchCandidates,
+    addBlockParentChain: addBlockChain,
+    searchInputParentChain: searchInputChain,
+    selectedFrameUrl,
+  });
+  return { searchInput, artifactPath, addBlockLocator: addBlockButton };
+}
+
 function selectCardCandidate(
   before: CardCandidateInternal[],
   after: CardCandidateInternal[]
 ): CardCandidateInternal | null {
-  const beforeSignatures = new Set(before.map((entry) => entry.signature));
-  const exactNew = after.filter((entry) => entry.exactNameFound && !beforeSignatures.has(entry.signature));
+  const beforeSignatures = new Set(before.filter((entry) => !entry.rejectedReason).map((entry) => entry.signature));
+  const validAfter = after.filter((entry) => !entry.rejectedReason);
+  const exactNew = validAfter.filter((entry) => entry.exactNameFound && !beforeSignatures.has(entry.signature));
   if (exactNew.length > 0) {
     return exactNew.sort((left, right) => right.rect.y - left.rect.y)[0];
   }
-  const exactAny = after.filter((entry) => entry.exactNameFound);
+  const exactAny = validAfter.filter((entry) => entry.exactNameFound);
   if (exactAny.length > 0) {
     return exactAny.sort((left, right) => right.rect.y - left.rect.y)[0];
   }
@@ -1188,7 +1671,11 @@ async function locateSelectedExerciseCard(
   if (!selected) {
     return { locator: null, candidates: afterCandidates };
   }
-  const locator = scope.locator("section,article,li,tr,[role='row'],[role='group'],[data-testid],div").nth(selected.locatorIndex);
+  const dialog = await resolveBuilderDialogRoot(scope);
+  if (!dialog) {
+    return { locator: null, candidates: afterCandidates };
+  }
+  const locator = dialog.locator("section,article,li,tr,[role='row'],[role='group'],[data-testid],div").nth(selected.locatorIndex);
   await revealExercisePanel(locator);
   return { locator, candidates: afterCandidates, selectedCandidateIndex: selected.index };
 }
@@ -1312,6 +1799,11 @@ async function runDryRunFlow(
   }
   const builderScope = resolved.scope;
   const builderFrame = resolved.frame;
+  const builderDialog = await resolveBuilderDialogRoot(builderScope);
+  if (!builderDialog) {
+    state.errors.push("Strength Builder dialog [role='dialog'] was not found; diagnostic-only fail early.");
+    return;
+  }
   await saveScreenshot(page, state, "dry-run-builder");
 
   const searchInput = await ensurePickerReady(builderScope, state);
@@ -1351,7 +1843,8 @@ async function runDryRunFlow(
   const frameProbePath = await saveBuilderFrameProbeReport(frameProbe, "dry-run");
   state.warnings.push(`Builder frame probe saved: ${frameProbePath}`);
   const cardCandidates = await collectCardCandidates(builderScope, firstExerciseName);
-  const candidatesPath = await saveCardCandidatesDebug(firstExerciseName, true, cardCandidates);
+  const dryRunRootFound = cardCandidates.length > 0 || Boolean(state.addBlockButtonFound || state.pickerSearchFound);
+  const candidatesPath = await saveCardCandidatesDebug(firstExerciseName, dryRunRootFound, cardCandidates);
   state.warnings.push(`Card candidates saved (dry-run): ${candidatesPath}`);
 }
 
@@ -1387,9 +1880,12 @@ async function runApplyFlow(
   }
   const builderScope = resolved.scope;
   const builderFrame = resolved.frame;
+  const builderDialog = await resolveBuilderDialogRoot(builderScope);
+  if (!builderDialog) {
+    state.errors.push("Strength Builder dialog [role='dialog'] was not found; field writing skipped; Save blocked.");
+    return;
+  }
 
-  await fillWorkoutTitle(builderScope, template.title).catch(() => {});
-  await fillWorkoutInstructions(builderScope, template.workoutInstructions).catch(() => {});
   await saveScreenshot(page, state, "apply-before-add");
   const frameProbe = await probeBuilderFrames(
     page,
@@ -1399,14 +1895,23 @@ async function runApplyFlow(
   const frameProbePath = await saveBuilderFrameProbeReport(frameProbe, "apply-before-add");
   state.warnings.push(`Builder frame probe saved: ${frameProbePath}`);
 
-  let requiredWriteFailure = false;
   const flatExercises = flattenWorkoutExercises(template);
 
   for (const exercise of flatExercises) {
     const attempt = buildAttempt(exercise);
     state.attemptedExercises.push(attempt);
 
-    const searchInput = await ensurePickerReady(builderScope, state);
+    const pickerReadyBefore = await ensurePickerReadyWithDebug(
+      builderScope,
+      state,
+      exercise.name,
+      "before-add",
+      builderFrame.url()
+    );
+    if (pickerReadyBefore.artifactPath) {
+      state.warnings.push(`Root diagnostic (${exercise.name}, before-add): ${pickerReadyBefore.artifactPath}`);
+    }
+    const searchInput = pickerReadyBefore.searchInput;
     if (!searchInput) {
       break;
     }
@@ -1438,91 +1943,64 @@ async function runApplyFlow(
       return;
     }
 
-    const beforeCandidates = await collectCardCandidates(builderScope, exercise.name);
     attempt.clicked = true;
     attempt.exactMatchClicked = exercise.name;
-    await page.waitForTimeout(700);
+    attempt.added = true;
+    await closePickerPopover(builderDialog);
+    const afterAddBlockCandidates = (await collectLocatorCandidateDebug(candidateSelectorEntries(builderScope))).filter((entry) =>
+      entry.name.startsWith("addBlock_")
+    );
+    const afterSearchCandidates = (await collectLocatorCandidateDebug(candidateSelectorEntries(builderScope))).filter((entry) =>
+      entry.name.startsWith("search_")
+    );
+    const beforeCandidates = await collectCardCandidates(builderScope, exercise.name);
     const locatedCard = await locateSelectedExerciseCard(builderScope, exercise.name, beforeCandidates);
+    const addedNameLocator = await locateVisibleExerciseName(builderScope, exercise.name);
+    const addedExerciseNameParentChain = addedNameLocator ? await collectParentChain(addedNameLocator) : undefined;
+    const builderRootFoundForCard = Boolean(
+      builderDialog && (state.addBlockButtonFound || state.pickerSearchFound || locatedCard.candidates.length > 0)
+    );
+    const addedExerciseNameRejectedReason = parentChainSuggestsCalendarShell(addedExerciseNameParentChain)
+      ? "calendar_shell_parent_chain"
+      : undefined;
+    if (addedExerciseNameRejectedReason) {
+      state.warnings.push(`Rejected calendar-shell addedExerciseNameParentChain for "${exercise.name}".`);
+    }
     const cardDebugPath = await saveCardCandidatesDebug(
       exercise.name,
-      true,
+      builderRootFoundForCard,
       locatedCard.candidates,
       locatedCard.selectedCandidateIndex
     );
     state.warnings.push(`Card candidates saved for "${attempt.name}": ${cardDebugPath}`);
-    if (!locatedCard.locator) {
-      markExerciseCardNotFound(attempt);
-      requiredWriteFailure = true;
-      attempt.added = true;
-      continue;
+    const afterArtifactPath = await saveRootDiagnosticArtifact({
+      exerciseName: exercise.name,
+      stage: "after-add",
+      label: "exact-result",
+      builderRootFound: builderRootFoundForCard,
+      addBlockCandidates: afterAddBlockCandidates,
+      pickerSearchCandidates: afterSearchCandidates,
+      exactResultCandidates: selection.exactResultCandidates,
+      addedExerciseNameParentChain: addedExerciseNameParentChain ?? selection.exactResultParentChain,
+      addedExerciseNameRejectedReason,
+      selectedFrameUrl: builderFrame.url(),
+      selectedCardIndex: locatedCard.selectedCandidateIndex,
+      candidateCardCount: locatedCard.candidates.length,
+    });
+    state.warnings.push(`Exact-result root diagnostic (${exercise.name}): ${afterArtifactPath}`);
+    if (!builderRootFoundForCard) {
+      state.errors.push(`Builder root not proven for "${exercise.name}"; diagnostic-only fail early.`);
+      break;
     }
-    await populateExerciseCard(locatedCard.locator, exercise, attempt);
-    if (!isWrittenFieldStatus(attempt.fields.sets.status)) requiredWriteFailure = true;
-    if (attempt.fields.reps.required && !isWrittenFieldStatus(attempt.fields.reps.status)) requiredWriteFailure = true;
-    if (attempt.fields.duration.required && !isWrittenFieldStatus(attempt.fields.duration.status)) requiredWriteFailure = true;
-    if (attempt.fields.coachNote.required && !isWrittenFieldStatus(attempt.fields.coachNote.status)) requiredWriteFailure = true;
-    attempt.added = true;
+    markExerciseCardNotFound(attempt);
   }
-
-  await saveScreenshot(page, state, "apply-before-save");
+  state.errors.push("Diagnostic-only mode: field writing skipped; Save blocked.");
   const beforeSaveVisual = await collectVisualFieldEvidence(page, flatExercises);
-  if (!beforeSaveVisual.fieldsVisible || !beforeSaveVisual.notesVisible) {
-    state.errors.push("Before-save visual verification failed (fieldsVisible and notesVisible must both be yes). Save blocked.");
-    state.visualFieldVerification = {
-      beforeSave: beforeSaveVisual,
-      afterSave: buildMissingAfterSaveVisual(beforeSaveVisual),
-    };
-    return;
-  }
-  if (requiredWriteFailure) {
-    state.errors.push("One or more required fields were not written/read back. Save blocked for safety.");
-    state.visualFieldVerification = {
-      beforeSave: beforeSaveVisual,
-      afterSave: buildMissingAfterSaveVisual(beforeSaveVisual),
-    };
-    return;
-  }
-  if (args.visualConfirmBeforeSave) {
-    console.log("");
-    console.log("[tp-create-test-strength-workout] visual confirm required before Save.");
-    console.log("- Igor should verify sets, reps, duration/time, and coach notes in the UI.");
-    if (args.nonInteractive) {
-      state.errors.push("Visual confirm before save requires interactive mode. Remove --non-interactive.");
-      state.visualFieldVerification = {
-        beforeSave: beforeSaveVisual,
-        afterSave: buildMissingAfterSaveVisual(beforeSaveVisual),
-      };
-      return;
-    }
-    const confirmed = await waitForTypedYes('Type "yes" after Igor visual confirmation');
-    if (!confirmed) {
-      state.errors.push('Visual confirmation rejected by operator (expected typed "yes"). Save blocked.');
-      state.visualFieldVerification = {
-        beforeSave: beforeSaveVisual,
-        afterSave: buildMissingAfterSaveVisual(beforeSaveVisual),
-      };
-      return;
-    }
-  }
-  const saveButton = page.getByRole("button", { name: /Save( and Close)?/i }).first();
-  if ((await saveButton.count()) > 0 && (await saveButton.isVisible().catch(() => false))) {
-    await saveButton.click();
-    state.saveClicked = true;
-    await page.waitForTimeout(1500);
-    await saveScreenshot(page, state, "apply-after-save");
-    await closeAndReopenWorkoutIfPossible(page, template.title).catch(() => {});
-    const afterSaveVisual = await collectVisualFieldEvidence(page, flatExercises);
-    state.visualFieldVerification = {
-      beforeSave: beforeSaveVisual,
-      afterSave: afterSaveVisual,
-    };
-  } else {
-    state.errors.push("Save button was not found.");
-    state.visualFieldVerification = {
-      beforeSave: beforeSaveVisual,
-      afterSave: buildMissingAfterSaveVisual(beforeSaveVisual),
-    };
-  }
+  state.visualFieldVerification = {
+    beforeSave: beforeSaveVisual,
+    afterSave: buildMissingAfterSaveVisual(beforeSaveVisual),
+  };
+  await saveScreenshot(page, state, "apply-diagnostic-only");
 }
 
 function slugify(value: string): string {
