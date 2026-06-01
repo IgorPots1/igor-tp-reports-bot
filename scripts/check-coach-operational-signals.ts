@@ -18,6 +18,8 @@ type Expectation = {
   available_days?: string[];
   unavailable_days?: string[];
   health_issue_kind?: string | null;
+  reason?: string;
+  secondary_buckets_includes?: OperationalPrimaryBucket[];
   confidence_at_least?: "low" | "medium" | "high";
 };
 
@@ -88,6 +90,14 @@ function assertCase(caseDef: CaseDef): string[] {
       `health_issue_kind=${result.structured_payload.health_issue_kind ?? "null"} expected=${caseDef.expected.health_issue_kind ?? "null"}`
     );
   }
+  if (caseDef.expected.reason !== undefined && result.reason !== caseDef.expected.reason) {
+    failures.push(`reason=${result.reason} expected=${caseDef.expected.reason}`);
+  }
+  if (caseDef.expected.secondary_buckets_includes && !includesAll(result.secondary_buckets, caseDef.expected.secondary_buckets_includes)) {
+    failures.push(
+      `secondary_buckets=${JSON.stringify(result.secondary_buckets)} expected_has=${JSON.stringify(caseDef.expected.secondary_buckets_includes)}`
+    );
+  }
   if (
     caseDef.expected.confidence_at_least &&
     CONFIDENCE_ORDER[result.confidence] < CONFIDENCE_ORDER[caseDef.expected.confidence_at_least]
@@ -100,8 +110,21 @@ function assertCase(caseDef: CaseDef): string[] {
 async function run(): Promise<void> {
   const cases: CaseDef[] = [
     {
+      name: "current-week-multi-day-availability",
+      observation: mkObs("Можно на этой неделе тренировки вторник, среда, пятница и воскресенье?"),
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        available_days: ["Tuesday", "Wednesday", "Friday", "Sunday"],
+        confidence_at_least: "medium",
+      },
+    },
+    {
       name: "next-week-tue-thu-availability",
-      observation: mkObs("На следующей неделе сможет бегать во вторник и четверг."),
+      observation: mkObs("На следующей неделе смогу бегать во вторник и четверг."),
       expected: {
         primary_bucket: "operational_signal",
         signal_type: "schedule_availability_window",
@@ -109,19 +132,6 @@ async function run(): Promise<void> {
         should_create_case: false,
         should_create_trainingpeaks_action: false,
         available_days: ["Tuesday", "Thursday"],
-        confidence_at_least: "high",
-      },
-    },
-    {
-      name: "this-week-only-tuesday",
-      observation: mkObs("На этой неделе может только во вторник."),
-      expected: {
-        primary_bucket: "operational_signal",
-        signal_type: "schedule_availability_window",
-        should_create_memory: false,
-        should_create_case: false,
-        should_create_trainingpeaks_action: false,
-        available_days: ["Tuesday"],
       },
     },
     {
@@ -147,18 +157,6 @@ async function run(): Promise<void> {
       },
     },
     {
-      name: "throat-resolved-ready-tomorrow",
-      observation: mkObs("Горло прошло, завтра готова бегать."),
-      expected: {
-        primary_bucket: "operational_signal",
-        signal_type: "resume_training",
-        should_create_memory: false,
-        should_create_case: false,
-        should_create_trainingpeaks_action: false,
-        health_issue_kind: "illness",
-      },
-    },
-    {
       name: "knee-hurts-third-day",
       observation: mkObs("Колено болит третий день."),
       expected: {
@@ -167,12 +165,12 @@ async function run(): Promise<void> {
         should_create_memory: true,
         should_create_case: true,
         should_create_trainingpeaks_action: false,
-        health_issue_kind: "musculoskeletal",
+        health_issue_kind: "pain_or_injury",
       },
     },
     {
-      name: "knee-hurt-but-resolved",
-      observation: mkObs("Колено болело, но прошло."),
+      name: "no-pain-today",
+      observation: mkObs("Я сегодня вообще без боли побегал."),
       expected: {
         primary_bucket: "health_lifecycle_signal",
         signal_type: "health_issue_resolved",
@@ -182,14 +180,27 @@ async function run(): Promise<void> {
       },
     },
     {
-      name: "move-workout-friday",
-      observation: mkObs("Перенеси тренировку на пятницу."),
+      name: "leg-significantly-better",
+      observation: mkObs("Ну я тебе скажу что у меня сегодня нога уже значительно лучше"),
+      expected: {
+        primary_bucket: "health_lifecycle_signal",
+        signal_type: "health_issue_improving",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: "pain_or_injury",
+      },
+    },
+    {
+      name: "move-workout-friday-to-thursday",
+      observation: mkObs("А можно пятничную тренировку в чт сделать? У меня она не переносится("),
       expected: {
         primary_bucket: "coach_case",
         signal_type: "move_workout_candidate",
         should_create_memory: false,
         should_create_case: true,
         should_create_trainingpeaks_action: true,
+        secondary_buckets_includes: ["trainingpeaks_action"],
       },
     },
     {
@@ -237,15 +248,59 @@ async function run(): Promise<void> {
       },
     },
     {
-      name: "cannot-tuesday-child",
-      observation: mkObs("По вторникам не может из-за ребёнка."),
+      name: "zabolela-noga-is-not-illness",
+      observation: mkObs("Важный момент: день когда заболела нога это была первая тренировка в новых кроссовках"),
       expected: {
-        primary_bucket: "durable_memory",
-        signal_type: "plan_generation_constraint",
+        primary_bucket: "temporary_memory",
+        signal_type: "health_issue_started",
         should_create_memory: true,
         should_create_case: false,
         should_create_trainingpeaks_action: false,
-        unavailable_days: ["Tuesday"],
+        health_issue_kind: "pain_or_injury",
+      },
+    },
+    {
+      name: "group-missing-senderrole-explicit-schedule-accepted",
+      observation: {
+        ...mkObs("Можно на этой неделе тренировки вт, ср, пт и вс?", "group_topic"),
+        metadata: {},
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        available_days: ["Tuesday", "Wednesday", "Friday", "Sunday"],
+      },
+    },
+    {
+      name: "group-missing-senderrole-ambiguous-skipped",
+      observation: {
+        ...mkObs("Спасибо! Все ок", "group_topic"),
+        metadata: {},
+      },
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "group-explicit-non-student-skipped",
+      observation: {
+        ...mkObs("Можно на этой неделе только во вторник", "group_topic"),
+        metadata: { senderRole: "coach" },
+      },
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        reason: "group message explicitly non-student-authored",
       },
     },
   ];

@@ -13,6 +13,7 @@ export type OperationalSignalType =
   | "resume_training"
   | "pause_training"
   | "health_issue_started"
+  | "health_issue_improving"
   | "health_issue_resolved"
   | "move_workout_candidate"
   | "plan_generation_constraint"
@@ -62,6 +63,16 @@ const DAY_ALIASES: Array<{ day: string; forms: string[] }> = [
   { day: "Sunday", forms: ["воскресенье", "воскресеньям", "вс"] },
 ];
 
+const DAY_TO_INDEX: Record<string, number> = {
+  Monday: 1,
+  Tuesday: 2,
+  Wednesday: 3,
+  Thursday: 4,
+  Friday: 5,
+  Saturday: 6,
+  Sunday: 0,
+};
+
 const NOISE_ONLY_PATTERN = /^(ок|окей|спасибо|thanks|понял[а]?|принято|👍|👌|🙏)$/iu;
 
 function normalize(text: string | null): string {
@@ -89,6 +100,12 @@ function addDays(input: Date, days: number): Date {
 function endOfWeekSunday(input: Date): Date {
   const day = input.getUTCDay();
   return addDays(input, 7 - day);
+}
+
+function startOfWeekMonday(input: Date): Date {
+  const day = input.getUTCDay();
+  const delta = day === 0 ? -6 : 1 - day;
+  return addDays(input, delta);
 }
 
 function endOfNextWeek(input: Date): string {
@@ -148,6 +165,20 @@ function parseNamedDayTargetDate(text: string, observedAt: string): string | nul
   return null;
 }
 
+function inferDateForDay(day: string, observedAt: string): string | null {
+  const observed = parseIsoDateFallback(observedAt);
+  const targetDow = DAY_TO_INDEX[day];
+  if (targetDow === undefined) {
+    return null;
+  }
+  const today = observed.getUTCDay();
+  let delta = (targetDow - today + 7) % 7;
+  if (delta === 0) {
+    delta = 7;
+  }
+  return isoDate(addDays(observed, delta));
+}
+
 function toDefaultPayload(): OperationalStructuredPayload {
   return {
     available_days: [],
@@ -170,15 +201,25 @@ function isExplicitCoachRelevantSignal(text: string, labels: string[]): boolean 
     "не смогу",
     "перенеси",
     "перенести",
+    "можно",
+    "сделать",
+    "на этой неделе",
+    "на следующей неделе",
     "могу только",
     "готов",
     "готова",
     "болит",
     "болела",
     "болею",
+    "лучше",
+    "без боли",
+    "прошло",
     "забол",
     "горло",
     "колено",
+    "нога",
+    "ахилл",
+    "стоп",
     "марафон",
     "тренировки",
     "по вторникам",
@@ -187,8 +228,8 @@ function isExplicitCoachRelevantSignal(text: string, labels: string[]): boolean 
 }
 
 function classifyHealthIssueKind(text: string): string | null {
-  if (hasAny(text, ["колено", "ахилл", "икра", "спина", "голень", "стоп"])) {
-    return "musculoskeletal";
+  if (hasAny(text, ["нога", "колено", "ахилл", "икра", "спина", "голень", "стоп"])) {
+    return "pain_or_injury";
   }
   if (hasAny(text, ["горло", "температур", "простуд", "кашель", "боле"])) {
     return "illness";
@@ -199,7 +240,84 @@ function classifyHealthIssueKind(text: string): string | null {
   return null;
 }
 
+function parseMoveDays(text: string): { sourceDay: string | null; targetDay: string | null } {
+  const source = text.match(/с\s+(пн|вт|ср|чт|пт|сб|вс|понедельник(?:а|у)?|вторник(?:а|у)?|сред[ауы]|четверг(?:а|у)?|пятниц[ауы]|суббот[ауы]|воскресенье)\s+на\s+(пн|вт|ср|чт|пт|сб|вс|понедельник(?:а|у)?|вторник(?:а|у)?|сред[ауы]|четверг(?:а|у)?|пятниц[ауы]|суббот[ауы]|воскресенье)/iu);
+  if (source) {
+    const parsed = extractDays(`${source[1]} ${source[2]}`);
+    return {
+      sourceDay: parsed[0] ?? null,
+      targetDay: parsed[1] ?? null,
+    };
+  }
+  const adjectiveToDay: Array<{ day: string; pattern: RegExp }> = [
+    { day: "Monday", pattern: /понедельнич/iu },
+    { day: "Tuesday", pattern: /вторнич/iu },
+    { day: "Wednesday", pattern: /сред/iu },
+    { day: "Thursday", pattern: /четвергов|четверг/iu },
+    { day: "Friday", pattern: /пятнич/iu },
+    { day: "Saturday", pattern: /суббот/iu },
+    { day: "Sunday", pattern: /воскрес/iu },
+  ];
+  const phrased = text.match(
+    /(понедельнич[^ ]*|вторнич[^ ]*|сред[^ ]*|четверг[^ ]*|пятнич[^ ]*|суббот[^ ]*|воскрес[^ ]*)\s+трениров[^ ]*.*?\sв\s+(пн|вт|ср|чт|пт|сб|вс|понедельник(?:а|у)?|вторник(?:а|у)?|сред[ауы]|четверг(?:а|у)?|пятниц[ауы]|суббот[ауы]|воскресенье)/iu
+  );
+  if (phrased) {
+    const firstToken = phrased[1] ?? "";
+    const sourceDay = adjectiveToDay.find((item) => item.pattern.test(firstToken))?.day ?? null;
+    const targetDay = extractDays(phrased[2] ?? "")[0] ?? null;
+    return { sourceDay, targetDay };
+  }
+  const generic = text.match(
+    /перенеси.*?(пн|вт|ср|чт|пт|сб|вс|понедельник(?:а|у)?|вторник(?:а|у)?|сред[ауы]|четверг(?:а|у)?|пятниц[ауы]|суббот[ауы]|воскресенье).*?\bна\s+(пн|вт|ср|чт|пт|сб|вс|понедельник(?:а|у)?|вторник(?:а|у)?|сред[ауы]|четверг(?:а|у)?|пятниц[ауы]|суббот[ауы]|воскресенье)/iu
+  );
+  if (generic) {
+    return {
+      sourceDay: extractDays(generic[1] ?? "")[0] ?? null,
+      targetDay: extractDays(generic[2] ?? "")[0] ?? null,
+    };
+  }
+  return { sourceDay: null, targetDay: null };
+}
+
+function hasScheduleContext(text: string): boolean {
+  return hasAny(text, [
+    "тренировк",
+    "бегать",
+    "могу",
+    "может",
+    "можно",
+    "на этой неделе",
+    "на следующей неделе",
+    "на след неделе",
+    "следующей неделе",
+  ]);
+}
+
+function hasMoveWorkoutIntent(text: string, labels: string[]): boolean {
+  if (labels.includes("move_workout_candidate")) {
+    return true;
+  }
+  if (hasAny(text, ["перенеси тренировку", "перенести тренировку", "перенеси", "перенести", "сдвинь тренировку"])) {
+    return true;
+  }
+  if (/с\s+.*\s+на\s+/iu.test(text) && text.includes("трениров")) {
+    return true;
+  }
+  if (
+    /(понедельнич[^ ]*|вторнич[^ ]*|сред[^ ]*|четверг[^ ]*|пятнич[^ ]*|суббот[^ ]*|воскрес[^ ]*)\s+трениров[^ ]*.*\sв\s+(пн|вт|ср|чт|пт|сб|вс)/iu.test(
+      text
+    )
+  ) {
+    return true;
+  }
+  if (/можно.*тренировк\w*.*\bв\s+(пн|вт|ср|чт|пт|сб|вс)/iu.test(text) && text.includes("не перенос")) {
+    return true;
+  }
+  return false;
+}
+
 export function classifyCoachOperationalSignal(input: ObservationLike): OperationalClassification {
+  let groupMissingSenderRoleButAccepted = false;
   const text = normalize(input.textPreview);
   const labels = input.labels.map((label) => label.toLowerCase());
   const payload = toDefaultPayload();
@@ -236,8 +354,22 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
   if (source === "group_topic" || source === "group_general") {
     const senderRole =
       typeof input.metadata.senderRole === "string" ? input.metadata.senderRole.toLowerCase() : "";
-    const isStudentAuthored = senderRole === "known_student" || senderRole === "linked_student";
-    if (!isStudentAuthored) {
+    const isExplicitNonStudent = ["coach", "admin", "bot"].some((role) => senderRole.includes(role));
+    const isExplicitStudent = ["known_student", "linked_student", "student"].some((role) => senderRole.includes(role));
+    if (isExplicitNonStudent) {
+      return {
+        primary_bucket: "skip",
+        secondary_buckets: [],
+        signal_type: null,
+        structured_payload: payload,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        confidence: "high",
+        reason: "group message explicitly non-student-authored",
+      };
+    }
+    if (!isExplicitStudent && senderRole) {
       return {
         primary_bucket: "skip",
         secondary_buckets: [],
@@ -263,14 +395,27 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
         reason: "group message ambiguous for coach signal",
       };
     }
+    if (!isExplicitStudent && !senderRole) {
+      groupMissingSenderRoleButAccepted = true;
+    }
   }
+  const explicitSignalReason = groupMissingSenderRoleButAccepted
+    ? "group message missing senderRole but explicit student signal accepted"
+    : null;
 
   if (
-    hasAny(text, ["перенеси тренировку", "перенести тренировку", "перенеси", "перенести", "сдвинь тренировку"]) ||
-    labels.includes("move_workout_candidate")
+    hasMoveWorkoutIntent(text, labels)
   ) {
-    payload.target_date = parseRelativeDate(text, input.observedAt) ?? parseNamedDayTargetDate(text, input.observedAt);
-    payload.source_date = text.includes("сегодня") ? parseRelativeDate("сегодня", input.observedAt) : null;
+    const { sourceDay, targetDay } = parseMoveDays(text);
+    payload.target_date =
+      (targetDay ? inferDateForDay(targetDay, input.observedAt) : null) ??
+      parseRelativeDate(text, input.observedAt) ??
+      parseNamedDayTargetDate(text, input.observedAt);
+    payload.source_date = sourceDay
+      ? inferDateForDay(sourceDay, input.observedAt)
+      : text.includes("сегодня")
+        ? parseRelativeDate("сегодня", input.observedAt)
+        : null;
     return {
       primary_bucket: "coach_case",
       secondary_buckets: ["trainingpeaks_action", "operational_signal"],
@@ -279,14 +424,34 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
       should_create_memory: false,
       should_create_case: true,
       should_create_trainingpeaks_action: true,
-      confidence: "high",
-      reason: "explicit move-workout request",
+      confidence: sourceDay || targetDay ? "high" : "medium",
+      reason: explicitSignalReason ?? "explicit move-workout request",
     };
   }
 
+  const healthImproving = hasAny(text, ["значительно лучше", "намного лучше", "лучше", "становится лучше", "полегче"]);
+  const healthResolved =
+    hasAny(text, ["без боли", "не болит", "прошло", "прошел", "прошла", "выздоров"]) &&
+    hasAny(text, ["бол", "горло", "колено", "нога", "ахилл", "стоп", "простуд", "кашель", "самочув"]);
+
   const resolvedHealth =
-    hasAny(text, ["прошло", "прошел", "прошла", "уже не болит", "не болит", "выздоров", "готова бегать", "готов бегать"]) &&
-    hasAny(text, ["бол", "горло", "простуд", "трав"]);
+    (hasAny(text, ["прошло", "прошел", "прошла", "уже не болит", "не болит", "выздоров", "готова бегать", "готов бегать"]) &&
+      hasAny(text, ["бол", "горло", "простуд", "трав"])) ||
+    healthResolved;
+  if (healthImproving || hasAny(text, ["самочувствие хорошо", "самочувствие норм", "самочувствие вроде хорошо"])) {
+    payload.health_issue_kind = classifyHealthIssueKind(text);
+    return {
+      primary_bucket: "health_lifecycle_signal",
+      secondary_buckets: [],
+      signal_type: "health_issue_improving",
+      structured_payload: payload,
+      should_create_memory: false,
+      should_create_case: false,
+      should_create_trainingpeaks_action: false,
+      confidence: "medium",
+      reason: explicitSignalReason ?? "health improvement signal detected",
+    };
+  }
   if (resolvedHealth) {
     payload.resume_from_date = parseRelativeDate(text, input.observedAt);
     payload.health_issue_kind = classifyHealthIssueKind(text);
@@ -300,7 +465,7 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
       should_create_case: false,
       should_create_trainingpeaks_action: false,
       confidence: "medium",
-      reason: "health resolution signal detected",
+      reason: explicitSignalReason ?? "health resolution signal detected",
     };
   }
 
@@ -316,7 +481,7 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
       should_create_case: false,
       should_create_trainingpeaks_action: false,
       confidence: "high",
-      reason: "explicit resume training phrasing",
+      reason: explicitSignalReason ?? "explicit resume training phrasing",
     };
   }
 
@@ -326,7 +491,7 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
   if (healthStarted) {
     payload.health_issue_kind = classifyHealthIssueKind(text);
     const hasPersistence = hasAny(text, ["третий день", "несколько дней", "постоянно", "после каждой тренировки"]);
-    if (hasPersistence && payload.health_issue_kind === "musculoskeletal") {
+    if (hasPersistence && payload.health_issue_kind === "pain_or_injury") {
       return {
         primary_bucket: "durable_memory",
         secondary_buckets: ["coach_case"],
@@ -348,14 +513,22 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
       should_create_case: false,
       should_create_trainingpeaks_action: false,
       confidence: "medium",
-      reason: "health issue present without durable persistence evidence",
+      reason: explicitSignalReason ?? "health issue present without durable persistence evidence",
     };
   }
 
   const days = extractDays(text);
-  const scheduleAvailability = hasAny(text, ["может бегать", "сможет бегать", "могу только", "может только"]);
+  const scheduleAvailability = hasAny(text, [
+    "может бегать",
+    "сможет бегать",
+    "могу только",
+    "может только",
+    "можно",
+    "смогу бегать",
+    "могу бегать",
+  ]);
   const scheduleUnavailability = hasAny(text, ["не могу", "не смогу", "не успеваю", "не может"]);
-  if (days.length > 0 && (scheduleAvailability || scheduleUnavailability)) {
+  if (days.length > 0 && hasScheduleContext(text) && (scheduleAvailability || scheduleUnavailability)) {
     if (scheduleAvailability) {
       payload.available_days = days;
     }
@@ -364,10 +537,10 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
     }
     const observed = parseIsoDateFallback(input.observedAt);
     if (text.includes("на следующей неделе") || text.includes("следующей неделе")) {
-      payload.valid_from = isoDate(addDays(observed, 1));
+      payload.valid_from = isoDate(startOfWeekMonday(addDays(observed, 7)));
       payload.valid_until = endOfNextWeek(observed);
     } else if (text.includes("на этой неделе")) {
-      payload.valid_from = isoDate(observed);
+      payload.valid_from = isoDate(startOfWeekMonday(observed));
       payload.valid_until = isoDate(endOfWeekSunday(observed));
     } else if (text.includes("сегодня")) {
       payload.valid_from = isoDate(observed);
@@ -392,13 +565,18 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
     return {
       primary_bucket: "operational_signal",
       secondary_buckets: [],
-      signal_type: scheduleUnavailability ? "schedule_unavailability_window" : "schedule_availability_window",
+      signal_type:
+        scheduleAvailability && text.includes("на этой неделе")
+          ? "plan_generation_constraint"
+          : scheduleUnavailability
+            ? "schedule_unavailability_window"
+            : "schedule_availability_window",
       structured_payload: payload,
       should_create_memory: false,
       should_create_case: false,
       should_create_trainingpeaks_action: false,
-      confidence: "high",
-      reason: "bounded schedule window detected",
+      confidence: text.includes("можно") ? "medium" : "high",
+      reason: explicitSignalReason ?? "bounded schedule window detected",
     };
   }
 
