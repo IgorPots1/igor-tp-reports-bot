@@ -8274,7 +8274,6 @@ async function handleTrainingPeaksReplyDraft(
   const draftResult = await generateTrainingPeaksReplyDraft({
     studentMessage,
     context: draftContext,
-    telegramFormality: studentMatch.student.telegramFormality,
   });
 
   if (!draftResult.ok) {

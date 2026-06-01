@@ -15,6 +15,11 @@ import {
   type TrainingPeaksWorkoutCacheRow,
 } from "@/features/trainingpeaks/repository";
 import { classifyTrainingPeaksWorkoutActivity } from "@/features/trainingpeaks/workout-activity-classification";
+import {
+  buildResolvedCommunicationProfilePromptLines,
+  resolveStudentCommunicationProfile,
+  type ResolvedStudentCommunicationProfile,
+} from "@/features/trainingpeaks/communication-profile";
 
 const BELGRADE_TIMEZONE = "Europe/Belgrade";
 const LOOKBACK_DAYS = 7;
@@ -57,6 +62,7 @@ export type TrainingPeaksReplyDraftContext = {
   recoveryAlertAvailable: boolean;
   telegramContextBullets: string[];
   coachMemoryPromptBlock: string | null;
+  resolvedCommunicationProfile: ResolvedStudentCommunicationProfile;
   promptContext: string;
 };
 
@@ -117,6 +123,12 @@ export async function buildTrainingPeaksReplyDraftContext(
     recentObservationLabels,
   });
 
+  const resolvedCommunicationProfile = resolveStudentCommunicationProfile({
+    telegramFormality: student?.telegramFormality ?? "unknown",
+    telegramContextNotes,
+    activeMemoryItems,
+  });
+
   const promptContext = buildPromptContext({
     studentName: input.studentName,
     studentSlug: input.studentSlug,
@@ -133,7 +145,9 @@ export async function buildTrainingPeaksReplyDraftContext(
     contactStatus,
     recentContactEvents,
     recentObservationLabels,
+    telegramFormality: student?.telegramFormality ?? "unknown",
     activeMemoryItems,
+    resolvedCommunicationProfile,
   });
 
   return {
@@ -150,6 +164,7 @@ export async function buildTrainingPeaksReplyDraftContext(
     recoveryAlertAvailable: recovery.available,
     telegramContextBullets,
     coachMemoryPromptBlock: buildCoachMemoryPromptBlock(activeMemoryItems),
+    resolvedCommunicationProfile,
     promptContext,
   };
 }
@@ -382,10 +397,12 @@ function buildPromptContext(input: {
   recoveryAlertMessage: string | null;
   recoveryAlertAvailable: boolean;
   telegramContextNotes: string | null;
+  telegramFormality: "ty" | "vy" | "unknown";
   contactStatus: TrainingPeaksStudentContactStatus | null;
   recentContactEvents: TrainingPeaksStudentContactEvent[];
   recentObservationLabels: string[];
   activeMemoryItems: TrainingPeaksStudentMemoryItem[];
+  resolvedCommunicationProfile: ResolvedStudentCommunicationProfile;
 }): string {
   const workoutLines =
     input.workouts.length === 0
@@ -414,12 +431,15 @@ function buildPromptContext(input: {
     `period=${input.periodFrom}..${input.periodTo}`,
     `cache_status=${input.cacheStatus.kind}`,
     `cache_note=${input.cacheStatusNote}`,
+    `telegram_formality_manual=${input.telegramFormality}`,
     ...(input.telegramContextNotes ? [`telegram_context_notes=${input.telegramContextNotes}`] : []),
     ...(input.recentObservationLabels.length > 0
       ? [`recent_observation_labels=${input.recentObservationLabels.join(", ")}`]
       : []),
     ...buildContactStatusPromptLines(input.contactStatus),
     ...(recentContactEventsSummary ? [`recent_contact_events=${recentContactEventsSummary}`] : []),
+    "",
+    ...buildResolvedCommunicationProfilePromptLines(input.resolvedCommunicationProfile),
     ...(coachMemoryPromptBlock ? ["", coachMemoryPromptBlock] : []),
     ...workoutLines,
     input.missedPlannedRunningDates.length > 0

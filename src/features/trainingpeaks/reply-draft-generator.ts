@@ -1,6 +1,5 @@
 import type { TrainingPeaksReplyDraftContext } from "@/features/trainingpeaks/reply-draft-context";
 import { getTrainingPeaksReplyDraftFormalityInstruction } from "@/features/trainingpeaks/telegram-context";
-import type { TrainingPeaksTelegramFormality } from "@/features/trainingpeaks/repository";
 
 const AI_MODEL = process.env.OPENAI_REPLY_DRAFT_MODEL?.trim() || "gpt-4o-mini";
 const OPENAI_API_URL = process.env.OPENAI_API_URL?.trim() || "https://api.openai.com/v1/chat/completions";
@@ -16,16 +15,31 @@ export type GenerateTrainingPeaksReplyDraftResult =
 export async function generateTrainingPeaksReplyDraft(input: {
   studentMessage: string;
   context: TrainingPeaksReplyDraftContext;
-  telegramFormality?: TrainingPeaksTelegramFormality;
 }): Promise<GenerateTrainingPeaksReplyDraftResult> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
     return { ok: false, reason: "missing_api_key" };
   }
 
-  const formalityInstruction = getTrainingPeaksReplyDraftFormalityInstruction(
-    input.telegramFormality ?? "unknown"
-  );
+  const resolvedFormality = input.context.resolvedCommunicationProfile.formality;
+  const formalityInstruction = getTrainingPeaksReplyDraftFormalityInstruction(resolvedFormality);
+  const resolvedProfileLines = [
+    "Resolved communication profile:",
+    `- formality: ${input.context.resolvedCommunicationProfile.formality}`,
+    `- source: ${input.context.resolvedCommunicationProfile.formalitySource}`,
+    ...(input.context.resolvedCommunicationProfile.tone
+      ? [`- tone: ${input.context.resolvedCommunicationProfile.tone}`]
+      : []),
+    ...(input.context.resolvedCommunicationProfile.preferredGreeting
+      ? [`- preferred_greeting: ${input.context.resolvedCommunicationProfile.preferredGreeting}`]
+      : []),
+    ...(input.context.resolvedCommunicationProfile.notes
+      ? [`- notes: ${input.context.resolvedCommunicationProfile.notes}`]
+      : []),
+    ...(input.context.resolvedCommunicationProfile.conflictFlags.length > 0
+      ? [`- conflict_flags: ${input.context.resolvedCommunicationProfile.conflictFlags.join(", ")}`]
+      : []),
+  ].join("\n");
 
   const systemPrompt = [
     "Ты помогаешь тренеру по бегу подготовить черновик ответа ученику в Telegram.",
@@ -46,8 +60,8 @@ export async function generateTrainingPeaksReplyDraft(input: {
     "Не выдумывай тренировки, дистанции, пульс и самочувствие, которых нет в контексте или в сообщении ученика.",
     "Тон тренерский: спокойно, по делу, без лишней технической детализации.",
     "Если в контексте есть блок Coach Memory, используй его как вспомогательные долгосрочные ориентиры для тона и содержания ответа.",
-    "Если в Coach Memory есть communication_style, адаптируй стиль ответа под него (включая ty/vy и общую формальность).",
-    "Если в Coach Memory есть preferred greeting, используй его как вероятный формат приветствия, когда это уместно.",
+    "Formality (ты/вы) бери только из Resolved communication profile. Не переопределяй его по Coach Memory.",
+    "tone/preferred_greeting из Resolved communication profile — вспомогательные, не обязательные сигналы.",
     "Учитывай ограничения расписания и предпочтения планирования из Coach Memory, когда предлагаешь шаги и сроки.",
     "Учитывай боль/здоровье/переносимость нагрузки из Coach Memory как важный safety-контекст и не предлагай рискованные формулировки.",
     "Не упоминай память как отдельный источник ('по памяти' и т.п.), если это не требуется по смыслу.",
@@ -61,6 +75,8 @@ export async function generateTrainingPeaksReplyDraft(input: {
     "",
     "Контекст из Supabase (только для ориентира):",
     input.context.promptContext,
+    "",
+    resolvedProfileLines,
     "",
     "Сформируй черновик ответа тренера ученику.",
   ].join("\n");

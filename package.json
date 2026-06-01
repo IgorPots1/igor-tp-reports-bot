@@ -78,6 +78,7 @@
     "check:coach-memory-duplicate-clustering": "npx tsx scripts/check-coach-memory-duplicate-clustering.ts",
     "merge-coach-memory-duplicates": "npx tsx scripts/merge-coach-memory-duplicates.ts",
     "check:move-phrase-coverage": "npx tsx scripts/check-move-phrase-coverage.ts",
+    "check-trainingpeaks-reply-draft-communication-profile": "npx tsx scripts/check-trainingpeaks-reply-draft-communication-profile.ts",
     "check:communication-style": "npx tsx scripts/diagnose-student-communication-style.ts"
   },
   "dependencies": {
