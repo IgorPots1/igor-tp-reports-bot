@@ -17,12 +17,14 @@ import {
   buildCatalogPreflight,
   buildStrengthWorkoutSummaryMarkdown,
   flattenWorkoutExercises,
+  isWrittenFieldStatus,
   normalizeVisibleText,
   parseStrengthWorkoutTemplate,
   relativizeArtifactPath,
   sanitizeAthleteUrl,
   type ExactVisibleResultDecision,
   type FieldWriteResult,
+  type FieldWriteStatus,
   type StrengthWorkoutExerciseSpec,
   type StrengthWorkoutRunSummary,
   type StrengthWorkoutTemplate,
@@ -365,16 +367,21 @@ async function waitForEnter(promptText: string): Promise<void> {
   }
 }
 
-async function waitForTypedYes(promptText: string): Promise<void> {
+async function waitForTypedYes(promptText: string): Promise<boolean> {
   const rl = createInterface({ input, output });
   try {
     const answer = await rl.question(`${promptText}\n`);
-    if (answer.trim().toLowerCase() !== "yes") {
-      throw new Error('Visual confirmation rejected. Type "yes" to continue.');
-    }
+    return answer.trim().toLowerCase() === "yes";
   } finally {
     rl.close();
   }
+}
+
+function sanitizeDebugText(value: string | null | undefined, maxLength = 240): string {
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
 }
 
 async function saveScreenshot(page: Page, state: RunState, label: string): Promise<string> {
@@ -395,25 +402,87 @@ async function saveFieldDebug(page: Page, exerciseName: string, reason: string):
     );
     const matched = blocks.find((node) => (node.textContent ?? "").replace(/\s+/g, " ").trim().includes(targetExerciseName));
     const host = matched ?? document.body;
-    const inputs = Array.from(host.querySelectorAll("input, textarea, [contenteditable='true']"))
-      .slice(0, 30)
+    const textSample = ((host.textContent ?? "").replace(/\s+/g, " ").trim()).slice(0, 1200);
+    const possibleLabels = Array.from(host.querySelectorAll("label, [aria-label], [title], [data-testid], th, dt, strong"))
+      .map((node) => {
+        const text = (node.textContent ?? "").replace(/\s+/g, " ").trim();
+        const aria = node.getAttribute("aria-label") ?? "";
+        const title = node.getAttribute("title") ?? "";
+        return `${text} ${aria} ${title}`.replace(/\s+/g, " ").trim();
+      })
+      .filter((entry) => entry.length >= 3)
+      .slice(0, 40);
+    const inputs = Array.from(host.querySelectorAll("input"))
+      .slice(0, 40)
       .map((node) => {
         const el = node as HTMLElement;
-        const tagName = el.tagName.toLowerCase();
-        const inputEl = el as HTMLInputElement;
+        const inputEl = node as HTMLInputElement;
+        const rect = el.getBoundingClientRect();
         return {
-          tagName,
-          type: tagName === "input" ? inputEl.type : undefined,
+          index: -1,
+          type: inputEl.type,
           ariaLabel: inputEl.getAttribute("aria-label") ?? undefined,
           placeholder: inputEl.getAttribute("placeholder") ?? undefined,
+          title: inputEl.getAttribute("title") ?? undefined,
           value: "value" in inputEl ? String(inputEl.value ?? "").slice(0, 180) : undefined,
-          nearbyText: ((el.closest("label, div, section, article")?.textContent ?? "").replace(/\s+/g, " ").trim()).slice(0, 240),
+          nearbyText: ((el.closest("label, td, th, div, section, article")?.textContent ?? "").replace(/\s+/g, " ").trim()).slice(0, 240),
+          rect: {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          },
         };
       });
+    const textareas = Array.from(host.querySelectorAll("textarea, [contenteditable='true'], [role='textbox']"))
+      .slice(0, 20)
+      .map((node) => {
+        const el = node as HTMLElement;
+        const rect = el.getBoundingClientRect();
+        const textareaEl = node as HTMLTextAreaElement;
+        return {
+          index: -1,
+          ariaLabel: textareaEl.getAttribute("aria-label") ?? undefined,
+          placeholder: textareaEl.getAttribute("placeholder") ?? undefined,
+          title: textareaEl.getAttribute("title") ?? undefined,
+          value: ("value" in textareaEl ? String(textareaEl.value ?? "") : String(textareaEl.textContent ?? "")).slice(0, 180),
+          nearbyText: ((el.closest("label, td, th, div, section, article")?.textContent ?? "").replace(/\s+/g, " ").trim()).slice(0, 240),
+          rect: {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          },
+        };
+      });
+    const buttons = Array.from(host.querySelectorAll("button, [role='button']"))
+      .slice(0, 20)
+      .map((node) => {
+        const el = node as HTMLElement;
+        const rect = el.getBoundingClientRect();
+        return {
+          index: -1,
+          text: (el.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 120),
+          ariaLabel: el.getAttribute("aria-label") ?? undefined,
+          title: el.getAttribute("title") ?? undefined,
+          rect: {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          },
+        };
+      });
+    for (let index = 0; index < inputs.length; index += 1) inputs[index].index = index;
+    for (let index = 0; index < textareas.length; index += 1) textareas[index].index = index;
+    for (let index = 0; index < buttons.length; index += 1) buttons[index].index = index;
     return {
       exerciseName: targetExerciseName,
-      hostTextSample: ((host.textContent ?? "").replace(/\s+/g, " ").trim()).slice(0, 1200),
+      blockTextSample: textSample ? textSample.split(" ").slice(0, 80) : [],
       inputs,
+      textareas,
+      buttons,
+      possibleLabels,
     };
   }, exerciseName);
   await writeFile(filePath, `${JSON.stringify(redactUnknown(payload), null, 2)}\n`, "utf8");
@@ -654,6 +723,239 @@ async function writeFieldValueInScope(
   return { ok: false };
 }
 
+type SemanticFieldKind = "sets" | "reps" | "duration" | "coachNote";
+
+type SemanticFieldWriteAttempt = {
+  status: FieldWriteStatus;
+  readBack?: string;
+  selectorHint?: string;
+  detail?: string;
+};
+
+type SemanticFieldOptions = {
+  kind: SemanticFieldKind;
+  value: string;
+  labelTokens: string[];
+  placeholderTokens: string[];
+  ariaTokens: string[];
+  inputTypeAllowList?: string[];
+  allowTextarea?: boolean;
+  allowContentEditable?: boolean;
+};
+
+function isTimePlaceholderLike(value: string | undefined): boolean {
+  const normalized = sanitizeDebugText(value).toLowerCase();
+  return (
+    normalized === "hh:mm:ss" ||
+    normalized === "mm:ss" ||
+    normalized === "h:mm:ss" ||
+    normalized.includes("hh:mm:ss")
+  );
+}
+
+function normalizeDurationVariants(raw: string): string[] {
+  const value = raw.trim();
+  if (!value) return [];
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return [value];
+  const mm = Math.floor(seconds / 60);
+  const ss = seconds % 60;
+  return [
+    `${seconds}`,
+    `${seconds} sec`,
+    `${seconds} secs`,
+    `${seconds} second`,
+    `${seconds} seconds`,
+    `${seconds}s`,
+    `${mm}:${String(ss).padStart(2, "0")}`,
+    `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`,
+    `00:${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`,
+  ];
+}
+
+async function isValueVisibleInBlock(
+  block: Locator,
+  kind: SemanticFieldKind,
+  expected: string
+): Promise<boolean> {
+  const expectedVariants = kind === "duration" ? normalizeDurationVariants(expected) : [expected];
+  return block.evaluate(
+    (host, input) => {
+      const normalize = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
+      const haystackParts: string[] = [];
+      const hostText = (host.textContent ?? "").replace(/\s+/g, " ").trim();
+      if (hostText) haystackParts.push(hostText);
+      const controls = Array.from(host.querySelectorAll("input, textarea, [contenteditable='true'], [role='textbox']"));
+      for (const node of controls) {
+        const inputEl = node as HTMLInputElement;
+        const value =
+          "value" in inputEl
+            ? String(inputEl.value ?? "")
+            : String((node as HTMLElement).textContent ?? "");
+        if (value.trim()) haystackParts.push(value);
+      }
+      const haystack = normalize(haystackParts.join(" | "));
+      return input.expectedVariants.some((variant) => normalize(variant) && haystack.includes(normalize(variant)));
+    },
+    { expectedVariants }
+  );
+}
+
+async function revealExercisePanel(block: Locator): Promise<void> {
+  const toggles = [
+    block.locator("button[aria-expanded='false']").first(),
+    block.locator("[role='button'][aria-expanded='false']").first(),
+    block.getByRole("button", { name: /Expand|Show More|More/i }).first(),
+  ];
+  for (const toggle of toggles) {
+    if ((await toggle.count()) === 0) continue;
+    if (!(await toggle.isVisible().catch(() => false))) continue;
+    await toggle.click().catch(() => {});
+    await block.page().waitForTimeout(250);
+  }
+}
+
+async function revealCoachNotesEditor(block: Locator): Promise<void> {
+  const candidates = [
+    block.getByRole("button", { name: /Add Note|Coach Notes?|Notes?|Instructions?/i }).first(),
+    block.getByText(/Add Note|Coach Notes?|Notes?|Instructions?/i).first(),
+  ];
+  for (const target of candidates) {
+    if ((await target.count()) === 0) continue;
+    if (!(await target.isVisible().catch(() => false))) continue;
+    await target.click().catch(() => {});
+    await block.page().waitForTimeout(250);
+  }
+}
+
+async function writeSemanticFieldInExerciseBlock(
+  block: Locator,
+  options: SemanticFieldOptions
+): Promise<SemanticFieldWriteAttempt> {
+  const result = await block.evaluate(
+    (host, input) => {
+      const normalize = (value: unknown) =>
+        String(value ?? "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .toLowerCase();
+      const compact = (value: unknown) => String(value ?? "").replace(/\s+/g, " ").trim();
+      const tokenMatch = (value: string, tokens: string[]) => {
+        const normalizedValue = normalize(value);
+        return tokens.some((token) => normalizedValue.includes(normalize(token)));
+      };
+      const controls = Array.from(
+        host.querySelectorAll("input, textarea, [contenteditable='true'], [role='textbox']")
+      ) as Array<HTMLInputElement | HTMLTextAreaElement | HTMLElement>;
+      const scored = controls
+        .map((node, index) => {
+          const tag = node.tagName.toLowerCase();
+          const type = tag === "input" ? normalize((node as HTMLInputElement).type || "text") : "";
+          if (input.inputTypeAllowList?.length && tag === "input" && !input.inputTypeAllowList.includes(type || "text")) {
+            return null;
+          }
+          if (!input.allowTextarea && tag === "textarea") return null;
+          if (!input.allowContentEditable && node.getAttribute("contenteditable") === "true") return null;
+          const ariaLabel = compact(node.getAttribute("aria-label"));
+          const placeholder = compact(node.getAttribute("placeholder"));
+          const title = compact(node.getAttribute("title"));
+          const ownValue =
+            "value" in node ? compact((node as HTMLInputElement | HTMLTextAreaElement).value) : compact(node.textContent);
+          const containerText = compact(node.closest("label, td, th, div, section, article, li, tr")?.textContent ?? "");
+          const signatures = [ariaLabel, placeholder, title, containerText].filter(Boolean).join(" | ");
+          let score = 0;
+          if (tokenMatch(ariaLabel, input.ariaTokens)) score += 50;
+          if (tokenMatch(placeholder, input.placeholderTokens)) score += 45;
+          if (tokenMatch(signatures, input.labelTokens)) score += 35;
+          if (tokenMatch(containerText, input.labelTokens)) score += 25;
+          if (input.kind === "coachNote" && tag === "textarea") score += 20;
+          if (input.kind !== "coachNote" && tag === "input") score += 10;
+          if (ownValue && tokenMatch(ownValue, ["hh:mm:ss"]) && input.kind !== "duration") score -= 60;
+          return {
+            index,
+            score,
+            tag,
+            type,
+            ariaLabel,
+            placeholder,
+            title,
+            containerText: containerText.slice(0, 220),
+          };
+        })
+        .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+        .filter((entry) => entry.score > 0)
+        .sort((a, b) => b.score - a.score);
+      const top = scored[0];
+      if (!top) {
+        return { ok: false, detail: "No semantic field candidate found." };
+      }
+      const target = controls[top.index];
+      const asInput = target as HTMLInputElement;
+      target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      (target as HTMLElement).focus();
+      if ("value" in asInput) {
+        asInput.value = "";
+        asInput.dispatchEvent(new Event("input", { bubbles: true }));
+        asInput.value = input.value;
+        asInput.dispatchEvent(new Event("input", { bubbles: true }));
+        asInput.dispatchEvent(new Event("change", { bubbles: true }));
+      } else {
+        (target as HTMLElement).textContent = input.value;
+        target.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      }
+      target.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+      (target as HTMLElement).blur();
+      const readBack = "value" in asInput ? compact(asInput.value) : compact((target as HTMLElement).textContent);
+      return {
+        ok: true,
+        readBack,
+        selectorHint: `${top.tag}:${top.type || "n/a"}:${top.ariaLabel || top.placeholder || "no-label"}`,
+      };
+    },
+    options
+  );
+
+  if (!result.ok) {
+    return {
+      status: "not_found",
+      detail: result.detail ?? "Semantic field candidate not found in exercise block.",
+    };
+  }
+
+  const readBack = sanitizeDebugText(result.readBack);
+  if (options.kind !== "duration" && isTimePlaceholderLike(readBack)) {
+    return {
+      status: "wrong_field",
+      readBack,
+      selectorHint: result.selectorHint,
+      detail: `Read-back looks like a time placeholder (${readBack}).`,
+    };
+  }
+
+  const matchesExpected =
+    options.kind === "duration"
+      ? normalizeDurationVariants(options.value).some((variant) =>
+          sanitizeDebugText(readBack).toLowerCase().includes(variant.toLowerCase())
+        )
+      : sanitizeDebugText(readBack).toLowerCase() === sanitizeDebugText(options.value).toLowerCase();
+  if (!matchesExpected) {
+    return {
+      status: "failed",
+      readBack,
+      selectorHint: result.selectorHint,
+      detail: `Read-back mismatch. Expected "${options.value}", got "${readBack || "<empty>"}".`,
+    };
+  }
+
+  const visible = await isValueVisibleInBlock(block, options.kind, options.value);
+  return {
+    status: visible ? "written_visible" : "written_but_not_visible",
+    readBack,
+    selectorHint: result.selectorHint,
+    detail: visible ? undefined : "Value read back but not visibly rendered in exercise block.",
+  };
+}
+
 function emptyField(required: boolean, value?: string): FieldWriteResult {
   return { attempted: false, required, status: "not_attempted", value };
 }
@@ -729,30 +1031,31 @@ async function ensurePickerReady(page: Page, state: RunState): Promise<Locator |
 
 async function locateExerciseBlock(page: Page, exerciseName: string): Promise<Locator | null> {
   const normalized = normalizeVisibleText(exerciseName);
-  const scopedEditable = page
-    .locator("section,article,div,li,tr,[role='row'],[role='group'],[data-testid]")
-    .filter({
-      hasText: new RegExp(escapeRegex(normalized), "i"),
-      has: page.locator("input, textarea, [contenteditable='true']"),
-    })
-    .last();
-  if ((await scopedEditable.count()) > 0 && (await scopedEditable.isVisible().catch(() => false))) {
-    return scopedEditable;
-  }
-
   const candidates = [
     page
-      .locator("section,article,div,li,tr,[role='row'],[role='group'],[data-testid]")
+      .locator("section,article,li,tr,[role='row'],[role='group'],[data-testid],div")
       .filter({ hasText: new RegExp(`^\\s*${escapeRegex(normalized)}\\s*$`, "i") })
-      .last(),
+      .filter({ has: page.locator("input, textarea, [contenteditable='true'], [role='textbox'], button") }),
     page
-      .locator("section,article,div,li,tr,[role='row'],[role='group'],[data-testid]")
+      .locator("section,article,li,tr,[role='row'],[role='group'],[data-testid],div")
       .filter({ hasText: new RegExp(escapeRegex(normalized), "i") })
-      .last(),
+      .filter({ has: page.locator("input, textarea, [contenteditable='true'], [role='textbox'], button") }),
   ];
   for (const candidate of candidates) {
-    if ((await candidate.count()) > 0 && (await candidate.isVisible().catch(() => false))) {
-      return candidate;
+    const count = await candidate.count();
+    let best: { index: number; textLength: number } | null = null;
+    for (let index = 0; index < count; index += 1) {
+      const item = candidate.nth(index);
+      if (!(await item.isVisible().catch(() => false))) continue;
+      const textLength = sanitizeDebugText(await item.innerText().catch(() => ""), 4000).length;
+      if (!best || textLength < best.textLength) {
+        best = { index, textLength };
+      }
+    }
+    if (best) {
+      const located = candidate.nth(best.index);
+      await revealExercisePanel(located);
+      return located;
     }
   }
   return null;
@@ -778,48 +1081,75 @@ async function populateExerciseCard(page: Page, exercise: StrengthWorkoutExercis
     return;
   }
 
-  const setsResult = await writeFieldValueInScope(block, { labels: /Sets/i, placeholders: /Sets/i, allowAnyInput: true }, attempt.sets);
+  const setsResult = await writeSemanticFieldInExerciseBlock(block, {
+    kind: "sets",
+    value: attempt.sets,
+    labelTokens: ["sets"],
+    placeholderTokens: ["sets", "set"],
+    ariaTokens: ["sets"],
+    inputTypeAllowList: ["text", "number", "tel", "search"],
+  });
   attempt.fields.sets.attempted = true;
-  attempt.fields.sets.status = setsResult.ok ? "written" : "not_found";
+  attempt.fields.sets.status = setsResult.status;
   attempt.fields.sets.readBack = setsResult.readBack;
   attempt.fields.sets.selectorHint = setsResult.selectorHint;
+  attempt.fields.sets.detail = setsResult.detail;
 
   if (exercise.reps) {
-    const repsResult = await writeFieldValueInScope(block, { labels: /Reps|Count/i, placeholders: /rep|count/i, allowAnyInput: true }, exercise.reps);
+    const repsResult = await writeSemanticFieldInExerciseBlock(block, {
+      kind: "reps",
+      value: exercise.reps,
+      labelTokens: ["reps", "rep", "count"],
+      placeholderTokens: ["reps", "rep", "count"],
+      ariaTokens: ["reps", "rep", "count"],
+      inputTypeAllowList: ["text", "number", "tel", "search"],
+    });
     attempt.fields.reps.attempted = true;
-    attempt.fields.reps.status = repsResult.ok ? "written" : "not_found";
+    attempt.fields.reps.status = repsResult.status;
     attempt.fields.reps.readBack = repsResult.readBack;
     attempt.fields.reps.selectorHint = repsResult.selectorHint;
+    attempt.fields.reps.detail = repsResult.detail;
   } else {
     attempt.fields.reps.status = "unsupported";
     attempt.fields.reps.detail = "Template does not require reps for this exercise.";
   }
 
   if (exercise.durationSeconds) {
-    const durationResult = await writeFieldValueInScope(
-      block,
-      { labels: /Duration|Time|Seconds|Sec/i, placeholders: /duration|time|sec|min/i, allowAnyInput: true },
-      exercise.durationSeconds
-    );
+    const durationResult = await writeSemanticFieldInExerciseBlock(block, {
+      kind: "duration",
+      value: exercise.durationSeconds,
+      labelTokens: ["duration", "time", "seconds", "sec"],
+      placeholderTokens: ["duration", "time", "sec", "hh:mm:ss", "mm:ss"],
+      ariaTokens: ["duration", "time", "seconds", "sec"],
+      inputTypeAllowList: ["text", "number", "tel", "search", "time"],
+    });
     attempt.fields.duration.attempted = true;
-    attempt.fields.duration.status = durationResult.ok ? "written" : "not_found";
+    attempt.fields.duration.status = durationResult.status;
     attempt.fields.duration.readBack = durationResult.readBack;
     attempt.fields.duration.selectorHint = durationResult.selectorHint;
+    attempt.fields.duration.detail = durationResult.detail;
   } else {
     attempt.fields.duration.status = "unsupported";
     attempt.fields.duration.detail = "Template does not require duration for this exercise.";
   }
 
   if (exercise.coachNote) {
-    const noteResult = await writeFieldValueInScope(
-      block,
-      { labels: /Notes|Coach Notes|Instructions/i, placeholders: /notes|coach notes|instructions/i, allowTextarea: true, allowAnyInput: true },
-      exercise.coachNote
-    );
+    await revealCoachNotesEditor(block);
+    const noteResult = await writeSemanticFieldInExerciseBlock(block, {
+      kind: "coachNote",
+      value: exercise.coachNote,
+      labelTokens: ["coach note", "notes", "note", "instruction", "instructions"],
+      placeholderTokens: ["coach note", "notes", "instruction"],
+      ariaTokens: ["coach note", "notes", "instruction"],
+      allowTextarea: true,
+      allowContentEditable: true,
+      inputTypeAllowList: ["text", "search"],
+    });
     attempt.fields.coachNote.attempted = true;
-    attempt.fields.coachNote.status = noteResult.ok ? "written" : "not_found";
+    attempt.fields.coachNote.status = noteResult.status;
     attempt.fields.coachNote.readBack = noteResult.readBack;
     attempt.fields.coachNote.selectorHint = noteResult.selectorHint;
+    attempt.fields.coachNote.detail = noteResult.detail;
   } else {
     attempt.fields.coachNote.status = "unsupported";
     attempt.fields.coachNote.detail = "Template does not require coach note for this exercise.";
@@ -951,22 +1281,22 @@ async function runApplyFlow(
     attempt.exactMatchClicked = exercise.name;
     await page.waitForTimeout(700);
     await populateExerciseCard(page, exercise, attempt);
-    if (attempt.fields.sets.status !== "written") {
+    if (!isWrittenFieldStatus(attempt.fields.sets.status)) {
       requiredWriteFailure = true;
       const debugPath = await saveFieldDebug(page, attempt.name, "sets-not-written");
       state.warnings.push(`Field debug captured for "${attempt.name}" sets: ${debugPath}`);
     }
-    if (attempt.fields.reps.required && attempt.fields.reps.status !== "written") {
+    if (attempt.fields.reps.required && !isWrittenFieldStatus(attempt.fields.reps.status)) {
       requiredWriteFailure = true;
       const debugPath = await saveFieldDebug(page, attempt.name, "reps-not-written");
       state.warnings.push(`Field debug captured for "${attempt.name}" reps: ${debugPath}`);
     }
-    if (attempt.fields.duration.required && attempt.fields.duration.status !== "written") {
+    if (attempt.fields.duration.required && !isWrittenFieldStatus(attempt.fields.duration.status)) {
       requiredWriteFailure = true;
       const debugPath = await saveFieldDebug(page, attempt.name, "duration-not-written");
       state.warnings.push(`Field debug captured for "${attempt.name}" duration: ${debugPath}`);
     }
-    if (attempt.fields.coachNote.required && attempt.fields.coachNote.status !== "written") {
+    if (attempt.fields.coachNote.required && !isWrittenFieldStatus(attempt.fields.coachNote.status)) {
       requiredWriteFailure = true;
       const debugPath = await saveFieldDebug(page, attempt.name, "coach-note-not-written");
       state.warnings.push(`Field debug captured for "${attempt.name}" coachNote: ${debugPath}`);
@@ -976,6 +1306,14 @@ async function runApplyFlow(
 
   await saveScreenshot(page, state, "apply-before-save");
   const beforeSaveVisual = await collectVisualFieldEvidence(page, flatExercises);
+  if (!beforeSaveVisual.fieldsVisible || !beforeSaveVisual.notesVisible) {
+    state.errors.push("Before-save visual verification failed (fieldsVisible and notesVisible must both be yes). Save blocked.");
+    state.visualFieldVerification = {
+      beforeSave: beforeSaveVisual,
+      afterSave: buildMissingAfterSaveVisual(beforeSaveVisual),
+    };
+    return;
+  }
   if (requiredWriteFailure) {
     state.errors.push("One or more required fields were not written/read back. Save blocked for safety.");
     state.visualFieldVerification = {
@@ -996,7 +1334,15 @@ async function runApplyFlow(
       };
       return;
     }
-    await waitForTypedYes('Type "yes" after Igor visual confirmation');
+    const confirmed = await waitForTypedYes('Type "yes" after Igor visual confirmation');
+    if (!confirmed) {
+      state.errors.push('Visual confirmation rejected by operator (expected typed "yes"). Save blocked.');
+      state.visualFieldVerification = {
+        beforeSave: beforeSaveVisual,
+        afterSave: buildMissingAfterSaveVisual(beforeSaveVisual),
+      };
+      return;
+    }
   }
   const saveButton = page.getByRole("button", { name: /Save( and Close)?/i }).first();
   if ((await saveButton.count()) > 0 && (await saveButton.isVisible().catch(() => false))) {

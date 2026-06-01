@@ -101,7 +101,14 @@ export type StrengthWorkoutRunSummary = {
   errors: string[];
 };
 
-export type FieldWriteStatus = "written" | "not_found" | "unsupported" | "failed" | "not_attempted";
+export type FieldWriteStatus =
+  | "written_visible"
+  | "written_but_not_visible"
+  | "wrong_field"
+  | "not_found"
+  | "unsupported"
+  | "failed"
+  | "not_attempted";
 
 export type FieldWriteResult = {
   attempted: boolean;
@@ -112,6 +119,10 @@ export type FieldWriteResult = {
   selectorHint?: string;
   detail?: string;
 };
+
+export function isWrittenFieldStatus(status: FieldWriteStatus): boolean {
+  return status === "written_visible" || status === "written_but_not_visible";
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -319,13 +330,13 @@ export function buildStrengthWorkoutSummaryMarkdown(summary: StrengthWorkoutRunS
   let notesWritten = 0;
   let notesRequired = 0;
   for (const exercise of summary.attemptedExercises) {
-    if (exercise.fields.sets.status === "written") setsWritten += 1;
+    if (isWrittenFieldStatus(exercise.fields.sets.status)) setsWritten += 1;
     if (exercise.fields.reps.required) repsRequired += 1;
-    if (exercise.fields.reps.status === "written") repsWritten += 1;
+    if (isWrittenFieldStatus(exercise.fields.reps.status)) repsWritten += 1;
     if (exercise.fields.duration.required) durationRequired += 1;
-    if (exercise.fields.duration.status === "written") durationWritten += 1;
+    if (isWrittenFieldStatus(exercise.fields.duration.status)) durationWritten += 1;
     if (exercise.fields.coachNote.required) notesRequired += 1;
-    if (exercise.fields.coachNote.status === "written") notesWritten += 1;
+    if (isWrittenFieldStatus(exercise.fields.coachNote.status)) notesWritten += 1;
     lines.push(
       `- [${exercise.blockName}] ${exercise.name}: selection=${exercise.selectionStatus}, clicked=${exercise.clicked ? "yes" : "no"}, added=${exercise.added ? "yes" : "no"}, sets=${exercise.fields.sets.status}, reps=${exercise.fields.reps.status}, duration=${exercise.fields.duration.status}, coachNote=${exercise.fields.coachNote.status}`
     );
