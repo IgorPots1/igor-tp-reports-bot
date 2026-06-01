@@ -32,7 +32,7 @@ export type ExactVisibleResultDecision = {
   requestedName: string;
   exactVisibleMatches: string[];
   visibleTexts: string[];
-  status: "exact_one" | "missing" | "ambiguous";
+  status: "exact" | "missing" | "ambiguous";
 };
 
 export type StrengthWorkoutRunSummary = {
@@ -55,9 +55,12 @@ export type StrengthWorkoutRunSummary = {
     notes?: string;
     selectionStatus: ExactVisibleResultDecision["status"] | "not_run";
     clicked: boolean;
+    wouldClick?: boolean;
     added: boolean;
     visibleExactMatches: string[];
     visibleTextsSample: string[];
+    inputValueAfterTyping?: string;
+    candidateRows?: string[];
     fieldWrite: {
       sets: "yes" | "no" | "not_attempted";
       metric: "yes" | "no" | "not_attempted";
@@ -172,7 +175,7 @@ export function buildCatalogPreflight(
   };
 }
 
-function normalizeVisibleText(value: string): string {
+export function normalizeVisibleText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
@@ -192,7 +195,7 @@ export function decideExactVisibleResult(
       requestedName,
       exactVisibleMatches,
       visibleTexts: normalizedVisible,
-      status: "exact_one",
+      status: "exact",
     };
   }
 
@@ -260,6 +263,12 @@ export function buildStrengthWorkoutSummaryMarkdown(summary: StrengthWorkoutRunS
     lines.push(
       `- [${exercise.blockName}] ${exercise.name}: selection=${exercise.selectionStatus}, clicked=${exercise.clicked ? "yes" : "no"}, added=${exercise.added ? "yes" : "no"}, sets=${exercise.fieldWrite.sets}, metric=${exercise.fieldWrite.metric}, notes=${exercise.fieldWrite.notes}`
     );
+    if (exercise.inputValueAfterTyping) {
+      lines.push(`  inputValueAfterTyping=${exercise.inputValueAfterTyping}`);
+    }
+    if (exercise.candidateRows && exercise.candidateRows.length > 0) {
+      lines.push(`  candidateRows=${exercise.candidateRows.slice(0, 8).join(" | ")}`);
+    }
   }
   lines.push("");
   lines.push("## Verification");

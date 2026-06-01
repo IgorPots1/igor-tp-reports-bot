@@ -16,6 +16,7 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const fixturePath = path.join(__dirname, "fixtures", "strength-workout-template.fixture.json");
+const minimalFixturePath = path.join(__dirname, "fixtures", "strength-workout-template.minimal-strength.fixture.json");
 
 function assert(condition: unknown, message: string): void {
   if (!condition) {
@@ -31,11 +32,18 @@ function loadFixtureTemplate() {
 function run(): void {
   const template = loadFixtureTemplate();
   const flatExercises = flattenWorkoutExercises(template);
+  const minimalTemplate = parseStrengthWorkoutTemplate(
+    JSON.parse(readFileSync(minimalFixturePath, "utf8")) as unknown
+  );
+  const minimalFlat = flattenWorkoutExercises(minimalTemplate);
 
   assert(template.title === "TEST - Beginner Runner Strength Foundation", "Expected fixed TEST workout title.");
   assert(flatExercises.length === 13, `Expected 13 exercises, got ${flatExercises.length}.`);
   assert(flatExercises[0]?.name === "Jog In Place", "Expected Jog In Place first.");
   assert(flatExercises[12]?.name === "Supported Calf Stretch", "Expected Supported Calf Stretch last.");
+  assert(minimalTemplate.id === "minimal_strength", "Expected minimal template id.");
+  assert(minimalFlat.length === 5, `Expected 5 minimal exercises, got ${minimalFlat.length}.`);
+  assert(minimalFlat[0]?.name === "Glute Bridge", "Expected minimal template to start from Glute Bridge.");
 
   const catalogPreflight = buildCatalogPreflight(template, flatExercises.map((entry) => entry.name));
   assert(catalogPreflight.missingNames.length === 0, "Expected all exact names to be present in synthetic catalog preflight.");
@@ -44,13 +52,20 @@ function run(): void {
   assert(missingPreflight.missingNames.includes("Bird Dog"), "Expected Bird Dog to be reported missing.");
 
   const exactDecision = decideExactVisibleResult("Glute Bridge", ["Glute Bridge", "Banded Glute Bridge"]);
-  assert(exactDecision.status === "exact_one", "Expected exact result decision for Glute Bridge.");
+  assert(exactDecision.status === "exact", "Expected exact result decision for Glute Bridge.");
+  assert(
+    exactDecision.exactVisibleMatches.length === 1 && exactDecision.exactVisibleMatches[0] === "Glute Bridge",
+    "Expected only exact Glute Bridge match, without banded/single-leg variants."
+  );
 
   const ambiguousDecision = decideExactVisibleResult("Glute Bridge", ["Glute Bridge", "Glute Bridge"]);
   assert(ambiguousDecision.status === "ambiguous", "Expected ambiguous status for duplicate exact matches.");
 
-  const missingDecision = decideExactVisibleResult("Bird Dog", ["Banded Bird Dog", "Bird Dog Row"]);
+  const missingDecision = decideExactVisibleResult("Glute Bridge", ["Banded Glute Bridge", "Single Leg Glute Bridge"]);
   assert(missingDecision.status === "missing", "Expected missing status when exact visible match is absent.");
+
+  const unrelatedMissingDecision = decideExactVisibleResult("Bird Dog", ["Banded Bird Dog", "Bird Dog Row"]);
+  assert(unrelatedMissingDecision.status === "missing", "Expected missing status when exact visible match is absent.");
 
   const redactedUrl = sanitizeAthleteUrl("https://app.trainingpeaks.com/#calendar/athletes/3102415?athleteId=3102415");
   assert(redactedUrl.includes("<ATHLETE_ID>"), "Expected athlete id redaction.");
@@ -78,6 +93,8 @@ function run(): void {
       added: false,
       visibleExactMatches: [],
       visibleTextsSample: [],
+      inputValueAfterTyping: exercise.name,
+      candidateRows: [exercise.name],
       fieldWrite: {
         sets: "not_attempted",
         metric: "not_attempted",
@@ -123,6 +140,7 @@ function run(): void {
   console.log("check-strength-workout-ui-writer: ok");
   console.log(`- fixture: ${fixturePath}`);
   console.log(`- exercises: ${flatExercises.length}`);
+  console.log(`- minimal exercises: ${minimalFlat.length}`);
   console.log(`- title: ${template.title}`);
 }
 

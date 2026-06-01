@@ -12,8 +12,8 @@ import { redactUnknown } from "./lib/trainingpeaks-api-move.ts";
 import {
   buildCatalogPreflight,
   buildStrengthWorkoutSummaryMarkdown,
-  decideExactVisibleResult,
   flattenWorkoutExercises,
+  normalizeVisibleText,
   parseStrengthWorkoutTemplate,
   relativizeArtifactPath,
   sanitizeAthleteUrl,
@@ -26,7 +26,13 @@ import {
 
 const TP_APP_HOST = "https://app.trainingpeaks.com";
 const repoRoot = path.resolve(toolRoot, "..", "..");
-const fixturePath = path.join(toolRoot, "scripts", "fixtures", "strength-workout-template.fixture.json");
+const defaultFixturePath = path.join(toolRoot, "scripts", "fixtures", "strength-workout-template.fixture.json");
+const minimalFixturePath = path.join(
+  toolRoot,
+  "scripts",
+  "fixtures",
+  "strength-workout-template.minimal-strength.fixture.json"
+);
 const renderedCatalogPath = path.join(repoRoot, "reports", "strength-builder-ai-audit-input", "raw-rendered-exercises.json");
 const defaultOutDir = path.join(repoRoot, "reports", "strength-builder-create-test-workout");
 const summaryPath = path.join(defaultOutDir, "CREATE_TEST_WORKOUT_SUMMARY.md");
@@ -40,6 +46,7 @@ type CliArgs = {
   headless: boolean;
   mode: "dry-run" | "apply";
   manualBuilder: boolean;
+  template: "default" | "minimal-strength";
   help: boolean;
 };
 
@@ -57,9 +64,12 @@ type ExerciseAttempt = {
   notes?: string;
   selectionStatus: ExactVisibleResultDecision["status"] | "not_run";
   clicked: boolean;
+  wouldClick?: boolean;
   added: boolean;
   visibleExactMatches: string[];
   visibleTextsSample: string[];
+  inputValueAfterTyping?: string;
+  candidateRows?: string[];
   fieldWrite: {
     sets: "yes" | "no" | "not_attempted";
     metric: "yes" | "no" | "not_attempted";
@@ -95,6 +105,7 @@ function printHelp(): void {
   console.log("  --headed | --headless  Browser mode");
   console.log("  --dry-run | --apply    Dry-run is default");
   console.log("  --manual-builder       Wait for manual builder open before checks");
+  console.log("  --template <name>      default | minimal-strength");
   console.log("");
   console.log("Safety:");
   console.log("  - Dry-run is the default mode.");
@@ -108,6 +119,7 @@ function parseArgs(argv: string[]): CliArgs {
     headless: false,
     mode: "dry-run",
     manualBuilder: false,
+    template: "default",
     help: false,
   };
   let browserModeProvided = false;
@@ -166,6 +178,25 @@ function parseArgs(argv: string[]): CliArgs {
       parsed.manualBuilder = true;
       continue;
     }
+    if (arg.startsWith("--template=")) {
+      const value = arg.slice("--template=".length).trim();
+      if (value !== "default" && value !== "minimal-strength") {
+        throw new Error(`Unsupported --template value "${value}".`);
+      }
+      parsed.template = value;
+      continue;
+    }
+    if (arg === "--template") {
+      const next = argv[index + 1];
+      if (!next) throw new Error("Missing value after --template");
+      const value = next.trim();
+      if (value !== "default" && value !== "minimal-strength") {
+        throw new Error(`Unsupported --template value "${value}".`);
+      }
+      parsed.template = value;
+      index += 1;
+      continue;
+    }
     throw new Error(`Unknown argument: ${arg}`);
   }
 
@@ -191,8 +222,12 @@ function parseArgs(argv: string[]): CliArgs {
   return parsed as CliArgs;
 }
 
-function readWorkoutTemplate(): StrengthWorkoutTemplate {
-  const raw = readFileSync(fixturePath, "utf8");
+function fixturePathForTemplate(template: CliArgs["template"]): string {
+  return template === "minimal-strength" ? minimalFixturePath : defaultFixturePath;
+}
+
+function readWorkoutTemplate(template: CliArgs["template"]): StrengthWorkoutTemplate {
+  const raw = readFileSync(fixturePathForTemplate(template), "utf8");
   return parseStrengthWorkoutTemplate(JSON.parse(raw) as unknown);
 }
 
@@ -332,51 +367,62 @@ async function locateSearchInput(page: Page): Promise<Locator | null> {
   return null;
 }
 
-async function collectVisibleSearchResults(page: Page): Promise<string[]> {
-  const texts = await page.evaluate(() => {
-    const scopes = Array.from(document.querySelectorAll("div, li, button, span"));
-    const collected: string[] = [];
-    for (const element of scopes) {
-      const text = element.textContent?.replace(/\s+/g, " ").trim();
-      if (!text || text.length > 120) continue;
-      const style = window.getComputedStyle(element as Element);
-      if (style.visibility === "hidden" || style.display === "none") continue;
-      const rect = (element as HTMLElement).getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) continue;
-      collected.push(text);
-    }
-    return Array.from(new Set(collected)).slice(0, 40);
-  });
-  return texts;
+async function collectCandidateRows(page: Page): Promise<string[]> {
+  const optionRows = page.locator("[role='option']");
+  const count = await optionRows.count();
+  const rows: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const row = optionRows.nth(index);
+    const visible = await row.isVisible().catch(() => false);
+    if (!visible) continue;
+    const text = normalizeVisibleText(await row.innerText().catch(() => ""));
+    if (!text || text.length > 140) continue;
+    rows.push(text);
+  }
+  return rows.slice(0, 30);
 }
 
-async function clickExactSearchResult(page: Page, requestedName: string): Promise<ExactVisibleResultDecision> {
-  const visibleTexts = await collectVisibleSearchResults(page);
-  const decision = decideExactVisibleResult(requestedName, visibleTexts);
-  if (decision.status !== "exact_one") {
-    return decision;
-  }
+type PickerSelectionResult = {
+  decision: ExactVisibleResultDecision;
+  clicked: boolean;
+};
 
-  const exactButton = page.getByRole("button", { name: new RegExp(`^${escapeRegExp(requestedName)}$`, "i") }).first();
-  if ((await exactButton.count()) > 0 && (await exactButton.isVisible().catch(() => false))) {
-    await exactButton.click();
-    return decision;
-  }
+async function clickExactSearchResult(page: Page, requestedName: string, shouldClick: boolean): Promise<PickerSelectionResult> {
+  const candidateRows = await collectCandidateRows(page);
+  const normalizedRequested = normalizeVisibleText(requestedName);
+  const matchingIndexes = candidateRows
+    .map((text, index) => ({ text, index }))
+    .filter((entry) => normalizeVisibleText(entry.text) === normalizedRequested);
+  const exactVisibleMatches = matchingIndexes.map((entry) => entry.text);
 
-  const exactText = page.getByText(new RegExp(`^${escapeRegExp(requestedName)}$`, "i")).first();
-  if ((await exactText.count()) > 0 && (await exactText.isVisible().catch(() => false))) {
-    await exactText.click();
-    return decision;
-  }
-
-  return {
-    ...decision,
-    status: "missing",
+  const decision: ExactVisibleResultDecision = {
+    requestedName,
+    exactVisibleMatches,
+    visibleTexts: candidateRows,
+    status: matchingIndexes.length === 1 ? "exact" : matchingIndexes.length > 1 ? "ambiguous" : "missing",
   };
-}
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (!shouldClick || decision.status !== "exact") {
+    return { decision, clicked: false };
+  }
+
+  const targetIndex = matchingIndexes[0]?.index;
+  if (targetIndex === undefined) {
+    return { decision: { ...decision, status: "missing" }, clicked: false };
+  }
+
+  const targetRow = page.locator("[role='option']").nth(targetIndex);
+  if (!(await targetRow.isVisible().catch(() => false))) {
+    return { decision: { ...decision, status: "missing" }, clicked: false };
+  }
+
+  const textBeforeClick = normalizeVisibleText(await targetRow.innerText().catch(() => ""));
+  if (textBeforeClick !== normalizedRequested) {
+    return { decision: { ...decision, status: "missing" }, clicked: false };
+  }
+
+  await targetRow.click();
+  return { decision, clicked: true };
 }
 
 async function fillFirstVisibleInput(candidates: Locator[], value: string): Promise<boolean> {
@@ -524,20 +570,25 @@ async function runDryRunFlow(
   if (!searchInput) {
     return;
   }
-  await searchInput.fill("Glute Bridge");
+  const firstExerciseName = flattenWorkoutExercises(template)[0]?.name ?? "Glute Bridge";
+  await searchInput.fill(firstExerciseName);
   await page.waitForTimeout(900);
-  const decision = decideExactVisibleResult("Glute Bridge", await collectVisibleSearchResults(page));
+  const typedValue = await searchInput.inputValue().catch(() => "");
+  const pickerDecision = await clickExactSearchResult(page, firstExerciseName, false);
   state.attemptedExercises.push({
     blockName: template.blocks[1]?.name ?? "Activation",
-    name: "Glute Bridge",
-    sets: "2",
+    name: firstExerciseName,
+    sets: flattenWorkoutExercises(template)[0]?.sets ?? "2",
     metricType: "reps",
-    metricValue: "15",
-    selectionStatus: "not_run",
+    metricValue: flattenWorkoutExercises(template)[0]?.metricValue ?? "15",
     clicked: false,
     added: false,
-    visibleExactMatches: decision.exactVisibleMatches,
-    visibleTextsSample: decision.visibleTexts.slice(0, 10),
+    selectionStatus: pickerDecision.decision.status,
+    wouldClick: pickerDecision.decision.status === "exact",
+    visibleExactMatches: pickerDecision.decision.exactVisibleMatches,
+    visibleTextsSample: pickerDecision.decision.visibleTexts.slice(0, 10),
+    inputValueAfterTyping: typedValue,
+    candidateRows: pickerDecision.decision.visibleTexts,
     fieldWrite: {
       sets: "not_attempted",
       metric: "not_attempted",
@@ -576,14 +627,27 @@ async function runApplyFlow(
 
     await searchInput.fill(exercise.name);
     await page.waitForTimeout(900);
-
-    const decision = await clickExactSearchResult(page, exercise.name);
+    const typedValue = await searchInput.inputValue().catch(() => "");
+    const selection = await clickExactSearchResult(page, exercise.name, args.mode === "apply");
+    const decision = selection.decision;
+    const candidateRows = decision.visibleTexts;
     attempt.selectionStatus = decision.status;
     attempt.visibleExactMatches = decision.exactVisibleMatches;
     attempt.visibleTextsSample = decision.visibleTexts.slice(0, 10);
+    attempt.inputValueAfterTyping = typedValue;
+    attempt.candidateRows = candidateRows;
+    attempt.wouldClick = decision.status === "exact";
 
-    if (decision.status !== "exact_one") {
+    if (decision.status !== "exact") {
       state.errors.push(`Exact visible result was not unique for "${exercise.name}" (status: ${decision.status}).`);
+      await saveScreenshot(page, state, `apply-ambiguous-${slugify(exercise.name)}`);
+      return;
+    }
+
+    if (!selection.clicked) {
+      attempt.clicked = false;
+      attempt.selectionStatus = "missing";
+      state.errors.push(`Exact picker row changed before click for "${exercise.name}" (status: missing).`);
       await saveScreenshot(page, state, `apply-ambiguous-${slugify(exercise.name)}`);
       return;
     }
@@ -676,7 +740,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const template = readWorkoutTemplate();
+  const template = readWorkoutTemplate(args.template);
   const renderedNames = readRenderedExerciseNames();
   const preflight = buildCatalogPreflight(template, renderedNames);
   const athleteUrlRedacted = sanitizeAthleteUrl(args.athleteUrl);
@@ -686,6 +750,7 @@ async function main(): Promise<void> {
   console.log(`[tp-create-test-strength-workout] date: ${args.date}`);
   console.log(`[tp-create-test-strength-workout] title: ${template.title}`);
   console.log(`[tp-create-test-strength-workout] manual-builder: ${args.manualBuilder ? "yes" : "no"}`);
+  console.log(`[tp-create-test-strength-workout] template: ${args.template}`);
   console.log(`[tp-create-test-strength-workout] exercises: ${preflight.requestedNames.join(", ")}`);
   console.log("[tp-create-test-strength-workout] WARNING: TrainingPeaks may be changed only in --apply mode after typed confirmation.");
 
