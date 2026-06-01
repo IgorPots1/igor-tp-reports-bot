@@ -9,10 +9,28 @@
         padding: 12px;
         border: 1px solid #ccc;
       }
-      .picker-list {
+      .shell-header {
+        font-size: 12px;
+        color: #666;
+        margin-bottom: 8px;
+      }
+      .shell-category {
+        display: block;
+        width: 100%;
+        text-align: left;
+        padding: 8px 10px;
+        margin-bottom: 4px;
+        border: 1px solid #ddd;
+        background: #fafafa;
+      }
+      .search-results {
         margin-top: 8px;
         max-height: 220px;
         overflow-y: auto;
+        border: 1px solid #ddd;
+      }
+      .search-results[hidden] {
+        display: none;
       }
       .exercise-row {
         display: flex;
@@ -32,83 +50,132 @@
   </head>
   <body>
     <section aria-label="Exercise Library">
-      <div class="picker-popup">
+      <div class="picker-popup add-block-shell">
+        <div class="shell-header">search and add block or template</div>
+        <div class="shell-header">OR SELECT TO CREATE</div>
+        <button type="button" class="shell-category">Single Exercise</button>
+        <button type="button" class="shell-category">Warm Up</button>
+        <button type="button" class="shell-category">Cool Down</button>
         <input
+          id="exercise-search-input"
           type="text"
           placeholder="Search Exercises, Circuits, or Saved Items"
           aria-label="Search Exercises, Circuits, or Saved Items"
         />
-        <div class="picker-list" data-testid="rendered-exercise-list">
-          <div class="exercise-row">
+        <div
+          id="search-results"
+          class="search-results"
+          data-testid="search-results-list"
+          role="listbox"
+          hidden
+        >
+          <div class="exercise-row" data-keywords="90 degree iso chin up hold chin 90">
             <div class="exercise-name">90 Degree Iso Chin Up Hold</div>
             <div class="exercise-meta">Biceps</div>
           </div>
-          <div class="exercise-row">
+          <div class="exercise-row" data-keywords="90-90 glute 90">
             <div class="exercise-name">90-90</div>
             <div class="exercise-meta">Glute</div>
           </div>
-          <div class="exercise-row">
+          <div class="exercise-row" data-keywords="90-90 to lunge quads 90">
             <div class="exercise-name">90-90 to Lunge</div>
             <div class="exercise-meta">Quads</div>
           </div>
-          <div class="exercise-row">
+          <div class="exercise-row" data-keywords="ab wheel abs ab">
             <div class="exercise-name">Ab Wheel</div>
             <div class="exercise-meta">Abs</div>
           </div>
-          <div class="exercise-row">
+          <div class="exercise-row" data-keywords="air squat hamstrings air">
             <div class="exercise-name">Air Squat</div>
             <div class="exercise-meta">Hamstrings</div>
           </div>
-          <div class="exercise-row">
+          <div class="exercise-row" data-keywords="alternating db bent over row upper back">
             <div class="exercise-name">Alternating DB Bent Over Row</div>
             <div class="exercise-meta">Upper Back</div>
           </div>
-          <div class="exercise-row">
+          <div class="exercise-row" data-keywords="alternating db floor press chest">
             <div class="exercise-name">Alternating DB Floor Press</div>
             <div class="exercise-meta">Chest</div>
           </div>
-          <div class="exercise-row">
+          <div class="exercise-row" data-keywords="alternating db hammer curl biceps">
             <div class="exercise-name">Alternating DB Hammer Curl</div>
             <div class="exercise-meta">Biceps</div>
           </div>
-          <div class="exercise-row">
+          <div class="exercise-row" data-keywords="downward dog lunge rotation glute">
             <div class="exercise-name">Downward Dog Lunge Rotation</div>
             <div class="exercise-meta">Glute</div>
           </div>
-          <div class="exercise-row">
+          <div class="exercise-row" data-keywords="drag curl biceps">
             <div class="exercise-name">Drag Curl</div>
             <div class="exercise-meta">Biceps</div>
           </div>
-          <div class="exercise-row">
+          <div class="exercise-row" data-keywords="drop jump calves">
             <div class="exercise-name">Drop Jump</div>
             <div class="exercise-meta">Calves</div>
           </div>
-          <div class="exercise-row">
+          <div class="exercise-row" data-keywords="dynamic chest stretch chest">
             <div class="exercise-name">Dynamic Chest Stretch</div>
             <div class="exercise-meta">Chest</div>
           </div>
-          <div class="exercise-row">
+          <div class="exercise-row" data-keywords="dynamic clam shell glute clam">
             <div class="exercise-name">Dynamic Clam Shell</div>
             <div class="exercise-meta">Glute</div>
           </div>
-          <div class="exercise-row">
+          <div class="exercise-row" data-keywords="eagle arms stretch shoulders">
             <div class="exercise-name">Eagle Arms Stretch</div>
             <div class="exercise-meta">Shoulders</div>
           </div>
-          <div class="exercise-row">
+          <div class="exercise-row" data-keywords="elbow to knee abs">
             <div class="exercise-name">Elbow to Knee</div>
             <div class="exercise-meta">Abs</div>
           </div>
-          <div class="exercise-row">
+          <div class="exercise-row" data-keywords="elevated body weight calf raise calves calf">
             <div class="exercise-name">Elevated Body Weight Calf Raise</div>
             <div class="exercise-meta">Calves</div>
           </div>
-          <div class="exercise-row">
+          <div class="exercise-row" data-keywords="forearm plank abs plank">
             <div class="exercise-name">Forearm Plank</div>
             <div class="exercise-meta">Abs</div>
           </div>
         </div>
       </div>
     </section>
+    <script>
+      (function () {
+        const input = document.getElementById("exercise-search-input");
+        const results = document.getElementById("search-results");
+        const rows = Array.from(results.querySelectorAll(".exercise-row"));
+
+        function rowMatchesQuery(row, query) {
+          const keywords = (row.getAttribute("data-keywords") || "").toLowerCase();
+          const name = row.querySelector(".exercise-name")?.textContent?.toLowerCase() || "";
+          return keywords.includes(query) || name.includes(query);
+        }
+
+        function refreshResults() {
+          const query = input.value.trim().toLowerCase();
+          if (query.length < 2) {
+            results.hidden = true;
+            rows.forEach((row) => {
+              row.style.display = "none";
+            });
+            return;
+          }
+
+          results.hidden = false;
+          let visibleCount = 0;
+          rows.forEach((row) => {
+            const visible = rowMatchesQuery(row, query);
+            row.style.display = visible ? "" : "none";
+            if (visible) visibleCount += 1;
+          });
+          if (visibleCount === 0) {
+            results.hidden = true;
+          }
+        }
+
+        input.addEventListener("input", refreshResults);
+      })();
+    </script>
   </body>
 </html>

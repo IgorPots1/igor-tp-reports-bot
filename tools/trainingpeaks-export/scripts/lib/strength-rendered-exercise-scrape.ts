@@ -26,9 +26,65 @@ export function assertRenderedPickerBrowserScriptIsSafe(): void {
 }
 
 type PickerBrowserInput = {
-  action: "inspect" | "read" | "scroll" | "set-search" | "debug";
+  action:
+    | "inspect"
+    | "read"
+    | "read-search-results"
+    | "scroll"
+    | "scroll-search-results"
+    | "set-search"
+    | "debug"
+    | "debug-search-term";
   value?: string;
+  searchTerm?: string;
 };
+
+export const RENDERED_SEARCH_INPUT_PLACEHOLDER = "Search Exercises, Circuits, or Saved Items";
+
+export const EXCLUDED_SHELL_OR_UI_LABELS = [
+  "search and add block or template",
+  "or select to create",
+  "single exercise",
+  "cool down",
+  "warm up",
+  "search exercises, circuits, or saved items",
+  "create custom exercise",
+  "add block",
+  "add exercise",
+  "save",
+  "save & close",
+  "summary",
+  "library",
+  "comments",
+  "private notes",
+  "workout title",
+  "add workout instructions",
+] as const;
+
+export function isExcludedShellOrUiLabel(name: string): boolean {
+  const normalized = name.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!normalized) return true;
+  return EXCLUDED_SHELL_OR_UI_LABELS.some((label) => normalized === label);
+}
+
+export function isOnlyShellOrUiLabels(names: string[]): boolean {
+  return names.length > 0 && names.every((name) => isExcludedShellOrUiLabel(name));
+}
+
+export const PRIORITY_SEARCH_TERMS = [
+  "air",
+  "plank",
+  "clam",
+  "calf",
+  "glute",
+  "bridge",
+  "step",
+  "squat",
+  "deadlift",
+  "romanian",
+  "90",
+  "ab",
+] as const;
 
 export type PickerDebugDom = {
   pickerDetected: boolean;
@@ -47,6 +103,27 @@ export type PickerDebugDom = {
 };
 
 export const RENDERED_PICKER_DEBUG_FILENAME = "debug-picker-dom.json";
+export const RENDERED_PICKER_SEARCH_DEBUG_FILENAME = "debug-rendered-picker-search.json";
+
+export type PickerSearchDebug = {
+  pickerDetected: boolean;
+  inputDetected: boolean;
+  inputPlaceholder: string | null;
+  searchTermsTried: string[];
+  perTerm: Array<{
+    term: string;
+    inputValueAfterTyping: string | null;
+    visibleTextSamples: string[];
+    candidateRows: Array<{
+      text: string;
+      tagName: string;
+      role?: string;
+      ariaLabel?: string;
+      className?: string;
+      rect: { x: number; y: number; width: number; height: number };
+    }>;
+  }>;
+};
 
 async function evaluateRenderedPickerBrowser<T>(page: Page, input: PickerBrowserInput): Promise<T> {
   return page.evaluate(
@@ -189,6 +266,7 @@ export type ScrapeRenderedExerciseResult = {
   summary: RawRenderedExercisesSummary;
   inspection: PickerInspection;
   debugDom?: PickerDebugDom;
+  searchDebug?: PickerSearchDebug;
 };
 
 function sanitizeDataAttributes(dataAttributes: Record<string, string> | undefined): Record<string, string> | undefined {
@@ -207,7 +285,7 @@ function recordObservation(
   searchTerm?: string,
 ): void {
   const name = observation.name.trim();
-  if (!name) return;
+  if (!name || isExcludedShellOrUiLabel(name)) return;
 
   const existing = map.get(name);
   if (existing) {
@@ -338,7 +416,7 @@ export function renderRawRenderedExercisesCsv(payload: RawRenderedExercisesPaylo
 
 export function buildSearchTerms(useSearchPrefixes: boolean): string[] {
   if (!useSearchPrefixes) return [];
-  return [...new Set([...SEARCH_PREFIX_TERMS, ...TARGETED_SEARCH_TERMS])];
+  return [...new Set([...PRIORITY_SEARCH_TERMS, ...TARGETED_SEARCH_TERMS, ...SEARCH_PREFIX_TERMS])];
 }
 
 export async function inspectRenderedExercisePicker(page: Page): Promise<PickerInspection> {
@@ -353,14 +431,61 @@ export async function readRenderedExercisePicker(page: Page): Promise<BrowserRea
   return evaluateRenderedPickerBrowser<BrowserReadResult>(page, { action: "read" });
 }
 
-async function readVisibleExerciseButtons(page: Page): Promise<BrowserReadResult> {
-  return readRenderedExercisePicker(page);
+async function readSearchResultRows(page: Page, searchTerm: string): Promise<BrowserReadResult> {
+  return evaluateRenderedPickerBrowser<BrowserReadResult>(page, {
+    action: "read-search-results",
+    searchTerm,
+  });
 }
 
-async function scrollRenderedExerciseList(page: Page): Promise<BrowserScrollResult> {
-  return evaluateRenderedPickerBrowser<BrowserScrollResult>(page, { action: "scroll" });
+async function scrollSearchResultList(page: Page, searchTerm: string): Promise<BrowserScrollResult> {
+  return evaluateRenderedPickerBrowser<BrowserScrollResult>(page, {
+    action: "scroll-search-results",
+    searchTerm,
+  });
 }
 
+export async function typeRenderedExerciseSearch(
+  page: Page,
+  term: string,
+): Promise<{ applied: boolean; activeValue: string | null }> {
+  const input = page.getByPlaceholder(RENDERED_SEARCH_INPUT_PLACEHOLDER, { exact: true }).first();
+  try {
+    await input.click({ timeout: 8_000 });
+    await input.fill(term, { timeout: 8_000 });
+    const activeValue = await input.inputValue();
+    const normalizedTerm = term.trim().toLowerCase();
+    const normalizedValue = activeValue.trim().toLowerCase();
+    return {
+      applied: normalizedValue === normalizedTerm || normalizedValue.includes(normalizedTerm),
+      activeValue,
+    };
+  } catch {
+    return { applied: false, activeValue: null };
+  }
+}
+
+export async function clearRenderedExerciseSearch(page: Page): Promise<void> {
+  const input = page.getByPlaceholder(RENDERED_SEARCH_INPUT_PLACEHOLDER, { exact: true }).first();
+  try {
+    await input.click({ timeout: 5_000 });
+    await input.fill("", { timeout: 5_000 });
+  } catch {
+    // Picker may already be closed; ignore.
+  }
+}
+
+export async function collectRenderedPickerSearchTermDebug(
+  page: Page,
+  term: string,
+): Promise<PickerSearchDebug["perTerm"][number]> {
+  return evaluateRenderedPickerBrowser<PickerSearchDebug["perTerm"][number]>(page, {
+    action: "debug-search-term",
+    searchTerm: term,
+  });
+}
+
+/** @deprecated Prefer typeRenderedExerciseSearch (Playwright fill). */
 export async function setRenderedExerciseSearchValue(page: Page, value: string): Promise<BrowserSearchResult> {
   return evaluateRenderedPickerBrowser<BrowserSearchResult>(page, { action: "set-search", value });
 }
@@ -382,13 +507,12 @@ export async function waitForRenderedExercisePicker(
   return inspectRenderedExercisePicker(page);
 }
 
-async function collectByScrolling(
+async function collectSearchResultsForTerm(
   page: Page,
   records: Map<string, AccumulatorRecord>,
-  via: SeenVia,
+  term: string,
   deadlineAt: number,
   maxScrolls: number,
-  searchTerm?: string,
 ): Promise<void> {
   let stagnantReads = 0;
   let previousSignature = "";
@@ -396,9 +520,9 @@ async function collectByScrolling(
   for (let index = 0; index < maxScrolls; index += 1) {
     if (Date.now() >= deadlineAt) break;
 
-    const readResult = await readVisibleExerciseButtons(page);
-    if (!readResult.inputFound || !readResult.listFound) {
-      throw new Error("Rendered Add Block picker disappeared before scraping completed.");
+    const readResult = await readSearchResultRows(page, term);
+    if (!readResult.inputFound) {
+      throw new Error("Rendered Add Block search input disappeared before scraping completed.");
     }
 
     const signature = readResult.options.map((option) => option.name).join("||");
@@ -410,10 +534,10 @@ async function collectByScrolling(
     }
 
     readResult.options.forEach((option) => {
-      recordObservation(records, option, via, searchTerm);
+      recordObservation(records, option, "search", term);
     });
 
-    const scrollResult = await scrollRenderedExerciseList(page);
+    const scrollResult = await scrollSearchResultList(page, term);
     await page.waitForTimeout(140);
 
     if (scrollResult.reachedEnd || stagnantReads >= 3) {
@@ -427,29 +551,57 @@ export async function scrapeRenderedExerciseCatalog(
   options: ScrapeRenderedExerciseOptions,
 ): Promise<ScrapeRenderedExerciseResult> {
   const inspection = await waitForRenderedExercisePicker(page, Math.max(5_000, options.deadlineAt - Date.now()));
-  if (!inspection.inputFound || !inspection.listFound) {
-    throw new Error("Could not detect the TrainingPeaks Add Block rendered exercise picker.");
+  if (!inspection.inputFound) {
+    throw new Error("Could not detect the TrainingPeaks Add Block rendered exercise search input.");
   }
 
   const records = new Map<string, AccumulatorRecord>();
-  await collectByScrolling(page, records, "scroll", options.deadlineAt, options.maxScrolls);
+  const searchTermsTried: string[] = [];
+  const perTermDebug: PickerSearchDebug["perTerm"] = [];
 
   for (const term of options.searchTerms) {
     if (Date.now() >= options.deadlineAt) break;
-    const applied = await setRenderedExerciseSearchValue(page, term);
-    if (!applied.applied) break;
-    await page.waitForTimeout(500);
-    await collectByScrolling(page, records, "search", options.deadlineAt, options.maxScrolls, term);
+    searchTermsTried.push(term);
+
+    const typed = await typeRenderedExerciseSearch(page, term);
+    await page.waitForTimeout(typed.applied ? 550 : 200);
+
+    if (typed.applied) {
+      await collectSearchResultsForTerm(page, records, term, options.deadlineAt, options.maxScrolls);
+    }
+
+    const termDebug = await collectRenderedPickerSearchTermDebug(page, term).catch(() => ({
+      term,
+      inputValueAfterTyping: typed.activeValue,
+      visibleTextSamples: [],
+      candidateRows: [],
+    }));
+    perTermDebug.push(termDebug);
   }
 
   if (options.searchTerms.length > 0) {
-    await setRenderedExerciseSearchValue(page, "");
+    await clearRenderedExerciseSearch(page);
     await page.waitForTimeout(120);
   }
 
   const payload = finalizePayload(records);
   const summary = buildRawRenderedExercisesSummary(payload);
+  const needsSearchDebug =
+    options.searchTerms.length > 0 &&
+    (payload.totalUniqueNames === 0 || isOnlyShellOrUiLabels(payload.namesFirstSeenOrder));
+  const searchDebug: PickerSearchDebug | undefined = needsSearchDebug
+    ? {
+        pickerDetected: inspection.pickerFound,
+        inputDetected: inspection.inputFound,
+        inputPlaceholder: inspection.inputPlaceholder,
+        searchTermsTried,
+        perTerm: perTermDebug,
+      }
+    : undefined;
   const debugDom =
-    payload.totalUniqueNames === 0 ? await collectRenderedPickerDebugDom(page).catch(() => undefined) : undefined;
-  return { payload, summary, inspection, debugDom };
+    payload.totalUniqueNames === 0 && !searchDebug
+      ? await collectRenderedPickerDebugDom(page).catch(() => undefined)
+      : undefined;
+
+  return { payload, summary, inspection, debugDom, searchDebug };
 }

@@ -11,6 +11,7 @@ import {
   buildSearchTerms,
   inspectRenderedExercisePicker,
   RENDERED_PICKER_DEBUG_FILENAME,
+  RENDERED_PICKER_SEARCH_DEBUG_FILENAME,
   renderRawRenderedExercisesCsv,
   renderRawRenderedExercisesMarkdown,
   scrapeRenderedExerciseCatalog,
@@ -237,7 +238,11 @@ async function main(): Promise<void> {
       summary: result.summary,
     });
 
-    if (result.debugDom) {
+    if (result.searchDebug) {
+      const debugPath = path.join(args.outDir, RENDERED_PICKER_SEARCH_DEBUG_FILENAME);
+      await writeFile(debugPath, `${JSON.stringify(result.searchDebug, null, 2)}\n`, "utf8");
+      console.log(`- search debug artifact: ${debugPath}`);
+    } else if (result.debugDom) {
       const debugPath = path.join(args.outDir, RENDERED_PICKER_DEBUG_FILENAME);
       await writeFile(debugPath, `${JSON.stringify(result.debugDom, null, 2)}\n`, "utf8");
       console.log(`- debug artifact: ${debugPath}`);

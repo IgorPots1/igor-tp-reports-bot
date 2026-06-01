@@ -8,7 +8,9 @@ import { chromium } from "playwright";
 import {
   assertRenderedPickerBrowserScriptIsSafe,
   buildRawRenderedExercisesSummary,
+  buildSearchTerms,
   EXPECTED_VISIBLE_RENDERED_EXERCISE_NAMES,
+  isExcludedShellOrUiLabel,
   RENDERED_EXERCISE_CATALOG_SOURCE,
   RENDERED_EXERCISE_SOURCE,
   RENDERED_PICKER_BROWSER_SCRIPT_PATH,
@@ -23,6 +25,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const fixturePath = path.join(__dirname, "fixtures", "strength-rendered-exercise-picker.fixture.html");
+
+const FIXTURE_SHELL_LABELS = [
+  "search and add block or template",
+  "OR SELECT TO CREATE",
+  "Single Exercise",
+  "Warm Up",
+  "Cool Down",
+] as const;
 
 function assert(condition: unknown, message: string): void {
   if (!condition) {
@@ -41,7 +51,7 @@ function buildFixturePayload(names: string[]): RawRenderedExercisesPayload {
     normalizedName: normalizeExerciseName(name),
     firstSeenIndex: index,
     seenCount: 1,
-    seenVia: ["scroll"] as const,
+    seenVia: ["search"] as const,
     source: RENDERED_EXERCISE_SOURCE,
     domTag: "div",
     role: undefined,
@@ -65,26 +75,36 @@ async function assertFixtureExtraction(): Promise<string[]> {
     const page = await browser.newPage();
     await page.goto(pathToFileURL(fixturePath).href, { waitUntil: "domcontentloaded" });
 
+    const searchTerms = ["air", "plank", "clam", "calf", "90", "ab", "squat"];
     const result = await scrapeRenderedExerciseCatalog(page, {
-      maxScrolls: 40,
-      searchTerms: [],
-      deadlineAt: Date.now() + 15_000,
+      maxScrolls: 20,
+      searchTerms,
+      deadlineAt: Date.now() + 20_000,
     });
 
     assert(result.inspection.inputFound, "Expected fixture search input to be detected.");
-    assert(result.inspection.listFound, "Expected fixture list container to be detected.");
-    assert(result.payload.totalUniqueNames >= 16, `Expected at least 16 extracted names, got ${result.payload.totalUniqueNames}.`);
+    assert(result.payload.totalUniqueNames >= 8, `Expected exercise names from search, got ${result.payload.totalUniqueNames}.`);
 
     const extractedNames = result.payload.namesFirstSeenOrder;
+    for (const shellLabel of FIXTURE_SHELL_LABELS) {
+      assert(!extractedNames.includes(shellLabel), `Expected shell label to be excluded: "${shellLabel}".`);
+      assert(isExcludedShellOrUiLabel(shellLabel), `Expected shell label helper to reject "${shellLabel}".`);
+    }
+
+    const requiredNames = [
+      "Air Squat",
+      "Dynamic Clam Shell",
+      "Elevated Body Weight Calf Raise",
+      "Forearm Plank",
+      "90 Degree Iso Chin Up Hold",
+    ];
+    for (const expected of requiredNames) {
+      assert(extractedNames.includes(expected), `Expected search extraction to include "${expected}".`);
+    }
+
     for (const expected of EXPECTED_VISIBLE_RENDERED_EXERCISE_NAMES) {
       assert(extractedNames.includes(expected), `Expected rendered picker extraction to include "${expected}".`);
     }
-
-    assert(
-      extractedNames[0] === "90 Degree Iso Chin Up Hold",
-      "Expected first extracted fixture item to be 90 Degree Iso Chin Up Hold.",
-    );
-    assert(extractedNames.includes("Dynamic Chest Stretch"), "Expected Dynamic Chest Stretch in extraction.");
 
     return extractedNames;
   } finally {
@@ -100,13 +120,14 @@ async function run(): Promise<void> {
     browserScript.includes("function browserPickerAction"),
     "Browser picker script must define browserPickerAction.",
   );
-  assert(browserScript.includes('action === "debug"'), "Browser picker script must support debug action.");
+  assert(browserScript.includes('action === "read-search-results"'), "Browser picker script must support read-search-results.");
+  assert(browserScript.includes('action === "debug-search-term"'), "Browser picker script must support debug-search-term.");
 
   const html = readFileSync(fixturePath, "utf8");
   const fixtureNames = parseFixtureNames(html);
   const extractedNames = await assertFixtureExtraction();
   assert(fixtureNames.length >= 16, "Expected at least 16 rendered exercise names in fixture.");
-  assert(fixtureNames.length === extractedNames.length, "Expected fixture names to match browser extraction count.");
+  assert(buildSearchTerms(true).length > 0, "Expected search prefix terms to be configured.");
 
   const payload = buildFixturePayload(extractedNames);
   const summary = buildRawRenderedExercisesSummary(payload);
@@ -114,7 +135,7 @@ async function run(): Promise<void> {
   const csv = renderRawRenderedExercisesCsv(payload);
 
   assert(payload.totalUniqueNames === extractedNames.length, "Expected unique total to match extracted exercise count.");
-  assert(summary.scrapeMethod === "scroll", "Expected fixture scrape method to stay scroll-only.");
+  assert(summary.scrapeMethod === "search_prefixes", "Expected fixture scrape method to use search.");
   assert(markdown.includes("## First-seen order"), "Expected markdown first-seen section.");
   assert(markdown.includes("## Alphabetical order"), "Expected markdown alphabetical section.");
   assert(csv.startsWith("name,normalizedName,firstSeenIndex,seenCount,seenVia,searchTerms"), "Expected CSV header.");
@@ -123,11 +144,6 @@ async function run(): Promise<void> {
     assert(extractedNames.includes(expected), `Expected extraction to include "${expected}".`);
     assert(summary.expectedVisibleNamesFound[expected] === true, `Expected summary marker for "${expected}".`);
   }
-
-  assert(
-    payload.namesAlphabetical[0] === "90 Degree Iso Chin Up Hold",
-    "Expected alphabetical sort to start with 90 Degree Iso Chin Up Hold.",
-  );
 
   const allowedImports = [
     "./lib/strength-rendered-exercise-scrape.ts",

@@ -31,7 +31,15 @@ function browserPickerAction(input) {
     "Last Performance",
     "Search",
     "Exercise Library",
+    "search and add block or template",
+    "OR SELECT TO CREATE",
+    "Single Exercise",
+    "Cool Down",
+    "Warm Up",
   ]);
+  const EXCLUDED_UI_LABELS_LOWER = new Set(
+    Array.from(EXCLUDED_UI_LABELS).map((label) => label.toLowerCase()),
+  );
   const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "SVG", "PATH", "INPUT", "TEXTAREA", "NOSCRIPT"]);
 
   function normalizeWhitespace(value) {
@@ -56,10 +64,44 @@ function browserPickerAction(input) {
   function isExcludedLabel(text) {
     const normalized = normalizeWhitespace(text);
     if (!normalized) return true;
+    const lower = normalized.toLowerCase();
     if (EXCLUDED_UI_LABELS.has(normalized)) return true;
+    if (EXCLUDED_UI_LABELS_LOWER.has(lower)) return true;
     if (EXCLUDED_BUTTON_LABELS.has(normalized)) return true;
     if (/^search exercises/i.test(normalized)) return true;
+    if (/^search and add block/i.test(lower)) return true;
+    if (/^or select to create/i.test(lower)) return true;
+    if (/^single exercise$/i.test(lower)) return true;
+    if (/^warm up$/i.test(lower)) return true;
+    if (/^cool down$/i.test(lower)) return true;
     return false;
+  }
+
+  function containsShellCategoryLabels(element) {
+    const lower = normalizeWhitespace(element.textContent).toLowerCase();
+    const hasSingle = lower.includes("single exercise");
+    const hasWarm = lower.includes("warm up");
+    const hasCool = lower.includes("cool down");
+    const hasShellHeader = lower.includes("search and add block") || lower.includes("or select to create");
+    return (hasSingle && hasWarm) || (hasSingle && hasCool) || hasShellHeader;
+  }
+
+  function rowMatchesSearchTerm(name, searchTerm) {
+    const normalizedName = normalizeWhitespace(name).toLowerCase();
+    const normalizedTerm = normalizeWhitespace(searchTerm).toLowerCase();
+    if (!normalizedTerm) return true;
+    if (normalizedName.includes(normalizedTerm)) return true;
+    const tokens = normalizedTerm.split(/\s+/).filter(Boolean);
+    return tokens.length > 0 && tokens.every((token) => normalizedName.includes(token));
+  }
+
+  function getSearchInputValue(searchInput) {
+    if (!searchInput) return "";
+    const target = extractInputLike(searchInput);
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+      return normalizeWhitespace(target.value);
+    }
+    return normalizeWhitespace(target.textContent);
   }
 
   function isPlausibleExerciseName(text) {
@@ -314,6 +356,66 @@ function browserPickerAction(input) {
     return Math.max(buttons, textRows);
   }
 
+  function findSearchResultsRoot(searchInput, searchTerm) {
+    if (!searchInput) return null;
+
+    const inputRect = searchInput.getBoundingClientRect();
+    const activeTerm = normalizeWhitespace(searchTerm || getSearchInputValue(searchInput)).toLowerCase();
+    let best = null;
+    let bestScore = -Infinity;
+
+    const candidates = Array.from(
+      document.querySelectorAll("[role='listbox'], [role='list'], ul, ol, div, section"),
+    );
+
+    for (const candidate of candidates) {
+      if (!isHTMLElement(candidate) || !isVisible(candidate)) continue;
+      if (candidate === searchInput || searchInput.contains(candidate)) continue;
+      if (containsShellCategoryLabels(candidate)) continue;
+
+      const rect = candidate.getBoundingClientRect();
+      const nearBelow =
+        rect.top >= inputRect.bottom - 20 &&
+        rect.top <= inputRect.bottom + 460 &&
+        rect.left <= inputRect.right + 120 &&
+        rect.right >= inputRect.left - 120;
+      if (!nearBelow) continue;
+
+      const rows = collectVisibleTextRows(searchInput, candidate).filter((row) =>
+        rowMatchesSearchTerm(row.name, activeTerm),
+      );
+      if (rows.length === 0) continue;
+
+      const isScrollable = candidate.scrollHeight > candidate.clientHeight + 12;
+      const score =
+        rows.length * 14 +
+        (isScrollable ? 24 : 0) +
+        (rect.top - inputRect.bottom < 180 ? 28 : 0) -
+        Math.max(0, Math.abs(rect.left - inputRect.left) / 30);
+
+      if (score > bestScore) {
+        best = candidate;
+        bestScore = score;
+      }
+    }
+
+    if (best) return best;
+
+    let sibling = searchInput.parentElement;
+    for (let depth = 0; depth < 6 && sibling; depth += 1) {
+      const next = sibling.nextElementSibling;
+      if (isHTMLElement(next) && isVisible(next) && !containsShellCategoryLabels(next)) {
+        const rows = collectVisibleTextRows(searchInput, next).filter((row) =>
+          rowMatchesSearchTerm(row.name, activeTerm),
+        );
+        if (rows.length > 0) return next;
+      }
+      sibling = sibling.parentElement;
+    }
+
+    return null;
+  }
+
   function findListContainer(searchInput, root) {
     if (!searchInput || !root) return null;
     const inputRect = searchInput.getBoundingClientRect();
@@ -369,12 +471,14 @@ function browserPickerAction(input) {
     return best;
   }
 
-  function buildPickerState() {
+  function buildPickerState(searchTerm) {
     const searchInput = findSearchInput();
     const root = findPickerRoot(searchInput);
-    const list = findListContainer(searchInput, root) || root;
+    const activeTerm = normalizeWhitespace(searchTerm || getSearchInputValue(searchInput));
+    const searchResults = activeTerm ? findSearchResultsRoot(searchInput, activeTerm) : null;
+    const list = searchResults || findListContainer(searchInput, root) || root;
     const scrollContainer = findScrollContainer(list, searchInput);
-    return { searchInput, root, list, scrollContainer };
+    return { searchInput, root, list, scrollContainer, searchResults, activeTerm };
   }
 
   function serializeDataAttributes(element) {
@@ -438,13 +542,60 @@ function browserPickerAction(input) {
     return merged;
   }
 
-  function readVisibleOptions(searchInput, list, root) {
-    const scope = list || root;
+  function readVisibleOptions(searchInput, list, root, searchTerm) {
+    const activeTerm = normalizeWhitespace(searchTerm || getSearchInputValue(searchInput));
+    const resultsRoot = activeTerm ? findSearchResultsRoot(searchInput, activeTerm) : null;
+    const scope = resultsRoot || list || root;
     if (!searchInput || !scope) return [];
 
-    const buttonOptions = list ? readButtonOptions(list) : [];
-    const textOptions = collectVisibleTextRows(searchInput, scope);
+    const buttonOptions = readButtonOptions(scope);
+    const textOptions = collectVisibleTextRows(searchInput, scope).filter((row) =>
+      activeTerm ? rowMatchesSearchTerm(row.name, activeTerm) : !isExcludedLabel(row.name),
+    );
     return mergeVisibleOptions(buttonOptions, textOptions);
+  }
+
+  function collectCandidateRows(searchInput, searchTerm) {
+    const activeTerm = normalizeWhitespace(searchTerm || getSearchInputValue(searchInput));
+    const resultsRoot = findSearchResultsRoot(searchInput, activeTerm);
+    const scope = resultsRoot || searchInput?.parentElement;
+    if (!searchInput || !scope) return [];
+
+    const rows = [];
+    const elements = [scope, ...Array.from(scope.querySelectorAll("*"))];
+    for (const element of elements) {
+      if (!isHTMLElement(element) || !isVisible(element)) continue;
+      const name = extractRowName(element);
+      if (!isPlausibleExerciseName(name)) continue;
+      if (activeTerm && !rowMatchesSearchTerm(name, activeTerm)) continue;
+      if (descendantHasCleanerExerciseName(element, name)) continue;
+      if (isLikelyMetadataRowElement(element)) continue;
+
+      const rect = element.getBoundingClientRect();
+      rows.push({
+        text: name,
+        tagName: element.tagName.toLowerCase(),
+        role: normalizeWhitespace(element.getAttribute("role")) || undefined,
+        ariaLabel: normalizeWhitespace(element.getAttribute("aria-label")) || undefined,
+        className: normalizeWhitespace(element.className).slice(0, 120) || undefined,
+        rect: {
+          x: Math.round(rect.x),
+          y: Math.round(rect.y),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        },
+      });
+    }
+
+    const seen = new Set();
+    return rows
+      .sort((left, right) => left.rect.y - right.rect.y || left.rect.x - right.rect.x)
+      .filter((row) => {
+        if (seen.has(row.text)) return false;
+        seen.add(row.text);
+        return true;
+      })
+      .slice(0, 40);
   }
 
   function collectDebugContainers(searchInput, root) {
@@ -523,7 +674,7 @@ function browserPickerAction(input) {
     return null;
   }
 
-  const state = buildPickerState();
+  const state = buildPickerState(input.searchTerm);
   const { searchInput, root, list, scrollContainer } = state;
   const inspection = {
     pickerFound: Boolean(searchInput && list),
@@ -566,17 +717,35 @@ function browserPickerAction(input) {
     };
   }
 
-  if (input.action === "read") {
-    const options = searchInput && list ? readVisibleOptions(searchInput, list, root) : [];
+  if (input.action === "read" || input.action === "read-search-results") {
+    const searchTerm = input.action === "read-search-results" ? input.searchTerm : undefined;
+    const options = searchInput ? readVisibleOptions(searchInput, list, root, searchTerm) : [];
     return {
       ...inspection,
       optionCount: options.length,
       options,
+      inputValue: getSearchInputValue(searchInput) || null,
     };
   }
 
-  if (input.action === "scroll") {
-    const scrollTarget = scrollContainer || list;
+  if (input.action === "debug-search-term") {
+    const searchTerm = normalizeWhitespace(input.searchTerm || "");
+    return {
+      term: searchTerm,
+      inputValueAfterTyping: getSearchInputValue(searchInput) || null,
+      visibleTextSamples: searchInput
+        ? readVisibleOptions(searchInput, list, root, searchTerm)
+            .slice(0, 30)
+            .map((row) => row.name)
+        : [],
+      candidateRows: collectCandidateRows(searchInput, searchTerm),
+    };
+  }
+
+  if (input.action === "scroll" || input.action === "scroll-search-results") {
+    const searchTerm = input.action === "scroll-search-results" ? input.searchTerm : undefined;
+    const resultsRoot = searchTerm ? findSearchResultsRoot(searchInput, searchTerm) : null;
+    const scrollTarget = resultsRoot || scrollContainer || list;
     if (!scrollTarget) {
       return {
         ...inspection,
