@@ -77,7 +77,8 @@
     "check-coach-operational-signals": "npx tsx scripts/check-coach-operational-signals.ts",
     "check:coach-memory-duplicate-clustering": "npx tsx scripts/check-coach-memory-duplicate-clustering.ts",
     "merge-coach-memory-duplicates": "npx tsx scripts/merge-coach-memory-duplicates.ts",
-    "check:move-phrase-coverage": "npx tsx scripts/check-move-phrase-coverage.ts"
+    "check:move-phrase-coverage": "npx tsx scripts/check-move-phrase-coverage.ts",
+    "check:communication-style": "npx tsx scripts/diagnose-student-communication-style.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.3",
