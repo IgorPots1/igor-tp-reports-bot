@@ -7,6 +7,10 @@ import {
   type OperationalPrimaryBucket,
   type OperationalSignalType,
 } from "./lib/coach-operational-signals";
+import {
+  matchesOperationalSignalFollowUpFilter,
+  normalizeOperationalSignalFollowUp,
+} from "./lib/coach-operational-follow-up";
 
 const LOG_PREFIX = "[check-coach-operational-signals]";
 
@@ -43,6 +47,19 @@ type MultiCaseDef = {
   name: string;
   observation: ObservationLike;
   expected: MultiExpectation;
+};
+
+type FollowUpCaseDef = {
+  name: string;
+  metadata: Record<string, unknown>;
+  asOfDate: string;
+  expectedState: "none" | "pending_future" | "pending_due" | "pending_overdue" | "resolved_or_non_pending";
+  include: {
+    pending: boolean;
+    due: boolean;
+    overdue: boolean;
+    all: boolean;
+  };
 };
 
 const CONFIDENCE_ORDER: Record<string, number> = {
@@ -134,6 +151,33 @@ function assertMultiCase(caseDef: MultiCaseDef): string[] {
   }
   if (caseDef.expected.signal_types.length !== result.length) {
     failures.push(`signal_count=${result.length} expected=${caseDef.expected.signal_types.length}`);
+  }
+  return failures;
+}
+
+function assertFollowUpCase(caseDef: FollowUpCaseDef): string[] {
+  const normalized = normalizeOperationalSignalFollowUp(caseDef.metadata, {
+    asOfDate: caseDef.asOfDate,
+  });
+  const failures: string[] = [];
+  if (normalized.state !== caseDef.expectedState) {
+    failures.push(`state=${normalized.state} expected=${caseDef.expectedState}`);
+  }
+  const pending = matchesOperationalSignalFollowUpFilter(normalized, "pending");
+  if (pending !== caseDef.include.pending) {
+    failures.push(`pending=${String(pending)} expected=${String(caseDef.include.pending)}`);
+  }
+  const due = matchesOperationalSignalFollowUpFilter(normalized, "due");
+  if (due !== caseDef.include.due) {
+    failures.push(`due=${String(due)} expected=${String(caseDef.include.due)}`);
+  }
+  const overdue = matchesOperationalSignalFollowUpFilter(normalized, "overdue");
+  if (overdue !== caseDef.include.overdue) {
+    failures.push(`overdue=${String(overdue)} expected=${String(caseDef.include.overdue)}`);
+  }
+  const all = matchesOperationalSignalFollowUpFilter(normalized, "all");
+  if (all !== caseDef.include.all) {
+    failures.push(`all=${String(all)} expected=${String(caseDef.include.all)}`);
   }
   return failures;
 }
@@ -444,6 +488,82 @@ async function run(): Promise<void> {
       },
     },
   ];
+  const followUpCases: FollowUpCaseDef[] = [
+    {
+      name: "follow-up-case-a-pending-future",
+      asOfDate: "2026-06-03",
+      metadata: {
+        follow_up_status: "pending",
+        follow_up_due_at: "2026-06-04T12:00:00.000+02:00",
+        follow_up_kind: "health_check",
+        follow_up_reason: "illness check next day",
+      },
+      expectedState: "pending_future",
+      include: {
+        pending: true,
+        due: false,
+        overdue: false,
+        all: true,
+      },
+    },
+    {
+      name: "follow-up-case-b-due-today",
+      asOfDate: "2026-06-03",
+      metadata: {
+        follow_up_status: "pending",
+        follow_up_due_at: "2026-06-03T10:15:00.000+02:00",
+      },
+      expectedState: "pending_due",
+      include: {
+        pending: true,
+        due: true,
+        overdue: false,
+        all: true,
+      },
+    },
+    {
+      name: "follow-up-case-c-overdue",
+      asOfDate: "2026-06-03",
+      metadata: {
+        follow_up_status: "pending",
+        follow_up_due_at: "2026-06-02T20:00:00.000+02:00",
+      },
+      expectedState: "pending_overdue",
+      include: {
+        pending: true,
+        due: true,
+        overdue: true,
+        all: true,
+      },
+    },
+    {
+      name: "follow-up-case-d-non-pending",
+      asOfDate: "2026-06-03",
+      metadata: {
+        follow_up_status: "resolved",
+        follow_up_due_at: "2026-06-01T12:00:00.000+02:00",
+      },
+      expectedState: "resolved_or_non_pending",
+      include: {
+        pending: false,
+        due: false,
+        overdue: false,
+        all: true,
+      },
+    },
+    {
+      name: "follow-up-case-e-none",
+      asOfDate: "2026-06-03",
+      metadata: {},
+      expectedState: "none",
+      include: {
+        pending: false,
+        due: false,
+        overdue: false,
+        all: false,
+      },
+    },
+  ];
 
   let failed = 0;
   for (const caseDef of episodeCases) {
@@ -457,6 +577,15 @@ async function run(): Promise<void> {
   }
   for (const caseDef of cases) {
     const failures = assertCase(caseDef);
+    if (failures.length > 0) {
+      failed += 1;
+      console.log(`${LOG_PREFIX} FAIL ${caseDef.name}: ${failures.join("; ")}`);
+    } else {
+      console.log(`${LOG_PREFIX} OK ${caseDef.name}`);
+    }
+  }
+  for (const caseDef of followUpCases) {
+    const failures = assertFollowUpCase(caseDef);
     if (failures.length > 0) {
       failed += 1;
       console.log(`${LOG_PREFIX} FAIL ${caseDef.name}: ${failures.join("; ")}`);

@@ -8,6 +8,15 @@ import {
   type TrainingPeaksOperationalSignalType,
 } from "@/features/trainingpeaks/repository";
 import { createSupabaseServerClient } from "@/features/supabase/server";
+import {
+  DEFAULT_COACH_TIMEZONE,
+  formatFollowUpStateForText,
+  getCoachTodayDateKey,
+  matchesOperationalSignalFollowUpFilter,
+  normalizeOperationalSignalFollowUp,
+  parseCoachAsOfDate,
+  type OperationalSignalFollowUpFilter,
+} from "./lib/coach-operational-follow-up";
 
 const LOG_PREFIX = "[review-coach-operational-signals]";
 const DEFAULT_LIMIT = 200;
@@ -34,10 +43,19 @@ const ALLOWED_SIGNAL_TYPES: readonly TrainingPeaksOperationalSignalType[] = [
   "race_load_context",
 ];
 
+const ALLOWED_FOLLOW_UP_FILTERS: readonly OperationalSignalFollowUpFilter[] = [
+  "pending",
+  "due",
+  "overdue",
+  "all",
+];
+
 type CliOptions = {
   status: TrainingPeaksOperationalSignalStatus | null;
   student: string | null;
   signalType: TrainingPeaksOperationalSignalType | null;
+  followUp: OperationalSignalFollowUpFilter | null;
+  asOfDate: string | null;
   limit: number;
   json: boolean;
 };
@@ -105,11 +123,21 @@ function parseSignalType(raw: string): TrainingPeaksOperationalSignalType {
   return normalized;
 }
 
+function parseFollowUpFilter(raw: string): OperationalSignalFollowUpFilter {
+  const normalized = raw.trim().toLowerCase() as OperationalSignalFollowUpFilter;
+  if (!ALLOWED_FOLLOW_UP_FILTERS.includes(normalized)) {
+    throw new Error(`${LOG_PREFIX} FAIL: invalid --follow-up value: ${raw}`);
+  }
+  return normalized;
+}
+
 function parseCliOptions(argv: string[]): CliOptions {
   const options: CliOptions = {
     status: null,
     student: null,
     signalType: null,
+    followUp: null,
+    asOfDate: null,
     limit: DEFAULT_LIMIT,
     json: false,
   };
@@ -169,6 +197,32 @@ function parseCliOptions(argv: string[]): CliOptions {
         throw new Error(`${LOG_PREFIX} FAIL: missing value for --signal-type`);
       }
       options.signalType = parseSignalType(next);
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--follow-up=")) {
+      options.followUp = parseFollowUpFilter(arg.slice("--follow-up=".length));
+      continue;
+    }
+    if (arg === "--follow-up") {
+      const next = argv[index + 1]?.trim();
+      if (!next || next.startsWith("--")) {
+        throw new Error(`${LOG_PREFIX} FAIL: missing value for --follow-up`);
+      }
+      options.followUp = parseFollowUpFilter(next);
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--as-of=")) {
+      options.asOfDate = parseCoachAsOfDate(arg.slice("--as-of=".length));
+      continue;
+    }
+    if (arg === "--as-of") {
+      const next = argv[index + 1]?.trim();
+      if (!next || next.startsWith("--")) {
+        throw new Error(`${LOG_PREFIX} FAIL: missing value for --as-of`);
+      }
+      options.asOfDate = parseCoachAsOfDate(next);
       index += 1;
       continue;
     }
@@ -265,13 +319,30 @@ async function fetchStudentsByIds(studentIds: readonly string[]): Promise<Map<st
 async function run(): Promise<void> {
   loadLocalEnvFiles();
   const options = parseCliOptions(process.argv.slice(2));
+  const asOfDate = options.asOfDate ?? getCoachTodayDateKey(DEFAULT_COACH_TIMEZONE);
 
-  const result = await listTrainingPeaksOperationalSignals({
+  const resultBase = await listTrainingPeaksOperationalSignals({
     status: options.status ?? undefined,
     studentQuery: options.student,
     signalType: options.signalType ?? undefined,
     limit: options.limit,
   });
+  const resultItems = options.followUp
+    ? resultBase.items.filter((item) =>
+        matchesOperationalSignalFollowUpFilter(
+          normalizeOperationalSignalFollowUp(item.metadata, {
+            asOfDate,
+            timeZone: DEFAULT_COACH_TIMEZONE,
+          }),
+          options.followUp as OperationalSignalFollowUpFilter
+        )
+      )
+    : resultBase.items;
+
+  const result = {
+    items: resultItems,
+    total: resultItems.length,
+  };
 
   const studentById = await fetchStudentsByIds([...new Set(result.items.map((item) => item.studentId))]);
 
@@ -327,6 +398,10 @@ async function run(): Promise<void> {
         signals: entry.rows.map((row) => {
           const episode = extractEpisodeFields(row.metadata);
           const followUp = extractFollowUpFields(row.metadata);
+          const normalizedFollowUp = normalizeOperationalSignalFollowUp(row.metadata, {
+            asOfDate,
+            timeZone: DEFAULT_COACH_TIMEZONE,
+          });
           return {
             signal_type: row.signalType,
             status: row.status,
@@ -346,10 +421,14 @@ async function run(): Promise<void> {
               related_signal_types: episode.relatedSignalTypes,
             },
             follow_up: {
+              has_follow_up: normalizedFollowUp.has_follow_up,
+              state: normalizedFollowUp.state,
               due_at: followUp.dueAt,
+              due_date: normalizedFollowUp.due_date,
               kind: followUp.kind,
               reason: followUp.reason,
               status: followUp.status,
+              days_overdue: normalizedFollowUp.days_overdue,
             },
           };
         }),
@@ -358,7 +437,11 @@ async function run(): Promise<void> {
       JSON.stringify(
         {
           mode: "read-only",
-          options,
+          options: {
+            ...options,
+            asOfDate,
+            timezone: DEFAULT_COACH_TIMEZONE,
+          },
           summary,
           students,
         },
@@ -370,7 +453,9 @@ async function run(): Promise<void> {
   }
 
   console.log(`${LOG_PREFIX} mode=read-only`);
-  console.log(`${LOG_PREFIX} filters status=${options.status ?? "all"} student=${JSON.stringify(options.student)} signal_type=${options.signalType ?? "all"}`);
+  console.log(
+    `${LOG_PREFIX} filters status=${options.status ?? "all"} student=${JSON.stringify(options.student)} signal_type=${options.signalType ?? "all"} follow_up=${options.followUp ?? "none"} as_of=${asOfDate} tz=${DEFAULT_COACH_TIMEZONE}`
+  );
   console.log(`${LOG_PREFIX} total=${result.items.length}`);
 
   const sortedStudents = [...byStudent.values()].sort((a, b) => a.studentName.localeCompare(b.studentName));
@@ -406,6 +491,10 @@ async function run(): Promise<void> {
       const dayTokens = extractDayTokens(row.structuredPayload);
       const reason = compactReason(row.structuredPayload);
       const followUp = extractFollowUpFields(row.metadata);
+      const followUpNormalized = normalizeOperationalSignalFollowUp(row.metadata, {
+        asOfDate,
+        timeZone: DEFAULT_COACH_TIMEZONE,
+      });
       if (episode.episodeKey && episode.episodeKey !== previousEpisodeKey) {
         const episodeSuffix = episode.episodeKey.slice(-12);
         console.log(`  episode ${episode.episodeType ?? "unknown"}#${episodeSuffix}`);
@@ -427,11 +516,24 @@ async function run(): Promise<void> {
       if (episode.relatedSignalTypes.length > 0) {
         details.push(`related=${episode.relatedSignalTypes.join(",")}`);
       }
-      if (followUp.dueAt) {
-        details.push(`follow_up=${followUp.dueAt}`);
-      }
-      if (followUp.status) {
-        details.push(`follow_up_status=${followUp.status}`);
+      if (followUpNormalized.has_follow_up) {
+        details.push(`follow-up=${formatFollowUpStateForText(followUpNormalized.state)}`);
+        if (followUpNormalized.due_date) {
+          details.push(`follow-up due=${followUpNormalized.due_date}`);
+        }
+        if (followUp.kind) {
+          details.push(`kind=${followUp.kind}`);
+        }
+        if (followUp.reason) {
+          details.push(`reason=${followUp.reason}`);
+        }
+        if (followUp.status) {
+          details.push(`status=${followUp.status}`);
+        }
+        if (followUpNormalized.days_overdue > 0) {
+          details.push(`days_overdue=${followUpNormalized.days_overdue}`);
+        }
+        details.push(`signal_row=${row.id.slice(0, 8)}`);
       }
       details.push(`source: ${row.sourceType}`);
       console.log(`  - ${details.join(" | ")}`);
