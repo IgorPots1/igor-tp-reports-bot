@@ -1,0 +1,40 @@
+{
+  "id": "test_beginner_runner_strength_foundation",
+  "title": "TEST - Beginner Runner Strength Foundation",
+  "workoutInstructions": "TEST WORKOUT - do not assign to real athletes.\nEasy beginner runner strength session.\nFocus on controlled movement, no sharp pain, no max effort.\nStop if pain increases.",
+  "blocks": [
+    {
+      "name": "Warm-up",
+      "exercises": [
+        { "name": "Jog In Place", "sets": "1", "metricType": "duration", "metricValue": "60 sec" },
+        { "name": "Arm Circle", "sets": "1", "metricType": "reps", "metricValue": "10 each direction" },
+        { "name": "Walking Knee Hug", "sets": "1", "metricType": "reps", "metricValue": "8 per side" },
+        { "name": "Ankle Roll", "sets": "1", "metricType": "reps", "metricValue": "10 per side" }
+      ]
+    },
+    {
+      "name": "Activation",
+      "exercises": [
+        { "name": "Glute Bridge", "sets": "2", "metricType": "reps", "metricValue": "15" },
+        { "name": "Banded Clam Shell", "sets": "2", "metricType": "reps", "metricValue": "12 per side" },
+        { "name": "Bird Dog", "sets": "2", "metricType": "reps", "metricValue": "8 per side" }
+      ]
+    },
+    {
+      "name": "Main",
+      "exercises": [
+        { "name": "Goblet Squat", "sets": "3", "metricType": "reps", "metricValue": "10" },
+        { "name": "Body Weight Reverse Lunge", "sets": "3", "metricType": "reps", "metricValue": "8 per side" },
+        { "name": "Romanian Deadlift with DB", "sets": "3", "metricType": "reps", "metricValue": "10" },
+        { "name": "Forearm Plank", "sets": "3", "metricType": "duration", "metricValue": "20-30 sec" }
+      ]
+    },
+    {
+      "name": "Cooldown",
+      "exercises": [
+        { "name": "Hip Flexor Stretch", "sets": "1", "metricType": "duration", "metricValue": "45 sec per side" },
+        { "name": "Supported Calf Stretch", "sets": "1", "metricType": "duration", "metricValue": "45 sec per side" }
+      ]
+    }
+  ]
+}
