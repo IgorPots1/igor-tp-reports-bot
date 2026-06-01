@@ -149,7 +149,7 @@ type OpenAiChatResponse = {
   choices?: Array<{ message?: { content?: string | null } }>;
 };
 
-const BODY_PAIN_OR_HEALTH_KEYWORDS = [
+const MUSCULOSKELETAL_PAIN_OR_INJURY_KEYWORDS = [
   "болит",
   "боль",
   "болезнен",
@@ -165,19 +165,35 @@ const BODY_PAIN_OR_HEALTH_KEYWORDS = [
   "сустав",
   "мышц",
   "сухожил",
+  "голень",
+  "растяж",
+  "надрыв",
+  "перегруз",
+  "injur",
+  "pain",
+];
+
+const ILLNESS_HEALTH_KEYWORDS = [
   "горло",
   "температур",
+  "болезн",
   "забол",
   "простуд",
   "кашель",
   "насморк",
+  "орви",
+  "грипп",
+  "ангин",
   "головн",
   "тошн",
+  "слабост",
+  "озноб",
+  "давлен",
   "ill",
-  "injur",
-  "pain",
   "sick",
   "fever",
+  "cough",
+  "cold",
 ];
 
 const NON_BODY_DISCOMFORT_KEYWORDS = [
@@ -275,6 +291,16 @@ const FUTURE_RACE_GOAL_KEYWORDS = [
   "target race",
   "next race",
   "prep",
+];
+const REFLECTIVE_RACE_OVERLOAD_KEYWORDS = [
+  "слишком большом количестве марафонов",
+  "слишком много марафонов",
+  "слишком много стартов",
+  "слишком часто старт",
+  "слишком много соревнований",
+  "too many marathons",
+  "too many races",
+  "overracing",
 ];
 const TRANSIENT_RESOLVED_PAIN_KEYWORDS = [
   "потом прошло",
@@ -429,12 +455,24 @@ function looksLikeDurableScheduleConstraint(text: string): boolean {
   return textHasAny(text, SCHEDULE_CONSTRAINT_KEYWORDS);
 }
 
-function hasBodyPainOrHealthSignal(text: string): boolean {
-  return textHasAny(text, BODY_PAIN_OR_HEALTH_KEYWORDS);
+function hasMusculoskeletalPainOrInjurySignal(text: string): boolean {
+  return textHasAny(text, MUSCULOSKELETAL_PAIN_OR_INJURY_KEYWORDS);
+}
+
+function hasIllnessHealthSignal(text: string): boolean {
+  return textHasAny(text, ILLNESS_HEALTH_KEYWORDS);
+}
+
+function hasAnyHealthSignal(text: string): boolean {
+  return hasMusculoskeletalPainOrInjurySignal(text) || hasIllnessHealthSignal(text);
+}
+
+function isIllnessOnlySignal(text: string): boolean {
+  return hasIllnessHealthSignal(text) && !hasMusculoskeletalPainOrInjurySignal(text);
 }
 
 function hasOnlyNonBodyDiscomfort(text: string): boolean {
-  return textHasAny(text, NON_BODY_DISCOMFORT_KEYWORDS) && !hasBodyPainOrHealthSignal(text);
+  return textHasAny(text, NON_BODY_DISCOMFORT_KEYWORDS) && !hasAnyHealthSignal(text);
 }
 
 function addDaysToIsoDate(isoDate: string, days: number): string | null {
@@ -508,7 +546,8 @@ function shouldSkipPastEventRaceOrGoal(
   referenceDate: string
 ): boolean {
   const hasPastOnlySignal = textHasAny(text, PAST_EVENT_ONLY_KEYWORDS);
-  if (!hasPastOnlySignal) {
+  const hasReflectiveOverloadSignal = textHasAny(text, REFLECTIVE_RACE_OVERLOAD_KEYWORDS);
+  if (!hasPastOnlySignal && !hasReflectiveOverloadSignal) {
     return false;
   }
 
@@ -606,8 +645,13 @@ function applyConservativeMemoryRules(
     return null;
   }
 
-  if (adjusted.memoryType === "pain_or_injury" && shouldSkipResolvedTransientPain(combinedText)) {
-    return null;
+  if (adjusted.memoryType === "pain_or_injury") {
+    if (isIllnessOnlySignal(combinedText)) {
+      adjusted.memoryType = "health_status";
+      adjusted.structured = { ...adjusted.structured };
+    } else if (shouldSkipResolvedTransientPain(combinedText)) {
+      return null;
+    }
   }
 
   if (isTemporaryAvailabilitySignal(adjusted.memoryType, combinedText) && !adjusted.validUntil) {
@@ -681,8 +725,9 @@ function applyDryRunMemoryGuards(
 
       if (item.memoryType === "pain_or_injury") {
         const combinedPainEvidenceText = `${observationText} ${normalizeForRules(item.summaryText)}`;
-        const hasBodySignal = hasBodyPainOrHealthSignal(combinedPainEvidenceText);
-        if (!hasBodySignal || hasOnlyNonBodyDiscomfort(combinedPainEvidenceText)) {
+        const hasMusculoskeletalSignal = hasMusculoskeletalPainOrInjurySignal(combinedPainEvidenceText);
+        const illnessOnly = isIllnessOnlySignal(combinedPainEvidenceText);
+        if ((!hasMusculoskeletalSignal && !illnessOnly) || hasOnlyNonBodyDiscomfort(combinedPainEvidenceText)) {
           return false;
         }
       }
@@ -981,8 +1026,10 @@ function buildSystemPrompt(referenceDate: string): string {
     "- communication_style НЕ создавай из одного inbound-сообщения ученика.",
     "- communication_style допустим только при явном coach-to-student evidence или явном контексте стиля тренера.",
     "- pain_or_injury не создавай для нефизического дискомфорта (телефон, одежда, погода, обувь без боли в теле).",
+    "- Болезнь/простуда/температура/кашель/горло без явной боли в опорно-двигательном аппарате => health_status (НЕ pain_or_injury).",
     "- schedule_constraint создавай только при недоступности/ограничении/изменении графика/жизненном конфликте.",
     "- schedule_constraint НЕ создавай для 'просто спросил расписание' или 'разово перенести на завтра' без ограничения.",
+    "- race_or_goal создавай только при явном будущем старте/цели/подготовке; рефлексия типа 'слишком много марафонов' без будущей цели не race_or_goal.",
     "- immediate только для pain_or_injury, health_status, тяжелого/повторяющегося load_tolerance, или срочного near-term конфликта расписания.",
     "- digest для не-срочных schedule/life/race/emotion.",
     "- silent для стабильных planning_preference, equipment_or_device_note, communication_style.",

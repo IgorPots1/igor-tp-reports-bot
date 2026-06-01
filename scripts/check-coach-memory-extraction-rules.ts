@@ -4,15 +4,26 @@ import {
   processCoachMemoryForObservation,
   type CoachMemoryExtractionResult,
 } from "@/features/trainingpeaks/coach-memory-extraction";
+import type { TrainingPeaksStudentMemoryItem } from "@/features/trainingpeaks/repository";
 
 const LOG_PREFIX = "[check-coach-memory-extraction-rules]";
 
 type CaseDefinition = {
   name: string;
   textPreview: string;
-  expected: "skip_race_or_goal" | "keep_race_or_goal" | "skip_pain" | "keep_pain" | "bounded_availability";
+  expected:
+    | "skip_race_or_goal"
+    | "keep_race_or_goal"
+    | "skip_pain"
+    | "keep_pain"
+    | "bounded_availability"
+    | "illness_to_health_dedupes";
   extraction: CoachMemoryExtractionResult;
   observedAt?: string;
+  currentActiveMemoryItems?: Pick<
+    TrainingPeaksStudentMemoryItem,
+    "id" | "memoryType" | "summaryText" | "structured" | "validUntil"
+  >[];
 };
 
 function makeRaceExtraction(summary: string, options?: { validFrom?: string | null }): CoachMemoryExtractionResult {
@@ -94,7 +105,7 @@ async function runCase(caseDef: CaseDefinition): Promise<{ ok: boolean; message:
     labels: ["report_like"],
     sourceType: "private_dm",
     observedAt,
-    currentActiveMemoryItems: [],
+    currentActiveMemoryItems: caseDef.currentActiveMemoryItems ?? [],
     applyWrites: false,
     precomputedExtraction: caseDef.extraction,
   });
@@ -122,6 +133,13 @@ async function runCase(caseDef: CaseDefinition): Promise<{ ok: boolean; message:
     const ok = result.inserted >= 1;
     return { ok, message: `${caseDef.name}: inserted=${result.inserted} skipped=${result.skipped}` };
   }
+  if (caseDef.expected === "illness_to_health_dedupes") {
+    const ok = result.inserted === 0 && result.touched >= 1 && result.duplicate >= 1 && result.skipped === 0;
+    return {
+      ok,
+      message: `${caseDef.name}: inserted=${result.inserted} touched=${result.touched} duplicate=${result.duplicate} skipped=${result.skipped}`,
+    };
+  }
 
   const boundedItem = caseDef.extraction.memoryItems[0]?.validUntil;
   const inserted = result.inserted >= 1;
@@ -148,6 +166,12 @@ async function run(): Promise<void> {
       extraction: makeRaceExtraction("Готовится к старту 2026-07-14, цель сезона.", { validFrom: "2026-07-14" }),
     },
     {
+      name: "reflective-too-many-marathons-not-race-goal",
+      textPreview: "Сергей понимает, что участвует в слишком большом количестве марафонов.",
+      expected: "skip_race_or_goal",
+      extraction: makeRaceExtraction("Сергей понимает, что участвует в слишком большом количестве марафонов."),
+    },
+    {
       name: "resolved-transient-pain-skip",
       textPreview: "Колено сначала беспокоило, потом прошло, сейчас не болит.",
       expected: "skip_pain",
@@ -158,6 +182,21 @@ async function run(): Promise<void> {
       textPreview: "Колено не проходит несколько дней, после каждой тренировки усиливается.",
       expected: "keep_pain",
       extraction: makePainExtraction("Колено болит несколько дней и после каждой тренировки усиливается."),
+    },
+    {
+      name: "illness-only-not-pain",
+      textPreview: "На неделе была болезнь, простыла, была температура и кашель.",
+      expected: "illness_to_health_dedupes",
+      extraction: makePainExtraction("На неделе была болезнь, простыла, была температура и кашель."),
+      currentActiveMemoryItems: [
+        {
+          id: "existing-health-item",
+          memoryType: "health_status",
+          summaryText: "На неделе была болезнь, простыла, была температура и кашель.",
+          structured: {},
+          validUntil: null,
+        },
+      ],
     },
     {
       name: "temporary-availability-bounded-or-conservative",
