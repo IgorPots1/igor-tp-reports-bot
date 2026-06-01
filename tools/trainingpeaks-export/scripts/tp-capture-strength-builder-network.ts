@@ -7,9 +7,20 @@ import { createInterface } from "node:readline/promises";
 import { chromium, type Request, type Response } from "playwright";
 
 import { profileDir, toolRoot } from "./lib/paths.ts";
+import {
+  buildExerciseDbCandidates,
+  buildExerciseDbKeywordHits,
+  buildExerciseDbSummarySection,
+  buildExerciseSearchCandidates,
+  buildUnknownStrengthCalls,
+  extractSanitizedNameSamples,
+  isStaticAssetUrl,
+  isTpApiUrl,
+  isTrainingPeaksApiUrl,
+  summarizeExerciseDbFindings,
+} from "./lib/strength-exercise-db-capture.ts";
 
 const TP_APP_HOST = "https://app.trainingpeaks.com";
-const TP_API_HOST = "https://tpapi.trainingpeaks.com";
 const DEFAULT_ATHLETE_URL = `${TP_APP_HOST}/#calendar/athletes/3102415`;
 const DEFAULT_DURATION_SEC = 120;
 const MAX_BODY_PARSE_CHARS = 600_000;
@@ -20,7 +31,10 @@ const repoRoot = path.resolve(toolRoot, "..", "..");
 const defaultOutDir = path.join(repoRoot, "reports", "strength-builder-audit");
 
 const INTEREST_KEYWORD_PATTERN =
-  /\b(strength|exercise|exercises|circuit|superset|workouttypevalueid|structure|library|workout|search)\b/i;
+  /\b(strength|exercise|exercises|movement|circuit|superset|workouttypevalueid|structure|library|workout|search|equipment|muscle|bodypart|instructions|video|media|thumbnail)\b/i;
+
+const OTHER_TP_API_HOST_HINT =
+  /\/(?:api|v\d|graphql|fitness|exercise|strength|library|search|movement|catalog)\b/i;
 
 type CliArgs = {
   help: boolean;
@@ -51,6 +65,7 @@ type CapturedCall = {
     bodyParseNote: string | null;
     hasStructure: boolean;
     hasExerciseLike: boolean;
+    sampleSanitizedNames: string[];
   };
 };
 
@@ -361,7 +376,7 @@ function parseBody(raw: string): { value: unknown; note: string | null } {
 }
 
 function buildEndpointPattern(inputUrl: string): string {
-  return sanitizeUrlLike(inputUrl).replace(/^https?:\/\/[^/]+/i, TP_API_HOST).replace(/\?.*$/, "");
+  return sanitizeUrlLike(inputUrl).replace(/\?.*$/, "");
 }
 
 function topLevelKeys(value: unknown): string[] {
@@ -475,10 +490,11 @@ function tagsForCall(input: { url: string; method: string; requestBody: unknown;
   const haystack = `${input.method} ${input.url}`.toLowerCase();
   if (haystack.includes("workout")) tags.add("workout");
   if (haystack.includes("strength")) tags.add("strength");
-  if (haystack.includes("exercise") || haystack.includes("library")) tags.add("exercise");
+  if (haystack.includes("exercise") || haystack.includes("library") || haystack.includes("movement")) tags.add("exercise");
   if (haystack.includes("search")) tags.add("search");
   if (haystack.includes("circuit")) tags.add("circuit");
   if (haystack.includes("superset")) tags.add("superset");
+  if (haystack.includes("equipment") || haystack.includes("muscle") || haystack.includes("bodypart")) tags.add("exercise-metadata");
   if (/(post|put|patch)/i.test(input.method)) tags.add("mutation-observed");
   if (containsAnyTextMatch(input.requestBody, /\bstructure\b/i) || containsAnyTextMatch(input.responseBody, /\bstructure\b/i)) {
     tags.add("structure");
@@ -486,7 +502,30 @@ function tagsForCall(input: { url: string; method: string; requestBody: unknown;
   if (containsAnyTextMatch(input.requestBody, /\bexercise(s)?\b/i) || containsAnyTextMatch(input.responseBody, /\bexercise(s)?\b/i)) {
     tags.add("exercise");
   }
+  if (containsAnyTextMatch(input.requestBody, /\bmovement(s)?\b/i) || containsAnyTextMatch(input.responseBody, /\bmovement(s)?\b/i)) {
+    tags.add("movement");
+  }
   return [...tags];
+}
+
+function shouldIncludeCapturedCall(input: {
+  url: string;
+  requestBody: unknown;
+  responseBody: unknown;
+}): boolean {
+  if (isStaticAssetUrl(input.url)) {
+    return false;
+  }
+  if (isTpApiUrl(input.url)) {
+    return true;
+  }
+  if (!isTrainingPeaksApiUrl(input.url)) {
+    return false;
+  }
+  if (OTHER_TP_API_HOST_HINT.test(input.url)) {
+    return true;
+  }
+  return bodyIncludesInterest(input.url, input.requestBody, input.responseBody);
 }
 
 function likelyOperationFromEndpoint(endpointPattern: string, method: string): "create-or-save" | "update-or-save" | "unknown" {
@@ -599,9 +638,18 @@ async function buildCapturedCall(args: {
     if (textual) {
       try {
         const responseText = await args.response.text();
-        const parsed = parseBody(responseText);
-        parsedResponseNote = parsed.note;
-        responseBodySanitized = sanitizeUnknown(parsed.value);
+        if (contentType?.includes("javascript") || isStaticAssetUrl(originalUrl)) {
+          parsedResponseNote = "javascript bundle omitted from sanitized body";
+          responseBodySanitized = {
+            type: "javascript_bundle",
+            omitted: true,
+            length: responseText.length,
+          };
+        } else {
+          const parsed = parseBody(responseText);
+          parsedResponseNote = parsed.note;
+          responseBodySanitized = sanitizeUnknown(parsed.value);
+        }
       } catch (error) {
         parsedResponseNote = `failed reading response body: ${(error as Error).message}`;
         responseBodySanitized = "[UNAVAILABLE_RESPONSE_BODY]";
@@ -619,7 +667,11 @@ async function buildCapturedCall(args: {
     responseBody: responseBodySanitized,
   });
 
-  const include = originalUrl.startsWith(`${TP_API_HOST}/`) && bodyIncludesInterest(originalUrl, requestBodySanitized, responseBodySanitized);
+  const include = shouldIncludeCapturedCall({
+    url: originalUrl,
+    requestBody: requestBodySanitized,
+    responseBody: responseBodySanitized,
+  });
   const responseTopKeys = topLevelKeys(responseBodySanitized);
   const requestTopKeys = topLevelKeys(requestBodySanitized);
   const hasStructure = containsAnyTextMatch(responseBodySanitized, /\bstructure\b/i);
@@ -628,6 +680,7 @@ async function buildCapturedCall(args: {
     containsAnyTextMatch(responseBodySanitized, /\bworkouttypevalueid\b/i) &&
     containsAnyTextMatch(responseBodySanitized, /\b9\b/i);
   const isStrengthWorkoutGet = method === "GET" && tags.includes("workout") && (tags.includes("strength") || hasWorkoutType9);
+  const sampleSanitizedNames = extractSanitizedNameSamples(responseBodySanitized);
 
   return {
     include,
@@ -654,6 +707,7 @@ async function buildCapturedCall(args: {
         bodyParseNote: parsedResponseNote,
         hasStructure,
         hasExerciseLike,
+        sampleSanitizedNames,
       },
     },
   };
@@ -761,6 +815,10 @@ async function main(): Promise<void> {
   const structurePath = path.join(args.outDir, "strength-structure-shape.sanitized.json");
   const exercisePath = path.join(args.outDir, "exercise-search-shape.sanitized.json");
   const savePath = path.join(args.outDir, "save-payload-shape.sanitized.json");
+  const exerciseDbCandidatesPath = path.join(args.outDir, "exercise-db-candidates.sanitized.json");
+  const exerciseSearchCandidatesPath = path.join(args.outDir, "exercise-search-candidates.sanitized.json");
+  const exerciseDbKeywordHitsPath = path.join(args.outDir, "exercise-db-keyword-hits.sanitized.json");
+  const unknownStrengthCallsPath = path.join(args.outDir, "unknown-strength-calls.sanitized.json");
 
   console.log("[tp-capture-strength-builder-network] mode: READ-ONLY capture");
   console.log(`[tp-capture-strength-builder-network] output: ${args.outDir}`);
@@ -768,9 +826,10 @@ async function main(): Promise<void> {
   console.log("[tp-capture-strength-builder-network] script will NOT click save or send any write requests.");
   console.log("");
   console.log("Manual actions in browser:");
-  console.log("A) Open an existing/test New Strength Builder workout and let it load.");
-  console.log("B) Search exercises: Glute Bridge, Calf Raise, Step Up, Side Plank.");
-  console.log("C) Optional: manually edit and save a TEST workout to observe save payload (script does not trigger save).");
+  console.log("A) Open New Strength Builder and wait for load.");
+  console.log("B) Open exercise picker/list, scroll filters/categories.");
+  console.log("C) Search terms: glute, bridge, calf, raise, step up, plank, side plank, clam, shell, squat, deadlift, romanian, band, knee.");
+  console.log("D) Optional: open exercise details/preview panel. Do NOT press Save.");
   console.log("");
 
   const context = await chromium.launchPersistentContext(profileDir, {
@@ -781,6 +840,8 @@ async function main(): Promise<void> {
   const requestIds = new Map<Request, number>();
   let nextRequestId = 1;
   let totalObservedTpApi = 0;
+  let totalObservedOtherTpHosts = 0;
+  let totalObservedStaticAssets = 0;
   const captured: CapturedCall[] = [];
   let strengthGetFound = false;
   let workoutType9Found = false;
@@ -797,13 +858,23 @@ async function main(): Promise<void> {
   };
 
   context.on("request", (request) => {
-    if (!request.url().startsWith(`${TP_API_HOST}/`)) return;
-    totalObservedTpApi += 1;
+    const url = request.url();
+    if (!isTrainingPeaksApiUrl(url)) return;
+    if (isStaticAssetUrl(url)) {
+      totalObservedStaticAssets += 1;
+      return;
+    }
+    if (isTpApiUrl(url)) {
+      totalObservedTpApi += 1;
+    } else {
+      totalObservedOtherTpHosts += 1;
+    }
     assignId(request);
   });
 
   context.on("requestfinished", async (request) => {
-    if (!request.url().startsWith(`${TP_API_HOST}/`)) return;
+    const url = request.url();
+    if (!isTrainingPeaksApiUrl(url) || isStaticAssetUrl(url)) return;
     const response = await request.response();
     const built = await buildCapturedCall({
       id: assignId(request),
@@ -823,7 +894,8 @@ async function main(): Promise<void> {
   });
 
   context.on("requestfailed", async (request) => {
-    if (!request.url().startsWith(`${TP_API_HOST}/`)) return;
+    const url = request.url();
+    if (!isTrainingPeaksApiUrl(url) || isStaticAssetUrl(url)) return;
     const built = await buildCapturedCall({
       id: assignId(request),
       request,
@@ -850,16 +922,45 @@ async function main(): Promise<void> {
   const structureEntries = buildStructureEntries(captured);
   const exerciseEntries = buildExerciseEntries(captured);
   const saveEntries = buildSaveEntries(captured);
+  const exerciseDbCandidates = buildExerciseDbCandidates(captured);
+  const exerciseSearchCandidates = buildExerciseSearchCandidates(exerciseDbCandidates);
+  const unknownStrengthCalls = buildUnknownStrengthCalls(exerciseDbCandidates);
+  const exerciseDbKeywordHits = buildExerciseDbKeywordHits(exerciseDbCandidates);
+  const exerciseDbFindings = summarizeExerciseDbFindings(exerciseDbCandidates);
 
   const summaryPayload = {
     runAt: new Date().toISOString(),
     mode: "read-only-observer",
     outputDir: args.outDir,
     totalObservedTpApi,
+    totalObservedOtherTpHosts,
+    totalObservedStaticAssets,
     totalIncluded: captured.length,
+    exerciseDbFindings,
     calls: captured,
   };
   await writeFile(networkCallsPath, `${JSON.stringify(summaryPayload, null, 2)}\n`, "utf8");
+
+  await writeFile(
+    exerciseDbCandidatesPath,
+    `${JSON.stringify({ runAt: new Date().toISOString(), found: exerciseDbCandidates.length > 0, candidates: exerciseDbCandidates }, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(
+    exerciseSearchCandidatesPath,
+    `${JSON.stringify({ runAt: new Date().toISOString(), found: exerciseSearchCandidates.length > 0, candidates: exerciseSearchCandidates }, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(
+    exerciseDbKeywordHitsPath,
+    `${JSON.stringify({ runAt: new Date().toISOString(), hits: exerciseDbKeywordHits }, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(
+    unknownStrengthCallsPath,
+    `${JSON.stringify({ runAt: new Date().toISOString(), found: unknownStrengthCalls.length > 0, candidates: unknownStrengthCalls }, null, 2)}\n`,
+    "utf8",
+  );
 
   let createdStructurePath: string | null = null;
   if (structureEntries.length > 0) {
@@ -887,22 +988,38 @@ async function main(): Promise<void> {
     createdSavePath = savePath;
   }
 
-  const markdown = buildSummaryMarkdown({
-    outDir: args.outDir,
-    durationSec: args.durationSec,
-    totalObserved: totalObservedTpApi,
-    totalIncluded: captured.length,
-    callsPath: networkCallsPath,
-    structurePath: createdStructurePath,
-    exercisePath: createdExercisePath,
-    savePath: createdSavePath,
-    strengthGetFound,
-    structureFound: structureEntries.length > 0,
-    exerciseSearchFound: exerciseEntries.length > 0,
-    saveObserved: saveEntries.length > 0,
-    strengthWorkoutType9Found: workoutType9Found,
-    scenarioHints,
-  });
+  const markdown = [
+    buildSummaryMarkdown({
+      outDir: args.outDir,
+      durationSec: args.durationSec,
+      totalObserved: totalObservedTpApi,
+      totalIncluded: captured.length,
+      callsPath: networkCallsPath,
+      structurePath: createdStructurePath,
+      exercisePath: createdExercisePath,
+      savePath: createdSavePath,
+      strengthGetFound,
+      structureFound: structureEntries.length > 0,
+      exerciseSearchFound: exerciseEntries.length > 0,
+      saveObserved: saveEntries.length > 0,
+      strengthWorkoutType9Found: workoutType9Found,
+      scenarioHints,
+    }),
+    "",
+    buildExerciseDbSummarySection({
+      totalObservedTpApi,
+      totalObservedOtherTpHosts,
+      totalIncluded: captured.length,
+      findings: exerciseDbFindings,
+      keywordHits: exerciseDbKeywordHits,
+    }),
+    "",
+    "## Exercise DB artifacts",
+    `- exercise-db-candidates.sanitized.json: \`${exerciseDbCandidatesPath}\``,
+    `- exercise-search-candidates.sanitized.json: \`${exerciseSearchCandidatesPath}\``,
+    `- exercise-db-keyword-hits.sanitized.json: \`${exerciseDbKeywordHitsPath}\``,
+    `- unknown-strength-calls.sanitized.json: \`${unknownStrengthCallsPath}\``,
+  ].join("\n");
   await writeFile(summaryPath, `${markdown}\n`, "utf8");
 
   console.log("");
@@ -912,6 +1029,11 @@ async function main(): Promise<void> {
   if (createdStructurePath) console.log(`- structure shape: ${createdStructurePath}`);
   if (createdExercisePath) console.log(`- exercise search shape: ${createdExercisePath}`);
   if (createdSavePath) console.log(`- save payload shape: ${createdSavePath}`);
+  console.log(`- exercise db candidates: ${exerciseDbCandidatesPath}`);
+  console.log(`- exercise search candidates: ${exerciseSearchCandidatesPath}`);
+  console.log(`- exercise db keyword hits: ${exerciseDbKeywordHitsPath}`);
+  console.log(`- unknown strength calls: ${unknownStrengthCallsPath}`);
+  console.log(`- real exercise DB found: ${exerciseDbFindings.realExerciseDbFound ? "yes" : "no"}`);
   console.log("- no TrainingPeaks write request was initiated by this script.");
 }
 

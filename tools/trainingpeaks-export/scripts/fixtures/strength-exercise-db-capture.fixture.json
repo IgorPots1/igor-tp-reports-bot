@@ -1,0 +1,62 @@
+{
+  "calls": [
+    {
+      "id": 1,
+      "method": "GET",
+      "endpointPattern": "https://tpapi.trainingpeaks.com/exerciselibrary/v2/libraries/112352/items",
+      "status": 200,
+      "tags": ["exercise"],
+      "request": {
+        "queryKeys": [],
+        "bodyShape": { "type": "null" },
+        "bodyTopLevelKeys": []
+      },
+      "response": {
+        "topLevelKeys": [],
+        "bodyShape": {
+          "type": "array",
+          "length": 728,
+          "itemShape": {
+            "type": "object",
+            "keys": ["exerciseLibraryItemId", "itemName", "description"]
+          }
+        },
+        "bodyParseNote": null,
+        "hasExerciseLike": true,
+        "sampleSanitizedNames": ["AA, 3-4 sets", "Aerobic Ride (30 mins)", "Long run, tempo finish"]
+      }
+    },
+    {
+      "id": 2,
+      "method": "GET",
+      "endpointPattern": "https://tpapi.trainingpeaks.com/strength/v1/exercises",
+      "status": 200,
+      "tags": ["strength", "exercise"],
+      "request": {
+        "queryKeys": ["q"],
+        "bodyShape": { "type": "null" },
+        "bodyTopLevelKeys": []
+      },
+      "response": {
+        "topLevelKeys": ["items"],
+        "bodyShape": {
+          "type": "object",
+          "keys": ["items"],
+          "fields": {
+            "items": {
+              "type": "array",
+              "length": 120,
+              "itemShape": {
+                "type": "object",
+                "keys": ["exerciseId", "name", "instructions", "equipment", "muscleGroups", "videoUrl"]
+              }
+            }
+          }
+        },
+        "bodyParseNote": null,
+        "hasExerciseLike": true,
+        "sampleSanitizedNames": ["Glute Bridge", "Single Leg Calf Raise", "Side Plank", "Banded Clam Shell", "Romanian Deadlift"]
+      }
+    }
+  ]
+}

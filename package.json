@@ -19,6 +19,7 @@
     "tp:generate-strength-exercise-catalog": "npm --prefix tools/trainingpeaks-export run tp-generate-strength-exercise-catalog --",
     "check:strength-template-matcher": "npm --prefix tools/trainingpeaks-export run check:strength-template-matcher --",
     "check:strength-exercise-catalog": "npm --prefix tools/trainingpeaks-export run check:strength-exercise-catalog --",
+    "check:strength-exercise-db-capture": "npm --prefix tools/trainingpeaks-export run check:strength-exercise-db-capture --",
     "tp-enable-weekly-reports": "npm --prefix tools/trainingpeaks-export run tp-enable-weekly-reports --",
     "tp-telegram-context-backfill": "npm --prefix tools/trainingpeaks-export run tp-telegram-context-backfill --",
     "tp-custom-metrics-availability-report": "npm --prefix tools/trainingpeaks-export run tp-custom-metrics-availability-report --",

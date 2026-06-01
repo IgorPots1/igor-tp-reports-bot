@@ -32,6 +32,7 @@
     "tp-generate-strength-exercise-catalog": "tsx scripts/tp-generate-strength-exercise-catalog.ts",
     "check:strength-template-matcher": "tsx scripts/check-strength-template-matcher.ts",
     "check:strength-exercise-catalog": "tsx scripts/check-strength-exercise-catalog.ts",
+    "check:strength-exercise-db-capture": "tsx scripts/check-strength-exercise-db-capture.ts",
     "tp-import-athletes": "tsx scripts/tp-import-athletes.ts",
     "tp-enable-weekly-reports": "tsx scripts/tp-enable-weekly-reports.ts",
     "tp-telegram-context-backfill": "tsx scripts/tp-telegram-context-backfill.ts",
