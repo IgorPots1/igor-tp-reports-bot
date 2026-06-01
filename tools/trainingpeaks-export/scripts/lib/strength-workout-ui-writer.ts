@@ -1,13 +1,11 @@
 import path from "node:path";
 
-export type StrengthWorkoutMetricType = "reps" | "duration";
-
 export type StrengthWorkoutExerciseSpec = {
   name: string;
   sets: string;
-  metricType: StrengthWorkoutMetricType;
-  metricValue: string;
-  notes?: string;
+  reps?: string;
+  durationSeconds?: string;
+  coachNote?: string;
 };
 
 export type StrengthWorkoutBlockSpec = {
@@ -50,21 +48,20 @@ export type StrengthWorkoutRunSummary = {
     blockName: string;
     name: string;
     sets: string;
-    metricType: StrengthWorkoutMetricType;
-    metricValue: string;
-    notes?: string;
     selectionStatus: ExactVisibleResultDecision["status"] | "not_run";
     clicked: boolean;
     wouldClick?: boolean;
+    exactMatchClicked?: string;
     added: boolean;
     visibleExactMatches: string[];
     visibleTextsSample: string[];
     inputValueAfterTyping?: string;
     candidateRows?: string[];
-    fieldWrite: {
-      sets: "yes" | "no" | "not_attempted";
-      metric: "yes" | "no" | "not_attempted";
-      notes: "yes" | "no" | "not_attempted";
+    fields: {
+      sets: FieldWriteResult;
+      reps: FieldWriteResult;
+      duration: FieldWriteResult;
+      coachNote: FieldWriteResult;
     };
   }>;
   verification: {
@@ -78,6 +75,18 @@ export type StrengthWorkoutRunSummary = {
   screenshots: string[];
   warnings: string[];
   errors: string[];
+};
+
+export type FieldWriteStatus = "written" | "not_found" | "unsupported" | "failed" | "not_attempted";
+
+export type FieldWriteResult = {
+  attempted: boolean;
+  required: boolean;
+  status: FieldWriteStatus;
+  value?: string;
+  readBack?: string;
+  selectorHint?: string;
+  detail?: string;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -96,22 +105,41 @@ function parseExerciseSpec(value: unknown, index: number): StrengthWorkoutExerci
     throw new Error(`Fixture exercise[${index}] must be an object.`);
   }
 
-  const metricTypeRaw = requireNonEmptyString(value.metricType, `blocks[].exercises[${index}].metricType`);
-  if (metricTypeRaw !== "reps" && metricTypeRaw !== "duration") {
-    throw new Error(`Unsupported metricType "${metricTypeRaw}" in workout fixture.`);
+  const repsRaw = typeof value.reps === "string" ? value.reps.trim() : "";
+  const durationRaw = typeof value.durationSeconds === "string" ? value.durationSeconds.trim() : "";
+  const coachNoteRaw = typeof value.coachNote === "string" ? value.coachNote.trim() : "";
+
+  if (repsRaw && durationRaw) {
+    throw new Error(`Exercise[${index}] cannot define both reps and durationSeconds in fixture.`);
   }
 
-  const notesValue = value.notes;
-  if (notesValue !== undefined && typeof notesValue !== "string") {
-    throw new Error(`Fixture exercise notes at index ${index} must be a string when provided.`);
+  // Backward compatibility with legacy fixture format.
+  if (!repsRaw && !durationRaw) {
+    const metricTypeRaw = typeof value.metricType === "string" ? value.metricType.trim() : "";
+    const metricValueRaw = typeof value.metricValue === "string" ? value.metricValue.trim() : "";
+    if (!metricTypeRaw || !metricValueRaw) {
+      throw new Error(
+        `Exercise[${index}] must provide either {reps|durationSeconds} or legacy {metricType, metricValue}.`
+      );
+    }
+    if (metricTypeRaw !== "reps" && metricTypeRaw !== "duration") {
+      throw new Error(`Unsupported metricType "${metricTypeRaw}" in workout fixture.`);
+    }
+    return {
+      name: requireNonEmptyString(value.name, `blocks[].exercises[${index}].name`),
+      sets: requireNonEmptyString(value.sets, `blocks[].exercises[${index}].sets`),
+      reps: metricTypeRaw === "reps" ? metricValueRaw : undefined,
+      durationSeconds: metricTypeRaw === "duration" ? metricValueRaw : undefined,
+      coachNote: typeof value.notes === "string" && value.notes.trim() ? value.notes.trim() : undefined,
+    };
   }
 
   return {
     name: requireNonEmptyString(value.name, `blocks[].exercises[${index}].name`),
     sets: requireNonEmptyString(value.sets, `blocks[].exercises[${index}].sets`),
-    metricType: metricTypeRaw,
-    metricValue: requireNonEmptyString(value.metricValue, `blocks[].exercises[${index}].metricValue`),
-    notes: typeof notesValue === "string" && notesValue.trim() ? notesValue.trim() : undefined,
+    reps: repsRaw || undefined,
+    durationSeconds: durationRaw || undefined,
+    coachNote: coachNoteRaw || undefined,
   };
 }
 
@@ -259,9 +287,23 @@ export function buildStrengthWorkoutSummaryMarkdown(summary: StrengthWorkoutRunS
   }
   lines.push("");
   lines.push("## Exercise attempts");
+  let setsWritten = 0;
+  let repsWritten = 0;
+  let repsRequired = 0;
+  let durationWritten = 0;
+  let durationRequired = 0;
+  let notesWritten = 0;
+  let notesRequired = 0;
   for (const exercise of summary.attemptedExercises) {
+    if (exercise.fields.sets.status === "written") setsWritten += 1;
+    if (exercise.fields.reps.required) repsRequired += 1;
+    if (exercise.fields.reps.status === "written") repsWritten += 1;
+    if (exercise.fields.duration.required) durationRequired += 1;
+    if (exercise.fields.duration.status === "written") durationWritten += 1;
+    if (exercise.fields.coachNote.required) notesRequired += 1;
+    if (exercise.fields.coachNote.status === "written") notesWritten += 1;
     lines.push(
-      `- [${exercise.blockName}] ${exercise.name}: selection=${exercise.selectionStatus}, clicked=${exercise.clicked ? "yes" : "no"}, added=${exercise.added ? "yes" : "no"}, sets=${exercise.fieldWrite.sets}, metric=${exercise.fieldWrite.metric}, notes=${exercise.fieldWrite.notes}`
+      `- [${exercise.blockName}] ${exercise.name}: selection=${exercise.selectionStatus}, clicked=${exercise.clicked ? "yes" : "no"}, added=${exercise.added ? "yes" : "no"}, sets=${exercise.fields.sets.status}, reps=${exercise.fields.reps.status}, duration=${exercise.fields.duration.status}, coachNote=${exercise.fields.coachNote.status}`
     );
     if (exercise.inputValueAfterTyping) {
       lines.push(`  inputValueAfterTyping=${exercise.inputValueAfterTyping}`);
@@ -270,6 +312,12 @@ export function buildStrengthWorkoutSummaryMarkdown(summary: StrengthWorkoutRunS
       lines.push(`  candidateRows=${exercise.candidateRows.slice(0, 8).join(" | ")}`);
     }
   }
+  lines.push("");
+  lines.push("## Field write summary");
+  lines.push(`- Sets written: ${setsWritten}/${summary.attemptedExercises.length}`);
+  lines.push(`- Reps written: ${repsWritten}/${repsRequired}`);
+  lines.push(`- Duration written: ${durationWritten}/${durationRequired}`);
+  lines.push(`- Coach notes written: ${notesWritten}/${notesRequired}`);
   lines.push("");
   lines.push("## Verification");
   lines.push(`- Status: ${summary.verification.status}`);

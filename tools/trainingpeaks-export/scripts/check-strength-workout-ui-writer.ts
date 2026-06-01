@@ -17,6 +17,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const fixturePath = path.join(__dirname, "fixtures", "strength-workout-template.fixture.json");
 const minimalFixturePath = path.join(__dirname, "fixtures", "strength-workout-template.minimal-strength.fixture.json");
+const probeFixturePath = path.join(
+  __dirname,
+  "fixtures",
+  "strength-workout-template.runner-strength-fields-probe.fixture.json"
+);
 
 function assert(condition: unknown, message: string): void {
   if (!condition) {
@@ -36,6 +41,8 @@ function run(): void {
     JSON.parse(readFileSync(minimalFixturePath, "utf8")) as unknown
   );
   const minimalFlat = flattenWorkoutExercises(minimalTemplate);
+  const probeTemplate = parseStrengthWorkoutTemplate(JSON.parse(readFileSync(probeFixturePath, "utf8")) as unknown);
+  const probeFlat = flattenWorkoutExercises(probeTemplate);
 
   assert(template.title === "TEST - Beginner Runner Strength Foundation", "Expected fixed TEST workout title.");
   assert(flatExercises.length === 13, `Expected 13 exercises, got ${flatExercises.length}.`);
@@ -44,6 +51,16 @@ function run(): void {
   assert(minimalTemplate.id === "minimal_strength", "Expected minimal template id.");
   assert(minimalFlat.length === 5, `Expected 5 minimal exercises, got ${minimalFlat.length}.`);
   assert(minimalFlat[0]?.name === "Glute Bridge", "Expected minimal template to start from Glute Bridge.");
+  assert(probeTemplate.id === "runner_strength_fields_probe", "Expected fields probe template id.");
+  assert(
+    probeTemplate.title === "TEST - Runner Strength Template Fields Probe",
+    "Expected fixed fields probe title."
+  );
+  assert(probeFlat.length === 6, `Expected 6 probe exercises, got ${probeFlat.length}.`);
+  assert(probeFlat[0]?.name === "Glute Bridge", "Expected probe first exercise Glute Bridge.");
+  assert(probeFlat[5]?.name === "Single Leg Calf Raise", "Expected probe last exercise Single Leg Calf Raise.");
+  assert(probeFlat[4]?.durationSeconds === "30", "Expected Forearm Plank durationSeconds=30.");
+  assert(typeof probeFlat[4]?.reps === "undefined", "Expected Forearm Plank without reps.");
 
   const catalogPreflight = buildCatalogPreflight(template, flatExercises.map((entry) => entry.name));
   assert(catalogPreflight.missingNames.length === 0, "Expected all exact names to be present in synthetic catalog preflight.");
@@ -85,9 +102,6 @@ function run(): void {
       blockName: exercise.blockName,
       name: exercise.name,
       sets: exercise.sets,
-      metricType: exercise.metricType,
-      metricValue: exercise.metricValue,
-      notes: exercise.notes,
       selectionStatus: "not_run",
       clicked: false,
       added: false,
@@ -95,10 +109,11 @@ function run(): void {
       visibleTextsSample: [],
       inputValueAfterTyping: exercise.name,
       candidateRows: [exercise.name],
-      fieldWrite: {
-        sets: "not_attempted",
-        metric: "not_attempted",
-        notes: "not_attempted",
+      fields: {
+        sets: { attempted: false, required: true, status: "not_attempted" },
+        reps: { attempted: false, required: false, status: "unsupported" },
+        duration: { attempted: false, required: false, status: "unsupported" },
+        coachNote: { attempted: false, required: false, status: "unsupported" },
       },
     })),
     verification: {
@@ -141,6 +156,7 @@ function run(): void {
   console.log(`- fixture: ${fixturePath}`);
   console.log(`- exercises: ${flatExercises.length}`);
   console.log(`- minimal exercises: ${minimalFlat.length}`);
+  console.log(`- probe exercises: ${probeFlat.length}`);
   console.log(`- title: ${template.title}`);
 }
 

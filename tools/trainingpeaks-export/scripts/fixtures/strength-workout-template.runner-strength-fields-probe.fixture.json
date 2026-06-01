@@ -1,0 +1,48 @@
+{
+  "id": "runner_strength_fields_probe",
+  "title": "TEST - Runner Strength Template Fields Probe",
+  "workoutInstructions": "TEST WORKOUT - do not assign to real athletes.\nRunner strength template field probe.\nFocus on controlled movement, no sharp pain, no max effort.\nStop if pain increases.",
+  "blocks": [
+    {
+      "name": "Main",
+      "exercises": [
+        {
+          "name": "Glute Bridge",
+          "sets": "2",
+          "reps": "15",
+          "coachNote": "Drive through heels. Pause 1-2 sec at the top. Keep ribs down and hips level."
+        },
+        {
+          "name": "Banded Clam Shell",
+          "sets": "2",
+          "reps": "12 per side",
+          "coachNote": "Band above knees. Keep pelvis still. Move slowly, no hip rolling backward."
+        },
+        {
+          "name": "Goblet Squat",
+          "sets": "3",
+          "reps": "10",
+          "coachNote": "Controlled depth. Knees track over toes. Keep torso tall and pressure through midfoot."
+        },
+        {
+          "name": "Romanian Deadlift with DB",
+          "sets": "3",
+          "reps": "10",
+          "coachNote": "Hinge at hips. Slight knee bend. Keep DBs close to legs and feel hamstrings load."
+        },
+        {
+          "name": "Forearm Plank",
+          "sets": "3",
+          "durationSeconds": "30",
+          "coachNote": "Hips level. Do not sag or pike. Stop the set if low back takes over."
+        },
+        {
+          "name": "Single Leg Calf Raise",
+          "sets": "2",
+          "reps": "12 per side",
+          "coachNote": "Full range. Slow 2-3 sec lower. Use support for balance, not to pull yourself up."
+        }
+      ]
+    }
+  ]
+}
