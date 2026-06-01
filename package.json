@@ -72,6 +72,8 @@
     "diagnose-coach-memory-health": "npx tsx scripts/diagnose-coach-memory-health.ts",
     "diagnose-coach-memory-quality": "npx tsx scripts/diagnose-coach-memory-quality.ts",
     "diagnose-coach-operational-signals": "npx tsx scripts/diagnose-coach-operational-signals.ts",
+    "persist-coach-operational-signals": "npx tsx scripts/persist-coach-operational-signals.ts",
+    "review-coach-operational-signals": "npx tsx scripts/review-coach-operational-signals.ts",
     "cleanup-coach-memory-quality": "npx tsx scripts/cleanup-coach-memory-quality.ts",
     "review-coach-memory-contexts": "npx tsx scripts/review-coach-memory-contexts.ts",
     "check-coach-operational-signals": "npx tsx scripts/check-coach-operational-signals.ts",

@@ -252,6 +252,23 @@ export type TrainingPeaksCoachCaseStatus =
   | "needs_review"
   | "resolved"
   | "dismissed";
+export type TrainingPeaksOperationalSignalStatus =
+  | "active"
+  | "consumed"
+  | "expired"
+  | "cancelled"
+  | "dismissed";
+export type TrainingPeaksOperationalSignalType =
+  | "schedule_availability_window"
+  | "schedule_unavailability_window"
+  | "resume_training"
+  | "pause_training"
+  | "health_issue_started"
+  | "health_issue_resolved"
+  | "health_issue_improving"
+  | "move_workout_candidate"
+  | "plan_generation_constraint"
+  | "race_load_context";
 export type TrainingPeaksCoachActionKind =
   | "case_resolved"
   | "case_dismissed"
@@ -5461,6 +5478,34 @@ export type TrainingPeaksCoachCase = TrainingPeaksCoachCaseSummary & {
   coachNotesJson: Record<string, unknown>;
 };
 
+export type TrainingPeaksStudentOperationalSignal = {
+  id: string;
+  studentId: string;
+  signalType: TrainingPeaksOperationalSignalType;
+  status: TrainingPeaksOperationalSignalStatus;
+  sourceType: string;
+  sourceObservationId: string | null;
+  telegramChatId: number | null;
+  telegramMessageId: number | null;
+  telegramMessageThreadId: number | null;
+  structuredPayload: Record<string, unknown>;
+  confidence: number | null;
+  validFrom: string | null;
+  validUntil: string | null;
+  sourceDate: string | null;
+  targetDate: string | null;
+  sourceDay: string | null;
+  targetDay: string | null;
+  linkedMemoryItemId: string | null;
+  linkedCaseId: string | null;
+  linkedActionId: string | null;
+  dedupeKey: string;
+  consumedAt: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type TrainingPeaksCoachCaseSummaryRow = {
   id: string;
   student_id: string;
@@ -5475,6 +5520,75 @@ type TrainingPeaksCoachCaseRow = TrainingPeaksCoachCaseSummaryRow & {
   telegram_message_id: number | null;
   action_id: string | null;
   coach_notes_json: unknown | null;
+};
+
+type TrainingPeaksStudentOperationalSignalRow = {
+  id: string;
+  student_id: string;
+  signal_type: string;
+  status: string;
+  source_type: string;
+  source_observation_id: string | null;
+  telegram_chat_id: number | null;
+  telegram_message_id: number | null;
+  telegram_message_thread_id: number | null;
+  structured_payload: unknown;
+  confidence: number | null;
+  valid_from: string | null;
+  valid_until: string | null;
+  source_date: string | null;
+  target_date: string | null;
+  source_day: string | null;
+  target_day: string | null;
+  linked_memory_item_id: string | null;
+  linked_case_id: string | null;
+  linked_action_id: string | null;
+  dedupe_key: string;
+  consumed_at: string | null;
+  metadata: unknown;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ListTrainingPeaksOperationalSignalsInput = {
+  limit?: number;
+  offset?: number;
+  status?: TrainingPeaksOperationalSignalStatus;
+  studentQuery?: string | null;
+  signalType?: TrainingPeaksOperationalSignalType;
+};
+
+export type UpsertTrainingPeaksOperationalSignalFromCandidateInput = {
+  studentId: string;
+  signalType: TrainingPeaksOperationalSignalType;
+  sourceType: string;
+  sourceObservationId?: string | null;
+  telegramChatId?: number | null;
+  telegramMessageId?: number | null;
+  telegramMessageThreadId?: number | null;
+  structuredPayload?: Record<string, unknown>;
+  confidence?: number | null;
+  validFrom?: string | null;
+  validUntil?: string | null;
+  sourceDate?: string | null;
+  targetDate?: string | null;
+  sourceDay?: string | null;
+  targetDay?: string | null;
+  linkedMemoryItemId?: string | null;
+  linkedCaseId?: string | null;
+  linkedActionId?: string | null;
+  dedupeKey: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type UpsertTrainingPeaksOperationalSignalWriteStatus =
+  | "inserted"
+  | "existing"
+  | "updated";
+
+export type UpsertTrainingPeaksOperationalSignalFromCandidateResult = {
+  writeStatus: UpsertTrainingPeaksOperationalSignalWriteStatus;
+  signal: TrainingPeaksStudentOperationalSignal;
 };
 
 export type TrainingPeaksCoachCasePrefixLookupResult =
@@ -5745,6 +5859,153 @@ function mapTrainingPeaksCoachCaseRow(row: TrainingPeaksCoachCaseRow): TrainingP
         ? (row.coach_notes_json as Record<string, unknown>)
         : {},
   };
+}
+
+function mapTrainingPeaksStudentOperationalSignalRow(
+  row: TrainingPeaksStudentOperationalSignalRow
+): TrainingPeaksStudentOperationalSignal {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    signalType: row.signal_type as TrainingPeaksOperationalSignalType,
+    status: row.status as TrainingPeaksOperationalSignalStatus,
+    sourceType: row.source_type,
+    sourceObservationId: row.source_observation_id,
+    telegramChatId: row.telegram_chat_id,
+    telegramMessageId: row.telegram_message_id,
+    telegramMessageThreadId: row.telegram_message_thread_id,
+    structuredPayload:
+      row.structured_payload &&
+      typeof row.structured_payload === "object" &&
+      !Array.isArray(row.structured_payload)
+        ? (row.structured_payload as Record<string, unknown>)
+        : {},
+    confidence: row.confidence,
+    validFrom: row.valid_from,
+    validUntil: row.valid_until,
+    sourceDate: row.source_date,
+    targetDate: row.target_date,
+    sourceDay: row.source_day,
+    targetDay: row.target_day,
+    linkedMemoryItemId: row.linked_memory_item_id,
+    linkedCaseId: row.linked_case_id,
+    linkedActionId: row.linked_action_id,
+    dedupeKey: row.dedupe_key,
+    consumedAt: row.consumed_at,
+    metadata:
+      row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? (row.metadata as Record<string, unknown>)
+        : {},
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+const TRAININGPEAKS_OPERATIONAL_SIGNAL_TYPE_SET: Set<TrainingPeaksOperationalSignalType> =
+  new Set<TrainingPeaksOperationalSignalType>([
+    "schedule_availability_window",
+    "schedule_unavailability_window",
+    "resume_training",
+    "pause_training",
+    "health_issue_started",
+    "health_issue_resolved",
+    "health_issue_improving",
+    "move_workout_candidate",
+    "plan_generation_constraint",
+    "race_load_context",
+  ]);
+
+const TRAININGPEAKS_OPERATIONAL_SIGNAL_STATUS_SET: Set<TrainingPeaksOperationalSignalStatus> =
+  new Set<TrainingPeaksOperationalSignalStatus>([
+    "active",
+    "consumed",
+    "expired",
+    "cancelled",
+    "dismissed",
+  ]);
+
+function normalizeTrainingPeaksOperationalSignalType(
+  value: string
+): TrainingPeaksOperationalSignalType {
+  const normalized = value.trim().toLowerCase() as TrainingPeaksOperationalSignalType;
+  if (!TRAININGPEAKS_OPERATIONAL_SIGNAL_TYPE_SET.has(normalized)) {
+    throw new Error(`Unsupported TrainingPeaks operational signal type: ${value}`);
+  }
+  return normalized;
+}
+
+function normalizeTrainingPeaksOperationalSignalStatus(
+  value: string | null | undefined
+): TrainingPeaksOperationalSignalStatus {
+  const normalized = (value?.trim().toLowerCase() || "active") as TrainingPeaksOperationalSignalStatus;
+  if (!TRAININGPEAKS_OPERATIONAL_SIGNAL_STATUS_SET.has(normalized)) {
+    throw new Error(`Unsupported TrainingPeaks operational signal status: ${String(value)}`);
+  }
+  return normalized;
+}
+
+function normalizeTrainingPeaksOperationalSignalSourceType(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    throw new Error("TrainingPeaks operational signal source_type is required");
+  }
+  return normalized;
+}
+
+function normalizeTrainingPeaksOperationalSignalDedupeKey(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    throw new Error("TrainingPeaks operational signal dedupe_key is required");
+  }
+  return normalized;
+}
+
+function normalizeTrainingPeaksOperationalSignalDate(
+  value: string | null | undefined
+): string | null {
+  const normalized = value?.trim() ?? "";
+  if (!normalized) {
+    return null;
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
+function normalizeTrainingPeaksOperationalSignalDay(
+  value: string | null | undefined
+): string | null {
+  const normalized = value?.trim() ?? "";
+  return normalized ? normalized : null;
+}
+
+function normalizeTrainingPeaksOperationalSignalConfidence(
+  value: number | null | undefined
+): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  const bounded = Math.max(0, Math.min(1, value));
+  return Number(bounded.toFixed(3));
+}
+
+function isTrainingPeaksMissingRelationError(error: {
+  code?: string | null;
+  message?: string | null;
+}): boolean {
+  const code = (error.code ?? "").toUpperCase();
+  const message = (error.message ?? "").toLowerCase();
+  return (
+    code === "PGRST205" ||
+    code === "42P01" ||
+    message.includes("does not exist") ||
+    message.includes("schema cache") ||
+    message.includes("could not find the table")
+  );
 }
 
 function mapTrainingPeaksCoachActionTakenRow(
@@ -6466,6 +6727,262 @@ export async function insertTrainingPeaksCoachActionTaken(
   }
 
   return mapTrainingPeaksCoachActionTakenRow(data as TrainingPeaksCoachActionTakenRow);
+}
+
+export async function listTrainingPeaksOperationalSignals(
+  input: ListTrainingPeaksOperationalSignalsInput = {}
+): Promise<{ items: TrainingPeaksStudentOperationalSignal[]; total: number }> {
+  const safeLimit = Math.max(1, Math.min(input.limit ?? 50, 200));
+  const safeOffset = Math.max(0, Math.trunc(input.offset ?? 0));
+  const normalizedStudentQuery = input.studentQuery?.trim() ?? "";
+  const supabase = createSupabaseServerClient();
+
+  let studentIdFilter: string[] | null = null;
+  if (normalizedStudentQuery.length > 0) {
+    const { data: matchedStudents, error: studentsError } = await supabase
+      .from("trainingpeaks_students")
+      .select("id")
+      .or(
+        `student_name.ilike.%${normalizedStudentQuery}%,student_id.ilike.%${normalizedStudentQuery}%`
+      )
+      .limit(200);
+    if (studentsError) {
+      throw new Error(
+        `Failed to filter TrainingPeaks operational signals by student: ${studentsError.message}`
+      );
+    }
+    studentIdFilter = ((matchedStudents as Array<{ id: string }> | null) ?? [])
+      .map((row) => row.id)
+      .filter(Boolean);
+    if (studentIdFilter.length === 0) {
+      return { items: [], total: 0 };
+    }
+  }
+
+  let query = supabase
+    .from("trainingpeaks_student_operational_signals")
+    .select("*", { count: "exact" })
+    .order("created_at", { ascending: false })
+    .range(safeOffset, safeOffset + safeLimit - 1);
+
+  if (input.status) {
+    query = query.eq(
+      "status",
+      normalizeTrainingPeaksOperationalSignalStatus(input.status)
+    );
+  }
+  if (input.signalType) {
+    query = query.eq(
+      "signal_type",
+      normalizeTrainingPeaksOperationalSignalType(input.signalType)
+    );
+  }
+  if (studentIdFilter && studentIdFilter.length > 0) {
+    query = query.in("student_id", studentIdFilter);
+  }
+
+  const { data, error, count } = await query;
+  if (error) {
+    if (isTrainingPeaksMissingRelationError(error)) {
+      return { items: [], total: 0 };
+    }
+    throw new Error(`Failed to list TrainingPeaks operational signals: ${error.message}`);
+  }
+
+  const rows = (data as TrainingPeaksStudentOperationalSignalRow[] | null) ?? [];
+  return {
+    items: rows.map(mapTrainingPeaksStudentOperationalSignalRow),
+    total: count ?? rows.length,
+  };
+}
+
+export async function upsertTrainingPeaksOperationalSignalFromCandidate(
+  input: UpsertTrainingPeaksOperationalSignalFromCandidateInput
+): Promise<UpsertTrainingPeaksOperationalSignalFromCandidateResult> {
+  const normalizedSignalType = normalizeTrainingPeaksOperationalSignalType(input.signalType);
+
+  const normalizedSourceType = normalizeTrainingPeaksOperationalSignalSourceType(input.sourceType);
+  const normalizedDedupeKey = normalizeTrainingPeaksOperationalSignalDedupeKey(input.dedupeKey);
+  const normalizedStatus: TrainingPeaksOperationalSignalStatus = "active";
+  const payload = pickDefinedValues({
+    student_id: input.studentId,
+    signal_type: normalizedSignalType,
+    status: normalizedStatus,
+    source_type: normalizedSourceType,
+    source_observation_id: input.sourceObservationId ?? null,
+    telegram_chat_id: input.telegramChatId ?? null,
+    telegram_message_id: input.telegramMessageId ?? null,
+    telegram_message_thread_id: input.telegramMessageThreadId ?? null,
+    structured_payload: input.structuredPayload ?? {},
+    confidence: normalizeTrainingPeaksOperationalSignalConfidence(input.confidence),
+    valid_from: normalizeTrainingPeaksOperationalSignalDate(input.validFrom),
+    valid_until: normalizeTrainingPeaksOperationalSignalDate(input.validUntil),
+    source_date: normalizeTrainingPeaksOperationalSignalDate(input.sourceDate),
+    target_date: normalizeTrainingPeaksOperationalSignalDate(input.targetDate),
+    source_day: normalizeTrainingPeaksOperationalSignalDay(input.sourceDay),
+    target_day: normalizeTrainingPeaksOperationalSignalDay(input.targetDay),
+    linked_memory_item_id: input.linkedMemoryItemId ?? null,
+    linked_case_id: input.linkedCaseId ?? null,
+    linked_action_id: input.linkedActionId ?? null,
+    dedupe_key: normalizedDedupeKey,
+    metadata: input.metadata ?? {},
+  });
+
+  const supabase = createSupabaseServerClient();
+  const existingQuery = supabase
+    .from("trainingpeaks_student_operational_signals")
+    .select("*")
+    .eq("student_id", input.studentId)
+    .eq("signal_type", normalizedSignalType)
+    .eq("dedupe_key", normalizedDedupeKey)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const existingScoped =
+    input.sourceObservationId && input.sourceObservationId.trim().length > 0
+      ? existingQuery.eq("source_observation_id", input.sourceObservationId)
+      : existingQuery.is("source_observation_id", null);
+
+  const existingResult = await existingScoped.maybeSingle();
+  if (existingResult.error) {
+    if (isTrainingPeaksMissingRelationError(existingResult.error)) {
+      throw new Error(
+        "trainingpeaks_student_operational_signals table is missing; apply Supabase migration first"
+      );
+    }
+    throw new Error(
+      `Failed to lookup existing TrainingPeaks operational signal candidate: ${existingResult.error.message}`
+    );
+  }
+
+  const existing = existingResult.data as TrainingPeaksStudentOperationalSignalRow | null;
+  if (!existing) {
+    const { data: insertedData, error: insertedError } = await supabase
+      .from("trainingpeaks_student_operational_signals")
+      .insert(payload)
+      .select("*")
+      .single();
+    if (insertedError) {
+      if (isTrainingPeaksMissingRelationError(insertedError)) {
+        throw new Error(
+          "trainingpeaks_student_operational_signals table is missing; apply Supabase migration first"
+        );
+      }
+      if (insertedError.code === "23505") {
+        const { data: conflictData, error: conflictError } = await existingScoped.maybeSingle();
+        if (conflictError) {
+          throw new Error(
+            `Failed to load TrainingPeaks operational signal after conflict: ${conflictError.message}`
+          );
+        }
+        if (!conflictData) {
+          throw new Error(
+            "Failed to resolve TrainingPeaks operational signal conflict: row not found"
+          );
+        }
+        return {
+          writeStatus: "existing",
+          signal: mapTrainingPeaksStudentOperationalSignalRow(
+            conflictData as TrainingPeaksStudentOperationalSignalRow
+          ),
+        };
+      }
+      throw new Error(
+        `Failed to insert TrainingPeaks operational signal candidate: ${insertedError.message}`
+      );
+    }
+    return {
+      writeStatus: "inserted",
+      signal: mapTrainingPeaksStudentOperationalSignalRow(
+        insertedData as TrainingPeaksStudentOperationalSignalRow
+      ),
+    };
+  }
+
+  const structuredPayload =
+    payload.structured_payload && typeof payload.structured_payload === "object"
+      ? (payload.structured_payload as Record<string, unknown>)
+      : {};
+  const existingStructuredPayload =
+    existing.structured_payload &&
+    typeof existing.structured_payload === "object" &&
+    !Array.isArray(existing.structured_payload)
+      ? (existing.structured_payload as Record<string, unknown>)
+      : {};
+  const nextStructuredPayload = {
+    ...existingStructuredPayload,
+    ...structuredPayload,
+  };
+  const nextMetadata = {
+    ...(existing.metadata && typeof existing.metadata === "object" && !Array.isArray(existing.metadata)
+      ? (existing.metadata as Record<string, unknown>)
+      : {}),
+    ...((payload.metadata as Record<string, unknown> | undefined) ?? {}),
+  };
+
+  const shouldUpdate =
+    existing.status !== normalizedStatus ||
+    existing.source_type !== normalizedSourceType ||
+    existing.telegram_chat_id !== (payload.telegram_chat_id ?? null) ||
+    existing.telegram_message_id !== (payload.telegram_message_id ?? null) ||
+    existing.telegram_message_thread_id !== (payload.telegram_message_thread_id ?? null) ||
+    JSON.stringify(existingStructuredPayload) !== JSON.stringify(nextStructuredPayload) ||
+    (existing.confidence ?? null) !== (payload.confidence ?? null) ||
+    existing.valid_from !== (payload.valid_from ?? null) ||
+    existing.valid_until !== (payload.valid_until ?? null) ||
+    existing.source_date !== (payload.source_date ?? null) ||
+    existing.target_date !== (payload.target_date ?? null) ||
+    existing.source_day !== (payload.source_day ?? null) ||
+    existing.target_day !== (payload.target_day ?? null) ||
+    existing.linked_memory_item_id !== (payload.linked_memory_item_id ?? null) ||
+    existing.linked_case_id !== (payload.linked_case_id ?? null) ||
+    existing.linked_action_id !== (payload.linked_action_id ?? null) ||
+    JSON.stringify(existing.metadata ?? {}) !== JSON.stringify(nextMetadata);
+
+  if (!shouldUpdate) {
+    return {
+      writeStatus: "existing",
+      signal: mapTrainingPeaksStudentOperationalSignalRow(existing),
+    };
+  }
+
+  const { data: updatedData, error: updatedError } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .update({
+      status: normalizedStatus,
+      source_type: normalizedSourceType,
+      telegram_chat_id: payload.telegram_chat_id ?? null,
+      telegram_message_id: payload.telegram_message_id ?? null,
+      telegram_message_thread_id: payload.telegram_message_thread_id ?? null,
+      structured_payload: nextStructuredPayload,
+      confidence: payload.confidence ?? null,
+      valid_from: payload.valid_from ?? null,
+      valid_until: payload.valid_until ?? null,
+      source_date: payload.source_date ?? null,
+      target_date: payload.target_date ?? null,
+      source_day: payload.source_day ?? null,
+      target_day: payload.target_day ?? null,
+      linked_memory_item_id: payload.linked_memory_item_id ?? null,
+      linked_case_id: payload.linked_case_id ?? null,
+      linked_action_id: payload.linked_action_id ?? null,
+      metadata: nextMetadata,
+    })
+    .eq("id", existing.id)
+    .select("*")
+    .single();
+  if (updatedError) {
+    if (isTrainingPeaksMissingRelationError(updatedError)) {
+      throw new Error(
+        "trainingpeaks_student_operational_signals table is missing; apply Supabase migration first"
+      );
+    }
+    throw new Error(`Failed to update TrainingPeaks operational signal: ${updatedError.message}`);
+  }
+  return {
+    writeStatus: "updated",
+    signal: mapTrainingPeaksStudentOperationalSignalRow(
+      updatedData as TrainingPeaksStudentOperationalSignalRow
+    ),
+  };
 }
 
 export type UpdateTrainingPeaksMessageIntentLogAiInput = {
