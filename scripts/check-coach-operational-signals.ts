@@ -2,6 +2,7 @@ import process from "node:process";
 
 import {
   classifyCoachOperationalSignal,
+  classifyCoachOperationalSignals,
   type ObservationLike,
   type OperationalPrimaryBucket,
   type OperationalSignalType,
@@ -27,6 +28,21 @@ type CaseDef = {
   name: string;
   observation: ObservationLike;
   expected: Expectation;
+};
+
+type MultiExpectation = {
+  signal_types: OperationalSignalType[];
+  same_episode_expected?: boolean;
+  episode_type?: string;
+  role_by_signal?: Partial<Record<OperationalSignalType, string>>;
+  health_follow_up_expected_for?: OperationalSignalType[];
+  no_follow_up_for?: OperationalSignalType[];
+};
+
+type MultiCaseDef = {
+  name: string;
+  observation: ObservationLike;
+  expected: MultiExpectation;
 };
 
 const CONFIDENCE_ORDER: Record<string, number> = {
@@ -107,7 +123,52 @@ function assertCase(caseDef: CaseDef): string[] {
   return failures;
 }
 
+function assertMultiCase(caseDef: MultiCaseDef): string[] {
+  const result = classifyCoachOperationalSignals(caseDef.observation);
+  const failures: string[] = [];
+  const resultTypes = result.map((item) => item.signal_type);
+  for (const expectedType of caseDef.expected.signal_types) {
+    if (!resultTypes.includes(expectedType)) {
+      failures.push(`missing signal_type=${expectedType}; got=${JSON.stringify(resultTypes)}`);
+    }
+  }
+  if (caseDef.expected.signal_types.length !== result.length) {
+    failures.push(`signal_count=${result.length} expected=${caseDef.expected.signal_types.length}`);
+  }
+  return failures;
+}
+
 async function run(): Promise<void> {
+  const episodeCases: MultiCaseDef[] = [
+    {
+      name: "episode-health-related-move-adjustment",
+      observation: mkObs("переставить интервалы пока на среду, заболевать начала, горло болит, колбасить начинает"),
+      expected: {
+        signal_types: ["move_workout_candidate", "health_issue_started"],
+      },
+    },
+    {
+      name: "episode-illness-pause",
+      observation: mkObs("сегодня-завтра воздержусь от бега, кашель, голос осип"),
+      expected: {
+        signal_types: ["pause_training", "health_issue_started"],
+      },
+    },
+    {
+      name: "episode-pure-move-stays-simple",
+      observation: mkObs("А можно пятничную тренировку в чт сделать? У меня она не переносится"),
+      expected: {
+        signal_types: ["move_workout_candidate"],
+      },
+    },
+    {
+      name: "episode-schedule-stays-schedule-no-health-fp",
+      observation: mkObs("на этой неделе смогу во вторник и четверг"),
+      expected: {
+        signal_types: ["plan_generation_constraint"],
+      },
+    },
+  ];
   const cases: CaseDef[] = [
     {
       name: "current-week-multi-day-availability",
@@ -385,6 +446,15 @@ async function run(): Promise<void> {
   ];
 
   let failed = 0;
+  for (const caseDef of episodeCases) {
+    const failures = assertMultiCase(caseDef);
+    if (failures.length > 0) {
+      failed += 1;
+      console.log(`${LOG_PREFIX} FAIL ${caseDef.name}: ${failures.join("; ")}`);
+    } else {
+      console.log(`${LOG_PREFIX} OK ${caseDef.name}`);
+    }
+  }
   for (const caseDef of cases) {
     const failures = assertCase(caseDef);
     if (failures.length > 0) {

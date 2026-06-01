@@ -12,7 +12,7 @@ import {
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
 import {
-  classifyCoachOperationalSignal,
+  classifyCoachOperationalSignals,
   type ObservationLike,
   type OperationalConfidence,
   type OperationalPrimaryBucket,
@@ -104,6 +104,13 @@ type CandidateOutput = {
   write_status: CandidateWriteStatus;
   observation_id: string;
   reason: string;
+  episode_key: string | null;
+  episode_type: string | null;
+  episode_role: string | null;
+  related_signal_types: string[];
+  follow_up_due_at: string | null;
+  follow_up_kind: string | null;
+  follow_up_status: string | null;
 };
 
 type RunSummary = {
@@ -298,6 +305,24 @@ function toIsoObservedAt(observation: ObservationRow): string {
   return observation.observed_at ?? observation.created_at;
 }
 
+function normalizeObservedDateTime(value: string): Date {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return new Date();
+  }
+  return parsed;
+}
+
+function toIsoDate(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
+
+function addDaysDate(value: Date, days: number): Date {
+  const copy = new Date(value.getTime());
+  copy.setUTCDate(copy.getUTCDate() + days);
+  return copy;
+}
+
 function normalizeDate(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
@@ -376,6 +401,133 @@ function parseTelegramBigInt(value: string | null): number | null {
     return null;
   }
   return parsed;
+}
+
+function isHealthSignalType(signalType: TrainingPeaksOperationalSignalType): boolean {
+  return (
+    signalType === "health_issue_started" ||
+    signalType === "health_issue_improving" ||
+    signalType === "health_issue_resolved"
+  );
+}
+
+function isScheduleSignalType(signalType: TrainingPeaksOperationalSignalType): boolean {
+  return (
+    signalType === "plan_generation_constraint" ||
+    signalType === "schedule_availability_window" ||
+    signalType === "schedule_unavailability_window"
+  );
+}
+
+type EpisodeModel = {
+  episodeKey: string;
+  episodeType: string;
+};
+
+function detectEpisodeModel(input: {
+  studentId: string;
+  observationId: string;
+  candidates: Array<{
+    signalType: TrainingPeaksOperationalSignalType;
+    structuredPayload: Record<string, unknown>;
+  }>;
+}): EpisodeModel | null {
+  if (input.candidates.length < 2) {
+    return null;
+  }
+  const types = new Set(input.candidates.map((item) => item.signalType));
+  const hasHealth = [...types].some((signalType) => isHealthSignalType(signalType));
+  const hasMove = types.has("move_workout_candidate");
+  const hasPause = types.has("pause_training");
+  const hasSchedule = [...types].some((signalType) => isScheduleSignalType(signalType));
+  const hasIllnessPause = input.candidates.some((item) => {
+    if (item.signalType !== "pause_training") {
+      return false;
+    }
+    const kind = item.structuredPayload.health_issue_kind;
+    return typeof kind === "string" && kind === "illness";
+  });
+  let episodeType: string | null = null;
+  if (hasHealth && hasMove) {
+    episodeType = "health_related_plan_adjustment";
+  } else if (hasPause && (hasHealth || hasIllnessPause)) {
+    episodeType = "illness_pause";
+  } else if (hasHealth && hasSchedule) {
+    episodeType = types.has("schedule_unavailability_window")
+      ? "schedule_unavailability"
+      : "schedule_constraint";
+  }
+  if (!episodeType) {
+    return null;
+  }
+  return {
+    episodeKey: `student:${input.studentId}:observation:${input.observationId}:episode:${episodeType}`,
+    episodeType,
+  };
+}
+
+function pickEpisodeRole(
+  signalType: TrainingPeaksOperationalSignalType,
+  episodeType: string
+): string | null {
+  if (episodeType === "health_related_plan_adjustment") {
+    if (signalType === "move_workout_candidate") {
+      return "plan_adjustment";
+    }
+    if (isHealthSignalType(signalType)) {
+      return "health_context";
+    }
+    if (isScheduleSignalType(signalType)) {
+      return "schedule_context";
+    }
+  }
+  if (episodeType === "illness_pause") {
+    if (signalType === "pause_training") {
+      return "pause_context";
+    }
+    if (isHealthSignalType(signalType)) {
+      return "health_context";
+    }
+  }
+  if (episodeType === "schedule_constraint" || episodeType === "schedule_unavailability") {
+    if (isScheduleSignalType(signalType)) {
+      return "schedule_context";
+    }
+    if (isHealthSignalType(signalType)) {
+      return "health_context";
+    }
+  }
+  return null;
+}
+
+function computeFollowUpDays(input: {
+  signalType: TrainingPeaksOperationalSignalType;
+  structuredPayload: Record<string, unknown>;
+}): number | null {
+  const healthKind = input.structuredPayload.health_issue_kind;
+  const isIllness = typeof healthKind === "string" && healthKind === "illness";
+  if (input.signalType === "pause_training" && isIllness) {
+    return 2;
+  }
+  if (input.signalType === "health_issue_started") {
+    return isIllness ? 2 : 3;
+  }
+  return null;
+}
+
+function buildFollowUpReason(input: {
+  signalType: TrainingPeaksOperationalSignalType;
+  structuredPayload: Record<string, unknown>;
+}): string {
+  const healthKind = input.structuredPayload.health_issue_kind;
+  const isIllness = typeof healthKind === "string" && healthKind === "illness";
+  if (input.signalType === "pause_training" && isIllness) {
+    return "illness-related pause follow-up";
+  }
+  if (input.signalType === "health_issue_started" && isIllness) {
+    return "illness onset follow-up";
+  }
+  return "health status follow-up";
 }
 
 async function fetchStudents(studentQuery: string | null): Promise<Map<string, StudentRow>> {
@@ -461,6 +613,17 @@ function printTextOutput(
     console.log(`  write_status=${row.write_status}`);
     console.log(`  reason=${row.reason}`);
     console.log(`  observation_id=${row.observation_id}`);
+    if (row.episode_key) {
+      console.log(`  episode_key=${row.episode_key}`);
+      console.log(`  episode_type=${row.episode_type ?? "null"}`);
+      console.log(`  episode_role=${row.episode_role ?? "null"}`);
+      console.log(`  related_signal_types=${row.related_signal_types.join(",") || "none"}`);
+    }
+    if (row.follow_up_due_at) {
+      console.log(`  follow_up_due_at=${row.follow_up_due_at}`);
+      console.log(`  follow_up_kind=${row.follow_up_kind ?? "null"}`);
+      console.log(`  follow_up_status=${row.follow_up_status ?? "null"}`);
+    }
   }
 
   console.log("");
@@ -516,6 +679,13 @@ async function run(): Promise<void> {
           write_status: "skipped",
           observation_id: row.id,
           reason: "missing_student_id",
+          episode_key: null,
+          episode_type: null,
+          episode_role: null,
+          related_signal_types: [],
+          follow_up_due_at: null,
+          follow_up_kind: null,
+          follow_up_status: null,
         });
       }
       continue;
@@ -528,7 +698,7 @@ async function run(): Promise<void> {
     }
 
     const sourceType = (row.source_type ?? "").toLowerCase();
-    const classification = classifyCoachOperationalSignal({
+    const allCandidates = classifyCoachOperationalSignals({
       sourceType,
       textPreview: row.text_preview,
       labels: coerceStringArray(row.labels).map((label) => label.toLowerCase()),
@@ -536,155 +706,274 @@ async function run(): Promise<void> {
       observedAt: toIsoObservedAt(row),
       studentId: row.student_id,
     } as ObservationLike);
-
-    const signalType = classification.signal_type;
-    const isActionable = isActionableClassification({
-      primaryBucket: classification.primary_bucket,
-      secondaryBuckets: classification.secondary_buckets,
-    });
-    const persistableSignalType =
-      signalType &&
-      PERSISTABLE_SIGNAL_TYPES.has(signalType as TrainingPeaksOperationalSignalType)
-        ? (signalType as TrainingPeaksOperationalSignalType)
-        : null;
-
-    if (
-      !persistableSignalType ||
-      classification.primary_bucket === "skip" ||
-      !isActionable
-    ) {
+    if (allCandidates.length === 0) {
       summary.skipped += 1;
       if (!options.onlyActionable) {
         outputRows.push({
           student: `${student.student_name} (${student.student_id})`,
           source_type: sourceType || "unknown",
-          signal_type: signalType,
-          valid_from: normalizeDate(classification.structured_payload.valid_from),
-          valid_until: normalizeDate(classification.structured_payload.valid_until),
-          source_date: normalizeDate(classification.structured_payload.source_date),
-          target_date: normalizeDate(classification.structured_payload.target_date),
-          confidence: confidenceToNumeric(classification.confidence),
+          signal_type: null,
+          valid_from: null,
+          valid_until: null,
+          source_date: null,
+          target_date: null,
+          confidence: null,
           dedupe_key: null,
           write_status: "skipped",
           observation_id: row.id,
-          reason: !signalType
-            ? "missing_signal_type"
-            : !isActionable
-              ? "non_actionable_bucket"
-              : "skip_or_non_persistable",
+          reason: "missing_signal_type",
+          episode_key: null,
+          episode_type: null,
+          episode_role: null,
+          related_signal_types: [],
+          follow_up_due_at: null,
+          follow_up_kind: null,
+          follow_up_status: null,
         });
       }
       continue;
     }
 
-    summary.candidate_signals += 1;
+    const persistableCandidates = allCandidates
+      .map((classification) => {
+        const signalType = classification.signal_type;
+        const isActionable = isActionableClassification({
+          primaryBucket: classification.primary_bucket,
+          secondaryBuckets: classification.secondary_buckets,
+        });
+        if (
+          !PERSISTABLE_SIGNAL_TYPES.has(signalType as TrainingPeaksOperationalSignalType) ||
+          classification.primary_bucket === "skip" ||
+          !isActionable
+        ) {
+          return null;
+        }
+        return {
+          classification,
+          signalType: signalType as TrainingPeaksOperationalSignalType,
+        };
+      })
+      .filter((item): item is { classification: (typeof allCandidates)[number]; signalType: TrainingPeaksOperationalSignalType } => Boolean(item));
 
-    const validFrom = normalizeDate(classification.structured_payload.valid_from);
-    const validUntil = normalizeDate(classification.structured_payload.valid_until);
-    const sourceDate = normalizeDate(classification.structured_payload.source_date);
-    const targetDate = normalizeDate(classification.structured_payload.target_date);
-    const sourceDay = normalizeDay(
-      (classification.structured_payload as Record<string, unknown>).source_day
-    );
-    const targetDay = normalizeDay(
-      (classification.structured_payload as Record<string, unknown>).target_day
-    );
-    const dedupeKey = buildDedupeKey({
-      studentId: row.student_id,
-      sourceObservationId: row.id,
-      signalType: persistableSignalType,
-      sourceType: sourceType || "unknown",
-      validFrom,
-      validUntil,
-      sourceDate,
-      targetDate,
-      sourceDay,
-      targetDay,
-      structuredPayload: classification.structured_payload as Record<string, unknown>,
-    });
-
-    if (!options.apply) {
-      outputRows.push({
-        student: `${student.student_name} (${student.student_id})`,
-        source_type: sourceType || "unknown",
-        signal_type: persistableSignalType,
-        valid_from: validFrom,
-        valid_until: validUntil,
-        source_date: sourceDate,
-        target_date: targetDate,
-        confidence: confidenceToNumeric(classification.confidence),
-        dedupe_key: dedupeKey,
-        write_status: "dry_run",
-        observation_id: row.id,
-        reason: classification.reason,
-      });
+    if (persistableCandidates.length === 0) {
+      summary.skipped += 1;
+      if (!options.onlyActionable) {
+        for (const classification of allCandidates) {
+          if (outputRows.length >= options.limit) {
+            break;
+          }
+          const isActionable = isActionableClassification({
+            primaryBucket: classification.primary_bucket,
+            secondaryBuckets: classification.secondary_buckets,
+          });
+          outputRows.push({
+            student: `${student.student_name} (${student.student_id})`,
+            source_type: sourceType || "unknown",
+            signal_type: classification.signal_type,
+            valid_from: normalizeDate(classification.structured_payload.valid_from),
+            valid_until: normalizeDate(classification.structured_payload.valid_until),
+            source_date: normalizeDate(classification.structured_payload.source_date),
+            target_date: normalizeDate(classification.structured_payload.target_date),
+            confidence: confidenceToNumeric(classification.confidence),
+            dedupe_key: null,
+            write_status: "skipped",
+            observation_id: row.id,
+            reason: !isActionable ? "non_actionable_bucket" : "skip_or_non_persistable",
+            episode_key: null,
+            episode_type: null,
+            episode_role: null,
+            related_signal_types: [],
+            follow_up_due_at: null,
+            follow_up_kind: null,
+            follow_up_status: null,
+          });
+        }
+      }
       continue;
     }
 
-    try {
-      const result = await upsertTrainingPeaksOperationalSignalFromCandidate({
+    const episodeModel = detectEpisodeModel({
+      studentId: row.student_id,
+      observationId: row.id,
+      candidates: persistableCandidates.map((item) => ({
+        signalType: item.signalType,
+        structuredPayload: item.classification.structured_payload as Record<string, unknown>,
+      })),
+    });
+
+    for (const item of persistableCandidates) {
+      if (outputRows.length >= options.limit) {
+        break;
+      }
+      summary.candidate_signals += 1;
+      const classification = item.classification;
+      const persistableSignalType = item.signalType;
+      const validFrom = normalizeDate(classification.structured_payload.valid_from);
+      const validUntil = normalizeDate(classification.structured_payload.valid_until);
+      const sourceDate = normalizeDate(classification.structured_payload.source_date);
+      const targetDate = normalizeDate(classification.structured_payload.target_date);
+      const sourceDay = normalizeDay(
+        (classification.structured_payload as Record<string, unknown>).source_day
+      );
+      const targetDay = normalizeDay(
+        (classification.structured_payload as Record<string, unknown>).target_day
+      );
+      const dedupeKey = buildDedupeKey({
         studentId: row.student_id,
+        sourceObservationId: row.id,
         signalType: persistableSignalType,
         sourceType: sourceType || "unknown",
-        sourceObservationId: row.id,
-        telegramChatId: parseTelegramBigInt(row.chat_id),
-        telegramMessageId: parseTelegramBigInt(row.message_id),
-        telegramMessageThreadId: row.message_thread_id,
-        structuredPayload: classification.structured_payload as Record<string, unknown>,
-        confidence: confidenceToNumeric(classification.confidence),
         validFrom,
         validUntil,
         sourceDate,
         targetDate,
         sourceDay,
         targetDay,
-        dedupeKey,
-        metadata: {
-          classifier_version: CLASSIFIER_VERSION,
-          classifier_reason: classification.reason,
-          classifier_confidence: classification.confidence,
-          primary_bucket: classification.primary_bucket,
-          secondary_buckets: classification.secondary_buckets,
-          source_script: "persist-coach-operational-signals",
-        },
+        structuredPayload: classification.structured_payload as Record<string, unknown>,
       });
-      if (result.writeStatus === "inserted") {
-        summary.inserted += 1;
-      } else if (result.writeStatus === "existing") {
-        summary.existing_deduped += 1;
-      } else if (result.writeStatus === "updated") {
-        summary.updated += 1;
+
+      const relatedSignalTypes = persistableCandidates
+        .map((candidate) => candidate.signalType)
+        .filter((signalType) => signalType !== persistableSignalType);
+      const episodeType = episodeModel?.episodeType ?? null;
+      const episodeKey = episodeModel?.episodeKey ?? null;
+      const episodeRole = episodeType ? pickEpisodeRole(persistableSignalType, episodeType) : null;
+      const followUpDays = computeFollowUpDays({
+        signalType: persistableSignalType,
+        structuredPayload: classification.structured_payload as Record<string, unknown>,
+      });
+      const followUpDueAt = followUpDays === null
+        ? null
+        : toIsoDate(addDaysDate(normalizeObservedDateTime(toIsoObservedAt(row)), followUpDays));
+      const followUpKind = followUpDays === null ? null : "health_check";
+      const followUpStatus = followUpDays === null ? null : "pending";
+      const followUpReason = followUpDays === null
+        ? null
+        : buildFollowUpReason({
+            signalType: persistableSignalType,
+            structuredPayload: classification.structured_payload as Record<string, unknown>,
+          });
+
+      if (!options.apply) {
+        outputRows.push({
+          student: `${student.student_name} (${student.student_id})`,
+          source_type: sourceType || "unknown",
+          signal_type: persistableSignalType,
+          valid_from: validFrom,
+          valid_until: validUntil,
+          source_date: sourceDate,
+          target_date: targetDate,
+          confidence: confidenceToNumeric(classification.confidence),
+          dedupe_key: dedupeKey,
+          write_status: "dry_run",
+          observation_id: row.id,
+          reason: classification.reason,
+          episode_key: episodeKey,
+          episode_type: episodeType,
+          episode_role: episodeRole,
+          related_signal_types: relatedSignalTypes,
+          follow_up_due_at: followUpDueAt,
+          follow_up_kind: followUpKind,
+          follow_up_status: followUpStatus,
+        });
+        continue;
       }
-      outputRows.push({
-        student: `${student.student_name} (${student.student_id})`,
-        source_type: sourceType || "unknown",
-        signal_type: persistableSignalType,
-        valid_from: validFrom,
-        valid_until: validUntil,
-        source_date: sourceDate,
-        target_date: targetDate,
-        confidence: confidenceToNumeric(classification.confidence),
-        dedupe_key: dedupeKey,
-        write_status: result.writeStatus,
-        observation_id: row.id,
-        reason: classification.reason,
-      });
-    } catch (error) {
-      summary.errors += 1;
-      outputRows.push({
-        student: `${student.student_name} (${student.student_id})`,
-        source_type: sourceType || "unknown",
-        signal_type: persistableSignalType,
-        valid_from: validFrom,
-        valid_until: validUntil,
-        source_date: sourceDate,
-        target_date: targetDate,
-        confidence: confidenceToNumeric(classification.confidence),
-        dedupe_key: dedupeKey,
-        write_status: "error",
-        observation_id: row.id,
-        reason: error instanceof Error ? error.message : String(error),
-      });
+
+      try {
+        const result = await upsertTrainingPeaksOperationalSignalFromCandidate({
+          studentId: row.student_id,
+          signalType: persistableSignalType,
+          sourceType: sourceType || "unknown",
+          sourceObservationId: row.id,
+          telegramChatId: parseTelegramBigInt(row.chat_id),
+          telegramMessageId: parseTelegramBigInt(row.message_id),
+          telegramMessageThreadId: row.message_thread_id,
+          structuredPayload: classification.structured_payload as Record<string, unknown>,
+          confidence: confidenceToNumeric(classification.confidence),
+          validFrom,
+          validUntil,
+          sourceDate,
+          targetDate,
+          sourceDay,
+          targetDay,
+          dedupeKey,
+          metadata: {
+            classifier_version: CLASSIFIER_VERSION,
+            classifier_reason: classification.reason,
+            classifier_confidence: classification.confidence,
+            primary_bucket: classification.primary_bucket,
+            secondary_buckets: classification.secondary_buckets,
+            source_script: "persist-coach-operational-signals",
+            ...(episodeKey
+              ? {
+                  episode_key: episodeKey,
+                  episode_type: episodeType,
+                  episode_role: episodeRole,
+                  related_signal_types: relatedSignalTypes,
+                }
+              : {}),
+            ...(followUpDueAt
+              ? {
+                  follow_up_due_at: followUpDueAt,
+                  follow_up_kind: followUpKind,
+                  follow_up_reason: followUpReason,
+                  follow_up_status: followUpStatus,
+                }
+              : {}),
+          },
+        });
+        if (result.writeStatus === "inserted") {
+          summary.inserted += 1;
+        } else if (result.writeStatus === "existing") {
+          summary.existing_deduped += 1;
+        } else if (result.writeStatus === "updated") {
+          summary.updated += 1;
+        }
+        outputRows.push({
+          student: `${student.student_name} (${student.student_id})`,
+          source_type: sourceType || "unknown",
+          signal_type: persistableSignalType,
+          valid_from: validFrom,
+          valid_until: validUntil,
+          source_date: sourceDate,
+          target_date: targetDate,
+          confidence: confidenceToNumeric(classification.confidence),
+          dedupe_key: dedupeKey,
+          write_status: result.writeStatus,
+          observation_id: row.id,
+          reason: classification.reason,
+          episode_key: episodeKey,
+          episode_type: episodeType,
+          episode_role: episodeRole,
+          related_signal_types: relatedSignalTypes,
+          follow_up_due_at: followUpDueAt,
+          follow_up_kind: followUpKind,
+          follow_up_status: followUpStatus,
+        });
+      } catch (error) {
+        summary.errors += 1;
+        outputRows.push({
+          student: `${student.student_name} (${student.student_id})`,
+          source_type: sourceType || "unknown",
+          signal_type: persistableSignalType,
+          valid_from: validFrom,
+          valid_until: validUntil,
+          source_date: sourceDate,
+          target_date: targetDate,
+          confidence: confidenceToNumeric(classification.confidence),
+          dedupe_key: dedupeKey,
+          write_status: "error",
+          observation_id: row.id,
+          reason: error instanceof Error ? error.message : String(error),
+          episode_key: episodeKey,
+          episode_type: episodeType,
+          episode_role: episodeRole,
+          related_signal_types: relatedSignalTypes,
+          follow_up_due_at: followUpDueAt,
+          follow_up_kind: followUpKind,
+          follow_up_status: followUpStatus,
+        });
+      }
     }
   }
 

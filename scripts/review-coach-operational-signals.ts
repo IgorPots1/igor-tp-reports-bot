@@ -202,6 +202,49 @@ function compactReason(structuredPayload: Record<string, unknown>): string | nul
   return null;
 }
 
+function readStringMetadata(metadata: Record<string, unknown>, key: string): string | null {
+  const value = metadata[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readStringArrayMetadata(metadata: Record<string, unknown>, key: string): string[] {
+  const value = metadata[key];
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+    .map((entry) => entry.trim());
+}
+
+function extractEpisodeFields(metadata: Record<string, unknown>): {
+  episodeKey: string | null;
+  episodeType: string | null;
+  episodeRole: string | null;
+  relatedSignalTypes: string[];
+} {
+  return {
+    episodeKey: readStringMetadata(metadata, "episode_key"),
+    episodeType: readStringMetadata(metadata, "episode_type"),
+    episodeRole: readStringMetadata(metadata, "episode_role"),
+    relatedSignalTypes: readStringArrayMetadata(metadata, "related_signal_types"),
+  };
+}
+
+function extractFollowUpFields(metadata: Record<string, unknown>): {
+  dueAt: string | null;
+  kind: string | null;
+  reason: string | null;
+  status: string | null;
+} {
+  return {
+    dueAt: readStringMetadata(metadata, "follow_up_due_at"),
+    kind: readStringMetadata(metadata, "follow_up_kind"),
+    reason: readStringMetadata(metadata, "follow_up_reason"),
+    status: readStringMetadata(metadata, "follow_up_status"),
+  };
+}
+
 async function fetchStudentsByIds(studentIds: readonly string[]): Promise<Map<string, StudentRow>> {
   if (studentIds.length === 0) {
     return new Map();
@@ -281,19 +324,35 @@ async function run(): Promise<void> {
         student_name: entry.studentName,
         student_slug: entry.studentSlug,
         active_signals: entry.rows.filter((row) => row.status === "active").length,
-        signals: entry.rows.map((row) => ({
-          signal_type: row.signalType,
-          status: row.status,
-          valid_from: row.validFrom,
-          valid_until: row.validUntil,
-          source_type: row.sourceType,
-          source_date: row.sourceDate,
-          target_date: row.targetDate,
-          source_day: row.sourceDay,
-          target_day: row.targetDay,
-          confidence: row.confidence,
-          dedupe_key: row.dedupeKey,
-        })),
+        signals: entry.rows.map((row) => {
+          const episode = extractEpisodeFields(row.metadata);
+          const followUp = extractFollowUpFields(row.metadata);
+          return {
+            signal_type: row.signalType,
+            status: row.status,
+            valid_from: row.validFrom,
+            valid_until: row.validUntil,
+            source_type: row.sourceType,
+            source_date: row.sourceDate,
+            target_date: row.targetDate,
+            source_day: row.sourceDay,
+            target_day: row.targetDay,
+            confidence: row.confidence,
+            dedupe_key: row.dedupeKey,
+            episode: {
+              key: episode.episodeKey,
+              type: episode.episodeType,
+              role: episode.episodeRole,
+              related_signal_types: episode.relatedSignalTypes,
+            },
+            follow_up: {
+              due_at: followUp.dueAt,
+              kind: followUp.kind,
+              reason: followUp.reason,
+              status: followUp.status,
+            },
+          };
+        }),
       }));
     console.log(
       JSON.stringify(
@@ -320,9 +379,38 @@ async function run(): Promise<void> {
     console.log("");
     console.log(`${student.studentName} (${student.studentSlug})`);
     console.log(`  active signals: ${activeCount}`);
-    for (const row of student.rows) {
+    const episodeRows = student.rows
+      .map((row) => {
+        const episode = extractEpisodeFields(row.metadata);
+        return {
+          row,
+          episode,
+        };
+      })
+      .sort((a, b) => {
+        const aKey = a.episode.episodeKey ?? "";
+        const bKey = b.episode.episodeKey ?? "";
+        if (aKey && bKey && aKey !== bKey) {
+          return aKey.localeCompare(bKey);
+        }
+        if (aKey && !bKey) {
+          return -1;
+        }
+        if (!aKey && bKey) {
+          return 1;
+        }
+        return 0;
+      });
+    let previousEpisodeKey: string | null = null;
+    for (const { row, episode } of episodeRows) {
       const dayTokens = extractDayTokens(row.structuredPayload);
       const reason = compactReason(row.structuredPayload);
+      const followUp = extractFollowUpFields(row.metadata);
+      if (episode.episodeKey && episode.episodeKey !== previousEpisodeKey) {
+        const episodeSuffix = episode.episodeKey.slice(-12);
+        console.log(`  episode ${episode.episodeType ?? "unknown"}#${episodeSuffix}`);
+      }
+      previousEpisodeKey = episode.episodeKey;
       const details: string[] = [
         `${row.signalType}`,
         `valid ${normalizeDate(row.validFrom)}..${normalizeDate(row.validUntil)}`,
@@ -332,6 +420,18 @@ async function run(): Promise<void> {
       }
       if (reason) {
         details.push(reason);
+      }
+      if (episode.episodeRole) {
+        details.push(`role=${episode.episodeRole}`);
+      }
+      if (episode.relatedSignalTypes.length > 0) {
+        details.push(`related=${episode.relatedSignalTypes.join(",")}`);
+      }
+      if (followUp.dueAt) {
+        details.push(`follow_up=${followUp.dueAt}`);
+      }
+      if (followUp.status) {
+        details.push(`follow_up_status=${followUp.status}`);
       }
       details.push(`source: ${row.sourceType}`);
       console.log(`  - ${details.join(" | ")}`);
