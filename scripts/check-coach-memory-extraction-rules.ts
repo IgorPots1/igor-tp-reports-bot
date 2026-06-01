@@ -17,7 +17,9 @@ type CaseDefinition = {
     | "skip_pain"
     | "keep_pain"
     | "bounded_availability"
-    | "illness_to_health_dedupes";
+    | "illness_to_health_dedupes"
+    | "skip_availability"
+    | "keep_availability";
   extraction: CoachMemoryExtractionResult;
   observedAt?: string;
   currentActiveMemoryItems?: Pick<
@@ -92,6 +94,28 @@ function makeAvailabilityExtraction(summary: string, validUntil: string | null):
   };
 }
 
+function makeScheduleConstraintExtraction(summary: string): CoachMemoryExtractionResult {
+  return {
+    shouldRemember: true,
+    reason: "test",
+    caseCandidate: null,
+    memoryItems: [
+      {
+        memoryType: "schedule_constraint",
+        summaryText: summary,
+        structured: { note: "test" },
+        validFrom: null,
+        validUntil: null,
+        confidence: 0.9,
+        affectsPlanning: true,
+        requiresCoachAttention: false,
+        notificationLevel: "digest",
+        supersedesHint: { reason: null, targetMemoryType: null },
+      },
+    ],
+  };
+}
+
 async function runCase(caseDef: CaseDefinition): Promise<{ ok: boolean; message: string }> {
   process.env.COACH_MEMORY_EXTRACTION_ENABLED = "true";
   process.env.COACH_MEMORY_MIN_CONFIDENCE = "0.7";
@@ -139,6 +163,16 @@ async function runCase(caseDef: CaseDefinition): Promise<{ ok: boolean; message:
       ok,
       message: `${caseDef.name}: inserted=${result.inserted} touched=${result.touched} duplicate=${result.duplicate} skipped=${result.skipped}`,
     };
+  }
+
+  if (caseDef.expected === "skip_availability") {
+    const ok = result.inserted === 0 && result.skipped >= 1;
+    return { ok, message: `${caseDef.name}: inserted=${result.inserted} skipped=${result.skipped}` };
+  }
+
+  if (caseDef.expected === "keep_availability") {
+    const ok = result.inserted >= 1;
+    return { ok, message: `${caseDef.name}: inserted=${result.inserted} skipped=${result.skipped}` };
   }
 
   const boundedItem = caseDef.extraction.memoryItems[0]?.validUntil;
@@ -204,6 +238,24 @@ async function run(): Promise<void> {
       expected: "bounded_availability",
       extraction: makeAvailabilityExtraction("На следующей неделе могу только вт/чт.", null),
       observedAt: "2026-06-01T10:00:00.000Z",
+    },
+    {
+      name: "starts-tomorrow-not-durable-availability",
+      textPreview: "С завтрашнего дня начинаются тренировки.",
+      expected: "skip_availability",
+      extraction: makeAvailabilityExtraction("С завтрашнего дня начинаются тренировки.", null),
+    },
+    {
+      name: "durable-schedule-constraint-preserved",
+      textPreview: "По вторникам не могу тренироваться из-за ребёнка.",
+      expected: "keep_availability",
+      extraction: makeScheduleConstraintExtraction("По вторникам не может тренироваться из-за ребенка."),
+    },
+    {
+      name: "durable-availability-preference-preserved",
+      textPreview: "Предпочитает тренироваться во вторник и четверг.",
+      expected: "keep_availability",
+      extraction: makeAvailabilityExtraction("Предпочитает тренироваться во вторник и четверг.", null),
     },
   ];
 

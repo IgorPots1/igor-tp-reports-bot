@@ -252,6 +252,19 @@ const SCHEDULE_CONSTRAINT_KEYWORDS = [
   "смена",
   "семейн",
 ];
+const AVAILABILITY_PREFERENCE_KEYWORDS = [
+  "предпочита",
+  "удобнее",
+  "лучше",
+  "могу только",
+  "предпочитает",
+  "обычно",
+  "обычно могу",
+];
+const OPERATIONAL_STARTS_TOMORROW_KEYWORDS = [
+  "с завтрашнего дня начинаются тренировки",
+  "с завтрашнего дня начинаются тренировки.",
+];
 
 const SCHEDULE_INFO_REQUEST_KEYWORDS = [
   "интересуюсь расписанием",
@@ -453,6 +466,14 @@ function looksLikeScheduleInfoRequest(text: string): boolean {
 
 function looksLikeDurableScheduleConstraint(text: string): boolean {
   return textHasAny(text, SCHEDULE_CONSTRAINT_KEYWORDS);
+}
+
+function looksLikeDurableAvailabilityPreference(text: string): boolean {
+  return textHasAny(text, AVAILABILITY_PREFERENCE_KEYWORDS);
+}
+
+function looksLikeOperationalTrainingStartsTomorrow(text: string): boolean {
+  return textHasAny(text, OPERATIONAL_STARTS_TOMORROW_KEYWORDS);
 }
 
 function hasMusculoskeletalPainOrInjurySignal(text: string): boolean {
@@ -710,6 +731,8 @@ function applyDryRunMemoryGuards(
   const oneOffMoveRequest = isOneOffMoveRequest(observationText);
   const scheduleInfoRequest = looksLikeScheduleInfoRequest(observationText);
   const durableScheduleConstraint = looksLikeDurableScheduleConstraint(observationText);
+  const durableAvailabilityPreference = looksLikeDurableAvailabilityPreference(observationText);
+  const operationalStartsTomorrow = looksLikeOperationalTrainingStartsTomorrow(observationText);
   const inboundBusinessDm = sourceType === "business_dm";
 
   const filtered = rawItems
@@ -742,6 +765,15 @@ function applyDryRunMemoryGuards(
         if (!durableScheduleConstraint && observationText.includes("попробую завтра")) {
           return false;
         }
+      }
+
+      if (
+        item.memoryType === "availability_preference" &&
+        operationalStartsTomorrow &&
+        !durableScheduleConstraint &&
+        !durableAvailabilityPreference
+      ) {
+        return false;
       }
 
       return true;
@@ -1353,6 +1385,15 @@ export async function processCoachMemoryForObservation(
       adjustedItem.memoryType === "schedule_constraint" &&
       isOneOffMoveRequest(observationText) &&
       !looksLikeDurableScheduleConstraint(observationText)
+    ) {
+      skipped += 1;
+      continue;
+    }
+    if (
+      adjustedItem.memoryType === "availability_preference" &&
+      looksLikeOperationalTrainingStartsTomorrow(observationText) &&
+      !looksLikeDurableScheduleConstraint(observationText) &&
+      !looksLikeDurableAvailabilityPreference(observationText)
     ) {
       skipped += 1;
       continue;
