@@ -6055,16 +6055,23 @@ export async function supersedeTrainingPeaksStudentMemoryItem(
 }
 
 export async function touchTrainingPeaksStudentMemoryItem(
-  id: string
+  id: string,
+  options?: {
+    validUntil?: string | null;
+  }
 ): Promise<TrainingPeaksStudentMemoryItem | null> {
   const nowIso = new Date().toISOString();
   const supabase = createSupabaseServerClient();
+  const updates: Record<string, unknown> = {
+    last_seen_at: nowIso,
+    updated_at: nowIso,
+  };
+  if (options && "validUntil" in options) {
+    updates.valid_until = options.validUntil ?? null;
+  }
   const { data, error } = await supabase
     .from("trainingpeaks_student_memory_items")
-    .update({
-      last_seen_at: nowIso,
-      updated_at: nowIso,
-    })
+    .update(updates)
     .eq("id", id)
     .select("*")
     .maybeSingle();

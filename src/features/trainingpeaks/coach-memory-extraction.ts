@@ -363,6 +363,13 @@ function normalizeSummaryForDedupe(input: string): string {
   return input.toLowerCase().replace(/\s+/gu, " ").trim();
 }
 
+function pickTouchedValidUntil(existingValidUntil: string | null, candidateValidUntil: string | null): string | null | undefined {
+  if (candidateValidUntil && !existingValidUntil) {
+    return candidateValidUntil;
+  }
+  return undefined;
+}
+
 function toLowerString(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
@@ -1309,7 +1316,9 @@ export async function processCoachMemoryForObservation(
     const exactDuplicate = exactByTypeAndSummary.get(exactKey);
     if (exactDuplicate) {
       if (applyWrites) {
-        await touchTrainingPeaksStudentMemoryItem(exactDuplicate.id);
+        await touchTrainingPeaksStudentMemoryItem(exactDuplicate.id, {
+          validUntil: pickTouchedValidUntil(exactDuplicate.validUntil, adjustedItem.validUntil),
+        });
       }
       touched += 1;
       duplicate += 1;
@@ -1320,7 +1329,9 @@ export async function processCoachMemoryForObservation(
     const structuredDuplicate = structuredKey ? structuredByTypeAndKey.get(structuredKey) : null;
     if (structuredDuplicate) {
       if (applyWrites) {
-        await touchTrainingPeaksStudentMemoryItem(structuredDuplicate.id);
+        await touchTrainingPeaksStudentMemoryItem(structuredDuplicate.id, {
+          validUntil: pickTouchedValidUntil(structuredDuplicate.validUntil, adjustedItem.validUntil),
+        });
       }
       touched += 1;
       duplicate += 1;

@@ -42,6 +42,9 @@ type CliOptions = {
   source: SourceFilter;
   json: boolean;
   sample: boolean;
+  skipExistingSourceObservations: boolean;
+  includeProcessed: boolean;
+  offset: number;
 };
 
 type StudentRow = {
@@ -104,6 +107,11 @@ type JsonPayload = {
   requestedLimit: number;
   effectiveLimit: number;
   selected: number;
+  offset: number;
+  skipExistingSourceObservations: boolean;
+  candidateObservationsBeforeSkip: number;
+  existingSourceObservationsCount: number;
+  candidateObservationsAfterSkip: number;
   processed: number;
   counters: CounterSummary;
   bySourceType: Record<string, number>;
@@ -244,6 +252,9 @@ function parseCliOptions(argv: string[]): CliOptions {
     source: "all",
     json: false,
     sample: false,
+    skipExistingSourceObservations: false,
+    includeProcessed: false,
+    offset: 0,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -262,6 +273,35 @@ function parseCliOptions(argv: string[]): CliOptions {
     }
     if (arg === "--sample") {
       options.sample = true;
+      continue;
+    }
+    if (arg === "--skip-existing-source-observations") {
+      options.skipExistingSourceObservations = true;
+      continue;
+    }
+    if (arg === "--include-processed") {
+      options.includeProcessed = true;
+      continue;
+    }
+    if (arg.startsWith("--offset=")) {
+      const parsedOffset = Number(arg.slice("--offset=".length).trim());
+      if (!Number.isFinite(parsedOffset) || parsedOffset < 0) {
+        throw new Error(`${LOG_PREFIX} FAIL: invalid --offset value: ${arg.slice("--offset=".length).trim()}`);
+      }
+      options.offset = Math.floor(parsedOffset);
+      continue;
+    }
+    if (arg === "--offset") {
+      const next = argv[index + 1]?.trim();
+      if (!next || next.startsWith("--")) {
+        throw new Error(`${LOG_PREFIX} FAIL: missing value for --offset`);
+      }
+      const parsedOffset = Number(next);
+      if (!Number.isFinite(parsedOffset) || parsedOffset < 0) {
+        throw new Error(`${LOG_PREFIX} FAIL: invalid --offset value: ${next}`);
+      }
+      options.offset = Math.floor(parsedOffset);
+      index += 1;
       continue;
     }
     if (arg.startsWith("--days=")) {
@@ -320,6 +360,11 @@ function parseCliOptions(argv: string[]): CliOptions {
   }
 
   options.limit = options.allowLarge ? options.requestedLimit : Math.min(options.requestedLimit, DEFAULT_HARD_CAP);
+  if (options.apply && options.includeProcessed) {
+    options.skipExistingSourceObservations = false;
+  } else if (options.apply) {
+    options.skipExistingSourceObservations = true;
+  }
   return options;
 }
 
@@ -455,6 +500,42 @@ async function fetchObservationRows(options: CliOptions, studentIds: string[]): 
     throw new Error(`${LOG_PREFIX} FAIL: trainingpeaks_telegram_context_observations: ${error.message}`);
   }
   return (data as ObservationRow[] | null) ?? [];
+}
+
+async function fetchExistingSourceObservationIds(studentIds: string[]): Promise<Set<string>> {
+  if (studentIds.length === 0) {
+    return new Set();
+  }
+  const supabase = createSupabaseServerClient();
+  const observed = new Set<string>();
+  const pageSize = 5000;
+  let from = 0;
+  while (true) {
+    const to = from + pageSize - 1;
+    const { data, error } = await supabase
+      .from("trainingpeaks_student_memory_items")
+      .select("source_observation_id")
+      .in("student_id", studentIds)
+      .not("source_observation_id", "is", null)
+      .range(from, to);
+    if (error) {
+      if (isMissingRelationError(error)) {
+        return new Set();
+      }
+      throw new Error(`${LOG_PREFIX} FAIL: trainingpeaks_student_memory_items: ${error.message}`);
+    }
+    const rows = (data as Array<{ source_observation_id: string | null }> | null) ?? [];
+    for (const row of rows) {
+      if (typeof row.source_observation_id === "string" && row.source_observation_id.length > 0) {
+        observed.add(row.source_observation_id);
+      }
+    }
+    if (rows.length < pageSize) {
+      break;
+    }
+    from += pageSize;
+  }
+  return observed;
 }
 
 function hasDurableSignal(text: string): boolean {
@@ -659,6 +740,7 @@ async function run(): Promise<void> {
   const rows = await fetchObservationRows(options, [...studentById.keys()]);
   const selectedRows: Array<{ row: ObservationRow; reasons: string[] }> = [];
   const skipReasons: Record<string, number> = {};
+  const candidateRows: Array<{ row: ObservationRow; reasons: string[] }> = [];
   for (const row of rows) {
     const decision = pickCandidate(row);
     if (!decision.selected) {
@@ -667,7 +749,24 @@ async function run(): Promise<void> {
       }
       continue;
     }
-    selectedRows.push({ row, reasons: decision.reasons });
+    candidateRows.push({ row, reasons: decision.reasons });
+  }
+
+  const candidateObservationsBeforeSkip = candidateRows.length;
+  let existingSourceObservationIds = new Set<string>();
+  if (options.skipExistingSourceObservations) {
+    existingSourceObservationIds = await fetchExistingSourceObservationIds([...studentById.keys()]);
+  }
+  const existingSourceObservationsCount = existingSourceObservationIds.size;
+
+  const candidatesAfterSkip = options.skipExistingSourceObservations
+    ? candidateRows.filter((entry) => !existingSourceObservationIds.has(entry.row.id))
+    : candidateRows;
+  const candidateObservationsAfterSkip = candidatesAfterSkip.length;
+
+  const limitedCandidates = candidatesAfterSkip.slice(options.offset);
+  for (const candidate of limitedCandidates) {
+    selectedRows.push(candidate);
     if (selectedRows.length >= options.limit) {
       break;
     }
@@ -700,6 +799,14 @@ async function run(): Promise<void> {
   console.log(`${LOG_PREFIX} source=${options.source}`);
   console.log(`${LOG_PREFIX} requestedLimit=${options.requestedLimit}`);
   console.log(`${LOG_PREFIX} effectiveLimit=${options.limit}`);
+  console.log(`${LOG_PREFIX} offset=${options.offset}`);
+  console.log(`${LOG_PREFIX} skip_existing_source_observations=${options.skipExistingSourceObservations}`);
+  console.log(`${LOG_PREFIX} existing_source_observations_count=${existingSourceObservationsCount}`);
+  console.log(`${LOG_PREFIX} candidate_observations_before_skip=${candidateObservationsBeforeSkip}`);
+  console.log(`${LOG_PREFIX} candidate_observations_after_skip=${candidateObservationsAfterSkip}`);
+  if (options.includeProcessed) {
+    console.log(`${LOG_PREFIX} warning=include-processed enabled; existing source observations are not skipped`);
+  }
   if (!options.apply) {
     console.log(`${LOG_PREFIX} apply=false (no DB writes)`);
   } else {
@@ -850,6 +957,11 @@ async function run(): Promise<void> {
     requestedLimit: options.requestedLimit,
     effectiveLimit: options.limit,
     selected: selectedRows.length,
+    offset: options.offset,
+    skipExistingSourceObservations: options.skipExistingSourceObservations,
+    candidateObservationsBeforeSkip,
+    existingSourceObservationsCount,
+    candidateObservationsAfterSkip,
     processed: counters.processed,
     counters,
     bySourceType,
