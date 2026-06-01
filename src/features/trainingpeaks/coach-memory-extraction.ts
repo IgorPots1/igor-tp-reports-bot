@@ -248,6 +248,94 @@ const SCHEDULE_INFO_REQUEST_KEYWORDS = [
 
 const RECURRENT_LOAD_KEYWORDS = ["третий раз", "повтор", "снова", "каждый раз", "не вывожу", "слишком тяжело"];
 const URGENT_SCHEDULE_KEYWORDS = ["сегодня", "завтра", "ближайш", "сейчас", "утром", "вечером"];
+const PAST_EVENT_ONLY_KEYWORDS = [
+  "участвова",
+  "пробежал",
+  "пробежала",
+  "сходил на забег",
+  "сходила на забег",
+  "финиширова",
+  "закончил",
+  "закончила",
+  "completed",
+  "participated",
+  "finished",
+];
+const FUTURE_RACE_GOAL_KEYWORDS = [
+  "готовит",
+  "готовлюсь",
+  "планиру",
+  "цель",
+  "предстоящ",
+  "будущ",
+  "следующ",
+  "стартую",
+  "upcoming",
+  "goal",
+  "target race",
+  "next race",
+  "prep",
+];
+const TRANSIENT_RESOLVED_PAIN_KEYWORDS = [
+  "потом прошло",
+  "поболело и прошло",
+  "сейчас не болит",
+  "дискомфорт прошел",
+  "дискомфорт прошёл",
+  "уже прошло",
+  "уже не болит",
+  "не болит сейчас",
+  "passed",
+  "resolved",
+  "no longer hurts",
+];
+const PERSISTENT_PAIN_KEYWORDS = [
+  "несколько дней",
+  "повторя",
+  "усилива",
+  "не проход",
+  "после каждой тренировки",
+  "каждой тренировки",
+  "каждый раз",
+  "постоянно",
+  "остается",
+  "остаётся",
+  "persistent",
+  "worse",
+  "keeps hurting",
+];
+const TEMPORARY_AVAILABILITY_HINTS = [
+  "на следующей неделе",
+  "следующей неделе",
+  "только вт",
+  "только чт",
+  "только во вторник",
+  "только в четверг",
+  "сегодня",
+  "завтра",
+  "в поездке",
+  "поездк",
+  "в отпуске",
+  "until",
+  "next week",
+  "today",
+  "tomorrow",
+];
+const RU_MONTH_TO_NUMBER: Record<string, string> = {
+  января: "01",
+  феврал: "02",
+  марта: "03",
+  апрел: "04",
+  мая: "05",
+  май: "05",
+  июня: "06",
+  июля: "07",
+  августа: "08",
+  сентября: "09",
+  октября: "10",
+  ноября: "11",
+  декабря: "12",
+};
 
 function normalizeForRules(input: string): string {
   return input.toLowerCase().replace(/\s+/gu, " ").trim();
@@ -342,6 +430,191 @@ function hasOnlyNonBodyDiscomfort(text: string): boolean {
   return textHasAny(text, NON_BODY_DISCOMFORT_KEYWORDS) && !hasBodyPainOrHealthSignal(text);
 }
 
+function addDaysToIsoDate(isoDate: string, days: number): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(isoDate)) {
+    return null;
+  }
+  const parsed = Date.parse(`${isoDate}T00:00:00.000Z`);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return new Date(parsed + days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+function collectIsoDatesFromText(text: string): string[] {
+  const dates = new Set<string>();
+  for (const match of text.matchAll(/\b(20\d{2}-\d{2}-\d{2})\b/gu)) {
+    if (match[1]) {
+      dates.add(match[1]);
+    }
+  }
+  return [...dates];
+}
+
+function monthFromText(rawMonth: string): string | null {
+  const normalized = rawMonth.toLowerCase().replace(/ё/gu, "е");
+  for (const [stem, month] of Object.entries(RU_MONTH_TO_NUMBER)) {
+    if (normalized.startsWith(stem)) {
+      return month;
+    }
+  }
+  return null;
+}
+
+function collectLocalizedDatesFromText(text: string, referenceDate: string): string[] {
+  const dates = new Set<string>();
+
+  for (const match of text.matchAll(/\b([0-3]?\d)\.([01]?\d)(?:\.(20\d{2}))?\b/gu)) {
+    const day = match[1]?.padStart(2, "0");
+    const month = match[2]?.padStart(2, "0");
+    const year = match[3] ?? referenceDate.slice(0, 4);
+    if (day && month) {
+      dates.add(`${year}-${month}-${day}`);
+    }
+  }
+
+  for (const match of text.matchAll(/\b([0-3]?\d)\s+([а-яё]+)(?:\s+(20\d{2}))?\b/gu)) {
+    const day = match[1]?.padStart(2, "0");
+    const month = monthFromText(match[2] ?? "");
+    const year = match[3] ?? referenceDate.slice(0, 4);
+    if (day && month) {
+      dates.add(`${year}-${month}-${day}`);
+    }
+  }
+
+  return [...dates].filter((date) => /^\d{4}-\d{2}-\d{2}$/u.test(date));
+}
+
+function hasFutureDateSignal(text: string, referenceDate: string): boolean {
+  const normalizedReference = referenceDate.slice(0, 10);
+  const candidates = [
+    ...collectIsoDatesFromText(text),
+    ...collectLocalizedDatesFromText(text, normalizedReference),
+  ];
+  return candidates.some((date) => date > normalizedReference);
+}
+
+function shouldSkipPastEventRaceOrGoal(
+  text: string,
+  structured: Record<string, unknown>,
+  validFrom: string | null,
+  referenceDate: string
+): boolean {
+  const hasPastOnlySignal = textHasAny(text, PAST_EVENT_ONLY_KEYWORDS);
+  if (!hasPastOnlySignal) {
+    return false;
+  }
+
+  const hasFutureSignal =
+    textHasAny(text, FUTURE_RACE_GOAL_KEYWORDS) ||
+    hasFutureDateSignal(text, referenceDate) ||
+    (validFrom !== null && validFrom > referenceDate);
+
+  const structuredEventDate = toSafeDate(structured.event_date) ?? toSafeDate(structured.date);
+  if (structuredEventDate && structuredEventDate > referenceDate) {
+    return false;
+  }
+
+  return !hasFutureSignal;
+}
+
+function shouldSkipResolvedTransientPain(text: string): boolean {
+  const hasResolvedSignal = textHasAny(text, TRANSIENT_RESOLVED_PAIN_KEYWORDS);
+  if (!hasResolvedSignal) {
+    return false;
+  }
+  return !textHasAny(text, PERSISTENT_PAIN_KEYWORDS);
+}
+
+function isTemporaryAvailabilitySignal(memoryType: CoachMemoryExtractionMemoryType, text: string): boolean {
+  if (
+    memoryType !== "availability_preference" &&
+    memoryType !== "schedule_constraint" &&
+    memoryType !== "travel_or_life_event"
+  ) {
+    return false;
+  }
+  return textHasAny(text, TEMPORARY_AVAILABILITY_HINTS) || /с\s+\d{1,2}\s+по\s+\d{1,2}\s+[а-яё]+/u.test(text);
+}
+
+function inferBoundedValidUntil(text: string, referenceDate: string): string | null {
+  const normalizedReference = referenceDate.slice(0, 10);
+  const candidates = new Set<string>();
+
+  for (const date of collectIsoDatesFromText(text)) {
+    candidates.add(date);
+  }
+  for (const date of collectLocalizedDatesFromText(text, normalizedReference)) {
+    candidates.add(date);
+  }
+
+  const rangeMatch = text.match(/с\s+([0-3]?\d)\s+по\s+([0-3]?\d)\s+([а-яё]+)(?:\s+(20\d{2}))?/u);
+  if (rangeMatch) {
+    const endDay = rangeMatch[2]?.padStart(2, "0");
+    const month = monthFromText(rangeMatch[3] ?? "");
+    const year = rangeMatch[4] ?? normalizedReference.slice(0, 4);
+    if (endDay && month) {
+      candidates.add(`${year}-${month}-${endDay}`);
+    }
+  }
+
+  if (text.includes("сегодня")) {
+    candidates.add(normalizedReference);
+  }
+  if (text.includes("завтра")) {
+    const tomorrow = addDaysToIsoDate(normalizedReference, 1);
+    if (tomorrow) {
+      candidates.add(tomorrow);
+    }
+  }
+  if (text.includes("на следующей неделе") || text.includes("следующей неделе")) {
+    const twoWeeks = addDaysToIsoDate(normalizedReference, 14);
+    if (twoWeeks) {
+      candidates.add(twoWeeks);
+    }
+  }
+
+  const sorted = [...candidates]
+    .filter((date) => /^\d{4}-\d{2}-\d{2}$/u.test(date) && date >= normalizedReference)
+    .sort();
+  return sorted[sorted.length - 1] ?? null;
+}
+
+function applyConservativeMemoryRules(
+  item: CoachMemoryExtractionItem,
+  observationText: string,
+  referenceDate: string
+): CoachMemoryExtractionItem | null {
+  const normalizedReference = referenceDate.slice(0, 10);
+  const combinedText = normalizeForRules(`${observationText} ${item.summaryText}`);
+  const adjusted: CoachMemoryExtractionItem = {
+    ...item,
+    structured: { ...item.structured },
+  };
+
+  if (
+    adjusted.memoryType === "race_or_goal" &&
+    shouldSkipPastEventRaceOrGoal(combinedText, adjusted.structured, adjusted.validFrom, normalizedReference)
+  ) {
+    return null;
+  }
+
+  if (adjusted.memoryType === "pain_or_injury" && shouldSkipResolvedTransientPain(combinedText)) {
+    return null;
+  }
+
+  if (isTemporaryAvailabilitySignal(adjusted.memoryType, combinedText) && !adjusted.validUntil) {
+    const inferredValidUntil = inferBoundedValidUntil(combinedText, normalizedReference);
+    if (inferredValidUntil) {
+      adjusted.validUntil = inferredValidUntil;
+    } else {
+      adjusted.confidence = Math.min(adjusted.confidence, 0.64);
+    }
+  }
+
+  return adjusted;
+}
+
 function normalizeNotificationLevelWithRules(
   item: CoachMemoryExtractionItem,
   text: string
@@ -380,6 +653,7 @@ function applyDryRunMemoryGuards(
   input: ExtractionInput
 ): { memoryItems: CoachMemoryExtractionItem[]; forcedCaseCandidate: CoachMemoryExtractionResult["caseCandidate"] | null } {
   const observationText = normalizeForRules(input.observationPreview);
+  const referenceDate = (input.referenceDate ?? input.observedAt.slice(0, 10)).slice(0, 10);
   const labels = input.observationLabels.map((label) => label.toLowerCase());
   const sourceType = (input.sourceType ?? "").toLowerCase();
   const oneOffMoveRequest = isOneOffMoveRequest(observationText);
@@ -420,10 +694,17 @@ function applyDryRunMemoryGuards(
 
       return true;
     })
-    .map((item) => ({
-      ...item,
-      notificationLevel: normalizeNotificationLevelWithRules(item, observationText),
-    }));
+    .map((item) => {
+      const adjusted = applyConservativeMemoryRules(item, observationText, referenceDate);
+      if (!adjusted) {
+        return null;
+      }
+      return {
+        ...adjusted,
+        notificationLevel: normalizeNotificationLevelWithRules(adjusted, observationText),
+      };
+    })
+    .filter((item): item is CoachMemoryExtractionItem => Boolean(item));
 
   if (oneOffMoveRequest && !durableScheduleConstraint) {
     return {
@@ -982,25 +1263,30 @@ export async function processCoachMemoryForObservation(
   let belowConfidence = 0;
   let duplicate = 0;
 
-  for (const item of extraction.memoryItems) {
-    if (item.confidence < minConfidence) {
+  for (const rawItem of extraction.memoryItems) {
+    const adjustedItem = applyConservativeMemoryRules(rawItem, observationText, referenceDate.slice(0, 10));
+    if (!adjustedItem) {
+      skipped += 1;
+      continue;
+    }
+    if (adjustedItem.confidence < minConfidence) {
       skipped += 1;
       belowConfidence += 1;
       continue;
     }
-    if (!MEMORY_TYPES.has(item.memoryType)) {
+    if (!MEMORY_TYPES.has(adjustedItem.memoryType)) {
       skipped += 1;
       continue;
     }
-    if (!item.summaryText.trim()) {
+    if (!adjustedItem.summaryText.trim()) {
       skipped += 1;
       continue;
     }
-    if (isPastDate(item.validUntil, referenceDate)) {
+    if (isPastDate(adjustedItem.validUntil, referenceDate)) {
       skipped += 1;
       continue;
     }
-    if (item.memoryType === "communication_style" && inboundBusinessDm) {
+    if (adjustedItem.memoryType === "communication_style" && inboundBusinessDm) {
       const hasCoachStyleEvidenceLabel = labels.some(
         (label) => label.includes("coach_outgoing") || label.includes("coach_style")
       );
@@ -1009,13 +1295,17 @@ export async function processCoachMemoryForObservation(
         continue;
       }
     }
-    if (item.memoryType === "schedule_constraint" && isOneOffMoveRequest(observationText) && !looksLikeDurableScheduleConstraint(observationText)) {
+    if (
+      adjustedItem.memoryType === "schedule_constraint" &&
+      isOneOffMoveRequest(observationText) &&
+      !looksLikeDurableScheduleConstraint(observationText)
+    ) {
       skipped += 1;
       continue;
     }
 
-    const normalizedSummary = normalizeSummaryForDedupe(item.summaryText);
-    const exactKey = `${item.memoryType}:${normalizedSummary}`;
+    const normalizedSummary = normalizeSummaryForDedupe(adjustedItem.summaryText);
+    const exactKey = `${adjustedItem.memoryType}:${normalizedSummary}`;
     const exactDuplicate = exactByTypeAndSummary.get(exactKey);
     if (exactDuplicate) {
       if (applyWrites) {
@@ -1026,7 +1316,7 @@ export async function processCoachMemoryForObservation(
       continue;
     }
 
-    const structuredKey = buildStructuredDedupeKey(item.memoryType, item.structured);
+    const structuredKey = buildStructuredDedupeKey(adjustedItem.memoryType, adjustedItem.structured);
     const structuredDuplicate = structuredKey ? structuredByTypeAndKey.get(structuredKey) : null;
     if (structuredDuplicate) {
       if (applyWrites) {
@@ -1040,19 +1330,19 @@ export async function processCoachMemoryForObservation(
     if (applyWrites) {
       const insertedItem = await insertTrainingPeaksStudentMemoryItem({
         studentId: input.studentId,
-        memoryType: item.memoryType,
-        summaryText: item.summaryText,
-        structured: item.structured,
+        memoryType: adjustedItem.memoryType,
+        summaryText: adjustedItem.summaryText,
+        structured: adjustedItem.structured,
         source: "ai_extraction",
-        confidence: item.confidence,
-        validFrom: item.validFrom,
-        validUntil: item.validUntil,
+        confidence: adjustedItem.confidence,
+        validFrom: adjustedItem.validFrom,
+        validUntil: adjustedItem.validUntil,
         sourceObservationId: input.observationId,
         sourceMessagePreview: input.textPreview?.slice(0, 160) ?? null,
         metadata: {
-          affects_planning: item.affectsPlanning,
-          requires_coach_attention: item.requiresCoachAttention,
-          notification_level: item.notificationLevel,
+          affects_planning: adjustedItem.affectsPlanning,
+          requires_coach_attention: adjustedItem.requiresCoachAttention,
+          notification_level: adjustedItem.notificationLevel,
         },
       });
       exactByTypeAndSummary.set(exactKey, insertedItem);
