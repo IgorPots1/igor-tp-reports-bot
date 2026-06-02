@@ -349,6 +349,7 @@ function run(): void {
     today: [],
     observe: [],
     fyi: [],
+    noContact5Days: [],
     followUpToday: collected.items.map((item) => ({
       level: "today",
       studentName: item.studentName,

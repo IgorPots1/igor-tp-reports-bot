@@ -80,6 +80,7 @@ function run(): void {
     today: [],
     observe: [],
     fyi: [],
+    noContact5Days: [],
     followUpToday: [],
     followUpOverflowCount: 0,
     planConstraintsToday: [

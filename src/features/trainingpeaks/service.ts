@@ -8,7 +8,7 @@ import {
   cancelQueuedTrainingPeaksJob,
   countRunningTrainingPeaksJobsUpdatedBefore,
   countActiveTrainingPeaksCoachCases as countActiveTrainingPeaksCoachCasesInRepository,
-  countTrainingPeaksSilentStudents as countTrainingPeaksSilentStudentsInRepository,
+  listTrainingPeaksStudentContactStatus as listTrainingPeaksStudentContactStatusInRepository,
   claimTrainingPeaksWeeklyReportForSend as claimTrainingPeaksWeeklyReportForSendInRepository,
   createTrainingPeaksAction as createTrainingPeaksActionInRepository,
   createTrainingPeaksActionRun as createTrainingPeaksActionRunInRepository,
@@ -629,6 +629,7 @@ export type TrainingPeaksAttentionSnapshot = {
   today: TrainingPeaksAttentionSignal[];
   observe: TrainingPeaksAttentionSignal[];
   fyi: TrainingPeaksAttentionSignal[];
+  noContact5Days: TrainingPeaksAttentionSignal[];
   followUpToday: TrainingPeaksAttentionSignal[];
   followUpOverflowCount: number;
   planConstraintsToday: TrainingPeaksAttentionSignal[];
@@ -4294,6 +4295,9 @@ function isWithinLookbackHours(value: string | null | undefined, lookbackHours: 
 const YESTERDAY_SCAN_FAILURE_TTL_HOURS = 48;
 const YESTERDAY_SCAN_MISSING_ALERT_START_HOUR = 11;
 const YESTERDAY_SCAN_SMALL_FAILURE_NAMES_LIMIT = 3;
+const YESTERDAY_SCAN_FAILURE_PREVIEW_NAMES_LIMIT = 4;
+const ATTENTION_OPERATIONAL_LIST_MAX_ITEMS = 20;
+const ATTENTION_NO_CONTACT_MINIMUM_SILENCE_DAYS = 5;
 
 type YesterdayScanStatusSignalSource = {
   studentId: string;
@@ -4429,7 +4433,7 @@ function pushUniqueAttentionSignal(
   }
 }
 
-function formatRussianCountedNoun(
+export function formatRussianCountedNoun(
   count: number,
   forms: readonly [one: string, few: string, many: string]
 ): string {
@@ -5055,14 +5059,26 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
   });
 
   if (yesterdayScanSummary.actionableFailedCount > 0) {
-    const namesSuffix =
-      yesterdayScanSummary.actionableFailedCount <= YESTERDAY_SCAN_SMALL_FAILURE_NAMES_LIMIT
-        ? ` (${yesterdayScanSummary.actionableFailedNames.join(", ")})`
-        : "";
+    const failedCount = yesterdayScanSummary.actionableFailedCount;
+    const studentNoun = formatRussianCountedNoun(failedCount, ["ученик", "ученика", "учеников"]);
+    let namesSuffix = "";
+    if (failedCount <= YESTERDAY_SCAN_SMALL_FAILURE_NAMES_LIMIT) {
+      namesSuffix = ` (${yesterdayScanSummary.actionableFailedNames.join(", ")})`;
+    } else if (yesterdayScanSummary.actionableFailedNames.length > 0) {
+      const previewNames = yesterdayScanSummary.actionableFailedNames.slice(
+        0,
+        YESTERDAY_SCAN_FAILURE_PREVIEW_NAMES_LIMIT
+      );
+      const hiddenNames = Math.max(0, failedCount - previewNames.length);
+      namesSuffix =
+        hiddenNames > 0
+          ? `; первые: ${previewNames.join(", ")}; ещё ${hiddenNames}`
+          : `; первые: ${previewNames.join(", ")}`;
+    }
     pushUniqueAttentionSignal(observe, {
       level: "observe",
       studentName: null,
-      reason: `скан тренировок за вчера завершился с ошибкой: ${yesterdayScanSummary.actionableFailedCount} учеников${namesSuffix}`,
+      reason: `Скан тренировок за вчера завершился с ошибкой: ${failedCount} ${studentNoun}${namesSuffix}`,
       signalKind: "scan_failed",
     });
   }
@@ -5130,29 +5146,12 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
   }
 
   if (yesterdayScanSummary.shouldShowMissingScanAlert && yesterdayScanSummary.missingScanCount > 0) {
+    const missingCount = yesterdayScanSummary.missingScanCount;
     pushUniqueAttentionSignal(fyi, {
       level: "fyi",
       studentName: null,
-      reason: `Нет свежего скана тренировок за вчера для ${yesterdayScanSummary.missingScanCount} учеников`,
+      reason: `Нет свежего скана тренировок за вчера для ${missingCount} ${formatRussianCountedNoun(missingCount, ["ученика", "учеников", "учеников"])}`,
       signalKind: "fyi",
-    });
-  }
-
-  try {
-    const silentStudentsCount = await countTrainingPeaksSilentStudentsInRepository({
-      minimumSilenceDays: 5,
-    });
-    if (silentStudentsCount > 0) {
-      pushUniqueAttentionSignal(fyi, {
-        level: "fyi",
-        studentName: null,
-        reason: `Без активности 5+ дней: ${silentStudentsCount} учеников`,
-        signalKind: "silent_student",
-      });
-    }
-  } catch (error) {
-    console.warn("Failed to count TrainingPeaks silent students for attention snapshot", {
-      error,
     });
   }
 
@@ -5309,8 +5308,47 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
   let planConstraintsOverflowCount = 0;
   let movesToday: TrainingPeaksAttentionSignal[] = [];
   let movesOverflowCount = 0;
+  const noContact5Days: TrainingPeaksAttentionSignal[] = [];
   try {
-    const followUps = await listOperationalHealthFollowUpsForAttention(activeStudentNameById, 5);
+    const contactStatuses = await listTrainingPeaksStudentContactStatusInRepository();
+    const silentStatuses = contactStatuses
+      .filter(
+        (status) =>
+          (status.silenceDays ?? 0) >= ATTENTION_NO_CONTACT_MINIMUM_SILENCE_DAYS &&
+          activeStudentNameById.has(status.studentId)
+      )
+      .sort((left, right) => {
+        const leftDays = left.silenceDays ?? 0;
+        const rightDays = right.silenceDays ?? 0;
+        if (leftDays !== rightDays) {
+          return rightDays - leftDays;
+        }
+        const leftName = (activeStudentNameById.get(left.studentId) ?? "").toLocaleLowerCase("ru-RU");
+        const rightName = (activeStudentNameById.get(right.studentId) ?? "").toLocaleLowerCase("ru-RU");
+        return leftName.localeCompare(rightName, "ru-RU");
+      });
+
+    for (const status of silentStatuses) {
+      const studentName = activeStudentNameById.get(status.studentId) ?? null;
+      pushUniqueAttentionSignal(noContact5Days, {
+        level: "fyi",
+        studentName,
+        studentId: status.studentId,
+        reason: "",
+        signalKind: "no_contact",
+      });
+    }
+  } catch (error) {
+    console.warn("Failed to load TrainingPeaks contact silence for attention snapshot", {
+      error,
+    });
+  }
+
+  try {
+    const followUps = await listOperationalHealthFollowUpsForAttention(
+      activeStudentNameById,
+      ATTENTION_OPERATIONAL_LIST_MAX_ITEMS
+    );
     followUpToday = followUps.items.map((item) => ({
       level: "today",
       studentName: item.studentName,
@@ -5324,7 +5362,10 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
   }
 
   try {
-    const scheduleSignals = await listOperationalScheduleSignalsForAttention(activeStudentNameById, 5);
+    const scheduleSignals = await listOperationalScheduleSignalsForAttention(
+      activeStudentNameById,
+      ATTENTION_OPERATIONAL_LIST_MAX_ITEMS
+    );
     planConstraintsToday = scheduleSignals.items.map((item) => ({
       level: "today",
       studentName: item.studentName,
@@ -5338,7 +5379,10 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
   }
 
   try {
-    const moveSignals = await listOperationalMoveSignalsForAttention(activeStudentNameById, 5);
+    const moveSignals = await listOperationalMoveSignalsForAttention(
+      activeStudentNameById,
+      ATTENTION_OPERATIONAL_LIST_MAX_ITEMS
+    );
     movesToday = moveSignals.items.map((item) => ({
       level: "today",
       studentName: item.studentName,
@@ -5356,6 +5400,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     today,
     observe,
     fyi,
+    noContact5Days,
     followUpToday,
     followUpOverflowCount,
     planConstraintsToday,

@@ -1,13 +1,20 @@
 import type { TrainingPeaksAttentionSnapshot } from "@/features/trainingpeaks/service";
 
 export const TRAININGPEAKS_ATTENTION_DIGEST_CHUNK_LIMIT = 3500;
-const ATTENTION_URGENT_MAX_ITEMS = 5;
-const ATTENTION_TODAY_MAX_ITEMS = 5;
-const ATTENTION_FOLLOW_UP_MAX_ITEMS = 5;
-const ATTENTION_PLAN_MAX_ITEMS = 5;
-const ATTENTION_MOVES_MAX_ITEMS = 5;
-const ATTENTION_OBSERVE_MAX_ITEMS = 5;
-const ATTENTION_FYI_MAX_ITEMS = 3;
+
+/** Per-section visible item caps before an overflow line; long digests split across Telegram messages. */
+export const ATTENTION_DIGEST_SECTION_LIMITS = {
+  urgent: 20,
+  today: 25,
+  followUp: 20,
+  plan: 20,
+  moves: 20,
+  observe: 20,
+  noContact: 30,
+  fyi: 10,
+} as const;
+
+const ATTENTION_DIGEST_CONTINUATION_SUFFIX = " — продолжение";
 
 function formatAttentionSignalLine(signal: {
   studentName: string | null;
@@ -17,17 +24,22 @@ function formatAttentionSignalLine(signal: {
   actionId?: string | null;
 }, botUsername: string | null): string {
   const name = signal.studentName?.trim();
+  const reason = signal.reason.trim();
   const payload = getAttentionSignalDeepLinkPayload(signal);
   const linkedName =
     name && botUsername && payload
       ? name
       : name;
 
-  if (linkedName) {
-    return `• ${linkedName} — ${signal.reason}`;
+  if (linkedName && reason) {
+    return `• ${linkedName} — ${reason}`;
   }
 
-  return `• ${signal.reason}`;
+  if (linkedName) {
+    return `• ${linkedName}`;
+  }
+
+  return `• ${reason || "—"}`;
 }
 
 function getTrainingPeaksBotUsername(): string | null {
@@ -263,26 +275,30 @@ function buildAttentionDigestBlocks(
   title: string
 ): string[][] {
   const botUsername = getTrainingPeaksBotUsername();
-  const urgent = buildAttentionSection("Срочно", snapshot.urgent, botUsername, {
-    maxItems: ATTENTION_URGENT_MAX_ITEMS,
+  const urgent = buildAttentionSection("🚨 Срочно", snapshot.urgent, botUsername, {
+    maxItems: ATTENTION_DIGEST_SECTION_LIMITS.urgent,
   });
-  const today = buildAttentionSection("Сегодня", snapshot.today, botUsername, {
-    maxItems: ATTENTION_TODAY_MAX_ITEMS,
+  const today = buildAttentionSection("📌 Сегодня", snapshot.today, botUsername, {
+    maxItems: ATTENTION_DIGEST_SECTION_LIMITS.today,
   });
-  const observe = buildAttentionSection("Наблюдать", snapshot.observe, botUsername, {
-    maxItems: ATTENTION_OBSERVE_MAX_ITEMS,
+  const observe = buildAttentionSection("👀 Наблюдать", snapshot.observe, botUsername, {
+    maxItems: ATTENTION_DIGEST_SECTION_LIMITS.observe,
   });
 
-  const hasSignals = snapshot.urgent.length > 0 || snapshot.today.length > 0 || snapshot.observe.length > 0;
-  const fyi = buildAttentionSection("FYI", snapshot.fyi, botUsername, {
-    maxItems: ATTENTION_FYI_MAX_ITEMS,
+  const hasSignals =
+    snapshot.urgent.length > 0 ||
+    snapshot.today.length > 0 ||
+    snapshot.observe.length > 0 ||
+    snapshot.noContact5Days.length > 0;
+  const fyi = buildAttentionSection("ℹ️ Справочно", snapshot.fyi, botUsername, {
+    maxItems: ATTENTION_DIGEST_SECTION_LIMITS.fyi,
   });
   if (snapshot.fyi.length === 0 && !hasSignals) {
     fyi.splice(1, fyi.length - 1, "• Активных сигналов больше нет");
   }
 
   const followUps = buildAttentionSection("Проверить сегодня", snapshot.followUpToday, botUsername, {
-    maxItems: ATTENTION_FOLLOW_UP_MAX_ITEMS,
+    maxItems: ATTENTION_DIGEST_SECTION_LIMITS.followUp,
     overflowCount: snapshot.followUpOverflowCount,
   });
 
@@ -294,16 +310,36 @@ function buildAttentionDigestBlocks(
       })
   );
   const planConstraints = buildAttentionSection("📅 Учесть в плане", planConstraintsSignals, botUsername, {
-    maxItems: ATTENTION_PLAN_MAX_ITEMS,
+    maxItems: ATTENTION_DIGEST_SECTION_LIMITS.plan,
     overflowCount: snapshot.planConstraintsOverflowCount,
   });
 
   const moves = buildAttentionSection("🔁 Переносы", snapshot.movesToday, botUsername, {
-    maxItems: ATTENTION_MOVES_MAX_ITEMS,
+    maxItems: ATTENTION_DIGEST_SECTION_LIMITS.moves,
     overflowCount: snapshot.movesOverflowCount,
   });
 
-  return [[title], urgent, today, followUps, planConstraints, moves, observe, fyi].filter((block) => block.length > 1);
+  const noContact = buildAttentionSection(
+    "📭 Нет контакта 5+ дней",
+    snapshot.noContact5Days,
+    botUsername,
+    {
+      maxItems: ATTENTION_DIGEST_SECTION_LIMITS.noContact,
+    }
+  );
+
+  return [[title], urgent, today, followUps, planConstraints, moves, observe, noContact, fyi].filter(
+    (block) => block.length > 1
+  );
+}
+
+function applyAttentionDigestContinuationHeaders(title: string, chunks: string[]): string[] {
+  if (chunks.length <= 1) {
+    return chunks;
+  }
+
+  const continuationTitle = `${title}${ATTENTION_DIGEST_CONTINUATION_SUFFIX}`;
+  return chunks.map((chunk, index) => (index === 0 ? chunk : `${continuationTitle}\n\n${chunk}`));
 }
 
 export function buildTrainingPeaksAttentionDigestMessages(
@@ -311,7 +347,8 @@ export function buildTrainingPeaksAttentionDigestMessages(
   title: string,
   chunkLimit = TRAININGPEAKS_ATTENTION_DIGEST_CHUNK_LIMIT
 ): string[] {
-  return packAttentionDigestBlocks(buildAttentionDigestBlocks(snapshot, title), chunkLimit);
+  const chunks = packAttentionDigestBlocks(buildAttentionDigestBlocks(snapshot, title), chunkLimit);
+  return applyAttentionDigestContinuationHeaders(title, chunks);
 }
 
 export function formatTrainingPeaksAttentionSnapshotMessage(

@@ -1,10 +1,11 @@
 import process from "node:process";
 
 import {
+  ATTENTION_DIGEST_SECTION_LIMITS,
   buildTrainingPeaksAttentionDigestMessages,
   formatTrainingPeaksAttentionSnapshotMessage,
 } from "@/features/trainingpeaks/attention-telegram";
-import { summarizeYesterdayScanAttention } from "@/features/trainingpeaks/service";
+import { formatRussianCountedNoun, summarizeYesterdayScanAttention } from "@/features/trainingpeaks/service";
 import type { TrainingPeaksAttentionSnapshot } from "@/features/trainingpeaks/service";
 
 function assert(condition: unknown, message: string): void {
@@ -25,6 +26,7 @@ function buildSnapshotWithTodayItems(count: number): TrainingPeaksAttentionSnaps
     today,
     observe: [],
     fyi: [],
+    noContact5Days: [],
     followUpToday: [],
     followUpOverflowCount: 0,
     planConstraintsToday: [],
@@ -64,6 +66,7 @@ function buildCaseGroupingSnapshot(): TrainingPeaksAttentionSnapshot {
     ],
     observe: [],
     fyi: [],
+    noContact5Days: [],
     followUpToday: [],
     followUpOverflowCount: 0,
     planConstraintsToday: [],
@@ -80,8 +83,11 @@ function run(): void {
     .split("\n")
     .filter((line) => line.startsWith("• ") && line.includes("Athlete"));
 
-  assert(todayLines.length <= 5, `Expected compact today section up to 5 lines, got ${todayLines.length}.`);
-  assert(message.includes("+3 ещё"), 'Digest should include overflow line for truncated "today" items.');
+  assert(
+    todayLines.length === 8,
+    `Expected all 8 today athletes listed (limit ${ATTENTION_DIGEST_SECTION_LIMITS.today}), got ${todayLines.length}.`
+  );
+  assert(!message.includes("+"), 'Digest should not hide today items behind "+N ещё" for 8 athletes.');
 
   const chunks = buildTrainingPeaksAttentionDigestMessages(snapshot, "Утренний обзор TrainingPeaks");
   assert(chunks.length >= 1, "Expected at least one digest chunk.");
@@ -89,10 +95,7 @@ function run(): void {
     chunks.every((chunk) => chunk.length <= 3500),
     "Each digest chunk must stay within the 3500 character limit."
   );
-  assert(
-    chunks.join("\n").includes("+3 ещё"),
-    "Chunked digest should include overflow marker for compacted today items."
-  );
+  assert(chunks.join("\n").includes("Athlete 8"), "Chunked digest should include the last today athlete.");
   assert(!message.includes("Проверить сегодня"), "Empty follow-up section should be omitted.");
   assert(!message.includes("• Нет"), 'Digest should not include placeholder "• Нет".');
 
@@ -152,6 +155,48 @@ function run(): void {
     yesterdayScanSummary.shouldShowMissingScanAlert,
     "Missing scan alert should be enabled during daytime checkpoint."
   );
+
+  assert(
+    formatRussianCountedNoun(1, ["ученик", "ученика", "учеников"]) === "ученик",
+    "Russian student count noun: 1."
+  );
+  assert(
+    formatRussianCountedNoun(2, ["ученик", "ученика", "учеников"]) === "ученика",
+    "Russian student count noun: 2."
+  );
+  assert(
+    formatRussianCountedNoun(5, ["ученик", "ученика", "учеников"]) === "учеников",
+    "Russian student count noun: 5."
+  );
+  assert(
+    formatRussianCountedNoun(103, ["ученик", "ученика", "учеников"]) === "ученика",
+    "Russian student count noun: 103."
+  );
+
+  const noContactSnapshot: TrainingPeaksAttentionSnapshot = {
+    urgent: [],
+    today: [],
+    observe: [],
+    fyi: [],
+    noContact5Days: [
+      { level: "fyi", studentName: "Student A", reason: "", signalKind: "no_contact" },
+      { level: "fyi", studentName: "Student B", reason: "", signalKind: "no_contact" },
+    ],
+    followUpToday: [],
+    followUpOverflowCount: 0,
+    planConstraintsToday: [],
+    planConstraintsOverflowCount: 0,
+    movesToday: [],
+    movesOverflowCount: 0,
+  };
+  const noContactMessage = formatTrainingPeaksAttentionSnapshotMessage(
+    noContactSnapshot,
+    "Утренний обзор TrainingPeaks"
+  );
+  assert(noContactMessage.includes("📭 Нет контакта 5+ дней"), "No-contact section title should be coach-facing.");
+  assert(noContactMessage.includes("• Student A"), "No-contact section should list student names.");
+  assert(noContactMessage.includes("• Student B"), "No-contact section should list all silent students.");
+  assert(!noContactMessage.includes("Без активности"), "Legacy no-activity label should be gone.");
 
   console.log("[check-trainingpeaks-attention-digest] PASS");
 }

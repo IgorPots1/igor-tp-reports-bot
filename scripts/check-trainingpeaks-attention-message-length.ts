@@ -56,6 +56,13 @@ function buildLargeSnapshot(): TrainingPeaksAttentionSnapshot {
       signalKind: "operational_move" as const,
     })),
     movesOverflowCount: 4,
+    noContact5Days: Array.from({ length: 12 }, (_, index) => ({
+      level: "fyi" as const,
+      studentName: `SILENT Athlete ${index + 1}`,
+      reason: "",
+      studentId: `student-silent-${index + 1}`,
+      signalKind: "no_contact" as const,
+    })),
   };
 }
 
@@ -70,21 +77,33 @@ function run(): void {
   );
 
   const joined = messages.join("\n");
-  assert(joined.includes("Срочно"), "Urgent section should be present.");
-  assert(joined.includes("Сегодня"), "Today section should be present.");
+  assert(joined.includes("🚨 Срочно"), "Urgent section should be present.");
+  assert(joined.includes("📌 Сегодня"), "Today section should be present.");
   assert(joined.includes("Проверить сегодня"), "Follow-up section should be present.");
   assert(joined.includes("📅 Учесть в плане"), "Plan section should be present.");
   assert(joined.includes("🔁 Переносы"), "Moves section should be present.");
-  assert(joined.includes("Наблюдать"), "Observe section should be present.");
-  assert(joined.includes("FYI"), "FYI section should be present.");
+  assert(joined.includes("👀 Наблюдать"), "Observe section should be present.");
+  assert(joined.includes("📭 Нет контакта 5+ дней"), "No-contact section should be present.");
+  assert(joined.includes("ℹ️ Справочно"), "FYI/misc section should be present.");
+
+  assert(joined.includes("URGENT Athlete 12"), "Urgent section should list athletes up to the section cap.");
+  assert(joined.includes("TODAY Athlete 15"), "Today section should list athletes up to the section cap.");
+  assert(joined.includes("SILENT Athlete 12"), "No-contact section should list silent students.");
 
   const overflowMentions = (joined.match(/\+\d+\sещё/g) ?? []).length;
-  assert(overflowMentions >= 5, "Expected overflow lines across compacted sections.");
+  assert(overflowMentions >= 1, "Expected overflow lines only for sections above explicit caps.");
 
   assert(
-    !joined.includes("TODAY Athlete 15"),
-    "Today section should be compacted and not include every raw item."
+    messages.length >= 2 || joined.length > 2500,
+    "Large digest should split across messages or stay safely chunked."
   );
+
+  if (messages.length > 1) {
+    assert(
+      messages[1]?.includes("продолжение"),
+      "Continuation chunks should include a continuation header."
+    );
+  }
 
   const tooLongError = new Error(
     'Telegram sendMessage failed (400): {"ok":false,"error_code":400,"description":"Bad Request: message is too long"}'
