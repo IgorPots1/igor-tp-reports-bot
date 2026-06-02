@@ -119,6 +119,10 @@ function extractDays(text: string): string[] {
   return output;
 }
 
+export function extractDaysFromText(text: string): string[] {
+  return extractDays(normalize(text));
+}
+
 function parseRelativeDate(text: string, observedAt: string): string | null {
   const observed = parseIsoDateFallback(observedAt);
   if (text.includes("завтра") || text.includes("с завтрашнего дня")) {
@@ -275,6 +279,111 @@ function hasScheduleContext(text: string): boolean {
     "на след неделе",
     "следующей неделе",
   ]);
+}
+
+const SCHEDULE_CONTEXT_CUE_WORDS = [
+  "бегать",
+  "тренировк",
+  "на этой неделе",
+  "на следующей неделе",
+  "на след неделе",
+  "следующей неделе",
+  "улетаю",
+  "поездк",
+  "командировк",
+  "отпуск",
+  "фестиваль",
+  "не смогу",
+  "не могу",
+  "на 4 дня",
+];
+
+export function hasScheduleContextCue(text: string | null): boolean {
+  const normalized = normalize(text);
+  return hasAny(normalized, SCHEDULE_CONTEXT_CUE_WORDS);
+}
+
+export function isBareWeekdayObservationText(text: string | null): boolean {
+  const normalized = normalize(text);
+  if (!normalized) {
+    return false;
+  }
+  const days = extractDays(normalized);
+  if (days.length === 0) {
+    return false;
+  }
+  if (hasScheduleContext(normalized)) {
+    return false;
+  }
+  const tokens = normalized.split(/[^a-zа-яё0-9]+/giu).filter(Boolean);
+  if (tokens.length === 0) {
+    return false;
+  }
+  const allowedTokens = new Set([
+    "понедельник",
+    "понедельника",
+    "понедельнику",
+    "вторник",
+    "вторника",
+    "вторнику",
+    "среда",
+    "среду",
+    "средам",
+    "четверг",
+    "четверга",
+    "четвергу",
+    "пятница",
+    "пятницу",
+    "пятницам",
+    "суббота",
+    "субботу",
+    "субботам",
+    "воскресенье",
+    "пн",
+    "вт",
+    "ср",
+    "чт",
+    "пт",
+    "сб",
+    "вс",
+    "и",
+    "или",
+  ]);
+  return tokens.every((token) => allowedTokens.has(token));
+}
+
+export function buildPromotedBareWeekdayScheduleCandidate(input: {
+  observation: ObservationLike;
+  contextText: string;
+}): OperationalSignalCandidate | null {
+  const text = normalize(input.observation.textPreview);
+  if (!isBareWeekdayObservationText(text) || !hasScheduleContextCue(input.contextText)) {
+    return null;
+  }
+  const payload = toDefaultPayload();
+  payload.available_days = extractDays(text);
+  const normalizedContext = normalize(input.contextText);
+  const contextWithWeekScope =
+    normalizedContext.includes("на этой неделе") ||
+    normalizedContext.includes("на следующей неделе") ||
+    normalizedContext.includes("следующей неделе")
+      ? normalizedContext
+      : `на этой неделе ${normalizedContext}`;
+  finalizeSchedulePayload(`${text}. ${contextWithWeekScope}`, input.observation.observedAt, payload);
+  return {
+    primary_bucket: "operational_signal",
+    secondary_buckets: [],
+    signal_type:
+      normalizedContext.includes("на этой неделе") || normalizedContext.includes("на этой")
+        ? "plan_generation_constraint"
+        : "schedule_availability_window",
+    structured_payload: payload,
+    should_create_memory: false,
+    should_create_case: false,
+    should_create_trainingpeaks_action: false,
+    confidence: "medium",
+    reason: "bare weekdays promoted by neighboring schedule context",
+  };
 }
 
 function hasAvailabilityIntent(text: string, days: string[]): boolean {
@@ -653,7 +762,7 @@ function isHealthSignal(signalType: OperationalSignalType): boolean {
   );
 }
 
-function isScheduleSignal(signalType: OperationalSignalType): boolean {
+export function isScheduleSignalType(signalType: OperationalSignalType): boolean {
   return (
     signalType === "plan_generation_constraint" ||
     signalType === "schedule_availability_window" ||
@@ -707,7 +816,11 @@ export function classifyCoachOperationalSignals(input: ObservationLike): Operati
     ? "group message missing senderRole but explicit student signal accepted"
     : null;
 
-  if (primarySignal === "move_workout_candidate" || isScheduleSignal(primarySignal) || primarySignal === "pause_training") {
+  if (
+    primarySignal === "move_workout_candidate" ||
+    isScheduleSignalType(primarySignal) ||
+    primarySignal === "pause_training"
+  ) {
     addUniqueCandidate(
       candidates,
       withPrimaryReasonSuffix(

@@ -17,6 +17,7 @@ import {
   type OperationalConfidence,
   type OperationalPrimaryBucket,
 } from "./lib/coach-operational-signals";
+import { buildMultiMessageObservationPlan } from "./lib/coach-operational-multi-message-episodes";
 
 const LOG_PREFIX = "[persist-coach-operational-signals]";
 const DEFAULT_LIMIT = 50;
@@ -382,6 +383,35 @@ function buildDedupeKey(input: {
   return createHash("sha256").update(raw).digest("hex");
 }
 
+function payloadRichnessScore(payload: Record<string, unknown>): number {
+  let score = 0;
+  const validFrom = normalizeDate(payload.valid_from);
+  const validUntil = normalizeDate(payload.valid_until);
+  const sourceDate = normalizeDate(payload.source_date);
+  const targetDate = normalizeDate(payload.target_date);
+  if (validFrom) {
+    score += 4;
+  }
+  if (validUntil) {
+    score += 4;
+  }
+  if (sourceDate) {
+    score += 2;
+  }
+  if (targetDate) {
+    score += 2;
+  }
+  const duration = payload.duration_days;
+  if (typeof duration === "number" && Number.isFinite(duration) && duration > 0) {
+    score += 3;
+  }
+  const resolvedDates = Array.isArray(payload.resolved_available_dates) ? payload.resolved_available_dates : [];
+  if (resolvedDates.length > 0) {
+    score += 3;
+  }
+  return score;
+}
+
 function isActionableClassification(input: {
   primaryBucket: OperationalPrimaryBucket;
   secondaryBuckets: OperationalPrimaryBucket[];
@@ -656,6 +686,7 @@ async function run(): Promise<void> {
     errors: 0,
   };
   const outputRows: CandidateOutput[] = [];
+  const multiMessagePlanByObservation = buildMultiMessageObservationPlan(rows);
 
   for (const row of rows) {
     if (outputRows.length >= options.limit) {
@@ -706,7 +737,12 @@ async function run(): Promise<void> {
       observedAt: toIsoObservedAt(row),
       studentId: row.student_id,
     } as ObservationLike);
-    if (allCandidates.length === 0) {
+    const episodePlan = multiMessagePlanByObservation.get(row.id) ?? null;
+    const allCandidatesWithEpisodeContext = episodePlan
+      ? [...allCandidates, ...episodePlan.additionalCandidates]
+      : allCandidates;
+
+    if (allCandidatesWithEpisodeContext.length === 0) {
       summary.skipped += 1;
       if (!options.onlyActionable) {
         outputRows.push({
@@ -734,31 +770,47 @@ async function run(): Promise<void> {
       continue;
     }
 
-    const persistableCandidates = allCandidates
-      .map((classification) => {
-        const signalType = classification.signal_type;
-        const isActionable = isActionableClassification({
-          primaryBucket: classification.primary_bucket,
-          secondaryBuckets: classification.secondary_buckets,
-        });
-        if (
-          !PERSISTABLE_SIGNAL_TYPES.has(signalType as TrainingPeaksOperationalSignalType) ||
-          classification.primary_bucket === "skip" ||
-          !isActionable
-        ) {
-          return null;
-        }
-        return {
+    const persistableCandidatesMap = new Map<
+      TrainingPeaksOperationalSignalType,
+      { classification: (typeof allCandidatesWithEpisodeContext)[number]; signalType: TrainingPeaksOperationalSignalType }
+    >();
+    for (const classification of allCandidatesWithEpisodeContext) {
+      const signalType = classification.signal_type;
+      const isActionable = isActionableClassification({
+        primaryBucket: classification.primary_bucket,
+        secondaryBuckets: classification.secondary_buckets,
+      });
+      if (
+        !PERSISTABLE_SIGNAL_TYPES.has(signalType as TrainingPeaksOperationalSignalType) ||
+        classification.primary_bucket === "skip" ||
+        !isActionable
+      ) {
+        continue;
+      }
+      const typedSignal = signalType as TrainingPeaksOperationalSignalType;
+      const prev = persistableCandidatesMap.get(typedSignal);
+      if (!prev) {
+        persistableCandidatesMap.set(typedSignal, {
           classification,
-          signalType: signalType as TrainingPeaksOperationalSignalType,
-        };
-      })
-      .filter((item): item is { classification: (typeof allCandidates)[number]; signalType: TrainingPeaksOperationalSignalType } => Boolean(item));
+          signalType: typedSignal,
+        });
+        continue;
+      }
+      const prevScore = payloadRichnessScore(prev.classification.structured_payload as Record<string, unknown>);
+      const nextScore = payloadRichnessScore(classification.structured_payload as Record<string, unknown>);
+      if (nextScore >= prevScore) {
+        persistableCandidatesMap.set(typedSignal, {
+          classification,
+          signalType: typedSignal,
+        });
+      }
+    }
+    const persistableCandidates = [...persistableCandidatesMap.values()];
 
     if (persistableCandidates.length === 0) {
       summary.skipped += 1;
       if (!options.onlyActionable) {
-        for (const classification of allCandidates) {
+        for (const classification of allCandidatesWithEpisodeContext) {
           if (outputRows.length >= options.limit) {
             break;
           }
@@ -835,9 +887,12 @@ async function run(): Promise<void> {
       const relatedSignalTypes = persistableCandidates
         .map((candidate) => candidate.signalType)
         .filter((signalType) => signalType !== persistableSignalType);
-      const episodeType = episodeModel?.episodeType ?? null;
-      const episodeKey = episodeModel?.episodeKey ?? null;
-      const episodeRole = episodeType ? pickEpisodeRole(persistableSignalType, episodeType) : null;
+      const episodeType = episodePlan?.scheduleEpisodeMeta?.episodeType ?? episodeModel?.episodeType ?? null;
+      const episodeKey = episodePlan?.scheduleEpisodeMeta?.episodeKey ?? episodeModel?.episodeKey ?? null;
+      const episodeRole =
+        (episodePlan?.scheduleEpisodeMeta?.roleBySignalType[persistableSignalType] ?? null) ||
+        (episodeType ? pickEpisodeRole(persistableSignalType, episodeType) : null);
+      const resolvedRelatedSignalTypes = episodePlan?.scheduleEpisodeMeta?.relatedSignalTypes ?? relatedSignalTypes;
       const followUpDays = computeFollowUpDays({
         signalType: persistableSignalType,
         structuredPayload: classification.structured_payload as Record<string, unknown>,
@@ -871,7 +926,7 @@ async function run(): Promise<void> {
           episode_key: episodeKey,
           episode_type: episodeType,
           episode_role: episodeRole,
-          related_signal_types: relatedSignalTypes,
+          related_signal_types: resolvedRelatedSignalTypes,
           follow_up_due_at: followUpDueAt,
           follow_up_kind: followUpKind,
           follow_up_status: followUpStatus,
@@ -909,7 +964,7 @@ async function run(): Promise<void> {
                   episode_key: episodeKey,
                   episode_type: episodeType,
                   episode_role: episodeRole,
-                  related_signal_types: relatedSignalTypes,
+                  related_signal_types: resolvedRelatedSignalTypes,
                 }
               : {}),
             ...(followUpDueAt
@@ -945,7 +1000,7 @@ async function run(): Promise<void> {
           episode_key: episodeKey,
           episode_type: episodeType,
           episode_role: episodeRole,
-          related_signal_types: relatedSignalTypes,
+          related_signal_types: resolvedRelatedSignalTypes,
           follow_up_due_at: followUpDueAt,
           follow_up_kind: followUpKind,
           follow_up_status: followUpStatus,
@@ -968,7 +1023,7 @@ async function run(): Promise<void> {
           episode_key: episodeKey,
           episode_type: episodeType,
           episode_role: episodeRole,
-          related_signal_types: relatedSignalTypes,
+          related_signal_types: resolvedRelatedSignalTypes,
           follow_up_due_at: followUpDueAt,
           follow_up_kind: followUpKind,
           follow_up_status: followUpStatus,
