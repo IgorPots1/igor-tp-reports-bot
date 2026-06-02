@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 function browserCaptureStrengthFieldTruthDom(input) {
   var checkpoint = String((input && input.checkpoint) || "");
   var targetExerciseNames = Array.isArray(input && input.targetExerciseNames) ? input.targetExerciseNames : [];
