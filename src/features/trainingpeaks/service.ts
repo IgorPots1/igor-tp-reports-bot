@@ -168,6 +168,11 @@ import {
   getCoachTodayDateKey,
   normalizeOperationalSignalFollowUp,
 } from "@/features/trainingpeaks/operational-follow-up";
+import {
+  buildEpisodeScheduleContextIndex,
+  formatScheduleOperationalSignalText,
+  type EpisodeScheduleContext,
+} from "@/features/trainingpeaks/operational-schedule-display";
 import type { TelegramMessage } from "@/features/telegram/types";
 import { buildTelegramContextTextPreview, sha256TelegramContextText } from "@/features/trainingpeaks/telegram-context";
 import {
@@ -626,6 +631,10 @@ export type TrainingPeaksAttentionSnapshot = {
   fyi: TrainingPeaksAttentionSignal[];
   followUpToday: TrainingPeaksAttentionSignal[];
   followUpOverflowCount: number;
+  planConstraintsToday: TrainingPeaksAttentionSignal[];
+  planConstraintsOverflowCount: number;
+  movesToday: TrainingPeaksAttentionSignal[];
+  movesOverflowCount: number;
 };
 
 export type TrainingPeaksOperationalSignalsScope = "all" | "health" | "schedule" | "move";
@@ -4566,6 +4575,163 @@ async function listOperationalHealthFollowUpsForAttention(
   };
 }
 
+type OperationalPlanningAttentionItem = {
+  studentId: string;
+  studentName: string | null;
+  reason: string;
+  episodeKey: string | null;
+  signalId: string;
+  sortDate: string | null;
+};
+
+function getOperationalPlanningSortKey(
+  item: Pick<OperationalPlanningAttentionItem, "sortDate" | "studentName">
+): string {
+  const date = item.sortDate ?? "9999-12-31";
+  const name = (item.studentName ?? "").toLocaleLowerCase("ru-RU");
+  return `${date}:${name}`;
+}
+
+function collectOperationalPlanningAttentionItems(input: {
+  signals: TrainingPeaksStudentOperationalSignal[];
+  activeStudentNameById: ReadonlyMap<string, string | null>;
+  asOfDate: string;
+  signalTypes: Set<string>;
+  maxItems: number;
+}): { items: OperationalPlanningAttentionItem[]; overflowCount: number } {
+  const episodeScheduleIndex = buildEpisodeScheduleContextIndex(input.signals);
+  const dedupedByEpisode = new Map<string, OperationalPlanningAttentionItem>();
+  const fallbackItems: OperationalPlanningAttentionItem[] = [];
+
+  for (const signal of input.signals) {
+    if (!input.signalTypes.has(signal.signalType)) {
+      continue;
+    }
+    const episodeKey = getSignalMetadataString(signal.metadata, "episode_key");
+    const episodeContext = episodeKey
+      ? episodeScheduleIndex.get(`${signal.studentId}:${episodeKey}`) ?? null
+      : null;
+    const reason = isScheduleOperationalSignalType(signal.signalType)
+      ? formatScheduleOperationalSignalText({
+          signalType: signal.signalType,
+          validFrom: signal.validFrom,
+          validUntil: signal.validUntil,
+          structuredPayload: signal.structuredPayload,
+          episodeContext,
+        })
+      : `кандидат переноса ${signal.sourceDate ?? "—"} → ${signal.targetDate ?? "—"}`;
+
+    const item: OperationalPlanningAttentionItem = {
+      studentId: signal.studentId,
+      studentName: input.activeStudentNameById.get(signal.studentId) ?? null,
+      reason,
+      episodeKey,
+      signalId: signal.id,
+      sortDate: signal.validUntil ?? signal.targetDate ?? signal.validFrom ?? signal.sourceDate ?? null,
+    };
+
+    if (!episodeKey) {
+      fallbackItems.push(item);
+      continue;
+    }
+
+    const dedupeKey = `${item.studentId}:${episodeKey}`;
+    const existing = dedupedByEpisode.get(dedupeKey);
+    if (!existing) {
+      dedupedByEpisode.set(dedupeKey, item);
+      continue;
+    }
+
+    const existingKey = getOperationalPlanningSortKey(existing);
+    const nextKey = getOperationalPlanningSortKey(item);
+    const preferred = nextKey < existingKey || (nextKey === existingKey && item.signalId < existing.signalId) ? item : existing;
+    const secondary = preferred === item ? existing : item;
+    if (preferred.reason !== secondary.reason) {
+      dedupedByEpisode.set(dedupeKey, {
+        ...preferred,
+        reason: compactOperationalSignalText(`${secondary.reason}; ${preferred.reason}`, 90),
+      });
+      continue;
+    }
+    dedupedByEpisode.set(dedupeKey, preferred);
+  }
+
+  const merged = [...dedupedByEpisode.values(), ...fallbackItems];
+  merged.sort((left, right) => {
+    const leftKey = getOperationalPlanningSortKey(left);
+    const rightKey = getOperationalPlanningSortKey(right);
+    if (leftKey !== rightKey) {
+      return leftKey.localeCompare(rightKey);
+    }
+    return left.signalId.localeCompare(right.signalId);
+  });
+
+  const limited = merged.slice(0, input.maxItems);
+  return {
+    items: limited,
+    overflowCount: Math.max(0, merged.length - limited.length),
+  };
+}
+
+async function listOperationalScheduleSignalsForAttention(
+  activeStudentNameById: ReadonlyMap<string, string | null>,
+  maxItems = 5
+): Promise<{ items: OperationalPlanningAttentionItem[]; overflowCount: number }> {
+  const asOfDate = getCoachTodayDateKey(DEFAULT_COACH_TIMEZONE);
+  const signals = await listTrainingPeaksOperationalSignals({
+    status: "active",
+    limit: 200,
+  });
+  if (signals.items.length === 0) {
+    return { items: [], overflowCount: 0 };
+  }
+
+  const scheduleTypes = new Set([
+    "schedule_unavailability_window",
+    "schedule_availability_window",
+    "plan_generation_constraint",
+  ]);
+
+  const activeSignals = signals.items.filter((signal) => {
+    if (!scheduleTypes.has(signal.signalType)) {
+      return false;
+    }
+    if (signal.validUntil && signal.validUntil < asOfDate) {
+      return false;
+    }
+    return true;
+  });
+
+  return collectOperationalPlanningAttentionItems({
+    signals: activeSignals,
+    activeStudentNameById,
+    asOfDate,
+    signalTypes: scheduleTypes,
+    maxItems,
+  });
+}
+
+async function listOperationalMoveSignalsForAttention(
+  activeStudentNameById: ReadonlyMap<string, string | null>,
+  maxItems = 5
+): Promise<{ items: OperationalPlanningAttentionItem[]; overflowCount: number }> {
+  const signals = await listTrainingPeaksOperationalSignals({
+    status: "active",
+    limit: 200,
+  });
+  if (signals.items.length === 0) {
+    return { items: [], overflowCount: 0 };
+  }
+
+  return collectOperationalPlanningAttentionItems({
+    signals: signals.items,
+    activeStudentNameById,
+    asOfDate: getCoachTodayDateKey(DEFAULT_COACH_TIMEZONE),
+    signalTypes: new Set(["move_workout_candidate"]),
+    maxItems,
+  });
+}
+
 export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaksAttentionSnapshot> {
   const [actions, jobs] = await Promise.all([
     listRecentTrainingPeaksActionsFromRepository(50),
@@ -4883,6 +5049,10 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
 
   let followUpToday: TrainingPeaksAttentionSignal[] = [];
   let followUpOverflowCount = 0;
+  let planConstraintsToday: TrainingPeaksAttentionSignal[] = [];
+  let planConstraintsOverflowCount = 0;
+  let movesToday: TrainingPeaksAttentionSignal[] = [];
+  let movesOverflowCount = 0;
   try {
     const followUps = await listOperationalHealthFollowUpsForAttention(activeStudentNameById, 5);
     followUpToday = followUps.items.map((item) => ({
@@ -4897,6 +5067,34 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     console.warn("Failed to load operational signal follow-ups for attention snapshot", { error });
   }
 
+  try {
+    const scheduleSignals = await listOperationalScheduleSignalsForAttention(activeStudentNameById, 5);
+    planConstraintsToday = scheduleSignals.items.map((item) => ({
+      level: "today",
+      studentName: item.studentName,
+      studentId: item.studentId,
+      reason: item.reason,
+      signalKind: "operational_schedule",
+    }));
+    planConstraintsOverflowCount = scheduleSignals.overflowCount;
+  } catch (error) {
+    console.warn("Failed to load operational schedule signals for attention snapshot", { error });
+  }
+
+  try {
+    const moveSignals = await listOperationalMoveSignalsForAttention(activeStudentNameById, 5);
+    movesToday = moveSignals.items.map((item) => ({
+      level: "today",
+      studentName: item.studentName,
+      studentId: item.studentId,
+      reason: item.reason,
+      signalKind: "operational_move",
+    }));
+    movesOverflowCount = moveSignals.overflowCount;
+  } catch (error) {
+    console.warn("Failed to load operational move signals for attention snapshot", { error });
+  }
+
   return {
     urgent,
     today,
@@ -4904,6 +5102,10 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     fyi,
     followUpToday,
     followUpOverflowCount,
+    planConstraintsToday,
+    planConstraintsOverflowCount,
+    movesToday,
+    movesOverflowCount,
   };
 }
 
@@ -4974,6 +5176,7 @@ function buildOperationalSignalItemFromSignal(input: {
   signal: TrainingPeaksStudentOperationalSignal;
   studentNameById: ReadonlyMap<string, string | null>;
   asOfDate: string;
+  episodeScheduleContext?: EpisodeScheduleContext | null;
 }): TrainingPeaksOperationalSignalsItem {
   const { signal, studentNameById, asOfDate } = input;
   const followUp = normalizeOperationalSignalFollowUp(signal.metadata, {
@@ -5050,13 +5253,13 @@ function buildOperationalSignalItemFromSignal(input: {
   }
 
   if (isScheduleOperationalSignalType(signal.signalType)) {
-    const details = compactOperationalSignalText(
-      getSignalMetadataString(signal.metadata, "constraint_text") ??
-        getSignalMetadataString(signal.metadata, "reason") ??
-        "",
-      70
-    );
-    const base = `${typeLabel}${windowSuffix}`;
+    const scheduleText = formatScheduleOperationalSignalText({
+      signalType: signal.signalType,
+      validFrom: signal.validFrom,
+      validUntil: signal.validUntil,
+      structuredPayload: signal.structuredPayload,
+      episodeContext: input.episodeScheduleContext ?? null,
+    });
     return {
       signalId: signal.id,
       studentId: signal.studentId,
@@ -5069,7 +5272,7 @@ function buildOperationalSignalItemFromSignal(input: {
       signalType: signal.signalType,
       isEpisodeSummary: false,
       followUpState: followUp.state,
-      text: details ? `${base}: ${details}` : base,
+      text: compactOperationalSignalText(scheduleText, 95),
     };
   }
 
@@ -5121,10 +5324,22 @@ function mergeOperationalSignalEpisodeItems(
 ): TrainingPeaksOperationalSignalsItem {
   const currentKey = getOperationalSignalSortKey(current);
   const incomingKey = getOperationalSignalSortKey(incoming);
-  if (incomingKey < currentKey) {
-    return incoming;
+  const preferred = incomingKey < currentKey ? incoming : current;
+  const secondary = incomingKey < currentKey ? current : incoming;
+
+  if (
+    preferred.section === "plan_constraints" &&
+    secondary.section === "plan_constraints" &&
+    preferred.signalType !== secondary.signalType &&
+    preferred.text !== secondary.text
+  ) {
+    return {
+      ...preferred,
+      text: compactOperationalSignalText(`${secondary.text}; ${preferred.text}`, 95),
+    };
   }
-  return current;
+
+  return preferred;
 }
 
 function toOperationalSignalDisplayLine(item: TrainingPeaksOperationalSignalsItem): string {
@@ -5172,16 +5387,22 @@ export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
   const maxItems = Math.max(5, Math.min(30, Math.floor(input.limit ?? 15)));
   const studentNameById = input.studentNameById ?? new Map<string, string | null>();
 
+  const episodeScheduleIndex = buildEpisodeScheduleContextIndex(input.signals);
   const dedupedByEpisode = new Map<string, TrainingPeaksOperationalSignalsItem>();
   const fallbackItems: TrainingPeaksOperationalSignalsItem[] = [];
   for (const signal of input.signals) {
     if (!shouldKeepOperationalSignalByScope(signal.signalType, scope)) {
       continue;
     }
+    const episodeKey = getSignalMetadataString(signal.metadata, "episode_key");
+    const episodeScheduleContext = episodeKey
+      ? episodeScheduleIndex.get(`${signal.studentId}:${episodeKey}`) ?? null
+      : null;
     const item = buildOperationalSignalItemFromSignal({
       signal,
       studentNameById,
       asOfDate: input.asOfDate,
+      episodeScheduleContext,
     });
     if (!item.episodeKey) {
       fallbackItems.push(item);

@@ -26,6 +26,10 @@ function buildSnapshotWithTodayItems(count: number): TrainingPeaksAttentionSnaps
     fyi: [],
     followUpToday: [],
     followUpOverflowCount: 0,
+    planConstraintsToday: [],
+    planConstraintsOverflowCount: 0,
+    movesToday: [],
+    movesOverflowCount: 0,
   };
 }
 

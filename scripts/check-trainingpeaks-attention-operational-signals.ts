@@ -1,9 +1,11 @@
 import process from "node:process";
 
+import { formatTrainingPeaksAttentionSnapshotMessage } from "@/features/trainingpeaks/attention-telegram";
 import {
   normalizeOperationalSignalFollowUp,
   type OperationalSignalFollowUpNormalized,
 } from "@/features/trainingpeaks/operational-follow-up";
+import type { TrainingPeaksAttentionSnapshot } from "@/features/trainingpeaks/service";
 
 type SignalInput = {
   id: string;
@@ -341,6 +343,53 @@ function run(): void {
   const empty = collectAttentionFollowUps([], asOfDate, 5);
   assert(empty.items.length === 0, "G failed: empty list should produce zero items.");
   assert(empty.overflowCount === 0, "G failed: empty list should have zero overflow.");
+
+  const attentionSnapshot: TrainingPeaksAttentionSnapshot = {
+    urgent: [],
+    today: [],
+    observe: [],
+    fyi: [],
+    followUpToday: collected.items.map((item) => ({
+      level: "today",
+      studentName: item.studentName,
+      studentId: item.studentId,
+      reason: item.reason,
+      signalKind: "operational_follow_up",
+    })),
+    followUpOverflowCount: collected.overflowCount,
+    planConstraintsToday: [
+      {
+        level: "today",
+        studentName: "Sofia Vlasova",
+        studentId: "student-schedule",
+        reason: "доступна: вт 2026-06-03, чт 2026-06-05",
+        signalKind: "operational_schedule",
+      },
+    ],
+    planConstraintsOverflowCount: 0,
+    movesToday: [
+      {
+        level: "today",
+        studentName: "Ilya Bogdanov",
+        studentId: "student-move",
+        reason: "кандидат переноса 2026-06-05 → 2026-06-04",
+        signalKind: "operational_move",
+      },
+    ],
+    movesOverflowCount: 0,
+  };
+  const attentionMessage = formatTrainingPeaksAttentionSnapshotMessage(attentionSnapshot, "Утренний обзор");
+  assert(attentionMessage.includes("📅 Учесть в плане"), "Attention digest should include planning section.");
+  assert(attentionMessage.includes("🔁 Переносы"), "Attention digest should include move section.");
+  assert(
+    attentionMessage.includes("Sofia Vlasova") && attentionMessage.includes("2026-06-03"),
+    "Attention digest should include schedule planning context with dates."
+  );
+  assert(
+    attentionMessage.includes("Ilya Bogdanov") && attentionMessage.includes("2026-06-05"),
+    "Attention digest should include move candidate context."
+  );
+  assert(!attentionMessage.includes("Future Athlete"), "Attention digest must not include future follow-up athlete.");
 
   console.log(`${LOG_PREFIX} PASS`);
 }

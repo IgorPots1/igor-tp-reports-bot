@@ -229,7 +229,29 @@ function buildAttentionDigestBlocks(
   }
   const followUps = buildAttentionSection("Проверить сегодня", followUpSignals, botUsername);
 
-  return [[title], urgent, today, followUps, observe, fyi];
+  const planConstraintSignals = [...snapshot.planConstraintsToday];
+  if (snapshot.planConstraintsOverflowCount > 0) {
+    planConstraintSignals.push({
+      level: "today",
+      studentName: null,
+      reason: `+${snapshot.planConstraintsOverflowCount} ещё по расписанию`,
+      studentId: null,
+    });
+  }
+  const planConstraints = buildAttentionSection("📅 Учесть в плане", planConstraintSignals, botUsername);
+
+  const moveSignals = [...snapshot.movesToday];
+  if (snapshot.movesOverflowCount > 0) {
+    moveSignals.push({
+      level: "today",
+      studentName: null,
+      reason: `+${snapshot.movesOverflowCount} ещё переносов`,
+      studentId: null,
+    });
+  }
+  const moves = buildAttentionSection("🔁 Переносы", moveSignals, botUsername);
+
+  return [[title], urgent, today, followUps, planConstraints, moves, observe, fyi];
 }
 
 export function buildTrainingPeaksAttentionDigestMessages(

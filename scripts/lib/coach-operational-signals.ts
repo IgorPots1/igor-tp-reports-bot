@@ -1,3 +1,9 @@
+import {
+  enrichScheduleStructuredPayload,
+  resolveDayToIsoDate,
+  detectWeekScopeFromText,
+} from "@/features/trainingpeaks/operational-schedule-display";
+
 export type OperationalPrimaryBucket =
   | "durable_memory"
   | "temporary_memory"
@@ -24,6 +30,8 @@ export type OperationalConfidence = "low" | "medium" | "high";
 export type OperationalStructuredPayload = {
   available_days: string[];
   unavailable_days: string[];
+  resolved_available_dates: string[];
+  duration_days: number | null;
   valid_from: string | null;
   valid_until: string | null;
   resume_from_date: string | null;
@@ -67,16 +75,6 @@ const DAY_ALIASES: Array<{ day: string; forms: string[] }> = [
   { day: "Sunday", forms: ["воскресенье", "воскресеньям", "вс"] },
 ];
 
-const DAY_TO_INDEX: Record<string, number> = {
-  Monday: 1,
-  Tuesday: 2,
-  Wednesday: 3,
-  Thursday: 4,
-  Friday: 5,
-  Saturday: 6,
-  Sunday: 0,
-};
-
 const NOISE_ONLY_PATTERN = /^(ок|окей|спасибо|thanks|понял[а]?|принято|👍|👌|🙏)$/iu;
 
 function normalize(text: string | null): string {
@@ -99,21 +97,6 @@ function addDays(input: Date, days: number): Date {
   const copy = new Date(input.getTime());
   copy.setUTCDate(copy.getUTCDate() + days);
   return copy;
-}
-
-function endOfWeekSunday(input: Date): Date {
-  const day = input.getUTCDay();
-  return addDays(input, 7 - day);
-}
-
-function startOfWeekMonday(input: Date): Date {
-  const day = input.getUTCDay();
-  const delta = day === 0 ? -6 : 1 - day;
-  return addDays(input, delta);
-}
-
-function endOfNextWeek(input: Date): string {
-  return isoDate(endOfWeekSunday(addDays(input, 7)));
 }
 
 function hasAny(text: string, patterns: readonly string[]): boolean {
@@ -169,24 +152,17 @@ function parseNamedDayTargetDate(text: string, observedAt: string): string | nul
   return null;
 }
 
-function inferDateForDay(day: string, observedAt: string): string | null {
-  const observed = parseIsoDateFallback(observedAt);
-  const targetDow = DAY_TO_INDEX[day];
-  if (targetDow === undefined) {
-    return null;
-  }
-  const today = observed.getUTCDay();
-  let delta = (targetDow - today + 7) % 7;
-  if (delta === 0) {
-    delta = 7;
-  }
-  return isoDate(addDays(observed, delta));
+function inferDateForDay(day: string, observedAt: string, weekScopeText = ""): string | null {
+  const weekScope = detectWeekScopeFromText(weekScopeText);
+  return resolveDayToIsoDate(day, observedAt, weekScope);
 }
 
 function toDefaultPayload(): OperationalStructuredPayload {
   return {
     available_days: [],
     unavailable_days: [],
+    resolved_available_dates: [],
+    duration_days: null,
     valid_from: null,
     valid_until: null,
     resume_from_date: null,
@@ -194,6 +170,10 @@ function toDefaultPayload(): OperationalStructuredPayload {
     target_date: null,
     source_date: null,
   };
+}
+
+function finalizeSchedulePayload(text: string, observedAt: string, payload: OperationalStructuredPayload): void {
+  enrichScheduleStructuredPayload(text, observedAt, payload);
 }
 
 function isExplicitCoachRelevantSignal(text: string, labels: string[]): boolean {
@@ -393,11 +373,11 @@ function buildMoveWorkoutCandidate(
   const payload = toDefaultPayload();
   const { sourceDay, targetDay } = parseMoveDays(text);
   payload.target_date =
-    (targetDay ? inferDateForDay(targetDay, input.observedAt) : null) ??
+    (targetDay ? inferDateForDay(targetDay, input.observedAt, text) : null) ??
     parseRelativeDate(text, input.observedAt) ??
     parseNamedDayTargetDate(text, input.observedAt);
   payload.source_date = sourceDay
-    ? inferDateForDay(sourceDay, input.observedAt)
+    ? inferDateForDay(sourceDay, input.observedAt, text)
     : text.includes("сегодня")
       ? parseRelativeDate("сегодня", input.observedAt)
       : null;
@@ -561,14 +541,8 @@ function buildScheduleCandidate(
     if (scheduleUnavailability) {
       payload.unavailable_days = days;
     }
-    const observed = parseIsoDateFallback(input.observedAt);
-    if (text.includes("на следующей неделе") || text.includes("следующей неделе")) {
-      payload.valid_from = isoDate(startOfWeekMonday(addDays(observed, 7)));
-      payload.valid_until = endOfNextWeek(observed);
-    } else if (text.includes("на этой неделе") || text.includes("на этой")) {
-      payload.valid_from = isoDate(startOfWeekMonday(observed));
-      payload.valid_until = isoDate(endOfWeekSunday(observed));
-    } else if (text.includes("сегодня")) {
+    if (text.includes("сегодня")) {
+      const observed = parseIsoDateFallback(input.observedAt);
       payload.valid_from = isoDate(observed);
       payload.valid_until = isoDate(observed);
     }
@@ -576,6 +550,7 @@ function buildScheduleCandidate(
       hasAny(text, ["по вторникам", "по средам", "по четвергам", "из-за ребенка", "из-за ребёнка", "каждый"]) &&
       scheduleUnavailability;
     if (durableConstraint) {
+      finalizeSchedulePayload(text, input.observedAt, payload);
       return {
         primary_bucket: "durable_memory",
         secondary_buckets: ["operational_signal"],
@@ -588,6 +563,7 @@ function buildScheduleCandidate(
         reason: "recurring schedule constraint with explicit life conflict",
       };
     }
+    finalizeSchedulePayload(text, input.observedAt, payload);
     return {
       primary_bucket: "operational_signal",
       secondary_buckets: [],
@@ -648,10 +624,12 @@ function buildScheduleCandidate(
       if (hasDurationContext && today) {
         const daysCount = Number(text.match(/на\s+(\d{1,2})\s+дн/iu)?.[1] ?? 0);
         if (daysCount > 0) {
+          payload.duration_days = daysCount;
           payload.valid_until = isoDate(addDays(parseIsoDateFallback(today), daysCount - 1));
         }
       }
     }
+    finalizeSchedulePayload(text, input.observedAt, payload);
     return {
       primary_bucket: "operational_signal",
       secondary_buckets: [],
@@ -868,11 +846,11 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
   ) {
     const { sourceDay, targetDay } = parseMoveDays(text);
     payload.target_date =
-      (targetDay ? inferDateForDay(targetDay, input.observedAt) : null) ??
+      (targetDay ? inferDateForDay(targetDay, input.observedAt, text) : null) ??
       parseRelativeDate(text, input.observedAt) ??
       parseNamedDayTargetDate(text, input.observedAt);
     payload.source_date = sourceDay
-      ? inferDateForDay(sourceDay, input.observedAt)
+      ? inferDateForDay(sourceDay, input.observedAt, text)
       : text.includes("сегодня")
         ? parseRelativeDate("сегодня", input.observedAt)
         : null;
@@ -1034,14 +1012,8 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
     if (scheduleUnavailability) {
       payload.unavailable_days = days;
     }
-    const observed = parseIsoDateFallback(input.observedAt);
-    if (text.includes("на следующей неделе") || text.includes("следующей неделе")) {
-      payload.valid_from = isoDate(startOfWeekMonday(addDays(observed, 7)));
-      payload.valid_until = endOfNextWeek(observed);
-    } else if (text.includes("на этой неделе") || text.includes("на этой")) {
-      payload.valid_from = isoDate(startOfWeekMonday(observed));
-      payload.valid_until = isoDate(endOfWeekSunday(observed));
-    } else if (text.includes("сегодня")) {
+    if (text.includes("сегодня")) {
+      const observed = parseIsoDateFallback(input.observedAt);
       payload.valid_from = isoDate(observed);
       payload.valid_until = isoDate(observed);
     }
@@ -1049,6 +1021,7 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
       hasAny(text, ["по вторникам", "по средам", "по четвергам", "из-за ребенка", "из-за ребёнка", "каждый"]) &&
       scheduleUnavailability;
     if (durableConstraint) {
+      finalizeSchedulePayload(text, input.observedAt, payload);
       return {
         primary_bucket: "durable_memory",
         secondary_buckets: ["operational_signal"],
@@ -1061,6 +1034,7 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
         reason: "recurring schedule constraint with explicit life conflict",
       };
     }
+    finalizeSchedulePayload(text, input.observedAt, payload);
     return {
       primary_bucket: "operational_signal",
       secondary_buckets: [],
@@ -1121,10 +1095,12 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
       if (hasDurationContext && today) {
         const daysCount = Number(text.match(/на\s+(\d{1,2})\s+дн/iu)?.[1] ?? 0);
         if (daysCount > 0) {
+          payload.duration_days = daysCount;
           payload.valid_until = isoDate(addDays(parseIsoDateFallback(today), daysCount - 1));
         }
       }
     }
+    finalizeSchedulePayload(text, input.observedAt, payload);
     return {
       primary_bucket: "operational_signal",
       secondary_buckets: [],

@@ -3622,11 +3622,29 @@ function buildTrainingPeaksAttentionDigestText(
       reason: `+${snapshot.followUpOverflowCount} ещё follow-up`,
     });
   }
+  const planConstraintSignals: TrainingPeaksAttentionSignal[] = [...snapshot.planConstraintsToday];
+  if (snapshot.planConstraintsOverflowCount > 0) {
+    planConstraintSignals.push({
+      level: "today",
+      studentName: null,
+      reason: `+${snapshot.planConstraintsOverflowCount} ещё по расписанию`,
+    });
+  }
+  const moveSignals: TrainingPeaksAttentionSignal[] = [...snapshot.movesToday];
+  if (snapshot.movesOverflowCount > 0) {
+    moveSignals.push({
+      level: "today",
+      studentName: null,
+      reason: `+${snapshot.movesOverflowCount} ещё переносов`,
+    });
+  }
   const blocks: string[][] = [
     ["🌅 Внимание на сегодня"],
     formatAttentionSectionHtml("🚨 Срочно", snapshot.urgent, botUsername),
     formatAttentionSectionHtml("📌 Сегодня", snapshot.today, botUsername),
     formatAttentionSectionHtml("🩺 Проверить сегодня", followUpSignals, botUsername),
+    formatAttentionSectionHtml("📅 Учесть в плане", planConstraintSignals, botUsername),
+    formatAttentionSectionHtml("🔁 Переносы", moveSignals, botUsername),
     formatAttentionSectionHtml("👀 Наблюдать", snapshot.observe, botUsername),
     formatAttentionSectionHtml("ℹ️ FYI", snapshot.fyi, botUsername),
   ];

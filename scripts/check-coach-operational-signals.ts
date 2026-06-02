@@ -22,6 +22,10 @@ type Expectation = {
   should_create_trainingpeaks_action: boolean;
   available_days?: string[];
   unavailable_days?: string[];
+  resolved_available_dates?: string[];
+  valid_from?: string | null;
+  valid_until?: string | null;
+  duration_days?: number | null;
   health_issue_kind?: string | null;
   reason?: string;
   secondary_buckets_includes?: OperationalPrimaryBucket[];
@@ -116,6 +120,25 @@ function assertCase(caseDef: CaseDef): string[] {
   ) {
     failures.push(
       `unavailable_days=${JSON.stringify(result.structured_payload.unavailable_days)} expected_has=${JSON.stringify(caseDef.expected.unavailable_days)}`
+    );
+  }
+  if (
+    caseDef.expected.resolved_available_dates &&
+    !includesAll(result.structured_payload.resolved_available_dates, caseDef.expected.resolved_available_dates)
+  ) {
+    failures.push(
+      `resolved_available_dates=${JSON.stringify(result.structured_payload.resolved_available_dates)} expected_has=${JSON.stringify(caseDef.expected.resolved_available_dates)}`
+    );
+  }
+  if (caseDef.expected.valid_from !== undefined && result.structured_payload.valid_from !== caseDef.expected.valid_from) {
+    failures.push(`valid_from=${result.structured_payload.valid_from ?? "null"} expected=${caseDef.expected.valid_from ?? "null"}`);
+  }
+  if (caseDef.expected.valid_until !== undefined && result.structured_payload.valid_until !== caseDef.expected.valid_until) {
+    failures.push(`valid_until=${result.structured_payload.valid_until ?? "null"} expected=${caseDef.expected.valid_until ?? "null"}`);
+  }
+  if (caseDef.expected.duration_days !== undefined && result.structured_payload.duration_days !== caseDef.expected.duration_days) {
+    failures.push(
+      `duration_days=${String(result.structured_payload.duration_days)} expected=${String(caseDef.expected.duration_days)}`
     );
   }
   if (caseDef.expected.health_issue_kind !== undefined && result.structured_payload.health_issue_kind !== caseDef.expected.health_issue_kind) {
@@ -426,9 +449,12 @@ async function run(): Promise<void> {
     },
     {
       name: "this-week-availability-with-days",
-      observation: mkObs(
-        "Добрый день, сорри, я пропадаю переодически. Я на прошлой неделе не бегала, на этой смогу во вторник и в четверг."
-      ),
+      observation: {
+        ...mkObs(
+          "Добрый день, сорри, я пропадаю переодически. Я на прошлой неделе не бегала, на этой смогу во вторник и в четверг."
+        ),
+        observedAt: "2026-05-31T12:00:00.000Z",
+      },
       expected: {
         primary_bucket: "operational_signal",
         signal_type: "plan_generation_constraint",
@@ -436,6 +462,9 @@ async function run(): Promise<void> {
         should_create_case: false,
         should_create_trainingpeaks_action: false,
         available_days: ["Tuesday", "Thursday"],
+        resolved_available_dates: ["2026-06-03", "2026-06-05"],
+        valid_from: "2026-06-02",
+        valid_until: "2026-06-08",
         confidence_at_least: "medium",
       },
     },
@@ -459,6 +488,7 @@ async function run(): Promise<void> {
         should_create_memory: false,
         should_create_case: false,
         should_create_trainingpeaks_action: false,
+        duration_days: 4,
         confidence_at_least: "medium",
       },
     },

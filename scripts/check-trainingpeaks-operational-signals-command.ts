@@ -32,6 +32,7 @@ function makeSignal(input: {
   studentId: string;
   signalType: string;
   metadata?: Record<string, unknown>;
+  structuredPayload?: Record<string, unknown>;
   validFrom?: string | null;
   validUntil?: string | null;
   sourceDate?: string | null;
@@ -52,7 +53,7 @@ function makeSignal(input: {
     telegramChatId: null,
     telegramMessageId: null,
     telegramMessageThreadId: null,
-    structuredPayload: {},
+    structuredPayload: input.structuredPayload ?? {},
     confidence: null,
     validFrom: input.validFrom ?? null,
     validUntil: input.validUntil ?? null,
@@ -146,6 +147,18 @@ function buildSnapshot(scope: TrainingPeaksOperationalSignalsScope) {
       },
     }),
     makeSignal({
+      signalId: "sig-schedule-availability",
+      studentId: "s-sch-2",
+      signalType: "plan_generation_constraint",
+      validFrom: "2026-06-02",
+      validUntil: "2026-06-08",
+      episodeKey: "episode-schedule-rich",
+      structuredPayload: {
+        available_days: ["Tuesday", "Thursday"],
+        resolved_available_dates: ["2026-06-03", "2026-06-05"],
+      },
+    }),
+    makeSignal({
       signalId: "sig-move",
       studentId: "s-mov",
       signalType: "move_workout_candidate",
@@ -199,6 +212,7 @@ function buildSnapshot(scope: TrainingPeaksOperationalSignalsScope) {
     ["s-res", "Resolved Athlete"],
     ["s-h1", "Health Athlete"],
     ["s-sch", "Schedule Athlete"],
+    ["s-sch-2", "Schedule Dates Athlete"],
     ["s-mov", "Move Athlete"],
     ["s-oth", "Other Athlete"],
     ["s-x1", "Extra One"],
@@ -238,6 +252,15 @@ function run(): void {
   // C: schedule and move signals are represented
   assert(text.includes("Schedule Athlete"), "C failed: schedule signal not shown.");
   assert(text.includes("Move Athlete"), "C failed: move signal not shown.");
+  const scheduleScopeText = formatTrainingPeaksOperationalSignalsForTelegram(buildSnapshot("schedule"));
+  assert(
+    scheduleScopeText.includes("2026-06-04") || scheduleScopeText.includes("недоступна"),
+    "C failed: schedule scope should show concrete unavailability dates."
+  );
+  assert(
+    scheduleScopeText.includes("2026-06-03") || scheduleScopeText.includes("доступна"),
+    "C failed: schedule scope should show concrete availability dates."
+  );
 
   // D: overflow line appears
   assert(snapshot.overflowCount > 0, "D failed: expected overflow count.");
