@@ -365,6 +365,13 @@ function run(): void {
         reason: "доступна: вт 02.06, чт 04.06; недоступна: 05.06—08.06",
         signalKind: "operational_schedule",
       },
+      {
+        level: "today",
+        studentName: "Sofia Vlasova",
+        studentId: "student-schedule",
+        reason: "недоступность",
+        signalKind: "operational_schedule",
+      },
     ],
     planConstraintsOverflowCount: 0,
     movesToday: [
@@ -384,6 +391,10 @@ function run(): void {
   assert(
     attentionMessage.includes("Sofia Vlasova") && attentionMessage.includes("вт 02.06"),
     "Attention digest should include schedule planning context with dates."
+  );
+  assert(
+    !attentionMessage.includes("• Sofia Vlasova — недоступность"),
+    "Attention digest should suppress legacy unavailability duplicate."
   );
   assert(
     attentionMessage.includes("Ilya Bogdanov") && attentionMessage.includes("2026-06-05"),

@@ -4429,6 +4429,25 @@ function pushUniqueAttentionSignal(
   }
 }
 
+function formatRussianCountedNoun(
+  count: number,
+  forms: readonly [one: string, few: string, many: string]
+): string {
+  const abs = Math.abs(count);
+  const lastTwoDigits = abs % 100;
+  if (lastTwoDigits >= 11 && lastTwoDigits <= 14) {
+    return forms[2];
+  }
+  const lastDigit = abs % 10;
+  if (lastDigit === 1) {
+    return forms[0];
+  }
+  if (lastDigit >= 2 && lastDigit <= 4) {
+    return forms[1];
+  }
+  return forms[2];
+}
+
 function getBelgradeIsoDate(value: Date): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: TRAININGPEAKS_TIME_ZONE,
@@ -5208,26 +5227,38 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
       }),
     ]);
 
+    const painCaseCountsByStudentId = new Map<string, number>();
     for (const caseRow of painCases) {
-      const studentName = activeStudentNameById.get(caseRow.studentId) ?? null;
+      painCaseCountsByStudentId.set(caseRow.studentId, (painCaseCountsByStudentId.get(caseRow.studentId) ?? 0) + 1);
+    }
+    for (const [studentId, count] of painCaseCountsByStudentId) {
+      const studentName = activeStudentNameById.get(studentId) ?? null;
       pushUniqueAttentionSignal(urgent, {
         level: "urgent",
         studentName,
-        reason: `сигнал по самочувствию/боли за последние 48ч (case: ${caseRow.id.slice(0, 8)})`,
-        studentId: caseRow.studentId,
-        caseId: caseRow.id,
+        reason:
+          count > 1
+            ? `самочувствие/боль: ${count} ${formatRussianCountedNoun(count, ["сигнал", "сигнала", "сигналов"])} за 48ч`
+            : "самочувствие/боль за последние 48ч",
+        studentId,
         signalKind: "pain_case",
       });
     }
 
+    const questionCaseCountsByStudentId = new Map<string, number>();
     for (const caseRow of questionCases) {
-      const studentName = activeStudentNameById.get(caseRow.studentId) ?? null;
+      questionCaseCountsByStudentId.set(caseRow.studentId, (questionCaseCountsByStudentId.get(caseRow.studentId) ?? 0) + 1);
+    }
+    for (const [studentId, count] of questionCaseCountsByStudentId) {
+      const studentName = activeStudentNameById.get(studentId) ?? null;
       pushUniqueAttentionSignal(today, {
         level: "today",
         studentName,
-        reason: `вопрос тренеру за последние 24ч (case: ${caseRow.id.slice(0, 8)})`,
-        studentId: caseRow.studentId,
-        caseId: caseRow.id,
+        reason:
+          count > 1
+            ? `вопросы тренеру: ${count} за 24ч`
+            : "вопрос тренеру за последние 24ч",
+        studentId,
         signalKind: "question_case",
       });
     }
@@ -5237,7 +5268,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
       pushUniqueAttentionSignal(today, {
         level: "today",
         studentName,
-        reason: `перенос тренировки требует проверки (case: ${caseRow.id.slice(0, 8)})`,
+        reason: "перенос тренировки требует проверки",
         studentId: caseRow.studentId,
         caseId: caseRow.id,
         signalKind: "move_needs_review_case",

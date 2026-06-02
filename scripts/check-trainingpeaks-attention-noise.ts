@@ -1,6 +1,8 @@
 import process from "node:process";
 
+import { formatTrainingPeaksAttentionSnapshotMessage } from "@/features/trainingpeaks/attention-telegram";
 import { summarizeYesterdayScanAttention } from "@/features/trainingpeaks/service";
+import type { TrainingPeaksAttentionSnapshot } from "@/features/trainingpeaks/service";
 
 function assert(condition: unknown, message: string): void {
   if (!condition) {
@@ -72,6 +74,40 @@ function run(): void {
     !preWindowSummary.shouldShowMissingScanAlert,
     "Missing scan alert should stay hidden before the morning scan window."
   );
+
+  const scheduleSnapshot: TrainingPeaksAttentionSnapshot = {
+    urgent: [],
+    today: [],
+    observe: [],
+    fyi: [],
+    followUpToday: [],
+    followUpOverflowCount: 0,
+    planConstraintsToday: [
+      {
+        level: "today",
+        studentName: "Sofia Vlasova",
+        studentId: "student-sofia",
+        reason: "доступна: вт 02.06, чт 04.06; недоступна: 05.06—08.06",
+        signalKind: "operational_schedule",
+      },
+      {
+        level: "today",
+        studentName: "Sofia Vlasova",
+        studentId: "student-sofia",
+        reason: "недоступность",
+        signalKind: "operational_schedule",
+      },
+    ],
+    planConstraintsOverflowCount: 0,
+    movesToday: [],
+    movesOverflowCount: 0,
+  };
+  const scheduleMessage = formatTrainingPeaksAttentionSnapshotMessage(scheduleSnapshot, "🌅 Внимание на сегодня");
+  assert(
+    scheduleMessage.includes("доступна: вт 02.06, чт 04.06; недоступна: 05.06—08.06"),
+    "Detailed schedule line should stay in attention digest."
+  );
+  assert(!scheduleMessage.includes("• Sofia Vlasova — недоступность"), "Legacy schedule duplicate should be suppressed.");
 
   console.log("[check-trainingpeaks-attention-noise] PASS");
 }

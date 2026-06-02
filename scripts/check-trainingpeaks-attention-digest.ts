@@ -34,6 +34,45 @@ function buildSnapshotWithTodayItems(count: number): TrainingPeaksAttentionSnaps
   };
 }
 
+function buildCaseGroupingSnapshot(): TrainingPeaksAttentionSnapshot {
+  return {
+    urgent: [
+      {
+        level: "urgent",
+        studentName: "Elena Titskaia",
+        studentId: "student-elena",
+        reason: "самочувствие/боль: 2 сигнала за 48ч",
+        signalKind: "pain_case",
+      },
+    ],
+    today: [
+      {
+        level: "today",
+        studentName: "Elena Titskaia",
+        studentId: "student-elena",
+        reason: "вопросы тренеру: 4 за 24ч",
+        signalKind: "question_case",
+      },
+      {
+        level: "today",
+        studentName: "Ilya Bogdanov",
+        studentId: "student-ilya",
+        caseId: "12345678-1234-1234-1234-123456789abc",
+        reason: "перенос тренировки требует проверки",
+        signalKind: "move_needs_review_case",
+      },
+    ],
+    observe: [],
+    fyi: [],
+    followUpToday: [],
+    followUpOverflowCount: 0,
+    planConstraintsToday: [],
+    planConstraintsOverflowCount: 0,
+    movesToday: [],
+    movesOverflowCount: 0,
+  };
+}
+
 function run(): void {
   const snapshot = buildSnapshotWithTodayItems(8);
   const message = formatTrainingPeaksAttentionSnapshotMessage(snapshot, "Утренний обзор TrainingPeaks");
@@ -53,6 +92,23 @@ function run(): void {
   assert(
     chunks.join("\n").includes("+3 ещё"),
     "Chunked digest should include overflow marker for compacted today items."
+  );
+  assert(!message.includes("Проверить сегодня"), "Empty follow-up section should be omitted.");
+  assert(!message.includes("• Нет"), 'Digest should not include placeholder "• Нет".');
+
+  const groupedSnapshot = buildCaseGroupingSnapshot();
+  const groupedMessage = formatTrainingPeaksAttentionSnapshotMessage(groupedSnapshot, "Утренний обзор TrainingPeaks");
+  assert(
+    groupedMessage.includes("самочувствие/боль: 2 сигнала за 48ч"),
+    "Grouped pain case line should be rendered."
+  );
+  assert(
+    groupedMessage.includes("вопросы тренеру: 4 за 24ч"),
+    "Grouped question case line should be rendered."
+  );
+  assert(
+    !groupedMessage.includes("(case:"),
+    "Main attention digest should not render raw case IDs."
   );
 
   const yesterdayScanSummary = summarizeYesterdayScanAttention({

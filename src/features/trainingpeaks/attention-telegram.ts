@@ -97,7 +97,6 @@ function buildAttentionSection(
   const totalOverflow = explicitOverflow + hiddenBySectionLimit;
 
   if (visibleSignals.length === 0 && totalOverflow === 0) {
-    lines.push("• Нет");
     return lines;
   }
 
@@ -110,6 +109,39 @@ function buildAttentionSection(
   }
 
   return lines;
+}
+
+function shouldSuppressAttentionLegacyScheduleDuplicate(input: {
+  signal: {
+    studentId?: string | null;
+    reason: string;
+    signalKind?: string;
+  };
+  allSignals: Array<{
+    studentId?: string | null;
+    reason: string;
+    signalKind?: string;
+  }>;
+}): boolean {
+  const { signal, allSignals } = input;
+  if (signal.signalKind !== "operational_schedule") {
+    return false;
+  }
+  if (signal.reason !== "недоступность") {
+    return false;
+  }
+  return allSignals.some((candidate) => {
+    if (candidate === signal) {
+      return false;
+    }
+    if (candidate.signalKind !== "operational_schedule") {
+      return false;
+    }
+    if ((candidate.studentId ?? null) !== (signal.studentId ?? null)) {
+      return false;
+    }
+    return candidate.reason.includes("доступна:") || candidate.reason.includes("недоступна:");
+  });
 }
 
 function joinAttentionDigestBlock(lines: string[]): string {
@@ -254,7 +286,14 @@ function buildAttentionDigestBlocks(
     overflowCount: snapshot.followUpOverflowCount,
   });
 
-  const planConstraints = buildAttentionSection("📅 Учесть в плане", snapshot.planConstraintsToday, botUsername, {
+  const planConstraintsSignals = snapshot.planConstraintsToday.filter(
+    (signal) =>
+      !shouldSuppressAttentionLegacyScheduleDuplicate({
+        signal,
+        allSignals: snapshot.planConstraintsToday,
+      })
+  );
+  const planConstraints = buildAttentionSection("📅 Учесть в плане", planConstraintsSignals, botUsername, {
     maxItems: ATTENTION_PLAN_MAX_ITEMS,
     overflowCount: snapshot.planConstraintsOverflowCount,
   });
@@ -264,7 +303,7 @@ function buildAttentionDigestBlocks(
     overflowCount: snapshot.movesOverflowCount,
   });
 
-  return [[title], urgent, today, followUps, planConstraints, moves, observe, fyi];
+  return [[title], urgent, today, followUps, planConstraints, moves, observe, fyi].filter((block) => block.length > 1);
 }
 
 export function buildTrainingPeaksAttentionDigestMessages(
