@@ -155,7 +155,23 @@ function buildSnapshot(scope: TrainingPeaksOperationalSignalsScope) {
       episodeKey: "episode-schedule-rich",
       structuredPayload: {
         available_days: ["Tuesday", "Thursday"],
-        resolved_available_dates: ["2026-06-03", "2026-06-05"],
+        resolved_available_dates: ["2026-06-02", "2026-06-04"],
+      },
+    }),
+    makeSignal({
+      signalId: "sig-schedule-unavailability-rich",
+      studentId: "s-sch-2",
+      signalType: "schedule_unavailability_window",
+      episodeKey: "episode-schedule-rich",
+      structuredPayload: {
+        duration_days: 4,
+      },
+    }),
+    makeSignal({
+      signalId: "sig-schedule-legacy-vague",
+      studentId: "s-sch-2",
+      signalType: "schedule_unavailability_window",
+      structuredPayload: {
       },
     }),
     makeSignal({
@@ -254,12 +270,30 @@ function run(): void {
   assert(text.includes("Move Athlete"), "C failed: move signal not shown.");
   const scheduleScopeText = formatTrainingPeaksOperationalSignalsForTelegram(buildSnapshot("schedule"));
   assert(
-    scheduleScopeText.includes("2026-06-04") || scheduleScopeText.includes("недоступна"),
+    scheduleScopeText.includes("05.06") || scheduleScopeText.includes("недоступна"),
     "C failed: schedule scope should show concrete unavailability dates."
   );
   assert(
-    scheduleScopeText.includes("2026-06-03") || scheduleScopeText.includes("доступна"),
+    scheduleScopeText.includes("вт 02.06") || scheduleScopeText.includes("доступна"),
     "C failed: schedule scope should show concrete availability dates."
+  );
+  assert(
+    scheduleScopeText.includes("Schedule Dates Athlete"),
+    "C failed: rich schedule episode line missing."
+  );
+  const richLine = scheduleScopeText
+    .split("\n")
+    .find((line) => line.includes("Schedule Dates Athlete"));
+  assert(
+    Boolean(richLine) &&
+      (richLine as string).includes("доступна:") &&
+      (richLine as string).includes("недоступна:") &&
+      (richLine as string).indexOf("доступна:") < (richLine as string).indexOf("недоступна:"),
+    "C failed: schedule scope should show availability before unavailability."
+  );
+  assert(
+    !scheduleScopeText.includes("недоступность"),
+    "C failed: legacy vague schedule line should be suppressed when rich episode exists."
   );
 
   // D: overflow line appears
@@ -270,9 +304,9 @@ function run(): void {
   assert(!text.includes("{\""), "E failed: raw JSON leaked to output.");
   assert(!text.includes("follow_up_status"), "E failed: raw metadata key leaked.");
 
-  // F: filter label appears for non-default scope
+  // F: no raw scope label line for non-default scope
   const healthText = formatTrainingPeaksOperationalSignalsForTelegram(buildSnapshot("health"));
-  assert(healthText.includes("Фильтр: health"), "F failed: scope label missing for health filter.");
+  assert(!healthText.includes("Фильтр:"), "F failed: raw scope label should not be shown.");
 
   // H: future pending and resolved follow-up are not in check section
   assert(
@@ -298,7 +332,7 @@ function run(): void {
     overflowCount: 0,
   });
   assert(
-    emptyText.includes("Активных operational signals не найдено."),
+    emptyText.includes("Активных сигналов не найдено."),
     "G failed: empty-state text missing."
   );
 

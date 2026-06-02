@@ -5,6 +5,7 @@ import {
   buildEpisodeScheduleContextIndex,
   formatScheduleOperationalSignalText,
   inferUnavailabilityAfterAvailableDates,
+  resolveDayToIsoDate,
 } from "@/features/trainingpeaks/operational-schedule-display";
 import {
   buildTrainingPeaksOperationalSignalsSnapshotFromSignals,
@@ -63,8 +64,22 @@ function makeSignal(input: {
 }
 
 function run(): void {
-  const observedAt = "2026-05-31T12:00:00.000Z";
+  const observedAt = "2026-06-01T12:00:00.000Z";
   const studentId = "sofia-student";
+
+  const weekdayMap = new Map<string, string>([
+    ["Monday", "2026-06-01"],
+    ["Tuesday", "2026-06-02"],
+    ["Wednesday", "2026-06-03"],
+    ["Thursday", "2026-06-04"],
+    ["Friday", "2026-06-05"],
+    ["Saturday", "2026-06-06"],
+    ["Sunday", "2026-06-07"],
+  ]);
+  for (const [day, expectedDate] of weekdayMap.entries()) {
+    const got = resolveDayToIsoDate(day, observedAt, "this_week");
+    assert(got === expectedDate, `Weekday check failed for ${day}: expected ${expectedDate}, got ${got}`);
+  }
 
   const availabilityCandidates = classifyCoachOperationalSignals({
     sourceType: "business_dm",
@@ -77,8 +92,8 @@ function run(): void {
   const availability = availabilityCandidates.find((item) => item.signal_type === "plan_generation_constraint");
   assert(Boolean(availability), "Sofia availability signal missing.");
   assert(
-    availability!.structured_payload.resolved_available_dates.includes("2026-06-03") &&
-      availability!.structured_payload.resolved_available_dates.includes("2026-06-05"),
+    availability!.structured_payload.resolved_available_dates.includes("2026-06-02") &&
+      availability!.structured_payload.resolved_available_dates.includes("2026-06-04"),
     "Sofia availability should resolve Tue/Thu dates for anchor week."
   );
 
@@ -98,8 +113,8 @@ function run(): void {
     availableDates: availability!.structured_payload.resolved_available_dates,
     durationDays: 4,
   });
-  assert(inferred?.validFrom === "2026-06-06", `Expected unavailability from 2026-06-06, got ${inferred?.validFrom}`);
-  assert(inferred?.validUntil === "2026-06-09", `Expected unavailability until 2026-06-09, got ${inferred?.validUntil}`);
+  assert(inferred?.validFrom === "2026-06-05", `Expected unavailability from 2026-06-05, got ${inferred?.validFrom}`);
+  assert(inferred?.validUntil === "2026-06-08", `Expected unavailability until 2026-06-08, got ${inferred?.validUntil}`);
 
   const episodeKey = "student:sofia-student:observation:fixture:episode:schedule_unavailability";
   const signals = [
@@ -135,8 +150,12 @@ function run(): void {
     episodeContext: episodeContext ?? null,
   });
   assert(
-    travelDisplay.includes("2026-06-06") && travelDisplay.includes("2026-06-09"),
+    travelDisplay.includes("05.06") && travelDisplay.includes("08.06"),
     `Travel display should include inferred range, got: ${travelDisplay}`
+  );
+  assert(
+    travelDisplay.startsWith("недоступна:"),
+    `Travel display should render unavailability phrase first, got: ${travelDisplay}`
   );
 
   const availabilityDisplay = formatScheduleOperationalSignalText({
@@ -146,7 +165,7 @@ function run(): void {
     structuredPayload: availability!.structured_payload as Record<string, unknown>,
   });
   assert(
-    availabilityDisplay.includes("2026-06-03") && availabilityDisplay.includes("2026-06-05"),
+    availabilityDisplay.includes("вт 02.06") && availabilityDisplay.includes("чт 04.06"),
     `Availability display should include concrete dates, got: ${availabilityDisplay}`
   );
 
@@ -160,11 +179,11 @@ function run(): void {
   const telegramText = formatTrainingPeaksOperationalSignalsForTelegram(snapshot);
   assert(telegramText.includes("Sofia Vlasova"), "tp_signals schedule output should include student name.");
   assert(
-    telegramText.includes("2026-06-03") || telegramText.includes("доступна"),
+    telegramText.includes("вт 02.06") || telegramText.includes("доступна"),
     "tp_signals schedule output should include availability dates."
   );
   assert(
-    telegramText.includes("2026-06-06") || telegramText.includes("недоступна"),
+    telegramText.includes("05.06") || telegramText.includes("недоступна"),
     "tp_signals schedule output should include unavailability range."
   );
 

@@ -90,11 +90,8 @@ function coachWeekStart(dateKey: string, weekScope: WeekScope): string {
   }
   if (weekScope === "this_week") {
     const weekday = coachWeekdayIndex(dateKey);
-    if (weekday === 0) {
-      return shiftDateKey(dateKey, 2);
-    }
-    if (weekday === 6) {
-      return shiftDateKey(dateKey, 3);
+    if (weekday === 0 || weekday === 6) {
+      return shiftDateKey(monday, 7);
     }
     return monday;
   }
@@ -275,28 +272,36 @@ export function enrichScheduleStructuredPayload(
 function formatDayDateList(dates: string[]): string {
   return dates
     .map((date) => {
-      const dayName = Object.entries(DAY_MONDAY_OFFSET).find(([, offset]) => {
-        const monday = startOfWeekMondayFromDateKey(date);
-        const delta = Math.round(
-          (isoDateFromDateKey(date).getTime() - isoDateFromDateKey(monday).getTime()) / 86_400_000
-        );
-        return delta === offset;
-      })?.[0];
+      const parsed = isoDateFromDateKey(date);
+      const dow = parsed.getUTCDay();
+      const dayName = (
+        {
+          1: "Monday",
+          2: "Tuesday",
+          3: "Wednesday",
+          4: "Thursday",
+          5: "Friday",
+          6: "Saturday",
+          0: "Sunday",
+        } as Record<number, string>
+      )[dow];
       const short = dayName ? DAY_SHORT_RU[dayName] ?? dayName.slice(0, 2).toLowerCase() : null;
-      return short ? `${short} ${date}` : date;
+      const displayDate = `${date.slice(8, 10)}.${date.slice(5, 7)}`;
+      return short ? `${short} ${displayDate}` : displayDate;
     })
     .join(", ");
 }
 
 function formatDateRange(validFrom: string | null, validUntil: string | null): string | null {
+  const fmt = (value: string): string => `${value.slice(8, 10)}.${value.slice(5, 7)}`;
   if (validFrom && validUntil) {
-    return validFrom === validUntil ? validFrom : `${validFrom}—${validUntil}`;
+    return validFrom === validUntil ? fmt(validFrom) : `${fmt(validFrom)}—${fmt(validUntil)}`;
   }
   if (validFrom) {
-    return `с ${validFrom}`;
+    return `с ${fmt(validFrom)}`;
   }
   if (validUntil) {
-    return `до ${validUntil}`;
+    return `до ${fmt(validUntil)}`;
   }
   return null;
 }

@@ -362,7 +362,7 @@ function run(): void {
         level: "today",
         studentName: "Sofia Vlasova",
         studentId: "student-schedule",
-        reason: "доступна: вт 2026-06-03, чт 2026-06-05",
+        reason: "доступна: вт 02.06, чт 04.06; недоступна: 05.06—08.06",
         signalKind: "operational_schedule",
       },
     ],
@@ -382,7 +382,7 @@ function run(): void {
   assert(attentionMessage.includes("📅 Учесть в плане"), "Attention digest should include planning section.");
   assert(attentionMessage.includes("🔁 Переносы"), "Attention digest should include move section.");
   assert(
-    attentionMessage.includes("Sofia Vlasova") && attentionMessage.includes("2026-06-03"),
+    attentionMessage.includes("Sofia Vlasova") && attentionMessage.includes("вт 02.06"),
     "Attention digest should include schedule planning context with dates."
   );
   assert(

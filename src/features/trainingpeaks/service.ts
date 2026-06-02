@@ -4647,9 +4647,26 @@ function collectOperationalPlanningAttentionItems(input: {
     const preferred = nextKey < existingKey || (nextKey === existingKey && item.signalId < existing.signalId) ? item : existing;
     const secondary = preferred === item ? existing : item;
     if (preferred.reason !== secondary.reason) {
+      const orderedReasons = [preferred.reason, secondary.reason].sort((left, right) => {
+        const rank = (value: string): number => {
+          if (value.startsWith("доступна:")) {
+            return 0;
+          }
+          if (value.startsWith("недоступна:")) {
+            return 1;
+          }
+          return 2;
+        };
+        const leftRank = rank(left);
+        const rightRank = rank(right);
+        if (leftRank !== rightRank) {
+          return leftRank - rightRank;
+        }
+        return left.localeCompare(right, "ru-RU");
+      });
       dedupedByEpisode.set(dedupeKey, {
         ...preferred,
-        reason: compactOperationalSignalText(`${secondary.reason}; ${preferred.reason}`, 90),
+        reason: compactOperationalSignalText(orderedReasons.join("; "), 90),
       });
       continue;
     }
@@ -5333,13 +5350,56 @@ function mergeOperationalSignalEpisodeItems(
     preferred.signalType !== secondary.signalType &&
     preferred.text !== secondary.text
   ) {
+    const orderedText = [preferred.text, secondary.text].sort((left, right) => {
+      const rank = (value: string): number => {
+        if (value.startsWith("доступна:")) {
+          return 0;
+        }
+        if (value.startsWith("недоступна:")) {
+          return 1;
+        }
+        return 2;
+      };
+      const leftRank = rank(left);
+      const rightRank = rank(right);
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank;
+      }
+      return left.localeCompare(right, "ru-RU");
+    });
     return {
       ...preferred,
-      text: compactOperationalSignalText(`${secondary.text}; ${preferred.text}`, 95),
+      text: compactOperationalSignalText(orderedText.join("; "), 95),
     };
   }
 
   return preferred;
+}
+
+function shouldSuppressLegacyScheduleDuplicate(input: {
+  item: TrainingPeaksOperationalSignalsItem;
+  allItems: readonly TrainingPeaksOperationalSignalsItem[];
+}): boolean {
+  const { item, allItems } = input;
+  if (item.section !== "plan_constraints" || item.signalType !== "schedule_unavailability_window") {
+    return false;
+  }
+  if (item.text !== "недоступность") {
+    return false;
+  }
+
+  return allItems.some((candidate) => {
+    if (candidate === item) {
+      return false;
+    }
+    if (candidate.studentId !== item.studentId) {
+      return false;
+    }
+    if (candidate.section !== "plan_constraints") {
+      return false;
+    }
+    return candidate.text.includes("доступна:") || candidate.text.includes("недоступна:");
+  });
 }
 
 function toOperationalSignalDisplayLine(item: TrainingPeaksOperationalSignalsItem): string {
@@ -5352,19 +5412,25 @@ export function formatTrainingPeaksOperationalSignalsForTelegram(
 ): string {
   const lines: string[] = [];
   lines.push("📍 /tp_signals");
-  if (snapshot.scope !== "all") {
-    lines.push(`Фильтр: ${snapshot.scope}`);
-  }
 
   const nonEmptySections = snapshot.sections.filter((section) => section.items.length > 0);
   if (nonEmptySections.length === 0) {
-    lines.push("", "Активных operational signals не найдено.");
+    lines.push("", "Активных сигналов не найдено.");
     return lines.join("\n");
   }
 
   for (const section of nonEmptySections) {
+    const visibleItems = section.items.filter((item) =>
+      !shouldSuppressLegacyScheduleDuplicate({
+        item,
+        allItems: section.items,
+      })
+    );
+    if (visibleItems.length === 0) {
+      continue;
+    }
     lines.push("", section.title);
-    for (const item of section.items) {
+    for (const item of visibleItems) {
       lines.push(toOperationalSignalDisplayLine(item));
     }
   }
