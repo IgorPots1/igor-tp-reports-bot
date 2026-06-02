@@ -1,0 +1,671 @@
+{
+  "runAt": "2026-06-02T12:43:59.625Z",
+  "captureMode": "read-only-attended-observer",
+  "operationGuess": "create_running_workout",
+  "endpointConfirmed": true,
+  "endpointPattern": "/fitness/v6/athletes/{athleteId}/workouts",
+  "method": "POST",
+  "athleteId": 3102415,
+  "bestCandidateSelection": {
+    "id": 1,
+    "score": 31,
+    "reasons": [
+      "exact create-workout endpoint path",
+      "workout date field observed",
+      "workout type identifiers observed",
+      "duration field observed",
+      "expected safe coach notes observed",
+      "2xx response status (200)"
+    ],
+    "criteria": "Prefer exact POST /fitness/v6/athletes/{athleteId}/workouts with safe test title, workout date, workout type ids, duration fields, coach notes, and 2xx response."
+  },
+  "request": {
+    "headerKeys": [
+      "accept",
+      "content-type",
+      "referer",
+      "sec-ch-ua",
+      "sec-ch-ua-mobile",
+      "sec-ch-ua-platform",
+      "user-agent"
+    ],
+    "selectedHeaders": {
+      "accept": "application/json, text/javascript, */*; q=0.01",
+      "content-type": "application/json",
+      "referer": "/",
+      "user-agent": "[REDACTED_LONG_STRING]"
+    },
+    "bodyTopLevelKeys": [
+      "athleteId",
+      "workoutDay",
+      "workoutId",
+      "title",
+      "workoutTypeValueId",
+      "workoutSubTypeId",
+      "code",
+      "isHidden",
+      "description",
+      "userTags",
+      "coachComments",
+      "newComment",
+      "publicSettingValue",
+      "sharedWorkoutInformationKey",
+      "sharedWorkoutInformationExpireKey",
+      "shortUrl",
+      "distance",
+      "distancePlanned",
+      "distanceCustomized",
+      "distanceUnitsCustomized",
+      "totalTime",
+      "totalTimePlanned",
+      "heartRateMinimum",
+      "heartRateMaximum",
+      "heartRateAverage",
+      "hrAvg",
+      "calories",
+      "caloriesPlanned",
+      "tssActual",
+      "tssPlanned",
+      "tssSource",
+      "if",
+      "ifPlanned",
+      "velocityAverage",
+      "velocityAvg",
+      "velocityPlanned",
+      "velocityMaximum",
+      "normalizedSpeedActual",
+      "normalizedPowerActual",
+      "powerAverage",
+      "powerAvg",
+      "powerMaximum",
+      "energy",
+      "energyPlanned",
+      "elevationGain",
+      "elevationGainPlanned",
+      "elevationLoss",
+      "elevationMinimum",
+      "elevationAverage",
+      "elevationMaximum",
+      "torqueAverage",
+      "torqueMaximum",
+      "tempMin",
+      "tempAvg",
+      "tempMax",
+      "cadenceAverage",
+      "cadenceAvg",
+      "cadenceMaximum",
+      "lastModifiedDate",
+      "startTime",
+      "startTimePlanned",
+      "equipmentBikeId",
+      "equipmentShoeId",
+      "poolLengthOptionId",
+      "isLocked",
+      "complianceDurationPercent",
+      "complianceDistancePercent",
+      "complianceTssPercent",
+      "orderOnDay",
+      "personalRecordCount",
+      "structure",
+      "personalRecords",
+      "feeling",
+      "rpe",
+      "syncedTo",
+      "workoutComments"
+    ],
+    "bodyShape": {
+      "type": "object",
+      "keys": [
+        "athleteId",
+        "workoutDay",
+        "workoutId",
+        "title",
+        "workoutTypeValueId",
+        "workoutSubTypeId",
+        "code",
+        "isHidden",
+        "description",
+        "userTags",
+        "coachComments",
+        "newComment",
+        "publicSettingValue",
+        "sharedWorkoutInformationKey",
+        "sharedWorkoutInformationExpireKey",
+        "shortUrl",
+        "distance",
+        "distancePlanned",
+        "distanceCustomized",
+        "distanceUnitsCustomized",
+        "totalTime",
+        "totalTimePlanned",
+        "heartRateMinimum",
+        "heartRateMaximum",
+        "heartRateAverage",
+        "hrAvg",
+        "calories",
+        "caloriesPlanned",
+        "tssActual",
+        "tssPlanned",
+        "tssSource",
+        "if",
+        "ifPlanned",
+        "velocityAverage",
+        "velocityAvg",
+        "velocityPlanned",
+        "velocityMaximum",
+        "normalizedSpeedActual",
+        "normalizedPowerActual",
+        "powerAverage",
+        "powerAvg",
+        "powerMaximum",
+        "energy",
+        "energyPlanned",
+        "elevationGain",
+        "elevationGainPlanned",
+        "elevationLoss",
+        "elevationMinimum",
+        "elevationAverage",
+        "elevationMaximum",
+        "torqueAverage",
+        "torqueMaximum",
+        "tempMin",
+        "tempAvg",
+        "tempMax",
+        "cadenceAverage",
+        "cadenceAvg",
+        "cadenceMaximum",
+        "lastModifiedDate",
+        "startTime",
+        "startTimePlanned",
+        "equipmentBikeId",
+        "equipmentShoeId",
+        "poolLengthOptionId",
+        "isLocked",
+        "complianceDurationPercent",
+        "complianceDistancePercent",
+        "complianceTssPercent",
+        "orderOnDay",
+        "personalRecordCount",
+        "structure",
+        "personalRecords",
+        "feeling",
+        "rpe",
+        "syncedTo",
+        "workoutComments"
+      ],
+      "fields": {
+        "athleteId": {
+          "type": "number"
+        },
+        "workoutDay": {
+          "type": "string"
+        },
+        "workoutId": {
+          "type": "number"
+        },
+        "title": {
+          "type": "string"
+        },
+        "workoutTypeValueId": {
+          "type": "number"
+        },
+        "workoutSubTypeId": {
+          "type": "null"
+        },
+        "code": {
+          "type": "null"
+        },
+        "isHidden": {
+          "type": "null"
+        },
+        "description": {
+          "type": "string"
+        },
+        "userTags": {
+          "type": "string"
+        },
+        "coachComments": {
+          "type": "null"
+        },
+        "newComment": {
+          "type": "null"
+        },
+        "publicSettingValue": {
+          "type": "number"
+        },
+        "sharedWorkoutInformationKey": {
+          "type": "null"
+        },
+        "sharedWorkoutInformationExpireKey": {
+          "type": "null"
+        },
+        "shortUrl": {
+          "type": "null"
+        },
+        "distance": {
+          "type": "null"
+        },
+        "distancePlanned": {
+          "type": "number"
+        },
+        "distanceCustomized": {
+          "type": "null"
+        },
+        "distanceUnitsCustomized": {
+          "type": "null"
+        },
+        "totalTime": {
+          "type": "null"
+        },
+        "totalTimePlanned": {
+          "type": "number"
+        },
+        "heartRateMinimum": {
+          "type": "null"
+        },
+        "heartRateMaximum": {
+          "type": "null"
+        },
+        "heartRateAverage": {
+          "type": "null"
+        },
+        "hrAvg": {
+          "type": "null"
+        },
+        "calories": {
+          "type": "null"
+        },
+        "caloriesPlanned": {
+          "type": "null"
+        },
+        "tssActual": {
+          "type": "null"
+        },
+        "tssPlanned": {
+          "type": "number"
+        },
+        "tssSource": {
+          "type": "null"
+        },
+        "if": {
+          "type": "null"
+        },
+        "ifPlanned": {
+          "type": "number"
+        },
+        "velocityAverage": {
+          "type": "null"
+        },
+        "velocityAvg": {
+          "type": "null"
+        },
+        "velocityPlanned": {
+          "type": "number"
+        },
+        "velocityMaximum": {
+          "type": "null"
+        },
+        "normalizedSpeedActual": {
+          "type": "null"
+        },
+        "normalizedPowerActual": {
+          "type": "null"
+        },
+        "powerAverage": {
+          "type": "null"
+        }
+      }
+    },
+    "bodyFieldSamples": {
+      "title": "API capture test. Safe to delete.",
+      "workoutDay": "2026-06-03",
+      "workoutTypeValueId": 3,
+      "workoutSubTypeId": null,
+      "totalTimePlanned": 0.3333333333333333,
+      "distancePlanned": 5570,
+      "distance": null,
+      "coachComments": null,
+      "description": "API capture test. Safe to delete.",
+      "workoutId": 0,
+      "athleteId": 3102415
+    },
+    "parseNote": null
+  },
+  "response": {
+    "status": 200,
+    "ok": true,
+    "headerKeys": [
+      "access-control-allow-credentials",
+      "access-control-allow-origin",
+      "cache-control",
+      "content-encoding",
+      "content-length",
+      "content-type",
+      "date",
+      "expires",
+      "pragma",
+      "server",
+      "vary",
+      "x-aspnet-version",
+      "x-powered-by",
+      "x-server"
+    ],
+    "selectedHeaders": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "bodyTopLevelKeys": [
+      "workoutId",
+      "athleteId",
+      "title",
+      "workoutTypeValueId",
+      "code",
+      "workoutDay",
+      "startTime",
+      "startTimePlanned",
+      "isItAnOr",
+      "isHidden",
+      "completed",
+      "description",
+      "userTags",
+      "coachComments",
+      "workoutComments",
+      "newComment",
+      "hasPrivateWorkoutNoteForCaller",
+      "unreadCommentCount",
+      "publicSettingValue",
+      "sharedWorkoutInformationKey",
+      "sharedWorkoutInformationExpireKey",
+      "distance",
+      "distancePlanned",
+      "distanceCustomized",
+      "distanceUnitsCustomized",
+      "totalTime",
+      "totalTimePlanned",
+      "heartRateMinimum",
+      "heartRateMaximum",
+      "heartRateAverage",
+      "calories",
+      "caloriesPlanned",
+      "tssActual",
+      "tssPlanned",
+      "tssSource",
+      "if",
+      "ifPlanned",
+      "velocityAverage",
+      "velocityPlanned",
+      "velocityMaximum",
+      "normalizedSpeedActual",
+      "normalizedPowerActual",
+      "powerAverage",
+      "powerMaximum",
+      "energy",
+      "energyPlanned",
+      "elevationGain",
+      "elevationGainPlanned",
+      "elevationLoss",
+      "elevationMinimum",
+      "elevationAverage",
+      "elevationMaximum",
+      "torqueAverage",
+      "torqueMaximum",
+      "tempMin",
+      "tempAvg",
+      "tempMax",
+      "cadenceAverage",
+      "cadenceMaximum",
+      "lastModifiedDate",
+      "equipmentBikeId",
+      "equipmentShoeId",
+      "isLocked",
+      "complianceDurationPercent",
+      "complianceDistancePercent",
+      "complianceTssPercent",
+      "rpe",
+      "feeling",
+      "structure",
+      "orderOnDay",
+      "personalRecordCount",
+      "syncedTo",
+      "poolLengthOptionId",
+      "workoutSubTypeId",
+      "workoutDeviceSource"
+    ],
+    "bodyShape": {
+      "type": "object",
+      "keys": [
+        "workoutId",
+        "athleteId",
+        "title",
+        "workoutTypeValueId",
+        "code",
+        "workoutDay",
+        "startTime",
+        "startTimePlanned",
+        "isItAnOr",
+        "isHidden",
+        "completed",
+        "description",
+        "userTags",
+        "coachComments",
+        "workoutComments",
+        "newComment",
+        "hasPrivateWorkoutNoteForCaller",
+        "unreadCommentCount",
+        "publicSettingValue",
+        "sharedWorkoutInformationKey",
+        "sharedWorkoutInformationExpireKey",
+        "distance",
+        "distancePlanned",
+        "distanceCustomized",
+        "distanceUnitsCustomized",
+        "totalTime",
+        "totalTimePlanned",
+        "heartRateMinimum",
+        "heartRateMaximum",
+        "heartRateAverage",
+        "calories",
+        "caloriesPlanned",
+        "tssActual",
+        "tssPlanned",
+        "tssSource",
+        "if",
+        "ifPlanned",
+        "velocityAverage",
+        "velocityPlanned",
+        "velocityMaximum",
+        "normalizedSpeedActual",
+        "normalizedPowerActual",
+        "powerAverage",
+        "powerMaximum",
+        "energy",
+        "energyPlanned",
+        "elevationGain",
+        "elevationGainPlanned",
+        "elevationLoss",
+        "elevationMinimum",
+        "elevationAverage",
+        "elevationMaximum",
+        "torqueAverage",
+        "torqueMaximum",
+        "tempMin",
+        "tempAvg",
+        "tempMax",
+        "cadenceAverage",
+        "cadenceMaximum",
+        "lastModifiedDate",
+        "equipmentBikeId",
+        "equipmentShoeId",
+        "isLocked",
+        "complianceDurationPercent",
+        "complianceDistancePercent",
+        "complianceTssPercent",
+        "rpe",
+        "feeling",
+        "structure",
+        "orderOnDay",
+        "personalRecordCount",
+        "syncedTo",
+        "poolLengthOptionId",
+        "workoutSubTypeId",
+        "workoutDeviceSource"
+      ],
+      "fields": {
+        "workoutId": {
+          "type": "number"
+        },
+        "athleteId": {
+          "type": "number"
+        },
+        "title": {
+          "type": "string"
+        },
+        "workoutTypeValueId": {
+          "type": "number"
+        },
+        "code": {
+          "type": "null"
+        },
+        "workoutDay": {
+          "type": "string"
+        },
+        "startTime": {
+          "type": "null"
+        },
+        "startTimePlanned": {
+          "type": "null"
+        },
+        "isItAnOr": {
+          "type": "boolean"
+        },
+        "isHidden": {
+          "type": "null"
+        },
+        "completed": {
+          "type": "null"
+        },
+        "description": {
+          "type": "string"
+        },
+        "userTags": {
+          "type": "string"
+        },
+        "coachComments": {
+          "type": "null"
+        },
+        "workoutComments": {
+          "type": "array",
+          "length": 0,
+          "itemShape": {
+            "type": "unknown"
+          }
+        },
+        "newComment": {
+          "type": "null"
+        },
+        "hasPrivateWorkoutNoteForCaller": {
+          "type": "boolean"
+        },
+        "unreadCommentCount": {
+          "type": "number"
+        },
+        "publicSettingValue": {
+          "type": "number"
+        },
+        "sharedWorkoutInformationKey": {
+          "type": "string"
+        },
+        "sharedWorkoutInformationExpireKey": {
+          "type": "string"
+        },
+        "distance": {
+          "type": "null"
+        },
+        "distancePlanned": {
+          "type": "number"
+        },
+        "distanceCustomized": {
+          "type": "null"
+        },
+        "distanceUnitsCustomized": {
+          "type": "null"
+        },
+        "totalTime": {
+          "type": "null"
+        },
+        "totalTimePlanned": {
+          "type": "number"
+        },
+        "heartRateMinimum": {
+          "type": "null"
+        },
+        "heartRateMaximum": {
+          "type": "null"
+        },
+        "heartRateAverage": {
+          "type": "null"
+        },
+        "calories": {
+          "type": "null"
+        },
+        "caloriesPlanned": {
+          "type": "null"
+        },
+        "tssActual": {
+          "type": "null"
+        },
+        "tssPlanned": {
+          "type": "number"
+        },
+        "tssSource": {
+          "type": "number"
+        },
+        "if": {
+          "type": "null"
+        },
+        "ifPlanned": {
+          "type": "number"
+        },
+        "velocityAverage": {
+          "type": "null"
+        },
+        "velocityPlanned": {
+          "type": "number"
+        },
+        "velocityMaximum": {
+          "type": "null"
+        }
+      }
+    },
+    "bodyFieldSamples": {
+      "title": "API capture test. Safe to delete.",
+      "workoutDay": "2026-06-03T00:00:00",
+      "workoutTypeValueId": 3,
+      "workoutSubTypeId": null,
+      "totalTimePlanned": 0.3333333333333333,
+      "distancePlanned": 5570,
+      "distance": null,
+      "coachComments": null,
+      "description": "API capture test. Safe to delete.",
+      "workoutId": 3769775845,
+      "athleteId": 3102415
+    },
+    "parseNote": null,
+    "failedText": null
+  },
+  "allCandidates": [
+    {
+      "id": 1,
+      "urlPath": "/fitness/v6/athletes/3102415/workouts",
+      "responseStatus": 200,
+      "score": 31,
+      "reasons": [
+        "exact create-workout endpoint path",
+        "workout date field observed",
+        "workout type identifiers observed",
+        "duration field observed",
+        "expected safe coach notes observed",
+        "2xx response status (200)"
+      ]
+    }
+  ]
+}

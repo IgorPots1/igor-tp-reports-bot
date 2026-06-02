@@ -27,6 +27,8 @@
     "tp-discover-custom-metrics-api": "tsx scripts/tp-discover-custom-metrics-api.ts",
     "tp-discover-athletes": "tsx scripts/tp-discover-athletes.ts",
     "tp-capture-strength-builder": "tsx scripts/tp-capture-strength-builder-network.ts",
+    "tp-capture-create-running-workout-network": "tsx scripts/tp-capture-create-workout-network.ts",
+    "tp-capture-structured-running-workout-network": "tsx scripts/tp-capture-structured-running-workout-network.ts",
     "tp-capture-strength-field-truth": "tsx scripts/tp-capture-strength-field-truth.ts",
     "tp-scrape-strength-rendered-exercises": "tsx scripts/tp-scrape-strength-rendered-exercises.ts",
     "tp-cache-strength-exercises": "tsx scripts/tp-cache-strength-exercise-library.ts",

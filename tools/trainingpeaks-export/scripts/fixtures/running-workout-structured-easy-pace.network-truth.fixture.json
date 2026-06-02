@@ -1,0 +1,332 @@
+{
+  "runAt": "2026-06-02T15:14:52.009Z",
+  "caseId": "easy-pace",
+  "operationGuess": "create_structured_running_workout",
+  "endpointConfirmed": true,
+  "method": "POST",
+  "athleteId": 3102415,
+  "titleMarker": "API STRUCTURE TEST EASY PACE DO NOT USE",
+  "descriptionMarker": "DESC_MARKER_EASY_PACE",
+  "stepNoteMarkers": [
+    "STEP_NOTE_EASY_PACE"
+  ],
+  "waitReason": "auto_detected",
+  "selectedCandidateId": 99,
+  "selectedCandidateScore": 38,
+  "selectedCandidateReasons": [
+    "POST create endpoint",
+    "title marker matched",
+    "description marker matched",
+    "structure present",
+    "target range observed (75-85)",
+    "2xx response (200)"
+  ],
+  "request": {
+    "urlPath": "/fitness/v6/athletes/3102415/workouts",
+    "endpointPattern": "/fitness/v6/athletes/{athleteId}/workouts",
+    "bodyTopLevelKeys": [
+      "athleteId",
+      "workoutDay",
+      "workoutId",
+      "title",
+      "workoutTypeValueId",
+      "workoutSubTypeId",
+      "code",
+      "isHidden",
+      "description",
+      "userTags",
+      "coachComments",
+      "newComment",
+      "publicSettingValue",
+      "sharedWorkoutInformationKey",
+      "sharedWorkoutInformationExpireKey",
+      "shortUrl",
+      "distance",
+      "distancePlanned",
+      "distanceCustomized",
+      "distanceUnitsCustomized",
+      "totalTime",
+      "totalTimePlanned",
+      "heartRateMinimum",
+      "heartRateMaximum",
+      "heartRateAverage",
+      "hrAvg",
+      "calories",
+      "caloriesPlanned",
+      "tssActual",
+      "tssPlanned",
+      "tssSource",
+      "if",
+      "ifPlanned",
+      "velocityAverage",
+      "velocityAvg",
+      "velocityPlanned",
+      "velocityMaximum",
+      "normalizedSpeedActual",
+      "normalizedPowerActual",
+      "powerAverage",
+      "powerAvg",
+      "powerMaximum",
+      "energy",
+      "energyPlanned",
+      "elevationGain",
+      "elevationGainPlanned",
+      "elevationLoss",
+      "elevationMinimum",
+      "elevationAverage",
+      "elevationMaximum",
+      "torqueAverage",
+      "torqueMaximum",
+      "tempMin",
+      "tempAvg",
+      "tempMax",
+      "cadenceAverage",
+      "cadenceAvg",
+      "cadenceMaximum",
+      "lastModifiedDate",
+      "startTime",
+      "startTimePlanned",
+      "equipmentBikeId",
+      "equipmentShoeId",
+      "poolLengthOptionId",
+      "isLocked",
+      "complianceDurationPercent",
+      "complianceDistancePercent",
+      "complianceTssPercent",
+      "orderOnDay",
+      "personalRecordCount",
+      "structure",
+      "personalRecords",
+      "feeling",
+      "rpe",
+      "syncedTo",
+      "workoutComments"
+    ],
+    "bodyFieldSamples": {
+      "athleteId": 3102415,
+      "workoutDay": "2026-06-07",
+      "workoutId": 0,
+      "title": "API STRUCTURE TEST EASY PACE DO NOT USE",
+      "workoutTypeValueId": 3,
+      "workoutSubTypeId": null,
+      "description": "DESC_MARKER_EASY_PACE",
+      "coachComments": null,
+      "distancePlanned": null,
+      "totalTimePlanned": 0.5,
+      "structure": "[captured in structureSamples]"
+    },
+    "structureShape": {
+      "type": "string"
+    },
+    "structureSamples": "[REDACTED_LONG_STRING]"
+  },
+  "response": {
+    "status": 200,
+    "bodyFieldSamples": {
+      "athleteId": 3102415,
+      "workoutDay": "2026-06-07T00:00:00",
+      "workoutId": 3770026207,
+      "title": "API STRUCTURE TEST EASY PACE DO NOT USE",
+      "workoutTypeValueId": 3,
+      "workoutSubTypeId": null,
+      "description": "DESC_MARKER_EASY_PACE",
+      "coachComments": null,
+      "distancePlanned": null,
+      "totalTimePlanned": 0.5,
+      "structure": "[captured in structureSamples]"
+    },
+    "structureShape": {
+      "type": "object",
+      "keys": [
+        "structure",
+        "polyline",
+        "primaryLengthMetric",
+        "primaryIntensityMetric",
+        "primaryIntensityTargetOrRange"
+      ],
+      "fields": {
+        "structure": {
+          "type": "array",
+          "length": 1,
+          "itemShape": {
+            "type": "object",
+            "keys": [
+              "type",
+              "length",
+              "steps",
+              "begin",
+              "end"
+            ],
+            "fields": {
+              "type": {
+                "type": "string"
+              },
+              "length": {
+                "type": "object",
+                "keys": [
+                  "value",
+                  "unit"
+                ],
+                "fields": {
+                  "value": {
+                    "type": "number"
+                  },
+                  "unit": {
+                    "type": "string"
+                  }
+                }
+              },
+              "steps": {
+                "type": "array",
+                "length": 1,
+                "itemShape": {
+                  "type": "object",
+                  "keys": [
+                    "name",
+                    "length",
+                    "targets",
+                    "intensityClass",
+                    "openDuration",
+                    "notes"
+                  ],
+                  "fields": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "length": {
+                      "type": "object",
+                      "keys": [
+                        "value",
+                        "unit"
+                      ],
+                      "fields": {
+                        "value": {
+                          "type": "truncated"
+                        },
+                        "unit": {
+                          "type": "truncated"
+                        }
+                      }
+                    },
+                    "targets": {
+                      "type": "array",
+                      "length": 1,
+                      "itemShape": {
+                        "type": "truncated"
+                      }
+                    },
+                    "intensityClass": {
+                      "type": "string"
+                    },
+                    "openDuration": {
+                      "type": "boolean"
+                    },
+                    "notes": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "begin": {
+                "type": "number"
+              },
+              "end": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "polyline": {
+          "type": "array",
+          "length": 4,
+          "itemShape": {
+            "type": "array",
+            "length": 2,
+            "itemShape": {
+              "type": "number"
+            }
+          }
+        },
+        "primaryLengthMetric": {
+          "type": "string"
+        },
+        "primaryIntensityMetric": {
+          "type": "string"
+        },
+        "primaryIntensityTargetOrRange": {
+          "type": "string"
+        }
+      }
+    },
+    "structureSamples": {
+      "structure": [
+        {
+          "type": "step",
+          "length": {
+            "value": 1,
+            "unit": "repetition"
+          },
+          "steps": [
+            {
+              "name": "Active",
+              "length": {
+                "value": 1800,
+                "unit": "second"
+              },
+              "targets": [
+                {
+                  "minValue": 75,
+                  "maxValue": 85
+                }
+              ],
+              "intensityClass": "active",
+              "openDuration": false,
+              "notes": "STEP_NOTE_EASY_PACE"
+            }
+          ],
+          "begin": 0,
+          "end": 1800
+        }
+      ],
+      "polyline": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          0
+        ]
+      ],
+      "primaryLengthMetric": "duration",
+      "primaryIntensityMetric": "percentOfThresholdPace",
+      "primaryIntensityTargetOrRange": "range"
+    }
+  },
+  "observations": {
+    "workoutId": null,
+    "structurePresent": true,
+    "targetMetricObserved": null,
+    "targetRangeObserved": "75-85",
+    "repeatBlockObserved": false
+  },
+  "mappingNotes": {
+    "title": "request.title observed",
+    "description": "request.description observed",
+    "coachComments": "request.coachComments observed",
+    "preActivityComments": "not observed in request sample",
+    "stepNotes": "step note markers not observed"
+  },
+  "redaction": {
+    "secretsFound": false,
+    "note": "Sensitive headers/tokens/session-like values are redacted before writing fixtures."
+  }
+}

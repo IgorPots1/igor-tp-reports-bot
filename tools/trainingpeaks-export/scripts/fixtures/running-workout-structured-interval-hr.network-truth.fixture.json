@@ -1,0 +1,515 @@
+{
+  "runAt": "2026-06-02T15:36:51.856Z",
+  "caseId": "interval-hr",
+  "operationGuess": "create_structured_running_workout",
+  "endpointConfirmed": true,
+  "method": "POST",
+  "athleteId": 3102415,
+  "titleMarker": "API STRUCTURE TEST INTERVAL HR DO NOT USE",
+  "descriptionMarker": "DESC_MARKER_INTERVAL_HR",
+  "stepNoteMarkers": [
+    "STEP_NOTE_WARMUP_HR",
+    "STEP_NOTE_WORK_HR",
+    "STEP_NOTE_RECOVERY_HR",
+    "STEP_NOTE_COOLDOWN_HR"
+  ],
+  "waitReason": "auto_detected",
+  "selectedCandidateId": 114,
+  "selectedCandidateScore": 38,
+  "selectedCandidateReasons": [
+    "POST create endpoint",
+    "title marker matched",
+    "description marker matched",
+    "structure present",
+    "target range observed (90-95)",
+    "2xx response (200)"
+  ],
+  "request": {
+    "urlPath": "/fitness/v6/athletes/3102415/workouts",
+    "endpointPattern": "/fitness/v6/athletes/{athleteId}/workouts",
+    "bodyTopLevelKeys": [
+      "athleteId",
+      "workoutDay",
+      "workoutId",
+      "title",
+      "workoutTypeValueId",
+      "workoutSubTypeId",
+      "code",
+      "isHidden",
+      "description",
+      "userTags",
+      "coachComments",
+      "newComment",
+      "publicSettingValue",
+      "sharedWorkoutInformationKey",
+      "sharedWorkoutInformationExpireKey",
+      "shortUrl",
+      "distance",
+      "distancePlanned",
+      "distanceCustomized",
+      "distanceUnitsCustomized",
+      "totalTime",
+      "totalTimePlanned",
+      "heartRateMinimum",
+      "heartRateMaximum",
+      "heartRateAverage",
+      "hrAvg",
+      "calories",
+      "caloriesPlanned",
+      "tssActual",
+      "tssPlanned",
+      "tssSource",
+      "if",
+      "ifPlanned",
+      "velocityAverage",
+      "velocityAvg",
+      "velocityPlanned",
+      "velocityMaximum",
+      "normalizedSpeedActual",
+      "normalizedPowerActual",
+      "powerAverage",
+      "powerAvg",
+      "powerMaximum",
+      "energy",
+      "energyPlanned",
+      "elevationGain",
+      "elevationGainPlanned",
+      "elevationLoss",
+      "elevationMinimum",
+      "elevationAverage",
+      "elevationMaximum",
+      "torqueAverage",
+      "torqueMaximum",
+      "tempMin",
+      "tempAvg",
+      "tempMax",
+      "cadenceAverage",
+      "cadenceAvg",
+      "cadenceMaximum",
+      "lastModifiedDate",
+      "startTime",
+      "startTimePlanned",
+      "equipmentBikeId",
+      "equipmentShoeId",
+      "poolLengthOptionId",
+      "isLocked",
+      "complianceDurationPercent",
+      "complianceDistancePercent",
+      "complianceTssPercent",
+      "orderOnDay",
+      "personalRecordCount",
+      "structure",
+      "personalRecords",
+      "feeling",
+      "rpe",
+      "syncedTo",
+      "workoutComments"
+    ],
+    "bodyFieldSamples": {
+      "athleteId": 3102415,
+      "workoutDay": "2026-06-10",
+      "workoutId": 0,
+      "title": "API STRUCTURE TEST INTERVAL HR DO NOT USE",
+      "workoutTypeValueId": 3,
+      "workoutSubTypeId": null,
+      "description": "DESC_MARKER_INTERVAL_HR",
+      "coachComments": null,
+      "distancePlanned": null,
+      "totalTimePlanned": 1.0333333333333334,
+      "structure": "[captured in structureSamples]"
+    },
+    "structureShape": {
+      "type": "string"
+    },
+    "structureSamples": "[REDACTED_LONG_STRING]"
+  },
+  "response": {
+    "status": 200,
+    "bodyFieldSamples": {
+      "athleteId": 3102415,
+      "workoutDay": "2026-06-10T00:00:00",
+      "workoutId": 3770061461,
+      "title": "API STRUCTURE TEST INTERVAL HR DO NOT USE",
+      "workoutTypeValueId": 3,
+      "workoutSubTypeId": null,
+      "description": "DESC_MARKER_INTERVAL_HR",
+      "coachComments": null,
+      "distancePlanned": null,
+      "totalTimePlanned": 1.0333333333333334,
+      "structure": "[captured in structureSamples]"
+    },
+    "structureShape": {
+      "type": "object",
+      "keys": [
+        "structure",
+        "polyline",
+        "primaryLengthMetric",
+        "primaryIntensityMetric",
+        "primaryIntensityTargetOrRange"
+      ],
+      "fields": {
+        "structure": {
+          "type": "array",
+          "length": 3,
+          "itemShape": {
+            "type": "object",
+            "keys": [
+              "type",
+              "length",
+              "steps",
+              "begin",
+              "end"
+            ],
+            "fields": {
+              "type": {
+                "type": "string"
+              },
+              "length": {
+                "type": "object",
+                "keys": [
+                  "value",
+                  "unit"
+                ],
+                "fields": {
+                  "value": {
+                    "type": "number"
+                  },
+                  "unit": {
+                    "type": "string"
+                  }
+                }
+              },
+              "steps": {
+                "type": "array",
+                "length": 1,
+                "itemShape": {
+                  "type": "object",
+                  "keys": [
+                    "name",
+                    "length",
+                    "targets",
+                    "intensityClass",
+                    "openDuration",
+                    "notes"
+                  ],
+                  "fields": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "length": {
+                      "type": "object",
+                      "keys": [
+                        "value",
+                        "unit"
+                      ],
+                      "fields": {
+                        "value": {
+                          "type": "truncated"
+                        },
+                        "unit": {
+                          "type": "truncated"
+                        }
+                      }
+                    },
+                    "targets": {
+                      "type": "array",
+                      "length": 1,
+                      "itemShape": {
+                        "type": "truncated"
+                      }
+                    },
+                    "intensityClass": {
+                      "type": "string"
+                    },
+                    "openDuration": {
+                      "type": "boolean"
+                    },
+                    "notes": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "begin": {
+                "type": "number"
+              },
+              "end": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "polyline": {
+          "type": "array",
+          "length": 31,
+          "itemShape": {
+            "type": "array",
+            "length": 2,
+            "itemShape": {
+              "type": "number"
+            }
+          }
+        },
+        "primaryLengthMetric": {
+          "type": "string"
+        },
+        "primaryIntensityMetric": {
+          "type": "string"
+        },
+        "primaryIntensityTargetOrRange": {
+          "type": "string"
+        }
+      }
+    },
+    "structureSamples": {
+      "structure": [
+        {
+          "type": "step",
+          "length": {
+            "value": 1,
+            "unit": "repetition"
+          },
+          "steps": [
+            {
+              "name": "Warm up",
+              "length": {
+                "value": 1200,
+                "unit": "second"
+              },
+              "targets": [
+                {
+                  "minValue": 70,
+                  "maxValue": 80
+                }
+              ],
+              "intensityClass": "warmUp",
+              "openDuration": false,
+              "notes": "STEP_NOTE_WARMUP_HR"
+            }
+          ],
+          "begin": 0,
+          "end": 1200
+        },
+        {
+          "type": "repetition",
+          "length": {
+            "value": 4,
+            "unit": "repetition"
+          },
+          "steps": [
+            {
+              "type": "step",
+              "name": "Hard",
+              "length": {
+                "unit": "second",
+                "value": 300
+              },
+              "targets": [
+                {
+                  "minValue": 90,
+                  "maxValue": 95
+                }
+              ],
+              "intensityClass": "active",
+              "openDuration": false,
+              "notes": "STEP_NOTE_WORK_HR"
+            },
+            {
+              "type": "step",
+              "name": "Easy",
+              "length": {
+                "unit": "second",
+                "value": 180
+              },
+              "targets": [
+                {
+                  "minValue": 70,
+                  "maxValue": 80
+                }
+              ],
+              "intensityClass": "rest",
+              "openDuration": false,
+              "notes": "STEP_NOTE_RECOVERY_HR"
+            }
+          ],
+          "begin": 1200,
+          "end": 3120
+        },
+        {
+          "type": "step",
+          "length": {
+            "value": 1,
+            "unit": "repetition"
+          },
+          "steps": [
+            {
+              "name": "Cool down",
+              "length": {
+                "value": 600,
+                "unit": "second"
+              },
+              "targets": [
+                {
+                  "minValue": 70,
+                  "maxValue": 80
+                }
+              ],
+              "intensityClass": "coolDown",
+              "openDuration": false,
+              "notes": "STEP_NOTE_COOLDOWN_HR"
+            }
+          ],
+          "begin": 3120,
+          "end": 3720
+        }
+      ],
+      "polyline": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0.842
+        ],
+        [
+          0.323,
+          0.842
+        ],
+        [
+          0.323,
+          0
+        ],
+        [
+          0.323,
+          1
+        ],
+        [
+          0.403,
+          1
+        ],
+        [
+          0.403,
+          0
+        ],
+        [
+          0.403,
+          0.842
+        ],
+        [
+          0.452,
+          0.842
+        ],
+        [
+          0.452,
+          0
+        ],
+        [
+          0.452,
+          1
+        ],
+        [
+          0.532,
+          1
+        ],
+        [
+          0.532,
+          0
+        ],
+        [
+          0.532,
+          0.842
+        ],
+        [
+          0.581,
+          0.842
+        ],
+        [
+          0.581,
+          0
+        ],
+        [
+          0.581,
+          1
+        ],
+        [
+          0.661,
+          1
+        ],
+        [
+          0.661,
+          0
+        ],
+        [
+          0.661,
+          0.842
+        ],
+        [
+          0.71,
+          0.842
+        ],
+        [
+          0.71,
+          0
+        ],
+        [
+          0.71,
+          1
+        ],
+        [
+          0.79,
+          1
+        ],
+        [
+          0.79,
+          0
+        ],
+        [
+          0.79,
+          0.842
+        ],
+        [
+          0.839,
+          0.842
+        ],
+        [
+          0.839,
+          0
+        ],
+        [
+          0.839,
+          0.842
+        ],
+        [
+          1,
+          0.842
+        ],
+        [
+          1,
+          0
+        ]
+      ],
+      "primaryLengthMetric": "duration",
+      "primaryIntensityMetric": "percentOfThresholdHr",
+      "primaryIntensityTargetOrRange": "range"
+    }
+  },
+  "observations": {
+    "workoutId": null,
+    "structurePresent": true,
+    "targetMetricObserved": null,
+    "targetRangeObserved": "90-95",
+    "repeatBlockObserved": false
+  },
+  "mappingNotes": {
+    "title": "request.title observed",
+    "description": "request.description observed",
+    "coachComments": "request.coachComments observed",
+    "preActivityComments": "not observed in request sample",
+    "stepNotes": "step note markers not observed"
+  },
+  "redaction": {
+    "secretsFound": false,
+    "note": "Sensitive headers/tokens/session-like values are redacted before writing fixtures."
+  }
+}
