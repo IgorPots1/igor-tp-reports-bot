@@ -4448,6 +4448,28 @@ function formatRussianCountedNoun(
   return forms[2];
 }
 
+function formatAttentionCaseCreatedAtLabel(isoDateTime: string): string | null {
+  const parsed = new Date(isoDateTime);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  const parts = new Intl.DateTimeFormat("ru-RU", {
+    timeZone: DEFAULT_COACH_TIMEZONE,
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).formatToParts(parsed);
+  const day = parts.find((part) => part.type === "day")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const hour = parts.find((part) => part.type === "hour")?.value;
+  const minute = parts.find((part) => part.type === "minute")?.value;
+  if (!day || !month || !hour || !minute) {
+    return null;
+  }
+  return `${day}.${month} ${hour}:${minute}`;
+}
+
 function getBelgradeIsoDate(value: Date): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: TRAININGPEAKS_TIME_ZONE,
@@ -5265,10 +5287,13 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
 
     for (const caseRow of moveNeedsReviewCases) {
       const studentName = activeStudentNameById.get(caseRow.studentId) ?? null;
+      const createdAtLabel = formatAttentionCaseCreatedAtLabel(caseRow.createdAt);
       pushUniqueAttentionSignal(today, {
         level: "today",
         studentName,
-        reason: "перенос тренировки требует проверки",
+        reason: createdAtLabel
+          ? `перенос тренировки требует проверки (${createdAtLabel})`
+          : "перенос тренировки требует проверки",
         studentId: caseRow.studentId,
         caseId: caseRow.id,
         signalKind: "move_needs_review_case",
