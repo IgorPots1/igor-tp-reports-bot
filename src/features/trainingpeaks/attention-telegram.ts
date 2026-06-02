@@ -218,7 +218,18 @@ function buildAttentionDigestBlocks(
     fyi.splice(1, fyi.length - 1, "• Активных сигналов больше нет");
   }
 
-  return [[title], urgent, today, observe, fyi];
+  const followUpSignals = [...snapshot.followUpToday];
+  if (snapshot.followUpOverflowCount > 0) {
+    followUpSignals.push({
+      level: "today",
+      studentName: null,
+      reason: `+${snapshot.followUpOverflowCount} ещё follow-up`,
+      studentId: null,
+    });
+  }
+  const followUps = buildAttentionSection("Проверить сегодня", followUpSignals, botUsername);
+
+  return [[title], urgent, today, followUps, observe, fyi];
 }
 
 export function buildTrainingPeaksAttentionDigestMessages(

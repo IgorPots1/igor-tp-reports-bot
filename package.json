@@ -67,6 +67,7 @@
     "check-trainingpeaks-recovery-alerts": "npx tsx scripts/check-trainingpeaks-recovery-alerts.ts",
     "check-trainingpeaks-coach-notes-delivery": "npx tsx scripts/check-trainingpeaks-coach-notes-delivery.ts",
     "check-trainingpeaks-attention-digest": "npx tsx scripts/check-trainingpeaks-attention-digest.ts",
+    "check-trainingpeaks-attention-operational-signals": "npx tsx scripts/check-trainingpeaks-attention-operational-signals.ts",
     "check-billing-payer-identities": "npx tsx scripts/check-billing-payer-identities.ts",
     "check-billing-auto-match-payments": "npx tsx scripts/check-billing-auto-match-payments.ts",
     "check-billing-email-import-cli": "npx tsx scripts/check-billing-email-import-cli.ts",

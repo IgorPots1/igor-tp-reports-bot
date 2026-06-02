@@ -3605,10 +3605,19 @@ function buildTrainingPeaksAttentionDigestText(
   snapshot: Awaited<ReturnType<typeof getTrainingPeaksAttentionSnapshot>>
 ): string {
   const botUsername = getTrainingPeaksBotUsername();
+  const followUpSignals: TrainingPeaksAttentionSignal[] = [...snapshot.followUpToday];
+  if (snapshot.followUpOverflowCount > 0) {
+    followUpSignals.push({
+      level: "today",
+      studentName: null,
+      reason: `+${snapshot.followUpOverflowCount} ещё follow-up`,
+    });
+  }
   const blocks: string[][] = [
     ["🌅 Внимание на сегодня"],
     formatAttentionSectionHtml("🚨 Срочно", snapshot.urgent, botUsername),
     formatAttentionSectionHtml("📌 Сегодня", snapshot.today, botUsername),
+    formatAttentionSectionHtml("🩺 Проверить сегодня", followUpSignals, botUsername),
     formatAttentionSectionHtml("👀 Наблюдать", snapshot.observe, botUsername),
     formatAttentionSectionHtml("ℹ️ FYI", snapshot.fyi, botUsername),
   ];
