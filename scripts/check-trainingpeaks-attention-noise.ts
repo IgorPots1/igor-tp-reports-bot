@@ -105,8 +105,12 @@ function run(): void {
   };
   const scheduleMessage = formatTrainingPeaksAttentionSnapshotMessage(scheduleSnapshot, "🌅 Внимание на сегодня");
   assert(
-    scheduleMessage.includes("доступна: вт 02.06, чт 04.06; недоступна: 05.06—08.06"),
-    "Detailed schedule line should stay in attention digest."
+    scheduleMessage.includes("• Sofia Vlasova\n  доступна: вт 02.06, чт 04.06"),
+    "Detailed schedule availability should stay in attention digest."
+  );
+  assert(
+    scheduleMessage.includes("  недоступна: 05.06—08.06"),
+    "Detailed schedule unavailability should stay in attention digest."
   );
   assert(!scheduleMessage.includes("• Sofia Vlasova — недоступность"), "Legacy schedule duplicate should be suppressed.");
 

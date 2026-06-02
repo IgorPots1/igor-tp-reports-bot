@@ -176,6 +176,7 @@ import {
 } from "@/features/trainingpeaks/operational-schedule-display";
 import type { TelegramMessage } from "@/features/telegram/types";
 import { buildTelegramContextTextPreview, sha256TelegramContextText } from "@/features/trainingpeaks/telegram-context";
+import { formatOperationalSignalTelegramLine } from "@/features/trainingpeaks/telegram-visual-ux";
 import {
   normalizeTrainingPeaksStudentId,
   validateTrainingPeaksStudentId,
@@ -5735,14 +5736,14 @@ function shouldSuppressLegacyScheduleDuplicate(input: {
 
 function toOperationalSignalDisplayLine(item: TrainingPeaksOperationalSignalsItem): string {
   const name = item.studentName?.trim() || "Без ученика";
-  return `• ${name} — ${item.text}`;
+  return formatOperationalSignalTelegramLine(name, item.text);
 }
 
 export function formatTrainingPeaksOperationalSignalsForTelegram(
   snapshot: TrainingPeaksOperationalSignalsSnapshot
 ): string {
   const lines: string[] = [];
-  lines.push("📍 /tp_signals");
+  lines.push("📍 Сигналы");
 
   const nonEmptySections = snapshot.sections.filter((section) => section.items.length > 0);
   if (nonEmptySections.length === 0) {
@@ -5760,7 +5761,7 @@ export function formatTrainingPeaksOperationalSignalsForTelegram(
     if (visibleItems.length === 0) {
       continue;
     }
-    lines.push("", section.title);
+    lines.push("", section.title, "");
     for (const item of visibleItems) {
       lines.push(toOperationalSignalDisplayLine(item));
     }

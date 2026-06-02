@@ -281,15 +281,21 @@ function run(): void {
     scheduleScopeText.includes("Schedule Dates Athlete"),
     "C failed: rich schedule episode line missing."
   );
-  const richLine = scheduleScopeText
-    .split("\n")
-    .find((line) => line.includes("Schedule Dates Athlete"));
+  const planSection = extractSectionBlock(scheduleScopeText, "📅 Учесть в плане", "🔁 Переносы");
+  const scheduleDatesCard = planSection.split("• Schedule Dates Athlete")[1]?.split("\n\n")[0] ?? "";
   assert(
-    Boolean(richLine) &&
-      (richLine as string).includes("доступна:") &&
-      (richLine as string).includes("недоступна:") &&
-      (richLine as string).indexOf("доступна:") < (richLine as string).indexOf("недоступна:"),
+    scheduleDatesCard.includes("доступна:") &&
+      scheduleDatesCard.includes("недоступна:") &&
+      scheduleDatesCard.indexOf("доступна:") < scheduleDatesCard.indexOf("недоступна:"),
     "C failed: schedule scope should show availability before unavailability."
+  );
+  assert(
+    planSection.includes("• Schedule Dates Athlete\n"),
+    "C failed: schedule card should put athlete name on its own line."
+  );
+  assert(
+    planSection.includes("  доступна:") && planSection.includes("  недоступна:"),
+    "C failed: schedule availability lines should be indented under the athlete name."
   );
   assert(
     !scheduleScopeText.includes("недоступность"),

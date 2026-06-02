@@ -398,7 +398,7 @@ function run(): void {
     "Attention digest should suppress legacy unavailability duplicate."
   );
   assert(
-    attentionMessage.includes("Ilya Bogdanov") && attentionMessage.includes("2026-06-05"),
+    attentionMessage.includes("Ilya Bogdanov") && attentionMessage.includes("05.06"),
     "Attention digest should include move candidate context."
   );
   assert(!attentionMessage.includes("Future Athlete"), "Attention digest must not include future follow-up athlete.");

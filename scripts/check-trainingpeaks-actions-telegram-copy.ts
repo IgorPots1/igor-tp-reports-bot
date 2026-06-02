@@ -130,6 +130,10 @@ function run(): void {
   assert(listText.includes("Нужно решение"), "pending section missing");
   assert(listText.includes("Готово к выполнению"), "ready section missing");
   assert(listText.includes("Нужно проверить"), "review section missing");
+  assert(listText.includes("⚠️ Нужно проверить\n\n"), "review section needs blank line after header");
+  assert(listText.includes("   перенос:"), "move line should use перенос label on separate line");
+  assert(listText.includes("   причина:"), "review items should expose причина on separate line");
+  assert(!/\d+\. [^\n]+ — /.test(listText), "list items must not glue name and route on one line");
   assert(listText.includes("Старые проблемы скрыты"), "stale summary missing");
 
   assert(classifyCoachActionListBucket(pending) === "pending_decision", "pending bucket mismatch");

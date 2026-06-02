@@ -390,12 +390,60 @@ export function formatCoachActionCompactStatus(action: CoachActionListItem): str
   return formatCoachActionStatusLabel(action.status);
 }
 
+function formatCoachActionListItemDetailLine(action: CoachActionListItem): string {
+  const bucket = classifyCoachActionListBucket(action);
+
+  if (bucket === "completed") {
+    return "выполнено";
+  }
+  if (bucket === "ready_to_execute") {
+    return "готово к выполнению";
+  }
+  if (bucket === "pending_decision") {
+    return "ждёт решения тренера";
+  }
+  if (bucket === "needs_review" || bucket === "stale_review") {
+    const latestDryRun = action.latestRunContext?.latestDryRun ?? null;
+    const dryRunResult = latestDryRun?.dryRunResult ?? null;
+    if (dryRunResult === "not_found") {
+      return "причина: тренировка не найдена";
+    }
+    if (dryRunResult === "ambiguous") {
+      return "причина: найдено несколько вариантов";
+    }
+    const reason = extractCoachActionLatestReason(action.latestRunContext);
+    if (reason && isConfidenceThresholdReason(reason)) {
+      return "причина: недостаточно уверенности";
+    }
+    if (action.executionStatus === "failed") {
+      return "причина: ошибка выполнения";
+    }
+    return "причина: нужна проверка";
+  }
+  if (isCoachActionWaitingDryRunRecheck(action)) {
+    return "ожидает повторной проверки";
+  }
+  if (action.executionStatus === "dry_run_running") {
+    return "проверка идёт";
+  }
+  if (action.executionStatus === "execute_pending" || action.executionStatus === "running_local") {
+    return formatCoachExecutionStatusLabel(action.executionStatus);
+  }
+  if (action.status === "approved" && action.executionStatus === "dry_run_completed") {
+    return "проверка завершена";
+  }
+  return formatCoachActionCompactStatus(action);
+}
+
 function formatCoachActionCompactLine(action: CoachActionListItem, index: number): string {
   const dates = extractMoveDateRangeFromParsedPayload(action.parsedPayload);
   const route = `${formatCompactCoachDateShort(dates.sourceDate)} → ${formatCompactCoachDateShort(dates.targetDate)}`;
   const name = action.studentName?.trim() || "?";
-  const status = formatCoachActionCompactStatus(action);
-  return [`${index + 1}. ${name} — ${route}`, `   ${status}`].join("\n");
+  return [
+    `${index + 1}. ${name}`,
+    `   перенос: ${route}`,
+    `   ${formatCoachActionListItemDetailLine(action)}`,
+  ].join("\n");
 }
 
 function pushSection(lines: string[], title: string, items: string[]): void {

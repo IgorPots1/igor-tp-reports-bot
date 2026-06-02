@@ -21,6 +21,10 @@ import {
   translateCoachActionTechnicalReason,
 } from "@/features/trainingpeaks/action-list-telegram-copy";
 import {
+  expandCoachRunSummaryForDetail,
+  formatTelegramLabeledBlock,
+} from "@/features/trainingpeaks/telegram-visual-ux";
+import {
   addTrainingPeaksStudentFromCommand,
   approveTrainingPeaksAction,
   cancelTrainingPeaksActionExecution,
@@ -2399,8 +2403,13 @@ function formatTrainingPeaksCoachCaseCard(
 ): string {
   const lines = [
     item.studentName ?? "Без имени",
-    `${getTrainingPeaksCoachCaseKindLabel(item.caseKind)} · ${formatTrainingPeaksCoachCaseCreatedAt(item.createdAt)} · ${getTrainingPeaksCoachCaseStatusLabel(item.status)}`,
-    `Контекст: ${getTrainingPeaksCoachCasePreviewText(item.previewText)}`,
+    "",
+    `тип: ${getTrainingPeaksCoachCaseKindLabel(item.caseKind)}`,
+    `статус: ${getTrainingPeaksCoachCaseStatusLabel(item.status)}`,
+    `создано: ${formatTrainingPeaksCoachCaseCreatedAt(item.createdAt)}`,
+    "",
+    `Контекст:`,
+    getTrainingPeaksCoachCasePreviewText(item.previewText),
   ];
 
   if (item.caseKind === "move_workout_needs_review") {
@@ -2418,8 +2427,14 @@ function formatTrainingPeaksCoachCaseCard(
 
     const multiMovePossible = item.coachNotesJson.multi_move_possible === true;
     const validatedPairs = validateTrainingPeaksGroupMovePairsPreview(item.coachNotesJson.move_pairs_preview);
-    const pairs = validatedPairs.pairs.map((pair) => `${pair.source} -> ${pair.target}`);
-    lines.push(`multi_move_possible: ${multiMovePossible ? "yes" : "no"}${pairs.length > 0 ? ` / pairs: ${pairs.join("; ")}` : ""}`);
+    const pairs = validatedPairs.pairs.map(
+      (pair) => `${formatCompactDateShort(pair.source)} → ${formatCompactDateShort(pair.target)}`
+    );
+    if (multiMovePossible && pairs.length > 0) {
+      lines.push("", "переносы:", pairs.join("; "));
+    } else if (pairs.length > 0) {
+      lines.push("", "перенос:", pairs[0] ?? "—");
+    }
     if (!validatedPairs.isSafe) {
       lines.push("Пары переноса разобраны неуверенно — нужна ручная проверка");
     }
@@ -2428,12 +2443,11 @@ function formatTrainingPeaksCoachCaseCard(
       ? item.coachNotesJson.created_action_ids.filter((value): value is string => typeof value === "string" && value.length > 0)
       : [];
     if (createdActionIds.length > 0 || item.coachNotesJson.action_proposals_created === true) {
-      lines.push(`created_action_ids: ${createdActionIds.length > 0 ? createdActionIds.join(", ") : "есть"}`);
-      lines.push("Заявки уже созданы — проверь /tp_actions");
+      lines.push("", "Заявки уже созданы — проверь /tp_actions");
     }
   }
 
-  lines.push(`#${item.shortId}`);
+  lines.push("", `#${item.shortId}`);
   return lines.join("\n");
 }
 
@@ -6153,30 +6167,41 @@ function getTpActionDetailText(
   const lines = [
     `📋 Действие #${shortenActionId(action.id)}`,
     "",
-    `Ученик: ${action.studentName ?? "?"}`,
-    `Запрос: ${truncateActionMessage(action.rawText, 120)}`,
-    `Перенос: ${src} → ${tgt}`,
-    `Статус: ${formatActionStatusLabel(action)}`,
-    `Проверка: ${formatCoachActionRunSummary(latestDryRun, "dry_run")}`,
-    `Выполнение: ${formatCoachActionRunSummary(latestExecute, "execute")}`,
-    `Источник: ${formatCompactDateShort(sourceDate)} — ${formatSourcePolicyLabel(sourcePolicy)}`,
-    `Комментарий: ${formatCoachActionReasonForDisplay(action.latestRunContext)}`,
-    `Создано: ${formatActionCompactDate(action.createdAt)}`,
+    ...formatTelegramLabeledBlock("Ученик:", action.studentName ?? "?"),
+    ...formatTelegramLabeledBlock("Запрос:", truncateActionMessage(action.rawText, 120)),
+    ...formatTelegramLabeledBlock("Перенос:", `${src} → ${tgt}`),
+    ...formatTelegramLabeledBlock("Статус:", formatActionStatusLabel(action)),
+    "Проверка:",
+    ...expandCoachRunSummaryForDetail(formatCoachActionRunSummary(latestDryRun, "dry_run")),
+    "",
+    "Выполнение:",
+    ...expandCoachRunSummaryForDetail(formatCoachActionRunSummary(latestExecute, "execute")),
+    "",
+    ...formatTelegramLabeledBlock(
+      "Источник:",
+      `${formatCompactDateShort(sourceDate)} — ${formatSourcePolicyLabel(sourcePolicy)}`
+    ),
+    ...formatTelegramLabeledBlock("Комментарий:", formatCoachActionReasonForDisplay(action.latestRunContext)),
+    ...formatTelegramLabeledBlock("Создано:", formatActionCompactDate(action.createdAt)),
   ];
   if (warnings.length > 0) {
-    lines.push("", "Предупреждения:");
+    lines.push("Предупреждения:");
     for (const warning of warnings.slice(0, 3)) {
-      lines.push(`- ${warning}`);
+      lines.push(`• ${warning}`);
     }
+    lines.push("");
   }
   if (action.approvedAt) {
-    lines.push(`Одобрено: ${formatActionCompactDate(action.approvedAt)}`);
+    lines.push(...formatTelegramLabeledBlock("Одобрено:", formatActionCompactDate(action.approvedAt)));
   }
   if (action.rejectedAt) {
-    lines.push(`Отклонено: ${formatActionCompactDate(action.rejectedAt)}`);
+    lines.push(...formatTelegramLabeledBlock("Отклонено:", formatActionCompactDate(action.rejectedAt)));
   }
   if (options?.includeFreshness) {
     lines.push("", options.freshnessLabel ?? formatActionDetailFreshnessLabel());
+  }
+  while (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
   }
   return lines.join("\n");
 }
@@ -6912,20 +6937,29 @@ async function handleTrainingPeaksActionExecuteRequestCallback(
   const blockedText =
     result.kind === "blocked"
       ? [
-          "⚠️ Перенос не выполнен. TrainingPeaks не изменён.",
-          `Причина: ${translateCoachActionTechnicalReason(
-            result.reason?.trim() || formatCoachActionReasonForDisplay(result.latestRunContext)
-          )}`,
+          "⚠️ Перенос не выполнен",
+          "",
+          ...formatTelegramLabeledBlock(
+            "Причина:",
+            translateCoachActionTechnicalReason(
+              result.reason?.trim() || formatCoachActionReasonForDisplay(result.latestRunContext)
+            )
+          ),
           (() => {
             const selectedSourceDate = result.latestRunContext?.latestDryRun?.selectedSourceDate ?? null;
             const selectedSourcePolicy = result.latestRunContext?.latestDryRun?.selectedSourceDatePolicy ?? null;
             if (!selectedSourceDate && !selectedSourcePolicy) {
-              return null;
+              return [];
             }
-            return `Источник: ${formatCompactDateShort(selectedSourceDate)} — ${formatSourcePolicyLabel(selectedSourcePolicy)}`;
+            return formatTelegramLabeledBlock(
+              "Источник:",
+              `${formatCompactDateShort(selectedSourceDate)} — ${formatSourcePolicyLabel(selectedSourcePolicy)}`
+            );
           })(),
-          "Проверь заявку в /tp_actions.",
+          "Что дальше:",
+          "Проверьте заявку вручную в /tp_actions.",
         ]
+          .flat()
           .filter((line): line is string => Boolean(line))
           .join("\n")
       : `⚠️ ${INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU}`;
