@@ -70,6 +70,7 @@
     "check-trainingpeaks-attention-message-length": "npx tsx scripts/check-trainingpeaks-attention-message-length.ts",
     "check-trainingpeaks-attention-operational-signals": "npx tsx scripts/check-trainingpeaks-attention-operational-signals.ts",
     "check-trainingpeaks-attention-resilience": "npx tsx scripts/check-trainingpeaks-attention-resilience.ts",
+    "check-trainingpeaks-attention-noise": "npx tsx scripts/check-trainingpeaks-attention-noise.ts",
     "check-trainingpeaks-operational-signals-command": "npx tsx scripts/check-trainingpeaks-operational-signals-command.ts",
     "check-billing-payer-identities": "npx tsx scripts/check-billing-payer-identities.ts",
     "check-billing-auto-match-payments": "npx tsx scripts/check-billing-auto-match-payments.ts",

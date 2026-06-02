@@ -4291,6 +4291,130 @@ function isWithinLookbackHours(value: string | null | undefined, lookbackHours: 
   return timeMs >= cutoffMs;
 }
 
+const YESTERDAY_SCAN_FAILURE_TTL_HOURS = 48;
+const YESTERDAY_SCAN_MISSING_ALERT_START_HOUR = 11;
+const YESTERDAY_SCAN_SMALL_FAILURE_NAMES_LIMIT = 3;
+
+type YesterdayScanStatusSignalSource = {
+  studentId: string;
+  status: "ok" | "failed" | "skipped";
+  scannedAt: string;
+};
+
+type YesterdayScanActiveStudentSource = {
+  id: string;
+  studentName: string | null;
+};
+
+type YesterdayScanAttentionSummary = {
+  actionableFailedCount: number;
+  actionableFailedNames: string[];
+  missingScanCount: number;
+  shouldShowMissingScanAlert: boolean;
+  latestStatusByStudentId: Map<string, YesterdayScanStatusSignalSource>;
+};
+
+function getBelgradeHour(now = new Date()): number | null {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: TRAININGPEAKS_TIME_ZONE,
+    hour: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+  const hourRaw = parts.find((part) => part.type === "hour")?.value ?? "";
+  const hour = Number(hourRaw);
+  return Number.isFinite(hour) ? hour : null;
+}
+
+function shouldShowMissingYesterdayScanAlert(now = new Date()): boolean {
+  const belgradeHour = getBelgradeHour(now);
+  if (belgradeHour === null) {
+    return false;
+  }
+  return belgradeHour >= YESTERDAY_SCAN_MISSING_ALERT_START_HOUR;
+}
+
+export function summarizeYesterdayScanAttention(input: {
+  activeStudents: YesterdayScanActiveStudentSource[];
+  statuses: YesterdayScanStatusSignalSource[];
+  now?: Date;
+  failureTtlHours?: number;
+}): YesterdayScanAttentionSummary {
+  const now = input.now ?? new Date();
+  const failureTtlHours = input.failureTtlHours ?? YESTERDAY_SCAN_FAILURE_TTL_HOURS;
+  const failedCutoffMs = now.getTime() - failureTtlHours * 60 * 60 * 1000;
+  const activeStudentsById = new Map(
+    input.activeStudents.map((student) => [student.id, student.studentName?.trim() || null])
+  );
+  const latestStatusByStudentId = new Map<string, YesterdayScanStatusSignalSource>();
+  const latestStatusMsByStudentId = new Map<string, number | null>();
+  const latestFailedMsByStudentId = new Map<string, number>();
+  const latestOkMsByStudentId = new Map<string, number>();
+  const hasAnyStatusByStudentId = new Set<string>();
+
+  for (const status of input.statuses) {
+    if (!activeStudentsById.has(status.studentId)) {
+      continue;
+    }
+    hasAnyStatusByStudentId.add(status.studentId);
+    const statusTimeMs = getIsoTimeMs(status.scannedAt);
+    const currentLatestMs = latestStatusMsByStudentId.get(status.studentId) ?? null;
+    const shouldPromoteLatest =
+      !latestStatusByStudentId.has(status.studentId) ||
+      (statusTimeMs !== null && (currentLatestMs === null || statusTimeMs > currentLatestMs));
+    if (shouldPromoteLatest) {
+      latestStatusByStudentId.set(status.studentId, status);
+      latestStatusMsByStudentId.set(status.studentId, statusTimeMs);
+    }
+    if (statusTimeMs === null) {
+      continue;
+    }
+    if (status.status === "failed") {
+      const previousFailedMs = latestFailedMsByStudentId.get(status.studentId);
+      if (previousFailedMs === undefined || statusTimeMs > previousFailedMs) {
+        latestFailedMsByStudentId.set(status.studentId, statusTimeMs);
+      }
+      continue;
+    }
+    if (status.status === "ok") {
+      const previousOkMs = latestOkMsByStudentId.get(status.studentId);
+      if (previousOkMs === undefined || statusTimeMs > previousOkMs) {
+        latestOkMsByStudentId.set(status.studentId, statusTimeMs);
+      }
+    }
+  }
+
+  const actionableFailedNames: string[] = [];
+  let missingScanCount = 0;
+  for (const student of input.activeStudents) {
+    if (!hasAnyStatusByStudentId.has(student.id)) {
+      missingScanCount += 1;
+      continue;
+    }
+    const latestFailedMs = latestFailedMsByStudentId.get(student.id);
+    if (latestFailedMs === undefined || latestFailedMs < failedCutoffMs) {
+      continue;
+    }
+    const latestOkMs = latestOkMsByStudentId.get(student.id);
+    if (latestOkMs !== undefined && latestOkMs > latestFailedMs) {
+      continue;
+    }
+    const name = activeStudentsById.get(student.id);
+    if (name) {
+      actionableFailedNames.push(name);
+    }
+  }
+
+  actionableFailedNames.sort((left, right) => left.localeCompare(right, "ru-RU"));
+
+  return {
+    actionableFailedCount: actionableFailedNames.length,
+    actionableFailedNames,
+    missingScanCount,
+    shouldShowMissingScanAlert: shouldShowMissingYesterdayScanAlert(now),
+    latestStatusByStudentId,
+  };
+}
+
 function pushUniqueAttentionSignal(
   list: TrainingPeaksAttentionSignal[],
   signal: TrainingPeaksAttentionSignal
@@ -4870,13 +4994,6 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     [[], [], []]
   );
 
-  const scanStatusByStudentId = new Map<string, (typeof yesterdayScanStatuses)[number]>();
-  for (const status of yesterdayScanStatuses) {
-    if (!scanStatusByStudentId.has(status.studentId)) {
-      scanStatusByStudentId.set(status.studentId, status);
-    }
-  }
-
   const rowsByStudentId = new Map<string, (typeof yesterdayWorkoutRows)>();
   for (const row of yesterdayWorkoutRows) {
     const rows = rowsByStudentId.get(row.studentId) ?? [];
@@ -4884,24 +5001,40 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     rowsByStudentId.set(row.studentId, rows);
   }
 
-  let missingScanCount = 0;
+  const yesterdayScanSummary = summarizeYesterdayScanAttention({
+    activeStudents: activeStudents.map((student) => ({
+      id: student.id,
+      studentName: student.studentName?.trim() || null,
+    })),
+    statuses: yesterdayScanStatuses.map((status) => ({
+      studentId: status.studentId,
+      status: status.status,
+      scannedAt: status.scannedAt,
+    })),
+  });
+
+  if (yesterdayScanSummary.actionableFailedCount > 0) {
+    const namesSuffix =
+      yesterdayScanSummary.actionableFailedCount <= YESTERDAY_SCAN_SMALL_FAILURE_NAMES_LIMIT
+        ? ` (${yesterdayScanSummary.actionableFailedNames.join(", ")})`
+        : "";
+    pushUniqueAttentionSignal(observe, {
+      level: "observe",
+      studentName: null,
+      reason: `скан тренировок за вчера завершился с ошибкой: ${yesterdayScanSummary.actionableFailedCount} учеников${namesSuffix}`,
+      signalKind: "scan_failed",
+    });
+  }
+
   for (const student of activeStudents) {
     const studentName = student.studentName?.trim() || null;
-    const scanStatus = scanStatusByStudentId.get(student.id);
+    const scanStatus = yesterdayScanSummary.latestStatusByStudentId.get(student.id);
 
     if (!scanStatus) {
-      missingScanCount += 1;
       continue;
     }
 
     if (scanStatus.status === "failed") {
-      pushUniqueAttentionSignal(observe, {
-        level: "observe",
-        studentName,
-        reason: "скан тренировок за вчера завершился с ошибкой",
-        studentId: student.id,
-        signalKind: "scan_failed",
-      });
       continue;
     }
 
@@ -4955,11 +5088,11 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     }
   }
 
-  if (missingScanCount > 0) {
+  if (yesterdayScanSummary.shouldShowMissingScanAlert && yesterdayScanSummary.missingScanCount > 0) {
     pushUniqueAttentionSignal(fyi, {
       level: "fyi",
       studentName: null,
-      reason: `Нет свежего скана тренировок за вчера для ${missingScanCount} учеников`,
+      reason: `Нет свежего скана тренировок за вчера для ${yesterdayScanSummary.missingScanCount} учеников`,
       signalKind: "fyi",
     });
   }

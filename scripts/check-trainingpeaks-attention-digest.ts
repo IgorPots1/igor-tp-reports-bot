@@ -4,6 +4,7 @@ import {
   buildTrainingPeaksAttentionDigestMessages,
   formatTrainingPeaksAttentionSnapshotMessage,
 } from "@/features/trainingpeaks/attention-telegram";
+import { summarizeYesterdayScanAttention } from "@/features/trainingpeaks/service";
 import type { TrainingPeaksAttentionSnapshot } from "@/features/trainingpeaks/service";
 
 function assert(condition: unknown, message: string): void {
@@ -52,6 +53,48 @@ function run(): void {
   assert(
     chunks.join("\n").includes("+3 ещё"),
     "Chunked digest should include overflow marker for compacted today items."
+  );
+
+  const yesterdayScanSummary = summarizeYesterdayScanAttention({
+    now: new Date("2026-06-02T12:00:00+02:00"),
+    activeStudents: Array.from({ length: 100 }, (_, index) => ({
+      id: `student-${index + 1}`,
+      studentName: `Student ${index + 1}`,
+    })),
+    statuses: [
+      ...Array.from({ length: 98 }, (_, index) => ({
+        studentId: `student-${index + 3}`,
+        status: "failed" as const,
+        scannedAt: "2026-06-01T07:00:00.000Z",
+      })),
+      {
+        studentId: "student-1",
+        status: "failed" as const,
+        scannedAt: "2026-06-01T07:00:00.000Z",
+      },
+      {
+        studentId: "student-1",
+        status: "ok" as const,
+        scannedAt: "2026-06-01T09:00:00.000Z",
+      },
+      {
+        studentId: "student-2",
+        status: "failed" as const,
+        scannedAt: "2026-05-28T07:00:00.000Z",
+      },
+    ],
+  });
+  assert(
+    yesterdayScanSummary.actionableFailedCount === 98,
+    `Expected 98 actionable failures after success/TTL suppression, got ${yesterdayScanSummary.actionableFailedCount}.`
+  );
+  assert(
+    yesterdayScanSummary.missingScanCount === 0,
+    `Expected 0 missing scans when every active student has status, got ${yesterdayScanSummary.missingScanCount}.`
+  );
+  assert(
+    yesterdayScanSummary.shouldShowMissingScanAlert,
+    "Missing scan alert should be enabled during daytime checkpoint."
   );
 
   console.log("[check-trainingpeaks-attention-digest] PASS");
