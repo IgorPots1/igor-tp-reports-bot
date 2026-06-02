@@ -13,6 +13,14 @@ import {
 } from "@/features/trainingpeaks/move-source-policy";
 import { formatTrainingPeaksExecuteQueuedMessage } from "@/features/trainingpeaks/action-execute-telegram-copy";
 import {
+  buildCoachActionsListText,
+  COACH_REPLY_BUTTON_SIGNALS,
+  formatCoachActionReasonForDisplay,
+  formatCoachActionRunSummary,
+  listCoachActionListActiveActions,
+  translateCoachActionTechnicalReason,
+} from "@/features/trainingpeaks/action-list-telegram-copy";
+import {
   addTrainingPeaksStudentFromCommand,
   approveTrainingPeaksAction,
   cancelTrainingPeaksActionExecution,
@@ -199,6 +207,7 @@ const TP_CALLBACK_REPORTS_ELIGIBLE = "tp:reports:eligible";
 const TP_REPLY_BUTTON_TELEGRAM_USERNAME_LEGACY = "🔎 Найти username";
 const TP_CALLBACK_MORE_MENU = "tp:menu:more";
 const TP_CALLBACK_ATTENTION = "tp:attention";
+const TP_CALLBACK_SIGNALS = "tp:signals";
 const TP_CALLBACK_REPLY_DRAFT_HINT = "tp:reply_draft:hint";
 const TP_CALLBACK_BILLING_HINT = "tp:billing:hint";
 const TP_CALLBACK_HEALTH = "tp:health";
@@ -242,6 +251,7 @@ const TP_CALLBACK_CASE_DISMISS_PREFIX = "tp:case:d:";
 const TP_CALLBACK_CASE_PROPOSE_PREFIX = "tp:case:p:";
 const TP_REPLY_BUTTON_MENU = "🏠 Меню";
 const TP_REPLY_BUTTON_TODAY = "🌅 Сегодня";
+const TP_REPLY_BUTTON_SIGNALS = COACH_REPLY_BUTTON_SIGNALS;
 const TP_REPLY_BUTTON_STUDENTS = "👥 Ученики";
 const TP_REPLY_BUTTON_ADD = "➕ Добавить";
 const TP_REPLY_BUTTON_REPORTS = "📊 Отчёты";
@@ -421,6 +431,7 @@ type ParsedTrainingPeaksCallback =
   | { kind: "case_create_proposals"; shortId: string }
   | { kind: "cases_page"; offset: number; query: string | null }
   | { kind: "actions_list" }
+  | { kind: "signals_list" }
   | { kind: "week_menu" }
   | { kind: "week_last" }
   | { kind: "week_current" }
@@ -609,6 +620,7 @@ type TrainingPeaksReplyKeyboardAction =
   | "jobs_refresh"
   | "cancel_job"
   | "actions"
+  | "signals"
   | "billing_hint"
   | "student_report"
   | "student_link"
@@ -1501,10 +1513,10 @@ function formatVoiceDraftsCreatedText(input: {
 
 function getTrainingPeaksMainReplyKeyboardMarkup(): TelegramReplyKeyboardMarkup {
   return createReplyKeyboardMarkup([
-    [TP_REPLY_BUTTON_TODAY, TP_REPLY_BUTTON_CASES],
-    [TP_REPLY_BUTTON_ACTIONS, TP_REPLY_BUTTON_REPORTS],
-    [TP_REPLY_BUTTON_STUDENTS, TP_REPLY_BUTTON_PAYMENTS],
-    [TP_REPLY_BUTTON_SERVICE],
+    [TP_REPLY_BUTTON_TODAY, TP_REPLY_BUTTON_SIGNALS],
+    [TP_REPLY_BUTTON_CASES, TP_REPLY_BUTTON_ACTIONS],
+    [TP_REPLY_BUTTON_REPORTS, TP_REPLY_BUTTON_STUDENTS],
+    [TP_REPLY_BUTTON_PAYMENTS, TP_REPLY_BUTTON_SERVICE],
   ]);
 }
 
@@ -3624,6 +3636,7 @@ async function handleTrainingPeaksOperationalSignalsCommand(
 function getTrainingPeaksAttentionDigestMarkup(): TelegramInlineKeyboardMarkup {
   return createInlineKeyboardMarkup([
     [createMenuButton("🔄 Обновить", TP_CALLBACK_ATTENTION)],
+    [createMenuButton(TP_REPLY_BUTTON_SIGNALS, TP_CALLBACK_SIGNALS)],
     [
       createMenuButton("🧩 Кейсы", TP_CALLBACK_CASES_RECENT),
       createMenuButton("📋 Заявки", "tp:actions:list"),
@@ -4031,6 +4044,10 @@ function getTrainingPeaksReplyKeyboardAction(text: string): TrainingPeaksReplyKe
     return "actions";
   }
 
+  if (text === TP_REPLY_BUTTON_SIGNALS) {
+    return "signals";
+  }
+
   if (text === TP_REPLY_BUTTON_PAYMENTS) {
     return "billing_hint";
   }
@@ -4305,6 +4322,10 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
 
   if (data === "tp:actions:list") {
     return { kind: "actions_list" };
+  }
+
+  if (data === TP_CALLBACK_SIGNALS) {
+    return { kind: "signals_list" };
   }
 
   if (data === TP_CALLBACK_ACTION_DETAIL_BACK) {
@@ -5813,39 +5834,6 @@ function shortenActionId(value: string): string {
   return value.slice(-6);
 }
 
-type ActionStatusGroup = "pending" | "in_progress" | "needs_review" | "completed" | "rejected";
-
-function classifyActionStatusGroup(
-  action: Awaited<ReturnType<typeof listRecentTrainingPeaksActionsWithLatestRunContext>>[number]
-): ActionStatusGroup {
-  if (action.status === "rejected") {
-    return "rejected";
-  }
-  if (action.executionStatus === "completed") {
-    return "completed";
-  }
-  if (action.executionStatus === "failed") {
-    return "needs_review";
-  }
-  if (action.status === "pending_coach") {
-    return "pending";
-  }
-  if (
-    action.executionStatus === "dry_run_running" ||
-    action.executionStatus === "execute_pending" ||
-    action.executionStatus === "running_local"
-  ) {
-    return "in_progress";
-  }
-  if (action.executionStatus === "not_started") {
-    return "in_progress";
-  }
-  if (action.executionStatus === "dry_run_completed") {
-    return "needs_review";
-  }
-  return "in_progress";
-}
-
 function formatCompactDateShort(value: string | null): string {
   if (!value) {
     return "?";
@@ -5870,52 +5858,6 @@ function isActionWaitingDryRunRecheck(action: {
   }
   const latestDryRun = action.latestRunContext?.latestDryRun;
   return Boolean(latestDryRun && typeof latestDryRun === "object");
-}
-
-function formatExecutionStatusLabel(executionStatus: string): string {
-  const labels: Record<string, string> = {
-    not_started: "не начато",
-    dry_run_running: "dry-run...",
-    dry_run_completed: "dry-run ✓",
-    execute_pending: "в очереди",
-    running_local: "выполняется",
-    completed: "выполнено",
-    failed: "ошибка",
-  };
-  return labels[executionStatus] ?? executionStatus;
-}
-
-function extractActionLatestReason(latestRunContext: unknown): string | null {
-  if (!latestRunContext || typeof latestRunContext !== "object") {
-    return null;
-  }
-  const context = latestRunContext as {
-    latestRelevant?: { failureReason?: unknown; blockedReason?: unknown; errorMessage?: unknown } | null;
-    latestDryRun?: { failureReason?: unknown; blockedReason?: unknown; errorMessage?: unknown } | null;
-    latestExecute?: { failureReason?: unknown; blockedReason?: unknown; errorMessage?: unknown } | null;
-  };
-  for (const run of [context.latestRelevant, context.latestExecute, context.latestDryRun]) {
-    if (!run || typeof run !== "object") {
-      continue;
-    }
-    const blocked = typeof run.blockedReason === "string" && run.blockedReason.trim() ? run.blockedReason.trim() : null;
-    if (blocked) {
-      return blocked;
-    }
-    const failure = typeof run.failureReason === "string" && run.failureReason.trim() ? run.failureReason.trim() : null;
-    if (failure) {
-      return failure;
-    }
-    const error = typeof run.errorMessage === "string" && run.errorMessage.trim() ? run.errorMessage.trim() : null;
-    if (error) {
-      return error;
-    }
-  }
-  return null;
-}
-
-function getActionLatestReasonOrFallback(latestRunContext: unknown): string {
-  return extractActionLatestReason(latestRunContext) ?? "Причина не сохранена в логе. Проверь последний action run.";
 }
 
 function formatSourcePolicyLabel(policy: string | null | undefined): string {
@@ -6033,124 +5975,16 @@ function stripActionDetailFreshness(text: string | null | undefined): string {
     .trim();
 }
 
-function formatRunResultLine(label: string, run: unknown): string {
-  if (!run || typeof run !== "object") {
-    return `${label}: нет`;
-  }
-  const runPayload = run as {
-    status?: unknown;
-    dryRunResult?: unknown;
-    blockedReason?: unknown;
-    failureReason?: unknown;
-    errorMessage?: unknown;
-  };
-  const status = typeof runPayload.status === "string" ? runPayload.status : "unknown";
-  const dryRunResult = typeof runPayload.dryRunResult === "string" ? runPayload.dryRunResult : null;
-  const reason =
-    (typeof runPayload.blockedReason === "string" && runPayload.blockedReason.trim()) ||
-    (typeof runPayload.failureReason === "string" && runPayload.failureReason.trim()) ||
-    (typeof runPayload.errorMessage === "string" && runPayload.errorMessage.trim()) ||
-    null;
-  const core = dryRunResult ? `${status}/${dryRunResult}` : status;
-  return reason ? `${label}: ${core} — ${reason}` : `${label}: ${core}`;
-}
-
-function formatCompactActionLine(
-  action: Awaited<ReturnType<typeof listRecentTrainingPeaksActionsWithLatestRunContext>>[number],
-  index: number
-): string {
-  const dates = extractMoveDateRangeFromParsedPayload(action.parsedPayload);
-  const src = formatCompactDateShort(dates.sourceDate);
-  const tgt = formatCompactDateShort(dates.targetDate);
-  const name = action.studentName ?? "?";
-  const dryRun = action.latestRunContext?.latestDryRun ?? null;
-  const executeRun = action.latestRunContext?.latestExecute ?? null;
-  const policy = dryRun?.selectedSourceDatePolicy ?? null;
-  const reason = getActionLatestReasonOrFallback(action.latestRunContext);
-  const statusLabel = isActionWaitingDryRunRecheck(action)
-    ? "ожидает повторной проверки"
-    : formatExecutionStatusLabel(action.executionStatus);
-  return [
-    `${index + 1}. ${name} | ${src} → ${tgt}`,
-    `Статус: ${action.status}/${statusLabel}`,
-    formatRunResultLine("Dry-run", dryRun),
-    formatRunResultLine("Выполнение", executeRun),
-    `Источник: ${formatCompactDateShort(dryRun?.selectedSourceDate ?? dates.sourceDate)} — ${formatSourcePolicyLabel(policy)}`,
-    `Причина: ${reason}`,
-  ].join(" | ");
-}
-
 function getTpActionsListText(
   actions: Awaited<ReturnType<typeof listRecentTrainingPeaksActionsWithLatestRunContext>>
 ): string {
-  if (actions.length === 0) {
-    return "📋 TrainingPeaks Actions\n\nПока заявок на перенос нет.";
-  }
-
-  const grouped: Record<ActionStatusGroup, typeof actions> = {
-    pending: [],
-    in_progress: [],
-    needs_review: [],
-    completed: [],
-    rejected: [],
-  };
-
-  for (const action of actions) {
-    grouped[classifyActionStatusGroup(action)].push(action);
-  }
-
-  const activeActions = [
-    ...grouped.pending,
-    ...grouped.in_progress,
-    ...grouped.needs_review,
-  ];
-
-  const lines: string[] = ["📋 TrainingPeaks Actions", ""];
-
-  if (grouped.pending.length > 0) {
-    lines.push("⏳ Ожидают решения:");
-    for (const action of grouped.pending) {
-      lines.push(formatCompactActionLine(action, activeActions.indexOf(action)));
-    }
-    lines.push("");
-  }
-
-  if (grouped.in_progress.length > 0) {
-    lines.push("🔄 В работе / очередь:");
-    for (const action of grouped.in_progress) {
-      lines.push(formatCompactActionLine(action, activeActions.indexOf(action)));
-    }
-    lines.push("");
-  }
-
-  if (grouped.needs_review.length > 0) {
-    lines.push("⚠️ Требуют проверки:");
-    for (const action of grouped.needs_review) {
-      lines.push(formatCompactActionLine(action, activeActions.indexOf(action)));
-    }
-    lines.push("");
-  }
-
-  if (activeActions.length === 0) {
-    lines.push("Нет активных заявок.", "");
-  }
-
-  if (grouped.completed.length > 0) {
-    lines.push(`✅ Выполнено: ${grouped.completed.length}`);
-  }
-  if (grouped.rejected.length > 0) {
-    lines.push(`❌ Отклонено/отменено: ${grouped.rejected.length}`);
-  }
-
-  return lines.join("\n");
+  return buildCoachActionsListText(actions);
 }
 
 function getTpActionsListMarkup(
   actions: Awaited<ReturnType<typeof listRecentTrainingPeaksActionsWithLatestRunContext>>
 ): TelegramInlineKeyboardMarkup {
-  const activeActions = actions.filter(
-    (a) => classifyActionStatusGroup(a) !== "completed" && classifyActionStatusGroup(a) !== "rejected"
-  );
+  const activeActions = listCoachActionListActiveActions(actions);
 
   const rows: TrainingPeaksMenuButton[][] = [];
 
@@ -6290,10 +6124,10 @@ function formatActionStatusLabel(action: NonNullable<Awaited<ReturnType<typeof g
     return "🔄 В очереди на выполнение";
   }
   if (action.executionStatus === "dry_run_running") {
-    return "🔄 Dry-run...";
+    return "🔄 Проверка идёт";
   }
   if (action.executionStatus === "dry_run_completed") {
-    return "🔄 Dry-run завершён";
+    return "🔄 Проверка завершена";
   }
   if (action.executionStatus === "not_started") {
     if (isActionWaitingDryRunRecheck(action)) {
@@ -6301,7 +6135,7 @@ function formatActionStatusLabel(action: NonNullable<Awaited<ReturnType<typeof g
     }
     return "🔄 Одобрено, не начато";
   }
-  return `${action.status} / ${action.executionStatus}`;
+  return "🔄 Статус обновляется";
 }
 
 function getTpActionDetailText(
@@ -6323,11 +6157,10 @@ function getTpActionDetailText(
     `Запрос: ${truncateActionMessage(action.rawText, 120)}`,
     `Перенос: ${src} → ${tgt}`,
     `Статус: ${formatActionStatusLabel(action)}`,
-    `Запуск был: ${action.lastRunId ? "да" : "нет"}`,
-    `Результат dry-run: ${formatRunResultLine("dry-run", latestDryRun).replace(/^dry-run:\s*/, "")}`,
-    `Результат выполнения: ${formatRunResultLine("execute", latestExecute).replace(/^execute:\s*/, "")}`,
+    `Проверка: ${formatCoachActionRunSummary(latestDryRun, "dry_run")}`,
+    `Выполнение: ${formatCoachActionRunSummary(latestExecute, "execute")}`,
     `Источник: ${formatCompactDateShort(sourceDate)} — ${formatSourcePolicyLabel(sourcePolicy)}`,
-    `Причина: ${getActionLatestReasonOrFallback(action.latestRunContext)}`,
+    `Комментарий: ${formatCoachActionReasonForDisplay(action.latestRunContext)}`,
     `Создано: ${formatActionCompactDate(action.createdAt)}`,
   ];
   if (warnings.length > 0) {
@@ -6513,7 +6346,10 @@ async function handleTrainingPeaksActionConfirmSourceDateCallback(
   }
 
   if (result.kind === "blocked") {
-    const blockedReason = result.reason?.trim() || getActionLatestReasonOrFallback({ latestDryRun: result.latestDryRun });
+    const blockedReason = translateCoachActionTechnicalReason(
+      result.reason?.trim() ||
+        formatCoachActionReasonForDisplay({ latestDryRun: result.latestDryRun })
+    );
     await editTrainingPeaksMenuMessage(
       parsedMessage.chatId,
       parsedMessage.messageId,
@@ -7077,14 +6913,16 @@ async function handleTrainingPeaksActionExecuteRequestCallback(
     result.kind === "blocked"
       ? [
           "⚠️ Перенос не выполнен. TrainingPeaks не изменён.",
-          `Причина: ${result.reason?.trim() || getActionLatestReasonOrFallback(result.latestRunContext)}`,
+          `Причина: ${translateCoachActionTechnicalReason(
+            result.reason?.trim() || formatCoachActionReasonForDisplay(result.latestRunContext)
+          )}`,
           (() => {
             const selectedSourceDate = result.latestRunContext?.latestDryRun?.selectedSourceDate ?? null;
             const selectedSourcePolicy = result.latestRunContext?.latestDryRun?.selectedSourceDatePolicy ?? null;
             if (!selectedSourceDate && !selectedSourcePolicy) {
               return null;
             }
-            return `Источник: ${formatCompactDateShort(selectedSourceDate)}, policy: ${selectedSourcePolicy ?? "не указан"}`;
+            return `Источник: ${formatCompactDateShort(selectedSourceDate)} — ${formatSourcePolicyLabel(selectedSourcePolicy)}`;
           })(),
           "Проверь заявку в /tp_actions.",
         ]
@@ -7835,6 +7673,11 @@ export async function handleTrainingPeaksTelegramReplyKeyboardMessage(
 
     if (action === "actions") {
       await showTpActionsList(parsedMessage);
+      return "handled";
+    }
+
+    if (action === "signals") {
+      await handleTrainingPeaksOperationalSignalsCommand(parsedMessage, "/tp_signals");
       return "handled";
     }
 
@@ -9810,6 +9653,11 @@ export async function handleTrainingPeaksTelegramCallback(
       return "handled";
     }
 
+    if (callback.kind === "signals_list") {
+      await handleTrainingPeaksOperationalSignalsCommand(parsedMessage, "/tp_signals");
+      return "handled";
+    }
+
     if (callback.kind === "week_menu") {
       await showTrainingPeaksWeekMenu(parsedMessage);
       return "handled";
@@ -10419,4 +10267,12 @@ export async function handleTrainingPeaksTelegramCommand(
   }
 
   return "handled";
+}
+
+export function getCoachReplyKeyboardLayoutForTest(): string[][] {
+  return getTrainingPeaksMainReplyKeyboardMarkup().keyboard.map((row) => row.map((button) => button.text));
+}
+
+export function getCoachReplyKeyboardRouteForTest(text: string): string | null {
+  return getTrainingPeaksReplyKeyboardAction(text);
 }
