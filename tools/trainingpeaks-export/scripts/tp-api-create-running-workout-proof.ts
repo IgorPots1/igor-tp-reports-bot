@@ -31,9 +31,11 @@ type CliArgs = {
   headless: boolean;
 };
 
+type ProofCaseId = "easy-pace" | "easy-hr" | "interval-pace" | "interval-hr";
+
 type ProofWorkoutSpec = {
   safeAthleteId: number;
-  caseId: "easy-pace" | "interval-hr";
+  caseId: ProofCaseId;
   title: string;
   description: string;
   blocks: RunningWorkoutDefinition["blocks"];
@@ -69,7 +71,7 @@ type PreflightArtifact = {
 };
 
 const TP_ACTIONS_REAL_EXECUTION_ENV = "TP_ACTIONS_REAL_EXECUTION";
-const SAFE_PROOF_BY_CASE: Record<"easy-pace" | "interval-hr", ProofWorkoutSpec> = {
+const SAFE_PROOF_BY_CASE: Record<ProofCaseId, ProofWorkoutSpec> = {
   "easy-pace": {
     safeAthleteId: 3102415,
     caseId: "easy-pace",
@@ -96,6 +98,116 @@ const SAFE_PROOF_BY_CASE: Record<"easy-pace" | "interval-hr", ProofWorkoutSpec> 
       requiredRanges: [{ minValue: 75, maxValue: 85 }],
       requiredStepNames: ["Active"],
       requiredStepNoteMarkers: ["API_CREATE_PROOF_STEP_NOTE_EASY_PACE"],
+    },
+    confirmPhrase: "CREATE TEST RUN WORKOUT",
+  },
+  "easy-hr": {
+    safeAthleteId: 3102415,
+    caseId: "easy-hr",
+    title: "API CREATE PROOF EASY HR DO NOT USE",
+    description: "API_CREATE_PROOF_DESC_EASY_HR",
+    blocks: [
+      {
+        kind: "step",
+        label: "Active",
+        durationSeconds: 1800,
+        intensityClass: "active",
+        target: {
+          metric: "percentOfThresholdHr",
+          minValue: 70,
+          maxValue: 80,
+        },
+        notes: "API_CREATE_PROOF_STEP_NOTE_EASY_HR",
+      },
+    ],
+    verification: {
+      primaryMetric: "percentOfThresholdHr",
+      requireRepetition: false,
+      repeatCount: null,
+      requiredRanges: [{ minValue: 70, maxValue: 80, matchName: "Active" }],
+      requiredStepNames: ["Active"],
+      requiredStepNoteMarkers: ["API_CREATE_PROOF_STEP_NOTE_EASY_HR"],
+    },
+    confirmPhrase: "CREATE TEST RUN WORKOUT",
+  },
+  "interval-pace": {
+    safeAthleteId: 3102415,
+    caseId: "interval-pace",
+    title: "API CREATE PROOF INTERVAL PACE DO NOT USE",
+    description: "API_CREATE_PROOF_DESC_INTERVAL_PACE",
+    blocks: [
+      {
+        kind: "step",
+        label: "Warm up",
+        durationSeconds: 600,
+        intensityClass: "warmup",
+        target: {
+          metric: "percentOfThresholdPace",
+          minValue: 75,
+          maxValue: 85,
+        },
+        notes: "API_CREATE_PROOF_NOTE_WARMUP_PACE",
+      },
+      {
+        kind: "repetition",
+        repeatCount: 4,
+        steps: [
+          {
+            kind: "step",
+            label: "Hard",
+            durationSeconds: 360,
+            intensityClass: "active",
+            target: {
+              metric: "percentOfThresholdPace",
+              minValue: 105,
+              maxValue: 115,
+            },
+            notes: "API_CREATE_PROOF_NOTE_HARD_PACE",
+          },
+          {
+            kind: "step",
+            label: "Easy",
+            durationSeconds: 180,
+            intensityClass: "recovery",
+            target: {
+              metric: "percentOfThresholdPace",
+              minValue: 75,
+              maxValue: 85,
+            },
+            notes: "API_CREATE_PROOF_NOTE_RECOVERY_PACE",
+          },
+        ],
+      },
+      {
+        kind: "step",
+        label: "Cool down",
+        durationSeconds: 600,
+        intensityClass: "cooldown",
+        target: {
+          metric: "percentOfThresholdPace",
+          minValue: 75,
+          maxValue: 85,
+        },
+        notes: "API_CREATE_PROOF_NOTE_COOLDOWN_PACE",
+      },
+    ],
+    verification: {
+      primaryMetric: "percentOfThresholdPace",
+      requireRepetition: true,
+      repeatCount: 4,
+      requiredRanges: [
+        { minValue: 105, maxValue: 115, matchName: "Hard" },
+        { minValue: 75, maxValue: 85, matchName: "Warm up" },
+        { minValue: 75, maxValue: 85, matchName: "Easy" },
+        { minValue: 75, maxValue: 85, matchName: "Cool down" },
+      ],
+      requiredStepNames: ["Warm up", "Hard", "Easy", "Cool down"],
+      requiredStepNoteMarkers: [
+        "API_CREATE_PROOF_NOTE_WARMUP_PACE",
+        "API_CREATE_PROOF_NOTE_HARD_PACE",
+        "API_CREATE_PROOF_NOTE_RECOVERY_PACE",
+        "API_CREATE_PROOF_NOTE_COOLDOWN_PACE",
+      ],
     },
     confirmPhrase: "CREATE TEST RUN WORKOUT",
   },
@@ -189,18 +301,18 @@ function printHelp(): void {
   console.log("");
   console.log("Usage (dry-run, default):");
   console.log(
-    "  npm run tp-api-create-running-workout-proof -- --case easy-pace|interval-hr --athlete-id 3102415 --date YYYY-MM-DD",
+    "  npm run tp-api-create-running-workout-proof -- --case easy-pace|easy-hr|interval-pace|interval-hr --athlete-id 3102415 --date YYYY-MM-DD",
   );
   console.log("");
   console.log("Usage (live apply, guarded):");
   console.log(
-    '  TP_ACTIONS_REAL_EXECUTION=true npm run tp-api-create-running-workout-proof -- --case easy-pace|interval-hr --athlete-id 3102415 --date YYYY-MM-DD --apply --confirm "CREATE TEST RUN WORKOUT"',
+    '  TP_ACTIONS_REAL_EXECUTION=true npm run tp-api-create-running-workout-proof -- --case easy-pace|easy-hr|interval-pace|interval-hr --athlete-id 3102415 --date YYYY-MM-DD --apply --confirm "CREATE TEST RUN WORKOUT"',
   );
   console.log("");
   console.log("Safety rules:");
   console.log("  - dry-run is default; no POST is sent unless all apply gates pass");
   console.log("  - safe athlete only: 3102415");
-  console.log("  - safe case only: easy-pace or interval-hr");
+  console.log("  - safe case only: easy-pace, easy-hr, interval-pace, interval-hr");
   console.log('  - typed confirmation required: --confirm "CREATE TEST RUN WORKOUT"');
   console.log("  - TP_ACTIONS_REAL_EXECUTION=true required for live POST");
   console.log("  - target date must be in the future (not today)");
@@ -476,6 +588,40 @@ function mustPass(checks: Record<string, { pass: boolean; details: string }>, na
   }
 }
 
+function caseDetailTag(caseId: string): string {
+  return caseId.replace(/-/g, "_");
+}
+
+function summarizeCaseVerificationDetails(
+  checks: {
+    primaryMetric: string | null;
+    repetitionCount: number | null;
+    ranges: Array<{ minValue: number; maxValue: number; name: string }>;
+    stepNames: string[];
+    notes: string[];
+  },
+  spec: ProofWorkoutSpec,
+): string {
+  const rangeText = checks.ranges.map((entry) => `${entry.name}:${entry.minValue}-${entry.maxValue}`).join(";") || "none";
+  const expectedRanges = spec.verification.requiredRanges
+    .map((entry) => `${entry.matchName ?? "*"}:${entry.minValue}-${entry.maxValue}`)
+    .join(";");
+  const expectedNotes = spec.verification.requiredStepNoteMarkers.join(";");
+  const observedRequiredNotes = spec.verification.requiredStepNoteMarkers.filter((marker) =>
+    checks.notes.some((note) => note.includes(marker)),
+  );
+  return [
+    `metric=${checks.primaryMetric ?? "missing"}`,
+    `repetitionCount=${checks.repetitionCount ?? "none"}`,
+    `ranges=${rangeText}`,
+    `expectedRanges=${expectedRanges}`,
+    `steps=${checks.stepNames.join(";") || "none"}`,
+    `expectedSteps=${spec.verification.requiredStepNames.join(";") || "none"}`,
+    `requiredNotesPresent=${observedRequiredNotes.join(";") || "none"}`,
+    `requiredNotesExpected=${expectedNotes || "none"}`,
+  ].join(" ");
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const safeProof = SAFE_PROOF_BY_CASE[args.caseId as keyof typeof SAFE_PROOF_BY_CASE];
@@ -609,11 +755,9 @@ async function main(): Promise<void> {
     console.log(`- totalTimePlanned: ${plan.requestBodyCandidate.totalTimePlanned}`);
     console.log("- network calls: no");
     console.log("- verification_status: not-run");
-    if (args.caseId === "interval-hr") {
-      console.log(
-        `- verification_details_interval_hr: metric=${structureChecks.primaryMetric ?? "missing"} repetitionCount=${structureChecks.repetitionCount ?? "none"} ranges=${structureChecks.ranges.map((entry) => `${entry.name}:${entry.minValue}-${entry.maxValue}`).join(";") || "none"}`,
-      );
-    }
+    console.log(
+      `- verification_details_${caseDetailTag(args.caseId)}: ${summarizeCaseVerificationDetails(structureChecks, safeProof)}`,
+    );
     console.log(`- preflight artifact: ${preflightPath}`);
     console.log(`- request artifact: ${requestPath}`);
     console.log("dry-run complete. POST not sent.");
@@ -795,9 +939,7 @@ async function main(): Promise<void> {
 
     console.log(`created_workout_id: ${createdWorkoutId}`);
     console.log(`verification_status: ${verificationStatus}`);
-    if (args.caseId === "interval-hr") {
-      console.log(`verification_details_interval_hr: ${JSON.stringify(verificationDetails)}`);
-    }
+    console.log(`verification_details_${caseDetailTag(args.caseId)}: ${JSON.stringify(verificationDetails)}`);
     console.log(`preflight_artifact: ${preflightPath}`);
     console.log(`request_artifact: ${requestPath}`);
     console.log(`response_artifact: ${responsePath}`);
