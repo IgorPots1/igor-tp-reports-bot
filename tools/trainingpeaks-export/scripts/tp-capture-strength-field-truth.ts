@@ -3,6 +3,7 @@ import process from "node:process";
 import { chromium } from "playwright";
 
 import {
+  type FinishedReason,
   REQUIRED_SAVE_CONFIRMATION,
   attachNetworkCapture,
   buildCheckpointPlan,
@@ -19,11 +20,26 @@ import {
   saveJson,
   saveText,
   sanitizeAthleteUrl,
-  waitForCheckpointEnter,
+  waitForCheckpointAction,
   waitForTypedConfirmation,
   type DomCaptureArtifact,
   type TruthCaptureLog,
 } from "./lib/strength-field-truth-capture.ts";
+
+function isDurationExceededError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.toLowerCase().includes("timed out");
+}
+
+function isFatalBrowserError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("target page, context or browser has been closed") ||
+    normalized.includes("browser has been closed") ||
+    normalized.includes("context closed")
+  );
+}
 
 async function main(): Promise<void> {
   const args = parseTruthCaptureArgs(process.argv.slice(2));
@@ -42,6 +58,7 @@ async function main(): Promise<void> {
   const domArtifacts: DomCaptureArtifact[] = [];
   const notes: string[] = [];
   const errors: string[] = [];
+  let finishedReason: FinishedReason = "completed_all_checkpoints";
 
   console.log("[tp-capture-strength-field-truth] mode: diagnostic-only truth capture");
   console.log(`[tp-capture-strength-field-truth] athlete: ${sanitizeAthleteUrl(args.athleteUrl)}`);
@@ -63,12 +80,21 @@ async function main(): Promise<void> {
     await page.waitForTimeout(1500);
 
     const checkpoints = buildCheckpointPlan(args.allowSaveCapture);
-    for (const checkpoint of checkpoints) {
+    for (const [index, checkpoint] of checkpoints.entries()) {
+      if (Date.now() > deadlineAtMs) {
+        finishedReason = "duration_exceeded";
+        notes.push(`Stopped before ${checkpoint.id}: total duration budget exceeded.`);
+        break;
+      }
       networkState.currentCheckpoint = checkpoint.id;
       const record = {
         id: checkpoint.id,
         prompt: checkpoint.prompt,
         startedAt: new Date().toISOString(),
+        required: !checkpoint.optional,
+        optional: Boolean(checkpoint.optional),
+        attemptCount: 0,
+        errors: [] as string[],
       };
       checkpointRecords.push(record);
 
@@ -82,29 +108,116 @@ async function main(): Promise<void> {
         );
       }
 
-      await waitForCheckpointEnter(checkpoint.prompt, deadlineAtMs);
-      await page.waitForTimeout(600);
+      let moveToNextCheckpoint = false;
+      while (!moveToNextCheckpoint) {
+        if (Date.now() > deadlineAtMs) {
+          finishedReason = "duration_exceeded";
+          notes.push(`Stopped during ${checkpoint.id}: total duration budget exceeded.`);
+          moveToNextCheckpoint = true;
+          break;
+        }
+        record.attemptCount = (record.attemptCount ?? 0) + 1;
+        const action = await waitForCheckpointAction(checkpoint.prompt, deadlineAtMs);
 
-      const screenshotAbsolute = await saveCheckpointScreenshot(page, artifacts.screenshotsDir, checkpoint.screenshotName);
-      const domArtifact = await captureDomArtifact(page, checkpoint.id);
-      const domAbsolute = await saveDomArtifact(artifacts.domDir, checkpoint.domFileName, domArtifact);
+        if (action === "retry") {
+          console.log(`[tp-capture-strength-field-truth] retry ${checkpoint.id}`);
+          continue;
+        }
 
-      domArtifacts.push(domArtifact);
-      record.completedAt = new Date().toISOString();
-      record.screenshotPath = getRepoRelativePath(screenshotAbsolute);
-      record.domPath = getRepoRelativePath(domAbsolute);
+        if (action === "quit") {
+          record.action = "quit";
+          record.completedAt = new Date().toISOString();
+          finishedReason = "user_quit";
+          moveToNextCheckpoint = true;
+          break;
+        }
 
-      if (!domArtifact.dialogFound) {
-        notes.push(`${checkpoint.id}: visible [role="dialog"] was not detected at capture time.`);
+        if (action === "skip") {
+          if (!checkpoint.optional) {
+            console.log(`[tp-capture-strength-field-truth] ${checkpoint.id} is required. Skip is not allowed.`);
+            continue;
+          }
+          record.action = "skipped";
+          record.skipped = true;
+          record.completedAt = new Date().toISOString();
+          moveToNextCheckpoint = true;
+          console.log(`Checkpoint ${index + 1} skipped (optional).`);
+          console.log(`- next: ${checkpoints[index + 1]?.id ?? "run summary"}`);
+          break;
+        }
+
+        try {
+          await page.waitForTimeout(600);
+          const screenshotAbsolute = await saveCheckpointScreenshot(page, artifacts.screenshotsDir, checkpoint.screenshotName);
+          const domArtifact = await captureDomArtifact(page, checkpoint.id);
+          const domAbsolute = await saveDomArtifact(artifacts.domDir, checkpoint.domFileName, domArtifact);
+
+          domArtifacts.push(domArtifact);
+          record.action = "captured";
+          record.completedAt = new Date().toISOString();
+          record.screenshotPath = getRepoRelativePath(screenshotAbsolute);
+          record.domPath = getRepoRelativePath(domAbsolute);
+          record.dialogFound = domArtifact.dialogFound;
+          record.exerciseOccurrenceCount = domArtifact.dialogs.reduce(
+            (sum, dialog) => sum + dialog.exactExerciseNameOccurrences.length + dialog.exactValueTokenOccurrences.length,
+            0
+          );
+          record.inputControlCount = domArtifact.dialogs.reduce(
+            (sum, dialog) => sum + dialog.inputs.length + dialog.textareas.length,
+            0
+          );
+          record.networkEventCount = networkState.events.length;
+
+          if (!domArtifact.dialogFound) {
+            notes.push(`${checkpoint.id}: visible [role="dialog"] was not detected at capture time.`);
+          }
+          if (domArtifact.focusedControl?.value) {
+            notes.push(`${checkpoint.id}: focused control value="${domArtifact.focusedControl.value}".`);
+          }
+
+          console.log(`Checkpoint ${index + 1} captured.`);
+          console.log(`- dialogFound: ${domArtifact.dialogFound ? "yes" : "no"}`);
+          console.log(`- exercise occurrences: ${record.exerciseOccurrenceCount}`);
+          console.log(`- screenshots: ${record.screenshotPath}`);
+          console.log(`- next: ${checkpoints[index + 1]?.id ?? "run summary"}`);
+          moveToNextCheckpoint = true;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          record.errors?.push(message);
+          errors.push(`${checkpoint.id}: ${message}`);
+          record.completedAt = new Date().toISOString();
+          record.action = "captured";
+          record.networkEventCount = networkState.events.length;
+          console.log(`Checkpoint ${index + 1} capture failed: ${message}`);
+          console.log(`- next: ${checkpoints[index + 1]?.id ?? "run summary"}`);
+          if (isFatalBrowserError(error)) {
+            finishedReason = "fatal_error";
+            moveToNextCheckpoint = true;
+            break;
+          }
+          if (isDurationExceededError(error)) {
+            finishedReason = "duration_exceeded";
+            moveToNextCheckpoint = true;
+            break;
+          }
+          // Non-fatal Playwright errors must not stop the checkpoint flow.
+          moveToNextCheckpoint = true;
+        }
       }
-      if (domArtifact.focusedControl?.value) {
-        notes.push(`${checkpoint.id}: focused control value="${domArtifact.focusedControl.value}".`);
+
+      if (finishedReason === "user_quit" || finishedReason === "duration_exceeded" || finishedReason === "fatal_error") {
+        break;
       }
     }
 
     await page.waitForTimeout(1000);
   } catch (error) {
     errors.push(error instanceof Error ? error.message : String(error));
+    if (isDurationExceededError(error)) {
+      finishedReason = "duration_exceeded";
+    } else {
+      finishedReason = "fatal_error";
+    }
   } finally {
     await context.close().catch(() => {});
   }
@@ -122,6 +235,7 @@ async function main(): Promise<void> {
     date: args.date,
     manual: args.manual,
     allowSaveCapture: args.allowSaveCapture,
+    finishedReason,
     liveCaptureRan: checkpointRecords.length > 0,
     checkpoints: checkpointRecords,
     screenshots: checkpointRecords
@@ -133,7 +247,7 @@ async function main(): Promise<void> {
     networkEventsPath: getRepoRelativePath(artifacts.networkEventsPath),
     networkEventCount: networkState.events.length,
     networkEvents: networkState.events,
-    verdict: "pause_field_automation_do_catalog_enrichment",
+    verdict: "capture_incomplete",
     notes,
     errors,
   };

@@ -69,6 +69,17 @@ function buildDomArtifact(checkpoint: string, overrides: Partial<DomCaptureArtif
             nearbyButtons: [makeControl({ tag: "button", type: "button", value: "Coach Notes" })],
           },
         ],
+        exactValueTokenOccurrences: [
+          {
+            name: "2",
+            source: "inputValue",
+            value: "2",
+            rect: { x: 10, y: 10, width: 90, height: 24 },
+            parentChain: [{ depth: 0, tag: "input" }],
+            nearbyInputs: [makeControl()],
+            nearbyButtons: [],
+          },
+        ],
         possibleExerciseCards: [
           {
             exactName: "Glute Bridge",
@@ -184,6 +195,20 @@ async function run(): Promise<void> {
               nearbyButtons: [],
             },
           ],
+          exactValueTokenOccurrences: [
+            {
+              name: "30",
+              source: "inputValue",
+              value: "30 sec",
+              rect: { x: 0, y: 0, width: 120, height: 20 },
+              parentChain: [{ depth: 0, tag: "div" }],
+              nearbyInputs: [
+                makeControl({ value: "3", placeholder: "Sets" }),
+                makeControl({ index: 1, value: "30 sec", placeholder: "Duration", ariaLabel: "Duration" }),
+              ],
+              nearbyButtons: [],
+            },
+          ],
           possibleExerciseCards: [
             {
               exactName: "Forearm Plank",
@@ -210,6 +235,7 @@ async function run(): Promise<void> {
     date: SAFE_DATE,
     manual: true,
     allowSaveCapture: false,
+    finishedReason: "completed_all_checkpoints",
     liveCaptureRan: true,
     checkpoints: [
       {
@@ -217,8 +243,41 @@ async function run(): Promise<void> {
         prompt: "Checkpoint 3",
         startedAt: "2026-06-02T09:30:00.000Z",
         completedAt: "2026-06-02T09:31:00.000Z",
+        action: "captured",
+        required: true,
+        optional: false,
+        dialogFound: true,
+        exerciseOccurrenceCount: 2,
+        inputControlCount: 2,
+        networkEventCount: 1,
         screenshotPath: "reports/strength-field-truth-capture/20260602-113000/screenshots/checkpoint-03-glute-sets-reps-set.png",
         domPath: "reports/strength-field-truth-capture/20260602-113000/dom/checkpoint-03-glute-sets-reps-set.json",
+      },
+      {
+        id: "checkpoint-04-glute-note-set",
+        prompt: "Checkpoint 4",
+        startedAt: "2026-06-02T09:31:00.000Z",
+        completedAt: "2026-06-02T09:32:00.000Z",
+        action: "captured",
+        required: true,
+        optional: false,
+        dialogFound: true,
+        exerciseOccurrenceCount: 1,
+        inputControlCount: 3,
+        networkEventCount: 1,
+      },
+      {
+        id: "checkpoint-05-plank-duration-set",
+        prompt: "Checkpoint 5",
+        startedAt: "2026-06-02T09:32:00.000Z",
+        completedAt: "2026-06-02T09:33:00.000Z",
+        action: "captured",
+        required: false,
+        optional: true,
+        dialogFound: true,
+        exerciseOccurrenceCount: 2,
+        inputControlCount: 2,
+        networkEventCount: 1,
       },
     ],
     screenshots: ["reports/strength-field-truth-capture/20260602-113000/screenshots/checkpoint-03-glute-sets-reps-set.png"],
@@ -237,7 +296,7 @@ async function run(): Promise<void> {
         headersRedacted: true,
       },
     ],
-    verdict: "pause_field_automation_do_catalog_enrichment",
+    verdict: "continue_ui_writer_with_exact_selectors",
     notes: [],
     errors: [],
   };
@@ -248,11 +307,14 @@ async function run(): Promise<void> {
   assert(summary.includes("VERDICT: continue_ui_writer_with_exact_selectors"), "Expected continue_ui_writer verdict in summary.");
   assert(summary.includes("Sets: tag=input"), "Expected sets control details in summary.");
   assert(summary.includes("Coach notes"), "Expected coach notes section.");
+  assert(summary.includes("Finished reason: completed_all_checkpoints"), "Expected finished reason in summary.");
+  assert(summary.includes("## Checkpoints"), "Expected checkpoint section in summary.");
 
   const networkVerdict = deriveVerdict(
     {
       ...log,
       allowSaveCapture: true,
+      finishedReason: "completed_all_checkpoints",
       networkEvents: [
         ...log.networkEvents,
         {
@@ -272,6 +334,15 @@ async function run(): Promise<void> {
     domArtifacts
   );
   assert(networkVerdict === "pivot_to_network_payload_writer", `Expected network verdict, got ${networkVerdict}.`);
+
+  const incompleteVerdict = deriveVerdict(
+    {
+      ...log,
+      checkpoints: log.checkpoints.slice(0, 1),
+    },
+    domArtifacts.slice(0, 1)
+  );
+  assert(incompleteVerdict === "capture_incomplete", `Expected incomplete verdict, got ${incompleteVerdict}.`);
 
   let badArgsFailed = false;
   try {

@@ -12,8 +12,8 @@ export const SAFE_ATHLETE_URL = "https://app.trainingpeaks.com/#calendar/athlete
 export const SAFE_DATE = "2026-06-06";
 export const REQUIRED_SAVE_CONFIRMATION = "CAPTURE SAVE";
 export const DEFAULT_DURATION_SECONDS = 900;
-export const TARGET_EXERCISE_NAMES = ["Glute Bridge", "Forearm Plank"];
-export const TARGET_VALUE_TOKENS = ["2", "15", "30", "TEST NOTE"];
+export const TARGET_EXERCISE_NAMES = ["Glute Bridge", "Forearm Plank", "Single Leg Calf Raise"];
+export const TARGET_VALUE_TOKENS = ["TEST NOTE MANUAL CAPTURE", "2", "15", "3", "30"];
 
 const RELEVANT_HOSTS = new Set(["tpapi.trainingpeaks.com", "api.peakswaresb.com"]);
 const MAX_SHAPE_DEPTH = 5;
@@ -80,6 +80,7 @@ export type DialogCaptureDebug = {
   textareas: ControlDebug[];
   buttons: ControlDebug[];
   exactExerciseNameOccurrences: ExerciseOccurrenceDebug[];
+  exactValueTokenOccurrences: ExerciseOccurrenceDebug[];
   possibleExerciseCards: PossibleExerciseCardDebug[];
 };
 
@@ -135,7 +136,7 @@ export type CheckpointSpec = {
   prompt: string;
   screenshotName: string;
   domFileName: string;
-  allowSkip?: boolean;
+  optional?: boolean;
 };
 
 export type RunArtifacts = {
@@ -153,10 +154,21 @@ export type CheckpointCaptureRecord = {
   prompt: string;
   startedAt: string;
   completedAt?: string;
+  action?: "captured" | "skipped" | "quit";
+  attemptCount?: number;
   skipped?: boolean;
+  required?: boolean;
+  optional?: boolean;
+  dialogFound?: boolean;
+  exerciseOccurrenceCount?: number;
+  inputControlCount?: number;
+  networkEventCount?: number;
   screenshotPath?: string;
   domPath?: string;
+  errors?: string[];
 };
+
+export type FinishedReason = "completed_all_checkpoints" | "user_quit" | "duration_exceeded" | "fatal_error";
 
 export type TruthCaptureLog = {
   runAt: string;
@@ -165,6 +177,7 @@ export type TruthCaptureLog = {
   date: string;
   manual: boolean;
   allowSaveCapture: boolean;
+  finishedReason: FinishedReason;
   liveCaptureRan: boolean;
   checkpoints: CheckpointCaptureRecord[];
   screenshots: string[];
@@ -180,7 +193,8 @@ export type TruthCaptureLog = {
 export type TruthCaptureVerdict =
   | "continue_ui_writer_with_exact_selectors"
   | "pivot_to_network_payload_writer"
-  | "pause_field_automation_do_catalog_enrichment";
+  | "pause_field_automation_do_catalog_enrichment"
+  | "capture_incomplete";
 
 type ShapeObject = {
   type: string;
@@ -305,6 +319,12 @@ export function buildHelpText(): string {
     "  --duration <seconds>      Overall run deadline in seconds",
     "  --allow-save-capture      Enable separate save-capture phase after typed confirmation",
     "  --help                    Show this help",
+    "",
+    "Checkpoint prompt controls:",
+    "  - Enter: capture and continue",
+    "  - r: retry current checkpoint",
+    "  - s: skip optional checkpoint",
+    "  - q: finish early and write summary",
     "",
     "Safety:",
     "  - No field writing by automation.",
@@ -446,7 +466,7 @@ export function buildCheckpointPlan(allowSaveCapture: boolean): CheckpointSpec[]
       prompt: "Checkpoint 5:\nOptionally repeat with Forearm Plank, sets=3, duration/time=30 sec, note TEST NOTE MANUAL CAPTURE Forearm Plank.\nIf you skip the second exercise, just press Enter.\nPress Enter when ready.",
       screenshotName: "checkpoint-05-plank-duration-set.png",
       domFileName: "checkpoint-05-plank-duration-set.json",
-      allowSkip: true,
+      optional: true,
     },
     {
       id: "checkpoint-06-before-save",
@@ -520,8 +540,35 @@ async function promptWithDeadline(promptText: string, deadlineAtMs: number): Pro
   }
 }
 
+function normalizeCheckpointAction(inputValue: string): "capture" | "retry" | "skip" | "quit" {
+  const normalized = inputValue.trim().toLowerCase();
+  if (normalized === "") return "capture";
+  if (normalized === "r") return "retry";
+  if (normalized === "s") return "skip";
+  if (normalized === "q") return "quit";
+  return "capture";
+}
+
 export async function waitForCheckpointEnter(promptText: string, deadlineAtMs: number): Promise<void> {
   await promptWithDeadline(promptText, deadlineAtMs);
+}
+
+export async function waitForCheckpointAction(
+  checkpointPrompt: string,
+  deadlineAtMs: number
+): Promise<"capture" | "retry" | "skip" | "quit"> {
+  const promptLines = [
+    checkpointPrompt,
+    "",
+    "Actions:",
+    "  Enter = capture and continue",
+    "  r = retry current checkpoint",
+    "  s = skip optional checkpoint",
+    "  q = finish early and write summary",
+    "Input:",
+  ];
+  const answer = await promptWithDeadline(promptLines.join("\n"), deadlineAtMs);
+  return normalizeCheckpointAction(answer);
 }
 
 export async function waitForTypedConfirmation(
@@ -544,6 +591,8 @@ export async function saveCheckpointScreenshot(page: Page, screenshotsDir: strin
 export async function captureDomArtifact(page: Page, checkpointId: string): Promise<DomCaptureArtifact> {
   return await page.evaluate(
     ({ checkpoint, targetExerciseNames, targetValueTokens }) => {
+      const __name = <T extends (...args: unknown[]) => unknown>(value: T): T => value;
+      void __name;
       const normalize = (value: unknown, maxLength = 220): string =>
         String(value ?? "")
           .replace(/\s+/g, " ")
@@ -691,6 +740,7 @@ export async function captureDomArtifact(page: Page, checkpointId: string): Prom
         const textareas = collectControls(dialog, "textarea,[contenteditable='true']", 40);
         const buttons = collectControls(dialog, "button,[role='button']", 40);
         const exactExerciseNameOccurrences: ExerciseOccurrenceDebug[] = [];
+        const exactValueTokenOccurrences: ExerciseOccurrenceDebug[] = [];
         const possibleExerciseCardMap = new Map<string, PossibleExerciseCardDebug>();
 
         const addValueSignal = (control: ControlDebug): void => {
@@ -715,11 +765,12 @@ export async function captureDomArtifact(page: Page, checkpointId: string): Prom
           sourceNode: Element,
           name: string,
           source: ExerciseOccurrenceDebug["source"],
-          value: string
+          value: string,
+          target: "exercise" | "value"
         ): void => {
           const scope = controlScopeFor(sourceNode, dialog);
           const scopeKey = `${name}::${source}::${Math.round(scope.getBoundingClientRect().x)}::${Math.round(scope.getBoundingClientRect().y)}::${Math.round(scope.getBoundingClientRect().width)}::${Math.round(scope.getBoundingClientRect().height)}`;
-          exactExerciseNameOccurrences.push({
+          const occurrence = {
             name,
             source,
             value: normalize(value, 160),
@@ -727,7 +778,12 @@ export async function captureDomArtifact(page: Page, checkpointId: string): Prom
             parentChain: parentChain(sourceNode),
             nearbyInputs: collectControls(scope, "input,select,textarea,[contenteditable='true']", 8),
             nearbyButtons: collectControls(scope, "button,[role='button']", 8),
-          });
+          } satisfies ExerciseOccurrenceDebug;
+          if (target === "exercise") {
+            exactExerciseNameOccurrences.push(occurrence);
+          } else {
+            exactValueTokenOccurrences.push(occurrence);
+          }
           if (!possibleExerciseCardMap.has(scopeKey)) {
             const controls = [
               ...collectControls(scope, "input,select", 12),
@@ -759,16 +815,43 @@ export async function captureDomArtifact(page: Page, checkpointId: string): Prom
           for (const name of targetExerciseNames) {
             const loweredName = name.toLowerCase();
             if (text && text.toLowerCase().includes(loweredName)) {
-              pushOccurrence(node, name, "text", text);
+              pushOccurrence(node, name, "text", text, "exercise");
             }
             if (currentValue && currentValue.toLowerCase().includes(loweredName)) {
-              pushOccurrence(node, name, node instanceof HTMLTextAreaElement ? "textareaValue" : "inputValue", currentValue);
+              pushOccurrence(
+                node,
+                name,
+                node instanceof HTMLTextAreaElement ? "textareaValue" : "inputValue",
+                currentValue,
+                "exercise"
+              );
             }
             if (ariaLabel && ariaLabel.toLowerCase().includes(loweredName)) {
-              pushOccurrence(node, name, "ariaLabel", ariaLabel);
+              pushOccurrence(node, name, "ariaLabel", ariaLabel, "exercise");
             }
             if (placeholder && placeholder.toLowerCase().includes(loweredName)) {
-              pushOccurrence(node, name, "placeholder", placeholder);
+              pushOccurrence(node, name, "placeholder", placeholder, "exercise");
+            }
+          }
+          for (const token of targetValueTokens) {
+            const loweredToken = token.toLowerCase();
+            if (text && text.toLowerCase().includes(loweredToken)) {
+              pushOccurrence(node, token, "text", text, "value");
+            }
+            if (currentValue && currentValue.toLowerCase().includes(loweredToken)) {
+              pushOccurrence(
+                node,
+                token,
+                node instanceof HTMLTextAreaElement ? "textareaValue" : "inputValue",
+                currentValue,
+                "value"
+              );
+            }
+            if (ariaLabel && ariaLabel.toLowerCase().includes(loweredToken)) {
+              pushOccurrence(node, token, "ariaLabel", ariaLabel, "value");
+            }
+            if (placeholder && placeholder.toLowerCase().includes(loweredToken)) {
+              pushOccurrence(node, token, "placeholder", placeholder, "value");
             }
           }
         }
@@ -781,6 +864,7 @@ export async function captureDomArtifact(page: Page, checkpointId: string): Prom
           textareas,
           buttons,
           exactExerciseNameOccurrences,
+          exactValueTokenOccurrences,
           possibleExerciseCards: [...possibleExerciseCardMap.values()].slice(0, 24),
         });
       }
@@ -924,6 +1008,21 @@ function dedupeLines(values: string[]): string[] {
   return out;
 }
 
+function isMutationMethod(method: string): boolean {
+  return ["POST", "PUT", "PATCH"].includes(method.toUpperCase());
+}
+
+function isSaveLikeEvent(event: NetworkEvent): boolean {
+  const haystack = JSON.stringify({
+    url: event.urlRedacted,
+    method: event.method,
+    requestPostDataShape: event.requestPostDataShape,
+    responseJsonShape: event.responseJsonShape,
+    responseTextSnippet: event.responseTextSnippet,
+  }).toLowerCase();
+  return /save|workout|structure|exercise|note|set|rep|duration/.test(haystack);
+}
+
 export function buildRunSummaryMarkdown(log: TruthCaptureLog, domArtifacts: DomCaptureArtifact[]): string {
   const dialogDetected = domArtifacts.some((artifact) => artifact.dialogFound);
   const allOccurrences = domArtifacts.flatMap((artifact) =>
@@ -958,11 +1057,16 @@ export function buildRunSummaryMarkdown(log: TruthCaptureLog, domArtifacts: DomC
       )
   );
 
-  const verdict: TruthCaptureVerdict = networkPromising
-    ? "pivot_to_network_payload_writer"
-    : uiFeasible
-      ? "continue_ui_writer_with_exact_selectors"
-      : "pause_field_automation_do_catalog_enrichment";
+  const completedCheckpointCount = log.checkpoints.filter((entry) => entry.action === "captured").length;
+  const missingCheckpointCount = log.checkpoints.length - completedCheckpointCount;
+  const verdict: TruthCaptureVerdict =
+    completedCheckpointCount < 3
+      ? "capture_incomplete"
+      : networkPromising
+        ? "pivot_to_network_payload_writer"
+        : uiFeasible
+          ? "continue_ui_writer_with_exact_selectors"
+          : "pause_field_automation_do_catalog_enrichment";
 
   const recommendation =
     verdict === "pivot_to_network_payload_writer"
@@ -980,6 +1084,20 @@ export function buildRunSummaryMarkdown(log: TruthCaptureLog, domArtifacts: DomC
   lines.push(`- Date: ${log.date}`);
   lines.push(`- Live truth capture ran: ${log.liveCaptureRan ? "yes" : "no"}`);
   lines.push(`- Save capture allowed: ${log.allowSaveCapture ? "yes" : "no"}`);
+  lines.push(`- Finished reason: ${log.finishedReason}`);
+  lines.push(`- Completed checkpoints: ${completedCheckpointCount}`);
+  lines.push(`- Missing checkpoints: ${missingCheckpointCount}`);
+  lines.push("");
+  lines.push("## Checkpoints");
+  for (const checkpoint of log.checkpoints) {
+    lines.push(
+      `- ${checkpoint.id}: action=${checkpoint.action ?? "unknown"}, dialogFound=${
+        checkpoint.dialogFound === undefined ? "n/a" : checkpoint.dialogFound ? "yes" : "no"
+      }, exerciseOccurrences=${checkpoint.exerciseOccurrenceCount ?? 0}, inputControls=${checkpoint.inputControlCount ?? 0}, networkEvents=${checkpoint.networkEventCount ?? 0}`
+    );
+    lines.push(`  - screenshot: ${checkpoint.screenshotPath ?? "n/a"}`);
+    lines.push(`  - dom: ${checkpoint.domPath ?? "n/a"}`);
+  }
   lines.push("");
   lines.push("## Findings");
   lines.push(`1. Was New Strength Builder dialog detected? ${dialogDetected ? "Yes." : "No."}`);
@@ -1021,6 +1139,34 @@ export function buildRunSummaryMarkdown(log: TruthCaptureLog, domArtifacts: DomC
   lines.push(`8. Is network/API writer more promising? ${networkPromising ? "Yes." : "Not from this run."}`);
   lines.push(`9. Exact next recommendation: ${recommendation}`);
   lines.push("");
+  lines.push("## Network Summary");
+  lines.push(`- Total relevant network events: ${log.networkEvents.length}`);
+  const mutationEvents = log.networkEvents.filter((event) => isMutationMethod(event.method));
+  lines.push(`- POST/PUT/PATCH observed: ${mutationEvents.length > 0 ? "yes" : "no"}`);
+  const saveLikeEvents = log.networkEvents.filter((event) => isSaveLikeEvent(event));
+  lines.push(`- Save-like endpoint observed: ${saveLikeEvents.length > 0 ? "yes" : "no"}`);
+  const endpointsTouched = dedupeLines(log.networkEvents.map((event) => event.urlRedacted));
+  lines.push("- Endpoints touched:");
+  if (endpointsTouched.length === 0) {
+    lines.push("  - none");
+  } else {
+    for (const endpoint of endpointsTouched.slice(0, 20)) {
+      lines.push(`  - ${endpoint}`);
+    }
+  }
+  lines.push("- Events per checkpoint interval:");
+  const perCheckpoint = new Map<string, number>();
+  for (const event of log.networkEvents) {
+    perCheckpoint.set(event.checkpoint, (perCheckpoint.get(event.checkpoint) ?? 0) + 1);
+  }
+  if (perCheckpoint.size === 0) {
+    lines.push("  - none");
+  } else {
+    for (const [checkpointId, count] of perCheckpoint.entries()) {
+      lines.push(`  - ${checkpointId}: ${count}`);
+    }
+  }
+  lines.push("");
   lines.push("## Artifacts");
   for (const screenshot of log.screenshots) {
     lines.push(`- Screenshot: \`${screenshot}\``);
@@ -1052,6 +1198,10 @@ export function buildRunSummaryMarkdown(log: TruthCaptureLog, domArtifacts: DomC
 }
 
 export function deriveVerdict(log: TruthCaptureLog, domArtifacts: DomCaptureArtifact[]): TruthCaptureVerdict {
+  const completedCheckpointCount = log.checkpoints.filter((entry) => entry.action === "captured").length;
+  if (completedCheckpointCount < 3) {
+    return "capture_incomplete";
+  }
   const summary = buildRunSummaryMarkdown(log, domArtifacts);
   if (summary.includes("VERDICT: pivot_to_network_payload_writer")) {
     return "pivot_to_network_payload_writer";
@@ -1059,7 +1209,10 @@ export function deriveVerdict(log: TruthCaptureLog, domArtifacts: DomCaptureArti
   if (summary.includes("VERDICT: continue_ui_writer_with_exact_selectors")) {
     return "continue_ui_writer_with_exact_selectors";
   }
-  return "pause_field_automation_do_catalog_enrichment";
+  if (summary.includes("VERDICT: pause_field_automation_do_catalog_enrichment")) {
+    return "pause_field_automation_do_catalog_enrichment";
+  }
+  return "capture_incomplete";
 }
 
 export { profileDir, sanitizeAthleteUrl };
