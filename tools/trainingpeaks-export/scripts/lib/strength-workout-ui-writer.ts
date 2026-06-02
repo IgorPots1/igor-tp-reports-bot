@@ -36,6 +36,8 @@ export type ExactVisibleResultDecision = {
 export type StrengthWorkoutRunSummary = {
   runAt: string;
   mode: "dry-run" | "apply";
+  runStatus: "completed" | "aborted_by_user" | "manual_builder_timeout" | "browser_crash";
+  manualBuilder: boolean;
   athleteUrlRedacted: string;
   targetDate: string;
   title: string;
@@ -70,7 +72,7 @@ export type StrengthWorkoutRunSummary = {
     missingExercisesVisible: string[];
     visibleExerciseCount: number;
     unexpectedExerciseCheck: string;
-    status: "passed" | "partial" | "failed" | "ready_for_apply";
+    status: "passed" | "partial" | "failed" | "ready_for_apply" | "not_run" | "stale_page_text";
   };
   visualFieldVerification?: {
     beforeSave: {
@@ -301,6 +303,7 @@ export function buildStrengthWorkoutSummaryMarkdown(summary: StrengthWorkoutRunS
   lines.push("## Run");
   lines.push(`- Run at: ${summary.runAt}`);
   lines.push(`- Mode: ${summary.mode}`);
+  lines.push(`- Run status: ${summary.runStatus}`);
   lines.push(`- Athlete: \`${summary.athleteUrlRedacted}\``);
   lines.push(`- Target date: ${summary.targetDate}`);
   lines.push(`- Title: ${summary.title}`);
@@ -310,6 +313,12 @@ export function buildStrengthWorkoutSummaryMarkdown(summary: StrengthWorkoutRunS
   lines.push(`- Builder opened: ${summary.builderOpened ? "yes" : "no"}`);
   lines.push(`- Add Block found: ${summary.addBlockButtonFound ? "yes" : "no"}`);
   lines.push(`- Picker search found: ${summary.pickerSearchFound ? "yes" : "no"}`);
+  if (summary.manualBuilder && !summary.builderOpened) {
+    lines.push("- Manual-builder gate did not pass.");
+  }
+  if (!summary.builderOpened || summary.attemptedExercises.length === 0) {
+    lines.push("- No builder detected; no exercise attempts were made; card diagnostics not generated.");
+  }
   lines.push("");
   lines.push("## Local catalog preflight");
   lines.push(`- Requested exercises: ${summary.localCatalogPreflight.requestedNames.length}`);

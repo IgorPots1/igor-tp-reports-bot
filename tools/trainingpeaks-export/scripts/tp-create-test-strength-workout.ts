@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { stdin as input, stdout as output } from "node:process";
@@ -56,6 +56,12 @@ const visualFieldProbeFixturePath = path.join(
   "fixtures",
   "strength-workout-template.visual-field-probe.fixture.json"
 );
+const visualFieldRepsNotesProbeFixturePath = path.join(
+  toolRoot,
+  "scripts",
+  "fixtures",
+  "strength-workout-template.visual-field-reps-notes-probe.fixture.json"
+);
 const renderedCatalogPath = path.join(repoRoot, "reports", "strength-builder-ai-audit-input", "raw-rendered-exercises.json");
 const defaultOutDir = path.join(repoRoot, "reports", "strength-builder-create-test-workout");
 const summaryPath = path.join(defaultOutDir, "CREATE_TEST_WORKOUT_SUMMARY.md");
@@ -70,7 +76,12 @@ type CliArgs = {
   headless: boolean;
   mode: "dry-run" | "apply";
   manualBuilder: boolean;
-  template: "default" | "minimal-strength" | "runner-strength-fields-probe" | "visual-field-probe";
+  template:
+    | "default"
+    | "minimal-strength"
+    | "runner-strength-fields-probe"
+    | "visual-field-probe"
+    | "visual-field-reps-notes-probe";
   visualConfirmBeforeSave: boolean;
   nonInteractive: boolean;
   manualBuilderTimeoutSeconds: number;
@@ -113,6 +124,7 @@ type RunState = {
   addBlockButtonFound: boolean;
   pickerSearchFound: boolean;
   saveClicked: boolean;
+  runStatus: StrengthWorkoutRunSummary["runStatus"];
   visualFieldVerification?: StrengthWorkoutRunSummary["visualFieldVerification"];
 };
 
@@ -132,6 +144,15 @@ type BuilderFrameProbeReport = {
   selectedFrameUrl: string;
   selectedFrameTitle?: string;
   frames: BuilderFrameProbe[];
+};
+
+type ManualBuilderGateDetection = {
+  dialogFound: boolean;
+  addBlockFound: boolean;
+  workoutTitleFound: boolean;
+  searchInputFound: boolean;
+  selectedFrameUrl: string;
+  currentUrl: string;
 };
 
 type CardFieldDebugEntry = {
@@ -221,12 +242,12 @@ function printHelp(): void {
   console.log("  --dry-run | --apply    Dry-run is default");
   console.log("  --manual-builder       Wait for manual builder open before checks");
   console.log(
-    "  --template <name>      default | minimal-strength | runner-strength-fields-probe | visual-field-probe"
+    "  --template <name>      default | minimal-strength | runner-strength-fields-probe | visual-field-probe | visual-field-reps-notes-probe"
   );
   console.log("  --visual-confirm-before-save  Pause before Save and wait for typed confirmation");
   console.log("  --pause-before-save           Alias for --visual-confirm-before-save");
   console.log("  --non-interactive      Do not wait for Enter/typed prompt");
-  console.log("  --manual-builder-timeout-seconds <n>  Wait window for manual builder open (default: 120)");
+  console.log("  --manual-builder-timeout-seconds <n>  Wait window for manual builder open (default: 300)");
   console.log(`  --apply-confirmation   Required with --apply --non-interactive; exact value: ${REQUIRED_CONFIRMATION}`);
   console.log("");
   console.log("Safety:");
@@ -244,7 +265,7 @@ function parseArgs(argv: string[]): CliArgs {
     template: "default",
     visualConfirmBeforeSave: false,
     nonInteractive: false,
-    manualBuilderTimeoutSeconds: 120,
+    manualBuilderTimeoutSeconds: 300,
     help: false,
   };
   let browserModeProvided = false;
@@ -348,7 +369,8 @@ function parseArgs(argv: string[]): CliArgs {
         value !== "default" &&
         value !== "minimal-strength" &&
         value !== "runner-strength-fields-probe" &&
-        value !== "visual-field-probe"
+        value !== "visual-field-probe" &&
+        value !== "visual-field-reps-notes-probe"
       ) {
         throw new Error(`Unsupported --template value "${value}".`);
       }
@@ -363,7 +385,8 @@ function parseArgs(argv: string[]): CliArgs {
         value !== "default" &&
         value !== "minimal-strength" &&
         value !== "runner-strength-fields-probe" &&
-        value !== "visual-field-probe"
+        value !== "visual-field-probe" &&
+        value !== "visual-field-reps-notes-probe"
       ) {
         throw new Error(`Unsupported --template value "${value}".`);
       }
@@ -405,6 +428,7 @@ function fixturePathForTemplate(template: CliArgs["template"]): string {
   if (template === "minimal-strength") return minimalFixturePath;
   if (template === "runner-strength-fields-probe") return runnerStrengthFieldsProbeFixturePath;
   if (template === "visual-field-probe") return visualFieldProbeFixturePath;
+  if (template === "visual-field-reps-notes-probe") return visualFieldRepsNotesProbeFixturePath;
   return defaultFixturePath;
 }
 
@@ -450,15 +474,6 @@ async function promptForConfirmation(args: CliArgs): Promise<void> {
   }
 }
 
-async function waitForEnter(promptText: string): Promise<void> {
-  const rl = createInterface({ input, output });
-  try {
-    await rl.question(`${promptText}\n`);
-  } finally {
-    rl.close();
-  }
-}
-
 async function waitForTypedYes(promptText: string): Promise<boolean> {
   const rl = createInterface({ input, output });
   try {
@@ -478,6 +493,44 @@ function listFramesWithMainFirst(page: Page): Frame[] {
   const main = getMainFrame(page);
   const rest = all.filter((frame) => frame !== main);
   return [main, ...rest];
+}
+
+async function readManualBuilderGateDetection(page: Page): Promise<ManualBuilderGateDetection> {
+  const resolved = await resolveBuilderScope(page);
+  const currentUrl = page.url();
+  if (!resolved) {
+    return {
+      dialogFound: false,
+      addBlockFound: false,
+      workoutTitleFound: false,
+      searchInputFound: false,
+      selectedFrameUrl: currentUrl,
+      currentUrl,
+    };
+  }
+  const dialog = await resolveBuilderDialogRoot(resolved.scope);
+  const addBlock = await locateAddBlockButton(resolved.scope);
+  const search = await locateSearchInput(resolved.scope);
+  const workoutTitleCandidates = [
+    resolved.scope.getByPlaceholder(/Workout Title/i).first(),
+    resolved.scope.getByRole("textbox", { name: /Workout Title|Title/i }).first(),
+    resolved.scope.locator("input[placeholder*='Workout Title']").first(),
+  ];
+  let workoutTitleFound = false;
+  for (const candidate of workoutTitleCandidates) {
+    if ((await candidate.count().catch(() => 0)) > 0 && (await candidate.isVisible().catch(() => false))) {
+      workoutTitleFound = true;
+      break;
+    }
+  }
+  return {
+    dialogFound: Boolean(dialog),
+    addBlockFound: Boolean(addBlock),
+    workoutTitleFound,
+    searchInputFound: Boolean(search),
+    selectedFrameUrl: resolved.frame.url(),
+    currentUrl,
+  };
 }
 
 async function probeBuilderFrames(
@@ -803,9 +856,12 @@ async function saveScreenshot(page: Page, state: RunState, label: string): Promi
   return relative;
 }
 
-async function collectCardCandidates(scope: PageLike, exerciseName: string): Promise<CardCandidateInternal[]> {
+async function collectCardCandidates(scope: PageLike | Locator, exerciseName: string): Promise<CardCandidateInternal[]> {
   const normalizedName = normalizeVisibleText(exerciseName).toLowerCase();
-  const dialog = await resolveBuilderDialogRoot(scope);
+  const dialog =
+    typeof (scope as Locator).isVisible === "function"
+      ? (scope as Locator)
+      : await resolveBuilderDialogRoot(scope as PageLike);
   if (!dialog) {
     return [];
   }
@@ -1002,6 +1058,49 @@ async function collectCardCandidates(scope: PageLike, exerciseName: string): Pro
   );
 }
 
+function hasStrongCardFieldSignals(candidate: CardCandidateInternal): boolean {
+  const joinedText = [
+    candidate.textSample.join(" "),
+    candidate.inputs.map((entry) => `${entry.nearbyText ?? ""} ${entry.ariaLabel ?? ""}`).join(" "),
+    candidate.textareas.map((entry) => `${entry.nearbyText ?? ""} ${entry.ariaLabel ?? ""}`).join(" "),
+    candidate.buttons.map((entry) => `${entry.text ?? ""} ${entry.ariaLabel ?? ""} ${entry.nearbyText ?? ""}`).join(" "),
+  ]
+    .join(" ")
+    .toLowerCase();
+  return /sets/.test(joinedText) || /reps/.test(joinedText) || /coach notes?|notes/.test(joinedText);
+}
+
+function scoreCardCandidate(candidate: CardCandidateInternal): number {
+  let score = 0;
+  if (!candidate.rejectedReason) score += 200;
+  if (candidate.exactNameFound) score += 100;
+  if (candidate.exactNameSource === "inputValue") score += 80;
+  if (candidate.exactNameSource === "textareaValue") score += 70;
+  if (candidate.exactNameSource === "selectValue") score += 70;
+  if (candidate.exactNameSource === "text") score += 50;
+  if (candidate.exactNameSource === "ariaLabel") score += 25;
+  if (candidate.exactNameSource === "placeholder") score += 10;
+  if (hasStrongCardFieldSignals(candidate)) score += 55;
+  if (candidate.rect.width >= 180 && candidate.rect.height >= 90) score += 20;
+  return score;
+}
+
+async function resolveExerciseCardInBuilderDialog(
+  dialog: Locator,
+  exerciseName: string
+): Promise<{ locator: Locator | null; candidates: CardCandidateInternal[]; selectedCandidateIndex?: number }> {
+  const candidates = await collectCardCandidates(dialog, exerciseName);
+  const exact = candidates.filter((entry) => entry.exactNameFound && !entry.rejectedReason);
+  const pool = exact.length > 0 ? exact : candidates.filter((entry) => !entry.rejectedReason);
+  if (pool.length === 0) {
+    return { locator: null, candidates };
+  }
+  const selected = [...pool].sort((left, right) => scoreCardCandidate(right) - scoreCardCandidate(left))[0];
+  const locator = dialog.locator("section,article,li,tr,[role='row'],[role='group'],[data-testid],div").nth(selected.locatorIndex);
+  await revealExercisePanel(locator);
+  return { locator, candidates, selectedCandidateIndex: selected.index };
+}
+
 async function saveCardCandidatesDebug(
   exerciseName: string,
   builderRootFound: boolean,
@@ -1128,30 +1227,94 @@ async function openBuilderFromCalendar(page: Page, state: RunState): Promise<boo
   return false;
 }
 
-async function runManualBuilderGate(args: CliArgs): Promise<void> {
-  console.log("");
-  console.log("[tp-create-test-strength-workout] manual-builder mode");
-  console.log("1) Open safe athlete calendar manually.");
-  console.log(`2) Open date ${args.date}.`);
-  console.log("3) Create/open a Strength workout for that date.");
-  console.log("4) Open New Strength Builder.");
-  console.log("5) Do NOT click Save.");
-  console.log("");
-  if (args.nonInteractive) {
-    console.log("[tp-create-test-strength-workout] non-interactive manual gate: continuing without Enter prompt.");
-    return;
+async function readManualBuilderGateAction(promptText: string): Promise<string> {
+  const rl = createInterface({ input, output });
+  try {
+    return (await rl.question(`${promptText}\n`)).trim().toLowerCase();
+  } finally {
+    rl.close();
   }
-  await waitForEnter("Press Enter once New Strength Builder is open.");
 }
 
-async function waitForManualBuilderOpen(page: Page, state: RunState, timeoutMs: number): Promise<boolean> {
+async function runManualBuilderGate(page: Page, state: RunState, args: CliArgs): Promise<boolean> {
+  console.log("");
+  console.log("Manual Builder Gate");
+  console.log("");
+  console.log("Open the real New Strength Builder dialog.");
+  console.log("Required visible elements:");
+  console.log("- Workout Title");
+  console.log("- Add Block");
+  console.log("- Search Exercises, Circuits, or Saved Items OR Add Block button");
+  console.log('- [role="dialog"] container');
+  console.log("");
+  console.log("Actions:");
+  console.log("Enter = check again");
+  console.log("r = retry / keep waiting");
+  console.log("s = save screenshot + diagnostics");
+  console.log("q = abort safely");
+  console.log("");
   const startedAt = Date.now();
+  const timeoutMs = args.manualBuilderTimeoutSeconds * 1000;
+
   while (Date.now() - startedAt <= timeoutMs) {
-    if (await openExistingBuilderIfPresent(page, state)) {
+    const label = `manual-gate-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+    const screenshotPath = await saveScreenshot(page, state, label);
+    const detection = await readManualBuilderGateDetection(page);
+    const gatePassed =
+      detection.dialogFound &&
+      (detection.addBlockFound || detection.workoutTitleFound || detection.searchInputFound);
+    state.builderOpened = gatePassed;
+    state.addBlockButtonFound = detection.addBlockFound;
+    state.pickerSearchFound = detection.searchInputFound;
+
+    console.log("");
+    console.log(`[tp-create-test-strength-workout] manual gate check`);
+    console.log(`- dialogFound: ${detection.dialogFound ? "yes" : "no"}`);
+    console.log(`- addBlockFound: ${detection.addBlockFound ? "yes" : "no"}`);
+    console.log(`- workoutTitleFound: ${detection.workoutTitleFound ? "yes" : "no"}`);
+    console.log(`- searchInputFound: ${detection.searchInputFound ? "yes" : "no"}`);
+    console.log(`- current URL: ${detection.currentUrl}`);
+    console.log(`- screenshot: ${screenshotPath}`);
+
+    if (gatePassed) {
+      console.log("[tp-create-test-strength-workout] Manual-builder gate passed.");
       return true;
     }
-    await page.waitForTimeout(1000);
+
+    console.log(
+      "[tp-create-test-strength-workout] Builder not detected. Keep New Strength Builder open, then press Enter/r. Type q to abort."
+    );
+
+    const remainingSeconds = Math.max(0, Math.ceil((timeoutMs - (Date.now() - startedAt)) / 1000));
+    let action = "";
+    if (args.nonInteractive) {
+      await page.waitForTimeout(1000);
+      action = "r";
+    } else {
+      action = await readManualBuilderGateAction(
+        `manual-builder gate action (Enter/r/s/q). Timeout in ${remainingSeconds}s:`
+      );
+    }
+    if (action === "q") {
+      state.runStatus = "aborted_by_user";
+      state.errors.push("Manual-builder gate aborted by user (q).");
+      return false;
+    }
+    if (action === "s") {
+      const diagPath = await saveBuilderFrameProbeReport(
+        await probeBuilderFrames(page, [], getMainFrame(page)),
+        `manual-gate-${Date.now()}`
+      );
+      state.warnings.push(`Manual gate diagnostics saved: ${diagPath}`);
+    }
+    if (action === "" || action === "r" || action === "s") {
+      continue;
+    }
+    console.log("[tp-create-test-strength-workout] Unknown action. Use Enter/r/s/q.");
   }
+
+  state.runStatus = "manual_builder_timeout";
+  state.errors.push(`Manual builder was not detected within timeout (${args.manualBuilderTimeoutSeconds}s).`);
   return false;
 }
 
@@ -1371,10 +1534,18 @@ function isTimePlaceholderLike(value: string | undefined): boolean {
   const normalized = sanitizeDebugText(value).toLowerCase();
   return (
     normalized === "hh:mm:ss" ||
+    normalized === "hh:mm aa" ||
     normalized === "mm:ss" ||
     normalized === "h:mm:ss" ||
-    normalized.includes("hh:mm:ss")
+    normalized.includes("hh:mm:ss") ||
+    normalized.includes("hh:mm aa")
   );
+}
+
+function looksLikeStartTimeSelectorHint(value: string | undefined): boolean {
+  const normalized = sanitizeDebugText(value).toLowerCase();
+  if (!normalized) return false;
+  return normalized.includes("start time") || normalized.includes("hh:mm aa");
 }
 
 function normalizeDurationVariants(raw: string): string[] {
@@ -1422,8 +1593,8 @@ async function revealExercisePanel(block: Locator): Promise<void> {
 
 async function revealCoachNotesEditor(block: Locator): Promise<void> {
   const candidates = [
-    block.getByRole("button", { name: /Add Note|Coach Notes?|Notes?|Instructions?/i }).first(),
-    block.getByText(/Add Note|Coach Notes?|Notes?|Instructions?/i).first(),
+    block.getByRole("button", { name: /Add Coach Notes|Coach Notes?|Add Note|Notes?/i }).first(),
+    block.getByText(/Add Coach Notes|Coach Notes?|Add Note|Notes?/i).first(),
   ];
   for (const target of candidates) {
     if ((await target.count()) === 0) continue;
@@ -1447,12 +1618,21 @@ async function writeSemanticFieldInExerciseBlock(
   }
 
   const readBack = sanitizeDebugText(result.readBack);
+  const selectorHint = sanitizeDebugText(result.selectorHint);
   if (options.kind !== "duration" && isTimePlaceholderLike(readBack)) {
     return {
       status: "wrong_field",
       readBack,
       selectorHint: result.selectorHint,
       detail: `Read-back looks like a time placeholder (${readBack}).`,
+    };
+  }
+  if (options.kind === "duration" && looksLikeStartTimeSelectorHint(selectorHint)) {
+    return {
+      status: "wrong_field",
+      readBack,
+      selectorHint: result.selectorHint,
+      detail: "Duration candidate resolved to Start Time-like field; rejected.",
     };
   }
 
@@ -1634,23 +1814,6 @@ async function ensurePickerReadyWithDebug(
   return { searchInput, artifactPath, addBlockLocator: addBlockButton };
 }
 
-function selectCardCandidate(
-  before: CardCandidateInternal[],
-  after: CardCandidateInternal[]
-): CardCandidateInternal | null {
-  const beforeSignatures = new Set(before.filter((entry) => !entry.rejectedReason).map((entry) => entry.signature));
-  const validAfter = after.filter((entry) => !entry.rejectedReason);
-  const exactNew = validAfter.filter((entry) => entry.exactNameFound && !beforeSignatures.has(entry.signature));
-  if (exactNew.length > 0) {
-    return exactNew.sort((left, right) => right.rect.y - left.rect.y)[0];
-  }
-  const exactAny = validAfter.filter((entry) => entry.exactNameFound);
-  if (exactAny.length > 0) {
-    return exactAny.sort((left, right) => right.rect.y - left.rect.y)[0];
-  }
-  return null;
-}
-
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -1659,25 +1822,6 @@ function markNotFound(field: FieldWriteResult, detail: string): void {
   field.attempted = true;
   field.status = "not_found";
   field.detail = detail;
-}
-
-async function locateSelectedExerciseCard(
-  scope: PageLike,
-  exerciseName: string,
-  beforeCandidates: CardCandidateInternal[]
-): Promise<{ locator: Locator | null; candidates: CardCandidateInternal[]; selectedCandidateIndex?: number }> {
-  const afterCandidates = await collectCardCandidates(scope, exerciseName);
-  const selected = selectCardCandidate(beforeCandidates, afterCandidates);
-  if (!selected) {
-    return { locator: null, candidates: afterCandidates };
-  }
-  const dialog = await resolveBuilderDialogRoot(scope);
-  if (!dialog) {
-    return { locator: null, candidates: afterCandidates };
-  }
-  const locator = dialog.locator("section,article,li,tr,[role='row'],[role='group'],[data-testid],div").nth(selected.locatorIndex);
-  await revealExercisePanel(locator);
-  return { locator, candidates: afterCandidates, selectedCandidateIndex: selected.index };
 }
 
 function markExerciseCardNotFound(attempt: ExerciseAttempt): void {
@@ -1773,20 +1917,10 @@ async function runDryRunFlow(
   state: RunState,
   args: CliArgs
 ): Promise<void> {
-  if (args.manualBuilder) {
-    await runManualBuilderGate(args);
-  }
   const opened = args.manualBuilder
-    ? args.nonInteractive
-      ? await waitForManualBuilderOpen(page, state, args.manualBuilderTimeoutSeconds * 1000)
-      : await openExistingBuilderIfPresent(page, state)
+    ? await runManualBuilderGate(page, state, args)
     : await openBuilderFromCalendar(page, state);
   if (!opened) {
-    if (args.manualBuilder && args.nonInteractive) {
-      state.errors.push(
-        `Manual builder was not detected within timeout (${args.manualBuilderTimeoutSeconds}s).`
-      );
-    }
     return;
   }
   const resolved = await resolveBuilderScope(page);
@@ -1854,20 +1988,10 @@ async function runApplyFlow(
   state: RunState,
   args: CliArgs
 ): Promise<void> {
-  if (args.manualBuilder) {
-    await runManualBuilderGate(args);
-  }
   const opened = args.manualBuilder
-    ? args.nonInteractive
-      ? await waitForManualBuilderOpen(page, state, args.manualBuilderTimeoutSeconds * 1000)
-      : await openExistingBuilderIfPresent(page, state)
+    ? await runManualBuilderGate(page, state, args)
     : await openBuilderFromCalendar(page, state);
   if (!opened) {
-    if (args.manualBuilder && args.nonInteractive) {
-      state.errors.push(
-        `Manual builder was not detected within timeout (${args.manualBuilderTimeoutSeconds}s).`
-      );
-    }
     return;
   }
   const resolved = await resolveBuilderScope(page);
@@ -1896,6 +2020,7 @@ async function runApplyFlow(
   state.warnings.push(`Builder frame probe saved: ${frameProbePath}`);
 
   const flatExercises = flattenWorkoutExercises(template);
+  let allRequiredFieldsWrittenVisible = true;
 
   for (const exercise of flatExercises) {
     const attempt = buildAttempt(exercise);
@@ -1953,8 +2078,7 @@ async function runApplyFlow(
     const afterSearchCandidates = (await collectLocatorCandidateDebug(candidateSelectorEntries(builderScope))).filter((entry) =>
       entry.name.startsWith("search_")
     );
-    const beforeCandidates = await collectCardCandidates(builderScope, exercise.name);
-    const locatedCard = await locateSelectedExerciseCard(builderScope, exercise.name, beforeCandidates);
+    const locatedCard = await resolveExerciseCardInBuilderDialog(builderDialog, exercise.name);
     const addedNameLocator = await locateVisibleExerciseName(builderScope, exercise.name);
     const addedExerciseNameParentChain = addedNameLocator ? await collectParentChain(addedNameLocator) : undefined;
     const builderRootFoundForCard = Boolean(
@@ -1992,15 +2116,80 @@ async function runApplyFlow(
       state.errors.push(`Builder root not proven for "${exercise.name}"; diagnostic-only fail early.`);
       break;
     }
-    markExerciseCardNotFound(attempt);
+    if (!locatedCard.locator) {
+      markExerciseCardNotFound(attempt);
+      allRequiredFieldsWrittenVisible = false;
+      state.errors.push(`Exercise card in dialog not found for "${exercise.name}".`);
+      break;
+    }
+    await populateExerciseCard(locatedCard.locator, exercise, attempt);
+    const requiredFields = [attempt.fields.sets, attempt.fields.reps, attempt.fields.duration, attempt.fields.coachNote].filter(
+      (entry) => entry.required
+    );
+    const hasMissing = requiredFields.some((entry) => entry.status !== "written_visible");
+    if (hasMissing) {
+      allRequiredFieldsWrittenVisible = false;
+      const details = requiredFields
+        .map((entry) => `${entry.value ?? "<empty>"}:${entry.status}`)
+        .join(", ");
+      state.errors.push(`Required field write failed for "${exercise.name}": ${details}`);
+    }
   }
-  state.errors.push("Diagnostic-only mode: field writing skipped; Save blocked.");
   const beforeSaveVisual = await collectVisualFieldEvidence(page, flatExercises);
   state.visualFieldVerification = {
     beforeSave: beforeSaveVisual,
     afterSave: buildMissingAfterSaveVisual(beforeSaveVisual),
   };
-  await saveScreenshot(page, state, "apply-diagnostic-only");
+  await saveScreenshot(page, state, "apply-before-save");
+
+  const visualGatePassed = beforeSaveVisual.fieldsVisible && beforeSaveVisual.notesVisible;
+  if (!visualGatePassed) {
+    state.errors.push("Before-save visual verification failed (fieldsVisible/notesVisible is not yes). Save blocked.");
+  }
+  if (!allRequiredFieldsWrittenVisible) {
+    state.errors.push("Not all required fields are written_visible. Save blocked.");
+  }
+
+  if (!visualGatePassed || !allRequiredFieldsWrittenVisible) {
+    return;
+  }
+
+  if (args.visualConfirmBeforeSave) {
+    if (args.nonInteractive) {
+      state.errors.push("visual-confirm-before-save requires interactive yes/no confirmation. Save blocked in non-interactive mode.");
+      return;
+    }
+    const operatorConfirmed = await waitForTypedYes("Before-save visual gate passed. Type 'yes' to click Save, or 'no' to abort:");
+    if (!operatorConfirmed) {
+      state.warnings.push("Operator declined save at before-save confirmation prompt.");
+      return;
+    }
+  }
+
+  const saveButton =
+    builderDialog.getByRole("button", { name: /^Save$/i }).first().count().then(async (count) =>
+      count > 0 && (await builderDialog.getByRole("button", { name: /^Save$/i }).first().isVisible().catch(() => false))
+        ? builderDialog.getByRole("button", { name: /^Save$/i }).first()
+        : builderDialog.getByRole("button", { name: /Save & Close/i }).first()
+    );
+  const resolvedSaveButton = await saveButton;
+  const saveVisible = (await resolvedSaveButton.count().catch(() => 0)) > 0 && (await resolvedSaveButton.isVisible().catch(() => false));
+  if (!saveVisible) {
+    state.errors.push("Save button not found inside builder dialog after passing gates.");
+    return;
+  }
+  await resolvedSaveButton.click().catch(() => {
+    state.errors.push("Failed to click Save button after passing gates.");
+  });
+  if (state.errors.length > 0) return;
+  state.saveClicked = true;
+  await page.waitForTimeout(1200);
+  await saveScreenshot(page, state, "apply-after-save");
+  const afterSaveVisual = await collectVisualFieldEvidence(page, flatExercises);
+  state.visualFieldVerification = {
+    beforeSave: beforeSaveVisual,
+    afterSave: afterSaveVisual,
+  };
 }
 
 function slugify(value: string): string {
@@ -2016,6 +2205,7 @@ function buildVerification(
     builderOpened: boolean;
     addBlockButtonFound: boolean;
     pickerSearchFound: boolean;
+    attemptedExercisesCount: number;
     hadErrors: boolean;
   }
 ): StrengthWorkoutRunSummary["verification"] {
@@ -2023,6 +2213,36 @@ function buildVerification(
   const expectedVisible = expectedNames.filter((name) => snapshot.texts.includes(name));
   const missingVisible = expectedNames.filter((name) => !snapshot.texts.includes(name));
   const titleVisible = snapshot.texts.includes(template.title);
+  if (!input.builderOpened && input.attemptedExercisesCount === 0) {
+    return {
+      titleVisible: false,
+      expectedExercisesVisible: [],
+      missingExercisesVisible: expectedNames,
+      visibleExerciseCount: 0,
+      unexpectedExerciseCheck: "No builder detected; no exercise attempts were made; card diagnostics not generated.",
+      status: "not_run",
+    };
+  }
+  if (input.attemptedExercisesCount === 0) {
+    return {
+      titleVisible: false,
+      expectedExercisesVisible: [],
+      missingExercisesVisible: expectedNames,
+      visibleExerciseCount: 0,
+      unexpectedExerciseCheck: "Stale page text detected; verification skipped because no exercise attempts were made.",
+      status: "stale_page_text",
+    };
+  }
+  if (!input.builderOpened) {
+    return {
+      titleVisible,
+      expectedExercisesVisible: [],
+      missingExercisesVisible: expectedNames,
+      visibleExerciseCount: snapshot.count,
+      unexpectedExerciseCheck: "Builder was not confirmed as open; calendar/page text cannot be used for pass verification.",
+      status: "failed",
+    };
+  }
   if (
     input.mode === "dry-run" &&
     input.manualBuilder &&
@@ -2066,6 +2286,14 @@ async function writeArtifacts(summary: StrengthWorkoutRunSummary): Promise<void>
   await writeFile(summaryPath, buildStrengthWorkoutSummaryMarkdown(summary), "utf8");
 }
 
+async function clearDirContents(dirPath: string): Promise<void> {
+  await mkdir(dirPath, { recursive: true });
+  const entries = await readdir(dirPath, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    await rm(path.join(dirPath, entry.name), { recursive: true, force: true });
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   assertStrengthWorkoutFieldWriterBrowserScriptIsSafe();
@@ -2100,6 +2328,8 @@ async function main(): Promise<void> {
   await mkdir(defaultOutDir, { recursive: true });
   await mkdir(screenshotDir, { recursive: true });
   await mkdir(fieldDebugDir, { recursive: true });
+  await clearDirContents(screenshotDir);
+  await clearDirContents(fieldDebugDir);
 
   const state: RunState = {
     warnings: [],
@@ -2110,6 +2340,7 @@ async function main(): Promise<void> {
     addBlockButtonFound: false,
     pickerSearchFound: false,
     saveClicked: false,
+    runStatus: "completed",
     visualFieldVerification: undefined,
   };
 
@@ -2138,6 +2369,9 @@ async function main(): Promise<void> {
     }
 
     verificationSnapshot = await readVisibleExerciseSnapshot(page);
+  } catch (error) {
+    state.runStatus = "browser_crash";
+    state.errors.push(`Fatal browser/runtime error: ${String(error instanceof Error ? error.message : error)}`);
   } finally {
     await context.close().catch(() => {});
   }
@@ -2145,6 +2379,8 @@ async function main(): Promise<void> {
   const summary: StrengthWorkoutRunSummary = {
     runAt: new Date().toISOString(),
     mode: args.mode,
+    runStatus: state.runStatus,
+    manualBuilder: args.manualBuilder,
     athleteUrlRedacted,
     targetDate: args.date,
     title: template.title,
@@ -2160,6 +2396,7 @@ async function main(): Promise<void> {
       builderOpened: state.builderOpened,
       addBlockButtonFound: state.addBlockButtonFound,
       pickerSearchFound: state.pickerSearchFound,
+      attemptedExercisesCount: state.attemptedExercises.length,
       hadErrors: state.errors.length > 0,
     }),
     visualFieldVerification: state.visualFieldVerification,

@@ -37,7 +37,11 @@ const probeFixturePath = path.join(
   "strength-workout-template.runner-strength-fields-probe.fixture.json"
 );
 const visualProbeFixturePath = path.join(__dirname, "fixtures", "strength-workout-template.visual-field-probe.fixture.json");
-const visualEvidenceFixturePath = path.join(__dirname, "fixtures", "strength-visual-field-evidence.fixture.html");
+const visualRepsNotesProbeFixturePath = path.join(
+  __dirname,
+  "fixtures",
+  "strength-workout-template.visual-field-reps-notes-probe.fixture.json"
+);
 const writerSmokeFixturePath = path.join(__dirname, "fixtures", "strength-workout-field-writer.fixture.html");
 
 function assert(condition: unknown, message: string): void {
@@ -57,7 +61,28 @@ async function assertVisualFieldEvidenceFixture(
   const browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(pathToFileURL(visualEvidenceFixturePath).href, { waitUntil: "domcontentloaded" });
+    const rowsHtml = visualProbeFlat
+      .map((entry) => {
+        const metric = entry.reps
+          ? `<span class="reps">${entry.reps}</span>`
+          : entry.durationSeconds
+            ? `<span class="duration">00:${String(entry.durationSeconds).padStart(2, "0")}</span>`
+            : "";
+        return `
+          <div role="dialog">
+            <div class="exercise-card" data-exercise="${entry.name}">
+              <div>${entry.name}</div>
+              <div>Sets</div>
+              <input type="text" value="${entry.sets}" />
+              ${metric}
+              <label>Coach Notes</label>
+              <textarea>${entry.coachNote ?? ""}</textarea>
+            </div>
+          </div>
+        `;
+      })
+      .join("\n");
+    await page.setContent(`<html><body>${rowsHtml}</body></html>`, { waitUntil: "domcontentloaded" });
     const evidence = await collectVisualFieldEvidence(page, visualProbeFlat);
     assert(evidence.fieldsVisible, "Expected visual evidence fieldsVisible=true on fixture.");
     assert(evidence.notesVisible, "Expected visual evidence notesVisible=true on fixture.");
@@ -318,6 +343,10 @@ async function run(): Promise<void> {
     JSON.parse(readFileSync(visualProbeFixturePath, "utf8")) as unknown
   );
   const visualProbeFlat = flattenWorkoutExercises(visualProbeTemplate);
+  const visualRepsNotesProbeTemplate = parseStrengthWorkoutTemplate(
+    JSON.parse(readFileSync(visualRepsNotesProbeFixturePath, "utf8")) as unknown
+  );
+  const visualRepsNotesProbeFlat = flattenWorkoutExercises(visualRepsNotesProbeTemplate);
 
   assert(template.title === "TEST - Beginner Runner Strength Foundation", "Expected fixed TEST workout title.");
   assert(flatExercises.length === 13, `Expected 13 exercises, got ${flatExercises.length}.`);
@@ -342,6 +371,35 @@ async function run(): Promise<void> {
   assert(visualProbeFlat[0]?.name === "Glute Bridge", "Expected visual probe first exercise Glute Bridge.");
   assert(visualProbeFlat[1]?.name === "Forearm Plank", "Expected visual probe second exercise Forearm Plank.");
   assert(visualProbeFlat[2]?.name === "Single Leg Calf Raise", "Expected visual probe third exercise Single Leg Calf Raise.");
+  assert(
+    visualProbeFlat[0]?.coachNote === "TEST NOTE MANUAL CAPTURE Glute Bridge",
+    "Expected Glute Bridge manual-capture note."
+  );
+  assert(
+    visualProbeFlat[1]?.coachNote === "TEST NOTE MANUAL CAPTURE Forearm Plank",
+    "Expected Forearm Plank manual-capture note."
+  );
+  assert(
+    visualProbeFlat[2]?.coachNote === "TEST NOTE MANUAL CAPTURE Calf Raise",
+    "Expected calf raise manual-capture note."
+  );
+  assert(
+    visualRepsNotesProbeTemplate.id === "visual_field_reps_notes_probe",
+    "Expected reps-notes probe template id."
+  );
+  assert(
+    visualRepsNotesProbeFlat.length === 2,
+    `Expected 2 visual reps-notes probe exercises, got ${visualRepsNotesProbeFlat.length}.`
+  );
+  assert(
+    visualRepsNotesProbeFlat[0]?.name === "Glute Bridge" &&
+      visualRepsNotesProbeFlat[1]?.name === "Single Leg Calf Raise",
+    "Expected reps-notes probe to include Glute Bridge and Single Leg Calf Raise."
+  );
+  assert(
+    !visualRepsNotesProbeFlat.some((entry) => Boolean(entry.durationSeconds)),
+    "Expected reps-notes probe to exclude duration fields."
+  );
   await assertVisualFieldEvidenceFixture(visualProbeFlat);
   await assertStrengthFieldWriterFixture();
   await assertDialogScopedCardDetectionFixtures();
@@ -374,6 +432,8 @@ async function run(): Promise<void> {
   const summary: StrengthWorkoutRunSummary = {
     runAt: "2026-06-01T00:00:00.000Z",
     mode: "dry-run",
+    runStatus: "completed",
+    manualBuilder: false,
     athleteUrlRedacted: redactedUrl,
     targetDate: "2026-06-02",
     title: template.title,
@@ -455,6 +515,24 @@ async function run(): Promise<void> {
   };
   const readyMarkdown = buildStrengthWorkoutSummaryMarkdown(readySummary);
   assert(readyMarkdown.includes("ready_for_apply"), "Expected ready_for_apply status in summary markdown.");
+  const notRunSummary: StrengthWorkoutRunSummary = {
+    ...summary,
+    builderOpened: false,
+    addBlockButtonFound: false,
+    pickerSearchFound: false,
+    attemptedExercises: [],
+    verification: {
+      titleVisible: false,
+      expectedExercisesVisible: [],
+      missingExercisesVisible: flatExercises.map((exercise) => exercise.name),
+      visibleExerciseCount: 0,
+      unexpectedExerciseCheck: "No builder detected; no exercise attempts were made; card diagnostics not generated.",
+      status: "not_run",
+    },
+  };
+  const notRunMarkdown = buildStrengthWorkoutSummaryMarkdown(notRunSummary);
+  assert(notRunMarkdown.includes("No builder detected; no exercise attempts were made; card diagnostics not generated."), "Expected explicit no-builder summary line.");
+  assert(notRunMarkdown.includes("not_run"), "Expected not_run verification status in summary markdown.");
 
   const tpCreateSource = readFileSync(tpCreateScriptPath, "utf8");
   assert(
