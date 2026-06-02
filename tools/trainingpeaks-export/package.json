@@ -42,6 +42,7 @@
     "check-strength-workout-ui-writer": "tsx scripts/check-strength-workout-ui-writer.ts",
     "check-strength-field-truth-capture": "tsx scripts/check-strength-field-truth-capture.ts",
     "check-strength-builder-profile-routing": "tsx scripts/check-strength-builder-profile-routing.ts",
+    "check-running-workout-renderer": "tsx scripts/check-running-workout-renderer.ts",
     "tp-import-athletes": "tsx scripts/tp-import-athletes.ts",
     "tp-enable-weekly-reports": "tsx scripts/tp-enable-weekly-reports.ts",
     "tp-telegram-context-backfill": "tsx scripts/tp-telegram-context-backfill.ts",
