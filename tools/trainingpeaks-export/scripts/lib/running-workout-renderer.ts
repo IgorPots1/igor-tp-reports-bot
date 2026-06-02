@@ -248,7 +248,7 @@ export function buildRunningWorkoutFixtureAlignedDefinitions(): RunningWorkoutDe
       title: "API STRUCTURE TEST EASY PACE DO NOT USE",
       description: "DESC_MARKER_EASY_PACE",
       athleteId: 3102415,
-      workoutDay: "2026-06-07",
+      workoutDay: "2026-06-03",
       workoutTypeValueId: 3,
       workoutSubTypeId: null,
       blocks: [
@@ -335,7 +335,7 @@ export function buildRunningWorkoutFixtureAlignedDefinitions(): RunningWorkoutDe
       title: "API STRUCTURE TEST INTERVAL HR DO NOT USE",
       description: "DESC_MARKER_INTERVAL_HR",
       athleteId: 3102415,
-      workoutDay: "2026-06-10",
+      workoutDay: "2026-06-02",
       workoutTypeValueId: 3,
       workoutSubTypeId: null,
       blocks: [

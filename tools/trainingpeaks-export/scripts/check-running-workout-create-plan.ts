@@ -169,7 +169,9 @@ function validateCase(caseId: RunningWorkoutCaseId, fixture: Fixture): void {
   const expectedNotes = flattenNotes(responseStructure);
   const actualNotes = flattenNotes(candidateStructureParsed);
   for (const note of expectedNotes) {
-    assert(actualNotes.includes(note), `${caseId}: missing note ${note}`);
+    for (const marker of note.split("\n").map((line) => line.trim()).filter(Boolean)) {
+      assert(actualNotes.includes(marker), `${caseId}: missing note ${marker}`);
+    }
   }
 
   assert(

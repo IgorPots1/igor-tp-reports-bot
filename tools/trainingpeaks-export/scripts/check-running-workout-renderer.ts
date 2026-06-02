@@ -184,7 +184,9 @@ function validateIntervalCase(
   const notes = flattenNotes(rendered.structure);
   const expectedNotes = flattenNotes(fixture.response.structureSamples);
   for (const note of expectedNotes) {
-    assert(notes.includes(note), `${caseId}: missing note ${note}`);
+    for (const marker of note.split("\n").map((line) => line.trim()).filter(Boolean)) {
+      assert(notes.includes(marker), `${caseId}: missing note ${marker}`);
+    }
   }
 }
 

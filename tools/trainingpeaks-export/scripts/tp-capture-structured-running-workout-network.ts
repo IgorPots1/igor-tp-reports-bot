@@ -95,6 +95,13 @@ type CapturedEvent = {
     bodyFieldSamples: Record<string, unknown>;
     structureShape: unknown;
     structureSamples: unknown;
+    structureSerializedInfo: {
+      isString: boolean;
+      parseableJson: boolean | null;
+      rawLength: number;
+      rawStored: false;
+      sourceType: "stringified-json" | "object" | "missing" | "string-non-json";
+    };
     parseNote: string | null;
   };
   response: {
@@ -646,6 +653,13 @@ function extractRequestStructure(inputValue: unknown): {
   structureForSignals: unknown;
   structureShape: unknown;
   structureSamples: unknown;
+  structureSerializedInfo: {
+    isString: boolean;
+    parseableJson: boolean | null;
+    rawLength: number;
+    rawStored: false;
+    sourceType: "stringified-json" | "object" | "missing" | "string-non-json";
+  };
   parseNote: string | null;
 } {
   const structureCandidate = findStructureCandidate(inputValue);
@@ -654,11 +668,19 @@ function extractRequestStructure(inputValue: unknown): {
       structureForSignals: null,
       structureShape: describeShape(null),
       structureSamples: null,
+      structureSerializedInfo: {
+        isString: false,
+        parseableJson: null,
+        rawLength: 0,
+        rawStored: false,
+        sourceType: "missing",
+      },
       parseNote: null,
     };
   }
 
   if (typeof structureCandidate === "string") {
+    const rawLength = structureCandidate.length;
     try {
       const parsed = JSON.parse(structureCandidate);
       const sanitizedParsed = redactUnknown(parsed);
@@ -666,6 +688,13 @@ function extractRequestStructure(inputValue: unknown): {
         structureForSignals: sanitizedParsed,
         structureShape: describeShape(sanitizedParsed),
         structureSamples: buildStructureSamplesWithParseStatus("parsed", sanitizedParsed),
+        structureSerializedInfo: {
+          isString: true,
+          parseableJson: true,
+          rawLength,
+          rawStored: false,
+          sourceType: "stringified-json",
+        },
         parseNote: "request.structure parsed from JSON string",
       };
     } catch (error) {
@@ -674,6 +703,13 @@ function extractRequestStructure(inputValue: unknown): {
         structureForSignals: null,
         structureShape: describeShape(null),
         structureSamples: buildStructureSamplesWithParseStatus("failed", null, reason),
+        structureSerializedInfo: {
+          isString: true,
+          parseableJson: false,
+          rawLength,
+          rawStored: false,
+          sourceType: "string-non-json",
+        },
         parseNote: reason,
       };
     }
@@ -684,6 +720,13 @@ function extractRequestStructure(inputValue: unknown): {
     structureForSignals: sanitized,
     structureShape: describeShape(sanitized),
     structureSamples: buildStructureSamplesWithParseStatus("native", sanitized),
+    structureSerializedInfo: {
+      isString: false,
+      parseableJson: null,
+      rawLength: 0,
+      rawStored: false,
+      sourceType: "object",
+    },
     parseNote: null,
   };
 }
@@ -785,6 +828,34 @@ function evaluateStepNoteMarkers(markers: string[], structureSource: unknown): {
   const observed = expected.filter((marker) => loweredNotes.some((note) => note.includes(marker.toLowerCase())));
   const missing = expected.filter((marker) => !observed.includes(marker));
   return { expected, observed, missing };
+}
+
+function countRepetitionBlocks(value: unknown): number {
+  if (Array.isArray(value)) {
+    return value.reduce((acc, entry) => acc + countRepetitionBlocks(entry), 0);
+  }
+  if (!isRecord(value)) return 0;
+  const current = value.type === "repetition" ? 1 : 0;
+  return current + Object.values(value).reduce((acc, nested) => acc + countRepetitionBlocks(nested), 0);
+}
+
+function findFirstRepetitionCount(value: unknown): number | null {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const nested = findFirstRepetitionCount(entry);
+      if (nested !== null) return nested;
+    }
+    return null;
+  }
+  if (!isRecord(value)) return null;
+  if (value.type === "repetition" && isRecord(value.length) && typeof value.length.value === "number") {
+    return value.length.value;
+  }
+  for (const nested of Object.values(value)) {
+    const found = findFirstRepetitionCount(nested);
+    if (found !== null) return found;
+  }
+  return null;
 }
 
 function parseRelevantEndpoint(inputUrl: string): {
@@ -925,6 +996,7 @@ async function buildCapturedEvent(input: {
       bodyFieldSamples: pickFieldSamples(redactedRequestBody),
       structureShape: requestStructureData.structureShape,
       structureSamples: requestStructureData.structureSamples,
+      structureSerializedInfo: requestStructureData.structureSerializedInfo,
       parseNote: mergeParseNotes(parsedRequest.note, requestStructureData.parseNote),
     },
     response: {
@@ -1127,6 +1199,85 @@ function buildValidation(input: {
   const parseStatus = isRecord(input.requestStructureSamples) ? input.requestStructureSamples.parseStatus : null;
   if (parseStatus !== "parsed" && parseStatus !== "native") {
     warnings.push("request.structureSamples not parsed; fixture is response-truth only");
+  }
+
+  const status: "valid" | "invalid" | "partial" = errors.length > 0 ? "invalid" : warnings.length > 0 ? "partial" : "valid";
+  return { status, errors, warnings };
+}
+
+function buildRequestStructureValidation(input: {
+  definition: CaseDefinition;
+  event: CapturedEvent | null;
+  targetMetricObserved: string | null;
+  targetRangeObserved: string | null;
+  stepNotes: { expected: string[]; observed: string[]; missing: string[] };
+  requestStructureSamples: unknown;
+  requestStructureInfo: {
+    isString: boolean;
+    parseableJson: boolean | null;
+    rawLength: number;
+    rawStored: false;
+    sourceType: "stringified-json" | "object" | "missing" | "string-non-json";
+  } | null;
+  secretsFound: boolean;
+}): {
+  status: "valid" | "invalid" | "partial";
+  errors: string[];
+  warnings: string[];
+} {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const parseStatus = isRecord(input.requestStructureSamples) ? input.requestStructureSamples.parseStatus : null;
+
+  if (!input.event) {
+    errors.push("no candidate event selected");
+  }
+  if (!input.requestStructureSamples) {
+    errors.push("request.structureSamples missing");
+  }
+  if (parseStatus !== "parsed" && parseStatus !== "native") {
+    errors.push(`request.structure parse status invalid: ${String(parseStatus)}`);
+  }
+  if (input.requestStructureInfo?.sourceType === "string-non-json") {
+    errors.push("request.structure string is not parseable JSON");
+  }
+  if (input.targetMetricObserved !== input.definition.targetMetricKey) {
+    errors.push(
+      `request primaryIntensityMetric mismatch: expected ${input.definition.targetMetricKey}, got ${input.targetMetricObserved ?? "null"}`,
+    );
+  }
+  const expectedRange = `${input.definition.expectedRange.min}-${input.definition.expectedRange.max}`;
+  if (input.targetRangeObserved !== expectedRange) {
+    errors.push(`request target range mismatch: expected ${expectedRange}, got ${input.targetRangeObserved ?? "null"}`);
+  }
+
+  const repetitionObserved = countRepetitionBlocks(input.requestStructureSamples) > 0;
+  if (input.definition.expectRepeatBlock && !repetitionObserved) {
+    errors.push("expected repetition block in request structure was not observed");
+  }
+  if (!input.definition.expectRepeatBlock && repetitionObserved) {
+    warnings.push("unexpected repetition block observed for non-interval request structure");
+  }
+  if (input.definition.expectRepeatBlock) {
+    const repeatCount = findFirstRepetitionCount(input.requestStructureSamples);
+    if (repeatCount === null) {
+      errors.push("request repetition repeatCount not found");
+    } else if (repeatCount !== 4) {
+      errors.push(`request repetition repeatCount mismatch: expected 4, got ${repeatCount}`);
+    }
+  }
+
+  if (input.stepNotes.missing.length > 0) {
+    errors.push(`missing request step note markers: ${input.stepNotes.missing.join(", ")}`);
+  }
+  if (input.secretsFound) {
+    errors.push("secretsFound flag is true");
+  }
+  if (input.requestStructureInfo?.isString && input.requestStructureInfo.rawLength <= 0) {
+    errors.push("request structure rawLength must be > 0 for string source");
+  }
+  if (input.requestStructureInfo?.rawStored !== false) {
+    errors.push("request structure rawStored must be false");
   }
 
   const status: "valid" | "invalid" | "partial" = errors.length > 0 ? "invalid" : warnings.length > 0 ? "partial" : "valid";
@@ -1382,14 +1533,22 @@ async function main(): Promise<void> {
       });
       const responseBodyFieldWorkoutId = toPositiveNumber(best?.response.bodyFieldSamples.workoutId);
       const workoutIdObserved = responseBodyFieldWorkoutId ?? toPositiveNumber(findFieldValue(best?.response.structureSamples ?? null, "workoutId")) ?? best?.workoutId ?? null;
+      const requestTargetMetricObserved = extractPrimaryIntensityMetric(best?.request.structureSamples ?? null);
+      const requestTargetRangeObserved = detectStructuredRange(
+        best?.request.structureSamples ?? null,
+        definition.expectedRange.min,
+        definition.expectedRange.max,
+      );
       const targetMetricObserved =
         extractPrimaryIntensityMetric(best?.response.structureSamples ?? null) ??
         extractPrimaryIntensityMetric(best?.response.bodyFieldSamples ?? null) ??
+        requestTargetMetricObserved ??
         best?.signals.targetMetricObserved ??
         null;
       const targetRangeObserved =
         detectStructuredRange(best?.response.structureSamples ?? null, definition.expectedRange.min, definition.expectedRange.max) ??
         detectStructuredRange(best?.response.bodyFieldSamples ?? null, definition.expectedRange.min, definition.expectedRange.max) ??
+        requestTargetRangeObserved ??
         best?.signals.targetRangeObserved ??
         null;
       const repeatBlockObserved =
@@ -1397,6 +1556,7 @@ async function main(): Promise<void> {
         hasRepetitionBlock(best?.response.bodyFieldSamples ?? null) ||
         best?.signals.repeatBlockObserved ||
         false;
+      const requestStepNotes = evaluateStepNoteMarkers(definition.stepNoteMarkers, best?.request.structureSamples ?? null);
       const stepNotes = evaluateStepNoteMarkers(definition.stepNoteMarkers, best?.response.structureSamples ?? null);
       const mappingNotes = buildMappingNotes({ event: best, stepNotes });
       const validation = buildValidation({
@@ -1409,6 +1569,16 @@ async function main(): Promise<void> {
         stepNotes,
         secretsFound,
         requestStructureSamples: best?.request.structureSamples ?? null,
+      });
+      const requestStructureValidation = buildRequestStructureValidation({
+        definition,
+        event: best,
+        targetMetricObserved: requestTargetMetricObserved,
+        targetRangeObserved: requestTargetRangeObserved,
+        stepNotes: requestStepNotes,
+        requestStructureSamples: best?.request.structureSamples ?? null,
+        requestStructureInfo: best?.request.structureSerializedInfo ?? null,
+        secretsFound,
       });
 
       const fixturePayload = {
@@ -1433,6 +1603,7 @@ async function main(): Promise<void> {
               bodyFieldSamples: best.request.bodyFieldSamples,
               structureShape: best.request.structureShape,
               structureSamples: best.request.structureSamples,
+              structureSerializedInfo: best.request.structureSerializedInfo,
             }
           : null,
         response: best
@@ -1452,9 +1623,10 @@ async function main(): Promise<void> {
         },
         mappingNotes,
         validation,
+        requestStructureValidation,
         redaction: {
           secretsFound,
-          note: "Sensitive headers/tokens/session-like values are redacted before writing fixtures.",
+          note: "Sensitive auth headers and tokens are redacted before writing fixtures.",
         },
       };
 
