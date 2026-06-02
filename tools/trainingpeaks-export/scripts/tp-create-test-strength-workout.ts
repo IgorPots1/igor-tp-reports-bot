@@ -7,7 +7,7 @@ import { createInterface } from "node:readline/promises";
 
 import { chromium, type Frame, type Locator, type Page } from "playwright";
 
-import { profileDir, toolRoot } from "./lib/paths.ts";
+import { strengthBuilderProfileDir, toolRoot } from "./lib/paths.ts";
 import {
   assertStrengthWorkoutFieldWriterBrowserScriptIsSafe,
   browserIsValueVisibleInBlock,
@@ -2736,7 +2736,7 @@ async function main(): Promise<void> {
     await promptForConfirmation(args);
   }
 
-  await mkdir(profileDir, { recursive: true });
+  await mkdir(strengthBuilderProfileDir, { recursive: true });
   await mkdir(defaultOutDir, { recursive: true });
   await mkdir(screenshotDir, { recursive: true });
   await mkdir(fieldDebugDir, { recursive: true });
@@ -2760,7 +2760,7 @@ async function main(): Promise<void> {
     state.errors.push(`Local rendered catalog missing exact exercise names: ${preflight.missingNames.join(", ")}`);
   }
 
-  const context = await chromium.launchPersistentContext(profileDir, {
+  const context = await chromium.launchPersistentContext(strengthBuilderProfileDir, {
     headless: args.headless,
     viewport: null,
   });

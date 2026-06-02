@@ -11,5 +11,6 @@ export const exportsRoot = path.join(toolRoot, "exports");
 export const parsedRoot = path.join(toolRoot, "parsed");
 export const reportsRoot = path.join(toolRoot, "reports");
 export const profileDir = path.join(toolRoot, ".playwright-profile", "trainingpeaks");
+export const strengthBuilderProfileDir = path.join(toolRoot, ".playwright-profile", "strength-builder");
 export const studentsConfigPath = path.join(configRoot, "students.json");
 export const studentsExamplePath = path.join(configRoot, "students.example.json");
