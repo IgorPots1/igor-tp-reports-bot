@@ -4749,13 +4749,39 @@ async function listOperationalMoveSignalsForAttention(
   });
 }
 
+export async function safeAttentionSource<T>(
+  label: string,
+  load: () => Promise<T>,
+  fallback: T
+): Promise<T> {
+  try {
+    return await load();
+  } catch (error) {
+    console.error("trainingpeaks_attention_source_failed", {
+      label,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return fallback;
+  }
+}
+
 export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaksAttentionSnapshot> {
-  const [actions, jobs] = await Promise.all([
-    listRecentTrainingPeaksActionsFromRepository(50),
-    listRecentTrainingPeaksJobs(40),
-  ]);
-  const latestRunsByActionId = await listLatestTrainingPeaksActionRunsByActionIds(
-    actions.map((action) => action.id)
+  const [actions, jobs] = await safeAttentionSource<
+    [
+      Awaited<ReturnType<typeof listRecentTrainingPeaksActionsFromRepository>>,
+      Awaited<ReturnType<typeof listRecentTrainingPeaksJobs>>,
+    ]
+  >(
+    "recent_actions_and_jobs",
+    () => Promise.all([listRecentTrainingPeaksActionsFromRepository(50), listRecentTrainingPeaksJobs(40)]),
+    [[], []]
+  );
+  const latestRunsByActionId = await safeAttentionSource<
+    Awaited<ReturnType<typeof listLatestTrainingPeaksActionRunsByActionIds>>
+  >(
+    "latest_action_runs_by_action_ids",
+    () => listLatestTrainingPeaksActionRunsByActionIds(actions.map((action) => action.id)),
+    new Map() as Awaited<ReturnType<typeof listLatestTrainingPeaksActionRunsByActionIds>>
   );
 
   const urgent: TrainingPeaksAttentionSignal[] = [];
@@ -4821,17 +4847,28 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
   }
 
   const yesterdayDate = getYesterdayBelgradeIsoDate();
-  const [activeStudents, yesterdayWorkoutRows, yesterdayScanStatuses] = await Promise.all([
-    listTrainingPeaksStudents(),
-    listTrainingPeaksWorkoutCacheForDateRange({
-      from: yesterdayDate,
-      to: yesterdayDate,
-    }),
-    listTrainingPeaksWorkoutCacheScanStatusesForRange({
-      from: yesterdayDate,
-      to: yesterdayDate,
-    }),
-  ]);
+  const [activeStudents, yesterdayWorkoutRows, yesterdayScanStatuses] = await safeAttentionSource<
+    [
+      Awaited<ReturnType<typeof listTrainingPeaksStudents>>,
+      Awaited<ReturnType<typeof listTrainingPeaksWorkoutCacheForDateRange>>,
+      Awaited<ReturnType<typeof listTrainingPeaksWorkoutCacheScanStatusesForRange>>,
+    ]
+  >(
+    "yesterday_scan_sources",
+    () =>
+      Promise.all([
+        listTrainingPeaksStudents(),
+        listTrainingPeaksWorkoutCacheForDateRange({
+          from: yesterdayDate,
+          to: yesterdayDate,
+        }),
+        listTrainingPeaksWorkoutCacheScanStatusesForRange({
+          from: yesterdayDate,
+          to: yesterdayDate,
+        }),
+      ]),
+    [[], [], []]
+  );
 
   const scanStatusByStudentId = new Map<string, (typeof yesterdayScanStatuses)[number]>();
   for (const status of yesterdayScanStatuses) {
@@ -4947,13 +4984,26 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
 
   const recoveryAlertTargetDate = yesterdayDate;
   const recoveryAlertFromDate = shiftBelgradeIsoDate(recoveryAlertTargetDate, -2);
-  const eligibleRecoveryProfiles = await listTrainingPeaksStudentsEligibleForHealthMetrics();
+  const eligibleRecoveryProfiles = await safeAttentionSource<
+    Awaited<ReturnType<typeof listTrainingPeaksStudentsEligibleForHealthMetrics>>
+  >(
+    "eligible_students_for_health_metrics",
+    () => listTrainingPeaksStudentsEligibleForHealthMetrics(),
+    []
+  );
   for (const profile of eligibleRecoveryProfiles) {
-    const metrics = await listTrainingPeaksHealthMetricsForStudentDateRange({
-      studentId: profile.studentId,
-      from: recoveryAlertFromDate,
-      to: recoveryAlertTargetDate,
-    });
+    const metrics = await safeAttentionSource<
+      Awaited<ReturnType<typeof listTrainingPeaksHealthMetricsForStudentDateRange>>
+    >(
+      `health_metrics_for_student:${profile.studentId}`,
+      () =>
+        listTrainingPeaksHealthMetricsForStudentDateRange({
+          studentId: profile.studentId,
+          from: recoveryAlertFromDate,
+          to: recoveryAlertTargetDate,
+        }),
+      []
+    );
     const alert = evaluateTrainingPeaksRecoveryAlert({
       profile,
       metrics,

@@ -3479,22 +3479,39 @@ function formatJobsMessage(
 async function handleTrainingPeaksAttention(
   parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate
 ): Promise<void> {
-  const snapshot = await getTrainingPeaksAttentionSnapshot();
-  const text = buildTrainingPeaksAttentionDigestText(snapshot);
-  const markup = getTrainingPeaksAttentionDigestMarkup();
+  try {
+    const snapshot = await getTrainingPeaksAttentionSnapshot();
+    const text = buildTrainingPeaksAttentionDigestText(snapshot);
+    const markup = getTrainingPeaksAttentionDigestMarkup();
 
-  if (parsedMessage.kind === "callback_query") {
-    await editTelegramMessageText(parsedMessage.chatId, parsedMessage.messageId, text, {
+    if (parsedMessage.kind === "callback_query") {
+      await editTelegramMessageText(parsedMessage.chatId, parsedMessage.messageId, text, {
+        replyMarkup: markup,
+        parseMode: "HTML",
+      });
+      return;
+    }
+
+    await sendTelegramMessage(parsedMessage.chatId, text, {
       replyMarkup: markup,
       parseMode: "HTML",
     });
-    return;
+  } catch (error) {
+    console.error("trainingpeaks_attention_handler_failed", {
+      error: error instanceof Error ? error.message : String(error),
+      updateKind: parsedMessage.kind,
+      chatId: parsedMessage.chatId,
+    });
+    const fallbackText =
+      "Не удалось загрузить «Сегодня».\nПопробуйте ещё раз через минуту.\nЕсли повторится — проверьте логи.";
+    if (parsedMessage.kind === "callback_query") {
+      await editTelegramMessageText(parsedMessage.chatId, parsedMessage.messageId, fallbackText, {
+        replyMarkup: getTrainingPeaksAttentionDigestMarkup(),
+      });
+      return;
+    }
+    await sendTelegramMessage(parsedMessage.chatId, fallbackText);
   }
-
-  await sendTelegramMessage(parsedMessage.chatId, text, {
-    replyMarkup: markup,
-    parseMode: "HTML",
-  });
 }
 
 function getTrainingPeaksBotUsername(): string | null {
@@ -6600,6 +6617,16 @@ function isTrainingPeaksReplyDraftAutoDetectEnabled(): boolean {
   return process.env.TP_REPLY_DRAFT_AUTO_ENABLED?.trim() === "dry_run";
 }
 
+function isTrainingPeaksAutoApproveProgressNotificationEnabled(): boolean {
+  const value = process.env.TP_AUTO_APPROVE_PROGRESS_NOTIFY?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
+function isTrainingPeaksLinkSuccessNotificationEnabled(): boolean {
+  const value = process.env.TP_LINK_SUCCESS_NOTIFY?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
 export async function handleTrainingPeaksTelegramBusinessMessage(
   message: Pick<
     TelegramMessage,
@@ -6759,13 +6786,15 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
 
     const summary = formatTrainingPeaksMoveWorkoutActionSummary(moveActionResult.parsed);
     if (isMoveActionAutoApprovedForDryRun(moveActionResult.action.parsedPayload)) {
-      await notifyCoachChats(
-        formatTrainingPeaksMoveActionProcessingMessage({
-          studentName: moveActionResult.student.studentName,
-          rawText: moveActionResult.action.rawText,
-          parsedPayload: moveActionResult.action.parsedPayload,
-        })
-      );
+      if (isTrainingPeaksAutoApproveProgressNotificationEnabled()) {
+        await notifyCoachChats(
+          formatTrainingPeaksMoveActionProcessingMessage({
+            studentName: moveActionResult.student.studentName,
+            rawText: moveActionResult.action.rawText,
+            parsedPayload: moveActionResult.action.parsedPayload,
+          })
+        );
+      }
     } else {
       await notifyCoachChatsWithMarkup(
         [
@@ -6791,13 +6820,15 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
   }
 
   if (result.kind === "linked") {
-    await notifyCoachChats(
-      [
-        `✅ Telegram привязан по коду ${result.code}.`,
-        `Ученик: ${result.student.studentName}`,
-        `Чат: ${getTelegramBusinessChatDisplayName(result.chat)}`,
-      ].join("\n")
-    );
+    if (isTrainingPeaksLinkSuccessNotificationEnabled()) {
+      await notifyCoachChats(
+        [
+          `✅ Telegram привязан по коду ${result.code}.`,
+          `Ученик: ${result.student.studentName}`,
+          `Чат: ${getTelegramBusinessChatDisplayName(result.chat)}`,
+        ].join("\n")
+      );
+    }
     return;
   }
 
