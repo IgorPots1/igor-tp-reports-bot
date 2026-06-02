@@ -97,6 +97,7 @@
     "review-coach-memory-contexts": "npx tsx scripts/review-coach-memory-contexts.ts",
     "check-coach-operational-signals": "npx tsx scripts/check-coach-operational-signals.ts",
     "check-operational-schedule-display": "npx tsx scripts/check-operational-schedule-display.ts",
+    "diagnose-operational-schedule-duplicates": "npx tsx scripts/diagnose-operational-schedule-duplicates.ts",
     "check-operational-multi-message-episodes": "npx tsx scripts/check-operational-multi-message-episodes.ts",
     "check:coach-memory-duplicate-clustering": "npx tsx scripts/check-coach-memory-duplicate-clustering.ts",
     "merge-coach-memory-duplicates": "npx tsx scripts/merge-coach-memory-duplicates.ts",

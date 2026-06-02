@@ -2,6 +2,7 @@ import process from "node:process";
 
 import { classifyCoachOperationalSignals } from "./lib/coach-operational-signals";
 import {
+  buildCanonicalEpisodeScheduleDisplayText,
   buildEpisodeScheduleContextIndex,
   formatScheduleOperationalSignalText,
   inferUnavailabilityAfterAvailableDates,
@@ -11,6 +12,7 @@ import {
   buildTrainingPeaksOperationalSignalsSnapshotFromSignals,
   formatTrainingPeaksOperationalSignalsForTelegram,
 } from "@/features/trainingpeaks/service";
+import { formatTrainingPeaksAttentionSnapshotMessage } from "@/features/trainingpeaks/attention-telegram";
 import type { TrainingPeaksStudentOperationalSignal } from "@/features/trainingpeaks/repository";
 
 const LOG_PREFIX = "[check-operational-schedule-display]";
@@ -29,6 +31,8 @@ function makeSignal(input: {
   validFrom?: string | null;
   validUntil?: string | null;
   episodeKey?: string | null;
+  updatedAt?: string;
+  createdAt?: string;
 }): TrainingPeaksStudentOperationalSignal {
   const metadata: Record<string, unknown> = {};
   if (input.episodeKey) {
@@ -58,8 +62,8 @@ function makeSignal(input: {
     dedupeKey: `fixture:${input.id}`,
     consumedAt: null,
     metadata,
-    createdAt: "2026-06-01T10:00:00.000Z",
-    updatedAt: "2026-06-01T10:00:00.000Z",
+    createdAt: input.createdAt ?? "2026-06-01T10:00:00.000Z",
+    updatedAt: input.updatedAt ?? input.createdAt ?? "2026-06-01T10:00:00.000Z",
   };
 }
 
@@ -185,6 +189,112 @@ function run(): void {
   assert(
     telegramText.includes("05.06") || telegramText.includes("недоступна"),
     "tp_signals schedule output should include unavailability range."
+  );
+
+  const staleOverlayEpisodeKey = "student:sofia-student:observation:fixture:episode:schedule-stale-overlay";
+  const staleOverlaySignals = [
+    makeSignal({
+      id: "sig-availability-old",
+      studentId,
+      signalType: "schedule_availability_window",
+      episodeKey: staleOverlayEpisodeKey,
+      updatedAt: "2026-06-01T08:00:00.000Z",
+      structuredPayload: {
+        resolved_available_dates: ["2026-06-03", "2026-06-05"],
+      },
+    }),
+    makeSignal({
+      id: "sig-availability-new",
+      studentId,
+      signalType: "schedule_availability_window",
+      episodeKey: staleOverlayEpisodeKey,
+      updatedAt: "2026-06-02T12:00:00.000Z",
+      structuredPayload: {
+        resolved_available_dates: ["2026-06-02", "2026-06-04"],
+      },
+    }),
+    makeSignal({
+      id: "sig-unavailability-new",
+      studentId,
+      signalType: "schedule_unavailability_window",
+      episodeKey: staleOverlayEpisodeKey,
+      updatedAt: "2026-06-02T12:00:00.000Z",
+      validFrom: "2026-06-05",
+      validUntil: "2026-06-08",
+      structuredPayload: {},
+    }),
+    makeSignal({
+      id: "sig-unavailability-legacy-vague",
+      studentId,
+      signalType: "schedule_unavailability_window",
+      episodeKey: staleOverlayEpisodeKey,
+      updatedAt: "2026-06-01T08:00:00.000Z",
+      structuredPayload: {},
+    }),
+  ];
+
+  const canonicalOverlayText = buildCanonicalEpisodeScheduleDisplayText({
+    signals: staleOverlaySignals,
+  });
+  assert(canonicalOverlayText.includes("вт 02.06"), "Canonical overlay text should include Tue 02.06.");
+  assert(canonicalOverlayText.includes("чт 04.06"), "Canonical overlay text should include Thu 04.06.");
+  assert(canonicalOverlayText.includes("05.06—08.06"), "Canonical overlay text should include unavailability range.");
+  assert(!canonicalOverlayText.includes("ср 03.06"), "Canonical overlay text must not include stale Wed 03.06.");
+  assert(!canonicalOverlayText.includes("пт 05.06"), "Canonical overlay text must not include stale Fri 05.06.");
+  const availabilityParts = canonicalOverlayText.split("; ").filter((part) => part.startsWith("доступна:"));
+  assert(availabilityParts.length === 1, "Canonical overlay text must not duplicate availability prefix.");
+
+  const overlaySnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    signals: staleOverlaySignals,
+    studentNameById: new Map([[studentId, "Sofia Vlasova"]]),
+    asOfDate: "2026-06-03",
+    scope: "schedule",
+    limit: 10,
+  });
+  const overlayTelegramText = formatTrainingPeaksOperationalSignalsForTelegram(overlaySnapshot);
+  assert(overlayTelegramText.includes("вт 02.06"), "tp_signals overlay fixture should show canonical Tue date.");
+  assert(!overlayTelegramText.includes("ср 03.06"), "tp_signals overlay fixture must hide stale Wed date.");
+  assert(!overlayTelegramText.includes("недоступность"), "tp_signals overlay fixture should suppress vague duplicate.");
+
+  const attentionMessage = formatTrainingPeaksAttentionSnapshotMessage(
+    {
+      urgent: [],
+      today: [],
+      observe: [],
+      fyi: [],
+      noContact5Days: [],
+      followUpToday: [],
+      followUpOverflowCount: 0,
+      planConstraintsToday: [
+        {
+          level: "today",
+          studentName: "Sofia Vlasova",
+          studentId,
+          reason: canonicalOverlayText,
+          signalKind: "operational_schedule",
+        },
+      ],
+      planConstraintsOverflowCount: 0,
+      movesToday: [
+        {
+          level: "today",
+          studentName: "Ilya Bogdanov",
+          studentId: "student-move",
+          reason: "кандидат переноса 2026-06-05 → 2026-06-04",
+          signalKind: "operational_move",
+        },
+      ],
+      movesOverflowCount: 0,
+    },
+    "Утренний обзор"
+  );
+  assert(
+    attentionMessage.includes("📅 Учесть в плане\n\n• Sofia Vlasova"),
+    "Attention digest should include blank line after plan section header."
+  );
+  assert(
+    attentionMessage.includes("🔁 Переносы\n\n• Ilya Bogdanov"),
+    "Attention digest should include blank line after moves section header."
   );
 
   console.log(`${LOG_PREFIX} PASS`);

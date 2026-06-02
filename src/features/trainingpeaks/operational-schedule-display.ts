@@ -314,18 +314,179 @@ export function getSignalMetadataString(
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
-function isAvailabilityScheduleSignalType(signalType: string): boolean {
+export function isAvailabilityScheduleSignalType(signalType: string): boolean {
   return signalType === "schedule_availability_window" || signalType === "plan_generation_constraint";
 }
 
-function isUnavailabilityScheduleSignalType(signalType: string): boolean {
+export function isUnavailabilityScheduleSignalType(signalType: string): boolean {
   return signalType === "schedule_unavailability_window";
+}
+
+export type ScheduleOperationalSignalRole = "availability" | "unavailability";
+
+export function getScheduleOperationalSignalRole(signalType: string): ScheduleOperationalSignalRole | null {
+  if (isAvailabilityScheduleSignalType(signalType)) {
+    return "availability";
+  }
+  if (isUnavailabilityScheduleSignalType(signalType)) {
+    return "unavailability";
+  }
+  return null;
+}
+
+function scheduleSignalStructureScore(
+  signal: TrainingPeaksStudentOperationalSignal,
+  role: ScheduleOperationalSignalRole
+): number {
+  const structured = signal.structuredPayload as ScheduleStructuredPayload;
+  if (role === "availability") {
+    const resolvedDates = readStringArray(structured.resolved_available_dates);
+    if (resolvedDates.length > 0) {
+      return 100 + resolvedDates.length;
+    }
+    if (readStringArray(structured.available_days).length > 0) {
+      return 50;
+    }
+    if (signal.validFrom || signal.validUntil || structured.valid_from || structured.valid_until) {
+      return 25;
+    }
+    return 0;
+  }
+
+  if (signal.validFrom && signal.validUntil) {
+    return 100;
+  }
+  if (structured.valid_from && structured.valid_until) {
+    return 90;
+  }
+  if (readPositiveInt(structured.duration_days)) {
+    return 50;
+  }
+  return 0;
+}
+
+function compareScheduleSignalsForCanonicality(
+  left: TrainingPeaksStudentOperationalSignal,
+  right: TrainingPeaksStudentOperationalSignal,
+  role: ScheduleOperationalSignalRole
+): number {
+  const leftScore = scheduleSignalStructureScore(left, role);
+  const rightScore = scheduleSignalStructureScore(right, role);
+  if (leftScore !== rightScore) {
+    return rightScore - leftScore;
+  }
+
+  const leftTime = Date.parse(left.updatedAt ?? left.createdAt ?? "1970-01-01T00:00:00.000Z");
+  const rightTime = Date.parse(right.updatedAt ?? right.createdAt ?? "1970-01-01T00:00:00.000Z");
+  if (leftTime !== rightTime) {
+    return rightTime - leftTime;
+  }
+
+  return left.id.localeCompare(right.id);
+}
+
+export function pickCanonicalScheduleSignalByRole(
+  signals: readonly TrainingPeaksStudentOperationalSignal[],
+  role: ScheduleOperationalSignalRole
+): TrainingPeaksStudentOperationalSignal | null {
+  const candidates = signals.filter((signal) => getScheduleOperationalSignalRole(signal.signalType) === role);
+  if (candidates.length === 0) {
+    return null;
+  }
+  return [...candidates].sort((left, right) => compareScheduleSignalsForCanonicality(left, right, role))[0] ?? null;
+}
+
+export function buildCanonicalEpisodeScheduleContext(
+  signals: readonly TrainingPeaksStudentOperationalSignal[]
+): EpisodeScheduleContext {
+  const availabilitySignal = pickCanonicalScheduleSignalByRole(signals, "availability");
+  if (!availabilitySignal) {
+    return {
+      availableDays: [],
+      availableDates: [],
+      observedAt: null,
+    };
+  }
+
+  const structured = availabilitySignal.structuredPayload as ScheduleStructuredPayload;
+  const availableDays = readStringArray(structured.available_days);
+  const resolvedDates = readStringArray(structured.resolved_available_dates);
+  const observedAt =
+    getSignalMetadataString(availabilitySignal.metadata, "observed_at") ??
+    availabilitySignal.createdAt ??
+    null;
+
+  let availableDates = resolvedDates;
+  if (availableDates.length === 0 && availableDays.length > 0 && observedAt) {
+    const weekScope = detectWeekScopeFromText(
+      getSignalMetadataString(availabilitySignal.metadata, "constraint_text") ?? ""
+    );
+    availableDates = resolveAvailableDayDates(availableDays, observedAt, weekScope);
+  }
+
+  return {
+    availableDays,
+    availableDates,
+    observedAt,
+  };
+}
+
+function isLegacyVagueScheduleUnavailabilityText(text: string): boolean {
+  return text === "недоступность" || text.startsWith("недоступность:");
+}
+
+function hasRichSchedulePartText(text: string): boolean {
+  return (
+    text.startsWith("доступна:") ||
+    text.startsWith("недоступна:") ||
+    text.startsWith("учесть в плане:")
+  );
+}
+
+export function buildCanonicalEpisodeScheduleDisplayText(input: {
+  signals: readonly TrainingPeaksStudentOperationalSignal[];
+}): string {
+  const episodeContext = buildCanonicalEpisodeScheduleContext(input.signals);
+  const availabilitySignal = pickCanonicalScheduleSignalByRole(input.signals, "availability");
+  const unavailabilitySignal = pickCanonicalScheduleSignalByRole(input.signals, "unavailability");
+
+  const parts: string[] = [];
+  if (availabilitySignal) {
+    const availabilityText = formatScheduleOperationalSignalText({
+      signalType: availabilitySignal.signalType,
+      validFrom: availabilitySignal.validFrom,
+      validUntil: availabilitySignal.validUntil,
+      structuredPayload: availabilitySignal.structuredPayload,
+      episodeContext,
+    });
+    if (availabilityText.trim()) {
+      parts.push(availabilityText);
+    }
+  }
+
+  if (unavailabilitySignal) {
+    const unavailabilityText = formatScheduleOperationalSignalText({
+      signalType: unavailabilitySignal.signalType,
+      validFrom: unavailabilitySignal.validFrom,
+      validUntil: unavailabilitySignal.validUntil,
+      structuredPayload: unavailabilitySignal.structuredPayload,
+      episodeContext,
+    });
+    const hasRichSchedulePart = parts.some((part) => hasRichSchedulePartText(part));
+    if (isLegacyVagueScheduleUnavailabilityText(unavailabilityText) && hasRichSchedulePart) {
+      // Keep canonical rich availability/unavailability and hide stale vague duplicate.
+    } else if (unavailabilityText.trim()) {
+      parts.push(unavailabilityText);
+    }
+  }
+
+  return parts.join("; ");
 }
 
 export function buildEpisodeScheduleContextIndex(
   signals: TrainingPeaksStudentOperationalSignal[]
 ): Map<string, EpisodeScheduleContext> {
-  const index = new Map<string, EpisodeScheduleContext>();
+  const grouped = new Map<string, TrainingPeaksStudentOperationalSignal[]>();
 
   for (const signal of signals) {
     if (!isAvailabilityScheduleSignalType(signal.signalType)) {
@@ -336,31 +497,14 @@ export function buildEpisodeScheduleContextIndex(
       continue;
     }
     const dedupeKey = `${signal.studentId}:${episodeKey}`;
-    const structured = signal.structuredPayload as ScheduleStructuredPayload;
-    const availableDays = readStringArray(structured.available_days);
-    const resolvedDates = readStringArray(structured.resolved_available_dates);
-    const observedAt =
-      getSignalMetadataString(signal.metadata, "observed_at") ??
-      signal.createdAt ??
-      null;
+    const group = grouped.get(dedupeKey) ?? [];
+    group.push(signal);
+    grouped.set(dedupeKey, group);
+  }
 
-    const existing = index.get(dedupeKey) ?? {
-      availableDays: [],
-      availableDates: [],
-      observedAt: null,
-    };
-    existing.availableDays = [...new Set([...existing.availableDays, ...availableDays])];
-    existing.availableDates = [...new Set([...existing.availableDates, ...resolvedDates])];
-    if (!existing.observedAt && observedAt) {
-      existing.observedAt = observedAt;
-    }
-    if (existing.availableDates.length === 0 && availableDays.length > 0 && observedAt) {
-      const weekScope = detectWeekScopeFromText(
-        getSignalMetadataString(signal.metadata, "constraint_text") ?? ""
-      );
-      existing.availableDates = resolveAvailableDayDates(availableDays, observedAt, weekScope);
-    }
-    index.set(dedupeKey, existing);
+  const index = new Map<string, EpisodeScheduleContext>();
+  for (const [dedupeKey, group] of grouped) {
+    index.set(dedupeKey, buildCanonicalEpisodeScheduleContext(group));
   }
 
   return index;

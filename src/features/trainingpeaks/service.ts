@@ -169,6 +169,7 @@ import {
   normalizeOperationalSignalFollowUp,
 } from "@/features/trainingpeaks/operational-follow-up";
 import {
+  buildCanonicalEpisodeScheduleDisplayText,
   buildEpisodeScheduleContextIndex,
   formatScheduleOperationalSignalText,
   type EpisodeScheduleContext,
@@ -4768,27 +4769,71 @@ function collectOperationalPlanningAttentionItems(input: {
   signalTypes: Set<string>;
   maxItems: number;
 }): { items: OperationalPlanningAttentionItem[]; overflowCount: number } {
-  const episodeScheduleIndex = buildEpisodeScheduleContextIndex(input.signals);
   const dedupedByEpisode = new Map<string, OperationalPlanningAttentionItem>();
   const fallbackItems: OperationalPlanningAttentionItem[] = [];
+  const scheduleSignalsByEpisode = new Map<string, TrainingPeaksStudentOperationalSignal[]>();
 
   for (const signal of input.signals) {
     if (!input.signalTypes.has(signal.signalType)) {
       continue;
     }
+    if (!isScheduleOperationalSignalType(signal.signalType)) {
+      continue;
+    }
     const episodeKey = getSignalMetadataString(signal.metadata, "episode_key");
-    const episodeContext = episodeKey
-      ? episodeScheduleIndex.get(`${signal.studentId}:${episodeKey}`) ?? null
-      : null;
-    const reason = isScheduleOperationalSignalType(signal.signalType)
-      ? formatScheduleOperationalSignalText({
-          signalType: signal.signalType,
-          validFrom: signal.validFrom,
-          validUntil: signal.validUntil,
-          structuredPayload: signal.structuredPayload,
-          episodeContext,
-        })
-      : `кандидат переноса ${signal.sourceDate ?? "—"} → ${signal.targetDate ?? "—"}`;
+    if (!episodeKey) {
+      continue;
+    }
+    const dedupeKey = `${signal.studentId}:${episodeKey}`;
+    const group = scheduleSignalsByEpisode.get(dedupeKey) ?? [];
+    group.push(signal);
+    scheduleSignalsByEpisode.set(dedupeKey, group);
+  }
+
+  for (const [dedupeKey, group] of scheduleSignalsByEpisode) {
+    const primarySignal = [...group].sort((left, right) => {
+      const leftDate = left.validUntil ?? left.validFrom ?? left.updatedAt ?? left.createdAt ?? "";
+      const rightDate = right.validUntil ?? right.validFrom ?? right.updatedAt ?? right.createdAt ?? "";
+      if (leftDate !== rightDate) {
+        return rightDate.localeCompare(leftDate);
+      }
+      return right.id.localeCompare(left.id);
+    })[0];
+    if (!primarySignal) {
+      continue;
+    }
+
+    const episodeKey = getSignalMetadataString(primarySignal.metadata, "episode_key");
+    const reason = compactOperationalSignalText(
+      buildCanonicalEpisodeScheduleDisplayText({ signals: group }),
+      90
+    );
+    const item: OperationalPlanningAttentionItem = {
+      studentId: primarySignal.studentId,
+      studentName: input.activeStudentNameById.get(primarySignal.studentId) ?? null,
+      reason,
+      episodeKey,
+      signalId: primarySignal.id,
+      sortDate:
+        primarySignal.validUntil ??
+        primarySignal.targetDate ??
+        primarySignal.validFrom ??
+        primarySignal.sourceDate ??
+        null,
+    };
+    dedupedByEpisode.set(dedupeKey, item);
+  }
+
+  for (const signal of input.signals) {
+    if (!input.signalTypes.has(signal.signalType)) {
+      continue;
+    }
+    if (isScheduleOperationalSignalType(signal.signalType)) {
+      continue;
+    }
+
+    const episodeKey = getSignalMetadataString(signal.metadata, "episode_key");
+    const reason = `кандидат переноса ${signal.sourceDate ?? "—"} → ${signal.targetDate ?? "—"}`;
 
     const item: OperationalPlanningAttentionItem = {
       studentId: signal.studentId,
@@ -4813,33 +4858,42 @@ function collectOperationalPlanningAttentionItems(input: {
 
     const existingKey = getOperationalPlanningSortKey(existing);
     const nextKey = getOperationalPlanningSortKey(item);
-    const preferred = nextKey < existingKey || (nextKey === existingKey && item.signalId < existing.signalId) ? item : existing;
-    const secondary = preferred === item ? existing : item;
-    if (preferred.reason !== secondary.reason) {
-      const orderedReasons = [preferred.reason, secondary.reason].sort((left, right) => {
-        const rank = (value: string): number => {
-          if (value.startsWith("доступна:")) {
-            return 0;
-          }
-          if (value.startsWith("недоступна:")) {
-            return 1;
-          }
-          return 2;
-        };
-        const leftRank = rank(left);
-        const rightRank = rank(right);
-        if (leftRank !== rightRank) {
-          return leftRank - rightRank;
-        }
-        return left.localeCompare(right, "ru-RU");
-      });
-      dedupedByEpisode.set(dedupeKey, {
-        ...preferred,
-        reason: compactOperationalSignalText(orderedReasons.join("; "), 90),
-      });
+    const preferred =
+      nextKey < existingKey || (nextKey === existingKey && item.signalId < existing.signalId)
+        ? item
+        : existing;
+    dedupedByEpisode.set(dedupeKey, preferred);
+  }
+
+  for (const signal of input.signals) {
+    if (!input.signalTypes.has(signal.signalType)) {
       continue;
     }
-    dedupedByEpisode.set(dedupeKey, preferred);
+    if (!isScheduleOperationalSignalType(signal.signalType)) {
+      continue;
+    }
+    const episodeKey = getSignalMetadataString(signal.metadata, "episode_key");
+    if (episodeKey) {
+      continue;
+    }
+
+    const episodeContext = null;
+    const reason = formatScheduleOperationalSignalText({
+      signalType: signal.signalType,
+      validFrom: signal.validFrom,
+      validUntil: signal.validUntil,
+      structuredPayload: signal.structuredPayload,
+      episodeContext,
+    });
+
+    fallbackItems.push({
+      studentId: signal.studentId,
+      studentName: input.activeStudentNameById.get(signal.studentId) ?? null,
+      reason: compactOperationalSignalText(reason, 90),
+      episodeKey: null,
+      signalId: signal.id,
+      sortDate: signal.validUntil ?? signal.targetDate ?? signal.validFrom ?? signal.sourceDate ?? null,
+    });
   }
 
   const merged = [...dedupedByEpisode.values(), ...fallbackItems];
@@ -5621,43 +5675,36 @@ function buildOperationalSignalItemFromSignal(input: {
 
 function mergeOperationalSignalEpisodeItems(
   current: TrainingPeaksOperationalSignalsItem,
-  incoming: TrainingPeaksOperationalSignalsItem
+  incoming: TrainingPeaksOperationalSignalsItem,
+  episodeSignals?: readonly TrainingPeaksStudentOperationalSignal[]
 ): TrainingPeaksOperationalSignalsItem {
-  const currentKey = getOperationalSignalSortKey(current);
-  const incomingKey = getOperationalSignalSortKey(incoming);
-  const preferred = incomingKey < currentKey ? incoming : current;
-  const secondary = incomingKey < currentKey ? current : incoming;
-
   if (
-    preferred.section === "plan_constraints" &&
-    secondary.section === "plan_constraints" &&
-    preferred.signalType !== secondary.signalType &&
-    preferred.text !== secondary.text
+    current.section === "plan_constraints" &&
+    incoming.section === "plan_constraints" &&
+    episodeSignals &&
+    episodeSignals.length > 0
   ) {
-    const orderedText = [preferred.text, secondary.text].sort((left, right) => {
-      const rank = (value: string): number => {
-        if (value.startsWith("доступна:")) {
-          return 0;
-        }
-        if (value.startsWith("недоступна:")) {
-          return 1;
-        }
-        return 2;
-      };
-      const leftRank = rank(left);
-      const rightRank = rank(right);
-      if (leftRank !== rightRank) {
-        return leftRank - rightRank;
-      }
-      return left.localeCompare(right, "ru-RU");
-    });
+    const currentKey = getOperationalSignalSortKey(current);
+    const incomingKey = getOperationalSignalSortKey(incoming);
+    const preferred = incomingKey < currentKey ? incoming : current;
     return {
       ...preferred,
-      text: compactOperationalSignalText(orderedText.join("; "), 95),
+      text: compactOperationalSignalText(
+        buildCanonicalEpisodeScheduleDisplayText({ signals: episodeSignals }),
+        95
+      ),
     };
   }
 
-  return preferred;
+  const currentKey = getOperationalSignalSortKey(current);
+  const incomingKey = getOperationalSignalSortKey(incoming);
+  return incomingKey < currentKey ? incoming : current;
+}
+
+function hasRichScheduleDisplayText(text: string): boolean {
+  return text.split("; ").some(
+    (part) => part.startsWith("доступна:") || part.startsWith("недоступна:") || part.startsWith("учесть в плане:")
+  );
 }
 
 function shouldSuppressLegacyScheduleDuplicate(input: {
@@ -5682,7 +5729,7 @@ function shouldSuppressLegacyScheduleDuplicate(input: {
     if (candidate.section !== "plan_constraints") {
       return false;
     }
-    return candidate.text.includes("доступна:") || candidate.text.includes("недоступна:");
+    return hasRichScheduleDisplayText(candidate.text);
   });
 }
 
@@ -5739,7 +5786,21 @@ export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
 
   const episodeScheduleIndex = buildEpisodeScheduleContextIndex(input.signals);
   const dedupedByEpisode = new Map<string, TrainingPeaksOperationalSignalsItem>();
+  const episodeSignalsByKey = new Map<string, TrainingPeaksStudentOperationalSignal[]>();
   const fallbackItems: TrainingPeaksOperationalSignalsItem[] = [];
+  for (const signal of input.signals) {
+    if (!shouldKeepOperationalSignalByScope(signal.signalType, scope)) {
+      continue;
+    }
+    const episodeKey = getSignalMetadataString(signal.metadata, "episode_key");
+    if (episodeKey && isScheduleOperationalSignalType(signal.signalType)) {
+      const episodeDedupeKey = `${signal.studentId}:${episodeKey}`;
+      const group = episodeSignalsByKey.get(episodeDedupeKey) ?? [];
+      group.push(signal);
+      episodeSignalsByKey.set(episodeDedupeKey, group);
+    }
+  }
+
   for (const signal of input.signals) {
     if (!shouldKeepOperationalSignalByScope(signal.signalType, scope)) {
       continue;
@@ -5761,10 +5822,28 @@ export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
     const episodeDedupeKey = `${item.studentId}:${item.episodeKey}`;
     const existing = dedupedByEpisode.get(episodeDedupeKey);
     if (!existing) {
-      dedupedByEpisode.set(episodeDedupeKey, item);
+      if (item.section === "plan_constraints") {
+        const episodeSignals = episodeSignalsByKey.get(episodeDedupeKey) ?? [signal];
+        dedupedByEpisode.set(episodeDedupeKey, {
+          ...item,
+          text: compactOperationalSignalText(
+            buildCanonicalEpisodeScheduleDisplayText({ signals: episodeSignals }),
+            95
+          ),
+        });
+      } else {
+        dedupedByEpisode.set(episodeDedupeKey, item);
+      }
       continue;
     }
-    dedupedByEpisode.set(episodeDedupeKey, mergeOperationalSignalEpisodeItems(existing, item));
+    dedupedByEpisode.set(
+      episodeDedupeKey,
+      mergeOperationalSignalEpisodeItems(
+        existing,
+        item,
+        episodeSignalsByKey.get(episodeDedupeKey)
+      )
+    );
   }
 
   const allItems = [...dedupedByEpisode.values(), ...fallbackItems];

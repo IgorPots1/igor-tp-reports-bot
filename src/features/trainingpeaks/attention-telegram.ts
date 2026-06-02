@@ -112,6 +112,8 @@ function buildAttentionSection(
     return lines;
   }
 
+  lines.push("");
+
   for (const signal of visibleSignals) {
     lines.push(formatAttentionSignalLine(signal, botUsername));
   }
@@ -121,6 +123,12 @@ function buildAttentionSection(
   }
 
   return lines;
+}
+
+function hasRichScheduleDisplayText(text: string): boolean {
+  return text.split("; ").some(
+    (part) => part.startsWith("доступна:") || part.startsWith("недоступна:") || part.startsWith("учесть в плане:")
+  );
 }
 
 function shouldSuppressAttentionLegacyScheduleDuplicate(input: {
@@ -152,7 +160,7 @@ function shouldSuppressAttentionLegacyScheduleDuplicate(input: {
     if ((candidate.studentId ?? null) !== (signal.studentId ?? null)) {
       return false;
     }
-    return candidate.reason.includes("доступна:") || candidate.reason.includes("недоступна:");
+    return hasRichScheduleDisplayText(candidate.reason);
   });
 }
 
@@ -181,8 +189,8 @@ function splitOversizedAttentionDigestBlock(lines: string[], limit: number): str
 
     if (nextLength > limit && current.length > 1) {
       parts.push(current);
-      current = [header, item];
-      currentLength = header.length + 1 + item.length;
+      current = [header, "", item];
+      currentLength = header.length + 2 + item.length;
       continue;
     }
 
@@ -294,7 +302,7 @@ function buildAttentionDigestBlocks(
     maxItems: ATTENTION_DIGEST_SECTION_LIMITS.fyi,
   });
   if (snapshot.fyi.length === 0 && !hasSignals) {
-    fyi.splice(1, fyi.length - 1, "• Активных сигналов больше нет");
+    fyi.splice(1, fyi.length - 1, "", "• Активных сигналов больше нет");
   }
 
   const followUps = buildAttentionSection("Проверить сегодня", snapshot.followUpToday, botUsername, {
