@@ -115,6 +115,7 @@ import {
   type TrainingPeaksJob,
   type TrainingPeaksRaceResultsProbeRequestJson,
   type TrainingPeaksStudent,
+  type TrainingPeaksStudentOperationalSignal,
   type TrainingPeaksStudentThread,
   type TrainingPeaksTelegramFormality,
   TrainingPeaksStudentThreadConflictError,
@@ -625,6 +626,48 @@ export type TrainingPeaksAttentionSnapshot = {
   fyi: TrainingPeaksAttentionSignal[];
   followUpToday: TrainingPeaksAttentionSignal[];
   followUpOverflowCount: number;
+};
+
+export type TrainingPeaksOperationalSignalsScope = "all" | "health" | "schedule" | "move";
+
+export type TrainingPeaksOperationalSignalsSectionKey =
+  | "check_now"
+  | "health_pause"
+  | "plan_constraints"
+  | "moves"
+  | "other";
+
+export type TrainingPeaksOperationalSignalsFollowUpState = Extract<
+  ReturnType<typeof normalizeOperationalSignalFollowUp>["state"],
+  "pending_overdue" | "pending_due" | "pending_future" | "none" | "resolved_or_non_pending"
+>;
+
+export type TrainingPeaksOperationalSignalsItem = {
+  signalId: string;
+  studentId: string;
+  studentName: string | null;
+  section: TrainingPeaksOperationalSignalsSectionKey;
+  priority: number;
+  sortBucket: number;
+  dueDate: string | null;
+  episodeKey: string | null;
+  signalType: string;
+  isEpisodeSummary: boolean;
+  followUpState: TrainingPeaksOperationalSignalsFollowUpState;
+  text: string;
+};
+
+export type TrainingPeaksOperationalSignalsSection = {
+  key: TrainingPeaksOperationalSignalsSectionKey;
+  title: string;
+  items: TrainingPeaksOperationalSignalsItem[];
+};
+
+export type TrainingPeaksOperationalSignalsSnapshot = {
+  scope: TrainingPeaksOperationalSignalsScope;
+  sections: TrainingPeaksOperationalSignalsSection[];
+  totalBeforeLimit: number;
+  overflowCount: number;
 };
 
 export type TrainingPeaksHealthSnapshot = {
@@ -4313,6 +4356,93 @@ function getSignalMetadataString(
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+function compactOperationalSignalText(raw: string, maxLength = 90): string {
+  const normalized = raw.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "";
+  }
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(1, maxLength - 3)).trimEnd()}...`;
+}
+
+function isScheduleOperationalSignalType(signalType: string): boolean {
+  return (
+    signalType === "schedule_unavailability_window" ||
+    signalType === "schedule_availability_window" ||
+    signalType === "plan_generation_constraint"
+  );
+}
+
+function isMoveOperationalSignalType(signalType: string): boolean {
+  return signalType === "move_workout_candidate";
+}
+
+function getOperationalSignalTypeLabel(signalType: string): string {
+  if (signalType === "health_issue_started") {
+    return "болезнь";
+  }
+  if (signalType === "health_issue_improving") {
+    return "восстановление";
+  }
+  if (signalType === "health_issue_resolved") {
+    return "самочувствие";
+  }
+  if (signalType === "pause_training") {
+    return "пауза";
+  }
+  if (signalType === "resume_training") {
+    return "возврат";
+  }
+  if (signalType === "schedule_unavailability_window") {
+    return "недоступность";
+  }
+  if (signalType === "schedule_availability_window") {
+    return "окно доступности";
+  }
+  if (signalType === "plan_generation_constraint") {
+    return "ограничение плана";
+  }
+  if (signalType === "move_workout_candidate") {
+    return "запрос на перенос";
+  }
+  if (signalType === "race_load_context") {
+    return "контекст гонки";
+  }
+  return signalType.replace(/_/g, " ");
+}
+
+function getOperationalSignalWindowPart(signal: Pick<TrainingPeaksStudentOperationalSignal, "validFrom" | "validUntil">): string {
+  if (signal.validFrom && signal.validUntil) {
+    return `${signal.validFrom}—${signal.validUntil}`;
+  }
+  if (signal.validFrom) {
+    return `с ${signal.validFrom}`;
+  }
+  if (signal.validUntil) {
+    return `до ${signal.validUntil}`;
+  }
+  return "";
+}
+
+function formatOperationalFollowUpReason(
+  followUp: ReturnType<typeof normalizeOperationalSignalFollowUp>,
+  fallbackReason: string
+): string {
+  if (followUp.state === "pending_overdue") {
+    const suffix = followUp.days_overdue > 0 ? ` (${followUp.days_overdue} дн.)` : "";
+    return `follow-up просрочен${suffix}: ${fallbackReason}`;
+  }
+  if (followUp.state === "pending_due") {
+    return `follow-up сегодня: ${fallbackReason}`;
+  }
+  if (followUp.state === "pending_future") {
+    return `follow-up позже: ${fallbackReason}`;
+  }
+  return fallbackReason;
+}
+
 function isHealthOperationalSignalType(signalType: string): boolean {
   return (
     signalType === "health_issue_started" ||
@@ -4775,6 +4905,334 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     followUpToday,
     followUpOverflowCount,
   };
+}
+
+const TRAININGPEAKS_OPERATIONAL_SIGNALS_SECTION_ORDER: TrainingPeaksOperationalSignalsSectionKey[] = [
+  "check_now",
+  "health_pause",
+  "plan_constraints",
+  "moves",
+  "other",
+];
+
+function createOperationalSignalsSections(): Record<
+  TrainingPeaksOperationalSignalsSectionKey,
+  TrainingPeaksOperationalSignalsSection
+> {
+  return {
+    check_now: {
+      key: "check_now",
+      title: "🩺 Проверить",
+      items: [],
+    },
+    health_pause: {
+      key: "health_pause",
+      title: "🟡 Болезнь / пауза",
+      items: [],
+    },
+    plan_constraints: {
+      key: "plan_constraints",
+      title: "📅 Учесть в плане",
+      items: [],
+    },
+    moves: {
+      key: "moves",
+      title: "🔁 Переносы",
+      items: [],
+    },
+    other: {
+      key: "other",
+      title: "ℹ️ Остальное",
+      items: [],
+    },
+  };
+}
+
+function shouldKeepOperationalSignalByScope(
+  signalType: string,
+  scope: TrainingPeaksOperationalSignalsScope
+): boolean {
+  if (scope === "all") {
+    return true;
+  }
+  if (scope === "health") {
+    return isHealthOperationalSignalType(signalType);
+  }
+  if (scope === "schedule") {
+    return isScheduleOperationalSignalType(signalType);
+  }
+  return isMoveOperationalSignalType(signalType);
+}
+
+function getOperationalSignalSortKey(item: TrainingPeaksOperationalSignalsItem): string {
+  const due = item.dueDate ?? "9999-12-31";
+  const name = (item.studentName ?? "").toLocaleLowerCase("ru-RU");
+  return `${String(item.priority).padStart(4, "0")}:${String(item.sortBucket).padStart(2, "0")}:${due}:${name}:${item.signalId}`;
+}
+
+function buildOperationalSignalItemFromSignal(input: {
+  signal: TrainingPeaksStudentOperationalSignal;
+  studentNameById: ReadonlyMap<string, string | null>;
+  asOfDate: string;
+}): TrainingPeaksOperationalSignalsItem {
+  const { signal, studentNameById, asOfDate } = input;
+  const followUp = normalizeOperationalSignalFollowUp(signal.metadata, {
+    asOfDate,
+    timeZone: DEFAULT_COACH_TIMEZONE,
+  });
+  const studentName = studentNameById.get(signal.studentId) ?? null;
+  const reasonFromMeta = compactOperationalSignalText(getSignalMetadataString(signal.metadata, "follow_up_reason") ?? "", 80);
+  const typeLabel = getOperationalSignalTypeLabel(signal.signalType);
+  const episodeRole = getSignalMetadataString(signal.metadata, "episode_role");
+  const windowPart = getOperationalSignalWindowPart(signal);
+  const windowSuffix = windowPart ? ` (${windowPart})` : "";
+  const episodeKey = getSignalMetadataString(signal.metadata, "episode_key");
+  const relatedSignalTypes = getSignalMetadataString(signal.metadata, "related_signal_types");
+  const relatedSuffix = relatedSignalTypes ? `; сигналы: ${compactOperationalSignalText(relatedSignalTypes, 42)}` : "";
+
+  if (followUp.state === "pending_overdue") {
+    return {
+      signalId: signal.id,
+      studentId: signal.studentId,
+      studentName,
+      section: "check_now",
+      priority: 10,
+      sortBucket: 0,
+      dueDate: followUp.due_date,
+      episodeKey,
+      signalType: signal.signalType,
+      isEpisodeSummary: false,
+      followUpState: followUp.state,
+      text: formatOperationalFollowUpReason(
+        followUp,
+        reasonFromMeta || "проверить самочувствие после болезни/паузы"
+      ),
+    };
+  }
+
+  if (followUp.state === "pending_due") {
+    return {
+      signalId: signal.id,
+      studentId: signal.studentId,
+      studentName,
+      section: "check_now",
+      priority: 20,
+      sortBucket: 1,
+      dueDate: followUp.due_date,
+      episodeKey,
+      signalType: signal.signalType,
+      isEpisodeSummary: false,
+      followUpState: followUp.state,
+      text: formatOperationalFollowUpReason(
+        followUp,
+        reasonFromMeta || "контроль самочувствия на сегодня"
+      ),
+    };
+  }
+
+  if (isHealthOperationalSignalType(signal.signalType)) {
+    const rolePrefix = episodeRole ? `${episodeRole}: ` : "";
+    const baseReason = reasonFromMeta || `${typeLabel}${windowSuffix}`;
+    return {
+      signalId: signal.id,
+      studentId: signal.studentId,
+      studentName,
+      section: "health_pause",
+      priority: 30,
+      sortBucket: 2,
+      dueDate: followUp.due_date,
+      episodeKey,
+      signalType: signal.signalType,
+      isEpisodeSummary: false,
+      followUpState: followUp.state,
+      text: compactOperationalSignalText(`${rolePrefix}${baseReason}${relatedSuffix}`, 95),
+    };
+  }
+
+  if (isScheduleOperationalSignalType(signal.signalType)) {
+    const details = compactOperationalSignalText(
+      getSignalMetadataString(signal.metadata, "constraint_text") ??
+        getSignalMetadataString(signal.metadata, "reason") ??
+        "",
+      70
+    );
+    const base = `${typeLabel}${windowSuffix}`;
+    return {
+      signalId: signal.id,
+      studentId: signal.studentId,
+      studentName,
+      section: "plan_constraints",
+      priority: 40,
+      sortBucket: 3,
+      dueDate: signal.validUntil ?? signal.validFrom ?? null,
+      episodeKey,
+      signalType: signal.signalType,
+      isEpisodeSummary: false,
+      followUpState: followUp.state,
+      text: details ? `${base}: ${details}` : base,
+    };
+  }
+
+  if (isMoveOperationalSignalType(signal.signalType)) {
+    const sourceDate = signal.sourceDate ?? "—";
+    const targetDate = signal.targetDate ?? "—";
+    return {
+      signalId: signal.id,
+      studentId: signal.studentId,
+      studentName,
+      section: "moves",
+      priority: 50,
+      sortBucket: 4,
+      dueDate: signal.targetDate ?? signal.sourceDate ?? null,
+      episodeKey,
+      signalType: signal.signalType,
+      isEpisodeSummary: false,
+      followUpState: followUp.state,
+      text: `кандидат переноса ${sourceDate} → ${targetDate}`,
+    };
+  }
+
+  const genericReason = compactOperationalSignalText(
+    getSignalMetadataString(signal.metadata, "reason") ??
+      getSignalMetadataString(signal.metadata, "summary") ??
+      "",
+    75
+  );
+  const genericBase = `${typeLabel}${windowSuffix}`;
+  return {
+    signalId: signal.id,
+    studentId: signal.studentId,
+    studentName,
+    section: "other",
+    priority: 60,
+    sortBucket: 5,
+    dueDate: signal.validUntil ?? signal.validFrom ?? null,
+    episodeKey,
+    signalType: signal.signalType,
+    isEpisodeSummary: false,
+    followUpState: followUp.state,
+    text: genericReason ? `${genericBase}: ${genericReason}` : genericBase,
+  };
+}
+
+function mergeOperationalSignalEpisodeItems(
+  current: TrainingPeaksOperationalSignalsItem,
+  incoming: TrainingPeaksOperationalSignalsItem
+): TrainingPeaksOperationalSignalsItem {
+  const currentKey = getOperationalSignalSortKey(current);
+  const incomingKey = getOperationalSignalSortKey(incoming);
+  if (incomingKey < currentKey) {
+    return incoming;
+  }
+  return current;
+}
+
+function toOperationalSignalDisplayLine(item: TrainingPeaksOperationalSignalsItem): string {
+  const name = item.studentName?.trim() || "Без ученика";
+  return `• ${name} — ${item.text}`;
+}
+
+export function formatTrainingPeaksOperationalSignalsForTelegram(
+  snapshot: TrainingPeaksOperationalSignalsSnapshot
+): string {
+  const lines: string[] = [];
+  lines.push("📍 /tp_signals");
+  if (snapshot.scope !== "all") {
+    lines.push(`Фильтр: ${snapshot.scope}`);
+  }
+
+  const nonEmptySections = snapshot.sections.filter((section) => section.items.length > 0);
+  if (nonEmptySections.length === 0) {
+    lines.push("", "Активных operational signals не найдено.");
+    return lines.join("\n");
+  }
+
+  for (const section of nonEmptySections) {
+    lines.push("", section.title);
+    for (const item of section.items) {
+      lines.push(toOperationalSignalDisplayLine(item));
+    }
+  }
+
+  if (snapshot.overflowCount > 0) {
+    lines.push("", `+${snapshot.overflowCount} ещё сигналов`);
+  }
+
+  return lines.join("\n");
+}
+
+export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
+  signals: TrainingPeaksStudentOperationalSignal[];
+  studentNameById?: ReadonlyMap<string, string | null>;
+  asOfDate: string;
+  scope?: TrainingPeaksOperationalSignalsScope;
+  limit?: number;
+}): TrainingPeaksOperationalSignalsSnapshot {
+  const scope = input.scope ?? "all";
+  const maxItems = Math.max(5, Math.min(30, Math.floor(input.limit ?? 15)));
+  const studentNameById = input.studentNameById ?? new Map<string, string | null>();
+
+  const dedupedByEpisode = new Map<string, TrainingPeaksOperationalSignalsItem>();
+  const fallbackItems: TrainingPeaksOperationalSignalsItem[] = [];
+  for (const signal of input.signals) {
+    if (!shouldKeepOperationalSignalByScope(signal.signalType, scope)) {
+      continue;
+    }
+    const item = buildOperationalSignalItemFromSignal({
+      signal,
+      studentNameById,
+      asOfDate: input.asOfDate,
+    });
+    if (!item.episodeKey) {
+      fallbackItems.push(item);
+      continue;
+    }
+    const episodeDedupeKey = `${item.studentId}:${item.episodeKey}`;
+    const existing = dedupedByEpisode.get(episodeDedupeKey);
+    if (!existing) {
+      dedupedByEpisode.set(episodeDedupeKey, item);
+      continue;
+    }
+    dedupedByEpisode.set(episodeDedupeKey, mergeOperationalSignalEpisodeItems(existing, item));
+  }
+
+  const allItems = [...dedupedByEpisode.values(), ...fallbackItems];
+  allItems.sort((left, right) => getOperationalSignalSortKey(left).localeCompare(getOperationalSignalSortKey(right)));
+  const limited = allItems.slice(0, maxItems);
+
+  const sectionsMap = createOperationalSignalsSections();
+  for (const item of limited) {
+    sectionsMap[item.section].items.push(item);
+  }
+
+  return {
+    scope,
+    sections: TRAININGPEAKS_OPERATIONAL_SIGNALS_SECTION_ORDER.map((key) => sectionsMap[key]),
+    totalBeforeLimit: allItems.length,
+    overflowCount: Math.max(0, allItems.length - limited.length),
+  };
+}
+
+export async function getTrainingPeaksOperationalSignalsSnapshot(input?: {
+  scope?: TrainingPeaksOperationalSignalsScope;
+  limit?: number;
+}): Promise<TrainingPeaksOperationalSignalsSnapshot> {
+  const [signals, students] = await Promise.all([
+    listTrainingPeaksOperationalSignals({
+      status: "active",
+      limit: 250,
+    }),
+    listTrainingPeaksStudents(),
+  ]);
+  const studentNameById = new Map(students.map((student) => [student.id, student.studentName?.trim() || null]));
+  const asOfDate = getCoachTodayDateKey(DEFAULT_COACH_TIMEZONE);
+  return buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    signals: signals.items,
+    studentNameById,
+    asOfDate,
+    scope: input?.scope,
+    limit: input?.limit,
+  });
 }
 
 export async function getTrainingPeaksHealthSnapshot(): Promise<TrainingPeaksHealthSnapshot> {

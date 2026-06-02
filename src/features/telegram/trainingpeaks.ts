@@ -30,6 +30,7 @@ import {
   findTrainingPeaksBusinessChatsByUsername,
   getTrainingPeaksAttentionSnapshot,
   getTrainingPeaksHealthSnapshot,
+  getTrainingPeaksOperationalSignalsSnapshot,
   getTrainingPeaksJobsStatus,
   getTrainingPeaksBusinessChatByInternalId,
   getTrainingPeaksLatestReportSnapshotByInternalId,
@@ -76,6 +77,8 @@ import {
   insertTrainingPeaksReplyDraft,
   recordTrainingPeaksReplyDraftFeedback,
   type TrainingPeaksAttentionSignal,
+  type TrainingPeaksOperationalSignalsScope,
+  formatTrainingPeaksOperationalSignalsForTelegram,
 } from "@/features/trainingpeaks/service";
 import {
   hasTrainingPeaksAttentionDigestSentForBelgradeDate,
@@ -285,6 +288,7 @@ const TP_START_COMMAND_PATTERN = /^\/tp_start(?:@\w+)?(?:\s+|$)/;
 const TP_RACES_COMMAND_PATTERN = /^\/tp_races(?:@\w+)?(?:\s+|$)/;
 const TP_JOBS_COMMAND_PATTERN = /^\/tp_jobs(?:@\w+)?(?:\s+|$)/;
 const TP_ATTENTION_COMMAND_PATTERN = /^\/tp_attention(?:@\w+)?(?:\s+|$)/;
+const TP_SIGNALS_COMMAND_PATTERN = /^\/tp_signals(?:@\w+)?(?:\s+|$)/;
 const TP_CASES_RECENT_COMMAND_PATTERN = /^\/tp_cases_recent(?:@\w+)?(?:\s+|$)/;
 const TP_CASES_COMMAND_PATTERN = /^\/tp_cases(?:@\w+)?(?:\s+|$)/;
 const TP_CASE_COMMAND_PATTERN = /^\/tp_case(?:@\w+)?(?:\s+|$)/;
@@ -345,6 +349,7 @@ type TrainingPeaksCommand =
   | "tp_races"
   | "tp_jobs"
   | "tp_attention"
+  | "tp_signals"
   | "tp_cases_recent"
   | "tp_cases"
   | "tp_case"
@@ -689,6 +694,10 @@ function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
 
   if (TP_ATTENTION_COMMAND_PATTERN.test(text)) {
     return "tp_attention";
+  }
+
+  if (TP_SIGNALS_COMMAND_PATTERN.test(text)) {
+    return "tp_signals";
   }
 
   if (TP_CASES_RECENT_COMMAND_PATTERN.test(text)) {
@@ -3625,6 +3634,33 @@ function buildTrainingPeaksAttentionDigestText(
   return blocks.map((block) => block.join("\n")).join("\n\n");
 }
 
+function parseTpSignalsScopeFromCommand(text: string): TrainingPeaksOperationalSignalsScope {
+  const normalized = text.replace(/^\/tp_signals(?:@\w+)?/iu, "").trim().toLowerCase();
+  if (normalized === "health") {
+    return "health";
+  }
+  if (normalized === "schedule") {
+    return "schedule";
+  }
+  if (normalized === "move") {
+    return "move";
+  }
+  return "all";
+}
+
+async function handleTrainingPeaksOperationalSignalsCommand(
+  parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate,
+  text: string
+): Promise<void> {
+  const scope = parseTpSignalsScopeFromCommand(text);
+  const snapshot = await getTrainingPeaksOperationalSignalsSnapshot({
+    scope,
+    limit: 15,
+  });
+  const message = formatTrainingPeaksOperationalSignalsForTelegram(snapshot);
+  await sendTrainingPeaksMessage(parsedMessage.chatId, message);
+}
+
 function getTrainingPeaksAttentionDigestMarkup(): TelegramInlineKeyboardMarkup {
   return createInlineKeyboardMarkup([
     [createMenuButton("🔄 Обновить", TP_CALLBACK_ATTENTION)],
@@ -3947,6 +3983,7 @@ export function getTrainingPeaksHelpLines(): string[] {
     "",
     "1. Утренний обзор",
     "🌅 /tp_attention — текущий digest внимания",
+    "📍 /tp_signals [health|schedule|move] — активные operational signals (read-only)",
     "/tp_digest_now — ручная отправка digest только тренерским чатам, с защитой от повторной отправки за день",
     "",
     "2. Кейсы",
@@ -10299,6 +10336,11 @@ export async function handleTrainingPeaksTelegramCommand(
 
     if (command === "tp_attention") {
       await handleTrainingPeaksAttention(parsedMessage);
+      return "handled";
+    }
+
+    if (command === "tp_signals") {
+      await handleTrainingPeaksOperationalSignalsCommand(parsedMessage, text);
       return "handled";
     }
 
