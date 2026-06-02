@@ -33,10 +33,23 @@ type CliArgs = {
 
 type ProofWorkoutSpec = {
   safeAthleteId: number;
-  caseId: "easy-pace";
+  caseId: "easy-pace" | "interval-hr";
   title: string;
   description: string;
-  stepNote: string;
+  blocks: RunningWorkoutDefinition["blocks"];
+  verification: {
+    primaryMetric: "percentOfThresholdPace" | "percentOfThresholdHr";
+    requireRepetition: boolean;
+    repeatCount: number | null;
+    requiredRanges: Array<{
+      minValue: number;
+      maxValue: number;
+      matchName?: string;
+      matchIntensityClass?: string;
+    }>;
+    requiredStepNames: string[];
+    requiredStepNoteMarkers: string[];
+  };
   confirmPhrase: string;
 };
 
@@ -56,32 +69,138 @@ type PreflightArtifact = {
 };
 
 const TP_ACTIONS_REAL_EXECUTION_ENV = "TP_ACTIONS_REAL_EXECUTION";
-const SAFE_PROOF: ProofWorkoutSpec = {
-  safeAthleteId: 3102415,
-  caseId: "easy-pace",
-  title: "API CREATE PROOF EASY PACE DO NOT USE",
-  description: "API_CREATE_PROOF_DESC_EASY_PACE",
-  stepNote: "API_CREATE_PROOF_STEP_NOTE_EASY_PACE",
-  confirmPhrase: "CREATE TEST RUN WORKOUT",
+const SAFE_PROOF_BY_CASE: Record<"easy-pace" | "interval-hr", ProofWorkoutSpec> = {
+  "easy-pace": {
+    safeAthleteId: 3102415,
+    caseId: "easy-pace",
+    title: "API CREATE PROOF EASY PACE DO NOT USE",
+    description: "API_CREATE_PROOF_DESC_EASY_PACE",
+    blocks: [
+      {
+        kind: "step",
+        label: "Active",
+        durationSeconds: 1800,
+        intensityClass: "active",
+        target: {
+          metric: "percentOfThresholdPace",
+          minValue: 75,
+          maxValue: 85,
+        },
+        notes: "API_CREATE_PROOF_STEP_NOTE_EASY_PACE",
+      },
+    ],
+    verification: {
+      primaryMetric: "percentOfThresholdPace",
+      requireRepetition: false,
+      repeatCount: null,
+      requiredRanges: [{ minValue: 75, maxValue: 85 }],
+      requiredStepNames: ["Active"],
+      requiredStepNoteMarkers: ["API_CREATE_PROOF_STEP_NOTE_EASY_PACE"],
+    },
+    confirmPhrase: "CREATE TEST RUN WORKOUT",
+  },
+  "interval-hr": {
+    safeAthleteId: 3102415,
+    caseId: "interval-hr",
+    title: "API CREATE PROOF INTERVAL HR DO NOT USE",
+    description: "API_CREATE_PROOF_DESC_INTERVAL_HR",
+    blocks: [
+      {
+        kind: "step",
+        label: "Warm up",
+        durationSeconds: 1200,
+        intensityClass: "warmup",
+        target: {
+          metric: "percentOfThresholdHr",
+          minValue: 70,
+          maxValue: 80,
+        },
+        notes: "API_CREATE_PROOF_NOTE_WARMUP_HR",
+      },
+      {
+        kind: "repetition",
+        repeatCount: 4,
+        steps: [
+          {
+            kind: "step",
+            label: "Hard",
+            durationSeconds: 300,
+            intensityClass: "active",
+            target: {
+              metric: "percentOfThresholdHr",
+              minValue: 90,
+              maxValue: 95,
+            },
+            notes: "API_CREATE_PROOF_NOTE_HARD_HR",
+          },
+          {
+            kind: "step",
+            label: "Easy",
+            durationSeconds: 180,
+            intensityClass: "recovery",
+            target: {
+              metric: "percentOfThresholdHr",
+              minValue: 70,
+              maxValue: 80,
+            },
+            notes: "API_CREATE_PROOF_NOTE_RECOVERY_HR",
+          },
+        ],
+      },
+      {
+        kind: "step",
+        label: "Cool down",
+        durationSeconds: 600,
+        intensityClass: "cooldown",
+        target: {
+          metric: "percentOfThresholdHr",
+          minValue: 70,
+          maxValue: 80,
+        },
+        notes: "API_CREATE_PROOF_NOTE_COOLDOWN_HR",
+      },
+    ],
+    verification: {
+      primaryMetric: "percentOfThresholdHr",
+      requireRepetition: true,
+      repeatCount: 4,
+      requiredRanges: [
+        { minValue: 90, maxValue: 95, matchName: "Hard" },
+        { minValue: 70, maxValue: 80, matchName: "Warm up" },
+        { minValue: 70, maxValue: 80, matchName: "Easy" },
+        { minValue: 70, maxValue: 80, matchName: "Cool down" },
+      ],
+      requiredStepNames: ["Warm up", "Hard", "Easy", "Cool down"],
+      requiredStepNoteMarkers: [
+        "API_CREATE_PROOF_NOTE_WARMUP_HR",
+        "API_CREATE_PROOF_NOTE_HARD_HR",
+        "API_CREATE_PROOF_NOTE_RECOVERY_HR",
+        "API_CREATE_PROOF_NOTE_COOLDOWN_HR",
+      ],
+    },
+    confirmPhrase: "CREATE TEST RUN WORKOUT",
+  },
 };
 const ACTION_ARTIFACTS_ROOT = path.join(toolRoot, "reports", "tp-api-create-running-workout-proof");
 const DEFAULT_HEADLESS = true;
 
 function printHelp(): void {
-  console.log("Controlled API Create Proof: Easy Pace Running Workout");
+  console.log("Controlled API Create Proof: Running Workout");
   console.log("");
   console.log("Usage (dry-run, default):");
-  console.log("  npm run tp-api-create-running-workout-proof -- --case easy-pace --athlete-id 3102415 --date YYYY-MM-DD");
+  console.log(
+    "  npm run tp-api-create-running-workout-proof -- --case easy-pace|interval-hr --athlete-id 3102415 --date YYYY-MM-DD",
+  );
   console.log("");
   console.log("Usage (live apply, guarded):");
   console.log(
-    '  TP_ACTIONS_REAL_EXECUTION=true npm run tp-api-create-running-workout-proof -- --case easy-pace --athlete-id 3102415 --date YYYY-MM-DD --apply --confirm "CREATE TEST RUN WORKOUT"',
+    '  TP_ACTIONS_REAL_EXECUTION=true npm run tp-api-create-running-workout-proof -- --case easy-pace|interval-hr --athlete-id 3102415 --date YYYY-MM-DD --apply --confirm "CREATE TEST RUN WORKOUT"',
   );
   console.log("");
   console.log("Safety rules:");
   console.log("  - dry-run is default; no POST is sent unless all apply gates pass");
   console.log("  - safe athlete only: 3102415");
-  console.log("  - safe case only: easy-pace");
+  console.log("  - safe case only: easy-pace or interval-hr");
   console.log('  - typed confirmation required: --confirm "CREATE TEST RUN WORKOUT"');
   console.log("  - TP_ACTIONS_REAL_EXECUTION=true required for live POST");
   console.log("  - target date must be in the future (not today)");
@@ -135,9 +254,10 @@ function readRequiredNextArg(argv: string[], index: number, flag: string): strin
 }
 
 function parseArgs(argv: string[]): CliArgs {
+  const defaultCaseId = "easy-pace" as const;
   const parsed: CliArgs = {
-    caseId: SAFE_PROOF.caseId,
-    athleteId: SAFE_PROOF.safeAthleteId,
+    caseId: defaultCaseId,
+    athleteId: SAFE_PROOF_BY_CASE[defaultCaseId].safeAthleteId,
     date: "",
     apply: false,
     confirm: null,
@@ -214,28 +334,19 @@ function parseArgs(argv: string[]): CliArgs {
 }
 
 function buildDefinitionFromProof(args: CliArgs): RunningWorkoutDefinition {
+  const safeProof = SAFE_PROOF_BY_CASE[args.caseId as keyof typeof SAFE_PROOF_BY_CASE];
+  if (!safeProof) {
+    throw new Error(`Unsupported --case "${args.caseId}". Allowed: ${Object.keys(SAFE_PROOF_BY_CASE).join(", ")}`);
+  }
   return {
-    caseId: SAFE_PROOF.caseId,
+    caseId: safeProof.caseId,
     athleteId: args.athleteId,
     workoutDay: args.date,
-    title: SAFE_PROOF.title,
-    description: SAFE_PROOF.description,
+    title: safeProof.title,
+    description: safeProof.description,
     workoutTypeValueId: 3,
     workoutSubTypeId: null,
-    blocks: [
-      {
-        kind: "step",
-        label: "Active",
-        durationSeconds: 1800,
-        intensityClass: "active",
-        target: {
-          metric: "percentOfThresholdPace",
-          minValue: 75,
-          maxValue: 85,
-        },
-        notes: SAFE_PROOF.stepNote,
-      },
-    ],
+    blocks: safeProof.blocks,
   };
 }
 
@@ -259,26 +370,44 @@ function findArrayFromUnknown(input: unknown): unknown[] {
 
 function parseStructureForChecks(serialized: string): {
   parseable: boolean;
-  metricOk: boolean;
-  rangeOk: boolean;
-  noteOk: boolean;
-  noRepetition: boolean;
+  hasStructureArray: boolean;
+  primaryMetric: string | null;
+  repetitionBlocks: number;
+  repetitionCount: number | null;
+  ranges: Array<{ minValue: number; maxValue: number; name: string; intensityClass: string }>;
+  stepNames: string[];
+  notes: string[];
   details: string;
 } {
   try {
     const parsed = JSON.parse(serialized) as {
       primaryIntensityMetric?: unknown;
-      structure?: Array<{ type?: string; steps?: Array<{ notes?: string; targets?: Array<{ minValue?: unknown; maxValue?: unknown }> }> }>;
+      structure?: Array<{
+        type?: string;
+        length?: { value?: unknown };
+        steps?: Array<{
+          name?: string;
+          intensityClass?: string;
+          notes?: string;
+          targets?: Array<{ minValue?: unknown; maxValue?: unknown }>;
+        }>;
+      }>;
     };
-    const metricOk = parsed.primaryIntensityMetric === "percentOfThresholdPace";
+    const primaryMetric = typeof parsed.primaryIntensityMetric === "string" ? parsed.primaryIntensityMetric : null;
     const structure = Array.isArray(parsed.structure) ? parsed.structure : [];
-    const noRepetition = structure.every((entry) => entry.type !== "repetition");
+    const hasStructureArray = Array.isArray(parsed.structure);
+    const repetitionBlocks = structure.filter((entry) => entry.type === "repetition").length;
+    const firstRepetition = structure.find((entry) => entry.type === "repetition");
+    const repetitionCount =
+      firstRepetition && typeof firstRepetition.length?.value === "number" ? firstRepetition.length.value : null;
 
-    const targets: Array<{ minValue: number; maxValue: number }> = [];
+    const ranges: Array<{ minValue: number; maxValue: number; name: string; intensityClass: string }> = [];
+    const stepNames: string[] = [];
     const notes: string[] = [];
     for (const block of structure) {
       const steps = Array.isArray(block.steps) ? block.steps : [];
       for (const step of steps) {
+        if (typeof step.name === "string") stepNames.push(step.name);
         if (typeof step.notes === "string") notes.push(step.notes);
         const firstTarget = Array.isArray(step.targets) ? step.targets[0] : null;
         if (
@@ -287,31 +416,58 @@ function parseStructureForChecks(serialized: string): {
           typeof firstTarget.minValue === "number" &&
           typeof firstTarget.maxValue === "number"
         ) {
-          targets.push({ minValue: firstTarget.minValue, maxValue: firstTarget.maxValue });
+          ranges.push({
+            minValue: firstTarget.minValue,
+            maxValue: firstTarget.maxValue,
+            name: typeof step.name === "string" ? step.name : "",
+            intensityClass: typeof step.intensityClass === "string" ? step.intensityClass : "",
+          });
         }
       }
     }
 
-    const rangeOk = targets.some((item) => item.minValue === 75 && item.maxValue === 85);
-    const noteOk = notes.some((value) => value.includes(SAFE_PROOF.stepNote));
     return {
       parseable: true,
-      metricOk,
-      rangeOk,
-      noteOk,
-      noRepetition,
-      details: `targets=${targets.map((x) => `${x.minValue}-${x.maxValue}`).join(",") || "none"} notes=${notes.length}`,
+      hasStructureArray,
+      primaryMetric,
+      repetitionBlocks,
+      repetitionCount,
+      ranges,
+      stepNames,
+      notes,
+      details: `metric=${primaryMetric ?? "missing"} ranges=${ranges.map((x) => `${x.name}:${x.minValue}-${x.maxValue}`).join(",") || "none"} notes=${notes.length} repetitionBlocks=${repetitionBlocks} repetitionCount=${repetitionCount ?? "none"}`,
     };
   } catch {
     return {
       parseable: false,
-      metricOk: false,
-      rangeOk: false,
-      noteOk: false,
-      noRepetition: false,
+      hasStructureArray: false,
+      primaryMetric: null,
+      repetitionBlocks: 0,
+      repetitionCount: null,
+      ranges: [],
+      stepNames: [],
+      notes: [],
       details: "structure is not parseable JSON",
     };
   }
+}
+
+function hasRequiredRange(
+  ranges: Array<{ minValue: number; maxValue: number; name: string; intensityClass: string }>,
+  required: { minValue: number; maxValue: number; matchName?: string; matchIntensityClass?: string },
+): boolean {
+  return ranges.some((range) => {
+    if (range.minValue !== required.minValue || range.maxValue !== required.maxValue) {
+      return false;
+    }
+    if (required.matchName && range.name !== required.matchName) {
+      return false;
+    }
+    if (required.matchIntensityClass && range.intensityClass !== required.matchIntensityClass) {
+      return false;
+    }
+    return true;
+  });
 }
 
 function mustPass(checks: Record<string, { pass: boolean; details: string }>, name: string): void {
@@ -322,6 +478,10 @@ function mustPass(checks: Record<string, { pass: boolean; details: string }>, na
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+  const safeProof = SAFE_PROOF_BY_CASE[args.caseId as keyof typeof SAFE_PROOF_BY_CASE];
+  if (!safeProof) {
+    throw new Error(`Unsupported --case "${args.caseId}". Allowed: ${Object.keys(SAFE_PROOF_BY_CASE).join(", ")}`);
+  }
   const mode: "dry-run" | "apply" = args.apply ? "apply" : "dry-run";
   const executeAllowed = args.apply && isTruthyEnvFlag(process.env[TP_ACTIONS_REAL_EXECUTION_ENV]);
   const timestamp = timestampForPath(new Date());
@@ -338,19 +498,24 @@ async function main(): Promise<void> {
   const plan = buildRunningWorkoutCreatePlan(definition);
   const structureChecks = parseStructureForChecks(plan.requestBodyCandidate.structure);
   const title = plan.requestBodyCandidate.title;
+  const description = plan.requestBodyCandidate.description;
 
   const safetyChecks: Record<string, { pass: boolean; details: string }> = {
     safeAthleteOnly: {
-      pass: args.athleteId === SAFE_PROOF.safeAthleteId,
-      details: `athleteId=${args.athleteId}; expected=${SAFE_PROOF.safeAthleteId}`,
+      pass: args.athleteId === safeProof.safeAthleteId,
+      details: `athleteId=${args.athleteId}; expected=${safeProof.safeAthleteId}`,
     },
     safeCaseOnly: {
-      pass: args.caseId === SAFE_PROOF.caseId,
-      details: `case=${args.caseId}; expected=${SAFE_PROOF.caseId}`,
+      pass: Boolean(SAFE_PROOF_BY_CASE[args.caseId as keyof typeof SAFE_PROOF_BY_CASE]),
+      details: `case=${args.caseId}; allowed=${Object.keys(SAFE_PROOF_BY_CASE).join(",")}`,
     },
     titleGuard: {
       pass: title.includes("API CREATE PROOF") && title.includes("DO NOT USE"),
       details: `title=${title}`,
+    },
+    descriptionMarker: {
+      pass: description.includes(safeProof.description),
+      details: `description must include marker=${safeProof.description}`,
     },
     futureDateOnly: {
       pass: isFutureDateOnly(args.date),
@@ -360,25 +525,49 @@ async function main(): Promise<void> {
       pass: structureChecks.parseable,
       details: structureChecks.details,
     },
+    structureArrayPresent: {
+      pass: structureChecks.hasStructureArray,
+      details: "expected structure[] in serialized payload",
+    },
     structureMetric: {
-      pass: structureChecks.metricOk,
-      details: "expected metric=percentOfThresholdPace",
+      pass: structureChecks.primaryMetric === safeProof.verification.primaryMetric,
+      details: `expected metric=${safeProof.verification.primaryMetric}`,
     },
-    structureRange: {
-      pass: structureChecks.rangeOk,
-      details: "expected one target range=75-85",
+    structureRanges: {
+      pass: safeProof.verification.requiredRanges.every((required) => hasRequiredRange(structureChecks.ranges, required)),
+      details: `required ranges: ${safeProof.verification.requiredRanges
+        .map((item) => `${item.matchName ?? "*"}:${item.minValue}-${item.maxValue}`)
+        .join(", ")}`,
     },
-    structureNoteMarker: {
-      pass: structureChecks.noteOk,
-      details: `expected note marker=${SAFE_PROOF.stepNote}`,
+    structureStepNames: {
+      pass: safeProof.verification.requiredStepNames.every((name) => structureChecks.stepNames.includes(name)),
+      details: `required steps: ${safeProof.verification.requiredStepNames.join(", ")}`,
     },
-    structureNoRepetition: {
-      pass: structureChecks.noRepetition,
-      details: "easy-pace proof must not contain repetition blocks",
+    structureStepNotes: {
+      pass: safeProof.verification.requiredStepNoteMarkers.every((note) =>
+        structureChecks.notes.some((item) => item.includes(note))
+      ),
+      details: `required step note markers: ${safeProof.verification.requiredStepNoteMarkers.join(", ")}`,
+    },
+    structureRepetitionBlock: {
+      pass: safeProof.verification.requireRepetition
+        ? structureChecks.repetitionBlocks > 0
+        : structureChecks.repetitionBlocks === 0,
+      details: safeProof.verification.requireRepetition
+        ? "repetition block required"
+        : "repetition block must not exist",
+    },
+    structureRepetitionCount: {
+      pass:
+        safeProof.verification.repeatCount === null || structureChecks.repetitionCount === safeProof.verification.repeatCount,
+      details:
+        safeProof.verification.repeatCount === null
+          ? "repeat count not required"
+          : `expected repetition count=${safeProof.verification.repeatCount}`,
     },
     applyConfirmPhrase: {
-      pass: !args.apply || args.confirm === SAFE_PROOF.confirmPhrase,
-      details: `confirm=${args.confirm ?? "null"}; expected="${SAFE_PROOF.confirmPhrase}"`,
+      pass: !args.apply || args.confirm === safeProof.confirmPhrase,
+      details: `confirm=${args.confirm ?? "null"}; expected="${safeProof.confirmPhrase}"`,
     },
     applyEnvGuard: {
       pass: !args.apply || executeAllowed,
@@ -406,6 +595,10 @@ async function main(): Promise<void> {
   console.log(`[tp-api-create-running-workout-proof] mode=${mode}`);
   console.log(`[tp-api-create-running-workout-proof] athleteId=${args.athleteId} case=${args.caseId} date=${args.date}`);
   console.log(`[tp-api-create-running-workout-proof] artifacts=${artifactDir}`);
+  console.log(`case: ${args.caseId}`);
+  console.log(`athlete_id: ${args.athleteId}`);
+  console.log(`date: ${args.date}`);
+  console.log(`mode: ${mode}`);
 
   if (!args.apply) {
     await writeFile(preflightPath, `${JSON.stringify(redactUnknown(preflightBase), null, 2)}\n`, "utf8");
@@ -415,6 +608,12 @@ async function main(): Promise<void> {
     console.log(`- workoutTypeValueId: ${plan.requestBodyCandidate.workoutTypeValueId}`);
     console.log(`- totalTimePlanned: ${plan.requestBodyCandidate.totalTimePlanned}`);
     console.log("- network calls: no");
+    console.log("- verification_status: not-run");
+    if (args.caseId === "interval-hr") {
+      console.log(
+        `- verification_details_interval_hr: metric=${structureChecks.primaryMetric ?? "missing"} repetitionCount=${structureChecks.repetitionCount ?? "none"} ranges=${structureChecks.ranges.map((entry) => `${entry.name}:${entry.minValue}-${entry.maxValue}`).join(";") || "none"}`,
+      );
+    }
     console.log(`- preflight artifact: ${preflightPath}`);
     console.log(`- request artifact: ${requestPath}`);
     console.log("dry-run complete. POST not sent.");
@@ -535,22 +734,46 @@ async function main(): Promise<void> {
     const verifyParsed = parseStructureForChecks(verifyStructure);
 
     const verificationChecks = {
-      athleteId: verifyRecord.athleteId === SAFE_PROOF.safeAthleteId,
-      title: verifyTitle === SAFE_PROOF.title,
+      athleteId: verifyRecord.athleteId === safeProof.safeAthleteId,
+      title: verifyTitle === safeProof.title,
       workoutDay: Boolean(verifyWorkoutDay?.startsWith(args.date)),
-      descriptionMarker: verifyDescription.includes(SAFE_PROOF.description),
-      structurePresent: verifyStructure.length > 0,
-      structureMetric: verifyParsed.metricOk,
-      structureRange: verifyParsed.rangeOk,
-      stepNoteMarker: verifyParsed.noteOk,
+      descriptionMarker: verifyDescription.includes(safeProof.description),
+      structurePresent: verifyStructure.length > 0 && verifyParsed.hasStructureArray,
+      structureParseable: verifyParsed.parseable,
+      structureMetric: verifyParsed.primaryMetric === safeProof.verification.primaryMetric,
+      structureRepetitionBlock: safeProof.verification.requireRepetition
+        ? verifyParsed.repetitionBlocks > 0
+        : verifyParsed.repetitionBlocks === 0,
+      structureRepetitionCount:
+        safeProof.verification.repeatCount === null || verifyParsed.repetitionCount === safeProof.verification.repeatCount,
+      structureRanges: safeProof.verification.requiredRanges.every((required) => hasRequiredRange(verifyParsed.ranges, required)),
+      structureStepNames: safeProof.verification.requiredStepNames.every((name) => verifyParsed.stepNames.includes(name)),
+      structureStepNotes: safeProof.verification.requiredStepNoteMarkers.every((note) =>
+        verifyParsed.notes.some((item) => item.includes(note))
+      ),
     };
 
-    const verificationStatus: "pass" | "warn" | "fail" =
-      verifyResult.ok && Object.values(verificationChecks).every(Boolean)
+    const failedChecks = Object.entries(verificationChecks)
+      .filter(([, pass]) => !pass)
+      .map(([name]) => name);
+    const verificationStatus: "pass" | "fail" =
+      verifyResult.ok && failedChecks.length === 0
         ? "pass"
-        : verifyResult.ok
-          ? "warn"
-          : "fail";
+        : "fail";
+    const verificationDetails = {
+      caseId: args.caseId,
+      observed: {
+        primaryMetric: verifyParsed.primaryMetric,
+        repetitionBlocks: verifyParsed.repetitionBlocks,
+        repetitionCount: verifyParsed.repetitionCount,
+        ranges: verifyParsed.ranges,
+        stepNames: verifyParsed.stepNames,
+        notes: verifyParsed.notes,
+      },
+      expected: safeProof.verification,
+      failedChecks,
+      parseDetails: verifyParsed.details,
+    };
 
     await writeFile(
       verifyPath,
@@ -561,6 +784,7 @@ async function main(): Promise<void> {
           ok: verifyResult.ok,
           verificationStatus,
           checks: verificationChecks,
+          details: verificationDetails,
           body: verifyResult.body,
         }),
         null,
@@ -571,10 +795,18 @@ async function main(): Promise<void> {
 
     console.log(`created_workout_id: ${createdWorkoutId}`);
     console.log(`verification_status: ${verificationStatus}`);
+    if (args.caseId === "interval-hr") {
+      console.log(`verification_details_interval_hr: ${JSON.stringify(verificationDetails)}`);
+    }
     console.log(`preflight_artifact: ${preflightPath}`);
     console.log(`request_artifact: ${requestPath}`);
     console.log(`response_artifact: ${responsePath}`);
     console.log(`verify_artifact: ${verifyPath}`);
+    if (verificationStatus !== "pass") {
+      throw new Error(
+        `Verification failed for case=${args.caseId}. Failed checks: ${failedChecks.join(", ") || "unknown"}.`,
+      );
+    }
   } finally {
     await context.close().catch(() => {});
   }
