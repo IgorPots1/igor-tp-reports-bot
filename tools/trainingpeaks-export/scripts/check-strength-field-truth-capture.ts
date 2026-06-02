@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { chromium } from "playwright";
 
 import {
   DEFAULT_DURATION_SECONDS,
@@ -13,6 +16,7 @@ import {
   buildCheckpointPlan,
   buildHelpText,
   buildRunSummaryMarkdown,
+  captureDomArtifact,
   deriveVerdict,
   parseTruthCaptureArgs,
   type DomCaptureArtifact,
@@ -353,7 +357,66 @@ async function run(): Promise<void> {
   assert(badArgsFailed, "Expected unsafe athlete URL to fail.");
 
   const source = readFileSync(path.join(__dirname, "tp-capture-strength-field-truth.ts"), "utf8");
+  const libSource = readFileSync(path.join(__dirname, "lib", "strength-field-truth-capture.ts"), "utf8");
+  const browserScript = readFileSync(path.join(__dirname, "lib", "strength-field-truth-dom-capture.browser.js"), "utf8");
+
+  assert(!browserScript.includes("__name("), "Browser DOM script must not include __name transform marker.");
+  assert(
+    browserScript.includes("browserCaptureStrengthFieldTruthDom"),
+    "Browser DOM script must define browserCaptureStrengthFieldTruthDom."
+  );
+  assert(
+    !libSource.includes("page.evaluate(\n    ({ checkpoint, targetExerciseNames, targetValueTokens }) =>"),
+    "Truth capture helper must not pass TS DOM collector callback directly into page.evaluate."
+  );
+  assert(
+    libSource.includes("new Function(") && libSource.includes("scriptSource"),
+    "Truth capture helper must execute browser DOM collector from raw script text."
+  );
   assert(!source.includes(".click(") || source.includes("Do NOT"), "Capture script should not automate UI clicking beyond browser startup.");
+
+  const profilePath = await mkdtemp(path.join(os.tmpdir(), "tp-strength-truth-check-"));
+  const browser = await chromium.launchPersistentContext(profilePath, { headless: true, viewport: { width: 1280, height: 900 } });
+  try {
+    const page = browser.pages()[0] ?? (await browser.newPage());
+    const fixtureHtml = `
+      <html>
+        <body>
+          <div role="dialog">
+            <h2>New Strength Builder</h2>
+            <div>Glute Bridge</div>
+            <input aria-label="Exercise" value="Glute Bridge" />
+            <input aria-label="Sets" value="2" placeholder="Sets" />
+            <input aria-label="Reps" value="15" placeholder="Reps" />
+            <textarea aria-label="Coach Notes">TEST NOTE MANUAL CAPTURE Glute Bridge</textarea>
+            <button type="button">Save</button>
+          </div>
+        </body>
+      </html>
+    `;
+    await page.setContent(fixtureHtml);
+    const fixtureDom = await captureDomArtifact(page, "checkpoint-fixture-smoke");
+    assert(fixtureDom.dialogFound === true, "Fixture smoke expected dialogFound=true.");
+    const fixtureControls = fixtureDom.dialogs.reduce((sum, dialog) => sum + dialog.inputs.length + dialog.textareas.length, 0);
+    assert(fixtureControls > 0, "Fixture smoke expected input controls > 0.");
+    const occurrenceNames = fixtureDom.dialogs.flatMap((dialog) =>
+      dialog.exactExerciseNameOccurrences.map((occurrence) => occurrence.name)
+    );
+    const tokenNames = fixtureDom.dialogs.flatMap((dialog) =>
+      dialog.exactValueTokenOccurrences.map((occurrence) => occurrence.name)
+    );
+    assert(
+      occurrenceNames.some((name) => name === "Glute Bridge"),
+      "Fixture smoke expected exact occurrence for Glute Bridge."
+    );
+    assert(
+      tokenNames.some((name) => name === "TEST NOTE MANUAL CAPTURE"),
+      "Fixture smoke expected exact occurrence for TEST NOTE MANUAL CAPTURE."
+    );
+  } finally {
+    await browser.close();
+    await rm(profilePath, { recursive: true, force: true });
+  }
 
   console.log("check-strength-field-truth-capture: ok");
   console.log(`- safe athlete: ${SAFE_ATHLETE_URL}`);

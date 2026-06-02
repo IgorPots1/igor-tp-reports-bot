@@ -149,36 +149,57 @@ async function main(): Promise<void> {
         try {
           await page.waitForTimeout(600);
           const screenshotAbsolute = await saveCheckpointScreenshot(page, artifacts.screenshotsDir, checkpoint.screenshotName);
-          const domArtifact = await captureDomArtifact(page, checkpoint.id);
-          const domAbsolute = await saveDomArtifact(artifacts.domDir, checkpoint.domFileName, domArtifact);
-
-          domArtifacts.push(domArtifact);
-          record.action = "captured";
-          record.completedAt = new Date().toISOString();
           record.screenshotPath = getRepoRelativePath(screenshotAbsolute);
-          record.domPath = getRepoRelativePath(domAbsolute);
-          record.dialogFound = domArtifact.dialogFound;
-          record.exerciseOccurrenceCount = domArtifact.dialogs.reduce(
-            (sum, dialog) => sum + dialog.exactExerciseNameOccurrences.length + dialog.exactValueTokenOccurrences.length,
-            0
-          );
-          record.inputControlCount = domArtifact.dialogs.reduce(
-            (sum, dialog) => sum + dialog.inputs.length + dialog.textareas.length,
-            0
-          );
+          record.domStatus = "not_attempted";
+          let domArtifact: DomCaptureArtifact | undefined;
+          let domAbsolute: string | undefined;
+          try {
+            domArtifact = await captureDomArtifact(page, checkpoint.id);
+            domAbsolute = await saveDomArtifact(artifacts.domDir, checkpoint.domFileName, domArtifact);
+            record.domStatus = "captured";
+          } catch (domError) {
+            const domMessage = domError instanceof Error ? domError.message : String(domError);
+            record.domStatus = "failed";
+            record.errors?.push(`DOM capture failed: ${domMessage}`);
+            errors.push(`${checkpoint.id}: DOM capture failed: ${domMessage}`);
+          }
+
+          record.action = record.screenshotPath || domAbsolute ? "captured" : undefined;
+          record.completedAt = new Date().toISOString();
+          record.domPath = domAbsolute ? getRepoRelativePath(domAbsolute) : undefined;
+          if (domArtifact) {
+            domArtifacts.push(domArtifact);
+            record.dialogFound = domArtifact.dialogFound;
+            record.exerciseOccurrenceCount = domArtifact.dialogs.reduce(
+              (sum, dialog) => sum + dialog.exactExerciseNameOccurrences.length + dialog.exactValueTokenOccurrences.length,
+              0
+            );
+            record.inputControlCount = domArtifact.dialogs.reduce(
+              (sum, dialog) => sum + dialog.inputs.length + dialog.textareas.length,
+              0
+            );
+          } else {
+            record.dialogFound = undefined;
+            record.exerciseOccurrenceCount = 0;
+            record.inputControlCount = 0;
+          }
           record.networkEventCount = networkState.events.length;
 
-          if (!domArtifact.dialogFound) {
+          if (!domArtifact) {
+            notes.push(`${checkpoint.id}: screenshot captured but DOM capture failed.`);
+          } else if (!domArtifact.dialogFound) {
             notes.push(`${checkpoint.id}: visible [role="dialog"] was not detected at capture time.`);
           }
-          if (domArtifact.focusedControl?.value) {
+          if (domArtifact?.focusedControl?.value) {
             notes.push(`${checkpoint.id}: focused control value="${domArtifact.focusedControl.value}".`);
           }
 
           console.log(`Checkpoint ${index + 1} captured.`);
-          console.log(`- dialogFound: ${domArtifact.dialogFound ? "yes" : "no"}`);
+          console.log(`- dialogFound: ${domArtifact ? (domArtifact.dialogFound ? "yes" : "no") : "n/a (dom failed)"}`);
+          console.log(`- domStatus: ${record.domStatus}`);
           console.log(`- exercise occurrences: ${record.exerciseOccurrenceCount}`);
           console.log(`- screenshots: ${record.screenshotPath}`);
+          console.log(`- dom: ${record.domPath ?? "n/a"}`);
           console.log(`- next: ${checkpoints[index + 1]?.id ?? "run summary"}`);
           moveToNextCheckpoint = true;
         } catch (error) {
@@ -186,7 +207,8 @@ async function main(): Promise<void> {
           record.errors?.push(message);
           errors.push(`${checkpoint.id}: ${message}`);
           record.completedAt = new Date().toISOString();
-          record.action = "captured";
+          record.action = undefined;
+          record.domStatus = "failed";
           record.networkEventCount = networkState.events.length;
           console.log(`Checkpoint ${index + 1} capture failed: ${message}`);
           console.log(`- next: ${checkpoints[index + 1]?.id ?? "run summary"}`);

@@ -1,11 +1,12 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import assert from "node:assert/strict";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { stdin as input, stdout as output } from "node:process";
 import { createInterface } from "node:readline/promises";
 
 import type { BrowserContext, Page, Request, Response } from "playwright";
 
-import { profileDir, toolRoot } from "./paths.ts";
+import { profileDir, scriptsRoot, toolRoot } from "./paths.ts";
 import { sanitizeAthleteUrl } from "./strength-workout-ui-writer.ts";
 
 export const SAFE_ATHLETE_URL = "https://app.trainingpeaks.com/#calendar/athletes/3102415";
@@ -165,6 +166,7 @@ export type CheckpointCaptureRecord = {
   networkEventCount?: number;
   screenshotPath?: string;
   domPath?: string;
+  domStatus?: "captured" | "failed" | "not_attempted";
   errors?: string[];
 };
 
@@ -195,6 +197,29 @@ export type TruthCaptureVerdict =
   | "pivot_to_network_payload_writer"
   | "pause_field_automation_do_catalog_enrichment"
   | "capture_incomplete";
+
+export type BrowserDomCaptureInput = {
+  checkpoint: string;
+  targetExerciseNames: string[];
+  targetValueTokens: string[];
+};
+
+let browserDomCaptureScriptPromise: Promise<string> | undefined;
+
+async function loadBrowserDomCaptureScript(): Promise<string> {
+  if (!browserDomCaptureScriptPromise) {
+    const browserScriptPath = path.join(scriptsRoot, "lib", "strength-field-truth-dom-capture.browser.js");
+    browserDomCaptureScriptPromise = readFile(browserScriptPath, "utf8").then((script) => {
+      assert(!script.includes("__name("), "DOM browser script must not contain __name transform markers.");
+      assert(
+        script.includes("browserCaptureStrengthFieldTruthDom"),
+        "DOM browser script must define browserCaptureStrengthFieldTruthDom."
+      );
+      return script;
+    });
+  }
+  return browserDomCaptureScriptPromise;
+}
 
 type ShapeObject = {
   type: string;
@@ -589,329 +614,20 @@ export async function saveCheckpointScreenshot(page: Page, screenshotsDir: strin
 }
 
 export async function captureDomArtifact(page: Page, checkpointId: string): Promise<DomCaptureArtifact> {
+  const script = await loadBrowserDomCaptureScript();
+  const evalInput: BrowserDomCaptureInput = {
+    checkpoint: checkpointId,
+    targetExerciseNames: TARGET_EXERCISE_NAMES,
+    targetValueTokens: TARGET_VALUE_TOKENS,
+  };
   return await page.evaluate(
-    ({ checkpoint, targetExerciseNames, targetValueTokens }) => {
-      const __name = <T extends (...args: unknown[]) => unknown>(value: T): T => value;
-      void __name;
-      const normalize = (value: unknown, maxLength = 220): string =>
-        String(value ?? "")
-          .replace(/\s+/g, " ")
-          .trim()
-          .replace(/\/athletes\/\d+/gi, "/athletes/<ATHLETE_ID>")
-          .replace(/\/workouts\/\d+/gi, "/workouts/<WORKOUT_ID>")
-          .slice(0, maxLength);
-
-      const rectOf = (node: Element | null | undefined): Rect | undefined => {
-        if (!node || !(node instanceof Element)) return undefined;
-        const rect = node.getBoundingClientRect();
-        return {
-          x: Math.round(rect.x),
-          y: Math.round(rect.y),
-          width: Math.round(rect.width),
-          height: Math.round(rect.height),
-        };
-      };
-
-      const isVisible = (node: Element | null | undefined): boolean => {
-        if (!node || !(node instanceof Element)) return false;
-        const rect = node.getBoundingClientRect();
-        const style = window.getComputedStyle(node);
-        return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
-      };
-
-      const textSampleFrom = (root: Element, limit = 10): string[] => {
-        const values: string[] = [];
-        const seen = new Set<string>();
-        const nodes = root.querySelectorAll("h1,h2,h3,h4,h5,h6,button,label,span,div,p,input,textarea,select");
-        for (const node of nodes) {
-          if (!isVisible(node)) continue;
-          const text =
-            node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement
-              ? normalize(node.value || node.placeholder || node.getAttribute("aria-label") || "", 100)
-              : normalize(node.textContent, 100);
-          if (!text || seen.has(text)) continue;
-          seen.add(text);
-          values.push(text);
-          if (values.length >= limit) break;
-        }
-        return values;
-      };
-
-      const parentChain = (node: Element | null | undefined, maxDepth = 8): ParentNodeDebug[] | undefined => {
-        if (!node || !(node instanceof Element)) return undefined;
-        const chain: ParentNodeDebug[] = [];
-        let current: Element | null = node;
-        let depth = 0;
-        while (current && depth < maxDepth) {
-          chain.push({
-            depth,
-            tag: current.tagName.toLowerCase(),
-            id: normalize((current as HTMLElement).id, 80) || undefined,
-            className: normalize((current as HTMLElement).className, 120) || undefined,
-            role: normalize(current.getAttribute("role"), 60) || undefined,
-            ariaLabel: normalize(current.getAttribute("aria-label"), 120) || undefined,
-            dataTestId: normalize(current.getAttribute("data-testid"), 120) || undefined,
-            textSample: normalize(current.textContent, 140) || undefined,
-            rect: rectOf(current),
-          });
-          current = current.parentElement;
-          depth += 1;
-        }
-        return chain;
-      };
-
-      const labelTextFor = (node: Element): string | undefined => {
-        if (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement) {
-          const labels = Array.from(node.labels ?? [])
-            .map((label) => normalize(label.textContent, 120))
-            .filter(Boolean);
-          if (labels.length > 0) return labels.join(" | ");
-        }
-        const labelledBy = node.getAttribute("aria-labelledby");
-        if (labelledBy) {
-          const labels = labelledBy
-            .split(/\s+/)
-            .map((id) => document.getElementById(id))
-            .filter((entry): entry is HTMLElement => Boolean(entry))
-            .map((entry) => normalize(entry.textContent, 120))
-            .filter(Boolean);
-          if (labels.length > 0) return labels.join(" | ");
-        }
-        const nearestLabel = node.closest("label");
-        return nearestLabel ? normalize(nearestLabel.textContent, 120) || undefined : undefined;
-      };
-
-      const nearestTextScope = (node: Element): Element => {
-        return (
-          node.closest("label,div,section,article,li,tr,td,th,[role='group'],[role='row']") ??
-          node.parentElement ??
-          node
-        );
-      };
-
-      const toControl = (node: Element, index: number): ControlDebug => {
-        const tag = node.tagName.toLowerCase();
-        const value =
-          node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement
-            ? normalize(node.value, 120)
-            : normalize(node.textContent, 120);
-        return {
-          index,
-          tag,
-          type: node instanceof HTMLInputElement ? normalize(node.type, 40) || undefined : tag === "select" ? "select" : tag,
-          value: value || undefined,
-          placeholder:
-            node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement
-              ? normalize(node.placeholder, 120) || undefined
-              : undefined,
-          ariaLabel: normalize(node.getAttribute("aria-label"), 120) || undefined,
-          title: normalize(node.getAttribute("title"), 120) || undefined,
-          nearbyText: normalize(nearestTextScope(node).textContent, 180) || undefined,
-          labelText: labelTextFor(node),
-          rect: rectOf(node),
-          parentChain: parentChain(node),
-        };
-      };
-
-      const collectControls = (root: Element, selector: string, limit: number): ControlDebug[] =>
-        Array.from(root.querySelectorAll(selector))
-          .filter((node) => isVisible(node))
-          .slice(0, limit)
-          .map((node, index) => toControl(node, index));
-
-      const controlScopeFor = (node: Element, dialog: Element): Element => {
-        let current: Element | null = node;
-        while (current && current !== dialog) {
-          const controlCount = current.querySelectorAll("input,textarea,select,[contenteditable='true'],button,[role='button']").length;
-          if (controlCount > 0) {
-            return current;
-          }
-          current = current.parentElement;
-        }
-        return node.closest("div,section,article,li,[role='group'],[role='row']") ?? node;
-      };
-
-      const visibleDialogs = Array.from(document.querySelectorAll('[role="dialog"]')).filter((dialog) => isVisible(dialog));
-      const dialogs: DialogCaptureDebug[] = [];
-      const valueSignalControls: ControlDebug[] = [];
-
-      for (const [dialogIndex, dialog] of visibleDialogs.entries()) {
-        const inputs = collectControls(dialog, "input,select", 80);
-        const textareas = collectControls(dialog, "textarea,[contenteditable='true']", 40);
-        const buttons = collectControls(dialog, "button,[role='button']", 40);
-        const exactExerciseNameOccurrences: ExerciseOccurrenceDebug[] = [];
-        const exactValueTokenOccurrences: ExerciseOccurrenceDebug[] = [];
-        const possibleExerciseCardMap = new Map<string, PossibleExerciseCardDebug>();
-
-        const addValueSignal = (control: ControlDebug): void => {
-          const haystack = normalize(
-            [control.value ?? "", control.placeholder ?? "", control.ariaLabel ?? "", control.labelText ?? "", control.nearbyText ?? ""].join(" "),
-            500
-          ).toLowerCase();
-          if (targetValueTokens.some((token) => haystack.includes(token.toLowerCase()))) {
-            valueSignalControls.push(control);
-          }
-        };
-
-        for (const control of [...inputs, ...textareas]) {
-          addValueSignal(control);
-        }
-
-        const candidateElements = Array.from(
-          dialog.querySelectorAll("input,textarea,select,button,label,span,div,p,h1,h2,h3,h4,h5,h6")
-        ).filter((node) => isVisible(node));
-
-        const pushOccurrence = (
-          sourceNode: Element,
-          name: string,
-          source: ExerciseOccurrenceDebug["source"],
-          value: string,
-          target: "exercise" | "value"
-        ): void => {
-          const scope = controlScopeFor(sourceNode, dialog);
-          const scopeKey = `${name}::${source}::${Math.round(scope.getBoundingClientRect().x)}::${Math.round(scope.getBoundingClientRect().y)}::${Math.round(scope.getBoundingClientRect().width)}::${Math.round(scope.getBoundingClientRect().height)}`;
-          const occurrence = {
-            name,
-            source,
-            value: normalize(value, 160),
-            rect: rectOf(sourceNode),
-            parentChain: parentChain(sourceNode),
-            nearbyInputs: collectControls(scope, "input,select,textarea,[contenteditable='true']", 8),
-            nearbyButtons: collectControls(scope, "button,[role='button']", 8),
-          } satisfies ExerciseOccurrenceDebug;
-          if (target === "exercise") {
-            exactExerciseNameOccurrences.push(occurrence);
-          } else {
-            exactValueTokenOccurrences.push(occurrence);
-          }
-          if (!possibleExerciseCardMap.has(scopeKey)) {
-            const controls = [
-              ...collectControls(scope, "input,select", 12),
-              ...collectControls(scope, "textarea,[contenteditable='true']", 8),
-            ];
-            possibleExerciseCardMap.set(scopeKey, {
-              exactName: name,
-              evidenceSource: source,
-              rect: rectOf(scope),
-              textSample: textSampleFrom(scope, 12),
-              inputValues: controls
-                .map((control) => control.value)
-                .filter((entry): entry is string => Boolean(entry))
-                .slice(0, 12),
-              controls,
-              parentChain: parentChain(scope),
-            });
-          }
-        };
-
-        for (const node of candidateElements) {
-          const text = normalize(node.textContent, 200);
-          const ariaLabel = normalize(node.getAttribute("aria-label"), 160);
-          const placeholder = normalize(node.getAttribute("placeholder"), 160);
-          const currentValue =
-            node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement
-              ? normalize(node.value, 160)
-              : "";
-          for (const name of targetExerciseNames) {
-            const loweredName = name.toLowerCase();
-            if (text && text.toLowerCase().includes(loweredName)) {
-              pushOccurrence(node, name, "text", text, "exercise");
-            }
-            if (currentValue && currentValue.toLowerCase().includes(loweredName)) {
-              pushOccurrence(
-                node,
-                name,
-                node instanceof HTMLTextAreaElement ? "textareaValue" : "inputValue",
-                currentValue,
-                "exercise"
-              );
-            }
-            if (ariaLabel && ariaLabel.toLowerCase().includes(loweredName)) {
-              pushOccurrence(node, name, "ariaLabel", ariaLabel, "exercise");
-            }
-            if (placeholder && placeholder.toLowerCase().includes(loweredName)) {
-              pushOccurrence(node, name, "placeholder", placeholder, "exercise");
-            }
-          }
-          for (const token of targetValueTokens) {
-            const loweredToken = token.toLowerCase();
-            if (text && text.toLowerCase().includes(loweredToken)) {
-              pushOccurrence(node, token, "text", text, "value");
-            }
-            if (currentValue && currentValue.toLowerCase().includes(loweredToken)) {
-              pushOccurrence(
-                node,
-                token,
-                node instanceof HTMLTextAreaElement ? "textareaValue" : "inputValue",
-                currentValue,
-                "value"
-              );
-            }
-            if (ariaLabel && ariaLabel.toLowerCase().includes(loweredToken)) {
-              pushOccurrence(node, token, "ariaLabel", ariaLabel, "value");
-            }
-            if (placeholder && placeholder.toLowerCase().includes(loweredToken)) {
-              pushOccurrence(node, token, "placeholder", placeholder, "value");
-            }
-          }
-        }
-
-        dialogs.push({
-          index: dialogIndex,
-          rect: rectOf(dialog) ?? { x: 0, y: 0, width: 0, height: 0 },
-          textSample: textSampleFrom(dialog, 16),
-          inputs,
-          textareas,
-          buttons,
-          exactExerciseNameOccurrences,
-          exactValueTokenOccurrences,
-          possibleExerciseCards: [...possibleExerciseCardMap.values()].slice(0, 24),
-        });
-      }
-
-      const active = document.activeElement instanceof Element ? document.activeElement : null;
-      const activeElement: ActiveElementDebug | undefined = active
-        ? {
-            tag: active.tagName.toLowerCase(),
-            type: active instanceof HTMLInputElement ? normalize(active.type, 40) || undefined : undefined,
-            value:
-              active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement
-                ? normalize(active.value, 120) || undefined
-                : undefined,
-            placeholder:
-              active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement
-                ? normalize(active.placeholder, 120) || undefined
-                : undefined,
-            ariaLabel: normalize(active.getAttribute("aria-label"), 120) || undefined,
-            title: normalize(active.getAttribute("title"), 120) || undefined,
-            textSample: normalize(active.textContent, 120) || undefined,
-            rect: rectOf(active),
-            parentChain: parentChain(active),
-          }
-        : undefined;
-
-      const focusedControl =
-        active && (active.matches("input,select,textarea,[contenteditable='true']") || active.getAttribute("role") === "textbox")
-          ? toControl(active, 0)
-          : undefined;
-
-      return {
-        checkpoint,
-        url: sanitizeUrl(window.location.href),
-        timestamp: new Date().toISOString(),
-        targetExerciseNames: [...targetExerciseNames],
-        dialogFound: dialogs.length > 0,
-        dialogs,
-        activeElement,
-        focusedControl,
-        valueSignalControls: valueSignalControls.slice(0, 40),
-      } satisfies DomCaptureArtifact;
+    ({ scriptSource, input }) => {
+      return new Function(
+        "input",
+        `${scriptSource}\nreturn browserCaptureStrengthFieldTruthDom(input);`
+      )(input);
     },
-    {
-      checkpoint: checkpointId,
-      targetExerciseNames: TARGET_EXERCISE_NAMES,
-      targetValueTokens: TARGET_VALUE_TOKENS,
-    }
+    { scriptSource: script, input: evalInput }
   );
 }
 
@@ -1059,8 +775,14 @@ export function buildRunSummaryMarkdown(log: TruthCaptureLog, domArtifacts: DomC
 
   const completedCheckpointCount = log.checkpoints.filter((entry) => entry.action === "captured").length;
   const missingCheckpointCount = log.checkpoints.length - completedCheckpointCount;
+  const allDomFailed =
+    log.checkpoints.length > 0 &&
+    log.checkpoints.every(
+      (entry) =>
+        entry.action !== "captured" || entry.domStatus === "failed" || (!entry.domPath && Boolean(entry.screenshotPath))
+    );
   const verdict: TruthCaptureVerdict =
-    completedCheckpointCount < 3
+    completedCheckpointCount < 3 || allDomFailed
       ? "capture_incomplete"
       : networkPromising
         ? "pivot_to_network_payload_writer"
@@ -1087,16 +809,24 @@ export function buildRunSummaryMarkdown(log: TruthCaptureLog, domArtifacts: DomC
   lines.push(`- Finished reason: ${log.finishedReason}`);
   lines.push(`- Completed checkpoints: ${completedCheckpointCount}`);
   lines.push(`- Missing checkpoints: ${missingCheckpointCount}`);
+  if (allDomFailed && log.screenshots.length > 0) {
+    lines.push("- Screenshots captured, DOM capture failed.");
+  }
   lines.push("");
   lines.push("## Checkpoints");
   for (const checkpoint of log.checkpoints) {
     lines.push(
       `- ${checkpoint.id}: action=${checkpoint.action ?? "unknown"}, dialogFound=${
         checkpoint.dialogFound === undefined ? "n/a" : checkpoint.dialogFound ? "yes" : "no"
-      }, exerciseOccurrences=${checkpoint.exerciseOccurrenceCount ?? 0}, inputControls=${checkpoint.inputControlCount ?? 0}, networkEvents=${checkpoint.networkEventCount ?? 0}`
+      }, domStatus=${checkpoint.domStatus ?? "not_attempted"}, exerciseOccurrences=${checkpoint.exerciseOccurrenceCount ?? 0}, inputControls=${
+        checkpoint.inputControlCount ?? 0
+      }, networkEvents=${checkpoint.networkEventCount ?? 0}`
     );
     lines.push(`  - screenshot: ${checkpoint.screenshotPath ?? "n/a"}`);
     lines.push(`  - dom: ${checkpoint.domPath ?? "n/a"}`);
+    if ((checkpoint.errors?.length ?? 0) > 0) {
+      lines.push(`  - errors: ${checkpoint.errors?.join(" | ")}`);
+    }
   }
   lines.push("");
   lines.push("## Findings");
@@ -1199,7 +929,12 @@ export function buildRunSummaryMarkdown(log: TruthCaptureLog, domArtifacts: DomC
 
 export function deriveVerdict(log: TruthCaptureLog, domArtifacts: DomCaptureArtifact[]): TruthCaptureVerdict {
   const completedCheckpointCount = log.checkpoints.filter((entry) => entry.action === "captured").length;
-  if (completedCheckpointCount < 3) {
+  const allDomFailed =
+    log.checkpoints.length > 0 &&
+    log.checkpoints
+      .filter((entry) => entry.action === "captured")
+      .every((entry) => entry.domStatus === "failed");
+  if (completedCheckpointCount < 3 || allDomFailed) {
     return "capture_incomplete";
   }
   const summary = buildRunSummaryMarkdown(log, domArtifacts);
