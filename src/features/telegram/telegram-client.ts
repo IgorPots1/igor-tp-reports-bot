@@ -21,12 +21,22 @@ type SendTelegramMessageOptions = {
   parseMode?: "HTML";
 };
 
+const TELEGRAM_MESSAGE_TOO_LONG_PATTERN = /message is too long/i;
+
 function isTelegramTopicClosedError(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;
   }
 
   return error.message.includes("TOPIC_CLOSED");
+}
+
+export function isTelegramMessageTooLongError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return TELEGRAM_MESSAGE_TOO_LONG_PATTERN.test(error.message);
 }
 
 type EditTelegramMessageTextOptions = {
@@ -298,6 +308,21 @@ export async function editTelegramMessageText(
       error: message,
     });
   }
+}
+
+export async function editTelegramMessageTextStrict(
+  chatId: string | number,
+  messageId: number,
+  text: string,
+  options?: EditTelegramMessageTextOptions
+): Promise<void> {
+  await postTelegramApi("editMessageText", {
+    chat_id: chatId,
+    message_id: messageId,
+    text,
+    reply_markup: options?.replyMarkup,
+    parse_mode: options?.parseMode,
+  });
 }
 
 export async function answerTelegramCallbackQuery(callbackQueryId: string, text?: string) {

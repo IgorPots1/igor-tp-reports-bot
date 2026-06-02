@@ -76,7 +76,6 @@ import {
   getTrainingPeaksActionWithStudentAndLatestRunContextById,
   insertTrainingPeaksReplyDraft,
   recordTrainingPeaksReplyDraftFeedback,
-  type TrainingPeaksAttentionSignal,
   type TrainingPeaksOperationalSignalsScope,
   formatTrainingPeaksOperationalSignalsForTelegram,
 } from "@/features/trainingpeaks/service";
@@ -85,6 +84,8 @@ import {
   runTrainingPeaksAttentionDigest,
 } from "@/features/trainingpeaks/attention-digest-run";
 import {
+  TRAININGPEAKS_ATTENTION_DIGEST_CHUNK_LIMIT,
+  buildTrainingPeaksAttentionDigestMessages,
   getTrainingPeaksCoachChatIds,
 } from "@/features/trainingpeaks/attention-telegram";
 import { sendTrainingPeaksWeeklyReportToStudent } from "@/features/trainingpeaks/report-delivery";
@@ -145,6 +146,8 @@ import {
   answerTelegramCallbackQuery,
   downloadTelegramFile,
   editTelegramMessageText,
+  editTelegramMessageTextStrict,
+  isTelegramMessageTooLongError,
   sendTelegramMessage,
   sendTelegramMessageStrict,
 } from "@/features/telegram/telegram-client";
@@ -167,6 +170,9 @@ const TP_WEEKLY_DISABLED_MESSAGE =
   "⚙️ /tp_weekly отключён. Для отчётов используй «📊 Отчёты», а запуск workflow оставлен через явные preview/confirm-кнопки.";
 const TP_UNKNOWN_COMMAND_MESSAGE = "Не поняла команду. Используй кнопки внизу или отправь /start.";
 const TELEGRAM_MESSAGE_LIMIT = 4000;
+const TELEGRAM_SAFE_MESSAGE_LIMIT = TRAININGPEAKS_ATTENTION_DIGEST_CHUNK_LIMIT;
+const TP_ATTENTION_FALLBACK_TOO_LONG_MESSAGE =
+  "«Сегодня» получился слишком длинным.\nПоказываю короткую версию. Откройте /tp_actions или /tp_signals для деталей.";
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const STUDENTS_PAGE_SIZE = 8;
 const TP_CALLBACK_PREFIX = "tp:";
@@ -1193,6 +1199,74 @@ async function sendTrainingPeaksMessage(
     await sendTelegramMessage(chatId, chunk, {
       replyMarkup: index === chunks.length - 1 ? options?.replyMarkup : undefined,
       messageThreadId: options?.messageThreadId,
+    });
+  }
+}
+
+function buildTrainingPeaksAttentionMessages(
+  snapshot: Awaited<ReturnType<typeof getTrainingPeaksAttentionSnapshot>>
+): string[] {
+  return buildTrainingPeaksAttentionDigestMessages(
+    snapshot,
+    "🌅 Внимание на сегодня",
+    TELEGRAM_SAFE_MESSAGE_LIMIT
+  );
+}
+
+async function sendTrainingPeaksAttentionMessages(
+  parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate,
+  messages: string[],
+  markup: TelegramInlineKeyboardMarkup
+): Promise<void> {
+  if (messages.length === 0) {
+    return;
+  }
+
+  if (parsedMessage.kind === "callback_query") {
+    await editTelegramMessageTextStrict(parsedMessage.chatId, parsedMessage.messageId, messages[0], {
+      replyMarkup: markup,
+      parseMode: "HTML",
+    });
+
+    for (const message of messages.slice(1)) {
+      await sendTelegramMessageStrict(parsedMessage.chatId, message, {
+        parseMode: "HTML",
+      });
+    }
+    return;
+  }
+
+  for (const [index, message] of messages.entries()) {
+    await sendTelegramMessageStrict(parsedMessage.chatId, message, {
+      replyMarkup: index === messages.length - 1 ? markup : undefined,
+      parseMode: "HTML",
+    });
+  }
+}
+
+async function sendTrainingPeaksAttentionLengthFallback(
+  parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate,
+  markup: TelegramInlineKeyboardMarkup
+): Promise<void> {
+  try {
+    if (parsedMessage.kind === "callback_query") {
+      await editTelegramMessageTextStrict(
+        parsedMessage.chatId,
+        parsedMessage.messageId,
+        TP_ATTENTION_FALLBACK_TOO_LONG_MESSAGE,
+        {
+          replyMarkup: markup,
+        }
+      );
+      return;
+    }
+
+    await sendTelegramMessageStrict(parsedMessage.chatId, TP_ATTENTION_FALLBACK_TOO_LONG_MESSAGE);
+  } catch (fallbackError) {
+    console.error("trainingpeaks_attention_too_long_fallback_failed", {
+      error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+      updateKind: parsedMessage.kind,
+      chatId: parsedMessage.chatId,
     });
   }
 }
@@ -3479,24 +3553,22 @@ function formatJobsMessage(
 async function handleTrainingPeaksAttention(
   parsedMessage: ParsedTelegramUpdate | ParsedTelegramCallbackUpdate
 ): Promise<void> {
+  const markup = getTrainingPeaksAttentionDigestMarkup();
   try {
     const snapshot = await getTrainingPeaksAttentionSnapshot();
-    const text = buildTrainingPeaksAttentionDigestText(snapshot);
-    const markup = getTrainingPeaksAttentionDigestMarkup();
-
-    if (parsedMessage.kind === "callback_query") {
-      await editTelegramMessageText(parsedMessage.chatId, parsedMessage.messageId, text, {
-        replyMarkup: markup,
-        parseMode: "HTML",
+    const messages = buildTrainingPeaksAttentionMessages(snapshot);
+    await sendTrainingPeaksAttentionMessages(parsedMessage, messages, markup);
+  } catch (error) {
+    if (isTelegramMessageTooLongError(error)) {
+      console.warn("trainingpeaks_attention_message_too_long", {
+        error: error instanceof Error ? error.message : String(error),
+        updateKind: parsedMessage.kind,
+        chatId: parsedMessage.chatId,
       });
+      await sendTrainingPeaksAttentionLengthFallback(parsedMessage, markup);
       return;
     }
 
-    await sendTelegramMessage(parsedMessage.chatId, text, {
-      replyMarkup: markup,
-      parseMode: "HTML",
-    });
-  } catch (error) {
     console.error("trainingpeaks_attention_handler_failed", {
       error: error instanceof Error ? error.message : String(error),
       updateKind: parsedMessage.kind,
@@ -3504,169 +3576,22 @@ async function handleTrainingPeaksAttention(
     });
     const fallbackText =
       "Не удалось загрузить «Сегодня».\nПопробуйте ещё раз через минуту.\nЕсли повторится — проверьте логи.";
-    if (parsedMessage.kind === "callback_query") {
-      await editTelegramMessageText(parsedMessage.chatId, parsedMessage.messageId, fallbackText, {
-        replyMarkup: getTrainingPeaksAttentionDigestMarkup(),
+    try {
+      if (parsedMessage.kind === "callback_query") {
+        await editTelegramMessageText(parsedMessage.chatId, parsedMessage.messageId, fallbackText, {
+          replyMarkup: markup,
+        });
+        return;
+      }
+      await sendTelegramMessage(parsedMessage.chatId, fallbackText);
+    } catch (fallbackError) {
+      console.error("trainingpeaks_attention_generic_fallback_failed", {
+        error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+        updateKind: parsedMessage.kind,
+        chatId: parsedMessage.chatId,
       });
-      return;
     }
-    await sendTelegramMessage(parsedMessage.chatId, fallbackText);
   }
-}
-
-function getTrainingPeaksBotUsername(): string | null {
-  const fromConfig = process.env.TELEGRAM_BOT_USERNAME?.trim() ?? "";
-  if (!fromConfig) {
-    return null;
-  }
-
-  return fromConfig.replace(/^@+/, "").trim() || null;
-}
-
-function toShortIdForAttention(value: string | null | undefined): string | null {
-  const normalized = value?.trim();
-  if (!normalized) {
-    return null;
-  }
-  return normalized.slice(0, 8);
-}
-
-function toAttentionActionDeepLinkId(actionId: string): string {
-  const normalized = actionId.trim();
-  if (normalized.length <= 8) {
-    return normalized;
-  }
-  return normalized.slice(0, 8);
-}
-
-function toAttentionStudentDeepLinkId(studentId: string): string {
-  const normalized = studentId.trim();
-  if (normalized.length <= 40) {
-    return normalized;
-  }
-  return normalized.slice(0, 40);
-}
-
-function escapeTelegramHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function getAttentionSignalLabel(signal: TrainingPeaksAttentionSignal): string {
-  const name = signal.studentName?.trim();
-  if (name) {
-    return name;
-  }
-
-  return signal.signalKind === "scan_failed" || signal.signalKind === "failed_job"
-    ? "Система"
-    : "Без ученика";
-}
-
-function getAttentionSignalDeepLinkPayload(signal: TrainingPeaksAttentionSignal): string | null {
-  const caseShort = toShortIdForAttention(signal.caseId);
-  if (caseShort) {
-    return `case_${caseShort}`;
-  }
-
-  const actionId = signal.actionId?.trim();
-  if (actionId) {
-    return `action_${toAttentionActionDeepLinkId(actionId)}`;
-  }
-
-  const studentId = signal.studentId?.trim();
-  if (studentId) {
-    return `student_${toAttentionStudentDeepLinkId(studentId)}`;
-  }
-
-  return null;
-}
-
-function getAttentionSignalReason(signal: TrainingPeaksAttentionSignal): string {
-  const normalized = signal.reason.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return "нужна проверка";
-  }
-
-  return normalized.replace(/\s*\(case:\s*[a-z0-9]{8}\)\s*$/i, "").trim();
-}
-
-function formatAttentionSignalNameWithOptionalLink(
-  signal: TrainingPeaksAttentionSignal,
-  botUsername: string | null
-): string {
-  const label = escapeTelegramHtml(getAttentionSignalLabel(signal));
-  const payload = getAttentionSignalDeepLinkPayload(signal);
-  if (!botUsername || !payload) {
-    return label;
-  }
-
-  const href = `https://t.me/${botUsername}?start=${encodeURIComponent(payload)}`;
-  return `<a href="${href}">${label}</a>`;
-}
-
-function formatAttentionSectionHtml(
-  title: string,
-  signals: TrainingPeaksAttentionSignal[],
-  botUsername: string | null
-): string[] {
-  const lines = [escapeTelegramHtml(title)];
-  if (signals.length === 0) {
-    lines.push("• Нет");
-    return lines;
-  }
-
-  for (const signal of signals) {
-    const name = formatAttentionSignalNameWithOptionalLink(signal, botUsername);
-    const reason = escapeTelegramHtml(getAttentionSignalReason(signal));
-    lines.push(`• ${name} — ${reason}`);
-  }
-
-  return lines;
-}
-
-function buildTrainingPeaksAttentionDigestText(
-  snapshot: Awaited<ReturnType<typeof getTrainingPeaksAttentionSnapshot>>
-): string {
-  const botUsername = getTrainingPeaksBotUsername();
-  const followUpSignals: TrainingPeaksAttentionSignal[] = [...snapshot.followUpToday];
-  if (snapshot.followUpOverflowCount > 0) {
-    followUpSignals.push({
-      level: "today",
-      studentName: null,
-      reason: `+${snapshot.followUpOverflowCount} ещё follow-up`,
-    });
-  }
-  const planConstraintSignals: TrainingPeaksAttentionSignal[] = [...snapshot.planConstraintsToday];
-  if (snapshot.planConstraintsOverflowCount > 0) {
-    planConstraintSignals.push({
-      level: "today",
-      studentName: null,
-      reason: `+${snapshot.planConstraintsOverflowCount} ещё по расписанию`,
-    });
-  }
-  const moveSignals: TrainingPeaksAttentionSignal[] = [...snapshot.movesToday];
-  if (snapshot.movesOverflowCount > 0) {
-    moveSignals.push({
-      level: "today",
-      studentName: null,
-      reason: `+${snapshot.movesOverflowCount} ещё переносов`,
-    });
-  }
-  const blocks: string[][] = [
-    ["🌅 Внимание на сегодня"],
-    formatAttentionSectionHtml("🚨 Срочно", snapshot.urgent, botUsername),
-    formatAttentionSectionHtml("📌 Сегодня", snapshot.today, botUsername),
-    formatAttentionSectionHtml("🩺 Проверить сегодня", followUpSignals, botUsername),
-    formatAttentionSectionHtml("📅 Учесть в плане", planConstraintSignals, botUsername),
-    formatAttentionSectionHtml("🔁 Переносы", moveSignals, botUsername),
-    formatAttentionSectionHtml("👀 Наблюдать", snapshot.observe, botUsername),
-    formatAttentionSectionHtml("ℹ️ FYI", snapshot.fyi, botUsername),
-  ];
-
-  return blocks.map((block) => block.join("\n")).join("\n\n");
 }
 
 function parseTpSignalsScopeFromCommand(text: string): TrainingPeaksOperationalSignalsScope {

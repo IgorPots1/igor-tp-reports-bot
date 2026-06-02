@@ -1,6 +1,13 @@
 import type { TrainingPeaksAttentionSnapshot } from "@/features/trainingpeaks/service";
 
 export const TRAININGPEAKS_ATTENTION_DIGEST_CHUNK_LIMIT = 3500;
+const ATTENTION_URGENT_MAX_ITEMS = 5;
+const ATTENTION_TODAY_MAX_ITEMS = 5;
+const ATTENTION_FOLLOW_UP_MAX_ITEMS = 5;
+const ATTENTION_PLAN_MAX_ITEMS = 5;
+const ATTENTION_MOVES_MAX_ITEMS = 5;
+const ATTENTION_OBSERVE_MAX_ITEMS = 5;
+const ATTENTION_FYI_MAX_ITEMS = 3;
 
 function formatAttentionSignalLine(signal: {
   studentName: string | null;
@@ -74,16 +81,32 @@ function buildAttentionSection(
     caseId?: string | null;
     actionId?: string | null;
   }>,
-  botUsername: string | null
+  botUsername: string | null,
+  options?: {
+    maxItems?: number;
+    overflowCount?: number;
+  }
 ): string[] {
   const lines = [title];
-  if (signals.length === 0) {
+  const maxItems = options?.maxItems;
+  const explicitOverflow = options?.overflowCount ?? 0;
+  const visibleSignals =
+    typeof maxItems === "number" && maxItems >= 0 ? signals.slice(0, maxItems) : [...signals];
+  const hiddenBySectionLimit =
+    typeof maxItems === "number" && maxItems >= 0 ? Math.max(0, signals.length - maxItems) : 0;
+  const totalOverflow = explicitOverflow + hiddenBySectionLimit;
+
+  if (visibleSignals.length === 0 && totalOverflow === 0) {
     lines.push("• Нет");
     return lines;
   }
 
-  for (const signal of signals) {
+  for (const signal of visibleSignals) {
     lines.push(formatAttentionSignalLine(signal, botUsername));
+  }
+
+  if (totalOverflow > 0) {
+    lines.push(`• +${totalOverflow} ещё`);
   }
 
   return lines;
@@ -208,48 +231,38 @@ function buildAttentionDigestBlocks(
   title: string
 ): string[][] {
   const botUsername = getTrainingPeaksBotUsername();
-  const urgent = buildAttentionSection("Срочно", snapshot.urgent, botUsername);
-  const today = buildAttentionSection("Сегодня", snapshot.today, botUsername);
-  const observe = buildAttentionSection("Наблюдать", snapshot.observe, botUsername);
+  const urgent = buildAttentionSection("Срочно", snapshot.urgent, botUsername, {
+    maxItems: ATTENTION_URGENT_MAX_ITEMS,
+  });
+  const today = buildAttentionSection("Сегодня", snapshot.today, botUsername, {
+    maxItems: ATTENTION_TODAY_MAX_ITEMS,
+  });
+  const observe = buildAttentionSection("Наблюдать", snapshot.observe, botUsername, {
+    maxItems: ATTENTION_OBSERVE_MAX_ITEMS,
+  });
 
   const hasSignals = snapshot.urgent.length > 0 || snapshot.today.length > 0 || snapshot.observe.length > 0;
-  const fyi = buildAttentionSection("FYI", snapshot.fyi, botUsername);
+  const fyi = buildAttentionSection("FYI", snapshot.fyi, botUsername, {
+    maxItems: ATTENTION_FYI_MAX_ITEMS,
+  });
   if (snapshot.fyi.length === 0 && !hasSignals) {
     fyi.splice(1, fyi.length - 1, "• Активных сигналов больше нет");
   }
 
-  const followUpSignals = [...snapshot.followUpToday];
-  if (snapshot.followUpOverflowCount > 0) {
-    followUpSignals.push({
-      level: "today",
-      studentName: null,
-      reason: `+${snapshot.followUpOverflowCount} ещё follow-up`,
-      studentId: null,
-    });
-  }
-  const followUps = buildAttentionSection("Проверить сегодня", followUpSignals, botUsername);
+  const followUps = buildAttentionSection("Проверить сегодня", snapshot.followUpToday, botUsername, {
+    maxItems: ATTENTION_FOLLOW_UP_MAX_ITEMS,
+    overflowCount: snapshot.followUpOverflowCount,
+  });
 
-  const planConstraintSignals = [...snapshot.planConstraintsToday];
-  if (snapshot.planConstraintsOverflowCount > 0) {
-    planConstraintSignals.push({
-      level: "today",
-      studentName: null,
-      reason: `+${snapshot.planConstraintsOverflowCount} ещё по расписанию`,
-      studentId: null,
-    });
-  }
-  const planConstraints = buildAttentionSection("📅 Учесть в плане", planConstraintSignals, botUsername);
+  const planConstraints = buildAttentionSection("📅 Учесть в плане", snapshot.planConstraintsToday, botUsername, {
+    maxItems: ATTENTION_PLAN_MAX_ITEMS,
+    overflowCount: snapshot.planConstraintsOverflowCount,
+  });
 
-  const moveSignals = [...snapshot.movesToday];
-  if (snapshot.movesOverflowCount > 0) {
-    moveSignals.push({
-      level: "today",
-      studentName: null,
-      reason: `+${snapshot.movesOverflowCount} ещё переносов`,
-      studentId: null,
-    });
-  }
-  const moves = buildAttentionSection("🔁 Переносы", moveSignals, botUsername);
+  const moves = buildAttentionSection("🔁 Переносы", snapshot.movesToday, botUsername, {
+    maxItems: ATTENTION_MOVES_MAX_ITEMS,
+    overflowCount: snapshot.movesOverflowCount,
+  });
 
   return [[title], urgent, today, followUps, planConstraints, moves, observe, fyi];
 }

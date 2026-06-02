@@ -40,8 +40,8 @@ function run(): void {
     .split("\n")
     .filter((line) => line.startsWith("• ") && line.includes("Athlete"));
 
-  assert(todayLines.length === 8, `Expected 8 today bullet lines, got ${todayLines.length}.`);
-  assert(!message.includes("Ещё"), 'Digest must not collapse items into "Ещё N".');
+  assert(todayLines.length <= 5, `Expected compact today section up to 5 lines, got ${todayLines.length}.`);
+  assert(message.includes("+3 ещё"), 'Digest should include overflow line for truncated "today" items.');
 
   const chunks = buildTrainingPeaksAttentionDigestMessages(snapshot, "Утренний обзор TrainingPeaks");
   assert(chunks.length >= 1, "Expected at least one digest chunk.");
@@ -50,8 +50,8 @@ function run(): void {
     "Each digest chunk must stay within the 3500 character limit."
   );
   assert(
-    chunks.join("\n").includes("Athlete 8"),
-    "Chunked digest must still include all today items."
+    chunks.join("\n").includes("+3 ещё"),
+    "Chunked digest should include overflow marker for compacted today items."
   );
 
   console.log("[check-trainingpeaks-attention-digest] PASS");

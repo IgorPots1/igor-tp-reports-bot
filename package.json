@@ -67,6 +67,7 @@
     "check-trainingpeaks-recovery-alerts": "npx tsx scripts/check-trainingpeaks-recovery-alerts.ts",
     "check-trainingpeaks-coach-notes-delivery": "npx tsx scripts/check-trainingpeaks-coach-notes-delivery.ts",
     "check-trainingpeaks-attention-digest": "npx tsx scripts/check-trainingpeaks-attention-digest.ts",
+    "check-trainingpeaks-attention-message-length": "npx tsx scripts/check-trainingpeaks-attention-message-length.ts",
     "check-trainingpeaks-attention-operational-signals": "npx tsx scripts/check-trainingpeaks-attention-operational-signals.ts",
     "check-trainingpeaks-attention-resilience": "npx tsx scripts/check-trainingpeaks-attention-resilience.ts",
     "check-trainingpeaks-operational-signals-command": "npx tsx scripts/check-trainingpeaks-operational-signals-command.ts",
