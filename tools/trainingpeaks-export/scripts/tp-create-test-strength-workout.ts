@@ -155,6 +155,67 @@ type ManualBuilderGateDetection = {
   currentUrl: string;
 };
 
+type ManualBuilderRawInputSample = {
+  tag: string;
+  type?: string;
+  value?: string;
+  placeholder?: string;
+  ariaLabel?: string;
+};
+
+type ManualBuilderRawButtonSample = {
+  text?: string;
+  ariaLabel?: string;
+};
+
+type ManualBuilderRawAreaEvidence = {
+  source: "dialog" | "container";
+  isVisible: boolean;
+  textSample: string[];
+  hasAddBlock: boolean;
+  hasWorkoutTitle: boolean;
+  hasStrengthWorkout: boolean;
+  hasAddWorkoutInstructions: boolean;
+  hasSaveAndClose: boolean;
+  hasSummary: boolean;
+  buttons: ManualBuilderRawButtonSample[];
+  inputs: ManualBuilderRawInputSample[];
+};
+
+type ManualBuilderRawFrameEvidence = {
+  frameUrl: string;
+  title?: string;
+  dialogFound: boolean;
+  visibleTextSample: string[];
+  buttons: ManualBuilderRawButtonSample[];
+  inputs: ManualBuilderRawInputSample[];
+  areas: ManualBuilderRawAreaEvidence[];
+  addBlockFound: boolean;
+  workoutTitleFound: boolean;
+  strengthWorkoutFound: boolean;
+  addWorkoutInstructionsFound: boolean;
+  saveAndCloseFound: boolean;
+  summaryFound: boolean;
+  builderAreaPass: boolean;
+  fallbackVisibleDomPass: boolean;
+};
+
+type ManualBuilderRawDomEvidence = {
+  currentUrl: string;
+  selectedFrameUrl: string;
+  dialogFound: boolean;
+  addBlockFound: boolean;
+  workoutTitleFound: boolean;
+  strengthWorkoutFound: boolean;
+  addWorkoutInstructionsFound: boolean;
+  saveAndCloseFound: boolean;
+  summaryFound: boolean;
+  builderAreaPass: boolean;
+  fallbackVisibleDomPass: boolean;
+  gatePass: boolean;
+  frames: ManualBuilderRawFrameEvidence[];
+};
+
 type CardFieldDebugEntry = {
   index: number;
   text?: string;
@@ -531,6 +592,329 @@ async function readManualBuilderGateDetection(page: Page): Promise<ManualBuilder
     selectedFrameUrl: resolved.frame.url(),
     currentUrl,
   };
+}
+
+async function readManualBuilderRawDomEvidence(page: Page): Promise<ManualBuilderRawDomEvidence> {
+  const frames = listFramesWithMainFirst(page);
+  const frameEvidence: ManualBuilderRawFrameEvidence[] = [];
+  const normalizeStringList = (values: string[], limit = 30): string[] =>
+    values.map((value) => sanitizeDebugText(value, 140)).filter(Boolean).slice(0, limit);
+  const normalizeButtons = (items: Array<{ text?: string; ariaLabel?: string }>): ManualBuilderRawButtonSample[] =>
+    items
+      .map((entry) => ({
+        text: sanitizeDebugText(entry.text, 140) || undefined,
+        ariaLabel: sanitizeDebugText(entry.ariaLabel, 140) || undefined,
+      }))
+      .filter((entry) => Boolean(entry.text || entry.ariaLabel))
+      .slice(0, 60);
+  const normalizeInputs = (
+    items: Array<{ tag: string; type?: string; value?: string; placeholder?: string; ariaLabel?: string }>
+  ): ManualBuilderRawInputSample[] =>
+    items
+      .map((entry) => ({
+        tag: sanitizeDebugText(entry.tag, 30) || "input",
+        type: sanitizeDebugText(entry.type, 40) || undefined,
+        value: sanitizeDebugText(entry.value, 140) || undefined,
+        placeholder: sanitizeDebugText(entry.placeholder, 140) || undefined,
+        ariaLabel: sanitizeDebugText(entry.ariaLabel, 140) || undefined,
+      }))
+      .slice(0, 80);
+
+  for (const frame of frames) {
+    const probe = await frame
+      .evaluate(() => {
+        const normalize = (value: unknown, max = 200): string =>
+          String(value ?? "")
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, max);
+        const isVisible = (node: Element | null): node is Element => {
+          if (!node) return false;
+          const rect = node.getBoundingClientRect();
+          const style = window.getComputedStyle(node);
+          return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+        };
+        const collectTextSample = (root: ParentNode, maxCount = 20): string[] => {
+          const values: string[] = [];
+          const seen = new Set<string>();
+          const nodes = root.querySelectorAll?.("h1,h2,h3,h4,h5,h6,button,label,span,div,p,input,textarea") ?? [];
+          for (const node of nodes) {
+            if (!(node instanceof HTMLElement)) continue;
+            if (!isVisible(node)) continue;
+            const text =
+              node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement
+                ? normalize(node.value || node.placeholder || node.getAttribute("aria-label"), 120)
+                : normalize(node.textContent, 120);
+            if (!text || seen.has(text)) continue;
+            seen.add(text);
+            values.push(text);
+            if (values.length >= maxCount) break;
+          }
+          return values;
+        };
+        const collectButtons = (root: ParentNode, maxCount = 40): Array<{ text?: string; ariaLabel?: string }> => {
+          const values: Array<{ text?: string; ariaLabel?: string }> = [];
+          const nodes = root.querySelectorAll?.("button,[role='button']") ?? [];
+          for (const node of nodes) {
+            if (!(node instanceof HTMLElement)) continue;
+            if (!isVisible(node)) continue;
+            values.push({
+              text: normalize(node.textContent, 160) || undefined,
+              ariaLabel: normalize(node.getAttribute("aria-label"), 160) || undefined,
+            });
+            if (values.length >= maxCount) break;
+          }
+          return values;
+        };
+        const collectInputs = (
+          root: ParentNode,
+          maxCount = 50
+        ): Array<{ tag: string; type?: string; value?: string; placeholder?: string; ariaLabel?: string }> => {
+          const values: Array<{ tag: string; type?: string; value?: string; placeholder?: string; ariaLabel?: string }> = [];
+          const nodes = root.querySelectorAll?.("input,textarea,[role='textbox']") ?? [];
+          for (const node of nodes) {
+            if (!(node instanceof HTMLElement)) continue;
+            if (!isVisible(node)) continue;
+            const htmlNode = node as HTMLElement;
+            const inputLike =
+              node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement
+                ? node
+                : undefined;
+            values.push({
+              tag: htmlNode.tagName.toLowerCase(),
+              type: node instanceof HTMLInputElement ? normalize(node.type, 40) || undefined : undefined,
+              value: inputLike ? normalize(inputLike.value, 160) || undefined : undefined,
+              placeholder: inputLike ? normalize(inputLike.placeholder, 160) || undefined : undefined,
+              ariaLabel: normalize(htmlNode.getAttribute("aria-label"), 160) || undefined,
+            });
+            if (values.length >= maxCount) break;
+          }
+          return values;
+        };
+        const hasTextToken = (root: ParentNode, token: RegExp): boolean => {
+          const text = normalize((root as HTMLElement).textContent ?? document.body?.textContent ?? "", 30000);
+          return token.test(text);
+        };
+        const hasInputToken = (root: ParentNode, token: RegExp): boolean => {
+          const controls = root.querySelectorAll?.("input,textarea,[role='textbox']") ?? [];
+          for (const node of controls) {
+            if (!(node instanceof HTMLElement)) continue;
+            if (!isVisible(node)) continue;
+            const inputLike =
+              node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement
+                ? node
+                : undefined;
+            const haystack = normalize(
+              `${inputLike?.value ?? ""} ${inputLike?.placeholder ?? ""} ${node.getAttribute("aria-label") ?? ""}`,
+              800
+            );
+            if (token.test(haystack)) return true;
+          }
+          return false;
+        };
+        const hasButtonToken = (root: ParentNode, token: RegExp): boolean => {
+          const controls = root.querySelectorAll?.("button,[role='button']") ?? [];
+          for (const node of controls) {
+            if (!(node instanceof HTMLElement)) continue;
+            if (!isVisible(node)) continue;
+            const haystack = normalize(`${node.textContent ?? ""} ${node.getAttribute("aria-label") ?? ""}`, 800);
+            if (token.test(haystack)) return true;
+          }
+          return false;
+        };
+
+        const tokenMatchers = {
+          addBlock: /add block/i,
+          workoutTitle: /workout title/i,
+          strengthWorkout: /strength workout/i,
+          addWorkoutInstructions: /add workout instructions/i,
+          saveAndClose: /save\s*&\s*close/i,
+          summary: /\bsummary\b/i,
+        };
+
+        const dialogNodes = Array.from(document.querySelectorAll("[role='dialog']")).filter((node) =>
+          isVisible(node)
+        );
+        const containerNodes = Array.from(document.querySelectorAll("section,article,main,aside,div")).filter((node) => {
+          if (!(node instanceof HTMLElement)) return false;
+          if (!isVisible(node)) return false;
+          const rect = node.getBoundingClientRect();
+          if (rect.width < 260 || rect.height < 180) return false;
+          return hasTextToken(node, /strength workout|workout title|add block|save\s*&\s*close|add workout instructions|summary/i);
+        });
+        const areaNodes: Array<{ source: "dialog" | "container"; node: Element }> = [
+          ...dialogNodes.map((node) => ({ source: "dialog" as const, node })),
+          ...containerNodes.slice(0, 8).map((node) => ({ source: "container" as const, node })),
+        ];
+        const areas = areaNodes.map((entry) => {
+          const hasAddBlock = hasButtonToken(entry.node, tokenMatchers.addBlock);
+          const hasWorkoutTitle = hasInputToken(entry.node, tokenMatchers.workoutTitle);
+          return {
+            source: entry.source,
+            isVisible: isVisible(entry.node),
+            textSample: collectTextSample(entry.node, 18),
+            hasAddBlock,
+            hasWorkoutTitle,
+            hasStrengthWorkout: hasTextToken(entry.node, tokenMatchers.strengthWorkout),
+            hasAddWorkoutInstructions: hasTextToken(entry.node, tokenMatchers.addWorkoutInstructions),
+            hasSaveAndClose: hasButtonToken(entry.node, tokenMatchers.saveAndClose) || hasTextToken(entry.node, tokenMatchers.saveAndClose),
+            hasSummary: hasTextToken(entry.node, tokenMatchers.summary),
+            buttons: collectButtons(entry.node, 30),
+            inputs: collectInputs(entry.node, 40),
+          };
+        });
+        const docButtons = collectButtons(document, 80);
+        const docInputs = collectInputs(document, 100);
+        const visibleTextSample = collectTextSample(document, 40);
+        const addBlockFound = areas.some((area) => area.hasAddBlock) || docButtons.some((button) => tokenMatchers.addBlock.test(`${button.text ?? ""} ${button.ariaLabel ?? ""}`));
+        const workoutTitleFound =
+          areas.some((area) => area.hasWorkoutTitle) ||
+          docInputs.some((input) => tokenMatchers.workoutTitle.test(`${input.value ?? ""} ${input.placeholder ?? ""} ${input.ariaLabel ?? ""}`));
+        const strengthWorkoutFound =
+          areas.some((area) => area.hasStrengthWorkout) || tokenMatchers.strengthWorkout.test(document.body?.textContent ?? "");
+        const addWorkoutInstructionsFound =
+          areas.some((area) => area.hasAddWorkoutInstructions) ||
+          tokenMatchers.addWorkoutInstructions.test(document.body?.textContent ?? "");
+        const saveAndCloseFound =
+          areas.some((area) => area.hasSaveAndClose) ||
+          docButtons.some((button) => tokenMatchers.saveAndClose.test(`${button.text ?? ""} ${button.ariaLabel ?? ""}`)) ||
+          tokenMatchers.saveAndClose.test(document.body?.textContent ?? "");
+        const summaryFound =
+          areas.some((area) => area.hasSummary) || tokenMatchers.summary.test(document.body?.textContent ?? "");
+        const builderAreaPass = areas.some((area) => area.isVisible && (area.hasAddBlock || area.hasWorkoutTitle));
+        const fallbackVisibleDomPass = dialogNodes.length === 0 && addBlockFound && workoutTitleFound;
+        return {
+          title: normalize(document.title, 180) || undefined,
+          dialogFound: dialogNodes.length > 0,
+          visibleTextSample,
+          buttons: docButtons,
+          inputs: docInputs,
+          areas,
+          addBlockFound,
+          workoutTitleFound,
+          strengthWorkoutFound,
+          addWorkoutInstructionsFound,
+          saveAndCloseFound,
+          summaryFound,
+          builderAreaPass,
+          fallbackVisibleDomPass,
+        };
+      })
+      .catch(() => ({
+        title: undefined,
+        dialogFound: false,
+        visibleTextSample: [],
+        buttons: [],
+        inputs: [],
+        areas: [],
+        addBlockFound: false,
+        workoutTitleFound: false,
+        strengthWorkoutFound: false,
+        addWorkoutInstructionsFound: false,
+        saveAndCloseFound: false,
+        summaryFound: false,
+        builderAreaPass: false,
+        fallbackVisibleDomPass: false,
+      }));
+    frameEvidence.push({
+      frameUrl: frame.url(),
+      title: sanitizeDebugText(probe.title, 180) || undefined,
+      dialogFound: probe.dialogFound,
+      visibleTextSample: normalizeStringList(probe.visibleTextSample, 40),
+      buttons: normalizeButtons(probe.buttons),
+      inputs: normalizeInputs(probe.inputs),
+      areas: probe.areas.map((area) => ({
+        source: area.source,
+        isVisible: Boolean(area.isVisible),
+        textSample: normalizeStringList(area.textSample, 20),
+        hasAddBlock: Boolean(area.hasAddBlock),
+        hasWorkoutTitle: Boolean(area.hasWorkoutTitle),
+        hasStrengthWorkout: Boolean(area.hasStrengthWorkout),
+        hasAddWorkoutInstructions: Boolean(area.hasAddWorkoutInstructions),
+        hasSaveAndClose: Boolean(area.hasSaveAndClose),
+        hasSummary: Boolean(area.hasSummary),
+        buttons: normalizeButtons(area.buttons),
+        inputs: normalizeInputs(area.inputs),
+      })),
+      addBlockFound: Boolean(probe.addBlockFound),
+      workoutTitleFound: Boolean(probe.workoutTitleFound),
+      strengthWorkoutFound: Boolean(probe.strengthWorkoutFound),
+      addWorkoutInstructionsFound: Boolean(probe.addWorkoutInstructionsFound),
+      saveAndCloseFound: Boolean(probe.saveAndCloseFound),
+      summaryFound: Boolean(probe.summaryFound),
+      builderAreaPass: Boolean(probe.builderAreaPass),
+      fallbackVisibleDomPass: Boolean(probe.fallbackVisibleDomPass),
+    });
+  }
+
+  const selected = frameEvidence.find(
+    (frame) => frame.builderAreaPass || frame.fallbackVisibleDomPass || frame.addBlockFound || frame.workoutTitleFound
+  );
+  const selectedFrame = selected ?? frameEvidence[0] ?? {
+    frameUrl: page.url(),
+    title: undefined,
+    dialogFound: false,
+    visibleTextSample: [],
+    buttons: [],
+    inputs: [],
+    areas: [],
+    addBlockFound: false,
+    workoutTitleFound: false,
+    strengthWorkoutFound: false,
+    addWorkoutInstructionsFound: false,
+    saveAndCloseFound: false,
+    summaryFound: false,
+    builderAreaPass: false,
+    fallbackVisibleDomPass: false,
+  };
+  const aggregate = {
+    dialogFound: frameEvidence.some((frame) => frame.dialogFound),
+    addBlockFound: frameEvidence.some((frame) => frame.addBlockFound),
+    workoutTitleFound: frameEvidence.some((frame) => frame.workoutTitleFound),
+    strengthWorkoutFound: frameEvidence.some((frame) => frame.strengthWorkoutFound),
+    addWorkoutInstructionsFound: frameEvidence.some((frame) => frame.addWorkoutInstructionsFound),
+    saveAndCloseFound: frameEvidence.some((frame) => frame.saveAndCloseFound),
+    summaryFound: frameEvidence.some((frame) => frame.summaryFound),
+    builderAreaPass: frameEvidence.some((frame) => frame.builderAreaPass),
+    fallbackVisibleDomPass: frameEvidence.some((frame) => frame.fallbackVisibleDomPass),
+  };
+  return {
+    currentUrl: page.url(),
+    selectedFrameUrl: selectedFrame.frameUrl,
+    ...aggregate,
+    gatePass: aggregate.builderAreaPass || aggregate.fallbackVisibleDomPass,
+    frames: frameEvidence,
+  };
+}
+
+async function saveManualGateDiagnostics(
+  page: Page,
+  state: RunState,
+  detection: ManualBuilderGateDetection,
+  rawDom: ManualBuilderRawDomEvidence
+): Promise<{ domPath: string; screenshotPath: string }> {
+  await mkdir(fieldDebugDir, { recursive: true });
+  await mkdir(screenshotDir, { recursive: true });
+  const domPathAbs = path.join(fieldDebugDir, "manual-gate-dom.json");
+  const screenshotAbs = path.join(screenshotDir, "manual-gate-screenshot.png");
+  await writeFile(
+    domPathAbs,
+    `${JSON.stringify(
+      redactUnknown({
+        generatedAt: new Date().toISOString(),
+        detection,
+        rawDom,
+      }),
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+  await page.screenshot({ path: screenshotAbs, fullPage: true });
+  const domPath = relativizeArtifactPath(repoRoot, domPathAbs);
+  const screenshotPath = relativizeArtifactPath(repoRoot, screenshotAbs);
+  state.screenshots.push(screenshotPath);
+  return { domPath, screenshotPath };
 }
 
 async function probeBuilderFrames(
@@ -1244,8 +1628,12 @@ async function runManualBuilderGate(page: Page, state: RunState, args: CliArgs):
   console.log("Required visible elements:");
   console.log("- Workout Title");
   console.log("- Add Block");
-  console.log("- Search Exercises, Circuits, or Saved Items OR Add Block button");
-  console.log('- [role="dialog"] container');
+  console.log("- Strength Workout");
+  console.log("- Add Workout Instructions");
+  console.log("- Save & Close");
+  console.log("- Summary");
+  console.log("- Search Exercises, Circuits, or Saved Items (optional evidence)");
+  console.log('- [role="dialog"] preferred, but raw DOM fallback allowed');
   console.log("");
   console.log("Actions:");
   console.log("Enter = check again");
@@ -1260,21 +1648,41 @@ async function runManualBuilderGate(page: Page, state: RunState, args: CliArgs):
     const label = `manual-gate-${new Date().toISOString().replace(/[:.]/g, "-")}`;
     const screenshotPath = await saveScreenshot(page, state, label);
     const detection = await readManualBuilderGateDetection(page);
-    const gatePassed =
+    const rawDom = await readManualBuilderRawDomEvidence(page);
+    const locatorGatePassed =
       detection.dialogFound &&
       (detection.addBlockFound || detection.workoutTitleFound || detection.searchInputFound);
+    const gatePassed = rawDom.gatePass || locatorGatePassed;
     state.builderOpened = gatePassed;
-    state.addBlockButtonFound = detection.addBlockFound;
+    state.addBlockButtonFound = detection.addBlockFound || rawDom.addBlockFound;
     state.pickerSearchFound = detection.searchInputFound;
 
     console.log("");
     console.log(`[tp-create-test-strength-workout] manual gate check`);
-    console.log(`- dialogFound: ${detection.dialogFound ? "yes" : "no"}`);
-    console.log(`- addBlockFound: ${detection.addBlockFound ? "yes" : "no"}`);
-    console.log(`- workoutTitleFound: ${detection.workoutTitleFound ? "yes" : "no"}`);
-    console.log(`- searchInputFound: ${detection.searchInputFound ? "yes" : "no"}`);
+    console.log(`- locator.dialogFound: ${detection.dialogFound ? "yes" : "no"}`);
+    console.log(`- locator.addBlockFound: ${detection.addBlockFound ? "yes" : "no"}`);
+    console.log(`- locator.workoutTitleFound: ${detection.workoutTitleFound ? "yes" : "no"}`);
+    console.log(`- locator.searchInputFound: ${detection.searchInputFound ? "yes" : "no"}`);
+    console.log(`- raw.dialogFound: ${rawDom.dialogFound ? "yes" : "no"}`);
+    console.log(`- raw.addBlockFound: ${rawDom.addBlockFound ? "yes" : "no"}`);
+    console.log(`- raw.workoutTitleFound: ${rawDom.workoutTitleFound ? "yes" : "no"}`);
+    console.log(`- raw.strengthWorkoutFound: ${rawDom.strengthWorkoutFound ? "yes" : "no"}`);
+    console.log(`- raw.addWorkoutInstructionsFound: ${rawDom.addWorkoutInstructionsFound ? "yes" : "no"}`);
+    console.log(`- raw.saveAndCloseFound: ${rawDom.saveAndCloseFound ? "yes" : "no"}`);
+    console.log(`- raw.summaryFound: ${rawDom.summaryFound ? "yes" : "no"}`);
+    console.log(`- raw.builderAreaPass (Add Block OR Workout Title in visible area): ${rawDom.builderAreaPass ? "yes" : "no"}`);
+    console.log(`- raw.fallbackVisibleDomPass (no role=dialog + Add Block + Workout Title): ${rawDom.fallbackVisibleDomPass ? "yes" : "no"}`);
+    console.log(`- gatePassed: ${gatePassed ? "yes" : "no"}`);
     console.log(`- current URL: ${detection.currentUrl}`);
+    console.log(`- selected frame URL: ${rawDom.selectedFrameUrl}`);
     console.log(`- screenshot: ${screenshotPath}`);
+
+    if (!locatorGatePassed && rawDom.gatePass) {
+      const diagnostics = await saveManualGateDiagnostics(page, state, detection, rawDom);
+      console.log("- locator/raw mismatch detected. Saved diagnostics:");
+      console.log(`  - ${diagnostics.domPath}`);
+      console.log(`  - ${diagnostics.screenshotPath}`);
+    }
 
     if (gatePassed) {
       console.log("[tp-create-test-strength-workout] Manual-builder gate passed.");
@@ -1301,6 +1709,10 @@ async function runManualBuilderGate(page: Page, state: RunState, args: CliArgs):
       return false;
     }
     if (action === "s") {
+      const rawDomForSave = await readManualBuilderRawDomEvidence(page);
+      const manualDiag = await saveManualGateDiagnostics(page, state, detection, rawDomForSave);
+      state.warnings.push(`Manual gate DOM diagnostics saved: ${manualDiag.domPath}`);
+      state.warnings.push(`Manual gate screenshot saved: ${manualDiag.screenshotPath}`);
       const diagPath = await saveBuilderFrameProbeReport(
         await probeBuilderFrames(page, [], getMainFrame(page)),
         `manual-gate-${Date.now()}`
