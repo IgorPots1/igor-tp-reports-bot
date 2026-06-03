@@ -118,6 +118,7 @@ import {
   buildTelegramContextTextPreview,
   classifyTelegramContextLabels,
   isAthleteIncomingBusinessDmMessage,
+  recordCoachOutgoingBusinessDmContactIfSafe,
   recordTrainingPeaksTelegramBusinessContextObservation,
   sha256TelegramContextText,
 } from "@/features/trainingpeaks/telegram-context";
@@ -141,6 +142,8 @@ import {
   getTrainingPeaksMessageIntentLogByTelegramMessage,
   getTrainingPeaksStudentByTelegramChatId,
   listActiveTrainingPeaksStudentMemoryItems,
+  listRecentTrainingPeaksStudentContactEvents,
+  listTrainingPeaksStudentsByTelegramChatId,
   listTrainingPeaksMessageIntentLogsForTriage,
   listTrainingPeaksCronRunLogs,
   TRAININGPEAKS_ATTENTION_DIGEST_CRON_JOB_NAME,
@@ -6448,6 +6451,29 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
   const messageText = (message.text ?? message.caption ?? "").trim();
   const contextLabels = messageText ? classifyTelegramContextLabels(messageText) : [];
   let contextObsId: string | null = null;
+
+  try {
+    await recordCoachOutgoingBusinessDmContactIfSafe({
+      message,
+      isCoachTelegramId: (value) => (value === undefined ? false : isCoachChat(value)),
+      listStudentsByTelegramChatId: async (telegramChatId) =>
+        listTrainingPeaksStudentsByTelegramChatId(telegramChatId),
+      listRecentContactEvents: async (studentId) =>
+        listRecentTrainingPeaksStudentContactEvents({
+          studentId,
+          limit: 10,
+        }),
+      recordContactEvent: async (payload) => {
+        await recordTrainingPeaksStudentContactEvent(payload);
+      },
+    });
+  } catch (error) {
+    console.warn("Failed to record outgoing TrainingPeaks business DM contact event", {
+      chatId,
+      messageId: message.message_id,
+      error,
+    });
+  }
 
   if (chatId && messageText && isAthleteIncomingBusinessDmMessage(message)) {
     try {

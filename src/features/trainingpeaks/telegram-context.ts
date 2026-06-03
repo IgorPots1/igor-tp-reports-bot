@@ -199,6 +199,228 @@ export function isAthleteIncomingBusinessDmMessage(message: {
   return String(fromId) === String(chatId);
 }
 
+const TELEGRAM_SERVICE_MESSAGE_KEYS = [
+  "new_chat_members",
+  "left_chat_member",
+  "new_chat_title",
+  "new_chat_photo",
+  "delete_chat_photo",
+  "group_chat_created",
+  "supergroup_chat_created",
+  "channel_chat_created",
+  "migrate_to_chat_id",
+  "migrate_from_chat_id",
+  "pinned_message",
+  "forum_topic_created",
+  "forum_topic_edited",
+  "forum_topic_closed",
+  "forum_topic_reopened",
+  "general_forum_topic_hidden",
+  "general_forum_topic_unhidden",
+  "write_access_allowed",
+  "video_chat_scheduled",
+  "video_chat_started",
+  "video_chat_ended",
+  "video_chat_participants_invited",
+] as const;
+
+const TELEGRAM_NON_TEXT_MESSAGE_KEYS = [
+  "photo",
+  "document",
+  "voice",
+  "audio",
+  "video",
+  "video_note",
+  "sticker",
+  "animation",
+  "contact",
+  "location",
+  "venue",
+  "poll",
+] as const;
+
+type BusinessDmMessageLike = Pick<
+  Record<string, unknown>,
+  never
+> & {
+  message_id: number;
+  chat?: { id?: number | string | null };
+  from?: { id?: number | string | null; is_bot?: boolean };
+  text?: string | null;
+  caption?: string | null;
+  date?: number | null;
+  business_connection_id?: string | null;
+};
+
+type ContactEventLike = {
+  eventType: string;
+  source: string;
+  referenceId: string | null;
+  metadata: unknown;
+};
+
+export type RecordCoachOutgoingBusinessDmContactResult =
+  | { kind: "recorded"; studentId: string }
+  | {
+      kind:
+        | "ignored_not_outgoing_coach_dm"
+        | "ignored_missing_chat_id"
+        | "ignored_no_student_match"
+        | "ignored_ambiguous_student_match"
+        | "ignored_duplicate";
+    };
+
+function hasTelegramServiceMessagePayload(message: BusinessDmMessageLike): boolean {
+  const rawMessage = message as Record<string, unknown>;
+  return TELEGRAM_SERVICE_MESSAGE_KEYS.some((key) => rawMessage[key] !== undefined);
+}
+
+function hasTelegramBusinessMessageMeaningfulContent(message: BusinessDmMessageLike): boolean {
+  const text = (message.text ?? message.caption ?? "").trim();
+  if (text.length > 0) {
+    return true;
+  }
+
+  const rawMessage = message as Record<string, unknown>;
+  return TELEGRAM_NON_TEXT_MESSAGE_KEYS.some((key) => rawMessage[key] !== undefined);
+}
+
+export function isCoachOutgoingBusinessDmMessage(input: {
+  message: BusinessDmMessageLike;
+  isCoachTelegramId: (value: number | undefined) => boolean;
+}): boolean {
+  const fromIdRaw = input.message.from?.id;
+  const chatIdRaw = input.message.chat?.id;
+  const fromId =
+    fromIdRaw === undefined || fromIdRaw === null ? undefined : Number.parseInt(String(fromIdRaw), 10);
+
+  if (fromId === undefined || !Number.isFinite(fromId)) {
+    return false;
+  }
+  if (chatIdRaw === undefined || chatIdRaw === null) {
+    return false;
+  }
+  if (!input.isCoachTelegramId(fromId)) {
+    return false;
+  }
+  if (String(fromIdRaw) === String(chatIdRaw)) {
+    return false;
+  }
+  if (input.message.from?.is_bot === true || hasTelegramServiceMessagePayload(input.message)) {
+    return false;
+  }
+
+  const normalizedText = (input.message.text ?? input.message.caption ?? "").trim();
+  if (normalizedText.startsWith("/")) {
+    return false;
+  }
+
+  return hasTelegramBusinessMessageMeaningfulContent(input.message);
+}
+
+function isDuplicateCoachBusinessDmContactEvent(input: {
+  chatId: string;
+  messageId: string;
+  recentEvents: ContactEventLike[];
+}): boolean {
+  for (const event of input.recentEvents) {
+    if (event.eventType !== "coach_message" || event.source !== "telegram_business_dm") {
+      continue;
+    }
+
+    if (event.referenceId === input.messageId) {
+      const metadata = event.metadata;
+      if (
+        metadata &&
+        typeof metadata === "object" &&
+        !Array.isArray(metadata) &&
+        String((metadata as Record<string, unknown>).chat_id ?? "") === input.chatId
+      ) {
+        return true;
+      }
+    }
+
+    const metadata = event.metadata;
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+      continue;
+    }
+
+    const metadataRecord = metadata as Record<string, unknown>;
+    if (
+      String(metadataRecord.chat_id ?? "") === input.chatId &&
+      String(metadataRecord.message_id ?? "") === input.messageId
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export async function recordCoachOutgoingBusinessDmContactIfSafe(input: {
+  message: BusinessDmMessageLike;
+  isCoachTelegramId: (value: number | undefined) => boolean;
+  listStudentsByTelegramChatId: (chatId: string) => Promise<Array<{ id: string }>>;
+  listRecentContactEvents: (studentId: string) => Promise<ContactEventLike[]>;
+  recordContactEvent: (payload: {
+    studentId: string;
+    eventType: "coach_message";
+    source: "telegram_business_dm";
+    referenceId: string;
+    occurredAt: string;
+    metadata: Record<string, unknown>;
+  }) => Promise<void>;
+}): Promise<RecordCoachOutgoingBusinessDmContactResult> {
+  if (!isCoachOutgoingBusinessDmMessage({ message: input.message, isCoachTelegramId: input.isCoachTelegramId })) {
+    return { kind: "ignored_not_outgoing_coach_dm" };
+  }
+
+  const chatId =
+    input.message.chat?.id === undefined || input.message.chat?.id === null
+      ? null
+      : String(input.message.chat.id);
+  if (!chatId) {
+    return { kind: "ignored_missing_chat_id" };
+  }
+
+  const matchedStudents = await input.listStudentsByTelegramChatId(chatId);
+  if (matchedStudents.length === 0) {
+    return { kind: "ignored_no_student_match" };
+  }
+  if (matchedStudents.length > 1) {
+    return { kind: "ignored_ambiguous_student_match" };
+  }
+
+  const studentId = matchedStudents[0]!.id;
+  const messageId = String(input.message.message_id);
+  const recentEvents = await input.listRecentContactEvents(studentId);
+  if (isDuplicateCoachBusinessDmContactEvent({ chatId, messageId, recentEvents })) {
+    return { kind: "ignored_duplicate" };
+  }
+
+  const dateSeconds = input.message.date;
+  const occurredAt =
+    typeof dateSeconds === "number" && Number.isFinite(dateSeconds) && dateSeconds > 0
+      ? new Date(dateSeconds * 1000).toISOString()
+      : new Date().toISOString();
+
+  await input.recordContactEvent({
+    studentId,
+    eventType: "coach_message",
+    source: "telegram_business_dm",
+    referenceId: messageId,
+    occurredAt,
+    metadata: {
+      chat_id: chatId,
+      message_id: input.message.message_id,
+      has_business_connection_id: Boolean(input.message.business_connection_id?.trim()),
+      direction: "coach_outgoing_manual",
+    },
+  });
+
+  return { kind: "recorded", studentId };
+}
+
 export async function recordTrainingPeaksTelegramBusinessContextObservation(input: {
   chatId: string;
   messageId: string | number | null | undefined;

@@ -73,6 +73,7 @@
     "check-trainingpeaks-attention-noise": "npx tsx scripts/check-trainingpeaks-attention-noise.ts",
     "trace-trainingpeaks-contact-status": "npx tsx scripts/trace-trainingpeaks-contact-status.ts",
     "check-trainingpeaks-coach-group-reply-contact": "npx tsx scripts/check-trainingpeaks-coach-group-reply-contact.ts",
+    "check-trainingpeaks-business-dm-coach-contact": "npx tsx scripts/check-trainingpeaks-business-dm-coach-contact.ts",
     "check-trainingpeaks-actions-telegram-copy": "npx tsx scripts/check-trainingpeaks-actions-telegram-copy.ts",
     "check-trainingpeaks-telegram-readability": "npx tsx scripts/check-trainingpeaks-telegram-readability.ts",
     "check-trainingpeaks-operational-signals-command": "npx tsx scripts/check-trainingpeaks-operational-signals-command.ts",
