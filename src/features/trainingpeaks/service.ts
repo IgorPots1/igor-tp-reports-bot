@@ -1134,27 +1134,29 @@ async function finalizeTrainingPeaksCoachCase(input: {
       });
     }
 
-    try {
-      await recordTrainingPeaksStudentContactEvent({
-        studentId: coachCase.studentId,
-        eventType: "coach_action_decision",
-        source: "admin_action",
-        referenceId: coachCase.id,
-        metadata: {
-          case_id: coachCase.id,
-          case_kind: coachCase.caseKind,
-          action_kind: input.actionKind,
+    if (input.finalStatus === "resolved") {
+      try {
+        await recordTrainingPeaksStudentContactEvent({
+          studentId: coachCase.studentId,
+          eventType: "coach_action_decision",
+          source: "admin_action",
+          referenceId: coachCase.id,
+          metadata: {
+            case_id: coachCase.id,
+            case_kind: coachCase.caseKind,
+            action_kind: input.actionKind,
+            status: input.finalStatus,
+            actor_telegram_chat_id: input.actorTelegramChatId ?? null,
+          },
+        });
+      } catch (contactError) {
+        console.warn("Failed to record TrainingPeaks coach case decision contact event", {
+          caseId: coachCase.id,
+          studentId: coachCase.studentId,
           status: input.finalStatus,
-          actor_telegram_chat_id: input.actorTelegramChatId ?? null,
-        },
-      });
-    } catch (contactError) {
-      console.warn("Failed to record TrainingPeaks coach case decision contact event", {
-        caseId: coachCase.id,
-        studentId: coachCase.studentId,
-        status: input.finalStatus,
-        error: contactError,
-      });
+          error: contactError,
+        });
+      }
     }
 
     return {
