@@ -7294,13 +7294,14 @@ export async function listRecentTrainingPeaksCoachCasesForAttention(input: {
     caseKind: TrainingPeaksCoachCaseKind;
     status: TrainingPeaksCoachCaseStatus;
     createdAt: string;
+    coachNotesJson: Record<string, unknown>;
   }>
 > {
   const cutoffIso = new Date(Date.now() - input.sinceHours * 3_600_000).toISOString();
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("trainingpeaks_coach_cases")
-    .select("id, student_id, case_kind, status, created_at")
+    .select("id, student_id, case_kind, status, created_at, coach_notes_json")
     .gte("created_at", cutoffIso)
     .in("case_kind", [...input.caseKinds])
     .in("status", [...input.statuses])
@@ -7319,6 +7320,7 @@ export async function listRecentTrainingPeaksCoachCasesForAttention(input: {
       case_kind: TrainingPeaksCoachCaseKind;
       status: TrainingPeaksCoachCaseStatus;
       created_at: string;
+      coach_notes_json: unknown | null;
     }>) ?? []
   ).map((row) => ({
     id: row.id,
@@ -7326,6 +7328,10 @@ export async function listRecentTrainingPeaksCoachCasesForAttention(input: {
     caseKind: row.case_kind,
     status: row.status,
     createdAt: row.created_at,
+    coachNotesJson:
+      row.coach_notes_json && typeof row.coach_notes_json === "object" && !Array.isArray(row.coach_notes_json)
+        ? (row.coach_notes_json as Record<string, unknown>)
+        : {},
   }));
 }
 

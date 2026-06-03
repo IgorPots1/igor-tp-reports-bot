@@ -727,6 +727,67 @@ export type RecordTrainingPeaksCoachCaseAndSnapshotResult = {
   caseIds: string[];
 };
 
+const TRAININGPEAKS_DEFAULT_VISIBLE_COACH_CASE_KINDS: readonly TrainingPeaksCoachCaseKind[] = [
+  "pain_or_health_signal",
+  "move_workout_needs_review",
+];
+
+function readStringRecordValue(record: Record<string, unknown>, key: string): string | null {
+  const value = record[key];
+  return typeof value === "string" ? value.trim() : null;
+}
+
+function readBooleanRecordValue(record: Record<string, unknown>, key: string): boolean | null {
+  const value = record[key];
+  return typeof value === "boolean" ? value : null;
+}
+
+function isTrainingPeaksQuestionCaseMarkedVisibleByPriorityOrStaleness(
+  coachNotesJson: Record<string, unknown> | null | undefined
+): boolean {
+  if (!coachNotesJson) {
+    return false;
+  }
+
+  const priorityCandidates = [
+    readStringRecordValue(coachNotesJson, "priority"),
+    readStringRecordValue(coachNotesJson, "question_priority"),
+  ]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => value.toLowerCase());
+  if (priorityCandidates.some((value) => value === "urgent" || value === "high")) {
+    return true;
+  }
+
+  const explicitFlags = [
+    readBooleanRecordValue(coachNotesJson, "high_priority"),
+    readBooleanRecordValue(coachNotesJson, "is_high_priority"),
+    readBooleanRecordValue(coachNotesJson, "question_high_priority"),
+    readBooleanRecordValue(coachNotesJson, "stale"),
+    readBooleanRecordValue(coachNotesJson, "is_stale"),
+    readBooleanRecordValue(coachNotesJson, "stale_unanswered"),
+    readBooleanRecordValue(coachNotesJson, "is_stale_unanswered"),
+  ];
+  return explicitFlags.some((value) => value === true);
+}
+
+export function isTrainingPeaksCoachCaseVisibleByDefault(input: {
+  caseKind: TrainingPeaksCoachCaseKind;
+  coachNotesJson?: Record<string, unknown> | null;
+}): boolean {
+  if (TRAININGPEAKS_DEFAULT_VISIBLE_COACH_CASE_KINDS.includes(input.caseKind)) {
+    return true;
+  }
+  if (input.caseKind !== "question_to_coach") {
+    return false;
+  }
+  return isTrainingPeaksQuestionCaseMarkedVisibleByPriorityOrStaleness(input.coachNotesJson);
+}
+
+export function getTrainingPeaksDefaultVisibleCoachCaseKinds(): readonly TrainingPeaksCoachCaseKind[] {
+  return TRAININGPEAKS_DEFAULT_VISIBLE_COACH_CASE_KINDS;
+}
+
 export type CreateTrainingPeaksGroupMoveRequestCaseInput = {
   message: TelegramMessage;
   student: TrainingPeaksStudent;
@@ -5304,6 +5365,12 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
         limit: 300,
       }),
     ]);
+    const visibleQuestionCases = questionCases.filter((caseRow) =>
+      isTrainingPeaksCoachCaseVisibleByDefault({
+        caseKind: caseRow.caseKind,
+        coachNotesJson: caseRow.coachNotesJson,
+      })
+    );
 
     const painCaseCountsByStudentId = new Map<string, number>();
     for (const caseRow of painCases) {
@@ -5324,7 +5391,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     }
 
     const questionCaseCountsByStudentId = new Map<string, number>();
-    for (const caseRow of questionCases) {
+    for (const caseRow of visibleQuestionCases) {
       questionCaseCountsByStudentId.set(caseRow.studentId, (questionCaseCountsByStudentId.get(caseRow.studentId) ?? 0) + 1);
     }
     for (const [studentId, count] of questionCaseCountsByStudentId) {

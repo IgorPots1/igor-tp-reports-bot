@@ -53,8 +53,10 @@ import {
   getTrainingPeaksStudentById,
   getTrainingPeaksBusinessChatByChatId,
   getTrainingPeaksCoachCaseByShortId,
+  getTrainingPeaksDefaultVisibleCoachCaseKinds,
   getTrainingPeaksStudentsRegistryWithLatestReportStatus,
   getTrainingPeaksThreadInfo,
+  isTrainingPeaksCoachCaseVisibleByDefault,
   getTrainingPeaksWeeklyReportByInternalId,
   linkTrainingPeaksStudentThread,
   linkTrainingPeaksStudentToBusinessChat,
@@ -2262,6 +2264,7 @@ function parseTrainingPeaksStartPayload(text: string): TrainingPeaksStartPayload
 type TrainingPeaksCasesQueryFilters = {
   normalizedQuery: string;
   studentQuery: string | null;
+  includeNoisyKinds: boolean;
   caseKindFilter: Array<
     | "move_workout_requested"
     | "move_workout_needs_review"
@@ -2300,6 +2303,7 @@ function deriveTrainingPeaksCasesFilters(rawQuery: string): TrainingPeaksCasesQu
   const hasUnrecognized = tokens.some(
     (token) => token === "unrecognized" || token.startsWith("неразоб") || token.startsWith("непонят")
   );
+  const includeNoisyKinds = tokens.some((token) => token === "all" || token === "debug" || token === "все");
 
   const caseKindFilter: TrainingPeaksCasesQueryFilters["caseKindFilter"] = [];
   if (hasMove) {
@@ -2315,13 +2319,15 @@ function deriveTrainingPeaksCasesFilters(rawQuery: string): TrainingPeaksCasesQu
     caseKindFilter.push("unrecognized_intent");
   }
 
-  const keywordRegex = /^(move|questions?|health|unrecognized|перенос\p{L}*|вопрос\p{L}*|бол\p{L}*|здоров\p{L}*|неразоб\p{L}*|непонят\p{L}*)$/u;
+  const keywordRegex =
+    /^(move|questions?|health|unrecognized|all|debug|перенос\p{L}*|вопрос\p{L}*|бол\p{L}*|здоров\p{L}*|неразоб\p{L}*|непонят\p{L}*|все)$/u;
   const studentTokens = tokens.filter((token) => !keywordRegex.test(token));
   const studentQuery = studentTokens.length > 0 ? studentTokens.join(" ") : null;
 
   return {
     normalizedQuery,
     studentQuery,
+    includeNoisyKinds,
     caseKindFilter: [...new Set(caseKindFilter)],
   };
 }
@@ -2553,17 +2559,33 @@ async function handleTrainingPeaksCasesList(
   const rawQuery = input?.query?.trim() ?? "";
   const offset = Math.max(0, Math.trunc(input?.offset ?? 0));
   const filters = deriveTrainingPeaksCasesFilters(rawQuery);
+  const hasExplicitCaseKindFilter = filters.caseKindFilter.length > 0;
+  const defaultVisibleKindSet = new Set(getTrainingPeaksDefaultVisibleCoachCaseKinds());
+  defaultVisibleKindSet.add("question_to_coach");
+  const listCaseKindFilter = hasExplicitCaseKindFilter
+    ? filters.caseKindFilter
+    : filters.includeNoisyKinds
+      ? undefined
+      : [...defaultVisibleKindSet];
   const listResult = await listTrainingPeaksCoachCases({
     limit: TP_CASES_PAGE_LIMIT,
     offset,
     statusFilter: TP_CASES_ACTIVE_STATUSES,
-    caseKindFilter: filters.caseKindFilter.length > 0 ? filters.caseKindFilter : undefined,
+    caseKindFilter: listCaseKindFilter,
     studentQuery: filters.studentQuery,
   });
+  const visibleItems = hasExplicitCaseKindFilter || filters.includeNoisyKinds
+    ? listResult.items
+    : listResult.items.filter((item) =>
+        isTrainingPeaksCoachCaseVisibleByDefault({
+          caseKind: item.caseKind,
+          coachNotesJson: item.coachNotesJson,
+        })
+      );
   const title =
     rawQuery.length > 0 ? `TP-кейсы по запросу: "${rawQuery}"` : "Последние TP-кейсы";
 
-  if (listResult.items.length === 0) {
+  if (visibleItems.length === 0) {
     await sendTrainingPeaksMessage(
       parsedMessage.chatId,
       `${title}\nПоказано 0 из ${listResult.total} активных кейсов.`
@@ -2571,7 +2593,7 @@ async function handleTrainingPeaksCasesList(
     return;
   }
 
-  const shownTo = Math.min(offset + listResult.items.length, listResult.total);
+  const shownTo = Math.min(offset + visibleItems.length, listResult.total);
   await showTrainingPeaksMenuScreen(
     parsedMessage,
     `${title}\nПоказано ${offset + 1}-${shownTo} из ${listResult.total} активных кейсов.`,
@@ -2583,7 +2605,7 @@ async function handleTrainingPeaksCasesList(
     })
   );
 
-  for (const item of listResult.items) {
+  for (const item of visibleItems) {
     await sendTrainingPeaksMenuMessage(
       parsedMessage.chatId,
       formatTrainingPeaksCoachCaseCard(item),
