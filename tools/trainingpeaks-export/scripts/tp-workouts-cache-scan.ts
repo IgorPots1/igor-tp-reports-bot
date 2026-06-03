@@ -313,7 +313,141 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function toCompactText(value: unknown, maxLength = 4000): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return null;
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength)}…`;
+}
+
+function collectStructureSummaryMetrics(input: unknown): {
+  nodeCount: number;
+  stepCount: number;
+  repetitionCount: number;
+  targetMetrics: string[];
+} {
+  const targetMetrics = new Set<string>();
+  let nodeCount = 0;
+  let stepCount = 0;
+  let repetitionCount = 0;
+
+  const visit = (value: unknown, depth = 0): void => {
+    if (depth > 14 || nodeCount >= 400) {
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        visit(item, depth + 1);
+      }
+      return;
+    }
+    if (!isRecord(value)) {
+      return;
+    }
+    nodeCount += 1;
+    const typeValue = typeof value.type === "string" ? value.type.toLowerCase() : null;
+    if (typeValue === "step") stepCount += 1;
+    if (typeValue === "repetition") repetitionCount += 1;
+
+    const maybeMetricKeys = ["metric", "targetType", "type", "field", "unit", "valueType", "name"];
+    for (const key of maybeMetricKeys) {
+      const rawMetric = value[key];
+      if (typeof rawMetric === "string") {
+        const normalized = rawMetric.trim().toLowerCase();
+        if (normalized.length >= 2 && normalized.length <= 40) {
+          targetMetrics.add(normalized);
+        }
+      }
+    }
+
+    for (const childValue of Object.values(value)) {
+      if (Array.isArray(childValue) || isRecord(childValue)) {
+        visit(childValue, depth + 1);
+      }
+    }
+  };
+
+  visit(input);
+  return {
+    nodeCount,
+    stepCount,
+    repetitionCount,
+    targetMetrics: [...targetMetrics].sort().slice(0, 20),
+  };
+}
+
+function buildCompactStructure(value: unknown): unknown {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      const serialized = JSON.stringify(parsed);
+      if (serialized.length <= 2000) {
+        return parsed;
+      }
+      const metrics = collectStructureSummaryMetrics(parsed);
+      return {
+        summaryOnly: true,
+        serializedLength: serialized.length,
+        ...metrics,
+      };
+    } catch {
+      return {
+        summaryOnly: true,
+        parseableJson: false,
+        rawLength: trimmed.length,
+        preview: trimmed.slice(0, 320),
+      };
+    }
+  }
+
+  if (isRecord(value) || Array.isArray(value)) {
+    try {
+      const serialized = JSON.stringify(value);
+      if (serialized.length <= 2000) {
+        return value;
+      }
+      const metrics = collectStructureSummaryMetrics(value);
+      return {
+        summaryOnly: true,
+        serializedLength: serialized.length,
+        ...metrics,
+      };
+    } catch {
+      const metrics = collectStructureSummaryMetrics(value);
+      return {
+        summaryOnly: true,
+        serializationError: true,
+        ...metrics,
+      };
+    }
+  }
+
+  return null;
+}
+
 function buildCompactSourceSnapshot(raw: TrainingPeaksWorkoutRaw): Record<string, unknown> {
+  const structure = buildCompactStructure(raw.structure);
   return {
     rawTitle: raw.title ?? null,
     rawWorkoutDay: raw.workoutDay ?? null,
@@ -327,6 +461,17 @@ function buildCompactSourceSnapshot(raw: TrainingPeaksWorkoutRaw): Record<string
     rawComplianceDurationPercent: raw.complianceDurationPercent ?? null,
     rawComplianceDistancePercent: raw.complianceDistancePercent ?? null,
     rawCompleted: raw.completed ?? null,
+    description: toCompactText(raw.description),
+    coachComments: toCompactText(raw.coachComments),
+    structure,
+    tssActual: toFiniteNumber(raw.tssActual),
+    tssPlanned: toFiniteNumber(raw.tssPlanned),
+    ifActual: toFiniteNumber(raw.ifActual ?? raw.if),
+    ifPlanned: toFiniteNumber(raw.ifPlanned),
+    totalTimePlanned: toFiniteNumber(raw.totalTimePlanned),
+    totalDistancePlanned: toFiniteNumber(raw.distancePlanned),
+    workoutTypeValueId: readPositiveInt(raw.workoutTypeValueId),
+    isHidden: typeof raw.isHidden === "boolean" ? raw.isHidden : null,
   };
 }
 
