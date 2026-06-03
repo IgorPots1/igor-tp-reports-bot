@@ -5467,23 +5467,28 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
   const noContactStatuses = contactStatuses
     .map((status) => {
       const lastCoachTouchMs = getIsoTimeMs(status.lastCoachTouchAt);
-      const coachIdleDays =
-        lastCoachTouchMs === null
-          ? Number.POSITIVE_INFINITY
-          : Math.floor((nowMs - lastCoachTouchMs) / (24 * 60 * 60 * 1000));
+      const hasReliableCoachTouchBaseline = lastCoachTouchMs !== null;
+      const coachIdleDays = hasReliableCoachTouchBaseline
+        ? Math.floor((nowMs - lastCoachTouchMs) / (24 * 60 * 60 * 1000))
+        : null;
       return {
         status,
+        hasReliableCoachTouchBaseline,
         coachIdleDays,
       };
     })
     .filter(
-      ({ status, coachIdleDays }) =>
+      ({ status, hasReliableCoachTouchBaseline, coachIdleDays }) =>
         activeStudentNameById.has(status.studentId) &&
+        hasReliableCoachTouchBaseline &&
+        coachIdleDays !== null &&
         coachIdleDays >= ATTENTION_NO_CONTACT_MINIMUM_COACH_IDLE_DAYS
     )
     .sort((left, right) => {
-      if (left.coachIdleDays !== right.coachIdleDays) {
-        return right.coachIdleDays - left.coachIdleDays;
+      const leftCoachIdleDays = left.coachIdleDays ?? 0;
+      const rightCoachIdleDays = right.coachIdleDays ?? 0;
+      if (leftCoachIdleDays !== rightCoachIdleDays) {
+        return rightCoachIdleDays - leftCoachIdleDays;
       }
       const leftName = (activeStudentNameById.get(left.status.studentId) ?? "").toLocaleLowerCase("ru-RU");
       const rightName = (activeStudentNameById.get(right.status.studentId) ?? "").toLocaleLowerCase("ru-RU");
