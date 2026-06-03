@@ -96,6 +96,21 @@ function normalizeDay(value: unknown): string | null {
   return normalized ? normalized : null;
 }
 
+function normalizeIsoDateTime(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+  const timestamp = Date.parse(normalized);
+  if (!Number.isFinite(timestamp)) {
+    return null;
+  }
+  return new Date(timestamp).toISOString();
+}
+
 function stableJsonStringify(value: unknown): string {
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value);
@@ -164,6 +179,14 @@ function payloadRichnessScore(payload: Record<string, unknown>): number {
   const resolvedDates = Array.isArray(payload.resolved_available_dates) ? payload.resolved_available_dates : [];
   if (resolvedDates.length > 0) {
     score += 3;
+  }
+  const latestSummary = typeof payload.latest_summary === "string" ? payload.latest_summary.trim() : "";
+  if (latestSummary) {
+    score += 5;
+  }
+  const symptoms = Array.isArray(payload.symptoms) ? payload.symptoms : [];
+  if (symptoms.length > 0) {
+    score += 2;
   }
   return score;
 }
@@ -400,6 +423,22 @@ export async function persistOperationalSignalsForObservation(
           classifier_confidence: classification.confidence,
           primary_bucket: classification.primary_bucket,
           secondary_buckets: classification.secondary_buckets,
+          health_state:
+            typeof structuredPayload.health_state === "string" ? structuredPayload.health_state : null,
+          training_recommendation:
+            typeof structuredPayload.training_recommendation === "string"
+              ? structuredPayload.training_recommendation
+              : null,
+          latest_summary:
+            typeof structuredPayload.latest_summary === "string"
+              ? structuredPayload.latest_summary
+              : null,
+          follow_up_status: normalizeIsoDateTime(structuredPayload.follow_up_due_at) ? "pending" : null,
+          follow_up_due_at: normalizeIsoDateTime(structuredPayload.follow_up_due_at),
+          follow_up_reason:
+            typeof structuredPayload.latest_summary === "string"
+              ? structuredPayload.latest_summary
+              : null,
           source_script: "inline-operational-signal-persistence",
           inline_runtime: true,
         },

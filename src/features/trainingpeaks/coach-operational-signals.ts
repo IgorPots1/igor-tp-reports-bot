@@ -38,6 +38,12 @@ export type OperationalStructuredPayload = {
   health_issue_kind: string | null;
   target_date: string | null;
   source_date: string | null;
+  health_state: "sick" | "improving" | "resolved" | "unknown" | null;
+  symptoms: string[];
+  training_recommendation: "pause" | "easy_if_symptom_free" | "monitor" | "resume_carefully" | null;
+  latest_summary: string | null;
+  follow_up_due_at: string | null;
+  planned_attempt_date: string | null;
 };
 
 export type ObservationLike = {
@@ -173,6 +179,12 @@ function toDefaultPayload(): OperationalStructuredPayload {
     health_issue_kind: null,
     target_date: null,
     source_date: null,
+    health_state: null,
+    symptoms: [],
+    training_recommendation: null,
+    latest_summary: null,
+    follow_up_due_at: null,
+    planned_attempt_date: null,
   };
 }
 
@@ -219,13 +231,297 @@ function classifyHealthIssueKind(text: string): string | null {
   if (hasAny(text, ["нога", "колено", "ахилл", "икра", "спина", "голень", "стоп"])) {
     return "pain_or_injury";
   }
-  if (hasAny(text, ["горло", "температур", "простуд", "кашель", "боле", "насморк", "орви", "осип", "голос осип"])) {
+  if (
+    hasAny(text, [
+      "горло",
+      "температур",
+      "простуд",
+      "кашель",
+      "болею",
+      "болеет",
+      "забол",
+      "прибол",
+      "насморк",
+      "сопли",
+      "орви",
+      "осип",
+      "голос осип",
+      "голос пропал",
+      "голос вернул",
+      "слабост",
+    ])
+  ) {
     return "illness";
   }
   if (text.includes("бол")) {
     return "pain_unspecified";
   }
   return null;
+}
+
+const HEALTH_SYMPTOM_PATTERNS: Array<{ symptom: string; patterns: string[] }> = [
+  { symptom: "fever", patterns: ["температур"] },
+  { symptom: "cough", patterns: ["кашель", "кашля"] },
+  { symptom: "throat", patterns: ["горло"] },
+  { symptom: "voice", patterns: ["голос пропал", "голос осип", "голос вернул", "голос немного вернул"] },
+  { symptom: "runny_nose", patterns: ["насморк", "сопли"] },
+  { symptom: "cold", patterns: ["простуд"] },
+  { symptom: "orvi", patterns: ["орви"] },
+  { symptom: "weakness", patterns: ["слабост"] },
+];
+
+function dedupeStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function detectHealthSymptoms(text: string): string[] {
+  const symptoms: string[] = [];
+  for (const descriptor of HEALTH_SYMPTOM_PATTERNS) {
+    if (hasAny(text, descriptor.patterns)) {
+      symptoms.push(descriptor.symptom);
+    }
+  }
+  return dedupeStrings(symptoms);
+}
+
+function hasHealthStartedCue(text: string): boolean {
+  return hasAny(text, [
+    "забол",
+    "прибол",
+    "болею",
+    "болеет",
+    "температур",
+    "кашель",
+    "горло",
+    "голос пропал",
+    "насморк",
+    "сопли",
+    "простуд",
+    "орви",
+    "слабост",
+    "отлежусь",
+  ]);
+}
+
+function hasHealthImprovingCue(text: string): boolean {
+  return hasAny(text, [
+    "получше",
+    "полегче",
+    "лучше, но",
+    "лучше но",
+    "еще болею",
+    "ещё болею",
+    "плюс-минус болею",
+    "более менее",
+    "более-менее",
+    "выздорав",
+    "голос немного вернул",
+    "голос вернул",
+    "самочувствие норм",
+    "самочувствие вроде",
+  ]);
+}
+
+function hasHealthResolvedCue(text: string): boolean {
+  return hasAny(text, [
+    "выздоров",
+    "кашля нет",
+    "кашель прошел",
+    "кашель прошёл",
+    "температуры нет",
+    "температура прошла",
+    "симптомов нет",
+    "чувствую себя нормально",
+    "чувствую себя норм",
+  ]);
+}
+
+function symptomLabel(symptom: string): string {
+  switch (symptom) {
+    case "fever":
+      return "температура";
+    case "cough":
+      return "кашель";
+    case "throat":
+      return "горло";
+    case "voice":
+      return "голос";
+    case "runny_nose":
+      return "насморк";
+    case "cold":
+      return "простуда";
+    case "orvi":
+      return "ОРВИ";
+    case "weakness":
+      return "слабость";
+    default:
+      return symptom;
+  }
+}
+
+function joinSymptomLabels(symptoms: string[]): string {
+  return symptoms.map(symptomLabel).join(", ");
+}
+
+function buildHealthFollowUpDueAt(observedAt: string, preferredDate?: string | null): string {
+  const base =
+    preferredDate && /^\d{4}-\d{2}-\d{2}$/u.test(preferredDate)
+      ? new Date(`${preferredDate}T09:00:00.000Z`)
+      : addDays(parseIsoDateFallback(observedAt), 1);
+  return base.toISOString();
+}
+
+function buildHealthSummary(input: {
+  text: string;
+  signalType: "health_issue_started" | "health_issue_improving" | "health_issue_resolved";
+  symptoms: string[];
+  recommendation: "pause" | "easy_if_symptom_free" | "monitor" | "resume_carefully";
+  plannedAttemptDate: string | null;
+}): string {
+  const lines: string[] = [];
+  const symptomSummary = joinSymptomLabels(input.symptoms);
+  const hasVoiceRecovery = hasAny(input.text, ["голос немного вернул", "голос вернул"]);
+  const hasRestPlan = hasAny(input.text, ["отлежусь", "отлежат", "пару дней", "несколько дней"]);
+  const hasConditionalRunPlan =
+    input.plannedAttemptDate !== null &&
+    hasAny(input.text, ["пробеж", "выйти на пробежку", "выйду на пробежку", "побегу"]);
+
+  if (input.signalType === "health_issue_started") {
+    if (input.text.includes("температур") && input.text.includes("с понедельника")) {
+      lines.push("болеет, температура с понедельника");
+    } else if (input.text.includes("температур")) {
+      lines.push("болеет, температура");
+    } else if (input.text.includes("кашель") && input.text.includes("горло")) {
+      lines.push("болеет, кашель и горло");
+    } else if (symptomSummary) {
+      lines.push(`болеет, ${symptomSummary}`);
+    } else {
+      lines.push("болеет");
+    }
+    lines.push("пауза / наблюдать");
+    return lines.join("; ");
+  }
+
+  if (input.signalType === "health_issue_improving") {
+    if (input.symptoms.includes("cough")) {
+      lines.push("восстанавливается, кашель ещё есть");
+    } else if (symptomSummary) {
+      lines.push(`ещё болеет, симптомы сохраняются: ${symptomSummary}`);
+    } else {
+      lines.push("самочувствие улучшается");
+    }
+    if (hasVoiceRecovery) {
+      lines.push("голос частично вернулся");
+    }
+    if (hasRestPlan) {
+      lines.push("планирует отлежаться пару дней");
+    }
+    if (hasConditionalRunPlan && input.plannedAttemptDate) {
+      const when =
+        input.text.includes("завтра вечером") || (input.text.includes("завтра") && input.text.includes("вечер"))
+          ? "завтра вечером"
+          : compactOperationalDate(input.plannedAttemptDate);
+      lines.push(`хочет пробежку ${when}, если кашля не будет`);
+    } else if (input.recommendation === "easy_if_symptom_free") {
+      lines.push("лёгкий возврат только если симптомов не будет");
+    }
+    return lines.join("; ");
+  }
+
+  if (input.text.includes("кашля нет")) {
+    lines.push("самочувствие нормализовалось, кашля нет");
+  } else if (input.text.includes("температур") && hasAny(input.text, ["нет", "не"])) {
+    lines.push("самочувствие нормализовалось, температуры нет");
+  } else {
+    lines.push("самочувствие нормализовалось");
+  }
+  lines.push("можно аккуратно возвращаться к бегу");
+  return lines.join("; ");
+}
+
+function compactOperationalDate(value: string): string {
+  return /^\d{4}-\d{2}-\d{2}$/u.test(value) ? value.slice(8, 10) + "." + value.slice(5, 7) : value;
+}
+
+function classifyHealthLifecycleSignal(input: {
+  text: string;
+  observedAt: string;
+}): {
+  signalType: "health_issue_started" | "health_issue_improving" | "health_issue_resolved";
+  payload: OperationalStructuredPayload;
+  confidence: OperationalConfidence;
+  reason: string;
+} | null {
+  const text = input.text;
+  const payload = toDefaultPayload();
+  const symptoms = detectHealthSymptoms(text);
+  const plannedAttemptDate =
+    hasAny(text, ["пробеж", "выйти на пробежку", "выйду на пробежку", "побегу"]) ? parseRelativeDate(text, input.observedAt) : null;
+  payload.health_issue_kind = classifyHealthIssueKind(text);
+  payload.symptoms = symptoms;
+  payload.planned_attempt_date = plannedAttemptDate;
+
+  const improving = hasHealthImprovingCue(text);
+  const resolved = hasHealthResolvedCue(text);
+  const started = hasHealthStartedCue(text);
+
+  if (resolved) {
+    payload.health_state = "resolved";
+    payload.training_recommendation = "resume_carefully";
+    payload.latest_summary = buildHealthSummary({
+      text,
+      signalType: "health_issue_resolved",
+      symptoms,
+      recommendation: "resume_carefully",
+      plannedAttemptDate,
+    });
+    return {
+      signalType: "health_issue_resolved",
+      payload,
+      confidence: "medium",
+      reason: "health resolution signal detected",
+    };
+  }
+
+  if (improving) {
+    payload.health_state = "improving";
+    payload.training_recommendation = plannedAttemptDate ? "easy_if_symptom_free" : "monitor";
+    payload.follow_up_due_at = buildHealthFollowUpDueAt(input.observedAt, plannedAttemptDate);
+    payload.latest_summary = buildHealthSummary({
+      text,
+      signalType: "health_issue_improving",
+      symptoms,
+      recommendation: payload.training_recommendation,
+      plannedAttemptDate,
+    });
+    return {
+      signalType: "health_issue_improving",
+      payload,
+      confidence: "medium",
+      reason: "health improvement signal detected",
+    };
+  }
+
+  if (!started) {
+    return null;
+  }
+
+  payload.health_state = "sick";
+  payload.training_recommendation = "pause";
+  payload.follow_up_due_at = buildHealthFollowUpDueAt(input.observedAt, null);
+  payload.latest_summary = buildHealthSummary({
+    text,
+    signalType: "health_issue_started",
+    symptoms,
+    recommendation: "pause",
+    plannedAttemptDate,
+  });
+  return {
+    signalType: "health_issue_started",
+    payload,
+    confidence: "medium",
+    reason: "health issue present without durable persistence evidence",
+  };
 }
 
 function parseMoveDays(text: string): { sourceDay: string | null; targetDay: string | null } {
@@ -509,78 +805,20 @@ function buildHealthLifecycleCandidate(
   input: ObservationLike,
   text: string
 ): OperationalSignalCandidate | null {
-  const payload = toDefaultPayload();
-  const healthImproving =
-    hasAny(text, ["значительно лучше", "намного лучше", "становится лучше", "полегче", "лучше"]) &&
-    hasAny(text, [
-      "бол",
-      "боль",
-      "нога",
-      "колено",
-      "ахилл",
-      "стоп",
-      "голень",
-      "горло",
-      "кашель",
-      "насморк",
-      "простуд",
-      "температур",
-      "самочув",
-      "выздорав",
-    ]);
-  const healthResolved =
-    hasAny(text, ["без боли", "не болит", "прошло", "прошел", "прошла", "выздоров"]) &&
-    hasAny(text, ["бол", "горло", "колено", "нога", "ахилл", "стоп", "простуд", "кашель", "самочув"]);
-  const resolvedHealth =
-    (hasAny(text, ["прошло", "прошел", "прошла", "уже не болит", "не болит", "выздоров", "готова бегать", "готов бегать"]) &&
-      hasAny(text, ["бол", "горло", "простуд", "трав"])) ||
-    healthResolved;
-
-  if (healthImproving || hasAny(text, ["самочувствие хорошо", "самочувствие норм", "самочувствие вроде хорошо"])) {
-    payload.health_issue_kind = classifyHealthIssueKind(text);
-    return {
-      primary_bucket: "health_lifecycle_signal",
-      secondary_buckets: [],
-      signal_type: "health_issue_improving",
-      structured_payload: payload,
-      should_create_memory: false,
-      should_create_case: false,
-      should_create_trainingpeaks_action: false,
-      confidence: "medium",
-      reason: "health improvement signal detected",
-    };
-  }
-
-  if (resolvedHealth) {
-    payload.health_issue_kind = classifyHealthIssueKind(text);
-    return {
-      primary_bucket: "health_lifecycle_signal",
-      secondary_buckets: [],
-      signal_type: "health_issue_resolved",
-      structured_payload: payload,
-      should_create_memory: false,
-      should_create_case: false,
-      should_create_trainingpeaks_action: false,
-      confidence: "medium",
-      reason: "health resolution signal detected",
-    };
-  }
-
-  const healthStarted =
-    hasAny(text, ["болела", "болею", "забол", "температур", "горло", "простуд", "болит", "кашель", "насморк", "орви", "осип"]) &&
-    !resolvedHealth;
-  if (!healthStarted) {
+  const details = classifyHealthLifecycleSignal({
+    text,
+    observedAt: input.observedAt,
+  });
+  if (!details) {
     return null;
   }
-
-  payload.health_issue_kind = classifyHealthIssueKind(text);
   const hasPersistence = hasAny(text, ["третий день", "несколько дней", "постоянно", "после каждой тренировки"]);
-  if (hasPersistence && payload.health_issue_kind === "pain_or_injury") {
+  if (details.signalType === "health_issue_started" && hasPersistence && details.payload.health_issue_kind === "pain_or_injury") {
     return {
       primary_bucket: "durable_memory",
       secondary_buckets: ["coach_case"],
       signal_type: "health_issue_started",
-      structured_payload: payload,
+      structured_payload: details.payload,
       should_create_memory: true,
       should_create_case: true,
       should_create_trainingpeaks_action: false,
@@ -588,16 +826,29 @@ function buildHealthLifecycleCandidate(
       reason: "persistent musculoskeletal pain likely durable",
     };
   }
+  if (details.signalType !== "health_issue_started") {
+    return {
+      primary_bucket: "health_lifecycle_signal",
+      secondary_buckets: [],
+      signal_type: details.signalType,
+      structured_payload: details.payload,
+      should_create_memory: false,
+      should_create_case: false,
+      should_create_trainingpeaks_action: false,
+      confidence: details.confidence,
+      reason: details.reason,
+    };
+  }
   return {
     primary_bucket: "temporary_memory",
     secondary_buckets: ["health_lifecycle_signal"],
-    signal_type: "health_issue_started",
-    structured_payload: payload,
+    signal_type: details.signalType,
+    structured_payload: details.payload,
     should_create_memory: true,
     should_create_case: false,
     should_create_trainingpeaks_action: false,
-    confidence: "medium",
-    reason: "health issue present without durable persistence evidence",
+    confidence: details.confidence,
+    reason: details.reason,
   };
 }
 
@@ -760,7 +1011,9 @@ function isHealthSignal(signalType: OperationalSignalType): boolean {
   return (
     signalType === "health_issue_started" ||
     signalType === "health_issue_improving" ||
-    signalType === "health_issue_resolved"
+    signalType === "health_issue_resolved" ||
+    signalType === "pause_training" ||
+    signalType === "resume_training"
   );
 }
 
@@ -985,60 +1238,37 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
     };
   }
 
-  const healthImproving =
-    hasAny(text, ["значительно лучше", "намного лучше", "становится лучше", "полегче", "лучше"]) &&
-    hasAny(text, [
-      "бол",
-      "боль",
-      "нога",
-      "колено",
-      "ахилл",
-      "стоп",
-      "голень",
-      "горло",
-      "кашель",
-      "насморк",
-      "простуд",
-      "температур",
-      "самочув",
-      "выздорав",
-    ]);
-  const healthResolved =
-    hasAny(text, ["без боли", "не болит", "прошло", "прошел", "прошла", "выздоров"]) &&
-    hasAny(text, ["бол", "горло", "колено", "нога", "ахилл", "стоп", "простуд", "кашель", "самочув"]);
-
-  const resolvedHealth =
-    (hasAny(text, ["прошло", "прошел", "прошла", "уже не болит", "не болит", "выздоров", "готова бегать", "готов бегать"]) &&
-      hasAny(text, ["бол", "горло", "простуд", "трав"])) ||
-    healthResolved;
-  if (healthImproving || hasAny(text, ["самочувствие хорошо", "самочувствие норм", "самочувствие вроде хорошо"])) {
-    payload.health_issue_kind = classifyHealthIssueKind(text);
+  const healthDetails = classifyHealthLifecycleSignal({
+    text,
+    observedAt: input.observedAt,
+  });
+  const resolvedHealth = healthDetails?.signalType === "health_issue_resolved";
+  if (healthDetails?.signalType === "health_issue_improving") {
     return {
       primary_bucket: "health_lifecycle_signal",
       secondary_buckets: [],
       signal_type: "health_issue_improving",
-      structured_payload: payload,
+      structured_payload: healthDetails.payload,
       should_create_memory: false,
       should_create_case: false,
       should_create_trainingpeaks_action: false,
-      confidence: "medium",
-      reason: explicitSignalReason ?? "health improvement signal detected",
+      confidence: healthDetails.confidence,
+      reason: explicitSignalReason ?? healthDetails.reason,
     };
   }
-  if (resolvedHealth) {
-    payload.resume_from_date = parseRelativeDate(text, input.observedAt);
-    payload.health_issue_kind = classifyHealthIssueKind(text);
+  if (resolvedHealth && healthDetails) {
+    healthDetails.payload.resume_from_date = parseRelativeDate(text, input.observedAt);
     const withResume = hasAny(text, ["готова бегать", "готов бегать", "начинаются тренировки", "возобновля"]);
     return {
       primary_bucket: withResume ? "operational_signal" : "health_lifecycle_signal",
       secondary_buckets: withResume ? ["health_lifecycle_signal"] : [],
       signal_type: withResume ? "resume_training" : "health_issue_resolved",
-      structured_payload: payload,
+      structured_payload: healthDetails.payload,
       should_create_memory: false,
       should_create_case: false,
       should_create_trainingpeaks_action: false,
-      confidence: "medium",
-      reason: explicitSignalReason ?? "health resolution signal detected",
+      confidence: healthDetails.confidence,
+      reason: explicitSignalReason ?? healthDetails.reason,
     };
   }
 
@@ -1088,18 +1318,14 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
     };
   }
 
-  const healthStarted =
-    hasAny(text, ["болела", "болею", "забол", "температур", "горло", "простуд", "болит", "кашель", "насморк", "орви", "осип"]) &&
-    !resolvedHealth;
-  if (healthStarted) {
-    payload.health_issue_kind = classifyHealthIssueKind(text);
+  if (healthDetails?.signalType === "health_issue_started") {
     const hasPersistence = hasAny(text, ["третий день", "несколько дней", "постоянно", "после каждой тренировки"]);
-    if (hasPersistence && payload.health_issue_kind === "pain_or_injury") {
+    if (hasPersistence && healthDetails.payload.health_issue_kind === "pain_or_injury") {
       return {
         primary_bucket: "durable_memory",
         secondary_buckets: ["coach_case"],
         signal_type: "health_issue_started",
-        structured_payload: payload,
+        structured_payload: healthDetails.payload,
         should_create_memory: true,
         should_create_case: true,
         should_create_trainingpeaks_action: false,
@@ -1111,12 +1337,12 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
       primary_bucket: "temporary_memory",
       secondary_buckets: ["health_lifecycle_signal"],
       signal_type: "health_issue_started",
-      structured_payload: payload,
+      structured_payload: healthDetails.payload,
       should_create_memory: true,
       should_create_case: false,
       should_create_trainingpeaks_action: false,
-      confidence: "medium",
-      reason: explicitSignalReason ?? "health issue present without durable persistence evidence",
+      confidence: healthDetails.confidence,
+      reason: explicitSignalReason ?? healthDetails.reason,
     };
   }
 

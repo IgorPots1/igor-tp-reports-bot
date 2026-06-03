@@ -129,11 +129,19 @@ function buildSnapshot(scope: TrainingPeaksOperationalSignalsScope) {
     makeSignal({
       signalId: "sig-health-active",
       studentId: "s-h1",
-      signalType: "pause_training",
+      signalType: "health_issue_improving",
       validFrom: "2026-06-01",
       validUntil: "2026-06-05",
+      structuredPayload: {
+        health_state: "improving",
+        symptoms: ["cough", "voice"],
+        training_recommendation: "easy_if_symptom_free",
+        latest_summary:
+          "восстанавливается, кашель ещё есть; голос частично вернулся; хочет пробежку завтра вечером, если кашля не будет",
+      },
       metadata: {
-        reason: "острая простуда",
+        follow_up_reason:
+          "восстанавливается, кашель ещё есть; голос частично вернулся; хочет пробежку завтра вечером, если кашля не будет",
       },
     }),
     makeSignal({
@@ -180,6 +188,13 @@ function buildSnapshot(scope: TrainingPeaksOperationalSignalsScope) {
       signalType: "move_workout_candidate",
       sourceDate: "2026-06-03",
       targetDate: "2026-06-05",
+    }),
+    makeSignal({
+      signalId: "sig-move-active",
+      studentId: "s-mov-2",
+      signalType: "move_workout_candidate",
+      sourceDate: "2026-06-04",
+      targetDate: "2026-06-06",
     }),
     makeSignal({
       signalId: "sig-other",
@@ -230,6 +245,7 @@ function buildSnapshot(scope: TrainingPeaksOperationalSignalsScope) {
     ["s-sch", "Schedule Athlete"],
     ["s-sch-2", "Schedule Dates Athlete"],
     ["s-mov", "Move Athlete"],
+    ["s-mov-2", "Move Visible Athlete"],
     ["s-oth", "Other Athlete"],
     ["s-x1", "Extra One"],
     ["s-x2", "Extra Two"],
@@ -244,6 +260,44 @@ function buildSnapshot(scope: TrainingPeaksOperationalSignalsScope) {
     asOfDate: "2026-06-03",
     scope,
     limit: 10,
+    activeMoveActions: [
+      {
+        id: "action-visible-1",
+        studentId: "s-mov-2",
+        actionType: "move_workout",
+        status: "pending_coach",
+        sourceChatId: "chat-1",
+        sourceMessageId: "msg-1",
+        sourceUserId: null,
+        rawText: "fixture",
+        parsedPayload: {
+          sourceDate: "2026-06-04",
+          target: { kind: "date", value: "2026-06-06" },
+        },
+        confidence: null,
+        coachChatId: null,
+        approvedAt: null,
+        rejectedAt: null,
+        decidedByChatId: null,
+        decidedByUserId: null,
+        decisionMessageId: null,
+        executionStatus: "not_started",
+        executionMode: null,
+        claimedBy: null,
+        claimedAt: null,
+        lastRunId: null,
+        executionRequestedAt: null,
+        executionRequestedByChatId: null,
+        executionRequestedByUserId: null,
+        executionRequestMessageId: null,
+        cancelledAt: null,
+        cancelledByChatId: null,
+        cancelledByUserId: null,
+        cancelMessageId: null,
+        createdAt: "2026-06-03T08:00:00.000Z",
+        updatedAt: "2026-06-03T08:00:00.000Z",
+      },
+    ],
   });
 }
 
@@ -267,7 +321,8 @@ function run(): void {
 
   // C: schedule and move signals are represented
   assert(text.includes("Schedule Athlete"), "C failed: schedule signal not shown.");
-  assert(text.includes("Move Athlete"), "C failed: move signal not shown.");
+  assert(!text.includes("Move Athlete"), "C failed: stale move signal without active action should be hidden.");
+  assert(text.includes("Move Visible Athlete"), "C failed: move with active action should be shown.");
   const scheduleScopeText = formatTrainingPeaksOperationalSignalsForTelegram(buildSnapshot("schedule"));
   assert(
     scheduleScopeText.includes("05.06") || scheduleScopeText.includes("недоступна"),
@@ -313,6 +368,10 @@ function run(): void {
   // F: no raw scope label line for non-default scope
   const healthText = formatTrainingPeaksOperationalSignalsForTelegram(buildSnapshot("health"));
   assert(!healthText.includes("Фильтр:"), "F failed: raw scope label should not be shown.");
+  assert(
+    healthText.includes("кашель ещё есть") && healthText.includes("хочет пробежку завтра вечером"),
+    "F failed: health scope should show rich coaching summary instead of vague label."
+  );
 
   // H: future pending and resolved follow-up are not in check section
   assert(

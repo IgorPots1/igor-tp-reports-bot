@@ -110,6 +110,19 @@ async function run(): Promise<void> {
     `A failed: expected health_issue_improving, got ${improvingSignalCall?.signalType ?? "null"}.`
   );
   assert(
+    (improvingSignalCall?.structuredPayload?.health_state as string | undefined) === "improving",
+    "A failed: improving signal should persist health_state=improving."
+  );
+  assert(
+    typeof improvingSignalCall?.structuredPayload?.latest_summary === "string" &&
+      improvingSignalCall.structuredPayload.latest_summary.includes("кашель ещё есть"),
+    "A failed: improving signal should persist useful health summary."
+  );
+  assert(
+    improvingSignalCall?.metadata?.follow_up_reason === improvingSignalCall?.structuredPayload?.latest_summary,
+    "A failed: improving signal should copy summary into follow_up_reason metadata."
+  );
+  assert(
     typeof improvingSignalCall?.validUntil === "string" && improvingSignalCall.validUntil.length > 0,
     "E failed: improving signal should have default valid_until."
   );
@@ -157,6 +170,42 @@ async function run(): Promise<void> {
   assert(
     typeof moveSignalCall?.validUntil === "string" && moveSignalCall.validUntil.length > 0,
     "F failed: move signal should get default valid_until."
+  );
+
+  const feverResult = await persistOperationalSignalsForObservation(
+    makeTestObservation({
+      observationId: "obs-6",
+      studentId: "student-fever",
+      textPreview: "Нет, заболела. Температура с понедельника.",
+    }),
+    deps
+  );
+  assert(feverResult.status === "processed", "H failed: fever observation should be processed.");
+  const feverSignalCall = upsertCalls.find((call) => call.sourceObservationId === "obs-6");
+  assert(feverSignalCall?.signalType === "health_issue_started", "H failed: fever observation should create health_issue_started.");
+  assert(
+    feverSignalCall?.structuredPayload?.training_recommendation === "pause",
+    "H failed: fever observation should persist pause recommendation."
+  );
+
+  const restObservationResult = await persistOperationalSignalsForObservation(
+    makeTestObservation({
+      observationId: "obs-7",
+      studentId: "student-rest",
+      textPreview: "Еще плюс-минус болею, но уже более менее. Думаю пару дней может отлежусь.",
+    }),
+    deps
+  );
+  assert(restObservationResult.status === "processed", "I failed: rest observation should be processed.");
+  const restSignalCall = upsertCalls.find((call) => call.sourceObservationId === "obs-7");
+  assert(
+    restSignalCall?.signalType === "health_issue_improving",
+    "I failed: rest observation should create health_issue_improving."
+  );
+  assert(
+    typeof restSignalCall?.structuredPayload?.latest_summary === "string" &&
+      restSignalCall.structuredPayload.latest_summary.includes("отлежаться пару дней"),
+    "I failed: rest observation should preserve rest note in summary."
   );
 
   const noStudentResult = await persistOperationalSignalsForObservation(

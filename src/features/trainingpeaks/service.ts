@@ -54,6 +54,7 @@ import {
   listRecentTrainingPeaksCoachCases as listRecentTrainingPeaksCoachCasesFromRepository,
   listTrainingPeaksCoachCases as listTrainingPeaksCoachCasesFromRepository,
   listRecentTrainingPeaksActions as listRecentTrainingPeaksActionsFromRepository,
+  listActiveTrainingPeaksMoveActions,
   listTrainingPeaksActionLatestRunContexts,
   getTrainingPeaksActionLatestRunContext,
   listLatestTrainingPeaksActionRunsByActionIds,
@@ -671,6 +672,7 @@ export type TrainingPeaksOperationalSignalsItem = {
   isEpisodeSummary: boolean;
   followUpState: TrainingPeaksOperationalSignalsFollowUpState;
   text: string;
+  hiddenReason?: string | null;
 };
 
 export type TrainingPeaksOperationalSignalsSection = {
@@ -4627,6 +4629,128 @@ function isMoveOperationalSignalType(signalType: string): boolean {
   return signalType === "move_workout_candidate";
 }
 
+function normalizeRecordString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizeRecordStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => normalizeRecordString(item)).filter((item): item is string => Boolean(item)) : [];
+}
+
+function translateHealthSymptom(value: string): string {
+  switch (value) {
+    case "fever":
+      return "температура";
+    case "cough":
+      return "кашель";
+    case "throat":
+      return "горло";
+    case "voice":
+      return "голос";
+    case "runny_nose":
+      return "насморк";
+    case "cold":
+      return "простуда";
+    case "orvi":
+      return "ОРВИ";
+    case "weakness":
+      return "слабость";
+    default:
+      return value;
+  }
+}
+
+function readMoveActionDates(action: Pick<TrainingPeaksAction, "parsedPayload">): {
+  sourceDate: string | null;
+  targetDate: string | null;
+} {
+  if (!action.parsedPayload || typeof action.parsedPayload !== "object") {
+    return { sourceDate: null, targetDate: null };
+  }
+  const payload = action.parsedPayload as {
+    source?: { kind?: string; value?: string };
+    target?: { kind?: string; value?: string };
+    sourceDate?: string;
+    source_date?: string;
+  };
+  return {
+    sourceDate:
+      normalizeRecordString(payload.sourceDate) ??
+      normalizeRecordString(payload.source_date) ??
+      (payload.source?.kind === "date" ? normalizeRecordString(payload.source.value) : null),
+    targetDate: payload.target?.kind === "date" ? normalizeRecordString(payload.target.value) : null,
+  };
+}
+
+function isActionActiveForMoveSignal(
+  signal: Pick<TrainingPeaksStudentOperationalSignal, "studentId" | "linkedActionId" | "sourceDate" | "targetDate">,
+  actions: readonly TrainingPeaksAction[]
+): boolean {
+  return actions.some((action) => {
+    if (action.studentId !== signal.studentId) {
+      return false;
+    }
+    if (signal.linkedActionId && action.id === signal.linkedActionId) {
+      return action.status === "pending_coach" || (action.status === "approved" && action.executionStatus !== "completed");
+    }
+    const dates = readMoveActionDates(action);
+    return (
+      (action.status === "pending_coach" || (action.status === "approved" && action.executionStatus !== "completed")) &&
+      dates.sourceDate === (signal.sourceDate ?? null) &&
+      dates.targetDate === (signal.targetDate ?? null)
+    );
+  });
+}
+
+function buildHealthOperationalSignalText(signal: TrainingPeaksStudentOperationalSignal): string {
+  const latestSummary =
+    normalizeRecordString(signal.structuredPayload.latest_summary) ??
+    getSignalMetadataString(signal.metadata, "latest_summary") ??
+    getSignalMetadataString(signal.metadata, "follow_up_reason");
+  if (latestSummary) {
+    return compactOperationalSignalText(latestSummary, 140);
+  }
+
+  const healthState =
+    normalizeRecordString(signal.structuredPayload.health_state) ??
+    getSignalMetadataString(signal.metadata, "health_state");
+  const symptoms = normalizeRecordStringArray(signal.structuredPayload.symptoms);
+  const recommendation =
+    normalizeRecordString(signal.structuredPayload.training_recommendation) ??
+    getSignalMetadataString(signal.metadata, "training_recommendation");
+  const lines: string[] = [];
+
+  if (healthState === "improving") {
+    lines.push(
+      symptoms.length > 0
+        ? `восстанавливается, ${symptoms.map(translateHealthSymptom).join(", ")}`
+        : "восстанавливается"
+    );
+  } else if (healthState === "sick") {
+    lines.push(
+      symptoms.length > 0 ? `болеет, ${symptoms.map(translateHealthSymptom).join(", ")}` : "болеет"
+    );
+  } else if (healthState === "resolved") {
+    lines.push("самочувствие нормализовалось");
+  }
+
+  if (recommendation === "pause") {
+    lines.push("пауза / наблюдать");
+  } else if (recommendation === "easy_if_symptom_free") {
+    lines.push("лёгкий возврат только без симптомов");
+  } else if (recommendation === "resume_carefully") {
+    lines.push("аккуратный возврат к тренировкам");
+  }
+
+  if (lines.length > 0) {
+    return compactOperationalSignalText(lines.join("; "), 140);
+  }
+
+  const typeLabel = getOperationalSignalTypeLabel(signal.signalType);
+  const windowPart = getOperationalSignalWindowPart(signal);
+  return windowPart ? `${typeLabel} (${windowPart})` : typeLabel;
+}
+
 function getOperationalSignalTypeLabel(signalType: string): string {
   if (signalType === "health_issue_started") {
     return "болезнь";
@@ -5024,16 +5148,21 @@ async function listOperationalMoveSignalsForAttention(
   activeStudentNameById: ReadonlyMap<string, string | null>,
   maxItems = 5
 ): Promise<{ items: OperationalPlanningAttentionItem[]; overflowCount: number }> {
-  const signals = await listTrainingPeaksOperationalSignals({
-    status: "active",
-    limit: 200,
-  });
+  const [signals, activeMoveActions] = await Promise.all([
+    listTrainingPeaksOperationalSignals({
+      status: "active",
+      limit: 200,
+    }),
+    listActiveTrainingPeaksMoveActions(250),
+  ]);
   if (signals.items.length === 0) {
     return { items: [], overflowCount: 0 };
   }
 
   return collectOperationalPlanningAttentionItems({
-    signals: signals.items,
+    signals: signals.items.filter(
+      (signal) => !isMoveOperationalSignalType(signal.signalType) || isActionActiveForMoveSignal(signal, activeMoveActions)
+    ),
     activeStudentNameById,
     asOfDate: getCoachTodayDateKey(DEFAULT_COACH_TIMEZONE),
     signalTypes: new Set(["move_workout_candidate"]),
@@ -5641,6 +5770,7 @@ function buildOperationalSignalItemFromSignal(input: {
   studentNameById: ReadonlyMap<string, string | null>;
   asOfDate: string;
   episodeScheduleContext?: EpisodeScheduleContext | null;
+  activeMoveActions?: readonly TrainingPeaksAction[];
 }): TrainingPeaksOperationalSignalsItem {
   const { signal, studentNameById, asOfDate } = input;
   const followUp = normalizeOperationalSignalFollowUp(signal.metadata, {
@@ -5699,7 +5829,7 @@ function buildOperationalSignalItemFromSignal(input: {
 
   if (isHealthOperationalSignalType(signal.signalType)) {
     const rolePrefix = episodeRole ? `${episodeRole}: ` : "";
-    const baseReason = reasonFromMeta || `${typeLabel}${windowSuffix}`;
+    const baseReason = buildHealthOperationalSignalText(signal) || reasonFromMeta || `${typeLabel}${windowSuffix}`;
     return {
       signalId: signal.id,
       studentId: signal.studentId,
@@ -5713,6 +5843,7 @@ function buildOperationalSignalItemFromSignal(input: {
       isEpisodeSummary: false,
       followUpState: followUp.state,
       text: compactOperationalSignalText(`${rolePrefix}${baseReason}${relatedSuffix}`, 95),
+      hiddenReason: null,
     };
   }
 
@@ -5737,12 +5868,14 @@ function buildOperationalSignalItemFromSignal(input: {
       isEpisodeSummary: false,
       followUpState: followUp.state,
       text: compactOperationalSignalText(scheduleText, 95),
+      hiddenReason: null,
     };
   }
 
   if (isMoveOperationalSignalType(signal.signalType)) {
     const sourceDate = signal.sourceDate ?? "—";
     const targetDate = signal.targetDate ?? "—";
+    const isVisible = isActionActiveForMoveSignal(signal, input.activeMoveActions ?? []);
     return {
       signalId: signal.id,
       studentId: signal.studentId,
@@ -5756,6 +5889,7 @@ function buildOperationalSignalItemFromSignal(input: {
       isEpisodeSummary: false,
       followUpState: followUp.state,
       text: `кандидат переноса ${sourceDate} → ${targetDate}`,
+      hiddenReason: isVisible ? null : "no_active_move_action",
     };
   }
 
@@ -5779,6 +5913,7 @@ function buildOperationalSignalItemFromSignal(input: {
     isEpisodeSummary: false,
     followUpState: followUp.state,
     text: genericReason ? `${genericBase}: ${genericReason}` : genericBase,
+    hiddenReason: null,
   };
 }
 
@@ -5888,6 +6023,7 @@ export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
   asOfDate: string;
   scope?: TrainingPeaksOperationalSignalsScope;
   limit?: number;
+  activeMoveActions?: readonly TrainingPeaksAction[];
 }): TrainingPeaksOperationalSignalsSnapshot {
   const scope = input.scope ?? "all";
   const maxItems = Math.max(5, Math.min(30, Math.floor(input.limit ?? 15)));
@@ -5923,7 +6059,11 @@ export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
       studentNameById,
       asOfDate: input.asOfDate,
       episodeScheduleContext,
+      activeMoveActions: input.activeMoveActions,
     });
+    if (item.hiddenReason) {
+      continue;
+    }
     if (!item.episodeKey) {
       fallbackItems.push(item);
       continue;
@@ -5976,12 +6116,13 @@ export async function getTrainingPeaksOperationalSignalsSnapshot(input?: {
   scope?: TrainingPeaksOperationalSignalsScope;
   limit?: number;
 }): Promise<TrainingPeaksOperationalSignalsSnapshot> {
-  const [signals, students] = await Promise.all([
+  const [signals, students, actions] = await Promise.all([
     listTrainingPeaksOperationalSignals({
       status: "active",
       limit: 250,
     }),
     listTrainingPeaksStudents(),
+    listActiveTrainingPeaksMoveActions(250),
   ]);
   const studentNameById = new Map(students.map((student) => [student.id, student.studentName?.trim() || null]));
   const asOfDate = getCoachTodayDateKey(DEFAULT_COACH_TIMEZONE);
@@ -5991,6 +6132,7 @@ export async function getTrainingPeaksOperationalSignalsSnapshot(input?: {
     asOfDate,
     scope: input?.scope,
     limit: input?.limit,
+    activeMoveActions: actions,
   });
 }
 

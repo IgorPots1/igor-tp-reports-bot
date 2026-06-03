@@ -3427,6 +3427,26 @@ export async function listRecentTrainingPeaksActions(limit = 15): Promise<Traini
   }));
 }
 
+export async function listActiveTrainingPeaksMoveActions(limit = 200): Promise<TrainingPeaksAction[]> {
+  const supabase = createSupabaseServerClient();
+  const safeLimit = Math.max(1, Math.min(limit, 500));
+  const { data, error } = await supabase
+    .from("trainingpeaks_actions")
+    .select("*")
+    .eq("action_type", "move_workout")
+    .or(
+      "status.eq.pending_coach,and(status.eq.approved,execution_status.in.(not_started,dry_run_running,dry_run_completed,execute_pending,running_local))"
+    )
+    .order("created_at", { ascending: false })
+    .limit(safeLimit);
+
+  if (error) {
+    throw new Error(`Failed to list active TrainingPeaks move actions: ${error.message}`);
+  }
+
+  return ((data as TrainingPeaksActionRow[]) ?? []).map(mapTrainingPeaksActionRow);
+}
+
 async function decideTrainingPeaksActionStatus(
   input: DecideTrainingPeaksActionInput,
   nextStatus: Extract<TrainingPeaksActionStatus, "approved" | "rejected">
