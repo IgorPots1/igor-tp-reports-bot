@@ -54,7 +54,24 @@ function formatSilenceDays(
 function formatLastCoachTouch(
   student: Awaited<ReturnType<typeof listTrainingPeaksAdminStudents>>[number]
 ): string {
-  return formatIsoDate(student.contactStatus?.lastCoachTouchAt ?? null);
+  return formatIsoDate(student.contactStatus?.lastCoachTouchAt ?? null) ?? "нет истории";
+}
+
+function formatCoachIdleDays(
+  student: Awaited<ReturnType<typeof listTrainingPeaksAdminStudents>>[number]
+): string {
+  const lastCoachTouchAt = student.contactStatus?.lastCoachTouchAt ?? null;
+  if (!lastCoachTouchAt) {
+    return "нет истории";
+  }
+
+  const lastCoachTouchMs = Date.parse(lastCoachTouchAt);
+  if (!Number.isFinite(lastCoachTouchMs)) {
+    return "нет истории";
+  }
+
+  const idleDays = Math.max(0, Math.floor((Date.now() - lastCoachTouchMs) / (24 * 60 * 60 * 1000)));
+  return `${idleDays}д / 3д`;
 }
 
 export default async function AdminStudentsPage({ searchParams }: StudentsPageProps) {
@@ -114,8 +131,9 @@ export default async function AdminStudentsPage({ searchParams }: StudentsPagePr
               <th>Ученик</th>
               <th>Статус</th>
               <th>Telegram</th>
-              <th>Silence</th>
-              <th>Last coach touch</th>
+              <th>Ученик не писал</th>
+              <th>Последний контакт тренера</th>
+              <th>Без контакта тренера</th>
               <th>Последний отчёт</th>
               <th>Действия</th>
             </tr>
@@ -123,7 +141,7 @@ export default async function AdminStudentsPage({ searchParams }: StudentsPagePr
           <tbody>
             {students.length === 0 ? (
               <tr>
-                <td colSpan={7} className="admin-empty-cell">
+                <td colSpan={8} className="admin-empty-cell">
                   Список пуст.
                 </td>
               </tr>
@@ -179,6 +197,9 @@ export default async function AdminStudentsPage({ searchParams }: StudentsPagePr
                   </td>
                   <td>
                     <span className="admin-muted">{formatLastCoachTouch(student)}</span>
+                  </td>
+                  <td>
+                    <span className="admin-muted">{formatCoachIdleDays(student)}</span>
                   </td>
                   <td>
                     {student.latestWeekFrom && student.latestWeekTo ? (
