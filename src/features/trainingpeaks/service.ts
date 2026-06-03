@@ -178,6 +178,10 @@ import type { TelegramMessage } from "@/features/telegram/types";
 import { buildTelegramContextTextPreview, sha256TelegramContextText } from "@/features/trainingpeaks/telegram-context";
 import { formatOperationalSignalTelegramLine } from "@/features/trainingpeaks/telegram-visual-ux";
 import {
+  buildTrainingPeaksContactDisplay,
+  TRAININGPEAKS_NO_CONTACT_ALERT_DAYS,
+} from "@/features/trainingpeaks/contact-display";
+import {
   normalizeTrainingPeaksStudentId,
   validateTrainingPeaksStudentId,
 } from "@/lib/trainingpeaks-student-id";
@@ -4362,7 +4366,7 @@ const YESTERDAY_SCAN_MISSING_ALERT_START_HOUR = 11;
 const YESTERDAY_SCAN_SMALL_FAILURE_NAMES_LIMIT = 3;
 const YESTERDAY_SCAN_FAILURE_PREVIEW_NAMES_LIMIT = 4;
 const ATTENTION_OPERATIONAL_LIST_MAX_ITEMS = 20;
-const ATTENTION_NO_CONTACT_MINIMUM_COACH_IDLE_DAYS = 3;
+const ATTENTION_NO_CONTACT_MINIMUM_COACH_IDLE_DAYS = TRAININGPEAKS_NO_CONTACT_ALERT_DAYS;
 const QUESTION_UNANSWERED_PROMOTION_HOURS = 6;
 
 type YesterdayScanStatusSignalSource = {
@@ -5466,27 +5470,24 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
   const noContact5Days: TrainingPeaksAttentionSignal[] = [];
   const noContactStatuses = contactStatuses
     .map((status) => {
-      const lastCoachTouchMs = getIsoTimeMs(status.lastCoachTouchAt);
-      const hasReliableCoachTouchBaseline = lastCoachTouchMs !== null;
-      const coachIdleDays = hasReliableCoachTouchBaseline
-        ? Math.floor((nowMs - lastCoachTouchMs) / (24 * 60 * 60 * 1000))
-        : null;
+      const contactDisplay = buildTrainingPeaksContactDisplay(
+        { lastCoachTouchAt: status.lastCoachTouchAt },
+        nowMs
+      );
       return {
         status,
-        hasReliableCoachTouchBaseline,
-        coachIdleDays,
+        contactDisplay,
       };
     })
     .filter(
-      ({ status, hasReliableCoachTouchBaseline, coachIdleDays }) =>
+      ({ status, contactDisplay }) =>
         activeStudentNameById.has(status.studentId) &&
-        hasReliableCoachTouchBaseline &&
-        coachIdleDays !== null &&
-        coachIdleDays >= ATTENTION_NO_CONTACT_MINIMUM_COACH_IDLE_DAYS
+        contactDisplay.daysWithoutContact !== null &&
+        contactDisplay.daysWithoutContact >= ATTENTION_NO_CONTACT_MINIMUM_COACH_IDLE_DAYS
     )
     .sort((left, right) => {
-      const leftCoachIdleDays = left.coachIdleDays ?? 0;
-      const rightCoachIdleDays = right.coachIdleDays ?? 0;
+      const leftCoachIdleDays = left.contactDisplay.daysWithoutContact ?? 0;
+      const rightCoachIdleDays = right.contactDisplay.daysWithoutContact ?? 0;
       if (leftCoachIdleDays !== rightCoachIdleDays) {
         return rightCoachIdleDays - leftCoachIdleDays;
       }

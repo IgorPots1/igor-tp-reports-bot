@@ -2,6 +2,7 @@ import process from "node:process";
 
 import {
   isCoachGroupReplyContactCandidate,
+  isCoachGroupTopicNoReplyContactCandidate,
   type CoachGroupReplyContactResolverInput,
   resolveCoachGroupReplyContactStudentId,
 } from "@/features/trainingpeaks/context-observer";
@@ -97,6 +98,42 @@ async function run(): Promise<void> {
       isTelegramServiceMessage: () => false,
     }),
     "Generic group message without reply must not count as contact."
+  );
+
+  const linkedTopicNoReplyCoachMessage = {
+    ...buildBaseGroupMessage(),
+    is_topic_message: true,
+    message_thread_id: 77,
+    reply_to_message: undefined,
+  };
+  assert(
+    isCoachGroupTopicNoReplyContactCandidate({
+      message: linkedTopicNoReplyCoachMessage,
+      fromId: 555_111,
+      text: linkedTopicNoReplyCoachMessage.text ?? null,
+      isCoachTelegramId: (value) => value === 555_111,
+      isTelegramBotSender: () => false,
+      isTelegramServiceMessage: () => false,
+    }),
+    "Coach message in a linked topic without reply should be a valid contact candidate."
+  );
+
+  const genericGroupNoReplyCoachMessage = {
+    ...buildBaseGroupMessage(),
+    is_topic_message: false,
+    message_thread_id: undefined,
+    reply_to_message: undefined,
+  };
+  assert(
+    !isCoachGroupTopicNoReplyContactCandidate({
+      message: genericGroupNoReplyCoachMessage,
+      fromId: 555_111,
+      text: genericGroupNoReplyCoachMessage.text ?? null,
+      isCoachTelegramId: (value) => value === 555_111,
+      isTelegramBotSender: () => false,
+      isTelegramServiceMessage: () => false,
+    }),
+    "Coach message in common group without reply must not count as topic contact."
   );
 
   const studentMessage = {

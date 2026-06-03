@@ -93,6 +93,15 @@ export type CoachGroupReplyContactResolverInput = {
   message: TelegramMessage;
 } & CoachGroupReplyResolverDeps;
 
+type CoachGroupTopicNoReplyContactCandidateInput = {
+  message: TelegramMessage;
+  fromId: number | undefined;
+  text: string | null;
+  isCoachTelegramId: (value: number | undefined) => boolean;
+  isTelegramBotSender: (message: TelegramMessage) => boolean;
+  isTelegramServiceMessage: (message: TelegramMessage) => boolean;
+};
+
 const TRAINING_REPORT_KEYWORDS = [
   "тренировка",
   "пробежка",
@@ -277,6 +286,30 @@ export function isCoachGroupReplyContactCandidate(input: CoachGroupReplyContactC
   return true;
 }
 
+export function isCoachGroupTopicNoReplyContactCandidate(
+  input: CoachGroupTopicNoReplyContactCandidateInput
+): boolean {
+  if (!isGroupOrSupergroupMessage(input.message)) {
+    return false;
+  }
+  if (!input.isCoachTelegramId(input.fromId)) {
+    return false;
+  }
+  if (!input.message.is_topic_message || input.message.message_thread_id === undefined) {
+    return false;
+  }
+  if (input.message.reply_to_message) {
+    return false;
+  }
+  if (!input.text || input.text.startsWith("/")) {
+    return false;
+  }
+  if (input.isTelegramBotSender(input.message) || input.isTelegramServiceMessage(input.message)) {
+    return false;
+  }
+  return true;
+}
+
 async function getThreadStudentIdByChatThread(input: {
   chatId: string;
   messageThreadId: number;
@@ -392,6 +425,78 @@ async function recordCoachGroupReplyContactIfSafe(input: {
       replied_message_id: input.message.reply_to_message?.message_id ?? null,
       replied_from_id: input.message.reply_to_message?.from?.id ?? null,
       direction: "coach_outgoing_reply",
+    },
+  });
+
+  return {
+    handled: true,
+    reason: "coach_group_reply_contact_recorded",
+  };
+}
+
+async function recordCoachGroupTopicNoReplyContactIfSafe(input: {
+  message: TelegramMessage;
+  fromId: number | undefined;
+  text: string | null;
+}): Promise<TrainingPeaksObserverRouteResult | null> {
+  if (
+    !isCoachGroupTopicNoReplyContactCandidate({
+      ...input,
+      isCoachTelegramId,
+      isTelegramBotSender,
+      isTelegramServiceMessage,
+    })
+  ) {
+    return null;
+  }
+
+  const threadId = input.message.message_thread_id;
+  if (threadId === undefined) {
+    return null;
+  }
+
+  const studentId = await getThreadStudentIdByChatThread({
+    chatId: String(input.message.chat.id),
+    messageThreadId: threadId,
+  });
+  if (!studentId) {
+    return null;
+  }
+
+  const chatId = String(input.message.chat.id);
+  const messageId = String(input.message.message_id);
+  const recentContactEvents = await listRecentTrainingPeaksStudentContactEvents({
+    studentId,
+    limit: 5,
+  });
+  const duplicateEvent = recentContactEvents.find(
+    (event) =>
+      event.eventType === "coach_message" &&
+      event.source === "telegram_group_topic" &&
+      event.referenceId === messageId &&
+      event.metadata &&
+      typeof event.metadata === "object" &&
+      (event.metadata as Record<string, unknown>).chat_id === chatId
+  );
+  if (duplicateEvent) {
+    return {
+      handled: true,
+      reason: "coach_group_reply_contact_skipped",
+    };
+  }
+
+  await recordTrainingPeaksStudentContactEvent({
+    studentId,
+    eventType: "coach_message",
+    source: "telegram_group_topic",
+    referenceId: messageId,
+    metadata: {
+      chat_id: chatId,
+      message_id: input.message.message_id,
+      message_thread_id: threadId,
+      replied_message_id: null,
+      replied_from_id: null,
+      direction: "coach_outgoing_topic",
     },
   });
 
@@ -913,6 +1018,15 @@ export async function handleTrainingPeaksContextObserverMessage(
   });
   if (coachGroupReplyResult) {
     return coachGroupReplyResult;
+  }
+
+  const coachGroupTopicNoReplyResult = await recordCoachGroupTopicNoReplyContactIfSafe({
+    message,
+    fromId,
+    text,
+  });
+  if (coachGroupTopicNoReplyResult) {
+    return coachGroupTopicNoReplyResult;
   }
 
   if (chatType === "private") {

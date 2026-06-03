@@ -15,6 +15,9 @@ import {
   listTrainingPeaksAdminStudents,
   type TrainingPeaksAdminStudentsView,
 } from "@/features/trainingpeaks/admin";
+import {
+  buildTrainingPeaksContactDisplay,
+} from "@/features/trainingpeaks/contact-display";
 
 type StudentsPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
@@ -40,38 +43,39 @@ function getTelegramBindingText(
   return "Telegram привязан, доставка включена";
 }
 
-function formatSilenceDays(
+function formatLastContact(
   student: Awaited<ReturnType<typeof listTrainingPeaksAdminStudents>>[number]
 ): string {
-  const silenceDays = student.contactStatus?.silenceDays;
-  if (silenceDays === null || silenceDays === undefined) {
-    return "—";
-  }
-
-  return `${silenceDays}д`;
+  const contactDisplay = buildTrainingPeaksContactDisplay({
+    lastCoachTouchAt: student.contactStatus?.lastCoachTouchAt ?? null,
+  });
+  return formatIsoDate(contactDisplay.lastContactAt) ?? "нет истории";
 }
 
-function formatLastCoachTouch(
+function getDaysWithoutContactDisplay(
   student: Awaited<ReturnType<typeof listTrainingPeaksAdminStudents>>[number]
-): string {
-  return formatIsoDate(student.contactStatus?.lastCoachTouchAt ?? null) ?? "нет истории";
-}
-
-function formatCoachIdleDays(
-  student: Awaited<ReturnType<typeof listTrainingPeaksAdminStudents>>[number]
-): string {
-  const lastCoachTouchAt = student.contactStatus?.lastCoachTouchAt ?? null;
-  if (!lastCoachTouchAt) {
-    return "нет истории";
+): { text: string; className: string } {
+  const contactDisplay = buildTrainingPeaksContactDisplay({
+    lastCoachTouchAt: student.contactStatus?.lastCoachTouchAt ?? null,
+  });
+  if (contactDisplay.daysWithoutContact === null) {
+    return {
+      text: "—",
+      className: "admin-muted",
+    };
   }
 
-  const lastCoachTouchMs = Date.parse(lastCoachTouchAt);
-  if (!Number.isFinite(lastCoachTouchMs)) {
-    return "нет истории";
+  if (contactDisplay.hasNoContactAlert) {
+    return {
+      text: `${contactDisplay.daysWithoutContact}д`,
+      className: "admin-badge admin-badge-warning",
+    };
   }
 
-  const idleDays = Math.max(0, Math.floor((Date.now() - lastCoachTouchMs) / (24 * 60 * 60 * 1000)));
-  return `${idleDays}д / 3д`;
+  return {
+    text: `${contactDisplay.daysWithoutContact}д`,
+    className: "admin-muted",
+  };
 }
 
 export default async function AdminStudentsPage({ searchParams }: StudentsPageProps) {
@@ -131,9 +135,8 @@ export default async function AdminStudentsPage({ searchParams }: StudentsPagePr
               <th>Ученик</th>
               <th>Статус</th>
               <th>Telegram</th>
-              <th>Ученик не писал</th>
-              <th>Последний контакт тренера</th>
-              <th>Без контакта тренера</th>
+              <th>Последний контакт</th>
+              <th>Дней без контакта</th>
               <th>Последний отчёт</th>
               <th>Действия</th>
             </tr>
@@ -146,8 +149,10 @@ export default async function AdminStudentsPage({ searchParams }: StudentsPagePr
                 </td>
               </tr>
             ) : (
-              students.map((student) => (
-                <tr key={student.id}>
+              students.map((student) => {
+                const daysWithoutContact = getDaysWithoutContactDisplay(student);
+                return (
+                  <tr key={student.id}>
                   <td>
                     <div className="admin-table-primary">
                       <strong>{student.studentName}</strong>
@@ -193,13 +198,10 @@ export default async function AdminStudentsPage({ searchParams }: StudentsPagePr
                     </div>
                   </td>
                   <td>
-                    <span className="admin-muted">{formatSilenceDays(student)}</span>
+                    <span className="admin-muted">{formatLastContact(student)}</span>
                   </td>
                   <td>
-                    <span className="admin-muted">{formatLastCoachTouch(student)}</span>
-                  </td>
-                  <td>
-                    <span className="admin-muted">{formatCoachIdleDays(student)}</span>
+                    <span className={daysWithoutContact.className}>{daysWithoutContact.text}</span>
                   </td>
                   <td>
                     {student.latestWeekFrom && student.latestWeekTo ? (
@@ -241,8 +243,9 @@ export default async function AdminStudentsPage({ searchParams }: StudentsPagePr
                       )}
                     </div>
                   </td>
-                </tr>
-              ))
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
