@@ -193,7 +193,7 @@ function run(): void {
     noContactSnapshot,
     "Утренний обзор TrainingPeaks"
   );
-  assert(noContactMessage.includes("📭 Нет контакта 5+ дней"), "No-contact section title should be coach-facing.");
+  assert(noContactMessage.includes("📭 Нет контакта 3+ дня"), "No-contact section title should be coach-facing.");
   assert(noContactMessage.includes("• Student A"), "No-contact section should list student names.");
   assert(noContactMessage.includes("• Student B"), "No-contact section should list all silent students.");
   assert(!noContactMessage.includes("Без активности"), "Legacy no-activity label should be gone.");

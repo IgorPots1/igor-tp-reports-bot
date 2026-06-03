@@ -262,7 +262,7 @@ function buildAttentionDigestBlocks(
     overflowCount: snapshot.movesOverflowCount,
   });
 
-  const noContact = buildAttentionSection("📭 Нет контакта 5+ дней", snapshot.noContact5Days, {
+  const noContact = buildAttentionSection("📭 Нет контакта 3+ дня", snapshot.noContact5Days, {
     maxItems: ATTENTION_DIGEST_SECTION_LIMITS.noContact,
   });
 

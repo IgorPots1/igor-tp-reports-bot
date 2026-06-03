@@ -4362,7 +4362,8 @@ const YESTERDAY_SCAN_MISSING_ALERT_START_HOUR = 11;
 const YESTERDAY_SCAN_SMALL_FAILURE_NAMES_LIMIT = 3;
 const YESTERDAY_SCAN_FAILURE_PREVIEW_NAMES_LIMIT = 4;
 const ATTENTION_OPERATIONAL_LIST_MAX_ITEMS = 20;
-const ATTENTION_NO_CONTACT_MINIMUM_SILENCE_DAYS = 5;
+const ATTENTION_NO_CONTACT_MINIMUM_COACH_IDLE_DAYS = 3;
+const QUESTION_UNANSWERED_PROMOTION_HOURS = 6;
 
 type YesterdayScanStatusSignalSource = {
   studentId: string;
@@ -5343,6 +5344,16 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     activeStudents.map((student) => [student.id, student.studentName?.trim() || null])
   );
   const caseStatusesForAttention = ["logged", "open", "needs_review"] as const;
+  const nowMs = Date.now();
+  let contactStatuses: Awaited<ReturnType<typeof listTrainingPeaksStudentContactStatusInRepository>> = [];
+  try {
+    contactStatuses = await listTrainingPeaksStudentContactStatusInRepository();
+  } catch (error) {
+    console.warn("Failed to load TrainingPeaks student contact status for attention snapshot", {
+      error,
+    });
+  }
+  const contactStatusByStudentId = new Map(contactStatuses.map((status) => [status.studentId, status]));
 
   try {
     const [painCases, questionCases, moveNeedsReviewCases] = await Promise.all([
@@ -5353,7 +5364,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
         limit: 300,
       }),
       listRecentTrainingPeaksCoachCasesForAttention({
-        sinceHours: 24,
+        sinceHours: 72,
         caseKinds: ["question_to_coach"],
         statuses: caseStatusesForAttention,
         limit: 300,
@@ -5365,12 +5376,32 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
         limit: 300,
       }),
     ]);
-    const visibleQuestionCases = questionCases.filter((caseRow) =>
-      isTrainingPeaksCoachCaseVisibleByDefault({
+    const visibleQuestionCases = questionCases.filter((caseRow) => {
+      const visibleByDefault = isTrainingPeaksCoachCaseVisibleByDefault({
         caseKind: caseRow.caseKind,
         coachNotesJson: caseRow.coachNotesJson,
-      })
-    );
+      });
+      if (visibleByDefault) {
+        return true;
+      }
+
+      if (caseRow.caseKind !== "question_to_coach") {
+        return false;
+      }
+
+      const createdAtMs = getIsoTimeMs(caseRow.createdAt);
+      if (createdAtMs === null) {
+        return false;
+      }
+      const isCaseOldEnough =
+        nowMs - createdAtMs >= QUESTION_UNANSWERED_PROMOTION_HOURS * 60 * 60 * 1000;
+      if (!isCaseOldEnough) {
+        return false;
+      }
+
+      const unansweredSeconds = contactStatusByStudentId.get(caseRow.studentId)?.unansweredSeconds ?? 0;
+      return unansweredSeconds >= QUESTION_UNANSWERED_PROMOTION_HOURS * 60 * 60;
+    });
 
     const painCaseCountsByStudentId = new Map<string, number>();
     for (const caseRow of painCases) {
@@ -5433,38 +5464,40 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
   let movesToday: TrainingPeaksAttentionSignal[] = [];
   let movesOverflowCount = 0;
   const noContact5Days: TrainingPeaksAttentionSignal[] = [];
-  try {
-    const contactStatuses = await listTrainingPeaksStudentContactStatusInRepository();
-    const silentStatuses = contactStatuses
-      .filter(
-        (status) =>
-          (status.silenceDays ?? 0) >= ATTENTION_NO_CONTACT_MINIMUM_SILENCE_DAYS &&
-          activeStudentNameById.has(status.studentId)
-      )
-      .sort((left, right) => {
-        const leftDays = left.silenceDays ?? 0;
-        const rightDays = right.silenceDays ?? 0;
-        if (leftDays !== rightDays) {
-          return rightDays - leftDays;
-        }
-        const leftName = (activeStudentNameById.get(left.studentId) ?? "").toLocaleLowerCase("ru-RU");
-        const rightName = (activeStudentNameById.get(right.studentId) ?? "").toLocaleLowerCase("ru-RU");
-        return leftName.localeCompare(rightName, "ru-RU");
-      });
+  const noContactStatuses = contactStatuses
+    .map((status) => {
+      const lastCoachTouchMs = getIsoTimeMs(status.lastCoachTouchAt);
+      const coachIdleDays =
+        lastCoachTouchMs === null
+          ? Number.POSITIVE_INFINITY
+          : Math.floor((nowMs - lastCoachTouchMs) / (24 * 60 * 60 * 1000));
+      return {
+        status,
+        coachIdleDays,
+      };
+    })
+    .filter(
+      ({ status, coachIdleDays }) =>
+        activeStudentNameById.has(status.studentId) &&
+        coachIdleDays >= ATTENTION_NO_CONTACT_MINIMUM_COACH_IDLE_DAYS
+    )
+    .sort((left, right) => {
+      if (left.coachIdleDays !== right.coachIdleDays) {
+        return right.coachIdleDays - left.coachIdleDays;
+      }
+      const leftName = (activeStudentNameById.get(left.status.studentId) ?? "").toLocaleLowerCase("ru-RU");
+      const rightName = (activeStudentNameById.get(right.status.studentId) ?? "").toLocaleLowerCase("ru-RU");
+      return leftName.localeCompare(rightName, "ru-RU");
+    });
 
-    for (const status of silentStatuses) {
-      const studentName = activeStudentNameById.get(status.studentId) ?? null;
-      pushUniqueAttentionSignal(noContact5Days, {
-        level: "fyi",
-        studentName,
-        studentId: status.studentId,
-        reason: "",
-        signalKind: "no_contact",
-      });
-    }
-  } catch (error) {
-    console.warn("Failed to load TrainingPeaks contact silence for attention snapshot", {
-      error,
+  for (const { status } of noContactStatuses) {
+    const studentName = activeStudentNameById.get(status.studentId) ?? null;
+    pushUniqueAttentionSignal(noContact5Days, {
+      level: "fyi",
+      studentName,
+      studentId: status.studentId,
+      reason: "",
+      signalKind: "no_contact",
     });
   }
 
