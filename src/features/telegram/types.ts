@@ -77,6 +77,7 @@ export type TelegramMessage = {
   message_id: number;
   chat: TelegramChat;
   from?: TelegramUser;
+  reply_to_message?: TelegramMessage;
   text?: string;
   caption?: string;
   voice?: TelegramVoice;

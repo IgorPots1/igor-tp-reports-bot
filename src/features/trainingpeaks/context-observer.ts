@@ -6,7 +6,9 @@ import {
   hasTrainingPeaksTelegramContextObservationForChatTextHash,
   insertTrainingPeaksTelegramContextObservation,
   listActiveTrainingPeaksStudentMemoryItems,
+  listRecentTrainingPeaksStudentContactEvents,
   listTrainingPeaksStudentsByTelegramChatId,
+  recordTrainingPeaksStudentContactEvent,
   type TrainingPeaksStudent,
 } from "@/features/trainingpeaks/repository";
 import { processCoachMemoryForObservation } from "@/features/trainingpeaks/coach-memory-extraction";
@@ -69,6 +71,8 @@ type TrainingPeaksObserverRouteResult =
   | {
       handled: true;
       reason:
+        | "coach_group_reply_contact_recorded"
+        | "coach_group_reply_contact_skipped"
         | "known_student_private_dm"
         | "unknown_private_dm"
         | "linked_group_topic"
@@ -76,6 +80,18 @@ type TrainingPeaksObserverRouteResult =
         | "known_student_group_general"
         | "skipped_group_general";
     };
+
+type CoachGroupReplyResolverDeps = {
+  listStudentsByTelegramChatId: (telegramChatId: string) => Promise<Array<{ id: string }>>;
+  getThreadStudentIdByChatThread: (input: {
+    chatId: string;
+    messageThreadId: number;
+  }) => Promise<string | null>;
+};
+
+export type CoachGroupReplyContactResolverInput = {
+  message: TelegramMessage;
+} & CoachGroupReplyResolverDeps;
 
 const TRAINING_REPORT_KEYWORDS = [
   "тренировка",
@@ -212,6 +228,10 @@ function isGeneralGroupMessage(message: TelegramMessage): boolean {
   return !message.is_topic_message && message.message_thread_id === undefined;
 }
 
+function isGroupOrSupergroupMessage(message: TelegramMessage): boolean {
+  return message.chat.type === "group" || message.chat.type === "supergroup";
+}
+
 function logGeneralGroupObservationEvent(input: {
   studentId: string | null;
   chatId: string;
@@ -227,6 +247,158 @@ function logGeneralGroupObservationEvent(input: {
     reason: input.reason,
     dedupSkipped: input.dedupSkipped ?? false,
   });
+}
+
+type CoachGroupReplyContactCandidateInput = {
+  message: TelegramMessage;
+  fromId: number | undefined;
+  text: string | null;
+  isCoachTelegramId: (value: number | undefined) => boolean;
+  isTelegramBotSender: (message: TelegramMessage) => boolean;
+  isTelegramServiceMessage: (message: TelegramMessage) => boolean;
+};
+
+export function isCoachGroupReplyContactCandidate(input: CoachGroupReplyContactCandidateInput): boolean {
+  if (!isGroupOrSupergroupMessage(input.message)) {
+    return false;
+  }
+  if (!input.isCoachTelegramId(input.fromId)) {
+    return false;
+  }
+  if (!input.message.reply_to_message) {
+    return false;
+  }
+  if (!input.text || input.text.startsWith("/")) {
+    return false;
+  }
+  if (input.isTelegramBotSender(input.message) || input.isTelegramServiceMessage(input.message)) {
+    return false;
+  }
+  return true;
+}
+
+async function getThreadStudentIdByChatThread(input: {
+  chatId: string;
+  messageThreadId: number;
+}): Promise<string | null> {
+  const linkedThread = await getTrainingPeaksStudentThreadByChatThread(input.chatId, input.messageThreadId);
+  return linkedThread?.studentId ?? null;
+}
+
+export async function resolveCoachGroupReplyContactStudentId(
+  input: CoachGroupReplyContactResolverInput
+): Promise<string | null> {
+  const repliedMessage = input.message.reply_to_message;
+  if (!repliedMessage) {
+    return null;
+  }
+
+  const repliedFromId = repliedMessage.from?.id;
+  if (repliedFromId === undefined || isCoachTelegramId(repliedFromId)) {
+    return null;
+  }
+
+  if (isTelegramBotSender(repliedMessage) || isTelegramServiceMessage(repliedMessage)) {
+    return null;
+  }
+
+  const directMatches = await input.listStudentsByTelegramChatId(String(repliedFromId));
+  if (directMatches.length === 1) {
+    return directMatches[0]!.id;
+  }
+
+  if (directMatches.length > 1) {
+    return null;
+  }
+
+  const threadId = repliedMessage.message_thread_id ?? input.message.message_thread_id;
+  if (threadId !== undefined) {
+    const threadStudentId = await input.getThreadStudentIdByChatThread({
+      chatId: String(repliedMessage.chat.id),
+      messageThreadId: threadId,
+    });
+    if (threadStudentId) {
+      return threadStudentId;
+    }
+  }
+
+  return null;
+}
+
+async function recordCoachGroupReplyContactIfSafe(input: {
+  message: TelegramMessage;
+  fromId: number | undefined;
+  text: string | null;
+}): Promise<TrainingPeaksObserverRouteResult | null> {
+  if (
+    !isCoachGroupReplyContactCandidate({
+      ...input,
+      isCoachTelegramId,
+      isTelegramBotSender,
+      isTelegramServiceMessage,
+    })
+  ) {
+    return null;
+  }
+
+  const studentId = await resolveCoachGroupReplyContactStudentId({
+    message: input.message,
+    listStudentsByTelegramChatId: async (telegramChatId) => listTrainingPeaksStudentsByTelegramChatId(telegramChatId),
+    getThreadStudentIdByChatThread,
+  });
+  if (!studentId) {
+    return {
+      handled: true,
+      reason: "coach_group_reply_contact_skipped",
+    };
+  }
+
+  const chatId = String(input.message.chat.id);
+  const messageId = String(input.message.message_id);
+  const recentContactEvents = await listRecentTrainingPeaksStudentContactEvents({
+    studentId,
+    limit: 5,
+  });
+  const duplicateEvent = recentContactEvents.find(
+    (event) =>
+      event.eventType === "coach_message" &&
+      event.source.startsWith("telegram_group_") &&
+      event.referenceId === messageId &&
+      event.metadata &&
+      typeof event.metadata === "object" &&
+      (event.metadata as Record<string, unknown>).chat_id === chatId
+  );
+  if (duplicateEvent) {
+    return {
+      handled: true,
+      reason: "coach_group_reply_contact_skipped",
+    };
+  }
+
+  const source =
+    input.message.is_topic_message || input.message.message_thread_id !== undefined
+      ? "telegram_group_topic"
+      : "telegram_group_general";
+
+  await recordTrainingPeaksStudentContactEvent({
+    studentId,
+    eventType: "coach_message",
+    source,
+    referenceId: messageId,
+    metadata: {
+      chat_id: chatId,
+      message_id: input.message.message_id,
+      message_thread_id: input.message.message_thread_id ?? null,
+      replied_message_id: input.message.reply_to_message?.message_id ?? null,
+      replied_from_id: input.message.reply_to_message?.from?.id ?? null,
+      direction: "coach_outgoing_reply",
+    },
+  });
+
+  return {
+    handled: true,
+    reason: "coach_group_reply_contact_recorded",
+  };
 }
 
 export function isTrainingPeaksContextObserverEnabled(): boolean {
@@ -733,6 +905,15 @@ export async function handleTrainingPeaksContextObserverMessage(
   const messageLength = text?.length ?? 0;
   const fromId = message.from?.id;
   const fromUsername = message.from?.username ?? null;
+
+  const coachGroupReplyResult = await recordCoachGroupReplyContactIfSafe({
+    message,
+    fromId,
+    text,
+  });
+  if (coachGroupReplyResult) {
+    return coachGroupReplyResult;
+  }
 
   if (chatType === "private") {
     if (isCoachTelegramId(fromId)) {
