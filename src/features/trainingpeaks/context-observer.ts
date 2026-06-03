@@ -13,6 +13,7 @@ import {
 } from "@/features/trainingpeaks/repository";
 import { processCoachMemoryForObservation } from "@/features/trainingpeaks/coach-memory-extraction";
 import { getTrainingPeaksCoachChatIds } from "@/features/trainingpeaks/attention-telegram";
+import { persistOperationalSignalsForObservation } from "@/features/trainingpeaks/operational-signals-inline";
 import { passesTrainingPeaksStrictMoveWorkoutIntentGate } from "@/features/trainingpeaks/service";
 import { buildTelegramContextTextPreview, sha256TelegramContextText } from "@/features/trainingpeaks/telegram-context";
 import { tryAutoLinkTrainingPeaksTopic } from "@/features/trainingpeaks/topic-auto-link";
@@ -728,6 +729,28 @@ async function persistObserverObservation(input: BuildObservationLogPayloadInput
         });
       }
     }
+
+    try {
+      await persistOperationalSignalsForObservation({
+        observationId: insertedObservation.id,
+        studentId: insertedObservation.studentId,
+        sourceType: insertedObservation.sourceType,
+        textPreview: insertedObservation.textPreview,
+        labels: insertedObservation.labels,
+        metadata: insertedObservation.metadata,
+        observedAt: insertedObservation.observedAt,
+        telegramChatId: insertedObservation.chatId,
+        telegramMessageId: insertedObservation.messageId,
+        telegramMessageThreadId: insertedObservation.messageThreadId,
+      });
+    } catch (signalError) {
+      console.warn("TrainingPeaks inline operational signal persistence failed", {
+        event: "trainingpeaks_inline_operational_signal_persist_failed",
+        observationIdPrefix: insertedObservation.id.slice(0, 8),
+        studentIdPrefix: insertedObservation.studentId?.slice(0, 8) ?? null,
+        errorClass: signalError instanceof Error ? signalError.name : "UnknownError",
+      });
+    }
   }
 
   console.info("TrainingPeaks context observation", {
@@ -786,7 +809,7 @@ async function persistKnownStudentGeneralGroupObservation(input: {
   );
 
   if (!dedupSkipped) {
-    await insertTrainingPeaksTelegramContextObservation({
+    const insertedObservation = await insertTrainingPeaksTelegramContextObservation({
       studentId: input.student.id,
       sourceType: "group_general",
       chatId: String(input.message.chat.id),
@@ -807,6 +830,28 @@ async function persistKnownStudentGeneralGroupObservation(input: {
         senderMatchMethod: "telegram_chat_id",
       },
     });
+
+    try {
+      await persistOperationalSignalsForObservation({
+        observationId: insertedObservation.id,
+        studentId: insertedObservation.studentId,
+        sourceType: insertedObservation.sourceType,
+        textPreview: insertedObservation.textPreview,
+        labels: insertedObservation.labels,
+        metadata: insertedObservation.metadata,
+        observedAt: insertedObservation.observedAt,
+        telegramChatId: insertedObservation.chatId,
+        telegramMessageId: insertedObservation.messageId,
+        telegramMessageThreadId: insertedObservation.messageThreadId,
+      });
+    } catch (signalError) {
+      console.warn("TrainingPeaks inline operational signal persistence failed", {
+        event: "trainingpeaks_inline_operational_signal_persist_failed",
+        observationIdPrefix: insertedObservation.id.slice(0, 8),
+        studentIdPrefix: insertedObservation.studentId?.slice(0, 8) ?? null,
+        errorClass: signalError instanceof Error ? signalError.name : "UnknownError",
+      });
+    }
   }
 
   logGeneralGroupObservationEvent({

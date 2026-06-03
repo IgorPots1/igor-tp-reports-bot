@@ -7006,6 +7006,82 @@ export async function upsertTrainingPeaksOperationalSignalFromCandidate(
   };
 }
 
+export async function consumeActiveTrainingPeaksOperationalSignals(input: {
+  studentId: string;
+  signalTypes: TrainingPeaksOperationalSignalType[];
+  excludeSignalId?: string | null;
+  consumedAt?: string;
+  metadataPatch?: Record<string, unknown>;
+}): Promise<number> {
+  if (!input.signalTypes.length) {
+    return 0;
+  }
+
+  const normalizedSignalTypes = [...new Set(input.signalTypes.map(normalizeTrainingPeaksOperationalSignalType))];
+  const supabase = createSupabaseServerClient();
+  let query = supabase
+    .from("trainingpeaks_student_operational_signals")
+    .select("id, metadata")
+    .eq("student_id", input.studentId)
+    .eq("status", "active")
+    .in("signal_type", normalizedSignalTypes);
+
+  if (input.excludeSignalId) {
+    query = query.neq("id", input.excludeSignalId);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    if (isTrainingPeaksMissingRelationError(error)) {
+      throw new Error(
+        "trainingpeaks_student_operational_signals table is missing; apply Supabase migration first"
+      );
+    }
+    throw new Error(`Failed to list active TrainingPeaks operational signals to consume: ${error.message}`);
+  }
+
+  const rows =
+    (data as Array<{ id: string; metadata: unknown }> | null)?.filter(
+      (row): row is { id: string; metadata: unknown } =>
+        Boolean(row && typeof row.id === "string" && row.id.trim())
+    ) ?? [];
+  if (!rows.length) {
+    return 0;
+  }
+
+  const consumedAt = input.consumedAt ?? new Date().toISOString();
+  let updated = 0;
+  for (const row of rows) {
+    const rowMetadata =
+      row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? (row.metadata as Record<string, unknown>)
+        : {};
+    const { error: updateError } = await supabase
+      .from("trainingpeaks_student_operational_signals")
+      .update({
+        status: "consumed",
+        consumed_at: consumedAt,
+        metadata: {
+          ...rowMetadata,
+          ...(input.metadataPatch ?? {}),
+        },
+      })
+      .eq("id", row.id)
+      .eq("status", "active");
+    if (updateError) {
+      if (isTrainingPeaksMissingRelationError(updateError)) {
+        throw new Error(
+          "trainingpeaks_student_operational_signals table is missing; apply Supabase migration first"
+        );
+      }
+      throw new Error(`Failed to consume TrainingPeaks operational signal ${row.id}: ${updateError.message}`);
+    }
+    updated += 1;
+  }
+
+  return updated;
+}
+
 export type UpdateTrainingPeaksMessageIntentLogAiInput = {
   aiIntent?: Record<string, unknown> | null;
   aiConfidence?: number | null;

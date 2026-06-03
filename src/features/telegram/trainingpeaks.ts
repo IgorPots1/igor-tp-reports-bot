@@ -122,6 +122,7 @@ import {
   recordTrainingPeaksTelegramBusinessContextObservation,
   sha256TelegramContextText,
 } from "@/features/trainingpeaks/telegram-context";
+import { persistOperationalSignalsForObservation } from "@/features/trainingpeaks/operational-signals-inline";
 import {
   extractStudentMessagesFromVoiceTranscriptDetailed,
   type ExtractedVoiceStudentMessage,
@@ -6483,6 +6484,29 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
         text: messageText,
       });
       contextObsId = observation?.id ?? null;
+      if (observation) {
+        try {
+          await persistOperationalSignalsForObservation({
+            observationId: observation.id,
+            studentId: observation.studentId,
+            sourceType: observation.sourceType,
+            textPreview: observation.textPreview,
+            labels: observation.labels,
+            metadata: observation.metadata,
+            observedAt: observation.observedAt,
+            telegramChatId: observation.chatId,
+            telegramMessageId: observation.messageId,
+            telegramMessageThreadId: observation.messageThreadId,
+          });
+        } catch (signalError) {
+          console.warn("Failed to persist inline TrainingPeaks operational signal for business observation", {
+            event: "trainingpeaks_inline_operational_signal_persist_failed",
+            observationIdPrefix: observation.id.slice(0, 8),
+            studentIdPrefix: observation.studentId?.slice(0, 8) ?? null,
+            errorClass: signalError instanceof Error ? signalError.name : "UnknownError",
+          });
+        }
+      }
     } catch (error) {
       console.warn("Failed to record TrainingPeaks telegram business context observation", {
         chatId,
