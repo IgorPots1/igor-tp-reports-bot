@@ -3,6 +3,8 @@ import { timingSafeEqual } from "node:crypto";
 import { runTrainingPeaksAttentionDigest } from "@/features/trainingpeaks/attention-digest-run";
 import {
   createTrainingPeaksCronRunLog,
+  expireTrainingPeaksOperationalSignals,
+  expireTrainingPeaksStudentMemoryItems,
   finishTrainingPeaksCronRunLog,
   TRAININGPEAKS_ATTENTION_DIGEST_CRON_JOB_NAME,
 } from "@/features/trainingpeaks/repository";
@@ -152,6 +154,23 @@ async function handleTrainingPeaksAttentionDigest(request: Request) {
     return jsonResponse(401, {
       ok: false,
       error: "Unauthorized",
+    });
+  }
+
+  let memoryExpiredCount = 0;
+  let signalsExpiredCount = 0;
+  try {
+    [memoryExpiredCount, signalsExpiredCount] = await Promise.all([
+      expireTrainingPeaksStudentMemoryItems(),
+      expireTrainingPeaksOperationalSignals(),
+    ]);
+    console.info("trainingpeaks_attention_digest_lifecycle_cleanup_completed", {
+      memoryExpiredCount,
+      signalsExpiredCount,
+    });
+  } catch (error) {
+    console.error("trainingpeaks_attention_digest_lifecycle_cleanup_failed", {
+      error,
     });
   }
 

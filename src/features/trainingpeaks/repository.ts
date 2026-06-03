@@ -6368,6 +6368,27 @@ export async function expireTrainingPeaksStudentMemoryItems(referenceDate?: stri
   return (data ?? []).length;
 }
 
+export async function expireTrainingPeaksOperationalSignals(referenceDate?: string): Promise<number> {
+  const supabase = createSupabaseServerClient();
+  const asOfDate = normalizeTrainingPeaksMemoryReferenceDate(referenceDate);
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .update({
+      status: "expired",
+      updated_at: new Date().toISOString(),
+    })
+    .neq("status", "expired")
+    .not("valid_until", "is", null)
+    .lt("valid_until", asOfDate)
+    .select("id");
+
+  if (error) {
+    throw new Error(`Failed to expire TrainingPeaks operational signals: ${error.message}`);
+  }
+
+  return (data ?? []).length;
+}
+
 export async function insertTrainingPeaksCoachCase(
   input: InsertTrainingPeaksCoachCaseInput
 ): Promise<{ id: string } | null> {
