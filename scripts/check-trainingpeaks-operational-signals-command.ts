@@ -15,10 +15,13 @@ function assert(condition: unknown, message: string): void {
   }
 }
 
-function extractSectionBlock(text: string, sectionTitle: string, nextSectionTitle: string): string {
+function extractSectionBlock(text: string, sectionTitle: string, nextSectionTitle?: string): string {
   const start = text.indexOf(sectionTitle);
   if (start < 0) {
     return "";
+  }
+  if (!nextSectionTitle) {
+    return text.slice(start);
   }
   const next = text.indexOf(nextSectionTitle, start + sectionTitle.length);
   if (next < 0) {
@@ -304,17 +307,10 @@ function buildSnapshot(scope: TrainingPeaksOperationalSignalsScope) {
 function run(): void {
   const snapshot = buildSnapshot("all");
   const text = formatTrainingPeaksOperationalSignalsForTelegram(snapshot);
-  const checkSection = extractSectionBlock(text, "🩺 Проверить", "🟡 Болезнь / пауза");
-
-  // A: overdue before due today in check section
-  const overdueIndex = checkSection.indexOf("Overdue Athlete");
-  const dueIndex = checkSection.indexOf("Due Athlete");
-  assert(overdueIndex >= 0, "A failed: overdue follow-up missing.");
-  assert(dueIndex >= 0, "A failed: due-today follow-up missing.");
-  assert(overdueIndex < dueIndex, "A failed: overdue must appear before due-today.");
 
   // B: all key sections are present
-  assert(text.includes("🩺 Проверить"), "B failed: check section missing.");
+  assert(!text.includes("🩺 Проверить"), "B failed: check section should be hidden in normal /tp_signals.");
+  assert(!text.includes("follow-up"), "B failed: internal follow-up language should not be shown.");
   assert(text.includes("🟡 Болезнь / пауза"), "B failed: health section missing.");
   assert(text.includes("📅 Учесть в плане"), "B failed: planning section missing.");
   assert(text.includes("🔁 Переносы"), "B failed: move section missing.");
@@ -373,21 +369,20 @@ function run(): void {
     "F failed: health scope should show rich coaching summary instead of vague label."
   );
 
-  // H: future pending and resolved follow-up are not in check section
+  // H: future pending and resolved follow-up are not visible in normal output
   assert(
-    !checkSection.includes("Future Athlete"),
-    "H failed: future pending should not be prioritized in check list."
+    !text.includes("Future Athlete"),
+    "H failed: future pending should not appear in normal output."
   );
   assert(
-    !checkSection.includes("Resolved Athlete"),
-    "H failed: resolved follow-up should not appear in check list."
+    !text.includes("Resolved Athlete"),
+    "H failed: resolved follow-up should not appear in normal output."
   );
 
   // G: empty snapshot handled
   const emptyText = formatTrainingPeaksOperationalSignalsForTelegram({
     scope: "all",
     sections: [
-      { key: "check_now", title: "🩺 Проверить", items: [] },
       { key: "health_pause", title: "🟡 Болезнь / пауза", items: [] },
       { key: "plan_constraints", title: "📅 Учесть в плане", items: [] },
       { key: "moves", title: "🔁 Переносы", items: [] },

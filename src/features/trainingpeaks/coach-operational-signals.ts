@@ -2,6 +2,7 @@ import {
   enrichScheduleStructuredPayload,
   resolveDayToIsoDate,
   detectWeekScopeFromText,
+  parseDurationDaysFromText,
 } from "@/features/trainingpeaks/operational-schedule-display";
 
 export type OperationalPrimaryBucket =
@@ -103,6 +104,45 @@ function addDays(input: Date, days: number): Date {
   const copy = new Date(input.getTime());
   copy.setUTCDate(copy.getUTCDate() + days);
   return copy;
+}
+
+const WORD_NUMBER_DAYS: Array<{ patterns: string[]; value: number }> = [
+  { patterns: ["один", "одну"], value: 1 },
+  { patterns: ["два", "две"], value: 2 },
+  { patterns: ["три"], value: 3 },
+  { patterns: ["четыре"], value: 4 },
+  { patterns: ["пять"], value: 5 },
+  { patterns: ["шесть"], value: 6 },
+  { patterns: ["семь"], value: 7 },
+  { patterns: ["восемь"], value: 8 },
+  { patterns: ["девять"], value: 9 },
+  { patterns: ["десять"], value: 10 },
+];
+
+function parsePauseDurationDays(text: string): number | null {
+  const numericWithNoNa = text.match(/(?:на\s+)?(\d{1,2})\s+дн(?:я|ей)?/iu);
+  if (numericWithNoNa) {
+    const parsed = Number(numericWithNoNa[1]);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  const fromScheduleParser = parseDurationDaysFromText(text);
+  if (fromScheduleParser) {
+    return fromScheduleParser;
+  }
+  if (/пару\s+дн(?:я|ей)?/iu.test(text)) {
+    return 2;
+  }
+  if (/несколько\s+дн(?:я|ей)?/iu.test(text)) {
+    return 3;
+  }
+  for (const item of WORD_NUMBER_DAYS) {
+    if (item.patterns.some((pattern) => new RegExp(`(?:на\\s+)?${pattern}\\s+дн(?:я|ей)?`, "iu").test(text))) {
+      return item.value;
+    }
+  }
+  return null;
 }
 
 function hasAny(text: string, patterns: readonly string[]): boolean {
@@ -305,20 +345,26 @@ function hasHealthStartedCue(text: string): boolean {
 
 function hasHealthImprovingCue(text: string): boolean {
   return hasAny(text, [
+    "стало лучше",
+    "лучше стало",
     "получше",
     "полегче",
     "лучше, но",
     "лучше но",
+    "уже лучше",
+    "еще лучше",
+    "ещё лучше",
     "еще болею",
     "ещё болею",
     "плюс-минус болею",
+    "плюс минус болею",
+    "уже более менее",
     "более менее",
     "более-менее",
-    "выздорав",
     "голос немного вернул",
     "голос вернул",
-    "самочувствие норм",
-    "самочувствие вроде",
+    "температура спала",
+    "кашля меньше",
   ]);
 }
 
@@ -380,6 +426,8 @@ function buildHealthSummary(input: {
 }): string {
   const lines: string[] = [];
   const symptomSummary = joinSymptomLabels(input.symptoms);
+  const pauseDays = parsePauseDurationDays(input.text);
+  const hasRunPauseConstraint = hasAny(input.text, ["не смогу бегать", "бегать не смогу", "не буду бегать", "не бегать"]);
   const hasVoiceRecovery = hasAny(input.text, ["голос немного вернул", "голос вернул"]);
   const hasRestPlan = hasAny(input.text, ["отлежусь", "отлежат", "пару дней", "несколько дней"]);
   const hasConditionalRunPlan =
@@ -397,6 +445,9 @@ function buildHealthSummary(input: {
       lines.push(`болеет, ${symptomSummary}`);
     } else {
       lines.push("болеет");
+    }
+    if (hasRunPauseConstraint && pauseDays) {
+      lines.push(`не бегает ${pauseDays} дней`);
     }
     lines.push("пауза / наблюдать");
     return lines.join("; ");
@@ -506,8 +557,16 @@ function classifyHealthLifecycleSignal(input: {
     return null;
   }
 
+  const pauseDays = parsePauseDurationDays(text);
+  const hasRunPauseConstraint = hasAny(text, ["не смогу бегать", "бегать не смогу", "не буду бегать", "не бегать"]);
   payload.health_state = "sick";
   payload.training_recommendation = "pause";
+  if (hasRunPauseConstraint && pauseDays) {
+    const observed = parseIsoDateFallback(input.observedAt);
+    payload.duration_days = pauseDays;
+    payload.valid_from = isoDate(observed);
+    payload.valid_until = isoDate(addDays(observed, pauseDays));
+  }
   payload.follow_up_due_at = buildHealthFollowUpDueAt(input.observedAt, null);
   payload.latest_summary = buildHealthSummary({
     text,
@@ -727,6 +786,18 @@ function inferPauseWindow(
     return { valid_from: tomorrow, valid_until: tomorrow };
   }
   return { valid_from: today, valid_until: null };
+}
+
+function parseConditionalEasyRunDate(text: string, observedAt: string): string | null {
+  const plannedDate = parseRelativeDate(text, observedAt);
+  if (!plannedDate) {
+    return null;
+  }
+  const hasConditionalCue =
+    hasAny(text, ["если"]) &&
+    hasAny(text, ["кашля не будет", "кашель не будет", "самочувствие хорошее"]) &&
+    hasAny(text, ["пробеж", "выйти на пробежку", "выйду на пробежку", "побегу"]);
+  return hasConditionalCue ? plannedDate : null;
 }
 
 function hasMoveWorkoutIntent(text: string, labels: string[]): boolean {
@@ -978,18 +1049,13 @@ function buildScheduleCandidate(
     "в отъезде",
     "в отезде",
   ]);
-  const hasDurationContext = /на\s+\d{1,2}\s+дн/iu.test(text);
-  if (hasRunUnavailability && (hasTravelContext || hasDurationContext)) {
-    if (text.includes("сегодня")) {
-      const today = parseRelativeDate("сегодня", input.observedAt);
-      payload.valid_from = today;
-      if (hasDurationContext && today) {
-        const daysCount = Number(text.match(/на\s+(\d{1,2})\s+дн/iu)?.[1] ?? 0);
-        if (daysCount > 0) {
-          payload.duration_days = daysCount;
-          payload.valid_until = isoDate(addDays(parseIsoDateFallback(today), daysCount - 1));
-        }
-      }
+  const durationDays = parsePauseDurationDays(text);
+  if (hasRunUnavailability && (hasTravelContext || durationDays !== null)) {
+    const baseDate = parseRelativeDate("сегодня", input.observedAt) ?? isoDate(parseIsoDateFallback(input.observedAt));
+    payload.valid_from = baseDate;
+    if (durationDays && baseDate) {
+      payload.duration_days = durationDays;
+      payload.valid_until = isoDate(addDays(parseIsoDateFallback(baseDate), durationDays));
     }
     finalizeSchedulePayload(text, input.observedAt, payload);
     return {
@@ -1001,7 +1067,26 @@ function buildScheduleCandidate(
       should_create_case: false,
       should_create_trainingpeaks_action: false,
       confidence: "medium",
-      reason: "travel/duration-linked temporary running unavailability",
+      reason: "temporary running unavailability with explicit duration",
+    };
+  }
+
+  const conditionalEasyRunDate = parseConditionalEasyRunDate(text, input.observedAt);
+  if (conditionalEasyRunDate) {
+    payload.valid_from = conditionalEasyRunDate;
+    payload.valid_until = conditionalEasyRunDate;
+    payload.resolved_available_dates = [conditionalEasyRunDate];
+    payload.latest_summary = `${compactOperationalDate(conditionalEasyRunDate)}: если кашля не будет — лёгкая пробежка вечером`;
+    return {
+      primary_bucket: "operational_signal",
+      secondary_buckets: ["health_lifecycle_signal"],
+      signal_type: "plan_generation_constraint",
+      structured_payload: payload,
+      should_create_memory: false,
+      should_create_case: false,
+      should_create_trainingpeaks_action: false,
+      confidence: "medium",
+      reason: "conditional easy run planning constraint from health update",
     };
   }
   return null;
@@ -1343,6 +1428,25 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
       should_create_trainingpeaks_action: false,
       confidence: healthDetails.confidence,
       reason: explicitSignalReason ?? healthDetails.reason,
+    };
+  }
+
+  const conditionalEasyRunDate = parseConditionalEasyRunDate(text, input.observedAt);
+  if (conditionalEasyRunDate) {
+    payload.valid_from = conditionalEasyRunDate;
+    payload.valid_until = conditionalEasyRunDate;
+    payload.resolved_available_dates = [conditionalEasyRunDate];
+    payload.latest_summary = `${compactOperationalDate(conditionalEasyRunDate)}: если кашля не будет — лёгкая пробежка вечером`;
+    return {
+      primary_bucket: "operational_signal",
+      secondary_buckets: ["health_lifecycle_signal"],
+      signal_type: "plan_generation_constraint",
+      structured_payload: payload,
+      should_create_memory: false,
+      should_create_case: false,
+      should_create_trainingpeaks_action: false,
+      confidence: "medium",
+      reason: explicitSignalReason ?? "conditional easy run planning constraint from health update",
     };
   }
 

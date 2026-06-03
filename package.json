@@ -72,6 +72,7 @@
     "check-trainingpeaks-attention-resilience": "npx tsx scripts/check-trainingpeaks-attention-resilience.ts",
     "check-trainingpeaks-attention-noise": "npx tsx scripts/check-trainingpeaks-attention-noise.ts",
     "check-trainingpeaks-operational-signals-inline": "npx tsx scripts/check-trainingpeaks-operational-signals-inline.ts",
+    "check-trainingpeaks-operational-signals-simple-output": "npx tsx scripts/check-trainingpeaks-operational-signals-simple-output.ts",
     "trace-trainingpeaks-contact-status": "npx tsx scripts/trace-trainingpeaks-contact-status.ts",
     "trace-trainingpeaks-operational-signals": "npx tsx scripts/trace-trainingpeaks-operational-signals.ts",
     "check-trainingpeaks-coach-group-reply-contact": "npx tsx scripts/check-trainingpeaks-coach-group-reply-contact.ts",
