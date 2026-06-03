@@ -179,6 +179,9 @@ async function resolveStudent(args: CliArgs): Promise<TrainingPeaksStudent | Tra
   const card = await getTrainingPeaksStudentCard(args.studentQuery ?? "");
   if (card.kind === "not_found") {
     console.log(`No students found for query: ${args.studentQuery}`);
+    console.log(
+      "Tip: try --telegram if known, or use --student-id / exact admin student name."
+    );
     return null;
   }
   if (card.kind === "ambiguous") {
