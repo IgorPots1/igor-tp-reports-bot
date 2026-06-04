@@ -82,6 +82,8 @@
     "check-trainingpeaks-telegram-readability": "npx tsx scripts/check-trainingpeaks-telegram-readability.ts",
     "check-trainingpeaks-operational-signals-command": "npx tsx scripts/check-trainingpeaks-operational-signals-command.ts",
     "check-trainingpeaks-operational-signals-health-move": "npx tsx scripts/check-trainingpeaks-operational-signals-health-move.ts",
+    "audit-trainingpeaks-operational-signals-stale": "npx tsx scripts/audit-trainingpeaks-operational-signals-stale.ts",
+    "check-trainingpeaks-operational-signals-stale-audit": "npx tsx scripts/check-trainingpeaks-operational-signals-stale-audit.ts",
     "check-billing-payer-identities": "npx tsx scripts/check-billing-payer-identities.ts",
     "check-billing-auto-match-payments": "npx tsx scripts/check-billing-auto-match-payments.ts",
     "check-billing-email-import-cli": "npx tsx scripts/check-billing-email-import-cli.ts",
