@@ -152,6 +152,59 @@ function hasAny(text: string, patterns: readonly string[]): boolean {
   return patterns.some((item) => text.includes(item));
 }
 
+const PAUSE_TRAINING_CUES = [
+  "воздержусь от бега",
+  "не буду бегать",
+  "пауза от бега",
+  "не побегу",
+  "беру паузу",
+  "сделаю паузу",
+] as const;
+
+const SINGLE_EVENT_RUN_SKIP_CUES = [
+  "не побегу",
+  "не смогу побегать",
+  "не могу побегать",
+  "не получится побегать",
+  "не смогу убежать",
+  "не могу убежать",
+] as const;
+
+function hasPauseTrainingCue(text: string): boolean {
+  return hasAny(text, PAUSE_TRAINING_CUES);
+}
+
+function hasTravelScheduleCue(text: string): boolean {
+  return hasAny(text, [
+    "улетаю",
+    "поездк",
+    "фестиваль",
+    "командировк",
+    "отпуск",
+    "в отъезде",
+    "в отезде",
+    "свадьб",
+    "день рождения",
+  ]);
+}
+
+function hasDurationRunPauseConstraint(text: string): boolean {
+  const hasRunCannotCue = hasAny(text, ["не смогу бегать", "бегать не смогу"]);
+  if (!hasRunCannotCue) {
+    return false;
+  }
+  if (!hasExplicitPauseWindowCue(text)) {
+    return false;
+  }
+  if (hasHealthStartedCue(text)) {
+    return false;
+  }
+  if (hasTravelScheduleCue(text)) {
+    return false;
+  }
+  return true;
+}
+
 function hasToken(text: string, token: string): boolean {
   const escaped = token.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   const pattern = new RegExp(`(^|[^a-zа-яё0-9])${escaped}([^a-zа-яё0-9]|$)`, "iu");
@@ -763,6 +816,12 @@ const SCHEDULE_CONTEXT_CUE_WORDS = [
   "не смогу",
   "не могу",
   "не получится",
+  "не побегу",
+  "не смогу побегать",
+  "не могу побегать",
+  "не получится побегать",
+  "не смогу убежать",
+  "не могу убежать",
   "поеду",
   "уеду",
   "в мск",
@@ -824,6 +883,54 @@ function hasScheduleDateCue(text: string): boolean {
     return true;
   }
   return false;
+}
+
+function hasExplicitPauseWindowCue(text: string): boolean {
+  if (
+    hasAny(text, [
+      "пауза",
+      "воздержусь от бега",
+      "не буду бегать",
+      "не смогу бегать",
+      "бегать не смогу",
+      "отлежусь",
+      "на этой неделе не бегаю",
+      "на этой неделе не буду бегать",
+      "на неделю",
+      "эту неделю",
+      "несколько дней",
+      "пару дней",
+    ])
+  ) {
+    return true;
+  }
+  if (parsePauseDurationDays(text) !== null) {
+    return true;
+  }
+  if (
+    /до\s+(понедельника|вторника|среды|четверга|пятницы|субботы|воскресенья|завтра|послезавтра|\d{1,2}(?:[./]\d{1,2})?)/iu.test(
+      text
+    )
+  ) {
+    return true;
+  }
+  if (/(?:с|со)\s+\d{1,2}(?:[./]\d{1,2})?\s+по\s+\d{1,2}(?:[./]\d{1,2})?/iu.test(text)) {
+    return true;
+  }
+  return false;
+}
+
+function isSingleEventRunSkip(text: string): boolean {
+  if (!hasAny(text, SINGLE_EVENT_RUN_SKIP_CUES)) {
+    return false;
+  }
+  if (!hasScheduleDateCue(text)) {
+    return false;
+  }
+  if (hasHealthStartedCue(text) || hasExplicitPauseWindowCue(text)) {
+    return false;
+  }
+  return true;
 }
 
 function extractDayOfMonthTokens(text: string): number[] {
@@ -1045,7 +1152,18 @@ function extractPlanningIntentDates(input: { text: string; observedAt: string })
     }
     const hasTrainingCue = hasAny(clause, ["бег", "побег", "пробеж", "убежать", "трениров"]);
     const hasPlanningCue = hasAny(clause, ["планир", "побегу", "пробегу", "выйду на пробежку", "выйти на пробежку"]);
-    const hasUnavailabilityCue = hasAny(clause, ["не могу", "не смогу", "не получится", "недоступ"]);
+    const hasUnavailabilityCue = hasAny(clause, [
+      "не могу",
+      "не смогу",
+      "не получится",
+      "недоступ",
+      "не побегу",
+      "не смогу побегать",
+      "не могу побегать",
+      "не получится побегать",
+      "не смогу убежать",
+      "не могу убежать",
+    ]);
     const hasPlannedIntent = hasPlanningCue && (hasTrainingCue || globalTrainingContext);
     const hasUnavailableIntent = hasUnavailabilityCue && (hasTrainingCue || globalTrainingContext);
     const today = isoDate(parseIsoDateFallback(input.observedAt));
@@ -1234,15 +1352,14 @@ function buildPauseTrainingCandidate(
   input: ObservationLike,
   text: string
 ): OperationalSignalCandidate | null {
-  const pauseTraining = hasAny(text, [
-    "воздержусь от бега",
-    "не буду бегать",
-    "пауза от бега",
-    "не побегу",
-    "беру паузу",
-    "сделаю паузу",
-  ]);
+  const pauseTraining = hasPauseTrainingCue(text) || hasDurationRunPauseConstraint(text);
   if (!pauseTraining) {
+    return null;
+  }
+  if (isSingleEventRunSkip(text)) {
+    return null;
+  }
+  if (hasTravelScheduleCue(text) && !hasHealthStartedCue(text)) {
     return null;
   }
   const payload = toDefaultPayload();
@@ -1721,14 +1838,15 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
     };
   }
 
-  const pauseTraining = hasAny(text, [
-    "воздержусь от бега",
-    "не буду бегать",
-    "пауза от бега",
-    "не побегу",
-    "беру паузу",
-    "сделаю паузу",
-  ]);
+  let pauseTraining = hasPauseTrainingCue(text) || hasDurationRunPauseConstraint(text);
+  if (pauseTraining) {
+    if (isSingleEventRunSkip(text)) {
+      pauseTraining = false;
+    }
+    if (hasTravelScheduleCue(text) && !hasHealthStartedCue(text)) {
+      pauseTraining = false;
+    }
+  }
   if (pauseTraining) {
     const pauseWindow = inferPauseWindow(text, input.observedAt);
     payload.valid_from = pauseWindow.valid_from;

@@ -325,6 +325,81 @@ async function run(): Promise<void> {
       },
     },
     {
+      name: "single-day-skip-friday-not-pause",
+      observation: {
+        ...mkObs("в пятницу не побегу"),
+        observedAt: "2026-06-04T10:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        unavailable_dates: ["2026-06-05"],
+      },
+    },
+    {
+      name: "single-day-skip-tomorrow-wedding-not-pause",
+      observation: {
+        ...mkObs("завтра не побегу, свадьба"),
+        observedAt: "2026-06-04T10:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        unavailable_dates: ["2026-06-05"],
+      },
+    },
+    {
+      name: "single-day-skip-today-wedding-not-pause",
+      observation: {
+        ...mkObs("сегодня не могу побегать, у подружки свадьба"),
+        observedAt: "2026-06-04T10:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        unavailable_dates: ["2026-06-04"],
+      },
+    },
+    {
+      name: "single-day-skip-friday-cannot-run-not-pause",
+      observation: {
+        ...mkObs("в пятницу не смогу побегать"),
+        observedAt: "2026-06-04T10:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        unavailable_dates: ["2026-06-05"],
+      },
+    },
+    {
+      name: "single-day-skip-tomorrow-cannot-run-not-pause",
+      observation: {
+        ...mkObs("завтра не получится побегать"),
+        observedAt: "2026-06-04T10:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        unavailable_dates: ["2026-06-05"],
+      },
+    },
+    {
       name: "schedule-unavailable-today-run-tomorrow-sunday",
       observation: {
         ...mkObs("Не могу сегодня, завтра и в воскресенье побегу."),
@@ -589,6 +664,64 @@ async function run(): Promise<void> {
         health_issue_kind: "illness",
         secondary_buckets_includes: ["health_lifecycle_signal"],
         confidence_at_least: "medium",
+      },
+    },
+    {
+      name: "pause-training-boleyu-tomorrow-not-run",
+      observation: {
+        ...mkObs("болею, завтра не побегу"),
+        observedAt: "2026-06-04T10:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "pause_training",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: "illness",
+      },
+    },
+    {
+      name: "pause-training-restraint-today-tomorrow-cough",
+      observation: {
+        ...mkObs("воздержусь от бега сегодня и завтра, кашель"),
+        observedAt: "2026-06-04T10:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "pause_training",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: "illness",
+      },
+    },
+    {
+      name: "pause-training-couple-days-cannot-run",
+      observation: {
+        ...mkObs("пару дней бегать не смогу"),
+        observedAt: "2026-06-04T10:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "pause_training",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "pause-training-this-week-not-running",
+      observation: {
+        ...mkObs("на этой неделе не буду бегать"),
+        observedAt: "2026-06-04T10:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "pause_training",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
       },
     },
     {
