@@ -115,7 +115,9 @@
     "check-trainingpeaks-reply-draft-communication-profile": "npx tsx scripts/check-trainingpeaks-reply-draft-communication-profile.ts",
     "check:communication-style": "npx tsx scripts/diagnose-student-communication-style.ts",
     "seed-workout-template-catalog": "npx tsx scripts/seed-workout-template-catalog.ts",
-    "check:workout-template-catalog": "npx tsx scripts/check-workout-template-catalog-invariants.ts"
+    "seed-workout-template-guardrails": "npx tsx scripts/seed-workout-template-guardrails.ts",
+    "check:workout-template-catalog": "npx tsx scripts/check-workout-template-catalog-invariants.ts",
+    "check:workout-template-guardrails": "npx tsx scripts/check-workout-template-guardrails.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.3",

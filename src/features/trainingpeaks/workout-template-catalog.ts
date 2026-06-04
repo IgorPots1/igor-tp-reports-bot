@@ -830,3 +830,33 @@ export async function getWorkoutTemplatePresetByCode(presetCode: string) {
 
   return data;
 }
+
+export async function listWorkoutTemplateGuardrails() {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("workout_template_guardrails")
+    .select("*")
+    .order("sort_order", { ascending: true })
+    .order("rule_code", { ascending: true });
+
+  if (error) {
+    throw new Error(`Failed to list workout template guardrails: ${error.message}`);
+  }
+
+  return data ?? [];
+}
+
+export async function listCoachReviewRules() {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("coach_review_rules")
+    .select("*")
+    .order("sort_order", { ascending: true })
+    .order("rule_code", { ascending: true });
+
+  if (error) {
+    throw new Error(`Failed to list coach review rules: ${error.message}`);
+  }
+
+  return data ?? [];
+}
