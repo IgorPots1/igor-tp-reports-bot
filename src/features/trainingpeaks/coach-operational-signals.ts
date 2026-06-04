@@ -32,6 +32,9 @@ export type OperationalStructuredPayload = {
   available_days: string[];
   unavailable_days: string[];
   resolved_available_dates: string[];
+  planned_training_dates: string[];
+  unavailable_dates: string[];
+  planning_status: "athlete_intends_to_train" | null;
   duration_days: number | null;
   valid_from: string | null;
   valid_until: string | null;
@@ -212,6 +215,9 @@ function toDefaultPayload(): OperationalStructuredPayload {
     available_days: [],
     unavailable_days: [],
     resolved_available_dates: [],
+    planned_training_dates: [],
+    unavailable_dates: [],
+    planning_status: null,
     duration_days: null,
     valid_from: null,
     valid_until: null,
@@ -366,6 +372,22 @@ function hasHealthStartedCue(text: string): boolean {
 
 function hasHealthImprovingCue(text: string): boolean {
   return hasAny(text, [
+    "самочувствие лучше",
+    "самочувствие улучшается",
+    "выздоравливаю",
+    "выздоравливает",
+    "восстанавливаюсь",
+    "восстанавливается",
+    "после болезни",
+    "после простуды",
+    "после орви",
+    "восстановилась после болезни",
+    "восстановился после болезни",
+  ]);
+}
+
+function hasGenericImprovingCue(text: string): boolean {
+  return hasAny(text, [
     "стало лучше",
     "лучше стало",
     "получше",
@@ -391,6 +413,36 @@ function hasHealthImprovingCue(text: string): boolean {
     "голос вернул",
     "температура спала",
     "кашля меньше",
+  ]);
+}
+
+function hasHealthEvidenceForImproving(text: string, symptoms: string[]): boolean {
+  if (symptoms.length > 0) {
+    return true;
+  }
+  return hasAny(text, [
+    "болею",
+    "болела",
+    "болел",
+    "после болезни",
+    "кашель",
+    "горло",
+    "темпера",
+    "слабост",
+    "недомога",
+    "плохо себя чувств",
+    "голос осип",
+    "голос сел",
+    "нога",
+    "колено",
+    "ахилл",
+    "икра",
+    "спина",
+    "голень",
+    "стоп",
+    "болит",
+    "боль",
+    "травма",
   ]);
 }
 
@@ -550,6 +602,7 @@ function classifyHealthLifecycleSignal(input: {
   payload.planned_attempt_date = plannedAttemptDate;
 
   const improving = hasHealthImprovingCue(text);
+  const genericImproving = hasGenericImprovingCue(text);
   const resolved = hasHealthResolvedCue(text);
   const started = hasHealthStartedCue(text);
   const weatherTemperatureContext =
@@ -589,7 +642,7 @@ function classifyHealthLifecycleSignal(input: {
     };
   }
 
-  if (improving) {
+  if (improving || (genericImproving && hasHealthEvidenceForImproving(text, symptoms))) {
     payload.health_state = "improving";
     payload.training_recommendation = plannedAttemptDate ? "easy_if_symptom_free" : "monitor";
     payload.follow_up_due_at = buildHealthFollowUpDueAt(input.observedAt, plannedAttemptDate);
@@ -681,6 +734,10 @@ function hasScheduleContext(text: string): boolean {
   return hasAny(text, [
     "тренировк",
     "бегать",
+    "бег",
+    "побег",
+    "пробеж",
+    "планир",
     "могу",
     "может",
     "можно",
@@ -931,6 +988,13 @@ function hasAvailabilityIntent(text: string, days: string[]): boolean {
     return true;
   }
   if (
+    hasAny(text, ["планир", "побегу", "пробегу", "выйду на пробежку", "выйти на пробежку"]) &&
+    hasAny(text, ["бег", "побег", "пробеж", "трениров"]) &&
+    (days.length > 0 || hasAny(text, ["завтра", "сегодня", "послезавтра"]))
+  ) {
+    return true;
+  }
+  if (
     days.length > 0 &&
     hasToken(text, "лучше") &&
     hasAny(text, ["на следующей неделе", "на след неделе", "следующей неделе", "на этой неделе", "на этой"])
@@ -938,6 +1002,78 @@ function hasAvailabilityIntent(text: string, days: string[]): boolean {
     return true;
   }
   return false;
+}
+
+function extractPlanningIntentDates(input: { text: string; observedAt: string }): {
+  plannedDates: string[];
+  unavailableDates: string[];
+} {
+  const planned = new Set<string>();
+  const unavailable = new Set<string>();
+  const globalTrainingContext = hasAny(input.text, ["бег", "побег", "пробеж", "убежать", "трениров"]);
+  const clauses = input.text
+    .split(/[.!?;\n]+/u)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const collectDates = (clause: string): string[] => {
+    const out = new Set<string>();
+    const observed = parseIsoDateFallback(input.observedAt);
+    if (clause.includes("сегодня")) {
+      out.add(isoDate(observed));
+    }
+    if (clause.includes("завтра")) {
+      out.add(isoDate(addDays(observed, 1)));
+    }
+    if (clause.includes("послезавтра")) {
+      out.add(isoDate(addDays(observed, 2)));
+    }
+    const days = extractDays(clause);
+    for (const day of days) {
+      const resolved = inferDateForDay(day, input.observedAt, clause);
+      if (resolved) {
+        out.add(resolved);
+      }
+    }
+    return [...out];
+  };
+
+  for (const clause of clauses) {
+    const clauseDates = collectDates(clause);
+    if (clauseDates.length === 0) {
+      continue;
+    }
+    const hasTrainingCue = hasAny(clause, ["бег", "побег", "пробеж", "убежать", "трениров"]);
+    const hasPlanningCue = hasAny(clause, ["планир", "побегу", "пробегу", "выйду на пробежку", "выйти на пробежку"]);
+    const hasUnavailabilityCue = hasAny(clause, ["не могу", "не смогу", "не получится", "недоступ"]);
+    const hasPlannedIntent = hasPlanningCue && (hasTrainingCue || globalTrainingContext);
+    const hasUnavailableIntent = hasUnavailabilityCue && (hasTrainingCue || globalTrainingContext);
+    const today = isoDate(parseIsoDateFallback(input.observedAt));
+
+    if (hasUnavailableIntent) {
+      if (hasPlannedIntent && clause.includes("сегодня")) {
+        unavailable.add(today);
+      } else {
+        for (const date of clauseDates) {
+          unavailable.add(date);
+        }
+      }
+    }
+
+    if (hasPlannedIntent) {
+      for (const date of clauseDates) {
+        if (hasUnavailableIntent && date === today) {
+          continue;
+        }
+        planned.add(date);
+      }
+    }
+  }
+
+  return {
+    plannedDates: [...planned].sort(),
+    unavailableDates: [...unavailable].sort(),
+  };
 }
 
 function inferPauseWindow(
@@ -1136,6 +1272,30 @@ function buildScheduleCandidate(
   const payload = toDefaultPayload();
   const hasLogisticsCue = hasAny(text, [...SCHEDULE_AVAILABILITY_CUES, ...SCHEDULE_TRAVEL_CUES]);
   const hasDateConstraint = hasScheduleDateCue(text);
+  const planningDates = extractPlanningIntentDates({ text, observedAt: input.observedAt });
+  if (planningDates.plannedDates.length > 0 || planningDates.unavailableDates.length > 0) {
+    payload.resolved_available_dates = planningDates.plannedDates;
+    payload.planned_training_dates = planningDates.plannedDates;
+    payload.unavailable_dates = planningDates.unavailableDates;
+    payload.planning_status = planningDates.plannedDates.length > 0 ? "athlete_intends_to_train" : null;
+    if (!payload.valid_from && planningDates.unavailableDates.length > 0) {
+      payload.valid_from = planningDates.unavailableDates[0] ?? null;
+      payload.valid_until = planningDates.unavailableDates[planningDates.unavailableDates.length - 1] ?? null;
+    }
+    payload.latest_summary = buildDateBasedScheduleSummary(text) ?? text;
+    finalizeSchedulePayload(text, input.observedAt, payload);
+    return {
+      primary_bucket: "operational_signal",
+      secondary_buckets: [],
+      signal_type: "plan_generation_constraint",
+      structured_payload: payload,
+      should_create_memory: false,
+      should_create_case: false,
+      should_create_trainingpeaks_action: false,
+      confidence: "high",
+      reason: "planned training dates with explicit schedule constraints",
+    };
+  }
   if (hasLogisticsCue && hasDateConstraint) {
     payload.latest_summary = buildDateBasedScheduleSummary(text) ?? text;
     finalizeSchedulePayload(text, input.observedAt, payload);
@@ -1641,6 +1801,30 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
   const days = extractDays(text);
   const hasLogisticsCue = hasAny(text, [...SCHEDULE_AVAILABILITY_CUES, ...SCHEDULE_TRAVEL_CUES]);
   const hasDateConstraint = hasScheduleDateCue(text);
+  const planningDates = extractPlanningIntentDates({ text, observedAt: input.observedAt });
+  if (planningDates.plannedDates.length > 0 || planningDates.unavailableDates.length > 0) {
+    payload.resolved_available_dates = planningDates.plannedDates;
+    payload.planned_training_dates = planningDates.plannedDates;
+    payload.unavailable_dates = planningDates.unavailableDates;
+    payload.planning_status = planningDates.plannedDates.length > 0 ? "athlete_intends_to_train" : null;
+    if (!payload.valid_from && planningDates.unavailableDates.length > 0) {
+      payload.valid_from = planningDates.unavailableDates[0] ?? null;
+      payload.valid_until = planningDates.unavailableDates[planningDates.unavailableDates.length - 1] ?? null;
+    }
+    payload.latest_summary = buildDateBasedScheduleSummary(text) ?? text;
+    finalizeSchedulePayload(text, input.observedAt, payload);
+    return {
+      primary_bucket: "operational_signal",
+      secondary_buckets: [],
+      signal_type: "plan_generation_constraint",
+      structured_payload: payload,
+      should_create_memory: false,
+      should_create_case: false,
+      should_create_trainingpeaks_action: false,
+      confidence: "high",
+      reason: explicitSignalReason ?? "planned training dates with explicit schedule constraints",
+    };
+  }
   if (hasLogisticsCue && hasDateConstraint) {
     payload.latest_summary = buildDateBasedScheduleSummary(text) ?? text;
     finalizeSchedulePayload(text, input.observedAt, payload);

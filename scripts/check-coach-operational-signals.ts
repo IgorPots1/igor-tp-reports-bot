@@ -23,6 +23,9 @@ type Expectation = {
   available_days?: string[];
   unavailable_days?: string[];
   resolved_available_dates?: string[];
+  planned_training_dates?: string[];
+  unavailable_dates?: string[];
+  planning_status?: "athlete_intends_to_train" | null;
   valid_from?: string | null;
   valid_until?: string | null;
   duration_days?: number | null;
@@ -130,6 +133,36 @@ function assertCase(caseDef: CaseDef): string[] {
   ) {
     failures.push(
       `resolved_available_dates=${JSON.stringify(result.structured_payload.resolved_available_dates)} expected_has=${JSON.stringify(caseDef.expected.resolved_available_dates)}`
+    );
+  }
+  if (
+    caseDef.expected.planned_training_dates &&
+    !includesAll(
+      result.structured_payload.planned_training_dates ?? [],
+      caseDef.expected.planned_training_dates
+    )
+  ) {
+    failures.push(
+      `planned_training_dates=${JSON.stringify(result.structured_payload.planned_training_dates)} expected_has=${JSON.stringify(caseDef.expected.planned_training_dates)}`
+    );
+  }
+  if (
+    caseDef.expected.unavailable_dates &&
+    !includesAll(
+      result.structured_payload.unavailable_dates ?? [],
+      caseDef.expected.unavailable_dates
+    )
+  ) {
+    failures.push(
+      `unavailable_dates=${JSON.stringify(result.structured_payload.unavailable_dates)} expected_has=${JSON.stringify(caseDef.expected.unavailable_dates)}`
+    );
+  }
+  if (
+    caseDef.expected.planning_status !== undefined &&
+    (result.structured_payload.planning_status ?? null) !== caseDef.expected.planning_status
+  ) {
+    failures.push(
+      `planning_status=${result.structured_payload.planning_status ?? "null"} expected=${caseDef.expected.planning_status ?? "null"}`
     );
   }
   if (caseDef.expected.valid_from !== undefined && result.structured_payload.valid_from !== caseDef.expected.valid_from) {
@@ -255,6 +288,99 @@ async function run(): Promise<void> {
     },
   ];
   const cases: CaseDef[] = [
+    {
+      name: "olga-unavailable-today-plans-tomorrow-and-sunday",
+      observation: {
+        ...mkObs("сегодня не могу убежать, у подружки свадьба. Завтра планирую и в воскресенье."),
+        observedAt: "2026-06-04T09:06:15.866Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        resolved_available_dates: ["2026-06-05", "2026-06-07"],
+        planned_training_dates: ["2026-06-05", "2026-06-07"],
+        unavailable_dates: ["2026-06-04"],
+        planning_status: "athlete_intends_to_train",
+      },
+    },
+    {
+      name: "schedule-unavailable-today-plans-tomorrow",
+      observation: {
+        ...mkObs("Сегодня не могу побегать, завтра планирую."),
+        observedAt: "2026-06-04T10:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        resolved_available_dates: ["2026-06-05"],
+        planned_training_dates: ["2026-06-05"],
+        unavailable_dates: ["2026-06-04"],
+        planning_status: "athlete_intends_to_train",
+      },
+    },
+    {
+      name: "schedule-unavailable-today-run-tomorrow-sunday",
+      observation: {
+        ...mkObs("Не могу сегодня, завтра и в воскресенье побегу."),
+        observedAt: "2026-06-04T10:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        resolved_available_dates: ["2026-06-05", "2026-06-07"],
+        planned_training_dates: ["2026-06-05", "2026-06-07"],
+        unavailable_dates: ["2026-06-04"],
+        planning_status: "athlete_intends_to_train",
+      },
+    },
+    {
+      name: "schedule-plan-run-tomorrow-sunday-no-unavailability",
+      observation: {
+        ...mkObs("Завтра планирую бег, в воскресенье тоже."),
+        observedAt: "2026-06-04T10:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        resolved_available_dates: ["2026-06-05", "2026-06-07"],
+        planned_training_dates: ["2026-06-05", "2026-06-07"],
+        planning_status: "athlete_intends_to_train",
+      },
+    },
+    {
+      name: "schedule-planning-buy-shoes-skip",
+      observation: mkObs("планирую купить кроссовки завтра"),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "schedule-wedding-without-date-cue-skip",
+      observation: mkObs("свадьба у подружки"),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
     {
       name: "current-week-multi-day-availability",
       observation: mkObs("Можно на этой неделе тренировки вторник, среда, пятница и воскресенье?"),
@@ -606,6 +732,105 @@ async function run(): Promise<void> {
     {
       name: "aleksandra-bare-missed-workout-skips",
       observation: mkObs("пропущу тренировку"),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "health-improving-generic-with-cough",
+      observation: mkObs("сегодня получше, но кашель ещё есть"),
+      expected: {
+        primary_bucket: "health_lifecycle_signal",
+        signal_type: "health_issue_improving",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "health-improving-generic-with-weakness",
+      observation: mkObs("сегодня получше, но слабость"),
+      expected: {
+        primary_bucket: "health_lifecycle_signal",
+        signal_type: "health_issue_improving",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "health-improving-self-feeling-better",
+      observation: mkObs("самочувствие лучше"),
+      expected: {
+        primary_bucket: "health_lifecycle_signal",
+        signal_type: "health_issue_improving",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "health-improving-after-illness",
+      observation: mkObs("после болезни сегодня получше"),
+      expected: {
+        primary_bucket: "health_lifecycle_signal",
+        signal_type: "health_issue_improving",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "health-improving-generic-no-context-skip",
+      observation: mkObs("сегодня получше"),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "health-improving-better-no-context-skip",
+      observation: mkObs("сегодня лучше"),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "health-improving-better-run-performance-skip",
+      observation: mkObs("сегодня лучше пробежалось"),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "health-improving-better-pace-skip",
+      observation: mkObs("получше темп"),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "health-improving-better-work-context-skip",
+      observation: mkObs("вроде получше по работе"),
       expected: {
         primary_bucket: "skip",
         signal_type: null,
