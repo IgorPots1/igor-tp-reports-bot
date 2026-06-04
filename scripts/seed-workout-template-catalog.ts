@@ -1,5 +1,6 @@
 import process from "node:process";
 
+import { assertSupabaseEnvOrSkip, loadScriptEnv } from "./lib/load-script-env";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import {
   buildSeedInvariantInput,
@@ -15,11 +16,6 @@ type Counts = {
 type SeedTrackedRow<T> = T & {
   seedExists: boolean;
 };
-
-function getEnvValue(name: "NEXT_PUBLIC_SUPABASE_URL" | "SUPABASE_URL" | "SUPABASE_SERVICE_ROLE_KEY"): string | null {
-  const value = process.env[name]?.trim();
-  return value ? value : null;
-}
 
 function hasFlag(flag: string): boolean {
   return process.argv.slice(2).includes(flag);
@@ -88,16 +84,10 @@ async function runApply(): Promise<void> {
     throw new Error("Seed definitions failed invariant validation.");
   }
 
-  const supabaseUrl = getEnvValue("NEXT_PUBLIC_SUPABASE_URL") ?? getEnvValue("SUPABASE_URL");
-  const serviceRoleKey = getEnvValue("SUPABASE_SERVICE_ROLE_KEY");
-
-  if (!supabaseUrl || !serviceRoleKey) {
-    console.log("[seed-workout-template-catalog] SKIP: missing NEXT_PUBLIC_SUPABASE_URL/SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+  loadScriptEnv();
+  const env = assertSupabaseEnvOrSkip("seed-workout-template-catalog");
+  if (!env) {
     return;
-  }
-
-  if (!process.env.SUPABASE_URL) {
-    process.env.SUPABASE_URL = supabaseUrl;
   }
 
   const supabase = createSupabaseServerClient();

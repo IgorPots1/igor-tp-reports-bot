@@ -1,9 +1,8 @@
-import fs from "node:fs";
-import path from "node:path";
 import process from "node:process";
 
 import type { PostgrestError } from "@supabase/supabase-js";
 
+import { assertSupabaseEnvOrSkip, loadScriptEnv } from "./lib/load-script-env";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
 const LOG_PREFIX = "[check-athlete-training-baselines]";
@@ -33,46 +32,6 @@ type DuplicateCurrentRow = {
   count: number;
 };
 
-function loadLocalEnvFiles(): void {
-  const repoRoot = path.resolve(process.cwd());
-  const envPaths = [path.join(repoRoot, ".env.local"), path.join(repoRoot, ".env")];
-  for (const envPath of envPaths) {
-    if (!fs.existsSync(envPath)) {
-      continue;
-    }
-    const content = fs.readFileSync(envPath, "utf8");
-    for (const rawLine of content.split(/\r?\n/u)) {
-      const line = rawLine.trim();
-      if (!line || line.startsWith("#")) {
-        continue;
-      }
-      const separatorIndex = line.indexOf("=");
-      if (separatorIndex <= 0) {
-        continue;
-      }
-      const key = line.slice(0, separatorIndex).trim();
-      if (!key || process.env[key] !== undefined) {
-        continue;
-      }
-      let value = line.slice(separatorIndex + 1).trim();
-      if (
-        (value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))
-      ) {
-        value = value.slice(1, -1);
-      }
-      process.env[key] = value;
-    }
-  }
-}
-
-function getEnvValue(
-  name: "NEXT_PUBLIC_SUPABASE_URL" | "SUPABASE_URL" | "SUPABASE_SERVICE_ROLE_KEY"
-): string | null {
-  const value = process.env[name]?.trim();
-  return value ? value : null;
-}
-
 function isMissingRelationError(error: PostgrestError | null): boolean {
   if (!error) {
     return false;
@@ -93,17 +52,10 @@ function isNegative(value: number | null): boolean {
 }
 
 async function run(): Promise<void> {
-  loadLocalEnvFiles();
-  const supabaseUrl = getEnvValue("NEXT_PUBLIC_SUPABASE_URL") ?? getEnvValue("SUPABASE_URL");
-  const serviceRoleKey = getEnvValue("SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !serviceRoleKey) {
-    console.log(
-      `${LOG_PREFIX} SKIP: missing NEXT_PUBLIC_SUPABASE_URL/SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY`
-    );
+  loadScriptEnv();
+  const env = assertSupabaseEnvOrSkip("check-athlete-training-baselines");
+  if (!env) {
     return;
-  }
-  if (!process.env.SUPABASE_URL) {
-    process.env.SUPABASE_URL = supabaseUrl;
   }
 
   const supabase = createSupabaseServerClient();

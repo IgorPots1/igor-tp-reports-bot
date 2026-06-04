@@ -1,5 +1,4 @@
-import process from "node:process";
-
+import { assertSupabaseEnvOrSkip, loadScriptEnv } from "./lib/load-script-env";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import {
   evaluateWorkoutTemplateCatalogInvariants,
@@ -60,11 +59,6 @@ type PresetRow = {
     | null;
 };
 
-function getEnvValue(name: "NEXT_PUBLIC_SUPABASE_URL" | "SUPABASE_URL" | "SUPABASE_SERVICE_ROLE_KEY"): string | null {
-  const value = process.env[name]?.trim();
-  return value ? value : null;
-}
-
 function unwrapSingle<T>(value: T | T[] | null | undefined): T | null {
   if (Array.isArray(value)) {
     return value[0] ?? null;
@@ -98,16 +92,10 @@ function mapPresetRows(rows: PresetRow[]): WorkoutTemplateCatalogPresetRecord[] 
 }
 
 async function run(): Promise<void> {
-  const supabaseUrl = getEnvValue("NEXT_PUBLIC_SUPABASE_URL") ?? getEnvValue("SUPABASE_URL");
-  const serviceRoleKey = getEnvValue("SUPABASE_SERVICE_ROLE_KEY");
-
-  if (!supabaseUrl || !serviceRoleKey) {
-    console.log("[check-workout-template-catalog] SKIP: missing NEXT_PUBLIC_SUPABASE_URL/SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+  loadScriptEnv();
+  const env = assertSupabaseEnvOrSkip("check-workout-template-catalog");
+  if (!env) {
     return;
-  }
-
-  if (!process.env.SUPABASE_URL) {
-    process.env.SUPABASE_URL = supabaseUrl;
   }
 
   const supabase = createSupabaseServerClient();
