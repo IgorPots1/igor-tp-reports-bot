@@ -275,20 +275,29 @@ function classifyHealthIssueKind(text: string): string | null {
     hasAny(text, [
       "горло",
       "температур",
+      "темпера подним",
       "простуд",
       "кашель",
       "болею",
       "болеет",
+      "болел",
+      "болела",
+      "болели",
       "забол",
       "прибол",
       "насморк",
       "сопли",
       "орви",
       "осип",
+      "голос сел",
       "голос осип",
+      "осип голос",
       "голос пропал",
       "голос вернул",
       "слабост",
+      "отврат",
+      "недомога",
+      "плохо себя чувств",
     ])
   ) {
     return "illness";
@@ -300,14 +309,15 @@ function classifyHealthIssueKind(text: string): string | null {
 }
 
 const HEALTH_SYMPTOM_PATTERNS: Array<{ symptom: string; patterns: string[] }> = [
-  { symptom: "fever", patterns: ["температур"] },
+  { symptom: "fever", patterns: ["температур", "темпера"] },
   { symptom: "cough", patterns: ["кашель", "кашля"] },
   { symptom: "throat", patterns: ["горло"] },
-  { symptom: "voice", patterns: ["голос пропал", "голос осип", "голос вернул", "голос немного вернул"] },
+  { symptom: "voice", patterns: ["голос пропал", "голос осип", "голос сел", "осип голос", "голос вернул", "голос немного вернул"] },
   { symptom: "runny_nose", patterns: ["насморк", "сопли"] },
   { symptom: "cold", patterns: ["простуд"] },
   { symptom: "orvi", patterns: ["орви"] },
   { symptom: "weakness", patterns: ["слабост"] },
+  { symptom: "malaise", patterns: ["отврат", "недомога", "плохо себя чувств"] },
 ];
 
 function dedupeStrings(values: string[]): string[] {
@@ -330,15 +340,26 @@ function hasHealthStartedCue(text: string): boolean {
     "прибол",
     "болею",
     "болеет",
+    "болел",
+    "болела",
+    "болели",
+    "болит",
     "температур",
+    "темпера подним",
     "кашель",
     "горло",
     "голос пропал",
+    "голос сел",
+    "голос осип",
+    "осип голос",
     "насморк",
     "сопли",
     "простуд",
     "орви",
     "слабост",
+    "отврат",
+    "недомога",
+    "плохо себя чувств",
     "отлежусь",
   ]);
 }
@@ -352,6 +373,11 @@ function hasHealthImprovingCue(text: string): boolean {
     "лучше, но",
     "лучше но",
     "уже лучше",
+    "сегодня получше",
+    "сегодня лучше",
+    "сегодня пока норм, но",
+    "сегодня пока норм но",
+    "значительно лучше",
     "еще лучше",
     "ещё лучше",
     "еще болею",
@@ -379,6 +405,8 @@ function hasHealthResolvedCue(text: string): boolean {
     "симптомов нет",
     "чувствую себя нормально",
     "чувствую себя норм",
+    "без боли",
+    "боли нет",
   ]);
 }
 
@@ -400,6 +428,8 @@ function symptomLabel(symptom: string): string {
       return "ОРВИ";
     case "weakness":
       return "слабость";
+    case "malaise":
+      return "плохое самочувствие";
     default:
       return symptom;
   }
@@ -454,7 +484,14 @@ function buildHealthSummary(input: {
   }
 
   if (input.signalType === "health_issue_improving") {
-    if (input.symptoms.includes("cough")) {
+    if (
+      input.text.includes("вчера") &&
+      input.text.includes("сегодня") &&
+      input.text.includes("темпера") &&
+      input.text.includes("слабост")
+    ) {
+      lines.push("вчера была температура, сегодня лучше, но слабость");
+    } else if (input.symptoms.includes("cough")) {
       lines.push("восстанавливается, кашель ещё есть");
     } else if (symptomSummary) {
       lines.push(`ещё болеет, симптомы сохраняются: ${symptomSummary}`);
@@ -515,6 +552,24 @@ function classifyHealthLifecycleSignal(input: {
   const improving = hasHealthImprovingCue(text);
   const resolved = hasHealthResolvedCue(text);
   const started = hasHealthStartedCue(text);
+  const weatherTemperatureContext =
+    hasAny(text, ["на улице", "за окном", "погода", "воздуха"]) &&
+    hasAny(text, ["температур", "темпера"]);
+  const illnessCounterCues = hasAny(text, [
+    "боле",
+    "кашель",
+    "горло",
+    "слабост",
+    "голос",
+    "озноб",
+    "отврат",
+    "недомога",
+    "плохо себя чувств",
+  ]);
+
+  if (weatherTemperatureContext && !illnessCounterCues && !improving && !resolved) {
+    return null;
+  }
 
   if (resolved) {
     payload.health_state = "resolved";
@@ -650,12 +705,128 @@ const SCHEDULE_CONTEXT_CUE_WORDS = [
   "фестиваль",
   "не смогу",
   "не могу",
+  "не получится",
+  "поеду",
+  "уеду",
+  "в мск",
+  "в москв",
+  "недоступ",
   "на 4 дня",
 ];
 
 export function hasScheduleContextCue(text: string | null): boolean {
   const normalized = normalize(text);
   return hasAny(normalized, SCHEDULE_CONTEXT_CUE_WORDS);
+}
+
+const SCHEDULE_AVAILABILITY_CUES = [
+  "не смогу",
+  "не могу",
+  "не получится",
+  "не доступен",
+  "недоступен",
+  "не доступна",
+  "недоступна",
+];
+
+const SCHEDULE_TRAVEL_CUES = ["уеду", "поеду", "в поездк", "буду в мск", "буду в москв", "в мск", "в москв"];
+
+const SCHEDULE_UNCERTAINTY_CUES = ["возможно", "может быть", "наверное", "пока не решила", "пока не решил", "типо"];
+
+function hasScheduleDateCue(text: string): boolean {
+  if (
+    hasAny(text, [
+      "сегодня",
+      "завтра",
+      "послезавтра",
+      "на этой неделе",
+      "на следующей неделе",
+      "на след неделе",
+      "следующей неделе",
+    ])
+  ) {
+    return true;
+  }
+  if (extractDays(text).length > 0) {
+    return true;
+  }
+  if (/(?:^|[^0-9])([12]?\d|3[01])\s*(?:[-–]\s*)?(?:го|ое|й)(?:[^a-zа-яё]|$)/iu.test(text)) {
+    return true;
+  }
+  if (/\b([12]?\d|3[01])(?:[./](?:0?\d|1[0-2]))\b/iu.test(text)) {
+    return true;
+  }
+  if (/\b([12]?\d|3[01])\s*(?:или|\/)\s*([12]?\d|3[01])\b/iu.test(text)) {
+    return true;
+  }
+  if (
+    /\b([12]?\d|3[01])\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\b/iu.test(
+      text
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function extractDayOfMonthTokens(text: string): number[] {
+  const output: number[] = [];
+  const push = (value: number): void => {
+    if (Number.isInteger(value) && value >= 1 && value <= 31 && !output.includes(value)) {
+      output.push(value);
+    }
+  };
+  for (const match of text.matchAll(/(?:^|[^0-9])([12]?\d|3[01])\s*(?:[-–]\s*)?(?:го|ое|й)(?:[^a-zа-яё]|$)/giu)) {
+    push(Number(match[1]));
+  }
+  for (const match of text.matchAll(/\b([12]?\d|3[01])(?:[./](?:0?\d|1[0-2]))\b/giu)) {
+    push(Number(match[1]));
+  }
+  for (const match of text.matchAll(/\b([12]?\d|3[01])\s*(?:или|\/)\s*([12]?\d|3[01])\b/giu)) {
+    if (text.includes(" или ") || text.includes("/")) {
+      push(Number(match[1]));
+      push(Number(match[2]));
+    }
+  }
+  for (const match of text.matchAll(/\b([12]?\d|3[01])\b/giu)) {
+    const day = Number(match[1]);
+    if (day <= 31 && !/^\d{4}$/u.test(match[1] ?? "")) {
+      push(day);
+    }
+  }
+  return output;
+}
+
+function buildDateBasedScheduleSummary(text: string): string | null {
+  const clauses = text.split(/[.!?;\n]+/u).map((item) => item.trim()).filter(Boolean);
+  const strongDays: number[] = [];
+  const uncertainDays: number[] = [];
+  for (const clause of clauses) {
+    const hasLogisticsCue = hasAny(clause, [...SCHEDULE_AVAILABILITY_CUES, ...SCHEDULE_TRAVEL_CUES]);
+    if (!hasLogisticsCue || !hasScheduleDateCue(clause)) {
+      continue;
+    }
+    const target = hasAny(clause, SCHEDULE_UNCERTAINTY_CUES) ? uncertainDays : strongDays;
+    for (const day of extractDayOfMonthTokens(clause)) {
+      if (!target.includes(day)) {
+        target.push(day);
+      }
+    }
+  }
+  if (strongDays.length === 0 && uncertainDays.length === 0) {
+    return null;
+  }
+  const formatDay = (value: number): string => String(value).padStart(2, "0");
+  const strong = strongDays.sort((a, b) => a - b).map(formatDay);
+  const uncertain = uncertainDays.filter((day) => !strongDays.includes(day)).sort((a, b) => a - b).map(formatDay);
+  const parts: string[] = [];
+  if (strong.length > 0) {
+    parts.push(`недоступен: ${strong.join(" или ")}`);
+  }
+  if (uncertain.length > 0) {
+    parts.push(`возможно недоступен: ${uncertain.join(" или ")}`);
+  }
+  return parts.join("; ");
 }
 
 export function isBareWeekdayObservationText(text: string | null): boolean {
@@ -930,10 +1101,10 @@ function buildPauseTrainingCandidate(
   const pauseTraining = hasAny(text, [
     "воздержусь от бега",
     "не буду бегать",
-    "пропущу бег",
     "пауза от бега",
-    "пропущу тренировку",
     "не побегу",
+    "беру паузу",
+    "сделаю паузу",
   ]);
   if (!pauseTraining) {
     return null;
@@ -963,6 +1134,23 @@ function buildScheduleCandidate(
   text: string
 ): OperationalSignalCandidate | null {
   const payload = toDefaultPayload();
+  const hasLogisticsCue = hasAny(text, [...SCHEDULE_AVAILABILITY_CUES, ...SCHEDULE_TRAVEL_CUES]);
+  const hasDateConstraint = hasScheduleDateCue(text);
+  if (hasLogisticsCue && hasDateConstraint) {
+    payload.latest_summary = buildDateBasedScheduleSummary(text) ?? text;
+    finalizeSchedulePayload(text, input.observedAt, payload);
+    return {
+      primary_bucket: "operational_signal",
+      secondary_buckets: [],
+      signal_type: "plan_generation_constraint",
+      structured_payload: payload,
+      should_create_memory: false,
+      should_create_case: false,
+      should_create_trainingpeaks_action: false,
+      confidence: hasAny(text, SCHEDULE_UNCERTAINTY_CUES) ? "medium" : "high",
+      reason: "date-based schedule constraint with logistics cue",
+    };
+  }
   const days = extractDays(text);
   const scheduleAvailability = hasAvailabilityIntent(text, days);
   const scheduleUnavailability = hasAny(text, ["не могу", "не смогу", "не успеваю", "не может"]);
@@ -1376,10 +1564,10 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
   const pauseTraining = hasAny(text, [
     "воздержусь от бега",
     "не буду бегать",
-    "пропущу бег",
     "пауза от бега",
-    "пропущу тренировку",
     "не побегу",
+    "беру паузу",
+    "сделаю паузу",
   ]);
   if (pauseTraining) {
     const pauseWindow = inferPauseWindow(text, input.observedAt);
@@ -1451,6 +1639,23 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
   }
 
   const days = extractDays(text);
+  const hasLogisticsCue = hasAny(text, [...SCHEDULE_AVAILABILITY_CUES, ...SCHEDULE_TRAVEL_CUES]);
+  const hasDateConstraint = hasScheduleDateCue(text);
+  if (hasLogisticsCue && hasDateConstraint) {
+    payload.latest_summary = buildDateBasedScheduleSummary(text) ?? text;
+    finalizeSchedulePayload(text, input.observedAt, payload);
+    return {
+      primary_bucket: "operational_signal",
+      secondary_buckets: [],
+      signal_type: "plan_generation_constraint",
+      structured_payload: payload,
+      should_create_memory: false,
+      should_create_case: false,
+      should_create_trainingpeaks_action: false,
+      confidence: hasAny(text, SCHEDULE_UNCERTAINTY_CUES) ? "medium" : "high",
+      reason: explicitSignalReason ?? "date-based schedule constraint with logistics cue",
+    };
+  }
   const scheduleAvailability = hasAvailabilityIntent(text, days);
   const scheduleUnavailability = hasAny(text, ["не могу", "не смогу", "не успеваю", "не может"]);
   if (days.length > 0 && hasScheduleContext(text) && (scheduleAvailability || scheduleUnavailability)) {
@@ -1559,6 +1764,20 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
       should_create_trainingpeaks_action: false,
       confidence: "medium",
       reason: "travel/duration-linked temporary running unavailability",
+    };
+  }
+
+  if (hasAny(text, ["отдыхать буду после марафона", "отдыхать я буду после марафона"])) {
+    return {
+      primary_bucket: "skip",
+      secondary_buckets: [],
+      signal_type: null,
+      structured_payload: payload,
+      should_create_memory: false,
+      should_create_case: false,
+      should_create_trainingpeaks_action: false,
+      confidence: "medium",
+      reason: "future post-race rest note without current operational constraint",
     };
   }
 

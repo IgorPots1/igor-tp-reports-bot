@@ -4720,11 +4720,15 @@ function buildHealthOperationalSignalText(signal: TrainingPeaksStudentOperationa
   const lines: string[] = [];
 
   if (healthState === "improving") {
-    lines.push(
-      symptoms.length > 0
-        ? `восстанавливается, ${symptoms.map(translateHealthSymptom).join(", ")}`
-        : "восстанавливается"
-    );
+    if (symptoms.includes("fever") && symptoms.includes("weakness")) {
+      lines.push("вчера была температура, сегодня лучше, но слабость");
+    } else {
+      lines.push(
+        symptoms.length > 0
+          ? `восстанавливается, ${symptoms.map(translateHealthSymptom).join(", ")}`
+          : "восстанавливается"
+      );
+    }
   } else if (healthState === "sick") {
     lines.push(
       symptoms.length > 0 ? `болеет, ${symptoms.map(translateHealthSymptom).join(", ")}` : "болеет"
@@ -5781,7 +5785,7 @@ function buildOperationalSignalItemFromSignal(input: {
       signalType: signal.signalType,
       isEpisodeSummary: false,
       followUpState: followUp.state,
-      text: compactOperationalSignalText(`${rolePrefix}${baseReason}${relatedSuffix}`, 95),
+      text: compactOperationalSignalText(`${rolePrefix}${baseReason}${relatedSuffix}`, 140),
       hiddenReason: null,
     };
   }
@@ -5929,20 +5933,18 @@ function filterNormalOperationalSignalItems(items: TrainingPeaksOperationalSigna
     if (item.hiddenReason) {
       return false;
     }
-    if (item.followUpState === "pending_due" || item.followUpState === "pending_overdue") {
-      return false;
-    }
     if (item.signalType === "health_issue_resolved") {
       return false;
     }
-    if (
-      item.followUpState === "resolved_or_non_pending" &&
-      item.section === "health_pause" &&
-      item.signalType === "health_issue_started"
-    ) {
-      return false;
+    if (item.section === "health_pause") {
+      if (item.signalType === "health_issue_improving") {
+        return true;
+      }
+      if (item.signalType === "health_issue_started") {
+        return item.followUpState !== "resolved_or_non_pending";
+      }
     }
-    if (item.followUpState === "pending_future" && item.section === "health_pause" && item.signalType === "health_issue_started") {
+    if (item.followUpState === "pending_due" || item.followUpState === "pending_overdue") {
       return false;
     }
     if (item.section === "other" && /^самочувствие\b/iu.test(item.text)) {

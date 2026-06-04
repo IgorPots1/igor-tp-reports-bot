@@ -128,6 +128,7 @@ function run(): void {
       ["ilya", "Ilya Bogdanov"],
       ["alex", "Aleksandra Kasianenko"],
       ["elena", "Elena Vasileva"],
+      ["lyubov", "Lyubov Selezneva"],
     ]),
     signals: [
       makeSignal({
@@ -142,6 +143,21 @@ function run(): void {
           follow_up_status: "pending",
           follow_up_due_at: "2026-06-05T10:00:00.000Z",
           follow_up_reason: "illness onset follow-up",
+        },
+      }),
+      makeSignal({
+        signalId: "lyubov-improving",
+        studentId: "lyubov",
+        signalType: "health_issue_improving",
+        structuredPayload: {
+          latest_summary: "вчера была температура, сегодня лучше, но слабость",
+          health_state: "improving",
+          symptoms: ["fever", "weakness"],
+        },
+        metadata: {
+          follow_up_status: "pending",
+          follow_up_due_at: "2026-06-06T09:00:00.000Z",
+          follow_up_reason: "illness-related pause follow-up",
         },
       }),
       makeSignal({
@@ -229,6 +245,10 @@ function run(): void {
   assert(!text.includes("🩺 Проверить"), "5 failed: follow-up section must be hidden.");
   assert(!text.includes("follow-up"), "5 failed: internal follow-up rows must not be shown.");
   assert(text.includes("🟡 Болезнь / пауза"), "5 failed: health section must be present.");
+  assert(
+    text.includes("Lyubov Selezneva") && text.includes("вчера была температура, сегодня лучше, но слабость"),
+    "5 failed: Lyubov active illness context should stay visible in normal /tp_signals."
+  );
   assert(text.includes("📅 Учесть в плане"), "5 failed: plan section must be present.");
   // Moves section remains part of normal layout, but appears only with active move actions.
 

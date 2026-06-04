@@ -28,6 +28,8 @@ type Expectation = {
   duration_days?: number | null;
   health_issue_kind?: string | null;
   reason?: string;
+  symptoms_includes?: string[];
+  latest_summary_includes?: string[];
   secondary_buckets_includes?: OperationalPrimaryBucket[];
   confidence_at_least?: "low" | "medium" | "high";
 };
@@ -148,6 +150,22 @@ function assertCase(caseDef: CaseDef): string[] {
   }
   if (caseDef.expected.reason !== undefined && result.reason !== caseDef.expected.reason) {
     failures.push(`reason=${result.reason} expected=${caseDef.expected.reason}`);
+  }
+  if (
+    caseDef.expected.symptoms_includes &&
+    !includesAll(result.structured_payload.symptoms, caseDef.expected.symptoms_includes)
+  ) {
+    failures.push(
+      `symptoms=${JSON.stringify(result.structured_payload.symptoms)} expected_has=${JSON.stringify(caseDef.expected.symptoms_includes)}`
+    );
+  }
+  if (caseDef.expected.latest_summary_includes) {
+    const latestSummary = String(result.structured_payload.latest_summary ?? "");
+    for (const part of caseDef.expected.latest_summary_includes) {
+      if (!latestSummary.includes(part)) {
+        failures.push(`latest_summary=${latestSummary} expected_to_include=${part}`);
+      }
+    }
   }
   if (caseDef.expected.secondary_buckets_includes && !includesAll(result.secondary_buckets, caseDef.expected.secondary_buckets_includes)) {
     failures.push(
@@ -515,6 +533,243 @@ async function run(): Promise<void> {
         should_create_case: false,
         should_create_trainingpeaks_action: false,
         available_days: ["Tuesday", "Thursday", "Friday", "Sunday"],
+      },
+    },
+    {
+      name: "sergey-schedule-constraints-with-uncertain-days",
+      observation: mkObs(
+        "я возможно на след неделе не смогу 11го и в какой-то день в конце может быть поеду в мск, типо 12 или 13ое а так норм"
+      ),
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "next-week-cannot-11-go-schedule",
+      observation: mkObs("на следующей неделе не смогу 11го"),
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "cannot-11-hyphen-go-schedule",
+      observation: mkObs("11-го не смогу"),
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "cannot-11-dot-06-schedule",
+      observation: mkObs("не смогу 11.06"),
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "maybe-12-or-13-travel-schedule",
+      observation: mkObs("возможно 12 или 13 поеду в Москву"),
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "aleksandra-skip-missed-workout-without-date",
+      observation: mkObs("Пропущу тренировку — день рождения"),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "aleksandra-bare-missed-workout-skips",
+      observation: mkObs("пропущу тренировку"),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "lyubov-health-fn-captured",
+      observation: mkObs("Вчера было отврат, темпера поднимался. Сегодня пока норм, но слабость("),
+      expected: {
+        primary_bucket: "health_lifecycle_signal",
+        signal_type: "health_issue_improving",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: "illness",
+        symptoms_includes: ["fever", "weakness", "malaise"],
+        latest_summary_includes: ["температура", "слабость"],
+      },
+    },
+    {
+      name: "lyubov-health-fn-with-greeting",
+      observation: mkObs("Привет. Вчера было отврат, темпера поднимался. Сегодня пока норм, но слабость("),
+      expected: {
+        primary_bucket: "health_lifecycle_signal",
+        signal_type: "health_issue_improving",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: "illness",
+        symptoms_includes: ["fever", "weakness", "malaise"],
+      },
+    },
+    {
+      name: "health-temperature-weakness-short",
+      observation: mkObs("темпера поднималась, слабость"),
+      expected: {
+        primary_bucket: "temporary_memory",
+        signal_type: "health_issue_started",
+        should_create_memory: true,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: "illness",
+        symptoms_includes: ["fever", "weakness"],
+      },
+    },
+    {
+      name: "health-nedomogayu-weakness",
+      observation: mkObs("недомогаю, слабость"),
+      expected: {
+        primary_bucket: "temporary_memory",
+        signal_type: "health_issue_started",
+        should_create_memory: true,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: "illness",
+        symptoms_includes: ["weakness", "malaise"],
+      },
+    },
+    {
+      name: "health-was-sick-yesterday-better-today",
+      observation: mkObs("болела вчера, сегодня получше"),
+      expected: {
+        primary_bucket: "health_lifecycle_signal",
+        signal_type: "health_issue_improving",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: "illness",
+      },
+    },
+    {
+      name: "health-voice-and-cough",
+      observation: mkObs("голос сел, кашель ещё есть"),
+      expected: {
+        primary_bucket: "temporary_memory",
+        signal_type: "health_issue_started",
+        should_create_memory: true,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: "illness",
+      },
+    },
+    {
+      name: "health-feel-bad",
+      observation: mkObs("плохо себя чувствую"),
+      expected: {
+        primary_bucket: "temporary_memory",
+        signal_type: "health_issue_started",
+        should_create_memory: true,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: "illness",
+      },
+    },
+    {
+      name: "health-plain-no-skips",
+      observation: mkObs("Нет"),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "temperature-outside-weather-context-skips",
+      observation: mkObs("температура на улице норм"),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "future-rest-after-marathon-not-current-pause",
+      observation: mkObs("отдыхать я буду после марафона"),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "emotional-commentary-skips",
+      observation: mkObs("одни ограничения))"),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "coach-instruction-skips",
+      observation: {
+        ...mkObs("не перед длительной только", "group_topic"),
+        metadata: { senderRole: "coach" },
+      },
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "a-tak-norm-skips",
+      observation: mkObs("а так норм"),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
       },
     },
   ];

@@ -371,8 +371,8 @@ function run(): void {
 
   // H: future pending and resolved follow-up are not visible in normal output
   assert(
-    !text.includes("Future Athlete"),
-    "H failed: future pending should not appear in normal output."
+    text.includes("Future Athlete"),
+    "H failed: future pending active illness should remain visible in normal output."
   );
   assert(
     !text.includes("Resolved Athlete"),
