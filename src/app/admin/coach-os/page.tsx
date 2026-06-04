@@ -843,7 +843,8 @@ export default async function CoachOsAdminPage({ searchParams }: CoachOsPageProp
 
           <div className="admin-card">
             <p className="admin-muted">
-              База нагрузки — это ограничитель для будущего планирования. Family labels в baseline не считаются истиной.
+              База нагрузки используется как ограничитель по цифрам: частота, минуты, длительная, quality. Черновая
+              авто-классификация тренировок не используется для планирования.
             </p>
           </div>
 
@@ -897,9 +898,6 @@ export default async function CoachOsAdminPage({ searchParams }: CoachOsPageProp
                       <td>
                         <div className="admin-table-primary">
                           <span>{formatContextFlags(row.context_flags)}</span>
-                          {row.family_label_advisory && (
-                            <span className="admin-muted">advisory family: {row.family_label_advisory}</span>
-                          )}
                         </div>
                       </td>
                       <td>{formatNumber(row.frequency_cap)}</td>
