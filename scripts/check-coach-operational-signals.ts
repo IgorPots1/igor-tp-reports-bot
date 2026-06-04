@@ -291,7 +291,9 @@ async function run(): Promise<void> {
     {
       name: "olga-unavailable-today-plans-tomorrow-and-sunday",
       observation: {
-        ...mkObs("сегодня не могу убежать, у подружки свадьба. Завтра планирую и в воскресенье."),
+        ...mkObs(
+          "Игорь здравствуйте, да. Вчера. Сегодня не могу побежать, у подружки свадьба. Завтра планирую и в воскресенье"
+        ),
         observedAt: "2026-06-04T09:06:15.866Z",
       },
       expected: {

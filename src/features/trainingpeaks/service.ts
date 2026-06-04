@@ -4706,8 +4706,9 @@ function buildHealthOperationalSignalText(signal: TrainingPeaksStudentOperationa
     normalizeRecordString(signal.structuredPayload.latest_summary) ??
     getSignalMetadataString(signal.metadata, "latest_summary") ??
     getSignalMetadataString(signal.metadata, "follow_up_reason");
-  if (latestSummary) {
-    return compactOperationalSignalText(latestSummary, 140);
+  const sanitizedSummary = sanitizeHealthOperationalSummary(latestSummary);
+  if (sanitizedSummary) {
+    return compactOperationalSignalText(sanitizedSummary, 140);
   }
 
   const healthState =
@@ -4737,9 +4738,7 @@ function buildHealthOperationalSignalText(signal: TrainingPeaksStudentOperationa
     lines.push("самочувствие нормализовалось");
   }
 
-  if (recommendation === "pause") {
-    lines.push("пауза / наблюдать");
-  } else if (recommendation === "easy_if_symptom_free") {
+  if (recommendation === "easy_if_symptom_free") {
     lines.push("лёгкий возврат только без симптомов");
   } else if (recommendation === "resume_carefully") {
     lines.push("аккуратный возврат к тренировкам");
@@ -4752,6 +4751,44 @@ function buildHealthOperationalSignalText(signal: TrainingPeaksStudentOperationa
   const typeLabel = getOperationalSignalTypeLabel(signal.signalType);
   const windowPart = getOperationalSignalWindowPart(signal);
   return windowPart ? `${typeLabel} (${windowPart})` : typeLabel;
+}
+
+function sanitizeHealthOperationalSummary(raw: string | null): string | null {
+  if (!raw) {
+    return null;
+  }
+  const normalized = raw.replace(/\s+/gu, " ").trim();
+  if (!normalized) {
+    return null;
+  }
+  const parts = normalized
+    .split(/\s*;\s*/u)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .map((part) => part.replace(/^health_context:\s*/iu, "").trim())
+    .filter((part) => {
+      const lower = part.toLowerCase();
+      if (!lower) {
+        return false;
+      }
+      if (lower === "пауза / наблюдать") {
+        return false;
+      }
+      if (lower === "illness onset follow-up") {
+        return false;
+      }
+      if (lower === "illness-related pause follow-up") {
+        return false;
+      }
+      if (lower === "follow-up") {
+        return false;
+      }
+      return true;
+    });
+  if (parts.length === 0) {
+    return null;
+  }
+  return parts.join("; ");
 }
 
 function getOperationalSignalTypeLabel(signalType: string): string {

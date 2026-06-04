@@ -129,6 +129,7 @@ function run(): void {
       ["alex", "Aleksandra Kasianenko"],
       ["elena", "Elena Vasileva"],
       ["lyubov", "Lyubov Selezneva"],
+      ["olga", "Olga Slastnaia"],
     ]),
     signals: [
       makeSignal({
@@ -136,7 +137,7 @@ function run(): void {
         studentId: "anna",
         signalType: "health_issue_started",
         structuredPayload: {
-          latest_summary: "болеет, температура с понедельника; пауза / наблюдать",
+          latest_summary: "health_context: болеет, температура с понедельника; пауза / наблюдать",
           health_state: "sick",
         },
         metadata: {
@@ -201,7 +202,7 @@ function run(): void {
         studentId: "alex",
         signalType: "health_issue_started",
         structuredPayload: {
-          latest_summary: "болеет, горло; не бегает 5 дней; пауза / наблюдать",
+          latest_summary: "health_context: болеет, горло; не бегает 5 дней; пауза / наблюдать",
           health_state: "sick",
         },
         validFrom: "2026-06-03",
@@ -236,6 +237,19 @@ function run(): void {
           health_state: "improving",
         },
       }),
+      makeSignal({
+        signalId: "olga-plan",
+        studentId: "olga",
+        signalType: "plan_generation_constraint",
+        structuredPayload: {
+          unavailable_dates: ["2026-06-04"],
+          planned_training_dates: ["2026-06-05", "2026-06-07"],
+          resolved_available_dates: ["2026-06-05", "2026-06-07"],
+          planning_status: "athlete_intends_to_train",
+        },
+        validFrom: "2026-06-04",
+        validUntil: "2026-06-04",
+      }),
     ],
     activeMoveActions: [],
   });
@@ -249,6 +263,10 @@ function run(): void {
     text.includes("Lyubov Selezneva") && text.includes("вчера была температура, сегодня лучше, но слабость"),
     "5 failed: Lyubov active illness context should stay visible in normal /tp_signals."
   );
+  assert(!text.includes("health_context:"), "5 failed: health_context prefix must be removed from normal output.");
+  assert(!text.includes("пауза / наблюдать"), "5 failed: pause/observe label must be hidden in normal output.");
+  assert(!text.includes("illness onset follow-up"), "5 failed: internal follow-up labels must be hidden.");
+  assert(!text.includes("illness-related pause follow-up"), "5 failed: internal follow-up labels must be hidden.");
   assert(text.includes("📅 Учесть в плане"), "5 failed: plan section must be present.");
   // Moves section remains part of normal layout, but appears only with active move actions.
 
@@ -260,7 +278,7 @@ function run(): void {
   );
   assert(!text.includes("восстановление"), "6 failed: generic Viktoria recovery duplicate should be hidden.");
   assert(
-    text.includes("доступна: чт 04.06") || text.includes("04.06: если кашля не будет — лёгкая пробежка вечером"),
+    text.includes("доступна: 04.06") || text.includes("04.06: если кашля не будет — лёгкая пробежка вечером"),
     "7 failed: Viktoria conditional run should be shown in planning."
   );
 
@@ -268,6 +286,16 @@ function run(): void {
   assert(!text.includes("03.06—03.06"), "8 failed: one-day pause must not use range.");
   assert(text.includes("недоступна: 03.06—08.06"), "9 failed: multi-day pause should be shown as range.");
   assert(!text.includes("самочувствие (до 04.06)"), "10 failed: vague resolved health leftovers must be hidden.");
+  assert(text.includes("болеет"), "11 failed: useful health content 'болеет' must stay visible.");
+  assert(text.includes("кашель"), "11 failed: useful health content 'кашель' must stay visible.");
+  assert(text.includes("горло"), "11 failed: useful health content 'горло' must stay visible.");
+  assert(text.includes("температура"), "11 failed: useful health content 'температура' must stay visible.");
+  assert(text.includes("слабость"), "11 failed: useful health content 'слабость' must stay visible.");
+  assert(text.includes("не бегает 5 дней"), "11 failed: useful health duration details must stay visible.");
+  assert(text.includes("Olga Slastnaia"), "12 failed: Olga fixture must be present.");
+  assert(text.includes("недоступна: 04.06"), "12 failed: Olga unavailability must be shown.");
+  assert(text.includes("планирует: 05.06"), "12 failed: Olga planned dates should use 'планирует'.");
+  assert(text.includes("07.06"), "12 failed: Olga planned Sunday date must be shown.");
 
   console.log(`${LOG_PREFIX} PASS`);
 }

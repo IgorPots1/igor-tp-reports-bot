@@ -28,6 +28,9 @@ export type ScheduleStructuredPayload = {
   available_days?: string[];
   unavailable_days?: string[];
   resolved_available_dates?: string[];
+  planned_training_dates?: string[];
+  unavailable_dates?: string[];
+  planning_status?: "athlete_intends_to_train" | null;
   duration_days?: number | null;
   valid_from?: string | null;
   valid_until?: string | null;
@@ -306,6 +309,10 @@ function formatDateRange(validFrom: string | null, validUntil: string | null): s
   return null;
 }
 
+function formatCompactDateList(dates: string[]): string {
+  return dates.map((date) => `${date.slice(8, 10)}.${date.slice(5, 7)}`).join(", ");
+}
+
 export function getSignalMetadataString(
   metadata: Record<string, unknown>,
   key: string
@@ -520,6 +527,10 @@ export function formatScheduleOperationalSignalText(input: {
   const structured = input.structuredPayload as ScheduleStructuredPayload;
   const availableDays = readStringArray(structured.available_days);
   const resolvedDates = readStringArray(structured.resolved_available_dates);
+  const plannedDates = readStringArray(structured.planned_training_dates);
+  const unavailableDates = readStringArray(structured.unavailable_dates);
+  const planningStatus =
+    structured.planning_status === "athlete_intends_to_train" ? "athlete_intends_to_train" : null;
   const durationDays = readPositiveInt(structured.duration_days) ?? null;
 
   let validFrom = input.validFrom ?? structured.valid_from ?? null;
@@ -544,24 +555,39 @@ export function formatScheduleOperationalSignalText(input: {
   const range = formatDateRange(validFrom, validUntil);
 
   if (isAvailabilityScheduleSignalType(input.signalType)) {
+    const displayParts: string[] = [];
     const dates =
-      resolvedDates.length > 0
-        ? resolvedDates
-        : input.episodeContext?.availableDates.length
-          ? input.episodeContext.availableDates
-          : [];
+      plannedDates.length > 0
+        ? plannedDates
+        : resolvedDates.length > 0
+          ? resolvedDates
+          : input.episodeContext?.availableDates.length
+            ? input.episodeContext.availableDates
+            : [];
+    if (unavailableDates.length > 0) {
+      displayParts.push(`недоступна: ${formatCompactDateList(unavailableDates)}`);
+    }
     if (dates.length > 0) {
-      return `доступна: ${formatDayDateList(dates)}`;
+      const label = plannedDates.length > 0 || planningStatus === "athlete_intends_to_train" ? "планирует" : "доступна";
+      displayParts.push(`${label}: ${formatCompactDateList(dates)}`);
+      return displayParts.join("; ");
     }
     if (availableDays.length > 0) {
       const dayLabels = availableDays
         .map((day) => DAY_SHORT_RU[day] ?? day.slice(0, 2))
         .join(", ");
-      return range ? `доступна (${range}): ${dayLabels}` : `доступна: ${dayLabels}`;
+      displayParts.push(range ? `доступна (${range}): ${dayLabels}` : `доступна: ${dayLabels}`);
+      return displayParts.join("; ");
+    }
+    if (displayParts.length > 0) {
+      return displayParts.join("; ");
     }
   }
 
   if (isUnavailabilityScheduleSignalType(input.signalType)) {
+    if (unavailableDates.length > 0) {
+      return `недоступна: ${formatCompactDateList(unavailableDates)}`;
+    }
     if (range) {
       return `недоступна: ${range}`;
     }

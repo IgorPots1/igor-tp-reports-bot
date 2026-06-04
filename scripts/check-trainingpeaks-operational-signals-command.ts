@@ -140,11 +140,10 @@ function buildSnapshot(scope: TrainingPeaksOperationalSignalsScope) {
         symptoms: ["cough", "voice"],
         training_recommendation: "easy_if_symptom_free",
         latest_summary:
-          "восстанавливается, кашель ещё есть; голос частично вернулся; хочет пробежку завтра вечером, если кашля не будет",
+          "health_context: восстанавливается, кашель ещё есть; голос частично вернулся; хочет пробежку завтра вечером, если кашля не будет; пауза / наблюдать",
       },
       metadata: {
-        follow_up_reason:
-          "восстанавливается, кашель ещё есть; голос частично вернулся; хочет пробежку завтра вечером, если кашля не будет",
+        follow_up_reason: "illness-related pause follow-up",
       },
     }),
     makeSignal({
@@ -167,6 +166,9 @@ function buildSnapshot(scope: TrainingPeaksOperationalSignalsScope) {
       structuredPayload: {
         available_days: ["Tuesday", "Thursday"],
         resolved_available_dates: ["2026-06-02", "2026-06-04"],
+        unavailable_dates: ["2026-06-05", "2026-06-08"],
+        planned_training_dates: ["2026-06-02", "2026-06-04"],
+        planning_status: "athlete_intends_to_train",
       },
     }),
     makeSignal({
@@ -335,18 +337,18 @@ function run(): void {
   const planSection = extractSectionBlock(scheduleScopeText, "📅 Учесть в плане", "🔁 Переносы");
   const scheduleDatesCard = planSection.split("• Schedule Dates Athlete")[1]?.split("\n\n")[0] ?? "";
   assert(
-    scheduleDatesCard.includes("доступна:") &&
+    scheduleDatesCard.includes("планирует:") &&
       scheduleDatesCard.includes("недоступна:") &&
-      scheduleDatesCard.indexOf("доступна:") < scheduleDatesCard.indexOf("недоступна:"),
-    "C failed: schedule scope should show availability before unavailability."
+      scheduleDatesCard.indexOf("недоступна:") < scheduleDatesCard.indexOf("планирует:"),
+    "C failed: schedule scope should show unavailability then planned dates."
   );
   assert(
     planSection.includes("• Schedule Dates Athlete\n"),
     "C failed: schedule card should put athlete name on its own line."
   );
   assert(
-    planSection.includes("  доступна:") && planSection.includes("  недоступна:"),
-    "C failed: schedule availability lines should be indented under the athlete name."
+    planSection.includes("  планирует:") && planSection.includes("  недоступна:"),
+    "C failed: schedule planning lines should be indented under the athlete name."
   );
   assert(
     !scheduleScopeText.includes("недоступность"),
@@ -368,6 +370,9 @@ function run(): void {
     healthText.includes("кашель ещё есть") && healthText.includes("хочет пробежку завтра вечером"),
     "F failed: health scope should show rich coaching summary instead of vague label."
   );
+  assert(!healthText.includes("health_context:"), "F failed: technical health_context prefix should not leak.");
+  assert(!healthText.includes("пауза / наблюдать"), "F failed: pause/observe label should not leak.");
+  assert(!healthText.includes("illness-related pause follow-up"), "F failed: internal follow-up labels should not leak.");
 
   // H: future pending and resolved follow-up are not visible in normal output
   assert(
@@ -377,6 +382,10 @@ function run(): void {
   assert(
     !text.includes("Resolved Athlete"),
     "H failed: resolved follow-up should not appear in normal output."
+  );
+  assert(
+    scheduleScopeText.includes("недоступна: 05.06, 08.06") && scheduleScopeText.includes("планирует: 02.06, 04.06"),
+    "H failed: schedule output should include explicit unavailable and planned date lists."
   );
 
   // G: empty snapshot handled

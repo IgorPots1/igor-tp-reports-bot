@@ -265,6 +265,84 @@ function run(): void {
     assert(!deny.allowed, "13 failed: pause_training duplicate_candidate alone must be rejected.");
   }
 
+  // 14) health_issue_improving + generic cue + reviewed reason -> allowed
+  {
+    const allow = evaluateApplyEligibility({
+      action: "hide",
+      signalType: "health_issue_improving",
+      reason: "false_positive_health_improving",
+      sourceObservationId: "99999999-9999-4999-8999-999999999999",
+      evidenceLower: "сегодня получше или пока непонятно?",
+      risks: ["visible_in_tp_signals", "should_review_manually"],
+    });
+    assert(allow.allowed, "14 failed: reviewed false-positive improving health hide should be allowed.");
+  }
+
+  // 15) health_issue_improving without required reason -> rejected
+  {
+    const deny = evaluateApplyEligibility({
+      action: "hide",
+      signalType: "health_issue_improving",
+      reason: null,
+      sourceObservationId: "b9999999-9999-4999-8999-999999999999",
+      evidenceLower: "сегодня получше или пока непонятно?",
+      risks: ["visible_in_tp_signals", "should_review_manually"],
+    });
+    assert(!deny.allowed, "15 failed: improving health hide without reason must be rejected.");
+  }
+
+  // 16) health_issue_improving with wrong reason -> rejected
+  {
+    const deny = evaluateApplyEligibility({
+      action: "hide",
+      signalType: "health_issue_improving",
+      reason: "false_positive_pause",
+      sourceObservationId: "c9999999-9999-4999-8999-999999999999",
+      evidenceLower: "сегодня получше или пока непонятно?",
+      risks: ["visible_in_tp_signals", "should_review_manually"],
+    });
+    assert(!deny.allowed, "16 failed: improving health hide with wrong reason must be rejected.");
+  }
+
+  // 17) health_issue_improving with health-context cue (самочувствие) -> rejected
+  {
+    const deny = evaluateApplyEligibility({
+      action: "hide",
+      signalType: "health_issue_improving",
+      reason: "false_positive_health_improving",
+      sourceObservationId: "d9999999-9999-4999-8999-999999999999",
+      evidenceLower: "самочувствие лучше",
+      risks: ["visible_in_tp_signals", "should_review_manually"],
+    });
+    assert(!deny.allowed, "17 failed: improving health hide with health context must be rejected.");
+  }
+
+  // 18) health_issue_improving with cough symptom -> rejected
+  {
+    const deny = evaluateApplyEligibility({
+      action: "hide",
+      signalType: "health_issue_improving",
+      reason: "false_positive_health_improving",
+      sourceObservationId: "e9999999-9999-4999-8999-999999999999",
+      evidenceLower: "сегодня получше, но кашель есть",
+      risks: ["visible_in_tp_signals", "should_review_manually"],
+    });
+    assert(!deny.allowed, "18 failed: improving health hide with cough cue must be rejected.");
+  }
+
+  // 19) health_issue_improving with weakness symptom -> rejected
+  {
+    const deny = evaluateApplyEligibility({
+      action: "hide",
+      signalType: "health_issue_improving",
+      reason: "false_positive_health_improving",
+      sourceObservationId: "f9999999-9999-4999-8999-999999999999",
+      evidenceLower: "сегодня получше, но слабость",
+      risks: ["visible_in_tp_signals", "should_review_manually"],
+    });
+    assert(!deny.allowed, "19 failed: improving health hide with weakness cue must be rejected.");
+  }
+
   console.log(`${LOG_PREFIX} PASS`);
 }
 

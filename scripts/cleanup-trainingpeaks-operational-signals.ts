@@ -27,7 +27,6 @@ export const REQUIRED_CONFIRMATION = "CLEANUP OPERATIONAL SIGNALS";
 
 const PROTECTED_HIDE_SIGNAL_TYPES = new Set<TrainingPeaksOperationalSignalType>([
   "health_issue_started",
-  "health_issue_improving",
   "plan_generation_constraint",
   "schedule_unavailability_window",
 ]);
@@ -35,7 +34,7 @@ const PROTECTED_HIDE_SIGNAL_TYPES = new Set<TrainingPeaksOperationalSignalType>(
 type CleanupAction = "expire" | "hide" | "review-only";
 type CleanupRecommendation = "keep" | "manual_review" | "expire_candidate" | "hide_candidate";
 type CleanupMode = "dry-run" | "apply";
-type CleanupReason = "false_positive_pause";
+type CleanupReason = "false_positive_pause" | "false_positive_health_improving";
 type CleanupRisk = AuditRisk | "reviewed_false_positive_pause_candidate";
 
 const FALSE_POSITIVE_PAUSE_ONE_OFF_CUES = [
@@ -62,6 +61,29 @@ const FALSE_POSITIVE_PAUSE_HEALTH_CUES = [
 ];
 
 const FALSE_POSITIVE_PAUSE_MULTI_DAY_CUES = ["пару дней", "несколько дней", "на этой неделе не буду бегать"];
+
+const FALSE_POSITIVE_HEALTH_IMPROVING_GENERIC_CUES = [
+  "получше",
+  "сегодня лучше",
+  "лучше или пока непонятно",
+  "пока непонятно",
+];
+
+const FALSE_POSITIVE_HEALTH_IMPROVING_HEALTH_CONTEXT_CUES = [
+  "самочувствие",
+  "боле",
+  "темпера",
+  "кашель",
+  "горло",
+  "слабость",
+  "недомога",
+  "плохо себя чувств",
+  "голос",
+  "травм",
+  "боль",
+  "после болезни",
+  "выздорав",
+];
 
 type CliOptions = {
   signalIds: string[];
@@ -211,7 +233,7 @@ function parseAction(raw: string): CleanupAction {
 
 function parseReason(raw: string): CleanupReason {
   const normalized = raw.trim().toLowerCase();
-  if (normalized === "false_positive_pause") {
+  if (normalized === "false_positive_pause" || normalized === "false_positive_health_improving") {
     return normalized;
   }
   throw new Error(`${LOG_PREFIX} FAIL: unknown --reason value: ${raw}`);
@@ -321,7 +343,9 @@ export function validateApplyPrerequisites(options: CliOptions): string | null {
     return "--apply does not support --action=review-only";
   }
   if (options.action === "hide" && options.reason !== "false_positive_pause") {
-    return "--apply --action hide requires --reason false_positive_pause";
+    if (options.reason !== "false_positive_health_improving") {
+      return "--apply --action hide requires --reason false_positive_pause or false_positive_health_improving";
+    }
   }
   return null;
 }
@@ -380,10 +404,35 @@ export function evaluateApplyEligibility(input: ApplyEligibilityInput): {
       }
       return { allowed: true, reason: null };
     }
+    if (input.signalType === "health_issue_improving") {
+      if (input.reason !== "false_positive_health_improving") {
+        return {
+          allowed: false,
+          reason: "hide apply for health_issue_improving requires --reason false_positive_health_improving",
+        };
+      }
+      if (!input.sourceObservationId || !input.evidenceLower.trim()) {
+        return {
+          allowed: false,
+          reason: "hide apply for health_issue_improving requires source observation and evidence text",
+        };
+      }
+      const hasGenericCue = FALSE_POSITIVE_HEALTH_IMPROVING_GENERIC_CUES.some((cue) => input.evidenceLower.includes(cue));
+      if (!hasGenericCue) {
+        return { allowed: false, reason: "manual_review: no generic improving cue found in evidence" };
+      }
+      const hasHealthContextCue = FALSE_POSITIVE_HEALTH_IMPROVING_HEALTH_CONTEXT_CUES.some((cue) =>
+        input.evidenceLower.includes(cue)
+      );
+      if (hasHealthContextCue) {
+        return { allowed: false, reason: "manual_review: health context cue found in evidence" };
+      }
+      return { allowed: true, reason: null };
+    }
     if (input.signalType !== "pause_training") {
       return {
         allowed: false,
-        reason: "hide apply is restricted to move_workout_candidate and reviewed false-positive pause_training",
+        reason: "hide apply is restricted to move_workout_candidate, reviewed false-positive pause_training, and reviewed false-positive health_issue_improving",
       };
     }
     if (input.reason !== "false_positive_pause") {

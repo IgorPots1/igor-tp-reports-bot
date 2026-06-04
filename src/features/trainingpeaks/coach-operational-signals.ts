@@ -1117,7 +1117,7 @@ function extractPlanningIntentDates(input: { text: string; observedAt: string })
 } {
   const planned = new Set<string>();
   const unavailable = new Set<string>();
-  const globalTrainingContext = hasAny(input.text, ["бег", "побег", "пробеж", "убежать", "трениров"]);
+  const globalTrainingContext = hasAny(input.text, ["бег", "побег", "побеж", "пробеж", "убежать", "трениров"]);
   const clauses = input.text
     .split(/[.!?;\n]+/u)
     .map((item) => item.trim())
@@ -1150,7 +1150,7 @@ function extractPlanningIntentDates(input: { text: string; observedAt: string })
     if (clauseDates.length === 0) {
       continue;
     }
-    const hasTrainingCue = hasAny(clause, ["бег", "побег", "пробеж", "убежать", "трениров"]);
+    const hasTrainingCue = hasAny(clause, ["бег", "побег", "побеж", "пробеж", "убежать", "трениров"]);
     const hasPlanningCue = hasAny(clause, ["планир", "побегу", "пробегу", "выйду на пробежку", "выйти на пробежку"]);
     const hasUnavailabilityCue = hasAny(clause, [
       "не могу",
