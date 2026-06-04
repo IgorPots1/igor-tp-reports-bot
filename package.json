@@ -113,7 +113,9 @@
     "merge-coach-memory-duplicates": "npx tsx scripts/merge-coach-memory-duplicates.ts",
     "check:move-phrase-coverage": "npx tsx scripts/check-move-phrase-coverage.ts",
     "check-trainingpeaks-reply-draft-communication-profile": "npx tsx scripts/check-trainingpeaks-reply-draft-communication-profile.ts",
-    "check:communication-style": "npx tsx scripts/diagnose-student-communication-style.ts"
+    "check:communication-style": "npx tsx scripts/diagnose-student-communication-style.ts",
+    "seed-workout-template-catalog": "npx tsx scripts/seed-workout-template-catalog.ts",
+    "check:workout-template-catalog": "npx tsx scripts/check-workout-template-catalog-invariants.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.3",
