@@ -35,10 +35,38 @@ const PROTECTED_HIDE_SIGNAL_TYPES = new Set<TrainingPeaksOperationalSignalType>(
 type CleanupAction = "expire" | "hide" | "review-only";
 type CleanupRecommendation = "keep" | "manual_review" | "expire_candidate" | "hide_candidate";
 type CleanupMode = "dry-run" | "apply";
+type CleanupReason = "false_positive_pause";
+type CleanupRisk = AuditRisk | "reviewed_false_positive_pause_candidate";
+
+const FALSE_POSITIVE_PAUSE_ONE_OFF_CUES = [
+  "не побегу",
+  "не смогу побегать",
+  "не получится побегать",
+  "сегодня не могу",
+  "завтра не могу",
+  "в пятницу",
+  "посольств",
+  "поездк",
+  "свадьб",
+  "мероприят",
+];
+
+const FALSE_POSITIVE_PAUSE_HEALTH_CUES = [
+  "темпера",
+  "кашель",
+  "горло",
+  "слабость",
+  "болею",
+  "травм",
+  "боль",
+];
+
+const FALSE_POSITIVE_PAUSE_MULTI_DAY_CUES = ["пару дней", "несколько дней", "на этой неделе не буду бегать"];
 
 type CliOptions = {
   signalIds: string[];
   action: CleanupAction;
+  reason: CleanupReason | null;
   apply: boolean;
   confirm: string | null;
 };
@@ -86,7 +114,8 @@ type SelectedSignalEvaluation = {
   validUntil: string | null;
   sourceObservationId: string | null;
   latestSummary: string | null;
-  risks: AuditRisk[];
+  evidencePreview: string | null;
+  risks: CleanupRisk[];
   recommendation: CleanupRecommendation;
   visibleInTpSignals: boolean;
   plannedMutation: string[];
@@ -97,7 +126,10 @@ type SelectedSignalEvaluation = {
 type ApplyEligibilityInput = {
   action: CleanupAction;
   signalType: TrainingPeaksOperationalSignalType;
-  risks: readonly AuditRisk[];
+  reason: CleanupReason | null;
+  sourceObservationId: string | null;
+  evidenceLower: string;
+  risks: readonly CleanupRisk[];
 };
 
 function loadLocalEnvFiles(): void {
@@ -177,9 +209,18 @@ function parseAction(raw: string): CleanupAction {
   throw new Error(`${LOG_PREFIX} FAIL: unknown --action value: ${raw}`);
 }
 
+function parseReason(raw: string): CleanupReason {
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "false_positive_pause") {
+    return normalized;
+  }
+  throw new Error(`${LOG_PREFIX} FAIL: unknown --reason value: ${raw}`);
+}
+
 export function parseCleanupCliOptions(argv: string[]): CliOptions {
   const signalIds: string[] = [];
   let action: CleanupAction | null = null;
+  let reason: CleanupReason | null = null;
   let apply = false;
   let confirm: string | null = null;
 
@@ -219,6 +260,19 @@ export function parseCleanupCliOptions(argv: string[]): CliOptions {
       index += 1;
       continue;
     }
+    if (arg.startsWith("--reason=")) {
+      reason = parseReason(arg.slice("--reason=".length));
+      continue;
+    }
+    if (arg === "--reason") {
+      const next = argv[index + 1]?.trim();
+      if (!next || next.startsWith("--")) {
+        throw new Error(`${LOG_PREFIX} FAIL: missing value for --reason`);
+      }
+      reason = parseReason(next);
+      index += 1;
+      continue;
+    }
     if (arg.startsWith("--confirm=")) {
       confirm = arg.slice("--confirm=".length);
       continue;
@@ -250,7 +304,7 @@ export function parseCleanupCliOptions(argv: string[]): CliOptions {
   }
 
   const dedupedSignalIds = uniqueStrings(signalIds);
-  return { signalIds: dedupedSignalIds, action, apply, confirm };
+  return { signalIds: dedupedSignalIds, action, reason, apply, confirm };
 }
 
 export function validateApplyPrerequisites(options: CliOptions): string | null {
@@ -266,10 +320,13 @@ export function validateApplyPrerequisites(options: CliOptions): string | null {
   if (options.action === "review-only") {
     return "--apply does not support --action=review-only";
   }
+  if (options.action === "hide" && options.reason !== "false_positive_pause") {
+    return "--apply --action hide requires --reason false_positive_pause";
+  }
   return null;
 }
 
-function computeRecommendation(risks: readonly AuditRisk[]): CleanupRecommendation {
+function computeRecommendation(risks: readonly CleanupRisk[]): CleanupRecommendation {
   if (risks.includes("expired_but_active")) {
     return "expire_candidate";
   }
@@ -282,7 +339,7 @@ function computeRecommendation(risks: readonly AuditRisk[]): CleanupRecommendati
   return "keep";
 }
 
-function shouldMarkManualReview(risks: readonly AuditRisk[]): boolean {
+function shouldMarkManualReview(risks: readonly CleanupRisk[]): boolean {
   if (risks.length === 0) {
     return false;
   }
@@ -317,11 +374,40 @@ export function evaluateApplyEligibility(input: ApplyEligibilityInput): {
         reason: `hide apply is blocked for ${input.signalType}; manual review required`,
       };
     }
-    if (!input.risks.includes("active_move_without_action")) {
-      return { allowed: false, reason: "hide apply requires active_move_without_action risk" };
+    if (input.signalType === "move_workout_candidate") {
+      if (!input.risks.includes("active_move_without_action")) {
+        return { allowed: false, reason: "hide apply requires active_move_without_action risk" };
+      }
+      return { allowed: true, reason: null };
     }
-    if (input.signalType !== "move_workout_candidate") {
-      return { allowed: false, reason: "hide apply is currently restricted to move_workout_candidate" };
+    if (input.signalType !== "pause_training") {
+      return {
+        allowed: false,
+        reason: "hide apply is restricted to move_workout_candidate and reviewed false-positive pause_training",
+      };
+    }
+    if (input.reason !== "false_positive_pause") {
+      return { allowed: false, reason: "hide apply for pause_training requires --reason false_positive_pause" };
+    }
+    if (!input.sourceObservationId || !input.evidenceLower.trim()) {
+      return {
+        allowed: false,
+        reason: "hide apply for pause_training requires source observation and evidence text",
+      };
+    }
+    const hasOneOffCue = FALSE_POSITIVE_PAUSE_ONE_OFF_CUES.some((cue) => input.evidenceLower.includes(cue));
+    if (!hasOneOffCue) {
+      return { allowed: false, reason: "manual_review: no one-off/logistics cue found in pause evidence" };
+    }
+    const hasHealthCue = FALSE_POSITIVE_PAUSE_HEALTH_CUES.some((cue) => input.evidenceLower.includes(cue));
+    if (hasHealthCue) {
+      return { allowed: false, reason: "manual_review: health cue found in pause evidence" };
+    }
+    const hasMultiDayCue = FALSE_POSITIVE_PAUSE_MULTI_DAY_CUES.some((cue) =>
+      input.evidenceLower.includes(cue)
+    );
+    if (hasMultiDayCue) {
+      return { allowed: false, reason: "manual_review: multi-day pause cue found in pause evidence" };
     }
     return { allowed: true, reason: null };
   }
@@ -497,12 +583,15 @@ function normalizeMetadata(value: unknown): Record<string, unknown> {
 function buildCleanupMetadata(input: {
   existing: unknown;
   action: CleanupAction;
+  reason: CleanupReason | null;
   mode: CleanupMode;
-  risks: readonly AuditRisk[];
+  risks: readonly CleanupRisk[];
 }): Record<string, unknown> {
   return {
     ...normalizeMetadata(input.existing),
     cleanup_operational_signal_action: input.action,
+    cleanup_operational_signal_reason: input.reason,
+    cleanup_operational_signal_at: new Date().toISOString(),
     cleanup_operational_signal_mode: input.mode,
     cleanup_operational_signal_applied_at: new Date().toISOString(),
     cleanup_operational_signal_risks: [...input.risks],
@@ -511,31 +600,42 @@ function buildCleanupMetadata(input: {
 
 function buildPlannedMutation(input: {
   action: CleanupAction;
+  reason: CleanupReason | null;
   signal: SignalRow;
   asOfDate: string;
-  risks: readonly AuditRisk[];
+  risks: readonly CleanupRisk[];
 }): string[] {
   if (input.action === "review-only") {
     return ["no mutation (review-only)"];
   }
 
   if (input.action === "hide") {
-    return [
+    const lines = [
       `update status: ${input.signal.status} -> dismissed`,
       "preserve row for audit history",
       `set metadata.cleanup_operational_signal_action="${input.action}"`,
+      `set metadata.cleanup_operational_signal_at="<now>"`,
     ];
+    if (input.reason) {
+      lines.push(`set metadata.cleanup_operational_signal_reason="${input.reason}"`);
+    }
+    return lines;
   }
 
   const nextValidUntil =
     !input.signal.valid_until || input.signal.valid_until > input.asOfDate
       ? input.asOfDate
       : input.signal.valid_until;
-  return [
+  const lines = [
     `update status: ${input.signal.status} -> expired`,
     `update valid_until: ${input.signal.valid_until ?? "null"} -> ${nextValidUntil}`,
     `set metadata.cleanup_operational_signal_action="${input.action}"`,
+    `set metadata.cleanup_operational_signal_at="<now>"`,
   ];
+  if (input.reason) {
+    lines.push(`set metadata.cleanup_operational_signal_reason="${input.reason}"`);
+  }
+  return lines;
 }
 
 function renderSignalDetail(value: SelectedSignalEvaluation): void {
@@ -545,6 +645,7 @@ function renderSignalDetail(value: SelectedSignalEvaluation): void {
   console.log(`  valid_from: ${value.validFrom ?? "null"}`);
   console.log(`  valid_until: ${value.validUntil ?? "null"}`);
   console.log(`  source_observation_id: ${value.sourceObservationId ?? "null"}`);
+  console.log(`  evidence: ${value.evidencePreview ?? "null"}`);
   console.log(`  latest_summary: ${value.latestSummary ?? "null"}`);
   console.log(`  current visible_in_tp_signals: ${value.visibleInTpSignals ? "yes" : "no"}`);
   console.log(`  risks: ${value.risks.join(", ") || "none"}`);
@@ -564,6 +665,29 @@ function parseSignalRows(rows: readonly SignalRow[]): Map<string, SignalRow> {
     map.set(row.id, row);
   }
   return map;
+}
+
+function isReviewedFalsePositivePauseCandidate(input: {
+  signalType: TrainingPeaksOperationalSignalType;
+  sourceObservationId: string | null;
+  evidenceLower: string;
+}): boolean {
+  if (input.signalType !== "pause_training") {
+    return false;
+  }
+  if (!input.sourceObservationId || !input.evidenceLower.trim()) {
+    return false;
+  }
+  const hasOneOffCue = FALSE_POSITIVE_PAUSE_ONE_OFF_CUES.some((cue) => input.evidenceLower.includes(cue));
+  if (!hasOneOffCue) {
+    return false;
+  }
+  const hasHealthCue = FALSE_POSITIVE_PAUSE_HEALTH_CUES.some((cue) => input.evidenceLower.includes(cue));
+  if (hasHealthCue) {
+    return false;
+  }
+  const hasMultiDayCue = FALSE_POSITIVE_PAUSE_MULTI_DAY_CUES.some((cue) => input.evidenceLower.includes(cue));
+  return !hasMultiDayCue;
 }
 
 function ensureAllSelectedSignalsFound(selectedIds: readonly string[], rows: readonly SignalRow[]): void {
@@ -626,7 +750,8 @@ async function evaluateSelectedSignals(input: {
       ? observationPreviewById.get(row.source_observation_id) ?? null
       : null;
     const evidenceJoined = compact([latestSummary, observationPreview].filter(Boolean).join(" | "));
-    const risks: AuditRisk[] = [];
+    const evidenceLower = asLower(evidenceJoined);
+    const risks: CleanupRisk[] = [];
 
     if (row.valid_until && row.valid_until < input.asOfDate && row.status === "active") {
       risks.push("expired_but_active");
@@ -640,8 +765,17 @@ async function evaluateSelectedSignals(input: {
     if (activeSignalDuplicateSet.has(row.id)) {
       risks.push("duplicate_candidate");
     }
-    if (row.signal_type === "pause_training" && isPossibleFalsePause(asLower(evidenceJoined))) {
+    if (row.signal_type === "pause_training" && isPossibleFalsePause(evidenceLower)) {
       risks.push("possible_false_pause");
+    }
+    if (
+      isReviewedFalsePositivePauseCandidate({
+        signalType: row.signal_type,
+        sourceObservationId: row.source_observation_id,
+        evidenceLower,
+      })
+    ) {
+      risks.push("reviewed_false_positive_pause_candidate");
     }
     if (row.signal_type === "move_workout_candidate") {
       const hasMatch = hasMatchingActiveMoveAction(
@@ -669,6 +803,9 @@ async function evaluateSelectedSignals(input: {
     const applyEligibility = evaluateApplyEligibility({
       action: input.options.action,
       signalType: row.signal_type,
+      reason: input.options.reason,
+      sourceObservationId: row.source_observation_id,
+      evidenceLower,
       risks: dedupedRisks,
     });
 
@@ -681,12 +818,14 @@ async function evaluateSelectedSignals(input: {
       validFrom: row.valid_from,
       validUntil: row.valid_until,
       sourceObservationId: row.source_observation_id,
+      evidencePreview: evidenceJoined || null,
       latestSummary,
       risks: dedupedRisks,
       recommendation,
       visibleInTpSignals: visibleSignalIds.has(row.id),
       plannedMutation: buildPlannedMutation({
         action: input.options.action,
+        reason: input.options.reason,
         signal: row,
         asOfDate: input.asOfDate,
         risks: dedupedRisks,
@@ -697,11 +836,17 @@ async function evaluateSelectedSignals(input: {
   });
 }
 
-function printHeader(input: { mode: CleanupMode; action: CleanupAction; selectedCount: number }): void {
+function printHeader(input: {
+  mode: CleanupMode;
+  action: CleanupAction;
+  reason: CleanupReason | null;
+  selectedCount: number;
+}): void {
   console.log("Operational Signals cleanup dry-run");
   console.log("");
   console.log(`Mode: ${input.mode}`);
   console.log(`Action: ${input.action}`);
+  console.log(`Reason: ${input.reason ?? "none"}`);
   console.log(`Selected signals: ${input.selectedCount}`);
   console.log("");
 }
@@ -732,6 +877,7 @@ async function applyMutation(input: {
     const metadata = buildCleanupMetadata({
       existing: row.metadata,
       action: input.options.action,
+      reason: input.options.reason,
       mode: "apply",
       risks: selectedEval.risks,
     });
@@ -796,7 +942,12 @@ async function run(): Promise<void> {
     asOfDate,
   });
 
-  printHeader({ mode, action: options.action, selectedCount: selectedEvaluations.length });
+  printHeader({
+    mode,
+    action: options.action,
+    reason: options.reason,
+    selectedCount: selectedEvaluations.length,
+  });
   for (const selected of selectedEvaluations) {
     renderSignalDetail(selected);
   }

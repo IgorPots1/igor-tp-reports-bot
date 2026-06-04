@@ -122,6 +122,7 @@ export type AuditRisk =
 type AuditRecommendation = "keep" | "manual_review" | "expire_candidate" | "hide_candidate";
 
 type AuditItem = {
+  signalId: string;
   studentName: string;
   signalType: string;
   risks: AuditRisk[];
@@ -633,6 +634,7 @@ function printTextReport(output: AuditJsonOutput, includeHidden: boolean): void 
   }
   for (const row of top) {
     console.log(`• ${row.studentName}`);
+    console.log(`  signal_id: ${row.signalId}`);
     console.log(`  signal_type: ${row.signalType}`);
     console.log(`  risks: ${row.risks.join(", ")}`);
     console.log(`  window: ${formatWindow(row.validFrom ?? null, row.validUntil ?? null)}`);
@@ -757,6 +759,7 @@ async function run(): Promise<void> {
 
     const studentName = studentNameById.get(signal.studentId) ?? `Unknown (${signal.studentId.slice(0, 8)})`;
     items.push({
+      signalId: signal.id,
       studentName,
       signalType: signal.signalType,
       risks: dedupedRisks,

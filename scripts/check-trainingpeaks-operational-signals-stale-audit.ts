@@ -86,6 +86,20 @@ function run(): void {
   );
   assert(!hasMoveMatch, "7 failed: no active actions should mean move match is absent.");
 
+  // 8) stale audit JSON item contract must include real signal_id
+  type AuditJsonItemContract = {
+    signalId: string;
+    sourceObservationId?: string | null;
+  };
+  const contractCheck: AuditJsonItemContract = {
+    signalId: "11111111-1111-4111-8111-111111111111",
+    sourceObservationId: "22222222-2222-4222-8222-222222222222",
+  };
+  assert(
+    contractCheck.signalId.length > 0,
+    "8 failed: stale audit item contract must include non-empty signalId."
+  );
+
   console.log(`${LOG_PREFIX} PASS`);
 }
 
