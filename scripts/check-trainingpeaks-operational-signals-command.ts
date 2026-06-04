@@ -147,6 +147,19 @@ function buildSnapshot(scope: TrainingPeaksOperationalSignalsScope) {
       },
     }),
     makeSignal({
+      signalId: "sig-health-ambiguous",
+      studentId: "s-h2",
+      signalType: "health_issue_started",
+      structuredPayload: {
+        latest_summary: "health_context: сил нет, голова болит; пауза / наблюдать",
+        health_state: "sick",
+        symptoms: ["fatigue", "headache"],
+      },
+      metadata: {
+        follow_up_reason: "illness onset follow-up",
+      },
+    }),
+    makeSignal({
       signalId: "sig-schedule",
       studentId: "s-sch",
       signalType: "schedule_unavailability_window",
@@ -247,6 +260,7 @@ function buildSnapshot(scope: TrainingPeaksOperationalSignalsScope) {
     ["s-fut", "Future Athlete"],
     ["s-res", "Resolved Athlete"],
     ["s-h1", "Health Athlete"],
+    ["s-h2", "Ambiguous Health Athlete"],
     ["s-sch", "Schedule Athlete"],
     ["s-sch-2", "Schedule Dates Athlete"],
     ["s-mov", "Move Athlete"],
@@ -370,6 +384,14 @@ function run(): void {
     healthText.includes("кашель ещё есть") && healthText.includes("хочет пробежку завтра вечером"),
     "F failed: health scope should show rich coaching summary instead of vague label."
   );
+  const ambiguousVisible = text.includes("Ambiguous Health Athlete");
+  if (ambiguousVisible) {
+    assert(
+      text.includes("сил нет") || text.includes("голова болит") || text.includes("плохое самочувствие"),
+      "F failed: ambiguous health case should show cautious wording."
+    );
+    assert(!text.includes("Ambiguous Health Athlete\n  болеет"), "F failed: ambiguous symptom-only case must not say 'болеет'.");
+  }
   assert(!healthText.includes("health_context:"), "F failed: technical health_context prefix should not leak.");
   assert(!healthText.includes("пауза / наблюдать"), "F failed: pause/observe label should not leak.");
   assert(!healthText.includes("illness-related pause follow-up"), "F failed: internal follow-up labels should not leak.");

@@ -137,8 +137,9 @@ function run(): void {
         studentId: "anna",
         signalType: "health_issue_started",
         structuredPayload: {
-          latest_summary: "health_context: болеет, температура с понедельника; пауза / наблюдать",
+          latest_summary: "health_context: сил нет, голова болит; пауза / наблюдать",
           health_state: "sick",
+          symptoms: ["fatigue", "headache"],
         },
         metadata: {
           follow_up_status: "pending",
@@ -263,10 +264,16 @@ function run(): void {
     text.includes("Lyubov Selezneva") && text.includes("вчера была температура, сегодня лучше, но слабость"),
     "5 failed: Lyubov active illness context should stay visible in normal /tp_signals."
   );
+  assert(
+    text.includes("Anna Lobodina") &&
+      (text.includes("сил нет") || text.includes("голова болит") || text.includes("плохое самочувствие")),
+    "5 failed: ambiguous health wording should stay cautious and specific."
+  );
   assert(!text.includes("health_context:"), "5 failed: health_context prefix must be removed from normal output.");
   assert(!text.includes("пауза / наблюдать"), "5 failed: pause/observe label must be hidden in normal output.");
   assert(!text.includes("illness onset follow-up"), "5 failed: internal follow-up labels must be hidden.");
   assert(!text.includes("illness-related pause follow-up"), "5 failed: internal follow-up labels must be hidden.");
+  assert(!text.includes("Anna Lobodina\n  болеет"), "5 failed: ambiguous symptom-only case must not overclaim 'болеет'.");
   assert(text.includes("📅 Учесть в плане"), "5 failed: plan section must be present.");
   // Moves section remains part of normal layout, but appears only with active move actions.
 

@@ -353,13 +353,12 @@ function classifyHealthIssueKind(text: string): string | null {
       "осип голос",
       "голос пропал",
       "голос вернул",
-      "слабост",
-      "отврат",
-      "недомога",
-      "плохо себя чувств",
     ])
   ) {
     return "illness";
+  }
+  if (hasAny(text, ["голова болит", "голов болит", "головная боль"])) {
+    return null;
   }
   if (text.includes("бол")) {
     return "pain_unspecified";
@@ -375,9 +374,35 @@ const HEALTH_SYMPTOM_PATTERNS: Array<{ symptom: string; patterns: string[] }> = 
   { symptom: "runny_nose", patterns: ["насморк", "сопли"] },
   { symptom: "cold", patterns: ["простуд"] },
   { symptom: "orvi", patterns: ["орви"] },
+  { symptom: "fatigue", patterns: ["сил нет", "сил вообще нет", "нет сил", "вообще нет сил", "без сил"] },
+  { symptom: "headache", patterns: ["голова болит", "голов болит", "головная боль"] },
   { symptom: "weakness", patterns: ["слабост"] },
   { symptom: "malaise", patterns: ["отврат", "недомога", "плохо себя чувств"] },
 ];
+
+function hasExplicitIllnessCue(text: string): boolean {
+  return hasAny(text, [
+    "болею",
+    "болеет",
+    "болел",
+    "болела",
+    "болели",
+    "забол",
+    "прибол",
+    "температур",
+    "темпера подним",
+    "кашель",
+    "горло",
+    "насморк",
+    "сопли",
+    "простуд",
+    "орви",
+    "голос осип",
+    "голос сел",
+    "осип голос",
+    "голос пропал",
+  ]);
+}
 
 function dedupeStrings(values: string[]): string[] {
   return [...new Set(values)];
@@ -531,6 +556,10 @@ function symptomLabel(symptom: string): string {
       return "простуда";
     case "orvi":
       return "ОРВИ";
+    case "fatigue":
+      return "сил нет";
+    case "headache":
+      return "голова болит";
     case "weakness":
       return "слабость";
     case "malaise":
@@ -568,18 +597,21 @@ function buildHealthSummary(input: {
   const hasConditionalRunPlan =
     input.plannedAttemptDate !== null &&
     hasAny(input.text, ["пробеж", "выйти на пробежку", "выйду на пробежку", "побегу"]);
+  const explicitIllness = hasExplicitIllnessCue(input.text);
 
   if (input.signalType === "health_issue_started") {
-    if (input.text.includes("температур") && input.text.includes("с понедельника")) {
+    if (explicitIllness && input.text.includes("температур") && input.text.includes("с понедельника")) {
       lines.push("болеет, температура с понедельника");
-    } else if (input.text.includes("температур")) {
+    } else if (explicitIllness && input.text.includes("температур")) {
       lines.push("болеет, температура");
-    } else if (input.text.includes("кашель") && input.text.includes("горло")) {
+    } else if (explicitIllness && input.text.includes("кашель") && input.text.includes("горло")) {
       lines.push("болеет, кашель и горло");
-    } else if (symptomSummary) {
+    } else if (explicitIllness && symptomSummary) {
       lines.push(`болеет, ${symptomSummary}`);
+    } else if (symptomSummary) {
+      lines.push(symptomSummary);
     } else {
-      lines.push("болеет");
+      lines.push(explicitIllness ? "болеет" : "плохое самочувствие");
     }
     if (hasRunPauseConstraint && pauseDays) {
       lines.push(`не бегает ${pauseDays} дней`);

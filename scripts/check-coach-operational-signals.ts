@@ -1023,8 +1023,89 @@ async function run(): Promise<void> {
         should_create_memory: true,
         should_create_case: false,
         should_create_trainingpeaks_action: false,
-        health_issue_kind: "illness",
+        health_issue_kind: null,
         symptoms_includes: ["weakness", "malaise"],
+      },
+    },
+    {
+      name: "health-ambiguous-malaise-headache-no-overclaim",
+      observation: mkObs("сил вообще нет и голова болит"),
+      expected: {
+        primary_bucket: "temporary_memory",
+        signal_type: "health_issue_started",
+        should_create_memory: true,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: null,
+        symptoms_includes: ["fatigue", "headache"],
+        latest_summary_includes: ["сил нет", "голова болит"],
+      },
+    },
+    {
+      name: "health-ambiguous-short-fatigue-headache",
+      observation: mkObs("сил нет и голова болит"),
+      expected: {
+        primary_bucket: "temporary_memory",
+        signal_type: "health_issue_started",
+        should_create_memory: true,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: null,
+        symptoms_includes: ["fatigue", "headache"],
+        latest_summary_includes: ["сил нет", "голова болит"],
+      },
+    },
+    {
+      name: "health-ambiguous-feel-bad-not-illness",
+      observation: mkObs("плохо себя чувствую"),
+      expected: {
+        primary_bucket: "temporary_memory",
+        signal_type: "health_issue_started",
+        should_create_memory: true,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: null,
+        symptoms_includes: ["malaise"],
+        latest_summary_includes: ["плохое самочувствие"],
+      },
+    },
+    {
+      name: "health-ambiguous-elena-text-priority-still-health-secondary",
+      observation: mkObs("Игорь, привет! Я сегодня не смогу бегать, сил вообще нет и голова болит, можно перенести, пожалуйста"),
+      expected: {
+        primary_bucket: "coach_case",
+        signal_type: "move_workout_candidate",
+        should_create_memory: false,
+        should_create_case: true,
+        should_create_trainingpeaks_action: true,
+      },
+    },
+    {
+      name: "health-explicit-illness-zabolela-temperature",
+      observation: mkObs("заболела, температура"),
+      expected: {
+        primary_bucket: "temporary_memory",
+        signal_type: "health_issue_started",
+        should_create_memory: true,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: "illness",
+        symptoms_includes: ["fever"],
+        latest_summary_includes: ["болеет", "температура"],
+      },
+    },
+    {
+      name: "health-explicit-illness-cough-throat",
+      observation: mkObs("кашель и горло болит"),
+      expected: {
+        primary_bucket: "temporary_memory",
+        signal_type: "health_issue_started",
+        should_create_memory: true,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: "illness",
+        symptoms_includes: ["cough", "throat"],
+        latest_summary_includes: ["болеет", "кашель", "горло"],
       },
     },
     {
@@ -1060,7 +1141,7 @@ async function run(): Promise<void> {
         should_create_memory: true,
         should_create_case: false,
         should_create_trainingpeaks_action: false,
-        health_issue_kind: "illness",
+        health_issue_kind: null,
       },
     },
     {
@@ -1209,9 +1290,27 @@ async function run(): Promise<void> {
       },
     },
   ];
+  const healthEpisodeCases: MultiCaseDef[] = [
+    {
+      name: "episode-elena-like-health-plus-move",
+      observation: mkObs("Игорь, привет! Я сегодня не смогу бегать, сил вообще нет и голова болит, можно перенести, пожалуйста"),
+      expected: {
+        signal_types: ["move_workout_candidate", "health_issue_started"],
+      },
+    },
+  ];
 
   let failed = 0;
   for (const caseDef of episodeCases) {
+    const failures = assertMultiCase(caseDef);
+    if (failures.length > 0) {
+      failed += 1;
+      console.log(`${LOG_PREFIX} FAIL ${caseDef.name}: ${failures.join("; ")}`);
+    } else {
+      console.log(`${LOG_PREFIX} OK ${caseDef.name}`);
+    }
+  }
+  for (const caseDef of healthEpisodeCases) {
     const failures = assertMultiCase(caseDef);
     if (failures.length > 0) {
       failed += 1;
