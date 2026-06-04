@@ -86,6 +86,8 @@
     "check-trainingpeaks-operational-signals-stale-audit": "npx tsx scripts/check-trainingpeaks-operational-signals-stale-audit.ts",
     "cleanup-trainingpeaks-operational-signals": "npx tsx scripts/cleanup-trainingpeaks-operational-signals.ts",
     "check-trainingpeaks-operational-signals-cleanup": "npx tsx scripts/check-trainingpeaks-operational-signals-cleanup.ts",
+    "recompute-trainingpeaks-operational-signal": "npx tsx scripts/recompute-trainingpeaks-operational-signal.ts",
+    "check-trainingpeaks-operational-signal-recompute": "npx tsx scripts/check-trainingpeaks-operational-signal-recompute.ts",
     "check-billing-payer-identities": "npx tsx scripts/check-billing-payer-identities.ts",
     "check-billing-auto-match-payments": "npx tsx scripts/check-billing-auto-match-payments.ts",
     "check-billing-email-import-cli": "npx tsx scripts/check-billing-email-import-cli.ts",

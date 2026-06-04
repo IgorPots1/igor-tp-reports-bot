@@ -150,6 +150,7 @@ type ApplyEligibilityInput = {
   signalType: TrainingPeaksOperationalSignalType;
   reason: CleanupReason | null;
   sourceObservationId: string | null;
+  sourceObservationTextLower: string;
   evidenceLower: string;
   risks: readonly CleanupRisk[];
 };
@@ -411,21 +412,24 @@ export function evaluateApplyEligibility(input: ApplyEligibilityInput): {
           reason: "hide apply for health_issue_improving requires --reason false_positive_health_improving",
         };
       }
-      if (!input.sourceObservationId || !input.evidenceLower.trim()) {
+      if (!input.sourceObservationId || !input.sourceObservationTextLower.trim()) {
         return {
           allowed: false,
-          reason: "hide apply for health_issue_improving requires source observation and evidence text",
+          reason:
+            "manual_review: hide apply for health_issue_improving requires source observation with raw text",
         };
       }
-      const hasGenericCue = FALSE_POSITIVE_HEALTH_IMPROVING_GENERIC_CUES.some((cue) => input.evidenceLower.includes(cue));
+      const hasGenericCue = FALSE_POSITIVE_HEALTH_IMPROVING_GENERIC_CUES.some((cue) =>
+        input.sourceObservationTextLower.includes(cue)
+      );
       if (!hasGenericCue) {
-        return { allowed: false, reason: "manual_review: no generic improving cue found in evidence" };
+        return { allowed: false, reason: "manual_review: no generic improving cue found in raw source text" };
       }
       const hasHealthContextCue = FALSE_POSITIVE_HEALTH_IMPROVING_HEALTH_CONTEXT_CUES.some((cue) =>
-        input.evidenceLower.includes(cue)
+        input.sourceObservationTextLower.includes(cue)
       );
       if (hasHealthContextCue) {
-        return { allowed: false, reason: "manual_review: health context cue found in evidence" };
+        return { allowed: false, reason: "manual_review: health context cue found in raw source text" };
       }
       return { allowed: true, reason: null };
     }
@@ -800,6 +804,7 @@ async function evaluateSelectedSignals(input: {
       : null;
     const evidenceJoined = compact([latestSummary, observationPreview].filter(Boolean).join(" | "));
     const evidenceLower = asLower(evidenceJoined);
+    const sourceObservationTextLower = asLower(observationPreview);
     const risks: CleanupRisk[] = [];
 
     if (row.valid_until && row.valid_until < input.asOfDate && row.status === "active") {
@@ -854,6 +859,7 @@ async function evaluateSelectedSignals(input: {
       signalType: row.signal_type,
       reason: input.options.reason,
       sourceObservationId: row.source_observation_id,
+      sourceObservationTextLower,
       evidenceLower,
       risks: dedupedRisks,
     });

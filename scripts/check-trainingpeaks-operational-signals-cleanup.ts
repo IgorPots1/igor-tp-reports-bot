@@ -50,6 +50,7 @@ function run(): void {
       signalType: "pause_training",
       reason: null,
       sourceObservationId: null,
+      sourceObservationTextLower: "",
       evidenceLower: "",
       risks: ["expired_but_active"],
     });
@@ -60,6 +61,7 @@ function run(): void {
       signalType: "pause_training",
       reason: null,
       sourceObservationId: null,
+      sourceObservationTextLower: "",
       evidenceLower: "",
       risks: ["visible_in_tp_signals"],
     });
@@ -73,6 +75,7 @@ function run(): void {
       signalType: "move_workout_candidate",
       reason: null,
       sourceObservationId: null,
+      sourceObservationTextLower: "",
       evidenceLower: "",
       risks: ["active_move_without_action"],
     });
@@ -83,6 +86,7 @@ function run(): void {
       signalType: "move_workout_candidate",
       reason: null,
       sourceObservationId: null,
+      sourceObservationTextLower: "",
       evidenceLower: "",
       risks: ["expired_but_active"],
     });
@@ -96,6 +100,7 @@ function run(): void {
       signalType: "pause_training",
       reason: null,
       sourceObservationId: null,
+      sourceObservationTextLower: "",
       evidenceLower: "",
       risks: ["duplicate_candidate"],
     });
@@ -104,6 +109,7 @@ function run(): void {
       signalType: "move_workout_candidate",
       reason: null,
       sourceObservationId: null,
+      sourceObservationTextLower: "",
       evidenceLower: "",
       risks: ["duplicate_candidate"],
     });
@@ -118,6 +124,7 @@ function run(): void {
       signalType,
       reason: null,
       sourceObservationId: null,
+      sourceObservationTextLower: "",
       evidenceLower: "",
       risks: ["missing_valid_until"],
     });
@@ -126,6 +133,7 @@ function run(): void {
       signalType,
       reason: null,
       sourceObservationId: null,
+      sourceObservationTextLower: "",
       evidenceLower: "",
       risks: ["missing_valid_until"],
     });
@@ -189,6 +197,7 @@ function run(): void {
       signalType: "pause_training",
       reason: "false_positive_pause",
       sourceObservationId: "44444444-4444-4444-8444-444444444444",
+      sourceObservationTextLower: "я в пятницу не побегу, у нас мероприятие в посольстве",
       evidenceLower: "я в пятницу не побегу, у нас мероприятие в посольстве",
       risks: ["visible_in_tp_signals", "reviewed_false_positive_pause_candidate"],
     });
@@ -202,6 +211,7 @@ function run(): void {
       signalType: "pause_training",
       reason: null,
       sourceObservationId: "55555555-5555-4555-8555-555555555555",
+      sourceObservationTextLower: "завтра не могу, в пятницу не побегу",
       evidenceLower: "завтра не могу, в пятницу не побегу",
       risks: ["visible_in_tp_signals"],
     });
@@ -233,6 +243,7 @@ function run(): void {
       signalType: "pause_training",
       reason: "false_positive_pause",
       sourceObservationId: "66666666-6666-4666-8666-666666666666",
+      sourceObservationTextLower: "в пятницу не побегу, температура и кашель",
       evidenceLower: "в пятницу не побегу, температура и кашель",
       risks: ["visible_in_tp_signals"],
     });
@@ -246,6 +257,7 @@ function run(): void {
       signalType: "pause_training",
       reason: "false_positive_pause",
       sourceObservationId: "77777777-7777-4777-8777-777777777777",
+      sourceObservationTextLower: "на этой неделе не буду бегать, в пятницу не побегу",
       evidenceLower: "на этой неделе не буду бегать, в пятницу не побегу",
       risks: ["visible_in_tp_signals"],
     });
@@ -259,20 +271,23 @@ function run(): void {
       signalType: "pause_training",
       reason: "false_positive_pause",
       sourceObservationId: "88888888-8888-4888-8888-888888888888",
+      sourceObservationTextLower: "дубликат",
       evidenceLower: "дубликат",
       risks: ["duplicate_candidate"],
     });
     assert(!deny.allowed, "13 failed: pause_training duplicate_candidate alone must be rejected.");
   }
 
-  // 14) health_issue_improving + generic cue + reviewed reason -> allowed
+  // 14) health_issue_improving + generic raw source + reviewed reason -> allowed
+  // even when combined evidence includes generated "самочувствие улучшается"
   {
     const allow = evaluateApplyEligibility({
       action: "hide",
       signalType: "health_issue_improving",
       reason: "false_positive_health_improving",
       sourceObservationId: "99999999-9999-4999-8999-999999999999",
-      evidenceLower: "сегодня получше или пока непонятно?",
+      sourceObservationTextLower: "сегодня получше или пока непонятно?",
+      evidenceLower: "самочувствие улучшается | сегодня получше или пока непонятно?",
       risks: ["visible_in_tp_signals", "should_review_manually"],
     });
     assert(allow.allowed, "14 failed: reviewed false-positive improving health hide should be allowed.");
@@ -285,6 +300,7 @@ function run(): void {
       signalType: "health_issue_improving",
       reason: null,
       sourceObservationId: "b9999999-9999-4999-8999-999999999999",
+      sourceObservationTextLower: "сегодня получше или пока непонятно?",
       evidenceLower: "сегодня получше или пока непонятно?",
       risks: ["visible_in_tp_signals", "should_review_manually"],
     });
@@ -298,6 +314,7 @@ function run(): void {
       signalType: "health_issue_improving",
       reason: "false_positive_pause",
       sourceObservationId: "c9999999-9999-4999-8999-999999999999",
+      sourceObservationTextLower: "сегодня получше или пока непонятно?",
       evidenceLower: "сегодня получше или пока непонятно?",
       risks: ["visible_in_tp_signals", "should_review_manually"],
     });
@@ -311,6 +328,7 @@ function run(): void {
       signalType: "health_issue_improving",
       reason: "false_positive_health_improving",
       sourceObservationId: "d9999999-9999-4999-8999-999999999999",
+      sourceObservationTextLower: "самочувствие лучше",
       evidenceLower: "самочувствие лучше",
       risks: ["visible_in_tp_signals", "should_review_manually"],
     });
@@ -324,6 +342,7 @@ function run(): void {
       signalType: "health_issue_improving",
       reason: "false_positive_health_improving",
       sourceObservationId: "e9999999-9999-4999-8999-999999999999",
+      sourceObservationTextLower: "сегодня получше, но кашель есть",
       evidenceLower: "сегодня получше, но кашель есть",
       risks: ["visible_in_tp_signals", "should_review_manually"],
     });
@@ -337,10 +356,25 @@ function run(): void {
       signalType: "health_issue_improving",
       reason: "false_positive_health_improving",
       sourceObservationId: "f9999999-9999-4999-8999-999999999999",
+      sourceObservationTextLower: "сегодня получше, но слабость",
       evidenceLower: "сегодня получше, но слабость",
       risks: ["visible_in_tp_signals", "should_review_manually"],
     });
     assert(!deny.allowed, "19 failed: improving health hide with weakness cue must be rejected.");
+  }
+
+  // 20) health_issue_improving with missing raw source text -> rejected
+  {
+    const deny = evaluateApplyEligibility({
+      action: "hide",
+      signalType: "health_issue_improving",
+      reason: "false_positive_health_improving",
+      sourceObservationId: "f1999999-9999-4999-8999-999999999999",
+      sourceObservationTextLower: "",
+      evidenceLower: "самочувствие улучшается | сегодня получше или пока непонятно?",
+      risks: ["visible_in_tp_signals", "should_review_manually"],
+    });
+    assert(!deny.allowed, "20 failed: improving health hide without raw source text must be rejected.");
   }
 
   console.log(`${LOG_PREFIX} PASS`);
