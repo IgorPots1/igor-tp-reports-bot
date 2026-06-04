@@ -31,6 +31,10 @@ export type AthleteTrainingBaselineRow = {
   updated_at: string;
 };
 
+export type AthleteTrainingBaselineWithStudentNameRow = AthleteTrainingBaselineRow & {
+  student_name: string | null;
+};
+
 const BASELINE_SELECT =
   "id, student_id, trainingpeaks_athlete_id, source_report_path, source_from, source_to, generated_at, is_current, frequency_cap, weekly_minutes_cap, long_run_cap_min, quality_count_cap, interval_like_count, confidence, needs_review, context_flags, family_label_advisory, raw_stats_jsonb, is_manually_overridden, override_frequency_cap, override_weekly_minutes_cap, override_long_run_cap_min, override_quality_count_cap, override_reason, override_by, override_at, created_at, updated_at";
 
@@ -79,4 +83,69 @@ export async function listAthletesNeedingBaselineReview(): Promise<AthleteTraini
   }
 
   return (data ?? []) as AthleteTrainingBaselineRow[];
+}
+
+export async function listCurrentAthleteTrainingBaselinesWithStudentNames(): Promise<
+  AthleteTrainingBaselineWithStudentNameRow[]
+> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("athlete_training_baselines")
+    .select(`${BASELINE_SELECT}, trainingpeaks_students(student_name)`)
+    .eq("is_current", true)
+    .order("student_id", { ascending: true });
+
+  if (error) {
+    throw new Error(`Failed to list current athlete training baselines with student names: ${error.message}`);
+  }
+
+  return (
+    (data as Array<
+      AthleteTrainingBaselineRow & {
+        trainingpeaks_students?: { student_name?: string | null } | Array<{ student_name?: string | null }> | null;
+      }
+    > | null) ?? []
+  ).map((row) => {
+    const joinedStudent = Array.isArray(row.trainingpeaks_students)
+      ? row.trainingpeaks_students[0]
+      : row.trainingpeaks_students;
+
+    return {
+      ...row,
+      student_name: joinedStudent?.student_name?.trim() || null,
+    };
+  });
+}
+
+export async function listAthletesNeedingBaselineReviewWithStudentNames(): Promise<
+  AthleteTrainingBaselineWithStudentNameRow[]
+> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("athlete_training_baselines")
+    .select(`${BASELINE_SELECT}, trainingpeaks_students(student_name)`)
+    .eq("is_current", true)
+    .eq("needs_review", true)
+    .order("student_id", { ascending: true });
+
+  if (error) {
+    throw new Error(`Failed to list athletes needing baseline review with student names: ${error.message}`);
+  }
+
+  return (
+    (data as Array<
+      AthleteTrainingBaselineRow & {
+        trainingpeaks_students?: { student_name?: string | null } | Array<{ student_name?: string | null }> | null;
+      }
+    > | null) ?? []
+  ).map((row) => {
+    const joinedStudent = Array.isArray(row.trainingpeaks_students)
+      ? row.trainingpeaks_students[0]
+      : row.trainingpeaks_students;
+
+    return {
+      ...row,
+      student_name: joinedStudent?.student_name?.trim() || null,
+    };
+  });
 }

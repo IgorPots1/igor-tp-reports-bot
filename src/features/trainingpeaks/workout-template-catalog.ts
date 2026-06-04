@@ -814,6 +814,23 @@ export async function listWorkoutTemplatePresets() {
   return data ?? [];
 }
 
+export async function listWorkoutTemplatePresetsDetailed() {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("workout_template_presets")
+    .select(
+      "id, variant_id, preset_code, source, tier, enabled_by_default, coach_only, coach_review_required, requires_explicit_vo2_intensity, athlete_level_min, display_name_ru, observed_count, athlete_count, is_enabled, sort_order, created_at, updated_at, workout_template_variants(variant_code, intensity_intent, display_name_ru, workout_template_families(family_code, display_name_ru)), workout_template_preset_parameters(reps, work_duration_min, work_duration_sec, work_distance_km, work_unit, distance_unit, recovery_duration_min, recovery_duration_sec, recovery_unit, recovery_type, target_mode, run_duration_min, walk_duration_min), workout_template_warmup_refs(ref_code, display_name_ru), workout_template_cooldown_refs(ref_code, display_name_ru), workout_template_description_refs(ref_code)"
+    )
+    .order("sort_order", { ascending: true })
+    .order("preset_code", { ascending: true });
+
+  if (error) {
+    throw new Error(`Failed to list detailed workout template presets: ${error.message}`);
+  }
+
+  return data ?? [];
+}
+
 export async function getWorkoutTemplatePresetByCode(presetCode: string) {
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
