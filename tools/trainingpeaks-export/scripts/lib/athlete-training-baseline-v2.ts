@@ -72,9 +72,16 @@ export type WeekTagReportRow = {
   week_end: string;
   tag: WeekTag;
   secondary_flags: SecondaryWeekFlag[];
+  completed_running_workouts: number;
   planned_running_workouts: number;
+  completed_running_distance_km: number;
   planned_running_minutes: number;
   completed_running_minutes: number;
+  completed_only_running_workouts: number;
+  planned_only_running_workouts: number;
+  ambiguous_completed_activities: number;
+  planned_not_completed_context: boolean;
+  low_data_reasons: Array<"no_completed_running" | "very_low_completed_running" | "classification_ambiguous" | "cache_gap">;
   longest_run_minutes: number | null;
   quality_sessions: number;
   interval_like_sessions: number;
@@ -97,6 +104,7 @@ export type PerAthleteBaselineV2 = {
   analyzed_to: string;
   normal_baseline: BaselineWeekMetrics;
   all_week_baseline: BaselineWeekMetrics;
+  planned_context_baseline: BaselineWeekMetrics;
   baseline_mode: BaselineMode;
   normal_training_weeks_count: number;
   excluded_weeks_count: number;
@@ -104,6 +112,22 @@ export type PerAthleteBaselineV2 = {
   excluded_weeks_count_by_tag: Record<Exclude<WeekTag, "normal_training">, number>;
   total_weeks_count: number;
   baseline_source: "normal_training" | "fallback_all_weeks";
+  baseline_metric_source: "completed_actual_running";
+  baseline_change_vs_planned_context: {
+    frequency_delta: number | null;
+    weekly_minutes_delta: number | null;
+    long_run_delta: number | null;
+    quality_delta: number | null;
+    materially_changed: boolean;
+  };
+  completed_vs_planned_divergence: {
+    weeks_with_workout_count_difference: number;
+    weeks_with_minutes_difference: number;
+    completed_only_running_workouts: number;
+    planned_only_running_workouts: number;
+    ambiguous_completed_activities: number;
+    low_data_reason_counts: Record<"no_completed_running" | "very_low_completed_running" | "classification_ambiguous" | "cache_gap", number>;
+  };
   race_candidate_count_by_confidence: Record<RaceCandidateConfidence, number>;
   race_candidate_count_by_source_type: Record<RaceCandidateSourceType, number>;
   race_detection_diagnostics: {
@@ -209,6 +233,14 @@ export type BaselineV2Summary = {
   race_candidate_counts_by_distance: Record<RaceDistanceKey, number>;
   race_candidate_counts_by_confidence: Record<RaceCandidateConfidence, number>;
   total_normal_weeks: number;
+  completed_vs_planned_divergence_totals: {
+    weeks_with_workout_count_difference: number;
+    weeks_with_minutes_difference: number;
+    completed_only_running_workouts: number;
+    planned_only_running_workouts: number;
+    ambiguous_completed_activities: number;
+  };
+  athletes_with_material_completed_vs_planned_change: number;
   total_excluded_weeks_by_tag: Record<Exclude<WeekTag, "normal_training">, number>;
   confidence_distribution: Record<BaselineV2Confidence, number>;
   needs_review_count: number;
@@ -275,9 +307,13 @@ type WorkoutInsight = {
   row: TrainingPeaksWorkoutCacheRow;
   text: string;
   title: string | null;
+  activityFamily: string;
+  activityConfidence: "high" | "medium" | "low";
   isRunning: boolean;
+  isAmbiguousCompletedActivity: boolean;
   plannedMinutes: number | null;
   completedMinutes: number | null;
+  completedDistanceKm: number | null;
   durationMinutes: number | null;
   distanceKm: number | null;
   isCompleted: boolean;
@@ -298,9 +334,14 @@ type WeekAccumulator = {
   athleteId: number;
   weekStart: string;
   weekEnd: string;
+  completedRunningWorkouts: number;
   plannedRunningWorkouts: number;
+  completedRunningDistanceKm: number;
   plannedRunningMinutes: number;
   completedRunningMinutes: number;
+  completedOnlyRunningWorkouts: number;
+  plannedOnlyRunningWorkouts: number;
+  ambiguousCompletedActivities: number;
   longestRunMinutes: number | null;
   qualitySessions: number;
   intervalLikeSessions: number;
@@ -448,6 +489,11 @@ function distanceKmForRow(row: TrainingPeaksWorkoutCacheRow): number | null {
   );
 }
 
+function completedDistanceKmForRow(row: TrainingPeaksWorkoutCacheRow): number | null {
+  const snapshot = isRecord(row.sourceSnapshot) ? row.sourceSnapshot : null;
+  return distanceKmFromRaw(row.completedDistanceRaw) ?? distanceKmFromRaw(snapshot?.rawDistance);
+}
+
 function weekStartIso(dateIso: string): string {
   const date = new Date(`${dateIso}T00:00:00Z`);
   const day = date.getUTCDay();
@@ -580,14 +626,22 @@ function buildWorkoutInsight(row: TrainingPeaksWorkoutCacheRow): WorkoutInsight 
   const longRunLike = LONG_RUN_PATTERN.test(text) || ((durationMinutes ?? 0) >= 80 && activity.isRunning);
   const qualityLike = QUALITY_PATTERN.test(text) || INTERVAL_PATTERN.test(text) || MARATHON_SPECIFIC_PATTERN.test(text);
   const marathonSpecificCue = MARATHON_SPECIFIC_PATTERN.test(text);
+  const isAmbiguousCompletedActivity =
+    row.isCompleted &&
+    !activity.isRunning &&
+    (activity.family === "unknown" || (activity.family === "other" && activity.confidence === "low"));
 
   return {
     row,
     text,
     title: row.title,
+    activityFamily: activity.family,
+    activityConfidence: activity.confidence,
     isRunning: activity.isRunning,
+    isAmbiguousCompletedActivity,
     plannedMinutes,
     completedMinutes,
+    completedDistanceKm: completedDistanceKmForRow(row),
     durationMinutes,
     distanceKm: distanceKmForRow(row),
     isCompleted: row.isCompleted,
@@ -875,10 +929,16 @@ function emptyExcludedCounts(): Record<Exclude<WeekTag, "normal_training">, numb
   };
 }
 
-function computeWeekMetrics(weeks: WeekTagReportRow[]): BaselineWeekMetrics {
+function computeWeekMetrics(weeks: WeekTagReportRow[], source: "completed" | "planned"): BaselineWeekMetrics {
+  const frequencyValues = weeks.map((week) =>
+    source === "completed" ? week.completed_running_workouts : week.planned_running_workouts,
+  );
+  const minuteValues = weeks.map((week) =>
+    source === "completed" ? week.completed_running_minutes : week.planned_running_minutes,
+  );
   return {
-    frequency_cap: median(weeks.map((week) => week.planned_running_workouts)),
-    weekly_minutes_cap: quantile(weeks.map((week) => week.planned_running_minutes), 0.75),
+    frequency_cap: median(frequencyValues),
+    weekly_minutes_cap: quantile(minuteValues, 0.75),
     long_run_cap_min: quantile(
       weeks.map((week) => week.longest_run_minutes).filter((value): value is number => value !== null),
       0.75,
@@ -1132,6 +1192,7 @@ function analyzeAthlete(input: {
 
   const insights = input.athlete.rows.map(buildWorkoutInsight);
   const runningInsights = insights.filter((insight) => insight.isRunning);
+  const ambiguousCompletedInsights = insights.filter((insight) => insight.isAmbiguousCompletedActivity);
   if (runningInsights.length === 0) return null;
 
   const weekMap = new Map<string, WeekAccumulator>();
@@ -1146,9 +1207,14 @@ function analyzeAthlete(input: {
       athleteId: insight.row.trainingPeaksAthleteId,
       weekStart: insight.weekStart,
       weekEnd: insight.weekEnd,
+      completedRunningWorkouts: 0,
       plannedRunningWorkouts: 0,
+      completedRunningDistanceKm: 0,
       plannedRunningMinutes: 0,
       completedRunningMinutes: 0,
+      completedOnlyRunningWorkouts: 0,
+      plannedOnlyRunningWorkouts: 0,
+      ambiguousCompletedActivities: 0,
       longestRunMinutes: null,
       qualitySessions: 0,
       intervalLikeSessions: 0,
@@ -1163,14 +1229,22 @@ function analyzeAthlete(input: {
       current.plannedRunningMinutes += insight.plannedMinutes ?? 0;
     }
     if (insight.isCompleted) {
+      current.completedRunningWorkouts += 1;
       current.completedRunningMinutes += insight.completedMinutes ?? 0;
+      current.completedRunningDistanceKm += insight.completedDistanceKm ?? 0;
+      if (insight.completedWithoutPlan) current.completedOnlyRunningWorkouts += 1;
     }
-    if (insight.longRunLike && insight.durationMinutes !== null) {
+    if (insight.isPlanned && !insight.isCompleted) {
+      current.plannedOnlyRunningWorkouts += 1;
+    }
+    if (insight.longRunLike && insight.isCompleted && insight.completedMinutes !== null) {
       current.longestRunMinutes =
-        current.longestRunMinutes === null ? insight.durationMinutes : Math.max(current.longestRunMinutes, insight.durationMinutes);
+        current.longestRunMinutes === null
+          ? insight.completedMinutes
+          : Math.max(current.longestRunMinutes, insight.completedMinutes);
     }
-    if (insight.qualityLike) current.qualitySessions += 1;
-    if (insight.intervalLike) current.intervalLikeSessions += 1;
+    if (insight.isCompleted && insight.qualityLike) current.qualitySessions += 1;
+    if (insight.isCompleted && insight.intervalLike) current.intervalLikeSessions += 1;
     if (insight.marathonSpecificCue) current.marathonSpecificCue = true;
     if (insight.explicitRunWalk) current.notes.push("explicit_run_walk_signal");
 
@@ -1180,6 +1254,33 @@ function analyzeAthlete(input: {
       else current.raceCandidates.push(raceCandidate);
     }
 
+    weekMap.set(insight.weekStart, current);
+  }
+
+  for (const insight of ambiguousCompletedInsights) {
+    const current = weekMap.get(insight.weekStart) ?? {
+      studentId: insight.row.studentId,
+      studentName: insight.row.studentName,
+      athleteId: insight.row.trainingPeaksAthleteId,
+      weekStart: insight.weekStart,
+      weekEnd: insight.weekEnd,
+      completedRunningWorkouts: 0,
+      plannedRunningWorkouts: 0,
+      completedRunningDistanceKm: 0,
+      plannedRunningMinutes: 0,
+      completedRunningMinutes: 0,
+      completedOnlyRunningWorkouts: 0,
+      plannedOnlyRunningWorkouts: 0,
+      ambiguousCompletedActivities: 0,
+      longestRunMinutes: null,
+      qualitySessions: 0,
+      intervalLikeSessions: 0,
+      marathonSpecificCue: false,
+      raceCandidates: [],
+      lowConfidenceRaceCandidates: [],
+      notes: [],
+    };
+    current.ambiguousCompletedActivities += 1;
     weekMap.set(insight.weekStart, current);
   }
 
@@ -1273,13 +1374,23 @@ function analyzeAthlete(input: {
       }
     }
 
-    if (week.plannedRunningWorkouts < 2 && week.plannedRunningMinutes < 60) {
+    const lowDataReasons: WeekTagReportRow["low_data_reasons"] = [];
+    if (week.completedRunningWorkouts === 0) {
+      if (week.ambiguousCompletedActivities > 0) lowDataReasons.push("classification_ambiguous");
+      if (week.plannedRunningWorkouts > 0 || week.plannedRunningMinutes > 0) lowDataReasons.push("no_completed_running");
+      if (week.plannedRunningWorkouts === 0 && week.plannedRunningMinutes === 0 && week.ambiguousCompletedActivities === 0) {
+        lowDataReasons.push("cache_gap");
+      }
+    } else if (week.completedRunningMinutes > 0 && week.completedRunningMinutes < 45) {
+      lowDataReasons.push("very_low_completed_running");
+    }
+    if (lowDataReasons.length > 0) {
       tags.add("low_data");
     }
 
     if (!tags.has("race_week") && !tags.has("taper_week") && !tags.has("post_race_recovery")) {
       if (rollingMedian !== null && rollingMedian >= 90 && effectiveMinutes < rollingMedian * 0.3) {
-        if (week.plannedRunningWorkouts >= 2 || week.plannedRunningMinutes >= 60) {
+        if (week.completedRunningWorkouts >= 2 || week.completedRunningMinutes >= 60) {
           tags.add("illness_low_volume");
         } else {
           notes.push("possible_illness_low_volume_but_sparse_data");
@@ -1291,6 +1402,12 @@ function analyzeAthlete(input: {
 
     if (week.lowConfidenceRaceCandidates.length > 0) {
       notes.push("low_confidence_race_signal");
+    }
+    if (week.ambiguousCompletedActivities > 0) {
+      notes.push("ambiguous_completed_activity_types");
+    }
+    if (week.plannedRunningWorkouts > 0 && week.completedRunningWorkouts === 0) {
+      notes.push("planned_not_completed_context");
     }
 
     if (week.notes.includes("explicit_run_walk_signal") && runWalkStatus === "possible_run_walk_signal") {
@@ -1357,9 +1474,16 @@ function analyzeAthlete(input: {
       week_end: week.weekEnd,
       tag: finalTag,
       secondary_flags: buildSecondaryFlag(notes),
+      completed_running_workouts: week.completedRunningWorkouts,
       planned_running_workouts: week.plannedRunningWorkouts,
+      completed_running_distance_km: Number(week.completedRunningDistanceKm.toFixed(2)),
       planned_running_minutes: Number(week.plannedRunningMinutes.toFixed(2)),
       completed_running_minutes: Number(week.completedRunningMinutes.toFixed(2)),
+      completed_only_running_workouts: week.completedOnlyRunningWorkouts,
+      planned_only_running_workouts: week.plannedOnlyRunningWorkouts,
+      ambiguous_completed_activities: week.ambiguousCompletedActivities,
+      planned_not_completed_context: week.plannedRunningWorkouts > 0 && week.completedRunningWorkouts === 0,
+      low_data_reasons: lowDataReasons,
       longest_run_minutes: week.longestRunMinutes === null ? null : Number(week.longestRunMinutes.toFixed(2)),
       quality_sessions: week.qualitySessions,
       interval_like_sessions: week.intervalLikeSessions,
@@ -1433,8 +1557,9 @@ function analyzeAthlete(input: {
   }
 
   const baselineWeeks = baselineSource === "normal_training" ? normalWeeks : allWeeks;
-  const normalBaseline = computeWeekMetrics(baselineWeeks);
-  const allWeekBaseline = computeWeekMetrics(allWeeks);
+  const normalBaseline = computeWeekMetrics(baselineWeeks, "completed");
+  const allWeekBaseline = computeWeekMetrics(allWeeks, "completed");
+  const plannedContextBaseline = computeWeekMetrics(baselineWeeks, "planned");
   const raceCandidatesUnique = clusteredRaceCandidates;
 
   if (raceCandidatesUnique.some((candidate) => candidate.estimated_distance === "marathon")) {
@@ -1497,6 +1622,52 @@ function analyzeAthlete(input: {
     .slice(0, 8);
 
   const latestTwoWeeks = [...weekRows].sort((a, b) => b.week_start.localeCompare(a.week_start)).slice(0, 2);
+  const diffOrNull = (a: number | null, b: number | null): number | null =>
+    a === null || b === null ? null : Number((a - b).toFixed(2));
+  const baselineChangeVsPlanned = {
+    frequency_delta: diffOrNull(normalBaseline.frequency_cap, plannedContextBaseline.frequency_cap),
+    weekly_minutes_delta: diffOrNull(normalBaseline.weekly_minutes_cap, plannedContextBaseline.weekly_minutes_cap),
+    long_run_delta: diffOrNull(normalBaseline.long_run_cap_min, plannedContextBaseline.long_run_cap_min),
+    quality_delta: diffOrNull(normalBaseline.quality_count_cap, plannedContextBaseline.quality_count_cap),
+    materially_changed: false,
+  };
+  baselineChangeVsPlanned.materially_changed =
+    Math.abs(baselineChangeVsPlanned.frequency_delta ?? 0) >= 1 ||
+    Math.abs(baselineChangeVsPlanned.weekly_minutes_delta ?? 0) >= 30 ||
+    Math.abs(baselineChangeVsPlanned.long_run_delta ?? 0) >= 20 ||
+    Math.abs(baselineChangeVsPlanned.quality_delta ?? 0) >= 1;
+  const lowDataReasonCounts: PerAthleteBaselineV2["completed_vs_planned_divergence"]["low_data_reason_counts"] = {
+    no_completed_running: 0,
+    very_low_completed_running: 0,
+    classification_ambiguous: 0,
+    cache_gap: 0,
+  };
+  for (const week of weekRows) {
+    for (const reason of week.low_data_reasons) lowDataReasonCounts[reason] += 1;
+  }
+  const completedVsPlannedDivergence = {
+    weeks_with_workout_count_difference: weekRows.filter(
+      (week) => week.completed_running_workouts !== week.planned_running_workouts,
+    ).length,
+    weeks_with_minutes_difference: weekRows.filter(
+      (week) => Math.abs(week.completed_running_minutes - week.planned_running_minutes) >= 1,
+    ).length,
+    completed_only_running_workouts: weekRows.reduce((sum, week) => sum + week.completed_only_running_workouts, 0),
+    planned_only_running_workouts: weekRows.reduce((sum, week) => sum + week.planned_only_running_workouts, 0),
+    ambiguous_completed_activities: weekRows.reduce((sum, week) => sum + week.ambiguous_completed_activities, 0),
+    low_data_reason_counts: lowDataReasonCounts,
+  };
+  if (baselineChangeVsPlanned.materially_changed) {
+    notes.push("completed_and_planned_diverge_materially");
+  }
+  if (completedVsPlannedDivergence.completed_only_running_workouts >= 8 || completedVsPlannedDivergence.planned_only_running_workouts >= 8) {
+    notes.push("gps_only_or_completed_only_pattern");
+    needsReview = true;
+  }
+  if (completedVsPlannedDivergence.ambiguous_completed_activities >= 5) {
+    notes.push("too_many_ambiguous_activity_types");
+    needsReview = true;
+  }
   const athleteOutput: PerAthleteBaselineV2 = {
     student_name: input.athlete.studentName,
     student_id: input.athlete.studentId,
@@ -1505,6 +1676,7 @@ function analyzeAthlete(input: {
     analyzed_to: input.to,
     normal_baseline: normalBaseline,
     all_week_baseline: allWeekBaseline,
+    planned_context_baseline: plannedContextBaseline,
     baseline_mode: baselineMode,
     normal_training_weeks_count: normalWeeks.length,
     excluded_weeks_count: weekRows.length - normalWeeks.length,
@@ -1512,6 +1684,9 @@ function analyzeAthlete(input: {
     excluded_weeks_count_by_tag: excludedCounts,
     total_weeks_count: weekRows.length,
     baseline_source: baselineSource,
+    baseline_metric_source: "completed_actual_running",
+    baseline_change_vs_planned_context: baselineChangeVsPlanned,
+    completed_vs_planned_divergence: completedVsPlannedDivergence,
     race_candidate_count_by_confidence: raceByConfidence,
     race_candidate_count_by_source_type: raceBySourceType,
     race_detection_diagnostics: {
@@ -1644,6 +1819,31 @@ export function analyzeAthleteTrainingBaselineV2(input: {
     race_candidate_counts_by_distance: raceByDistance,
     race_candidate_counts_by_confidence: raceByConfidence,
     total_normal_weeks: perAthlete.reduce((total, athlete) => total + athlete.normal_training_weeks_count, 0),
+    completed_vs_planned_divergence_totals: {
+      weeks_with_workout_count_difference: perAthlete.reduce(
+        (total, athlete) => total + athlete.completed_vs_planned_divergence.weeks_with_workout_count_difference,
+        0,
+      ),
+      weeks_with_minutes_difference: perAthlete.reduce(
+        (total, athlete) => total + athlete.completed_vs_planned_divergence.weeks_with_minutes_difference,
+        0,
+      ),
+      completed_only_running_workouts: perAthlete.reduce(
+        (total, athlete) => total + athlete.completed_vs_planned_divergence.completed_only_running_workouts,
+        0,
+      ),
+      planned_only_running_workouts: perAthlete.reduce(
+        (total, athlete) => total + athlete.completed_vs_planned_divergence.planned_only_running_workouts,
+        0,
+      ),
+      ambiguous_completed_activities: perAthlete.reduce(
+        (total, athlete) => total + athlete.completed_vs_planned_divergence.ambiguous_completed_activities,
+        0,
+      ),
+    },
+    athletes_with_material_completed_vs_planned_change: perAthlete.filter(
+      (athlete) => athlete.baseline_change_vs_planned_context.materially_changed,
+    ).length,
     total_excluded_weeks_by_tag: totalExcludedWeeksByTag,
     confidence_distribution: confidenceDistribution,
     needs_review_count: perAthlete.filter((athlete) => athlete.needs_review).length,
@@ -1694,6 +1894,8 @@ export function buildBaselineV2SummaryMarkdown(summary: BaselineV2Summary): stri
   lines.push(`- athletes_with_fallback_baseline: ${summary.athletes_with_fallback_baseline}`);
   lines.push(`- athletes_with_detected_race_candidates: ${summary.athletes_with_detected_race_candidates}`);
   lines.push(`- total_normal_weeks: ${summary.total_normal_weeks}`);
+  lines.push(`- athletes_with_material_completed_vs_planned_change: ${summary.athletes_with_material_completed_vs_planned_change}`);
+  lines.push(`- completed_vs_planned_divergence_totals: ${JSON.stringify(summary.completed_vs_planned_divergence_totals)}`);
   lines.push(`- needs_review_count: ${summary.needs_review_count}`);
   lines.push("");
   lines.push("## Race Candidates");
@@ -1718,6 +1920,7 @@ export function buildPerAthleteBaselineV2Markdown(athletes: PerAthleteBaselineV2
     lines.push(`## ${athlete.student_name}`);
     lines.push(`- athlete_id: ${athlete.athlete_id}`);
     lines.push(`- baseline_source: ${athlete.baseline_source}`);
+    lines.push(`- baseline_metric_source: ${athlete.baseline_metric_source}`);
     lines.push(`- baseline_mode: ${athlete.baseline_mode}`);
     lines.push(`- confidence: ${athlete.confidence}`);
     lines.push(`- needs_review: ${athlete.needs_review}`);
@@ -1735,6 +1938,15 @@ export function buildPerAthleteBaselineV2Markdown(athletes: PerAthleteBaselineV2
         athlete.all_week_baseline.quality_count_cap,
       )}, interval_like=${formatMetric(athlete.all_week_baseline.interval_like_count)}`,
     );
+    lines.push(
+      `- planned_context_baseline: freq=${formatMetric(athlete.planned_context_baseline.frequency_cap)}, weekly_minutes=${formatMetric(
+        athlete.planned_context_baseline.weekly_minutes_cap,
+      )}, long_run=${formatMetric(athlete.planned_context_baseline.long_run_cap_min)}, quality=${formatMetric(
+        athlete.planned_context_baseline.quality_count_cap,
+      )}, interval_like=${formatMetric(athlete.planned_context_baseline.interval_like_count)}`,
+    );
+    lines.push(`- baseline_change_vs_planned_context: ${JSON.stringify(athlete.baseline_change_vs_planned_context)}`);
+    lines.push(`- completed_vs_planned_divergence: ${JSON.stringify(athlete.completed_vs_planned_divergence)}`);
     lines.push(`- normal_training_weeks_count: ${athlete.normal_training_weeks_count}`);
     lines.push(`- excluded_weeks_count: ${athlete.excluded_weeks_count}`);
     lines.push(`- excluded_weeks_count_by_tag: ${JSON.stringify(athlete.excluded_weeks_count_by_tag)}`);
@@ -1797,8 +2009,15 @@ export function buildWeekTagsMarkdown(weeks: WeekTagReportRow[]): string {
     lines.push(`- tag: ${week.tag}`);
     lines.push(`- secondary_flags: ${week.secondary_flags.join(", ") || "none"}`);
     lines.push(`- planned_running_workouts: ${week.planned_running_workouts}`);
+    lines.push(`- completed_running_workouts: ${week.completed_running_workouts}`);
+    lines.push(`- completed_running_distance_km: ${week.completed_running_distance_km}`);
     lines.push(`- planned_running_minutes: ${week.planned_running_minutes}`);
     lines.push(`- completed_running_minutes: ${week.completed_running_minutes}`);
+    lines.push(`- completed_only_running_workouts: ${week.completed_only_running_workouts}`);
+    lines.push(`- planned_only_running_workouts: ${week.planned_only_running_workouts}`);
+    lines.push(`- ambiguous_completed_activities: ${week.ambiguous_completed_activities}`);
+    lines.push(`- planned_not_completed_context: ${week.planned_not_completed_context}`);
+    lines.push(`- low_data_reasons: ${week.low_data_reasons.join(", ") || "none"}`);
     lines.push(`- longest_run_minutes: ${formatMetric(week.longest_run_minutes)}`);
     lines.push(`- quality_sessions: ${week.quality_sessions}`);
     lines.push(`- interval_like_sessions: ${week.interval_like_sessions}`);

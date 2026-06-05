@@ -397,6 +397,112 @@ function buildRaceCandidatesJsonRows(markdownCompatibleCandidates: ReturnType<ty
   }));
 }
 
+function buildRequiredAthletesBeforeAfterRows(
+  athletes: ReturnType<typeof analyzeAthleteTrainingBaselineV2>["perAthlete"],
+): Array<{
+  requested_name: string;
+  matched_student_name: string | null;
+  athlete_id: number | null;
+  old_v2_frequency_planned_context: number | null;
+  new_completed_primary_frequency: number | null;
+  completed_running_workouts_total: number;
+  planned_running_workouts_total: number;
+  low_data_weeks_before_planned_context: number | null;
+  low_data_weeks_after_completed_primary: number;
+  normal_training_weeks_count_before_planned_context: number | null;
+  normal_training_weeks_count_after_completed_primary: number;
+  fallback_status_before_planned_context: boolean | null;
+  fallback_status_after_completed_primary: boolean;
+  short_diagnosis: string;
+}> {
+  const requiredNames = [
+    "Margarita",
+    "Irina Melnikova",
+    "Anastasia Abramova",
+    "Anastasia Utenkova",
+    "Alexander Abramov",
+    "Igor Potseluev",
+    "Yulia Krylova",
+    "Anna Chernysheva",
+    "Aleksei Lobus",
+  ];
+  const normalized = (value: string) => value.trim().toLowerCase().replace(/\s+/g, " ");
+
+  function matchAthlete(name: string) {
+    const n = normalized(name);
+    const exact = athletes.find((athlete) => normalized(athlete.student_name) === n);
+    if (exact) return exact;
+    const partial = athletes.find((athlete) => normalized(athlete.student_name).includes(n) || n.includes(normalized(athlete.student_name)));
+    return partial ?? null;
+  }
+
+  return requiredNames.map((requestedName) => {
+    const athlete = matchAthlete(requestedName);
+    if (!athlete) {
+      return {
+        requested_name: requestedName,
+        matched_student_name: null,
+        athlete_id: null,
+        old_v2_frequency_planned_context: null,
+        new_completed_primary_frequency: null,
+        completed_running_workouts_total: 0,
+        planned_running_workouts_total: 0,
+        low_data_weeks_before_planned_context: null,
+        low_data_weeks_after_completed_primary: 0,
+        normal_training_weeks_count_before_planned_context: null,
+        normal_training_weeks_count_after_completed_primary: 0,
+        fallback_status_before_planned_context: null,
+        fallback_status_after_completed_primary: false,
+        short_diagnosis: "No matching athlete name found in this run.",
+      };
+    }
+
+    const lowDataAfter = athlete.excluded_weeks_by_tag.low_data;
+    const completedWorkouts = athlete.completed_vs_planned_divergence.completed_only_running_workouts;
+    const plannedOnlyWorkouts = athlete.completed_vs_planned_divergence.planned_only_running_workouts;
+    const diagnosisParts = [
+      athlete.baseline_change_vs_planned_context.materially_changed
+        ? "Material completed-vs-planned baseline shift."
+        : "No material baseline shift.",
+      completedWorkouts > plannedOnlyWorkouts
+        ? "Completed-only pattern dominates."
+        : plannedOnlyWorkouts > completedWorkouts
+          ? "Planned-only pattern dominates."
+          : "Completed/planned workout patterns are balanced.",
+      lowDataAfter > 0 ? `Has ${lowDataAfter} completed-primary low_data weeks.` : "No completed-primary low_data weeks.",
+    ];
+
+    return {
+      requested_name: requestedName,
+      matched_student_name: athlete.student_name,
+      athlete_id: athlete.athlete_id,
+      old_v2_frequency_planned_context: athlete.planned_context_baseline.frequency_cap,
+      new_completed_primary_frequency: athlete.normal_baseline.frequency_cap,
+      completed_running_workouts_total:
+        athlete.completed_vs_planned_divergence.completed_only_running_workouts +
+        Math.max(
+          0,
+          athlete.completed_vs_planned_divergence.weeks_with_workout_count_difference -
+            athlete.completed_vs_planned_divergence.planned_only_running_workouts,
+        ),
+      planned_running_workouts_total:
+        athlete.completed_vs_planned_divergence.planned_only_running_workouts +
+        Math.max(
+          0,
+          athlete.completed_vs_planned_divergence.weeks_with_workout_count_difference -
+            athlete.completed_vs_planned_divergence.completed_only_running_workouts,
+        ),
+      low_data_weeks_before_planned_context: null,
+      low_data_weeks_after_completed_primary: lowDataAfter,
+      normal_training_weeks_count_before_planned_context: null,
+      normal_training_weeks_count_after_completed_primary: athlete.normal_training_weeks_count,
+      fallback_status_before_planned_context: null,
+      fallback_status_after_completed_primary: athlete.baseline_source === "fallback_all_weeks",
+      short_diagnosis: diagnosisParts.join(" "),
+    };
+  });
+}
+
 async function main(): Promise<void> {
   loadLocalEnv();
   if (!process.env.SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_URL) {
@@ -490,6 +596,7 @@ async function main(): Promise<void> {
     dataGapsMd: path.join(reportDir, "data-gaps.md"),
     raceEvidenceCalibrationJson: path.join(reportDir, "race-evidence-calibration.json"),
     raceEvidenceCalibrationMd: path.join(reportDir, "race-evidence-calibration.md"),
+    requiredAthletesBeforeAfterJson: path.join(reportDir, "required-athletes-before-after.json"),
     combinedMd: path.join(reportDir, "COMBINED-BASELINE-V2-ARTIFACTS.md"),
   };
 
@@ -524,6 +631,11 @@ async function main(): Promise<void> {
   await writeFile(files.dataGapsMd, dataGapsMd, "utf8");
   await writeFile(files.raceEvidenceCalibrationJson, `${JSON.stringify(analysis.raceEvidenceCalibration, null, 2)}\n`, "utf8");
   await writeFile(files.raceEvidenceCalibrationMd, raceEvidenceCalibrationMd, "utf8");
+  await writeFile(
+    files.requiredAthletesBeforeAfterJson,
+    `${JSON.stringify(buildRequiredAthletesBeforeAfterRows(analysis.perAthlete), null, 2)}\n`,
+    "utf8",
+  );
   await writeFile(files.combinedMd, combinedMd, "utf8");
 
   if (args.json) {
@@ -549,6 +661,7 @@ async function main(): Promise<void> {
   console.log(`manual_review_md: ${files.manualReviewMd}`);
   console.log(`race_evidence_calibration_json: ${files.raceEvidenceCalibrationJson}`);
   console.log(`race_evidence_calibration_md: ${files.raceEvidenceCalibrationMd}`);
+  console.log(`required_athletes_before_after_json: ${files.requiredAthletesBeforeAfterJson}`);
 }
 
 main().catch((error: unknown) => {
