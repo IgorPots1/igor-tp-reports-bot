@@ -4642,6 +4642,24 @@ function resolveScheduleOperationalSignalValidUntil(
   return normalizeRecordString(signal.structuredPayload.valid_until);
 }
 
+function areAllPlannedTrainingDatesExpired(
+  structuredPayload: Record<string, unknown>,
+  asOfDate: string
+): boolean {
+  const plannedDates = normalizeRecordStringArray(structuredPayload.planned_training_dates);
+  if (plannedDates.length === 0) {
+    return false;
+  }
+  if (!plannedDates.every((date) => date < asOfDate)) {
+    return false;
+  }
+  const unavailableDates = normalizeRecordStringArray(structuredPayload.unavailable_dates);
+  const resolvedDates = normalizeRecordStringArray(structuredPayload.resolved_available_dates);
+  const hasFutureUnavailable = unavailableDates.some((date) => date >= asOfDate);
+  const hasFutureResolved = resolvedDates.some((date) => date >= asOfDate);
+  return !hasFutureUnavailable && !hasFutureResolved;
+}
+
 function isExpiredScheduleOperationalSignal(
   signal: { signalType: string; validUntil: string | null; structuredPayload: Record<string, unknown> },
   asOfDate: string
@@ -4651,7 +4669,7 @@ function isExpiredScheduleOperationalSignal(
   }
   const validUntil = resolveScheduleOperationalSignalValidUntil(signal);
   if (!validUntil) {
-    return false;
+    return areAllPlannedTrainingDatesExpired(signal.structuredPayload, asOfDate);
   }
   return validUntil < asOfDate;
 }
@@ -4792,11 +4810,22 @@ function buildHealthOperationalSignalText(
   return windowPart ? `${typeLabel} (${windowPart})` : typeLabel;
 }
 
+const INTERNAL_OPERATIONAL_EPISODE_ROLES = new Set([
+  "health_context",
+  "schedule_context",
+  "pause_context",
+  "plan_adjustment",
+]);
+
+function stripInternalOperationalDisplayPrefix(raw: string): string {
+  return raw.replace(/^health_context:\s*/iu, "").trim();
+}
+
 function sanitizeHealthOperationalSummary(raw: string | null): string | null {
   if (!raw) {
     return null;
   }
-  const normalized = raw.replace(/\s+/gu, " ").trim();
+  const normalized = stripInternalOperationalDisplayPrefix(raw.replace(/\s+/gu, " ").trim());
   if (!normalized) {
     return null;
   }
@@ -4804,7 +4833,7 @@ function sanitizeHealthOperationalSummary(raw: string | null): string | null {
     .split(/\s*;\s*/u)
     .map((part) => part.trim())
     .filter((part) => part.length > 0)
-    .map((part) => part.replace(/^health_context:\s*/iu, "").trim())
+    .map((part) => stripInternalOperationalDisplayPrefix(part))
     .filter((part) => {
       const lower = part.toLowerCase();
       if (!lower) {
@@ -5846,6 +5875,36 @@ type EffectiveOperationalSignalForDisplay = {
   effectiveRequiresCoachReview: boolean | null;
 };
 
+function isPainInjuryOperationalSignalForDisplay(
+  effective: EffectiveOperationalSignalForDisplay
+): boolean {
+  if (effective.effectiveSignalType === "pain_injury") {
+    return true;
+  }
+  if (effective.effectiveActivityDomain === "injury") {
+    return true;
+  }
+  return false;
+}
+
+function resolveOperationalSignalDisplaySection(
+  effective: EffectiveOperationalSignalForDisplay
+): TrainingPeaksOperationalSignalsSectionKey {
+  if (isPainInjuryOperationalSignalForDisplay(effective)) {
+    return "pain_injury";
+  }
+  if (isHealthOperationalSignalType(effective.effectiveSignalType)) {
+    return "health_pause";
+  }
+  if (isScheduleOperationalSignalType(effective.effectiveSignalType)) {
+    return "plan_constraints";
+  }
+  if (isMoveOperationalSignalType(effective.effectiveSignalType)) {
+    return "moves";
+  }
+  return "other";
+}
+
 function resolveEffectiveOperationalSignalForDisplay(
   signal: Pick<TrainingPeaksStudentOperationalSignal, "signalType" | "structuredPayload" | "metadata">
 ): EffectiveOperationalSignalForDisplay {
@@ -5896,6 +5955,8 @@ function buildOperationalSignalItemFromSignal(input: {
   const episodeKey = getSignalMetadataString(signal.metadata, "episode_key");
   const relatedSignalTypes = getSignalMetadataString(signal.metadata, "related_signal_types");
   const relatedSuffix = relatedSignalTypes ? `; сигналы: ${compactOperationalSignalText(relatedSignalTypes, 42)}` : "";
+  const rolePrefix =
+    episodeRole && !INTERNAL_OPERATIONAL_EPISODE_ROLES.has(episodeRole) ? `${episodeRole}: ` : "";
   if (effective.effectiveVisibleInTpSignals === false) {
     return {
       signalId: signal.id,
@@ -5914,8 +5975,10 @@ function buildOperationalSignalItemFromSignal(input: {
     };
   }
 
-  if (isHealthOperationalSignalType(effective.effectiveSignalType)) {
-    const rolePrefix = episodeRole ? `${episodeRole}: ` : "";
+  if (
+    isPainInjuryOperationalSignalForDisplay(effective) ||
+    isHealthOperationalSignalType(effective.effectiveSignalType)
+  ) {
     const explicitDisplaySummary = sanitizeHealthOperationalSummary(effective.effectiveDisplaySummary);
     const baseReason =
       explicitDisplaySummary ||
@@ -5926,7 +5989,7 @@ function buildOperationalSignalItemFromSignal(input: {
       signalId: signal.id,
       studentId: signal.studentId,
       studentName,
-      section: effective.effectiveSignalType === "pain_injury" ? "pain_injury" : "health_pause",
+      section: resolveOperationalSignalDisplaySection(effective),
       priority: 30,
       sortBucket: 2,
       dueDate: followUp.due_date,

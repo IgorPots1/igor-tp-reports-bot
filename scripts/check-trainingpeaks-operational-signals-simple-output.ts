@@ -339,6 +339,88 @@ function run(): void {
   );
   const painSection = text.split("🦵 Боль / травмы")[1]?.split("📅 Учесть в плане")[0] ?? "";
   assert(painSection.includes("Stepan Trofimov"), "13 failed: Stepan should be grouped under pain/injury section.");
+  const illnessSection = text.split("🟡 Болезнь / пауза")[1]?.split("🦵 Боль / травмы")[0] ?? "";
+  assert(!illnessSection.includes("Stepan Trofimov"), "13c failed: Stepan must not appear under illness section.");
+
+  const episodeRoleFixtureSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-05",
+    limit: 10,
+    studentNameById: new Map<string, string | null>([["viktoria", "Viktoria Sergeeva"]]),
+    signals: [
+      makeSignal({
+        signalId: "viktoria-episode-role-health-context",
+        studentId: "viktoria",
+        signalType: "health_issue_started",
+        structuredPayload: {
+          display_summary: "болеет, кашель, голос",
+          health_state: "sick",
+          symptoms: ["cough", "voice"],
+        },
+        metadata: {
+          episode_role: "health_context",
+        },
+      }),
+    ],
+    activeMoveActions: [],
+  });
+  const episodeRoleFixtureText = formatTrainingPeaksOperationalSignalsForTelegram(episodeRoleFixtureSnapshot);
+  assert(
+    episodeRoleFixtureText.includes("Viktoria Sergeeva") && episodeRoleFixtureText.includes("болеет, кашель, голос"),
+    "13b failed: Viktoria illness summary should stay visible."
+  );
+  assert(!episodeRoleFixtureText.includes("health_context:"), "13b failed: internal episode_role health_context prefix must not leak.");
+
+  const stepanInjuryDomainSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-05",
+    limit: 10,
+    studentNameById: new Map<string, string | null>([["stepan", "Stepan Trofimov"]]),
+    signals: [
+      makeSignal({
+        signalId: "stepan-legacy-injury-domain-only",
+        studentId: "stepan",
+        signalType: "health_issue_started",
+        structuredPayload: {
+          activity_domain: "injury",
+          planning_effect: "safety_review",
+          requires_coach_review: true,
+          display_summary: "боль / надкостница (уточнить, актуально ли)",
+        },
+      }),
+    ],
+    activeMoveActions: [],
+  });
+  const stepanInjuryDomainText = formatTrainingPeaksOperationalSignalsForTelegram(stepanInjuryDomainSnapshot);
+  assert(stepanInjuryDomainText.includes("🦵 Боль / травмы"), "13e failed: injury-domain legacy row must use pain section.");
+  assert(
+    stepanInjuryDomainText.includes("Stepan Trofimov") &&
+      stepanInjuryDomainText.includes("боль / надкостница (уточнить, актуально ли)"),
+    "13e failed: injury-domain legacy row must preserve pain summary."
+  );
+  assert(!stepanInjuryDomainText.includes("🟡 Болезнь / пауза"), "13e failed: injury-domain legacy row must not use illness section.");
+
+  const healthContextFixtureSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-05",
+    limit: 10,
+    studentNameById: new Map<string, string | null>([["viktoria", "Viktoria Sergeeva"]]),
+    signals: [
+      makeSignal({
+        signalId: "viktoria-display-summary-prefix",
+        studentId: "viktoria",
+        signalType: "health_issue_started",
+        structuredPayload: {
+          display_summary: "health_context: болеет, кашель, голос",
+          health_state: "sick",
+        },
+      }),
+    ],
+    activeMoveActions: [],
+  });
+  const healthContextFixtureText = formatTrainingPeaksOperationalSignalsForTelegram(healthContextFixtureSnapshot);
+  assert(
+    healthContextFixtureText.includes("болеет, кашель, голос"),
+    "13d failed: health_context display_summary prefix must be stripped."
+  );
+  assert(!healthContextFixtureText.includes("health_context:"), "13d failed: health_context prefix must not leak.");
 
   const expiredScheduleSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
     asOfDate: "2026-06-05",
@@ -466,6 +548,70 @@ function run(): void {
   assert(!overflowText.includes("ещё сигналов"), "19 failed: expired schedule signals must not inflate +N count.");
   assert(!overflowText.includes("Expired One"), "19 failed: expired schedule athlete must be hidden.");
   assert(!overflowText.includes("Expired Two"), "19 failed: expired schedule athlete must be hidden.");
+
+  const elizavetaExpiredPlannedSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-05",
+    limit: 10,
+    studentNameById: new Map<string, string | null>([["elizaveta", "Elizaveta Kolodkina"]]),
+    signals: [
+      makeSignal({
+        signalId: "elizaveta-expired-planned",
+        studentId: "elizaveta",
+        signalType: "plan_generation_constraint",
+        structuredPayload: {
+          planned_training_dates: ["2026-06-04"],
+          planning_effect: "planned_run",
+        },
+      }),
+    ],
+    activeMoveActions: [],
+  });
+  const elizavetaExpiredPlannedText = formatTrainingPeaksOperationalSignalsForTelegram(elizavetaExpiredPlannedSnapshot);
+  assert(!elizavetaExpiredPlannedText.includes("Elizaveta Kolodkina"), "20 failed: expired planned date must be hidden.");
+  assert(!elizavetaExpiredPlannedText.includes("планирует: 04.06"), "20 failed: expired planned date text must be hidden.");
+  assert(elizavetaExpiredPlannedSnapshot.overflowCount === 0, "20 failed: expired planned date must not count in overflow.");
+
+  const sameDayPlannedSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-05",
+    limit: 10,
+    studentNameById: new Map<string, string | null>([["same-day-planned", "Same Day Planned Athlete"]]),
+    signals: [
+      makeSignal({
+        signalId: "same-day-planned",
+        studentId: "same-day-planned",
+        signalType: "plan_generation_constraint",
+        structuredPayload: {
+          planned_training_dates: ["2026-06-05"],
+          planning_effect: "planned_run",
+        },
+      }),
+    ],
+    activeMoveActions: [],
+  });
+  const sameDayPlannedText = formatTrainingPeaksOperationalSignalsForTelegram(sameDayPlannedSnapshot);
+  assert(sameDayPlannedText.includes("Same Day Planned Athlete"), "21 failed: same-day planned date must stay visible.");
+  assert(sameDayPlannedText.includes("планирует: 05.06"), "21 failed: same-day planned date text must stay visible.");
+
+  const futurePlannedSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-05",
+    limit: 10,
+    studentNameById: new Map<string, string | null>([["future-planned", "Future Planned Athlete"]]),
+    signals: [
+      makeSignal({
+        signalId: "future-planned",
+        studentId: "future-planned",
+        signalType: "plan_generation_constraint",
+        structuredPayload: {
+          planned_training_dates: ["2026-06-06"],
+          planning_effect: "planned_run",
+        },
+      }),
+    ],
+    activeMoveActions: [],
+  });
+  const futurePlannedText = formatTrainingPeaksOperationalSignalsForTelegram(futurePlannedSnapshot);
+  assert(futurePlannedText.includes("Future Planned Athlete"), "22 failed: future planned date must stay visible.");
+  assert(futurePlannedText.includes("планирует: 06.06"), "22 failed: future planned date text must stay visible.");
 
   console.log(`${LOG_PREFIX} PASS`);
 }
