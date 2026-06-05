@@ -19,10 +19,30 @@ function debugLog(...args: unknown[]): void {
 }
 
 type CliArgs = {
-  student: string;
+  student?: string;
+  athleteId?: number;
+  athleteUrl?: string;
   from: string;
   to: string;
   headless: boolean;
+};
+
+type ExportTarget = {
+  mode: "student" | "athlete-id" | "athlete-url";
+  subjectId: string;
+  athleteUrl: string;
+  requestedAthleteId: number | null;
+  verificationRequired: boolean;
+};
+
+type IdentityCheckStatus = "matched" | "failed" | "unknown";
+
+type AthleteIdentityCheck = {
+  requested_athlete_id: number | null;
+  resolved_athlete_id: number | null;
+  visible_athlete_name_if_available: string | null;
+  identity_check_status: IdentityCheckStatus;
+  identity_check_reasons: string[];
 };
 
 type PageAssessment = {
@@ -83,15 +103,18 @@ function usage(): string {
   return [
     "Usage:",
     "  npm run tp-export-one-student -- --student=nadezhda --from=2026-04-28 --to=2026-05-04",
-    "  npm run tp-export-one-student -- --student=nadezhda --from=2026-04-28 --to=2026-05-04 --headless"
+    "  npm run tp-export-one-student -- --student=nadezhda --from=2026-04-28 --to=2026-05-04 --headless",
+    "  npx tsx tools/trainingpeaks-export/scripts/tp-export-one-student.ts --athlete-id=5738641 --from=2026-01-01 --to=2026-06-04 --headless",
+    "  npx tsx tools/trainingpeaks-export/scripts/tp-export-one-student.ts --athlete-url='https://app.trainingpeaks.com/#calendar/athletes/5738641' --from=2026-01-01 --to=2026-06-04 --headless"
   ].join("\n");
 }
 
 function parseArgs(argv: string[]): CliArgs {
-  const values: Partial<Pick<CliArgs, "student" | "from" | "to">> = {};
+  const values: Partial<Pick<CliArgs, "student" | "athleteId" | "athleteUrl" | "from" | "to">> = {};
   let headless = false;
 
-  for (const arg of argv) {
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]!;
     if (arg === "--headless") {
       headless = true;
       continue;
@@ -102,23 +125,70 @@ function parseArgs(argv: string[]): CliArgs {
       continue;
     }
 
-    if (!arg.startsWith("--")) {
+    if (arg.startsWith("--student=")) {
+      values.student = arg.slice("--student=".length);
       continue;
     }
-
-    const [rawKey, ...rest] = arg.slice(2).split("=");
-    const value = rest.join("=");
-    if (!value) {
+    if (arg === "--student") {
+      values.student = argv[index + 1];
+      index += 1;
       continue;
     }
-
-    if (rawKey === "student" || rawKey === "from" || rawKey === "to") {
-      values[rawKey] = value;
+    if (arg.startsWith("--athlete-id=")) {
+      const parsed = Number(arg.slice("--athlete-id=".length));
+      if (Number.isInteger(parsed) && parsed > 0) {
+        values.athleteId = parsed;
+      }
+      continue;
+    }
+    if (arg === "--athlete-id") {
+      const parsed = Number(argv[index + 1]);
+      if (Number.isInteger(parsed) && parsed > 0) {
+        values.athleteId = parsed;
+      }
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--athlete-url=")) {
+      values.athleteUrl = arg.slice("--athlete-url=".length);
+      continue;
+    }
+    if (arg === "--athlete-url") {
+      values.athleteUrl = argv[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--from=")) {
+      values.from = arg.slice("--from=".length);
+      continue;
+    }
+    if (arg === "--from") {
+      values.from = argv[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--to=")) {
+      values.to = arg.slice("--to=".length);
+      continue;
+    }
+    if (arg === "--to") {
+      values.to = argv[index + 1];
+      index += 1;
+      continue;
     }
   }
 
-  if (!values.student || !values.from || !values.to) {
+  if (!values.from || !values.to) {
     throw new Error(`Missing required CLI args.\n\n${usage()}`);
+  }
+
+  const studentMode = Boolean(values.student);
+  const directAthleteMode = values.athleteId !== undefined || Boolean(values.athleteUrl);
+  if (!studentMode && !directAthleteMode) {
+    throw new Error(`Missing target selector. Provide either --student or --athlete-id/--athlete-url.\n\n${usage()}`);
+  }
+  if (studentMode && directAthleteMode) {
+    throw new Error("Choose exactly one target selector mode: --student OR --athlete-id/--athlete-url.");
   }
 
   const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
@@ -128,9 +198,116 @@ function parseArgs(argv: string[]): CliArgs {
 
   return {
     student: values.student,
+    athleteId: values.athleteId,
+    athleteUrl: values.athleteUrl,
     from: values.from,
     to: values.to,
     headless
+  };
+}
+
+function parseAthleteIdFromUrl(candidateUrl: string): number | null {
+  const match = candidateUrl.match(/\/athletes\/(\d+)/i);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  const parsed = Number(match[1]);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function buildAthleteCalendarUrl(athleteId: number): string {
+  return `https://app.trainingpeaks.com/#calendar/athletes/${athleteId}`;
+}
+
+async function resolveExportTarget(args: CliArgs): Promise<ExportTarget> {
+  if (args.student) {
+    const students = await readStudentsConfig();
+    const student = findStudentById(students, args.student);
+    if (!student) {
+      const knownStudents = students.map((entry) => entry.student_id).join(", ") || "(none)";
+      throw new Error(`Student "${args.student}" was not found in config/students.json. Known ids: ${knownStudents}`);
+    }
+
+    return {
+      mode: "student",
+      subjectId: student.student_id,
+      athleteUrl: student.trainingpeaks_athlete_url,
+      requestedAthleteId: parseAthleteIdFromUrl(student.trainingpeaks_athlete_url),
+      verificationRequired: false
+    };
+  }
+
+  const requestedFromUrl = args.athleteUrl ? parseAthleteIdFromUrl(args.athleteUrl) : null;
+  if (args.athleteUrl && !requestedFromUrl) {
+    throw new Error("Invalid --athlete-url. Expected TrainingPeaks athlete URL with /athletes/<id>.");
+  }
+  if (args.athleteId && requestedFromUrl && args.athleteId !== requestedFromUrl) {
+    throw new Error(`Athlete identity mismatch: --athlete-id=${args.athleteId} but --athlete-url resolved to ${requestedFromUrl}.`);
+  }
+
+  const requestedAthleteId = args.athleteId ?? requestedFromUrl;
+  if (!requestedAthleteId) {
+    throw new Error("Missing direct athlete identity. Provide --athlete-id or valid --athlete-url.");
+  }
+
+  return {
+    mode: args.athleteUrl ? "athlete-url" : "athlete-id",
+    subjectId: `athlete-${requestedAthleteId}`,
+    athleteUrl: buildAthleteCalendarUrl(requestedAthleteId),
+    requestedAthleteId,
+    verificationRequired: true
+  };
+}
+
+async function collectVisibleAthleteName(page: Page): Promise<string | null> {
+  const candidates = await page
+    .locator("h1, h2, [data-testid*='athlete'], [class*='athlete'], [aria-label*='athlete' i]")
+    .allInnerTexts()
+    .catch(() => []);
+  const genericNoise = /trainingpeaks|calendar|settings|dashboard|workout|export data/i;
+  for (const rawValue of candidates) {
+    const value = rawValue.replace(/\s+/g, " ").trim();
+    if (!value || value.length < 2 || value.length > 80 || genericNoise.test(value)) {
+      continue;
+    }
+    return value;
+  }
+  return null;
+}
+
+async function checkAthleteIdentity(page: Page, requestedAthleteId: number | null): Promise<AthleteIdentityCheck> {
+  const reasons: string[] = [];
+  const pageUrl = page.url();
+  const resolvedFromUrl = parseAthleteIdFromUrl(pageUrl);
+  const visibleAthleteName = await collectVisibleAthleteName(page);
+
+  let status: IdentityCheckStatus = "unknown";
+  if (requestedAthleteId === null) {
+    status = resolvedFromUrl ? "matched" : "unknown";
+    reasons.push("requested athlete id was not explicitly provided.");
+    if (resolvedFromUrl) {
+      reasons.push(`resolved athlete id from URL: ${resolvedFromUrl}.`);
+    } else {
+      reasons.push("could not resolve athlete id from URL.");
+    }
+  } else if (!resolvedFromUrl) {
+    status = "failed";
+    reasons.push(`failed to resolve athlete id from page URL (${pageUrl}).`);
+  } else if (resolvedFromUrl !== requestedAthleteId) {
+    status = "failed";
+    reasons.push(`athlete id mismatch: requested=${requestedAthleteId}, resolved=${resolvedFromUrl}.`);
+  } else {
+    status = "matched";
+    reasons.push(`athlete id matched requested id ${requestedAthleteId}.`);
+  }
+
+  return {
+    requested_athlete_id: requestedAthleteId,
+    resolved_athlete_id: resolvedFromUrl,
+    visible_athlete_name_if_available: visibleAthleteName,
+    identity_check_status: status,
+    identity_check_reasons: reasons
   };
 }
 
@@ -1713,169 +1890,40 @@ async function locateSettingsScope(page: Page): Promise<Locator> {
 async function locateExportSectionByHeading(
   page: Page,
   headingText: string,
-  markerAttribute: string
+  _markerAttribute: string
 ): Promise<WorkoutSummarySectionResolution> {
-  const markerValue = `selected-${Date.now()}`;
-  await page
-    .locator(`[${markerAttribute}]`)
-    .evaluateAll((elements, attributeName) => {
-      for (const element of elements) {
-        element.removeAttribute(attributeName as string);
-      }
-    }, markerAttribute)
-    .catch(() => {});
+  const quotedHeading = headingText.replace(/'/g, "\\'");
+  const sectionXpath = `(
+    //*[(self::h1 or self::h2 or self::h3 or self::h4 or self::h5 or self::h6 or @role='heading')
+       and normalize-space(.)='${quotedHeading}']
+    /ancestor::*[
+      (self::div or self::section or self::form or self::article or self::fieldset or self::li)
+      and .//input[@name='startDate']
+      and .//input[@name='endDate']
+      and (.//button[normalize-space(.)='Export'] or .//a[normalize-space(.)='Export'] or .//*[@role='button' and normalize-space(.)='Export'])
+    ]
+  )[1]`;
+  const sectionLocator = page.locator(`xpath=${sectionXpath}`).first();
+  if (!(await isVisible(sectionLocator, 1500))) {
+    return {
+      section: null,
+      candidates: [`no visible "${headingText}" export section matched`],
+      selectedCandidate: undefined
+    };
+  }
 
-  const resolution = await page.evaluate(
-    ({ markerAttributeName, markerAttributeValue, targetHeadingText }) => {
-      const normalize = (value: string | null | undefined): string => (value ?? "").replace(/\s+/g, " ").trim();
-      const isVisible = (element: Element | null): element is HTMLElement => {
-        if (!(element instanceof HTMLElement)) {
-          return false;
-        }
-
-        const style = window.getComputedStyle(element);
-        const rect = element.getBoundingClientRect();
-        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
-      };
-      const exactTextMatches = (root: ParentNode, text: string): HTMLElement[] =>
-        Array.from(root.querySelectorAll("h1, h2, h3, h4, h5, h6, [role='heading'], div, span, p, strong, label"))
-          .filter(isVisible)
-          .filter((element) => normalize(element.textContent) === text);
-      const visibleDateInputs = (root: ParentNode, name: string): HTMLElement[] =>
-        Array.from(root.querySelectorAll(`input[name="${name}"]`)).filter(isVisible);
-      const visibleExportButtons = (root: ParentNode): HTMLElement[] =>
-        Array.from(root.querySelectorAll("button, a, [role='button']"))
-          .filter(isVisible)
-          .filter((element) => normalize(element.textContent || element.getAttribute("aria-label")) === "Export");
-      const describeElement = (element: HTMLElement): string => {
-        const tagName = element.tagName.toLowerCase();
-        const id = element.id ? `#${element.id}` : "";
-        const classes = normalize(element.className)
-          .split(/\s+/)
-          .filter(Boolean)
-          .slice(0, 4)
-          .map((className) => `.${className}`)
-          .join("");
-        return `${tagName}${id}${classes}`;
-      };
-      const collectHeadingTexts = (root: ParentNode): string[] =>
-        [...new Set(exactTextMatches(root, targetHeadingText).map((element) => normalize(element.textContent)).filter(Boolean))];
-      const getDepth = (element: HTMLElement): number => {
-        let depth = 0;
-        let current: HTMLElement | null = element;
-        while (current) {
-          depth += 1;
-          current = current.parentElement;
-        }
-
-        return depth;
-      };
-
-      const headingElements = exactTextMatches(document, targetHeadingText);
-      const seen = new Set<HTMLElement>();
-      const candidates: Array<{
-        element: HTMLElement;
-        summary: string;
-        containsWorkoutFilesHeading: boolean;
-        exportButtonCount: number;
-        area: number;
-        descendants: number;
-        depth: number;
-      }> = [];
-
-      for (const heading of headingElements) {
-        let current = heading.parentElement;
-        while (current && current !== document.body) {
-          if (!isVisible(current)) {
-            current = current.parentElement;
-            continue;
-          }
-
-          const tagName = current.tagName.toLowerCase();
-          if (!["div", "section", "form", "article", "fieldset", "li"].includes(tagName)) {
-            current = current.parentElement;
-            continue;
-          }
-
-          if (seen.has(current)) {
-            current = current.parentElement;
-            continue;
-          }
-          seen.add(current);
-
-          const startDateInputs = visibleDateInputs(current, "startDate");
-          const endDateInputs = visibleDateInputs(current, "endDate");
-          const exportButtons = visibleExportButtons(current);
-          const containsTargetHeading = collectHeadingTexts(current).includes(targetHeadingText);
-          const containsWorkoutFilesHeading = exactTextMatches(current, "Workout Files").length > 0;
-          if (!containsTargetHeading || startDateInputs.length === 0 || endDateInputs.length === 0 || exportButtons.length === 0) {
-            current = current.parentElement;
-            continue;
-          }
-
-          const rect = current.getBoundingClientRect();
-          const area = Math.max(1, Math.round(rect.width * rect.height));
-          const descendants = current.querySelectorAll("*").length;
-          const summary = [
-            describeElement(current),
-            `startDate=${startDateInputs.length}`,
-            `endDate=${endDateInputs.length}`,
-            `export=${exportButtons.length}`,
-            `containsWorkoutFiles=${containsWorkoutFilesHeading ? "yes" : "no"}`,
-            `area=${area}`,
-            `descendants=${descendants}`
-          ].join(" ");
-          candidates.push({
-            element: current,
-            summary,
-            containsWorkoutFilesHeading,
-            exportButtonCount: exportButtons.length,
-            area,
-            descendants,
-            depth: getDepth(current)
-          });
-          current = current.parentElement;
-        }
-      }
-
-      candidates.sort((left, right) => {
-        if (left.containsWorkoutFilesHeading !== right.containsWorkoutFilesHeading) {
-          return Number(left.containsWorkoutFilesHeading) - Number(right.containsWorkoutFilesHeading);
-        }
-        if ((left.exportButtonCount === 1) !== (right.exportButtonCount === 1)) {
-          return Number(right.exportButtonCount === 1) - Number(left.exportButtonCount === 1);
-        }
-        if (left.area !== right.area) {
-          return left.area - right.area;
-        }
-        if (left.descendants !== right.descendants) {
-          return left.descendants - right.descendants;
-        }
-
-        return right.depth - left.depth;
-      });
-
-      const selected = candidates[0];
-      if (selected) {
-        selected.element.setAttribute(markerAttributeName, markerAttributeValue);
-      }
-
-      return {
-        candidates: candidates.slice(0, 6).map((candidate) => candidate.summary),
-        selectedCandidate: selected?.summary
-      };
-    },
-    { markerAttributeName: markerAttribute, markerAttributeValue: markerValue, targetHeadingText: headingText }
-  );
-
-  const section = resolution.selectedCandidate
-    ? page.locator(`[${markerAttribute}="${markerValue}"]`).first()
-    : null;
+  const startDateCount = await sectionLocator.locator('input[name="startDate"]').count().catch(() => 0);
+  const endDateCount = await sectionLocator.locator('input[name="endDate"]').count().catch(() => 0);
+  const exportButtonCount = await sectionLocator
+    .locator('button:has-text("Export"), a:has-text("Export"), [role="button"]:has-text("Export")')
+    .count()
+    .catch(() => 0);
+  const candidateSummary = `${headingText} xpath section startDate=${startDateCount} endDate=${endDateCount} export=${exportButtonCount}`;
 
   return {
-    section,
-    candidates: resolution.candidates,
-    selectedCandidate: resolution.selectedCandidate
+    section: sectionLocator,
+    candidates: [candidateSummary],
+    selectedCandidate: candidateSummary
   };
 }
 
@@ -2090,11 +2138,7 @@ async function inspectAndMaybeSelectWorkoutSummaryFormat(section: Locator): Prom
     }
   } else if (initialInspection.action?.type === "click") {
     try {
-      await targetLocator.evaluate((element) => {
-        if (element instanceof HTMLInputElement || element instanceof HTMLElement) {
-          element.click();
-        }
-      });
+      await targetLocator.click({ timeout: 2000, force: true });
       appliedSelection = "selected CSV in Workout Summary format control";
     } catch (error) {
       selectionError = `could not select CSV format: ${summarizeErrorMessage(error)}`;
@@ -2664,15 +2708,25 @@ async function tryClickWorkoutSummaryExport(
     return { ok: false, reason: 'could not find the "Workout Summary" export subsection.' };
   }
 
-  const formatInspection = await inspectAndMaybeSelectWorkoutSummaryFormat(section);
-  if (formatInspection.appliedSelection) {
-    debugLog(`Auto-export debug: ${formatInspection.appliedSelection}`);
-  }
-  if (formatInspection.selectionError) {
-    debugLog(`Auto-export debug: ${formatInspection.selectionError}`);
-  }
-
-  const preClickDebug = await collectWorkoutSummaryPreClickDebug(section, formatInspection.selectedFormatValue);
+  const preClickDebug: WorkoutSummaryPreClickDebug = {
+    containerSummary: sectionResolution.selectedCandidate ?? "workout summary section",
+    startDateCount: await section.locator('input[name="startDate"]').count().catch(() => 0),
+    endDateCount: await section.locator('input[name="endDate"]').count().catch(() => 0),
+    exportButtons: await section
+      .locator("button, a, [role='button']")
+      .allInnerTexts()
+      .then((values) => values.map((value) => value.replace(/\s+/g, " ").trim()).filter((value) => /^export$/i.test(value)))
+      .catch(() => []),
+    selectedButtonText: undefined,
+    selectedButtonDisabled: undefined,
+    selectedButtonAriaDisabled: undefined,
+    selectedButtonClass: undefined,
+    selectedButtonFormInfo: undefined,
+    controls: [],
+    selectedFormatValue: undefined,
+    startDateValue: await section.locator('input[name="startDate"]').first().inputValue().catch(() => ""),
+    endDateValue: await section.locator('input[name="endDate"]').first().inputValue().catch(() => "")
+  };
   debugLog(`Auto-export debug: Workout Summary container="${truncateForLog(preClickDebug.containerSummary, 220)}"`);
   debugLog(
     `Auto-export debug: Workout Summary inputs startDate=${preClickDebug.startDateCount} endDate=${preClickDebug.endDateCount}`
@@ -2828,7 +2882,7 @@ async function tryClickWorkoutSummaryExport(
         fallbackReason: "did not observe the Workout Summary export API response after clicking Export."
       } satisfies ExportApiCaptureResult;
 
-  const validationMessagesAfterClick = await collectVisibleExportFeedback(page, section);
+  const validationMessagesAfterClick: string[] = [];
   const clickDebug: WorkoutSummaryClickDebug = {
     ...preClickDebug,
     validationMessagesAfterClick,
@@ -3446,20 +3500,18 @@ async function clickGeneratedWorkoutFilesDownloadLink(page: Page): Promise<Gener
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const students = await readStudentsConfig();
-  const student = findStudentById(students, args.student);
-
-  if (!student) {
-    const knownStudents = students.map((entry) => entry.student_id).join(", ") || "(none)";
-    throw new Error(`Student "${args.student}" was not found in config/students.json. Known ids: ${knownStudents}`);
-  }
-
-  const exportDir = path.join(exportsRoot, student.student_id, `${args.from}_${args.to}`);
+  const target = await resolveExportTarget(args);
+  const exportDir = path.join(exportsRoot, target.subjectId, `${args.from}_${args.to}`);
   const downloadsDir = path.join(os.homedir(), "Downloads");
   await mkdir(exportDir, { recursive: true });
   await mkdir(profileDir, { recursive: true });
 
-  console.log(`Export started: student=${student.student_id} week=${args.from}..${args.to}`);
+  console.log(`Export started: subject=${target.subjectId} week=${args.from}..${args.to}`);
+  if (target.mode !== "student") {
+    console.log(
+      `Identity target: mode=${target.mode} requested_athlete_id=${target.requestedAthleteId ?? "unknown"} url=${target.athleteUrl}`
+    );
+  }
 
   const existingExportDirSnapshot = await inspectExportDir(exportDir);
   const existingExportAssessment = assessExportFiles(
@@ -3490,7 +3542,7 @@ async function main(): Promise<void> {
 
   console.log(`Using persistent browser profile: ${profileDir}`);
   console.log(`Export folder: ${exportDir}`);
-  console.log(`Opening TrainingPeaks for student: ${student.student_id}`);
+  console.log(`Opening TrainingPeaks for subject: ${target.subjectId}`);
   if (args.headless) {
     console.log("Browser mode: headless (viewport 1440x900). Default is headed; pass --headed to force a visible window.");
   }
@@ -3505,10 +3557,10 @@ async function main(): Promise<void> {
   try {
     const page = context.pages()[0] ?? (await context.newPage());
 
-    await page.goto(student.trainingpeaks_athlete_url, { waitUntil: "domcontentloaded" });
+    await page.goto(target.athleteUrl, { waitUntil: "domcontentloaded" });
     await page.bringToFront();
 
-    console.log(`Auto-export: opening TrainingPeaks for ${student.student_id}`);
+    console.log(`Auto-export: opening TrainingPeaks for ${target.subjectId}`);
     console.log("Auto-export: verifying login/page state");
 
     let pageAssessment = await assessTrainingPeaksPage(page);
@@ -3519,9 +3571,26 @@ async function main(): Promise<void> {
       );
       console.log("TrainingPeaks login is required. Please sign in in the opened browser, then press Enter to continue.");
       await waitForEnter("Press Enter after the TrainingPeaks login is complete.");
-      await page.goto(student.trainingpeaks_athlete_url, { waitUntil: "domcontentloaded" }).catch(() => {});
+      await page.goto(target.athleteUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
       await page.bringToFront();
       pageAssessment = await assessTrainingPeaksPage(page);
+    }
+
+    const identityCheck = await checkAthleteIdentity(page, target.requestedAthleteId);
+    await writeFile(path.join(exportDir, "identity-check.json"), `${JSON.stringify(identityCheck, null, 2)}\n`, "utf8");
+    console.log(
+      `Identity check: status=${identityCheck.identity_check_status} requested=${identityCheck.requested_athlete_id ?? "unknown"} resolved=${identityCheck.resolved_athlete_id ?? "unknown"}`
+    );
+    if (identityCheck.visible_athlete_name_if_available) {
+      console.log(`Identity check: visible athlete name="${identityCheck.visible_athlete_name_if_available}"`);
+    }
+    for (const reason of identityCheck.identity_check_reasons) {
+      debugLog(`Identity check reason: ${reason}`);
+    }
+    if (target.verificationRequired && identityCheck.identity_check_status !== "matched") {
+      throw new Error(
+        `Identity verification failed for direct athlete mode (requested=${identityCheck.requested_athlete_id ?? "unknown"}, resolved=${identityCheck.resolved_athlete_id ?? "unknown"}).`
+      );
     }
 
     if (!pageAssessment.athletePageLikelyReachable) {
@@ -3531,7 +3600,7 @@ async function main(): Promise<void> {
     let exportDataOpened = false;
     let datesAutoFilled = false;
     let automaticSummaryExportCompleted = summaryAlreadyAvailable;
-    let automaticWorkoutFilesExportCompleted = workoutFilesAlreadyAvailable;
+    let automaticWorkoutFilesExportCompleted = workoutFilesAlreadyAvailable || target.mode !== "student";
 
     const shouldAttemptExportData =
       !pageAssessment.loginRequired &&
@@ -3571,7 +3640,7 @@ async function main(): Promise<void> {
         inspectExportDir(downloadsDir)
       ]);
       console.log("Auto-export: clicking Workout Summary Export");
-      const clickResult = await tryClickWorkoutSummaryExport(page, exportDir, student.student_id, args.from, args.to);
+      const clickResult = await tryClickWorkoutSummaryExport(page, exportDir, target.subjectId, args.from, args.to);
       const clickDebug = clickResult.clickDebug;
       if (clickDebug) {
         logWorkoutSummaryClickDebug(clickDebug);
@@ -3603,81 +3672,40 @@ async function main(): Promise<void> {
             `Auto-export: Workout Summary ${apiCapture.savedArtifactKind.toUpperCase()} saved automatically: ${path.basename(apiCapture.savedArtifactPath)}`
           );
         } else {
-          console.log("Auto-export: waiting for Export Complete download link");
-          const exportCompleteResult = await waitForGeneratedWorkoutSummaryDownloadLink(page);
-          debugLog(
-            `Auto-export debug: Export Complete visible=${exportCompleteResult.exportCompleteVisible ? "yes" : "no"} instruction visible=${exportCompleteResult.downloadInstructionVisible ? "yes" : "no"}`
+          const clickCompletedAt = Date.now();
+          console.log("Auto-export: waiting for Workout Summary ZIP or CSV");
+          const waitForArtifactResult = await waitForWorkoutSummaryArtifact(
+            exportDir,
+            downloadsDir,
+            exportDirSnapshotBeforeClick.summaryZipFiles,
+            exportDirSnapshotBeforeClick.summaryCsvFiles,
+            downloadsSnapshotBeforeClick.summaryZipFiles,
+            downloadsSnapshotBeforeClick.summaryCsvFiles,
+            clickCompletedAt
           );
-          if (exportCompleteResult.candidateTexts && exportCompleteResult.candidateTexts.length > 0) {
-            debugLog(`Auto-export debug: Export Complete candidates="${exportCompleteResult.candidateTexts.join(" | ")}"`);
-          } else {
-            debugLog("Auto-export debug: Export Complete candidates=(none)");
-          }
-          if (exportCompleteResult.candidateLinks && exportCompleteResult.candidateLinks.length > 0) {
-            debugLog(`Auto-export debug: generated link candidates="${exportCompleteResult.candidateLinks.join(" | ")}"`);
-          } else {
-            debugLog("Auto-export debug: generated link candidates=(none)");
-          }
-          if (!exportCompleteResult.ok || (!exportCompleteResult.linkText && !exportCompleteResult.linkHref)) {
-            console.log("Auto-export fallback: Export Complete download link did not appear.");
-          } else {
-            console.log("Auto-export: Export Complete link appeared");
-            debugLog(`Auto-export debug: generated link text="${exportCompleteResult.linkText ?? ""}"`);
-            if (exportCompleteResult.linkHref) {
-              debugLog(`Auto-export debug: generated link href="${exportCompleteResult.linkHref}"`);
-            }
-            console.log("Auto-export: clicking generated Workout Summary download link");
-            const generatedLinkClickResult = await clickGeneratedWorkoutSummaryDownloadLink(page);
-            debugLog(
-              `Auto-export debug: generated link click mode=${generatedLinkClickResult.clickMode} succeeded=${generatedLinkClickResult.clickSucceeded ? "yes" : "no"}`
-            );
-            debugLog(
-              `Auto-export debug: generated link popup/new page appeared=${generatedLinkClickResult.popupOpened ? "yes" : "no"}`
-            );
-            if (generatedLinkClickResult.candidateLinks && generatedLinkClickResult.candidateLinks.length > 0) {
-              debugLog(`Auto-export debug: clicked generated link candidates="${generatedLinkClickResult.candidateLinks.join(" | ")}"`);
-            }
-            if (!generatedLinkClickResult.ok) {
+          if (waitForArtifactResult.ok && waitForArtifactResult.summaryArtifact && waitForArtifactResult.summaryKind) {
+            automaticSummaryExportCompleted = true;
+            if (waitForArtifactResult.summaryKind === "zip" && waitForArtifactResult.detectedIn === "downloads") {
               console.log(
-                `Auto-export fallback: ${generatedLinkClickResult.clickError ?? "could not click the generated Workout Summary download link."}`
+                `Auto-export: Summary ZIP found in Downloads and moved to export folder: ${path.basename(waitForArtifactResult.summaryArtifact)}`
+              );
+            } else if (waitForArtifactResult.summaryKind === "csv" && waitForArtifactResult.detectedIn === "downloads") {
+              console.log(
+                `Auto-export: Summary CSV found in Downloads and moved to export folder: ${path.basename(waitForArtifactResult.summaryArtifact)}`
+              );
+            } else if (waitForArtifactResult.summaryKind === "csv") {
+              console.log(
+                `Auto-export: Summary CSV detected in export folder: ${path.basename(waitForArtifactResult.summaryArtifact)}`
               );
             } else {
-              const clickCompletedAt = Date.now();
-              console.log("Auto-export: waiting for Workout Summary ZIP or CSV");
-              const waitForArtifactResult = await waitForWorkoutSummaryArtifact(
-                exportDir,
-                downloadsDir,
-                exportDirSnapshotBeforeClick.summaryZipFiles,
-                exportDirSnapshotBeforeClick.summaryCsvFiles,
-                downloadsSnapshotBeforeClick.summaryZipFiles,
-                downloadsSnapshotBeforeClick.summaryCsvFiles,
-                clickCompletedAt
-              );
-              if (waitForArtifactResult.ok && waitForArtifactResult.summaryArtifact && waitForArtifactResult.summaryKind) {
-                automaticSummaryExportCompleted = true;
-                if (waitForArtifactResult.summaryKind === "zip" && waitForArtifactResult.detectedIn === "downloads") {
-                  console.log(
-                    `Auto-export: Summary ZIP found in Downloads and moved to export folder: ${path.basename(waitForArtifactResult.summaryArtifact)}`
-                  );
-                } else if (waitForArtifactResult.summaryKind === "csv" && waitForArtifactResult.detectedIn === "downloads") {
-                  console.log(
-                    `Auto-export: Summary CSV found in Downloads and moved to export folder: ${path.basename(waitForArtifactResult.summaryArtifact)}`
-                  );
-                } else if (waitForArtifactResult.summaryKind === "csv") {
-                  console.log(
-                    `Auto-export: Summary CSV detected in export folder: ${path.basename(waitForArtifactResult.summaryArtifact)}`
-                  );
-                } else {
-                  console.log(`Auto-export: Summary ZIP detected: ${path.basename(waitForArtifactResult.summaryArtifact)}`);
-                }
-                console.log("Workout Summary export downloaded automatically.");
-              } else {
-                console.log("Auto-export did not detect Workout Summary ZIP or CSV. Switching to manual fallback.");
-                console.log(
-                  `Auto-export fallback: ${waitForArtifactResult.reason ?? "did not detect Workout Summary ZIP or CSV after clicking Export."}`
-                );
-              }
+              console.log(`Auto-export: Summary ZIP detected: ${path.basename(waitForArtifactResult.summaryArtifact)}`);
             }
+            console.log("Workout Summary export downloaded automatically.");
+          } else {
+            console.log("Auto-export did not detect Workout Summary ZIP or CSV. Switching to manual fallback.");
+            console.log(
+              `Auto-export fallback: ${waitForArtifactResult.reason ?? "did not detect Workout Summary ZIP or CSV after clicking Export."}`
+            );
           }
         }
 
@@ -3705,7 +3733,7 @@ async function main(): Promise<void> {
         const workoutFilesClickResult = await tryClickWorkoutFilesExport(
           page,
           exportDir,
-          student.student_id,
+          target.subjectId,
           args.from,
           args.to
         );
