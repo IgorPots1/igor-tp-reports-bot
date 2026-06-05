@@ -216,14 +216,23 @@ export function enrichScheduleStructuredPayload(
   const unavailableDays = readStringArray(payload.unavailable_days);
   const observedDateKey = toCoachDateKey(parseIsoDateFallback(observedAt));
 
+  const explicitPlannedDates = [
+    ...readStringArray(payload.resolved_available_dates),
+    ...readStringArray(payload.planned_training_dates),
+  ].sort();
+
   if (weekScope === "this_week") {
     const weekStart = coachWeekStart(observedDateKey, "this_week");
     payload.valid_from = weekStart;
-    payload.valid_until = shiftDateKey(weekStart, 6);
+    if (explicitPlannedDates.length === 0) {
+      payload.valid_until = shiftDateKey(weekStart, 6);
+    }
   } else if (weekScope === "next_week") {
     const weekStart = coachWeekStart(observedDateKey, "next_week");
     payload.valid_from = weekStart;
-    payload.valid_until = shiftDateKey(weekStart, 6);
+    if (explicitPlannedDates.length === 0) {
+      payload.valid_until = shiftDateKey(weekStart, 6);
+    }
   }
 
   if (availableDays.length > 0) {
@@ -237,6 +246,10 @@ export function enrichScheduleStructuredPayload(
         payload.valid_until = resolved[resolved.length - 1] ?? null;
       }
     }
+  }
+
+  if (explicitPlannedDates.length > 0) {
+    payload.valid_until = explicitPlannedDates[explicitPlannedDates.length - 1] ?? payload.valid_until;
   }
 
   const durationDays = parseDurationDaysFromText(normalized) ?? readPositiveInt(payload.duration_days);

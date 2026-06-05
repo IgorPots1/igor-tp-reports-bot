@@ -1190,6 +1190,45 @@ async function run(): Promise<void> {
       },
     },
     {
+      name: "postolaki-past-missed-sunday-tomorrow-run",
+      observation: {
+        ...mkObs(
+          "Привет! Да, сорри. Я в вс не смогла побегать На этой неделе смогу только раз, к сожалению Завтра"
+        ),
+        observedAt: "2026-06-04T12:02:27.972Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        resolved_available_dates: ["2026-06-05"],
+        planned_training_dates: ["2026-06-05"],
+        valid_until: "2026-06-05",
+        planning_status: "athlete_intends_to_train",
+      },
+    },
+    {
+      name: "titskaia-cold-timeout-until-sunday",
+      observation: {
+        ...mkObs("беру тайм аут до вскр, нужно чуть в себя прийти что-то простыла немного"),
+        observedAt: "2026-06-05T10:19:41.381Z",
+      },
+      expected: {
+        primary_bucket: "temporary_memory",
+        signal_type: "health_issue_started",
+        should_create_memory: true,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: "illness",
+        health_state: "sick",
+        training_recommendation: "pause",
+        valid_until: "2026-06-07",
+        latest_summary_includes: ["простыла", "тайм-аут до 07.06"],
+      },
+    },
+    {
       name: "health-ambiguous-feel-bad-not-illness",
       observation: mkObs("плохо себя чувствую"),
       expected: {

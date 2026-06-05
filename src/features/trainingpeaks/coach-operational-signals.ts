@@ -124,7 +124,7 @@ const DAY_ALIASES: Array<{ day: string; forms: string[] }> = [
   { day: "Thursday", forms: ["четверг", "четвергам", "четвергам", "чт"] },
   { day: "Friday", forms: ["пятница", "пятницу", "пятницам", "пт"] },
   { day: "Saturday", forms: ["суббота", "субботу", "субботам", "сб"] },
-  { day: "Sunday", forms: ["воскресенье", "воскресеньям", "вс"] },
+  { day: "Sunday", forms: ["воскресенье", "воскресеньям", "вс", "вскр"] },
 ];
 
 const NOISE_ONLY_PATTERN = /^(ок|окей|спасибо|thanks|понял[а]?|принято|👍|👌|🙏)$/iu;
@@ -253,6 +253,41 @@ function hasToken(text: string, token: string): boolean {
   return pattern.test(text);
 }
 
+function escapeRegexToken(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function isPastTenseMissedRunPhrase(text: string): boolean {
+  return /не\s+смог(?:ла|л|ли)?\s*(?:по)?бег|не\s+смог(?:ла|л|ли)?\s+.*\s*(?:бег|побег|пробеж|убеж)/iu.test(
+    text
+  );
+}
+
+function extractPastMissedRunWeekdays(text: string): Set<string> {
+  const missed = new Set<string>();
+  if (!isPastTenseMissedRunPhrase(text)) {
+    return missed;
+  }
+  for (const alias of DAY_ALIASES) {
+    const nearMissed = alias.forms.some((form) => {
+      const escaped = escapeRegexToken(form);
+      return new RegExp(
+        `(?:^|[^a-zа-яё])в\\s+${escaped}\\s+не\\s+смог|не\\s+смог(?:ла|л|ли)?[^.!?;]{0,48}(?:в\\s+)?${escaped}`,
+        "iu"
+      ).test(text);
+    });
+    if (nearMissed) {
+      missed.add(alias.day);
+    }
+  }
+  return missed;
+}
+
+function filterDaysExcludingPastMissedRun(text: string, days: string[]): string[] {
+  const missed = extractPastMissedRunWeekdays(text);
+  return days.filter((day) => !missed.has(day));
+}
+
 function extractDays(text: string): string[] {
   const output: string[] = [];
   for (const alias of DAY_ALIASES) {
@@ -260,7 +295,42 @@ function extractDays(text: string): string[] {
       output.push(alias.day);
     }
   }
-  return output;
+  return filterDaysExcludingPastMissedRun(text, output);
+}
+
+function hasTomorrowRunAvailabilityIntent(clause: string, globalRunningContext: boolean): boolean {
+  if (!clause.includes("завтра")) {
+    return false;
+  }
+  if (/завтра\s+не|не\s+[^.!?;]{0,24}завтра/iu.test(clause)) {
+    return false;
+  }
+  const hasAbilityCue = hasToken(clause, "смогу") || hasToken(clause, "могу") || clause.includes("смогу только");
+  if (!hasAbilityCue) {
+    return false;
+  }
+  return hasRunningCue(clause) || globalRunningContext;
+}
+
+function parseHealthPauseUntilDate(text: string, observedAt: string): string | null {
+  const match = text.match(
+    /до\s+(понедельника|вторника|среды|четверга|пятницы|субботы|воскресенья|вскр|вс|пн|вт|ср|чт|пт|сб|завтра|послезавтра)/iu
+  );
+  if (!match?.[1]) {
+    return null;
+  }
+  const token = match[1].toLowerCase();
+  if (token === "завтра") {
+    return isoDate(addDays(parseIsoDateFallback(observedAt), 1));
+  }
+  if (token === "послезавтра") {
+    return isoDate(addDays(parseIsoDateFallback(observedAt), 2));
+  }
+  const days = extractDays(token);
+  if (days.length > 0) {
+    return inferDateForDay(days[0]!, observedAt, text);
+  }
+  return null;
 }
 
 export function extractDaysFromText(text: string): string[] {
@@ -390,6 +460,7 @@ function classifyHealthIssueKind(text: string): string | null {
       "температур",
       "темпера подним",
       "простуд",
+      "простыл",
       "кашель",
       "болею",
       "болеет",
@@ -426,7 +497,7 @@ const HEALTH_SYMPTOM_PATTERNS: Array<{ symptom: string; patterns: string[] }> = 
   { symptom: "throat", patterns: ["горло"] },
   { symptom: "voice", patterns: ["голос пропал", "голос осип", "голос сел", "осип голос", "голос вернул", "голос немного вернул"] },
   { symptom: "runny_nose", patterns: ["насморк", "сопли"] },
-  { symptom: "cold", patterns: ["простуд"] },
+  { symptom: "cold", patterns: ["простуд", "простыл"] },
   { symptom: "orvi", patterns: ["орви"] },
   { symptom: "fatigue", patterns: ["сил нет", "сил вообще нет", "нет сил", "вообще нет сил", "без сил"] },
   { symptom: "headache", patterns: ["голова болит", "голов болит", "головная боль"] },
@@ -450,6 +521,7 @@ function hasExplicitIllnessCue(text: string): boolean {
     "насморк",
     "сопли",
     "простуд",
+    "простыл",
     "орви",
     "голос осип",
     "голос сел",
@@ -493,12 +565,16 @@ function hasHealthStartedCue(text: string): boolean {
     "насморк",
     "сопли",
     "простуд",
+    "простыл",
     "орви",
     "слабост",
     "отврат",
     "недомога",
     "плохо себя чувств",
     "отлежусь",
+    "тайм аут",
+    "тайм-аут",
+    "таймаут",
   ]);
 }
 
@@ -637,10 +713,13 @@ function buildHealthFollowUpDueAt(observedAt: string, preferredDate?: string | n
 
 function buildHealthSummary(input: {
   text: string;
+  observedAt?: string;
   signalType: "health_issue_started" | "health_issue_improving" | "health_issue_resolved";
   symptoms: string[];
   recommendation: "pause" | "easy_if_symptom_free" | "monitor" | "resume_carefully";
   plannedAttemptDate: string | null;
+  pauseUntil?: string | null;
+  hasTimeoutCue?: boolean;
 }): string {
   const lines: string[] = [];
   const symptomSummary = joinSymptomLabels(input.symptoms);
@@ -654,6 +733,13 @@ function buildHealthSummary(input: {
   const explicitIllness = hasExplicitIllnessCue(input.text);
 
   if (input.signalType === "health_issue_started") {
+    if (
+      input.hasTimeoutCue &&
+      input.pauseUntil &&
+      hasAny(input.text, ["простыл", "простуд"])
+    ) {
+      return `простыла, тайм-аут до ${compactOperationalDate(input.pauseUntil)}`;
+    }
     if (explicitIllness && input.text.includes("температур") && input.text.includes("с понедельника")) {
       lines.push("болеет, температура с понедельника");
     } else if (explicitIllness && input.text.includes("температур")) {
@@ -885,26 +971,34 @@ function classifyHealthLifecycleSignal(input: {
   }
 
   const pauseDays = parsePauseDurationDays(text);
+  const pauseUntil = parseHealthPauseUntilDate(text, input.observedAt);
+  const hasTimeoutCue = hasAny(text, ["тайм аут", "тайм-аут", "таймаут"]);
   const hasRunPauseConstraint = hasAny(text, ["не смогу бегать", "бегать не смогу", "не буду бегать", "не бегать"]);
   const explicitIllness = hasExplicitIllnessCue(text);
   payload.health_state = "sick";
   payload.training_recommendation = "pause";
   payload.evidence_level = explicitIllness ? "explicit_illness" : "ambiguous_malaise";
   payload.requires_coach_review = !explicitIllness;
-  payload.date_certainty = "none";
-  if (hasRunPauseConstraint && pauseDays) {
+  payload.date_certainty = pauseUntil ? "probable" : "none";
+  if (pauseUntil) {
+    payload.valid_from = isoDate(parseIsoDateFallback(input.observedAt));
+    payload.valid_until = pauseUntil;
+  } else if (hasRunPauseConstraint && pauseDays) {
     const observed = parseIsoDateFallback(input.observedAt);
     payload.duration_days = pauseDays;
     payload.valid_from = isoDate(observed);
     payload.valid_until = isoDate(addDays(observed, pauseDays));
   }
-  payload.follow_up_due_at = buildHealthFollowUpDueAt(input.observedAt, null);
+  payload.follow_up_due_at = buildHealthFollowUpDueAt(input.observedAt, pauseUntil);
   payload.latest_summary = buildHealthSummary({
     text,
+    observedAt: input.observedAt,
     signalType: "health_issue_started",
     symptoms,
     recommendation: "pause",
     plannedAttemptDate,
+    pauseUntil,
+    hasTimeoutCue,
   });
   payload.display_summary = payload.latest_summary;
   return {
@@ -1351,6 +1445,9 @@ function extractPlanningIntentDates(input: { text: string; observedAt: string })
     const hasUnavailabilityCue = hasAny(clause, [
       "не могу",
       "не смогу",
+      "не смогла",
+      "не смог",
+      "не смогли",
       "не получится",
       "недоступ",
       "не побегу",
@@ -1361,13 +1458,17 @@ function extractPlanningIntentDates(input: { text: string; observedAt: string })
       "не могу убежать",
     ]);
     const hasPlannedIntent = hasPlanningCue && !hasStrengthCue && (hasRunCue || globalRunningContext);
+    const hasTomorrowIntent = hasTomorrowRunAvailabilityIntent(clause, globalRunningContext);
     const hasUnavailableIntent = hasUnavailabilityCue && (hasRunCue || globalRunningContext);
+    const pastMissedDays = extractPastMissedRunWeekdays(clause);
     const today = isoDate(parseIsoDateFallback(input.observedAt));
 
+    const hasPastMissedUnavailable =
+      pastMissedDays.size > 0 && hasAny(clause, ["не смогла", "не смог", "не смогли"]);
     if (hasUnavailableIntent) {
       if (hasPlannedIntent && clause.includes("сегодня")) {
         unavailable.add(today);
-      } else {
+      } else if (!hasPastMissedUnavailable) {
         for (const date of clauseDates) {
           unavailable.add(date);
         }
@@ -1376,11 +1477,19 @@ function extractPlanningIntentDates(input: { text: string; observedAt: string })
 
     if (hasPlannedIntent) {
       for (const date of clauseDates) {
+        const dateFromPastMissedDay = [...pastMissedDays].some((day) => inferDateForDay(day, input.observedAt, clause) === date);
+        if (dateFromPastMissedDay) {
+          continue;
+        }
         if (hasUnavailableIntent && date === today) {
           continue;
         }
         planned.add(date);
       }
+    }
+
+    if (hasTomorrowIntent) {
+      planned.add(isoDate(addDays(parseIsoDateFallback(input.observedAt), 1)));
     }
   }
 
