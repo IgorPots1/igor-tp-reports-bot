@@ -149,20 +149,26 @@ function buildSnapshot(scope: TrainingPeaksOperationalSignalsScope) {
     makeSignal({
       signalId: "sig-pain-injury",
       studentId: "s-h3",
-      signalType: "pain_injury",
+      signalType: "health_issue_started",
       structuredPayload: {
+        signal_type: "pain_injury",
         latest_summary: "боль / надкостница (уточнить, актуально ли)",
         activity_domain: "injury",
+        planning_effect: "safety_review",
         requires_coach_review: true,
       },
     }),
     makeSignal({
       signalId: "sig-strength-hidden",
       studentId: "s-h4",
-      signalType: "external_training_context",
+      signalType: "plan_generation_constraint",
       structuredPayload: {
+        signal_type: "external_training_context",
         visible_in_tp_signals: false,
-        display_summary: "силовые: пн/чт",
+        display_summary: "силовые: вт/чт",
+        activity_domain: "strength",
+        planning_effect: "strength_schedule_context",
+        planned_training_dates: [],
       },
     }),
     makeSignal({
@@ -349,6 +355,7 @@ function run(): void {
   assert(!text.includes("🩺 Проверить"), "B failed: check section should be hidden in normal /tp_signals.");
   assert(!text.includes("follow-up"), "B failed: internal follow-up language should not be shown.");
   assert(text.includes("🟡 Болезнь / пауза"), "B failed: health section missing.");
+  assert(text.includes("🦵 Боль / травмы"), "B failed: pain/injury section missing.");
   assert(text.includes("📅 Учесть в плане"), "B failed: planning section missing.");
   assert(text.includes("🔁 Переносы"), "B failed: move section missing.");
 
@@ -408,7 +415,8 @@ function run(): void {
   assert(healthText.includes("Pain Athlete"), "F failed: pain/injury signal should be visible in health section.");
   assert(healthText.includes("надкостница"), "F failed: pain/injury summary should preserve body area.");
   assert(!text.includes("Strength Hidden Athlete"), "F failed: hidden strength context should not be visible.");
-  assert(!text.includes("силовые: пн/чт"), "F failed: hidden strength context text leaked.");
+  assert(!text.includes("силовые: вт/чт"), "F failed: hidden strength context text leaked.");
+  assert(!text.includes("Pain Athlete\n  болеет"), "F failed: pain/injury row must not use illness wording.");
   const ambiguousVisible = text.includes("Ambiguous Health Athlete");
   if (ambiguousVisible) {
     assert(
@@ -440,6 +448,7 @@ function run(): void {
     scope: "all",
     sections: [
       { key: "health_pause", title: "🟡 Болезнь / пауза", items: [] },
+      { key: "pain_injury", title: "🦵 Боль / травмы", items: [] },
       { key: "plan_constraints", title: "📅 Учесть в плане", items: [] },
       { key: "moves", title: "🔁 Переносы", items: [] },
       { key: "other", title: "ℹ️ Остальное", items: [] },

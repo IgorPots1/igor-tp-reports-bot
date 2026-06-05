@@ -649,6 +649,7 @@ export type TrainingPeaksOperationalSignalsScope = "all" | "health" | "schedule"
 
 export type TrainingPeaksOperationalSignalsSectionKey =
   | "health_pause"
+  | "pain_injury"
   | "plan_constraints"
   | "moves"
   | "other";
@@ -4605,6 +4606,14 @@ function getSignalMetadataString(
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+function getSignalMetadataBoolean(
+  metadata: Record<string, unknown>,
+  key: string
+): boolean | null {
+  const value = metadata[key];
+  return typeof value === "boolean" ? value : null;
+}
+
 function compactOperationalSignalText(raw: string, maxLength = 90): string {
   const normalized = raw.replace(/\s+/g, " ").trim();
   if (!normalized) {
@@ -4634,7 +4643,7 @@ function resolveScheduleOperationalSignalValidUntil(
 }
 
 function isExpiredScheduleOperationalSignal(
-  signal: Pick<TrainingPeaksStudentOperationalSignal, "signalType" | "validUntil" | "structuredPayload">,
+  signal: { signalType: string; validUntil: string | null; structuredPayload: Record<string, unknown> },
   asOfDate: string
 ): boolean {
   if (!isScheduleOperationalSignalType(signal.signalType)) {
@@ -4728,7 +4737,10 @@ function isActionActiveForMoveSignal(
   });
 }
 
-function buildHealthOperationalSignalText(signal: TrainingPeaksStudentOperationalSignal): string {
+function buildHealthOperationalSignalText(
+  signal: TrainingPeaksStudentOperationalSignal,
+  signalTypeOverride?: string | null
+): string {
   const latestSummary =
     normalizeRecordString(signal.structuredPayload.latest_summary) ??
     getSignalMetadataString(signal.metadata, "latest_summary") ??
@@ -4775,7 +4787,7 @@ function buildHealthOperationalSignalText(signal: TrainingPeaksStudentOperationa
     return compactOperationalSignalText(lines.join("; "), 140);
   }
 
-  const typeLabel = getOperationalSignalTypeLabel(signal.signalType);
+  const typeLabel = getOperationalSignalTypeLabel(signalTypeOverride ?? signal.signalType);
   const windowPart = getOperationalSignalWindowPart(signal);
   return windowPart ? `${typeLabel} (${windowPart})` : typeLabel;
 }
@@ -5764,6 +5776,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
 
 const TRAININGPEAKS_OPERATIONAL_SIGNALS_SECTION_ORDER: TrainingPeaksOperationalSignalsSectionKey[] = [
   "health_pause",
+  "pain_injury",
   "plan_constraints",
   "moves",
   "other",
@@ -5777,6 +5790,11 @@ function createOperationalSignalsSections(): Record<
     health_pause: {
       key: "health_pause",
       title: "🟡 Болезнь / пауза",
+      items: [],
+    },
+    pain_injury: {
+      key: "pain_injury",
+      title: "🦵 Боль / травмы",
       items: [],
     },
     plan_constraints: {
@@ -5819,6 +5837,43 @@ function getOperationalSignalSortKey(item: TrainingPeaksOperationalSignalsItem):
   return `${String(item.priority).padStart(4, "0")}:${String(item.sortBucket).padStart(2, "0")}:${due}:${name}:${item.signalId}`;
 }
 
+type EffectiveOperationalSignalForDisplay = {
+  effectiveSignalType: string;
+  effectiveActivityDomain: string | null;
+  effectivePlanningEffect: string | null;
+  effectiveVisibleInTpSignals: boolean | null;
+  effectiveDisplaySummary: string | null;
+  effectiveRequiresCoachReview: boolean | null;
+};
+
+function resolveEffectiveOperationalSignalForDisplay(
+  signal: Pick<TrainingPeaksStudentOperationalSignal, "signalType" | "structuredPayload" | "metadata">
+): EffectiveOperationalSignalForDisplay {
+  return {
+    effectiveSignalType:
+      normalizeRecordString(signal.structuredPayload.signal_type) ??
+      getSignalMetadataString(signal.metadata, "signal_type") ??
+      signal.signalType,
+    effectiveActivityDomain:
+      normalizeRecordString(signal.structuredPayload.activity_domain) ??
+      getSignalMetadataString(signal.metadata, "activity_domain"),
+    effectivePlanningEffect:
+      normalizeRecordString(signal.structuredPayload.planning_effect) ??
+      getSignalMetadataString(signal.metadata, "planning_effect"),
+    effectiveVisibleInTpSignals:
+      normalizeRecordBoolean(signal.structuredPayload.visible_in_tp_signals) ??
+      getSignalMetadataBoolean(signal.metadata, "visible_in_tp_signals"),
+    effectiveDisplaySummary:
+      normalizeRecordString(signal.structuredPayload.display_summary) ??
+      normalizeRecordString(signal.structuredPayload.latest_summary) ??
+      getSignalMetadataString(signal.metadata, "display_summary") ??
+      getSignalMetadataString(signal.metadata, "latest_summary"),
+    effectiveRequiresCoachReview:
+      normalizeRecordBoolean(signal.structuredPayload.requires_coach_review) ??
+      getSignalMetadataBoolean(signal.metadata, "requires_coach_review"),
+  };
+}
+
 function buildOperationalSignalItemFromSignal(input: {
   signal: TrainingPeaksStudentOperationalSignal;
   studentNameById: ReadonlyMap<string, string | null>;
@@ -5827,21 +5882,21 @@ function buildOperationalSignalItemFromSignal(input: {
   activeMoveActions?: readonly TrainingPeaksAction[];
 }): TrainingPeaksOperationalSignalsItem {
   const { signal, studentNameById, asOfDate } = input;
+  const effective = resolveEffectiveOperationalSignalForDisplay(signal);
   const followUp = normalizeOperationalSignalFollowUp(signal.metadata, {
     asOfDate,
     timeZone: DEFAULT_COACH_TIMEZONE,
   });
   const studentName = studentNameById.get(signal.studentId) ?? null;
   const reasonFromMeta = compactOperationalSignalText(getSignalMetadataString(signal.metadata, "follow_up_reason") ?? "", 80);
-  const typeLabel = getOperationalSignalTypeLabel(signal.signalType);
+  const typeLabel = getOperationalSignalTypeLabel(effective.effectiveSignalType);
   const episodeRole = getSignalMetadataString(signal.metadata, "episode_role");
   const windowPart = getOperationalSignalWindowPart(signal);
   const windowSuffix = windowPart ? ` (${windowPart})` : "";
   const episodeKey = getSignalMetadataString(signal.metadata, "episode_key");
   const relatedSignalTypes = getSignalMetadataString(signal.metadata, "related_signal_types");
   const relatedSuffix = relatedSignalTypes ? `; сигналы: ${compactOperationalSignalText(relatedSignalTypes, 42)}` : "";
-  const structuredVisible = normalizeRecordBoolean(signal.structuredPayload.visible_in_tp_signals);
-  if (structuredVisible === false) {
+  if (effective.effectiveVisibleInTpSignals === false) {
     return {
       signalId: signal.id,
       studentId: signal.studentId,
@@ -5851,27 +5906,32 @@ function buildOperationalSignalItemFromSignal(input: {
       sortBucket: 9,
       dueDate: null,
       episodeKey,
-      signalType: signal.signalType,
+      signalType: effective.effectiveSignalType,
       isEpisodeSummary: false,
       followUpState: followUp.state,
       text: "",
-      hiddenReason: "structured_hidden_from_tp_signals",
+      hiddenReason: "v2_payload_hidden",
     };
   }
 
-  if (isHealthOperationalSignalType(signal.signalType)) {
+  if (isHealthOperationalSignalType(effective.effectiveSignalType)) {
     const rolePrefix = episodeRole ? `${episodeRole}: ` : "";
-    const baseReason = buildHealthOperationalSignalText(signal) || reasonFromMeta || `${typeLabel}${windowSuffix}`;
+    const explicitDisplaySummary = sanitizeHealthOperationalSummary(effective.effectiveDisplaySummary);
+    const baseReason =
+      explicitDisplaySummary ||
+      buildHealthOperationalSignalText(signal, effective.effectiveSignalType) ||
+      reasonFromMeta ||
+      `${typeLabel}${windowSuffix}`;
     return {
       signalId: signal.id,
       studentId: signal.studentId,
       studentName,
-      section: "health_pause",
+      section: effective.effectiveSignalType === "pain_injury" ? "pain_injury" : "health_pause",
       priority: 30,
       sortBucket: 2,
       dueDate: followUp.due_date,
       episodeKey,
-      signalType: signal.signalType,
+      signalType: effective.effectiveSignalType,
       isEpisodeSummary: false,
       followUpState: followUp.state,
       text: compactOperationalSignalText(`${rolePrefix}${baseReason}${relatedSuffix}`, 140),
@@ -5879,8 +5939,17 @@ function buildOperationalSignalItemFromSignal(input: {
     };
   }
 
-  if (isScheduleOperationalSignalType(signal.signalType)) {
-    if (isExpiredScheduleOperationalSignal(signal, asOfDate)) {
+  if (isScheduleOperationalSignalType(effective.effectiveSignalType)) {
+    if (
+      isExpiredScheduleOperationalSignal(
+        {
+          signalType: effective.effectiveSignalType,
+          validUntil: signal.validUntil,
+          structuredPayload: signal.structuredPayload,
+        },
+        asOfDate
+      )
+    ) {
       return {
         signalId: signal.id,
         studentId: signal.studentId,
@@ -5890,7 +5959,7 @@ function buildOperationalSignalItemFromSignal(input: {
         sortBucket: 9,
         dueDate: null,
         episodeKey,
-        signalType: signal.signalType,
+        signalType: effective.effectiveSignalType,
         isEpisodeSummary: false,
         followUpState: followUp.state,
         text: "",
@@ -5898,7 +5967,7 @@ function buildOperationalSignalItemFromSignal(input: {
       };
     }
     const scheduleText = formatScheduleOperationalSignalText({
-      signalType: signal.signalType,
+      signalType: effective.effectiveSignalType,
       validFrom: signal.validFrom,
       validUntil: signal.validUntil,
       structuredPayload: signal.structuredPayload,
@@ -5913,7 +5982,7 @@ function buildOperationalSignalItemFromSignal(input: {
       sortBucket: 3,
       dueDate: signal.validUntil ?? signal.validFrom ?? null,
       episodeKey,
-      signalType: signal.signalType,
+      signalType: effective.effectiveSignalType,
       isEpisodeSummary: false,
       followUpState: followUp.state,
       text: compactOperationalSignalText(scheduleText, 95),
@@ -5921,7 +5990,7 @@ function buildOperationalSignalItemFromSignal(input: {
     };
   }
 
-  if (isMoveOperationalSignalType(signal.signalType)) {
+  if (isMoveOperationalSignalType(effective.effectiveSignalType)) {
     const sourceDate = signal.sourceDate ?? "—";
     const targetDate = signal.targetDate ?? "—";
     const isVisible = isActionActiveForMoveSignal(signal, input.activeMoveActions ?? []);
@@ -5934,7 +6003,7 @@ function buildOperationalSignalItemFromSignal(input: {
       sortBucket: 4,
       dueDate: signal.targetDate ?? signal.sourceDate ?? null,
       episodeKey,
-      signalType: signal.signalType,
+      signalType: effective.effectiveSignalType,
       isEpisodeSummary: false,
       followUpState: followUp.state,
       text: `кандидат переноса ${sourceDate} → ${targetDate}`,
@@ -5949,7 +6018,7 @@ function buildOperationalSignalItemFromSignal(input: {
     75
   );
   const genericBase = `${typeLabel}${windowSuffix}`;
-  if (signal.signalType === "health_issue_resolved" || genericBase === "самочувствие") {
+  if (effective.effectiveSignalType === "health_issue_resolved" || genericBase === "самочувствие") {
     return {
       signalId: signal.id,
       studentId: signal.studentId,
@@ -5959,7 +6028,7 @@ function buildOperationalSignalItemFromSignal(input: {
       sortBucket: 9,
       dueDate: signal.validUntil ?? signal.validFrom ?? null,
       episodeKey,
-      signalType: signal.signalType,
+      signalType: effective.effectiveSignalType,
       isEpisodeSummary: false,
       followUpState: followUp.state,
       text: genericReason ? `${genericBase}: ${genericReason}` : genericBase,
@@ -5975,7 +6044,7 @@ function buildOperationalSignalItemFromSignal(input: {
     sortBucket: 5,
     dueDate: signal.validUntil ?? signal.validFrom ?? null,
     episodeKey,
-    signalType: signal.signalType,
+    signalType: effective.effectiveSignalType,
     isEpisodeSummary: false,
     followUpState: followUp.state,
     text: genericReason ? `${genericBase}: ${genericReason}` : genericBase,
@@ -6191,11 +6260,12 @@ export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
   const episodeSignalsByKey = new Map<string, TrainingPeaksStudentOperationalSignal[]>();
   const fallbackItems: TrainingPeaksOperationalSignalsItem[] = [];
   for (const signal of input.signals) {
-    if (!shouldKeepOperationalSignalByScope(signal.signalType, scope)) {
+    const effective = resolveEffectiveOperationalSignalForDisplay(signal);
+    if (!shouldKeepOperationalSignalByScope(effective.effectiveSignalType, scope)) {
       continue;
     }
     const episodeKey = getSignalMetadataString(signal.metadata, "episode_key");
-    if (episodeKey && isScheduleOperationalSignalType(signal.signalType)) {
+    if (episodeKey && isScheduleOperationalSignalType(effective.effectiveSignalType)) {
       const episodeDedupeKey = `${signal.studentId}:${episodeKey}`;
       const group = episodeSignalsByKey.get(episodeDedupeKey) ?? [];
       group.push(signal);
@@ -6204,7 +6274,8 @@ export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
   }
 
   for (const signal of input.signals) {
-    if (!shouldKeepOperationalSignalByScope(signal.signalType, scope)) {
+    const effective = resolveEffectiveOperationalSignalForDisplay(signal);
+    if (!shouldKeepOperationalSignalByScope(effective.effectiveSignalType, scope)) {
       continue;
     }
     const episodeKey = getSignalMetadataString(signal.metadata, "episode_key");

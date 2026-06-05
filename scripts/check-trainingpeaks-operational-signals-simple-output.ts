@@ -130,6 +130,7 @@ function run(): void {
       ["elena", "Elena Vasileva"],
       ["lyubov", "Lyubov Selezneva"],
       ["olga", "Olga Slastnaia"],
+      ["stepan", "Stepan Trofimov"],
     ]),
     signals: [
       makeSignal({
@@ -252,14 +253,28 @@ function run(): void {
         validUntil: "2026-06-04",
       }),
       makeSignal({
-        signalId: "naida-strength-context",
+        signalId: "naida-strength-context-hidden",
         studentId: "naida",
-        signalType: "external_training_context",
+        signalType: "plan_generation_constraint",
         structuredPayload: {
+          signal_type: "external_training_context",
           visible_in_tp_signals: false,
           activity_domain: "strength",
           planning_effect: "strength_schedule_context",
-          display_summary: "силовые: пн/чт",
+          planned_training_dates: [],
+          display_summary: "силовые: вт/чт",
+        },
+      }),
+      makeSignal({
+        signalId: "stepan-legacy-health-row-v2-pain",
+        studentId: "stepan",
+        signalType: "health_issue_started",
+        structuredPayload: {
+          signal_type: "pain_injury",
+          activity_domain: "injury",
+          planning_effect: "safety_review",
+          requires_coach_review: true,
+          display_summary: "боль / надкостница (уточнить, актуально ли)",
         },
       }),
     ],
@@ -286,6 +301,7 @@ function run(): void {
   assert(!text.includes("illness-related pause follow-up"), "5 failed: internal follow-up labels must be hidden.");
   assert(!text.includes("Anna Lobodina\n  болеет"), "5 failed: ambiguous symptom-only case must not overclaim 'болеет'.");
   assert(text.includes("📅 Учесть в плане"), "5 failed: plan section must be present.");
+  assert(text.includes("🦵 Боль / травмы"), "5 failed: pain/injury section must be present.");
   // Moves section remains part of normal layout, but appears only with active move actions.
 
   const viktoriaRows = text.split("\n").filter((line) => line.includes("Viktoria Sergeeva"));
@@ -315,7 +331,14 @@ function run(): void {
   assert(text.includes("планирует: 05.06"), "12 failed: Olga planned dates should use 'планирует'.");
   assert(text.includes("07.06"), "12 failed: Olga planned Sunday date must be shown.");
   assert(!text.includes("Naida"), "13 failed: external strength context must stay hidden in /tp_signals.");
-  assert(!text.includes("силовые: пн/чт"), "13 failed: hidden strength context leaked into /tp_signals.");
+  assert(!text.includes("силовые: вт/чт"), "13 failed: hidden strength context leaked into /tp_signals.");
+  assert(!text.includes("Stepan Trofimov\n  болеет"), "13 failed: Stepan pain/injury must not be shown as illness.");
+  assert(
+    text.includes("Stepan Trofimov") && text.includes("боль / надкостница (уточнить, актуально ли)"),
+    "13 failed: Stepan pain/injury summary should be shown."
+  );
+  const painSection = text.split("🦵 Боль / травмы")[1]?.split("📅 Учесть в плане")[0] ?? "";
+  assert(painSection.includes("Stepan Trofimov"), "13 failed: Stepan should be grouped under pain/injury section.");
 
   const expiredScheduleSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
     asOfDate: "2026-06-05",
@@ -371,10 +394,11 @@ function run(): void {
       makeSignal({
         signalId: "pain-old",
         studentId: "pain",
-        signalType: "pain_injury",
+        signalType: "health_issue_started",
         validFrom: "2026-05-20",
         validUntil: "2026-05-22",
         structuredPayload: {
+          signal_type: "pain_injury",
           latest_summary: "боль в голени",
         },
       }),
