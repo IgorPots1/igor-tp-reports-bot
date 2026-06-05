@@ -1,7 +1,6 @@
 import type { TrainingPeaksWorkoutCacheRow } from "../../../../src/features/trainingpeaks/repository.ts";
 import { classifyTrainingPeaksWorkoutActivity } from "../../../../src/features/trainingpeaks/workout-activity-classification.ts";
 import {
-  containsStrongRaceKeyword,
   DISTANCE_KEYWORDS,
   RACE_KEYWORDS_PATTERN,
 } from "../../src/quality/race-keywords.ts";
@@ -9,6 +8,16 @@ import {
 export type BaselineV2Confidence = "high" | "medium" | "low";
 export type RaceCandidateConfidence = "high" | "medium" | "low";
 export type RaceDistanceKey = "5k" | "10k" | "half" | "marathon" | "unknown";
+export type BaselineMode = "normal_only" | "limited_clean" | "fallback_all_weeks";
+export type RaceCandidateSourceType =
+  | "race_type_duration"
+  | "strong_event_keyword"
+  | "strong_result_keyword"
+  | "reliable_classifier_evidence"
+  | "completed_race_like_distance"
+  | "distance_window_context"
+  | "distance_keyword_context"
+  | "pace_or_training_context_only";
 export type WeekTag =
   | "normal_training"
   | "race_week"
@@ -48,8 +57,13 @@ export type RaceCandidate = {
   score: number;
   confidence: RaceCandidateConfidence;
   source_signals: string[];
+  source_types: RaceCandidateSourceType[];
+  matched_reasons: string[];
   matched_text_snippet: string | null;
   completed_without_plan: boolean;
+  exclusion_eligible: boolean;
+  exclusion_decision_reason: string | null;
+  caused_exclusion: boolean;
 };
 
 export type WeekTagReportRow = {
@@ -85,11 +99,42 @@ export type PerAthleteBaselineV2 = {
   analyzed_to: string;
   normal_baseline: BaselineWeekMetrics;
   all_week_baseline: BaselineWeekMetrics;
+  baseline_mode: BaselineMode;
   normal_training_weeks_count: number;
   excluded_weeks_count: number;
   excluded_weeks_by_tag: Record<Exclude<WeekTag, "normal_training">, number>;
+  excluded_weeks_count_by_tag: Record<Exclude<WeekTag, "normal_training">, number>;
   total_weeks_count: number;
   baseline_source: "normal_training" | "fallback_all_weeks";
+  race_candidate_count_by_confidence: Record<RaceCandidateConfidence, number>;
+  race_candidate_count_by_source_type: Record<RaceCandidateSourceType, number>;
+  race_detection_diagnostics: {
+    raw_race_candidates_count: number;
+    clustered_race_events_count: number;
+    suppressed_duplicate_candidates_count: number;
+    top_race_candidates: Array<{
+      date: string;
+      week_start: string;
+      title: string | null;
+      score: number;
+      confidence: RaceCandidateConfidence;
+      source_types: RaceCandidateSourceType[];
+      matched_reasons: string[];
+      caused_exclusion: boolean;
+      exclusion_decision_reason: string | null;
+    }>;
+    top_excluded_weeks: Array<{
+      week_start: string;
+      tag: Exclude<WeekTag, "normal_training">;
+      reason: string;
+      source_race_candidate: {
+        date: string;
+        title: string | null;
+        score: number;
+        confidence: RaceCandidateConfidence;
+      } | null;
+    }>;
+  };
   race_specific_context: {
     race_candidates: Array<{
       date: string;
@@ -140,6 +185,18 @@ export type ManualReviewEntry = {
     post_race_recovery: number;
     marathon_specific_block: number;
   };
+  baseline_mode: BaselineMode;
+  normal_training_weeks_count: number;
+  excluded_weeks_count_by_tag: Record<Exclude<WeekTag, "normal_training">, number>;
+  race_candidate_count_by_confidence: Record<RaceCandidateConfidence, number>;
+  race_candidate_count_by_source_type: Record<RaceCandidateSourceType, number>;
+  race_detection_diagnostics: {
+    raw_race_candidates_count: number;
+    clustered_race_events_count: number;
+    suppressed_duplicate_candidates_count: number;
+  };
+  top_race_candidates: PerAthleteBaselineV2["race_detection_diagnostics"]["top_race_candidates"];
+  top_excluded_weeks: PerAthleteBaselineV2["race_detection_diagnostics"]["top_excluded_weeks"];
   note: string;
 };
 
@@ -226,6 +283,7 @@ type RaceWindow = {
   weekStart: string;
   distance: RaceDistanceKey;
   confidence: RaceCandidateConfidence;
+  candidate: RaceCandidate;
 };
 
 const EXCLUDED_TAGS: Array<Exclude<WeekTag, "normal_training">> = [
@@ -256,6 +314,18 @@ const MARATHON_SPECIFIC_PATTERN =
   /(марафонск(?:ий|ого)?\s*темп|marathon pace|\bмт\b|\bмп\b|20\s*км\s*в\s*мт|25\s*км\s*в\s*мт|гели|питани)/i;
 const RUN_WALK_STRONG_PATTERN =
   /(run[- ]?walk|run\s*\/\s*walk|бег\s*\/\s*шаг|бег\s*\/\s*ходьб|walk breaks?|чередован(?:ие)?\s*бег.*ходьб|ходьб.*бег)/i;
+const STRONG_EVENT_RESULT_KEYWORDS =
+  /\b(race day|race|parkrun|park run|парк\s*ран|забег|соревнован|официальн(?:ый|ая)?\s*старт|result|results|official|event|finisher|протокол|результат|финиш)\b/i;
+const WEAK_CONTEXT_KEYWORDS =
+  /\b(race pace|10k pace|5k pace|hm pace|half marathon pace|marathon pace|пейс\s*гонки|темп\s*гонки|темп\s*старта|5к\s*темп|10к\s*темп|марафонск(?:ий|ого)?\s*темп)\b/i;
+const DISTANCE_WINDOW_TOLERANCE = {
+  marathon: [41.0, 43.5] as const,
+  half: [20.5, 21.8] as const,
+  "10k": [9.6, 10.6] as const,
+  "5k": [4.8, 5.3] as const,
+};
+const OVERBROAD_JAN_JUN_CLUSTER_THRESHOLD = 5;
+const OVERBROAD_JAN_JUN_EXCLUSION_THRESHOLD = 10;
 
 function normalizeText(...parts: Array<string | null | undefined>): string {
   return parts
@@ -401,6 +471,30 @@ function estimateRaceDistance(text: string, distanceKm: number | null): RaceDist
   return "unknown";
 }
 
+function isWithinRaceDistanceWindow(distance: RaceDistanceKey, distanceKm: number | null): boolean {
+  if (distanceKm === null || distance === "unknown") return false;
+  const bounds = DISTANCE_WINDOW_TOLERANCE[distance];
+  if (!bounds) return false;
+  return distanceKm >= bounds[0] && distanceKm <= bounds[1];
+}
+
+function emptyRaceByConfidence(): Record<RaceCandidateConfidence, number> {
+  return { high: 0, medium: 0, low: 0 };
+}
+
+function emptyRaceBySourceType(): Record<RaceCandidateSourceType, number> {
+  return {
+    race_type_duration: 0,
+    strong_event_keyword: 0,
+    strong_result_keyword: 0,
+    reliable_classifier_evidence: 0,
+    completed_race_like_distance: 0,
+    distance_window_context: 0,
+    distance_keyword_context: 0,
+    pace_or_training_context_only: 0,
+  };
+}
+
 function raceTaperWeeks(distance: RaceDistanceKey): number {
   if (distance === "marathon") return 3;
   if (distance === "half") return 2;
@@ -456,67 +550,114 @@ function buildRaceCandidate(insight: WorkoutInsight): RaceCandidate | null {
   if (!insight.isRunning) return null;
   const snapshot = isRecord(insight.row.sourceSnapshot) ? insight.row.sourceSnapshot : null;
   const sourceSignals: string[] = [];
+  const sourceTypes = new Set<RaceCandidateSourceType>();
+  const matchedReasons = new Set<string>();
   let score = 0;
-  let hasExplicitRaceSignal = false;
-  let hasDistanceWindowSignal = false;
-  let hasEffortSupport = false;
-
-  if (snapshot?.raceTypeDuration !== null && snapshot?.raceTypeDuration !== undefined) {
-    score += 3;
-    sourceSignals.push("explicit_raceTypeDuration");
-    hasExplicitRaceSignal = true;
-  }
-
-  if (containsStrongRaceKeyword(insight.text) || RACE_KEYWORDS_PATTERN.test(insight.text)) {
-    score += 3;
-    sourceSignals.push("strong_race_keyword");
-    hasExplicitRaceSignal = true;
-  }
-
   const estimatedDistance = estimateRaceDistance(insight.text, insight.distanceKm);
-  if (estimatedDistance !== "unknown" && DISTANCE_KEYWORDS[estimatedDistance].test(insight.text)) {
-    score += 1;
-    sourceSignals.push(`distance_keyword:${estimatedDistance}`);
-    hasExplicitRaceSignal = true;
-  }
-
-  if (estimatedDistance !== "unknown" && insight.distanceKm !== null) {
-    score += 1;
-    sourceSignals.push(`distance_window:${estimatedDistance}`);
-    hasDistanceWindowSignal = true;
-  }
-
+  const distanceKeywordMatch = estimatedDistance !== "unknown" && DISTANCE_KEYWORDS[estimatedDistance].test(insight.text);
+  const distanceWindowMatch = isWithinRaceDistanceWindow(estimatedDistance, insight.distanceKm);
   const tssActual = toFiniteNumber(snapshot?.tssActual);
   const ifActual = toFiniteNumber(snapshot?.ifActual);
   const effortSupport =
     ((tssActual ?? 0) >= 50 || (ifActual ?? 0) >= 0.9) && ((insight.distanceKm ?? 0) >= 5 || (insight.durationMinutes ?? 0) >= 20);
+  const hasRaceTypeDuration = snapshot?.raceTypeDuration !== null && snapshot?.raceTypeDuration !== undefined;
+  const hasStrongEventKeyword = RACE_KEYWORDS_PATTERN.test(insight.text) || STRONG_EVENT_RESULT_KEYWORDS.test(insight.text);
+  const hasStrongResultKeyword = /\b(result|results|official|finisher|протокол|результат|финиш)\b/i.test(insight.text);
+  const classifierLabelRaw = typeof snapshot?.resultStatus === "string" ? snapshot.resultStatus : typeof snapshot?.result_status === "string" ? snapshot.result_status : null;
+  const classifierConfidence = toFiniteNumber(snapshot?.eventConfidence ?? snapshot?.event_confidence);
+  const classifierLabel = classifierLabelRaw?.toLowerCase().trim() ?? "";
+  const hasReliableClassifierEvidence = Boolean(
+    classifierLabel &&
+      (classifierLabel.includes("official_event") || classifierLabel.includes("probable_result") || classifierLabel.includes("result")) &&
+      (classifierConfidence ?? 0) >= 0.6,
+  );
+  const hasPaceOrTrainingOnlyCue = WEAK_CONTEXT_KEYWORDS.test(insight.text);
+  const hasCompletedRaceLikeDistance = insight.isCompleted && distanceWindowMatch;
+
+  if (hasRaceTypeDuration) {
+    score += 5;
+    sourceSignals.push("explicit_raceTypeDuration");
+    sourceTypes.add("race_type_duration");
+    matchedReasons.add("TrainingPeaks raceTypeDuration present");
+  }
+  if (hasStrongEventKeyword) {
+    score += hasStrongResultKeyword ? 4 : 2;
+    sourceSignals.push("strong_event_result_keyword");
+    sourceTypes.add("strong_event_keyword");
+    matchedReasons.add("Strong race/event keyword in workout text");
+    if (hasStrongResultKeyword) {
+      sourceTypes.add("strong_result_keyword");
+      matchedReasons.add("Strong result/finish keyword in workout text");
+    }
+  }
+  if (hasReliableClassifierEvidence) {
+    score += 4;
+    sourceSignals.push(`classifier:${classifierLabel || "result_like"}:${(classifierConfidence ?? 0).toFixed(2)}`);
+    sourceTypes.add("reliable_classifier_evidence");
+    matchedReasons.add("Reliable existing result/event classifier evidence");
+  }
+  if (distanceKeywordMatch) {
+    score += 1;
+    sourceSignals.push(`distance_keyword:${estimatedDistance}`);
+    sourceTypes.add("distance_keyword_context");
+    matchedReasons.add(`Distance keyword context for ${estimatedDistance}`);
+  }
+  if (distanceWindowMatch) {
+    score += 1;
+    sourceSignals.push(`distance_window:${estimatedDistance}`);
+    sourceTypes.add("distance_window_context");
+    matchedReasons.add(`Distance window context for ${estimatedDistance}`);
+  }
+  if (hasCompletedRaceLikeDistance) {
+    score += 1;
+    sourceSignals.push("completed_race_like_distance");
+    sourceTypes.add("completed_race_like_distance");
+    matchedReasons.add("Completed activity in race-like distance window");
+  }
   if (effortSupport) {
     score += 1;
     sourceSignals.push("effort_support");
-    hasEffortSupport = true;
   }
-
-  if (insight.completedWithoutPlan && estimatedDistance !== "unknown") {
-    score += 1;
+  if (insight.completedWithoutPlan) {
     sourceSignals.push("completed_without_plan");
-    hasExplicitRaceSignal = true;
+  }
+  if (hasPaceOrTrainingOnlyCue) {
+    sourceTypes.add("pace_or_training_context_only");
   }
 
-  if (score <= 0) return null;
+  const strongEvidence =
+    hasRaceTypeDuration ||
+    hasStrongEventKeyword ||
+    hasStrongResultKeyword ||
+    hasReliableClassifierEvidence ||
+    (hasCompletedRaceLikeDistance && (hasStrongEventKeyword || hasStrongResultKeyword || hasReliableClassifierEvidence || hasRaceTypeDuration));
+  if (!strongEvidence) return null;
+
+  const exclusionEligible =
+    hasRaceTypeDuration ||
+    hasReliableClassifierEvidence ||
+    hasStrongResultKeyword ||
+    (hasStrongEventKeyword &&
+      !hasPaceOrTrainingOnlyCue &&
+      (hasCompletedRaceLikeDistance || (distanceKeywordMatch && effortSupport) || (distanceWindowMatch && effortSupport))) ||
+    (hasCompletedRaceLikeDistance && (hasStrongEventKeyword || hasReliableClassifierEvidence || hasRaceTypeDuration));
 
   let confidence: RaceCandidateConfidence = "low";
-  if (score >= 4 && hasExplicitRaceSignal) {
+  if (hasRaceTypeDuration || (hasReliableClassifierEvidence && (hasStrongEventKeyword || hasStrongResultKeyword))) {
     confidence = "high";
-  } else if (
-    hasExplicitRaceSignal &&
-    (
-      score >= 3 ||
-      (hasDistanceWindowSignal && hasEffortSupport) ||
-      (insight.completedWithoutPlan && hasDistanceWindowSignal)
-    )
-  ) {
+  } else if (exclusionEligible || score >= 6) {
     confidence = "medium";
   }
+
+  const exclusionDecisionReason = exclusionEligible
+    ? hasRaceTypeDuration
+      ? "raceTypeDuration"
+      : hasReliableClassifierEvidence
+        ? "reliable_classifier_evidence"
+        : hasStrongResultKeyword
+          ? "strong_result_keyword"
+          : "strong_event_keyword_plus_race_like_completion"
+    : "context_only_non_exclusion";
 
   return {
     student_id: insight.row.studentId,
@@ -531,8 +672,13 @@ function buildRaceCandidate(insight: WorkoutInsight): RaceCandidate | null {
     score,
     confidence,
     source_signals: sourceSignals,
+    source_types: sortSourceTypesForOutput([...sourceTypes]),
+    matched_reasons: [...matchedReasons],
     matched_text_snippet: pickTextSnippet(insight.text),
     completed_without_plan: insight.completedWithoutPlan,
+    exclusion_eligible: exclusionEligible,
+    exclusion_decision_reason: exclusionDecisionReason,
+    caused_exclusion: false,
   };
 }
 
@@ -613,6 +759,18 @@ function buildManualReviewShortlist(perAthlete: PerAthleteBaselineV2[]): ManualR
         post_race_recovery: athlete.excluded_weeks_by_tag.post_race_recovery,
         marathon_specific_block: athlete.excluded_weeks_by_tag.marathon_specific_block,
       },
+      baseline_mode: athlete.baseline_mode,
+      normal_training_weeks_count: athlete.normal_training_weeks_count,
+      excluded_weeks_count_by_tag: athlete.excluded_weeks_count_by_tag,
+      race_candidate_count_by_confidence: athlete.race_candidate_count_by_confidence,
+      race_candidate_count_by_source_type: athlete.race_candidate_count_by_source_type,
+      race_detection_diagnostics: {
+        raw_race_candidates_count: athlete.race_detection_diagnostics.raw_race_candidates_count,
+        clustered_race_events_count: athlete.race_detection_diagnostics.clustered_race_events_count,
+        suppressed_duplicate_candidates_count: athlete.race_detection_diagnostics.suppressed_duplicate_candidates_count,
+      },
+      top_race_candidates: athlete.race_detection_diagnostics.top_race_candidates,
+      top_excluded_weeks: athlete.race_detection_diagnostics.top_excluded_weeks,
       note,
     };
   }
@@ -659,6 +817,54 @@ function buildManualReviewShortlist(perAthlete: PerAthleteBaselineV2[]): ManualR
 
 function buildSecondaryFlag(notes: string[]): SecondaryWeekFlag[] {
   return notes.length > 0 ? ["manual_review"] : [];
+}
+
+function dedupeAndClusterRaceCandidates(candidates: RaceCandidate[]): {
+  rawCount: number;
+  clustered: RaceCandidate[];
+  suppressedDuplicateCount: number;
+} {
+  if (candidates.length === 0) {
+    return { rawCount: 0, clustered: [], suppressedDuplicateCount: 0 };
+  }
+  const sorted = [...candidates].sort((a, b) => a.date.localeCompare(b.date) || b.score - a.score || a.workout_id - b.workout_id);
+  const clustered: RaceCandidate[] = [];
+  const used = new Set<number>();
+
+  for (let i = 0; i < sorted.length; i += 1) {
+    if (used.has(i)) continue;
+    const seed = sorted[i]!;
+    const groupIndices: number[] = [i];
+    used.add(i);
+    for (let j = i + 1; j < sorted.length; j += 1) {
+      if (used.has(j)) continue;
+      const candidate = sorted[j]!;
+      const dayDiff = Math.abs(
+        Math.round(
+          (new Date(`${candidate.date}T00:00:00Z`).getTime() - new Date(`${seed.date}T00:00:00Z`).getTime()) / (24 * 60 * 60 * 1000),
+        ),
+      );
+      const nearDate = dayDiff <= 2;
+      const sameWeek = candidate.week_start === seed.week_start;
+      const sameDistance =
+        candidate.estimated_distance === seed.estimated_distance ||
+        candidate.estimated_distance === "unknown" ||
+        seed.estimated_distance === "unknown";
+      if (sameDistance && (nearDate || sameWeek)) {
+        groupIndices.push(j);
+        used.add(j);
+      }
+    }
+    const group = groupIndices.map((index) => sorted[index]!);
+    const representative = [...group].sort((a, b) => b.score - a.score || (a.confidence === "high" ? -1 : a.confidence === "medium" ? 0 : 1))[0]!;
+    clustered.push({ ...representative });
+  }
+
+  return {
+    rawCount: candidates.length,
+    clustered: clustered.sort((a, b) => a.date.localeCompare(b.date) || a.workout_id - b.workout_id),
+    suppressedDuplicateCount: Math.max(0, candidates.length - clustered.length),
+  };
 }
 
 function analyzeAthlete(input: {
@@ -728,25 +934,32 @@ function analyzeAthlete(input: {
   }
 
   const orderedWeeks = [...weekMap.values()].sort((a, b) => a.weekStart.localeCompare(b.weekStart));
-  const raceWindows: RaceWindow[] = orderedWeeks
-    .filter((week) => week.raceCandidates.length > 0)
-    .map((week) => {
-      const raceDistances = week.raceCandidates.map((candidate) => candidate.estimated_distance);
-      const distance =
-        raceDistances.includes("marathon")
-          ? "marathon"
-          : raceDistances.includes("half")
-            ? "half"
-            : raceDistances.includes("10k")
-              ? "10k"
-              : raceDistances.includes("5k")
-                ? "5k"
-                : "unknown";
-      const confidence = week.raceCandidates.some((candidate) => candidate.confidence === "high") ? "high" : "medium";
-      return { weekStart: week.weekStart, distance, confidence };
-    });
+  const rawRaceCandidates = orderedWeeks.flatMap((week) => [...week.raceCandidates, ...week.lowConfidenceRaceCandidates]);
+  const dedupedRace = dedupeAndClusterRaceCandidates(rawRaceCandidates);
+  const clusteredRaceCandidates = dedupedRace.clustered;
+  const raceCandidateByWorkoutId = new Map(clusteredRaceCandidates.map((candidate) => [candidate.workout_id, candidate]));
+  const eligibleCandidates = clusteredRaceCandidates.filter((candidate) => candidate.exclusion_eligible && candidate.confidence !== "low");
+
+  function toRaceWindows(candidates: RaceCandidate[]): RaceWindow[] {
+    return candidates
+      .map((candidate) => ({
+        weekStart: candidate.week_start,
+        distance: candidate.estimated_distance,
+        confidence: candidate.confidence,
+        candidate,
+      }))
+      .sort((a, b) => a.weekStart.localeCompare(b.weekStart));
+  }
 
   const weekRows: WeekTagReportRow[] = [];
+  const weekExclusionReasons = new Map<
+    string,
+    {
+      tag: Exclude<WeekTag, "normal_training">;
+      reason: string;
+      sourceRaceCandidate: RaceCandidate | null;
+    }
+  >();
   const currentFlags = new Set(input.athlete.currentBaseline?.contextFlags ?? []);
   const contextFlags = new Set<string>(input.athlete.currentBaseline?.contextFlags ?? []);
   let runWalkStatus: "run_walk_actual" | "possible_run_walk_signal" | "none" = "none";
@@ -783,11 +996,15 @@ function analyzeAthlete(input: {
     const rollingMedian = median(previousEffective);
 
     const tags = new Set<WeekTag>();
-    if (week.raceCandidates.length > 0) {
+    const weekEligibleCandidates = [...week.raceCandidates, ...week.lowConfidenceRaceCandidates].filter((candidate) => {
+      const clustered = raceCandidateByWorkoutId.get(candidate.workout_id);
+      return Boolean(clustered && clustered.exclusion_eligible && clustered.confidence !== "low");
+    });
+    if (weekEligibleCandidates.length > 0) {
       tags.add("race_week");
     }
 
-    for (const raceWindow of raceWindows) {
+    for (const raceWindow of toRaceWindows(eligibleCandidates)) {
       const offset = weekDistance(week.weekStart, raceWindow.weekStart);
       if (offset > 0 && offset <= raceTaperWeeks(raceWindow.distance)) {
         tags.add("taper_week");
@@ -837,6 +1054,50 @@ function analyzeAthlete(input: {
         break;
       }
     }
+    if (finalTag !== "normal_training") {
+      if (finalTag === "race_week") {
+        const top = weekEligibleCandidates.sort((a, b) => b.score - a.score || a.date.localeCompare(b.date))[0] ?? null;
+        if (top) top.caused_exclusion = true;
+        weekExclusionReasons.set(week.weekStart, {
+          tag: finalTag,
+          reason: top?.exclusion_decision_reason ?? "race_candidate_exclusion",
+          sourceRaceCandidate: top,
+        });
+      } else if (finalTag === "taper_week" || finalTag === "post_race_recovery" || finalTag === "marathon_specific_block") {
+        const driver = toRaceWindows(eligibleCandidates)
+          .filter((raceWindow) => {
+            const offset = weekDistance(week.weekStart, raceWindow.weekStart);
+            if (finalTag === "taper_week") return offset > 0 && offset <= raceTaperWeeks(raceWindow.distance);
+            if (finalTag === "post_race_recovery") return offset < 0 && Math.abs(offset) <= raceRecoveryWeeks(raceWindow.distance);
+            return (
+              finalTag === "marathon_specific_block" &&
+              raceWindow.distance === "marathon" &&
+              offset > 0 &&
+              offset >= 4 &&
+              offset <= 6 &&
+              (week.marathonSpecificCue || (week.longestRunMinutes ?? 0) >= 140)
+            );
+          })
+          .sort((a, b) => b.candidate.score - a.candidate.score)[0];
+        if (driver?.candidate) driver.candidate.caused_exclusion = true;
+        weekExclusionReasons.set(week.weekStart, {
+          tag: finalTag,
+          reason:
+            finalTag === "taper_week"
+              ? "pre_race_taper_window"
+              : finalTag === "post_race_recovery"
+                ? "post_race_recovery_window"
+                : "marathon_specific_block_window",
+          sourceRaceCandidate: driver?.candidate ?? null,
+        });
+      } else {
+        weekExclusionReasons.set(week.weekStart, {
+          tag: finalTag,
+          reason: finalTag,
+          sourceRaceCandidate: null,
+        });
+      }
+    }
 
     weekRows.push({
       student_id: week.studentId,
@@ -852,8 +1113,12 @@ function analyzeAthlete(input: {
       longest_run_minutes: week.longestRunMinutes === null ? null : Number(week.longestRunMinutes.toFixed(2)),
       quality_sessions: week.qualitySessions,
       interval_like_sessions: week.intervalLikeSessions,
-      race_candidate_count: week.raceCandidates.length + week.lowConfidenceRaceCandidates.length,
-      race_candidates: [...week.raceCandidates, ...week.lowConfidenceRaceCandidates].map((candidate) => ({
+      race_candidate_count: [...week.raceCandidates, ...week.lowConfidenceRaceCandidates].filter((candidate) =>
+        raceCandidateByWorkoutId.has(candidate.workout_id),
+      ).length,
+      race_candidates: [...week.raceCandidates, ...week.lowConfidenceRaceCandidates]
+        .filter((candidate) => raceCandidateByWorkoutId.has(candidate.workout_id))
+        .map((candidate) => ({
         date: candidate.date,
         estimated_distance: candidate.estimated_distance,
         confidence: candidate.confidence,
@@ -870,8 +1135,17 @@ function analyzeAthlete(input: {
   for (const week of weekRows) {
     if (week.tag !== "normal_training") excludedCounts[week.tag] += 1;
   }
+  const raceByConfidence = emptyRaceByConfidence();
+  const raceBySourceType = emptyRaceBySourceType();
+  for (const candidate of clusteredRaceCandidates) {
+    raceByConfidence[candidate.confidence] += 1;
+    for (const sourceType of candidate.source_types) {
+      raceBySourceType[sourceType] += 1;
+    }
+  }
 
   let baselineSource: "normal_training" | "fallback_all_weeks" = "normal_training";
+  let baselineMode: BaselineMode = "normal_only";
   let confidence: BaselineV2Confidence = "high";
   let needsReview = false;
   const notes: string[] = [];
@@ -880,6 +1154,7 @@ function analyzeAthlete(input: {
     confidence = normalWeeks.length >= input.minNormalWeeks + 2 ? "high" : "medium";
   } else if (normalWeeks.length >= 4) {
     confidence = "medium";
+    baselineMode = "limited_clean";
     needsReview = true;
     contextFlags.add("limited_clean_baseline");
     notes.push(`Only ${normalWeeks.length} clean normal weeks found.`);
@@ -887,8 +1162,10 @@ function analyzeAthlete(input: {
     confidence = "low";
     needsReview = true;
     baselineSource = "fallback_all_weeks";
+    baselineMode = "fallback_all_weeks";
     contextFlags.add("insufficient_clean_baseline");
     notes.push(`Fallback baseline used because only ${normalWeeks.length} clean normal weeks were found.`);
+    notes.push("Fallback mode means normal metrics may equal all-week metrics because all weeks were used.");
   }
 
   if (weekRows.some((week) => week.secondary_flags.includes("manual_review"))) {
@@ -908,20 +1185,66 @@ function analyzeAthlete(input: {
   const baselineWeeks = baselineSource === "normal_training" ? normalWeeks : allWeeks;
   const normalBaseline = computeWeekMetrics(baselineWeeks);
   const allWeekBaseline = computeWeekMetrics(allWeeks);
-  const raceCandidates = weekRows.flatMap((week) =>
-    week.race_candidates.map((candidate) => {
-      const full = [...(weekMap.get(week.week_start)?.raceCandidates ?? []), ...(weekMap.get(week.week_start)?.lowConfidenceRaceCandidates ?? [])]
-        .find((entry) => entry.date === candidate.date && entry.score === candidate.score && entry.title === candidate.title);
-      return full!;
-    }),
-  );
-  const raceCandidatesUnique = uniqueSorted(raceCandidates.map((candidate) => `${candidate.workout_id}`))
-    .map((id) => raceCandidates.find((candidate) => `${candidate.workout_id}` === id))
-    .filter((candidate): candidate is RaceCandidate => Boolean(candidate));
+  const raceCandidatesUnique = clusteredRaceCandidates;
 
   if (raceCandidatesUnique.some((candidate) => candidate.estimated_distance === "marathon")) {
     notes.push("Marathon-context race candidate detected.");
   }
+  const janJunCandidates = raceCandidatesUnique.filter((candidate) => candidate.date >= "2026-01-01" && candidate.date <= "2026-06-30");
+  const janJunRaceRelatedExclusions = weekRows.filter(
+    (week) =>
+      week.week_start >= "2026-01-01" &&
+      week.week_start <= "2026-06-30" &&
+      (week.tag === "race_week" || week.tag === "taper_week" || week.tag === "post_race_recovery" || week.tag === "marathon_specific_block"),
+  ).length;
+  if (
+    janJunCandidates.length >= OVERBROAD_JAN_JUN_CLUSTER_THRESHOLD ||
+    janJunRaceRelatedExclusions >= OVERBROAD_JAN_JUN_EXCLUSION_THRESHOLD ||
+    excludedCounts.race_week >= OVERBROAD_JAN_JUN_CLUSTER_THRESHOLD
+  ) {
+    contextFlags.add("race_detection_overbroad_manual_review");
+    needsReview = true;
+    notes.push(
+      `Race detection may be overbroad (Jan-Jun clusters=${janJunCandidates.length}, race-related exclusions=${janJunRaceRelatedExclusions}). Manual review required.`,
+    );
+  }
+  if (orderedWeeks.some((week) => week.marathonSpecificCue)) {
+    notes.push("Marathon-specific training context detected (kept visible as training context, not auto-race exclusion).");
+  }
+
+  const topRaceCandidates = [...raceCandidatesUnique]
+    .sort((a, b) => b.score - a.score || (a.confidence === "high" ? -1 : a.confidence === "medium" ? 0 : 1))
+    .slice(0, 8)
+    .map((candidate) => ({
+      date: candidate.date,
+      week_start: candidate.week_start,
+      title: candidate.title,
+      score: candidate.score,
+      confidence: candidate.confidence,
+      source_types: candidate.source_types,
+      matched_reasons: candidate.matched_reasons,
+      caused_exclusion: candidate.caused_exclusion,
+      exclusion_decision_reason: candidate.exclusion_decision_reason,
+    }));
+  const topExcludedWeeks = [...weekRows]
+    .filter((week) => week.tag !== "normal_training")
+    .map((week) => {
+      const exclusion = weekExclusionReasons.get(week.week_start);
+      return {
+        week_start: week.week_start,
+        tag: week.tag as Exclude<WeekTag, "normal_training">,
+        reason: exclusion?.reason ?? "excluded",
+        source_race_candidate: exclusion?.sourceRaceCandidate
+          ? {
+              date: exclusion.sourceRaceCandidate.date,
+              title: exclusion.sourceRaceCandidate.title,
+              score: exclusion.sourceRaceCandidate.score,
+              confidence: exclusion.sourceRaceCandidate.confidence,
+            }
+          : null,
+      };
+    })
+    .slice(0, 8);
 
   const latestTwoWeeks = [...weekRows].sort((a, b) => b.week_start.localeCompare(a.week_start)).slice(0, 2);
   const athleteOutput: PerAthleteBaselineV2 = {
@@ -932,11 +1255,22 @@ function analyzeAthlete(input: {
     analyzed_to: input.to,
     normal_baseline: normalBaseline,
     all_week_baseline: allWeekBaseline,
+    baseline_mode: baselineMode,
     normal_training_weeks_count: normalWeeks.length,
     excluded_weeks_count: weekRows.length - normalWeeks.length,
     excluded_weeks_by_tag: excludedCounts,
+    excluded_weeks_count_by_tag: excludedCounts,
     total_weeks_count: weekRows.length,
     baseline_source: baselineSource,
+    race_candidate_count_by_confidence: raceByConfidence,
+    race_candidate_count_by_source_type: raceBySourceType,
+    race_detection_diagnostics: {
+      raw_race_candidates_count: dedupedRace.rawCount,
+      clustered_race_events_count: dedupedRace.clustered.length,
+      suppressed_duplicate_candidates_count: dedupedRace.suppressedDuplicateCount,
+      top_race_candidates: topRaceCandidates,
+      top_excluded_weeks: topExcludedWeeks,
+    },
     race_specific_context: {
       race_candidates: raceCandidatesUnique.map((candidate) => ({
         date: candidate.date,
@@ -1079,6 +1413,20 @@ function formatMetric(value: number | null): string {
   return value === null ? "n/a" : String(value);
 }
 
+function sortSourceTypesForOutput(sourceTypes: RaceCandidateSourceType[]): RaceCandidateSourceType[] {
+  const priority: Record<RaceCandidateSourceType, number> = {
+    race_type_duration: 1,
+    strong_result_keyword: 2,
+    strong_event_keyword: 3,
+    reliable_classifier_evidence: 4,
+    completed_race_like_distance: 5,
+    distance_window_context: 6,
+    distance_keyword_context: 7,
+    pace_or_training_context_only: 8,
+  };
+  return [...sourceTypes].sort((a, b) => priority[a] - priority[b]);
+}
+
 export function buildBaselineV2SummaryMarkdown(summary: BaselineV2Summary): string {
   const lines: string[] = ["# Athlete Training Baseline v2 Summary", ""];
   lines.push(`- date_range: ${summary.date_range.from}..${summary.date_range.to}`);
@@ -1112,6 +1460,7 @@ export function buildPerAthleteBaselineV2Markdown(athletes: PerAthleteBaselineV2
     lines.push(`## ${athlete.student_name}`);
     lines.push(`- athlete_id: ${athlete.athlete_id}`);
     lines.push(`- baseline_source: ${athlete.baseline_source}`);
+    lines.push(`- baseline_mode: ${athlete.baseline_mode}`);
     lines.push(`- confidence: ${athlete.confidence}`);
     lines.push(`- needs_review: ${athlete.needs_review}`);
     lines.push(
@@ -1130,8 +1479,29 @@ export function buildPerAthleteBaselineV2Markdown(athletes: PerAthleteBaselineV2
     );
     lines.push(`- normal_training_weeks_count: ${athlete.normal_training_weeks_count}`);
     lines.push(`- excluded_weeks_count: ${athlete.excluded_weeks_count}`);
+    lines.push(`- excluded_weeks_count_by_tag: ${JSON.stringify(athlete.excluded_weeks_count_by_tag)}`);
     lines.push(`- excluded_weeks_by_tag: ${JSON.stringify(athlete.excluded_weeks_by_tag)}`);
+    lines.push(`- race_candidate_count_by_confidence: ${JSON.stringify(athlete.race_candidate_count_by_confidence)}`);
+    lines.push(`- race_candidate_count_by_source_type: ${JSON.stringify(athlete.race_candidate_count_by_source_type)}`);
+    lines.push(
+      `- race_detection_diagnostics: raw=${athlete.race_detection_diagnostics.raw_race_candidates_count}, clustered=${athlete.race_detection_diagnostics.clustered_race_events_count}, suppressed_duplicates=${athlete.race_detection_diagnostics.suppressed_duplicate_candidates_count}`,
+    );
+    lines.push("- top_race_candidates:");
+    for (const candidate of athlete.race_detection_diagnostics.top_race_candidates) {
+      lines.push(
+        `  - ${candidate.date} (week ${candidate.week_start}) | ${candidate.title ?? "n/a"} | score=${candidate.score} | confidence=${candidate.confidence} | caused_exclusion=${candidate.caused_exclusion} | reason=${candidate.exclusion_decision_reason ?? "n/a"} | evidence=${candidate.matched_reasons.join("; ") || "none"}`,
+      );
+    }
+    lines.push("- top_excluded_weeks:");
+    for (const excludedWeek of athlete.race_detection_diagnostics.top_excluded_weeks) {
+      lines.push(
+        `  - ${excludedWeek.week_start} | tag=${excludedWeek.tag} | reason=${excludedWeek.reason} | source=${excludedWeek.source_race_candidate ? `${excludedWeek.source_race_candidate.date} / ${excludedWeek.source_race_candidate.title ?? "n/a"} / score=${excludedWeek.source_race_candidate.score}` : "n/a"}`,
+      );
+    }
     lines.push(`- race_candidates: ${athlete.race_specific_context.race_candidate_count}`);
+    if (athlete.baseline_mode === "fallback_all_weeks") {
+      lines.push("- fallback_explanation: normal metrics may equal all-week metrics because fallback_all_weeks mode used all weeks.");
+    }
     lines.push(`- context_flags: ${athlete.context_flags.join(", ") || "none"}`);
     lines.push(`- notes: ${athlete.notes.join(" | ") || "none"}`);
     lines.push("");
@@ -1190,6 +1560,8 @@ export function buildManualReviewShortlistMarkdown(entries: ManualReviewEntry[])
   for (const entry of entries) {
     lines.push(`## ${entry.student_name}`);
     lines.push(`- reason: ${entry.review_reason}`);
+    lines.push(`- baseline_mode: ${entry.baseline_mode}`);
+    lines.push(`- normal_training_weeks_count: ${entry.normal_training_weeks_count}`);
     lines.push(
       `- all_week_vs_normal: freq ${formatMetric(entry.all_week_vs_normal.frequency.all_weeks)} -> ${formatMetric(
         entry.all_week_vs_normal.frequency.normal_weeks,
@@ -1204,6 +1576,27 @@ export function buildManualReviewShortlistMarkdown(entries: ManualReviewEntry[])
     lines.push(
       `- excluded_race_taper_recovery_weeks: race=${entry.excluded_race_taper_recovery_weeks.race_week}, taper=${entry.excluded_race_taper_recovery_weeks.taper_week}, recovery=${entry.excluded_race_taper_recovery_weeks.post_race_recovery}, marathon_specific=${entry.excluded_race_taper_recovery_weeks.marathon_specific_block}`,
     );
+    lines.push(`- excluded_weeks_count_by_tag: ${JSON.stringify(entry.excluded_weeks_count_by_tag)}`);
+    lines.push(`- race_candidate_count_by_confidence: ${JSON.stringify(entry.race_candidate_count_by_confidence)}`);
+    lines.push(`- race_candidate_count_by_source_type: ${JSON.stringify(entry.race_candidate_count_by_source_type)}`);
+    lines.push(
+      `- race_detection_diagnostics: raw=${entry.race_detection_diagnostics.raw_race_candidates_count}, clustered=${entry.race_detection_diagnostics.clustered_race_events_count}, suppressed_duplicates=${entry.race_detection_diagnostics.suppressed_duplicate_candidates_count}`,
+    );
+    lines.push("- top_race_candidates:");
+    for (const candidate of entry.top_race_candidates) {
+      lines.push(
+        `  - ${candidate.date} (week ${candidate.week_start}) | ${candidate.title ?? "n/a"} | score=${candidate.score} | confidence=${candidate.confidence} | caused_exclusion=${candidate.caused_exclusion} | reason=${candidate.exclusion_decision_reason ?? "n/a"} | evidence=${candidate.matched_reasons.join("; ") || "none"}`,
+      );
+    }
+    lines.push("- top_excluded_weeks:");
+    for (const excludedWeek of entry.top_excluded_weeks) {
+      lines.push(
+        `  - ${excludedWeek.week_start} | tag=${excludedWeek.tag} | reason=${excludedWeek.reason} | source=${excludedWeek.source_race_candidate ? `${excludedWeek.source_race_candidate.date} / ${excludedWeek.source_race_candidate.title ?? "n/a"} / score=${excludedWeek.source_race_candidate.score}` : "n/a"}`,
+      );
+    }
+    if (entry.baseline_mode === "fallback_all_weeks") {
+      lines.push("- fallback_explanation: normal metrics may equal all-week metrics because fallback_all_weeks mode used all weeks.");
+    }
     lines.push(`- note: ${entry.note}`);
     lines.push("");
   }

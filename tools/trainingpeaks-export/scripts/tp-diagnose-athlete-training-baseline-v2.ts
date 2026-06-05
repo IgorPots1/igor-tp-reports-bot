@@ -383,11 +383,16 @@ function buildRaceCandidatesJsonRows(markdownCompatibleCandidates: ReturnType<ty
     estimated_distance: candidate.estimated_distance,
     estimated_distance_km: candidate.estimated_distance_km,
     source_signals: candidate.source_signals,
+    source_types: candidate.source_types,
+    matched_reasons: candidate.matched_reasons,
     score: candidate.score,
     confidence: candidate.confidence,
     title: candidate.title,
     matched_text_snippet: candidate.matched_text_snippet,
     completed_without_plan: candidate.completed_without_plan,
+    exclusion_eligible: candidate.exclusion_eligible,
+    exclusion_decision_reason: candidate.exclusion_decision_reason,
+    caused_exclusion: candidate.caused_exclusion,
   }));
 }
 
