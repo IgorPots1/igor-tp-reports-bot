@@ -672,6 +672,7 @@ export type TrainingPeaksOperationalSignalsItem = {
   isEpisodeSummary: boolean;
   followUpState: TrainingPeaksOperationalSignalsFollowUpState;
   text: string;
+  requiresCoachReview?: boolean | null;
   hiddenReason?: string | null;
 };
 
@@ -4660,6 +4661,16 @@ function areAllPlannedTrainingDatesExpired(
   return !hasFutureUnavailable && !hasFutureResolved;
 }
 
+function isExpiredPlannedTrainingDatesSignal(
+  signal: { signalType: string; structuredPayload: Record<string, unknown> },
+  asOfDate: string
+): boolean {
+  if (!isScheduleOperationalSignalType(signal.signalType)) {
+    return false;
+  }
+  return areAllPlannedTrainingDatesExpired(signal.structuredPayload, asOfDate);
+}
+
 function isExpiredScheduleOperationalSignal(
   signal: { signalType: string; validUntil: string | null; structuredPayload: Record<string, unknown> },
   asOfDate: string
@@ -4669,7 +4680,7 @@ function isExpiredScheduleOperationalSignal(
   }
   const validUntil = resolveScheduleOperationalSignalValidUntil(signal);
   if (!validUntil) {
-    return areAllPlannedTrainingDatesExpired(signal.structuredPayload, asOfDate);
+    return isExpiredPlannedTrainingDatesSignal(signal, asOfDate);
   }
   return validUntil < asOfDate;
 }
@@ -4857,6 +4868,18 @@ function sanitizeHealthOperationalSummary(raw: string | null): string | null {
     return null;
   }
   return parts.join("; ");
+}
+
+function isAmbiguousIllnessText(raw: string): boolean {
+  return /(может|возможно|кажется)\s+заболева/iu.test(raw);
+}
+
+function normalizeAmbiguousIllnessDisplayText(raw: string): string {
+  const compact = compactOperationalSignalText(raw, 140).toLowerCase();
+  if (compact === "болеет" || isAmbiguousIllnessText(compact)) {
+    return "возможно заболевает";
+  }
+  return raw;
 }
 
 function getOperationalSignalTypeLabel(signalType: string): string {
@@ -5997,12 +6020,40 @@ function buildOperationalSignalItemFromSignal(input: {
       signalType: effective.effectiveSignalType,
       isEpisodeSummary: false,
       followUpState: followUp.state,
-      text: compactOperationalSignalText(`${rolePrefix}${baseReason}${relatedSuffix}`, 140),
+      text: normalizeAmbiguousIllnessDisplayText(
+        compactOperationalSignalText(`${rolePrefix}${baseReason}${relatedSuffix}`, 140)
+      ),
+      requiresCoachReview: effective.effectiveRequiresCoachReview,
       hiddenReason: null,
     };
   }
 
   if (isScheduleOperationalSignalType(effective.effectiveSignalType)) {
+    if (
+      isExpiredPlannedTrainingDatesSignal(
+        {
+          signalType: effective.effectiveSignalType,
+          structuredPayload: signal.structuredPayload,
+        },
+        asOfDate
+      )
+    ) {
+      return {
+        signalId: signal.id,
+        studentId: signal.studentId,
+        studentName,
+        section: "plan_constraints",
+        priority: 999,
+        sortBucket: 9,
+        dueDate: null,
+        episodeKey,
+        signalType: effective.effectiveSignalType,
+        isEpisodeSummary: false,
+        followUpState: followUp.state,
+        text: "",
+        hiddenReason: "expired_planned_training_dates",
+      };
+    }
     if (
       isExpiredScheduleOperationalSignal(
         {
@@ -6049,6 +6100,7 @@ function buildOperationalSignalItemFromSignal(input: {
       isEpisodeSummary: false,
       followUpState: followUp.state,
       text: compactOperationalSignalText(scheduleText, 95),
+        requiresCoachReview: effective.effectiveRequiresCoachReview,
       hiddenReason: null,
     };
   }
@@ -6070,6 +6122,7 @@ function buildOperationalSignalItemFromSignal(input: {
       isEpisodeSummary: false,
       followUpState: followUp.state,
       text: `кандидат переноса ${sourceDate} → ${targetDate}`,
+      requiresCoachReview: effective.effectiveRequiresCoachReview,
       hiddenReason: isVisible ? null : "no_active_move_action",
     };
   }
@@ -6095,6 +6148,7 @@ function buildOperationalSignalItemFromSignal(input: {
       isEpisodeSummary: false,
       followUpState: followUp.state,
       text: genericReason ? `${genericBase}: ${genericReason}` : genericBase,
+      requiresCoachReview: effective.effectiveRequiresCoachReview,
       hiddenReason: "resolved_health_hidden_in_normal_view",
     };
   }
@@ -6111,8 +6165,17 @@ function buildOperationalSignalItemFromSignal(input: {
     isEpisodeSummary: false,
     followUpState: followUp.state,
     text: genericReason ? `${genericBase}: ${genericReason}` : genericBase,
+    requiresCoachReview: effective.effectiveRequiresCoachReview,
     hiddenReason: null,
   };
+}
+
+function isAmbiguousIllnessDisplayItem(item: TrainingPeaksOperationalSignalsItem): boolean {
+  if (item.signalType !== "health_issue_started" || item.requiresCoachReview !== true) {
+    return false;
+  }
+  const normalized = item.text.trim().toLowerCase();
+  return normalized === "болеет" || normalized.includes("возможно заболевает") || normalized.includes("уточнить самочувствие");
 }
 
 function mergeOperationalSignalEpisodeItems(
@@ -6120,6 +6183,20 @@ function mergeOperationalSignalEpisodeItems(
   incoming: TrainingPeaksOperationalSignalsItem,
   episodeSignals?: readonly TrainingPeaksStudentOperationalSignal[]
 ): TrainingPeaksOperationalSignalsItem {
+  if (
+    current.section === "pain_injury" &&
+    incoming.section === "health_pause" &&
+    isAmbiguousIllnessDisplayItem(incoming)
+  ) {
+    return current;
+  }
+  if (
+    incoming.section === "pain_injury" &&
+    current.section === "health_pause" &&
+    isAmbiguousIllnessDisplayItem(current)
+  ) {
+    return incoming;
+  }
   if (current.section === "health_pause" && incoming.section === "health_pause") {
     const rank = (item: TrainingPeaksOperationalSignalsItem): number => {
       if (item.signalType === "health_issue_started" || item.signalType === "pause_training") {

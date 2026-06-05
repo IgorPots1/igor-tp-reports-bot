@@ -185,6 +185,29 @@ function buildSnapshot(scope: TrainingPeaksOperationalSignalsScope) {
       },
     }),
     makeSignal({
+      signalId: "sig-stepan-pain-priority",
+      studentId: "s-stepan",
+      signalType: "health_issue_started",
+      episodeKey: "episode-stepan-priority",
+      structuredPayload: {
+        signal_type: "pain_injury",
+        activity_domain: "injury",
+        planning_effect: "safety_review",
+        requires_coach_review: true,
+        display_summary: "боль / надкостница (уточнить, актуально ли)",
+      },
+    }),
+    makeSignal({
+      signalId: "sig-stepan-ambiguous-illness-priority",
+      studentId: "s-stepan",
+      signalType: "health_issue_started",
+      episodeKey: "episode-stepan-priority",
+      structuredPayload: {
+        display_summary: "может заболеваю",
+        requires_coach_review: true,
+      },
+    }),
+    makeSignal({
       signalId: "sig-schedule",
       studentId: "s-sch",
       signalType: "schedule_unavailability_window",
@@ -216,6 +239,16 @@ function buildSnapshot(scope: TrainingPeaksOperationalSignalsScope) {
       episodeKey: "episode-schedule-rich",
       structuredPayload: {
         duration_days: 4,
+      },
+    }),
+    makeSignal({
+      signalId: "sig-elizaveta-expired-planned",
+      studentId: "s-elizaveta",
+      signalType: "plan_generation_constraint",
+      validUntil: "2026-06-07",
+      structuredPayload: {
+        planned_training_dates: ["2026-06-02"],
+        valid_until: "2026-06-07",
       },
     }),
     makeSignal({
@@ -288,6 +321,8 @@ function buildSnapshot(scope: TrainingPeaksOperationalSignalsScope) {
     ["s-h2", "Ambiguous Health Athlete"],
     ["s-h3", "Pain Athlete"],
     ["s-h4", "Strength Hidden Athlete"],
+    ["s-stepan", "Stepan Trofimov"],
+    ["s-elizaveta", "Elizaveta Kolodkina"],
     ["s-sch", "Schedule Athlete"],
     ["s-sch-2", "Schedule Dates Athlete"],
     ["s-mov", "Move Athlete"],
@@ -417,6 +452,12 @@ function run(): void {
   assert(!text.includes("Strength Hidden Athlete"), "F failed: hidden strength context should not be visible.");
   assert(!text.includes("силовые: вт/чт"), "F failed: hidden strength context text leaked.");
   assert(!text.includes("Pain Athlete\n  болеет"), "F failed: pain/injury row must not use illness wording.");
+  assert(
+    text.includes("Stepan Trofimov") && text.includes("боль / надкостница (уточнить, актуально ли)"),
+    "F failed: Stepan pain/injury should stay visible."
+  );
+  assert(!text.includes("Stepan Trofimov\n  болеет"), "F failed: Stepan ambiguous illness must not overclaim 'болеет'.");
+  assert(!text.includes("Elizaveta Kolodkina"), "F failed: expired planned-only Elizaveta signal should be hidden.");
   const ambiguousVisible = text.includes("Ambiguous Health Athlete");
   if (ambiguousVisible) {
     assert(

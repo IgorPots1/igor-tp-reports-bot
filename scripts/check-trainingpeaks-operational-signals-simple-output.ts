@@ -561,6 +561,7 @@ function run(): void {
         structuredPayload: {
           planned_training_dates: ["2026-06-04"],
           planning_effect: "planned_run",
+          valid_until: "2026-06-07",
         },
       }),
     ],
@@ -570,6 +571,85 @@ function run(): void {
   assert(!elizavetaExpiredPlannedText.includes("Elizaveta Kolodkina"), "20 failed: expired planned date must be hidden.");
   assert(!elizavetaExpiredPlannedText.includes("планирует: 04.06"), "20 failed: expired planned date text must be hidden.");
   assert(elizavetaExpiredPlannedSnapshot.overflowCount === 0, "20 failed: expired planned date must not count in overflow.");
+
+  const stepanAmbiguousIllnessPrioritySnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-05",
+    limit: 10,
+    studentNameById: new Map<string, string | null>([["stepan", "Stepan Trofimov"]]),
+    signals: [
+      makeSignal({
+        signalId: "stepan-pain-priority",
+        studentId: "stepan",
+        signalType: "health_issue_started",
+        metadata: {
+          episode_key: "stepan-episode-priority",
+        },
+        structuredPayload: {
+          signal_type: "pain_injury",
+          activity_domain: "injury",
+          planning_effect: "safety_review",
+          display_summary: "боль / надкостница (уточнить, актуально ли)",
+          requires_coach_review: true,
+        },
+      }),
+      makeSignal({
+        signalId: "stepan-ambiguous-illness-priority",
+        studentId: "stepan",
+        signalType: "health_issue_started",
+        metadata: {
+          episode_key: "stepan-episode-priority",
+        },
+        structuredPayload: {
+          display_summary: "может заболеваю",
+          requires_coach_review: true,
+        },
+      }),
+    ],
+    activeMoveActions: [],
+  });
+  const stepanAmbiguousIllnessPriorityText = formatTrainingPeaksOperationalSignalsForTelegram(
+    stepanAmbiguousIllnessPrioritySnapshot
+  );
+  assert(
+    stepanAmbiguousIllnessPriorityText.includes("🦵 Боль / травмы"),
+    "20b failed: pain/injury section should be visible for Stepan mixed episode."
+  );
+  assert(
+    stepanAmbiguousIllnessPriorityText.includes("Stepan Trofimov") &&
+      stepanAmbiguousIllnessPriorityText.includes("боль / надкостница (уточнить, актуально ли)"),
+    "20b failed: Stepan pain/injury should win over ambiguous illness in same episode."
+  );
+  assert(
+    !stepanAmbiguousIllnessPriorityText.includes("Stepan Trofimov\n  болеет"),
+    "20b failed: Stepan ambiguous illness must not overtake pain/injury."
+  );
+
+  const ambiguousIllnessSummarySnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-05",
+    limit: 10,
+    studentNameById: new Map<string, string | null>([["ambiguous", "Ambiguous Illness Athlete"]]),
+    signals: [
+      makeSignal({
+        signalId: "ambiguous-illness-wording",
+        studentId: "ambiguous",
+        signalType: "health_issue_started",
+        structuredPayload: {
+          display_summary: "может заболеваю",
+          requires_coach_review: true,
+        },
+      }),
+    ],
+    activeMoveActions: [],
+  });
+  const ambiguousIllnessSummaryText = formatTrainingPeaksOperationalSignalsForTelegram(ambiguousIllnessSummarySnapshot);
+  assert(
+    ambiguousIllnessSummaryText.includes("возможно заболевает"),
+    "20c failed: ambiguous illness wording must stay non-assertive."
+  );
+  assert(
+    !ambiguousIllnessSummaryText.includes("Ambiguous Illness Athlete\n  болеет"),
+    "20c failed: ambiguous illness wording must not be assertive."
+  );
 
   const sameDayPlannedSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
     asOfDate: "2026-06-05",
