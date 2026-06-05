@@ -37,6 +37,7 @@
     "tp-probe-race-results": "npm --prefix tools/trainingpeaks-export run tp-probe-race-results --",
     "tp-probes-once": "npm --prefix tools/trainingpeaks-export run tp-probes-once --",
     "tp-probe-progress-evidence": "npm --prefix tools/trainingpeaks-export run tp-probe-progress-evidence --",
+    "tp-diagnose-athlete-training-baseline-v2": "npx tsx tools/trainingpeaks-export/scripts/tp-diagnose-athlete-training-baseline-v2.ts",
     "tp-race-prediction-probe": "npm --prefix tools/trainingpeaks-export run tp-race-prediction-probe --",
     "tp-actions-loop:install": "npm --prefix tools/trainingpeaks-export run tp-actions-loop:install",
     "tp-actions-loop:uninstall": "npm --prefix tools/trainingpeaks-export run tp-actions-loop:uninstall",
