@@ -5934,6 +5934,8 @@ const TRAININGPEAKS_OPERATIONAL_SIGNAL_TYPE_SET: Set<TrainingPeaksOperationalSig
     "health_issue_improving",
     "move_workout_candidate",
     "plan_generation_constraint",
+    "pain_injury",
+    "external_training_context",
     "race_load_context",
   ]);
 
