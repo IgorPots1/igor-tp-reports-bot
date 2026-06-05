@@ -24,9 +24,42 @@ export type OperationalSignalType =
   | "health_issue_resolved"
   | "move_workout_candidate"
   | "plan_generation_constraint"
+  | "pain_injury"
+  | "external_training_context"
   | "race_load_context";
 
 export type OperationalConfidence = "low" | "medium" | "high";
+
+export type OperationalActivityDomain =
+  | "running"
+  | "strength"
+  | "cross_training"
+  | "life_schedule"
+  | "health"
+  | "injury"
+  | "unknown";
+
+export type OperationalPlanningEffect =
+  | "planned_run"
+  | "run_unavailable"
+  | "strength_schedule_context"
+  | "external_training_context"
+  | "life_schedule_constraint"
+  | "move_request"
+  | "safety_review"
+  | "context_only"
+  | "none";
+
+export type OperationalEvidenceLevel =
+  | "explicit_illness"
+  | "ambiguous_malaise"
+  | "explicit_pain_or_injury"
+  | "possible_schedule"
+  | "explicit_run_plan"
+  | "strength_context"
+  | "unknown";
+
+export type OperationalDateCertainty = "confirmed" | "probable" | "possible" | "habitual_weekdays" | "none";
 
 export type OperationalStructuredPayload = {
   available_days: string[];
@@ -48,6 +81,15 @@ export type OperationalStructuredPayload = {
   latest_summary: string | null;
   follow_up_due_at: string | null;
   planned_attempt_date: string | null;
+  activity_domain: OperationalActivityDomain;
+  planning_effect: OperationalPlanningEffect;
+  evidence_level: OperationalEvidenceLevel;
+  date_certainty: OperationalDateCertainty;
+  requires_coach_review: boolean;
+  visible_in_tp_signals: boolean;
+  display_summary: string | null;
+  evidence_phrases: string[];
+  weekdays: Array<"monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday">;
 };
 
 export type ObservationLike = {
@@ -284,6 +326,15 @@ function toDefaultPayload(): OperationalStructuredPayload {
     latest_summary: null,
     follow_up_due_at: null,
     planned_attempt_date: null,
+    activity_domain: "unknown",
+    planning_effect: "none",
+    evidence_level: "unknown",
+    date_certainty: "none",
+    requires_coach_review: false,
+    visible_in_tp_signals: true,
+    display_summary: null,
+    evidence_phrases: [],
+    weekdays: [],
   };
 }
 
@@ -322,6 +373,9 @@ function isExplicitCoachRelevantSignal(text: string, labels: string[]): boolean 
     "марафон",
     "тренировки",
     "по вторникам",
+    "силов",
+    "зал",
+    "надкостниц",
   ];
   return hasAny(text, cueWords);
 }
@@ -664,8 +718,79 @@ function buildHealthSummary(input: {
   return lines.join("; ");
 }
 
+function buildPainInjuryCandidate(input: ObservationLike, text: string): OperationalSignalCandidate | null {
+  const hasPainCue = hasAny(text, ["болит", "болела", "боль", "тянет", "дискомфорт"]);
+  const hasBodyCue = hasAny(text, PAIN_INJURY_BODY_CUES);
+  if (!hasPainCue || !hasBodyCue) {
+    return null;
+  }
+  const payload = toDefaultPayload();
+  payload.activity_domain = "injury";
+  payload.planning_effect = "safety_review";
+  payload.evidence_level = "explicit_pain_or_injury";
+  payload.date_certainty = "none";
+  payload.requires_coach_review = true;
+  payload.visible_in_tp_signals = true;
+  payload.health_issue_kind = "pain_or_injury";
+  payload.evidence_phrases = PAIN_INJURY_BODY_CUES.filter((cue) => text.includes(cue));
+  const base = payload.evidence_phrases.includes("надкостниц")
+    ? "боль / надкостница"
+    : payload.evidence_phrases.length > 0
+      ? `боль / ${payload.evidence_phrases[0]}`
+      : "боль / травма";
+  const isPastOrResolving = hasAny(text, ["болела", "был дискомфорт", "было"]);
+  payload.display_summary = isPastOrResolving ? `${base} (уточнить, актуально ли)` : base;
+  payload.latest_summary = payload.display_summary;
+
+  return {
+    primary_bucket: "health_lifecycle_signal",
+    secondary_buckets: ["coach_case"],
+    signal_type: "pain_injury",
+    structured_payload: payload,
+    should_create_memory: false,
+    should_create_case: true,
+    should_create_trainingpeaks_action: false,
+    confidence: "high",
+    reason: "explicit pain/injury mention",
+  };
+}
+
 function compactOperationalDate(value: string): string {
   return /^\d{4}-\d{2}-\d{2}$/u.test(value) ? value.slice(8, 10) + "." + value.slice(5, 7) : value;
+}
+
+function toWeekdayToken(day: string): OperationalStructuredPayload["weekdays"][number] | null {
+  switch (day) {
+    case "Monday":
+      return "monday";
+    case "Tuesday":
+      return "tuesday";
+    case "Wednesday":
+      return "wednesday";
+    case "Thursday":
+      return "thursday";
+    case "Friday":
+      return "friday";
+    case "Saturday":
+      return "saturday";
+    case "Sunday":
+      return "sunday";
+    default:
+      return null;
+  }
+}
+
+function buildWeekdayCompactLabel(weekdays: OperationalStructuredPayload["weekdays"]): string {
+  const ruMap: Record<OperationalStructuredPayload["weekdays"][number], string> = {
+    monday: "пн",
+    tuesday: "вт",
+    wednesday: "ср",
+    thursday: "чт",
+    friday: "пт",
+    saturday: "сб",
+    sunday: "вс",
+  };
+  return weekdays.map((weekday) => ruMap[weekday]).join("/");
 }
 
 function classifyHealthLifecycleSignal(input: {
@@ -685,6 +810,10 @@ function classifyHealthLifecycleSignal(input: {
   payload.health_issue_kind = classifyHealthIssueKind(text);
   payload.symptoms = symptoms;
   payload.planned_attempt_date = plannedAttemptDate;
+  payload.activity_domain = "health";
+  payload.planning_effect = "safety_review";
+  payload.visible_in_tp_signals = true;
+  payload.requires_coach_review = false;
 
   const improving = hasHealthImprovingCue(text);
   const genericImproving = hasGenericImprovingCue(text);
@@ -712,6 +841,8 @@ function classifyHealthLifecycleSignal(input: {
   if (resolved) {
     payload.health_state = "resolved";
     payload.training_recommendation = "resume_carefully";
+    payload.evidence_level = hasExplicitIllnessCue(text) ? "explicit_illness" : "unknown";
+    payload.date_certainty = "probable";
     payload.latest_summary = buildHealthSummary({
       text,
       signalType: "health_issue_resolved",
@@ -731,6 +862,9 @@ function classifyHealthLifecycleSignal(input: {
     payload.health_state = "improving";
     payload.training_recommendation = plannedAttemptDate ? "easy_if_symptom_free" : "monitor";
     payload.follow_up_due_at = buildHealthFollowUpDueAt(input.observedAt, plannedAttemptDate);
+    payload.evidence_level = hasExplicitIllnessCue(text) ? "explicit_illness" : "ambiguous_malaise";
+    payload.date_certainty = plannedAttemptDate ? "probable" : "none";
+    payload.requires_coach_review = payload.evidence_level === "ambiguous_malaise";
     payload.latest_summary = buildHealthSummary({
       text,
       signalType: "health_issue_improving",
@@ -752,8 +886,12 @@ function classifyHealthLifecycleSignal(input: {
 
   const pauseDays = parsePauseDurationDays(text);
   const hasRunPauseConstraint = hasAny(text, ["не смогу бегать", "бегать не смогу", "не буду бегать", "не бегать"]);
+  const explicitIllness = hasExplicitIllnessCue(text);
   payload.health_state = "sick";
   payload.training_recommendation = "pause";
+  payload.evidence_level = explicitIllness ? "explicit_illness" : "ambiguous_malaise";
+  payload.requires_coach_review = !explicitIllness;
+  payload.date_certainty = "none";
   if (hasRunPauseConstraint && pauseDays) {
     const observed = parseIsoDateFallback(input.observedAt);
     payload.duration_days = pauseDays;
@@ -768,6 +906,7 @@ function classifyHealthLifecycleSignal(input: {
     recommendation: "pause",
     plannedAttemptDate,
   });
+  payload.display_summary = payload.latest_summary;
   return {
     signalType: "health_issue_started",
     payload,
@@ -880,6 +1019,26 @@ const SCHEDULE_AVAILABILITY_CUES = [
 const SCHEDULE_TRAVEL_CUES = ["уеду", "поеду", "в поездк", "буду в мск", "буду в москв", "в мск", "в москв"];
 
 const SCHEDULE_UNCERTAINTY_CUES = ["возможно", "может быть", "наверное", "пока не решила", "пока не решил", "типо"];
+
+const STRENGTH_CONTEXT_CUES = [
+  "силов",
+  "зал",
+  "тренажер",
+  "тренажёр",
+  "кроссфит",
+  "офп",
+] as const;
+
+const PAIN_INJURY_BODY_CUES = [
+  "надкостниц",
+  "голен",
+  "голени",
+  "колен",
+  "ахилл",
+  "спин",
+  "икр",
+  "стоп",
+] as const;
 
 function hasScheduleDateCue(text: string): boolean {
   if (
@@ -1143,13 +1302,17 @@ function hasAvailabilityIntent(text: string, days: string[]): boolean {
   return false;
 }
 
+function hasRunningCue(text: string): boolean {
+  return hasAny(text, ["бег", "побег", "побеж", "пробеж", "убежать"]);
+}
+
 function extractPlanningIntentDates(input: { text: string; observedAt: string }): {
   plannedDates: string[];
   unavailableDates: string[];
 } {
   const planned = new Set<string>();
   const unavailable = new Set<string>();
-  const globalTrainingContext = hasAny(input.text, ["бег", "побег", "побеж", "пробеж", "убежать", "трениров"]);
+  const globalRunningContext = hasRunningCue(input.text);
   const clauses = input.text
     .split(/[.!?;\n]+/u)
     .map((item) => item.trim())
@@ -1182,7 +1345,8 @@ function extractPlanningIntentDates(input: { text: string; observedAt: string })
     if (clauseDates.length === 0) {
       continue;
     }
-    const hasTrainingCue = hasAny(clause, ["бег", "побег", "побеж", "пробеж", "убежать", "трениров"]);
+    const hasRunCue = hasRunningCue(clause);
+    const hasStrengthCue = hasAny(clause, STRENGTH_CONTEXT_CUES);
     const hasPlanningCue = hasAny(clause, ["планир", "побегу", "пробегу", "выйду на пробежку", "выйти на пробежку"]);
     const hasUnavailabilityCue = hasAny(clause, [
       "не могу",
@@ -1196,8 +1360,8 @@ function extractPlanningIntentDates(input: { text: string; observedAt: string })
       "не смогу убежать",
       "не могу убежать",
     ]);
-    const hasPlannedIntent = hasPlanningCue && (hasTrainingCue || globalTrainingContext);
-    const hasUnavailableIntent = hasUnavailabilityCue && (hasTrainingCue || globalTrainingContext);
+    const hasPlannedIntent = hasPlanningCue && !hasStrengthCue && (hasRunCue || globalRunningContext);
+    const hasUnavailableIntent = hasUnavailabilityCue && (hasRunCue || globalRunningContext);
     const today = isoDate(parseIsoDateFallback(input.observedAt));
 
     if (hasUnavailableIntent) {
@@ -1333,6 +1497,10 @@ function buildHealthLifecycleCandidate(
   input: ObservationLike,
   text: string
 ): OperationalSignalCandidate | null {
+  const painInjury = buildPainInjuryCandidate(input, text);
+  if (painInjury) {
+    return painInjury;
+  }
   const details = classifyHealthLifecycleSignal({
     text,
     observedAt: input.observedAt,
@@ -1418,6 +1586,67 @@ function buildScheduleCandidate(
   input: ObservationLike,
   text: string
 ): OperationalSignalCandidate | null {
+  const strengthWeekdays = extractDays(text)
+    .map((item) => toWeekdayToken(item))
+    .filter((item): item is NonNullable<typeof item> => item !== null);
+  const hasStrengthContext = hasAny(text, STRENGTH_CONTEXT_CUES);
+  const hasStrengthBlocksRunningCue = hasAny(text, ["не ставить интервалы", "лучше не ставить", "не ставить"]);
+  const hasExplicitRunPlanCue = hasAny(text, ["планирую побегать", "завтра побегу", "побегу", "пробеж"]);
+  if (hasStrengthContext && strengthWeekdays.length > 0 && hasStrengthBlocksRunningCue) {
+    const payload = toDefaultPayload();
+    payload.activity_domain = "strength";
+    payload.planning_effect = "life_schedule_constraint";
+    payload.evidence_level = "strength_context";
+    payload.date_certainty = "habitual_weekdays";
+    payload.requires_coach_review = true;
+    payload.visible_in_tp_signals = true;
+    payload.weekdays = strengthWeekdays;
+    payload.display_summary = `учесть силовую: ${buildWeekdayCompactLabel(strengthWeekdays)}`;
+    payload.latest_summary = payload.display_summary;
+    payload.evidence_phrases = STRENGTH_CONTEXT_CUES.filter((cue) => text.includes(cue));
+    return {
+      primary_bucket: "operational_signal",
+      secondary_buckets: [],
+      signal_type: "plan_generation_constraint",
+      structured_payload: payload,
+      should_create_memory: false,
+      should_create_case: true,
+      should_create_trainingpeaks_action: false,
+      confidence: "medium",
+      reason: "strength schedule constrains running plan",
+    };
+  }
+
+  const strengthOnlyContext =
+    hasStrengthContext &&
+    strengthWeekdays.length > 0 &&
+    !hasExplicitRunPlanCue &&
+    !hasAny(text, ["не смогу побегать", "не могу побежать", "не побегу"]);
+  if (strengthOnlyContext) {
+    const payload = toDefaultPayload();
+    payload.activity_domain = "strength";
+    payload.planning_effect = "strength_schedule_context";
+    payload.evidence_level = "strength_context";
+    payload.date_certainty = "habitual_weekdays";
+    payload.requires_coach_review = false;
+    payload.visible_in_tp_signals = false;
+    payload.weekdays = strengthWeekdays;
+    payload.display_summary = `силовые: ${buildWeekdayCompactLabel(strengthWeekdays)}`;
+    payload.latest_summary = payload.display_summary;
+    payload.evidence_phrases = STRENGTH_CONTEXT_CUES.filter((cue) => text.includes(cue));
+    return {
+      primary_bucket: "temporary_memory",
+      secondary_buckets: [],
+      signal_type: "external_training_context",
+      structured_payload: payload,
+      should_create_memory: true,
+      should_create_case: false,
+      should_create_trainingpeaks_action: false,
+      confidence: "medium",
+      reason: "strength schedule context without explicit running intent",
+    };
+  }
+
   const payload = toDefaultPayload();
   const hasLogisticsCue = hasAny(text, [...SCHEDULE_AVAILABILITY_CUES, ...SCHEDULE_TRAVEL_CUES]);
   const hasDateConstraint = hasScheduleDateCue(text);
@@ -1427,6 +1656,13 @@ function buildScheduleCandidate(
     payload.planned_training_dates = planningDates.plannedDates;
     payload.unavailable_dates = planningDates.unavailableDates;
     payload.planning_status = planningDates.plannedDates.length > 0 ? "athlete_intends_to_train" : null;
+    payload.activity_domain =
+      planningDates.plannedDates.length > 0 ? "running" : hasRunningCue(text) ? "running" : "life_schedule";
+    payload.planning_effect =
+      planningDates.plannedDates.length > 0 ? "planned_run" : planningDates.unavailableDates.length > 0 ? "run_unavailable" : "none";
+    payload.evidence_level = planningDates.plannedDates.length > 0 ? "explicit_run_plan" : "possible_schedule";
+    payload.date_certainty = "probable";
+    payload.visible_in_tp_signals = true;
     if (!payload.valid_from && planningDates.unavailableDates.length > 0) {
       payload.valid_from = planningDates.unavailableDates[0] ?? null;
       payload.valid_until = planningDates.unavailableDates[planningDates.unavailableDates.length - 1] ?? null;
@@ -1446,6 +1682,11 @@ function buildScheduleCandidate(
     };
   }
   if (hasLogisticsCue && hasDateConstraint) {
+    payload.activity_domain = hasRunningCue(text) ? "running" : "life_schedule";
+    payload.planning_effect = "run_unavailable";
+    payload.evidence_level = "possible_schedule";
+    payload.date_certainty = hasAny(text, SCHEDULE_UNCERTAINTY_CUES) ? "possible" : "probable";
+    payload.visible_in_tp_signals = true;
     payload.latest_summary = buildDateBasedScheduleSummary(text) ?? text;
     finalizeSchedulePayload(text, input.observedAt, payload);
     return {
@@ -1465,6 +1706,11 @@ function buildScheduleCandidate(
   const scheduleUnavailability = hasAny(text, ["не могу", "не смогу", "не успеваю", "не может"]);
 
   if (days.length > 0 && hasScheduleContext(text) && (scheduleAvailability || scheduleUnavailability)) {
+    payload.activity_domain = hasRunningCue(text) ? "running" : "life_schedule";
+    payload.planning_effect = scheduleUnavailability ? "run_unavailable" : "context_only";
+    payload.evidence_level = "possible_schedule";
+    payload.date_certainty = "habitual_weekdays";
+    payload.visible_in_tp_signals = true;
     if (scheduleAvailability) {
       payload.available_days = days;
     }
@@ -1516,6 +1762,11 @@ function buildScheduleCandidate(
     const today = parseRelativeDate("сегодня", input.observedAt);
     payload.valid_from = today;
     payload.valid_until = today;
+    payload.activity_domain = "life_schedule";
+    payload.planning_effect = "run_unavailable";
+    payload.evidence_level = "possible_schedule";
+    payload.date_certainty = "confirmed";
+    payload.visible_in_tp_signals = true;
     return {
       primary_bucket: "operational_signal",
       secondary_buckets: [],
@@ -1554,6 +1805,11 @@ function buildScheduleCandidate(
       payload.duration_days = durationDays;
       payload.valid_until = isoDate(addDays(parseIsoDateFallback(baseDate), durationDays));
     }
+    payload.activity_domain = "running";
+    payload.planning_effect = "run_unavailable";
+    payload.evidence_level = "possible_schedule";
+    payload.date_certainty = durationDays !== null ? "probable" : "possible";
+    payload.visible_in_tp_signals = true;
     finalizeSchedulePayload(text, input.observedAt, payload);
     return {
       primary_bucket: "operational_signal",
@@ -1573,6 +1829,11 @@ function buildScheduleCandidate(
     payload.valid_from = conditionalEasyRunDate;
     payload.valid_until = conditionalEasyRunDate;
     payload.resolved_available_dates = [conditionalEasyRunDate];
+    payload.activity_domain = "running";
+    payload.planning_effect = "planned_run";
+    payload.evidence_level = "explicit_run_plan";
+    payload.date_certainty = "probable";
+    payload.visible_in_tp_signals = true;
     payload.latest_summary = `${compactOperationalDate(conditionalEasyRunDate)}: если кашля не будет — лёгкая пробежка вечером`;
     return {
       primary_bucket: "operational_signal",
@@ -1594,6 +1855,7 @@ function isHealthSignal(signalType: OperationalSignalType): boolean {
     signalType === "health_issue_started" ||
     signalType === "health_issue_improving" ||
     signalType === "health_issue_resolved" ||
+    signalType === "pain_injury" ||
     signalType === "pause_training" ||
     signalType === "resume_training"
   );
@@ -1820,6 +2082,15 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
     };
   }
 
+  const painCandidate = buildPainInjuryCandidate(input, text);
+  const hasPainPersistence = hasAny(text, ["третий день", "несколько дней", "постоянно", "после каждой тренировки"]);
+  if (painCandidate && !hasPainPersistence) {
+    return {
+      ...painCandidate,
+      reason: explicitSignalReason ?? painCandidate.reason,
+    };
+  }
+
   const healthDetails = classifyHealthLifecycleSignal({
     text,
     observedAt: input.observedAt,
@@ -1948,156 +2219,11 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
     };
   }
 
-  const days = extractDays(text);
-  const hasLogisticsCue = hasAny(text, [...SCHEDULE_AVAILABILITY_CUES, ...SCHEDULE_TRAVEL_CUES]);
-  const hasDateConstraint = hasScheduleDateCue(text);
-  const planningDates = extractPlanningIntentDates({ text, observedAt: input.observedAt });
-  if (planningDates.plannedDates.length > 0 || planningDates.unavailableDates.length > 0) {
-    payload.resolved_available_dates = planningDates.plannedDates;
-    payload.planned_training_dates = planningDates.plannedDates;
-    payload.unavailable_dates = planningDates.unavailableDates;
-    payload.planning_status = planningDates.plannedDates.length > 0 ? "athlete_intends_to_train" : null;
-    if (!payload.valid_from && planningDates.unavailableDates.length > 0) {
-      payload.valid_from = planningDates.unavailableDates[0] ?? null;
-      payload.valid_until = planningDates.unavailableDates[planningDates.unavailableDates.length - 1] ?? null;
-    }
-    payload.latest_summary = buildDateBasedScheduleSummary(text) ?? text;
-    finalizeSchedulePayload(text, input.observedAt, payload);
+  const scheduleCandidate = buildScheduleCandidate(input, text);
+  if (scheduleCandidate) {
     return {
-      primary_bucket: "operational_signal",
-      secondary_buckets: [],
-      signal_type: "plan_generation_constraint",
-      structured_payload: payload,
-      should_create_memory: false,
-      should_create_case: false,
-      should_create_trainingpeaks_action: false,
-      confidence: "high",
-      reason: explicitSignalReason ?? "planned training dates with explicit schedule constraints",
-    };
-  }
-  if (hasLogisticsCue && hasDateConstraint) {
-    payload.latest_summary = buildDateBasedScheduleSummary(text) ?? text;
-    finalizeSchedulePayload(text, input.observedAt, payload);
-    return {
-      primary_bucket: "operational_signal",
-      secondary_buckets: [],
-      signal_type: "plan_generation_constraint",
-      structured_payload: payload,
-      should_create_memory: false,
-      should_create_case: false,
-      should_create_trainingpeaks_action: false,
-      confidence: hasAny(text, SCHEDULE_UNCERTAINTY_CUES) ? "medium" : "high",
-      reason: explicitSignalReason ?? "date-based schedule constraint with logistics cue",
-    };
-  }
-  const scheduleAvailability = hasAvailabilityIntent(text, days);
-  const scheduleUnavailability = hasAny(text, ["не могу", "не смогу", "не успеваю", "не может"]);
-  if (days.length > 0 && hasScheduleContext(text) && (scheduleAvailability || scheduleUnavailability)) {
-    if (scheduleAvailability) {
-      payload.available_days = days;
-    }
-    if (scheduleUnavailability) {
-      payload.unavailable_days = days;
-    }
-    if (text.includes("сегодня")) {
-      const observed = parseIsoDateFallback(input.observedAt);
-      payload.valid_from = isoDate(observed);
-      payload.valid_until = isoDate(observed);
-    }
-    const durableConstraint =
-      hasAny(text, ["по вторникам", "по средам", "по четвергам", "из-за ребенка", "из-за ребёнка", "каждый"]) &&
-      scheduleUnavailability;
-    if (durableConstraint) {
-      finalizeSchedulePayload(text, input.observedAt, payload);
-      return {
-        primary_bucket: "durable_memory",
-        secondary_buckets: ["operational_signal"],
-        signal_type: "plan_generation_constraint",
-        structured_payload: payload,
-        should_create_memory: true,
-        should_create_case: false,
-        should_create_trainingpeaks_action: false,
-        confidence: "high",
-        reason: "recurring schedule constraint with explicit life conflict",
-      };
-    }
-    finalizeSchedulePayload(text, input.observedAt, payload);
-    return {
-      primary_bucket: "operational_signal",
-      secondary_buckets: [],
-      signal_type:
-        scheduleAvailability && (text.includes("на этой неделе") || text.includes("на этой"))
-          ? "plan_generation_constraint"
-          : scheduleUnavailability
-            ? "schedule_unavailability_window"
-            : "schedule_availability_window",
-      structured_payload: payload,
-      should_create_memory: false,
-      should_create_case: false,
-      should_create_trainingpeaks_action: false,
-      confidence: text.includes("можно") ? "medium" : "high",
-      reason: explicitSignalReason ?? "bounded schedule window detected",
-    };
-  }
-
-  if (hasAny(text, ["сегодня не успеваю", "сегодня не могу"])) {
-    const today = parseRelativeDate("сегодня", input.observedAt);
-    payload.valid_from = today;
-    payload.valid_until = today;
-    return {
-      primary_bucket: "operational_signal",
-      secondary_buckets: [],
-      signal_type: "schedule_unavailability_window",
-      structured_payload: payload,
-      should_create_memory: false,
-      should_create_case: false,
-      should_create_trainingpeaks_action: false,
-      confidence: "high",
-      reason: "single-day unavailability",
-    };
-  }
-
-  const hasRunUnavailability = hasAny(text, [
-    "точно бегать не смогу",
-    "не смогу бегать",
-    "бегать не смогу",
-    "не получится бегать",
-    "бегать не получится",
-    "тренироваться не смогу",
-  ]);
-  const hasTravelContext = hasAny(text, [
-    "улетаю",
-    "поездк",
-    "фестиваль",
-    "командировк",
-    "отпуск",
-    "в отъезде",
-    "в отезде",
-  ]);
-  const hasDurationContext = /на\s+\d{1,2}\s+дн/iu.test(text);
-  if (hasRunUnavailability && (hasTravelContext || hasDurationContext)) {
-    if (text.includes("сегодня")) {
-      const today = parseRelativeDate("сегодня", input.observedAt);
-      payload.valid_from = today;
-      if (hasDurationContext && today) {
-        const daysCount = Number(text.match(/на\s+(\d{1,2})\s+дн/iu)?.[1] ?? 0);
-        if (daysCount > 0) {
-          payload.duration_days = daysCount;
-          payload.valid_until = isoDate(addDays(parseIsoDateFallback(today), daysCount - 1));
-        }
-      }
-    }
-    finalizeSchedulePayload(text, input.observedAt, payload);
-    return {
-      primary_bucket: "operational_signal",
-      secondary_buckets: [],
-      signal_type: "schedule_unavailability_window",
-      structured_payload: payload,
-      should_create_memory: false,
-      should_create_case: false,
-      should_create_trainingpeaks_action: false,
-      confidence: "medium",
-      reason: "travel/duration-linked temporary running unavailability",
+      ...scheduleCandidate,
+      reason: explicitSignalReason ?? scheduleCandidate.reason,
     };
   }
 

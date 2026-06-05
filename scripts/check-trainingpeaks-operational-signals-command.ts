@@ -147,6 +147,25 @@ function buildSnapshot(scope: TrainingPeaksOperationalSignalsScope) {
       },
     }),
     makeSignal({
+      signalId: "sig-pain-injury",
+      studentId: "s-h3",
+      signalType: "pain_injury",
+      structuredPayload: {
+        latest_summary: "боль / надкостница (уточнить, актуально ли)",
+        activity_domain: "injury",
+        requires_coach_review: true,
+      },
+    }),
+    makeSignal({
+      signalId: "sig-strength-hidden",
+      studentId: "s-h4",
+      signalType: "external_training_context",
+      structuredPayload: {
+        visible_in_tp_signals: false,
+        display_summary: "силовые: пн/чт",
+      },
+    }),
+    makeSignal({
       signalId: "sig-health-ambiguous",
       studentId: "s-h2",
       signalType: "health_issue_started",
@@ -261,6 +280,8 @@ function buildSnapshot(scope: TrainingPeaksOperationalSignalsScope) {
     ["s-res", "Resolved Athlete"],
     ["s-h1", "Health Athlete"],
     ["s-h2", "Ambiguous Health Athlete"],
+    ["s-h3", "Pain Athlete"],
+    ["s-h4", "Strength Hidden Athlete"],
     ["s-sch", "Schedule Athlete"],
     ["s-sch-2", "Schedule Dates Athlete"],
     ["s-mov", "Move Athlete"],
@@ -384,6 +405,10 @@ function run(): void {
     healthText.includes("кашель ещё есть") && healthText.includes("хочет пробежку завтра вечером"),
     "F failed: health scope should show rich coaching summary instead of vague label."
   );
+  assert(healthText.includes("Pain Athlete"), "F failed: pain/injury signal should be visible in health section.");
+  assert(healthText.includes("надкостница"), "F failed: pain/injury summary should preserve body area.");
+  assert(!text.includes("Strength Hidden Athlete"), "F failed: hidden strength context should not be visible.");
+  assert(!text.includes("силовые: пн/чт"), "F failed: hidden strength context text leaked.");
   const ambiguousVisible = text.includes("Ambiguous Health Athlete");
   if (ambiguousVisible) {
     assert(

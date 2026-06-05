@@ -33,8 +33,17 @@ type Expectation = {
   reason?: string;
   symptoms_includes?: string[];
   latest_summary_includes?: string[];
+  latest_summary_not_includes?: string[];
   secondary_buckets_includes?: OperationalPrimaryBucket[];
   confidence_at_least?: "low" | "medium" | "high";
+  activity_domain?: string;
+  planning_effect?: string;
+  date_certainty?: string;
+  requires_coach_review?: boolean;
+  visible_in_tp_signals?: boolean;
+  display_summary_includes?: string[];
+  weekdays?: string[];
+  evidence_level?: string;
 };
 
 type CaseDef = {
@@ -199,6 +208,70 @@ function assertCase(caseDef: CaseDef): string[] {
         failures.push(`latest_summary=${latestSummary} expected_to_include=${part}`);
       }
     }
+  }
+  if (caseDef.expected.latest_summary_not_includes) {
+    const latestSummary = String(result.structured_payload.latest_summary ?? "");
+    for (const part of caseDef.expected.latest_summary_not_includes) {
+      if (latestSummary.includes(part)) {
+        failures.push(`latest_summary=${latestSummary} expected_not_to_include=${part}`);
+      }
+    }
+  }
+  if (
+    caseDef.expected.activity_domain !== undefined &&
+    String(result.structured_payload.activity_domain) !== caseDef.expected.activity_domain
+  ) {
+    failures.push(`activity_domain=${String(result.structured_payload.activity_domain)} expected=${caseDef.expected.activity_domain}`);
+  }
+  if (
+    caseDef.expected.planning_effect !== undefined &&
+    String(result.structured_payload.planning_effect) !== caseDef.expected.planning_effect
+  ) {
+    failures.push(`planning_effect=${String(result.structured_payload.planning_effect)} expected=${caseDef.expected.planning_effect}`);
+  }
+  if (
+    caseDef.expected.date_certainty !== undefined &&
+    String(result.structured_payload.date_certainty) !== caseDef.expected.date_certainty
+  ) {
+    failures.push(`date_certainty=${String(result.structured_payload.date_certainty)} expected=${caseDef.expected.date_certainty}`);
+  }
+  if (
+    caseDef.expected.requires_coach_review !== undefined &&
+    Boolean(result.structured_payload.requires_coach_review) !== caseDef.expected.requires_coach_review
+  ) {
+    failures.push(
+      `requires_coach_review=${String(result.structured_payload.requires_coach_review)} expected=${String(caseDef.expected.requires_coach_review)}`
+    );
+  }
+  if (
+    caseDef.expected.visible_in_tp_signals !== undefined &&
+    Boolean(result.structured_payload.visible_in_tp_signals) !== caseDef.expected.visible_in_tp_signals
+  ) {
+    failures.push(
+      `visible_in_tp_signals=${String(result.structured_payload.visible_in_tp_signals)} expected=${String(caseDef.expected.visible_in_tp_signals)}`
+    );
+  }
+  if (caseDef.expected.display_summary_includes) {
+    const displaySummary = String(result.structured_payload.display_summary ?? "");
+    for (const part of caseDef.expected.display_summary_includes) {
+      if (!displaySummary.includes(part)) {
+        failures.push(`display_summary=${displaySummary} expected_to_include=${part}`);
+      }
+    }
+  }
+  if (
+    caseDef.expected.weekdays &&
+    !includesAll((result.structured_payload.weekdays ?? []).map(String), caseDef.expected.weekdays.map(String))
+  ) {
+    failures.push(
+      `weekdays=${JSON.stringify(result.structured_payload.weekdays ?? [])} expected_has=${JSON.stringify(caseDef.expected.weekdays)}`
+    );
+  }
+  if (
+    caseDef.expected.evidence_level !== undefined &&
+    String(result.structured_payload.evidence_level) !== caseDef.expected.evidence_level
+  ) {
+    failures.push(`evidence_level=${String(result.structured_payload.evidence_level)} expected=${caseDef.expected.evidence_level}`);
   }
   if (caseDef.expected.secondary_buckets_includes && !includesAll(result.secondary_buckets, caseDef.expected.secondary_buckets_includes)) {
     failures.push(
@@ -1053,6 +1126,67 @@ async function run(): Promise<void> {
         health_issue_kind: null,
         symptoms_includes: ["fatigue", "headache"],
         latest_summary_includes: ["сил нет", "голова болит"],
+        latest_summary_not_includes: ["болеет"],
+        evidence_level: "ambiguous_malaise",
+        requires_coach_review: true,
+      },
+    },
+    {
+      name: "naida-strength-context-hidden-from-tp-signals",
+      observation: mkObs(
+        "Было отлично, сегодня не бегала, много всего напланировала, еще теперь делаю силовые - стараюсь в понедельник и четверг"
+      ),
+      expected: {
+        primary_bucket: "temporary_memory",
+        signal_type: "external_training_context",
+        should_create_memory: true,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        activity_domain: "strength",
+        planning_effect: "strength_schedule_context",
+        date_certainty: "habitual_weekdays",
+        weekdays: ["monday", "thursday"],
+        planned_training_dates: [],
+        visible_in_tp_signals: false,
+        display_summary_includes: ["силовые", "пн/чт"],
+        evidence_level: "strength_context",
+      },
+    },
+    {
+      name: "stepan-pain-injury-not-illness",
+      observation: mkObs("болела надкостница"),
+      expected: {
+        primary_bucket: "health_lifecycle_signal",
+        signal_type: "pain_injury",
+        should_create_memory: false,
+        should_create_case: true,
+        should_create_trainingpeaks_action: false,
+        activity_domain: "injury",
+        planning_effect: "safety_review",
+        requires_coach_review: true,
+        health_issue_kind: "pain_or_injury",
+        latest_summary_includes: ["надкостница"],
+        latest_summary_not_includes: ["болеет"],
+        evidence_level: "explicit_pain_or_injury",
+      },
+    },
+    {
+      name: "running-plan-tomorrow-explicit-run",
+      observation: {
+        ...mkObs("завтра планирую побегать"),
+        observedAt: "2026-06-04T10:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        activity_domain: "running",
+        planning_effect: "planned_run",
+        evidence_level: "explicit_run_plan",
+        planned_training_dates: ["2026-06-05"],
+        visible_in_tp_signals: true,
       },
     },
     {

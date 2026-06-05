@@ -47,6 +47,8 @@ const PERSISTABLE_SIGNAL_TYPES = new Set<TrainingPeaksOperationalSignalType>([
   "health_issue_started",
   "health_issue_resolved",
   "health_issue_improving",
+  "pain_injury",
+  "external_training_context",
   "move_workout_candidate",
   "plan_generation_constraint",
   "race_load_context",

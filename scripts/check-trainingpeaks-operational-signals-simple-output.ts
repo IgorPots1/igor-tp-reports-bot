@@ -251,6 +251,17 @@ function run(): void {
         validFrom: "2026-06-04",
         validUntil: "2026-06-04",
       }),
+      makeSignal({
+        signalId: "naida-strength-context",
+        studentId: "naida",
+        signalType: "external_training_context",
+        structuredPayload: {
+          visible_in_tp_signals: false,
+          activity_domain: "strength",
+          planning_effect: "strength_schedule_context",
+          display_summary: "силовые: пн/чт",
+        },
+      }),
     ],
     activeMoveActions: [],
   });
@@ -303,6 +314,8 @@ function run(): void {
   assert(text.includes("недоступна: 04.06"), "12 failed: Olga unavailability must be shown.");
   assert(text.includes("планирует: 05.06"), "12 failed: Olga planned dates should use 'планирует'.");
   assert(text.includes("07.06"), "12 failed: Olga planned Sunday date must be shown.");
+  assert(!text.includes("Naida"), "13 failed: external strength context must stay hidden in /tp_signals.");
+  assert(!text.includes("силовые: пн/чт"), "13 failed: hidden strength context leaked into /tp_signals.");
 
   console.log(`${LOG_PREFIX} PASS`);
 }

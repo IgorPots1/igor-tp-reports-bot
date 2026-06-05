@@ -268,6 +268,8 @@ export type TrainingPeaksOperationalSignalType =
   | "health_issue_improving"
   | "move_workout_candidate"
   | "plan_generation_constraint"
+  | "pain_injury"
+  | "external_training_context"
   | "race_load_context";
 export type TrainingPeaksCoachActionKind =
   | "case_resolved"

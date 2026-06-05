@@ -4624,6 +4624,10 @@ function isScheduleOperationalSignalType(signalType: string): boolean {
   );
 }
 
+function normalizeRecordBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
 function isMoveOperationalSignalType(signalType: string): boolean {
   return signalType === "move_workout_candidate";
 }
@@ -4816,6 +4820,12 @@ function getOperationalSignalTypeLabel(signalType: string): string {
   if (signalType === "plan_generation_constraint") {
     return "ограничение плана";
   }
+  if (signalType === "pain_injury") {
+    return "боль / травма";
+  }
+  if (signalType === "external_training_context") {
+    return "внешний тренировочный контекст";
+  }
   if (signalType === "move_workout_candidate") {
     return "запрос на перенос";
   }
@@ -4846,6 +4856,7 @@ function isHealthOperationalSignalType(signalType: string): boolean {
     signalType === "health_issue_started" ||
     signalType === "health_issue_improving" ||
     signalType === "pause_training" ||
+    signalType === "pain_injury" ||
     signalType === "resume_training"
   );
 }
@@ -5806,6 +5817,24 @@ function buildOperationalSignalItemFromSignal(input: {
   const episodeKey = getSignalMetadataString(signal.metadata, "episode_key");
   const relatedSignalTypes = getSignalMetadataString(signal.metadata, "related_signal_types");
   const relatedSuffix = relatedSignalTypes ? `; сигналы: ${compactOperationalSignalText(relatedSignalTypes, 42)}` : "";
+  const structuredVisible = normalizeRecordBoolean(signal.structuredPayload.visible_in_tp_signals);
+  if (structuredVisible === false) {
+    return {
+      signalId: signal.id,
+      studentId: signal.studentId,
+      studentName,
+      section: "other",
+      priority: 999,
+      sortBucket: 9,
+      dueDate: null,
+      episodeKey,
+      signalType: signal.signalType,
+      isEpisodeSummary: false,
+      followUpState: followUp.state,
+      text: "",
+      hiddenReason: "structured_hidden_from_tp_signals",
+    };
+  }
 
   if (isHealthOperationalSignalType(signal.signalType)) {
     const rolePrefix = episodeRole ? `${episodeRole}: ` : "";
