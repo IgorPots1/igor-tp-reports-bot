@@ -1,9 +1,6 @@
 import type { TrainingPeaksWorkoutCacheRow } from "../../../../src/features/trainingpeaks/repository.ts";
 import { classifyTrainingPeaksWorkoutActivity } from "../../../../src/features/trainingpeaks/workout-activity-classification.ts";
-import {
-  DISTANCE_KEYWORDS,
-  RACE_KEYWORDS_PATTERN,
-} from "../../src/quality/race-keywords.ts";
+import { DISTANCE_KEYWORDS } from "../../src/quality/race-keywords.ts";
 
 export type BaselineV2Confidence = "high" | "medium" | "low";
 export type RaceCandidateConfidence = "high" | "medium" | "low";
@@ -27,6 +24,7 @@ export type WeekTag =
   | "illness_low_volume"
   | "low_data";
 export type SecondaryWeekFlag = "manual_review";
+export type RaceEvidenceDecision = "true_event_candidate" | "rejected_training_context" | "manual_review";
 
 export type CurrentBaselineContext = {
   studentId: string;
@@ -230,6 +228,39 @@ export type BaselineV2Analysis = {
   weekTags: WeekTagReportRow[];
   manualReviewShortlist: ManualReviewEntry[];
   dataGaps: DataGap[];
+  raceEvidenceCalibration: RaceEvidenceCalibrationReport;
+};
+
+export type RaceEvidenceCalibrationExample = {
+  student_id: string;
+  athlete_id: number;
+  athlete_name: string;
+  date: string;
+  title: string | null;
+  completed: boolean;
+  planned: boolean;
+  estimated_distance_km: number | null;
+  duration_minutes: number | null;
+  raceTypeDuration: string | number | null;
+  matched_positive_evidence: string[];
+  matched_negative_training_context: string[];
+  decision: RaceEvidenceDecision;
+  would_drive_race_exclusions: boolean;
+  notes: string[];
+};
+
+export type RaceEvidenceCalibrationReport = {
+  generated_at: string;
+  date_range: { from: string; to: string };
+  totals: {
+    considered_examples: number;
+    true_event_candidate: number;
+    rejected_training_context: number;
+    manual_review: number;
+  };
+  potential_positive_examples: RaceEvidenceCalibrationExample[];
+  rejected_training_context_examples: RaceEvidenceCalibrationExample[];
+  manual_review_examples: RaceEvidenceCalibrationExample[];
 };
 
 type AthleteInput = {
@@ -315,9 +346,20 @@ const MARATHON_SPECIFIC_PATTERN =
 const RUN_WALK_STRONG_PATTERN =
   /(run[- ]?walk|run\s*\/\s*walk|бег\s*\/\s*шаг|бег\s*\/\s*ходьб|walk breaks?|чередован(?:ие)?\s*бег.*ходьб|ходьб.*бег)/i;
 const STRONG_EVENT_RESULT_KEYWORDS =
-  /\b(race day|race|parkrun|park run|парк\s*ран|забег|соревнован|официальн(?:ый|ая)?\s*старт|result|results|official|event|finisher|протокол|результат|финиш)\b/i;
+  /\b(race day|official race|official event|event day|parkrun|park run|парк\s*ран|забег|соревнован|официальн(?:ый|ая)?\s*старт|official result|finisher|протокол|результат)\b/i;
 const WEAK_CONTEXT_KEYWORDS =
   /\b(race pace|10k pace|5k pace|hm pace|half marathon pace|marathon pace|пейс\s*гонки|темп\s*гонки|темп\s*старта|5к\s*темп|10к\s*темп|марафонск(?:ий|ого)?\s*темп)\b/i;
+const POSITIVE_EVENT_KEYWORDS =
+  /(?:^|[^a-zа-яё0-9])(race day|official race|official event|event day|parkrun|park run|забег|соревнован|соревновал|гонк|протокол|полумарафон|марафон|официальн(?:ый|ая)?\s*(?:старт|забег|гонк)|5\s*верст)(?:$|[^a-zа-яё0-9])/iu;
+const POSITIVE_RESULT_KEYWORDS =
+  /(?:^|[^a-zа-яё0-9])(result|results|official result|finisher|podium|placing|place|time\s*result|результат|протокол|место|время\s*на\s*финише)(?:$|[^a-zа-яё0-9])/iu;
+const POSITIVE_START_WORDS = /\b(started race|race started|стартовал|стартовала|на старте|в старте)\b/i;
+const POSITIVE_FINISH_WORDS = /\b(finished|finish|finisher|финишировал|финишировала)\b/i;
+const STRONG_EVENT_TITLE_PATTERN =
+  /\b(official race|official event|parkrun|park run|забег|соревнован|полумарафон|марафон|5\s*верст)\b/i;
+const NEGATIVE_TRAINING_CONTEXT_KEYWORDS =
+  /\b(10k pace|5k pace|hm pace|half marathon pace|marathon pace|race pace|tempo|threshold|interval|intervals|workout|session|planned|plan|target pace|target hr|целевой темп|темпов|порог|интервал|фартлек|тренировк|подводящ|полумарафонск(?:ий|ого)?\s*темп|марафонск(?:ий|ого)?\s*темп)\b/i;
+const NEGATIVE_COACH_WORKOUT_PATTERN = /\b(coach comments?|описани(?:е)? тренировки|цель тренировки|workout description)\b/i;
 const DISTANCE_WINDOW_TOLERANCE = {
   marathon: [41.0, 43.5] as const,
   half: [20.5, 21.8] as const,
@@ -457,6 +499,21 @@ function pickTextSnippet(text: string): string | null {
   return text.length <= 160 ? text : `${text.slice(0, 157)}...`;
 }
 
+function extractRegexMatches(pattern: RegExp, text: string): string[] {
+  const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+  const regex = new RegExp(pattern.source, flags);
+  const values: string[] = [];
+  for (const match of text.matchAll(regex)) {
+    const raw = (match[0] ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/^[^a-zа-яё0-9]+/iu, "")
+      .replace(/[^a-zа-яё0-9]+$/iu, "");
+    if (raw) values.push(raw);
+  }
+  return uniqueSorted(values);
+}
+
 function estimateRaceDistance(text: string, distanceKm: number | null): RaceDistanceKey {
   if (DISTANCE_KEYWORDS.marathon.test(text)) return "marathon";
   if (DISTANCE_KEYWORDS.half.test(text)) return "half";
@@ -546,12 +603,34 @@ function buildWorkoutInsight(row: TrainingPeaksWorkoutCacheRow): WorkoutInsight 
   };
 }
 
-function buildRaceCandidate(insight: WorkoutInsight): RaceCandidate | null {
-  if (!insight.isRunning) return null;
+function evaluateRaceEvidence(insight: WorkoutInsight): {
+  decision: RaceEvidenceDecision;
+  matchedPositiveEvidence: string[];
+  matchedNegativeTrainingContext: string[];
+  strongEvidence: boolean;
+  exclusionEligible: boolean;
+  hasRaceTypeDuration: boolean;
+  hasReliableClassifierEvidence: boolean;
+  hasStrongEventKeyword: boolean;
+  hasStrongResultKeyword: boolean;
+  hasCompletedRaceLikeDistance: boolean;
+  distanceKeywordMatch: boolean;
+  distanceWindowMatch: boolean;
+  estimatedDistance: RaceDistanceKey;
+  sourceSignals: string[];
+  sourceTypes: Set<RaceCandidateSourceType>;
+  matchedReasons: Set<string>;
+  score: number;
+  exclusionDecisionReason: string | null;
+  notes: string[];
+} {
   const snapshot = isRecord(insight.row.sourceSnapshot) ? insight.row.sourceSnapshot : null;
   const sourceSignals: string[] = [];
   const sourceTypes = new Set<RaceCandidateSourceType>();
   const matchedReasons = new Set<string>();
+  const matchedPositiveEvidence: string[] = [];
+  const matchedNegativeTrainingContext: string[] = [];
+  const notes: string[] = [];
   let score = 0;
   const estimatedDistance = estimateRaceDistance(insight.text, insight.distanceKm);
   const distanceKeywordMatch = estimatedDistance !== "unknown" && DISTANCE_KEYWORDS[estimatedDistance].test(insight.text);
@@ -561,9 +640,11 @@ function buildRaceCandidate(insight: WorkoutInsight): RaceCandidate | null {
   const effortSupport =
     ((tssActual ?? 0) >= 50 || (ifActual ?? 0) >= 0.9) && ((insight.distanceKm ?? 0) >= 5 || (insight.durationMinutes ?? 0) >= 20);
   const hasRaceTypeDuration = snapshot?.raceTypeDuration !== null && snapshot?.raceTypeDuration !== undefined;
-  const hasStrongEventKeyword = RACE_KEYWORDS_PATTERN.test(insight.text) || STRONG_EVENT_RESULT_KEYWORDS.test(insight.text);
-  const hasStrongResultKeyword = /\b(result|results|official|finisher|протокол|результат|финиш)\b/i.test(insight.text);
-  const classifierLabelRaw = typeof snapshot?.resultStatus === "string" ? snapshot.resultStatus : typeof snapshot?.result_status === "string" ? snapshot.result_status : null;
+  const hasStrongEventKeyword = STRONG_EVENT_RESULT_KEYWORDS.test(insight.text) || POSITIVE_EVENT_KEYWORDS.test(insight.text);
+  const hasStrongResultKeyword = POSITIVE_RESULT_KEYWORDS.test(insight.text) || POSITIVE_FINISH_WORDS.test(insight.text);
+  const hasStrongStartKeyword = POSITIVE_START_WORDS.test(insight.text);
+  const classifierLabelRaw =
+    typeof snapshot?.resultStatus === "string" ? snapshot.resultStatus : typeof snapshot?.result_status === "string" ? snapshot.result_status : null;
   const classifierConfidence = toFiniteNumber(snapshot?.eventConfidence ?? snapshot?.event_confidence);
   const classifierLabel = classifierLabelRaw?.toLowerCase().trim() ?? "";
   const hasReliableClassifierEvidence = Boolean(
@@ -572,29 +653,56 @@ function buildRaceCandidate(insight: WorkoutInsight): RaceCandidate | null {
       (classifierConfidence ?? 0) >= 0.6,
   );
   const hasPaceOrTrainingOnlyCue = WEAK_CONTEXT_KEYWORDS.test(insight.text);
+  const hasBroadTrainingContext = NEGATIVE_TRAINING_CONTEXT_KEYWORDS.test(insight.text) || NEGATIVE_COACH_WORKOUT_PATTERN.test(insight.text);
+  const hasRaceRouteTrainingContext = /\b(маршрут[а-я]*\s+забега|course|route)\b/i.test(insight.text) && /\b(тренировк|подготов|workout|session)\b/i.test(insight.text);
   const hasCompletedRaceLikeDistance = insight.isCompleted && distanceWindowMatch;
+  const positiveKeywordMatches = uniqueSorted([
+    ...extractRegexMatches(POSITIVE_EVENT_KEYWORDS, insight.text),
+    ...extractRegexMatches(POSITIVE_RESULT_KEYWORDS, insight.text),
+    ...extractRegexMatches(POSITIVE_START_WORDS, insight.text),
+    ...extractRegexMatches(POSITIVE_FINISH_WORDS, insight.text),
+  ]);
+  const negativeKeywordMatches = uniqueSorted([
+    ...extractRegexMatches(WEAK_CONTEXT_KEYWORDS, insight.text),
+    ...extractRegexMatches(NEGATIVE_TRAINING_CONTEXT_KEYWORDS, insight.text),
+    ...extractRegexMatches(NEGATIVE_COACH_WORKOUT_PATTERN, insight.text),
+  ]);
+  matchedPositiveEvidence.push(...positiveKeywordMatches);
+  matchedNegativeTrainingContext.push(...negativeKeywordMatches);
+  const hasEventNameStyleTitle =
+    Boolean(insight.title) &&
+    STRONG_EVENT_TITLE_PATTERN.test(insight.title ?? "") &&
+    !NEGATIVE_TRAINING_CONTEXT_KEYWORDS.test(insight.title ?? "");
+  if (hasEventNameStyleTitle) {
+    matchedPositiveEvidence.push("event_name_style_title");
+    sourceSignals.push("event_name_style_title");
+    sourceTypes.add("strong_event_keyword");
+    matchedReasons.add("Event-like race name in title");
+  }
 
   if (hasRaceTypeDuration) {
     score += 5;
     sourceSignals.push("explicit_raceTypeDuration");
     sourceTypes.add("race_type_duration");
     matchedReasons.add("TrainingPeaks raceTypeDuration present");
+    matchedPositiveEvidence.push("raceTypeDuration");
   }
-  if (hasStrongEventKeyword) {
+  if (hasStrongEventKeyword || hasStrongStartKeyword) {
     score += hasStrongResultKeyword ? 4 : 2;
     sourceSignals.push("strong_event_result_keyword");
     sourceTypes.add("strong_event_keyword");
     matchedReasons.add("Strong race/event keyword in workout text");
-    if (hasStrongResultKeyword) {
-      sourceTypes.add("strong_result_keyword");
-      matchedReasons.add("Strong result/finish keyword in workout text");
-    }
+  }
+  if (hasStrongResultKeyword) {
+    sourceTypes.add("strong_result_keyword");
+    matchedReasons.add("Strong result/finish keyword in workout text");
   }
   if (hasReliableClassifierEvidence) {
     score += 4;
     sourceSignals.push(`classifier:${classifierLabel || "result_like"}:${(classifierConfidence ?? 0).toFixed(2)}`);
     sourceTypes.add("reliable_classifier_evidence");
     matchedReasons.add("Reliable existing result/event classifier evidence");
+    matchedPositiveEvidence.push(`classifier:${classifierLabel || "result_like"}`);
   }
   if (distanceKeywordMatch) {
     score += 1;
@@ -613,6 +721,7 @@ function buildRaceCandidate(insight: WorkoutInsight): RaceCandidate | null {
     sourceSignals.push("completed_race_like_distance");
     sourceTypes.add("completed_race_like_distance");
     matchedReasons.add("Completed activity in race-like distance window");
+    matchedPositiveEvidence.push("completed_race_like_distance");
   }
   if (effortSupport) {
     score += 1;
@@ -621,43 +730,116 @@ function buildRaceCandidate(insight: WorkoutInsight): RaceCandidate | null {
   if (insight.completedWithoutPlan) {
     sourceSignals.push("completed_without_plan");
   }
-  if (hasPaceOrTrainingOnlyCue) {
+  if (hasPaceOrTrainingOnlyCue || hasBroadTrainingContext) {
     sourceTypes.add("pace_or_training_context_only");
+    if (hasPaceOrTrainingOnlyCue) matchedNegativeTrainingContext.push("pace_context");
+    if (hasBroadTrainingContext) matchedNegativeTrainingContext.push("training_session_context");
+  }
+  if (hasRaceRouteTrainingContext) {
+    sourceTypes.add("pace_or_training_context_only");
+    matchedNegativeTrainingContext.push("race_route_training_context");
   }
 
   const strongEvidence =
     hasRaceTypeDuration ||
-    hasStrongEventKeyword ||
-    hasStrongResultKeyword ||
     hasReliableClassifierEvidence ||
+    hasEventNameStyleTitle ||
+    ((hasStrongEventKeyword || hasStrongStartKeyword || hasStrongResultKeyword) &&
+      insight.isCompleted &&
+      !hasPaceOrTrainingOnlyCue &&
+      !hasRaceRouteTrainingContext) ||
     (hasCompletedRaceLikeDistance && (hasStrongEventKeyword || hasStrongResultKeyword || hasReliableClassifierEvidence || hasRaceTypeDuration));
-  if (!strongEvidence) return null;
 
   const exclusionEligible =
     hasRaceTypeDuration ||
     hasReliableClassifierEvidence ||
-    hasStrongResultKeyword ||
-    (hasStrongEventKeyword &&
+    (hasEventNameStyleTitle && insight.isCompleted && (hasCompletedRaceLikeDistance || (insight.durationMinutes ?? 0) >= 45)) ||
+    (hasStrongResultKeyword && insight.isCompleted && !hasPaceOrTrainingOnlyCue) ||
+    ((hasStrongEventKeyword || hasStrongStartKeyword) &&
+      insight.isCompleted &&
       !hasPaceOrTrainingOnlyCue &&
-      (hasCompletedRaceLikeDistance || (distanceKeywordMatch && effortSupport) || (distanceWindowMatch && effortSupport))) ||
-    (hasCompletedRaceLikeDistance && (hasStrongEventKeyword || hasReliableClassifierEvidence || hasRaceTypeDuration));
+      !hasRaceRouteTrainingContext &&
+      (hasCompletedRaceLikeDistance || (distanceKeywordMatch && effortSupport) || (distanceWindowMatch && effortSupport)));
 
-  let confidence: RaceCandidateConfidence = "low";
-  if (hasRaceTypeDuration || (hasReliableClassifierEvidence && (hasStrongEventKeyword || hasStrongResultKeyword))) {
-    confidence = "high";
-  } else if (exclusionEligible || score >= 6) {
-    confidence = "medium";
+  let decision: RaceEvidenceDecision = "rejected_training_context";
+  if (!insight.isRunning) {
+    decision = "rejected_training_context";
+    notes.push("non_running_activity");
+  } else if (strongEvidence && exclusionEligible) {
+    decision = "true_event_candidate";
+  } else if (
+    (hasStrongEventKeyword || hasStrongResultKeyword || hasStrongStartKeyword || distanceWindowMatch || distanceKeywordMatch) &&
+    !exclusionEligible
+  ) {
+    decision = "manual_review";
+    notes.push("partial_evidence_not_enough_for_exclusion");
+  } else {
+    decision = "rejected_training_context";
   }
 
-  const exclusionDecisionReason = exclusionEligible
-    ? hasRaceTypeDuration
-      ? "raceTypeDuration"
-      : hasReliableClassifierEvidence
-        ? "reliable_classifier_evidence"
-        : hasStrongResultKeyword
-          ? "strong_result_keyword"
-          : "strong_event_keyword_plus_race_like_completion"
-    : "context_only_non_exclusion";
+  if (!insight.isCompleted && (hasStrongEventKeyword || hasStrongResultKeyword || hasStrongStartKeyword)) {
+    decision = "manual_review";
+    notes.push("planned_or_uncompleted_event_like_text");
+  }
+  if ((hasPaceOrTrainingOnlyCue || hasBroadTrainingContext || hasRaceRouteTrainingContext) && !hasRaceTypeDuration && !hasReliableClassifierEvidence) {
+    if (decision === "true_event_candidate") {
+      decision = "manual_review";
+      notes.push("training_context_present_requires_manual_check");
+    } else {
+      decision = "rejected_training_context";
+    }
+  }
+
+  const exclusionDecisionReason =
+    decision === "true_event_candidate"
+      ? hasRaceTypeDuration
+        ? "raceTypeDuration"
+        : hasReliableClassifierEvidence
+          ? "reliable_classifier_evidence"
+          : hasStrongResultKeyword
+            ? "strong_result_keyword"
+            : "strong_event_keyword_plus_race_like_completion"
+      : decision === "manual_review"
+        ? "manual_review_partial_evidence"
+        : "context_only_non_exclusion";
+
+  return {
+    decision,
+    matchedPositiveEvidence: uniqueSorted(matchedPositiveEvidence),
+    matchedNegativeTrainingContext: uniqueSorted(matchedNegativeTrainingContext),
+    strongEvidence,
+    exclusionEligible: decision === "true_event_candidate" && exclusionEligible,
+    hasRaceTypeDuration,
+    hasReliableClassifierEvidence,
+    hasStrongEventKeyword: hasStrongEventKeyword || hasStrongStartKeyword,
+    hasStrongResultKeyword,
+    hasCompletedRaceLikeDistance,
+    distanceKeywordMatch,
+    distanceWindowMatch,
+    estimatedDistance,
+    sourceSignals,
+    sourceTypes,
+    matchedReasons,
+    score,
+    exclusionDecisionReason,
+    notes,
+  };
+}
+
+function buildRaceCandidate(insight: WorkoutInsight): RaceCandidate | null {
+  if (!insight.isRunning) return null;
+  const evidence = evaluateRaceEvidence(insight);
+  if (evidence.decision !== "true_event_candidate") return null;
+
+  let confidence: RaceCandidateConfidence = "low";
+  if (
+    evidence.hasRaceTypeDuration ||
+    (evidence.hasReliableClassifierEvidence && (evidence.hasStrongEventKeyword || evidence.hasStrongResultKeyword))
+  ) {
+    confidence = "high";
+  } else if (evidence.exclusionEligible || evidence.score >= 6) {
+    confidence = "medium";
+  }
 
   return {
     student_id: insight.row.studentId,
@@ -667,17 +849,17 @@ function buildRaceCandidate(insight: WorkoutInsight): RaceCandidate | null {
     date: insight.row.workoutDate,
     week_start: insight.weekStart,
     title: insight.title,
-    estimated_distance: estimatedDistance,
+    estimated_distance: evidence.estimatedDistance,
     estimated_distance_km: insight.distanceKm,
-    score,
+    score: evidence.score,
     confidence,
-    source_signals: sourceSignals,
-    source_types: sortSourceTypesForOutput([...sourceTypes]),
-    matched_reasons: [...matchedReasons],
+    source_signals: evidence.sourceSignals,
+    source_types: sortSourceTypesForOutput([...evidence.sourceTypes]),
+    matched_reasons: [...evidence.matchedReasons],
     matched_text_snippet: pickTextSnippet(insight.text),
     completed_without_plan: insight.completedWithoutPlan,
-    exclusion_eligible: exclusionEligible,
-    exclusion_decision_reason: exclusionDecisionReason,
+    exclusion_eligible: evidence.exclusionEligible,
+    exclusion_decision_reason: evidence.exclusionDecisionReason,
     caused_exclusion: false,
   };
 }
@@ -817,6 +999,74 @@ function buildManualReviewShortlist(perAthlete: PerAthleteBaselineV2[]): ManualR
 
 function buildSecondaryFlag(notes: string[]): SecondaryWeekFlag[] {
   return notes.length > 0 ? ["manual_review"] : [];
+}
+
+function buildRaceEvidenceCalibrationForAthletes(input: {
+  athletes: AthleteInput[];
+  from: string;
+  to: string;
+  generatedAt: string;
+}): RaceEvidenceCalibrationReport {
+  const allExamples: RaceEvidenceCalibrationExample[] = [];
+  for (const athlete of input.athletes) {
+    for (const row of athlete.rows) {
+      const insight = buildWorkoutInsight(row);
+      if (!insight.isRunning) continue;
+      const evidence = evaluateRaceEvidence(insight);
+      const snapshot = isRecord(row.sourceSnapshot) ? row.sourceSnapshot : null;
+      const hasRaceLikeTextOrDistance =
+        evidence.hasStrongEventKeyword ||
+        evidence.hasStrongResultKeyword ||
+        evidence.distanceKeywordMatch ||
+        evidence.distanceWindowMatch ||
+        evidence.hasRaceTypeDuration ||
+        evidence.hasReliableClassifierEvidence;
+      if (!hasRaceLikeTextOrDistance) continue;
+      allExamples.push({
+        student_id: athlete.studentId,
+        athlete_id: athlete.athleteId,
+        athlete_name: athlete.studentName,
+        date: row.workoutDate,
+        title: row.title,
+        completed: row.isCompleted,
+        planned: row.isPlanned,
+        estimated_distance_km: insight.distanceKm,
+        duration_minutes: insight.durationMinutes,
+        raceTypeDuration: (snapshot?.raceTypeDuration as string | number | null | undefined) ?? null,
+        matched_positive_evidence: evidence.matchedPositiveEvidence,
+        matched_negative_training_context: evidence.matchedNegativeTrainingContext,
+        decision: evidence.decision,
+        would_drive_race_exclusions: evidence.decision === "true_event_candidate" && evidence.exclusionEligible,
+        notes: evidence.notes,
+      });
+    }
+  }
+
+  allExamples.sort(
+    (a, b) =>
+      a.athlete_name.localeCompare(b.athlete_name) ||
+      a.date.localeCompare(b.date) ||
+      (a.title ?? "").localeCompare(b.title ?? ""),
+  );
+
+  const positives = allExamples.filter((example) => example.decision === "true_event_candidate");
+  const rejected = allExamples.filter((example) => example.decision === "rejected_training_context");
+  const manual = allExamples.filter((example) => example.decision === "manual_review");
+
+  const sample = (items: RaceEvidenceCalibrationExample[], limit: number) => items.slice(0, limit);
+  return {
+    generated_at: input.generatedAt,
+    date_range: { from: input.from, to: input.to },
+    totals: {
+      considered_examples: allExamples.length,
+      true_event_candidate: positives.length,
+      rejected_training_context: rejected.length,
+      manual_review: manual.length,
+    },
+    potential_positive_examples: sample(positives, 300),
+    rejected_training_context_examples: sample(rejected, 300),
+    manual_review_examples: sample(manual, 300),
+  };
 }
 
 function dedupeAndClusterRaceCandidates(candidates: RaceCandidate[]): {
@@ -1399,6 +1649,13 @@ export function analyzeAthleteTrainingBaselineV2(input: {
     needs_review_count: perAthlete.filter((athlete) => athlete.needs_review).length,
   };
 
+  const raceEvidenceCalibration = buildRaceEvidenceCalibrationForAthletes({
+    athletes: input.athletes,
+    from: input.from,
+    to: input.to,
+    generatedAt: input.generatedAt,
+  });
+
   return {
     summary,
     perAthlete,
@@ -1406,6 +1663,7 @@ export function analyzeAthleteTrainingBaselineV2(input: {
     weekTags,
     manualReviewShortlist: buildManualReviewShortlist(perAthlete),
     dataGaps,
+    raceEvidenceCalibration,
   };
 }
 
@@ -1615,6 +1873,43 @@ export function buildDataGapsMarkdown(dataGaps: DataGap[]): string {
   return `${lines.join("\n")}\n`;
 }
 
+export function buildRaceEvidenceCalibrationMarkdown(report: RaceEvidenceCalibrationReport): string {
+  const lines: string[] = ["# Race Evidence Calibration", ""];
+  lines.push(`- date_range: ${report.date_range.from}..${report.date_range.to}`);
+  lines.push(`- considered_examples: ${report.totals.considered_examples}`);
+  lines.push(`- true_event_candidate: ${report.totals.true_event_candidate}`);
+  lines.push(`- rejected_training_context: ${report.totals.rejected_training_context}`);
+  lines.push(`- manual_review: ${report.totals.manual_review}`);
+  lines.push("");
+
+  function emitSection(title: string, rows: RaceEvidenceCalibrationExample[]): void {
+    lines.push(`## ${title}`);
+    if (rows.length === 0) {
+      lines.push("- none");
+      lines.push("");
+      return;
+    }
+    for (const row of rows) {
+      lines.push(`### ${row.athlete_name} · ${row.date}`);
+      lines.push(`- title: ${row.title ?? "n/a"}`);
+      lines.push(`- status: completed=${row.completed} planned=${row.planned}`);
+      lines.push(`- distance_km: ${row.estimated_distance_km ?? "n/a"} | duration_min: ${row.duration_minutes ?? "n/a"}`);
+      lines.push(`- raceTypeDuration: ${row.raceTypeDuration ?? "n/a"}`);
+      lines.push(`- matched_positive_evidence: ${row.matched_positive_evidence.join(", ") || "none"}`);
+      lines.push(`- matched_negative_training_context: ${row.matched_negative_training_context.join(", ") || "none"}`);
+      lines.push(`- decision: ${row.decision}`);
+      lines.push(`- would_drive_race_exclusions: ${row.would_drive_race_exclusions}`);
+      lines.push(`- notes: ${row.notes.join(" | ") || "none"}`);
+      lines.push("");
+    }
+  }
+
+  emitSection("Potential Positive Race/Event Examples", report.potential_positive_examples);
+  emitSection("Rejected Race-Like Training Context Examples", report.rejected_training_context_examples);
+  emitSection("Unknown / Manual Review Examples", report.manual_review_examples);
+  return `${lines.join("\n")}\n`;
+}
+
 export function buildCombinedArtifactsMarkdown(input: {
   summaryMd: string;
   perAthleteMd: string;
@@ -1622,6 +1917,7 @@ export function buildCombinedArtifactsMarkdown(input: {
   weekTagsMd: string;
   manualReviewMd: string;
   dataGapsMd: string;
+  raceEvidenceCalibrationMd?: string;
 }): string {
   const parts = [
     "# COMBINED BASELINE V2 ARTIFACTS",
@@ -1637,6 +1933,8 @@ export function buildCombinedArtifactsMarkdown(input: {
     input.manualReviewMd.trim(),
     "",
     input.dataGapsMd.trim(),
+    "",
+    input.raceEvidenceCalibrationMd?.trim() ?? "",
     "",
   ];
   return `${parts.join("\n")}\n`;

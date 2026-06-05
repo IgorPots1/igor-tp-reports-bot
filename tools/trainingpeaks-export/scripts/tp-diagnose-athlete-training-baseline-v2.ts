@@ -15,6 +15,7 @@ import {
   buildDataGapsMarkdown,
   buildManualReviewShortlistMarkdown,
   buildPerAthleteBaselineV2Markdown,
+  buildRaceEvidenceCalibrationMarkdown,
   buildRaceCandidatesMarkdown,
   buildWeekTagsMarkdown,
   type BaselineV2Confidence,
@@ -487,6 +488,8 @@ async function main(): Promise<void> {
     weekTagsMd: path.join(reportDir, "week-tags.md"),
     manualReviewMd: path.join(reportDir, "manual-review-shortlist.md"),
     dataGapsMd: path.join(reportDir, "data-gaps.md"),
+    raceEvidenceCalibrationJson: path.join(reportDir, "race-evidence-calibration.json"),
+    raceEvidenceCalibrationMd: path.join(reportDir, "race-evidence-calibration.md"),
     combinedMd: path.join(reportDir, "COMBINED-BASELINE-V2-ARTIFACTS.md"),
   };
 
@@ -498,6 +501,7 @@ async function main(): Promise<void> {
   const weekTagsMd = buildWeekTagsMarkdown(analysis.weekTags);
   const manualReviewMd = buildManualReviewShortlistMarkdown(analysis.manualReviewShortlist);
   const dataGapsMd = buildDataGapsMarkdown(analysis.dataGaps);
+  const raceEvidenceCalibrationMd = buildRaceEvidenceCalibrationMarkdown(analysis.raceEvidenceCalibration);
   const combinedMd = buildCombinedArtifactsMarkdown({
     summaryMd,
     perAthleteMd,
@@ -505,6 +509,7 @@ async function main(): Promise<void> {
     weekTagsMd,
     manualReviewMd,
     dataGapsMd,
+    raceEvidenceCalibrationMd,
   });
 
   await writeFile(files.summaryJson, `${JSON.stringify(analysis.summary, null, 2)}\n`, "utf8");
@@ -517,6 +522,8 @@ async function main(): Promise<void> {
   await writeFile(files.weekTagsMd, weekTagsMd, "utf8");
   await writeFile(files.manualReviewMd, manualReviewMd, "utf8");
   await writeFile(files.dataGapsMd, dataGapsMd, "utf8");
+  await writeFile(files.raceEvidenceCalibrationJson, `${JSON.stringify(analysis.raceEvidenceCalibration, null, 2)}\n`, "utf8");
+  await writeFile(files.raceEvidenceCalibrationMd, raceEvidenceCalibrationMd, "utf8");
   await writeFile(files.combinedMd, combinedMd, "utf8");
 
   if (args.json) {
@@ -540,6 +547,8 @@ async function main(): Promise<void> {
   console.log(`race_candidates_json: ${files.raceCandidatesJson}`);
   console.log(`week_tags_json: ${files.weekTagsJson}`);
   console.log(`manual_review_md: ${files.manualReviewMd}`);
+  console.log(`race_evidence_calibration_json: ${files.raceEvidenceCalibrationJson}`);
+  console.log(`race_evidence_calibration_md: ${files.raceEvidenceCalibrationMd}`);
 }
 
 main().catch((error: unknown) => {
