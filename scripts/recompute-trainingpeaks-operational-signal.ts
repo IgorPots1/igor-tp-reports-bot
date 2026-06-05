@@ -4,11 +4,19 @@ import process from "node:process";
 
 import type { PostgrestError } from "@supabase/supabase-js";
 
-import { classifyCoachOperationalSignals, type ObservationLike } from "@/features/trainingpeaks/coach-operational-signals";
+import {
+  classifyCoachOperationalSignals,
+  type ObservationLike,
+  type OperationalConfidence,
+} from "@/features/trainingpeaks/coach-operational-signals";
 import type { TrainingPeaksOperationalSignalType } from "@/features/trainingpeaks/repository";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
 const LOG_PREFIX = "[recompute-trainingpeaks-operational-signal]";
+export const RECOMPUTE_REQUIRED_CONFIRMATION = "RECOMPUTE OPERATIONAL SIGNAL";
+export const RECOMPUTE_CLASSIFIER_VERSION = "coach-operational-signals-v1";
+export const RECOMPUTE_BY_TASK = "operational_signal_single_observation_recompute_apply_v1";
+
 const PERSISTABLE_SIGNAL_TYPES = new Set<TrainingPeaksOperationalSignalType>([
   "schedule_availability_window",
   "schedule_unavailability_window",
@@ -22,8 +30,12 @@ const PERSISTABLE_SIGNAL_TYPES = new Set<TrainingPeaksOperationalSignalType>([
   "race_load_context",
 ]);
 
+type RecomputeMode = "dry-run" | "apply";
+
 type CliOptions = {
   sourceObservationId: string;
+  apply: boolean;
+  confirm: string | null;
 };
 
 type ObservationRow = {
@@ -43,10 +55,25 @@ type StudentRow = {
 
 type SignalRow = {
   id: string;
+  student_id: string;
   signal_type: string;
   status: string;
   source_observation_id: string | null;
   structured_payload: unknown;
+  metadata: unknown;
+  confidence: number | null;
+};
+
+type PersistableCandidate = {
+  signalType: TrainingPeaksOperationalSignalType;
+  payload: Record<string, unknown>;
+  confidence: OperationalConfidence;
+};
+
+type ApplyRecomputeUpdate = {
+  structuredPayload: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  confidence: number | null;
 };
 
 function loadLocalEnvFiles(): void {
@@ -116,16 +143,31 @@ function compact(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/gu, " ").trim();
 }
 
+function confidenceToNumeric(value: OperationalConfidence): number {
+  if (value === "high") {
+    return 0.9;
+  }
+  if (value === "medium") {
+    return 0.65;
+  }
+  return 0.35;
+}
+
 export function parseRecomputeCliOptions(argv: string[]): CliOptions {
   let sourceObservationId: string | null = null;
+  let dryRun = false;
+  let apply = false;
+  let confirm: string | null = null;
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]!;
     if (arg === "--dry-run") {
+      dryRun = true;
       continue;
     }
     if (arg === "--apply") {
-      throw new Error(`${LOG_PREFIX} FAIL: --apply is not supported in this script; dry-run only`);
+      apply = true;
+      continue;
     }
     if (arg.startsWith("--source-observation-id=")) {
       sourceObservationId = arg.slice("--source-observation-id=".length).trim();
@@ -140,18 +182,138 @@ export function parseRecomputeCliOptions(argv: string[]): CliOptions {
       index += 1;
       continue;
     }
+    if (arg.startsWith("--confirm=")) {
+      confirm = arg.slice("--confirm=".length);
+      continue;
+    }
+    if (arg === "--confirm") {
+      const next = argv[index + 1];
+      if (next === undefined || next.trim().startsWith("--")) {
+        throw new Error(`${LOG_PREFIX} FAIL: missing value for --confirm`);
+      }
+      confirm = next;
+      index += 1;
+      continue;
+    }
     if (arg.startsWith("--")) {
       throw new Error(`${LOG_PREFIX} FAIL: unknown argument: ${arg}`);
     }
   }
 
+  if (dryRun && apply) {
+    throw new Error(`${LOG_PREFIX} FAIL: --dry-run and --apply cannot be used together`);
+  }
   if (!sourceObservationId) {
     throw new Error(`${LOG_PREFIX} FAIL: --source-observation-id is required`);
   }
   if (!isLikelyUuid(sourceObservationId)) {
     throw new Error(`${LOG_PREFIX} FAIL: --source-observation-id must be UUID, got: ${sourceObservationId}`);
   }
-  return { sourceObservationId };
+  return { sourceObservationId, apply, confirm };
+}
+
+export function validateRecomputeApplyPrerequisites(options: CliOptions): string | null {
+  if (!options.apply) {
+    return null;
+  }
+  if (!options.confirm || options.confirm !== RECOMPUTE_REQUIRED_CONFIRMATION) {
+    return `--apply requires --confirm "${RECOMPUTE_REQUIRED_CONFIRMATION}"`;
+  }
+  return null;
+}
+
+export function validateActiveSignalsForApply(activeSignalCount: number): string | null {
+  if (activeSignalCount === 0) {
+    return "no active signals linked to source observation";
+  }
+  if (activeSignalCount > 1) {
+    return `expected exactly one active signal, found ${activeSignalCount}`;
+  }
+  return null;
+}
+
+export function buildRecomputeMetadata(input: {
+  existing: unknown;
+  sourceObservationId: string;
+  now?: string;
+}): Record<string, unknown> {
+  return {
+    ...normalizeRecord(input.existing),
+    recomputed_at: input.now ?? new Date().toISOString(),
+    recompute_source_observation_id: input.sourceObservationId,
+    recompute_reason: "single_observation_guarded_recompute",
+    recompute_confirmed: true,
+    classifier_version: RECOMPUTE_CLASSIFIER_VERSION,
+    recomputed_by_task: RECOMPUTE_BY_TASK,
+  };
+}
+
+export function mergeRecomputeStructuredPayload(
+  existingPayload: Record<string, unknown>,
+  nextPayload: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    ...existingPayload,
+    ...nextPayload,
+  };
+}
+
+export function findMatchingRecomputeCandidate(
+  existingSignalType: string,
+  candidates: readonly PersistableCandidate[]
+): PersistableCandidate | null {
+  return candidates.find((candidate) => candidate.signalType === existingSignalType) ?? null;
+}
+
+export function selectRecomputeCandidateForApply(
+  activeSignalCount: number,
+  existingSignalType: string,
+  candidates: readonly PersistableCandidate[]
+): PersistableCandidate | null {
+  if (candidates.length === 0) {
+    return null;
+  }
+  if (activeSignalCount === 1) {
+    return findMatchingRecomputeCandidate(existingSignalType, candidates) ?? candidates[0]!;
+  }
+  return findMatchingRecomputeCandidate(existingSignalType, candidates);
+}
+
+export function buildApplyRecomputeUpdate(input: {
+  existingPayload: Record<string, unknown>;
+  existingMetadata: unknown;
+  sourceObservationId: string;
+  candidate: PersistableCandidate;
+  now?: string;
+}): ApplyRecomputeUpdate {
+  const structuredPayload = mergeRecomputeStructuredPayload(input.existingPayload, input.candidate.payload);
+  const metadata = buildRecomputeMetadata({
+    existing: input.existingMetadata,
+    sourceObservationId: input.sourceObservationId,
+    now: input.now,
+  });
+  return {
+    structuredPayload,
+    metadata,
+    confidence: confidenceToNumeric(input.candidate.confidence),
+  };
+}
+
+export function buildPlannedRecomputeMutation(input: {
+  sourceObservationId: string;
+  existingPayload: Record<string, unknown>;
+  existingMetadata: unknown;
+  candidate: PersistableCandidate;
+}): string[] {
+  const update = buildApplyRecomputeUpdate(input);
+  const lines = buildRecomputeDiff(input.existingPayload, update.structuredPayload);
+  lines.push(`set metadata.recomputed_at="<now>"`);
+  lines.push(`set metadata.recompute_source_observation_id="${input.sourceObservationId}"`);
+  lines.push(`set metadata.recompute_reason="single_observation_guarded_recompute"`);
+  lines.push(`set metadata.recompute_confirmed=true`);
+  lines.push(`set metadata.classifier_version="${RECOMPUTE_CLASSIFIER_VERSION}"`);
+  lines.push(`set metadata.recomputed_by_task="${RECOMPUTE_BY_TASK}"`);
+  return lines;
 }
 
 async function fetchObservationById(sourceObservationId: string): Promise<ObservationRow> {
@@ -200,7 +362,9 @@ async function fetchActiveSignalsForObservation(sourceObservationId: string): Pr
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("trainingpeaks_student_operational_signals")
-    .select("id, signal_type, status, source_observation_id, structured_payload")
+    .select(
+      "id, student_id, signal_type, status, source_observation_id, structured_payload, metadata, confidence"
+    )
     .eq("source_observation_id", sourceObservationId)
     .eq("status", "active")
     .order("updated_at", { ascending: false });
@@ -210,11 +374,18 @@ async function fetchActiveSignalsForObservation(sourceObservationId: string): Pr
   return (data as SignalRow[] | null) ?? [];
 }
 
-function pickPersistableCandidates(observation: ObservationLike): Array<{
-  signalType: TrainingPeaksOperationalSignalType;
-  payload: Record<string, unknown>;
-  confidence: string;
-}> {
+function buildClassificationInput(observation: ObservationRow): ObservationLike {
+  return {
+    sourceType: observation.source_type,
+    textPreview: observation.text_preview,
+    labels: normalizeLabels(observation.labels),
+    metadata: normalizeRecord(observation.metadata),
+    observedAt: observation.observed_at,
+    studentId: observation.student_id,
+  };
+}
+
+function pickPersistableCandidates(observation: ObservationLike): PersistableCandidate[] {
   const all = classifyCoachOperationalSignals(observation);
   const filtered = all.filter((candidate) =>
     PERSISTABLE_SIGNAL_TYPES.has(candidate.signal_type as TrainingPeaksOperationalSignalType)
@@ -279,9 +450,129 @@ export function buildRecomputeDiff(
   return lines;
 }
 
+function printRecomputeReport(input: {
+  mode: RecomputeMode;
+  sourceObservationId: string;
+  studentName: string;
+  observationPreview: string | null;
+  existingSignals: SignalRow[];
+  nextCandidates: PersistableCandidate[];
+}): void {
+  const title = input.mode === "apply" ? "Operational Signal recompute apply" : "Operational Signal recompute dry-run";
+  console.log(title);
+  console.log("");
+  console.log(`Mode: ${input.mode}`);
+  console.log(`source_observation_id: ${input.sourceObservationId}`);
+  console.log(`student: ${input.studentName}`);
+  console.log(`source preview: ${compact(input.observationPreview) || "null"}`);
+  console.log("");
+  console.log("Existing active signals from this observation:");
+  if (input.existingSignals.length === 0) {
+    console.log("- none");
+  } else {
+    for (const signal of input.existingSignals) {
+      console.log(`- signal_id: ${signal.id}`);
+      console.log(`  signal_type: ${signal.signal_type}`);
+      printSignalLine("  payload: ", normalizeRecord(signal.structured_payload));
+    }
+  }
+  console.log("");
+  console.log("New classifier output:");
+  if (input.nextCandidates.length === 0) {
+    console.log("- none");
+  } else {
+    for (const candidate of input.nextCandidates) {
+      console.log(`- signal_type: ${candidate.signalType}`);
+      printSignalLine("  payload: ", candidate.payload);
+    }
+  }
+
+  console.log("");
+  console.log("Diff:");
+  if (input.nextCandidates.length === 0) {
+    console.log("- no persistable classifier output");
+  } else if (input.existingSignals.length === 1) {
+    const activeSignal = input.existingSignals[0]!;
+    const candidate = selectRecomputeCandidateForApply(
+      input.existingSignals.length,
+      activeSignal.signal_type,
+      input.nextCandidates
+    );
+    if (!candidate) {
+      console.log("- no persistable classifier output");
+      return;
+    }
+    const existingPayload = normalizeRecord(activeSignal.structured_payload);
+    const mergedPayload = mergeRecomputeStructuredPayload(existingPayload, candidate.payload);
+    const diffLines = buildRecomputeDiff(existingPayload, mergedPayload);
+    console.log(`- linked active signal ${activeSignal.id} (${activeSignal.signal_type}):`);
+    if (candidate.signalType !== activeSignal.signal_type) {
+      console.log(`  - classifier primary output type: ${candidate.signalType}`);
+    }
+    for (const line of diffLines) {
+      console.log(`  - ${line}`);
+    }
+  } else {
+    for (const candidate of input.nextCandidates) {
+      const matchingExisting = input.existingSignals.find((signal) => signal.signal_type === candidate.signalType);
+      const diffLines = buildRecomputeDiff(
+        matchingExisting ? normalizeRecord(matchingExisting.structured_payload) : null,
+        candidate.payload
+      );
+      console.log(`- ${candidate.signalType}:`);
+      for (const line of diffLines) {
+        console.log(`  - ${line}`);
+      }
+    }
+  }
+}
+
+async function applyRecomputeMutation(input: {
+  sourceObservationId: string;
+  signal: SignalRow;
+  candidate: PersistableCandidate;
+}): Promise<void> {
+  const existingPayload = normalizeRecord(input.signal.structured_payload);
+  const update = buildApplyRecomputeUpdate({
+    existingPayload,
+    existingMetadata: input.signal.metadata,
+    sourceObservationId: input.sourceObservationId,
+    candidate: input.candidate,
+  });
+
+  const supabase = createSupabaseServerClient();
+  const write = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .update({
+      structured_payload: update.structuredPayload,
+      metadata: update.metadata,
+      confidence: update.confidence,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", input.signal.id)
+    .eq("status", "active")
+    .eq("source_observation_id", input.sourceObservationId)
+    .select("id")
+    .maybeSingle();
+
+  if (write.error) {
+    throw new Error(`${LOG_PREFIX} FAIL: failed to update signal ${input.signal.id}: ${write.error.message}`);
+  }
+  if (!write.data) {
+    throw new Error(
+      `${LOG_PREFIX} FAIL: no row updated for signal ${input.signal.id} (status drift, missing row, or observation mismatch)`
+    );
+  }
+}
+
 async function run(): Promise<void> {
   loadLocalEnvFiles();
   const options = parseRecomputeCliOptions(process.argv.slice(2));
+  const mode: RecomputeMode = options.apply ? "apply" : "dry-run";
+  const preApplyValidationError = validateRecomputeApplyPrerequisites(options);
+  if (preApplyValidationError) {
+    throw new Error(`${LOG_PREFIX} FAIL: ${preApplyValidationError}`);
+  }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || process.env.SUPABASE_URL?.trim();
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
@@ -295,62 +586,49 @@ async function run(): Promise<void> {
   const observation = await fetchObservationById(options.sourceObservationId);
   const studentName = await fetchStudentNameById(observation.student_id);
   const existingSignals = await fetchActiveSignalsForObservation(options.sourceObservationId);
+  const nextCandidates = pickPersistableCandidates(buildClassificationInput(observation));
 
-  const classificationInput: ObservationLike = {
-    sourceType: observation.source_type,
-    textPreview: observation.text_preview,
-    labels: normalizeLabels(observation.labels),
-    metadata: normalizeRecord(observation.metadata),
-    observedAt: observation.observed_at,
-    studentId: observation.student_id,
-  };
-  const nextCandidates = pickPersistableCandidates(classificationInput);
+  printRecomputeReport({
+    mode,
+    sourceObservationId: options.sourceObservationId,
+    studentName,
+    observationPreview: observation.text_preview,
+    existingSignals,
+    nextCandidates,
+  });
 
-  console.log("Operational Signal recompute dry-run");
-  console.log("");
-  console.log(`source_observation_id: ${options.sourceObservationId}`);
-  console.log(`student: ${studentName}`);
-  console.log(`source preview: ${compact(observation.text_preview) || "null"}`);
-  console.log("");
-  console.log("Existing active signals from this observation:");
-  if (existingSignals.length === 0) {
-    console.log("- none");
-  } else {
-    for (const signal of existingSignals) {
-      console.log(`- signal_id: ${signal.id}`);
-      console.log(`  signal_type: ${signal.signal_type}`);
-      printSignalLine("  payload: ", normalizeRecord(signal.structured_payload));
-    }
-  }
-  console.log("");
-  console.log("New classifier output:");
-  if (nextCandidates.length === 0) {
-    console.log("- none");
-  } else {
-    for (const candidate of nextCandidates) {
-      console.log(`- signal_type: ${candidate.signalType}`);
-      printSignalLine("  payload: ", candidate.payload);
-    }
+  if (mode === "dry-run") {
+    console.log("No changes made.");
+    console.log(`To apply, rerun with --apply --confirm "${RECOMPUTE_REQUIRED_CONFIRMATION}".`);
+    return;
   }
 
-  console.log("");
-  console.log("Diff:");
-  if (nextCandidates.length === 0) {
-    console.log("- no persistable classifier output");
-  } else {
-    for (const candidate of nextCandidates) {
-      const matchingExisting = existingSignals.find((signal) => signal.signal_type === candidate.signalType);
-      const diffLines = buildRecomputeDiff(
-        matchingExisting ? normalizeRecord(matchingExisting.structured_payload) : null,
-        candidate.payload
-      );
-      console.log(`- ${candidate.signalType}:`);
-      for (const line of diffLines) {
-        console.log(`  - ${line}`);
-      }
-    }
+  const observationBeforeWrite = await fetchObservationById(options.sourceObservationId);
+  const activeSignalsBeforeWrite = await fetchActiveSignalsForObservation(options.sourceObservationId);
+  const activeSignalGuard = validateActiveSignalsForApply(activeSignalsBeforeWrite.length);
+  if (activeSignalGuard) {
+    throw new Error(`${LOG_PREFIX} FAIL: ${activeSignalGuard}`);
   }
-  console.log("No changes made.");
+
+  const activeSignal = activeSignalsBeforeWrite[0]!;
+  const candidatesBeforeWrite = pickPersistableCandidates(buildClassificationInput(observationBeforeWrite));
+  const matchingCandidate = selectRecomputeCandidateForApply(
+    activeSignalsBeforeWrite.length,
+    activeSignal.signal_type,
+    candidatesBeforeWrite
+  );
+  if (!matchingCandidate) {
+    throw new Error(`${LOG_PREFIX} FAIL: no persistable classifier output for source observation`);
+  }
+
+  await applyRecomputeMutation({
+    sourceObservationId: options.sourceObservationId,
+    signal: activeSignal,
+    candidate: matchingCandidate,
+  });
+
+  console.log("");
+  console.log(`Applied recompute to signal_id: ${activeSignal.id}`);
 }
 
 if (
