@@ -175,6 +175,30 @@ const fixtures: Fixture[] = [
     },
   },
   {
+    name: "Cross-training completion does not resolve confirmed illness",
+    input: mkInput({
+      signalClass: "confirmed_illness",
+      currentLifecycle: "active_problem",
+      latestTpCompletionAfterOpen: {
+        workoutId: "105b",
+        workoutDate: "2026-06-04",
+        title: "Bike endurance",
+        sportOrTypeCode: "bike",
+        sportClass: "cross_training_or_other",
+        runningCompletionClass: "not_running",
+        classificationConfidence: "high",
+        classificationReasonCodes: ["fixture_cross_structured"],
+        classificationInspectedFields: {},
+        plannedVsCompletedDelta: "normal",
+        evidenceFreshness: "ok",
+      },
+    }),
+    expected: {
+      proposedLifecycle: "active_problem",
+      hideFromTpSignals: false,
+    },
+  },
+  {
     name: "Ambiguous illness + modified easy completion -> monitoring",
     input: mkInput({
       signalClass: "ambiguous_illness",
@@ -319,6 +343,36 @@ const classifierFixtures: ClassifierFixture[] = [
       sportClass: "strength_only",
       runningCompletionClass: "not_running",
       confidence: "high",
+    },
+  },
+  {
+    name: "Known strength type id 9 remains not running",
+    input: {
+      workoutTypeValueId: 9,
+      title: "Strength",
+      isCompleted: true,
+      isPlanned: false,
+      plannedVsCompletedDelta: "unknown",
+    },
+    expected: {
+      sportClass: "strength_only",
+      runningCompletionClass: "not_running",
+      confidence: "medium",
+    },
+  },
+  {
+    name: "Known other type id 100 remains conservative unknown",
+    input: {
+      workoutTypeValueId: 100,
+      title: "Hiit",
+      isCompleted: true,
+      isPlanned: false,
+      plannedVsCompletedDelta: "unknown",
+    },
+    expected: {
+      sportClass: "unknown",
+      runningCompletionClass: "not_running",
+      confidence: "low",
     },
   },
   {
