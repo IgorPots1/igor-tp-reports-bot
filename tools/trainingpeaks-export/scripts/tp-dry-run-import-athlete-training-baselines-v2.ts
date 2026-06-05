@@ -53,6 +53,21 @@ type BaselineV2PerAthlete = {
   normal_training_weeks_count: number;
   total_weeks_count: number;
   excluded_weeks_by_tag: Record<string, number>;
+  race_candidate_count_by_source_type?: Record<string, number>;
+  race_specific_context: {
+    race_candidate_count: number;
+    race_candidates: Array<{
+      date: string;
+      estimated_distance: string;
+      confidence: Confidence;
+      score: number;
+      title: string | null;
+      source_type?: "keyword" | "events_api" | "mixed";
+      confirmed_by_workout?: boolean;
+      exclusion_eligible?: boolean;
+      drove_exclusion_tag?: string | null;
+    }>;
+  };
   active_training_window?: {
     active_training_window_start: string | null;
     active_training_window_end: string | null;
@@ -82,6 +97,10 @@ type BaselineV2PerAthlete = {
 type BaselineV2Summary = {
   generated_at: string;
   date_range: { from: string; to: string };
+  events_api_confirmed_race_count?: number;
+  events_api_advisory_event_count?: number;
+  events_api_missing_completed_workout_count?: number;
+  keyword_race_candidates_count?: number;
 };
 
 type AthleteTrainingBaselineDbRow = {
@@ -140,6 +159,11 @@ type ActionRow = {
   current_quality_sessions_cap: number | null;
   current_confidence: Confidence | null;
   context_flags: string[];
+  race_context_source: "keyword" | "events_api" | "mixed" | "none";
+  events_api_confirmed_races: number;
+  events_api_advisory_events: number;
+  race_exclusion_weeks_count: number;
+  race_context_manual_review: boolean;
   would_set_is_current: boolean;
   would_unset_previous_current: boolean;
   raw_stats_preview: Record<string, unknown>;
@@ -495,7 +519,7 @@ function buildCombinedMd(report: DryRunReport): string {
   const manualRows = report.actions.filter((row) => row.action === "manual_review");
   if (manualRows.length === 0) lines.push("- none");
   for (const row of manualRows.slice(0, 50)) {
-    lines.push(`- ${row.student_name} (${row.athlete_id}) | reasons=${row.reasons.join(", ")}`);
+    lines.push(`- ${row.student_name} (${row.athlete_id}) | reasons=${row.reasons.join(", ")} | race_context=${row.race_context_source} | events_api_confirmed=${row.events_api_confirmed_races} | events_api_advisory=${row.events_api_advisory_events}`);
   }
   lines.push("");
   lines.push("## 5. Skipped/blocked athletes");
@@ -573,6 +597,23 @@ async function main(): Promise<void> {
     const reasons = new Set<string>();
     const flags = new Set<string>(athlete.context_flags ?? []);
     const notesLower = athlete.notes.map((value) => value.toLowerCase());
+    const raceSourceStats = athlete.race_candidate_count_by_source_type as Partial<Record<string, number>> | undefined;
+    const eventsApiCount = Number(raceSourceStats?.events_api ?? 0);
+    const keywordCount = Number((raceSourceStats?.strong_event_keyword ?? 0) + (raceSourceStats?.strong_result_keyword ?? 0));
+    const raceContextSource: ActionRow["race_context_source"] =
+      eventsApiCount > 0 && keywordCount > 0 ? "mixed" : eventsApiCount > 0 ? "events_api" : keywordCount > 0 ? "keyword" : "none";
+    const eventsApiConfirmedRaces = athlete.race_specific_context.race_candidates.filter(
+      (candidate) => candidate.source_type !== "keyword" && candidate.confirmed_by_workout === true,
+    ).length;
+    const eventsApiAdvisoryEvents = athlete.race_specific_context.race_candidates.filter(
+      (candidate) => candidate.source_type !== "keyword" && candidate.confirmed_by_workout === false,
+    ).length;
+    const raceExclusionWeeksCount =
+      athlete.excluded_weeks_by_tag.race_week + athlete.excluded_weeks_by_tag.taper_week + athlete.excluded_weeks_by_tag.post_race_recovery;
+    const raceContextManualReview =
+      eventsApiAdvisoryEvents > 0 ||
+      athlete.notes.some((note) => /race/i.test(note)) ||
+      (athlete.race_specific_context.race_candidate_count > 0 && athlete.baseline_change_vs_planned_context.materially_changed);
 
     const frequencyRaw = athlete.normal_baseline.frequency_cap;
     const weeklyMinutesRaw = athlete.normal_baseline.weekly_minutes_cap;
@@ -671,6 +712,15 @@ async function main(): Promise<void> {
     }
 
     if (athlete.needs_review) {
+      flags.add("manual_review");
+    }
+
+    if (eventsApiAdvisoryEvents > 0) {
+      reasons.add("planned_event_no_completed_workout_found");
+      flags.add("manual_review");
+    }
+    if (raceContextManualReview && athlete.baseline_change_vs_planned_context.materially_changed) {
+      reasons.add("race_context_changed_baseline");
       flags.add("manual_review");
     }
 
@@ -844,6 +894,11 @@ async function main(): Promise<void> {
       current_quality_sessions_cap: currentBaseline?.quality_count_cap ?? null,
       current_confidence: currentBaseline?.confidence ?? null,
       context_flags: [...flags].sort(),
+      race_context_source: raceContextSource,
+      events_api_confirmed_races: eventsApiConfirmedRaces,
+      events_api_advisory_events: eventsApiAdvisoryEvents,
+      race_exclusion_weeks_count: raceExclusionWeeksCount,
+      race_context_manual_review: raceContextManualReview,
       would_set_is_current: action === "import" || action === "manual_review",
       would_unset_previous_current: currentBaseline !== null && action !== "skip" && action !== "blocked",
       raw_stats_preview: rawStatsPreview,
@@ -948,6 +1003,11 @@ async function main(): Promise<void> {
     "quality_sessions_delta",
     "confidence_delta",
     "context_flags",
+    "race_context_source",
+    "events_api_confirmed_races",
+    "events_api_advisory_events",
+    "race_exclusion_weeks_count",
+    "race_context_manual_review",
   ];
   const actionsCsvRows = [actionsHeader, ...actions.map((row) => [
     row.student_name,
@@ -972,6 +1032,11 @@ async function main(): Promise<void> {
     String(row.quality_sessions_delta ?? ""),
     String(row.confidence_delta ?? ""),
     row.context_flags.join("|"),
+    row.race_context_source,
+    String(row.events_api_confirmed_races),
+    String(row.events_api_advisory_events),
+    String(row.race_exclusion_weeks_count),
+    String(row.race_context_manual_review),
   ])];
 
   const diffHeader = [
@@ -1027,6 +1092,10 @@ async function main(): Promise<void> {
     `- athletes_in_report: ${perAthlete.length}`,
     `- action_counts: ${JSON.stringify(counts)}`,
     `- high_delta_count: ${report.high_delta_count}`,
+    `- events_api_confirmed_race_count: ${summary.events_api_confirmed_race_count ?? 0}`,
+    `- events_api_advisory_event_count: ${summary.events_api_advisory_event_count ?? 0}`,
+    `- events_api_missing_completed_workout_count: ${summary.events_api_missing_completed_workout_count ?? 0}`,
+    `- keyword_race_candidates_count: ${summary.keyword_race_candidates_count ?? 0}`,
     `- db_current_baseline_available: ${current.available}`,
     `- manual_override_protection_found: ${current.manualOverrideProtectionFound}`,
   ].join("\n");

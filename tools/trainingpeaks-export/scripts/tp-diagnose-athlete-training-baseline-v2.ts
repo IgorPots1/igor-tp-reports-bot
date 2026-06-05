@@ -21,6 +21,11 @@ import {
   type BaselineV2Confidence,
   type CurrentBaselineContext,
 } from "./lib/athlete-training-baseline-v2.ts";
+import {
+  buildEventsApiRaceCandidates,
+  normalizeEventsApiEntries,
+  type EventsApiEntry,
+} from "./lib/events-api-race-context.ts";
 
 type CliArgs = {
   from: string;
@@ -29,6 +34,7 @@ type CliArgs = {
   athleteId: number | null;
   minNormalWeeks: number;
   json: boolean;
+  eventsJson: string | null;
 };
 
 type RepositoryCompat = {
@@ -173,7 +179,7 @@ function printHelp(): void {
   console.log("  npx tsx tools/trainingpeaks-export/scripts/tp-diagnose-athlete-training-baseline-v2.ts --athlete-id 123456");
   console.log("");
   console.log("Optional:");
-  console.log("  --min-normal-weeks 6 --json");
+  console.log("  --min-normal-weeks 6 --events-json <path> --json");
   console.log("");
   console.log("Safety:");
   console.log("  - read-only");
@@ -189,6 +195,7 @@ function parseArgs(argv: string[]): CliArgs {
     athleteId: null,
     minNormalWeeks: 6,
     json: false,
+    eventsJson: null,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -246,6 +253,15 @@ function parseArgs(argv: string[]): CliArgs {
       parsed.json = true;
       continue;
     }
+    if (arg.startsWith("--events-json=")) {
+      parsed.eventsJson = arg.slice("--events-json=".length).trim() || null;
+      continue;
+    }
+    if (arg === "--events-json") {
+      parsed.eventsJson = (argv[index + 1] ?? "").trim() || null;
+      index += 1;
+      continue;
+    }
     throw new Error(`Unknown argument: ${arg}`);
   }
 
@@ -258,7 +274,28 @@ function parseArgs(argv: string[]): CliArgs {
   if (parsed.athleteId !== null && (!Number.isInteger(parsed.athleteId) || parsed.athleteId <= 0)) {
     throw new Error("Invalid --athlete-id. Expected positive integer.");
   }
+  if (parsed.eventsJson !== null && parsed.eventsJson.length === 0) {
+    throw new Error("Invalid --events-json. Expected non-empty path.");
+  }
   return parsed;
+}
+
+function loadEventsApiEntriesOrThrow(eventsJsonPath: string): EventsApiEntry[] {
+  const resolvedPath = path.resolve(eventsJsonPath);
+  if (!existsSync(resolvedPath)) {
+    throw new Error(`--events-json file does not exist: ${resolvedPath}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(resolvedPath, "utf8"));
+  } catch (error) {
+    throw new Error(`--events-json invalid JSON (${resolvedPath}): ${(error as Error).message}`);
+  }
+  const entries = normalizeEventsApiEntries(parsed, "events_json");
+  if (entries.length === 0) {
+    throw new Error(`--events-json parsed zero valid event entries: ${resolvedPath}`);
+  }
+  return entries;
 }
 
 function mapWorkoutCacheDbRow(row: TrainingPeaksWorkoutCacheDbRow): TrainingPeaksWorkoutCacheRow {
@@ -388,11 +425,18 @@ function buildRaceCandidatesJsonRows(markdownCompatibleCandidates: ReturnType<ty
     matched_reasons: candidate.matched_reasons,
     score: candidate.score,
     confidence: candidate.confidence,
+    source_type: candidate.source_type,
     title: candidate.title,
+    event_name: candidate.event_name,
+    confirmed_by_workout: candidate.confirmed_by_workout,
+    matched_workout_date: candidate.matched_workout_date,
+    matched_workout_title: candidate.matched_workout_title,
+    matched_workout_distance_km: candidate.matched_workout_distance_km,
     matched_text_snippet: candidate.matched_text_snippet,
     completed_without_plan: candidate.completed_without_plan,
     exclusion_eligible: candidate.exclusion_eligible,
     exclusion_decision_reason: candidate.exclusion_decision_reason,
+    drove_exclusion_tag: candidate.drove_exclusion_tag,
     caused_exclusion: candidate.caused_exclusion,
   }));
 }
@@ -609,6 +653,10 @@ async function main(): Promise<void> {
     minNormalWeeks: args.minNormalWeeks,
     generatedAt: new Date().toISOString(),
     activeAthletesTotal: selectedStudent ? 1 : activeStudents.length,
+    eventsApiCandidates:
+      args.eventsJson !== null
+        ? buildEventsApiRaceCandidates(loadEventsApiEntriesOrThrow(args.eventsJson), rows)
+        : [],
   });
 
   const repoRoot = path.resolve(toolRoot, "..", "..");
