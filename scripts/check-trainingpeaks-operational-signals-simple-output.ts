@@ -317,6 +317,132 @@ function run(): void {
   assert(!text.includes("Naida"), "13 failed: external strength context must stay hidden in /tp_signals.");
   assert(!text.includes("силовые: пн/чт"), "13 failed: hidden strength context leaked into /tp_signals.");
 
+  const expiredScheduleSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-05",
+    limit: 20,
+    studentNameById: new Map<string, string | null>([
+      ["olga", "Olga Slastnaia"],
+      ["anna", "Anna Lobodina"],
+      ["alex", "Aleksandra Kasianenko"],
+      ["viktoria", "Viktoria Sergeeva"],
+      ["future", "Future Schedule Athlete"],
+      ["same-day", "Same Day Schedule Athlete"],
+      ["pain", "Pain Athlete"],
+    ]),
+    signals: [
+      makeSignal({
+        signalId: "olga-expired-unavailable",
+        studentId: "olga",
+        signalType: "schedule_unavailability_window",
+        validFrom: "2026-06-04",
+        validUntil: "2026-06-04",
+        structuredPayload: {
+          unavailable_dates: ["2026-06-04"],
+        },
+      }),
+      makeSignal({
+        signalId: "future-schedule",
+        studentId: "future",
+        signalType: "schedule_unavailability_window",
+        validFrom: "2026-06-06",
+        validUntil: "2026-06-06",
+      }),
+      makeSignal({
+        signalId: "same-day-schedule",
+        studentId: "same-day",
+        signalType: "plan_generation_constraint",
+        validFrom: "2026-06-05",
+        validUntil: "2026-06-05",
+        structuredPayload: {
+          unavailable_dates: ["2026-06-05"],
+        },
+      }),
+      makeSignal({
+        signalId: "anna-old-health",
+        studentId: "anna",
+        signalType: "health_issue_started",
+        validFrom: "2026-05-28",
+        validUntil: "2026-05-30",
+        structuredPayload: {
+          latest_summary: "температура, слабость",
+          health_state: "sick",
+        },
+      }),
+      makeSignal({
+        signalId: "pain-old",
+        studentId: "pain",
+        signalType: "pain_injury",
+        validFrom: "2026-05-20",
+        validUntil: "2026-05-22",
+        structuredPayload: {
+          latest_summary: "боль в голени",
+        },
+      }),
+      makeSignal({
+        signalId: "viktoria-same-day-plan",
+        studentId: "viktoria",
+        signalType: "plan_generation_constraint",
+        validFrom: "2026-06-05",
+        validUntil: "2026-06-05",
+        structuredPayload: {
+          resolved_available_dates: ["2026-06-05"],
+        },
+      }),
+    ],
+    activeMoveActions: [],
+  });
+  const expiredScheduleText = formatTrainingPeaksOperationalSignalsForTelegram(expiredScheduleSnapshot);
+
+  assert(!expiredScheduleText.includes("Olga Slastnaia"), "14 failed: expired Olga schedule must be hidden.");
+  assert(!expiredScheduleText.includes("недоступна: 04.06"), "14 failed: expired Olga unavailability must be hidden.");
+  assert(expiredScheduleText.includes("Future Schedule Athlete"), "15 failed: future schedule must stay visible.");
+  assert(expiredScheduleText.includes("Same Day Schedule Athlete"), "16 failed: same-day schedule must stay visible.");
+  assert(expiredScheduleText.includes("Anna Lobodina"), "17 failed: old health signal must not be hidden by date guard.");
+  assert(expiredScheduleText.includes("Pain Athlete"), "18 failed: old pain/injury signal must not be hidden by date guard.");
+
+  const overflowSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-05",
+    limit: 2,
+    studentNameById: new Map<string, string | null>([
+      ["visible-1", "Visible One"],
+      ["visible-2", "Visible Two"],
+      ["expired-1", "Expired One"],
+      ["expired-2", "Expired Two"],
+    ]),
+    signals: [
+      makeSignal({
+        signalId: "visible-1",
+        studentId: "visible-1",
+        signalType: "plan_generation_constraint",
+        validUntil: "2026-06-06",
+      }),
+      makeSignal({
+        signalId: "visible-2",
+        studentId: "visible-2",
+        signalType: "schedule_unavailability_window",
+        validUntil: "2026-06-05",
+      }),
+      makeSignal({
+        signalId: "expired-1",
+        studentId: "expired-1",
+        signalType: "schedule_unavailability_window",
+        validUntil: "2026-06-04",
+      }),
+      makeSignal({
+        signalId: "expired-2",
+        studentId: "expired-2",
+        signalType: "plan_generation_constraint",
+        validUntil: "2026-06-03",
+      }),
+    ],
+    activeMoveActions: [],
+  });
+  const overflowText = formatTrainingPeaksOperationalSignalsForTelegram(overflowSnapshot);
+  assert(overflowSnapshot.overflowCount === 0, "19 failed: expired schedule signals must not count in overflow.");
+  assert(!overflowText.includes("ещё сигналов"), "19 failed: expired schedule signals must not inflate +N count.");
+  assert(!overflowText.includes("Expired One"), "19 failed: expired schedule athlete must be hidden.");
+  assert(!overflowText.includes("Expired Two"), "19 failed: expired schedule athlete must be hidden.");
+
   console.log(`${LOG_PREFIX} PASS`);
 }
 

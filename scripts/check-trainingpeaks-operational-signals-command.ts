@@ -452,6 +452,39 @@ function run(): void {
     "G failed: empty-state text missing."
   );
 
+  const expiredScheduleSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    signals: [
+      makeSignal({
+        signalId: "sig-expired-schedule",
+        studentId: "s-expired",
+        signalType: "schedule_unavailability_window",
+        validFrom: "2026-06-04",
+        validUntil: "2026-06-04",
+        structuredPayload: {
+          unavailable_dates: ["2026-06-04"],
+        },
+      }),
+      makeSignal({
+        signalId: "sig-active-schedule",
+        studentId: "s-active",
+        signalType: "schedule_unavailability_window",
+        validFrom: "2026-06-05",
+        validUntil: "2026-06-05",
+      }),
+    ],
+    studentNameById: new Map<string, string | null>([
+      ["s-expired", "Expired Schedule Athlete"],
+      ["s-active", "Active Schedule Athlete"],
+    ]),
+    asOfDate: "2026-06-05",
+    scope: "schedule",
+    limit: 10,
+    activeMoveActions: [],
+  });
+  const expiredScheduleText = formatTrainingPeaksOperationalSignalsForTelegram(expiredScheduleSnapshot);
+  assert(!expiredScheduleText.includes("Expired Schedule Athlete"), "I failed: expired schedule signal must be hidden.");
+  assert(expiredScheduleText.includes("Active Schedule Athlete"), "I failed: same-day schedule signal must stay visible.");
+
   console.log(`${LOG_PREFIX} PASS`);
 }
 

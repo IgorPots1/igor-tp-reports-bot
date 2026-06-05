@@ -4624,6 +4624,29 @@ function isScheduleOperationalSignalType(signalType: string): boolean {
   );
 }
 
+function resolveScheduleOperationalSignalValidUntil(
+  signal: Pick<TrainingPeaksStudentOperationalSignal, "validUntil" | "structuredPayload">
+): string | null {
+  if (signal.validUntil) {
+    return signal.validUntil;
+  }
+  return normalizeRecordString(signal.structuredPayload.valid_until);
+}
+
+function isExpiredScheduleOperationalSignal(
+  signal: Pick<TrainingPeaksStudentOperationalSignal, "signalType" | "validUntil" | "structuredPayload">,
+  asOfDate: string
+): boolean {
+  if (!isScheduleOperationalSignalType(signal.signalType)) {
+    return false;
+  }
+  const validUntil = resolveScheduleOperationalSignalValidUntil(signal);
+  if (!validUntil) {
+    return false;
+  }
+  return validUntil < asOfDate;
+}
+
 function normalizeRecordBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
@@ -5857,6 +5880,23 @@ function buildOperationalSignalItemFromSignal(input: {
   }
 
   if (isScheduleOperationalSignalType(signal.signalType)) {
+    if (isExpiredScheduleOperationalSignal(signal, asOfDate)) {
+      return {
+        signalId: signal.id,
+        studentId: signal.studentId,
+        studentName,
+        section: "plan_constraints",
+        priority: 999,
+        sortBucket: 9,
+        dueDate: null,
+        episodeKey,
+        signalType: signal.signalType,
+        isEpisodeSummary: false,
+        followUpState: followUp.state,
+        text: "",
+        hiddenReason: "expired_schedule_signal",
+      };
+    }
     const scheduleText = formatScheduleOperationalSignalText({
       signalType: signal.signalType,
       validFrom: signal.validFrom,
