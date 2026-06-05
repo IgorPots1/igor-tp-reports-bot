@@ -53,6 +53,19 @@ type BaselineV2PerAthlete = {
   normal_training_weeks_count: number;
   total_weeks_count: number;
   excluded_weeks_by_tag: Record<string, number>;
+  active_training_window?: {
+    active_training_window_start: string | null;
+    active_training_window_end: string | null;
+    active_training_weeks_count: number;
+    pre_active_gap_weeks_count: number;
+    pre_active_inactive_weeks: string[];
+    all_window_frequency: number | null;
+    active_window_frequency: number | null;
+    normal_week_frequency: number | null;
+    recent_4w_frequency: number | null;
+    recent_4w_completed_minutes: number | null;
+    baseline_period_type: string;
+  };
   recent_current_status?: {
     latest_week_start: string | null;
     latest_week_tag: string | null;
@@ -409,6 +422,13 @@ function buildManualReviewShortlistMd(rows: ActionRow[]): string {
     lines.push(`- proposed_baseline: freq=${row.proposed_frequency_cap ?? "n/a"}, weekly_minutes=${row.proposed_weekly_minutes_cap ?? "n/a"}, long_run=${row.proposed_long_run_cap ?? "n/a"}, quality=${row.proposed_quality_sessions_cap ?? "n/a"}`);
     lines.push(`- current_baseline: freq=${row.current_frequency_cap ?? "n/a"}, weekly_minutes=${row.current_weekly_minutes_cap ?? "n/a"}, long_run=${row.current_long_run_cap ?? "n/a"}, quality=${row.current_quality_sessions_cap ?? "n/a"}`);
     lines.push(`- deltas: frequency=${row.frequency_delta ?? "n/a"}, weekly_minutes=${row.weekly_minutes_delta ?? "n/a"}, long_run=${row.long_run_delta ?? "n/a"}, quality=${row.quality_sessions_delta ?? "n/a"}, confidence_delta=${row.confidence_delta ?? "n/a"}`);
+    const activePreview = row.raw_stats_preview.source_values as Record<string, unknown>;
+    lines.push(
+      `- active_training_window: period_type=${String(activePreview.baseline_period_type ?? "n/a")}, start=${String(activePreview.active_training_window_start ?? "n/a")}, pre_active_gap=${String(activePreview.pre_active_gap_weeks_count ?? "n/a")}`,
+    );
+    lines.push(
+      `- frequency_layers: all_window=${String(activePreview.all_window_frequency ?? "n/a")}, active_window=${String(activePreview.active_window_frequency ?? "n/a")}, normal_week=${String(activePreview.normal_week_frequency ?? "n/a")}, recent_4w=${String(activePreview.recent_4w_frequency ?? "n/a")}`,
+    );
     lines.push(`- context_flags: ${row.context_flags.join(", ") || "none"}`);
     lines.push("");
   }
@@ -577,15 +597,48 @@ async function main(): Promise<void> {
       flags.add("completed_only_gps_pattern");
     }
 
-    const allWeekFrequency = toNumberOrNull(athlete.all_week_baseline.frequency_cap);
-    const normalWeekFrequency = toNumberOrNull(athlete.normal_baseline.frequency_cap);
+    const activeWindow = athlete.active_training_window ?? null;
+    const allWeekFrequency = toNumberOrNull(
+      activeWindow?.all_window_frequency ?? athlete.all_week_baseline.frequency_cap,
+    );
+    const normalWeekFrequency = toNumberOrNull(
+      activeWindow?.normal_week_frequency ?? athlete.normal_baseline.frequency_cap,
+    );
+    const activeWindowFrequency = toNumberOrNull(activeWindow?.active_window_frequency ?? null);
+    const recent4wFrequency = toNumberOrNull(
+      activeWindow?.recent_4w_frequency ?? athlete.recent_current_status?.recent_4w_frequency ?? null,
+    );
+
     if (
       allWeekFrequency !== null &&
       normalWeekFrequency !== null &&
       Math.abs(normalWeekFrequency - allWeekFrequency) >= 1
     ) {
-      flags.add("normal_vs_all_week_shift");
-      reasons.add("normal_vs_all_week_shift");
+      flags.add("normal_vs_all_window_shift");
+      reasons.add("normal_vs_all_window_shift");
+    }
+
+    if (activeWindow?.baseline_period_type === "active_since") {
+      flags.add("active_since");
+      reasons.add("active_since");
+      if (activeWindow.pre_active_gap_weeks_count > 0) {
+        flags.add("pre_active_gap_excluded");
+        reasons.add("pre_active_gap_excluded");
+      }
+    }
+
+    if (activeWindow?.baseline_period_type === "insufficient_active_window") {
+      flags.add("insufficient_active_window");
+      reasons.add("insufficient_active_window");
+    }
+
+    if (
+      normalWeekFrequency !== null &&
+      recent4wFrequency !== null &&
+      Math.abs(normalWeekFrequency - recent4wFrequency) >= 1.5
+    ) {
+      flags.add("recent_status_differs_from_baseline");
+      reasons.add("recent_status_differs_from_baseline");
     }
 
     const latestWeeks = athlete.recent_current_status?.latest_two_weeks ?? [];
@@ -624,15 +677,18 @@ async function main(): Promise<void> {
     if (athlete.athlete_id === 5485169) {
       reasons.add("melnikova_special_case");
       flags.add("completed_only_gps_pattern");
-      flags.add("normal_vs_all_week_shift");
       flags.add("manual_review");
       specialCases.push({
         athlete: athlete.student_name,
         athlete_id: athlete.athlete_id,
         status: "manual_review",
         details: {
-          all_week_frequency: athlete.all_week_baseline.frequency_cap,
-          normal_week_frequency: athlete.normal_baseline.frequency_cap,
+          baseline_period_type: activeWindow?.baseline_period_type ?? "unknown",
+          active_training_window_start: activeWindow?.active_training_window_start ?? null,
+          all_window_frequency: allWeekFrequency,
+          active_window_frequency: activeWindowFrequency,
+          normal_week_frequency: normalWeekFrequency,
+          recent_4w_frequency: recent4wFrequency,
         },
       });
     }
@@ -647,8 +703,10 @@ async function main(): Promise<void> {
         athlete_id: athlete.athlete_id,
         status: "manual_review",
         details: {
-          all_window_frequency: athlete.all_week_baseline.frequency_cap,
-          healthy_normal_week_frequency: athlete.normal_baseline.frequency_cap,
+          baseline_period_type: activeWindow?.baseline_period_type ?? "unknown",
+          all_window_frequency: allWeekFrequency,
+          healthy_normal_week_frequency: normalWeekFrequency,
+          recent_4w_frequency: recent4wFrequency,
         },
       });
     }
@@ -700,11 +758,15 @@ async function main(): Promise<void> {
       action = "skip";
     } else if (reasons.has("insufficient_completed_running_data")) {
       action = "skip";
+    } else if (reasons.has("insufficient_active_window")) {
+      action = "manual_review";
     } else if (reasons.has("self_profile_or_non_student_baseline_target")) {
       action = "skip";
     } else if (
       athlete.confidence === "low" ||
-      reasons.has("normal_vs_all_week_shift") ||
+      reasons.has("normal_vs_all_window_shift") ||
+      reasons.has("active_since") ||
+      reasons.has("recent_status_differs_from_baseline") ||
       reasons.has("completed_data_incomplete") ||
       reasons.has("high_delta_vs_current") ||
       reasons.has("melnikova_special_case") ||
@@ -732,6 +794,16 @@ async function main(): Promise<void> {
         all_week_frequency_cap: athlete.all_week_baseline.frequency_cap,
         normal_weekly_minutes_cap: athlete.normal_baseline.weekly_minutes_cap,
         all_week_weekly_minutes_cap: athlete.all_week_baseline.weekly_minutes_cap,
+        active_training_window_start: activeWindow?.active_training_window_start ?? null,
+        active_training_window_end: activeWindow?.active_training_window_end ?? null,
+        active_training_weeks_count: activeWindow?.active_training_weeks_count ?? null,
+        pre_active_gap_weeks_count: activeWindow?.pre_active_gap_weeks_count ?? null,
+        all_window_frequency: allWeekFrequency,
+        active_window_frequency: activeWindowFrequency,
+        normal_week_frequency: normalWeekFrequency,
+        recent_4w_frequency: recent4wFrequency,
+        recent_4w_completed_minutes: activeWindow?.recent_4w_completed_minutes ?? null,
+        baseline_period_type: activeWindow?.baseline_period_type ?? null,
       },
       special_case_context:
         athlete.athlete_id === 5485169

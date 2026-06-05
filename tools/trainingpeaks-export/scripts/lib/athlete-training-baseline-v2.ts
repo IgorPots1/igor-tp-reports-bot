@@ -6,6 +6,26 @@ export type BaselineV2Confidence = "high" | "medium" | "low";
 export type RaceCandidateConfidence = "high" | "medium" | "low";
 export type RaceDistanceKey = "5k" | "10k" | "half" | "marathon" | "unknown";
 export type BaselineMode = "normal_only" | "limited_clean" | "fallback_all_weeks";
+export type BaselinePeriodType =
+  | "full_window"
+  | "active_since"
+  | "injury_return"
+  | "data_gap"
+  | "insufficient_active_window";
+
+export type ActiveTrainingWindowMetrics = {
+  active_training_window_start: string | null;
+  active_training_window_end: string | null;
+  active_training_weeks_count: number;
+  pre_active_gap_weeks_count: number;
+  pre_active_inactive_weeks: string[];
+  all_window_frequency: number | null;
+  active_window_frequency: number | null;
+  normal_week_frequency: number | null;
+  recent_4w_frequency: number | null;
+  recent_4w_completed_minutes: number | null;
+  baseline_period_type: BaselinePeriodType;
+};
 export type RaceCandidateSourceType =
   | "race_type_duration"
   | "strong_event_keyword"
@@ -169,6 +189,7 @@ export type PerAthleteBaselineV2 = {
     marathon_context_detected: boolean;
     excluded_weeks_by_tag: Record<Exclude<WeekTag, "normal_training">, number>;
   };
+  active_training_window: ActiveTrainingWindowMetrics;
   recent_current_status: {
     latest_week_start: string | null;
     latest_week_tag: WeekTag | null;
@@ -178,6 +199,8 @@ export type PerAthleteBaselineV2 = {
       planned_running_minutes: number;
       completed_running_minutes: number;
     }>;
+    recent_4w_frequency: number | null;
+    recent_4w_completed_minutes: number | null;
     run_walk_status: "run_walk_actual" | "possible_run_walk_signal" | "none";
   };
   current_baseline_context: {
@@ -195,6 +218,7 @@ export type ManualReviewEntry = {
   student_name: string;
   athlete_id: number;
   review_reason: string;
+  active_training_window: ActiveTrainingWindowMetrics;
   all_week_vs_normal: {
     frequency: { all_weeks: number | null; normal_weeks: number | null };
     weekly_minutes: { all_weeks: number | null; normal_weeks: number | null };
@@ -244,6 +268,8 @@ export type BaselineV2Summary = {
   total_excluded_weeks_by_tag: Record<Exclude<WeekTag, "normal_training">, number>;
   confidence_distribution: Record<BaselineV2Confidence, number>;
   needs_review_count: number;
+  athletes_with_active_since_window: number;
+  athletes_with_insufficient_active_window: number;
   report_paths?: Record<string, string>;
 };
 
@@ -409,6 +435,8 @@ const DISTANCE_WINDOW_TOLERANCE = {
 };
 const OVERBROAD_JAN_JUN_CLUSTER_THRESHOLD = 5;
 const OVERBROAD_JAN_JUN_EXCLUSION_THRESHOLD = 10;
+const MIN_ACTIVE_COMPLETED_MINUTES = 45;
+const MIN_ACTIVE_WINDOW_WEEKS = 3;
 
 function normalizeText(...parts: Array<string | null | undefined>): string {
   return parts
@@ -948,6 +976,162 @@ function computeWeekMetrics(weeks: WeekTagReportRow[], source: "completed" | "pl
   };
 }
 
+function isMeaningfulActiveRunningWeek(week: WeekTagReportRow): boolean {
+  return week.completed_running_workouts >= 1 && week.completed_running_minutes >= MIN_ACTIVE_COMPLETED_MINUTES;
+}
+
+function hasThreeConsecutiveActiveWeeks(weeks: WeekTagReportRow[], startIndex: number): boolean {
+  if (startIndex + 2 >= weeks.length) return false;
+  return (
+    isMeaningfulActiveRunningWeek(weeks[startIndex]!) &&
+    isMeaningfulActiveRunningWeek(weeks[startIndex + 1]!) &&
+    isMeaningfulActiveRunningWeek(weeks[startIndex + 2]!)
+  );
+}
+
+function hasThreeOfFourActiveWeeks(weeks: WeekTagReportRow[], startIndex: number): boolean {
+  const slice = weeks.slice(startIndex, startIndex + 4);
+  if (slice.length < 4) return false;
+  return slice.filter(isMeaningfulActiveRunningWeek).length >= 3;
+}
+
+function detectActiveTrainingWindowStart(weekRows: WeekTagReportRow[]): string | null {
+  const sorted = [...weekRows].sort((a, b) => a.week_start.localeCompare(b.week_start));
+  for (let index = 0; index < sorted.length; index += 1) {
+    if (hasThreeConsecutiveActiveWeeks(sorted, index)) {
+      return sorted[index]!.week_start;
+    }
+    if (hasThreeOfFourActiveWeeks(sorted, index)) {
+      const slice = sorted.slice(index, index + 4);
+      const firstActive = slice.find(isMeaningfulActiveRunningWeek);
+      return firstActive?.week_start ?? sorted[index]!.week_start;
+    }
+  }
+  return null;
+}
+
+function recentWeekSlice(weekRows: WeekTagReportRow[], count: number): WeekTagReportRow[] {
+  return [...weekRows].sort((a, b) => b.week_start.localeCompare(a.week_start)).slice(0, count);
+}
+
+function buildActiveTrainingWindowMetrics(input: {
+  weekRows: WeekTagReportRow[];
+  analyzedFrom: string;
+  normalBaselineFrequency: number | null;
+  allWeekBaselineFrequency: number | null;
+}): ActiveTrainingWindowMetrics {
+  const sortedWeeks = [...input.weekRows].sort((a, b) => a.week_start.localeCompare(b.week_start));
+  const windowWeeks = sortedWeeks.filter((week) => week.week_start >= input.analyzedFrom);
+  const activeStart = detectActiveTrainingWindowStart(windowWeeks.length > 0 ? windowWeeks : sortedWeeks);
+  const activeEnd = (windowWeeks.length > 0 ? windowWeeks : sortedWeeks).at(-1)?.week_start ?? null;
+
+  const weeksInScope = windowWeeks.length > 0 ? windowWeeks : sortedWeeks;
+  const preActiveInactiveWeeks = activeStart
+    ? weeksInScope.filter((week) => week.week_start < activeStart).map((week) => week.week_start)
+    : [];
+
+  const activeWindowWeeks = activeStart
+    ? weeksInScope.filter((week) => week.week_start >= activeStart)
+    : weeksInScope;
+  const meaningfulActiveWeeks = activeWindowWeeks.filter(isMeaningfulActiveRunningWeek);
+  const activeWindowFrequency = median(meaningfulActiveWeeks.map((week) => week.completed_running_workouts));
+
+  const recentFour = recentWeekSlice(weeksInScope, 4);
+  const recent4wFrequency = median(recentFour.map((week) => week.completed_running_workouts));
+  const recent4wCompletedMinutes = median(recentFour.map((week) => week.completed_running_minutes));
+
+  let baselinePeriodType: BaselinePeriodType = "full_window";
+  if (!activeStart || meaningfulActiveWeeks.length < MIN_ACTIVE_WINDOW_WEEKS) {
+    baselinePeriodType = "insufficient_active_window";
+  } else if (preActiveInactiveWeeks.length > 0 && activeStart > input.analyzedFrom) {
+    const preActiveCacheGaps = preActiveInactiveWeeks.filter((weekStart) => {
+      const week = weeksInScope.find((candidate) => candidate.week_start === weekStart);
+      return week?.low_data_reasons.includes("cache_gap") ?? false;
+    }).length;
+    if (preActiveCacheGaps >= Math.max(2, Math.floor(preActiveInactiveWeeks.length * 0.5))) {
+      baselinePeriodType = "data_gap";
+    } else {
+      baselinePeriodType = "active_since";
+    }
+  } else if (
+    input.normalBaselineFrequency !== null &&
+    recent4wFrequency !== null &&
+    input.normalBaselineFrequency - recent4wFrequency >= 1.5 &&
+    recentFour.some((week) => week.tag === "illness_low_volume" || week.tag === "low_data")
+  ) {
+    baselinePeriodType = "injury_return";
+  }
+
+  return {
+    active_training_window_start: activeStart,
+    active_training_window_end: activeEnd,
+    active_training_weeks_count: meaningfulActiveWeeks.length,
+    pre_active_gap_weeks_count: preActiveInactiveWeeks.length,
+    pre_active_inactive_weeks: preActiveInactiveWeeks,
+    all_window_frequency: input.allWeekBaselineFrequency,
+    active_window_frequency: activeWindowFrequency,
+    normal_week_frequency: input.normalBaselineFrequency,
+    recent_4w_frequency: recent4wFrequency,
+    recent_4w_completed_minutes: recent4wCompletedMinutes,
+    baseline_period_type: baselinePeriodType,
+  };
+}
+
+function applyActiveTrainingWindowContext(input: {
+  activeWindow: ActiveTrainingWindowMetrics;
+  contextFlags: Set<string>;
+  notes: string[];
+  needsReview: boolean;
+}): boolean {
+  let needsReview = input.needsReview;
+  const { activeWindow } = input;
+
+  if (activeWindow.baseline_period_type === "active_since") {
+    input.contextFlags.add("active_since");
+    input.notes.push(
+      `Active training window starts ${activeWindow.active_training_window_start}; ${activeWindow.pre_active_gap_weeks_count} pre-active weeks excluded from baseline context.`,
+    );
+  }
+  if (activeWindow.pre_active_gap_weeks_count > 0) {
+    input.contextFlags.add("pre_active_gap_excluded");
+  }
+  if (
+    activeWindow.all_window_frequency !== null &&
+    activeWindow.normal_week_frequency !== null &&
+    activeWindow.normal_week_frequency - activeWindow.all_window_frequency >= 1
+  ) {
+    input.contextFlags.add("normal_vs_all_window_shift");
+    needsReview = true;
+    input.notes.push(
+      `Normal-week frequency (${activeWindow.normal_week_frequency}) is higher than all-window (${activeWindow.all_window_frequency}); early inactive weeks should not lower planning baseline.`,
+    );
+  }
+  if (
+    activeWindow.normal_week_frequency !== null &&
+    activeWindow.recent_4w_frequency !== null &&
+    Math.abs(activeWindow.normal_week_frequency - activeWindow.recent_4w_frequency) >= 1.5
+  ) {
+    input.contextFlags.add("recent_status_differs_from_baseline");
+    needsReview = true;
+    input.notes.push(
+      `Recent 4-week frequency (${activeWindow.recent_4w_frequency}) differs from normal baseline (${activeWindow.normal_week_frequency}); treat as recent-status overlay.`,
+    );
+  }
+  if (activeWindow.baseline_period_type === "injury_return") {
+    input.contextFlags.add("injury_break_context");
+    input.contextFlags.add("healthy_baseline_vs_recent_status");
+    needsReview = true;
+    input.notes.push("Recent injury/break pattern detected; healthy baseline kept separate from recent status.");
+  }
+  if (activeWindow.baseline_period_type === "insufficient_active_window") {
+    input.contextFlags.add("insufficient_active_window");
+    needsReview = true;
+    input.notes.push("Insufficient sustained active training window for confident baseline.");
+  }
+
+  return needsReview;
+}
+
 function baselineDiffScore(athlete: PerAthleteBaselineV2): number {
   const frequencyDiff = Math.abs((athlete.all_week_baseline.frequency_cap ?? 0) - (athlete.normal_baseline.frequency_cap ?? 0)) * 25;
   const minutesDiff = Math.abs((athlete.all_week_baseline.weekly_minutes_cap ?? 0) - (athlete.normal_baseline.weekly_minutes_cap ?? 0));
@@ -977,6 +1161,7 @@ function buildManualReviewShortlist(perAthlete: PerAthleteBaselineV2[]): ManualR
       student_name: athlete.student_name,
       athlete_id: athlete.athlete_id,
       review_reason: reason,
+      active_training_window: athlete.active_training_window,
       all_week_vs_normal: {
         frequency: {
           all_weeks: athlete.all_week_baseline.frequency_cap,
@@ -1034,6 +1219,26 @@ function buildManualReviewShortlist(perAthlete: PerAthleteBaselineV2[]): ManualR
   addByName("slava Taranec", "low_confidence_required", "Low-confidence athlete from prior baseline review.");
   addByName("Kristina Pamparaite", "high_load_required", "High-load athlete from previous report if present.");
   addByName("Valentin Shavkun", "high_load_required", "High-load athlete from previous report if present.");
+  addByName(
+    "Irina Melnikova",
+    "active_since_validation_case",
+    "Early inactive weeks should not lower normal baseline; active window should explain all-window vs normal-week shift.",
+  );
+  addByName(
+    "Yulia Krylova",
+    "injury_break_validation_case",
+    "Healthy normal-week baseline should stay separate from recent injury/break status overlay.",
+  );
+  addByName(
+    "Anastasia Abramova",
+    "device_upload_validation_case",
+    "Recent upload drop-off should remain manual_review, not a silent baseline downgrade.",
+  );
+  addByName(
+    "Anna Chernysheva",
+    "completed_only_validation_case",
+    "Completed-only/GPS-heavy pattern should remain visible without zeroing baseline.",
+  );
 
   const withRaceCandidates = perAthlete
     .filter((athlete) => athlete.race_specific_context.race_candidate_count > 0)
@@ -1045,6 +1250,17 @@ function buildManualReviewShortlist(perAthlete: PerAthleteBaselineV2[]): ManualR
   const byDiff = [...perAthlete].sort((a, b) => baselineDiffScore(b) - baselineDiffScore(a));
   for (const athlete of byDiff.slice(0, 5)) {
     addAthlete(athlete, "largest_baseline_shift_top5", "Large gap between all-week and normal-only baseline.");
+  }
+
+  const activeSinceAthletes = perAthlete
+    .filter((athlete) => athlete.active_training_window.baseline_period_type === "active_since")
+    .sort((a, b) => b.active_training_window.pre_active_gap_weeks_count - a.active_training_window.pre_active_gap_weeks_count);
+  for (const athlete of activeSinceAthletes.slice(0, 5)) {
+    addAthlete(
+      athlete,
+      "active_since_top5",
+      `Active training starts ${athlete.active_training_window.active_training_window_start}; ${athlete.active_training_window.pre_active_gap_weeks_count} pre-active weeks excluded.`,
+    );
   }
 
   const insufficient = perAthlete
@@ -1503,8 +1719,8 @@ function analyzeAthlete(input: {
     });
   }
 
-  const normalWeeks = weekRows.filter((week) => week.tag === "normal_training");
   const allWeeks = weekRows;
+  let normalWeeks = weekRows.filter((week) => week.tag === "normal_training");
   const excludedCounts = emptyExcludedCounts();
   for (const week of weekRows) {
     if (week.tag !== "normal_training") excludedCounts[week.tag] += 1;
@@ -1556,10 +1772,47 @@ function analyzeAthlete(input: {
     notes.push(`Ignored advisory family label: ${input.athlete.currentBaseline.familyLabelAdvisory}.`);
   }
 
+  const preliminaryAllWeekBaseline = computeWeekMetrics(allWeeks, "completed");
+  const preliminaryNormalBaseline = computeWeekMetrics(
+    baselineSource === "normal_training" ? normalWeeks : allWeeks,
+    "completed",
+  );
+  const activeTrainingWindow = buildActiveTrainingWindowMetrics({
+    weekRows: weekRows,
+    analyzedFrom: input.from,
+    normalBaselineFrequency: preliminaryNormalBaseline.frequency_cap,
+    allWeekBaselineFrequency: preliminaryAllWeekBaseline.frequency_cap,
+  });
+
+  if (
+    activeTrainingWindow.baseline_period_type === "active_since" &&
+    activeTrainingWindow.active_training_window_start
+  ) {
+    const activeNormalWeeks = normalWeeks.filter(
+      (week) => week.week_start >= activeTrainingWindow.active_training_window_start!,
+    );
+    if (activeNormalWeeks.length >= Math.min(input.minNormalWeeks, 4)) {
+      normalWeeks = activeNormalWeeks;
+      notes.push(
+        `Normal baseline restricted to active training window from ${activeTrainingWindow.active_training_window_start}.`,
+      );
+    }
+  }
+
   const baselineWeeks = baselineSource === "normal_training" ? normalWeeks : allWeeks;
   const normalBaseline = computeWeekMetrics(baselineWeeks, "completed");
-  const allWeekBaseline = computeWeekMetrics(allWeeks, "completed");
+  const allWeekBaseline = preliminaryAllWeekBaseline;
   const plannedContextBaseline = computeWeekMetrics(baselineWeeks, "planned");
+  activeTrainingWindow.normal_week_frequency = normalBaseline.frequency_cap;
+  activeTrainingWindow.all_window_frequency = allWeekBaseline.frequency_cap;
+  activeTrainingWindow.active_window_frequency = median(
+    (activeTrainingWindow.active_training_window_start
+      ? weekRows.filter((week) => week.week_start >= activeTrainingWindow.active_training_window_start!)
+      : weekRows
+    )
+      .filter(isMeaningfulActiveRunningWeek)
+      .map((week) => week.completed_running_workouts),
+  );
   const raceCandidatesUnique = clusteredRaceCandidates;
 
   if (raceCandidatesUnique.some((candidate) => candidate.estimated_distance === "marathon")) {
@@ -1622,6 +1875,12 @@ function analyzeAthlete(input: {
     .slice(0, 8);
 
   const latestTwoWeeks = [...weekRows].sort((a, b) => b.week_start.localeCompare(a.week_start)).slice(0, 2);
+  needsReview = applyActiveTrainingWindowContext({
+    activeWindow: activeTrainingWindow,
+    contextFlags,
+    notes,
+    needsReview,
+  });
   const diffOrNull = (a: number | null, b: number | null): number | null =>
     a === null || b === null ? null : Number((a - b).toFixed(2));
   const baselineChangeVsPlanned = {
@@ -1708,6 +1967,7 @@ function analyzeAthlete(input: {
       marathon_context_detected: raceCandidatesUnique.some((candidate) => candidate.estimated_distance === "marathon"),
       excluded_weeks_by_tag: excludedCounts,
     },
+    active_training_window: activeTrainingWindow,
     recent_current_status: {
       latest_week_start: latestTwoWeeks[0]?.week_start ?? null,
       latest_week_tag: latestTwoWeeks[0]?.tag ?? null,
@@ -1717,6 +1977,8 @@ function analyzeAthlete(input: {
         planned_running_minutes: week.planned_running_minutes,
         completed_running_minutes: week.completed_running_minutes,
       })),
+      recent_4w_frequency: activeTrainingWindow.recent_4w_frequency,
+      recent_4w_completed_minutes: activeTrainingWindow.recent_4w_completed_minutes,
       run_walk_status: runWalkStatus,
     },
     current_baseline_context: {
@@ -1847,6 +2109,12 @@ export function analyzeAthleteTrainingBaselineV2(input: {
     total_excluded_weeks_by_tag: totalExcludedWeeksByTag,
     confidence_distribution: confidenceDistribution,
     needs_review_count: perAthlete.filter((athlete) => athlete.needs_review).length,
+    athletes_with_active_since_window: perAthlete.filter(
+      (athlete) => athlete.active_training_window.baseline_period_type === "active_since",
+    ).length,
+    athletes_with_insufficient_active_window: perAthlete.filter(
+      (athlete) => athlete.active_training_window.baseline_period_type === "insufficient_active_window",
+    ).length,
   };
 
   const raceEvidenceCalibration = buildRaceEvidenceCalibrationForAthletes({
@@ -1897,6 +2165,8 @@ export function buildBaselineV2SummaryMarkdown(summary: BaselineV2Summary): stri
   lines.push(`- athletes_with_material_completed_vs_planned_change: ${summary.athletes_with_material_completed_vs_planned_change}`);
   lines.push(`- completed_vs_planned_divergence_totals: ${JSON.stringify(summary.completed_vs_planned_divergence_totals)}`);
   lines.push(`- needs_review_count: ${summary.needs_review_count}`);
+  lines.push(`- athletes_with_active_since_window: ${summary.athletes_with_active_since_window}`);
+  lines.push(`- athletes_with_insufficient_active_window: ${summary.athletes_with_insufficient_active_window}`);
   lines.push("");
   lines.push("## Race Candidates");
   lines.push(`- by_distance: ${JSON.stringify(summary.race_candidate_counts_by_distance)}`);
@@ -1947,6 +2217,15 @@ export function buildPerAthleteBaselineV2Markdown(athletes: PerAthleteBaselineV2
     );
     lines.push(`- baseline_change_vs_planned_context: ${JSON.stringify(athlete.baseline_change_vs_planned_context)}`);
     lines.push(`- completed_vs_planned_divergence: ${JSON.stringify(athlete.completed_vs_planned_divergence)}`);
+    lines.push(
+      `- active_training_window: start=${athlete.active_training_window.active_training_window_start ?? "n/a"}, end=${athlete.active_training_window.active_training_window_end ?? "n/a"}, active_weeks=${athlete.active_training_window.active_training_weeks_count}, pre_active_gap=${athlete.active_training_window.pre_active_gap_weeks_count}, period_type=${athlete.active_training_window.baseline_period_type}`,
+    );
+    lines.push(
+      `- frequency_layers: all_window=${formatMetric(athlete.active_training_window.all_window_frequency)}, active_window=${formatMetric(athlete.active_training_window.active_window_frequency)}, normal_week=${formatMetric(athlete.active_training_window.normal_week_frequency)}, recent_4w=${formatMetric(athlete.active_training_window.recent_4w_frequency)}`,
+    );
+    lines.push(
+      `- recent_4w_completed_minutes: ${formatMetric(athlete.recent_current_status.recent_4w_completed_minutes)}`,
+    );
     lines.push(`- normal_training_weeks_count: ${athlete.normal_training_weeks_count}`);
     lines.push(`- excluded_weeks_count: ${athlete.excluded_weeks_count}`);
     lines.push(`- excluded_weeks_count_by_tag: ${JSON.stringify(athlete.excluded_weeks_count_by_tag)}`);
@@ -2037,6 +2316,13 @@ export function buildManualReviewShortlistMarkdown(entries: ManualReviewEntry[])
   for (const entry of entries) {
     lines.push(`## ${entry.student_name}`);
     lines.push(`- reason: ${entry.review_reason}`);
+    lines.push(`- baseline_period_type: ${entry.active_training_window.baseline_period_type}`);
+    lines.push(
+      `- active_training_window: start=${entry.active_training_window.active_training_window_start ?? "n/a"}, pre_active_gap=${entry.active_training_window.pre_active_gap_weeks_count}`,
+    );
+    lines.push(
+      `- frequency_layers: all_window=${formatMetric(entry.active_training_window.all_window_frequency)}, active_window=${formatMetric(entry.active_training_window.active_window_frequency)}, normal_week=${formatMetric(entry.active_training_window.normal_week_frequency)}, recent_4w=${formatMetric(entry.active_training_window.recent_4w_frequency)}`,
+    );
     lines.push(`- baseline_mode: ${entry.baseline_mode}`);
     lines.push(`- normal_training_weeks_count: ${entry.normal_training_weeks_count}`);
     lines.push(

@@ -413,6 +413,14 @@ function buildRequiredAthletesBeforeAfterRows(
   normal_training_weeks_count_after_completed_primary: number;
   fallback_status_before_planned_context: boolean | null;
   fallback_status_after_completed_primary: boolean;
+  baseline_period_type: string | null;
+  active_training_window_start: string | null;
+  pre_active_gap_weeks_count: number | null;
+  all_window_frequency: number | null;
+  active_window_frequency: number | null;
+  normal_week_frequency: number | null;
+  recent_4w_frequency: number | null;
+  context_flags: string[];
   short_diagnosis: string;
 }> {
   const requiredNames = [
@@ -453,6 +461,14 @@ function buildRequiredAthletesBeforeAfterRows(
         normal_training_weeks_count_after_completed_primary: 0,
         fallback_status_before_planned_context: null,
         fallback_status_after_completed_primary: false,
+        baseline_period_type: null,
+        active_training_window_start: null,
+        pre_active_gap_weeks_count: null,
+        all_window_frequency: null,
+        active_window_frequency: null,
+        normal_week_frequency: null,
+        recent_4w_frequency: null,
+        context_flags: [],
         short_diagnosis: "No matching athlete name found in this run.",
       };
     }
@@ -470,6 +486,14 @@ function buildRequiredAthletesBeforeAfterRows(
           ? "Planned-only pattern dominates."
           : "Completed/planned workout patterns are balanced.",
       lowDataAfter > 0 ? `Has ${lowDataAfter} completed-primary low_data weeks.` : "No completed-primary low_data weeks.",
+      athlete.active_training_window.baseline_period_type === "active_since"
+        ? `Active training since ${athlete.active_training_window.active_training_window_start ?? "unknown"}.`
+        : `Baseline period type: ${athlete.active_training_window.baseline_period_type}.`,
+      athlete.active_training_window.normal_week_frequency !== null &&
+      athlete.active_training_window.all_window_frequency !== null &&
+      athlete.active_training_window.normal_week_frequency - athlete.active_training_window.all_window_frequency >= 1
+        ? `Normal-week frequency (${athlete.active_training_window.normal_week_frequency}) stays above all-window (${athlete.active_training_window.all_window_frequency}).`
+        : "No major normal-vs-all-window frequency shift.",
     ];
 
     return {
@@ -498,6 +522,14 @@ function buildRequiredAthletesBeforeAfterRows(
       normal_training_weeks_count_after_completed_primary: athlete.normal_training_weeks_count,
       fallback_status_before_planned_context: null,
       fallback_status_after_completed_primary: athlete.baseline_source === "fallback_all_weeks",
+      baseline_period_type: athlete.active_training_window.baseline_period_type,
+      active_training_window_start: athlete.active_training_window.active_training_window_start,
+      pre_active_gap_weeks_count: athlete.active_training_window.pre_active_gap_weeks_count,
+      all_window_frequency: athlete.active_training_window.all_window_frequency,
+      active_window_frequency: athlete.active_training_window.active_window_frequency,
+      normal_week_frequency: athlete.active_training_window.normal_week_frequency,
+      recent_4w_frequency: athlete.active_training_window.recent_4w_frequency,
+      context_flags: athlete.context_flags,
       short_diagnosis: diagnosisParts.join(" "),
     };
   });
