@@ -192,6 +192,15 @@ export type PerAthleteBaselineV2 = {
       week_start: string;
       tag: Exclude<WeekTag, "normal_training">;
       reason: string;
+      race_date: string | null;
+      event_name: string | null;
+      source_type: "keyword" | "events_api" | "mixed" | null;
+      matched_workout_date: string | null;
+      race_week_start: string | null;
+      taper_week_start: string | null;
+      post_race_recovery_week_start: string | null;
+      week_tag_applied: Exclude<WeekTag, "normal_training">;
+      exclusion_reason: string;
       source_race_candidate: {
         date: string;
         title: string | null;
@@ -579,6 +588,12 @@ function weekDistance(start: string, end: string): number {
   const startTime = new Date(`${start}T00:00:00Z`).getTime();
   const endTime = new Date(`${end}T00:00:00Z`).getTime();
   return Math.round((endTime - startTime) / (7 * 24 * 60 * 60 * 1000));
+}
+
+function addWeeksIso(weekStart: string, weeks: number): string {
+  const date = new Date(`${weekStart}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + weeks * 7);
+  return date.toISOString().slice(0, 10);
 }
 
 function median(values: number[]): number | null {
@@ -1651,6 +1666,7 @@ function analyzeAthlete(input: {
   const clusteredRaceCandidates = dedupedRace.clustered;
   const raceCandidateByWorkoutId = new Map(clusteredRaceCandidates.map((candidate) => [candidate.workout_id, candidate]));
   const eligibleCandidates = clusteredRaceCandidates.filter((candidate) => candidate.exclusion_eligible && candidate.confidence !== "low");
+  const eligibleRaceWindows = toRaceWindows(eligibleCandidates);
 
   function toRaceWindows(candidates: RaceCandidate[]): RaceWindow[] {
     return candidates
@@ -1708,15 +1724,16 @@ function analyzeAthlete(input: {
     const rollingMedian = median(previousEffective);
 
     const tags = new Set<WeekTag>();
+    const weekRaceDrivers = eligibleRaceWindows.filter((raceWindow) => raceWindow.weekStart === week.weekStart);
     const weekEligibleCandidates = [...week.raceCandidates, ...week.lowConfidenceRaceCandidates].filter((candidate) => {
       const clustered = raceCandidateByWorkoutId.get(candidate.workout_id);
       return Boolean(clustered && clustered.exclusion_eligible && clustered.confidence !== "low");
     });
-    if (weekEligibleCandidates.length > 0) {
+    if (weekEligibleCandidates.length > 0 || weekRaceDrivers.length > 0) {
       tags.add("race_week");
     }
 
-    for (const raceWindow of toRaceWindows(eligibleCandidates)) {
+    for (const raceWindow of eligibleRaceWindows) {
       const offset = weekDistance(week.weekStart, raceWindow.weekStart);
       if (offset > 0 && offset <= raceTaperWeeks(raceWindow.distance)) {
         tags.add("taper_week");
@@ -1784,7 +1801,9 @@ function analyzeAthlete(input: {
     }
     if (finalTag !== "normal_training") {
       if (finalTag === "race_week") {
-        const top = weekEligibleCandidates.sort((a, b) => b.score - a.score || a.date.localeCompare(b.date))[0] ?? null;
+        const top =
+          [...weekEligibleCandidates, ...weekRaceDrivers.map((window) => window.candidate)]
+            .sort((a, b) => b.score - a.score || a.date.localeCompare(b.date))[0] ?? null;
         if (top) {
           top.caused_exclusion = true;
           top.drove_exclusion_tag = finalTag;
@@ -1795,7 +1814,7 @@ function analyzeAthlete(input: {
           sourceRaceCandidate: top,
         });
       } else if (finalTag === "taper_week" || finalTag === "post_race_recovery" || finalTag === "marathon_specific_block") {
-        const driver = toRaceWindows(eligibleCandidates)
+        const driver = eligibleRaceWindows
           .filter((raceWindow) => {
             const offset = weekDistance(week.weekStart, raceWindow.weekStart);
             if (finalTag === "taper_week") return offset > 0 && offset <= raceTaperWeeks(raceWindow.distance);
@@ -2027,6 +2046,24 @@ function analyzeAthlete(input: {
         week_start: week.week_start,
         tag: week.tag as Exclude<WeekTag, "normal_training">,
         reason: exclusion?.reason ?? "excluded",
+        race_date: exclusion?.sourceRaceCandidate?.date ?? null,
+        event_name: exclusion?.sourceRaceCandidate?.event_name ?? exclusion?.sourceRaceCandidate?.title ?? null,
+        source_type: exclusion?.sourceRaceCandidate?.source_type ?? null,
+        matched_workout_date: exclusion?.sourceRaceCandidate?.matched_workout_date ?? null,
+        race_week_start: exclusion?.sourceRaceCandidate?.week_start ?? null,
+        taper_week_start:
+          exclusion?.sourceRaceCandidate && exclusion.sourceRaceCandidate.exclusion_eligible
+            ? addWeeksIso(
+                exclusion.sourceRaceCandidate.week_start,
+                -raceTaperWeeks(exclusion.sourceRaceCandidate.estimated_distance),
+              )
+            : null,
+        post_race_recovery_week_start:
+          exclusion?.sourceRaceCandidate && exclusion.sourceRaceCandidate.exclusion_eligible
+            ? addWeeksIso(exclusion.sourceRaceCandidate.week_start, 1)
+            : null,
+        week_tag_applied: week.tag as Exclude<WeekTag, "normal_training">,
+        exclusion_reason: exclusion?.reason ?? "excluded",
         source_race_candidate: exclusion?.sourceRaceCandidate
           ? {
               date: exclusion.sourceRaceCandidate.date,
@@ -2465,7 +2502,7 @@ export function buildPerAthleteBaselineV2Markdown(athletes: PerAthleteBaselineV2
     lines.push("- top_excluded_weeks:");
     for (const excludedWeek of athlete.race_detection_diagnostics.top_excluded_weeks) {
       lines.push(
-        `  - ${excludedWeek.week_start} | tag=${excludedWeek.tag} | reason=${excludedWeek.reason} | source=${excludedWeek.source_race_candidate ? `${excludedWeek.source_race_candidate.date} / ${excludedWeek.source_race_candidate.title ?? "n/a"} / score=${excludedWeek.source_race_candidate.score}` : "n/a"}`,
+        `  - ${excludedWeek.week_start} | tag=${excludedWeek.tag} | reason=${excludedWeek.reason} | race_date=${excludedWeek.race_date ?? "n/a"} | event=${excludedWeek.event_name ?? "n/a"} | source_type=${excludedWeek.source_type ?? "n/a"} | matched_workout_date=${excludedWeek.matched_workout_date ?? "n/a"} | race_week_start=${excludedWeek.race_week_start ?? "n/a"} | taper_week_start=${excludedWeek.taper_week_start ?? "n/a"} | post_race_recovery_week_start=${excludedWeek.post_race_recovery_week_start ?? "n/a"} | exclusion_reason=${excludedWeek.exclusion_reason} | source=${excludedWeek.source_race_candidate ? `${excludedWeek.source_race_candidate.date} / ${excludedWeek.source_race_candidate.title ?? "n/a"} / score=${excludedWeek.source_race_candidate.score}` : "n/a"}`,
       );
     }
     lines.push(`- race_candidates: ${athlete.race_specific_context.race_candidate_count}`);
@@ -2592,7 +2629,7 @@ export function buildManualReviewShortlistMarkdown(entries: ManualReviewEntry[])
     lines.push("- top_excluded_weeks:");
     for (const excludedWeek of entry.top_excluded_weeks) {
       lines.push(
-        `  - ${excludedWeek.week_start} | tag=${excludedWeek.tag} | reason=${excludedWeek.reason} | source=${excludedWeek.source_race_candidate ? `${excludedWeek.source_race_candidate.date} / ${excludedWeek.source_race_candidate.title ?? "n/a"} / score=${excludedWeek.source_race_candidate.score}` : "n/a"}`,
+        `  - ${excludedWeek.week_start} | tag=${excludedWeek.tag} | reason=${excludedWeek.reason} | race_date=${excludedWeek.race_date ?? "n/a"} | event=${excludedWeek.event_name ?? "n/a"} | source_type=${excludedWeek.source_type ?? "n/a"} | matched_workout_date=${excludedWeek.matched_workout_date ?? "n/a"} | race_week_start=${excludedWeek.race_week_start ?? "n/a"} | taper_week_start=${excludedWeek.taper_week_start ?? "n/a"} | post_race_recovery_week_start=${excludedWeek.post_race_recovery_week_start ?? "n/a"} | exclusion_reason=${excludedWeek.exclusion_reason} | source=${excludedWeek.source_race_candidate ? `${excludedWeek.source_race_candidate.date} / ${excludedWeek.source_race_candidate.title ?? "n/a"} / score=${excludedWeek.source_race_candidate.score}` : "n/a"}`,
       );
     }
     if (entry.baseline_mode === "fallback_all_weeks") {
