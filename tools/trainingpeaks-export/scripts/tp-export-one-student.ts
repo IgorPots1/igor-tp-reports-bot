@@ -1887,13 +1887,55 @@ async function locateSettingsScope(page: Page): Promise<Locator> {
   return page.locator("body");
 }
 
+function isWorkoutSummaryExportResponseUrl(rawUrl: string): boolean {
+  const normalizedUrl = rawUrl.toLowerCase();
+  return (
+    normalizedUrl.includes("/fitness/v1/export/") &&
+    normalizedUrl.includes("/workouts/") &&
+    !normalizedUrl.includes("/files/")
+  );
+}
+
 async function locateExportSectionByHeading(
   page: Page,
   headingText: string,
   _markerAttribute: string
 ): Promise<WorkoutSummarySectionResolution> {
   const quotedHeading = headingText.replace(/'/g, "\\'");
-  const sectionXpath = `(
+  const candidates: string[] = [];
+  const countSteps = [1, 2, 3, 4, 5, 6];
+
+  for (const startDateCount of countSteps) {
+    const sectionXpath = `(
+      //*[(self::h1 or self::h2 or self::h3 or self::h4 or self::h5 or self::h6 or @role='heading')
+         and normalize-space(.)='${quotedHeading}']
+      /ancestor::*[
+        (self::div or self::section or self::form or self::article or self::fieldset or self::li)
+        and count(.//input[@name='startDate'])=${startDateCount}
+        and count(.//input[@name='endDate'])=${startDateCount}
+        and count(.//button[normalize-space(.)='Export'] | .//a[normalize-space(.)='Export'] | .//*[@role='button' and normalize-space(.)='Export'])>=1
+      ][1]
+    )`;
+    const sectionLocator = page.locator(`xpath=${sectionXpath}`).first();
+    if (!(await isVisible(sectionLocator, 500))) {
+      continue;
+    }
+
+    const exportButtonCount = await sectionLocator
+      .locator('button:has-text("Export"), a:has-text("Export"), [role="button"]:has-text("Export")')
+      .count()
+      .catch(() => 0);
+    const candidateSummary = `${headingText} tight xpath section startDate=${startDateCount} endDate=${startDateCount} export=${exportButtonCount}`;
+    candidates.push(candidateSummary);
+
+    return {
+      section: sectionLocator,
+      candidates,
+      selectedCandidate: candidateSummary
+    };
+  }
+
+  const fallbackXpath = `(
     //*[(self::h1 or self::h2 or self::h3 or self::h4 or self::h5 or self::h6 or @role='heading')
        and normalize-space(.)='${quotedHeading}']
     /ancestor::*[
@@ -1901,29 +1943,28 @@ async function locateExportSectionByHeading(
       and .//input[@name='startDate']
       and .//input[@name='endDate']
       and (.//button[normalize-space(.)='Export'] or .//a[normalize-space(.)='Export'] or .//*[@role='button' and normalize-space(.)='Export'])
-    ]
-  )[1]`;
-  const sectionLocator = page.locator(`xpath=${sectionXpath}`).first();
-  if (!(await isVisible(sectionLocator, 1500))) {
+    ][1]
+  )`;
+  const fallbackSection = page.locator(`xpath=${fallbackXpath}`).first();
+  if (await isVisible(fallbackSection, 1500)) {
+    const startDateCount = await fallbackSection.locator('input[name="startDate"]').count().catch(() => 0);
+    const endDateCount = await fallbackSection.locator('input[name="endDate"]').count().catch(() => 0);
+    const exportButtonCount = await fallbackSection
+      .locator('button:has-text("Export"), a:has-text("Export"), [role="button"]:has-text("Export")')
+      .count()
+      .catch(() => 0);
+    const candidateSummary = `${headingText} fallback xpath section startDate=${startDateCount} endDate=${endDateCount} export=${exportButtonCount}`;
     return {
-      section: null,
-      candidates: [`no visible "${headingText}" export section matched`],
-      selectedCandidate: undefined
+      section: fallbackSection,
+      candidates: [candidateSummary],
+      selectedCandidate: candidateSummary
     };
   }
 
-  const startDateCount = await sectionLocator.locator('input[name="startDate"]').count().catch(() => 0);
-  const endDateCount = await sectionLocator.locator('input[name="endDate"]').count().catch(() => 0);
-  const exportButtonCount = await sectionLocator
-    .locator('button:has-text("Export"), a:has-text("Export"), [role="button"]:has-text("Export")')
-    .count()
-    .catch(() => 0);
-  const candidateSummary = `${headingText} xpath section startDate=${startDateCount} endDate=${endDateCount} export=${exportButtonCount}`;
-
   return {
-    section: sectionLocator,
-    candidates: [candidateSummary],
-    selectedCandidate: candidateSummary
+    section: null,
+    candidates: candidates.length > 0 ? candidates : [`no visible "${headingText}" export section matched`],
+    selectedCandidate: undefined
   };
 }
 
@@ -2613,6 +2654,23 @@ async function tryOpenExportData(page: Page): Promise<AutomationAttemptResult> {
   return { ok: true };
 }
 
+async function markWorkoutSummaryExportButton(section: Locator): Promise<Locator | null> {
+  const buttonLocators = [
+    section.locator('xpath=.//input[@name="startDate"][1]/ancestor::form[1]//button[normalize-space(.)="Export"]').first(),
+    section.locator('xpath=.//input[@name="startDate"][1]/ancestor::*[self::div or self::section or self::fieldset or self::li][1]//button[normalize-space(.)="Export"]').first(),
+    section.getByRole("button", { name: /^export$/i }).first(),
+    section.getByRole("link", { name: /^export$/i }).first()
+  ];
+
+  for (const candidate of buttonLocators) {
+    if (await isVisible(candidate, 700)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
 async function tryFillWorkoutSummaryDateRange(
   page: Page,
   fromIso: string,
@@ -2717,8 +2775,8 @@ async function tryClickWorkoutSummaryExport(
       .allInnerTexts()
       .then((values) => values.map((value) => value.replace(/\s+/g, " ").trim()).filter((value) => /^export$/i.test(value)))
       .catch(() => []),
-    selectedButtonText: undefined,
-    selectedButtonDisabled: undefined,
+    selectedButtonText: "Export",
+    selectedButtonDisabled: false,
     selectedButtonAriaDisabled: undefined,
     selectedButtonClass: undefined,
     selectedButtonFormInfo: undefined,
@@ -2749,20 +2807,7 @@ async function tryClickWorkoutSummaryExport(
     `Auto-export debug: Workout Summary startDate="${preClickDebug.startDateValue}" endDate="${preClickDebug.endDateValue}"`
   );
 
-  const buttonLocators = [
-    section.getByRole("button", { name: /^export$/i }).filter({ hasNot: section.getByText(/^Workout Files$/i) }),
-    section.getByRole("link", { name: /^export$/i }),
-    section.locator("button").filter({ hasText: /^export$/i }),
-    section.locator('[role="button"]').filter({ hasText: /^export$/i })
-  ];
-
-  let button: Locator | null = null;
-  for (const candidate of buttonLocators) {
-    if (await isVisible(candidate, 700)) {
-      button = candidate.first();
-      break;
-    }
-  }
+  const button = await markWorkoutSummaryExportButton(section);
 
   if (!button) {
     return { ok: false, reason: 'could not find the "Export" button inside "Workout Summary".' };
@@ -2833,11 +2878,9 @@ async function tryClickWorkoutSummaryExport(
   let clickError: string | undefined;
   const popupPromise = page.waitForEvent("popup", { timeout: 2000 }).then(() => true).catch(() => false);
   const exportApiResponsePromise = page
-    .waitForResponse(
-      (response) => response.url().includes("/fitness/v1/export/") && response.url().includes("/workouts/"),
-      { timeout: 15_000 }
-    )
+    .waitForResponse((response) => isWorkoutSummaryExportResponseUrl(response.url()), { timeout: 15_000 })
     .catch(() => null);
+  const downloadEventPromise = page.waitForEvent("download", { timeout: 120_000 }).catch(() => null);
 
   try {
     try {
@@ -2864,7 +2907,7 @@ async function tryClickWorkoutSummaryExport(
   }
 
   const matchedExportApiResponse = await exportApiResponsePromise;
-  const apiCapture = matchedExportApiResponse
+  let apiCapture: ExportApiCaptureResult = matchedExportApiResponse
     ? await captureAndMaybeSaveExportResponse({
         context,
         response: matchedExportApiResponse,
@@ -2880,7 +2923,28 @@ async function tryClickWorkoutSummaryExport(
         asyncJobDetected: false,
         asyncPollAttempted: false,
         fallbackReason: "did not observe the Workout Summary export API response after clicking Export."
-      } satisfies ExportApiCaptureResult;
+      };
+
+  if (!apiCapture.savedArtifactPath) {
+    const downloadEvent = await downloadEventPromise;
+    if (downloadEvent) {
+      try {
+        const suggestedName = downloadEvent.suggestedFilename();
+        const destinationPath = await uniquePathForFile(exportDir, suggestedName);
+        await downloadEvent.saveAs(destinationPath);
+        const kind: SummaryArtifactKind = path.extname(suggestedName).toLowerCase() === ".csv" ? "csv" : "zip";
+        debugLog(`Auto-export debug: saved Workout Summary from Playwright download event="${path.basename(destinationPath)}"`);
+        apiCapture = {
+          ...apiCapture,
+          savedArtifactPath: destinationPath,
+          savedArtifactKind: kind,
+          savedVia: "response-body"
+        };
+      } catch (error) {
+        debugLog(`Auto-export debug: Playwright download save failed="${summarizeErrorMessage(error)}"`);
+      }
+    }
+  }
 
   const validationMessagesAfterClick: string[] = [];
   const clickDebug: WorkoutSummaryClickDebug = {
@@ -3672,6 +3736,36 @@ async function main(): Promise<void> {
             `Auto-export: Workout Summary ${apiCapture.savedArtifactKind.toUpperCase()} saved automatically: ${path.basename(apiCapture.savedArtifactPath)}`
           );
         } else {
+          const summaryDownloadLinkResult = await waitForGeneratedWorkoutSummaryDownloadLink(page);
+          debugLog(
+            `Auto-export debug: Workout Summary download link visible=${summaryDownloadLinkResult.ok ? "yes" : "no"} exportComplete=${summaryDownloadLinkResult.exportCompleteVisible ? "yes" : "no"} instruction=${summaryDownloadLinkResult.downloadInstructionVisible ? "yes" : "no"}`
+          );
+          if (summaryDownloadLinkResult.candidateTexts?.length) {
+            debugLog(
+              `Auto-export debug: Workout Summary generated text candidates="${summaryDownloadLinkResult.candidateTexts.join(" | ")}"`
+            );
+          }
+          if (summaryDownloadLinkResult.candidateLinks?.length) {
+            debugLog(
+              `Auto-export debug: Workout Summary generated link candidates="${summaryDownloadLinkResult.candidateLinks.join(" | ")}"`
+            );
+          }
+          if (summaryDownloadLinkResult.ok && (summaryDownloadLinkResult.linkText || summaryDownloadLinkResult.linkHref)) {
+            debugLog(`Auto-export debug: Workout Summary generated link text="${summaryDownloadLinkResult.linkText ?? ""}"`);
+            if (summaryDownloadLinkResult.linkHref) {
+              debugLog(`Auto-export debug: Workout Summary generated link href="${summaryDownloadLinkResult.linkHref}"`);
+            }
+            const generatedSummaryLinkClickResult = await clickGeneratedWorkoutSummaryDownloadLink(page);
+            debugLog(
+              `Auto-export debug: Workout Summary generated link click mode=${generatedSummaryLinkClickResult.clickMode} succeeded=${generatedSummaryLinkClickResult.clickSucceeded ? "yes" : "no"}`
+            );
+            if (!generatedSummaryLinkClickResult.ok) {
+              debugLog(
+                `Auto-export debug: Workout Summary generated link click failed: ${generatedSummaryLinkClickResult.clickError ?? "(unknown reason)"}`
+              );
+            }
+          }
+
           const clickCompletedAt = Date.now();
           console.log("Auto-export: waiting for Workout Summary ZIP or CSV");
           const waitForArtifactResult = await waitForWorkoutSummaryArtifact(
