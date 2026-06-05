@@ -1,6 +1,7 @@
 import process from "node:process";
 
 import {
+  classifyTpWorkoutEvidence,
   evaluateOperationalSignalLifecycle,
   type OperationalSignalLifecycleInput,
 } from "@/features/trainingpeaks/operational-signal-lifecycle";
@@ -15,6 +16,21 @@ type Fixture = {
     requiresCoachClose?: boolean;
     blockedByNegative?: boolean;
     hideFromTpSignals?: boolean;
+  };
+};
+
+type ClassifierFixture = {
+  name: string;
+  input: Parameters<typeof classifyTpWorkoutEvidence>[0];
+  expected: {
+    sportClass: "running_like" | "strength_only" | "cross_training_or_other" | "unknown";
+    runningCompletionClass:
+      | "normal_planned_run"
+      | "modified_or_easy_run"
+      | "return_trial_run"
+      | "uncertain_running_completion"
+      | "not_running";
+    confidence?: "high" | "medium" | "low";
   };
 };
 
@@ -34,7 +50,7 @@ function mkInput(partial: Partial<OperationalSignalLifecycleInput>): Operational
 
 const fixtures: Fixture[] = [
   {
-    name: "Viktoria confirmed illness + running completion -> monitoring",
+    name: "Confirmed illness + normal planned run -> monitoring",
     input: mkInput({
       signalClass: "confirmed_illness",
       latestTpCompletionAfterOpen: {
@@ -42,8 +58,11 @@ const fixtures: Fixture[] = [
         workoutDate: "2026-06-04",
         title: "Easy Run",
         sportOrTypeCode: "run",
-        isRunningLike: true,
-        isStrengthLike: false,
+        sportClass: "running_like",
+        runningCompletionClass: "normal_planned_run",
+        classificationConfidence: "high",
+        classificationReasonCodes: ["fixture_running_structured"],
+        classificationInspectedFields: {},
         plannedVsCompletedDelta: "normal",
         evidenceFreshness: "ok",
       },
@@ -54,7 +73,7 @@ const fixtures: Fixture[] = [
     },
   },
   {
-    name: "Stepan ambiguous illness + clean next run -> resolved",
+    name: "Ambiguous illness + clean normal run -> resolved",
     input: mkInput({
       signalClass: "ambiguous_illness",
       latestTpCompletionAfterOpen: {
@@ -62,8 +81,11 @@ const fixtures: Fixture[] = [
         workoutDate: "2026-06-04",
         title: "Planned Run",
         sportOrTypeCode: "run",
-        isRunningLike: true,
-        isStrengthLike: false,
+        sportClass: "running_like",
+        runningCompletionClass: "normal_planned_run",
+        classificationConfidence: "high",
+        classificationReasonCodes: ["fixture_running_structured"],
+        classificationInspectedFields: {},
         plannedVsCompletedDelta: "normal",
         evidenceFreshness: "ok",
       },
@@ -74,7 +96,7 @@ const fixtures: Fixture[] = [
     },
   },
   {
-    name: "Injury + one easy return run -> monitoring and coach close required",
+    name: "Injury + TP-only running completion -> monitoring and coach close required",
     input: mkInput({
       signalClass: "injury_pain",
       latestTpCompletionAfterOpen: {
@@ -82,8 +104,11 @@ const fixtures: Fixture[] = [
         workoutDate: "2026-06-04",
         title: "Recovery Run",
         sportOrTypeCode: "run",
-        isRunningLike: true,
-        isStrengthLike: false,
+        sportClass: "running_like",
+        runningCompletionClass: "modified_or_easy_run",
+        classificationConfidence: "medium",
+        classificationReasonCodes: ["fixture_modified_easy"],
+        classificationInspectedFields: {},
         plannedVsCompletedDelta: "modified_easy",
         evidenceFreshness: "ok",
       },
@@ -104,8 +129,11 @@ const fixtures: Fixture[] = [
         workoutDate: "2026-06-04",
         title: "Easy Run",
         sportOrTypeCode: "run",
-        isRunningLike: true,
-        isStrengthLike: false,
+        sportClass: "running_like",
+        runningCompletionClass: "normal_planned_run",
+        classificationConfidence: "high",
+        classificationReasonCodes: ["fixture_running_structured"],
+        classificationInspectedFields: {},
         plannedVsCompletedDelta: "normal",
         evidenceFreshness: "ok",
       },
@@ -131,8 +159,11 @@ const fixtures: Fixture[] = [
         workoutDate: "2026-06-04",
         title: "Strength Session",
         sportOrTypeCode: "strength",
-        isRunningLike: false,
-        isStrengthLike: true,
+        sportClass: "strength_only",
+        runningCompletionClass: "not_running",
+        classificationConfidence: "high",
+        classificationReasonCodes: ["fixture_strength_structured"],
+        classificationInspectedFields: {},
         plannedVsCompletedDelta: "normal",
         evidenceFreshness: "ok",
       },
@@ -144,7 +175,7 @@ const fixtures: Fixture[] = [
     },
   },
   {
-    name: "Modified easy completion for ambiguous illness is capped at monitoring",
+    name: "Ambiguous illness + modified easy completion -> monitoring",
     input: mkInput({
       signalClass: "ambiguous_illness",
       latestTpCompletionAfterOpen: {
@@ -152,9 +183,35 @@ const fixtures: Fixture[] = [
         workoutDate: "2026-06-04",
         title: "Short Easy",
         sportOrTypeCode: "run",
-        isRunningLike: true,
-        isStrengthLike: false,
+        sportClass: "running_like",
+        runningCompletionClass: "modified_or_easy_run",
+        classificationConfidence: "medium",
+        classificationReasonCodes: ["fixture_modified_easy"],
+        classificationInspectedFields: {},
         plannedVsCompletedDelta: "modified_easy",
+        evidenceFreshness: "ok",
+      },
+    }),
+    expected: {
+      proposedLifecycle: "monitoring_after_return",
+      hideFromTpSignals: false,
+    },
+  },
+  {
+    name: "Ambiguous illness + uncertain running completion -> monitoring",
+    input: mkInput({
+      signalClass: "ambiguous_illness",
+      latestTpCompletionAfterOpen: {
+        workoutId: "107",
+        workoutDate: "2026-06-04",
+        title: "Run",
+        sportOrTypeCode: "run",
+        sportClass: "running_like",
+        runningCompletionClass: "uncertain_running_completion",
+        classificationConfidence: "low",
+        classificationReasonCodes: ["fixture_uncertain_running"],
+        classificationInspectedFields: {},
+        plannedVsCompletedDelta: "unknown",
         evidenceFreshness: "ok",
       },
     }),
@@ -203,8 +260,110 @@ const fixtures: Fixture[] = [
   },
 ];
 
+const classifierFixtures: ClassifierFixture[] = [
+  {
+    name: "Structured running type id -> running_like high confidence",
+    input: {
+      workoutTypeValueId: 3,
+      title: "Anything",
+      isCompleted: true,
+      isPlanned: true,
+      plannedVsCompletedDelta: "normal",
+    },
+    expected: {
+      sportClass: "running_like",
+      runningCompletionClass: "normal_planned_run",
+      confidence: "high",
+    },
+  },
+  {
+    name: "Unknown structured + Russian running title -> running_like medium",
+    input: {
+      sportOrTypeCode: "unknown code",
+      title: "Легкий бег 40 мин",
+      isCompleted: true,
+      isPlanned: true,
+      plannedVsCompletedDelta: "unknown",
+    },
+    expected: {
+      sportClass: "running_like",
+      runningCompletionClass: "modified_or_easy_run",
+      confidence: "medium",
+    },
+  },
+  {
+    name: "Unknown structured + English running title -> running_like medium",
+    input: {
+      sportOrTypeCode: "unknown code",
+      title: "Easy Run 30 min",
+      isCompleted: true,
+      isPlanned: false,
+      plannedVsCompletedDelta: "unknown",
+    },
+    expected: {
+      sportClass: "running_like",
+      runningCompletionClass: "modified_or_easy_run",
+      confidence: "medium",
+    },
+  },
+  {
+    name: "Structured strength should not be overridden by generic title",
+    input: {
+      sportOrTypeCode: "strength",
+      title: "Warmup",
+      isCompleted: true,
+      isPlanned: true,
+      plannedVsCompletedDelta: "normal",
+    },
+    expected: {
+      sportClass: "strength_only",
+      runningCompletionClass: "not_running",
+      confidence: "high",
+    },
+  },
+  {
+    name: "Strength title only -> strength_only",
+    input: {
+      title: "Gym mobility core",
+      isCompleted: true,
+      plannedVsCompletedDelta: "unknown",
+    },
+    expected: {
+      sportClass: "strength_only",
+      runningCompletionClass: "not_running",
+    },
+  },
+  {
+    name: "Cross-training title only -> not running",
+    input: {
+      title: "Bike endurance ride",
+      isCompleted: true,
+      plannedVsCompletedDelta: "unknown",
+    },
+    expected: {
+      sportClass: "cross_training_or_other",
+      runningCompletionClass: "not_running",
+    },
+  },
+];
+
 function run(): void {
   const failures: string[] = [];
+  for (const fixture of classifierFixtures) {
+    const actual = classifyTpWorkoutEvidence(fixture.input);
+    if (actual.sportClass !== fixture.expected.sportClass) {
+      failures.push(`${fixture.name}: sportClass=${actual.sportClass} expected=${fixture.expected.sportClass}`);
+    }
+    if (actual.runningCompletionClass !== fixture.expected.runningCompletionClass) {
+      failures.push(
+        `${fixture.name}: runningCompletionClass=${actual.runningCompletionClass} expected=${fixture.expected.runningCompletionClass}`
+      );
+    }
+    if (fixture.expected.confidence && actual.confidence !== fixture.expected.confidence) {
+      failures.push(`${fixture.name}: confidence=${actual.confidence} expected=${fixture.expected.confidence}`);
+    }
+  }
+
   for (const fixture of fixtures) {
     const actual = evaluateOperationalSignalLifecycle(fixture.input);
     if (actual.proposedLifecycle !== fixture.expected.proposedLifecycle) {
@@ -247,7 +406,7 @@ function run(): void {
     return;
   }
 
-  console.log(`${LOG_PREFIX} PASS fixtures=${fixtures.length}`);
+  console.log(`${LOG_PREFIX} PASS fixtures=${fixtures.length} classifier_fixtures=${classifierFixtures.length}`);
 }
 
 run();

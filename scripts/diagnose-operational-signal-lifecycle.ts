@@ -3,6 +3,7 @@ import path from "node:path";
 import process from "node:process";
 
 import {
+  classifyTpWorkoutEvidence,
   evaluateOperationalSignalLifecycle,
   type EvidenceFreshness,
   type OperationalSignalClass,
@@ -39,6 +40,11 @@ type DiagnosticRow = {
   opened_at: string;
   latest_tp_completion_after_open: string | null;
   workout_type: string | null;
+  workout_evidence_summary: string | null;
+  running_completion_class: string | null;
+  classification_confidence: "high" | "medium" | "low" | null;
+  classification_reason_codes: string | null;
+  transition_explanation: string;
   planned_vs_completed_delta: PlannedVsCompletedDelta | null;
   negative_message_after_completion: string | null;
   missed_skipped_after_return: boolean;
@@ -49,8 +55,6 @@ type DiagnosticRow = {
   reason: string;
 };
 
-const RUN_KEYWORDS = ["run", "running", "jog", "бег", "пробеж"];
-const STRENGTH_KEYWORDS = ["strength", "gym", "crossfit", "сил", "зал", "weights"];
 const RECOVERY_PATTERNS = [
   /все\s*ок/iu,
   /всё\s*ок/iu,
@@ -242,18 +246,6 @@ function classifySignal(signal: TrainingPeaksStudentOperationalSignal): Operatio
   return "unknown";
 }
 
-function isRunningLikeWorkout(workout: TrainingPeaksWorkoutCacheRow): boolean {
-  const sport = (workout.sportOrTypeCode ?? "").toLowerCase();
-  const title = (workout.title ?? "").toLowerCase();
-  return RUN_KEYWORDS.some((part) => sport.includes(part) || title.includes(part));
-}
-
-function isStrengthLikeWorkout(workout: TrainingPeaksWorkoutCacheRow): boolean {
-  const sport = (workout.sportOrTypeCode ?? "").toLowerCase();
-  const title = (workout.title ?? "").toLowerCase();
-  return STRENGTH_KEYWORDS.some((part) => sport.includes(part) || title.includes(part));
-}
-
 function parseNumberish(value: number | string | null | undefined): number | null {
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : null;
@@ -317,15 +309,49 @@ function buildCompletionInfo(
     return null;
   }
   const latest = candidates[candidates.length - 1]!;
+  const sourceSnapshot =
+    latest.sourceSnapshot && typeof latest.sourceSnapshot === "object" && !Array.isArray(latest.sourceSnapshot)
+      ? (latest.sourceSnapshot as Record<string, unknown>)
+      : {};
+  const evidenceClassification = classifyTpWorkoutEvidence({
+    workoutId: String(latest.trainingPeaksWorkoutId),
+    workoutDate: latest.workoutDate,
+    title: latest.title,
+    description: typeof sourceSnapshot.description === "string" ? sourceSnapshot.description : null,
+    coachComments: typeof sourceSnapshot.coachComments === "string" ? sourceSnapshot.coachComments : null,
+    sportOrTypeCode: latest.sportOrTypeCode,
+    workoutTypeValueId: latest.workoutTypeValueId,
+    workoutSubTypeId: latest.workoutSubTypeId,
+    snapshotWorkoutTypeValueId:
+      typeof sourceSnapshot.workoutTypeValueId === "number" ? sourceSnapshot.workoutTypeValueId : null,
+    snapshotRawWorkoutTypeValueId:
+      typeof sourceSnapshot.rawWorkoutTypeValueId === "number" ? sourceSnapshot.rawWorkoutTypeValueId : null,
+    snapshotRawWorkoutSubTypeId:
+      typeof sourceSnapshot.rawWorkoutSubTypeId === "number" ? sourceSnapshot.rawWorkoutSubTypeId : null,
+    snapshotRawCode: typeof sourceSnapshot.rawCode === "string" ? sourceSnapshot.rawCode : null,
+    isPlanned: latest.isPlanned,
+    isCompleted: latest.isCompleted,
+    plannedVsCompletedDelta: deriveDelta(latest),
+    complianceDurationPercent: parseNumberish(latest.complianceDurationPercent),
+    complianceDistancePercent: parseNumberish(latest.complianceDistancePercent),
+    plannedTimeRaw: parseNumberish(latest.plannedTimeRaw),
+    completedTimeRaw: parseNumberish(latest.completedTimeRaw),
+    plannedDistanceRaw: parseNumberish(latest.plannedDistanceRaw),
+    completedDistanceRaw: parseNumberish(latest.completedDistanceRaw),
+  });
   return {
     workoutId: String(latest.trainingPeaksWorkoutId),
     workoutDate: latest.workoutDate,
     title: latest.title,
     sportOrTypeCode: latest.sportOrTypeCode,
-    isRunningLike: isRunningLikeWorkout(latest),
-    isStrengthLike: isStrengthLikeWorkout(latest),
+    sportClass: evidenceClassification.sportClass,
+    runningCompletionClass: evidenceClassification.runningCompletionClass,
+    classificationConfidence: evidenceClassification.confidence,
+    classificationReasonCodes: evidenceClassification.reasonCodes,
+    classificationInspectedFields: evidenceClassification.inspectedFields,
     plannedVsCompletedDelta: deriveDelta(latest),
     evidenceFreshness: deriveFreshness(latest, asOfDate),
+    completionObservedAt: latest.startTime ?? latest.startTimePlanned ?? null,
   };
 }
 
@@ -347,15 +373,21 @@ function findRecoveryMessage(
 
 function findNegativeAfterCompletion(
   observations: Awaited<ReturnType<typeof listTrainingPeaksTelegramContextObservationsForStudent>>,
-  completionDate: string | null
+  completionDate: string | null,
+  completionObservedAt: string | null,
+  openedAt: string
 ): OperationalSignalLifecycleInput["negativeMessageAfterCompletion"] {
   if (!completionDate) {
     return null;
   }
-  const completionStart = Date.parse(`${completionDate}T00:00:00.000Z`);
+  const completionStart = Number.isFinite(Date.parse(completionObservedAt ?? ""))
+    ? Date.parse(completionObservedAt as string)
+    : Date.parse(`${completionDate}T00:00:00.000Z`);
+  const openedAtMs = Date.parse(openedAt);
+  const threshold = Number.isFinite(openedAtMs) ? Math.max(completionStart, openedAtMs) : completionStart;
   for (const observation of observations) {
     const observedAt = Date.parse(observation.observedAt);
-    if (!Number.isFinite(observedAt) || observedAt < completionStart) {
+    if (!Number.isFinite(observedAt) || observedAt < threshold) {
       continue;
     }
     const text = `${observation.textPreview ?? ""} ${(observation.labels ?? []).join(" ")}`;
@@ -382,8 +414,73 @@ function computeMissedSkippedReturnWorkout(
     if (!workout.isPlanned || workout.isCompleted) {
       return false;
     }
-    return isRunningLikeWorkout(workout);
+    const sourceSnapshot =
+      workout.sourceSnapshot && typeof workout.sourceSnapshot === "object" && !Array.isArray(workout.sourceSnapshot)
+        ? (workout.sourceSnapshot as Record<string, unknown>)
+        : {};
+    const classification = classifyTpWorkoutEvidence({
+      workoutId: String(workout.trainingPeaksWorkoutId),
+      workoutDate: workout.workoutDate,
+      title: workout.title,
+      description: typeof sourceSnapshot.description === "string" ? sourceSnapshot.description : null,
+      coachComments: typeof sourceSnapshot.coachComments === "string" ? sourceSnapshot.coachComments : null,
+      sportOrTypeCode: workout.sportOrTypeCode,
+      workoutTypeValueId: workout.workoutTypeValueId,
+      workoutSubTypeId: workout.workoutSubTypeId,
+      snapshotWorkoutTypeValueId:
+        typeof sourceSnapshot.workoutTypeValueId === "number" ? sourceSnapshot.workoutTypeValueId : null,
+      snapshotRawWorkoutTypeValueId:
+        typeof sourceSnapshot.rawWorkoutTypeValueId === "number" ? sourceSnapshot.rawWorkoutTypeValueId : null,
+      snapshotRawWorkoutSubTypeId:
+        typeof sourceSnapshot.rawWorkoutSubTypeId === "number" ? sourceSnapshot.rawWorkoutSubTypeId : null,
+      snapshotRawCode: typeof sourceSnapshot.rawCode === "string" ? sourceSnapshot.rawCode : null,
+      isPlanned: workout.isPlanned,
+      isCompleted: workout.isCompleted,
+      plannedVsCompletedDelta: deriveDelta(workout),
+      complianceDurationPercent: parseNumberish(workout.complianceDurationPercent),
+      complianceDistancePercent: parseNumberish(workout.complianceDistancePercent),
+      plannedTimeRaw: parseNumberish(workout.plannedTimeRaw),
+      completedTimeRaw: parseNumberish(workout.completedTimeRaw),
+      plannedDistanceRaw: parseNumberish(workout.plannedDistanceRaw),
+      completedDistanceRaw: parseNumberish(workout.completedDistanceRaw),
+    });
+    return classification.sportClass === "running_like";
   });
+}
+
+function explainTransition(
+  input: OperationalSignalLifecycleInput,
+  row: DiagnosticRow,
+  proposalReason: string
+): string {
+  if (!input.latestTpCompletionAfterOpen) {
+    return `No TP completion after signal open (${input.openedAt.slice(0, 10)}), lifecycle kept.`;
+  }
+  if (input.negativeMessageAfterCompletion) {
+    return `Negative Telegram after completion (${input.negativeMessageAfterCompletion.observedAt}) blocks transition.`;
+  }
+  if (input.missedOrSkippedReturnWorkout) {
+    return "Missed/skipped planned running workout blocks closure.";
+  }
+  if (input.latestTpCompletionAfterOpen.sportClass === "strength_only") {
+    return "Latest completion is strength-only, does not count as return-to-run evidence.";
+  }
+  if (input.latestTpCompletionAfterOpen.sportClass === "cross_training_or_other") {
+    return "Latest completion is cross-training/other, not running evidence for this lifecycle.";
+  }
+  if (input.latestTpCompletionAfterOpen.sportClass === "unknown") {
+    return "Latest completion exists, but sport classification is unknown.";
+  }
+  if (input.latestTpCompletionAfterOpen.runningCompletionClass === "uncertain_running_completion") {
+    return "Running-like completion exists, but planned-vs-completed evidence is uncertain.";
+  }
+  if (input.latestTpCompletionAfterOpen.runningCompletionClass === "modified_or_easy_run") {
+    return "Running completion appears modified/easy, so transition is capped at monitoring.";
+  }
+  if (input.latestTpCompletionAfterOpen.runningCompletionClass === "return_trial_run") {
+    return "Running completion appears to be a return trial run; conservative monitoring transition used.";
+  }
+  return proposalReason || row.reason;
 }
 
 async function buildRows(options: CliOptions): Promise<DiagnosticRow[]> {
@@ -421,7 +518,9 @@ async function buildRows(options: CliOptions): Promise<DiagnosticRow[]> {
     const explicitRecovery = findRecoveryMessage(observations);
     const negativeAfterCompletion = findNegativeAfterCompletion(
       observations,
-      completion?.workoutDate ?? null
+      completion?.workoutDate ?? null,
+      completion?.completionObservedAt ?? null,
+      openedAt
     );
     const missedSkipped = computeMissedSkippedReturnWorkout(workouts, openedDate, options.asOfDate);
     const lifecycleInput: OperationalSignalLifecycleInput = {
@@ -439,6 +538,32 @@ async function buildRows(options: CliOptions): Promise<DiagnosticRow[]> {
       missedOrSkippedReturnWorkout: missedSkipped,
     };
     const proposal = evaluateOperationalSignalLifecycle(lifecycleInput);
+    const workoutEvidenceSummary = completion
+      ? `sport=${completion.sportClass}; running=${completion.runningCompletionClass}; confidence=${completion.classificationConfidence}`
+      : null;
+    const reasonCodes = completion ? completion.classificationReasonCodes.join(",") : null;
+    const transitionExplanation = explainTransition(lifecycleInput, {
+      episode_key: "",
+      student: student.studentName,
+      signal_class: lifecycleInput.signalClass,
+      current_lifecycle: lifecycleInput.currentLifecycle,
+      opened_at: lifecycleInput.openedAt,
+      latest_tp_completion_after_open: completion ? `${completion.workoutDate} #${completion.workoutId}` : null,
+      workout_type: completion ? `${completion.sportOrTypeCode ?? "unknown"} ${completion.title ?? ""}`.trim() : null,
+      workout_evidence_summary: workoutEvidenceSummary,
+      running_completion_class: completion?.runningCompletionClass ?? null,
+      classification_confidence: completion?.classificationConfidence ?? null,
+      classification_reason_codes: reasonCodes,
+      transition_explanation: "",
+      planned_vs_completed_delta: completion?.plannedVsCompletedDelta ?? null,
+      negative_message_after_completion: negativeAfterCompletion?.reason ?? null,
+      missed_skipped_after_return: missedSkipped,
+      evidence_freshness: completion?.evidenceFreshness ?? "missing",
+      proposed_transition: proposal.proposedLifecycle,
+      confidence: proposal.confidence,
+      hide_from_tp_signals: proposal.hideFromTpSignals,
+      reason: proposal.reason,
+    }, proposal.reason);
     rows.push({
       episode_key: lifecycleInput.episodeKey ?? null,
       student: student.studentName,
@@ -449,6 +574,11 @@ async function buildRows(options: CliOptions): Promise<DiagnosticRow[]> {
       workout_type: completion
         ? `${completion.sportOrTypeCode ?? "unknown"} ${completion.title ?? ""}`.trim()
         : null,
+      workout_evidence_summary: workoutEvidenceSummary,
+      running_completion_class: completion?.runningCompletionClass ?? null,
+      classification_confidence: completion?.classificationConfidence ?? null,
+      classification_reason_codes: reasonCodes,
+      transition_explanation: transitionExplanation,
       planned_vs_completed_delta: completion?.plannedVsCompletedDelta ?? null,
       negative_message_after_completion: negativeAfterCompletion?.reason ?? null,
       missed_skipped_after_return: missedSkipped,
@@ -471,6 +601,10 @@ function printTable(rows: DiagnosticRow[]): void {
     "opened_at",
     "latest_tp_completion_after_open",
     "workout_type",
+    "workout_evidence_summary",
+    "running_completion_class",
+    "classification_confidence",
+    "classification_reason_codes",
     "planned_vs_completed_delta",
     "negative_message_after_completion",
     "missed_skipped_after_return",
@@ -478,6 +612,7 @@ function printTable(rows: DiagnosticRow[]): void {
     "proposed_transition",
     "confidence",
     "hide_from_tp_signals",
+    "transition_explanation",
     "reason",
   ];
   console.log(header.join("\t"));
@@ -491,6 +626,10 @@ function printTable(rows: DiagnosticRow[]): void {
         row.opened_at,
         row.latest_tp_completion_after_open ?? "",
         row.workout_type ?? "",
+        row.workout_evidence_summary ?? "",
+        row.running_completion_class ?? "",
+        row.classification_confidence ?? "",
+        row.classification_reason_codes ?? "",
         row.planned_vs_completed_delta ?? "",
         row.negative_message_after_completion ?? "",
         row.missed_skipped_after_return ? "yes" : "no",
@@ -498,6 +637,7 @@ function printTable(rows: DiagnosticRow[]): void {
         row.proposed_transition,
         row.confidence,
         row.hide_from_tp_signals ? "yes" : "no",
+        row.transition_explanation,
         row.reason,
       ].join("\t")
     );
