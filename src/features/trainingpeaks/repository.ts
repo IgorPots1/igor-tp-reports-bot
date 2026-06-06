@@ -6143,6 +6143,30 @@ function isTrainingPeaksMissingRelationError(error: {
   );
 }
 
+function formatTrainingPeaksDbError(
+  error: {
+    code?: string | null;
+    message?: string | null;
+    details?: string | null;
+    hint?: string | null;
+  } | null,
+  operation: string,
+  context: Record<string, unknown>
+): string {
+  const contextPairs = Object.entries(context).map(([key, value]) => `${key}=${String(value ?? "null")}`);
+  const contextSuffix = contextPairs.length > 0 ? ` (${contextPairs.join(" ")})` : "";
+  if (!error) {
+    return `${operation}${contextSuffix}`;
+  }
+  const parts = [
+    `message=${error.message ?? "unknown"}`,
+    `code=${error.code ?? "unknown"}`,
+    `details=${error.details ?? "-"}`,
+    `hint=${error.hint ?? "-"}`,
+  ];
+  return `${operation}${contextSuffix}: ${parts.join(" ")}`;
+}
+
 function mapTrainingPeaksCoachActionTakenRow(
   row: TrainingPeaksCoachActionTakenRow
 ): TrainingPeaksCoachActionTaken {
@@ -7405,7 +7429,7 @@ export async function applyTrainingPeaksOperationalSignalLifecycleTransition(inp
     }
   }
 
-  const { data: updatedData, error: updatedError } = await supabase
+  const updatedQuery = supabase
     .from("trainingpeaks_student_operational_signals")
     .update({
       lifecycle_state: input.toLifecycleState,
@@ -7417,18 +7441,58 @@ export async function applyTrainingPeaksOperationalSignalLifecycleTransition(inp
       requires_coach_close: input.requiresCoachClose,
     })
     .eq("id", input.signalId)
-    .eq("student_id", input.studentId)
-    .eq("lifecycle_state", before.lifecycleState)
-    .select("*")
-    .single();
+    .eq("student_id", input.studentId);
+  const lifecycleMatchedUpdate = before.lifecycleState
+    ? updatedQuery.eq("lifecycle_state", before.lifecycleState)
+    : updatedQuery.is("lifecycle_state", null);
+  const { data: updatedData, error: updatedError } = await lifecycleMatchedUpdate.select("id").maybeSingle();
   if (updatedError) {
     if (isTrainingPeaksMissingRelationError(updatedError)) {
       throw new Error(
         "trainingpeaks_student_operational_signals table is missing; apply Supabase migration first"
       );
     }
-    throw new Error(`Failed to update operational signal lifecycle state: ${updatedError.message}`);
+    throw new Error(
+      formatTrainingPeaksDbError(updatedError, "Failed to update operational signal lifecycle state", {
+        signalId: input.signalId,
+        studentId: input.studentId,
+        expectedFromLifecycle: input.fromLifecycleState,
+      })
+    );
   }
+  if (!updatedData) {
+    throw new Error(
+      formatTrainingPeaksDbError(null, "Lifecycle apply update affected zero rows", {
+        signalId: input.signalId,
+        studentId: input.studentId,
+        expectedFromLifecycle: input.fromLifecycleState,
+      })
+    );
+  }
+
+  const { data: afterData, error: afterError } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .select("*")
+    .eq("id", input.signalId)
+    .eq("student_id", input.studentId)
+    .maybeSingle();
+  if (afterError) {
+    throw new Error(
+      formatTrainingPeaksDbError(afterError, "Lifecycle apply post-read failed", {
+        signalId: input.signalId,
+        studentId: input.studentId,
+      })
+    );
+  }
+  if (!afterData) {
+    throw new Error(
+      formatTrainingPeaksDbError(null, "Lifecycle apply post-read returned zero rows", {
+        signalId: input.signalId,
+        studentId: input.studentId,
+      })
+    );
+  }
+  const after = mapTrainingPeaksStudentOperationalSignalRow(afterData as TrainingPeaksStudentOperationalSignalRow);
 
   const transitionInsert = {
     signal_id: input.signalId,
@@ -7447,14 +7511,38 @@ export async function applyTrainingPeaksOperationalSignalLifecycleTransition(inp
     .from("trainingpeaks_student_operational_signal_lifecycle_transitions")
     .insert(transitionInsert)
     .select("*")
-    .single();
+    .maybeSingle();
+
+  const rollbackSignalLifecycleUpdate = async (): Promise<void> => {
+    const { error: rollbackError } = await supabase
+      .from("trainingpeaks_student_operational_signals")
+      .update({
+        lifecycle_state: beforeRow.lifecycle_state,
+        lifecycle_state_updated_at: beforeRow.lifecycle_state_updated_at,
+        lifecycle_applied_at: beforeRow.lifecycle_applied_at,
+        lifecycle_meta: beforeRow.lifecycle_meta ?? {},
+        resolved_at: beforeRow.resolved_at,
+        resolved_reason: beforeRow.resolved_reason,
+        requires_coach_close: beforeRow.requires_coach_close,
+      })
+      .eq("id", input.signalId)
+      .eq("student_id", input.studentId);
+    if (rollbackError) {
+      throw new Error(
+        formatTrainingPeaksDbError(rollbackError, "Lifecycle apply rollback failed", {
+          signalId: input.signalId,
+          studentId: input.studentId,
+        })
+      );
+    }
+  };
   if (transitionError) {
     if (transitionError.code === "23505") {
       const existingTransition = await getLatestTrainingPeaksOperationalSignalLifecycleTransition(input.signalId);
       return {
         outcome: "idempotent",
         before,
-        after: mapTrainingPeaksStudentOperationalSignalRow(updatedData as TrainingPeaksStudentOperationalSignalRow),
+        after,
         transition: existingTransition,
       };
     }
@@ -7463,13 +7551,50 @@ export async function applyTrainingPeaksOperationalSignalLifecycleTransition(inp
         "trainingpeaks_student_operational_signal_lifecycle_transitions table is missing; apply Supabase migration first"
       );
     }
-    throw new Error(`Failed to insert lifecycle transition row: ${transitionError.message}`);
+    try {
+      await rollbackSignalLifecycleUpdate();
+    } catch (rollbackFailure) {
+      throw new Error(
+        `${formatTrainingPeaksDbError(transitionError, "Failed to insert lifecycle transition row", {
+          signalId: input.signalId,
+          studentId: input.studentId,
+          fromLifecycleState: input.fromLifecycleState,
+          toLifecycleState: input.toLifecycleState,
+        })}; rollback_error=${rollbackFailure instanceof Error ? rollbackFailure.message : String(rollbackFailure)}`
+      );
+    }
+    throw new Error(
+      formatTrainingPeaksDbError(transitionError, "Failed to insert lifecycle transition row", {
+        signalId: input.signalId,
+        studentId: input.studentId,
+        fromLifecycleState: input.fromLifecycleState,
+        toLifecycleState: input.toLifecycleState,
+      })
+    );
+  }
+  if (!transitionData) {
+    try {
+      await rollbackSignalLifecycleUpdate();
+    } catch (rollbackFailure) {
+      throw new Error(
+        `${formatTrainingPeaksDbError(null, "Lifecycle transition insert returned zero rows", {
+          signalId: input.signalId,
+          studentId: input.studentId,
+        })}; rollback_error=${rollbackFailure instanceof Error ? rollbackFailure.message : String(rollbackFailure)}`
+      );
+    }
+    throw new Error(
+      formatTrainingPeaksDbError(null, "Lifecycle transition insert returned zero rows", {
+        signalId: input.signalId,
+        studentId: input.studentId,
+      })
+    );
   }
 
   return {
     outcome: "applied",
     before,
-    after: mapTrainingPeaksStudentOperationalSignalRow(updatedData as TrainingPeaksStudentOperationalSignalRow),
+    after,
     transition: mapTrainingPeaksOperationalSignalLifecycleTransitionRow(
       transitionData as TrainingPeaksOperationalSignalLifecycleTransitionRow
     ),

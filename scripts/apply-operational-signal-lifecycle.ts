@@ -243,7 +243,7 @@ async function main(): Promise<void> {
     toLifecycleState: proposal.proposedLifecycle,
     reason: proposal.reason,
     reasonCodes,
-    actor: "manual_apply_script_v1",
+    actor: "coach",
     evidenceSnapshot: proposal.evidenceRefs,
     dryRunFingerprint,
     lifecycleMetaPatch: {

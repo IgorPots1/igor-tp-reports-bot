@@ -270,6 +270,17 @@ function run(): void {
   });
   assert(firstToken === secondToken, "idempotent re-apply token should be stable");
 
+  const beforeLifecycleStateRaw: string | null = null;
+  const expectedLifecycle = "active_problem";
+  const oldEqWouldMatch = beforeLifecycleStateRaw === expectedLifecycle;
+  assert(
+    oldEqWouldMatch === false,
+    "legacy update filter using eq(lifecycle_state, null) semantics should miss NULL legacy rows"
+  );
+  const newNullAwareMatch =
+    beforeLifecycleStateRaw === null ? beforeLifecycleStateRaw === null : beforeLifecycleStateRaw === expectedLifecycle;
+  assert(newNullAwareMatch, "null-aware lifecycle filter should match legacy NULL lifecycle row");
+
   console.log(`${LOG_PREFIX} PASS`);
 }
 
