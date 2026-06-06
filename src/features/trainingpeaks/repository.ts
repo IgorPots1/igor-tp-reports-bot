@@ -7601,6 +7601,183 @@ export async function applyTrainingPeaksOperationalSignalLifecycleTransition(inp
   };
 }
 
+export async function supersedeTrainingPeaksOperationalSignal(input: {
+  sourceSignalId: string;
+  targetSignalId: string;
+  reason: string;
+  dryRunFingerprint: string;
+  actor?: string;
+  source?: string;
+  appliedAt?: string;
+}): Promise<{
+  outcome: "applied" | "idempotent";
+  before: TrainingPeaksStudentOperationalSignal;
+  after: TrainingPeaksStudentOperationalSignal;
+}> {
+  const supabase = createSupabaseServerClient();
+  const appliedAt = input.appliedAt ?? new Date().toISOString();
+  const actor = input.actor ?? "coach";
+  const sourceTag = input.source ?? "guarded_supersede_apply_v1";
+  const normalizedReason = input.reason.trim().replace(/\s+/gu, " ");
+
+  const { data: sourceData, error: sourceError } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .select("*")
+    .eq("id", input.sourceSignalId)
+    .maybeSingle();
+  if (sourceError) {
+    if (isTrainingPeaksMissingRelationError(sourceError)) {
+      throw new Error(
+        "trainingpeaks_student_operational_signals table is missing; apply Supabase migration first"
+      );
+    }
+    throw new Error(`Failed to load source operational signal before supersede apply: ${sourceError.message}`);
+  }
+  if (!sourceData) {
+    throw new Error(`Source operational signal not found for supersede apply: ${input.sourceSignalId}`);
+  }
+
+  const { data: targetData, error: targetError } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .select("*")
+    .eq("id", input.targetSignalId)
+    .maybeSingle();
+  if (targetError) {
+    if (isTrainingPeaksMissingRelationError(targetError)) {
+      throw new Error(
+        "trainingpeaks_student_operational_signals table is missing; apply Supabase migration first"
+      );
+    }
+    throw new Error(`Failed to load target operational signal before supersede apply: ${targetError.message}`);
+  }
+  if (!targetData) {
+    throw new Error(`Target operational signal not found for supersede apply: ${input.targetSignalId}`);
+  }
+
+  const sourceRow = sourceData as TrainingPeaksStudentOperationalSignalRow;
+  const targetRow = targetData as TrainingPeaksStudentOperationalSignalRow;
+  const before = mapTrainingPeaksStudentOperationalSignalRow(sourceRow);
+
+  if (before.studentId !== targetRow.student_id) {
+    throw new Error(
+      `Supersede apply precondition failed: source student ${before.studentId} != target student ${targetRow.student_id}`
+    );
+  }
+  if (input.sourceSignalId === input.targetSignalId) {
+    throw new Error("Supersede apply precondition failed: source and target ids must differ");
+  }
+
+  const lifecycleMetaBefore =
+    sourceRow.lifecycle_meta && typeof sourceRow.lifecycle_meta === "object" && !Array.isArray(sourceRow.lifecycle_meta)
+      ? (sourceRow.lifecycle_meta as Record<string, unknown>)
+      : {};
+  const existingSupersededBy =
+    typeof lifecycleMetaBefore.superseded_by_signal_id === "string"
+      ? lifecycleMetaBefore.superseded_by_signal_id.trim()
+      : typeof before.metadata.superseded_by_signal_id === "string"
+        ? before.metadata.superseded_by_signal_id.trim()
+        : typeof before.structuredPayload.superseded_by_signal_id === "string"
+          ? before.structuredPayload.superseded_by_signal_id.trim()
+          : null;
+
+  if (existingSupersededBy && existingSupersededBy !== input.targetSignalId) {
+    throw new Error(
+      `Supersede apply precondition failed: source already superseded by ${existingSupersededBy}`
+    );
+  }
+  if (before.lifecycleState === "resolved") {
+    throw new Error("Supersede apply precondition failed: source signal is already resolved");
+  }
+
+  const supersedeMeta = {
+    superseded_by_signal_id: input.targetSignalId,
+    superseded_at: appliedAt,
+    superseded_reason: normalizedReason,
+    superseded_actor: actor,
+    superseded_source: sourceTag,
+    supersede_dry_run_fingerprint: input.dryRunFingerprint,
+  };
+  const nextLifecycleMeta = {
+    ...lifecycleMetaBefore,
+    ...supersedeMeta,
+  };
+
+  if (
+    existingSupersededBy === input.targetSignalId &&
+    lifecycleMetaBefore.superseded_reason === normalizedReason &&
+    lifecycleMetaBefore.supersede_dry_run_fingerprint === input.dryRunFingerprint
+  ) {
+    return {
+      outcome: "idempotent",
+      before,
+      after: before,
+    };
+  }
+
+  const { data: updatedData, error: updatedError } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .update({
+      lifecycle_meta: nextLifecycleMeta,
+      updated_at: appliedAt,
+    })
+    .eq("id", input.sourceSignalId)
+    .eq("student_id", before.studentId)
+    .select("id")
+    .maybeSingle();
+  if (updatedError) {
+    if (isTrainingPeaksMissingRelationError(updatedError)) {
+      throw new Error(
+        "trainingpeaks_student_operational_signals table is missing; apply Supabase migration first"
+      );
+    }
+    throw new Error(
+      formatTrainingPeaksDbError(updatedError, "Failed to update operational signal supersede metadata", {
+        sourceSignalId: input.sourceSignalId,
+        targetSignalId: input.targetSignalId,
+        studentId: before.studentId,
+      })
+    );
+  }
+  if (!updatedData) {
+    throw new Error(
+      formatTrainingPeaksDbError(null, "Supersede apply update affected zero rows", {
+        sourceSignalId: input.sourceSignalId,
+        targetSignalId: input.targetSignalId,
+        studentId: before.studentId,
+      })
+    );
+  }
+
+  const { data: afterData, error: afterError } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .select("*")
+    .eq("id", input.sourceSignalId)
+    .eq("student_id", before.studentId)
+    .maybeSingle();
+  if (afterError) {
+    throw new Error(
+      formatTrainingPeaksDbError(afterError, "Supersede apply post-read failed", {
+        sourceSignalId: input.sourceSignalId,
+        studentId: before.studentId,
+      })
+    );
+  }
+  if (!afterData) {
+    throw new Error(
+      formatTrainingPeaksDbError(null, "Supersede apply post-read returned zero rows", {
+        sourceSignalId: input.sourceSignalId,
+        studentId: before.studentId,
+      })
+    );
+  }
+
+  return {
+    outcome: "applied",
+    before,
+    after: mapTrainingPeaksStudentOperationalSignalRow(afterData as TrainingPeaksStudentOperationalSignalRow),
+  };
+}
+
 export type UpdateTrainingPeaksMessageIntentLogAiInput = {
   aiIntent?: Record<string, unknown> | null;
   aiConfidence?: number | null;
