@@ -6245,6 +6245,9 @@ function mergeOperationalSignalEpisodeItems(
 
 function filterNormalOperationalSignalItems(items: TrainingPeaksOperationalSignalsItem[]): TrainingPeaksOperationalSignalsItem[] {
   return items.filter((item) => {
+    if (item.signalType === "resolved") {
+      return false;
+    }
     if (item.hiddenReason) {
       return false;
     }
@@ -6400,6 +6403,9 @@ export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
   const episodeSignalsByKey = new Map<string, TrainingPeaksStudentOperationalSignal[]>();
   const fallbackItems: TrainingPeaksOperationalSignalsItem[] = [];
   for (const signal of input.signals) {
+    if (signal.lifecycleState === "resolved") {
+      continue;
+    }
     const effective = resolveEffectiveOperationalSignalForDisplay(signal);
     if (!shouldKeepOperationalSignalByScope(effective.effectiveSignalType, scope)) {
       continue;
@@ -6414,6 +6420,9 @@ export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
   }
 
   for (const signal of input.signals) {
+    if (signal.lifecycleState === "resolved") {
+      continue;
+    }
     const effective = resolveEffectiveOperationalSignalForDisplay(signal);
     if (!shouldKeepOperationalSignalByScope(effective.effectiveSignalType, scope)) {
       continue;

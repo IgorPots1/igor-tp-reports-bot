@@ -258,6 +258,12 @@ export type TrainingPeaksOperationalSignalStatus =
   | "expired"
   | "cancelled"
   | "dismissed";
+export type TrainingPeaksOperationalSignalLifecycle =
+  | "active_problem"
+  | "return_planned"
+  | "return_trial_completed"
+  | "monitoring_after_return"
+  | "resolved";
 export type TrainingPeaksOperationalSignalType =
   | "schedule_availability_window"
   | "schedule_unavailability_window"
@@ -5505,6 +5511,13 @@ export type TrainingPeaksStudentOperationalSignal = {
   studentId: string;
   signalType: TrainingPeaksOperationalSignalType;
   status: TrainingPeaksOperationalSignalStatus;
+  lifecycleState: TrainingPeaksOperationalSignalLifecycle | null;
+  lifecycleStateUpdatedAt: string | null;
+  lifecycleAppliedAt: string | null;
+  lifecycleMeta: Record<string, unknown>;
+  resolvedAt: string | null;
+  resolvedReason: string | null;
+  requiresCoachClose: boolean;
   sourceType: string;
   sourceObservationId: string | null;
   telegramChatId: number | null;
@@ -5549,6 +5562,13 @@ type TrainingPeaksStudentOperationalSignalRow = {
   student_id: string;
   signal_type: string;
   status: string;
+  lifecycle_state: string | null;
+  lifecycle_state_updated_at: string | null;
+  lifecycle_applied_at: string | null;
+  lifecycle_meta: unknown;
+  resolved_at: string | null;
+  resolved_reason: string | null;
+  requires_coach_close: boolean;
   source_type: string;
   source_observation_id: string | null;
   telegram_chat_id: number | null;
@@ -5576,8 +5596,37 @@ export type ListTrainingPeaksOperationalSignalsInput = {
   limit?: number;
   offset?: number;
   status?: TrainingPeaksOperationalSignalStatus;
+  lifecycleState?: TrainingPeaksOperationalSignalLifecycle;
   studentQuery?: string | null;
   signalType?: TrainingPeaksOperationalSignalType;
+};
+
+export type TrainingPeaksOperationalSignalLifecycleTransition = {
+  id: string;
+  signalId: string;
+  studentId: string;
+  fromLifecycleState: TrainingPeaksOperationalSignalLifecycle | null;
+  toLifecycleState: TrainingPeaksOperationalSignalLifecycle;
+  reason: string;
+  reasonCodes: string[];
+  actor: string;
+  evidenceSnapshot: Record<string, unknown>;
+  dryRunFingerprint: string;
+  createdAt: string;
+};
+
+type TrainingPeaksOperationalSignalLifecycleTransitionRow = {
+  id: string;
+  signal_id: string;
+  student_id: string;
+  from_lifecycle_state: string | null;
+  to_lifecycle_state: string;
+  reason: string;
+  reason_codes: string[] | null;
+  actor: string;
+  evidence_snapshot: unknown;
+  dry_run_fingerprint: string;
+  created_at: string;
 };
 
 export type UpsertTrainingPeaksOperationalSignalFromCandidateInput = {
@@ -5601,6 +5650,13 @@ export type UpsertTrainingPeaksOperationalSignalFromCandidateInput = {
   linkedActionId?: string | null;
   dedupeKey: string;
   metadata?: Record<string, unknown>;
+  lifecycleState?: TrainingPeaksOperationalSignalLifecycle | null;
+  lifecycleStateUpdatedAt?: string | null;
+  lifecycleAppliedAt?: string | null;
+  lifecycleMeta?: Record<string, unknown>;
+  resolvedAt?: string | null;
+  resolvedReason?: string | null;
+  requiresCoachClose?: boolean;
 };
 
 export type UpsertTrainingPeaksOperationalSignalWriteStatus =
@@ -5891,6 +5947,16 @@ function mapTrainingPeaksStudentOperationalSignalRow(
     studentId: row.student_id,
     signalType: row.signal_type as TrainingPeaksOperationalSignalType,
     status: row.status as TrainingPeaksOperationalSignalStatus,
+    lifecycleState: normalizeTrainingPeaksOperationalSignalLifecycleState(row.lifecycle_state),
+    lifecycleStateUpdatedAt: row.lifecycle_state_updated_at,
+    lifecycleAppliedAt: row.lifecycle_applied_at,
+    lifecycleMeta:
+      row.lifecycle_meta && typeof row.lifecycle_meta === "object" && !Array.isArray(row.lifecycle_meta)
+        ? (row.lifecycle_meta as Record<string, unknown>)
+        : {},
+    resolvedAt: row.resolved_at,
+    resolvedReason: row.resolved_reason,
+    requiresCoachClose: Boolean(row.requires_coach_close),
     sourceType: row.source_type,
     sourceObservationId: row.source_observation_id,
     telegramChatId: row.telegram_chat_id,
@@ -5923,6 +5989,29 @@ function mapTrainingPeaksStudentOperationalSignalRow(
   };
 }
 
+function mapTrainingPeaksOperationalSignalLifecycleTransitionRow(
+  row: TrainingPeaksOperationalSignalLifecycleTransitionRow
+): TrainingPeaksOperationalSignalLifecycleTransition {
+  return {
+    id: row.id,
+    signalId: row.signal_id,
+    studentId: row.student_id,
+    fromLifecycleState: normalizeTrainingPeaksOperationalSignalLifecycleState(row.from_lifecycle_state),
+    toLifecycleState: normalizeTrainingPeaksOperationalSignalLifecycleState(row.to_lifecycle_state) ?? "active_problem",
+    reason: row.reason,
+    reasonCodes: Array.isArray(row.reason_codes)
+      ? row.reason_codes.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      : [],
+    actor: row.actor,
+    evidenceSnapshot:
+      row.evidence_snapshot && typeof row.evidence_snapshot === "object" && !Array.isArray(row.evidence_snapshot)
+        ? (row.evidence_snapshot as Record<string, unknown>)
+        : {},
+    dryRunFingerprint: row.dry_run_fingerprint,
+    createdAt: row.created_at,
+  };
+}
+
 const TRAININGPEAKS_OPERATIONAL_SIGNAL_TYPE_SET: Set<TrainingPeaksOperationalSignalType> =
   new Set<TrainingPeaksOperationalSignalType>([
     "schedule_availability_window",
@@ -5948,6 +6037,15 @@ const TRAININGPEAKS_OPERATIONAL_SIGNAL_STATUS_SET: Set<TrainingPeaksOperationalS
     "dismissed",
   ]);
 
+const TRAININGPEAKS_OPERATIONAL_SIGNAL_LIFECYCLE_SET: Set<TrainingPeaksOperationalSignalLifecycle> =
+  new Set<TrainingPeaksOperationalSignalLifecycle>([
+    "active_problem",
+    "return_planned",
+    "return_trial_completed",
+    "monitoring_after_return",
+    "resolved",
+  ]);
+
 function normalizeTrainingPeaksOperationalSignalType(
   value: string
 ): TrainingPeaksOperationalSignalType {
@@ -5966,6 +6064,19 @@ function normalizeTrainingPeaksOperationalSignalStatus(
     throw new Error(`Unsupported TrainingPeaks operational signal status: ${String(value)}`);
   }
   return normalized;
+}
+
+function normalizeTrainingPeaksOperationalSignalLifecycleState(
+  value: string | null | undefined
+): TrainingPeaksOperationalSignalLifecycle | null {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  if (!normalized) {
+    return null;
+  }
+  if (!TRAININGPEAKS_OPERATIONAL_SIGNAL_LIFECYCLE_SET.has(normalized as TrainingPeaksOperationalSignalLifecycle)) {
+    return null;
+  }
+  return normalized as TrainingPeaksOperationalSignalLifecycle;
 }
 
 function normalizeTrainingPeaksOperationalSignalSourceType(value: string): string {
@@ -6822,6 +6933,12 @@ export async function listTrainingPeaksOperationalSignals(
       normalizeTrainingPeaksOperationalSignalType(input.signalType)
     );
   }
+  if (input.lifecycleState) {
+    query = query.eq(
+      "lifecycle_state",
+      normalizeTrainingPeaksOperationalSignalLifecycleState(input.lifecycleState) ?? "active_problem"
+    );
+  }
   if (studentIdFilter && studentIdFilter.length > 0) {
     query = query.in("student_id", studentIdFilter);
   }
@@ -6871,6 +6988,13 @@ export async function upsertTrainingPeaksOperationalSignalFromCandidate(
     linked_action_id: input.linkedActionId ?? null,
     dedupe_key: normalizedDedupeKey,
     metadata: input.metadata ?? {},
+    lifecycle_state: normalizeTrainingPeaksOperationalSignalLifecycleState(input.lifecycleState ?? null),
+    lifecycle_state_updated_at: input.lifecycleStateUpdatedAt ?? null,
+    lifecycle_applied_at: input.lifecycleAppliedAt ?? null,
+    lifecycle_meta: input.lifecycleMeta ?? {},
+    resolved_at: input.resolvedAt ?? null,
+    resolved_reason: input.resolvedReason ?? null,
+    requires_coach_close: input.requiresCoachClose ?? false,
   });
 
   const supabase = createSupabaseServerClient();
@@ -6963,6 +7087,14 @@ export async function upsertTrainingPeaksOperationalSignalFromCandidate(
       : {}),
     ...((payload.metadata as Record<string, unknown> | undefined) ?? {}),
   };
+  const existingLifecycleMeta =
+    existing.lifecycle_meta && typeof existing.lifecycle_meta === "object" && !Array.isArray(existing.lifecycle_meta)
+      ? (existing.lifecycle_meta as Record<string, unknown>)
+      : {};
+  const nextLifecycleMeta = {
+    ...existingLifecycleMeta,
+    ...((payload.lifecycle_meta as Record<string, unknown> | undefined) ?? {}),
+  };
 
   const shouldUpdate =
     existing.status !== normalizedStatus ||
@@ -6981,7 +7113,14 @@ export async function upsertTrainingPeaksOperationalSignalFromCandidate(
     existing.linked_memory_item_id !== (payload.linked_memory_item_id ?? null) ||
     existing.linked_case_id !== (payload.linked_case_id ?? null) ||
     existing.linked_action_id !== (payload.linked_action_id ?? null) ||
-    JSON.stringify(existing.metadata ?? {}) !== JSON.stringify(nextMetadata);
+    JSON.stringify(existing.metadata ?? {}) !== JSON.stringify(nextMetadata) ||
+    existing.lifecycle_state !== (payload.lifecycle_state ?? null) ||
+    existing.lifecycle_state_updated_at !== (payload.lifecycle_state_updated_at ?? null) ||
+    existing.lifecycle_applied_at !== (payload.lifecycle_applied_at ?? null) ||
+    JSON.stringify(existingLifecycleMeta) !== JSON.stringify(nextLifecycleMeta) ||
+    existing.resolved_at !== (payload.resolved_at ?? null) ||
+    existing.resolved_reason !== (payload.resolved_reason ?? null) ||
+    Boolean(existing.requires_coach_close) !== Boolean(payload.requires_coach_close ?? false);
 
   if (!shouldUpdate) {
     return {
@@ -7010,6 +7149,13 @@ export async function upsertTrainingPeaksOperationalSignalFromCandidate(
       linked_case_id: payload.linked_case_id ?? null,
       linked_action_id: payload.linked_action_id ?? null,
       metadata: nextMetadata,
+      lifecycle_state: payload.lifecycle_state ?? null,
+      lifecycle_state_updated_at: payload.lifecycle_state_updated_at ?? null,
+      lifecycle_applied_at: payload.lifecycle_applied_at ?? null,
+      lifecycle_meta: nextLifecycleMeta,
+      resolved_at: payload.resolved_at ?? null,
+      resolved_reason: payload.resolved_reason ?? null,
+      requires_coach_close: payload.requires_coach_close ?? false,
     })
     .eq("id", existing.id)
     .select("*")
@@ -7104,6 +7250,230 @@ export async function consumeActiveTrainingPeaksOperationalSignals(input: {
   }
 
   return updated;
+}
+
+export async function getTrainingPeaksOperationalSignalById(
+  signalId: string
+): Promise<TrainingPeaksStudentOperationalSignal | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .select("*")
+    .eq("id", signalId)
+    .maybeSingle();
+  if (error) {
+    if (isTrainingPeaksMissingRelationError(error)) {
+      throw new Error(
+        "trainingpeaks_student_operational_signals table is missing; apply Supabase migration first"
+      );
+    }
+    throw new Error(`Failed to load TrainingPeaks operational signal by id: ${error.message}`);
+  }
+  if (!data) {
+    return null;
+  }
+  return mapTrainingPeaksStudentOperationalSignalRow(data as TrainingPeaksStudentOperationalSignalRow);
+}
+
+export async function listActiveTrainingPeaksOperationalSignalsByStudent(
+  studentId: string
+): Promise<TrainingPeaksStudentOperationalSignal[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .select("*")
+    .eq("student_id", studentId)
+    .eq("status", "active")
+    .order("created_at", { ascending: false })
+    .limit(300);
+  if (error) {
+    if (isTrainingPeaksMissingRelationError(error)) {
+      throw new Error(
+        "trainingpeaks_student_operational_signals table is missing; apply Supabase migration first"
+      );
+    }
+    throw new Error(`Failed to list active TrainingPeaks operational signals by student: ${error.message}`);
+  }
+  const rows = (data as TrainingPeaksStudentOperationalSignalRow[] | null) ?? [];
+  return rows.map(mapTrainingPeaksStudentOperationalSignalRow);
+}
+
+export async function getLatestTrainingPeaksOperationalSignalLifecycleTransition(
+  signalId: string
+): Promise<TrainingPeaksOperationalSignalLifecycleTransition | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_operational_signal_lifecycle_transitions")
+    .select("*")
+    .eq("signal_id", signalId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    if (isTrainingPeaksMissingRelationError(error)) {
+      throw new Error(
+        "trainingpeaks_student_operational_signal_lifecycle_transitions table is missing; apply Supabase migration first"
+      );
+    }
+    throw new Error(`Failed to load latest TrainingPeaks lifecycle transition: ${error.message}`);
+  }
+  if (!data) {
+    return null;
+  }
+  return mapTrainingPeaksOperationalSignalLifecycleTransitionRow(
+    data as TrainingPeaksOperationalSignalLifecycleTransitionRow
+  );
+}
+
+export async function applyTrainingPeaksOperationalSignalLifecycleTransition(input: {
+  signalId: string;
+  studentId: string;
+  fromLifecycleState: TrainingPeaksOperationalSignalLifecycle;
+  toLifecycleState: TrainingPeaksOperationalSignalLifecycle;
+  reason: string;
+  reasonCodes: string[];
+  actor: string;
+  evidenceSnapshot: Record<string, unknown>;
+  dryRunFingerprint: string;
+  lifecycleMetaPatch?: Record<string, unknown>;
+  requiresCoachClose: boolean;
+  resolvedReason?: string | null;
+  appliedAt?: string;
+}): Promise<{
+  outcome: "applied" | "idempotent";
+  before: TrainingPeaksStudentOperationalSignal;
+  after: TrainingPeaksStudentOperationalSignal;
+  transition: TrainingPeaksOperationalSignalLifecycleTransition | null;
+}> {
+  const supabase = createSupabaseServerClient();
+  const appliedAt = input.appliedAt ?? new Date().toISOString();
+
+  const { data: beforeData, error: beforeError } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .select("*")
+    .eq("id", input.signalId)
+    .eq("student_id", input.studentId)
+    .maybeSingle();
+  if (beforeError) {
+    if (isTrainingPeaksMissingRelationError(beforeError)) {
+      throw new Error(
+        "trainingpeaks_student_operational_signals table is missing; apply Supabase migration first"
+      );
+    }
+    throw new Error(`Failed to load TrainingPeaks operational signal before lifecycle apply: ${beforeError.message}`);
+  }
+  if (!beforeData) {
+    throw new Error(`Operational signal not found for lifecycle apply: ${input.signalId}`);
+  }
+  const beforeRow = beforeData as TrainingPeaksStudentOperationalSignalRow;
+  const before = mapTrainingPeaksStudentOperationalSignalRow(beforeRow);
+  const currentLifecycle = before.lifecycleState ?? "active_problem";
+  if (currentLifecycle !== input.fromLifecycleState) {
+    throw new Error(
+      `Lifecycle apply precondition failed for signal ${input.signalId}: current=${currentLifecycle} expected=${input.fromLifecycleState}`
+    );
+  }
+
+  const lifecycleMetaBefore =
+    beforeRow.lifecycle_meta && typeof beforeRow.lifecycle_meta === "object" && !Array.isArray(beforeRow.lifecycle_meta)
+      ? (beforeRow.lifecycle_meta as Record<string, unknown>)
+      : {};
+  const lifecycleMeta = {
+    ...lifecycleMetaBefore,
+    ...(input.lifecycleMetaPatch ?? {}),
+  };
+  const nextResolvedAt = input.toLifecycleState === "resolved" ? appliedAt : null;
+  const nextResolvedReason = input.toLifecycleState === "resolved" ? input.resolvedReason ?? input.reason : null;
+
+  if (
+    currentLifecycle === input.toLifecycleState &&
+    before.requiresCoachClose === input.requiresCoachClose &&
+    before.resolvedReason === nextResolvedReason
+  ) {
+    const existingTransition = await getLatestTrainingPeaksOperationalSignalLifecycleTransition(input.signalId);
+    if (
+      existingTransition &&
+      existingTransition.dryRunFingerprint === input.dryRunFingerprint &&
+      existingTransition.toLifecycleState === input.toLifecycleState
+    ) {
+      return {
+        outcome: "idempotent",
+        before,
+        after: before,
+        transition: existingTransition,
+      };
+    }
+  }
+
+  const { data: updatedData, error: updatedError } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .update({
+      lifecycle_state: input.toLifecycleState,
+      lifecycle_state_updated_at: appliedAt,
+      lifecycle_applied_at: appliedAt,
+      lifecycle_meta: lifecycleMeta,
+      resolved_at: nextResolvedAt,
+      resolved_reason: nextResolvedReason,
+      requires_coach_close: input.requiresCoachClose,
+    })
+    .eq("id", input.signalId)
+    .eq("student_id", input.studentId)
+    .eq("lifecycle_state", before.lifecycleState)
+    .select("*")
+    .single();
+  if (updatedError) {
+    if (isTrainingPeaksMissingRelationError(updatedError)) {
+      throw new Error(
+        "trainingpeaks_student_operational_signals table is missing; apply Supabase migration first"
+      );
+    }
+    throw new Error(`Failed to update operational signal lifecycle state: ${updatedError.message}`);
+  }
+
+  const transitionInsert = {
+    signal_id: input.signalId,
+    student_id: input.studentId,
+    from_lifecycle_state: input.fromLifecycleState,
+    to_lifecycle_state: input.toLifecycleState,
+    reason: input.reason,
+    reason_codes: input.reasonCodes,
+    actor: input.actor,
+    evidence_snapshot: input.evidenceSnapshot,
+    dry_run_fingerprint: input.dryRunFingerprint,
+    created_at: appliedAt,
+  };
+
+  const { data: transitionData, error: transitionError } = await supabase
+    .from("trainingpeaks_student_operational_signal_lifecycle_transitions")
+    .insert(transitionInsert)
+    .select("*")
+    .single();
+  if (transitionError) {
+    if (transitionError.code === "23505") {
+      const existingTransition = await getLatestTrainingPeaksOperationalSignalLifecycleTransition(input.signalId);
+      return {
+        outcome: "idempotent",
+        before,
+        after: mapTrainingPeaksStudentOperationalSignalRow(updatedData as TrainingPeaksStudentOperationalSignalRow),
+        transition: existingTransition,
+      };
+    }
+    if (isTrainingPeaksMissingRelationError(transitionError)) {
+      throw new Error(
+        "trainingpeaks_student_operational_signal_lifecycle_transitions table is missing; apply Supabase migration first"
+      );
+    }
+    throw new Error(`Failed to insert lifecycle transition row: ${transitionError.message}`);
+  }
+
+  return {
+    outcome: "applied",
+    before,
+    after: mapTrainingPeaksStudentOperationalSignalRow(updatedData as TrainingPeaksStudentOperationalSignalRow),
+    transition: mapTrainingPeaksOperationalSignalLifecycleTransitionRow(
+      transitionData as TrainingPeaksOperationalSignalLifecycleTransitionRow
+    ),
+  };
 }
 
 export type UpdateTrainingPeaksMessageIntentLogAiInput = {
