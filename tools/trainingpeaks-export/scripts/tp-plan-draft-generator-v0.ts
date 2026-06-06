@@ -813,50 +813,52 @@ async function main(): Promise<void> {
 
   applyCoachStyleRounding(workouts, plannedWeeklyMinutes, weeklyMinutesCap, longRunCap);
 
-  const plannedMinutesFromWorkouts = workouts.reduce((sum, workout) => sum + workout.duration_minutes, 0);
-  const qualityCountFromWorkouts = workouts.filter((workout) => workout.quality_flag).length;
-  const longRunFromWorkouts = workouts
-    .filter((workout) => workout.workout_type === "long_easy_run")
-    .reduce((max, workout) => Math.max(max, workout.duration_minutes), 0);
-
-  const guardrailCheck: GuardrailCheck = {
-    planned_run_count_lte_frequency_cap: {
-      ok: frequencyCap !== null && workouts.length <= frequencyCap,
-      value: workouts.length,
-      cap: frequencyCap,
-    },
-    planned_weekly_minutes_lte_weekly_minutes_cap: {
-      ok: weeklyMinutesCap !== null && plannedMinutesFromWorkouts <= weeklyMinutesCap,
-      value: plannedMinutesFromWorkouts,
-      cap: weeklyMinutesCap,
-    },
-    long_run_minutes_lte_long_run_cap: {
-      ok: longRunCap !== null && longRunFromWorkouts <= longRunCap,
-      value: longRunFromWorkouts,
-      cap: longRunCap,
-    },
-    quality_session_count_lte_quality_cap: {
-      ok: qualityCap !== null && qualityCountFromWorkouts <= qualityCap,
-      value: qualityCountFromWorkouts,
-      cap: qualityCap,
-    },
-    no_active_illness_or_injury_conflict: {
-      ok: !op.activeIllness && !op.activePainInjury,
-      details: selectedAthlete.operational_signal_summary,
-    },
-    no_race_or_recovery_conflict: {
-      ok: !hasRaceContext,
-      details: selectedAthlete.race_context_summary,
-    },
-    no_device_or_upload_issue_conflict: {
-      ok: !hasDeviceIssue,
-      details: selectedAthlete.data_quality_summary,
-    },
-    no_planned_vs_completed_issue_conflict: {
-      ok: !hasPlannedVsCompletedIssue,
-      details: `delta=${selectedAthlete.planned_vs_completed_delta ?? "missing"}; reasons=${selectedAthlete.reasons.join("|") || "none"}`,
-    },
+  const buildGuardrailCheck = (draftWorkouts: DraftWorkout[]): GuardrailCheck => {
+    const plannedMinutesFromWorkouts = draftWorkouts.reduce((sum, workout) => sum + workout.duration_minutes, 0);
+    const qualityCountFromWorkouts = draftWorkouts.filter((workout) => workout.quality_flag).length;
+    const longRunFromWorkouts = draftWorkouts
+      .filter((workout) => workout.workout_type === "long_easy_run")
+      .reduce((max, workout) => Math.max(max, workout.duration_minutes), 0);
+    return {
+      planned_run_count_lte_frequency_cap: {
+        ok: frequencyCap !== null && draftWorkouts.length <= frequencyCap,
+        value: draftWorkouts.length,
+        cap: frequencyCap,
+      },
+      planned_weekly_minutes_lte_weekly_minutes_cap: {
+        ok: weeklyMinutesCap !== null && plannedMinutesFromWorkouts <= weeklyMinutesCap,
+        value: plannedMinutesFromWorkouts,
+        cap: weeklyMinutesCap,
+      },
+      long_run_minutes_lte_long_run_cap: {
+        ok: longRunCap !== null && longRunFromWorkouts <= longRunCap,
+        value: longRunFromWorkouts,
+        cap: longRunCap,
+      },
+      quality_session_count_lte_quality_cap: {
+        ok: qualityCap !== null && qualityCountFromWorkouts <= qualityCap,
+        value: qualityCountFromWorkouts,
+        cap: qualityCap,
+      },
+      no_active_illness_or_injury_conflict: {
+        ok: !op.activeIllness && !op.activePainInjury,
+        details: selectedAthlete.operational_signal_summary,
+      },
+      no_race_or_recovery_conflict: {
+        ok: !hasRaceContext,
+        details: selectedAthlete.race_context_summary,
+      },
+      no_device_or_upload_issue_conflict: {
+        ok: !hasDeviceIssue,
+        details: selectedAthlete.data_quality_summary,
+      },
+      no_planned_vs_completed_issue_conflict: {
+        ok: !hasPlannedVsCompletedIssue,
+        details: `delta=${selectedAthlete.planned_vs_completed_delta ?? "missing"}; reasons=${selectedAthlete.reasons.join("|") || "none"}`,
+      },
+    };
   };
+  let guardrailCheck = buildGuardrailCheck(workouts);
 
   const coachReviewNotes: string[] = [];
   if (selectedAthlete.decision !== "ready_for_plan") {
@@ -900,6 +902,18 @@ async function main(): Promise<void> {
     status = "draft_invalid_needs_fix";
     decision = "needs_coach_review";
   }
+
+  if (status !== "draft_ready_for_coach_review" && workouts.length > 0) {
+    workouts.length = 0;
+    coachReviewNotes.push("No workout draft generated because readiness did not allow a plan-ready draft.");
+    guardrailCheck = buildGuardrailCheck(workouts);
+  }
+
+  const plannedMinutesFromWorkouts = workouts.reduce((sum, workout) => sum + workout.duration_minutes, 0);
+  const qualityCountFromWorkouts = workouts.filter((workout) => workout.quality_flag).length;
+  const longRunFromWorkouts = workouts
+    .filter((workout) => workout.workout_type === "long_easy_run")
+    .reduce((max, workout) => Math.max(max, workout.duration_minutes), 0);
 
   const planJson: PlanDraftJson = {
     generated_at: new Date().toISOString(),
