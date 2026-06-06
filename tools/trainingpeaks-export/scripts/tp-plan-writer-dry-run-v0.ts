@@ -5,12 +5,14 @@ import process from "node:process";
 
 import { buildRunningWorkoutCreatePlan } from "./lib/running-workout-create-plan.ts";
 import { toolRoot } from "./lib/paths.ts";
-import { buildSafeRunningWorkoutDefinition, type RunningWorkoutTemplateId } from "./lib/running-workout-safe-runner-v0.ts";
+import { SAFE_RUNNING_WORKOUT_MARKER, type RunningWorkoutTemplateId } from "./lib/running-workout-safe-runner-v0.ts";
+import type { RunningWorkoutDefinition } from "./lib/running-workout-renderer.ts";
 
 type DraftStatus = "draft_ready_for_coach_review" | "draft_invalid_needs_fix" | "draft_blocked_by_readiness";
 type DraftWorkoutType = "easy_run" | "controlled_quality" | "long_easy_run";
 type WriterStatus =
   | "writer_dry_run_ready_for_review"
+  | "writer_dry_run_needs_manual_review"
   | "blocked_by_draft_readiness"
   | "blocked_by_draft_guardrails";
 
@@ -82,11 +84,16 @@ type WorkoutPreviewRow = {
   template: RunningWorkoutTemplateId;
   writer_action: "preview_create" | "writer_preview_needs_manual_review";
   writer_review_reason: string | null;
+  writer_review_details: string | null;
   title: string;
-  duration_minutes: number;
+  draft_duration_minutes: number;
+  structured_duration_minutes: number;
+  duration_delta_minutes: number;
+  duration_match: boolean;
   total_time_planned_hours: number | null;
   primary_intensity_metric: string | null;
   repeat_block_count: number | null;
+  structure_summary: string;
   description: string;
   coach_comments: string;
   safety_markers: string[];
@@ -127,7 +134,11 @@ type WriterDryRunJson = {
 
 const EXPECTED_ATHLETE_ID = 5905779;
 const EXPECTED_WEEK_START = "2026-06-08";
-const CONTROLLED_QUALITY_DURATION_V0_MINUTES = 55;
+const CONTROLLED_QUALITY_WARMUP_MINUTES = 10;
+const CONTROLLED_QUALITY_REPEAT_COUNT = 3;
+const CONTROLLED_QUALITY_HARD_MINUTES = 6;
+const CONTROLLED_QUALITY_RECOVERY_MINUTES = 3;
+const CONTROLLED_QUALITY_MIN_COOLDOWN_MINUTES = 8;
 
 function timestampForPath(date: Date): string {
   const yyyy = String(date.getFullYear());
@@ -281,11 +292,29 @@ function buildMappedWorkout(input: {
   let title: string;
   let description: string;
   let coachComments: string;
-  let manualReview: string | null = null;
+  let blocks: RunningWorkoutDefinition["blocks"];
+  let structureSummary: string;
+  let manualReviewReason: string | null = null;
+  let manualReviewDetails: string | null = null;
 
   if (workout.workout_type === "easy_run") {
     template = "easy-hr";
     title = `Легкий бег ${workout.duration_minutes} мин`;
+    blocks = [
+      {
+        kind: "step",
+        label: "Active",
+        durationSeconds: workout.duration_minutes * 60,
+        intensityClass: "active",
+        target: {
+          metric: "percentOfThresholdHr",
+          minValue: 70,
+          maxValue: 80,
+        },
+        notes: `${SAFE_RUNNING_WORKOUT_MARKER}_STEP_NOTE_EASY_HR`,
+      },
+    ];
+    structureSummary = `easy_steady ${workout.duration_minutes}min @70-80%THR`;
     description = [
       "Спокойный аэробный бег.",
       "Ориентир: легко, без борьбы за темп.",
@@ -305,6 +334,21 @@ function buildMappedWorkout(input: {
   } else if (workout.workout_type === "long_easy_run") {
     template = "easy-hr";
     title = `Длительный легкий бег ${workout.duration_minutes} мин`;
+    blocks = [
+      {
+        kind: "step",
+        label: "Active",
+        durationSeconds: workout.duration_minutes * 60,
+        intensityClass: "active",
+        target: {
+          metric: "percentOfThresholdHr",
+          minValue: 70,
+          maxValue: 80,
+        },
+        notes: `${SAFE_RUNNING_WORKOUT_MARKER}_STEP_NOTE_EASY_HR`,
+      },
+    ];
+    structureSummary = `long_easy_steady ${workout.duration_minutes}min @70-80%THR`;
     description = [
       "Ровный легкий бег.",
       "Главная задача — объем без форсирования.",
@@ -324,10 +368,78 @@ function buildMappedWorkout(input: {
   } else {
     template = "interval-hr";
     title = "Контрольная работа 3 x 6 мин";
+    const mainSetMinutes =
+      CONTROLLED_QUALITY_REPEAT_COUNT * (CONTROLLED_QUALITY_HARD_MINUTES + CONTROLLED_QUALITY_RECOVERY_MINUTES);
+    const cooldownMinutes = workout.duration_minutes - CONTROLLED_QUALITY_WARMUP_MINUTES - mainSetMinutes;
+    if (cooldownMinutes < CONTROLLED_QUALITY_MIN_COOLDOWN_MINUTES) {
+      manualReviewReason = "structured_duration_mismatch";
+      manualReviewDetails = [
+        `draft_duration=${workout.duration_minutes}`,
+        `minimum_supported=${CONTROLLED_QUALITY_WARMUP_MINUTES + mainSetMinutes + CONTROLLED_QUALITY_MIN_COOLDOWN_MINUTES}`,
+        "controlled structure cannot be safely aligned",
+      ].join(" | ");
+    }
+    blocks = [
+      {
+        kind: "step",
+        label: "Warm up",
+        durationSeconds: CONTROLLED_QUALITY_WARMUP_MINUTES * 60,
+        intensityClass: "warmup",
+        target: {
+          metric: "percentOfThresholdHr",
+          minValue: 70,
+          maxValue: 80,
+        },
+        notes: `${SAFE_RUNNING_WORKOUT_MARKER}_STEP_NOTE_INTERVAL_HR_WARMUP`,
+      },
+      {
+        kind: "repetition",
+        repeatCount: CONTROLLED_QUALITY_REPEAT_COUNT,
+        steps: [
+          {
+            kind: "step",
+            label: "Hard",
+            durationSeconds: CONTROLLED_QUALITY_HARD_MINUTES * 60,
+            intensityClass: "active",
+            target: {
+              metric: "percentOfThresholdHr",
+              minValue: 90,
+              maxValue: 95,
+            },
+            notes: `${SAFE_RUNNING_WORKOUT_MARKER}_STEP_NOTE_INTERVAL_HR_HARD`,
+          },
+          {
+            kind: "step",
+            label: "Easy",
+            durationSeconds: CONTROLLED_QUALITY_RECOVERY_MINUTES * 60,
+            intensityClass: "recovery",
+            target: {
+              metric: "percentOfThresholdHr",
+              minValue: 70,
+              maxValue: 80,
+            },
+            notes: `${SAFE_RUNNING_WORKOUT_MARKER}_STEP_NOTE_INTERVAL_HR_EASY`,
+          },
+        ],
+      },
+      {
+        kind: "step",
+        label: "Cool down",
+        durationSeconds: Math.max(0, cooldownMinutes) * 60,
+        intensityClass: "cooldown",
+        target: {
+          metric: "percentOfThresholdHr",
+          minValue: 70,
+          maxValue: 80,
+        },
+        notes: `${SAFE_RUNNING_WORKOUT_MARKER}_STEP_NOTE_INTERVAL_HR_COOLDOWN`,
+      },
+    ];
+    structureSummary = `warmup ${CONTROLLED_QUALITY_WARMUP_MINUTES}min + ${CONTROLLED_QUALITY_REPEAT_COUNT}x(${CONTROLLED_QUALITY_HARD_MINUTES}min controlled/${CONTROLLED_QUALITY_RECOVERY_MINUTES}min easy) + cooldown ${Math.max(0, cooldownMinutes)}min`;
     description = [
       "Разминка: 10 мин легко.",
       "Основная часть: 3 x 6 мин контролируемо, между отрезками 3 мин легко.",
-      "Заминка: 10–12 мин легко.",
+      `Заминка: ${Math.max(0, cooldownMinutes)} мин легко.`,
       "Интенсивность: controlled, RPE 6–7/10, без VO2 и без all-out.",
       "",
       ...safetyMarkers,
@@ -337,7 +449,7 @@ function buildMappedWorkout(input: {
     coachComments = [
       "Разминка 10 мин легко.",
       "3 x 6 мин в контролируемом темпе, между ними 3 мин легко.",
-      "Заминка 10–12 мин легко.",
+      `Заминка ${Math.max(0, cooldownMinutes)} мин легко.`,
       "RPE 6–7/10, не максимум, без VO2 и без all-out.",
       "",
       ...safetyMarkers,
@@ -345,37 +457,54 @@ function buildMappedWorkout(input: {
       "CONTROLLED_STRUCTURE=10EASY+3x6CONTROLLED/3EASY+10-12EASY",
     ].join("\n");
 
-    if (workout.duration_minutes !== CONTROLLED_QUALITY_DURATION_V0_MINUTES) {
-      manualReview = `controlled_quality duration ${workout.duration_minutes} differs from conservative v0 structure target ${CONTROLLED_QUALITY_DURATION_V0_MINUTES}`;
-    }
   }
 
-  const definition = buildSafeRunningWorkoutDefinition({
-    template,
+  const definition: RunningWorkoutDefinition = {
+    caseId: template,
     athleteId,
     workoutDay: workout.date,
     title,
     description,
     coachComments,
-  });
+    workoutTypeValueId: 3,
+    workoutSubTypeId: null,
+    blocks,
+  };
   const createPlan = buildRunningWorkoutCreatePlan(definition);
+  const structuredDurationMinutes = Math.round(createPlan.requestBodySummary.totalTimePlanned * 60);
+  const durationDeltaMinutes = structuredDurationMinutes - workout.duration_minutes;
+  const durationMatch = durationDeltaMinutes === 0;
+  if (!durationMatch) {
+    manualReviewReason = "structured_duration_mismatch";
+    manualReviewDetails = [
+      `draft_duration=${workout.duration_minutes}`,
+      `structured_duration=${structuredDurationMinutes}`,
+      `duration_delta=${durationDeltaMinutes}`,
+    ].join(" | ");
+  }
+  const writerAction = manualReviewReason ? "writer_preview_needs_manual_review" : "preview_create";
 
   return {
     index: 0,
     date: workout.date,
     draft_workout_type: workout.workout_type,
     template,
-    writer_action: manualReview ? "writer_preview_needs_manual_review" : "preview_create",
-    writer_review_reason: manualReview,
+    writer_action: writerAction,
+    writer_review_reason: manualReviewReason,
+    writer_review_details: manualReviewDetails,
     title,
-    duration_minutes: workout.duration_minutes,
+    draft_duration_minutes: workout.duration_minutes,
+    structured_duration_minutes: structuredDurationMinutes,
+    duration_delta_minutes: durationDeltaMinutes,
+    duration_match: durationMatch,
     total_time_planned_hours: createPlan.requestBodySummary.totalTimePlanned,
     primary_intensity_metric: createPlan.requestBodySummary.primaryIntensityMetric,
     repeat_block_count: createPlan.requestBodySummary.repeatBlockCount,
+    structure_summary: structureSummary,
     description,
     coach_comments: coachComments,
     safety_markers: safetyMarkers,
-    create_payload_candidate: createPlan.requestBodyCandidate,
+    create_payload_candidate: writerAction === "preview_create" ? createPlan.requestBodyCandidate : null,
   };
 }
 
@@ -409,10 +538,13 @@ function buildMarkdown(report: WriterDryRunJson, sourceDraftDir: string): string
   } else {
     for (const workout of report.workouts) {
       lines.push(
-        `- ${workout.date} | ${workout.draft_workout_type} -> ${workout.template} | action=${workout.writer_action} | title="${workout.title}" | minutes=${workout.duration_minutes}`,
+        `- ${workout.date} | ${workout.draft_workout_type} -> ${workout.template} | action=${workout.writer_action} | title="${workout.title}" | draft=${workout.draft_duration_minutes}m | structured=${workout.structured_duration_minutes}m | delta=${workout.duration_delta_minutes}m | match=${workout.duration_match} | structure=${workout.structure_summary}`,
       );
       if (workout.writer_review_reason) {
         lines.push(`  reason: ${workout.writer_review_reason}`);
+      }
+      if (workout.writer_review_details) {
+        lines.push(`  details: ${workout.writer_review_details}`);
       }
     }
   }
@@ -423,7 +555,7 @@ function buildMarkdown(report: WriterDryRunJson, sourceDraftDir: string): string
   } else {
     for (const workout of report.workouts) {
       lines.push(
-        `- ${workout.date} ${workout.title} | metric=${workout.primary_intensity_metric ?? "unknown"} | repeat_blocks=${workout.repeat_block_count ?? "unknown"} | total_hours=${workout.total_time_planned_hours ?? "unknown"}`,
+        `- ${workout.date} ${workout.title} | metric=${workout.primary_intensity_metric ?? "unknown"} | repeat_blocks=${workout.repeat_block_count ?? "unknown"} | total_hours=${workout.total_time_planned_hours ?? "unknown"} | duration_match=${workout.duration_match}`,
       );
     }
   }
@@ -471,7 +603,9 @@ function buildManualReviewNotes(report: WriterDryRunJson): string {
       if (workout.writer_action === "preview_create") {
         lines.push(`- ${workout.date} ${workout.title}: ready for coach preview (dry-run only).`);
       } else {
-        lines.push(`- ${workout.date} ${workout.title}: ${workout.writer_review_reason ?? "manual review required"}.`);
+        lines.push(
+          `- ${workout.date} ${workout.title}: ${workout.writer_review_reason ?? "manual review required"}${workout.writer_review_details ? ` (${workout.writer_review_details})` : ""}.`,
+        );
       }
     }
   }
@@ -586,6 +720,9 @@ async function main(): Promise<void> {
   const payloadsNeedingManualReview = workouts.filter(
     (row) => row.writer_action === "writer_preview_needs_manual_review",
   ).length;
+  if (writerStatus === "writer_dry_run_ready_for_review" && payloadsNeedingManualReview > 0) {
+    writerStatus = "writer_dry_run_needs_manual_review";
+  }
 
   const outputDir = path.join(repoRoot, "reports", "tp-plan-writer-dry-run-v0", timestampForPath(new Date()));
   await mkdir(outputDir, { recursive: true });
@@ -630,7 +767,11 @@ async function main(): Promise<void> {
     writer_action: row.writer_action,
     writer_review_reason: row.writer_review_reason,
     title: row.title,
-    duration_minutes: row.duration_minutes,
+    draft_duration_minutes: row.draft_duration_minutes,
+    structured_duration_minutes: row.structured_duration_minutes,
+    duration_delta_minutes: row.duration_delta_minutes,
+    duration_match: row.duration_match,
+    structure_summary: row.structure_summary,
     create_payload_candidate: row.create_payload_candidate,
   }));
 
@@ -642,11 +783,16 @@ async function main(): Promise<void> {
       "template",
       "writer_action",
       "title",
-      "duration_minutes",
+      "draft_duration_minutes",
+      "structured_duration_minutes",
+      "duration_delta_minutes",
+      "duration_match",
       "primary_intensity_metric",
       "repeat_block_count",
+      "structure_summary",
       "safety_markers",
       "writer_review_reason",
+      "writer_review_details",
     ],
     ...workouts.map((row) => [
       String(row.index),
@@ -655,11 +801,16 @@ async function main(): Promise<void> {
       row.template,
       row.writer_action,
       row.title,
-      String(row.duration_minutes),
+      String(row.draft_duration_minutes),
+      String(row.structured_duration_minutes),
+      String(row.duration_delta_minutes),
+      String(row.duration_match),
       row.primary_intensity_metric ?? "",
       String(row.repeat_block_count ?? ""),
+      row.structure_summary,
       row.safety_markers.join("|"),
       row.writer_review_reason ?? "",
+      row.writer_review_details ?? "",
     ]),
   ];
 
@@ -667,7 +818,29 @@ async function main(): Promise<void> {
   await writeFile(reportJsonPath, `${JSON.stringify(reportJson, null, 2)}\n`, "utf8");
   await writeFile(payloadPreviewJsonPath, `${JSON.stringify(payloadPreview, null, 2)}\n`, "utf8");
   await writeFile(payloadPreviewCsvPath, listToCsv(csvRows), "utf8");
-  await writeFile(payloadSafetyPath, `${JSON.stringify({ safety_checks: safetyChecks, blocked_reasons: blockedReasons }, null, 2)}\n`, "utf8");
+  await writeFile(
+    payloadSafetyPath,
+    `${JSON.stringify(
+      {
+        safety_checks: safetyChecks,
+        blocked_reasons: blockedReasons,
+        duration_alignment_checks: workouts.map((row) => ({
+          index: row.index,
+          date: row.date,
+          draft_workout_type: row.draft_workout_type,
+          draft_duration_minutes: row.draft_duration_minutes,
+          structured_duration_minutes: row.structured_duration_minutes,
+          duration_delta_minutes: row.duration_delta_minutes,
+          duration_match: row.duration_match,
+          structure_summary: row.structure_summary,
+          status: row.duration_match ? "ok" : "structured_duration_mismatch",
+        })),
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
   await writeFile(manualReviewPath, buildManualReviewNotes(reportJson), "utf8");
 
   if (args.json) {
