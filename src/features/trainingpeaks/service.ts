@@ -4990,77 +4990,12 @@ async function listOperationalHealthFollowUpsForAttention(
     status: "active",
     limit: 200,
   });
-  if (signals.items.length === 0) {
-    return { items: [], overflowCount: 0 };
-  }
-
-  const dedupedByEpisode = new Map<string, OperationalHealthFollowUpAttentionItem>();
-  const fallbackItems: OperationalHealthFollowUpAttentionItem[] = [];
-  for (const signal of signals.items) {
-    if (!isHealthOperationalSignalType(signal.signalType)) {
-      continue;
-    }
-    const followUp = normalizeOperationalSignalFollowUp(signal.metadata, {
-      asOfDate,
-      timeZone: DEFAULT_COACH_TIMEZONE,
-    });
-    if (followUp.state !== "pending_due" && followUp.state !== "pending_overdue") {
-      continue;
-    }
-
-    const signalReason = compactHealthFollowUpReason(followUp.reason);
-    const reason = signalReason ?? "проверить самочувствие после болезни/паузы";
-    const item: OperationalHealthFollowUpAttentionItem = {
-      studentId: signal.studentId,
-      studentName: activeStudentNameById.get(signal.studentId) ?? null,
-      reason: formatOperationalHealthFollowUpReason({
-        state: followUp.state,
-        daysOverdue: followUp.days_overdue,
-        reason,
-      }),
-      state: followUp.state,
-      dueDate: followUp.due_date,
-      daysOverdue: followUp.days_overdue,
-      episodeKey: getSignalMetadataString(signal.metadata, "episode_key"),
-      signalId: signal.id,
-    };
-
-    const episodeKey = item.episodeKey;
-    if (!episodeKey) {
-      fallbackItems.push(item);
-      continue;
-    }
-
-    const dedupeKey = `${item.studentId}:${episodeKey}`;
-    const existing = dedupedByEpisode.get(dedupeKey);
-    if (!existing) {
-      dedupedByEpisode.set(dedupeKey, item);
-      continue;
-    }
-
-    const existingSortKey = getOperationalHealthFollowUpSortKey(existing);
-    const nextSortKey = getOperationalHealthFollowUpSortKey(item);
-    if (nextSortKey < existingSortKey || (nextSortKey === existingSortKey && item.signalId < existing.signalId)) {
-      dedupedByEpisode.set(dedupeKey, item);
-    }
-  }
-
-  const merged = [...dedupedByEpisode.values(), ...fallbackItems];
-  merged.sort((a, b) => {
-    const left = getOperationalHealthFollowUpSortKey(a);
-    const right = getOperationalHealthFollowUpSortKey(b);
-    if (left !== right) {
-      return left.localeCompare(right);
-    }
-    return a.signalId.localeCompare(b.signalId);
+  return collectOperationalHealthFollowUpsFromSignals({
+    signals: signals.items,
+    activeStudentNameById,
+    asOfDate,
+    maxItems,
   });
-
-  const limited = merged.slice(0, maxItems);
-  const overflowCount = Math.max(0, merged.length - limited.length);
-  return {
-    items: limited,
-    overflowCount,
-  };
 }
 
 type OperationalPlanningAttentionItem = {
@@ -5244,27 +5179,10 @@ async function listOperationalScheduleSignalsForAttention(
     return { items: [], overflowCount: 0 };
   }
 
-  const scheduleTypes = new Set([
-    "schedule_unavailability_window",
-    "schedule_availability_window",
-    "plan_generation_constraint",
-  ]);
-
-  const activeSignals = signals.items.filter((signal) => {
-    if (!scheduleTypes.has(signal.signalType)) {
-      return false;
-    }
-    if (signal.validUntil && signal.validUntil < asOfDate) {
-      return false;
-    }
-    return true;
-  });
-
-  return collectOperationalPlanningAttentionItems({
-    signals: activeSignals,
+  return collectOperationalScheduleSignalsForAttentionFromSignals({
+    signals: signals.items,
     activeStudentNameById,
     asOfDate,
-    signalTypes: scheduleTypes,
     maxItems,
   });
 }
@@ -6011,6 +5929,178 @@ function isSignalSupersededForDisplay(signal: TrainingPeaksStudentOperationalSig
     normalizeRecordString(signal.structuredPayload.superseded_by_signal_id) ??
     normalizeRecordString(signal.lifecycleMeta.superseded_by_signal_id);
   return Boolean(supersededBySignalId);
+}
+
+function shouldSkipOperationalSignalForAttentionHealthFollowUp(
+  signal: TrainingPeaksStudentOperationalSignal
+): boolean {
+  if (signal.lifecycleState === "resolved") {
+    return true;
+  }
+  if (isSignalSupersededForDisplay(signal)) {
+    return true;
+  }
+  const effective = resolveEffectiveOperationalSignalForDisplay(signal);
+  if (effective.effectiveVisibleInTpSignals === false) {
+    return true;
+  }
+  return false;
+}
+
+function shouldSkipOperationalSignalForAttentionSchedulePlan(
+  signal: TrainingPeaksStudentOperationalSignal
+): boolean {
+  if (signal.lifecycleState === "resolved") {
+    return true;
+  }
+  if (isSignalSupersededForDisplay(signal)) {
+    return true;
+  }
+  const effective = resolveEffectiveOperationalSignalForDisplay(signal);
+  if (effective.effectiveVisibleInTpSignals === false) {
+    return true;
+  }
+  if (effective.effectiveSignalType === "external_training_context") {
+    return true;
+  }
+  return false;
+}
+
+function buildOperationalHealthFollowUpLifecycleBaseReason(
+  signal: TrainingPeaksStudentOperationalSignal,
+  followUpReason: string | null
+): string {
+  const lifecycleDisplayState = resolveOperationalSignalDisplayLifecycleState(signal);
+  const effective = resolveEffectiveOperationalSignalForDisplay(signal);
+  const summary = compactHealthFollowUpReason(effective.effectiveDisplaySummary);
+  const compactReason = compactHealthFollowUpReason(followUpReason);
+
+  if (lifecycleDisplayState === "ready_for_coach_close") {
+    return summary ? `можно закрыть после проверки: ${summary}` : "можно закрыть после проверки";
+  }
+  if (lifecycleDisplayState === "stale_needs_review") {
+    return "давно нет новых данных, проверить вручную";
+  }
+  if (lifecycleDisplayState === "monitoring_after_return") {
+    return summary ? `после паузы: ${summary}; наблюдать` : "после паузы: наблюдать";
+  }
+  return compactReason ?? "проверить самочувствие после болезни/паузы";
+}
+
+export function collectOperationalHealthFollowUpsFromSignals(input: {
+  signals: TrainingPeaksStudentOperationalSignal[];
+  activeStudentNameById: ReadonlyMap<string, string | null>;
+  asOfDate: string;
+  maxItems?: number;
+}): { items: OperationalHealthFollowUpAttentionItem[]; overflowCount: number } {
+  const maxItems = input.maxItems ?? 5;
+  if (input.signals.length === 0) {
+    return { items: [], overflowCount: 0 };
+  }
+
+  const dedupedByEpisode = new Map<string, OperationalHealthFollowUpAttentionItem>();
+  const fallbackItems: OperationalHealthFollowUpAttentionItem[] = [];
+  for (const signal of input.signals) {
+    if (!isHealthOperationalSignalType(signal.signalType)) {
+      continue;
+    }
+    if (shouldSkipOperationalSignalForAttentionHealthFollowUp(signal)) {
+      continue;
+    }
+    const followUp = normalizeOperationalSignalFollowUp(signal.metadata, {
+      asOfDate: input.asOfDate,
+      timeZone: DEFAULT_COACH_TIMEZONE,
+    });
+    if (followUp.state !== "pending_due" && followUp.state !== "pending_overdue") {
+      continue;
+    }
+
+    const reason = buildOperationalHealthFollowUpLifecycleBaseReason(signal, followUp.reason);
+    const item: OperationalHealthFollowUpAttentionItem = {
+      studentId: signal.studentId,
+      studentName: input.activeStudentNameById.get(signal.studentId) ?? null,
+      reason: formatOperationalHealthFollowUpReason({
+        state: followUp.state,
+        daysOverdue: followUp.days_overdue,
+        reason,
+      }),
+      state: followUp.state,
+      dueDate: followUp.due_date,
+      daysOverdue: followUp.days_overdue,
+      episodeKey: getSignalMetadataString(signal.metadata, "episode_key"),
+      signalId: signal.id,
+    };
+
+    const episodeKey = item.episodeKey;
+    if (!episodeKey) {
+      fallbackItems.push(item);
+      continue;
+    }
+
+    const dedupeKey = `${item.studentId}:${episodeKey}`;
+    const existing = dedupedByEpisode.get(dedupeKey);
+    if (!existing) {
+      dedupedByEpisode.set(dedupeKey, item);
+      continue;
+    }
+
+    const existingSortKey = getOperationalHealthFollowUpSortKey(existing);
+    const nextSortKey = getOperationalHealthFollowUpSortKey(item);
+    if (nextSortKey < existingSortKey || (nextSortKey === existingSortKey && item.signalId < existing.signalId)) {
+      dedupedByEpisode.set(dedupeKey, item);
+    }
+  }
+
+  const merged = [...dedupedByEpisode.values(), ...fallbackItems];
+  merged.sort((a, b) => {
+    const left = getOperationalHealthFollowUpSortKey(a);
+    const right = getOperationalHealthFollowUpSortKey(b);
+    if (left !== right) {
+      return left.localeCompare(right);
+    }
+    return a.signalId.localeCompare(b.signalId);
+  });
+
+  const limited = merged.slice(0, maxItems);
+  const overflowCount = Math.max(0, merged.length - limited.length);
+  return {
+    items: limited,
+    overflowCount,
+  };
+}
+
+export function collectOperationalScheduleSignalsForAttentionFromSignals(input: {
+  signals: TrainingPeaksStudentOperationalSignal[];
+  activeStudentNameById: ReadonlyMap<string, string | null>;
+  asOfDate: string;
+  maxItems?: number;
+}): { items: OperationalPlanningAttentionItem[]; overflowCount: number } {
+  const maxItems = input.maxItems ?? 5;
+  const scheduleTypes = new Set([
+    "schedule_unavailability_window",
+    "schedule_availability_window",
+    "plan_generation_constraint",
+  ]);
+  const activeSignals = input.signals.filter((signal) => {
+    if (!scheduleTypes.has(signal.signalType)) {
+      return false;
+    }
+    if (signal.validUntil && signal.validUntil < input.asOfDate) {
+      return false;
+    }
+    if (shouldSkipOperationalSignalForAttentionSchedulePlan(signal)) {
+      return false;
+    }
+    return true;
+  });
+
+  return collectOperationalPlanningAttentionItems({
+    signals: activeSignals,
+    activeStudentNameById: input.activeStudentNameById,
+    asOfDate: input.asOfDate,
+    signalTypes: scheduleTypes,
+    maxItems,
+  });
 }
 
 function buildOperationalSignalItemFromSignal(input: {
