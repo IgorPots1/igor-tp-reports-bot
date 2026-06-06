@@ -610,16 +610,18 @@ export function formatScheduleOperationalSignalText(input: {
   if (
     isUnavailabilityScheduleSignalType(input.signalType) &&
     durationDays &&
-    !validFrom &&
     input.episodeContext?.availableDates.length
   ) {
-    const inferred = inferUnavailabilityAfterAvailableDates({
-      availableDates: input.episodeContext.availableDates,
-      durationDays,
-    });
-    if (inferred) {
-      validFrom = inferred.validFrom;
-      validUntil = inferred.validUntil;
+    const hasExplicitSignalDates = Boolean(input.validFrom || input.validUntil);
+    if (!hasExplicitSignalDates) {
+      const inferred = inferUnavailabilityAfterAvailableDates({
+        availableDates: input.episodeContext.availableDates,
+        durationDays,
+      });
+      if (inferred) {
+        validFrom = inferred.validFrom;
+        validUntil = inferred.validUntil;
+      }
     }
   }
 
@@ -640,7 +642,9 @@ export function formatScheduleOperationalSignalText(input: {
     }
     if (dates.length > 0) {
       const label = plannedDates.length > 0 || planningStatus === "athlete_intends_to_train" ? "планирует" : "доступна";
-      displayParts.push(`${label}: ${formatCompactDateList(dates)}`);
+      const dateText =
+        label === "планирует" ? formatCompactDateList(dates) : formatDayDateList(dates);
+      displayParts.push(`${label}: ${dateText}`);
       return displayParts.join("; ");
     }
     if (availableDays.length > 0) {
