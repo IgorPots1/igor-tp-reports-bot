@@ -671,6 +671,7 @@ export type TrainingPeaksOperationalSignalsItem = {
   signalType: string;
   isEpisodeSummary: boolean;
   followUpState: TrainingPeaksOperationalSignalsFollowUpState;
+  lifecycleDisplayState: "active_problem" | "monitoring_after_return" | "ready_for_coach_close" | "stale_needs_review";
   text: string;
   requiresCoachReview?: boolean | null;
   hiddenReason?: string | null;
@@ -5898,6 +5899,12 @@ type EffectiveOperationalSignalForDisplay = {
   effectiveRequiresCoachReview: boolean | null;
 };
 
+type OperationalSignalDisplayLifecycleState =
+  | "active_problem"
+  | "monitoring_after_return"
+  | "ready_for_coach_close"
+  | "stale_needs_review";
+
 function isPainInjuryOperationalSignalForDisplay(
   effective: EffectiveOperationalSignalForDisplay
 ): boolean {
@@ -5956,6 +5963,56 @@ function resolveEffectiveOperationalSignalForDisplay(
   };
 }
 
+function isSignalMarkedStaleNeedsReview(signal: TrainingPeaksStudentOperationalSignal): boolean {
+  const metadata = signal.metadata;
+  const payload = signal.structuredPayload;
+  const lifecycleMeta = signal.lifecycleMeta;
+  const markerCandidates = [
+    getSignalMetadataString(metadata, "lifecycle_effective"),
+    getSignalMetadataString(metadata, "proposed_action"),
+    normalizeRecordString(payload.lifecycle_effective),
+    normalizeRecordString(payload.proposed_action),
+    normalizeRecordString(lifecycleMeta.lifecycle_effective),
+    normalizeRecordString(lifecycleMeta.proposed_action),
+  ]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => value.trim().toLowerCase());
+  if (
+    markerCandidates.includes("stale_needs_review") ||
+    markerCandidates.includes("stale")
+  ) {
+    return true;
+  }
+  return (
+    getSignalMetadataBoolean(metadata, "stale_needs_review") === true ||
+    normalizeRecordBoolean(payload.stale_needs_review) === true ||
+    normalizeRecordBoolean(lifecycleMeta.stale_needs_review) === true
+  );
+}
+
+function resolveOperationalSignalDisplayLifecycleState(
+  signal: TrainingPeaksStudentOperationalSignal
+): OperationalSignalDisplayLifecycleState {
+  if (isSignalMarkedStaleNeedsReview(signal)) {
+    return "stale_needs_review";
+  }
+  if (signal.lifecycleState === "monitoring_after_return") {
+    if (signal.requiresCoachClose) {
+      return "ready_for_coach_close";
+    }
+    return "monitoring_after_return";
+  }
+  return "active_problem";
+}
+
+function isSignalSupersededForDisplay(signal: TrainingPeaksStudentOperationalSignal): boolean {
+  const supersededBySignalId =
+    getSignalMetadataString(signal.metadata, "superseded_by_signal_id") ??
+    normalizeRecordString(signal.structuredPayload.superseded_by_signal_id) ??
+    normalizeRecordString(signal.lifecycleMeta.superseded_by_signal_id);
+  return Boolean(supersededBySignalId);
+}
+
 function buildOperationalSignalItemFromSignal(input: {
   signal: TrainingPeaksStudentOperationalSignal;
   studentNameById: ReadonlyMap<string, string | null>;
@@ -5980,6 +6037,41 @@ function buildOperationalSignalItemFromSignal(input: {
   const relatedSuffix = relatedSignalTypes ? `; сигналы: ${compactOperationalSignalText(relatedSignalTypes, 42)}` : "";
   const rolePrefix =
     episodeRole && !INTERNAL_OPERATIONAL_EPISODE_ROLES.has(episodeRole) ? `${episodeRole}: ` : "";
+  const lifecycleDisplayState = resolveOperationalSignalDisplayLifecycleState(signal);
+  const lifecyclePriority =
+    lifecycleDisplayState === "active_problem"
+      ? 30
+      : lifecycleDisplayState === "monitoring_after_return"
+        ? 55
+        : lifecycleDisplayState === "ready_for_coach_close"
+          ? 56
+          : 57;
+  const lifecycleSortBucket =
+    lifecycleDisplayState === "active_problem"
+      ? 2
+      : lifecycleDisplayState === "monitoring_after_return"
+        ? 6
+        : lifecycleDisplayState === "ready_for_coach_close"
+          ? 7
+          : 8;
+  if (isSignalSupersededForDisplay(signal)) {
+    return {
+      signalId: signal.id,
+      studentId: signal.studentId,
+      studentName,
+      section: resolveOperationalSignalDisplaySection(effective),
+      priority: 999,
+      sortBucket: 9,
+      dueDate: null,
+      episodeKey,
+      signalType: effective.effectiveSignalType,
+      isEpisodeSummary: false,
+      followUpState: followUp.state,
+      lifecycleDisplayState,
+      text: "",
+      hiddenReason: "superseded_signal_hidden",
+    };
+  }
   if (effective.effectiveVisibleInTpSignals === false) {
     return {
       signalId: signal.id,
@@ -5993,6 +6085,7 @@ function buildOperationalSignalItemFromSignal(input: {
       signalType: effective.effectiveSignalType,
       isEpisodeSummary: false,
       followUpState: followUp.state,
+      lifecycleDisplayState,
       text: "",
       hiddenReason: "v2_payload_hidden",
     };
@@ -6008,21 +6101,31 @@ function buildOperationalSignalItemFromSignal(input: {
       buildHealthOperationalSignalText(signal, effective.effectiveSignalType) ||
       reasonFromMeta ||
       `${typeLabel}${windowSuffix}`;
+    const normalizedBaseReason = normalizeAmbiguousIllnessDisplayText(
+      compactOperationalSignalText(`${rolePrefix}${baseReason}${relatedSuffix}`, 140)
+    );
+    const lifecycleText =
+      lifecycleDisplayState === "monitoring_after_return"
+        ? `после паузы: ${normalizedBaseReason}; наблюдать`
+        : lifecycleDisplayState === "ready_for_coach_close"
+          ? `можно закрыть после проверки: ${normalizedBaseReason}`
+          : lifecycleDisplayState === "stale_needs_review"
+            ? "давно нет новых данных, проверить вручную"
+            : normalizedBaseReason;
     return {
       signalId: signal.id,
       studentId: signal.studentId,
       studentName,
       section: resolveOperationalSignalDisplaySection(effective),
-      priority: 30,
-      sortBucket: 2,
+      priority: lifecyclePriority,
+      sortBucket: lifecycleSortBucket,
       dueDate: followUp.due_date,
       episodeKey,
       signalType: effective.effectiveSignalType,
       isEpisodeSummary: false,
       followUpState: followUp.state,
-      text: normalizeAmbiguousIllnessDisplayText(
-        compactOperationalSignalText(`${rolePrefix}${baseReason}${relatedSuffix}`, 140)
-      ),
+      lifecycleDisplayState,
+      text: lifecycleText,
       requiresCoachReview: effective.effectiveRequiresCoachReview,
       hiddenReason: null,
     };
@@ -6050,6 +6153,7 @@ function buildOperationalSignalItemFromSignal(input: {
         signalType: effective.effectiveSignalType,
         isEpisodeSummary: false,
         followUpState: followUp.state,
+        lifecycleDisplayState,
         text: "",
         hiddenReason: "expired_planned_training_dates",
       };
@@ -6076,6 +6180,7 @@ function buildOperationalSignalItemFromSignal(input: {
         signalType: effective.effectiveSignalType,
         isEpisodeSummary: false,
         followUpState: followUp.state,
+        lifecycleDisplayState,
         text: "",
         hiddenReason: "expired_schedule_signal",
       };
@@ -6099,8 +6204,9 @@ function buildOperationalSignalItemFromSignal(input: {
       signalType: effective.effectiveSignalType,
       isEpisodeSummary: false,
       followUpState: followUp.state,
+      lifecycleDisplayState,
       text: compactOperationalSignalText(scheduleText, 95),
-        requiresCoachReview: effective.effectiveRequiresCoachReview,
+      requiresCoachReview: effective.effectiveRequiresCoachReview,
       hiddenReason: null,
     };
   }
@@ -6121,6 +6227,7 @@ function buildOperationalSignalItemFromSignal(input: {
       signalType: effective.effectiveSignalType,
       isEpisodeSummary: false,
       followUpState: followUp.state,
+      lifecycleDisplayState,
       text: `кандидат переноса ${sourceDate} → ${targetDate}`,
       requiresCoachReview: effective.effectiveRequiresCoachReview,
       hiddenReason: isVisible ? null : "no_active_move_action",
@@ -6147,6 +6254,7 @@ function buildOperationalSignalItemFromSignal(input: {
       signalType: effective.effectiveSignalType,
       isEpisodeSummary: false,
       followUpState: followUp.state,
+      lifecycleDisplayState,
       text: genericReason ? `${genericBase}: ${genericReason}` : genericBase,
       requiresCoachReview: effective.effectiveRequiresCoachReview,
       hiddenReason: "resolved_health_hidden_in_normal_view",
@@ -6164,6 +6272,7 @@ function buildOperationalSignalItemFromSignal(input: {
     signalType: effective.effectiveSignalType,
     isEpisodeSummary: false,
     followUpState: followUp.state,
+    lifecycleDisplayState,
     text: genericReason ? `${genericBase}: ${genericReason}` : genericBase,
     requiresCoachReview: effective.effectiveRequiresCoachReview,
     hiddenReason: null,
@@ -6255,6 +6364,15 @@ function filterNormalOperationalSignalItems(items: TrainingPeaksOperationalSigna
       return false;
     }
     if (item.section === "health_pause") {
+      if (item.lifecycleDisplayState === "monitoring_after_return") {
+        return true;
+      }
+      if (item.lifecycleDisplayState === "ready_for_coach_close") {
+        return true;
+      }
+      if (item.lifecycleDisplayState === "stale_needs_review") {
+        return true;
+      }
       if (item.signalType === "health_issue_improving") {
         return true;
       }
@@ -6286,6 +6404,18 @@ function dedupeHealthByStudent(items: readonly TrainingPeaksOperationalSignalsIt
   for (const [studentId, studentItems] of grouped.entries()) {
     const best = [...studentItems].sort((left, right) => {
       const rank = (item: TrainingPeaksOperationalSignalsItem): number => {
+        if (item.lifecycleDisplayState === "active_problem") {
+          return 10;
+        }
+        if (item.lifecycleDisplayState === "ready_for_coach_close") {
+          return 7;
+        }
+        if (item.lifecycleDisplayState === "monitoring_after_return") {
+          return 6;
+        }
+        if (item.lifecycleDisplayState === "stale_needs_review") {
+          return 5;
+        }
         if (item.signalType === "health_issue_started" || item.signalType === "pause_training") {
           return 4;
         }

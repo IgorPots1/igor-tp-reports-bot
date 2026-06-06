@@ -41,6 +41,8 @@ function makeSignal(input: {
   sourceDate?: string | null;
   targetDate?: string | null;
   episodeKey?: string | null;
+  lifecycleState?: TrainingPeaksStudentOperationalSignal["lifecycleState"];
+  requiresCoachClose?: boolean;
 }): TrainingPeaksStudentOperationalSignal {
   const metadata = { ...(input.metadata ?? {}) };
   if (input.episodeKey) {
@@ -51,13 +53,13 @@ function makeSignal(input: {
     studentId: input.studentId,
     signalType: input.signalType as TrainingPeaksStudentOperationalSignal["signalType"],
     status: "active",
-    lifecycleState: null,
+    lifecycleState: input.lifecycleState ?? null,
     lifecycleStateUpdatedAt: null,
     lifecycleAppliedAt: null,
     lifecycleMeta: {},
     resolvedAt: null,
     resolvedReason: null,
-    requiresCoachClose: false,
+    requiresCoachClose: input.requiresCoachClose ?? false,
     sourceType: "fixture",
     sourceObservationId: null,
     telegramChatId: null,
@@ -163,6 +165,57 @@ function buildSnapshot(scope: TrainingPeaksOperationalSignalsScope) {
         activity_domain: "injury",
         planning_effect: "safety_review",
         requires_coach_review: true,
+      },
+    }),
+    makeSignal({
+      signalId: "sig-monitoring-after-return",
+      studentId: "s-monitor",
+      signalType: "health_issue_started",
+      lifecycleState: "monitoring_after_return",
+      structuredPayload: {
+        latest_summary: "вернулся к бегу после боли в голени",
+        signal_type: "pain_injury",
+        activity_domain: "injury",
+      },
+    }),
+    makeSignal({
+      signalId: "sig-ready-for-close",
+      studentId: "s-ready",
+      signalType: "health_issue_started",
+      lifecycleState: "monitoring_after_return",
+      requiresCoachClose: true,
+      structuredPayload: {
+        latest_summary: "после болезни выполнена тренировка без жалоб",
+      },
+    }),
+    makeSignal({
+      signalId: "sig-stale-review",
+      studentId: "s-stale",
+      signalType: "health_issue_started",
+      metadata: {
+        lifecycle_effective: "stale_needs_review",
+      },
+      structuredPayload: {
+        latest_summary: "старый эпизод без новых сообщений",
+      },
+    }),
+    makeSignal({
+      signalId: "sig-superseded-hidden",
+      studentId: "s-dup",
+      signalType: "health_issue_started",
+      metadata: {
+        superseded_by_signal_id: "sig-superseded-visible",
+      },
+      structuredPayload: {
+        latest_summary: "старый дубль",
+      },
+    }),
+    makeSignal({
+      signalId: "sig-superseded-visible",
+      studentId: "s-dup",
+      signalType: "health_issue_improving",
+      structuredPayload: {
+        latest_summary: "актуальный эпизод",
       },
     }),
     makeSignal({
@@ -327,6 +380,10 @@ function buildSnapshot(scope: TrainingPeaksOperationalSignalsScope) {
     ["s-h1", "Health Athlete"],
     ["s-h2", "Ambiguous Health Athlete"],
     ["s-h3", "Pain Athlete"],
+    ["s-monitor", "Monitoring Athlete"],
+    ["s-ready", "Ready Close Athlete"],
+    ["s-stale", "Stale Athlete"],
+    ["s-dup", "Dedup Athlete"],
     ["s-h4", "Strength Hidden Athlete"],
     ["s-stepan", "Stepan Trofimov"],
     ["s-elizaveta", "Elizaveta Kolodkina"],
@@ -464,6 +521,7 @@ function run(): void {
     "F failed: Stepan pain/injury should stay visible."
   );
   assert(!text.includes("Stepan Trofimov\n  болеет"), "F failed: Stepan ambiguous illness must not overclaim 'болеет'.");
+  assert(!text.includes("старый дубль"), "F failed: superseded duplicate should be hidden from display.");
   assert(!text.includes("Elizaveta Kolodkina"), "F failed: expired planned-only Elizaveta signal should be hidden.");
   const ambiguousVisible = text.includes("Ambiguous Health Athlete");
   if (ambiguousVisible) {
@@ -476,6 +534,25 @@ function run(): void {
   assert(!healthText.includes("health_context:"), "F failed: technical health_context prefix should not leak.");
   assert(!healthText.includes("пауза / наблюдать"), "F failed: pause/observe label should not leak.");
   assert(!healthText.includes("illness-related pause follow-up"), "F failed: internal follow-up labels should not leak.");
+  assert(
+    healthText.includes("Monitoring Athlete") && healthText.includes("после паузы:"),
+    "F failed: monitoring_after_return should stay visible with calm wording."
+  );
+  assert(
+    healthText.includes("Ready Close Athlete") && healthText.includes("можно закрыть после проверки"),
+    "F failed: ready_for_coach_close should be shown as coach action wording."
+  );
+  assert(
+    healthText.includes("Stale Athlete") && healthText.includes("давно нет новых данных, проверить вручную"),
+    "F failed: stale_needs_review should surface explicit manual review wording."
+  );
+  const monitoringIndex = healthText.indexOf("Monitoring Athlete");
+  const readyIndex = healthText.indexOf("Ready Close Athlete");
+  const activeIndex = healthText.indexOf("Health Athlete");
+  assert(
+    activeIndex >= 0 && monitoringIndex > activeIndex && readyIndex > activeIndex,
+    "F failed: monitoring/ready rows should be lower priority than active health rows."
+  );
 
   // H: future pending and resolved follow-up are not visible in normal output
   assert(

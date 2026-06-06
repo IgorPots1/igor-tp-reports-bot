@@ -39,12 +39,21 @@ function makeSignal(input: {
   validUntil?: string | null;
   sourceDate?: string | null;
   targetDate?: string | null;
+  lifecycleState?: TrainingPeaksStudentOperationalSignal["lifecycleState"];
+  requiresCoachClose?: boolean;
 }): TrainingPeaksStudentOperationalSignal {
   return {
     id: input.signalId,
     studentId: input.studentId,
     signalType: input.signalType as TrainingPeaksStudentOperationalSignal["signalType"],
     status: "active",
+    lifecycleState: input.lifecycleState ?? null,
+    lifecycleStateUpdatedAt: null,
+    lifecycleAppliedAt: null,
+    lifecycleMeta: {},
+    resolvedAt: null,
+    resolvedReason: null,
+    requiresCoachClose: input.requiresCoachClose ?? false,
     sourceType: "fixture",
     sourceObservationId: null,
     telegramChatId: null,
@@ -277,6 +286,49 @@ function run(): void {
           display_summary: "боль / надкостница (уточнить, актуально ли)",
         },
       }),
+      makeSignal({
+        signalId: "stepan-monitoring-display",
+        studentId: "stepan",
+        signalType: "health_issue_started",
+        lifecycleState: "monitoring_after_return",
+        structuredPayload: {
+          signal_type: "pain_injury",
+          activity_domain: "injury",
+          latest_summary: "вернулся к бегу после боли",
+        },
+      }),
+      makeSignal({
+        signalId: "stepan-ready-close-display",
+        studentId: "stepan",
+        signalType: "health_issue_started",
+        lifecycleState: "monitoring_after_return",
+        requiresCoachClose: true,
+        structuredPayload: {
+          latest_summary: "без жалоб после возврата",
+        },
+      }),
+      makeSignal({
+        signalId: "viktoria-stale-display",
+        studentId: "viktoria",
+        signalType: "health_issue_started",
+        metadata: {
+          lifecycle_effective: "stale_needs_review",
+        },
+        structuredPayload: {
+          latest_summary: "старый сигнал без обновлений",
+        },
+      }),
+      makeSignal({
+        signalId: "viktoria-superseded-duplicate",
+        studentId: "viktoria",
+        signalType: "health_issue_started",
+        metadata: {
+          superseded_by_signal_id: "v-improving-rich",
+        },
+        structuredPayload: {
+          latest_summary: "дубликат эпизода",
+        },
+      }),
     ],
     activeMoveActions: [],
   });
@@ -332,6 +384,19 @@ function run(): void {
   assert(text.includes("07.06"), "12 failed: Olga planned Sunday date must be shown.");
   assert(!text.includes("Naida"), "13 failed: external strength context must stay hidden in /tp_signals.");
   assert(!text.includes("силовые: вт/чт"), "13 failed: hidden strength context leaked into /tp_signals.");
+  assert(
+    text.includes("после паузы:") && text.includes("вернулся к бегу после боли"),
+    "13 failed: monitoring_after_return should use calm monitoring wording."
+  );
+  assert(
+    text.includes("можно закрыть после проверки"),
+    "13 failed: monitoring_after_return + requiresCoachClose should show coach-close wording."
+  );
+  assert(
+    text.includes("давно нет новых данных, проверить вручную"),
+    "13 failed: stale_needs_review should be explicitly surfaced."
+  );
+  assert(!text.includes("дубликат эпизода"), "13 failed: superseded duplicate should be hidden in projection.");
   assert(!text.includes("Stepan Trofimov\n  болеет"), "13 failed: Stepan pain/injury must not be shown as illness.");
   assert(
     text.includes("Stepan Trofimov") && text.includes("боль / надкостница (уточнить, актуально ли)"),
