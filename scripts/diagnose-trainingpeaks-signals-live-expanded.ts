@@ -583,6 +583,14 @@ async function run(): Promise<void> {
 
   const observationsByStudent = new Map<string, Awaited<ReturnType<typeof listTrainingPeaksTelegramContextObservationsForStudent>>>();
   const workoutsByStudent = new Map<string, Awaited<ReturnType<typeof listTrainingPeaksWorkoutCacheForStudentDateRange>>>();
+  const earliestOpenedDateByStudent = new Map<string, string>();
+  for (const signal of allSignals) {
+    const openedDate = signal.createdAt.slice(0, 10);
+    const existing = earliestOpenedDateByStudent.get(signal.studentId);
+    if (!existing || openedDate < existing) {
+      earliestOpenedDateByStudent.set(signal.studentId, openedDate);
+    }
+  }
 
   const rows: TriageRow[] = [];
   for (const signal of allSignals) {
@@ -595,7 +603,7 @@ async function run(): Promise<void> {
       );
     }
     if (!workoutsByStudent.has(signal.studentId)) {
-      const openedDate = signal.createdAt.slice(0, 10);
+      const openedDate = earliestOpenedDateByStudent.get(signal.studentId) ?? signal.createdAt.slice(0, 10);
       workoutsByStudent.set(
         signal.studentId,
         await listTrainingPeaksWorkoutCacheForStudentDateRange({
