@@ -7,6 +7,7 @@ import { createClient } from "@supabase/supabase-js";
 
 import type { TrainingPeaksStudent } from "../../../src/features/trainingpeaks/repository.ts";
 import * as trainingPeaksRepository from "../../../src/features/trainingpeaks/repository.ts";
+import { analyzePlannedVsCompletedFrequency } from "./lib/planned-vs-completed-frequency.ts";
 import { toolRoot } from "./lib/paths.ts";
 
 type Confidence = "low" | "medium" | "high";
@@ -91,6 +92,25 @@ type BaselineV2PerAthlete = {
       completed_running_minutes: number;
     }>;
     run_walk_status: "run_walk_actual" | "possible_run_walk_signal" | "none";
+    recent_4w_frequency?: number | null;
+  };
+  planned_context_baseline: {
+    frequency_cap: number | null;
+    weekly_minutes_cap: number | null;
+    long_run_cap_min: number | null;
+    quality_count_cap: number | null;
+    interval_like_count: number | null;
+  };
+  baseline_change_vs_planned_context: {
+    frequency_delta: number | null;
+    weekly_minutes_delta: number | null;
+    long_run_delta: number | null;
+    quality_delta: number | null;
+    materially_changed: boolean;
+  };
+  completed_vs_planned_divergence: {
+    planned_only_running_workouts: number;
+    completed_only_running_workouts: number;
   };
 };
 
@@ -167,6 +187,12 @@ type ActionRow = {
   would_set_is_current: boolean;
   would_unset_previous_current: boolean;
   raw_stats_preview: Record<string, unknown>;
+  actual_completed_frequency: number | null;
+  planned_context_frequency: number | null;
+  planned_vs_completed_delta: number | null;
+  planned_vs_completed_classification: string;
+  planned_vs_completed_reliability: string;
+  safe_batch_excluded_planned_vs_completed: boolean;
 };
 
 type DryRunReport = {
@@ -190,6 +216,14 @@ type DryRunReport = {
   actions: ActionRow[];
   counts: Record<ImportAction, number>;
   high_delta_count: number;
+  planned_vs_completed_summary: {
+    reason_count: number;
+    safe_batch_exclusion_count: number;
+    planned_higher_count: number;
+    completed_higher_count: number;
+    planned_signal_missing_count: number;
+    aligned_count: number;
+  };
   special_cases: Array<{
     athlete: string;
     athlete_id: number;
@@ -453,6 +487,9 @@ function buildManualReviewShortlistMd(rows: ActionRow[]): string {
     lines.push(
       `- frequency_layers: all_window=${String(activePreview.all_window_frequency ?? "n/a")}, active_window=${String(activePreview.active_window_frequency ?? "n/a")}, normal_week=${String(activePreview.normal_week_frequency ?? "n/a")}, recent_4w=${String(activePreview.recent_4w_frequency ?? "n/a")}`,
     );
+    lines.push(
+      `- planned_vs_completed: actual=${row.actual_completed_frequency ?? "n/a"}, planned=${row.planned_context_frequency ?? "n/a"}, delta=${row.planned_vs_completed_delta ?? "n/a"}, classification=${row.planned_vs_completed_classification}, reliability=${row.planned_vs_completed_reliability}`,
+    );
     lines.push(`- context_flags: ${row.context_flags.join(", ") || "none"}`);
     lines.push("");
   }
@@ -536,13 +573,27 @@ function buildCombinedMd(report: DryRunReport): string {
     lines.push(`- ${row.student_name} (${row.athlete_id}) | frequency_delta=${row.frequency_delta ?? "n/a"} | weekly_minutes_delta=${row.weekly_minutes_delta ?? "n/a"} | long_run_delta=${row.long_run_delta ?? "n/a"} | quality_delta=${row.quality_sessions_delta ?? "n/a"}`);
   }
   lines.push("");
-  lines.push("## 7. Special-case athletes");
+  lines.push("## 7. Planned vs completed frequency gaps");
+  lines.push(`- reason_count: ${report.planned_vs_completed_summary.reason_count}`);
+  lines.push(`- safe_batch_exclusion_count: ${report.planned_vs_completed_summary.safe_batch_exclusion_count}`);
+  lines.push(`- planned_higher: ${report.planned_vs_completed_summary.planned_higher_count}`);
+  lines.push(`- completed_higher: ${report.planned_vs_completed_summary.completed_higher_count}`);
+  lines.push(`- planned_signal_missing: ${report.planned_vs_completed_summary.planned_signal_missing_count}`);
+  const plannedGapRows = report.actions.filter((row) => row.reasons.includes("planned_vs_completed_frequency_delta"));
+  if (plannedGapRows.length === 0) lines.push("- none");
+  for (const row of plannedGapRows.slice(0, 30)) {
+    lines.push(
+      `- ${row.student_name} (${row.athlete_id}) | action=${row.action} | actual=${row.actual_completed_frequency ?? "n/a"} | planned=${row.planned_context_frequency ?? "n/a"} | delta=${row.planned_vs_completed_delta ?? "n/a"} | classification=${row.planned_vs_completed_classification} | reliability=${row.planned_vs_completed_reliability}`,
+    );
+  }
+  lines.push("");
+  lines.push("## 8. Special-case athletes");
   for (const special of report.special_cases) {
     lines.push(`- ${special.athlete} (${special.athlete_id}) | status=${special.status} | details=${JSON.stringify(special.details)}`);
   }
   if (report.special_cases.length === 0) lines.push("- none");
   lines.push("");
-  lines.push("## 8. Safety notes");
+  lines.push("## 9. Safety notes");
   lines.push("- Read-only script; no insert/update/upsert/delete executed.");
   lines.push("- No TrainingPeaks mutation paths are called.");
   lines.push("- No Telegram paths are called.");
@@ -553,10 +604,76 @@ function buildCombinedMd(report: DryRunReport): string {
     lines.push(`- ${note}`);
   }
   lines.push("");
-  lines.push("## 9. Next step recommendation");
+  lines.push("## 10. Next step recommendation");
   lines.push("- Keep apply step disabled.");
   lines.push("- Review all manual_review/skip/blocked rows with coach context.");
   lines.push("- Only after manual review, implement separate guarded apply command.");
+  lines.push("");
+  return `${lines.join("\n")}\n`;
+}
+
+function buildPlannedVsCompletedSummary(actions: ActionRow[]): DryRunReport["planned_vs_completed_summary"] {
+  const gapRows = actions.filter((row) => row.reasons.includes("planned_vs_completed_frequency_delta"));
+  return {
+    reason_count: gapRows.length,
+    safe_batch_exclusion_count: actions.filter((row) => row.safe_batch_excluded_planned_vs_completed).length,
+    planned_higher_count: actions.filter((row) => row.planned_vs_completed_classification === "planned_higher_than_completed").length,
+    completed_higher_count: actions.filter((row) => row.planned_vs_completed_classification === "completed_higher_than_planned").length,
+    planned_signal_missing_count: actions.filter((row) => row.planned_vs_completed_classification === "planned_signal_missing").length,
+    aligned_count: actions.filter((row) => row.planned_vs_completed_classification === "aligned").length,
+  };
+}
+
+function buildPlannedVsCompletedValidationMd(input: {
+  sourceReportDir: string;
+  importDryRunDir: string;
+  actions: ActionRow[];
+  summary: DryRunReport["planned_vs_completed_summary"];
+  validationTargets: Array<{ label: string; row: ActionRow | null }>;
+}): string {
+  const lines = [
+    "# Planned vs Completed Dry-Run Validation",
+    "",
+    `- source_report_dir: ${input.sourceReportDir}`,
+    `- import_dry_run_dir: ${input.importDryRunDir}`,
+    `- planned_vs_completed_reason_count: ${input.summary.reason_count}`,
+    `- safe_batch_exclusion_count: ${input.summary.safe_batch_exclusion_count}`,
+    "",
+    "## Summary counts",
+    `- aligned: ${input.summary.aligned_count}`,
+    `- planned_higher_than_completed: ${input.summary.planned_higher_count}`,
+    `- completed_higher_than_planned: ${input.summary.completed_higher_count}`,
+    `- planned_signal_missing: ${input.summary.planned_signal_missing_count}`,
+    "",
+    "## Validation targets",
+  ];
+  for (const target of input.validationTargets) {
+    if (!target.row) {
+      lines.push(`- ${target.label}: not found`);
+      continue;
+    }
+    const row = target.row;
+    lines.push(
+      `- ${target.label}: action=${row.action}; actual=${row.actual_completed_frequency ?? "n/a"}; planned=${row.planned_context_frequency ?? "n/a"}; delta=${row.planned_vs_completed_delta ?? "n/a"}; classification=${row.planned_vs_completed_classification}; reliability=${row.planned_vs_completed_reliability}; reasons=${row.reasons.join(", ") || "none"}; safe_batch_excluded=${row.safe_batch_excluded_planned_vs_completed}`,
+    );
+  }
+  lines.push("");
+  lines.push("## Top planned-higher candidates");
+  const plannedHigher = input.actions
+    .filter((row) => row.planned_vs_completed_classification === "planned_higher_than_completed")
+    .sort((a, b) => (b.planned_vs_completed_delta ?? 0) - (a.planned_vs_completed_delta ?? 0))
+    .slice(0, 15);
+  if (plannedHigher.length === 0) lines.push("- none");
+  for (const row of plannedHigher) {
+    lines.push(
+      `- ${row.student_name} (${row.athlete_id}): planned=${row.planned_context_frequency ?? "n/a"}, actual=${row.actual_completed_frequency ?? "n/a"}, delta=${row.planned_vs_completed_delta ?? "n/a"}, action=${row.action}`,
+    );
+  }
+  lines.push("");
+  lines.push("## Notes");
+  lines.push("- Completed baseline remains primary proposed frequency_cap.");
+  lines.push("- Planned context is surfaced separately for coach-target overlay review.");
+  lines.push("- Future ultra-safe batches should exclude athletes with |planned_vs_completed_delta|>=1 unless coach-whitelisted.");
   lines.push("");
   return `${lines.join("\n")}\n`;
 }
@@ -799,6 +916,22 @@ async function main(): Promise<void> {
       flags.add("manual_review");
     }
 
+    const plannedVsCompleted = analyzePlannedVsCompletedFrequency({
+      actualCompletedFrequency: normalWeekFrequency,
+      plannedContextFrequency: toNumberOrNull(athlete.planned_context_baseline.frequency_cap),
+      plannedContextWeeklyMinutes: toNumberOrNull(athlete.planned_context_baseline.weekly_minutes_cap),
+      plannedOnlyRunningWorkouts: athlete.completed_vs_planned_divergence.planned_only_running_workouts,
+      activeWindowFrequency,
+      allWindowFrequency: allWeekFrequency,
+      recent4wFrequency,
+    });
+    for (const plannedReason of plannedVsCompleted.review_reasons) {
+      reasons.add(plannedReason);
+    }
+    if (plannedVsCompleted.safe_batch_excluded) {
+      flags.add("planned_vs_completed_frequency_gap");
+    }
+
     let action: ImportAction = "import";
     if (!current.available) {
       action = "blocked";
@@ -854,6 +987,11 @@ async function main(): Promise<void> {
         recent_4w_frequency: recent4wFrequency,
         recent_4w_completed_minutes: activeWindow?.recent_4w_completed_minutes ?? null,
         baseline_period_type: activeWindow?.baseline_period_type ?? null,
+        planned_context_frequency: plannedVsCompleted.planned_context_frequency,
+        actual_completed_frequency: plannedVsCompleted.actual_completed_frequency,
+        planned_vs_completed_delta: plannedVsCompleted.planned_vs_completed_delta,
+        planned_vs_completed_classification: plannedVsCompleted.planned_vs_completed_classification,
+        planned_vs_completed_reliability: plannedVsCompleted.planned_vs_completed_reliability,
       },
       special_case_context:
         athlete.athlete_id === 5485169
@@ -902,6 +1040,12 @@ async function main(): Promise<void> {
       would_set_is_current: action === "import" || action === "manual_review",
       would_unset_previous_current: currentBaseline !== null && action !== "skip" && action !== "blocked",
       raw_stats_preview: rawStatsPreview,
+      actual_completed_frequency: plannedVsCompleted.actual_completed_frequency,
+      planned_context_frequency: plannedVsCompleted.planned_context_frequency,
+      planned_vs_completed_delta: plannedVsCompleted.planned_vs_completed_delta,
+      planned_vs_completed_classification: plannedVsCompleted.planned_vs_completed_classification,
+      planned_vs_completed_reliability: plannedVsCompleted.planned_vs_completed_reliability,
+      safe_batch_excluded_planned_vs_completed: plannedVsCompleted.safe_batch_excluded,
     });
   }
 
@@ -935,6 +1079,7 @@ async function main(): Promise<void> {
   actions.sort((a, b) => a.student_name.localeCompare(b.student_name));
   const counts: Record<ImportAction, number> = { import: 0, manual_review: 0, skip: 0, blocked: 0 };
   for (const row of actions) counts[row.action] += 1;
+  const plannedVsCompletedSummary = buildPlannedVsCompletedSummary(actions);
 
   const report: DryRunReport = {
     generated_at: new Date().toISOString(),
@@ -957,6 +1102,7 @@ async function main(): Promise<void> {
     actions,
     counts,
     high_delta_count: actions.filter((row) => row.reasons.includes("high_delta_vs_current")).length,
+    planned_vs_completed_summary: plannedVsCompletedSummary,
     special_cases: specialCases,
     recommendations: [
       "Dry-run only complete; no DB writes performed.",
@@ -1008,6 +1154,12 @@ async function main(): Promise<void> {
     "events_api_advisory_events",
     "race_exclusion_weeks_count",
     "race_context_manual_review",
+    "actual_completed_frequency",
+    "planned_context_frequency",
+    "planned_vs_completed_delta",
+    "planned_vs_completed_classification",
+    "planned_vs_completed_reliability",
+    "safe_batch_excluded_planned_vs_completed",
   ];
   const actionsCsvRows = [actionsHeader, ...actions.map((row) => [
     row.student_name,
@@ -1037,6 +1189,12 @@ async function main(): Promise<void> {
     String(row.events_api_advisory_events),
     String(row.race_exclusion_weeks_count),
     String(row.race_context_manual_review),
+    String(row.actual_completed_frequency ?? ""),
+    String(row.planned_context_frequency ?? ""),
+    String(row.planned_vs_completed_delta ?? ""),
+    row.planned_vs_completed_classification,
+    row.planned_vs_completed_reliability,
+    String(row.safe_batch_excluded_planned_vs_completed),
   ])];
 
   const diffHeader = [
@@ -1092,6 +1250,8 @@ async function main(): Promise<void> {
     `- athletes_in_report: ${perAthlete.length}`,
     `- action_counts: ${JSON.stringify(counts)}`,
     `- high_delta_count: ${report.high_delta_count}`,
+    `- planned_vs_completed_reason_count: ${report.planned_vs_completed_summary.reason_count}`,
+    `- planned_vs_completed_safe_batch_exclusion_count: ${report.planned_vs_completed_summary.safe_batch_exclusion_count}`,
     `- events_api_confirmed_race_count: ${summary.events_api_confirmed_race_count ?? 0}`,
     `- events_api_advisory_event_count: ${summary.events_api_advisory_event_count ?? 0}`,
     `- events_api_missing_completed_workout_count: ${summary.events_api_missing_completed_workout_count ?? 0}`,
@@ -1110,6 +1270,123 @@ async function main(): Promise<void> {
   await writeFile(files.diffCsv, listToCsv(diffRows), "utf8");
   await writeFile(files.combinedMd, buildCombinedMd(report), "utf8");
 
+  const validationDir = path.join(
+    repoRoot,
+    "reports",
+    "athlete-training-baseline-v2-planned-vs-completed-dry-run-validation",
+    timestampForPath(new Date()),
+  );
+  await mkdir(validationDir, { recursive: true });
+  const actionsByAthleteId = new Map(actions.map((row) => [row.athlete_id, row]));
+  const validationTargets = [
+    { label: "Tararova (5847207)", row: actionsByAthleteId.get(5847207) ?? null },
+    { label: "Anna Chernysheva (6030663)", row: actionsByAthleteId.get(6030663) ?? null },
+    { label: "Alex (5738641)", row: actionsByAthleteId.get(5738641) ?? null },
+  ];
+  const affectedAthletes = actions.filter((row) => row.reasons.includes("planned_vs_completed_frequency_delta"));
+  const safeBatchExclusionPreview = actions.filter((row) => row.safe_batch_excluded_planned_vs_completed);
+  const validationJson = {
+    generated_at: new Date().toISOString(),
+    source_report_dir: sourceReportDir,
+    import_dry_run_dir: outputDir,
+    planned_vs_completed_summary: plannedVsCompletedSummary,
+    validation_targets: validationTargets.map((target) => ({
+      label: target.label,
+      athlete_id: target.row?.athlete_id ?? null,
+      action: target.row?.action ?? null,
+      actual_completed_frequency: target.row?.actual_completed_frequency ?? null,
+      planned_context_frequency: target.row?.planned_context_frequency ?? null,
+      planned_vs_completed_delta: target.row?.planned_vs_completed_delta ?? null,
+      planned_vs_completed_classification: target.row?.planned_vs_completed_classification ?? null,
+      planned_vs_completed_reliability: target.row?.planned_vs_completed_reliability ?? null,
+      reasons: target.row?.reasons ?? [],
+      safe_batch_excluded: target.row?.safe_batch_excluded_planned_vs_completed ?? false,
+    })),
+    top_planned_higher_candidates: actions
+      .filter((row) => row.planned_vs_completed_classification === "planned_higher_than_completed")
+      .sort((a, b) => (b.planned_vs_completed_delta ?? 0) - (a.planned_vs_completed_delta ?? 0))
+      .slice(0, 15)
+      .map((row) => ({
+        athlete_id: row.athlete_id,
+        student_name: row.student_name,
+        planned_context_frequency: row.planned_context_frequency,
+        actual_completed_frequency: row.actual_completed_frequency,
+        planned_vs_completed_delta: row.planned_vs_completed_delta,
+        action: row.action,
+        reasons: row.reasons,
+      })),
+  };
+  const affectedHeader = [
+    "student_name",
+    "athlete_id",
+    "action",
+    "actual_completed_frequency",
+    "planned_context_frequency",
+    "planned_vs_completed_delta",
+    "planned_vs_completed_classification",
+    "planned_vs_completed_reliability",
+    "reasons",
+    "safe_batch_excluded_planned_vs_completed",
+  ];
+  const affectedCsvRows = [
+    affectedHeader,
+    ...affectedAthletes.map((row) => [
+      row.student_name,
+      String(row.athlete_id),
+      row.action,
+      String(row.actual_completed_frequency ?? ""),
+      String(row.planned_context_frequency ?? ""),
+      String(row.planned_vs_completed_delta ?? ""),
+      row.planned_vs_completed_classification,
+      row.planned_vs_completed_reliability,
+      row.reasons.join("|"),
+      String(row.safe_batch_excluded_planned_vs_completed),
+    ]),
+  ];
+  const safeBatchHeader = [
+    "student_name",
+    "athlete_id",
+    "action",
+    "proposed_frequency_cap",
+    "planned_context_frequency",
+    "actual_completed_frequency",
+    "planned_vs_completed_delta",
+    "would_exclude_from_ultra_safe_batch",
+    "reasons",
+  ];
+  const safeBatchCsvRows = [
+    safeBatchHeader,
+    ...safeBatchExclusionPreview.map((row) => [
+      row.student_name,
+      String(row.athlete_id),
+      row.action,
+      String(row.proposed_frequency_cap ?? ""),
+      String(row.planned_context_frequency ?? ""),
+      String(row.actual_completed_frequency ?? ""),
+      String(row.planned_vs_completed_delta ?? ""),
+      "true",
+      row.reasons.join("|"),
+    ]),
+  ];
+  await writeFile(
+    path.join(validationDir, "PLANNED-VS-COMPLETED-DRY-RUN-VALIDATION.md"),
+    buildPlannedVsCompletedValidationMd({
+      sourceReportDir,
+      importDryRunDir: outputDir,
+      actions,
+      summary: plannedVsCompletedSummary,
+      validationTargets,
+    }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(validationDir, "planned-vs-completed-dry-run-validation.json"),
+    `${JSON.stringify(validationJson, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(path.join(validationDir, "affected-athletes.csv"), listToCsv(affectedCsvRows), "utf8");
+  await writeFile(path.join(validationDir, "safe-batch-exclusion-preview.csv"), listToCsv(safeBatchCsvRows), "utf8");
+
   if (args.json) {
     console.log(JSON.stringify(report, null, 2));
     return;
@@ -1122,6 +1399,9 @@ async function main(): Promise<void> {
   console.log(`output_dir: ${outputDir}`);
   console.log(`counts: ${JSON.stringify(counts)}`);
   console.log(`high_delta_count: ${report.high_delta_count}`);
+  console.log(`planned_vs_completed_reason_count: ${report.planned_vs_completed_summary.reason_count}`);
+  console.log(`planned_vs_completed_safe_batch_exclusion_count: ${report.planned_vs_completed_summary.safe_batch_exclusion_count}`);
+  console.log(`validation_dir: ${validationDir}`);
   console.log(`manual_override_protection_found: ${current.manualOverrideProtectionFound}`);
 }
 

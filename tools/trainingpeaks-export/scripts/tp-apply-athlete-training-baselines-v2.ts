@@ -119,6 +119,10 @@ const DISALLOWED_REASON_SET = new Set([
   "melnikova_special_case",
   "krylova_special_case",
   "abramova_special_case",
+  "planned_vs_completed_frequency_delta",
+  "planned_signal_missing",
+  "planned_higher_than_completed",
+  "completed_higher_than_planned",
 ]);
 
 function readEnvFile(filePath: string): void {
