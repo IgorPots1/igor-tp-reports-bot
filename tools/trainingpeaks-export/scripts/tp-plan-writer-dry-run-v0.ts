@@ -4,6 +4,13 @@ import path from "node:path";
 import process from "node:process";
 
 import { buildRunningWorkoutCreatePlan } from "./lib/running-workout-create-plan.ts";
+import {
+  type QualityIntent,
+  type QualityStructure,
+  type QualityWorkoutKey,
+  getQualityWorkoutCatalogEntry,
+  validateQualityStructureForIntent,
+} from "./lib/plan-quality-methodology-catalog.ts";
 import { toolRoot } from "./lib/paths.ts";
 import { SAFE_RUNNING_WORKOUT_MARKER, type RunningWorkoutTemplateId } from "./lib/running-workout-safe-runner-v0.ts";
 import type { RunningWorkoutDefinition } from "./lib/running-workout-renderer.ts";
@@ -29,6 +36,10 @@ type DraftWorkout = {
   workout_type: DraftWorkoutType;
   title: string;
   duration_minutes: number;
+  quality_intent?: QualityIntent | null;
+  quality_workout_key?: QualityWorkoutKey | null;
+  structure?: QualityStructure | null;
+  selection_reason?: string | null;
   intensity_target: string;
   coach_notes: string;
   guardrail_notes: string;
@@ -124,22 +135,10 @@ type WriterDryRunJson = {
   safety_checks: SafetyCheck[];
   workouts: WorkoutPreviewRow[];
   blocked_reasons: string[];
-  controlled_quality_structure_v0: {
-    warmup: string;
-    main_set: string;
-    cooldown: string;
-    intensity: string;
-  };
 };
 
 const EXPECTED_ATHLETE_ID = 5905779;
 const EXPECTED_WEEK_START = "2026-06-08";
-const CONTROLLED_QUALITY_WARMUP_MINUTES = 10;
-const CONTROLLED_QUALITY_REPEAT_COUNT = 3;
-const CONTROLLED_QUALITY_HARD_MINUTES = 6;
-const CONTROLLED_QUALITY_RECOVERY_MINUTES = 3;
-const CONTROLLED_QUALITY_MIN_COOLDOWN_MINUTES = 8;
-
 function timestampForPath(date: Date): string {
   const yyyy = String(date.getFullYear());
   const mm = String(date.getMonth() + 1).padStart(2, "0");
@@ -366,24 +365,118 @@ function buildMappedWorkout(input: {
       "DRAFT_WORKOUT_TYPE=long_easy_run",
     ].join("\n");
   } else {
+    if (!workout.quality_intent) {
+      return {
+        index: 0,
+        date: workout.date,
+        draft_workout_type: workout.workout_type,
+        template: "interval-hr",
+        writer_action: "writer_preview_needs_manual_review",
+        writer_review_reason: "missing_quality_intent",
+        writer_review_details: "draft quality workout does not include quality_intent",
+        title: workout.title,
+        draft_duration_minutes: workout.duration_minutes,
+        structured_duration_minutes: 0,
+        duration_delta_minutes: -workout.duration_minutes,
+        duration_match: false,
+        total_time_planned_hours: null,
+        primary_intensity_metric: null,
+        repeat_block_count: null,
+        structure_summary: "missing_quality_intent",
+        description: "",
+        coach_comments: "",
+        safety_markers: safetyMarkers,
+        create_payload_candidate: null,
+      };
+    }
+    if (!workout.quality_workout_key || !workout.structure) {
+      return {
+        index: 0,
+        date: workout.date,
+        draft_workout_type: workout.workout_type,
+        template: "interval-hr",
+        writer_action: "writer_preview_needs_manual_review",
+        writer_review_reason: "missing_quality_structure",
+        writer_review_details:
+          "draft quality workout does not include quality_workout_key and full structure",
+        title: workout.title,
+        draft_duration_minutes: workout.duration_minutes,
+        structured_duration_minutes: 0,
+        duration_delta_minutes: -workout.duration_minutes,
+        duration_match: false,
+        total_time_planned_hours: null,
+        primary_intensity_metric: null,
+        repeat_block_count: null,
+        structure_summary: "missing_quality_structure",
+        description: "",
+        coach_comments: "",
+        safety_markers: safetyMarkers,
+        create_payload_candidate: null,
+      };
+    }
+    const validation = validateQualityStructureForIntent({
+      intent: workout.quality_intent,
+      workout_key: workout.quality_workout_key,
+      structure: workout.structure,
+    });
+    if (!validation.ok) {
+      return {
+        index: 0,
+        date: workout.date,
+        draft_workout_type: workout.workout_type,
+        template: "interval-hr",
+        writer_action: "writer_preview_needs_manual_review",
+        writer_review_reason: "missing_quality_structure",
+        writer_review_details: validation.reason ?? "quality structure validation failed",
+        title: workout.title,
+        draft_duration_minutes: workout.duration_minutes,
+        structured_duration_minutes: 0,
+        duration_delta_minutes: -workout.duration_minutes,
+        duration_match: false,
+        total_time_planned_hours: null,
+        primary_intensity_metric: null,
+        repeat_block_count: null,
+        structure_summary: "invalid_quality_structure",
+        description: "",
+        coach_comments: "",
+        safety_markers: safetyMarkers,
+        create_payload_candidate: null,
+      };
+    }
+
+    const qualityCatalog = getQualityWorkoutCatalogEntry(workout.quality_workout_key);
     template = "interval-hr";
-    title = "Контрольная работа 3 x 6 мин";
-    const mainSetMinutes =
-      CONTROLLED_QUALITY_REPEAT_COUNT * (CONTROLLED_QUALITY_HARD_MINUTES + CONTROLLED_QUALITY_RECOVERY_MINUTES);
-    const cooldownMinutes = workout.duration_minutes - CONTROLLED_QUALITY_WARMUP_MINUTES - mainSetMinutes;
-    if (cooldownMinutes < CONTROLLED_QUALITY_MIN_COOLDOWN_MINUTES) {
-      manualReviewReason = "structured_duration_mismatch";
-      manualReviewDetails = [
-        `draft_duration=${workout.duration_minutes}`,
-        `minimum_supported=${CONTROLLED_QUALITY_WARMUP_MINUTES + mainSetMinutes + CONTROLLED_QUALITY_MIN_COOLDOWN_MINUTES}`,
-        "controlled structure cannot be safely aligned",
-      ].join(" | ");
+    title = qualityCatalog.display_title_ru;
+    const repeats = workout.structure.repeats;
+    if (!repeats) {
+      return {
+        index: 0,
+        date: workout.date,
+        draft_workout_type: workout.workout_type,
+        template: "interval-hr",
+        writer_action: "writer_preview_needs_manual_review",
+        writer_review_reason: "missing_quality_structure",
+        writer_review_details: "quality structure repeats are required for interval quality in v0",
+        title,
+        draft_duration_minutes: workout.duration_minutes,
+        structured_duration_minutes: 0,
+        duration_delta_minutes: -workout.duration_minutes,
+        duration_match: false,
+        total_time_planned_hours: null,
+        primary_intensity_metric: null,
+        repeat_block_count: null,
+        structure_summary: "missing_repeats",
+        description: "",
+        coach_comments: "",
+        safety_markers: safetyMarkers,
+        create_payload_candidate: null,
+      };
     }
     blocks = [
       {
         kind: "step",
         label: "Warm up",
-        durationSeconds: CONTROLLED_QUALITY_WARMUP_MINUTES * 60,
+        durationSeconds: workout.structure.warmup_minutes * 60,
         intensityClass: "warmup",
         target: {
           metric: "percentOfThresholdHr",
@@ -394,12 +487,12 @@ function buildMappedWorkout(input: {
       },
       {
         kind: "repetition",
-        repeatCount: CONTROLLED_QUALITY_REPEAT_COUNT,
+        repeatCount: repeats.repeat_count,
         steps: [
           {
             kind: "step",
             label: "Hard",
-            durationSeconds: CONTROLLED_QUALITY_HARD_MINUTES * 60,
+            durationSeconds: repeats.work_minutes * 60,
             intensityClass: "active",
             target: {
               metric: "percentOfThresholdHr",
@@ -411,7 +504,7 @@ function buildMappedWorkout(input: {
           {
             kind: "step",
             label: "Easy",
-            durationSeconds: CONTROLLED_QUALITY_RECOVERY_MINUTES * 60,
+            durationSeconds: repeats.recovery_minutes * 60,
             intensityClass: "recovery",
             target: {
               metric: "percentOfThresholdHr",
@@ -425,7 +518,7 @@ function buildMappedWorkout(input: {
       {
         kind: "step",
         label: "Cool down",
-        durationSeconds: Math.max(0, cooldownMinutes) * 60,
+        durationSeconds: workout.structure.cooldown_minutes * 60,
         intensityClass: "cooldown",
         target: {
           metric: "percentOfThresholdHr",
@@ -435,28 +528,29 @@ function buildMappedWorkout(input: {
         notes: `${SAFE_RUNNING_WORKOUT_MARKER}_STEP_NOTE_INTERVAL_HR_COOLDOWN`,
       },
     ];
-    structureSummary = `warmup ${CONTROLLED_QUALITY_WARMUP_MINUTES}min + ${CONTROLLED_QUALITY_REPEAT_COUNT}x(${CONTROLLED_QUALITY_HARD_MINUTES}min controlled/${CONTROLLED_QUALITY_RECOVERY_MINUTES}min easy) + cooldown ${Math.max(0, cooldownMinutes)}min`;
+    structureSummary = `warmup ${workout.structure.warmup_minutes}min + ${repeats.repeat_count}x(${repeats.work_minutes}min ${repeats.work_label}/${repeats.recovery_minutes}min ${repeats.recovery_label}) + cooldown ${workout.structure.cooldown_minutes}min`;
     description = [
-      "Разминка: 10 мин легко.",
-      "Основная часть: 3 x 6 мин контролируемо, между отрезками 3 мин легко.",
-      `Заминка: ${Math.max(0, cooldownMinutes)} мин легко.`,
-      "Интенсивность: controlled, RPE 6–7/10, без VO2 и без all-out.",
+      `Разминка: ${workout.structure.warmup_minutes} мин легко.`,
+      `Основная часть: ${repeats.repeat_count} x ${repeats.work_minutes} мин сильно, но контролируемо; между отрезками ${repeats.recovery_minutes} мин легкий бег.`,
+      `Заминка: ${workout.structure.cooldown_minutes} мин легко.`,
+      "Не спринтовать первые отрезки; последние держать технически стабильно.",
       "",
       ...safetyMarkers,
       "DRAFT_WORKOUT_TYPE=controlled_quality",
-      "CONTROLLED_STRUCTURE=10EASY+3x6CONTROLLED/3EASY+10-12EASY",
+      `QUALITY_INTENT=${workout.quality_intent}`,
+      `QUALITY_WORKOUT_KEY=${workout.quality_workout_key}`,
     ].join("\n");
     coachComments = [
-      "Разминка 10 мин легко.",
-      "3 x 6 мин в контролируемом темпе, между ними 3 мин легко.",
-      `Заминка ${Math.max(0, cooldownMinutes)} мин легко.`,
-      "RPE 6–7/10, не максимум, без VO2 и без all-out.",
+      `Разминка ${workout.structure.warmup_minutes} мин легко.`,
+      `${repeats.repeat_count} x ${repeats.work_minutes} мин сильно, но контролируемо; восстановление ${repeats.recovery_minutes} мин легким бегом.`,
+      `Заминка ${workout.structure.cooldown_minutes} мин легко.`,
+      "Не спринтовать первые отрезки; последние отрезки технично и стабильно.",
       "",
       ...safetyMarkers,
       "DRAFT_WORKOUT_TYPE=controlled_quality",
-      "CONTROLLED_STRUCTURE=10EASY+3x6CONTROLLED/3EASY+10-12EASY",
+      `QUALITY_INTENT=${workout.quality_intent}`,
+      `QUALITY_WORKOUT_KEY=${workout.quality_workout_key}`,
     ].join("\n");
-
   }
 
   const definition: RunningWorkoutDefinition = {
@@ -588,12 +682,6 @@ function buildManualReviewNotes(report: WriterDryRunJson): string {
   lines.push("");
   lines.push(`- writer_status: ${report.writer_status}`);
   lines.push(`- payload_count: ${report.payload_count}`);
-  lines.push("");
-  lines.push("## Controlled quality structure v0");
-  lines.push(`- warmup: ${report.controlled_quality_structure_v0.warmup}`);
-  lines.push(`- main_set: ${report.controlled_quality_structure_v0.main_set}`);
-  lines.push(`- cooldown: ${report.controlled_quality_structure_v0.cooldown}`);
-  lines.push(`- intensity: ${report.controlled_quality_structure_v0.intensity}`);
   lines.push("");
   lines.push("## Per-workout notes");
   if (report.workouts.length === 0) {
@@ -744,12 +832,6 @@ async function main(): Promise<void> {
     safety_checks: safetyChecks,
     workouts,
     blocked_reasons: blockedReasons,
-    controlled_quality_structure_v0: {
-      warmup: "10 min easy warmup",
-      main_set: "3 x 6 min controlled / 3 min easy recovery",
-      cooldown: "10-12 min easy cooldown",
-      intensity: "RPE 6-7/10, controlled, no VO2 and no all-out",
-    },
   };
 
   const markdownPath = path.join(outputDir, "TP-WRITER-DRY-RUN.md");

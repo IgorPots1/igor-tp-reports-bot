@@ -5,6 +5,12 @@ import process from "node:process";
 
 import { createClient } from "@supabase/supabase-js";
 
+import {
+  type QualityIntent,
+  type QualityStructure,
+  type QualityWorkoutKey,
+  selectQualityMethodologyV0,
+} from "./lib/plan-quality-methodology-catalog.ts";
 import { toolRoot } from "./lib/paths.ts";
 
 type DraftStatus =
@@ -73,6 +79,10 @@ type DraftWorkout = {
   duration_minutes: number;
   rounding_reason: string;
   quality_flag: boolean;
+  quality_intent: QualityIntent | null;
+  quality_workout_key: QualityWorkoutKey | null;
+  structure: QualityStructure | null;
+  selection_reason: string | null;
   intensity_target: string;
   coach_notes: string;
   guardrail_notes: string;
@@ -490,6 +500,31 @@ function listToCsv(rows: string[][]): string {
     .join("\n")}\n`;
 }
 
+type RecentQualityDiagnosticSummary = {
+  found_20x1min_candidate?: boolean;
+};
+
+function loadRecentQualityDiagnosticIfAvailable(repoRoot: string): {
+  available: boolean;
+  found20x1: boolean;
+} {
+  const diagnosticPath = path.join(
+    repoRoot,
+    "reports",
+    "anna-recent-workout-diagnostic-v0",
+    "20260606-115025",
+    "summary.json",
+  );
+  if (!existsSync(diagnosticPath)) {
+    return { available: false, found20x1: false };
+  }
+  const summary = loadJson<RecentQualityDiagnosticSummary>(diagnosticPath);
+  return {
+    available: true,
+    found20x1: summary.found_20x1min_candidate === true,
+  };
+}
+
 function buildMarkdown(plan: PlanDraftJson): string {
   const lines: string[] = [];
   lines.push("# PLAN DRAFT v0");
@@ -550,6 +585,18 @@ function buildMarkdown(plan: PlanDraftJson): string {
       lines.push(
         `- ${workout.date} (${workout.day_of_week}) | ${workout.workout_type} | ${workout.title} | raw=${workout.raw_duration_minutes} min | rounded=${workout.rounded_duration_minutes} min | quality=${workout.quality_flag} | reason=${workout.rounding_reason}`,
       );
+      if (workout.quality_flag) {
+        lines.push(
+          `  quality_intent=${workout.quality_intent ?? "missing"} | quality_workout_key=${workout.quality_workout_key ?? "missing"} | selection_reason=${workout.selection_reason ?? "missing"}`,
+        );
+        if (workout.structure?.repeats) {
+          lines.push(
+            `  structure=${workout.structure.warmup_minutes} + ${workout.structure.repeats.repeat_count}x(${workout.structure.repeats.work_minutes}/${workout.structure.repeats.recovery_minutes}) + ${workout.structure.cooldown_minutes} = ${workout.structure.total_minutes}`,
+          );
+        } else {
+          lines.push("  structure=missing");
+        }
+      }
     }
   }
   lines.push("");
@@ -706,6 +753,15 @@ async function main(): Promise<void> {
   const plannedWeeklyMinutes = weeklyMinutesCap !== null ? Math.max(0, Math.round(weeklyMinutesCap * 0.9)) : 0;
   const longRunMinutes = longRunCap !== null ? Math.max(0, Math.round(longRunCap * 0.9)) : 0;
   const qualitySessionCount = qualityCap !== null && qualityCap >= 1 ? 1 : 0;
+  const recentDiagnostic = loadRecentQualityDiagnosticIfAvailable(repoRoot);
+  const qualitySelection = selectQualityMethodologyV0({
+    quality_count_cap: qualityCap,
+    planned_run_count: plannedRunCount,
+    has_active_illness_or_injury: op.activeIllness || op.activePainInjury,
+    has_race_context: hasRaceContext,
+    recent_quality_diagnostic_available: recentDiagnostic.available,
+    found_20x1_candidate: recentDiagnostic.found20x1,
+  });
 
   const workouts: DraftWorkout[] = [];
   const weekStart = args.weekStart;
@@ -728,24 +784,42 @@ async function main(): Promise<void> {
         duration_minutes: easyCount > 0 ? easyMinutesEach : Math.max(30, remainingForEasy),
         rounding_reason: "No rounding applied yet.",
         quality_flag: false,
+        quality_intent: null,
+        quality_workout_key: null,
+        structure: null,
+        selection_reason: null,
         intensity_target: "easy / conversational",
         coach_notes: "Keep effort relaxed and controlled.",
         guardrail_notes: "Counts toward frequency only; low intensity.",
       });
       if (qualitySessionCount > 0) {
+        const qualityDurationFromStructure = qualitySelection.selected
+          ? qualitySelection.structure.total_minutes
+          : qualityMinutes;
+        const qualityTitle = qualitySelection.selected
+          ? "Интервалы 10×2 мин"
+          : "Quality session requires coach intent selection";
+        const qualityCoachNotes = qualitySelection.selected
+          ? "Беги сильно, но контролируемо. Восстановление между отрезками — легкий бег трусцой. Не спринтуй первые отрезки; последние отрезки держи технично и стабильно."
+          : "Missing explicit quality intent/structure in draft. Manual coach selection is required before writer preview.";
         workouts.push({
           date: addDays(weekStart, 3),
           day_of_week: weekday(addDays(weekStart, 3)),
           workout_type: "controlled_quality",
-          title: "Controlled quality support",
-          raw_duration_minutes: qualityMinutes,
-          rounded_duration_minutes: qualityMinutes,
-          duration_minutes: qualityMinutes,
+          title: qualityTitle,
+          raw_duration_minutes: qualityDurationFromStructure,
+          rounded_duration_minutes: qualityDurationFromStructure,
+          duration_minutes: qualityDurationFromStructure,
           rounding_reason: "No rounding applied yet.",
           quality_flag: true,
-          intensity_target: "comfortably hard, controlled",
-          coach_notes:
-            "Example: 10 min easy + 3 x 6 min comfortably hard / 3 min easy + easy cooldown. Keep conservative.",
+          quality_intent: qualitySelection.selected ? qualitySelection.intent : null,
+          quality_workout_key: qualitySelection.selected ? qualitySelection.workout_key : null,
+          structure: qualitySelection.selected ? qualitySelection.structure : null,
+          selection_reason: qualitySelection.selection_reason,
+          intensity_target: qualitySelection.selected
+            ? "strong but controlled VO2-oriented; not all-out"
+            : "manual coach review required",
+          coach_notes: qualityCoachNotes,
           guardrail_notes: "Single quality session only (v0).",
         });
       }
@@ -759,6 +833,10 @@ async function main(): Promise<void> {
         duration_minutes: longRunMinutes,
         rounding_reason: "No rounding applied yet.",
         quality_flag: false,
+        quality_intent: null,
+        quality_workout_key: null,
+        structure: null,
+        selection_reason: null,
         intensity_target: "easy / steady low intensity",
         coach_notes: "Stay aerobic; avoid progression to hard finish.",
         guardrail_notes: "Long run kept below long_run_cap_min.",
@@ -799,6 +877,10 @@ async function main(): Promise<void> {
           duration_minutes: duration,
           rounding_reason: "No rounding applied yet.",
           quality_flag: useQuality,
+          quality_intent: null,
+          quality_workout_key: null,
+          structure: null,
+          selection_reason: null,
           intensity_target: intensity,
           coach_notes: notes,
           guardrail_notes: isLong
@@ -991,6 +1073,13 @@ async function main(): Promise<void> {
       "duration_minutes",
       "rounding_reason",
       "quality_flag",
+      "quality_intent",
+      "quality_workout_key",
+      "selection_reason",
+      "structure_repeat_count",
+      "structure_work_minutes",
+      "structure_recovery_minutes",
+      "structure_total_minutes",
       "intensity_target",
       "coach_notes",
       "guardrail_notes",
@@ -1005,6 +1094,13 @@ async function main(): Promise<void> {
       String(workout.duration_minutes),
       workout.rounding_reason,
       String(workout.quality_flag),
+      workout.quality_intent ?? "",
+      workout.quality_workout_key ?? "",
+      workout.selection_reason ?? "",
+      String(workout.structure?.repeats?.repeat_count ?? ""),
+      String(workout.structure?.repeats?.work_minutes ?? ""),
+      String(workout.structure?.repeats?.recovery_minutes ?? ""),
+      String(workout.structure?.total_minutes ?? ""),
       workout.intensity_target,
       workout.coach_notes,
       workout.guardrail_notes,
