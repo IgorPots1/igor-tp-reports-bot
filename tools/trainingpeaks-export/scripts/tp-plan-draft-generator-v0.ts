@@ -68,7 +68,10 @@ type DraftWorkout = {
   day_of_week: string;
   workout_type: WorkoutType;
   title: string;
+  raw_duration_minutes: number;
+  rounded_duration_minutes: number;
   duration_minutes: number;
+  rounding_reason: string;
   quality_flag: boolean;
   intensity_target: string;
   coach_notes: string;
@@ -332,6 +335,130 @@ function toRounded(value: number | null): number | null {
   return Math.max(0, Math.round(value));
 }
 
+const EASY_RUN_ALLOWED_MINUTES = [30, 35, 40, 45, 50, 55, 60, 65, 70];
+const LONG_RUN_ALLOWED_MINUTES = [75, 80, 85, 90, 95, 100, 105, 110, 115, 120];
+const QUALITY_ALLOWED_MINUTES = [45, 50, 55, 60];
+
+function allowedMinutesForType(type: WorkoutType): number[] {
+  if (type === "long_easy_run") return LONG_RUN_ALLOWED_MINUTES;
+  if (type === "controlled_quality") return QUALITY_ALLOWED_MINUTES;
+  return EASY_RUN_ALLOWED_MINUTES;
+}
+
+function nearestAllowedMinute(rawMinutes: number, allowedMinutes: number[], cap: number | null): number {
+  const candidates =
+    cap === null
+      ? [...allowedMinutes]
+      : allowedMinutes.filter((minute) => minute <= cap);
+
+  if (candidates.length === 0) {
+    return Math.max(0, Math.min(rawMinutes, cap ?? rawMinutes));
+  }
+
+  const [best] = candidates.sort((a, b) => {
+    const byDistance = Math.abs(a - rawMinutes) - Math.abs(b - rawMinutes);
+    if (byDistance !== 0) return byDistance;
+    // Conservative tie-break: choose the lower duration.
+    return a - b;
+  });
+  return best ?? candidates[0]!;
+}
+
+function coachRoundDuration(
+  workoutType: WorkoutType,
+  rawMinutes: number,
+  weeklyMinutesCap: number | null,
+  longRunCap: number | null,
+): { rounded: number; reason: string } {
+  const allowed = allowedMinutesForType(workoutType);
+  const boundedRaw = Math.max(0, Math.round(rawMinutes));
+  let cap = weeklyMinutesCap;
+  if (workoutType === "long_easy_run") {
+    cap = longRunCap === null ? weeklyMinutesCap : Math.min(weeklyMinutesCap ?? longRunCap, longRunCap);
+  }
+  const rounded = nearestAllowedMinute(boundedRaw, allowed, cap);
+  const reasonBase =
+    workoutType === "easy_run"
+      ? "Rounded to nearest coach-style easy-run duration; conservative tie-break rounds down."
+      : workoutType === "long_easy_run"
+        ? "Rounded to nearest coach-style long-run duration within long-run and weekly caps."
+        : "Rounded to nearest coach-style controlled-quality duration based on structured session range.";
+  return { rounded, reason: `${reasonBase} raw=${boundedRaw} -> rounded=${rounded}.` };
+}
+
+function nextAllowedMinute(workoutType: WorkoutType, current: number, direction: -1 | 1): number | null {
+  const allowed = allowedMinutesForType(workoutType);
+  const index = allowed.indexOf(current);
+  if (index < 0) return null;
+  const nextIndex = index + direction;
+  if (nextIndex < 0 || nextIndex >= allowed.length) return null;
+  return allowed[nextIndex] ?? null;
+}
+
+function applyCoachStyleRounding(
+  workouts: DraftWorkout[],
+  targetWeeklyMinutes: number,
+  weeklyMinutesCap: number | null,
+  longRunCap: number | null,
+): void {
+  for (const workout of workouts) {
+    const rounded = coachRoundDuration(
+      workout.workout_type,
+      workout.raw_duration_minutes,
+      weeklyMinutesCap,
+      longRunCap,
+    );
+    workout.rounded_duration_minutes = rounded.rounded;
+    workout.duration_minutes = rounded.rounded;
+    workout.rounding_reason = rounded.reason;
+  }
+
+  const maxWeekly = weeklyMinutesCap ?? Number.POSITIVE_INFINITY;
+  const totalMinutes = (): number => workouts.reduce((sum, workout) => sum + workout.duration_minutes, 0);
+
+  // If rounded values exceed cap, step down in coach-style increments.
+  while (totalMinutes() > maxWeekly) {
+    const downCandidates = [...workouts].sort((a, b) => {
+      const priority = (type: WorkoutType) =>
+        type === "easy_run" ? 0 : type === "controlled_quality" ? 1 : 2;
+      const p = priority(a.workout_type) - priority(b.workout_type);
+      if (p !== 0) return p;
+      return b.duration_minutes - a.duration_minutes;
+    });
+    let changed = false;
+    for (const workout of downCandidates) {
+      const next = nextAllowedMinute(workout.workout_type, workout.duration_minutes, -1);
+      if (next === null) continue;
+      if (workout.workout_type === "long_easy_run" && longRunCap !== null && next > longRunCap) continue;
+      workout.duration_minutes = next;
+      workout.rounded_duration_minutes = next;
+      workout.rounding_reason = `${workout.rounding_reason} Stepped down one coach-style notch to satisfy weekly_minutes_cap.`;
+      changed = true;
+      break;
+    }
+    if (!changed) break;
+  }
+
+  // If we're meaningfully below target after rounding, nudge one easy run up by one coach-style step.
+  const deficit = targetWeeklyMinutes - totalMinutes();
+  if (deficit >= 5) {
+    const easyCandidate = workouts
+      .filter((workout) => workout.workout_type === "easy_run")
+      .sort((a, b) => b.duration_minutes - a.duration_minutes)[0];
+    if (easyCandidate) {
+      const stepUp = nextAllowedMinute(easyCandidate.workout_type, easyCandidate.duration_minutes, 1);
+      if (stepUp !== null) {
+        const projectedTotal = totalMinutes() - easyCandidate.duration_minutes + stepUp;
+        if (projectedTotal <= maxWeekly) {
+          easyCandidate.duration_minutes = stepUp;
+          easyCandidate.rounded_duration_minutes = stepUp;
+          easyCandidate.rounding_reason = `${easyCandidate.rounding_reason} Stepped up one coach-style notch to reduce weekly target deficit while staying within caps.`;
+        }
+      }
+    }
+  }
+}
+
 function parseOperationalSummary(summary: string): {
   activeIllness: boolean;
   activePainInjury: boolean;
@@ -407,13 +534,21 @@ function buildMarkdown(plan: PlanDraftJson): string {
   lines.push(`- long_run_minutes: ${plan.planned.long_run_minutes}`);
   lines.push(`- quality_session_count: ${plan.planned.quality_session_count}`);
   lines.push("");
+  lines.push("### Duration rounding");
+  lines.push(
+    "- The generator rounds raw calculated durations into coach-style durations.",
+  );
+  lines.push(
+    "- It prioritizes natural durations over exact percentage matching while staying within guardrails.",
+  );
+  lines.push("");
   lines.push("## 5. Workout list");
   if (plan.workouts.length === 0) {
     lines.push("- No workouts generated.");
   } else {
     for (const workout of plan.workouts) {
       lines.push(
-        `- ${workout.date} (${workout.day_of_week}) | ${workout.workout_type} | ${workout.title} | ${workout.duration_minutes} min | quality=${workout.quality_flag}`,
+        `- ${workout.date} (${workout.day_of_week}) | ${workout.workout_type} | ${workout.title} | raw=${workout.raw_duration_minutes} min | rounded=${workout.rounded_duration_minutes} min | quality=${workout.quality_flag} | reason=${workout.rounding_reason}`,
       );
     }
   }
@@ -588,7 +723,10 @@ async function main(): Promise<void> {
         day_of_week: weekday(addDays(weekStart, 1)),
         workout_type: "easy_run",
         title: "Easy aerobic run",
+        raw_duration_minutes: easyCount > 0 ? easyMinutesEach : Math.max(30, remainingForEasy),
+        rounded_duration_minutes: easyCount > 0 ? easyMinutesEach : Math.max(30, remainingForEasy),
         duration_minutes: easyCount > 0 ? easyMinutesEach : Math.max(30, remainingForEasy),
+        rounding_reason: "No rounding applied yet.",
         quality_flag: false,
         intensity_target: "easy / conversational",
         coach_notes: "Keep effort relaxed and controlled.",
@@ -600,7 +738,10 @@ async function main(): Promise<void> {
           day_of_week: weekday(addDays(weekStart, 3)),
           workout_type: "controlled_quality",
           title: "Controlled quality support",
+          raw_duration_minutes: qualityMinutes,
+          rounded_duration_minutes: qualityMinutes,
           duration_minutes: qualityMinutes,
+          rounding_reason: "No rounding applied yet.",
           quality_flag: true,
           intensity_target: "comfortably hard, controlled",
           coach_notes:
@@ -613,7 +754,10 @@ async function main(): Promise<void> {
         day_of_week: weekday(addDays(weekStart, 6)),
         workout_type: "long_easy_run",
         title: "Long easy run",
+        raw_duration_minutes: longRunMinutes,
+        rounded_duration_minutes: longRunMinutes,
         duration_minutes: longRunMinutes,
+        rounding_reason: "No rounding applied yet.",
         quality_flag: false,
         intensity_target: "easy / steady low intensity",
         coach_notes: "Stay aerobic; avoid progression to hard finish.",
@@ -650,7 +794,10 @@ async function main(): Promise<void> {
           day_of_week: weekday(addDays(weekStart, offset)),
           workout_type: type,
           title,
+          raw_duration_minutes: duration,
+          rounded_duration_minutes: duration,
           duration_minutes: duration,
+          rounding_reason: "No rounding applied yet.",
           quality_flag: useQuality,
           intensity_target: intensity,
           coach_notes: notes,
@@ -663,6 +810,8 @@ async function main(): Promise<void> {
       }
     }
   }
+
+  applyCoachStyleRounding(workouts, plannedWeeklyMinutes, weeklyMinutesCap, longRunCap);
 
   const plannedMinutesFromWorkouts = workouts.reduce((sum, workout) => sum + workout.duration_minutes, 0);
   const qualityCountFromWorkouts = workouts.filter((workout) => workout.quality_flag).length;
@@ -823,7 +972,10 @@ async function main(): Promise<void> {
       "day_of_week",
       "workout_type",
       "title",
+      "raw_duration_minutes",
+      "rounded_duration_minutes",
       "duration_minutes",
+      "rounding_reason",
       "quality_flag",
       "intensity_target",
       "coach_notes",
@@ -834,7 +986,10 @@ async function main(): Promise<void> {
       workout.day_of_week,
       workout.workout_type,
       workout.title,
+      String(workout.raw_duration_minutes),
+      String(workout.rounded_duration_minutes),
       String(workout.duration_minutes),
+      workout.rounding_reason,
       String(workout.quality_flag),
       workout.intensity_target,
       workout.coach_notes,
