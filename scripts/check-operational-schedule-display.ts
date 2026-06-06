@@ -297,6 +297,33 @@ function run(): void {
     "Attention digest should include blank line after moves section header."
   );
 
+  const restrictionWithReason = formatScheduleOperationalSignalText({
+    signalType: "schedule_availability_window",
+    validFrom: null,
+    validUntil: "2026-06-07",
+    structuredPayload: {
+      display_summary: "Голова просто раскалывается, не могу сегодня",
+      valid_until: "2026-06-07",
+    },
+  });
+  assert(
+    restrictionWithReason === "ограничение: головная боль (до 07.06)",
+    `Restriction with reason should preserve short reason, got: ${restrictionWithReason}`
+  );
+
+  const restrictionWithoutReason = formatScheduleOperationalSignalText({
+    signalType: "schedule_availability_window",
+    validFrom: null,
+    validUntil: "2026-06-07",
+    structuredPayload: {
+      valid_until: "2026-06-07",
+    },
+  });
+  assert(
+    restrictionWithoutReason === "ограничение (до 07.06)",
+    `Restriction without reason should keep generic wording, got: ${restrictionWithoutReason}`
+  );
+
   console.log(`${LOG_PREFIX} PASS`);
 }
 

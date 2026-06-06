@@ -34,6 +34,9 @@ export type ScheduleStructuredPayload = {
   duration_days?: number | null;
   valid_from?: string | null;
   valid_until?: string | null;
+  display_summary?: string | null;
+  latest_summary?: string | null;
+  constraint_reason?: string | null;
 };
 
 export type EpisodeScheduleContext = {
@@ -324,6 +327,61 @@ function formatDateRange(validFrom: string | null, validUntil: string | null): s
 
 function formatCompactDateList(dates: string[]): string {
   return dates.map((date) => `${date.slice(8, 10)}.${date.slice(5, 7)}`).join(", ");
+}
+
+function readOptionalString(raw: unknown): string | null {
+  return typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : null;
+}
+
+function compactScheduleRestrictionReason(raw: string): string | null {
+  const normalized = raw.replace(/^health_context:\s*/iu, "").replace(/\s+/gu, " ").trim();
+  if (!normalized) {
+    return null;
+  }
+  const firstClause = normalized.split(/\s*;\s*/u)[0]?.trim() ?? normalized;
+  if (!firstClause || /^(недоступн|доступн|планирует|учесть)/iu.test(firstClause)) {
+    return null;
+  }
+  if (/голов/i.test(firstClause)) {
+    return /бол|раскалыва|раскол/i.test(firstClause) ? "головная боль" : "голова";
+  }
+  const withoutClarify = firstClause.replace(/\s*\([^)]*\)\s*/gu, " ").replace(/\s+/gu, " ").trim();
+  if (withoutClarify.length < 3) {
+    return null;
+  }
+  if (withoutClarify.length > 32) {
+    return `${withoutClarify.slice(0, 29)}…`;
+  }
+  return withoutClarify;
+}
+
+function extractShortScheduleRestrictionReason(structured: ScheduleStructuredPayload): string | null {
+  const candidates = [
+    readOptionalString(structured.display_summary),
+    readOptionalString(structured.latest_summary),
+    readOptionalString(structured.constraint_reason),
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue;
+    }
+    const compact = compactScheduleRestrictionReason(candidate);
+    if (compact) {
+      return compact;
+    }
+  }
+  return null;
+}
+
+function formatGenericScheduleRestrictionText(
+  range: string | null,
+  structured: ScheduleStructuredPayload
+): string {
+  const reason = extractShortScheduleRestrictionReason(structured);
+  if (reason) {
+    return range ? `ограничение: ${reason} (${range})` : `ограничение: ${reason}`;
+  }
+  return range ? `ограничение (${range})` : "ограничение плана";
 }
 
 export function getSignalMetadataString(
@@ -634,5 +692,5 @@ export function formatScheduleOperationalSignalText(input: {
     }
   }
 
-  return range ? `ограничение (${range})` : "ограничение плана";
+  return formatGenericScheduleRestrictionText(range, structured);
 }

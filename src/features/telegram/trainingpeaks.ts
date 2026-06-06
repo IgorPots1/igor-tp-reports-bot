@@ -3667,7 +3667,7 @@ async function handleTrainingPeaksOperationalSignalsCommand(
   const scope = parseTpSignalsScopeFromCommand(text);
   const snapshot = await getTrainingPeaksOperationalSignalsSnapshot({
     scope,
-    limit: 15,
+    limit: 20,
   });
   const message = formatTrainingPeaksOperationalSignalsForTelegram(snapshot);
   await sendTrainingPeaksMessage(parsedMessage.chatId, message);

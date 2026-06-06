@@ -404,7 +404,7 @@ function buildSnapshot(scope: TrainingPeaksOperationalSignalsScope) {
     studentNameById,
     asOfDate: "2026-06-03",
     scope,
-    limit: 10,
+    limit: 15,
     activeMoveActions: [
       {
         id: "action-visible-1",

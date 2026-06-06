@@ -895,6 +895,136 @@ function run(): void {
   assert(futurePlannedText.includes("Future Planned Athlete"), "22 failed: future planned date must stay visible.");
   assert(futurePlannedText.includes("планирует: 06.06"), "22 failed: future planned date text must stay visible.");
 
+  const defaultLimitSignals = Array.from({ length: 21 }, (_, index) =>
+    makeSignal({
+      signalId: `default-limit-${index + 1}`,
+      studentId: `default-limit-student-${index + 1}`,
+      signalType: "race_load_context",
+      metadata: { summary: `race context ${index + 1}` },
+    })
+  );
+  const defaultLimitSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-06",
+    studentNameById: new Map(
+      defaultLimitSignals.map((signal) => [signal.studentId, `Default Limit Athlete ${signal.signalId}`])
+    ),
+    signals: defaultLimitSignals,
+    activeMoveActions: [],
+  });
+  const defaultLimitVisibleCount = defaultLimitSnapshot.sections.reduce(
+    (count, section) => count + section.items.length,
+    0
+  );
+  assert(defaultLimitVisibleCount === 20, "23 failed: default /tp_signals limit should show 20 items.");
+  assert(defaultLimitSnapshot.overflowCount === 1, "23 failed: default /tp_signals overflow should count hidden rows only.");
+
+  const nastyaRestrictionSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-06",
+    limit: 10,
+    studentNameById: new Map<string, string | null>([["nastya", "Nastya Holodnaya"]]),
+    signals: [
+      makeSignal({
+        signalId: "nastya-headache-restriction",
+        studentId: "nastya",
+        signalType: "schedule_availability_window",
+        validUntil: "2026-06-07",
+        structuredPayload: {
+          display_summary: "Голова просто раскалывается, не могу сегодня",
+          valid_until: "2026-06-07",
+        },
+      }),
+    ],
+    activeMoveActions: [],
+  });
+  const nastyaRestrictionText = formatTrainingPeaksOperationalSignalsForTelegram(nastyaRestrictionSnapshot);
+  assert(
+    nastyaRestrictionText.includes("ограничение: головная боль (до 07.06)"),
+    "24 failed: generic schedule restriction should preserve short reason."
+  );
+
+  const genericRestrictionNoReasonSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-06",
+    limit: 10,
+    studentNameById: new Map<string, string | null>([["no-reason", "No Reason Athlete"]]),
+    signals: [
+      makeSignal({
+        signalId: "generic-restriction-no-reason",
+        studentId: "no-reason",
+        signalType: "schedule_availability_window",
+        validUntil: "2026-06-07",
+        structuredPayload: {
+          valid_until: "2026-06-07",
+        },
+      }),
+    ],
+    activeMoveActions: [],
+  });
+  const genericRestrictionNoReasonText = formatTrainingPeaksOperationalSignalsForTelegram(
+    genericRestrictionNoReasonSnapshot
+  );
+  assert(
+    genericRestrictionNoReasonText.includes("ограничение (до 07.06)"),
+    "24b failed: generic schedule restriction without reason should keep old wording."
+  );
+  assert(
+    !genericRestrictionNoReasonText.includes("ограничение:"),
+    "24b failed: generic schedule restriction without reason must not add empty reason label."
+  );
+
+  const stepanMonitoringCrossEpisodeSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-06",
+    limit: 10,
+    studentNameById: new Map<string, string | null>([["stepan", "Stepan Trofimov"]]),
+    signals: [
+      makeSignal({
+        signalId: "stepan-pain-monitoring-cross-episode",
+        studentId: "stepan",
+        signalType: "health_issue_started",
+        lifecycleState: "monitoring_after_return",
+        requiresCoachClose: true,
+        metadata: {
+          episode_key: "stepan-pain-monitoring-episode",
+          follow_up_status: "pending_due",
+          follow_up_due_at: "2026-06-06T10:00:00.000+02:00",
+        },
+        structuredPayload: {
+          signal_type: "pain_injury",
+          activity_domain: "injury",
+          planning_effect: "safety_review",
+          display_summary: "боль / надкостница (уточнить, актуально ли)",
+        },
+      }),
+      makeSignal({
+        signalId: "stepan-ambiguous-illness-cross-episode",
+        studentId: "stepan",
+        signalType: "health_issue_started",
+        metadata: {
+          episode_key: "stepan-ambiguous-illness-episode",
+        },
+        structuredPayload: {
+          display_summary: "может заболеваю",
+          requires_coach_review: true,
+        },
+      }),
+    ],
+    activeMoveActions: [],
+  });
+  const stepanMonitoringCrossEpisodeText = formatTrainingPeaksOperationalSignalsForTelegram(
+    stepanMonitoringCrossEpisodeSnapshot
+  );
+  assert(
+    stepanMonitoringCrossEpisodeText.includes("🦵 Боль / травмы"),
+    "25 failed: pain/injury monitoring should surface in pain section."
+  );
+  assert(
+    stepanMonitoringCrossEpisodeText.includes("можно закрыть после проверки: боль / надкостница (уточнить, актуально ли)"),
+    "25 failed: pain/injury monitoring with requiresCoachClose should use coach-close wording."
+  );
+  assert(
+    !stepanMonitoringCrossEpisodeText.includes("возможно заболевает"),
+    "25 failed: ambiguous illness should be suppressed when concrete pain monitoring is visible."
+  );
+
   console.log(`${LOG_PREFIX} PASS`);
 }
 

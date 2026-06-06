@@ -26,7 +26,7 @@ import {
 } from "./lib/operational-signal-lifecycle-runtime";
 
 const LOG_PREFIX = "[diagnose-trainingpeaks-signals-live-expanded]";
-const LIVE_DISPLAY_LIMIT = 15;
+const LIVE_DISPLAY_LIMIT = 20;
 const FULL_DISPLAY_LIMIT = 250;
 const DEFAULT_AS_OF = "2026-06-06";
 const DUPLICATE_WINDOW_DAYS = 10;

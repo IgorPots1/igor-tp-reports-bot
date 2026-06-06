@@ -6128,7 +6128,8 @@ function buildOperationalSignalItemFromSignal(input: {
   const rolePrefix =
     episodeRole && !INTERNAL_OPERATIONAL_EPISODE_ROLES.has(episodeRole) ? `${episodeRole}: ` : "";
   const lifecycleDisplayState = resolveOperationalSignalDisplayLifecycleState(signal);
-  const lifecyclePriority =
+  const displaySection = resolveOperationalSignalDisplaySection(effective);
+  let lifecyclePriority =
     lifecycleDisplayState === "active_problem"
       ? 30
       : lifecycleDisplayState === "monitoring_after_return"
@@ -6136,7 +6137,7 @@ function buildOperationalSignalItemFromSignal(input: {
         : lifecycleDisplayState === "ready_for_coach_close"
           ? 56
           : 57;
-  const lifecycleSortBucket =
+  let lifecycleSortBucket =
     lifecycleDisplayState === "active_problem"
       ? 2
       : lifecycleDisplayState === "monitoring_after_return"
@@ -6144,6 +6145,18 @@ function buildOperationalSignalItemFromSignal(input: {
         : lifecycleDisplayState === "ready_for_coach_close"
           ? 7
           : 8;
+  if (displaySection === "pain_injury") {
+    if (lifecycleDisplayState === "ready_for_coach_close") {
+      lifecyclePriority = 28;
+      lifecycleSortBucket = 2;
+    } else if (lifecycleDisplayState === "monitoring_after_return") {
+      lifecyclePriority = 45;
+      lifecycleSortBucket = 5;
+    } else if (lifecycleDisplayState === "active_problem") {
+      lifecyclePriority = 32;
+      lifecycleSortBucket = 2;
+    }
+  }
   if (isSignalSupersededForDisplay(signal)) {
     return {
       signalId: signal.id,
@@ -6206,7 +6219,7 @@ function buildOperationalSignalItemFromSignal(input: {
       signalId: signal.id,
       studentId: signal.studentId,
       studentName,
-      section: resolveOperationalSignalDisplaySection(effective),
+      section: displaySection,
       priority: lifecyclePriority,
       sortBucket: lifecycleSortBucket,
       dueDate: followUp.due_date,
@@ -6370,11 +6383,17 @@ function buildOperationalSignalItemFromSignal(input: {
 }
 
 function isAmbiguousIllnessDisplayItem(item: TrainingPeaksOperationalSignalsItem): boolean {
-  if (item.signalType !== "health_issue_started" || item.requiresCoachReview !== true) {
+  if (item.section !== "health_pause" || item.signalType !== "health_issue_started") {
     return false;
   }
   const normalized = item.text.trim().toLowerCase();
-  return normalized === "болеет" || normalized.includes("возможно заболевает") || normalized.includes("уточнить самочувствие");
+  if (normalized.includes("возможно заболевает") || normalized.includes("уточнить самочувствие")) {
+    return true;
+  }
+  if (item.requiresCoachReview !== true) {
+    return false;
+  }
+  return normalized === "болеет";
 }
 
 function mergeOperationalSignalEpisodeItems(
@@ -6442,6 +6461,39 @@ function mergeOperationalSignalEpisodeItems(
   return incomingKey < currentKey ? incoming : current;
 }
 
+function hasConcretePainInjuryMonitoringItem(item: TrainingPeaksOperationalSignalsItem): boolean {
+  if (item.section !== "pain_injury") {
+    return false;
+  }
+  return (
+    item.lifecycleDisplayState === "monitoring_after_return" ||
+    item.lifecycleDisplayState === "ready_for_coach_close"
+  );
+}
+
+function suppressAmbiguousIllnessWhenConcretePainVisible(
+  items: readonly TrainingPeaksOperationalSignalsItem[]
+): TrainingPeaksOperationalSignalsItem[] {
+  const studentsWithConcretePain = new Set<string>();
+  for (const item of items) {
+    if (hasConcretePainInjuryMonitoringItem(item)) {
+      studentsWithConcretePain.add(item.studentId);
+    }
+  }
+  if (studentsWithConcretePain.size === 0) {
+    return [...items];
+  }
+  return items.filter((item) => {
+    if (item.section !== "health_pause") {
+      return true;
+    }
+    if (!studentsWithConcretePain.has(item.studentId)) {
+      return true;
+    }
+    return !isAmbiguousIllnessDisplayItem(item);
+  });
+}
+
 function filterNormalOperationalSignalItems(items: TrainingPeaksOperationalSignalsItem[]): TrainingPeaksOperationalSignalsItem[] {
   return items.filter((item) => {
     if (item.signalType === "resolved") {
@@ -6452,6 +6504,17 @@ function filterNormalOperationalSignalItems(items: TrainingPeaksOperationalSigna
     }
     if (item.signalType === "health_issue_resolved") {
       return false;
+    }
+    if (item.section === "pain_injury") {
+      if (item.lifecycleDisplayState === "monitoring_after_return") {
+        return true;
+      }
+      if (item.lifecycleDisplayState === "ready_for_coach_close") {
+        return true;
+      }
+      if (item.lifecycleDisplayState === "stale_needs_review") {
+        return true;
+      }
     }
     if (item.section === "health_pause") {
       if (item.lifecycleDisplayState === "monitoring_after_return") {
@@ -6471,6 +6534,13 @@ function filterNormalOperationalSignalItems(items: TrainingPeaksOperationalSigna
       }
     }
     if (item.followUpState === "pending_due" || item.followUpState === "pending_overdue") {
+      if (
+        item.section === "pain_injury" &&
+        (item.lifecycleDisplayState === "monitoring_after_return" ||
+          item.lifecycleDisplayState === "ready_for_coach_close")
+      ) {
+        return true;
+      }
       return false;
     }
     if (item.section === "other" && /^самочувствие\b/iu.test(item.text)) {
@@ -6615,7 +6685,7 @@ export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
   activeMoveActions?: readonly TrainingPeaksAction[];
 }): TrainingPeaksOperationalSignalsSnapshot {
   const scope = input.scope ?? "all";
-  const maxItems = Math.max(5, Math.min(30, Math.floor(input.limit ?? 15)));
+  const maxItems = Math.max(5, Math.min(30, Math.floor(input.limit ?? 20)));
   const studentNameById = input.studentNameById ?? new Map<string, string | null>();
 
   const episodeScheduleIndex = buildEpisodeScheduleContextIndex(input.signals);
@@ -6693,7 +6763,9 @@ export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
   }
 
   const allItemsRaw = [...dedupedByEpisode.values(), ...fallbackItems];
-  const allItems = dedupeHealthByStudent(filterNormalOperationalSignalItems(allItemsRaw));
+  const allItems = suppressAmbiguousIllnessWhenConcretePainVisible(
+    dedupeHealthByStudent(filterNormalOperationalSignalItems(allItemsRaw))
+  );
   allItems.sort((left, right) => getOperationalSignalSortKey(left).localeCompare(getOperationalSignalSortKey(right)));
   const limited = allItems.slice(0, maxItems);
 
