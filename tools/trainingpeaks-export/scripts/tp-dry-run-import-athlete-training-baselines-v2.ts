@@ -916,6 +916,11 @@ async function main(): Promise<void> {
       flags.add("manual_review");
     }
 
+    if (qualityDelta !== null && qualityDelta >= 1) {
+      reasons.add("quality_sessions_delta");
+      flags.add("manual_review");
+    }
+
     const plannedVsCompleted = analyzePlannedVsCompletedFrequency({
       actualCompletedFrequency: normalWeekFrequency,
       plannedContextFrequency: toNumberOrNull(athlete.planned_context_baseline.frequency_cap),
@@ -952,6 +957,7 @@ async function main(): Promise<void> {
       reasons.has("recent_status_differs_from_baseline") ||
       reasons.has("completed_data_incomplete") ||
       reasons.has("high_delta_vs_current") ||
+      reasons.has("quality_sessions_delta") ||
       reasons.has("melnikova_special_case") ||
       reasons.has("krylova_special_case") ||
       reasons.has("abramova_special_case") ||

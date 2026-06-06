@@ -454,6 +454,11 @@ const QUALITY_PATTERN =
   /\b(interval|intervals|repeats?|fartlek|tempo|threshold|vo2|vo₂|hill|track|порог|темп|интерв|фартлек|горк|ускорен)\b/i;
 const INTERVAL_PATTERN =
   /(\d{1,2})\s*[xх×*]\s*(\d{1,4}(?:[.,]\d+)?)\s*(мин|min|км|km|сек|sec|м|m)?/i;
+const MINUTE_KM_INTERVAL_PATTERN =
+  /(\d{1,2})\s*[xх×*]\s*(\d{1,4}(?:[.,]\d+)?)\s*(мин|min|км|km)\b/i;
+const SHORT_SEC_M_INTERVAL_PATTERN =
+  /(\d{1,2})\s*[xх×*]\s*(\d{1,2}(?:[.,]\d+)?)\s*(сек|sec|м|m)\b/i;
+const WARMUP_DRILL_PATTERN = /(разминк|warm[- ]?up|drills?|сбу|ускорени|strides?|accelerations?)\b/i;
 const LONG_RUN_PATTERN = /(длительн|long run|\blong\b)/i;
 const MARATHON_SPECIFIC_PATTERN =
   /(марафонск(?:ий|ого)?\s*темп|marathon pace|\bмт\b|\bмп\b|20\s*км\s*в\s*мт|25\s*км\s*в\s*мт|гели|питани)/i;
@@ -692,9 +697,42 @@ function raceRecoveryWeeks(distance: RaceDistanceKey): number {
   return 1;
 }
 
+function isPrimaryQualityWorkout(primaryText: string): boolean {
+  return (
+    QUALITY_PATTERN.test(primaryText) ||
+    INTERVAL_PATTERN.test(primaryText) ||
+    MARATHON_SPECIFIC_PATTERN.test(primaryText)
+  );
+}
+
+function isCoachSupportingQualityWorkout(coachText: string): boolean {
+  if (!coachText.trim()) return false;
+  if (QUALITY_PATTERN.test(coachText) || MARATHON_SPECIFIC_PATTERN.test(coachText)) return true;
+  if (MINUTE_KM_INTERVAL_PATTERN.test(coachText)) return true;
+  // Short sec/m strides and warmup drills in coachComments alone are not quality sessions.
+  if (SHORT_SEC_M_INTERVAL_PATTERN.test(coachText) || WARMUP_DRILL_PATTERN.test(coachText)) return false;
+  return false;
+}
+
+function evaluateQualityLike(primaryText: string, coachText: string): boolean {
+  if (isPrimaryQualityWorkout(primaryText)) return true;
+  return isCoachSupportingQualityWorkout(coachText);
+}
+
+function evaluateIntervalLike(primaryText: string, coachText: string): boolean {
+  const intervalKeywordPattern = /\b(vo2|vo₂|threshold|tempo|порог|интерв|фартлек|hill)\b/i;
+  if (INTERVAL_PATTERN.test(primaryText) || intervalKeywordPattern.test(primaryText)) return true;
+  if (MINUTE_KM_INTERVAL_PATTERN.test(coachText) || intervalKeywordPattern.test(coachText)) return true;
+  return false;
+}
+
 function buildWorkoutInsight(row: TrainingPeaksWorkoutCacheRow): WorkoutInsight {
   const snapshot = isRecord(row.sourceSnapshot) ? row.sourceSnapshot : null;
-  const text = normalizeText(row.title, String(snapshot?.description ?? ""), String(snapshot?.coachComments ?? ""));
+  const description = String(snapshot?.description ?? "");
+  const coachComments = String(snapshot?.coachComments ?? "");
+  const primaryText = normalizeText(row.title, description);
+  const coachText = normalizeText(coachComments);
+  const text = normalizeText(row.title, description, coachComments);
   const activity = classifyTrainingPeaksWorkoutActivity({
     title: row.title,
     sportOrTypeCode: row.sportOrTypeCode,
@@ -706,7 +744,7 @@ function buildWorkoutInsight(row: TrainingPeaksWorkoutCacheRow): WorkoutInsight 
   const completedMinutes = durationMinutesForRow(row, "completed");
   const durationMinutes = plannedMinutes ?? completedMinutes;
   const longRunLike = LONG_RUN_PATTERN.test(text) || ((durationMinutes ?? 0) >= 80 && activity.isRunning);
-  const qualityLike = QUALITY_PATTERN.test(text) || INTERVAL_PATTERN.test(text) || MARATHON_SPECIFIC_PATTERN.test(text);
+  const qualityLike = evaluateQualityLike(primaryText, coachText);
   const marathonSpecificCue = MARATHON_SPECIFIC_PATTERN.test(text);
   const isAmbiguousCompletedActivity =
     row.isCompleted &&
@@ -732,7 +770,7 @@ function buildWorkoutInsight(row: TrainingPeaksWorkoutCacheRow): WorkoutInsight 
     weekStart: weekStartIso(row.workoutDate),
     weekEnd: weekEndIso(weekStartIso(row.workoutDate)),
     qualityLike,
-    intervalLike: INTERVAL_PATTERN.test(text) || /\b(vo2|vo₂|threshold|tempo|порог|интерв|фартлек|hill)\b/i.test(text),
+    intervalLike: evaluateIntervalLike(primaryText, coachText),
     longRunLike,
     explicitRunWalk: RUN_WALK_STRONG_PATTERN.test(text),
     marathonSpecificCue,
