@@ -9,8 +9,13 @@ import {
   type QualityIntent,
   type QualityStructure,
   type QualityWorkoutKey,
+  getQualityWorkoutCatalogEntry,
   selectQualityMethodologyV0,
 } from "./lib/plan-quality-methodology-catalog.ts";
+import {
+  type ProgressionCompletionStatus,
+  selectNextQualityWorkoutFromProgression,
+} from "./lib/plan-quality-progression-selector.ts";
 import { toolRoot } from "./lib/paths.ts";
 
 type DraftStatus =
@@ -502,11 +507,21 @@ function listToCsv(rows: string[][]): string {
 
 type RecentQualityDiagnosticSummary = {
   found_20x1min_candidate?: boolean;
+  last_quality_session_estimated_structure?: string | null;
+  last_quality_session_title?: string | null;
+  last_quality_session_estimated_type?: string | null;
+  twenty_by_one_candidate?: {
+    found?: boolean;
+    date?: string | null;
+  };
 };
 
 function loadRecentQualityDiagnosticIfAvailable(repoRoot: string): {
   available: boolean;
   found20x1: boolean;
+  recentPattern: string | null;
+  completionStatus: ProgressionCompletionStatus;
+  fatigueOrHealthFlag: boolean;
 } {
   const diagnosticPath = path.join(
     repoRoot,
@@ -516,12 +531,36 @@ function loadRecentQualityDiagnosticIfAvailable(repoRoot: string): {
     "summary.json",
   );
   if (!existsSync(diagnosticPath)) {
-    return { available: false, found20x1: false };
+    return {
+      available: false,
+      found20x1: false,
+      recentPattern: null,
+      completionStatus: "unknown",
+      fatigueOrHealthFlag: false,
+    };
   }
   const summary = loadJson<RecentQualityDiagnosticSummary>(diagnosticPath);
+  const patternSource =
+    summary.last_quality_session_estimated_structure ??
+    summary.last_quality_session_title ??
+    null;
+  const normalizedPattern = patternSource
+    ?.toLowerCase()
+    .replaceAll(" ", "")
+    .replaceAll("×", "x")
+    .replaceAll("х", "x")
+    .replace("x1min", "x1")
+    .replace("x2min", "x2")
+    .replace("x3min", "x3")
+    .replace("x4min", "x4")
+    .replace("x1.5min", "x1:30");
+
   return {
     available: true,
     found20x1: summary.found_20x1min_candidate === true,
+    recentPattern: normalizedPattern ?? null,
+    completionStatus: "completed",
+    fatigueOrHealthFlag: false,
   };
 }
 
@@ -754,7 +793,27 @@ async function main(): Promise<void> {
   const longRunMinutes = longRunCap !== null ? Math.max(0, Math.round(longRunCap * 0.9)) : 0;
   const qualitySessionCount = qualityCap !== null && qualityCap >= 1 ? 1 : 0;
   const recentDiagnostic = loadRecentQualityDiagnosticIfAvailable(repoRoot);
-  const qualitySelection = selectQualityMethodologyV0({
+  const progressionSelection = selectNextQualityWorkoutFromProgression({
+    intent: "vo2max_intervals",
+    recentWorkoutPattern: recentDiagnostic.recentPattern ?? (recentDiagnostic.found20x1 ? "20x1" : null),
+    completionStatus: recentDiagnostic.completionStatus,
+    fatigueOrHealthFlag: recentDiagnostic.fatigueOrHealthFlag,
+    noRaceGeneralDevelopment: !hasRaceContext,
+  });
+
+  const qualitySelection =
+    recentDiagnostic.available && progressionSelection.selectedKey
+      ? {
+          selected: true as const,
+          intent: "vo2max_intervals" as const,
+          workout_key: progressionSelection.selectedKey,
+          structure: getQualityWorkoutCatalogEntry(progressionSelection.selectedKey).structure,
+          selection_reason: [
+            ...progressionSelection.reasonCodes,
+            "maintain_controlled_non_all_out_execution",
+          ].join("; "),
+        }
+      : selectQualityMethodologyV0({
     quality_count_cap: qualityCap,
     planned_run_count: plannedRunCount,
     has_active_illness_or_injury: op.activeIllness || op.activePainInjury,
@@ -797,7 +856,7 @@ async function main(): Promise<void> {
           ? qualitySelection.structure.total_minutes
           : qualityMinutes;
         const qualityTitle = qualitySelection.selected
-          ? "Интервалы 10×2 мин"
+          ? getQualityWorkoutCatalogEntry(qualitySelection.workout_key).display_title_ru
           : "Quality session requires coach intent selection";
         const qualityCoachNotes = qualitySelection.selected
           ? "Беги сильно, но контролируемо. Восстановление между отрезками — легкий бег трусцой. Не спринтуй первые отрезки; последние отрезки держи технично и стабильно."

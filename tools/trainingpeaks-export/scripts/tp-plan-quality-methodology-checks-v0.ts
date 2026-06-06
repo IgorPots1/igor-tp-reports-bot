@@ -10,6 +10,7 @@ import {
   selectQualityMethodologyV0,
   validateQualityStructureForIntent,
 } from "./lib/plan-quality-methodology-catalog.ts";
+import { selectNextQualityWorkoutFromProgression } from "./lib/plan-quality-progression-selector.ts";
 
 function testAnnaRecent20x1SelectsVo2_10x2(): void {
   const selected = selectQualityMethodologyV0({
@@ -113,6 +114,96 @@ function testVo2ProgressionRules(): void {
   }
 }
 
+function testProgressionSelector20x1To10x2(): void {
+  const selection = selectNextQualityWorkoutFromProgression({
+    intent: "vo2max_intervals",
+    recentWorkoutPattern: "20x1",
+    completionStatus: "completed",
+    fatigueOrHealthFlag: false,
+    noRaceGeneralDevelopment: true,
+  });
+  assert.equal(selection.action, "progress");
+  assert.equal(selection.selectedKey, "vo2_10x2");
+}
+
+function testProgressionSelector24x1To10x2(): void {
+  const selection = selectNextQualityWorkoutFromProgression({
+    intent: "vo2max_intervals",
+    recentWorkoutPattern: "24x1",
+    completionStatus: "completed",
+    fatigueOrHealthFlag: false,
+    noRaceGeneralDevelopment: true,
+  });
+  assert.equal(selection.action, "progress");
+  assert.equal(selection.selectedKey, "vo2_10x2");
+}
+
+function testProgressionSelector10x2To3MinuteFamily(): void {
+  const selection = selectNextQualityWorkoutFromProgression({
+    intent: "vo2max_intervals",
+    recentWorkoutPattern: "10x2",
+    completionStatus: "completed",
+    fatigueOrHealthFlag: false,
+    noRaceGeneralDevelopment: true,
+  });
+  assert.equal(selection.action, "progress");
+  assert.equal(selection.selectedKey === "vo2_6x3" || selection.selectedKey === "vo2_7x3", true);
+}
+
+function testProgressionSelectorBridgePatternsFollowCatalog(): void {
+  const by400 = selectNextQualityWorkoutFromProgression({
+    intent: "vo2max_intervals",
+    recentWorkoutPattern: "15x400",
+    completionStatus: "completed",
+    fatigueOrHealthFlag: false,
+    noRaceGeneralDevelopment: true,
+  });
+  assert.equal(by400.action, "progress");
+  assert.equal(by400.selectedKey === "vo2_20x90sec" || by400.selectedKey === "vo2_10x2", true);
+
+  const by90 = selectNextQualityWorkoutFromProgression({
+    intent: "vo2max_intervals",
+    recentWorkoutPattern: "20x90sec",
+    completionStatus: "completed",
+    fatigueOrHealthFlag: false,
+    noRaceGeneralDevelopment: true,
+  });
+  assert.equal(by90.action, "progress");
+  assert.equal(by90.selectedKey === "vo2_10x2" || by90.selectedKey === "vo2_12x2", true);
+}
+
+function testProgressionSelectorFatigueAndPartialBlockProgression(): void {
+  const fatigueSelection = selectNextQualityWorkoutFromProgression({
+    intent: "vo2max_intervals",
+    recentWorkoutPattern: "20x1",
+    completionStatus: "completed",
+    fatigueOrHealthFlag: true,
+    noRaceGeneralDevelopment: true,
+  });
+  assert.notEqual(fatigueSelection.action, "progress");
+
+  const partialSelection = selectNextQualityWorkoutFromProgression({
+    intent: "vo2max_intervals",
+    recentWorkoutPattern: "20x1",
+    completionStatus: "partial",
+    fatigueOrHealthFlag: false,
+    noRaceGeneralDevelopment: true,
+  });
+  assert.notEqual(partialSelection.action, "progress");
+}
+
+function testProgressionSelectorUnknownWorkoutNoControlled3x6Fallback(): void {
+  const selection = selectNextQualityWorkoutFromProgression({
+    intent: "vo2max_intervals",
+    recentWorkoutPattern: "weird_unknown_pattern",
+    completionStatus: "completed",
+    fatigueOrHealthFlag: false,
+    noRaceGeneralDevelopment: true,
+  });
+  assert.equal(selection.action, "manual_review");
+  assert.notEqual(selection.selectedKey, "controlled_3x6");
+}
+
 function testWriterGuardSignals(): void {
   const missingIntentSelection = selectQualityMethodologyV0({
     quality_count_cap: 1,
@@ -155,6 +246,12 @@ function main(): void {
   testBelowThresholdRecoveryRules();
   testThresholdTempoRecoveryRules();
   testVo2ProgressionRules();
+  testProgressionSelector20x1To10x2();
+  testProgressionSelector24x1To10x2();
+  testProgressionSelector10x2To3MinuteFamily();
+  testProgressionSelectorBridgePatternsFollowCatalog();
+  testProgressionSelectorFatigueAndPartialBlockProgression();
+  testProgressionSelectorUnknownWorkoutNoControlled3x6Fallback();
   testWriterGuardSignals();
   console.log("[tp-plan-quality-methodology-checks-v0] all checks passed");
 }
