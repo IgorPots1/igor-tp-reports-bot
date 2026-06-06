@@ -109,6 +109,7 @@
     "diagnose-coach-memory-quality": "npx tsx scripts/diagnose-coach-memory-quality.ts",
     "diagnose-coach-operational-signals": "npx tsx scripts/diagnose-coach-operational-signals.ts",
     "diagnose-operational-signal-lifecycle": "npx tsx scripts/diagnose-operational-signal-lifecycle.ts",
+    "diagnose-operational-signal-episodes": "npx tsx scripts/diagnose-operational-signal-episodes.ts",
     "apply-operational-signal-lifecycle": "npx tsx scripts/apply-operational-signal-lifecycle.ts",
     "close-operational-signal-lifecycle": "npx tsx scripts/close-operational-signal-lifecycle.ts",
     "diagnose-tp-workout-type-mapping": "npx tsx scripts/diagnose-trainingpeaks-workout-type-mapping.ts",
