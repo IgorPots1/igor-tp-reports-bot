@@ -392,10 +392,6 @@ function run(): void {
     text.includes("можно закрыть после проверки"),
     "13 failed: monitoring_after_return + requiresCoachClose should show coach-close wording."
   );
-  assert(
-    text.includes("давно нет новых данных, проверить вручную"),
-    "13 failed: stale_needs_review should be explicitly surfaced."
-  );
   assert(!text.includes("дубликат эпизода"), "13 failed: superseded duplicate should be hidden in projection.");
   assert(!text.includes("Stepan Trofimov\n  болеет"), "13 failed: Stepan pain/injury must not be shown as illness.");
   assert(
@@ -404,8 +400,149 @@ function run(): void {
   );
   const painSection = text.split("🦵 Боль / травмы")[1]?.split("📅 Учесть в плане")[0] ?? "";
   assert(painSection.includes("Stepan Trofimov"), "13 failed: Stepan should be grouped under pain/injury section.");
-  const illnessSection = text.split("🟡 Болезнь / пауза")[1]?.split("🦵 Боль / травмы")[0] ?? "";
-  assert(!illnessSection.includes("Stepan Trofimov"), "13c failed: Stepan must not appear under illness section.");
+
+  const lifecycleDisplayFixtureSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-05",
+    limit: 10,
+    studentNameById: new Map<string, string | null>([
+      ["active-illness", "Active Illness Athlete"],
+      ["monitoring", "Monitoring Athlete"],
+      ["ready-close", "Ready Close Athlete"],
+      ["stale", "Stale Athlete"],
+      ["resolved-hidden", "Resolved Hidden Athlete"],
+      ["superseded-hidden", "Superseded Hidden Athlete"],
+      ["strength-hidden", "Strength Context Hidden Athlete"],
+    ]),
+    signals: [
+      makeSignal({
+        signalId: "active-illness-row",
+        studentId: "active-illness",
+        signalType: "health_issue_started",
+        structuredPayload: {
+          latest_summary: "болеет, температура и слабость",
+          health_state: "sick",
+        },
+      }),
+      makeSignal({
+        signalId: "monitoring-row",
+        studentId: "monitoring",
+        signalType: "health_issue_started",
+        lifecycleState: "monitoring_after_return",
+        structuredPayload: {
+          latest_summary: "вернулся после паузы, бег лёгкий",
+          health_state: "improving",
+        },
+      }),
+      makeSignal({
+        signalId: "ready-close-row",
+        studentId: "ready-close",
+        signalType: "health_issue_started",
+        lifecycleState: "monitoring_after_return",
+        requiresCoachClose: true,
+        structuredPayload: {
+          signal_type: "pain_injury",
+          activity_domain: "injury",
+          latest_summary: "без жалоб после возврата",
+        },
+      }),
+      makeSignal({
+        signalId: "stale-row",
+        studentId: "stale",
+        signalType: "health_issue_started",
+        metadata: {
+          lifecycle_effective: "stale_needs_review",
+        },
+        structuredPayload: {
+          latest_summary: "нет новых апдейтов по эпизоду",
+        },
+      }),
+      makeSignal({
+        signalId: "resolved-hidden-row",
+        studentId: "resolved-hidden",
+        signalType: "health_issue_started",
+        lifecycleState: "resolved",
+        structuredPayload: {
+          latest_summary: "resolved should be hidden",
+        },
+      }),
+      makeSignal({
+        signalId: "superseded-hidden-row",
+        studentId: "superseded-hidden",
+        signalType: "health_issue_started",
+        metadata: {
+          superseded_by_signal_id: "active-illness-row",
+        },
+        structuredPayload: {
+          latest_summary: "superseded duplicate should be hidden",
+        },
+      }),
+      makeSignal({
+        signalId: "strength-context-hidden-row",
+        studentId: "strength-hidden",
+        signalType: "plan_generation_constraint",
+        structuredPayload: {
+          signal_type: "external_training_context",
+          activity_domain: "strength",
+          visible_in_tp_signals: false,
+          display_summary: "силовые: hidden context",
+        },
+      }),
+    ],
+    activeMoveActions: [],
+  });
+  const lifecycleDisplayFixtureText = formatTrainingPeaksOperationalSignalsForTelegram(
+    lifecycleDisplayFixtureSnapshot
+  );
+  assert(
+    lifecycleDisplayFixtureText.includes("🟡 Болезнь / пауза"),
+    "13f failed: lifecycle fixture should render illness section."
+  );
+  assert(
+    lifecycleDisplayFixtureText.includes("🦵 Боль / травмы"),
+    "13f failed: lifecycle fixture should render pain/injury section."
+  );
+  assert(
+    lifecycleDisplayFixtureText.includes("Active Illness Athlete") && lifecycleDisplayFixtureText.includes("болеет"),
+    "13f failed: active illness fixture row should be visible with direct wording."
+  );
+  assert(
+    lifecycleDisplayFixtureText.includes("Monitoring Athlete") &&
+      lifecycleDisplayFixtureText.includes("после паузы:") &&
+      lifecycleDisplayFixtureText.includes("наблюдать"),
+    "13f failed: monitoring_after_return fixture should use calm monitoring wording."
+  );
+  assert(
+    lifecycleDisplayFixtureText.includes("Ready Close Athlete") &&
+      lifecycleDisplayFixtureText.includes("можно закрыть после проверки"),
+    "13f failed: monitoring_after_return + requiresCoachClose fixture should use coach-close wording."
+  );
+  assert(
+    lifecycleDisplayFixtureText.includes("Stale Athlete") &&
+      lifecycleDisplayFixtureText.includes("давно нет новых данных, проверить вручную"),
+    "13f failed: stale_needs_review fixture should use stale-review wording."
+  );
+  assert(
+    !lifecycleDisplayFixtureText.includes("Resolved Hidden Athlete"),
+    "13f failed: resolved lifecycle fixture row should be hidden."
+  );
+  assert(
+    !lifecycleDisplayFixtureText.includes("Superseded Hidden Athlete"),
+    "13f failed: superseded fixture row should be hidden."
+  );
+  assert(
+    !lifecycleDisplayFixtureText.includes("Strength Context Hidden Athlete") &&
+      !lifecycleDisplayFixtureText.includes("силовые: hidden context"),
+    "13f failed: external strength context fixture row should stay hidden."
+  );
+  assert(
+    lifecycleDisplayFixtureSnapshot.overflowCount === 0 &&
+      !lifecycleDisplayFixtureText.includes("ещё сигналов"),
+    "13f failed: resolved/superseded/hidden rows must not inflate overflow."
+  );
+  assert(
+    lifecycleDisplayFixtureText.includes("Stale Athlete\n  давно нет новых данных, проверить вручную"),
+    "13f failed: stale fixture full block changed unexpectedly."
+  );
 
   const episodeRoleFixtureSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
     asOfDate: "2026-06-05",
