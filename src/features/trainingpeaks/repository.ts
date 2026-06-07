@@ -5071,6 +5071,31 @@ export async function listTrainingPeaksTelegramContextObservationsForStudent(
   );
 }
 
+export async function getTrainingPeaksTelegramContextObservationById(
+  observationId: string
+): Promise<TrainingPeaksTelegramContextObservation | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_telegram_context_observations")
+    .select("*")
+    .eq("id", observationId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to get TrainingPeaks telegram context observation ${observationId}: ${error.message}`
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksTelegramContextObservationRow(
+    data as TrainingPeaksTelegramContextObservationRow
+  );
+}
+
 /**
  * Read-only helper used by the multi-message move-intent context assembly. Returns
  * only the minimal safe fields needed by the assembler so we never widen access
@@ -7767,6 +7792,174 @@ export async function supersedeTrainingPeaksOperationalSignal(input: {
       formatTrainingPeaksDbError(null, "Supersede apply post-read returned zero rows", {
         sourceSignalId: input.sourceSignalId,
         studentId: before.studentId,
+      })
+    );
+  }
+
+  return {
+    outcome: "applied",
+    before,
+    after: mapTrainingPeaksStudentOperationalSignalRow(afterData as TrainingPeaksStudentOperationalSignalRow),
+  };
+}
+
+export async function applyTrainingPeaksOperationalSignalRecoveryEpisodeUpdate(input: {
+  signalId: string;
+  studentId: string;
+  fromLifecycleState: TrainingPeaksOperationalSignalLifecycle;
+  toLifecycleState: TrainingPeaksOperationalSignalLifecycle;
+  fromDisplaySummary: string | null;
+  updatedDisplaySummary: string;
+  dryRunFingerprint: string;
+  recoveryUpdateMeta: Record<string, unknown>;
+  appliedAt?: string;
+}): Promise<{
+  outcome: "applied" | "idempotent";
+  before: TrainingPeaksStudentOperationalSignal;
+  after: TrainingPeaksStudentOperationalSignal;
+}> {
+  const supabase = createSupabaseServerClient();
+  const appliedAt = input.appliedAt ?? new Date().toISOString();
+
+  const { data: beforeData, error: beforeError } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .select("*")
+    .eq("id", input.signalId)
+    .eq("student_id", input.studentId)
+    .maybeSingle();
+  if (beforeError) {
+    if (isTrainingPeaksMissingRelationError(beforeError)) {
+      throw new Error(
+        "trainingpeaks_student_operational_signals table is missing; apply Supabase migration first"
+      );
+    }
+    throw new Error(
+      `Failed to load operational signal before recovery episode apply: ${beforeError.message}`
+    );
+  }
+  if (!beforeData) {
+    throw new Error(`Operational signal not found for recovery episode apply: ${input.signalId}`);
+  }
+
+  const beforeRow = beforeData as TrainingPeaksStudentOperationalSignalRow;
+  const before = mapTrainingPeaksStudentOperationalSignalRow(beforeRow);
+  const currentLifecycle = before.lifecycleState ?? "active_problem";
+  if (currentLifecycle !== input.fromLifecycleState) {
+    throw new Error(
+      `Recovery episode apply precondition failed for signal ${input.signalId}: current=${currentLifecycle} expected=${input.fromLifecycleState}`
+    );
+  }
+
+  const existingStructuredPayload =
+    beforeRow.structured_payload &&
+    typeof beforeRow.structured_payload === "object" &&
+    !Array.isArray(beforeRow.structured_payload)
+      ? (beforeRow.structured_payload as Record<string, unknown>)
+      : {};
+  const existingDisplay =
+    typeof existingStructuredPayload.display_summary === "string"
+      ? existingStructuredPayload.display_summary.trim()
+      : typeof existingStructuredPayload.latest_summary === "string"
+        ? existingStructuredPayload.latest_summary.trim()
+        : null;
+  if (existingDisplay !== input.fromDisplaySummary) {
+    throw new Error(
+      `Recovery episode apply precondition failed for signal ${input.signalId}: display summary changed since dry-run`
+    );
+  }
+
+  const lifecycleMetaBefore =
+    beforeRow.lifecycle_meta && typeof beforeRow.lifecycle_meta === "object" && !Array.isArray(beforeRow.lifecycle_meta)
+      ? (beforeRow.lifecycle_meta as Record<string, unknown>)
+      : {};
+  const existingRecoveryUpdate = lifecycleMetaBefore.recovery_update;
+  if (
+    existingRecoveryUpdate &&
+    typeof existingRecoveryUpdate === "object" &&
+    !Array.isArray(existingRecoveryUpdate) &&
+    (existingRecoveryUpdate as Record<string, unknown>).dry_run_fingerprint === input.dryRunFingerprint
+  ) {
+    return {
+      outcome: "idempotent",
+      before,
+      after: before,
+    };
+  }
+
+  const nextStructuredPayload = {
+    ...existingStructuredPayload,
+    display_summary: input.updatedDisplaySummary,
+    latest_summary: input.updatedDisplaySummary,
+  };
+  const nextLifecycleMeta = {
+    ...lifecycleMetaBefore,
+    recovery_update: input.recoveryUpdateMeta,
+  };
+  const lifecycleChanged = currentLifecycle !== input.toLifecycleState;
+
+  const updatePayload: Record<string, unknown> = {
+    structured_payload: nextStructuredPayload,
+    lifecycle_meta: nextLifecycleMeta,
+    updated_at: appliedAt,
+  };
+  if (lifecycleChanged) {
+    updatePayload.lifecycle_state = input.toLifecycleState;
+    updatePayload.lifecycle_state_updated_at = appliedAt;
+    updatePayload.lifecycle_applied_at = appliedAt;
+  }
+
+  const updateQuery = supabase
+    .from("trainingpeaks_student_operational_signals")
+    .update(updatePayload)
+    .eq("id", input.signalId)
+    .eq("student_id", input.studentId);
+  const lifecycleMatchedUpdate = before.lifecycleState
+    ? updateQuery.eq("lifecycle_state", before.lifecycleState)
+    : updateQuery.is("lifecycle_state", null);
+  const { data: updatedData, error: updatedError } = await lifecycleMatchedUpdate.select("id").maybeSingle();
+  if (updatedError) {
+    if (isTrainingPeaksMissingRelationError(updatedError)) {
+      throw new Error(
+        "trainingpeaks_student_operational_signals table is missing; apply Supabase migration first"
+      );
+    }
+    throw new Error(
+      formatTrainingPeaksDbError(updatedError, "Failed to apply recovery episode update", {
+        signalId: input.signalId,
+        studentId: input.studentId,
+        expectedFromLifecycle: input.fromLifecycleState,
+      })
+    );
+  }
+  if (!updatedData) {
+    throw new Error(
+      formatTrainingPeaksDbError(null, "Recovery episode apply update affected zero rows", {
+        signalId: input.signalId,
+        studentId: input.studentId,
+        expectedFromLifecycle: input.fromLifecycleState,
+      })
+    );
+  }
+
+  const { data: afterData, error: afterError } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .select("*")
+    .eq("id", input.signalId)
+    .eq("student_id", input.studentId)
+    .maybeSingle();
+  if (afterError) {
+    throw new Error(
+      formatTrainingPeaksDbError(afterError, "Recovery episode apply post-read failed", {
+        signalId: input.signalId,
+        studentId: input.studentId,
+      })
+    );
+  }
+  if (!afterData) {
+    throw new Error(
+      formatTrainingPeaksDbError(null, "Recovery episode apply post-read returned zero rows", {
+        signalId: input.signalId,
+        studentId: input.studentId,
       })
     );
   }
