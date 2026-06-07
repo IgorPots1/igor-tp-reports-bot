@@ -43,6 +43,7 @@ function makeSignal(input: {
   episodeKey?: string | null;
   lifecycleState?: TrainingPeaksStudentOperationalSignal["lifecycleState"];
   requiresCoachClose?: boolean;
+  lifecycleMeta?: Record<string, unknown>;
 }): TrainingPeaksStudentOperationalSignal {
   const metadata = { ...(input.metadata ?? {}) };
   if (input.episodeKey) {
@@ -56,7 +57,7 @@ function makeSignal(input: {
     lifecycleState: input.lifecycleState ?? null,
     lifecycleStateUpdatedAt: null,
     lifecycleAppliedAt: null,
-    lifecycleMeta: {},
+    lifecycleMeta: input.lifecycleMeta ?? {},
     resolvedAt: null,
     resolvedReason: null,
     requiresCoachClose: input.requiresCoachClose ?? false,
@@ -618,6 +619,107 @@ function run(): void {
   const expiredScheduleText = formatTrainingPeaksOperationalSignalsForTelegram(expiredScheduleSnapshot);
   assert(!expiredScheduleText.includes("Expired Schedule Athlete"), "I failed: expired schedule signal must be hidden.");
   assert(expiredScheduleText.includes("Active Schedule Athlete"), "I failed: same-day schedule signal must stay visible.");
+
+  const recoveryDisplaySnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-07",
+    limit: 10,
+    studentNameById: new Map<string, string | null>([
+      ["pautov-like", "Pautov Recovery Athlete"],
+      ["titskaia-like", "Titskaia Recovery Athlete"],
+      ["kasianenko-like", "Kasianenko Recovery Athlete"],
+    ]),
+    signals: [
+      makeSignal({
+        signalId: "pautov-recovery-row",
+        studentId: "pautov-like",
+        signalType: "health_issue_started",
+        lifecycleState: "return_planned",
+        metadata: {
+          follow_up_status: "pending",
+          follow_up_due_at: "2026-06-07T09:00:00.000+02:00",
+          follow_up_reason: "болеет, горло",
+        },
+        structuredPayload: {
+          display_summary: "после болезни: в строю, возврат к тренировкам; наблюдать",
+          latest_summary: "после болезни: в строю, возврат к тренировкам; наблюдать",
+        },
+        lifecycleMeta: {
+          recovery_update: {
+            updated_display_summary: "после болезни: в строю, возврат к тренировкам; наблюдать",
+          },
+        },
+      }),
+      makeSignal({
+        signalId: "titskaia-recovery-row",
+        studentId: "titskaia-like",
+        signalType: "health_issue_started",
+        lifecycleState: "return_planned",
+        metadata: {
+          follow_up_status: "pending",
+          follow_up_due_at: "2026-06-07T09:00:00.000+02:00",
+          follow_up_reason: "болеет; пауза",
+        },
+        structuredPayload: {
+          display_summary: "после болезни: лучше, завтра пробежка; наблюдать",
+          latest_summary: "после болезни: лучше, завтра пробежка; наблюдать",
+        },
+        lifecycleMeta: {
+          recovery_update: {
+            updated_display_summary: "после болезни: лучше, завтра пробежка; наблюдать",
+          },
+        },
+      }),
+      makeSignal({
+        signalId: "kasianenko-recovery-row",
+        studentId: "kasianenko-like",
+        signalType: "health_issue_started",
+        lifecycleState: "monitoring_after_return",
+        metadata: {
+          follow_up_status: "pending",
+          follow_up_due_at: "2026-06-07T09:00:00.000+02:00",
+          follow_up_reason: "болеет, горло; не бегает 5 дней",
+        },
+        structuredPayload: {
+          display_summary: "после болезни: лучше, завтра пробный бег; наблюдать",
+          latest_summary: "после болезни: лучше, завтра пробный бег; наблюдать",
+        },
+        lifecycleMeta: {
+          recovery_update: {
+            updated_display_summary: "после болезни: лучше, завтра пробный бег; наблюдать",
+          },
+        },
+      }),
+    ],
+    activeMoveActions: [],
+  });
+  const recoveryDisplayText = formatTrainingPeaksOperationalSignalsForTelegram(recoveryDisplaySnapshot);
+  assert(
+    recoveryDisplayText.includes("Pautov Recovery Athlete") &&
+      recoveryDisplayText.includes("после болезни: в строю, возврат к тренировкам"),
+    "J failed: return_planned recovery row should use refreshed display summary."
+  );
+  assert(
+    !recoveryDisplayText.includes("болеет, горло"),
+    "J failed: return_planned recovery row must not keep stale acute wording."
+  );
+  assert(
+    recoveryDisplayText.includes("Titskaia Recovery Athlete") &&
+      recoveryDisplayText.includes("после болезни: лучше, завтра пробежка"),
+    "J failed: return_planned refreshed row should use recovery display summary."
+  );
+  assert(
+    recoveryDisplayText.includes("Kasianenko Recovery Athlete") &&
+      recoveryDisplayText.includes("после болезни: лучше, завтра пробный бег"),
+    "J failed: monitoring recovery row should use refreshed display summary."
+  );
+  assert(
+    !recoveryDisplayText.includes("после паузы: после болезни:"),
+    "J failed: monitoring recovery row must not double-prefix recovery summary."
+  );
+  assert(
+    (recoveryDisplayText.match(/; наблюдать; наблюдать/gu) ?? []).length === 0,
+    "J failed: monitoring recovery row must not duplicate наблюдать suffix."
+  );
 
   console.log(`${LOG_PREFIX} PASS`);
 }

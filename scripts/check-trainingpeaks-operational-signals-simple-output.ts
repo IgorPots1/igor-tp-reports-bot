@@ -41,6 +41,7 @@ function makeSignal(input: {
   targetDate?: string | null;
   lifecycleState?: TrainingPeaksStudentOperationalSignal["lifecycleState"];
   requiresCoachClose?: boolean;
+  lifecycleMeta?: Record<string, unknown>;
 }): TrainingPeaksStudentOperationalSignal {
   return {
     id: input.signalId,
@@ -50,7 +51,7 @@ function makeSignal(input: {
     lifecycleState: input.lifecycleState ?? null,
     lifecycleStateUpdatedAt: null,
     lifecycleAppliedAt: null,
-    lifecycleMeta: {},
+    lifecycleMeta: input.lifecycleMeta ?? {},
     resolvedAt: null,
     resolvedReason: null,
     requiresCoachClose: input.requiresCoachClose ?? false,
@@ -542,6 +543,111 @@ function run(): void {
   assert(
     lifecycleDisplayFixtureText.includes("Stale Athlete\n  давно нет новых данных, проверить вручную"),
     "13f failed: stale fixture full block changed unexpectedly."
+  );
+
+  const recoveryDisplayFixtureSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-07",
+    limit: 10,
+    studentNameById: new Map<string, string | null>([
+      ["pautov-like", "Pautov Recovery Athlete"],
+      ["titskaia-like", "Titskaia Recovery Athlete"],
+      ["kasianenko-like", "Kasianenko Recovery Athlete"],
+    ]),
+    signals: [
+      makeSignal({
+        signalId: "pautov-recovery-row",
+        studentId: "pautov-like",
+        signalType: "health_issue_started",
+        lifecycleState: "return_planned",
+        metadata: {
+          follow_up_status: "pending",
+          follow_up_due_at: "2026-06-07T09:00:00.000+02:00",
+          follow_up_reason: "болеет, горло",
+        },
+        structuredPayload: {
+          display_summary: "после болезни: в строю, возврат к тренировкам; наблюдать",
+          latest_summary: "после болезни: в строю, возврат к тренировкам; наблюдать",
+        },
+        lifecycleMeta: {
+          recovery_update: {
+            updated_display_summary: "после болезни: в строю, возврат к тренировкам; наблюдать",
+          },
+        },
+      }),
+      makeSignal({
+        signalId: "titskaia-recovery-row",
+        studentId: "titskaia-like",
+        signalType: "health_issue_started",
+        lifecycleState: "return_planned",
+        metadata: {
+          follow_up_status: "pending",
+          follow_up_due_at: "2026-06-07T09:00:00.000+02:00",
+          follow_up_reason: "болеет; пауза",
+        },
+        structuredPayload: {
+          display_summary: "после болезни: лучше, завтра пробежка; наблюдать",
+          latest_summary: "после болезни: лучше, завтра пробежка; наблюдать",
+        },
+        lifecycleMeta: {
+          recovery_update: {
+            updated_display_summary: "после болезни: лучше, завтра пробежка; наблюдать",
+          },
+        },
+      }),
+      makeSignal({
+        signalId: "kasianenko-recovery-row",
+        studentId: "kasianenko-like",
+        signalType: "health_issue_started",
+        lifecycleState: "monitoring_after_return",
+        metadata: {
+          follow_up_status: "pending",
+          follow_up_due_at: "2026-06-07T09:00:00.000+02:00",
+          follow_up_reason: "болеет, горло; не бегает 5 дней",
+        },
+        structuredPayload: {
+          display_summary: "после болезни: лучше, завтра пробный бег; наблюдать",
+          latest_summary: "после болезни: лучше, завтра пробный бег; наблюдать",
+        },
+        lifecycleMeta: {
+          recovery_update: {
+            updated_display_summary: "после болезни: лучше, завтра пробный бег; наблюдать",
+          },
+        },
+      }),
+    ],
+    activeMoveActions: [],
+  });
+  const recoveryDisplayFixtureText = formatTrainingPeaksOperationalSignalsForTelegram(recoveryDisplayFixtureSnapshot);
+  assert(
+    recoveryDisplayFixtureText.includes("Pautov Recovery Athlete") &&
+      recoveryDisplayFixtureText.includes("после болезни: в строю, возврат к тренировкам"),
+    "13g failed: return_planned recovery row should use refreshed display summary."
+  );
+  assert(
+    !recoveryDisplayFixtureText.includes("болеет, горло"),
+    "13g failed: return_planned recovery row must not keep stale acute wording."
+  );
+  assert(
+    recoveryDisplayFixtureText.includes("Titskaia Recovery Athlete") &&
+      recoveryDisplayFixtureText.includes("после болезни: лучше, завтра пробежка"),
+    "13h failed: return_planned refreshed row should use recovery display summary."
+  );
+  assert(
+    recoveryDisplayFixtureText.includes("Kasianenko Recovery Athlete") &&
+      recoveryDisplayFixtureText.includes("после болезни: лучше, завтра пробный бег"),
+    "13i failed: monitoring recovery row should use refreshed display summary."
+  );
+  assert(
+    !recoveryDisplayFixtureText.includes("болеет, горло; не бегает 5 дней"),
+    "13i failed: monitoring recovery row must not keep stale acute wording."
+  );
+  assert(
+    (recoveryDisplayFixtureText.match(/наблюдать/gu) ?? []).length <= 3,
+    "13i failed: recovery rows must not duplicate наблюдать."
+  );
+  assert(
+    !recoveryDisplayFixtureText.includes("после паузы: после болезни:"),
+    "13i failed: monitoring recovery row must not double-prefix recovery summary."
   );
 
   const episodeRoleFixtureSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({

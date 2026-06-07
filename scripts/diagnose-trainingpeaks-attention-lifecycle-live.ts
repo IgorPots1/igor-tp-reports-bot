@@ -18,6 +18,7 @@ import {
   collectOperationalScheduleSignalsForAttentionFromSignals,
   type TrainingPeaksAttentionSnapshot,
 } from "@/features/trainingpeaks/service";
+import { getSignalLifecycle } from "./lib/operational-signal-lifecycle-runtime";
 
 const LOG_PREFIX = "[diagnose-trainingpeaks-attention-lifecycle-live]";
 const DEFAULT_LIMIT = 50;
@@ -47,11 +48,12 @@ type CliOptions = {
 
 type LifecycleState =
   | "active_problem"
+  | "return_planned"
+  | "return_trial_completed"
   | "monitoring_after_return"
   | "ready_for_coach_close"
   | "stale_needs_review"
-  | "resolved"
-  | null;
+  | "resolved";
 
 type AttentionSectionDecision = "included" | "omitted" | "not_applicable";
 
@@ -471,7 +473,7 @@ async function buildDiagnostics(options: CliOptions): Promise<StudentAttentionDi
         studentId,
         studentName: student.studentName,
         signalType: signal.signalType,
-        lifecycleState: resolveDisplayLifecycleState(signal),
+        lifecycleState: getSignalLifecycle(signal),
         requiresCoachClose: signal.requiresCoachClose,
         visibleInTpSignals: resolveEffectiveVisibleInTpSignals(signal),
         superseded: isSignalSuperseded(signal),
@@ -538,7 +540,7 @@ function printDiagnostics(options: CliOptions, diagnostics: StudentAttentionDiag
       console.log("");
       console.log(`signal_id: ${row.signalId}`);
       console.log(`signal_type: ${row.signalType}`);
-      console.log(`lifecycle_state: ${row.lifecycleState ?? "null/default"}`);
+      console.log(`lifecycle_state: ${row.lifecycleState}`);
       console.log(`requiresCoachClose: ${row.requiresCoachClose ? "true" : "false"}`);
       console.log(`visible_in_tp_signals: ${row.visibleInTpSignals === null ? "unset" : String(row.visibleInTpSignals)}`);
       console.log(`superseded: ${row.superseded ? "yes" : "no"}`);

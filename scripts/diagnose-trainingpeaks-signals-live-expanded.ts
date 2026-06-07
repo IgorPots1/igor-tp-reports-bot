@@ -15,6 +15,7 @@ import {
 import {
   buildTrainingPeaksOperationalSignalsSnapshotFromSignals,
   formatTrainingPeaksOperationalSignalsForTelegram,
+  resolveOperationalSignalDisplaySummary,
   type TrainingPeaksOperationalSignalsItem,
   type TrainingPeaksOperationalSignalsSnapshot,
 } from "@/features/trainingpeaks/service";
@@ -646,8 +647,10 @@ async function run(): Promise<void> {
     const sourceObservation = observations.find((item) => item.id === signal.sourceObservationId) ?? null;
     const sourceObservationPreview = sourceObservation?.textPreview?.replace(/\s+/gu, " ").trim() ?? null;
     const displaySummary =
-      normalizeRecordString(signal.structuredPayload.display_summary) ??
-      normalizeRecordString(signal.structuredPayload.latest_summary) ??
+      resolveOperationalSignalDisplaySummary(
+        signal,
+        getSignalMetadataString(signal.metadata, "follow_up_reason")
+      ) ??
       normalizeRecordString(signal.metadata.summary) ??
       null;
     const displayText = projectedItem?.text ?? null;

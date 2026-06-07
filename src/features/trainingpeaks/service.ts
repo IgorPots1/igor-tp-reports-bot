@@ -5979,8 +5979,21 @@ function readRecoveryUpdatedDisplaySummary(
     : null;
 }
 
-export function resolveOperationalSignalAttentionSummary(
-  signal: TrainingPeaksStudentOperationalSignal,
+export function resolveOperationalSignalDisplaySummary(
+  signal: Pick<
+    TrainingPeaksStudentOperationalSignal,
+    "structuredPayload" | "metadata" | "lifecycleMeta"
+  >,
+  followUpReason?: string | null
+): string | null {
+  return resolveOperationalSignalDisplaySummaryCandidates(signal, followUpReason);
+}
+
+function resolveOperationalSignalDisplaySummaryCandidates(
+  signal: Pick<
+    TrainingPeaksStudentOperationalSignal,
+    "structuredPayload" | "metadata" | "lifecycleMeta"
+  >,
   followUpReason?: string | null
 ): string | null {
   const candidates: Array<string | null> = [
@@ -5997,9 +6010,20 @@ export function resolveOperationalSignalAttentionSummary(
     if (!sanitized) {
       continue;
     }
-    return compactHealthFollowUpReason(sanitized) ?? sanitized;
+    return sanitized;
   }
   return null;
+}
+
+export function resolveOperationalSignalAttentionSummary(
+  signal: TrainingPeaksStudentOperationalSignal,
+  followUpReason?: string | null
+): string | null {
+  const summary = resolveOperationalSignalDisplaySummaryCandidates(signal, followUpReason);
+  if (!summary) {
+    return null;
+  }
+  return compactHealthFollowUpReason(summary) ?? summary;
 }
 
 function summaryAlreadyIncludesMonitoringObserve(summary: string): boolean {
@@ -6256,23 +6280,26 @@ function buildOperationalSignalItemFromSignal(input: {
     isPainInjuryOperationalSignalForDisplay(effective) ||
     isHealthOperationalSignalType(effective.effectiveSignalType)
   ) {
-    const explicitDisplaySummary = sanitizeHealthOperationalSummary(effective.effectiveDisplaySummary);
-    const baseReason =
-      explicitDisplaySummary ||
-      buildHealthOperationalSignalText(signal, effective.effectiveSignalType) ||
-      reasonFromMeta ||
-      `${typeLabel}${windowSuffix}`;
-    const normalizedBaseReason = normalizeAmbiguousIllnessDisplayText(
-      compactOperationalSignalText(`${rolePrefix}${baseReason}${relatedSuffix}`, 140)
-    );
-    const lifecycleText =
-      lifecycleDisplayState === "monitoring_after_return"
-        ? `после паузы: ${normalizedBaseReason}; наблюдать`
-        : lifecycleDisplayState === "ready_for_coach_close"
-          ? `можно закрыть после проверки: ${normalizedBaseReason}`
-          : lifecycleDisplayState === "stale_needs_review"
-            ? "давно нет новых данных, проверить вручную"
-            : normalizedBaseReason;
+    const resolvedSummary = resolveOperationalSignalDisplaySummary(signal, reasonFromMeta || null);
+    let lifecycleText: string;
+    if (lifecycleDisplayState === "monitoring_after_return") {
+      lifecycleText = formatMonitoringAfterReturnAttentionSummary(resolvedSummary);
+    } else if (lifecycleDisplayState === "ready_for_coach_close") {
+      lifecycleText = resolvedSummary
+        ? `можно закрыть после проверки: ${resolvedSummary}`
+        : "можно закрыть после проверки";
+    } else if (lifecycleDisplayState === "stale_needs_review") {
+      lifecycleText = "давно нет новых данных, проверить вручную";
+    } else {
+      const baseReason =
+        resolvedSummary ||
+        buildHealthOperationalSignalText(signal, effective.effectiveSignalType) ||
+        reasonFromMeta ||
+        `${typeLabel}${windowSuffix}`;
+      lifecycleText = normalizeAmbiguousIllnessDisplayText(
+        compactOperationalSignalText(`${rolePrefix}${baseReason}${relatedSuffix}`, 140)
+      );
+    }
     return {
       signalId: signal.id,
       studentId: signal.studentId,
