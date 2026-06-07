@@ -40,6 +40,8 @@
     "tp-diagnose-athlete-training-baseline-v2": "npx tsx tools/trainingpeaks-export/scripts/tp-diagnose-athlete-training-baseline-v2.ts",
     "tp-athlete-phase-snapshot-v0": "npx tsx tools/trainingpeaks-export/scripts/tp-athlete-phase-snapshot-v0.ts",
     "check-athlete-phase-snapshot-v0": "npx tsx tools/trainingpeaks-export/scripts/check-athlete-phase-snapshot-v0.ts",
+    "tp-athlete-phase-review-table-v0": "npx tsx tools/trainingpeaks-export/scripts/tp-athlete-phase-review-table-v0.ts",
+    "check-athlete-phase-review-table-v0": "npx tsx tools/trainingpeaks-export/scripts/check-athlete-phase-review-table-v0.ts",
     "tp-race-prediction-probe": "npm --prefix tools/trainingpeaks-export run tp-race-prediction-probe --",
     "tp-actions-loop:install": "npm --prefix tools/trainingpeaks-export run tp-actions-loop:install",
     "tp-actions-loop:uninstall": "npm --prefix tools/trainingpeaks-export run tp-actions-loop:uninstall",
