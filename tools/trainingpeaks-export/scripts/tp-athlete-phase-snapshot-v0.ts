@@ -319,9 +319,22 @@ type RaceScanRow = {
   distance?: string | number | null;
   distance_km?: string | number | null;
   sport_type?: string | null;
-  confidence?: string | null;
+  confidence?: string | number | null;
   source_type?: string | null;
 };
+
+function normalizeRaceScanConfidence(value: unknown): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    if (value >= 0.8) return "high";
+    if (value >= 0.5) return "medium";
+    return "low";
+  }
+  return null;
+}
 
 type RaceScanJson = {
   rows?: RaceScanRow[];
@@ -495,7 +508,7 @@ function mapRaceCandidatesFromRaceScan(rows: RaceScanRow[]): Map<number, RaceCon
       date,
       estimated_distance: estimatedDistance,
       confidence:
-        row.confidence?.trim() ||
+        normalizeRaceScanConfidence(row.confidence) ??
         (estimatedDistance && estimatedDistance !== "unknown" ? "medium" : "low"),
       event_name: row.event_title ?? row.event_name ?? null,
       source_type: row.source_type ?? "events_api",
