@@ -22,6 +22,7 @@ import {
   PHASE_DETECTOR_SAFETY_MARKERS,
   type AthletePhaseSnapshot,
   type RaceContextCandidate,
+  type ReviewLevel,
 } from "./lib/training-phase-detector-v0.ts";
 
 type CliArgs = {
@@ -123,6 +124,7 @@ type PhaseSnapshotReport = {
   operational_signals_included: boolean;
   operational_signals_unavailable_reason: string | null;
   counts_by_context: Record<string, number>;
+  counts_by_review_level: Record<ReviewLevel, number>;
   manual_review_count: number;
   possible_deload_count: number;
   safety: typeof PHASE_DETECTOR_SAFETY_MARKERS;
@@ -441,6 +443,11 @@ function buildReadme(report: PhaseSnapshotReport, outputDir: string): string {
     lines.push(`- ${context}: ${count}`);
   }
 
+  lines.push("", "## Counts by review_level", "");
+  for (const [level, count] of Object.entries(report.counts_by_review_level).sort((a, b) => b[1] - a[1])) {
+    lines.push(`- ${level}: ${count}`);
+  }
+
   lines.push("", "## Safety", "");
   lines.push("- mode: read_only");
   lines.push("- no_trainingpeaks_mutations: true");
@@ -581,8 +588,15 @@ async function main(): Promise<void> {
   }
 
   const countsByContext: Record<string, number> = {};
+  const countsByReviewLevel: Record<ReviewLevel, number> = {
+    none: 0,
+    info: 0,
+    coach_review: 0,
+    hard_block: 0,
+  };
   for (const athlete of athletes) {
     countsByContext[athlete.detected_context] = (countsByContext[athlete.detected_context] ?? 0) + 1;
+    countsByReviewLevel[athlete.review_level] += 1;
   }
 
   const report: PhaseSnapshotReport = {
@@ -593,6 +607,7 @@ async function main(): Promise<void> {
     operational_signals_included: operationalSignalsUnavailableReason === null,
     operational_signals_unavailable_reason: operationalSignalsUnavailableReason,
     counts_by_context: countsByContext,
+    counts_by_review_level: countsByReviewLevel,
     manual_review_count: athletes.filter((athlete) => athlete.flags.manual_review_required).length,
     possible_deload_count: athletes.filter((athlete) => athlete.flags.possible_deload_recommended).length,
     safety: PHASE_DETECTOR_SAFETY_MARKERS,
@@ -620,6 +635,7 @@ async function main(): Promise<void> {
       "name",
       "detected_context",
       "confidence",
+      "review_level",
       "manual_review_required",
       "possible_deload_recommended",
       "last_quality_date",
@@ -632,6 +648,7 @@ async function main(): Promise<void> {
       athlete.name,
       athlete.detected_context,
       athlete.confidence,
+      athlete.review_level,
       String(athlete.flags.manual_review_required),
       String(athlete.flags.possible_deload_recommended),
       athlete.recent_training_summary.last_quality_date ?? "",
@@ -642,19 +659,89 @@ async function main(): Promise<void> {
   await writeFile(path.join(outputDir, "summary.csv"), listToCsv(summaryCsvRows), "utf8");
 
   const manualReviewRows: string[][] = [
-    ["athlete_id", "name", "detected_context", "confidence", "evidence", "recommendation_summary"],
+    [
+      "athlete_id",
+      "name",
+      "detected_context",
+      "review_level",
+      "confidence",
+      "review_reasons",
+      "evidence",
+      "recommendation_summary",
+    ],
     ...athletes
       .filter((athlete) => athlete.flags.manual_review_required)
       .map((athlete) => [
         String(athlete.athlete_id ?? ""),
         athlete.name,
         athlete.detected_context,
+        athlete.review_level,
         athlete.confidence,
+        athlete.review_reasons.join(" | "),
         athlete.evidence.join(" | "),
         athlete.recommendation.summary,
       ]),
   ];
   await writeFile(path.join(outputDir, "manual-review.csv"), listToCsv(manualReviewRows), "utf8");
+
+  const hardBlockRows: string[][] = [
+    ["athlete_id", "name", "detected_context", "review_reasons", "evidence", "recommendation_summary"],
+    ...athletes
+      .filter((athlete) => athlete.review_level === "hard_block")
+      .map((athlete) => [
+        String(athlete.athlete_id ?? ""),
+        athlete.name,
+        athlete.detected_context,
+        athlete.review_reasons.join(" | "),
+        athlete.evidence.join(" | "),
+        athlete.recommendation.summary,
+      ]),
+  ];
+  await writeFile(path.join(outputDir, "hard-block.csv"), listToCsv(hardBlockRows), "utf8");
+
+  const coachReviewRows: string[][] = [
+    ["athlete_id", "name", "detected_context", "review_reasons", "evidence", "recommendation_summary"],
+    ...athletes
+      .filter((athlete) => athlete.review_level === "coach_review")
+      .map((athlete) => [
+        String(athlete.athlete_id ?? ""),
+        athlete.name,
+        athlete.detected_context,
+        athlete.review_reasons.join(" | "),
+        athlete.evidence.join(" | "),
+        athlete.recommendation.summary,
+      ]),
+  ];
+  await writeFile(path.join(outputDir, "coach-review.csv"), listToCsv(coachReviewRows), "utf8");
+
+  const infoOnlyRows: string[][] = [
+    ["athlete_id", "name", "detected_context", "review_reasons", "evidence", "recommendation_summary"],
+    ...athletes
+      .filter((athlete) => athlete.review_level === "info")
+      .map((athlete) => [
+        String(athlete.athlete_id ?? ""),
+        athlete.name,
+        athlete.detected_context,
+        athlete.review_reasons.join(" | "),
+        athlete.evidence.join(" | "),
+        athlete.recommendation.summary,
+      ]),
+  ];
+  await writeFile(path.join(outputDir, "info-only.csv"), listToCsv(infoOnlyRows), "utf8");
+
+  const cleanRows: string[][] = [
+    ["athlete_id", "name", "detected_context", "confidence", "recommendation_summary"],
+    ...athletes
+      .filter((athlete) => athlete.review_level === "none")
+      .map((athlete) => [
+        String(athlete.athlete_id ?? ""),
+        athlete.name,
+        athlete.detected_context,
+        athlete.confidence,
+        athlete.recommendation.summary,
+      ]),
+  ];
+  await writeFile(path.join(outputDir, "clean.csv"), listToCsv(cleanRows), "utf8");
 
   const deloadRows: string[][] = [
     ["athlete_id", "name", "consecutive_quality_weeks", "evidence", "recommendation_summary"],
@@ -728,6 +815,10 @@ async function main(): Promise<void> {
     console.log(`Athletes evaluated: ${report.athlete_count}`);
     console.log(`Manual review: ${report.manual_review_count}`);
     console.log(`Possible deload flags: ${report.possible_deload_count}`);
+    console.log("Counts by review_level:");
+    for (const [level, count] of Object.entries(report.counts_by_review_level).sort((a, b) => b[1] - a[1])) {
+      console.log(`  ${level}: ${count}`);
+    }
     console.log("Counts by context:");
     for (const [context, count] of Object.entries(report.counts_by_context).sort((a, b) => b[1] - a[1])) {
       console.log(`  ${context}: ${count}`);

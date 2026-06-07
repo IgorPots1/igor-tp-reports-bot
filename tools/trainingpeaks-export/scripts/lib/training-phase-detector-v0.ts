@@ -24,6 +24,8 @@ export type DetectedContext =
 
 export type PhaseConfidence = "high" | "medium" | "low";
 
+export type ReviewLevel = "none" | "info" | "coach_review" | "hard_block";
+
 export type AthletePhaseFlags = {
   manual_review_required: boolean;
   possible_deload_recommended: boolean;
@@ -60,6 +62,8 @@ export type AthletePhaseSnapshot = {
   name: string;
   detected_context: DetectedContext;
   confidence: PhaseConfidence;
+  review_level: ReviewLevel;
+  review_reasons: string[];
   evidence: string[];
   recent_training_summary: RecentTrainingSummary;
   flags: AthletePhaseFlags;
@@ -128,6 +132,188 @@ function daysBetween(left: string, right: string): number {
 
 function normalizePattern(value: string): string {
   return value.trim().toLowerCase().replaceAll(" ", "").replaceAll("×", "x").replaceAll("м", "m");
+}
+
+const REVIEW_LEVEL_PRIORITY: Record<ReviewLevel, number> = {
+  none: 0,
+  info: 1,
+  coach_review: 2,
+  hard_block: 3,
+};
+
+function workoutTextBlob(workout: WorkoutDiagnosticRow): string {
+  return `${workout.title} ${workout.notes_excerpt ?? ""} ${workout.estimated_structure ?? ""}`;
+}
+
+export function isEasyOrLightWorkout(workout: WorkoutDiagnosticRow): boolean {
+  const text = workoutTextBlob(workout).toLowerCase();
+  return /(легк|лёгк|easy|light|спокойн|ускорен|controlled|rpe\s*(low|moderate|1|2|3|4|5|6)\b)/i.test(
+    text,
+  );
+}
+
+export function isAmbiguous3MinPattern(workout: WorkoutDiagnosticRow): boolean {
+  const structure = workout.interval_structure;
+  if (structure?.repeat_count && structure.work_duration) {
+    const is3min = /^3\s*min$/i.test(structure.work_duration.trim());
+    if (is3min && structure.repeat_count >= 5 && structure.repeat_count <= 7) {
+      return true;
+    }
+  }
+  const text = `${workout.title} ${workout.estimated_structure ?? ""}`;
+  return /\b[567][xх×]3\b/i.test(text);
+}
+
+export function hasStrongVo2IntensityEvidence(workout: WorkoutDiagnosticRow): boolean {
+  const text = workoutTextBlob(workout);
+  if (/(vo2|vo₂|мпк|mapk|интенсив|hard\s+interval|intervals?\s+hard)/i.test(text)) {
+    return true;
+  }
+
+  const structure = workout.interval_structure;
+  if (!structure?.repeat_count || !structure.work_duration) {
+    return false;
+  }
+
+  const workDuration = structure.work_duration.trim();
+  const repeatCount = structure.repeat_count;
+
+  if (repeatCount >= 12 && /^[12]\s*min$/i.test(workDuration)) {
+    return true;
+  }
+  if (repeatCount >= 15 && /^(400m|400\s*m)$/i.test(workDuration)) {
+    return true;
+  }
+  if (repeatCount === 4 && /^4\s*min$/i.test(workDuration)) {
+    return true;
+  }
+  if ((repeatCount === 6 || repeatCount === 7) && /^3\s*min$/i.test(workDuration)) {
+    return /(vo2|vo₂|мпк|mapk|интенсив|hard)/i.test(text);
+  }
+
+  return false;
+}
+
+function isBeginnerOrLowConsistency(input: {
+  summary: RecentTrainingSummary;
+  baseline: PhaseDetectorBaselineContext | null;
+  detectedContext: DetectedContext;
+}): boolean {
+  if (input.detectedContext === "base_or_low_consistency") {
+    return true;
+  }
+  if (input.baseline?.recent_4w_frequency !== null && input.baseline.recent_4w_frequency < 2) {
+    return true;
+  }
+  if (input.summary.recent_4w_frequency !== null && input.summary.recent_4w_frequency < 2) {
+    return true;
+  }
+  return input.summary.completed_runs < 8;
+}
+
+function deriveManualReviewRequired(reviewLevel: ReviewLevel): boolean {
+  return reviewLevel === "coach_review" || reviewLevel === "hard_block";
+}
+
+type ReviewReason = {
+  level: ReviewLevel;
+  reason: string;
+};
+
+function computeReviewLevel(input: {
+  detectedContext: DetectedContext;
+  flags: AthletePhaseFlags;
+  baseline: PhaseDetectorBaselineContext | null;
+  summary: RecentTrainingSummary;
+  lastQuality: WorkoutDiagnosticRow | null;
+  health: ReturnType<typeof extractOperationalHealthFlags>;
+  vo2EndOfFamily: boolean;
+  severeConflictingSignals: boolean;
+}): { review_level: ReviewLevel; review_reasons: string[] } {
+  const reasons: ReviewReason[] = [];
+  const hasQualityRecommendation =
+    input.flags.quality_progression_known ||
+    input.flags.quality_progression_unknown ||
+    isQualityType(input.lastQuality?.estimated_quality_type ?? "unknown");
+
+  if (input.health.has_active_illness) {
+    reasons.push({ level: "hard_block", reason: "active_illness" });
+  }
+  if (input.health.has_active_pain_injury) {
+    reasons.push({ level: "hard_block", reason: "active_pain_injury" });
+  }
+  if (input.summary.completed_runs === 0 && !input.flags.illness_return_week && !input.health.has_active_illness) {
+    reasons.push({ level: "hard_block", reason: "no_completed_runs" });
+  }
+  if (
+    input.detectedContext === "manual_review_unknown" &&
+    input.summary.completed_runs === 0 &&
+    !input.flags.illness_return_week
+  ) {
+    reasons.push({ level: "hard_block", reason: "manual_review_unknown_no_data" });
+  }
+  if (input.vo2EndOfFamily) {
+    reasons.push({ level: "hard_block", reason: "vo2_end_of_family_no_safe_next_step" });
+  }
+  if (input.severeConflictingSignals) {
+    reasons.push({ level: "hard_block", reason: "severe_conflicting_signals" });
+  }
+
+  if (input.detectedContext === "threshold_or_controlled_block") {
+    reasons.push({ level: "coach_review", reason: "threshold_or_controlled_block_v0" });
+  }
+  if (input.flags.quality_progression_unknown) {
+    reasons.push({ level: "coach_review", reason: "quality_progression_unknown" });
+  }
+  if (input.flags.possible_deload_recommended) {
+    reasons.push({ level: "coach_review", reason: "possible_deload_recommended" });
+  }
+  if (input.flags.illness_return_week) {
+    reasons.push({ level: "coach_review", reason: "illness_return_week" });
+  }
+  if (input.flags.race_context_needs_confirmation) {
+    reasons.push({ level: "coach_review", reason: "race_context_unclear" });
+  }
+  if (input.health.has_requires_coach_close) {
+    reasons.push({ level: "coach_review", reason: "requires_coach_close" });
+  }
+  if (input.flags.marathon_specific_requires_review) {
+    reasons.push({ level: "coach_review", reason: "marathon_specific_context" });
+  }
+  if (input.baseline?.confidence === "low" && hasQualityRecommendation) {
+    reasons.push({ level: "coach_review", reason: "baseline_confidence_low_with_quality" });
+  }
+  if (input.detectedContext === "post_race_recovery") {
+    reasons.push({ level: "coach_review", reason: "post_race_recovery" });
+  }
+  if (input.detectedContext === "manual_review_unknown" && input.summary.completed_runs > 0) {
+    reasons.push({ level: "coach_review", reason: "manual_review_unknown" });
+  }
+
+  if (input.baseline?.needs_review) {
+    reasons.push({ level: "info", reason: "baseline_needs_review" });
+  }
+  if (input.baseline?.confidence === "low" && !hasQualityRecommendation) {
+    reasons.push({ level: "info", reason: "baseline_confidence_low" });
+  }
+
+  const review_level = reasons.reduce<ReviewLevel>((max, entry) => {
+    return REVIEW_LEVEL_PRIORITY[entry.level] > REVIEW_LEVEL_PRIORITY[max] ? entry.level : max;
+  }, "none");
+
+  return {
+    review_level,
+    review_reasons: reasons.map((entry) => entry.reason),
+  };
+}
+
+export function resolveVo2ProgressionKeyFromWorkout(workout: WorkoutDiagnosticRow): QualityWorkoutKey | null {
+  const key = resolveQualityWorkoutKeyFromWorkout(workout);
+  if (!key) return null;
+  if (key === "vo2_6x3" || key === "vo2_7x3") {
+    return hasStrongVo2IntensityEvidence(workout) ? key : null;
+  }
+  return key;
 }
 
 export function resolveQualityWorkoutKeyFromWorkout(workout: WorkoutDiagnosticRow): QualityWorkoutKey | null {
@@ -295,6 +481,8 @@ function defaultFlags(): AthletePhaseFlags {
 export function detectTrainingPhaseV0(input: PhaseDetectorInput): AthletePhaseSnapshot {
   const evidence: string[] = [];
   const flags = defaultFlags();
+  let vo2EndOfFamily = false;
+  let severeConflictingSignals = false;
   const weeksAnalyzed = 4;
   const windowFrom = addDaysIso(input.week_start, -7 * weeksAnalyzed);
   const windowWorkouts = input.workouts.filter(
@@ -324,7 +512,6 @@ export function detectTrainingPhaseV0(input: PhaseDetectorInput): AthletePhaseSn
 
   if (health.has_active_illness || health.has_active_pain_injury) {
     flags.active_illness = health.has_active_illness;
-    flags.manual_review_required = true;
     detectedContext = health.has_active_illness ? "return_after_illness" : "manual_review_unknown";
     confidence = health.has_active_illness ? "high" : "medium";
     evidence.push(
@@ -334,7 +521,6 @@ export function detectTrainingPhaseV0(input: PhaseDetectorInput): AthletePhaseSn
     );
   } else if (health.has_return_monitoring) {
     flags.illness_return_week = true;
-    flags.manual_review_required = true;
     detectedContext = "return_after_illness";
     confidence = "high";
     evidence.push("Recent illness return / monitoring-after-return signal detected.");
@@ -355,7 +541,6 @@ export function detectTrainingPhaseV0(input: PhaseDetectorInput): AthletePhaseSn
     daysBetween(input.week_start, recentPastRace.date) <= 14
   ) {
     detectedContext = "post_race_recovery";
-    flags.manual_review_required = true;
     confidence = recentPastRace.confidence === "high" ? "high" : "medium";
     evidence.push(`Recent race on ${recentPastRace.date}; post-race recovery context likely.`);
   }
@@ -365,12 +550,10 @@ export function detectTrainingPhaseV0(input: PhaseDetectorInput): AthletePhaseSn
     const raceConfidence = (upcomingRace.confidence ?? "low").toLowerCase();
     if (raceConfidence === "low" || !upcomingRace.estimated_distance || upcomingRace.estimated_distance === "unknown") {
       flags.race_context_needs_confirmation = true;
-      flags.manual_review_required = true;
       evidence.push(`Upcoming race candidate on ${upcomingRace.date} needs confirmation.`);
     }
     if (upcomingRace.estimated_distance === "marathon") {
       flags.marathon_specific_requires_review = true;
-      flags.manual_review_required = true;
       evidence.push("Marathon-specific race context requires coach review.");
     }
     if (daysToRace <= 14 && daysToRace >= 0) {
@@ -390,43 +573,65 @@ export function detectTrainingPhaseV0(input: PhaseDetectorInput): AthletePhaseSn
   if (lastQuality && detectedContext !== "return_after_illness" && detectedContext !== "post_race_recovery") {
     const qualityType = lastQuality.estimated_quality_type;
     if (qualityType === "vo2max_intervals" || qualityType === "short_intervals") {
-      detectedContext = "vo2_block";
-      confidence = lastQuality.confidence === "high" ? "high" : "medium";
-      evidence.push(
-        `Recent quality history is VO2-oriented (${qualityType}) on ${lastQuality.date}: "${lastQuality.title}".`,
-      );
-      const qualityKey = resolveQualityWorkoutKeyFromWorkout(lastQuality);
-      if (qualityKey) {
-        summary.last_quality_key = qualityKey;
-        const progression = getNextProgressionCandidates(qualityKeyToProgressionPattern(qualityKey), {
-          workout_completed: true,
-          rpe: "moderate",
+      if (isEasyOrLightWorkout(lastQuality)) {
+        evidence.push(
+          `Easy/light workout context on ${lastQuality.date}: "${lastQuality.title}"; not classified as VO2 block.`,
+        );
+        if (detectedContext === "general_development" || detectedContext === "schedule_constrained") {
+          detectedContext = "general_development";
+        }
+      } else if (
+        isAmbiguous3MinPattern(lastQuality) &&
+        !hasStrongVo2IntensityEvidence(lastQuality)
+      ) {
+        flags.quality_progression_unknown = true;
+        const conservativeContext = isBeginnerOrLowConsistency({
+          summary,
+          baseline: input.baseline,
+          detectedContext,
         });
-        if (progression.decision === "progress" && progression.next_preferred_keys.length > 0) {
-          flags.quality_progression_known = true;
-          evidence.push(
-            `VO2 progression selector resolves next candidates: ${progression.next_preferred_keys.join(", ")}.`,
-          );
-        } else if (progression.decision === "repeat") {
-          flags.quality_progression_known = true;
-          evidence.push(`VO2 progression selector recommends repeat of ${qualityKey}.`);
+        detectedContext = conservativeContext ? "general_development" : "threshold_or_controlled_block";
+        confidence = "low";
+        evidence.push(
+          `Ambiguous 3-min repeat pattern on ${lastQuality.date}: "${lastQuality.title}" without strong VO2 intensity evidence; conservative classification.`,
+        );
+      } else {
+        detectedContext = "vo2_block";
+        confidence = lastQuality.confidence === "high" ? "high" : "medium";
+        evidence.push(
+          `Recent quality history is VO2-oriented (${qualityType}) on ${lastQuality.date}: "${lastQuality.title}".`,
+        );
+        const qualityKey = resolveVo2ProgressionKeyFromWorkout(lastQuality);
+        if (qualityKey) {
+          summary.last_quality_key = qualityKey;
+          const progression = getNextProgressionCandidates(qualityKeyToProgressionPattern(qualityKey), {
+            workout_completed: true,
+            rpe: "moderate",
+          });
+          if (progression.decision === "progress" && progression.next_preferred_keys.length > 0) {
+            flags.quality_progression_known = true;
+            evidence.push(
+              `VO2 progression selector resolves next candidates: ${progression.next_preferred_keys.join(", ")}.`,
+            );
+          } else if (progression.decision === "repeat") {
+            flags.quality_progression_known = true;
+            evidence.push(`VO2 progression selector recommends repeat of ${qualityKey}.`);
+          } else {
+            flags.quality_progression_unknown = true;
+            evidence.push(`VO2 progression uncertain (${progression.rationale}).`);
+          }
+          const catalogEntry = getQualityWorkoutCatalogEntry(qualityKey);
+          if ((catalogEntry.next_preferred_keys ?? []).length === 0) {
+            vo2EndOfFamily = true;
+            evidence.push(`At advanced/end-of-family VO2 stage (${qualityKey}); coach review required.`);
+          }
         } else {
           flags.quality_progression_unknown = true;
-          flags.manual_review_required = true;
-          evidence.push(`VO2 progression uncertain (${progression.rationale}).`);
+          evidence.push("VO2-like session detected but quality workout key could not be resolved.");
         }
-        const catalogEntry = getQualityWorkoutCatalogEntry(qualityKey);
-        if ((catalogEntry.next_preferred_keys ?? []).length === 0) {
-          flags.manual_review_required = true;
-          evidence.push(`At advanced/end-of-family VO2 stage (${qualityKey}); coach review required.`);
-        }
-      } else {
-        flags.quality_progression_unknown = true;
-        evidence.push("VO2-like session detected but quality workout key could not be resolved.");
       }
     } else if (qualityType === "controlled_sub_threshold" || qualityType === "threshold_tempo") {
       detectedContext = "threshold_or_controlled_block";
-      flags.manual_review_required = true;
       flags.quality_progression_unknown = true;
       confidence = lastQuality.confidence === "high" ? "medium" : "low";
       evidence.push(
@@ -450,7 +655,6 @@ export function detectTrainingPhaseV0(input: PhaseDetectorInput): AthletePhaseSn
     flags.possible_undertraining_or_low_consistency = lowFrequency || lowRunVolume;
     if (summary.completed_runs === 0) {
       confidence = "low";
-      flags.manual_review_required = true;
       detectedContext = "manual_review_unknown";
       evidence.push("Insufficient completed running data in analysis window.");
     } else {
@@ -462,22 +666,19 @@ export function detectTrainingPhaseV0(input: PhaseDetectorInput): AthletePhaseSn
     }
   }
 
-  if (qualityWeekStats.consecutive_from_recent >= 3 || qualityWeekStats.quality_weeks_in_window >= 3) {
+  if (qualityWeekStats.consecutive_from_recent >= 3) {
     flags.possible_deload_recommended = true;
-    flags.manual_review_required = true;
-    flags.possible_overload_risk = qualityWeekStats.consecutive_from_recent >= 3;
+    flags.possible_overload_risk = true;
     evidence.push(
-      qualityWeekStats.consecutive_from_recent >= 3
-        ? `${qualityWeekStats.consecutive_from_recent} consecutive quality weeks detected; possible deload signal only (no auto-insert).`
-        : `${qualityWeekStats.quality_weeks_in_window} quality weeks in last ${weeksAnalyzed}; possible deload signal only (no auto-insert).`,
+      `${qualityWeekStats.consecutive_from_recent} consecutive quality weeks detected; possible deload signal only (no auto-insert).`,
     );
   }
 
   if (input.baseline?.confidence === "low") {
-    flags.manual_review_required = true;
     if (isQualityType(lastQuality?.estimated_quality_type ?? "unknown")) {
       detectedContext = "manual_review_unknown";
       confidence = "low";
+      severeConflictingSignals = true;
       evidence.push("Baseline confidence is low while quality history exists; conflicting signals.");
     } else {
       confidence = confidence === "high" ? "medium" : "low";
@@ -486,12 +687,10 @@ export function detectTrainingPhaseV0(input: PhaseDetectorInput): AthletePhaseSn
   }
 
   if (input.baseline?.needs_review) {
-    flags.manual_review_required = true;
     evidence.push("Baseline marked needs_review.");
   }
 
   if (health.has_requires_coach_close) {
-    flags.manual_review_required = true;
     evidence.push("Operational signal requires coach close.");
   }
 
@@ -506,12 +705,26 @@ export function detectTrainingPhaseV0(input: PhaseDetectorInput): AthletePhaseSn
     summary,
   });
 
+  const review = computeReviewLevel({
+    detectedContext,
+    flags,
+    baseline: input.baseline,
+    summary,
+    lastQuality,
+    health,
+    vo2EndOfFamily,
+    severeConflictingSignals,
+  });
+  flags.manual_review_required = deriveManualReviewRequired(review.review_level);
+
   return {
     athlete_id: input.athlete_id,
     student_id: input.student_id,
     name: input.name,
     detected_context: detectedContext,
     confidence,
+    review_level: review.review_level,
+    review_reasons: review.review_reasons,
     evidence,
     recent_training_summary: summary,
     flags,
