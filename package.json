@@ -117,6 +117,7 @@
     "diagnose-trainingpeaks-attention-lifecycle-live": "npx tsx scripts/diagnose-trainingpeaks-attention-lifecycle-live.ts",
     "diagnose-trainingpeaks-signals-live-expanded": "npx tsx scripts/diagnose-trainingpeaks-signals-live-expanded.ts",
     "diagnose-operational-signal-episodes": "npx tsx scripts/diagnose-operational-signal-episodes.ts",
+    "diagnose-recovery-trigger-gaps": "npx tsx scripts/diagnose-recovery-trigger-gaps.ts",
     "apply-operational-signal-lifecycle": "npx tsx scripts/apply-operational-signal-lifecycle.ts",
     "close-operational-signal-lifecycle": "npx tsx scripts/close-operational-signal-lifecycle.ts",
     "supersede-operational-signal": "npx tsx scripts/supersede-operational-signal.ts",

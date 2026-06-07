@@ -229,12 +229,46 @@ export function buildCompletionInfo(
   };
 }
 
+export function matchesRecoveryPattern(text: string): boolean {
+  return RECOVERY_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+export type RecoveryEvidenceKind =
+  | "explicit_recovery"
+  | "return_planned"
+  | "return_request"
+  | "recovery_pattern_only"
+  | "none";
+
+export function classifyRecoveryEvidenceKind(input: {
+  classifierSignalType: string | null;
+  text: string;
+  plannedAttemptDate: string | null;
+}): RecoveryEvidenceKind {
+  if (input.classifierSignalType === "health_issue_resolved" || input.classifierSignalType === "resume_training") {
+    return "explicit_recovery";
+  }
+  if (input.classifierSignalType === "health_issue_improving") {
+    if (input.plannedAttemptDate) {
+      return "return_planned";
+    }
+    if (/\b(можно\s+побег|попробую\s+побег|завтра\s+побег)/iu.test(input.text)) {
+      return "return_request";
+    }
+    return "return_planned";
+  }
+  if (matchesRecoveryPattern(input.text)) {
+    return "recovery_pattern_only";
+  }
+  return "none";
+}
+
 export function findRecoveryMessage(
   observations: readonly ObservationForLifecycle[]
 ): OperationalSignalLifecycleInput["explicitRecoveryMessage"] {
   for (const observation of observations) {
     const text = `${observation.textPreview ?? ""} ${(observation.labels ?? []).join(" ")}`;
-    if (RECOVERY_PATTERNS.some((pattern) => pattern.test(text))) {
+    if (matchesRecoveryPattern(text)) {
       return {
         observationId: observation.id,
         observedAt: observation.observedAt,
