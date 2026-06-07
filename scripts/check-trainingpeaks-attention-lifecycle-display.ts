@@ -26,6 +26,7 @@ function makeSignal(input: {
   validFrom?: string | null;
   validUntil?: string | null;
   lifecycleState?: TrainingPeaksStudentOperationalSignal["lifecycleState"];
+  lifecycleMeta?: TrainingPeaksStudentOperationalSignal["lifecycleMeta"];
   requiresCoachClose?: boolean;
 }): TrainingPeaksStudentOperationalSignal {
   return {
@@ -36,7 +37,7 @@ function makeSignal(input: {
     lifecycleState: input.lifecycleState ?? null,
     lifecycleStateUpdatedAt: null,
     lifecycleAppliedAt: null,
-    lifecycleMeta: {},
+    lifecycleMeta: input.lifecycleMeta ?? {},
     resolvedAt: null,
     resolvedReason: null,
     requiresCoachClose: input.requiresCoachClose ?? false,
@@ -118,6 +119,9 @@ function run(): void {
     ["superseded-hidden", "Superseded Hidden Athlete"],
     ["strength-hidden", "Strength Context Hidden Athlete"],
     ["visible-plan", "Visible Plan Athlete"],
+    ["pautov-like", "Alexander Pautov"],
+    ["titskaia-like", "Elena Titskaia"],
+    ["kasianenko-like", "Aleksandra Kasianenko"],
   ]);
 
   const lifecycleSignals = [
@@ -211,6 +215,54 @@ function run(): void {
       structuredPayload: {
         resolved_available_dates: [AS_OF_DATE],
         latest_summary: "доступна сегодня",
+      },
+    }),
+    makeSignal({
+      signalId: "pautov-recovery-row",
+      studentId: "pautov-like",
+      signalType: "health_issue_started",
+      lifecycleState: "return_planned",
+      metadata: pendingFollowUpMetadata("болеет, горло"),
+      structuredPayload: {
+        display_summary: "после болезни: в строю, возврат к тренировкам; наблюдать",
+        latest_summary: "после болезни: в строю, возврат к тренировкам; наблюдать",
+      },
+      lifecycleMeta: {
+        recovery_update: {
+          updated_display_summary: "после болезни: в строю, возврат к тренировкам; наблюдать",
+        },
+      },
+    }),
+    makeSignal({
+      signalId: "titskaia-recovery-row",
+      studentId: "titskaia-like",
+      signalType: "health_issue_started",
+      lifecycleState: "return_planned",
+      metadata: pendingFollowUpMetadata("болеет; пауза"),
+      structuredPayload: {
+        display_summary: "после болезни: лучше, завтра пробежка; наблюдать",
+        latest_summary: "после болезни: лучше, завтра пробежка; наблюдать",
+      },
+      lifecycleMeta: {
+        recovery_update: {
+          updated_display_summary: "после болезни: лучше, завтра пробежка; наблюдать",
+        },
+      },
+    }),
+    makeSignal({
+      signalId: "kasianenko-recovery-row",
+      studentId: "kasianenko-like",
+      signalType: "health_issue_started",
+      lifecycleState: "monitoring_after_return",
+      metadata: pendingFollowUpMetadata("болеет, горло; не бегает 5 дней"),
+      structuredPayload: {
+        display_summary: "после болезни: лучше, завтра пробный бег; наблюдать",
+        latest_summary: "после болезни: лучше, завтра пробный бег; наблюдать",
+      },
+      lifecycleMeta: {
+        recovery_update: {
+          updated_display_summary: "после болезни: лучше, завтра пробный бег; наблюдать",
+        },
       },
     }),
   ];
@@ -348,6 +400,44 @@ function run(): void {
   assert(
     monitoringWithoutFollowUp.items.length === 0,
     "9 failed: monitoring_after_return without due follow-up should stay out of /tp_attention follow-ups."
+  );
+
+  const pautovRecovery = followUps.items.find((item) => item.studentId === "pautov-like");
+  assert(Boolean(pautovRecovery), "10 failed: return_planned recovery follow-up should appear when due today.");
+  assert(
+    pautovRecovery?.reason.includes("после болезни: в строю, возврат к тренировкам"),
+    "10 failed: return_planned recovery follow-up should use refreshed display summary."
+  );
+  assert(
+    !pautovRecovery?.reason.includes("болеет, горло"),
+    "10 failed: return_planned recovery follow-up must not keep stale acute wording."
+  );
+
+  const titskaiaRecovery = followUps.items.find((item) => item.studentId === "titskaia-like");
+  assert(Boolean(titskaiaRecovery), "11 failed: return_planned refreshed follow-up should appear when due today.");
+  assert(
+    titskaiaRecovery?.reason.includes("после болезни: лучше, завтра пробежка"),
+    "11 failed: return_planned refreshed follow-up should use refreshed display summary."
+  );
+  assert(
+    !titskaiaRecovery?.reason.includes("болеет; пауза") && !titskaiaRecovery?.reason.includes("простыла"),
+    "11 failed: return_planned refreshed follow-up must not keep stale pause wording."
+  );
+
+  const kasianenkoRecovery = followUps.items.find((item) => item.studentId === "kasianenko-like");
+  assert(Boolean(kasianenkoRecovery), "12 failed: monitoring recovery follow-up should appear when due today.");
+  assert(
+    kasianenkoRecovery?.reason.includes("после болезни: лучше, завтра пробный бег"),
+    "12 failed: monitoring recovery follow-up should use refreshed display summary."
+  );
+  assert(
+    !kasianenkoRecovery?.reason.includes("болеет, горло") &&
+      !kasianenkoRecovery?.reason.includes("не бегает 5 дней"),
+    "12 failed: monitoring recovery follow-up must not keep stale acute wording."
+  );
+  assert(
+    (kasianenkoRecovery?.reason.match(/наблюдать/gu) ?? []).length <= 1,
+    "12 failed: monitoring recovery follow-up must not duplicate наблюдать."
   );
 
   console.log(`${LOG_PREFIX} PASS`);

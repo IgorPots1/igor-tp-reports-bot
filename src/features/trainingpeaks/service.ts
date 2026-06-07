@@ -5966,14 +5966,72 @@ function shouldSkipOperationalSignalForAttentionSchedulePlan(
   return false;
 }
 
+function readRecoveryUpdatedDisplaySummary(
+  signal: Pick<TrainingPeaksStudentOperationalSignal, "lifecycleMeta">
+): string | null {
+  const recoveryUpdate = signal.lifecycleMeta.recovery_update;
+  if (!recoveryUpdate || typeof recoveryUpdate !== "object") {
+    return null;
+  }
+  const updatedDisplaySummary = (recoveryUpdate as Record<string, unknown>).updated_display_summary;
+  return typeof updatedDisplaySummary === "string" && updatedDisplaySummary.trim().length > 0
+    ? updatedDisplaySummary.trim()
+    : null;
+}
+
+export function resolveOperationalSignalAttentionSummary(
+  signal: TrainingPeaksStudentOperationalSignal,
+  followUpReason?: string | null
+): string | null {
+  const candidates: Array<string | null> = [
+    readRecoveryUpdatedDisplaySummary(signal),
+    normalizeRecordString(signal.structuredPayload.display_summary),
+    normalizeRecordString(signal.structuredPayload.latest_summary),
+    followUpReason ?? null,
+    getSignalMetadataString(signal.metadata, "follow_up_reason"),
+    getSignalMetadataString(signal.metadata, "display_summary"),
+    getSignalMetadataString(signal.metadata, "latest_summary"),
+  ];
+  for (const candidate of candidates) {
+    const sanitized = sanitizeHealthOperationalSummary(candidate);
+    if (!sanitized) {
+      continue;
+    }
+    return compactHealthFollowUpReason(sanitized) ?? sanitized;
+  }
+  return null;
+}
+
+function summaryAlreadyIncludesMonitoringObserve(summary: string): boolean {
+  return summary
+    .split(/\s*;\s*/u)
+    .map((part) => part.trim().toLowerCase())
+    .some((part) => part === "наблюдать" || part === "пауза / наблюдать" || part.endsWith("наблюдать"));
+}
+
+function summaryAlreadyHasRecoveryPrefix(summary: string): boolean {
+  const lower = summary.trim().toLowerCase();
+  return lower.startsWith("после болезни:") || lower.startsWith("после паузы:");
+}
+
+function formatMonitoringAfterReturnAttentionSummary(summary: string | null): string {
+  if (!summary) {
+    return "после паузы: наблюдать";
+  }
+  if (summaryAlreadyHasRecoveryPrefix(summary)) {
+    return summaryAlreadyIncludesMonitoringObserve(summary) ? summary : `${summary}; наблюдать`;
+  }
+  return summaryAlreadyIncludesMonitoringObserve(summary)
+    ? `после паузы: ${summary}`
+    : `после паузы: ${summary}; наблюдать`;
+}
+
 function buildOperationalHealthFollowUpLifecycleBaseReason(
   signal: TrainingPeaksStudentOperationalSignal,
   followUpReason: string | null
 ): string {
   const lifecycleDisplayState = resolveOperationalSignalDisplayLifecycleState(signal);
-  const effective = resolveEffectiveOperationalSignalForDisplay(signal);
-  const summary = compactHealthFollowUpReason(effective.effectiveDisplaySummary);
-  const compactReason = compactHealthFollowUpReason(followUpReason);
+  const summary = resolveOperationalSignalAttentionSummary(signal, followUpReason);
 
   if (lifecycleDisplayState === "ready_for_coach_close") {
     return summary ? `можно закрыть после проверки: ${summary}` : "можно закрыть после проверки";
@@ -5982,9 +6040,9 @@ function buildOperationalHealthFollowUpLifecycleBaseReason(
     return "давно нет новых данных, проверить вручную";
   }
   if (lifecycleDisplayState === "monitoring_after_return") {
-    return summary ? `после паузы: ${summary}; наблюдать` : "после паузы: наблюдать";
+    return formatMonitoringAfterReturnAttentionSummary(summary);
   }
-  return compactReason ?? "проверить самочувствие после болезни/паузы";
+  return summary ?? "проверить самочувствие после болезни/паузы";
 }
 
 export function collectOperationalHealthFollowUpsFromSignals(input: {
