@@ -496,7 +496,7 @@ const HEALTH_SYMPTOM_PATTERNS: Array<{ symptom: string; patterns: string[] }> = 
   { symptom: "cough", patterns: ["кашель", "кашля"] },
   { symptom: "throat", patterns: ["горло"] },
   { symptom: "voice", patterns: ["голос пропал", "голос осип", "голос сел", "осип голос", "голос вернул", "голос немного вернул"] },
-  { symptom: "runny_nose", patterns: ["насморк", "сопли"] },
+  { symptom: "runny_nose", patterns: ["насморк", "сопли", "закладывает нос"] },
   { symptom: "cold", patterns: ["простуд", "простыл"] },
   { symptom: "orvi", patterns: ["орви"] },
   { symptom: "fatigue", patterns: ["сил нет", "сил вообще нет", "нет сил", "вообще нет сил", "без сил"] },
@@ -578,10 +578,62 @@ function hasHealthStartedCue(text: string): boolean {
   ]);
 }
 
+const PLANNED_RUN_ATTEMPT_CUES = [
+  "пробеж",
+  "выйти на пробежку",
+  "выйду на пробежку",
+  "побегу",
+  "побегать",
+  "попробую побегать",
+  "можно побегу",
+  "можно побегать",
+] as const;
+
+const RETURN_INTENT_CUES = [
+  "с понедельника начинаем тренировки",
+  "начинаем тренировки",
+  "возобновляем тренировки",
+  "возвращаюсь к тренировкам",
+  "возвращаюсь к бегу",
+  "завтра побегу",
+  "завтра попробую побегать",
+  "попробую побегать",
+  "можно побегу",
+  "можно побегать",
+] as const;
+
+const RESUME_TRAINING_CUES = [
+  "с завтрашнего дня начинаются тренировки",
+  "начинаются тренировки",
+  "начинаем тренировки",
+  "возобновляю тренировки",
+  "возобновляем тренировки",
+  "возвращаюсь к тренировкам",
+  "возвращаюсь к бегу",
+  "я в строю",
+  "в строю",
+  "готов к тренировкам",
+  "готова к тренировкам",
+] as const;
+
+function hasPlannedRunAttemptCue(text: string): boolean {
+  return hasAny(text, PLANNED_RUN_ATTEMPT_CUES);
+}
+
+function hasReturnIntentCue(text: string): boolean {
+  return hasAny(text, RETURN_INTENT_CUES);
+}
+
+function hasResumeTrainingCue(text: string): boolean {
+  return hasAny(text, RESUME_TRAINING_CUES);
+}
+
 function hasHealthImprovingCue(text: string): boolean {
   return hasAny(text, [
     "самочувствие лучше",
     "самочувствие улучшается",
+    "чувствую себя лучше",
+    "лучше себя чувствую",
     "выздоравливаю",
     "выздоравливает",
     "восстанавливаюсь",
@@ -598,6 +650,18 @@ function hasGenericImprovingCue(text: string): boolean {
   return hasAny(text, [
     "стало лучше",
     "лучше стало",
+    "вроде лучше",
+    "вроде лучше намного",
+    "лучше намного",
+    "намного лучше",
+    "немного лучше",
+    "чуть лучше",
+    "мне лучше",
+    "вроде ок",
+    "вроде норм",
+    "вроде нормально",
+    "почти ок",
+    "почти нормально",
     "получше",
     "полегче",
     "лучше, но",
@@ -665,6 +729,11 @@ function hasHealthResolvedCue(text: string): boolean {
     "симптомов нет",
     "чувствую себя нормально",
     "чувствую себя норм",
+    "чувствую себя хорошо",
+    "я в строю",
+    "в строю",
+    "готов к тренировкам",
+    "готова к тренировкам",
     "без боли",
     "боли нет",
   ]);
@@ -727,9 +796,12 @@ function buildHealthSummary(input: {
   const hasRunPauseConstraint = hasAny(input.text, ["не смогу бегать", "бегать не смогу", "не буду бегать", "не бегать"]);
   const hasVoiceRecovery = hasAny(input.text, ["голос немного вернул", "голос вернул"]);
   const hasRestPlan = hasAny(input.text, ["отлежусь", "отлежат", "пару дней", "несколько дней"]);
+  const hasReturnRunPlan =
+    input.plannedAttemptDate !== null && hasPlannedRunAttemptCue(input.text);
   const hasConditionalRunPlan =
-    input.plannedAttemptDate !== null &&
-    hasAny(input.text, ["пробеж", "выйти на пробежку", "выйду на пробежку", "побегу"]);
+    hasReturnRunPlan &&
+    hasAny(input.text, ["если", "когда"]) &&
+    !hasAny(input.text, ["завтра побегу", "завтра попробую побегать", "можно побегу", "можно побегать"]);
   const explicitIllness = hasExplicitIllnessCue(input.text);
 
   if (input.signalType === "health_issue_started") {
@@ -781,19 +853,31 @@ function buildHealthSummary(input: {
     if (hasRestPlan) {
       lines.push("планирует отлежаться пару дней");
     }
-    if (hasConditionalRunPlan && input.plannedAttemptDate) {
+    if (hasReturnRunPlan && input.plannedAttemptDate) {
       const when =
         input.text.includes("завтра вечером") || (input.text.includes("завтра") && input.text.includes("вечер"))
           ? "завтра вечером"
-          : compactOperationalDate(input.plannedAttemptDate);
-      lines.push(`хочет пробежку ${when}, если кашля не будет`);
+          : input.text.includes("завтра")
+            ? "завтра"
+            : compactOperationalDate(input.plannedAttemptDate);
+      if (hasConditionalRunPlan) {
+        lines.push(`хочет пробежку ${when}, если кашля не будет`);
+      } else if (hasAny(input.text, ["можно побег"])) {
+        lines.push(`просит разрешение на пробежку (${when})`);
+      } else {
+        lines.push(`планирует пробежку ${when}`);
+      }
     } else if (input.recommendation === "easy_if_symptom_free") {
       lines.push("лёгкий возврат только если симптомов не будет");
     }
     return lines.join("; ");
   }
 
-  if (input.text.includes("кашля нет")) {
+  if (hasAny(input.text, ["в строю", "я в строю"])) {
+    lines.push("в строю, готов к тренировкам");
+  } else if (hasAny(input.text, ["готов к тренировкам", "готова к тренировкам", "начинаем тренировки"])) {
+    lines.push("готов возобновить тренировки");
+  } else if (input.text.includes("кашля нет")) {
     lines.push("самочувствие нормализовалось, кашля нет");
   } else if (input.text.includes("температур") && hasAny(input.text, ["нет", "не"])) {
     lines.push("самочувствие нормализовалось, температуры нет");
@@ -891,8 +975,7 @@ function classifyHealthLifecycleSignal(input: {
   const text = input.text;
   const payload = toDefaultPayload();
   const symptoms = detectHealthSymptoms(text);
-  const plannedAttemptDate =
-    hasAny(text, ["пробеж", "выйти на пробежку", "выйду на пробежку", "побегу"]) ? parseRelativeDate(text, input.observedAt) : null;
+  const plannedAttemptDate = hasPlannedRunAttemptCue(text) ? parseRelativeDate(text, input.observedAt) : null;
   payload.health_issue_kind = classifyHealthIssueKind(text);
   payload.symptoms = symptoms;
   payload.planned_attempt_date = plannedAttemptDate;
@@ -903,6 +986,7 @@ function classifyHealthLifecycleSignal(input: {
 
   const improving = hasHealthImprovingCue(text);
   const genericImproving = hasGenericImprovingCue(text);
+  const returnIntent = hasReturnIntentCue(text);
   const resolved = hasHealthResolvedCue(text);
   const started = hasHealthStartedCue(text);
   const weatherTemperatureContext =
@@ -944,7 +1028,7 @@ function classifyHealthLifecycleSignal(input: {
     };
   }
 
-  if (improving || (genericImproving && hasHealthEvidenceForImproving(text, symptoms))) {
+  if (improving || (genericImproving && (hasHealthEvidenceForImproving(text, symptoms) || returnIntent))) {
     payload.health_state = "improving";
     payload.training_recommendation = plannedAttemptDate ? "easy_if_symptom_free" : "monitor";
     payload.follow_up_due_at = buildHealthFollowUpDueAt(input.observedAt, plannedAttemptDate);
@@ -2220,7 +2304,7 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
   }
   if (resolvedHealth && healthDetails) {
     healthDetails.payload.resume_from_date = parseRelativeDate(text, input.observedAt);
-    const withResume = hasAny(text, ["готова бегать", "готов бегать", "начинаются тренировки", "возобновля"]);
+    const withResume = hasResumeTrainingCue(text) || hasAny(text, ["готова бегать", "готов бегать"]);
     return {
       primary_bucket: withResume ? "operational_signal" : "health_lifecycle_signal",
       secondary_buckets: withResume ? ["health_lifecycle_signal"] : [],
@@ -2234,7 +2318,7 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
     };
   }
 
-  const resumeTraining = hasAny(text, ["с завтрашнего дня начинаются тренировки", "начинаются тренировки", "возобновляю тренировки"]);
+  const resumeTraining = hasResumeTrainingCue(text);
   if (resumeTraining) {
     payload.resume_from_date = parseRelativeDate(text, input.observedAt);
     return {

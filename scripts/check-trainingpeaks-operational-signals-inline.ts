@@ -242,6 +242,105 @@ async function run(): Promise<void> {
   const otherStudentTouches = consumeCalls.filter((call) => call.studentId === "student-other").length;
   assert(otherStudentTouches === 0, "D failed: no supersession should touch other students.");
 
+  // Recovery / return-intent regression fixtures (real athlete phrases).
+  const pautovResult = await persistOperationalSignalsForObservation(
+    makeTestObservation({
+      observationId: "obs-pautov",
+      studentId: "student-pautov",
+      textPreview: "Игорь, привет, с понедельника начинаем тренировки, я в строю",
+    }),
+    deps
+  );
+  assert(pautovResult.status === "processed", "Pautov failed: recovery message should not skip.");
+  assert(pautovResult.considered > 0, "Pautov failed: expected at least one candidate.");
+  const pautovSignalCall = upsertCalls.find((call) => call.sourceObservationId === "obs-pautov");
+  assert(Boolean(pautovSignalCall), "Pautov failed: missing upsert call.");
+  assert(
+    pautovSignalCall?.signalType === "health_issue_resolved" ||
+      pautovSignalCall?.signalType === "resume_training",
+    `Pautov failed: expected health_issue_resolved or resume_training, got ${pautovSignalCall?.signalType ?? "null"}.`
+  );
+  assert(
+    typeof pautovSignalCall?.structuredPayload?.latest_summary === "string" &&
+      (pautovSignalCall.structuredPayload.latest_summary.includes("в строю") ||
+        pautovSignalCall.structuredPayload.latest_summary.includes("возобновить") ||
+        pautovSignalCall.structuredPayload.latest_summary.includes("возвращ")),
+    "Pautov failed: summary should include recovery/return meaning."
+  );
+
+  const titskaiaResult = await persistOperationalSignalsForObservation(
+    makeTestObservation({
+      observationId: "obs-titskaia",
+      studentId: "student-titskaia",
+      textPreview: "Привет, вроде лучше намного, завтра побегу",
+    }),
+    deps
+  );
+  assert(titskaiaResult.status === "processed", "Titskaia failed: improving/return message should not skip.");
+  const titskaiaSignalCall = upsertCalls.find((call) => call.sourceObservationId === "obs-titskaia");
+  assert(Boolean(titskaiaSignalCall), "Titskaia failed: missing upsert call.");
+  assert(
+    titskaiaSignalCall?.signalType === "health_issue_improving",
+    `Titskaia failed: expected health_issue_improving, got ${titskaiaSignalCall?.signalType ?? "null"}.`
+  );
+  assert(
+    typeof titskaiaSignalCall?.structuredPayload?.latest_summary === "string" &&
+      (titskaiaSignalCall.structuredPayload.latest_summary.includes("улучшается") ||
+        titskaiaSignalCall.structuredPayload.latest_summary.includes("пробежку")),
+    "Titskaia failed: summary should indicate improvement or planned return."
+  );
+
+  const seleznevaResult = await persistOperationalSignalsForObservation(
+    makeTestObservation({
+      observationId: "obs-selezneva",
+      studentId: "student-selezneva",
+      textPreview: "Привет, ну я вроде ок, чуть ещё закладывает нос, можно побегу",
+    }),
+    deps
+  );
+  assert(seleznevaResult.status === "processed", "Selezneva failed: improving/return request should not skip.");
+  const seleznevaSignalCall = upsertCalls.find((call) => call.sourceObservationId === "obs-selezneva");
+  assert(Boolean(seleznevaSignalCall), "Selezneva failed: missing upsert call.");
+  assert(
+    seleznevaSignalCall?.signalType === "health_issue_improving",
+    `Selezneva failed: expected health_issue_improving, got ${seleznevaSignalCall?.signalType ?? "null"}.`
+  );
+  assert(
+    seleznevaSignalCall?.signalType !== "health_issue_resolved",
+    "Selezneva failed: partial recovery with return request should not be terminal resolved."
+  );
+  assert(
+    typeof seleznevaSignalCall?.structuredPayload?.latest_summary === "string" &&
+      (seleznevaSignalCall.structuredPayload.latest_summary.includes("насморк") ||
+        seleznevaSignalCall.structuredPayload.latest_summary.includes("пробежку")),
+    "Selezneva failed: summary should preserve residual symptom or return request."
+  );
+
+  const kasianenkoResult = await persistOperationalSignalsForObservation(
+    makeTestObservation({
+      observationId: "obs-kasianenko",
+      studentId: "student-kasianenko",
+      textPreview: "Привет, чувствую себя лучше, завтра попробую побегать",
+    }),
+    deps
+  );
+  assert(kasianenkoResult.status === "processed", "Kasianenko failed: improving/trial-run message should not skip.");
+  const kasianenkoSignalCall = upsertCalls.find((call) => call.sourceObservationId === "obs-kasianenko");
+  assert(Boolean(kasianenkoSignalCall), "Kasianenko failed: missing upsert call.");
+  assert(
+    kasianenkoSignalCall?.signalType === "health_issue_improving",
+    `Kasianenko failed: expected health_issue_improving, got ${kasianenkoSignalCall?.signalType ?? "null"}.`
+  );
+  assert(
+    typeof kasianenkoSignalCall?.structuredPayload?.latest_summary === "string" &&
+      (kasianenkoSignalCall.structuredPayload.latest_summary.includes("улучшается") ||
+        kasianenkoSignalCall.structuredPayload.latest_summary.includes("пробежку")),
+    "Kasianenko failed: summary should indicate improvement or trial run."
+  );
+
+  // TODO(coach-approval): coach reply "давай" after athlete "можно побегу" is not linked in this task.
+  // TODO(viktoria-tp-evidence): TP-only return evidence (completed runs) needs lifecycle diagnostic, not phrase classifier.
+
   console.log(`${LOG_PREFIX} PASS`);
 }
 
