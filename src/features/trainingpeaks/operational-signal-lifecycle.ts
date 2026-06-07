@@ -56,6 +56,16 @@ export type TpWorkoutEvidenceClassification = {
   inspectedFields: Record<string, unknown>;
 };
 
+export type ReturnWorkoutBlockerKind = "missed_before_today" | "pending_today" | "future_planned";
+
+export type ReturnWorkoutBlocker = {
+  kind: ReturnWorkoutBlockerKind;
+  workoutId: string;
+  workoutDate: string;
+  title?: string | null;
+  reason: string;
+};
+
 export type OperationalSignalLifecycleInput = {
   episodeKey?: string;
   studentId: string;
@@ -87,6 +97,7 @@ export type OperationalSignalLifecycleInput = {
     reason: string;
   } | null;
   missedOrSkippedReturnWorkout?: boolean;
+  returnWorkoutBlocker?: ReturnWorkoutBlocker | null;
 };
 
 export type OperationalSignalLifecycleProposal = {

@@ -123,6 +123,9 @@ export function collectOperationalSignalLifecycleCloseReasonCodes(input: {
   if (input.lifecycleInput.missedOrSkippedReturnWorkout) {
     codes.add("missed_or_skipped_return_workout");
   }
+  if (input.lifecycleInput.returnWorkoutBlocker?.kind === "pending_today") {
+    codes.add("pending_today_return_workout");
+  }
   const completion = input.lifecycleInput.latestTpCompletionAfterOpen;
   if (completion) {
     for (const code of completion.classificationReasonCodes) {
@@ -219,6 +222,13 @@ export function validateOperationalSignalLifecycleCloseEligibility(
     };
   }
 
+  if (input.lifecycleInput.returnWorkoutBlocker?.kind === "pending_today") {
+    return {
+      ok: false,
+      reason: "Planned return workout is scheduled today; wait for completion before close.",
+    };
+  }
+
   const completion = input.lifecycleInput.latestTpCompletionAfterOpen;
   if (completion) {
     if (completion.evidenceFreshness === "missing" || completion.evidenceFreshness === "stale") {
@@ -253,6 +263,8 @@ export function buildCloseEvidenceSnapshot(input: {
     latest_tp_completion_after_open: input.lifecycleInput.latestTpCompletionAfterOpen ?? null,
     negative_message_after_completion: input.lifecycleInput.negativeMessageAfterCompletion ?? null,
     missed_or_skipped_return_workout: Boolean(input.lifecycleInput.missedOrSkippedReturnWorkout),
+    pending_today_return_workout: input.lifecycleInput.returnWorkoutBlocker?.kind === "pending_today",
+    return_workout_blocker: input.lifecycleInput.returnWorkoutBlocker ?? null,
     evaluator_proposal: {
       proposed_lifecycle: input.proposal.proposedLifecycle,
       reason_code: input.proposal.reasonCode,

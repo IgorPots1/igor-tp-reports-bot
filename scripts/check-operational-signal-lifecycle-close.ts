@@ -10,6 +10,11 @@ import {
   parseOperationalSignalLifecycleCloseToken,
   validateOperationalSignalLifecycleCloseEligibility,
 } from "@/features/trainingpeaks/operational-signal-lifecycle-close";
+import type { TrainingPeaksWorkoutCacheRow } from "@/features/trainingpeaks/repository";
+import {
+  computeMissedSkippedReturnWorkout,
+  computeReturnWorkoutBlocker,
+} from "./lib/operational-signal-lifecycle-runtime";
 
 const LOG_PREFIX = "[check-operational-signal-lifecycle-close]";
 
@@ -62,7 +67,194 @@ function mkCompletion(partial: Record<string, unknown> = {}) {
   };
 }
 
+function mkWorkout(partial: Partial<TrainingPeaksWorkoutCacheRow>): TrainingPeaksWorkoutCacheRow {
+  return {
+    id: "cache-1",
+    studentId: "student-test",
+    studentName: "Test Athlete",
+    trainingPeaksAthleteId: 1,
+    trainingPeaksWorkoutId: 9001,
+    workoutDate: "2026-06-06",
+    title: "Easy Run",
+    sportOrTypeCode: "run",
+    workoutTypeValueId: 3,
+    workoutSubTypeId: null,
+    isPlanned: true,
+    isCompleted: false,
+    plannedTimeRaw: 2400,
+    completedTimeRaw: null,
+    plannedDistanceRaw: null,
+    completedDistanceRaw: null,
+    complianceDurationPercent: null,
+    complianceDistancePercent: null,
+    startTimePlanned: null,
+    startTime: null,
+    sourceUpdatedAt: null,
+    orderOnDay: null,
+    scannedAt: "2026-06-06T08:00:00.000Z",
+    scanJobId: null,
+    normalizationWarnings: [],
+    sourceSnapshot: {},
+    createdAt: "2026-06-06T08:00:00.000Z",
+    updatedAt: "2026-06-06T08:00:00.000Z",
+    ...partial,
+  };
+}
+
+function assertReturnWorkoutBlockerCases(): void {
+  const openedDate = "2026-06-01";
+  const asOfDate = "2026-06-06";
+
+  const missedWorkout = mkWorkout({
+    trainingPeaksWorkoutId: 9101,
+    workoutDate: "2026-06-05",
+    isPlanned: true,
+    isCompleted: false,
+  });
+  const missedBlocker = computeReturnWorkoutBlocker([missedWorkout], openedDate, asOfDate);
+  assert(missedBlocker?.kind === "missed_before_today", "planned workout before as-of should be missed_before_today");
+  assert(
+    computeMissedSkippedReturnWorkout([missedWorkout], openedDate, asOfDate) === true,
+    "missed before today should set missedOrSkippedReturnWorkout=true"
+  );
+
+  const pendingWorkout = mkWorkout({
+    trainingPeaksWorkoutId: 9102,
+    workoutDate: "2026-06-06",
+    isPlanned: true,
+    isCompleted: false,
+  });
+  const pendingBlocker = computeReturnWorkoutBlocker([pendingWorkout], openedDate, asOfDate);
+  assert(pendingBlocker?.kind === "pending_today", "planned workout on as-of should be pending_today");
+  assert(
+    computeMissedSkippedReturnWorkout([pendingWorkout], openedDate, asOfDate) === false,
+    "pending today should not set missedOrSkippedReturnWorkout=true"
+  );
+
+  const futureWorkout = mkWorkout({
+    trainingPeaksWorkoutId: 9103,
+    workoutDate: "2026-06-07",
+    isPlanned: true,
+    isCompleted: false,
+  });
+  const futureBlocker = computeReturnWorkoutBlocker([futureWorkout], openedDate, asOfDate);
+  assert(futureBlocker?.kind === "future_planned", "planned workout after as-of should be future_planned");
+  assert(
+    computeMissedSkippedReturnWorkout([futureWorkout], openedDate, asOfDate) === false,
+    "future planned should not set missedOrSkippedReturnWorkout=true"
+  );
+
+  const completedTodayWorkout = mkWorkout({
+    trainingPeaksWorkoutId: 9104,
+    workoutDate: "2026-06-06",
+    isPlanned: true,
+    isCompleted: true,
+    completedTimeRaw: 2400,
+  });
+  assert(
+    computeReturnWorkoutBlocker([completedTodayWorkout], openedDate, asOfDate) === null,
+    "completed today workout should not produce a blocker"
+  );
+
+  const stepanLikeInput = mkInput({
+    signalClass: "injury_pain",
+    currentLifecycle: "monitoring_after_return",
+    latestTpCompletionAfterOpen: mkCompletion({
+      workoutId: "103",
+      workoutDate: "2026-06-05",
+      runningCompletionClass: "modified_or_easy_run",
+      plannedVsCompletedDelta: "modified_easy",
+    }),
+    missedOrSkippedReturnWorkout: false,
+    returnWorkoutBlocker: pendingBlocker,
+  });
+  const stepanLikeProposal = evaluateOperationalSignalLifecycle(stepanLikeInput);
+  const stepanLikeEligibility = validateOperationalSignalLifecycleCloseEligibility({
+    storedLifecycleState: "monitoring_after_return",
+    requiresCoachClose: true,
+    signalClass: "injury_pain",
+    lifecycleInput: stepanLikeInput,
+    proposal: stepanLikeProposal,
+    coachReason: normalizeCoachCloseReason("coach reviewed pain return"),
+    applyMode: true,
+  });
+  assert(!stepanLikeEligibility.ok, "stepan-like pending today should refuse close");
+  assert(
+    stepanLikeEligibility.ok === false &&
+      stepanLikeEligibility.reason.includes("scheduled today") &&
+      !stepanLikeEligibility.reason.includes("Missed or skipped"),
+    "stepan-like refusal should cite pending today, not missed/skipped"
+  );
+
+  const missedCloseInput = mkInput({
+    signalClass: "injury_pain",
+    currentLifecycle: "monitoring_after_return",
+    missedOrSkippedReturnWorkout: true,
+    returnWorkoutBlocker: missedBlocker,
+  });
+  const missedCloseProposal = evaluateOperationalSignalLifecycle(missedCloseInput);
+  const missedCloseEligibility = validateOperationalSignalLifecycleCloseEligibility({
+    storedLifecycleState: "monitoring_after_return",
+    requiresCoachClose: true,
+    signalClass: "injury_pain",
+    lifecycleInput: missedCloseInput,
+    proposal: missedCloseProposal,
+    coachReason: normalizeCoachCloseReason("coach reviewed pain return"),
+    applyMode: true,
+  });
+  assert(!missedCloseEligibility.ok, "missed before today should refuse close");
+  assert(
+    missedCloseEligibility.ok === false && missedCloseEligibility.reason.includes("Missed or skipped"),
+    "missed before today refusal should cite missed/skipped"
+  );
+
+  const pendingCloseInput = mkInput({
+    signalClass: "injury_pain",
+    currentLifecycle: "monitoring_after_return",
+    missedOrSkippedReturnWorkout: false,
+    returnWorkoutBlocker: pendingBlocker,
+  });
+  const pendingCloseProposal = evaluateOperationalSignalLifecycle(pendingCloseInput);
+  const pendingCloseEligibility = validateOperationalSignalLifecycleCloseEligibility({
+    storedLifecycleState: "monitoring_after_return",
+    requiresCoachClose: true,
+    signalClass: "injury_pain",
+    lifecycleInput: pendingCloseInput,
+    proposal: pendingCloseProposal,
+    coachReason: normalizeCoachCloseReason("coach reviewed pain return"),
+    applyMode: true,
+  });
+  assert(!pendingCloseEligibility.ok, "pending today should refuse close");
+  assert(
+    pendingCloseEligibility.ok === false && pendingCloseEligibility.reason.includes("scheduled today"),
+    "pending today refusal should cite scheduled today"
+  );
+
+  const futureCloseInput = mkInput({
+    signalClass: "injury_pain",
+    currentLifecycle: "monitoring_after_return",
+    missedOrSkippedReturnWorkout: false,
+    returnWorkoutBlocker: futureBlocker,
+  });
+  const futureCloseProposal = evaluateOperationalSignalLifecycle(futureCloseInput);
+  const futureCloseEligibility = validateOperationalSignalLifecycleCloseEligibility({
+    storedLifecycleState: "monitoring_after_return",
+    requiresCoachClose: true,
+    signalClass: "injury_pain",
+    lifecycleInput: futureCloseInput,
+    proposal: futureCloseProposal,
+    coachReason: normalizeCoachCloseReason("coach reviewed pain return"),
+    applyMode: true,
+  });
+  assert(
+    futureCloseEligibility.ok && futureCloseEligibility.kind === "eligible",
+    "future planned alone should not block close under current policy"
+  );
+}
+
 function run(): void {
+  assertReturnWorkoutBlockerCases();
+
   const coachReason = normalizeCoachCloseReason("coach reviewed return after illness");
   assert(coachReason.length >= MIN_COACH_CLOSE_REASON_LENGTH, "fixture coach reason should meet minimum length");
 
