@@ -66,6 +66,25 @@ export type AthletePhaseSnapshot = {
   review_reasons: string[];
   evidence: string[];
   recent_training_summary: RecentTrainingSummary;
+  race_context: {
+    upcoming_race_detected: boolean;
+    upcoming_races_count: number;
+    next_race_date: string | null;
+    next_race_name: string | null;
+    next_race_distance: string | null;
+    next_race_type: "road" | "trail" | "unknown" | null;
+    weeks_to_next_race: number | null;
+    race_confidence: "high" | "medium" | "low" | null;
+    race_context_needs_confirmation: boolean;
+    all_upcoming_races_preview: Array<{
+      date: string;
+      name: string | null;
+      distance: string | null;
+      type: string | null;
+      confidence: string | null;
+    }>;
+  };
+  data_visibility_status: "normal" | "no_completed_data" | "device_upload_issue_suspected" | "unknown";
   flags: AthletePhaseFlags;
   recommendation: AthletePhaseRecommendation;
 };
@@ -76,6 +95,8 @@ export type RaceContextCandidate = {
   confidence: string | null;
   event_name?: string | null;
   source_type?: string | null;
+  event_type?: string | null;
+  distance_km?: number | null;
 };
 
 export type PhaseDetectorBaselineContext = {
@@ -229,6 +250,7 @@ function computeReviewLevel(input: {
   health: ReturnType<typeof extractOperationalHealthFlags>;
   vo2EndOfFamily: boolean;
   severeConflictingSignals: boolean;
+  upcomingRaceOutsidePlanningWindow: boolean;
 }): { review_level: ReviewLevel; review_reasons: string[] } {
   const reasons: ReviewReason[] = [];
   const hasQualityRecommendation =
@@ -262,6 +284,12 @@ function computeReviewLevel(input: {
   if (input.detectedContext === "threshold_or_controlled_block") {
     reasons.push({ level: "coach_review", reason: "threshold_or_controlled_block_v0" });
   }
+  if (input.detectedContext === "taper_context") {
+    reasons.push({ level: "coach_review", reason: "taper_context_race_review" });
+  }
+  if (input.detectedContext === "race_specific_context") {
+    reasons.push({ level: "coach_review", reason: "race_specific_context_review" });
+  }
   if (input.flags.quality_progression_unknown) {
     reasons.push({ level: "coach_review", reason: "quality_progression_unknown" });
   }
@@ -292,6 +320,9 @@ function computeReviewLevel(input: {
 
   if (input.baseline?.needs_review) {
     reasons.push({ level: "info", reason: "baseline_needs_review" });
+  }
+  if (input.upcomingRaceOutsidePlanningWindow) {
+    reasons.push({ level: "info", reason: "upcoming_race_outside_planning_window" });
   }
   if (input.baseline?.confidence === "low" && !hasQualityRecommendation) {
     reasons.push({ level: "info", reason: "baseline_confidence_low" });
@@ -431,6 +462,59 @@ function pickUpcomingRace(
   return future[0] ?? null;
 }
 
+function raceTypeFromCandidate(candidate: RaceContextCandidate): "road" | "trail" | "unknown" | null {
+  const blob = `${candidate.event_name ?? ""} ${candidate.event_type ?? ""} ${candidate.source_type ?? ""}`.toLowerCase();
+  if (/\btrail|тр[еэ]йл|trailrun\b/i.test(blob)) return "trail";
+  if (
+    /\broad|roadrun|marathon|half|10k|5k|race|run|забег|марафон|полумарафон|шоссе|старт\b/i.test(blob)
+  ) {
+    return "road";
+  }
+  return "unknown";
+}
+
+function normalizeDistanceLabel(candidate: RaceContextCandidate): string | null {
+  const raw = (candidate.estimated_distance ?? "").trim().toLowerCase();
+  if (!raw || raw === "unknown") {
+    if (candidate.distance_km !== null && candidate.distance_km !== undefined) {
+      return `${candidate.distance_km}km`;
+    }
+    return null;
+  }
+  return raw;
+}
+
+function planningWindowForCandidate(candidate: RaceContextCandidate): { minWeeks: number; maxWeeks: number } | null {
+  const distance = (candidate.estimated_distance ?? "").toLowerCase();
+  const raceType = raceTypeFromCandidate(candidate);
+  if (distance === "10k") return { minWeeks: 4, maxWeeks: 10 };
+  if (distance === "half") return { minWeeks: 6, maxWeeks: 14 };
+  if (distance === "marathon" || distance === "ultra") return { minWeeks: 10, maxWeeks: 18 };
+  if (raceType === "trail") return null;
+  return null;
+}
+
+function taperThresholdDays(candidate: RaceContextCandidate): number {
+  const distance = (candidate.estimated_distance ?? "").toLowerCase();
+  const raceType = raceTypeFromCandidate(candidate);
+  if (distance === "marathon" || distance === "ultra") return 21;
+  if (distance === "half") return 14;
+  if (raceType === "trail") return 14;
+  if (distance === "10k") return 7;
+  if (candidate.distance_km !== null && candidate.distance_km !== undefined) {
+    if (candidate.distance_km >= 20) return 14;
+    return 7;
+  }
+  return 14;
+}
+
+function raceConfidence(candidate: RaceContextCandidate): "high" | "medium" | "low" {
+  const normalized = (candidate.confidence ?? "").toLowerCase();
+  if (normalized === "high") return "high";
+  if (normalized === "medium") return "medium";
+  return "low";
+}
+
 function pickRecentPastRace(
   candidates: RaceContextCandidate[],
   weekStart: string,
@@ -483,6 +567,7 @@ export function detectTrainingPhaseV0(input: PhaseDetectorInput): AthletePhaseSn
   const flags = defaultFlags();
   let vo2EndOfFamily = false;
   let severeConflictingSignals = false;
+  let upcomingRaceOutsidePlanningWindow = false;
   const weeksAnalyzed = 4;
   const windowFrom = addDaysIso(input.week_start, -7 * weeksAnalyzed);
   const windowWorkouts = input.workouts.filter(
@@ -505,6 +590,18 @@ export function detectTrainingPhaseV0(input: PhaseDetectorInput): AthletePhaseSn
   const qualityWeekStats = countQualityWeeks(windowWorkouts, input.week_start, weeksAnalyzed);
   const raceCandidates = input.race_context?.candidates ?? [];
   const upcomingRace = pickUpcomingRace(raceCandidates, input.week_start);
+  const upcomingRaces = raceCandidates
+    .filter((candidate) => candidate.date && candidate.date >= input.week_start)
+    .sort((left, right) => (left.date ?? "").localeCompare(right.date ?? ""));
+  const upcomingRacesCount = upcomingRaces.length;
+  const multipleUpcomingRaces = upcomingRacesCount > 1;
+  const nextRaceDate = upcomingRace?.date ?? null;
+  const nextRaceDays =
+    upcomingRace?.date !== undefined && upcomingRace?.date !== null
+      ? daysBetween(upcomingRace.date, input.week_start)
+      : null;
+  const nextRaceType = upcomingRace ? raceTypeFromCandidate(upcomingRace) : null;
+  const nextRaceConfidence = upcomingRace ? raceConfidence(upcomingRace) : null;
   const recentPastRace = pickRecentPastRace(raceCandidates, input.week_start);
 
   let detectedContext: DetectedContext = "general_development";
@@ -547,26 +644,68 @@ export function detectTrainingPhaseV0(input: PhaseDetectorInput): AthletePhaseSn
 
   if (upcomingRace?.date) {
     const daysToRace = daysBetween(upcomingRace.date, input.week_start);
-    const raceConfidence = (upcomingRace.confidence ?? "low").toLowerCase();
-    if (raceConfidence === "low" || !upcomingRace.estimated_distance || upcomingRace.estimated_distance === "unknown") {
+    const confidenceTag = raceConfidence(upcomingRace);
+    const taperDays = taperThresholdDays(upcomingRace);
+    const window = planningWindowForCandidate(upcomingRace);
+    const weeksToRace = Math.ceil(daysToRace / 7);
+    const raceType = raceTypeFromCandidate(upcomingRace);
+    const distanceLabel = normalizeDistanceLabel(upcomingRace);
+    const unknownDistance = !upcomingRace.estimated_distance || upcomingRace.estimated_distance === "unknown";
+    const insideTaper = daysToRace >= 0 && daysToRace <= taperDays;
+    const insidePlanningWindow =
+      window !== null &&
+      weeksToRace >= window.minWeeks &&
+      weeksToRace <= window.maxWeeks &&
+      daysToRace > taperDays;
+
+    if (confidenceTag !== "high" || unknownDistance) {
       flags.race_context_needs_confirmation = true;
       evidence.push(`Upcoming race candidate on ${upcomingRace.date} needs confirmation.`);
     }
-    if (upcomingRace.estimated_distance === "marathon") {
-      flags.marathon_specific_requires_review = true;
-      evidence.push("Marathon-specific race context requires coach review.");
+    if (multipleUpcomingRaces) {
+      flags.race_context_needs_confirmation = true;
+      evidence.push(`Multiple upcoming races detected (${upcomingRacesCount}); A-race requires coach confirmation.`);
     }
-    if (daysToRace <= 14 && daysToRace >= 0) {
-      if (detectedContext === "general_development" || detectedContext === "schedule_constrained") {
-        detectedContext = daysToRace <= 7 ? "taper_context" : "race_specific_context";
-        confidence = raceConfidence === "high" ? "high" : "medium";
-        evidence.push(`Upcoming race in ${daysToRace} days (${upcomingRace.event_name ?? "unnamed event"}).`);
-      }
-    } else if (daysToRace > 14 && daysToRace <= 56) {
-      if (detectedContext === "general_development") {
+    if (upcomingRace.estimated_distance === "marathon" || raceType === "trail") {
+      flags.marathon_specific_requires_review = true;
+      evidence.push(
+        upcomingRace.estimated_distance === "marathon"
+          ? "Marathon-specific race context requires coach review."
+          : "Trail race context requires explicit coach review.",
+      );
+    }
+
+    if (
+      insideTaper &&
+      detectedContext !== "return_after_illness" &&
+      detectedContext !== "post_race_recovery" &&
+      !health.has_active_illness &&
+      !health.has_active_pain_injury
+    ) {
+      detectedContext = "taper_context";
+      confidence = confidenceTag === "high" ? "high" : "medium";
+      evidence.push(
+        `Upcoming race in ${daysToRace} days (${upcomingRace.event_name ?? "unnamed event"}${distanceLabel ? `, ${distanceLabel}` : ""}); taper context.`,
+      );
+    } else if (
+      (insidePlanningWindow || raceType === "trail" || unknownDistance) &&
+      detectedContext !== "return_after_illness" &&
+      detectedContext !== "post_race_recovery" &&
+      !health.has_active_illness &&
+      !health.has_active_pain_injury
+    ) {
+      if (detectedContext !== "taper_context") {
         detectedContext = "race_specific_context";
-        evidence.push(`Race-specific build context; race on ${upcomingRace.date} (${daysToRace} days out).`);
       }
+      confidence = confidenceTag === "high" ? "high" : "medium";
+      evidence.push(
+        `Race-specific context for ${upcomingRace.date} (${weeksToRace} weeks out; ${upcomingRace.event_name ?? "unnamed event"}).`,
+      );
+    } else if (daysToRace > 0) {
+      upcomingRaceOutsidePlanningWindow = true;
+      evidence.push(
+        `Upcoming race detected (${upcomingRace.date}), outside active planning window; context preserved for now.`,
+      );
     }
   }
 
@@ -714,6 +853,7 @@ export function detectTrainingPhaseV0(input: PhaseDetectorInput): AthletePhaseSn
     health,
     vo2EndOfFamily,
     severeConflictingSignals,
+    upcomingRaceOutsidePlanningWindow,
   });
   flags.manual_review_required = deriveManualReviewRequired(review.review_level);
 
@@ -727,6 +867,28 @@ export function detectTrainingPhaseV0(input: PhaseDetectorInput): AthletePhaseSn
     review_reasons: review.review_reasons,
     evidence,
     recent_training_summary: summary,
+    race_context: {
+      upcoming_race_detected: upcomingRace !== null,
+      upcoming_races_count: upcomingRacesCount,
+      next_race_date: nextRaceDate,
+      next_race_name: upcomingRace?.event_name ?? null,
+      next_race_distance: upcomingRace ? normalizeDistanceLabel(upcomingRace) : null,
+      next_race_type: nextRaceType,
+      weeks_to_next_race: nextRaceDays === null ? null : Math.ceil(nextRaceDays / 7),
+      race_confidence: nextRaceConfidence,
+      race_context_needs_confirmation: flags.race_context_needs_confirmation,
+      all_upcoming_races_preview: upcomingRaces
+        .filter((candidate): candidate is RaceContextCandidate & { date: string } => Boolean(candidate.date))
+        .slice(0, 8)
+        .map((candidate) => ({
+          date: candidate.date,
+          name: candidate.event_name ?? null,
+          distance: normalizeDistanceLabel(candidate),
+          type: raceTypeFromCandidate(candidate),
+          confidence: candidate.confidence ?? null,
+        })),
+    },
+    data_visibility_status: summary.completed_runs === 0 ? "no_completed_data" : "normal",
     flags,
     recommendation,
   };

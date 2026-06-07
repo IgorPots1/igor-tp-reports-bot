@@ -410,6 +410,93 @@ function testUnclearRaceContextRequiresCoachReview(): void {
   assert.equal(snapshot.flags.manual_review_required, true);
 }
 
+function testRace10kInOneWeekTriggersTaperCoachReview(): void {
+  const snapshot = detectTrainingPhaseV0(
+    baseInput({
+      workouts: easyRuns(8),
+      race_context: {
+        candidates: [
+          {
+            date: "2026-06-14",
+            estimated_distance: "10k",
+            confidence: "high",
+            event_name: "City 10K",
+          },
+        ],
+      },
+    }),
+  );
+  assert.equal(snapshot.detected_context, "taper_context");
+  assert.equal(snapshot.review_level, "coach_review");
+  assert.equal(snapshot.race_context.upcoming_race_detected, true);
+  assert.equal(snapshot.race_context.weeks_to_next_race, 1);
+}
+
+function testMarathonInTwelveWeeksIsRaceSpecificCoachReview(): void {
+  const snapshot = detectTrainingPhaseV0(
+    baseInput({
+      workouts: easyRuns(8),
+      race_context: {
+        candidates: [
+          {
+            date: "2026-08-31",
+            estimated_distance: "marathon",
+            confidence: "high",
+            event_name: "Autumn Marathon",
+          },
+        ],
+      },
+    }),
+  );
+  assert.equal(snapshot.detected_context, "race_specific_context");
+  assert.equal(snapshot.review_level, "coach_review");
+  assert.equal(snapshot.flags.marathon_specific_requires_review, true);
+}
+
+function testMultipleUpcomingRacesRequireConfirmation(): void {
+  const snapshot = detectTrainingPhaseV0(
+    baseInput({
+      workouts: easyRuns(8),
+      race_context: {
+        candidates: [
+          { date: "2026-07-20", estimated_distance: "10k", confidence: "high", event_name: "10K A" },
+          { date: "2026-08-17", estimated_distance: "half", confidence: "medium", event_name: "Half B" },
+        ],
+      },
+    }),
+  );
+  assert.equal(snapshot.race_context.upcoming_races_count, 2);
+  assert.equal(snapshot.flags.race_context_needs_confirmation, true);
+  assert.equal(snapshot.review_level, "coach_review");
+}
+
+function testRaceOutsidePlanningWindowKeepsExistingContextWithRaceInfo(): void {
+  const snapshot = detectTrainingPhaseV0(
+    baseInput({
+      workouts: [mockQualityWorkout({ date: "2026-06-04", type: "controlled_sub_threshold", repeatCount: 3, workDuration: "8 min" })],
+      race_context: {
+        candidates: [
+          { date: "2027-01-10", estimated_distance: "marathon", confidence: "high", event_name: "Far Marathon" },
+        ],
+      },
+    }),
+  );
+  assert.equal(snapshot.detected_context, "threshold_or_controlled_block");
+  assert.equal(snapshot.race_context.upcoming_race_detected, true);
+  assert.equal(snapshot.race_context.next_race_date, "2027-01-10");
+}
+
+function testNoRaceInputKeepsBaselineBehavior(): void {
+  const snapshot = detectTrainingPhaseV0(
+    baseInput({
+      workouts: [mockQualityWorkout({ date: "2026-06-04", type: "controlled_sub_threshold", repeatCount: 3, workDuration: "8 min" })],
+      race_context: { candidates: [] },
+    }),
+  );
+  assert.equal(snapshot.detected_context, "threshold_or_controlled_block");
+  assert.equal(snapshot.race_context.upcoming_race_detected, false);
+}
+
 function testMarathonSpecificRequiresCoachReview(): void {
   const snapshot = detectTrainingPhaseV0(
     baseInput({
@@ -449,6 +536,34 @@ function testLowDataAthleteIsHardBlock(): void {
   assert.equal(snapshot.confidence, "low");
   assert.equal(snapshot.review_level, "hard_block");
   assert.equal(snapshot.flags.manual_review_required, true);
+  assert.equal(snapshot.data_visibility_status, "no_completed_data");
+}
+
+function testDemianLike6x3StaysConservativeWithoutVo2Intent(): void {
+  const workout = mockQualityWorkout({
+    date: "2026-06-04",
+    type: "short_intervals",
+    title: "6 x 3 min near ПАНО",
+    notes: "tempo upper threshold session near ПАНО",
+    repeatCount: 6,
+    workDuration: "3 min",
+    trainingFamily: "threshold_subthreshold_intervals",
+  });
+  const snapshot = detectTrainingPhaseV0(
+    baseInput({
+      workouts: [workout],
+      baseline: {
+        confidence: "medium",
+        needs_review: false,
+        frequency_cap: 5,
+        quality_count_cap: 2,
+        recent_4w_frequency: 4,
+        context_flags: [],
+      },
+    }),
+  );
+  assert.notEqual(snapshot.detected_context, "vo2_block");
+  assert.equal(snapshot.review_level, "coach_review");
 }
 
 function testSafetyMarkers(): void {
@@ -475,9 +590,15 @@ function main(): void {
   testLegkiyBegMustNotClassifyAsVo2();
   testAmbiguous5x3MustNotAutoMapToVo2();
   testAmbiguous6x3WithoutIntensityEvidenceMustNotBeConfidentVo2();
+  testRace10kInOneWeekTriggersTaperCoachReview();
+  testMarathonInTwelveWeeksIsRaceSpecificCoachReview();
+  testMultipleUpcomingRacesRequireConfirmation();
+  testRaceOutsidePlanningWindowKeepsExistingContextWithRaceInfo();
+  testNoRaceInputKeepsBaselineBehavior();
   testUnclearRaceContextRequiresCoachReview();
   testMarathonSpecificRequiresCoachReview();
   testLowDataAthleteIsHardBlock();
+  testDemianLike6x3StaysConservativeWithoutVo2Intent();
   testSafetyMarkers();
   testExtractOperationalHealthFlags();
   console.log("check-athlete-phase-snapshot-v0: all checks passed");

@@ -30,6 +30,7 @@ type CliArgs = {
   allActiveStudents: boolean;
   studentId: string | null;
   athleteId: number | null;
+  raceScanDir: string | null;
   json: boolean;
 };
 
@@ -99,9 +100,12 @@ type BaselineV2PerAthlete = {
       title?: string | null;
       event_name?: string | null;
       source_type?: string | null;
+      distance_km?: number | null;
+      event_type?: string | null;
     }>;
   };
   context_flags: string[];
+  notes?: string[];
 };
 
 type AthleteTrainingBaselineDbRow = {
@@ -123,8 +127,15 @@ type PhaseSnapshotReport = {
   baseline_v2_source_dir: string | null;
   operational_signals_included: boolean;
   operational_signals_unavailable_reason: string | null;
-  counts_by_context: Record<string, number>;
+  counts_by_detected_context: Record<string, number>;
   counts_by_review_level: Record<ReviewLevel, number>;
+  race_context_summary: {
+    athletes_with_upcoming_race: number;
+    athletes_with_multiple_races: number;
+    athletes_with_marathon_context: number;
+    athletes_with_trail_context: number;
+    athletes_needing_race_confirmation: number;
+  };
   manual_review_count: number;
   possible_deload_count: number;
   safety: typeof PHASE_DETECTOR_SAFETY_MARKERS;
@@ -217,6 +228,7 @@ function printHelp(): void {
   console.log("  npm run tp-athlete-phase-snapshot-v0 -- --week-start 2026-06-08 --all-active-students");
   console.log("  npm run tp-athlete-phase-snapshot-v0 -- --week-start 2026-06-08 --student-id <uuid>");
   console.log("  npm run tp-athlete-phase-snapshot-v0 -- --week-start 2026-06-08 --athlete-id <id>");
+  console.log("  npm run tp-athlete-phase-snapshot-v0 -- --week-start 2026-06-08 --all-active-students --race-scan-dir reports/races-scan/<timestamp>");
   console.log("");
   console.log("Optional:");
   console.log("  --json");
@@ -235,6 +247,7 @@ function parseArgs(argv: string[]): CliArgs {
     allActiveStudents: false,
     studentId: null,
     athleteId: null,
+    raceScanDir: null,
     json: false,
   };
 
@@ -279,6 +292,15 @@ function parseArgs(argv: string[]): CliArgs {
       parsed.json = true;
       continue;
     }
+    if (arg.startsWith("--race-scan-dir=")) {
+      parsed.raceScanDir = arg.slice("--race-scan-dir=".length).trim() || null;
+      continue;
+    }
+    if (arg === "--race-scan-dir") {
+      parsed.raceScanDir = (argv[index + 1] ?? "").trim() || null;
+      index += 1;
+      continue;
+    }
     throw new Error(`Unknown argument: ${arg}`);
   }
 
@@ -287,6 +309,48 @@ function parseArgs(argv: string[]): CliArgs {
   }
 
   return parsed;
+}
+
+type RaceScanRow = {
+  athlete_id?: number | string | null;
+  event_date?: string | null;
+  event_title?: string | null;
+  event_name?: string | null;
+  distance?: string | number | null;
+  distance_km?: string | number | null;
+  sport_type?: string | null;
+  confidence?: string | null;
+  source_type?: string | null;
+};
+
+type RaceScanJson = {
+  rows?: RaceScanRow[];
+};
+
+function parseDistanceKmValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Number(value.toFixed(3));
+  }
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const direct = Number(trimmed.replace(",", "."));
+  if (Number.isFinite(direct) && direct > 0) return Number(direct.toFixed(3));
+  const match = trimmed.match(/(\d+(?:[.,]\d+)?)/);
+  if (!match) return null;
+  const parsed = Number(match[1]!.replace(",", "."));
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Number(parsed.toFixed(3));
+}
+
+function estimateDistanceFromKm(distanceKm: number | null): string | null {
+  if (distanceKm === null) return null;
+  if (distanceKm >= 41 && distanceKm <= 43.5) return "marathon";
+  if (distanceKm >= 20.5 && distanceKm <= 22.5) return "half";
+  if (distanceKm >= 9.5 && distanceKm <= 10.8) return "10k";
+  if (distanceKm >= 4.6 && distanceKm <= 5.6) return "5k";
+  if (distanceKm > 43.5) return "ultra";
+  return "unknown";
 }
 
 function mapWorkoutCacheDbRow(row: TrainingPeaksWorkoutCacheDbRow): TrainingPeaksWorkoutCacheRow {
@@ -408,7 +472,85 @@ function mapRaceCandidatesFromBaselineV2(row: BaselineV2PerAthlete | null): Race
     confidence: candidate.confidence ?? null,
     event_name: candidate.event_name ?? candidate.title ?? null,
     source_type: candidate.source_type ?? null,
+    distance_km: candidate.distance_km ?? null,
+    event_type: candidate.event_type ?? null,
   }));
+}
+
+function mapRaceCandidatesFromRaceScan(rows: RaceScanRow[]): Map<number, RaceContextCandidate[]> {
+  const byAthlete = new Map<number, RaceContextCandidate[]>();
+  for (const row of rows) {
+    const athleteId =
+      typeof row.athlete_id === "number"
+        ? row.athlete_id
+        : typeof row.athlete_id === "string"
+          ? Number(row.athlete_id)
+          : null;
+    if (!athleteId || !Number.isInteger(athleteId) || athleteId <= 0) continue;
+    const date = row.event_date?.trim();
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const distanceKm = parseDistanceKmValue(row.distance_km ?? row.distance ?? null);
+    const estimatedDistance = estimateDistanceFromKm(distanceKm);
+    const source: RaceContextCandidate = {
+      date,
+      estimated_distance: estimatedDistance,
+      confidence:
+        row.confidence?.trim() ||
+        (estimatedDistance && estimatedDistance !== "unknown" ? "medium" : "low"),
+      event_name: row.event_title ?? row.event_name ?? null,
+      source_type: row.source_type ?? "events_api",
+      event_type: row.sport_type ?? null,
+      distance_km: distanceKm,
+    };
+    const bucket = byAthlete.get(athleteId) ?? [];
+    bucket.push(source);
+    byAthlete.set(athleteId, bucket);
+  }
+  for (const [athleteId, bucket] of byAthlete.entries()) {
+    bucket.sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
+    byAthlete.set(athleteId, bucket);
+  }
+  return byAthlete;
+}
+
+function mergeRaceCandidates(
+  baseline: RaceContextCandidate[],
+  scan: RaceContextCandidate[],
+): RaceContextCandidate[] {
+  const merged = new Map<string, RaceContextCandidate>();
+  for (const candidate of [...baseline, ...scan]) {
+    const key = `${candidate.date ?? ""}|${(candidate.event_name ?? "").toLowerCase()}|${candidate.estimated_distance ?? ""}`;
+    const previous = merged.get(key);
+    if (!previous) {
+      merged.set(key, candidate);
+      continue;
+    }
+    const prevConfidence = (previous.confidence ?? "").toLowerCase();
+    const nextConfidence = (candidate.confidence ?? "").toLowerCase();
+    const best =
+      (prevConfidence === "high" ? 3 : prevConfidence === "medium" ? 2 : 1) >=
+      (nextConfidence === "high" ? 3 : nextConfidence === "medium" ? 2 : 1)
+        ? previous
+        : candidate;
+    merged.set(key, {
+      ...best,
+      source_type:
+        previous.source_type && candidate.source_type && previous.source_type !== candidate.source_type
+          ? "mixed"
+          : best.source_type ?? previous.source_type ?? candidate.source_type ?? null,
+      distance_km: best.distance_km ?? previous.distance_km ?? candidate.distance_km ?? null,
+      event_type: best.event_type ?? previous.event_type ?? candidate.event_type ?? null,
+    });
+  }
+  return [...merged.values()].sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
+}
+
+function detectUploadIssueSuspected(input: {
+  contextFlags: string[];
+  notes: string[];
+}): boolean {
+  const blob = `${input.contextFlags.join(" ")} ${input.notes.join(" ")}`.toLowerCase();
+  return /device_upload|gps_only|completed_only|cache_gap|upload_issue|planned_only_running/i.test(blob);
 }
 
 function buildPhaseGroups(athletes: AthletePhaseSnapshot[]): Record<string, AthletePhaseSnapshot[]> {
@@ -439,7 +581,7 @@ function buildReadme(report: PhaseSnapshotReport, outputDir: string): string {
     "",
   ];
 
-  for (const [context, count] of Object.entries(report.counts_by_context).sort((a, b) => b[1] - a[1])) {
+  for (const [context, count] of Object.entries(report.counts_by_detected_context).sort((a, b) => b[1] - a[1])) {
     lines.push(`- ${context}: ${count}`);
   }
 
@@ -447,6 +589,13 @@ function buildReadme(report: PhaseSnapshotReport, outputDir: string): string {
   for (const [level, count] of Object.entries(report.counts_by_review_level).sort((a, b) => b[1] - a[1])) {
     lines.push(`- ${level}: ${count}`);
   }
+
+  lines.push("", "## Race context summary", "");
+  lines.push(`- athletes_with_upcoming_race: ${report.race_context_summary.athletes_with_upcoming_race}`);
+  lines.push(`- athletes_with_multiple_races: ${report.race_context_summary.athletes_with_multiple_races}`);
+  lines.push(`- athletes_with_marathon_context: ${report.race_context_summary.athletes_with_marathon_context}`);
+  lines.push(`- athletes_with_trail_context: ${report.race_context_summary.athletes_with_trail_context}`);
+  lines.push(`- athletes_needing_race_confirmation: ${report.race_context_summary.athletes_needing_race_confirmation}`);
 
   lines.push("", "## Safety", "");
   lines.push("- mode: read_only");
@@ -510,6 +659,18 @@ async function main(): Promise<void> {
     }
   }
 
+  let raceScanByAthleteId = new Map<number, RaceContextCandidate[]>();
+  if (args.raceScanDir) {
+    const raceScanDir = path.resolve(repoRoot, args.raceScanDir);
+    const raceScanPath = path.join(raceScanDir, "races.json");
+    if (existsSync(raceScanPath)) {
+      const raceScan = loadJson<RaceScanJson>(raceScanPath);
+      raceScanByAthleteId = mapRaceCandidatesFromRaceScan(raceScan.rows ?? []);
+    } else {
+      throw new Error(`--race-scan-dir provided but races.json was not found: ${raceScanPath}`);
+    }
+  }
+
   const baselinesByStudentId = await fetchCurrentBaselinesByStudentId();
   let operationalSignalsUnavailableReason: string | null = null;
   const athletes: AthletePhaseSnapshot[] = [];
@@ -563,8 +724,10 @@ async function main(): Promise<void> {
       /schedule|constraint|travel|availability/i.test(flag),
     );
 
-    athletes.push(
-      detectTrainingPhaseV0({
+    const baselineRaceCandidates = mapRaceCandidatesFromBaselineV2(baselineV2);
+    const scanRaceCandidates = raceScanByAthleteId.get(athleteId) ?? [];
+    const mergedRaceCandidates = mergeRaceCandidates(baselineRaceCandidates, scanRaceCandidates);
+    const snapshot = detectTrainingPhaseV0({
         week_start: args.weekStart,
         name: student.studentName,
         athlete_id: athleteId,
@@ -580,14 +743,24 @@ async function main(): Promise<void> {
           context_flags: contextFlags,
         },
         race_context: {
-          candidates: mapRaceCandidatesFromBaselineV2(baselineV2),
+          candidates: mergedRaceCandidates,
         },
         schedule_constrained: scheduleConstrained,
-      }),
-    );
+      });
+    if (snapshot.recent_training_summary.completed_runs === 0) {
+      snapshot.data_visibility_status = detectUploadIssueSuspected({
+        contextFlags,
+        notes: baselineV2?.notes ?? [],
+      })
+        ? "device_upload_issue_suspected"
+        : "no_completed_data";
+    } else if (snapshot.data_visibility_status !== "normal") {
+      snapshot.data_visibility_status = "normal";
+    }
+    athletes.push(snapshot);
   }
 
-  const countsByContext: Record<string, number> = {};
+  const countsByDetectedContext: Record<string, number> = {};
   const countsByReviewLevel: Record<ReviewLevel, number> = {
     none: 0,
     info: 0,
@@ -595,9 +768,22 @@ async function main(): Promise<void> {
     hard_block: 0,
   };
   for (const athlete of athletes) {
-    countsByContext[athlete.detected_context] = (countsByContext[athlete.detected_context] ?? 0) + 1;
+    countsByDetectedContext[athlete.detected_context] = (countsByDetectedContext[athlete.detected_context] ?? 0) + 1;
     countsByReviewLevel[athlete.review_level] += 1;
   }
+
+  const raceContextSummary = {
+    athletes_with_upcoming_race: athletes.filter((athlete) => athlete.race_context.upcoming_race_detected).length,
+    athletes_with_multiple_races: athletes.filter((athlete) => athlete.race_context.upcoming_races_count > 1).length,
+    athletes_with_marathon_context: athletes.filter((athlete) =>
+      athlete.race_context.all_upcoming_races_preview.some((race) => race.distance === "marathon"),
+    ).length,
+    athletes_with_trail_context: athletes.filter((athlete) =>
+      athlete.race_context.all_upcoming_races_preview.some((race) => race.type === "trail"),
+    ).length,
+    athletes_needing_race_confirmation: athletes.filter((athlete) => athlete.race_context.race_context_needs_confirmation)
+      .length,
+  };
 
   const report: PhaseSnapshotReport = {
     generated_at: new Date().toISOString(),
@@ -606,8 +792,9 @@ async function main(): Promise<void> {
     baseline_v2_source_dir: baselineV2Dir,
     operational_signals_included: operationalSignalsUnavailableReason === null,
     operational_signals_unavailable_reason: operationalSignalsUnavailableReason,
-    counts_by_context: countsByContext,
+    counts_by_detected_context: countsByDetectedContext,
     counts_by_review_level: countsByReviewLevel,
+    race_context_summary: raceContextSummary,
     manual_review_count: athletes.filter((athlete) => athlete.flags.manual_review_required).length,
     possible_deload_count: athletes.filter((athlete) => athlete.flags.possible_deload_recommended).length,
     safety: PHASE_DETECTOR_SAFETY_MARKERS,
@@ -641,6 +828,17 @@ async function main(): Promise<void> {
       "last_quality_date",
       "last_quality_type",
       "recommendation_summary",
+      "data_visibility_status",
+      "upcoming_race_detected",
+      "upcoming_races_count",
+      "next_race_date",
+      "next_race_name",
+      "next_race_distance",
+      "next_race_type",
+      "weeks_to_next_race",
+      "race_confidence",
+      "race_context_needs_confirmation",
+      "all_upcoming_races_preview",
     ],
     ...athletes.map((athlete) => [
       String(athlete.athlete_id ?? ""),
@@ -654,6 +852,19 @@ async function main(): Promise<void> {
       athlete.recent_training_summary.last_quality_date ?? "",
       athlete.recent_training_summary.last_quality_type ?? "",
       athlete.recommendation.summary,
+      athlete.data_visibility_status,
+      String(athlete.race_context.upcoming_race_detected),
+      String(athlete.race_context.upcoming_races_count),
+      athlete.race_context.next_race_date ?? "",
+      athlete.race_context.next_race_name ?? "",
+      athlete.race_context.next_race_distance ?? "",
+      athlete.race_context.next_race_type ?? "",
+      String(athlete.race_context.weeks_to_next_race ?? ""),
+      athlete.race_context.race_confidence ?? "",
+      String(athlete.race_context.race_context_needs_confirmation),
+      athlete.race_context.all_upcoming_races_preview
+        .map((race) => `${race.date}:${race.name ?? "n/a"}:${race.distance ?? "unknown"}:${race.type ?? "unknown"}`)
+        .join(" | "),
     ]),
   ];
   await writeFile(path.join(outputDir, "summary.csv"), listToCsv(summaryCsvRows), "utf8");
@@ -772,22 +983,56 @@ async function main(): Promise<void> {
   await writeFile(path.join(outputDir, "return-after-illness.csv"), listToCsv(illnessRows), "utf8");
 
   const raceRows: string[][] = [
-    ["athlete_id", "name", "detected_context", "race_context_needs_confirmation", "marathon_specific_requires_review", "evidence"],
+    [
+      "athlete_id",
+      "name",
+      "detected_context",
+      "review_level",
+      "upcoming_race_detected",
+      "upcoming_races_count",
+      "next_race_date",
+      "next_race_name",
+      "next_race_distance",
+      "next_race_type",
+      "weeks_to_next_race",
+      "race_confidence",
+      "race_context_needs_confirmation",
+      "marathon_specific_requires_review",
+      "all_upcoming_races_preview",
+      "evidence",
+    ],
     ...athletes
-      .filter(
-        (athlete) =>
+      .filter((athlete) => {
+        const hasTrail = athlete.race_context.all_upcoming_races_preview.some((race) => race.type === "trail");
+        return (
+          athlete.race_context.upcoming_race_detected ||
           athlete.flags.race_context_needs_confirmation ||
+          athlete.race_context.upcoming_races_count > 1 ||
           athlete.flags.marathon_specific_requires_review ||
+          hasTrail ||
           athlete.detected_context === "race_specific_context" ||
-          athlete.detected_context === "taper_context",
-      )
+          athlete.detected_context === "taper_context"
+        );
+      })
       .map((athlete) => [
         String(athlete.athlete_id ?? ""),
         athlete.name,
         athlete.detected_context,
+        athlete.review_level,
+        String(athlete.race_context.upcoming_race_detected),
+        String(athlete.race_context.upcoming_races_count),
+        athlete.race_context.next_race_date ?? "",
+        athlete.race_context.next_race_name ?? "",
+        athlete.race_context.next_race_distance ?? "",
+        athlete.race_context.next_race_type ?? "",
+        String(athlete.race_context.weeks_to_next_race ?? ""),
+        athlete.race_context.race_confidence ?? "",
         String(athlete.flags.race_context_needs_confirmation),
         String(athlete.flags.marathon_specific_requires_review),
-        athlete.evidence.filter((item) => /race|marathon|taper/i.test(item)).join(" | "),
+        athlete.race_context.all_upcoming_races_preview
+          .map((race) => `${race.date}:${race.name ?? "n/a"}:${race.distance ?? "unknown"}:${race.type ?? "unknown"}`)
+          .join(" | "),
+        athlete.evidence.filter((item) => /race|marathon|taper|trail/i.test(item)).join(" | "),
       ]),
   ];
   await writeFile(path.join(outputDir, "race-context-review.csv"), listToCsv(raceRows), "utf8");
@@ -819,10 +1064,18 @@ async function main(): Promise<void> {
     for (const [level, count] of Object.entries(report.counts_by_review_level).sort((a, b) => b[1] - a[1])) {
       console.log(`  ${level}: ${count}`);
     }
-    console.log("Counts by context:");
-    for (const [context, count] of Object.entries(report.counts_by_context).sort((a, b) => b[1] - a[1])) {
+    console.log("Counts by detected_context:");
+    for (const [context, count] of Object.entries(report.counts_by_detected_context).sort((a, b) => b[1] - a[1])) {
       console.log(`  ${context}: ${count}`);
     }
+    console.log("Race context summary:");
+    console.log(`  athletes_with_upcoming_race: ${report.race_context_summary.athletes_with_upcoming_race}`);
+    console.log(`  athletes_with_multiple_races: ${report.race_context_summary.athletes_with_multiple_races}`);
+    console.log(`  athletes_with_marathon_context: ${report.race_context_summary.athletes_with_marathon_context}`);
+    console.log(`  athletes_with_trail_context: ${report.race_context_summary.athletes_with_trail_context}`);
+    console.log(
+      `  athletes_needing_race_confirmation: ${report.race_context_summary.athletes_needing_race_confirmation}`,
+    );
   }
 }
 
