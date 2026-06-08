@@ -21,6 +21,7 @@ import {
   evaluateLifecycleFromEvidence,
   getSignalLifecycle,
   matchesRecoveryPattern,
+  resolveSignalOpenTime,
   type RecoveryEvidenceKind,
 } from "./lib/operational-signal-lifecycle-runtime";
 
@@ -294,9 +295,6 @@ function isActiveHealthSignal(signal: TrainingPeaksStudentOperationalSignal): bo
   return activityDomain === "health" || activityDomain === "injury";
 }
 
-function resolveSignalOpenTime(signal: TrainingPeaksStudentOperationalSignal): string {
-  return signal.validFrom ?? signal.createdAt;
-}
 
 function resolveCurrentDisplay(signal: TrainingPeaksStudentOperationalSignal): string {
   return (

@@ -258,6 +258,37 @@ function run(): void {
   });
   assert(!staleSafety.ok, "stale TP completion evidence should block apply");
 
+  const returnPlannedInput = mkInput({
+    signalClass: "confirmed_illness",
+    currentLifecycle: "return_planned",
+    latestTpCompletionAfterOpen: {
+      workoutId: "701",
+      workoutDate: "2026-06-07",
+      title: "Easy Run",
+      sportOrTypeCode: "run",
+      sportClass: "running_like",
+      runningCompletionClass: "normal_planned_run",
+      classificationConfidence: "high",
+      classificationReasonCodes: ["fixture"],
+      classificationInspectedFields: {},
+      plannedVsCompletedDelta: "normal",
+      evidenceFreshness: "ok",
+    },
+  });
+  const returnPlannedProposal = evaluateOperationalSignalLifecycle(returnPlannedInput);
+  assert(
+    returnPlannedProposal.proposedLifecycle === "monitoring_after_return",
+    "return_planned + TP run should transition to monitoring"
+  );
+  assert(
+    validateOperationalSignalLifecycleApplySafety({
+      signalClass: "confirmed_illness",
+      lifecycleInput: returnPlannedInput,
+      proposal: returnPlannedProposal,
+    }).ok,
+    "return_planned monitoring transition should be allowed"
+  );
+
   const firstToken = buildOperationalSignalLifecycleApplyToken({
     signalId: "sig-repeat",
     proposedLifecycle: "monitoring_after_return",

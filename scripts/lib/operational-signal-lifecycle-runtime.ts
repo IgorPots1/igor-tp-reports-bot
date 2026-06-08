@@ -57,6 +57,10 @@ function getSignalString(input: Record<string, unknown>, key: string): string | 
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+export function resolveSignalOpenTime(signal: TrainingPeaksStudentOperationalSignal): string {
+  return signal.validFrom ?? signal.createdAt;
+}
+
 export function getSignalLifecycle(signal: TrainingPeaksStudentOperationalSignal): OperationalSignalLifecycle {
   if (signal.lifecycleState) {
     return signal.lifecycleState;
@@ -469,4 +473,68 @@ export function evaluateLifecycleFromEvidence(input: {
   const lifecycleInput = buildLifecycleInputFromEvidence(input);
   const proposal = evaluateOperationalSignalLifecycle(lifecycleInput);
   return { lifecycleInput, proposal };
+}
+
+function classifyWorkoutFromCacheRow(workout: TrainingPeaksWorkoutCacheRow) {
+  const sourceSnapshot =
+    workout.sourceSnapshot && typeof workout.sourceSnapshot === "object" && !Array.isArray(workout.sourceSnapshot)
+      ? (workout.sourceSnapshot as Record<string, unknown>)
+      : {};
+  return classifyTpWorkoutEvidence({
+    workoutId: String(workout.trainingPeaksWorkoutId),
+    workoutDate: workout.workoutDate,
+    title: workout.title,
+    description: typeof sourceSnapshot.description === "string" ? sourceSnapshot.description : null,
+    coachComments: typeof sourceSnapshot.coachComments === "string" ? sourceSnapshot.coachComments : null,
+    sportOrTypeCode: workout.sportOrTypeCode,
+    workoutTypeValueId: workout.workoutTypeValueId,
+    workoutSubTypeId: workout.workoutSubTypeId,
+    snapshotWorkoutTypeValueId:
+      typeof sourceSnapshot.workoutTypeValueId === "number" ? sourceSnapshot.workoutTypeValueId : null,
+    snapshotRawWorkoutTypeValueId:
+      typeof sourceSnapshot.rawWorkoutTypeValueId === "number" ? sourceSnapshot.rawWorkoutTypeValueId : null,
+    snapshotRawWorkoutSubTypeId:
+      typeof sourceSnapshot.rawWorkoutSubTypeId === "number" ? sourceSnapshot.rawWorkoutSubTypeId : null,
+    snapshotRawCode: typeof sourceSnapshot.rawCode === "string" ? sourceSnapshot.rawCode : null,
+    isPlanned: workout.isPlanned,
+    isCompleted: workout.isCompleted,
+    plannedVsCompletedDelta: deriveDelta(workout),
+    complianceDurationPercent: parseNumberish(workout.complianceDurationPercent),
+    complianceDistancePercent: parseNumberish(workout.complianceDistancePercent),
+    plannedTimeRaw: parseNumberish(workout.plannedTimeRaw),
+    completedTimeRaw: parseNumberish(workout.completedTimeRaw),
+    plannedDistanceRaw: parseNumberish(workout.plannedDistanceRaw),
+    completedDistanceRaw: parseNumberish(workout.completedDistanceRaw),
+  });
+}
+
+export function countCleanRunningCompletionsAfterOpen(input: {
+  workouts: TrainingPeaksWorkoutCacheRow[];
+  openedDate: string;
+  asOfDate: string;
+}): number {
+  let count = 0;
+  for (const workout of input.workouts) {
+    if (workout.workoutDate < input.openedDate || workout.workoutDate > input.asOfDate) {
+      continue;
+    }
+    if (!workout.isCompleted) {
+      continue;
+    }
+    const classification = classifyWorkoutFromCacheRow(workout);
+    if (classification.sportClass !== "running_like") {
+      continue;
+    }
+    if (classification.confidence === "low") {
+      continue;
+    }
+    if (
+      classification.runningCompletionClass === "normal_planned_run" ||
+      classification.runningCompletionClass === "modified_or_easy_run" ||
+      classification.runningCompletionClass === "return_trial_run"
+    ) {
+      count += 1;
+    }
+  }
+  return count;
 }

@@ -374,6 +374,26 @@ function evaluateRecoveryMessage(
     };
   }
   if (input.signalClass === "confirmed_illness") {
+    const completion = input.latestTpCompletionAfterOpen;
+    const hasReliableRunningCompletion =
+      completion?.sportClass === "running_like" &&
+      completion.evidenceFreshness === "ok" &&
+      completion.classificationConfidence !== "low" &&
+      completion.runningCompletionClass !== "uncertain_running_completion";
+    if (hasReliableRunningCompletion) {
+      return {
+        proposedLifecycle: "monitoring_after_return",
+        confidence: "high",
+        reasonCode: "explicit_recovery_with_tp_running_completion",
+        reason:
+          "Recovery message plus reliable TP running completion caps first transition at monitoring, not terminal close.",
+        hideFromTpSignals: false,
+        evidenceRefs: {
+          ...reasonBase,
+          latestTpCompletionAfterOpen: completion,
+        },
+      };
+    }
     return {
       proposedLifecycle: "resolved",
       confidence: "high",
@@ -427,6 +447,15 @@ function evaluateMissedReturnWorkout(
   input: OperationalSignalLifecycleInput
 ): OperationalSignalLifecycleProposal | null {
   if (!input.missedOrSkippedReturnWorkout) {
+    return null;
+  }
+  const completion = input.latestTpCompletionAfterOpen;
+  const hasReliableRunningCompletion =
+    completion?.sportClass === "running_like" &&
+    completion.evidenceFreshness === "ok" &&
+    completion.classificationConfidence !== "low" &&
+    completion.runningCompletionClass !== "uncertain_running_completion";
+  if (hasReliableRunningCompletion) {
     return null;
   }
   return {

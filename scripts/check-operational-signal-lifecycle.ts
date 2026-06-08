@@ -257,6 +257,36 @@ const fixtures: Fixture[] = [
     },
   },
   {
+    name: "Missed return workout does not block monitoring when TP run completed",
+    input: mkInput({
+      signalClass: "confirmed_illness",
+      currentLifecycle: "return_planned",
+      missedOrSkippedReturnWorkout: true,
+      explicitRecoveryMessage: {
+        observationId: "obs-rec",
+        observedAt: "2026-06-05T09:00:00.000Z",
+        reason: "all_ok",
+      },
+      latestTpCompletionAfterOpen: {
+        workoutId: "111",
+        workoutDate: "2026-06-07",
+        title: "Easy Run",
+        sportOrTypeCode: "run",
+        sportClass: "running_like",
+        runningCompletionClass: "normal_planned_run",
+        classificationConfidence: "high",
+        classificationReasonCodes: ["fixture_running_structured"],
+        classificationInspectedFields: {},
+        plannedVsCompletedDelta: "normal",
+        evidenceFreshness: "ok",
+      },
+    }),
+    expected: {
+      proposedLifecycle: "monitoring_after_return",
+      hideFromTpSignals: false,
+    },
+  },
+  {
     name: "Explicit recovery without TP completion can close confirmed illness",
     input: mkInput({
       signalClass: "confirmed_illness",
@@ -272,6 +302,35 @@ const fixtures: Fixture[] = [
     },
   },
   {
+    name: "Explicit recovery with reliable TP run caps at monitoring for confirmed illness",
+    input: mkInput({
+      signalClass: "confirmed_illness",
+      currentLifecycle: "return_planned",
+      explicitRecoveryMessage: {
+        observationId: "obs-rec",
+        observedAt: "2026-06-05T09:00:00.000Z",
+        reason: "all_ok",
+      },
+      latestTpCompletionAfterOpen: {
+        workoutId: "110",
+        workoutDate: "2026-06-07",
+        title: "Easy Run",
+        sportOrTypeCode: "run",
+        sportClass: "running_like",
+        runningCompletionClass: "normal_planned_run",
+        classificationConfidence: "high",
+        classificationReasonCodes: ["fixture_running_structured"],
+        classificationInspectedFields: {},
+        plannedVsCompletedDelta: "normal",
+        evidenceFreshness: "ok",
+      },
+    }),
+    expected: {
+      proposedLifecycle: "monitoring_after_return",
+      hideFromTpSignals: false,
+    },
+  },
+  {
     name: "No TP and no messages keeps active",
     input: mkInput({
       signalClass: "confirmed_illness",
@@ -279,6 +338,54 @@ const fixtures: Fixture[] = [
     }),
     expected: {
       proposedLifecycle: "active_problem",
+      hideFromTpSignals: false,
+    },
+  },
+  {
+    name: "Return planned + completed running workout -> monitoring",
+    input: mkInput({
+      signalClass: "confirmed_illness",
+      currentLifecycle: "return_planned",
+      latestTpCompletionAfterOpen: {
+        workoutId: "108",
+        workoutDate: "2026-06-07",
+        title: "Easy Run",
+        sportOrTypeCode: "run",
+        sportClass: "running_like",
+        runningCompletionClass: "normal_planned_run",
+        classificationConfidence: "high",
+        classificationReasonCodes: ["fixture_running_structured"],
+        classificationInspectedFields: {},
+        plannedVsCompletedDelta: "normal",
+        evidenceFreshness: "ok",
+      },
+    }),
+    expected: {
+      proposedLifecycle: "monitoring_after_return",
+      hideFromTpSignals: false,
+    },
+  },
+  {
+    name: "Active problem illness + completed run from return_planned state path",
+    input: mkInput({
+      signalClass: "confirmed_illness",
+      currentLifecycle: "return_planned",
+      latestTpCompletionAfterOpen: {
+        workoutId: "109",
+        workoutDate: "2026-06-08",
+        title: "Recovery Run",
+        sportOrTypeCode: "run",
+        sportClass: "running_like",
+        runningCompletionClass: "modified_or_easy_run",
+        classificationConfidence: "medium",
+        classificationReasonCodes: ["fixture_modified_easy"],
+        classificationInspectedFields: {},
+        plannedVsCompletedDelta: "modified_easy",
+        evidenceFreshness: "ok",
+      },
+    }),
+    expected: {
+      proposedLifecycle: "monitoring_after_return",
       hideFromTpSignals: false,
     },
   },
