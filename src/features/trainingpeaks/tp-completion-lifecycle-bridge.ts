@@ -75,6 +75,9 @@ function normalizeText(value: string | null | undefined): string {
 }
 
 function titleLooksLikeRunning(title: string | null | undefined): boolean {
+  if (titleLooksLikeNonRunning(title)) {
+    return false;
+  }
   const normalized = normalizeText(title);
   return RUNNING_TITLE_HINTS.some((hint) => normalized.includes(hint));
 }
@@ -101,8 +104,8 @@ export function detectPossibleMisclassifiedRun(input: {
   runningCompletionClass: TpRunningCompletionClass;
   classificationConfidence: "high" | "medium" | "low";
 }): boolean {
-  if (titleLooksLikeNonRunning(input.title) && input.sportClass === "running_like") {
-    return true;
+  if (titleLooksLikeNonRunning(input.title)) {
+    return input.sportClass === "running_like";
   }
   if (!titleLooksLikeRunning(input.title)) {
     return false;

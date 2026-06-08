@@ -185,9 +185,23 @@ const RETURN_TRIAL_HINTS = [
   "check-in",
 ];
 const RUNNING_WORKOUT_TYPE_IDS = new Set<number>([3]);
+const STRENGTH_WORKOUT_TYPE_IDS = new Set<number>([9]);
+const CYCLING_WORKOUT_TYPE_IDS = new Set<number>([2, 13]);
+
+const CYCLING_TITLE_HINTS = [
+  "bike",
+  "cycling",
+  "cycle",
+  "ride",
+  "вел",
+  "вело",
+  "велосипед",
+  "длительный вел",
+];
+const GENERIC_ENGLISH_RUNNING_TITLES = new Set(["running", "run"]);
 
 function normalizeText(value: string | null | undefined): string {
-  return typeof value === "string" ? value.toLowerCase() : "";
+  return typeof value === "string" ? value.toLowerCase().trim() : "";
 }
 
 function textContainsAny(value: string, needles: string[]): boolean {
@@ -196,6 +210,51 @@ function textContainsAny(value: string, needles: string[]): boolean {
 
 function normalizeNumberish(value: number | null | undefined): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function collectStructuredTypeIds(input: TpWorkoutEvidenceInput): number[] {
+  return [
+    input.workoutTypeValueId,
+    input.snapshotWorkoutTypeValueId,
+    input.snapshotRawWorkoutTypeValueId,
+  ].filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+}
+
+function hasStructuredRunningTypeId(typeIds: readonly number[]): boolean {
+  return typeIds.some((id) => RUNNING_WORKOUT_TYPE_IDS.has(id));
+}
+
+function hasStructuredStrengthTypeId(typeIds: readonly number[]): boolean {
+  return typeIds.some((id) => STRENGTH_WORKOUT_TYPE_IDS.has(id));
+}
+
+function hasStructuredCyclingTypeId(typeIds: readonly number[]): boolean {
+  return typeIds.some((id) => CYCLING_WORKOUT_TYPE_IDS.has(id));
+}
+
+function titleIndicatesCycling(text: string): boolean {
+  if (!text) {
+    return false;
+  }
+  if (textContainsAny(text, CYCLING_TITLE_HINTS)) {
+    return true;
+  }
+  if (/\bвел/u.test(text) && /по\s+мощности/u.test(text)) {
+    return true;
+  }
+  return false;
+}
+
+function isGenericEnglishRunningTitle(title: string): boolean {
+  const normalized = normalizeText(title);
+  return GENERIC_ENGLISH_RUNNING_TITLES.has(normalized);
+}
+
+function titleIndicatesKnownRunning(text: string, title: string): boolean {
+  if (!text || isGenericEnglishRunningTitle(title)) {
+    return false;
+  }
+  return textContainsAny(text, RUN_TEXT_HINTS);
 }
 
 function classifyRunningCompletion(
@@ -221,6 +280,7 @@ function classifyRunningCompletion(
   ]
     .filter(Boolean)
     .join(" ");
+  const structuredRunningType = hasStructuredRunningTypeId(collectStructuredTypeIds(input));
 
   if (textContainsAny(combinedText, RETURN_TRIAL_HINTS)) {
     return {
@@ -249,6 +309,22 @@ function classifyRunningCompletion(
     };
   }
 
+  if (input.isCompleted && structuredRunningType) {
+    return {
+      runningCompletionClass: "modified_or_easy_run",
+      confidence: "medium",
+      reasonCodes: ["structured_completed_run_without_planned_delta"],
+    };
+  }
+
+  if (isGenericEnglishRunningTitle(input.title ?? "") && !structuredRunningType) {
+    return {
+      runningCompletionClass: "uncertain_running_completion",
+      confidence: "low",
+      reasonCodes: ["title_generic_running_without_structured_type"],
+    };
+  }
+
   return {
     runningCompletionClass: "uncertain_running_completion",
     confidence: "low",
@@ -264,11 +340,8 @@ export function classifyTpWorkoutEvidence(input: TpWorkoutEvidenceInput): TpWork
   const coachComments = normalizeText(input.coachComments);
   const snapshotRawCode = normalizeText(input.snapshotRawCode);
   const textComposite = [title, description, coachComments, snapshotRawCode].filter(Boolean).join(" ");
-  const typeIds = [
-    input.workoutTypeValueId,
-    input.snapshotWorkoutTypeValueId,
-    input.snapshotRawWorkoutTypeValueId,
-  ].filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const typeIds = collectStructuredTypeIds(input);
+  const cyclingTitleExclusion = titleIndicatesCycling(textComposite);
   const inspectedFields: Record<string, unknown> = {
     workoutId: input.workoutId ?? null,
     workoutDate: input.workoutDate ?? null,
@@ -289,24 +362,38 @@ export function classifyTpWorkoutEvidence(input: TpWorkoutEvidenceInput): TpWork
     completedTimeRaw: normalizeNumberish(input.completedTimeRaw),
     plannedDistanceRaw: normalizeNumberish(input.plannedDistanceRaw),
     completedDistanceRaw: normalizeNumberish(input.completedDistanceRaw),
+    cyclingTitleExclusion,
+    structuredTypeIds: typeIds,
   };
 
   let sportClass: TpWorkoutSportClass = "unknown";
   let confidence: TpEvidenceConfidence = "low";
 
-  if (textContainsAny(sportOrTypeCode, STRENGTH_HINTS)) {
+  if (cyclingTitleExclusion) {
+    sportClass = "cross_training_or_other";
+    confidence = "high";
+    reasonCodes.push("cycling_title_exclusion");
+  } else if (textContainsAny(sportOrTypeCode, STRENGTH_HINTS)) {
     sportClass = "strength_only";
     confidence = "high";
     reasonCodes.push("structured_sport_strength");
-  } else if (textContainsAny(sportOrTypeCode, RUN_SPORT_HINTS)) {
-    sportClass = "running_like";
-    confidence = "high";
-    reasonCodes.push("structured_sport_running");
   } else if (textContainsAny(sportOrTypeCode, CROSS_HINTS)) {
     sportClass = "cross_training_or_other";
     confidence = "high";
     reasonCodes.push("structured_sport_cross_training");
-  } else if (typeIds.some((id) => RUNNING_WORKOUT_TYPE_IDS.has(id))) {
+  } else if (textContainsAny(sportOrTypeCode, RUN_SPORT_HINTS)) {
+    sportClass = "running_like";
+    confidence = "high";
+    reasonCodes.push("structured_sport_running");
+  } else if (hasStructuredStrengthTypeId(typeIds)) {
+    sportClass = "strength_only";
+    confidence = "high";
+    reasonCodes.push("strength_structured_guardrail");
+  } else if (hasStructuredCyclingTypeId(typeIds)) {
+    sportClass = "cross_training_or_other";
+    confidence = "high";
+    reasonCodes.push("structured_workout_type_cycling");
+  } else if (hasStructuredRunningTypeId(typeIds)) {
     sportClass = "running_like";
     confidence = "high";
     reasonCodes.push("structured_workout_type_running");
@@ -314,26 +401,30 @@ export function classifyTpWorkoutEvidence(input: TpWorkoutEvidenceInput): TpWork
     sportClass = "strength_only";
     confidence = "medium";
     reasonCodes.push("snapshot_code_strength");
-  } else if (textContainsAny(snapshotRawCode, RUN_SPORT_HINTS)) {
-    sportClass = "running_like";
-    confidence = "medium";
-    reasonCodes.push("snapshot_code_running");
   } else if (textContainsAny(snapshotRawCode, CROSS_HINTS)) {
     sportClass = "cross_training_or_other";
     confidence = "medium";
     reasonCodes.push("snapshot_code_cross_training");
+  } else if (textContainsAny(snapshotRawCode, RUN_SPORT_HINTS)) {
+    sportClass = "running_like";
+    confidence = "medium";
+    reasonCodes.push("snapshot_code_running");
   } else if (textContainsAny(textComposite, STRENGTH_HINTS)) {
     sportClass = "strength_only";
     confidence = "medium";
     reasonCodes.push("title_or_text_strength_keyword_fallback");
-  } else if (textContainsAny(textComposite, RUN_TEXT_HINTS)) {
-    sportClass = "running_like";
-    confidence = "medium";
-    reasonCodes.push("title_running_keyword_fallback");
   } else if (textContainsAny(textComposite, CROSS_HINTS)) {
     sportClass = "cross_training_or_other";
     confidence = "medium";
     reasonCodes.push("title_or_text_cross_training_keyword_fallback");
+  } else if (titleIndicatesKnownRunning(textComposite, title)) {
+    sportClass = "running_like";
+    confidence = "medium";
+    reasonCodes.push("title_known_running_keyword_fallback");
+  } else if (isGenericEnglishRunningTitle(title)) {
+    sportClass = "unknown";
+    confidence = "low";
+    reasonCodes.push("title_generic_running_without_structured_type");
   } else {
     reasonCodes.push("sport_class_unknown_after_all_checks");
   }

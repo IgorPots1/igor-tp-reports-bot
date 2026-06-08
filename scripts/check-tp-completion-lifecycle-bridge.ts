@@ -98,6 +98,15 @@ function run(): void {
     "bike title classified as running should be flagged"
   );
   assert(
+    !detectPossibleMisclassifiedRun({
+      title: "Длительный вел по мощности",
+      sportClass: "cross_training_or_other",
+      runningCompletionClass: "not_running",
+      classificationConfidence: "high",
+    }),
+    "bike title correctly classified as cross-training should not be flagged"
+  );
+  assert(
     isCleanRunningCompletion({
       sportClass: "running_like",
       runningCompletionClass: "normal_planned_run",

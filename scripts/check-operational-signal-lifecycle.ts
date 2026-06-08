@@ -464,7 +464,7 @@ const classifierFixtures: ClassifierFixture[] = [
     expected: {
       sportClass: "strength_only",
       runningCompletionClass: "not_running",
-      confidence: "medium",
+      confidence: "high",
     },
   },
   {
@@ -504,6 +504,80 @@ const classifierFixtures: ClassifierFixture[] = [
     expected: {
       sportClass: "cross_training_or_other",
       runningCompletionClass: "not_running",
+    },
+  },
+  {
+    name: "Bike title must not classify as running",
+    input: {
+      title: "Длительный вел по мощности",
+      workoutTypeValueId: 2,
+      isCompleted: true,
+      isPlanned: true,
+      plannedVsCompletedDelta: "unknown",
+    },
+    expected: {
+      sportClass: "cross_training_or_other",
+      runningCompletionClass: "not_running",
+      confidence: "high",
+    },
+  },
+  {
+    name: "Generic Running with structured type id 3 -> high-confidence running",
+    input: {
+      title: "Running",
+      workoutTypeValueId: 3,
+      isCompleted: true,
+      isPlanned: false,
+      plannedVsCompletedDelta: "unknown",
+    },
+    expected: {
+      sportClass: "running_like",
+      runningCompletionClass: "modified_or_easy_run",
+      confidence: "high",
+    },
+  },
+  {
+    name: "Generic Running without structured type stays uncertain",
+    input: {
+      title: "Running",
+      isCompleted: true,
+      isPlanned: false,
+      plannedVsCompletedDelta: "unknown",
+    },
+    expected: {
+      sportClass: "unknown",
+      runningCompletionClass: "not_running",
+      confidence: "low",
+    },
+  },
+  {
+    name: "Strength title and type id 9 guardrail",
+    input: {
+      title: "Running Strength",
+      workoutTypeValueId: 9,
+      isCompleted: true,
+      isPlanned: true,
+      plannedVsCompletedDelta: "normal",
+    },
+    expected: {
+      sportClass: "strength_only",
+      runningCompletionClass: "not_running",
+      confidence: "high",
+    },
+  },
+  {
+    name: "Known Russian running title with structured type id 3",
+    input: {
+      title: "Бег по темпу",
+      workoutTypeValueId: 3,
+      isCompleted: true,
+      isPlanned: true,
+      plannedVsCompletedDelta: "normal",
+    },
+    expected: {
+      sportClass: "running_like",
+      runningCompletionClass: "normal_planned_run",
+      confidence: "high",
     },
   },
 ];
