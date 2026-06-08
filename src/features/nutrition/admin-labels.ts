@@ -159,6 +159,9 @@ export function formatNutritionExtractionWarning(warning: string): string {
   if (warning.includes("pdf_text_empty")) {
     return "PDF похож на изображение, текст не извлечён.";
   }
+  if (warning.includes("pdf_extraction_failed:")) {
+    return "PDF не удалось прочитать на сервере (ошибка pdfjs).";
+  }
   if (warning.includes("unsupported_pdf_image_only")) {
     return "PDF загружен, но не читается как текст (возможен скан/скриншот).";
   }

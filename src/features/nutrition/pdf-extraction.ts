@@ -19,7 +19,12 @@ let pdfJsModulePromise: Promise<PdfJsModule> | null = null;
 
 function getPdfJsModule(): Promise<PdfJsModule> {
   if (!pdfJsModulePromise) {
-    pdfJsModulePromise = import("pdfjs-dist/legacy/build/pdf.mjs");
+    pdfJsModulePromise = (async () => {
+      // Worker + canvas must load before pdfjs evaluates in bundled server actions.
+      await import("@napi-rs/canvas");
+      await import("pdfjs-dist/legacy/build/pdf.worker.min.mjs");
+      return import("pdfjs-dist/legacy/build/pdf.mjs");
+    })();
   }
   return pdfJsModulePromise;
 }
@@ -131,6 +136,8 @@ export async function extractPdfTextFromBuffer(bytes: Uint8Array): Promise<PdfTe
     const loadingTask = pdfjs.getDocument({
       data: bytes,
       useSystemFonts: false,
+      useWorkerFetch: false,
+      verbosity: 0,
     });
     const pdfDocument = await loadingTask.promise;
     const pageCount = pdfDocument.numPages;
@@ -167,12 +174,14 @@ export async function extractPdfTextFromBuffer(bytes: Uint8Array): Promise<PdfTe
       extractionMethod: "pdfjs_text",
     };
   } catch (error) {
+    const errorCode = mapPdfExtractionError(error);
+    const errorHint = error instanceof Error ? error.name : "unknown_error";
     return {
       ok: false,
       text: "",
       pageCount: null,
-      warnings: ["pdf_text_empty"],
-      errorCode: mapPdfExtractionError(error),
+      warnings: [`pdf_extraction_failed:${errorCode}:${errorHint}`],
+      errorCode,
       extractionMethod: "pdfjs_text",
     };
   }

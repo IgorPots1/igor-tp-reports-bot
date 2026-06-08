@@ -181,7 +181,11 @@ export default function NutritionFileUploadPanel({
           <div className="admin-card-actions admin-card-actions-compact">
             <span className={getBadgeClass(activePreview.status)}>{formatNutritionStatus(activePreview.status, "report")}</span>
             <span className="admin-muted">
-              дней: {activePreview.quality.parsedDays}, низкая уверенность: {activePreview.quality.lowConfidenceDays}
+              найдено дней: {activePreview.quality.parsedDays}
+              {activePreview.rows.length > 0
+                ? ` · даты: ${activePreview.rows[0]?.day.slice(5).replace("-", ".")}—${activePreview.rows.at(-1)?.day.slice(5).replace("-", ".")}`
+                : ""}
+              {` · низкая уверенность: ${activePreview.quality.lowConfidenceDays}`}
             </span>
           </div>
           {activePreview.extractionWarnings.length > 0 && (
@@ -252,7 +256,12 @@ export default function NutritionFileUploadPanel({
                       const parsedDays = file.extractionDiagnostics?.parsedRows ?? 0;
                       const textLen = file.extractionTextLength ?? 0;
                       const pdfReadable = file.extractionErrorCode ? "не прочитан" : "прочитан";
-                      const compactStatus = parsedDays >= 5 ? "готово" : "мало данных";
+                      const compactStatus =
+                        parsedDays >= 5
+                          ? "готово"
+                          : parsedDays > 0
+                            ? "мало дней"
+                            : "мало данных";
                       return (
                         <tr key={`${file.originalFileName}-${file.fileKind}`}>
                           <td>{file.originalFileName}</td>
