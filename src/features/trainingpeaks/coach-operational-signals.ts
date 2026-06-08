@@ -194,6 +194,88 @@ function hasAny(text: string, patterns: readonly string[]): boolean {
   return patterns.some((item) => text.includes(item));
 }
 
+const FIGURATIVE_HEALTH_PHRASES = [
+  "душа болит",
+  "душа не болит",
+  "душа просит",
+  "минутка слабости",
+  "момент слабости",
+  "минутная слабость",
+  "слабость была минутка",
+] as const;
+
+const ACTIVE_PAIN_SYMPTOM_CUES = [
+  "болит",
+  "болела",
+  "болело",
+  "болел",
+  "болели",
+  "боль",
+  "боли",
+  "болевые",
+] as const;
+
+function stripFigurativeHealthPhrases(text: string): string {
+  let result = text;
+  for (const phrase of FIGURATIVE_HEALTH_PHRASES) {
+    result = result.split(phrase).join(" ");
+  }
+  return result.replace(/\s+/gu, " ").trim();
+}
+
+function healthClassificationText(text: string): string {
+  return stripFigurativeHealthPhrases(text);
+}
+
+function isNegatedCueOccurrence(text: string, cueIndex: number, cue: string): boolean {
+  const windowStart = Math.max(0, cueIndex - 35);
+  const before = text.slice(windowStart, cueIndex);
+  if (/\bбез\s*$/iu.test(before)) {
+    return true;
+  }
+  if (/(?:^|[^\p{L}])не\s+(?:\S+\s+){0,3}$/iu.test(before)) {
+    return true;
+  }
+  if (/\bничего\s+не\s+(?:\S+\s+){0,2}$/iu.test(before)) {
+    return true;
+  }
+  if (/\bникогда\s+не\s+(?:\S+\s+){0,2}$/iu.test(before)) {
+    return true;
+  }
+  const after = text.slice(cueIndex, cueIndex + cue.length + 10);
+  if (/^боли\s+нет\b/iu.test(after) || /^боль\s+нет\b/iu.test(after)) {
+    return true;
+  }
+  return false;
+}
+
+function hasActiveCue(text: string, cue: string): boolean {
+  const healthText = healthClassificationText(text);
+  if (!healthText.includes(cue)) {
+    return false;
+  }
+  let searchFrom = 0;
+  while (searchFrom < healthText.length) {
+    const index = healthText.indexOf(cue, searchFrom);
+    if (index === -1) {
+      return false;
+    }
+    if (!isNegatedCueOccurrence(healthText, index, cue)) {
+      return true;
+    }
+    searchFrom = index + 1;
+  }
+  return false;
+}
+
+function hasActiveAny(text: string, patterns: readonly string[]): boolean {
+  return patterns.some((pattern) => hasActiveCue(text, pattern));
+}
+
+function hasActivePainSymptom(text: string): boolean {
+  return hasActiveAny(text, ACTIVE_PAIN_SYMPTOM_CUES);
+}
+
 const PAUSE_TRAINING_CUES = [
   "воздержусь от бега",
   "не буду бегать",
@@ -451,11 +533,21 @@ function isExplicitCoachRelevantSignal(text: string, labels: string[]): boolean 
 }
 
 function classifyHealthIssueKind(text: string): string | null {
-  if (hasAny(text, ["нога", "колено", "ахилл", "икра", "спина", "голень", "стоп"])) {
+  const hasBodyPartCue = hasAny(text, ["нога", "колено", "ахилл", "икра", "спина", "голень", "стоп"]);
+  const hasBodyRecoveryCue = hasAny(text, [
+    "лучше",
+    "получше",
+    "значительно лучше",
+    "полегче",
+    "прошло",
+    "без боли",
+    "боли нет",
+  ]);
+  if (hasBodyPartCue && (hasActivePainSymptom(text) || hasBodyRecoveryCue)) {
     return "pain_or_injury";
   }
   if (
-    hasAny(text, [
+    hasActiveAny(text, [
       "горло",
       "температур",
       "темпера подним",
@@ -482,10 +574,10 @@ function classifyHealthIssueKind(text: string): string | null {
   ) {
     return "illness";
   }
-  if (hasAny(text, ["голова болит", "голов болит", "головная боль"])) {
+  if (hasActiveAny(text, ["голова болит", "голов болит", "головная боль"])) {
     return null;
   }
-  if (text.includes("бол")) {
+  if (hasActivePainSymptom(text)) {
     return "pain_unspecified";
   }
   return null;
@@ -506,7 +598,7 @@ const HEALTH_SYMPTOM_PATTERNS: Array<{ symptom: string; patterns: string[] }> = 
 ];
 
 function hasExplicitIllnessCue(text: string): boolean {
-  return hasAny(text, [
+  return hasActiveAny(text, [
     "болею",
     "болеет",
     "болел",
@@ -537,7 +629,7 @@ function dedupeStrings(values: string[]): string[] {
 function detectHealthSymptoms(text: string): string[] {
   const symptoms: string[] = [];
   for (const descriptor of HEALTH_SYMPTOM_PATTERNS) {
-    if (hasAny(text, descriptor.patterns)) {
+    if (hasActiveAny(text, descriptor.patterns)) {
       symptoms.push(descriptor.symptom);
     }
   }
@@ -545,7 +637,7 @@ function detectHealthSymptoms(text: string): string[] {
 }
 
 function hasHealthStartedCue(text: string): boolean {
-  return hasAny(text, [
+  return hasActiveAny(text, [
     "забол",
     "прибол",
     "болею",
@@ -692,30 +784,29 @@ function hasHealthEvidenceForImproving(text: string, symptoms: string[]): boolea
   if (symptoms.length > 0) {
     return true;
   }
-  return hasAny(text, [
-    "болею",
-    "болела",
-    "болел",
-    "после болезни",
-    "кашель",
-    "горло",
-    "темпера",
-    "слабост",
-    "недомога",
-    "плохо себя чувств",
-    "голос осип",
-    "голос сел",
-    "нога",
-    "колено",
-    "ахилл",
-    "икра",
-    "спина",
-    "голень",
-    "стоп",
-    "болит",
-    "боль",
-    "травма",
-  ]);
+  const healthText = healthClassificationText(text);
+  return (
+    hasActiveAny(text, ["болею", "болела", "болел", "болит", "боль"]) ||
+    hasAny(healthText, [
+      "после болезни",
+      "кашель",
+      "горло",
+      "темпера",
+      "слабост",
+      "недомога",
+      "плохо себя чувств",
+      "голос осип",
+      "голос сел",
+      "нога",
+      "колено",
+      "ахилл",
+      "икра",
+      "спина",
+      "голень",
+      "стоп",
+      "травма",
+    ])
+  );
 }
 
 function hasHealthResolvedCue(text: string): boolean {
@@ -889,8 +980,9 @@ function buildHealthSummary(input: {
 }
 
 function buildPainInjuryCandidate(input: ObservationLike, text: string): OperationalSignalCandidate | null {
-  const hasPainCue = hasAny(text, ["болит", "болела", "боль", "тянет", "дискомфорт"]);
-  const hasBodyCue = hasAny(text, PAIN_INJURY_BODY_CUES);
+  const hasPainCue = hasActiveAny(text, ["болит", "болела", "боль", "тянет", "дискомфорт"]);
+  const healthText = healthClassificationText(text);
+  const hasBodyCue = hasAny(healthText, PAIN_INJURY_BODY_CUES);
   if (!hasPainCue || !hasBodyCue) {
     return null;
   }
@@ -908,7 +1000,8 @@ function buildPainInjuryCandidate(input: ObservationLike, text: string): Operati
     : payload.evidence_phrases.length > 0
       ? `боль / ${payload.evidence_phrases[0]}`
       : "боль / травма";
-  const isPastOrResolving = hasAny(text, ["болела", "был дискомфорт", "было"]);
+  const isPastOrResolving =
+    hasActiveAny(text, ["болела"]) || hasAny(text, ["был дискомфорт", "было"]);
   payload.display_summary = isPastOrResolving ? `${base} (уточнить, актуально ли)` : base;
   payload.latest_summary = payload.display_summary;
 
@@ -992,17 +1085,19 @@ function classifyHealthLifecycleSignal(input: {
   const weatherTemperatureContext =
     hasAny(text, ["на улице", "за окном", "погода", "воздуха"]) &&
     hasAny(text, ["температур", "темпера"]);
-  const illnessCounterCues = hasAny(text, [
-    "боле",
-    "кашель",
-    "горло",
-    "слабост",
-    "голос",
-    "озноб",
-    "отврат",
-    "недомога",
-    "плохо себя чувств",
-  ]);
+  const healthText = healthClassificationText(text);
+  const illnessCounterCues =
+    hasActiveAny(text, ["болею", "болеет", "болел", "болела", "болели", "болит", "забол", "прибол"]) ||
+    hasAny(healthText, [
+      "кашель",
+      "горло",
+      "слабост",
+      "голос",
+      "озноб",
+      "отврат",
+      "недомога",
+      "плохо себя чувств",
+    ]);
 
   if (weatherTemperatureContext && !illnessCounterCues && !improving && !resolved) {
     return null;

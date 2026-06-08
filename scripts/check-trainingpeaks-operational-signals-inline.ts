@@ -338,6 +338,123 @@ async function run(): Promise<void> {
     "Kasianenko failed: summary should indicate improvement or trial run."
   );
 
+  // False-positive suppression: negated pain and figurative health idioms.
+  const lavrentyevNegationResult = await persistOperationalSignalsForObservation(
+    makeTestObservation({
+      observationId: "obs-lavrentyev-negation",
+      studentId: "student-lavrentyev",
+      textPreview: "Все четко, нога не болела",
+    }),
+    deps
+  );
+  assert(
+    lavrentyevNegationResult.status === "skipped",
+    `Lavrentyev negation failed: expected skipped, got ${lavrentyevNegationResult.status}.`
+  );
+  assert(
+    !upsertCalls.some((call) => call.sourceObservationId === "obs-lavrentyev-negation"),
+    "Lavrentyev negation failed: should not create operational signal."
+  );
+
+  const nothingHurtResult = await persistOperationalSignalsForObservation(
+    makeTestObservation({
+      observationId: "obs-nothing-hurt",
+      studentId: "student-nothing-hurt",
+      textPreview: "ничего не болело",
+    }),
+    deps
+  );
+  assert(
+    nothingHurtResult.status === "skipped",
+    `Nothing hurt failed: expected skipped, got ${nothingHurtResult.status}.`
+  );
+  assert(
+    !upsertCalls.some((call) => call.sourceObservationId === "obs-nothing-hurt"),
+    "Nothing hurt failed: should not create operational signal."
+  );
+
+  const kruglovaIdiomResult = await persistOperationalSignalsForObservation(
+    makeTestObservation({
+      observationId: "obs-kruglova-idiom",
+      studentId: "student-kruglova",
+      textPreview: "мне так не хватает побегать побыстрее, прям душа болит",
+    }),
+    deps
+  );
+  assert(
+    kruglovaIdiomResult.status === "skipped",
+    `Kruglova idiom failed: expected skipped, got ${kruglovaIdiomResult.status}.`
+  );
+  assert(
+    !upsertCalls.some((call) => call.sourceObservationId === "obs-kruglova-idiom"),
+    "Kruglova idiom failed: should not create operational signal."
+  );
+
+  const denisovaIdiomResult = await persistOperationalSignalsForObservation(
+    makeTestObservation({
+      observationId: "obs-denisova-idiom",
+      studentId: "student-denisova",
+      textPreview: 'это была "минутка слабости"',
+    }),
+    deps
+  );
+  assert(
+    denisovaIdiomResult.status === "skipped",
+    `Denisova idiom failed: expected skipped, got ${denisovaIdiomResult.status}.`
+  );
+  assert(
+    !upsertCalls.some((call) => call.sourceObservationId === "obs-denisova-idiom"),
+    "Denisova idiom failed: should not create operational signal."
+  );
+
+  const throatPainPositiveResult = await persistOperationalSignalsForObservation(
+    makeTestObservation({
+      observationId: "obs-throat-pain-positive",
+      studentId: "student-throat-pain-positive",
+      textPreview: "болит горло, сил нет",
+    }),
+    deps
+  );
+  assert(throatPainPositiveResult.status === "processed", "Throat pain positive failed: should be processed.");
+  const throatPainSignalCall = upsertCalls.find((call) => call.sourceObservationId === "obs-throat-pain-positive");
+  assert(Boolean(throatPainSignalCall), "Throat pain positive failed: missing upsert call.");
+  assert(
+    throatPainSignalCall?.signalType === "health_issue_started",
+    `Throat pain positive failed: expected health_issue_started, got ${throatPainSignalCall?.signalType ?? "null"}.`
+  );
+
+  const legPainPositiveResult = await persistOperationalSignalsForObservation(
+    makeTestObservation({
+      observationId: "obs-leg-pain-positive",
+      studentId: "student-leg-pain-positive",
+      textPreview: "нога болела после бега",
+    }),
+    deps
+  );
+  assert(legPainPositiveResult.status === "processed", "Leg pain positive failed: should be processed.");
+  const legPainSignalCall = upsertCalls.find((call) => call.sourceObservationId === "obs-leg-pain-positive");
+  assert(Boolean(legPainSignalCall), "Leg pain positive failed: missing upsert call.");
+  assert(
+    legPainSignalCall?.signalType === "health_issue_started" || legPainSignalCall?.signalType === "pain_injury",
+    `Leg pain positive failed: expected health_issue_started or pain_injury, got ${legPainSignalCall?.signalType ?? "null"}.`
+  );
+
+  const weaknessFeverPositiveResult = await persistOperationalSignalsForObservation(
+    makeTestObservation({
+      observationId: "obs-weakness-fever-positive",
+      studentId: "student-weakness-fever-positive",
+      textPreview: "слабость, температура",
+    }),
+    deps
+  );
+  assert(weaknessFeverPositiveResult.status === "processed", "Weakness fever positive failed: should be processed.");
+  const weaknessFeverSignalCall = upsertCalls.find((call) => call.sourceObservationId === "obs-weakness-fever-positive");
+  assert(Boolean(weaknessFeverSignalCall), "Weakness fever positive failed: missing upsert call.");
+  assert(
+    weaknessFeverSignalCall?.signalType === "health_issue_started",
+    `Weakness fever positive failed: expected health_issue_started, got ${weaknessFeverSignalCall?.signalType ?? "null"}.`
+  );
+
   // TODO(coach-approval): coach reply "давай" after athlete "можно побегу" is not linked in this task.
   // TODO(viktoria-tp-evidence): TP-only return evidence (completed runs) needs lifecycle diagnostic, not phrase classifier.
 

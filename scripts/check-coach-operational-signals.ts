@@ -1386,6 +1386,88 @@ async function run(): Promise<void> {
         should_create_trainingpeaks_action: false,
       },
     },
+    {
+      name: "health-negated-leg-pain-lavrentyev-skips",
+      observation: mkObs("Все четко, нога не болела"),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "health-negated-nothing-hurt-skips",
+      observation: mkObs("ничего не болело"),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "health-figurative-soul-hurts-kruglova-skips",
+      observation: mkObs("мне так не хватает побегать побыстрее, прям душа болит"),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "health-figurative-minute-of-weakness-denisova-skips",
+      observation: mkObs('это была "минутка слабости"'),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "health-positive-throat-pain-fatigue",
+      observation: mkObs("болит горло, сил нет"),
+      expected: {
+        primary_bucket: "temporary_memory",
+        signal_type: "health_issue_started",
+        should_create_memory: true,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: "illness",
+        symptoms_includes: ["throat", "fatigue"],
+      },
+    },
+    {
+      name: "health-positive-leg-pain-after-run",
+      observation: mkObs("нога болела после бега"),
+      expected: {
+        primary_bucket: "temporary_memory",
+        signal_type: "health_issue_started",
+        should_create_memory: true,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: "pain_or_injury",
+      },
+    },
+    {
+      name: "health-positive-weakness-fever",
+      observation: mkObs("слабость, температура"),
+      expected: {
+        primary_bucket: "temporary_memory",
+        signal_type: "health_issue_started",
+        should_create_memory: true,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: "illness",
+        symptoms_includes: ["weakness", "fever"],
+      },
+    },
   ];
   const followUpCases: FollowUpCaseDef[] = [
     {
