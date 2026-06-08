@@ -92,6 +92,7 @@ import {
   recordTrainingPeaksReplyDraftFeedback,
   type TrainingPeaksOperationalSignalsScope,
   formatTrainingPeaksOperationalSignalsForTelegram,
+  formatTrainingPeaksOperationalSignalsForTelegramMultiMessage,
 } from "@/features/trainingpeaks/service";
 import {
   hasTrainingPeaksAttentionDigestSentForBelgradeDate,
@@ -3667,10 +3668,12 @@ async function handleTrainingPeaksOperationalSignalsCommand(
   const scope = parseTpSignalsScopeFromCommand(text);
   const snapshot = await getTrainingPeaksOperationalSignalsSnapshot({
     scope,
-    limit: 20,
+    limit: 100,
   });
-  const message = formatTrainingPeaksOperationalSignalsForTelegram(snapshot);
-  await sendTrainingPeaksMessage(parsedMessage.chatId, message);
+  const messages = formatTrainingPeaksOperationalSignalsForTelegramMultiMessage(snapshot);
+  for (const message of messages) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, message);
+  }
 }
 
 function getTrainingPeaksAttentionDigestMarkup(): TelegramInlineKeyboardMarkup {

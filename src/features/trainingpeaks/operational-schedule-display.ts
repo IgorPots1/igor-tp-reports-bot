@@ -349,8 +349,8 @@ function compactScheduleRestrictionReason(raw: string): string | null {
   if (withoutClarify.length < 3) {
     return null;
   }
-  if (withoutClarify.length > 32) {
-    return `${withoutClarify.slice(0, 29)}…`;
+  if (withoutClarify.length > 120) {
+    return `${withoutClarify.slice(0, 117)}…`;
   }
   return withoutClarify;
 }

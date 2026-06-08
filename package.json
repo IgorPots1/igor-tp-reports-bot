@@ -156,7 +156,9 @@
     "check:workout-template-catalog": "npx tsx scripts/check-workout-template-catalog-invariants.ts",
     "check:workout-template-guardrails": "npx tsx scripts/check-workout-template-guardrails.ts",
     "import-athlete-training-baselines": "npx tsx scripts/import-athlete-training-baselines.ts",
-    "check:athlete-training-baselines": "npx tsx scripts/check-athlete-training-baselines.ts"
+    "check:athlete-training-baselines": "npx tsx scripts/check-athlete-training-baselines.ts",
+    "check:tp-signals-full-output": "npx tsx scripts/check-tp-signals-full-output.ts",
+    "diagnose-tp-signals-stale-health-after-completion": "npx tsx scripts/diagnose-tp-signals-stale-health-after-completion.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.3",

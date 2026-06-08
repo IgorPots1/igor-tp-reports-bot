@@ -6393,7 +6393,7 @@ function buildOperationalSignalItemFromSignal(input: {
       isEpisodeSummary: false,
       followUpState: followUp.state,
       lifecycleDisplayState,
-      text: compactOperationalSignalText(scheduleText, 95),
+      text: compactOperationalSignalText(scheduleText, 200),
       requiresCoachReview: effective.effectiveRequiresCoachReview,
       hiddenReason: null,
     };
@@ -6426,7 +6426,7 @@ function buildOperationalSignalItemFromSignal(input: {
     getSignalMetadataString(signal.metadata, "reason") ??
       getSignalMetadataString(signal.metadata, "summary") ??
       "",
-    75
+    160
   );
   const genericBase = `${typeLabel}${windowSuffix}`;
   if (effective.effectiveSignalType === "health_issue_resolved" || genericBase === "самочувствие") {
@@ -6536,7 +6536,7 @@ function mergeOperationalSignalEpisodeItems(
       ...preferred,
       text: compactOperationalSignalText(
         buildCanonicalEpisodeScheduleDisplayText({ signals: episodeSignals }),
-        95
+        200
       ),
     };
   }
@@ -6761,6 +6761,70 @@ export function formatTrainingPeaksOperationalSignalsForTelegram(
   return lines.join("\n");
 }
 
+const TELEGRAM_SIGNALS_CHUNK_LIMIT = 3500;
+
+export function formatTrainingPeaksOperationalSignalsForTelegramMultiMessage(
+  snapshot: TrainingPeaksOperationalSignalsSnapshot
+): string[] {
+  const nonEmptySections = snapshot.sections.filter((section) => section.items.length > 0);
+  if (nonEmptySections.length === 0) {
+    return ["📍 Сигналы\n\nАктивных сигналов не найдено."];
+  }
+
+  const blocks: { sectionTitle: string; line: string }[] = [];
+  for (const section of nonEmptySections) {
+    const visibleItems = section.items.filter((item) =>
+      !shouldSuppressLegacyScheduleDuplicate({
+        item,
+        allItems: section.items,
+      })
+    );
+    for (const item of visibleItems) {
+      blocks.push({ sectionTitle: section.title, line: toOperationalSignalDisplayLine(item) });
+    }
+  }
+
+  if (blocks.length === 0) {
+    return ["📍 Сигналы\n\nАктивных сигналов не найдено."];
+  }
+
+  const chunks: string[] = [];
+  let currentChunk = "📍 Сигналы";
+  let currentSection = "";
+
+  for (const block of blocks) {
+    let addition = "";
+    if (block.sectionTitle !== currentSection) {
+      addition = `\n\n${block.sectionTitle}\n\n${block.line}`;
+      currentSection = block.sectionTitle;
+    } else {
+      addition = `\n${block.line}`;
+    }
+
+    if (currentChunk.length + addition.length > TELEGRAM_SIGNALS_CHUNK_LIMIT && currentChunk !== "📍 Сигналы") {
+      chunks.push(currentChunk);
+      currentChunk = "📍 Сигналы (продолжение)";
+      addition = `\n\n${block.sectionTitle}\n\n${block.line}`;
+      currentSection = block.sectionTitle;
+    }
+    currentChunk += addition;
+  }
+  if (currentChunk.length > 0) {
+    chunks.push(currentChunk);
+  }
+
+  if (chunks.length <= 1) {
+    return chunks;
+  }
+
+  return chunks.map((chunk, index) =>
+    chunk.replace(
+      /^📍 Сигналы(?:\s*\(продолжение\))?/u,
+      `📍 Сигналы ${index + 1}/${chunks.length}`
+    )
+  );
+}
+
 export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
   signals: TrainingPeaksStudentOperationalSignal[];
   studentNameById?: ReadonlyMap<string, string | null>;
@@ -6770,7 +6834,7 @@ export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
   activeMoveActions?: readonly TrainingPeaksAction[];
 }): TrainingPeaksOperationalSignalsSnapshot {
   const scope = input.scope ?? "all";
-  const maxItems = Math.max(5, Math.min(30, Math.floor(input.limit ?? 20)));
+  const maxItems = Math.max(5, Math.min(100, Math.floor(input.limit ?? 20)));
   const studentNameById = input.studentNameById ?? new Map<string, string | null>();
 
   const episodeScheduleIndex = buildEpisodeScheduleContextIndex(input.signals);
@@ -6829,7 +6893,7 @@ export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
           ...item,
           text: compactOperationalSignalText(
             buildCanonicalEpisodeScheduleDisplayText({ signals: episodeSignals }),
-            95
+            200
           ),
         });
       } else {
