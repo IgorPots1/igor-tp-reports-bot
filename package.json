@@ -145,6 +145,7 @@
     "check:move-phrase-coverage": "npx tsx scripts/check-move-phrase-coverage.ts",
     "check:group-workout-report-intake": "npx tsx scripts/check-group-workout-report-intake.ts",
     "check-trainingpeaks-reply-draft-communication-profile": "npx tsx scripts/check-trainingpeaks-reply-draft-communication-profile.ts",
+    "check:telegram-formality-reply-draft-usage": "npx tsx scripts/check-telegram-formality-reply-draft-usage.ts",
     "check:communication-style": "npx tsx scripts/diagnose-student-communication-style.ts",
     "seed-workout-template-catalog": "npx tsx scripts/seed-workout-template-catalog.ts",
     "seed-workout-template-guardrails": "npx tsx scripts/seed-workout-template-guardrails.ts",
