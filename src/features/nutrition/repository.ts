@@ -292,8 +292,12 @@ export type CreateNutritionWeeklyAnalysisInput = {
   coachEdits?: string | null;
 };
 
+export type NutritionDashboardViewMode = "test" | "all" | "not-in-test";
+
 export type NutritionDashboardFilters = {
+  viewMode?: NutritionDashboardViewMode;
   active?: boolean;
+  /** @deprecated use viewMode=test instead */
   enabledNutrition?: boolean;
   statuses?: NutritionReportStatus[];
   analysisStatuses?: NutritionWeeklyAnalysisStatus[];
@@ -809,7 +813,7 @@ async function getDailyMacroCountsByStudent(studentIds: string[]): Promise<Map<s
   return map;
 }
 
-async function getNutritionProfilesByStudent(studentIds: string[]): Promise<Map<string, NutritionStudentProfile>> {
+export async function getNutritionProfilesByStudent(studentIds: string[]): Promise<Map<string, NutritionStudentProfile>> {
   if (studentIds.length === 0) {
     return new Map();
   }
@@ -902,11 +906,15 @@ export async function listNutritionDashboardRows(
     };
   });
 
+  const viewMode = filters.viewMode ?? "test";
+  if (viewMode === "test") {
+    rows = rows.filter((row) => row.nutritionEnabled);
+  } else if (viewMode === "not-in-test") {
+    rows = rows.filter((row) => !row.nutritionEnabled);
+  }
+
   if (filters.active === true) {
     rows = rows.filter((row) => row.isActive);
-  }
-  if (filters.enabledNutrition === true) {
-    rows = rows.filter((row) => row.nutritionEnabled);
   }
   if (filters.statuses && filters.statuses.length > 0) {
     rows = rows.filter((row) => row.lastReportStatus !== null && filters.statuses?.includes(row.lastReportStatus));

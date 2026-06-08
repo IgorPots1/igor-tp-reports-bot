@@ -108,6 +108,35 @@ export async function saveNutritionProfileAction(formData: FormData): Promise<vo
   redirect(withNotice(redirectTo, "notice", "Профиль питания сохранён."));
 }
 
+export async function setNutritionEnabledAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+
+  const enabled = parseBoolean(getRequiredFormValue(formData, "enabled"), false);
+
+  try {
+    const { getNutritionStudentProfile } = await import("@/features/nutrition/repository");
+    const existing = await getNutritionStudentProfile(studentId);
+    await saveNutritionProfileActionData({
+      studentId,
+      enabled,
+      goal: existing?.goal ?? null,
+      trackingApp: existing?.trackingApp ?? null,
+      currentWeightKg: existing?.currentWeightKg ?? null,
+      toleranceNotes: existing?.toleranceNotes ?? null,
+      coachNotes: existing?.coachNotes ?? null,
+    });
+  } catch (error) {
+    revalidateNutritionPaths(studentId);
+    const message = error instanceof Error ? error.message : "Не удалось изменить статус питания.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+
+  revalidateNutritionPaths(studentId);
+  redirect(withNotice(redirectTo, "notice", enabled ? "Ученик включён в тест питания." : "Ученик выключен из теста питания."));
+}
+
 export async function addNutritionWeightAction(formData: FormData): Promise<void> {
   const studentId = getRequiredFormValue(formData, "studentId");
   const redirectTo = getRequiredFormValue(formData, "redirectTo");

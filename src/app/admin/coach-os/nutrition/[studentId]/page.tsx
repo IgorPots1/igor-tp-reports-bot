@@ -174,10 +174,10 @@ export default async function CoachOsNutritionStudentCardPage({
             <input type="hidden" name="studentId" value={studentId} />
             <input type="hidden" name="redirectTo" value={`/admin/coach-os/nutrition/${studentId}`} />
             <label className="admin-form-field">
-              <span>Включено</span>
+              <span>Питание</span>
               <select name="enabled" className="admin-input" defaultValue={card.profile?.enabled ? "true" : "false"}>
-                <option value="false">Нет</option>
-                <option value="true">Да</option>
+                <option value="false">Выключено</option>
+                <option value="true">Включено</option>
               </select>
             </label>
             <label className="admin-form-field">

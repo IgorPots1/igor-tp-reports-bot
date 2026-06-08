@@ -7,7 +7,7 @@ export const NUTRITION_REPORT_STATUS_LABELS: Record<string, string> = {
   parsed: "разобран",
   insufficient: "мало данных",
   needs_review: "нужна проверка",
-  ready_for_analysis: "готов к анализу",
+  ready_for_analysis: "готово к разбору",
   approved_for_copy: "одобрен для копии",
 };
 
@@ -73,10 +73,14 @@ export const NUTRITION_TP_CACHE_STATUS_LABELS: Record<"ok" | "empty" | "stale", 
 
 export function formatNutritionStatus(status: string | null | undefined, kind: "report" | "analysis"): string {
   if (!status) {
-    return "—";
+    return kind === "report" ? "нет отчёта" : "—";
   }
   const labels = kind === "report" ? NUTRITION_REPORT_STATUS_LABELS : NUTRITION_ANALYSIS_STATUS_LABELS;
   return labels[status] ?? status;
+}
+
+export function formatNutritionCohortStatus(enabled: boolean): string {
+  return enabled ? "в тесте питания" : "не включён";
 }
 
 export function formatNutritionNextAction(action: string): string {
