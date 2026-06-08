@@ -15,6 +15,20 @@ import {
   getNutritionAdminStudentCard,
   parseNutritionManualMacros,
 } from "@/features/nutrition/admin";
+import {
+  formatNutritionConflictFlags,
+  formatNutritionContextItemType,
+  formatNutritionDoNotSendReason,
+  formatNutritionEnabled,
+  formatNutritionFormality,
+  formatNutritionFormalitySource,
+  formatNutritionStatus,
+  formatNutritionTone,
+  formatNutritionTpCacheNote,
+  formatNutritionTpCacheStatus,
+  NUTRITION_CONTEXT_ITEM_TYPE_LABELS,
+} from "@/features/nutrition/admin-labels";
+import type { NutritionContextItemType } from "@/features/nutrition/repository";
 
 type NutritionStudentCardPageProps = {
   params: Promise<{ studentId: string }>;
@@ -51,8 +65,10 @@ function asStringArray(value: unknown): string[] {
 
 function formatDoNotSendReasons(safetyFlags: Record<string, unknown>): string[] {
   const hardFlags = asStringArray(safetyFlags.hard_flags);
-  return hardFlags.map((flag) => `manual_review_required:${flag}`);
+  return hardFlags.map((flag) => formatNutritionDoNotSendReason(`manual_review_required:${flag}`));
 }
+
+const CONTEXT_ITEM_TYPES = Object.keys(NUTRITION_CONTEXT_ITEM_TYPE_LABELS) as NutritionContextItemType[];
 
 export default async function CoachOsNutritionStudentCardPage({
   params,
@@ -87,19 +103,19 @@ export default async function CoachOsNutritionStudentCardPage({
     : null;
 
   return (
-    <section className="admin-section">
+    <section className="admin-section admin-nutrition-page">
       <div className="admin-section-header">
         <div>
           <Link className="admin-backlink" href="/admin/coach-os/nutrition">
-            ← Nutrition dashboard
+            ← Питание
           </Link>
-          <h2>Nutrition Card · {card.student.studentName}</h2>
+          <h2>Карточка питания · {card.student.studentName}</h2>
           <p className="admin-muted">
             {card.student.studentId} · {card.student.id}
           </p>
         </div>
         <span className={`admin-badge ${card.student.isActive ? "admin-badge-success" : "admin-badge-warning"}`}>
-          {card.student.isActive ? "Active" : "Archived"}
+          {card.student.isActive ? "Активен" : "Архив"}
         </span>
       </div>
 
@@ -109,116 +125,112 @@ export default async function CoachOsNutritionStudentCardPage({
 
       <div className="admin-grid admin-grid-student-detail">
         <article className="admin-card admin-card-compact">
-          <h3>Student summary</h3>
+          <h3>Сводка</h3>
           <dl className="admin-meta-list admin-meta-list-compact">
             <div>
-              <dt>Weekly reports</dt>
-              <dd>{card.student.weeklyReportEnabled ? "Enabled" : "Disabled"}</dd>
+              <dt>Недельные отчёты</dt>
+              <dd>{formatNutritionEnabled(card.student.weeklyReportEnabled)}</dd>
             </div>
             <div>
-              <dt>Telegram delivery</dt>
-              <dd>{card.student.telegramDeliveryEnabled ? "Enabled" : "Disabled"}</dd>
+              <dt>Telegram</dt>
+              <dd>{formatNutritionEnabled(card.student.telegramDeliveryEnabled)}</dd>
             </div>
             <div>
-              <dt>Updated</dt>
+              <dt>Обновлено</dt>
               <dd>{formatIsoDate(card.student.updatedAt)}</dd>
             </div>
           </dl>
         </article>
 
         <article className="admin-card admin-card-compact">
-          <h3>Communication profile</h3>
+          <h3>Стиль общения</h3>
           <dl className="admin-meta-list admin-meta-list-compact">
             <div>
-              <dt>Formality</dt>
-              <dd>{card.context.resolvedCommunicationProfile.formality}</dd>
+              <dt>Формальность</dt>
+              <dd>{formatNutritionFormality(card.context.resolvedCommunicationProfile.formality)}</dd>
             </div>
             <div>
-              <dt>Source</dt>
-              <dd>{card.context.resolvedCommunicationProfile.formalitySource}</dd>
+              <dt>Источник</dt>
+              <dd>{formatNutritionFormalitySource(card.context.resolvedCommunicationProfile.formalitySource)}</dd>
             </div>
             <div>
-              <dt>Tone</dt>
-              <dd>{card.context.resolvedCommunicationProfile.tone ?? "—"}</dd>
+              <dt>Тон</dt>
+              <dd>{formatNutritionTone(card.context.resolvedCommunicationProfile.tone)}</dd>
             </div>
             <div>
-              <dt>Preferred greeting</dt>
+              <dt>Приветствие</dt>
               <dd>{card.context.resolvedCommunicationProfile.preferredGreeting ?? "—"}</dd>
             </div>
             <div>
-              <dt>Conflict flags</dt>
-              <dd>
-                {card.context.resolvedCommunicationProfile.conflictFlags.length > 0
-                  ? card.context.resolvedCommunicationProfile.conflictFlags.join(", ")
-                  : "none"}
-              </dd>
+              <dt>Конфликты</dt>
+              <dd>{formatNutritionConflictFlags(card.context.resolvedCommunicationProfile.conflictFlags)}</dd>
             </div>
           </dl>
         </article>
 
-        <article className="admin-card">
-          <h3>Nutrition profile</h3>
+        <article className="admin-card admin-card-compact">
+          <h3>Профиль питания</h3>
           <form className="admin-form-stack" action={saveNutritionProfileAction}>
             <input type="hidden" name="studentId" value={studentId} />
             <input type="hidden" name="redirectTo" value={`/admin/coach-os/nutrition/${studentId}`} />
             <label className="admin-form-field">
-              <span>Enabled</span>
+              <span>Включено</span>
               <select name="enabled" className="admin-input" defaultValue={card.profile?.enabled ? "true" : "false"}>
-                <option value="false">No</option>
-                <option value="true">Yes</option>
+                <option value="false">Нет</option>
+                <option value="true">Да</option>
               </select>
             </label>
             <label className="admin-form-field">
-              <span>Goal</span>
+              <span>Цель</span>
               <input className="admin-input" name="goal" defaultValue={card.profile?.goal ?? ""} />
             </label>
             <label className="admin-form-field">
-              <span>Tracking app</span>
+              <span>Приложение</span>
               <input className="admin-input" name="trackingApp" defaultValue={card.profile?.trackingApp ?? ""} />
             </label>
             <label className="admin-form-field">
-              <span>Current weight (kg)</span>
+              <span>Текущий вес (кг)</span>
               <input className="admin-input" name="currentWeightKg" type="number" step="0.1" defaultValue={card.profile?.currentWeightKg ?? ""} />
             </label>
             <label className="admin-form-field">
-              <span>Tolerance notes</span>
-              <textarea className="admin-textarea admin-textarea-compact" name="toleranceNotes" rows={3} defaultValue={card.profile?.toleranceNotes ?? ""} />
+              <span>Заметки по переносимости</span>
+              <textarea className="admin-textarea admin-textarea-compact" name="toleranceNotes" rows={2} defaultValue={card.profile?.toleranceNotes ?? ""} />
             </label>
             <label className="admin-form-field">
-              <span>Coach notes</span>
-              <textarea className="admin-textarea admin-textarea-compact" name="coachNotes" rows={3} defaultValue={card.profile?.coachNotes ?? ""} />
+              <span>Заметки тренера</span>
+              <textarea className="admin-textarea admin-textarea-compact" name="coachNotes" rows={2} defaultValue={card.profile?.coachNotes ?? ""} />
             </label>
-            <FormActionButton className="admin-button" pendingText="Saving...">
-              Save nutrition profile
+            <FormActionButton className="admin-button" pendingText="Сохраняю…">
+              Сохранить профиль
             </FormActionButton>
           </form>
         </article>
 
-        <article className="admin-card">
-          <h3>Weight logs</h3>
+        <article className="admin-card admin-card-compact">
+          <h3>Вес</h3>
           <form className="admin-form-inline" action={addNutritionWeightAction}>
             <input type="hidden" name="studentId" value={studentId} />
             <input type="hidden" name="redirectTo" value={`/admin/coach-os/nutrition/${studentId}`} />
-            <input className="admin-input" name="weightKg" type="number" step="0.1" placeholder="kg" required />
+            <input className="admin-input" name="weightKg" type="number" step="0.1" placeholder="кг" required />
             <input className="admin-input" name="source" defaultValue="manual" />
-            <FormActionButton className="admin-button" pendingText="Adding...">
-              Add weight
+            <FormActionButton className="admin-button" pendingText="Добавляю…">
+              Добавить
             </FormActionButton>
           </form>
           <div className="admin-table-wrap">
             <table className="admin-table admin-table-compact">
               <thead>
                 <tr>
-                  <th>Logged at</th>
-                  <th>Weight</th>
-                  <th>Source</th>
+                  <th>Дата</th>
+                  <th>Вес</th>
+                  <th>Источник</th>
                 </tr>
               </thead>
               <tbody>
                 {card.weightLogs.length === 0 ? (
                   <tr>
                     <td colSpan={3} className="admin-empty-cell">
-                      No weight logs yet.
+                      Записей веса пока нет.
                     </td>
                   </tr>
                 ) : (
@@ -235,46 +247,43 @@ export default async function CoachOsNutritionStudentCardPage({
           </div>
         </article>
 
-        <article className="admin-card">
-          <h3>Nutrition context notes</h3>
+        <article className="admin-card admin-card-compact">
+          <h3>Контекст питания</h3>
           <form className="admin-form-inline" action={addNutritionContextNoteAction}>
             <input type="hidden" name="studentId" value={studentId} />
             <input type="hidden" name="redirectTo" value={`/admin/coach-os/nutrition/${studentId}`} />
             <select className="admin-input" name="itemType" defaultValue="note">
-              <option value="preference">preference</option>
-              <option value="dislike">dislike</option>
-              <option value="tolerance">tolerance</option>
-              <option value="energy">energy</option>
-              <option value="hunger">hunger</option>
-              <option value="gi">gi</option>
-              <option value="training_food_experience">training_food_experience</option>
-              <option value="note">note</option>
+              {CONTEXT_ITEM_TYPES.map((itemType) => (
+                <option key={itemType} value={itemType}>
+                  {formatNutritionContextItemType(itemType)}
+                </option>
+              ))}
             </select>
-            <input className="admin-input" name="text" placeholder="Context note..." required />
-            <FormActionButton className="admin-button" pendingText="Adding...">
-              Add context note
+            <input className="admin-input" name="text" placeholder="Заметка…" required />
+            <FormActionButton className="admin-button" pendingText="Добавляю…">
+              Добавить
             </FormActionButton>
           </form>
           <div className="admin-table-wrap">
             <table className="admin-table admin-table-compact">
               <thead>
                 <tr>
-                  <th>Type</th>
-                  <th>Text</th>
-                  <th>Priority</th>
+                  <th>Тип</th>
+                  <th>Текст</th>
+                  <th>Приоритет</th>
                 </tr>
               </thead>
               <tbody>
                 {card.contextItems.length === 0 ? (
                   <tr>
                     <td colSpan={3} className="admin-empty-cell">
-                      No nutrition context notes yet.
+                      Заметок пока нет.
                     </td>
                   </tr>
                 ) : (
                   card.contextItems.map((item) => (
                     <tr key={item.id}>
-                      <td>{item.itemType}</td>
+                      <td>{formatNutritionContextItemType(item.itemType)}</td>
                       <td>{item.text}</td>
                       <td>{item.priority}</td>
                     </tr>
@@ -285,26 +294,28 @@ export default async function CoachOsNutritionStudentCardPage({
           </div>
         </article>
 
-        <article className="admin-card">
-          <h3>Manual macro input</h3>
+        <article className="admin-card admin-card-compact admin-nutrition-card-wide">
+          <h3>Ручной ввод макросов</h3>
           <form className="admin-form-stack" action={parseNutritionManualMacrosAction}>
             <input type="hidden" name="studentId" value={studentId} />
             <input type="hidden" name="redirectTo" value={`/admin/coach-os/nutrition/${studentId}`} />
+            <div className="admin-nutrition-kv-grid">
+              <label className="admin-form-field">
+                <span>Неделя с</span>
+                <input className="admin-input" type="date" name="weekFrom" defaultValue={weekFrom} />
+              </label>
+              <label className="admin-form-field">
+                <span>Неделя по</span>
+                <input className="admin-input" type="date" name="weekTo" defaultValue={weekTo} />
+              </label>
+            </div>
             <label className="admin-form-field">
-              <span>Week from</span>
-              <input className="admin-input" type="date" name="weekFrom" defaultValue={weekFrom} />
-            </label>
-            <label className="admin-form-field">
-              <span>Week to</span>
-              <input className="admin-input" type="date" name="weekTo" defaultValue={weekTo} />
-            </label>
-            <label className="admin-form-field">
-              <span>Raw manual macro text</span>
-              <textarea className="admin-textarea" name="rawText" rows={6} defaultValue={rawText} />
+              <span>Текст макросов</span>
+              <textarea className="admin-textarea admin-textarea-compact" name="rawText" rows={4} defaultValue={rawText} />
             </label>
             <div className="admin-card-actions admin-card-actions-compact">
-              <FormActionButton className="admin-button admin-button-secondary" pendingText="Parsing...">
-                Parse manual macros
+              <FormActionButton className="admin-button admin-button-secondary" pendingText="Разбираю…">
+                Разобрать макросы
               </FormActionButton>
             </div>
           </form>
@@ -315,8 +326,8 @@ export default async function CoachOsNutritionStudentCardPage({
             <input type="hidden" name="weekTo" value={weekTo} />
             <input type="hidden" name="rawText" value={rawText} />
             <input type="hidden" name="redirectTo" value={`/admin/coach-os/nutrition/${studentId}`} />
-            <FormActionButton className="admin-button" pendingText="Saving...">
-              Confirm/save parsed macros
+            <FormActionButton className="admin-button" pendingText="Сохраняю…" disabled={!rawText}>
+              Сохранить разбор
             </FormActionButton>
           </form>
 
@@ -324,23 +335,23 @@ export default async function CoachOsNutritionStudentCardPage({
             <>
               <div className="admin-card-actions admin-card-actions-compact">
                 <span className={getBadgeClass(parsedPreview.status)}>
-                  status: {parsedPreview.status}
+                  {formatNutritionStatus(parsedPreview.status, "report")}
                 </span>
                 <span className="admin-muted">
-                  parsed days: {parsedPreview.quality.parsedDays}, low confidence: {parsedPreview.quality.lowConfidenceDays}
+                  дней: {parsedPreview.quality.parsedDays}, низкая уверенность: {parsedPreview.quality.lowConfidenceDays}
                 </span>
               </div>
               <div className="admin-table-wrap">
                 <table className="admin-table admin-table-compact">
                   <thead>
                     <tr>
-                      <th>Day</th>
-                      <th>kcal</th>
-                      <th>Protein</th>
-                      <th>Fat</th>
-                      <th>Carbs</th>
-                      <th>Confidence</th>
-                      <th>Notes</th>
+                      <th>День</th>
+                      <th>ккал</th>
+                      <th>Белки</th>
+                      <th>Жиры</th>
+                      <th>Углев.</th>
+                      <th>Уверен.</th>
+                      <th>Заметки</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -362,50 +373,50 @@ export default async function CoachOsNutritionStudentCardPage({
           )}
         </article>
 
-        <article className="admin-card">
-          <h3>TrainingPeaks context from cache</h3>
-          <div className="admin-summary-grid">
-            <article className="admin-card admin-summary-card">
-              <span className="admin-summary-label">Past week cache</span>
-              <strong className="admin-summary-value">{card.context.tpPastWeek.cacheStatus}</strong>
-            </article>
-            <article className="admin-card admin-summary-card">
-              <span className="admin-summary-label">Next week cache</span>
-              <strong className="admin-summary-value">{card.context.tpNextWeek.cacheStatus}</strong>
-            </article>
-            <article className="admin-card admin-summary-card">
-              <span className="admin-summary-label">Past key sessions</span>
-              <strong className="admin-summary-value">{card.context.tpPastWeek.keyWorkouts.length}</strong>
-            </article>
-            <article className="admin-card admin-summary-card">
-              <span className="admin-summary-label">Next key sessions</span>
-              <strong className="admin-summary-value">{card.context.tpNextWeek.keyWorkouts.length}</strong>
-            </article>
+        <article className="admin-card admin-card-compact">
+          <h3>Кэш TrainingPeaks</h3>
+          <div className="admin-nutrition-kv-grid">
+            <dl className="admin-nutrition-kv">
+              <dt>Прошлая неделя</dt>
+              <dd>{formatNutritionTpCacheStatus(card.context.tpPastWeek.cacheStatus)}</dd>
+            </dl>
+            <dl className="admin-nutrition-kv">
+              <dt>Следующая неделя</dt>
+              <dd>{formatNutritionTpCacheStatus(card.context.tpNextWeek.cacheStatus)}</dd>
+            </dl>
+            <dl className="admin-nutrition-kv">
+              <dt>Ключ. тренировки (прош.)</dt>
+              <dd>{card.context.tpPastWeek.keyWorkouts.length}</dd>
+            </dl>
+            <dl className="admin-nutrition-kv">
+              <dt>Ключ. тренировки (след.)</dt>
+              <dd>{card.context.tpNextWeek.keyWorkouts.length}</dd>
+            </dl>
           </div>
-          <p className="admin-muted">{card.context.tpPastWeek.cacheStatusNote}</p>
-          <p className="admin-muted">{card.context.tpNextWeek.cacheStatusNote}</p>
+          <p className="admin-muted">{formatNutritionTpCacheNote(card.context.tpPastWeek.cacheStatusNote)}</p>
+          <p className="admin-muted">{formatNutritionTpCacheNote(card.context.tpNextWeek.cacheStatusNote)}</p>
         </article>
 
-        <article className="admin-card">
-          <h3>Saved reports (this week)</h3>
-          <p className="admin-muted">
-            Each save creates a new report row. Older reports are kept; macros are scoped per report.
+        <article className="admin-card admin-card-compact">
+          <h3>Сохранённые отчёты</h3>
+          <p className="admin-muted admin-nutrition-helper">
+            {weekFrom} — {weekTo}. Каждое сохранение — новая строка.
           </p>
           <div className="admin-table-wrap">
             <table className="admin-table admin-table-compact">
               <thead>
                 <tr>
-                  <th>Created</th>
-                  <th>Status</th>
-                  <th>Report ID</th>
-                  <th>Source</th>
+                  <th>Создан</th>
+                  <th>Статус</th>
+                  <th>ID</th>
+                  <th>Источник</th>
                 </tr>
               </thead>
               <tbody>
                 {card.reports.length === 0 ? (
                   <tr>
                     <td colSpan={4} className="admin-empty-cell">
-                      No saved reports for {weekFrom} — {weekTo}.
+                      Отчётов за период нет.
                     </td>
                   </tr>
                 ) : (
@@ -413,10 +424,10 @@ export default async function CoachOsNutritionStudentCardPage({
                     <tr key={report.id}>
                       <td>{formatIsoDate(report.createdAt)}</td>
                       <td>
-                        <span className={getBadgeClass(report.status)}>{report.status}</span>
+                        <span className={getBadgeClass(report.status)}>{formatNutritionStatus(report.status, "report")}</span>
                       </td>
                       <td>
-                        <code>{report.id}</code>
+                        <code className="admin-nutrition-code">{report.id}</code>
                       </td>
                       <td>{report.sourceType}</td>
                     </tr>
@@ -427,10 +438,10 @@ export default async function CoachOsNutritionStudentCardPage({
           </div>
         </article>
 
-        <article className="admin-card">
-          <h3>Generate weekly review</h3>
-          <p className="admin-muted">
-            Generates internal analysis and a copy-only draft. Hard safety flags block athlete draft text.
+        <article className="admin-card admin-card-compact">
+          <h3>Недельный обзор</h3>
+          <p className="admin-muted admin-nutrition-helper">
+            Внутренний анализ и черновик для копирования. Жёсткие флаги блокируют текст для ученика.
           </p>
           <form className="admin-form-stack" action={generateNutritionWeeklyReviewAction}>
             <input type="hidden" name="studentId" value={studentId} />
@@ -438,75 +449,76 @@ export default async function CoachOsNutritionStudentCardPage({
             <input type="hidden" name="weekTo" value={weekTo} />
             <input type="hidden" name="redirectTo" value={`/admin/coach-os/nutrition/${studentId}`} />
             <label className="admin-form-field">
-              <span>Nutrition report</span>
+              <span>Отчёт питания</span>
               {card.reports.length > 0 ? (
                 <select className="admin-input" name="reportId" required defaultValue={card.reports[0]?.id}>
                   {card.reports.map((report) => (
                     <option key={report.id} value={report.id}>
-                      {formatIsoDate(report.createdAt)} · {report.status} · {report.id.slice(0, 8)}
+                      {formatIsoDate(report.createdAt)} · {formatNutritionStatus(report.status, "report")} · {report.id.slice(0, 8)}
                     </option>
                   ))}
                 </select>
               ) : (
-                <input className="admin-input" name="reportId" placeholder="Save a report first" required disabled />
+                <input className="admin-input" name="reportId" placeholder="Сначала сохраните отчёт" required disabled />
               )}
             </label>
-            <FormActionButton className="admin-button" pendingText="Generating..." disabled={card.reports.length === 0}>
-              Generate weekly review
+            <FormActionButton className="admin-button" pendingText="Генерирую…" disabled={card.reports.length === 0}>
+              Сгенерировать обзор
             </FormActionButton>
           </form>
         </article>
 
-        <article className="admin-card">
-          <h3>Saved weekly review (copy-only)</h3>
+        <article className="admin-card admin-card-compact admin-nutrition-card-wide">
+          <h3>Сохранённый обзор (только копия)</h3>
           {!card.weeklyAnalysis ? (
-            <p className="admin-muted">No weekly review saved for {weekFrom} — {weekTo} yet.</p>
+            <p className="admin-muted">Обзора за {weekFrom} — {weekTo} пока нет.</p>
           ) : (
             <div className="admin-form-stack">
               <div className="admin-card-actions admin-card-actions-compact">
-                <span className={getBadgeClass(card.weeklyAnalysis.status)}>{card.weeklyAnalysis.status}</span>
-                <span className="admin-muted">updated {formatIsoDate(card.weeklyAnalysis.updatedAt)}</span>
+                <span className={getBadgeClass(card.weeklyAnalysis.status)}>
+                  {formatNutritionStatus(card.weeklyAnalysis.status, "analysis")}
+                </span>
+                <span className="admin-muted">обновлён {formatIsoDate(card.weeklyAnalysis.updatedAt)}</span>
               </div>
 
               {card.weeklyAnalysis.status === "blocked_safety" && (
                 <div className="admin-alert admin-alert-error">
-                  <strong>Safety block active.</strong> Athlete-facing draft is suppressed. Review hard flags and do-not-send
-                  reasons before any manual copy.
+                  <strong>Блок безопасности.</strong> Черновик для ученика скрыт. Проверьте флаги перед ручным копированием.
                 </div>
               )}
 
               <section>
-                <h4>Internal summary</h4>
+                <h4>Внутренняя сводка</h4>
                 <textarea
-                  className="admin-textarea admin-textarea-compact"
-                  rows={6}
+                  className="admin-textarea admin-textarea-compact admin-textarea-readonly"
+                  rows={4}
                   readOnly
                   value={JSON.stringify(card.weeklyAnalysis.internalSummary, null, 2)}
                 />
               </section>
 
               <section>
-                <h4>Nutrition summary</h4>
+                <h4>Сводка по питанию</h4>
                 <textarea
-                  className="admin-textarea admin-textarea-compact"
-                  rows={4}
+                  className="admin-textarea admin-textarea-compact admin-textarea-readonly"
+                  rows={3}
                   readOnly
                   value={JSON.stringify(card.weeklyAnalysis.nutritionSummary, null, 2)}
                 />
               </section>
 
               <section>
-                <h4>Safety flags</h4>
+                <h4>Флаги безопасности</h4>
                 <textarea
-                  className="admin-textarea admin-textarea-compact"
-                  rows={4}
+                  className="admin-textarea admin-textarea-compact admin-textarea-readonly"
+                  rows={3}
                   readOnly
                   value={JSON.stringify(card.weeklyAnalysis.safetyFlags, null, 2)}
                 />
                 {formatDoNotSendReasons(card.weeklyAnalysis.safetyFlags).length > 0 && (
                   <div className="admin-meta-list admin-meta-list-compact">
                     <div>
-                      <dt>Do-not-send reasons</dt>
+                      <dt>Причины не отправлять</dt>
                       <dd>{formatDoNotSendReasons(card.weeklyAnalysis.safetyFlags).join(", ")}</dd>
                     </div>
                   </div>
@@ -514,16 +526,16 @@ export default async function CoachOsNutritionStudentCardPage({
               </section>
 
               <section>
-                <h4>Athlete draft (copy-only)</h4>
+                <h4>Черновик для ученика</h4>
                 {card.weeklyAnalysis.athleteMessageDraft ? (
                   <textarea
-                    className="admin-textarea"
-                    rows={8}
+                    className="admin-textarea admin-textarea-compact admin-textarea-readonly"
+                    rows={6}
                     readOnly
                     value={card.weeklyAnalysis.athleteMessageDraft}
                   />
                 ) : (
-                  <p className="admin-muted">Athlete draft suppressed (safety block or insufficient data).</p>
+                  <p className="admin-muted">Черновик скрыт (блок безопасности или мало данных).</p>
                 )}
               </section>
             </div>

@@ -2,6 +2,12 @@ import Link from "next/link";
 
 import { getSingleSearchParam } from "@/app/admin/lib";
 import { listNutritionAdminDashboardRows } from "@/features/nutrition/admin";
+import {
+  formatNutritionNextAction,
+  formatNutritionSafetyFlag,
+  formatNutritionStatus,
+  formatNutritionYesNo,
+} from "@/features/nutrition/admin-labels";
 
 type NutritionDashboardPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
@@ -52,73 +58,73 @@ export default async function CoachOsNutritionDashboardPage({
   const enabledCount = rows.filter((row) => row.nutritionEnabled).length;
 
   return (
-    <section className="admin-section">
+    <section className="admin-section admin-nutrition-page">
       <div className="admin-section-header">
         <div>
-          <h2>Coach OS Nutrition</h2>
+          <h2>Питание · Coach OS</h2>
           <p className="admin-muted">
-            Admin-only nutrition workflow for weekly review drafts. No auto-send paths.
+            Админка недельных обзоров питания. Только копирование черновика, без автоотправки.
           </p>
         </div>
-        <span className="admin-badge admin-badge-outline">Copy-only workflow</span>
+        <span className="admin-badge admin-badge-outline">Только копия</span>
       </div>
 
-      <div className="admin-summary-grid">
+      <div className="admin-summary-grid admin-summary-grid-compact">
         <article className="admin-card admin-summary-card">
-          <span className="admin-summary-label">Students</span>
+          <span className="admin-summary-label">Ученики</span>
           <strong className="admin-summary-value">{rows.length}</strong>
         </article>
         <article className="admin-card admin-summary-card">
-          <span className="admin-summary-label">Nutrition enabled</span>
+          <span className="admin-summary-label">Питание вкл.</span>
           <strong className="admin-summary-value">{enabledCount}</strong>
         </article>
         <article className="admin-card admin-summary-card">
-          <span className="admin-summary-label">Ready for analysis</span>
+          <span className="admin-summary-label">Готовы к анализу</span>
           <strong className="admin-summary-value">{readyCount}</strong>
         </article>
         <article className="admin-card admin-summary-card">
-          <span className="admin-summary-label">Needs review</span>
+          <span className="admin-summary-label">Нужна проверка</span>
           <strong className="admin-summary-value">{needsReviewCount}</strong>
         </article>
         <article className="admin-card admin-summary-card">
-          <span className="admin-summary-label">Safety blocked</span>
+          <span className="admin-summary-label">Блок безопасности</span>
           <strong className="admin-summary-value">{blockedCount}</strong>
         </article>
       </div>
 
-      <div className="admin-card">
+      <div className="admin-card admin-card-compact">
         <div className="admin-tabs">
           <Link className={`admin-tab ${active ? "admin-tab-active" : ""}`} href="/admin/coach-os/nutrition?active=1">
-            Active
+            Активные
           </Link>
           <Link
             className={`admin-tab ${enabledNutrition ? "admin-tab-active" : ""}`}
             href="/admin/coach-os/nutrition?enabled=1"
           >
-            Enabled nutrition
+            Питание вкл.
           </Link>
           <Link className={`admin-tab ${safetyOnly ? "admin-tab-active" : ""}`} href="/admin/coach-os/nutrition?safety=1">
-            Safety blocked
+            Блок безопасности
           </Link>
           <Link className="admin-tab" href="/admin/coach-os/nutrition">
-            Reset
+            Сбросить
           </Link>
         </div>
       </div>
 
-      <div className="admin-card admin-table-wrap">
-        <table className="admin-table">
+      <div className="admin-card admin-card-compact admin-table-wrap">
+        <table className="admin-table admin-table-compact">
           <thead>
             <tr>
-              <th>Student</th>
-              <th>Enabled</th>
-              <th>Weight</th>
-              <th>Tracking app</th>
-              <th>Last report</th>
-              <th>Days parsed</th>
-              <th>Last analysis</th>
-              <th>Safety</th>
-              <th>Next action</th>
+              <th>Ученик</th>
+              <th>Вкл.</th>
+              <th>Вес</th>
+              <th>Приложение</th>
+              <th>Отчёт</th>
+              <th>Дней</th>
+              <th>Анализ</th>
+              <th>Безопасность</th>
+              <th>След. шаг</th>
               <th></th>
             </tr>
           </thead>
@@ -126,7 +132,7 @@ export default async function CoachOsNutritionDashboardPage({
             {rows.length === 0 ? (
               <tr>
                 <td className="admin-empty-cell" colSpan={10}>
-                  No students for selected filters.
+                  Нет учеников по выбранным фильтрам.
                 </td>
               </tr>
             ) : (
@@ -139,26 +145,32 @@ export default async function CoachOsNutritionDashboardPage({
                     </div>
                   </td>
                   <td>
-                    <span className={getBadgeClass(row.nutritionEnabled)}>{row.nutritionEnabled ? "Yes" : "No"}</span>
+                    <span className={getBadgeClass(row.nutritionEnabled)}>
+                      {formatNutritionYesNo(row.nutritionEnabled)}
+                    </span>
                   </td>
                   <td>{row.currentWeightKg ?? "—"}</td>
                   <td>{row.trackingApp ?? "—"}</td>
                   <td>
-                    <span className={getStatusBadgeClass(row.lastReportStatus)}>{row.lastReportStatus ?? "—"}</span>
+                    <span className={getStatusBadgeClass(row.lastReportStatus)}>
+                      {formatNutritionStatus(row.lastReportStatus, "report")}
+                    </span>
                   </td>
                   <td>{row.parsedDays}</td>
                   <td>
-                    <span className={getStatusBadgeClass(row.lastAnalysisStatus)}>{row.lastAnalysisStatus ?? "—"}</span>
+                    <span className={getStatusBadgeClass(row.lastAnalysisStatus)}>
+                      {formatNutritionStatus(row.lastAnalysisStatus, "analysis")}
+                    </span>
                   </td>
                   <td>
                     <span className={getBadgeClass(!row.hasSafetyFlag)}>
-                      {row.hasSafetyFlag ? "Blocked" : "Clear"}
+                      {formatNutritionSafetyFlag(row.hasSafetyFlag)}
                     </span>
                   </td>
-                  <td>{row.nextAction}</td>
+                  <td>{formatNutritionNextAction(row.nextAction)}</td>
                   <td>
                     <Link className="admin-button admin-button-secondary" href={`/admin/coach-os/nutrition/${row.studentId}`}>
-                      Open card
+                      Открыть
                     </Link>
                   </td>
                 </tr>

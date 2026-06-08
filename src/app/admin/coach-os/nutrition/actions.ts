@@ -12,6 +12,7 @@ import {
   saveNutritionManualMacros,
   saveNutritionProfileActionData,
 } from "@/features/nutrition/admin";
+import { formatNutritionStatus } from "@/features/nutrition/admin-labels";
 import type { NutritionContextItemType } from "@/features/nutrition/repository";
 import {
   ADMIN_ACCESS_COOKIE_NAME,
@@ -99,12 +100,12 @@ export async function saveNutritionProfileAction(formData: FormData): Promise<vo
     });
   } catch (error) {
     revalidateNutritionPaths(studentId);
-    const message = error instanceof Error ? error.message : "Failed to save nutrition profile.";
+    const message = error instanceof Error ? error.message : "Не удалось сохранить профиль питания.";
     redirect(withNotice(redirectTo, "error", message));
   }
 
   revalidateNutritionPaths(studentId);
-  redirect(withNotice(redirectTo, "notice", "Nutrition profile saved."));
+  redirect(withNotice(redirectTo, "notice", "Профиль питания сохранён."));
 }
 
 export async function addNutritionWeightAction(formData: FormData): Promise<void> {
@@ -115,7 +116,7 @@ export async function addNutritionWeightAction(formData: FormData): Promise<void
   try {
     const weight = parseOptionalNumber(getRequiredFormValue(formData, "weightKg"));
     if (weight === null) {
-      throw new Error("Weight is required.");
+      throw new Error("Укажите вес.");
     }
     await addNutritionWeightActionData({
       studentId,
@@ -125,12 +126,12 @@ export async function addNutritionWeightAction(formData: FormData): Promise<void
     });
   } catch (error) {
     revalidateNutritionPaths(studentId);
-    const message = error instanceof Error ? error.message : "Failed to save weight log.";
+    const message = error instanceof Error ? error.message : "Не удалось сохранить запись веса.";
     redirect(withNotice(redirectTo, "error", message));
   }
 
   revalidateNutritionPaths(studentId);
-  redirect(withNotice(redirectTo, "notice", "Weight log added."));
+  redirect(withNotice(redirectTo, "notice", "Запись веса добавлена."));
 }
 
 export async function addNutritionContextNoteAction(formData: FormData): Promise<void> {
@@ -148,12 +149,12 @@ export async function addNutritionContextNoteAction(formData: FormData): Promise
     });
   } catch (error) {
     revalidateNutritionPaths(studentId);
-    const message = error instanceof Error ? error.message : "Failed to add nutrition context note.";
+    const message = error instanceof Error ? error.message : "Не удалось добавить заметку.";
     redirect(withNotice(redirectTo, "error", message));
   }
 
   revalidateNutritionPaths(studentId);
-  redirect(withNotice(redirectTo, "notice", "Nutrition context note added."));
+  redirect(withNotice(redirectTo, "notice", "Заметка добавлена."));
 }
 
 export async function parseNutritionManualMacrosAction(formData: FormData): Promise<void> {
@@ -177,11 +178,14 @@ export async function parseNutritionManualMacrosAction(formData: FormData): Prom
     params.set("weekFrom", weekFrom);
     params.set("weekTo", weekTo);
     params.set("macroText", rawText);
-    params.set("notice", `Manual parser: ${parsed.rows.length} rows, status ${parsed.status}.`);
+    params.set(
+      "notice",
+      `Разбор: ${parsed.rows.length} дн., статус ${formatNutritionStatus(parsed.status, "report")}.`
+    );
     redirect(`${pathOnly}?${params.toString()}`);
   } catch (error) {
     revalidateNutritionPaths(studentId);
-    const message = error instanceof Error ? error.message : "Failed to parse manual macros.";
+    const message = error instanceof Error ? error.message : "Не удалось разобрать макросы.";
     redirect(withNotice(redirectTo, "error", message));
   }
 }
@@ -207,12 +211,12 @@ export async function saveNutritionManualMacrosAction(formData: FormData): Promi
       withNotice(
         redirectTo,
         "notice",
-        `Report saved (${result.report.status}), macro rows stored: ${result.macros.length}.`
+        `Отчёт сохранён (${formatNutritionStatus(result.report.status, "report")}), строк макросов: ${result.macros.length}.`
       )
     );
   } catch (error) {
     revalidateNutritionPaths(studentId);
-    const message = error instanceof Error ? error.message : "Failed to save parsed macros.";
+    const message = error instanceof Error ? error.message : "Не удалось сохранить разбор макросов.";
     redirect(withNotice(redirectTo, "error", message));
   }
 }
@@ -235,12 +239,12 @@ export async function generateNutritionWeeklyReviewAction(formData: FormData): P
     });
     revalidateNutritionPaths(studentId);
     const message = result.generated.safety_flags.blocked
-      ? "Safety block triggered: draft suppressed, manual review required."
-      : "Nutrition weekly review draft generated.";
+      ? "Блок безопасности: черновик скрыт, нужна ручная проверка."
+      : "Недельный обзор сгенерирован.";
     redirect(withNotice(redirectTo, "notice", message));
   } catch (error) {
     revalidateNutritionPaths(studentId);
-    const message = error instanceof Error ? error.message : "Failed to generate nutrition weekly review.";
+    const message = error instanceof Error ? error.message : "Не удалось сгенерировать недельный обзор.";
     redirect(withNotice(redirectTo, "error", message));
   }
 }

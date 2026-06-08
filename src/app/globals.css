@@ -787,3 +787,133 @@ code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   vertical-align: baseline;
 }
+
+.admin-nutrition-page {
+  gap: 10px;
+}
+
+.admin-nutrition-page .admin-section-header {
+  gap: 10px;
+}
+
+.admin-nutrition-page .admin-section-header h2 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.admin-nutrition-page .admin-summary-value {
+  font-size: 22px;
+  margin-top: 4px;
+}
+
+.admin-nutrition-page .admin-card h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+
+.admin-nutrition-page .admin-card h4 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: #475569;
+}
+
+.admin-nutrition-page .admin-form-stack {
+  gap: 8px;
+}
+
+.admin-nutrition-page .admin-form-field {
+  display: grid;
+  gap: 4px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.admin-nutrition-page .admin-form-inline {
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.admin-nutrition-page .admin-textarea {
+  min-height: 0;
+}
+
+.admin-nutrition-page .admin-textarea-compact {
+  min-height: 96px;
+}
+
+.admin-nutrition-page .admin-textarea-readonly {
+  min-height: 72px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.admin-nutrition-page .admin-empty-cell {
+  padding: 10px 8px;
+  font-size: 13px;
+}
+
+.admin-nutrition-page .admin-muted {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.admin-nutrition-page .admin-table th,
+.admin-nutrition-page .admin-table td {
+  padding: 7px 8px;
+}
+
+.admin-nutrition-page .admin-table th {
+  font-size: 11px;
+}
+
+.admin-nutrition-page .admin-button {
+  min-height: 32px;
+  font-size: 13px;
+}
+
+.admin-nutrition-page .admin-card-actions-compact {
+  margin-top: 6px;
+}
+
+.admin-nutrition-page .admin-nutrition-card-wide {
+  grid-column: 1 / -1;
+}
+
+.admin-nutrition-page .admin-nutrition-kv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.admin-nutrition-page .admin-nutrition-kv {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.admin-nutrition-page .admin-nutrition-kv dt {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.admin-nutrition-page .admin-nutrition-kv dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.admin-nutrition-page .admin-nutrition-code {
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.admin-nutrition-page .admin-nutrition-helper {
+  margin: 0 0 8px;
+}
