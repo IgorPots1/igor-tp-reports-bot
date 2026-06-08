@@ -7803,6 +7803,78 @@ export async function supersedeTrainingPeaksOperationalSignal(input: {
   };
 }
 
+export async function applyTrainingPeaksOperationalSignalFalsePositiveSuppression(input: {
+  signalId: string;
+  studentId: string;
+  fromLifecycleState: TrainingPeaksOperationalSignalLifecycle;
+  reason: string;
+  dryRunFingerprint: string;
+  falsePositiveSuppressionMeta: Record<string, unknown>;
+  appliedAt?: string;
+}): Promise<{
+  outcome: "applied" | "idempotent";
+  before: TrainingPeaksStudentOperationalSignal;
+  after: TrainingPeaksStudentOperationalSignal;
+  transition: TrainingPeaksOperationalSignalLifecycleTransition | null;
+}> {
+  const resolvedReason = `false_positive:${input.reason}`;
+  const existingSignal = await getTrainingPeaksOperationalSignalById(input.signalId);
+  if (!existingSignal) {
+    throw new Error(`Operational signal not found for false-positive suppression apply: ${input.signalId}`);
+  }
+  if (existingSignal.studentId !== input.studentId) {
+    throw new Error(
+      `False-positive suppression apply precondition failed: signal student ${existingSignal.studentId} != ${input.studentId}`
+    );
+  }
+
+  const existingMeta = getFalsePositiveSuppressionMetaFromSignalForApply(existingSignal);
+  if (
+    existingSignal.lifecycleState === "resolved" &&
+    existingSignal.resolvedReason === resolvedReason &&
+    existingMeta?.dry_run_fingerprint === input.dryRunFingerprint
+  ) {
+    const existingTransition = await getLatestTrainingPeaksOperationalSignalLifecycleTransition(input.signalId);
+    return {
+      outcome: "idempotent",
+      before: existingSignal,
+      after: existingSignal,
+      transition: existingTransition,
+    };
+  }
+
+  return applyTrainingPeaksOperationalSignalLifecycleTransition({
+    signalId: input.signalId,
+    studentId: input.studentId,
+    fromLifecycleState: input.fromLifecycleState,
+    toLifecycleState: "resolved",
+    reason: `false positive suppressed: ${input.reason}`,
+    reasonCodes: ["false_positive_suppressed", input.reason],
+    actor: "coach",
+    evidenceSnapshot: {
+      false_positive_suppression: input.falsePositiveSuppressionMeta,
+    },
+    dryRunFingerprint: input.dryRunFingerprint,
+    lifecycleMetaPatch: {
+      false_positive_suppression: input.falsePositiveSuppressionMeta,
+      apply_script: "suppress-operational-signal-false-positive",
+    },
+    requiresCoachClose: false,
+    resolvedReason,
+    appliedAt: input.appliedAt,
+  });
+}
+
+function getFalsePositiveSuppressionMetaFromSignalForApply(
+  signal: Pick<TrainingPeaksStudentOperationalSignal, "lifecycleMeta">
+): Record<string, unknown> | null {
+  const meta = signal.lifecycleMeta.false_positive_suppression;
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
+    return null;
+  }
+  return meta as Record<string, unknown>;
+}
+
 export async function applyTrainingPeaksOperationalSignalRecoveryEpisodeUpdate(input: {
   signalId: string;
   studentId: string;
