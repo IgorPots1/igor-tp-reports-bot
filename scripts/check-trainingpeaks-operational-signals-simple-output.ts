@@ -338,7 +338,7 @@ function run(): void {
 
   assert(!text.includes("🩺 Проверить"), "5 failed: follow-up section must be hidden.");
   assert(!text.includes("follow-up"), "5 failed: internal follow-up rows must not be shown.");
-  assert(text.includes("🟡 Болезнь / пауза"), "5 failed: health section must be present.");
+  assert(text.includes("🟡 Болезнь / самочувствие"), "5 failed: health section must be present.");
   assert(
     text.includes("Lyubov Selezneva") && text.includes("вчера была температура, сегодня лучше, но слабость"),
     "5 failed: Lyubov active illness context should stay visible in normal /tp_signals."
@@ -354,7 +354,7 @@ function run(): void {
   assert(!text.includes("illness-related pause follow-up"), "5 failed: internal follow-up labels must be hidden.");
   assert(!text.includes("Anna Lobodina\n  болеет"), "5 failed: ambiguous symptom-only case must not overclaim 'болеет'.");
   assert(text.includes("📅 Учесть в плане"), "5 failed: plan section must be present.");
-  assert(text.includes("🦵 Боль / травмы"), "5 failed: pain/injury section must be present.");
+  assert(text.includes("🦵 Травмы / боль / дискомфорт"), "5 failed: pain/injury section must be present.");
   // Moves section remains part of normal layout, but appears only with active move actions.
 
   const viktoriaRows = text.split("\n").filter((line) => line.includes("Viktoria Sergeeva"));
@@ -399,7 +399,7 @@ function run(): void {
     text.includes("Stepan Trofimov") && text.includes("боль / надкостница (уточнить, актуально ли)"),
     "13 failed: Stepan pain/injury summary should be shown."
   );
-  const painSection = text.split("🦵 Боль / травмы")[1]?.split("📅 Учесть в плане")[0] ?? "";
+  const painSection = text.split("🦵 Травмы / боль / дискомфорт")[1]?.split("📅 Учесть в плане")[0] ?? "";
   assert(painSection.includes("Stepan Trofimov"), "13 failed: Stepan should be grouped under pain/injury section.");
 
   const lifecycleDisplayFixtureSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
@@ -495,11 +495,11 @@ function run(): void {
     lifecycleDisplayFixtureSnapshot
   );
   assert(
-    lifecycleDisplayFixtureText.includes("🟡 Болезнь / пауза"),
+    lifecycleDisplayFixtureText.includes("🟡 Болезнь / самочувствие"),
     "13f failed: lifecycle fixture should render illness section."
   );
   assert(
-    lifecycleDisplayFixtureText.includes("🦵 Боль / травмы"),
+    lifecycleDisplayFixtureText.includes("🦵 Травмы / боль / дискомфорт"),
     "13f failed: lifecycle fixture should render pain/injury section."
   );
   assert(
@@ -698,13 +698,19 @@ function run(): void {
     activeMoveActions: [],
   });
   const stepanInjuryDomainText = formatTrainingPeaksOperationalSignalsForTelegram(stepanInjuryDomainSnapshot);
-  assert(stepanInjuryDomainText.includes("🦵 Боль / травмы"), "13e failed: injury-domain legacy row must use pain section.");
+  assert(
+    stepanInjuryDomainText.includes("🦵 Травмы / боль / дискомфорт"),
+    "13e failed: injury-domain legacy row must use pain section."
+  );
   assert(
     stepanInjuryDomainText.includes("Stepan Trofimov") &&
       stepanInjuryDomainText.includes("боль / надкостница (уточнить, актуально ли)"),
     "13e failed: injury-domain legacy row must preserve pain summary."
   );
-  assert(!stepanInjuryDomainText.includes("🟡 Болезнь / пауза"), "13e failed: injury-domain legacy row must not use illness section.");
+  assert(
+    !stepanInjuryDomainText.includes("🟡 Болезнь / самочувствие"),
+    "13e failed: injury-domain legacy row must not use illness section."
+  );
 
   const healthContextFixtureSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
     asOfDate: "2026-06-05",
@@ -919,7 +925,7 @@ function run(): void {
     stepanAmbiguousIllnessPrioritySnapshot
   );
   assert(
-    stepanAmbiguousIllnessPriorityText.includes("🦵 Боль / травмы"),
+    stepanAmbiguousIllnessPriorityText.includes("🦵 Травмы / боль / дискомфорт"),
     "20b failed: pain/injury section should be visible for Stepan mixed episode."
   );
   assert(
@@ -1119,7 +1125,7 @@ function run(): void {
     stepanMonitoringCrossEpisodeSnapshot
   );
   assert(
-    stepanMonitoringCrossEpisodeText.includes("🦵 Боль / травмы"),
+    stepanMonitoringCrossEpisodeText.includes("🦵 Травмы / боль / дискомфорт"),
     "25 failed: pain/injury monitoring should surface in pain section."
   );
   assert(

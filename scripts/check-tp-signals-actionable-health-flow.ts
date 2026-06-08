@@ -91,7 +91,7 @@ function run(): void {
       structuredPayload: {
         signal_type: "pain_injury",
         activity_domain: "injury",
-        display_summary: "боль / стоп",
+        display_summary: "лёгкий дискомфорт стопы, не похоже на острую травму",
       },
     }),
     makeSignal({
@@ -132,7 +132,8 @@ function run(): void {
       {
         source: {
           observedAt: "2026-06-08T07:30:00.000Z",
-          textPreview: "после пробежки снова чувствую стопу",
+          textPreview:
+            "Все хорошо, немного стабилизаторы стопы побаливают при движении, но боль рабочая мышечная",
         },
       },
     ],
@@ -141,7 +142,8 @@ function run(): void {
       {
         source: {
           observedAt: "2026-06-02T07:30:00.000Z",
-          textPreview: "надкостница уже не беспокоит, бегал спокойно",
+          textPreview:
+            "Чао) че то короче не пошло сегодня, икры или надкостница опять болит на тренировке",
         },
       },
     ],
@@ -197,13 +199,26 @@ function run(): void {
   assert(!text.includes("ещё сигналов"), "must not hide rows behind +N more");
   assert(text.includes(longRestriction), "schedule restriction must preserve full source context");
   assert(!text.includes("…"), "fixture output must not contain synthetic ellipsis");
-  assert(text.includes("источник: 08.06, после пробежки снова чувствую стопу"), "pain row must include source context");
-  assert(text.includes("lifecycle: active_problem"), "pain row must include lifecycle state");
-  assert(text.includes("действие: проверить актуальность боли; не закрывать автоматически"), "pain row must include safe action");
-  assert(text.includes("что проверить: актуальна ли боль/пауза сейчас"), "close candidate must explain what to check");
-  assert(text.includes("guarded close"), "close candidate must point to guarded close workflow");
-  assert(text.includes("TP evidence: completed running-like workout after signal (07.06)"), "health row must show TP completion evidence");
-  assert(text.includes("recommended: apply_monitoring_after_return"), "health row must show bridge recommendation");
+  assert(
+    text.includes("источник: 08.06, Все хорошо, немного стабилизаторы стопы побаливают при движении, но боль рабочая мышечная"),
+    "pain row must include full source context"
+  );
+  assert(text.includes("статус: лёгкий дискомфорт / наблюдать"), "Lavrentyev should be mild discomfort.");
+  assert(text.includes("статус: можно закрыть после проверки"), "close candidate should have Russian close status.");
+  assert(
+    text.includes("что сделать: уточнить, болит ли сейчас. Если уже не актуально — закрыть сигнал через безопасное закрытие."),
+    "close candidate should have simple close guidance"
+  );
+  assert(
+    text.includes("подтверждение: после сигнала есть завершённая беговая тренировка (07.06)"),
+    "health row must show Russian TP completion evidence"
+  );
+  assert(text.includes("статус: наблюдать после возврата"), "health row should have Russian lifecycle status");
+  assert(!text.includes("lifecycle:"), "coach text must not leak lifecycle label");
+  assert(!text.includes("active_problem"), "coach text must not leak internal lifecycle state");
+  assert(!text.includes("monitoring_after_return"), "coach text must not leak monitoring state name");
+  assert(!text.includes("guarded close"), "coach text must not leak guarded close wording");
+  assert(!text.includes("close candidate"), "coach text must not leak close-candidate wording");
 
   const messages = formatTrainingPeaksOperationalSignalsForTelegramMultiMessage(snapshot);
   assert(messages.every((message) => message.length <= TELEGRAM_SAFE_LIMIT), "all chunks must stay under safe limit");

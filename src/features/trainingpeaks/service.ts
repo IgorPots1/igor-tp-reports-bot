@@ -5791,12 +5791,12 @@ function createOperationalSignalsSections(): Record<
   return {
     health_pause: {
       key: "health_pause",
-      title: "🟡 Болезнь / пауза",
+      title: "🟡 Болезнь / самочувствие",
       items: [],
     },
     pain_injury: {
       key: "pain_injury",
-      title: "🦵 Боль / травмы",
+      title: "🦵 Травмы / боль / дискомфорт",
       items: [],
     },
     plan_constraints: {
@@ -6196,15 +6196,6 @@ function formatOperationalSignalShortDate(iso: string | null | undefined): strin
   return `${match[3]}.${match[2]}`;
 }
 
-function formatOperationalSignalLifecycleState(
-  lifecycleDisplayState: OperationalSignalDisplayLifecycleState
-): string {
-  if (lifecycleDisplayState === "ready_for_coach_close") {
-    return "monitoring_after_return / close candidate";
-  }
-  return lifecycleDisplayState;
-}
-
 function formatOperationalSignalSummaryLine(summary: string): string {
   const compact = summary.replace(/\b(\d{4})-(\d{2})-(\d{2})\b/g, (_match, _year, month, day) => `${day}.${month}`);
   const pauseMatch = compact.match(/^пауза\s*\(([^)]+)\)$/iu);
@@ -6219,36 +6210,97 @@ function formatOperationalSignalCompletionEvidence(
   signal: TrainingPeaksStudentOperationalSignal
 ): string[] {
   if (!completion) {
-    return ["TP evidence: cache overlay unavailable in payload", "recommended: manual review"];
+    return ["подтверждение: данных из кэша пока нет", "что сделать: проверить вручную"];
   }
   if (completion.evidenceError) {
-    return [
-      `TP cache: ошибка чтения — нужен diagnostic refresh/check`,
-      "recommended: manual review",
-    ];
+    return ["подтверждение: не удалось прочитать кэш TrainingPeaks", "что сделать: проверить вручную"];
   }
   const latest = completion.latestCompletionAfterOpen;
   const lines: string[] = [];
   if (latest?.sportClass === "running_like") {
-    lines.push(`TP evidence: completed running-like workout after signal (${formatOperationalSignalShortDate(latest.workoutDate) ?? latest.workoutDate})`);
+    lines.push(
+      `подтверждение: после сигнала есть завершённая беговая тренировка (${formatOperationalSignalShortDate(latest.workoutDate) ?? latest.workoutDate})`
+    );
   } else if (latest) {
-    lines.push(`TP evidence: latest completion after signal is ${latest.sportClass}`);
+    lines.push("подтверждение: после сигнала есть завершённая тренировка");
   } else if (completion.latestCacheScannedAt) {
     lines.push(
-      `TP evidence: no completed running workout found after ${formatOperationalSignalShortDate(signal.createdAt) ?? signal.createdAt.slice(0, 10)} in current cache`
+      `подтверждение: после ${formatOperationalSignalShortDate(signal.createdAt) ?? signal.createdAt.slice(0, 10)} в кэше нет завершённых беговых тренировок`
     );
   } else {
-    lines.push("TP cache: данных по окну нет — нужен refresh");
+    lines.push("подтверждение: в кэше пока нет данных по периоду");
   }
   if (latest?.evidenceFreshness === "stale" || latest?.evidenceFreshness === "missing") {
-    lines.push(
-      `TP cache: ${latest.evidenceFreshness === "stale" ? "устарел" : "неполный"} — нужен refresh`
-    );
+    lines.push(`кэш: ${latest.evidenceFreshness === "stale" ? "устаревший" : "неполный"}, лучше перепроверить`);
   } else if (!latest && completion.latestCacheScannedAt) {
-    lines.push(`TP cache: latest scan ${completion.latestCacheScannedAt.slice(0, 16).replace("T", " ")}`);
+    lines.push(`кэш: последнее обновление ${completion.latestCacheScannedAt.slice(0, 16).replace("T", " ")}`);
   }
-  lines.push(`recommended: ${completion.recommendedAction}`);
+  if (completion.recommendedAction === "apply_monitoring_after_return") {
+    lines.push("статус: наблюдать после возврата");
+  } else if (completion.recommendedAction === "coach_close_candidate") {
+    lines.push("статус: можно закрыть после проверки");
+  } else if (completion.recommendedAction === "keep_active") {
+    lines.push("статус: актуально / требует проверки");
+  } else if (completion.recommendedAction === "manual_review") {
+    lines.push("статус: нужна ручная проверка");
+  }
   return lines;
+}
+
+type OperationalPainSeverity =
+  | "acute_limiting"
+  | "needs_clarification"
+  | "minor_discomfort"
+  | "ready_to_close_after_check";
+
+const PAIN_ACUTE_CUES = [
+  /острая?\s+боль/iu,
+  /сильн[а-яё]*\s+боль/iu,
+  /резк[а-яё]*\s+боль/iu,
+  /не\s+могу\s+(бежать|бегать|наступать)/iu,
+  /мешает\s+бежать/iu,
+  /от[её]к|опух/iu,
+];
+
+const PAIN_MINOR_DISCOMFORT_CUES = [
+  /немного/iu,
+  /л[её]гк[а-яё]*/iu,
+  /дискомфорт/iu,
+  /побал[а-яё]*/iu,
+  /рабоч[а-яё]*\s+мышечн[а-яё]*/iu,
+  /мышечн[а-яё]*\s+боль/iu,
+  /наблюда[а-яё]*/iu,
+  /стабилизатор[а-яё]*/iu,
+];
+
+function normalizeCoachFacingSignalText(raw: string): string {
+  return raw
+    .replace(/\s+/gu, " ")
+    .replace(/после паузы:\s*после болезни:/giu, "после болезни:")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function resolvePainSeverity(input: {
+  lifecycleDisplayState: OperationalSignalDisplayLifecycleState;
+  summary: string;
+  sourceText: string | null;
+}): OperationalPainSeverity {
+  if (input.lifecycleDisplayState === "ready_for_coach_close") {
+    return "ready_to_close_after_check";
+  }
+  const joined = `${input.summary} ${input.sourceText ?? ""}`.toLowerCase();
+  const hasNegatedAcuteCue =
+    joined.includes("не похоже на острую травму") ||
+    joined.includes("не острая травма") ||
+    joined.includes("не острая боль");
+  if (PAIN_MINOR_DISCOMFORT_CUES.some((cue) => cue.test(joined))) {
+    return "minor_discomfort";
+  }
+  if (!hasNegatedAcuteCue && PAIN_ACUTE_CUES.some((cue) => cue.test(joined))) {
+    return "acute_limiting";
+  }
+  return "needs_clarification";
 }
 
 function buildActionableHealthOrPainDisplayText(input: {
@@ -6260,36 +6312,56 @@ function buildActionableHealthOrPainDisplayText(input: {
   asOfDate: string;
 }): string {
   const isPain = isPainInjuryOperationalSignalForDisplay(input.effective);
-  const lines = [
-    formatOperationalSignalSummaryLine(input.summary.trim()) || "контекст: полный текст недоступен в signal payload",
-  ];
+  const summaryLine =
+    normalizeCoachFacingSignalText(formatOperationalSignalSummaryLine(input.summary.trim())) ||
+    "контекст: полный текст недоступен в signal payload";
+  const lines = [summaryLine];
   const source = input.evidence?.source ?? null;
+  const sourceText = source?.textPreview?.replace(/\s+/g, " ").trim() ?? null;
   const sourceDate =
     formatOperationalSignalShortDate(source?.observedAt) ??
     formatOperationalSignalShortDate(input.signal.createdAt);
-  if (source?.textPreview) {
-    lines.push(`источник: ${sourceDate ?? "дата неизвестна"}, ${source.textPreview.replace(/\s+/g, " ").trim()}`);
+  if (sourceText) {
+    lines.push(`источник: ${sourceDate ?? "дата неизвестна"}, ${sourceText}`);
   } else {
     lines.push("источник: не найден в payload/cache — нужен review");
   }
-  lines.push(`lifecycle: ${formatOperationalSignalLifecycleState(input.lifecycleDisplayState)}`);
-
-  if (input.lifecycleDisplayState === "ready_for_coach_close") {
-    lines.push("что проверить: актуальна ли боль/пауза сейчас");
-    lines.push("если не актуально: выполнить guarded close через existing lifecycle close tool");
-    return lines.join("\n");
-  }
 
   if (isPain) {
-    lines.push("действие: проверить актуальность боли; не закрывать автоматически");
+    const severity = resolvePainSeverity({
+      lifecycleDisplayState: input.lifecycleDisplayState,
+      summary: summaryLine,
+      sourceText,
+    });
+    if (severity === "ready_to_close_after_check") {
+      lines.push("статус: можно закрыть после проверки");
+      lines.push("что сделать: уточнить, болит ли сейчас. Если уже не актуально — закрыть сигнал через безопасное закрытие.");
+      return lines.join("\n");
+    }
+    if (severity === "acute_limiting") {
+      lines.push("статус: острая боль / ограничивает бег");
+      lines.push("что сделать: уточнить, мешает ли боль бегу сейчас; до проверки не усиливать нагрузку.");
+      return lines.join("\n");
+    }
+    if (severity === "minor_discomfort") {
+      lines.push("статус: лёгкий дискомфорт / наблюдать");
+      lines.push("что сделать: наблюдать и уточнить на ближайшем контакте, усиливается ли симптом.");
+      return lines.join("\n");
+    }
+    lines.push("статус: боль / нужно уточнить");
+    lines.push("что сделать: уточнить, болит ли сейчас и мешает ли тренировкам.");
     return lines.join("\n");
   }
 
   lines.push(...formatOperationalSignalCompletionEvidence(input.evidence?.completion, input.signal));
-  if (input.lifecycleDisplayState === "monitoring_after_return") {
-    lines.push("действие: close только через guarded review");
+  if (input.lifecycleDisplayState === "ready_for_coach_close") {
+    lines.push("статус: можно закрыть после проверки");
+    lines.push("что сделать: уточнить текущее самочувствие. Если всё стабильно — закрыть сигнал через безопасное закрытие.");
+  } else if (input.lifecycleDisplayState === "monitoring_after_return") {
+    lines.push("что сделать: уточнить самочувствие после возврата к тренировкам.");
   } else {
-    lines.push("действие: не закрывать автоматически");
+    lines.push("статус: актуально / требует проверки");
+    lines.push("что сделать: уточнить текущее самочувствие и обновить сигнал.");
   }
   return lines.join("\n");
 }
@@ -6432,7 +6504,62 @@ function shouldSkipOperationalSignalForAttentionSchedulePlan(
   if (effective.effectiveSignalType === "external_training_context") {
     return true;
   }
+  const scheduleSummary = resolveOperationalSignalDisplaySummary(signal) ?? "";
+  if (isNutritionOnlyScheduleConstraintText(scheduleSummary)) {
+    return true;
+  }
   return false;
+}
+
+const NUTRITION_ONLY_CONSTRAINT_CUES = [
+  "еда",
+  "питание",
+  "калории",
+  "ккал",
+  "бжу",
+  "жиры",
+  "белки",
+  "углеводы",
+  "считаю",
+  "не считаю",
+  "контролировать еду",
+  "fatsecret",
+  "myfitnesspal",
+];
+
+const TRAINING_AVAILABILITY_CUES = [
+  "тренировка",
+  "тренироваться",
+  "бег",
+  "бежать",
+  "смогу",
+  "не смогу",
+  "доступна",
+  "недоступна",
+  "перенести",
+  "понедельник",
+  "вторник",
+  "среда",
+  "четверг",
+  "пятница",
+  "суббота",
+  "воскресенье",
+  "выходные",
+  "утром",
+  "вечером",
+];
+
+function isNutritionOnlyScheduleConstraintText(raw: string): boolean {
+  const normalized = raw.toLowerCase().replace(/\s+/gu, " ").trim();
+  if (!normalized) {
+    return false;
+  }
+  const hasNutritionCue = NUTRITION_ONLY_CONSTRAINT_CUES.some((cue) => normalized.includes(cue));
+  if (!hasNutritionCue) {
+    return false;
+  }
+  const hasTrainingAvailabilityCue = TRAINING_AVAILABILITY_CUES.some((cue) => normalized.includes(cue));
+  return !hasTrainingAvailabilityCue;
 }
 
 function readRecoveryUpdatedDisplaySummary(

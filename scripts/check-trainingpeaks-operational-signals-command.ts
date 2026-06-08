@@ -454,8 +454,8 @@ function run(): void {
   // B: all key sections are present
   assert(!text.includes("🩺 Проверить"), "B failed: check section should be hidden in normal /tp_signals.");
   assert(!text.includes("follow-up"), "B failed: internal follow-up language should not be shown.");
-  assert(text.includes("🟡 Болезнь / пауза"), "B failed: health section missing.");
-  assert(text.includes("🦵 Боль / травмы"), "B failed: pain/injury section missing.");
+  assert(text.includes("🟡 Болезнь / самочувствие"), "B failed: health section missing.");
+  assert(text.includes("🦵 Травмы / боль / дискомфорт"), "B failed: pain/injury section missing.");
   assert(text.includes("📅 Учесть в плане"), "B failed: planning section missing.");
   assert(text.includes("🔁 Переносы"), "B failed: move section missing.");
 
@@ -573,8 +573,8 @@ function run(): void {
   const emptyText = formatTrainingPeaksOperationalSignalsForTelegram({
     scope: "all",
     sections: [
-      { key: "health_pause", title: "🟡 Болезнь / пауза", items: [] },
-      { key: "pain_injury", title: "🦵 Боль / травмы", items: [] },
+      { key: "health_pause", title: "🟡 Болезнь / самочувствие", items: [] },
+      { key: "pain_injury", title: "🦵 Травмы / боль / дискомфорт", items: [] },
       { key: "plan_constraints", title: "📅 Учесть в плане", items: [] },
       { key: "moves", title: "🔁 Переносы", items: [] },
       { key: "other", title: "ℹ️ Остальное", items: [] },
