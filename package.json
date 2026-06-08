@@ -158,7 +158,14 @@
     "import-athlete-training-baselines": "npx tsx scripts/import-athlete-training-baselines.ts",
     "check:athlete-training-baselines": "npx tsx scripts/check-athlete-training-baselines.ts",
     "check:tp-signals-full-output": "npx tsx scripts/check-tp-signals-full-output.ts",
-    "diagnose-tp-signals-stale-health-after-completion": "npx tsx scripts/diagnose-tp-signals-stale-health-after-completion.ts"
+    "diagnose-tp-signals-stale-health-after-completion": "npx tsx scripts/diagnose-tp-signals-stale-health-after-completion.ts",
+    "check:nutrition-admin-mvp": "npx tsx scripts/check-nutrition-admin-mvp.ts",
+    "check:nutrition-student-fk": "npx tsx scripts/check-nutrition-student-fk.ts",
+    "check:nutrition-communication-profile": "npx tsx scripts/check-nutrition-communication-profile.ts",
+    "check:nutrition-context-builder": "npx tsx scripts/check-nutrition-context-builder.ts",
+    "check:nutrition-safety-blocks": "npx tsx scripts/check-nutrition-safety-blocks.ts",
+    "check:nutrition-no-autosend": "npx tsx scripts/check-nutrition-no-autosend.ts",
+    "check:nutrition-admin-routes": "npx tsx scripts/check-nutrition-admin-routes.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.3",

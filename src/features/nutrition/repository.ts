@@ -1,0 +1,915 @@
+import { createHash } from "node:crypto";
+
+import { createSupabaseServerClient } from "@/features/supabase/server";
+import type {
+  TrainingPeaksStudent,
+  TrainingPeaksStudentMemoryItem,
+  TrainingPeaksStudentMemoryType,
+  TrainingPeaksWorkoutCacheRow,
+} from "@/features/trainingpeaks/repository";
+import {
+  getTrainingPeaksStudentById,
+  listActiveTrainingPeaksStudentMemoryItems,
+  listTrainingPeaksWorkoutCacheForStudentDateRange,
+} from "@/features/trainingpeaks/repository";
+import { listTrainingPeaksAdminStudents } from "@/features/trainingpeaks/admin";
+
+export type NutritionStudentProfile = {
+  id: string;
+  studentId: string;
+  enabled: boolean;
+  goal: string | null;
+  trackingApp: string | null;
+  currentWeightKg: number | null;
+  preferences: Record<string, unknown>;
+  dislikes: Record<string, unknown>;
+  toleranceNotes: string | null;
+  coachNotes: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NutritionWeightLog = {
+  id: string;
+  studentId: string;
+  weightKg: number;
+  loggedAt: string;
+  source: string;
+  confirmedByCoach: boolean;
+  rawText: string | null;
+  createdAt: string;
+};
+
+export type NutritionContextItemType =
+  | "preference"
+  | "dislike"
+  | "tolerance"
+  | "energy"
+  | "hunger"
+  | "gi"
+  | "training_food_experience"
+  | "note";
+
+export type NutritionContextItem = {
+  id: string;
+  studentId: string;
+  itemType: NutritionContextItemType;
+  text: string;
+  source: string;
+  confidence: number | null;
+  priority: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NutritionReportStatus =
+  | "received"
+  | "parsed"
+  | "insufficient"
+  | "needs_review"
+  | "ready_for_analysis";
+
+export type NutritionReport = {
+  id: string;
+  studentId: string;
+  weekFrom: string;
+  weekTo: string;
+  sourceType: string;
+  rawText: string | null;
+  fileRefs: Record<string, unknown> | null;
+  status: NutritionReportStatus;
+  dataQuality: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NutritionDailyMacro = {
+  id: string;
+  reportId: string | null;
+  studentId: string;
+  day: string;
+  kcal: number | null;
+  proteinG: number | null;
+  fatG: number | null;
+  carbsG: number | null;
+  confidence: number | null;
+  source: string | null;
+  notes: string | null;
+  createdAt: string;
+};
+
+export type NutritionWeeklyAnalysisStatus =
+  | "draft_generated"
+  | "blocked_safety"
+  | "needs_review"
+  | "approved_for_copy"
+  | "archived";
+
+export type NutritionWeeklyAnalysis = {
+  id: string;
+  studentId: string;
+  reportId: string | null;
+  weekFrom: string;
+  weekTo: string;
+  status: NutritionWeeklyAnalysisStatus;
+  internalSummary: Record<string, unknown>;
+  tpPastWeekContext: Record<string, unknown>;
+  tpNextWeekContext: Record<string, unknown>;
+  nutritionSummary: Record<string, unknown>;
+  safetyFlags: Record<string, unknown>;
+  contextSnapshot: Record<string, unknown>;
+  promptHash: string | null;
+  contextHash: string | null;
+  aiModel: string | null;
+  athleteMessageDraft: string | null;
+  coachEdits: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type NutritionStudentProfileRow = {
+  id: string;
+  student_id: string;
+  enabled: boolean;
+  goal: string | null;
+  tracking_app: string | null;
+  current_weight_kg: number | string | null;
+  preferences: unknown;
+  dislikes: unknown;
+  tolerance_notes: string | null;
+  coach_notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type NutritionWeightLogRow = {
+  id: string;
+  student_id: string;
+  weight_kg: number | string;
+  logged_at: string;
+  source: string;
+  confirmed_by_coach: boolean;
+  raw_text: string | null;
+  created_at: string;
+};
+
+type NutritionContextItemRow = {
+  id: string;
+  student_id: string;
+  item_type: string;
+  text: string;
+  source: string;
+  confidence: number | string | null;
+  priority: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+type NutritionReportRow = {
+  id: string;
+  student_id: string;
+  week_from: string;
+  week_to: string;
+  source_type: string;
+  raw_text: string | null;
+  file_refs: unknown | null;
+  status: NutritionReportStatus;
+  data_quality: unknown;
+  created_at: string;
+  updated_at: string;
+};
+
+type NutritionDailyMacroRow = {
+  id: string;
+  report_id: string | null;
+  student_id: string;
+  day: string;
+  kcal: number | string | null;
+  protein_g: number | string | null;
+  fat_g: number | string | null;
+  carbs_g: number | string | null;
+  confidence: number | string | null;
+  source: string | null;
+  notes: string | null;
+  created_at: string;
+};
+
+type NutritionWeeklyAnalysisRow = {
+  id: string;
+  student_id: string;
+  report_id: string | null;
+  week_from: string;
+  week_to: string;
+  status: NutritionWeeklyAnalysisStatus;
+  internal_summary: unknown;
+  tp_past_week_context: unknown;
+  tp_next_week_context: unknown;
+  nutrition_summary: unknown;
+  safety_flags: unknown;
+  context_snapshot: unknown;
+  prompt_hash: string | null;
+  context_hash: string | null;
+  ai_model: string | null;
+  athlete_message_draft: string | null;
+  coach_edits: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type UpsertNutritionStudentProfileInput = {
+  studentId: string;
+  enabled?: boolean;
+  goal?: string | null;
+  trackingApp?: string | null;
+  currentWeightKg?: number | null;
+  preferences?: Record<string, unknown>;
+  dislikes?: Record<string, unknown>;
+  toleranceNotes?: string | null;
+  coachNotes?: string | null;
+};
+
+export type AddNutritionWeightLogInput = {
+  studentId: string;
+  weightKg: number;
+  loggedAt?: string;
+  source: string;
+  confirmedByCoach?: boolean;
+  rawText?: string | null;
+};
+
+export type AddNutritionContextItemInput = {
+  studentId: string;
+  itemType: NutritionContextItemType;
+  text: string;
+  source: string;
+  confidence?: number | null;
+  priority?: number;
+  isActive?: boolean;
+};
+
+export type CreateNutritionReportInput = {
+  studentId: string;
+  weekFrom: string;
+  weekTo: string;
+  sourceType: string;
+  rawText?: string | null;
+  fileRefs?: Record<string, unknown> | null;
+  status?: NutritionReportStatus;
+  dataQuality?: Record<string, unknown>;
+};
+
+export type InsertNutritionDailyMacrosInput = {
+  reportId?: string | null;
+  studentId: string;
+  day: string;
+  kcal?: number | null;
+  proteinG?: number | null;
+  fatG?: number | null;
+  carbsG?: number | null;
+  confidence?: number | null;
+  source?: string | null;
+  notes?: string | null;
+};
+
+export type CreateNutritionWeeklyAnalysisInput = {
+  studentId: string;
+  reportId?: string | null;
+  weekFrom: string;
+  weekTo: string;
+  status: NutritionWeeklyAnalysisStatus;
+  internalSummary?: Record<string, unknown>;
+  tpPastWeekContext?: Record<string, unknown>;
+  tpNextWeekContext?: Record<string, unknown>;
+  nutritionSummary?: Record<string, unknown>;
+  safetyFlags?: Record<string, unknown>;
+  contextSnapshot?: Record<string, unknown>;
+  promptHash?: string | null;
+  contextHash?: string | null;
+  aiModel?: string | null;
+  athleteMessageDraft?: string | null;
+  coachEdits?: string | null;
+};
+
+export type NutritionDashboardFilters = {
+  active?: boolean;
+  enabledNutrition?: boolean;
+  statuses?: NutritionReportStatus[];
+  analysisStatuses?: NutritionWeeklyAnalysisStatus[];
+  safetyOnly?: boolean;
+};
+
+export type NutritionDashboardRow = {
+  studentId: string;
+  studentSlug: string;
+  studentName: string;
+  isActive: boolean;
+  weeklyReportEnabled: boolean;
+  telegramDeliveryEnabled: boolean;
+  nutritionEnabled: boolean;
+  currentWeightKg: number | null;
+  trackingApp: string | null;
+  lastReportStatus: NutritionReportStatus | null;
+  lastReportCreatedAt: string | null;
+  parsedDays: number;
+  lastAnalysisStatus: NutritionWeeklyAnalysisStatus | null;
+  lastAnalysisWeekFrom: string | null;
+  hasSafetyFlag: boolean;
+  nextAction: string;
+};
+
+export type NutritionReportWithMacros = {
+  report: NutritionReport;
+  macros: NutritionDailyMacro[];
+};
+
+function toFiniteNumber(value: number | string | null | undefined): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function toObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
+function mapNutritionStudentProfileRow(row: NutritionStudentProfileRow): NutritionStudentProfile {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    enabled: row.enabled,
+    goal: row.goal,
+    trackingApp: row.tracking_app,
+    currentWeightKg: toFiniteNumber(row.current_weight_kg),
+    preferences: toObject(row.preferences),
+    dislikes: toObject(row.dislikes),
+    toleranceNotes: row.tolerance_notes,
+    coachNotes: row.coach_notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapNutritionWeightLogRow(row: NutritionWeightLogRow): NutritionWeightLog {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    weightKg: toFiniteNumber(row.weight_kg) ?? 0,
+    loggedAt: row.logged_at,
+    source: row.source,
+    confirmedByCoach: row.confirmed_by_coach,
+    rawText: row.raw_text,
+    createdAt: row.created_at,
+  };
+}
+
+function mapNutritionContextItemRow(row: NutritionContextItemRow): NutritionContextItem {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    itemType: row.item_type as NutritionContextItemType,
+    text: row.text,
+    source: row.source,
+    confidence: toFiniteNumber(row.confidence),
+    priority: row.priority,
+    isActive: row.is_active,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapNutritionReportRow(row: NutritionReportRow): NutritionReport {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    weekFrom: row.week_from,
+    weekTo: row.week_to,
+    sourceType: row.source_type,
+    rawText: row.raw_text,
+    fileRefs: row.file_refs && typeof row.file_refs === "object" && !Array.isArray(row.file_refs)
+      ? (row.file_refs as Record<string, unknown>)
+      : null,
+    status: row.status,
+    dataQuality: toObject(row.data_quality),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapNutritionDailyMacroRow(row: NutritionDailyMacroRow): NutritionDailyMacro {
+  return {
+    id: row.id,
+    reportId: row.report_id,
+    studentId: row.student_id,
+    day: row.day,
+    kcal: toFiniteNumber(row.kcal),
+    proteinG: toFiniteNumber(row.protein_g),
+    fatG: toFiniteNumber(row.fat_g),
+    carbsG: toFiniteNumber(row.carbs_g),
+    confidence: toFiniteNumber(row.confidence),
+    source: row.source,
+    notes: row.notes,
+    createdAt: row.created_at,
+  };
+}
+
+function mapNutritionWeeklyAnalysisRow(row: NutritionWeeklyAnalysisRow): NutritionWeeklyAnalysis {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    reportId: row.report_id,
+    weekFrom: row.week_from,
+    weekTo: row.week_to,
+    status: row.status,
+    internalSummary: toObject(row.internal_summary),
+    tpPastWeekContext: toObject(row.tp_past_week_context),
+    tpNextWeekContext: toObject(row.tp_next_week_context),
+    nutritionSummary: toObject(row.nutrition_summary),
+    safetyFlags: toObject(row.safety_flags),
+    contextSnapshot: toObject(row.context_snapshot),
+    promptHash: row.prompt_hash,
+    contextHash: row.context_hash,
+    aiModel: row.ai_model,
+    athleteMessageDraft: row.athlete_message_draft,
+    coachEdits: row.coach_edits,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function compactText(value: string | null | undefined): string | null {
+  const normalized = value?.replace(/\s+/g, " ").trim() ?? "";
+  return normalized || null;
+}
+
+export function stableHash(input: unknown): string {
+  return createHash("sha256")
+    .update(JSON.stringify(input))
+    .digest("hex");
+}
+
+export async function getNutritionStudentProfile(studentId: string): Promise<NutritionStudentProfile | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_student_profiles")
+    .select("*")
+    .eq("student_id", studentId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to get nutrition student profile ${studentId}: ${error.message}`);
+  }
+  if (!data) {
+    return null;
+  }
+  return mapNutritionStudentProfileRow(data as NutritionStudentProfileRow);
+}
+
+export async function upsertNutritionStudentProfile(
+  input: UpsertNutritionStudentProfileInput
+): Promise<NutritionStudentProfile> {
+  const supabase = createSupabaseServerClient();
+  const payload = {
+    student_id: input.studentId,
+    enabled: input.enabled ?? false,
+    goal: compactText(input.goal),
+    tracking_app: compactText(input.trackingApp),
+    current_weight_kg: input.currentWeightKg ?? null,
+    preferences: input.preferences ?? {},
+    dislikes: input.dislikes ?? {},
+    tolerance_notes: compactText(input.toleranceNotes),
+    coach_notes: compactText(input.coachNotes),
+  };
+  const { data, error } = await supabase
+    .from("nutrition_student_profiles")
+    .upsert(payload, { onConflict: "student_id" })
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to upsert nutrition student profile ${input.studentId}: ${error.message}`);
+  }
+  return mapNutritionStudentProfileRow(data as NutritionStudentProfileRow);
+}
+
+export async function addNutritionWeightLog(input: AddNutritionWeightLogInput): Promise<NutritionWeightLog> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_weight_logs")
+    .insert({
+      student_id: input.studentId,
+      weight_kg: input.weightKg,
+      logged_at: input.loggedAt ?? new Date().toISOString(),
+      source: input.source,
+      confirmed_by_coach: input.confirmedByCoach ?? true,
+      raw_text: compactText(input.rawText),
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to add nutrition weight log for ${input.studentId}: ${error.message}`);
+  }
+  return mapNutritionWeightLogRow(data as NutritionWeightLogRow);
+}
+
+export async function getNutritionWeightLogs(studentId: string): Promise<NutritionWeightLog[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_weight_logs")
+    .select("*")
+    .eq("student_id", studentId)
+    .order("logged_at", { ascending: false })
+    .limit(30);
+
+  if (error) {
+    throw new Error(`Failed to list nutrition weight logs for ${studentId}: ${error.message}`);
+  }
+  return ((data as NutritionWeightLogRow[]) ?? []).map(mapNutritionWeightLogRow);
+}
+
+export async function addNutritionContextItem(input: AddNutritionContextItemInput): Promise<NutritionContextItem> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_context_items")
+    .insert({
+      student_id: input.studentId,
+      item_type: input.itemType,
+      text: compactText(input.text) ?? "",
+      source: input.source,
+      confidence: input.confidence ?? null,
+      priority: input.priority ?? 0,
+      is_active: input.isActive ?? true,
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to add nutrition context item for ${input.studentId}: ${error.message}`);
+  }
+  return mapNutritionContextItemRow(data as NutritionContextItemRow);
+}
+
+export async function getActiveNutritionContextItems(studentId: string): Promise<NutritionContextItem[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_context_items")
+    .select("*")
+    .eq("student_id", studentId)
+    .eq("is_active", true)
+    .order("priority", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(40);
+
+  if (error) {
+    throw new Error(`Failed to list active nutrition context items for ${studentId}: ${error.message}`);
+  }
+  return ((data as NutritionContextItemRow[]) ?? []).map(mapNutritionContextItemRow);
+}
+
+export async function createNutritionReport(input: CreateNutritionReportInput): Promise<NutritionReport> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_reports")
+    .insert({
+      student_id: input.studentId,
+      week_from: input.weekFrom,
+      week_to: input.weekTo,
+      source_type: input.sourceType,
+      raw_text: compactText(input.rawText),
+      file_refs: input.fileRefs ?? null,
+      status: input.status ?? "received",
+      data_quality: input.dataQuality ?? {},
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to create nutrition report for ${input.studentId}: ${error.message}`);
+  }
+  return mapNutritionReportRow(data as NutritionReportRow);
+}
+
+export async function insertNutritionDailyMacros(
+  input: InsertNutritionDailyMacrosInput[]
+): Promise<NutritionDailyMacro[]> {
+  if (input.length === 0) {
+    return [];
+  }
+
+  const supabase = createSupabaseServerClient();
+  const payload = input.map((item) => ({
+    report_id: item.reportId ?? null,
+    student_id: item.studentId,
+    day: item.day,
+    kcal: item.kcal ?? null,
+    protein_g: item.proteinG ?? null,
+    fat_g: item.fatG ?? null,
+    carbs_g: item.carbsG ?? null,
+    confidence: item.confidence ?? null,
+    source: compactText(item.source),
+    notes: compactText(item.notes),
+  }));
+
+  const { data, error } = await supabase
+    .from("nutrition_daily_macros")
+    .upsert(payload, { onConflict: "report_id,day" })
+    .select("*");
+  if (error) {
+    throw new Error(`Failed to insert nutrition daily macros: ${error.message}`);
+  }
+  return ((data as NutritionDailyMacroRow[]) ?? []).map(mapNutritionDailyMacroRow);
+}
+
+export async function getNutritionReportWithMacros(reportId: string): Promise<NutritionReportWithMacros | null> {
+  const supabase = createSupabaseServerClient();
+  const [{ data: reportData, error: reportError }, { data: macroData, error: macroError }] = await Promise.all([
+    supabase.from("nutrition_reports").select("*").eq("id", reportId).maybeSingle(),
+    supabase
+      .from("nutrition_daily_macros")
+      .select("*")
+      .eq("report_id", reportId)
+      .order("day", { ascending: true }),
+  ]);
+
+  if (reportError) {
+    throw new Error(`Failed to load nutrition report ${reportId}: ${reportError.message}`);
+  }
+  if (!reportData) {
+    return null;
+  }
+  if (macroError) {
+    throw new Error(`Failed to load nutrition report macros ${reportId}: ${macroError.message}`);
+  }
+
+  return {
+    report: mapNutritionReportRow(reportData as NutritionReportRow),
+    macros: ((macroData as NutritionDailyMacroRow[]) ?? []).map(mapNutritionDailyMacroRow),
+  };
+}
+
+export async function createNutritionWeeklyAnalysis(
+  input: CreateNutritionWeeklyAnalysisInput
+): Promise<NutritionWeeklyAnalysis> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_weekly_analyses")
+    .upsert(
+      {
+        student_id: input.studentId,
+        report_id: input.reportId ?? null,
+        week_from: input.weekFrom,
+        week_to: input.weekTo,
+        status: input.status,
+        internal_summary: input.internalSummary ?? {},
+        tp_past_week_context: input.tpPastWeekContext ?? {},
+        tp_next_week_context: input.tpNextWeekContext ?? {},
+        nutrition_summary: input.nutritionSummary ?? {},
+        safety_flags: input.safetyFlags ?? {},
+        context_snapshot: input.contextSnapshot ?? {},
+        prompt_hash: input.promptHash ?? null,
+        context_hash: input.contextHash ?? null,
+        ai_model: input.aiModel ?? null,
+        athlete_message_draft: input.athleteMessageDraft ?? null,
+        coach_edits: input.coachEdits ?? null,
+      },
+      { onConflict: "student_id,week_from,week_to" }
+    )
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to create nutrition weekly analysis for ${input.studentId}: ${error.message}`);
+  }
+  return mapNutritionWeeklyAnalysisRow(data as NutritionWeeklyAnalysisRow);
+}
+
+async function getLatestReportsByStudent(studentIds: string[]): Promise<Map<string, NutritionReport>> {
+  if (studentIds.length === 0) {
+    return new Map();
+  }
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_reports")
+    .select("*")
+    .in("student_id", studentIds)
+    .order("created_at", { ascending: false });
+  if (error) {
+    throw new Error(`Failed to load nutrition dashboard reports: ${error.message}`);
+  }
+  const map = new Map<string, NutritionReport>();
+  for (const row of (data as NutritionReportRow[]) ?? []) {
+    if (!map.has(row.student_id)) {
+      map.set(row.student_id, mapNutritionReportRow(row));
+    }
+  }
+  return map;
+}
+
+async function getLatestAnalysesByStudent(studentIds: string[]): Promise<Map<string, NutritionWeeklyAnalysis>> {
+  if (studentIds.length === 0) {
+    return new Map();
+  }
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_weekly_analyses")
+    .select("*")
+    .in("student_id", studentIds)
+    .order("created_at", { ascending: false });
+  if (error) {
+    throw new Error(`Failed to load nutrition dashboard analyses: ${error.message}`);
+  }
+  const map = new Map<string, NutritionWeeklyAnalysis>();
+  for (const row of (data as NutritionWeeklyAnalysisRow[]) ?? []) {
+    if (!map.has(row.student_id)) {
+      map.set(row.student_id, mapNutritionWeeklyAnalysisRow(row));
+    }
+  }
+  return map;
+}
+
+async function getDailyMacroCountsByStudent(studentIds: string[]): Promise<Map<string, number>> {
+  if (studentIds.length === 0) {
+    return new Map();
+  }
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_daily_macros")
+    .select("student_id")
+    .in("student_id", studentIds);
+  if (error) {
+    throw new Error(`Failed to load nutrition daily macro counts: ${error.message}`);
+  }
+  const map = new Map<string, number>();
+  for (const row of ((data as Array<{ student_id: string }>) ?? [])) {
+    map.set(row.student_id, (map.get(row.student_id) ?? 0) + 1);
+  }
+  return map;
+}
+
+async function getNutritionProfilesByStudent(studentIds: string[]): Promise<Map<string, NutritionStudentProfile>> {
+  if (studentIds.length === 0) {
+    return new Map();
+  }
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_student_profiles")
+    .select("*")
+    .in("student_id", studentIds);
+  if (error) {
+    throw new Error(`Failed to load nutrition profiles for dashboard: ${error.message}`);
+  }
+  return new Map(
+    ((data as NutritionStudentProfileRow[]) ?? []).map((row) => [row.student_id, mapNutritionStudentProfileRow(row)])
+  );
+}
+
+function hasHardSafetyFlag(analysis: NutritionWeeklyAnalysis | null): boolean {
+  if (!analysis) {
+    return false;
+  }
+  const blocked = analysis.status === "blocked_safety";
+  const reasons = analysis.safetyFlags?.hard_flags;
+  return blocked || (Array.isArray(reasons) && reasons.length > 0);
+}
+
+function resolveNextAction(row: {
+  profile: NutritionStudentProfile | null;
+  report: NutritionReport | null;
+  analysis: NutritionWeeklyAnalysis | null;
+  hasSafetyFlag: boolean;
+}): string {
+  if (!row.profile?.enabled) {
+    return "Enable nutrition profile";
+  }
+  if (!row.report) {
+    return "Add manual report";
+  }
+  if (row.report.status === "received" || row.report.status === "parsed") {
+    return "Parse and review macros";
+  }
+  if (row.report.status === "insufficient" || row.report.status === "needs_review") {
+    return "Fix report data quality";
+  }
+  if (row.hasSafetyFlag) {
+    return "Manual safety review required";
+  }
+  if (!row.analysis || row.analysis.status === "needs_review") {
+    return "Generate weekly nutrition review";
+  }
+  if (row.analysis.status === "draft_generated") {
+    return "Review draft and mark approved";
+  }
+  return "Up to date";
+}
+
+export async function listNutritionDashboardRows(
+  filters: NutritionDashboardFilters = {}
+): Promise<NutritionDashboardRow[]> {
+  const adminStudents = await listTrainingPeaksAdminStudents("all");
+  const studentIds = adminStudents.map((student) => student.id);
+  const [profilesByStudent, latestReportsByStudent, latestAnalysesByStudent, dailyMacroCounts] = await Promise.all([
+    getNutritionProfilesByStudent(studentIds),
+    getLatestReportsByStudent(studentIds),
+    getLatestAnalysesByStudent(studentIds),
+    getDailyMacroCountsByStudent(studentIds),
+  ]);
+
+  let rows: NutritionDashboardRow[] = adminStudents.map((student) => {
+    const profile = profilesByStudent.get(student.id) ?? null;
+    const report = latestReportsByStudent.get(student.id) ?? null;
+    const analysis = latestAnalysesByStudent.get(student.id) ?? null;
+    const safety = hasHardSafetyFlag(analysis);
+    return {
+      studentId: student.id,
+      studentSlug: student.studentId,
+      studentName: student.studentName,
+      isActive: student.isActive,
+      weeklyReportEnabled: student.weeklyReportEnabled,
+      telegramDeliveryEnabled: student.telegramDeliveryEnabled,
+      nutritionEnabled: profile?.enabled ?? false,
+      currentWeightKg: profile?.currentWeightKg ?? null,
+      trackingApp: profile?.trackingApp ?? null,
+      lastReportStatus: report?.status ?? null,
+      lastReportCreatedAt: report?.createdAt ?? null,
+      parsedDays: dailyMacroCounts.get(student.id) ?? 0,
+      lastAnalysisStatus: analysis?.status ?? null,
+      lastAnalysisWeekFrom: analysis?.weekFrom ?? null,
+      hasSafetyFlag: safety,
+      nextAction: resolveNextAction({ profile, report, analysis, hasSafetyFlag: safety }),
+    };
+  });
+
+  if (filters.active === true) {
+    rows = rows.filter((row) => row.isActive);
+  }
+  if (filters.enabledNutrition === true) {
+    rows = rows.filter((row) => row.nutritionEnabled);
+  }
+  if (filters.statuses && filters.statuses.length > 0) {
+    rows = rows.filter((row) => row.lastReportStatus !== null && filters.statuses?.includes(row.lastReportStatus));
+  }
+  if (filters.analysisStatuses && filters.analysisStatuses.length > 0) {
+    rows = rows.filter(
+      (row) => row.lastAnalysisStatus !== null && filters.analysisStatuses?.includes(row.lastAnalysisStatus)
+    );
+  }
+  if (filters.safetyOnly) {
+    rows = rows.filter((row) => row.hasSafetyFlag);
+  }
+
+  return rows;
+}
+
+export async function getNutritionStudentEssentials(studentId: string): Promise<{
+  student: TrainingPeaksStudent | null;
+  profile: NutritionStudentProfile | null;
+  contextItems: NutritionContextItem[];
+  weightLogs: NutritionWeightLog[];
+  activeMemoryItems: TrainingPeaksStudentMemoryItem[];
+}> {
+  const [student, profile, contextItems, weightLogs, activeMemoryItems] = await Promise.all([
+    getTrainingPeaksStudentById(studentId),
+    getNutritionStudentProfile(studentId),
+    getActiveNutritionContextItems(studentId),
+    getNutritionWeightLogs(studentId),
+    listActiveTrainingPeaksStudentMemoryItems(studentId, {
+      memoryTypes: [
+        "communication_style",
+        "schedule_constraint",
+        "availability_preference",
+        "planning_preference",
+        "travel_or_life_event",
+        "health_status",
+        "pain_or_injury",
+        "load_tolerance",
+        "race_or_goal",
+      ] as TrainingPeaksStudentMemoryType[],
+      limit: 40,
+    }),
+  ]);
+  return {
+    student,
+    profile,
+    contextItems,
+    weightLogs,
+    activeMemoryItems,
+  };
+}
+
+export async function getNutritionTrainingPeaksCacheWindow(input: {
+  studentId: string;
+  from: string;
+  to: string;
+}): Promise<TrainingPeaksWorkoutCacheRow[]> {
+  return listTrainingPeaksWorkoutCacheForStudentDateRange(input);
+}

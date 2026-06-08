@@ -275,6 +275,9 @@ export default async function AdminStudentDetailPage({
             >
               {student.telegramChatId ? "Telegram привязан" : "Telegram не привязан"}
             </span>
+            <Link className="admin-button admin-button-secondary" href={`/admin/coach-os/nutrition/${student.id}`}>
+              Nutrition card
+            </Link>
           </div>
         </div>
       </div>
