@@ -144,6 +144,8 @@
     "merge-coach-memory-duplicates": "npx tsx scripts/merge-coach-memory-duplicates.ts",
     "check:move-phrase-coverage": "npx tsx scripts/check-move-phrase-coverage.ts",
     "check:group-workout-report-intake": "npx tsx scripts/check-group-workout-report-intake.ts",
+    "check:group-workout-report-match-analyzer": "npx tsx scripts/check-group-workout-report-match-and-analyzer.ts",
+    "audit:trainingpeaks-workout-details-availability": "npx tsx scripts/audit-trainingpeaks-workout-details-availability.ts",
     "check-trainingpeaks-reply-draft-communication-profile": "npx tsx scripts/check-trainingpeaks-reply-draft-communication-profile.ts",
     "check:telegram-formality-reply-draft-usage": "npx tsx scripts/check-telegram-formality-reply-draft-usage.ts",
     "check:communication-style": "npx tsx scripts/diagnose-student-communication-style.ts",
