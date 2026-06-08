@@ -630,6 +630,59 @@ export async function insertNutritionDailyMacros(
   return ((data as NutritionDailyMacroRow[]) ?? []).map(mapNutritionDailyMacroRow);
 }
 
+export async function listNutritionReportsForStudent(
+  studentId: string,
+  input?: { weekFrom?: string; weekTo?: string; limit?: number }
+): Promise<NutritionReport[]> {
+  const supabase = createSupabaseServerClient();
+  let query = supabase
+    .from("nutrition_reports")
+    .select("*")
+    .eq("student_id", studentId)
+    .order("created_at", { ascending: false });
+
+  if (input?.weekFrom) {
+    query = query.eq("week_from", input.weekFrom);
+  }
+  if (input?.weekTo) {
+    query = query.eq("week_to", input.weekTo);
+  }
+  if (input?.limit) {
+    query = query.limit(input.limit);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    throw new Error(`Failed to list nutrition reports for ${studentId}: ${error.message}`);
+  }
+  return ((data as NutritionReportRow[]) ?? []).map(mapNutritionReportRow);
+}
+
+export async function getNutritionWeeklyAnalysisForWeek(input: {
+  studentId: string;
+  weekFrom: string;
+  weekTo: string;
+}): Promise<NutritionWeeklyAnalysis | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_weekly_analyses")
+    .select("*")
+    .eq("student_id", input.studentId)
+    .eq("week_from", input.weekFrom)
+    .eq("week_to", input.weekTo)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to load nutrition weekly analysis for ${input.studentId} ${input.weekFrom}..${input.weekTo}: ${error.message}`
+    );
+  }
+  if (!data) {
+    return null;
+  }
+  return mapNutritionWeeklyAnalysisRow(data as NutritionWeeklyAnalysisRow);
+}
+
 export async function getNutritionReportWithMacros(reportId: string): Promise<NutritionReportWithMacros | null> {
   const supabase = createSupabaseServerClient();
   const [{ data: reportData, error: reportError }, { data: macroData, error: macroError }] = await Promise.all([

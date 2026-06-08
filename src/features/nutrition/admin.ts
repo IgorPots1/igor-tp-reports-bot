@@ -12,7 +12,9 @@ import {
   getNutritionReportWithMacros,
   getNutritionStudentEssentials,
   getNutritionStudentProfile,
+  getNutritionWeeklyAnalysisForWeek,
   getNutritionWeightLogs,
+  listNutritionReportsForStudent,
   insertNutritionDailyMacros,
   listNutritionDashboardRows,
   type NutritionDashboardFilters,
@@ -30,10 +32,20 @@ export async function getNutritionAdminStudentCard(input: {
   weekTo: string;
 }) {
   const essentials = await getNutritionStudentEssentials(input.studentId);
-  const [profile, contextItems, weightLogs] = await Promise.all([
+  const [profile, contextItems, weightLogs, reports, weeklyAnalysis] = await Promise.all([
     getNutritionStudentProfile(input.studentId),
     getActiveNutritionContextItems(input.studentId),
     getNutritionWeightLogs(input.studentId),
+    listNutritionReportsForStudent(input.studentId, {
+      weekFrom: input.weekFrom,
+      weekTo: input.weekTo,
+      limit: 20,
+    }),
+    getNutritionWeeklyAnalysisForWeek({
+      studentId: input.studentId,
+      weekFrom: input.weekFrom,
+      weekTo: input.weekTo,
+    }),
   ]);
   const context = await buildNutritionStudentContext({
     studentId: input.studentId,
@@ -46,6 +58,8 @@ export async function getNutritionAdminStudentCard(input: {
     profile,
     contextItems,
     weightLogs,
+    reports,
+    weeklyAnalysis,
     context,
   };
 }

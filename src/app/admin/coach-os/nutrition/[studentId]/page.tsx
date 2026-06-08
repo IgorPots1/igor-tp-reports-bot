@@ -33,7 +33,7 @@ function getCurrentWeekWindow(): { weekFrom: string; weekTo: string } {
 }
 
 function getBadgeClass(status: string): string {
-  if (status === "ready_for_analysis" || status === "approved_for_copy") {
+  if (status === "ready_for_analysis" || status === "approved_for_copy" || status === "draft_generated") {
     return "admin-badge admin-badge-success";
   }
   if (status === "blocked_safety" || status === "insufficient") {
@@ -43,6 +43,15 @@ function getBadgeClass(status: string): string {
     return "admin-badge admin-badge-warning";
   }
   return "admin-badge admin-badge-outline";
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function formatDoNotSendReasons(safetyFlags: Record<string, unknown>): string[] {
+  const hardFlags = asStringArray(safetyFlags.hard_flags);
+  return hardFlags.map((flag) => `manual_review_required:${flag}`);
 }
 
 export default async function CoachOsNutritionStudentCardPage({
@@ -378,9 +387,50 @@ export default async function CoachOsNutritionStudentCardPage({
         </article>
 
         <article className="admin-card">
+          <h3>Saved reports (this week)</h3>
+          <p className="admin-muted">
+            Each save creates a new report row. Older reports are kept; macros are scoped per report.
+          </p>
+          <div className="admin-table-wrap">
+            <table className="admin-table admin-table-compact">
+              <thead>
+                <tr>
+                  <th>Created</th>
+                  <th>Status</th>
+                  <th>Report ID</th>
+                  <th>Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                {card.reports.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="admin-empty-cell">
+                      No saved reports for {weekFrom} — {weekTo}.
+                    </td>
+                  </tr>
+                ) : (
+                  card.reports.map((report) => (
+                    <tr key={report.id}>
+                      <td>{formatIsoDate(report.createdAt)}</td>
+                      <td>
+                        <span className={getBadgeClass(report.status)}>{report.status}</span>
+                      </td>
+                      <td>
+                        <code>{report.id}</code>
+                      </td>
+                      <td>{report.sourceType}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article className="admin-card">
           <h3>Generate weekly review</h3>
           <p className="admin-muted">
-            Generates internal analysis and a copy-only draft. Hard safety flags block normal athlete draft text.
+            Generates internal analysis and a copy-only draft. Hard safety flags block athlete draft text.
           </p>
           <form className="admin-form-stack" action={generateNutritionWeeklyReviewAction}>
             <input type="hidden" name="studentId" value={studentId} />
@@ -388,13 +438,96 @@ export default async function CoachOsNutritionStudentCardPage({
             <input type="hidden" name="weekTo" value={weekTo} />
             <input type="hidden" name="redirectTo" value={`/admin/coach-os/nutrition/${studentId}`} />
             <label className="admin-form-field">
-              <span>Nutrition report ID</span>
-              <input className="admin-input" name="reportId" placeholder="UUID from saved report" required />
+              <span>Nutrition report</span>
+              {card.reports.length > 0 ? (
+                <select className="admin-input" name="reportId" required defaultValue={card.reports[0]?.id}>
+                  {card.reports.map((report) => (
+                    <option key={report.id} value={report.id}>
+                      {formatIsoDate(report.createdAt)} · {report.status} · {report.id.slice(0, 8)}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input className="admin-input" name="reportId" placeholder="Save a report first" required disabled />
+              )}
             </label>
-            <FormActionButton className="admin-button" pendingText="Generating...">
+            <FormActionButton className="admin-button" pendingText="Generating..." disabled={card.reports.length === 0}>
               Generate weekly review
             </FormActionButton>
           </form>
+        </article>
+
+        <article className="admin-card">
+          <h3>Saved weekly review (copy-only)</h3>
+          {!card.weeklyAnalysis ? (
+            <p className="admin-muted">No weekly review saved for {weekFrom} — {weekTo} yet.</p>
+          ) : (
+            <div className="admin-form-stack">
+              <div className="admin-card-actions admin-card-actions-compact">
+                <span className={getBadgeClass(card.weeklyAnalysis.status)}>{card.weeklyAnalysis.status}</span>
+                <span className="admin-muted">updated {formatIsoDate(card.weeklyAnalysis.updatedAt)}</span>
+              </div>
+
+              {card.weeklyAnalysis.status === "blocked_safety" && (
+                <div className="admin-alert admin-alert-error">
+                  <strong>Safety block active.</strong> Athlete-facing draft is suppressed. Review hard flags and do-not-send
+                  reasons before any manual copy.
+                </div>
+              )}
+
+              <section>
+                <h4>Internal summary</h4>
+                <textarea
+                  className="admin-textarea admin-textarea-compact"
+                  rows={6}
+                  readOnly
+                  value={JSON.stringify(card.weeklyAnalysis.internalSummary, null, 2)}
+                />
+              </section>
+
+              <section>
+                <h4>Nutrition summary</h4>
+                <textarea
+                  className="admin-textarea admin-textarea-compact"
+                  rows={4}
+                  readOnly
+                  value={JSON.stringify(card.weeklyAnalysis.nutritionSummary, null, 2)}
+                />
+              </section>
+
+              <section>
+                <h4>Safety flags</h4>
+                <textarea
+                  className="admin-textarea admin-textarea-compact"
+                  rows={4}
+                  readOnly
+                  value={JSON.stringify(card.weeklyAnalysis.safetyFlags, null, 2)}
+                />
+                {formatDoNotSendReasons(card.weeklyAnalysis.safetyFlags).length > 0 && (
+                  <div className="admin-meta-list admin-meta-list-compact">
+                    <div>
+                      <dt>Do-not-send reasons</dt>
+                      <dd>{formatDoNotSendReasons(card.weeklyAnalysis.safetyFlags).join(", ")}</dd>
+                    </div>
+                  </div>
+                )}
+              </section>
+
+              <section>
+                <h4>Athlete draft (copy-only)</h4>
+                {card.weeklyAnalysis.athleteMessageDraft ? (
+                  <textarea
+                    className="admin-textarea"
+                    rows={8}
+                    readOnly
+                    value={card.weeklyAnalysis.athleteMessageDraft}
+                  />
+                ) : (
+                  <p className="admin-muted">Athlete draft suppressed (safety block or insufficient data).</p>
+                )}
+              </section>
+            </div>
+          )}
         </article>
       </div>
     </section>

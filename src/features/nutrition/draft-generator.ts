@@ -3,6 +3,8 @@ import {
   type NutritionStudentContext,
 } from "@/features/nutrition/context";
 import { stableHash } from "@/features/nutrition/repository";
+import type { TrainingPeaksTelegramFormality } from "@/features/trainingpeaks/repository";
+import { getTrainingPeaksReplyDraftFormalityInstruction } from "@/features/trainingpeaks/telegram-context";
 
 export type GeneratedNutritionWeeklyAnalysis = {
   data_quality_summary: {
@@ -67,24 +69,54 @@ function resolveMainFocus(context: NutritionStudentContext): string {
   return "Keep nutrition consistency through the training week";
 }
 
-function russianFormalityLead(formality: "ty" | "vy" | "unknown"): string {
-  if (formality === "vy") {
-    return "Предлагаю на этой неделе";
+function buildNutritionDraftAddress(formality: TrainingPeaksTelegramFormality): {
+  lead: string;
+  focusVerb: string;
+} {
+  switch (formality) {
+    case "ty":
+      return {
+        lead: "Предлагаю тебе на этой неделе",
+        focusVerb: "Держим фокус на одном шаге.",
+      };
+    case "vy":
+      return {
+        lead: "Предлагаю вам на этой неделе",
+        focusVerb: "Держите фокус на одном шаге.",
+      };
+    default:
+      return {
+        lead: "На этой неделе предлагаю",
+        focusVerb: "Сфокусируемся на одном шаге.",
+      };
   }
-  return "Предлагаю на этой неделе";
 }
 
 function buildAthleteDraft(context: NutritionStudentContext, mainFocus: string): string {
-  const formality = context.resolvedCommunicationProfile.formality;
-  const lead = russianFormalityLead(formality);
+  const profile = context.resolvedCommunicationProfile;
+  const address = buildNutritionDraftAddress(profile.formality);
+  const greeting = profile.preferredGreeting ? `${profile.preferredGreeting}\n\n` : "";
   const longRunText = context.tpNextWeek.longRun
     ? `с акцентом на питание перед/после длительной ${context.tpNextWeek.longRun.date}`
     : "с акцентом на стабильность перед ключевыми тренировками";
-  const toneSuffix = context.resolvedCommunicationProfile.tone === "direct"
-    ? " Держим фокус на одном шаге."
-    : ".";
 
-  return `${lead} ${mainFocus.toLocaleLowerCase("ru")} и ровный режим в течение недели, ${longRunText}${toneSuffix}`;
+  let toneSuffix = ".";
+  if (profile.tone === "direct") {
+    toneSuffix = ` ${address.focusVerb}`;
+  } else if (profile.tone === "warm") {
+    toneSuffix =
+      profile.formality === "vy"
+        ? " Буду рядом, если понадобится уточнить детали."
+        : profile.formality === "ty"
+          ? " Буду на связи, если понадобится уточнить детали."
+          : " Буду на связи при необходимости уточнить детали.";
+  } else if (profile.tone === "formal") {
+    toneSuffix = profile.formality === "vy" ? " Сохраняйте ровный режим." : " Сохраняй ровный режим.";
+  }
+
+  const profileNotes = profile.notes ? `\n\n${profile.notes}` : "";
+
+  return `${greeting}${address.lead} ${mainFocus.toLocaleLowerCase("ru")} и ровный режим в течение недели, ${longRunText}${toneSuffix}${profileNotes}`;
 }
 
 export async function generateNutritionWeeklyAnalysis(input: {
@@ -116,6 +148,10 @@ export async function generateNutritionWeeklyAnalysis(input: {
   if (context.dataQuality.qualityFlags.length > 0) {
     notes.push(`data_quality:${context.dataQuality.qualityFlags.join(",")}`);
   }
+  notes.push(
+    `communication_formality:${getTrainingPeaksReplyDraftFormalityInstruction(context.resolvedCommunicationProfile.formality)}`
+  );
+  notes.push(...context.communicationProfilePromptLines);
   const promptHash = stableHash({
     role: "nutrition-weekly-analysis-v1",
     guardrails: [
