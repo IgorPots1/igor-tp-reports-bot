@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 
 import FormActionButton from "@/app/admin/FormActionButton";
-import NutritionReportUploadForm from "@/app/admin/coach-os/nutrition/NutritionReportUploadForm";
+import NutritionFileUploadPanel from "@/app/admin/coach-os/nutrition/NutritionFileUploadPanel";
 import { formatIsoDate, getSingleSearchParam } from "@/app/admin/lib";
 import {
   addNutritionContextNoteAction,
@@ -31,7 +31,6 @@ import {
   formatNutritionTpCacheNote,
   formatNutritionTpCacheStatus,
   NUTRITION_CONTEXT_ITEM_TYPE_LABELS,
-  NUTRITION_FILE_UPLOAD_LIMIT_HINT,
 } from "@/features/nutrition/admin-labels";
 import {
   NUTRITION_FILE_PREVIEW_COOKIE,
@@ -312,150 +311,14 @@ export default async function CoachOsNutritionStudentCardPage({
           </div>
         </article>
 
-        <article className="admin-card admin-card-compact admin-nutrition-card-wide">
-          <h3>Загрузить отчёт питания</h3>
-          <p className="admin-muted admin-nutrition-helper">
-            Поддержка: PDF, CSV, TXT, JPG/JPEG, PNG, WEBP, HEIC (если mime поддержан браузером).{" "}
-            {NUTRITION_FILE_UPLOAD_LIMIT_HINT}
-          </p>
-          <NutritionReportUploadForm className="admin-form-stack" action={previewNutritionFileUploadAction}>
-            <input type="hidden" name="studentId" value={studentId} />
-            <input type="hidden" name="redirectTo" value={`/admin/coach-os/nutrition/${studentId}`} />
-            <div className="admin-nutrition-kv-grid">
-              <label className="admin-form-field">
-                <span>Неделя с</span>
-                <input className="admin-input" type="date" name="weekFrom" defaultValue={weekFrom} required />
-              </label>
-              <label className="admin-form-field">
-                <span>Неделя по</span>
-                <input className="admin-input" type="date" name="weekTo" defaultValue={weekTo} required />
-              </label>
-            </div>
-            <label className="admin-form-field">
-              <span>Файлы отчёта</span>
-              <input
-                className="admin-input"
-                type="file"
-                name="reportFiles"
-                multiple
-                required
-                accept=".pdf,.csv,.txt,.jpg,.jpeg,.png,.webp,.heic,image/heic,image/heif"
-              />
-            </label>
-            <label className="admin-form-field">
-              <span>Комментарий ученика / заметки</span>
-              <textarea className="admin-textarea admin-textarea-compact" name="studentNotes" rows={3} />
-            </label>
-            <div className="admin-card-actions admin-card-actions-compact">
-              <FormActionButton className="admin-button admin-button-secondary" pendingText="Распознаю…">
-                Загрузить и распознать
-              </FormActionButton>
-            </div>
-          </NutritionReportUploadForm>
-
-          <NutritionReportUploadForm className="admin-form-stack" action={saveNutritionFileReportAction}>
-            <input type="hidden" name="studentId" value={studentId} />
-            <input type="hidden" name="redirectTo" value={`/admin/coach-os/nutrition/${studentId}`} />
-            <div className="admin-nutrition-kv-grid">
-              <label className="admin-form-field">
-                <span>Неделя с</span>
-                <input className="admin-input" type="date" name="weekFrom" defaultValue={weekFrom} required />
-              </label>
-              <label className="admin-form-field">
-                <span>Неделя по</span>
-                <input className="admin-input" type="date" name="weekTo" defaultValue={weekTo} required />
-              </label>
-            </div>
-            <label className="admin-form-field">
-              <span>Файлы отчёта</span>
-              <input
-                className="admin-input"
-                type="file"
-                name="reportFiles"
-                multiple
-                required
-                accept=".pdf,.csv,.txt,.jpg,.jpeg,.png,.webp,.heic,image/heic,image/heif"
-              />
-            </label>
-            <label className="admin-form-field">
-              <span>Комментарий ученика / заметки</span>
-              <textarea className="admin-textarea admin-textarea-compact" name="studentNotes" rows={3} />
-            </label>
-            <label className="admin-form-field">
-              <span>Если данных мало</span>
-              <select className="admin-input" name="forceNeedsReview" defaultValue="false">
-                <option value="false">Автостатус по качеству данных</option>
-                <option value="true">Сохранить как needs_review</option>
-              </select>
-            </label>
-            <div className="admin-card-actions admin-card-actions-compact">
-              <FormActionButton className="admin-button" pendingText="Сохраняю…">
-                Сохранить и запустить разбор
-              </FormActionButton>
-            </div>
-          </NutritionReportUploadForm>
-
-          {activeFilePreview && (
-            <>
-              <div className="admin-card-actions admin-card-actions-compact">
-                <span className={getBadgeClass(activeFilePreview.status)}>
-                  {formatNutritionStatus(activeFilePreview.status, "report")}
-                </span>
-                <span className="admin-muted">
-                  дней: {activeFilePreview.quality.parsedDays}, низкая уверенность: {activeFilePreview.quality.lowConfidenceDays}
-                </span>
-              </div>
-              {activeFilePreview.extractionWarnings.length > 0 && (
-                <div className="admin-alert admin-alert-warning">
-                  {activeFilePreview.extractionWarnings.join(" | ")}
-                </div>
-              )}
-              {activeFilePreview.unsupportedFiles.length > 0 && (
-                <div className="admin-alert admin-alert-warning">
-                  {activeFilePreview.unsupportedFiles
-                    .map((item) => `${item.fileName}: ${item.reason === "pdf_no_text_content" ? "PDF не удалось прочитать как текст." : item.reason}`)
-                    .join(" | ")}
-                </div>
-              )}
-              <div className="admin-table-wrap">
-                <table className="admin-table admin-table-compact">
-                  <thead>
-                    <tr>
-                      <th>День</th>
-                      <th>ккал</th>
-                      <th>Белки</th>
-                      <th>Жиры</th>
-                      <th>Углев.</th>
-                      <th>Уверен.</th>
-                      <th>Заметки</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activeFilePreview.rows.length === 0 ? (
-                      <tr>
-                        <td colSpan={7} className="admin-empty-cell">
-                          Распознанных строк из файлов пока нет.
-                        </td>
-                      </tr>
-                    ) : (
-                      activeFilePreview.rows.map((row) => (
-                        <tr key={`${row.day}-${row.kcal ?? "na"}-${row.confidence.toFixed(3)}`}>
-                          <td>{row.day}</td>
-                          <td>{row.kcal ?? "—"}</td>
-                          <td>{row.proteinG ?? "—"}</td>
-                          <td>{row.fatG ?? "—"}</td>
-                          <td>{row.carbsG ?? "—"}</td>
-                          <td>{row.confidence.toFixed(2)}</td>
-                          <td>{row.notes ?? "—"}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
-        </article>
+        <NutritionFileUploadPanel
+          studentId={studentId}
+          weekFrom={weekFrom}
+          weekTo={weekTo}
+          initialPreview={activeFilePreview}
+          previewAction={previewNutritionFileUploadAction}
+          saveAction={saveNutritionFileReportAction}
+        />
 
         <article className="admin-card admin-card-compact admin-nutrition-card-wide">
           <h3>Ручной ввод макросов</h3>

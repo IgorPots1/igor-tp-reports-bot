@@ -19,6 +19,8 @@ import {
   NUTRITION_FILE_PREVIEW_COOKIE,
   serializeNutritionFileUploadPreview,
 } from "@/features/nutrition/file-preview-cookie";
+import type { NutritionFileUploadPreviewSnapshot } from "@/features/nutrition/file-preview-cookie";
+import type { NutritionFileUploadPreviewActionState } from "@/app/admin/coach-os/nutrition/upload-action-state";
 import type { NutritionContextItemType } from "@/features/nutrition/repository";
 import {
   ADMIN_ACCESS_COOKIE_NAME,
@@ -97,6 +99,53 @@ function parseOptionalNumber(value: string | null): number | null {
     throw new Error("Invalid numeric field");
   }
   return parsed;
+}
+
+function toNutritionUploadUserError(error: unknown, fallback: string): string {
+  if (error instanceof Error) {
+    const message = error.message.trim();
+    if (!message) {
+      return fallback;
+    }
+    if (/next_redirect|redirect/i.test(message)) {
+      return fallback;
+    }
+    return message;
+  }
+  return fallback;
+}
+
+function buildPreviewSnapshot(input: {
+  studentId: string;
+  weekFrom: string;
+  weekTo: string;
+  preview: Awaited<ReturnType<typeof previewNutritionFileUpload>>;
+}): NutritionFileUploadPreviewSnapshot {
+  return {
+    studentId: input.studentId,
+    weekFrom: input.weekFrom,
+    weekTo: input.weekTo,
+    status: input.preview.status,
+    quality: input.preview.quality,
+    rows: input.preview.extraction.extractedRows.map((row) => ({
+      day: row.day,
+      kcal: row.kcal,
+      proteinG: row.proteinG,
+      fatG: row.fatG,
+      carbsG: row.carbsG,
+      confidence: row.confidence,
+      notes: row.notes,
+    })),
+    extractionWarnings: input.preview.extraction.extractionWarnings,
+    unsupportedFiles: input.preview.extraction.unsupportedFiles,
+    files: input.preview.fileMetas.map((file) => ({
+      originalFileName: file.originalFileName,
+      fileKind: file.fileKind,
+      extractionMethod: file.extractionMethod ?? null,
+      extractionErrorCode: file.extractionErrorCode ?? null,
+      extractionWarnings: file.extractionWarnings ?? [],
+    })),
+  };
 }
 
 export async function saveNutritionProfileAction(formData: FormData): Promise<void> {
@@ -271,7 +320,10 @@ function getFormFiles(formData: FormData, key: string): File[] {
   return values.filter((value): value is File => value instanceof File && value.size > 0);
 }
 
-export async function previewNutritionFileUploadAction(formData: FormData): Promise<void> {
+export async function previewNutritionFileUploadAction(
+  _prevState: NutritionFileUploadPreviewActionState,
+  formData: FormData
+): Promise<NutritionFileUploadPreviewActionState> {
   const studentId = getRequiredFormValue(formData, "studentId");
   const weekFrom = getRequiredFormValue(formData, "weekFrom");
   const weekTo = getRequiredFormValue(formData, "weekTo");
@@ -284,6 +336,13 @@ export async function previewNutritionFileUploadAction(formData: FormData): Prom
     if (files.length === 0) {
       throw new Error("Выберите хотя бы один файл.");
     }
+    const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+    console.info("[nutrition.upload.preview] start", {
+      studentId,
+      fileCount: files.length,
+      totalBytes,
+      mimeTypes: files.map((file) => file.type || "application/octet-stream"),
+    });
     const preview = await previewNutritionFileUpload({
       studentId,
       weekFrom,
@@ -291,48 +350,45 @@ export async function previewNutritionFileUploadAction(formData: FormData): Prom
       studentNotes,
       files,
     });
+    const snapshot = buildPreviewSnapshot({
+      studentId,
+      weekFrom,
+      weekTo,
+      preview,
+    });
     const cookieStore = await cookies();
     cookieStore.set(
       NUTRITION_FILE_PREVIEW_COOKIE,
-      serializeNutritionFileUploadPreview({
-        studentId,
-        weekFrom,
-        weekTo,
-        status: preview.status,
-        quality: preview.quality,
-        rows: preview.extraction.extractedRows.map((row) => ({
-          day: row.day,
-          kcal: row.kcal,
-          proteinG: row.proteinG,
-          fatG: row.fatG,
-          carbsG: row.carbsG,
-          confidence: row.confidence,
-          notes: row.notes,
-        })),
-        extractionWarnings: preview.extraction.extractionWarnings,
-        unsupportedFiles: preview.extraction.unsupportedFiles,
-        files: preview.fileMetas.map((file) => ({
-          originalFileName: file.originalFileName,
-          fileKind: file.fileKind,
-          extractionMethod: file.extractionMethod ?? null,
-          extractionErrorCode: file.extractionErrorCode ?? null,
-          extractionWarnings: file.extractionWarnings ?? [],
-        })),
-      }),
+      serializeNutritionFileUploadPreview(snapshot),
       getPreviewCookieOptions()
     );
-    revalidateNutritionPaths(studentId);
-    redirect(
-      withNotice(
-        redirectTo,
-        "notice",
-        `Файлы обработаны: ${preview.fileMetas.length}. Дней найдено: ${preview.quality.parsedDays}, статус: ${formatNutritionStatus(preview.status, "report")}.`
-      )
-    );
+    console.info("[nutrition.upload.preview] success", {
+      studentId,
+      fileCount: preview.fileMetas.length,
+      parsedRows: preview.extraction.extractedRows.length,
+      warningsCount: preview.extraction.extractionWarnings.length,
+      unsupportedFiles: preview.extraction.unsupportedFiles.length,
+    });
+    return {
+      ok: true,
+      notice: `Файлы обработаны: ${preview.fileMetas.length}. Дней найдено: ${preview.quality.parsedDays}, статус: ${formatNutritionStatus(preview.status, "report")}.`,
+      error: null,
+      preview: snapshot,
+      refreshKey: `${Date.now()}`,
+    };
   } catch (error) {
-    revalidateNutritionPaths(studentId);
-    const message = error instanceof Error ? error.message : "Не удалось распознать файлы отчёта.";
-    redirect(withNotice(redirectTo, "error", message));
+    const message = toNutritionUploadUserError(error, "Файл загружен, но отчёт не удалось распознать.");
+    console.warn("[nutrition.upload.preview] failed", {
+      studentId,
+      message,
+    });
+    return {
+      ok: false,
+      notice: null,
+      error: message,
+      preview: null,
+      refreshKey: null,
+    };
   }
 }
 
@@ -344,13 +400,21 @@ export async function saveNutritionFileReportAction(formData: FormData): Promise
   const studentNotes = getOptionalFormValue(formData, "studentNotes");
   await ensureAdminAccess(redirectTo);
 
+  let result: Awaited<ReturnType<typeof saveNutritionFileReport>>;
   try {
     const files = getFormFiles(formData, "reportFiles");
     if (files.length === 0) {
       throw new Error("Выберите хотя бы один файл.");
     }
+    const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+    console.info("[nutrition.upload.save] start", {
+      studentId,
+      fileCount: files.length,
+      totalBytes,
+      mimeTypes: files.map((file) => file.type || "application/octet-stream"),
+    });
     const forceNeedsReview = parseBoolean(getOptionalFormValue(formData, "forceNeedsReview"), false);
-    const result = await saveNutritionFileReport({
+    result = await saveNutritionFileReport({
       studentId,
       weekFrom,
       weekTo,
@@ -358,21 +422,34 @@ export async function saveNutritionFileReportAction(formData: FormData): Promise
       files,
       forceNeedsReview,
     });
-    const cookieStore = await cookies();
-    cookieStore.delete(NUTRITION_FILE_PREVIEW_COOKIE);
-    revalidateNutritionPaths(studentId);
-    redirect(
-      withNotice(
-        redirectTo,
-        "notice",
-        `Отчёт сохранён (${formatNutritionStatus(result.status, "report")}), файлов: ${result.intake.fileMetas.length}, макросов: ${result.macros.length}.`
-      )
-    );
   } catch (error) {
     revalidateNutritionPaths(studentId);
-    const message = error instanceof Error ? error.message : "Не удалось сохранить отчёт из файлов.";
+    const message = toNutritionUploadUserError(error, "Не удалось сохранить отчёт из файлов.");
+    console.warn("[nutrition.upload.save] failed", {
+      studentId,
+      message,
+    });
     redirect(withNotice(redirectTo, "error", message));
   }
+
+  const cookieStore = await cookies();
+  cookieStore.delete(NUTRITION_FILE_PREVIEW_COOKIE);
+  revalidateNutritionPaths(studentId);
+  console.info("[nutrition.upload.save] success", {
+    studentId,
+    reportId: result.report.id,
+    fileCount: result.intake.fileMetas.length,
+    parsedRows: result.intake.extraction.extractedRows.length,
+    warningsCount: result.intake.extraction.extractionWarnings.length,
+    macrosSaved: result.macros.length,
+  });
+  redirect(
+    withNotice(
+      redirectTo,
+      "notice",
+      `Отчёт сохранён (${formatNutritionStatus(result.status, "report")}), файлов: ${result.intake.fileMetas.length}, макросов: ${result.macros.length}.`
+    )
+  );
 }
 
 export async function generateNutritionWeeklyReviewAction(formData: FormData): Promise<void> {

@@ -55,8 +55,18 @@ assert.match(
 );
 
 const pageBody = readFileSync(join(root, "src/app/admin/coach-os/nutrition/[studentId]/page.tsx"), "utf8");
-assert.match(pageBody, /NUTRITION_FILE_UPLOAD_LIMIT_HINT/, "nutrition upload page must show upload limit hint");
-assert.match(pageBody, /NutritionReportUploadForm/, "nutrition upload page must use client upload guard form");
+const uploadPanelBody = readFileSync(
+  join(root, "src/app/admin/coach-os/nutrition/NutritionFileUploadPanel.tsx"),
+  "utf8"
+);
+assert.ok(
+  /NUTRITION_FILE_UPLOAD_LIMIT_HINT/.test(pageBody) || /NUTRITION_FILE_UPLOAD_LIMIT_HINT/.test(uploadPanelBody),
+  "nutrition upload UI must show upload limit hint"
+);
+assert.ok(
+  /NutritionReportUploadForm/.test(pageBody) || /NutritionReportUploadForm/.test(uploadPanelBody),
+  "nutrition upload UI must use client upload guard form"
+);
 
 const uploadFormBody = readFileSync(
   join(root, "src/app/admin/coach-os/nutrition/NutritionReportUploadForm.tsx"),
