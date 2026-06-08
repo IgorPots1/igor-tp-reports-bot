@@ -349,9 +349,6 @@ function compactScheduleRestrictionReason(raw: string): string | null {
   if (withoutClarify.length < 3) {
     return null;
   }
-  if (withoutClarify.length > 120) {
-    return `${withoutClarify.slice(0, 117)}…`;
-  }
   return withoutClarify;
 }
 
@@ -379,7 +376,10 @@ function formatGenericScheduleRestrictionText(
 ): string {
   const reason = extractShortScheduleRestrictionReason(structured);
   if (reason) {
-    return range ? `ограничение: ${reason} (${range})` : `ограничение: ${reason}`;
+    if (reason.length <= 80 && !reason.includes("\n")) {
+      return range ? `ограничение: ${reason} (${range})` : `ограничение: ${reason}`;
+    }
+    return range ? `ограничение (${range}):\n${reason}` : `ограничение:\n${reason}`;
   }
   return range ? `ограничение (${range})` : "ограничение плана";
 }

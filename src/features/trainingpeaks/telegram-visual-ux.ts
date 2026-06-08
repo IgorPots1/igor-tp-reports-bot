@@ -10,6 +10,13 @@ export function splitCoachFacingDenseText(text: string): string[] {
     return [];
   }
 
+  if (normalized.includes("\n")) {
+    return normalized
+      .split(/\n/u)
+      .map((line) => line.trimEnd())
+      .filter((line) => line.trim().length > 0);
+  }
+
   const moveMatch = normalized.match(/^кандидат переноса\s+(.+?)\s*→\s*(.+)$/iu);
   if (moveMatch) {
     return ["кандидат переноса", `${moveMatch[1].trim()} → ${moveMatch[2].trim()}`];

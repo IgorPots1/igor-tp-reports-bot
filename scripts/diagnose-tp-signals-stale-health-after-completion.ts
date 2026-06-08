@@ -107,6 +107,22 @@ function parseCliOptions(argv: string[]): CliOptions {
       }
       continue;
     }
+    if (arg.startsWith("--athletes=")) {
+      const value = arg.slice("--athletes=".length).trim();
+      if (value) {
+        options.students.push(...value.split(",").map((item) => item.trim()).filter(Boolean));
+      }
+      continue;
+    }
+    if (arg === "--athletes") {
+      const next = argv[index + 1]?.trim();
+      if (!next || next.startsWith("--")) {
+        throw new Error(`${LOG_PREFIX} FAIL: missing value for --athletes`);
+      }
+      options.students.push(...next.split(",").map((item) => item.trim()).filter(Boolean));
+      index += 1;
+      continue;
+    }
     if (arg === "--student") {
       const next = argv[index + 1]?.trim();
       if (!next || next.startsWith("--")) {
@@ -140,7 +156,50 @@ function parseCliOptions(argv: string[]): CliOptions {
 }
 
 function normalizeMatch(input: string): string {
-  return input.toLowerCase().replace(/\s+/gu, " ").trim();
+  const lower = input.toLowerCase().replace(/\s+/gu, " ").trim();
+  const transliterated = transliterateCyrillicForMatch(lower);
+  return transliterated && transliterated !== lower
+    ? `${lower} ${transliterated}`.replace(/\s+/gu, " ").trim()
+    : lower;
+}
+
+function transliterateCyrillicForMatch(input: string): string {
+  const table: Record<string, string> = {
+    а: "a",
+    б: "b",
+    в: "v",
+    г: "g",
+    д: "d",
+    е: "e",
+    ё: "e",
+    ж: "zh",
+    з: "z",
+    и: "i",
+    й: "y",
+    к: "k",
+    л: "l",
+    м: "m",
+    н: "n",
+    о: "o",
+    п: "p",
+    р: "r",
+    с: "s",
+    т: "t",
+    у: "u",
+    ф: "f",
+    х: "h",
+    ц: "ts",
+    ч: "ch",
+    ш: "sh",
+    щ: "sch",
+    ы: "y",
+    э: "e",
+    ю: "yu",
+    я: "ya",
+    ь: "",
+    ъ: "",
+  };
+  return input.replace(/[а-яё]/gu, (char) => table[char] ?? char);
 }
 
 function normalizeRecordString(value: unknown): string | null {
@@ -286,7 +345,7 @@ async function run(): Promise<void> {
   const studentQueries = options.students.map(normalizeMatch);
 
   const matchedStudents = students.filter((student) => {
-    const haystack = `${student.studentName} ${student.studentId} ${student.id}`.toLowerCase();
+    const haystack = normalizeMatch(`${student.studentName} ${student.studentId} ${student.id}`);
     return studentQueries.some((query) => haystack.includes(query));
   });
 
@@ -341,7 +400,7 @@ async function run(): Promise<void> {
         (obs) => obs.observedAt >= openedAt
       );
       const workoutsAfterOpen = workouts.filter(
-        (w) => w.workoutDate >= openedDate && (w.completedAt || w.actualDistance || w.actualDuration)
+        (w) => w.workoutDate >= openedDate && w.isCompleted
       );
 
       const { lifecycleInput, proposal } = evaluateLifecycleFromEvidence({

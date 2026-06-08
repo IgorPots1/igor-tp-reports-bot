@@ -118,6 +118,7 @@ import {
   type TrainingPeaksStudent,
   type TrainingPeaksStudentOperationalSignal,
   type TrainingPeaksStudentThread,
+  type TrainingPeaksTelegramContextObservation,
   type TrainingPeaksTelegramFormality,
   TrainingPeaksStudentThreadConflictError,
   type TrainingPeaksWeek,
@@ -178,6 +179,19 @@ import {
 import type { TelegramMessage } from "@/features/telegram/types";
 import { buildTelegramContextTextPreview, sha256TelegramContextText } from "@/features/trainingpeaks/telegram-context";
 import { formatOperationalSignalTelegramLine } from "@/features/trainingpeaks/telegram-visual-ux";
+import {
+  classifyTpWorkoutEvidence,
+  evaluateOperationalSignalLifecycle,
+  type EvidenceFreshness,
+  type OperationalSignalClass,
+  type OperationalSignalLifecycle,
+  type OperationalSignalLifecycleInput,
+  type PlannedVsCompletedDelta,
+} from "@/features/trainingpeaks/operational-signal-lifecycle";
+import {
+  isCleanRunningCompletion,
+  resolveBridgeRecommendedAction,
+} from "@/features/trainingpeaks/tp-completion-lifecycle-bridge";
 import {
   buildTrainingPeaksContactDisplay,
   TRAININGPEAKS_NO_CONTACT_ALERT_DAYS,
@@ -675,6 +689,26 @@ export type TrainingPeaksOperationalSignalsItem = {
   text: string;
   requiresCoachReview?: boolean | null;
   hiddenReason?: string | null;
+};
+
+export type TrainingPeaksOperationalSignalCompletionEvidence = {
+  latestCacheScannedAt: string | null;
+  latestCompletionAfterOpen: OperationalSignalLifecycleInput["latestTpCompletionAfterOpen"];
+  recommendedAction: string;
+  recommendationReason: string;
+  applyDryRunCommand: string | null;
+  cleanRunningCompletionCount: number;
+  evidenceError?: string | null;
+};
+
+export type TrainingPeaksOperationalSignalSourceEvidence = {
+  observedAt: string | null;
+  textPreview: string | null;
+};
+
+export type TrainingPeaksOperationalSignalDisplayEvidence = {
+  source?: TrainingPeaksOperationalSignalSourceEvidence | null;
+  completion?: TrainingPeaksOperationalSignalCompletionEvidence | null;
 };
 
 export type TrainingPeaksOperationalSignalsSection = {
@@ -5057,10 +5091,7 @@ function collectOperationalPlanningAttentionItems(input: {
     }
 
     const episodeKey = getSignalMetadataString(primarySignal.metadata, "episode_key");
-    const reason = compactOperationalSignalText(
-      buildCanonicalEpisodeScheduleDisplayText({ signals: group }),
-      90
-    );
+    const reason = buildCanonicalEpisodeScheduleDisplayText({ signals: group });
     const item: OperationalPlanningAttentionItem = {
       studentId: primarySignal.studentId,
       studentName: input.activeStudentNameById.get(primarySignal.studentId) ?? null,
@@ -5142,7 +5173,7 @@ function collectOperationalPlanningAttentionItems(input: {
     fallbackItems.push({
       studentId: signal.studentId,
       studentName: input.activeStudentNameById.get(signal.studentId) ?? null,
-      reason: compactOperationalSignalText(reason, 90),
+      reason,
       episodeKey: null,
       signalId: signal.id,
       sortDate: signal.validUntil ?? signal.targetDate ?? signal.validFrom ?? signal.sourceDate ?? null,
@@ -5923,6 +5954,444 @@ function resolveOperationalSignalDisplayLifecycleState(
   return "active_problem";
 }
 
+function parseNumberishOperationalSignal(value: number | string | null | undefined): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+  const parsed = Number(value.replace(",", ".").replace(/[^\d.-]/gu, ""));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function deriveOperationalSignalCompletionDelta(workout: TrainingPeaksWorkoutCacheRow): PlannedVsCompletedDelta {
+  const complianceDuration = parseNumberishOperationalSignal(workout.complianceDurationPercent);
+  const complianceDistance = parseNumberishOperationalSignal(workout.complianceDistancePercent);
+  if (complianceDuration !== null && complianceDuration < 80) {
+    return "modified_easy";
+  }
+  if (complianceDistance !== null && complianceDistance < 80) {
+    return "modified_easy";
+  }
+  const plannedTime = parseNumberishOperationalSignal(workout.plannedTimeRaw);
+  const completedTime = parseNumberishOperationalSignal(workout.completedTimeRaw);
+  if (plannedTime !== null && plannedTime > 0 && completedTime !== null) {
+    const ratio = completedTime / plannedTime;
+    if (ratio < 0.8) {
+      return "modified_easy";
+    }
+    if (ratio > 1.25) {
+      return "modified_other";
+    }
+    return "normal";
+  }
+  return "unknown";
+}
+
+function deriveOperationalSignalEvidenceFreshness(
+  workout: TrainingPeaksWorkoutCacheRow,
+  asOfDate: string
+): EvidenceFreshness {
+  const asOf = new Date(`${asOfDate}T23:59:59.999Z`).getTime();
+  const scannedAt = Date.parse(workout.scannedAt);
+  if (!Number.isFinite(scannedAt)) {
+    return "missing";
+  }
+  const ageDays = (asOf - scannedAt) / (24 * 60 * 60 * 1000);
+  return ageDays > 3 ? "stale" : "ok";
+}
+
+function classifyOperationalSignalWorkout(workout: TrainingPeaksWorkoutCacheRow) {
+  const sourceSnapshot =
+    workout.sourceSnapshot && typeof workout.sourceSnapshot === "object" && !Array.isArray(workout.sourceSnapshot)
+      ? (workout.sourceSnapshot as Record<string, unknown>)
+      : {};
+  return classifyTpWorkoutEvidence({
+    workoutId: String(workout.trainingPeaksWorkoutId),
+    workoutDate: workout.workoutDate,
+    title: workout.title,
+    description: typeof sourceSnapshot.description === "string" ? sourceSnapshot.description : null,
+    coachComments: typeof sourceSnapshot.coachComments === "string" ? sourceSnapshot.coachComments : null,
+    sportOrTypeCode: workout.sportOrTypeCode,
+    workoutTypeValueId: workout.workoutTypeValueId,
+    workoutSubTypeId: workout.workoutSubTypeId,
+    snapshotWorkoutTypeValueId:
+      typeof sourceSnapshot.workoutTypeValueId === "number" ? sourceSnapshot.workoutTypeValueId : null,
+    snapshotRawWorkoutTypeValueId:
+      typeof sourceSnapshot.rawWorkoutTypeValueId === "number" ? sourceSnapshot.rawWorkoutTypeValueId : null,
+    snapshotRawWorkoutSubTypeId:
+      typeof sourceSnapshot.rawWorkoutSubTypeId === "number" ? sourceSnapshot.rawWorkoutSubTypeId : null,
+    snapshotRawCode: typeof sourceSnapshot.rawCode === "string" ? sourceSnapshot.rawCode : null,
+    isPlanned: workout.isPlanned,
+    isCompleted: workout.isCompleted,
+    plannedVsCompletedDelta: deriveOperationalSignalCompletionDelta(workout),
+    complianceDurationPercent: parseNumberishOperationalSignal(workout.complianceDurationPercent),
+    complianceDistancePercent: parseNumberishOperationalSignal(workout.complianceDistancePercent),
+    plannedTimeRaw: parseNumberishOperationalSignal(workout.plannedTimeRaw),
+    completedTimeRaw: parseNumberishOperationalSignal(workout.completedTimeRaw),
+    plannedDistanceRaw: parseNumberishOperationalSignal(workout.plannedDistanceRaw),
+    completedDistanceRaw: parseNumberishOperationalSignal(workout.completedDistanceRaw),
+  });
+}
+
+function buildOperationalSignalCompletionInfo(input: {
+  workouts: TrainingPeaksWorkoutCacheRow[];
+  openedDate: string;
+  asOfDate: string;
+}): OperationalSignalLifecycleInput["latestTpCompletionAfterOpen"] {
+  const candidates = input.workouts
+    .filter((workout) => workout.workoutDate >= input.openedDate && workout.workoutDate <= input.asOfDate)
+    .filter((workout) => workout.isCompleted)
+    .sort((left, right) => {
+      if (left.workoutDate === right.workoutDate) {
+        return left.trainingPeaksWorkoutId - right.trainingPeaksWorkoutId;
+      }
+      return left.workoutDate.localeCompare(right.workoutDate);
+    });
+  const latest = candidates[candidates.length - 1];
+  if (!latest) {
+    return null;
+  }
+  const classification = classifyOperationalSignalWorkout(latest);
+  return {
+    workoutId: String(latest.trainingPeaksWorkoutId),
+    workoutDate: latest.workoutDate,
+    title: latest.title,
+    sportOrTypeCode: latest.sportOrTypeCode,
+    sportClass: classification.sportClass,
+    runningCompletionClass: classification.runningCompletionClass,
+    classificationConfidence: classification.confidence,
+    classificationReasonCodes: classification.reasonCodes,
+    classificationInspectedFields: classification.inspectedFields,
+    plannedVsCompletedDelta: deriveOperationalSignalCompletionDelta(latest),
+    evidenceFreshness: deriveOperationalSignalEvidenceFreshness(latest, input.asOfDate),
+    completionObservedAt: latest.startTime ?? latest.startTimePlanned ?? null,
+  };
+}
+
+function getOperationalSignalLifecycle(signal: TrainingPeaksStudentOperationalSignal): OperationalSignalLifecycle {
+  if (signal.lifecycleState) {
+    return signal.lifecycleState;
+  }
+  const payloadLifecycle = normalizeRecordString(signal.structuredPayload.lifecycle_state);
+  if (
+    payloadLifecycle === "active_problem" ||
+    payloadLifecycle === "return_planned" ||
+    payloadLifecycle === "return_trial_completed" ||
+    payloadLifecycle === "monitoring_after_return" ||
+    payloadLifecycle === "resolved"
+  ) {
+    return payloadLifecycle;
+  }
+  return "active_problem";
+}
+
+function classifyOperationalSignalForLifecycle(signal: TrainingPeaksStudentOperationalSignal): OperationalSignalClass {
+  const effective = resolveEffectiveOperationalSignalForDisplay(signal);
+  const healthKind = normalizeRecordString(signal.structuredPayload.health_issue_kind) ?? "";
+  const summary = [
+    normalizeRecordString(signal.structuredPayload.display_summary),
+    normalizeRecordString(signal.structuredPayload.latest_summary),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (isScheduleOperationalSignalType(effective.effectiveSignalType)) {
+    return "schedule_pause";
+  }
+  if (effective.effectiveSignalType === "resume_training" || effective.effectiveSignalType === "external_training_context") {
+    return "return_to_run";
+  }
+  if (isPainInjuryOperationalSignalForDisplay(effective)) {
+    return "injury_pain";
+  }
+  if (effective.effectiveSignalType === "pause_training") {
+    return "confirmed_illness";
+  }
+  if (isHealthOperationalSignalType(effective.effectiveSignalType)) {
+    if (healthKind.includes("ambiguous") || summary.includes("возможно") || summary.includes("не очень")) {
+      return "ambiguous_illness";
+    }
+    return "confirmed_illness";
+  }
+  return "unknown";
+}
+
+function countCleanOperationalSignalRunningCompletions(input: {
+  workouts: TrainingPeaksWorkoutCacheRow[];
+  openedDate: string;
+  asOfDate: string;
+}): number {
+  let count = 0;
+  for (const workout of input.workouts) {
+    if (workout.workoutDate < input.openedDate || workout.workoutDate > input.asOfDate || !workout.isCompleted) {
+      continue;
+    }
+    const classification = classifyOperationalSignalWorkout(workout);
+    if (
+      isCleanRunningCompletion({
+        sportClass: classification.sportClass,
+        runningCompletionClass: classification.runningCompletionClass,
+        classificationConfidence: classification.confidence,
+      })
+    ) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function findOperationalSignalSourceObservation(input: {
+  signal: TrainingPeaksStudentOperationalSignal;
+  observations: readonly TrainingPeaksTelegramContextObservation[];
+}): TrainingPeaksOperationalSignalSourceEvidence | null {
+  const sourceObservationId = input.signal.sourceObservationId;
+  const exact = sourceObservationId
+    ? input.observations.find((observation) => observation.id === sourceObservationId)
+    : null;
+  const fallback = exact ?? input.observations.find((observation) => observation.observedAt >= input.signal.createdAt) ?? null;
+  if (!fallback) {
+    return null;
+  }
+  return {
+    observedAt: fallback.observedAt,
+    textPreview: fallback.textPreview,
+  };
+}
+
+function buildOperationalSignalLifecycleInputFromCache(input: {
+  signal: TrainingPeaksStudentOperationalSignal;
+  workouts: TrainingPeaksWorkoutCacheRow[];
+  asOfDate: string;
+}): OperationalSignalLifecycleInput {
+  const openedAt = input.signal.createdAt;
+  const openedDate = openedAt.slice(0, 10);
+  return {
+    studentId: input.signal.studentId,
+    signalClass: classifyOperationalSignalForLifecycle(input.signal),
+    currentLifecycle: getOperationalSignalLifecycle(input.signal),
+    openedAt,
+    latestTpCompletionAfterOpen: buildOperationalSignalCompletionInfo({
+      workouts: input.workouts,
+      openedDate,
+      asOfDate: input.asOfDate,
+    }),
+    negativeMessageAfterCompletion: null,
+    explicitRecoveryMessage: null,
+    missedOrSkippedReturnWorkout: false,
+    returnWorkoutBlocker: null,
+  };
+}
+
+function formatOperationalSignalShortDate(iso: string | null | undefined): string | null {
+  if (!iso) {
+    return null;
+  }
+  const match = iso.match(/^(\d{4})-(\d{2})-(\d{2})/u);
+  if (!match) {
+    return null;
+  }
+  return `${match[3]}.${match[2]}`;
+}
+
+function formatOperationalSignalLifecycleState(
+  lifecycleDisplayState: OperationalSignalDisplayLifecycleState
+): string {
+  if (lifecycleDisplayState === "ready_for_coach_close") {
+    return "monitoring_after_return / close candidate";
+  }
+  return lifecycleDisplayState;
+}
+
+function formatOperationalSignalSummaryLine(summary: string): string {
+  const compact = summary.replace(/\b(\d{4})-(\d{2})-(\d{2})\b/g, (_match, _year, month, day) => `${day}.${month}`);
+  const pauseMatch = compact.match(/^пауза\s*\(([^)]+)\)$/iu);
+  if (pauseMatch?.[1]) {
+    return `пауза: ${pauseMatch[1].replace(/\s*—\s*/g, "—").trim()}`;
+  }
+  return compact;
+}
+
+function formatOperationalSignalCompletionEvidence(
+  completion: TrainingPeaksOperationalSignalCompletionEvidence | null | undefined,
+  signal: TrainingPeaksStudentOperationalSignal
+): string[] {
+  if (!completion) {
+    return ["TP evidence: cache overlay unavailable in payload", "recommended: manual review"];
+  }
+  if (completion.evidenceError) {
+    return [
+      `TP cache: ошибка чтения — нужен diagnostic refresh/check`,
+      "recommended: manual review",
+    ];
+  }
+  const latest = completion.latestCompletionAfterOpen;
+  const lines: string[] = [];
+  if (latest?.sportClass === "running_like") {
+    lines.push(`TP evidence: completed running-like workout after signal (${formatOperationalSignalShortDate(latest.workoutDate) ?? latest.workoutDate})`);
+  } else if (latest) {
+    lines.push(`TP evidence: latest completion after signal is ${latest.sportClass}`);
+  } else if (completion.latestCacheScannedAt) {
+    lines.push(
+      `TP evidence: no completed running workout found after ${formatOperationalSignalShortDate(signal.createdAt) ?? signal.createdAt.slice(0, 10)} in current cache`
+    );
+  } else {
+    lines.push("TP cache: данных по окну нет — нужен refresh");
+  }
+  if (latest?.evidenceFreshness === "stale" || latest?.evidenceFreshness === "missing") {
+    lines.push(
+      `TP cache: ${latest.evidenceFreshness === "stale" ? "устарел" : "неполный"} — нужен refresh`
+    );
+  } else if (!latest && completion.latestCacheScannedAt) {
+    lines.push(`TP cache: latest scan ${completion.latestCacheScannedAt.slice(0, 16).replace("T", " ")}`);
+  }
+  lines.push(`recommended: ${completion.recommendedAction}`);
+  return lines;
+}
+
+function buildActionableHealthOrPainDisplayText(input: {
+  signal: TrainingPeaksStudentOperationalSignal;
+  effective: EffectiveOperationalSignalForDisplay;
+  summary: string;
+  lifecycleDisplayState: OperationalSignalDisplayLifecycleState;
+  evidence: TrainingPeaksOperationalSignalDisplayEvidence | null;
+  asOfDate: string;
+}): string {
+  const isPain = isPainInjuryOperationalSignalForDisplay(input.effective);
+  const lines = [
+    formatOperationalSignalSummaryLine(input.summary.trim()) || "контекст: полный текст недоступен в signal payload",
+  ];
+  const source = input.evidence?.source ?? null;
+  const sourceDate =
+    formatOperationalSignalShortDate(source?.observedAt) ??
+    formatOperationalSignalShortDate(input.signal.createdAt);
+  if (source?.textPreview) {
+    lines.push(`источник: ${sourceDate ?? "дата неизвестна"}, ${source.textPreview.replace(/\s+/g, " ").trim()}`);
+  } else {
+    lines.push("источник: не найден в payload/cache — нужен review");
+  }
+  lines.push(`lifecycle: ${formatOperationalSignalLifecycleState(input.lifecycleDisplayState)}`);
+
+  if (input.lifecycleDisplayState === "ready_for_coach_close") {
+    lines.push("что проверить: актуальна ли боль/пауза сейчас");
+    lines.push("если не актуально: выполнить guarded close через existing lifecycle close tool");
+    return lines.join("\n");
+  }
+
+  if (isPain) {
+    lines.push("действие: проверить актуальность боли; не закрывать автоматически");
+    return lines.join("\n");
+  }
+
+  lines.push(...formatOperationalSignalCompletionEvidence(input.evidence?.completion, input.signal));
+  if (input.lifecycleDisplayState === "monitoring_after_return") {
+    lines.push("действие: close только через guarded review");
+  } else {
+    lines.push("действие: не закрывать автоматически");
+  }
+  return lines.join("\n");
+}
+
+async function buildOperationalSignalDisplayEvidenceMap(input: {
+  signals: TrainingPeaksStudentOperationalSignal[];
+  asOfDate: string;
+}): Promise<ReadonlyMap<string, TrainingPeaksOperationalSignalDisplayEvidence>> {
+  const eligible = input.signals.filter((signal) => {
+    if (signal.lifecycleState === "resolved") {
+      return false;
+    }
+    const effective = resolveEffectiveOperationalSignalForDisplay(signal);
+    return isHealthOperationalSignalType(effective.effectiveSignalType) || isPainInjuryOperationalSignalForDisplay(effective);
+  });
+  if (eligible.length === 0) {
+    return new Map();
+  }
+
+  const byStudent = new Map<string, TrainingPeaksStudentOperationalSignal[]>();
+  for (const signal of eligible) {
+    const group = byStudent.get(signal.studentId) ?? [];
+    group.push(signal);
+    byStudent.set(signal.studentId, group);
+  }
+
+  const evidence = new Map<string, TrainingPeaksOperationalSignalDisplayEvidence>();
+  await Promise.all(
+    [...byStudent.entries()].map(async ([studentId, studentSignals]) => {
+      const oldestOpened = studentSignals
+        .map((signal) => signal.createdAt.slice(0, 10))
+        .sort()[0] ?? input.asOfDate;
+      try {
+        const [workouts, observations] = await Promise.all([
+          listTrainingPeaksWorkoutCacheForStudentDateRange({
+            studentId,
+            from: oldestOpened,
+            to: input.asOfDate,
+          }),
+          listTrainingPeaksTelegramContextObservationsForStudent(studentId, 250),
+        ]);
+        const latestCacheScannedAt = workouts
+          .map((workout) => workout.scannedAt)
+          .filter(Boolean)
+          .sort()
+          .at(-1) ?? null;
+        for (const signal of studentSignals) {
+          const lifecycleInput = buildOperationalSignalLifecycleInputFromCache({
+            signal,
+            workouts,
+            asOfDate: input.asOfDate,
+          });
+          const proposal = evaluateOperationalSignalLifecycle(lifecycleInput);
+          const cleanRunningCompletionCount = countCleanOperationalSignalRunningCompletions({
+            workouts,
+            openedDate: signal.createdAt.slice(0, 10),
+            asOfDate: input.asOfDate,
+          });
+          const bridge = resolveBridgeRecommendedAction({
+            signalId: signal.id,
+            signalType: signal.signalType,
+            signalClass: lifecycleInput.signalClass,
+            currentLifecycle: lifecycleInput.currentLifecycle,
+            lifecycleInput,
+            proposal,
+            asOfDate: input.asOfDate,
+            cleanRunningCompletionCount,
+          });
+          evidence.set(signal.id, {
+            source: findOperationalSignalSourceObservation({ signal, observations }),
+            completion: {
+              latestCacheScannedAt,
+              latestCompletionAfterOpen: lifecycleInput.latestTpCompletionAfterOpen ?? null,
+              recommendedAction: bridge.recommendedAction,
+              recommendationReason: bridge.reason,
+              applyDryRunCommand: bridge.applyDryRunCommand,
+              cleanRunningCompletionCount,
+            },
+          });
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        for (const signal of studentSignals) {
+          evidence.set(signal.id, {
+            source: null,
+            completion: {
+              latestCacheScannedAt: null,
+              latestCompletionAfterOpen: null,
+              recommendedAction: "manual_review",
+              recommendationReason: "TP cache evidence read failed; use diagnostic refresh/check.",
+              applyDryRunCommand: null,
+              cleanRunningCompletionCount: 0,
+              evidenceError: message,
+            },
+          });
+        }
+      }
+    })
+  );
+  return evidence;
+}
+
 function isSignalSupersededForDisplay(signal: TrainingPeaksStudentOperationalSignal): boolean {
   const supersededBySignalId =
     getSignalMetadataString(signal.metadata, "superseded_by_signal_id") ??
@@ -6191,6 +6660,7 @@ function buildOperationalSignalItemFromSignal(input: {
   asOfDate: string;
   episodeScheduleContext?: EpisodeScheduleContext | null;
   activeMoveActions?: readonly TrainingPeaksAction[];
+  displayEvidence?: TrainingPeaksOperationalSignalDisplayEvidence | null;
 }): TrainingPeaksOperationalSignalsItem {
   const { signal, studentNameById, asOfDate } = input;
   const effective = resolveEffectiveOperationalSignalForDisplay(signal);
@@ -6297,9 +6767,17 @@ function buildOperationalSignalItemFromSignal(input: {
         reasonFromMeta ||
         `${typeLabel}${windowSuffix}`;
       lifecycleText = normalizeAmbiguousIllnessDisplayText(
-        compactOperationalSignalText(`${rolePrefix}${baseReason}${relatedSuffix}`, 140)
+        `${rolePrefix}${baseReason}${relatedSuffix}`.replace(/\s+/g, " ").trim()
       );
     }
+    lifecycleText = buildActionableHealthOrPainDisplayText({
+      signal,
+      effective,
+      summary: lifecycleText,
+      lifecycleDisplayState,
+      evidence: input.displayEvidence ?? null,
+      asOfDate,
+    });
     return {
       signalId: signal.id,
       studentId: signal.studentId,
@@ -6393,7 +6871,7 @@ function buildOperationalSignalItemFromSignal(input: {
       isEpisodeSummary: false,
       followUpState: followUp.state,
       lifecycleDisplayState,
-      text: compactOperationalSignalText(scheduleText, 200),
+      text: scheduleText.trim() || "контекст: полный текст недоступен в signal payload",
       requiresCoachReview: effective.effectiveRequiresCoachReview,
       hiddenReason: null,
     };
@@ -6534,10 +7012,7 @@ function mergeOperationalSignalEpisodeItems(
     const preferred = incomingKey < currentKey ? incoming : current;
     return {
       ...preferred,
-      text: compactOperationalSignalText(
-        buildCanonicalEpisodeScheduleDisplayText({ signals: episodeSignals }),
-        200
-      ),
+      text: buildCanonicalEpisodeScheduleDisplayText({ signals: episodeSignals }),
     };
   }
 
@@ -6763,6 +7238,34 @@ export function formatTrainingPeaksOperationalSignalsForTelegram(
 
 const TELEGRAM_SIGNALS_CHUNK_LIMIT = 3500;
 
+function splitOperationalSignalCardLine(line: string, limit: number): string[] {
+  if (line.length <= limit) {
+    return [line];
+  }
+  const parts: string[] = [];
+  let rest = line.trim();
+  let index = 0;
+  while (rest.length > 0) {
+    const prefix = index === 0 ? "" : "• продолжение\n  ";
+    const available = Math.max(200, limit - prefix.length);
+    if (rest.length <= available) {
+      parts.push(`${prefix}${rest}`);
+      break;
+    }
+    let boundary = rest.lastIndexOf("\n", available);
+    if (boundary < Math.floor(available * 0.5)) {
+      boundary = rest.lastIndexOf(" ", available);
+    }
+    if (boundary <= 0) {
+      boundary = available;
+    }
+    parts.push(`${prefix}${rest.slice(0, boundary).trimEnd()}`);
+    rest = rest.slice(boundary).trimStart();
+    index += 1;
+  }
+  return parts.filter(Boolean);
+}
+
 export function formatTrainingPeaksOperationalSignalsForTelegramMultiMessage(
   snapshot: TrainingPeaksOperationalSignalsSnapshot
 ): string[] {
@@ -6780,7 +7283,12 @@ export function formatTrainingPeaksOperationalSignalsForTelegramMultiMessage(
       })
     );
     for (const item of visibleItems) {
-      blocks.push({ sectionTitle: section.title, line: toOperationalSignalDisplayLine(item) });
+      for (const line of splitOperationalSignalCardLine(
+        toOperationalSignalDisplayLine(item),
+        TELEGRAM_SIGNALS_CHUNK_LIMIT - 120
+      )) {
+        blocks.push({ sectionTitle: section.title, line });
+      }
     }
   }
 
@@ -6832,6 +7340,7 @@ export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
   scope?: TrainingPeaksOperationalSignalsScope;
   limit?: number;
   activeMoveActions?: readonly TrainingPeaksAction[];
+  displayEvidenceBySignalId?: ReadonlyMap<string, TrainingPeaksOperationalSignalDisplayEvidence>;
 }): TrainingPeaksOperationalSignalsSnapshot {
   const scope = input.scope ?? "all";
   const maxItems = Math.max(5, Math.min(100, Math.floor(input.limit ?? 20)));
@@ -6876,6 +7385,7 @@ export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
       asOfDate: input.asOfDate,
       episodeScheduleContext,
       activeMoveActions: input.activeMoveActions,
+      displayEvidence: input.displayEvidenceBySignalId?.get(signal.id) ?? null,
     });
     if (item.hiddenReason) {
       continue;
@@ -6891,10 +7401,7 @@ export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
         const episodeSignals = episodeSignalsByKey.get(episodeDedupeKey) ?? [signal];
         dedupedByEpisode.set(episodeDedupeKey, {
           ...item,
-          text: compactOperationalSignalText(
-            buildCanonicalEpisodeScheduleDisplayText({ signals: episodeSignals }),
-            200
-          ),
+          text: buildCanonicalEpisodeScheduleDisplayText({ signals: episodeSignals }),
         });
       } else {
         dedupedByEpisode.set(episodeDedupeKey, item);
@@ -6945,6 +7452,10 @@ export async function getTrainingPeaksOperationalSignalsSnapshot(input?: {
   ]);
   const studentNameById = new Map(students.map((student) => [student.id, student.studentName?.trim() || null]));
   const asOfDate = getCoachTodayDateKey(DEFAULT_COACH_TIMEZONE);
+  const displayEvidenceBySignalId = await buildOperationalSignalDisplayEvidenceMap({
+    signals: signals.items,
+    asOfDate,
+  });
   return buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
     signals: signals.items,
     studentNameById,
@@ -6952,6 +7463,7 @@ export async function getTrainingPeaksOperationalSignalsSnapshot(input?: {
     scope: input?.scope,
     limit: input?.limit,
     activeMoveActions: actions,
+    displayEvidenceBySignalId,
   });
 }
 
