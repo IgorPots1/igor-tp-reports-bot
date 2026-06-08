@@ -44,6 +44,38 @@ export type TrainingPeaksStudentThread = {
   updatedAt: string;
 };
 
+export type TrainingPeaksGroupWorkoutReportIntakeStatus =
+  | "candidate_stored"
+  | "skipped_feature_disabled"
+  | "skipped_group_not_allowed"
+  | "skipped_bot_or_service"
+  | "skipped_coach_message"
+  | "skipped_not_report_like"
+  | "skipped_unknown_student"
+  | "skipped_inactive_student"
+  | "skipped_missing_tp_link"
+  | "duplicate_source_message";
+
+export type TrainingPeaksGroupWorkoutReportIntake = {
+  id: string;
+  sourceChatId: string;
+  sourceMessageId: string;
+  sourceMessageTimestamp: string;
+  sourceTelegramUserId: string | null;
+  sourceTelegramUsername: string | null;
+  sourceTelegramDisplayName: string | null;
+  sourceChatTitle: string | null;
+  studentId: string | null;
+  trainingPeaksAthleteId: string | null;
+  messageText: string;
+  detectedLabels: string[];
+  intakeStatus: TrainingPeaksGroupWorkoutReportIntakeStatus;
+  skipReason: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type TrainingPeaksStudentRow = {
   id: string;
   student_id: string;
@@ -72,6 +104,26 @@ type TrainingPeaksStudentThreadRow = {
   chat_title: string | null;
   thread_title: string | null;
   linked_by_user_id: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type TrainingPeaksGroupWorkoutReportIntakeRow = {
+  id: string;
+  source_chat_id: string;
+  source_message_id: string;
+  source_message_timestamp: string;
+  source_telegram_user_id: string | null;
+  source_telegram_username: string | null;
+  source_telegram_display_name: string | null;
+  source_chat_title: string | null;
+  student_id: string | null;
+  trainingpeaks_athlete_id: string | null;
+  message_text: string;
+  detected_labels: unknown;
+  intake_status: string;
+  skip_reason: string | null;
+  metadata: unknown;
   created_at: string;
   updated_at: string;
 };
@@ -1091,6 +1143,23 @@ export type InsertTrainingPeaksStudentTelegramLinkCodeInput = {
   expiresAt: string;
 };
 
+export type InsertTrainingPeaksGroupWorkoutReportIntakeInput = {
+  sourceChatId: string;
+  sourceMessageId: string;
+  sourceMessageTimestamp: string;
+  sourceTelegramUserId?: string | null;
+  sourceTelegramUsername?: string | null;
+  sourceTelegramDisplayName?: string | null;
+  sourceChatTitle?: string | null;
+  studentId?: string | null;
+  trainingPeaksAthleteId?: string | null;
+  messageText: string;
+  detectedLabels: string[];
+  intakeStatus: TrainingPeaksGroupWorkoutReportIntakeStatus;
+  skipReason?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
 export class TrainingPeaksTelegramLinkCodeConflictError extends Error {
   readonly codeValue: string;
 
@@ -1154,6 +1223,53 @@ function mapTrainingPeaksStudentThreadRow(
     chatTitle: row.chat_title,
     threadTitle: row.thread_title,
     linkedByUserId: row.linked_by_user_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function normalizeTrainingPeaksGroupWorkoutReportIntakeStatus(
+  value: string
+): TrainingPeaksGroupWorkoutReportIntakeStatus {
+  switch (value) {
+    case "candidate_stored":
+    case "skipped_feature_disabled":
+    case "skipped_group_not_allowed":
+    case "skipped_bot_or_service":
+    case "skipped_coach_message":
+    case "skipped_not_report_like":
+    case "skipped_unknown_student":
+    case "skipped_inactive_student":
+    case "skipped_missing_tp_link":
+    case "duplicate_source_message":
+      return value;
+    default:
+      return "skipped_not_report_like";
+  }
+}
+
+function mapTrainingPeaksGroupWorkoutReportIntakeRow(
+  row: TrainingPeaksGroupWorkoutReportIntakeRow
+): TrainingPeaksGroupWorkoutReportIntake {
+  return {
+    id: row.id,
+    sourceChatId: row.source_chat_id,
+    sourceMessageId: row.source_message_id,
+    sourceMessageTimestamp: row.source_message_timestamp,
+    sourceTelegramUserId: row.source_telegram_user_id,
+    sourceTelegramUsername: row.source_telegram_username,
+    sourceTelegramDisplayName: row.source_telegram_display_name,
+    sourceChatTitle: row.source_chat_title,
+    studentId: row.student_id,
+    trainingPeaksAthleteId: row.trainingpeaks_athlete_id,
+    messageText: row.message_text,
+    detectedLabels: Array.isArray(row.detected_labels) ? row.detected_labels.map(String) : [],
+    intakeStatus: normalizeTrainingPeaksGroupWorkoutReportIntakeStatus(row.intake_status),
+    skipReason: row.skip_reason,
+    metadata:
+      row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? (row.metadata as Record<string, unknown>)
+        : {},
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -5046,6 +5162,74 @@ export async function insertTrainingPeaksTelegramContextObservation(
   return mapTrainingPeaksTelegramContextObservationRow(
     data as TrainingPeaksTelegramContextObservationRow
   );
+}
+
+export async function getTrainingPeaksGroupWorkoutReportIntakeBySourceMessage(
+  sourceChatId: string,
+  sourceMessageId: string
+): Promise<TrainingPeaksGroupWorkoutReportIntake | null> {
+  const normalizedChatId = sourceChatId.trim();
+  const normalizedMessageId = sourceMessageId.trim();
+
+  if (!normalizedChatId || !normalizedMessageId) {
+    return null;
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_group_workout_report_intake")
+    .select("*")
+    .eq("source_chat_id", normalizedChatId)
+    .eq("source_message_id", normalizedMessageId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to get TrainingPeaks group workout report intake by source message ${normalizedChatId}/${normalizedMessageId}: ${error.message}`
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksGroupWorkoutReportIntakeRow(data as TrainingPeaksGroupWorkoutReportIntakeRow);
+}
+
+export async function insertTrainingPeaksGroupWorkoutReportIntake(
+  input: InsertTrainingPeaksGroupWorkoutReportIntakeInput
+): Promise<TrainingPeaksGroupWorkoutReportIntake | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_group_workout_report_intake")
+    .insert({
+      source_chat_id: input.sourceChatId,
+      source_message_id: input.sourceMessageId,
+      source_message_timestamp: input.sourceMessageTimestamp,
+      source_telegram_user_id: input.sourceTelegramUserId ?? null,
+      source_telegram_username: input.sourceTelegramUsername ?? null,
+      source_telegram_display_name: input.sourceTelegramDisplayName ?? null,
+      source_chat_title: input.sourceChatTitle ?? null,
+      student_id: input.studentId ?? null,
+      trainingpeaks_athlete_id: input.trainingPeaksAthleteId ?? null,
+      message_text: input.messageText,
+      detected_labels: input.detectedLabels,
+      intake_status: input.intakeStatus,
+      skip_reason: input.skipReason ?? null,
+      metadata: input.metadata ?? {},
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    if (error.code === "23505") {
+      return null;
+    }
+
+    throw new Error(`Failed to insert TrainingPeaks group workout report intake: ${error.message}`);
+  }
+
+  return mapTrainingPeaksGroupWorkoutReportIntakeRow(data as TrainingPeaksGroupWorkoutReportIntakeRow);
 }
 
 export async function listTrainingPeaksTelegramContextObservationsForStudent(

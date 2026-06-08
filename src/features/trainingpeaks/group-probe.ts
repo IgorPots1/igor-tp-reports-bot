@@ -1,6 +1,9 @@
 import {
   getTrainingPeaksStudentByTelegramChatId,
   getTrainingPeaksStudentByTelegramUsername,
+  getTrainingPeaksGroupWorkoutReportIntakeBySourceMessage,
+  insertTrainingPeaksGroupWorkoutReportIntake,
+  listTrainingPeaksStudentsIncludingArchived,
   type TrainingPeaksStudent,
 } from "@/features/trainingpeaks/repository";
 import {
@@ -11,6 +14,11 @@ import { buildTelegramContextTextPreview } from "@/features/trainingpeaks/telegr
 import { getTrainingPeaksCoachChatIds } from "@/features/trainingpeaks/attention-telegram";
 import { sendTelegramMessage } from "@/features/telegram/telegram-client";
 import type { TelegramInlineKeyboardMarkup, TelegramMessage } from "@/features/telegram/types";
+import {
+  decideTrainingPeaksGroupWorkoutReportIntake,
+  getTrainingPeaksGroupWorkoutReportChatAllowlist,
+  isTrainingPeaksGroupWorkoutReportIntakeEnabled,
+} from "@/features/trainingpeaks/group-workout-report-intake";
 
 const PREVIEW_MAX_LENGTH = 120;
 const TP_CALLBACK_CASES_RECENT = "tp:cases:recent";
@@ -95,6 +103,30 @@ async function matchGroupProbeSender(
 
     if (studentByUsername) {
       return { student: studentByUsername, matchMethod: "telegram_username" };
+    }
+  }
+
+  if (fromUserId == null && !normalizedUsername) {
+    return { student: null, matchMethod: null };
+  }
+
+  // Inactive student detection must stay strict: exact telegram id/username match only.
+  const studentsIncludingArchived = await listTrainingPeaksStudentsIncludingArchived();
+  if (fromUserId != null) {
+    const byChatId = studentsIncludingArchived.find(
+      (student) => student.telegramChatId === String(fromUserId)
+    );
+    if (byChatId) {
+      return { student: byChatId, matchMethod: "telegram_chat_id" };
+    }
+  }
+
+  if (normalizedUsername) {
+    const byUsername = studentsIncludingArchived.find(
+      (student) => student.telegramUsername?.toLowerCase() === normalizedUsername.toLowerCase()
+    );
+    if (byUsername) {
+      return { student: byUsername, matchMethod: "telegram_username" };
     }
   }
 
@@ -336,6 +368,53 @@ export async function handleTrainingPeaksGroupProbe(message: TelegramMessage): P
 
   const sourceType: "group_topic" | "group_general" =
     message.is_topic_message || message.message_thread_id !== undefined ? "group_topic" : "group_general";
+
+  const reportIntakeDecision = await decideTrainingPeaksGroupWorkoutReportIntake({
+    message,
+    featureEnabled: isTrainingPeaksGroupWorkoutReportIntakeEnabled(),
+    allowedChatIds: getTrainingPeaksGroupWorkoutReportChatAllowlist(),
+    isCoachTelegramId,
+    resolveSender: matchGroupProbeSender,
+    hasExistingBySourceMessage: async (sourceChatId, sourceMessageId) => {
+      const existing = await getTrainingPeaksGroupWorkoutReportIntakeBySourceMessage(
+        sourceChatId,
+        sourceMessageId
+      );
+      return existing !== null;
+    },
+  });
+
+  if (reportIntakeDecision.shouldPersist && reportIntakeDecision.messageText) {
+    const insertedIntake = await insertTrainingPeaksGroupWorkoutReportIntake({
+      sourceChatId: String(message.chat.id),
+      sourceMessageId: String(message.message_id),
+      sourceMessageTimestamp:
+        typeof message.date === "number" && Number.isFinite(message.date) && message.date > 0
+          ? new Date(message.date * 1000).toISOString()
+          : new Date().toISOString(),
+      sourceTelegramUserId: message.from?.id != null ? String(message.from.id) : null,
+      sourceTelegramUsername: message.from?.username?.trim() ?? null,
+      sourceTelegramDisplayName: message.from?.first_name?.trim() ?? null,
+      sourceChatTitle: message.chat.title?.trim() ?? null,
+      studentId: reportIntakeDecision.student?.id ?? null,
+      trainingPeaksAthleteId: reportIntakeDecision.trainingPeaksAthleteId,
+      messageText: reportIntakeDecision.messageText,
+      detectedLabels: reportIntakeDecision.detectedLabels,
+      intakeStatus: reportIntakeDecision.intakeStatus,
+      skipReason: reportIntakeDecision.skipReason,
+      metadata: {
+        sourceType,
+        senderMatchMethod: reportIntakeDecision.senderMatchMethod,
+      },
+    });
+
+    if (!insertedIntake) {
+      console.info("TrainingPeaks group workout report intake: duplicate source message skipped", {
+        chatId: message.chat.id,
+        messageId: message.message_id,
+      });
+    }
+  }
 
   if (
     student &&

@@ -24,8 +24,21 @@ export type TrainingPeaksTelegramContextLabel =
 const TRAINING_REPORT_KEYWORDS = [
   "тренировка",
   "пробежка",
+  "пробежал",
+  "пробежала",
+  "бежал",
+  "бежала",
+  "выполнил тренировку",
+  "выполнила тренировку",
+  "сделал тренировку",
+  "сделала тренировку",
+  "длительную",
+  "длительная",
   "темп",
+  "темповую",
   "интервалы",
+  "мин/км",
+  "километров",
   "пульс",
   "hr",
   "км",
@@ -33,6 +46,23 @@ const TRAINING_REPORT_KEYWORDS = [
   "workout",
   "run",
   "pace",
+];
+const REPORT_ACTION_VERBS = ["сделал", "сделала", "выполнил", "выполнила"];
+const REPORT_ACTION_CONTEXT = [
+  "трен",
+  "бег",
+  "пробеж",
+  "интервал",
+  "темпов",
+  "длител",
+  "размин",
+  "замин",
+  "км",
+  "мин/км",
+  "пульс",
+  "pace",
+  "run",
+  "workout",
 ];
 const PAIN_OR_HEALTH_KEYWORDS = [
   "боль",
@@ -146,7 +176,12 @@ export function classifyTelegramContextLabels(text: string | null | undefined): 
 
   if (
     normalized.length >= CONTEXT_TRAINING_REPORT_MIN_LENGTH &&
-    TRAINING_REPORT_KEYWORDS.some((keyword) => normalized.includes(keyword))
+    (TRAINING_REPORT_KEYWORDS.some((keyword) => normalized.includes(keyword)) ||
+      REPORT_ACTION_VERBS.some(
+        (verb) =>
+          normalized.includes(verb) &&
+          REPORT_ACTION_CONTEXT.some((context) => normalized.includes(context))
+      ))
   ) {
     labels.push("report_like");
   }
