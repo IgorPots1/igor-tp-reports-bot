@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 
 import FormActionButton from "@/app/admin/FormActionButton";
@@ -30,6 +31,10 @@ import {
   formatNutritionTpCacheStatus,
   NUTRITION_CONTEXT_ITEM_TYPE_LABELS,
 } from "@/features/nutrition/admin-labels";
+import {
+  NUTRITION_FILE_PREVIEW_COOKIE,
+  parseNutritionFileUploadPreview,
+} from "@/features/nutrition/file-preview-cookie";
 import type { NutritionContextItemType } from "@/features/nutrition/repository";
 
 type NutritionStudentCardPageProps = {
@@ -103,6 +108,15 @@ export default async function CoachOsNutritionStudentCardPage({
         rawText,
       })
     : null;
+  const cookieStore = await cookies();
+  const fileUploadPreview = parseNutritionFileUploadPreview(cookieStore.get(NUTRITION_FILE_PREVIEW_COOKIE)?.value);
+  const activeFilePreview =
+    fileUploadPreview &&
+    fileUploadPreview.studentId === studentId &&
+    fileUploadPreview.weekFrom === weekFrom &&
+    fileUploadPreview.weekTo === weekTo
+      ? fileUploadPreview
+      : null;
 
   return (
     <section className="admin-section admin-nutrition-page">
@@ -377,6 +391,67 @@ export default async function CoachOsNutritionStudentCardPage({
               </FormActionButton>
             </div>
           </form>
+
+          {activeFilePreview && (
+            <>
+              <div className="admin-card-actions admin-card-actions-compact">
+                <span className={getBadgeClass(activeFilePreview.status)}>
+                  {formatNutritionStatus(activeFilePreview.status, "report")}
+                </span>
+                <span className="admin-muted">
+                  дней: {activeFilePreview.quality.parsedDays}, низкая уверенность: {activeFilePreview.quality.lowConfidenceDays}
+                </span>
+              </div>
+              {activeFilePreview.extractionWarnings.length > 0 && (
+                <div className="admin-alert admin-alert-warning">
+                  {activeFilePreview.extractionWarnings.join(" | ")}
+                </div>
+              )}
+              {activeFilePreview.unsupportedFiles.length > 0 && (
+                <div className="admin-alert admin-alert-warning">
+                  {activeFilePreview.unsupportedFiles
+                    .map((item) => `${item.fileName}: ${item.reason === "pdf_no_text_content" ? "PDF не удалось прочитать как текст." : item.reason}`)
+                    .join(" | ")}
+                </div>
+              )}
+              <div className="admin-table-wrap">
+                <table className="admin-table admin-table-compact">
+                  <thead>
+                    <tr>
+                      <th>День</th>
+                      <th>ккал</th>
+                      <th>Белки</th>
+                      <th>Жиры</th>
+                      <th>Углев.</th>
+                      <th>Уверен.</th>
+                      <th>Заметки</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeFilePreview.rows.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="admin-empty-cell">
+                          Распознанных строк из файлов пока нет.
+                        </td>
+                      </tr>
+                    ) : (
+                      activeFilePreview.rows.map((row) => (
+                        <tr key={`${row.day}-${row.kcal ?? "na"}-${row.confidence.toFixed(3)}`}>
+                          <td>{row.day}</td>
+                          <td>{row.kcal ?? "—"}</td>
+                          <td>{row.proteinG ?? "—"}</td>
+                          <td>{row.fatG ?? "—"}</td>
+                          <td>{row.carbsG ?? "—"}</td>
+                          <td>{row.confidence.toFixed(2)}</td>
+                          <td>{row.notes ?? "—"}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </article>
 
         <article className="admin-card admin-card-compact admin-nutrition-card-wide">

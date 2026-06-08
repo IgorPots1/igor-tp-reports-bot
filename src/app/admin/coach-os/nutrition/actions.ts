@@ -15,6 +15,10 @@ import {
   saveNutritionProfileActionData,
 } from "@/features/nutrition/admin";
 import { formatNutritionStatus } from "@/features/nutrition/admin-labels";
+import {
+  NUTRITION_FILE_PREVIEW_COOKIE,
+  serializeNutritionFileUploadPreview,
+} from "@/features/nutrition/file-preview-cookie";
 import type { NutritionContextItemType } from "@/features/nutrition/repository";
 import {
   ADMIN_ACCESS_COOKIE_NAME,
@@ -57,6 +61,16 @@ async function ensureAdminAccess(redirectTarget: string): Promise<void> {
     return;
   }
   redirect(`/admin/login?next=${encodeURIComponent(normalizeAdminRedirectPath(redirectTarget))}`);
+}
+
+function getPreviewCookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: process.env.NODE_ENV === "production",
+    path: "/admin/coach-os/nutrition",
+    maxAge: 60 * 10,
+  };
 }
 
 function revalidateNutritionPaths(studentId?: string): void {
@@ -277,6 +291,36 @@ export async function previewNutritionFileUploadAction(formData: FormData): Prom
       studentNotes,
       files,
     });
+    const cookieStore = await cookies();
+    cookieStore.set(
+      NUTRITION_FILE_PREVIEW_COOKIE,
+      serializeNutritionFileUploadPreview({
+        studentId,
+        weekFrom,
+        weekTo,
+        status: preview.status,
+        quality: preview.quality,
+        rows: preview.extraction.extractedRows.map((row) => ({
+          day: row.day,
+          kcal: row.kcal,
+          proteinG: row.proteinG,
+          fatG: row.fatG,
+          carbsG: row.carbsG,
+          confidence: row.confidence,
+          notes: row.notes,
+        })),
+        extractionWarnings: preview.extraction.extractionWarnings,
+        unsupportedFiles: preview.extraction.unsupportedFiles,
+        files: preview.fileMetas.map((file) => ({
+          originalFileName: file.originalFileName,
+          fileKind: file.fileKind,
+          extractionMethod: file.extractionMethod ?? null,
+          extractionErrorCode: file.extractionErrorCode ?? null,
+          extractionWarnings: file.extractionWarnings ?? [],
+        })),
+      }),
+      getPreviewCookieOptions()
+    );
     revalidateNutritionPaths(studentId);
     redirect(
       withNotice(
@@ -314,6 +358,8 @@ export async function saveNutritionFileReportAction(formData: FormData): Promise
       files,
       forceNeedsReview,
     });
+    const cookieStore = await cookies();
+    cookieStore.delete(NUTRITION_FILE_PREVIEW_COOKIE);
     revalidateNutritionPaths(studentId);
     redirect(
       withNotice(
