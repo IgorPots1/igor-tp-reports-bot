@@ -20,6 +20,7 @@ type NutritionFileUploadPanelProps = {
   studentId: string;
   weekFrom: string;
   weekTo: string;
+  redirectTo: string;
   initialPreview: NutritionFileUploadPreviewSnapshot | null;
   previewAction: (
     prevState: NutritionFileUploadPreviewActionState,
@@ -61,6 +62,7 @@ export default function NutritionFileUploadPanel({
   studentId,
   weekFrom,
   weekTo,
+  redirectTo,
   initialPreview,
   previewAction,
   saveAction,
@@ -98,7 +100,7 @@ export default function NutritionFileUploadPanel({
         }}
       >
         <input type="hidden" name="studentId" value={studentId} />
-        <input type="hidden" name="redirectTo" value={`/admin/coach-os/nutrition/${studentId}`} />
+        <input type="hidden" name="redirectTo" value={redirectTo} />
         <div className="admin-nutrition-kv-grid">
           <label className="admin-form-field">
             <span>Неделя с</span>
@@ -137,7 +139,7 @@ export default function NutritionFileUploadPanel({
 
       <NutritionReportUploadForm className="admin-form-stack" action={saveAction}>
         <input type="hidden" name="studentId" value={studentId} />
-        <input type="hidden" name="redirectTo" value={`/admin/coach-os/nutrition/${studentId}`} />
+        <input type="hidden" name="redirectTo" value={redirectTo} />
         <div className="admin-nutrition-kv-grid">
           <label className="admin-form-field">
             <span>Неделя с</span>

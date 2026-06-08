@@ -228,7 +228,18 @@ export default async function CoachOsNutritionDashboardPage({
                       {formatNutritionSafetyFlag(row.hasSafetyFlag)}
                     </span>
                   </td>
-                  <td>{formatNutritionNextAction(row.nextAction)}</td>
+                  <td>
+                    {row.nextActionHref ? (
+                      <Link
+                        className="admin-button admin-button-secondary admin-button-compact"
+                        href={row.nextActionHref}
+                      >
+                        {formatNutritionNextAction(row.nextAction)}
+                      </Link>
+                    ) : (
+                      formatNutritionNextAction(row.nextAction)
+                    )}
+                  </td>
                   <td>
                     <Link className="admin-button admin-button-secondary" href={`/admin/coach-os/nutrition/${row.studentId}`}>
                       Открыть

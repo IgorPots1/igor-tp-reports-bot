@@ -14,7 +14,10 @@ import {
   saveNutritionManualMacros,
   saveNutritionProfileActionData,
 } from "@/features/nutrition/admin";
-import { formatNutritionStatus } from "@/features/nutrition/admin-labels";
+import {
+  buildNutritionStudentCardHref,
+  formatNutritionStatus,
+} from "@/features/nutrition/admin-labels";
 import {
   NUTRITION_FILE_PREVIEW_COOKIE,
   serializeNutritionFileUploadPreview,
@@ -306,11 +309,13 @@ export async function saveNutritionManualMacrosAction(formData: FormData): Promi
     });
     revalidateNutritionPaths(studentId);
     redirect(
-      withNotice(
-        redirectTo,
-        "notice",
-        `Отчёт сохранён (${formatNutritionStatus(result.report.status, "report")}), строк макросов: ${result.macros.length}.`
-      )
+      buildNutritionStudentCardHref({
+        studentId,
+        weekFrom,
+        weekTo,
+        reportId: result.report.id,
+        notice: `Отчёт сохранён (${formatNutritionStatus(result.report.status, "report")}), строк макросов: ${result.macros.length}.`,
+      })
     );
   } catch (error) {
     revalidateNutritionPaths(studentId);
@@ -448,11 +453,13 @@ export async function saveNutritionFileReportAction(formData: FormData): Promise
     macrosSaved: result.macros.length,
   });
   redirect(
-    withNotice(
-      redirectTo,
-      "notice",
-      `Отчёт сохранён (${formatNutritionStatus(result.status, "report")}), файлов: ${result.intake.fileMetas.length}, макросов: ${result.macros.length}.`
-    )
+    buildNutritionStudentCardHref({
+      studentId,
+      weekFrom,
+      weekTo,
+      reportId: result.report.id,
+      notice: `Отчёт сохранён (${formatNutritionStatus(result.status, "report")}), файлов: ${result.intake.fileMetas.length}, макросов: ${result.macros.length}.`,
+    })
   );
 }
 
@@ -476,7 +483,15 @@ export async function generateNutritionWeeklyReviewAction(formData: FormData): P
     const message = result.generated.safety_flags.blocked
       ? "Блок безопасности: черновик скрыт, нужна ручная проверка."
       : "Недельный обзор сгенерирован.";
-    redirect(withNotice(redirectTo, "notice", message));
+    redirect(
+      buildNutritionStudentCardHref({
+        studentId,
+        weekFrom,
+        weekTo,
+        reportId,
+        notice: message,
+      })
+    );
   } catch (error) {
     revalidateNutritionPaths(studentId);
     const message = error instanceof Error ? error.message : "Не удалось сгенерировать недельный обзор.";

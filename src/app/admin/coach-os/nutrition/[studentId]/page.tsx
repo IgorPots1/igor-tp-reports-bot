@@ -20,6 +20,7 @@ import {
   parseNutritionManualMacros,
 } from "@/features/nutrition/admin";
 import {
+  buildNutritionStudentCardHref,
   formatNutritionConflictFlags,
   formatNutritionContextItemType,
   formatNutritionDoNotSendReason,
@@ -31,6 +32,7 @@ import {
   formatNutritionTpCacheNote,
   formatNutritionTpCacheStatus,
   NUTRITION_CONTEXT_ITEM_TYPE_LABELS,
+  pickDefaultNutritionReport,
 } from "@/features/nutrition/admin-labels";
 import {
   NUTRITION_FILE_PREVIEW_COOKIE,
@@ -90,6 +92,7 @@ export default async function CoachOsNutritionStudentCardPage({
   const defaultWeek = getCurrentWeekWindow();
   const weekFrom = getSingleSearchParam(resolvedSearchParams.weekFrom) ?? defaultWeek.weekFrom;
   const weekTo = getSingleSearchParam(resolvedSearchParams.weekTo) ?? defaultWeek.weekTo;
+  const reportIdFromQuery = getSingleSearchParam(resolvedSearchParams.reportId);
 
   const card = await getNutritionAdminStudentCard({
     studentId,
@@ -100,6 +103,14 @@ export default async function CoachOsNutritionStudentCardPage({
   if (!card.student) {
     notFound();
   }
+
+  const selectedReportId = pickDefaultNutritionReport(card.reports, reportIdFromQuery);
+  const studentCardPath = buildNutritionStudentCardHref({
+    studentId,
+    weekFrom,
+    weekTo,
+    reportId: selectedReportId,
+  });
 
   const parsedPreview = rawText
     ? await parseNutritionManualMacros({
@@ -189,7 +200,7 @@ export default async function CoachOsNutritionStudentCardPage({
           <h3>Профиль питания</h3>
           <form className="admin-form-stack" action={saveNutritionProfileAction}>
             <input type="hidden" name="studentId" value={studentId} />
-            <input type="hidden" name="redirectTo" value={`/admin/coach-os/nutrition/${studentId}`} />
+            <input type="hidden" name="redirectTo" value={studentCardPath} />
             <label className="admin-form-field">
               <span>Питание</span>
               <select name="enabled" className="admin-input" defaultValue={card.profile?.enabled ? "true" : "false"}>
@@ -227,7 +238,7 @@ export default async function CoachOsNutritionStudentCardPage({
           <h3>Вес</h3>
           <form className="admin-form-inline" action={addNutritionWeightAction}>
             <input type="hidden" name="studentId" value={studentId} />
-            <input type="hidden" name="redirectTo" value={`/admin/coach-os/nutrition/${studentId}`} />
+            <input type="hidden" name="redirectTo" value={studentCardPath} />
             <input className="admin-input" name="weightKg" type="number" step="0.1" placeholder="кг" required />
             <input className="admin-input" name="source" defaultValue="manual" />
             <FormActionButton className="admin-button" pendingText="Добавляю…">
@@ -268,7 +279,7 @@ export default async function CoachOsNutritionStudentCardPage({
           <h3>Контекст питания</h3>
           <form className="admin-form-inline" action={addNutritionContextNoteAction}>
             <input type="hidden" name="studentId" value={studentId} />
-            <input type="hidden" name="redirectTo" value={`/admin/coach-os/nutrition/${studentId}`} />
+            <input type="hidden" name="redirectTo" value={studentCardPath} />
             <select className="admin-input" name="itemType" defaultValue="note">
               {CONTEXT_ITEM_TYPES.map((itemType) => (
                 <option key={itemType} value={itemType}>
@@ -315,6 +326,7 @@ export default async function CoachOsNutritionStudentCardPage({
           studentId={studentId}
           weekFrom={weekFrom}
           weekTo={weekTo}
+          redirectTo={studentCardPath}
           initialPreview={activeFilePreview}
           previewAction={previewNutritionFileUploadAction}
           saveAction={saveNutritionFileReportAction}
@@ -324,7 +336,7 @@ export default async function CoachOsNutritionStudentCardPage({
           <h3>Ручной ввод макросов</h3>
           <form className="admin-form-stack" action={parseNutritionManualMacrosAction}>
             <input type="hidden" name="studentId" value={studentId} />
-            <input type="hidden" name="redirectTo" value={`/admin/coach-os/nutrition/${studentId}`} />
+            <input type="hidden" name="redirectTo" value={studentCardPath} />
             <div className="admin-nutrition-kv-grid">
               <label className="admin-form-field">
                 <span>Неделя с</span>
@@ -351,7 +363,7 @@ export default async function CoachOsNutritionStudentCardPage({
             <input type="hidden" name="weekFrom" value={weekFrom} />
             <input type="hidden" name="weekTo" value={weekTo} />
             <input type="hidden" name="rawText" value={rawText} />
-            <input type="hidden" name="redirectTo" value={`/admin/coach-os/nutrition/${studentId}`} />
+            <input type="hidden" name="redirectTo" value={studentCardPath} />
             <FormActionButton className="admin-button" pendingText="Сохраняю…" disabled={!rawText}>
               Сохранить разбор
             </FormActionButton>
@@ -473,11 +485,11 @@ export default async function CoachOsNutritionStudentCardPage({
             <input type="hidden" name="studentId" value={studentId} />
             <input type="hidden" name="weekFrom" value={weekFrom} />
             <input type="hidden" name="weekTo" value={weekTo} />
-            <input type="hidden" name="redirectTo" value={`/admin/coach-os/nutrition/${studentId}`} />
+            <input type="hidden" name="redirectTo" value={studentCardPath} />
             <label className="admin-form-field">
               <span>Отчёт питания</span>
               {card.reports.length > 0 ? (
-                <select className="admin-input" name="reportId" required defaultValue={card.reports[0]?.id}>
+                <select className="admin-input" name="reportId" required defaultValue={selectedReportId ?? undefined}>
                   {card.reports.map((report) => (
                     <option key={report.id} value={report.id}>
                       {formatIsoDate(report.createdAt)} · {formatNutritionStatus(report.status, "report")} · {report.id.slice(0, 8)}
@@ -488,7 +500,7 @@ export default async function CoachOsNutritionStudentCardPage({
                 <input className="admin-input" name="reportId" placeholder="Сначала сохраните отчёт" required disabled />
               )}
             </label>
-            <FormActionButton className="admin-button" pendingText="Генерирую…" disabled={card.reports.length === 0}>
+            <FormActionButton className="admin-button" pendingText="Генерирую…" disabled={!selectedReportId}>
               Сгенерировать обзор
             </FormActionButton>
           </form>

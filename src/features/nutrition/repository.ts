@@ -13,6 +13,7 @@ import {
   listTrainingPeaksWorkoutCacheForStudentDateRange,
 } from "@/features/trainingpeaks/repository";
 import { listTrainingPeaksAdminStudents } from "@/features/trainingpeaks/admin";
+import { buildNutritionNextActionHref } from "@/features/nutrition/admin-labels";
 
 export type NutritionStudentProfile = {
   id: string;
@@ -321,6 +322,10 @@ export type NutritionDashboardRow = {
   lastAnalysisWeekFrom: string | null;
   hasSafetyFlag: boolean;
   nextAction: string;
+  latestReportId: string | null;
+  latestReportWeekFrom: string | null;
+  latestReportWeekTo: string | null;
+  nextActionHref: string | null;
 };
 
 export type NutritionReportWithMacros = {
@@ -886,6 +891,7 @@ export async function listNutritionDashboardRows(
     const report = latestReportsByStudent.get(student.id) ?? null;
     const analysis = latestAnalysesByStudent.get(student.id) ?? null;
     const safety = hasHardSafetyFlag(analysis);
+    const nextAction = resolveNextAction({ profile, report, analysis, hasSafetyFlag: safety });
     return {
       studentId: student.id,
       studentSlug: student.studentId,
@@ -902,7 +908,20 @@ export async function listNutritionDashboardRows(
       lastAnalysisStatus: analysis?.status ?? null,
       lastAnalysisWeekFrom: analysis?.weekFrom ?? null,
       hasSafetyFlag: safety,
-      nextAction: resolveNextAction({ profile, report, analysis, hasSafetyFlag: safety }),
+      nextAction,
+      latestReportId: report?.id ?? null,
+      latestReportWeekFrom: report?.weekFrom ?? null,
+      latestReportWeekTo: report?.weekTo ?? null,
+      nextActionHref: buildNutritionNextActionHref({
+        studentId: student.id,
+        nextAction,
+        report: report
+          ? { id: report.id, weekFrom: report.weekFrom, weekTo: report.weekTo }
+          : null,
+        analysis: analysis
+          ? { weekFrom: analysis.weekFrom, weekTo: analysis.weekTo, reportId: analysis.reportId }
+          : null,
+      }),
     };
   });
 

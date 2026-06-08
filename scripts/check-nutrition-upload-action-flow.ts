@@ -36,8 +36,8 @@ assert.equal(
 );
 assert.match(
   saveBody![0],
-  /let result:[\s\S]*try[\s\S]*catch[\s\S]*redirect\(withNotice\(redirectTo, "error", message\)\)[\s\S]*redirect\(/,
-  "save action should redirect in success path outside catch block"
+  /let result:[\s\S]*try[\s\S]*catch[\s\S]*redirect\(withNotice\(redirectTo, "error", message\)\)[\s\S]*redirect\([\s\S]*buildNutritionStudentCardHref/,
+  "save action should redirect in success path with report week and id"
 );
 
 assert.equal(

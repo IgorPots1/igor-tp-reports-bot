@@ -87,6 +87,118 @@ export function formatNutritionNextAction(action: string): string {
   return NUTRITION_NEXT_ACTION_LABELS[action] ?? action;
 }
 
+export type NutritionReportPickCandidate = {
+  id: string;
+  status: string;
+  createdAt: string;
+};
+
+export function buildNutritionStudentCardHref(input: {
+  studentId: string;
+  weekFrom?: string | null;
+  weekTo?: string | null;
+  reportId?: string | null;
+  notice?: string | null;
+  error?: string | null;
+}): string {
+  const params = new URLSearchParams();
+  if (input.weekFrom) {
+    params.set("weekFrom", input.weekFrom);
+  }
+  if (input.weekTo) {
+    params.set("weekTo", input.weekTo);
+  }
+  if (input.reportId) {
+    params.set("reportId", input.reportId);
+  }
+  if (input.notice) {
+    params.set("notice", input.notice);
+  }
+  if (input.error) {
+    params.set("error", input.error);
+  }
+  const query = params.toString();
+  return query
+    ? `/admin/coach-os/nutrition/${input.studentId}?${query}`
+    : `/admin/coach-os/nutrition/${input.studentId}`;
+}
+
+export function pickDefaultNutritionReport(
+  reports: NutritionReportPickCandidate[],
+  reportIdFromQuery?: string | null
+): string | null {
+  if (reports.length === 0) {
+    return null;
+  }
+  if (reportIdFromQuery && reports.some((report) => report.id === reportIdFromQuery)) {
+    return reportIdFromQuery;
+  }
+  const pickLatestByStatus = (status: string) =>
+    reports
+      .filter((report) => report.status === status)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null;
+  const ready = pickLatestByStatus("ready_for_analysis");
+  if (ready) {
+    return ready.id;
+  }
+  const needsReview = pickLatestByStatus("needs_review");
+  if (needsReview) {
+    return needsReview.id;
+  }
+  return reports[0]?.id ?? null;
+}
+
+export function buildNutritionNextActionHref(input: {
+  studentId: string;
+  nextAction: string;
+  report: { id: string; weekFrom: string; weekTo: string } | null;
+  analysis: { weekFrom: string; weekTo: string; reportId: string | null } | null;
+}): string | null {
+  const studentCard = buildNutritionStudentCardHref({ studentId: input.studentId });
+
+  switch (input.nextAction) {
+    case "Generate weekly nutrition review":
+      if (!input.report) {
+        return studentCard;
+      }
+      return buildNutritionStudentCardHref({
+        studentId: input.studentId,
+        weekFrom: input.report.weekFrom,
+        weekTo: input.report.weekTo,
+        reportId: input.report.id,
+      });
+    case "Fix report data quality":
+    case "Parse and review macros":
+      if (!input.report) {
+        return studentCard;
+      }
+      return buildNutritionStudentCardHref({
+        studentId: input.studentId,
+        weekFrom: input.report.weekFrom,
+        weekTo: input.report.weekTo,
+        reportId: input.report.id,
+      });
+    case "Review draft and mark approved":
+    case "Manual safety review required":
+      if (input.analysis) {
+        return buildNutritionStudentCardHref({
+          studentId: input.studentId,
+          weekFrom: input.analysis.weekFrom,
+          weekTo: input.analysis.weekTo,
+          reportId: input.analysis.reportId,
+        });
+      }
+      return studentCard;
+    case "Add manual report":
+    case "Enable nutrition profile":
+      return studentCard;
+    case "Up to date":
+      return null;
+    default:
+      return studentCard;
+  }
+}
+
 export function formatNutritionYesNo(value: boolean): string {
   return value ? "Да" : "Нет";
 }
