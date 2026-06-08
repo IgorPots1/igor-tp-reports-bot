@@ -171,6 +171,7 @@
     "check:nutrition-file-extraction": "npx tsx scripts/check-nutrition-file-extraction.ts",
     "check:nutrition-pdf-extraction": "npx tsx scripts/check-nutrition-pdf-extraction.ts",
     "check:nutrition-file-safety": "npx tsx scripts/check-nutrition-file-safety.ts",
+    "check:nutrition-upload-size-limit": "npx tsx scripts/check-nutrition-upload-size-limit.ts",
     "nutrition:enable-test-cohort": "npx tsx scripts/nutrition-enable-test-cohort.ts"
   },
   "dependencies": {

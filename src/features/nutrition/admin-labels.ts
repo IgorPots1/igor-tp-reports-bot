@@ -154,3 +154,5 @@ export function formatNutritionDoNotSendReason(reason: string): string {
   }
   return reason;
 }
+
+export { NUTRITION_FILE_UPLOAD_LIMIT_HINT } from "@/features/nutrition/file-upload-limits";

@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 
 import FormActionButton from "@/app/admin/FormActionButton";
+import NutritionReportUploadForm from "@/app/admin/coach-os/nutrition/NutritionReportUploadForm";
 import { formatIsoDate, getSingleSearchParam } from "@/app/admin/lib";
 import {
   addNutritionContextNoteAction,
@@ -30,6 +31,7 @@ import {
   formatNutritionTpCacheNote,
   formatNutritionTpCacheStatus,
   NUTRITION_CONTEXT_ITEM_TYPE_LABELS,
+  NUTRITION_FILE_UPLOAD_LIMIT_HINT,
 } from "@/features/nutrition/admin-labels";
 import {
   NUTRITION_FILE_PREVIEW_COOKIE,
@@ -313,9 +315,10 @@ export default async function CoachOsNutritionStudentCardPage({
         <article className="admin-card admin-card-compact admin-nutrition-card-wide">
           <h3>Загрузить отчёт питания</h3>
           <p className="admin-muted admin-nutrition-helper">
-            Поддержка: PDF, CSV, TXT, JPG/JPEG, PNG, WEBP, HEIC (если mime поддержан браузером).
+            Поддержка: PDF, CSV, TXT, JPG/JPEG, PNG, WEBP, HEIC (если mime поддержан браузером).{" "}
+            {NUTRITION_FILE_UPLOAD_LIMIT_HINT}
           </p>
-          <form className="admin-form-stack" action={previewNutritionFileUploadAction}>
+          <NutritionReportUploadForm className="admin-form-stack" action={previewNutritionFileUploadAction}>
             <input type="hidden" name="studentId" value={studentId} />
             <input type="hidden" name="redirectTo" value={`/admin/coach-os/nutrition/${studentId}`} />
             <div className="admin-nutrition-kv-grid">
@@ -348,9 +351,9 @@ export default async function CoachOsNutritionStudentCardPage({
                 Загрузить и распознать
               </FormActionButton>
             </div>
-          </form>
+          </NutritionReportUploadForm>
 
-          <form className="admin-form-stack" action={saveNutritionFileReportAction}>
+          <NutritionReportUploadForm className="admin-form-stack" action={saveNutritionFileReportAction}>
             <input type="hidden" name="studentId" value={studentId} />
             <input type="hidden" name="redirectTo" value={`/admin/coach-os/nutrition/${studentId}`} />
             <div className="admin-nutrition-kv-grid">
@@ -390,7 +393,7 @@ export default async function CoachOsNutritionStudentCardPage({
                 Сохранить и запустить разбор
               </FormActionButton>
             </div>
-          </form>
+          </NutritionReportUploadForm>
 
           {activeFilePreview && (
             <>

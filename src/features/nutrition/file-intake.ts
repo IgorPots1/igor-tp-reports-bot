@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 
 import { normalizeManualMacroInput, type NormalizedManualMacroRow } from "@/features/nutrition/context";
+import {
+  assertNutritionUploadFilesValid,
+  MAX_NUTRITION_FILE_SIZE_BYTES,
+} from "@/features/nutrition/file-upload-limits";
 import { extractPdfTextFromBuffer, type PdfTextExtractionErrorCode } from "@/features/nutrition/pdf-extraction";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
@@ -47,8 +51,6 @@ export type IntakeNutritionReportFilesResult = {
   sourceType: "manual_text" | "screenshot" | "pdf" | "csv" | "mixed";
 };
 
-const MAX_FILE_COUNT = 10;
-const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 const MAX_TEXT_BYTES_TO_PARSE = 1_000_000;
 const DEFAULT_BUCKET = "nutrition-report-files";
 
@@ -556,9 +558,7 @@ export async function intakeNutritionReportFiles(input: {
     };
   }
 
-  if (input.files.length > MAX_FILE_COUNT) {
-    throw new Error(`Слишком много файлов: максимум ${MAX_FILE_COUNT}.`);
-  }
+  assertNutritionUploadFilesValid(input.files);
 
   const bucket = resolveBucketName();
   const persistFiles = input.persistFiles ?? true;
@@ -583,8 +583,8 @@ export async function intakeNutritionReportFiles(input: {
     if (file.size <= 0) {
       throw new Error(`Файл пустой: ${file.name}`);
     }
-    if (file.size > MAX_FILE_SIZE_BYTES) {
-      throw new Error(`Файл слишком большой (${file.name}). Лимит: 10 MB.`);
+    if (file.size > MAX_NUTRITION_FILE_SIZE_BYTES) {
+      throw new Error(`Файл слишком большой (${file.name}). Лимит: 10 MB на файл.`);
     }
 
     const bytes = new Uint8Array(await file.arrayBuffer());
