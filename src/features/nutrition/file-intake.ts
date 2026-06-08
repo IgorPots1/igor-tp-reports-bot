@@ -159,6 +159,131 @@ type FatSecretPdfDayCandidate = {
   source: "daily_total";
 };
 
+const RU_MONTHS_GENITIVE: Record<string, number> = {
+  января: 1,
+  февраля: 2,
+  марта: 3,
+  апреля: 4,
+  мая: 5,
+  июня: 6,
+  июля: 7,
+  августа: 8,
+  сентября: 9,
+  октября: 10,
+  ноября: 11,
+  декабря: 12,
+};
+
+function parseRussianDetailedDateHeader(line: string): string | null {
+  const normalized = line.trim().toLocaleLowerCase("ru");
+  const match = normalized.match(
+    /^(?:понедельник|вторник|среда|четверг|пятница|суббота|воскресенье)\s*,\s*([а-яё]+)\s+(\d{1,2})\s*,\s*(20\d{2})$/i
+  );
+  if (!match) {
+    return null;
+  }
+  const month = RU_MONTHS_GENITIVE[match[1] ?? ""] ?? null;
+  if (!month) {
+    return null;
+  }
+  return isoFromDateParts(Number(match[3]), month, Number(match[2]));
+}
+
+function parseRussianFatSecretDetailedDailyTotals(text: string): {
+  candidates: FatSecretPdfDayCandidate[];
+  warnings: string[];
+} {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  let currentDate: string | null = null;
+  let inDaySection = false;
+  let currentDayLines: string[] = [];
+  const warnings: string[] = [];
+  const candidates: FatSecretPdfDayCandidate[] = [];
+
+  const flushCurrentDay = () => {
+    if (!currentDate) {
+      return;
+    }
+    const mealSectionSeen = currentDayLines.some((line) => /(завтрак|обед|ужин|перекус)/i.test(line));
+    const totalLines = currentDayLines.filter((line) => /^всего(?:\s|$)/i.test(line.toLocaleLowerCase("ru")));
+    const validTotals: Array<{ kcal: number; fatG: number; carbsG: number; proteinG: number }> = [];
+
+    for (const totalLine of totalLines) {
+      const numericTokens = totalLine.match(/-?\d+(?:[.,]\d+)?/g) ?? [];
+      const values = numericTokens.map((token) => parseNumberCell(token)).filter((value): value is number => value !== null);
+      if (values.length < 7) {
+        continue;
+      }
+      const kcal = values[0] ?? null;
+      const fatG = values[1] ?? null;
+      const carbsG = values[3] ?? null;
+      const proteinG = values[6] ?? null;
+      if (kcal === null || fatG === null || carbsG === null || proteinG === null) {
+        continue;
+      }
+      if (kcal < 500) {
+        continue;
+      }
+      validTotals.push({ kcal, fatG, carbsG, proteinG });
+    }
+
+    if (validTotals.length === 0) {
+      warnings.push(`missing_daily_total_for_date:${currentDate}`);
+      return;
+    }
+
+    // Guard against treating single meal subtotal as a day total.
+    if (validTotals.length === 1 && totalLines.length === 1 && mealSectionSeen) {
+      warnings.push(`missing_daily_total_for_date:${currentDate}`);
+      return;
+    }
+
+    const best = validTotals[validTotals.length - 1];
+    candidates.push({
+      day: currentDate,
+      kcal: best.kcal,
+      fatG: best.fatG,
+      carbsG: best.carbsG,
+      proteinG: best.proteinG,
+      confidence: 0.94,
+      notes: "fatsecret_ru_detailed_daily_total",
+      source: "daily_total",
+    });
+  };
+
+  for (const line of lines) {
+    const parsedDate = parseRussianDetailedDateHeader(line);
+    if (parsedDate) {
+      inDaySection = true;
+      if (!currentDate) {
+        currentDate = parsedDate;
+        currentDayLines = [];
+        continue;
+      }
+      if (parsedDate !== currentDate) {
+        flushCurrentDay();
+        currentDate = parsedDate;
+        currentDayLines = [];
+      }
+      continue;
+    }
+    if (!inDaySection) {
+      continue;
+    }
+    currentDayLines.push(line);
+  }
+  flushCurrentDay();
+
+  if (candidates.length > 0) {
+    warnings.push("fatsecret_ru_detailed_daily_totals_parsed");
+  }
+  return { candidates, warnings };
+}
+
 function isoFromDateParts(year: number, month: number, day: number): string | null {
   if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
     return null;
@@ -467,16 +592,23 @@ export function extractNutritionRowsFromFatSecretPdfText(input: {
   };
 } {
   const lowered = input.text.toLocaleLowerCase("ru");
+  const ruDetailedParsed = parseRussianFatSecretDetailedDailyTotals(input.text);
   const diagnostics = {
     extractedTextLength: input.text.length,
     normalizedTextLength: input.text.replace(/\s+/g, " ").trim().length,
-    hasKcalKeyword: /(kcal|calories|ккал|калори)/i.test(lowered),
-    hasProteinKeyword: /(protein|белки|белок)/i.test(lowered),
-    hasFatKeyword: /(fat|жиры|жир)/i.test(lowered),
-    hasCarbsKeyword: /(carb|carbohydrate|углеводы|углевод)/i.test(lowered),
+    hasKcalKeyword: /(kcal|calories|ккал|кал)/i.test(lowered),
+    hasProteinKeyword: /(protein|белк|белок|белки)/i.test(lowered),
+    hasFatKeyword: /(fat|жир|жиры)/i.test(lowered),
+    hasCarbsKeyword: /(carbs|carbohydrate|углев|углеводы)/i.test(lowered),
     dateMatches: (input.text.match(/(20\d{2}-\d{1,2}-\d{1,2}|\d{1,2}[./]\d{1,2}(?:[./](?:20)?\d{2})?)/g) ?? []).length,
     parsedRows: 0,
   };
+  if (ruDetailedParsed.candidates.length > 0) {
+    const converted = convertFatSecretPdfCandidates(ruDetailedParsed.candidates, input.sourceFileName ?? "pdf_text");
+    diagnostics.parsedRows = converted.extractedRows.length;
+    const warnings = [...converted.warnings, ...ruDetailedParsed.warnings];
+    return { ...converted, warnings, diagnostics };
+  }
   const parsed = parseFatSecretPdfLines(input.text);
   if (parsed.length === 0) {
     const hasMacroKeywords =

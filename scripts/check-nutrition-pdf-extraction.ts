@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import { extractNutritionRowsFromFatSecretPdfText } from "@/features/nutrition/file-intake";
+import { calculateNutritionDataQuality, classifyNutritionReportStatus } from "@/features/nutrition/context";
 
 function parseSyntheticPdfText(text: string) {
   return extractNutritionRowsFromFatSecretPdfText({
@@ -10,6 +11,72 @@ function parseSyntheticPdfText(text: string) {
 }
 
 function run(): void {
+  const ruDetailedSplitAcrossPages = [
+    "понедельник, июня 1, 2026",
+    "Кал Жир Н/жир Углев Клетч Сахар Белк Натри Холес Калий",
+    "Завтрак",
+    "Всего 341 11,43 3,323 30,6 0,7 3,21 15,04 212 19 34",
+    "Перекус/Другое",
+    "Всего 499 17,38 3,382 50,71 5,7 31,79 36,61 50 0 224",
+    "Страница 2",
+    "понедельник, июня 1, 2026",
+    "Всего 1617 44,97 9,837 176,7 11,11 36,29 112,97 621,1 111,1 811",
+  ].join("\n");
+  const case1 = parseSyntheticPdfText(ruDetailedSplitAcrossPages);
+  assert.equal(case1.extractedRows.length, 1, "RU detailed split day should parse exactly one day total");
+  assert.equal(case1.extractedRows[0]?.day, "2026-06-01", "RU detailed date should map to ISO");
+  assert.equal(case1.extractedRows[0]?.kcal, 1617, "RU detailed day total kcal mismatch");
+  assert.equal(case1.extractedRows[0]?.fatG, 44.97, "RU detailed day total fat mismatch");
+  assert.equal(case1.extractedRows[0]?.carbsG, 176.7, "RU detailed day total carbs mismatch");
+  assert.equal(case1.extractedRows[0]?.proteinG, 112.97, "RU detailed day total protein mismatch");
+  assert.equal(case1.warnings.includes("fatsecret_ru_detailed_daily_totals_parsed"), true, "RU parser marker warning expected");
+
+  const ruDetailedWeek = [
+    "понедельник, июня 1, 2026",
+    "Всего 1617 44,97 9,837 176,7 11,11 36,29 112,97 621,1 111,1 811",
+    "вторник, июня 2, 2026",
+    "Всего 1419 47,69 3,694 164,02 6,7 23,45 80,11 231,1 8 283",
+    "среда, июня 3, 2026",
+    "Всего 1384 42,18 3,895 168,72 7 9,24 81,13 1315,15 257,15 1211",
+    "четверг, июня 4, 2026",
+    "Всего 1605 44,17 9,094 149,75 7,3 12,6 99 1499 148 1019",
+    "пятница, июня 5, 2026",
+    "Всего 1740 61,12 5,239 199,1 9,06 7,16 96,06 388 170 267",
+    "суббота, июня 6, 2026",
+    "Всего 1956 57,98 2,121 135,26 2,12 43,84 86,27 228,8 131,8 339",
+    "воскресенье, июня 7, 2026",
+    "Всего 1763 84,68 12,052 151,92 6,98 47,38 97,11 1966 532 995",
+  ].join("\n");
+  const case2 = parseSyntheticPdfText(ruDetailedWeek);
+  assert.equal(case2.extractedRows.length, 7, "RU detailed 7-day layout must produce 7 rows");
+  const case2ByDate = new Map(case2.extractedRows.map((row) => [row.day, row]));
+  assert.equal(case2ByDate.get("2026-06-01")?.kcal, 1617);
+  assert.equal(case2ByDate.get("2026-06-02")?.fatG, 47.69);
+  assert.equal(case2ByDate.get("2026-06-03")?.carbsG, 168.72);
+  assert.equal(case2ByDate.get("2026-06-04")?.proteinG, 99);
+  assert.equal(case2ByDate.get("2026-06-05")?.kcal, 1740);
+  assert.equal(case2ByDate.get("2026-06-06")?.carbsG, 135.26);
+  assert.equal(case2ByDate.get("2026-06-07")?.proteinG, 97.11);
+
+  const quality = calculateNutritionDataQuality(case2.extractedRows);
+  assert.equal(classifyNutritionReportStatus(quality), "ready_for_analysis", "7 resolved high-confidence rows must be ready");
+
+  const periodSummaryOnly = [
+    "Period Summary",
+    "Cреднесуточная норма Кал Жир Углев Белк",
+    "Всего 1641 54,68 163,64 93,24",
+  ].join("\n");
+  const case3 = parseSyntheticPdfText(periodSummaryOnly);
+  assert.equal(case3.extractedRows.length, 0, "Period Summary must not become daily row");
+
+  const mealOnly = [
+    "понедельник, июня 1, 2026",
+    "Завтрак",
+    "Всего 341 11,43 3,323 30,6 0,7 3,21 15,04 212 19 34",
+  ].join("\n");
+  const case4 = parseSyntheticPdfText(mealOnly);
+  assert.equal(case4.extractedRows.length, 0, "single meal total without final day marker must not become day row");
+
   const ruText = [
     "FatSecret Food Diary",
     "2026-06-01 Итого: ккал 2200 белки 130 г жиры 70 г углеводы 280 г",
