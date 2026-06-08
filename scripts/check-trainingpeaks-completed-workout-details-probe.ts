@@ -65,6 +65,30 @@ function testExtractorHappyPath(): void {
   assert(extracted.extractedMetrics.intervalCount === 2, "interval count should normalize");
 }
 
+function testExtractorTpLiveWorkoutListShape(): void {
+  const fixture = {
+    totalTime: 1.6466666460037231,
+    distance: 13645.4296875,
+    heartRateAverage: 147,
+    heartRateMaximum: 159,
+    velocityAverage: 2.546999931335449,
+    structure: {
+      primaryIntensityMetric: "percentOfMaxHr",
+      structure: [{ steps: [{ targets: [{ minValue: 141, maxValue: 152 }] }] }],
+    },
+    coachComments: "warmup drills",
+  };
+  const extracted = extractTrainingPeaksCompletedWorkoutDetails(fixture);
+  assert(extracted.dataAvailability.hasCompletedDuration, "TP totalTime hours should normalize to duration");
+  assert(extracted.dataAvailability.hasCompletedDistance, "TP distance meters should be detected");
+  assert(extracted.dataAvailability.hasAverageHeartRate, "heartRateAverage should be detected");
+  assert(extracted.dataAvailability.hasAveragePace, "velocityAverage should derive avg pace");
+  assert(extracted.dataAvailability.hasTargetPaceOrHr, "structure targets should be detected");
+  assert(extracted.extractedMetrics.durationSeconds === 5928, "decimal-hour totalTime should convert to seconds");
+  assert(extracted.extractedMetrics.averageHeartRateBpm === 147, "heartRateAverage should normalize");
+  assert(extracted.extractedMetrics.maxHeartRateBpm === 159, "heartRateMaximum should normalize");
+}
+
 function testExtractorMissingData(): void {
   const fixture = {
     totalTimePlanned: 3200,
@@ -104,6 +128,7 @@ function run(): void {
   testArgParsing();
   testGetGuard();
   testExtractorHappyPath();
+  testExtractorTpLiveWorkoutListShape();
   testExtractorMissingData();
   testReportRedaction();
   testForbiddenStringsNotPresent();

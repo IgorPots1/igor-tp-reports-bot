@@ -130,6 +130,7 @@ function normalizeDistanceMeters(root: unknown): number | undefined {
     "distanceMeters",
     "completedDistanceMeters",
     "distancemeters",
+    "rawDistance",
   ]);
   if (distanceMeters !== undefined) {
     return distanceMeters;
@@ -141,29 +142,62 @@ function normalizeDistanceMeters(root: unknown): number | undefined {
   return undefined;
 }
 
-export function extractTrainingPeaksCompletedWorkoutDetails(
-  source: unknown
-): TrainingPeaksCompletedWorkoutDetailsExtraction {
-  const durationSeconds = chooseFirstNumber(source, [
-    "durationSeconds",
-    "completedTimeRaw",
-    "totalTime",
-    "elapsedTime",
-  ]);
-  const distanceMeters = normalizeDistanceMeters(source);
-  const averagePaceSecPerKm = chooseFirstNumber(source, [
+function normalizeDurationSeconds(root: unknown): number | undefined {
+  const directSeconds = chooseFirstNumber(root, ["durationSeconds", "elapsedTime"]);
+  if (directSeconds !== undefined) {
+    return directSeconds;
+  }
+  for (const key of ["totalTime", "completedTimeRaw", "rawTotalTime"]) {
+    const value = findValueByNormalizedKeys(root, [key]);
+    const numberValue = toNumber(value);
+    if (numberValue === null || numberValue <= 0) {
+      continue;
+    }
+    // TrainingPeaks list/detail payloads often store these fields as decimal hours.
+    if (numberValue <= 48) {
+      return Math.round(numberValue * 3600);
+    }
+    return numberValue;
+  }
+  return undefined;
+}
+
+function normalizeAveragePaceSecPerKm(root: unknown): number | undefined {
+  const directPace = chooseFirstNumber(root, [
     "averagePaceSecPerKm",
     "avgPace",
     "averagePace",
     "paceAvg",
   ]);
+  if (directPace !== undefined) {
+    return directPace;
+  }
+  const velocityMetersPerSecond = chooseFirstNumber(root, ["normalizedSpeedActual", "velocityAverage"]);
+  if (velocityMetersPerSecond !== undefined && velocityMetersPerSecond > 0) {
+    return Math.round(1000 / velocityMetersPerSecond);
+  }
+  return undefined;
+}
+
+export function extractTrainingPeaksCompletedWorkoutDetails(
+  source: unknown
+): TrainingPeaksCompletedWorkoutDetailsExtraction {
+  const durationSeconds = normalizeDurationSeconds(source);
+  const distanceMeters = normalizeDistanceMeters(source);
+  const averagePaceSecPerKm = normalizeAveragePaceSecPerKm(source);
   const averageHeartRateBpm = chooseFirstNumber(source, [
     "averageHeartRateBpm",
     "avgHeartRate",
     "averageHeartRate",
     "heartRateAvg",
+    "heartRateAverage",
   ]);
-  const maxHeartRateBpm = chooseFirstNumber(source, ["maxHeartRateBpm", "maxHeartRate", "hrMax"]);
+  const maxHeartRateBpm = chooseFirstNumber(source, [
+    "maxHeartRateBpm",
+    "maxHeartRate",
+    "hrMax",
+    "heartRateMaximum",
+  ]);
   const lapCount =
     countLikelyArray(source, ["laps", "splits", "lapDetails"]) ??
     (hasAnyKeyDeep(source, ["lap", "split"]) ? 1 : undefined);
@@ -180,7 +214,14 @@ export function extractTrainingPeaksCompletedWorkoutDetails(
       hasLaps: lapCount !== undefined,
       hasIntervalActuals: intervalCount !== undefined,
       hasPlannedStructure: hasAnyKeyDeep(source, ["structure", "plannedstep", "planned"]),
-      hasTargetPaceOrHr: hasAnyKeyDeep(source, ["targetpace", "targethr", "heartratezone", "pacerange"]),
+      hasTargetPaceOrHr: hasAnyKeyDeep(source, [
+        "targetpace",
+        "targethr",
+        "heartratezone",
+        "pacerange",
+        "targets",
+        "percentofmaxhr",
+      ]),
       hasCoachComments: hasAnyKeyDeep(source, ["coachcomment", "coachnote", "comment"]),
     },
     extractedMetrics: {
