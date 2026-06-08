@@ -91,7 +91,6 @@ import {
   insertTrainingPeaksReplyDraft,
   recordTrainingPeaksReplyDraftFeedback,
   type TrainingPeaksOperationalSignalsScope,
-  formatTrainingPeaksOperationalSignalsForTelegram,
   formatTrainingPeaksOperationalSignalsForTelegramMultiMessage,
 } from "@/features/trainingpeaks/service";
 import {
