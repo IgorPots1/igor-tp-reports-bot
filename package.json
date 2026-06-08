@@ -146,6 +146,8 @@
     "check:group-workout-report-intake": "npx tsx scripts/check-group-workout-report-intake.ts",
     "check:group-workout-report-match-analyzer": "npx tsx scripts/check-group-workout-report-match-and-analyzer.ts",
     "audit:trainingpeaks-workout-details-availability": "npx tsx scripts/audit-trainingpeaks-workout-details-availability.ts",
+    "audit:trainingpeaks-completed-workout-details-probe": "npx tsx scripts/probe-trainingpeaks-completed-workout-details.ts",
+    "check:trainingpeaks-completed-workout-details-probe": "npx tsx scripts/check-trainingpeaks-completed-workout-details-probe.ts",
     "check-trainingpeaks-reply-draft-communication-profile": "npx tsx scripts/check-trainingpeaks-reply-draft-communication-profile.ts",
     "check:telegram-formality-reply-draft-usage": "npx tsx scripts/check-telegram-formality-reply-draft-usage.ts",
     "check:communication-style": "npx tsx scripts/diagnose-student-communication-style.ts",
