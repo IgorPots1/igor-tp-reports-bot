@@ -8,6 +8,8 @@ import {
   addNutritionWeightAction,
   generateNutritionWeeklyReviewAction,
   parseNutritionManualMacrosAction,
+  previewNutritionFileUploadAction,
+  saveNutritionFileReportAction,
   saveNutritionManualMacrosAction,
   saveNutritionProfileAction,
 } from "@/app/admin/coach-os/nutrition/actions";
@@ -292,6 +294,89 @@ export default async function CoachOsNutritionStudentCardPage({
               </tbody>
             </table>
           </div>
+        </article>
+
+        <article className="admin-card admin-card-compact admin-nutrition-card-wide">
+          <h3>Загрузить отчёт питания</h3>
+          <p className="admin-muted admin-nutrition-helper">
+            Поддержка: PDF, CSV, TXT, JPG/JPEG, PNG, WEBP, HEIC (если mime поддержан браузером).
+          </p>
+          <form className="admin-form-stack" action={previewNutritionFileUploadAction}>
+            <input type="hidden" name="studentId" value={studentId} />
+            <input type="hidden" name="redirectTo" value={`/admin/coach-os/nutrition/${studentId}`} />
+            <div className="admin-nutrition-kv-grid">
+              <label className="admin-form-field">
+                <span>Неделя с</span>
+                <input className="admin-input" type="date" name="weekFrom" defaultValue={weekFrom} required />
+              </label>
+              <label className="admin-form-field">
+                <span>Неделя по</span>
+                <input className="admin-input" type="date" name="weekTo" defaultValue={weekTo} required />
+              </label>
+            </div>
+            <label className="admin-form-field">
+              <span>Файлы отчёта</span>
+              <input
+                className="admin-input"
+                type="file"
+                name="reportFiles"
+                multiple
+                required
+                accept=".pdf,.csv,.txt,.jpg,.jpeg,.png,.webp,.heic,image/heic,image/heif"
+              />
+            </label>
+            <label className="admin-form-field">
+              <span>Комментарий ученика / заметки</span>
+              <textarea className="admin-textarea admin-textarea-compact" name="studentNotes" rows={3} />
+            </label>
+            <div className="admin-card-actions admin-card-actions-compact">
+              <FormActionButton className="admin-button admin-button-secondary" pendingText="Распознаю…">
+                Загрузить и распознать
+              </FormActionButton>
+            </div>
+          </form>
+
+          <form className="admin-form-stack" action={saveNutritionFileReportAction}>
+            <input type="hidden" name="studentId" value={studentId} />
+            <input type="hidden" name="redirectTo" value={`/admin/coach-os/nutrition/${studentId}`} />
+            <div className="admin-nutrition-kv-grid">
+              <label className="admin-form-field">
+                <span>Неделя с</span>
+                <input className="admin-input" type="date" name="weekFrom" defaultValue={weekFrom} required />
+              </label>
+              <label className="admin-form-field">
+                <span>Неделя по</span>
+                <input className="admin-input" type="date" name="weekTo" defaultValue={weekTo} required />
+              </label>
+            </div>
+            <label className="admin-form-field">
+              <span>Файлы отчёта</span>
+              <input
+                className="admin-input"
+                type="file"
+                name="reportFiles"
+                multiple
+                required
+                accept=".pdf,.csv,.txt,.jpg,.jpeg,.png,.webp,.heic,image/heic,image/heif"
+              />
+            </label>
+            <label className="admin-form-field">
+              <span>Комментарий ученика / заметки</span>
+              <textarea className="admin-textarea admin-textarea-compact" name="studentNotes" rows={3} />
+            </label>
+            <label className="admin-form-field">
+              <span>Если данных мало</span>
+              <select className="admin-input" name="forceNeedsReview" defaultValue="false">
+                <option value="false">Автостатус по качеству данных</option>
+                <option value="true">Сохранить как needs_review</option>
+              </select>
+            </label>
+            <div className="admin-card-actions admin-card-actions-compact">
+              <FormActionButton className="admin-button" pendingText="Сохраняю…">
+                Сохранить и запустить разбор
+              </FormActionButton>
+            </div>
+          </form>
         </article>
 
         <article className="admin-card admin-card-compact admin-nutrition-card-wide">

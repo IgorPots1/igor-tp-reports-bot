@@ -1,5 +1,9 @@
+import { randomUUID } from "node:crypto";
+
 import {
   buildNutritionStudentContext,
+  classifyNutritionReportStatus,
+  calculateNutritionDataQuality,
   normalizeManualMacroInput,
   summarizeNutritionRows,
 } from "@/features/nutrition/context";
@@ -21,6 +25,7 @@ import {
   type NutritionContextItemType,
 } from "@/features/nutrition/repository";
 import { generateNutritionWeeklyAnalysis } from "@/features/nutrition/draft-generator";
+import { intakeNutritionReportFiles, type IntakeNutritionReportFilesResult } from "@/features/nutrition/file-intake";
 
 export async function listNutritionAdminDashboardRows(filters: NutritionDashboardFilters = {}) {
   return listNutritionDashboardRows(filters);
@@ -179,6 +184,99 @@ export async function saveNutritionManualMacros(input: {
 
   const savedMacros = await insertNutritionDailyMacros(macrosToSave);
   return { report, macros: savedMacros, parsed };
+}
+
+export async function previewNutritionFileUpload(input: {
+  studentId: string;
+  weekFrom: string;
+  weekTo: string;
+  studentNotes?: string | null;
+  files: File[];
+}): Promise<IntakeNutritionReportFilesResult & {
+  quality: ReturnType<typeof calculateNutritionDataQuality>;
+  status: ReturnType<typeof classifyNutritionReportStatus>;
+}> {
+  const previewReportId = randomUUID();
+  const intake = await intakeNutritionReportFiles({
+    studentId: input.studentId,
+    reportId: previewReportId,
+    weekFrom: input.weekFrom,
+    files: input.files,
+    persistFiles: false,
+  });
+  const rows = intake.extraction.extractedRows;
+  const quality = calculateNutritionDataQuality(rows);
+  const status = classifyNutritionReportStatus(quality);
+  return {
+    ...intake,
+    quality,
+    status,
+  };
+}
+
+export async function saveNutritionFileReport(input: {
+  studentId: string;
+  weekFrom: string;
+  weekTo: string;
+  studentNotes?: string | null;
+  files: File[];
+  forceNeedsReview?: boolean;
+}) {
+  const reportId = randomUUID();
+  const intake = await intakeNutritionReportFiles({
+    studentId: input.studentId,
+    reportId,
+    weekFrom: input.weekFrom,
+    files: input.files,
+  });
+  const rows = intake.extraction.extractedRows;
+  const quality = calculateNutritionDataQuality(rows);
+  const status = input.forceNeedsReview ? "needs_review" : classifyNutritionReportStatus(quality);
+  const hasOnlyNotes = rows.length === 0 && Boolean(input.studentNotes?.trim());
+  const resolvedStatus = hasOnlyNotes ? "needs_review" : status;
+
+  const report = await createNutritionReport({
+    studentId: input.studentId,
+    weekFrom: input.weekFrom,
+    weekTo: input.weekTo,
+    sourceType: intake.sourceType,
+    rawText: input.studentNotes ?? null,
+    fileRefs: {
+      files: intake.fileMetas,
+      unsupported_files: intake.extraction.unsupportedFiles,
+      extraction_warnings: intake.extraction.extractionWarnings,
+    },
+    status: resolvedStatus,
+    dataQuality: {
+      ...quality,
+      extracted_days: rows.length,
+      unsupported_files_count: intake.extraction.unsupportedFiles.length,
+    },
+  });
+
+  const macrosToSave = rows
+    .filter((row) => !row.day.startsWith("unresolved:"))
+    .map((row) => ({
+      reportId: report.id,
+      studentId: input.studentId,
+      day: row.day,
+      kcal: row.kcal,
+      proteinG: row.proteinG,
+      fatG: row.fatG,
+      carbsG: row.carbsG,
+      confidence: row.confidence,
+      source: intake.sourceType === "manual_text" ? "manual_text" : "file_upload",
+      notes: row.notes,
+    }));
+  const macros = await insertNutritionDailyMacros(macrosToSave);
+
+  return {
+    report,
+    macros,
+    intake,
+    quality,
+    status: resolvedStatus,
+  };
 }
 
 export async function generateNutritionWeeklyReview(input: {

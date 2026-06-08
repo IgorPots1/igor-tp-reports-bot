@@ -8,7 +8,9 @@ import {
   addNutritionContextNoteActionData,
   addNutritionWeightActionData,
   generateNutritionWeeklyReview,
+  previewNutritionFileUpload,
   parseNutritionManualMacros,
+  saveNutritionFileReport,
   saveNutritionManualMacros,
   saveNutritionProfileActionData,
 } from "@/features/nutrition/admin";
@@ -246,6 +248,83 @@ export async function saveNutritionManualMacrosAction(formData: FormData): Promi
   } catch (error) {
     revalidateNutritionPaths(studentId);
     const message = error instanceof Error ? error.message : "Не удалось сохранить разбор макросов.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+}
+
+function getFormFiles(formData: FormData, key: string): File[] {
+  const values = formData.getAll(key);
+  return values.filter((value): value is File => value instanceof File && value.size > 0);
+}
+
+export async function previewNutritionFileUploadAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const weekFrom = getRequiredFormValue(formData, "weekFrom");
+  const weekTo = getRequiredFormValue(formData, "weekTo");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  const studentNotes = getOptionalFormValue(formData, "studentNotes");
+  await ensureAdminAccess(redirectTo);
+
+  try {
+    const files = getFormFiles(formData, "reportFiles");
+    if (files.length === 0) {
+      throw new Error("Выберите хотя бы один файл.");
+    }
+    const preview = await previewNutritionFileUpload({
+      studentId,
+      weekFrom,
+      weekTo,
+      studentNotes,
+      files,
+    });
+    revalidateNutritionPaths(studentId);
+    redirect(
+      withNotice(
+        redirectTo,
+        "notice",
+        `Файлы обработаны: ${preview.fileMetas.length}. Дней найдено: ${preview.quality.parsedDays}, статус: ${formatNutritionStatus(preview.status, "report")}.`
+      )
+    );
+  } catch (error) {
+    revalidateNutritionPaths(studentId);
+    const message = error instanceof Error ? error.message : "Не удалось распознать файлы отчёта.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+}
+
+export async function saveNutritionFileReportAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const weekFrom = getRequiredFormValue(formData, "weekFrom");
+  const weekTo = getRequiredFormValue(formData, "weekTo");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  const studentNotes = getOptionalFormValue(formData, "studentNotes");
+  await ensureAdminAccess(redirectTo);
+
+  try {
+    const files = getFormFiles(formData, "reportFiles");
+    if (files.length === 0) {
+      throw new Error("Выберите хотя бы один файл.");
+    }
+    const forceNeedsReview = parseBoolean(getOptionalFormValue(formData, "forceNeedsReview"), false);
+    const result = await saveNutritionFileReport({
+      studentId,
+      weekFrom,
+      weekTo,
+      studentNotes,
+      files,
+      forceNeedsReview,
+    });
+    revalidateNutritionPaths(studentId);
+    redirect(
+      withNotice(
+        redirectTo,
+        "notice",
+        `Отчёт сохранён (${formatNutritionStatus(result.status, "report")}), файлов: ${result.intake.fileMetas.length}, макросов: ${result.macros.length}.`
+      )
+    );
+  } catch (error) {
+    revalidateNutritionPaths(studentId);
+    const message = error instanceof Error ? error.message : "Не удалось сохранить отчёт из файлов.";
     redirect(withNotice(redirectTo, "error", message));
   }
 }

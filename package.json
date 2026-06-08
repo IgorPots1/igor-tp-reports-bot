@@ -166,6 +166,9 @@
     "check:nutrition-safety-blocks": "npx tsx scripts/check-nutrition-safety-blocks.ts",
     "check:nutrition-no-autosend": "npx tsx scripts/check-nutrition-no-autosend.ts",
     "check:nutrition-admin-routes": "npx tsx scripts/check-nutrition-admin-routes.ts",
+    "check:nutrition-file-upload": "npx tsx scripts/check-nutrition-file-upload.ts",
+    "check:nutrition-file-extraction": "npx tsx scripts/check-nutrition-file-extraction.ts",
+    "check:nutrition-file-safety": "npx tsx scripts/check-nutrition-file-safety.ts",
     "nutrition:enable-test-cohort": "npx tsx scripts/nutrition-enable-test-cohort.ts"
   },
   "dependencies": {
