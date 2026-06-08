@@ -131,6 +131,10 @@ export default function NutritionFileUploadPanel({
         </div>
       </form>
 
+      <p className="admin-muted admin-nutrition-helper">
+        После распознавания для сохранения пока нужно выбрать тот же файл ещё раз.
+      </p>
+
       <NutritionReportUploadForm className="admin-form-stack" action={saveAction}>
         <input type="hidden" name="studentId" value={studentId} />
         <input type="hidden" name="redirectTo" value={`/admin/coach-os/nutrition/${studentId}`} />

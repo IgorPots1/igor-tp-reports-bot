@@ -162,6 +162,7 @@
     "diagnose-tp-signals-stale-health-after-completion": "npx tsx scripts/diagnose-tp-signals-stale-health-after-completion.ts",
     "check:nutrition-admin-mvp": "npx tsx scripts/check-nutrition-admin-mvp.ts",
     "check:nutrition-student-fk": "npx tsx scripts/check-nutrition-student-fk.ts",
+    "check:nutrition-daily-macros-upsert": "npx tsx scripts/check-nutrition-daily-macros-upsert.ts",
     "check:nutrition-communication-profile": "npx tsx scripts/check-nutrition-communication-profile.ts",
     "check:nutrition-context-builder": "npx tsx scripts/check-nutrition-context-builder.ts",
     "check:nutrition-safety-blocks": "npx tsx scripts/check-nutrition-safety-blocks.ts",
