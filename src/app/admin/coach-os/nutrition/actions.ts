@@ -143,6 +143,10 @@ function buildPreviewSnapshot(input: {
       fileKind: file.fileKind,
       extractionMethod: file.extractionMethod ?? null,
       extractionErrorCode: file.extractionErrorCode ?? null,
+      extractionPageCount: file.extractionPageCount ?? null,
+      extractionTextLength: file.extractionTextLength ?? null,
+      extractionNormalizedTextLength: file.extractionNormalizedTextLength ?? null,
+      extractionDiagnostics: file.extractionDiagnostics ?? null,
       extractionWarnings: file.extractionWarnings ?? [],
     })),
   };

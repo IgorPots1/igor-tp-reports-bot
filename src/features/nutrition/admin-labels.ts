@@ -155,4 +155,29 @@ export function formatNutritionDoNotSendReason(reason: string): string {
   return reason;
 }
 
+export function formatNutritionExtractionWarning(warning: string): string {
+  if (warning.includes("pdf_text_empty")) {
+    return "PDF похож на изображение, текст не извлечён.";
+  }
+  if (warning.includes("unsupported_pdf_image_only")) {
+    return "PDF загружен, но не читается как текст (возможен скан/скриншот).";
+  }
+  if (warning.includes("daily_totals_not_found")) {
+    return "PDF прочитан, но дневные итоги не найдены.";
+  }
+  if (warning.includes("parsed_food_rows_but_no_day_totals")) {
+    return "Похоже, в PDF есть продукты, но нет распознанной строки итога за день.";
+  }
+  if (warning.includes("fatsecret_layout_not_recognized")) {
+    return "Нераспознанный layout FatSecret PDF.";
+  }
+  if (warning.includes("duplicate_day_totals")) {
+    return "Обнаружены дубли дневных итогов.";
+  }
+  if (warning.includes("low_confidence_pdf_parse")) {
+    return "Низкая уверенность распознавания PDF.";
+  }
+  return warning;
+}
+
 export { NUTRITION_FILE_UPLOAD_LIMIT_HINT } from "@/features/nutrition/file-upload-limits";

@@ -10,6 +10,7 @@ import {
 } from "@/app/admin/coach-os/nutrition/upload-action-state";
 import {
   formatNutritionStatus,
+  formatNutritionExtractionWarning,
   NUTRITION_FILE_UPLOAD_LIMIT_HINT,
 } from "@/features/nutrition/admin-labels";
 import { validateNutritionUploadFiles } from "@/features/nutrition/file-upload-limits";
@@ -41,14 +42,17 @@ function getBadgeClass(status: string): string {
 }
 
 function mapUnsupportedReason(reason: string): string {
-  if (reason === "pdf_no_text_content") {
-    return "PDF не удалось прочитать как текст.";
+  if (reason === "pdf_text_empty") {
+    return "PDF похож на изображение, текст не извлечён.";
   }
   if (reason === "pdf_password_protected") {
     return "PDF защищён паролем.";
   }
   if (reason === "pdf_invalid_or_corrupted") {
     return "PDF повреждён или имеет неверный формат.";
+  }
+  if (reason === "daily_totals_not_found") {
+    return "PDF прочитан, но дневные итоги не найдены.";
   }
   return reason;
 }
@@ -181,7 +185,9 @@ export default function NutritionFileUploadPanel({
             </span>
           </div>
           {activePreview.extractionWarnings.length > 0 && (
-            <div className="admin-alert admin-alert-warning">{activePreview.extractionWarnings.join(" | ")}</div>
+            <div className="admin-alert admin-alert-warning">
+              {activePreview.extractionWarnings.map(formatNutritionExtractionWarning).join(" | ")}
+            </div>
           )}
           {activePreview.unsupportedFiles.length > 0 && (
             <div className="admin-alert admin-alert-warning">
@@ -226,6 +232,43 @@ export default function NutritionFileUploadPanel({
               </tbody>
             </table>
           </div>
+          {activePreview.files.length > 0 && (
+            <div className="admin-card admin-card-compact">
+              <h4>Диагностика PDF</h4>
+              <div className="admin-table-wrap">
+                <table className="admin-table admin-table-compact">
+                  <thead>
+                    <tr>
+                      <th>Файл</th>
+                      <th>PDF</th>
+                      <th>Текст</th>
+                      <th>Найдено дней</th>
+                      <th>Статус</th>
+                      <th>Предупреждения</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activePreview.files.map((file) => {
+                      const parsedDays = file.extractionDiagnostics?.parsedRows ?? 0;
+                      const textLen = file.extractionTextLength ?? 0;
+                      const pdfReadable = file.extractionErrorCode ? "не прочитан" : "прочитан";
+                      const compactStatus = parsedDays >= 5 ? "готово" : "мало данных";
+                      return (
+                        <tr key={`${file.originalFileName}-${file.fileKind}`}>
+                          <td>{file.originalFileName}</td>
+                          <td>{file.fileKind === "pdf" ? pdfReadable : "—"}</td>
+                          <td>{file.fileKind === "pdf" ? `${textLen} символов` : "—"}</td>
+                          <td>{file.fileKind === "pdf" ? parsedDays : "—"}</td>
+                          <td>{file.fileKind === "pdf" ? compactStatus : "—"}</td>
+                          <td>{(file.extractionWarnings ?? []).map(formatNutritionExtractionWarning).join(" | ") || "—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </>
       )}
     </article>

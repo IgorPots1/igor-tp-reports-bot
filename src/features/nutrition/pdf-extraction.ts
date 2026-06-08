@@ -39,8 +39,35 @@ function compactPdfText(value: string): string {
   return value.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+type PdfTextItem = {
+  str?: unknown;
+  transform?: unknown;
+};
+
+type PositionedText = {
+  text: string;
+  x: number;
+  y: number;
+};
+
+function toPositionedText(item: PdfTextItem): PositionedText | null {
+  const text = typeof item.str === "string" ? item.str.trim() : "";
+  if (!text) {
+    return null;
+  }
+  const transform = Array.isArray(item.transform) ? item.transform : null;
+  const x = typeof transform?.[4] === "number" ? transform[4] : Number.NaN;
+  const y = typeof transform?.[5] === "number" ? transform[5] : Number.NaN;
+  return {
+    text,
+    x,
+    y,
+  };
+}
+
 function appendPageText(items: unknown[]): string {
-  const chunks: string[] = [];
+  const positioned: PositionedText[] = [];
+  const fallbackChunks: string[] = [];
   for (const item of items) {
     if (!item || typeof item !== "object") {
       continue;
@@ -48,13 +75,54 @@ function appendPageText(items: unknown[]): string {
     if (!("str" in item)) {
       continue;
     }
-    const text = typeof item.str === "string" ? item.str.trim() : "";
-    if (!text) {
+    const positionedText = toPositionedText(item as PdfTextItem);
+    if (!positionedText) {
       continue;
     }
-    chunks.push(text);
+    if (Number.isFinite(positionedText.x) && Number.isFinite(positionedText.y)) {
+      positioned.push(positionedText);
+    } else {
+      fallbackChunks.push(positionedText.text);
+    }
   }
-  return chunks.join(" ");
+  if (positioned.length === 0) {
+    return fallbackChunks.join(" ");
+  }
+
+  const sorted = [...positioned].sort((a, b) => {
+    const yDelta = b.y - a.y;
+    if (Math.abs(yDelta) > 2) {
+      return yDelta;
+    }
+    return a.x - b.x;
+  });
+
+  const rows: Array<{ y: number; chunks: PositionedText[] }> = [];
+  for (const token of sorted) {
+    const row = rows.find((candidate) => Math.abs(candidate.y - token.y) <= 2);
+    if (row) {
+      row.chunks.push(token);
+      continue;
+    }
+    rows.push({ y: token.y, chunks: [token] });
+  }
+
+  const pageLines = rows
+    .sort((a, b) => b.y - a.y)
+    .map((row) =>
+      row.chunks
+        .sort((a, b) => a.x - b.x)
+        .map((chunk) => chunk.text)
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim()
+    )
+    .filter(Boolean);
+
+  if (pageLines.length === 0) {
+    return fallbackChunks.join(" ");
+  }
+  return pageLines.join("\n");
 }
 
 export async function extractPdfTextFromBuffer(bytes: Uint8Array): Promise<PdfTextExtractionResult> {
@@ -84,7 +152,7 @@ export async function extractPdfTextFromBuffer(bytes: Uint8Array): Promise<PdfTe
         ok: false,
         text: "",
         pageCount,
-        warnings: ["PDF не удалось прочитать как текст."],
+        warnings: ["pdf_text_empty", "unsupported_pdf_image_only"],
         errorCode: "no_text_content",
         extractionMethod: "pdfjs_text",
       };
@@ -103,7 +171,7 @@ export async function extractPdfTextFromBuffer(bytes: Uint8Array): Promise<PdfTe
       ok: false,
       text: "",
       pageCount: null,
-      warnings: ["PDF не удалось прочитать как текст."],
+      warnings: ["pdf_text_empty"],
       errorCode: mapPdfExtractionError(error),
       extractionMethod: "pdfjs_text",
     };

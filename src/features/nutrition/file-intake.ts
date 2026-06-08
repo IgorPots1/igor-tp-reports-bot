@@ -24,6 +24,16 @@ export type NutritionUploadedFileMeta = {
   extractionErrorCode?: string | null;
   extractionMethod?: string | null;
   extractionPageCount?: number | null;
+  extractionTextLength?: number | null;
+  extractionNormalizedTextLength?: number | null;
+  extractionDiagnostics?: {
+    hasKcalKeyword: boolean;
+    hasProteinKeyword: boolean;
+    hasFatKeyword: boolean;
+    hasCarbsKeyword: boolean;
+    dateMatches: number;
+    parsedRows: number;
+  } | null;
 };
 
 export type ExtractedNutritionDay = {
@@ -146,6 +156,7 @@ type FatSecretPdfDayCandidate = {
   carbsG: number | null;
   confidence: number;
   notes?: string;
+  source: "daily_total";
 };
 
 function isoFromDateParts(year: number, month: number, day: number): string | null {
@@ -169,18 +180,56 @@ function isoFromDateParts(year: number, month: number, day: number): string | nu
 }
 
 function parseDateFromFatSecretLine(line: string): string | null {
-  const directIso = line.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/);
+  const directIso = line.match(/(?:^|[^\d])(20\d{2})-(\d{1,2})-(\d{1,2})(?:$|[^\d])/);
   if (directIso) {
     return isoFromDateParts(Number(directIso[1]), Number(directIso[2]), Number(directIso[3]));
   }
 
-  const dotted = line.match(/\b(\d{1,2})[./](\d{1,2})[./](20\d{2})\b/);
+  const dotted = line.match(/(?:^|[^\d])(\d{1,2})[./](\d{1,2})[./](20\d{2})(?:$|[^\d])/);
   if (dotted) {
     return isoFromDateParts(Number(dotted[3]), Number(dotted[2]), Number(dotted[1]));
   }
 
+  const monthEn = line.match(
+    /\b(?:mon|monday|tue|tuesday|wed|wednesday|thu|thursday|fri|friday|sat|saturday|sun|sunday)?\s*([a-z]{3,9})\s+(\d{1,2})(?:,?\s*(20\d{2}))?\b/i
+  );
+  if (monthEn) {
+    const key = monthEn[1].toLocaleLowerCase("en");
+    const monthMap: Record<string, number> = {
+      jan: 1,
+      january: 1,
+      feb: 2,
+      february: 2,
+      mar: 3,
+      march: 3,
+      apr: 4,
+      april: 4,
+      may: 5,
+      jun: 6,
+      june: 6,
+      jul: 7,
+      july: 7,
+      aug: 8,
+      august: 8,
+      sep: 9,
+      sept: 9,
+      september: 9,
+      oct: 10,
+      october: 10,
+      nov: 11,
+      november: 11,
+      dec: 12,
+      december: 12,
+    };
+    const month = monthMap[key] ?? null;
+    if (month) {
+      const year = monthEn[3] ? Number(monthEn[3]) : new Date().getUTCFullYear();
+      return isoFromDateParts(year, month, Number(monthEn[2]));
+    }
+  }
+
   const monthRu = line.match(
-    /\b(\d{1,2})\s+(январ[ья]|феврал[ья]|март[а]?|апрел[ья]|ма[йя]|июн[ья]|июл[ья]|август[а]?|сентябр[ья]|октябр[ья]|ноябр[ья]|декабр[ья])(?:\s+(20\d{2}))?\b/i
+    /(\d{1,2})\s+(январ[ья]|феврал[ья]|март[а]?|апрел[ья]|ма[йя]|июн[ья]|июл[ья]|август[а]?|сентябр[ья]|октябр[ья]|ноябр[ья]|декабр[ья])(?:\s+(20\d{2}))?/i
   );
   if (monthRu) {
     const m = monthRu[2].toLocaleLowerCase("ru");
@@ -219,7 +268,7 @@ function parseDateFromFatSecretLine(line: string): string | null {
   }
 
   const weekdayDotted = line.match(
-    /\b(?:mon|monday|tue|tuesday|wed|wednesday|thu|thursday|fri|friday|sat|saturday|sun|sunday|пн|понедельник|вт|вторник|ср|среда|чт|четверг|пт|пятница|сб|суббота|вс|воскресенье)\b[^0-9]{0,10}(\d{1,2})[./](\d{1,2})(?:[./](20\d{2}))?/i
+    /(?:mon|monday|tue|tuesday|wed|wednesday|thu|thursday|fri|friday|sat|saturday|sun|sunday|пн|понедельник|вт|вторник|ср|среда|чт|четверг|пт|пятница|сб|суббота|вс|воскресенье)[^0-9]{0,10}(\d{1,2})[./](\d{1,2})(?:[./](20\d{2}))?/i
   );
   if (weekdayDotted) {
     const year = weekdayDotted[3] ? Number(weekdayDotted[3]) : new Date().getUTCFullYear();
@@ -243,29 +292,102 @@ function parseMacroValue(input: string, patterns: RegExp[]): number | null {
   return null;
 }
 
+function hasDatePattern(line: string): boolean {
+  return (
+    /(?:^|[^\d])20\d{2}-\d{1,2}-\d{1,2}(?:$|[^\d])/.test(line) ||
+    /(?:^|[^\d])\d{1,2}[./]\d{1,2}(?:[./](?:20)?\d{2})?(?:$|[^\d])/.test(line) ||
+    /(?:jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)/i.test(
+      line
+    ) ||
+    /(?:январ[ья]|феврал[ья]|март[а]?|апрел[ья]|ма[йя]|июн[ья]|июл[ья]|август[а]?|сентябр[ья]|октябр[ья]|ноябр[ья]|декабр[ья])/i.test(
+      line
+    )
+  );
+}
+
 function parseFatSecretPdfLines(text: string): FatSecretPdfDayCandidate[] {
   const lines = text
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+  const loweredFullText = text.toLocaleLowerCase("ru");
   const candidates: FatSecretPdfDayCandidate[] = [];
+  const parsedFoodLikeRows: Array<{ line: string; day: string | null }> = [];
+  const tabularCandidates: FatSecretPdfDayCandidate[] = [];
 
-  for (const line of lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    const lowered = line.toLocaleLowerCase("ru");
+    const looksLikeHeader =
+      /(date|day|дата)/.test(lowered) &&
+      /(kcal|calories|ккал|калории)/.test(lowered) &&
+      /(protein|белк)/.test(lowered) &&
+      /(fat|жир)/.test(lowered) &&
+      /(carb|углев)/.test(lowered);
+    if (!looksLikeHeader) {
+      continue;
+    }
+    for (let rowIndex = index + 1; rowIndex <= Math.min(lines.length - 1, index + 16); rowIndex += 1) {
+      const rowLine = lines[rowIndex] ?? "";
+      const day = parseDateFromFatSecretLine(rowLine);
+      if (!day) {
+        if (rowLine.length === 0) {
+          break;
+        }
+        continue;
+      }
+      const rowWithoutDate = rowLine
+        .replace(/20\d{2}-\d{1,2}-\d{1,2}/g, " ")
+        .replace(/\d{1,2}[./]\d{1,2}[./](?:20)?\d{2}/g, " ")
+        .replace(/\d{1,2}[./]\d{1,2}(?!\d)/g, " ");
+      const numberMatches = rowWithoutDate.match(/([0-9]+(?:[.,][0-9]+)?)/g) ?? [];
+      if (numberMatches.length < 4) {
+        continue;
+      }
+      const values = numberMatches.map((value) => parseNumberCell(value)).filter((value): value is number => value !== null);
+      if (values.length < 4) {
+        continue;
+      }
+      const [kcal, fatG, carbsG, proteinG] = values;
+      tabularCandidates.push({
+        day,
+        kcal,
+        proteinG,
+        fatG,
+        carbsG,
+        confidence: 0.9,
+        notes: undefined,
+        source: "daily_total",
+      });
+    }
+  }
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    const contextLine = [line, lines[index + 1] ?? ""].join(" | ");
     const day = parseDateFromFatSecretLine(line);
     const lowered = line.toLocaleLowerCase("ru");
-    const kcal = parseMacroValue(lowered, [
-      /(?:ккал|калори[ия]|calories|kcal)\s*[:=-]?\s*([0-9]+(?:[.,][0-9]+)?)/i,
+    const isTotalLine =
+      /(total|daily total|day total|итого|всего|суточн(?:ый|ые)|за день)/i.test(lowered) ||
+      /(foods?\s*(?:totals?|summary))/i.test(lowered);
+    const looksLikeFoodRow =
+      /(breakfast|lunch|dinner|snack|meal|serving|grams?|portion|порци|завтрак|обед|ужин|перекус)/i.test(
+        lowered
+      ) && !isTotalLine;
+
+    const kcal = parseMacroValue(contextLine.toLocaleLowerCase("ru"), [
+      /(?:ккал|калори(?:и|я|й)|calories|kcal)\s*[:=-]?\s*([0-9]+(?:[.,][0-9]+)?)/i,
       /([0-9]+(?:[.,][0-9]+)?)\s*(?:ккал|calories|kcal)\b/i,
     ]);
-    const proteinG = parseMacroValue(lowered, [
+    const proteinG = parseMacroValue(contextLine.toLocaleLowerCase("ru"), [
       /(?:белк(?:и|а|ов)?|белок|protein)\s*[:=-]?\s*([0-9]+(?:[.,][0-9]+)?)/i,
       /([0-9]+(?:[.,][0-9]+)?)\s*(?:г|g)\s*(?:белк(?:и|а|ов)?|protein)\b/i,
     ]);
-    const fatG = parseMacroValue(lowered, [
+    const fatG = parseMacroValue(contextLine.toLocaleLowerCase("ru"), [
       /(?:жир(?:ы|а|ов)?|fat)\s*[:=-]?\s*([0-9]+(?:[.,][0-9]+)?)/i,
       /([0-9]+(?:[.,][0-9]+)?)\s*(?:г|g)\s*(?:жир(?:ы|а|ов)?|fat)\b/i,
     ]);
-    const carbsG = parseMacroValue(lowered, [
+    const carbsG = parseMacroValue(contextLine.toLocaleLowerCase("ru"), [
       /(?:углевод(?:ы|ов)?|carb(?:s|ohydrate)?s?)\s*[:=-]?\s*([0-9]+(?:[.,][0-9]+)?)/i,
       /([0-9]+(?:[.,][0-9]+)?)\s*(?:г|g)\s*(?:углевод(?:ы|ов)?|carb(?:s|ohydrate)?s?)\b/i,
     ]);
@@ -275,13 +397,27 @@ function parseFatSecretPdfLines(text: string): FatSecretPdfDayCandidate[] {
       continue;
     }
 
-    const confidence = Math.max(0.1, Math.min(0.98, 0.35 + (day ? 0.4 : 0) + macroCount * 0.15));
+    if (looksLikeFoodRow && macroCount > 0) {
+      parsedFoodLikeRows.push({ line, day });
+    }
+
+    if (!isTotalLine) {
+      continue;
+    }
+
+    const confidence = Math.max(
+      0.1,
+      Math.min(0.98, 0.45 + (day ? 0.25 : 0) + (macroCount === 4 ? 0.25 : macroCount * 0.1))
+    );
     const notes: string[] = [];
     if (!day) {
       notes.push("date_missing");
     }
     if (macroCount < 4) {
       notes.push("partial_macros");
+    }
+    if (!hasDatePattern(line) && !day) {
+      notes.push("date_not_near_total");
     }
     candidates.push({
       day,
@@ -291,9 +427,25 @@ function parseFatSecretPdfLines(text: string): FatSecretPdfDayCandidate[] {
       carbsG,
       confidence,
       notes: notes.length > 0 ? notes.join(", ") : undefined,
+      source: "daily_total",
     });
   }
-  return candidates;
+
+  if (candidates.length === 0 && parsedFoodLikeRows.length > 0) {
+    return [];
+  }
+
+  const hasLikelyFatSecret =
+    /(fatsecret|food diary|foods|nutrition report|дневник питания)/i.test(loweredFullText) ||
+    [/calories?/i, /protein/i, /fat/i, /carbs?/i, /ккал|калори/i, /белк/i, /жир/i, /углев/i].filter((pattern) =>
+      pattern.test(loweredFullText)
+    )
+      .length >= 2;
+  if (!hasLikelyFatSecret) {
+    return [];
+  }
+
+  return [...tabularCandidates, ...candidates];
 }
 
 export function extractNutritionRowsFromFatSecretPdfText(input: {
@@ -303,12 +455,46 @@ export function extractNutritionRowsFromFatSecretPdfText(input: {
   extractedRows: NormalizedManualMacroRow[];
   extractedDays: ExtractedNutritionDay[];
   warnings: string[];
+  diagnostics: {
+    extractedTextLength: number;
+    normalizedTextLength: number;
+    hasKcalKeyword: boolean;
+    hasProteinKeyword: boolean;
+    hasFatKeyword: boolean;
+    hasCarbsKeyword: boolean;
+    dateMatches: number;
+    parsedRows: number;
+  };
 } {
+  const lowered = input.text.toLocaleLowerCase("ru");
+  const diagnostics = {
+    extractedTextLength: input.text.length,
+    normalizedTextLength: input.text.replace(/\s+/g, " ").trim().length,
+    hasKcalKeyword: /(kcal|calories|ккал|калори)/i.test(lowered),
+    hasProteinKeyword: /(protein|белки|белок)/i.test(lowered),
+    hasFatKeyword: /(fat|жиры|жир)/i.test(lowered),
+    hasCarbsKeyword: /(carb|carbohydrate|углеводы|углевод)/i.test(lowered),
+    dateMatches: (input.text.match(/(20\d{2}-\d{1,2}-\d{1,2}|\d{1,2}[./]\d{1,2}(?:[./](?:20)?\d{2})?)/g) ?? []).length,
+    parsedRows: 0,
+  };
   const parsed = parseFatSecretPdfLines(input.text);
   if (parsed.length === 0) {
-    return { extractedRows: [], extractedDays: [], warnings: [] };
+    const hasMacroKeywords =
+      [diagnostics.hasKcalKeyword, diagnostics.hasProteinKeyword, diagnostics.hasFatKeyword, diagnostics.hasCarbsKeyword].filter(Boolean)
+        .length >= 2;
+    const warnings = hasMacroKeywords
+      ? ["daily_totals_not_found", "parsed_food_rows_but_no_day_totals", "fatsecret_layout_not_recognized"]
+      : ["fatsecret_layout_not_recognized"];
+    return { extractedRows: [], extractedDays: [], warnings, diagnostics };
   }
-  return convertFatSecretPdfCandidates(parsed, input.sourceFileName ?? "pdf_text");
+  const converted = convertFatSecretPdfCandidates(parsed, input.sourceFileName ?? "pdf_text");
+  diagnostics.parsedRows = converted.extractedRows.length;
+  const hasLowConfidence = converted.extractedRows.some((row) => row.confidence < 0.65);
+  const warnings = [...converted.warnings];
+  if (hasLowConfidence) {
+    warnings.push("low_confidence_pdf_parse");
+  }
+  return { ...converted, warnings, diagnostics };
 }
 
 type DeduplicatePdfRowsResult = {
@@ -338,9 +524,10 @@ function deduplicatePdfRowsByDay(inputRows: NormalizedManualMacroRow[]): Dedupli
   }
 
   const rows = [...bestByDay.values(), ...unresolvedRows].sort((a, b) => a.day.localeCompare(b.day));
-  const warnings = [...duplicateDays].map(
-    (day) => `duplicate_date:${day}: сохранена строка с наибольшей уверенностью`
-  );
+  const warnings = [...duplicateDays].flatMap((day) => [
+    "duplicate_day_totals",
+    `duplicate_date:${day}: сохранена строка с наибольшей уверенностью`,
+  ]);
   return { rows, warnings };
 }
 
@@ -351,7 +538,7 @@ function mapPdfExtractionErrorReason(errorCode: PdfTextExtractionErrorCode | nul
     case "invalid_pdf":
       return "pdf_invalid_or_corrupted";
     case "no_text_content":
-      return "pdf_no_text_content";
+      return "pdf_text_empty";
     case "parse_failed":
       return "pdf_parse_failed";
     default:
@@ -625,6 +812,9 @@ export async function intakeNutritionReportFiles(input: {
       extractionErrorCode: null,
       extractionMethod: null,
       extractionPageCount: null,
+      extractionTextLength: null,
+      extractionNormalizedTextLength: null,
+      extractionDiagnostics: null,
     });
     const metaRef = fileMetas[fileMetas.length - 1];
 
@@ -667,14 +857,24 @@ export async function intakeNutritionReportFiles(input: {
         text: pdfExtraction.text,
         sourceFileName: file.name,
       });
+      metaRef.extractionTextLength = converted.diagnostics.extractedTextLength;
+      metaRef.extractionNormalizedTextLength = converted.diagnostics.normalizedTextLength;
+      metaRef.extractionDiagnostics = {
+        hasKcalKeyword: converted.diagnostics.hasKcalKeyword,
+        hasProteinKeyword: converted.diagnostics.hasProteinKeyword,
+        hasFatKeyword: converted.diagnostics.hasFatKeyword,
+        hasCarbsKeyword: converted.diagnostics.hasCarbsKeyword,
+        dateMatches: converted.diagnostics.dateMatches,
+        parsedRows: converted.diagnostics.parsedRows,
+      };
       if (converted.extractedRows.length === 0) {
         unsupportedFiles.push({
           fileName: file.name,
-          reason: "pdf_text_parsed_but_no_macros_found",
+          reason: "daily_totals_not_found",
         });
-        const warning = `${file.name}: PDF прочитан как текст, но дневные КБЖУ не распознаны.`;
-        metaRef.extractionWarnings = [...(metaRef.extractionWarnings ?? []), warning];
-        extractionWarnings.push(warning);
+        const warning = `${file.name}: daily_totals_not_found`;
+        metaRef.extractionWarnings = [...(metaRef.extractionWarnings ?? []), warning, ...converted.warnings];
+        extractionWarnings.push(warning, ...converted.warnings.map((item) => `${file.name}: ${item}`));
         continue;
       }
       extractedRows.push(...converted.extractedRows);

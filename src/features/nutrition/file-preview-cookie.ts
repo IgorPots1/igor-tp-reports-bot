@@ -29,6 +29,17 @@ export type NutritionFileUploadPreviewSnapshot = {
     fileKind: NutritionUploadedFileMeta["fileKind"];
     extractionMethod: string | null;
     extractionErrorCode: string | null;
+    extractionPageCount?: number | null;
+    extractionTextLength?: number | null;
+    extractionNormalizedTextLength?: number | null;
+    extractionDiagnostics?: {
+      hasKcalKeyword: boolean;
+      hasProteinKeyword: boolean;
+      hasFatKeyword: boolean;
+      hasCarbsKeyword: boolean;
+      dateMatches: number;
+      parsedRows: number;
+    } | null;
     extractionWarnings: string[];
   }>;
 };

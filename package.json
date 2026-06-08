@@ -170,6 +170,7 @@
     "check:nutrition-file-upload": "npx tsx scripts/check-nutrition-file-upload.ts",
     "check:nutrition-file-extraction": "npx tsx scripts/check-nutrition-file-extraction.ts",
     "check:nutrition-pdf-extraction": "npx tsx scripts/check-nutrition-pdf-extraction.ts",
+    "nutrition:inspect-pdf": "npx tsx scripts/nutrition-inspect-pdf.ts",
     "check:nutrition-file-safety": "npx tsx scripts/check-nutrition-file-safety.ts",
     "check:nutrition-upload-size-limit": "npx tsx scripts/check-nutrition-upload-size-limit.ts",
     "check:nutrition-upload-action-flow": "npx tsx scripts/check-nutrition-upload-action-flow.ts",
