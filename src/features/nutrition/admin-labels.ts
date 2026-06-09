@@ -19,6 +19,15 @@ export const NUTRITION_ANALYSIS_STATUS_LABELS: Record<string, string> = {
   insufficient: "мало данных",
 };
 
+export const NUTRITION_WEEKLY_PLAN_STATUS_LABELS: Record<string, string> = {
+  draft_generated: "черновик готов",
+  needs_review: "нужна проверка",
+  blocked_safety: "заблокировано безопасностью",
+  approved_for_copy: "готово к копированию",
+  archived: "архив",
+  superseded: "заменён новой версией",
+};
+
 export const NUTRITION_NEXT_ACTION_LABELS: Record<string, string> = {
   "Enable nutrition profile": "Включить профиль питания",
   "Add manual report": "Добавить отчёт вручную",
@@ -71,12 +80,31 @@ export const NUTRITION_TP_CACHE_STATUS_LABELS: Record<"ok" | "empty" | "stale", 
   stale: "устарел",
 };
 
-export function formatNutritionStatus(status: string | null | undefined, kind: "report" | "analysis"): string {
+export function formatNutritionStatus(
+  status: string | null | undefined,
+  kind: "report" | "analysis" | "weekly_plan"
+): string {
   if (!status) {
     return kind === "report" ? "нет отчёта" : "—";
   }
-  const labels = kind === "report" ? NUTRITION_REPORT_STATUS_LABELS : NUTRITION_ANALYSIS_STATUS_LABELS;
+  const labels =
+    kind === "report"
+      ? NUTRITION_REPORT_STATUS_LABELS
+      : kind === "weekly_plan"
+        ? NUTRITION_WEEKLY_PLAN_STATUS_LABELS
+        : NUTRITION_ANALYSIS_STATUS_LABELS;
   return labels[status] ?? status;
+}
+
+export function formatNutritionPlanWeekRange(planWeekFrom: string, planWeekTo: string): string {
+  const formatPart = (isoDate: string) => {
+    const match = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) {
+      return isoDate;
+    }
+    return `${match[3]}.${match[2]}`;
+  };
+  return `${formatPart(planWeekFrom)}—${formatPart(planWeekTo)}`;
 }
 
 export function formatNutritionCohortStatus(enabled: boolean): string {

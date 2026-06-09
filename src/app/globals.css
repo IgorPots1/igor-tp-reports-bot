@@ -1071,6 +1071,35 @@ code {
   gap: 10px;
 }
 
+.admin-nutrition-page .admin-nutrition-plan-card {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-nutrition-page .admin-nutrition-plan-sections {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-nutrition-page .admin-nutrition-plan-sections h4 {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+
+.admin-nutrition-page .admin-nutrition-plan-safety-note {
+  margin: 0;
+}
+
+.admin-nutrition-page .admin-nutrition-plan-history {
+  margin-top: 4px;
+}
+
+.admin-nutrition-page .admin-nutrition-plan-history > summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: #475569;
+}
+
 .admin-nutrition-page .admin-nutrition-advanced-stack {
   grid-column: 1 / -1;
 }

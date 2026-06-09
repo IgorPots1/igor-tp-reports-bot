@@ -9,6 +9,7 @@ import { formatIsoDate, getSingleSearchParam } from "@/app/admin/lib";
 import {
   addNutritionContextNoteAction,
   addNutritionWeightAction,
+  generateNutritionWeeklyPlanAction,
   generateNutritionWeeklyReviewAction,
   parseNutritionManualMacrosAction,
   previewNutritionFileUploadAction,
@@ -32,6 +33,7 @@ import {
   formatNutritionFormality,
   formatNutritionFormalitySource,
   formatNutritionGenerationMode,
+  formatNutritionPlanWeekRange,
   formatNutritionShortId,
   formatNutritionSourceType,
   formatNutritionStatus,
@@ -45,7 +47,8 @@ import {
   NUTRITION_FILE_PREVIEW_COOKIE,
   parseNutritionFileUploadPreview,
 } from "@/features/nutrition/file-preview-cookie";
-import type { NutritionContextItemType } from "@/features/nutrition/repository";
+import { calculateNutritionPlanWeek } from "@/features/nutrition/weekly-plan-generator";
+import type { NutritionContextItemType, NutritionWeeklyPlan } from "@/features/nutrition/repository";
 
 type NutritionStudentCardPageProps = {
   params: Promise<{ studentId: string }>;
@@ -118,6 +121,101 @@ function getParsedDays(dataQuality: Record<string, unknown>): string {
   return typeof parsedDays === "number" ? String(parsedDays) : "—";
 }
 
+function formatWeekdayRu(isoDate: string): string {
+  const weekdays = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
+  const match = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return "—";
+  }
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12, 0, 0));
+  return weekdays[date.getUTCDay()] ?? "—";
+}
+
+function formatCardTpNextWeekLine(tpNextWeek: {
+  cacheStatus: string;
+  plannedSessions: number;
+  keyWorkouts: Array<{ type: string }>;
+}): string {
+  const status = tpNextWeek.cacheStatus === "ok" ? "available" : tpNextWeek.cacheStatus;
+  return formatPlanTpContextLine({
+    status,
+    workoutCount: tpNextWeek.plannedSessions,
+    keyWorkouts: tpNextWeek.keyWorkouts,
+  });
+}
+
+function formatPlanTpContextLine(trainingSnapshot: Record<string, unknown>): string {
+  const status = typeof trainingSnapshot.status === "string" ? trainingSnapshot.status : "unknown";
+  const workoutCount =
+    typeof trainingSnapshot.workoutCount === "number" ? trainingSnapshot.workoutCount : null;
+  const keyWorkouts = Array.isArray(trainingSnapshot.keyWorkouts) ? trainingSnapshot.keyWorkouts : [];
+  const keyTypes = keyWorkouts
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+      const workout = item as Record<string, unknown>;
+      return formatTrainingType(typeof workout.type === "string" ? workout.type : null);
+    })
+    .filter((value): value is string => Boolean(value) && value !== "неизвестно");
+  const uniqueKeyTypes = [...new Set(keyTypes)];
+
+  if (status === "empty") {
+    return "TrainingPeaks: тренировок нет";
+  }
+  if (status === "stale") {
+    return workoutCount !== null
+      ? `TrainingPeaks: cache устарел · ${workoutCount} тренировок`
+      : "TrainingPeaks: cache устарел";
+  }
+  if (status === "unknown") {
+    return "TrainingPeaks: контекст недоступен";
+  }
+  const countPart = workoutCount !== null ? `${workoutCount} тренировки` : "тренировки есть";
+  const keyPart = uniqueKeyTypes.length > 0 ? ` · ключевые: ${uniqueKeyTypes.join(", ")}` : "";
+  return `TrainingPeaks: ${countPart}${keyPart}`;
+}
+
+function getPlanFocusText(planSummary: Record<string, unknown>): string | null {
+  const planFocus = asObject(planSummary.plan_focus);
+  const title = typeof planFocus.title === "string" ? planFocus.title.trim() : "";
+  const explanation = typeof planFocus.explanation === "string" ? planFocus.explanation.trim() : "";
+  if (title && explanation) {
+    return `${title}. ${explanation}`;
+  }
+  return title || explanation || null;
+}
+
+function getPlanKeyTrainingDayLines(planSummary: Record<string, unknown>): string[] {
+  const keyDays = Array.isArray(planSummary.key_training_days) ? planSummary.key_training_days : [];
+  return keyDays
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+      const day = item as Record<string, unknown>;
+      const date = typeof day.date === "string" ? day.date : null;
+      const guidance = typeof day.nutrition_guidance === "string" ? day.nutrition_guidance.trim() : "";
+      const workoutType = formatTrainingType(typeof day.workout_type === "string" ? day.workout_type : null);
+      const workoutTitle = typeof day.workout_title === "string" ? day.workout_title.trim() : "";
+      const label = workoutType !== "неизвестно" ? workoutType : workoutTitle || "тренировка";
+      if (!date || !guidance) {
+        return null;
+      }
+      return `${formatWeekdayRu(date)} — ${label}: ${guidance}`;
+    })
+    .filter((line): line is string => Boolean(line));
+}
+
+function getPlanDoNotSendReasons(plan: NutritionWeeklyPlan): string[] {
+  const fromSummary = asStringArray(asObject(plan.planSummary).do_not_send_reasons);
+  const fromSafety = asStringArray(plan.safetyFlags.do_not_send_reasons);
+  const hardFlags = asStringArray(plan.safetyFlags.hard_flags).map((flag) =>
+    formatNutritionDoNotSendReason(`manual_review_required:${flag}`)
+  );
+  return [...new Set([...fromSummary, ...fromSafety, ...hardFlags].map((reason) => reason.trim()).filter(Boolean))];
+}
+
 const CONTEXT_ITEM_TYPES = Object.keys(NUTRITION_CONTEXT_ITEM_TYPE_LABELS) as NutritionContextItemType[];
 
 export default async function CoachOsNutritionStudentCardPage({
@@ -144,6 +242,7 @@ export default async function CoachOsNutritionStudentCardPage({
   }
   const reportIdFromQuery = getSingleSearchParam(resolvedSearchParams.reportId);
   const reviewIdFromQuery = getSingleSearchParam(resolvedSearchParams.reviewId);
+  const planIdFromQuery = getSingleSearchParam(resolvedSearchParams.planId);
 
   const card = await getNutritionAdminStudentCard({
     studentId,
@@ -159,12 +258,58 @@ export default async function CoachOsNutritionStudentCardPage({
   const selectedReportId = pickDefaultNutritionReport(card.reports, reportIdFromQuery);
   const selectedReport = card.reports.find((report) => report.id === selectedReportId) ?? null;
   const selectedReviewId = card.weeklyAnalysis?.id ?? null;
+
+  const planWeek =
+    card.weeklyAnalysis?.weekTo != null ? calculateNutritionPlanWeek(card.weeklyAnalysis.weekTo) : null;
+  let selectedPlanById: NutritionWeeklyPlan | null = null;
+  let planIdWarning: string | null = null;
+  let latestPlanForWeek: NutritionWeeklyPlan | null = null;
+  let plansForWeek: NutritionWeeklyPlan[] = [];
+
+  if (planWeek) {
+    const {
+      getNutritionWeeklyPlanById,
+      getLatestNutritionWeeklyPlanForStudentWeek,
+      listNutritionWeeklyPlansForStudentWeek,
+    } = await import("@/features/nutrition/repository");
+
+    if (planIdFromQuery) {
+      const planById = await getNutritionWeeklyPlanById(planIdFromQuery);
+      if (!planById) {
+        planIdWarning = "Фокус по planId не найден — показан последний сохранённый за неделю.";
+      } else if (planById.studentId !== studentId) {
+        planIdWarning = "Фокус не принадлежит этому ученику — показан последний сохранённый за неделю.";
+      } else {
+        selectedPlanById = planById;
+      }
+    }
+
+    latestPlanForWeek = await getLatestNutritionWeeklyPlanForStudentWeek({
+      studentId,
+      planWeekFrom: planWeek.from,
+      planWeekTo: planWeek.to,
+    });
+    plansForWeek = await listNutritionWeeklyPlansForStudentWeek({
+      studentId,
+      planWeekFrom: planWeek.from,
+      planWeekTo: planWeek.to,
+      limit: 10,
+    });
+  }
+
+  const displayPlan = selectedPlanById ?? latestPlanForWeek;
+  const selectedPlanId = displayPlan?.id ?? null;
+  const planSelectedById = Boolean(planIdFromQuery && selectedPlanById?.id === planIdFromQuery);
+  const visiblePlansForWeek = plansForWeek.slice(0, 3);
+  const hiddenPlanCount = Math.max(0, plansForWeek.length - visiblePlansForWeek.length);
+
   const studentCardPath = buildNutritionStudentCardHref({
     studentId,
     weekFrom,
     weekTo,
     reportId: selectedReportId,
     reviewId: selectedReviewId,
+    planId: selectedPlanId,
   });
 
   const parsedPreview = rawText
@@ -233,6 +378,14 @@ export default async function CoachOsNutritionStudentCardPage({
   const recentReports = [...card.reports].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   const visibleReports = recentReports.slice(0, 5);
   const hiddenReportCount = Math.max(0, recentReports.length - visibleReports.length);
+  const reviewBlockedSafety = card.weeklyAnalysis?.status === "blocked_safety";
+  const displayPlanSummary = displayPlan ? asObject(displayPlan.planSummary) : {};
+  const displayPlanTrainingSnapshot = displayPlan ? asObject(displayPlan.trainingContextSnapshot) : {};
+  const displayPlanFocusText = getPlanFocusText(displayPlanSummary);
+  const displayPlanKeyDayLines = getPlanKeyTrainingDayLines(displayPlanSummary);
+  const displayPlanSimpleActions = asStringArray(displayPlanSummary.simple_actions);
+  const displayPlanSafetyNotes = asStringArray(displayPlanSummary.safety_notes);
+  const displayPlanDoNotSendReasons = displayPlan ? getPlanDoNotSendReasons(displayPlan) : [];
 
   return (
     <section className="admin-section admin-nutrition-page">
@@ -260,6 +413,7 @@ export default async function CoachOsNutritionStudentCardPage({
         <form className="admin-form-inline admin-nutrition-week-row" method="get">
           {selectedReportId ? <input type="hidden" name="reportId" value={selectedReportId} /> : null}
           {selectedReviewId ? <input type="hidden" name="reviewId" value={selectedReviewId} /> : null}
+          {selectedPlanId ? <input type="hidden" name="planId" value={selectedPlanId} /> : null}
           <span className="admin-nutrition-week-label">Неделя:</span>
           <label className="admin-form-field">
             <span>с</span>
@@ -416,6 +570,185 @@ export default async function CoachOsNutritionStudentCardPage({
               <code className="admin-nutrition-code">{formatNutritionShortId(card.weeklyAnalysis.id)}</code>
               {reviewSelectedById ? " · выбран по ссылке" : ""}
             </p>
+          )}
+        </article>
+
+        <article className="admin-card admin-card-compact admin-nutrition-card-wide admin-nutrition-plan-card">
+          <h3>Фокус питания на следующую неделю</h3>
+          {!card.weeklyAnalysis ? (
+            <p className="admin-muted admin-nutrition-helper">Сначала сгенерируйте разбор прошлой недели.</p>
+          ) : (
+            <>
+              {planIdWarning ? <p className="admin-muted admin-nutrition-helper">{planIdWarning}</p> : null}
+              {planWeek ? (
+                <p className="admin-nutrition-inline-meta">
+                  Неделя: {formatNutritionPlanWeekRange(planWeek.from, planWeek.to)}
+                  {" "}
+                  · Основан на: обзор{" "}
+                  <code className="admin-nutrition-code">{formatNutritionShortId(card.weeklyAnalysis.id)}</code>
+                  {card.weeklyAnalysis.reportId || selectedReportId ? (
+                    <>
+                      {" "}
+                      · отчёт{" "}
+                      <code className="admin-nutrition-code">
+                        {formatNutritionShortId(card.weeklyAnalysis.reportId ?? selectedReportId)}
+                      </code>
+                    </>
+                  ) : null}
+                </p>
+              ) : null}
+              <p className="admin-nutrition-inline-meta admin-nutrition-helper">
+                {displayPlan
+                  ? formatPlanTpContextLine(displayPlanTrainingSnapshot)
+                  : formatCardTpNextWeekLine(card.context.tpNextWeek)}
+              </p>
+
+              {reviewBlockedSafety ? (
+                <div className="admin-alert admin-alert-error admin-nutrition-plan-safety-note">
+                  <strong>Блок безопасности в обзоре.</strong> Фокус можно сохранить, но черновик для ученика может
+                  быть скрыт — проверьте вручную.
+                </div>
+              ) : null}
+
+              <form className="admin-nutrition-review-row" action={generateNutritionWeeklyPlanAction}>
+                <input type="hidden" name="studentId" value={studentId} />
+                <input type="hidden" name="weekFrom" value={weekFrom} />
+                <input type="hidden" name="weekTo" value={weekTo} />
+                <input type="hidden" name="sourceAnalysisId" value={card.weeklyAnalysis.id} />
+                <input type="hidden" name="redirectTo" value={studentCardPath} />
+                {selectedReportId ? <input type="hidden" name="reportId" value={selectedReportId} /> : null}
+                <FormActionButton className="admin-button" pendingText="Генерирую…">
+                  Сгенерировать фокус
+                </FormActionButton>
+              </form>
+
+              {!displayPlan ? (
+                <p className="admin-muted admin-nutrition-helper">Сохранённого фокуса на эту неделю пока нет.</p>
+              ) : (
+                <>
+                  <p className="admin-nutrition-inline-meta admin-nutrition-helper">
+                    Сохранённый фокус: {formatNutritionGenerationMode(displayPlan.generationMode)} ·{" "}
+                    {formatNutritionStatus(displayPlan.status, "weekly_plan")} · обновлён{" "}
+                    {formatNutritionCompactDate(displayPlan.updatedAt)} · plan{" "}
+                    <code className="admin-nutrition-code">{formatNutritionShortId(displayPlan.id)}</code>
+                    {planSelectedById ? " · выбран по ссылке" : ""}
+                  </p>
+
+                  <div className="admin-nutrition-plan-sections">
+                    <section>
+                      <h4>Главный фокус</h4>
+                      {displayPlanFocusText ? (
+                        <p className="admin-nutrition-text-block">{displayPlanFocusText}</p>
+                      ) : (
+                        <p className="admin-muted">Главный фокус не сформирован.</p>
+                      )}
+                    </section>
+
+                    <section>
+                      <h4>Ключевые дни</h4>
+                      {displayPlanKeyDayLines.length === 0 ? (
+                        <p className="admin-muted">Ключевые дни не выделены.</p>
+                      ) : (
+                        <ul className="admin-list">
+                          {displayPlanKeyDayLines.map((line, idx) => (
+                            <li key={`plan-key-day-${idx}`}>{line}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </section>
+
+                    {displayPlanSimpleActions.length > 0 ? (
+                      <section>
+                        <h4>Простые действия</h4>
+                        <ul className="admin-list">
+                          {displayPlanSimpleActions.map((action, idx) => (
+                            <li key={`plan-action-${idx}`}>{action}</li>
+                          ))}
+                        </ul>
+                      </section>
+                    ) : null}
+
+                    {displayPlanSafetyNotes.length > 0 || displayPlan.status === "blocked_safety" ? (
+                      <section>
+                        <h4>Заметки безопасности</h4>
+                        {displayPlanSafetyNotes.length === 0 ? (
+                          <p className="admin-muted">Заметки не добавлены.</p>
+                        ) : (
+                          <ul className="admin-list">
+                            {displayPlanSafetyNotes.map((note, idx) => (
+                              <li key={`plan-safety-${idx}`}>{note}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </section>
+                    ) : null}
+                  </div>
+
+                  {displayPlan.athleteMessageDraft ? (
+                    <>
+                      <h4>Черновик ученику по фокусу недели</h4>
+                      <NutritionDraftCopyBlock
+                        draft={displayPlan.athleteMessageDraft}
+                        generationMode={displayPlan.generationMode}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <p className="admin-muted">Черновик ученику не создан — проверьте причины ниже.</p>
+                      {displayPlanDoNotSendReasons.length > 0 ? (
+                        <ul className="admin-list">
+                          {displayPlanDoNotSendReasons.map((reason, idx) => (
+                            <li key={`plan-dnr-${idx}`}>{reason}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </>
+                  )}
+
+                  {plansForWeek.length > 0 ? (
+                    <details className="admin-nutrition-plan-history">
+                      <summary>Другие версии фокуса за эту неделю</summary>
+                      <div className="admin-nutrition-mini-table">
+                        {visiblePlansForWeek.map((plan) => {
+                          const isSelected = plan.id === displayPlan.id;
+                          const planHref = buildNutritionStudentCardHref({
+                            studentId,
+                            weekFrom,
+                            weekTo,
+                            reportId: selectedReportId,
+                            reviewId: selectedReviewId,
+                            planId: plan.id,
+                          });
+                          return (
+                            <div
+                              key={plan.id}
+                              className={`admin-nutrition-mini-table-row${isSelected ? " admin-nutrition-mini-table-row-selected" : ""}`}
+                            >
+                              {isSelected ? (
+                                <span className="admin-nutrition-mini-table-badge">выбран</span>
+                              ) : (
+                                <Link className="admin-backlink" href={planHref}>
+                                  открыть
+                                </Link>
+                              )}
+                              <span>
+                                {formatNutritionCompactDate(plan.updatedAt)} ·{" "}
+                                {formatNutritionStatus(plan.status, "weekly_plan")} ·{" "}
+                                {formatNutritionGenerationMode(plan.generationMode)} ·{" "}
+                                <code className="admin-nutrition-code">{formatNutritionShortId(plan.id)}</code>
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {hiddenPlanCount > 0 ? (
+                        <p className="admin-muted">Ещё {hiddenPlanCount} версий — см. «Дополнительно».</p>
+                      ) : null}
+                    </details>
+                  ) : null}
+                </>
+              )}
+            </>
           )}
         </article>
 
@@ -912,6 +1245,73 @@ export default async function CoachOsNutritionStudentCardPage({
                     </tbody>
                   </table>
                 </div>
+              </details>
+            )}
+
+            {plansForWeek.length > 0 && (
+              <details>
+                <summary>Все сохранённые фокусы питания</summary>
+                <div className="admin-table-wrap">
+                  <table className="admin-table admin-table-compact">
+                    <thead>
+                      <tr>
+                        <th>Обновлён</th>
+                        <th>Статус</th>
+                        <th>Режим</th>
+                        <th>ID</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {plansForWeek.map((plan) => {
+                        const isSelected = plan.id === displayPlan?.id;
+                        const planHref = buildNutritionStudentCardHref({
+                          studentId,
+                          weekFrom,
+                          weekTo,
+                          reportId: selectedReportId,
+                          reviewId: selectedReviewId,
+                          planId: plan.id,
+                        });
+                        return (
+                          <tr key={plan.id}>
+                            <td>{formatNutritionCompactDate(plan.updatedAt)}</td>
+                            <td>
+                              <span className={getBadgeClass(plan.status)}>
+                                {formatNutritionStatus(plan.status, "weekly_plan")}
+                              </span>
+                            </td>
+                            <td>{formatNutritionGenerationMode(plan.generationMode)}</td>
+                            <td>
+                              <code className="admin-nutrition-code">{formatNutritionShortId(plan.id)}</code>
+                            </td>
+                            <td>
+                              {isSelected ? (
+                                <span className="admin-muted">выбран</span>
+                              ) : (
+                                <Link className="admin-backlink" href={planHref}>
+                                  Открыть
+                                </Link>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            )}
+
+            {displayPlan && (
+              <details>
+                <summary>Technical JSON — nutrition weekly plan</summary>
+                <textarea
+                  className="admin-textarea admin-textarea-compact admin-textarea-readonly"
+                  rows={10}
+                  readOnly
+                  value={JSON.stringify(displayPlan, null, 2)}
+                />
               </details>
             )}
 
