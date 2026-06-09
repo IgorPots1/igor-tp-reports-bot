@@ -13,7 +13,7 @@ import { getTrainingPeaksReplyDraftFormalityInstruction } from "@/features/train
 
 const OPENAI_API_URL = process.env.OPENAI_API_URL?.trim() || "https://api.openai.com/v1/chat/completions";
 const OPENAI_NUTRITION_REVIEW_MODEL = process.env.OPENAI_NUTRITION_WEEKLY_REVIEW_MODEL?.trim() || "gpt-4o-mini";
-const NUTRITION_REVIEW_PROMPT_VERSION = "nutrition-weekly-review-v2-ai";
+const NUTRITION_REVIEW_PROMPT_VERSION = "nutrition-weekly-review-v3-ai";
 
 export type GeneratedNutritionWeeklyAnalysis = {
   data_quality_summary: {
@@ -184,6 +184,10 @@ function formatDateRu(isoDate: string): string {
     return isoDate;
   }
   return `${match[3]}.${match[2]}`;
+}
+
+function formatDecimalRu(value: number, digits = 1): string {
+  return value.toFixed(digits).replace(".", ",");
 }
 
 function buildWorkoutTitleMap(context: NutritionStudentContext): Map<string, string> {
@@ -416,57 +420,46 @@ function buildDetailedDayObservationLines(input: {
     context: input.context,
     dailyAnalysis: input.dailyAnalysis,
   });
-  const prioritized = [...dailyFacts].sort((left, right) => {
-    const normalizeRelevance = (value: unknown): "high" | "medium" | "low" => {
-      if (value === "high" || value === "key") {
-        return "high";
-      }
-      if (value === "medium" || value === "important") {
-        return "medium";
-      }
-      return "low";
-    };
-    const leftRelevance = normalizeRelevance(left.legacy_relevance ?? left.relevance);
-    const rightRelevance = normalizeRelevance(right.legacy_relevance ?? right.relevance);
-    const leftScore =
-      leftRelevance === "high" ? 3 : leftRelevance === "medium" ? 2 : left.isRestDay ? 0 : 1;
-    const rightScore =
-      rightRelevance === "high" ? 3 : rightRelevance === "medium" ? 2 : right.isRestDay ? 0 : 1;
-    if (rightScore !== leftScore) {
-      return rightScore - leftScore;
-    }
-    return String(left.date).localeCompare(String(right.date));
-  });
-  const selected =
-    prioritized.filter((day) => ["high", "medium", "key", "important"].includes(String(day.legacy_relevance ?? day.relevance))).length >= 3
-      ? prioritized.filter((day) => ["high", "medium", "key", "important"].includes(String(day.legacy_relevance ?? day.relevance)) || !day.isRestDay)
-      : prioritized;
-  return selected.slice(0, input.maxDays ?? 7).map((day) => {
-    const dateLabel = formatDateRu(String(day.date));
-    const workoutLabel =
-      typeof day.workoutTitle === "string" &&
-      day.workoutTitle.trim() &&
-      !/[A-Za-z]{3,}/.test(day.workoutTitle)
-        ? day.workoutTitle
-        : formatTrainingTypeRu(String(day.workoutType));
-    const kcalPart = typeof day.caloriesActual === "number" ? `${day.caloriesActual} ккал` : "ккал н/д";
-    const carbsPart = typeof day.carbsActual === "number" ? `${day.carbsActual} г углеводов` : "углеводы н/д";
-    const assessment = String(day.assessment);
-    let verdict = "по питанию всё спокойно";
-    if (assessment === "low_carbs_or_energy") {
-      verdict = "энергии/углеводов маловато для нагрузки";
-    } else if (assessment === "recovery_support") {
-      verdict = "можно усилить восстановление";
-    } else if (day.isLongRun || day.isHardSession) {
-      verdict = "питание ближе к норме для нагрузки";
-    } else if (day.isRestDay) {
-      verdict = "по калориям и углеводам всё спокойно";
-    }
-    if (day.dayBeforeKeyWorkout && assessment === "low_carbs_or_energy") {
-      verdict = "углеводы просели перед ключевой тренировкой";
-    }
-    return `${dateLabel} — ${workoutLabel}: ${kcalPart}, ${carbsPart}; ${verdict}.`;
-  });
+  return dailyFacts
+    .sort((left, right) => String(left.date).localeCompare(String(right.date)))
+    .slice(0, input.maxDays ?? 7)
+    .map((day) => {
+      const weekday = typeof day.weekday_ru === "string" ? day.weekday_ru : "День";
+      const dateLabel = typeof day.date_label === "string" ? day.date_label : formatDateRu(String(day.date));
+      const rawTrainingLabel =
+        typeof day.training_label === "string" && day.training_label.trim()
+          ? day.training_label.trim()
+          : formatTrainingTypeRu(String(day.training_type ?? day.workoutType ?? "rest"));
+      const trainingLabel = /[A-Za-z]{3,}/.test(rawTrainingLabel)
+        ? formatTrainingTypeRu(String(day.training_type ?? day.workoutType ?? "rest"))
+        : rawTrainingLabel;
+      const actual = day.actual && typeof day.actual === "object" && !Array.isArray(day.actual)
+        ? (day.actual as Record<string, unknown>)
+        : {};
+      const kcal = typeof actual.kcal === "number" ? `~${actual.kcal} ккал` : "~ккал н/д";
+      const protein = typeof actual.proteinG === "number" ? `белок ${actual.proteinG} г` : "белок н/д";
+      const fat = typeof actual.fatG === "number" ? `жиры ${actual.fatG} г` : "жиры н/д";
+      const carbs = typeof actual.carbsG === "number" ? `углеводы ${actual.carbsG} г` : "углеводы н/д";
+      const carbsPerKg =
+        typeof actual.carbsGPerKg === "number" ? ` (~${formatDecimalRu(actual.carbsGPerKg)} г/кг)` : "";
+      const sourceQuality =
+        day.source_quality && typeof day.source_quality === "object" && !Array.isArray(day.source_quality)
+          ? (day.source_quality as Record<string, unknown>)
+          : {};
+      const confidence = typeof sourceQuality.confidence === "string" ? sourceQuality.confidence : "medium";
+      const suspect =
+        day.flags && typeof day.flags === "object" && !Array.isArray(day.flags)
+          ? Boolean((day.flags as Record<string, unknown>).suspect)
+          : false;
+      const hint = typeof day.hint_for_comment === "string" && day.hint_for_comment.trim()
+        ? day.hint_for_comment.trim()
+        : "Нужна аккуратная интерпретация по этому дню.";
+      const cautiousPrefix =
+        suspect || confidence === "low"
+          ? "Комментарий: по качеству данных здесь возможна неполная картина. "
+          : "Комментарий: ";
+      return `🔹 ${weekday} (${dateLabel}) — ${trainingLabel}\n${kcal} · ${protein} · ${fat} · ${carbs}${carbsPerKg}.\n${cautiousPrefix}${hint}`;
+    });
 }
 
 function buildFallbackAthleteDraft(input: {
@@ -594,31 +587,31 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     input.context.resolvedCommunicationProfile.formality
   );
   const systemPrompt = [
-    "You are writing as a running coach preparing a weekly nutrition review based on deterministic facts.",
-    "Inputs are facts. Do not recalculate or invent numbers. Use methodology facts as the single source of truth.",
+    "Пиши только на русском языке.",
+    "Ты пишешь недельный nutrition review только по deterministic facts.",
+    "LLM writes. Code calculates.",
+    "Ничего не пересчитывай и не придумывай: kcal, белки/жиры/углеводы, г/кг, formula targets, day type, nutrition status, one_focus, safety status, race status, TrainingPeaks workouts.",
+    "Используй только exact числа и labels из facts JSON.",
+    "Не классифицируй дни и не выводи формулы — это уже сделано в коде.",
     "Return strict JSON only with keys: coach_summary_text, day_by_day_analysis_text, athlete_message_draft, quality_notes, do_not_send_reasons.",
-    "coach_summary_text must be concise and useful for a coach.",
-    "day_by_day_analysis_text must be readable prose and include training-nutrition links day by day with actual kcal/carbs numbers when available.",
-    "athlete_message_draft must be Russian only, no English.",
-    "athlete_message_draft must include 3-7 day-level observations when daily facts exist; do not stay generic if day facts are present.",
-    "athlete_message_draft should mention actual kcal and carbs where useful and connect each day to workout/rest context.",
-    "athlete_message_draft should end with one simple focus for next behavior, not a menu or strict diet.",
-    "Do not write 'ниже нормы' unless facts include assessment/target/range.",
+    "coach_summary_text: короткий внутренний текст для тренера.",
+    "day_by_day_analysis_text: дневные блоки строго по canonical daily_analysis.",
+    "Для каждого дня при наличии данных используй: weekday_ru, date_label, training_label, actual, hint_for_comment/findings.",
+    "В day_by_day_analysis_text комментируй только дневные totals; без intraday утверждений (до/во время/после тренировки, граммы по таймингу, гели).",
+    "Если source_quality.confidence=low или suspect=true, формулируй осторожно как ограничение данных.",
+    "athlete_message_draft должен включать 3-7 дневных наблюдений, если daily facts есть.",
+    "athlete_message_draft: только plain Telegram text. Разрешены emoji-разделители.",
+    "Запрещено в athlete_message_draft: **, ---, code fences, markdown headings.",
+    "Строгая формальность: только ты ИЛИ только вы, без смешивания.",
+    "Не используй диагнозы/медицинские термины: RED-S, REDs, LEA, дефицит энергии, расстройство, анемия.",
+    "Не используй язык похудения/ограничения: похудеть, сбросить вес, урезать калории, меньше есть, дефицит калорий.",
+    "Не давай меню/диету/рецепты. Продукты только как варианты при наличии фактов.",
+    "Не придумывай тренировки и не придумывай гели/fueling.",
+    "Разрешённая причинность только с хеджами: может, могло, вполне могло, не утверждаю наверняка.",
+    "Запрещённая причинность: вызвало, из-за этого точно, именно поэтому.",
     "Use the required ты/вы form from formality instruction.",
-    "Mention athlete name if available.",
-    "Mention training only if TP past-week context exists in facts.",
-    "Explain what was okay and what was not okay.",
-    "One focus only.",
-    "No strict g/kg target in athlete text.",
-    "If carbs are far below reference, recommend gradual step.",
-    "No medical diagnosis.",
-    "No weight-loss or restriction framing.",
-    "No meal plan.",
-    "Food examples may be options only.",
-    "Do not hallucinate gels or during-run fueling.",
-    "If workout description has no during-run fueling, treat it internally as not specified without criticizing athlete.",
-    "Hedge causality: allowed 'может влиять', 'могло сказаться'; forbidden deterministic causal claims.",
-    "Coach summary should include: data quality, key training context, what is okay, main limiter, one focus, what not to overstate.",
+    "Упоминание athlete name допускается при наличии в facts.",
+    "One focus only: используй exact one_focus из facts.",
     allowAthleteDraft
       ? "athlete_message_draft is required and must be useful Telegram-ready text."
       : "Hard safety flags present: athlete_message_draft must be null and coach-only text should explain manual review need.",

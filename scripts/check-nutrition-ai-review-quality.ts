@@ -107,6 +107,11 @@ async function run(): Promise<void> {
   assert.equal(generated.methodology_signals.protein_sufficient, true);
 
   const athleteDraft = generated.athlete_message_draft ?? "";
+  assert.match(
+    athleteDraft,
+    /🔹\s+[А-Яа-яЁё]+\s+\(\d{2}\.\d{2}\)\s+—\s+.+\n~\d+\s*ккал\s*·\s*белок\s*\d+\s*г\s*·\s*жиры\s*\d+\s*г\s*·\s*углеводы\s*\d+\s*г/i,
+    "athlete draft should contain canonical day blocks"
+  );
   assert.match(athleteDraft, /Надя|надя/i, "athlete draft should mention athlete name");
   assert.match(athleteDraft.toLowerCase(), /интервал|длитель/, "athlete draft should mention key sessions");
   assert.match(athleteDraft.toLowerCase(), /белк/, "athlete draft should mention protein status");
@@ -115,10 +120,35 @@ async function run(): Promise<void> {
   assert.match(athleteDraft, /\d{2}\.\d{2}/, "athlete draft should include day-level dates when fallback is used");
   assert.match(athleteDraft.toLowerCase(), /постеп|не\s+резк|небольш/, "athlete draft should recommend gradual step");
   assert.doesNotMatch(athleteDraft, /[A-Za-z]{3,}/, "athlete draft should avoid English");
+  assert.doesNotMatch(athleteDraft, /\*\*|---|```/, "athlete draft should stay plain Telegram text");
+  assert.doesNotMatch(
+    athleteDraft.toLowerCase(),
+    /red-s|reds|lea|дефицит энергии|анемия|расстройств/,
+    "athlete draft must avoid diagnostic language"
+  );
+  assert.doesNotMatch(
+    athleteDraft.toLowerCase(),
+    /похуд|сбросить вес|урезать калори|меньше есть|дефицит калорий/,
+    "athlete draft must avoid restrictive language"
+  );
+  assert.doesNotMatch(
+    athleteDraft.toLowerCase(),
+    /вызвало|из-за этого точно|именно поэтому/,
+    "athlete draft must avoid deterministic causality claims"
+  );
+  assert.doesNotMatch(
+    athleteDraft.toLowerCase(),
+    /до тренировки|во время тренировки|после тренировки|гель|гели|тайминг/,
+    "day-by-day section should avoid intra-day fueling detail"
+  );
   assert.doesNotMatch(athleteDraft.toLowerCase(), /\blong_run_underfueling\b|\bsmall_step\b|\bparsed_days\b/, "athlete draft should avoid enum labels");
   assert.doesNotMatch(athleteDraft.toLowerCase(), /главный\s+фокус.*главный\s+фокус/, "athlete draft should avoid repeated focus phrase");
   assert.doesNotMatch(athleteDraft.toLowerCase(), /день\s+самой\s+работы/, "athlete draft should avoid robotic phrase");
-  assert.doesNotMatch(athleteDraft.toLowerCase(), /[6-8]\s*г\/кг|7-8\s*г\/кг/, "athlete draft should avoid strict g/kg target");
+  assert.doesNotMatch(
+    athleteDraft.toLowerCase(),
+    /\b[1-9]\s*[-–]\s*[1-9]\s*г\/кг\b|\b[1-9]\s+до\s+[1-9]\s*г\/кг\b/,
+    "athlete draft should avoid strict g/kg range targets"
+  );
 
   const coachSummary = generated.coach_summary_text.toLowerCase();
   assert.match(coachSummary, /белок|норм|хорош/, "coach summary should include what was okay");

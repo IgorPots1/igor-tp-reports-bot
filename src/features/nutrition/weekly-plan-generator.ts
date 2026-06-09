@@ -24,6 +24,7 @@ const OPENAI_NUTRITION_PLAN_MODEL =
   process.env.OPENAI_NUTRITION_WEEKLY_REVIEW_MODEL?.trim() ||
   "gpt-4o-mini";
 export const NUTRITION_WEEKLY_PLAN_PROMPT_VERSION = "nutrition-weekly-plan-v1-ai";
+const NUTRITION_WEEKLY_PLAN_FALLBACK_MODEL = "nutrition-weekly-plan-fallback-v2";
 
 export type NutritionWeeklyPlanWorkoutFacts = {
   date: string;
@@ -191,6 +192,10 @@ function formatDateRu(isoDate: string): string {
     return isoDate;
   }
   return `${match[3]}.${match[2]}`;
+}
+
+function formatDecimalRu(value: number, digits = 1): string {
+  return value.toFixed(digits).replace(".", ",");
 }
 
 export function calculateNutritionPlanWeek(sourceReviewWeekTo: string): { from: string; to: string } {
@@ -587,18 +592,30 @@ function buildFallbackKeyTrainingDays(facts: NutritionWeeklyPlanFacts): Nutritio
 function buildFallbackAthleteDraft(facts: NutritionWeeklyPlanFacts, planFocus: NutritionWeeklyPlanAiOutput["plan_focus"]): string {
   const address = buildPlanAddress(facts.student.formality);
   const keyDays = buildFallbackKeyTrainingDays(facts);
+  const nextWeekPlanLines = facts.nextWeekPlan.days.slice(0, 7).map((day) => {
+    const kcal = typeof day.target_kcal === "number" ? `~${day.target_kcal} ккал` : "~ккал н/д";
+    const protein = typeof day.protein_g === "number" ? `${day.protein_g} г белка` : "белок н/д";
+    const fat = typeof day.fat_g === "number" ? `${day.fat_g} г жиров` : "жиры н/д";
+    const carbs = typeof day.carbs_g === "number" ? `${day.carbs_g} г углеводов` : "углеводы н/д";
+    const carbsPerKg =
+      typeof day.carbs_g_per_kg === "number" ? ` (~${formatDecimalRu(day.carbs_g_per_kg)} г/кг)` : "";
+    return `🔹 ${day.weekday_ru} (${formatDateRu(day.date)}) — ${day.training_label}: ${kcal} · ${protein} · ${fat} · ${carbs}${carbsPerKg}.`;
+  });
   const lines = [
     address.greeting,
     "",
     `На следующую неделю главный фокус по питанию: ${planFocus.title.toLowerCase()}.`,
     planFocus.explanation,
+    "",
+    "Ориентиры по дням из согласованного плана:",
+    ...nextWeekPlanLines,
   ];
   if (keyDays.length > 0) {
     lines.push("", "Ключевые дни:", ...keyDays.map((day) => day.nutrition_guidance));
   } else {
     lines.push("", "Без привязки к конкретным дням: держи регулярность и не занижай питание в дни, когда чувствуешь нагрузку.");
   }
-  lines.push("", "Это ориентир для энергии и восстановления, не жёсткий рацион.");
+  lines.push("", "Это ориентир для энергии и восстановления. Числа берём только из согласованного плана.");
   return lines.join("\n").trim();
 }
 
@@ -655,7 +672,7 @@ export function generateNutritionWeeklyPlanFallback(
     status: blocked ? "blocked_safety" : facts.methodology.limitedData ? "needs_review" : "draft_generated",
     generationMode: "fallback",
     promptVersion: NUTRITION_WEEKLY_PLAN_PROMPT_VERSION,
-    aiModel: "nutrition-weekly-plan-fallback-v1",
+    aiModel: NUTRITION_WEEKLY_PLAN_FALLBACK_MODEL,
     doNotSendReasons,
   };
 }
@@ -671,23 +688,30 @@ async function generateNutritionWeeklyPlanWithAiInternal(
   const allowAthleteDraft = !blocked;
   const formalityInstruction = getTrainingPeaksReplyDraftFormalityInstruction(facts.student.formality);
   const systemPrompt = [
-    "You are writing as a running coach preparing a weekly nutrition focus/guidance for the NEXT week based on deterministic facts.",
-    "Product framing: training nutrition — energy, carbs, recovery. NOT a diet, NOT a menu, NOT medical advice.",
+    "Пиши только на русском языке.",
+    "Ты пишешь текст для weekly nutrition plan только по deterministic facts.",
+    "LLM writes. Code calculates.",
+    "Ничего не пересчитывай и не придумывай: формулы, kcal, БЖУ, г/кг, day type, one_focus, safety, race, workouts.",
+    "next_week_plan канонический и deterministic. Используй exact значения из него.",
+    "Пример: если rest target_kcal=1950 во facts, пиши ~1950 ккал, не ~2000.",
     "Return strict JSON only with keys: coach_summary, athlete_message_draft, plan_focus, key_training_days, simple_actions, safety_notes, do_not_send_reasons.",
     "coach_summary: concise Russian text for coach internal use.",
-    "plan_focus: object with category, title, explanation — one weekly focus only.",
+    "plan_focus: object with category, title, explanation — use one focus from facts, do not invent priorities.",
     "key_training_days: array only for real TP next-week workouts from facts; empty if no TP workouts.",
     "simple_actions: short practical bullets in Russian.",
     "safety_notes: internal coach notes.",
-    "Russian only in all user-facing strings.",
     `Formality instruction: ${formalityInstruction}`,
+    "Plain Telegram text for athlete draft: no **, no ---, no code fences, no markdown headings.",
+    "Строгая формальность: только ты или только вы, без смешивания.",
     "Facts-only. Do not invent workouts.",
-    "next_week_plan is deterministic and canonical. Do not recalculate formulas, macros, kcal, grams, or day types.",
     "Do not invent gels/fueling. If fueling_instruction_present is false, do not prescribe gels.",
     "No strict g/kg in athlete text. Carb ranges internal only.",
     "No diagnosis. No medical claims.",
+    "No RED-S/REDs/LEA/дефицит энергии/анемия/расстройство in athlete draft.",
     "No weight loss / deficit framing.",
     "No menu / meal plan / prescribed recipes.",
+    "Allowed hedged causality only: может, могло, вполне могло, не утверждаю наверняка.",
+    "Forbidden deterministic causality: вызвало, из-за этого точно, именно поэтому.",
     "If no TP next-week workouts, no day-specific recommendations.",
     "Copy-only draft for manual coach review before sending.",
     "No medical advice.",

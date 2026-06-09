@@ -124,6 +124,13 @@ assert.equal(
   "next_week_plan must include formula version"
 );
 assert.equal(
+  ((generated.planSummary.next_week_plan as { day_type_targets?: unknown }).day_type_targets as {
+    rest?: { target_kcal?: unknown };
+  })?.rest?.target_kcal,
+  1950,
+  "rest target kcal for 56kg must stay 1950 from deterministic formulas"
+);
+assert.equal(
   (generated.planSummary.next_week_plan as { bodyweight_kg?: unknown }).bodyweight_kg,
   56,
   "next_week_plan must include bodyweight when available"
@@ -151,6 +158,31 @@ assert.match(
   generatorSource,
   /excludePlanId:\s*plan\.id/,
   "superseded handling must exclude newly created plan"
+);
+assert.match(
+  generatorSource,
+  /next_week_plan канонический и deterministic\. Используй exact значения из него/,
+  "AI prompt must force exact canonical next_week_plan values"
+);
+assert.match(
+  generatorSource,
+  /если rest target_kcal=1950 во facts, пиши ~1950 ккал, не ~2000/i,
+  "AI prompt must preserve deterministic rest target example"
+);
+assert.match(
+  generatorSource,
+  /Ничего не пересчитывай и не придумывай/i,
+  "AI prompt must ban recalculation"
+);
+assert.match(
+  generatorSource,
+  /no \*\*, no ---, no code fences/i,
+  "AI prompt must enforce athlete plain-text format"
+);
+assert.doesNotMatch(
+  generatorSource,
+  /calculate formulas|compute formulas|classify day/i,
+  "AI prompt must not ask model to calculate formulas or classify days"
 );
 
 console.log("PASS check-nutrition-weekly-plan-generation");

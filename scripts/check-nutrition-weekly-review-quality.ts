@@ -8,12 +8,23 @@ const draftGenerator = readFileSync(join(root, "src/features/nutrition/draft-gen
 assert.match(draftGenerator, /day_by_day_training_aware_analysis/, "weekly generator must include day-by-day methodology guardrail");
 assert.match(draftGenerator, /detailed_day_level_athlete_draft/, "weekly generator must require detailed day-level athlete draft");
 assert.match(draftGenerator, /buildNutritionDailyFactsForNarrative/, "weekly generator must enrich daily facts for AI");
-assert.match(draftGenerator, /no_generic_athlete_draft_when_daily_facts_exist/, "weekly generator must ban generic-only athlete draft");
-assert.match(draftGenerator, /athlete_message_draft must include 3-7 day-level observations/, "AI prompt must require day-level athlete draft");
+assert.match(draftGenerator, /facts_only_no_recalculation/, "weekly generator must enforce no recalculation guardrail");
+assert.match(draftGenerator, /athlete_message_draft должен включать 3-7 дневных наблюдений/i, "AI prompt must require day-level athlete draft");
 assert.match(draftGenerator, /no_hallucinated_workouts_or_gels/, "weekly generator must ban workout/fueling hallucinations");
 assert.match(draftGenerator, /carb_reference_not_prescriptive/, "weekly generator must keep carb band non-prescriptive");
 assert.match(draftGenerator, /small_step_progression_if_low_carbs/, "weekly generator must enforce gradual progression");
 assert.match(draftGenerator, /no_english/, "weekly generator must enforce russian-only draft");
+assert.match(draftGenerator, /weekday_ru/, "day-by-day should use weekday_ru");
+assert.match(draftGenerator, /date_label/, "day-by-day should use date_label");
+assert.match(draftGenerator, /training_label/, "day-by-day should use training_label");
+assert.match(draftGenerator, /hint_for_comment/, "day-by-day should use hint_for_comment");
+assert.match(draftGenerator, /комментируй только дневные totals; без intraday/i, "prompt must ban intra-day detail in day-by-day section");
+assert.match(draftGenerator, /source_quality\.confidence=low/i, "prompt must include low-confidence caution rule");
+assert.match(draftGenerator, /Строгая формальность: только ты ИЛИ только вы/i, "prompt must enforce formality consistency");
+assert.match(draftGenerator, /Запрещено в athlete_message_draft: \*\*, ---, code fences/i, "prompt must enforce plain text");
+assert.match(draftGenerator, /Разрешённая причинность только с хеджами/i, "prompt must enforce hedged causality");
+assert.doesNotMatch(draftGenerator, /classify days|day classification rules/i, "prompt must not ask model to classify days");
+assert.doesNotMatch(draftGenerator, /compute formulas|calculate formulas/i, "prompt must not ask model to calculate formulas");
 assert.match(draftGenerator, /one_focus/, "weekly generator output must contain one_focus");
 assert.match(draftGenerator, /daily_analysis/, "weekly generator output must contain daily_analysis");
 assert.match(draftGenerator, /canonical_daily_analysis/, "weekly generator output must contain canonical_daily_analysis");
@@ -30,9 +41,9 @@ assert.match(draftGenerator, /day_by_day_analysis_text/, "weekly generator must 
 assert.match(draftGenerator, /generation_mode/, "weekly generator must include generation_mode");
 assert.match(draftGenerator, /prompt_version/, "weekly generator must include prompt_version");
 assert.match(draftGenerator, /generateNutritionWeeklyReviewNarrative/, "weekly generator must include AI narrative layer");
-assert.match(draftGenerator, /nutrition-weekly-review-v2-ai/, "weekly generator must use v2 prompt version");
+assert.match(draftGenerator, /nutrition-weekly-review-v3-ai/, "weekly generator must use v3 prompt version");
 assert.match(draftGenerator, /Return strict JSON only/, "AI prompt must require strict JSON output");
-assert.match(draftGenerator, /no strict g\/kg target/i, "AI prompt must ban strict g/kg targets for athlete text");
+assert.match(draftGenerator, /не пересчитывай и не придумывай:.*г\/кг/i, "AI prompt must ban strict g/kg targets for athlete text");
 assert.doesNotMatch(draftGenerator, /Главный фокус недели — главный фокус/i, "generator should avoid duplicated focus template");
 assert.doesNotMatch(draftGenerator, /день самой работы/i, "generator should avoid robotic phrase 'день самой работы'");
 

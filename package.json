@@ -170,6 +170,7 @@
     "check:nutrition-next-week-plan-formulas": "npx tsx scripts/check-nutrition-next-week-plan-formulas.ts",
     "check:nutrition-methodology-wiring": "npx tsx scripts/check-nutrition-methodology-wiring.ts",
     "check:nutrition-ai-review-quality": "npx tsx scripts/check-nutrition-ai-review-quality.ts",
+    "check:nutrition-athlete-draft-plain-text": "npx tsx scripts/check-nutrition-athlete-draft-plain-text.ts",
     "check:nutrition-weekly-review-quality": "npx tsx scripts/check-nutrition-weekly-review-quality.ts",
     "check:nutrition-safety-blocks": "npx tsx scripts/check-nutrition-safety-blocks.ts",
     "check:nutrition-no-autosend": "npx tsx scripts/check-nutrition-no-autosend.ts",
