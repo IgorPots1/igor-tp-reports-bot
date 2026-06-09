@@ -319,7 +319,9 @@ export type NutritionDashboardRow = {
   lastReportCreatedAt: string | null;
   parsedDays: number;
   lastAnalysisStatus: NutritionWeeklyAnalysisStatus | null;
+  lastAnalysisId: string | null;
   lastAnalysisWeekFrom: string | null;
+  lastAnalysisWeekTo: string | null;
   hasSafetyFlag: boolean;
   nextAction: string;
   latestReportId: string | null;
@@ -639,6 +641,40 @@ export async function insertNutritionDailyMacros(
   return ((data as NutritionDailyMacroRow[]) ?? []).map(mapNutritionDailyMacroRow);
 }
 
+export async function getNutritionStudentDefaultWeek(
+  studentId: string
+): Promise<{ weekFrom: string; weekTo: string } | null> {
+  const supabase = createSupabaseServerClient();
+  const { data: analysis, error: analysisError } = await supabase
+    .from("nutrition_weekly_analyses")
+    .select("week_from, week_to")
+    .eq("student_id", studentId)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (analysisError) {
+    throw new Error(`Failed to load default nutrition week for ${studentId}: ${analysisError.message}`);
+  }
+  if (analysis) {
+    return { weekFrom: analysis.week_from, weekTo: analysis.week_to };
+  }
+
+  const { data: report, error: reportError } = await supabase
+    .from("nutrition_reports")
+    .select("week_from, week_to")
+    .eq("student_id", studentId)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (reportError) {
+    throw new Error(`Failed to load default nutrition report week for ${studentId}: ${reportError.message}`);
+  }
+  if (report) {
+    return { weekFrom: report.week_from, weekTo: report.week_to };
+  }
+  return null;
+}
+
 export async function listNutritionReportsForStudent(
   studentId: string,
   input?: { weekFrom?: string; weekTo?: string; limit?: number }
@@ -945,7 +981,9 @@ export async function listNutritionDashboardRows(
       lastReportCreatedAt: report?.createdAt ?? null,
       parsedDays: dailyMacroCounts.get(student.id) ?? 0,
       lastAnalysisStatus: analysis?.status ?? null,
+      lastAnalysisId: analysis?.id ?? null,
       lastAnalysisWeekFrom: analysis?.weekFrom ?? null,
+      lastAnalysisWeekTo: analysis?.weekTo ?? null,
       hasSafetyFlag: safety,
       nextAction,
       latestReportId: report?.id ?? null,

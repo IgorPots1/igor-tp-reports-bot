@@ -5,6 +5,7 @@ import { getSingleSearchParam } from "@/app/admin/lib";
 import { setNutritionEnabledAction } from "@/app/admin/coach-os/nutrition/actions";
 import { listNutritionAdminDashboardRows } from "@/features/nutrition/admin";
 import {
+  buildNutritionDashboardOpenHref,
   formatNutritionCohortStatus,
   formatNutritionNextAction,
   formatNutritionSafetyFlag,
@@ -241,7 +242,18 @@ export default async function CoachOsNutritionDashboardPage({
                     )}
                   </td>
                   <td>
-                    <Link className="admin-button admin-button-secondary" href={`/admin/coach-os/nutrition/${row.studentId}`}>
+                    <Link
+                      className="admin-button admin-button-secondary"
+                      href={buildNutritionDashboardOpenHref({
+                        studentId: row.studentId,
+                        latestReportId: row.latestReportId,
+                        latestReportWeekFrom: row.latestReportWeekFrom,
+                        latestReportWeekTo: row.latestReportWeekTo,
+                        lastAnalysisId: row.lastAnalysisId,
+                        lastAnalysisWeekFrom: row.lastAnalysisWeekFrom,
+                        lastAnalysisWeekTo: row.lastAnalysisWeekTo,
+                      })}
+                    >
                       Открыть
                     </Link>
                   </td>

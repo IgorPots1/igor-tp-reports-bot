@@ -124,9 +124,19 @@ export default async function CoachOsNutritionStudentCardPage({
   const notice = getSingleSearchParam(resolvedSearchParams.notice);
   const error = getSingleSearchParam(resolvedSearchParams.error);
   const rawText = getSingleSearchParam(resolvedSearchParams.macroText) ?? "";
+  const weekFromParam = getSingleSearchParam(resolvedSearchParams.weekFrom);
+  const weekToParam = getSingleSearchParam(resolvedSearchParams.weekTo);
   const defaultWeek = getCurrentWeekWindow();
-  const weekFrom = getSingleSearchParam(resolvedSearchParams.weekFrom) ?? defaultWeek.weekFrom;
-  const weekTo = getSingleSearchParam(resolvedSearchParams.weekTo) ?? defaultWeek.weekTo;
+  let weekFrom = weekFromParam ?? defaultWeek.weekFrom;
+  let weekTo = weekToParam ?? defaultWeek.weekTo;
+  if (!weekFromParam && !weekToParam) {
+    const { getNutritionStudentDefaultWeek } = await import("@/features/nutrition/repository");
+    const nutritionWeek = await getNutritionStudentDefaultWeek(studentId);
+    if (nutritionWeek) {
+      weekFrom = nutritionWeek.weekFrom;
+      weekTo = nutritionWeek.weekTo;
+    }
+  }
   const reportIdFromQuery = getSingleSearchParam(resolvedSearchParams.reportId);
   const reviewIdFromQuery = getSingleSearchParam(resolvedSearchParams.reviewId);
 
@@ -238,6 +248,8 @@ export default async function CoachOsNutritionStudentCardPage({
       <article className="admin-card admin-card-compact admin-nutrition-card-wide">
         <h3>Неделя и профиль</h3>
         <form className="admin-form-inline" method="get">
+          {selectedReportId ? <input type="hidden" name="reportId" value={selectedReportId} /> : null}
+          {selectedReviewId ? <input type="hidden" name="reviewId" value={selectedReviewId} /> : null}
           <label className="admin-form-field">
             <span>Неделя с</span>
             <input className="admin-input" type="date" name="weekFrom" defaultValue={weekFrom} />

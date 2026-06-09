@@ -104,6 +104,26 @@ export function formatNutritionGenerationMode(mode: string | null | undefined): 
   return mode === "ai" ? "AI" : "fallback";
 }
 
+export function buildNutritionDashboardOpenHref(input: {
+  studentId: string;
+  latestReportId?: string | null;
+  latestReportWeekFrom?: string | null;
+  latestReportWeekTo?: string | null;
+  lastAnalysisId?: string | null;
+  lastAnalysisWeekFrom?: string | null;
+  lastAnalysisWeekTo?: string | null;
+}): string {
+  const weekFrom = input.lastAnalysisWeekFrom ?? input.latestReportWeekFrom ?? null;
+  const weekTo = input.lastAnalysisWeekTo ?? input.latestReportWeekTo ?? null;
+  return buildNutritionStudentCardHref({
+    studentId: input.studentId,
+    weekFrom,
+    weekTo,
+    reportId: input.latestReportId ?? null,
+    reviewId: input.lastAnalysisId ?? null,
+  });
+}
+
 export function buildNutritionStudentCardHref(input: {
   studentId: string;
   weekFrom?: string | null;
