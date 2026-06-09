@@ -87,6 +87,26 @@ function titleLooksLikeNonRunning(title: string | null | undefined): boolean {
   return NON_RUNNING_TITLE_HINTS.some((hint) => normalized.includes(hint));
 }
 
+function daysBetweenDates(fromDate: string, toDate: string): number {
+  const from = new Date(`${fromDate}T12:00:00Z`).getTime();
+  const to = new Date(`${toDate}T12:00:00Z`).getTime();
+  return Math.floor((to - from) / (24 * 60 * 60 * 1000));
+}
+
+function hasIllnessMonitoringCloseEvidence(input: {
+  lifecycleInput: OperationalSignalLifecycleInput;
+  asOfDate: string;
+  completion: NonNullable<OperationalSignalLifecycleInput["latestTpCompletionAfterOpen"]>;
+}): boolean {
+  if (!isCleanRunningCompletion(input.completion)) {
+    return false;
+  }
+  if (input.lifecycleInput.explicitRecoveryMessage) {
+    return true;
+  }
+  return daysBetweenDates(input.completion.workoutDate, input.asOfDate) >= 1;
+}
+
 function hasReliableTpRunningCompletion(
   completion: NonNullable<OperationalSignalLifecycleInput["latestTpCompletionAfterOpen"]>
 ): boolean {
@@ -310,13 +330,37 @@ export function resolveBridgeRecommendedAction(input: BridgeDiagnosticInput): {
 
   if (
     currentLifecycle === "monitoring_after_return" &&
+    !lifecycleInput.negativeMessageAfterCompletion &&
+    (signalClass === "confirmed_illness" || signalClass === "ambiguous_illness") &&
+    cleanRunCount >= 1 &&
+    completion &&
+    (cleanRunCount >= 2 ||
+      hasIllnessMonitoringCloseEvidence({
+        lifecycleInput,
+        asOfDate: input.asOfDate,
+        completion,
+      }))
+  ) {
+    const daysSinceRun = daysBetweenDates(completion.workoutDate, input.asOfDate);
+    return {
+      recommendedAction: "coach_close_candidate",
+      reason:
+        cleanRunCount >= 2
+          ? `${cleanRunCount} clean running completions after return; ready for guarded coach close.`
+          : `Illness monitoring after clean return run (${daysSinceRun}d, no new complaints); ready for guarded coach close.`,
+      applyDryRunCommand: null,
+    };
+  }
+
+  if (
+    currentLifecycle === "monitoring_after_return" &&
     cleanRunCount >= 2 &&
     !lifecycleInput.negativeMessageAfterCompletion &&
-    (signalClass === "confirmed_illness" || signalClass === "ambiguous_illness" || signalClass === "schedule_pause")
+    signalClass === "schedule_pause"
   ) {
     return {
       recommendedAction: "coach_close_candidate",
-      reason: `${cleanRunCount} clean running completions after return; ready for coach close review (no auto-close).`,
+      reason: `${cleanRunCount} clean running completions after return; ready for guarded coach close.`,
       applyDryRunCommand: null,
     };
   }
@@ -379,6 +423,20 @@ export function resolveBridgeRecommendedAction(input: BridgeDiagnosticInput): {
   }
 
   if (proposal.proposedLifecycle === currentLifecycle) {
+    if (
+      currentLifecycle === "monitoring_after_return" &&
+      (signalClass === "confirmed_illness" || signalClass === "ambiguous_illness") &&
+      completion &&
+      hasReliableTpRunningCompletion(completion) &&
+      !lifecycleInput.negativeMessageAfterCompletion
+    ) {
+      return {
+        recommendedAction: "no_action",
+        reason:
+          "monitoring_after_return_without_auto_close_rule; guarded coach close recommended if no new complaints.",
+        applyDryRunCommand: null,
+      };
+    }
     return {
       recommendedAction: "no_action",
       reason: "Stored lifecycle already matches evaluator proposal.",

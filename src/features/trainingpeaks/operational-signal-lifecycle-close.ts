@@ -227,10 +227,16 @@ export function validateOperationalSignalLifecycleCloseEligibility(
   }
 
   if (input.lifecycleInput.returnWorkoutBlocker?.kind === "pending_today") {
-    return {
-      ok: false,
-      reason: "Planned return workout is scheduled today; wait for completion before close.",
-    };
+    const illnessWithReliableReturn =
+      (input.signalClass === "confirmed_illness" || input.signalClass === "ambiguous_illness") &&
+      hasReliableRunningCompletionAfterOpen(input.lifecycleInput.latestTpCompletionAfterOpen) &&
+      !input.lifecycleInput.negativeMessageAfterCompletion;
+    if (!illnessWithReliableReturn) {
+      return {
+        ok: false,
+        reason: "Planned return workout is scheduled today; wait for completion before close.",
+      };
+    }
   }
 
   const completion = input.lifecycleInput.latestTpCompletionAfterOpen;

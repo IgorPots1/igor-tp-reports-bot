@@ -55,6 +55,7 @@ type BridgeFixture = {
   name: string;
   input: BridgeDiagnosticInputLike;
   expectedAction: BridgeRecommendedAction;
+  expectedReasonIncludes?: string;
 };
 
 type BridgeDiagnosticInputLike = {
@@ -207,6 +208,86 @@ function run(): void {
       expectedAction: "coach_close_candidate",
     },
     {
+      name: "monitoring_after_return illness + one clean run + recovery message -> coach_close_candidate",
+      input: (() => {
+        const lifecycleInput = mkInput({
+          signalClass: "confirmed_illness",
+          currentLifecycle: "monitoring_after_return",
+          latestTpCompletionAfterOpen: mkCompletion({
+            workoutDate: "2026-06-07",
+            runningCompletionClass: "modified_or_easy_run",
+          }),
+          explicitRecoveryMessage: {
+            observationId: "obs-recovery",
+            observedAt: "2026-06-07T09:00:00.000Z",
+            reason: "matched_recovery_pattern",
+          },
+        });
+        const proposal = evaluateOperationalSignalLifecycle(lifecycleInput);
+        return {
+          signalId: "sig-3b",
+          signalType: "health_issue_improving",
+          signalClass: "confirmed_illness",
+          currentLifecycle: "monitoring_after_return",
+          lifecycleInput,
+          proposal,
+          asOfDate: "2026-06-09",
+          cleanRunningCompletionCount: 1,
+        };
+      })(),
+      expectedAction: "coach_close_candidate",
+    },
+    {
+      name: "pain/injury monitoring + one clean run uses injury coach-close path, not illness one-run rule",
+      input: (() => {
+        const lifecycleInput = mkInput({
+          signalClass: "injury_pain",
+          currentLifecycle: "monitoring_after_return",
+          latestTpCompletionAfterOpen: mkCompletion({ workoutDate: "2026-06-08" }),
+        });
+        const proposal = evaluateOperationalSignalLifecycle(lifecycleInput);
+        return {
+          signalId: "sig-3c",
+          signalType: "pain_injury",
+          signalClass: "injury_pain",
+          currentLifecycle: "monitoring_after_return",
+          lifecycleInput,
+          proposal,
+          asOfDate: "2026-06-09",
+          cleanRunningCompletionCount: 1,
+        };
+      })(),
+      expectedAction: "coach_close_candidate",
+      expectedReasonIncludes: "Injury/pain monitoring",
+    },
+    {
+      name: "completed run + later temperature -> blocked_by_negative",
+      input: (() => {
+        const lifecycleInput = mkInput({
+          signalClass: "confirmed_illness",
+          currentLifecycle: "monitoring_after_return",
+          latestTpCompletionAfterOpen: mkCompletion({ workoutDate: "2026-06-07" }),
+          negativeMessageAfterCompletion: {
+            observationId: "obs-temp",
+            observedAt: "2026-06-08T08:00:00.000Z",
+            reason: "matched_negative_pattern",
+          },
+        });
+        const proposal = evaluateOperationalSignalLifecycle(lifecycleInput);
+        return {
+          signalId: "sig-3d",
+          signalType: "health_issue_improving",
+          signalClass: "confirmed_illness",
+          currentLifecycle: "active_problem",
+          lifecycleInput,
+          proposal,
+          asOfDate: "2026-06-09",
+          cleanRunningCompletionCount: 1,
+        };
+      })(),
+      expectedAction: "blocked_by_negative",
+    },
+    {
       name: "injury + completed run -> monitoring apply with coach close later",
       input: (() => {
         const lifecycleInput = mkInput({
@@ -336,6 +417,14 @@ function run(): void {
     if (result.recommendedAction !== fixture.expectedAction) {
       failures.push(
         `${fixture.name}: action=${result.recommendedAction} expected=${fixture.expectedAction}`
+      );
+    }
+    if (
+      fixture.expectedReasonIncludes &&
+      !result.reason.includes(fixture.expectedReasonIncludes)
+    ) {
+      failures.push(
+        `${fixture.name}: reason="${result.reason}" expected to include "${fixture.expectedReasonIncludes}"`
       );
     }
   }

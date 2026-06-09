@@ -257,6 +257,31 @@ function assertReturnWorkoutBlockerCases(): void {
     "pending today refusal should cite scheduled today"
   );
 
+  const illnessPendingCloseInput = mkInput({
+    signalClass: "confirmed_illness",
+    currentLifecycle: "monitoring_after_return",
+    latestTpCompletionAfterOpen: mkCompletion({
+      workoutDate: "2026-06-07",
+      runningCompletionClass: "modified_or_easy_run",
+    }),
+    missedOrSkippedReturnWorkout: false,
+    returnWorkoutBlocker: pendingBlocker,
+  });
+  const illnessPendingCloseProposal = evaluateOperationalSignalLifecycle(illnessPendingCloseInput);
+  const illnessPendingCloseEligibility = validateOperationalSignalLifecycleCloseEligibility({
+    storedLifecycleState: "monitoring_after_return",
+    requiresCoachClose: false,
+    signalClass: "confirmed_illness",
+    lifecycleInput: illnessPendingCloseInput,
+    proposal: illnessPendingCloseProposal,
+    coachReason: normalizeCoachCloseReason("recovery confirmed after return run"),
+    applyMode: true,
+  });
+  assert(
+    illnessPendingCloseEligibility.ok && illnessPendingCloseEligibility.kind === "eligible",
+    "illness monitoring with reliable return run should not be blocked by pending today"
+  );
+
   const futureCloseInput = mkInput({
     signalClass: "injury_pain",
     currentLifecycle: "monitoring_after_return",
