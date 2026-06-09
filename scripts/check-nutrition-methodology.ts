@@ -296,6 +296,16 @@ async function run(): Promise<void> {
   assert.ok(Array.isArray(generatedTy.nutrition_summary.training_nutrition_links));
   assert.equal(typeof generatedTy.nutrition_summary.one_focus, "object");
   assert.equal(typeof generatedTy.nutrition_summary.methodology_signals, "object");
+  const canonicalLongRun = generatedTy.daily_analysis.find((day) => day.date === "2026-06-07");
+  assert.ok(canonicalLongRun && typeof canonicalLongRun.canonicalDailyAnalysis === "object");
+  const canonicalPayload = canonicalLongRun?.canonicalDailyAnalysis as Record<string, unknown>;
+  assert.equal(typeof canonicalPayload.weekdayRu, "string");
+  assert.equal(typeof canonicalPayload.dateLabel, "string");
+  assert.equal(canonicalPayload.trainingType, "long_run");
+  assert.equal(typeof canonicalPayload.trainingLabel, "string");
+  assert.equal(typeof canonicalPayload.hintForComment, "string");
+  assert.ok(Array.isArray(canonicalPayload.findings));
+  assert.equal(typeof canonicalPayload.sourceQuality, "object");
 
   const vyContext = buildMockContext({
     resolvedCommunicationProfile: {

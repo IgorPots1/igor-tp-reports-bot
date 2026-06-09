@@ -97,6 +97,12 @@ async function run(): Promise<void> {
   const generated = await generateNutritionWeeklyAnalysis({ context: buildMockContext() });
   assert.ok(Array.isArray(generated.daily_analysis), "daily_analysis must exist");
   assert.ok(Array.isArray(generated.training_nutrition_links), "training_nutrition_links must exist");
+  const canonicalDay = generated.daily_analysis.find((day) => day.date === "2026-06-07");
+  assert.ok(canonicalDay && typeof canonicalDay.canonicalDailyAnalysis === "object", "canonical daily facts must be present");
+  const canonicalPayload = canonicalDay?.canonicalDailyAnalysis as Record<string, unknown>;
+  assert.equal(typeof canonicalPayload.weekdayRu, "string");
+  assert.equal(typeof canonicalPayload.dateLabel, "string");
+  assert.equal(typeof canonicalPayload.nutritionStatus, "string");
   assert.equal(generated.one_focus.category, "long_run_underfueling");
   assert.equal(generated.methodology_signals.protein_sufficient, true);
 

@@ -30,5 +30,10 @@ assert.match(contextSource, /currentWeightKg:\s*essentials\.profile\?\.currentWe
 const methodologySource = readFileSync(join(root, "src/features/nutrition/methodology.ts"), "utf8");
 assert.match(methodologySource, /forcedLongRunDate/, "methodology must force long-run date override");
 assert.match(methodologySource, /(?:x\|х\|×\|\\\*)/, "methodology must support x/х/×/* interval patterns");
+assert.match(methodologySource, /canonicalDailyAnalysis/, "methodology must build canonicalDailyAnalysis facts");
+assert.match(methodologySource, /weekdayRu/, "methodology canonical facts must include weekdayRu");
+assert.match(methodologySource, /dateLabel/, "methodology canonical facts must include dateLabel");
+assert.match(methodologySource, /hintForComment/, "methodology canonical facts must include hintForComment");
+assert.match(methodologySource, /sourceQuality/, "methodology canonical facts must include sourceQuality");
 
 console.log("PASS check-nutrition-methodology-wiring");

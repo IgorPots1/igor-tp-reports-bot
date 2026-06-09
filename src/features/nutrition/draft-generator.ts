@@ -308,8 +308,82 @@ function buildNutritionDailyFactsForNarrative(input: {
         previousDayTrainingType === "intervals" ||
         previousDayTrainingType === "tempo" ||
         previousDayTrainingType === "race";
+      const canonical =
+        day.canonicalDailyAnalysis && typeof day.canonicalDailyAnalysis === "object" && !Array.isArray(day.canonicalDailyAnalysis)
+          ? (day.canonicalDailyAnalysis as Record<string, unknown>)
+          : null;
+      const canonicalActual =
+        canonical?.actual && typeof canonical.actual === "object" && !Array.isArray(canonical.actual)
+          ? (canonical.actual as Record<string, unknown>)
+          : null;
+      const canonicalFlags =
+        canonical?.flags && typeof canonical.flags === "object" && !Array.isArray(canonical.flags)
+          ? (canonical.flags as Record<string, unknown>)
+          : null;
+      const canonicalTarget =
+        canonical?.target && typeof canonical.target === "object" && !Array.isArray(canonical.target)
+          ? (canonical.target as Record<string, unknown>)
+          : null;
+      const canonicalSourceQuality =
+        canonical?.sourceQuality && typeof canonical.sourceQuality === "object" && !Array.isArray(canonical.sourceQuality)
+          ? (canonical.sourceQuality as Record<string, unknown>)
+          : null;
       return {
         date,
+        weekday_ru: typeof canonical?.weekdayRu === "string" ? canonical.weekdayRu : null,
+        date_label: typeof canonical?.dateLabel === "string" ? canonical.dateLabel : formatDateRu(date),
+        training_type: typeof canonical?.trainingType === "string" ? canonical.trainingType : trainingType,
+        training_label:
+          typeof canonical?.trainingLabel === "string"
+            ? canonical.trainingLabel
+            : workoutTitles.get(date) ?? formatTrainingTypeRu(trainingType),
+        actual: canonicalActual ?? {
+          kcal: typeof day.kcal === "number" ? day.kcal : null,
+          proteinG: typeof day.proteinG === "number" ? day.proteinG : null,
+          fatG: typeof day.fatG === "number" ? day.fatG : null,
+          carbsG: typeof day.carbsG === "number" ? day.carbsG : null,
+          proteinGPerKg: typeof day.proteinGPerKg === "number" ? day.proteinGPerKg : null,
+          carbsGPerKg: typeof day.carbsGPerKg === "number" ? day.carbsGPerKg : null,
+        },
+        target: canonicalTarget ?? { formulaCode: "legacy_daily_v1" },
+        flags: canonicalFlags ?? {
+          rest: isRestDay,
+          easy: trainingType === "easy",
+          hard: isHardSession,
+          preLong: false,
+          longRun: isLongRun,
+          dayBeforeKeyWorkout,
+          dayAfterKeyWorkout,
+          suspect: nutritionStatus === "suspect",
+        },
+        nutrition_status: typeof canonical?.nutritionStatus === "string" ? canonical.nutritionStatus : nutritionStatus,
+        relevance: typeof canonical?.relevance === "string" ? canonical.relevance : relevance,
+        hint_for_comment:
+          typeof canonical?.hintForComment === "string"
+            ? canonical.hintForComment
+            : buildCoachReasonForDay(day),
+        findings:
+          Array.isArray(canonical?.findings)
+            ? canonical.findings.filter((item): item is string => typeof item === "string")
+            : Array.isArray(day.findings)
+              ? day.findings.filter((item): item is string => typeof item === "string")
+              : [],
+        training_nutrition_links:
+          Array.isArray(canonical?.trainingNutritionLinks)
+            ? canonical.trainingNutritionLinks
+            : [],
+        source_quality:
+          canonicalSourceQuality ?? {
+            hasNutritionData:
+              typeof day.kcal === "number" ||
+              typeof day.carbsG === "number" ||
+              typeof day.proteinG === "number" ||
+              typeof day.fatG === "number",
+            hasTrainingContext: workoutTitles.has(date),
+            confidence: "medium",
+            notes: [],
+          },
+        canonical_daily_analysis: canonical,
         caloriesActual: typeof day.kcal === "number" ? day.kcal : null,
         caloriesTargetOrEstimate: null,
         proteinActual: typeof day.proteinG === "number" ? day.proteinG : null,
@@ -327,7 +401,7 @@ function buildNutritionDailyFactsForNarrative(input: {
         dayBeforeKeyWorkout,
         dayAfterKeyWorkout,
         assessment: mapNutritionStatusToAssessment(nutritionStatus),
-        relevance,
+        legacy_relevance: relevance,
         coachReason: buildCoachReasonForDay(day),
       };
     });
@@ -343,18 +417,29 @@ function buildDetailedDayObservationLines(input: {
     dailyAnalysis: input.dailyAnalysis,
   });
   const prioritized = [...dailyFacts].sort((left, right) => {
+    const normalizeRelevance = (value: unknown): "high" | "medium" | "low" => {
+      if (value === "high" || value === "key") {
+        return "high";
+      }
+      if (value === "medium" || value === "important") {
+        return "medium";
+      }
+      return "low";
+    };
+    const leftRelevance = normalizeRelevance(left.legacy_relevance ?? left.relevance);
+    const rightRelevance = normalizeRelevance(right.legacy_relevance ?? right.relevance);
     const leftScore =
-      left.relevance === "high" ? 3 : left.relevance === "medium" ? 2 : left.isRestDay ? 0 : 1;
+      leftRelevance === "high" ? 3 : leftRelevance === "medium" ? 2 : left.isRestDay ? 0 : 1;
     const rightScore =
-      right.relevance === "high" ? 3 : right.relevance === "medium" ? 2 : right.isRestDay ? 0 : 1;
+      rightRelevance === "high" ? 3 : rightRelevance === "medium" ? 2 : right.isRestDay ? 0 : 1;
     if (rightScore !== leftScore) {
       return rightScore - leftScore;
     }
     return String(left.date).localeCompare(String(right.date));
   });
   const selected =
-    prioritized.filter((day) => day.relevance === "high" || day.relevance === "medium").length >= 3
-      ? prioritized.filter((day) => day.relevance === "high" || day.relevance === "medium" || !day.isRestDay)
+    prioritized.filter((day) => ["high", "medium", "key", "important"].includes(String(day.legacy_relevance ?? day.relevance))).length >= 3
+      ? prioritized.filter((day) => ["high", "medium", "key", "important"].includes(String(day.legacy_relevance ?? day.relevance)) || !day.isRestDay)
       : prioritized;
   return selected.slice(0, input.maxDays ?? 7).map((day) => {
     const dateLabel = formatDateRu(String(day.date));
