@@ -329,6 +329,11 @@ function formatCompactDateList(dates: string[]): string {
   return dates.map((date) => `${date.slice(8, 10)}.${date.slice(5, 7)}`).join(", ");
 }
 
+function intersectIsoDates(left: readonly string[], right: readonly string[]): string[] {
+  const rightSet = new Set(right);
+  return [...new Set(left.filter((date) => rightSet.has(date)))].sort();
+}
+
 function readOptionalString(raw: unknown): string | null {
   return typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : null;
 }
@@ -642,6 +647,12 @@ export function formatScheduleOperationalSignalText(input: {
     }
     if (dates.length > 0) {
       const label = plannedDates.length > 0 || planningStatus === "athlete_intends_to_train" ? "планирует" : "доступна";
+      const conflictingDates = label === "планирует" ? intersectIsoDates(unavailableDates, dates) : [];
+      if (conflictingDates.length > 0) {
+        displayParts.push(`конфликт расписания: ${formatCompactDateList(conflictingDates)} одновременно недоступна и планирует`);
+        displayParts.push("что сделать: уточнить дату");
+        return displayParts.join("; ");
+      }
       const dateText =
         label === "планирует" ? formatCompactDateList(dates) : formatDayDateList(dates);
       displayParts.push(`${label}: ${dateText}`);

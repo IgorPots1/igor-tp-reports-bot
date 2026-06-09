@@ -204,7 +204,6 @@ function run(): void {
     "pain row must include full source context"
   );
   assert(text.includes("статус: лёгкий дискомфорт / наблюдать"), "Lavrentyev should be mild discomfort.");
-  assert(text.includes("статус: можно закрыть после проверки"), "close candidate should have Russian close status.");
   assert(
     text.includes("что сделать: уточнить, болит ли сейчас. Если уже не актуально — закрыть сигнал через безопасное закрытие."),
     "close candidate should have simple close guidance"
@@ -215,6 +214,7 @@ function run(): void {
   );
   assert(text.includes("почему видно:"), "health row should explain why monitoring signal is still visible");
   assert(text.includes("что закрывает:"), "health row should explain what closes the monitoring signal");
+  assert(!text.includes("статус: актуально / требует проверки"), "health rows must not show generic actionable status");
   assert(!text.includes("lifecycle:"), "coach text must not leak lifecycle label");
   assert(!text.includes("active_problem"), "coach text must not leak internal lifecycle state");
   assert(!text.includes("monitoring_after_return"), "coach text must not leak monitoring state name");
@@ -329,7 +329,8 @@ function run(): void {
   assert(!illnessSection.includes("Anna Plotnitskaya"), "travel-only unavailability must not appear in illness section");
   assert(!semanticsText.includes("Anastasia Utenkova"), "nutrition-only schedule text must be hidden from /tp_signals");
   assert(
-    semanticsText.includes("Elena Vasileva") && semanticsText.includes("статус: возврат к бегу / наблюдать"),
+    semanticsText.includes("Elena Vasileva") &&
+      semanticsText.includes("почему видно: ученик сообщил о готовности к бегу"),
     "recovery-ready athlete should show return-to-run monitoring guidance"
   );
 

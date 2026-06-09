@@ -331,6 +331,22 @@ function run(): void {
     `Restriction without reason should keep generic wording, got: ${restrictionWithoutReason}`
   );
 
+  const conflictingScheduleText = formatScheduleOperationalSignalText({
+    signalType: "schedule_availability_window",
+    validFrom: null,
+    validUntil: null,
+    structuredPayload: {
+      unavailable_dates: ["2026-06-09", "2026-06-10"],
+      planned_training_dates: ["2026-06-10"],
+      planning_status: "athlete_intends_to_train",
+    },
+  });
+  assert(
+    conflictingScheduleText.includes("конфликт расписания: 10.06") &&
+      conflictingScheduleText.includes("что сделать: уточнить дату"),
+    `Conflicting unavailable/planned dates should be explicit, got: ${conflictingScheduleText}`
+  );
+
   console.log(`${LOG_PREFIX} PASS`);
 }
 

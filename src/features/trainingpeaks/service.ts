@@ -708,6 +708,10 @@ export type TrainingPeaksOperationalSignalSourceEvidence = {
 
 export type TrainingPeaksOperationalSignalDisplayEvidence = {
   source?: TrainingPeaksOperationalSignalSourceEvidence | null;
+  latestRelevant?: TrainingPeaksOperationalSignalSourceEvidence | null;
+  latestNegative?: TrainingPeaksOperationalSignalSourceEvidence | null;
+  latestPositive?: TrainingPeaksOperationalSignalSourceEvidence | null;
+  latestAgreement?: TrainingPeaksOperationalSignalSourceEvidence | null;
   completion?: TrainingPeaksOperationalSignalCompletionEvidence | null;
 };
 
@@ -5872,8 +5876,23 @@ const MUSCULOSKELETAL_BODY_PART_CUES = [
   "колен",
   "ахилл",
   "стоп",
+  "ступн",
   "икр",
   "бедр",
+  "спин",
+  "поясниц",
+  "нерв",
+  "палец",
+  "пальц",
+  "мозол",
+  "обув",
+  "кроссов",
+  "шиповк",
+  "натер",
+  "натёр",
+  "опух",
+  "отек",
+  "отёк",
   "таз",
   "передн",
   "мышечн",
@@ -5927,13 +5946,36 @@ function textIncludesAnyCue(text: string, cues: readonly string[]): boolean {
 }
 
 function hasMusculoskeletalPainSemantic(text: string): boolean {
-  if (!textIncludesAnyCue(text, ["болит", "болела", "болело", "боль", "болев", "побал", "дискомфорт"])) {
+  if (textIncludesAnyCue(text, MUSCULOSKELETAL_BODY_PART_CUES) && /чувств|ноет|тянет/iu.test(text)) {
+    return true;
+  }
+  if (
+    !textIncludesAnyCue(text, [
+      "болит",
+      "болела",
+      "болело",
+      "боль",
+      "болев",
+      "побал",
+      "дискомфорт",
+      "защем",
+      "мозол",
+      "натер",
+      "натёр",
+      "опух",
+      "отек",
+      "отёк",
+    ])
+  ) {
     return false;
   }
   if (textIncludesAnyCue(text, MUSCULOSKELETAL_BODY_PART_CUES)) {
     return true;
   }
-  return /передн\w*\s+част\w*\s+бедр/iu.test(text) || /бедр\w*\s+болит/iu.test(text);
+  return (
+    /передн\w*\s+част\w*\s+бедр/iu.test(text) ||
+    /бедр\w*\s+болит/iu.test(text)
+  );
 }
 
 function hasClearIllnessSemantic(text: string): boolean {
@@ -6334,6 +6376,135 @@ function countCleanOperationalSignalRunningCompletions(input: {
   return count;
 }
 
+function toOperationalSignalSourceEvidence(
+  observation: TrainingPeaksTelegramContextObservation | null | undefined
+): TrainingPeaksOperationalSignalSourceEvidence | null {
+  if (!observation) {
+    return null;
+  }
+  return {
+    observedAt: observation.observedAt,
+    textPreview: observation.textPreview,
+  };
+}
+
+function sortOperationalSignalObservations(
+  observations: readonly TrainingPeaksTelegramContextObservation[]
+): TrainingPeaksTelegramContextObservation[] {
+  return [...observations].sort((left, right) => {
+    const byTime = left.observedAt.localeCompare(right.observedAt);
+    if (byTime !== 0) {
+      return byTime;
+    }
+    return left.id.localeCompare(right.id);
+  });
+}
+
+function shiftIsoDateTimeByHours(iso: string, hours: number): string {
+  const parsed = Date.parse(iso);
+  if (!Number.isFinite(parsed)) {
+    return iso;
+  }
+  return new Date(parsed + hours * 60 * 60 * 1000).toISOString();
+}
+
+const OPERATIONAL_RECOVERY_OBSERVATION_PATTERNS = [
+  /вс[её]\s*(?:ок|хорошо|норм)/iu,
+  /хорошо/iu,
+  /нормальн/iu,
+  /самочувствие\s+(?:норм|хорош)/iu,
+  /чувствую\s+себя\s+лучше/iu,
+  /лучше\s+себя\s+чувствую/iu,
+  /вроде\s+(?:лучше|норм|ок)/iu,
+  /в\s+строю/iu,
+  /врач\s+разрешил[а-яё]*/iu,
+  /разрешил[аи]\s+(?:бег|трен)/iu,
+  /завтра.*(?:выйду|побегаю|побегу|пробегу|бегу)/iu,
+  /(?:выйду|побегаю|побегу|пробегу).*завтра/iu,
+  /боли?\s+нет/iu,
+  /ничего\s+не\s+болел/iu,
+  /не\s+болел[ао]?/iu,
+];
+
+const OPERATIONAL_NEGATIVE_OBSERVATION_PATTERNS = [
+  /температур/iu,
+  /лихорад/iu,
+  /боле[еюи]/iu,
+  /забол/iu,
+  /простуд/iu,
+  /кашель|горло|насморк|сопли/iu,
+  /хуже|ухудш/iu,
+  /слабост|сил\s+нет/iu,
+  /боли?\s+(?:снова|опять|вернул[а-яё]*)/iu,
+  /болит|боль|дискомфорт|травм|защем|мозол|натер|натёр|опух|отек|отёк/iu,
+  /не\s+бегаю|не\s+смогу\s+бегать|не\s+могу\s+бежать|пропущу|пропустил/iu,
+];
+
+const OPERATIONAL_PLAN_AGREEMENT_PATTERNS = [
+  /\b(?:30|40|тридцать|сорок)\s*(?:мин|минут)/iu,
+  /очень\s+легко|тихонечко|спокойно|спокойненько/iu,
+  /попроб(?:овать|уй|уем|ую)|провер(?:ить|им)/iu,
+  /завтра.*(?:бег|трен|пробеж)/iu,
+];
+
+function getObservationSemanticText(observation: TrainingPeaksTelegramContextObservation): string {
+  return normalizeOperationalSignalSemanticText([
+    observation.textPreview,
+    observation.labels.join(" "),
+    normalizeRecordString(observation.metadata.signal_type),
+    normalizeRecordString(observation.metadata.activity_domain),
+  ]);
+}
+
+function isOperationalPositiveObservation(observation: TrainingPeaksTelegramContextObservation): boolean {
+  const text = getObservationSemanticText(observation);
+  return OPERATIONAL_RECOVERY_OBSERVATION_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function isOperationalNegativeObservation(observation: TrainingPeaksTelegramContextObservation): boolean {
+  const text = getObservationSemanticText(observation);
+  return OPERATIONAL_NEGATIVE_OBSERVATION_PATTERNS.some((pattern) => pattern.test(text)) || hasMusculoskeletalPainSemantic(text);
+}
+
+function isOperationalAgreementObservation(observation: TrainingPeaksTelegramContextObservation): boolean {
+  const text = getObservationSemanticText(observation);
+  return OPERATIONAL_PLAN_AGREEMENT_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function isOperationalRelevantObservation(input: {
+  observation: TrainingPeaksTelegramContextObservation;
+  signal: TrainingPeaksStudentOperationalSignal;
+}): boolean {
+  const text = getObservationSemanticText(input.observation);
+  const effective = resolveEffectiveOperationalSignalForDisplay(input.signal);
+  if (isPainInjuryOperationalSignalForDisplay(effective)) {
+    return hasMusculoskeletalPainSemantic(text) || isOperationalPositiveObservation(input.observation) || isOperationalAgreementObservation(input.observation);
+  }
+  if (isHealthOperationalSignalType(effective.effectiveSignalType)) {
+    return (
+      hasClearIllnessSemantic(text) ||
+      isOperationalNegativeObservation(input.observation) ||
+      isOperationalPositiveObservation(input.observation) ||
+      isOperationalAgreementObservation(input.observation)
+    );
+  }
+  return isOperationalAgreementObservation(input.observation);
+}
+
+function findLatestOperationalSignalObservation(input: {
+  signal: TrainingPeaksStudentOperationalSignal;
+  observations: readonly TrainingPeaksTelegramContextObservation[];
+  predicate: (observation: TrainingPeaksTelegramContextObservation) => boolean;
+  afterIso?: string | null;
+}): TrainingPeaksOperationalSignalSourceEvidence | null {
+  const openedAt = input.afterIso ?? input.signal.createdAt;
+  const latest = sortOperationalSignalObservations(input.observations)
+    .filter((observation) => observation.observedAt >= openedAt)
+    .filter(input.predicate)
+    .at(-1);
+  return toOperationalSignalSourceEvidence(latest);
+}
+
 function findOperationalSignalSourceObservation(input: {
   signal: TrainingPeaksStudentOperationalSignal;
   observations: readonly TrainingPeaksTelegramContextObservation[];
@@ -6342,13 +6513,55 @@ function findOperationalSignalSourceObservation(input: {
   const exact = sourceObservationId
     ? input.observations.find((observation) => observation.id === sourceObservationId)
     : null;
-  const fallback = exact ?? input.observations.find((observation) => observation.observedAt >= input.signal.createdAt) ?? null;
-  if (!fallback) {
+  const fallback =
+    exact ??
+    sortOperationalSignalObservations(input.observations).find((observation) => observation.observedAt >= input.signal.createdAt) ??
+    null;
+  return toOperationalSignalSourceEvidence(fallback);
+}
+
+function findOperationalSignalRecoveryMessage(
+  observations: readonly TrainingPeaksTelegramContextObservation[],
+  openedAt: string
+): OperationalSignalLifecycleInput["explicitRecoveryMessage"] {
+  const recovery = sortOperationalSignalObservations(observations)
+    .filter((observation) => observation.observedAt >= openedAt)
+    .find(isOperationalPositiveObservation);
+  if (!recovery) {
     return null;
   }
   return {
-    observedAt: fallback.observedAt,
-    textPreview: fallback.textPreview,
+    observationId: recovery.id,
+    observedAt: recovery.observedAt,
+    reason: "matched_recovery_context",
+  };
+}
+
+function findOperationalSignalNegativeAfterCompletion(input: {
+  observations: readonly TrainingPeaksTelegramContextObservation[];
+  completionDate: string | null;
+  completionObservedAt: string | null | undefined;
+  openedAt: string;
+}): OperationalSignalLifecycleInput["negativeMessageAfterCompletion"] {
+  if (!input.completionDate) {
+    return null;
+  }
+  const completionStart = Number.isFinite(Date.parse(input.completionObservedAt ?? ""))
+    ? Date.parse(input.completionObservedAt as string)
+    : Date.parse(`${input.completionDate}T00:00:00.000Z`);
+  const openedAtMs = Date.parse(input.openedAt);
+  const thresholdMs = Number.isFinite(openedAtMs) ? Math.max(openedAtMs, completionStart) : completionStart;
+  const negative = sortOperationalSignalObservations(input.observations).find((observation) => {
+    const observedAt = Date.parse(observation.observedAt);
+    return Number.isFinite(observedAt) && observedAt >= thresholdMs && isOperationalNegativeObservation(observation);
+  });
+  if (!negative) {
+    return null;
+  }
+  return {
+    observationId: negative.id,
+    observedAt: negative.observedAt,
+    reason: "matched_negative_context",
   };
 }
 
@@ -6356,21 +6569,28 @@ function buildOperationalSignalLifecycleInputFromCache(input: {
   signal: TrainingPeaksStudentOperationalSignal;
   workouts: TrainingPeaksWorkoutCacheRow[];
   asOfDate: string;
+  observations?: readonly TrainingPeaksTelegramContextObservation[];
 }): OperationalSignalLifecycleInput {
   const openedAt = input.signal.createdAt;
   const openedDate = openedAt.slice(0, 10);
+  const completion = buildOperationalSignalCompletionInfo({
+    workouts: input.workouts,
+    openedDate,
+    asOfDate: input.asOfDate,
+  });
   return {
     studentId: input.signal.studentId,
     signalClass: classifyOperationalSignalForLifecycle(input.signal),
     currentLifecycle: getOperationalSignalLifecycle(input.signal),
     openedAt,
-    latestTpCompletionAfterOpen: buildOperationalSignalCompletionInfo({
-      workouts: input.workouts,
-      openedDate,
-      asOfDate: input.asOfDate,
+    latestTpCompletionAfterOpen: completion,
+    negativeMessageAfterCompletion: findOperationalSignalNegativeAfterCompletion({
+      observations: input.observations ?? [],
+      completionDate: completion?.workoutDate ?? null,
+      completionObservedAt: completion?.completionObservedAt,
+      openedAt,
     }),
-    negativeMessageAfterCompletion: null,
-    explicitRecoveryMessage: null,
+    explicitRecoveryMessage: findOperationalSignalRecoveryMessage(input.observations ?? [], openedAt),
     missedOrSkippedReturnWorkout: false,
     returnWorkoutBlocker: null,
   };
@@ -6441,6 +6661,7 @@ const PAIN_ACUTE_CUES = [
   /резк[а-яё]*\s+боль/iu,
   /не\s+могу\s+(бежать|бегать|наступать)/iu,
   /мешает\s+бежать/iu,
+  /защем[а-яё]*\s+нерв|нерв\s+.*защем/iu,
   /от[её]к|опух/iu,
 ];
 
@@ -6492,17 +6713,24 @@ function buildMonitoringLifetimeDisplayLines(input: {
   lifecycleDisplayState: OperationalSignalDisplayLifecycleState;
   completion: TrainingPeaksOperationalSignalCompletionEvidence | null | undefined;
   sourceText: string | null;
+  latestPositiveText?: string | null;
+  latestNegativeText?: string | null;
   isPain: boolean;
 }): string[] {
   const latest = input.completion?.latestCompletionAfterOpen ?? null;
   const hasRunningCompletion = latest?.sportClass === "running_like";
   const recoveryReady = hasRecoveryReadySemantic(
-    normalizeOperationalSignalSemanticText([input.sourceText])
+    normalizeOperationalSignalSemanticText([input.sourceText, input.latestPositiveText])
   );
+  const contextText = normalizeOperationalSignalSemanticText([
+    input.sourceText,
+    input.latestPositiveText,
+    input.latestNegativeText,
+  ]);
+  const hasCleanReportAfterRun = Boolean(hasRunningCompletion && input.latestPositiveText && !input.latestNegativeText);
 
   if (input.lifecycleDisplayState === "ready_for_coach_close") {
     return [
-      "статус: можно закрыть после проверки",
       "почему видно: есть признаки, что эпизод можно закрыть, но нужна короткая проверка",
       "что закрывает: подтверждение самочувствия / ручное безопасное закрытие",
       input.isPain
@@ -6522,9 +6750,15 @@ function buildMonitoringLifetimeDisplayLines(input: {
         "что сделать: уточнить, болит ли сейчас. Если уже не актуально — закрыть сигнал через безопасное закрытие.",
       ];
     }
+    if (hasCleanReportAfterRun) {
+      return [
+        "почему видно: есть пробежка и чистый отчёт после неё, сигнал оставлен для короткой проверки",
+        "что закрывает: ручное безопасное закрытие после проверки, что новых жалоб нет",
+        "что сделать: закрыть после короткой проверки самочувствия.",
+      ];
+    }
     if (recoveryReady && !hasRunningCompletion) {
       return [
-        "статус: возврат к бегу / наблюдать",
         "почему видно: ученик сообщил о готовности к бегу, но подтверждённой пробежки после этого ещё нет",
         "что закрывает: чистая пробежка + нет новых жалоб / ручное безопасное закрытие",
         "что сделать: если пробежка прошла нормально — перевести в наблюдение или закрыть после проверки",
@@ -6532,14 +6766,16 @@ function buildMonitoringLifetimeDisplayLines(input: {
     }
     if (hasRunningCompletion) {
       return [
-        "статус: наблюдение после болезни",
-        "почему видно: после возврата есть пробежка, ждём подтверждения что всё прошло нормально",
-        "что закрывает: нет новых жалоб + стабильное самочувствие / ручное безопасное закрытие",
-        "что сделать: если пробежка прошла нормально — перевести в наблюдение или закрыть после проверки",
+        input.latestNegativeText
+          ? "почему видно: после пробежки есть новое негативное сообщение, закрывать нельзя"
+          : "почему видно: после возврата есть пробежка, ждём чистый отчёт после неё",
+        "что закрывает: отчёт «всё ок» после пробежки и отсутствие новых жалоб",
+        input.latestNegativeText
+          ? "что сделать: уточнить текущее самочувствие и держать на контроле до стабильного состояния."
+          : "что сделать: проверить самочувствие после пробежки.",
       ];
     }
     return [
-      "статус: наблюдение после болезни",
       "почему видно: ждём подтверждения, что возврат прошёл нормально",
       "что закрывает: чистая пробежка + нет новых жалоб / ручное безопасное закрытие",
       "что сделать: уточнить самочувствие после возврата к тренировкам",
@@ -6548,16 +6784,26 @@ function buildMonitoringLifetimeDisplayLines(input: {
 
   if (recoveryReady && !hasRunningCompletion) {
     return [
-      "статус: возврат к бегу / наблюдать",
       "почему видно: ученик сообщил о готовности к бегу, но подтверждённой пробежки после этого ещё нет",
       "что закрывает: чистая пробежка + нет новых жалоб / ручное безопасное закрытие",
       "что сделать: если пробежка прошла нормально — перевести в наблюдение или закрыть после проверки",
     ];
   }
 
+  if (hasRunningCompletion) {
+    return [
+      input.latestNegativeText
+        ? "почему видно: после пробежки есть новое негативное сообщение, закрывать нельзя"
+        : "почему видно: после возврата есть пробежка, ждём чистый отчёт после неё",
+      "что закрывает: отчёт «всё ок» после пробежки и отсутствие новых жалоб",
+      input.latestNegativeText
+        ? "что сделать: уточнить текущее самочувствие и держать на контроле до стабильного состояния."
+        : "что сделать: проверить самочувствие после пробежки.",
+    ];
+  }
+
   if (input.completion?.recommendedAction === "coach_close_candidate") {
     return [
-      "статус: можно закрыть после проверки",
       "почему видно: есть признаки, что эпизод можно закрыть, но нужна короткая проверка",
       "что закрывает: подтверждение самочувствия / ручное безопасное закрытие",
       "что сделать: уточнить текущее самочувствие. Если всё стабильно — закрыть сигнал через безопасное закрытие.",
@@ -6566,16 +6812,20 @@ function buildMonitoringLifetimeDisplayLines(input: {
 
   if (!hasRunningCompletion && input.completion?.latestCacheScannedAt) {
     return [
-      "статус: актуально / требует проверки",
       "почему видно: нет подтверждённой пробежки после сообщения",
       "что закрывает: чистая пробежка + нет новых жалоб / ручное безопасное закрытие",
-      "что сделать: уточнить текущее самочувствие и обновить сигнал.",
+      /ближе\s+к\s+выходн|к\s+выходн/iu.test(contextText)
+        ? "что сделать: уточнить самочувствие ближе к выходным / перед возвратом к бегу."
+        : "что сделать: уточнить текущее самочувствие и обновить сигнал.",
     ];
   }
 
   return [
-    "статус: актуально / требует проверки",
-    "что сделать: уточнить текущее самочувствие и обновить сигнал.",
+    "почему видно: нет закрывающего сообщения или чистой пробежки после сигнала",
+    "что закрывает: чистый отчёт после пробежки и отсутствие новых жалоб",
+    /ближе\s+к\s+выходн|к\s+выходн/iu.test(contextText)
+      ? "что сделать: уточнить самочувствие ближе к выходным / перед возвратом к бегу."
+      : "что сделать: уточнить текущее самочувствие и обновить сигнал.",
   ];
 }
 
@@ -6588,19 +6838,47 @@ function buildActionableHealthOrPainDisplayText(input: {
   asOfDate: string;
 }): string {
   const isPain = isPainInjuryOperationalSignalForDisplay(input.effective);
-  const summaryLine =
+  let summaryLine =
     normalizeCoachFacingSignalText(formatOperationalSignalSummaryLine(input.summary.trim())) ||
     "контекст: полный текст недоступен в signal payload";
-  const lines = [summaryLine];
   const source = input.evidence?.source ?? null;
   const sourceText = source?.textPreview?.replace(/\s+/g, " ").trim() ?? null;
   const sourceDate =
     formatOperationalSignalShortDate(source?.observedAt) ??
     formatOperationalSignalShortDate(input.signal.createdAt);
-  if (sourceText) {
-    lines.push(`источник: ${sourceDate ?? "дата неизвестна"}, ${sourceText}`);
+  const latestRelevant = input.evidence?.latestRelevant ?? null;
+  const latestRelevantText = latestRelevant?.textPreview?.replace(/\s+/g, " ").trim() ?? null;
+  const latestRelevantDate = formatOperationalSignalShortDate(latestRelevant?.observedAt);
+  const latestPositiveText = input.evidence?.latestPositive?.textPreview?.replace(/\s+/g, " ").trim() ?? null;
+  const latestNegativeText = input.evidence?.latestNegative?.textPreview?.replace(/\s+/g, " ").trim() ?? null;
+  const latestAgreement = input.evidence?.latestAgreement ?? null;
+  const latestAgreementText = latestAgreement?.textPreview?.replace(/\s+/g, " ").trim() ?? null;
+  const latestAgreementDate = formatOperationalSignalShortDate(latestAgreement?.observedAt);
+  const latestPainText =
+    latestRelevantText && hasMusculoskeletalPainSemantic(latestRelevantText.toLowerCase()) ? latestRelevantText : null;
+  const sourcePainText = sourceText && hasMusculoskeletalPainSemantic(sourceText.toLowerCase()) ? sourceText : null;
+  const displaySourceText = latestPainText && !sourcePainText ? latestPainText : sourceText;
+  const displaySourceDate = latestPainText && !sourcePainText ? latestRelevantDate : sourceDate;
+  if (isPain && latestPainText && !sourcePainText) {
+    summaryLine = compactOperationalSignalText(latestPainText, 140);
+  } else if (isPain && sourcePainText && !hasMusculoskeletalPainSemantic(summaryLine.toLowerCase())) {
+    summaryLine = compactOperationalSignalText(sourcePainText, 140);
+  }
+  const lines = [summaryLine];
+  if (displaySourceText) {
+    lines.push(`источник: ${displaySourceDate ?? "дата неизвестна"}, ${displaySourceText}`);
   } else {
     lines.push("источник: не найден в payload/cache — нужен review");
+  }
+  if (latestRelevantText && latestRelevantText !== displaySourceText) {
+    lines.push(`последнее: ${latestRelevantDate ?? "дата неизвестна"}, ${latestRelevantText}`);
+  }
+  if (latestNegativeText && latestNegativeText !== latestRelevantText && latestNegativeText !== displaySourceText) {
+    const latestNegativeDate = formatOperationalSignalShortDate(input.evidence?.latestNegative?.observedAt);
+    lines.push(`важно: ${latestNegativeDate ?? "дата неизвестна"}, ${latestNegativeText}`);
+  }
+  if (latestAgreementText && latestAgreementText !== latestRelevantText && latestAgreementText !== displaySourceText) {
+    lines.push(`договорились: ${latestAgreementDate ?? "дата неизвестна"}, ${latestAgreementText}`);
   }
 
   if (isPain) {
@@ -6613,7 +6891,9 @@ function buildActionableHealthOrPainDisplayText(input: {
         ...buildMonitoringLifetimeDisplayLines({
           lifecycleDisplayState: input.lifecycleDisplayState,
           completion: input.evidence?.completion ?? null,
-          sourceText,
+          sourceText: displaySourceText,
+          latestPositiveText,
+          latestNegativeText,
           isPain: true,
         })
       );
@@ -6622,14 +6902,16 @@ function buildActionableHealthOrPainDisplayText(input: {
     const severity = resolvePainSeverity({
       lifecycleDisplayState: input.lifecycleDisplayState,
       summary: summaryLine,
-      sourceText,
+      sourceText: displaySourceText,
     });
     if (severity === "ready_to_close_after_check") {
       lines.push(
         ...buildMonitoringLifetimeDisplayLines({
           lifecycleDisplayState: input.lifecycleDisplayState,
           completion: input.evidence?.completion ?? null,
-          sourceText,
+          sourceText: displaySourceText,
+          latestPositiveText,
+          latestNegativeText,
           isPain: true,
         })
       );
@@ -6637,12 +6919,20 @@ function buildActionableHealthOrPainDisplayText(input: {
     }
     if (severity === "acute_limiting") {
       lines.push("статус: боль / ограничивает бег");
-      lines.push("что сделать: уточнить, мешает ли боль бегу сейчас; до проверки не усиливать нагрузку.");
+      lines.push(
+        /спин|нерв|защем/iu.test(`${summaryLine} ${displaySourceText ?? ""}`)
+          ? "что сделать: уточнить состояние спины и когда сможет вернуться к бегу."
+          : "что сделать: уточнить, мешает ли боль бегу сейчас; до проверки не усиливать нагрузку."
+      );
       return lines.join("\n");
     }
     if (severity === "minor_discomfort") {
       lines.push("статус: лёгкий дискомфорт / наблюдать");
-      lines.push("что сделать: наблюдать и уточнить на ближайшем контакте, усиливается ли симптом.");
+      lines.push(
+        /колен/iu.test(`${summaryLine} ${displaySourceText ?? ""}`)
+          ? "что сделать: после пробежки проверить реакцию колена."
+          : "что сделать: наблюдать и уточнить на ближайшем контакте, усиливается ли симптом."
+      );
       return lines.join("\n");
     }
     lines.push("статус: боль / нужно уточнить");
@@ -6655,7 +6945,9 @@ function buildActionableHealthOrPainDisplayText(input: {
     ...buildMonitoringLifetimeDisplayLines({
       lifecycleDisplayState: input.lifecycleDisplayState,
       completion: input.evidence?.completion ?? null,
-      sourceText,
+      sourceText: displaySourceText,
+      latestPositiveText,
+      latestNegativeText,
       isPain: false,
     })
   );
@@ -6709,6 +7001,7 @@ async function buildOperationalSignalDisplayEvidenceMap(input: {
             signal,
             workouts,
             asOfDate: input.asOfDate,
+            observations,
           });
           const proposal = evaluateOperationalSignalLifecycle(lifecycleInput);
           const cleanRunningCompletionCount = countCleanOperationalSignalRunningCompletions({
@@ -6726,8 +7019,30 @@ async function buildOperationalSignalDisplayEvidenceMap(input: {
             asOfDate: input.asOfDate,
             cleanRunningCompletionCount,
           });
+          const source = findOperationalSignalSourceObservation({ signal, observations });
           evidence.set(signal.id, {
-            source: findOperationalSignalSourceObservation({ signal, observations }),
+            source,
+            latestRelevant: findLatestOperationalSignalObservation({
+              signal,
+              observations,
+              predicate: (observation) => isOperationalRelevantObservation({ signal, observation }),
+              afterIso: shiftIsoDateTimeByHours(signal.createdAt, -48),
+            }),
+            latestNegative: findLatestOperationalSignalObservation({
+              signal,
+              observations,
+              predicate: isOperationalNegativeObservation,
+            }),
+            latestPositive: findLatestOperationalSignalObservation({
+              signal,
+              observations,
+              predicate: isOperationalPositiveObservation,
+            }),
+            latestAgreement: findLatestOperationalSignalObservation({
+              signal,
+              observations,
+              predicate: isOperationalAgreementObservation,
+            }),
             completion: {
               latestCacheScannedAt,
               latestCompletionAfterOpen: lifecycleInput.latestTpCompletionAfterOpen ?? null,
@@ -7087,10 +7402,13 @@ function buildOperationalSignalItemFromSignal(input: {
 }): TrainingPeaksOperationalSignalsItem {
   const { signal, studentNameById, asOfDate } = input;
   const sourceText = input.displayEvidence?.source?.textPreview?.replace(/\s+/g, " ").trim() ?? null;
+  const latestText = input.displayEvidence?.latestRelevant?.textPreview?.replace(/\s+/g, " ").trim() ?? null;
+  const semanticEvidenceText =
+    latestText && latestText !== sourceText ? normalizeOperationalSignalSemanticText([sourceText, latestText]) : sourceText;
   const semantics = resolveOperationalSignalDisplaySemantics({
     signal,
     effective: resolveEffectiveOperationalSignalForDisplay(signal),
-    sourceText,
+    sourceText: semanticEvidenceText,
   });
   const effective = semantics.effective;
   const followUp = normalizeOperationalSignalFollowUp(signal.metadata, {
@@ -7300,7 +7618,7 @@ function buildOperationalSignalItemFromSignal(input: {
         hiddenReason: "expired_schedule_signal",
       };
     }
-    if (shouldHideNutritionOnlyScheduleSignal({ signal, effective, sourceText })) {
+    if (shouldHideNutritionOnlyScheduleSignal({ signal, effective, sourceText: semanticEvidenceText })) {
       return {
         signalId: signal.id,
         studentId: signal.studentId,

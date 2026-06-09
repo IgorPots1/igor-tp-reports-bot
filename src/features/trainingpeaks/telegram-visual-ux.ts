@@ -98,7 +98,16 @@ export function formatOperationalSignalTelegramLine(
   studentName: string,
   signalText: string
 ): string {
-  return formatTelegramBulletCard(studentName, splitCoachFacingDenseText(signalText));
+  const detailLines = splitCoachFacingDenseText(signalText);
+  const shouldAddInnerSpacing =
+    detailLines.length >= 4 &&
+    detailLines.some((line) => line.startsWith("источник:")) &&
+    detailLines.some((line) => line.startsWith("подтверждение:") || line.startsWith("что сделать:"));
+  if (!shouldAddInnerSpacing) {
+    return formatTelegramBulletCard(studentName, detailLines);
+  }
+  const details = detailLines.map((line) => `${TELEGRAM_CARD_INDENT}${line}`).join("\n\n");
+  return details.length > 0 ? `• ${studentName}\n${details}` : `• ${studentName}`;
 }
 
 export function formatAttentionSignalTelegramLine(studentName: string | null, reason: string): string {
