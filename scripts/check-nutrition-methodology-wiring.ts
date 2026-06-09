@@ -19,6 +19,7 @@ assert.match(pageSource, /weeklyNutritionSummary\.one_focus/, "UI must read one_
 assert.match(pageSource, /weeklyNutritionSummary\.methodology_signals/, "UI must read methodology_signals from saved nutritionSummary");
 assert.match(pageSource, /weeklyNutritionSummary\.bodyweight_kg/, "UI must read bodyweight_kg from saved nutritionSummary");
 assert.match(pageSource, /weeklyNutritionSummary\.carb_progression_strategy/, "UI must read carb_progression_strategy from saved nutritionSummary");
+assert.match(pageSource, /formatNutritionTpNextWeekContextLine/, "UI must show saved review TP next-week context on plan card");
 assert.match(pageSource, /Вес не задан — расчёт г\/кг и белок достаточный недоступны\./, "UI must show missing weight guidance");
 assert.match(pageSource, /<details>[\s\S]*Technical JSON/, "technical JSON should be collapsed");
 assert.match(pageSource, /<details>[\s\S]*Safety JSON/, "safety JSON should be collapsed");

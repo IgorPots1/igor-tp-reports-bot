@@ -301,7 +301,7 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
       id: input.sourceAnalysis.id,
       weekFrom: input.sourceAnalysis.weekFrom,
       weekTo: input.sourceAnalysis.weekTo,
-      sourceReportId: input.sourceReportId ?? input.sourceAnalysis.reportId,
+      sourceReportId: input.sourceAnalysis.reportId ?? input.sourceReportId ?? null,
       generationMode: toStringOrNull(nutritionSummary.generation_mode),
       promptVersion: toStringOrNull(nutritionSummary.prompt_version),
       coachSummaryText: toStringOrNull(nutritionSummary.coach_summary_text),
@@ -667,10 +667,7 @@ export async function generateAndSaveNutritionWeeklyPlan(input: {
   if (sourceAnalysis.studentId !== input.studentId) {
     throw new Error("Source weekly analysis does not belong to the selected student.");
   }
-  const resolvedReportId = input.sourceReportId ?? sourceAnalysis.reportId;
-  if (input.sourceReportId && sourceAnalysis.reportId && input.sourceReportId !== sourceAnalysis.reportId) {
-    throw new Error("Source report id does not match the selected weekly analysis.");
-  }
+  const resolvedReportId = sourceAnalysis.reportId ?? input.sourceReportId ?? null;
 
   const facts = await buildNutritionWeeklyPlanFacts({
     studentId: input.studentId,

@@ -384,6 +384,46 @@ export function formatNutritionTpCacheNote(note: string): string {
   return note;
 }
 
+function countSavedTpNextWeekWorkouts(tpNextWeek: Record<string, unknown>): number {
+  const workouts = tpNextWeek.workouts;
+  if (Array.isArray(workouts)) {
+    return workouts.length;
+  }
+  if (typeof tpNextWeek.plannedSessions === "number") {
+    return tpNextWeek.plannedSessions;
+  }
+  if (typeof tpNextWeek.totalSessions === "number") {
+    return tpNextWeek.totalSessions;
+  }
+  return 0;
+}
+
+function countSavedTpNextWeekKeyWorkouts(tpNextWeek: Record<string, unknown>): number {
+  const keyWorkouts = tpNextWeek.keyWorkouts;
+  return Array.isArray(keyWorkouts) ? keyWorkouts.length : 0;
+}
+
+export function formatNutritionTpNextWeekContextLine(tpNextWeek: Record<string, unknown> | null | undefined): string {
+  if (!tpNextWeek || Object.keys(tpNextWeek).length === 0) {
+    return "TrainingPeaks: контекст не сохранён в обзоре, фокус будет общий";
+  }
+  const cacheStatus = typeof tpNextWeek.cacheStatus === "string" ? tpNextWeek.cacheStatus : "unknown";
+  const workoutCount = countSavedTpNextWeekWorkouts(tpNextWeek);
+  const keyWorkoutCount = countSavedTpNextWeekKeyWorkouts(tpNextWeek);
+
+  if (cacheStatus === "empty" || workoutCount === 0) {
+    return "TrainingPeaks: тренировок на следующую неделю не найдено";
+  }
+  if (cacheStatus === "stale") {
+    return `TrainingPeaks: cache устарел · ${workoutCount} тренировки`;
+  }
+  if (cacheStatus !== "ok") {
+    return "TrainingPeaks: контекст недоступен";
+  }
+  const keyPart = keyWorkoutCount > 0 ? ` · ключевые: ${keyWorkoutCount}` : "";
+  return `TrainingPeaks: ${workoutCount} тренировки${keyPart}`;
+}
+
 export function formatNutritionDoNotSendReason(reason: string): string {
   if (reason.startsWith("manual_review_required:")) {
     const flag = reason.slice("manual_review_required:".length);

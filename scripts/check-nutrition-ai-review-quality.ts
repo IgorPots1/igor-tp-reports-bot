@@ -105,6 +105,8 @@ async function run(): Promise<void> {
   assert.match(athleteDraft.toLowerCase(), /интервал|длитель/, "athlete draft should mention key sessions");
   assert.match(athleteDraft.toLowerCase(), /белк/, "athlete draft should mention protein status");
   assert.match(athleteDraft.toLowerCase(), /углевод|энерги/, "athlete draft should explain carbs/energy relevance");
+  assert.match(athleteDraft, /\d+\s*ккал|\d+\s*г\s*углевод/, "athlete draft should include day-level numbers when fallback is used");
+  assert.match(athleteDraft, /\d{2}\.\d{2}/, "athlete draft should include day-level dates when fallback is used");
   assert.match(athleteDraft.toLowerCase(), /постеп|не\s+резк|небольш/, "athlete draft should recommend gradual step");
   assert.doesNotMatch(athleteDraft, /[A-Za-z]{3,}/, "athlete draft should avoid English");
   assert.doesNotMatch(athleteDraft.toLowerCase(), /\blong_run_underfueling\b|\bsmall_step\b|\bparsed_days\b/, "athlete draft should avoid enum labels");

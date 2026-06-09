@@ -473,6 +473,7 @@ export async function generateNutritionWeeklyPlanAction(formData: FormData): Pro
   const weekFrom = getRequiredFormValue(formData, "weekFrom");
   const weekTo = getRequiredFormValue(formData, "weekTo");
   const sourceAnalysisId = getRequiredFormValue(formData, "sourceAnalysisId");
+  const sourceReportId = getOptionalFormValue(formData, "sourceReportId");
   const reportId = getOptionalFormValue(formData, "reportId");
   const redirectTo = getRequiredFormValue(formData, "redirectTo");
   const requestedModeRaw = getOptionalFormValue(formData, "requestedMode");
@@ -483,7 +484,7 @@ export async function generateNutritionWeeklyPlanAction(formData: FormData): Pro
     const plan = await generateAndSaveNutritionWeeklyPlan({
       studentId,
       sourceAnalysisId,
-      sourceReportId: reportId,
+      sourceReportId: sourceReportId ?? undefined,
       requestedMode,
     });
     revalidateNutritionPaths(studentId);

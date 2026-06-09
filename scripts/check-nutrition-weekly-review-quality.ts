@@ -6,6 +6,10 @@ const root = process.cwd();
 
 const draftGenerator = readFileSync(join(root, "src/features/nutrition/draft-generator.ts"), "utf8");
 assert.match(draftGenerator, /day_by_day_training_aware_analysis/, "weekly generator must include day-by-day methodology guardrail");
+assert.match(draftGenerator, /detailed_day_level_athlete_draft/, "weekly generator must require detailed day-level athlete draft");
+assert.match(draftGenerator, /buildNutritionDailyFactsForNarrative/, "weekly generator must enrich daily facts for AI");
+assert.match(draftGenerator, /no_generic_athlete_draft_when_daily_facts_exist/, "weekly generator must ban generic-only athlete draft");
+assert.match(draftGenerator, /athlete_message_draft must include 3-7 day-level observations/, "AI prompt must require day-level athlete draft");
 assert.match(draftGenerator, /no_hallucinated_workouts_or_gels/, "weekly generator must ban workout/fueling hallucinations");
 assert.match(draftGenerator, /carb_reference_not_prescriptive/, "weekly generator must keep carb band non-prescriptive");
 assert.match(draftGenerator, /small_step_progression_if_low_carbs/, "weekly generator must enforce gradual progression");
@@ -37,7 +41,7 @@ assert.match(studentPage, /Вес не задан — расчёт г\/кг и �
 assert.match(studentPage, /Safety JSON/, "UI should keep raw safety JSON collapsed");
 assert.doesNotMatch(studentPage, /JSON\.stringify\(card\.weeklyAnalysis\.nutritionSummary,\s*null,\s*2\)/, "raw JSON cannot be primary UI");
 assert.match(studentUi, /Сгенерировано шаблоном, лучше проверить текст вручную\./, "UI should warn when fallback text is shown");
-assert.match(studentPage, /Черновик для ученика/, "UI should keep athlete draft first");
+assert.match(studentPage, /Черновик ученику — разбор прошлой недели/, "UI should keep review athlete draft heading");
 assert.match(studentPage, /Метрики недели/, "UI should keep metrics section");
 
 console.log("PASS check-nutrition-weekly-review-quality");

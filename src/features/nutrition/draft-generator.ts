@@ -201,15 +201,197 @@ function buildWorkoutTitleMap(context: NutritionStudentContext): Map<string, str
   return map;
 }
 
+function formatTrainingTypeRu(type: string): string {
+  switch (type) {
+    case "long_run":
+      return "длительная";
+    case "intervals":
+      return "интервалы";
+    case "tempo":
+      return "темпо";
+    case "race":
+      return "гонка";
+    case "easy":
+      return "лёгкая тренировка";
+    case "strength":
+      return "силовая";
+    case "rest":
+      return "отдых";
+    default:
+      return "тренировка";
+  }
+}
+
+function mapNutritionStatusToAssessment(status: string): string {
+  switch (status) {
+    case "low_for_load":
+      return "low_carbs_or_energy";
+    case "moderate_for_load":
+      return "recovery_support";
+    case "rest_ok":
+    case "ample":
+    case "adequate":
+      return "ok";
+    case "missing":
+      return "missing_data";
+    case "suspect":
+      return "suspect";
+    default:
+      return "ok";
+  }
+}
+
+function buildCarbReferenceHint(input: {
+  trainingType: string;
+  bodyweightKg: number | null;
+}): string | null {
+  if (!input.bodyweightKg || input.bodyweightKg <= 0) {
+    return null;
+  }
+  if (input.trainingType === "long_run" || input.trainingType === "race") {
+    return "ориентир для дня длительной/гонки: выше обычного, без жёсткой цифры ученику";
+  }
+  if (input.trainingType === "intervals" || input.trainingType === "tempo") {
+    return "ориентир для ключевой работы: углеводы выше дня отдыха";
+  }
+  if (input.trainingType === "rest") {
+    return "ориентир для отдыха: умеренно, без занижения перед ключевым днём";
+  }
+  return "ориентир по нагрузке: сравнение с типом дня, без жёсткой нормы";
+}
+
+function buildCoachReasonForDay(day: Record<string, unknown>): string {
+  const findings = Array.isArray(day.findings) ? day.findings.filter((item): item is string => typeof item === "string") : [];
+  if (findings.length > 0) {
+    return findings[0] ?? "Явных несоответствий нагрузки и питания в этот день не видно.";
+  }
+  const status = typeof day.nutritionStatus === "string" ? day.nutritionStatus : "adequate";
+  if (status === "low_for_load") {
+    return "Питание выглядит ниже потребности для нагрузки этого дня.";
+  }
+  if (status === "moderate_for_load") {
+    return "После нагрузки восстановление можно усилить.";
+  }
+  if (status === "ample" || status === "adequate" || status === "rest_ok") {
+    return "Питание выглядит спокойно относительно нагрузки.";
+  }
+  return "Данных или контекста недостаточно для точного вывода.";
+}
+
+function buildNutritionDailyFactsForNarrative(input: {
+  context: NutritionStudentContext;
+  dailyAnalysis: Array<Record<string, unknown>>;
+}): Array<Record<string, unknown>> {
+  const workoutTitles = buildWorkoutTitleMap(input.context);
+  return input.dailyAnalysis
+    .filter((day) => typeof day.date === "string")
+    .map((day) => {
+      const date = day.date as string;
+      const trainingType = typeof day.trainingType === "string" ? day.trainingType : "rest";
+      const previousDayTrainingType =
+        typeof day.previousDayTrainingType === "string" ? day.previousDayTrainingType : null;
+      const nextDayTrainingType = typeof day.nextDayTrainingType === "string" ? day.nextDayTrainingType : null;
+      const nutritionStatus = typeof day.nutritionStatus === "string" ? day.nutritionStatus : "adequate";
+      const relevance = typeof day.relevance === "string" ? day.relevance : "low";
+      const bodyweightKg = typeof day.bodyweightKg === "number" ? day.bodyweightKg : input.context.currentWeightKg;
+      const isHardSession =
+        trainingType === "intervals" || trainingType === "tempo" || trainingType === "race" || trainingType === "strength";
+      const isLongRun = trainingType === "long_run";
+      const isRestDay = trainingType === "rest";
+      const dayBeforeKeyWorkout =
+        nextDayTrainingType === "long_run" ||
+        nextDayTrainingType === "intervals" ||
+        nextDayTrainingType === "tempo" ||
+        nextDayTrainingType === "race";
+      const dayAfterKeyWorkout =
+        previousDayTrainingType === "long_run" ||
+        previousDayTrainingType === "intervals" ||
+        previousDayTrainingType === "tempo" ||
+        previousDayTrainingType === "race";
+      return {
+        date,
+        caloriesActual: typeof day.kcal === "number" ? day.kcal : null,
+        caloriesTargetOrEstimate: null,
+        proteinActual: typeof day.proteinG === "number" ? day.proteinG : null,
+        fatActual: typeof day.fatG === "number" ? day.fatG : null,
+        carbsActual: typeof day.carbsG === "number" ? day.carbsG : null,
+        carbsTargetOrRange: buildCarbReferenceHint({ trainingType, bodyweightKg }),
+        carbsPerKg: typeof day.carbsGPerKg === "number" ? day.carbsGPerKg : null,
+        proteinPerKg: typeof day.proteinGPerKg === "number" ? day.proteinGPerKg : null,
+        workoutTitle: workoutTitles.get(date) ?? null,
+        workoutType: trainingType,
+        workoutIntensity: isLongRun || isHardSession ? "high" : isRestDay ? "rest" : "moderate",
+        isRestDay,
+        isHardSession,
+        isLongRun,
+        dayBeforeKeyWorkout,
+        dayAfterKeyWorkout,
+        assessment: mapNutritionStatusToAssessment(nutritionStatus),
+        relevance,
+        coachReason: buildCoachReasonForDay(day),
+      };
+    });
+}
+
+function buildDetailedDayObservationLines(input: {
+  context: NutritionStudentContext;
+  dailyAnalysis: Array<Record<string, unknown>>;
+  maxDays?: number;
+}): string[] {
+  const dailyFacts = buildNutritionDailyFactsForNarrative({
+    context: input.context,
+    dailyAnalysis: input.dailyAnalysis,
+  });
+  const prioritized = [...dailyFacts].sort((left, right) => {
+    const leftScore =
+      left.relevance === "high" ? 3 : left.relevance === "medium" ? 2 : left.isRestDay ? 0 : 1;
+    const rightScore =
+      right.relevance === "high" ? 3 : right.relevance === "medium" ? 2 : right.isRestDay ? 0 : 1;
+    if (rightScore !== leftScore) {
+      return rightScore - leftScore;
+    }
+    return String(left.date).localeCompare(String(right.date));
+  });
+  const selected =
+    prioritized.filter((day) => day.relevance === "high" || day.relevance === "medium").length >= 3
+      ? prioritized.filter((day) => day.relevance === "high" || day.relevance === "medium" || !day.isRestDay)
+      : prioritized;
+  return selected.slice(0, input.maxDays ?? 7).map((day) => {
+    const dateLabel = formatDateRu(String(day.date));
+    const workoutLabel =
+      typeof day.workoutTitle === "string" &&
+      day.workoutTitle.trim() &&
+      !/[A-Za-z]{3,}/.test(day.workoutTitle)
+        ? day.workoutTitle
+        : formatTrainingTypeRu(String(day.workoutType));
+    const kcalPart = typeof day.caloriesActual === "number" ? `${day.caloriesActual} ккал` : "ккал н/д";
+    const carbsPart = typeof day.carbsActual === "number" ? `${day.carbsActual} г углеводов` : "углеводы н/д";
+    const assessment = String(day.assessment);
+    let verdict = "по питанию всё спокойно";
+    if (assessment === "low_carbs_or_energy") {
+      verdict = "энергии/углеводов маловато для нагрузки";
+    } else if (assessment === "recovery_support") {
+      verdict = "можно усилить восстановление";
+    } else if (day.isLongRun || day.isHardSession) {
+      verdict = "питание ближе к норме для нагрузки";
+    } else if (day.isRestDay) {
+      verdict = "по калориям и углеводам всё спокойно";
+    }
+    if (day.dayBeforeKeyWorkout && assessment === "low_carbs_or_energy") {
+      verdict = "углеводы просели перед ключевой тренировкой";
+    }
+    return `${dateLabel} — ${workoutLabel}: ${kcalPart}, ${carbsPart}; ${verdict}.`;
+  });
+}
+
 function buildFallbackAthleteDraft(input: {
   context: NutritionStudentContext;
-  coachSummaryText: string;
-  dayByDayText: string;
+  dailyAnalysis: Array<Record<string, unknown>>;
   mainFocusRu: string;
   proteinSufficient: boolean;
   progressionStrategy: CarbProgressionStrategy;
 }): string {
-  const { context, mainFocusRu, proteinSufficient, progressionStrategy, dayByDayText } = input;
+  const { context, mainFocusRu, proteinSufficient, progressionStrategy } = input;
   const profile = context.resolvedCommunicationProfile;
   const address = buildNutritionDraftAddress(profile.formality);
   const defaultGreeting = profile.formality === "vy" ? "Здравствуйте!" : "Привет!";
@@ -223,20 +405,22 @@ function buildFallbackAthleteDraft(input: {
     .trim()
     .replace(/\.$/, "");
   const focusLine = `${address.lead}: ${normalizedFocus.toLowerCase()}.`;
-  const dayByDayCompact = dayByDayText
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .filter((line) => !/[A-Za-z]{2,}/.test(line))
-    .slice(0, 3)
-    .join(" ");
+  const dayLines = buildDetailedDayObservationLines({
+    context,
+    dailyAnalysis: input.dailyAnalysis,
+    maxDays: 7,
+  });
   const noJumpLine = address.noSharpJumps;
   const profileNotes = profile.notes ? `\n\n${profile.notes}` : "";
+  const intro =
+    profile.formality === "vy"
+      ? "По неделе в целом питание выглядит рабочим, но есть точки, где нагрузка и питание расходились."
+      : "По неделе в целом питание нормальное, но есть моменты, где нагрузка и питание расходились.";
   const lines = [
     greeting.trim(),
-    "Посмотрел(а) недельный отчёт и сопоставил(а) его с тренировками.",
+    intro,
     proteinLine,
-    dayByDayCompact || null,
+    dayLines.length > 0 ? dayLines.join("\n") : null,
     focusLine,
     stepText,
     noJumpLine,
@@ -287,34 +471,15 @@ function buildFallbackDayByDay(input: {
   context: NutritionStudentContext;
   dailyAnalysis: Array<Record<string, unknown>>;
 }): string {
-  const workoutTitles = buildWorkoutTitleMap(input.context);
-  const normalized = input.dailyAnalysis
-    .map((day) => {
-      const date = typeof day.date === "string" ? day.date : null;
-      if (!date) {
-        return null;
-      }
-      const trainingType = typeof day.trainingType === "string" ? day.trainingType : "rest";
-      const findings = Array.isArray(day.findings) ? day.findings.filter((f): f is string => typeof f === "string") : [];
-      const relevance = typeof day.relevance === "string" ? day.relevance : "low";
-      const title = workoutTitles.get(date) ?? null;
-      return { date, trainingType, findings, relevance, title };
-    })
-    .filter((day): day is NonNullable<typeof day> => Boolean(day));
-  const prioritized = normalized
-    .filter((day) => day.relevance === "high" || day.relevance === "medium" || day.trainingType !== "rest")
-    .slice(0, 5);
-  if (prioritized.length === 0) {
+  const lines = buildDetailedDayObservationLines({
+    context: input.context,
+    dailyAnalysis: input.dailyAnalysis,
+    maxDays: 7,
+  });
+  if (lines.length === 0) {
     return "По дням выраженных сигналов не выделилось: питание выглядит относительно ровно, но стоит продолжать наблюдать связку с нагрузкой.";
   }
-  return prioritized
-    .map((day) => {
-      const dateLabel = formatDateRu(day.date);
-      const trainingLabel = day.title ?? day.trainingType.replaceAll("_", " ");
-      const finding = day.findings[0] ?? "Явных несоответствий нагрузки и питания в этот день не видно.";
-      return `${dateLabel} · ${trainingLabel}\n${finding}`;
-    })
-    .join("\n\n");
+  return lines.join("\n");
 }
 
 async function generateNutritionWeeklyReviewNarrative(input: {
@@ -348,8 +513,12 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "Inputs are facts. Do not recalculate or invent numbers. Use methodology facts as the single source of truth.",
     "Return strict JSON only with keys: coach_summary_text, day_by_day_analysis_text, athlete_message_draft, quality_notes, do_not_send_reasons.",
     "coach_summary_text must be concise and useful for a coach.",
-    "day_by_day_analysis_text must be readable prose and include training-nutrition links day by day.",
+    "day_by_day_analysis_text must be readable prose and include training-nutrition links day by day with actual kcal/carbs numbers when available.",
     "athlete_message_draft must be Russian only, no English.",
+    "athlete_message_draft must include 3-7 day-level observations when daily facts exist; do not stay generic if day facts are present.",
+    "athlete_message_draft should mention actual kcal and carbs where useful and connect each day to workout/rest context.",
+    "athlete_message_draft should end with one simple focus for next behavior, not a menu or strict diet.",
+    "Do not write 'ниже нормы' unless facts include assessment/target/range.",
     "Use the required ты/вы form from formality instruction.",
     "Mention athlete name if available.",
     "Mention training only if TP past-week context exists in facts.",
@@ -371,6 +540,10 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     `Formality instruction: ${formalityInstruction}`,
   ].join("\n");
 
+  const dailyFacts = buildNutritionDailyFactsForNarrative({
+    context: input.context,
+    dailyAnalysis: input.dailyAnalysis,
+  });
   const factsPayload = {
     student: {
       name: input.context.studentName,
@@ -381,7 +554,8 @@ async function generateNutritionWeeklyReviewNarrative(input: {
       next_week: input.context.tpNextWeek,
     },
     data_quality: input.context.dataQuality,
-    daily_analysis: input.dailyAnalysis,
+    daily_analysis: dailyFacts,
+    daily_analysis_raw: input.dailyAnalysis,
     training_nutrition_links: input.trainingNutritionLinks,
     one_focus: input.oneFocus,
     methodology_signals: input.methodologySignals,
@@ -515,8 +689,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
       ? null
       : buildFallbackAthleteDraft({
           context,
-          coachSummaryText: fallbackCoachSummary,
-          dayByDayText: fallbackDayByDay,
+          dailyAnalysis: methodology.dailyAnalysis as Array<Record<string, unknown>>,
           mainFocusRu: selectedFocus.statementRu,
           proteinSufficient: methodology.proteinSufficient,
           progressionStrategy: selectedFocus.progressionStrategy,
@@ -568,6 +741,8 @@ export async function generateNutritionWeeklyAnalysis(input: {
       "resolved_formality_mandatory",
       "block_draft_on_hard_safety",
       "day_by_day_training_aware_analysis",
+      "detailed_day_level_athlete_draft",
+      "no_generic_athlete_draft_when_daily_facts_exist",
       "no_hallucinated_workouts_or_gels",
       "carb_reference_not_prescriptive",
       "small_step_progression_if_low_carbs",

@@ -21,7 +21,26 @@ assert.match(studentPage, /listNutritionWeeklyPlansForStudentWeek/, "student pag
 assert.match(studentPage, /planIdFromQuery/, "student page must read planId search param");
 assert.match(studentPage, /calculateNutritionPlanWeek/, "student page must compute plan week from review");
 
-assert.match(mainUi, /Фокус питания на следующую неделю/, "main UI must include weekly plan card title");
+assert.match(mainUi, /name="sourceReportId"/, "plan form must pass sourceReportId from selected review");
+assert.match(
+  mainUi,
+  /Выбранный отчёт отличается от отчёта, по которому создан обзор/,
+  "plan card must explain report/review mismatch without blocking"
+);
+assert.match(mainUi, /formatNutritionTpNextWeekContextLine/, "plan card must show saved review TP next-week context");
+assert.match(mainUi, /Черновик ученику — фокус на следующую неделю/, "plan card must distinguish plan draft heading");
+
+const reviewDraftStart = mainUi.indexOf("Черновик ученику — разбор прошлой недели");
+const planCardStart = mainUi.indexOf("Фокус питания на следующую неделю");
+assert.ok(reviewDraftStart >= 0, "main UI must include review draft heading");
+assert.ok(planCardStart >= 0, "main UI must include weekly plan card title");
+
+assert.match(actions, /getOptionalFormValue\(formData,\s*"sourceReportId"\)/, "plan action must read sourceReportId");
+assert.doesNotMatch(
+  actions,
+  /sourceReportId:\s*reportId/,
+  "plan action must not pass URL reportId as sourceReportId"
+);
 assert.match(mainUi, /generateNutritionWeeklyPlanAction/, "main UI must use generateNutritionWeeklyPlanAction");
 assert.match(mainUi, /NutritionDraftCopyBlock/, "main UI must use NutritionDraftCopyBlock for plan draft");
 assert.match(mainUi, /Сгенерировать фокус/, "main UI must include generate focus button");
@@ -44,8 +63,7 @@ assert.match(
   "generate UI must be gated on selected review"
 );
 
-const planCardStart = mainUi.indexOf("Фокус питания на следующую неделю");
-const planCardEnd = mainUi.indexOf("Черновик для ученика");
+const planCardEnd = mainUi.indexOf("Черновик ученику — разбор прошлой недели");
 const planCardUi =
   planCardStart >= 0 && planCardEnd > planCardStart ? mainUi.slice(planCardStart, planCardEnd) : mainUi;
 assert.doesNotMatch(planCardUi, /plan_summary|generation_mode/, "plan card must not expose raw plan field names");

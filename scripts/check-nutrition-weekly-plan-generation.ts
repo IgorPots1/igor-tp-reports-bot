@@ -88,7 +88,28 @@ const facts = buildNutritionWeeklyPlanFactsFromSources({
 });
 assert.equal(facts.planWeek.from, "2026-06-08");
 assert.equal(facts.planWeek.to, "2026-06-14");
+assert.equal(facts.sourceReview.sourceReportId, "report-fixture-1");
 assert.equal(facts.nextWeekTraining.workouts.length, 2);
+
+const mismatchFacts = buildNutritionWeeklyPlanFactsFromSources({
+  studentId: "student-uuid-1",
+  studentName: "Nadezhda",
+  formality: "ty",
+  weightKg: 56,
+  sourceReportId: "other-report-from-url",
+  sourceAnalysis: buildFixtureAnalysis({ reportId: "report-fixture-1" }),
+});
+assert.equal(
+  mismatchFacts.sourceReview.sourceReportId,
+  "report-fixture-1",
+  "analysis reportId must win over URL reportId"
+);
+
+assert.doesNotMatch(
+  generatorSource,
+  /Source report id does not match the selected weekly analysis/,
+  "generator must not hard-fail on URL/report mismatch when review has reportId"
+);
 assert.equal(facts.nextWeekTraining.status, "available");
 
 const generated = generateNutritionWeeklyPlanFallback(facts);

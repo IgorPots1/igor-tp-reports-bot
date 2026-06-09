@@ -40,6 +40,7 @@ import {
   formatNutritionTone,
   formatNutritionTpCacheNote,
   formatNutritionTpCacheStatus,
+  formatNutritionTpNextWeekContextLine,
   NUTRITION_CONTEXT_ITEM_TYPE_LABELS,
   pickDefaultNutritionReport,
 } from "@/features/nutrition/admin-labels";
@@ -129,19 +130,6 @@ function formatWeekdayRu(isoDate: string): string {
   }
   const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12, 0, 0));
   return weekdays[date.getUTCDay()] ?? "—";
-}
-
-function formatCardTpNextWeekLine(tpNextWeek: {
-  cacheStatus: string;
-  plannedSessions: number;
-  keyWorkouts: Array<{ type: string }>;
-}): string {
-  const status = tpNextWeek.cacheStatus === "ok" ? "available" : tpNextWeek.cacheStatus;
-  return formatPlanTpContextLine({
-    status,
-    workoutCount: tpNextWeek.plannedSessions,
-    keyWorkouts: tpNextWeek.keyWorkouts,
-  });
 }
 
 function formatPlanTpContextLine(trainingSnapshot: Record<string, unknown>): string {
@@ -379,6 +367,11 @@ export default async function CoachOsNutritionStudentCardPage({
   const visibleReports = recentReports.slice(0, 5);
   const hiddenReportCount = Math.max(0, recentReports.length - visibleReports.length);
   const reviewBlockedSafety = card.weeklyAnalysis?.status === "blocked_safety";
+  const reviewSourceReportId = card.weeklyAnalysis?.reportId ?? null;
+  const reviewReportMismatch = Boolean(
+    card.weeklyAnalysis && selectedReportId && reviewSourceReportId && selectedReportId !== reviewSourceReportId
+  );
+  const savedReviewTpNextWeek = card.weeklyAnalysis ? asObject(card.weeklyAnalysis.tpNextWeekContext) : {};
   const displayPlanSummary = displayPlan ? asObject(displayPlan.planSummary) : {};
   const displayPlanTrainingSnapshot = displayPlan ? asObject(displayPlan.trainingContextSnapshot) : {};
   const displayPlanFocusText = getPlanFocusText(displayPlanSummary);
@@ -580,6 +573,12 @@ export default async function CoachOsNutritionStudentCardPage({
           ) : (
             <>
               {planIdWarning ? <p className="admin-muted admin-nutrition-helper">{planIdWarning}</p> : null}
+              {reviewReportMismatch ? (
+                <p className="admin-muted admin-nutrition-helper">
+                  Выбранный отчёт отличается от отчёта, по которому создан обзор. Фокус будет построен по сохранённому
+                  обзору.
+                </p>
+              ) : null}
               {planWeek ? (
                 <p className="admin-nutrition-inline-meta">
                   Неделя: {formatNutritionPlanWeekRange(planWeek.from, planWeek.to)}
@@ -600,7 +599,7 @@ export default async function CoachOsNutritionStudentCardPage({
               <p className="admin-nutrition-inline-meta admin-nutrition-helper">
                 {displayPlan
                   ? formatPlanTpContextLine(displayPlanTrainingSnapshot)
-                  : formatCardTpNextWeekLine(card.context.tpNextWeek)}
+                  : formatNutritionTpNextWeekContextLine(savedReviewTpNextWeek)}
               </p>
 
               {reviewBlockedSafety ? (
@@ -616,6 +615,9 @@ export default async function CoachOsNutritionStudentCardPage({
                 <input type="hidden" name="weekTo" value={weekTo} />
                 <input type="hidden" name="sourceAnalysisId" value={card.weeklyAnalysis.id} />
                 <input type="hidden" name="redirectTo" value={studentCardPath} />
+                {reviewSourceReportId ? (
+                  <input type="hidden" name="sourceReportId" value={reviewSourceReportId} />
+                ) : null}
                 {selectedReportId ? <input type="hidden" name="reportId" value={selectedReportId} /> : null}
                 <FormActionButton className="admin-button" pendingText="Генерирую…">
                   Сгенерировать фокус
@@ -686,7 +688,7 @@ export default async function CoachOsNutritionStudentCardPage({
 
                   {displayPlan.athleteMessageDraft ? (
                     <>
-                      <h4>Черновик ученику по фокусу недели</h4>
+                      <h4>Черновик ученику — фокус на следующую неделю</h4>
                       <NutritionDraftCopyBlock
                         draft={displayPlan.athleteMessageDraft}
                         generationMode={displayPlan.generationMode}
@@ -753,7 +755,7 @@ export default async function CoachOsNutritionStudentCardPage({
         </article>
 
         <article className="admin-card admin-card-compact admin-nutrition-card-wide">
-          <h3>Черновик для ученика</h3>
+          <h3>Черновик ученику — разбор прошлой недели</h3>
           {!card.weeklyAnalysis ? (
             <p className="admin-muted">Обзор ещё не сгенерирован.</p>
           ) : card.weeklyAnalysis.status === "blocked_safety" ? (
