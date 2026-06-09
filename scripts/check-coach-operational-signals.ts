@@ -1171,6 +1171,134 @@ async function run(): Promise<void> {
       },
     },
     {
+      name: "veronika-breakfast-run-reflection-not-schedule",
+      observation: mkObs(
+        "Привет )) я сегодня перед завтраком бегала) не могу понять как больше нравится 😆"
+      ),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        planned_training_dates: [],
+        unavailable_dates: [],
+      },
+    },
+    {
+      name: "anna-chernysheva-nail-trauma-pain-injury",
+      observation: mkObs(
+        "Игорь, здравствуй! Это боль и Соузы от обиды. Час назад врезалась дома в диван, часть ногтя оторвалась😭"
+      ),
+      expected: {
+        primary_bucket: "health_lifecycle_signal",
+        signal_type: "pain_injury",
+        should_create_memory: false,
+        should_create_case: true,
+        should_create_trainingpeaks_action: false,
+        activity_domain: "injury",
+        health_issue_kind: "pain_or_injury",
+        display_summary_includes: ["ноготь", "мешает ли бегу"],
+        latest_summary_not_includes: ["болеет"],
+      },
+    },
+    {
+      name: "finger-trauma-hit-pain-injury",
+      observation: mkObs("сильно ударила палец"),
+      expected: {
+        primary_bucket: "health_lifecycle_signal",
+        signal_type: "pain_injury",
+        should_create_memory: false,
+        should_create_case: true,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: "pain_or_injury",
+      },
+    },
+    {
+      name: "finger-trauma-bruise-pain-injury",
+      observation: mkObs("ушибла палец"),
+      expected: {
+        primary_bucket: "health_lifecycle_signal",
+        signal_type: "pain_injury",
+        should_create_memory: false,
+        should_create_case: true,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: "pain_or_injury",
+      },
+    },
+    {
+      name: "finger-swollen-pain-injury",
+      observation: mkObs("палец опух и болит"),
+      expected: {
+        primary_bucket: "health_lifecycle_signal",
+        signal_type: "pain_injury",
+        should_create_memory: false,
+        should_create_case: true,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: "pain_or_injury",
+        display_summary_includes: ["палец"],
+      },
+    },
+    {
+      name: "figurative-bol-i-souzy-alone-not-injury",
+      observation: mkObs("это боль и Соузы от обиды"),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "schedule-unavailable-tomorrow-training",
+      observation: {
+        ...mkObs("завтра не смогу тренироваться"),
+        observedAt: "2026-06-09T10:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        unavailable_dates: ["2026-06-10"],
+        planned_training_dates: [],
+      },
+    },
+    {
+      name: "schedule-available-tomorrow-run",
+      observation: {
+        ...mkObs("завтра смогу побегать"),
+        observedAt: "2026-06-09T10:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        planned_training_dates: ["2026-06-10"],
+        unavailable_dates: [],
+        planning_status: "athlete_intends_to_train",
+      },
+    },
+    {
+      name: "schedule-wednesday-training-time-unavailable",
+      observation: {
+        ...mkObs("в среду не смогу найти время для тренировки"),
+        observedAt: "2026-06-09T10:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        unavailable_dates: ["2026-06-10"],
+      },
+    },
+    {
       name: "running-plan-tomorrow-explicit-run",
       observation: {
         ...mkObs("завтра планирую побегать"),

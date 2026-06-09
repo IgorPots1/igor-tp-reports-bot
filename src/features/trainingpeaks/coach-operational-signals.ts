@@ -202,6 +202,7 @@ const FIGURATIVE_HEALTH_PHRASES = [
   "момент слабости",
   "минутная слабость",
   "слабость была минутка",
+  "боль и соузы",
 ] as const;
 
 const ACTIVE_PAIN_SYMPTOM_CUES = [
@@ -335,6 +336,95 @@ function hasToken(text: string, token: string): boolean {
   return pattern.test(text);
 }
 
+function hasStandaloneTomorrowToken(text: string): boolean {
+  return /(?:^|[^\p{L}])завтра(?:[^\p{L}]|$)/iu.test(text);
+}
+
+function hasPositiveAbilityCue(text: string): boolean {
+  const stripped = text
+    .replace(/(?:^|[^\p{L}])не\s+могу(?:[^\p{L}]|$)/giu, " ")
+    .replace(/(?:^|[^\p{L}])не\s+смогу(?:[^\p{L}]|$)/giu, " ");
+  return hasToken(stripped, "смогу") || hasToken(stripped, "могу") || stripped.includes("смогу только");
+}
+
+const NON_TRAINING_INABILITY_PHRASES = [
+  "не могу понять",
+  "не могу решить",
+  "не могу выбрать",
+  "не могу определить",
+  "не смогу понять",
+  "не смогу решить",
+  "не смогу выбрать",
+] as const;
+
+const EXPLICIT_TRAINING_UNAVAILABILITY_CUES = [
+  "не смогу бегать",
+  "не могу бегать",
+  "не смогу побегать",
+  "не могу побегать",
+  "не смогу тренироваться",
+  "не могу тренироваться",
+  "не получится тренировка",
+  "не получится побегать",
+  "не найду время для тренировки",
+  "не побегу",
+  "не смогу убежать",
+  "не могу убежать",
+  "не смогла",
+  "не смог",
+  "не смогли",
+] as const;
+
+function hasTrainingUnavailabilityCue(text: string): boolean {
+  if (hasAny(text, EXPLICIT_TRAINING_UNAVAILABILITY_CUES)) {
+    return true;
+  }
+  if (!hasAny(text, ["не смогу", "не могу", "не получится", "недоступ"])) {
+    return false;
+  }
+  if (NON_TRAINING_INABILITY_PHRASES.some((phrase) => text.includes(phrase))) {
+    return false;
+  }
+  return hasRunningCue(text) || hasAny(text, ["трениров", "найду время"]);
+}
+
+function hasPastCompletedRunCue(text: string): boolean {
+  return /(?:^|[^\p{L}])(?:по|от|про)?бегал(?:а|и|о)?(?:[^\p{L}]|$)/iu.test(text);
+}
+
+function hasFutureRunAvailabilityCue(clause: string, globalRunningContext: boolean): boolean {
+  if (
+    hasAny(clause, [
+      "побегу",
+      "пробегу",
+      "планир",
+      "выйду на пробежку",
+      "выйти на пробежку",
+      "смогу побегать",
+      "могу побегать",
+      "смогу бегать",
+      "могу бегать",
+    ])
+  ) {
+    return true;
+  }
+  if (
+    hasStandaloneTomorrowToken(clause) &&
+    hasPositiveAbilityCue(clause) &&
+    (hasRunningCue(clause) || globalRunningContext)
+  ) {
+    return true;
+  }
+  if (hasStandaloneTomorrowToken(clause) && hasTrainingUnavailabilityCue(clause)) {
+    return true;
+  }
+  return false;
+}
+
+function isPastCompletedRunReflectionOnly(clause: string, globalRunningContext: boolean): boolean {
+  return hasPastCompletedRunCue(clause) && !hasFutureRunAvailabilityCue(clause, globalRunningContext);
+}
+
 function escapeRegexToken(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
@@ -381,14 +471,13 @@ function extractDays(text: string): string[] {
 }
 
 function hasTomorrowRunAvailabilityIntent(clause: string, globalRunningContext: boolean): boolean {
-  if (!clause.includes("завтра")) {
+  if (!hasStandaloneTomorrowToken(clause)) {
     return false;
   }
   if (/завтра\s+не|не\s+[^.!?;]{0,24}завтра/iu.test(clause)) {
     return false;
   }
-  const hasAbilityCue = hasToken(clause, "смогу") || hasToken(clause, "могу") || clause.includes("смогу только");
-  if (!hasAbilityCue) {
+  if (!hasPositiveAbilityCue(clause)) {
     return false;
   }
   return hasRunningCue(clause) || globalRunningContext;
@@ -421,13 +510,13 @@ export function extractDaysFromText(text: string): string[] {
 
 function parseRelativeDate(text: string, observedAt: string): string | null {
   const observed = parseIsoDateFallback(observedAt);
-  if (text.includes("завтра") || text.includes("с завтрашнего дня")) {
+  if (hasStandaloneTomorrowToken(text) || text.includes("с завтрашнего дня")) {
     return isoDate(addDays(observed, 1));
   }
-  if (text.includes("сегодня")) {
+  if (hasToken(text, "сегодня") || text.includes("сегодня")) {
     return isoDate(observed);
   }
-  if (text.includes("послезавтра")) {
+  if (hasToken(text, "послезавтра") || text.includes("послезавтра")) {
     return isoDate(addDays(observed, 2));
   }
   return null;
@@ -982,8 +1071,14 @@ function buildHealthSummary(input: {
 function buildPainInjuryCandidate(input: ObservationLike, text: string): OperationalSignalCandidate | null {
   const hasPainCue = hasActiveAny(text, ["болит", "болела", "боль", "тянет", "дискомфорт"]);
   const healthText = healthClassificationText(text);
-  const hasBodyCue = hasAny(healthText, PAIN_INJURY_BODY_CUES);
-  if (!hasPainCue || !hasBodyCue) {
+  const hasFingerNailCue = hasAny(healthText, PAIN_INJURY_FINGER_NAIL_CUES);
+  const hasHandCue = hasAny(healthText, PAIN_INJURY_HAND_CUES);
+  const hasStandardBodyCue = hasAny(healthText, PAIN_INJURY_BODY_CUES);
+  const hasTraumaCue = hasAny(healthText, TRAUMA_INJURY_CUES);
+  const hasTraumaInjury = hasTraumaCue && (hasFingerNailCue || hasHandCue || hasStandardBodyCue);
+  const hasPainBodyInjury =
+    hasPainCue && (hasStandardBodyCue || hasFingerNailCue || (hasHandCue && hasTraumaCue));
+  if (!hasTraumaInjury && !hasPainBodyInjury) {
     return null;
   }
   const payload = toDefaultPayload();
@@ -994,12 +1089,27 @@ function buildPainInjuryCandidate(input: ObservationLike, text: string): Operati
   payload.requires_coach_review = true;
   payload.visible_in_tp_signals = true;
   payload.health_issue_kind = "pain_or_injury";
-  payload.evidence_phrases = PAIN_INJURY_BODY_CUES.filter((cue) => text.includes(cue));
-  const base = payload.evidence_phrases.includes("надкостниц")
-    ? "боль / надкостница"
-    : payload.evidence_phrases.length > 0
-      ? `боль / ${payload.evidence_phrases[0]}`
-      : "боль / травма";
+  payload.evidence_phrases = [
+    ...TRAUMA_INJURY_CUES,
+    ...PAIN_INJURY_BODY_CUES,
+    ...PAIN_INJURY_FINGER_NAIL_CUES,
+    ...PAIN_INJURY_HAND_CUES,
+  ].filter((cue) => text.includes(cue));
+  let base: string;
+  const hasNailCue = hasAny(healthText, ["ногт", "ногтев"]);
+  if (hasNailCue && hasTraumaCue) {
+    base = "ноготь после удара/отрыва — уточнить, мешает ли бегу.";
+  } else if (hasFingerNailCue && hasPainCue && !hasNailCue) {
+    base = "боль / палец";
+  } else if (hasFingerNailCue && hasTraumaCue) {
+    base = "палец после удара/ушиба — уточнить, мешает ли бегу";
+  } else if (payload.evidence_phrases.includes("надкостниц")) {
+    base = "боль / надкостница";
+  } else if (payload.evidence_phrases.length > 0) {
+    base = `боль / ${payload.evidence_phrases[0]}`;
+  } else {
+    base = "боль / травма";
+  }
   const isPastOrResolving =
     hasActiveAny(text, ["болела"]) || hasAny(text, ["был дискомфорт", "было"]);
   payload.display_summary = isPastOrResolving ? `${base} (уточнить, актуально ли)` : base;
@@ -1279,16 +1389,6 @@ export function hasScheduleContextCue(text: string | null): boolean {
   return hasAny(normalized, SCHEDULE_CONTEXT_CUE_WORDS);
 }
 
-const SCHEDULE_AVAILABILITY_CUES = [
-  "не смогу",
-  "не могу",
-  "не получится",
-  "не доступен",
-  "недоступен",
-  "не доступна",
-  "недоступна",
-];
-
 const SCHEDULE_TRAVEL_CUES = ["уеду", "поеду", "в поездк", "буду в мск", "буду в москв", "в мск", "в москв"];
 
 const SCHEDULE_UNCERTAINTY_CUES = ["возможно", "может быть", "наверное", "пока не решила", "пока не решил", "типо"];
@@ -1313,12 +1413,34 @@ const PAIN_INJURY_BODY_CUES = [
   "стоп",
 ] as const;
 
+const PAIN_INJURY_FINGER_NAIL_CUES = ["палец", "пальц", "ногт", "ногтев"] as const;
+
+const PAIN_INJURY_HAND_CUES = ["рук", "кист"] as const;
+
+const TRAUMA_INJURY_CUES = [
+  "врезал",
+  "врезалась",
+  "ударил",
+  "ударила",
+  "ударился",
+  "ударилась",
+  "ушиб",
+  "ушибла",
+  "ушибся",
+  "оторвал",
+  "оторвалась",
+  "отрыв",
+  "посинел",
+  "опух",
+] as const;
+
 function hasScheduleDateCue(text: string): boolean {
   if (
+    hasToken(text, "сегодня") ||
+    hasStandaloneTomorrowToken(text) ||
+    hasToken(text, "послезавтра") ||
+    text.includes("с завтрашнего дня") ||
     hasAny(text, [
-      "сегодня",
-      "завтра",
-      "послезавтра",
       "на этой неделе",
       "на следующей неделе",
       "на след неделе",
@@ -1430,7 +1552,8 @@ function buildDateBasedScheduleSummary(text: string): string | null {
   const strongDays: number[] = [];
   const uncertainDays: number[] = [];
   for (const clause of clauses) {
-    const hasLogisticsCue = hasAny(clause, [...SCHEDULE_AVAILABILITY_CUES, ...SCHEDULE_TRAVEL_CUES]);
+    const hasLogisticsCue =
+      hasTrainingUnavailabilityCue(clause) || hasAny(clause, SCHEDULE_TRAVEL_CUES);
     if (!hasLogisticsCue || !hasScheduleDateCue(clause)) {
       continue;
     }
@@ -1541,7 +1664,7 @@ export function buildPromotedBareWeekdayScheduleCandidate(input: {
 }
 
 function hasAvailabilityIntent(text: string, days: string[]): boolean {
-  const hasNegativeAbility = hasAny(text, ["не смогу", "не могу", "не получится"]);
+  const hasNegativeAbility = hasTrainingUnavailabilityCue(text);
   if (
     hasAny(text, [
       "может бегать",
@@ -1555,13 +1678,16 @@ function hasAvailabilityIntent(text: string, days: string[]): boolean {
   ) {
     return true;
   }
-  if (!hasNegativeAbility && days.length > 0 && (hasToken(text, "смогу") || hasToken(text, "могу"))) {
+  if (!hasNegativeAbility && days.length > 0 && hasPositiveAbilityCue(text)) {
     return true;
   }
   if (
     hasAny(text, ["планир", "побегу", "пробегу", "выйду на пробежку", "выйти на пробежку"]) &&
     hasAny(text, ["бег", "побег", "пробеж", "трениров"]) &&
-    (days.length > 0 || hasAny(text, ["завтра", "сегодня", "послезавтра"]))
+    (days.length > 0 ||
+      hasStandaloneTomorrowToken(text) ||
+      hasToken(text, "сегодня") ||
+      hasToken(text, "послезавтра"))
   ) {
     return true;
   }
@@ -1594,13 +1720,13 @@ function extractPlanningIntentDates(input: { text: string; observedAt: string })
   const collectDates = (clause: string): string[] => {
     const out = new Set<string>();
     const observed = parseIsoDateFallback(input.observedAt);
-    if (clause.includes("сегодня")) {
+    if (hasToken(clause, "сегодня") || clause.includes("сегодня")) {
       out.add(isoDate(observed));
     }
-    if (clause.includes("завтра")) {
+    if (hasStandaloneTomorrowToken(clause)) {
       out.add(isoDate(addDays(observed, 1)));
     }
-    if (clause.includes("послезавтра")) {
+    if (hasToken(clause, "послезавтра") || clause.includes("послезавтра")) {
       out.add(isoDate(addDays(observed, 2)));
     }
     const days = extractDays(clause);
@@ -1614,6 +1740,9 @@ function extractPlanningIntentDates(input: { text: string; observedAt: string })
   };
 
   for (const clause of clauses) {
+    if (isPastCompletedRunReflectionOnly(clause, globalRunningContext)) {
+      continue;
+    }
     const clauseDates = collectDates(clause);
     if (clauseDates.length === 0) {
       continue;
@@ -1621,24 +1750,11 @@ function extractPlanningIntentDates(input: { text: string; observedAt: string })
     const hasRunCue = hasRunningCue(clause);
     const hasStrengthCue = hasAny(clause, STRENGTH_CONTEXT_CUES);
     const hasPlanningCue = hasAny(clause, ["планир", "побегу", "пробегу", "выйду на пробежку", "выйти на пробежку"]);
-    const hasUnavailabilityCue = hasAny(clause, [
-      "не могу",
-      "не смогу",
-      "не смогла",
-      "не смог",
-      "не смогли",
-      "не получится",
-      "недоступ",
-      "не побегу",
-      "не смогу побегать",
-      "не могу побегать",
-      "не получится побегать",
-      "не смогу убежать",
-      "не могу убежать",
-    ]);
+    const hasUnavailabilityCue = hasTrainingUnavailabilityCue(clause);
     const hasPlannedIntent = hasPlanningCue && !hasStrengthCue && (hasRunCue || globalRunningContext);
     const hasTomorrowIntent = hasTomorrowRunAvailabilityIntent(clause, globalRunningContext);
-    const hasUnavailableIntent = hasUnavailabilityCue && (hasRunCue || globalRunningContext);
+    const hasUnavailableIntent =
+      hasUnavailabilityCue && (hasRunCue || globalRunningContext || hasAny(clause, ["трениров"]));
     const pastMissedDays = extractPastMissedRunWeekdays(clause);
     const today = isoDate(parseIsoDateFallback(input.observedAt));
 
@@ -1936,7 +2052,7 @@ function buildScheduleCandidate(
   }
 
   const payload = toDefaultPayload();
-  const hasLogisticsCue = hasAny(text, [...SCHEDULE_AVAILABILITY_CUES, ...SCHEDULE_TRAVEL_CUES]);
+  const hasLogisticsCue = hasTrainingUnavailabilityCue(text) || hasAny(text, SCHEDULE_TRAVEL_CUES);
   const hasDateConstraint = hasScheduleDateCue(text);
   const planningDates = extractPlanningIntentDates({ text, observedAt: input.observedAt });
   if (planningDates.plannedDates.length > 0 || planningDates.unavailableDates.length > 0) {
@@ -1969,6 +2085,27 @@ function buildScheduleCandidate(
       reason: "planned training dates with explicit schedule constraints",
     };
   }
+  if (hasAny(text, ["сегодня не успеваю", "сегодня не могу"])) {
+    const today = parseRelativeDate("сегодня", input.observedAt);
+    payload.valid_from = today;
+    payload.valid_until = today;
+    payload.activity_domain = "life_schedule";
+    payload.planning_effect = "run_unavailable";
+    payload.evidence_level = "possible_schedule";
+    payload.date_certainty = "confirmed";
+    payload.visible_in_tp_signals = true;
+    return {
+      primary_bucket: "operational_signal",
+      secondary_buckets: [],
+      signal_type: "schedule_unavailability_window",
+      structured_payload: payload,
+      should_create_memory: false,
+      should_create_case: false,
+      should_create_trainingpeaks_action: false,
+      confidence: "high",
+      reason: "single-day unavailability",
+    };
+  }
   if (hasLogisticsCue && hasDateConstraint) {
     payload.activity_domain = hasRunningCue(text) ? "running" : "life_schedule";
     payload.planning_effect = "run_unavailable";
@@ -1991,7 +2128,7 @@ function buildScheduleCandidate(
   }
   const days = extractDays(text);
   const scheduleAvailability = hasAvailabilityIntent(text, days);
-  const scheduleUnavailability = hasAny(text, ["не могу", "не смогу", "не успеваю", "не может"]);
+  const scheduleUnavailability = hasTrainingUnavailabilityCue(text) || hasAny(text, ["не успеваю", "не может"]);
 
   if (days.length > 0 && hasScheduleContext(text) && (scheduleAvailability || scheduleUnavailability)) {
     payload.activity_domain = hasRunningCue(text) ? "running" : "life_schedule";
@@ -2043,28 +2180,6 @@ function buildScheduleCandidate(
       should_create_trainingpeaks_action: false,
       confidence: text.includes("можно") ? "medium" : "high",
       reason: "bounded schedule window detected",
-    };
-  }
-
-  if (hasAny(text, ["сегодня не успеваю", "сегодня не могу"])) {
-    const today = parseRelativeDate("сегодня", input.observedAt);
-    payload.valid_from = today;
-    payload.valid_until = today;
-    payload.activity_domain = "life_schedule";
-    payload.planning_effect = "run_unavailable";
-    payload.evidence_level = "possible_schedule";
-    payload.date_certainty = "confirmed";
-    payload.visible_in_tp_signals = true;
-    return {
-      primary_bucket: "operational_signal",
-      secondary_buckets: [],
-      signal_type: "schedule_unavailability_window",
-      structured_payload: payload,
-      should_create_memory: false,
-      should_create_case: false,
-      should_create_trainingpeaks_action: false,
-      confidence: "high",
-      reason: "single-day unavailability",
     };
   }
 
