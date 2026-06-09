@@ -16,9 +16,8 @@ const packageJson = readFileSync(join(root, "package.json"), "utf8");
 
 const mainUi = studentPage.slice(0, studentPage.indexOf("admin-nutrition-advanced-stack"));
 
-assert.match(studentPage, /getNutritionWeeklyPlanById/, "student page must load plan by id");
-assert.match(studentPage, /getLatestNutritionWeeklyPlanForStudentWeek/, "student page must load latest plan for week");
-assert.match(studentPage, /listNutritionWeeklyPlansForStudentWeek/, "student page must list plans for week");
+assert.match(studentPage, /resolveNutritionWeeklyPlanForDisplay/, "student page must resolve plan display");
+assert.match(studentPage, /plansForWeek/, "student page must list plans for week");
 assert.match(studentPage, /planIdFromQuery/, "student page must read planId search param");
 assert.match(studentPage, /calculateNutritionPlanWeek/, "student page must compute plan week from review");
 
@@ -41,6 +40,7 @@ const planCardStart = mainUi.indexOf("Фокус питания на следу�
 assert.ok(reviewDraftStart >= 0, "main UI must include review draft heading");
 assert.ok(planCardStart >= 0, "main UI must include weekly plan card title");
 
+assert.match(actions, /planId: plan\.id/, "generate action must redirect to newly generated plan id");
 assert.match(actions, /getOptionalFormValue\(formData,\s*"sourceReportId"\)/, "plan action must read sourceReportId");
 assert.doesNotMatch(
   actions,

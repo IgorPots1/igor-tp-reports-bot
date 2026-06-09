@@ -984,13 +984,114 @@ export async function listNutritionWeeklyPlansForStudentWeek(params: {
   return ((data as NutritionWeeklyPlanRow[]) ?? []).map(mapNutritionWeeklyPlanRow);
 }
 
+const NUTRITION_WEEKLY_PLAN_INACTIVE_STATUSES: NutritionWeeklyPlanStatus[] = ["superseded", "archived"];
+
+function isActiveNutritionWeeklyPlanStatus(status: NutritionWeeklyPlanStatus): boolean {
+  return !NUTRITION_WEEKLY_PLAN_INACTIVE_STATUSES.includes(status);
+}
+
+function pickPreferredNutritionWeeklyPlan(plans: NutritionWeeklyPlan[]): NutritionWeeklyPlan | null {
+  return plans.find((plan) => isActiveNutritionWeeklyPlanStatus(plan.status)) ?? plans[0] ?? null;
+}
+
+async function resolveSupersedingNutritionWeeklyPlan(
+  plan: NutritionWeeklyPlan,
+  plansById: Map<string, NutritionWeeklyPlan>
+): Promise<NutritionWeeklyPlan> {
+  let current = plan;
+  const visited = new Set<string>();
+  while (
+    current.status === "superseded" &&
+    current.supersededByPlanId &&
+    !visited.has(current.id)
+  ) {
+    visited.add(current.id);
+    const next = plansById.get(current.supersededByPlanId) ?? (await getNutritionWeeklyPlanById(current.supersededByPlanId));
+    if (!next) {
+      break;
+    }
+    plansById.set(next.id, next);
+    current = next;
+  }
+  return current;
+}
+
+export type NutritionWeeklyPlanDisplayResolution = {
+  displayPlan: NutritionWeeklyPlan | null;
+  selectedPlanById: NutritionWeeklyPlan | null;
+  latestPlanForWeek: NutritionWeeklyPlan | null;
+  plansForWeek: NutritionWeeklyPlan[];
+  planIdWarning: string | null;
+  supersededPlanNotice: string | null;
+  planSelectedById: boolean;
+};
+
+export async function resolveNutritionWeeklyPlanForDisplay(params: {
+  studentId: string;
+  planWeekFrom: string;
+  planWeekTo: string;
+  planIdFromQuery?: string | null;
+  plansLimit?: number;
+}): Promise<NutritionWeeklyPlanDisplayResolution> {
+  const plansForWeek = await listNutritionWeeklyPlansForStudentWeek({
+    studentId: params.studentId,
+    planWeekFrom: params.planWeekFrom,
+    planWeekTo: params.planWeekTo,
+    limit: params.plansLimit ?? 10,
+  });
+  const plansById = new Map(plansForWeek.map((plan) => [plan.id, plan]));
+  const latestPlanForWeek = pickPreferredNutritionWeeklyPlan(plansForWeek);
+
+  let selectedPlanById: NutritionWeeklyPlan | null = null;
+  let planIdWarning: string | null = null;
+  let supersededPlanNotice: string | null = null;
+  let displayPlan = latestPlanForWeek;
+  let planSelectedById = false;
+
+  if (params.planIdFromQuery) {
+    const planById =
+      plansById.get(params.planIdFromQuery) ?? (await getNutritionWeeklyPlanById(params.planIdFromQuery));
+    if (!planById) {
+      planIdWarning = "Фокус по planId не найден — показан последний сохранённый за неделю.";
+    } else if (planById.studentId !== params.studentId) {
+      planIdWarning = "Фокус не принадлежит этому ученику — показан последний сохранённый за неделю.";
+    } else {
+      selectedPlanById = planById;
+      plansById.set(planById.id, planById);
+      if (planById.status === "superseded") {
+        const supersedingPlan = await resolveSupersedingNutritionWeeklyPlan(planById, plansById);
+        if (supersedingPlan.id !== planById.id) {
+          displayPlan = supersedingPlan;
+          supersededPlanNotice = "Вы открыли старую версию фокуса. Показана новая версия.";
+        } else {
+          displayPlan = latestPlanForWeek;
+          planIdWarning = "Фокус по planId устарел — показан последний сохранённый за неделю.";
+        }
+      } else {
+        displayPlan = planById;
+        planSelectedById = true;
+      }
+    }
+  }
+
+  return {
+    displayPlan,
+    selectedPlanById,
+    latestPlanForWeek,
+    plansForWeek,
+    planIdWarning,
+    supersededPlanNotice,
+    planSelectedById,
+  };
+}
+
 export async function getLatestNutritionWeeklyPlanForStudentWeek(params: {
   studentId: string;
   planWeekFrom: string;
   planWeekTo: string;
 }): Promise<NutritionWeeklyPlan | null> {
-  const plans = await listNutritionWeeklyPlansForStudentWeek({ ...params, limit: 1 });
-  return plans[0] ?? null;
+  const plans = await listNutritionWeeklyPlansForStudentWeek({ ...params, limit: 10 });
+  return pickPreferredNutritionWeeklyPlan(plans);
 }
 
 export async function markNutritionWeeklyPlansSuperseded(params: {

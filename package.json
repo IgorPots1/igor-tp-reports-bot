@@ -189,9 +189,11 @@
     "check:nutrition-weekly-plan-safety": "npx tsx scripts/check-nutrition-weekly-plan-safety.ts",
     "check:nutrition-weekly-plan-fueling-instructions": "npx tsx scripts/check-nutrition-weekly-plan-fueling-instructions.ts",
     "diagnose:nutrition-tp-next-week-context": "npx tsx scripts/diagnose-nutrition-tp-next-week-context.ts",
+    "diagnose:nutrition-weekly-plan-selection": "npx tsx scripts/diagnose-nutrition-weekly-plan-selection.ts",
     "diagnose:trainingpeaks-future-workout-cache": "npx tsx scripts/diagnose-trainingpeaks-future-workout-cache.ts",
     "check:nutrition-tp-future-workout-context": "npx tsx scripts/check-nutrition-tp-future-workout-context.ts",
     "check:nutrition-weekly-plan-ui": "npx tsx scripts/check-nutrition-weekly-plan-ui.ts",
+    "check:nutrition-weekly-plan-selection": "npx tsx scripts/check-nutrition-weekly-plan-selection.ts",
     "check:nutrition-weekly-plan-refreshes-tp-context": "npx tsx scripts/check-nutrition-weekly-plan-refreshes-tp-context.ts",
     "nutrition:enable-test-cohort": "npx tsx scripts/nutrition-enable-test-cohort.ts"
   },

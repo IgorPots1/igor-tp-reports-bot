@@ -220,43 +220,30 @@ export default async function CoachOsNutritionStudentCardPage({
     card.weeklyAnalysis?.weekTo != null ? calculateNutritionPlanWeek(card.weeklyAnalysis.weekTo) : null;
   let selectedPlanById: NutritionWeeklyPlan | null = null;
   let planIdWarning: string | null = null;
+  let supersededPlanNotice: string | null = null;
   let latestPlanForWeek: NutritionWeeklyPlan | null = null;
   let plansForWeek: NutritionWeeklyPlan[] = [];
+  let displayPlan: NutritionWeeklyPlan | null = null;
+  let planSelectedById = false;
 
   if (planWeek) {
-    const {
-      getNutritionWeeklyPlanById,
-      getLatestNutritionWeeklyPlanForStudentWeek,
-      listNutritionWeeklyPlansForStudentWeek,
-    } = await import("@/features/nutrition/repository");
-
-    if (planIdFromQuery) {
-      const planById = await getNutritionWeeklyPlanById(planIdFromQuery);
-      if (!planById) {
-        planIdWarning = "Фокус по planId не найден — показан последний сохранённый за неделю.";
-      } else if (planById.studentId !== studentId) {
-        planIdWarning = "Фокус не принадлежит этому ученику — показан последний сохранённый за неделю.";
-      } else {
-        selectedPlanById = planById;
-      }
-    }
-
-    latestPlanForWeek = await getLatestNutritionWeeklyPlanForStudentWeek({
+    const { resolveNutritionWeeklyPlanForDisplay } = await import("@/features/nutrition/repository");
+    const planResolution = await resolveNutritionWeeklyPlanForDisplay({
       studentId,
       planWeekFrom: planWeek.from,
       planWeekTo: planWeek.to,
+      planIdFromQuery,
     });
-    plansForWeek = await listNutritionWeeklyPlansForStudentWeek({
-      studentId,
-      planWeekFrom: planWeek.from,
-      planWeekTo: planWeek.to,
-      limit: 10,
-    });
+    selectedPlanById = planResolution.selectedPlanById;
+    planIdWarning = planResolution.planIdWarning;
+    supersededPlanNotice = planResolution.supersededPlanNotice;
+    latestPlanForWeek = planResolution.latestPlanForWeek;
+    plansForWeek = planResolution.plansForWeek;
+    displayPlan = planResolution.displayPlan;
+    planSelectedById = planResolution.planSelectedById;
   }
 
-  const displayPlan = selectedPlanById ?? latestPlanForWeek;
   const selectedPlanId = displayPlan?.id ?? null;
-  const planSelectedById = Boolean(planIdFromQuery && selectedPlanById?.id === planIdFromQuery);
   const visiblePlansForWeek = plansForWeek.slice(0, 3);
   const hiddenPlanCount = Math.max(0, plansForWeek.length - visiblePlansForWeek.length);
 
@@ -541,6 +528,9 @@ export default async function CoachOsNutritionStudentCardPage({
             <p className="admin-muted admin-nutrition-helper">Сначала сгенерируйте разбор прошлой недели.</p>
           ) : (
             <>
+              {supersededPlanNotice ? (
+                <p className="admin-muted admin-nutrition-helper">{supersededPlanNotice}</p>
+              ) : null}
               {planIdWarning ? <p className="admin-muted admin-nutrition-helper">{planIdWarning}</p> : null}
               {reviewReportMismatch ? (
                 <p className="admin-muted admin-nutrition-helper">
