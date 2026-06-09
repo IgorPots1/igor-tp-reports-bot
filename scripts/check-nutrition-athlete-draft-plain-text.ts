@@ -7,6 +7,7 @@ import {
   generateNutritionWeeklyPlanFallback,
 } from "@/features/nutrition/weekly-plan-generator";
 import type { NutritionWeeklyAnalysis } from "@/features/nutrition/repository";
+import { buildDerivedNutritionCombinedMessage } from "@/features/nutrition/combined-message";
 
 function buildReviewContext(overrides?: Partial<NutritionStudentContext>): NutritionStudentContext {
   return {
@@ -166,6 +167,40 @@ async function run(): Promise<void> {
   const planDraft = planGenerated.athleteMessageDraft ?? "";
   assertAthleteDraftPlainText(planDraft, "weekly plan draft");
   assert.match(planDraft, /~1950 ккал/, "weekly plan draft should preserve deterministic rest target when present");
+
+  const combined = buildDerivedNutritionCombinedMessage({
+    review: sourceAnalysis,
+    plan: {
+      id: "plan-plain-text",
+      studentId: "student-anna",
+      sourceReportId: sourceAnalysis.reportId,
+      sourceAnalysisId: sourceAnalysis.id,
+      planWeekFrom: "2026-06-08",
+      planWeekTo: "2026-06-14",
+      status: "draft_generated",
+      generationMode: "fallback",
+      promptVersion: "nutrition-weekly-plan-v1-ai",
+      aiModel: "nutrition-weekly-plan-fallback-v2",
+      coachSummary: planGenerated.coachSummary,
+      athleteMessageDraft: planGenerated.athleteMessageDraft,
+      coachEditedDraft: null,
+      approvedAt: null,
+      planSummary: planGenerated.planSummary,
+      trainingContextSnapshot: planGenerated.trainingContextSnapshot,
+      nutritionContextSnapshot: planGenerated.nutritionContextSnapshot,
+      safetyFlags: planGenerated.safetyFlags,
+      supersededByPlanId: null,
+      createdAt: "2026-06-09T10:05:00.000Z",
+      updatedAt: "2026-06-09T10:05:00.000Z",
+    },
+    formality: "ty",
+    studentName: "Анна",
+  });
+  assert.equal(combined.status, "ready");
+  assert.ok(combined.athleteMessageDraft, "combined draft should exist in ready status");
+  const combinedDraft = combined.athleteMessageDraft ?? "";
+  assertAthleteDraftPlainText(combinedDraft, "combined draft");
+  assert.match(combinedDraft, /На следующем разборе посмотрим, как это отразится на энергии и восстановлении\./);
 
   console.log("PASS check-nutrition-athlete-draft-plain-text");
 }

@@ -21,6 +21,7 @@ import {
   getNutritionAdminStudentCard,
   parseNutritionManualMacros,
 } from "@/features/nutrition/admin";
+import { buildDerivedNutritionCombinedMessage } from "@/features/nutrition/combined-message";
 import {
   buildNutritionStudentCardHref,
   formatNutritionCarbStrategy,
@@ -218,10 +219,8 @@ export default async function CoachOsNutritionStudentCardPage({
 
   const planWeek =
     card.weeklyAnalysis?.weekTo != null ? calculateNutritionPlanWeek(card.weeklyAnalysis.weekTo) : null;
-  let selectedPlanById: NutritionWeeklyPlan | null = null;
   let planIdWarning: string | null = null;
   let supersededPlanNotice: string | null = null;
-  let latestPlanForWeek: NutritionWeeklyPlan | null = null;
   let plansForWeek: NutritionWeeklyPlan[] = [];
   let displayPlan: NutritionWeeklyPlan | null = null;
   let planSelectedById = false;
@@ -234,10 +233,8 @@ export default async function CoachOsNutritionStudentCardPage({
       planWeekTo: planWeek.to,
       planIdFromQuery,
     });
-    selectedPlanById = planResolution.selectedPlanById;
     planIdWarning = planResolution.planIdWarning;
     supersededPlanNotice = planResolution.supersededPlanNotice;
-    latestPlanForWeek = planResolution.latestPlanForWeek;
     plansForWeek = planResolution.plansForWeek;
     displayPlan = planResolution.displayPlan;
     planSelectedById = planResolution.planSelectedById;
@@ -335,6 +332,18 @@ export default async function CoachOsNutritionStudentCardPage({
   const displayPlanSimpleActions = asStringArray(displayPlanSummary.simple_actions);
   const displayPlanSafetyNotes = asStringArray(displayPlanSummary.safety_notes);
   const displayPlanDoNotSendReasons = displayPlan ? getPlanDoNotSendReasons(displayPlan) : [];
+  const combinedMessage = buildDerivedNutritionCombinedMessage({
+    review: card.weeklyAnalysis,
+    plan: displayPlan,
+    formality: card.context.resolvedCommunicationProfile.formality,
+    studentName: card.student.studentName,
+  });
+  const combinedDoNotSendReasons = [
+    ...new Set([
+      ...formatDoNotSendReasons(asObject(card.weeklyAnalysis?.safetyFlags)),
+      ...displayPlanDoNotSendReasons,
+    ]),
+  ];
 
   return (
     <section className="admin-section admin-nutrition-page">
@@ -710,6 +719,48 @@ export default async function CoachOsNutritionStudentCardPage({
                 </>
               )}
             </>
+          )}
+        </article>
+
+        <article className="admin-card admin-card-compact admin-nutrition-card-wide">
+          <h3>Черновик ученику — полный текст</h3>
+          {combinedMessage.status === "missing_review" ? (
+            <p className="admin-muted">Сначала сгенерируйте разбор прошлой недели.</p>
+          ) : combinedMessage.status === "missing_plan" ? (
+            <p className="admin-muted">Сначала сгенерируйте фокус на следующую неделю, чтобы собрать полный текст.</p>
+          ) : combinedMessage.status === "blocked_safety" ? (
+            <>
+              <div className="admin-alert admin-alert-error">
+                <strong>Полный текст скрыт: нужна ручная проверка.</strong> Полный текст ученику не сформирован: есть
+                причины для ручной проверки.
+              </div>
+              {combinedDoNotSendReasons.length > 0 ? (
+                <ul className="admin-list">
+                  {combinedDoNotSendReasons.map((reason, idx) => (
+                    <li key={`combined-dnr-${idx}`}>{reason}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </>
+          ) : combinedMessage.athleteMessageDraft ? (
+            <>
+              {combinedMessage.status === "needs_review" ? (
+                <p className="admin-badge admin-badge-warning">Нужна проверка тренера перед отправкой</p>
+              ) : null}
+              {combinedMessage.warnings.length > 0 ? (
+                <ul className="admin-list">
+                  {combinedMessage.warnings.map((warning, idx) => (
+                    <li key={`combined-warning-${idx}`}>{warning}</li>
+                  ))}
+                </ul>
+              ) : null}
+              <NutritionDraftCopyBlock
+                draft={combinedMessage.athleteMessageDraft}
+                generationMode={displayPlan?.generationMode ?? generationMode}
+              />
+            </>
+          ) : (
+            <p className="admin-muted">Полный текст ученику не сформирован: есть причины для ручной проверки.</p>
           )}
         </article>
 

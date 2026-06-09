@@ -34,11 +34,20 @@ assert.match(
   "plan card must show generated plan TP context from training snapshot"
 );
 assert.match(mainUi, /Черновик ученику — фокус на следующую неделю/, "plan card must distinguish plan draft heading");
+assert.match(mainUi, /Черновик ученику — полный текст/, "main UI must expose combined copy block title");
+assert.match(mainUi, /buildDerivedNutritionCombinedMessage/, "main UI must derive combined copy from review and plan");
+assert.match(mainUi, /displayPlan/, "main UI combined block must use resolved display plan");
 
 const reviewDraftStart = mainUi.indexOf("Черновик ученику — разбор прошлой недели");
 const planCardStart = mainUi.indexOf("Фокус питания на следующую неделю");
+const combinedDraftStart = mainUi.indexOf("Черновик ученику — полный текст");
 assert.ok(reviewDraftStart >= 0, "main UI must include review draft heading");
 assert.ok(planCardStart >= 0, "main UI must include weekly plan card title");
+assert.ok(combinedDraftStart >= 0, "main UI must include combined draft heading");
+assert.ok(
+  combinedDraftStart < reviewDraftStart,
+  "combined draft should appear above separate review/plan drafts"
+);
 
 assert.match(actions, /planId: plan\.id/, "generate action must redirect to newly generated plan id");
 assert.match(actions, /getOptionalFormValue\(formData,\s*"sourceReportId"\)/, "plan action must read sourceReportId");

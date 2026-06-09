@@ -198,6 +198,7 @@
     "check:nutrition-weekly-plan-ui": "npx tsx scripts/check-nutrition-weekly-plan-ui.ts",
     "check:nutrition-weekly-plan-selection": "npx tsx scripts/check-nutrition-weekly-plan-selection.ts",
     "check:nutrition-weekly-plan-refreshes-tp-context": "npx tsx scripts/check-nutrition-weekly-plan-refreshes-tp-context.ts",
+    "check:nutrition-combined-message": "npx tsx scripts/check-nutrition-combined-message.ts",
     "nutrition:enable-test-cohort": "npx tsx scripts/nutrition-enable-test-cohort.ts"
   },
   "dependencies": {

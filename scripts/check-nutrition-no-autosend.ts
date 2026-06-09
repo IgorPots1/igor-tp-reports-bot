@@ -7,10 +7,12 @@ const files = [
   "src/features/nutrition/repository.ts",
   "src/features/nutrition/context.ts",
   "src/features/nutrition/draft-generator.ts",
+  "src/features/nutrition/combined-message.ts",
   "src/features/nutrition/admin.ts",
   "src/app/admin/coach-os/nutrition/actions.ts",
   "src/app/admin/coach-os/nutrition/page.tsx",
   "src/app/admin/coach-os/nutrition/[studentId]/page.tsx",
+  "scripts/check-nutrition-combined-message.ts",
 ];
 
 const forbiddenPatterns = [
