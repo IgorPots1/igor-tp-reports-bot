@@ -40,6 +40,7 @@ import {
   formatNutritionTone,
   formatNutritionTpCacheNote,
   formatNutritionTpCacheStatus,
+  formatNutritionPlanTrainingContextLine,
   formatNutritionTpNextWeekContextLine,
   NUTRITION_CONTEXT_ITEM_TYPE_LABELS,
   pickDefaultNutritionReport,
@@ -130,38 +131,6 @@ function formatWeekdayRu(isoDate: string): string {
   }
   const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12, 0, 0));
   return weekdays[date.getUTCDay()] ?? "—";
-}
-
-function formatPlanTpContextLine(trainingSnapshot: Record<string, unknown>): string {
-  const status = typeof trainingSnapshot.status === "string" ? trainingSnapshot.status : "unknown";
-  const workoutCount =
-    typeof trainingSnapshot.workoutCount === "number" ? trainingSnapshot.workoutCount : null;
-  const keyWorkouts = Array.isArray(trainingSnapshot.keyWorkouts) ? trainingSnapshot.keyWorkouts : [];
-  const keyTypes = keyWorkouts
-    .map((item) => {
-      if (!item || typeof item !== "object") {
-        return null;
-      }
-      const workout = item as Record<string, unknown>;
-      return formatTrainingType(typeof workout.type === "string" ? workout.type : null);
-    })
-    .filter((value): value is string => Boolean(value) && value !== "неизвестно");
-  const uniqueKeyTypes = [...new Set(keyTypes)];
-
-  if (status === "empty") {
-    return "TrainingPeaks: тренировок нет";
-  }
-  if (status === "stale") {
-    return workoutCount !== null
-      ? `TrainingPeaks: cache устарел · ${workoutCount} тренировок`
-      : "TrainingPeaks: cache устарел";
-  }
-  if (status === "unknown") {
-    return "TrainingPeaks: контекст недоступен";
-  }
-  const countPart = workoutCount !== null ? `${workoutCount} тренировки` : "тренировки есть";
-  const keyPart = uniqueKeyTypes.length > 0 ? ` · ключевые: ${uniqueKeyTypes.join(", ")}` : "";
-  return `TrainingPeaks: ${countPart}${keyPart}`;
 }
 
 function getPlanFocusText(planSummary: Record<string, unknown>): string | null {
@@ -598,7 +567,7 @@ export default async function CoachOsNutritionStudentCardPage({
               ) : null}
               <p className="admin-nutrition-inline-meta admin-nutrition-helper">
                 {displayPlan
-                  ? formatPlanTpContextLine(displayPlanTrainingSnapshot)
+                  ? formatNutritionPlanTrainingContextLine(displayPlanTrainingSnapshot)
                   : formatNutritionTpNextWeekContextLine(savedReviewTpNextWeek)}
               </p>
 

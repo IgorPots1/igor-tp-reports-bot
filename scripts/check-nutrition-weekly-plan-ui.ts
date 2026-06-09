@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import {
   formatNutritionGenerationMode,
+  formatNutritionPlanTrainingContextLine,
   formatNutritionStatus,
   NUTRITION_WEEKLY_PLAN_STATUS_LABELS,
 } from "../src/features/nutrition/admin-labels";
@@ -27,7 +28,12 @@ assert.match(
   /Выбранный отчёт отличается от отчёта, по которому создан обзор/,
   "plan card must explain report/review mismatch without blocking"
 );
-assert.match(mainUi, /formatNutritionTpNextWeekContextLine/, "plan card must show saved review TP next-week context");
+assert.match(mainUi, /formatNutritionTpNextWeekContextLine/, "plan card must show saved review TP next-week context when no plan");
+assert.match(
+  mainUi,
+  /formatNutritionPlanTrainingContextLine/,
+  "plan card must show generated plan TP context from training snapshot"
+);
 assert.match(mainUi, /Черновик ученику — фокус на следующую неделю/, "plan card must distinguish plan draft heading");
 
 const reviewDraftStart = mainUi.indexOf("Черновик ученику — разбор прошлой недели");
@@ -74,6 +80,21 @@ assert.equal(formatNutritionStatus("draft_generated", "weekly_plan"), NUTRITION_
 assert.equal(formatNutritionStatus("blocked_safety", "weekly_plan"), "заблокировано безопасностью");
 assert.equal(formatNutritionGenerationMode("ai"), "AI");
 assert.equal(formatNutritionGenerationMode("fallback"), "шаблон");
+
+const refreshedPlanLine = formatNutritionPlanTrainingContextLine({
+  status: "available",
+  workoutCount: 4,
+  keyWorkouts: [{ date: "2026-06-10", title: "6 х 6 мин", type: "intervals" }],
+  diff: {
+    changed: true,
+    source_review_workouts_count: 0,
+    fresh_workouts_count: 4,
+    source_review_key_workouts_count: 0,
+    fresh_key_workouts_count: 1,
+  },
+});
+assert.match(refreshedPlanLine, /TrainingPeaks: 4 тренировки · ключевые: 1/);
+assert.match(refreshedPlanLine, /TP-контекст обновлён перед генерацией: было 0, стало 4/);
 
 assert.match(packageJson, /check:nutrition-weekly-plan-ui/, "package.json must include weekly plan UI check");
 

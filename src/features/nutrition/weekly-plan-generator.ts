@@ -1,3 +1,4 @@
+import { buildNutritionTrainingPeaksWeekContext } from "@/features/nutrition/context";
 import { detectWorkoutFuelingInstructions } from "@/features/nutrition/methodology";
 import {
   createNutritionWeeklyPlan,
@@ -98,6 +99,29 @@ export type NutritionWeeklyPlanAiOutput = {
   simple_actions: string[];
   safety_notes: string[];
   do_not_send_reasons: string[];
+};
+
+export type NutritionWeeklyPlanTpContextRefresh = {
+  source: "fresh_cache" | "source_review_fallback";
+  planWeekFrom: string;
+  planWeekTo: string;
+  freshContext: Record<string, unknown> | null;
+  sourceReviewContext: Record<string, unknown>;
+  diff: {
+    sourceReviewCacheStatus: string;
+    freshCacheStatus: string | null;
+    sourceReviewWorkoutsCount: number;
+    freshWorkoutsCount: number;
+    sourceReviewKeyWorkoutsCount: number;
+    freshKeyWorkoutsCount: number;
+    changed: boolean;
+  };
+  warnings: string[];
+};
+
+export type NutritionWeeklyPlanFactsBuildResult = {
+  facts: NutritionWeeklyPlanFacts;
+  tpContextRefresh: NutritionWeeklyPlanTpContextRefresh;
 };
 
 export type GeneratedNutritionWeeklyPlan = {
@@ -263,6 +287,89 @@ function buildPlanAddress(formality: TrainingPeaksTelegramFormality): {
   }
 }
 
+function countTpContextWorkouts(ctx: Record<string, unknown>): number {
+  const workouts = ctx.workouts;
+  if (Array.isArray(workouts)) {
+    return workouts.length;
+  }
+  if (typeof ctx.plannedSessions === "number") {
+    return ctx.plannedSessions;
+  }
+  if (typeof ctx.totalSessions === "number") {
+    return ctx.totalSessions;
+  }
+  return 0;
+}
+
+function countTpContextKeyWorkouts(ctx: Record<string, unknown>): number {
+  const keyWorkouts = ctx.keyWorkouts;
+  return Array.isArray(keyWorkouts) ? keyWorkouts.length : 0;
+}
+
+function tpContextCacheStatus(ctx: Record<string, unknown>): string {
+  return typeof ctx.cacheStatus === "string" ? ctx.cacheStatus : "unknown";
+}
+
+export function buildNutritionWeeklyPlanTpContextDiff(
+  sourceReviewContext: Record<string, unknown>,
+  freshContext: Record<string, unknown> | null
+): NutritionWeeklyPlanTpContextRefresh["diff"] {
+  const sourceReviewWorkoutsCount = countTpContextWorkouts(sourceReviewContext);
+  const freshWorkoutsCount = freshContext ? countTpContextWorkouts(freshContext) : 0;
+  const sourceReviewKeyWorkoutsCount = countTpContextKeyWorkouts(sourceReviewContext);
+  const freshKeyWorkoutsCount = freshContext ? countTpContextKeyWorkouts(freshContext) : 0;
+  const sourceReviewCacheStatus = tpContextCacheStatus(sourceReviewContext);
+  const freshCacheStatus = freshContext ? tpContextCacheStatus(freshContext) : null;
+  const changed =
+    sourceReviewCacheStatus !== freshCacheStatus ||
+    sourceReviewWorkoutsCount !== freshWorkoutsCount ||
+    sourceReviewKeyWorkoutsCount !== freshKeyWorkoutsCount;
+
+  return {
+    sourceReviewCacheStatus,
+    freshCacheStatus,
+    sourceReviewWorkoutsCount,
+    freshWorkoutsCount,
+    sourceReviewKeyWorkoutsCount,
+    freshKeyWorkoutsCount,
+    changed,
+  };
+}
+
+export function buildNutritionWeeklyPlanTrainingContextSnapshot(
+  facts: NutritionWeeklyPlanFacts,
+  refresh: NutritionWeeklyPlanTpContextRefresh | null
+): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    status: facts.nextWeekTraining.status,
+    planWeekFrom: facts.planWeek.from,
+    planWeekTo: facts.planWeek.to,
+    keyWorkouts: facts.nextWeekTraining.keyWorkouts,
+    workoutCount: facts.nextWeekTraining.workouts.length,
+  };
+  if (!refresh) {
+    return base;
+  }
+  return {
+    ...base,
+    source: refresh.source,
+    plan_week_from: refresh.planWeekFrom,
+    plan_week_to: refresh.planWeekTo,
+    fresh_context: refresh.freshContext,
+    source_review_context: refresh.sourceReviewContext,
+    diff: {
+      source_review_cache_status: refresh.diff.sourceReviewCacheStatus,
+      fresh_cache_status: refresh.diff.freshCacheStatus,
+      source_review_workouts_count: refresh.diff.sourceReviewWorkoutsCount,
+      fresh_workouts_count: refresh.diff.freshWorkoutsCount,
+      source_review_key_workouts_count: refresh.diff.sourceReviewKeyWorkoutsCount,
+      fresh_key_workouts_count: refresh.diff.freshKeyWorkoutsCount,
+      changed: refresh.diff.changed,
+    },
+    warnings: refresh.warnings,
+  };
+}
+
 export function buildNutritionWeeklyPlanFactsFromSources(input: {
   studentId: string;
   studentName: string;
@@ -270,10 +377,11 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
   weightKg: number | null;
   sourceAnalysis: NutritionWeeklyAnalysis;
   sourceReportId?: string | null;
+  tpNextWeekContextOverride?: Record<string, unknown>;
 }): NutritionWeeklyPlanFacts {
   const nutritionSummary = input.sourceAnalysis.nutritionSummary;
   const safetyFlags = input.sourceAnalysis.safetyFlags;
-  const tpNextWeek = input.sourceAnalysis.tpNextWeekContext;
+  const tpNextWeek = input.tpNextWeekContextOverride ?? input.sourceAnalysis.tpNextWeekContext;
   const workouts = parseStoredWorkouts(tpNextWeek.workouts);
   const keyWorkoutDates = new Set(
     (Array.isArray(tpNextWeek.keyWorkouts) ? tpNextWeek.keyWorkouts : [])
@@ -339,7 +447,7 @@ export function buildNutritionWeeklyPlanFacts(input: {
   studentId: string;
   sourceAnalysis: NutritionWeeklyAnalysis;
   sourceReportId?: string | null;
-}): Promise<NutritionWeeklyPlanFacts> {
+}): Promise<NutritionWeeklyPlanFactsBuildResult> {
   return buildNutritionWeeklyPlanFactsInternal(input);
 }
 
@@ -347,7 +455,7 @@ async function buildNutritionWeeklyPlanFactsInternal(input: {
   studentId: string;
   sourceAnalysis: NutritionWeeklyAnalysis;
   sourceReportId?: string | null;
-}): Promise<NutritionWeeklyPlanFacts> {
+}): Promise<NutritionWeeklyPlanFactsBuildResult> {
   const essentials = await getNutritionStudentEssentials(input.studentId);
   const student = essentials.student;
   if (!student) {
@@ -363,14 +471,58 @@ async function buildNutritionWeeklyPlanFactsInternal(input: {
   const latestWeight = essentials.weightLogs[0]?.weightKg ?? null;
   const weightKg = essentials.profile?.currentWeightKg ?? latestConfirmedWeight ?? latestWeight ?? null;
 
-  return buildNutritionWeeklyPlanFactsFromSources({
+  const planWeek = calculateNutritionPlanWeek(input.sourceAnalysis.weekTo);
+  const sourceReviewContext = toObject(input.sourceAnalysis.tpNextWeekContext);
+  let freshContext: Record<string, unknown> | null = null;
+  let tpNextWeekContextOverride = sourceReviewContext;
+  let tpContextRefresh: NutritionWeeklyPlanTpContextRefresh;
+  try {
+    const fresh = await buildNutritionTrainingPeaksWeekContext(
+      input.studentId,
+      planWeek.from,
+      planWeek.to
+    );
+    freshContext = fresh as unknown as Record<string, unknown>;
+    tpNextWeekContextOverride = freshContext;
+    const diff = buildNutritionWeeklyPlanTpContextDiff(sourceReviewContext, freshContext);
+    const warnings: string[] = [];
+    if (diff.changed) {
+      warnings.push("Saved review TP context differed from fresh cache; plan used fresh cache.");
+    }
+    tpContextRefresh = {
+      source: "fresh_cache",
+      planWeekFrom: planWeek.from,
+      planWeekTo: planWeek.to,
+      freshContext,
+      sourceReviewContext,
+      diff,
+      warnings,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const diff = buildNutritionWeeklyPlanTpContextDiff(sourceReviewContext, null);
+    tpContextRefresh = {
+      source: "source_review_fallback",
+      planWeekFrom: planWeek.from,
+      planWeekTo: planWeek.to,
+      freshContext: null,
+      sourceReviewContext,
+      diff,
+      warnings: [`Fresh TP context build failed (${message}); used saved review context.`],
+    };
+  }
+
+  const facts = buildNutritionWeeklyPlanFactsFromSources({
     studentId: input.studentId,
     studentName: student.studentName,
     formality: profile.formality,
     weightKg,
     sourceAnalysis: input.sourceAnalysis,
     sourceReportId: input.sourceReportId,
+    tpNextWeekContextOverride,
   });
+
+  return { facts, tpContextRefresh };
 }
 
 function buildFallbackPlanFocus(facts: NutritionWeeklyPlanFacts): NutritionWeeklyPlanAiOutput["plan_focus"] {
@@ -430,7 +582,10 @@ function buildFallbackAthleteDraft(facts: NutritionWeeklyPlanFacts, planFocus: N
   return lines.join("\n").trim();
 }
 
-export function generateNutritionWeeklyPlanFallback(facts: NutritionWeeklyPlanFacts): GeneratedNutritionWeeklyPlan {
+export function generateNutritionWeeklyPlanFallback(
+  facts: NutritionWeeklyPlanFacts,
+  tpContextRefresh?: NutritionWeeklyPlanTpContextRefresh | null
+): GeneratedNutritionWeeklyPlan {
   const blocked = isSafetyBlocked(facts.sourceReview.safetyFlags);
   const doNotSendReasons = extractDoNotSendReasons(facts.sourceReview.safetyFlags, facts.sourceReview.nutritionSummary);
   const planFocus = buildFallbackPlanFocus(facts);
@@ -468,13 +623,7 @@ export function generateNutritionWeeklyPlanFallback(facts: NutritionWeeklyPlanFa
       do_not_send_reasons: doNotSendReasons,
       facts_version: 1,
     },
-    trainingContextSnapshot: {
-      status: facts.nextWeekTraining.status,
-      planWeekFrom: facts.planWeek.from,
-      planWeekTo: facts.planWeek.to,
-      keyWorkouts: facts.nextWeekTraining.keyWorkouts,
-      workoutCount: facts.nextWeekTraining.workouts.length,
-    },
+    trainingContextSnapshot: buildNutritionWeeklyPlanTrainingContextSnapshot(facts, tpContextRefresh ?? null),
     nutritionContextSnapshot: facts as unknown as Record<string, unknown>,
     safetyFlags: {
       ...facts.sourceReview.safetyFlags,
@@ -594,7 +743,8 @@ async function generateNutritionWeeklyPlanWithAiInternal(
 }
 
 export async function generateNutritionWeeklyPlanWithAi(
-  facts: NutritionWeeklyPlanFacts
+  facts: NutritionWeeklyPlanFacts,
+  tpContextRefresh?: NutritionWeeklyPlanTpContextRefresh | null
 ): Promise<GeneratedNutritionWeeklyPlan | null> {
   const aiOutput = await generateNutritionWeeklyPlanWithAiInternal(facts);
   if (!aiOutput) {
@@ -618,13 +768,7 @@ export async function generateNutritionWeeklyPlanWithAi(
       do_not_send_reasons: doNotSendReasons,
       facts_version: 1,
     },
-    trainingContextSnapshot: {
-      status: facts.nextWeekTraining.status,
-      planWeekFrom: facts.planWeek.from,
-      planWeekTo: facts.planWeek.to,
-      keyWorkouts: facts.nextWeekTraining.keyWorkouts,
-      workoutCount: facts.nextWeekTraining.workouts.length,
-    },
+    trainingContextSnapshot: buildNutritionWeeklyPlanTrainingContextSnapshot(facts, tpContextRefresh ?? null),
     nutritionContextSnapshot: facts as unknown as Record<string, unknown>,
     safetyFlags: {
       ...facts.sourceReview.safetyFlags,
@@ -642,16 +786,17 @@ export async function generateNutritionWeeklyPlanWithAi(
 
 export async function generateNutritionWeeklyPlan(input: {
   facts: NutritionWeeklyPlanFacts;
+  tpContextRefresh?: NutritionWeeklyPlanTpContextRefresh | null;
   requestedMode?: "ai" | "fallback";
 }): Promise<GeneratedNutritionWeeklyPlan> {
   if (input.requestedMode === "fallback") {
-    return generateNutritionWeeklyPlanFallback(input.facts);
+    return generateNutritionWeeklyPlanFallback(input.facts, input.tpContextRefresh);
   }
-  const aiPlan = await generateNutritionWeeklyPlanWithAi(input.facts);
+  const aiPlan = await generateNutritionWeeklyPlanWithAi(input.facts, input.tpContextRefresh);
   if (aiPlan) {
     return aiPlan;
   }
-  return generateNutritionWeeklyPlanFallback(input.facts);
+  return generateNutritionWeeklyPlanFallback(input.facts, input.tpContextRefresh);
 }
 
 export async function generateAndSaveNutritionWeeklyPlan(input: {
@@ -669,13 +814,14 @@ export async function generateAndSaveNutritionWeeklyPlan(input: {
   }
   const resolvedReportId = sourceAnalysis.reportId ?? input.sourceReportId ?? null;
 
-  const facts = await buildNutritionWeeklyPlanFacts({
+  const { facts, tpContextRefresh } = await buildNutritionWeeklyPlanFacts({
     studentId: input.studentId,
     sourceAnalysis,
     sourceReportId: resolvedReportId,
   });
   const generated = await generateNutritionWeeklyPlan({
     facts,
+    tpContextRefresh,
     requestedMode: input.requestedMode,
   });
 

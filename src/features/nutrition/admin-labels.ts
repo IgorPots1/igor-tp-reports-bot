@@ -403,6 +403,76 @@ function countSavedTpNextWeekKeyWorkouts(tpNextWeek: Record<string, unknown>): n
   return Array.isArray(keyWorkouts) ? keyWorkouts.length : 0;
 }
 
+function countPlanTrainingSnapshotWorkouts(snapshot: Record<string, unknown>): number {
+  if (typeof snapshot.workoutCount === "number") {
+    return snapshot.workoutCount;
+  }
+  const freshContext = snapshot.fresh_context;
+  if (freshContext && typeof freshContext === "object" && !Array.isArray(freshContext)) {
+    return countSavedTpNextWeekWorkouts(freshContext as Record<string, unknown>);
+  }
+  return 0;
+}
+
+function countPlanTrainingSnapshotKeyWorkouts(snapshot: Record<string, unknown>): number {
+  const keyWorkouts = snapshot.keyWorkouts;
+  if (Array.isArray(keyWorkouts)) {
+    return keyWorkouts.length;
+  }
+  const diff = snapshot.diff;
+  if (diff && typeof diff === "object" && !Array.isArray(diff)) {
+    const freshKeyCount = (diff as Record<string, unknown>).fresh_key_workouts_count;
+    if (typeof freshKeyCount === "number") {
+      return freshKeyCount;
+    }
+  }
+  return 0;
+}
+
+function formatPlanTrainingSnapshotRefreshNote(snapshot: Record<string, unknown>): string | null {
+  const diff = snapshot.diff;
+  if (!diff || typeof diff !== "object" || Array.isArray(diff)) {
+    return null;
+  }
+  const diffRecord = diff as Record<string, unknown>;
+  if (diffRecord.changed !== true) {
+    return null;
+  }
+  const sourceCount =
+    typeof diffRecord.source_review_workouts_count === "number" ? diffRecord.source_review_workouts_count : null;
+  const freshCount = typeof diffRecord.fresh_workouts_count === "number" ? diffRecord.fresh_workouts_count : null;
+  if (sourceCount !== null && freshCount !== null) {
+    return `TP-контекст обновлён перед генерацией: было ${sourceCount}, стало ${freshCount}.`;
+  }
+  return "TP-контекст обновлён перед генерацией из свежего cache.";
+}
+
+export function formatNutritionPlanTrainingContextLine(
+  trainingSnapshot: Record<string, unknown> | null | undefined
+): string {
+  if (!trainingSnapshot || Object.keys(trainingSnapshot).length === 0) {
+    return "TrainingPeaks: контекст не сохранён";
+  }
+  const status = typeof trainingSnapshot.status === "string" ? trainingSnapshot.status : "unknown";
+  const workoutCount = countPlanTrainingSnapshotWorkouts(trainingSnapshot);
+  const keyWorkoutCount = countPlanTrainingSnapshotKeyWorkouts(trainingSnapshot);
+
+  let line: string;
+  if (status === "empty" || workoutCount === 0) {
+    line = "TrainingPeaks: тренировок нет";
+  } else if (status === "stale") {
+    line = `TrainingPeaks: cache устарел · ${workoutCount} тренировки`;
+  } else if (status === "unknown") {
+    line = "TrainingPeaks: контекст недоступен";
+  } else {
+    const keyPart = keyWorkoutCount > 0 ? ` · ключевые: ${keyWorkoutCount}` : "";
+    line = `TrainingPeaks: ${workoutCount} тренировки${keyPart}`;
+  }
+
+  const refreshNote = formatPlanTrainingSnapshotRefreshNote(trainingSnapshot);
+  return refreshNote ? `${line} · ${refreshNote}` : line;
+}
+
 export function formatNutritionTpNextWeekContextLine(tpNextWeek: Record<string, unknown> | null | undefined): string {
   if (!tpNextWeek || Object.keys(tpNextWeek).length === 0) {
     return "TrainingPeaks: контекст не сохранён в обзоре, фокус будет общий";
