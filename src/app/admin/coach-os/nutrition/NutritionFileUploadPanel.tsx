@@ -78,106 +78,62 @@ export default function NutritionFileUploadPanel({
     <article className="admin-card admin-card-compact admin-nutrition-card-wide">
       <h3>Загрузить отчёт питания</h3>
       <p className="admin-muted admin-nutrition-helper">
-        Поддержка: PDF, CSV, TXT, JPG/JPEG, PNG, WEBP, HEIC (если mime поддержан браузером).{" "}
-        {NUTRITION_FILE_UPLOAD_LIMIT_HINT}
+        PDF, CSV, TXT, JPG/JPEG, PNG, WEBP, HEIC. {NUTRITION_FILE_UPLOAD_LIMIT_HINT}
       </p>
 
-      <form
-        className="admin-form-stack"
-        action={formAction}
-        onSubmit={(event: FormEvent<HTMLFormElement>) => {
-          setLocalPreviewError(null);
-          const form = event.currentTarget;
-          const input = form.querySelector<HTMLInputElement>('input[type="file"][name="reportFiles"]');
-          if (!input?.files || input.files.length === 0) {
-            return;
-          }
-          const error = validateNutritionUploadFiles([...input.files]);
-          if (error) {
-            event.preventDefault();
-            setLocalPreviewError(error);
-          }
-        }}
-      >
-        <input type="hidden" name="studentId" value={studentId} />
-        <input type="hidden" name="redirectTo" value={redirectTo} />
-        <div className="admin-nutrition-kv-grid">
+      <section className="admin-nutrition-upload-step">
+        <h4>Шаг 1 — загрузить и распознать</h4>
+        <form
+          className="admin-form-stack"
+          action={formAction}
+          onSubmit={(event: FormEvent<HTMLFormElement>) => {
+            setLocalPreviewError(null);
+            const form = event.currentTarget;
+            const input = form.querySelector<HTMLInputElement>('input[type="file"][name="reportFiles"]');
+            if (!input?.files || input.files.length === 0) {
+              return;
+            }
+            const error = validateNutritionUploadFiles([...input.files]);
+            if (error) {
+              event.preventDefault();
+              setLocalPreviewError(error);
+            }
+          }}
+        >
+          <input type="hidden" name="studentId" value={studentId} />
+          <input type="hidden" name="redirectTo" value={redirectTo} />
+          <div className="admin-nutrition-kv-grid">
+            <label className="admin-form-field">
+              <span>Неделя с</span>
+              <input className="admin-input" type="date" name="weekFrom" defaultValue={weekFrom} required />
+            </label>
+            <label className="admin-form-field">
+              <span>Неделя по</span>
+              <input className="admin-input" type="date" name="weekTo" defaultValue={weekTo} required />
+            </label>
+          </div>
           <label className="admin-form-field">
-            <span>Неделя с</span>
-            <input className="admin-input" type="date" name="weekFrom" defaultValue={weekFrom} required />
+            <span>Файлы отчёта</span>
+            <input
+              className="admin-input"
+              type="file"
+              name="reportFiles"
+              multiple
+              required
+              accept=".pdf,.csv,.txt,.jpg,.jpeg,.png,.webp,.heic,image/heic,image/heif"
+            />
           </label>
           <label className="admin-form-field">
-            <span>Неделя по</span>
-            <input className="admin-input" type="date" name="weekTo" defaultValue={weekTo} required />
+            <span>Комментарий ученика / заметки</span>
+            <textarea className="admin-textarea admin-textarea-compact" name="studentNotes" rows={2} />
           </label>
-        </div>
-        <label className="admin-form-field">
-          <span>Файлы отчёта</span>
-          <input
-            className="admin-input"
-            type="file"
-            name="reportFiles"
-            multiple
-            required
-            accept=".pdf,.csv,.txt,.jpg,.jpeg,.png,.webp,.heic,image/heic,image/heif"
-          />
-        </label>
-        <label className="admin-form-field">
-          <span>Комментарий ученика / заметки</span>
-          <textarea className="admin-textarea admin-textarea-compact" name="studentNotes" rows={3} />
-        </label>
-        <div className="admin-card-actions admin-card-actions-compact">
-          <button className="admin-button admin-button-secondary" type="submit" disabled={pending}>
-            {pending ? "Распознаю…" : "Загрузить и распознать"}
-          </button>
-        </div>
-      </form>
-
-      <p className="admin-muted admin-nutrition-helper">
-        После распознавания для сохранения пока нужно выбрать тот же файл ещё раз.
-      </p>
-
-      <NutritionReportUploadForm className="admin-form-stack" action={saveAction}>
-        <input type="hidden" name="studentId" value={studentId} />
-        <input type="hidden" name="redirectTo" value={redirectTo} />
-        <div className="admin-nutrition-kv-grid">
-          <label className="admin-form-field">
-            <span>Неделя с</span>
-            <input className="admin-input" type="date" name="weekFrom" defaultValue={weekFrom} required />
-          </label>
-          <label className="admin-form-field">
-            <span>Неделя по</span>
-            <input className="admin-input" type="date" name="weekTo" defaultValue={weekTo} required />
-          </label>
-        </div>
-        <label className="admin-form-field">
-          <span>Файлы отчёта</span>
-          <input
-            className="admin-input"
-            type="file"
-            name="reportFiles"
-            multiple
-            required
-            accept=".pdf,.csv,.txt,.jpg,.jpeg,.png,.webp,.heic,image/heic,image/heif"
-          />
-        </label>
-        <label className="admin-form-field">
-          <span>Комментарий ученика / заметки</span>
-          <textarea className="admin-textarea admin-textarea-compact" name="studentNotes" rows={3} />
-        </label>
-        <label className="admin-form-field">
-          <span>Если данных мало</span>
-          <select className="admin-input" name="forceNeedsReview" defaultValue="false">
-            <option value="false">Автостатус по качеству данных</option>
-            <option value="true">Сохранить как needs_review</option>
-          </select>
-        </label>
-        <div className="admin-card-actions admin-card-actions-compact">
-          <FormActionButton className="admin-button" pendingText="Сохраняю…">
-            Сохранить и запустить разбор
-          </FormActionButton>
-        </div>
-      </NutritionReportUploadForm>
+          <div className="admin-card-actions admin-card-actions-compact">
+            <button className="admin-button admin-button-secondary" type="submit" disabled={pending}>
+              {pending ? "Распознаю…" : "Загрузить и распознать"}
+            </button>
+          </div>
+        </form>
+      </section>
 
       {previewNotice && <div className="admin-alert admin-alert-success">{previewNotice}</div>}
       {previewError && <div className="admin-alert admin-alert-error">{previewError}</div>}
@@ -243,8 +199,8 @@ export default function NutritionFileUploadPanel({
             </table>
           </div>
           {activePreview.files.length > 0 && (
-            <div className="admin-card admin-card-compact">
-              <h4>Диагностика PDF</h4>
+            <details>
+              <summary>Диагностика PDF</summary>
               <div className="admin-table-wrap">
                 <table className="admin-table admin-table-compact">
                   <thead>
@@ -263,11 +219,7 @@ export default function NutritionFileUploadPanel({
                       const textLen = file.extractionTextLength ?? 0;
                       const pdfReadable = file.extractionErrorCode ? "не прочитан" : "прочитан";
                       const compactStatus =
-                        parsedDays >= 5
-                          ? "готово"
-                          : parsedDays > 0
-                            ? "мало дней"
-                            : "мало данных";
+                        parsedDays >= 5 ? "готово" : parsedDays > 0 ? "мало дней" : "мало данных";
                       return (
                         <tr key={`${file.originalFileName}-${file.fileKind}`}>
                           <td>{file.originalFileName}</td>
@@ -282,8 +234,46 @@ export default function NutritionFileUploadPanel({
                   </tbody>
                 </table>
               </div>
-            </div>
+            </details>
           )}
+
+          <section className="admin-nutrition-upload-step admin-nutrition-upload-step-save">
+            <h4>Шаг 2 — сохранить распознанный отчёт</h4>
+            <p className="admin-muted">Для сохранения выберите тот же файл ещё раз.</p>
+            <NutritionReportUploadForm className="admin-form-stack" action={saveAction}>
+              <input type="hidden" name="studentId" value={studentId} />
+              <input type="hidden" name="redirectTo" value={redirectTo} />
+              <input type="hidden" name="weekFrom" value={weekFrom} />
+              <input type="hidden" name="weekTo" value={weekTo} />
+              <label className="admin-form-field">
+                <span>Файлы отчёта</span>
+                <input
+                  className="admin-input"
+                  type="file"
+                  name="reportFiles"
+                  multiple
+                  required
+                  accept=".pdf,.csv,.txt,.jpg,.jpeg,.png,.webp,.heic,image/heic,image/heif"
+                />
+              </label>
+              <label className="admin-form-field">
+                <span>Комментарий ученика / заметки</span>
+                <textarea className="admin-textarea admin-textarea-compact" name="studentNotes" rows={2} />
+              </label>
+              <label className="admin-form-field">
+                <span>Если данных мало</span>
+                <select className="admin-input" name="forceNeedsReview" defaultValue="false">
+                  <option value="false">Автостатус по качеству данных</option>
+                  <option value="true">Сохранить как needs_review</option>
+                </select>
+              </label>
+              <div className="admin-card-actions admin-card-actions-compact">
+                <FormActionButton className="admin-button" pendingText="Сохраняю…">
+                  Сохранить отчёт
+                </FormActionButton>
+              </div>
+            </NutritionReportUploadForm>
+          </section>
         </>
       )}
     </article>

@@ -917,3 +917,205 @@ code {
 .admin-nutrition-page .admin-nutrition-helper {
   margin: 0 0 8px;
 }
+
+.admin-nutrition-page .admin-nutrition-profile-compact {
+  padding: 10px 12px;
+}
+
+.admin-nutrition-page .admin-nutrition-week-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.admin-nutrition-page .admin-nutrition-week-row .admin-form-field {
+  margin: 0;
+}
+
+.admin-nutrition-page .admin-nutrition-week-row .admin-form-field span {
+  font-size: 11px;
+}
+
+.admin-nutrition-page .admin-nutrition-week-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  align-self: center;
+}
+
+.admin-nutrition-page .admin-nutrition-inline-meta {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #475569;
+}
+
+.admin-nutrition-page .admin-nutrition-compact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 6px 12px;
+}
+
+.admin-nutrition-page .admin-nutrition-selected-card {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #334155;
+}
+
+.admin-nutrition-page .admin-nutrition-mini-table {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0;
+}
+
+.admin-nutrition-page .admin-nutrition-mini-table-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 13px;
+  background: #fff;
+}
+
+.admin-nutrition-page .admin-nutrition-mini-table-row-selected {
+  border-color: #94a3b8;
+  background: #f1f5f9;
+}
+
+.admin-nutrition-page .admin-nutrition-mini-table-row a {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.admin-nutrition-page .admin-nutrition-mini-table-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.admin-nutrition-page .admin-nutrition-upload-step {
+  padding: 8px 0;
+}
+
+.admin-nutrition-page .admin-nutrition-upload-step-save {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.admin-nutrition-page .admin-nutrition-upload-step h4 {
+  margin: 0 0 6px;
+}
+
+.admin-nutrition-page .admin-nutrition-review-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.admin-nutrition-page .admin-nutrition-review-row .admin-form-field {
+  flex: 1 1 220px;
+  min-width: 180px;
+  margin: 0;
+}
+
+.admin-nutrition-page .admin-nutrition-copy-block {
+  display: grid;
+  gap: 6px;
+}
+
+.admin-nutrition-page .admin-nutrition-copy-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.admin-nutrition-page .admin-button-small {
+  min-height: 28px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.admin-nutrition-page .admin-nutrition-draft-textarea {
+  min-height: 80px;
+  max-height: 320px;
+  resize: vertical;
+}
+
+.admin-nutrition-page .admin-nutrition-text-block {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.admin-nutrition-page .admin-nutrition-coach-section {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-nutrition-page .admin-nutrition-advanced-stack {
+  grid-column: 1 / -1;
+}
+
+.admin-nutrition-page .admin-nutrition-advanced-stack > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.admin-nutrition-page .admin-nutrition-advanced-stack > .admin-nutrition-advanced-inner {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.admin-nutrition-page .admin-nutrition-advanced-inner details {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fff;
+}
+
+.admin-nutrition-page .admin-nutrition-advanced-inner details > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.admin-nutrition-page .admin-nutrition-advanced-inner details > .admin-form-stack,
+.admin-nutrition-page .admin-nutrition-advanced-inner details > article,
+.admin-nutrition-page .admin-nutrition-advanced-inner details > div {
+  margin-top: 8px;
+}
+
+.admin-nutrition-page .admin-input[type="date"],
+.admin-nutrition-page .admin-input[type="file"] {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.admin-nutrition-page .admin-form-field .admin-input,
+.admin-nutrition-page .admin-form-field .admin-textarea {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}

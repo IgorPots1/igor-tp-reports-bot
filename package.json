@@ -181,6 +181,7 @@
     "check:nutrition-upload-action-flow": "npx tsx scripts/check-nutrition-upload-action-flow.ts",
     "check:nutrition-report-navigation": "npx tsx scripts/check-nutrition-report-navigation.ts",
     "check:nutrition-review-persistence-flow": "npx tsx scripts/check-nutrition-review-persistence-flow.ts",
+    "check:nutrition-admin-ui-polish": "npx tsx scripts/check-nutrition-admin-ui-polish.ts",
     "nutrition:enable-test-cohort": "npx tsx scripts/nutrition-enable-test-cohort.ts"
   },
   "dependencies": {

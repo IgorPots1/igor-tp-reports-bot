@@ -27,6 +27,8 @@ assert.doesNotMatch(draftGenerator, /Главный фокус недели — 
 assert.doesNotMatch(draftGenerator, /день самой работы/i, "generator should avoid robotic phrase 'день самой работы'");
 
 const studentPage = readFileSync(join(root, "src/app/admin/coach-os/nutrition/[studentId]/page.tsx"), "utf8");
+const draftCopyBlock = readFileSync(join(root, "src/app/admin/coach-os/nutrition/NutritionDraftCopyBlock.tsx"), "utf8");
+const studentUi = `${studentPage}\n${draftCopyBlock}`;
 assert.match(studentPage, /Главный вывод для тренера/, "UI should render coach summary section");
 assert.match(studentPage, /Разбор по дням/, "UI should render day-by-day section");
 assert.match(studentPage, /Связки тренировка ↔ питание/, "UI should render training links section");
@@ -34,7 +36,7 @@ assert.match(studentPage, /<details>/, "UI should collapse technical JSON");
 assert.match(studentPage, /Вес не задан — расчёт г\/кг и белок достаточный недоступны\./, "UI should explain missing weight");
 assert.match(studentPage, /Safety JSON/, "UI should keep raw safety JSON collapsed");
 assert.doesNotMatch(studentPage, /JSON\.stringify\(card\.weeklyAnalysis\.nutritionSummary,\s*null,\s*2\)/, "raw JSON cannot be primary UI");
-assert.match(studentPage, /Сгенерировано шаблоном, лучше проверить текст вручную\./, "UI should warn when fallback text is shown");
+assert.match(studentUi, /Сгенерировано шаблоном, лучше проверить текст вручную\./, "UI should warn when fallback text is shown");
 assert.match(studentPage, /Черновик для ученика/, "UI should keep athlete draft first");
 assert.match(studentPage, /Метрики недели/, "UI should keep metrics section");
 

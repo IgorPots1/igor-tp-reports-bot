@@ -100,8 +100,64 @@ export function formatNutritionShortId(id: string | null | undefined): string {
   return id.slice(0, 8);
 }
 
+export const NUTRITION_SOURCE_TYPE_LABELS: Record<string, string> = {
+  pdf: "pdf",
+  csv: "csv",
+  manual_text: "текст",
+  screenshot: "скриншот",
+  mixed: "смешанный",
+};
+
+export const NUTRITION_CARB_STRATEGY_LABELS: Record<string, string> = {
+  maintain: "поддержание",
+  small_step: "маленький шаг",
+  moderate_step: "умеренный шаг",
+  toward_reference_band: "к целевому диапазону",
+};
+
 export function formatNutritionGenerationMode(mode: string | null | undefined): string {
-  return mode === "ai" ? "AI" : "fallback";
+  if (mode === "ai") {
+    return "AI";
+  }
+  if (mode === "fallback") {
+    return "шаблон";
+  }
+  return mode ?? "—";
+}
+
+export function formatNutritionCompactDate(value: string | null | undefined): string {
+  if (!value) {
+    return "—";
+  }
+  const date = new Date(value);
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const hours = String(date.getUTCHours()).padStart(2, "0");
+  const minutes = String(date.getUTCMinutes()).padStart(2, "0");
+  return `${day}.${month} ${hours}:${minutes}`;
+}
+
+export function formatNutritionSourceType(value: string | null | undefined): string {
+  if (!value) {
+    return "—";
+  }
+  return NUTRITION_SOURCE_TYPE_LABELS[value] ?? value;
+}
+
+export function formatNutritionCarbStrategy(value: string | null | undefined): string {
+  if (!value) {
+    return "—";
+  }
+  return NUTRITION_CARB_STRATEGY_LABELS[value] ?? value;
+}
+
+export function formatNutritionDataQualitySummary(input: {
+  parsedDays?: number | null;
+  lowConfidenceDays?: number | null;
+}): string {
+  const parsedDays = typeof input.parsedDays === "number" ? input.parsedDays : "—";
+  const lowConfidenceDays = typeof input.lowConfidenceDays === "number" ? input.lowConfidenceDays : "—";
+  return `${parsedDays} дней распознано, низкая уверенность: ${lowConfidenceDays}`;
 }
 
 export function buildNutritionDashboardOpenHref(input: {
