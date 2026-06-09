@@ -185,6 +185,39 @@ async function run(): Promise<void> {
   assert.equal(focus.category, "long_run_underfueling");
   assert.equal(methodology.dailyAnalysis.some((day) => day.trainingType === "long_run" && day.duringRunFuelPlanned === false), true);
 
+  const intervalPatternContext = buildMockContext({
+    tpPastWeek: {
+      ...buildMockContext().tpPastWeek,
+      keyWorkouts: [],
+      longRun: { date: "2026-06-07", title: "Длительная", durationHours: 1.8, distanceKm: 18 },
+      workouts: [
+        {
+          date: "2026-06-03",
+          title: "7 х 5 мин",
+          status: "completed",
+          type: "run",
+          description: null,
+          coachComments: null,
+          plannedText: null,
+        },
+        {
+          date: "2026-06-07",
+          title: "Бег по пульсу",
+          status: "completed",
+          type: "run",
+          description: null,
+          coachComments: null,
+          plannedText: null,
+        },
+      ],
+    },
+  });
+  const intervalPatternMethodology = buildNutritionMethodologyContext({ context: intervalPatternContext });
+  const intervalDay = intervalPatternMethodology.dailyAnalysis.find((day) => day.date === "2026-06-03");
+  const longRunDay = intervalPatternMethodology.dailyAnalysis.find((day) => day.date === "2026-06-07");
+  assert.equal(intervalDay?.trainingType, "intervals", "7 х 5 мин must be treated as intervals");
+  assert.equal(longRunDay?.trainingType, "long_run", "long run date must override generic title");
+
   const lowCarbsContext = buildMockContext({
     manualMacroRows: buildMockContext().manualMacroRows.map((row) => ({ ...row, carbsG: 130, kcal: 1450 })),
   });
@@ -253,6 +286,16 @@ async function run(): Promise<void> {
   assert.doesNotMatch(draftTy, /[A-Za-z]{3,}/, "draft should avoid English text");
   assert.doesNotMatch(draftTy.toLowerCase(), /\bвы\b/, "ty draft should not mix vy");
   assert.doesNotMatch(draftTy.toLowerCase(), /похуд|сниже|дефицит|уреза/, "draft should avoid weight-loss language");
+  assert.doesNotMatch(
+    draftTy.toLowerCase(),
+    /главный\s+фокус\s*[—-]\s*главный\s+фокус/,
+    "draft must avoid duplicated focus prefix"
+  );
+  assert.equal(typeof generatedTy.nutrition_summary.bodyweight_kg, "number");
+  assert.ok(Array.isArray(generatedTy.nutrition_summary.daily_analysis));
+  assert.ok(Array.isArray(generatedTy.nutrition_summary.training_nutrition_links));
+  assert.equal(typeof generatedTy.nutrition_summary.one_focus, "object");
+  assert.equal(typeof generatedTy.nutrition_summary.methodology_signals, "object");
 
   const vyContext = buildMockContext({
     resolvedCommunicationProfile: {

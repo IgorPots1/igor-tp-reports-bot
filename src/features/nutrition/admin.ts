@@ -326,7 +326,16 @@ export async function generateNutritionWeeklyReview(input: {
     internalSummary: generated.internal_summary,
     tpPastWeekContext: context.tpPastWeek,
     tpNextWeekContext: context.tpNextWeek,
-    nutritionSummary: generated.nutrition_summary,
+    nutritionSummary: {
+      ...generated.nutrition_summary,
+      data_quality_summary: generated.data_quality_summary,
+      daily_analysis: generated.daily_analysis,
+      training_nutrition_links: generated.training_nutrition_links,
+      one_focus: generated.one_focus,
+      methodology_signals: generated.methodology_signals,
+      bodyweight_kg: context.currentWeightKg,
+      carb_progression_strategy: generated.one_focus.progression_strategy,
+    },
     safetyFlags: generated.safety_flags,
     contextSnapshot: {
       studentName: context.studentName,

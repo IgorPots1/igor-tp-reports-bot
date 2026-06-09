@@ -122,6 +122,17 @@ function toFiniteNumber(value: number | string | null | undefined): number | nul
   return null;
 }
 
+function normalizeDistanceKm(distanceRaw: number | null): number | null {
+  if (distanceRaw === null) {
+    return null;
+  }
+  // TrainingPeaks cache can provide meters; normalize obvious meter values to km.
+  if (distanceRaw > 100) {
+    return Number((distanceRaw / 1000).toFixed(2));
+  }
+  return distanceRaw;
+}
+
 function addDays(isoDate: string, days: number): string {
   const match = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) {
@@ -440,7 +451,7 @@ function maybeLongRun(row: TrainingPeaksWorkoutCacheRow): {
 } | null {
   const title = (row.title ?? "").toLocaleLowerCase("ru");
   const duration = toFiniteNumber(row.completedTimeRaw ?? row.plannedTimeRaw);
-  const distance = toFiniteNumber(row.completedDistanceRaw ?? row.plannedDistanceRaw);
+  const distance = normalizeDistanceKm(toFiniteNumber(row.completedDistanceRaw ?? row.plannedDistanceRaw));
   const hasLongWord = /длитель|long run|longrun/.test(title);
   const durationHours = duration;
   const score = (hasLongWord ? 2 : 0) + ((durationHours !== null && durationHours >= 1.4) ? 1 : 0) + ((distance !== null && distance >= 16) ? 1 : 0);
@@ -471,7 +482,10 @@ function snapshotText(value: unknown): string | null {
 
 function isKeyWorkout(row: TrainingPeaksWorkoutCacheRow): boolean {
   const title = (row.title ?? "").toLocaleLowerCase("ru");
-  if (/интерв|tempo|темп|порог|threshold|vo2|спринт|hill/.test(title)) {
+  if (
+    /интерв|tempo|темп|порог|threshold|vo2|спринт|hill/.test(title) ||
+    /\b\d{1,2}\s*(?:x|х|×|\*)\s*\d{1,2}\s*(?:мин|min|m)?\b/i.test(title)
+  ) {
     return true;
   }
   const classification = classifyTrainingPeaksWorkoutActivity({
@@ -596,6 +610,9 @@ export async function buildNutritionStudentContext(input: {
       addDays(input.weekTo, 7)
     ),
   ]);
+  const latestConfirmedWeight =
+    essentials.weightLogs.find((item) => item.confirmedByCoach)?.weightKg ?? null;
+  const latestWeight = essentials.weightLogs[0]?.weightKg ?? null;
 
   return {
     studentName: student.studentName,
@@ -619,7 +636,7 @@ export async function buildNutritionStudentContext(input: {
     ),
     nutritionContextItems: essentials.contextItems,
     weightLogs: essentials.weightLogs,
-    currentWeightKg: essentials.profile?.currentWeightKg ?? null,
+    currentWeightKg: essentials.profile?.currentWeightKg ?? latestConfirmedWeight ?? latestWeight ?? null,
     nutritionGoal: essentials.profile?.goal ?? null,
     manualMacroRows: input.manualRows,
     dataQuality,

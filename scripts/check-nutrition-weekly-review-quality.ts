@@ -13,12 +13,16 @@ assert.match(draftGenerator, /no_english/, "weekly generator must enforce russia
 assert.match(draftGenerator, /one_focus/, "weekly generator output must contain one_focus");
 assert.match(draftGenerator, /daily_analysis/, "weekly generator output must contain daily_analysis");
 assert.match(draftGenerator, /training_nutrition_links/, "weekly generator output must contain training_nutrition_links");
+assert.match(draftGenerator, /bodyweight_kg/, "weekly generator output must contain bodyweight_kg");
+assert.match(draftGenerator, /carb_progression_strategy/, "weekly generator output must contain carb_progression_strategy");
 
 const studentPage = readFileSync(join(root, "src/app/admin/coach-os/nutrition/[studentId]/page.tsx"), "utf8");
 assert.match(studentPage, /Сводка для тренера/, "UI should render coach summary section");
 assert.match(studentPage, /Важные дни/, "UI should render important days section");
 assert.match(studentPage, /Связки тренировка ↔ питание/, "UI should render training links section");
 assert.match(studentPage, /<details>/, "UI should collapse technical JSON");
+assert.match(studentPage, /Вес не задан — расчёт г\/кг и белок достаточный недоступны\./, "UI should explain missing weight");
+assert.match(studentPage, /Safety JSON/, "UI should keep raw safety JSON collapsed");
 assert.doesNotMatch(studentPage, /JSON\.stringify\(card\.weeklyAnalysis\.nutritionSummary,\s*null,\s*2\)/, "raw JSON cannot be primary UI");
 
 console.log("PASS check-nutrition-weekly-review-quality");

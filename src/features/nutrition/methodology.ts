@@ -167,7 +167,10 @@ function normalizeTrainingType(rawType: string | null | undefined, title: string
   if (/tempo|темп|порог|threshold/.test(titleLc)) {
     return "tempo";
   }
-  if (/интерв|interval|vo2|спринт|hill/.test(titleLc)) {
+  if (
+    /интерв|interval|vo2|спринт|hill/.test(titleLc) ||
+    /\b\d{1,2}\s*(?:x|х|×|\*)\s*\d{1,2}\s*(?:мин|min|m)?\b/i.test(titleLc)
+  ) {
     return "intervals";
   }
   if (/длитель|long run|longrun/.test(titleLc)) {
@@ -184,8 +187,10 @@ function normalizeTrainingType(rawType: string | null | undefined, title: string
 
 function buildWorkoutContextByDate(week: NutritionTrainingPeaksWeekContext): Map<string, WorkoutContextByDate> {
   const map = new Map<string, WorkoutContextByDate>();
+  const forcedLongRunDate = week.longRun?.date ?? null;
   for (const workout of week.workouts) {
-    const type = normalizeTrainingType(workout.type, workout.title);
+    const inferredType = normalizeTrainingType(workout.type, workout.title);
+    const type = forcedLongRunDate && workout.date === forcedLongRunDate ? "long_run" : inferredType;
     const current = map.get(workout.date);
     if (!current || type === "long_run" || type === "intervals" || type === "tempo" || type === "race") {
       map.set(workout.date, {

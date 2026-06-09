@@ -37,6 +37,27 @@ export type GeneratedNutritionWeeklyAnalysis = {
     avg_protein_g: number | null;
     avg_fat_g: number | null;
     avg_carbs_g: number | null;
+    data_quality_summary?: {
+      parsed_days: number;
+      low_confidence_days: number;
+      quality_flags: string[];
+    };
+    daily_analysis?: Array<Record<string, unknown>>;
+    training_nutrition_links?: string[];
+    one_focus?: {
+      category: string;
+      statement_ru: string;
+      progression_strategy: CarbProgressionStrategy;
+    };
+    methodology_signals?: {
+      protein_sufficient: boolean;
+      carb_reference_band_used: true;
+      carb_reference_not_prescriptive: true;
+      long_run_fueling_instruction_detected: boolean;
+      during_run_fuel_planned: boolean;
+    };
+    bodyweight_kg?: number | null;
+    carb_progression_strategy?: CarbProgressionStrategy;
   };
   tp_context_summary: {
     past_week_key_sessions: number;
@@ -142,7 +163,13 @@ function buildAthleteDraft(input: {
   const greeting = profile.preferredGreeting ? `${profile.preferredGreeting}\n\n` : "";
   const proteinLine = proteinSufficient ? address.proteinOk : null;
   const stepText = buildProgressionStepText(progressionStrategy, profile.formality);
-  const focusLine = `${address.lead} — ${mainFocusRu.toLowerCase()}.`;
+  const normalizedFocus = mainFocusRu
+    .trim()
+    .replace(/^главный\s+фокус(?:\s+недели)?\s*[—:-]\s*/i, "")
+    .replace(/^главный\s+фокус\s*/i, "")
+    .trim()
+    .replace(/\.$/, "");
+  const focusLine = `${address.lead} — ${normalizedFocus.toLowerCase()}.`;
   const noJumpLine = address.noSharpJumps;
   const profileNotes = profile.notes ? `\n\n${profile.notes}` : "";
   const lines = [greeting.trim(), proteinLine, focusLine, stepText, noJumpLine, address.lookAhead]
@@ -256,6 +283,27 @@ export async function generateNutritionWeeklyAnalysis(input: {
       avg_protein_g: avgProtein,
       avg_fat_g: avgFat,
       avg_carbs_g: avgCarbs,
+      data_quality_summary: {
+        parsed_days: context.dataQuality.parsedDays,
+        low_confidence_days: context.dataQuality.lowConfidenceDays,
+        quality_flags: context.dataQuality.qualityFlags,
+      },
+      daily_analysis: methodology.dailyAnalysis as Array<Record<string, unknown>>,
+      training_nutrition_links: methodology.trainingNutritionLinks,
+      one_focus: {
+        category: selectedFocus.category,
+        statement_ru: selectedFocus.statementRu,
+        progression_strategy: selectedFocus.progressionStrategy,
+      },
+      methodology_signals: {
+        protein_sufficient: methodology.proteinSufficient,
+        carb_reference_band_used: methodology.carbReferenceBandUsed,
+        carb_reference_not_prescriptive: methodology.carbReferenceNotPrescriptive,
+        long_run_fueling_instruction_detected: methodology.longRunFuelingInstructionDetected,
+        during_run_fuel_planned: methodology.duringRunFuelPlanned,
+      },
+      bodyweight_kg: methodology.bodyweightKg,
+      carb_progression_strategy: selectedFocus.progressionStrategy,
     },
     tp_context_summary: {
       past_week_key_sessions: context.tpPastWeek.keyWorkouts.length,

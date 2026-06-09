@@ -157,7 +157,6 @@ export default async function CoachOsNutritionStudentCardPage({
     fileUploadPreview.weekTo === weekTo
       ? fileUploadPreview
       : null;
-  const weeklyInternalSummary = asObject(card.weeklyAnalysis?.internalSummary);
   const weeklyNutritionSummary = asObject(card.weeklyAnalysis?.nutritionSummary);
   const dailyAnalysis = Array.isArray(weeklyNutritionSummary.daily_analysis)
     ? (weeklyNutritionSummary.daily_analysis as Array<Record<string, unknown>>)
@@ -171,6 +170,20 @@ export default async function CoachOsNutritionStudentCardPage({
     : [];
   const oneFocus = asObject(weeklyNutritionSummary.one_focus);
   const methodologySignals = asObject(weeklyNutritionSummary.methodology_signals);
+  const dataQualitySummary = asObject(weeklyNutritionSummary.data_quality_summary);
+  const bodyweightKg =
+    typeof weeklyNutritionSummary.bodyweight_kg === "number"
+      ? weeklyNutritionSummary.bodyweight_kg
+      : card.context.currentWeightKg;
+  const carbStrategy =
+    typeof weeklyNutritionSummary.carb_progression_strategy === "string"
+      ? weeklyNutritionSummary.carb_progression_strategy
+      : typeof oneFocus.progression_strategy === "string"
+        ? oneFocus.progression_strategy
+        : null;
+  const oneFocusText = typeof oneFocus.statement_ru === "string" ? oneFocus.statement_ru : null;
+  const hardSafetyFlags = asStringArray(card.weeklyAnalysis?.safetyFlags?.hard_flags);
+  const hasSafetyFlags = hardSafetyFlags.length > 0;
 
   return (
     <section className="admin-section admin-nutrition-page">
@@ -568,11 +581,29 @@ export default async function CoachOsNutritionStudentCardPage({
               )}
 
               <section>
+                <h4>Черновик для ученика</h4>
+                {card.weeklyAnalysis.athleteMessageDraft ? (
+                  <textarea
+                    className="admin-textarea admin-textarea-compact admin-textarea-readonly"
+                    rows={6}
+                    readOnly
+                    value={card.weeklyAnalysis.athleteMessageDraft}
+                  />
+                ) : (
+                  <p className="admin-muted">Черновик скрыт (блок безопасности или мало данных).</p>
+                )}
+              </section>
+
+              <section>
                 <h4>Сводка для тренера</h4>
                 <dl className="admin-meta-list admin-meta-list-compact">
                   <div>
                     <dt>Качество данных</dt>
-                    <dd>{Array.isArray(weeklyInternalSummary.notes) ? "ok" : "needs_review"}</dd>
+                    <dd>
+                      parsed_days: {typeof dataQualitySummary.parsed_days === "number" ? dataQualitySummary.parsed_days : "—"}
+                      , low_confidence_days:{" "}
+                      {typeof dataQualitySummary.low_confidence_days === "number" ? dataQualitySummary.low_confidence_days : "—"}
+                    </dd>
                   </div>
                   <div>
                     <dt>Средние ккал/Б/Ж/У</dt>
@@ -583,25 +614,33 @@ export default async function CoachOsNutritionStudentCardPage({
                   </div>
                   <div>
                     <dt>Вес (кг)</dt>
-                    <dd>{card.context.currentWeightKg ?? "—"}</dd>
+                    <dd>{bodyweightKg ?? "—"}</dd>
                   </div>
                   <div>
                     <dt>Белок достаточный</dt>
-                    <dd>{methodologySignals.protein_sufficient === true ? "Да" : "Нет/неизвестно"}</dd>
+                    <dd>
+                      {bodyweightKg === null
+                        ? "Вес не задан — расчёт г/кг и белок достаточный недоступны."
+                        : methodologySignals.protein_sufficient === true
+                          ? "Да"
+                          : "Нет/неизвестно"}
+                    </dd>
                   </div>
                   <div>
                     <dt>Один фокус</dt>
-                    <dd>{typeof oneFocus.category === "string" ? oneFocus.category : "—"}</dd>
+                    <dd>{oneFocusText ?? "—"}</dd>
                   </div>
                   <div>
                     <dt>Стратегия углеводов</dt>
-                    <dd>{typeof oneFocus.progression_strategy === "string" ? oneFocus.progression_strategy : "—"}</dd>
+                    <dd>{carbStrategy ?? "—"}</dd>
                   </div>
                   <div>
-                    <dt>TP cache</dt>
-                    <dd>
-                      {formatNutritionTpCacheStatus(card.context.tpPastWeek.cacheStatus)} / {formatNutritionTpCacheStatus(card.context.tpNextWeek.cacheStatus)}
-                    </dd>
+                    <dt>TP прошлой недели</dt>
+                    <dd>{formatNutritionTpCacheStatus(card.context.tpPastWeek.cacheStatus)}</dd>
+                  </div>
+                  <div>
+                    <dt>TP следующей недели</dt>
+                    <dd>{formatNutritionTpCacheStatus(card.context.tpNextWeek.cacheStatus)}</dd>
                   </div>
                 </dl>
               </section>
@@ -642,13 +681,9 @@ export default async function CoachOsNutritionStudentCardPage({
 
               <section>
                 <h4>Флаги безопасности</h4>
-                <textarea
-                  className="admin-textarea admin-textarea-compact admin-textarea-readonly"
-                  rows={3}
-                  readOnly
-                  value={JSON.stringify(card.weeklyAnalysis.safetyFlags, null, 2)}
-                />
-                {formatDoNotSendReasons(card.weeklyAnalysis.safetyFlags).length > 0 && (
+                {!hasSafetyFlags ? (
+                  <p className="admin-muted">Флагов нет.</p>
+                ) : (
                   <div className="admin-meta-list admin-meta-list-compact">
                     <div>
                       <dt>Причины не отправлять</dt>
@@ -656,20 +691,15 @@ export default async function CoachOsNutritionStudentCardPage({
                     </div>
                   </div>
                 )}
-              </section>
-
-              <section>
-                <h4>Черновик для ученика</h4>
-                {card.weeklyAnalysis.athleteMessageDraft ? (
+                <details>
+                  <summary>Safety JSON</summary>
                   <textarea
                     className="admin-textarea admin-textarea-compact admin-textarea-readonly"
-                    rows={6}
+                    rows={3}
                     readOnly
-                    value={card.weeklyAnalysis.athleteMessageDraft}
+                    value={JSON.stringify(card.weeklyAnalysis.safetyFlags, null, 2)}
                   />
-                ) : (
-                  <p className="admin-muted">Черновик скрыт (блок безопасности или мало данных).</p>
-                )}
+                </details>
               </section>
 
               <details>
