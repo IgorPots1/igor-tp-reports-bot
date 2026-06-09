@@ -2,7 +2,10 @@ import process from "node:process";
 
 import { createClient } from "@supabase/supabase-js";
 
-import { buildDerivedNutritionCombinedMessage } from "../src/features/nutrition/combined-message";
+import {
+  buildDerivedNutritionCoachDayByDayText,
+  buildDerivedNutritionCombinedMessage,
+} from "../src/features/nutrition/combined-message";
 import { calculateNutritionPlanWeek } from "../src/features/nutrition/weekly-plan-generator";
 import {
   getNutritionStudentProfile,
@@ -225,6 +228,21 @@ async function main(): Promise<void> {
   console.log("Stored review draft (secondary block) — first line only:");
   const storedFirstLine = firstLines(review.athleteMessageDraft, 1)[0] ?? "—";
   console.log(`- ${storedFirstLine}`);
+  console.log("");
+
+  const summary = toObject(review.nutritionSummary);
+  const storedDayByDay =
+    typeof summary.day_by_day_analysis_text === "string" ? summary.day_by_day_analysis_text : null;
+  const derivedCoachDayByDay = buildDerivedNutritionCoachDayByDayText(review);
+  const storedDayByDayChecks = containsForbiddenPhrases(storedDayByDay);
+  const coachDayByDayChecks = containsForbiddenPhrases(derivedCoachDayByDay);
+  console.log("Coach day-by-day (Детали для тренера):");
+  console.log(`- uses derived canonical facts: ${yesNo(Boolean(derivedCoachDayByDay))}`);
+  console.log(`- stored day_by_day_analysis_text contains "Комментарий:": ${yesNo(storedDayByDayChecks.commentLabel)}`);
+  console.log(`- derived coach day-by-day contains "Комментарий:": ${yesNo(coachDayByDayChecks.commentLabel)}`);
+  console.log(`- derived coach day-by-day contains "можно дать": ${yesNo(coachDayByDayChecks.mozhnoDat)}`);
+  console.log("- derived coach day-by-day first line:");
+  console.log(`  ${firstLines(derivedCoachDayByDay, 1)[0] ?? "—"}`);
 }
 
 main().catch((error: unknown) => {

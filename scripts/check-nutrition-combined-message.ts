@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
+  buildDerivedNutritionCoachDayByDayText,
   buildDerivedNutritionCombinedMessage,
   type NutritionCombinedMessageResult,
 } from "@/features/nutrition/combined-message";
@@ -232,6 +233,10 @@ async function run(): Promise<void> {
     "methodology daily_analysis must render polished combined lines without stored review draft leakage"
   );
   assert.equal(methodologyCombined.warnings.length, 0, "methodology daily_analysis must not warn about missing canonical facts");
+
+  const coachDayByDay = buildDerivedNutritionCoachDayByDayText(methodologyReview);
+  assert.ok(coachDayByDay, "coach day-by-day must render from methodology daily_analysis");
+  assert.doesNotMatch(coachDayByDay ?? "", /Комментарий:|можно дать|указать факт/, "coach day-by-day must not leak stored hint text");
 
   const needsReview = buildDerivedNutritionCombinedMessage({
     review: buildReview("needs_review"),

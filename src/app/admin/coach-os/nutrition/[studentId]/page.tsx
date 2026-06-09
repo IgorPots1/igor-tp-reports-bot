@@ -21,7 +21,10 @@ import {
   getNutritionAdminStudentCard,
   parseNutritionManualMacros,
 } from "@/features/nutrition/admin";
-import { buildDerivedNutritionCombinedMessage } from "@/features/nutrition/combined-message";
+import {
+  buildDerivedNutritionCoachDayByDayText,
+  buildDerivedNutritionCombinedMessage,
+} from "@/features/nutrition/combined-message";
 import {
   buildNutritionStudentCardHref,
   formatNutritionCarbStrategy,
@@ -339,32 +342,8 @@ export default async function CoachOsNutritionStudentCardPage({
     studentName: card.student.studentName,
     profilePreferences: card.profile?.preferences ?? null,
   });
-  // #region agent log
-  fetch("http://127.0.0.1:7521/ingest/adcbf755-c5c9-4a78-9e7d-4a590fbeae5c", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "4d2583" },
-    body: JSON.stringify({
-      sessionId: "4d2583",
-      runId: "pre-fix",
-      hypothesisId: "A,D,E",
-      location: "nutrition/[studentId]/page.tsx",
-      message: "nutrition page draft blocks resolved",
-      data: {
-        studentId: card.student.id,
-        weekFrom,
-        weekTo,
-        combinedStatus: combinedMessage.status,
-        combinedFirstLine: combinedMessage.athleteMessageDraft?.split("\n")[0] ?? null,
-        storedReviewFirstLine: card.weeklyAnalysis?.athleteMessageDraft?.split("\n")[0] ?? null,
-        storedReviewHasCommentLabel: /Комментарий:/.test(card.weeklyAnalysis?.athleteMessageDraft ?? ""),
-        combinedHasCommentLabel: /Комментарий:/.test(combinedMessage.athleteMessageDraft ?? ""),
-        displayPlanId: displayPlan?.id ?? null,
-        reviewId: card.weeklyAnalysis?.id ?? null,
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
+  const derivedCoachDayByDayText = buildDerivedNutritionCoachDayByDayText(card.weeklyAnalysis);
+  const coachDayByDayDisplayText = derivedCoachDayByDayText ?? dayByDayAnalysisText;
   const combinedDoNotSendReasons = [
     ...new Set([
       ...formatDoNotSendReasons(asObject(card.weeklyAnalysis?.safetyFlags)),
@@ -830,8 +809,18 @@ export default async function CoachOsNutritionStudentCardPage({
 
               <section>
                 <h4>Разбор по дням</h4>
-                {dayByDayAnalysisText ? (
-                  <p className="admin-nutrition-text-block">{dayByDayAnalysisText}</p>
+                {coachDayByDayDisplayText ? (
+                  <>
+                    <p className="admin-nutrition-text-block">{coachDayByDayDisplayText}</p>
+                    {derivedCoachDayByDayText &&
+                    dayByDayAnalysisText &&
+                    derivedCoachDayByDayText !== dayByDayAnalysisText ? (
+                      <details>
+                        <summary className="admin-muted">Исходный сохранённый разбор (служебно)</summary>
+                        <p className="admin-nutrition-text-block">{dayByDayAnalysisText}</p>
+                      </details>
+                    ) : null}
+                  </>
                 ) : (
                   <p className="admin-muted">Разбор по дням не сформирован.</p>
                 )}

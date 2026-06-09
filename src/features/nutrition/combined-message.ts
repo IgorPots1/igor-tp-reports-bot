@@ -342,6 +342,17 @@ ${comment}`;
     .filter((line): line is string => Boolean(line));
 }
 
+export function buildDerivedNutritionCoachDayByDayText(review: NutritionWeeklyAnalysis | null): string | null {
+  if (!review) {
+    return null;
+  }
+  const lines = getDailyFactsLines(review);
+  if (lines.length === 0) {
+    return null;
+  }
+  return lines.join("\n\n");
+}
+
 function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
   const summary = asObject(review.nutritionSummary);
   const oneFocus = asObject(summary.one_focus);
@@ -609,33 +620,6 @@ export function buildDerivedNutritionCombinedMessage(input: {
   ];
 
   const athleteMessageDraft = lines.join("\n").trim();
-  // #region agent log
-  fetch("http://127.0.0.1:7521/ingest/adcbf755-c5c9-4a78-9e7d-4a590fbeae5c", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "4d2583" },
-    body: JSON.stringify({
-      sessionId: "4d2583",
-      runId: "pre-fix",
-      hypothesisId: "B,C,E",
-      location: "combined-message.ts:buildDerivedNutritionCombinedMessage",
-      message: "combined message built",
-      data: {
-        sourceReviewId: review.id,
-        sourcePlanId: plan.id,
-        reviewDailyLinesCount: reviewDailyLines.length,
-        hasNextWeekPlan: Boolean(nextWeekPlan),
-        firstLine: athleteMessageDraft.split("\n")[0] ?? null,
-        containsCommentLabel: /Комментарий:/.test(athleteMessageDraft),
-        containsMozhnoDat: /можно дать/.test(athleteMessageDraft),
-        containsDecimalMacro: /\d+\.\d+\s*г/.test(athleteMessageDraft),
-        usesStoredReviewDraft: review.athleteMessageDraft
-          ? athleteMessageDraft.includes(review.athleteMessageDraft.trim())
-          : false,
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
   return {
     status: hasNeedsReviewStatus(review, plan) ? "needs_review" : "ready",
     athleteMessageDraft,
