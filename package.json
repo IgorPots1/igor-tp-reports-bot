@@ -182,6 +182,9 @@
     "check:nutrition-report-navigation": "npx tsx scripts/check-nutrition-report-navigation.ts",
     "check:nutrition-review-persistence-flow": "npx tsx scripts/check-nutrition-review-persistence-flow.ts",
     "check:nutrition-admin-ui-polish": "npx tsx scripts/check-nutrition-admin-ui-polish.ts",
+    "check:nutrition-weekly-plan-storage": "npx tsx scripts/check-nutrition-weekly-plan-storage.ts",
+    "check:nutrition-weekly-plan-no-autosend": "npx tsx scripts/check-nutrition-weekly-plan-storage.ts --no-autosend",
+    "check:nutrition-weekly-plan-no-tp-mutation": "npx tsx scripts/check-nutrition-weekly-plan-storage.ts --no-tp-mutation",
     "nutrition:enable-test-cohort": "npx tsx scripts/nutrition-enable-test-cohort.ts"
   },
   "dependencies": {

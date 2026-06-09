@@ -129,6 +129,40 @@ export type NutritionWeeklyAnalysis = {
   updatedAt: string;
 };
 
+export type NutritionWeeklyPlanStatus =
+  | "draft_generated"
+  | "blocked_safety"
+  | "needs_review"
+  | "approved_for_copy"
+  | "archived"
+  | "superseded";
+
+export type NutritionWeeklyPlanGenerationMode = "ai" | "fallback";
+
+export type NutritionWeeklyPlan = {
+  id: string;
+  studentId: string;
+  sourceReportId: string | null;
+  sourceAnalysisId: string | null;
+  planWeekFrom: string;
+  planWeekTo: string;
+  status: NutritionWeeklyPlanStatus;
+  generationMode: NutritionWeeklyPlanGenerationMode;
+  promptVersion: string | null;
+  aiModel: string | null;
+  coachSummary: string | null;
+  athleteMessageDraft: string | null;
+  coachEditedDraft: string | null;
+  approvedAt: string | null;
+  planSummary: Record<string, unknown>;
+  trainingContextSnapshot: Record<string, unknown>;
+  nutritionContextSnapshot: Record<string, unknown>;
+  safetyFlags: Record<string, unknown>;
+  supersededByPlanId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type NutritionStudentProfileRow = {
   id: string;
   student_id: string;
@@ -219,6 +253,30 @@ type NutritionWeeklyAnalysisRow = {
   updated_at: string;
 };
 
+type NutritionWeeklyPlanRow = {
+  id: string;
+  student_id: string;
+  source_report_id: string | null;
+  source_analysis_id: string | null;
+  plan_week_from: string;
+  plan_week_to: string;
+  status: NutritionWeeklyPlanStatus;
+  generation_mode: NutritionWeeklyPlanGenerationMode;
+  prompt_version: string | null;
+  ai_model: string | null;
+  coach_summary: string | null;
+  athlete_message_draft: string | null;
+  coach_edited_draft: string | null;
+  approved_at: string | null;
+  plan_summary: unknown;
+  training_context_snapshot: unknown;
+  nutrition_context_snapshot: unknown;
+  safety_flags: unknown;
+  superseded_by_plan_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type UpsertNutritionStudentProfileInput = {
   studentId: string;
   enabled?: boolean;
@@ -292,6 +350,33 @@ export type CreateNutritionWeeklyAnalysisInput = {
   athleteMessageDraft?: string | null;
   coachEdits?: string | null;
 };
+
+export type CreateNutritionWeeklyPlanInput = {
+  studentId: string;
+  sourceReportId?: string | null;
+  sourceAnalysisId?: string | null;
+  planWeekFrom: string;
+  planWeekTo: string;
+  status: NutritionWeeklyPlanStatus;
+  generationMode: NutritionWeeklyPlanGenerationMode;
+  promptVersion?: string | null;
+  aiModel?: string | null;
+  coachSummary?: string | null;
+  athleteMessageDraft?: string | null;
+  coachEditedDraft?: string | null;
+  approvedAt?: string | null;
+  planSummary?: Record<string, unknown>;
+  trainingContextSnapshot?: Record<string, unknown>;
+  nutritionContextSnapshot?: Record<string, unknown>;
+  safetyFlags?: Record<string, unknown>;
+};
+
+const NUTRITION_WEEKLY_PLAN_ACTIVE_STATUSES: NutritionWeeklyPlanStatus[] = [
+  "draft_generated",
+  "blocked_safety",
+  "needs_review",
+  "approved_for_copy",
+];
 
 export type NutritionDashboardViewMode = "test" | "all" | "not-in-test";
 
@@ -452,6 +537,32 @@ function mapNutritionWeeklyAnalysisRow(row: NutritionWeeklyAnalysisRow): Nutriti
     aiModel: row.ai_model,
     athleteMessageDraft: row.athlete_message_draft,
     coachEdits: row.coach_edits,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapNutritionWeeklyPlanRow(row: NutritionWeeklyPlanRow): NutritionWeeklyPlan {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    sourceReportId: row.source_report_id,
+    sourceAnalysisId: row.source_analysis_id,
+    planWeekFrom: row.plan_week_from,
+    planWeekTo: row.plan_week_to,
+    status: row.status,
+    generationMode: row.generation_mode,
+    promptVersion: row.prompt_version,
+    aiModel: row.ai_model,
+    coachSummary: row.coach_summary,
+    athleteMessageDraft: row.athlete_message_draft,
+    coachEditedDraft: row.coach_edited_draft,
+    approvedAt: row.approved_at,
+    planSummary: toObject(row.plan_summary),
+    trainingContextSnapshot: toObject(row.training_context_snapshot),
+    nutritionContextSnapshot: toObject(row.nutrition_context_snapshot),
+    safetyFlags: toObject(row.safety_flags),
+    supersededByPlanId: row.superseded_by_plan_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -792,6 +903,125 @@ export async function getNutritionReportWithMacros(reportId: string): Promise<Nu
     report: mapNutritionReportRow(reportData as NutritionReportRow),
     macros: ((macroData as NutritionDailyMacroRow[]) ?? []).map(mapNutritionDailyMacroRow),
   };
+}
+
+export async function createNutritionWeeklyPlan(
+  input: CreateNutritionWeeklyPlanInput
+): Promise<NutritionWeeklyPlan> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_weekly_plans")
+    .insert({
+      student_id: input.studentId,
+      source_report_id: input.sourceReportId ?? null,
+      source_analysis_id: input.sourceAnalysisId ?? null,
+      plan_week_from: input.planWeekFrom,
+      plan_week_to: input.planWeekTo,
+      status: input.status,
+      generation_mode: input.generationMode,
+      prompt_version: compactText(input.promptVersion),
+      ai_model: compactText(input.aiModel),
+      coach_summary: compactText(input.coachSummary),
+      athlete_message_draft: compactText(input.athleteMessageDraft),
+      coach_edited_draft: compactText(input.coachEditedDraft),
+      approved_at: input.approvedAt ?? null,
+      plan_summary: input.planSummary ?? {},
+      training_context_snapshot: input.trainingContextSnapshot ?? {},
+      nutrition_context_snapshot: input.nutritionContextSnapshot ?? {},
+      safety_flags: input.safetyFlags ?? {},
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to create nutrition weekly plan for ${input.studentId}: ${error.message}`);
+  }
+  return mapNutritionWeeklyPlanRow(data as NutritionWeeklyPlanRow);
+}
+
+export async function getNutritionWeeklyPlanById(planId: string): Promise<NutritionWeeklyPlan | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_weekly_plans")
+    .select("*")
+    .eq("id", planId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to load nutrition weekly plan ${planId}: ${error.message}`);
+  }
+  if (!data) {
+    return null;
+  }
+  return mapNutritionWeeklyPlanRow(data as NutritionWeeklyPlanRow);
+}
+
+export async function listNutritionWeeklyPlansForStudentWeek(params: {
+  studentId: string;
+  planWeekFrom: string;
+  planWeekTo: string;
+  limit?: number;
+}): Promise<NutritionWeeklyPlan[]> {
+  const supabase = createSupabaseServerClient();
+  let query = supabase
+    .from("nutrition_weekly_plans")
+    .select("*")
+    .eq("student_id", params.studentId)
+    .eq("plan_week_from", params.planWeekFrom)
+    .eq("plan_week_to", params.planWeekTo)
+    .order("created_at", { ascending: false });
+
+  if (params.limit) {
+    query = query.limit(params.limit);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    throw new Error(
+      `Failed to list nutrition weekly plans for ${params.studentId} ${params.planWeekFrom}..${params.planWeekTo}: ${error.message}`
+    );
+  }
+  return ((data as NutritionWeeklyPlanRow[]) ?? []).map(mapNutritionWeeklyPlanRow);
+}
+
+export async function getLatestNutritionWeeklyPlanForStudentWeek(params: {
+  studentId: string;
+  planWeekFrom: string;
+  planWeekTo: string;
+}): Promise<NutritionWeeklyPlan | null> {
+  const plans = await listNutritionWeeklyPlansForStudentWeek({ ...params, limit: 1 });
+  return plans[0] ?? null;
+}
+
+export async function markNutritionWeeklyPlansSuperseded(params: {
+  studentId: string;
+  planWeekFrom: string;
+  planWeekTo: string;
+  supersededByPlanId: string;
+  excludePlanId?: string;
+}): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  let query = supabase
+    .from("nutrition_weekly_plans")
+    .update({
+      status: "superseded",
+      superseded_by_plan_id: params.supersededByPlanId,
+    })
+    .eq("student_id", params.studentId)
+    .eq("plan_week_from", params.planWeekFrom)
+    .eq("plan_week_to", params.planWeekTo)
+    .in("status", NUTRITION_WEEKLY_PLAN_ACTIVE_STATUSES);
+
+  if (params.excludePlanId) {
+    query = query.neq("id", params.excludePlanId);
+  }
+
+  const { error } = await query;
+  if (error) {
+    throw new Error(
+      `Failed to mark nutrition weekly plans superseded for ${params.studentId} ${params.planWeekFrom}..${params.planWeekTo}: ${error.message}`
+    );
+  }
 }
 
 export async function createNutritionWeeklyAnalysis(
