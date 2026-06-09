@@ -165,6 +165,8 @@
     "check:nutrition-daily-macros-upsert": "npx tsx scripts/check-nutrition-daily-macros-upsert.ts",
     "check:nutrition-communication-profile": "npx tsx scripts/check-nutrition-communication-profile.ts",
     "check:nutrition-context-builder": "npx tsx scripts/check-nutrition-context-builder.ts",
+    "check:nutrition-methodology": "npx tsx scripts/check-nutrition-methodology.ts",
+    "check:nutrition-weekly-review-quality": "npx tsx scripts/check-nutrition-weekly-review-quality.ts",
     "check:nutrition-safety-blocks": "npx tsx scripts/check-nutrition-safety-blocks.ts",
     "check:nutrition-no-autosend": "npx tsx scripts/check-nutrition-no-autosend.ts",
     "check:nutrition-admin-routes": "npx tsx scripts/check-nutrition-admin-routes.ts",

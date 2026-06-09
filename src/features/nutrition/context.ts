@@ -71,6 +71,9 @@ export type NutritionTrainingPeaksWeekContext = {
     title: string;
     status: "planned" | "completed" | "planned_and_completed" | "other";
     type: string;
+    description: string | null;
+    coachComments: string | null;
+    plannedText: string | null;
   }>;
 };
 
@@ -451,6 +454,21 @@ function maybeLongRun(row: TrainingPeaksWorkoutCacheRow): {
   };
 }
 
+function toObjectRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function snapshotText(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const compact = value.replace(/\s+/g, " ").trim();
+  return compact || null;
+}
+
 function isKeyWorkout(row: TrainingPeaksWorkoutCacheRow): boolean {
   const title = (row.title ?? "").toLocaleLowerCase("ru");
   if (/интерв|tempo|темп|порог|threshold|vo2|спринт|hill/.test(title)) {
@@ -537,11 +555,15 @@ export async function buildNutritionTrainingPeaksWeekContext(
         workoutTypeValueId: row.workoutTypeValueId,
         workoutSubTypeId: row.workoutSubTypeId,
       });
+      const sourceSnapshot = toObjectRecord(row.sourceSnapshot);
       return {
         date: row.workoutDate,
         title: row.title?.trim() || "Untitled workout",
         status: resolveWorkoutStatus(row),
         type: c.family,
+        description: snapshotText(sourceSnapshot?.description),
+        coachComments: snapshotText(sourceSnapshot?.coachComments),
+        plannedText: snapshotText(sourceSnapshot?.structure) ?? snapshotText(sourceSnapshot?.plannedText),
       };
     }),
   };

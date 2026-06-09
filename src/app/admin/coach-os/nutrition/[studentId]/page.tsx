@@ -73,9 +73,37 @@ function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+function asObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
 function formatDoNotSendReasons(safetyFlags: Record<string, unknown>): string[] {
   const hardFlags = asStringArray(safetyFlags.hard_flags);
   return hardFlags.map((flag) => formatNutritionDoNotSendReason(`manual_review_required:${flag}`));
+}
+
+function formatTrainingType(type: string | null | undefined): string {
+  switch (type) {
+    case "long_run":
+      return "длительная";
+    case "intervals":
+      return "интервалы";
+    case "tempo":
+      return "темпо";
+    case "race":
+      return "гонка";
+    case "easy":
+      return "лёгкий бег";
+    case "rest":
+      return "отдых";
+    case "strength":
+      return "силовая";
+    default:
+      return "неизвестно";
+  }
 }
 
 const CONTEXT_ITEM_TYPES = Object.keys(NUTRITION_CONTEXT_ITEM_TYPE_LABELS) as NutritionContextItemType[];
@@ -129,6 +157,20 @@ export default async function CoachOsNutritionStudentCardPage({
     fileUploadPreview.weekTo === weekTo
       ? fileUploadPreview
       : null;
+  const weeklyInternalSummary = asObject(card.weeklyAnalysis?.internalSummary);
+  const weeklyNutritionSummary = asObject(card.weeklyAnalysis?.nutritionSummary);
+  const dailyAnalysis = Array.isArray(weeklyNutritionSummary.daily_analysis)
+    ? (weeklyNutritionSummary.daily_analysis as Array<Record<string, unknown>>)
+    : [];
+  const importantDays = dailyAnalysis.filter((day) => {
+    const relevance = typeof day.relevance === "string" ? day.relevance : "";
+    return relevance === "high" || relevance === "medium";
+  });
+  const trainingLinks = Array.isArray(weeklyNutritionSummary.training_nutrition_links)
+    ? (weeklyNutritionSummary.training_nutrition_links as string[])
+    : [];
+  const oneFocus = asObject(weeklyNutritionSummary.one_focus);
+  const methodologySignals = asObject(weeklyNutritionSummary.methodology_signals);
 
   return (
     <section className="admin-section admin-nutrition-page">
@@ -526,23 +568,76 @@ export default async function CoachOsNutritionStudentCardPage({
               )}
 
               <section>
-                <h4>Внутренняя сводка</h4>
-                <textarea
-                  className="admin-textarea admin-textarea-compact admin-textarea-readonly"
-                  rows={4}
-                  readOnly
-                  value={JSON.stringify(card.weeklyAnalysis.internalSummary, null, 2)}
-                />
+                <h4>Сводка для тренера</h4>
+                <dl className="admin-meta-list admin-meta-list-compact">
+                  <div>
+                    <dt>Качество данных</dt>
+                    <dd>{Array.isArray(weeklyInternalSummary.notes) ? "ok" : "needs_review"}</dd>
+                  </div>
+                  <div>
+                    <dt>Средние ккал/Б/Ж/У</dt>
+                    <dd>
+                      {(weeklyNutritionSummary.avg_kcal as number | null) ?? "—"} / {(weeklyNutritionSummary.avg_protein_g as number | null) ?? "—"} /{" "}
+                      {(weeklyNutritionSummary.avg_fat_g as number | null) ?? "—"} / {(weeklyNutritionSummary.avg_carbs_g as number | null) ?? "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Вес (кг)</dt>
+                    <dd>{card.context.currentWeightKg ?? "—"}</dd>
+                  </div>
+                  <div>
+                    <dt>Белок достаточный</dt>
+                    <dd>{methodologySignals.protein_sufficient === true ? "Да" : "Нет/неизвестно"}</dd>
+                  </div>
+                  <div>
+                    <dt>Один фокус</dt>
+                    <dd>{typeof oneFocus.category === "string" ? oneFocus.category : "—"}</dd>
+                  </div>
+                  <div>
+                    <dt>Стратегия углеводов</dt>
+                    <dd>{typeof oneFocus.progression_strategy === "string" ? oneFocus.progression_strategy : "—"}</dd>
+                  </div>
+                  <div>
+                    <dt>TP cache</dt>
+                    <dd>
+                      {formatNutritionTpCacheStatus(card.context.tpPastWeek.cacheStatus)} / {formatNutritionTpCacheStatus(card.context.tpNextWeek.cacheStatus)}
+                    </dd>
+                  </div>
+                </dl>
               </section>
 
               <section>
-                <h4>Сводка по питанию</h4>
-                <textarea
-                  className="admin-textarea admin-textarea-compact admin-textarea-readonly"
-                  rows={3}
-                  readOnly
-                  value={JSON.stringify(card.weeklyAnalysis.nutritionSummary, null, 2)}
-                />
+                <h4>Важные дни</h4>
+                {importantDays.length === 0 ? (
+                  <p className="admin-muted">Ключевые дни не выделены.</p>
+                ) : (
+                  <ul className="admin-list">
+                    {importantDays.map((day, idx) => {
+                      const date = typeof day.date === "string" ? day.date : "—";
+                      const trainingType = formatTrainingType(typeof day.trainingType === "string" ? day.trainingType : null);
+                      const findings = Array.isArray(day.findings) ? (day.findings as string[]) : [];
+                      const line = findings[0] ?? "сигнал без деталей";
+                      return (
+                        <li key={`${date}-${idx}`}>
+                          {date} · {trainingType} · {line}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </section>
+
+              <section>
+                <h4>Связки тренировка ↔ питание</h4>
+                {trainingLinks.length === 0 ? (
+                  <p className="admin-muted">Связки не сформированы.</p>
+                ) : (
+                  <ul className="admin-list">
+                    {trainingLinks.map((line, idx) => (
+                      <li key={`training-link-${idx}`}>{line}</li>
+                    ))}
+                  </ul>
+                )}
               </section>
 
               <section>
@@ -576,6 +671,24 @@ export default async function CoachOsNutritionStudentCardPage({
                   <p className="admin-muted">Черновик скрыт (блок безопасности или мало данных).</p>
                 )}
               </section>
+
+              <details>
+                <summary>Technical JSON</summary>
+                <textarea
+                  className="admin-textarea admin-textarea-compact admin-textarea-readonly"
+                  rows={10}
+                  readOnly
+                  value={JSON.stringify(
+                    {
+                      internalSummary: card.weeklyAnalysis.internalSummary,
+                      nutritionSummary: card.weeklyAnalysis.nutritionSummary,
+                      safetyFlags: card.weeklyAnalysis.safetyFlags,
+                    },
+                    null,
+                    2
+                  )}
+                />
+              </details>
             </div>
           )}
         </article>

@@ -313,7 +313,7 @@ export async function generateNutritionWeeklyReview(input: {
   const generated = await generateNutritionWeeklyAnalysis({ context });
   const status = generated.safety_flags.blocked
     ? "blocked_safety"
-    : context.reportStatus === "ready_for_analysis"
+    : generated.status === "draft_ready"
       ? "draft_generated"
       : "needs_review";
 

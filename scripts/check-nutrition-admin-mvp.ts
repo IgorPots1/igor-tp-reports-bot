@@ -4,6 +4,8 @@ const checks = [
   "check-nutrition-student-fk",
   "check-nutrition-communication-profile",
   "check-nutrition-context-builder",
+  "check-nutrition-methodology",
+  "check-nutrition-weekly-review-quality",
   "check-nutrition-safety-blocks",
   "check-nutrition-no-autosend",
   "check-nutrition-admin-routes",
