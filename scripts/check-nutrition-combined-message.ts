@@ -9,6 +9,10 @@ import {
 import type { NutritionWeeklyAnalysis, NutritionWeeklyPlan } from "@/features/nutrition/repository";
 import { resolveNutritionWeeklyPlanForDisplay } from "@/features/nutrition/repository";
 
+function asObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
 function buildReview(status: NutritionWeeklyAnalysis["status"] = "draft_generated"): NutritionWeeklyAnalysis {
   return {
     id: "review-1",
@@ -178,6 +182,56 @@ async function run(): Promise<void> {
   });
   assert.match(nadezhdaGreeting.athleteMessageDraft ?? "", /^Надя, привет!/);
   assert.doesNotMatch(nadezhdaGreeting.athleteMessageDraft ?? "", /Nadezhda Ponomareva, привет/);
+
+  const methodologyReview = buildReview();
+  methodologyReview.nutritionSummary = {
+    ...asObject(methodologyReview.nutritionSummary),
+    daily_analysis: [
+      {
+        date: "2026-06-01",
+        kcal: 2477,
+        proteinG: 103.58,
+        fatG: 131.91,
+        carbsG: 206.93,
+        carbsGPerKg: 3.7,
+        nutritionStatus: "rest_ok",
+        findings: ["protein_sufficient"],
+        canonicalDailyAnalysis: {
+          date: "2026-06-01",
+          weekdayRu: "Понедельник",
+          dateLabel: "01.06",
+          trainingType: "rest",
+          trainingLabel: "день отдыха",
+          actual: {
+            kcal: 2477,
+            proteinG: 103.58,
+            fatG: 131.91,
+            carbsG: 206.93,
+            carbsGPerKg: 3.7,
+          },
+          nutritionStatus: "rest_ok",
+          findings: ["protein_sufficient"],
+          sourceQuality: { confidence: "high" },
+          hintForComment: "можно дать краткий поддерживающий комментарий.",
+        },
+      },
+    ],
+  };
+  methodologyReview.athleteMessageDraft =
+    "Привет!\nКомментарий: по качеству данных здесь возможна неполная картина.\nможно дать краткий поддерживающий комментарий.";
+  const methodologyCombined = buildDerivedNutritionCombinedMessage({
+    review: methodologyReview,
+    plan,
+    formality: "ty",
+    studentName: "Nadezhda Ponomareva",
+  });
+  assert.match(methodologyCombined.athleteMessageDraft ?? "", /🔹 Понедельник \(01\.06\) — день отдыха/);
+  assert.doesNotMatch(
+    methodologyCombined.athleteMessageDraft ?? "",
+    /Комментарий:|можно дать|103\.58|206\.93|Привет!/,
+    "methodology daily_analysis must render polished combined lines without stored review draft leakage"
+  );
+  assert.equal(methodologyCombined.warnings.length, 0, "methodology daily_analysis must not warn about missing canonical facts");
 
   const needsReview = buildDerivedNutritionCombinedMessage({
     review: buildReview("needs_review"),

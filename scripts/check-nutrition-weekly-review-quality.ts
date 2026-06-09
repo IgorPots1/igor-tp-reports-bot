@@ -58,7 +58,7 @@ assert.match(studentPage, /Вес не задан — расчёт г\/кг и �
 assert.match(studentPage, /Safety JSON/, "UI should keep raw safety JSON collapsed");
 assert.doesNotMatch(studentPage, /JSON\.stringify\(card\.weeklyAnalysis\.nutritionSummary,\s*null,\s*2\)/, "raw JSON cannot be primary UI");
 assert.match(studentUi, /Сгенерировано шаблоном, лучше проверить текст вручную\./, "UI should warn when fallback text is shown");
-assert.match(studentPage, /Черновик ученику — разбор прошлой недели/, "UI should keep review athlete draft heading");
+assert.match(studentPage, /Исходный черновик обзора — служебно/, "UI should keep secondary review draft heading");
 assert.match(studentPage, /Метрики недели/, "UI should keep metrics section");
 
 console.log("PASS check-nutrition-weekly-review-quality");

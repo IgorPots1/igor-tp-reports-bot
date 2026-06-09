@@ -193,6 +193,7 @@
     "check:nutrition-weekly-plan-fueling-instructions": "npx tsx scripts/check-nutrition-weekly-plan-fueling-instructions.ts",
     "diagnose:nutrition-tp-next-week-context": "npx tsx scripts/diagnose-nutrition-tp-next-week-context.ts",
     "diagnose:nutrition-weekly-plan-selection": "npx tsx scripts/diagnose-nutrition-weekly-plan-selection.ts",
+    "diagnose:nutrition-combined-message-render": "npx tsx scripts/diagnose-nutrition-combined-message-render.ts",
     "diagnose:trainingpeaks-future-workout-cache": "npx tsx scripts/diagnose-trainingpeaks-future-workout-cache.ts",
     "check:nutrition-tp-future-workout-context": "npx tsx scripts/check-nutrition-tp-future-workout-context.ts",
     "check:nutrition-weekly-plan-ui": "npx tsx scripts/check-nutrition-weekly-plan-ui.ts",

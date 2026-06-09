@@ -339,6 +339,32 @@ export default async function CoachOsNutritionStudentCardPage({
     studentName: card.student.studentName,
     profilePreferences: card.profile?.preferences ?? null,
   });
+  // #region agent log
+  fetch("http://127.0.0.1:7521/ingest/adcbf755-c5c9-4a78-9e7d-4a590fbeae5c", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "4d2583" },
+    body: JSON.stringify({
+      sessionId: "4d2583",
+      runId: "pre-fix",
+      hypothesisId: "A,D,E",
+      location: "nutrition/[studentId]/page.tsx",
+      message: "nutrition page draft blocks resolved",
+      data: {
+        studentId: card.student.id,
+        weekFrom,
+        weekTo,
+        combinedStatus: combinedMessage.status,
+        combinedFirstLine: combinedMessage.athleteMessageDraft?.split("\n")[0] ?? null,
+        storedReviewFirstLine: card.weeklyAnalysis?.athleteMessageDraft?.split("\n")[0] ?? null,
+        storedReviewHasCommentLabel: /Комментарий:/.test(card.weeklyAnalysis?.athleteMessageDraft ?? ""),
+        combinedHasCommentLabel: /Комментарий:/.test(combinedMessage.athleteMessageDraft ?? ""),
+        displayPlanId: displayPlan?.id ?? null,
+        reviewId: card.weeklyAnalysis?.id ?? null,
+      },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+  // #endregion
   const combinedDoNotSendReasons = [
     ...new Set([
       ...formatDoNotSendReasons(asObject(card.weeklyAnalysis?.safetyFlags)),
@@ -725,6 +751,7 @@ export default async function CoachOsNutritionStudentCardPage({
 
         <article className="admin-card admin-card-compact admin-nutrition-card-wide">
           <h3>Черновик ученику — полный текст</h3>
+          <p className="admin-muted">Основной текст для отправки. Копируйте только из этого блока.</p>
           {combinedMessage.status === "missing_review" ? (
             <p className="admin-muted">Сначала сгенерируйте разбор прошлой недели.</p>
           ) : combinedMessage.status === "missing_plan" ? (
@@ -765,8 +792,14 @@ export default async function CoachOsNutritionStudentCardPage({
           )}
         </article>
 
-        <article className="admin-card admin-card-compact admin-nutrition-card-wide">
-          <h3>Черновик ученику — разбор прошлой недели</h3>
+        <details className="admin-card admin-card-compact admin-nutrition-card-wide">
+          <summary>
+            <h3>Исходный черновик обзора — служебно</h3>
+          </summary>
+          <p className="admin-muted">
+            Сохранённый черновик из генерации обзора. Может содержать технические формулировки — для отправки ученику
+            используйте блок «полный текст» выше.
+          </p>
           {!card.weeklyAnalysis ? (
             <p className="admin-muted">Обзор ещё не сгенерирован.</p>
           ) : card.weeklyAnalysis.status === "blocked_safety" ? (
@@ -778,7 +811,7 @@ export default async function CoachOsNutritionStudentCardPage({
           ) : (
             <p className="admin-muted">Черновик скрыт (блок безопасности или мало данных).</p>
           )}
-        </article>
+        </details>
 
         <article className="admin-card admin-card-compact admin-nutrition-card-wide">
           <h3>Детали для тренера</h3>

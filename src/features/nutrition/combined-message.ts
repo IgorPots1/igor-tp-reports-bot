@@ -148,13 +148,95 @@ function dayTypeRu(dayType: NutritionPlanDayType): string {
   }
 }
 
+function normalizeStoredDailyFactItem(raw: unknown): CanonicalDailyFact | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  const item = raw as Record<string, unknown>;
+  const embedded = asObject(item.canonicalDailyAnalysis) ?? asObject(item.canonical_daily_analysis);
+  const source = Object.keys(embedded).length > 0 ? embedded : item;
+  const actualSource = asObject(source.actual);
+  const actual =
+    Object.keys(actualSource).length > 0
+      ? actualSource
+      : {
+          kcal: item.kcal ?? source.kcal ?? item.actual_kcal ?? source.actual_kcal,
+          proteinG: item.proteinG ?? source.proteinG ?? item.protein_g ?? source.protein_g,
+          fatG: item.fatG ?? source.fatG ?? item.fat_g ?? source.fat_g,
+          carbsG: item.carbsG ?? source.carbsG ?? item.carbs_g ?? source.carbs_g,
+          carbsGPerKg: item.carbsGPerKg ?? source.carbsGPerKg ?? item.carbs_g_per_kg ?? source.carbs_g_per_kg,
+        };
+  const date = typeof source.date === "string" ? source.date : typeof item.date === "string" ? item.date : null;
+  if (!date) {
+    return null;
+  }
+  const weekday =
+    typeof source.weekdayRu === "string"
+      ? source.weekdayRu
+      : typeof source.weekday_ru === "string"
+        ? source.weekday_ru
+        : typeof item.weekdayRu === "string"
+          ? item.weekdayRu
+          : null;
+  const dateLabel =
+    typeof source.dateLabel === "string"
+      ? source.dateLabel
+      : typeof source.date_label === "string"
+        ? source.date_label
+        : formatDateRu(date);
+  const trainingType =
+    typeof source.trainingType === "string"
+      ? source.trainingType
+      : typeof source.training_type === "string"
+        ? source.training_type
+        : typeof item.trainingType === "string"
+          ? item.trainingType
+          : "unknown";
+  const trainingLabel =
+    typeof source.trainingLabel === "string"
+      ? source.trainingLabel
+      : typeof source.training_label === "string"
+        ? source.training_label
+        : "день недели";
+  const sourceQuality = asObject(source.sourceQuality) ?? asObject(source.source_quality);
+  return {
+    date,
+    weekday_ru: weekday,
+    date_label: dateLabel,
+    training_type: trainingType,
+    training_label: trainingLabel,
+    actual,
+    actual_kcal:
+      toFiniteNumber(actual.kcal) ?? toFiniteNumber(item.actual_kcal) ?? toFiniteNumber(source.actual_kcal),
+    protein_g: toFiniteNumber(actual.proteinG) ?? toFiniteNumber(item.protein_g) ?? toFiniteNumber(source.protein_g),
+    fat_g: toFiniteNumber(actual.fatG) ?? toFiniteNumber(item.fat_g) ?? toFiniteNumber(source.fat_g),
+    carbs_g: toFiniteNumber(actual.carbsG) ?? toFiniteNumber(item.carbs_g) ?? toFiniteNumber(source.carbs_g),
+    carbs_g_per_kg:
+      toFiniteNumber(actual.carbsGPerKg) ??
+      toFiniteNumber(item.carbs_g_per_kg) ??
+      toFiniteNumber(source.carbs_g_per_kg),
+    nutrition_status:
+      typeof source.nutritionStatus === "string"
+        ? source.nutritionStatus
+        : typeof source.nutrition_status === "string"
+          ? source.nutrition_status
+          : typeof item.nutritionStatus === "string"
+            ? item.nutritionStatus
+            : null,
+    findings: source.findings ?? item.findings,
+    source_quality: Object.keys(sourceQuality).length > 0 ? sourceQuality : undefined,
+  };
+}
+
 function getCanonicalDailyFacts(review: NutritionWeeklyAnalysis): CanonicalDailyFact[] {
   const summary = asObject(review.nutritionSummary);
   const daily = summary.daily_analysis;
   if (!Array.isArray(daily)) {
     return [];
   }
-  return daily.filter((item): item is CanonicalDailyFact => Boolean(item && typeof item === "object" && !Array.isArray(item)));
+  return daily
+    .map((item) => normalizeStoredDailyFactItem(item))
+    .filter((item): item is CanonicalDailyFact => Boolean(item));
 }
 
 function getDailyFactValue(item: CanonicalDailyFact, actual: Record<string, unknown>, snakeKey: keyof CanonicalDailyFact, camelKey: string): number | null {
@@ -526,9 +608,37 @@ export function buildDerivedNutritionCombinedMessage(input: {
     closing,
   ];
 
+  const athleteMessageDraft = lines.join("\n").trim();
+  // #region agent log
+  fetch("http://127.0.0.1:7521/ingest/adcbf755-c5c9-4a78-9e7d-4a590fbeae5c", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "4d2583" },
+    body: JSON.stringify({
+      sessionId: "4d2583",
+      runId: "pre-fix",
+      hypothesisId: "B,C,E",
+      location: "combined-message.ts:buildDerivedNutritionCombinedMessage",
+      message: "combined message built",
+      data: {
+        sourceReviewId: review.id,
+        sourcePlanId: plan.id,
+        reviewDailyLinesCount: reviewDailyLines.length,
+        hasNextWeekPlan: Boolean(nextWeekPlan),
+        firstLine: athleteMessageDraft.split("\n")[0] ?? null,
+        containsCommentLabel: /Комментарий:/.test(athleteMessageDraft),
+        containsMozhnoDat: /можно дать/.test(athleteMessageDraft),
+        containsDecimalMacro: /\d+\.\d+\s*г/.test(athleteMessageDraft),
+        usesStoredReviewDraft: review.athleteMessageDraft
+          ? athleteMessageDraft.includes(review.athleteMessageDraft.trim())
+          : false,
+      },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+  // #endregion
   return {
     status: hasNeedsReviewStatus(review, plan) ? "needs_review" : "ready",
-    athleteMessageDraft: lines.join("\n").trim(),
+    athleteMessageDraft,
     warnings,
     sourceReviewId: review.id,
     sourcePlanId: plan.id,

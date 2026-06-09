@@ -35,13 +35,15 @@ assert.match(
 );
 assert.match(mainUi, /Черновик ученику — фокус на следующую неделю/, "plan card must distinguish plan draft heading");
 assert.match(mainUi, /Черновик ученику — полный текст/, "main UI must expose combined copy block title");
+assert.match(mainUi, /Основной текст для отправки/, "combined block must be labeled as primary copy source");
 assert.match(mainUi, /buildDerivedNutritionCombinedMessage/, "main UI must derive combined copy from review and plan");
 assert.match(mainUi, /displayPlan/, "main UI combined block must use resolved display plan");
 
-const reviewDraftStart = mainUi.indexOf("Черновик ученику — разбор прошлой недели");
+const reviewDraftStart = mainUi.indexOf("Исходный черновик обзора — служебно");
 const planCardStart = mainUi.indexOf("Фокус питания на следующую неделю");
 const combinedDraftStart = mainUi.indexOf("Черновик ученику — полный текст");
-assert.ok(reviewDraftStart >= 0, "main UI must include review draft heading");
+assert.ok(reviewDraftStart >= 0, "main UI must include secondary review draft heading");
+assert.match(mainUi, /используйте блок «полный текст» выше/, "secondary review draft must warn against athlete copy");
 assert.ok(planCardStart >= 0, "main UI must include weekly plan card title");
 assert.ok(combinedDraftStart >= 0, "main UI must include combined draft heading");
 assert.ok(
@@ -78,7 +80,7 @@ assert.match(
   "generate UI must be gated on selected review"
 );
 
-const planCardEnd = mainUi.indexOf("Черновик ученику — разбор прошлой недели");
+const planCardEnd = mainUi.indexOf("Исходный черновик обзора — служебно");
 const planCardUi =
   planCardStart >= 0 && planCardEnd > planCardStart ? mainUi.slice(planCardStart, planCardEnd) : mainUi;
 assert.doesNotMatch(planCardUi, /plan_summary|generation_mode/, "plan card must not expose raw plan field names");
