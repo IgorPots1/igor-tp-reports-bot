@@ -335,6 +335,11 @@ export async function generateNutritionWeeklyReview(input: {
       methodology_signals: generated.methodology_signals,
       bodyweight_kg: context.currentWeightKg,
       carb_progression_strategy: generated.one_focus.progression_strategy,
+      coach_summary_text: generated.coach_summary_text,
+      day_by_day_analysis_text: generated.day_by_day_analysis_text,
+      generation_mode: generated.generation_mode,
+      prompt_version: generated.prompt_version,
+      do_not_send_reasons: generated.do_not_send_reasons,
     },
     safetyFlags: generated.safety_flags,
     contextSnapshot: {

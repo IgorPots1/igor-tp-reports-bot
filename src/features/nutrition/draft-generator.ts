@@ -11,6 +11,10 @@ import { stableHash } from "@/features/nutrition/repository";
 import type { TrainingPeaksTelegramFormality } from "@/features/trainingpeaks/repository";
 import { getTrainingPeaksReplyDraftFormalityInstruction } from "@/features/trainingpeaks/telegram-context";
 
+const OPENAI_API_URL = process.env.OPENAI_API_URL?.trim() || "https://api.openai.com/v1/chat/completions";
+const OPENAI_NUTRITION_REVIEW_MODEL = process.env.OPENAI_NUTRITION_WEEKLY_REVIEW_MODEL?.trim() || "gpt-4o-mini";
+const NUTRITION_REVIEW_PROMPT_VERSION = "nutrition-weekly-review-v2-ai";
+
 export type GeneratedNutritionWeeklyAnalysis = {
   data_quality_summary: {
     parsed_days: number;
@@ -58,6 +62,12 @@ export type GeneratedNutritionWeeklyAnalysis = {
     };
     bodyweight_kg?: number | null;
     carb_progression_strategy?: CarbProgressionStrategy;
+    coach_summary_text?: string;
+    day_by_day_analysis_text?: string;
+    generation_mode?: "ai" | "fallback";
+    prompt_version?: string;
+    quality_notes?: string[];
+    do_not_send_reasons?: string[];
   };
   tp_context_summary: {
     past_week_key_sessions: number;
@@ -84,6 +94,10 @@ export type GeneratedNutritionWeeklyAnalysis = {
     during_run_fuel_planned: boolean;
   };
   athlete_message_draft: string | null;
+  coach_summary_text: string;
+  day_by_day_analysis_text: string;
+  generation_mode: "ai" | "fallback";
+  prompt_version: string;
   do_not_send_reasons: string[];
   prompt_hash: string;
   context_hash: string;
@@ -147,20 +161,59 @@ function buildProgressionStepText(strategy: CarbProgressionStrategy, formality: 
       : "Ты уже близко к рабочему диапазону, поэтому достаточно аккуратно докрутить углеводы вокруг ключевых сессий.";
   }
   return formality === "vy"
-    ? "Начните с простого шага: не занижайте углеводы в день до ключевой тренировки и в день самой работы."
-    : "Начинаем с простого шага: не занижаем углеводы в день до ключевой тренировки и в день самой работы.";
+    ? "Начните с простого шага: не занижайте углеводы в день до ключевой тренировки и в день ключевой тренировки."
+    : "Начинаем с простого шага: не занижаем углеводы в день до ключевой тренировки и в день ключевой тренировки.";
 }
 
-function buildAthleteDraft(input: {
+function extractJsonOnly(content: string): string {
+  const trimmed = content.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    return trimmed;
+  }
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return trimmed.slice(firstBrace, lastBrace + 1);
+  }
+  return trimmed;
+}
+
+function formatDateRu(isoDate: string): string {
+  const match = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return isoDate;
+  }
+  return `${match[3]}.${match[2]}`;
+}
+
+function buildWorkoutTitleMap(context: NutritionStudentContext): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const workout of context.tpPastWeek.workouts) {
+    const title = workout.title.trim();
+    if (!title) {
+      continue;
+    }
+    const current = map.get(workout.date);
+    if (!current || /длитель|long run|интерв|tempo|темп|race|гонк/i.test(title)) {
+      map.set(workout.date, title);
+    }
+  }
+  return map;
+}
+
+function buildFallbackAthleteDraft(input: {
   context: NutritionStudentContext;
+  coachSummaryText: string;
+  dayByDayText: string;
   mainFocusRu: string;
   proteinSufficient: boolean;
   progressionStrategy: CarbProgressionStrategy;
 }): string {
-  const { context, mainFocusRu, proteinSufficient, progressionStrategy } = input;
+  const { context, mainFocusRu, proteinSufficient, progressionStrategy, dayByDayText } = input;
   const profile = context.resolvedCommunicationProfile;
   const address = buildNutritionDraftAddress(profile.formality);
-  const greeting = profile.preferredGreeting ? `${profile.preferredGreeting}\n\n` : "";
+  const defaultGreeting = profile.formality === "vy" ? "Здравствуйте!" : "Привет!";
+  const greeting = profile.preferredGreeting ? `${profile.preferredGreeting}\n\n` : `${defaultGreeting}\n\n`;
   const proteinLine = proteinSufficient ? address.proteinOk : null;
   const stepText = buildProgressionStepText(progressionStrategy, profile.formality);
   const normalizedFocus = mainFocusRu
@@ -169,13 +222,221 @@ function buildAthleteDraft(input: {
     .replace(/^главный\s+фокус\s*/i, "")
     .trim()
     .replace(/\.$/, "");
-  const focusLine = `${address.lead} — ${normalizedFocus.toLowerCase()}.`;
+  const focusLine = `${address.lead}: ${normalizedFocus.toLowerCase()}.`;
+  const dayByDayCompact = dayByDayText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/[A-Za-z]{2,}/.test(line))
+    .slice(0, 3)
+    .join(" ");
   const noJumpLine = address.noSharpJumps;
   const profileNotes = profile.notes ? `\n\n${profile.notes}` : "";
-  const lines = [greeting.trim(), proteinLine, focusLine, stepText, noJumpLine, address.lookAhead]
+  const lines = [
+    greeting.trim(),
+    "Посмотрел(а) недельный отчёт и сопоставил(а) его с тренировками.",
+    proteinLine,
+    dayByDayCompact || null,
+    focusLine,
+    stepText,
+    noJumpLine,
+    address.lookAhead,
+  ]
     .filter((line): line is string => Boolean(line && line.trim()))
     .join("\n");
   return `${lines}${profileNotes ? `\n${profileNotes}` : ""}`.trim();
+}
+
+type NutritionAiNarrative = {
+  coach_summary_text: string;
+  day_by_day_analysis_text: string;
+  athlete_message_draft: string | null;
+  quality_notes: string[];
+  do_not_send_reasons: string[];
+};
+
+function buildFallbackCoachSummary(input: {
+  context: NutritionStudentContext;
+  selectedFocus: { statementRu: string };
+  proteinSufficient: boolean;
+  dataQualityFlags: string[];
+  nextWeekHasKeySessions: boolean;
+}): string {
+  const lines: string[] = [];
+  lines.push(
+    `Главный вывод: ${input.proteinSufficient ? "белок закрыт" : "белок частично закрыт"}, основной ограничитель недели — ${input.selectedFocus.statementRu.replace(/^Главный фокус(?: недели)?\s*[—:-]\s*/i, "").toLowerCase()}.`
+  );
+  const keySessions = input.context.tpPastWeek.keyWorkouts.length;
+  const longRunDate = input.context.tpPastWeek.longRun?.date ? formatDateRu(input.context.tpPastWeek.longRun.date) : null;
+  lines.push(
+    `Контекст нагрузки: в кэше TrainingPeaks видно ${keySessions} ключевых сессий${longRunDate ? `, длительная ${longRunDate}` : ""}.`
+  );
+  if (input.dataQualityFlags.length > 0) {
+    lines.push(`Качество данных: есть ограничения (${input.dataQualityFlags.join(", ")}), выводы интерпретируем аккуратно.`);
+  } else {
+    lines.push("Качество данных: неделя заполнена достаточно ровно, сигналы можно использовать в практическом разборе.");
+  }
+  lines.push("Что сказать ученику: не поднимать питание резко, а точечно добавить углеводы/энергию вокруг длительной и ключевых работ.");
+  if (!input.nextWeekHasKeySessions) {
+    lines.push("Ограничение: следующая неделя в TP cache пустая/ограниченная, будущие тренировки в тексте не называем.");
+  }
+  return lines.join("\n");
+}
+
+function buildFallbackDayByDay(input: {
+  context: NutritionStudentContext;
+  dailyAnalysis: Array<Record<string, unknown>>;
+}): string {
+  const workoutTitles = buildWorkoutTitleMap(input.context);
+  const normalized = input.dailyAnalysis
+    .map((day) => {
+      const date = typeof day.date === "string" ? day.date : null;
+      if (!date) {
+        return null;
+      }
+      const trainingType = typeof day.trainingType === "string" ? day.trainingType : "rest";
+      const findings = Array.isArray(day.findings) ? day.findings.filter((f): f is string => typeof f === "string") : [];
+      const relevance = typeof day.relevance === "string" ? day.relevance : "low";
+      const title = workoutTitles.get(date) ?? null;
+      return { date, trainingType, findings, relevance, title };
+    })
+    .filter((day): day is NonNullable<typeof day> => Boolean(day));
+  const prioritized = normalized
+    .filter((day) => day.relevance === "high" || day.relevance === "medium" || day.trainingType !== "rest")
+    .slice(0, 5);
+  if (prioritized.length === 0) {
+    return "По дням выраженных сигналов не выделилось: питание выглядит относительно ровно, но стоит продолжать наблюдать связку с нагрузкой.";
+  }
+  return prioritized
+    .map((day) => {
+      const dateLabel = formatDateRu(day.date);
+      const trainingLabel = day.title ?? day.trainingType.replaceAll("_", " ");
+      const finding = day.findings[0] ?? "Явных несоответствий нагрузки и питания в этот день не видно.";
+      return `${dateLabel} · ${trainingLabel}\n${finding}`;
+    })
+    .join("\n\n");
+}
+
+async function generateNutritionWeeklyReviewNarrative(input: {
+  context: NutritionStudentContext;
+  dailyAnalysis: Array<Record<string, unknown>>;
+  trainingNutritionLinks: string[];
+  oneFocus: {
+    category: string;
+    statement_ru: string;
+    progression_strategy: CarbProgressionStrategy;
+  };
+  methodologySignals: {
+    protein_sufficient: boolean;
+    carb_reference_band_used: true;
+    carb_reference_not_prescriptive: true;
+    long_run_fueling_instruction_detected: boolean;
+    during_run_fuel_planned: boolean;
+  };
+  safetyFlags: { hard_flags: string[]; soft_flags: string[]; blocked: boolean };
+}): Promise<NutritionAiNarrative | null> {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) {
+    return null;
+  }
+  const allowAthleteDraft = !input.safetyFlags.blocked;
+  const formalityInstruction = getTrainingPeaksReplyDraftFormalityInstruction(
+    input.context.resolvedCommunicationProfile.formality
+  );
+  const systemPrompt = [
+    "You are writing as a running coach preparing a weekly nutrition review based on deterministic facts.",
+    "Inputs are facts. Do not recalculate or invent numbers. Use methodology facts as the single source of truth.",
+    "Return strict JSON only with keys: coach_summary_text, day_by_day_analysis_text, athlete_message_draft, quality_notes, do_not_send_reasons.",
+    "coach_summary_text must be concise and useful for a coach.",
+    "day_by_day_analysis_text must be readable prose and include training-nutrition links day by day.",
+    "athlete_message_draft must be Russian only, no English.",
+    "Use the required ты/вы form from formality instruction.",
+    "Mention athlete name if available.",
+    "Mention training only if TP past-week context exists in facts.",
+    "Explain what was okay and what was not okay.",
+    "One focus only.",
+    "No strict g/kg target in athlete text.",
+    "If carbs are far below reference, recommend gradual step.",
+    "No medical diagnosis.",
+    "No weight-loss or restriction framing.",
+    "No meal plan.",
+    "Food examples may be options only.",
+    "Do not hallucinate gels or during-run fueling.",
+    "If workout description has no during-run fueling, treat it internally as not specified without criticizing athlete.",
+    "Hedge causality: allowed 'может влиять', 'могло сказаться'; forbidden deterministic causal claims.",
+    "Coach summary should include: data quality, key training context, what is okay, main limiter, one focus, what not to overstate.",
+    allowAthleteDraft
+      ? "athlete_message_draft is required and must be useful Telegram-ready text."
+      : "Hard safety flags present: athlete_message_draft must be null and coach-only text should explain manual review need.",
+    `Formality instruction: ${formalityInstruction}`,
+  ].join("\n");
+
+  const factsPayload = {
+    student: {
+      name: input.context.studentName,
+      formality: input.context.resolvedCommunicationProfile.formality,
+    },
+    tp_context: {
+      past_week: input.context.tpPastWeek,
+      next_week: input.context.tpNextWeek,
+    },
+    data_quality: input.context.dataQuality,
+    daily_analysis: input.dailyAnalysis,
+    training_nutrition_links: input.trainingNutritionLinks,
+    one_focus: input.oneFocus,
+    methodology_signals: input.methodologySignals,
+    safety_flags: input.safetyFlags,
+    allow_athlete_draft: allowAthleteDraft,
+  };
+
+  try {
+    const response = await fetch(OPENAI_API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: OPENAI_NUTRITION_REVIEW_MODEL,
+        temperature: 0.2,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: `Facts JSON:\n${JSON.stringify(factsPayload, null, 2)}` },
+        ],
+      }),
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const payload = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string | null } }>;
+    };
+    const content = payload.choices?.[0]?.message?.content?.trim();
+    if (!content) {
+      return null;
+    }
+    const parsed = JSON.parse(extractJsonOnly(content)) as Partial<NutritionAiNarrative>;
+    const coachSummary = typeof parsed.coach_summary_text === "string" ? parsed.coach_summary_text.trim() : "";
+    const dayByDay = typeof parsed.day_by_day_analysis_text === "string" ? parsed.day_by_day_analysis_text.trim() : "";
+    if (!coachSummary || !dayByDay) {
+      return null;
+    }
+    const athleteDraftRaw = typeof parsed.athlete_message_draft === "string" ? parsed.athlete_message_draft.trim() : null;
+    const athleteDraft = allowAthleteDraft ? athleteDraftRaw : null;
+    return {
+      coach_summary_text: coachSummary,
+      day_by_day_analysis_text: dayByDay,
+      athlete_message_draft: athleteDraft,
+      quality_notes: Array.isArray(parsed.quality_notes)
+        ? parsed.quality_notes.filter((item): item is string => typeof item === "string")
+        : [],
+      do_not_send_reasons: Array.isArray(parsed.do_not_send_reasons)
+        ? parsed.do_not_send_reasons.filter((item): item is string => typeof item === "string")
+        : [],
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function generateNutritionWeeklyAnalysis(input: {
@@ -199,16 +460,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
     methodology,
     blockedSafety: safety.blocked,
   });
-
   const mainFocus = selectedFocus.statementRu;
-  const athleteDraft = safety.blocked
-    ? null
-    : buildAthleteDraft({
-        context,
-        mainFocusRu: selectedFocus.statementRu,
-        proteinSufficient: methodology.proteinSufficient,
-        progressionStrategy: selectedFocus.progressionStrategy,
-      });
   const notes: string[] = [];
   if (context.tpPastWeek.cacheStatus !== "ok") {
     notes.push("past_week_tp_context_unavailable_or_stale");
@@ -223,8 +475,91 @@ export async function generateNutritionWeeklyAnalysis(input: {
     `communication_formality:${getTrainingPeaksReplyDraftFormalityInstruction(context.resolvedCommunicationProfile.formality)}`
   );
   notes.push(...context.communicationProfilePromptLines);
+  const resolvedMacroDays = context.manualMacroRows.filter((row) => !row.day.startsWith("unresolved:")).length;
+  const hasMethodologyFacts =
+    resolvedMacroDays > 0 &&
+    context.dataQuality.parsedDays > 0 &&
+    Boolean(selectedFocus.statementRu.trim()) &&
+    context.tpPastWeek.cacheStatus === "ok" &&
+    context.tpPastWeek.workouts.length > 0;
+  const forceNeedsReview = !hasMethodologyFacts;
+  if (!hasMethodologyFacts) {
+    notes.push("methodology_facts_incomplete_for_ai_generation");
+  }
+
+  const fallbackDayByDay = buildFallbackDayByDay({
+    context,
+    dailyAnalysis: methodology.dailyAnalysis as Array<Record<string, unknown>>,
+  });
+  const fallbackCoachSummary = buildFallbackCoachSummary({
+    context,
+    selectedFocus: {
+      statementRu: selectedFocus.statementRu,
+    },
+    proteinSufficient: methodology.proteinSufficient,
+    dataQualityFlags: context.dataQuality.qualityFlags,
+    nextWeekHasKeySessions: context.tpNextWeek.cacheStatus === "ok" && context.tpNextWeek.keyWorkouts.length > 0,
+  });
+  let narrative: {
+    coach_summary_text: string;
+    day_by_day_analysis_text: string;
+    athlete_message_draft: string | null;
+    quality_notes: string[];
+    do_not_send_reasons: string[];
+    generation_mode: "ai" | "fallback";
+    ai_model: string;
+  } = {
+    coach_summary_text: fallbackCoachSummary,
+    day_by_day_analysis_text: fallbackDayByDay,
+    athlete_message_draft: safety.blocked
+      ? null
+      : buildFallbackAthleteDraft({
+          context,
+          coachSummaryText: fallbackCoachSummary,
+          dayByDayText: fallbackDayByDay,
+          mainFocusRu: selectedFocus.statementRu,
+          proteinSufficient: methodology.proteinSufficient,
+          progressionStrategy: selectedFocus.progressionStrategy,
+        }),
+    quality_notes: [] as string[],
+    do_not_send_reasons: [] as string[],
+    generation_mode: "fallback" as const,
+    ai_model: "nutrition-weekly-review-fallback-v2",
+  };
+  if (!forceNeedsReview) {
+    const aiNarrative = await generateNutritionWeeklyReviewNarrative({
+      context,
+      dailyAnalysis: methodology.dailyAnalysis as Array<Record<string, unknown>>,
+      trainingNutritionLinks: methodology.trainingNutritionLinks,
+      oneFocus: {
+        category: selectedFocus.category,
+        statement_ru: selectedFocus.statementRu,
+        progression_strategy: selectedFocus.progressionStrategy,
+      },
+      methodologySignals: {
+        protein_sufficient: methodology.proteinSufficient,
+        carb_reference_band_used: methodology.carbReferenceBandUsed,
+        carb_reference_not_prescriptive: methodology.carbReferenceNotPrescriptive,
+        long_run_fueling_instruction_detected: methodology.longRunFuelingInstructionDetected,
+        during_run_fuel_planned: methodology.duringRunFuelPlanned,
+      },
+      safetyFlags: {
+        hard_flags: safety.hardFlags,
+        soft_flags: safety.softFlags,
+        blocked: safety.blocked,
+      },
+    });
+    if (aiNarrative) {
+      narrative = {
+        ...aiNarrative,
+        generation_mode: "ai",
+        ai_model: OPENAI_NUTRITION_REVIEW_MODEL,
+      };
+    }
+  }
+
   const promptHash = stableHash({
-    role: "nutrition-weekly-analysis-methodology-v1",
+    role: NUTRITION_REVIEW_PROMPT_VERSION,
     guardrails: [
       "no_medical_advice",
       "no_diagnosis",
@@ -239,6 +574,9 @@ export async function generateNutritionWeeklyAnalysis(input: {
       "no_english",
       "no_weight_loss_pressure",
       "no_mixed_ty_vy",
+      "facts_only_no_recalculation",
+      "json_output_required",
+      "coach_summary_day_by_day_athlete_draft",
     ],
   });
   const contextHash = stableHash({
@@ -253,7 +591,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
   });
   const status = safety.blocked
     ? "blocked_safety"
-    : methodology.focusCandidateSignals.limitedData
+    : methodology.focusCandidateSignals.limitedData || forceNeedsReview
       ? "needs_review"
       : "draft_ready";
 
@@ -304,6 +642,12 @@ export async function generateNutritionWeeklyAnalysis(input: {
       },
       bodyweight_kg: methodology.bodyweightKg,
       carb_progression_strategy: selectedFocus.progressionStrategy,
+      coach_summary_text: narrative.coach_summary_text,
+      day_by_day_analysis_text: narrative.day_by_day_analysis_text,
+      generation_mode: narrative.generation_mode,
+      prompt_version: NUTRITION_REVIEW_PROMPT_VERSION,
+      quality_notes: narrative.quality_notes,
+      do_not_send_reasons: [...new Set([...safety.doNotSendReasons, ...narrative.do_not_send_reasons])],
     },
     tp_context_summary: {
       past_week_key_sessions: context.tpPastWeek.keyWorkouts.length,
@@ -337,10 +681,14 @@ export async function generateNutritionWeeklyAnalysis(input: {
       long_run_fueling_instruction_detected: methodology.longRunFuelingInstructionDetected,
       during_run_fuel_planned: methodology.duringRunFuelPlanned,
     },
-    athlete_message_draft: athleteDraft,
-    do_not_send_reasons: safety.doNotSendReasons,
+    athlete_message_draft: narrative.athlete_message_draft,
+    coach_summary_text: narrative.coach_summary_text,
+    day_by_day_analysis_text: narrative.day_by_day_analysis_text,
+    generation_mode: narrative.generation_mode,
+    prompt_version: NUTRITION_REVIEW_PROMPT_VERSION,
+    do_not_send_reasons: [...new Set([...safety.doNotSendReasons, ...narrative.do_not_send_reasons])],
     prompt_hash: promptHash,
     context_hash: contextHash,
-    ai_model: "nutrition-methodology-v1-template",
+    ai_model: narrative.ai_model,
   };
 }

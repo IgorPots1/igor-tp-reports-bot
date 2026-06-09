@@ -171,6 +171,18 @@ export default async function CoachOsNutritionStudentCardPage({
   const oneFocus = asObject(weeklyNutritionSummary.one_focus);
   const methodologySignals = asObject(weeklyNutritionSummary.methodology_signals);
   const dataQualitySummary = asObject(weeklyNutritionSummary.data_quality_summary);
+  const coachSummaryText =
+    typeof weeklyNutritionSummary.coach_summary_text === "string"
+      ? weeklyNutritionSummary.coach_summary_text
+      : null;
+  const dayByDayAnalysisText =
+    typeof weeklyNutritionSummary.day_by_day_analysis_text === "string"
+      ? weeklyNutritionSummary.day_by_day_analysis_text
+      : null;
+  const generationMode =
+    typeof weeklyNutritionSummary.generation_mode === "string"
+      ? weeklyNutritionSummary.generation_mode
+      : "fallback";
   const bodyweightKg =
     typeof weeklyNutritionSummary.bodyweight_kg === "number"
       ? weeklyNutritionSummary.bodyweight_kg
@@ -582,6 +594,9 @@ export default async function CoachOsNutritionStudentCardPage({
 
               <section>
                 <h4>Черновик для ученика</h4>
+                {generationMode !== "ai" && (
+                  <p className="admin-muted">Сгенерировано шаблоном, лучше проверить текст вручную.</p>
+                )}
                 {card.weeklyAnalysis.athleteMessageDraft ? (
                   <textarea
                     className="admin-textarea admin-textarea-compact admin-textarea-readonly"
@@ -595,7 +610,35 @@ export default async function CoachOsNutritionStudentCardPage({
               </section>
 
               <section>
-                <h4>Сводка для тренера</h4>
+                <h4>Главный вывод для тренера</h4>
+                {coachSummaryText ? (
+                  <textarea
+                    className="admin-textarea admin-textarea-compact admin-textarea-readonly"
+                    rows={6}
+                    readOnly
+                    value={coachSummaryText}
+                  />
+                ) : (
+                  <p className="admin-muted">Главный вывод не сформирован.</p>
+                )}
+              </section>
+
+              <section>
+                <h4>Разбор по дням</h4>
+                {dayByDayAnalysisText ? (
+                  <textarea
+                    className="admin-textarea admin-textarea-compact admin-textarea-readonly"
+                    rows={8}
+                    readOnly
+                    value={dayByDayAnalysisText}
+                  />
+                ) : (
+                  <p className="admin-muted">Разбор по дням не сформирован.</p>
+                )}
+              </section>
+
+              <section>
+                <h4>Метрики недели</h4>
                 <dl className="admin-meta-list admin-meta-list-compact">
                   <div>
                     <dt>Качество данных</dt>
@@ -646,27 +689,6 @@ export default async function CoachOsNutritionStudentCardPage({
               </section>
 
               <section>
-                <h4>Важные дни</h4>
-                {importantDays.length === 0 ? (
-                  <p className="admin-muted">Ключевые дни не выделены.</p>
-                ) : (
-                  <ul className="admin-list">
-                    {importantDays.map((day, idx) => {
-                      const date = typeof day.date === "string" ? day.date : "—";
-                      const trainingType = formatTrainingType(typeof day.trainingType === "string" ? day.trainingType : null);
-                      const findings = Array.isArray(day.findings) ? (day.findings as string[]) : [];
-                      const line = findings[0] ?? "сигнал без деталей";
-                      return (
-                        <li key={`${date}-${idx}`}>
-                          {date} · {trainingType} · {line}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </section>
-
-              <section>
                 <h4>Связки тренировка ↔ питание</h4>
                 {trainingLinks.length === 0 ? (
                   <p className="admin-muted">Связки не сформированы.</p>
@@ -701,6 +723,27 @@ export default async function CoachOsNutritionStudentCardPage({
                   />
                 </details>
               </section>
+
+              <details>
+                <summary>Важные дни (technical)</summary>
+                {importantDays.length === 0 ? (
+                  <p className="admin-muted">Ключевые дни не выделены.</p>
+                ) : (
+                  <ul className="admin-list">
+                    {importantDays.map((day, idx) => {
+                      const date = typeof day.date === "string" ? day.date : "—";
+                      const trainingType = formatTrainingType(typeof day.trainingType === "string" ? day.trainingType : null);
+                      const findings = Array.isArray(day.findings) ? (day.findings as string[]) : [];
+                      const line = findings[0] ?? "сигнал без деталей";
+                      return (
+                        <li key={`${date}-${idx}`}>
+                          {date} · {trainingType} · {line}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </details>
 
               <details>
                 <summary>Technical JSON</summary>
