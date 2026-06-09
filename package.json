@@ -167,6 +167,7 @@
     "check:nutrition-context-builder": "npx tsx scripts/check-nutrition-context-builder.ts",
     "check:nutrition-methodology": "npx tsx scripts/check-nutrition-methodology.ts",
     "check:nutrition-canonical-daily-analysis": "npx tsx scripts/check-nutrition-canonical-daily-analysis.ts",
+    "check:nutrition-next-week-plan-formulas": "npx tsx scripts/check-nutrition-next-week-plan-formulas.ts",
     "check:nutrition-methodology-wiring": "npx tsx scripts/check-nutrition-methodology-wiring.ts",
     "check:nutrition-ai-review-quality": "npx tsx scripts/check-nutrition-ai-review-quality.ts",
     "check:nutrition-weekly-review-quality": "npx tsx scripts/check-nutrition-weekly-review-quality.ts",

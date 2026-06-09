@@ -1,6 +1,10 @@
 import { buildNutritionTrainingPeaksWeekContext } from "@/features/nutrition/context";
 import { detectWorkoutFuelingInstructions } from "@/features/nutrition/methodology";
 import {
+  buildNutritionNextWeekPlan,
+  type NutritionNextWeekPlan,
+} from "@/features/nutrition/weekly-plan-formulas";
+import {
   createNutritionWeeklyPlan,
   getNutritionStudentEssentials,
   getNutritionWeeklyAnalysisById,
@@ -79,6 +83,7 @@ export type NutritionWeeklyPlanFacts = {
     carbRangesInternalOnly: true;
     copyOnly: true;
   };
+  nextWeekPlan: NutritionNextWeekPlan;
 };
 
 export type NutritionWeeklyPlanAiOutput = {
@@ -346,6 +351,13 @@ export function buildNutritionWeeklyPlanTrainingContextSnapshot(
     planWeekTo: facts.planWeek.to,
     keyWorkouts: facts.nextWeekTraining.keyWorkouts,
     workoutCount: facts.nextWeekTraining.workouts.length,
+    next_week_plan_summary: {
+      formula_version: facts.nextWeekPlan.formula_version,
+      missing_bodyweight: facts.nextWeekPlan.summary.missing_bodyweight,
+      has_training_context: facts.nextWeekPlan.summary.has_training_context,
+      key_days_count: facts.nextWeekPlan.summary.key_days_count,
+      warnings: facts.nextWeekPlan.warnings,
+    },
   };
   if (!refresh) {
     return base;
@@ -397,6 +409,13 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
   const methodologySignals = toObject(nutritionSummary.methodology_signals);
   const dataQuality = toObject(nutritionSummary.data_quality_summary);
   const parsedDays = typeof dataQuality.parsed_days === "number" ? dataQuality.parsed_days : 0;
+  const planWeek = calculateNutritionPlanWeek(input.sourceAnalysis.weekTo);
+  const nextWeekPlan = buildNutritionNextWeekPlan({
+    bodyweightKg: input.weightKg,
+    planWeekFrom: planWeek.from,
+    planWeekTo: planWeek.to,
+    trainingContext: tpNextWeek,
+  });
 
   return {
     student: {
@@ -418,7 +437,7 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
       nutritionSummary,
       safetyFlags,
     },
-    planWeek: calculateNutritionPlanWeek(input.sourceAnalysis.weekTo),
+    planWeek,
     nextWeekTraining: {
       status: mapTpCacheStatus(tpNextWeek.cacheStatus),
       workouts,
@@ -440,6 +459,7 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
       carbRangesInternalOnly: true,
       copyOnly: true,
     },
+    nextWeekPlan,
   };
 }
 
@@ -619,6 +639,7 @@ export function generateNutritionWeeklyPlanFallback(
       plan_focus: planFocus,
       key_training_days: keyTrainingDays,
       simple_actions: simpleActions,
+      next_week_plan: facts.nextWeekPlan,
       safety_notes: blocked ? ["Источник недельного обзора заблокирован по безопасности."] : [],
       do_not_send_reasons: doNotSendReasons,
       facts_version: 1,
@@ -661,6 +682,7 @@ async function generateNutritionWeeklyPlanWithAiInternal(
     "Russian only in all user-facing strings.",
     `Formality instruction: ${formalityInstruction}`,
     "Facts-only. Do not invent workouts.",
+    "next_week_plan is deterministic and canonical. Do not recalculate formulas, macros, kcal, grams, or day types.",
     "Do not invent gels/fueling. If fueling_instruction_present is false, do not prescribe gels.",
     "No strict g/kg in athlete text. Carb ranges internal only.",
     "No diagnosis. No medical claims.",
@@ -764,6 +786,7 @@ export async function generateNutritionWeeklyPlanWithAi(
       plan_focus: aiOutput.plan_focus,
       key_training_days: aiOutput.key_training_days,
       simple_actions: aiOutput.simple_actions,
+      next_week_plan: facts.nextWeekPlan,
       safety_notes: aiOutput.safety_notes,
       do_not_send_reasons: doNotSendReasons,
       facts_version: 1,

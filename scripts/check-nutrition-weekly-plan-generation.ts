@@ -117,6 +117,17 @@ assert.ok(generated.coachSummary.trim().length > 0, "fallback must produce coach
 assert.ok(generated.athleteMessageDraft, "fallback must produce athlete draft when not blocked");
 assert.ok(generated.planSummary.plan_focus, "fallback must produce plan_focus");
 assert.ok(Array.isArray(generated.planSummary.key_training_days), "fallback must produce key_training_days");
+assert.ok(generated.planSummary.next_week_plan, "fallback must produce next_week_plan");
+assert.equal(
+  (generated.planSummary.next_week_plan as { formula_version?: unknown }).formula_version,
+  "nutrition_next_week_plan_v1",
+  "next_week_plan must include formula version"
+);
+assert.equal(
+  (generated.planSummary.next_week_plan as { bodyweight_kg?: unknown }).bodyweight_kg,
+  56,
+  "next_week_plan must include bodyweight when available"
+);
 assert.ok(generated.trainingContextSnapshot.planWeekFrom, "fallback must include training snapshot");
 assert.ok(generated.nutritionContextSnapshot, "fallback must include nutrition snapshot");
 assert.equal(generated.promptVersion, NUTRITION_WEEKLY_PLAN_PROMPT_VERSION);

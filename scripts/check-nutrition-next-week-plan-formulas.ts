@@ -1,0 +1,115 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import {
+  buildNutritionNextWeekPlan,
+  calculateNutritionDayTypeTarget,
+} from "@/features/nutrition/weekly-plan-formulas";
+
+const root = process.cwd();
+const formulasPath = join(root, "src/features/nutrition/weekly-plan-formulas.ts");
+const formulasSource = readFileSync(formulasPath, "utf8");
+
+assert.doesNotMatch(formulasSource, /from\s+["']openai["']/i, "formula module must not import OpenAI");
+assert.doesNotMatch(formulasSource, /sendTelegram|telegramSend|bot\.sendMessage/i, "formula module must not send Telegram");
+assert.doesNotMatch(
+  formulasSource,
+  /mutateTrainingPeaks|updateWorkout|moveWorkout|createWorkout|deleteWorkout|executeMove/i,
+  "formula module must not mutate TrainingPeaks"
+);
+
+const rest = calculateNutritionDayTypeTarget({ bodyweightKg: 56, dayType: "rest" });
+const easy = calculateNutritionDayTypeTarget({ bodyweightKg: 56, dayType: "easy" });
+const hard = calculateNutritionDayTypeTarget({ bodyweightKg: 56, dayType: "hard" });
+const preLong = calculateNutritionDayTypeTarget({ bodyweightKg: 56, dayType: "pre_long" });
+const longRun = calculateNutritionDayTypeTarget({ bodyweightKg: 56, dayType: "long_run" });
+
+assert.ok(rest);
+assert.ok(easy);
+assert.ok(hard);
+assert.ok(preLong);
+assert.ok(longRun);
+
+assert.equal(rest?.target_kcal, 1950);
+assert.equal(rest?.protein_g, 90);
+assert.equal(rest?.fat_g, 60);
+assert.equal(rest?.carbs_g, 250);
+
+assert.equal(easy?.target_kcal, 2200);
+assert.equal(easy?.protein_g, 90);
+assert.equal(easy?.fat_g, 65);
+assert.equal(easy?.carbs_g, 290);
+
+assert.equal(hard?.target_kcal, 2400);
+assert.equal(hard?.protein_g, 95);
+assert.equal(hard?.fat_g, 65);
+assert.equal(hard?.carbs_g, 340);
+
+assert.equal(preLong?.target_kcal, 2200);
+assert.equal(preLong?.protein_g, 90);
+assert.equal(preLong?.fat_g, 65);
+assert.equal(preLong?.carbs_g, 310);
+
+assert.equal(longRun?.target_kcal, 2500);
+assert.equal(longRun?.protein_g, 95);
+assert.equal(longRun?.fat_g, 65);
+assert.equal(longRun?.carbs_g, 390);
+
+const nadezhdaLikeContext = {
+  cacheStatus: "ok",
+  workouts: [
+    { date: "2026-06-09", title: "Бег по пульсу", type: "easy_run" },
+    { date: "2026-06-10", title: "6 х 6 мин", type: "intervals" },
+    { date: "2026-06-11", title: "Лёгкий бег", type: "easy_run" },
+    { date: "2026-06-14", title: "Длительная 18 км", type: "long_run" },
+  ],
+  keyWorkouts: [{ date: "2026-06-10", title: "6 х 6 мин", type: "intervals", confidence: "high" }],
+  longRun: { date: "2026-06-14", title: "Длительная 18 км" },
+};
+
+const plan = buildNutritionNextWeekPlan({
+  bodyweightKg: 56,
+  planWeekFrom: "2026-06-08",
+  planWeekTo: "2026-06-14",
+  trainingContext: nadezhdaLikeContext,
+});
+
+assert.equal(plan.formula_version, "nutrition_next_week_plan_v1");
+assert.equal(plan.days.length, 7);
+assert.equal(plan.summary.total_days, 7);
+assert.ok(plan.summary.has_training_context);
+assert.ok(plan.summary.key_days_count >= 1);
+assert.ok(plan.summary.hard_dates.includes("2026-06-10"));
+assert.ok(plan.days.some((day) => day.training_type === "rest"), "rest days must be generated for no-workout dates");
+assert.ok(plan.days.some((day) => day.date === "2026-06-13" && day.training_type === "pre_long"));
+assert.ok(plan.days.some((day) => day.date === "2026-06-10" && day.flags.key_workout));
+assert.ok(plan.days.some((day) => day.date === "2026-06-10" && day.workout_title === "6 х 6 мин"));
+
+const missingBodyweight = buildNutritionNextWeekPlan({
+  bodyweightKg: null,
+  planWeekFrom: "2026-06-08",
+  planWeekTo: "2026-06-14",
+  trainingContext: nadezhdaLikeContext,
+});
+
+assert.equal(missingBodyweight.summary.missing_bodyweight, true);
+assert.ok(missingBodyweight.warnings.includes("missing_bodyweight"));
+assert.ok(
+  missingBodyweight.days.every(
+    (day) =>
+      day.target_kcal === null && day.protein_g === null && day.fat_g === null && day.carbs_g === null
+  )
+);
+
+const noTpContext = buildNutritionNextWeekPlan({
+  bodyweightKg: 56,
+  planWeekFrom: "2026-06-08",
+  planWeekTo: "2026-06-14",
+  trainingContext: { cacheStatus: "empty", workouts: [] },
+});
+assert.ok(noTpContext.warnings.includes("training_context_missing"));
+assert.equal(noTpContext.days.length, 7);
+assert.ok(noTpContext.days.every((day) => day.training_type === "unknown"));
+
+console.log("PASS check-nutrition-next-week-plan-formulas");
