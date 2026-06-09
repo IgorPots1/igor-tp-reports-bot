@@ -161,13 +161,13 @@ assert.match(
 );
 assert.match(
   generatorSource,
-  /next_week_plan канонический и deterministic\. Используй exact значения из него/,
-  "AI prompt must force exact canonical next_week_plan values"
+  /Используй exact значения для логики, но в athlete draft kcal показывай display-rounded до ближайших 100/,
+  "AI prompt must preserve canonical logic while display-rounding athlete kcal"
 );
 assert.match(
   generatorSource,
-  /если rest target_kcal=1950 во facts, пиши ~1950 ккал, не ~2000/i,
-  "AI prompt must preserve deterministic rest target example"
+  /если rest target_kcal=1950 во facts, пиши ~2000 ккал/i,
+  "AI prompt must display-round deterministic rest target example"
 );
 assert.match(
   generatorSource,

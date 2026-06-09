@@ -8,6 +8,8 @@ type CanonicalDailyFact = {
   weekdayRu?: unknown;
   date_label?: unknown;
   dateLabel?: unknown;
+  training_type?: unknown;
+  trainingType?: unknown;
   training_label?: unknown;
   trainingLabel?: unknown;
   actual_kcal?: unknown;
@@ -18,7 +20,11 @@ type CanonicalDailyFact = {
   carbs_g_per_kg?: unknown;
   hint_for_comment?: unknown;
   hintForComment?: unknown;
+  nutrition_status?: unknown;
+  nutritionStatus?: unknown;
   findings?: unknown;
+  source_quality?: unknown;
+  sourceQuality?: unknown;
 };
 
 export type NutritionCombinedMessageResult = {
@@ -66,6 +72,39 @@ function formatDateRu(isoDate: string): string {
 
 function formatDecimalRu(value: number, digits = 1): string {
   return value.toFixed(digits).replace(".", ",");
+}
+
+function roundToNearest(value: number, step: number): number {
+  return Math.round(value / step) * step;
+}
+
+export function formatNutritionAthleteKcal(value: number | null | undefined, options?: { mode?: "actual" | "target" }): string {
+  if (value == null || !Number.isFinite(value)) {
+    return "ккал н/д";
+  }
+  return `~${roundToNearest(value, options?.mode === "target" ? 100 : 50)} ккал`;
+}
+
+export function formatNutritionAthleteMacro(value: number | null | undefined, options?: { approximate?: boolean }): string {
+  if (value == null || !Number.isFinite(value)) {
+    return "н/д";
+  }
+  const rounded = roundToNearest(value, 5);
+  return `${options?.approximate ? "~" : ""}${rounded} г`;
+}
+
+export function formatNutritionAthletePlanMacro(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) {
+    return "н/д";
+  }
+  return `${Math.round(value)} г`;
+}
+
+export function formatNutritionAthletePerKg(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) {
+    return "н/д";
+  }
+  return `~${formatDecimalRu(value, 1)} г/кг`;
 }
 
 function dayTypeEmoji(dayType: NutritionPlanDayType): string {
@@ -118,6 +157,58 @@ function getCanonicalDailyFacts(review: NutritionWeeklyAnalysis): CanonicalDaily
   return daily.filter((item): item is CanonicalDailyFact => Boolean(item && typeof item === "object" && !Array.isArray(item)));
 }
 
+function getDailyFactValue(item: CanonicalDailyFact, actual: Record<string, unknown>, snakeKey: keyof CanonicalDailyFact, camelKey: string): number | null {
+  return toFiniteNumber(item[snakeKey]) ?? toFiniteNumber(actual[camelKey]);
+}
+
+function renderNutritionDayComment(input: {
+  trainingType: string;
+  trainingLabel: string;
+  nutritionStatus: string | null;
+  kcal: number;
+  carbs: number;
+  carbsPerKg: number | null;
+  sourceConfidence: string | null;
+  findings: string[];
+}): string {
+  const carbsText = formatNutritionAthleteMacro(input.carbs, { approximate: true });
+  const kcalText = formatNutritionAthleteKcal(input.kcal, { mode: "actual" });
+  const carbsKgText = input.carbsPerKg != null ? ` (${formatNutritionAthletePerKg(input.carbsPerKg)})` : "";
+  const lowQuality = input.sourceConfidence === "low";
+  const cautiousPrefix = lowQuality
+    ? "По этому дню вывод делаю осторожно: данных может быть чуть меньше, чем нужно для точной оценки. "
+    : "";
+
+  if (input.nutritionStatus === "pre_long_low") {
+    return `${cautiousPrefix}Это день перед длительной: углеводов получилось около ${carbsText}${carbsKgText}. Для такой подготовки это нижняя граница, поэтому накануне длинной работы лучше не просаживать углеводы.`;
+  }
+  if (input.nutritionStatus === "long_run_low") {
+    return `${cautiousPrefix}На длинную работу день получился скромным по энергии: около ${kcalText}, углеводов около ${carbsText}${carbsKgText}. Не привязываю самочувствие только к этому, но запас топлива и восстановление могли быть лучше.`;
+  }
+  if (input.nutritionStatus === "low_for_load") {
+    return `${cautiousPrefix}Углеводов за день получилось около ${carbsText}${carbsKgText} — для такой работы это нижняя граница. Не критично, но в ключевые дни лучше держать углеводы повыше, чтобы было больше топлива на тренировку и восстановление.`;
+  }
+  if (input.nutritionStatus === "suspect") {
+    return "По этому дню вывод делаю осторожно: данных может быть чуть меньше, чем нужно для точной оценки.";
+  }
+  if (input.trainingType === "rest") {
+    return `${cautiousPrefix}Для дня без ключевой нагрузки выглядит спокойно: энергии около ${kcalText}, явной проблемы по распределению здесь не видно.`;
+  }
+  if (input.trainingType === "easy") {
+    return `${cautiousPrefix}Под лёгкую работу день выглядит нормально: энергии и углеводов достаточно, здесь ничего специально менять не нужно.`;
+  }
+  if (input.trainingType === "hard" || input.trainingType === "race") {
+    return `${cautiousPrefix}Под эту ключевую работу питание выглядит согласованно: углеводов около ${carbsText}${carbsKgText}, сильной просадки по дню не видно.`;
+  }
+  if (input.trainingType === "long_run") {
+    return `${cautiousPrefix}Под длинную работу день выглядит достаточно ровно: энергии около ${kcalText}, углеводов около ${carbsText}${carbsKgText}.`;
+  }
+  if (input.findings.includes("protein_sufficient")) {
+    return `${cautiousPrefix}Белок в этот день закрыт хорошо, по нагрузке и питанию явного конфликта не видно.`;
+  }
+  return `${cautiousPrefix}День выглядит ровно, здесь ничего специально менять не нужно.`;
+}
+
 function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
   const facts = getCanonicalDailyFacts(review);
   if (facts.length === 0) {
@@ -129,28 +220,41 @@ function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
       const weekday = typeof item.weekday_ru === "string" ? item.weekday_ru : typeof item.weekdayRu === "string" ? item.weekdayRu : null;
       const dateLabel =
         typeof item.date_label === "string" ? item.date_label : typeof item.dateLabel === "string" ? item.dateLabel : date ? formatDateRu(date) : null;
+      const trainingType =
+        typeof item.training_type === "string" ? item.training_type : typeof item.trainingType === "string" ? item.trainingType : "unknown";
       const trainingLabel =
         typeof item.training_label === "string" ? item.training_label : typeof item.trainingLabel === "string" ? item.trainingLabel : "день недели";
       const actual = asObject(item.actual);
-      const kcal = toFiniteNumber(item.actual_kcal) ?? toFiniteNumber(actual.kcal);
-      const protein = toFiniteNumber(item.protein_g) ?? toFiniteNumber(actual.proteinG);
-      const fat = toFiniteNumber(item.fat_g) ?? toFiniteNumber(actual.fatG);
-      const carbs = toFiniteNumber(item.carbs_g) ?? toFiniteNumber(actual.carbsG);
+      const kcal = getDailyFactValue(item, actual, "actual_kcal", "kcal");
+      const protein = getDailyFactValue(item, actual, "protein_g", "proteinG");
+      const fat = getDailyFactValue(item, actual, "fat_g", "fatG");
+      const carbs = getDailyFactValue(item, actual, "carbs_g", "carbsG");
       const carbsPerKg = toFiniteNumber(item.carbs_g_per_kg) ?? toFiniteNumber(actual.carbsGPerKg);
-      const hintRaw =
-        typeof item.hint_for_comment === "string"
-          ? item.hint_for_comment
-          : typeof item.hintForComment === "string"
-            ? item.hintForComment
-            : "";
       const findings = asStringArray(item.findings);
-      const comment = compactText(hintRaw) ?? compactText(findings[0]) ?? "Сохраняй ровный режим питания в течение дня.";
+      const nutritionStatus =
+        typeof item.nutrition_status === "string"
+          ? item.nutrition_status
+          : typeof item.nutritionStatus === "string"
+            ? item.nutritionStatus
+            : null;
+      const sourceQuality = asObject(item.source_quality) ?? asObject(item.sourceQuality);
+      const sourceConfidence = typeof sourceQuality.confidence === "string" ? sourceQuality.confidence : null;
       if (!weekday || !dateLabel || kcal == null || protein == null || fat == null || carbs == null) {
         return null;
       }
-      const carbsKgText = carbsPerKg != null ? ` (~${formatDecimalRu(carbsPerKg)} г/кг)` : "";
+      const comment = renderNutritionDayComment({
+        trainingType,
+        trainingLabel,
+        nutritionStatus,
+        kcal,
+        carbs,
+        carbsPerKg,
+        sourceConfidence,
+        findings,
+      });
+      const carbsKgText = carbsPerKg != null ? ` (${formatNutritionAthletePerKg(carbsPerKg)})` : "";
       return `🔹 ${weekday} (${dateLabel}) — ${trainingLabel}
-~${Math.round(kcal)} ккал · белок ${Math.round(protein)} г · жиры ${Math.round(fat)} г · углеводы ${Math.round(carbs)} г${carbsKgText}.
+${formatNutritionAthleteKcal(kcal, { mode: "actual" })} · белок ${formatNutritionAthleteMacro(protein)} · жиры ${formatNutritionAthleteMacro(fat)} · углеводы ${formatNutritionAthleteMacro(carbs)}${carbsKgText}.
 ${comment}`;
     })
     .filter((line): line is string => Boolean(line));
@@ -161,6 +265,23 @@ function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
   const oneFocus = asObject(summary.one_focus);
   const statement = compactText(typeof oneFocus.statement_ru === "string" ? oneFocus.statement_ru : null);
   const coachSummary = compactText(typeof summary.coach_summary_text === "string" ? summary.coach_summary_text : null);
+  const proteinSufficient = asObject(summary.methodology_signals).protein_sufficient === true;
+  const dailyFacts = getCanonicalDailyFacts(review);
+  const lowCarbKeyDays = dailyFacts
+    .filter((day) => {
+      const status = typeof day.nutrition_status === "string" ? day.nutrition_status : typeof day.nutritionStatus === "string" ? day.nutritionStatus : "";
+      return status === "pre_long_low" || status === "long_run_low" || status === "low_for_load";
+    })
+    .map((day) => (typeof day.weekday_ru === "string" ? day.weekday_ru.toLowerCase() : typeof day.weekdayRu === "string" ? day.weekdayRu.toLowerCase() : null))
+    .filter((day): day is string => Boolean(day));
+  if (proteinSufficient || lowCarbKeyDays.length > 0) {
+    const good = proteinSufficient ? "По белку всё спокойно — восстановление здесь закрыто хорошо." : "По базовой структуре недели есть на что опереться.";
+    const pattern =
+      lowCarbKeyDays.length > 0
+        ? `Главный момент недели — распределение углеводов и энергии: самые заметные просадки пришлись на ${[...new Set(lowCarbKeyDays)].join(", ")}.`
+        : "Главный момент недели — держать энергию ровнее вокруг ключевых тренировок.";
+    return `${good} ${pattern} Не утверждаю, что самочувствие зависело только от этого, но это могло повлиять на запас энергии и восстановление. Фокус — не снижать углеводы перед длинной или ключевой работой.`;
+  }
   return statement ?? coachSummary ?? "По неделе держим курс на ровную энергию и восстановление без резких просадок.";
 }
 
@@ -198,32 +319,52 @@ function getNextWeekPlan(plan: NutritionWeeklyPlan): NutritionNextWeekPlan | nul
 
 function buildDayTypeTargetsLines(nextWeekPlan: NutritionNextWeekPlan): string[] {
   const targets = nextWeekPlan.day_type_targets;
+  const hasStrengthDay = nextWeekPlan.days.some((day) => day.training_type === "strength");
   const ordered: Array<{ key: NutritionPlanDayType; target: NutritionNextWeekPlan["day_type_targets"]["rest"] }> = [
     { key: "rest", target: targets.rest },
     { key: "easy", target: targets.easy },
     { key: "hard", target: targets.hard },
     { key: "pre_long", target: targets.pre_long },
     { key: "long_run", target: targets.long_run },
-    { key: "strength", target: targets.strength },
+    ...(hasStrengthDay ? [{ key: "strength" as const, target: targets.strength }] : []),
   ];
   return ordered
     .map(({ key, target }) => {
       if (!target) {
         return null;
       }
-      return `${dayTypeEmoji(key)} ${dayTypeRu(key)} — ~${target.target_kcal} ккал · ${target.protein_g} г Б · ${target.fat_g} г Ж · ${target.carbs_g} г У`;
+      return `${dayTypeEmoji(key)} ${dayTypeRu(key)} — ${formatNutritionAthleteKcal(target.target_kcal, { mode: "target" })} · ${formatNutritionAthletePlanMacro(target.protein_g)} Б · ${formatNutritionAthletePlanMacro(target.fat_g)} Ж · ${formatNutritionAthletePlanMacro(target.carbs_g)} У`;
     })
     .filter((line): line is string => Boolean(line));
 }
 
 function buildMiniTableLines(nextWeekPlan: NutritionNextWeekPlan): string[] {
   return nextWeekPlan.days.slice(0, 7).map((day: NutritionNextWeekPlanDay) => {
-    const kcal = day.target_kcal != null ? `~${day.target_kcal} ккал` : "~ккал н/д";
-    const protein = day.protein_g != null ? `${day.protein_g}Б` : "Б н/д";
-    const fat = day.fat_g != null ? `${day.fat_g}Ж` : "Ж н/д";
-    const carbs = day.carbs_g != null ? `${day.carbs_g}У` : "У н/д";
+    const kcal = day.target_kcal != null ? formatNutritionAthleteKcal(day.target_kcal, { mode: "target" }) : "ккал н/д";
+    const protein = day.protein_g != null ? `${Math.round(day.protein_g)}Б` : "Б н/д";
+    const fat = day.fat_g != null ? `${Math.round(day.fat_g)}Ж` : "Ж н/д";
+    const carbs = day.carbs_g != null ? `${Math.round(day.carbs_g)}У` : "У н/д";
     return `${dayTypeEmoji(day.training_type)} ${day.weekday_ru} (${formatDateRu(day.date)}) · ${day.training_label} · ${kcal} · ${protein} · ${fat} · ${carbs}`;
   });
+}
+
+export function getNutritionAthleteDisplayName(student: { studentName?: string | null; profilePreferences?: Record<string, unknown> | null }): string {
+  const preferences = asObject(student.profilePreferences);
+  const preferred =
+    compactText(typeof preferences.preferred_name === "string" ? preferences.preferred_name : null) ??
+    compactText(typeof preferences.preferredName === "string" ? preferences.preferredName : null) ??
+    compactText(typeof preferences.display_name === "string" ? preferences.display_name : null) ??
+    compactText(typeof preferences.displayName === "string" ? preferences.displayName : null);
+  if (preferred) {
+    return preferred;
+  }
+  const rawName = compactText(student.studentName) ?? "Привет";
+  const firstToken = rawName.split(/\s+/)[0] ?? rawName;
+  const knownShortNames: Record<string, string> = {
+    nadezhda: "Надя",
+    надежда: "Надя",
+  };
+  return knownShortNames[firstToken.toLocaleLowerCase("ru")] ?? firstToken;
 }
 
 function resolveGreeting(formality: TrainingPeaksTelegramFormality, studentName: string): string {
@@ -284,6 +425,7 @@ export function buildDerivedNutritionCombinedMessage(input: {
   plan: NutritionWeeklyPlan | null;
   formality: TrainingPeaksTelegramFormality;
   studentName: string;
+  profilePreferences?: Record<string, unknown> | null;
 }): NutritionCombinedMessageResult {
   if (!input.review) {
     return {
@@ -328,23 +470,23 @@ export function buildDerivedNutritionCombinedMessage(input: {
     };
   }
 
-  const greeting = resolveGreeting(input.formality, input.studentName);
-  const introLine = "Собрала полный текст: разбор недели, фокус на следующую неделю и питание вокруг ключевых тренировок.";
+  const athleteName = getNutritionAthleteDisplayName({
+    studentName: input.studentName,
+    profilePreferences: input.profilePreferences ?? null,
+  });
+  const greeting = resolveGreeting(input.formality, athleteName);
+  const introLine = "Посмотрел твой отчёт за неделю и сопоставил его с тренировками.";
   const summary = asObject(review.nutritionSummary);
   const avgKcal = toFiniteNumber(summary.avg_kcal);
   const restKcal = nextWeekPlan?.day_type_targets.rest?.target_kcal ?? null;
   const comparisonLine =
     avgKcal != null && restKcal != null
-      ? `По сравнению с прошлой неделей держим более ровную базу: среднее за неделю ~${Math.round(avgKcal)} ккал, ориентир для дня отдыха ~${restKcal} ккал.`
+      ? `По сравнению с прошлой неделей держим более ровную базу: среднее за неделю ${formatNutritionAthleteKcal(avgKcal, { mode: "actual" })}, ориентир для дня отдыха ${formatNutritionAthleteKcal(restKcal, { mode: "target" })}.`
       : null;
   const dayByDaySection =
     reviewDailyLines.length > 0
       ? reviewDailyLines
-      : [
-          compactText(typeof summary.day_by_day_analysis_text === "string" ? summary.day_by_day_analysis_text : null) ??
-            compactText(review.athleteMessageDraft) ??
-            "Разбор по дням не сформирован — проверь исходный обзор вручную.",
-        ];
+      : ["Разбор по дням в этом черновике не детализирую: canonical daily_analysis не найден, поэтому лучше проверить исходный обзор вручную."];
   const weekSummary = getReviewWeekSummaryLine(review);
   const focusLines = getPlanFocusLines(plan);
   const planByDayTypeLines = nextWeekPlan ? buildDayTypeTargetsLines(nextWeekPlan) : [compactText(plan.athleteMessageDraft) ?? "План на неделю не сформирован."];

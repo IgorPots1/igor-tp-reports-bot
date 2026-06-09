@@ -85,6 +85,48 @@ assert.ok(plan.days.some((day) => day.training_type === "rest"), "rest days must
 assert.ok(plan.days.some((day) => day.date === "2026-06-13" && day.training_type === "pre_long"));
 assert.ok(plan.days.some((day) => day.date === "2026-06-10" && day.flags.key_workout));
 assert.ok(plan.days.some((day) => day.date === "2026-06-10" && day.workout_title === "6 х 6 мин"));
+assert.equal(plan.summary.long_run_source, "explicit_title");
+assert.equal(plan.summary.long_run_confidence, "high");
+
+const sundayDefaultPlan = buildNutritionNextWeekPlan({
+  bodyweightKg: 56,
+  planWeekFrom: "2026-06-08",
+  planWeekTo: "2026-06-14",
+  trainingContext: {
+    cacheStatus: "ok",
+    workouts: [
+      { date: "2026-06-10", title: "6 х 6 мин", type: "intervals" },
+      { date: "2026-06-14", title: "Бег по пульсу", type: "easy_run" },
+    ],
+    keyWorkouts: [{ date: "2026-06-10", title: "6 х 6 мин", type: "intervals", confidence: "high" }],
+    longRun: null,
+  },
+});
+const sundayLongRunDay = sundayDefaultPlan.days.find((day) => day.date === "2026-06-14");
+assert.equal(sundayLongRunDay?.training_type, "long_run", "Sunday running session should default to long_run");
+assert.equal(sundayLongRunDay?.training_label, "Бег по пульсу", "Sunday default must preserve original TP title");
+assert.equal(sundayLongRunDay?.long_run_source, "default_sunday");
+assert.equal(sundayLongRunDay?.long_run_confidence, "medium");
+assert.equal(sundayDefaultPlan.summary.long_run_source, "default_sunday");
+assert.ok(sundayDefaultPlan.days.some((day) => day.date === "2026-06-13" && day.training_type === "pre_long"));
+
+const explicitOtherDayPlan = buildNutritionNextWeekPlan({
+  bodyweightKg: 56,
+  planWeekFrom: "2026-06-08",
+  planWeekTo: "2026-06-14",
+  trainingContext: {
+    cacheStatus: "ok",
+    workouts: [
+      { date: "2026-06-12", title: "Long run 18 km", type: "run" },
+      { date: "2026-06-14", title: "Бег по пульсу", type: "easy_run" },
+    ],
+    keyWorkouts: [],
+    longRun: null,
+  },
+});
+assert.equal(explicitOtherDayPlan.days.find((day) => day.date === "2026-06-12")?.training_type, "long_run");
+assert.equal(explicitOtherDayPlan.days.find((day) => day.date === "2026-06-14")?.training_type, "easy");
+assert.equal(explicitOtherDayPlan.summary.long_run_source, "explicit_title");
 
 const missingBodyweight = buildNutritionNextWeekPlan({
   bodyweightKg: null,

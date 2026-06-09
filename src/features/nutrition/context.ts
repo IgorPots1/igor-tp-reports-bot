@@ -59,6 +59,8 @@ export type NutritionTrainingPeaksWeekContext = {
     title: string;
     durationHours: number | null;
     distanceKm: number | null;
+    source?: "explicit_title" | "default_sunday";
+    confidence?: "high" | "medium";
   } | null;
   keyWorkouts: Array<{
     date: string;
@@ -444,23 +446,25 @@ function resolveWorkoutStatus(row: TrainingPeaksWorkoutCacheRow): "planned" | "c
   return "other";
 }
 
-function maybeLongRun(row: TrainingPeaksWorkoutCacheRow): {
-  score: number;
+function isExplicitLongRunTitle(title: string | null | undefined): boolean {
+  return /длитель|длинн|long\s*run|\blong\b|longrun/.test((title ?? "").toLocaleLowerCase("ru"));
+}
+
+function isSundayIsoDate(isoDate: string): boolean {
+  return new Date(`${isoDate}T12:00:00.000Z`).getUTCDay() === 0;
+}
+
+function maybeExplicitLongRun(row: TrainingPeaksWorkoutCacheRow): {
   durationHours: number | null;
   distanceKm: number | null;
 } | null {
-  const title = (row.title ?? "").toLocaleLowerCase("ru");
   const duration = toFiniteNumber(row.completedTimeRaw ?? row.plannedTimeRaw);
   const distance = normalizeDistanceKm(toFiniteNumber(row.completedDistanceRaw ?? row.plannedDistanceRaw));
-  const hasLongWord = /длитель|long run|longrun/.test(title);
-  const durationHours = duration;
-  const score = (hasLongWord ? 2 : 0) + ((durationHours !== null && durationHours >= 1.4) ? 1 : 0) + ((distance !== null && distance >= 16) ? 1 : 0);
-  if (score === 0) {
+  if (!isExplicitLongRunTitle(row.title)) {
     return null;
   }
   return {
-    score,
-    durationHours: durationHours ?? null,
+    durationHours: duration ?? null,
     distanceKm: distance ?? null,
   };
 }
@@ -521,32 +525,43 @@ export async function buildNutritionTrainingPeaksWeekContext(
   ).length;
 
   let longRunCandidate: NutritionTrainingPeaksWeekContext["longRun"] = null;
-  let longRunScore = 0;
+  let defaultSundayCandidate: NutritionTrainingPeaksWeekContext["longRun"] = null;
   const keyWorkouts: NutritionTrainingPeaksWeekContext["keyWorkouts"] = [];
 
   for (const row of rows) {
-    const longRun = maybeLongRun(row);
-    if (longRun && longRun.score > longRunScore) {
-      longRunScore = longRun.score;
+    const classification = classifyTrainingPeaksWorkoutActivity({
+      title: row.title,
+      sportOrTypeCode: row.sportOrTypeCode,
+      workoutTypeValueId: row.workoutTypeValueId,
+      workoutSubTypeId: row.workoutSubTypeId,
+    });
+    const longRun = maybeExplicitLongRun(row);
+    if (longRun && !longRunCandidate) {
       longRunCandidate = {
         date: row.workoutDate,
         title: row.title?.trim() || "Untitled workout",
         durationHours: longRun.durationHours,
         distanceKm: longRun.distanceKm,
+        source: "explicit_title",
+        confidence: "high",
+      };
+    }
+    if (!longRunCandidate && !defaultSundayCandidate && classification.isRunning && isSundayIsoDate(row.workoutDate)) {
+      defaultSundayCandidate = {
+        date: row.workoutDate,
+        title: row.title?.trim() || "Untitled workout",
+        durationHours: toFiniteNumber(row.completedTimeRaw ?? row.plannedTimeRaw),
+        distanceKm: normalizeDistanceKm(toFiniteNumber(row.completedDistanceRaw ?? row.plannedDistanceRaw)),
+        source: "default_sunday",
+        confidence: "medium",
       };
     }
     if (isKeyWorkout(row)) {
-      const c = classifyTrainingPeaksWorkoutActivity({
-        title: row.title,
-        sportOrTypeCode: row.sportOrTypeCode,
-        workoutTypeValueId: row.workoutTypeValueId,
-        workoutSubTypeId: row.workoutSubTypeId,
-      });
       keyWorkouts.push({
         date: row.workoutDate,
         title: row.title?.trim() || "Untitled workout",
-        type: c.family,
-        confidence: c.confidence,
+        type: classification.family,
+        confidence: classification.confidence,
       });
     }
   }
@@ -560,7 +575,7 @@ export async function buildNutritionTrainingPeaksWeekContext(
     plannedSessions,
     completedSessions,
     runningSessions,
-    longRun: longRunCandidate,
+    longRun: longRunCandidate ?? defaultSundayCandidate,
     keyWorkouts: keyWorkouts.slice(0, 6),
     workouts: rows.slice(0, 16).map((row) => {
       const c = classifyTrainingPeaksWorkoutActivity({

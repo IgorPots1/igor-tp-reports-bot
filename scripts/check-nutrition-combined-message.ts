@@ -30,14 +30,17 @@ function buildReview(status: NutritionWeeklyAnalysis["status"] = "draft_generate
           date: "2026-06-01",
           weekday_ru: "Понедельник",
           date_label: "01.06",
+          training_type: "rest",
           training_label: "день отдыха",
-          actual_kcal: 2477,
-          protein_g: 104,
+          actual_kcal: 2487,
+          protein_g: 104.2,
           fat_g: 132,
-          carbs_g: 207,
-          carbs_g_per_kg: 3.7,
-          hint_for_comment: "Хорошо держится белок, но углеводы можно распределить ровнее.",
+          carbs_g: 214.69,
+          carbs_g_per_kg: 3.839,
+          nutrition_status: "rest_ok",
+          hint_for_comment: "Нагрузка и питание в целом согласованы; можно дать краткий поддерживающий комментарий.",
           findings: ["rest_day_macro_distribution"],
+          source_quality: { confidence: "high" },
         },
       ],
       day_by_day_analysis_text: "Текст fallback day-by-day.",
@@ -107,6 +110,10 @@ function buildPlan(input?: {
                   carbs_g: 250,
                 },
               ],
+              summary: {
+                long_run_source: "none",
+                long_run_confidence: "low",
+              },
             },
           }
         : {}),
@@ -150,8 +157,27 @@ async function run(): Promise<void> {
   });
   assert.equal(ready.status, "ready");
   assertReady(ready);
-  assert.match(ready.athleteMessageDraft ?? "", /~1950 ккал/, "must preserve exact deterministic rest kcal from next_week_plan");
+  assert.match(ready.athleteMessageDraft ?? "", /~2000 ккал/, "must display-round rest kcal from next_week_plan");
+  assert.doesNotMatch(ready.athleteMessageDraft ?? "", /~1950 ккал|2487 ккал|214\.69|104\.2|\d+\.\d+\s*г/, "athlete copy must avoid raw technical numbers");
+  assert.match(ready.athleteMessageDraft ?? "", /~2500 ккал/, "actual kcal must be rounded for athlete text");
+  assert.match(ready.athleteMessageDraft ?? "", /~3,8 г\/кг/, "g/kg must be formatted with comma and one decimal");
   assert.match(ready.athleteMessageDraft ?? "", /🔹 Понедельник \(01\.06\) — день отдыха/, "must include canonical day-by-day block");
+  assert.doesNotMatch(
+    ready.athleteMessageDraft ?? "",
+    /Комментарий:|можно дать|указать факт|hint|source_quality|по качеству данных здесь возможна неполная картина|Собрала|\*\*|---/,
+    "combined message must not leak internal hints or markdown separators"
+  );
+  assert.equal((ready.athleteMessageDraft ?? "").match(/Анна, привет!/g)?.length, 1, "combined message must have one greeting");
+  assert.doesNotMatch(ready.athleteMessageDraft ?? "", /Силовая —/, "strength block must not show without strength day");
+
+  const nadezhdaGreeting = buildDerivedNutritionCombinedMessage({
+    review,
+    plan,
+    formality: "ty",
+    studentName: "Nadezhda Ponomareva",
+  });
+  assert.match(nadezhdaGreeting.athleteMessageDraft ?? "", /^Надя, привет!/);
+  assert.doesNotMatch(nadezhdaGreeting.athleteMessageDraft ?? "", /Nadezhda Ponomareva, привет/);
 
   const needsReview = buildDerivedNutritionCombinedMessage({
     review: buildReview("needs_review"),

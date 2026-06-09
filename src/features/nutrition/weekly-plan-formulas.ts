@@ -15,6 +15,9 @@ export type NutritionPlanSource =
   | "missing_bodyweight"
   | "unknown";
 
+export type NutritionLongRunSource = "explicit_title" | "default_sunday" | "none";
+export type NutritionLongRunConfidence = "high" | "medium" | "low";
+
 export type NutritionDayTypeTarget = {
   target_kcal: number;
   protein_g: number;
@@ -52,6 +55,8 @@ export type NutritionNextWeekPlanDay = {
     day_before_long_run: boolean;
     has_training_context: boolean;
   };
+  long_run_source: NutritionLongRunSource;
+  long_run_confidence: NutritionLongRunConfidence;
   pre_training_guidance: string | null;
   source: NutritionPlanSource;
 };
@@ -80,6 +85,8 @@ export type NutritionNextWeekPlan = {
     days_with_training: number;
     key_days_count: number;
     long_run_dates: string[];
+    long_run_source: NutritionLongRunSource;
+    long_run_confidence: NutritionLongRunConfidence;
     hard_dates: string[];
     missing_bodyweight: boolean;
   };
@@ -99,6 +106,9 @@ type ParsedWorkout = {
   type: string | null;
   dayType: NutritionPlanDayType;
   keyWorkout: boolean;
+  isRunning: boolean;
+  longRunSource: NutritionLongRunSource;
+  longRunConfidence: NutritionLongRunConfidence;
 };
 
 const WEEKDAY_RU_FULL = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"] as const;
@@ -183,6 +193,27 @@ function roundToNearest(value: number, step: number): number {
   return Math.round(value / step) * step;
 }
 
+export function isExplicitNutritionLongRunTitle(titleRaw: string | null | undefined): boolean {
+  const title = (titleRaw ?? "").toLowerCase();
+  return /длитель|длинн|long\s*run|\blong\b|longrun/.test(title);
+}
+
+function isSunday(isoDate: string): boolean {
+  return new Date(`${isoDate}T12:00:00.000Z`).getUTCDay() === 0;
+}
+
+function isRunningWorkout(typeRaw: string | null, titleRaw: string | null): boolean {
+  const type = (typeRaw ?? "").toLowerCase();
+  const title = (titleRaw ?? "").toLowerCase();
+  if (type === "strength" || /силов/.test(title)) {
+    return false;
+  }
+  if (type === "run" || type === "easy_run" || type === "long_run" || type === "intervals" || type === "tempo" || type === "race") {
+    return true;
+  }
+  return /бег|пробеж|run|running|tempo|темп|интерв|длитель|длинн/.test(`${type} ${title}`);
+}
+
 function normalizeDayType(typeRaw: string | null, titleRaw: string | null): NutritionPlanDayType {
   const type = (typeRaw ?? "").toLowerCase();
   const title = (titleRaw ?? "").toLowerCase();
@@ -190,7 +221,7 @@ function normalizeDayType(typeRaw: string | null, titleRaw: string | null): Nutr
   if (/race|гонк|соревн/.test(haystack)) {
     return "race";
   }
-  if (type === "long_run" || /длитель|long run|longrun/.test(haystack)) {
+  if (type === "long_run" || isExplicitNutritionLongRunTitle(haystack)) {
     return "long_run";
   }
   if (
@@ -233,8 +264,7 @@ function parseTrainingContextWorkouts(trainingContext: unknown): ParsedWorkout[]
   const workoutsRaw = Array.isArray(ctx.workouts) ? ctx.workouts : [];
   const longRun = asObject(ctx.longRun);
   const longRunDate = toIsoDate(longRun?.date);
-
-  return workoutsRaw
+  const baseWorkouts = workoutsRaw
     .map((item) => asObject(item))
     .filter((item): item is Record<string, unknown> => Boolean(item))
     .map((workout) => {
@@ -242,8 +272,15 @@ function parseTrainingContextWorkouts(trainingContext: unknown): ParsedWorkout[]
       const title = toStringOrNull(workout.title);
       const type = toStringOrNull(workout.type);
       let dayType = normalizeDayType(type, title);
+      let longRunSource: NutritionLongRunSource = "none";
+      let longRunConfidence: NutritionLongRunConfidence = "low";
       if (longRunDate && date === longRunDate) {
         dayType = "long_run";
+        longRunSource = "explicit_title";
+        longRunConfidence = "high";
+      } else if (dayType === "long_run") {
+        longRunSource = "explicit_title";
+        longRunConfidence = "high";
       }
       return {
         date,
@@ -251,9 +288,29 @@ function parseTrainingContextWorkouts(trainingContext: unknown): ParsedWorkout[]
         type,
         dayType,
         keyWorkout: isKeyWorkout(dayType),
+        isRunning: isRunningWorkout(type, title),
+        longRunSource,
+        longRunConfidence,
       };
     })
     .filter((workout) => workout.date !== "unknown-date");
+
+  if (baseWorkouts.some((workout) => workout.dayType === "long_run")) {
+    return baseWorkouts;
+  }
+
+  return baseWorkouts.map((workout) => {
+    if (workout.isRunning && isSunday(workout.date)) {
+      return {
+        ...workout,
+        dayType: "long_run",
+        keyWorkout: true,
+        longRunSource: "default_sunday",
+        longRunConfidence: "medium",
+      };
+    }
+    return workout;
+  });
 }
 
 function pickPrimaryWorkout(workouts: ParsedWorkout[]): ParsedWorkout | null {
@@ -401,10 +458,14 @@ export function buildNutritionNextWeekPlan(params: {
         day_before_long_run: dayBeforeLongRun,
         has_training_context: hasWorkout,
       },
+      long_run_source: trainingType === "long_run" ? primaryWorkout?.longRunSource ?? "none" : "none",
+      long_run_confidence: trainingType === "long_run" ? primaryWorkout?.longRunConfidence ?? "low" : "low",
       pre_training_guidance: GUIDANCE_BY_DAY_TYPE[trainingType],
       source,
     };
   });
+
+  const longRunDay = days.find((day) => day.training_type === "long_run") ?? null;
 
   return {
     formula_version: "nutrition_next_week_plan_v1",
@@ -430,6 +491,8 @@ export function buildNutritionNextWeekPlan(params: {
       days_with_training: days.filter((day) => day.flags.has_training_context).length,
       key_days_count: days.filter((day) => day.flags.key_workout || day.flags.day_before_long_run).length,
       long_run_dates: days.filter((day) => day.training_type === "long_run").map((day) => day.date),
+      long_run_source: longRunDay?.long_run_source ?? "none",
+      long_run_confidence: longRunDay?.long_run_confidence ?? "low",
       hard_dates: days.filter((day) => day.training_type === "hard").map((day) => day.date),
       missing_bodyweight: !params.bodyweightKg || params.bodyweightKg <= 0,
     },

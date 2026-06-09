@@ -198,6 +198,10 @@ function formatDecimalRu(value: number, digits = 1): string {
   return value.toFixed(digits).replace(".", ",");
 }
 
+function roundToNearest(value: number, step: number): number {
+  return Math.round(value / step) * step;
+}
+
 export function calculateNutritionPlanWeek(sourceReviewWeekTo: string): { from: string; to: string } {
   return {
     from: addDays(sourceReviewWeekTo, 1),
@@ -593,7 +597,7 @@ function buildFallbackAthleteDraft(facts: NutritionWeeklyPlanFacts, planFocus: N
   const address = buildPlanAddress(facts.student.formality);
   const keyDays = buildFallbackKeyTrainingDays(facts);
   const nextWeekPlanLines = facts.nextWeekPlan.days.slice(0, 7).map((day) => {
-    const kcal = typeof day.target_kcal === "number" ? `~${day.target_kcal} ккал` : "~ккал н/д";
+    const kcal = typeof day.target_kcal === "number" ? `~${roundToNearest(day.target_kcal, 100)} ккал` : "~ккал н/д";
     const protein = typeof day.protein_g === "number" ? `${day.protein_g} г белка` : "белок н/д";
     const fat = typeof day.fat_g === "number" ? `${day.fat_g} г жиров` : "жиры н/д";
     const carbs = typeof day.carbs_g === "number" ? `${day.carbs_g} г углеводов` : "углеводы н/д";
@@ -692,8 +696,8 @@ async function generateNutritionWeeklyPlanWithAiInternal(
     "Ты пишешь текст для weekly nutrition plan только по deterministic facts.",
     "LLM writes. Code calculates.",
     "Ничего не пересчитывай и не придумывай: формулы, kcal, БЖУ, г/кг, day type, one_focus, safety, race, workouts.",
-    "next_week_plan канонический и deterministic. Используй exact значения из него.",
-    "Пример: если rest target_kcal=1950 во facts, пиши ~1950 ккал, не ~2000.",
+    "next_week_plan канонический и deterministic. Используй exact значения для логики, но в athlete draft kcal показывай display-rounded до ближайших 100.",
+    "Пример: если rest target_kcal=1950 во facts, пиши ~2000 ккал.",
     "Return strict JSON only with keys: coach_summary, athlete_message_draft, plan_focus, key_training_days, simple_actions, safety_notes, do_not_send_reasons.",
     "coach_summary: concise Russian text for coach internal use.",
     "plan_focus: object with category, title, explanation — use one focus from facts, do not invent priorities.",

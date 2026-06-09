@@ -337,6 +337,7 @@ export default async function CoachOsNutritionStudentCardPage({
     plan: displayPlan,
     formality: card.context.resolvedCommunicationProfile.formality,
     studentName: card.student.studentName,
+    profilePreferences: card.profile?.preferences ?? null,
   });
   const combinedDoNotSendReasons = [
     ...new Set([

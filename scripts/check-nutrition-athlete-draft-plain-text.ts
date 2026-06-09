@@ -166,7 +166,8 @@ async function run(): Promise<void> {
   const planGenerated = generateNutritionWeeklyPlanFallback(planFacts);
   const planDraft = planGenerated.athleteMessageDraft ?? "";
   assertAthleteDraftPlainText(planDraft, "weekly plan draft");
-  assert.match(planDraft, /~1950 ккал/, "weekly plan draft should preserve deterministic rest target when present");
+  assert.match(planDraft, /~2000 ккал/, "weekly plan draft should display-round deterministic rest target");
+  assert.doesNotMatch(planDraft, /~1950 ккал/, "weekly plan draft should not expose raw 1950 target");
 
   const combined = buildDerivedNutritionCombinedMessage({
     review: sourceAnalysis,
@@ -200,6 +201,11 @@ async function run(): Promise<void> {
   assert.ok(combined.athleteMessageDraft, "combined draft should exist in ready status");
   const combinedDraft = combined.athleteMessageDraft ?? "";
   assertAthleteDraftPlainText(combinedDraft, "combined draft");
+  assert.doesNotMatch(
+    combinedDraft,
+    /Комментарий:|можно дать|указать факт|hint|source_quality|Собрала|\d+\.\d+\s*г/,
+    "combined draft must not leak internal hints or raw decimal macros"
+  );
   assert.match(combinedDraft, /На следующем разборе посмотрим, как это отразится на энергии и восстановлении\./);
 
   console.log("PASS check-nutrition-athlete-draft-plain-text");

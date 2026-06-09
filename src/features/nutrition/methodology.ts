@@ -187,6 +187,8 @@ type WorkoutContextByDate = {
   date: string;
   title: string;
   type: NutritionTrainingType;
+  longRunSource: "explicit_title" | "default_sunday" | "none";
+  longRunConfidence: "high" | "medium" | "low";
   description: string | null;
   coachComments: string | null;
   plannedText: string | null;
@@ -279,7 +281,7 @@ function normalizeTrainingType(rawType: string | null | undefined, title: string
   ) {
     return "intervals";
   }
-  if (/длитель|long run|longrun/.test(titleLc)) {
+  if (/длитель|длинн|long\s*run|\blong\b|longrun/.test(titleLc)) {
     return "long_run";
   }
   if (raw === "run") {
@@ -297,12 +299,20 @@ function buildWorkoutContextByDate(week: NutritionTrainingPeaksWeekContext): Map
   for (const workout of week.workouts) {
     const inferredType = normalizeTrainingType(workout.type, workout.title);
     const type = forcedLongRunDate && workout.date === forcedLongRunDate ? "long_run" : inferredType;
+    const longRunSource =
+      type === "long_run"
+        ? week.longRun?.date === workout.date
+          ? week.longRun.source ?? "explicit_title"
+          : "explicit_title"
+        : "none";
     const current = map.get(workout.date);
     if (!current || type === "long_run" || type === "intervals" || type === "tempo" || type === "race") {
       map.set(workout.date, {
         date: workout.date,
         title: workout.title,
         type,
+        longRunSource,
+        longRunConfidence: longRunSource === "explicit_title" ? "high" : longRunSource === "default_sunday" ? "medium" : "low",
         description: workout.description ?? null,
         coachComments: workout.coachComments ?? null,
         plannedText: workout.plannedText ?? null,
