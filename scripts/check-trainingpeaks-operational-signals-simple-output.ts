@@ -1149,6 +1149,54 @@ function run(): void {
     "25 failed: ambiguous illness should be suppressed when concrete pain monitoring is visible."
   );
 
+  const slavaContinuedIllnessEvidence = new Map([
+    [
+      "slava-continued-illness",
+      {
+        source: {
+          observedAt: "2026-06-08T10:26:53.346Z",
+          textPreview: "насморк, слабость etc",
+        },
+        latestRelevant: {
+          observedAt: "2026-06-09T14:54:39.599Z",
+          textPreview: "Привет! Пока продолжаю.. давай наверное с новой недели начнем заново(",
+        },
+        latestNegative: {
+          observedAt: "2026-06-09T14:54:39.599Z",
+          textPreview: "Привет! Пока продолжаю.. давай наверное с новой недели начнем заново(",
+        },
+      },
+    ],
+  ]);
+  const slavaContinuedIllnessSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-09",
+    limit: 10,
+    studentNameById: new Map<string, string | null>([["slava", "slava Taranec"]]),
+    signals: [
+      makeSignal({
+        signalId: "slava-continued-illness",
+        studentId: "slava",
+        signalType: "health_issue_started",
+        structuredPayload: {
+          display_summary: "болеет, насморк, слабость; пауза / наблюдать",
+        },
+      }),
+    ],
+    activeMoveActions: [],
+    displayEvidenceBySignalId: slavaContinuedIllnessEvidence,
+  });
+  const slavaContinuedIllnessText = formatTrainingPeaksOperationalSignalsForTelegram(slavaContinuedIllnessSnapshot);
+  assert(
+    slavaContinuedIllnessText.includes("slava Taranec") &&
+      /долеч/iu.test(slavaContinuedIllnessText) &&
+      /новой недели/iu.test(slavaContinuedIllnessText),
+    "26 failed: continued illness with restart-next-week should override stale cold-only display."
+  );
+  assert(
+    !/простуда\s*—\s*уточнить самочувствие перед возвратом к бегу/iu.test(slavaContinuedIllnessText),
+    "26 failed: stale cold-only fallback must not win over continued illness context."
+  );
+
   console.log(`${LOG_PREFIX} PASS`);
 }
 

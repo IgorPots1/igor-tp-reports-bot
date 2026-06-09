@@ -828,6 +828,16 @@ function hasContinuedIllnessCue(text: string): boolean {
   return hasAny(text, CONTINUED_ILLNESS_CUES);
 }
 
+export function buildContinuedIllnessCoachDisplaySummary(text: string): string | null {
+  if (!hasContinuedIllnessCue(text)) {
+    return null;
+  }
+  if (hasAny(text, ["с новой недели"])) {
+    return "продолжает долечиваться, к бегу лучше вернуться с новой недели — держать паузу / уточнить перед стартом.";
+  }
+  return "продолжает долечиваться — держать паузу / уточнить перед стартом.";
+}
+
 function hasDoctorClearedRunCue(text: string): boolean {
   return /врач\s+разрешил[а-яё]*/iu.test(text) || hasAny(text, ["разрешила бег", "разрешил бег"]);
 }
@@ -1020,11 +1030,9 @@ function buildHealthSummary(input: {
   const explicitIllness = hasExplicitIllnessCue(input.text);
 
   if (input.signalType === "health_issue_started") {
-    if (hasContinuedIllnessCue(input.text)) {
-      if (hasAny(input.text, ["с новой недели"])) {
-        return "продолжает долечиваться, к бегу лучше вернуться с новой недели — держать паузу / уточнить перед стартом.";
-      }
-      return "продолжает долечиваться — держать паузу / уточнить перед стартом.";
+    const continuedIllnessSummary = buildContinuedIllnessCoachDisplaySummary(input.text);
+    if (continuedIllnessSummary) {
+      return continuedIllnessSummary;
     }
     if (
       input.hasTimeoutCue &&

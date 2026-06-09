@@ -194,6 +194,7 @@ import {
   isCleanRunningCompletion,
   resolveBridgeRecommendedAction,
 } from "@/features/trainingpeaks/tp-completion-lifecycle-bridge";
+import { buildContinuedIllnessCoachDisplaySummary } from "@/features/trainingpeaks/coach-operational-signals";
 import {
   buildTrainingPeaksContactDisplay,
   TRAININGPEAKS_NO_CONTACT_ALERT_DAYS,
@@ -7084,6 +7085,18 @@ export function compactCoachFacingOperationalSignalText(input: {
 
   if (/ближе\s+к\s+выходн|к\s+выходн/iu.test(contextText)) {
     return "после болезни лучше, к бегу ближе к выходным — уточнить перед первой пробежкой.";
+  }
+
+  if (!isPain && input.lifecycleDisplayState === "active_problem") {
+    for (const text of [latestRelevantText, latestNegativeText]) {
+      if (!text) {
+        continue;
+      }
+      const continuedIllnessSummary = buildContinuedIllnessCoachDisplaySummary(text);
+      if (continuedIllnessSummary) {
+        return continuedIllnessSummary;
+      }
+    }
   }
 
   if (/простуд|орви|насморк/iu.test(contextText) && input.lifecycleDisplayState === "active_problem") {
