@@ -213,7 +213,8 @@ function run(): void {
     text.includes("подтверждение: после сигнала есть завершённая беговая тренировка (07.06)"),
     "health row must show Russian TP completion evidence"
   );
-  assert(text.includes("статус: наблюдать после возврата"), "health row should have Russian lifecycle status");
+  assert(text.includes("почему видно:"), "health row should explain why monitoring signal is still visible");
+  assert(text.includes("что закрывает:"), "health row should explain what closes the monitoring signal");
   assert(!text.includes("lifecycle:"), "coach text must not leak lifecycle label");
   assert(!text.includes("active_problem"), "coach text must not leak internal lifecycle state");
   assert(!text.includes("monitoring_after_return"), "coach text must not leak monitoring state name");
@@ -223,6 +224,114 @@ function run(): void {
   const messages = formatTrainingPeaksOperationalSignalsForTelegramMultiMessage(snapshot);
   assert(messages.every((message) => message.length <= TELEGRAM_SAFE_LIMIT), "all chunks must stay under safe limit");
   assert(messages.join("\n").includes("• продолжение"), "oversized card must split with continuation marker");
+
+  const painSection = text.split("🦵 Травмы / боль / дискомфорт")[1]?.split("📅 Учесть в плане")[0] ?? "";
+  assert(/\n\n• /u.test(painSection), "athlete cards in pain section must be separated by a blank line");
+
+  const semanticsSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    signals: [
+      makeSignal({
+        signalId: "nadya-thigh-pain",
+        studentId: "nadya",
+        signalType: "health_issue_started",
+        structuredPayload: {
+          display_summary: "плохое самочувствие",
+        },
+      }),
+      makeSignal({
+        signalId: "anna-travel",
+        studentId: "anna-travel",
+        signalType: "pause_training",
+        validFrom: "2026-06-08",
+        validUntil: "2026-06-09",
+        structuredPayload: {
+          display_summary: "pause_training",
+        },
+      }),
+      makeSignal({
+        signalId: "anastasia-nutrition",
+        studentId: "anastasia",
+        signalType: "schedule_availability_window",
+        validFrom: "2026-06-08",
+        validUntil: "2026-06-14",
+        structuredPayload: {
+          display_summary:
+            "игорь. я пока не считаю. в поездке сложно контролировать еду. что успела схватить, то и хорошо) может завтра попробую з…",
+          valid_from: "2026-06-08",
+          valid_until: "2026-06-14",
+        },
+      }),
+      makeSignal({
+        signalId: "elena-recovery",
+        studentId: "elena",
+        signalType: "health_issue_improving",
+        structuredPayload: {
+          display_summary: "самочувствие улучшается; планирует отлежаться пару дней",
+        },
+      }),
+    ],
+    studentNameById: new Map([
+      ["nadya", "Nadya Hoffman"],
+      ["anna-travel", "Anna Plotnitskaya"],
+      ["anastasia", "Anastasia Utenkova"],
+      ["elena", "Elena Vasileva"],
+    ]),
+    asOfDate: "2026-06-08",
+    scope: "all",
+    limit: 100,
+    activeMoveActions: [],
+    displayEvidenceBySignalId: new Map([
+      [
+        "nadya-thigh-pain",
+        {
+          source: {
+            observedAt: "2026-06-08T15:07:15.262664+00:00",
+            textPreview: "болит передняя часть бедра, особенно при беге",
+          },
+        },
+      ],
+      [
+        "anna-travel",
+        {
+          source: {
+            observedAt: "2026-06-08T15:00:33.389+00:00",
+            textPreview: "Тренер, в пятницу-субботу не смогу бегать, буду в дороге",
+          },
+        },
+      ],
+      [
+        "elena-recovery",
+        {
+          source: {
+            observedAt: "2026-06-08T14:26:12.157+00:00",
+            textPreview: "Привет!я сходила к врачу,врач разрешила,завтра выйду,побегаю тихонечко?)",
+          },
+        },
+      ],
+    ]),
+  });
+  const semanticsText = formatTrainingPeaksOperationalSignalsForTelegram(semanticsSnapshot);
+  const illnessSection =
+    semanticsText.split("🟡 Болезнь / самочувствие")[1]?.split("🦵 Травмы / боль / дискомфорт")[0] ?? "";
+  const painSectionSemantics =
+    semanticsText.split("🦵 Травмы / боль / дискомфорт")[1]?.split("📅 Учесть в плане")[0] ?? "";
+  assert(
+    semanticsText.includes("🦵 Травмы / боль / дискомфорт") && painSectionSemantics.includes("Nadya Hoffman"),
+    "front-thigh pain must route to pain/injury section"
+  );
+  assert(!illnessSection.includes("Nadya Hoffman"), "front-thigh pain must not stay in illness section");
+  assert(
+    semanticsText.includes("Anna Plotnitskaya") &&
+      semanticsText.includes("📅 Учесть в плане") &&
+      semanticsText.includes("буду в дороге"),
+    "travel-only unavailability must appear in plan constraints"
+  );
+  assert(!illnessSection.includes("Anna Plotnitskaya"), "travel-only unavailability must not appear in illness section");
+  assert(!semanticsText.includes("Anastasia Utenkova"), "nutrition-only schedule text must be hidden from /tp_signals");
+  assert(
+    semanticsText.includes("Elena Vasileva") && semanticsText.includes("статус: возврат к бегу / наблюдать"),
+    "recovery-ready athlete should show return-to-run monitoring guidance"
+  );
 
   console.log(`${LOG_PREFIX} PASS`);
 }
