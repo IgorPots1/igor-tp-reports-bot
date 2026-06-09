@@ -214,6 +214,7 @@ const ACTIVE_PAIN_SYMPTOM_CUES = [
   "боль",
   "боли",
   "болевые",
+  "побалива",
 ] as const;
 
 function stripFigurativeHealthPhrases(text: string): string {
@@ -763,7 +764,9 @@ const PLANNED_RUN_ATTEMPT_CUES = [
   "пробеж",
   "выйти на пробежку",
   "выйду на пробежку",
+  "выйду",
   "побегу",
+  "побегаю",
   "побегать",
   "попробую побегать",
   "можно побегу",
@@ -781,6 +784,18 @@ const RETURN_INTENT_CUES = [
   "попробую побегать",
   "можно побегу",
   "можно побегать",
+  "с новой недели начн",
+] as const;
+
+const CONTINUED_ILLNESS_CUES = [
+  "долечиться",
+  "долечиваться",
+  "лучше не становится",
+  "не становится лучше",
+  "пока продолжаю",
+  "с новой недели начн",
+  "с новой недели начнём",
+  "с новой недели начнем",
 ] as const;
 
 const RESUME_TRAINING_CUES = [
@@ -809,7 +824,18 @@ function hasResumeTrainingCue(text: string): boolean {
   return hasAny(text, RESUME_TRAINING_CUES);
 }
 
+function hasContinuedIllnessCue(text: string): boolean {
+  return hasAny(text, CONTINUED_ILLNESS_CUES);
+}
+
+function hasDoctorClearedRunCue(text: string): boolean {
+  return /врач\s+разрешил[а-яё]*/iu.test(text) || hasAny(text, ["разрешила бег", "разрешил бег"]);
+}
+
 function hasHealthImprovingCue(text: string): boolean {
+  if (hasDoctorClearedRunCue(text)) {
+    return true;
+  }
   return hasAny(text, [
     "самочувствие лучше",
     "самочувствие улучшается",
@@ -985,6 +1011,12 @@ function buildHealthSummary(input: {
   const explicitIllness = hasExplicitIllnessCue(input.text);
 
   if (input.signalType === "health_issue_started") {
+    if (hasContinuedIllnessCue(input.text)) {
+      if (hasAny(input.text, ["с новой недели"])) {
+        return "продолжает долечиваться, к бегу лучше вернуться с новой недели — держать паузу / уточнить перед стартом.";
+      }
+      return "продолжает долечиваться — держать паузу / уточнить перед стартом.";
+    }
     if (
       input.hasTimeoutCue &&
       input.pauseUntil &&
@@ -1013,6 +1045,12 @@ function buildHealthSummary(input: {
   }
 
   if (input.signalType === "health_issue_improving") {
+    if (hasDoctorClearedRunCue(input.text)) {
+      if (hasReturnRunPlan && input.plannedAttemptDate) {
+        return "после болезни: врач разрешил бег, завтра лёгкий выход; наблюдать";
+      }
+      return "после болезни: врач разрешил бег; наблюдать";
+    }
     if (
       input.text.includes("вчера") &&
       input.text.includes("сегодня") &&
@@ -1069,7 +1107,7 @@ function buildHealthSummary(input: {
 }
 
 function buildPainInjuryCandidate(input: ObservationLike, text: string): OperationalSignalCandidate | null {
-  const hasPainCue = hasActiveAny(text, ["болит", "болела", "боль", "тянет", "дискомфорт"]);
+  const hasPainCue = hasActiveAny(text, ["болит", "болела", "боль", "тянет", "дискомфорт", "побалива"]);
   const healthText = healthClassificationText(text);
   const hasFingerNailCue = hasAny(healthText, PAIN_INJURY_FINGER_NAIL_CUES);
   const hasHandCue = hasAny(healthText, PAIN_INJURY_HAND_CUES);
@@ -1211,6 +1249,31 @@ function classifyHealthLifecycleSignal(input: {
 
   if (weatherTemperatureContext && !illnessCounterCues && !improving && !resolved) {
     return null;
+  }
+
+  if (hasContinuedIllnessCue(text)) {
+    payload.health_state = "sick";
+    payload.training_recommendation = "pause";
+    payload.evidence_level = hasExplicitIllnessCue(text) ? "explicit_illness" : "ambiguous_malaise";
+    payload.requires_coach_review = !hasExplicitIllnessCue(text);
+    payload.follow_up_due_at = buildHealthFollowUpDueAt(input.observedAt, null);
+    payload.latest_summary = buildHealthSummary({
+      text,
+      observedAt: input.observedAt,
+      signalType: "health_issue_started",
+      symptoms,
+      recommendation: "pause",
+      plannedAttemptDate,
+      pauseUntil: null,
+      hasTimeoutCue: false,
+    });
+    payload.display_summary = payload.latest_summary;
+    return {
+      signalType: "health_issue_started",
+      payload,
+      confidence: "medium",
+      reason: "continued illness or delayed return signal detected",
+    };
   }
 
   if (resolved) {

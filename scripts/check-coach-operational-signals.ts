@@ -1203,6 +1203,60 @@ async function run(): Promise<void> {
       },
     },
     {
+      name: "anna-denisova-periosteum-ache-pain-injury",
+      observation: mkObs("Нога что-то сегодня побаливает - надкостница"),
+      expected: {
+        primary_bucket: "health_lifecycle_signal",
+        signal_type: "pain_injury",
+        should_create_memory: false,
+        should_create_case: true,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: "pain_or_injury",
+        latest_summary_includes: ["надкостниц"],
+        latest_summary_not_includes: ["болеет"],
+      },
+    },
+    {
+      name: "elena-vasileva-doctor-cleared-tomorrow-easy-run",
+      observation: mkObs(
+        "Привет!я сходила к врачу,врач разрешила,завтра выйду,побегаю тихонечко?)"
+      ),
+      expected: {
+        primary_bucket: "health_lifecycle_signal",
+        signal_type: "health_issue_improving",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        latest_summary_includes: ["врач разрешил", "завтра"],
+      },
+    },
+    {
+      name: "slava-taranec-continued-illness-restart-next-week",
+      observation: mkObs(
+        "Привет! Пока продолжаю.. давай наверное с новой недели начнем заново("
+      ),
+      expected: {
+        primary_bucket: "temporary_memory",
+        signal_type: "health_issue_started",
+        should_create_memory: true,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        latest_summary_includes: ["долеч", "новой недели"],
+      },
+    },
+    {
+      name: "slava-taranec-wants-to-finish-recovery",
+      observation: mkObs("Попроще вроде, но хочу норм долечиться"),
+      expected: {
+        primary_bucket: "temporary_memory",
+        signal_type: "health_issue_started",
+        should_create_memory: true,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        latest_summary_includes: ["долеч"],
+      },
+    },
+    {
       name: "finger-trauma-hit-pain-injury",
       observation: mkObs("сильно ударила палец"),
       expected: {
