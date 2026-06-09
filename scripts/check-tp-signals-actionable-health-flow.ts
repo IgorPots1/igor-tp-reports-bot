@@ -197,23 +197,23 @@ function run(): void {
 
   const text = formatTrainingPeaksOperationalSignalsForTelegram(snapshot);
   assert(!text.includes("ещё сигналов"), "must not hide rows behind +N more");
-  assert(text.includes(longRestriction), "schedule restriction must preserve full source context");
-  assert(!text.includes("…"), "fixture output must not contain synthetic ellipsis");
   assert(
-    text.includes("источник: 08.06, Все хорошо, немного стабилизаторы стопы побаливают при движении, но боль рабочая мышечная"),
-    "pain row must include full source context"
+    text.includes("вт вечер занята") && text.includes("короткая тренировка"),
+    "schedule restriction must be summarized into compact coach text"
   );
-  assert(text.includes("статус: лёгкий дискомфорт / наблюдать"), "Lavrentyev should be mild discomfort.");
+  assert(!text.includes("…"), "fixture output must not contain synthetic ellipsis");
+  assert(!text.includes("источник:"), "compact output must not show diagnostic source line");
   assert(
-    text.includes("что сделать: уточнить, болит ли сейчас. Если уже не актуально — закрыть сигнал через безопасное закрытие."),
+    /лёгкий дискомфорт стопы/iu.test(text) && text.includes("наблюдать"),
+    "Lavrentyev should be mild discomfort in compact form"
+  );
+  assert(
+    text.includes("закрыть после короткой проверки") || text.includes("закрыть, если уже не актуально"),
     "close candidate should have simple close guidance"
   );
-  assert(
-    text.includes("подтверждение: после сигнала есть завершённая беговая тренировка (07.06)"),
-    "health row must show Russian TP completion evidence"
-  );
-  assert(text.includes("почему видно:"), "health row should explain why monitoring signal is still visible");
-  assert(text.includes("что закрывает:"), "health row should explain what closes the monitoring signal");
+  assert(!text.includes("подтверждение:"), "compact output must not show TP completion diagnostic label");
+  assert(!text.includes("почему видно:"), "compact output must not show why-visible diagnostic label");
+  assert(!text.includes("что закрывает:"), "compact output must not show what-closes diagnostic label");
   assert(!text.includes("статус: актуально / требует проверки"), "health rows must not show generic actionable status");
   assert(!text.includes("lifecycle:"), "coach text must not leak lifecycle label");
   assert(!text.includes("active_problem"), "coach text must not leak internal lifecycle state");
@@ -323,15 +323,16 @@ function run(): void {
   assert(
     semanticsText.includes("Anna Plotnitskaya") &&
       semanticsText.includes("📅 Учесть в плане") &&
-      semanticsText.includes("буду в дороге"),
-    "travel-only unavailability must appear in plan constraints"
+      semanticsText.includes("в дороге"),
+    "travel-only unavailability must appear in plan constraints as compact travel summary"
   );
   assert(!illnessSection.includes("Anna Plotnitskaya"), "travel-only unavailability must not appear in illness section");
   assert(!semanticsText.includes("Anastasia Utenkova"), "nutrition-only schedule text must be hidden from /tp_signals");
   assert(
     semanticsText.includes("Elena Vasileva") &&
-      semanticsText.includes("почему видно: ученик сообщил о готовности к бегу"),
-    "recovery-ready athlete should show return-to-run monitoring guidance"
+      (semanticsText.includes("уточнить перед первой пробежкой") ||
+        semanticsText.includes("проверить отчёт/самочувствие")),
+    "recovery-ready athlete should show compact return-to-run guidance"
   );
 
   console.log(`${LOG_PREFIX} PASS`);

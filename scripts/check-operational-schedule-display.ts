@@ -342,8 +342,8 @@ function run(): void {
     },
   });
   assert(
-    conflictingScheduleText.includes("конфликт расписания: 10.06") &&
-      conflictingScheduleText.includes("что сделать: уточнить дату"),
+    /конфликт расписания на 10\.06/iu.test(conflictingScheduleText) &&
+      /уточнить дату/iu.test(conflictingScheduleText),
     `Conflicting unavailable/planned dates should be explicit, got: ${conflictingScheduleText}`
   );
 

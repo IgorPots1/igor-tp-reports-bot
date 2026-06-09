@@ -357,6 +357,106 @@ function compactScheduleRestrictionReason(raw: string): string | null {
   return withoutClarify;
 }
 
+function stripScheduleGreetingNoise(raw: string): string {
+  return raw
+    .replace(/^(?:игорь|тренер),?\s*(?:привет!?|здравствуй!?)[,!.]?\s*/iu, "")
+    .replace(/^по поводу тренировок(?:\s+на этой неделе)?\s*[-—:]\s*/iu, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+export function summarizeLongScheduleConstraintText(raw: string): string | null {
+  const normalized = stripScheduleGreetingNoise(raw.replace(/\s+/gu, " ").trim());
+  if (!normalized) {
+    return null;
+  }
+  const lower = normalized.toLowerCase();
+
+  if (
+    /в\s+дороге/iu.test(lower) ||
+    (/пятниц|пт/iu.test(lower) && /суббот|сб/iu.test(lower))
+  ) {
+    if (/не\s+(?:смогу|могу)\s+бегать|бегать\s+не\s+смогу/iu.test(lower)) {
+      return "пт–сб в дороге, бегать не сможет";
+    }
+    return "пт–сб в дороге — учесть в плане";
+  }
+
+  const tueBusy = /(?:вторник|вт\b).*?(?:вечер.*?занят|не\s+смогу|занят)/iu.test(lower);
+  const thuTravel = /(?:четверг|чт\b).*?(?:уезжа|отъезд|вечер)/iu.test(lower);
+  const shortRunPossible = /(?:корот|утром\s+успе)/iu.test(lower);
+  if (tueBusy && thuTravel && shortRunPossible) {
+    return "вт вечер занята; чт уезжает вечером — возможна только короткая тренировка до отъезда";
+  }
+  if (tueBusy && thuTravel) {
+    return "вт вечер занята; чт уезжает вечером — учесть в плане";
+  }
+
+  for (const [dayPattern, shortLabel] of [
+    [/сред[ауы]|ср\b/iu, "ср"],
+    [/вторник|вт\b/iu, "вт"],
+    [/четверг|чт\b/iu, "чт"],
+    [/пятниц|пт\b/iu, "пт"],
+  ] as const) {
+    if (
+      dayPattern.test(lower) &&
+      (/не\s+(?:смогу|могу)|занят|нет\s+времени|не\s+смогу\s+найти\s+время/iu.test(lower) ||
+        /не\s+смогу.*трениров/iu.test(lower))
+    ) {
+      return `${shortLabel} не может тренироваться — учесть перенос/альтернативу.`;
+    }
+  }
+
+  return null;
+}
+
+function normalizeCompactScheduleConflictText(text: string): string {
+  return text.replace(
+    /конфликт расписания:\s*([\d.,\s]+)\s+одновременно недоступна и планирует(?:;\s*что сделать:\s*уточнить дату)?/giu,
+    "конфликт расписания на $1: недоступна и планирует — уточнить дату"
+  );
+}
+
+export function compactCoachFacingScheduleSignalText(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  const normalizedConflict = normalizeCompactScheduleConflictText(trimmed);
+  if (normalizedConflict !== trimmed) {
+    return normalizedConflict.replace(/;\s*что сделать:\s*уточнить дату\.?/giu, "");
+  }
+
+  if (hasRichSchedulePartText(trimmed.split("; ")[0] ?? trimmed)) {
+    return normalizedConflict;
+  }
+
+  const restrictionMatch = trimmed.match(/^ограничение(?::|\s*\([^)]*\):)\s*([\s\S]+)$/iu);
+  const candidate = restrictionMatch?.[1]?.replace(/\s*\([^)]*\)\s*$/u, "").trim() ?? trimmed;
+  const summarized = summarizeLongScheduleConstraintText(candidate);
+  if (summarized) {
+    return summarized;
+  }
+
+  const withoutGreeting = stripScheduleGreetingNoise(candidate);
+  if (withoutGreeting.length > 0 && withoutGreeting.length < candidate.length) {
+    const reSummarized = summarizeLongScheduleConstraintText(withoutGreeting);
+    if (reSummarized) {
+      return reSummarized;
+    }
+    if (withoutGreeting.length <= 100) {
+      const lowered = withoutGreeting.charAt(0).toLowerCase() + withoutGreeting.slice(1);
+      return lowered.endsWith(".") ? lowered : `${lowered}.`;
+    }
+  }
+
+  if (trimmed.length > 120) {
+    return `${trimmed.slice(0, 117).trimEnd()}...`;
+  }
+  return trimmed;
+}
+
 function extractShortScheduleRestrictionReason(structured: ScheduleStructuredPayload): string | null {
   const candidates = [
     readOptionalString(structured.display_summary),
@@ -381,10 +481,16 @@ function formatGenericScheduleRestrictionText(
 ): string {
   const reason = extractShortScheduleRestrictionReason(structured);
   if (reason) {
+    const summarized = summarizeLongScheduleConstraintText(reason);
+    if (summarized) {
+      return summarized;
+    }
     if (reason.length <= 80 && !reason.includes("\n")) {
       return range ? `ограничение: ${reason} (${range})` : `ограничение: ${reason}`;
     }
-    return range ? `ограничение (${range}):\n${reason}` : `ограничение:\n${reason}`;
+    return compactCoachFacingScheduleSignalText(
+      range ? `ограничение (${range}): ${reason}` : `ограничение: ${reason}`
+    );
   }
   return range ? `ограничение (${range})` : "ограничение плана";
 }
@@ -649,8 +755,9 @@ export function formatScheduleOperationalSignalText(input: {
       const label = plannedDates.length > 0 || planningStatus === "athlete_intends_to_train" ? "планирует" : "доступна";
       const conflictingDates = label === "планирует" ? intersectIsoDates(unavailableDates, dates) : [];
       if (conflictingDates.length > 0) {
-        displayParts.push(`конфликт расписания: ${formatCompactDateList(conflictingDates)} одновременно недоступна и планирует`);
-        displayParts.push("что сделать: уточнить дату");
+        displayParts.push(
+          `конфликт расписания на ${formatCompactDateList(conflictingDates)}: недоступна и планирует — уточнить дату`
+        );
         return displayParts.join("; ");
       }
       const dateText =

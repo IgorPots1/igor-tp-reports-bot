@@ -173,7 +173,9 @@ import {
 import {
   buildCanonicalEpisodeScheduleDisplayText,
   buildEpisodeScheduleContextIndex,
+  compactCoachFacingScheduleSignalText,
   formatScheduleOperationalSignalText,
+  summarizeLongScheduleConstraintText,
   type EpisodeScheduleContext,
 } from "@/features/trainingpeaks/operational-schedule-display";
 import type { TelegramMessage } from "@/features/telegram/types";
@@ -6041,11 +6043,11 @@ function formatTravelOnlyScheduleDisplayText(input: {
   summary: string | null;
 }): string {
   const reason = (input.sourceText ?? input.summary ?? "ограничение по расписанию").replace(/\s+/gu, " ").trim();
-  const windowPart = getOperationalSignalWindowPart(input.signal);
-  if (windowPart) {
-    return `ограничение (${windowPart}): ${reason}`;
+  const summarized = summarizeLongScheduleConstraintText(reason);
+  if (summarized) {
+    return summarized;
   }
-  return `ограничение: ${reason}`;
+  return compactCoachFacingScheduleSignalText(reason);
 }
 
 function resolveOperationalSignalDisplaySemantics(input: {
@@ -6829,7 +6831,276 @@ function buildMonitoringLifetimeDisplayLines(input: {
   ];
 }
 
+function joinCompactCoachSituationAndAction(situation: string, action: string): string {
+  const left = situation.replace(/[.;,\s]+$/u, "").trim();
+  const right = action.replace(/^[.;,\s]+/u, "").trim();
+  if (!left) {
+    return right;
+  }
+  if (!right) {
+    return left;
+  }
+  return `${left} — ${right}`;
+}
+
+function extractCompactPainSituation(summaryLine: string, displaySourceText: string | null): string {
+  const joined = `${summaryLine} ${displaySourceText ?? ""}`.toLowerCase();
+  if (/мозол|обув|пал[её]ц/iu.test(joined)) {
+    return "мозоль/палец от обуви";
+  }
+  if (/защем|спин/iu.test(joined) && painLimitsRunningSemantic(joined)) {
+    return "защемило спину, не бегает";
+  }
+  if (/колен/iu.test(joined)) {
+    if (/почти\s+норм|лучше|проходит/iu.test(joined)) {
+      return "колено почти нормально";
+    }
+    return summaryLine.replace(/^после\s+паузы:\s*/iu, "").replace(/^после\s+болезни:\s*/iu, "");
+  }
+  if (/стоп|стабилизатор/iu.test(joined) && /дискомфорт|побал|немного/iu.test(joined)) {
+    return "лёгкий дискомфорт стопы";
+  }
+  return summaryLine.replace(/^после\s+паузы:\s*/iu, "").replace(/^после\s+болезни:\s*/iu, "");
+}
+
+function extractCompactNegativeEvidenceSnippet(text: string): string {
+  const lower = text.toLowerCase();
+  if (/температур/iu.test(lower)) {
+    return "снова была температура";
+  }
+  if (/кашл/iu.test(lower)) {
+    return "снова усилился кашель";
+  }
+  if (/болит|боль/iu.test(lower)) {
+    return "снова появилась боль";
+  }
+  return compactOperationalSignalText(text, 60).replace(/^./u, (char) => char.toLowerCase());
+}
+
+function stripTrailingMonitoringObserve(summaryLine: string): string {
+  return summaryLine.replace(/;\s*наблюдать\s*$/iu, "").trim();
+}
+
+function stripCoachClosePrefix(summaryLine: string): string {
+  return summaryLine.replace(/^можно\s+закрыть\s+после\s+проверки:\s*/iu, "").trim();
+}
+
+function normalizeEmbeddedCoachActionSummary(summaryLine: string): string | null {
+  const match = summaryLine.match(/^(.+?)\s*\(([^)]+)\)\s*$/u);
+  if (!match) {
+    return null;
+  }
+  const action = match[2]?.trim() ?? "";
+  if (!/^уточнить|^наблюдать|^проверить|^закрыть|^после\b/iu.test(action)) {
+    return null;
+  }
+  const situation = match[1]?.trim() ?? "";
+  if (!situation) {
+    return null;
+  }
+  return joinCompactCoachSituationAndAction(situation, action.replace(/\.$/u, ""));
+}
+
+export function compactCoachFacingOperationalSignalText(input: {
+  signal: TrainingPeaksStudentOperationalSignal;
+  effective: EffectiveOperationalSignalForDisplay;
+  summary: string;
+  lifecycleDisplayState: OperationalSignalDisplayLifecycleState;
+  evidence: TrainingPeaksOperationalSignalDisplayEvidence | null;
+  asOfDate: string;
+}): string {
+  const isPain = isPainInjuryOperationalSignalForDisplay(input.effective);
+  let summaryLine =
+    normalizeCoachFacingSignalText(
+      formatOperationalSignalSummaryLine(stripTrailingMonitoringObserve(stripCoachClosePrefix(input.summary.trim())))
+    ) || "контекст: полный текст недоступен в signal payload";
+
+  const sourceText = input.evidence?.source?.textPreview?.replace(/\s+/g, " ").trim() ?? null;
+  const latestRelevantText = input.evidence?.latestRelevant?.textPreview?.replace(/\s+/g, " ").trim() ?? null;
+  const latestPositiveText = input.evidence?.latestPositive?.textPreview?.replace(/\s+/g, " ").trim() ?? null;
+  const latestNegativeText = input.evidence?.latestNegative?.textPreview?.replace(/\s+/g, " ").trim() ?? null;
+  const latestPainText =
+    latestRelevantText && hasMusculoskeletalPainSemantic(latestRelevantText.toLowerCase()) ? latestRelevantText : null;
+  const sourcePainText = sourceText && hasMusculoskeletalPainSemantic(sourceText.toLowerCase()) ? sourceText : null;
+  const displaySourceText = latestPainText && !sourcePainText ? latestPainText : sourceText;
+
+  if (isPain && latestPainText && !sourcePainText) {
+    summaryLine = compactOperationalSignalText(latestPainText, 140);
+  } else if (isPain && sourcePainText && !hasMusculoskeletalPainSemantic(summaryLine.toLowerCase())) {
+    summaryLine = compactOperationalSignalText(sourcePainText, 140);
+  }
+
+  if (
+    input.effective.effectiveSignalType === "pause_training" ||
+    input.effective.effectiveSignalType === "resume_training" ||
+    /^пауза:/iu.test(summaryLine)
+  ) {
+    return summaryLine;
+  }
+
+  const embeddedCoachSummary = normalizeEmbeddedCoachActionSummary(summaryLine);
+  if (embeddedCoachSummary) {
+    return embeddedCoachSummary;
+  }
+
+  if (
+    !isPain &&
+    summaryAlreadyHasRecoveryPrefix(summaryLine) &&
+    input.lifecycleDisplayState !== "ready_for_coach_close" &&
+    input.lifecycleDisplayState !== "stale_needs_review" &&
+    !latestNegativeText
+  ) {
+    const cleanedRecoverySummary = stripTrailingMonitoringObserve(summaryLine);
+    if (
+      hasRecoveryReadySemantic(cleanedRecoverySummary) ||
+      /в строю|завтра проб/iu.test(cleanedRecoverySummary)
+    ) {
+      if (/;\s*наблюдать\s*$/iu.test(summaryLine)) {
+        return joinCompactCoachSituationAndAction(cleanedRecoverySummary, "наблюдать");
+      }
+      return cleanedRecoverySummary;
+    }
+  }
+
+  const completion = input.evidence?.completion ?? null;
+  const latest = completion?.latestCompletionAfterOpen ?? null;
+  const hasRunningCompletion = latest?.sportClass === "running_like";
+  const runDate = formatOperationalSignalShortDate(latest?.workoutDate);
+  const contextText = normalizeOperationalSignalSemanticText([
+    displaySourceText,
+    latestPositiveText,
+    latestNegativeText,
+    summaryLine,
+  ]);
+  const recoveryReady = hasRecoveryReadySemantic(contextText);
+  const hasCleanReportAfterRun = Boolean(hasRunningCompletion && latestPositiveText && !latestNegativeText);
+  const joinedContext = `${summaryLine} ${displaySourceText ?? ""}`.toLowerCase();
+
+  if (input.lifecycleDisplayState === "stale_needs_review") {
+    return "давно нет новых данных — проверить вручную.";
+  }
+
+  if (isPain) {
+    const situation = extractCompactPainSituation(summaryLine, displaySourceText);
+    if (
+      input.lifecycleDisplayState === "monitoring_after_return" ||
+      input.lifecycleDisplayState === "ready_for_coach_close"
+    ) {
+      if (/колен/iu.test(joinedContext)) {
+        const base = runDate
+          ? joinCompactCoachSituationAndAction("колено почти нормально", `пробежка ${runDate} была`)
+          : "колено почти нормально";
+        return joinCompactCoachSituationAndAction(base, "после пробежки проверить реакцию");
+      }
+      if (input.lifecycleDisplayState === "ready_for_coach_close") {
+        return joinCompactCoachSituationAndAction(situation, "закрыть после короткой проверки");
+      }
+      return joinCompactCoachSituationAndAction(
+        stripTrailingMonitoringObserve(situation),
+        "уточнить, болит ли сейчас — закрыть, если уже не актуально"
+      );
+    }
+
+    const severity = resolvePainSeverity({
+      lifecycleDisplayState: input.lifecycleDisplayState,
+      summary: summaryLine,
+      sourceText: displaySourceText,
+    });
+
+    if (severity === "acute_limiting") {
+      if (/спин|нерв|защем/iu.test(joinedContext)) {
+        return joinCompactCoachSituationAndAction(situation, "уточнить состояние и срок возврата");
+      }
+      return joinCompactCoachSituationAndAction(situation, "уточнить, мешает ли боль бегу");
+    }
+    if (severity === "minor_discomfort") {
+      if (/стоп|стабилизатор/iu.test(joinedContext)) {
+        return "лёгкий дискомфорт стопы — наблюдать, уточнить если усилится.";
+      }
+      if (/колен/iu.test(joinedContext)) {
+        return joinCompactCoachSituationAndAction(
+          "колено почти нормально",
+          "наблюдать, после пробежки проверить реакцию"
+        );
+      }
+      if (/мозол|обув|пал[её]ц/iu.test(joinedContext)) {
+        return "мозоль/палец от обуви — уточнить, мешает ли бегу.";
+      }
+      return joinCompactCoachSituationAndAction(situation, "наблюдать, уточнить если усилится");
+    }
+    return joinCompactCoachSituationAndAction(situation, "уточнить, болит ли сейчас и мешает ли тренировкам");
+  }
+
+  let situation = summaryLine;
+  if (
+    !summaryAlreadyHasRecoveryPrefix(situation) &&
+    (hasRunningCompletion || input.lifecycleDisplayState !== "active_problem")
+  ) {
+    if (/простуд|орви|насморк|кашл/iu.test(contextText) && !hasRunningCompletion) {
+      situation = "простуда";
+    } else if (input.lifecycleDisplayState !== "active_problem") {
+      situation = situation.startsWith("после")
+        ? situation
+        : `после болезни: ${situation.replace(/^после\s+паузы:\s*/iu, "")}`;
+    }
+  }
+
+  if (latestNegativeText && hasRunningCompletion) {
+    const negSnippet = extractCompactNegativeEvidenceSnippet(latestNegativeText);
+    return `после пробежки ${negSnippet} — держать на контроле, уточнить самочувствие сегодня.`;
+  }
+
+  if (input.lifecycleDisplayState === "ready_for_coach_close" || hasCleanReportAfterRun) {
+    if (hasRunningCompletion || hasCleanReportAfterRun) {
+      return "после болезни: пробежка была, новых жалоб нет — закрыть после проверки.";
+    }
+    const readySummary = summaryLine.replace(/^после\s+паузы:\s*/iu, "после болезни: ");
+    return joinCompactCoachSituationAndAction(readySummary, "закрыть после проверки");
+  }
+
+  if (hasRunningCompletion) {
+    const runPart = runDate ? `пробежка ${runDate} была` : "пробежка была";
+    if (input.lifecycleDisplayState === "monitoring_after_return") {
+      return `после болезни: ${runPart} — проверить отчёт/самочувствие и закрыть, если всё ок.`;
+    }
+    return `после болезни: ${runPart} — проверить самочувствие после пробежки.`;
+  }
+
+  if (recoveryReady && !hasRunningCompletion) {
+    return joinCompactCoachSituationAndAction(
+      situation.replace(/^после\s+паузы:\s*/iu, "после болезни: "),
+      "уточнить перед первой пробежкой"
+    );
+  }
+
+  if (/ближе\s+к\s+выходн|к\s+выходн/iu.test(contextText)) {
+    return "после болезни лучше, к бегу ближе к выходным — уточнить перед первой пробежкой.";
+  }
+
+  if (/простуд|орви|насморк/iu.test(contextText) && input.lifecycleDisplayState === "active_problem") {
+    return "простуда — уточнить самочувствие перед возвратом к бегу.";
+  }
+
+  if (input.lifecycleDisplayState === "monitoring_after_return") {
+    const monitoringSummary = summaryLine.replace(/^после\s+паузы:\s*/iu, "после болезни: ");
+    return joinCompactCoachSituationAndAction(monitoringSummary, "наблюдать, уточнить самочувствие");
+  }
+
+  return joinCompactCoachSituationAndAction(situation, "уточнить текущее самочувствие");
+}
+
 function buildActionableHealthOrPainDisplayText(input: {
+  signal: TrainingPeaksStudentOperationalSignal;
+  effective: EffectiveOperationalSignalForDisplay;
+  summary: string;
+  lifecycleDisplayState: OperationalSignalDisplayLifecycleState;
+  evidence: TrainingPeaksOperationalSignalDisplayEvidence | null;
+  asOfDate: string;
+}): string {
+  return compactCoachFacingOperationalSignalText(input);
+}
+
+export function buildDetailedActionableHealthOrPainDisplayText(input: {
   signal: TrainingPeaksStudentOperationalSignal;
   effective: EffectiveOperationalSignalForDisplay;
   summary: string;
@@ -7507,7 +7778,7 @@ function buildOperationalSignalItemFromSignal(input: {
       isEpisodeSummary: false,
       followUpState: followUp.state,
       lifecycleDisplayState,
-      text: semantics.rerouteScheduleText,
+      text: compactCoachFacingScheduleSignalText(semantics.rerouteScheduleText),
       requiresCoachReview: effective.effectiveRequiresCoachReview,
       hiddenReason: null,
     };
@@ -7656,7 +7927,9 @@ function buildOperationalSignalItemFromSignal(input: {
       isEpisodeSummary: false,
       followUpState: followUp.state,
       lifecycleDisplayState,
-      text: scheduleText.trim() || "контекст: полный текст недоступен в signal payload",
+      text: compactCoachFacingScheduleSignalText(
+        scheduleText.trim() || "контекст: полный текст недоступен в signal payload"
+      ),
       requiresCoachReview: effective.effectiveRequiresCoachReview,
       hiddenReason: null,
     };

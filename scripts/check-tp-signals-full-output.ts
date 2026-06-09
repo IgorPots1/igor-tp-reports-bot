@@ -171,8 +171,9 @@ function run(): void {
     "D1 failed: restriction text must not be truncated to useless ellipsis."
   );
   assert(
-    restrictionText.includes("тренировок") || restrictionText.includes("тренировк"),
-    "D2 failed: restriction text must preserve enough context to be useful."
+    restrictionText.includes("ср не может тренироваться") ||
+      restrictionText.includes("учесть перенос"),
+    "D2 failed: long greeting schedule text must be summarized into actionable coach text."
   );
 
   // --- Test E: Long constraint with date range is readable ---
@@ -197,8 +198,8 @@ function run(): void {
   });
   const annaText = formatTrainingPeaksOperationalSignalsForTelegram(annaConstraintSnapshot);
   assert(
-    annaText.includes("на следующей неделе") || annaText.includes("вторник") || annaText.includes("четверг"),
-    "E1 failed: constraint must preserve schedule context, not truncate to useless fragment."
+    annaText.includes("вт вечер занята") || annaText.includes("вторник") || annaText.includes("четверг"),
+    "E1 failed: constraint must preserve schedule context as compact summary."
   );
   assert(
     !annaText.includes("на следующей неделе: во вторн…"),
