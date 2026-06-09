@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 
-import type {
-  OperationalSignalClass,
-  OperationalSignalLifecycle,
-  OperationalSignalLifecycleInput,
-  OperationalSignalLifecycleProposal,
+import {
+  hasReliableRunningCompletionAfterOpen,
+  type OperationalSignalClass,
+  type OperationalSignalLifecycle,
+  type OperationalSignalLifecycleInput,
+  type OperationalSignalLifecycleProposal,
 } from "@/features/trainingpeaks/operational-signal-lifecycle";
 
 export const MIN_COACH_CLOSE_REASON_LENGTH = 8;
@@ -215,7 +216,10 @@ export function validateOperationalSignalLifecycleCloseEligibility(
     };
   }
 
-  if (input.lifecycleInput.missedOrSkippedReturnWorkout) {
+  if (
+    input.lifecycleInput.missedOrSkippedReturnWorkout &&
+    !hasReliableRunningCompletionAfterOpen(input.lifecycleInput.latestTpCompletionAfterOpen)
+  ) {
     return {
       ok: false,
       reason: "Missed or skipped return workout blocks coach close.",

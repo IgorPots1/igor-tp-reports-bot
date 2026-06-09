@@ -602,6 +602,39 @@ async function run(): Promise<void> {
       },
     },
     {
+      name: "clean-recovery-feeling-fine",
+      observation: mkObs("С самочувствием всё в порядке."),
+      expected: {
+        primary_bucket: "health_lifecycle_signal",
+        signal_type: "health_issue_resolved",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "clean-recovery-feeling-ok-by-feeling",
+      observation: mkObs("По самочувствию всё ок."),
+      expected: {
+        primary_bucket: "health_lifecycle_signal",
+        signal_type: "health_issue_resolved",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "clean-recovery-after-run-normal",
+      observation: mkObs("После пробежки всё нормально."),
+      expected: {
+        primary_bucket: "health_lifecycle_signal",
+        signal_type: "health_issue_resolved",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
       name: "leg-significantly-better",
       observation: mkObs("Ну я тебе скажу что у меня сегодня нога уже значительно лучше"),
       expected: {

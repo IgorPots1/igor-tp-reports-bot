@@ -189,6 +189,7 @@ function assertReturnWorkoutBlockerCases(): void {
   const missedCloseInput = mkInput({
     signalClass: "injury_pain",
     currentLifecycle: "monitoring_after_return",
+    latestTpCompletionAfterOpen: null,
     missedOrSkippedReturnWorkout: true,
     returnWorkoutBlocker: missedBlocker,
   });
@@ -206,6 +207,32 @@ function assertReturnWorkoutBlockerCases(): void {
   assert(
     missedCloseEligibility.ok === false && missedCloseEligibility.reason.includes("Missed or skipped"),
     "missed before today refusal should cite missed/skipped"
+  );
+
+  const pautovLikeCloseInput = mkInput({
+    signalClass: "confirmed_illness",
+    currentLifecycle: "monitoring_after_return",
+    latestTpCompletionAfterOpen: mkCompletion({
+      workoutId: "3777608651",
+      workoutDate: "2026-06-08",
+      title: "Бег по пульсу",
+    }),
+    missedOrSkippedReturnWorkout: true,
+    returnWorkoutBlocker: missedBlocker,
+  });
+  const pautovLikeCloseProposal = evaluateOperationalSignalLifecycle(pautovLikeCloseInput);
+  const pautovLikeCloseEligibility = validateOperationalSignalLifecycleCloseEligibility({
+    storedLifecycleState: "monitoring_after_return",
+    requiresCoachClose: false,
+    signalClass: "confirmed_illness",
+    lifecycleInput: pautovLikeCloseInput,
+    proposal: pautovLikeCloseProposal,
+    coachReason: normalizeCoachCloseReason("recovery confirmed after later return run"),
+    applyMode: true,
+  });
+  assert(
+    pautovLikeCloseEligibility.ok && pautovLikeCloseEligibility.kind === "eligible",
+    "missed earlier planned return should not block close when reliable running completion exists"
   );
 
   const pendingCloseInput = mkInput({

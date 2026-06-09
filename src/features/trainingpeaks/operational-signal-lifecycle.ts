@@ -115,6 +115,17 @@ function isTerminal(lifecycle: OperationalSignalLifecycle): boolean {
   return lifecycle === "resolved";
 }
 
+export function hasReliableRunningCompletionAfterOpen(
+  completion: OperationalSignalLifecycleInput["latestTpCompletionAfterOpen"]
+): boolean {
+  return (
+    completion?.sportClass === "running_like" &&
+    completion.evidenceFreshness === "ok" &&
+    completion.classificationConfidence !== "low" &&
+    completion.runningCompletionClass !== "uncertain_running_completion"
+  );
+}
+
 const RUN_SPORT_HINTS = [
   "run",
   "running",
@@ -540,13 +551,7 @@ function evaluateMissedReturnWorkout(
   if (!input.missedOrSkippedReturnWorkout) {
     return null;
   }
-  const completion = input.latestTpCompletionAfterOpen;
-  const hasReliableRunningCompletion =
-    completion?.sportClass === "running_like" &&
-    completion.evidenceFreshness === "ok" &&
-    completion.classificationConfidence !== "low" &&
-    completion.runningCompletionClass !== "uncertain_running_completion";
-  if (hasReliableRunningCompletion) {
+  if (hasReliableRunningCompletionAfterOpen(input.latestTpCompletionAfterOpen)) {
     return null;
   }
   return {
