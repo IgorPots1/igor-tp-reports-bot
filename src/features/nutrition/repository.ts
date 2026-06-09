@@ -667,6 +667,45 @@ export async function listNutritionReportsForStudent(
   return ((data as NutritionReportRow[]) ?? []).map(mapNutritionReportRow);
 }
 
+export async function getNutritionWeeklyAnalysisById(id: string): Promise<NutritionWeeklyAnalysis | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_weekly_analyses")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to load nutrition weekly analysis ${id}: ${error.message}`);
+  }
+  if (!data) {
+    return null;
+  }
+  return mapNutritionWeeklyAnalysisRow(data as NutritionWeeklyAnalysisRow);
+}
+
+export async function listNutritionWeeklyAnalysesForStudentWeek(
+  studentId: string,
+  weekFrom: string,
+  weekTo: string
+): Promise<NutritionWeeklyAnalysis[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_weekly_analyses")
+    .select("*")
+    .eq("student_id", studentId)
+    .eq("week_from", weekFrom)
+    .eq("week_to", weekTo)
+    .order("updated_at", { ascending: false });
+
+  if (error) {
+    throw new Error(
+      `Failed to list nutrition weekly analyses for ${studentId} ${weekFrom}..${weekTo}: ${error.message}`
+    );
+  }
+  return ((data as NutritionWeeklyAnalysisRow[]) ?? []).map(mapNutritionWeeklyAnalysisRow);
+}
+
 export async function getNutritionWeeklyAnalysisForWeek(input: {
   studentId: string;
   weekFrom: string;
@@ -919,7 +958,12 @@ export async function listNutritionDashboardRows(
           ? { id: report.id, weekFrom: report.weekFrom, weekTo: report.weekTo }
           : null,
         analysis: analysis
-          ? { weekFrom: analysis.weekFrom, weekTo: analysis.weekTo, reportId: analysis.reportId }
+          ? {
+              id: analysis.id,
+              weekFrom: analysis.weekFrom,
+              weekTo: analysis.weekTo,
+              reportId: analysis.reportId,
+            }
           : null,
       }),
     };

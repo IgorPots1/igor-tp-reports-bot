@@ -93,11 +93,23 @@ export type NutritionReportPickCandidate = {
   createdAt: string;
 };
 
+export function formatNutritionShortId(id: string | null | undefined): string {
+  if (!id) {
+    return "—";
+  }
+  return id.slice(0, 8);
+}
+
+export function formatNutritionGenerationMode(mode: string | null | undefined): string {
+  return mode === "ai" ? "AI" : "fallback";
+}
+
 export function buildNutritionStudentCardHref(input: {
   studentId: string;
   weekFrom?: string | null;
   weekTo?: string | null;
   reportId?: string | null;
+  reviewId?: string | null;
   notice?: string | null;
   error?: string | null;
 }): string {
@@ -110,6 +122,9 @@ export function buildNutritionStudentCardHref(input: {
   }
   if (input.reportId) {
     params.set("reportId", input.reportId);
+  }
+  if (input.reviewId) {
+    params.set("reviewId", input.reviewId);
   }
   if (input.notice) {
     params.set("notice", input.notice);
@@ -152,7 +167,7 @@ export function buildNutritionNextActionHref(input: {
   studentId: string;
   nextAction: string;
   report: { id: string; weekFrom: string; weekTo: string } | null;
-  analysis: { weekFrom: string; weekTo: string; reportId: string | null } | null;
+  analysis: { id: string; weekFrom: string; weekTo: string; reportId: string | null } | null;
 }): string | null {
   const studentCard = buildNutritionStudentCardHref({ studentId: input.studentId });
 
@@ -166,6 +181,7 @@ export function buildNutritionNextActionHref(input: {
         weekFrom: input.report.weekFrom,
         weekTo: input.report.weekTo,
         reportId: input.report.id,
+        reviewId: input.analysis?.id ?? null,
       });
     case "Fix report data quality":
     case "Parse and review macros":
@@ -186,6 +202,7 @@ export function buildNutritionNextActionHref(input: {
           weekFrom: input.analysis.weekFrom,
           weekTo: input.analysis.weekTo,
           reportId: input.analysis.reportId,
+          reviewId: input.analysis.id,
         });
       }
       return studentCard;

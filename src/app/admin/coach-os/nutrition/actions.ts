@@ -273,12 +273,16 @@ export async function parseNutritionManualMacrosAction(formData: FormData): Prom
       weekTo,
       rawText,
     });
+    const reportId = getOptionalFormValue(formData, "reportId");
     revalidateNutritionPaths(studentId);
     const [pathOnly] = redirectTo.split("?");
     const params = new URLSearchParams();
     params.set("weekFrom", weekFrom);
     params.set("weekTo", weekTo);
     params.set("macroText", rawText);
+    if (reportId) {
+      params.set("reportId", reportId);
+    }
     params.set(
       "notice",
       `Разбор: ${parsed.rows.length} дн., статус ${formatNutritionStatus(parsed.status, "report")}.`
@@ -489,6 +493,7 @@ export async function generateNutritionWeeklyReviewAction(formData: FormData): P
         weekFrom,
         weekTo,
         reportId,
+        reviewId: result.analysis.id,
         notice: message,
       })
     );

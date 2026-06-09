@@ -13,11 +13,24 @@ const dashboardPage = readFileSync(join(root, "src/app/admin/coach-os/nutrition/
 const studentPage = readFileSync(join(root, "src/app/admin/coach-os/nutrition/[studentId]/page.tsx"), "utf8");
 const actions = readFileSync(join(root, "src/app/admin/coach-os/nutrition/actions.ts"), "utf8");
 const repository = readFileSync(join(root, "src/features/nutrition/repository.ts"), "utf8");
+const admin = readFileSync(join(root, "src/features/nutrition/admin.ts"), "utf8");
 
 assert.match(
   dashboardPage,
   /row\.nextActionHref[\s\S]*Link[\s\S]*href=\{row\.nextActionHref\}[\s\S]*formatNutritionNextAction\(row\.nextAction\)/,
   "dashboard next action must render as Link when href is present"
+);
+
+assert.match(
+  studentPage,
+  /reviewIdFromQuery[\s\S]*getSingleSearchParam\(resolvedSearchParams\.reviewId\)/,
+  "student card must parse reviewId from query"
+);
+
+assert.match(
+  studentPage,
+  /getNutritionAdminStudentCard\([\s\S]*reviewId: reviewIdFromQuery/,
+  "student card must pass reviewId into admin loader"
 );
 
 assert.match(
@@ -33,15 +46,51 @@ assert.match(
 );
 
 assert.match(
+  studentPage,
+  /reviewId: selectedReviewId/,
+  "student card canonical href must preserve selected review"
+);
+
+assert.match(
   actions,
   /buildNutritionStudentCardHref\([\s\S]*reportId: result\.report\.id/,
   "save actions must redirect with report week and id"
 );
 
 assert.match(
+  actions,
+  /reviewId: result\.analysis\.id/,
+  "generate review action must redirect with reviewId"
+);
+
+assert.match(
+  repository,
+  /export async function getNutritionWeeklyAnalysisById/,
+  "repository must expose getNutritionWeeklyAnalysisById"
+);
+
+assert.match(
+  repository,
+  /export async function listNutritionWeeklyAnalysesForStudentWeek/,
+  "repository must expose listNutritionWeeklyAnalysesForStudentWeek"
+);
+
+assert.match(
+  admin,
+  /getNutritionWeeklyAnalysisById\(input\.reviewId\)/,
+  "admin card loader must load review by id when reviewId is provided"
+);
+
+assert.match(
   repository,
   /nextActionHref: buildNutritionNextActionHref/,
   "dashboard rows must include nextActionHref"
+);
+
+assert.doesNotMatch(
+  actions,
+  /telegram|sendMessage|sendTelegram/i,
+  "nutrition actions must not import Telegram send paths"
 );
 
 const studentId = "student-uuid-1";
@@ -53,23 +102,46 @@ const href = buildNutritionNextActionHref({
     weekFrom: "2026-06-01",
     weekTo: "2026-06-07",
   },
-  analysis: null,
+  analysis: {
+    id: "review-uuid-1",
+    weekFrom: "2026-06-01",
+    weekTo: "2026-06-07",
+    reportId: "report-uuid-1",
+  },
 });
 assert.ok(href, "generate review action must produce href");
 assert.match(href!, /\/admin\/coach-os\/nutrition\/student-uuid-1\?/);
 assert.match(href!, /weekFrom=2026-06-01/);
 assert.match(href!, /weekTo=2026-06-07/);
 assert.match(href!, /reportId=report-uuid-1/);
+assert.match(href!, /reviewId=review-uuid-1/);
+
+const reviewDraftHref = buildNutritionNextActionHref({
+  studentId,
+  nextAction: "Review draft and mark approved",
+  report: null,
+  analysis: {
+    id: "review-uuid-2",
+    weekFrom: "2026-06-01",
+    weekTo: "2026-06-07",
+    reportId: "report-uuid-1",
+  },
+});
+assert.ok(reviewDraftHref, "review draft action must produce href");
+assert.match(reviewDraftHref!, /reviewId=review-uuid-2/);
+assert.match(reviewDraftHref!, /reportId=report-uuid-1/);
 
 const saveRedirect = buildNutritionStudentCardHref({
   studentId,
   weekFrom: "2026-06-01",
   weekTo: "2026-06-07",
   reportId: "report-uuid-1",
+  reviewId: "review-uuid-1",
   notice: "Отчёт сохранён",
 });
 assert.match(saveRedirect, /weekFrom=2026-06-01/);
 assert.match(saveRedirect, /reportId=report-uuid-1/);
+assert.match(saveRedirect, /reviewId=review-uuid-1/);
 assert.match(saveRedirect, /notice=/);
 
 const picked = pickDefaultNutritionReport(

@@ -16,9 +16,11 @@ import {
   getNutritionReportWithMacros,
   getNutritionStudentEssentials,
   getNutritionStudentProfile,
+  getNutritionWeeklyAnalysisById,
   getNutritionWeeklyAnalysisForWeek,
   getNutritionWeightLogs,
   listNutritionReportsForStudent,
+  listNutritionWeeklyAnalysesForStudentWeek,
   insertNutritionDailyMacros,
   listNutritionDashboardRows,
   type NutritionDashboardFilters,
@@ -35,9 +37,10 @@ export async function getNutritionAdminStudentCard(input: {
   studentId: string;
   weekFrom: string;
   weekTo: string;
+  reviewId?: string | null;
 }) {
   const essentials = await getNutritionStudentEssentials(input.studentId);
-  const [profile, contextItems, weightLogs, reports, weeklyAnalysis] = await Promise.all([
+  const [profile, contextItems, weightLogs, reports, weeklyAnalyses] = await Promise.all([
     getNutritionStudentProfile(input.studentId),
     getActiveNutritionContextItems(input.studentId),
     getNutritionWeightLogs(input.studentId),
@@ -46,12 +49,26 @@ export async function getNutritionAdminStudentCard(input: {
       weekTo: input.weekTo,
       limit: 20,
     }),
-    getNutritionWeeklyAnalysisForWeek({
-      studentId: input.studentId,
-      weekFrom: input.weekFrom,
-      weekTo: input.weekTo,
-    }),
+    listNutritionWeeklyAnalysesForStudentWeek(input.studentId, input.weekFrom, input.weekTo),
   ]);
+
+  let weeklyAnalysis: Awaited<ReturnType<typeof getNutritionWeeklyAnalysisForWeek>> = null;
+  if (input.reviewId) {
+    const byId = await getNutritionWeeklyAnalysisById(input.reviewId);
+    if (byId && byId.studentId === input.studentId) {
+      weeklyAnalysis = byId;
+    }
+  }
+  if (!weeklyAnalysis) {
+    weeklyAnalysis =
+      weeklyAnalyses[0] ??
+      (await getNutritionWeeklyAnalysisForWeek({
+        studentId: input.studentId,
+        weekFrom: input.weekFrom,
+        weekTo: input.weekTo,
+      }));
+  }
+
   const context = await buildNutritionStudentContext({
     studentId: input.studentId,
     weekFrom: input.weekFrom,
@@ -64,6 +81,7 @@ export async function getNutritionAdminStudentCard(input: {
     contextItems,
     weightLogs,
     reports,
+    weeklyAnalyses,
     weeklyAnalysis,
     context,
   };
