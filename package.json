@@ -185,6 +185,9 @@
     "check:nutrition-weekly-plan-storage": "npx tsx scripts/check-nutrition-weekly-plan-storage.ts",
     "check:nutrition-weekly-plan-no-autosend": "npx tsx scripts/check-nutrition-weekly-plan-storage.ts --no-autosend",
     "check:nutrition-weekly-plan-no-tp-mutation": "npx tsx scripts/check-nutrition-weekly-plan-storage.ts --no-tp-mutation",
+    "check:nutrition-weekly-plan-generation": "npx tsx scripts/check-nutrition-weekly-plan-generation.ts",
+    "check:nutrition-weekly-plan-safety": "npx tsx scripts/check-nutrition-weekly-plan-safety.ts",
+    "check:nutrition-weekly-plan-fueling-instructions": "npx tsx scripts/check-nutrition-weekly-plan-fueling-instructions.ts",
     "nutrition:enable-test-cohort": "npx tsx scripts/nutrition-enable-test-cohort.ts"
   },
   "dependencies": {

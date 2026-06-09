@@ -7,6 +7,7 @@ import { redirect } from "next/navigation";
 import {
   addNutritionContextNoteActionData,
   addNutritionWeightActionData,
+  generateAndSaveNutritionWeeklyPlan,
   generateNutritionWeeklyReview,
   previewNutritionFileUpload,
   parseNutritionManualMacros,
@@ -465,6 +466,47 @@ export async function saveNutritionFileReportAction(formData: FormData): Promise
       notice: `Отчёт сохранён (${formatNutritionStatus(result.status, "report")}), файлов: ${result.intake.fileMetas.length}, макросов: ${result.macros.length}.`,
     })
   );
+}
+
+export async function generateNutritionWeeklyPlanAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const weekFrom = getRequiredFormValue(formData, "weekFrom");
+  const weekTo = getRequiredFormValue(formData, "weekTo");
+  const sourceAnalysisId = getRequiredFormValue(formData, "sourceAnalysisId");
+  const reportId = getOptionalFormValue(formData, "reportId");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  const requestedModeRaw = getOptionalFormValue(formData, "requestedMode");
+  const requestedMode = requestedModeRaw === "ai" || requestedModeRaw === "fallback" ? requestedModeRaw : undefined;
+  await ensureAdminAccess(redirectTo);
+
+  try {
+    const plan = await generateAndSaveNutritionWeeklyPlan({
+      studentId,
+      sourceAnalysisId,
+      sourceReportId: reportId,
+      requestedMode,
+    });
+    revalidateNutritionPaths(studentId);
+    const message =
+      plan.status === "blocked_safety"
+        ? "Блок безопасности: фокус недели сохранён без черновика для ученика."
+        : "Фокус питания на следующую неделю сгенерирован.";
+    redirect(
+      buildNutritionStudentCardHref({
+        studentId,
+        weekFrom,
+        weekTo,
+        reportId,
+        reviewId: sourceAnalysisId,
+        planId: plan.id,
+        notice: message,
+      })
+    );
+  } catch (error) {
+    revalidateNutritionPaths(studentId);
+    const message = error instanceof Error ? error.message : "Не удалось сгенерировать фокус питания на неделю.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
 }
 
 export async function generateNutritionWeeklyReviewAction(formData: FormData): Promise<void> {

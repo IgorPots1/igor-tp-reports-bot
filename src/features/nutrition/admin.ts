@@ -28,6 +28,9 @@ import {
 } from "@/features/nutrition/repository";
 import { generateNutritionWeeklyAnalysis } from "@/features/nutrition/draft-generator";
 import { intakeNutritionReportFiles, type IntakeNutritionReportFilesResult } from "@/features/nutrition/file-intake";
+import { generateAndSaveNutritionWeeklyPlan } from "@/features/nutrition/weekly-plan-generator";
+
+export { generateAndSaveNutritionWeeklyPlan };
 
 export async function listNutritionAdminDashboardRows(filters: NutritionDashboardFilters = {}) {
   return listNutritionDashboardRows(filters);

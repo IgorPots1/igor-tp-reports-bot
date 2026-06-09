@@ -186,6 +186,7 @@ export function buildNutritionStudentCardHref(input: {
   weekTo?: string | null;
   reportId?: string | null;
   reviewId?: string | null;
+  planId?: string | null;
   notice?: string | null;
   error?: string | null;
 }): string {
@@ -201,6 +202,9 @@ export function buildNutritionStudentCardHref(input: {
   }
   if (input.reviewId) {
     params.set("reviewId", input.reviewId);
+  }
+  if (input.planId) {
+    params.set("planId", input.planId);
   }
   if (input.notice) {
     params.set("notice", input.notice);
