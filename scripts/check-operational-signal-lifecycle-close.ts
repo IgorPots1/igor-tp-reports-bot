@@ -531,6 +531,57 @@ function run(): void {
   const wrongTokenRefused = parseOperationalSignalLifecycleCloseToken("CLOSE_LIFECYCLE:other:resolved:deadbeef") === null;
   assert(wrongTokenRefused, "wrong token format should be refused");
 
+  const returnPlannedWithCompletionInput = mkInput({
+    currentLifecycle: "return_planned",
+    signalClass: "confirmed_illness",
+    latestTpCompletionAfterOpen: mkCompletion({
+      workoutDate: "2026-06-09",
+      runningCompletionClass: "normal_planned_run",
+    }),
+    missedOrSkippedReturnWorkout: false,
+    returnWorkoutBlocker: null,
+  });
+  const returnPlannedWithCompletionProposal = evaluateOperationalSignalLifecycle(returnPlannedWithCompletionInput);
+  assert(
+    returnPlannedWithCompletionProposal.proposedLifecycle === "monitoring_after_return",
+    "return_planned + reliable running completion should advance to monitoring_after_return"
+  );
+
+  const staleMissedBeforeCompletionInput = mkInput({
+    currentLifecycle: "return_planned",
+    signalClass: "confirmed_illness",
+    latestTpCompletionAfterOpen: mkCompletion({
+      workoutDate: "2026-06-09",
+      runningCompletionClass: "normal_planned_run",
+    }),
+    missedOrSkippedReturnWorkout: true,
+    returnWorkoutBlocker: {
+      kind: "missed_before_today",
+      workoutId: "9001",
+      workoutDate: "2026-06-04",
+      title: "Easy Run",
+      reason: "Planned return workout before as-of date was not completed.",
+    },
+  });
+  const staleMissedProposal = evaluateOperationalSignalLifecycle(staleMissedBeforeCompletionInput);
+  assert(
+    staleMissedProposal.reasonCode !== "missed_or_skipped_return_workout",
+    "reliable running completion should override stale missed planned run blocker"
+  );
+
+  const feverAfterRunInput = mkInput({
+    negativeMessageAfterCompletion: {
+      observationId: "obs-fever",
+      observedAt: "2026-06-10T08:00:00.000Z",
+      reason: "fever_after_run",
+    },
+  });
+  const feverAfterRunProposal = evaluateOperationalSignalLifecycle({
+    ...feverAfterRunInput,
+    currentLifecycle: "active_problem",
+  });
+  assert(feverAfterRunProposal.blockedByNegative === true, "fever/pain after run should block via negative override");
+
   console.log(`${LOG_PREFIX} PASS`);
 }
 

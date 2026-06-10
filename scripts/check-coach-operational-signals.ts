@@ -1544,6 +1544,66 @@ async function run(): Promise<void> {
       },
     },
     {
+      name: "health-family-illness-daughter-sick-athlete-tired-only-skips",
+      observation: mkObs("дочь заболела, я немного устала"),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "health-family-illness-daughter-sick-athlete-sleep-only-skips",
+      observation: mkObs("дочка заболела, я не выспалась"),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "health-family-illness-naida-daughter-sick-post-strength-soreness-skips",
+      observation: mkObs(
+        "Нет, была немного уставшей , не оч сон был - дочь заболела и вчера была силовая, немного ягодицы и ноги болели после нее"
+      ),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "health-family-illness-son-sick-athlete-fever-keeps-illness",
+      observation: mkObs("сын заболел, а у меня тоже температура"),
+      expected: {
+        primary_bucket: "temporary_memory",
+        signal_type: "health_issue_started",
+        should_create_memory: true,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: "illness",
+        symptoms_includes: ["fever"],
+      },
+    },
+    {
+      name: "health-family-illness-child-sick-athlete-also-sick-keeps-illness",
+      observation: mkObs("ребёнок болеет, я тоже заболеваю"),
+      expected: {
+        primary_bucket: "temporary_memory",
+        signal_type: "health_issue_started",
+        should_create_memory: true,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        health_issue_kind: "illness",
+      },
+    },
+    {
       name: "temperature-outside-weather-context-skips",
       observation: mkObs("температура на улице норм"),
       expected: {

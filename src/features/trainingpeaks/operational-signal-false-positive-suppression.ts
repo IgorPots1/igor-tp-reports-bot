@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   classifyCoachOperationalSignal,
   classifyCoachOperationalSignals,
+  isFamilyMemberIllnessOnlyContext,
   type ObservationLike,
   type OperationalClassification,
 } from "@/features/trainingpeaks/coach-operational-signals";
@@ -16,6 +17,7 @@ export type FalsePositiveSuppressionReason =
   | "negated_pain_cue"
   | "figurative_idiom"
   | "quoted_idiom"
+  | "family_member_illness"
   | "manual_review";
 
 export type FalsePositiveSuppressionDecision = "allowed" | "refused";
@@ -55,6 +57,9 @@ export function normalizeFalsePositiveSuppressionReason(
   if (normalized === "quoted_idiom" || normalized.includes("quoted")) {
     return "quoted_idiom";
   }
+  if (normalized === "family_member_illness" || normalized.includes("family_member")) {
+    return "family_member_illness";
+  }
   if (normalized === "manual_review" || normalized.includes("manual")) {
     return "manual_review";
   }
@@ -78,6 +83,9 @@ export function inferFalsePositiveSuppressionReason(text: string | null): FalseP
   }
   if (NEGATED_PAIN_PATTERNS.some((pattern) => pattern.test(normalized))) {
     return "negated_pain_cue";
+  }
+  if (isFamilyMemberIllnessOnlyContext(text ?? "")) {
+    return "family_member_illness";
   }
   return null;
 }

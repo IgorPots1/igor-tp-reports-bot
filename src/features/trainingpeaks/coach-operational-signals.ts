@@ -226,7 +226,54 @@ function stripFigurativeHealthPhrases(text: string): string {
 }
 
 function healthClassificationText(text: string): string {
-  return stripFigurativeHealthPhrases(text);
+  let result = stripFigurativeHealthPhrases(text);
+  result = stripFamilyMemberIllnessPhrases(result);
+  result = stripPostWorkoutSorenessPhrases(result);
+  return result.replace(/\s+/gu, " ").trim();
+}
+
+const FAMILY_MEMBER_ILLNESS_PHRASE_PATTERN =
+  /(?:^|[^\p{L}])(?:доч(?:ь|ка)|сын(?:ок)?|реб[её]нок|дети|муж(?:а|у)?|жена|мам(?:а|ы|е|у)?|пап(?:а|ы|е|у)?|брат(?:а|у)?|сестр(?:а|ы|е|у)?|родител(?:и|ь|я|ей|ям)?)\s+(?:\S+\s+){0,4}?(?:заболел(?:а|и|о)?|боле(?:ет|ют|л(?:а|и|о)?)|приболел(?:а|и|о)?)/giu;
+
+const ATHLETE_CO_ILLNESS_PATTERNS = [
+  /\b(?:я|у\s+меня|мне)\b.{0,24}\b(?:тоже|опять|снова)\b.{0,24}(?:заболел(?:а|и)?|боле(?:ю|ет)|температур|горло|кашл)/iu,
+  /\b(?:мы|обе|оба)\b.{0,20}(?:заболел(?:и)?|боле(?:ем|ют))/iu,
+  /\b(?:я|у\s+меня|мне)\b.{0,20}(?:температур|горло|кашл|насморк|сопл|простуд)/iu,
+  /\b(?:я|мне)\b.{0,12}(?:заболел(?:а|и)?|боле(?:ю|ет)|приболел(?:а|и)?)/iu,
+] as const;
+
+const POST_WORKOUT_SORENESS_PATTERN =
+  /(?:^|[^\p{L}])(?:немного\s+)?(?:ягодиц(?:ы|а|е|у)?|ног(?:и|а|е|у)?|икр(?:ы|а|е|у)?|мышц(?:ы|а|е|у)?|бедр(?:а|о|е|у)?|спин(?:а|ы|е|у)?|колен(?:о|а|е|у)?|стоп(?:ы|а|е|у)?)\s+(?:\S+\s+){0,4}?болел(?:а|и|о)?\s+после(?:\s|$|[^\p{L}])/giu;
+
+function stripFamilyMemberIllnessPhrases(text: string): string {
+  return text.replace(FAMILY_MEMBER_ILLNESS_PHRASE_PATTERN, " ").replace(/\s+/gu, " ").trim();
+}
+
+function stripPostWorkoutSorenessPhrases(text: string): string {
+  if (!hasAny(text, ["силов", "зал", "жим", "присед", "планк", "тяг", "велотрен"])) {
+    return text;
+  }
+  return text.replace(POST_WORKOUT_SORENESS_PATTERN, " ").replace(/\s+/gu, " ").trim();
+}
+
+export function hasFamilyMemberIllnessCue(text: string): boolean {
+  return FAMILY_MEMBER_ILLNESS_PHRASE_PATTERN.test(stripFigurativeHealthPhrases(text));
+}
+
+export function hasAthleteCoIllnessCue(text: string): boolean {
+  return ATHLETE_CO_ILLNESS_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+export function isFamilyMemberIllnessOnlyContext(text: string): boolean {
+  const normalized = stripFigurativeHealthPhrases(text);
+  if (!FAMILY_MEMBER_ILLNESS_PHRASE_PATTERN.test(normalized)) {
+    return false;
+  }
+  if (hasAthleteCoIllnessCue(normalized)) {
+    return false;
+  }
+  const healthText = healthClassificationText(text);
+  return !hasHealthStartedCue(healthText) && !hasExplicitIllnessCue(healthText);
 }
 
 function isNegatedCueOccurrence(text: string, cueIndex: number, cue: string): boolean {
@@ -623,8 +670,9 @@ function isExplicitCoachRelevantSignal(text: string, labels: string[]): boolean 
 }
 
 function classifyHealthIssueKind(text: string): string | null {
-  const hasBodyPartCue = hasAny(text, ["нога", "колено", "ахилл", "икра", "спина", "голень", "стоп"]);
-  const hasBodyRecoveryCue = hasAny(text, [
+  const healthText = healthClassificationText(text);
+  const hasBodyPartCue = hasAny(healthText, ["нога", "колено", "ахилл", "икра", "спина", "голень", "стоп"]);
+  const hasBodyRecoveryCue = hasAny(healthText, [
     "лучше",
     "получше",
     "значительно лучше",
@@ -633,11 +681,11 @@ function classifyHealthIssueKind(text: string): string | null {
     "без боли",
     "боли нет",
   ]);
-  if (hasBodyPartCue && (hasActivePainSymptom(text) || hasBodyRecoveryCue)) {
+  if (hasBodyPartCue && (hasActivePainSymptom(healthText) || hasBodyRecoveryCue)) {
     return "pain_or_injury";
   }
   if (
-    hasActiveAny(text, [
+    hasActiveAny(healthText, [
       "горло",
       "температур",
       "темпера подним",
@@ -664,10 +712,10 @@ function classifyHealthIssueKind(text: string): string | null {
   ) {
     return "illness";
   }
-  if (hasActiveAny(text, ["голова болит", "голов болит", "головная боль"])) {
+  if (hasActiveAny(healthText, ["голова болит", "голов болит", "головная боль"])) {
     return null;
   }
-  if (hasActivePainSymptom(text)) {
+  if (hasActivePainSymptom(healthText)) {
     return "pain_unspecified";
   }
   return null;
@@ -717,9 +765,10 @@ function dedupeStrings(values: string[]): string[] {
 }
 
 function detectHealthSymptoms(text: string): string[] {
+  const healthText = healthClassificationText(text);
   const symptoms: string[] = [];
   for (const descriptor of HEALTH_SYMPTOM_PATTERNS) {
-    if (hasActiveAny(text, descriptor.patterns)) {
+    if (hasActiveAny(healthText, descriptor.patterns)) {
       symptoms.push(descriptor.symptom);
     }
   }
@@ -1231,6 +1280,7 @@ function classifyHealthLifecycleSignal(input: {
   reason: string;
 } | null {
   const text = input.text;
+  const healthText = healthClassificationText(text);
   const payload = toDefaultPayload();
   const symptoms = detectHealthSymptoms(text);
   const plannedAttemptDate = hasPlannedRunAttemptCue(text) ? parseRelativeDate(text, input.observedAt) : null;
@@ -1242,17 +1292,20 @@ function classifyHealthLifecycleSignal(input: {
   payload.visible_in_tp_signals = true;
   payload.requires_coach_review = false;
 
+  if (isFamilyMemberIllnessOnlyContext(text)) {
+    return null;
+  }
+
   const improving = hasHealthImprovingCue(text);
   const genericImproving = hasGenericImprovingCue(text);
   const returnIntent = hasReturnIntentCue(text);
   const resolved = hasHealthResolvedCue(text);
-  const started = hasHealthStartedCue(text);
+  const started = hasHealthStartedCue(healthText);
   const weatherTemperatureContext =
     hasAny(text, ["на улице", "за окном", "погода", "воздуха"]) &&
     hasAny(text, ["температур", "темпера"]);
-  const healthText = healthClassificationText(text);
   const illnessCounterCues =
-    hasActiveAny(text, ["болею", "болеет", "болел", "болела", "болели", "болит", "забол", "прибол"]) ||
+    hasActiveAny(healthText, ["болею", "болеет", "болел", "болела", "болели", "болит", "забол", "прибол"]) ||
     hasAny(healthText, [
       "кашель",
       "горло",
@@ -1343,7 +1396,7 @@ function classifyHealthLifecycleSignal(input: {
   const pauseUntil = parseHealthPauseUntilDate(text, input.observedAt);
   const hasTimeoutCue = hasAny(text, ["тайм аут", "тайм-аут", "таймаут"]);
   const hasRunPauseConstraint = hasAny(text, ["не смогу бегать", "бегать не смогу", "не буду бегать", "не бегать"]);
-  const explicitIllness = hasExplicitIllnessCue(text);
+  const explicitIllness = hasExplicitIllnessCue(healthText);
   payload.health_state = "sick";
   payload.training_recommendation = "pause";
   payload.evidence_level = explicitIllness ? "explicit_illness" : "ambiguous_malaise";
