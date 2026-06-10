@@ -698,6 +698,7 @@ export type TrainingPeaksOperationalSignalsItem = {
 export type TrainingPeaksOperationalSignalCompletionEvidence = {
   latestCacheScannedAt: string | null;
   latestCompletionAfterOpen: OperationalSignalLifecycleInput["latestTpCompletionAfterOpen"];
+  negativeMessageAfterCompletion?: OperationalSignalLifecycleInput["negativeMessageAfterCompletion"];
   recommendedAction: string;
   recommendationReason: string;
   applyDryRunCommand: string | null;
@@ -706,7 +707,9 @@ export type TrainingPeaksOperationalSignalCompletionEvidence = {
 };
 
 export type TrainingPeaksOperationalSignalSourceEvidence = {
+  observationId?: string | null;
   observedAt: string | null;
+  sourceType?: string | null;
   textPreview: string | null;
 };
 
@@ -714,6 +717,7 @@ export type TrainingPeaksOperationalSignalDisplayEvidence = {
   source?: TrainingPeaksOperationalSignalSourceEvidence | null;
   latestRelevant?: TrainingPeaksOperationalSignalSourceEvidence | null;
   latestNegative?: TrainingPeaksOperationalSignalSourceEvidence | null;
+  negativeAfterCompletion?: TrainingPeaksOperationalSignalSourceEvidence | null;
   latestPositive?: TrainingPeaksOperationalSignalSourceEvidence | null;
   latestAgreement?: TrainingPeaksOperationalSignalSourceEvidence | null;
   completion?: TrainingPeaksOperationalSignalCompletionEvidence | null;
@@ -5949,16 +5953,26 @@ function textIncludesAnyCue(text: string, cues: readonly string[]): boolean {
   return cues.some((cue) => text.includes(cue));
 }
 
+const STANDALONE_PAIN_WORD_PATTERN = /(?:^|[^\p{L}])боль(?![а-яё])/iu;
+
+function hasStandalonePainWordSemantic(text: string): boolean {
+  return STANDALONE_PAIN_WORD_PATTERN.test(text);
+}
+
+function hasOperationalPainVerbSemantic(text: string): boolean {
+  return /болит|болел[ао]?|болят|побалива/iu.test(text);
+}
+
 function hasMusculoskeletalPainSemantic(text: string): boolean {
   if (textIncludesAnyCue(text, MUSCULOSKELETAL_BODY_PART_CUES) && /чувств|ноет|тянет/iu.test(text)) {
     return true;
   }
-  if (
-    !textIncludesAnyCue(text, [
-      "болит",
+  const hasPainCue =
+    hasOperationalPainVerbSemantic(text) ||
+    hasStandalonePainWordSemantic(text) ||
+    textIncludesAnyCue(text, [
       "болела",
       "болело",
-      "боль",
       "болев",
       "побал",
       "дискомфорт",
@@ -5969,8 +5983,8 @@ function hasMusculoskeletalPainSemantic(text: string): boolean {
       "опух",
       "отек",
       "отёк",
-    ])
-  ) {
+    ]);
+  if (!hasPainCue) {
     return false;
   }
   if (textIncludesAnyCue(text, MUSCULOSKELETAL_BODY_PART_CUES)) {
@@ -6121,7 +6135,7 @@ function resolveOperationalSignalDisplaySection(
   return "other";
 }
 
-function resolveEffectiveOperationalSignalForDisplay(
+export function resolveEffectiveOperationalSignalForDisplay(
   signal: Pick<TrainingPeaksStudentOperationalSignal, "signalType" | "structuredPayload" | "metadata">
 ): EffectiveOperationalSignalForDisplay {
   return {
@@ -6176,7 +6190,7 @@ function isSignalMarkedStaleNeedsReview(signal: TrainingPeaksStudentOperationalS
   );
 }
 
-function resolveOperationalSignalDisplayLifecycleState(
+export function resolveOperationalSignalDisplayLifecycleState(
   signal: TrainingPeaksStudentOperationalSignal
 ): OperationalSignalDisplayLifecycleState {
   if (isSignalMarkedStaleNeedsReview(signal)) {
@@ -6387,9 +6401,58 @@ function toOperationalSignalSourceEvidence(
     return null;
   }
   return {
+    observationId: observation.id,
     observedAt: observation.observedAt,
+    sourceType: observation.sourceType,
     textPreview: observation.textPreview,
   };
+}
+
+export function matchesOperationalPainNegativeSemantic(text: string): boolean {
+  const normalized = normalizeOperationalSignalSemanticText([text]);
+  return (
+    hasOperationalPainVerbSemantic(normalized) ||
+    hasStandalonePainWordSemantic(normalized) ||
+    /дискомфорт|травм|защем|мозол|натер|натёр|опух|отек|отёк/iu.test(normalized)
+  );
+}
+
+export function isOperationalNegativeObservationText(text: string): boolean {
+  const normalized = normalizeOperationalSignalSemanticText([text]);
+  return (
+    OPERATIONAL_NEGATIVE_OBSERVATION_PATTERNS.some((pattern) => pattern.test(normalized)) ||
+    hasMusculoskeletalPainSemantic(normalized)
+  );
+}
+
+function resolveNegativeAfterCompletionDisplayText(
+  evidence: TrainingPeaksOperationalSignalDisplayEvidence | null | undefined
+): string | null {
+  if (!evidence?.completion?.negativeMessageAfterCompletion) {
+    return null;
+  }
+  const negativeAfterCompletion = evidence.negativeAfterCompletion;
+  if (negativeAfterCompletion?.observationId === evidence.completion.negativeMessageAfterCompletion.observationId) {
+    return negativeAfterCompletion.textPreview?.replace(/\s+/g, " ").trim() ?? null;
+  }
+  const latestNegative = evidence.latestNegative;
+  if (latestNegative?.observationId === evidence.completion.negativeMessageAfterCompletion.observationId) {
+    return latestNegative.textPreview?.replace(/\s+/g, " ").trim() ?? null;
+  }
+  return null;
+}
+
+function hasDisplayNegativeAfterRunningCompletion(input: {
+  evidence: TrainingPeaksOperationalSignalDisplayEvidence | null | undefined;
+  completion: OperationalSignalLifecycleInput["latestTpCompletionAfterOpen"];
+}): boolean {
+  if (!input.evidence?.completion?.negativeMessageAfterCompletion) {
+    return false;
+  }
+  if (!hasReliableRunningCompletionAfterOpen(input.completion)) {
+    return false;
+  }
+  return Boolean(resolveNegativeAfterCompletionDisplayText(input.evidence));
 }
 
 function sortOperationalSignalObservations(
@@ -6445,7 +6508,12 @@ const OPERATIONAL_NEGATIVE_OBSERVATION_PATTERNS = [
   /хуже|ухудш/iu,
   /слабост|сил\s+нет/iu,
   /боли?\s+(?:снова|опять|вернул[а-яё]*)/iu,
-  /болит|боль|дискомфорт|травм|защем|мозол|натер|натёр|опух|отек|отёк/iu,
+  /болит/iu,
+  STANDALONE_PAIN_WORD_PATTERN,
+  /болел[ао]?/iu,
+  /болят/iu,
+  /побалива/iu,
+  /дискомфорт|травм|защем|мозол|натер|натёр|опух|отек|отёк/iu,
   /не\s+бегаю|не\s+смогу\s+бегать|не\s+могу\s+бежать|пропущу|пропустил/iu,
   /долеч/u,
   /лучше\s+не\s+становится/u,
@@ -6882,7 +6950,7 @@ function extractCompactNegativeEvidenceSnippet(text: string): string {
   if (/кашл/iu.test(lower)) {
     return "снова усилился кашель";
   }
-  if (/болит|боль/iu.test(lower)) {
+  if (hasOperationalPainVerbSemantic(lower) || hasStandalonePainWordSemantic(lower)) {
     return "снова появилась боль";
   }
   return compactOperationalSignalText(text, 60).replace(/^./u, (char) => char.toLowerCase());
@@ -6916,12 +6984,12 @@ function shouldApplyFreshIllnessRecoveryMonitoringOverlay(input: {
   isPain: boolean;
   lifecycleDisplayState: OperationalSignalDisplayLifecycleState;
   completion: OperationalSignalLifecycleInput["latestTpCompletionAfterOpen"];
-  latestNegativeText: string | null;
+  hasNegativeAfterCompletion: boolean;
 }): boolean {
   return (
     !input.isPain &&
     input.lifecycleDisplayState === "monitoring_after_return" &&
-    !input.latestNegativeText &&
+    !input.hasNegativeAfterCompletion &&
     hasReliableRunningCompletionAfterOpen(input.completion)
   );
 }
@@ -6936,14 +7004,31 @@ function buildFreshIllnessRecoveryMonitoringDisplayText(input: {
   return `после болезни: первая пробежка выполнена${datePart}${titlePart}, новых жалоб после неё нет — уточнить самочувствие / можно закрыть после проверки.`;
 }
 
-export function compactCoachFacingOperationalSignalText(input: {
+export type OperationalSignalDisplayDebugInfo = {
+  displayBranchUsed: string;
+  latestNegativeObservationId: string | null;
+  latestNegativeObservedAt: string | null;
+  latestNegativeSourceType: string | null;
+  latestNegativeTextPreview: string | null;
+  negativeAfterCompletion: boolean;
+  completionWorkoutId: string | null;
+  completionDate: string | null;
+  completionStartedAt: string | null;
+  completionCompletedAt: string | null;
+};
+
+function finishCompactCoachDisplay(text: string, branch: string): { text: string; branch: string } {
+  return { text, branch };
+}
+
+function buildCompactCoachFacingOperationalSignalText(input: {
   signal: TrainingPeaksStudentOperationalSignal;
   effective: EffectiveOperationalSignalForDisplay;
   summary: string;
   lifecycleDisplayState: OperationalSignalDisplayLifecycleState;
   evidence: TrainingPeaksOperationalSignalDisplayEvidence | null;
   asOfDate: string;
-}): string {
+}): { text: string; branch: string } {
   const isPain = isPainInjuryOperationalSignalForDisplay(input.effective);
   let summaryLine =
     normalizeCoachFacingSignalText(
@@ -6954,6 +7039,11 @@ export function compactCoachFacingOperationalSignalText(input: {
   const latestRelevantText = input.evidence?.latestRelevant?.textPreview?.replace(/\s+/g, " ").trim() ?? null;
   const latestPositiveText = input.evidence?.latestPositive?.textPreview?.replace(/\s+/g, " ").trim() ?? null;
   const latestNegativeText = input.evidence?.latestNegative?.textPreview?.replace(/\s+/g, " ").trim() ?? null;
+  const negativeAfterCompletionText = resolveNegativeAfterCompletionDisplayText(input.evidence);
+  const hasNegativeAfterCompletion = hasDisplayNegativeAfterRunningCompletion({
+    evidence: input.evidence,
+    completion: input.evidence?.completion?.latestCompletionAfterOpen ?? null,
+  });
   const latestPainText =
     latestRelevantText && hasMusculoskeletalPainSemantic(latestRelevantText.toLowerCase()) ? latestRelevantText : null;
   const sourcePainText = sourceText && hasMusculoskeletalPainSemantic(sourceText.toLowerCase()) ? sourceText : null;
@@ -6970,12 +7060,12 @@ export function compactCoachFacingOperationalSignalText(input: {
     input.effective.effectiveSignalType === "resume_training" ||
     /^пауза:/iu.test(summaryLine)
   ) {
-    return summaryLine;
+    return finishCompactCoachDisplay(summaryLine, "pause_or_resume");
   }
 
   const embeddedCoachSummary = normalizeEmbeddedCoachActionSummary(summaryLine);
   if (embeddedCoachSummary) {
-    return embeddedCoachSummary;
+    return finishCompactCoachDisplay(embeddedCoachSummary, "embedded_coach_action");
   }
 
   const completion = input.evidence?.completion ?? null;
@@ -6988,11 +7078,14 @@ export function compactCoachFacingOperationalSignalText(input: {
       isPain,
       lifecycleDisplayState: input.lifecycleDisplayState,
       completion: latest,
-      latestNegativeText,
+      hasNegativeAfterCompletion,
     }) &&
     latest
   ) {
-    return buildFreshIllnessRecoveryMonitoringDisplayText({ completion: latest });
+    return finishCompactCoachDisplay(
+      buildFreshIllnessRecoveryMonitoringDisplayText({ completion: latest }),
+      "fresh_illness_recovery_monitoring_overlay"
+    );
   }
 
   if (
@@ -7000,7 +7093,7 @@ export function compactCoachFacingOperationalSignalText(input: {
     summaryAlreadyHasRecoveryPrefix(summaryLine) &&
     input.lifecycleDisplayState !== "ready_for_coach_close" &&
     input.lifecycleDisplayState !== "stale_needs_review" &&
-    !latestNegativeText &&
+    !hasNegativeAfterCompletion &&
     !(
       input.lifecycleDisplayState === "monitoring_after_return" &&
       hasReliableRunningCompletionAfterOpen(latest)
@@ -7012,23 +7105,31 @@ export function compactCoachFacingOperationalSignalText(input: {
       /в строю|завтра проб/iu.test(cleanedRecoverySummary)
     ) {
       if (/;\s*наблюдать\s*$/iu.test(summaryLine)) {
-        return joinCompactCoachSituationAndAction(cleanedRecoverySummary, "наблюдать");
+        return finishCompactCoachDisplay(
+          joinCompactCoachSituationAndAction(cleanedRecoverySummary, "наблюдать"),
+          "recovery_prefix_with_observe"
+        );
       }
-      return cleanedRecoverySummary;
+      return finishCompactCoachDisplay(cleanedRecoverySummary, "recovery_prefix_clean");
     }
   }
   const contextText = normalizeOperationalSignalSemanticText([
     displaySourceText,
     latestPositiveText,
-    latestNegativeText,
+    negativeAfterCompletionText ?? latestNegativeText,
     summaryLine,
   ]);
   const recoveryReady = hasRecoveryReadySemantic(contextText);
-  const hasCleanReportAfterRun = Boolean(hasRunningCompletion && latestPositiveText && !latestNegativeText);
+  const hasCleanReportAfterRun = Boolean(
+    hasRunningCompletion && latestPositiveText && !hasNegativeAfterCompletion
+  );
   const joinedContext = `${summaryLine} ${displaySourceText ?? ""}`.toLowerCase();
 
   if (input.lifecycleDisplayState === "stale_needs_review") {
-    return "давно нет новых данных — проверить вручную.";
+    return finishCompactCoachDisplay(
+      "давно нет новых данных — проверить вручную.",
+      "stale_needs_review"
+    );
   }
 
   if (isPain) {
@@ -7041,14 +7142,23 @@ export function compactCoachFacingOperationalSignalText(input: {
         const base = runDate
           ? joinCompactCoachSituationAndAction("колено почти нормально", `пробежка ${runDate} была`)
           : "колено почти нормально";
-        return joinCompactCoachSituationAndAction(base, "после пробежки проверить реакцию");
+        return finishCompactCoachDisplay(
+          joinCompactCoachSituationAndAction(base, "после пробежки проверить реакцию"),
+          "pain_monitoring_knee_after_run"
+        );
       }
       if (input.lifecycleDisplayState === "ready_for_coach_close") {
-        return joinCompactCoachSituationAndAction(situation, "закрыть после короткой проверки");
+        return finishCompactCoachDisplay(
+          joinCompactCoachSituationAndAction(situation, "закрыть после короткой проверки"),
+          "pain_ready_for_coach_close"
+        );
       }
-      return joinCompactCoachSituationAndAction(
-        stripTrailingMonitoringObserve(situation),
-        "уточнить, болит ли сейчас — закрыть, если уже не актуально"
+      return finishCompactCoachDisplay(
+        joinCompactCoachSituationAndAction(
+          stripTrailingMonitoringObserve(situation),
+          "уточнить, болит ли сейчас — закрыть, если уже не актуально"
+        ),
+        "pain_monitoring_check"
       );
     }
 
@@ -7060,26 +7170,47 @@ export function compactCoachFacingOperationalSignalText(input: {
 
     if (severity === "acute_limiting") {
       if (/спин|нерв|защем/iu.test(joinedContext)) {
-        return joinCompactCoachSituationAndAction(situation, "уточнить состояние и срок возврата");
+        return finishCompactCoachDisplay(
+          joinCompactCoachSituationAndAction(situation, "уточнить состояние и срок возврата"),
+          "pain_acute_limiting_spine"
+        );
       }
-      return joinCompactCoachSituationAndAction(situation, "уточнить, мешает ли боль бегу");
+      return finishCompactCoachDisplay(
+        joinCompactCoachSituationAndAction(situation, "уточнить, мешает ли боль бегу"),
+        "pain_acute_limiting"
+      );
     }
     if (severity === "minor_discomfort") {
       if (/стоп|стабилизатор/iu.test(joinedContext)) {
-        return "лёгкий дискомфорт стопы — наблюдать, уточнить если усилится.";
+        return finishCompactCoachDisplay(
+          "лёгкий дискомфорт стопы — наблюдать, уточнить если усилится.",
+          "pain_minor_discomfort_foot"
+        );
       }
       if (/колен/iu.test(joinedContext)) {
-        return joinCompactCoachSituationAndAction(
-          "колено почти нормально",
-          "наблюдать, после пробежки проверить реакцию"
+        return finishCompactCoachDisplay(
+          joinCompactCoachSituationAndAction(
+            "колено почти нормально",
+            "наблюдать, после пробежки проверить реакцию"
+          ),
+          "pain_minor_discomfort_knee"
         );
       }
       if (/мозол|обув|пал[её]ц/iu.test(joinedContext)) {
-        return "мозоль/палец от обуви — уточнить, мешает ли бегу.";
+        return finishCompactCoachDisplay(
+          "мозоль/палец от обуви — уточнить, мешает ли бегу.",
+          "pain_minor_discomfort_blister"
+        );
       }
-      return joinCompactCoachSituationAndAction(situation, "наблюдать, уточнить если усилится");
+      return finishCompactCoachDisplay(
+        joinCompactCoachSituationAndAction(situation, "наблюдать, уточнить если усилится"),
+        "pain_minor_discomfort"
+      );
     }
-    return joinCompactCoachSituationAndAction(situation, "уточнить, болит ли сейчас и мешает ли тренировкам");
+    return finishCompactCoachDisplay(
+      joinCompactCoachSituationAndAction(situation, "уточнить, болит ли сейчас и мешает ли тренировкам"),
+      "pain_needs_clarification"
+    );
   }
 
   let situation = summaryLine;
@@ -7096,17 +7227,26 @@ export function compactCoachFacingOperationalSignalText(input: {
     }
   }
 
-  if (latestNegativeText && hasRunningCompletion) {
-    const negSnippet = extractCompactNegativeEvidenceSnippet(latestNegativeText);
-    return `после пробежки ${negSnippet} — держать на контроле, уточнить самочувствие сегодня.`;
+  if (hasNegativeAfterCompletion && negativeAfterCompletionText && hasRunningCompletion) {
+    const negSnippet = extractCompactNegativeEvidenceSnippet(negativeAfterCompletionText);
+    return finishCompactCoachDisplay(
+      `после пробежки ${negSnippet} — держать на контроле, уточнить самочувствие сегодня.`,
+      "post_run_negative_after_completion"
+    );
   }
 
   if (input.lifecycleDisplayState === "ready_for_coach_close" || hasCleanReportAfterRun) {
     if (hasRunningCompletion || hasCleanReportAfterRun) {
-      return "после болезни: пробежка была, новых жалоб нет — закрыть после проверки.";
+      return finishCompactCoachDisplay(
+        "после болезни: пробежка была, новых жалоб нет — закрыть после проверки.",
+        "ready_for_coach_close_after_run"
+      );
     }
     const readySummary = summaryLine.replace(/^после\s+паузы:\s*/iu, "после болезни: ");
-    return joinCompactCoachSituationAndAction(readySummary, "закрыть после проверки");
+    return finishCompactCoachDisplay(
+      joinCompactCoachSituationAndAction(readySummary, "закрыть после проверки"),
+      "ready_for_coach_close"
+    );
   }
 
   if (hasRunningCompletion) {
@@ -7114,26 +7254,41 @@ export function compactCoachFacingOperationalSignalText(input: {
       input.lifecycleDisplayState === "monitoring_after_return" &&
       latest &&
       hasReliableRunningCompletionAfterOpen(latest) &&
-      !latestNegativeText
+      !hasNegativeAfterCompletion
     ) {
-      return buildFreshIllnessRecoveryMonitoringDisplayText({ completion: latest });
+      return finishCompactCoachDisplay(
+        buildFreshIllnessRecoveryMonitoringDisplayText({ completion: latest }),
+        "monitoring_after_return_fresh_recovery_overlay"
+      );
     }
     const runPart = runDate ? `пробежка ${runDate} была` : "пробежка была";
     if (input.lifecycleDisplayState === "monitoring_after_return") {
-      return `после болезни: ${runPart} — проверить отчёт/самочувствие и закрыть, если всё ок.`;
+      return finishCompactCoachDisplay(
+        `после болезни: ${runPart} — проверить отчёт/самочувствие и закрыть, если всё ок.`,
+        "monitoring_after_return_with_run"
+      );
     }
-    return `после болезни: ${runPart} — проверить самочувствие после пробежки.`;
+    return finishCompactCoachDisplay(
+      `после болезни: ${runPart} — проверить самочувствие после пробежки.`,
+      "running_completion_check"
+    );
   }
 
   if (recoveryReady && !hasRunningCompletion) {
-    return joinCompactCoachSituationAndAction(
-      situation.replace(/^после\s+паузы:\s*/iu, "после болезни: "),
-      "уточнить перед первой пробежкой"
+    return finishCompactCoachDisplay(
+      joinCompactCoachSituationAndAction(
+        situation.replace(/^после\s+паузы:\s*/iu, "после болезни: "),
+        "уточнить перед первой пробежкой"
+      ),
+      "recovery_ready_before_first_run"
     );
   }
 
   if (/ближе\s+к\s+выходн|к\s+выходн/iu.test(contextText)) {
-    return "после болезни лучше, к бегу ближе к выходным — уточнить перед первой пробежкой.";
+    return finishCompactCoachDisplay(
+      "после болезни лучше, к бегу ближе к выходным — уточнить перед первой пробежкой.",
+      "recovery_weekend_timing"
+    );
   }
 
   if (!isPain && input.lifecycleDisplayState === "active_problem") {
@@ -7143,21 +7298,66 @@ export function compactCoachFacingOperationalSignalText(input: {
       }
       const continuedIllnessSummary = buildContinuedIllnessCoachDisplaySummary(text);
       if (continuedIllnessSummary) {
-        return continuedIllnessSummary;
+        return finishCompactCoachDisplay(continuedIllnessSummary, "continued_illness_active_problem");
       }
     }
   }
 
   if (/простуд|орви|насморк/iu.test(contextText) && input.lifecycleDisplayState === "active_problem") {
-    return "простуда — уточнить самочувствие перед возвратом к бегу.";
+    return finishCompactCoachDisplay(
+      "простуда — уточнить самочувствие перед возвратом к бегу.",
+      "active_problem_cold"
+    );
   }
 
   if (input.lifecycleDisplayState === "monitoring_after_return") {
     const monitoringSummary = summaryLine.replace(/^после\s+паузы:\s*/iu, "после болезни: ");
-    return joinCompactCoachSituationAndAction(monitoringSummary, "наблюдать, уточнить самочувствие");
+    return finishCompactCoachDisplay(
+      joinCompactCoachSituationAndAction(monitoringSummary, "наблюдать, уточнить самочувствие"),
+      "monitoring_after_return"
+    );
   }
 
-  return joinCompactCoachSituationAndAction(situation, "уточнить текущее самочувствие");
+  return finishCompactCoachDisplay(
+    joinCompactCoachSituationAndAction(situation, "уточнить текущее самочувствие"),
+    "default_clarify_wellbeing"
+  );
+}
+
+export function compactCoachFacingOperationalSignalText(input: {
+  signal: TrainingPeaksStudentOperationalSignal;
+  effective: EffectiveOperationalSignalForDisplay;
+  summary: string;
+  lifecycleDisplayState: OperationalSignalDisplayLifecycleState;
+  evidence: TrainingPeaksOperationalSignalDisplayEvidence | null;
+  asOfDate: string;
+}): string {
+  return buildCompactCoachFacingOperationalSignalText(input).text;
+}
+
+export function resolveOperationalSignalDisplayDebugInfo(input: {
+  signal: TrainingPeaksStudentOperationalSignal;
+  effective: EffectiveOperationalSignalForDisplay;
+  summary: string;
+  lifecycleDisplayState: OperationalSignalDisplayLifecycleState;
+  evidence: TrainingPeaksOperationalSignalDisplayEvidence | null;
+  asOfDate: string;
+}): OperationalSignalDisplayDebugInfo {
+  const built = buildCompactCoachFacingOperationalSignalText(input);
+  const latestNegative = input.evidence?.latestNegative ?? null;
+  const completion = input.evidence?.completion?.latestCompletionAfterOpen ?? null;
+  return {
+    displayBranchUsed: built.branch,
+    latestNegativeObservationId: latestNegative?.observationId ?? null,
+    latestNegativeObservedAt: latestNegative?.observedAt ?? null,
+    latestNegativeSourceType: latestNegative?.sourceType ?? null,
+    latestNegativeTextPreview: latestNegative?.textPreview?.replace(/\s+/g, " ").trim() ?? null,
+    negativeAfterCompletion: Boolean(input.evidence?.completion?.negativeMessageAfterCompletion),
+    completionWorkoutId: completion?.workoutId ?? null,
+    completionDate: completion?.workoutDate ?? null,
+    completionStartedAt: completion?.completionObservedAt ?? null,
+    completionCompletedAt: completion?.completionObservedAt ?? null,
+  };
 }
 
 function buildActionableHealthOrPainDisplayText(input: {
@@ -7362,6 +7562,11 @@ export async function buildOperationalSignalDisplayEvidenceMap(input: {
             cleanRunningCompletionCount,
           });
           const source = findOperationalSignalSourceObservation({ signal, observations });
+          const negativeAfterCompletionObservation = lifecycleInput.negativeMessageAfterCompletion
+            ? observations.find(
+                (observation) => observation.id === lifecycleInput.negativeMessageAfterCompletion?.observationId
+              ) ?? null
+            : null;
           evidence.set(signal.id, {
             source,
             latestRelevant: findLatestOperationalSignalObservation({
@@ -7375,6 +7580,7 @@ export async function buildOperationalSignalDisplayEvidenceMap(input: {
               observations,
               predicate: isOperationalNegativeObservation,
             }),
+            negativeAfterCompletion: toOperationalSignalSourceEvidence(negativeAfterCompletionObservation),
             latestPositive: findLatestOperationalSignalObservation({
               signal,
               observations,
@@ -7388,6 +7594,7 @@ export async function buildOperationalSignalDisplayEvidenceMap(input: {
             completion: {
               latestCacheScannedAt,
               latestCompletionAfterOpen: lifecycleInput.latestTpCompletionAfterOpen ?? null,
+              negativeMessageAfterCompletion: lifecycleInput.negativeMessageAfterCompletion ?? null,
               recommendedAction: bridge.recommendedAction,
               recommendationReason: bridge.reason,
               applyDryRunCommand: bridge.applyDryRunCommand,

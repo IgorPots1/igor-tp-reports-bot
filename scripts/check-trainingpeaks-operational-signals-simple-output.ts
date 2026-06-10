@@ -7,6 +7,8 @@ import {
 import {
   buildTrainingPeaksOperationalSignalsSnapshotFromSignals,
   formatTrainingPeaksOperationalSignalsForTelegram,
+  isOperationalNegativeObservationText,
+  matchesOperationalPainNegativeSemantic,
 } from "@/features/trainingpeaks/service";
 import type { TrainingPeaksStudentOperationalSignal } from "@/features/trainingpeaks/repository";
 
@@ -1260,6 +1262,7 @@ function run(): void {
     "27 failed: stale return_planned copy must not leak into monitoring_after_return overlay."
   );
 
+  const elenaNegativeAfterRunObservationId = "elena-negative-after-run-obs";
   const elenaNegativeAfterRunEvidence = new Map([
     [
       "elena-negative-after-run",
@@ -1267,13 +1270,26 @@ function run(): void {
         completion: {
           latestCompletionAfterOpen: elenaReliableRunCompletion,
           latestCacheScannedAt: "2026-06-10T00:00:00.000Z",
+          negativeMessageAfterCompletion: {
+            observationId: elenaNegativeAfterRunObservationId,
+            observedAt: "2026-06-10T08:00:00.000Z",
+            reason: "matched_negative_context",
+          },
           recommendedAction: "monitor",
           recommendationReason: "fixture",
           applyDryRunCommand: null,
           cleanRunningCompletionCount: 1,
         },
         latestNegative: {
+          observationId: elenaNegativeAfterRunObservationId,
           observedAt: "2026-06-10T08:00:00.000Z",
+          sourceType: "business_dm",
+          textPreview: "после пробежки снова температура",
+        },
+        negativeAfterCompletion: {
+          observationId: elenaNegativeAfterRunObservationId,
+          observedAt: "2026-06-10T08:00:00.000Z",
+          sourceType: "business_dm",
           textPreview: "после пробежки снова температура",
         },
       },
@@ -1308,6 +1324,92 @@ function run(): void {
   assert(
     /температур|держать на контроле/iu.test(elenaNegativeAfterRunText),
     "28 failed: negative-after-run should stay problem-oriented."
+  );
+
+  const painNegativeFalseFixtures = [
+    "Спасибо большое",
+    "Большое спасибо",
+    "стало больше сил",
+    "большой объем",
+  ];
+  for (const text of painNegativeFalseFixtures) {
+    assert(
+      !matchesOperationalPainNegativeSemantic(text) && !isOperationalNegativeObservationText(text),
+      `29 failed: "${text}" must not match pain/negative semantics.`
+    );
+  }
+  const painNegativeTrueFixtures = [
+    "есть боль",
+    "болит нога",
+    "после бега болело колено",
+    "надкостница побаливает",
+    "дискомфорт стопы",
+    "натёр мозоль",
+  ];
+  for (const text of painNegativeTrueFixtures) {
+    assert(
+      matchesOperationalPainNegativeSemantic(text) || isOperationalNegativeObservationText(text),
+      `29 failed: "${text}" must match pain/negative semantics.`
+    );
+  }
+
+  const elenaFalsePostRunNegativeEvidence = new Map([
+    [
+      "elena-false-post-run-negative",
+      {
+        completion: {
+          latestCompletionAfterOpen: elenaReliableRunCompletion,
+          latestCacheScannedAt: "2026-06-10T00:00:00.000Z",
+          recommendedAction: "coach_close_candidate",
+          recommendationReason: "fixture",
+          applyDryRunCommand: null,
+          cleanRunningCompletionCount: 1,
+        },
+        latestNegative: {
+          observationId: "d5b18c25-1290-45c7-b8d4-76119aed8308",
+          observedAt: "2026-06-04T11:05:30.600Z",
+          sourceType: "business_dm",
+          textPreview:
+            "Спасибо большое)) Только я к врачу на след неделе,на этой как быть?отдохнуть пока?",
+        },
+      },
+    ],
+  ]);
+  const elenaFalsePostRunNegativeSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-10",
+    limit: 10,
+    studentNameById: new Map<string, string | null>([["elena-vasileva", "Elena Vasileva"]]),
+    signals: [
+      makeSignal({
+        signalId: "elena-false-post-run-negative",
+        studentId: "elena-vasileva",
+        signalType: "health_issue_started",
+        lifecycleState: "monitoring_after_return",
+        structuredPayload: {
+          display_summary: "после болезни: врач разрешил бег, завтра лёгкий выход",
+        },
+      }),
+    ],
+    activeMoveActions: [],
+    displayEvidenceBySignalId: elenaFalsePostRunNegativeEvidence,
+  });
+  const elenaFalsePostRunNegativeText = formatTrainingPeaksOperationalSignalsForTelegram(
+    elenaFalsePostRunNegativeSnapshot
+  );
+  assert(
+    !isOperationalNegativeObservationText(
+      "Спасибо большое)) Только я к врачу на след неделе,на этой как быть?отдохнуть пока?"
+    ),
+    "30 failed: Elena thanks message must not be treated as pain/negative."
+  );
+  assert(
+    !/после пробежки.*боль/iu.test(elenaFalsePostRunNegativeText),
+    "30 failed: Elena must not render false post-run pain copy."
+  );
+  assert(
+    /первая пробежка выполнена/iu.test(elenaFalsePostRunNegativeText) &&
+      /новых жалоб после неё нет/iu.test(elenaFalsePostRunNegativeText),
+    "30 failed: Elena should render fresh recovery monitoring overlay."
   );
 
   console.log(`${LOG_PREFIX} PASS`);

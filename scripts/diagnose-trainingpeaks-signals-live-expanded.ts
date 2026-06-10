@@ -16,6 +16,9 @@ import {
   buildOperationalSignalDisplayEvidenceMap,
   buildTrainingPeaksOperationalSignalsSnapshotFromSignals,
   formatTrainingPeaksOperationalSignalsForTelegram,
+  resolveEffectiveOperationalSignalForDisplay,
+  resolveOperationalSignalDisplayDebugInfo,
+  resolveOperationalSignalDisplayLifecycleState,
   resolveOperationalSignalDisplaySummary,
   type TrainingPeaksOperationalSignalDisplayEvidence,
   type TrainingPeaksOperationalSignalsItem,
@@ -82,6 +85,16 @@ type TriageRow = {
   recommended_fix_type: RecommendedFixType;
   confidence: string | null;
   safety_notes: string;
+  latest_negative_observation_id: string | null;
+  latest_negative_observed_at: string | null;
+  latest_negative_source_type: string | null;
+  latest_negative_text_preview: string | null;
+  negative_after_completion: string;
+  completion_workout_id: string | null;
+  completion_date: string | null;
+  completion_started_at: string | null;
+  completion_completed_at: string | null;
+  display_branch_used: string | null;
 };
 
 function loadLocalEnvFiles(): void {
@@ -499,6 +512,16 @@ function printTable(rows: TriageRow[]): void {
     "recommended_fix_type",
     "confidence",
     "safety_notes",
+    "latest_negative_observation_id",
+    "latest_negative_observed_at",
+    "latest_negative_source_type",
+    "latest_negative_text_preview",
+    "negative_after_completion",
+    "completion_workout_id",
+    "completion_date",
+    "completion_started_at",
+    "completion_completed_at",
+    "display_branch_used",
   ];
   console.log(columns.join("\t"));
   for (const row of rows) {
@@ -668,6 +691,24 @@ async function run(): Promise<void> {
       null;
     const displayText = projectedItem?.text ?? null;
     const displayOrder = projectedItem ? fullItems.findIndex((item) => item.signalId === signal.id) + 1 : null;
+    const displayEvidence = displayEvidenceBySignalId.get(signal.id) ?? null;
+    const effective = resolveEffectiveOperationalSignalForDisplay(signal);
+    const displaySummaryForDebug =
+      resolveOperationalSignalDisplaySummary(
+        signal,
+        getSignalMetadataString(signal.metadata, "follow_up_reason")
+      ) ??
+      normalizeRecordString(signal.metadata.summary) ??
+      "контекст: полный текст недоступен в signal payload";
+    const displayDebug = resolveOperationalSignalDisplayDebugInfo({
+      signal,
+      effective,
+      summary: displaySummaryForDebug,
+      lifecycleDisplayState:
+        projectedItem?.lifecycleDisplayState ?? resolveOperationalSignalDisplayLifecycleState(signal),
+      evidence: displayEvidence,
+      asOfDate: options.asOfDate,
+    });
     const recommendedFixType = resolveRecommendedFixType({
       signal,
       lifecycleCurrent,
@@ -726,6 +767,16 @@ async function run(): Promise<void> {
       recommended_fix_type: recommendedFixType,
       confidence: signal.confidence === null ? null : String(signal.confidence),
       safety_notes: "read-only diagnostic; no lifecycle apply",
+      latest_negative_observation_id: displayDebug.latestNegativeObservationId,
+      latest_negative_observed_at: displayDebug.latestNegativeObservedAt,
+      latest_negative_source_type: displayDebug.latestNegativeSourceType,
+      latest_negative_text_preview: displayDebug.latestNegativeTextPreview,
+      negative_after_completion: displayDebug.negativeAfterCompletion ? "yes" : "no",
+      completion_workout_id: displayDebug.completionWorkoutId,
+      completion_date: displayDebug.completionDate,
+      completion_started_at: displayDebug.completionStartedAt,
+      completion_completed_at: displayDebug.completionCompletedAt,
+      display_branch_used: displayDebug.displayBranchUsed,
     });
   }
 
@@ -770,6 +821,27 @@ async function run(): Promise<void> {
     });
   }
   printRootCauseSummary(rows);
+  if (options.student) {
+    console.log("");
+    console.log("=== DISPLAY EVIDENCE (filtered student) ===");
+    for (const row of rows) {
+      console.log(
+        [
+          `signal_id=${row.signal_id}`,
+          `display_branch_used=${row.display_branch_used ?? "none"}`,
+          `latest_negative_observation_id=${row.latest_negative_observation_id ?? "none"}`,
+          `latest_negative_observed_at=${row.latest_negative_observed_at ?? "none"}`,
+          `latest_negative_source_type=${row.latest_negative_source_type ?? "none"}`,
+          `latest_negative_text_preview=${row.latest_negative_text_preview ?? "none"}`,
+          `negative_after_completion=${row.negative_after_completion}`,
+          `completion_workout_id=${row.completion_workout_id ?? "none"}`,
+          `completion_date=${row.completion_date ?? "none"}`,
+          `completion_started_at=${row.completion_started_at ?? "none"}`,
+          `completion_completed_at=${row.completion_completed_at ?? "none"}`,
+        ].join("\t")
+      );
+    }
+  }
 }
 
 if (process.argv[1] && process.argv[1].endsWith("diagnose-trainingpeaks-signals-live-expanded.ts")) {
