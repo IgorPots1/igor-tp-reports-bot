@@ -206,7 +206,7 @@ async function run(): Promise<void> {
   assert.doesNotMatch(combinedDraft, /—|–|TrainingPeaks|FatSecret/, "combined draft must be Telegram-clean");
   assert.doesNotMatch(
     combinedDraft,
-    /Комментарий:|можно дать|указать факт|hint|source_quality|Собрала|\d+\.\d+\s*г/,
+    /Комментарий:|можно дать|указать факт|hint|source_quality|Собрала|\d+\.\d+\s*г|Данные по питанию за день неполные|вывод короткий|день без тренировки в план тренировок|день без тренировки в TrainingPeaks/,
     "combined draft must not leak internal hints or raw decimal macros"
   );
   assert.match(combinedDraft, /На следующем разборе посмотрим, как это отразится на энергии и восстановлении\./);

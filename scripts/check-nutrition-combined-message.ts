@@ -44,8 +44,8 @@ function buildReview(status: NutritionWeeklyAnalysis["status"] = "draft_generate
           carbs_g_per_kg: 3.839,
           nutrition_status: "rest_ok",
           hint_for_comment: "Нагрузка и питание в целом согласованы; можно дать краткий поддерживающий комментарий.",
-          findings: ["rest_day_macro_distribution"],
-          source_quality: { confidence: "high" },
+          findings: ["rest_day_macro_distribution", "protein_sufficient"],
+          source_quality: { confidence: "low", hasNutritionData: true, hasTrainingContext: false, notes: ["missing_training_context"] },
         },
         {
           date: "2026-06-07",
@@ -183,12 +183,13 @@ async function run(): Promise<void> {
   assert.doesNotMatch(ready.athleteMessageDraft ?? "", /~1950 ккал|2487 ккал|214\.69|104\.2|\d+\.\d+\s*г/, "athlete copy must avoid raw technical numbers");
   assert.match(ready.athleteMessageDraft ?? "", /~2500 ккал/, "actual kcal must be rounded for athlete text");
   assert.match(ready.athleteMessageDraft ?? "", /~3,8 г\/кг/, "g/kg must be formatted with comma and one decimal");
-  assert.match(ready.athleteMessageDraft ?? "", /🔹 Понедельник \(01\.06\) - день отдыха/, "must include canonical day-by-day block");
-  assert.match(ready.athleteMessageDraft ?? "", /🔹 Воскресенье \(07\.06\) - длительная/, "long_run daily label must be athlete-safe");
-  assert.doesNotMatch(ready.athleteMessageDraft ?? "", /Воскресенье \(07\.06\) - Бег по пульсу/, "long_run daily label must not expose generic TP title");
+  assert.match(ready.athleteMessageDraft ?? "", /🔹 Понедельник \(01\.06\) · день отдыха/, "must include canonical day-by-day block");
+  assert.match(ready.athleteMessageDraft ?? "", /День отдыха получился спокойным/, "rest day must render natural non-caution text");
+  assert.match(ready.athleteMessageDraft ?? "", /🔹 Воскресенье \(07\.06\) · длительная/, "long_run daily label must be athlete-safe");
+  assert.doesNotMatch(ready.athleteMessageDraft ?? "", /Воскресенье \(07\.06\) · Бег по пульсу/, "long_run daily label must not expose generic TP title");
   assert.doesNotMatch(
     ready.athleteMessageDraft ?? "",
-    /Комментарий:|можно дать|указать факт|hint|source_quality|по качеству данных здесь возможна неполная картина|по этому дню вывод делаю осторожно|данных может быть чуть меньше|Собрала|\*\*|---|—|–|TrainingPeaks|FatSecret/,
+    /Комментарий:|можно дать|указать факт|hint|source_quality|по качеству данных здесь возможна неполная картина|по этому дню вывод делаю осторожно|данных может быть чуть меньше|Данные по питанию за день неполные|вывод короткий|день без тренировки в план тренировок|день без тренировки в TrainingPeaks|Собрала|\*\*|---|—|–|TrainingPeaks|FatSecret/,
     "combined message must not leak internal hints or markdown separators"
   );
   assert.equal((ready.athleteMessageDraft ?? "").match(/Анна, привет!/g)?.length, 1, "combined message must have one greeting");
@@ -245,13 +246,45 @@ async function run(): Promise<void> {
     formality: "ty",
     studentName: "Nadezhda Ponomareva",
   });
-  assert.match(methodologyCombined.athleteMessageDraft ?? "", /🔹 Понедельник \(01\.06\) - день отдыха/);
+  assert.match(methodologyCombined.athleteMessageDraft ?? "", /🔹 Понедельник \(01\.06\) · день отдыха/);
   assert.doesNotMatch(
     methodologyCombined.athleteMessageDraft ?? "",
     /Комментарий:|можно дать|103\.58|206\.93|Привет!/,
     "methodology daily_analysis must render polished combined lines without stored review draft leakage"
   );
   assert.equal(methodologyCombined.warnings.length, 0, "methodology daily_analysis must not warn about missing canonical facts");
+
+  const actualNutritionIssueReview = buildReview();
+  actualNutritionIssueReview.nutritionSummary = {
+    ...asObject(actualNutritionIssueReview.nutritionSummary),
+    daily_analysis: [
+      {
+        date: "2026-06-01",
+        weekday_ru: "Понедельник",
+        date_label: "01.06",
+        training_type: "rest",
+        training_label: "день отдыха",
+        actual_kcal: 1800,
+        protein_g: 90,
+        fat_g: 60,
+        carbs_g: 0,
+        nutrition_status: "adequate",
+        findings: [],
+        source_quality: { confidence: "low", hasNutritionData: false, hasTrainingContext: false, notes: ["missing_nutrition_data"] },
+      },
+    ],
+  };
+  const actualNutritionIssueCombined = buildDerivedNutritionCombinedMessage({
+    review: actualNutritionIssueReview,
+    plan,
+    formality: "ty",
+    studentName: "Анна",
+  });
+  assert.match(
+    actualNutritionIssueCombined.athleteMessageDraft ?? "",
+    /Данные по питанию за день неполные/,
+    "actual nutrition data issue may render incomplete-data caution"
+  );
 
   const coachDayByDay = buildDerivedNutritionCoachDayByDayText(methodologyReview);
   assert.ok(coachDayByDay, "coach day-by-day must render from methodology daily_analysis");

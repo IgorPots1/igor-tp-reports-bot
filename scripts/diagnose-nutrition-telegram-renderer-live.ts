@@ -69,6 +69,10 @@ function asNumber(value: unknown): number | null {
   return null;
 }
 
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
 function yesNo(value: boolean): string {
   return value ? "yes" : "no";
 }
@@ -142,6 +146,38 @@ function resolveFinalLabel(day: Record<string, unknown>): string {
   return distanceMatch ? `длительная ${distanceMatch[1].replace(".", ",")} км` : "длительная";
 }
 
+function hasNutritionCompletenessIssue(source: Record<string, unknown>): boolean {
+  const sourceQuality = toObject(source.sourceQuality ?? source.source_quality);
+  const actual = toObject(source.actual);
+  const nutritionStatus = asString(source.nutritionStatus ?? source.nutrition_status);
+  const findings = asStringArray(source.findings);
+  const kcal = asNumber(actual.kcal ?? source.actual_kcal ?? source.kcal);
+  const protein = asNumber(actual.proteinG ?? source.protein_g ?? source.proteinG);
+  const fat = asNumber(actual.fatG ?? source.fat_g ?? source.fatG);
+  const carbs = asNumber(actual.carbsG ?? source.carbs_g ?? source.carbsG);
+  if (nutritionStatus === "suspect") {
+    return true;
+  }
+  if (sourceQuality.hasNutritionData === false) {
+    return true;
+  }
+  if (kcal == null || protein == null || fat == null || carbs == null) {
+    return true;
+  }
+  if (kcal === 0 || protein === 0 || fat === 0 || carbs === 0) {
+    return true;
+  }
+  if (findings.includes("suspect_macro_values")) {
+    return true;
+  }
+  const notes = asStringArray(sourceQuality.notes).map((note) => note.toLowerCase());
+  return notes.some((note) =>
+    /missing_nutrition|missing_daily_macros|nutrition_source_confidence_low|parse_confidence_low|low_confidence_pdf_parse|suspect_macro|suspect_kcal|suspect_zero_macros|partial_week/.test(
+      note
+    )
+  );
+}
+
 function printRelevantPlanDays(plan: NutritionWeeklyPlan | null): void {
   const days = getNextWeekPlanDays(plan);
   const longRunTarget = getLongRunTargetKcal(plan);
@@ -182,6 +218,28 @@ function printRelevantDailyAnalysis(review: NutritionWeeklyAnalysis): void {
     console.log(`  resolved day type: ${dayType}`);
     console.log(`  resolved final label: ${resolveFinalLabel(source)}`);
     console.log(`  source object keys: ${Object.keys(source).sort().join(", ")}`);
+  }
+}
+
+function printNutritionCompleteness(review: NutritionWeeklyAnalysis, renderedText: string): void {
+  for (const item of getDailyAnalysis(review)) {
+    const canonical = toObject(item.canonicalDailyAnalysis ?? item.canonical_daily_analysis);
+    const source = Object.keys(canonical).length > 0 ? canonical : item;
+    const sourceQuality = toObject(source.sourceQuality ?? source.source_quality);
+    const date = asString(source.date) ?? "none";
+    const dateLabel = asString(source.dateLabel ?? source.date_label) ?? date;
+    const renderedBlock = renderedText
+      .split(/\n(?=🔹 )/)
+      .find((block) => block.includes(`(${dateLabel})`) || block.includes(date)) ?? "";
+    console.log(`- ${date}:`);
+    console.log(`  hasNutritionData: ${String(sourceQuality.hasNutritionData ?? "unknown")}`);
+    console.log(`  hasTrainingContext: ${String(sourceQuality.hasTrainingContext ?? "unknown")}`);
+    console.log(`  sourceQuality confidence: ${asString(sourceQuality.confidence) ?? "unknown"}`);
+    console.log(`  sourceQuality notes: ${asStringArray(sourceQuality.notes).join(", ") || "none"}`);
+    console.log(`  hasNutritionCompletenessIssue: ${yesNo(hasNutritionCompletenessIssue(source))}`);
+    console.log(
+      `  rendered incomplete-data sentence?: ${yesNo(/Данные по питанию за день неполные|вывод короткий/.test(renderedBlock))}`
+    );
   }
 }
 
@@ -289,6 +347,11 @@ async function main(): Promise<void> {
 
   console.log("Long-run relevant source data: daily analysis");
   printRelevantDailyAnalysis(review);
+  console.log("");
+
+  console.log("Nutrition completeness:");
+  printNutritionCompleteness(review, renderedText);
+  console.log(`- rendered incomplete-data sentence count: ${(renderedText.match(/Данные по питанию за день неполные|вывод короткий/g) ?? []).length}`);
   console.log("");
 
   console.log("Final rendered text:");

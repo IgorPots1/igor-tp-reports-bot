@@ -263,7 +263,7 @@ assert.match(text, /^Надя, привет!/);
 assert.doesNotMatch(text, /прошл[а-я]+\s+недел|по сравнению с прошл/i, "must omit comparison without context");
 assert.doesNotMatch(
   text,
-  /TrainingPeaks|FatSecret|—|–|\*\*|```|Комментарий:|можно дать|hint_for_comment|source_quality|по этому дню вывод делаю осторожно|данных может быть чуть меньше/
+  /TrainingPeaks|FatSecret|—|–|\*\*|```|Комментарий:|можно дать|hint_for_comment|source_quality|по этому дню вывод делаю осторожно|данных может быть чуть меньше|Данные по питанию за день неполные|вывод короткий|день без тренировки в план тренировок|день без тренировки в TrainingPeaks/
 );
 assert.match(text, /Воскресенье \(14\.06\) · длительная · ~2500 ккал/, "Sunday long run label must be deterministic");
 assert.doesNotMatch(text, /Воскресенье \(14\.06\) · Бег по пульсу/, "Sunday long run must not expose generic TP label");

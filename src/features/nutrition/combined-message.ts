@@ -224,14 +224,13 @@ function renderNutritionDayComment(input: {
   kcal: number;
   carbs: number;
   carbsPerKg: number | null;
-  sourceConfidence: string | null;
+  hasNutritionCompletenessIssue: boolean;
   findings: string[];
 }): string {
   const carbsText = formatNutritionAthleteMacro(input.carbs, { approximate: true });
   const kcalText = formatNutritionAthleteKcal(input.kcal, { mode: "actual" });
   const carbsKgText = input.carbsPerKg != null ? ` (${formatNutritionAthletePerKg(input.carbsPerKg)})` : "";
-  const lowQuality = input.sourceConfidence === "low";
-  const cautiousPrefix = lowQuality ? "Данные по питанию за день неполные, поэтому вывод короткий. " : "";
+  const cautiousPrefix = input.hasNutritionCompletenessIssue ? "Данные по питанию за день неполные, поэтому вывод короткий. " : "";
 
   if (input.nutritionStatus === "pre_long_low") {
     return `${cautiousPrefix}Это день перед длительной: углеводов получилось около ${carbsText}${carbsKgText}. Для такой подготовки это нижняя граница, поэтому накануне длинной работы лучше не просаживать углеводы.`;
@@ -246,9 +245,10 @@ function renderNutritionDayComment(input: {
     return "Данные по питанию за день выглядят неполными или нетипичными, поэтому здесь лучше проверить исходный отчёт вручную.";
   }
   if (input.trainingType === "rest") {
-    return lowQuality
-      ? `${cautiousPrefix}День отдыха. По питанию явного конфликта с нагрузкой не видно.`
-      : `День отдыха. По питанию всё спокойно, явного конфликта с нагрузкой нет.`;
+    if (input.findings.includes("protein_sufficient")) {
+      return `${cautiousPrefix}День отдыха получился спокойным: белок закрыт хорошо, явного конфликта между питанием и нагрузкой нет.`;
+    }
+    return `${cautiousPrefix}День отдыха. По питанию всё спокойно, здесь ничего специально менять не нужно.`;
   }
   if (input.trainingType === "easy") {
     return `${cautiousPrefix}Под лёгкую работу день выглядит нормально: энергии и углеводов достаточно, здесь ничего специально менять не нужно.`;
@@ -266,11 +266,55 @@ function renderNutritionDayComment(input: {
 }
 
 function resolveDailyTrainingLabelForAthlete(trainingType: string, trainingLabel: string): string {
+  if (trainingType === "rest" || /день без тренировки/i.test(trainingLabel)) {
+    return "день отдыха";
+  }
   if (trainingType !== "long_run") {
     return trainingLabel;
   }
   const distanceMatch = trainingLabel.match(/(\d+(?:[,.]\d+)?)\s*(?:км|km)\b/i);
   return distanceMatch ? `длительная ${distanceMatch[1].replace(".", ",")} км` : "длительная";
+}
+
+function hasNutritionCompletenessIssue(input: {
+  sourceQuality: Record<string, unknown>;
+  nutritionStatus: string | null;
+  findings: string[];
+  kcal: number | null;
+  protein: number | null;
+  fat: number | null;
+  carbs: number | null;
+}): boolean {
+  if (input.nutritionStatus === "suspect") {
+    return true;
+  }
+  const hasNutritionData = input.sourceQuality.hasNutritionData;
+  if (hasNutritionData === false) {
+    return true;
+  }
+  if (input.kcal == null || input.protein == null || input.fat == null || input.carbs == null) {
+    return true;
+  }
+  if (input.kcal === 0 || input.protein === 0 || input.fat === 0 || input.carbs === 0) {
+    return true;
+  }
+  if (input.findings.includes("suspect_macro_values")) {
+    return true;
+  }
+  const notes = asStringArray(input.sourceQuality.notes).map((note) => note.toLowerCase());
+  return notes.some((note) =>
+    /missing_nutrition|missing_daily_macros|nutrition_source_confidence_low|parse_confidence_low|low_confidence_pdf_parse|suspect_macro|suspect_kcal|suspect_zero_macros|partial_week/.test(
+      note
+    )
+  );
+}
+
+function formatRussianList(items: string[]): string {
+  const unique = [...new Set(items)];
+  if (unique.length <= 1) {
+    return unique.join("");
+  }
+  return `${unique.slice(0, -1).join(", ")} и ${unique[unique.length - 1]}`;
 }
 
 function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
@@ -302,7 +346,6 @@ function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
             ? item.nutritionStatus
             : null;
       const sourceQuality = asObject(item.source_quality) ?? asObject(item.sourceQuality);
-      const sourceConfidence = typeof sourceQuality.confidence === "string" ? sourceQuality.confidence : null;
       if (!weekday || !dateLabel || kcal == null || protein == null || fat == null || carbs == null) {
         return null;
       }
@@ -314,11 +357,19 @@ function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
         kcal,
         carbs,
         carbsPerKg,
-        sourceConfidence,
+        hasNutritionCompletenessIssue: hasNutritionCompletenessIssue({
+          sourceQuality,
+          nutritionStatus,
+          findings,
+          kcal,
+          protein,
+          fat,
+          carbs,
+        }),
         findings,
       });
       const carbsKgText = carbsPerKg != null ? ` (${formatNutritionAthletePerKg(carbsPerKg)})` : "";
-      return `🔹 ${weekday} (${dateLabel}) — ${athleteTrainingLabel}
+      return `🔹 ${weekday} (${dateLabel}) · ${athleteTrainingLabel}
 ${formatNutritionAthleteKcal(kcal, { mode: "actual" })} · белок ${formatNutritionAthleteMacro(protein)} · жиры ${formatNutritionAthleteMacro(fat)} · углеводы ${formatNutritionAthleteMacro(carbs)}${carbsKgText}.
 ${comment}`;
     })
@@ -354,7 +405,7 @@ function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
     const good = proteinSufficient ? "По белку всё спокойно — восстановление здесь закрыто хорошо." : "По базовой структуре недели есть на что опереться.";
     const pattern =
       lowCarbKeyDays.length > 0
-        ? `Главный момент недели — распределение углеводов и энергии: самые заметные просадки пришлись на ${[...new Set(lowCarbKeyDays)].join(", ")}.`
+        ? `Главный момент недели — распределение углеводов и энергии; самые заметные просадки: ${formatRussianList(lowCarbKeyDays)}.`
         : "Главный момент недели — держать энергию ровнее вокруг ключевых тренировок.";
     return `${good} ${pattern} Не утверждаю, что самочувствие зависело только от этого, но это могло повлиять на запас энергии и восстановление. Фокус — не снижать углеводы перед длинной или ключевой работой.`;
   }
