@@ -359,6 +359,16 @@ async function run(): Promise<void> {
         signal_types: ["plan_generation_constraint"],
       },
     },
+    {
+      name: "episode-completed-run-with-future-unavailability-keeps-schedule-candidate",
+      observation: {
+        ...mkObs("Сегодня побегала, но на этой неделе больше не смогу бегать."),
+        observedAt: "2026-06-04T10:00:00.000Z",
+      },
+      expected: {
+        signal_types: ["pause_training", "plan_generation_constraint"],
+      },
+    },
   ];
   const cases: CaseDef[] = [
     {
@@ -1422,6 +1432,136 @@ async function run(): Promise<void> {
         planned_training_dates: ["2026-06-05"],
         valid_until: "2026-06-05",
         planning_status: "athlete_intends_to_train",
+      },
+    },
+    {
+      name: "olga-completed-run-reflection-not-schedule",
+      observation: {
+        ...mkObs(
+          "Здравствуйте. Сегодня побегала, но 45 минут опять не смогла((( Я думаю может меня пока немного откатить назад."
+        ),
+        observedAt: "2026-06-10T06:09:58.147Z",
+      },
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "completed-run-reflection-45-min-failed",
+      observation: mkObs("Сегодня побегала, но 45 минут не получилось."),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "completed-run-reflection-load-rollback-request",
+      observation: mkObs("Вчера бегала, 50 минут не смогла удержать, можно немного откатить нагрузку?"),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "completed-run-reflection-did-not-reach-duration",
+      observation: mkObs("Сегодня пробежала, но не добежала до 45 минут."),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "completed-run-reflection-question-not-schedule",
+      observation: mkObs("Сегодня бегала перед завтраком, не могу понять как лучше."),
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "completed-run-then-future-unavailability-still-schedule",
+      observation: {
+        ...mkObs("Сегодня побегала, но на этой неделе больше не смогу бегать."),
+        observedAt: "2026-06-04T10:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "pause_training",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "failed-duration-until-sunday-no-run-still-schedule",
+      observation: {
+        ...mkObs("45 минут не получилось, до воскресенья лучше без бега."),
+        observedAt: "2026-06-04T10:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "completed-run-then-next-days-unavailable-still-schedule",
+      observation: {
+        ...mkObs("Вчера побегала, но ближайшие дни не смогу тренироваться."),
+        observedAt: "2026-06-04T10:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "today-cannot-run-reschedule-tomorrow-still-schedule",
+      observation: {
+        ...mkObs("Сегодня не смогу побегать, перенеси на завтра."),
+        observedAt: "2026-06-04T10:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "coach_case",
+        signal_type: "move_workout_candidate",
+        should_create_memory: false,
+        should_create_case: true,
+        should_create_trainingpeaks_action: true,
+      },
+    },
+    {
+      name: "this-week-short-runs-environment-still-schedule",
+      observation: {
+        ...mkObs("На этой неделе могу только короткие, песок и горки тяжело даются."),
+        observedAt: "2026-06-04T10:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
       },
     },
     {

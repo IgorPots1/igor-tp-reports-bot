@@ -405,7 +405,7 @@ const NON_TRAINING_INABILITY_PHRASES = [
   "не смогу выбрать",
 ] as const;
 
-const EXPLICIT_TRAINING_UNAVAILABILITY_CUES = [
+const EXPLICIT_FUTURE_TRAINING_UNAVAILABILITY_CUES = [
   "не смогу бегать",
   "не могу бегать",
   "не смогу побегать",
@@ -418,13 +418,30 @@ const EXPLICIT_TRAINING_UNAVAILABILITY_CUES = [
   "не побегу",
   "не смогу убежать",
   "не могу убежать",
-  "не смогла",
-  "не смог",
-  "не смогли",
+  "не буду бегать",
+  "без бега",
+  "лучше без бега",
 ] as const;
 
-function hasTrainingUnavailabilityCue(text: string): boolean {
-  if (hasAny(text, EXPLICIT_TRAINING_UNAVAILABILITY_CUES)) {
+function hasPastTenseUnableToCompleteCue(text: string): boolean {
+  return /(?:^|[^\p{L}])не\s+смог(?:ла|л|ли)?(?:\s|$|[^\p{L}])/iu.test(text);
+}
+
+function hasPastWorkoutOutcomeFailureCue(text: string): boolean {
+  return (
+    /(?:^|[^\p{L}])не\s+получилось(?:\s|$|[^\p{L}])/iu.test(text) ||
+    /не\s+\u0434\u043e\u0431\u0435\u0436\u0430\u043b(?:а|и|о)?(?:\s|$|[^\p{L}])/iu.test(text) ||
+    /(?:^|[^\p{L}])\d+\s*(?:минут|мин)(?:\.|,|\s|[^\p{L}]).{0,48}не\s+смог(?:ла|л|ли)?/iu.test(text) ||
+    /не\s+смог(?:ла|л|ли)?\s*(?:выполнить|удержать|удержал)/iu.test(text)
+  );
+}
+
+function hasPastOrSameDayDateCue(text: string): boolean {
+  return hasToken(text, "сегодня") || hasToken(text, "вчера");
+}
+
+function hasExplicitFutureScheduleUnavailabilityCue(text: string): boolean {
+  if (hasAny(text, EXPLICIT_FUTURE_TRAINING_UNAVAILABILITY_CUES)) {
     return true;
   }
   if (!hasAny(text, ["не смогу", "не могу", "не получится", "недоступ"])) {
@@ -433,7 +450,45 @@ function hasTrainingUnavailabilityCue(text: string): boolean {
   if (NON_TRAINING_INABILITY_PHRASES.some((phrase) => text.includes(phrase))) {
     return false;
   }
+  if (hasScheduleDateCue(text)) {
+    return true;
+  }
   return hasRunningCue(text) || hasAny(text, ["трениров", "найду время"]);
+}
+
+function hasTrainingUnavailabilityCue(text: string): boolean {
+  return hasExplicitFutureScheduleUnavailabilityCue(text);
+}
+
+export function isCompletedRunReflectionNotScheduleConstraint(text: string | null): boolean {
+  const normalized = normalize(text);
+  if (!normalized) {
+    return false;
+  }
+  if (hasExplicitFutureScheduleUnavailabilityCue(normalized)) {
+    return false;
+  }
+  if (
+    hasAny(normalized, [
+      "на этой неделе больше не",
+      "ближайшие дни не",
+      "перенеси на завтра",
+      "перенести на завтра",
+    ])
+  ) {
+    return false;
+  }
+
+  const hasCompletedRun = hasPastCompletedRunCue(normalized);
+  const hasFailure =
+    hasPastWorkoutOutcomeFailureCue(normalized) ||
+    (hasPastTenseUnableToCompleteCue(normalized) && (hasCompletedRun || hasRunningCue(normalized)));
+
+  if (!hasCompletedRun || !hasFailure) {
+    return false;
+  }
+
+  return hasPastOrSameDayDateCue(normalized);
 }
 
 function hasPastCompletedRunCue(text: string): boolean {
@@ -1578,7 +1633,15 @@ function hasScheduleDateCue(text: string): boolean {
       "на следующей неделе",
       "на след неделе",
       "следующей неделе",
+      "ближайшие дни",
     ])
+  ) {
+    return true;
+  }
+  if (
+    /до\s+(?:понедельника|вторника|среды|четверга|пятницы|субботы|воскресенья|вскр|завтра|послезавтра|\d{1,2}(?:[./]\d{1,2})?)/iu.test(
+      text
+    )
   ) {
     return true;
   }
@@ -2240,6 +2303,9 @@ function buildScheduleCandidate(
     };
   }
   if (hasLogisticsCue && hasDateConstraint) {
+    if (isCompletedRunReflectionNotScheduleConstraint(text)) {
+      return null;
+    }
     payload.activity_domain = hasRunningCue(text) ? "running" : "life_schedule";
     payload.planning_effect = "run_unavailable";
     payload.evidence_level = "possible_schedule";
@@ -2313,6 +2379,33 @@ function buildScheduleCandidate(
       should_create_trainingpeaks_action: false,
       confidence: text.includes("можно") ? "medium" : "high",
       reason: "bounded schedule window detected",
+    };
+  }
+
+  if (
+    days.length === 0 &&
+    hasScheduleDateCue(text) &&
+    scheduleAvailability &&
+    !scheduleUnavailability &&
+    !isCompletedRunReflectionNotScheduleConstraint(text)
+  ) {
+    payload.activity_domain = hasRunningCue(text) ? "running" : "life_schedule";
+    payload.planning_effect = "context_only";
+    payload.evidence_level = "possible_schedule";
+    payload.date_certainty = "probable";
+    payload.visible_in_tp_signals = true;
+    payload.latest_summary = buildDateBasedScheduleSummary(text) ?? text;
+    finalizeSchedulePayload(text, input.observedAt, payload);
+    return {
+      primary_bucket: "operational_signal",
+      secondary_buckets: [],
+      signal_type: "plan_generation_constraint",
+      structured_payload: payload,
+      should_create_memory: false,
+      should_create_case: false,
+      should_create_trainingpeaks_action: false,
+      confidence: "medium",
+      reason: "week-scoped training availability without explicit weekdays",
     };
   }
 

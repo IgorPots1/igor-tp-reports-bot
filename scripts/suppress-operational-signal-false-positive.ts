@@ -177,7 +177,7 @@ function resolveReason(options: CliOptions, sourceText: string | null): FalsePos
     const normalized = normalizeFalsePositiveSuppressionReason(options.reason);
     if (!normalized) {
       throw new Error(
-        `${LOG_PREFIX} FAIL: invalid --reason; expected negated_pain_cue, figurative_idiom, quoted_idiom, or manual_review`
+        `${LOG_PREFIX} FAIL: invalid --reason; expected negated_pain_cue, figurative_idiom, quoted_idiom, completed_run_reflection_not_schedule, or manual_review`
       );
     }
     return normalized;

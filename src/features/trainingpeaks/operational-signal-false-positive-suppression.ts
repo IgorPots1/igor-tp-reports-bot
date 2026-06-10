@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   classifyCoachOperationalSignal,
   classifyCoachOperationalSignals,
+  isCompletedRunReflectionNotScheduleConstraint,
   isFamilyMemberIllnessOnlyContext,
   type ObservationLike,
   type OperationalClassification,
@@ -18,6 +19,7 @@ export type FalsePositiveSuppressionReason =
   | "figurative_idiom"
   | "quoted_idiom"
   | "family_member_illness"
+  | "completed_run_reflection_not_schedule"
   | "manual_review";
 
 export type FalsePositiveSuppressionDecision = "allowed" | "refused";
@@ -42,7 +44,10 @@ const NEGATED_PAIN_PATTERNS = [
   /(?:^|[^\p{L}])боль\s+нет(?:\s|$|[^\p{L}])/iu,
 ] as const;
 
-const ELIGIBLE_FALSE_POSITIVE_SIGNAL_TYPES = new Set(["health_issue_started"]);
+const ELIGIBLE_FALSE_POSITIVE_SIGNAL_TYPES = new Set([
+  "health_issue_started",
+  "plan_generation_constraint",
+]);
 
 export function normalizeFalsePositiveSuppressionReason(
   reason: string
@@ -59,6 +64,12 @@ export function normalizeFalsePositiveSuppressionReason(
   }
   if (normalized === "family_member_illness" || normalized.includes("family_member")) {
     return "family_member_illness";
+  }
+  if (
+    normalized === "completed_run_reflection_not_schedule" ||
+    normalized.includes("completed_run_reflection")
+  ) {
+    return "completed_run_reflection_not_schedule";
   }
   if (normalized === "manual_review" || normalized.includes("manual")) {
     return "manual_review";
@@ -86,6 +97,9 @@ export function inferFalsePositiveSuppressionReason(text: string | null): FalseP
   }
   if (isFamilyMemberIllnessOnlyContext(text ?? "")) {
     return "family_member_illness";
+  }
+  if (isCompletedRunReflectionNotScheduleConstraint(text)) {
+    return "completed_run_reflection_not_schedule";
   }
   return null;
 }
@@ -117,9 +131,22 @@ export function wouldCreateHealthIssueSignal(
   return candidates.some((candidate) => candidate.signal_type === "health_issue_started");
 }
 
-export function isClassifierEligibleForFalsePositiveSuppression(
+export function wouldCreatePlanGenerationConstraintSignal(
   observation: TrainingPeaksTelegramContextObservation
 ): boolean {
+  const input = buildObservationLikeFromContextObservation(observation);
+  const candidates = classifyCoachOperationalSignals(input);
+  return candidates.some((candidate) => candidate.signal_type === "plan_generation_constraint");
+}
+
+export function isClassifierEligibleForFalsePositiveSuppression(
+  observation: TrainingPeaksTelegramContextObservation,
+  signalType?: string | null
+): boolean {
+  const effectiveSignalType = signalType ?? null;
+  if (effectiveSignalType === "plan_generation_constraint") {
+    return !wouldCreatePlanGenerationConstraintSignal(observation);
+  }
   return !wouldCreateHealthIssueSignal(observation);
 }
 
@@ -282,10 +309,13 @@ export function validateFalsePositiveSuppressionSafety(input: {
     };
   }
 
-  if (!isClassifierEligibleForFalsePositiveSuppression(observation)) {
+  if (!isClassifierEligibleForFalsePositiveSuppression(observation, signal.signalType)) {
     return {
       decision: "refused",
-      reason: `Current classifier would still create health_issue_started from this source text (bucket=${classification.primary_bucket}, signal_type=${classification.signal_type ?? "null"}).`,
+      reason:
+        signal.signalType === "plan_generation_constraint"
+          ? `Current classifier would still create plan_generation_constraint from this source text (bucket=${classification.primary_bucket}, signal_type=${classification.signal_type ?? "null"}).`
+          : `Current classifier would still create health_issue_started from this source text (bucket=${classification.primary_bucket}, signal_type=${classification.signal_type ?? "null"}).`,
     };
   }
 
