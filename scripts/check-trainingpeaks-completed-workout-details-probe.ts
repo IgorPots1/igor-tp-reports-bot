@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import {
   enforceGetOnlyMethod,
   parseProbeCliArgs,
@@ -158,6 +161,16 @@ function testReportRedaction(): void {
   assert(nested.sessionCookie === "[REDACTED]", "nested cookie-like key must be redacted");
 }
 
+function testProbeEntrypointLoadsScriptEnv(): void {
+  const probePath = path.join(process.cwd(), "scripts/probe-trainingpeaks-completed-workout-details.ts");
+  const source = fs.readFileSync(probePath, "utf8");
+  assert(
+    /import\s*\{[^}]*\bloadScriptEnv\b[^}]*\}\s*from\s*["']\.\/lib\/load-script-env["']/u.test(source),
+    "probe entrypoint must import loadScriptEnv from ./lib/load-script-env"
+  );
+  assert(/\bloadScriptEnv\s*\(\s*\)/u.test(source), "probe entrypoint must call loadScriptEnv()");
+}
+
 function testForbiddenStringsNotPresent(): void {
   // Static sanity to ensure this check is aware of forbidden paths from task contract.
   const forbidden = [
@@ -172,6 +185,7 @@ function testForbiddenStringsNotPresent(): void {
 }
 
 function run(): void {
+  testProbeEntrypointLoadsScriptEnv();
   testArgParsing();
   testGetGuard();
   testExtractorHappyPath();

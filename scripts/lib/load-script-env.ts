@@ -53,6 +53,10 @@ export function loadScriptEnv(): void {
   }
 }
 
+export function hasTrainingPeaksApiBearer(): boolean {
+  return Boolean(process.env.TRAININGPEAKS_API_BEARER?.trim());
+}
+
 export function getSupabaseEnvStatus(): { hasUrl: boolean; hasServiceKey: boolean } {
   const supabaseUrl = getEnvValue("NEXT_PUBLIC_SUPABASE_URL") ?? getEnvValue("SUPABASE_URL");
   const serviceRoleKey = getEnvValue("SUPABASE_SERVICE_ROLE_KEY");

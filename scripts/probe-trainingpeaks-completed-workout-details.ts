@@ -4,8 +4,9 @@ import {
 } from "@/features/trainingpeaks/trainingpeaks-completed-workout-details-probe";
 import { loadScriptEnv } from "./lib/load-script-env";
 
+loadScriptEnv();
+
 async function main(): Promise<void> {
-  loadScriptEnv();
   const cli = parseProbeCliArgs(process.argv.slice(2));
   if (cli.help) {
     console.log("TrainingPeaks completed workout details probe (read-only)");
