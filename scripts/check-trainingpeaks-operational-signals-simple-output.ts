@@ -1197,6 +1197,119 @@ function run(): void {
     "26 failed: stale cold-only fallback must not win over continued illness context."
   );
 
+  const elenaReliableRunCompletion = {
+    workoutId: "3780367547",
+    workoutDate: "2026-06-09",
+    title: "Бег по темпу",
+    sportClass: "running_like" as const,
+    runningCompletionClass: "normal_planned_run" as const,
+    classificationConfidence: "high" as const,
+    classificationReasonCodes: [] as string[],
+    classificationInspectedFields: {},
+    plannedVsCompletedDelta: "on_plan" as const,
+    evidenceFreshness: "ok" as const,
+  };
+  const elenaRecoveryMonitoringEvidence = new Map([
+    [
+      "elena-recovery-monitoring",
+      {
+        completion: {
+          latestCompletionAfterOpen: elenaReliableRunCompletion,
+          latestCacheScannedAt: "2026-06-10T00:00:00.000Z",
+          recommendedAction: "monitor",
+          recommendationReason: "fixture",
+          applyDryRunCommand: null,
+          cleanRunningCompletionCount: 1,
+        },
+      },
+    ],
+  ]);
+  const elenaRecoveryMonitoringSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-10",
+    limit: 10,
+    studentNameById: new Map<string, string | null>([["elena-vasileva", "Elena Vasileva"]]),
+    signals: [
+      makeSignal({
+        signalId: "elena-recovery-monitoring",
+        studentId: "elena-vasileva",
+        signalType: "health_issue_started",
+        lifecycleState: "monitoring_after_return",
+        structuredPayload: {
+          display_summary: "после болезни: врач разрешил бег, завтра лёгкий выход",
+          latest_summary: "после болезни: врач разрешил бег, завтра лёгкий выход",
+        },
+      }),
+    ],
+    activeMoveActions: [],
+    displayEvidenceBySignalId: elenaRecoveryMonitoringEvidence,
+  });
+  const elenaRecoveryMonitoringText = formatTrainingPeaksOperationalSignalsForTelegram(
+    elenaRecoveryMonitoringSnapshot
+  );
+  assert(
+    elenaRecoveryMonitoringText.includes("Elena Vasileva") &&
+      /первая пробежка выполнена/iu.test(elenaRecoveryMonitoringText) &&
+      /09\.06/iu.test(elenaRecoveryMonitoringText) &&
+      /новых жалоб после неё нет/iu.test(elenaRecoveryMonitoringText) &&
+      /можно закрыть после проверки/iu.test(elenaRecoveryMonitoringText),
+    "27 failed: monitoring_after_return with reliable run should show fresh recovery overlay."
+  );
+  assert(
+    !/завтра лёгкий выход/iu.test(elenaRecoveryMonitoringText) &&
+      !/уточнить перед первой пробежкой/iu.test(elenaRecoveryMonitoringText),
+    "27 failed: stale return_planned copy must not leak into monitoring_after_return overlay."
+  );
+
+  const elenaNegativeAfterRunEvidence = new Map([
+    [
+      "elena-negative-after-run",
+      {
+        completion: {
+          latestCompletionAfterOpen: elenaReliableRunCompletion,
+          latestCacheScannedAt: "2026-06-10T00:00:00.000Z",
+          recommendedAction: "monitor",
+          recommendationReason: "fixture",
+          applyDryRunCommand: null,
+          cleanRunningCompletionCount: 1,
+        },
+        latestNegative: {
+          observedAt: "2026-06-10T08:00:00.000Z",
+          textPreview: "после пробежки снова температура",
+        },
+      },
+    ],
+  ]);
+  const elenaNegativeAfterRunSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-10",
+    limit: 10,
+    studentNameById: new Map<string, string | null>([["elena-vasileva", "Elena Vasileva"]]),
+    signals: [
+      makeSignal({
+        signalId: "elena-negative-after-run",
+        studentId: "elena-vasileva",
+        signalType: "health_issue_started",
+        lifecycleState: "monitoring_after_return",
+        structuredPayload: {
+          display_summary: "после болезни: врач разрешил бег, завтра лёгкий выход",
+        },
+      }),
+    ],
+    activeMoveActions: [],
+    displayEvidenceBySignalId: elenaNegativeAfterRunEvidence,
+  });
+  const elenaNegativeAfterRunText = formatTrainingPeaksOperationalSignalsForTelegram(
+    elenaNegativeAfterRunSnapshot
+  );
+  assert(
+    !/новых жалоб после неё нет/iu.test(elenaNegativeAfterRunText) &&
+      !/можно закрыть после проверки/iu.test(elenaNegativeAfterRunText),
+    "28 failed: negative message after completion must block fresh close-copy overlay."
+  );
+  assert(
+    /температур|держать на контроле/iu.test(elenaNegativeAfterRunText),
+    "28 failed: negative-after-run should stay problem-oriented."
+  );
+
   console.log(`${LOG_PREFIX} PASS`);
 }
 

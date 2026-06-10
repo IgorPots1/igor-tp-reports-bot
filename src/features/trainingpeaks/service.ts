@@ -184,6 +184,7 @@ import { formatOperationalSignalTelegramLine } from "@/features/trainingpeaks/te
 import {
   classifyTpWorkoutEvidence,
   evaluateOperationalSignalLifecycle,
+  hasReliableRunningCompletionAfterOpen,
   type EvidenceFreshness,
   type OperationalSignalClass,
   type OperationalSignalLifecycle,
@@ -6911,6 +6912,30 @@ function normalizeEmbeddedCoachActionSummary(summaryLine: string): string | null
   return joinCompactCoachSituationAndAction(situation, action.replace(/\.$/u, ""));
 }
 
+function shouldApplyFreshIllnessRecoveryMonitoringOverlay(input: {
+  isPain: boolean;
+  lifecycleDisplayState: OperationalSignalDisplayLifecycleState;
+  completion: OperationalSignalLifecycleInput["latestTpCompletionAfterOpen"];
+  latestNegativeText: string | null;
+}): boolean {
+  return (
+    !input.isPain &&
+    input.lifecycleDisplayState === "monitoring_after_return" &&
+    !input.latestNegativeText &&
+    hasReliableRunningCompletionAfterOpen(input.completion)
+  );
+}
+
+function buildFreshIllnessRecoveryMonitoringDisplayText(input: {
+  completion: NonNullable<OperationalSignalLifecycleInput["latestTpCompletionAfterOpen"]>;
+}): string {
+  const runDate = formatOperationalSignalShortDate(input.completion.workoutDate);
+  const title = input.completion.title?.trim();
+  const titlePart = title && title.length > 0 && title.length <= 40 ? ` («${title}»)` : "";
+  const datePart = runDate ? ` ${runDate}` : "";
+  return `после болезни: первая пробежка выполнена${datePart}${titlePart}, новых жалоб после неё нет — уточнить самочувствие / можно закрыть после проверки.`;
+}
+
 export function compactCoachFacingOperationalSignalText(input: {
   signal: TrainingPeaksStudentOperationalSignal;
   effective: EffectiveOperationalSignalForDisplay;
@@ -6953,12 +6978,33 @@ export function compactCoachFacingOperationalSignalText(input: {
     return embeddedCoachSummary;
   }
 
+  const completion = input.evidence?.completion ?? null;
+  const latest = completion?.latestCompletionAfterOpen ?? null;
+  const hasRunningCompletion = latest?.sportClass === "running_like";
+  const runDate = formatOperationalSignalShortDate(latest?.workoutDate);
+
+  if (
+    shouldApplyFreshIllnessRecoveryMonitoringOverlay({
+      isPain,
+      lifecycleDisplayState: input.lifecycleDisplayState,
+      completion: latest,
+      latestNegativeText,
+    }) &&
+    latest
+  ) {
+    return buildFreshIllnessRecoveryMonitoringDisplayText({ completion: latest });
+  }
+
   if (
     !isPain &&
     summaryAlreadyHasRecoveryPrefix(summaryLine) &&
     input.lifecycleDisplayState !== "ready_for_coach_close" &&
     input.lifecycleDisplayState !== "stale_needs_review" &&
-    !latestNegativeText
+    !latestNegativeText &&
+    !(
+      input.lifecycleDisplayState === "monitoring_after_return" &&
+      hasReliableRunningCompletionAfterOpen(latest)
+    )
   ) {
     const cleanedRecoverySummary = stripTrailingMonitoringObserve(summaryLine);
     if (
@@ -6971,11 +7017,6 @@ export function compactCoachFacingOperationalSignalText(input: {
       return cleanedRecoverySummary;
     }
   }
-
-  const completion = input.evidence?.completion ?? null;
-  const latest = completion?.latestCompletionAfterOpen ?? null;
-  const hasRunningCompletion = latest?.sportClass === "running_like";
-  const runDate = formatOperationalSignalShortDate(latest?.workoutDate);
   const contextText = normalizeOperationalSignalSemanticText([
     displaySourceText,
     latestPositiveText,
@@ -7069,6 +7110,14 @@ export function compactCoachFacingOperationalSignalText(input: {
   }
 
   if (hasRunningCompletion) {
+    if (
+      input.lifecycleDisplayState === "monitoring_after_return" &&
+      latest &&
+      hasReliableRunningCompletionAfterOpen(latest) &&
+      !latestNegativeText
+    ) {
+      return buildFreshIllnessRecoveryMonitoringDisplayText({ completion: latest });
+    }
     const runPart = runDate ? `пробежка ${runDate} была` : "пробежка была";
     if (input.lifecycleDisplayState === "monitoring_after_return") {
       return `после болезни: ${runPart} — проверить отчёт/самочувствие и закрыть, если всё ок.`;
