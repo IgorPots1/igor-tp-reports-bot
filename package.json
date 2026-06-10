@@ -115,6 +115,7 @@
     "diagnose-coach-operational-signals": "npx tsx scripts/diagnose-coach-operational-signals.ts",
     "diagnose-operational-signal-sources": "npx tsx scripts/diagnose-operational-signal-sources.ts",
     "diagnose-operational-signal-lifecycle": "npx tsx scripts/diagnose-operational-signal-lifecycle.ts",
+    "diagnose:operational-signals-ai-review": "npx tsx scripts/diagnose-operational-signals-ai-review.ts",
     "diagnose-trainingpeaks-attention-lifecycle-live": "npx tsx scripts/diagnose-trainingpeaks-attention-lifecycle-live.ts",
     "diagnose-trainingpeaks-signals-live-expanded": "npx tsx scripts/diagnose-trainingpeaks-signals-live-expanded.ts",
     "diagnose-operational-signal-episodes": "npx tsx scripts/diagnose-operational-signal-episodes.ts",
