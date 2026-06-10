@@ -5,6 +5,7 @@ export type NutritionPlanDayType =
   | "pre_long"
   | "long_run"
   | "strength"
+  | "cross_training"
   | "race"
   | "unknown";
 
@@ -50,6 +51,7 @@ export type NutritionNextWeekPlanDay = {
     pre_long: boolean;
     long_run: boolean;
     strength: boolean;
+    cross_training?: boolean;
     race: boolean;
     key_workout: boolean;
     day_before_long_run: boolean;
@@ -78,6 +80,7 @@ export type NutritionNextWeekPlan = {
     pre_long: NutritionDayTypeTarget | null;
     long_run: NutritionDayTypeTarget | null;
     strength: NutritionDayTypeTarget | null;
+    cross_training?: NutritionDayTypeTarget | null;
   };
   summary: {
     has_training_context: boolean;
@@ -119,6 +122,7 @@ const DAY_TYPE_PRIORITY: Record<NutritionPlanDayType, number> = {
   hard: 5,
   pre_long: 4,
   strength: 3,
+  cross_training: 3,
   easy: 2,
   rest: 1,
   unknown: 0,
@@ -131,6 +135,7 @@ const FORMULA_BY_DAY_TYPE: Partial<Record<NutritionPlanDayType, FormulaCoefficie
   pre_long: { kcalPerKg: 39, proteinPerKg: 1.6, fatPerKg: 1.15, carbsPerKg: 5.5 },
   long_run: { kcalPerKg: 45, proteinPerKg: 1.7, fatPerKg: 1.15, carbsPerKg: 7.0 },
   strength: { kcalPerKg: 39, proteinPerKg: 1.8, fatPerKg: 1.15, carbsPerKg: 5.2 },
+  cross_training: { kcalPerKg: 39, proteinPerKg: 1.6, fatPerKg: 1.15, carbsPerKg: 5.2 },
 };
 
 const GUIDANCE_BY_DAY_TYPE: Record<NutritionPlanDayType, string | null> = {
@@ -140,6 +145,7 @@ const GUIDANCE_BY_DAY_TYPE: Record<NutritionPlanDayType, string | null> = {
   pre_long: "День перед длительной: это не обычный отдых; важно не просадить углеводы за день.",
   long_run: "Длительная: заранее поддержать углеводы и после тренировки закрыть восстановление.",
   strength: "Силовая: держать белок и углеводы без сильной просадки.",
+  cross_training: "Кросс-тренировка: поддержать питание вокруг нагрузки, без пустого дня по энергии.",
   race: "Соревновательный день: не экспериментировать с питанием и держать проверенные схемы.",
   unknown: null,
 };
@@ -208,6 +214,9 @@ function isRunningWorkout(typeRaw: string | null, titleRaw: string | null): bool
   if (type === "strength" || /силов/.test(title)) {
     return false;
   }
+  if (type === "crosstrain" || type === "cross_training" || type === "bike" || type === "swim" || /\bpadel\b|падел/.test(title)) {
+    return false;
+  }
   if (type === "run" || type === "easy_run" || type === "long_run" || type === "intervals" || type === "tempo" || type === "race") {
     return true;
   }
@@ -235,6 +244,15 @@ function normalizeDayType(typeRaw: string | null, titleRaw: string | null): Nutr
   }
   if (type === "strength" || /силов/.test(haystack)) {
     return "strength";
+  }
+  if (
+    type === "crosstrain" ||
+    type === "cross_training" ||
+    type === "bike" ||
+    type === "swim" ||
+    /\bpadel\b|падел|cross.?train|crosstrain|bike|cycling|swim|плав|вело/.test(haystack)
+  ) {
+    return "cross_training";
   }
   if (
     type === "easy" ||
@@ -348,6 +366,9 @@ function getTrainingLabel(dayType: NutritionPlanDayType, workoutTitle: string | 
   if (dayType === "strength") {
     return "силовая";
   }
+  if (dayType === "cross_training") {
+    return "кросс-тренировка";
+  }
   if (dayType === "race") {
     return "соревнование";
   }
@@ -453,6 +474,7 @@ export function buildNutritionNextWeekPlan(params: {
         pre_long: trainingType === "pre_long",
         long_run: trainingType === "long_run",
         strength: trainingType === "strength",
+        cross_training: trainingType === "cross_training",
         race: trainingType === "race",
         key_workout: trainingType === "hard" || trainingType === "long_run" || trainingType === "race",
         day_before_long_run: dayBeforeLongRun,
@@ -484,6 +506,7 @@ export function buildNutritionNextWeekPlan(params: {
       pre_long: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "pre_long" }),
       long_run: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "long_run" }),
       strength: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "strength" }),
+      cross_training: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "cross_training" }),
     },
     summary: {
       has_training_context: hasTrainingContext,

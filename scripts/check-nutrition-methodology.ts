@@ -182,7 +182,8 @@ async function run(): Promise<void> {
 
   const focus = selectNutritionWeeklyFocus({ methodology, blockedSafety: false });
   assert.notEqual(focus.category, "protein_support", "protein cannot be one focus when sufficient");
-  assert.equal(focus.category, "long_run_underfueling");
+  assert.equal(focus.category, "energy_availability");
+  assert.equal(methodology.focusCandidateSignals.longRunUnderfueling, true);
   assert.equal(methodology.dailyAnalysis.some((day) => day.trainingType === "long_run" && day.duringRunFuelPlanned === false), true);
 
   const intervalPatternContext = buildMockContext({

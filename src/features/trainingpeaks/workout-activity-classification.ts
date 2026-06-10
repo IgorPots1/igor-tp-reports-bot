@@ -71,6 +71,16 @@ function collectSnapshotStrings(value: unknown, output: string[], depth = 0): vo
 }
 
 function classifyByTitle(title: string): TrainingPeaksWorkoutActivityClassificationResult | null {
+  const padelMatch = title.match(/(?:^|[^a-zа-яё])(padel|падел)(?:[^a-zа-яё]|$)/iu);
+  if (padelMatch) {
+    return {
+      family: "crosstrain",
+      isRunning: false,
+      confidence: "high",
+      reason: `title matched padel keyword "${padelMatch[1]}"`,
+    };
+  }
+
   const strongPaddleMatch = includesAny(title, [
     "stand up paddleboarding",
     "paddleboarding",

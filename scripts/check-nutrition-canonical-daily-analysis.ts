@@ -104,6 +104,8 @@ function assertCanonicalShape(day: Record<string, unknown>): void {
   assert.equal(typeof canonical.trainingLabel, "string");
   assert.ok(canonical.actual && typeof canonical.actual === "object");
   assert.ok(canonical.flags && typeof canonical.flags === "object");
+  assert.ok(canonical.energyAvailability && typeof canonical.energyAvailability === "object");
+  assert.ok(canonical.energyFloor && typeof canonical.energyFloor === "object");
   assert.equal(typeof canonical.nutritionStatus, "string");
   assert.equal(typeof canonical.relevance, "string");
   assert.equal(typeof canonical.hintForComment, "string");
@@ -138,9 +140,25 @@ async function run(): Promise<void> {
     "03.06 must be low_for_load or carry low carbs finding"
   );
   assert.equal(preLongDay?.canonicalDailyAnalysis.trainingType, "pre_long");
-  assert.equal(preLongDay?.canonicalDailyAnalysis.nutritionStatus, "pre_long_low");
+  assert.ok(
+    preLongDay?.canonicalDailyAnalysis.nutritionStatus === "pre_long_low" ||
+      preLongDay?.canonicalDailyAnalysis.nutritionStatus === "below_energy_availability" ||
+      preLongDay?.canonicalDailyAnalysis.nutritionStatus === "below_energy_floor",
+    "pre-long day must stay flagged, with EA/floor allowed to outrank carb-specific status"
+  );
+  assert.ok(
+    preLongDay?.canonicalDailyAnalysis.findings.includes("low_carbs_before_long_run") ||
+      preLongDay?.canonicalDailyAnalysis.findings.includes("ea_red_screen") ||
+      preLongDay?.canonicalDailyAnalysis.findings.includes("below_load_energy_floor"),
+    "pre-long day must retain actionable finding"
+  );
   assert.equal(longRunDay?.canonicalDailyAnalysis.trainingType, "long_run");
-  assert.equal(longRunDay?.canonicalDailyAnalysis.nutritionStatus, "long_run_low");
+  assert.ok(
+    longRunDay?.canonicalDailyAnalysis.nutritionStatus === "long_run_low" ||
+      longRunDay?.canonicalDailyAnalysis.nutritionStatus === "below_energy_availability" ||
+      longRunDay?.canonicalDailyAnalysis.nutritionStatus === "below_energy_floor",
+    "long-run day must stay flagged, with EA/floor allowed to outrank long-run status"
+  );
   assert.ok(
     longRunDay?.canonicalDailyAnalysis.findings.includes("low_energy_long_run_day"),
     "07.06 must include long-run energy finding"
@@ -148,6 +166,8 @@ async function run(): Promise<void> {
 
   assert.equal(typeof hardDay?.canonicalDailyAnalysis.actual.carbsGPerKg, "number");
   assert.equal(typeof longRunDay?.canonicalDailyAnalysis.actual.proteinGPerKg, "number");
+  assert.equal(typeof longRunDay?.canonicalDailyAnalysis.energyAvailability.eaZone, "string");
+  assert.ok(longRunDay?.canonicalDailyAnalysis.findings.includes("estimated_ffm_used"));
 
   console.log("PASS check-nutrition-canonical-daily-analysis");
 }

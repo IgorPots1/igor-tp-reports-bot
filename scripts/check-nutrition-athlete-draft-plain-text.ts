@@ -87,7 +87,7 @@ function assertAthleteDraftPlainText(draft: string, label: string): void {
   assert.doesNotMatch(draft, /если будут вопросы[, ]+пишит/i, `${label}: avoid weak closing phrase`);
   assert.doesNotMatch(
     draft.toLowerCase(),
-    /red-s|reds|lea|дефицит энергии|анемия|расстройств/,
+    /red-s|reds|lea|энергодоступность|дефицит энергии|опасная зона|медицинский риск|анемия|расстройств/,
     `${label}: no diagnostic terms`
   );
   assert.doesNotMatch(

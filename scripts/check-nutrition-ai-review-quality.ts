@@ -103,7 +103,8 @@ async function run(): Promise<void> {
   assert.equal(typeof canonicalPayload.weekdayRu, "string");
   assert.equal(typeof canonicalPayload.dateLabel, "string");
   assert.equal(typeof canonicalPayload.nutritionStatus, "string");
-  assert.equal(generated.one_focus.category, "long_run_underfueling");
+  assert.equal(typeof (canonicalPayload.energyAvailability as Record<string, unknown>).eaZone, "string");
+  assert.equal(generated.one_focus.category, "energy_availability");
   assert.equal(generated.methodology_signals.protein_sufficient, true);
 
   const athleteDraft = generated.athlete_message_draft ?? "";

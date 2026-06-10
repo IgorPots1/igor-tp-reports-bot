@@ -12,11 +12,16 @@ export type NutritionTrainingType =
   | "tempo"
   | "race"
   | "strength"
+  | "cross_training"
   | "unknown";
 
 export type NutritionStatusForDay =
   | "adequate"
   | "low_for_load"
+  | "below_energy_availability"
+  | "below_energy_floor"
+  | "low_for_cross_training"
+  | "low_for_strength"
   | "moderate_for_load"
   | "ample"
   | "rest_ok"
@@ -53,6 +58,7 @@ export type NutritionCanonicalTrainingType =
   | "long_run"
   | "pre_long"
   | "strength"
+  | "cross_training"
   | "race"
   | "unknown";
 
@@ -61,6 +67,10 @@ export type NutritionCanonicalStatus =
   | "adequate"
   | "ample"
   | "low_for_load"
+  | "below_energy_availability"
+  | "below_energy_floor"
+  | "low_for_cross_training"
+  | "low_for_strength"
   | "pre_long_low"
   | "long_run_low"
   | "suspect";
@@ -96,12 +106,16 @@ export type NutritionCanonicalDailyAnalysis = {
     rest: boolean;
     easy: boolean;
     hard: boolean;
+    strength: boolean;
+    crossTraining: boolean;
     preLong: boolean;
     longRun: boolean;
     dayBeforeKeyWorkout: boolean;
     dayAfterKeyWorkout: boolean;
     suspect: boolean;
   };
+  energyAvailability: NutritionEnergyAvailabilityFacts;
+  energyFloor: NutritionEnergyFloorFacts;
   nutritionStatus: NutritionCanonicalStatus;
   relevance: NutritionCanonicalRelevance;
   hintForComment: string;
@@ -196,6 +210,39 @@ type WorkoutContextByDate = {
   distanceKm: number | null;
 };
 
+export type NutritionEnergyAvailabilityFacts = {
+  intakeKcal: number | null;
+  exerciseEnergyKcal: number | null;
+  exerciseEnergySource:
+    | "trainingpeaks_workout_kcal"
+    | "estimated_by_duration_or_distance"
+    | "missing"
+    | "none";
+  bodyweightKg: number | null;
+  fatFreeMassKg: number | null;
+  ffmSource: "measured" | "estimated_from_bodyweight" | "missing";
+  ffmCoefficient: number | null;
+  ffmConfidence: "high" | "medium" | "low";
+  eaKcalPerKgFfm: number | null;
+  eaZone: "green" | "amber" | "red" | "unknown";
+  confidence: "high" | "medium" | "low";
+  notes: string[];
+};
+
+export type NutritionEnergyFloorFacts = {
+  restFloorKcal: number | null;
+  loadFloorKcal: number | null;
+  strengthFloorKcal: number | null;
+  crossTrainingFloorKcal: number | null;
+  hardFloorKcal: number | null;
+  belowRestFloor: boolean;
+  belowLoadFloor: boolean;
+  belowStrengthFloor: boolean;
+  belowCrossTrainingFloor: boolean;
+  belowHardFloor: boolean;
+  floorSource: "bodyweight_fallback" | "none";
+};
+
 const FUELING_MARKERS: Array<{ token: RegExp; kind: WorkoutFuelingInstructionDetection["normalizedType"] }> = [
   { token: /\bгель\b/i, kind: "gels" },
   { token: /\bгели\b/i, kind: "gels" },
@@ -269,6 +316,9 @@ function normalizeTrainingType(rawType: string | null | undefined, title: string
   if (raw === "strength") {
     return "strength";
   }
+  if (raw === "crosstrain" || raw === "cross_training" || raw === "bike" || raw === "swim" || /\bpadel\b|падел|cross.?train|crosstrain|bike|cycling|swim|плав|вело/.test(titleLc)) {
+    return "cross_training";
+  }
   if (/race|гонк|соревн/.test(titleLc)) {
     return "race";
   }
@@ -335,6 +385,179 @@ function asSex(context: NutritionStudentContext): "female" | "male" | "unknown" 
   return "unknown";
 }
 
+function estimateExerciseEnergyKcal(input: {
+  workout: WorkoutContextByDate | null;
+  bodyweightKg: number | null;
+}): {
+  exerciseEnergyKcal: number | null;
+  exerciseEnergySource: NutritionEnergyAvailabilityFacts["exerciseEnergySource"];
+} {
+  if (!input.workout) {
+    return { exerciseEnergyKcal: 0, exerciseEnergySource: "none" };
+  }
+  if (!input.bodyweightKg || input.bodyweightKg <= 0) {
+    return { exerciseEnergyKcal: null, exerciseEnergySource: "missing" };
+  }
+  const bw = input.bodyweightKg;
+  if (input.workout.type === "long_run" && input.workout.distanceKm !== null && input.workout.distanceKm > 0) {
+    return {
+      exerciseEnergyKcal: Math.round(input.workout.distanceKm * bw),
+      exerciseEnergySource: "estimated_by_duration_or_distance",
+    };
+  }
+  if (
+    (input.workout.type === "intervals" ||
+      input.workout.type === "tempo" ||
+      input.workout.type === "race" ||
+      input.workout.type === "easy") &&
+    input.workout.durationHours !== null &&
+    input.workout.durationHours > 0
+  ) {
+    return {
+      exerciseEnergyKcal: Math.round(input.workout.durationHours * bw * 9),
+      exerciseEnergySource: "estimated_by_duration_or_distance",
+    };
+  }
+  return { exerciseEnergyKcal: null, exerciseEnergySource: "missing" };
+}
+
+function ffmCoefficientForSex(sex: "female" | "male" | "unknown"): number {
+  if (sex === "female") {
+    return 0.78;
+  }
+  if (sex === "male") {
+    return 0.82;
+  }
+  return 0.8;
+}
+
+function zoneForEa(value: number | null): NutritionEnergyAvailabilityFacts["eaZone"] {
+  if (value === null) {
+    return "unknown";
+  }
+  if (value < 30) {
+    return "red";
+  }
+  if (value < 45) {
+    return "amber";
+  }
+  return "green";
+}
+
+export function calculateNutritionEnergyAvailabilityFacts(input: {
+  intakeKcal: number | null;
+  exerciseEnergyKcal: number | null;
+  exerciseEnergySource: NutritionEnergyAvailabilityFacts["exerciseEnergySource"];
+  bodyweightKg: number | null;
+  sex: "female" | "male" | "unknown";
+  measuredFatFreeMassKg?: number | null;
+  hasLoad: boolean;
+}): NutritionEnergyAvailabilityFacts {
+  const notes: string[] = [];
+  let fatFreeMassKg: number | null = null;
+  let ffmSource: NutritionEnergyAvailabilityFacts["ffmSource"] = "missing";
+  let ffmCoefficient: number | null = null;
+
+  if (input.measuredFatFreeMassKg && input.measuredFatFreeMassKg > 0) {
+    fatFreeMassKg = Number(input.measuredFatFreeMassKg.toFixed(1));
+    ffmSource = "measured";
+  } else if (input.bodyweightKg && input.bodyweightKg > 0) {
+    ffmCoefficient = ffmCoefficientForSex(input.sex);
+    fatFreeMassKg = Number((input.bodyweightKg * ffmCoefficient).toFixed(1));
+    ffmSource = "estimated_from_bodyweight";
+    notes.push("estimated_ffm_used");
+  }
+
+  if (input.sex === "male") {
+    notes.push("male_ea_threshold_less_validated");
+  }
+
+  const exerciseEnergyMissing = input.hasLoad && input.exerciseEnergyKcal === null;
+  if (exerciseEnergyMissing) {
+    notes.push("exercise_energy_missing");
+  }
+  if (ffmSource === "missing") {
+    notes.push("ffm_missing");
+  }
+
+  const intakeKcal = input.intakeKcal;
+  const exerciseEnergyKcal = input.exerciseEnergyKcal;
+  const ffmForCalculation = fatFreeMassKg;
+  let eaKcalPerKgFfm: number | null = null;
+  if (intakeKcal !== null && exerciseEnergyKcal !== null && ffmForCalculation !== null && ffmForCalculation > 0) {
+    eaKcalPerKgFfm = Number(((intakeKcal - exerciseEnergyKcal) / ffmForCalculation).toFixed(1));
+  }
+  const eaZone = zoneForEa(eaKcalPerKgFfm);
+  const confidence: NutritionEnergyAvailabilityFacts["confidence"] =
+    eaKcalPerKgFfm === null || exerciseEnergyMissing
+      ? "low"
+      : ffmSource === "measured" && input.exerciseEnergySource === "trainingpeaks_workout_kcal"
+        ? "high"
+        : "medium";
+
+  return {
+    intakeKcal: input.intakeKcal,
+    exerciseEnergyKcal: input.exerciseEnergyKcal,
+    exerciseEnergySource: input.exerciseEnergySource,
+    bodyweightKg: input.bodyweightKg,
+    fatFreeMassKg,
+    ffmSource,
+    ffmCoefficient,
+    ffmConfidence: ffmSource === "measured" ? "high" : ffmSource === "estimated_from_bodyweight" ? "medium" : "low",
+    eaKcalPerKgFfm,
+    eaZone,
+    confidence,
+    notes: [...new Set(notes)],
+  };
+}
+
+export function calculateNutritionEnergyFloorFacts(input: {
+  intakeKcal: number | null;
+  bodyweightKg: number | null;
+  trainingType: NutritionCanonicalTrainingType;
+  hasLoad: boolean;
+}): NutritionEnergyFloorFacts {
+  if (!input.bodyweightKg || input.bodyweightKg <= 0) {
+    return {
+      restFloorKcal: null,
+      loadFloorKcal: null,
+      strengthFloorKcal: null,
+      crossTrainingFloorKcal: null,
+      hardFloorKcal: null,
+      belowRestFloor: false,
+      belowLoadFloor: false,
+      belowStrengthFloor: false,
+      belowCrossTrainingFloor: false,
+      belowHardFloor: false,
+      floorSource: "none",
+    };
+  }
+
+  const bw = input.bodyweightKg;
+  const restFloorKcal = Math.round(25 * bw);
+  const loadFloorKcal = Math.round(30 * bw);
+  const strengthFloorKcal = Math.round(30 * bw);
+  const crossTrainingFloorKcal = Math.round(30 * bw);
+  const hardFloorKcal = Math.round(35 * bw);
+  const kcal = input.intakeKcal;
+  return {
+    restFloorKcal,
+    loadFloorKcal,
+    strengthFloorKcal,
+    crossTrainingFloorKcal,
+    hardFloorKcal,
+    belowRestFloor: kcal !== null && kcal < restFloorKcal,
+    belowLoadFloor: kcal !== null && input.hasLoad && kcal < loadFloorKcal,
+    belowStrengthFloor: kcal !== null && input.trainingType === "strength" && kcal < strengthFloorKcal,
+    belowCrossTrainingFloor: kcal !== null && input.trainingType === "cross_training" && kcal < crossTrainingFloorKcal,
+    belowHardFloor:
+      kcal !== null &&
+      (input.trainingType === "hard" || input.trainingType === "long_run" || input.trainingType === "race") &&
+      kcal < hardFloorKcal,
+    floorSource: "bodyweight_fallback",
+  };
+}
+
 function getLowThresholds(rows: NormalizedManualMacroRow[]): {
   lowKcal: number | null;
   lowCarbs: number | null;
@@ -387,6 +610,9 @@ function inferCanonicalTrainingType(input: {
   }
   if (input.trainingType === "strength") {
     return "strength";
+  }
+  if (input.trainingType === "cross_training") {
+    return "cross_training";
   }
   if (input.trainingType === "easy") {
     return "easy";
@@ -450,10 +676,31 @@ function buildCanonicalTarget(input: {
   if (input.canonicalTrainingType === "easy") {
     return {
       carbsGPerKgMin: 3.5,
-      carbsGPerKgMax: 4.5,
+      carbsGPerKgMax: 5,
       carbsGMin: Number((3.5 * bodyweight).toFixed(0)),
-      carbsGMax: Number((4.5 * bodyweight).toFixed(0)),
+      carbsGMax: Number((5 * bodyweight).toFixed(0)),
       formulaCode: "canonical_daily_v1_easy",
+    };
+  }
+  if (input.canonicalTrainingType === "cross_training") {
+    return {
+      carbsGPerKgMin: 5,
+      carbsGPerKgMax: 7,
+      carbsGMin: Number((5 * bodyweight).toFixed(0)),
+      carbsGMax: Number((7 * bodyweight).toFixed(0)),
+      kcalMin: Number((30 * bodyweight).toFixed(0)),
+      formulaCode: "canonical_daily_v1_cross_training",
+    };
+  }
+  if (input.canonicalTrainingType === "strength") {
+    return {
+      carbsGPerKgMin: 4,
+      carbsGPerKgMax: 6,
+      carbsGMin: Number((4 * bodyweight).toFixed(0)),
+      carbsGMax: Number((6 * bodyweight).toFixed(0)),
+      kcalMin: Number((30 * bodyweight).toFixed(0)),
+      proteinGMin: Number((1.6 * bodyweight).toFixed(0)),
+      formulaCode: "canonical_daily_v1_strength",
     };
   }
   if (input.canonicalTrainingType === "rest") {
@@ -483,6 +730,9 @@ function buildCanonicalTrainingLabel(input: {
   }
   if (input.canonicalTrainingType === "strength") {
     return "силовая";
+  }
+  if (input.canonicalTrainingType === "cross_training") {
+    return title || "кросс-тренировка";
   }
   if (input.canonicalTrainingType === "long_run") {
     const distanceFromTitle = normalizeDistanceFromTitleKm(title);
@@ -517,6 +767,18 @@ function buildHintForComment(status: NutritionCanonicalStatus): string {
   }
   if (status === "low_for_load") {
     return "Ключевая нагрузка: углеводы за день на нижней границе для такой сессии; указать факт и мягкий ориентир.";
+  }
+  if (status === "below_energy_availability") {
+    return "Для такого дня энергии получилось маловато; написать мягко, без медицинских терминов и без точных добавок ккал.";
+  }
+  if (status === "below_energy_floor") {
+    return "Общая энергия ниже мягкого ориентира для дня; написать спокойно и без тревожных формулировок.";
+  }
+  if (status === "low_for_cross_training") {
+    return "Кросс-тренировка тоже нагрузка: день низкий по общей энергии; не давать OK fallback.";
+  }
+  if (status === "low_for_strength") {
+    return "Силовая пришлась на низкую общую энергию; не давать OK fallback.";
   }
   if (status === "ample") {
     return "Сытный день пришёлся на отдых/лёгкий день; отметить нейтрально в контексте распределения по неделе.";
@@ -572,6 +834,7 @@ function analyzeDailyTrainingNutrition(input: {
   rows: NormalizedManualMacroRow[];
   workoutsByDate: Map<string, WorkoutContextByDate>;
   bodyweightKg: number | null;
+  sex: "female" | "male" | "unknown";
   trainingCacheStatus: NutritionTrainingPeaksWeekContext["cacheStatus"];
 }): NutritionDailyAnalysis[] {
   const sortedRows = [...input.rows]
@@ -649,6 +912,20 @@ function analyzeDailyTrainingNutrition(input: {
       }
     }
 
+    if (trainingType === "strength" && row.kcal !== null && input.bodyweightKg && row.kcal < 30 * input.bodyweightKg) {
+      findings.push("В день силовой общая энергия ниже мягкого ориентира для дня с нагрузкой.");
+      trainingNutritionLinks.push("В день силовой важно не оставлять питание слишком низким по энергии.");
+      nutritionStatus = "low_for_strength";
+      relevance = "high";
+    }
+
+    if (trainingType === "cross_training" && row.kcal !== null && input.bodyweightKg && row.kcal < 30 * input.bodyweightKg) {
+      findings.push("Кросс-тренировка совпала с низкой общей энергией.");
+      trainingNutritionLinks.push("Кросс-тренировка тоже даёт нагрузку, день лучше не делать слишком пустым.");
+      nutritionStatus = "low_for_cross_training";
+      relevance = "high";
+    }
+
     if (prevIsHardOrLong && (lowKcal || lowCarbs || (row.proteinG !== null && row.proteinG < 95))) {
       findings.push("День восстановления после ключевой тренировки выглядит недоподкреплённым.");
       trainingNutritionLinks.push("После тяжёлой нагрузки важно закрывать энергию и углеводы для восстановления.");
@@ -680,10 +957,36 @@ function analyzeDailyTrainingNutrition(input: {
       hasTrainingContext,
       preLong: isPreLong,
     });
+    const canonicalHasLoad =
+      canonicalTrainingType === "easy" ||
+      canonicalTrainingType === "hard" ||
+      canonicalTrainingType === "long_run" ||
+      canonicalTrainingType === "pre_long" ||
+      canonicalTrainingType === "race" ||
+      canonicalTrainingType === "strength" ||
+      canonicalTrainingType === "cross_training";
     const target = buildCanonicalTarget({
       canonicalTrainingType,
       bodyweightKg: input.bodyweightKg,
       hasTrainingContext,
+    });
+    const exerciseEnergy = estimateExerciseEnergyKcal({
+      workout: currentWorkout ?? null,
+      bodyweightKg: input.bodyweightKg,
+    });
+    const energyAvailability = calculateNutritionEnergyAvailabilityFacts({
+      intakeKcal: row.kcal,
+      exerciseEnergyKcal: exerciseEnergy.exerciseEnergyKcal,
+      exerciseEnergySource: exerciseEnergy.exerciseEnergySource,
+      bodyweightKg: input.bodyweightKg,
+      sex: input.sex,
+      hasLoad: canonicalHasLoad,
+    });
+    const energyFloor = calculateNutritionEnergyFloorFacts({
+      intakeKcal: row.kcal,
+      bodyweightKg: input.bodyweightKg,
+      trainingType: canonicalTrainingType,
+      hasLoad: canonicalHasLoad,
     });
     const suspect =
       row.confidence < 0.6 ||
@@ -703,6 +1006,28 @@ function analyzeDailyTrainingNutrition(input: {
     }
     if (proteinGPerKg !== null && proteinGPerKg >= 1.6) {
       canonicalFindings.push("protein_sufficient");
+    }
+    for (const note of energyAvailability.notes) {
+      canonicalFindings.push(note);
+    }
+    if (energyAvailability.eaZone === "red") {
+      canonicalFindings.push("ea_red_screen");
+    } else if (energyAvailability.eaZone === "amber") {
+      canonicalFindings.push("ea_amber_screen");
+    }
+    if (energyFloor.belowLoadFloor) {
+      canonicalFindings.push("below_load_energy_floor");
+    }
+    if (energyFloor.belowCrossTrainingFloor) {
+      canonicalFindings.push("below_cross_training_floor");
+      canonicalFindings.push("low_energy_with_cross_training");
+    }
+    if (energyFloor.belowStrengthFloor) {
+      canonicalFindings.push("below_strength_floor");
+      canonicalFindings.push("low_energy_with_strength");
+    }
+    if (canonicalFindings.includes("protein_sufficient") && (energyFloor.belowLoadFloor || energyAvailability.eaZone === "red")) {
+      canonicalFindings.push("protein_ok_but_energy_low");
     }
     const carbsPerKg = carbsGPerKg;
     const kcalPerKgThreshold = input.bodyweightKg && input.bodyweightKg > 0 ? 35 * input.bodyweightKg : null;
@@ -725,6 +1050,14 @@ function analyzeDailyTrainingNutrition(input: {
     let canonicalNutritionStatus: NutritionCanonicalStatus = "adequate";
     if (suspect) {
       canonicalNutritionStatus = "suspect";
+    } else if (energyAvailability.eaZone === "red" || energyAvailability.eaZone === "amber") {
+      canonicalNutritionStatus = "below_energy_availability";
+    } else if (energyFloor.belowCrossTrainingFloor) {
+      canonicalNutritionStatus = "low_for_cross_training";
+    } else if (energyFloor.belowStrengthFloor) {
+      canonicalNutritionStatus = "low_for_strength";
+    } else if (energyFloor.belowHardFloor || energyFloor.belowLoadFloor || energyFloor.belowRestFloor) {
+      canonicalNutritionStatus = "below_energy_floor";
     } else if (
       canonicalTrainingType === "long_run" &&
       ((carbsPerKg !== null && carbsPerKg < 5) ||
@@ -755,10 +1088,14 @@ function analyzeDailyTrainingNutrition(input: {
 
     const canonicalRelevance: NutritionCanonicalRelevance =
       canonicalNutritionStatus === "suspect"
-        ? "low_confidence"
-        : canonicalNutritionStatus === "long_run_low" || canonicalNutritionStatus === "pre_long_low"
-          ? "key"
-          : canonicalNutritionStatus === "low_for_load"
+          ? "low_confidence"
+          : canonicalNutritionStatus === "long_run_low" || canonicalNutritionStatus === "pre_long_low"
+            ? "key"
+          : canonicalNutritionStatus === "low_for_load" ||
+              canonicalNutritionStatus === "below_energy_availability" ||
+              canonicalNutritionStatus === "below_energy_floor" ||
+              canonicalNutritionStatus === "low_for_cross_training" ||
+              canonicalNutritionStatus === "low_for_strength"
             ? "important"
             : "normal";
 
@@ -822,12 +1159,16 @@ function analyzeDailyTrainingNutrition(input: {
         rest: canonicalTrainingType === "rest",
         easy: canonicalTrainingType === "easy",
         hard: canonicalTrainingType === "hard" || canonicalTrainingType === "race",
+        strength: canonicalTrainingType === "strength",
+        crossTraining: canonicalTrainingType === "cross_training",
         preLong: canonicalTrainingType === "pre_long",
         longRun: canonicalTrainingType === "long_run",
         dayBeforeKeyWorkout: nextIsHardOrLong,
         dayAfterKeyWorkout: prevIsHardOrLong,
         suspect,
       },
+      energyAvailability,
+      energyFloor,
       nutritionStatus: canonicalNutritionStatus,
       relevance: canonicalRelevance,
       hintForComment: buildHintForComment(canonicalNutritionStatus),
@@ -874,11 +1215,13 @@ export function buildNutritionMethodologyContext(input: {
 }): NutritionMethodologyContext {
   const { context } = input;
   const bodyweightKg = context.currentWeightKg ?? null;
+  const sex = asSex(context);
   const workoutsByDate = buildWorkoutContextByDate(context.tpPastWeek);
   const dailyAnalysis = analyzeDailyTrainingNutrition({
     rows: context.manualMacroRows,
     workoutsByDate,
     bodyweightKg,
+    sex,
     trainingCacheStatus: context.tpPastWeek.cacheStatus,
   });
   const averages = {
@@ -897,7 +1240,15 @@ export function buildNutritionMethodologyContext(input: {
   };
   const proteinSufficient = (averages.proteinGPerKg ?? 0) >= 1.6;
   const severeEnergyAvailability =
-    context.manualMacroRows.filter((row) => (row.kcal ?? 9999) < 1300 || (row.carbsG ?? 9999) < 90).length >= 2;
+    dailyAnalysis.filter((day) => {
+      const canonical = day.canonicalDailyAnalysis;
+      return (
+        canonical.energyAvailability.eaZone === "red" ||
+        canonical.findings.includes("below_load_energy_floor") ||
+        (day.kcal ?? 9999) < 1300 ||
+        (day.carbsG ?? 9999) < 90
+      );
+    }).length >= 2;
   const longRunUnderfueling = dailyAnalysis.some(
     (day) =>
       day.trainingType === "long_run" &&
@@ -926,7 +1277,15 @@ export function buildNutritionMethodologyContext(input: {
         day.nextDayTrainingType === "race") &&
       day.nutritionStatus === "low_for_load"
   );
-  const weeklyConsistency = dailyAnalysis.filter((day) => day.nutritionStatus === "low_for_load").length >= 2;
+  const weeklyConsistency =
+    dailyAnalysis.filter(
+      (day) =>
+        day.nutritionStatus === "low_for_load" ||
+        day.nutritionStatus === "below_energy_floor" ||
+        day.nutritionStatus === "below_energy_availability" ||
+        day.nutritionStatus === "low_for_cross_training" ||
+        day.nutritionStatus === "low_for_strength"
+    ).length >= 2;
   const proteinSupport = !proteinSufficient && (averages.proteinGPerKg ?? 0) > 0;
   const heavyTraining = context.tpPastWeek.longRun !== null || context.tpPastWeek.keyWorkouts.length > 0;
   const carbProgressionStrategy = detectCarbProgressionStrategy({
@@ -939,7 +1298,7 @@ export function buildNutritionMethodologyContext(input: {
   const trainingNutritionLinks = [...new Set(dailyAnalysis.flatMap((day) => day.trainingNutritionLinks))];
   return {
     bodyweightKg,
-    sex: asSex(context),
+    sex,
     averages,
     proteinSufficient,
     carbReferenceBandUsed: true,

@@ -238,11 +238,35 @@ function renderNutritionDayComment(input: {
   if (input.nutritionStatus === "long_run_low") {
     return `${cautiousPrefix}На длинную работу день получился скромным по энергии: около ${kcalText}, углеводов около ${carbsText}${carbsKgText}. Не привязываю самочувствие только к этому, но запас топлива и восстановление могли быть лучше.`;
   }
-  if (input.nutritionStatus === "low_for_load") {
-    return `${cautiousPrefix}Углеводов за день получилось около ${carbsText}${carbsKgText} — для такой работы это нижняя граница. Не критично, но в ключевые дни лучше держать углеводы повыше, чтобы было больше топлива на тренировку и восстановление.`;
-  }
   if (input.nutritionStatus === "suspect") {
     return "Данные по питанию за день выглядят неполными или нетипичными, поэтому здесь лучше проверить исходный отчёт вручную.";
+  }
+  if (
+    input.nutritionStatus === "below_energy_availability" ||
+    input.nutritionStatus === "below_energy_floor" ||
+    input.findings.includes("below_load_energy_floor") ||
+    input.findings.includes("ea_red_screen") ||
+    input.findings.includes("ea_amber_screen")
+  ) {
+    if (input.trainingType === "cross_training" || input.findings.includes("low_energy_with_cross_training")) {
+      return `${cautiousPrefix}Падел и другая кросс-тренировка тоже дают нагрузку, а день получился низким по общей энергии. Я бы не делал такой день совсем пустым по питанию, особенно если нагрузка повторяется несколько раз в неделю.`;
+    }
+    if (input.trainingType === "strength" || input.findings.includes("low_energy_with_strength")) {
+      return `${cautiousPrefix}В день силовой важно оставить достаточно энергии для восстановления. Здесь день получился скромным по ккал, поэтому я бы поддержал питание чуть ровнее.`;
+    }
+    if (input.trainingType === "rest") {
+      return `${cautiousPrefix}День отдыха получился низким по энергии. Разово не страшно, но я бы не делал такие дни регулярными.`;
+    }
+    return `${cautiousPrefix}Для дня с нагрузкой энергии получилось маловато. Я бы не делал этот день слишком пустым по питанию и лучше поддержал питание вокруг тренировки.`;
+  }
+  if (input.nutritionStatus === "low_for_cross_training" || input.findings.includes("below_cross_training_floor")) {
+    return `${cautiousPrefix}Падел и другая кросс-тренировка тоже дают нагрузку. Здесь день получился низким по общей энергии, поэтому лучше поддержать питание вокруг такой нагрузки.`;
+  }
+  if (input.nutritionStatus === "low_for_strength" || input.findings.includes("below_strength_floor")) {
+    return `${cautiousPrefix}В день силовой важно оставить достаточно энергии для восстановления. Здесь день получился скромным по ккал, поэтому я бы поддержал питание чуть ровнее.`;
+  }
+  if (input.nutritionStatus === "low_for_load") {
+    return `${cautiousPrefix}Углеводов за день получилось около ${carbsText}${carbsKgText} — для такой работы это нижняя граница. Не критично, но в ключевые дни лучше держать углеводы повыше, чтобы было больше топлива на тренировку и восстановление.`;
   }
   if (input.trainingType === "rest") {
     if (input.findings.includes("protein_sufficient")) {
@@ -252,6 +276,9 @@ function renderNutritionDayComment(input: {
   }
   if (input.trainingType === "easy") {
     return `${cautiousPrefix}Под лёгкую работу день выглядит нормально: энергии и углеводов достаточно, здесь ничего специально менять не нужно.`;
+  }
+  if (input.trainingType === "cross_training") {
+    return `${cautiousPrefix}Под кросс-тренировку день выглядит достаточно ровно: энергии около ${kcalText}, углеводов около ${carbsText}${carbsKgText}.`;
   }
   if (input.trainingType === "hard" || input.trainingType === "race") {
     return `${cautiousPrefix}Под эту ключевую работу питание выглядит согласованно: углеводов около ${carbsText}${carbsKgText}, сильной просадки по дню не видно.`;
@@ -397,7 +424,15 @@ function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
   const lowCarbKeyDays = dailyFacts
     .filter((day) => {
       const status = typeof day.nutrition_status === "string" ? day.nutrition_status : typeof day.nutritionStatus === "string" ? day.nutritionStatus : "";
-      return status === "pre_long_low" || status === "long_run_low" || status === "low_for_load";
+      return (
+        status === "pre_long_low" ||
+        status === "long_run_low" ||
+        status === "low_for_load" ||
+        status === "below_energy_availability" ||
+        status === "below_energy_floor" ||
+        status === "low_for_cross_training" ||
+        status === "low_for_strength"
+      );
     })
     .map((day) => (typeof day.weekday_ru === "string" ? day.weekday_ru.toLowerCase() : typeof day.weekdayRu === "string" ? day.weekdayRu.toLowerCase() : null))
     .filter((day): day is string => Boolean(day));

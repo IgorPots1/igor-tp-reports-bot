@@ -90,6 +90,8 @@ function dayTypeRu(dayType: NutritionPlanDayType): string {
       return "Длительная";
     case "strength":
       return "Силовая";
+    case "cross_training":
+      return "Кросс-тренировка";
     case "race":
       return "Соревнование";
     default:
@@ -140,13 +142,15 @@ function buildPlanByDayTypes(nextWeekPlan: NutritionNextWeekPlan | null, fallbac
   }
   const targets = nextWeekPlan.day_type_targets;
   const hasStrengthDay = nextWeekPlan.days.some((day) => day.training_type === "strength");
+  const hasCrossTrainingDay = nextWeekPlan.days.some((day) => day.training_type === "cross_training");
   const ordered: Array<{ key: NutritionPlanDayType; target: typeof targets.rest }> = [
     { key: "rest", target: targets.rest },
     { key: "easy", target: targets.easy },
     { key: "hard", target: targets.hard },
     { key: "pre_long", target: targets.pre_long },
     { key: "long_run", target: targets.long_run },
-    ...(hasStrengthDay ? [{ key: "strength" as const, target: targets.strength }] : []),
+    ...(hasStrengthDay ? [{ key: "strength" as const, target: targets.strength ?? null }] : []),
+    ...(hasCrossTrainingDay ? [{ key: "cross_training" as const, target: targets.cross_training ?? null }] : []),
   ];
   return ordered
     .map(({ key, target }) => {
@@ -247,7 +251,11 @@ export function validateTelegramReadyNutritionMessage(input: {
   if (text.length > 4096) {
     pushIssue(issues, "warning", "telegram_length", "Текст длиннее одного Telegram-сообщения; при ручной отправке разделите на 2 части.");
   }
-  if (/дефицит калорий|урезать|похудеть|RED-S|LEA|анемия|расстройство пищевого/i.test(text)) {
+  if (
+    /дефицит калорий|дефицит энергии|энергодоступность|опасная зона|медицинский риск|урезать|похудеть|RED-S|LEA|анемия|расстройство пищевого/i.test(
+      text
+    )
+  ) {
     pushIssue(issues, "error", "forbidden_safety_language", "В тексте есть запрещённая safety-лексика.");
   }
   if (!input.hasKeyTraining && /Перед ключевыми тренировками/.test(text)) {

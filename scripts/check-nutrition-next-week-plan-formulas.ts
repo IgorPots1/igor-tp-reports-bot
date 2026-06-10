@@ -24,12 +24,14 @@ const easy = calculateNutritionDayTypeTarget({ bodyweightKg: 56, dayType: "easy"
 const hard = calculateNutritionDayTypeTarget({ bodyweightKg: 56, dayType: "hard" });
 const preLong = calculateNutritionDayTypeTarget({ bodyweightKg: 56, dayType: "pre_long" });
 const longRun = calculateNutritionDayTypeTarget({ bodyweightKg: 56, dayType: "long_run" });
+const crossTraining = calculateNutritionDayTypeTarget({ bodyweightKg: 56, dayType: "cross_training" });
 
 assert.ok(rest);
 assert.ok(easy);
 assert.ok(hard);
 assert.ok(preLong);
 assert.ok(longRun);
+assert.ok(crossTraining);
 
 assert.equal(rest?.target_kcal, 1950);
 assert.equal(rest?.protein_g, 90);
@@ -55,6 +57,11 @@ assert.equal(longRun?.target_kcal, 2500);
 assert.equal(longRun?.protein_g, 95);
 assert.equal(longRun?.fat_g, 65);
 assert.equal(longRun?.carbs_g, 390);
+
+assert.equal(crossTraining?.target_kcal, 2200);
+assert.equal(crossTraining?.protein_g, 90);
+assert.equal(crossTraining?.fat_g, 65);
+assert.equal(crossTraining?.carbs_g, 290);
 
 const nadezhdaLikeContext = {
   cacheStatus: "ok",
@@ -153,5 +160,19 @@ const noTpContext = buildNutritionNextWeekPlan({
 assert.ok(noTpContext.warnings.includes("training_context_missing"));
 assert.equal(noTpContext.days.length, 7);
 assert.ok(noTpContext.days.every((day) => day.training_type === "unknown"));
+
+const padelPlan = buildNutritionNextWeekPlan({
+  bodyweightKg: 60,
+  planWeekFrom: "2026-06-08",
+  planWeekTo: "2026-06-14",
+  trainingContext: {
+    cacheStatus: "ok",
+    workouts: [{ date: "2026-06-10", title: "Padel Racket", type: "crosstrain" }],
+  },
+});
+const padelDay = padelPlan.days.find((day) => day.date === "2026-06-10");
+assert.equal(padelDay?.training_type, "cross_training");
+assert.equal(padelDay?.target_kcal, 2350);
+assert.ok(padelDay?.target_kcal !== null, "Padel day with bodyweight must not render kcal n/d");
 
 console.log("PASS check-nutrition-next-week-plan-formulas");
