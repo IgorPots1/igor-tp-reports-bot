@@ -19,6 +19,7 @@ import {
   getTrainingPeaksGroupWorkoutReportChatAllowlist,
   isTrainingPeaksGroupWorkoutReportIntakeEnabled,
 } from "@/features/trainingpeaks/group-workout-report-intake";
+import { processGroupWorkoutReportReviewPipeline } from "@/features/trainingpeaks/group-workout-report-review-flow";
 
 const PREVIEW_MAX_LENGTH = 120;
 const TP_CALLBACK_CASES_RECENT = "tp:cases:recent";
@@ -413,6 +414,44 @@ export async function handleTrainingPeaksGroupProbe(message: TelegramMessage): P
         chatId: message.chat.id,
         messageId: message.message_id,
       });
+    } else if (
+      insertedIntake.intakeStatus === "candidate_stored" &&
+      reportIntakeDecision.student &&
+      reportIntakeDecision.messageText
+    ) {
+      try {
+        const pipelineResult = await processGroupWorkoutReportReviewPipeline({
+          intake: {
+            id: insertedIntake.id,
+            studentId: reportIntakeDecision.student.id,
+            messageText: reportIntakeDecision.messageText,
+            sourceChatId: insertedIntake.sourceChatId,
+            sourceMessageId: insertedIntake.sourceMessageId,
+            sourceMessageTimestamp: insertedIntake.sourceMessageTimestamp,
+            sourceTelegramUserId: insertedIntake.sourceTelegramUserId,
+            detectedLabels: insertedIntake.detectedLabels,
+          },
+          student: reportIntakeDecision.student,
+          messageDateUnixSeconds:
+            typeof message.date === "number" && Number.isFinite(message.date) && message.date > 0
+              ? message.date
+              : Math.floor(Date.now() / 1000),
+        });
+        console.info("TrainingPeaks group workout report review pipeline", {
+          chatId: message.chat.id,
+          messageId: message.message_id,
+          intakeId: insertedIntake.id,
+          pipelineStatus: pipelineResult.status,
+          draftId: "draftId" in pipelineResult ? pipelineResult.draftId : null,
+        });
+      } catch (pipelineError) {
+        console.warn("TrainingPeaks group workout report review pipeline failed", {
+          chatId: message.chat.id,
+          messageId: message.message_id,
+          intakeId: insertedIntake.id,
+          error: pipelineError,
+        });
+      }
     }
   }
 

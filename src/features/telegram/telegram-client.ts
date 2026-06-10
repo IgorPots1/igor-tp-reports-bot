@@ -18,7 +18,12 @@ type SendTelegramMessageOptions = {
   replyMarkup?: TelegramReplyMarkup;
   businessConnectionId?: string;
   messageThreadId?: number;
+  replyToMessageId?: number;
   parseMode?: "HTML";
+};
+
+export type SendTelegramMessageResult = {
+  messageId: number;
 };
 
 const TELEGRAM_MESSAGE_TOO_LONG_PATTERN = /message is too long/i;
@@ -161,7 +166,54 @@ function buildTelegramSendMessageBody(
     body.parse_mode = options.parseMode;
   }
 
+  if (options?.replyToMessageId !== undefined) {
+    body.reply_to_message_id = options.replyToMessageId;
+  }
+
   return body;
+}
+
+type TelegramSendMessageApiResponse = {
+  ok?: boolean;
+  description?: string;
+  result?: {
+    message_id?: number;
+  };
+};
+
+async function postTelegramMessageReturningResult(
+  chatId: string | number,
+  text: string,
+  options?: SendTelegramMessageOptions
+): Promise<SendTelegramMessageResult | null> {
+  const body = buildTelegramSendMessageBody(chatId, text, options);
+  const token = getTelegramBotToken();
+  const response = await fetch(`${TELEGRAM_API_BASE_URL}/bot${token}/sendMessage`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const responseText = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`Telegram sendMessage failed (${response.status}): ${responseText}`);
+  }
+
+  if (!responseText) {
+    return null;
+  }
+
+  const responseJson = JSON.parse(responseText) as TelegramSendMessageApiResponse;
+  if (responseJson.ok === false) {
+    throw new Error(
+      `Telegram sendMessage failed: ${responseJson.description ?? "Unknown Telegram API error"}`
+    );
+  }
+
+  const messageId = responseJson.result?.message_id;
+  return typeof messageId === "number" ? { messageId } : null;
 }
 
 async function postTelegramMessage(
@@ -211,6 +263,24 @@ export async function sendTelegramMessageStrict(
   options?: SendTelegramMessageOptions
 ): Promise<void> {
   await postTelegramMessage(chatId, text, options);
+}
+
+export async function sendTelegramMessageReturningId(
+  chatId: string | number,
+  text: string,
+  options?: SendTelegramMessageOptions
+): Promise<SendTelegramMessageResult | null> {
+  try {
+    return await postTelegramMessageReturningResult(chatId, text, options);
+  } catch (error) {
+    if (options?.messageThreadId !== undefined && isTelegramTopicClosedError(error)) {
+      return postTelegramMessageReturningResult(chatId, text, {
+        ...options,
+        messageThreadId: undefined,
+      });
+    }
+    throw error;
+  }
 }
 
 export async function sendTelegramMessage(

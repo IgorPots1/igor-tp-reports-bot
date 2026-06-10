@@ -7115,6 +7115,139 @@ export async function insertTrainingPeaksGroupWorkoutReportReplyDraft(
   return mapTrainingPeaksReplyDraftRow(data as TrainingPeaksReplyDraftRow);
 }
 
+export async function mergeTrainingPeaksReplyDraftMetadata(
+  draftId: string,
+  metadataPatch: Record<string, unknown>
+): Promise<TrainingPeaksReplyDraft | null> {
+  const supabase = createSupabaseServerClient();
+  const existing = await supabase
+    .from("trainingpeaks_reply_drafts")
+    .select("metadata")
+    .eq("id", draftId)
+    .maybeSingle();
+
+  if (existing.error) {
+    throw new Error(
+      `Failed to load TrainingPeaks reply draft metadata ${draftId}: ${existing.error.message}`
+    );
+  }
+
+  if (!existing.data) {
+    return null;
+  }
+
+  const previousMetadata =
+    existing.data.metadata &&
+    typeof existing.data.metadata === "object" &&
+    !Array.isArray(existing.data.metadata)
+      ? (existing.data.metadata as Record<string, unknown>)
+      : {};
+
+  const { data, error } = await supabase
+    .from("trainingpeaks_reply_drafts")
+    .update({
+      metadata: {
+        ...previousMetadata,
+        ...metadataPatch,
+      },
+    })
+    .eq("id", draftId)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to merge TrainingPeaks reply draft metadata ${draftId}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksReplyDraftRow(data as TrainingPeaksReplyDraftRow);
+}
+
+export async function updateTrainingPeaksGroupWorkoutReportReplyDraftContent(input: {
+  draftId: string;
+  draftText: string;
+  aiModel?: string | null;
+  metadataPatch?: Record<string, unknown>;
+}): Promise<TrainingPeaksReplyDraft | null> {
+  const draftText = input.draftText.trim();
+  if (!draftText) {
+    return null;
+  }
+
+  const draftSha256 = sha256TelegramContextText(draftText);
+  if (!draftSha256) {
+    return null;
+  }
+
+  const supabase = createSupabaseServerClient();
+  const existing = await supabase
+    .from("trainingpeaks_reply_drafts")
+    .select("metadata, draft_sha256")
+    .eq("id", input.draftId)
+    .eq("source", "group_workout_report")
+    .maybeSingle();
+
+  if (existing.error) {
+    throw new Error(
+      `Failed to load group workout report reply draft ${input.draftId}: ${existing.error.message}`
+    );
+  }
+
+  if (!existing.data) {
+    return null;
+  }
+
+  const previousMetadata =
+    existing.data.metadata &&
+    typeof existing.data.metadata === "object" &&
+    !Array.isArray(existing.data.metadata)
+      ? (existing.data.metadata as Record<string, unknown>)
+      : {};
+  const previousDraftSha256 =
+    typeof existing.data.draft_sha256 === "string" ? existing.data.draft_sha256 : null;
+
+  const updates: Record<string, unknown> = {
+    draft_text: draftText,
+    draft_sha256: draftSha256,
+    draft_preview: buildTrainingPeaksReplyDraftPreview(buildTelegramContextTextPreview(draftText), 120),
+    draft_char_count: draftText.length,
+    outcome: "generated",
+    metadata: {
+      ...previousMetadata,
+      ...(input.metadataPatch ?? {}),
+      previous_draft_sha256: previousDraftSha256,
+      edited_at: new Date().toISOString(),
+    },
+  };
+
+  if (input.aiModel?.trim()) {
+    updates.ai_model = input.aiModel.trim();
+  }
+
+  const { data, error } = await supabase
+    .from("trainingpeaks_reply_drafts")
+    .update(updates)
+    .eq("id", input.draftId)
+    .eq("source", "group_workout_report")
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to update group workout report reply draft content ${input.draftId}: ${error.message}`
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksReplyDraftRow(data as TrainingPeaksReplyDraftRow);
+}
+
 export async function getTrainingPeaksReplyDraftByIdPrefix(
   draftIdPrefix: string
 ): Promise<TrainingPeaksReplyDraft | null> {

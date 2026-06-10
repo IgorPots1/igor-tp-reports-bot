@@ -104,6 +104,11 @@ import {
 } from "@/features/trainingpeaks/attention-telegram";
 import { sendTrainingPeaksWeeklyReportToStudent } from "@/features/trainingpeaks/report-delivery";
 import { sendTrainingPeaksReplyDraftToStudent } from "@/features/trainingpeaks/reply-draft-delivery";
+import { parseGroupWorkoutReportReviewCallback } from "@/features/trainingpeaks/group-workout-report-review-card";
+import {
+  handleGroupWorkoutReportReviewCallback,
+  tryHandleGroupWorkoutReportCoachEditMessage,
+} from "@/features/trainingpeaks/group-workout-report-review-flow";
 import {
   isTrainingPeaksTelegramBusinessPeerMissingError,
   shortenTrainingPeaksTelegramDeliveryError,
@@ -7667,6 +7672,14 @@ export async function handleTrainingPeaksTelegramReplyKeyboardMessage(
   try {
     if (!action) {
       if (!isTrainingPeaksCommand(text)) {
+        const groupWorkoutReportEditHandled = await tryHandleGroupWorkoutReportCoachEditMessage({
+          coachChatId: String(parsedMessage.chatId),
+          text,
+        });
+        if (groupWorkoutReportEditHandled === "handled") {
+          return "handled";
+        }
+
         const chatContextState = getTrainingPeaksChatContextState(parsedMessage.chatId);
 
         if (
@@ -9429,6 +9442,27 @@ async function handleTrainingPeaksReplyDraftCancelCallback(
 export async function handleTrainingPeaksTelegramCallback(
   parsedMessage: ParsedTelegramCallbackUpdate
 ): Promise<"handled" | "ignored"> {
+  const groupWorkoutReportReviewCallback = parseGroupWorkoutReportReviewCallback(parsedMessage.data);
+  if (groupWorkoutReportReviewCallback) {
+    if (!isCoachChat(parsedMessage.chatId)) {
+      await sendTrainingPeaksMessage(parsedMessage.chatId, COACH_ONLY_MESSAGE);
+      return "handled";
+    }
+
+    await handleGroupWorkoutReportReviewCallback({
+      callback: groupWorkoutReportReviewCallback,
+      coachChatId: String(parsedMessage.chatId),
+      coachMessageId: parsedMessage.messageId,
+      callbackQueryId: parsedMessage.callbackQueryId,
+      deps: {
+        answerCallback: async (callbackQueryId, text) => {
+          await answerTelegramCallbackQuery(callbackQueryId, text);
+        },
+      },
+    });
+    return "handled";
+  }
+
   const callback = parseTrainingPeaksCallback(parsedMessage.data);
 
   if (!callback) {
