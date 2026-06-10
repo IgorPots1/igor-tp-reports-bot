@@ -2,6 +2,10 @@ import { createHash } from "node:crypto";
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import {
+  buildTelegramContextTextPreview,
+  sha256TelegramContextText,
+} from "@/features/trainingpeaks/telegram-context";
+import {
   extractMoveSourceExecutionContextFromDryRunLog,
   INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU,
   INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON,
@@ -5884,8 +5888,14 @@ export type TrainingPeaksCoachCasePrefixLookupResult =
   | { kind: "ambiguous" }
   | { kind: "invalid_prefix" };
 
-export type TrainingPeaksReplyDraftSource = "telegram_command" | "attention_digest" | "system";
+export type TrainingPeaksReplyDraftSource =
+  | "telegram_command"
+  | "attention_digest"
+  | "system"
+  | "group_workout_report";
 export type TrainingPeaksReplyDraftOutcome = "generated" | "used" | "edited" | "ignored";
+export type TrainingPeaksGroupWorkoutReportMatchStatus = "matched" | "ambiguous" | "not_found";
+export type TrainingPeaksGroupWorkoutReportMatchConfidence = "high" | "medium" | "low";
 
 export type InsertTrainingPeaksReplyDraftInput = {
   studentId: string;
@@ -5902,6 +5912,35 @@ export type InsertTrainingPeaksReplyDraftInput = {
   draftCharCount?: number;
   metadata?: Record<string, unknown>;
   createdAt?: string;
+  sourceChatId?: string | null;
+  sourceMessageId?: string | null;
+  sourceMessageTimestamp?: string | null;
+  sourceTelegramUserId?: string | null;
+  groupWorkoutReportIntakeId?: string | null;
+  workoutMatchStatus?: TrainingPeaksGroupWorkoutReportMatchStatus | null;
+  workoutMatchConfidence?: TrainingPeaksGroupWorkoutReportMatchConfidence | null;
+  plannedWorkoutCacheId?: string | null;
+  completedWorkoutCacheId?: string | null;
+  workoutAnalysisJson?: Record<string, unknown> | null;
+};
+
+export type InsertTrainingPeaksGroupWorkoutReportReplyDraftInput = {
+  studentId: string;
+  sourceChatId: string;
+  sourceMessageId: string;
+  sourceMessageTimestamp: string;
+  sourceTelegramUserId?: string | null;
+  groupWorkoutReportIntakeId?: string | null;
+  studentMessageText: string;
+  promptContext: string;
+  draftText: string;
+  aiModel: string;
+  workoutMatchStatus: TrainingPeaksGroupWorkoutReportMatchStatus;
+  workoutMatchConfidence: TrainingPeaksGroupWorkoutReportMatchConfidence;
+  plannedWorkoutCacheId?: string | null;
+  completedWorkoutCacheId?: string | null;
+  workoutAnalysisJson?: Record<string, unknown> | null;
+  metadata?: Record<string, unknown>;
 };
 
 export type TrainingPeaksReplyDraft = {
@@ -5924,6 +5963,16 @@ export type TrainingPeaksReplyDraft = {
   coachNoteSha256: string | null;
   metadata: Record<string, unknown>;
   createdAt: string;
+  sourceChatId: string | null;
+  sourceMessageId: string | null;
+  sourceMessageTimestamp: string | null;
+  sourceTelegramUserId: string | null;
+  groupWorkoutReportIntakeId: string | null;
+  workoutMatchStatus: TrainingPeaksGroupWorkoutReportMatchStatus | null;
+  workoutMatchConfidence: TrainingPeaksGroupWorkoutReportMatchConfidence | null;
+  plannedWorkoutCacheId: string | null;
+  completedWorkoutCacheId: string | null;
+  workoutAnalysisJson: Record<string, unknown> | null;
 };
 
 type TrainingPeaksReplyDraftRow = {
@@ -5946,6 +5995,16 @@ type TrainingPeaksReplyDraftRow = {
   coach_note_sha256: string | null;
   metadata: unknown;
   created_at: string;
+  source_chat_id?: string | number | null;
+  source_message_id?: string | number | null;
+  source_message_timestamp?: string | null;
+  source_telegram_user_id?: string | number | null;
+  group_workout_report_intake_id?: string | null;
+  workout_match_status?: TrainingPeaksGroupWorkoutReportMatchStatus | null;
+  workout_match_confidence?: TrainingPeaksGroupWorkoutReportMatchConfidence | null;
+  planned_workout_cache_id?: string | null;
+  completed_workout_cache_id?: string | null;
+  workout_analysis_json?: unknown;
 };
 
 export type UpdateTrainingPeaksReplyDraftOutcomeInput = {
@@ -6396,6 +6455,24 @@ function mapTrainingPeaksCoachActionTakenRow(
   };
 }
 
+function normalizeTrainingPeaksGroupWorkoutReportMatchStatus(
+  value: string | null | undefined
+): TrainingPeaksGroupWorkoutReportMatchStatus | null {
+  if (value === "matched" || value === "ambiguous" || value === "not_found") {
+    return value;
+  }
+  return null;
+}
+
+function normalizeTrainingPeaksGroupWorkoutReportMatchConfidence(
+  value: string | null | undefined
+): TrainingPeaksGroupWorkoutReportMatchConfidence | null {
+  if (value === "high" || value === "medium" || value === "low") {
+    return value;
+  }
+  return null;
+}
+
 function mapTrainingPeaksReplyDraftRow(row: TrainingPeaksReplyDraftRow): TrainingPeaksReplyDraft {
   return {
     id: row.id,
@@ -6420,6 +6497,32 @@ function mapTrainingPeaksReplyDraftRow(row: TrainingPeaksReplyDraftRow): Trainin
         ? (row.metadata as Record<string, unknown>)
         : {},
     createdAt: row.created_at,
+    sourceChatId:
+      row.source_chat_id === null || row.source_chat_id === undefined
+        ? null
+        : String(row.source_chat_id),
+    sourceMessageId:
+      row.source_message_id === null || row.source_message_id === undefined
+        ? null
+        : String(row.source_message_id),
+    sourceMessageTimestamp: row.source_message_timestamp ?? null,
+    sourceTelegramUserId:
+      row.source_telegram_user_id === null || row.source_telegram_user_id === undefined
+        ? null
+        : String(row.source_telegram_user_id),
+    groupWorkoutReportIntakeId: row.group_workout_report_intake_id ?? null,
+    workoutMatchStatus: normalizeTrainingPeaksGroupWorkoutReportMatchStatus(row.workout_match_status),
+    workoutMatchConfidence: normalizeTrainingPeaksGroupWorkoutReportMatchConfidence(
+      row.workout_match_confidence
+    ),
+    plannedWorkoutCacheId: row.planned_workout_cache_id ?? null,
+    completedWorkoutCacheId: row.completed_workout_cache_id ?? null,
+    workoutAnalysisJson:
+      row.workout_analysis_json &&
+      typeof row.workout_analysis_json === "object" &&
+      !Array.isArray(row.workout_analysis_json)
+        ? (row.workout_analysis_json as Record<string, unknown>)
+        : null,
   };
 }
 
@@ -6887,12 +6990,126 @@ export async function insertTrainingPeaksReplyDraft(
       draft_char_count: Math.max(0, Math.trunc(input.draftCharCount ?? 0)),
       metadata: input.metadata ?? {},
       created_at: input.createdAt ?? new Date().toISOString(),
+      source_chat_id: input.sourceChatId ?? null,
+      source_message_id: input.sourceMessageId ?? null,
+      source_message_timestamp: input.sourceMessageTimestamp ?? null,
+      source_telegram_user_id: input.sourceTelegramUserId ?? null,
+      group_workout_report_intake_id: input.groupWorkoutReportIntakeId ?? null,
+      workout_match_status: input.workoutMatchStatus ?? null,
+      workout_match_confidence: input.workoutMatchConfidence ?? null,
+      planned_workout_cache_id: input.plannedWorkoutCacheId ?? null,
+      completed_workout_cache_id: input.completedWorkoutCacheId ?? null,
+      workout_analysis_json: input.workoutAnalysisJson ?? null,
     })
     .select("*")
     .single();
 
   if (error) {
     throw new Error(`Failed to insert TrainingPeaks reply draft: ${error.message}`);
+  }
+
+  return mapTrainingPeaksReplyDraftRow(data as TrainingPeaksReplyDraftRow);
+}
+
+export async function getTrainingPeaksGroupWorkoutReportReplyDraftBySourceMessage(
+  sourceChatId: string,
+  sourceMessageId: string
+): Promise<TrainingPeaksReplyDraft | null> {
+  const normalizedChatId = sourceChatId.trim();
+  const normalizedMessageId = sourceMessageId.trim();
+  if (!normalizedChatId || !normalizedMessageId) {
+    return null;
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_reply_drafts")
+    .select("*")
+    .eq("source", "group_workout_report")
+    .eq("source_chat_id", normalizedChatId)
+    .eq("source_message_id", normalizedMessageId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to get group workout report reply draft by source message ${normalizedChatId}/${normalizedMessageId}: ${error.message}`
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksReplyDraftRow(data as TrainingPeaksReplyDraftRow);
+}
+
+export async function insertTrainingPeaksGroupWorkoutReportReplyDraft(
+  input: InsertTrainingPeaksGroupWorkoutReportReplyDraftInput
+): Promise<TrainingPeaksReplyDraft | null> {
+  const existing = await getTrainingPeaksGroupWorkoutReportReplyDraftBySourceMessage(
+    input.sourceChatId,
+    input.sourceMessageId
+  );
+  if (existing) {
+    return existing;
+  }
+
+  const promptContextSha256 = sha256TelegramContextText(input.promptContext);
+  const studentMessageSha256 = sha256TelegramContextText(input.studentMessageText);
+  const draftSha256 = sha256TelegramContextText(input.draftText);
+  if (!promptContextSha256 || !studentMessageSha256 || !draftSha256) {
+    throw new Error("Missing group workout report reply draft hash payload.");
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_reply_drafts")
+    .insert({
+      student_id: input.studentId,
+      case_id: null,
+      source: "group_workout_report",
+      actor_telegram_chat_id: input.sourceChatId,
+      ai_model: input.aiModel,
+      prompt_context_sha256: promptContextSha256,
+      student_message_sha256: studentMessageSha256,
+      student_message_preview: buildTrainingPeaksReplyDraftPreview(
+        buildTelegramContextTextPreview(input.studentMessageText)?.slice(0, 80) ?? null,
+        80
+      ),
+      draft_sha256: draftSha256,
+      draft_text: input.draftText,
+      draft_preview: buildTrainingPeaksReplyDraftPreview(
+        buildTelegramContextTextPreview(input.draftText),
+        120
+      ),
+      draft_char_count: Math.max(0, input.draftText.trim().length),
+      outcome: "generated",
+      metadata: {
+        review_status: "pending",
+        ...input.metadata,
+      },
+      source_chat_id: input.sourceChatId,
+      source_message_id: input.sourceMessageId,
+      source_message_timestamp: input.sourceMessageTimestamp,
+      source_telegram_user_id: input.sourceTelegramUserId ?? null,
+      group_workout_report_intake_id: input.groupWorkoutReportIntakeId ?? null,
+      workout_match_status: input.workoutMatchStatus,
+      workout_match_confidence: input.workoutMatchConfidence,
+      planned_workout_cache_id: input.plannedWorkoutCacheId ?? null,
+      completed_workout_cache_id: input.completedWorkoutCacheId ?? null,
+      workout_analysis_json: input.workoutAnalysisJson ?? null,
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    if (error.code === "23505") {
+      return getTrainingPeaksGroupWorkoutReportReplyDraftBySourceMessage(
+        input.sourceChatId,
+        input.sourceMessageId
+      );
+    }
+    throw new Error(`Failed to insert group workout report reply draft: ${error.message}`);
   }
 
   return mapTrainingPeaksReplyDraftRow(data as TrainingPeaksReplyDraftRow);
