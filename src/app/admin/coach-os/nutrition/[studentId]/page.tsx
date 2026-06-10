@@ -47,7 +47,6 @@ import {
   formatNutritionPlanTrainingContextLine,
   formatNutritionPlanTargetWeekHeading,
   formatNutritionPlanGenerateButtonLabel,
-  formatNutritionPlanDraftHeading,
   formatNutritionCombinedMessageMissingPlanHint,
   formatNutritionTpNextWeekContextLine,
   NUTRITION_CONTEXT_ITEM_TYPE_LABELS,
@@ -667,15 +666,7 @@ export default async function CoachOsNutritionStudentCardPage({
                     ) : null}
                   </div>
 
-                  {displayPlan.athleteMessageDraft ? (
-                    <>
-                      <h4>{planWeek ? formatNutritionPlanDraftHeading(planWeek.mode) : "Черновик ученику — фокус"}</h4>
-                      <NutritionDraftCopyBlock
-                        draft={displayPlan.athleteMessageDraft}
-                        generationMode={displayPlan.generationMode}
-                      />
-                    </>
-                  ) : (
+                  {displayPlan.athleteMessageDraft ? null : (
                     <>
                       <p className="admin-muted">Черновик ученику не создан — проверьте причины ниже.</p>
                       {displayPlanDoNotSendReasons.length > 0 ? (
@@ -737,7 +728,7 @@ export default async function CoachOsNutritionStudentCardPage({
 
         <article className="admin-card admin-card-compact admin-nutrition-card-wide">
           <h3>Черновик ученику — полный текст</h3>
-          <p className="admin-muted">Основной текст для отправки. Копируйте только из этого блока.</p>
+          <p className="admin-muted">Основной текст для отправки ученику. Копируйте именно этот блок.</p>
           {combinedMessage.status === "missing_review" ? (
             <p className="admin-muted">Сначала сгенерируйте разбор прошлой недели.</p>
           ) : combinedMessage.status === "missing_plan" ? (
@@ -811,27 +802,6 @@ export default async function CoachOsNutritionStudentCardPage({
             <p className="admin-muted">Полный текст ученику не сформирован: есть причины для ручной проверки.</p>
           )}
         </article>
-
-        <details className="admin-card admin-card-compact admin-nutrition-card-wide">
-          <summary>
-            <h3>Исходный черновик обзора — служебно</h3>
-          </summary>
-          <p className="admin-muted">
-            Сохранённый черновик из генерации обзора. Может содержать технические формулировки — для отправки ученику
-            используйте блок «полный текст» выше.
-          </p>
-          {!card.weeklyAnalysis ? (
-            <p className="admin-muted">Обзор ещё не сгенерирован.</p>
-          ) : card.weeklyAnalysis.status === "blocked_safety" ? (
-            <div className="admin-alert admin-alert-error">
-              <strong>Блок безопасности.</strong> Черновик для ученика скрыт. Проверьте флаги перед ручным копированием.
-            </div>
-          ) : card.weeklyAnalysis.athleteMessageDraft ? (
-            <NutritionDraftCopyBlock draft={card.weeklyAnalysis.athleteMessageDraft} generationMode={generationMode} />
-          ) : (
-            <p className="admin-muted">Черновик скрыт (блок безопасности или мало данных).</p>
-          )}
-        </details>
 
         <article className="admin-card admin-card-compact admin-nutrition-card-wide">
           <h3>Детали для тренера</h3>
@@ -953,6 +923,50 @@ export default async function CoachOsNutritionStudentCardPage({
         <details className="admin-card admin-card-compact admin-nutrition-card-wide admin-nutrition-advanced-stack">
           <summary>Дополнительно</summary>
           <div className="admin-nutrition-advanced-inner">
+            <details>
+              <summary>Исходные служебные черновики</summary>
+              <div className="admin-form-stack">
+                <p className="admin-muted">
+                  Служебный текст, не для отправки напрямую. Для отправки ученику используйте блок «Черновик ученику —
+                  полный текст» выше.
+                </p>
+
+                <section>
+                  <h4>Служебный черновик обзора из БД</h4>
+                  {!card.weeklyAnalysis ? (
+                    <p className="admin-muted">Обзор ещё не сгенерирован.</p>
+                  ) : card.weeklyAnalysis.status === "blocked_safety" ? (
+                    <div className="admin-alert admin-alert-error">
+                      <strong>Блок безопасности.</strong> Черновик скрыт. Проверьте флаги перед ручным просмотром.
+                    </div>
+                  ) : card.weeklyAnalysis.athleteMessageDraft ? (
+                    <NutritionDraftCopyBlock
+                      draft={card.weeklyAnalysis.athleteMessageDraft}
+                      generationMode={generationMode}
+                      copyEnabled={false}
+                    />
+                  ) : (
+                    <p className="admin-muted">Черновик скрыт (блок безопасности или мало данных).</p>
+                  )}
+                </section>
+
+                <section>
+                  <h4>Служебный черновик фокуса из БД</h4>
+                  {!displayPlan ? (
+                    <p className="admin-muted">Сохранённого фокуса на эту неделю пока нет.</p>
+                  ) : displayPlan.athleteMessageDraft ? (
+                    <NutritionDraftCopyBlock
+                      draft={displayPlan.athleteMessageDraft}
+                      generationMode={displayPlan.generationMode}
+                      copyEnabled={false}
+                    />
+                  ) : (
+                    <p className="admin-muted">Черновик фокуса не создан.</p>
+                  )}
+                </section>
+              </div>
+            </details>
+
             <details>
               <summary>Профиль и вес</summary>
               <div className="admin-form-stack">

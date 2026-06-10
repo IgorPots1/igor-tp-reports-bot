@@ -196,6 +196,7 @@
     "diagnose:nutrition-weekly-plan-selection": "npx tsx scripts/diagnose-nutrition-weekly-plan-selection.ts",
     "diagnose:nutrition-combined-message-render": "npx tsx scripts/diagnose-nutrition-combined-message-render.ts",
     "diagnose:nutrition-telegram-renderer-live": "npx tsx scripts/diagnose-nutrition-telegram-renderer-live.ts",
+    "diagnose:nutrition-page-render-path": "npx tsx scripts/diagnose-nutrition-page-render-path.ts",
     "diagnose:trainingpeaks-future-workout-cache": "npx tsx scripts/diagnose-trainingpeaks-future-workout-cache.ts",
     "check:nutrition-tp-future-workout-context": "npx tsx scripts/check-nutrition-tp-future-workout-context.ts",
     "check:nutrition-weekly-plan-ui": "npx tsx scripts/check-nutrition-weekly-plan-ui.ts",

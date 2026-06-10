@@ -33,26 +33,41 @@ assert.match(
   /formatNutritionPlanTrainingContextLine/,
   "plan card must show generated plan TP context from training snapshot"
 );
-assert.match(mainUi, /formatNutritionPlanDraftHeading/, "plan card must distinguish plan draft heading dynamically");
 assert.match(mainUi, /Черновик ученику — полный текст/, "main UI must expose combined copy block title");
-assert.match(mainUi, /Основной текст для отправки/, "combined block must be labeled as primary copy source");
+assert.match(mainUi, /Основной текст для отправки ученику/, "combined block must be labeled as primary copy source");
 assert.match(mainUi, /buildDerivedNutritionCombinedMessage/, "main UI must derive combined copy from review and plan");
 assert.match(mainUi, /renderResult\.text/, "main UI must copy deterministic renderer text");
 assert.match(mainUi, /renderResult\.issues/, "main UI must show renderer warnings or errors");
 assert.match(mainUi, /Полный текст заблокирован renderer-проверкой/, "main UI must block broken renderer output");
 assert.match(mainUi, /displayPlan/, "main UI combined block must use resolved display plan");
+assert.match(mainUi, /NutritionDraftCopyBlock/, "main UI must use NutritionDraftCopyBlock for primary combined draft");
 
-const reviewDraftStart = mainUi.indexOf("Исходный черновик обзора — служебно");
-const planCardStart = mainUi.indexOf("admin-nutrition-plan-card");
+const advancedStackStart = studentPage.indexOf("admin-nutrition-advanced-stack");
 const combinedDraftStart = mainUi.indexOf("Черновик ученику — полный текст");
-assert.ok(reviewDraftStart >= 0, "main UI must include secondary review draft heading");
-assert.match(mainUi, /используйте блок «полный текст» выше/, "secondary review draft must warn against athlete copy");
-assert.ok(planCardStart >= 0, "main UI must include weekly plan card title");
+assert.ok(advancedStackStart >= 0, "page must include advanced stack for service drafts");
 assert.ok(combinedDraftStart >= 0, "main UI must include combined draft heading");
 assert.ok(
-  combinedDraftStart < reviewDraftStart,
-  "combined draft should appear above separate review/plan drafts"
+  combinedDraftStart < advancedStackStart,
+  "combined draft should appear above advanced service drafts section"
 );
+
+assert.match(studentPage, /Исходные служебные черновики/, "advanced section must include collapsed service drafts");
+assert.match(studentPage, /Служебный черновик обзора из БД/, "service drafts must label review source draft");
+assert.match(studentPage, /Служебный черновик фокуса из БД/, "service drafts must label plan source draft");
+assert.match(
+  studentPage,
+  /Служебный текст, не для отправки напрямую/,
+  "service drafts must warn against athlete copy"
+);
+assert.match(studentPage, /copyEnabled=\{false\}/, "service drafts must disable copy button");
+
+assert.doesNotMatch(studentPage, /nutrition-render-debug/, "page must not include runtime debug log marker");
+assert.doesNotMatch(studentPage, /renderer-debug-c4c0d67/, "page must not include debug renderer version marker");
+assert.doesNotMatch(studentPage, /storedReviewDraftHasOldPhrases/, "page must not include debug audit fields");
+assert.doesNotMatch(studentPage, /data-testid/, "page must not include temporary debug test ids");
+
+const planCardStart = mainUi.indexOf("admin-nutrition-plan-card");
+assert.ok(planCardStart >= 0, "main UI must include weekly plan card title");
 
 assert.match(actions, /planId: plan\.id/, "generate action must redirect to newly generated plan id");
 assert.match(actions, /getOptionalFormValue\(formData,\s*"sourceReportId"\)/, "plan action must read sourceReportId");
@@ -62,7 +77,6 @@ assert.doesNotMatch(
   "plan action must not pass URL reportId as sourceReportId"
 );
 assert.match(mainUi, /generateNutritionWeeklyPlanAction/, "main UI must use generateNutritionWeeklyPlanAction");
-assert.match(mainUi, /NutritionDraftCopyBlock/, "main UI must use NutritionDraftCopyBlock for plan draft");
 assert.match(mainUi, /formatNutritionPlanGenerateButtonLabel/, "main UI must include dynamic generate focus button");
 assert.match(mainUi, /Сначала сгенерируйте разбор прошлой недели/, "main UI must show empty state without review");
 
@@ -83,9 +97,10 @@ assert.match(
   "generate UI must be gated on selected review"
 );
 
-const planCardEnd = mainUi.indexOf("Исходный черновик обзора — служебно");
+const planCardEnd = mainUi.indexOf("Черновик ученику — полный текст");
 const planCardUi =
   planCardStart >= 0 && planCardEnd > planCardStart ? mainUi.slice(planCardStart, planCardEnd) : mainUi;
+assert.doesNotMatch(planCardUi, /NutritionDraftCopyBlock/, "plan card must not expose copy-ready plan draft");
 assert.doesNotMatch(planCardUi, /plan_summary|generation_mode/, "plan card must not expose raw plan field names");
 assert.doesNotMatch(planCardUi, />\s*draft_generated\s*</, "plan card must not show raw draft_generated label");
 assert.doesNotMatch(planCardUi, />\s*blocked_safety\s*</, "plan card must not show raw blocked_safety label");
