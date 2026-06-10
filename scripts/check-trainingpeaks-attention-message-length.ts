@@ -1,6 +1,7 @@
 import process from "node:process";
 
 import {
+  MORNING_DIGEST_SECTION_TITLES,
   TRAININGPEAKS_ATTENTION_DIGEST_CHUNK_LIMIT,
   buildTrainingPeaksAttentionDigestMessages,
 } from "@/features/trainingpeaks/attention-telegram";
@@ -16,22 +17,25 @@ function assert(condition: unknown, message: string): void {
 function buildLargeSnapshot(): TrainingPeaksAttentionSnapshot {
   const makeSignals = (
     count: number,
-    section: "urgent" | "today" | "observe" | "fyi",
-    reasonPrefix: string
+    reasonPrefix: string,
+    signalKind: TrainingPeaksAttentionSnapshot["checkTodaySignals"][number]["signalKind"]
   ) =>
     Array.from({ length: count }, (_, index) => ({
-      level: section === "urgent" ? ("urgent" as const) : ("today" as const),
-      studentName: `${section.toUpperCase()} Athlete ${index + 1}`,
+      level: "today" as const,
+      studentName: `${reasonPrefix.toUpperCase()} Athlete ${index + 1}`,
       reason: `${reasonPrefix} ${index + 1}: ${"детали ".repeat(30).trim()}`,
-      studentId: `student-${section}-${index + 1}`,
-      signalKind: "follow_up_due" as const,
+      studentId: `student-${reasonPrefix}-${index + 1}`,
+      signalKind,
     }));
 
   return {
-    urgent: makeSignals(12, "urgent", "срочный сигнал"),
-    today: makeSignals(15, "today", "решение сегодня"),
-    observe: makeSignals(11, "observe", "наблюдение"),
-    fyi: makeSignals(9, "fyi", "контекст"),
+    urgent: [],
+    today: [],
+    observe: [],
+    fyi: [],
+    checkTodaySignals: makeSignals(12, "срочный", "move_failed_action"),
+    painDiscomfort: makeSignals(9, "боль", "pain_case"),
+    missedWorkouts: makeSignals(15, "пропуск", "missed_workout"),
     followUpToday: Array.from({ length: 14 }, (_, index) => ({
       level: "today" as const,
       studentName: `FOLLOWUP Athlete ${index + 1}`,
@@ -77,17 +81,17 @@ function run(): void {
   );
 
   const joined = messages.join("\n");
-  assert(joined.includes("🚨 Срочно"), "Urgent section should be present.");
-  assert(joined.includes("📌 Сегодня"), "Today section should be present.");
-  assert(joined.includes("Проверить сегодня"), "Follow-up section should be present.");
-  assert(joined.includes("📅 Учесть в плане"), "Plan section should be present.");
-  assert(joined.includes("🔁 Переносы"), "Moves section should be present.");
-  assert(joined.includes("👀 Наблюдать"), "Observe section should be present.");
-  assert(joined.includes("📭 Нет контакта 5+ дней"), "No-contact section should be present.");
-  assert(joined.includes("ℹ️ Справочно"), "FYI/misc section should be present.");
+  assert(joined.includes(MORNING_DIGEST_SECTION_TITLES.checkToday), "Check-today section should be present.");
+  assert(joined.includes(MORNING_DIGEST_SECTION_TITLES.plan), "Plan section should be present.");
+  assert(joined.includes(MORNING_DIGEST_SECTION_TITLES.pain), "Pain section should be present.");
+  assert(joined.includes(MORNING_DIGEST_SECTION_TITLES.noContact), "No-contact section should be present.");
+  assert(joined.includes(MORNING_DIGEST_SECTION_TITLES.missed), "Missed workout section should be present.");
+  assert(!joined.includes("🚨 Срочно"), "Legacy urgent section should be gone.");
+  assert(!joined.includes("📌 Сегодня"), "Legacy today section should be gone.");
+  assert(!joined.includes("🔁 Переносы"), "Moves should be merged into plan section.");
 
-  assert(joined.includes("URGENT Athlete 12"), "Urgent section should list athletes up to the section cap.");
-  assert(joined.includes("TODAY Athlete 15"), "Today section should list athletes up to the section cap.");
+  assert(joined.includes("FOLLOWUP Athlete 13"), "Check-today section should list follow-up athletes up to the section cap.");
+  assert(joined.includes("ПРОПУСК Athlete 15"), "Missed section should list athletes up to the section cap.");
   assert(joined.includes("SILENT Athlete 12"), "No-contact section should list silent students.");
 
   const overflowMentions = (joined.match(/\+\d+\sещё/g) ?? []).length;

@@ -269,6 +269,9 @@ function run(): void {
       today: [],
       observe: [],
       fyi: [],
+      checkTodaySignals: [],
+      painDiscomfort: [],
+      missedWorkouts: [],
       noContact5Days: [],
       followUpToday: [],
       followUpOverflowCount: 0,
@@ -300,9 +303,10 @@ function run(): void {
     "Attention digest should include blank line after plan section header."
   );
   assert(
-    attentionMessage.includes("🔁 Переносы\n\n• Ilya Bogdanov"),
-    "Attention digest should include blank line after moves section header."
+    attentionMessage.includes("• Ilya Bogdanov") && attentionMessage.includes("05.06"),
+    "Attention digest should include move candidate inside merged plan section."
   );
+  assert(!attentionMessage.includes("🔁 Переносы"), "Standalone moves section should be gone from morning digest.");
 
   const restrictionWithReason = formatScheduleOperationalSignalText({
     signalType: "schedule_availability_window",

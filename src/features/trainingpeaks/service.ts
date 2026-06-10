@@ -654,6 +654,9 @@ export type TrainingPeaksAttentionSnapshot = {
   today: TrainingPeaksAttentionSignal[];
   observe: TrainingPeaksAttentionSignal[];
   fyi: TrainingPeaksAttentionSignal[];
+  checkTodaySignals: TrainingPeaksAttentionSignal[];
+  painDiscomfort: TrainingPeaksAttentionSignal[];
+  missedWorkouts: TrainingPeaksAttentionSignal[];
   noContact5Days: TrainingPeaksAttentionSignal[];
   followUpToday: TrainingPeaksAttentionSignal[];
   followUpOverflowCount: number;
@@ -4417,7 +4420,6 @@ const YESTERDAY_SCAN_SMALL_FAILURE_NAMES_LIMIT = 3;
 const YESTERDAY_SCAN_FAILURE_PREVIEW_NAMES_LIMIT = 4;
 const ATTENTION_OPERATIONAL_LIST_MAX_ITEMS = 20;
 const ATTENTION_NO_CONTACT_MINIMUM_COACH_IDLE_DAYS = TRAININGPEAKS_NO_CONTACT_ALERT_DAYS;
-const QUESTION_UNANSWERED_PROMOTION_HOURS = 6;
 
 type YesterdayScanStatusSignalSource = {
   studentId: string;
@@ -4570,6 +4572,28 @@ export function formatRussianCountedNoun(
     return forms[1];
   }
   return forms[2];
+}
+
+function formatAttentionPainCaseReason(coachNotesJson: Record<string, unknown>): string {
+  const candidates = [
+    readStringRecordValue(coachNotesJson, "text_preview"),
+    readStringRecordValue(coachNotesJson, "summary"),
+    readStringRecordValue(coachNotesJson, "display_summary"),
+    readStringRecordValue(coachNotesJson, "latest_summary"),
+  ].filter((value): value is string => Boolean(value));
+
+  for (const candidate of candidates) {
+    const normalized = candidate.replace(/\s+/gu, " ").trim();
+    if (normalized.length === 0) {
+      continue;
+    }
+    if (/самочувствие\/боль|за последние\s+\d+\s*ч/iu.test(normalized)) {
+      continue;
+    }
+    return normalized.length > 120 ? `${normalized.slice(0, 117).trimEnd()}...` : normalized;
+  }
+
+  return "боль / дискомфорт";
 }
 
 function formatAttentionCaseCreatedAtLabel(isoDateTime: string): string | null {
@@ -5327,12 +5351,16 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
   const today: TrainingPeaksAttentionSignal[] = [];
   const observe: TrainingPeaksAttentionSignal[] = [];
   const fyi: TrainingPeaksAttentionSignal[] = [];
+  const checkTodaySignals: TrainingPeaksAttentionSignal[] = [];
+  const painDiscomfort: TrainingPeaksAttentionSignal[] = [];
+  const missedWorkouts: TrainingPeaksAttentionSignal[] = [];
+  const planExtras: TrainingPeaksAttentionSignal[] = [];
 
   for (const action of actions) {
     const studentName = action.studentName?.trim() || null;
 
     if (action.status === "pending_coach") {
-      pushUniqueAttentionSignal(today, {
+      pushUniqueAttentionSignal(planExtras, {
         level: "today",
         studentName,
         reason: "ждёт решения по переносу тренировки",
@@ -5359,8 +5387,8 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
         }
 
         if (latestRun.status === "failed" && isWithinLookbackHours(latestRun.createdAt, 48)) {
-          pushUniqueAttentionSignal(urgent, {
-            level: "urgent",
+          pushUniqueAttentionSignal(checkTodaySignals, {
+            level: "today",
             studentName,
             reason: "выполнение переноса завершилось с ошибкой",
             studentId: action.studentId ?? null,
@@ -5371,8 +5399,8 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
         continue;
       }
 
-      pushUniqueAttentionSignal(urgent, {
-        level: "urgent",
+      pushUniqueAttentionSignal(checkTodaySignals, {
+        level: "today",
         studentName,
         reason: "выполнение переноса завершилось с ошибкой",
         studentId: action.studentId ?? null,
@@ -5494,7 +5522,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     }
 
     if (missedRunningPlannedCount === 1) {
-      pushUniqueAttentionSignal(today, {
+      pushUniqueAttentionSignal(missedWorkouts, {
         level: "today",
         studentName,
         reason: "вчера была беговая тренировка, выполнения не найдено",
@@ -5505,7 +5533,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     }
 
     if (missedRunningPlannedCount > 1) {
-      pushUniqueAttentionSignal(today, {
+      pushUniqueAttentionSignal(missedWorkouts, {
         level: "today",
         studentName,
         reason: formatMissedRunningWorkoutReason(missedRunningPlannedCount),
@@ -5574,8 +5602,8 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     }
 
     if (job.jobType === "race_scan_events") {
-      pushUniqueAttentionSignal(urgent, {
-        level: "urgent",
+      pushUniqueAttentionSignal(checkTodaySignals, {
+        level: "today",
         studentName: null,
         reason: "последний запуск сканирования забегов завершился с ошибкой",
         signalKind: "failed_job",
@@ -5583,8 +5611,8 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
       continue;
     }
 
-    pushUniqueAttentionSignal(urgent, {
-      level: "urgent",
+    pushUniqueAttentionSignal(checkTodaySignals, {
+      level: "today",
       studentName: null,
       reason: "последний запуск TP завершился с ошибкой",
       signalKind: "failed_job",
@@ -5604,19 +5632,11 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
       error,
     });
   }
-  const contactStatusByStudentId = new Map(contactStatuses.map((status) => [status.studentId, status]));
-
   try {
-    const [painCases, questionCases, moveNeedsReviewCases] = await Promise.all([
+    const [painCases, moveNeedsReviewCases] = await Promise.all([
       listRecentTrainingPeaksCoachCasesForAttention({
         sinceHours: 48,
         caseKinds: ["pain_or_health_signal"],
-        statuses: caseStatusesForAttention,
-        limit: 300,
-      }),
-      listRecentTrainingPeaksCoachCasesForAttention({
-        sinceHours: 72,
-        caseKinds: ["question_to_coach"],
         statuses: caseStatusesForAttention,
         limit: 300,
       }),
@@ -5627,73 +5647,29 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
         limit: 300,
       }),
     ]);
-    const visibleQuestionCases = questionCases.filter((caseRow) => {
-      const visibleByDefault = isTrainingPeaksCoachCaseVisibleByDefault({
-        caseKind: caseRow.caseKind,
-        coachNotesJson: caseRow.coachNotesJson,
-      });
-      if (visibleByDefault) {
-        return true;
-      }
 
-      if (caseRow.caseKind !== "question_to_coach") {
-        return false;
-      }
-
-      const createdAtMs = getIsoTimeMs(caseRow.createdAt);
-      if (createdAtMs === null) {
-        return false;
-      }
-      const isCaseOldEnough =
-        nowMs - createdAtMs >= QUESTION_UNANSWERED_PROMOTION_HOURS * 60 * 60 * 1000;
-      if (!isCaseOldEnough) {
-        return false;
-      }
-
-      const unansweredSeconds = contactStatusByStudentId.get(caseRow.studentId)?.unansweredSeconds ?? 0;
-      return unansweredSeconds >= QUESTION_UNANSWERED_PROMOTION_HOURS * 60 * 60;
-    });
-
-    const painCaseCountsByStudentId = new Map<string, number>();
+    const painCasesByStudentId = new Map<string, (typeof painCases)[number]>();
     for (const caseRow of painCases) {
-      painCaseCountsByStudentId.set(caseRow.studentId, (painCaseCountsByStudentId.get(caseRow.studentId) ?? 0) + 1);
+      if (!painCasesByStudentId.has(caseRow.studentId)) {
+        painCasesByStudentId.set(caseRow.studentId, caseRow);
+      }
     }
-    for (const [studentId, count] of painCaseCountsByStudentId) {
+    for (const [studentId, caseRow] of painCasesByStudentId) {
       const studentName = activeStudentNameById.get(studentId) ?? null;
-      pushUniqueAttentionSignal(urgent, {
-        level: "urgent",
-        studentName,
-        reason:
-          count > 1
-            ? `самочувствие/боль: ${count} ${formatRussianCountedNoun(count, ["сигнал", "сигнала", "сигналов"])} за 48ч`
-            : "самочувствие/боль за последние 48ч",
-        studentId,
-        signalKind: "pain_case",
-      });
-    }
-
-    const questionCaseCountsByStudentId = new Map<string, number>();
-    for (const caseRow of visibleQuestionCases) {
-      questionCaseCountsByStudentId.set(caseRow.studentId, (questionCaseCountsByStudentId.get(caseRow.studentId) ?? 0) + 1);
-    }
-    for (const [studentId, count] of questionCaseCountsByStudentId) {
-      const studentName = activeStudentNameById.get(studentId) ?? null;
-      pushUniqueAttentionSignal(today, {
+      pushUniqueAttentionSignal(painDiscomfort, {
         level: "today",
         studentName,
-        reason:
-          count > 1
-            ? `вопросы тренеру: ${count} за 24ч`
-            : "вопрос тренеру за последние 24ч",
+        reason: formatAttentionPainCaseReason(caseRow.coachNotesJson),
         studentId,
-        signalKind: "question_case",
+        caseId: caseRow.id,
+        signalKind: "pain_case",
       });
     }
 
     for (const caseRow of moveNeedsReviewCases) {
       const studentName = activeStudentNameById.get(caseRow.studentId) ?? null;
       const createdAtLabel = formatAttentionCaseCreatedAtLabel(caseRow.createdAt);
-      pushUniqueAttentionSignal(today, {
+      pushUniqueAttentionSignal(planExtras, {
         level: "today",
         studentName,
         reason: createdAtLabel
@@ -5784,8 +5760,14 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
       signalKind: "operational_schedule",
     }));
     planConstraintsOverflowCount = scheduleSignals.overflowCount;
+    for (const signal of planExtras) {
+      pushUniqueAttentionSignal(planConstraintsToday, signal);
+    }
   } catch (error) {
     console.warn("Failed to load operational schedule signals for attention snapshot", { error });
+    for (const signal of planExtras) {
+      pushUniqueAttentionSignal(planConstraintsToday, signal);
+    }
   }
 
   try {
@@ -5810,6 +5792,9 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     today,
     observe,
     fyi,
+    checkTodaySignals,
+    painDiscomfort,
+    missedWorkouts,
     noContact5Days,
     followUpToday,
     followUpOverflowCount,

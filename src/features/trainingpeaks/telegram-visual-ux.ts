@@ -102,6 +102,10 @@ export function formatOperationalSignalTelegramLine(
   return formatTelegramBulletCard(studentName, detailLines);
 }
 
+export function escapeTelegramHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 export function formatAttentionSignalTelegramLine(studentName: string | null, reason: string): string {
   const name = studentName?.trim();
   const reasonLines = splitCoachFacingDenseText(reason);

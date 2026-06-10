@@ -2,6 +2,7 @@ import process from "node:process";
 
 import {
   ATTENTION_DIGEST_SECTION_LIMITS,
+  MORNING_DIGEST_SECTION_TITLES,
   buildTrainingPeaksAttentionDigestMessages,
   formatTrainingPeaksAttentionSnapshotMessage,
 } from "@/features/trainingpeaks/attention-telegram";
@@ -14,18 +15,17 @@ function assert(condition: unknown, message: string): void {
   }
 }
 
-function buildSnapshotWithTodayItems(count: number): TrainingPeaksAttentionSnapshot {
-  const today = Array.from({ length: count }, (_, index) => ({
-    level: "today" as const,
-    studentName: `Athlete ${index + 1}`,
-    reason: "вчера была беговая тренировка, выполнения не найдено",
-  }));
-
+function emptyMorningDigestSnapshot(
+  overrides: Partial<TrainingPeaksAttentionSnapshot> = {}
+): TrainingPeaksAttentionSnapshot {
   return {
     urgent: [],
-    today,
+    today: [],
     observe: [],
     fyi: [],
+    checkTodaySignals: [],
+    painDiscomfort: [],
+    missedWorkouts: [],
     noContact5Days: [],
     followUpToday: [],
     followUpOverflowCount: 0,
@@ -33,28 +33,33 @@ function buildSnapshotWithTodayItems(count: number): TrainingPeaksAttentionSnaps
     planConstraintsOverflowCount: 0,
     movesToday: [],
     movesOverflowCount: 0,
+    ...overrides,
   };
 }
 
+function buildSnapshotWithMissedWorkouts(count: number): TrainingPeaksAttentionSnapshot {
+  const missedWorkouts = Array.from({ length: count }, (_, index) => ({
+    level: "today" as const,
+    studentName: `Athlete ${index + 1}`,
+    reason: "вчера была беговая тренировка, выполнения не найдено",
+    signalKind: "missed_workout" as const,
+  }));
+
+  return emptyMorningDigestSnapshot({ missedWorkouts });
+}
+
 function buildCaseGroupingSnapshot(): TrainingPeaksAttentionSnapshot {
-  return {
-    urgent: [
-      {
-        level: "urgent",
-        studentName: "Elena Titskaia",
-        studentId: "student-elena",
-        reason: "самочувствие/боль: 2 сигнала за 48ч",
-        signalKind: "pain_case",
-      },
-    ],
-    today: [
+  return emptyMorningDigestSnapshot({
+    painDiscomfort: [
       {
         level: "today",
         studentName: "Elena Titskaia",
         studentId: "student-elena",
-        reason: "вопросы тренеру: 4 за 24ч",
-        signalKind: "question_case",
+        reason: "болит колено после вчерашней тренировки",
+        signalKind: "pain_case",
       },
+    ],
+    planConstraintsToday: [
       {
         level: "today",
         studentName: "Ilya Bogdanov",
@@ -64,30 +69,24 @@ function buildCaseGroupingSnapshot(): TrainingPeaksAttentionSnapshot {
         signalKind: "move_needs_review_case",
       },
     ],
-    observe: [],
-    fyi: [],
-    noContact5Days: [],
-    followUpToday: [],
-    followUpOverflowCount: 0,
-    planConstraintsToday: [],
-    planConstraintsOverflowCount: 0,
-    movesToday: [],
-    movesOverflowCount: 0,
-  };
+  });
 }
 
 function run(): void {
-  const snapshot = buildSnapshotWithTodayItems(8);
+  const snapshot = buildSnapshotWithMissedWorkouts(8);
   const message = formatTrainingPeaksAttentionSnapshotMessage(snapshot, "Утренний обзор TrainingPeaks");
-  const todayLines = message
+  const missedLines = message
     .split("\n")
     .filter((line) => line.startsWith("• ") && line.includes("Athlete"));
 
   assert(
-    todayLines.length === 8,
-    `Expected all 8 today athletes listed (limit ${ATTENTION_DIGEST_SECTION_LIMITS.today}), got ${todayLines.length}.`
+    missedLines.length === 8,
+    `Expected all 8 missed-workout athletes listed (limit ${ATTENTION_DIGEST_SECTION_LIMITS.missed}), got ${missedLines.length}.`
   );
-  assert(!message.includes("+"), 'Digest should not hide today items behind "+N ещё" for 8 athletes.');
+  assert(!message.includes("+"), 'Digest should not hide missed items behind "+N ещё" for 8 athletes.');
+  assert(message.includes(MORNING_DIGEST_SECTION_TITLES.missed), "Missed workout section should be present.");
+  assert(!message.split("\n").map((line) => line.trim()).includes("Проверить сегодня"), "Legacy follow-up title should be gone.");
+  assert(!message.includes("• Нет"), 'Digest should not include placeholder "• Нет".');
 
   const chunks = buildTrainingPeaksAttentionDigestMessages(snapshot, "Утренний обзор TrainingPeaks");
   assert(chunks.length >= 1, "Expected at least one digest chunk.");
@@ -95,24 +94,21 @@ function run(): void {
     chunks.every((chunk) => chunk.length <= 3500),
     "Each digest chunk must stay within the 3500 character limit."
   );
-  assert(chunks.join("\n").includes("Athlete 8"), "Chunked digest should include the last today athlete.");
-  assert(!message.includes("Проверить сегодня"), "Empty follow-up section should be omitted.");
-  assert(!message.includes("• Нет"), 'Digest should not include placeholder "• Нет".');
+  assert(chunks.join("\n").includes("Athlete 8"), "Chunked digest should include the last missed-workout athlete.");
 
   const groupedSnapshot = buildCaseGroupingSnapshot();
   const groupedMessage = formatTrainingPeaksAttentionSnapshotMessage(groupedSnapshot, "Утренний обзор TrainingPeaks");
+  assert(groupedMessage.includes("болит колено"), "Pain case line should keep concrete reason.");
   assert(
-    groupedMessage.includes("самочувствие/боль: 2 сигнала за 48ч"),
-    "Grouped pain case line should be rendered."
-  );
-  assert(
-    groupedMessage.includes("вопросы тренеру: 4 за 24ч"),
-    "Grouped question case line should be rendered."
+    groupedMessage.includes("перенос тренировки требует проверки"),
+    "Move-needs-review case should appear in plan section."
   );
   assert(
     !groupedMessage.includes("(case:"),
     "Main attention digest should not render raw case IDs."
   );
+  assert(!groupedMessage.includes("вопросы тренеру"), "Question noise must stay out of morning digest.");
+  assert(!groupedMessage.includes("самочувствие/боль"), "Generic pain noise must stay out of morning digest.");
 
   const yesterdayScanSummary = summarizeYesterdayScanAttention({
     now: new Date("2026-06-02T12:00:00+02:00"),
@@ -173,27 +169,16 @@ function run(): void {
     "Russian student count noun: 103."
   );
 
-  const noContactSnapshot: TrainingPeaksAttentionSnapshot = {
-    urgent: [],
-    today: [],
-    observe: [],
-    fyi: [],
-    noContact5Days: [
-      { level: "fyi", studentName: "Student A", reason: "", signalKind: "no_contact" },
-      { level: "fyi", studentName: "Student B", reason: "", signalKind: "no_contact" },
-    ],
-    followUpToday: [],
-    followUpOverflowCount: 0,
-    planConstraintsToday: [],
-    planConstraintsOverflowCount: 0,
-    movesToday: [],
-    movesOverflowCount: 0,
-  };
   const noContactMessage = formatTrainingPeaksAttentionSnapshotMessage(
-    noContactSnapshot,
+    emptyMorningDigestSnapshot({
+      noContact5Days: [
+        { level: "fyi", studentName: "Student A", reason: "", signalKind: "no_contact" },
+        { level: "fyi", studentName: "Student B", reason: "", signalKind: "no_contact" },
+      ],
+    }),
     "Утренний обзор TrainingPeaks"
   );
-  assert(noContactMessage.includes("📭 Нет контакта 3+ дня"), "No-contact section title should be coach-facing.");
+  assert(noContactMessage.includes(MORNING_DIGEST_SECTION_TITLES.noContact), "No-contact section title should be coach-facing.");
   assert(noContactMessage.includes("• Student A"), "No-contact section should list student names.");
   assert(noContactMessage.includes("• Student B"), "No-contact section should list all silent students.");
   assert(!noContactMessage.includes("Без активности"), "Legacy no-activity label should be gone.");

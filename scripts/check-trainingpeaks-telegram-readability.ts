@@ -140,6 +140,9 @@ function run(): void {
       today: [],
       observe: [],
       fyi: [],
+      checkTodaySignals: [],
+      painDiscomfort: [],
+      missedWorkouts: [],
       noContact5Days: [
         {
           level: "observe",
@@ -164,20 +167,24 @@ function run(): void {
     },
     "Утренний обзор"
   );
-  assert(attentionMessage.includes("📭 Нет контакта 5+ дней\n\n"), "contact section needs blank line after header");
+  assert(attentionMessage.includes("📭 Нет контакта\n\n"), "contact section needs blank line after header");
   assert(attentionMessage.includes("• Student Name\n  7 дней"), "contact card should split name and days");
   assert(attentionMessage.includes("• Sofia Vlasova\n  доступна:"), "plan card should split name and availability");
 
   const chunks = buildTrainingPeaksAttentionDigestMessages(
     {
       urgent: [],
-      today: Array.from({ length: 40 }, (_, index) => ({
+      today: [],
+      observe: [],
+      fyi: [],
+      checkTodaySignals: [],
+      painDiscomfort: [],
+      missedWorkouts: Array.from({ length: 40 }, (_, index) => ({
         level: "today" as const,
         studentName: `Athlete ${index + 1}`,
         reason: "вчера была беговая тренировка, выполнения не найдено",
+        signalKind: "missed_workout" as const,
       })),
-      observe: [],
-      fyi: [],
       noContact5Days: [],
       followUpToday: [],
       followUpOverflowCount: 0,

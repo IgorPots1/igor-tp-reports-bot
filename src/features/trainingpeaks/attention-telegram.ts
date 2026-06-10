@@ -1,27 +1,50 @@
-import type { TrainingPeaksAttentionSnapshot } from "@/features/trainingpeaks/service";
-import { formatAttentionSignalTelegramLine } from "@/features/trainingpeaks/telegram-visual-ux";
+import type { TrainingPeaksAttentionSnapshot, TrainingPeaksAttentionSignal } from "@/features/trainingpeaks/service";
+import {
+  escapeTelegramHtml,
+  formatAttentionSignalTelegramLine,
+} from "@/features/trainingpeaks/telegram-visual-ux";
 
 export const TRAININGPEAKS_ATTENTION_DIGEST_CHUNK_LIMIT = 3500;
+export const TELEGRAM_MESSAGE_HARD_LIMIT = 4096;
+
+export const MORNING_DIGEST_SECTION_TITLES = {
+  checkToday: "🩺 Проверить сегодня",
+  plan: "📅 Учесть в плане",
+  pain: "🦵 Травмы / дискомфорт",
+  noContact: "📭 Нет контакта",
+  missed: "🏃 Нет тренировки / выполнения",
+} as const;
 
 /** Per-section visible item caps before an overflow line; long digests split across Telegram messages. */
 export const ATTENTION_DIGEST_SECTION_LIMITS = {
-  urgent: 20,
-  today: 25,
-  followUp: 20,
-  plan: 20,
-  moves: 20,
-  observe: 20,
+  checkToday: 25,
+  plan: 25,
+  pain: 20,
   noContact: 30,
-  fyi: 10,
+  missed: 25,
 } as const;
+
+type MorningDigestSectionKey = keyof typeof MORNING_DIGEST_SECTION_TITLES;
+
+const CROSS_SECTION_DEDUPE_PRIORITY: MorningDigestSectionKey[] = [
+  "pain",
+  "checkToday",
+  "plan",
+  "missed",
+  "noContact",
+];
 
 const ATTENTION_DIGEST_CONTINUATION_SUFFIX = " — продолжение";
 
-function formatAttentionSignalLine(signal: {
-  studentName: string | null;
-  reason: string;
-}): string {
-  return formatAttentionSignalTelegramLine(signal.studentName, signal.reason);
+function formatAttentionSignalLine(
+  signal: {
+    studentName: string | null;
+    reason: string;
+  },
+  options?: { htmlSafe?: boolean }
+): string {
+  const line = formatAttentionSignalTelegramLine(signal.studentName, signal.reason);
+  return options?.htmlSafe ? escapeTelegramHtml(line) : line;
 }
 
 function buildAttentionSection(
@@ -33,6 +56,7 @@ function buildAttentionSection(
   options?: {
     maxItems?: number;
     overflowCount?: number;
+    htmlSafe?: boolean;
   }
 ): string[] {
   const lines = [title];
@@ -51,7 +75,7 @@ function buildAttentionSection(
   lines.push("");
 
   for (const signal of visibleSignals) {
-    lines.push(formatAttentionSignalLine(signal));
+    lines.push(formatAttentionSignalLine(signal, { htmlSafe: options?.htmlSafe }));
   }
 
   if (totalOverflow > 0) {
@@ -98,6 +122,33 @@ function shouldSuppressAttentionLegacyScheduleDuplicate(input: {
     }
     return hasRichScheduleDisplayText(candidate.reason);
   });
+}
+
+function attentionSignalDedupeKey(signal: TrainingPeaksAttentionSignal): string {
+  const studentKey = signal.studentId?.trim() || signal.studentName?.trim() || "";
+  const reasonKey = signal.reason.trim().toLowerCase();
+  return `${studentKey}::${reasonKey}`;
+}
+
+function dedupeAttentionSignalsAcrossSections(
+  sections: Record<MorningDigestSectionKey, TrainingPeaksAttentionSignal[]>
+): Record<MorningDigestSectionKey, TrainingPeaksAttentionSignal[]> {
+  const seen = new Set<string>();
+  const result = {} as Record<MorningDigestSectionKey, TrainingPeaksAttentionSignal[]>;
+
+  for (const key of CROSS_SECTION_DEDUPE_PRIORITY) {
+    result[key] = [];
+    for (const signal of sections[key]) {
+      const dedupeKey = attentionSignalDedupeKey(signal);
+      if (seen.has(dedupeKey)) {
+        continue;
+      }
+      seen.add(dedupeKey);
+      result[key].push(signal);
+    }
+  }
+
+  return result;
 }
 
 function joinAttentionDigestBlock(lines: string[]): string {
@@ -214,61 +265,64 @@ function packAttentionDigestBlocks(blocks: string[][], limit: number): string[] 
   return chunks;
 }
 
-function buildAttentionDigestBlocks(
-  snapshot: TrainingPeaksAttentionSnapshot,
-  title: string
-): string[][] {
-  const urgent = buildAttentionSection("🚨 Срочно", snapshot.urgent, {
-    maxItems: ATTENTION_DIGEST_SECTION_LIMITS.urgent,
-  });
-  const today = buildAttentionSection("📌 Сегодня", snapshot.today, {
-    maxItems: ATTENTION_DIGEST_SECTION_LIMITS.today,
-  });
-  const observe = buildAttentionSection("👀 Наблюдать", snapshot.observe, {
-    maxItems: ATTENTION_DIGEST_SECTION_LIMITS.observe,
-  });
-
-  const hasSignals =
-    snapshot.urgent.length > 0 ||
-    snapshot.today.length > 0 ||
-    snapshot.observe.length > 0 ||
-    snapshot.noContact5Days.length > 0;
-  const fyi = buildAttentionSection("ℹ️ Справочно", snapshot.fyi, {
-    maxItems: ATTENTION_DIGEST_SECTION_LIMITS.fyi,
-  });
-  if (snapshot.fyi.length === 0 && !hasSignals) {
-    fyi.splice(1, fyi.length - 1, "", "• Активных сигналов больше нет");
-  }
-
-  const followUps = buildAttentionSection("Проверить сегодня", snapshot.followUpToday, {
-    maxItems: ATTENTION_DIGEST_SECTION_LIMITS.followUp,
-    overflowCount: snapshot.followUpOverflowCount,
-  });
-
-  const planConstraintsSignals = snapshot.planConstraintsToday.filter(
+function buildMorningDigestSectionSignals(
+  snapshot: TrainingPeaksAttentionSnapshot
+): Record<MorningDigestSectionKey, TrainingPeaksAttentionSignal[]> {
+  const planSignals = [
+    ...snapshot.planConstraintsToday,
+    ...snapshot.movesToday,
+  ].filter(
     (signal) =>
       !shouldSuppressAttentionLegacyScheduleDuplicate({
         signal,
         allSignals: snapshot.planConstraintsToday,
       })
   );
-  const planConstraints = buildAttentionSection("📅 Учесть в плане", planConstraintsSignals, {
+
+  return dedupeAttentionSignalsAcrossSections({
+    checkToday: [...snapshot.checkTodaySignals, ...snapshot.followUpToday],
+    plan: planSignals,
+    pain: snapshot.painDiscomfort,
+    noContact: snapshot.noContact5Days,
+    missed: snapshot.missedWorkouts,
+  });
+}
+
+function buildAttentionDigestBlocks(
+  snapshot: TrainingPeaksAttentionSnapshot,
+  title: string,
+  options?: { htmlSafe?: boolean }
+): string[][] {
+  const sections = buildMorningDigestSectionSignals(snapshot);
+
+  const checkToday = buildAttentionSection(MORNING_DIGEST_SECTION_TITLES.checkToday, sections.checkToday, {
+    maxItems: ATTENTION_DIGEST_SECTION_LIMITS.checkToday,
+    overflowCount: snapshot.followUpOverflowCount,
+    htmlSafe: options?.htmlSafe,
+  });
+
+  const planConstraints = buildAttentionSection(MORNING_DIGEST_SECTION_TITLES.plan, sections.plan, {
     maxItems: ATTENTION_DIGEST_SECTION_LIMITS.plan,
-    overflowCount: snapshot.planConstraintsOverflowCount,
+    overflowCount: snapshot.planConstraintsOverflowCount + snapshot.movesOverflowCount,
+    htmlSafe: options?.htmlSafe,
   });
 
-  const moves = buildAttentionSection("🔁 Переносы", snapshot.movesToday, {
-    maxItems: ATTENTION_DIGEST_SECTION_LIMITS.moves,
-    overflowCount: snapshot.movesOverflowCount,
+  const pain = buildAttentionSection(MORNING_DIGEST_SECTION_TITLES.pain, sections.pain, {
+    maxItems: ATTENTION_DIGEST_SECTION_LIMITS.pain,
+    htmlSafe: options?.htmlSafe,
   });
 
-  const noContact = buildAttentionSection("📭 Нет контакта 3+ дня", snapshot.noContact5Days, {
+  const noContact = buildAttentionSection(MORNING_DIGEST_SECTION_TITLES.noContact, sections.noContact, {
     maxItems: ATTENTION_DIGEST_SECTION_LIMITS.noContact,
+    htmlSafe: options?.htmlSafe,
   });
 
-  return [[title], urgent, today, followUps, planConstraints, moves, observe, noContact, fyi].filter(
-    (block) => block.length > 1
-  );
+  const missed = buildAttentionSection(MORNING_DIGEST_SECTION_TITLES.missed, sections.missed, {
+    maxItems: ATTENTION_DIGEST_SECTION_LIMITS.missed,
+    htmlSafe: options?.htmlSafe,
+  });
+
+  return [[title], checkToday, planConstraints, pain, noContact, missed].filter((block) => block.length > 1);
 }
 
 function applyAttentionDigestContinuationHeaders(title: string, chunks: string[]): string[] {
@@ -280,20 +334,29 @@ function applyAttentionDigestContinuationHeaders(title: string, chunks: string[]
   return chunks.map((chunk, index) => (index === 0 ? chunk : `${continuationTitle}\n\n${chunk}`));
 }
 
+export type BuildTrainingPeaksAttentionDigestMessagesOptions = {
+  htmlSafe?: boolean;
+};
+
 export function buildTrainingPeaksAttentionDigestMessages(
   snapshot: TrainingPeaksAttentionSnapshot,
   title: string,
-  chunkLimit = TRAININGPEAKS_ATTENTION_DIGEST_CHUNK_LIMIT
+  chunkLimit = TRAININGPEAKS_ATTENTION_DIGEST_CHUNK_LIMIT,
+  options?: BuildTrainingPeaksAttentionDigestMessagesOptions
 ): string[] {
-  const chunks = packAttentionDigestBlocks(buildAttentionDigestBlocks(snapshot, title), chunkLimit);
+  const chunks = packAttentionDigestBlocks(
+    buildAttentionDigestBlocks(snapshot, title, { htmlSafe: options?.htmlSafe }),
+    chunkLimit
+  );
   return applyAttentionDigestContinuationHeaders(title, chunks);
 }
 
 export function formatTrainingPeaksAttentionSnapshotMessage(
   snapshot: TrainingPeaksAttentionSnapshot,
-  title: string
+  title: string,
+  options?: BuildTrainingPeaksAttentionDigestMessagesOptions
 ): string {
-  const blocks = buildAttentionDigestBlocks(snapshot, title);
+  const blocks = buildAttentionDigestBlocks(snapshot, title, { htmlSafe: options?.htmlSafe });
   return blocks
     .map((block) => joinAttentionDigestBlock(block))
     .join("\n\n");

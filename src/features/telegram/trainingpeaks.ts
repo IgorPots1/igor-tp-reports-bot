@@ -1231,7 +1231,8 @@ function buildTrainingPeaksAttentionMessages(
   return buildTrainingPeaksAttentionDigestMessages(
     snapshot,
     "🌅 Внимание на сегодня",
-    TELEGRAM_SAFE_MESSAGE_LIMIT
+    TELEGRAM_SAFE_MESSAGE_LIMIT,
+    { htmlSafe: true }
   );
 }
 

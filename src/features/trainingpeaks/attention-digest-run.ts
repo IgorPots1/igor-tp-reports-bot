@@ -144,19 +144,48 @@ export async function runTrainingPeaksAttentionDigest(
   }
 
   try {
+    const snapshotStartedAtMs = Date.now();
     const snapshot = await getTrainingPeaksAttentionSnapshot();
+    const snapshotDurationMs = Date.now() - snapshotStartedAtMs;
+
+    const formatStartedAtMs = Date.now();
     const messages = buildTrainingPeaksAttentionDigestMessages(
       snapshot,
       TRAININGPEAKS_ATTENTION_DIGEST_TITLE
     );
+    const formatDurationMs = Date.now() - formatStartedAtMs;
 
+    const sendStartedAtMs = Date.now();
     const results = await Promise.allSettled(
       coachChatIds.map(async (chatId) => {
-        for (const message of messages) {
-          await sendTelegramMessageStrict(chatId, message);
+        for (const [chunkIndex, message] of messages.entries()) {
+          try {
+            await sendTelegramMessageStrict(chatId, message);
+          } catch (error) {
+            console.error("TrainingPeaks attention digest chunk send failed", {
+              chatId,
+              chunkIndex,
+              chunkCount: messages.length,
+              chunkLength: message.length,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            throw error;
+          }
         }
       })
     );
+    const sendDurationMs = Date.now() - sendStartedAtMs;
+    const totalDurationMs = Date.now() - startedAtMs;
+
+    console.info("TrainingPeaks attention digest timing", {
+      snapshotDurationMs,
+      formatDurationMs,
+      sendDurationMs,
+      totalDurationMs,
+      chunkCount: messages.length,
+      coachChatCount: coachChatIds.length,
+      timeoutRiskLikely: totalDurationMs >= 50_000,
+    });
 
     const sentCount = results.filter((result) => result.status === "fulfilled").length;
     const failedCount = results.length - sentCount;

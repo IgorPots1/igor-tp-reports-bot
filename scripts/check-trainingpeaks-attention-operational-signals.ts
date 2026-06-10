@@ -349,6 +349,9 @@ function run(): void {
     today: [],
     observe: [],
     fyi: [],
+    checkTodaySignals: [],
+    painDiscomfort: [],
+    missedWorkouts: [],
     noContact5Days: [],
     followUpToday: collected.items.map((item) => ({
       level: "today",
@@ -388,7 +391,7 @@ function run(): void {
   };
   const attentionMessage = formatTrainingPeaksAttentionSnapshotMessage(attentionSnapshot, "Утренний обзор");
   assert(attentionMessage.includes("📅 Учесть в плане"), "Attention digest should include planning section.");
-  assert(attentionMessage.includes("🔁 Переносы"), "Attention digest should include move section.");
+  assert(!attentionMessage.includes("🔁 Переносы"), "Moves should be merged into plan section.");
   assert(
     attentionMessage.includes("Sofia Vlasova") && attentionMessage.includes("вт 02.06"),
     "Attention digest should include schedule planning context with dates."

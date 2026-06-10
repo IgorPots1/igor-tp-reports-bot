@@ -86,6 +86,9 @@ function buildAttentionMessage(input: {
     today: [],
     observe: [],
     fyi: [],
+    checkTodaySignals: [],
+    painDiscomfort: [],
+    missedWorkouts: [],
     noContact5Days: [],
     followUpToday: input.followUps.items.map((item) => ({
       level: "today",
