@@ -240,6 +240,7 @@ type WorkoutContextByDate = {
   date: string;
   title: string;
   type: NutritionTrainingType;
+  secondaryTitles: string[];
   longRunSource: "explicit_title" | "default_sunday" | "none";
   longRunConfidence: "high" | "medium" | "low";
   description: string | null;
@@ -248,6 +249,45 @@ type WorkoutContextByDate = {
   durationHours: number | null;
   distanceKm: number | null;
 };
+
+const PROTEIN_GUARD_LOW_G_PER_KG = 1.1;
+const PROTEIN_GUARD_BORDERLINE_G_PER_KG = 1.5;
+const PROTEIN_GUARD_SUFFICIENT_G_PER_KG = 1.5;
+const PROTEIN_GUARD_HIGH_G_PER_KG = 2.0;
+
+const WORKOUT_LOAD_PRIORITY: Record<NutritionTrainingType, number> = {
+  long_run: 100,
+  race: 95,
+  intervals: 90,
+  tempo: 85,
+  strength: 70,
+  cross_training: 60,
+  easy: 50,
+  rest: 0,
+  unknown: 10,
+};
+
+function formatAthleteWorkoutTitleRu(title: string): string {
+  const normalized = title.trim();
+  if (!normalized) {
+    return "";
+  }
+  if (/\bpadel\b/i.test(normalized)) {
+    return "падел";
+  }
+  if (/^strength$/i.test(normalized) || /силов/i.test(normalized)) {
+    return "силовая";
+  }
+  if (/^running$/i.test(normalized) || /^run$/i.test(normalized) || /бег/i.test(normalized)) {
+    return "бег";
+  }
+  return normalized;
+}
+
+function mergeWorkoutTitlesForDay(titles: string[]): string {
+  const labels = titles.map(formatAthleteWorkoutTitleRu).filter(Boolean);
+  return [...new Set(labels)].join(" + ");
+}
 
 export type NutritionEnergyAvailabilityFacts = {
   intakeKcal: number | null;
@@ -383,32 +423,68 @@ function normalizeTrainingType(rawType: string | null | undefined, title: string
 }
 
 function buildWorkoutContextByDate(week: NutritionTrainingPeaksWeekContext): Map<string, WorkoutContextByDate> {
-  const map = new Map<string, WorkoutContextByDate>();
+  const grouped = new Map<
+    string,
+    Array<{
+      title: string;
+      type: NutritionTrainingType;
+      description: string | null;
+      coachComments: string | null;
+      plannedText: string | null;
+      durationHours: number | null;
+      distanceKm: number | null;
+    }>
+  >();
   const forcedLongRunDate = week.longRun?.date ?? null;
   for (const workout of week.workouts) {
+    if (workout.status === "planned") {
+      continue;
+    }
     const inferredType = normalizeTrainingType(workout.type, workout.title);
     const type = forcedLongRunDate && workout.date === forcedLongRunDate ? "long_run" : inferredType;
+    const sessions = grouped.get(workout.date) ?? [];
+    sessions.push({
+      title: workout.title,
+      type,
+      description: workout.description ?? null,
+      coachComments: workout.coachComments ?? null,
+      plannedText: workout.plannedText ?? null,
+      durationHours:
+        forcedLongRunDate && workout.date === forcedLongRunDate ? week.longRun?.durationHours ?? null : null,
+      distanceKm: forcedLongRunDate && workout.date === forcedLongRunDate ? week.longRun?.distanceKm ?? null : null,
+    });
+    grouped.set(workout.date, sessions);
+  }
+
+  const map = new Map<string, WorkoutContextByDate>();
+  for (const [date, sessions] of grouped) {
+    const sorted = [...sessions].sort((left, right) => WORKOUT_LOAD_PRIORITY[right.type] - WORKOUT_LOAD_PRIORITY[left.type]);
+    const primary = sorted[0];
+    if (!primary) {
+      continue;
+    }
+    const hasStrength = sessions.some((session) => session.type === "strength");
+    const hasEasy = sessions.some((session) => session.type === "easy");
+    const effectiveType = hasStrength && hasEasy ? "easy" : primary.type;
     const longRunSource =
-      type === "long_run"
-        ? week.longRun?.date === workout.date
+      effectiveType === "long_run"
+        ? week.longRun?.date === date
           ? week.longRun.source ?? "explicit_title"
           : "explicit_title"
         : "none";
-    const current = map.get(workout.date);
-    if (!current || type === "long_run" || type === "intervals" || type === "tempo" || type === "race") {
-      map.set(workout.date, {
-        date: workout.date,
-        title: workout.title,
-        type,
-        longRunSource,
-        longRunConfidence: longRunSource === "explicit_title" ? "high" : longRunSource === "default_sunday" ? "medium" : "low",
-        description: workout.description ?? null,
-        coachComments: workout.coachComments ?? null,
-        plannedText: workout.plannedText ?? null,
-        durationHours: forcedLongRunDate && workout.date === forcedLongRunDate ? week.longRun?.durationHours ?? null : null,
-        distanceKm: forcedLongRunDate && workout.date === forcedLongRunDate ? week.longRun?.distanceKm ?? null : null,
-      });
-    }
+    map.set(date, {
+      date,
+      title: mergeWorkoutTitlesForDay(sessions.map((session) => session.title)),
+      type: effectiveType,
+      secondaryTitles: sorted.slice(1).map((session) => session.title),
+      longRunSource,
+      longRunConfidence: longRunSource === "explicit_title" ? "high" : longRunSource === "default_sunday" ? "medium" : "low",
+      description: primary.description,
+      coachComments: primary.coachComments,
+      plannedText: primary.plannedText,
+      durationHours: primary.durationHours,
+      distanceKm: primary.distanceKm,
+    });
   }
   return map;
 }
@@ -636,7 +712,7 @@ function inferCanonicalTrainingType(input: {
     return "pre_long";
   }
   if (!input.hasTrainingContext) {
-    return "unknown";
+    return input.trainingType === "rest" ? "rest" : "unknown";
   }
   if (input.trainingType === "long_run") {
     return "long_run";
@@ -771,7 +847,10 @@ function buildCanonicalTrainingLabel(input: {
     return "силовая";
   }
   if (input.canonicalTrainingType === "cross_training") {
-    return title || "кросс-тренировка";
+    if (/\bpadel\b/i.test(title)) {
+      return "падел";
+    }
+    return formatAthleteWorkoutTitleRu(title) || "кросс-тренировка";
   }
   if (input.canonicalTrainingType === "long_run") {
     const distanceFromTitle = normalizeDistanceFromTitleKm(title);
@@ -895,7 +974,7 @@ function buildMacroGuardrails(input: {
   carbsGPerKg: number | null;
   canonicalTrainingType: NutritionCanonicalTrainingType;
 }): NutritionMacroGuardrailsFacts {
-  const proteinFloor = 1.6;
+  const proteinFloor = PROTEIN_GUARD_SUFFICIENT_G_PER_KG;
   const fatFloor = 1.0;
   const fatGPerKg =
     input.fatG !== null && input.bodyweightKg && input.bodyweightKg > 0
@@ -909,13 +988,13 @@ function buildMacroGuardrails(input: {
   let proteinStatus: NutritionMacroStatus = "unknown";
   let proteinFinding: string | null = null;
   if (input.proteinGPerKg !== null) {
-    if (input.proteinGPerKg < 1.3) {
+    if (input.proteinGPerKg < PROTEIN_GUARD_LOW_G_PER_KG) {
       proteinStatus = "low";
       proteinFinding = "Белка маловато.";
-    } else if (input.proteinGPerKg < 1.6) {
+    } else if (input.proteinGPerKg < PROTEIN_GUARD_BORDERLINE_G_PER_KG) {
       proteinStatus = "borderline";
       proteinFinding = "Белок чуть ниже ориентира.";
-    } else if (input.proteinGPerKg > 2.2) {
+    } else if (input.proteinGPerKg > PROTEIN_GUARD_HIGH_G_PER_KG) {
       proteinStatus = "high";
       proteinFinding = null;
     } else {
@@ -1215,7 +1294,7 @@ function analyzeDailyTrainingNutrition(input: {
     if (suspect) {
       canonicalFindings.push("suspect_macro_values");
     }
-    if (proteinGPerKg !== null && proteinGPerKg >= 1.6) {
+    if (proteinGPerKg !== null && proteinGPerKg >= PROTEIN_GUARD_SUFFICIENT_G_PER_KG) {
       canonicalFindings.push("protein_sufficient");
     }
     if (macroGuardrails.protein.status === "low") {
@@ -1474,7 +1553,7 @@ export function buildNutritionMethodologyContext(input: {
         ? avg(context.manualMacroRows.map((row) => (row.carbsG !== null ? Number((row.carbsG / bodyweightKg).toFixed(2)) : null)))
         : null,
   };
-  const proteinSufficient = (averages.proteinGPerKg ?? 0) >= 1.6;
+  const proteinSufficient = (averages.proteinGPerKg ?? 0) >= PROTEIN_GUARD_SUFFICIENT_G_PER_KG;
   const severeEnergyAvailability =
     dailyAnalysis.filter((day) => {
       const canonical = day.canonicalDailyAnalysis;

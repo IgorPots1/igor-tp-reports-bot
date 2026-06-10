@@ -178,7 +178,7 @@ async function run(): Promise<void> {
 
   const baseContext = buildMockContext();
   const methodology = buildNutritionMethodologyContext({ context: baseContext });
-  assert.equal(methodology.proteinSufficient, true, "protein should be sufficient >1.6 g/kg avg");
+  assert.equal(methodology.proteinSufficient, true, "protein should be sufficient >=1.5 g/kg avg");
 
   const focus = selectNutritionWeeklyFocus({ methodology, blockedSafety: false });
   assert.notEqual(focus.category, "protein_support", "protein cannot be one focus when sufficient");

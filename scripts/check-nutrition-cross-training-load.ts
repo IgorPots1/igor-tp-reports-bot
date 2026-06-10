@@ -121,7 +121,8 @@ assert.ok(padelDay?.findings.includes("below_cross_training_floor"));
 
 const padelText = buildDerivedNutritionCoachDayByDayText(reviewFromContext(baseContext({ title: "Padel Racket", type: "crosstrain" }))) ?? "";
 assert.doesNotMatch(padelText, /День выглядит ровно|ничего специально менять не нужно/);
-assert.match(padelText, /Падел|кросс-тренировка|нагрузку/);
+assert.match(padelText, /падел|Падел|кросс-тренировка|нагрузку/);
+assert.equal(padelDay?.trainingLabel, "падел");
 
 const strengthText = buildDerivedNutritionCoachDayByDayText(reviewFromContext(baseContext({ title: "Strength", type: "strength" }))) ?? "";
 assert.doesNotMatch(strengthText, /День выглядит ровно|ничего специально менять не нужно/);
@@ -140,5 +141,35 @@ const planPadelDay = plan.days.find((day) => day.date === "2026-06-09");
 assert.equal(planPadelDay?.training_type, "cross_training");
 assert.equal(planPadelDay?.target_kcal, 2350);
 assert.notEqual(planPadelDay?.target_kcal, null);
+
+const multiWorkoutContext = baseContext({ title: "Strength", type: "strength" });
+multiWorkoutContext.manualMacroRows = [
+  { day: "2026-06-03", weekday: "ср", kcal: 1400, proteinG: 80, fatG: 40, carbsG: 170, confidence: 1, notes: null },
+];
+multiWorkoutContext.tpPastWeek.workouts = [
+  { date: "2026-06-03", title: "Strength", status: "completed", type: "strength", description: null, coachComments: null, plannedText: null },
+  { date: "2026-06-03", title: "Running", status: "completed", type: "run", description: null, coachComments: null, plannedText: null },
+  { date: "2026-06-07", title: "Бег по пульсу", status: "planned", type: "run", description: null, coachComments: null, plannedText: null },
+];
+multiWorkoutContext.tpPastWeek.longRun = null;
+const multiMethodology = buildNutritionMethodologyContext({ context: multiWorkoutContext });
+const wednesday = multiMethodology.dailyAnalysis.find((day) => day.date === "2026-06-03")?.canonicalDailyAnalysis;
+assert.equal(wednesday?.trainingLabel, "силовая + бег");
+assert.equal(wednesday?.trainingType, "easy");
+const plannedLongRunContext = baseContext({ title: "Padel Racket", type: "crosstrain" });
+plannedLongRunContext.manualMacroRows = [
+  { day: "2026-06-06", weekday: "сб", kcal: 1600, proteinG: 90, fatG: 50, carbsG: 140, confidence: 1, notes: null },
+  { day: "2026-06-07", weekday: "вс", kcal: 1800, proteinG: 95, fatG: 55, carbsG: 200, confidence: 1, notes: null },
+];
+plannedLongRunContext.tpPastWeek.workouts = [
+  { date: "2026-06-06", title: "Padel Racket", status: "completed", type: "crosstrain", description: null, coachComments: null, plannedText: null },
+  { date: "2026-06-07", title: "Бег по пульсу", status: "planned", type: "run", description: null, coachComments: null, plannedText: null },
+];
+plannedLongRunContext.tpPastWeek.longRun = null;
+const plannedLongRunMethodology = buildNutritionMethodologyContext({ context: plannedLongRunContext });
+const saturday = plannedLongRunMethodology.dailyAnalysis.find((day) => day.date === "2026-06-06")?.canonicalDailyAnalysis;
+const sunday = plannedLongRunMethodology.dailyAnalysis.find((day) => day.date === "2026-06-07")?.canonicalDailyAnalysis;
+assert.notEqual(saturday?.nutritionStatus, "pre_long_low");
+assert.equal(sunday?.trainingType, "rest");
 
 console.log("PASS check-nutrition-cross-training-load");

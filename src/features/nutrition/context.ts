@@ -536,7 +536,7 @@ export async function buildNutritionTrainingPeaksWeekContext(
       workoutSubTypeId: row.workoutSubTypeId,
     });
     const longRun = maybeExplicitLongRun(row);
-    if (longRun && !longRunCandidate) {
+    if (longRun && row.isCompleted && !longRunCandidate) {
       longRunCandidate = {
         date: row.workoutDate,
         title: row.title?.trim() || "Untitled workout",
@@ -546,7 +546,13 @@ export async function buildNutritionTrainingPeaksWeekContext(
         confidence: "high",
       };
     }
-    if (!longRunCandidate && !defaultSundayCandidate && classification.isRunning && isSundayIsoDate(row.workoutDate)) {
+    if (
+      !longRunCandidate &&
+      !defaultSundayCandidate &&
+      row.isCompleted &&
+      classification.isRunning &&
+      isSundayIsoDate(row.workoutDate)
+    ) {
       defaultSundayCandidate = {
         date: row.workoutDate,
         title: row.title?.trim() || "Untitled workout",

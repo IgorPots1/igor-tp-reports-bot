@@ -105,24 +105,27 @@ function reviewFromMethodology(methodology: ReturnType<typeof buildNutritionMeth
   };
 }
 
-const proteinOkCtx = contextFixture(
-  { kcal: 1400, proteinG: 100, fatG: 45, carbsG: 165 },
+const padelCtx = contextFixture(
+  { kcal: 1400, proteinG: 80, fatG: 50, carbsG: 165 },
   { title: "Padel Racket", type: "crosstrain" }
 );
-const proteinOkMethodology = buildNutritionMethodologyContext({ context: proteinOkCtx });
-const proteinOkDay = proteinOkMethodology.dailyAnalysis[0]?.canonicalDailyAnalysis;
-assert.ok(proteinOkDay);
-assert.equal(proteinOkDay?.macroGuardrails.protein.status, "ok");
-assert.equal(proteinOkDay?.macroGuardrails.fat.status, "low");
+const padelMethodology = buildNutritionMethodologyContext({ context: padelCtx });
+const padelDay = padelMethodology.dailyAnalysis[0]?.canonicalDailyAnalysis;
+assert.ok(padelDay);
+assert.equal(padelDay?.macroGuardrails.protein.status, "borderline", "Padel 80g protein at 60kg is borderline below 1.5 g/kg orientir");
 assert.ok(
-  proteinOkDay?.macroGuardrails.carbs.status === "low" || proteinOkDay?.macroGuardrails.carbs.status === "borderline",
+  padelDay?.macroGuardrails.fat.status === "low" || padelDay?.macroGuardrails.fat.status === "borderline",
+  "Padel day fat should not be fully OK"
+);
+assert.ok(
+  padelDay?.macroGuardrails.carbs.status === "low" || padelDay?.macroGuardrails.carbs.status === "borderline",
   "Padel 1400/165g carbs at 60kg must not be fully OK for carbs"
 );
-assert.notEqual(proteinOkDay?.nutritionStatus, "adequate");
-assert.notEqual(proteinOkDay?.nutritionStatus, "rest_ok");
+assert.notEqual(padelDay?.nutritionStatus, "adequate");
+assert.notEqual(padelDay?.nutritionStatus, "rest_ok");
 
 const strengthLowCtx = contextFixture(
-  { kcal: 1400, proteinG: 95, fatG: 40, carbsG: 150 },
+  { kcal: 1400, proteinG: 80, fatG: 40, carbsG: 170 },
   { title: "Strength", type: "strength" }
 );
 const strengthLowMethodology = buildNutritionMethodologyContext({ context: strengthLowCtx });
@@ -131,11 +134,11 @@ assert.ok(strengthLowDay);
 assert.notEqual(strengthLowDay?.nutritionStatus, "adequate");
 assert.notEqual(strengthLowDay?.nutritionStatus, "rest_ok");
 
-const rendered = buildDerivedNutritionCoachDayByDayText(reviewFromMethodology(proteinOkMethodology)) ?? "";
-assert.match(
-  rendered,
-  /Белок есть|Белок закрыт хорошо|главный момент не в белке|Жиров в этот день получилось низковато|Углеводов для такого дня низковато|энергии получилось маловато/
-);
+const rendered = buildDerivedNutritionCoachDayByDayText(reviewFromMethodology(padelMethodology)) ?? "";
+assert.match(rendered, /Падел|кросс-тренировка/);
+assert.match(rendered, /энерг|низким|пустым/);
+assert.match(rendered, /углевод/i);
+assert.match(rendered, /белок|углевод/i);
 assert.doesNotMatch(rendered, /День выглядит ровно: белок закрыт, углеводов под эту нагрузку достаточно/);
 
 console.log("PASS check-nutrition-macro-guardrails");

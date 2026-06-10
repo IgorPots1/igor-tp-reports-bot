@@ -129,7 +129,7 @@ function normalizeStoredDailyFactItem(raw: unknown): CanonicalDailyFact | null {
     return null;
   }
   const item = raw as Record<string, unknown>;
-  const embedded = asObject(item.canonicalDailyAnalysis) ?? asObject(item.canonical_daily_analysis);
+  const embedded = asObject(item.canonicalDailyAnalysis ?? item.canonical_daily_analysis);
   const source = Object.keys(embedded).length > 0 ? embedded : item;
   const actualSource = asObject(source.actual);
   const actual =
@@ -153,13 +153,19 @@ function normalizeStoredDailyFactItem(raw: unknown): CanonicalDailyFact | null {
         ? source.weekday_ru
         : typeof item.weekdayRu === "string"
           ? item.weekdayRu
-          : null;
+          : typeof item.weekday_ru === "string"
+            ? item.weekday_ru
+            : null;
   const dateLabel =
     typeof source.dateLabel === "string"
       ? source.dateLabel
       : typeof source.date_label === "string"
         ? source.date_label
-        : formatDateRu(date);
+        : typeof item.dateLabel === "string"
+          ? item.dateLabel
+          : typeof item.date_label === "string"
+            ? item.date_label
+            : formatDateRu(date);
   const trainingType =
     typeof source.trainingType === "string"
       ? source.trainingType
@@ -167,13 +173,19 @@ function normalizeStoredDailyFactItem(raw: unknown): CanonicalDailyFact | null {
         ? source.training_type
         : typeof item.trainingType === "string"
           ? item.trainingType
-          : "unknown";
+          : typeof item.training_type === "string"
+            ? item.training_type
+            : "unknown";
   const trainingLabel =
     typeof source.trainingLabel === "string"
       ? source.trainingLabel
       : typeof source.training_label === "string"
         ? source.training_label
-        : "день недели";
+        : typeof item.trainingLabel === "string"
+          ? item.trainingLabel
+          : typeof item.training_label === "string"
+            ? item.training_label
+            : "день недели";
   const sourceQuality = asObject(source.sourceQuality) ?? asObject(source.source_quality);
   return {
     date,
@@ -198,10 +210,147 @@ function normalizeStoredDailyFactItem(raw: unknown): CanonicalDailyFact | null {
           ? source.nutrition_status
           : typeof item.nutritionStatus === "string"
             ? item.nutritionStatus
-            : null,
+            : typeof item.nutrition_status === "string"
+              ? item.nutrition_status
+              : null,
     findings: source.findings ?? item.findings,
     source_quality: Object.keys(sourceQuality).length > 0 ? sourceQuality : undefined,
+    macro_guardrails:
+      source.macroGuardrails ??
+      source.macro_guardrails ??
+      item.macroGuardrails ??
+      item.macro_guardrails,
   };
+}
+
+function extractMacroGuardrailStatuses(macroGuardrails: unknown): {
+  proteinStatus: string | null;
+  fatStatus: string | null;
+  carbsStatus: string | null;
+} {
+  const guardrails = asObject(macroGuardrails);
+  const proteinGuard = asObject(guardrails.protein);
+  const fatGuard = asObject(guardrails.fat);
+  const carbsGuard = asObject(guardrails.carbs);
+  return {
+    proteinStatus: typeof proteinGuard.status === "string" ? proteinGuard.status : null,
+    fatStatus: typeof fatGuard.status === "string" ? fatGuard.status : null,
+    carbsStatus: typeof carbsGuard.status === "string" ? carbsGuard.status : null,
+  };
+}
+
+function hasDayEnergyIssue(input: {
+  nutritionStatus: string | null;
+  findings: string[];
+}): boolean {
+  return (
+    input.nutritionStatus === "below_energy_availability" ||
+    input.nutritionStatus === "below_energy_floor" ||
+    input.nutritionStatus === "low_for_cross_training" ||
+    input.nutritionStatus === "low_for_strength" ||
+    input.nutritionStatus === "low_for_load" ||
+    input.nutritionStatus === "pre_long_low" ||
+    input.nutritionStatus === "long_run_low" ||
+    input.findings.includes("below_load_energy_floor") ||
+    input.findings.includes("below_cross_training_floor") ||
+    input.findings.includes("below_strength_floor") ||
+    input.findings.includes("low_energy_with_cross_training") ||
+    input.findings.includes("low_energy_with_strength") ||
+    input.findings.includes("ea_red_screen") ||
+    input.findings.includes("ea_amber_screen")
+  );
+}
+
+export function buildDayMacroSentence(input: {
+  proteinStatus: string | null;
+  fatStatus: string | null;
+  carbsStatus: string | null;
+  trainingType: string;
+  hasEnergyIssue: boolean;
+}): string | null {
+  const { proteinStatus, fatStatus, carbsStatus, trainingType, hasEnergyIssue } = input;
+  const loadDay = trainingType !== "rest";
+
+  if (hasEnergyIssue && proteinStatus === "ok" && loadDay && (carbsStatus === "low" || carbsStatus === "borderline")) {
+    return "Белок закрыт, но общей энергии и углеводов всё равно маловато.";
+  }
+  if (
+    hasEnergyIssue &&
+    trainingType === "strength" &&
+    proteinStatus === "borderline" &&
+    (carbsStatus === "low" || carbsStatus === "borderline")
+  ) {
+    return "Белок близко к нижней границе, но общей энергии и углеводов всё равно маловато.";
+  }
+
+  const segments: string[] = [];
+  if (loadDay && carbsStatus === "low") {
+    segments.push("Углеводов для такой нагрузки маловато");
+  } else if (loadDay && carbsStatus === "borderline") {
+    segments.push("Углеводы на нижней границе");
+  }
+
+  const macroParts: string[] = [];
+  if (proteinStatus === "borderline") {
+    macroParts.push("белок близко к нижней границе");
+  } else if (proteinStatus === "low") {
+    macroParts.push("белка в этот день маловато");
+  }
+  if (fatStatus === "low") {
+    macroParts.push("жиры низковаты");
+  } else if (fatStatus === "borderline") {
+    macroParts.push("жиры на нижней границе");
+  }
+
+  if (segments.length > 0 && macroParts.length > 0) {
+    return `${segments[0]}; ${macroParts.join(", ")}.`;
+  }
+  if (segments.length > 0) {
+    return `${segments[0]}.`;
+  }
+  if (macroParts.length === 1) {
+    const part = macroParts[0]!;
+    if (part.startsWith("белок")) {
+      return "Белок близко к нижней границе.";
+    }
+    if (part.startsWith("белка")) {
+      return "Белка в этот день маловато.";
+    }
+    if (part === "жиры низковаты") {
+      return "Жиров получилось низковато.";
+    }
+    return "Жиры на нижней границе.";
+  }
+  if (macroParts.length >= 2) {
+    return `${macroParts[0]!.charAt(0).toUpperCase()}${macroParts[0]!.slice(1)}, ${macroParts.slice(1).join(", ")}.`;
+  }
+  return null;
+}
+
+function composeNutritionDayComment(input: {
+  primary: string;
+  cautiousPrefix: string;
+  trainingType: string;
+  nutritionStatus: string | null;
+  findings: string[];
+  proteinStatus: string | null;
+  fatStatus: string | null;
+  carbsStatus: string | null;
+}): string {
+  const macro = buildDayMacroSentence({
+    proteinStatus: input.proteinStatus,
+    fatStatus: input.fatStatus,
+    carbsStatus: input.carbsStatus,
+    trainingType: input.trainingType,
+    hasEnergyIssue: hasDayEnergyIssue({
+      nutritionStatus: input.nutritionStatus,
+      findings: input.findings,
+    }),
+  });
+  if (!macro) {
+    return `${input.cautiousPrefix}${input.primary}`;
+  }
+  return `${input.cautiousPrefix}${input.primary} ${macro}`;
 }
 
 function getCanonicalDailyFacts(review: NutritionWeeklyAnalysis): CanonicalDailyFact[] {
@@ -230,23 +379,32 @@ function renderNutritionDayComment(input: {
   findings: string[];
   macroGuardrails?: Record<string, unknown>;
 }): string {
-  const guardrails = asObject(input.macroGuardrails);
-  const proteinGuard = asObject(guardrails.protein);
-  const fatGuard = asObject(guardrails.fat);
-  const carbsGuard = asObject(guardrails.carbs);
-  const proteinStatus = typeof proteinGuard.status === "string" ? proteinGuard.status : null;
-  const fatStatus = typeof fatGuard.status === "string" ? fatGuard.status : null;
-  const carbsStatus = typeof carbsGuard.status === "string" ? carbsGuard.status : null;
+  const { proteinStatus, fatStatus, carbsStatus } = extractMacroGuardrailStatuses(input.macroGuardrails);
   const carbsText = formatNutritionAthleteMacro(input.carbs, { approximate: true });
   const kcalText = formatNutritionAthleteKcal(input.kcal, { mode: "actual" });
   const carbsKgText = input.carbsPerKg != null ? ` (${formatNutritionAthletePerKg(input.carbsPerKg)})` : "";
   const cautiousPrefix = input.hasNutritionCompletenessIssue ? "Данные по питанию за день неполные, поэтому вывод короткий. " : "";
+  const compose = (primary: string) =>
+    composeNutritionDayComment({
+      primary,
+      cautiousPrefix,
+      trainingType: input.trainingType,
+      nutritionStatus: input.nutritionStatus,
+      findings: input.findings,
+      proteinStatus,
+      fatStatus,
+      carbsStatus,
+    });
 
   if (input.nutritionStatus === "pre_long_low") {
-    return `${cautiousPrefix}Это день перед длительной: углеводов получилось около ${carbsText}${carbsKgText}. Для такой подготовки это нижняя граница, поэтому накануне длинной работы лучше не просаживать углеводы.`;
+    return compose(
+      `Это день перед длительной: углеводов получилось около ${carbsText}${carbsKgText}. Для такой подготовки это нижняя граница, поэтому накануне длинной работы лучше не просаживать углеводы.`
+    );
   }
   if (input.nutritionStatus === "long_run_low") {
-    return `${cautiousPrefix}На длинную работу день получился скромным по энергии: около ${kcalText}, углеводов около ${carbsText}${carbsKgText}. Не привязываю самочувствие только к этому, но запас топлива и восстановление могли быть лучше.`;
+    return compose(
+      `На длинную работу день получился скромным по энергии: около ${kcalText}, углеводов около ${carbsText}${carbsKgText}. Не привязываю самочувствие только к этому, но запас топлива и восстановление могли быть лучше.`
+    );
   }
   if (input.nutritionStatus === "suspect") {
     return "Данные по питанию за день выглядят неполными или нетипичными, поэтому здесь лучше проверить исходный отчёт вручную.";
@@ -259,36 +417,49 @@ function renderNutritionDayComment(input: {
     input.findings.includes("ea_amber_screen")
   ) {
     if (input.trainingType === "cross_training" || input.findings.includes("low_energy_with_cross_training")) {
-      return `${cautiousPrefix}Падел и другая кросс-тренировка тоже дают нагрузку, а день получился низким по общей энергии. Я бы не делал такой день совсем пустым по питанию, особенно если нагрузка повторяется несколько раз в неделю.`;
+      return compose(
+        "Падел и другая кросс-тренировка тоже дают нагрузку, а день получился низким по общей энергии. Я бы не делал такой день совсем пустым по питанию, особенно если нагрузка повторяется несколько раз в неделю."
+      );
     }
     if (input.trainingType === "strength" || input.findings.includes("low_energy_with_strength")) {
-      if (proteinStatus === "ok") {
-        return `${cautiousPrefix}Для дня с силовой энергии маловато. Белок есть, но для восстановления важна не только белковая часть: общая энергия и углеводы тоже должны быть ровнее.`;
-      }
-      return `${cautiousPrefix}В день силовой важно оставить достаточно энергии для восстановления. Здесь день получился скромным по ккал, поэтому я бы поддержал питание чуть ровнее.`;
+      return compose(
+        "В день силовой важно оставить достаточно энергии для восстановления. Здесь день получился скромным по ккал, поэтому я бы поддержал питание чуть ровнее."
+      );
     }
     if (input.trainingType === "rest") {
-      return `${cautiousPrefix}День отдыха получился низким по энергии. Разово не страшно, но я бы не делал такие дни регулярными.`;
+      return compose("День отдыха получился низким по энергии. Разово не страшно, но я бы не делал такие дни регулярными.");
     }
-    return `${cautiousPrefix}Для дня с нагрузкой энергии получилось маловато. Я бы не делал этот день слишком пустым по питанию и лучше поддержал питание вокруг тренировки.`;
+    return compose(
+      "Для дня с нагрузкой энергии получилось маловато. Я бы не делал этот день слишком пустым по питанию и лучше поддержал питание вокруг тренировки."
+    );
   }
   if (fatStatus === "low" || input.nutritionStatus === "low_fat" || input.findings.includes("fat_below_floor")) {
     return `${cautiousPrefix}Жиров в этот день получилось низковато. Не нужно специально держать такие дни слишком сухими по жирам, особенно если они повторяются.`;
   }
   if (input.nutritionStatus === "low_protein" || input.findings.includes("protein_low")) {
-    return `${cautiousPrefix}Белок в этот день чуть ниже ориентира. Поддержи базовый белок, но главный фокус всё равно на ровной энергии и углеводах под нагрузку.`;
+    return compose(
+      "Белок в этот день чуть ниже ориентира. Поддержи базовый белок, но главный фокус всё равно на ровной энергии и углеводах под нагрузку."
+    );
   }
   if (input.nutritionStatus === "low_for_cross_training" || input.findings.includes("below_cross_training_floor")) {
-    return `${cautiousPrefix}Падел и другая кросс-тренировка тоже дают нагрузку. Здесь день получился низким по общей энергии, поэтому лучше поддержать питание вокруг такой нагрузки.`;
+    return compose(
+      "Падел и другая кросс-тренировка тоже дают нагрузку. Здесь день получился низким по общей энергии, поэтому лучше поддержать питание вокруг такой нагрузки."
+    );
   }
   if (input.nutritionStatus === "low_for_strength" || input.findings.includes("below_strength_floor")) {
-    return `${cautiousPrefix}В день силовой важно оставить достаточно энергии для восстановления. Здесь день получился скромным по ккал, поэтому я бы поддержал питание чуть ровнее.`;
+    return compose(
+      "В день силовой важно оставить достаточно энергии для восстановления. Здесь день получился скромным по ккал, поэтому я бы поддержал питание чуть ровнее."
+    );
   }
   if (input.nutritionStatus === "low_for_load") {
     if (input.trainingType === "cross_training") {
-      return `${cautiousPrefix}Углеводов для такого дня низковато. Для лёгкого дня это ещё терпимо, но для падла/кросс-тренировки лучше держать выше.`;
+      return compose(
+        "Углеводов для такого дня низковато. Для лёгкого дня это ещё терпимо, но для падла/кросс-тренировки лучше держать выше."
+      );
     }
-    return `${cautiousPrefix}Углеводов за день получилось около ${carbsText}${carbsKgText} — для такой работы это нижняя граница. Не критично, но в ключевые дни лучше держать углеводы повыше, чтобы было больше топлива на тренировку и восстановление.`;
+    return compose(
+      `Углеводов за день получилось около ${carbsText}${carbsKgText} — для такой работы это нижняя граница. Не критично, но в ключевые дни лучше держать углеводы повыше, чтобы было больше топлива на тренировку и восстановление.`
+    );
   }
   if (input.trainingType === "rest") {
     if (input.findings.includes("protein_sufficient")) {
@@ -323,6 +494,9 @@ function renderNutritionDayComment(input: {
 function resolveDailyTrainingLabelForAthlete(trainingType: string, trainingLabel: string): string {
   if (trainingType === "rest" || /день без тренировки/i.test(trainingLabel)) {
     return "день отдыха";
+  }
+  if (/\bpadel\b/i.test(trainingLabel)) {
+    return "падел";
   }
   if (trainingType !== "long_run") {
     return trainingLabel;
@@ -443,28 +617,57 @@ function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
   const coachSummary = compactText(typeof summary.coach_summary_text === "string" ? summary.coach_summary_text : null);
   const proteinSufficient = asObject(summary.methodology_signals).protein_sufficient === true;
   const dailyFacts = getCanonicalDailyFacts(review);
-  const lowCarbKeyDays = dailyFacts
-    .filter((day) => {
-      const status = typeof day.nutrition_status === "string" ? day.nutrition_status : typeof day.nutritionStatus === "string" ? day.nutritionStatus : "";
-      return (
-        status === "pre_long_low" ||
-        status === "long_run_low" ||
-        status === "low_for_load" ||
-        status === "below_energy_availability" ||
-        status === "below_energy_floor" ||
-        status === "low_for_cross_training" ||
-        status === "low_for_strength"
-      );
-    })
-    .map((day) => (typeof day.weekday_ru === "string" ? day.weekday_ru.toLowerCase() : typeof day.weekdayRu === "string" ? day.weekdayRu.toLowerCase() : null))
-    .filter((day): day is string => Boolean(day));
-  if (proteinSufficient || lowCarbKeyDays.length > 0) {
-    const good = proteinSufficient ? "Белок в целом выглядит нормально." : "По базовой структуре недели есть на что опереться.";
+  let proteinOkDays = 0;
+  let proteinLowOrBorderlineDays = 0;
+  let fatLowOrBorderlineDays = 0;
+  let carbsLowLoadDays = 0;
+  let energyLowLoadDays = 0;
+  for (const day of dailyFacts) {
+    const trainingType =
+      typeof day.training_type === "string" ? day.training_type : typeof day.trainingType === "string" ? day.trainingType : "unknown";
+    const nutritionStatus =
+      typeof day.nutrition_status === "string" ? day.nutrition_status : typeof day.nutritionStatus === "string" ? day.nutritionStatus : null;
+    const findings = asStringArray(day.findings);
+    const { proteinStatus, fatStatus, carbsStatus } = extractMacroGuardrailStatuses(day.macro_guardrails ?? day.macroGuardrails);
+    if (proteinStatus === "ok") {
+      proteinOkDays += 1;
+    } else if (proteinStatus === "low" || proteinStatus === "borderline") {
+      proteinLowOrBorderlineDays += 1;
+    }
+    if (fatStatus === "low" || fatStatus === "borderline") {
+      fatLowOrBorderlineDays += 1;
+    }
+    if (trainingType !== "rest" && (carbsStatus === "low" || carbsStatus === "borderline")) {
+      carbsLowLoadDays += 1;
+    }
+    if (hasDayEnergyIssue({ nutritionStatus, findings }) && trainingType !== "rest") {
+      energyLowLoadDays += 1;
+    }
+  }
+  const hasMacroPattern =
+    proteinOkDays > 0 ||
+    proteinLowOrBorderlineDays > 0 ||
+    fatLowOrBorderlineDays > 0 ||
+    carbsLowLoadDays > 0 ||
+    energyLowLoadDays > 0;
+  if (proteinSufficient || energyLowLoadDays > 0 || carbsLowLoadDays > 0 || hasMacroPattern) {
+    const proteinLine =
+      proteinSufficient && proteinLowOrBorderlineDays === 0
+        ? "Белок в целом выглядит нормально."
+        : proteinSufficient && proteinLowOrBorderlineDays > 0
+          ? "Белок в целом ближе к норме, но в отдельные дни нагрузки он был ближе к нижней границе."
+          : proteinLowOrBorderlineDays >= 2
+            ? "Белок в целом ближе к нижней границе."
+            : proteinOkDays > proteinLowOrBorderlineDays
+              ? "Белок в целом ближе к норме, но он не компенсирует просадки по общей энергии и углеводам."
+              : "По базовой структуре недели есть на что опереться.";
+    const fatLine =
+      fatLowOrBorderlineDays >= 2 ? "Жиры в несколько дней тоже были на нижней границе." : "";
     const pattern =
-      lowCarbKeyDays.length > 0
-        ? "Главный паттерн недели: энергии и углеводов часто не хватало под нагрузку."
+      energyLowLoadDays > 0 || carbsLowLoadDays > 0
+        ? "Главный фокус: сделать дни с нагрузкой не такими «пустыми» по энергии и углеводам."
         : "Главный момент недели — держать энергию ровнее вокруг ключевых тренировок.";
-    return `${good} ${pattern} Белок не компенсирует низкую общую энергию и углеводы, поэтому фокус — в первую очередь на дни нагрузки.`;
+    return [proteinLine, fatLine, pattern].filter(Boolean).join(" ");
   }
   return statement ?? coachSummary ?? "По неделе держим курс на ровную энергию и восстановление без резких просадок.";
 }

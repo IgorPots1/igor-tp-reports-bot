@@ -61,19 +61,40 @@ const crossText = textFor({
   training_type: "cross_training",
   training_label: "Padel Racket",
   nutrition_status: "low_for_cross_training",
-  findings: ["below_cross_training_floor", "low_energy_with_cross_training"],
+  findings: ["below_cross_training_floor", "low_energy_with_cross_training", "below_load_energy_floor"],
+  canonical_daily_analysis: {
+    nutritionStatus: "low_for_cross_training",
+    findings: ["below_cross_training_floor", "low_energy_with_cross_training", "below_load_energy_floor"],
+    macroGuardrails: {
+      protein: { status: "borderline" },
+      fat: { status: "borderline" },
+      carbs: { status: "low" },
+    },
+  },
 });
 assert.doesNotMatch(crossText, /День выглядит ровно|ничего специально менять не нужно/);
 assert.match(crossText, /Падел|кросс-тренировка/);
+assert.match(crossText, /углевод/i);
+assert.match(crossText, /белок|жир/i);
 
 const strengthText = textFor({
   training_type: "strength",
   training_label: "силовая",
   nutrition_status: "low_for_strength",
-  findings: ["below_strength_floor", "low_energy_with_strength", "protein_sufficient"],
+  findings: ["below_strength_floor", "low_energy_with_strength", "below_load_energy_floor"],
+  canonical_daily_analysis: {
+    nutritionStatus: "low_for_strength",
+    findings: ["below_strength_floor", "low_energy_with_strength", "below_load_energy_floor"],
+    macroGuardrails: {
+      protein: { status: "borderline" },
+      fat: { status: "low" },
+      carbs: { status: "low" },
+    },
+  },
 });
 assert.doesNotMatch(strengthText, /Белок в этот день закрыт хорошо|День выглядит ровно/);
 assert.match(strengthText, /силовой|восстановления/);
+assert.match(strengthText, /белок|углевод/i);
 
 const hardCarbsText = textFor({
   training_type: "hard",
