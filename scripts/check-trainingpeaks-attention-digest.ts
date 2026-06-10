@@ -55,8 +55,8 @@ function buildCaseGroupingSnapshot(): TrainingPeaksAttentionSnapshot {
         level: "today",
         studentName: "Elena Titskaia",
         studentId: "student-elena",
-        reason: "болит колено после вчерашней тренировки",
-        signalKind: "pain_case",
+        reason: "боль в колене после вчерашней тренировки",
+        signalKind: "operational_pain_injury",
       },
     ],
     planConstraintsToday: [
@@ -98,7 +98,7 @@ function run(): void {
 
   const groupedSnapshot = buildCaseGroupingSnapshot();
   const groupedMessage = formatTrainingPeaksAttentionSnapshotMessage(groupedSnapshot, "Утренний обзор TrainingPeaks");
-  assert(groupedMessage.includes("болит колено"), "Pain case line should keep concrete reason.");
+  assert(groupedMessage.includes("боль в колене"), "Operational pain line should keep concrete reason.");
   assert(
     groupedMessage.includes("перенос тренировки требует проверки"),
     "Move-needs-review case should appear in plan section."

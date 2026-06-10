@@ -91,8 +91,8 @@ function buildRepresentativeSnapshot(): TrainingPeaksAttentionSnapshot {
         level: "today",
         studentName: "Elena Titskaia",
         studentId: "student-elena",
-        reason: "болит колено после вчерашней тренировки",
-        signalKind: "pain_case",
+        reason: "боль в колене после вчерашней тренировки\nнаблюдать, уточнить если усилится",
+        signalKind: "operational_pain_injury",
       },
     ],
     missedWorkouts: [
@@ -180,7 +180,12 @@ function run(): void {
   assert(!joined.includes("Legacy Today"), "Legacy today bucket must not leak into morning digest.");
   assert(!joined.includes("legacy observe"), "Legacy observe bucket must not leak into morning digest.");
   assert(!joined.includes("legacy fyi"), "Legacy fyi bucket must not leak into morning digest.");
-  assert(joined.includes("болит колено"), "Pain section should keep concrete case reason.");
+  assert(joined.includes("боль в колене"), "Pain section should keep concrete operational signal reason.");
+  assert(!joined.includes("signalKind"), "Rendered output must not leak internal fields.");
+  assert(
+    snapshot.painDiscomfort.every((signal) => signal.signalKind !== "pain_case"),
+    "Morning digest fixture must not use legacy pain_case source."
+  );
   assert(joined.includes("Follow Up Athlete"), "Check-today section should include follow-up athlete.");
   assert(joined.includes("Move Athlete"), "Plan section should include move candidate.");
   assert(!joined.includes("undefined"), "Rendered output must not contain undefined.");

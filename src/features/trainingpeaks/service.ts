@@ -4419,6 +4419,8 @@ const YESTERDAY_SCAN_MISSING_ALERT_START_HOUR = 11;
 const YESTERDAY_SCAN_SMALL_FAILURE_NAMES_LIMIT = 3;
 const YESTERDAY_SCAN_FAILURE_PREVIEW_NAMES_LIMIT = 4;
 const ATTENTION_OPERATIONAL_LIST_MAX_ITEMS = 20;
+/** Matches `/tp_signals` command limit in `handleTrainingPeaksOperationalSignalsCommand`. */
+export const TRAININGPEAKS_OPERATIONAL_SIGNALS_TELEGRAM_LIMIT = 100;
 const ATTENTION_NO_CONTACT_MINIMUM_COACH_IDLE_DAYS = TRAININGPEAKS_NO_CONTACT_ALERT_DAYS;
 
 type YesterdayScanStatusSignalSource = {
@@ -4572,28 +4574,6 @@ export function formatRussianCountedNoun(
     return forms[1];
   }
   return forms[2];
-}
-
-function formatAttentionPainCaseReason(coachNotesJson: Record<string, unknown>): string {
-  const candidates = [
-    readStringRecordValue(coachNotesJson, "text_preview"),
-    readStringRecordValue(coachNotesJson, "summary"),
-    readStringRecordValue(coachNotesJson, "display_summary"),
-    readStringRecordValue(coachNotesJson, "latest_summary"),
-  ].filter((value): value is string => Boolean(value));
-
-  for (const candidate of candidates) {
-    const normalized = candidate.replace(/\s+/gu, " ").trim();
-    if (normalized.length === 0) {
-      continue;
-    }
-    if (/самочувствие\/боль|за последние\s+\d+\s*ч/iu.test(normalized)) {
-      continue;
-    }
-    return normalized.length > 120 ? `${normalized.slice(0, 117).trimEnd()}...` : normalized;
-  }
-
-  return "боль / дискомфорт";
 }
 
 function formatAttentionCaseCreatedAtLabel(isoDateTime: string): string | null {
@@ -5109,6 +5089,34 @@ type OperationalPlanningAttentionItem = {
   sortDate: string | null;
 };
 
+export type OperationalPainInjuryAttentionItem = {
+  studentId: string;
+  studentName: string | null;
+  reason: string;
+  signalId: string;
+  signalType: string;
+  lifecycleDisplayState: TrainingPeaksOperationalSignalsItem["lifecycleDisplayState"];
+  followUpState: TrainingPeaksOperationalSignalsItem["followUpState"];
+};
+
+export function extractOperationalPainInjuryItemsFromSnapshot(
+  snapshot: TrainingPeaksOperationalSignalsSnapshot
+): TrainingPeaksOperationalSignalsItem[] {
+  return snapshot.sections.find((section) => section.key === "pain_injury")?.items ?? [];
+}
+
+export function mapOperationalPainInjuryItemToAttentionSignal(
+  item: OperationalPainInjuryAttentionItem
+): TrainingPeaksAttentionSignal {
+  return {
+    level: "today",
+    studentName: item.studentName,
+    studentId: item.studentId,
+    reason: item.reason,
+    signalKind: "operational_pain_injury",
+  };
+}
+
 function getOperationalPlanningSortKey(
   item: Pick<OperationalPlanningAttentionItem, "sortDate" | "studentName">
 ): string {
@@ -5310,6 +5318,51 @@ async function listOperationalMoveSignalsForAttention(
     signalTypes: new Set(["move_workout_candidate"]),
     maxItems,
   });
+}
+
+async function listOperationalPainInjurySignalsForAttention(
+  activeStudentNameById: ReadonlyMap<string, string | null>,
+  maxItems = ATTENTION_OPERATIONAL_LIST_MAX_ITEMS
+): Promise<{ items: OperationalPainInjuryAttentionItem[]; overflowCount: number }> {
+  const asOfDate = getCoachTodayDateKey(DEFAULT_COACH_TIMEZONE);
+  const [signals, activeMoveActions] = await Promise.all([
+    listTrainingPeaksOperationalSignals({
+      status: "active",
+      limit: 250,
+    }),
+    listActiveTrainingPeaksMoveActions(250),
+  ]);
+  if (signals.items.length === 0) {
+    return { items: [], overflowCount: 0 };
+  }
+
+  const displayEvidenceBySignalId = await buildOperationalSignalDisplayEvidenceMap({
+    signals: signals.items,
+    asOfDate,
+  });
+  const snapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    signals: signals.items,
+    studentNameById: activeStudentNameById,
+    asOfDate,
+    scope: "all",
+    limit: TRAININGPEAKS_OPERATIONAL_SIGNALS_TELEGRAM_LIMIT,
+    activeMoveActions,
+    displayEvidenceBySignalId,
+  });
+  const painItems = extractOperationalPainInjuryItemsFromSnapshot(snapshot);
+  const limited = painItems.slice(0, maxItems);
+  return {
+    items: limited.map((item) => ({
+      studentId: item.studentId,
+      studentName: item.studentName,
+      reason: item.text,
+      signalId: item.signalId,
+      signalType: item.signalType,
+      lifecycleDisplayState: item.lifecycleDisplayState,
+      followUpState: item.followUpState,
+    })),
+    overflowCount: Math.max(0, painItems.length - limited.length),
+  };
 }
 
 export async function safeAttentionSource<T>(
@@ -5633,38 +5686,12 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     });
   }
   try {
-    const [painCases, moveNeedsReviewCases] = await Promise.all([
-      listRecentTrainingPeaksCoachCasesForAttention({
-        sinceHours: 48,
-        caseKinds: ["pain_or_health_signal"],
-        statuses: caseStatusesForAttention,
-        limit: 300,
-      }),
-      listRecentTrainingPeaksCoachCasesForAttention({
-        sinceHours: 72,
-        caseKinds: ["move_workout_needs_review"],
-        statuses: caseStatusesForAttention,
-        limit: 300,
-      }),
-    ]);
-
-    const painCasesByStudentId = new Map<string, (typeof painCases)[number]>();
-    for (const caseRow of painCases) {
-      if (!painCasesByStudentId.has(caseRow.studentId)) {
-        painCasesByStudentId.set(caseRow.studentId, caseRow);
-      }
-    }
-    for (const [studentId, caseRow] of painCasesByStudentId) {
-      const studentName = activeStudentNameById.get(studentId) ?? null;
-      pushUniqueAttentionSignal(painDiscomfort, {
-        level: "today",
-        studentName,
-        reason: formatAttentionPainCaseReason(caseRow.coachNotesJson),
-        studentId,
-        caseId: caseRow.id,
-        signalKind: "pain_case",
-      });
-    }
+    const moveNeedsReviewCases = await listRecentTrainingPeaksCoachCasesForAttention({
+      sinceHours: 72,
+      caseKinds: ["move_workout_needs_review"],
+      statuses: caseStatusesForAttention,
+      limit: 300,
+    });
 
     for (const caseRow of moveNeedsReviewCases) {
       const studentName = activeStudentNameById.get(caseRow.studentId) ?? null;
@@ -5682,6 +5709,18 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     }
   } catch (error) {
     console.warn("Failed to load coach case signals for attention snapshot", { error });
+  }
+
+  try {
+    const painSignals = await listOperationalPainInjurySignalsForAttention(
+      activeStudentNameById,
+      ATTENTION_OPERATIONAL_LIST_MAX_ITEMS
+    );
+    for (const item of painSignals.items) {
+      pushUniqueAttentionSignal(painDiscomfort, mapOperationalPainInjuryItemToAttentionSignal(item));
+    }
+  } catch (error) {
+    console.warn("Failed to load operational pain/injury signals for attention snapshot", { error });
   }
 
   let followUpToday: TrainingPeaksAttentionSignal[] = [];
@@ -8790,19 +8829,14 @@ export function formatTrainingPeaksOperationalSignalsForTelegramMultiMessage(
   );
 }
 
-export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
+function collectOperationalSignalDisplayItemsFromSignals(input: {
   signals: TrainingPeaksStudentOperationalSignal[];
-  studentNameById?: ReadonlyMap<string, string | null>;
+  studentNameById: ReadonlyMap<string, string | null>;
   asOfDate: string;
-  scope?: TrainingPeaksOperationalSignalsScope;
-  limit?: number;
+  scope: TrainingPeaksOperationalSignalsScope;
   activeMoveActions?: readonly TrainingPeaksAction[];
   displayEvidenceBySignalId?: ReadonlyMap<string, TrainingPeaksOperationalSignalDisplayEvidence>;
-}): TrainingPeaksOperationalSignalsSnapshot {
-  const scope = input.scope ?? "all";
-  const maxItems = Math.max(5, Math.min(100, Math.floor(input.limit ?? 20)));
-  const studentNameById = input.studentNameById ?? new Map<string, string | null>();
-
+}): TrainingPeaksOperationalSignalsItem[] {
   const episodeScheduleIndex = buildEpisodeScheduleContextIndex(input.signals);
   const dedupedByEpisode = new Map<string, TrainingPeaksOperationalSignalsItem>();
   const episodeSignalsByKey = new Map<string, TrainingPeaksStudentOperationalSignal[]>();
@@ -8812,7 +8846,7 @@ export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
       continue;
     }
     const effective = resolveEffectiveOperationalSignalForDisplay(signal);
-    if (!shouldKeepOperationalSignalByScope(effective.effectiveSignalType, scope)) {
+    if (!shouldKeepOperationalSignalByScope(effective.effectiveSignalType, input.scope)) {
       continue;
     }
     const episodeKey = getSignalMetadataString(signal.metadata, "episode_key");
@@ -8829,7 +8863,7 @@ export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
       continue;
     }
     const effective = resolveEffectiveOperationalSignalForDisplay(signal);
-    if (!shouldKeepOperationalSignalByScope(effective.effectiveSignalType, scope)) {
+    if (!shouldKeepOperationalSignalByScope(effective.effectiveSignalType, input.scope)) {
       continue;
     }
     const episodeKey = getSignalMetadataString(signal.metadata, "episode_key");
@@ -8838,7 +8872,7 @@ export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
       : null;
     const item = buildOperationalSignalItemFromSignal({
       signal,
-      studentNameById,
+      studentNameById: input.studentNameById,
       asOfDate: input.asOfDate,
       episodeScheduleContext,
       activeMoveActions: input.activeMoveActions,
@@ -8880,6 +8914,29 @@ export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
     dedupeHealthByStudent(filterNormalOperationalSignalItems(allItemsRaw))
   );
   allItems.sort((left, right) => getOperationalSignalSortKey(left).localeCompare(getOperationalSignalSortKey(right)));
+  return allItems;
+}
+
+export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
+  signals: TrainingPeaksStudentOperationalSignal[];
+  studentNameById?: ReadonlyMap<string, string | null>;
+  asOfDate: string;
+  scope?: TrainingPeaksOperationalSignalsScope;
+  limit?: number;
+  activeMoveActions?: readonly TrainingPeaksAction[];
+  displayEvidenceBySignalId?: ReadonlyMap<string, TrainingPeaksOperationalSignalDisplayEvidence>;
+}): TrainingPeaksOperationalSignalsSnapshot {
+  const scope = input.scope ?? "all";
+  const maxItems = Math.max(5, Math.min(100, Math.floor(input.limit ?? 20)));
+  const studentNameById = input.studentNameById ?? new Map<string, string | null>();
+  const allItems = collectOperationalSignalDisplayItemsFromSignals({
+    signals: input.signals,
+    studentNameById,
+    asOfDate: input.asOfDate,
+    scope,
+    activeMoveActions: input.activeMoveActions,
+    displayEvidenceBySignalId: input.displayEvidenceBySignalId,
+  });
   const limited = allItems.slice(0, maxItems);
 
   const sectionsMap = createOperationalSignalsSections();

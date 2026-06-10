@@ -79,6 +79,8 @@
     "check-trainingpeaks-attention-noise": "npx tsx scripts/check-trainingpeaks-attention-noise.ts",
     "check:trainingpeaks-morning-digest": "npx tsx scripts/check-trainingpeaks-morning-digest.ts",
     "diagnose:trainingpeaks-morning-digest": "npx tsx scripts/diagnose-trainingpeaks-morning-digest.ts",
+    "diagnose:trainingpeaks-morning-digest-signal-parity": "npx tsx scripts/diagnose-trainingpeaks-morning-digest-signal-parity.ts",
+    "check:trainingpeaks-morning-digest-signal-parity": "npx tsx scripts/check-trainingpeaks-morning-digest-signal-parity.ts",
     "check-trainingpeaks-operational-signals-inline": "npx tsx scripts/check-trainingpeaks-operational-signals-inline.ts",
     "check-trainingpeaks-operational-signals-simple-output": "npx tsx scripts/check-trainingpeaks-operational-signals-simple-output.ts",
     "trace-trainingpeaks-contact-status": "npx tsx scripts/trace-trainingpeaks-contact-status.ts",
