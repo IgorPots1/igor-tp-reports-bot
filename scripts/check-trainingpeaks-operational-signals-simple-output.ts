@@ -9,6 +9,8 @@ import {
   formatTrainingPeaksOperationalSignalsForTelegram,
   isOperationalNegativeObservationText,
   matchesOperationalPainNegativeSemantic,
+  shouldAutoHideCleanIllnessRecoveryFromTpSignals,
+  resolveEffectiveOperationalSignalForDisplay,
 } from "@/features/trainingpeaks/service";
 import type { TrainingPeaksStudentOperationalSignal } from "@/features/trainingpeaks/repository";
 
@@ -1249,17 +1251,35 @@ function run(): void {
     elenaRecoveryMonitoringSnapshot
   );
   assert(
-    elenaRecoveryMonitoringText.includes("Elena Vasileva") &&
-      /первая пробежка выполнена/iu.test(elenaRecoveryMonitoringText) &&
-      /09\.06/iu.test(elenaRecoveryMonitoringText) &&
-      /новых жалоб после неё нет/iu.test(elenaRecoveryMonitoringText) &&
-      /можно закрыть после проверки/iu.test(elenaRecoveryMonitoringText),
-    "27 failed: monitoring_after_return with reliable run should show fresh recovery overlay."
+    !elenaRecoveryMonitoringText.includes("Elena Vasileva"),
+    "27 failed: clean illness recovery after reliable run should auto-hide from /tp_signals."
   );
   assert(
-    !/завтра лёгкий выход/iu.test(elenaRecoveryMonitoringText) &&
-      !/уточнить перед первой пробежкой/iu.test(elenaRecoveryMonitoringText),
-    "27 failed: stale return_planned copy must not leak into monitoring_after_return overlay."
+    shouldAutoHideCleanIllnessRecoveryFromTpSignals({
+      signal: makeSignal({
+        signalId: "elena-recovery-monitoring",
+        studentId: "elena-vasileva",
+        signalType: "health_issue_started",
+        lifecycleState: "monitoring_after_return",
+        structuredPayload: {
+          display_summary: "после болезни: врач разрешил бег, завтра лёгкий выход",
+        },
+      }),
+      effective: resolveEffectiveOperationalSignalForDisplay(
+        makeSignal({
+          signalId: "elena-recovery-monitoring",
+          studentId: "elena-vasileva",
+          signalType: "health_issue_started",
+          lifecycleState: "monitoring_after_return",
+          structuredPayload: {
+            display_summary: "после болезни: врач разрешил бег, завтра лёгкий выход",
+          },
+        })
+      ),
+      lifecycleDisplayState: "monitoring_after_return",
+      displayEvidence: elenaRecoveryMonitoringEvidence.get("elena-recovery-monitoring") ?? null,
+    }),
+    "27 failed: shouldAutoHideCleanIllnessRecoveryFromTpSignals must return true for Elena fixture."
   );
 
   const elenaNegativeAfterRunObservationId = "elena-negative-after-run-obs";
@@ -1407,9 +1427,189 @@ function run(): void {
     "30 failed: Elena must not render false post-run pain copy."
   );
   assert(
-    /первая пробежка выполнена/iu.test(elenaFalsePostRunNegativeText) &&
-      /новых жалоб после неё нет/iu.test(elenaFalsePostRunNegativeText),
-    "30 failed: Elena should render fresh recovery monitoring overlay."
+    !elenaFalsePostRunNegativeText.includes("Elena Vasileva"),
+    "30 failed: clean recovery with stale pre-run negative must auto-hide from /tp_signals."
+  );
+
+  const elviraPoorWellbeingObservationId = "elvira-poor-wellbeing-obs";
+  const elviraPoorWellbeingEvidence = new Map([
+    [
+      "elvira-poor-wellbeing",
+      {
+        completion: {
+          latestCompletionAfterOpen: elenaReliableRunCompletion,
+          latestCacheScannedAt: "2026-06-10T00:00:00.000Z",
+          negativeMessageAfterCompletion: {
+            observationId: elviraPoorWellbeingObservationId,
+            observedAt: "2026-06-10T08:00:00.000Z",
+            reason: "matched_negative_context",
+          },
+          recommendedAction: "monitor",
+          recommendationReason: "fixture",
+          applyDryRunCommand: null,
+          cleanRunningCompletionCount: 1,
+        },
+        latestNegative: {
+          observationId: elviraPoorWellbeingObservationId,
+          observedAt: "2026-06-10T08:00:00.000Z",
+          sourceType: "business_dm",
+          textPreview: "побегала, но самочувствие всё равно не очень",
+        },
+        negativeAfterCompletion: {
+          observationId: elviraPoorWellbeingObservationId,
+          observedAt: "2026-06-10T08:00:00.000Z",
+          sourceType: "business_dm",
+          textPreview: "побегала, но самочувствие всё равно не очень",
+        },
+      },
+    ],
+  ]);
+  const elviraPoorWellbeingSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-10",
+    limit: 10,
+    studentNameById: new Map<string, string | null>([["elvira-rizatdinova", "Elvira Rizatdinova"]]),
+    signals: [
+      makeSignal({
+        signalId: "elvira-poor-wellbeing",
+        studentId: "elvira-rizatdinova",
+        signalType: "health_issue_started",
+        lifecycleState: "monitoring_after_return",
+        structuredPayload: {
+          display_summary: "после болезни: врач разрешил бег",
+        },
+      }),
+    ],
+    activeMoveActions: [],
+    displayEvidenceBySignalId: elviraPoorWellbeingEvidence,
+  });
+  const elviraPoorWellbeingText = formatTrainingPeaksOperationalSignalsForTelegram(elviraPoorWellbeingSnapshot);
+  assert(
+    elviraPoorWellbeingText.includes("Elvira Rizatdinova"),
+    "31 failed: poor wellbeing after run must remain visible."
+  );
+  assert(
+    isOperationalNegativeObservationText("побегала, но самочувствие всё равно не очень"),
+    "31 failed: poor wellbeing after run must match negative semantics."
+  );
+
+  const painAfterRunEvidence = new Map([
+    [
+      "pain-after-run",
+      {
+        completion: {
+          latestCompletionAfterOpen: elenaReliableRunCompletion,
+          latestCacheScannedAt: "2026-06-10T00:00:00.000Z",
+          recommendedAction: "monitor",
+          recommendationReason: "fixture",
+          applyDryRunCommand: null,
+          cleanRunningCompletionCount: 1,
+        },
+      },
+    ],
+  ]);
+  const painAfterRunSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-10",
+    limit: 10,
+    studentNameById: new Map<string, string | null>([["pain-student", "Pain Student"]]),
+    signals: [
+      makeSignal({
+        signalId: "pain-after-run",
+        studentId: "pain-student",
+        signalType: "pain_injury",
+        lifecycleState: "monitoring_after_return",
+        structuredPayload: {
+          display_summary: "боль / колено",
+          activity_domain: "injury",
+          health_issue_kind: "pain_or_injury",
+        },
+      }),
+    ],
+    activeMoveActions: [],
+    displayEvidenceBySignalId: painAfterRunEvidence,
+  });
+  const painAfterRunText = formatTrainingPeaksOperationalSignalsForTelegram(painAfterRunSnapshot);
+  assert(
+    painAfterRunText.includes("Pain Student"),
+    "32 failed: pain/injury with completed run must not auto-hide via illness recovery rule."
+  );
+  assert(
+    !shouldAutoHideCleanIllnessRecoveryFromTpSignals({
+      signal: makeSignal({
+        signalId: "pain-after-run",
+        studentId: "pain-student",
+        signalType: "pain_injury",
+        lifecycleState: "monitoring_after_return",
+        structuredPayload: {
+          display_summary: "боль / колено",
+          activity_domain: "injury",
+          health_issue_kind: "pain_or_injury",
+        },
+      }),
+      effective: resolveEffectiveOperationalSignalForDisplay(
+        makeSignal({
+          signalId: "pain-after-run",
+          studentId: "pain-student",
+          signalType: "pain_injury",
+          lifecycleState: "monitoring_after_return",
+          structuredPayload: {
+            display_summary: "боль / колено",
+            activity_domain: "injury",
+            health_issue_kind: "pain_or_injury",
+          },
+        })
+      ),
+      lifecycleDisplayState: "monitoring_after_return",
+      displayEvidence: painAfterRunEvidence.get("pain-after-run") ?? null,
+    }),
+    "32 failed: pain/injury must not be eligible for clean illness auto-hide."
+  );
+
+  const scheduleAfterRunSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-10",
+    limit: 10,
+    studentNameById: new Map<string, string | null>([["schedule-student", "Schedule Student"]]),
+    signals: [
+      makeSignal({
+        signalId: "schedule-after-run",
+        studentId: "schedule-student",
+        signalType: "plan_generation_constraint",
+        structuredPayload: {
+          unavailable_dates: ["2026-06-12"],
+          display_summary: "недоступен: 12.06",
+        },
+        validFrom: "2026-06-12",
+        validUntil: "2026-06-12",
+      }),
+    ],
+    activeMoveActions: [],
+    displayEvidenceBySignalId: painAfterRunEvidence,
+  });
+  const scheduleAfterRunText = formatTrainingPeaksOperationalSignalsForTelegram(scheduleAfterRunSnapshot);
+  assert(
+    scheduleAfterRunText.includes("Schedule Student"),
+    "33 failed: schedule signal must remain unaffected by illness auto-hide rule."
+  );
+
+  const sofiaStaleSignal = makeSignal({
+    signalId: "sofia-stale-generic-unavailability",
+    studentId: "sofia-vlasova",
+    signalType: "schedule_unavailability_window",
+    structuredPayload: {},
+  });
+  sofiaStaleSignal.createdAt = "2026-06-01T08:00:00.000Z";
+  const sofiaStaleGenericSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
+    asOfDate: "2026-06-10",
+    limit: 10,
+    studentNameById: new Map<string, string | null>([["sofia-vlasova", "Sofia Vlasova"]]),
+    signals: [sofiaStaleSignal],
+    activeMoveActions: [],
+  });
+  const sofiaStaleGenericText = formatTrainingPeaksOperationalSignalsForTelegram(
+    sofiaStaleGenericSnapshot
+  );
+  assert(
+    !sofiaStaleGenericText.includes("Sofia Vlasova"),
+    "34 failed: stale generic schedule unavailability must auto-hide from /tp_signals."
   );
 
   console.log(`${LOG_PREFIX} PASS`);

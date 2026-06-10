@@ -4690,6 +4690,38 @@ function resolveScheduleOperationalSignalValidUntil(
   return normalizeRecordString(signal.structuredPayload.valid_until);
 }
 
+function addIsoDateDays(isoDate: string, days: number): string {
+  const parsed = new Date(`${isoDate}T12:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    return isoDate;
+  }
+  parsed.setUTCDate(parsed.getUTCDate() + days);
+  return parsed.toISOString().slice(0, 10);
+}
+
+function isStaleGenericScheduleUnavailabilitySignal(input: {
+  signal: TrainingPeaksStudentOperationalSignal;
+  asOfDate: string;
+}): boolean {
+  if (input.signal.signalType !== "schedule_unavailability_window") {
+    return false;
+  }
+  if (resolveScheduleOperationalSignalValidUntil(input.signal)) {
+    return false;
+  }
+  const durationDaysRaw = input.signal.structuredPayload.duration_days;
+  const durationDays =
+    typeof durationDaysRaw === "number" && Number.isFinite(durationDaysRaw) && durationDaysRaw > 0
+      ? Math.floor(durationDaysRaw)
+      : null;
+  const createdDate = input.signal.createdAt.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(createdDate)) {
+    return false;
+  }
+  const inferredEnd = addIsoDateDays(createdDate, durationDays ?? 7);
+  return inferredEnd < input.asOfDate;
+}
+
 function areAllPlannedTrainingDatesExpired(
   structuredPayload: Record<string, unknown>,
   asOfDate: string
@@ -6455,6 +6487,53 @@ function hasDisplayNegativeAfterRunningCompletion(input: {
   return Boolean(resolveNegativeAfterCompletionDisplayText(input.evidence));
 }
 
+export const AUTO_HIDDEN_CLEAN_ILLNESS_RECOVERY_RUN_REASON = "auto_hidden_clean_recovery_run";
+
+export function shouldAutoHideCleanIllnessRecoveryFromTpSignals(input: {
+  signal: TrainingPeaksStudentOperationalSignal;
+  effective: EffectiveOperationalSignalForDisplay;
+  lifecycleDisplayState: OperationalSignalDisplayLifecycleState;
+  displayEvidence?: TrainingPeaksOperationalSignalDisplayEvidence | null;
+}): boolean {
+  if (input.lifecycleDisplayState === "stale_needs_review") {
+    return false;
+  }
+  if (isPainInjuryOperationalSignalForDisplay(input.effective)) {
+    return false;
+  }
+  if (isScheduleOperationalSignalType(input.effective.effectiveSignalType)) {
+    return false;
+  }
+  if (!isHealthOperationalSignalType(input.effective.effectiveSignalType)) {
+    return false;
+  }
+  const signalClass = classifyOperationalSignalForLifecycle(input.signal);
+  if (
+    signalClass === "injury_pain" ||
+    signalClass === "schedule_pause" ||
+    signalClass === "return_to_run"
+  ) {
+    return false;
+  }
+  const healthKind = normalizeRecordString(input.signal.structuredPayload.health_issue_kind) ?? "";
+  if (healthKind === "pain_or_injury" || healthKind.includes("pain")) {
+    return false;
+  }
+  const completion = input.displayEvidence?.completion?.latestCompletionAfterOpen ?? null;
+  if (!hasReliableRunningCompletionAfterOpen(completion)) {
+    return false;
+  }
+  if (
+    hasDisplayNegativeAfterRunningCompletion({
+      evidence: input.displayEvidence ?? null,
+      completion,
+    })
+  ) {
+    return false;
+  }
+  return true;
+}
+
 function sortOperationalSignalObservations(
   observations: readonly TrainingPeaksTelegramContextObservation[]
 ): TrainingPeaksTelegramContextObservation[] {
@@ -6519,6 +6598,11 @@ const OPERATIONAL_NEGATIVE_OBSERVATION_PATTERNS = [
   /лучше\s+не\s+становится/u,
   /с\s+новой\s+недел/u,
   /пока\s+продолжаю/u,
+  /самочувств(?:ие|ия).*(?:не\s+очень|плох|не\s+хорош|не\s+норм|вс[её]\s+равно)/iu,
+  /(?:не\s+очень|плох(?:о|ое)).*самочувств/iu,
+  /(?:после|побегал(?:а|и)?).*(?:слабост|не\s+восстанов)/iu,
+  /не\s+восстановил(?:ся|ась|ись)/iu,
+  /голова\s+круж/iu,
 ];
 
 const OPERATIONAL_PLAN_AGREEMENT_PATTERNS = [
@@ -8063,6 +8147,33 @@ function buildOperationalSignalItemFromSignal(input: {
   }
 
   if (
+    shouldAutoHideCleanIllnessRecoveryFromTpSignals({
+      signal,
+      effective,
+      lifecycleDisplayState,
+      displayEvidence: input.displayEvidence ?? null,
+    })
+  ) {
+    return {
+      signalId: signal.id,
+      studentId: signal.studentId,
+      studentName,
+      section: displaySection,
+      priority: 999,
+      sortBucket: 9,
+      dueDate: followUp.due_date,
+      episodeKey,
+      signalType: effective.effectiveSignalType,
+      isEpisodeSummary: false,
+      followUpState: followUp.state,
+      lifecycleDisplayState,
+      text: "",
+      requiresCoachReview: effective.effectiveRequiresCoachReview,
+      hiddenReason: AUTO_HIDDEN_CLEAN_ILLNESS_RECOVERY_RUN_REASON,
+    };
+  }
+
+  if (
     isPainInjuryOperationalSignalForDisplay(effective) ||
     isHealthOperationalSignalType(effective.effectiveSignalType)
   ) {
@@ -8192,6 +8303,30 @@ function buildOperationalSignalItemFromSignal(input: {
       structuredPayload: signal.structuredPayload,
       episodeContext: input.episodeScheduleContext ?? null,
     });
+    const compactScheduleText = compactCoachFacingScheduleSignalText(
+      scheduleText.trim() || "контекст: полный текст недоступен в signal payload"
+    );
+    if (
+      compactScheduleText === "недоступность" &&
+      isStaleGenericScheduleUnavailabilitySignal({ signal, asOfDate })
+    ) {
+      return {
+        signalId: signal.id,
+        studentId: signal.studentId,
+        studentName,
+        section: "plan_constraints",
+        priority: 999,
+        sortBucket: 9,
+        dueDate: null,
+        episodeKey,
+        signalType: effective.effectiveSignalType,
+        isEpisodeSummary: false,
+        followUpState: followUp.state,
+        lifecycleDisplayState,
+        text: "",
+        hiddenReason: "stale_generic_schedule_unavailability",
+      };
+    }
     return {
       signalId: signal.id,
       studentId: signal.studentId,
@@ -8205,9 +8340,7 @@ function buildOperationalSignalItemFromSignal(input: {
       isEpisodeSummary: false,
       followUpState: followUp.state,
       lifecycleDisplayState,
-      text: compactCoachFacingScheduleSignalText(
-        scheduleText.trim() || "контекст: полный текст недоступен в signal payload"
-      ),
+      text: compactScheduleText,
       requiresCoachReview: effective.effectiveRequiresCoachReview,
       hiddenReason: null,
     };
