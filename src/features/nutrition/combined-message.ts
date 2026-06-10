@@ -1,7 +1,11 @@
 import type { NutritionPlanTargetWeekMode } from "@/features/nutrition/plan-week-policy";
 import type { NutritionWeeklyAnalysis, NutritionWeeklyPlan } from "@/features/nutrition/repository";
 import type { TrainingPeaksTelegramFormality } from "@/features/trainingpeaks/repository";
-import type { NutritionNextWeekPlan, NutritionNextWeekPlanDay, NutritionPlanDayType } from "@/features/nutrition/weekly-plan-formulas";
+import type { NutritionNextWeekPlan } from "@/features/nutrition/weekly-plan-formulas";
+import {
+  renderNutritionTelegramMessage,
+  type NutritionTelegramRenderResult,
+} from "@/features/nutrition/telegram-renderer";
 
 type CanonicalDailyFact = {
   date?: unknown;
@@ -31,6 +35,7 @@ type CanonicalDailyFact = {
 export type NutritionCombinedMessageResult = {
   status: "ready" | "missing_review" | "missing_plan" | "blocked_safety" | "needs_review";
   athleteMessageDraft: string | null;
+  renderResult: NutritionTelegramRenderResult;
   warnings: string[];
   sourceReviewId: string | null;
   sourcePlanId: string | null;
@@ -50,6 +55,15 @@ function asStringArray(value: unknown): string[] {
 function compactText(value: string | null | undefined): string | null {
   const normalized = value?.replace(/\s+/g, " ").trim() ?? "";
   return normalized || null;
+}
+
+function emptyRenderResult(): NutritionTelegramRenderResult {
+  return {
+    ok: false,
+    text: null,
+    issues: [],
+    charCount: 0,
+  };
 }
 
 function toFiniteNumber(value: unknown): number | null {
@@ -106,47 +120,6 @@ export function formatNutritionAthletePerKg(value: number | null | undefined): s
     return "н/д";
   }
   return `~${formatDecimalRu(value, 1)} г/кг`;
-}
-
-function dayTypeEmoji(dayType: NutritionPlanDayType): string {
-  switch (dayType) {
-    case "rest":
-      return "🟦";
-    case "easy":
-      return "🟩";
-    case "hard":
-      return "🟧";
-    case "pre_long":
-      return "🟪";
-    case "long_run":
-    case "race":
-      return "🟥";
-    case "strength":
-      return "🟩";
-    default:
-      return "🟩";
-  }
-}
-
-function dayTypeRu(dayType: NutritionPlanDayType): string {
-  switch (dayType) {
-    case "rest":
-      return "День отдыха";
-    case "easy":
-      return "Лёгкий день";
-    case "hard":
-      return "Ключевая нагрузка";
-    case "pre_long":
-      return "День перед длительной";
-    case "long_run":
-      return "Длительная";
-    case "strength":
-      return "Силовая";
-    case "race":
-      return "Соревнование";
-    default:
-      return "День недели";
-  }
 }
 
 function normalizeStoredDailyFactItem(raw: unknown): CanonicalDailyFact | null {
@@ -275,7 +248,9 @@ function renderNutritionDayComment(input: {
     return "По этому дню вывод делаю осторожно: данных может быть чуть меньше, чем нужно для точной оценки.";
   }
   if (input.trainingType === "rest") {
-    return `${cautiousPrefix}Для дня без ключевой нагрузки выглядит спокойно: энергии около ${kcalText}, явной проблемы по распределению здесь не видно.`;
+    return lowQuality
+      ? `${cautiousPrefix}День отдыха. По питанию явного конфликта с нагрузкой не видно.`
+      : `День отдыха. По питанию всё спокойно, явного конфликта с нагрузкой нет.`;
   }
   if (input.trainingType === "easy") {
     return `${cautiousPrefix}Под лёгкую работу день выглядит нормально: энергии и углеводов достаточно, здесь ничего специально менять не нужно.`;
@@ -403,10 +378,6 @@ function formatPlanFocusFallbackLine(mode: NutritionPlanTargetWeekMode): string 
     : "Фокус на следующую неделю не сформирован.";
 }
 
-function formatPlanFocusSectionHeading(mode: NutritionPlanTargetWeekMode): string {
-  return mode === "current_week" ? "📌 Фокус на эту неделю" : "📌 Фокус на следующую неделю";
-}
-
 function getNextWeekPlan(plan: NutritionWeeklyPlan): NutritionNextWeekPlan | null {
   const planSummary = asObject(plan.planSummary);
   const nextWeekPlan = asObject(planSummary.next_week_plan);
@@ -419,37 +390,6 @@ function getNextWeekPlan(plan: NutritionWeeklyPlan): NutritionNextWeekPlan | nul
     return null;
   }
   return nextWeekPlan as unknown as NutritionNextWeekPlan;
-}
-
-function buildDayTypeTargetsLines(nextWeekPlan: NutritionNextWeekPlan): string[] {
-  const targets = nextWeekPlan.day_type_targets;
-  const hasStrengthDay = nextWeekPlan.days.some((day) => day.training_type === "strength");
-  const ordered: Array<{ key: NutritionPlanDayType; target: NutritionNextWeekPlan["day_type_targets"]["rest"] }> = [
-    { key: "rest", target: targets.rest },
-    { key: "easy", target: targets.easy },
-    { key: "hard", target: targets.hard },
-    { key: "pre_long", target: targets.pre_long },
-    { key: "long_run", target: targets.long_run },
-    ...(hasStrengthDay ? [{ key: "strength" as const, target: targets.strength }] : []),
-  ];
-  return ordered
-    .map(({ key, target }) => {
-      if (!target) {
-        return null;
-      }
-      return `${dayTypeEmoji(key)} ${dayTypeRu(key)} — ${formatNutritionAthleteKcal(target.target_kcal, { mode: "target" })} · ${formatNutritionAthletePlanMacro(target.protein_g)} Б · ${formatNutritionAthletePlanMacro(target.fat_g)} Ж · ${formatNutritionAthletePlanMacro(target.carbs_g)} У`;
-    })
-    .filter((line): line is string => Boolean(line));
-}
-
-function buildMiniTableLines(nextWeekPlan: NutritionNextWeekPlan): string[] {
-  return nextWeekPlan.days.slice(0, 7).map((day: NutritionNextWeekPlanDay) => {
-    const kcal = day.target_kcal != null ? formatNutritionAthleteKcal(day.target_kcal, { mode: "target" }) : "ккал н/д";
-    const protein = day.protein_g != null ? `${Math.round(day.protein_g)}Б` : "Б н/д";
-    const fat = day.fat_g != null ? `${Math.round(day.fat_g)}Ж` : "Ж н/д";
-    const carbs = day.carbs_g != null ? `${Math.round(day.carbs_g)}У` : "У н/д";
-    return `${dayTypeEmoji(day.training_type)} ${day.weekday_ru} (${formatDateRu(day.date)}) · ${day.training_label} · ${kcal} · ${protein} · ${fat} · ${carbs}`;
-  });
 }
 
 export function getNutritionAthleteDisplayName(student: { studentName?: string | null; profilePreferences?: Record<string, unknown> | null }): string {
@@ -471,13 +411,6 @@ export function getNutritionAthleteDisplayName(student: { studentName?: string |
   return knownShortNames[firstToken.toLocaleLowerCase("ru")] ?? firstToken;
 }
 
-function resolveGreeting(formality: TrainingPeaksTelegramFormality, studentName: string): string {
-  if (formality === "vy") {
-    return `Здравствуйте, ${studentName}!`;
-  }
-  return `${studentName}, привет!`;
-}
-
 function extractReviewDoNotSendReasons(review: NutritionWeeklyAnalysis): string[] {
   const summary = asObject(review.nutritionSummary);
   const safety = asObject(review.safetyFlags);
@@ -494,6 +427,43 @@ function extractPlanDoNotSendReasons(plan: NutritionWeeklyPlan): string[] {
   const fromSafety = asStringArray(safety.do_not_send_reasons).concat(asStringArray(safety.doNotSendReasons));
   const hard = asStringArray(safety.hard_flags).map((flag) => `manual_review_required:${flag}`);
   return [...new Set([...fromSummary, ...fromSafety, ...hard].map((item) => item.trim()).filter(Boolean))];
+}
+
+function hasPreviousWeeksContext(review: NutritionWeeklyAnalysis): boolean {
+  const summary = asObject(review.nutritionSummary);
+  const internalSummary = asObject(review.internalSummary);
+  const contextSnapshot = asObject(review.contextSnapshot);
+  const candidates = [
+    summary.previous_weeks_context,
+    summary.previousWeeksContext,
+    internalSummary.previous_weeks_context,
+    internalSummary.previousWeeksContext,
+    contextSnapshot.previous_weeks_context,
+    contextSnapshot.previousWeeksContext,
+  ];
+  return candidates.some((candidate) => {
+    if (Array.isArray(candidate)) {
+      return candidate.length > 0;
+    }
+    const objectCandidate = asObject(candidate);
+    return Object.keys(objectCandidate).length > 0;
+  });
+}
+
+function hasTargetWeekTrainingContext(nextWeekPlan: NutritionNextWeekPlan | null, plan: NutritionWeeklyPlan): boolean {
+  if (nextWeekPlan?.summary.has_training_context === true) {
+    return true;
+  }
+  if (nextWeekPlan?.days.some((day) => day.flags?.has_training_context === true || day.source === "tp_workout")) {
+    return true;
+  }
+  const snapshot = asObject(plan.trainingContextSnapshot);
+  const workoutCount = toFiniteNumber(snapshot.workoutCount) ?? toFiniteNumber(snapshot.totalSessions);
+  if (workoutCount != null && workoutCount > 0) {
+    return true;
+  }
+  const workouts = snapshot.workouts;
+  return Array.isArray(workouts) && workouts.length > 0;
 }
 
 function isReviewBlockedSafety(review: NutritionWeeklyAnalysis): boolean {
@@ -536,6 +506,7 @@ export function buildDerivedNutritionCombinedMessage(input: {
     return {
       status: "missing_review",
       athleteMessageDraft: null,
+      renderResult: emptyRenderResult(),
       warnings: [],
       sourceReviewId: null,
       sourcePlanId: input.plan?.id ?? null,
@@ -545,6 +516,7 @@ export function buildDerivedNutritionCombinedMessage(input: {
     return {
       status: "missing_plan",
       athleteMessageDraft: null,
+      renderResult: emptyRenderResult(),
       warnings: [],
       sourceReviewId: input.review.id,
       sourcePlanId: null,
@@ -570,6 +542,7 @@ export function buildDerivedNutritionCombinedMessage(input: {
     return {
       status: "blocked_safety",
       athleteMessageDraft: null,
+      renderResult: emptyRenderResult(),
       warnings,
       sourceReviewId: review.id,
       sourcePlanId: plan.id,
@@ -580,62 +553,36 @@ export function buildDerivedNutritionCombinedMessage(input: {
     studentName: input.studentName,
     profilePreferences: input.profilePreferences ?? null,
   });
-  const greeting = resolveGreeting(input.formality, athleteName);
-  const introLine = "Посмотрел твой отчёт за неделю и сопоставил его с тренировками.";
   const summary = asObject(review.nutritionSummary);
   const avgKcal = toFiniteNumber(summary.avg_kcal);
   const restKcal = nextWeekPlan?.day_type_targets.rest?.target_kcal ?? null;
+  const previousWeeksContext = hasPreviousWeeksContext(review);
   const comparisonLine =
-    avgKcal != null && restKcal != null
+    previousWeeksContext && avgKcal != null && restKcal != null
       ? `По сравнению с прошлой неделей держим более ровную базу: среднее за неделю ${formatNutritionAthleteKcal(avgKcal, { mode: "actual" })}, ориентир для дня отдыха ${formatNutritionAthleteKcal(restKcal, { mode: "target" })}.`
       : null;
-  const dayByDaySection =
-    reviewDailyLines.length > 0
-      ? reviewDailyLines
-      : ["Разбор по дням в этом черновике не детализирую: canonical daily_analysis не найден, поэтому лучше проверить исходный обзор вручную."];
   const weekSummary = getReviewWeekSummaryLine(review);
   const focusLines = getPlanFocusLines(plan, planWeekMode);
-  const planByDayTypeLines = nextWeekPlan ? buildDayTypeTargetsLines(nextWeekPlan) : [compactText(plan.athleteMessageDraft) ?? "План на неделю не сформирован."];
-  const miniTableLines = nextWeekPlan ? buildMiniTableLines(nextWeekPlan) : [];
-  const closing = "На следующем разборе посмотрим, как это отразится на энергии и восстановлении.";
-
-  const lines: string[] = [
-    greeting,
-    "",
-    introLine,
-    ...(comparisonLine ? ["", comparisonLine] : []),
-    "",
-    "🔹 Разбор по дням",
-    ...dayByDaySection,
-    "",
-    "📌 Итог недели",
-    weekSummary,
-    "",
-    formatPlanFocusSectionHeading(planWeekMode),
-    ...focusLines,
-    "",
-    "📋 План на неделю по типам дней",
-    ...planByDayTypeLines,
-    "",
-    "🍽 Питание вокруг ключевых тренировок",
-    "Если ключевая тренировка утром:",
-    "- Накануне вечером — плотный углеводный ужин. Это часть дневной нормы, не сверху.",
-    "- Утром за 30-60 минут — лёгкие углеводы: банан, тост с мёдом, небольшая порция каши или гель.",
-    "",
-    "Если ключевая тренировка днём или вечером:",
-    "- За 2-3 часа — полноценный приём с углеводами и умеренным белком.",
-    "- За 30-60 минут — если чувствуешь, что не хватит: банан, гель или сухофрукты.",
-    "",
-    "После ключевой тренировки — углеводы + белок в течение часа.",
-    ...(miniTableLines.length > 0 ? ["", "📋 Мини-таблица", ...miniTableLines] : []),
-    "",
-    closing,
-  ];
-
-  const athleteMessageDraft = lines.join("\n").trim();
+  const renderResult = renderNutritionTelegramMessage({
+    formality: input.formality,
+    athleteName,
+    planWeekMode,
+    interpretation: {
+      dayComments: reviewDailyLines,
+      weekSummaryRu: weekSummary,
+      focusLinesRu: focusLines,
+      weekComparisonLineRu: comparisonLine,
+    },
+    nextWeekPlan,
+    fallbackPlanLines: [compactText(plan.athleteMessageDraft) ?? "План на неделю не сформирован."],
+    hasPreviousWeeksContext: previousWeeksContext,
+    hasTargetWeekTrainingContext: hasTargetWeekTrainingContext(nextWeekPlan, plan),
+  });
+  const athleteMessageDraft = renderResult.ok ? renderResult.text : null;
   return {
-    status: hasNeedsReviewStatus(review, plan) ? "needs_review" : "ready",
+    status: renderResult.ok && !hasNeedsReviewStatus(review, plan) ? "ready" : "needs_review",
     athleteMessageDraft,
+    renderResult,
     warnings,
     sourceReviewId: review.id,
     sourcePlanId: plan.id,

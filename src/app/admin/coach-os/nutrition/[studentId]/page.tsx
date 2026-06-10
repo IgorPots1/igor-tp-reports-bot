@@ -760,20 +760,50 @@ export default async function CoachOsNutritionStudentCardPage({
                 </ul>
               ) : null}
             </>
-          ) : combinedMessage.athleteMessageDraft ? (
+          ) : combinedMessage.renderResult.issues.some((issue) => issue.severity === "error") ? (
+            <>
+              <div className="admin-alert admin-alert-error">
+                <strong>Полный текст заблокирован renderer-проверкой.</strong> Исправьте issues ниже перед копированием.
+              </div>
+              <details>
+                <summary>
+                  Ошибки: {combinedMessage.renderResult.issues.filter((issue) => issue.severity === "error").length} ·
+                  предупреждения:{" "}
+                  {combinedMessage.renderResult.issues.filter((issue) => issue.severity === "warning").length} ·
+                  символов: {combinedMessage.renderResult.charCount}
+                </summary>
+                <ul className="admin-list">
+                  {combinedMessage.renderResult.issues.map((issue) => (
+                    <li key={`${issue.rule}-${issue.severity}`}>
+                      {issue.severity === "error" ? "Ошибка" : "Warning"}: {issue.message}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            </>
+          ) : combinedMessage.renderResult.text ? (
             <>
               {combinedMessage.status === "needs_review" ? (
                 <p className="admin-badge admin-badge-warning">Нужна проверка тренера перед отправкой</p>
               ) : null}
-              {combinedMessage.warnings.length > 0 ? (
-                <ul className="admin-list">
-                  {combinedMessage.warnings.map((warning, idx) => (
-                    <li key={`combined-warning-${idx}`}>{warning}</li>
-                  ))}
-                </ul>
+              {combinedMessage.renderResult.issues.length > 0 || combinedMessage.warnings.length > 0 ? (
+                <details>
+                  <summary>
+                    Предупреждения: {combinedMessage.renderResult.issues.filter((issue) => issue.severity === "warning").length + combinedMessage.warnings.length} ·
+                    символов: {combinedMessage.renderResult.charCount}
+                  </summary>
+                  <ul className="admin-list">
+                    {combinedMessage.warnings.map((warning, idx) => (
+                      <li key={`combined-warning-${idx}`}>{warning}</li>
+                    ))}
+                    {combinedMessage.renderResult.issues.map((issue) => (
+                      <li key={`${issue.rule}-${issue.severity}`}>{issue.message}</li>
+                    ))}
+                  </ul>
+                </details>
               ) : null}
               <NutritionDraftCopyBlock
-                draft={combinedMessage.athleteMessageDraft}
+                draft={combinedMessage.renderResult.text}
                 generationMode={displayPlan?.generationMode ?? generationMode}
               />
             </>

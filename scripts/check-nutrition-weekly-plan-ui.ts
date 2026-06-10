@@ -37,6 +37,9 @@ assert.match(mainUi, /formatNutritionPlanDraftHeading/, "plan card must distingu
 assert.match(mainUi, /Черновик ученику — полный текст/, "main UI must expose combined copy block title");
 assert.match(mainUi, /Основной текст для отправки/, "combined block must be labeled as primary copy source");
 assert.match(mainUi, /buildDerivedNutritionCombinedMessage/, "main UI must derive combined copy from review and plan");
+assert.match(mainUi, /renderResult\.text/, "main UI must copy deterministic renderer text");
+assert.match(mainUi, /renderResult\.issues/, "main UI must show renderer warnings or errors");
+assert.match(mainUi, /Полный текст заблокирован renderer-проверкой/, "main UI must block broken renderer output");
 assert.match(mainUi, /displayPlan/, "main UI combined block must use resolved display plan");
 
 const reviewDraftStart = mainUi.indexOf("Исходный черновик обзора — служебно");

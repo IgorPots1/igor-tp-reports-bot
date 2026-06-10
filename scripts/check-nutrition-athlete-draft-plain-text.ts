@@ -199,8 +199,11 @@ async function run(): Promise<void> {
   });
   assert.equal(combined.status, "ready");
   assert.ok(combined.athleteMessageDraft, "combined draft should exist in ready status");
+  assert.equal(combined.renderResult.ok, true, "combined draft must come from ok renderer result");
+  assert.equal(combined.renderResult.text, combined.athleteMessageDraft, "combined copy must equal renderer text");
   const combinedDraft = combined.athleteMessageDraft ?? "";
   assertAthleteDraftPlainText(combinedDraft, "combined draft");
+  assert.doesNotMatch(combinedDraft, /—|–|TrainingPeaks|FatSecret/, "combined draft must be Telegram-clean");
   assert.doesNotMatch(
     combinedDraft,
     /Комментарий:|можно дать|указать факт|hint|source_quality|Собрала|\d+\.\d+\s*г/,

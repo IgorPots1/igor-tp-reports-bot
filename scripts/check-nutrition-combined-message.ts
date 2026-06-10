@@ -134,6 +134,8 @@ function buildPlan(input?: {
 
 function assertReady(result: NutritionCombinedMessageResult): void {
   assert.ok(result.athleteMessageDraft, "ready result must have athlete draft");
+  assert.equal(result.renderResult.ok, true, "ready result must have ok renderer result");
+  assert.equal(result.renderResult.text, result.athleteMessageDraft, "athlete draft must come from renderer text");
   assert.equal(result.sourceReviewId, "review-1");
   assert.equal(result.sourcePlanId, "plan-1");
 }
@@ -166,10 +168,10 @@ async function run(): Promise<void> {
   assert.doesNotMatch(ready.athleteMessageDraft ?? "", /~1950 ккал|2487 ккал|214\.69|104\.2|\d+\.\d+\s*г/, "athlete copy must avoid raw technical numbers");
   assert.match(ready.athleteMessageDraft ?? "", /~2500 ккал/, "actual kcal must be rounded for athlete text");
   assert.match(ready.athleteMessageDraft ?? "", /~3,8 г\/кг/, "g/kg must be formatted with comma and one decimal");
-  assert.match(ready.athleteMessageDraft ?? "", /🔹 Понедельник \(01\.06\) — день отдыха/, "must include canonical day-by-day block");
+  assert.match(ready.athleteMessageDraft ?? "", /🔹 Понедельник \(01\.06\) - день отдыха/, "must include canonical day-by-day block");
   assert.doesNotMatch(
     ready.athleteMessageDraft ?? "",
-    /Комментарий:|можно дать|указать факт|hint|source_quality|по качеству данных здесь возможна неполная картина|Собрала|\*\*|---/,
+    /Комментарий:|можно дать|указать факт|hint|source_quality|по качеству данных здесь возможна неполная картина|Собрала|\*\*|---|—|–|TrainingPeaks|FatSecret/,
     "combined message must not leak internal hints or markdown separators"
   );
   assert.equal((ready.athleteMessageDraft ?? "").match(/Анна, привет!/g)?.length, 1, "combined message must have one greeting");
@@ -226,7 +228,7 @@ async function run(): Promise<void> {
     formality: "ty",
     studentName: "Nadezhda Ponomareva",
   });
-  assert.match(methodologyCombined.athleteMessageDraft ?? "", /🔹 Понедельник \(01\.06\) — день отдыха/);
+  assert.match(methodologyCombined.athleteMessageDraft ?? "", /🔹 Понедельник \(01\.06\) - день отдыха/);
   assert.doesNotMatch(
     methodologyCombined.athleteMessageDraft ?? "",
     /Комментарий:|можно дать|103\.58|206\.93|Привет!/,
@@ -254,6 +256,7 @@ async function run(): Promise<void> {
   });
   assert.equal(missingReview.status, "missing_review");
   assert.equal(missingReview.athleteMessageDraft, null);
+  assert.equal(missingReview.renderResult.ok, false);
 
   const missingPlan = buildDerivedNutritionCombinedMessage({
     review,
@@ -263,6 +266,7 @@ async function run(): Promise<void> {
   });
   assert.equal(missingPlan.status, "missing_plan");
   assert.equal(missingPlan.athleteMessageDraft, null);
+  assert.equal(missingPlan.renderResult.ok, false);
 
   const blockedByReview = buildDerivedNutritionCombinedMessage({
     review: {
