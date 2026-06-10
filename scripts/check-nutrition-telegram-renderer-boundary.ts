@@ -85,6 +85,17 @@ assertHasError(
   }),
   "long_run_label"
 );
+assert.deepEqual(
+  validateTelegramReadyNutritionMessage({
+    text: "🟩 Вторник (09.06) · Бег по пульсу · ~2200 ккал · 90Б · 65Ж · 290У",
+    hasPreviousWeeksContext: false,
+    hasTargetWeekTrainingContext: true,
+    hasKeyTraining: true,
+    longRunTargetKcalText: "~2500 ккал",
+  }).filter((issue) => issue.rule === "long_run_label"),
+  [],
+  "easy Бег по пульсу row must not trigger long_run label rule"
+);
 assertHasError(
   validateTelegramReadyNutritionMessage({
     text: "📋 План на неделю по типам дней\n...\n📋 Мини-таблица\n...",
@@ -147,6 +158,26 @@ const nextWeekPlan: NutritionNextWeekPlan = {
       fat_g_per_kg: 1.1,
       carbs_g_per_kg: 4.5,
       flags: { rest: true, easy: false, hard: false, pre_long: false, long_run: false, strength: false, race: false, key_workout: false, day_before_long_run: false, has_training_context: true },
+      long_run_source: "none",
+      long_run_confidence: "low",
+      pre_training_guidance: null,
+      source: "tp_workout",
+    },
+    {
+      date: "2026-06-09",
+      weekday_ru: "Вторник",
+      training_type: "easy",
+      training_label: "Бег по пульсу",
+      workout_title: "Бег по пульсу",
+      target_kcal: 2200,
+      protein_g: 90,
+      fat_g: 65,
+      carbs_g: 290,
+      kcal_per_kg: 39,
+      protein_g_per_kg: 1.6,
+      fat_g_per_kg: 1.15,
+      carbs_g_per_kg: 5.2,
+      flags: { rest: false, easy: true, hard: false, pre_long: false, long_run: false, strength: false, race: false, key_workout: false, day_before_long_run: false, has_training_context: true },
       long_run_source: "none",
       long_run_confidence: "low",
       pre_training_guidance: null,
@@ -236,6 +267,7 @@ assert.doesNotMatch(
 );
 assert.match(text, /Воскресенье \(14\.06\) · длительная · ~2500 ккал/, "Sunday long run label must be deterministic");
 assert.doesNotMatch(text, /Воскресенье \(14\.06\) · Бег по пульсу/, "Sunday long run must not expose generic TP label");
+assert.match(text, /Вторник \(09\.06\) · Бег по пульсу · ~2200 ккал/, "easy Бег по пульсу row may keep source label");
 assert.match(text, /📋 Мини-таблица/, "must show mini-table when TP context is available");
 assert.doesNotMatch(text, /План на неделю по типам дней/, "must not show day-type plan with TP context");
 assert.match(text, /🍽 Перед ключевыми тренировками/, "pre-training block must be present with hard or long_run");

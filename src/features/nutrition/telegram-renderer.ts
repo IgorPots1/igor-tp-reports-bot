@@ -172,6 +172,14 @@ function hasKeyTraining(nextWeekPlan: NutritionNextWeekPlan | null): boolean {
   return Boolean(nextWeekPlan?.days.some((day) => day.training_type === "hard" || day.training_type === "long_run" || day.training_type === "race"));
 }
 
+function getLongRunTargetKcalText(nextWeekPlan: NutritionNextWeekPlan | null): string | null {
+  const targetKcal =
+    nextWeekPlan?.day_type_targets.long_run?.target_kcal ??
+    nextWeekPlan?.days.find((day) => day.training_type === "long_run")?.target_kcal ??
+    null;
+  return targetKcal != null ? formatNutritionAthleteKcal(targetKcal, { mode: "target" }) : null;
+}
+
 function buildPreTrainingBlock(nextWeekPlan: NutritionNextWeekPlan | null): string[] {
   if (!hasKeyTraining(nextWeekPlan)) {
     return [];
@@ -199,6 +207,7 @@ export function validateTelegramReadyNutritionMessage(input: {
   hasPreviousWeeksContext: boolean;
   hasTargetWeekTrainingContext: boolean;
   hasKeyTraining: boolean;
+  longRunTargetKcalText?: string | null;
 }): NutritionTelegramRenderIssue[] {
   const issues: NutritionTelegramRenderIssue[] = [];
   const text = input.text;
@@ -225,9 +234,10 @@ export function validateTelegramReadyNutritionMessage(input: {
   if (cautiousMatches.length > 1) {
     pushIssue(issues, "error", "repeated_data_thin_caution", "Осторожная оговорка по качеству данных повторяется больше одного раза.");
   }
+  const longRunTargetKcalText = input.longRunTargetKcalText ?? "~2500 ккал";
   const longRunGenericLine = text
     .split("\n")
-    .some((line) => /Бег по пульсу/.test(line) && /ккал|Б|Ж|У/.test(line) && !/длительн/i.test(line));
+    .some((line) => /Бег по пульсу/.test(line) && line.includes(longRunTargetKcalText) && !/длительн/i.test(line));
   if (longRunGenericLine) {
     pushIssue(issues, "error", "long_run_label", "Длительная не должна отображаться как общий «Бег по пульсу».");
   }
@@ -288,6 +298,7 @@ export function renderNutritionTelegramMessage(input: NutritionTelegramRendererI
     hasPreviousWeeksContext: input.hasPreviousWeeksContext,
     hasTargetWeekTrainingContext: input.hasTargetWeekTrainingContext,
     hasKeyTraining: keyTrainingPresent,
+    longRunTargetKcalText: getLongRunTargetKcalText(input.nextWeekPlan),
   });
   const ok = !issues.some((issue) => issue.severity === "error");
   return {
