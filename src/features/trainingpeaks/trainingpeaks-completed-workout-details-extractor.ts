@@ -5,8 +5,11 @@ export type TrainingPeaksCompletedWorkoutDetailsAvailability = {
   hasCompletedDistance: boolean;
   hasAveragePace: boolean;
   hasAverageHeartRate: boolean;
+  hasMaxHeartRate: boolean;
   hasLaps: boolean;
+  hasSplits: boolean;
   hasIntervalActuals: boolean;
+  hasSamples: boolean;
   hasPlannedStructure: boolean;
   hasTargetPaceOrHr: boolean;
   hasCoachComments: boolean;
@@ -19,7 +22,9 @@ export type TrainingPeaksCompletedWorkoutDetailsMetrics = {
   averageHeartRateBpm?: number;
   maxHeartRateBpm?: number;
   lapCount?: number;
+  splitCount?: number;
   intervalCount?: number;
+  sampleCount?: number;
 };
 
 export type TrainingPeaksCompletedWorkoutDetailsExtraction = {
@@ -106,12 +111,43 @@ function hasAnyKeyDeep(root: unknown, keyHints: string[], depth = 0): boolean {
   return false;
 }
 
-function countLikelyArray(root: unknown, keyHints: string[]): number | undefined {
+function findLikelyArray(root: unknown, keyHints: string[]): unknown[] | null {
   const value = findValueByNormalizedKeys(root, keyHints);
-  if (Array.isArray(value)) {
-    return value.length;
+  return Array.isArray(value) ? value : null;
+}
+
+function looksLikeActualIntervalEntry(entry: unknown): boolean {
+  const record = asRecord(entry);
+  if (!record) {
+    return false;
   }
-  return undefined;
+  const actualHints = [
+    "duration",
+    "elapsed",
+    "time",
+    "distance",
+    "speed",
+    "pace",
+    "heartrate",
+    "cadence",
+    "power",
+  ];
+  const plannedOnlyHints = ["target", "planned", "goal", "zone", "structure", "step"];
+  for (const [rawKey, value] of Object.entries(record)) {
+    const key = rawKey.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (plannedOnlyHints.some((hint) => key.includes(hint))) {
+      continue;
+    }
+    if (actualHints.some((hint) => key.includes(hint))) {
+      if (typeof value === "number") {
+        return true;
+      }
+      if (typeof value === "string" && value.trim()) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function chooseFirstNumber(root: unknown, candidates: string[]): number | undefined {
@@ -198,12 +234,21 @@ export function extractTrainingPeaksCompletedWorkoutDetails(
     "hrMax",
     "heartRateMaximum",
   ]);
-  const lapCount =
-    countLikelyArray(source, ["laps", "splits", "lapDetails"]) ??
-    (hasAnyKeyDeep(source, ["lap", "split"]) ? 1 : undefined);
-  const intervalCount =
-    countLikelyArray(source, ["intervals", "repetitions", "segments"]) ??
-    (hasAnyKeyDeep(source, ["interval", "repetition", "segment"]) ? 1 : undefined);
+  const lapsArray = findLikelyArray(source, ["laps", "lapDetails"]);
+  const splitsArray = findLikelyArray(source, ["splits"]);
+  const intervalArray =
+    findLikelyArray(source, ["intervals"]) ??
+    findLikelyArray(source, ["segments"]) ??
+    findLikelyArray(source, ["repeats"]) ??
+    findLikelyArray(source, ["sets"]);
+  const sampleArray = findLikelyArray(source, ["samples"]);
+  const hasActualIntervals = Array.isArray(intervalArray)
+    ? intervalArray.some((entry) => looksLikeActualIntervalEntry(entry))
+    : false;
+  const lapCount = lapsArray?.length;
+  const splitCount = splitsArray?.length;
+  const intervalCount = hasActualIntervals ? intervalArray?.length : undefined;
+  const sampleCount = sampleArray?.length;
 
   return {
     dataAvailability: {
@@ -211,8 +256,11 @@ export function extractTrainingPeaksCompletedWorkoutDetails(
       hasCompletedDistance: distanceMeters !== undefined,
       hasAveragePace: averagePaceSecPerKm !== undefined,
       hasAverageHeartRate: averageHeartRateBpm !== undefined,
-      hasLaps: lapCount !== undefined,
-      hasIntervalActuals: intervalCount !== undefined,
+      hasMaxHeartRate: maxHeartRateBpm !== undefined,
+      hasLaps: (lapCount ?? 0) > 0,
+      hasSplits: (splitCount ?? 0) > 0,
+      hasIntervalActuals: (intervalCount ?? 0) > 0,
+      hasSamples: (sampleCount ?? 0) > 0,
       hasPlannedStructure: hasAnyKeyDeep(source, ["structure", "plannedstep", "planned"]),
       hasTargetPaceOrHr: hasAnyKeyDeep(source, [
         "targetpace",
@@ -231,7 +279,9 @@ export function extractTrainingPeaksCompletedWorkoutDetails(
       averageHeartRateBpm,
       maxHeartRateBpm,
       lapCount,
+      splitCount,
       intervalCount,
+      sampleCount,
     },
   };
 }
@@ -249,9 +299,12 @@ export function mergeExtractedMetrics(
       hasAveragePace: preferred.dataAvailability.hasAveragePace || fallback.dataAvailability.hasAveragePace,
       hasAverageHeartRate:
         preferred.dataAvailability.hasAverageHeartRate || fallback.dataAvailability.hasAverageHeartRate,
+      hasMaxHeartRate: preferred.dataAvailability.hasMaxHeartRate || fallback.dataAvailability.hasMaxHeartRate,
       hasLaps: preferred.dataAvailability.hasLaps || fallback.dataAvailability.hasLaps,
+      hasSplits: preferred.dataAvailability.hasSplits || fallback.dataAvailability.hasSplits,
       hasIntervalActuals:
         preferred.dataAvailability.hasIntervalActuals || fallback.dataAvailability.hasIntervalActuals,
+      hasSamples: preferred.dataAvailability.hasSamples || fallback.dataAvailability.hasSamples,
       hasPlannedStructure:
         preferred.dataAvailability.hasPlannedStructure || fallback.dataAvailability.hasPlannedStructure,
       hasTargetPaceOrHr:
@@ -267,7 +320,9 @@ export function mergeExtractedMetrics(
         preferred.extractedMetrics.averageHeartRateBpm ?? fallback.extractedMetrics.averageHeartRateBpm,
       maxHeartRateBpm: preferred.extractedMetrics.maxHeartRateBpm ?? fallback.extractedMetrics.maxHeartRateBpm,
       lapCount: preferred.extractedMetrics.lapCount ?? fallback.extractedMetrics.lapCount,
+      splitCount: preferred.extractedMetrics.splitCount ?? fallback.extractedMetrics.splitCount,
       intervalCount: preferred.extractedMetrics.intervalCount ?? fallback.extractedMetrics.intervalCount,
+      sampleCount: preferred.extractedMetrics.sampleCount ?? fallback.extractedMetrics.sampleCount,
     },
   };
 }

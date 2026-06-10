@@ -50,15 +50,18 @@ function testExtractorHappyPath(): void {
     avgHeartRate: 148,
     maxHeartRate: 167,
     laps: [{}, {}, {}],
-    intervals: [{}, {}],
+    intervals: [{ durationSeconds: 120, averageHeartRate: 160 }, { durationSeconds: 140, averageHeartRate: 162 }],
     structure: { steps: [{ targetPace: "5:30-5:45/km", targetHr: "140-150" }] },
     coachComments: "steady effort",
   };
   const extracted = extractTrainingPeaksCompletedWorkoutDetails(fixture);
   assert(extracted.dataAvailability.hasAveragePace, "avg pace should be detected");
   assert(extracted.dataAvailability.hasAverageHeartRate, "avg HR should be detected");
+  assert(extracted.dataAvailability.hasMaxHeartRate, "max HR should be detected");
   assert(extracted.dataAvailability.hasLaps, "laps should be detected");
+  assert(!extracted.dataAvailability.hasSplits, "splits should remain absent");
   assert(extracted.dataAvailability.hasIntervalActuals, "intervals should be detected");
+  assert(!extracted.dataAvailability.hasSamples, "samples should remain absent");
   assert(extracted.dataAvailability.hasPlannedStructure, "planned structure should be detected");
   assert(extracted.dataAvailability.hasTargetPaceOrHr, "target pace/HR should be detected");
   assert(extracted.extractedMetrics.lapCount === 3, "lap count should normalize");
@@ -82,11 +85,55 @@ function testExtractorTpLiveWorkoutListShape(): void {
   assert(extracted.dataAvailability.hasCompletedDuration, "TP totalTime hours should normalize to duration");
   assert(extracted.dataAvailability.hasCompletedDistance, "TP distance meters should be detected");
   assert(extracted.dataAvailability.hasAverageHeartRate, "heartRateAverage should be detected");
+  assert(extracted.dataAvailability.hasMaxHeartRate, "heartRateMaximum should be detected");
   assert(extracted.dataAvailability.hasAveragePace, "velocityAverage should derive avg pace");
   assert(extracted.dataAvailability.hasTargetPaceOrHr, "structure targets should be detected");
   assert(extracted.extractedMetrics.durationSeconds === 5928, "decimal-hour totalTime should convert to seconds");
   assert(extracted.extractedMetrics.averageHeartRateBpm === 147, "heartRateAverage should normalize");
   assert(extracted.extractedMetrics.maxHeartRateBpm === 159, "heartRateMaximum should normalize");
+}
+
+function testExtractorSplitsAndSamples(): void {
+  const fixture = {
+    splits: [{ distance: 1000 }, { distance: 1000 }, { distance: 1000 }],
+    samples: [{ t: 1 }, { t: 2 }],
+  };
+  const extracted = extractTrainingPeaksCompletedWorkoutDetails(fixture);
+  assert(extracted.dataAvailability.hasSplits, "splits should be detected");
+  assert(extracted.extractedMetrics.splitCount === 3, "split count should normalize");
+  assert(extracted.dataAvailability.hasSamples, "samples should be detected");
+  assert(extracted.extractedMetrics.sampleCount === 2, "sample count should normalize");
+}
+
+function testExtractorPlannedStructureNotActualIntervals(): void {
+  const fixture = {
+    structure: {
+      steps: [
+        {
+          intervals: [
+            { targetPace: "4:30-4:45/km", targetHr: "155-165" },
+            { targetPace: "4:45-5:00/km", targetHr: "150-160" },
+          ],
+        },
+      ],
+    },
+  };
+  const extracted = extractTrainingPeaksCompletedWorkoutDetails(fixture);
+  assert(extracted.dataAvailability.hasPlannedStructure, "planned structure should be detected");
+  assert(!extracted.dataAvailability.hasIntervalActuals, "planned intervals should not count as actual intervals");
+  assert(extracted.extractedMetrics.intervalCount === undefined, "interval count should remain undefined");
+}
+
+function testExtractorActualIntervalsOnlyWhenActualDataExists(): void {
+  const fixture = {
+    intervals: [
+      { durationSeconds: 180, averageHeartRate: 162, averagePaceSecPerKm: 245 },
+      { durationSeconds: 175, averageHeartRate: 164, averagePaceSecPerKm: 240 },
+    ],
+  };
+  const extracted = extractTrainingPeaksCompletedWorkoutDetails(fixture);
+  assert(extracted.dataAvailability.hasIntervalActuals, "actual intervals should be detected");
+  assert(extracted.extractedMetrics.intervalCount === 2, "actual interval count should normalize");
 }
 
 function testExtractorMissingData(): void {
@@ -129,6 +176,9 @@ function run(): void {
   testGetGuard();
   testExtractorHappyPath();
   testExtractorTpLiveWorkoutListShape();
+  testExtractorSplitsAndSamples();
+  testExtractorPlannedStructureNotActualIntervals();
+  testExtractorActualIntervalsOnlyWhenActualDataExists();
   testExtractorMissingData();
   testReportRedaction();
   testForbiddenStringsNotPresent();

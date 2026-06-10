@@ -2,8 +2,10 @@ import {
   parseProbeCliArgs,
   runTrainingPeaksCompletedWorkoutDetailsProbe,
 } from "@/features/trainingpeaks/trainingpeaks-completed-workout-details-probe";
+import { loadScriptEnv } from "./lib/load-script-env";
 
 async function main(): Promise<void> {
+  loadScriptEnv();
   const cli = parseProbeCliArgs(process.argv.slice(2));
   if (cli.help) {
     console.log("TrainingPeaks completed workout details probe (read-only)");
@@ -15,6 +17,9 @@ async function main(): Promise<void> {
     console.log(
       "  npm run audit:trainingpeaks-completed-workout-details-probe -- --athlete-id=<id> --date=YYYY-MM-DD [--workout-id=<id>]"
     );
+    console.log(
+      "  npm run audit:trainingpeaks-completed-workout-details-probe -- --athlete-id=<id> --date=YYYY-MM-DD --workout-id=<id> --discover-per-workout-endpoints"
+    );
     return;
   }
 
@@ -24,8 +29,9 @@ async function main(): Promise<void> {
   console.log(`[tp-completed-workout-details-probe] details=${result.outputFiles.detailsPath}`);
   console.log(`[tp-completed-workout-details-probe] summary=${result.outputFiles.summaryPath}`);
   console.log(`[tp-completed-workout-details-probe] mode=${result.probe.source.mode}`);
+  console.log(`[tp-completed-workout-details-probe] discover_per_workout=${Boolean(cli.discoverPerWorkoutEndpoints)}`);
   console.log(
-    `[tp-completed-workout-details-probe] avg_pace=${result.probe.dataAvailability.hasAveragePace} avg_hr=${result.probe.dataAvailability.hasAverageHeartRate} laps=${result.probe.dataAvailability.hasLaps} interval_actuals=${result.probe.dataAvailability.hasIntervalActuals}`
+    `[tp-completed-workout-details-probe] avg_pace=${result.probe.dataAvailability.hasAveragePace} avg_hr=${result.probe.dataAvailability.hasAverageHeartRate} laps=${result.probe.dataAvailability.hasLaps} splits=${result.probe.dataAvailability.hasSplits} interval_actuals=${result.probe.dataAvailability.hasIntervalActuals} samples=${result.probe.dataAvailability.hasSamples}`
   );
 }
 
