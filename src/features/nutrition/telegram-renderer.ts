@@ -235,9 +235,7 @@ export function validateTelegramReadyNutritionMessage(input: {
     pushIssue(issues, "error", "plan_and_mini_table", "При доступном TP-контексте нельзя одновременно показывать типы дней и dated plan.");
   }
   if (text.length > 4096) {
-    pushIssue(issues, "error", "telegram_length", "Текст длиннее лимита Telegram 4096 символов.");
-  } else if (text.length > 3500) {
-    pushIssue(issues, "warning", "telegram_length_warning", "Текст близок к лимиту Telegram.");
+    pushIssue(issues, "warning", "telegram_length", "Текст длиннее одного Telegram-сообщения; при ручной отправке разделите на 2 части.");
   }
   if (/дефицит калорий|урезать|похудеть|RED-S|LEA|анемия|расстройство пищевого/i.test(text)) {
     pushIssue(issues, "error", "forbidden_safety_language", "В тексте есть запрещённая safety-лексика.");

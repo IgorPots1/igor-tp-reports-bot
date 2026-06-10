@@ -47,6 +47,21 @@ function buildReview(status: NutritionWeeklyAnalysis["status"] = "draft_generate
           findings: ["rest_day_macro_distribution"],
           source_quality: { confidence: "high" },
         },
+        {
+          date: "2026-06-07",
+          weekday_ru: "Воскресенье",
+          date_label: "07.06",
+          training_type: "long_run",
+          training_label: "Бег по пульсу",
+          actual_kcal: 2510,
+          protein_g: 101,
+          fat_g: 66,
+          carbs_g: 382,
+          carbs_g_per_kg: 6.8,
+          nutrition_status: "long_run_ok",
+          findings: [],
+          source_quality: { confidence: "high" },
+        },
       ],
       day_by_day_analysis_text: "Текст fallback day-by-day.",
       do_not_send_reasons: [],
@@ -169,9 +184,11 @@ async function run(): Promise<void> {
   assert.match(ready.athleteMessageDraft ?? "", /~2500 ккал/, "actual kcal must be rounded for athlete text");
   assert.match(ready.athleteMessageDraft ?? "", /~3,8 г\/кг/, "g/kg must be formatted with comma and one decimal");
   assert.match(ready.athleteMessageDraft ?? "", /🔹 Понедельник \(01\.06\) - день отдыха/, "must include canonical day-by-day block");
+  assert.match(ready.athleteMessageDraft ?? "", /🔹 Воскресенье \(07\.06\) - длительная/, "long_run daily label must be athlete-safe");
+  assert.doesNotMatch(ready.athleteMessageDraft ?? "", /Воскресенье \(07\.06\) - Бег по пульсу/, "long_run daily label must not expose generic TP title");
   assert.doesNotMatch(
     ready.athleteMessageDraft ?? "",
-    /Комментарий:|можно дать|указать факт|hint|source_quality|по качеству данных здесь возможна неполная картина|Собрала|\*\*|---|—|–|TrainingPeaks|FatSecret/,
+    /Комментарий:|можно дать|указать факт|hint|source_quality|по качеству данных здесь возможна неполная картина|по этому дню вывод делаю осторожно|данных может быть чуть меньше|Собрала|\*\*|---|—|–|TrainingPeaks|FatSecret/,
     "combined message must not leak internal hints or markdown separators"
   );
   assert.equal((ready.athleteMessageDraft ?? "").match(/Анна, привет!/g)?.length, 1, "combined message must have one greeting");

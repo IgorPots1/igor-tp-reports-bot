@@ -231,9 +231,7 @@ function renderNutritionDayComment(input: {
   const kcalText = formatNutritionAthleteKcal(input.kcal, { mode: "actual" });
   const carbsKgText = input.carbsPerKg != null ? ` (${formatNutritionAthletePerKg(input.carbsPerKg)})` : "";
   const lowQuality = input.sourceConfidence === "low";
-  const cautiousPrefix = lowQuality
-    ? "По этому дню вывод делаю осторожно: данных может быть чуть меньше, чем нужно для точной оценки. "
-    : "";
+  const cautiousPrefix = lowQuality ? "Данные по питанию за день неполные, поэтому вывод короткий. " : "";
 
   if (input.nutritionStatus === "pre_long_low") {
     return `${cautiousPrefix}Это день перед длительной: углеводов получилось около ${carbsText}${carbsKgText}. Для такой подготовки это нижняя граница, поэтому накануне длинной работы лучше не просаживать углеводы.`;
@@ -245,7 +243,7 @@ function renderNutritionDayComment(input: {
     return `${cautiousPrefix}Углеводов за день получилось около ${carbsText}${carbsKgText} — для такой работы это нижняя граница. Не критично, но в ключевые дни лучше держать углеводы повыше, чтобы было больше топлива на тренировку и восстановление.`;
   }
   if (input.nutritionStatus === "suspect") {
-    return "По этому дню вывод делаю осторожно: данных может быть чуть меньше, чем нужно для точной оценки.";
+    return "Данные по питанию за день выглядят неполными или нетипичными, поэтому здесь лучше проверить исходный отчёт вручную.";
   }
   if (input.trainingType === "rest") {
     return lowQuality
@@ -265,6 +263,14 @@ function renderNutritionDayComment(input: {
     return `${cautiousPrefix}Белок в этот день закрыт хорошо, по нагрузке и питанию явного конфликта не видно.`;
   }
   return `${cautiousPrefix}День выглядит ровно, здесь ничего специально менять не нужно.`;
+}
+
+function resolveDailyTrainingLabelForAthlete(trainingType: string, trainingLabel: string): string {
+  if (trainingType !== "long_run") {
+    return trainingLabel;
+  }
+  const distanceMatch = trainingLabel.match(/(\d+(?:[,.]\d+)?)\s*(?:км|km)\b/i);
+  return distanceMatch ? `длительная ${distanceMatch[1].replace(".", ",")} км` : "длительная";
 }
 
 function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
@@ -300,9 +306,10 @@ function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
       if (!weekday || !dateLabel || kcal == null || protein == null || fat == null || carbs == null) {
         return null;
       }
+      const athleteTrainingLabel = resolveDailyTrainingLabelForAthlete(trainingType, trainingLabel);
       const comment = renderNutritionDayComment({
         trainingType,
-        trainingLabel,
+        trainingLabel: athleteTrainingLabel,
         nutritionStatus,
         kcal,
         carbs,
@@ -311,7 +318,7 @@ function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
         findings,
       });
       const carbsKgText = carbsPerKg != null ? ` (${formatNutritionAthletePerKg(carbsPerKg)})` : "";
-      return `🔹 ${weekday} (${dateLabel}) — ${trainingLabel}
+      return `🔹 ${weekday} (${dateLabel}) — ${athleteTrainingLabel}
 ${formatNutritionAthleteKcal(kcal, { mode: "actual" })} · белок ${formatNutritionAthleteMacro(protein)} · жиры ${formatNutritionAthleteMacro(fat)} · углеводы ${formatNutritionAthleteMacro(carbs)}${carbsKgText}.
 ${comment}`;
     })

@@ -17,6 +17,13 @@ function assertHasError(result: ReturnType<typeof validateTelegramReadyNutrition
   );
 }
 
+function assertHasWarning(result: ReturnType<typeof validateTelegramReadyNutritionMessage>, rule: string): void {
+  assert.ok(
+    result.some((issue) => issue.rule === rule && issue.severity === "warning"),
+    `must warn ${rule}`
+  );
+}
+
 const messy = cleanupPlainText(
   [
     "**Заголовок**",
@@ -87,7 +94,17 @@ assertHasError(
   }),
   "plan_and_mini_table"
 );
-assertHasError(
+assert.deepEqual(
+  validateTelegramReadyNutritionMessage({
+    text: "а".repeat(3928),
+    hasPreviousWeeksContext: false,
+    hasTargetWeekTrainingContext: false,
+    hasKeyTraining: false,
+  }),
+  [],
+  "near-limit text must not warn or block"
+);
+assertHasWarning(
   validateTelegramReadyNutritionMessage({
     text: "а".repeat(4097),
     hasPreviousWeeksContext: false,
@@ -213,8 +230,12 @@ assert.ok(result.text, "Nadezhda-like render must include text");
 const text = result.text ?? "";
 assert.match(text, /^Надя, привет!/);
 assert.doesNotMatch(text, /прошл[а-я]+\s+недел|по сравнению с прошл/i, "must omit comparison without context");
-assert.doesNotMatch(text, /TrainingPeaks|FatSecret|—|–|\*\*|```|Комментарий:|можно дать|hint_for_comment|source_quality/);
+assert.doesNotMatch(
+  text,
+  /TrainingPeaks|FatSecret|—|–|\*\*|```|Комментарий:|можно дать|hint_for_comment|source_quality|по этому дню вывод делаю осторожно|данных может быть чуть меньше/
+);
 assert.match(text, /Воскресенье \(14\.06\) · длительная · ~2500 ккал/, "Sunday long run label must be deterministic");
+assert.doesNotMatch(text, /Воскресенье \(14\.06\) · Бег по пульсу/, "Sunday long run must not expose generic TP label");
 assert.match(text, /📋 Мини-таблица/, "must show mini-table when TP context is available");
 assert.doesNotMatch(text, /План на неделю по типам дней/, "must not show day-type plan with TP context");
 assert.match(text, /🍽 Перед ключевыми тренировками/, "pre-training block must be present with hard or long_run");
