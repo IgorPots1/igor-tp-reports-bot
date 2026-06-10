@@ -12,6 +12,7 @@ import {
 } from "../src/features/nutrition/combined-message";
 import { buildNutritionStudentContext, type NutritionTrainingPeaksWeekContext } from "../src/features/nutrition/context";
 import { getNutritionPlanTargetWeekToday } from "../src/features/nutrition/plan-week-policy";
+import { analyzeNutritionPageConsistency } from "../src/features/nutrition/page-consistency";
 import { resolveNutritionWeeklyPlanForDisplay } from "../src/features/nutrition/repository";
 import { loadScriptEnv, resolveSupabaseEnv } from "./lib/load-script-env";
 
@@ -481,6 +482,23 @@ async function main(): Promise<void> {
     storedDayByDayHasStalePhrases,
   });
 
+  const selectedPlanWrongWeek = Boolean(
+    displayPlan &&
+      planWeek &&
+      planResolution?.planSelectedById &&
+      (displayPlan.planWeekFrom !== planWeek.from || displayPlan.planWeekTo !== planWeek.to)
+  );
+  const pageConsistencyIssues = analyzeNutritionPageConsistency({
+    selectedWeekFrom: weekFrom,
+    selectedWeekTo: weekTo,
+    targetPlanWeekFrom: planWeek?.from ?? null,
+    targetPlanWeekTo: planWeek?.to ?? null,
+    review,
+    plan: displayPlan,
+    selectedPlanWrongWeek,
+    hasReview: Boolean(review),
+  });
+
   console.log("Nutrition page consistency diagnostic (read-only, mirrors page.tsx selection)");
   console.log("");
   console.log("Git/runtime:");
@@ -625,6 +643,15 @@ async function main(): Promise<void> {
   console.log("- first 20 lines:");
   for (const line of firstLines(renderedText, 20)) {
     console.log(`  ${line}`);
+  }
+  console.log("");
+  console.log("Page consistency issues (analyzeNutritionPageConsistency):");
+  if (pageConsistencyIssues.length === 0) {
+    console.log("- none");
+  } else {
+    for (const issue of pageConsistencyIssues) {
+      console.log(`- [${issue.severity}] ${issue.code}: ${issue.message}${issue.action ? ` → ${issue.action}` : ""}`);
+    }
   }
   console.log("");
   console.log("Root cause categories:");

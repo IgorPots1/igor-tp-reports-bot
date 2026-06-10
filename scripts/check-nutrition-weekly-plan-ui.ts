@@ -35,6 +35,10 @@ assert.match(
 );
 assert.match(mainUi, /Черновик ученику — полный текст/, "main UI must expose combined copy block title");
 assert.match(mainUi, /Основной текст для отправки ученику/, "combined block must be labeled as primary copy source");
+assert.match(mainUi, /analyzeNutritionPageConsistency/, "main UI must run page consistency guardrails");
+assert.match(mainUi, /Проверка согласованности/, "main UI must show page consistency warning block");
+assert.match(mainUi, /Детали для тренера — служебный сохранённый обзор/, "coach details must be labeled as stored service layer");
+assert.doesNotMatch(mainUi, /скопируйте детали для тренера|copy this coach details/i, "page must not suggest copying coach details");
 assert.match(mainUi, /buildDerivedNutritionCombinedMessage/, "main UI must derive combined copy from review and plan");
 assert.match(mainUi, /renderResult\.text/, "main UI must copy deterministic renderer text");
 assert.match(mainUi, /renderResult\.issues/, "main UI must show renderer warnings or errors");

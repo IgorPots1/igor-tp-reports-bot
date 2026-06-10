@@ -166,6 +166,10 @@ async function run(): Promise<void> {
   assert.match(pageSource, /Черновик ученику — полный текст/, "UI must include combined copy block title");
   assert.match(pageSource, /buildDerivedNutritionCombinedMessage/, "UI must use combined helper");
   assert.match(pageSource, /displayPlan/, "UI combined block must use resolved display plan");
+  assert.match(pageSource, /analyzeNutritionPageConsistency/, "UI must include page consistency guardrails");
+  assert.match(pageSource, /Проверка согласованности/, "UI must show page consistency warning block");
+  assert.match(pageSource, /copyEnabled=\{false\}/, "stored service drafts must remain copy disabled");
+  assert.match(pageSource, /Детали для тренера — служебный сохранённый обзор/, "coach details must be labeled as service layer");
   assert.match(helperSource, /daily_analysis/, "helper must use canonical daily analysis facts");
   assert.match(helperSource, /next_week_plan/, "helper must use deterministic next_week_plan values");
 

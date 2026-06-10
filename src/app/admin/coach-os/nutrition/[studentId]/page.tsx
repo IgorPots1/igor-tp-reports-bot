@@ -57,6 +57,11 @@ import {
   parseNutritionFileUploadPreview,
 } from "@/features/nutrition/file-preview-cookie";
 import { getNutritionPlanTargetWeekToday } from "@/features/nutrition/plan-week-policy";
+import {
+  analyzeNutritionPageConsistency,
+  getActionablePageConsistencyIssues,
+  hasStaleReviewIssues,
+} from "@/features/nutrition/page-consistency";
 import type { NutritionContextItemType, NutritionWeeklyPlan } from "@/features/nutrition/repository";
 
 type NutritionStudentCardPageProps = {
@@ -356,6 +361,27 @@ export default async function CoachOsNutritionStudentCardPage({
       ...displayPlanDoNotSendReasons,
     ]),
   ];
+  const selectedPlanWrongWeek = Boolean(
+    displayPlan &&
+      planWeek &&
+      planSelectedById &&
+      (displayPlan.planWeekFrom !== planWeek.from || displayPlan.planWeekTo !== planWeek.to)
+  );
+  const pageConsistencyIssues = analyzeNutritionPageConsistency({
+    selectedWeekFrom: weekFrom,
+    selectedWeekTo: weekTo,
+    targetPlanWeekFrom: planWeek?.from ?? null,
+    targetPlanWeekTo: planWeek?.to ?? null,
+    review: card.weeklyAnalysis,
+    plan: displayPlan,
+    selectedPlanWrongWeek,
+    hasReview: Boolean(card.weeklyAnalysis),
+  });
+  const actionableConsistencyIssues = getActionablePageConsistencyIssues(pageConsistencyIssues);
+  const coachDetailsStoredNotice = pageConsistencyIssues.find(
+    (issue) => issue.code === "coach_details_stored_layer"
+  );
+  const showCoachDetailsStaleHint = hasStaleReviewIssues(pageConsistencyIssues);
 
   return (
     <section className="admin-section admin-nutrition-page">
@@ -402,6 +428,27 @@ export default async function CoachOsNutritionStudentCardPage({
           {profileWeightKg ?? "—"} кг · Стиль: {profileFormality}
         </p>
       </article>
+
+      {actionableConsistencyIssues.length > 0 ? (
+        <article className="admin-card admin-card-compact admin-nutrition-card-wide">
+          <h3>Проверка согласованности</h3>
+          <div className="admin-alert admin-alert-warning">
+            <strong>⚠️ Обзор или фокус требуют обновления</strong>
+            <p className="admin-muted">
+              Этот обзор создан до текущей методики питания или не совпадает с выбранной неделей. Перегенерируйте
+              обзор, затем сгенерируйте фокус.
+            </p>
+          </div>
+          <ul className="admin-list">
+            {actionableConsistencyIssues.map((issue) => (
+              <li key={issue.code}>
+                {issue.message}
+                {issue.action ? ` → ${issue.action}` : ""}
+              </li>
+            ))}
+          </ul>
+        </article>
+      ) : null}
 
       <div className="admin-grid admin-grid-student-detail">
         <NutritionFileUploadPanel
@@ -804,11 +851,20 @@ export default async function CoachOsNutritionStudentCardPage({
         </article>
 
         <article className="admin-card admin-card-compact admin-nutrition-card-wide">
-          <h3>Детали для тренера</h3>
+          <h3>Детали для тренера — служебный сохранённый обзор</h3>
           {!card.weeklyAnalysis ? (
             <p className="admin-muted">Обзор ещё не сгенерирован.</p>
           ) : (
             <div className="admin-nutrition-coach-section">
+              {coachDetailsStoredNotice ? (
+                <p className="admin-muted admin-nutrition-helper">{coachDetailsStoredNotice.message}</p>
+              ) : null}
+              {showCoachDetailsStaleHint ? (
+                <p className="admin-muted admin-nutrition-helper">
+                  Служебный блок для проверки. Это не текст для отправки ученику. Если выше есть предупреждение об
+                  устаревшем обзоре, эти детали могут не совпадать с актуальным черновиком.
+                </p>
+              ) : null}
               <section>
                 <h4>Главный вывод для тренера</h4>
                 {coachSummaryText ? (
