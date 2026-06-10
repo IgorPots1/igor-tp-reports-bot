@@ -14,6 +14,39 @@ import { getTrainingPeaksAttentionSnapshot } from "@/features/trainingpeaks/serv
 const LOG_PREFIX = "[diagnose-trainingpeaks-morning-digest]";
 const TITLE = "Утренний обзор TrainingPeaks";
 
+function loadLocalEnvFiles(): void {
+  const repoRoot = path.resolve(process.cwd());
+  const envPaths = [path.join(repoRoot, ".env.local"), path.join(repoRoot, ".env")];
+  for (const envPath of envPaths) {
+    if (!fs.existsSync(envPath)) {
+      continue;
+    }
+    const content = fs.readFileSync(envPath, "utf8");
+    for (const rawLine of content.split(/\r?\n/u)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith("#")) {
+        continue;
+      }
+      const separatorIndex = line.indexOf("=");
+      if (separatorIndex <= 0) {
+        continue;
+      }
+      const key = line.slice(0, separatorIndex).trim();
+      if (!key || process.env[key] !== undefined) {
+        continue;
+      }
+      let value = line.slice(separatorIndex + 1).trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      process.env[key] = value;
+    }
+  }
+}
+
 const NOISE_PATTERNS = [
   "question_case",
   "question_to_coach",
@@ -115,6 +148,7 @@ function findDuplicateStudentsAcrossSections(
 }
 
 async function run(): Promise<void> {
+  loadLocalEnvFiles();
   const startedAtMs = Date.now();
 
   const snapshotStartedAtMs = Date.now();
@@ -147,7 +181,9 @@ async function run(): Promise<void> {
       total: totalDurationMs,
       snapshot: snapshotDurationMs,
       format: formatDurationMs,
+      send: null,
     },
+    sendSkippedReason: "read-only diagnostic does not send Telegram",
     chunkCount: chunks.length,
     chunkLengths: chunks.map((chunk) => chunk.length),
     chunkOver3500: chunks.filter((chunk) => chunk.length > TRAININGPEAKS_ATTENTION_DIGEST_CHUNK_LIMIT).length,
@@ -173,7 +209,7 @@ async function run(): Promise<void> {
       legacyObserve: snapshot.observe.length,
       legacyFyi: snapshot.fyi.length,
     },
-    timeoutRiskLikely: totalDurationMs >= 50_000,
+    timeoutRiskLikely: snapshotDurationMs >= 50_000 || totalDurationMs >= 50_000,
   };
 
   fs.writeFileSync(path.join(reportDir, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`, "utf8");

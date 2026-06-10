@@ -38,8 +38,8 @@ function makeAction(input: Partial<CoachActionListItem> & Pick<CoachActionListIt
       sourceDate: null,
       target: { kind: "date", value: "2026-06-01" },
     },
-    createdAt: "2026-05-31T10:29:00.000Z",
-    updatedAt: "2026-06-01T10:00:00.000Z",
+    createdAt: "2026-06-09T08:00:00.000Z",
+    updatedAt: "2026-06-09T10:00:00.000Z",
     latestRunContext: {
       latestDryRun: {
         status: "completed",
@@ -57,6 +57,26 @@ function makeSignal(
 ): TrainingPeaksStudentOperationalSignal {
   return {
     status: "active",
+    lifecycleState: null,
+    lifecycleStateUpdatedAt: null,
+    lifecycleAppliedAt: null,
+    lifecycleMeta: {},
+    resolvedAt: null,
+    resolvedReason: null,
+    requiresCoachClose: false,
+    sourceType: "fixture",
+    sourceObservationId: null,
+    telegramChatId: null,
+    telegramMessageId: null,
+    telegramMessageThreadId: null,
+    confidence: null,
+    sourceDay: null,
+    targetDay: null,
+    linkedMemoryItemId: null,
+    linkedCaseId: null,
+    linkedActionId: null,
+    dedupeKey: `fixture:${input.id}`,
+    consumedAt: null,
     sourceDate: null,
     targetDate: null,
     validFrom: null,
@@ -123,6 +143,29 @@ function run(): void {
       asOfDate: "2026-06-03",
       scope: "all",
       limit: 10,
+      activeMoveActions: [
+        {
+          id: "action-move-fixture",
+          studentId: "student-move",
+          actionType: "move_workout",
+          status: "pending_coach",
+          sourceChatId: "chat-fixture",
+          sourceMessageId: "msg-fixture",
+          sourceUserId: null,
+          rawText: "fixture",
+          parsedPayload: {
+            sourceDate: "2026-06-05",
+            target: { kind: "date", value: "2026-06-04" },
+          },
+          confidence: null,
+          coachChatId: null,
+          coachMessageId: null,
+          executionStatus: "not_started",
+          executionMode: null,
+          createdAt: "2026-06-01T08:00:00.000Z",
+          updatedAt: "2026-06-01T08:00:00.000Z",
+        },
+      ],
     })
   );
   assert(signalsText.includes("📍 Сигналы"), "signals title should be coach-facing");
