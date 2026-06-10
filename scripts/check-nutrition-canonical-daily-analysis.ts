@@ -106,6 +106,7 @@ function assertCanonicalShape(day: Record<string, unknown>): void {
   assert.ok(canonical.flags && typeof canonical.flags === "object");
   assert.ok(canonical.energyAvailability && typeof canonical.energyAvailability === "object");
   assert.ok(canonical.energyFloor && typeof canonical.energyFloor === "object");
+  assert.ok(canonical.macroGuardrails && typeof canonical.macroGuardrails === "object");
   assert.equal(typeof canonical.nutritionStatus, "string");
   assert.equal(typeof canonical.relevance, "string");
   assert.equal(typeof canonical.hintForComment, "string");
@@ -167,6 +168,9 @@ async function run(): Promise<void> {
   assert.equal(typeof hardDay?.canonicalDailyAnalysis.actual.carbsGPerKg, "number");
   assert.equal(typeof longRunDay?.canonicalDailyAnalysis.actual.proteinGPerKg, "number");
   assert.equal(typeof longRunDay?.canonicalDailyAnalysis.energyAvailability.eaZone, "string");
+  assert.equal(typeof longRunDay?.canonicalDailyAnalysis.macroGuardrails.protein.status, "string");
+  assert.equal(typeof longRunDay?.canonicalDailyAnalysis.macroGuardrails.fat.status, "string");
+  assert.equal(typeof longRunDay?.canonicalDailyAnalysis.macroGuardrails.carbs.status, "string");
   assert.ok(longRunDay?.canonicalDailyAnalysis.findings.includes("estimated_ffm_used"));
 
   console.log("PASS check-nutrition-canonical-daily-analysis");

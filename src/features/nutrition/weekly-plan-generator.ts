@@ -433,6 +433,7 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
     planWeekFrom: planWeek.from,
     planWeekTo: planWeek.to,
     trainingContext: tpNextWeek,
+    previousWeekDailyAnalysis: nutritionSummary.daily_analysis,
   });
 
   return {
@@ -610,10 +611,20 @@ function buildFallbackAthleteDraft(facts: NutritionWeeklyPlanFacts, planFocus: N
   const address = buildPlanAddress(facts.student.formality);
   const keyDays = buildFallbackKeyTrainingDays(facts);
   const nextWeekPlanLines = facts.nextWeekPlan.days.slice(0, 7).map((day) => {
-    const kcal = typeof day.target_kcal === "number" ? `~${roundToNearest(day.target_kcal, 100)} ккал` : "~ккал н/д";
+    const kcal =
+      typeof day.display_target?.kcal_min === "number" && typeof day.display_target?.kcal_max === "number"
+        ? `~${day.display_target.kcal_min}-${day.display_target.kcal_max} ккал`
+        : typeof day.target_kcal === "number"
+          ? `~${roundToNearest(day.target_kcal, 100)} ккал`
+          : "~ккал н/д";
     const protein = typeof day.protein_g === "number" ? `${day.protein_g} г белка` : "белок н/д";
     const fat = typeof day.fat_g === "number" ? `${day.fat_g} г жиров` : "жиры н/д";
-    const carbs = typeof day.carbs_g === "number" ? `${day.carbs_g} г углеводов` : "углеводы н/д";
+    const carbs =
+      typeof day.display_target?.carbs_g_min === "number" && typeof day.display_target?.carbs_g_max === "number"
+        ? `${day.display_target.carbs_g_min}-${day.display_target.carbs_g_max} г углеводов`
+        : typeof day.carbs_g === "number"
+          ? `${day.carbs_g} г углеводов`
+          : "углеводы н/д";
     const carbsPerKg =
       typeof day.carbs_g_per_kg === "number" ? ` (~${formatDecimalRu(day.carbs_g_per_kg)} г/кг)` : "";
     return `🔹 ${day.weekday_ru} (${formatDateRu(day.date)}) — ${day.training_label}: ${kcal} · ${protein} · ${fat} · ${carbs}${carbsPerKg}.`;
@@ -625,6 +636,8 @@ function buildFallbackAthleteDraft(facts: NutritionWeeklyPlanFacts, planFocus: N
     planFocus.explanation,
     "",
     "Ориентиры по дням из согласованного плана:",
+    "Цифры ниже - ориентиры, не обязательство. Не нужно резко прыгать к ним за один день.",
+    "Главный шаг на этой неделе - поднять энергию и углеводы в дни нагрузки, особенно перед ключевой тренировкой.",
     ...nextWeekPlanLines,
   ];
   if (keyDays.length > 0) {

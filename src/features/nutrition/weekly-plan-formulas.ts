@@ -61,6 +61,14 @@ export type NutritionNextWeekPlanDay = {
   long_run_confidence: NutritionLongRunConfidence;
   pre_training_guidance: string | null;
   source: NutritionPlanSource;
+  ideal_target: NutritionDayTypeTarget | null;
+  practical_target: NutritionDayTypeTarget | null;
+  display_target: {
+    kcal_min: number | null;
+    kcal_max: number | null;
+    carbs_g_min: number | null;
+    carbs_g_max: number | null;
+  };
 };
 
 export type NutritionNextWeekPlan = {
@@ -74,6 +82,15 @@ export type NutritionNextWeekPlan = {
   };
   days: NutritionNextWeekPlanDay[];
   day_type_targets: {
+    rest: NutritionDayTypeTarget | null;
+    easy: NutritionDayTypeTarget | null;
+    hard: NutritionDayTypeTarget | null;
+    pre_long: NutritionDayTypeTarget | null;
+    long_run: NutritionDayTypeTarget | null;
+    strength: NutritionDayTypeTarget | null;
+    cross_training?: NutritionDayTypeTarget | null;
+  };
+  day_type_ideal_targets: {
     rest: NutritionDayTypeTarget | null;
     easy: NutritionDayTypeTarget | null;
     hard: NutritionDayTypeTarget | null;
@@ -112,6 +129,18 @@ type ParsedWorkout = {
   isRunning: boolean;
   longRunSource: NutritionLongRunSource;
   longRunConfidence: NutritionLongRunConfidence;
+};
+
+type PreviousWeekMacroPoint = {
+  kcal: number | null;
+  protein: number | null;
+  fat: number | null;
+  carbs: number | null;
+};
+
+type PreviousWeekTargets = {
+  overall: PreviousWeekMacroPoint;
+  byDayType: Partial<Record<NutritionPlanDayType, PreviousWeekMacroPoint>>;
 };
 
 const WEEKDAY_RU_FULL = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"] as const;
@@ -197,6 +226,17 @@ function toWeekdayRu(isoDate: string): string {
 
 function roundToNearest(value: number, step: number): number {
   return Math.round(value / step) * step;
+}
+
+function toFinite(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }
 
 export function isExplicitNutritionLongRunTitle(titleRaw: string | null | undefined): boolean {
@@ -399,11 +439,143 @@ export function calculateNutritionDayTypeTarget(params: {
   };
 }
 
+function average(values: Array<number | null>): number | null {
+  const present = values.filter((value): value is number => value !== null);
+  if (present.length === 0) {
+    return null;
+  }
+  return Number((present.reduce((sum, value) => sum + value, 0) / present.length).toFixed(1));
+}
+
+function normalizePrevDayType(raw: unknown): NutritionPlanDayType {
+  if (typeof raw !== "string") {
+    return "unknown";
+  }
+  const value = raw.toLowerCase();
+  if (
+    value === "rest" ||
+    value === "easy" ||
+    value === "hard" ||
+    value === "pre_long" ||
+    value === "long_run" ||
+    value === "strength" ||
+    value === "cross_training" ||
+    value === "race"
+  ) {
+    return value;
+  }
+  return "unknown";
+}
+
+function extractPreviousWeekTargets(previousWeekDailyAnalysis: unknown): PreviousWeekTargets {
+  const days = Array.isArray(previousWeekDailyAnalysis) ? previousWeekDailyAnalysis : [];
+  const points = days
+    .map((item) => (item && typeof item === "object" ? (item as Record<string, unknown>) : null))
+    .filter((item): item is Record<string, unknown> => Boolean(item))
+    .map((item) => {
+      const actual =
+        item.actual && typeof item.actual === "object" && !Array.isArray(item.actual)
+          ? (item.actual as Record<string, unknown>)
+          : {};
+      const trainingType = normalizePrevDayType(item.trainingType ?? item.training_type);
+      return {
+        trainingType,
+        kcal: toFinite(actual.kcal ?? item.kcal ?? item.actual_kcal),
+        protein: toFinite(actual.proteinG ?? item.proteinG ?? item.protein_g),
+        fat: toFinite(actual.fatG ?? item.fatG ?? item.fat_g),
+        carbs: toFinite(actual.carbsG ?? item.carbsG ?? item.carbs_g),
+      };
+    });
+
+  const overall: PreviousWeekMacroPoint = {
+    kcal: average(points.map((point) => point.kcal)),
+    protein: average(points.map((point) => point.protein)),
+    fat: average(points.map((point) => point.fat)),
+    carbs: average(points.map((point) => point.carbs)),
+  };
+
+  const byDayType: Partial<Record<NutritionPlanDayType, PreviousWeekMacroPoint>> = {};
+  for (const dayType of ["rest", "easy", "hard", "pre_long", "long_run", "strength", "cross_training", "race"] as const) {
+    const scoped = points.filter((point) => point.trainingType === dayType);
+    if (scoped.length === 0) {
+      continue;
+    }
+    byDayType[dayType] = {
+      kcal: average(scoped.map((point) => point.kcal)),
+      protein: average(scoped.map((point) => point.protein)),
+      fat: average(scoped.map((point) => point.fat)),
+      carbs: average(scoped.map((point) => point.carbs)),
+    };
+  }
+  return { overall, byDayType };
+}
+
+function applyPracticalTarget(input: {
+  dayType: NutritionPlanDayType;
+  bodyweightKg: number | null;
+  ideal: NutritionDayTypeTarget | null;
+  baseline: PreviousWeekMacroPoint | null;
+}): NutritionDayTypeTarget | null {
+  if (!input.ideal || !input.bodyweightKg || input.bodyweightKg <= 0) {
+    return input.ideal;
+  }
+  const isKeyDay =
+    input.dayType === "hard" ||
+    input.dayType === "pre_long" ||
+    input.dayType === "long_run" ||
+    input.dayType === "race";
+  const maxCarbJump = isKeyDay ? 100 : 80;
+  const maxKcalJump = isKeyDay ? 500 : 400;
+  const proteinFloor = 1.6 * input.bodyweightKg;
+  const fatFloor = 1.0 * input.bodyweightKg;
+
+  const baseline = input.baseline;
+  const baselineCarbs = baseline?.carbs ?? null;
+  const baselineKcal = baseline?.kcal ?? null;
+  const baselineProtein = baseline?.protein ?? null;
+  const baselineFat = baseline?.fat ?? null;
+
+  const practicalCarbs =
+    baselineCarbs === null
+      ? input.ideal.carbs_g
+      : Math.min(input.ideal.carbs_g, roundToNearest(baselineCarbs + maxCarbJump, 10));
+  const practicalKcal =
+    baselineKcal === null
+      ? input.ideal.target_kcal
+      : Math.min(input.ideal.target_kcal, roundToNearest(baselineKcal + maxKcalJump, 50));
+  const practicalProtein = Math.min(
+    input.ideal.protein_g,
+    Math.max(
+      roundToNearest(proteinFloor, 5),
+      baselineProtein === null ? roundToNearest(proteinFloor, 5) : roundToNearest(baselineProtein, 5)
+    )
+  );
+  const practicalFat = Math.max(
+    roundToNearest(fatFloor, 5),
+    Math.min(
+      input.ideal.fat_g,
+      baselineFat === null ? input.ideal.fat_g : roundToNearest(Math.max(baselineFat, fatFloor), 5)
+    )
+  );
+
+  return {
+    target_kcal: practicalKcal,
+    protein_g: practicalProtein,
+    fat_g: practicalFat,
+    carbs_g: practicalCarbs,
+    kcal_per_kg: Number((practicalKcal / input.bodyweightKg).toFixed(1)),
+    protein_g_per_kg: Number((practicalProtein / input.bodyweightKg).toFixed(2)),
+    fat_g_per_kg: Number((practicalFat / input.bodyweightKg).toFixed(2)),
+    carbs_g_per_kg: Number((practicalCarbs / input.bodyweightKg).toFixed(2)),
+  };
+}
+
 export function buildNutritionNextWeekPlan(params: {
   bodyweightKg: number | null;
   planWeekFrom: string;
   planWeekTo: string;
   trainingContext: unknown;
+  previousWeekDailyAnalysis?: unknown;
 }): NutritionNextWeekPlan {
   const dates = buildWeekDates(params.planWeekFrom, params.planWeekTo);
   const parsedWorkouts = parseTrainingContextWorkouts(params.trainingContext);
@@ -426,6 +598,7 @@ export function buildNutritionNextWeekPlan(params: {
   const longRunDates = new Set(
     parsedWorkouts.filter((workout) => workout.dayType === "long_run").map((workout) => workout.date)
   );
+  const previousWeekTargets = extractPreviousWeekTargets(params.previousWeekDailyAnalysis);
 
   const days: NutritionNextWeekPlanDay[] = dates.map((date) => {
     const dayWorkouts = workoutsByDate.get(date) ?? [];
@@ -435,9 +608,19 @@ export function buildNutritionNextWeekPlan(params: {
     const harder = baseType === "race" || baseType === "long_run" || baseType === "hard";
     const trainingType: NutritionPlanDayType = dayBeforeLongRun && !harder ? "pre_long" : baseType;
     const hasWorkout = Boolean(primaryWorkout);
-    const target = calculateNutritionDayTypeTarget({
+    const idealTarget = calculateNutritionDayTypeTarget({
       bodyweightKg: params.bodyweightKg,
       dayType: trainingType,
+    });
+    const baseline =
+      previousWeekTargets.byDayType[trainingType] ??
+      (trainingType === "race" ? previousWeekTargets.byDayType.hard ?? null : null) ??
+      previousWeekTargets.overall;
+    const practicalTarget = applyPracticalTarget({
+      dayType: trainingType,
+      bodyweightKg: params.bodyweightKg,
+      ideal: idealTarget,
+      baseline,
     });
 
     let source: NutritionPlanSource = "unknown";
@@ -459,14 +642,14 @@ export function buildNutritionNextWeekPlan(params: {
       training_type: trainingType,
       training_label: getTrainingLabel(trainingType, primaryWorkout?.title ?? null),
       workout_title: primaryWorkout?.title ?? null,
-      target_kcal: target?.target_kcal ?? null,
-      protein_g: target?.protein_g ?? null,
-      fat_g: target?.fat_g ?? null,
-      carbs_g: target?.carbs_g ?? null,
-      kcal_per_kg: target?.kcal_per_kg ?? null,
-      protein_g_per_kg: target?.protein_g_per_kg ?? null,
-      fat_g_per_kg: target?.fat_g_per_kg ?? null,
-      carbs_g_per_kg: target?.carbs_g_per_kg ?? null,
+      target_kcal: practicalTarget?.target_kcal ?? null,
+      protein_g: practicalTarget?.protein_g ?? null,
+      fat_g: practicalTarget?.fat_g ?? null,
+      carbs_g: practicalTarget?.carbs_g ?? null,
+      kcal_per_kg: practicalTarget?.kcal_per_kg ?? null,
+      protein_g_per_kg: practicalTarget?.protein_g_per_kg ?? null,
+      fat_g_per_kg: practicalTarget?.fat_g_per_kg ?? null,
+      carbs_g_per_kg: practicalTarget?.carbs_g_per_kg ?? null,
       flags: {
         rest: trainingType === "rest",
         easy: trainingType === "easy",
@@ -484,6 +667,14 @@ export function buildNutritionNextWeekPlan(params: {
       long_run_confidence: trainingType === "long_run" ? primaryWorkout?.longRunConfidence ?? "low" : "low",
       pre_training_guidance: GUIDANCE_BY_DAY_TYPE[trainingType],
       source,
+      ideal_target: idealTarget,
+      practical_target: practicalTarget,
+      display_target: {
+        kcal_min: practicalTarget ? roundToNearest(practicalTarget.target_kcal - 50, 50) : null,
+        kcal_max: practicalTarget ? roundToNearest(practicalTarget.target_kcal + 50, 50) : null,
+        carbs_g_min: practicalTarget ? roundToNearest(practicalTarget.carbs_g - 20, 10) : null,
+        carbs_g_max: practicalTarget ? roundToNearest(practicalTarget.carbs_g + 20, 10) : null,
+      },
     };
   });
 
@@ -500,6 +691,50 @@ export function buildNutritionNextWeekPlan(params: {
     },
     days,
     day_type_targets: {
+      rest: applyPracticalTarget({
+        dayType: "rest",
+        bodyweightKg: params.bodyweightKg,
+        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "rest" }),
+        baseline: previousWeekTargets.byDayType.rest ?? previousWeekTargets.overall,
+      }),
+      easy: applyPracticalTarget({
+        dayType: "easy",
+        bodyweightKg: params.bodyweightKg,
+        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "easy" }),
+        baseline: previousWeekTargets.byDayType.easy ?? previousWeekTargets.overall,
+      }),
+      hard: applyPracticalTarget({
+        dayType: "hard",
+        bodyweightKg: params.bodyweightKg,
+        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "hard" }),
+        baseline: previousWeekTargets.byDayType.hard ?? previousWeekTargets.overall,
+      }),
+      pre_long: applyPracticalTarget({
+        dayType: "pre_long",
+        bodyweightKg: params.bodyweightKg,
+        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "pre_long" }),
+        baseline: previousWeekTargets.byDayType.pre_long ?? previousWeekTargets.overall,
+      }),
+      long_run: applyPracticalTarget({
+        dayType: "long_run",
+        bodyweightKg: params.bodyweightKg,
+        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "long_run" }),
+        baseline: previousWeekTargets.byDayType.long_run ?? previousWeekTargets.overall,
+      }),
+      strength: applyPracticalTarget({
+        dayType: "strength",
+        bodyweightKg: params.bodyweightKg,
+        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "strength" }),
+        baseline: previousWeekTargets.byDayType.strength ?? previousWeekTargets.overall,
+      }),
+      cross_training: applyPracticalTarget({
+        dayType: "cross_training",
+        bodyweightKg: params.bodyweightKg,
+        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "cross_training" }),
+        baseline: previousWeekTargets.byDayType.cross_training ?? previousWeekTargets.overall,
+      }),
+    },
+    day_type_ideal_targets: {
       rest: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "rest" }),
       easy: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "easy" }),
       hard: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "hard" }),

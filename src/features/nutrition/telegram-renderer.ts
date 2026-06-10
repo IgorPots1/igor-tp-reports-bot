@@ -164,10 +164,20 @@ function buildPlanByDayTypes(nextWeekPlan: NutritionNextWeekPlan | null, fallbac
 
 function buildMiniTable(nextWeekPlan: NutritionNextWeekPlan): string[] {
   return nextWeekPlan.days.slice(0, 7).map((day) => {
-    const kcal = day.target_kcal != null ? formatNutritionAthleteKcal(day.target_kcal, { mode: "target" }) : "ккал н/д";
+    const kcal =
+      day.display_target?.kcal_min != null && day.display_target?.kcal_max != null
+        ? `~${Math.round(day.display_target.kcal_min)}-${Math.round(day.display_target.kcal_max)} ккал`
+        : day.target_kcal != null
+          ? formatNutritionAthleteKcal(day.target_kcal, { mode: "target" })
+          : "ккал н/д";
+    const carbs =
+      day.display_target?.carbs_g_min != null && day.display_target?.carbs_g_max != null
+        ? `${Math.round(day.display_target.carbs_g_min)}-${Math.round(day.display_target.carbs_g_max)}У`
+        : day.carbs_g != null
+          ? `${Math.round(day.carbs_g)}У`
+          : "У н/д";
     const protein = day.protein_g != null ? `${Math.round(day.protein_g)}Б` : "Б н/д";
     const fat = day.fat_g != null ? `${Math.round(day.fat_g)}Ж` : "Ж н/д";
-    const carbs = day.carbs_g != null ? `${Math.round(day.carbs_g)}У` : "У н/д";
     return `${dayTypeEmoji(day.training_type)} ${day.weekday_ru} (${formatDateRu(day.date)}) · ${resolveDayLabel(day)} · ${kcal} · ${protein} · ${fat} · ${carbs}`;
   });
 }
@@ -292,6 +302,8 @@ export function renderNutritionTelegramMessage(input: NutritionTelegramRendererI
     "",
     formatPlanFocusSectionHeading(input.planWeekMode),
     ...(input.interpretation.focusLinesRu.length > 0 ? input.interpretation.focusLinesRu : ["Фокус на неделю не сформирован."]),
+    "Цифры ниже - ориентиры, не обязательство. Не нужно резко прыгать к ним за один день.",
+    "Главный шаг на этой неделе - поднять энергию и углеводы в дни нагрузки, особенно перед ключевой тренировкой.",
     "",
     planHeading,
     ...planLines,

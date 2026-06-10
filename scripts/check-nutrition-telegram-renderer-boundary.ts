@@ -265,7 +265,11 @@ assert.doesNotMatch(
   text,
   /TrainingPeaks|FatSecret|—|–|\*\*|```|Комментарий:|можно дать|hint_for_comment|source_quality|по этому дню вывод делаю осторожно|данных может быть чуть меньше|Данные по питанию за день неполные|вывод короткий|день без тренировки в план тренировок|день без тренировки в TrainingPeaks/
 );
-assert.match(text, /Воскресенье \(14\.06\) · длительная · ~2500 ккал/, "Sunday long run label must be deterministic");
+assert.match(
+  text,
+  /Воскресенье \(14\.06\) · длительная · ~(2450-2550|2500) ккал/,
+  "Sunday long run label must be deterministic"
+);
 assert.doesNotMatch(text, /Воскресенье \(14\.06\) · Бег по пульсу/, "Sunday long run must not expose generic TP label");
 assert.match(text, /Вторник \(09\.06\) · Бег по пульсу · ~2200 ккал/, "easy Бег по пульсу row may keep source label");
 assert.match(text, /📋 Мини-таблица/, "must show mini-table when TP context is available");

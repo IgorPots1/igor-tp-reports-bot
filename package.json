@@ -173,6 +173,8 @@
     "check:nutrition-context-builder": "npx tsx scripts/check-nutrition-context-builder.ts",
     "check:nutrition-methodology": "npx tsx scripts/check-nutrition-methodology.ts",
     "check:nutrition-energy-availability": "npx tsx scripts/check-nutrition-energy-availability.ts",
+    "check:nutrition-macro-guardrails": "npx tsx scripts/check-nutrition-macro-guardrails.ts",
+    "check:nutrition-practical-targets": "npx tsx scripts/check-nutrition-practical-targets.ts",
     "check:nutrition-cross-training-load": "npx tsx scripts/check-nutrition-cross-training-load.ts",
     "check:nutrition-comment-decision-matrix": "npx tsx scripts/check-nutrition-comment-decision-matrix.ts",
     "check:nutrition-canonical-daily-analysis": "npx tsx scripts/check-nutrition-canonical-daily-analysis.ts",

@@ -166,7 +166,7 @@ async function run(): Promise<void> {
   const planGenerated = generateNutritionWeeklyPlanFallback(planFacts);
   const planDraft = planGenerated.athleteMessageDraft ?? "";
   assertAthleteDraftPlainText(planDraft, "weekly plan draft");
-  assert.match(planDraft, /~2000 ккал/, "weekly plan draft should display-round deterministic rest target");
+  assert.match(planDraft, /~1900-2000 ккал/, "weekly plan draft should display practical kcal range for rest day");
   assert.doesNotMatch(planDraft, /~1950 ккал/, "weekly plan draft should not expose raw 1950 target");
 
   const combined = buildDerivedNutritionCombinedMessage({

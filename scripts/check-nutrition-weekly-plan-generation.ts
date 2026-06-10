@@ -134,6 +134,11 @@ assert.equal(
   "rest target kcal for 56kg must stay 1950 from deterministic formulas"
 );
 assert.equal(
+  typeof (generated.planSummary.next_week_plan as { day_type_ideal_targets?: unknown }).day_type_ideal_targets,
+  "object",
+  "next_week_plan must include ideal targets alongside practical targets"
+);
+assert.equal(
   (generated.planSummary.next_week_plan as { bodyweight_kg?: unknown }).bodyweight_kg,
   56,
   "next_week_plan must include bodyweight when available"

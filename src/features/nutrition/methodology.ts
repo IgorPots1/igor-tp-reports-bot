@@ -67,6 +67,8 @@ export type NutritionCanonicalStatus =
   | "adequate"
   | "ample"
   | "low_for_load"
+  | "low_fat"
+  | "low_protein"
   | "below_energy_availability"
   | "below_energy_floor"
   | "low_for_cross_training"
@@ -116,6 +118,7 @@ export type NutritionCanonicalDailyAnalysis = {
   };
   energyAvailability: NutritionEnergyAvailabilityFacts;
   energyFloor: NutritionEnergyFloorFacts;
+  macroGuardrails: NutritionMacroGuardrailsFacts;
   nutritionStatus: NutritionCanonicalStatus;
   relevance: NutritionCanonicalRelevance;
   hintForComment: string;
@@ -131,6 +134,42 @@ export type NutritionCanonicalDailyAnalysis = {
     hasTrainingContext: boolean;
     confidence: "high" | "medium" | "low";
     notes: string[];
+  };
+};
+
+export type NutritionMacroStatus = "low" | "borderline" | "ok" | "high" | "unknown";
+
+export type NutritionCarbLoadBasis =
+  | "rest"
+  | "easy"
+  | "cross_training"
+  | "strength"
+  | "hard"
+  | "long_run"
+  | "pre_long"
+  | "unknown";
+
+export type NutritionMacroGuardrailsFacts = {
+  protein: {
+    gPerKg: number | null;
+    status: NutritionMacroStatus;
+    floorGPerKg: number;
+    finding: string | null;
+  };
+  fat: {
+    gPerKg: number | null;
+    percentEnergy: number | null;
+    status: NutritionMacroStatus;
+    floorGPerKg: number;
+    finding: string | null;
+  };
+  carbs: {
+    gPerKg: number | null;
+    status: NutritionMacroStatus;
+    rangeMinGPerKg: number | null;
+    rangeMaxGPerKg: number | null;
+    loadBasis: NutritionCarbLoadBasis;
+    finding: string | null;
   };
 };
 
@@ -768,6 +807,12 @@ function buildHintForComment(status: NutritionCanonicalStatus): string {
   if (status === "low_for_load") {
     return "Ключевая нагрузка: углеводы за день на нижней границе для такой сессии; указать факт и мягкий ориентир.";
   }
+  if (status === "low_fat") {
+    return "По жирам день просел ниже мягкого пола; отметить спокойно и без медицинских причин.";
+  }
+  if (status === "low_protein") {
+    return "Белок ниже мягкого ориентира; отметить коротко, не уводя фокус от энергии и углеводов под нагрузку.";
+  }
   if (status === "below_energy_availability") {
     return "Для такого дня энергии получилось маловато; написать мягко, без медицинских терминов и без точных добавок ккал.";
   }
@@ -787,6 +832,164 @@ function buildHintForComment(status: NutritionCanonicalStatus): string {
     return "По дню есть сомнения в качестве данных; нужен осторожный комментарий без жёстких выводов.";
   }
   return "Нагрузка и питание в целом согласованы; можно дать краткий поддерживающий комментарий.";
+}
+
+function resolveCarbLoadBasis(trainingType: NutritionCanonicalTrainingType): NutritionCarbLoadBasis {
+  if (trainingType === "rest") {
+    return "rest";
+  }
+  if (trainingType === "easy") {
+    return "easy";
+  }
+  if (trainingType === "cross_training") {
+    return "cross_training";
+  }
+  if (trainingType === "strength") {
+    return "strength";
+  }
+  if (trainingType === "hard" || trainingType === "race") {
+    return "hard";
+  }
+  if (trainingType === "long_run") {
+    return "long_run";
+  }
+  if (trainingType === "pre_long") {
+    return "pre_long";
+  }
+  return "unknown";
+}
+
+function resolveCarbRangeByLoadBasis(loadBasis: NutritionCarbLoadBasis): {
+  rangeMinGPerKg: number | null;
+  rangeMaxGPerKg: number | null;
+} {
+  if (loadBasis === "rest") {
+    return { rangeMinGPerKg: 3, rangeMaxGPerKg: 5 };
+  }
+  if (loadBasis === "easy") {
+    return { rangeMinGPerKg: 4, rangeMaxGPerKg: 6 };
+  }
+  if (loadBasis === "cross_training") {
+    return { rangeMinGPerKg: 4.5, rangeMaxGPerKg: 6.5 };
+  }
+  if (loadBasis === "strength") {
+    return { rangeMinGPerKg: 4, rangeMaxGPerKg: 6 };
+  }
+  if (loadBasis === "hard") {
+    return { rangeMinGPerKg: 5.5, rangeMaxGPerKg: 7 };
+  }
+  if (loadBasis === "long_run") {
+    return { rangeMinGPerKg: 6, rangeMaxGPerKg: 10 };
+  }
+  if (loadBasis === "pre_long") {
+    return { rangeMinGPerKg: 5, rangeMaxGPerKg: 7 };
+  }
+  return { rangeMinGPerKg: null, rangeMaxGPerKg: null };
+}
+
+function buildMacroGuardrails(input: {
+  proteinGPerKg: number | null;
+  fatG: number | null;
+  kcal: number | null;
+  bodyweightKg: number | null;
+  carbsGPerKg: number | null;
+  canonicalTrainingType: NutritionCanonicalTrainingType;
+}): NutritionMacroGuardrailsFacts {
+  const proteinFloor = 1.6;
+  const fatFloor = 1.0;
+  const fatGPerKg =
+    input.fatG !== null && input.bodyweightKg && input.bodyweightKg > 0
+      ? Number((input.fatG / input.bodyweightKg).toFixed(2))
+      : null;
+  const fatPercentEnergy =
+    input.fatG !== null && input.kcal !== null && input.kcal > 0
+      ? Number((((input.fatG * 9) / input.kcal) * 100).toFixed(1))
+      : null;
+
+  let proteinStatus: NutritionMacroStatus = "unknown";
+  let proteinFinding: string | null = null;
+  if (input.proteinGPerKg !== null) {
+    if (input.proteinGPerKg < 1.3) {
+      proteinStatus = "low";
+      proteinFinding = "Белка маловато.";
+    } else if (input.proteinGPerKg < 1.6) {
+      proteinStatus = "borderline";
+      proteinFinding = "Белок чуть ниже ориентира.";
+    } else if (input.proteinGPerKg > 2.2) {
+      proteinStatus = "high";
+      proteinFinding = null;
+    } else {
+      proteinStatus = "ok";
+      proteinFinding = "Белок закрыт хорошо.";
+    }
+  }
+
+  let fatStatus: NutritionMacroStatus = "unknown";
+  let fatFinding: string | null = null;
+  if (fatGPerKg !== null) {
+    if (fatGPerKg < 0.8) {
+      fatStatus = "low";
+      fatFinding =
+        "Жиры в этот день низковаты. Не нужно специально держать такие дни слишком сухими по жирам, особенно если они повторяются.";
+    } else if (fatGPerKg < 1) {
+      fatStatus = "borderline";
+      fatFinding = "Жиры на нижней границе, лучше регулярно не уходить ниже.";
+    } else if (fatGPerKg > 1.6) {
+      fatStatus = "high";
+      fatFinding = null;
+    } else {
+      fatStatus = "ok";
+      fatFinding = null;
+    }
+  }
+
+  const loadBasis = resolveCarbLoadBasis(input.canonicalTrainingType);
+  const carbRange = resolveCarbRangeByLoadBasis(loadBasis);
+  let carbsStatus: NutritionMacroStatus = "unknown";
+  let carbsFinding: string | null = null;
+  if (
+    input.carbsGPerKg !== null &&
+    carbRange.rangeMinGPerKg !== null &&
+    carbRange.rangeMaxGPerKg !== null
+  ) {
+    if (input.carbsGPerKg < carbRange.rangeMinGPerKg - 0.4) {
+      carbsStatus = "low";
+      carbsFinding = "Углеводов для такого дня низковато.";
+    } else if (input.carbsGPerKg < carbRange.rangeMinGPerKg) {
+      carbsStatus = "borderline";
+      carbsFinding = "Углеводы на нижней границе для такой нагрузки.";
+    } else if (input.carbsGPerKg > carbRange.rangeMaxGPerKg + 0.6) {
+      carbsStatus = "high";
+      carbsFinding = null;
+    } else {
+      carbsStatus = "ok";
+      carbsFinding = null;
+    }
+  }
+
+  return {
+    protein: {
+      gPerKg: input.proteinGPerKg,
+      status: proteinStatus,
+      floorGPerKg: proteinFloor,
+      finding: proteinFinding,
+    },
+    fat: {
+      gPerKg: fatGPerKg,
+      percentEnergy: fatPercentEnergy,
+      status: fatStatus,
+      floorGPerKg: fatFloor,
+      finding: fatFinding,
+    },
+    carbs: {
+      gPerKg: input.carbsGPerKg,
+      status: carbsStatus,
+      rangeMinGPerKg: carbRange.rangeMinGPerKg,
+      rangeMaxGPerKg: carbRange.rangeMaxGPerKg,
+      loadBasis,
+      finding: carbsFinding,
+    },
+  };
 }
 
 export function detectWorkoutFuelingInstructions(text: string | null): WorkoutFuelingInstructionDetection {
@@ -988,6 +1191,14 @@ function analyzeDailyTrainingNutrition(input: {
       trainingType: canonicalTrainingType,
       hasLoad: canonicalHasLoad,
     });
+    const macroGuardrails = buildMacroGuardrails({
+      proteinGPerKg,
+      fatG: row.fatG,
+      kcal: row.kcal,
+      bodyweightKg: input.bodyweightKg,
+      carbsGPerKg,
+      canonicalTrainingType,
+    });
     const suspect =
       row.confidence < 0.6 ||
       (row.kcal !== null && (row.kcal < 900 || row.kcal > 7000)) ||
@@ -1006,6 +1217,21 @@ function analyzeDailyTrainingNutrition(input: {
     }
     if (proteinGPerKg !== null && proteinGPerKg >= 1.6) {
       canonicalFindings.push("protein_sufficient");
+    }
+    if (macroGuardrails.protein.status === "low") {
+      canonicalFindings.push("protein_low");
+    } else if (macroGuardrails.protein.status === "borderline") {
+      canonicalFindings.push("protein_borderline");
+    }
+    if (macroGuardrails.fat.status === "low") {
+      canonicalFindings.push("fat_below_floor");
+    } else if (macroGuardrails.fat.status === "borderline") {
+      canonicalFindings.push("fat_borderline");
+    }
+    if (macroGuardrails.carbs.status === "low") {
+      canonicalFindings.push("low_carbs_for_load_type");
+    } else if (macroGuardrails.carbs.status === "borderline") {
+      canonicalFindings.push("carbs_borderline_for_load_type");
     }
     for (const note of energyAvailability.notes) {
       canonicalFindings.push(note);
@@ -1070,13 +1296,20 @@ function analyzeDailyTrainingNutrition(input: {
     ) {
       canonicalNutritionStatus = "pre_long_low";
     } else if (
-      (canonicalTrainingType === "hard" || canonicalTrainingType === "race") &&
-      carbsPerKg !== null &&
-      carbsPerKg < 4.5
+      macroGuardrails.carbs.status === "low" &&
+      (canonicalTrainingType === "easy" ||
+        canonicalTrainingType === "hard" ||
+        canonicalTrainingType === "race" ||
+        canonicalTrainingType === "long_run" ||
+        canonicalTrainingType === "pre_long" ||
+        canonicalTrainingType === "cross_training" ||
+        canonicalTrainingType === "strength")
     ) {
       canonicalNutritionStatus = "low_for_load";
-    } else if (canonicalTrainingType === "easy" && carbsPerKg !== null && carbsPerKg < 3) {
-      canonicalNutritionStatus = "low_for_load";
+    } else if (macroGuardrails.fat.status === "low") {
+      canonicalNutritionStatus = "low_fat";
+    } else if (macroGuardrails.protein.status === "low") {
+      canonicalNutritionStatus = "low_protein";
     } else if (canonicalTrainingType === "rest") {
       canonicalNutritionStatus = "rest_ok";
       if (row.kcal !== null && thresholds.lowKcal !== null && row.kcal > thresholds.lowKcal + 700) {
@@ -1095,7 +1328,9 @@ function analyzeDailyTrainingNutrition(input: {
               canonicalNutritionStatus === "below_energy_availability" ||
               canonicalNutritionStatus === "below_energy_floor" ||
               canonicalNutritionStatus === "low_for_cross_training" ||
-              canonicalNutritionStatus === "low_for_strength"
+              canonicalNutritionStatus === "low_for_strength" ||
+              canonicalNutritionStatus === "low_fat" ||
+              canonicalNutritionStatus === "low_protein"
             ? "important"
             : "normal";
 
@@ -1169,6 +1404,7 @@ function analyzeDailyTrainingNutrition(input: {
       },
       energyAvailability,
       energyFloor,
+      macroGuardrails,
       nutritionStatus: canonicalNutritionStatus,
       relevance: canonicalRelevance,
       hintForComment: buildHintForComment(canonicalNutritionStatus),

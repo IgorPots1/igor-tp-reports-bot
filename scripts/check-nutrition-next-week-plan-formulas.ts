@@ -92,8 +92,28 @@ assert.ok(plan.days.some((day) => day.training_type === "rest"), "rest days must
 assert.ok(plan.days.some((day) => day.date === "2026-06-13" && day.training_type === "pre_long"));
 assert.ok(plan.days.some((day) => day.date === "2026-06-10" && day.flags.key_workout));
 assert.ok(plan.days.some((day) => day.date === "2026-06-10" && day.workout_title === "6 х 6 мин"));
+assert.ok(
+  plan.days.some(
+    (day) =>
+      day.date === "2026-06-10" &&
+      day.ideal_target?.carbs_g != null &&
+      day.practical_target?.carbs_g != null &&
+      day.practical_target.carbs_g <= day.ideal_target.carbs_g
+  ),
+  "practical target must not exceed ideal target"
+);
+assert.ok(
+  plan.days.some(
+    (day) =>
+      day.date === "2026-06-10" &&
+      day.display_target.carbs_g_min != null &&
+      day.display_target.carbs_g_max != null
+  ),
+  "display target carb range must be present"
+);
 assert.equal(plan.summary.long_run_source, "explicit_title");
 assert.equal(plan.summary.long_run_confidence, "high");
+assert.ok(plan.day_type_ideal_targets.hard?.carbs_g === 340);
 
 const sundayDefaultPlan = buildNutritionNextWeekPlan({
   bodyweightKg: 56,

@@ -30,6 +30,8 @@ type CanonicalDailyFact = {
   findings?: unknown;
   source_quality?: unknown;
   sourceQuality?: unknown;
+  macro_guardrails?: unknown;
+  macroGuardrails?: unknown;
 };
 
 export type NutritionCombinedMessageResult = {
@@ -226,7 +228,15 @@ function renderNutritionDayComment(input: {
   carbsPerKg: number | null;
   hasNutritionCompletenessIssue: boolean;
   findings: string[];
+  macroGuardrails?: Record<string, unknown>;
 }): string {
+  const guardrails = asObject(input.macroGuardrails);
+  const proteinGuard = asObject(guardrails.protein);
+  const fatGuard = asObject(guardrails.fat);
+  const carbsGuard = asObject(guardrails.carbs);
+  const proteinStatus = typeof proteinGuard.status === "string" ? proteinGuard.status : null;
+  const fatStatus = typeof fatGuard.status === "string" ? fatGuard.status : null;
+  const carbsStatus = typeof carbsGuard.status === "string" ? carbsGuard.status : null;
   const carbsText = formatNutritionAthleteMacro(input.carbs, { approximate: true });
   const kcalText = formatNutritionAthleteKcal(input.kcal, { mode: "actual" });
   const carbsKgText = input.carbsPerKg != null ? ` (${formatNutritionAthletePerKg(input.carbsPerKg)})` : "";
@@ -252,12 +262,21 @@ function renderNutritionDayComment(input: {
       return `${cautiousPrefix}Падел и другая кросс-тренировка тоже дают нагрузку, а день получился низким по общей энергии. Я бы не делал такой день совсем пустым по питанию, особенно если нагрузка повторяется несколько раз в неделю.`;
     }
     if (input.trainingType === "strength" || input.findings.includes("low_energy_with_strength")) {
+      if (proteinStatus === "ok") {
+        return `${cautiousPrefix}Для дня с силовой энергии маловато. Белок есть, но для восстановления важна не только белковая часть: общая энергия и углеводы тоже должны быть ровнее.`;
+      }
       return `${cautiousPrefix}В день силовой важно оставить достаточно энергии для восстановления. Здесь день получился скромным по ккал, поэтому я бы поддержал питание чуть ровнее.`;
     }
     if (input.trainingType === "rest") {
       return `${cautiousPrefix}День отдыха получился низким по энергии. Разово не страшно, но я бы не делал такие дни регулярными.`;
     }
     return `${cautiousPrefix}Для дня с нагрузкой энергии получилось маловато. Я бы не делал этот день слишком пустым по питанию и лучше поддержал питание вокруг тренировки.`;
+  }
+  if (fatStatus === "low" || input.nutritionStatus === "low_fat" || input.findings.includes("fat_below_floor")) {
+    return `${cautiousPrefix}Жиров в этот день получилось низковато. Не нужно специально держать такие дни слишком сухими по жирам, особенно если они повторяются.`;
+  }
+  if (input.nutritionStatus === "low_protein" || input.findings.includes("protein_low")) {
+    return `${cautiousPrefix}Белок в этот день чуть ниже ориентира. Поддержи базовый белок, но главный фокус всё равно на ровной энергии и углеводах под нагрузку.`;
   }
   if (input.nutritionStatus === "low_for_cross_training" || input.findings.includes("below_cross_training_floor")) {
     return `${cautiousPrefix}Падел и другая кросс-тренировка тоже дают нагрузку. Здесь день получился низким по общей энергии, поэтому лучше поддержать питание вокруг такой нагрузки.`;
@@ -266,6 +285,9 @@ function renderNutritionDayComment(input: {
     return `${cautiousPrefix}В день силовой важно оставить достаточно энергии для восстановления. Здесь день получился скромным по ккал, поэтому я бы поддержал питание чуть ровнее.`;
   }
   if (input.nutritionStatus === "low_for_load") {
+    if (input.trainingType === "cross_training") {
+      return `${cautiousPrefix}Углеводов для такого дня низковато. Для лёгкого дня это ещё терпимо, но для падла/кросс-тренировки лучше держать выше.`;
+    }
     return `${cautiousPrefix}Углеводов за день получилось около ${carbsText}${carbsKgText} — для такой работы это нижняя граница. Не критично, но в ключевые дни лучше держать углеводы повыше, чтобы было больше топлива на тренировку и восстановление.`;
   }
   if (input.trainingType === "rest") {
@@ -275,6 +297,9 @@ function renderNutritionDayComment(input: {
     return `${cautiousPrefix}День отдыха. По питанию всё спокойно, здесь ничего специально менять не нужно.`;
   }
   if (input.trainingType === "easy") {
+    if (proteinStatus === "ok" && carbsStatus === "ok" && fatStatus === "ok") {
+      return `${cautiousPrefix}День выглядит ровно: белок закрыт, углеводов под эту нагрузку достаточно, по общей энергии явного провала нет.`;
+    }
     return `${cautiousPrefix}Под лёгкую работу день выглядит нормально: энергии и углеводов достаточно, здесь ничего специально менять не нужно.`;
   }
   if (input.trainingType === "cross_training") {
@@ -287,7 +312,10 @@ function renderNutritionDayComment(input: {
     return `${cautiousPrefix}Под длинную работу день выглядит достаточно ровно: энергии около ${kcalText}, углеводов около ${carbsText}${carbsKgText}.`;
   }
   if (input.findings.includes("protein_sufficient")) {
-    return `${cautiousPrefix}Белок в этот день закрыт хорошо, по нагрузке и питанию явного конфликта не видно.`;
+    if (fatStatus === "ok" && carbsStatus === "ok") {
+      return `${cautiousPrefix}Белок в этот день закрыт хорошо, по нагрузке и питанию явного конфликта не видно.`;
+    }
+    return `${cautiousPrefix}Белок закрыт хорошо, это плюс. Главный момент не в белке, а в общей энергии и углеводах под нагрузку.`;
   }
   return `${cautiousPrefix}День выглядит ровно, здесь ничего специально менять не нужно.`;
 }
@@ -336,14 +364,6 @@ function hasNutritionCompletenessIssue(input: {
   );
 }
 
-function formatRussianList(items: string[]): string {
-  const unique = [...new Set(items)];
-  if (unique.length <= 1) {
-    return unique.join("");
-  }
-  return `${unique.slice(0, -1).join(", ")} и ${unique[unique.length - 1]}`;
-}
-
 function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
   const facts = getCanonicalDailyFacts(review);
   if (facts.length === 0) {
@@ -373,6 +393,7 @@ function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
             ? item.nutritionStatus
             : null;
       const sourceQuality = asObject(item.source_quality) ?? asObject(item.sourceQuality);
+      const macroGuardrails = asObject(item.macro_guardrails) ?? asObject(item.macroGuardrails);
       if (!weekday || !dateLabel || kcal == null || protein == null || fat == null || carbs == null) {
         return null;
       }
@@ -394,6 +415,7 @@ function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
           carbs,
         }),
         findings,
+        macroGuardrails,
       });
       const carbsKgText = carbsPerKg != null ? ` (${formatNutritionAthletePerKg(carbsPerKg)})` : "";
       return `🔹 ${weekday} (${dateLabel}) · ${athleteTrainingLabel}
@@ -437,12 +459,12 @@ function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
     .map((day) => (typeof day.weekday_ru === "string" ? day.weekday_ru.toLowerCase() : typeof day.weekdayRu === "string" ? day.weekdayRu.toLowerCase() : null))
     .filter((day): day is string => Boolean(day));
   if (proteinSufficient || lowCarbKeyDays.length > 0) {
-    const good = proteinSufficient ? "По белку всё спокойно — восстановление здесь закрыто хорошо." : "По базовой структуре недели есть на что опереться.";
+    const good = proteinSufficient ? "Белок в целом выглядит нормально." : "По базовой структуре недели есть на что опереться.";
     const pattern =
       lowCarbKeyDays.length > 0
-        ? `Главный момент недели — распределение углеводов и энергии; самые заметные просадки: ${formatRussianList(lowCarbKeyDays)}.`
+        ? "Главный паттерн недели: энергии и углеводов часто не хватало под нагрузку."
         : "Главный момент недели — держать энергию ровнее вокруг ключевых тренировок.";
-    return `${good} ${pattern} Не утверждаю, что самочувствие зависело только от этого, но это могло повлиять на запас энергии и восстановление. Фокус — не снижать углеводы перед длинной или ключевой работой.`;
+    return `${good} ${pattern} Белок не компенсирует низкую общую энергию и углеводы, поэтому фокус — в первую очередь на дни нагрузки.`;
   }
   return statement ?? coachSummary ?? "По неделе держим курс на ровную энергию и восстановление без резких просадок.";
 }
