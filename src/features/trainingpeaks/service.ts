@@ -7296,7 +7296,7 @@ export function buildDetailedActionableHealthOrPainDisplayText(input: {
   return lines.join("\n");
 }
 
-async function buildOperationalSignalDisplayEvidenceMap(input: {
+export async function buildOperationalSignalDisplayEvidenceMap(input: {
   signals: TrainingPeaksStudentOperationalSignal[];
   asOfDate: string;
 }): Promise<ReadonlyMap<string, TrainingPeaksOperationalSignalDisplayEvidence>> {

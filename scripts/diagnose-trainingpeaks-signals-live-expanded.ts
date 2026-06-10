@@ -13,9 +13,11 @@ import {
   type TrainingPeaksStudentOperationalSignal,
 } from "@/features/trainingpeaks/repository";
 import {
+  buildOperationalSignalDisplayEvidenceMap,
   buildTrainingPeaksOperationalSignalsSnapshotFromSignals,
   formatTrainingPeaksOperationalSignalsForTelegram,
   resolveOperationalSignalDisplaySummary,
+  type TrainingPeaksOperationalSignalDisplayEvidence,
   type TrainingPeaksOperationalSignalsItem,
   type TrainingPeaksOperationalSignalsSnapshot,
 } from "@/features/trainingpeaks/service";
@@ -246,12 +248,14 @@ function resolveSoloHiddenReason(input: {
   studentNameById: ReadonlyMap<string, string | null>;
   asOfDate: string;
   activeMoveActions: Awaited<ReturnType<typeof listActiveTrainingPeaksMoveActions>>;
+  displayEvidenceBySignalId: ReadonlyMap<string, TrainingPeaksOperationalSignalDisplayEvidence>;
 }): string | null {
   const soloSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
     signals: [input.signal],
     studentNameById: input.studentNameById,
     asOfDate: input.asOfDate,
     activeMoveActions: input.activeMoveActions,
+    displayEvidenceBySignalId: input.displayEvidenceBySignalId,
     limit: 5,
   });
   const soloItems = flattenSnapshotItems(soloSnapshot);
@@ -263,6 +267,7 @@ function resolveSoloHiddenReason(input: {
     studentNameById: input.studentNameById,
     asOfDate: input.asOfDate,
     activeMoveActions: input.activeMoveActions,
+    displayEvidenceBySignalId: input.displayEvidenceBySignalId,
     limit: FULL_DISPLAY_LIMIT,
   });
   const visibleIds = new Set(flattenSnapshotItems(withContextSnapshot).map((item) => item.signalId));
@@ -561,11 +566,17 @@ async function run(): Promise<void> {
     return haystack.includes(studentQuery);
   });
 
+  const displayEvidenceBySignalId = await buildOperationalSignalDisplayEvidenceMap({
+    signals: allSignals,
+    asOfDate: options.asOfDate,
+  });
+
   const liveSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
     signals: allSignals,
     studentNameById,
     asOfDate: options.asOfDate,
     activeMoveActions,
+    displayEvidenceBySignalId,
     limit: LIVE_DISPLAY_LIMIT,
   });
   const fullSnapshot = buildTrainingPeaksOperationalSignalsSnapshotFromSignals({
@@ -573,6 +584,7 @@ async function run(): Promise<void> {
     studentNameById,
     asOfDate: options.asOfDate,
     activeMoveActions,
+    displayEvidenceBySignalId,
     limit: FULL_DISPLAY_LIMIT,
   });
 
@@ -636,6 +648,7 @@ async function run(): Promise<void> {
           studentNameById,
           asOfDate: options.asOfDate,
           activeMoveActions,
+          displayEvidenceBySignalId,
         });
     const proposedAction = resolveProposedAction({
       signal,
