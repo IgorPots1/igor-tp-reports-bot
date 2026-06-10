@@ -7,6 +7,7 @@ import {
   type GroupWorkoutReportWorkoutMatchResult,
 } from "@/features/trainingpeaks/group-workout-report-matcher";
 import type { TrainingPeaksWorkoutCacheRow } from "@/features/trainingpeaks/repository";
+import { buildTrainingPeaksCompletedWorkoutSummaryDetails } from "@/features/trainingpeaks/trainingpeaks-completed-workout-summary-reader";
 
 function makeWorkout(input: Partial<TrainingPeaksWorkoutCacheRow> & {
   workoutId: number;
@@ -56,14 +57,29 @@ function analyze(
   rows: TrainingPeaksWorkoutCacheRow[],
   match: GroupWorkoutReportWorkoutMatchResult,
   reportText: string,
-  labels: string[] = []
+  labels: string[] = [],
+  completedWorkoutSummaryDetails?: ReturnType<typeof buildTrainingPeaksCompletedWorkoutSummaryDetails> | null
 ) {
   return analyzeGroupWorkoutReport({
     match,
     plannedWorkout: byId(rows, match.selectedPlannedWorkoutId),
     completedWorkout: byId(rows, match.selectedCompletedWorkoutId),
+    completedWorkoutSummaryDetails,
     reportText,
     detectedLabels: labels,
+  });
+}
+
+function makeLiveSummaryFixture(input: {
+  workoutId: string;
+  date?: string;
+  payload: Record<string, unknown>;
+}) {
+  return buildTrainingPeaksCompletedWorkoutSummaryDetails({
+    workoutPayload: input.payload,
+    athleteId: "10101",
+    date: input.date ?? "2026-06-08",
+    workoutId: input.workoutId,
   });
 }
 
@@ -330,6 +346,198 @@ function run(): void {
     });
     const result = analyze(rows, match, "ахилл тянет", ["pain_or_health"]);
     assert.equal(result.riskFlags.includes("pain_or_health_signal_in_report"), true);
+  }
+
+  {
+    const rows = [
+      makeWorkout({
+        workoutId: 12001,
+        date: "2026-06-08",
+        title: "Easy run",
+        isCompleted: true,
+        completedTimeRaw: 45 * 60,
+        complianceDurationPercent: 100,
+      }),
+    ];
+    const match = matchGroupWorkoutReportWorkoutFromCache({
+      messageText: "бег",
+      messageDateUnixSeconds: messageDateUnix,
+      workouts: rows,
+    });
+    const liveSummary = makeLiveSummaryFixture({
+      workoutId: "12001",
+      payload: {
+        workoutId: 12001,
+        workoutTypeValueId: 3,
+        totalTime: 0.75,
+        distance: 10000,
+        heartRateAverage: 148,
+        heartRateMaximum: 162,
+        velocityAverage: 3.7,
+      },
+    });
+    const result = analyze(rows, match, "норм", [], liveSummary);
+    assert.equal(result.dataAvailability.hasAveragePace, true);
+    assert.equal(result.dataAvailability.hasAverageHeartRate, true);
+    assert.equal(result.planActualBullets.some((bullet) => bullet.startsWith("Average pace:")), true);
+    assert.equal(result.planActualBullets.some((bullet) => bullet.startsWith("Average HR:")), true);
+    assert.equal(result.planActualBullets.some((bullet) => bullet.startsWith("Max HR:")), true);
+    assert.equal(result.recommendationForDraft.includes("можно упоминать средний темп/пульс"), true);
+  }
+
+  {
+    const rows = [
+      makeWorkout({
+        workoutId: 13001,
+        date: "2026-06-08",
+        title: "easy run",
+        isCompleted: true,
+        completedTimeRaw: 40 * 60,
+        complianceDurationPercent: 100,
+        sourceSnapshot: { description: "simple workout" },
+      }),
+    ];
+    const match = matchGroupWorkoutReportWorkoutFromCache({
+      messageText: "бег",
+      messageDateUnixSeconds: messageDateUnix,
+      workouts: rows,
+    });
+    const result = analyze(rows, match, "норм", [], null);
+    assert.equal(result.dataAvailability.hasAverageHeartRate, false);
+    assert.equal(result.dataAvailability.hasAveragePace, false);
+  }
+
+  {
+    const rows = [
+      makeWorkout({
+        workoutId: 14001,
+        date: "2026-06-08",
+        title: "Interval 8x400",
+        isCompleted: true,
+        completedTimeRaw: 60 * 60,
+        complianceDurationPercent: 100,
+      }),
+    ];
+    const match = matchGroupWorkoutReportWorkoutFromCache({
+      messageText: "интервалы",
+      messageDateUnixSeconds: messageDateUnix,
+      workouts: rows,
+    });
+    const liveSummary = makeLiveSummaryFixture({
+      workoutId: "14001",
+      payload: {
+        workoutId: 14001,
+        workoutTypeValueId: 3,
+        totalTime: 1,
+        distance: 8000,
+        structure: {
+          steps: [{ intervals: [{ targetPace: "4:30/km" }, { targetPace: "4:45/km" }] }],
+        },
+      },
+    });
+    const result = analyze(rows, match, "сделал интервалы", [], liveSummary);
+    assert.equal(result.workoutType, "quality_interval");
+    assert.equal(liveSummary.dataAvailability.hasPlannedStructure, true);
+    assert.equal(liveSummary.dataAvailability.hasIntervalActuals, false);
+    assert.equal(result.dataAvailability.hasLapOrIntervalActuals, false);
+    assert.equal(
+      result.unavailableDataNotes.some((note) =>
+        note.includes("не делать выводы по каждому повтору")
+      ),
+      true
+    );
+    assert.equal(result.recommendationForDraft.includes("нельзя упоминать ровность отрезков/повторов"), true);
+  }
+
+  {
+    const rows = [
+      makeWorkout({
+        workoutId: 15001,
+        date: "2026-06-08",
+        title: "Morning run",
+        isCompleted: true,
+        completedTimeRaw: 25 * 60,
+      }),
+      makeWorkout({
+        workoutId: 15002,
+        date: "2026-06-08",
+        title: "Evening run",
+        isCompleted: true,
+        completedTimeRaw: 35 * 60,
+      }),
+    ];
+    const match = matchGroupWorkoutReportWorkoutFromCache({
+      messageText: "сделал бег",
+      messageDateUnixSeconds: messageDateUnix,
+      workouts: rows,
+    });
+    const result = analyze(rows, match, "сделал бег", [], null);
+    assert.equal(match.status, "ambiguous");
+    assert.equal(result.executionStatus, "ambiguous");
+  }
+
+  {
+    const rows = [
+      makeWorkout({
+        workoutId: 16001,
+        date: "2026-06-08",
+        title: "easy run",
+        isCompleted: true,
+        completedTimeRaw: 70 * 60,
+        complianceDurationPercent: 120,
+      }),
+    ];
+    const match = matchGroupWorkoutReportWorkoutFromCache({
+      messageText: "бег",
+      messageDateUnixSeconds: messageDateUnix,
+      workouts: rows,
+    });
+    const liveSummary = makeLiveSummaryFixture({
+      workoutId: "16001",
+      payload: {
+        workoutId: 16001,
+        workoutTypeValueId: 3,
+        totalTime: 1.16,
+        distance: 12000,
+        heartRateAverage: 155,
+      },
+    });
+    const result = analyze(rows, match, "переборщил", [], liveSummary);
+    assert.equal(result.executionStatus, "over_plan");
+    assert.equal(result.dataAvailability.hasAverageHeartRate, true);
+  }
+
+  {
+    const liveSummary = makeLiveSummaryFixture({
+      workoutId: "17001",
+      payload: {
+        workoutId: 17001,
+        workoutTypeValueId: 3,
+        totalTime: 1,
+        distance: 10000,
+        laps: [{}, {}],
+        intervals: [{ durationSeconds: 120, averageHeartRate: 160 }],
+      },
+    });
+    assert.equal(liveSummary.dataAvailability.hasLaps, false);
+    assert.equal(liveSummary.dataAvailability.hasSplits, false);
+    assert.equal(liveSummary.dataAvailability.hasIntervalActuals, false);
+    assert.equal(liveSummary.dataAvailability.hasSamples, false);
+  }
+
+  {
+    const liveSummary = makeLiveSummaryFixture({
+      workoutId: "18001",
+      payload: {
+        workoutId: 18001,
+        workoutTypeValueId: 3,
+        totalTime: 1,
+        distance: 10000,
+      },
+    });
+    assert.equal(liveSummary.metrics.computedAveragePaceFromDistanceDuration, true);
+    assert.equal(liveSummary.dataAvailability.hasAveragePace, true);
+    assert.equal(liveSummary.warnings.some((warning) => warning.includes("computed from duration and distance")), true);
   }
 
   console.log("[check-group-workout-report-match-analyzer] PASS");

@@ -9,6 +9,7 @@ import {
   extractTrainingPeaksCompletedWorkoutDetails,
   redactSensitiveForReport,
 } from "@/features/trainingpeaks/trainingpeaks-completed-workout-details-extractor";
+import { buildTrainingPeaksCompletedWorkoutSummaryDetails } from "@/features/trainingpeaks/trainingpeaks-completed-workout-summary-reader";
 
 function assert(condition: unknown, message: string): void {
   if (!condition) {
@@ -184,6 +185,31 @@ function testForbiddenStringsNotPresent(): void {
   assert(forbidden.length === 6, "forbidden list must remain explicit and stable");
 }
 
+function testSummaryReaderForcesUnavailableActuals(): void {
+  const summary = buildTrainingPeaksCompletedWorkoutSummaryDetails({
+    workoutPayload: {
+      workoutId: 9001,
+      workoutTypeValueId: 3,
+      totalTime: 1,
+      distance: 10000,
+      heartRateAverage: 150,
+      heartRateMaximum: 165,
+      velocityAverage: 2.8,
+      laps: [{}, {}],
+      intervals: [{ durationSeconds: 120, averageHeartRate: 160 }],
+      samples: [{ t: 1 }],
+    },
+    athleteId: "5652949",
+    date: "2026-06-07",
+    workoutId: "9001",
+  });
+  assert(summary.source === "tp_date_range_endpoint", "summary source must be date-range endpoint");
+  assert(summary.dataAvailability.hasLaps === false, "summary reader must force laps unavailable");
+  assert(summary.dataAvailability.hasIntervalActuals === false, "summary reader must force interval actuals unavailable");
+  assert(summary.dataAvailability.hasAveragePace === true, "summary reader should expose avg pace");
+  assert(summary.dataAvailability.hasAverageHeartRate === true, "summary reader should expose avg HR");
+}
+
 function run(): void {
   testProbeEntrypointLoadsScriptEnv();
   testArgParsing();
@@ -195,6 +221,7 @@ function run(): void {
   testExtractorActualIntervalsOnlyWhenActualDataExists();
   testExtractorMissingData();
   testReportRedaction();
+  testSummaryReaderForcesUnavailableActuals();
   testForbiddenStringsNotPresent();
   console.log("[check-trainingpeaks-completed-workout-details-probe] PASS");
 }

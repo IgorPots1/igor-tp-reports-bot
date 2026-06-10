@@ -1,5 +1,6 @@
 import type { GroupWorkoutReportWorkoutMatchResult } from "@/features/trainingpeaks/group-workout-report-matcher";
 import type { TrainingPeaksWorkoutCacheRow } from "@/features/trainingpeaks/repository";
+import type { TrainingPeaksCompletedWorkoutSummaryDetails } from "@/features/trainingpeaks/trainingpeaks-completed-workout-summary-reader";
 import { classifyTrainingPeaksWorkoutActivity } from "@/features/trainingpeaks/workout-activity-classification";
 
 export type GroupWorkoutReportAnalysisDataAvailability = {
@@ -44,9 +45,16 @@ type Input = {
   match: GroupWorkoutReportWorkoutMatchResult;
   plannedWorkout: TrainingPeaksWorkoutCacheRow | null;
   completedWorkout: TrainingPeaksWorkoutCacheRow | null;
+  completedWorkoutSummaryDetails?: TrainingPeaksCompletedWorkoutSummaryDetails | null;
   reportText: string;
   detectedLabels?: string[];
 };
+
+function formatPaceSecPerKm(value: number): string {
+  const minutes = Math.floor(value / 60);
+  const seconds = Math.round(value % 60);
+  return `${minutes}:${String(seconds).padStart(2, "0")}/km`;
+}
 
 function toNumber(value: number | string | null | undefined): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -161,9 +169,12 @@ function deriveExecutionStatus(input: {
 export function analyzeGroupWorkoutReport(input: Input): GroupWorkoutReportWorkoutAnalysis {
   const planned = input.plannedWorkout;
   const completed = input.completedWorkout;
-  const completedDuration = toNumber(completed?.completedTimeRaw);
+  const liveSummary = input.completedWorkoutSummaryDetails ?? null;
+  const completedDuration =
+    liveSummary?.metrics.durationSeconds ?? toNumber(completed?.completedTimeRaw);
   const plannedDuration = toNumber(planned?.plannedTimeRaw);
-  const completedDistance = toNumber(completed?.completedDistanceRaw);
+  const completedDistance =
+    liveSummary?.metrics.distanceMeters ?? toNumber(completed?.completedDistanceRaw);
   const plannedDistance = toNumber(planned?.plannedDistanceRaw);
   const durationCompliance =
     toNumber(completed?.complianceDurationPercent) ?? toNumber(planned?.complianceDurationPercent);
@@ -171,17 +182,33 @@ export function analyzeGroupWorkoutReport(input: Input): GroupWorkoutReportWorko
     toNumber(completed?.complianceDistancePercent) ?? toNumber(planned?.complianceDistancePercent);
 
   const snapshot = asObject(completed?.sourceSnapshot ?? planned?.sourceSnapshot);
-  const hasAveragePace = hasAnyKeyDeep(snapshot, ["avgpace", "averagepace", "pace_avg"]);
-  const hasAverageHeartRate = hasAnyKeyDeep(snapshot, ["avgheartrate", "averageheartrate", "heart_rate_avg"]);
-  const hasLapOrIntervalActuals = hasAnyKeyDeep(snapshot, [
+  const cacheHasAveragePace = hasAnyKeyDeep(snapshot, ["avgpace", "averagepace", "pace_avg"]);
+  const cacheHasAverageHeartRate = hasAnyKeyDeep(snapshot, [
+    "avgheartrate",
+    "averageheartrate",
+    "heart_rate_avg",
+  ]);
+  const cacheHasLapOrIntervalActuals = hasAnyKeyDeep(snapshot, [
     "lap",
     "interval",
     "split",
     "repetition",
     "segment",
   ]);
-  const hasPlannedStructure = hasAnyKeyDeep(snapshot, ["structure", "steps", "planned"]);
-  const hasCoachComments = hasAnyKeyDeep(snapshot, ["coachcomments", "coach_comments", "notes"]);
+  const cacheHasPlannedStructure = hasAnyKeyDeep(snapshot, ["structure", "steps", "planned"]);
+  const cacheHasCoachComments = hasAnyKeyDeep(snapshot, ["coachcomments", "coach_comments", "notes"]);
+
+  const hasAveragePace =
+    Boolean(liveSummary?.dataAvailability.hasAveragePace) || cacheHasAveragePace;
+  const hasAverageHeartRate =
+    Boolean(liveSummary?.dataAvailability.hasAverageHeartRate) || cacheHasAverageHeartRate;
+  const hasLapOrIntervalActuals = liveSummary
+    ? false
+    : cacheHasLapOrIntervalActuals;
+  const hasPlannedStructure =
+    Boolean(liveSummary?.plannedContext.hasStructure) || cacheHasPlannedStructure;
+  const hasCoachComments =
+    Boolean(liveSummary?.plannedContext.hasCoachComments) || cacheHasCoachComments;
 
   const dataAvailability: GroupWorkoutReportAnalysisDataAvailability = {
     hasPlannedDuration: plannedDuration !== null,
@@ -195,24 +222,42 @@ export function analyzeGroupWorkoutReport(input: Input): GroupWorkoutReportWorko
     hasLapOrIntervalActuals,
   };
 
+  const workoutType = inferWorkoutType({ planned, completed });
+
   const unavailableDataNotes: string[] = [];
   if (!dataAvailability.hasAveragePace) {
-    unavailableDataNotes.push("average pace is unavailable in current cache/source_snapshot.");
+    unavailableDataNotes.push(
+      liveSummary
+        ? "average pace is unavailable from live summary and cache/source_snapshot."
+        : "average pace is unavailable in current cache/source_snapshot."
+    );
   }
   if (!dataAvailability.hasAverageHeartRate) {
-    unavailableDataNotes.push("average heart rate is unavailable in current cache/source_snapshot.");
+    unavailableDataNotes.push(
+      liveSummary
+        ? "average heart rate is unavailable from live summary and cache/source_snapshot."
+        : "average heart rate is unavailable in current cache/source_snapshot."
+    );
   }
+  unavailableDataNotes.push("laps/splits are unavailable from the production date-range reader.");
+  unavailableDataNotes.push("interval actuals are unavailable; do not claim per-repeat execution.");
   if (!dataAvailability.hasLapOrIntervalActuals) {
     unavailableDataNotes.push("lap/interval actuals are unavailable in current cache/source_snapshot.");
   }
   if (!hasPlannedStructure) {
     unavailableDataNotes.push("planned interval/step structure is unavailable or sparse.");
+  } else if (workoutType === "quality_interval") {
+    unavailableDataNotes.push(
+      "Есть плановая структура, но фактические отрезки/laps недоступны — не делать выводы по каждому повтору."
+    );
   }
   if (!hasCoachComments) {
     unavailableDataNotes.push("coach comments are unavailable or sparse.");
   }
+  if (liveSummary?.metrics.computedAveragePaceFromDistanceDuration) {
+    unavailableDataNotes.push("average pace was computed from duration and distance, not reported directly by TP.");
+  }
 
-  const workoutType = inferWorkoutType({ planned, completed });
   const executionStatus = deriveExecutionStatus({
     match: input.match,
     hasCompleted: Boolean(completed),
@@ -239,10 +284,35 @@ export function analyzeGroupWorkoutReport(input: Input): GroupWorkoutReportWorko
     planActualBullets.push(`Planned distance: ${plannedDistance.toFixed(2)}.`);
   }
   if (completedDistance !== null) {
-    planActualBullets.push(`Completed distance: ${completedDistance.toFixed(2)}.`);
+    if (liveSummary?.metrics.distanceMeters !== undefined) {
+      planActualBullets.push(`Completed distance: ${(liveSummary.metrics.distanceMeters / 1000).toFixed(2)} km.`);
+    } else {
+      planActualBullets.push(`Completed distance: ${completedDistance.toFixed(2)}.`);
+    }
   }
   if (distanceCompliance !== null) {
     planActualBullets.push(`Distance compliance: ${distanceCompliance.toFixed(1)}%.`);
+  }
+  if (liveSummary?.metrics.averagePaceSecPerKm !== undefined) {
+    const paceLabel = liveSummary.metrics.computedAveragePaceFromDistanceDuration
+      ? "Computed average pace"
+      : "Average pace";
+    planActualBullets.push(`${paceLabel}: ${formatPaceSecPerKm(liveSummary.metrics.averagePaceSecPerKm)}.`);
+  }
+  if (liveSummary?.metrics.averageHeartRateBpm !== undefined) {
+    planActualBullets.push(`Average HR: ${Math.round(liveSummary.metrics.averageHeartRateBpm)} bpm.`);
+  }
+  if (liveSummary?.metrics.maxHeartRateBpm !== undefined) {
+    planActualBullets.push(`Max HR: ${Math.round(liveSummary.metrics.maxHeartRateBpm)} bpm.`);
+  }
+  if (liveSummary?.plannedContext.hasStructure) {
+    planActualBullets.push("Planned structure present in live summary.");
+  }
+  if (liveSummary?.plannedContext.hasTargetPaceOrHr) {
+    planActualBullets.push("Target pace/HR present in live summary.");
+  }
+  if (liveSummary?.plannedContext.hasCoachComments) {
+    planActualBullets.push("Coach comments present in live summary.");
   }
 
   const riskFlags: string[] = [];
@@ -277,9 +347,19 @@ export function analyzeGroupWorkoutReport(input: Input): GroupWorkoutReportWorko
     summaryForCoach = "Insufficient plan-vs-actual metrics for confident execution assessment.";
   }
 
+  const recommendationParts: string[] = [];
+  if (hasAveragePace || hasAverageHeartRate) {
+    recommendationParts.push("можно упоминать средний темп/пульс");
+  }
+  if (workoutType === "quality_interval" || hasPlannedStructure) {
+    recommendationParts.push("нельзя упоминать ровность отрезков/повторов");
+  }
+  if (unavailableDataNotes.length > 0) {
+    recommendationParts.push("explicitly state missing lap/split/interval actual data");
+  }
   const recommendationForDraft =
-    unavailableDataNotes.length > 0
-      ? "When generating a draft later, explicitly state missing pace/HR/lap data and avoid claims about zones/interval precision."
+    recommendationParts.length > 0
+      ? `When generating a draft later: ${recommendationParts.join("; ")}.`
       : "Draft can use available plan-vs-actual metrics conservatively.";
 
   return {
