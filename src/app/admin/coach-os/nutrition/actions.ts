@@ -17,8 +17,10 @@ import {
 } from "@/features/nutrition/admin";
 import {
   buildNutritionStudentCardHref,
+  formatNutritionPlanTargetWeekNotice,
   formatNutritionStatus,
 } from "@/features/nutrition/admin-labels";
+import { getNutritionPlanTargetWeekToday } from "@/features/nutrition/plan-week-policy";
 import {
   NUTRITION_FILE_PREVIEW_COOKIE,
   serializeNutritionFileUploadPreview,
@@ -488,10 +490,11 @@ export async function generateNutritionWeeklyPlanAction(formData: FormData): Pro
       requestedMode,
     });
     revalidateNutritionPaths(studentId);
+    const targetWeek = getNutritionPlanTargetWeekToday();
     const message =
       plan.status === "blocked_safety"
         ? "Блок безопасности: фокус недели сохранён без черновика для ученика."
-        : "Фокус питания на следующую неделю сгенерирован.";
+        : formatNutritionPlanTargetWeekNotice(targetWeek.mode);
     redirect(
       buildNutritionStudentCardHref({
         studentId,

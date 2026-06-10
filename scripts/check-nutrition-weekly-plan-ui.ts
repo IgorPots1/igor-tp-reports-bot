@@ -19,7 +19,7 @@ const mainUi = studentPage.slice(0, studentPage.indexOf("admin-nutrition-advance
 assert.match(studentPage, /resolveNutritionWeeklyPlanForDisplay/, "student page must resolve plan display");
 assert.match(studentPage, /plansForWeek/, "student page must list plans for week");
 assert.match(studentPage, /planIdFromQuery/, "student page must read planId search param");
-assert.match(studentPage, /calculateNutritionPlanWeek/, "student page must compute plan week from review");
+assert.match(studentPage, /getNutritionPlanTargetWeekToday/, "student page must compute target plan week from admin local date");
 
 assert.match(mainUi, /name="sourceReportId"/, "plan form must pass sourceReportId from selected review");
 assert.match(
@@ -33,14 +33,14 @@ assert.match(
   /formatNutritionPlanTrainingContextLine/,
   "plan card must show generated plan TP context from training snapshot"
 );
-assert.match(mainUi, /Черновик ученику — фокус на следующую неделю/, "plan card must distinguish plan draft heading");
+assert.match(mainUi, /formatNutritionPlanDraftHeading/, "plan card must distinguish plan draft heading dynamically");
 assert.match(mainUi, /Черновик ученику — полный текст/, "main UI must expose combined copy block title");
 assert.match(mainUi, /Основной текст для отправки/, "combined block must be labeled as primary copy source");
 assert.match(mainUi, /buildDerivedNutritionCombinedMessage/, "main UI must derive combined copy from review and plan");
 assert.match(mainUi, /displayPlan/, "main UI combined block must use resolved display plan");
 
 const reviewDraftStart = mainUi.indexOf("Исходный черновик обзора — служебно");
-const planCardStart = mainUi.indexOf("Фокус питания на следующую неделю");
+const planCardStart = mainUi.indexOf("admin-nutrition-plan-card");
 const combinedDraftStart = mainUi.indexOf("Черновик ученику — полный текст");
 assert.ok(reviewDraftStart >= 0, "main UI must include secondary review draft heading");
 assert.match(mainUi, /используйте блок «полный текст» выше/, "secondary review draft must warn against athlete copy");
@@ -60,7 +60,7 @@ assert.doesNotMatch(
 );
 assert.match(mainUi, /generateNutritionWeeklyPlanAction/, "main UI must use generateNutritionWeeklyPlanAction");
 assert.match(mainUi, /NutritionDraftCopyBlock/, "main UI must use NutritionDraftCopyBlock for plan draft");
-assert.match(mainUi, /Сгенерировать фокус/, "main UI must include generate focus button");
+assert.match(mainUi, /formatNutritionPlanGenerateButtonLabel/, "main UI must include dynamic generate focus button");
 assert.match(mainUi, /Сначала сгенерируйте разбор прошлой недели/, "main UI must show empty state without review");
 
 assert.match(mainUi, /formatNutritionStatus\([^,]+,\s*"weekly_plan"\)/, "main UI must use weekly_plan status labels");

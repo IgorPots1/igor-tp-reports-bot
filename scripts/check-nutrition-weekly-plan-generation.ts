@@ -5,10 +5,10 @@ import { join } from "node:path";
 import type { NutritionWeeklyAnalysis } from "@/features/nutrition/repository";
 import {
   buildNutritionWeeklyPlanFactsFromSources,
-  calculateNutritionPlanWeek,
   generateNutritionWeeklyPlanFallback,
   NUTRITION_WEEKLY_PLAN_PROMPT_VERSION,
 } from "@/features/nutrition/weekly-plan-generator";
+import { resolveNutritionPlanTargetWeek } from "@/features/nutrition/plan-week-policy";
 
 const root = process.cwd();
 const generatorPath = join(root, "src/features/nutrition/weekly-plan-generator.ts");
@@ -75,9 +75,9 @@ function buildFixtureAnalysis(overrides?: Partial<NutritionWeeklyAnalysis>): Nut
   };
 }
 
-const planWeek = calculateNutritionPlanWeek("2026-06-07");
-assert.equal(planWeek.from, "2026-06-08");
-assert.equal(planWeek.to, "2026-06-14");
+const targetWeek = resolveNutritionPlanTargetWeek({ todayLocalDate: "2026-06-10" });
+assert.equal(targetWeek.planWeekFrom, "2026-06-08");
+assert.equal(targetWeek.planWeekTo, "2026-06-14");
 
 const facts = buildNutritionWeeklyPlanFactsFromSources({
   studentId: "student-uuid-1",
@@ -85,9 +85,11 @@ const facts = buildNutritionWeeklyPlanFactsFromSources({
   formality: "ty",
   weightKg: 56,
   sourceAnalysis: buildFixtureAnalysis(),
+  todayLocalDate: "2026-06-10",
 });
-assert.equal(facts.planWeek.from, "2026-06-08");
-assert.equal(facts.planWeek.to, "2026-06-14");
+assert.equal(facts.planWeek.from, targetWeek.planWeekFrom);
+assert.equal(facts.planWeek.to, targetWeek.planWeekTo);
+assert.equal(facts.planWeekMode, "current_week");
 assert.equal(facts.sourceReview.sourceReportId, "report-fixture-1");
 assert.equal(facts.nextWeekTraining.workouts.length, 2);
 
@@ -98,6 +100,7 @@ const mismatchFacts = buildNutritionWeeklyPlanFactsFromSources({
   weightKg: 56,
   sourceReportId: "other-report-from-url",
   sourceAnalysis: buildFixtureAnalysis({ reportId: "report-fixture-1" }),
+  todayLocalDate: "2026-06-10",
 });
 assert.equal(
   mismatchFacts.sourceReview.sourceReportId,
@@ -147,6 +150,7 @@ const blockedFacts = buildNutritionWeeklyPlanFactsFromSources({
   sourceAnalysis: buildFixtureAnalysis({
     safetyFlags: { hard_flags: ["very_low_kcal_repeated"], soft_flags: [], blocked: true },
   }),
+  todayLocalDate: "2026-06-10",
 });
 const blockedGenerated = generateNutritionWeeklyPlanFallback(blockedFacts);
 assert.equal(blockedGenerated.status, "blocked_safety");

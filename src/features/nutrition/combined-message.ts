@@ -1,3 +1,4 @@
+import type { NutritionPlanTargetWeekMode } from "@/features/nutrition/plan-week-policy";
 import type { NutritionWeeklyAnalysis, NutritionWeeklyPlan } from "@/features/nutrition/repository";
 import type { TrainingPeaksTelegramFormality } from "@/features/trainingpeaks/repository";
 import type { NutritionNextWeekPlan, NutritionNextWeekPlanDay, NutritionPlanDayType } from "@/features/nutrition/weekly-plan-formulas";
@@ -378,7 +379,7 @@ function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
   return statement ?? coachSummary ?? "По неделе держим курс на ровную энергию и восстановление без резких просадок.";
 }
 
-function getPlanFocusLines(plan: NutritionWeeklyPlan): string[] {
+function getPlanFocusLines(plan: NutritionWeeklyPlan, mode: NutritionPlanTargetWeekMode): string[] {
   const planSummary = asObject(plan.planSummary);
   const focus = asObject(planSummary.plan_focus);
   const title = compactText(typeof focus.title === "string" ? focus.title : null);
@@ -393,7 +394,17 @@ function getPlanFocusLines(plan: NutritionWeeklyPlan): string[] {
     return [explanation];
   }
   const draft = compactText(plan.athleteMessageDraft);
-  return draft ? [draft] : ["Фокус на следующую неделю не сформирован."];
+  return draft ? [draft] : [formatPlanFocusFallbackLine(mode)];
+}
+
+function formatPlanFocusFallbackLine(mode: NutritionPlanTargetWeekMode): string {
+  return mode === "current_week"
+    ? "Фокус на эту неделю не сформирован."
+    : "Фокус на следующую неделю не сформирован.";
+}
+
+function formatPlanFocusSectionHeading(mode: NutritionPlanTargetWeekMode): string {
+  return mode === "current_week" ? "📌 Фокус на эту неделю" : "📌 Фокус на следующую неделю";
 }
 
 function getNextWeekPlan(plan: NutritionWeeklyPlan): NutritionNextWeekPlan | null {
@@ -519,6 +530,7 @@ export function buildDerivedNutritionCombinedMessage(input: {
   formality: TrainingPeaksTelegramFormality;
   studentName: string;
   profilePreferences?: Record<string, unknown> | null;
+  planWeekMode?: NutritionPlanTargetWeekMode;
 }): NutritionCombinedMessageResult {
   if (!input.review) {
     return {
@@ -541,6 +553,7 @@ export function buildDerivedNutritionCombinedMessage(input: {
 
   const review = input.review;
   const plan = input.plan;
+  const planWeekMode = input.planWeekMode ?? "next_week";
   const blocked = isReviewBlockedSafety(review) || isPlanBlockedSafety(plan);
   const warnings: string[] = [];
   const nextWeekPlan = getNextWeekPlan(plan);
@@ -581,7 +594,7 @@ export function buildDerivedNutritionCombinedMessage(input: {
       ? reviewDailyLines
       : ["Разбор по дням в этом черновике не детализирую: canonical daily_analysis не найден, поэтому лучше проверить исходный обзор вручную."];
   const weekSummary = getReviewWeekSummaryLine(review);
-  const focusLines = getPlanFocusLines(plan);
+  const focusLines = getPlanFocusLines(plan, planWeekMode);
   const planByDayTypeLines = nextWeekPlan ? buildDayTypeTargetsLines(nextWeekPlan) : [compactText(plan.athleteMessageDraft) ?? "План на неделю не сформирован."];
   const miniTableLines = nextWeekPlan ? buildMiniTableLines(nextWeekPlan) : [];
   const closing = "На следующем разборе посмотрим, как это отразится на энергии и восстановлении.";
@@ -598,7 +611,7 @@ export function buildDerivedNutritionCombinedMessage(input: {
     "📌 Итог недели",
     weekSummary,
     "",
-    "📌 Фокус на следующую неделю",
+    formatPlanFocusSectionHeading(planWeekMode),
     ...focusLines,
     "",
     "📋 План на неделю по типам дней",

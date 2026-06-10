@@ -107,6 +107,44 @@ export function formatNutritionPlanWeekRange(planWeekFrom: string, planWeekTo: s
   return `${formatPart(planWeekFrom)}—${formatPart(planWeekTo)}`;
 }
 
+export function formatNutritionPlanTargetWeekHeading(
+  mode: "current_week" | "next_week"
+): string {
+  return mode === "current_week"
+    ? "Фокус питания на текущую неделю"
+    : "Фокус питания на следующую неделю";
+}
+
+export function formatNutritionPlanGenerateButtonLabel(
+  mode: "current_week" | "next_week"
+): string {
+  return mode === "current_week"
+    ? "Сгенерировать фокус на текущую неделю"
+    : "Сгенерировать фокус на следующую неделю";
+}
+
+export function formatNutritionPlanDraftHeading(mode: "current_week" | "next_week"): string {
+  return mode === "current_week"
+    ? "Черновик ученику — фокус на текущую неделю"
+    : "Черновик ученику — фокус на следующую неделю";
+}
+
+export function formatNutritionCombinedMessageMissingPlanHint(
+  mode: "current_week" | "next_week"
+): string {
+  return mode === "current_week"
+    ? "Сначала сгенерируйте фокус на текущую неделю, чтобы собрать полный текст."
+    : "Сначала сгенерируйте фокус на следующую неделю, чтобы собрать полный текст.";
+}
+
+export function formatNutritionPlanTargetWeekNotice(
+  mode: "current_week" | "next_week"
+): string {
+  return mode === "current_week"
+    ? "Фокус питания на текущую неделю сгенерирован."
+    : "Фокус питания на следующую неделю сгенерирован.";
+}
+
 export function formatNutritionCohortStatus(enabled: boolean): string {
   return enabled ? "в тесте питания" : "не включён";
 }

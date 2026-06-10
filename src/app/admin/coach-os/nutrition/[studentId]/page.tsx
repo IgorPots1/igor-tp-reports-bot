@@ -45,6 +45,10 @@ import {
   formatNutritionTpCacheNote,
   formatNutritionTpCacheStatus,
   formatNutritionPlanTrainingContextLine,
+  formatNutritionPlanTargetWeekHeading,
+  formatNutritionPlanGenerateButtonLabel,
+  formatNutritionPlanDraftHeading,
+  formatNutritionCombinedMessageMissingPlanHint,
   formatNutritionTpNextWeekContextLine,
   NUTRITION_CONTEXT_ITEM_TYPE_LABELS,
   pickDefaultNutritionReport,
@@ -53,7 +57,7 @@ import {
   NUTRITION_FILE_PREVIEW_COOKIE,
   parseNutritionFileUploadPreview,
 } from "@/features/nutrition/file-preview-cookie";
-import { calculateNutritionPlanWeek } from "@/features/nutrition/weekly-plan-generator";
+import { getNutritionPlanTargetWeekToday } from "@/features/nutrition/plan-week-policy";
 import type { NutritionContextItemType, NutritionWeeklyPlan } from "@/features/nutrition/repository";
 
 type NutritionStudentCardPageProps = {
@@ -220,8 +224,10 @@ export default async function CoachOsNutritionStudentCardPage({
   const selectedReport = card.reports.find((report) => report.id === selectedReportId) ?? null;
   const selectedReviewId = card.weeklyAnalysis?.id ?? null;
 
-  const planWeek =
-    card.weeklyAnalysis?.weekTo != null ? calculateNutritionPlanWeek(card.weeklyAnalysis.weekTo) : null;
+  const targetPlanWeek = card.weeklyAnalysis ? getNutritionPlanTargetWeekToday() : null;
+  const planWeek = targetPlanWeek
+    ? { from: targetPlanWeek.planWeekFrom, to: targetPlanWeek.planWeekTo, mode: targetPlanWeek.mode }
+    : null;
   let planIdWarning: string | null = null;
   let supersededPlanNotice: string | null = null;
   let plansForWeek: NutritionWeeklyPlan[] = [];
@@ -341,6 +347,7 @@ export default async function CoachOsNutritionStudentCardPage({
     formality: card.context.resolvedCommunicationProfile.formality,
     studentName: card.student.studentName,
     profilePreferences: card.profile?.preferences ?? null,
+    planWeekMode: planWeek?.mode,
   });
   const derivedCoachDayByDayText = buildDerivedNutritionCoachDayByDayText(card.weeklyAnalysis);
   const coachDayByDayDisplayText = derivedCoachDayByDayText ?? dayByDayAnalysisText;
@@ -538,7 +545,7 @@ export default async function CoachOsNutritionStudentCardPage({
         </article>
 
         <article className="admin-card admin-card-compact admin-nutrition-card-wide admin-nutrition-plan-card">
-          <h3>Фокус питания на следующую неделю</h3>
+          <h3>{planWeek ? formatNutritionPlanTargetWeekHeading(planWeek.mode) : "Фокус питания"}</h3>
           {!card.weeklyAnalysis ? (
             <p className="admin-muted admin-nutrition-helper">Сначала сгенерируйте разбор прошлой недели.</p>
           ) : (
@@ -594,7 +601,7 @@ export default async function CoachOsNutritionStudentCardPage({
                 ) : null}
                 {selectedReportId ? <input type="hidden" name="reportId" value={selectedReportId} /> : null}
                 <FormActionButton className="admin-button" pendingText="Генерирую…">
-                  Сгенерировать фокус
+                  {planWeek ? formatNutritionPlanGenerateButtonLabel(planWeek.mode) : "Сгенерировать фокус"}
                 </FormActionButton>
               </form>
 
@@ -662,7 +669,7 @@ export default async function CoachOsNutritionStudentCardPage({
 
                   {displayPlan.athleteMessageDraft ? (
                     <>
-                      <h4>Черновик ученику — фокус на следующую неделю</h4>
+                      <h4>{planWeek ? formatNutritionPlanDraftHeading(planWeek.mode) : "Черновик ученику — фокус"}</h4>
                       <NutritionDraftCopyBlock
                         draft={displayPlan.athleteMessageDraft}
                         generationMode={displayPlan.generationMode}
@@ -734,7 +741,11 @@ export default async function CoachOsNutritionStudentCardPage({
           {combinedMessage.status === "missing_review" ? (
             <p className="admin-muted">Сначала сгенерируйте разбор прошлой недели.</p>
           ) : combinedMessage.status === "missing_plan" ? (
-            <p className="admin-muted">Сначала сгенерируйте фокус на следующую неделю, чтобы собрать полный текст.</p>
+            <p className="admin-muted">
+              {planWeek
+                ? formatNutritionCombinedMessageMissingPlanHint(planWeek.mode)
+                : "Сначала сгенерируйте фокус, чтобы собрать полный текст."}
+            </p>
           ) : combinedMessage.status === "blocked_safety" ? (
             <>
               <div className="admin-alert admin-alert-error">

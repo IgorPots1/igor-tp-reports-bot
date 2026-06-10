@@ -1,6 +1,11 @@
 import { buildNutritionTrainingPeaksWeekContext } from "@/features/nutrition/context";
 import { detectWorkoutFuelingInstructions } from "@/features/nutrition/methodology";
 import {
+  getNutritionPlanTargetWeekToday,
+  resolveNutritionPlanTargetWeek,
+  type NutritionPlanTargetWeekMode,
+} from "@/features/nutrition/plan-week-policy";
+import {
   buildNutritionNextWeekPlan,
   type NutritionNextWeekPlan,
 } from "@/features/nutrition/weekly-plan-formulas";
@@ -65,6 +70,7 @@ export type NutritionWeeklyPlanFacts = {
     from: string;
     to: string;
   };
+  planWeekMode: NutritionPlanTargetWeekMode;
   nextWeekTraining: {
     status: "available" | "empty" | "stale" | "unknown";
     workouts: NutritionWeeklyPlanWorkoutFacts[];
@@ -144,15 +150,6 @@ export type GeneratedNutritionWeeklyPlan = {
   doNotSendReasons: string[];
 };
 
-function addDays(isoDate: string, days: number): string {
-  const match = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!match) {
-    return isoDate;
-  }
-  const dt = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + days, 12, 0, 0));
-  return dt.toISOString().slice(0, 10);
-}
-
 function compactText(value: string | null | undefined): string | null {
   const normalized = value?.replace(/\s+/g, " ").trim() ?? "";
   return normalized || null;
@@ -202,10 +199,20 @@ function roundToNearest(value: number, step: number): number {
   return Math.round(value / step) * step;
 }
 
-export function calculateNutritionPlanWeek(sourceReviewWeekTo: string): { from: string; to: string } {
+function resolveFactsTargetPlanWeek(input?: { todayLocalDate?: string }): {
+  from: string;
+  to: string;
+  mode: NutritionPlanTargetWeekMode;
+  label: string;
+} {
+  const resolved = input?.todayLocalDate
+    ? resolveNutritionPlanTargetWeek({ todayLocalDate: input.todayLocalDate })
+    : getNutritionPlanTargetWeekToday();
   return {
-    from: addDays(sourceReviewWeekTo, 1),
-    to: addDays(sourceReviewWeekTo, 7),
+    from: resolved.planWeekFrom,
+    to: resolved.planWeekTo,
+    mode: resolved.mode,
+    label: resolved.label,
   };
 }
 
@@ -399,6 +406,7 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
   sourceAnalysis: NutritionWeeklyAnalysis;
   sourceReportId?: string | null;
   tpNextWeekContextOverride?: Record<string, unknown>;
+  todayLocalDate?: string;
 }): NutritionWeeklyPlanFacts {
   const nutritionSummary = input.sourceAnalysis.nutritionSummary;
   const safetyFlags = input.sourceAnalysis.safetyFlags;
@@ -418,7 +426,8 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
   const methodologySignals = toObject(nutritionSummary.methodology_signals);
   const dataQuality = toObject(nutritionSummary.data_quality_summary);
   const parsedDays = typeof dataQuality.parsed_days === "number" ? dataQuality.parsed_days : 0;
-  const planWeek = calculateNutritionPlanWeek(input.sourceAnalysis.weekTo);
+  const targetPlanWeek = resolveFactsTargetPlanWeek({ todayLocalDate: input.todayLocalDate });
+  const planWeek = { from: targetPlanWeek.from, to: targetPlanWeek.to };
   const nextWeekPlan = buildNutritionNextWeekPlan({
     bodyweightKg: input.weightKg,
     planWeekFrom: planWeek.from,
@@ -447,6 +456,7 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
       safetyFlags,
     },
     planWeek,
+    planWeekMode: targetPlanWeek.mode,
     nextWeekTraining: {
       status: mapTpCacheStatus(tpNextWeek.cacheStatus),
       workouts,
@@ -484,6 +494,7 @@ async function buildNutritionWeeklyPlanFactsInternal(input: {
   studentId: string;
   sourceAnalysis: NutritionWeeklyAnalysis;
   sourceReportId?: string | null;
+  todayLocalDate?: string;
 }): Promise<NutritionWeeklyPlanFactsBuildResult> {
   const essentials = await getNutritionStudentEssentials(input.studentId);
   const student = essentials.student;
@@ -500,7 +511,8 @@ async function buildNutritionWeeklyPlanFactsInternal(input: {
   const latestWeight = essentials.weightLogs[0]?.weightKg ?? null;
   const weightKg = essentials.profile?.currentWeightKg ?? latestConfirmedWeight ?? latestWeight ?? null;
 
-  const planWeek = calculateNutritionPlanWeek(input.sourceAnalysis.weekTo);
+  const targetPlanWeek = resolveFactsTargetPlanWeek({ todayLocalDate: input.todayLocalDate });
+  const planWeek = { from: targetPlanWeek.from, to: targetPlanWeek.to };
   const sourceReviewContext = toObject(input.sourceAnalysis.tpNextWeekContext);
   let freshContext: Record<string, unknown> | null = null;
   let tpNextWeekContextOverride = sourceReviewContext;
@@ -549,6 +561,7 @@ async function buildNutritionWeeklyPlanFactsInternal(input: {
     sourceAnalysis: input.sourceAnalysis,
     sourceReportId: input.sourceReportId,
     tpNextWeekContextOverride,
+    todayLocalDate: input.todayLocalDate,
   });
 
   return { facts, tpContextRefresh };
@@ -644,12 +657,20 @@ export function generateNutritionWeeklyPlanFallback(
           "Смотреть на энергию и восстановление, а не на жёсткие цифры.",
         ];
 
+  const planWeekLabel =
+    facts.planWeekMode === "current_week"
+      ? `Фокус питания на текущую неделю (${facts.planWeek.from}..${facts.planWeek.to}).`
+      : `Фокус питания на следующую неделю (${facts.planWeek.from}..${facts.planWeek.to}).`;
+  const tpContextLabel =
+    facts.planWeekMode === "current_week"
+      ? "План тренировок на целевую неделю в TrainingPeaks не виден или cache ограничен."
+      : "План тренировок на следующую неделю в TrainingPeaks не виден или cache ограничен.";
   const coachLines = [
-    `Фокус питания на следующую неделю (${facts.planWeek.from}..${facts.planWeek.to}).`,
+    planWeekLabel,
     `Главный фокус: ${planFocus.title}.`,
     facts.nextWeekTraining.status === "available"
       ? `Ключевых тренировок в TP cache: ${facts.nextWeekTraining.keyWorkouts.length}.`
-      : "План тренировок на следующую неделю в TrainingPeaks не виден или cache ограничен.",
+      : tpContextLabel,
     blocked ? "Блок безопасности из недельного обзора: черновик для ученика не формируем." : "Черновик для ученика сформирован (copy-only).",
   ];
 
@@ -915,3 +936,5 @@ export async function generateAndSaveNutritionWeeklyPlan(input: {
 
   return plan;
 }
+
+export { calculateNutritionPlanWeekFromReviewEnd as calculateNutritionPlanWeek } from "@/features/nutrition/plan-week-policy";

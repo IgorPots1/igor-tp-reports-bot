@@ -1058,7 +1058,21 @@ export async function resolveNutritionWeeklyPlanForDisplay(params: {
     } else {
       selectedPlanById = planById;
       plansById.set(planById.id, planById);
-      if (planById.status === "superseded") {
+      if (
+        planById.planWeekFrom !== params.planWeekFrom ||
+        planById.planWeekTo !== params.planWeekTo
+      ) {
+        if (latestPlanForWeek) {
+          displayPlan = latestPlanForWeek;
+          planIdWarning =
+            "Выбранный фокус относится к другой неделе — показан последний сохранённый за целевую неделю.";
+        } else {
+          displayPlan = planById;
+          planSelectedById = true;
+          planIdWarning =
+            "Выбранный фокус относится к другой неделе — сохранённого фокуса на целевую неделю пока нет.";
+        }
+      } else if (planById.status === "superseded") {
         const supersedingPlan = await resolveSupersedingNutritionWeeklyPlan(planById, plansById);
         if (supersedingPlan.id !== planById.id) {
           displayPlan = supersedingPlan;
