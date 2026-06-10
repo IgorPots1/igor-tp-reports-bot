@@ -103,6 +103,154 @@ function findRestLines(text: string): string[] {
   return text.split("\n").filter((line) => /день отдыха|день без тренировки/i.test(line));
 }
 
+const EA_AWARE_COMMIT = "0b9ab13";
+const CURRENT_METHODOLOGY_VERSION = "ea_screening_v1";
+
+function asObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function resolveEaCommitPresent(): boolean {
+  try {
+    execSync(`git merge-base --is-ancestor ${EA_AWARE_COMMIT} HEAD`, { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveEaCommitDate(): string | null {
+  try {
+    return execSync(`git show -s --format=%ci ${EA_AWARE_COMMIT}`, { encoding: "utf8" }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function isCreatedBeforeEaCommit(createdAt: string | null | undefined): boolean | null {
+  const eaCommitDate = resolveEaCommitDate();
+  if (!createdAt || !eaCommitDate) {
+    return null;
+  }
+  return new Date(createdAt).getTime() < new Date(eaCommitDate).getTime();
+}
+
+function extractMiniTableLines(text: string): string[] {
+  const lines = text.split("\n");
+  const start = lines.findIndex((line) => /Мини-таблица/.test(line));
+  if (start < 0) {
+    return [];
+  }
+  const result: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (!line.trim()) {
+      break;
+    }
+    if (/^🍽|^📋|^🔹|^Kristina|^На этой|^Начинаем|^Делаем|^Если тренировка|^После тренировки/.test(line)) {
+      break;
+    }
+    result.push(line);
+  }
+  return result;
+}
+
+function summarizeDailyAnalysis(summary: Record<string, unknown>): {
+  hasEnergyAvailability: boolean;
+  hasLoadClassification: boolean;
+  hasEnergyFloor: boolean;
+  hasMethodologyVersion: boolean;
+  hasPadelCrossTraining: boolean;
+  rows: string[];
+} {
+  const daily = Array.isArray(summary.daily_analysis) ? summary.daily_analysis : [];
+  const hasMethodologyVersion =
+    typeof summary.methodology_version === "string" ||
+    daily.some((item) => typeof asObject(item).methodology_version === "string");
+  const rows: string[] = [];
+  let hasPadelCrossTraining = false;
+
+  for (const item of daily) {
+    const day = asObject(item);
+    const canonical = asObject(day.canonicalDailyAnalysis) ?? asObject(day.canonical_daily_analysis);
+    const energyAvailability = asObject(day.energyAvailability) ?? asObject(canonical.energyAvailability);
+    const energyFloor = asObject(day.energyFloor) ?? asObject(canonical.energyFloor);
+    const loadClassification = asObject(day.loadClassification) ?? asObject(canonical.loadClassification);
+    const trainingType =
+      (typeof day.trainingType === "string" ? day.trainingType : null) ??
+      (typeof day.training_type === "string" ? day.training_type : null) ??
+      (typeof loadClassification.trainingType === "string" ? loadClassification.trainingType : null) ??
+      "?";
+    const trainingLabel =
+      (typeof day.trainingLabel === "string" ? day.trainingLabel : null) ??
+      (typeof day.training_label === "string" ? day.training_label : null) ??
+      "?";
+    const nutritionStatus =
+      (typeof day.nutritionStatus === "string" ? day.nutritionStatus : null) ??
+      (typeof day.nutrition_status === "string" ? day.nutrition_status : null) ??
+      "?";
+    const findings = asStringArray(day.findings).join(",");
+    const eaZone = typeof energyAvailability.eaZone === "string" ? energyAvailability.eaZone : "none";
+    const belowLoadFloor = energyFloor.belowLoadFloor === true ? "yes" : "no";
+    if (/padel/i.test(trainingLabel) && trainingType === "cross_training") {
+      hasPadelCrossTraining = true;
+    }
+    rows.push(
+      [
+        day.date ?? "?",
+        trainingLabel,
+        `type=${trainingType}`,
+        `kcal=${day.kcal ?? "?"}`,
+        `status=${nutritionStatus}`,
+        `ea=${eaZone}`,
+        `belowLoadFloor=${belowLoadFloor}`,
+        findings ? `findings=${findings}` : "findings=none",
+      ].join(" | ")
+    );
+  }
+
+  return {
+    hasEnergyAvailability: daily.some((item) => {
+      const day = asObject(item);
+      const canonical = asObject(day.canonicalDailyAnalysis) ?? asObject(day.canonical_daily_analysis);
+      return Boolean(day.energyAvailability) || Boolean(canonical.energyAvailability);
+    }),
+    hasLoadClassification: daily.some((item) => {
+      const day = asObject(item);
+      const canonical = asObject(day.canonicalDailyAnalysis) ?? asObject(day.canonical_daily_analysis);
+      return Boolean(day.loadClassification) || Boolean(canonical.loadClassification);
+    }),
+    hasEnergyFloor: daily.some((item) => {
+      const day = asObject(item);
+      const canonical = asObject(day.canonicalDailyAnalysis) ?? asObject(day.canonical_daily_analysis);
+      return Boolean(day.energyFloor) || Boolean(canonical.energyFloor);
+    }),
+    hasMethodologyVersion,
+    hasPadelCrossTraining,
+    rows,
+  };
+}
+
+function summarizePlanDays(planSummary: Record<string, unknown>): string[] {
+  const nextWeekPlan = asObject(planSummary.next_week_plan);
+  const days = Array.isArray(nextWeekPlan.days) ? nextWeekPlan.days : [];
+  return days.map((item) => {
+    const day = asObject(item);
+    return [
+      day.date ?? "?",
+      day.workout_title ?? day.training_label ?? "?",
+      `day_type=${day.training_type ?? day.day_type ?? "?"}`,
+      `target_kcal=${day.target_kcal ?? "null"}`,
+    ].join(" | ");
+  });
+}
+
 function resolveGitHead(): string {
   try {
     return execSync("git rev-parse --short HEAD", { encoding: "utf8" }).trim();
@@ -171,8 +319,10 @@ async function main(): Promise<void> {
 
   console.log("Nutrition page render path diagnostic (read-only, mirrors page.tsx)");
   console.log("");
-  console.log("Git:");
+  console.log("Git/runtime:");
   console.log(`- HEAD: ${resolveGitHead()}`);
+  console.log(`- latest EA commit present?: ${yesNo(resolveEaCommitPresent())} (${EA_AWARE_COMMIT})`);
+  console.log(`- expected methodology version: ${CURRENT_METHODOLOGY_VERSION}`);
   console.log("");
   console.log("Input:");
   console.log(`- studentId: ${options.studentId}`);
@@ -194,9 +344,24 @@ async function main(): Promise<void> {
     console.log(`- athlete_message_draft contains old phrases?: ${yesNo(findForbiddenPhrases(storedReviewDraft).length > 0)}`);
     console.log(`- old phrase hits: ${findForbiddenPhrases(storedReviewDraft).join(", ") || "none"}`);
     const summary = review.nutritionSummary as Record<string, unknown>;
+    const dailySummary = summarizeDailyAnalysis(summary);
+    const createdBeforeEa = isCreatedBeforeEaCommit(review.createdAt);
     console.log(
       `- nutrition_summary.daily_analysis exists?: ${yesNo(Array.isArray(summary.daily_analysis) && summary.daily_analysis.length > 0)}`
     );
+    console.log(`- generated before ${EA_AWARE_COMMIT}?: ${createdBeforeEa == null ? "unknown" : yesNo(createdBeforeEa)}`);
+    console.log(`- daily_analysis contains energyAvailability?: ${yesNo(dailySummary.hasEnergyAvailability)}`);
+    console.log(`- daily_analysis contains energyFloor?: ${yesNo(dailySummary.hasEnergyFloor)}`);
+    console.log(`- daily_analysis contains loadClassification?: ${yesNo(dailySummary.hasLoadClassification)}`);
+    console.log(`- daily_analysis contains Padel as cross_training?: ${yesNo(dailySummary.hasPadelCrossTraining)}`);
+    console.log(`- methodology_version present?: ${yesNo(dailySummary.hasMethodologyVersion)}`);
+    console.log(`- stored athlete_message_draft old?: ${yesNo(findForbiddenPhrases(storedReviewDraft).length > 0)}`);
+    if (dailySummary.rows.length > 0) {
+      console.log("- Kristina daily rows:");
+      for (const row of dailySummary.rows) {
+        console.log(`  ${row}`);
+      }
+    }
   }
   console.log("");
   console.log("Selected/display plan:");
@@ -213,6 +378,16 @@ async function main(): Promise<void> {
     console.log(`- athlete_message_draft hash: ${sha1(storedPlanDraft)}`);
     console.log(`- athlete_message_draft contains old phrases?: ${yesNo(findForbiddenPhrases(storedPlanDraft).length > 0)}`);
     console.log(`- old phrase hits: ${findForbiddenPhrases(storedPlanDraft).join(", ") || "none"}`);
+    const planSummary = displayPlan.planSummary as Record<string, unknown>;
+    const planCreatedBeforeEa = isCreatedBeforeEaCommit(displayPlan.createdAt);
+    console.log(`- generated before ${EA_AWARE_COMMIT}?: ${planCreatedBeforeEa == null ? "unknown" : yesNo(planCreatedBeforeEa)}`);
+    const planRows = summarizePlanDays(planSummary);
+    if (planRows.length > 0) {
+      console.log("- next_week_plan rows:");
+      for (const row of planRows) {
+        console.log(`  ${row}`);
+      }
+    }
   }
   console.log("");
   console.log("Combined/render (page-equivalent helper):");
@@ -227,9 +402,20 @@ async function main(): Promise<void> {
   console.log(`- charCount: ${combined.renderResult.charCount}`);
   console.log(`- text hash: ${sha1(renderedText)}`);
   console.log(`- copy enabled on page?: ${yesNo(Boolean(combined.renderResult.text && !combined.renderResult.issues.some((issue) => issue.severity === "error")))}`);
-  console.log("- first 20 lines:");
-  for (const line of firstLines(renderedText, 20)) {
+  console.log("- first 40 lines:");
+  for (const line of firstLines(renderedText, 40)) {
     console.log(`  ${line}`);
+  }
+  console.log(`- contains "День выглядит ровно": ${countPhrase(renderedText, "День выглядит ровно")}`);
+  console.log(`- contains "ккал н/д": ${countPhrase(renderedText, "ккал н/д")}`);
+  console.log(`- contains Padel lines: ${renderedText.split("\n").filter((line) => /Padel|Падел/i.test(line)).length}`);
+  console.log(`- contains силовая lines: ${renderedText.split("\n").filter((line) => /силов/i.test(line)).length}`);
+  const miniTableLines = extractMiniTableLines(renderedText);
+  if (miniTableLines.length > 0) {
+    console.log("- mini-table lines:");
+    for (const line of miniTableLines) {
+      console.log(`  ${line}`);
+    }
   }
   console.log(`- forbidden phrases in derived text: ${findForbiddenPhrases(renderedText).join(", ") || "none"}`);
   console.log(
