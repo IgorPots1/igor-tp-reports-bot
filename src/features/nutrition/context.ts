@@ -484,12 +484,21 @@ function snapshotText(value: unknown): string | null {
   return compact || null;
 }
 
-function isKeyWorkout(row: TrainingPeaksWorkoutCacheRow): boolean {
+type NutritionKeyWorkoutMode = "all" | "completed_only";
+
+function isQualityWorkoutTitle(title: string): boolean {
+  if (/\b\d{1,2}\s*(?:x|х|×|\*)\s*\d{1,2}\s*(?:мин|min|m)?\b/iu.test(title)) {
+    return true;
+  }
+  return /интерв|tempo|темпо|темпов|порог|threshold|vo2|спринт|hill/iu.test(title);
+}
+
+function isKeyWorkout(row: TrainingPeaksWorkoutCacheRow, mode: NutritionKeyWorkoutMode): boolean {
+  if (mode === "completed_only" && !row.isCompleted) {
+    return false;
+  }
   const title = (row.title ?? "").toLocaleLowerCase("ru");
-  if (
-    /интерв|tempo|темп|порог|threshold|vo2|спринт|hill/.test(title) ||
-    /\b\d{1,2}\s*(?:x|х|×|\*)\s*\d{1,2}\s*(?:мин|min|m)?\b/i.test(title)
-  ) {
+  if (isQualityWorkoutTitle(title)) {
     return true;
   }
   const classification = classifyTrainingPeaksWorkoutActivity({
@@ -504,7 +513,8 @@ function isKeyWorkout(row: TrainingPeaksWorkoutCacheRow): boolean {
 export async function buildNutritionTrainingPeaksWeekContext(
   studentId: string,
   weekFrom: string,
-  weekTo: string
+  weekTo: string,
+  options?: { keyWorkoutMode?: NutritionKeyWorkoutMode }
 ): Promise<NutritionTrainingPeaksWeekContext> {
   const rows = await getNutritionTrainingPeaksCacheWindow({
     studentId,
@@ -527,6 +537,8 @@ export async function buildNutritionTrainingPeaksWeekContext(
   let longRunCandidate: NutritionTrainingPeaksWeekContext["longRun"] = null;
   let defaultSundayCandidate: NutritionTrainingPeaksWeekContext["longRun"] = null;
   const keyWorkouts: NutritionTrainingPeaksWeekContext["keyWorkouts"] = [];
+
+  const keyWorkoutMode: NutritionKeyWorkoutMode = options?.keyWorkoutMode ?? "all";
 
   for (const row of rows) {
     const classification = classifyTrainingPeaksWorkoutActivity({
@@ -562,7 +574,7 @@ export async function buildNutritionTrainingPeaksWeekContext(
         confidence: "medium",
       };
     }
-    if (isKeyWorkout(row)) {
+    if (isKeyWorkout(row, keyWorkoutMode)) {
       keyWorkouts.push({
         date: row.workoutDate,
         title: row.title?.trim() || "Untitled workout",
@@ -624,11 +636,14 @@ export async function buildNutritionStudentContext(input: {
   const dataQuality = calculateNutritionDataQuality(input.manualRows);
   const reportStatus = classifyNutritionReportStatus(dataQuality);
   const [tpPastWeek, tpNextWeek] = await Promise.all([
-    buildNutritionTrainingPeaksWeekContext(input.studentId, input.weekFrom, input.weekTo),
+    buildNutritionTrainingPeaksWeekContext(input.studentId, input.weekFrom, input.weekTo, {
+      keyWorkoutMode: "completed_only",
+    }),
     buildNutritionTrainingPeaksWeekContext(
       input.studentId,
       addDays(input.weekTo, 1),
-      addDays(input.weekTo, 7)
+      addDays(input.weekTo, 7),
+      { keyWorkoutMode: "all" }
     ),
   ]);
   const latestConfirmedWeight =

@@ -4,9 +4,12 @@ import {
 } from "@/features/nutrition/context";
 import {
   buildNutritionMethodologyContext,
+  NUTRITION_REVIEW_METHODOLOGY_VERSION,
   selectNutritionWeeklyFocus,
   type CarbProgressionStrategy,
 } from "@/features/nutrition/methodology";
+
+export { NUTRITION_REVIEW_METHODOLOGY_VERSION };
 import { detectNutritionMacroReviewWeekMismatch } from "@/features/nutrition/report-date-coverage";
 import { stableHash } from "@/features/nutrition/repository";
 import type { TrainingPeaksTelegramFormality } from "@/features/trainingpeaks/repository";
@@ -66,6 +69,7 @@ export type GeneratedNutritionWeeklyAnalysis = {
     coach_summary_text?: string;
     day_by_day_analysis_text?: string;
     generation_mode?: "ai" | "fallback";
+    methodology_version?: string;
     prompt_version?: string;
     quality_notes?: string[];
     do_not_send_reasons?: string[];
@@ -98,6 +102,7 @@ export type GeneratedNutritionWeeklyAnalysis = {
   coach_summary_text: string;
   day_by_day_analysis_text: string;
   generation_mode: "ai" | "fallback";
+  methodology_version: string;
   prompt_version: string;
   do_not_send_reasons: string[];
   prompt_hash: string;
@@ -411,6 +416,14 @@ export function buildNutritionDailyFactsForNarrative(input: {
               notes: sourceQualityNotes,
             },
         canonical_daily_analysis: canonical,
+        canonicalDailyAnalysis: canonical,
+        macro_guardrails: canonical?.macroGuardrails ?? null,
+        macroGuardrails: canonical?.macroGuardrails ?? null,
+        energy_availability: canonical?.energyAvailability ?? null,
+        energyAvailability: canonical?.energyAvailability ?? null,
+        energy_floor: canonical?.energyFloor ?? null,
+        energyFloor: canonical?.energyFloor ?? null,
+        methodology_version: NUTRITION_REVIEW_METHODOLOGY_VERSION,
         caloriesActual: typeof day.kcal === "number" ? day.kcal : null,
         caloriesTargetOrEstimate: null,
         proteinActual: typeof day.proteinG === "number" ? day.proteinG : null,
@@ -751,16 +764,23 @@ export async function generateNutritionWeeklyAnalysis(input: {
   );
   notes.push(...context.communicationProfilePromptLines);
   const resolvedMacroDays = context.manualMacroRows.filter((row) => !row.day.startsWith("unresolved:")).length;
+  const hasUsableTrainingContext =
+    context.tpPastWeek.workouts.length > 0 &&
+    (context.tpPastWeek.cacheStatus === "ok" || context.tpPastWeek.cacheStatus === "stale");
   const hasMethodologyFacts =
     resolvedMacroDays > 0 &&
     context.dataQuality.parsedDays > 0 &&
+    context.dataQuality.hasResolvedDates &&
     Boolean(selectedFocus.statementRu.trim()) &&
-    context.tpPastWeek.cacheStatus === "ok" &&
-    context.tpPastWeek.workouts.length > 0;
+    hasUsableTrainingContext;
   const forceNeedsReview = !hasMethodologyFacts;
   if (!hasMethodologyFacts) {
     notes.push("methodology_facts_incomplete_for_ai_generation");
   }
+  const persistedDailyAnalysis = buildNutritionDailyFactsForNarrative({
+    context,
+    dailyAnalysis: methodology.dailyAnalysis as Array<Record<string, unknown>>,
+  });
 
   const fallbackDayByDay = buildFallbackDayByDay({
     context,
@@ -773,7 +793,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
     },
     proteinSufficient: methodology.proteinSufficient,
     dataQualityFlags: context.dataQuality.qualityFlags,
-    nextWeekHasKeySessions: context.tpNextWeek.cacheStatus === "ok" && context.tpNextWeek.keyWorkouts.length > 0,
+    nextWeekHasKeySessions: context.tpNextWeek.keyWorkouts.length > 0,
   });
   let narrative: {
     coach_summary_text: string;
@@ -902,7 +922,8 @@ export async function generateNutritionWeeklyAnalysis(input: {
         low_confidence_days: context.dataQuality.lowConfidenceDays,
         quality_flags: context.dataQuality.qualityFlags,
       },
-      daily_analysis: methodology.dailyAnalysis as Array<Record<string, unknown>>,
+      daily_analysis: persistedDailyAnalysis,
+      methodology_version: NUTRITION_REVIEW_METHODOLOGY_VERSION,
       training_nutrition_links: methodology.trainingNutritionLinks,
       one_focus: {
         category: selectedFocus.category,
@@ -943,7 +964,8 @@ export async function generateNutritionWeeklyAnalysis(input: {
     ],
     main_focus: mainFocus,
     status,
-    daily_analysis: methodology.dailyAnalysis as Array<Record<string, unknown>>,
+    daily_analysis: persistedDailyAnalysis,
+    methodology_version: NUTRITION_REVIEW_METHODOLOGY_VERSION,
     training_nutrition_links: methodology.trainingNutritionLinks,
     one_focus: {
       category: selectedFocus.category,

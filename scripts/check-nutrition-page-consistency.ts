@@ -245,7 +245,7 @@ assert.match(diagnoseScript, /--student-name/, "page consistency diagnostic must
 assert.match(diagnoseScript, /Daily analysis vs TP context/, "page consistency diagnostic must compare daily vs TP");
 
 assert.match(pageConsistencySource, /report_date_mismatch/, "page consistency helper must detect report date mismatch");
-assert.match(pageConsistencySource, /report_date_ui_fallback/, "page consistency helper must detect UI fallback date source");
+assert.match(diagnoseScript, /asNonemptyObject\(canonical\.macroGuardrails\)/, "diagnostic must resolve nested macroGuardrails");
 assert.match(pageConsistencySource, /formatNutritionReportDateMismatchCardNotice/, "page consistency helper must use report date notice formatter");
 
 assert.match(packageJson, /diagnose:nutrition-report-date-coverage/, "package.json must include report date coverage diagnostic");

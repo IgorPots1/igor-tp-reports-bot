@@ -4,6 +4,8 @@ import type {
   NormalizedManualMacroRow,
 } from "@/features/nutrition/context";
 
+export const NUTRITION_REVIEW_METHODOLOGY_VERSION = "ea_macro_narrative_v1";
+
 export type NutritionTrainingType =
   | "rest"
   | "easy"

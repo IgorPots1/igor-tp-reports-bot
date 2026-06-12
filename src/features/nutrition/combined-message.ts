@@ -219,7 +219,9 @@ function normalizeStoredDailyFactItem(raw: unknown): CanonicalDailyFact | null {
       source.macroGuardrails ??
       source.macro_guardrails ??
       item.macroGuardrails ??
-      item.macro_guardrails,
+      item.macro_guardrails ??
+      embedded.macroGuardrails ??
+      embedded.macro_guardrails,
   };
 }
 
@@ -362,6 +364,20 @@ function getCanonicalDailyFacts(review: NutritionWeeklyAnalysis): CanonicalDaily
   return daily
     .map((item) => normalizeStoredDailyFactItem(item))
     .filter((item): item is CanonicalDailyFact => Boolean(item));
+}
+
+function isIsoDateInRange(date: string | null, from: string, to: string): boolean {
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return false;
+  }
+  return date >= from && date <= to;
+}
+
+function filterFactsToReviewWeek(review: NutritionWeeklyAnalysis, facts: CanonicalDailyFact[]): CanonicalDailyFact[] {
+  return facts.filter((item) => {
+    const date = typeof item.date === "string" ? item.date : null;
+    return isIsoDateInRange(date, review.weekFrom, review.weekTo);
+  });
 }
 
 function getDailyFactValue(item: CanonicalDailyFact, actual: Record<string, unknown>, snakeKey: keyof CanonicalDailyFact, camelKey: string): number | null {
@@ -532,7 +548,7 @@ function hasNutritionCompletenessIssue(input: {
   }
   const notes = asStringArray(input.sourceQuality.notes).map((note) => note.toLowerCase());
   return notes.some((note) =>
-    /missing_nutrition|missing_daily_macros|nutrition_source_confidence_low|parse_confidence_low|low_confidence_pdf_parse|suspect_macro|suspect_kcal|suspect_zero_macros|partial_week/.test(
+    /missing_nutrition|missing_daily_macros|nutrition_source_confidence_low|parse_confidence_low|low_confidence_pdf_parse|suspect_macro|suspect_kcal|suspect_zero_macros/.test(
       note
     )
   );
@@ -540,10 +556,11 @@ function hasNutritionCompletenessIssue(input: {
 
 function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
   const facts = getCanonicalDailyFacts(review);
-  if (facts.length === 0) {
+  const reviewWeekFacts = filterFactsToReviewWeek(review, facts);
+  if (reviewWeekFacts.length === 0) {
     return [];
   }
-  return facts
+  return reviewWeekFacts
     .map((item) => {
       const date = typeof item.date === "string" ? item.date : null;
       const weekday = typeof item.weekday_ru === "string" ? item.weekday_ru : typeof item.weekdayRu === "string" ? item.weekdayRu : null;
@@ -599,6 +616,20 @@ ${comment}`;
     .filter((line): line is string => Boolean(line));
 }
 
+function getDailyFactsCoverage(review: NutritionWeeklyAnalysis): {
+  totalFacts: number;
+  reviewWeekFacts: number;
+  hasOutsideWeekFacts: boolean;
+} {
+  const facts = getCanonicalDailyFacts(review);
+  const reviewWeekFacts = filterFactsToReviewWeek(review, facts);
+  return {
+    totalFacts: facts.length,
+    reviewWeekFacts: reviewWeekFacts.length,
+    hasOutsideWeekFacts: facts.length > 0 && reviewWeekFacts.length === 0,
+  };
+}
+
 export function buildDerivedNutritionCoachDayByDayText(review: NutritionWeeklyAnalysis | null): string | null {
   if (!review) {
     return null;
@@ -616,7 +647,7 @@ function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
   const statement = compactText(typeof oneFocus.statement_ru === "string" ? oneFocus.statement_ru : null);
   const coachSummary = compactText(typeof summary.coach_summary_text === "string" ? summary.coach_summary_text : null);
   const proteinSufficient = asObject(summary.methodology_signals).protein_sufficient === true;
-  const dailyFacts = getCanonicalDailyFacts(review);
+  const dailyFacts = filterFactsToReviewWeek(review, getCanonicalDailyFacts(review));
   let proteinOkDays = 0;
   let proteinLowOrBorderlineDays = 0;
   let fatLowOrBorderlineDays = 0;
@@ -848,11 +879,14 @@ export function buildDerivedNutritionCombinedMessage(input: {
   const warnings: string[] = [];
   const nextWeekPlan = getNextWeekPlan(plan);
   const reviewDailyLines = getDailyFactsLines(review);
+  const reviewDailyCoverage = getDailyFactsCoverage(review);
 
   if (!nextWeekPlan) {
     warnings.push("У этого фокуса нет canonical next_week_plan — пересоздайте фокус.");
   }
-  if (reviewDailyLines.length === 0) {
+  if (reviewDailyCoverage.hasOutsideWeekFacts) {
+    warnings.push("Даты daily_analysis не попадают в выбранную неделю обзора — проверьте отчёт/неделю и перегенерируйте обзор.");
+  } else if (reviewDailyLines.length === 0) {
     warnings.push("В обзоре нет canonical daily_analysis — использован fallback из текста обзора.");
   }
 
@@ -886,7 +920,14 @@ export function buildDerivedNutritionCombinedMessage(input: {
     athleteName,
     planWeekMode,
     interpretation: {
-      dayComments: reviewDailyLines,
+      dayComments:
+        reviewDailyLines.length > 0
+          ? reviewDailyLines
+          : reviewDailyCoverage.hasOutsideWeekFacts
+            ? [
+                "Разбор по дням в этом черновике не показываю: даты в daily_analysis не совпадают с выбранной неделей. Проверь отчёт за нужную неделю и перегенерируй обзор.",
+              ]
+            : [],
       weekSummaryRu: weekSummary,
       focusLinesRu: focusLines,
       weekComparisonLineRu: comparisonLine,

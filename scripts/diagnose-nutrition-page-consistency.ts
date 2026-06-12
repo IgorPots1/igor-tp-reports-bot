@@ -223,6 +223,11 @@ function workoutsByDate(workouts: WorkoutBrief[]): Map<string, WorkoutBrief[]> {
   return map;
 }
 
+function asNonemptyObject(value: unknown): Record<string, unknown> | null {
+  const object = asObject(value);
+  return Object.keys(object).length > 0 ? object : null;
+}
+
 function summarizeDailyRow(item: unknown): {
   date: string;
   kcal: unknown;
@@ -258,8 +263,16 @@ function summarizeDailyRow(item: unknown): {
   const protein = day.protein_g ?? day.proteinG ?? actual.protein_g ?? actual.proteinG ?? "?";
   const fat = day.fat_g ?? day.fatG ?? actual.fat_g ?? actual.fatG ?? "?";
   const carbs = day.carbs_g ?? day.carbsG ?? actual.carbs_g ?? actual.carbsG ?? "?";
-  const macroGuardrails = asObject(day.macro_guardrails) ?? asObject(day.macroGuardrails) ?? asObject(canonical.macroGuardrails);
-  const energyAvailability = asObject(day.energyAvailability) ?? asObject(canonical.energyAvailability);
+  const macroGuardrails =
+    asNonemptyObject(day.macro_guardrails) ??
+    asNonemptyObject(day.macroGuardrails) ??
+    asNonemptyObject(canonical.macroGuardrails) ??
+    asNonemptyObject(canonical.macro_guardrails);
+  const energyAvailability =
+    asNonemptyObject(day.energy_availability) ??
+    asNonemptyObject(day.energyAvailability) ??
+    asNonemptyObject(canonical.energyAvailability) ??
+    asNonemptyObject(canonical.energy_availability);
   return {
     date: typeof day.date === "string" ? day.date : "?",
     kcal,
@@ -270,8 +283,8 @@ function summarizeDailyRow(item: unknown): {
     trainingLabel,
     nutritionStatus,
     hasCanonical: Object.keys(canonical).length > 0,
-    hasMacroGuardrails: Object.keys(macroGuardrails).length > 0,
-    hasEnergyAvailability: Object.keys(energyAvailability).length > 0,
+    hasMacroGuardrails: macroGuardrails !== null,
+    hasEnergyAvailability: energyAvailability !== null,
     isRest: trainingType === "rest" || /отдых/i.test(trainingLabel),
   };
 }

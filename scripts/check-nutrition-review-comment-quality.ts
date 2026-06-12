@@ -269,4 +269,93 @@ assert.match(athleteText, /Белок в целом ближе к норме|н�
 assert.match(athleteText, /энерг|углевод/i);
 assert.doesNotMatch(athleteText, /RED-S|LEA|энергодоступност|дефицит/i);
 
+function polyakovaLikeDayRow(input: {
+  date: string;
+  weekday: string;
+  dateLabel: string;
+  trainingType: string;
+  trainingLabel: string;
+  kcal: number;
+  proteinG: number;
+  fatG: number;
+  carbsG: number;
+  carbsGPerKg: number;
+  nutritionStatus: string;
+  findings: string[];
+}): Record<string, unknown> {
+  const macroGuardrails = kristinaMacroGuardrails({
+    proteinStatus: "ok",
+    proteinGPerKg: 1.63,
+    fatStatus: "ok",
+    fatGPerKg: 1.5,
+    carbsStatus: input.carbsGPerKg < 3 ? "low" : "ok",
+    carbsGPerKg: input.carbsGPerKg,
+    loadBasis: input.trainingType,
+  });
+  return dayRow({
+    ...input,
+    macroGuardrails,
+    findings: input.findings,
+  });
+}
+
+function polyakovaLikeReview(): NutritionWeeklyAnalysis {
+  return {
+    ...kristinaReview(),
+    id: "review-polyakova-like",
+    weekFrom: "2026-06-02",
+    weekTo: "2026-06-07",
+    nutritionSummary: {
+      methodology_version: "ea_macro_narrative_v1",
+      methodology_signals: { protein_sufficient: true },
+      daily_analysis: [
+        polyakovaLikeDayRow({
+          date: "2026-06-02",
+          weekday: "Вторник",
+          dateLabel: "02.06",
+          trainingType: "easy",
+          trainingLabel: "Бег в легком темпе",
+          kcal: 1683,
+          proteinG: 94,
+          fatG: 87,
+          carbsG: 137,
+          carbsGPerKg: 2.37,
+          nutritionStatus: "below_energy_floor",
+          findings: ["below_load_energy_floor"],
+        }),
+        polyakovaLikeDayRow({
+          date: "2026-06-03",
+          weekday: "Среда",
+          dateLabel: "03.06",
+          trainingType: "rest",
+          trainingLabel: "день отдыха",
+          kcal: 1969,
+          proteinG: 94,
+          fatG: 63,
+          carbsG: 245,
+          carbsGPerKg: 4.22,
+          nutritionStatus: "below_energy_floor",
+          findings: ["below_load_energy_floor"],
+        }),
+      ].map((row) => ({
+        ...row,
+        source_quality: {
+          confidence: "low",
+          hasNutritionData: true,
+          hasTrainingContext: true,
+          notes: ["missing_training_context", "partial_week"],
+        },
+      })),
+      do_not_send_reasons: [],
+    },
+  };
+}
+
+const polyakovaDerived = buildDerivedNutritionCoachDayByDayText(polyakovaLikeReview()) ?? "";
+assert.doesNotMatch(
+  polyakovaDerived,
+  /Данные по питанию за день неполные/,
+  "complete parsed week with TP-stale notes must not emit nutrition incomplete phrase"
+);
+
 console.log("PASS check-nutrition-review-comment-quality");
