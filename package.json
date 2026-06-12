@@ -237,6 +237,9 @@
     "check:nutrition-combined-message": "npx tsx scripts/check-nutrition-combined-message.ts",
     "check:nutrition-interpretation-contract": "npx tsx scripts/check-nutrition-interpretation-contract.ts",
     "diagnose:nutrition-interpretation-contract": "npx tsx scripts/diagnose-nutrition-interpretation-contract.ts",
+    "audit:nutrition-interpretation-shadow": "npx tsx scripts/audit-nutrition-interpretation-shadow.ts",
+    "diagnose:nutrition-interpretation-shadow-case": "npx tsx scripts/diagnose-nutrition-interpretation-shadow-case.ts",
+    "check:nutrition-interpretation-shadow-audit": "npx tsx scripts/check-nutrition-interpretation-shadow-audit.ts",
     "nutrition:enable-test-cohort": "npx tsx scripts/nutrition-enable-test-cohort.ts"
   },
   "dependencies": {

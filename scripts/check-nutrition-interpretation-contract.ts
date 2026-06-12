@@ -50,6 +50,11 @@ function run(): void {
   assert.doesNotMatch(generatorSource, /sendTelegram|telegram\.send/i, "shadow generator must not send Telegram");
   assert.match(draftGeneratorSource, /interpretation_shadow/, "review generation must persist shadow metadata");
 
+  // Shadow audit harness must read both outputs without switching production render.
+  const auditHelperSource = readFileSync(join(root, "src/features/nutrition/interpretation-audit.ts"), "utf8");
+  assert.doesNotMatch(auditHelperSource, /buildDerivedNutritionCombinedMessage/, "audit helper must stay composer-agnostic");
+  assert.match(auditHelperSource, /compareNutritionOutputs/, "audit helper must expose comparison entrypoint");
+
   const dates = ["2026-06-01", "2026-06-02", "2026-06-03"];
   const facts = buildFacts({ dates });
   const valid = validateNutritionWeeklyInterpretation(buildValidInterpretation(dates), facts);

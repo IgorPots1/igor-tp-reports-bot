@@ -152,7 +152,12 @@ if (runStorageChecks) {
   );
 }
 
-const planStorageFiles = [repositoryPath];
+const planStorageFiles = [
+  repositoryPath,
+  join(root, "scripts/audit-nutrition-interpretation-shadow.ts"),
+  join(root, "scripts/diagnose-nutrition-interpretation-shadow-case.ts"),
+  join(root, "src/features/nutrition/interpretation-audit.ts"),
+];
 
 const telegramForbiddenPatterns = [
   /sendTrainingPeaksWeeklyReportToStudent/,
