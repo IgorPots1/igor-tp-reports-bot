@@ -460,6 +460,46 @@ function hasTrainingUnavailabilityCue(text: string): boolean {
   return hasExplicitFutureScheduleUnavailabilityCue(text);
 }
 
+const NON_TRAINING_ADMIN_BILLING_CUES = [
+  "оплач",
+  "оплат",
+  "абонемент",
+  "реквизит",
+  "зарплат",
+  "переведу",
+  "перевод",
+  "чек",
+  "деньги",
+  "денег",
+] as const;
+
+function hasBillingAdminKeyword(text: string): boolean {
+  if (hasAny(text, NON_TRAINING_ADMIN_BILLING_CUES)) {
+    return true;
+  }
+  if (/(?:^|[^\p{L}])зп(?:[^\p{L}]|$)/iu.test(text)) {
+    return true;
+  }
+  if (text.includes("карт") && hasAny(text, ["оплат", "оплатить", "перевести", "переведу", "реквизит", "абонемент"])) {
+    return true;
+  }
+  return false;
+}
+
+export function isNonTrainingAdministrativeIntentText(text: string): boolean {
+  const normalized = normalize(text);
+  if (!normalized || !hasBillingAdminKeyword(normalized)) {
+    return false;
+  }
+  if (hasExplicitFutureScheduleUnavailabilityCue(normalized)) {
+    return false;
+  }
+  if (hasAny(normalized, ["перенеси", "перенести", "не смогу трениров", "не могу трениров", "болит", "болею"])) {
+    return false;
+  }
+  return true;
+}
+
 export function isCompletedRunReflectionNotScheduleConstraint(text: string | null): boolean {
   const normalized = normalize(text);
   if (!normalized) {
@@ -1901,6 +1941,41 @@ function hasRunningCue(text: string): boolean {
   return hasAny(text, ["бег", "побег", "побеж", "пробеж", "убежать"]);
 }
 
+function hasWeatherOrTemperatureMention(text: string): boolean {
+  if (hasAny(text, ["жар", "жарко", "погод", "градус", "°"])) {
+    return true;
+  }
+  return /(?:^|[^\d])(?:\+)?(?:3[0-9]|40)(?:[^\d]|$)/u.test(text);
+}
+
+function hasExplicitWeatherTrainingRestriction(text: string): boolean {
+  const weatherRestriction =
+    hasAny(text, ["из-за жар", "из за жар", "из-за погод", "из за погод", "из-за температур", "из за температур"]) &&
+    hasAny(text, ["не смог", "не мог", "не побег", "не буду бег", "перенес", "отмен", "бегать не", "трениров"]);
+  if (weatherRestriction) {
+    return true;
+  }
+  return (
+    hasWeatherOrTemperatureMention(text) &&
+    hasAny(text, ["не смогу бегать", "не могу бегать", "не побегу", "перенеси", "перенести", "отмен"]) &&
+    hasAny(text, ["бег", "трениров", "пробеж", "побег"])
+  );
+}
+
+export function isWeatherOrTemperatureSoftContextText(text: string): boolean {
+  const normalized = normalize(text);
+  if (!normalized || !hasWeatherOrTemperatureMention(normalized)) {
+    return false;
+  }
+  if (hasExplicitWeatherTrainingRestriction(normalized)) {
+    return false;
+  }
+  return (
+    hasAny(normalized, ["свободн", "выходной", "побегу", "попробую", "попроб", "выйду на пробежку"]) ||
+    (hasPositiveAbilityCue(normalized) && hasRunningCue(normalized))
+  );
+}
+
 function extractPlanningIntentDates(input: { text: string; observedAt: string }): {
   plannedDates: string[];
   unavailableDates: string[];
@@ -2186,6 +2261,10 @@ function buildScheduleCandidate(
   input: ObservationLike,
   text: string
 ): OperationalSignalCandidate | null {
+  if (isWeatherOrTemperatureSoftContextText(text)) {
+    return null;
+  }
+
   const strengthWeekdays = extractDays(text)
     .map((item) => toWeekdayToken(item))
     .filter((item): item is NonNullable<typeof item> => item !== null);
@@ -2684,6 +2763,20 @@ export function classifyCoachOperationalSignal(input: ObservationLike): Operatio
   const explicitSignalReason = groupMissingSenderRoleButAccepted
     ? "group message missing senderRole but explicit student signal accepted"
     : null;
+
+  if (isNonTrainingAdministrativeIntentText(text)) {
+    return {
+      primary_bucket: "skip",
+      secondary_buckets: [],
+      signal_type: null,
+      structured_payload: payload,
+      should_create_memory: false,
+      should_create_case: false,
+      should_create_trainingpeaks_action: false,
+      confidence: "high",
+      reason: "billing/admin message excluded from operational signals",
+    };
+  }
 
   if (
     hasMoveWorkoutIntent(text, labels)

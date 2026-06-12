@@ -279,11 +279,16 @@ export function enrichScheduleStructuredPayload(
     }
   }
 
-  if (unavailableDays.length > 0 && !payload.resolved_available_dates) {
+  if (unavailableDays.length > 0 && readStringArray(payload.resolved_available_dates).length === 0) {
     const resolvedUnavailable = resolveAvailableDayDates(unavailableDays, observedAt, weekScope);
-    if (resolvedUnavailable.length > 0 && !payload.valid_from) {
-      payload.valid_from = resolvedUnavailable[0] ?? null;
-      payload.valid_until = resolvedUnavailable[resolvedUnavailable.length - 1] ?? null;
+    if (resolvedUnavailable.length > 0) {
+      if (!payload.valid_from) {
+        payload.valid_from = resolvedUnavailable[0] ?? null;
+        payload.valid_until = resolvedUnavailable[resolvedUnavailable.length - 1] ?? null;
+      }
+      if (readStringArray(payload.unavailable_dates).length === 0) {
+        payload.unavailable_dates = resolvedUnavailable;
+      }
     }
   }
 }
@@ -336,6 +341,28 @@ function intersectIsoDates(left: readonly string[], right: readonly string[]): s
 
 function readOptionalString(raw: unknown): string | null {
   return typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : null;
+}
+
+export function filterScheduleDatesOnOrAfter(
+  dates: readonly string[],
+  asOfDate: string | null | undefined
+): string[] {
+  if (!asOfDate || !/^\d{4}-\d{2}-\d{2}$/u.test(asOfDate)) {
+    return [...dates];
+  }
+  return dates.filter((date) => date >= asOfDate);
+}
+
+export function inferOneOffWeekdayConstraintValidUntil(
+  structuredPayload: ScheduleStructuredPayload,
+  referenceObservedAt: string
+): string | null {
+  const unavailableDays = readStringArray(structuredPayload.unavailable_days);
+  if (unavailableDays.length === 0) {
+    return null;
+  }
+  const resolved = resolveAvailableDayDates(unavailableDays, referenceObservedAt, null);
+  return resolved.length > 0 ? (resolved[resolved.length - 1] ?? null) : null;
 }
 
 function compactScheduleRestrictionReason(raw: string): string | null {
@@ -634,6 +661,7 @@ function hasRichSchedulePartText(text: string): boolean {
 
 export function buildCanonicalEpisodeScheduleDisplayText(input: {
   signals: readonly TrainingPeaksStudentOperationalSignal[];
+  asOfDate?: string | null;
 }): string {
   const episodeContext = buildCanonicalEpisodeScheduleContext(input.signals);
   const availabilitySignal = pickCanonicalScheduleSignalByRole(input.signals, "availability");
@@ -647,6 +675,7 @@ export function buildCanonicalEpisodeScheduleDisplayText(input: {
       validUntil: availabilitySignal.validUntil,
       structuredPayload: availabilitySignal.structuredPayload,
       episodeContext,
+      asOfDate: input.asOfDate,
     });
     if (availabilityText.trim()) {
       parts.push(availabilityText);
@@ -660,6 +689,7 @@ export function buildCanonicalEpisodeScheduleDisplayText(input: {
       validUntil: unavailabilitySignal.validUntil,
       structuredPayload: unavailabilitySignal.structuredPayload,
       episodeContext,
+      asOfDate: input.asOfDate,
     });
     const hasRichSchedulePart = parts.some((part) => hasRichSchedulePartText(part));
     if (isLegacyVagueScheduleUnavailabilityText(unavailabilityText) && hasRichSchedulePart) {
@@ -705,12 +735,16 @@ export function formatScheduleOperationalSignalText(input: {
   validUntil: string | null;
   structuredPayload: Record<string, unknown>;
   episodeContext?: EpisodeScheduleContext | null;
+  asOfDate?: string | null;
 }): string {
   const structured = input.structuredPayload as ScheduleStructuredPayload;
   const availableDays = readStringArray(structured.available_days);
-  const resolvedDates = readStringArray(structured.resolved_available_dates);
-  const plannedDates = readStringArray(structured.planned_training_dates);
-  const unavailableDates = readStringArray(structured.unavailable_dates);
+  const resolvedDates = filterScheduleDatesOnOrAfter(
+    readStringArray(structured.resolved_available_dates),
+    input.asOfDate
+  );
+  const plannedDates = filterScheduleDatesOnOrAfter(readStringArray(structured.planned_training_dates), input.asOfDate);
+  const unavailableDates = filterScheduleDatesOnOrAfter(readStringArray(structured.unavailable_dates), input.asOfDate);
   const planningStatus =
     structured.planning_status === "athlete_intends_to_train" ? "athlete_intends_to_train" : null;
   const durationDays = readPositiveInt(structured.duration_days) ?? null;
@@ -778,8 +812,15 @@ export function formatScheduleOperationalSignalText(input: {
   }
 
   if (isUnavailabilityScheduleSignalType(input.signalType)) {
+    const displayParts: string[] = [];
     if (unavailableDates.length > 0) {
-      return `недоступна: ${formatCompactDateList(unavailableDates)}`;
+      displayParts.push(`недоступна: ${formatCompactDateList(unavailableDates)}`);
+    }
+    if (plannedDates.length > 0) {
+      displayParts.push(`планирует: ${formatCompactDateList(plannedDates)}`);
+    }
+    if (displayParts.length > 0) {
+      return displayParts.join("; ");
     }
     if (range) {
       return `недоступна: ${range}`;

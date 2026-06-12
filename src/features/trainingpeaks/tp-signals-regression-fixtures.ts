@@ -410,7 +410,8 @@ function evaluateCase5(): TpSignalsRegressionCaseResult {
       validUntil: signal.validUntil,
       structuredPayload: signal.structuredPayload,
     },
-    AS_OF_2026_06_12
+    AS_OF_2026_06_12,
+    { referenceObservedAt: observedAt }
   );
   const staleGeneric = isStaleGenericScheduleUnavailabilitySignal({ signal, asOfDate: AS_OF_2026_06_12 });
   const current = {
@@ -547,6 +548,7 @@ function evaluateCase8(): TpSignalsRegressionCaseResult {
     validFrom: signal.validFrom,
     validUntil: signal.validUntil,
     structuredPayload: signal.structuredPayload,
+    asOfDate: AS_OF_2026_06_12,
   });
   const visibleText = visibleSnapshotText([signal], AS_OF_2026_06_12);
   const expiredWhole = isExpiredScheduleOperationalSignal(

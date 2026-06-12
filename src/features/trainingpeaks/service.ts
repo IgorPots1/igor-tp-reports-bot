@@ -175,6 +175,7 @@ import {
   buildEpisodeScheduleContextIndex,
   compactCoachFacingScheduleSignalText,
   formatScheduleOperationalSignalText,
+  inferOneOffWeekdayConstraintValidUntil,
   summarizeLongScheduleConstraintText,
   type EpisodeScheduleContext,
 } from "@/features/trainingpeaks/operational-schedule-display";
@@ -4756,12 +4757,19 @@ function isExpiredPlannedTrainingDatesSignal(
 
 export function isExpiredScheduleOperationalSignal(
   signal: { signalType: string; validUntil: string | null; structuredPayload: Record<string, unknown> },
-  asOfDate: string
+  asOfDate: string,
+  options?: { referenceObservedAt?: string | null }
 ): boolean {
   if (!isScheduleOperationalSignalType(signal.signalType)) {
     return false;
   }
-  const validUntil = resolveScheduleOperationalSignalValidUntil(signal);
+  let validUntil = resolveScheduleOperationalSignalValidUntil(signal);
+  if (!validUntil && options?.referenceObservedAt) {
+    validUntil = inferOneOffWeekdayConstraintValidUntil(
+      signal.structuredPayload as Parameters<typeof inferOneOffWeekdayConstraintValidUntil>[0],
+      options.referenceObservedAt
+    );
+  }
   if (!validUntil) {
     return isExpiredPlannedTrainingDatesSignal(signal, asOfDate);
   }
@@ -8287,7 +8295,8 @@ function buildOperationalSignalItemFromSignal(input: {
           validUntil: signal.validUntil,
           structuredPayload: signal.structuredPayload,
         },
-        asOfDate
+        asOfDate,
+        { referenceObservedAt: signal.createdAt }
       )
     ) {
       return {
@@ -8331,6 +8340,7 @@ function buildOperationalSignalItemFromSignal(input: {
       validUntil: signal.validUntil,
       structuredPayload: signal.structuredPayload,
       episodeContext: input.episodeScheduleContext ?? null,
+      asOfDate,
     });
     const compactScheduleText = compactCoachFacingScheduleSignalText(
       scheduleText.trim() || "контекст: полный текст недоступен в signal payload"
@@ -8460,7 +8470,8 @@ function isAmbiguousIllnessDisplayItem(item: TrainingPeaksOperationalSignalsItem
 function mergeOperationalSignalEpisodeItems(
   current: TrainingPeaksOperationalSignalsItem,
   incoming: TrainingPeaksOperationalSignalsItem,
-  episodeSignals?: readonly TrainingPeaksStudentOperationalSignal[]
+  episodeSignals?: readonly TrainingPeaksStudentOperationalSignal[],
+  asOfDate?: string
 ): TrainingPeaksOperationalSignalsItem {
   if (
     current.section === "pain_injury" &&
@@ -8510,7 +8521,7 @@ function mergeOperationalSignalEpisodeItems(
     const preferred = incomingKey < currentKey ? incoming : current;
     return {
       ...preferred,
-      text: buildCanonicalEpisodeScheduleDisplayText({ signals: episodeSignals }),
+      text: buildCanonicalEpisodeScheduleDisplayText({ signals: episodeSignals, asOfDate }),
     };
   }
 
@@ -8897,7 +8908,7 @@ function collectOperationalSignalDisplayItemsFromSignals(input: {
         const episodeSignals = episodeSignalsByKey.get(episodeDedupeKey) ?? [signal];
         dedupedByEpisode.set(episodeDedupeKey, {
           ...item,
-          text: buildCanonicalEpisodeScheduleDisplayText({ signals: episodeSignals }),
+          text: buildCanonicalEpisodeScheduleDisplayText({ signals: episodeSignals, asOfDate: input.asOfDate }),
         });
       } else {
         dedupedByEpisode.set(episodeDedupeKey, item);
@@ -8909,7 +8920,8 @@ function collectOperationalSignalDisplayItemsFromSignals(input: {
       mergeOperationalSignalEpisodeItems(
         existing,
         item,
-        episodeSignalsByKey.get(episodeDedupeKey)
+        episodeSignalsByKey.get(episodeDedupeKey),
+        input.asOfDate
       )
     );
   }
@@ -8987,7 +8999,7 @@ export function collectOperationalSignalDiagnosticItems(input: {
         const episodeSignals = episodeSignalsByKey.get(episodeDedupeKey) ?? [signal];
         dedupedByEpisode.set(episodeDedupeKey, {
           ...item,
-          text: buildCanonicalEpisodeScheduleDisplayText({ signals: episodeSignals }),
+          text: buildCanonicalEpisodeScheduleDisplayText({ signals: episodeSignals, asOfDate: input.asOfDate }),
         });
       } else {
         dedupedByEpisode.set(episodeDedupeKey, item);
@@ -8999,7 +9011,7 @@ export function collectOperationalSignalDiagnosticItems(input: {
     }
     dedupedByEpisode.set(
       episodeDedupeKey,
-      mergeOperationalSignalEpisodeItems(existing, item, episodeSignalsByKey.get(episodeDedupeKey))
+      mergeOperationalSignalEpisodeItems(existing, item, episodeSignalsByKey.get(episodeDedupeKey), input.asOfDate)
     );
   }
 
