@@ -333,17 +333,28 @@ assert.doesNotMatch(coachDetailsUi, /NutritionDraftCopyBlock/, "coach details mu
 assert.match(studentPage, /copyEnabled=\{false\}/, "stored service drafts must disable copy");
 assert.match(studentPage, /Служебный текст, не для отправки напрямую/, "service drafts must warn they are not sendable");
 
-assert.match(mainUi, /coach_summary_text/, "coach details still read stored coach_summary_text");
+assert.match(mainUi, /buildDerivedNutritionCoachSummary/, "coach details must use derived coach summary helper");
+assert.doesNotMatch(
+  coachDetailsUi,
+  /\{coachSummaryText\}/,
+  "main coach details must not display stored coach_summary_text"
+);
 assert.match(mainUi, /buildDerivedNutritionCoachDayByDayText/, "coach day-by-day prefers derived text");
 assert.match(mainUi, /day_by_day_analysis_text/, "coach day-by-day falls back to stored text");
-assert.match(mainUi, /Детали для тренера — служебный сохранённый обзор/, "coach details must be labeled as stored service layer");
+assert.match(mainUi, /Детали для тренера — актуальная сводка/, "coach details must be labeled as derived summary");
 assert.match(
   mainUi,
-  /Служебный блок для проверки\. Это не текст для отправки ученику/,
+  /Сводка собрана из текущих канонических данных/,
+  "coach details must explain derived summary source"
+);
+assert.match(
+  mainUi,
+  /Это не текст для отправки ученику/,
   "coach details must warn when review is stale"
 );
-assert.match(mainUi, /coachDetailsStoredNotice/, "coach details must render stored-layer service notice");
-assert.match(pageConsistencySource, /Для отправки ученику используйте только/, "page consistency helper must define coach details service notice");
+assert.match(studentPage, /Сохранённый coach_summary_text из БД/, "stored coach summary must remain in collapsed service drafts");
+assert.match(pageConsistencySource, /coach_details_stored_layer/, "page consistency helper must keep stored-layer info code");
+assert.match(pageConsistencySource, /Старый coach_summary_text — только в служебных черновиках/, "page consistency helper must define stored coach summary audit notice");
 
 assert.match(diagnoseScript, /analyzeNutritionPageConsistency/, "page consistency diagnostic must use shared helper");
 assert.match(diagnoseScript, /buildDerivedNutritionCombinedMessage/, "page consistency diagnostic must mirror combined render");

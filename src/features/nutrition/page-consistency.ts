@@ -326,7 +326,7 @@ export function analyzeNutritionPageConsistency(
       severity: "info",
       code: "coach_details_stored_layer",
       message:
-        "Детали для тренера — служебный сохранённый обзор. Для отправки ученику используйте только «Черновик ученику — полный текст».",
+        "Сводка для тренера собирается из канонических данных при рендере. Старый coach_summary_text — только в служебных черновиках.",
     });
   }
 

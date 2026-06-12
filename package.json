@@ -222,6 +222,7 @@
     "diagnose:nutrition-tp-key-classification": "npx tsx scripts/diagnose-nutrition-tp-key-classification.ts",
     "diagnose:nutrition-review-comment-quality": "npx tsx scripts/diagnose-nutrition-review-comment-quality.ts",
     "check:nutrition-page-consistency": "npx tsx scripts/check-nutrition-page-consistency.ts",
+    "check:nutrition-derived-coach-summary": "npx tsx scripts/check-nutrition-derived-coach-summary.ts",
     "check:nutrition-long-run-classification": "npx tsx scripts/check-nutrition-long-run-classification.ts",
     "check:nutrition-report-date-source": "npx tsx scripts/check-nutrition-report-date-source.ts",
     "diagnose:trainingpeaks-future-workout-cache": "npx tsx scripts/diagnose-trainingpeaks-future-workout-cache.ts",

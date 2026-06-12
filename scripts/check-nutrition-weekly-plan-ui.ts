@@ -37,7 +37,8 @@ assert.match(mainUi, /Черновик ученику — полный текс�
 assert.match(mainUi, /Основной текст для отправки ученику/, "combined block must be labeled as primary copy source");
 assert.match(mainUi, /analyzeNutritionPageConsistency/, "main UI must run page consistency guardrails");
 assert.match(mainUi, /Проверка согласованности/, "main UI must show page consistency warning block");
-assert.match(mainUi, /Детали для тренера — служебный сохранённый обзор/, "coach details must be labeled as stored service layer");
+assert.match(mainUi, /Детали для тренера — актуальная сводка/, "coach details must be labeled as derived summary");
+assert.match(mainUi, /buildDerivedNutritionCoachSummary/, "coach details must use derived coach summary helper");
 assert.doesNotMatch(mainUi, /скопируйте детали для тренера|copy this coach details/i, "page must not suggest copying coach details");
 assert.match(mainUi, /buildDerivedNutritionCombinedMessage/, "main UI must derive combined copy from review and plan");
 assert.match(mainUi, /renderResult\.text/, "main UI must copy deterministic renderer text");

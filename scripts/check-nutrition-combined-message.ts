@@ -169,7 +169,8 @@ async function run(): Promise<void> {
   assert.match(pageSource, /analyzeNutritionPageConsistency/, "UI must include page consistency guardrails");
   assert.match(pageSource, /Проверка согласованности/, "UI must show page consistency warning block");
   assert.match(pageSource, /copyEnabled=\{false\}/, "stored service drafts must remain copy disabled");
-  assert.match(pageSource, /Детали для тренера — служебный сохранённый обзор/, "coach details must be labeled as service layer");
+  assert.match(pageSource, /Детали для тренера — актуальная сводка/, "coach details must be labeled as derived summary");
+  assert.match(pageSource, /buildDerivedNutritionCoachSummary/, "page must use derived coach summary helper");
   assert.match(helperSource, /daily_analysis/, "helper must use canonical daily analysis facts");
   assert.match(helperSource, /next_week_plan/, "helper must use deterministic next_week_plan values");
 

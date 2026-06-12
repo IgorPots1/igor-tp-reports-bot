@@ -22,6 +22,7 @@ import {
   getNutritionAdminStudentCard,
   parseNutritionManualMacros,
 } from "@/features/nutrition/admin";
+import { buildDerivedNutritionCoachSummary } from "@/features/nutrition/coach-summary";
 import {
   buildDerivedNutritionCoachDayByDayText,
   buildDerivedNutritionCombinedMessage,
@@ -426,9 +427,13 @@ export default async function CoachOsNutritionStudentCardPage({
     ? formatNutritionReportDateMismatchCardNotice(asObject(selectedReport.dataQuality))
     : null;
   const actionableConsistencyIssues = getActionablePageConsistencyIssues(pageConsistencyIssues);
-  const coachDetailsStoredNotice = pageConsistencyIssues.find(
-    (issue) => issue.code === "coach_details_stored_layer"
-  );
+  const derivedCoachSummaryText = card.weeklyAnalysis
+    ? buildDerivedNutritionCoachSummary({
+        review: card.weeklyAnalysis,
+        plan: displayPlan,
+        consistencyIssues: pageConsistencyIssues,
+      })
+    : null;
   const showCoachDetailsStaleHint = hasStaleReviewIssues(pageConsistencyIssues);
 
   return (
@@ -929,24 +934,25 @@ export default async function CoachOsNutritionStudentCardPage({
         </article>
 
         <article className="admin-card admin-card-compact admin-nutrition-card-wide">
-          <h3>Детали для тренера — служебный сохранённый обзор</h3>
+          <h3>Детали для тренера — актуальная сводка</h3>
           {!card.weeklyAnalysis ? (
             <p className="admin-muted">Обзор ещё не сгенерирован.</p>
           ) : (
             <div className="admin-nutrition-coach-section">
-              {coachDetailsStoredNotice ? (
-                <p className="admin-muted admin-nutrition-helper">{coachDetailsStoredNotice.message}</p>
-              ) : null}
+              <p className="admin-muted admin-nutrition-helper">
+                Сводка собрана из текущих канонических данных. Старый сохранённый текст доступен ниже в служебных
+                черновиках.
+              </p>
               {showCoachDetailsStaleHint ? (
                 <p className="admin-muted admin-nutrition-helper">
-                  Служебный блок для проверки. Это не текст для отправки ученику. Если выше есть предупреждение об
-                  устаревшем обзоре, эти детали могут не совпадать с актуальным черновиком.
+                  Это не текст для отправки ученику. Если выше есть предупреждение об устаревшем обзоре, перегенерируйте
+                  обзор и фокус.
                 </p>
               ) : null}
               <section>
                 <h4>Главный вывод для тренера</h4>
-                {coachSummaryText ? (
-                  <p className="admin-nutrition-text-block">{coachSummaryText}</p>
+                {derivedCoachSummaryText ? (
+                  <p className="admin-nutrition-text-block">{derivedCoachSummaryText}</p>
                 ) : (
                   <p className="admin-muted">Главный вывод не сформирован.</p>
                 )}
@@ -1085,6 +1091,17 @@ export default async function CoachOsNutritionStudentCardPage({
                   Служебный текст, не для отправки напрямую. Для отправки ученику используйте блок «Черновик ученику —
                   полный текст» выше.
                 </p>
+
+                <section>
+                  <h4>Сохранённый coach_summary_text из БД</h4>
+                  {!card.weeklyAnalysis ? (
+                    <p className="admin-muted">Обзор ещё не сгенерирован.</p>
+                  ) : coachSummaryText ? (
+                    <p className="admin-nutrition-text-block">{coachSummaryText}</p>
+                  ) : (
+                    <p className="admin-muted">Сохранённый coach_summary_text не найден.</p>
+                  )}
+                </section>
 
                 <section>
                   <h4>Служебный черновик обзора из БД</h4>
