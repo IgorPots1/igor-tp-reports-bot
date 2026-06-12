@@ -466,12 +466,12 @@ function evaluateRecoveryMessage(
   };
   if (input.signalClass === "injury_pain") {
     return {
-      proposedLifecycle: "resolved",
+      proposedLifecycle: "monitoring_after_return",
       confidence: "high",
-      reasonCode: "explicit_recovery_injury",
-      reason: "Explicit athlete recovery message allows injury/pain closure.",
-      hideFromTpSignals: true,
-      requiresCoachClose: false,
+      reasonCode: "explicit_recovery_injury_coach_close_candidate",
+      reason: "Explicit athlete recovery message for injury/pain marks close candidate; no auto-resolve.",
+      hideFromTpSignals: false,
+      requiresCoachClose: true,
       evidenceRefs: reasonBase,
     };
   }
@@ -604,6 +604,23 @@ function evaluateTpCompletion(input: OperationalSignalLifecycleInput): Operation
     runningClass === "return_trial_run" ||
     runningClass === "uncertain_running_completion";
   if (input.signalClass === "confirmed_illness") {
+    if (
+      input.currentLifecycle === "monitoring_after_return" &&
+      hasReliableRunningCompletionAfterOpen(completion) &&
+      !input.negativeMessageAfterCompletion
+    ) {
+      return {
+        proposedLifecycle: "monitoring_after_return",
+        confidence: completion.classificationConfidence === "high" && completion.evidenceFreshness === "ok" ? "high" : "medium",
+        reasonCode: "tp_completion_confirmed_illness_close_candidate",
+        reason: "Clean running completion after confirmed illness with no fresh negative evidence; ready for guarded coach close.",
+        hideFromTpSignals: false,
+        requiresCoachClose: true,
+        evidenceRefs: {
+          latestTpCompletionAfterOpen: completion,
+        },
+      };
+    }
     return {
       proposedLifecycle: "monitoring_after_return",
       confidence: completion.classificationConfidence === "high" && completion.evidenceFreshness === "ok" ? "high" : "medium",

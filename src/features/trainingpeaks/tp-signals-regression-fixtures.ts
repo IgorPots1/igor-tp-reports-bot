@@ -11,6 +11,7 @@ import {
   isOperationalNegativeObservationText,
   isOperationalPositiveObservationText,
   isStaleGenericScheduleUnavailabilitySignal,
+  resolveOperationalSignalDisplayLifecycleState,
   type TrainingPeaksOperationalSignalDisplayEvidence,
 } from "@/features/trainingpeaks/service";
 
@@ -142,17 +143,19 @@ function evaluateCase1(): TpSignalsRegressionCaseResult {
   const observations = [makeObservation({ id: "obs-1", text: message, observedAt: "2026-06-12T10:00:00.000Z" })];
   const hasNegativeText = isOperationalNegativeObservationText(message);
   const hasPositiveText = isOperationalPositiveObservationText(message);
+  const completion = makeRunningCompletionFixture({ workoutId: "w1", workoutDate: "2026-06-12", title: "Easy Run" });
   const gatedNegative = findOperationalSignalNegativeAfterCompletion({
     observations,
-    completionDate: null,
-    completionObservedAt: null,
+    completionDate: completion.workoutDate,
+    completionObservedAt: completion.completionObservedAt,
     openedAt,
   });
+  const latestNegativeText = hasNegativeText ? message : null;
   const displayLines = buildMonitoringLifetimeDisplayLines({
     lifecycleDisplayState: "monitoring_after_return",
     completion: {
       latestCacheScannedAt: "2026-06-12T12:00:00.000Z",
-      latestCompletionAfterOpen: makeRunningCompletionFixture({ workoutId: "w1", workoutDate: "2026-06-12", title: "Easy Run" }),
+      latestCompletionAfterOpen: completion,
       recommendedAction: "monitor",
       recommendationReason: "fixture",
       applyDryRunCommand: null,
@@ -160,7 +163,7 @@ function evaluateCase1(): TpSignalsRegressionCaseResult {
     },
     sourceText: message,
     latestPositiveText: hasPositiveText ? message : null,
-    latestNegativeText: gatedNegative ? message : null,
+    latestNegativeText,
     isPain: false,
   });
   const displayText = displayLines.join("\n");
@@ -185,8 +188,9 @@ function evaluateCase1(): TpSignalsRegressionCaseResult {
     hasNegativeText &&
     !isCloseCandidate &&
     !saysNoNewComplaints &&
-    gatedNegative === null &&
-    /головокруж/iu.test(message);
+    gatedNegative !== null &&
+    displayLines.some((line) => /негатив|контрол|голов|круж|сон|клонит/iu.test(line)) &&
+    /(?:голова\s+круж|головокруж|сон\s+клонит)/iu.test(message);
   return {
     caseId: 1,
     name: "Rizatdinova Elvira — negative after illness run",
@@ -196,8 +200,8 @@ function evaluateCase1(): TpSignalsRegressionCaseResult {
     current,
     expected,
     notes: [
-      "Negative pattern matches text, but completion-gated negative path returns null without TP completion anchor.",
-      "Display branch treats positive fragment as clean report when gated negative is missing.",
+      "Negative after open/completion must override clean-run close copy.",
+      "Display branch must reflect post-run symptoms even when positive fragment exists.",
     ],
   };
 }
@@ -215,16 +219,22 @@ function evaluateCase2(): TpSignalsRegressionCaseResult {
     },
     createdAt: "2026-06-05T08:00:00.000Z",
   });
-  const displayLines = buildMonitoringLifetimeDisplayLines({
-    lifecycleDisplayState: "monitoring_after_return",
+  const completion = makeRunningCompletionFixture({ workoutId: "w2", workoutDate: "2026-06-11" });
+  const evidence: TrainingPeaksOperationalSignalDisplayEvidence = {
     completion: {
       latestCacheScannedAt: "2026-06-12T12:00:00.000Z",
-      latestCompletionAfterOpen: makeRunningCompletionFixture({ workoutId: "w2", workoutDate: "2026-06-11" }),
-      recommendedAction: "monitor",
+      latestCompletionAfterOpen: completion,
+      recommendedAction: "coach_close_candidate",
       recommendationReason: "fixture",
       applyDryRunCommand: null,
       cleanRunningCompletionCount: 1,
     },
+    latestNegative: null,
+  };
+  const lifecycleDisplayState = resolveOperationalSignalDisplayLifecycleState(signal, evidence);
+  const displayLines = buildMonitoringLifetimeDisplayLines({
+    lifecycleDisplayState,
+    completion: evidence.completion ?? null,
     sourceText: "после болезни",
     latestPositiveText: null,
     latestNegativeText: null,
@@ -235,7 +245,7 @@ function evaluateCase2(): TpSignalsRegressionCaseResult {
     signalClass: "confirmed_illness",
     currentLifecycle: "monitoring_after_return",
     openedAt: signal.createdAt,
-    latestTpCompletionAfterOpen: makeRunningCompletionFixture({ workoutId: "w2", workoutDate: "2026-06-11" }),
+    latestTpCompletionAfterOpen: completion,
     negativeMessageAfterCompletion: null,
     explicitRecoveryMessage: null,
     missedOrSkippedReturnWorkout: false,
@@ -244,7 +254,7 @@ function evaluateCase2(): TpSignalsRegressionCaseResult {
   const displayText = displayLines.join("\n");
   const current = {
     lifecycleProposal: lifecycleProposal.proposedLifecycle,
-    lifecycleDisplayState: "monitoring_after_return",
+    lifecycleDisplayState,
     displayText,
     asksCheckAfterRun: /проверить самочувствие после пробежки/iu.test(displayText),
   };
@@ -253,8 +263,9 @@ function evaluateCase2(): TpSignalsRegressionCaseResult {
     targetNotInfiniteCheck: true,
   };
   const pass =
+    lifecycleDisplayState === "ready_for_coach_close" &&
     !current.asksCheckAfterRun &&
-    (current.lifecycleProposal === "resolved" || /ready_for_coach_close|close_candidate|закрыть после проверки/iu.test(displayText));
+    /закрыть после проверки/iu.test(displayText);
   return {
     caseId: 2,
     name: "Alexander Ivanov — clean run without new complaints",
@@ -263,7 +274,7 @@ function evaluateCase2(): TpSignalsRegressionCaseResult {
     pass,
     current,
     expected,
-    notes: ["Phase 3 target: close_candidate after clean run + silence; current keeps monitoring/check copy."],
+    notes: ["Phase 3 target: close_candidate after clean run + silence; not infinite check-after-run copy."],
   };
 }
 

@@ -6254,11 +6254,107 @@ function isSignalMarkedStaleNeedsReview(signal: TrainingPeaksStudentOperationalS
   );
 }
 
+function resolveOperationalSignalLatestNegativeText(
+  signal: TrainingPeaksStudentOperationalSignal,
+  evidence: TrainingPeaksOperationalSignalDisplayEvidence | null | undefined
+): string | null {
+  const negativeAfterCompletion = resolveNegativeAfterCompletionDisplayText(evidence);
+  if (negativeAfterCompletion) {
+    return negativeAfterCompletion;
+  }
+  const latestNegative = evidence?.latestNegative;
+  if (!latestNegative?.observedAt || latestNegative.observedAt < signal.createdAt) {
+    return null;
+  }
+  const text = latestNegative.textPreview?.replace(/\s+/g, " ").trim() ?? "";
+  return isOperationalNegativeObservationText(text) ? text : null;
+}
+
+function hasOperationalDisplayNegativeEvidence(input: {
+  signal: TrainingPeaksStudentOperationalSignal;
+  evidence: TrainingPeaksOperationalSignalDisplayEvidence | null | undefined;
+  completion: OperationalSignalLifecycleInput["latestTpCompletionAfterOpen"];
+}): boolean {
+  if (resolveOperationalSignalLatestNegativeText(input.signal, input.evidence)) {
+    return true;
+  }
+  return hasDisplayNegativeAfterRunningCompletion({
+    evidence: input.evidence,
+    completion: input.completion,
+  });
+}
+
+function hasFreshOperationalPainCloseEvidence(
+  signal: TrainingPeaksStudentOperationalSignal,
+  evidence: TrainingPeaksOperationalSignalDisplayEvidence | null | undefined
+): boolean {
+  const latestPositive = evidence?.latestPositive;
+  if (!latestPositive?.observedAt || latestPositive.observedAt < signal.createdAt) {
+    return false;
+  }
+  const positiveText = latestPositive.textPreview?.replace(/\s+/g, " ").trim() ?? "";
+  if (!isOperationalPositiveObservationText(positiveText)) {
+    return false;
+  }
+  const positiveAt = Date.parse(latestPositive.observedAt);
+  const latestNegative = evidence?.latestNegative;
+  if (latestNegative?.observedAt) {
+    const negativeAt = Date.parse(latestNegative.observedAt);
+    if (Number.isFinite(positiveAt) && Number.isFinite(negativeAt) && negativeAt >= positiveAt) {
+      const negativeText = latestNegative.textPreview?.replace(/\s+/g, " ").trim() ?? "";
+      if (
+        isOperationalNegativeObservationText(negativeText) ||
+        matchesOperationalPainNegativeSemantic(negativeText)
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function hasFreshIllnessCloseCandidateEvidence(
+  signal: TrainingPeaksStudentOperationalSignal,
+  evidence: TrainingPeaksOperationalSignalDisplayEvidence | null | undefined
+): boolean {
+  if (signal.lifecycleState !== "monitoring_after_return") {
+    return false;
+  }
+  const effective = resolveEffectiveOperationalSignalForDisplay(signal);
+  if (!isHealthOperationalSignalType(effective.effectiveSignalType)) {
+    return false;
+  }
+  if (isPainInjuryOperationalSignalForDisplay(effective)) {
+    return false;
+  }
+  const completion = evidence?.completion?.latestCompletionAfterOpen ?? null;
+  if (!hasReliableRunningCompletionAfterOpen(completion)) {
+    return false;
+  }
+  if (hasOperationalDisplayNegativeEvidence({ signal, evidence, completion })) {
+    return false;
+  }
+  if (evidence?.completion?.recommendedAction === "coach_close_candidate") {
+    return true;
+  }
+  return true;
+}
+
 export function resolveOperationalSignalDisplayLifecycleState(
-  signal: TrainingPeaksStudentOperationalSignal
+  signal: TrainingPeaksStudentOperationalSignal,
+  evidence?: TrainingPeaksOperationalSignalDisplayEvidence | null
 ): OperationalSignalDisplayLifecycleState {
   if (isSignalMarkedStaleNeedsReview(signal)) {
     return "stale_needs_review";
+  }
+  const effective = resolveEffectiveOperationalSignalForDisplay(signal);
+  if (evidence) {
+    if (isPainInjuryOperationalSignalForDisplay(effective) && hasFreshOperationalPainCloseEvidence(signal, evidence)) {
+      return "ready_for_coach_close";
+    }
+    if (!isPainInjuryOperationalSignalForDisplay(effective) && hasFreshIllnessCloseCandidateEvidence(signal, evidence)) {
+      return "ready_for_coach_close";
+    }
   }
   if (signal.lifecycleState === "monitoring_after_return") {
     if (signal.requiresCoachClose) {
@@ -6561,7 +6657,8 @@ export function shouldAutoHideCleanIllnessRecoveryFromTpSignals(input: {
     return false;
   }
   if (
-    hasDisplayNegativeAfterRunningCompletion({
+    hasOperationalDisplayNegativeEvidence({
+      signal: input.signal,
       evidence: input.displayEvidence ?? null,
       completion,
     })
@@ -6639,7 +6736,10 @@ const OPERATIONAL_NEGATIVE_OBSERVATION_PATTERNS = [
   /(?:не\s+очень|плох(?:о|ое)).*самочувств/iu,
   /(?:после|побегал(?:а|и)?).*(?:слабост|не\s+восстанов)/iu,
   /не\s+восстановил(?:ся|ась|ись)/iu,
-  /голова\s+круж/iu,
+  /голова\s+круж|головокруж/iu,
+  /(?:в\s+)?сон\s+клонит|клонит\s+в\s+сон|хочется\s+спать/iu,
+  /(?:меня\s+)?хватило\s+(?:минут\s+)?(?:на\s+)?\d+|хватило\s+минут/iu,
+  /(?:^|[,.!\s])плохо(?:[,.!\s]|$)/iu,
 ];
 
 const OPERATIONAL_PLAN_AGREEMENT_PATTERNS = [
@@ -6739,6 +6839,25 @@ function findOperationalSignalRecoveryMessage(
   };
 }
 
+export function findOperationalSignalNegativeAfterOpen(
+  observations: readonly TrainingPeaksTelegramContextObservation[],
+  openedAt: string
+): OperationalSignalLifecycleInput["negativeMessageAfterCompletion"] {
+  const openedAtMs = Date.parse(openedAt);
+  const negative = sortOperationalSignalObservations(observations).find((observation) => {
+    const observedAt = Date.parse(observation.observedAt);
+    return Number.isFinite(observedAt) && observedAt >= openedAtMs && isOperationalNegativeObservation(observation);
+  });
+  if (!negative) {
+    return null;
+  }
+  return {
+    observationId: negative.id,
+    observedAt: negative.observedAt,
+    reason: "matched_negative_after_open",
+  };
+}
+
 export function findOperationalSignalNegativeAfterCompletion(input: {
   observations: readonly TrainingPeaksTelegramContextObservation[];
   completionDate: string | null;
@@ -6746,7 +6865,7 @@ export function findOperationalSignalNegativeAfterCompletion(input: {
   openedAt: string;
 }): OperationalSignalLifecycleInput["negativeMessageAfterCompletion"] {
   if (!input.completionDate) {
-    return null;
+    return findOperationalSignalNegativeAfterOpen(input.observations, input.openedAt);
   }
   const completionStart = Number.isFinite(Date.parse(input.completionObservedAt ?? ""))
     ? Date.parse(input.completionObservedAt as string)
@@ -6758,7 +6877,7 @@ export function findOperationalSignalNegativeAfterCompletion(input: {
     return Number.isFinite(observedAt) && observedAt >= thresholdMs && isOperationalNegativeObservation(observation);
   });
   if (!negative) {
-    return null;
+    return findOperationalSignalNegativeAfterOpen(input.observations, input.openedAt);
   }
   return {
     observationId: negative.id,
@@ -6932,6 +7051,19 @@ export function buildMonitoringLifetimeDisplayLines(input: {
   const hasCleanReportAfterRun = Boolean(hasRunningCompletion && input.latestPositiveText && !input.latestNegativeText);
 
   if (input.lifecycleDisplayState === "ready_for_coach_close") {
+    if (
+      !input.isPain &&
+      hasRunningCompletion &&
+      !input.latestNegativeText &&
+      latest &&
+      hasReliableRunningCompletionAfterOpen(latest)
+    ) {
+      return [
+        "почему видно: после болезни пробежка была, новых жалоб не видно — можно закрыть после проверки",
+        "что закрывает: ручное безопасное закрытие после короткой проверки",
+        "что сделать: закрыть после короткой проверки самочувствия.",
+      ];
+    }
     return [
       "почему видно: есть признаки, что эпизод можно закрыть, но нужна короткая проверка",
       "что закрывает: подтверждение самочувствия / ручное безопасное закрытие",
@@ -6967,6 +7099,18 @@ export function buildMonitoringLifetimeDisplayLines(input: {
       ];
     }
     if (hasRunningCompletion) {
+      if (
+        !input.latestNegativeText &&
+        latest &&
+        hasReliableRunningCompletionAfterOpen(latest) &&
+        !input.isPain
+      ) {
+        return [
+          "почему видно: после болезни пробежка была, новых жалоб не видно — можно закрыть после проверки",
+          "что закрывает: ручное безопасное закрытие после короткой проверки",
+          "что сделать: закрыть после короткой проверки самочувствия.",
+        ];
+      }
       return [
         input.latestNegativeText
           ? "почему видно: после пробежки есть новое негативное сообщение, закрывать нельзя"
@@ -6993,6 +7137,19 @@ export function buildMonitoringLifetimeDisplayLines(input: {
   }
 
   if (hasRunningCompletion) {
+    if (
+      !input.latestNegativeText &&
+      latest &&
+      hasReliableRunningCompletionAfterOpen(latest) &&
+      !input.isPain &&
+      input.lifecycleDisplayState !== "active_problem"
+    ) {
+      return [
+        "почему видно: после болезни пробежка была, новых жалоб не видно — можно закрыть после проверки",
+        "что закрывает: ручное безопасное закрытие после короткой проверки",
+        "что сделать: закрыть после короткой проверки самочувствия.",
+      ];
+    }
     return [
       input.latestNegativeText
         ? "почему видно: после пробежки есть новое негативное сообщение, закрывать нельзя"
@@ -7031,13 +7188,41 @@ export function buildMonitoringLifetimeDisplayLines(input: {
   ];
 }
 
+function normalizeCoachActionLineForDedup(line: string): string {
+  return line
+    .toLowerCase()
+    .replace(/\s+/gu, " ")
+    .replace(/[.;]+$/u, "")
+    .trim();
+}
+
+function shouldSkipDuplicateCoachAction(action: string, existingText: string): boolean {
+  const normalizedAction = normalizeCoachActionLineForDedup(action);
+  if (!normalizedAction) {
+    return true;
+  }
+  const normalizedExisting = normalizeCoachActionLineForDedup(existingText);
+  if (normalizedExisting.includes(normalizedAction)) {
+    return true;
+  }
+  if (/уточнить/iu.test(normalizedAction) && /уточнить/iu.test(normalizedExisting)) {
+    if (/мешает/iu.test(normalizedAction) && /мешает/iu.test(normalizedExisting)) {
+      return true;
+    }
+    if (/болит\s+ли\s+сейчас/iu.test(normalizedAction) && /болит\s+ли\s+сейчас/iu.test(normalizedExisting)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function joinCompactCoachSituationAndAction(situation: string, action: string): string {
   const left = situation.replace(/[.;,\s]+$/u, "").trim();
   const right = action.replace(/^[.;,\s]+/u, "").trim();
   if (!left) {
     return right;
   }
-  if (!right) {
+  if (!right || shouldSkipDuplicateCoachAction(right, left)) {
     return left;
   }
   return `${left} — ${right}`;
@@ -7159,11 +7344,16 @@ function buildCompactCoachFacingOperationalSignalText(input: {
   const sourceText = input.evidence?.source?.textPreview?.replace(/\s+/g, " ").trim() ?? null;
   const latestRelevantText = input.evidence?.latestRelevant?.textPreview?.replace(/\s+/g, " ").trim() ?? null;
   const latestPositiveText = input.evidence?.latestPositive?.textPreview?.replace(/\s+/g, " ").trim() ?? null;
-  const latestNegativeText = input.evidence?.latestNegative?.textPreview?.replace(/\s+/g, " ").trim() ?? null;
+  const latestNegativeText =
+    resolveOperationalSignalLatestNegativeText(input.signal, input.evidence) ??
+    input.evidence?.latestNegative?.textPreview?.replace(/\s+/g, " ").trim() ??
+    null;
   const negativeAfterCompletionText = resolveNegativeAfterCompletionDisplayText(input.evidence);
-  const hasNegativeAfterCompletion = hasDisplayNegativeAfterRunningCompletion({
+  const completionForEvidence = input.evidence?.completion?.latestCompletionAfterOpen ?? null;
+  const hasNegativeAfterCompletion = hasOperationalDisplayNegativeEvidence({
+    signal: input.signal,
     evidence: input.evidence,
-    completion: input.evidence?.completion?.latestCompletionAfterOpen ?? null,
+    completion: completionForEvidence,
   });
   const latestPainText =
     latestRelevantText && hasMusculoskeletalPainSemantic(latestRelevantText.toLowerCase()) ? latestRelevantText : null;
@@ -7269,8 +7459,12 @@ function buildCompactCoachFacingOperationalSignalText(input: {
         );
       }
       if (input.lifecycleDisplayState === "ready_for_coach_close") {
+        const positiveSnippet = latestPositiveText ? compactOperationalSignalText(latestPositiveText, 40) : null;
+        const action = positiveSnippet
+          ? `свежий ответ: ${positiveSnippet} — закрыть после проверки`
+          : "закрыть после короткой проверки";
         return finishCompactCoachDisplay(
-          joinCompactCoachSituationAndAction(situation, "закрыть после короткой проверки"),
+          joinCompactCoachSituationAndAction(situation, action),
           "pain_ready_for_coach_close"
         );
       }
@@ -7348,12 +7542,15 @@ function buildCompactCoachFacingOperationalSignalText(input: {
     }
   }
 
-  if (hasNegativeAfterCompletion && negativeAfterCompletionText && hasRunningCompletion) {
-    const negSnippet = extractCompactNegativeEvidenceSnippet(negativeAfterCompletionText);
-    return finishCompactCoachDisplay(
-      `после пробежки ${negSnippet} — держать на контроле, уточнить самочувствие сегодня.`,
-      "post_run_negative_after_completion"
-    );
+  if (hasNegativeAfterCompletion && hasRunningCompletion) {
+    const negText = negativeAfterCompletionText ?? latestNegativeText;
+    if (negText) {
+      const negSnippet = extractCompactNegativeEvidenceSnippet(negText);
+      return finishCompactCoachDisplay(
+        `после пробежки ${negSnippet} — держать на контроле, уточнить самочувствие сегодня.`,
+        "post_run_negative_after_completion"
+      );
+    }
   }
 
   if (input.lifecycleDisplayState === "ready_for_coach_close" || hasCleanReportAfterRun) {
@@ -7700,6 +7897,7 @@ export async function buildOperationalSignalDisplayEvidenceMap(input: {
               signal,
               observations,
               predicate: isOperationalNegativeObservation,
+              afterIso: signal.createdAt,
             }),
             negativeAfterCompletion: toOperationalSignalSourceEvidence(negativeAfterCompletionObservation),
             latestPositive: findLatestOperationalSignalObservation({
@@ -8096,7 +8294,7 @@ function buildOperationalSignalItemFromSignal(input: {
   const relatedSuffix = relatedSignalTypes ? `; сигналы: ${compactOperationalSignalText(relatedSignalTypes, 42)}` : "";
   const rolePrefix =
     episodeRole && !INTERNAL_OPERATIONAL_EPISODE_ROLES.has(episodeRole) ? `${episodeRole}: ` : "";
-  const lifecycleDisplayState = resolveOperationalSignalDisplayLifecycleState(signal);
+  const lifecycleDisplayState = resolveOperationalSignalDisplayLifecycleState(signal, input.displayEvidence ?? null);
   const displaySection = resolveOperationalSignalDisplaySection(effective);
   let lifecyclePriority =
     lifecycleDisplayState === "active_problem"
