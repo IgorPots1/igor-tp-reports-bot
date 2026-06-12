@@ -55,7 +55,7 @@ const floorText = textFor({
   findings: ["protein_sufficient", "below_load_energy_floor", "protein_ok_but_energy_low"],
 });
 assert.doesNotMatch(floorText, /День выглядит ровно|ничего специально менять не нужно|Белок в этот день закрыт хорошо/);
-assert.match(floorText, /энергии получилось маловато|питание вокруг тренировки/);
+assert.match(floorText, /низким по энергии|энергии получилось маловато|питание вокруг тренировки/);
 
 const crossText = textFor({
   training_type: "cross_training",
@@ -73,7 +73,7 @@ const crossText = textFor({
   },
 });
 assert.doesNotMatch(crossText, /День выглядит ровно|ничего специально менять не нужно/);
-assert.match(crossText, /Падел|кросс-тренировка/);
+assert.match(crossText, /Падел|падел|кросс/i);
 assert.match(crossText, /углевод/i);
 assert.match(crossText, /белок|жир/i);
 
@@ -102,7 +102,7 @@ const hardCarbsText = textFor({
   nutrition_status: "low_for_load",
   findings: ["low_carbs_for_hard_session"],
 });
-assert.match(hardCarbsText, /Углеводов за день получилось/);
+assert.match(hardCarbsText, /интервальн|Углеводов|углевод/i);
 
 const suspectText = textFor({
   nutrition_status: "suspect",

@@ -245,12 +245,12 @@ const padelComment = dayComment(derived, "02.06");
 const strengthComment = dayComment(derived, "03.06");
 const runComment = dayComment(derived, "01.06");
 
-assert.match(padelComment, /Падел|кросс-тренировка/);
+assert.match(padelComment, /Падел|падел|кросс-тренировка/i);
 assert.match(padelComment, /энерг|низким|пустым/);
 assert.match(padelComment, /углевод/i);
 assert.match(padelComment, /белок|углевод/i);
 
-assert.match(strengthComment, /силовой|восстановления/);
+assert.match(strengthComment, /силовой|восстановления|двойн|нагрузка получилась двойная/i);
 assert.match(strengthComment, /белок|энерг|углевод/i);
 assert.doesNotMatch(strengthComment, /День выглядит ровно/);
 
@@ -268,8 +268,8 @@ const combined = buildDerivedNutritionCombinedMessage({
   profilePreferences: {},
 });
 const athleteText = combined.athleteMessageDraft ?? "";
-assert.match(athleteText, /Белок в целом ближе к норме|нижней границе/);
-assert.match(athleteText, /энерг|углевод/i);
+assert.match(athleteText, /Белок по неделе|Белок в целом|нижней границе/i);
+assert.match(athleteText, /Главный паттерн недели|Главный фокус|энерг|углевод/i);
 assert.doesNotMatch(athleteText, /RED-S|LEA|энергодоступност|дефицит/i);
 
 function polyakovaLikeDayRow(input: {

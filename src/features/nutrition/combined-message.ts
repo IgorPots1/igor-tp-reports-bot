@@ -3,6 +3,16 @@ import type { NutritionWeeklyAnalysis, NutritionWeeklyPlan } from "@/features/nu
 import type { TrainingPeaksTelegramFormality } from "@/features/trainingpeaks/repository";
 import type { NutritionNextWeekPlan } from "@/features/nutrition/weekly-plan-formulas";
 import {
+  buildNutritionTargetWeekFocusNarrative,
+  buildNutritionWeeklySummary,
+  composeNutritionDayComment,
+  humanizeNutritionTrainingLabel,
+  NutritionNarrativeRepetitionState,
+  resolveNutritionNarrativeWorkoutRole,
+  resolveWeekNarrativeDayRoles,
+  type MacroGuardrailStatuses,
+} from "@/features/nutrition/narrative-composer";
+import {
   renderNutritionTelegramMessage,
   type NutritionTelegramRenderResult,
 } from "@/features/nutrition/telegram-renderer";
@@ -276,14 +286,6 @@ export function buildDayMacroSentence(input: {
   if (hasEnergyIssue && proteinStatus === "ok" && loadDay && (carbsStatus === "low" || carbsStatus === "borderline")) {
     return "Белок закрыт, но общей энергии и углеводов всё равно маловато.";
   }
-  if (
-    hasEnergyIssue &&
-    trainingType === "strength" &&
-    proteinStatus === "borderline" &&
-    (carbsStatus === "low" || carbsStatus === "borderline")
-  ) {
-    return "Белок близко к нижней границе, но общей энергии и углеводов всё равно маловато.";
-  }
 
   const segments: string[] = [];
   if (loadDay && carbsStatus === "low") {
@@ -329,32 +331,6 @@ export function buildDayMacroSentence(input: {
   return null;
 }
 
-function composeNutritionDayComment(input: {
-  primary: string;
-  cautiousPrefix: string;
-  trainingType: string;
-  nutritionStatus: string | null;
-  findings: string[];
-  proteinStatus: string | null;
-  fatStatus: string | null;
-  carbsStatus: string | null;
-}): string {
-  const macro = buildDayMacroSentence({
-    proteinStatus: input.proteinStatus,
-    fatStatus: input.fatStatus,
-    carbsStatus: input.carbsStatus,
-    trainingType: input.trainingType,
-    hasEnergyIssue: hasDayEnergyIssue({
-      nutritionStatus: input.nutritionStatus,
-      findings: input.findings,
-    }),
-  });
-  if (!macro) {
-    return `${input.cautiousPrefix}${input.primary}`;
-  }
-  return `${input.cautiousPrefix}${input.primary} ${macro}`;
-}
-
 function getCanonicalDailyFacts(review: NutritionWeeklyAnalysis): CanonicalDailyFact[] {
   const summary = asObject(review.nutritionSummary);
   const daily = summary.daily_analysis;
@@ -384,141 +360,8 @@ function getDailyFactValue(item: CanonicalDailyFact, actual: Record<string, unkn
   return toFiniteNumber(item[snakeKey]) ?? toFiniteNumber(actual[camelKey]);
 }
 
-function renderNutritionDayComment(input: {
-  trainingType: string;
-  trainingLabel: string;
-  nutritionStatus: string | null;
-  kcal: number;
-  carbs: number;
-  carbsPerKg: number | null;
-  hasNutritionCompletenessIssue: boolean;
-  findings: string[];
-  macroGuardrails?: Record<string, unknown>;
-}): string {
-  const { proteinStatus, fatStatus, carbsStatus } = extractMacroGuardrailStatuses(input.macroGuardrails);
-  const carbsText = formatNutritionAthleteMacro(input.carbs, { approximate: true });
-  const kcalText = formatNutritionAthleteKcal(input.kcal, { mode: "actual" });
-  const carbsKgText = input.carbsPerKg != null ? ` (${formatNutritionAthletePerKg(input.carbsPerKg)})` : "";
-  const cautiousPrefix = input.hasNutritionCompletenessIssue ? "Данные по питанию за день неполные, поэтому вывод короткий. " : "";
-  const compose = (primary: string) =>
-    composeNutritionDayComment({
-      primary,
-      cautiousPrefix,
-      trainingType: input.trainingType,
-      nutritionStatus: input.nutritionStatus,
-      findings: input.findings,
-      proteinStatus,
-      fatStatus,
-      carbsStatus,
-    });
-
-  if (input.nutritionStatus === "pre_long_low") {
-    return compose(
-      `Это день перед длительной: углеводов получилось около ${carbsText}${carbsKgText}. Для такой подготовки это нижняя граница, поэтому накануне длинной работы лучше не просаживать углеводы.`
-    );
-  }
-  if (input.nutritionStatus === "long_run_low") {
-    return compose(
-      `На длинную работу день получился скромным по энергии: около ${kcalText}, углеводов около ${carbsText}${carbsKgText}. Не привязываю самочувствие только к этому, но запас топлива и восстановление могли быть лучше.`
-    );
-  }
-  if (input.nutritionStatus === "suspect") {
-    return "Данные по питанию за день выглядят неполными или нетипичными, поэтому здесь лучше проверить исходный отчёт вручную.";
-  }
-  if (
-    input.nutritionStatus === "below_energy_availability" ||
-    input.nutritionStatus === "below_energy_floor" ||
-    input.findings.includes("below_load_energy_floor") ||
-    input.findings.includes("ea_red_screen") ||
-    input.findings.includes("ea_amber_screen")
-  ) {
-    if (input.trainingType === "cross_training" || input.findings.includes("low_energy_with_cross_training")) {
-      return compose(
-        "Падел и другая кросс-тренировка тоже дают нагрузку, а день получился низким по общей энергии. Я бы не делал такой день совсем пустым по питанию, особенно если нагрузка повторяется несколько раз в неделю."
-      );
-    }
-    if (input.trainingType === "strength" || input.findings.includes("low_energy_with_strength")) {
-      return compose(
-        "В день силовой важно оставить достаточно энергии для восстановления. Здесь день получился скромным по ккал, поэтому я бы поддержал питание чуть ровнее."
-      );
-    }
-    if (input.trainingType === "rest") {
-      return compose("День отдыха получился низким по энергии. Разово не страшно, но я бы не делал такие дни регулярными.");
-    }
-    return compose(
-      "Для дня с нагрузкой энергии получилось маловато. Я бы не делал этот день слишком пустым по питанию и лучше поддержал питание вокруг тренировки."
-    );
-  }
-  if (fatStatus === "low" || input.nutritionStatus === "low_fat" || input.findings.includes("fat_below_floor")) {
-    return `${cautiousPrefix}Жиров в этот день получилось низковато. Не нужно специально держать такие дни слишком сухими по жирам, особенно если они повторяются.`;
-  }
-  if (input.nutritionStatus === "low_protein" || input.findings.includes("protein_low")) {
-    return compose(
-      "Белок в этот день чуть ниже ориентира. Поддержи базовый белок, но главный фокус всё равно на ровной энергии и углеводах под нагрузку."
-    );
-  }
-  if (input.nutritionStatus === "low_for_cross_training" || input.findings.includes("below_cross_training_floor")) {
-    return compose(
-      "Падел и другая кросс-тренировка тоже дают нагрузку. Здесь день получился низким по общей энергии, поэтому лучше поддержать питание вокруг такой нагрузки."
-    );
-  }
-  if (input.nutritionStatus === "low_for_strength" || input.findings.includes("below_strength_floor")) {
-    return compose(
-      "В день силовой важно оставить достаточно энергии для восстановления. Здесь день получился скромным по ккал, поэтому я бы поддержал питание чуть ровнее."
-    );
-  }
-  if (input.nutritionStatus === "low_for_load") {
-    if (input.trainingType === "cross_training") {
-      return compose(
-        "Углеводов для такого дня низковато. Для лёгкого дня это ещё терпимо, но для падла/кросс-тренировки лучше держать выше."
-      );
-    }
-    return compose(
-      `Углеводов за день получилось около ${carbsText}${carbsKgText} — для такой работы это нижняя граница. Не критично, но в ключевые дни лучше держать углеводы повыше, чтобы было больше топлива на тренировку и восстановление.`
-    );
-  }
-  if (input.trainingType === "rest") {
-    if (input.findings.includes("protein_sufficient")) {
-      return `${cautiousPrefix}День отдыха получился спокойным: белок закрыт хорошо, явного конфликта между питанием и нагрузкой нет.`;
-    }
-    return `${cautiousPrefix}День отдыха. По питанию всё спокойно, здесь ничего специально менять не нужно.`;
-  }
-  if (input.trainingType === "easy") {
-    if (proteinStatus === "ok" && carbsStatus === "ok" && fatStatus === "ok") {
-      return `${cautiousPrefix}День выглядит ровно: белок закрыт, углеводов под эту нагрузку достаточно, по общей энергии явного провала нет.`;
-    }
-    return `${cautiousPrefix}Под лёгкую работу день выглядит нормально: энергии и углеводов достаточно, здесь ничего специально менять не нужно.`;
-  }
-  if (input.trainingType === "cross_training") {
-    return `${cautiousPrefix}Под кросс-тренировку день выглядит достаточно ровно: энергии около ${kcalText}, углеводов около ${carbsText}${carbsKgText}.`;
-  }
-  if (input.trainingType === "hard" || input.trainingType === "race") {
-    return `${cautiousPrefix}Под эту ключевую работу питание выглядит согласованно: углеводов около ${carbsText}${carbsKgText}, сильной просадки по дню не видно.`;
-  }
-  if (input.trainingType === "long_run") {
-    return `${cautiousPrefix}Под длинную работу день выглядит достаточно ровно: энергии около ${kcalText}, углеводов около ${carbsText}${carbsKgText}.`;
-  }
-  if (input.findings.includes("protein_sufficient")) {
-    if (fatStatus === "ok" && carbsStatus === "ok") {
-      return `${cautiousPrefix}Белок в этот день закрыт хорошо, по нагрузке и питанию явного конфликта не видно.`;
-    }
-    return `${cautiousPrefix}Белок закрыт хорошо, это плюс. Главный момент не в белке, а в общей энергии и углеводах под нагрузку.`;
-  }
-  return `${cautiousPrefix}День выглядит ровно, здесь ничего специально менять не нужно.`;
-}
-
 function resolveDailyTrainingLabelForAthlete(trainingType: string, trainingLabel: string): string {
-  if (trainingType === "rest" || /день без тренировки/i.test(trainingLabel)) {
-    return "день отдыха";
-  }
-  if (/\bpadel\b/i.test(trainingLabel)) {
-    return "падел";
-  }
-  if (trainingType !== "long_run") {
-    return trainingLabel;
-  }
-  const distanceMatch = trainingLabel.match(/(\d+(?:[,.]\d+)?)\s*(?:км|km)\b/i);
-  return distanceMatch ? `длительная ${distanceMatch[1].replace(".", ",")} км` : "длительная";
+  return humanizeNutritionTrainingLabel(trainingLabel, trainingType);
 }
 
 function hasNutritionCompletenessIssue(input: {
@@ -560,6 +403,18 @@ function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
   if (reviewWeekFacts.length === 0) {
     return [];
   }
+
+  const roleInputs = reviewWeekFacts.map((item) => {
+    const date = typeof item.date === "string" ? item.date : "";
+    const trainingType =
+      typeof item.training_type === "string" ? item.training_type : typeof item.trainingType === "string" ? item.trainingType : "unknown";
+    const trainingLabel =
+      typeof item.training_label === "string" ? item.training_label : typeof item.trainingLabel === "string" ? item.trainingLabel : "день недели";
+    return { date, trainingType, trainingLabel, mode: "past_review" as const, isCompleted: true };
+  });
+  const weekRoles = resolveWeekNarrativeDayRoles(roleInputs);
+  const repetitionState = new NutritionNarrativeRepetitionState();
+
   return reviewWeekFacts
     .map((item) => {
       const date = typeof item.date === "string" ? item.date : null;
@@ -589,25 +444,37 @@ function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
         return null;
       }
       const athleteTrainingLabel = resolveDailyTrainingLabelForAthlete(trainingType, trainingLabel);
-      const comment = renderNutritionDayComment({
+      const macroStatuses: MacroGuardrailStatuses = extractMacroGuardrailStatuses(macroGuardrails);
+      const dateKey = date ?? "";
+      const resolvedRole = resolveNutritionNarrativeWorkoutRole({
         trainingType,
-        trainingLabel: athleteTrainingLabel,
-        nutritionStatus,
-        kcal,
-        carbs,
-        carbsPerKg,
-        hasNutritionCompletenessIssue: hasNutritionCompletenessIssue({
-          sourceQuality,
+        trainingLabel,
+        mode: "past_review",
+        isCompleted: true,
+      });
+      const roleInfo = weekRoles.get(dateKey) ?? { ...resolvedRole, isKey: false };
+      const comment = composeNutritionDayComment(
+        {
+          trainingType,
+          trainingLabel,
+          athleteTrainingLabel,
           nutritionStatus,
           findings,
-          kcal,
-          protein,
-          fat,
-          carbs,
-        }),
-        findings,
-        macroGuardrails,
-      });
+          macro: macroStatuses,
+          hasNutritionCompletenessIssue: hasNutritionCompletenessIssue({
+            sourceQuality,
+            nutritionStatus,
+            findings,
+            kcal,
+            protein,
+            fat,
+            carbs,
+          }),
+          hasEnergyIssue: hasDayEnergyIssue({ nutritionStatus, findings }),
+          roleInfo,
+        },
+        repetitionState
+      );
       const carbsKgText = carbsPerKg != null ? ` (${formatNutritionAthletePerKg(carbsPerKg)})` : "";
       return `🔹 ${weekday} (${dateLabel}) · ${athleteTrainingLabel}
 ${formatNutritionAthleteKcal(kcal, { mode: "actual" })} · белок ${formatNutritionAthleteMacro(protein)} · жиры ${formatNutritionAthleteMacro(fat)} · углеводы ${formatNutritionAthleteMacro(carbs)}${carbsKgText}.
@@ -647,63 +514,66 @@ function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
   const statement = compactText(typeof oneFocus.statement_ru === "string" ? oneFocus.statement_ru : null);
   const coachSummary = compactText(typeof summary.coach_summary_text === "string" ? summary.coach_summary_text : null);
   const proteinSufficient = asObject(summary.methodology_signals).protein_sufficient === true;
+  const weeklyProteinAvgGPerKg = toFiniteNumber(summary.avg_protein_g_per_kg) ?? toFiniteNumber(summary.avgProteinGPerKg);
   const dailyFacts = filterFactsToReviewWeek(review, getCanonicalDailyFacts(review));
-  let proteinOkDays = 0;
-  let proteinLowOrBorderlineDays = 0;
-  let fatLowOrBorderlineDays = 0;
-  let carbsLowLoadDays = 0;
-  let energyLowLoadDays = 0;
-  for (const day of dailyFacts) {
+
+  const roleInputs = dailyFacts.map((day) => {
+    const date = typeof day.date === "string" ? day.date : "";
     const trainingType =
       typeof day.training_type === "string" ? day.training_type : typeof day.trainingType === "string" ? day.trainingType : "unknown";
+    const trainingLabel =
+      typeof day.training_label === "string" ? day.training_label : typeof day.trainingLabel === "string" ? day.trainingLabel : "день недели";
+    return { date, trainingType, trainingLabel, mode: "past_review" as const, isCompleted: true };
+  });
+  const weekRoles = resolveWeekNarrativeDayRoles(roleInputs);
+
+  const summaryDays = dailyFacts.map((day) => {
+    const date = typeof day.date === "string" ? day.date : "";
+    const trainingType =
+      typeof day.training_type === "string" ? day.training_type : typeof day.trainingType === "string" ? day.trainingType : "unknown";
+    const trainingLabel =
+      typeof day.training_label === "string" ? day.training_label : typeof day.trainingLabel === "string" ? day.trainingLabel : "день недели";
     const nutritionStatus =
       typeof day.nutrition_status === "string" ? day.nutrition_status : typeof day.nutritionStatus === "string" ? day.nutritionStatus : null;
     const findings = asStringArray(day.findings);
-    const { proteinStatus, fatStatus, carbsStatus } = extractMacroGuardrailStatuses(day.macro_guardrails ?? day.macroGuardrails);
-    if (proteinStatus === "ok") {
-      proteinOkDays += 1;
-    } else if (proteinStatus === "low" || proteinStatus === "borderline") {
-      proteinLowOrBorderlineDays += 1;
-    }
-    if (fatStatus === "low" || fatStatus === "borderline") {
-      fatLowOrBorderlineDays += 1;
-    }
-    if (trainingType !== "rest" && (carbsStatus === "low" || carbsStatus === "borderline")) {
-      carbsLowLoadDays += 1;
-    }
-    if (hasDayEnergyIssue({ nutritionStatus, findings }) && trainingType !== "rest") {
-      energyLowLoadDays += 1;
-    }
-  }
-  const hasMacroPattern =
-    proteinOkDays > 0 ||
-    proteinLowOrBorderlineDays > 0 ||
-    fatLowOrBorderlineDays > 0 ||
-    carbsLowLoadDays > 0 ||
-    energyLowLoadDays > 0;
-  if (proteinSufficient || energyLowLoadDays > 0 || carbsLowLoadDays > 0 || hasMacroPattern) {
-    const proteinLine =
-      proteinSufficient && proteinLowOrBorderlineDays === 0
-        ? "Белок в целом выглядит нормально."
-        : proteinSufficient && proteinLowOrBorderlineDays > 0
-          ? "Белок в целом ближе к норме, но в отдельные дни нагрузки он был ближе к нижней границе."
-          : proteinLowOrBorderlineDays >= 2
-            ? "Белок в целом ближе к нижней границе."
-            : proteinOkDays > proteinLowOrBorderlineDays
-              ? "Белок в целом ближе к норме, но он не компенсирует просадки по общей энергии и углеводам."
-              : "По базовой структуре недели есть на что опереться.";
-    const fatLine =
-      fatLowOrBorderlineDays >= 2 ? "Жиры в несколько дней тоже были на нижней границе." : "";
-    const pattern =
-      energyLowLoadDays > 0 || carbsLowLoadDays > 0
-        ? "Главный фокус: сделать дни с нагрузкой не такими «пустыми» по энергии и углеводам."
-        : "Главный момент недели — держать энергию ровнее вокруг ключевых тренировок.";
-    return [proteinLine, fatLine, pattern].filter(Boolean).join(" ");
+    const macro = extractMacroGuardrailStatuses(day.macro_guardrails ?? day.macroGuardrails);
+    const roleInfo = weekRoles.get(date) ?? {
+      role: resolveNutritionNarrativeWorkoutRole({ trainingType, trainingLabel, mode: "past_review", isCompleted: true }).role,
+      isKey: false,
+      reason: "fallback",
+    };
+    return {
+      date,
+      trainingType,
+      trainingLabel,
+      nutritionStatus,
+      findings,
+      macro,
+      hasEnergyIssue: hasDayEnergyIssue({ nutritionStatus, findings }),
+      roleInfo,
+    };
+  });
+
+  if (summaryDays.length > 0) {
+    return buildNutritionWeeklySummary({
+      days: summaryDays,
+      proteinSufficient,
+      weeklyProteinAvgGPerKg,
+    });
   }
   return statement ?? coachSummary ?? "По неделе держим курс на ровную энергию и восстановление без резких просадок.";
 }
 
-function getPlanFocusLines(plan: NutritionWeeklyPlan, mode: NutritionPlanTargetWeekMode): string[] {
+function getPlanFocusLines(
+  plan: NutritionWeeklyPlan,
+  mode: NutritionPlanTargetWeekMode,
+  nextWeekPlan: NutritionNextWeekPlan | null
+): string[] {
+  const narrativeFocus = buildNutritionTargetWeekFocusNarrative(nextWeekPlan, mode);
+  if (narrativeFocus.length > 0) {
+    return narrativeFocus;
+  }
+
   const planSummary = asObject(plan.planSummary);
   const focus = asObject(planSummary.plan_focus);
   const title = compactText(typeof focus.title === "string" ? focus.title : null);
@@ -914,7 +784,7 @@ export function buildDerivedNutritionCombinedMessage(input: {
       ? `По сравнению с прошлой неделей держим более ровную базу: среднее за неделю ${formatNutritionAthleteKcal(avgKcal, { mode: "actual" })}, ориентир для дня отдыха ${formatNutritionAthleteKcal(restKcal, { mode: "target" })}.`
       : null;
   const weekSummary = getReviewWeekSummaryLine(review);
-  const focusLines = getPlanFocusLines(plan, planWeekMode);
+  const focusLines = getPlanFocusLines(plan, planWeekMode, nextWeekPlan);
   const renderResult = renderNutritionTelegramMessage({
     formality: input.formality,
     athleteName,

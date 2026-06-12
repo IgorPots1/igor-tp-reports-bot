@@ -2,8 +2,17 @@ import process from "node:process";
 
 import { createClient } from "@supabase/supabase-js";
 
-import { buildDerivedNutritionCoachDayByDayText } from "../src/features/nutrition/combined-message";
-import { getNutritionWeeklyAnalysisForWeek } from "../src/features/nutrition/repository";
+import { buildDerivedNutritionCoachDayByDayText, buildDerivedNutritionCombinedMessage } from "../src/features/nutrition/combined-message";
+import {
+  findTargetWeekKeyIntervalLabel,
+  resolveNutritionNarrativeWorkoutRole,
+  resolveWeekNarrativeDayRoles,
+  targetWeekHasLongRun,
+} from "../src/features/nutrition/narrative-composer";
+import {
+  getLatestNutritionWeeklyPlanForStudentWeek,
+  getNutritionWeeklyAnalysisForWeek,
+} from "../src/features/nutrition/repository";
 import { loadScriptEnv, resolveSupabaseEnv } from "./lib/load-script-env";
 
 const MACRO_GUARDRAILS_COMMIT_ISO = "2026-06-10T00:00:00.000Z";
@@ -56,6 +65,16 @@ function toObject(value: unknown): Record<string, unknown> {
 
 function yesNo(value: boolean): string {
   return value ? "yes" : "no";
+}
+
+function addIsoDays(isoDate: string, days: number): string {
+  const match = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return isoDate;
+  }
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 function asStringArray(value: unknown): string[] {
@@ -239,6 +258,113 @@ async function main(): Promise<void> {
   console.log(`- days_where_comment_mentions_fat: ${daysWhereCommentMentionsFat}`);
   console.log(`- days_where_comment_mentions_carbs: ${daysWhereCommentMentionsCarbs}`);
   console.log(`- days_where_comment_says_only_generic_template: ${daysWhereCommentSaysOnlyGenericTemplate}`);
+  console.log("");
+
+  const roleInputs = daily.map((raw) => {
+    const day = toObject(raw);
+    const canonical = toObject(day.canonical_daily_analysis ?? day.canonicalDailyAnalysis);
+    const date = typeof day.date === "string" ? day.date : typeof canonical.date === "string" ? canonical.date : "";
+    const trainingType =
+      typeof day.training_type === "string"
+        ? day.training_type
+        : typeof canonical.trainingType === "string"
+          ? canonical.trainingType
+          : "unknown";
+    const trainingLabel =
+      typeof day.training_label === "string"
+        ? day.training_label
+        : typeof canonical.trainingLabel === "string"
+          ? canonical.trainingLabel
+          : "день недели";
+    return { date, trainingType, trainingLabel, mode: "past_review" as const, isCompleted: true };
+  });
+  const weekRoles = resolveWeekNarrativeDayRoles(roleInputs);
+
+  console.log("key workout roles:");
+  for (const raw of daily) {
+    const day = toObject(raw);
+    const canonical = toObject(day.canonical_daily_analysis ?? day.canonicalDailyAnalysis);
+    const date = typeof day.date === "string" ? day.date : typeof canonical.date === "string" ? canonical.date : "n/a";
+    const trainingLabel =
+      typeof day.training_label === "string"
+        ? day.training_label
+        : typeof canonical.trainingLabel === "string"
+          ? canonical.trainingLabel
+          : "n/a";
+    const roleInfo = weekRoles.get(date) ?? {
+      role: resolveNutritionNarrativeWorkoutRole({
+        trainingType:
+          typeof day.training_type === "string"
+            ? day.training_type
+            : typeof canonical.trainingType === "string"
+              ? canonical.trainingType
+              : "unknown",
+        trainingLabel,
+        mode: "past_review",
+        isCompleted: true,
+      }).role,
+      isKey: false,
+      reason: "fallback",
+    };
+    console.log(`- ${date} · ${trainingLabel} · role=${roleInfo.role} · isKey=${yesNo(roleInfo.isKey)} · reason=${roleInfo.reason}`);
+  }
+  console.log("");
+
+  const fullDerived = derived ?? "";
+  const commentPatternCounts = {
+    low_energy_load: (fullDerived.match(/Для дня с нагрузкой|день с нагрузкой снова/i) ?? []).length,
+    low_energy_cross: (fullDerived.match(/падел|кросс-тренировк/i) ?? []).length,
+    key_interval: (fullDerived.match(/интервальн|ключевая интервальная/i) ?? []).length,
+    rest_low_energy: (fullDerived.match(/День отдыха получился низким/i) ?? []).length,
+  };
+  console.log("comment pattern counts:");
+  for (const [key, value] of Object.entries(commentPatternCounts)) {
+    console.log(`- ${key}: ${value}`);
+  }
+  console.log("");
+
+  const phraseCounts = {
+    "Я бы не делал...": (fullDerived.match(/Я бы не делал этот день слишком пустым/gi) ?? []).length,
+    "Белок закрыт": (fullDerived.match(/Белок закрыт/gi) ?? []).length,
+    "энергии маловато": (fullDerived.match(/энергии маловато|энергии снова маловато|низким по энергии/gi) ?? []).length,
+    "углеводов маловато": (fullDerived.match(/углеводов маловато|углеводов под/gi) ?? []).length,
+  };
+  console.log("phrase counts:");
+  for (const [key, value] of Object.entries(phraseCounts)) {
+    console.log(`- ${key}: ${value}`);
+  }
+  console.log("");
+
+  const planWeekFrom = addIsoDays(weekTo, 1);
+  const planWeekTo = addIsoDays(weekTo, 7);
+  const plan = await getLatestNutritionWeeklyPlanForStudentWeek({
+    studentId: student.id,
+    planWeekFrom,
+    planWeekTo,
+  });
+  const planSummary = toObject(plan?.planSummary);
+  const nextWeekPlanRaw = toObject(planSummary.next_week_plan);
+  const nextWeekPlan =
+    nextWeekPlanRaw.formula_version === "nutrition_next_week_plan_v1" ? (nextWeekPlanRaw as never) : null;
+  const combined =
+    plan && review
+      ? buildDerivedNutritionCombinedMessage({
+          review,
+          plan,
+          formality: "ty",
+          studentName: student.student_name,
+        })
+      : null;
+  const athleteText = combined?.athleteMessageDraft ?? "";
+  const keyLabel = findTargetWeekKeyIntervalLabel(nextWeekPlan);
+  const longRunPresent = targetWeekHasLongRun(nextWeekPlan);
+  const focusSection = athleteText.split("📋")[0] ?? athleteText;
+  const focusMentionsLong = /длительн/i.test(focusSection);
+
+  console.log("target week focus:");
+  console.log(`- key workout label: ${keyLabel ?? "n/a"}`);
+  console.log(`- long run present?: ${yesNo(longRunPresent)}`);
+  console.log(`- focus mentions long?: ${yesNo(focusMentionsLong)}`);
 }
 
 main().catch((error: unknown) => {

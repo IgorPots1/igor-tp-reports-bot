@@ -2,11 +2,18 @@ export const NUTRITION_ATHLETE_FORBIDDEN_MEDICAL_TERMS = [
   "RED-S",
   "REDs",
   "LEA",
+  "low energy availability",
   "энергодоступность",
   "энергодоступности",
   "дефицит энергии",
+  "дефицит",
   "медицинский риск",
+  "медицинский",
   "диагноз",
+  "гормоны",
+  "эндокринка",
+  "аменорея",
+  "костная плотность",
 ] as const;
 
 export const NUTRITION_ATHLETE_ALLOWED_ENERGY_WORDING = [
