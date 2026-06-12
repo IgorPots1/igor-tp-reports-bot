@@ -14,6 +14,7 @@ import {
   resolveNutritionLongRunSource,
   type NutritionLongRunSource,
 } from "@/features/nutrition/long-run";
+import type { NutritionAthleteReportSignal } from "@/features/nutrition/athlete-signals";
 import {
   getNutritionStudentEssentials,
   getNutritionTrainingPeaksCacheWindow,
@@ -98,6 +99,8 @@ export type NutritionStudentContext = {
   weightLogs: NutritionWeightLog[];
   currentWeightKg: number | null;
   nutritionGoal: string | null;
+  coachContextRu: string | null;
+  athleteReportSignals: NutritionAthleteReportSignal[];
   manualMacroRows: NormalizedManualMacroRow[];
   dataQuality: NutritionDataQuality;
   reportStatus: "received" | "parsed" | "insufficient" | "needs_review" | "ready_for_analysis";
@@ -598,6 +601,7 @@ export async function buildNutritionStudentContext(input: {
   weekFrom: string;
   weekTo: string;
   manualRows: NormalizedManualMacroRow[];
+  athleteReportSignals?: NutritionAthleteReportSignal[];
 }): Promise<NutritionStudentContext> {
   const essentials = await getNutritionStudentEssentials(input.studentId);
   const student = essentials.student;
@@ -651,6 +655,8 @@ export async function buildNutritionStudentContext(input: {
     weightLogs: essentials.weightLogs,
     currentWeightKg: essentials.profile?.currentWeightKg ?? latestConfirmedWeight ?? latestWeight ?? null,
     nutritionGoal: essentials.profile?.goal ?? null,
+    coachContextRu: essentials.profile?.coachContextRu ?? null,
+    athleteReportSignals: input.athleteReportSignals ?? [],
     manualMacroRows: input.manualRows,
     dataQuality,
     reportStatus,

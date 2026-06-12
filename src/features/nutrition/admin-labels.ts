@@ -1,5 +1,6 @@
 import type { ResolvedCommunicationProfileSource } from "@/features/trainingpeaks/communication-profile";
 import type { TrainingPeaksTelegramFormality } from "@/features/trainingpeaks/repository";
+import type { NutritionAthleteReportSignalCategory } from "@/features/nutrition/athlete-signals";
 import type { NutritionContextItemType } from "@/features/nutrition/repository";
 
 export const NUTRITION_REPORT_STATUS_LABELS: Record<string, string> = {
@@ -62,6 +63,21 @@ export const NUTRITION_CONFLICT_FLAG_LABELS: Record<string, string> = {
   formality_mismatch_manual_vs_memory: "расхождение формальности (ручная vs память)",
   preferred_greeting_conflicts_with_manual_formality: "приветствие конфликтует с формальностью",
 };
+
+export const NUTRITION_ATHLETE_REPORT_SIGNAL_LABELS: Record<NutritionAthleteReportSignalCategory, string> = {
+  fatigue: "Усталость",
+  gi: "ЖКТ",
+  illness: "Болезнь",
+  cycle: "Цикл",
+  injury: "Боль/травма",
+  psych: "Психоэмоционально",
+};
+
+export function formatNutritionAthleteReportSignalCategory(
+  category: NutritionAthleteReportSignalCategory
+): string {
+  return NUTRITION_ATHLETE_REPORT_SIGNAL_LABELS[category] ?? category;
+}
 
 export const NUTRITION_CONTEXT_ITEM_TYPE_LABELS: Record<NutritionContextItemType, string> = {
   preference: "предпочтение",

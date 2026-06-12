@@ -63,6 +63,8 @@ async function run(): Promise<void> {
     weightLogs: [],
     currentWeightKg: null,
     nutritionGoal: null,
+    coachContextRu: null,
+    athleteReportSignals: [],
     manualMacroRows: rows,
     dataQuality: {
       parsedDays: 3,
@@ -105,6 +107,52 @@ async function run(): Promise<void> {
   assert.equal(generated.safety_flags.blocked, true);
   assert.equal(generated.athlete_message_draft, null);
   assert.ok(generated.do_not_send_reasons.length > 0);
+
+  const illnessSignals = (await import("@/features/nutrition/athlete-signals")).detectNutritionAthleteReportSignals(
+    "Заболела, была температура"
+  );
+  const generatedIllnessSignals = await generateNutritionWeeklyAnalysis({
+    context: {
+      ...mockContext,
+      telegramContextNotes: null,
+      manualMacroRows: rows.map((row) => ({ ...row, kcal: 1850, carbsG: 210 })),
+      athleteReportSignals: illnessSignals,
+      tpPastWeek: {
+        periodFrom: "2026-06-01",
+        periodTo: "2026-06-07",
+        cacheStatus: "ok",
+        cacheStatusNote: "ok",
+        totalSessions: 2,
+        plannedSessions: 2,
+        completedSessions: 2,
+        runningSessions: 2,
+        longRun: null,
+        keyWorkouts: [{ date: "2026-06-03", title: "Интервалы", type: "run", confidence: "high" }],
+        workouts: [
+          {
+            date: "2026-06-03",
+            title: "Интервалы",
+            status: "completed",
+            type: "run",
+            description: null,
+            coachComments: null,
+            plannedText: null,
+          },
+        ],
+      },
+      dataQuality: {
+        parsedDays: 3,
+        lowConfidenceDays: 0,
+        hasResolvedDates: true,
+        unrealisticRows: 0,
+        duplicateDays: [],
+        qualityFlags: [],
+      },
+    },
+  });
+  assert.equal(generatedIllnessSignals.status, "needs_review", "illness signals should require coach review without hard block");
+  assert.notEqual(generatedIllnessSignals.athlete_message_draft, null, "illness signals alone must not auto-block athlete draft");
+
   console.log("PASS check-nutrition-safety-blocks");
 }
 

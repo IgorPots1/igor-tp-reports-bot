@@ -29,6 +29,8 @@ function basePastContext(workouts: NutritionStudentContext["tpPastWeek"]["workou
     weightLogs: [],
     currentWeightKg: 58,
     nutritionGoal: null,
+    coachContextRu: null,
+    athleteReportSignals: [],
     manualMacroRows: [
       { day: "2026-06-06", weekday: "сб", kcal: 1600, proteinG: 90, fatG: 50, carbsG: 140, confidence: 1, notes: null },
       { day: "2026-06-07", weekday: "вс", kcal: 1800, proteinG: 95, fatG: 55, carbsG: 200, confidence: 1, notes: null },

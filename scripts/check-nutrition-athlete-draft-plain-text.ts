@@ -29,6 +29,8 @@ function buildReviewContext(overrides?: Partial<NutritionStudentContext>): Nutri
     weightLogs: [],
     currentWeightKg: 56,
     nutritionGoal: null,
+    coachContextRu: null,
+    athleteReportSignals: [],
     manualMacroRows: [
       { day: "2026-06-01", weekday: "пн", kcal: 1950, proteinG: 102, fatG: 58, carbsG: 240, confidence: 1, notes: null },
       { day: "2026-06-02", weekday: "вт", kcal: 2200, proteinG: 106, fatG: 62, carbsG: 300, confidence: 1, notes: null },

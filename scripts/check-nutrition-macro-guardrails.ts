@@ -25,6 +25,8 @@ function contextFixture(row: { kcal: number; proteinG: number; fatG: number; car
     weightLogs: [],
     currentWeightKg: 60,
     nutritionGoal: null,
+    coachContextRu: null,
+    athleteReportSignals: [],
     manualMacroRows: [
       { day: "2026-06-01", weekday: "пн", confidence: 1, notes: null, ...row },
       { day: "2026-06-02", weekday: "вт", kcal: 2100, proteinG: 100, fatG: 65, carbsG: 280, confidence: 1, notes: null },

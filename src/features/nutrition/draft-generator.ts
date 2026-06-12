@@ -1,4 +1,8 @@
 import {
+  nutritionAthleteReportSignalsRequireCoachReview,
+  type NutritionAthleteReportSignal,
+} from "@/features/nutrition/athlete-signals";
+import {
   buildNutritionSafetyFlags,
   type NutritionStudentContext,
 } from "@/features/nutrition/context";
@@ -13,7 +17,11 @@ import { NUTRITION_REVIEW_NARRATIVE_PROMPT_LINES } from "@/features/nutrition/na
 export { NUTRITION_REVIEW_METHODOLOGY_VERSION };
 import { detectNutritionMacroReviewWeekMismatch } from "@/features/nutrition/report-date-coverage";
 import { stableHash } from "@/features/nutrition/repository";
-import type { TrainingPeaksTelegramFormality } from "@/features/trainingpeaks/repository";
+import type {
+  TrainingPeaksStudentMemoryItem,
+  TrainingPeaksStudentMemoryType,
+  TrainingPeaksTelegramFormality,
+} from "@/features/trainingpeaks/repository";
 import { getTrainingPeaksReplyDraftFormalityInstruction } from "@/features/trainingpeaks/telegram-context";
 
 const OPENAI_API_URL = process.env.OPENAI_API_URL?.trim() || "https://api.openai.com/v1/chat/completions";
@@ -106,6 +114,7 @@ export type GeneratedNutritionWeeklyAnalysis = {
   methodology_version: string;
   prompt_version: string;
   do_not_send_reasons: string[];
+  athlete_report_signals: NutritionAthleteReportSignal[];
   prompt_hash: string;
   context_hash: string;
   ai_model: string;
@@ -554,6 +563,30 @@ type NutritionAiNarrative = {
   do_not_send_reasons: string[];
 };
 
+function pickCoachMemorySummaries(
+  items: TrainingPeaksStudentMemoryItem[],
+  memoryType: TrainingPeaksStudentMemoryType,
+  limit = 2
+): string[] {
+  return items
+    .filter((item) => item.memoryType === memoryType)
+    .slice(0, limit)
+    .map((item) => item.summaryText.trim())
+    .filter(Boolean);
+}
+
+function buildCoachMemoryFactsPayload(context: NutritionStudentContext): {
+  race_or_goal: string[];
+  health_status: string[];
+  pain_or_injury: string[];
+} {
+  return {
+    race_or_goal: pickCoachMemorySummaries(context.coachMemoryItems, "race_or_goal"),
+    health_status: pickCoachMemorySummaries(context.coachMemoryItems, "health_status"),
+    pain_or_injury: pickCoachMemorySummaries(context.coachMemoryItems, "pain_or_injury"),
+  };
+}
+
 function buildFallbackCoachSummary(input: {
   context: NutritionStudentContext;
   selectedFocus: { statementRu: string };
@@ -578,6 +611,13 @@ function buildFallbackCoachSummary(input: {
   lines.push("Что сказать ученику: не поднимать питание резко, а точечно добавить углеводы/энергию вокруг длительной и ключевых работ.");
   if (!input.nextWeekHasKeySessions) {
     lines.push("Ограничение: следующая неделя в TP cache пустая/ограниченная, будущие тренировки в тексте не называем.");
+  }
+  if (input.context.athleteReportSignals.length > 0) {
+    const signalLabels = input.context.athleteReportSignals.map((signal) => signal.category).join(", ");
+    lines.push(`Сигналы из комментария ученика: ${signalLabels}. Нужна осторожная интерпретация без медицинских выводов в тексте ученику.`);
+  }
+  if (input.context.coachContextRu) {
+    lines.push("Учитывай coach_context_ru как рабочий контекст тренера, но не цитируй его ученику дословно.");
   }
   return lines.join("\n");
 }
@@ -650,6 +690,10 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "Use the required ты/вы form from formality instruction.",
     "Упоминание athlete name допускается при наличии в facts.",
     "One focus only: используй exact one_focus из facts.",
+    "coach_context_ru — high-priority interpretation context for coach summary only. Do not quote coach_context_ru verbatim to athlete.",
+    "athlete_report_signals — coach summary / review caution only. Do not cite or diagnose in athlete_message_draft.",
+    "If illness/cycle/injury signals present, recommend coach review in coach_summary_text and quality_notes.",
+    "Do not write medical claims or diagnostic conclusions in athlete_message_draft.",
     allowAthleteDraft
       ? "athlete_message_draft is required and must be useful Telegram-ready text."
       : "Hard safety flags present: athlete_message_draft must be null and coach-only text should explain manual review need.",
@@ -660,11 +704,16 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     context: input.context,
     dailyAnalysis: input.dailyAnalysis,
   });
+  const coachMemory = buildCoachMemoryFactsPayload(input.context);
   const factsPayload = {
     student: {
       name: input.context.studentName,
       formality: input.context.resolvedCommunicationProfile.formality,
+      nutrition_goal: input.context.nutritionGoal,
+      coach_context_ru: input.context.coachContextRu,
+      coach_memory: coachMemory,
     },
+    athlete_report_signals: input.context.athleteReportSignals,
     tp_context: {
       past_week: input.context.tpPastWeek,
       next_week: input.context.tpNextWeek,
@@ -776,8 +825,14 @@ export async function generateNutritionWeeklyAnalysis(input: {
     Boolean(selectedFocus.statementRu.trim()) &&
     hasUsableTrainingContext;
   const forceNeedsReview = !hasMethodologyFacts;
+  const athleteSignalsNeedCoachReview = nutritionAthleteReportSignalsRequireCoachReview(
+    context.athleteReportSignals
+  );
   if (!hasMethodologyFacts) {
     notes.push("methodology_facts_incomplete_for_ai_generation");
+  }
+  if (athleteSignalsNeedCoachReview) {
+    notes.push("athlete_report_signals_require_coach_review");
   }
   const persistedDailyAnalysis = buildNutritionDailyFactsForNarrative({
     context,
@@ -889,7 +944,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
   });
   const status = safety.blocked
     ? "blocked_safety"
-    : methodology.focusCandidateSignals.limitedData || forceNeedsReview
+    : methodology.focusCandidateSignals.limitedData || forceNeedsReview || athleteSignalsNeedCoachReview
       ? "needs_review"
       : "draft_ready";
 
@@ -987,6 +1042,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
     generation_mode: narrative.generation_mode,
     prompt_version: NUTRITION_REVIEW_PROMPT_VERSION,
     do_not_send_reasons: [...new Set([...safety.doNotSendReasons, ...narrative.do_not_send_reasons])],
+    athlete_report_signals: context.athleteReportSignals,
     prompt_hash: promptHash,
     context_hash: contextHash,
     ai_model: narrative.ai_model,

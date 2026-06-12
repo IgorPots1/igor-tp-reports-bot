@@ -15,6 +15,7 @@ import {
   previewNutritionFileUploadAction,
   saveNutritionFileReportAction,
   saveNutritionManualMacrosAction,
+  saveNutritionCoachContextAction,
   saveNutritionProfileAction,
 } from "@/app/admin/coach-os/nutrition/actions";
 import {
@@ -27,6 +28,7 @@ import {
 } from "@/features/nutrition/combined-message";
 import {
   buildNutritionStudentCardHref,
+  formatNutritionAthleteReportSignalCategory,
   formatNutritionCarbStrategy,
   formatNutritionCompactDate,
   formatNutritionConflictFlags,
@@ -63,6 +65,7 @@ import {
   hasStaleReviewIssues,
 } from "@/features/nutrition/page-consistency";
 import { formatNutritionReportDateMismatchCardNotice } from "@/features/nutrition/report-date-coverage";
+import type { NutritionAthleteReportSignal } from "@/features/nutrition/athlete-signals";
 import type { NutritionContextItemType, NutritionWeeklyPlan } from "@/features/nutrition/repository";
 
 type NutritionStudentCardPageProps = {
@@ -103,6 +106,34 @@ function asObject(value: unknown): Record<string, unknown> {
     return value as Record<string, unknown>;
   }
   return {};
+}
+
+function asAthleteReportSignals(value: unknown): NutritionAthleteReportSignal[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const allowedCategories = new Set(["fatigue", "gi", "illness", "cycle", "injury", "psych"]);
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return [];
+    }
+    const row = item as Record<string, unknown>;
+    const category = typeof row.category === "string" ? row.category : "";
+    const evidence = typeof row.evidence === "string" ? row.evidence : "";
+    const keyword = typeof row.keyword === "string" ? row.keyword : "";
+    const severity = row.severity === "coach_review" || row.severity === "info" ? row.severity : null;
+    if (!allowedCategories.has(category) || !evidence || !keyword || !severity) {
+      return [];
+    }
+    return [
+      {
+        category: category as NutritionAthleteReportSignal["category"],
+        evidence,
+        keyword,
+        severity,
+      },
+    ];
+  });
 }
 
 function formatDoNotSendReasons(safetyFlags: Record<string, unknown>): string[] {
@@ -333,6 +364,7 @@ export default async function CoachOsNutritionStudentCardPage({
         ? oneFocus.progression_strategy
         : null;
   const oneFocusText = typeof oneFocus.statement_ru === "string" ? oneFocus.statement_ru : null;
+  const athleteReportSignals = asAthleteReportSignals(weeklyNutritionSummary.athlete_report_signals);
   const hardSafetyFlags = asStringArray(card.weeklyAnalysis?.safetyFlags?.hard_flags);
   const hasSafetyFlags = hardSafetyFlags.length > 0;
   const reviewSelectedById = Boolean(reviewIdFromQuery && card.weeklyAnalysis?.id === reviewIdFromQuery);
@@ -443,6 +475,31 @@ export default async function CoachOsNutritionStudentCardPage({
           Питание: {formatNutritionEnabled(card.profile?.enabled ?? false).toLowerCase()} · Вес:{" "}
           {profileWeightKg ?? "—"} кг · Стиль: {profileFormality}
         </p>
+      </article>
+
+      <article className="admin-card admin-card-compact admin-nutrition-card-wide">
+        <h3>Контекст для разбора питания</h3>
+        <p className="admin-muted admin-nutrition-helper">
+          1–3 предложения для AI: что сейчас важно учесть по ученику. Не история болезни, а рабочий контекст.
+        </p>
+        <form className="admin-form-stack" action={saveNutritionCoachContextAction}>
+          <input type="hidden" name="studentId" value={studentId} />
+          <input type="hidden" name="redirectTo" value={studentCardPath} />
+          <label className="admin-form-field">
+            <span>Контекст для разбора питания</span>
+            <textarea
+              className="admin-textarea admin-textarea-compact"
+              name="coachContextRu"
+              rows={3}
+              maxLength={500}
+              placeholder="Например: недавно подняли объём, после болезни, готовится к старту, нужен мягкий тон."
+              defaultValue={card.profile?.coachContextRu ?? ""}
+            />
+          </label>
+          <FormActionButton className="admin-button" pendingText="Сохраняю…">
+            Сохранить контекст
+          </FormActionButton>
+        </form>
       </article>
 
       {actionableConsistencyIssues.length > 0 ? (
@@ -894,6 +951,27 @@ export default async function CoachOsNutritionStudentCardPage({
                   <p className="admin-muted">Главный вывод не сформирован.</p>
                 )}
               </section>
+
+              {athleteReportSignals.length > 0 ? (
+                <section>
+                  <h4>Сигналы из комментария ученика</h4>
+                  <div className="admin-nutrition-chip-row">
+                    {athleteReportSignals.map((signal, idx) => (
+                      <span key={`signal-chip-${idx}`} className="admin-badge admin-badge-outline">
+                        {formatNutritionAthleteReportSignalCategory(signal.category)}
+                      </span>
+                    ))}
+                  </div>
+                  <ul className="admin-list admin-nutrition-signal-evidence-list">
+                    {athleteReportSignals.map((signal, idx) => (
+                      <li key={`signal-evidence-${idx}`}>
+                        <strong>{formatNutritionAthleteReportSignalCategory(signal.category)}:</strong>{" "}
+                        <span className="admin-muted">{signal.evidence}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
 
               <section>
                 <h4>Разбор по дням</h4>

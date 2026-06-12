@@ -13,6 +13,7 @@ import {
   parseNutritionManualMacros,
   saveNutritionFileReport,
   saveNutritionManualMacros,
+  saveNutritionCoachContextActionData,
   saveNutritionProfileActionData,
 } from "@/features/nutrition/admin";
 import {
@@ -156,6 +157,26 @@ function buildPreviewSnapshot(input: {
       extractionWarnings: file.extractionWarnings ?? [],
     })),
   };
+}
+
+export async function saveNutritionCoachContextAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+
+  try {
+    await saveNutritionCoachContextActionData({
+      studentId,
+      coachContextRu: getOptionalFormValue(formData, "coachContextRu"),
+    });
+  } catch (error) {
+    revalidateNutritionPaths(studentId);
+    const message = error instanceof Error ? error.message : "Не удалось сохранить контекст для разбора.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+
+  revalidateNutritionPaths(studentId);
+  redirect(withNotice(redirectTo, "notice", "Контекст для разбора питания сохранён."));
 }
 
 export async function saveNutritionProfileAction(formData: FormData): Promise<void> {

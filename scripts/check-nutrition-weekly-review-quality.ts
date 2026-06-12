@@ -37,6 +37,11 @@ assert.match(draftGenerator, /source_quality/, "weekly generator output must inc
 assert.match(draftGenerator, /training_nutrition_links/, "weekly generator output must contain training_nutrition_links");
 assert.match(draftGenerator, /bodyweight_kg/, "weekly generator output must contain bodyweight_kg");
 assert.match(draftGenerator, /carb_progression_strategy/, "weekly generator output must contain carb_progression_strategy");
+assert.match(draftGenerator, /coach_context_ru/, "weekly generator must include coach_context_ru in facts payload");
+assert.match(draftGenerator, /athlete_report_signals/, "weekly generator must include athlete_report_signals in facts payload");
+assert.match(draftGenerator, /nutrition_goal/, "weekly generator must include nutrition_goal in facts payload");
+assert.match(draftGenerator, /coach_memory/, "weekly generator must include coach memory summaries in facts payload");
+assert.match(draftGenerator, /athlete_report_signals_require_coach_review/, "weekly generator must flag illness/cycle/injury signals");
 assert.match(draftGenerator, /coach_summary_text/, "weekly generator must include coach_summary_text");
 assert.match(draftGenerator, /day_by_day_analysis_text/, "weekly generator must include day_by_day_analysis_text");
 assert.match(draftGenerator, /generation_mode/, "weekly generator must include generation_mode");
@@ -63,5 +68,7 @@ assert.match(studentPage, /Служебный черновик обзора из
 assert.match(studentPage, /buildDerivedNutritionCoachDayByDayText/, "coach day-by-day section must use derived canonical facts");
 assert.match(studentPage, /Исходный сохранённый разбор \(служебно\)/, "coach section must keep stored day-by-day as secondary details");
 assert.match(studentPage, /Метрики недели/, "UI should keep metrics section");
+assert.match(studentPage, /Контекст для разбора питания/, "UI should show coach context block");
+assert.match(studentPage, /Сигналы из комментария ученика/, "UI should show athlete report signals section");
 
 console.log("PASS check-nutrition-weekly-review-quality");

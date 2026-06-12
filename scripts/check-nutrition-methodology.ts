@@ -29,6 +29,8 @@ function buildMockContext(overrides?: Partial<NutritionStudentContext>): Nutriti
     weightLogs: [],
     currentWeightKg: 56,
     nutritionGoal: null,
+    coachContextRu: null,
+    athleteReportSignals: [],
     manualMacroRows: [
       {
         day: "2026-06-01",

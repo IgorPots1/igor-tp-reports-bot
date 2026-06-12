@@ -27,6 +27,8 @@ function baseContext(workout: { title: string; type: string }, kcal = 1400): Nut
     weightLogs: [],
     currentWeightKg: 60,
     nutritionGoal: null,
+    coachContextRu: null,
+    athleteReportSignals: [],
     manualMacroRows: [
       { day: "2026-06-01", weekday: "пн", kcal, proteinG: 100, fatG: 45, carbsG: 130, confidence: 1, notes: null },
       { day: "2026-06-02", weekday: "вт", kcal: 2100, proteinG: 100, fatG: 65, carbsG: 270, confidence: 1, notes: null },

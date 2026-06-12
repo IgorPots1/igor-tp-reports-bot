@@ -25,6 +25,8 @@ function buildMockContext(): NutritionStudentContext {
     weightLogs: [],
     currentWeightKg: 56,
     nutritionGoal: null,
+    coachContextRu: null,
+    athleteReportSignals: [],
     manualMacroRows: [
       { day: "2026-06-01", weekday: "пн", kcal: 1900, proteinG: 105, fatG: 58, carbsG: 200, confidence: 1, notes: null },
       { day: "2026-06-02", weekday: "вт", kcal: 1800, proteinG: 102, fatG: 55, carbsG: 185, confidence: 1, notes: null },

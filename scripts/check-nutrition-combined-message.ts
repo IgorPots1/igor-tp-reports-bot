@@ -371,6 +371,10 @@ async function run(): Promise<void> {
   );
   assert.doesNotMatch(helperSource, /create table|nutrition_weekly_messages|migration/i, "combined helper must not introduce DB migration/table");
 
+  const draftGenerator = readFileSync(join(root, "src/features/nutrition/draft-generator.ts"), "utf8");
+  assert.match(draftGenerator, /athlete_report_signals/, "review generator must persist athlete report signals");
+  assert.doesNotMatch(helperSource, /coach_context_ru/, "combined athlete message must not expose coach context field");
+
   console.log("PASS check-nutrition-combined-message");
 }
 

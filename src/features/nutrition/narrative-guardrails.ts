@@ -29,6 +29,8 @@ export const NUTRITION_PRACTICAL_TARGET_REQUIRED_WORDING = [
 ] as const;
 
 export const NUTRITION_REVIEW_NARRATIVE_PROMPT_LINES = [
+  "coach_context_ru — high-priority coach interpretation context. Не цитируй coach_context_ru дословно ученику.",
+  "athlete_report_signals — только coach summary / review caution. Не пиши медицинские выводы ученику по сигналам illness/cycle/injury.",
   "EA/energyAvailability — только coach screening. Не пиши ученику: RED-S, REDs, LEA, энергодоступность, дефицит энергии, медицинский риск, диагноз.",
   "Допустимо ученику: «энергии для такого дня маловато», «для дня с нагрузкой это нижняя граница», «лучше поддержать питание вокруг нагрузки».",
   "macroGuardrails детерминированы в facts: не пересчитывай г/кг и не переопределяй protein ok как оправдание низкой энергии/углеводов.",

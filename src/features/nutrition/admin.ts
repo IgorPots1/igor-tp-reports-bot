@@ -26,6 +26,10 @@ import {
   type NutritionDashboardFilters,
   type NutritionContextItemType,
 } from "@/features/nutrition/repository";
+import {
+  collectNutritionAthleteReportSignalTexts,
+  detectNutritionAthleteReportSignalsFromTexts,
+} from "@/features/nutrition/athlete-signals";
 import { generateNutritionWeeklyAnalysis } from "@/features/nutrition/draft-generator";
 import { intakeNutritionReportFiles, type IntakeNutritionReportFilesResult } from "@/features/nutrition/file-intake";
 import {
@@ -114,6 +118,17 @@ export async function saveNutritionProfileActionData(input: {
     currentWeightKg: input.currentWeightKg ?? null,
     toleranceNotes: input.toleranceNotes ?? null,
     coachNotes: input.coachNotes ?? null,
+  });
+}
+
+export async function saveNutritionCoachContextActionData(input: {
+  studentId: string;
+  coachContextRu: string | null;
+}) {
+  const { saveNutritionCoachContextRu } = await import("@/features/nutrition/repository");
+  return saveNutritionCoachContextRu({
+    studentId: input.studentId,
+    coachContextRu: input.coachContextRu,
   });
 }
 
@@ -370,11 +385,21 @@ export async function generateNutritionWeeklyReview(input: {
         notes: row.notes,
       }));
 
+  const essentials = await getNutritionStudentEssentials(input.studentId);
+  const signalSourceTexts = collectNutritionAthleteReportSignalTexts({
+    reportComment: reportWithMacros.report.rawText,
+    manualMacroNotes: rows.map((row) => row.notes),
+    nutritionContextNotes: essentials.contextItems.map((item) => item.text),
+    profileToleranceNotes: essentials.profile?.toleranceNotes ?? null,
+  });
+  const athleteReportSignals = detectNutritionAthleteReportSignalsFromTexts(signalSourceTexts);
+
   const context = await buildNutritionStudentContext({
     studentId: input.studentId,
     weekFrom: effectiveWeekFrom,
     weekTo: effectiveWeekTo,
     manualRows: rows,
+    athleteReportSignals,
   });
   const generated = await generateNutritionWeeklyAnalysis({ context });
   const status = generated.safety_flags.blocked
@@ -403,6 +428,7 @@ export async function generateNutritionWeeklyReview(input: {
       carb_progression_strategy: generated.one_focus.progression_strategy,
       coach_summary_text: generated.coach_summary_text,
       day_by_day_analysis_text: generated.day_by_day_analysis_text,
+      athlete_report_signals: generated.athlete_report_signals,
       generation_mode: generated.generation_mode,
       prompt_version: generated.prompt_version,
       do_not_send_reasons: generated.do_not_send_reasons,
@@ -416,6 +442,8 @@ export async function generateNutritionWeeklyReview(input: {
       communicationProfilePromptLines: context.communicationProfilePromptLines,
       telegramContextNotes: context.telegramContextNotes,
       coachMemoryCount: context.coachMemoryItems.length,
+      coachContextRu: context.coachContextRu,
+      athleteReportSignals: context.athleteReportSignals,
       nutritionContextItemCount: context.nutritionContextItems.length,
       weightLogCount: context.weightLogs.length,
       manualMacroRows: context.manualMacroRows,

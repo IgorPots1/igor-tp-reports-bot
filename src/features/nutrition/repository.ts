@@ -15,6 +15,8 @@ import {
 import { listTrainingPeaksAdminStudents } from "@/features/trainingpeaks/admin";
 import { buildNutritionNextActionHref } from "@/features/nutrition/admin-labels";
 
+export const NUTRITION_COACH_CONTEXT_RU_MAX_LENGTH = 500;
+
 export type NutritionStudentProfile = {
   id: string;
   studentId: string;
@@ -26,6 +28,7 @@ export type NutritionStudentProfile = {
   dislikes: Record<string, unknown>;
   toleranceNotes: string | null;
   coachNotes: string | null;
+  coachContextRu: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -174,6 +177,7 @@ type NutritionStudentProfileRow = {
   dislikes: unknown;
   tolerance_notes: string | null;
   coach_notes: string | null;
+  coach_context_ru: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -287,6 +291,7 @@ export type UpsertNutritionStudentProfileInput = {
   dislikes?: Record<string, unknown>;
   toleranceNotes?: string | null;
   coachNotes?: string | null;
+  coachContextRu?: string | null;
 };
 
 export type AddNutritionWeightLogInput = {
@@ -450,6 +455,7 @@ function mapNutritionStudentProfileRow(row: NutritionStudentProfileRow): Nutriti
     dislikes: toObject(row.dislikes),
     toleranceNotes: row.tolerance_notes,
     coachNotes: row.coach_notes,
+    coachContextRu: compactText(row.coach_context_ru),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -573,6 +579,19 @@ function compactText(value: string | null | undefined): string | null {
   return normalized || null;
 }
 
+export function normalizeNutritionCoachContextRu(value: string | null | undefined): string | null {
+  const normalized = compactText(value);
+  if (!normalized) {
+    return null;
+  }
+  if (normalized.length > NUTRITION_COACH_CONTEXT_RU_MAX_LENGTH) {
+    throw new Error(
+      `Контекст для разбора не может быть длиннее ${NUTRITION_COACH_CONTEXT_RU_MAX_LENGTH} символов.`
+    );
+  }
+  return normalized;
+}
+
 export function stableHash(input: unknown): string {
   return createHash("sha256")
     .update(JSON.stringify(input))
@@ -610,10 +629,15 @@ export async function upsertNutritionStudentProfile(
     dislikes: input.dislikes ?? {},
     tolerance_notes: compactText(input.toleranceNotes),
     coach_notes: compactText(input.coachNotes),
+    coach_context_ru:
+      input.coachContextRu === undefined ? undefined : normalizeNutritionCoachContextRu(input.coachContextRu),
   };
+  const upsertPayload = Object.fromEntries(
+    Object.entries(payload).filter(([, value]) => value !== undefined)
+  );
   const { data, error } = await supabase
     .from("nutrition_student_profiles")
-    .upsert(payload, { onConflict: "student_id" })
+    .upsert(upsertPayload, { onConflict: "student_id" })
     .select("*")
     .single();
 
@@ -621,6 +645,23 @@ export async function upsertNutritionStudentProfile(
     throw new Error(`Failed to upsert nutrition student profile ${input.studentId}: ${error.message}`);
   }
   return mapNutritionStudentProfileRow(data as NutritionStudentProfileRow);
+}
+
+export async function saveNutritionCoachContextRu(input: {
+  studentId: string;
+  coachContextRu: string | null;
+}): Promise<NutritionStudentProfile> {
+  const existing = await getNutritionStudentProfile(input.studentId);
+  return upsertNutritionStudentProfile({
+    studentId: input.studentId,
+    enabled: existing?.enabled ?? false,
+    goal: existing?.goal ?? null,
+    trackingApp: existing?.trackingApp ?? null,
+    currentWeightKg: existing?.currentWeightKg ?? null,
+    toleranceNotes: existing?.toleranceNotes ?? null,
+    coachNotes: existing?.coachNotes ?? null,
+    coachContextRu: normalizeNutritionCoachContextRu(input.coachContextRu),
+  });
 }
 
 export async function addNutritionWeightLog(input: AddNutritionWeightLogInput): Promise<NutritionWeightLog> {

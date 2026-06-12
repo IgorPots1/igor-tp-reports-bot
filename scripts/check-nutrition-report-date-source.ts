@@ -143,6 +143,8 @@ function buildMinimalContext(weekFrom: string, weekTo: string, macroDates: strin
     weightLogs: [],
     currentWeightKg: 60,
     nutritionGoal: null,
+    coachContextRu: null,
+    athleteReportSignals: [],
     manualMacroRows,
     dataQuality: {
       parsedDays: manualMacroRows.length,

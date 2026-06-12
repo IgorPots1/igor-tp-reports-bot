@@ -23,6 +23,8 @@ function buildMockContext(overrides?: Partial<NutritionStudentContext>): Nutriti
     weightLogs: [],
     currentWeightKg: 56,
     nutritionGoal: null,
+    coachContextRu: null,
+    athleteReportSignals: [],
     manualMacroRows: [
       { day: "2026-06-01", weekday: "пн", kcal: 1850, proteinG: 108, fatG: 58, carbsG: 210, confidence: 1, notes: null },
       { day: "2026-06-02", weekday: "вт", kcal: 1820, proteinG: 102, fatG: 56, carbsG: 195, confidence: 1, notes: null },
@@ -164,6 +166,40 @@ async function run(): Promise<void> {
   const generatedHardSafety = await generateNutritionWeeklyAnalysis({ context: hardSafety });
   assert.equal(generatedHardSafety.status, "blocked_safety");
   assert.equal(generatedHardSafety.athlete_message_draft, null, "hard safety should block athlete draft");
+
+  const withCoachContext = buildMockContext({
+    coachContextRu: "недавно подняли объём, после болезни, нужен мягкий тон",
+    nutritionGoal: "поддержка энергии на объёме",
+    coachMemoryItems: [
+      {
+        id: "m1",
+        studentId: "student-nadya",
+        memoryType: "race_or_goal",
+        summaryText: "Готовится к полумарафону в августе",
+        structured: {},
+        source: "coach_manual",
+        confidence: 1,
+        validFrom: null,
+        validUntil: null,
+        isActive: true,
+        supersededBy: null,
+        sourceObservationId: null,
+        sourceMessagePreview: null,
+        firstSeenAt: "2026-06-01T00:00:00.000Z",
+        lastSeenAt: "2026-06-01T00:00:00.000Z",
+        metadata: {},
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      },
+    ],
+  });
+  const generatedWithCoachContext = await generateNutritionWeeklyAnalysis({ context: withCoachContext });
+  assert.ok(Array.isArray(generatedWithCoachContext.athlete_report_signals));
+  assert.doesNotMatch(
+    generatedWithCoachContext.athlete_message_draft ?? "",
+    /недавно подняли объём/i,
+    "coach context must not be quoted verbatim in athlete draft"
+  );
 
   const noApiKey = await generateNutritionWeeklyAnalysis({ context: buildMockContext() });
   if (!process.env.OPENAI_API_KEY?.trim()) {
