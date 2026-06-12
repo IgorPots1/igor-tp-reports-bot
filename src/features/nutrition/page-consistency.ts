@@ -1,4 +1,8 @@
 import type { NutritionWeeklyAnalysis, NutritionWeeklyPlan } from "@/features/nutrition/repository";
+import {
+  countDatesOverlappingWeek,
+  formatNutritionReportDateMismatchCardNotice,
+} from "@/features/nutrition/report-date-coverage";
 
 export type NutritionPageConsistencyIssueSeverity = "warning" | "error" | "info";
 
@@ -6,6 +10,8 @@ export type NutritionPageConsistencyIssueCode =
   | "review_stale_methodology"
   | "review_fallback_mode"
   | "daily_dates_mismatch"
+  | "report_date_mismatch"
+  | "report_date_ui_fallback"
   | "tp_daily_join_mismatch"
   | "missing_target_plan"
   | "selected_plan_wrong_week"
@@ -35,6 +41,10 @@ export type AnalyzeNutritionPageConsistencyInput = {
   plan?: NutritionWeeklyPlan | null;
   selectedPlanWrongWeek?: boolean;
   hasReview?: boolean;
+  reportDataQuality?: Record<string, unknown> | null;
+  reportWeekFrom?: string | null;
+  reportWeekTo?: string | null;
+  reportMacroDates?: string[];
 };
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -148,6 +158,38 @@ export function analyzeNutritionPageConsistency(
   const review = input.review ?? null;
   const plan = input.plan ?? null;
   const hasReview = input.hasReview ?? Boolean(review);
+
+  const reportDataQuality = input.reportDataQuality ?? null;
+  if (reportDataQuality) {
+    const cardNotice = formatNutritionReportDateMismatchCardNotice(reportDataQuality);
+    if (cardNotice) {
+      issues.push({
+        severity: "warning",
+        code:
+          reportDataQuality.date_range_source === "ui_fallback"
+            ? "report_date_ui_fallback"
+            : "report_date_mismatch",
+        message: cardNotice,
+        action: reportDataQuality.date_range_mismatch === true ? "Перезагрузите PDF или проверьте неделю" : undefined,
+      });
+    }
+  }
+
+  const reportMacroDates = input.reportMacroDates ?? [];
+  if (
+    reportMacroDates.length > 0 &&
+    input.reportWeekFrom &&
+    input.reportWeekTo &&
+    countDatesOverlappingWeek(reportMacroDates, input.reportWeekFrom, input.reportWeekTo) === 0
+  ) {
+    issues.push({
+      severity: "warning",
+      code: "report_date_mismatch",
+      message:
+        "Даты daily macros не совпадают с week_from/week_to отчёта. Пересохраните отчёт или перегенерируйте обзор.",
+      action: "Пересохраните отчёт",
+    });
+  }
 
   if (review) {
     const summary = asObject(review.nutritionSummary);

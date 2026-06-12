@@ -211,6 +211,11 @@ assert.match(
   "missing plan hint must use policy helper"
 );
 assert.match(mainUi, /analyzeNutritionPageConsistency/, "page must run page consistency analysis");
+assert.match(mainUi, /formatNutritionReportDateMismatchCardNotice/, "page must show report date mismatch notice");
+assert.match(mainUi, /reportMacroDates/, "page must pass report macro dates into consistency analysis");
+
+assert.match(packageJson, /diagnose:nutrition-page-consistency/, "package.json must include page consistency diagnostic");
+assert.match(packageJson, /check:nutrition-page-consistency/, "package.json must include page consistency check");
 assert.match(mainUi, /Проверка согласованности/, "page must show consistency check heading");
 assert.match(mainUi, /Обзор или фокус требуют обновления/, "page must show consistency warning copy");
 
@@ -239,8 +244,12 @@ assert.match(diagnoseScript, /resolveNutritionWeeklyPlanForDisplay/, "page consi
 assert.match(diagnoseScript, /--student-name/, "page consistency diagnostic must accept student name");
 assert.match(diagnoseScript, /Daily analysis vs TP context/, "page consistency diagnostic must compare daily vs TP");
 
-assert.match(packageJson, /diagnose:nutrition-page-consistency/, "package.json must include page consistency diagnostic");
-assert.match(packageJson, /check:nutrition-page-consistency/, "package.json must include page consistency check");
+assert.match(pageConsistencySource, /report_date_mismatch/, "page consistency helper must detect report date mismatch");
+assert.match(pageConsistencySource, /report_date_ui_fallback/, "page consistency helper must detect UI fallback date source");
+assert.match(pageConsistencySource, /formatNutritionReportDateMismatchCardNotice/, "page consistency helper must use report date notice formatter");
+
+assert.match(packageJson, /diagnose:nutrition-report-date-coverage/, "package.json must include report date coverage diagnostic");
+assert.match(packageJson, /check:nutrition-report-date-source/, "package.json must include report date source check");
 
 assert.doesNotMatch(mainUi, /telegram|sendMessage|sendTelegram/i, "nutrition page must not auto-send Telegram");
 assert.doesNotMatch(pageConsistencySource, /telegram|sendMessage|sendTelegram/i, "page consistency helper must not send Telegram");

@@ -28,6 +28,12 @@ import {
 } from "@/features/nutrition/repository";
 import { generateNutritionWeeklyAnalysis } from "@/features/nutrition/draft-generator";
 import { intakeNutritionReportFiles, type IntakeNutritionReportFilesResult } from "@/features/nutrition/file-intake";
+import {
+  buildNutritionReportDateQualityMetadata,
+  compareNutritionReportDateRanges,
+  formatNutritionReportDateMismatchNotice,
+  resolveNutritionEffectiveReportWeek,
+} from "@/features/nutrition/report-date-coverage";
 import { generateAndSaveNutritionWeeklyPlan } from "@/features/nutrition/weekly-plan-generator";
 
 export { generateAndSaveNutritionWeeklyPlan };
@@ -222,6 +228,7 @@ export async function previewNutritionFileUpload(input: {
     studentId: input.studentId,
     reportId: previewReportId,
     weekFrom: input.weekFrom,
+    weekTo: input.weekTo,
     files: input.files,
     persistFiles: false,
   });
@@ -248,31 +255,62 @@ export async function saveNutritionFileReport(input: {
     studentId: input.studentId,
     reportId,
     weekFrom: input.weekFrom,
+    weekTo: input.weekTo,
     files: input.files,
   });
   const rows = intake.extraction.extractedRows;
+  const parsedCoverage = intake.extraction.dateCoverage;
+  const effectiveWeek = resolveNutritionEffectiveReportWeek({
+    uiWeekFrom: input.weekFrom,
+    uiWeekTo: input.weekTo,
+    parsedWeekFrom: parsedCoverage.parsedWeekFrom,
+    parsedWeekTo: parsedCoverage.parsedWeekTo,
+  });
+  const dateComparison = compareNutritionReportDateRanges({
+    uiWeekFrom: input.weekFrom,
+    uiWeekTo: input.weekTo,
+    parsedWeekFrom: parsedCoverage.parsedWeekFrom,
+    parsedWeekTo: parsedCoverage.parsedWeekTo,
+  });
   const quality = calculateNutritionDataQuality(rows);
   const status = input.forceNeedsReview ? "needs_review" : classifyNutritionReportStatus(quality);
   const hasOnlyNotes = rows.length === 0 && Boolean(input.studentNotes?.trim());
   const resolvedStatus = hasOnlyNotes ? "needs_review" : status;
+  const dateMismatchNotice = formatNutritionReportDateMismatchNotice({
+    uiWeekFrom: input.weekFrom,
+    uiWeekTo: input.weekTo,
+    effectiveWeekFrom: effectiveWeek.effectiveWeekFrom,
+    effectiveWeekTo: effectiveWeek.effectiveWeekTo,
+    dateRangeSource: effectiveWeek.dateRangeSource,
+    mismatch: dateComparison.mismatch,
+  });
 
   const report = await createNutritionReport({
     studentId: input.studentId,
-    weekFrom: input.weekFrom,
-    weekTo: input.weekTo,
+    weekFrom: effectiveWeek.effectiveWeekFrom,
+    weekTo: effectiveWeek.effectiveWeekTo,
     sourceType: intake.sourceType,
     rawText: input.studentNotes ?? null,
     fileRefs: {
       files: intake.fileMetas,
       unsupported_files: intake.extraction.unsupportedFiles,
       extraction_warnings: intake.extraction.extractionWarnings,
+      parsed_week_from: parsedCoverage.parsedWeekFrom,
+      parsed_week_to: parsedCoverage.parsedWeekTo,
+      ui_week_from: input.weekFrom,
+      ui_week_to: input.weekTo,
     },
     status: resolvedStatus,
-    dataQuality: {
-      ...quality,
-      extracted_days: rows.length,
-      unsupported_files_count: intake.extraction.unsupportedFiles.length,
-    },
+    dataQuality: buildNutritionReportDateQualityMetadata({
+      uiWeekFrom: input.weekFrom,
+      uiWeekTo: input.weekTo,
+      parsedCoverage,
+      existing: {
+        ...quality,
+        extracted_days: rows.length,
+        unsupported_files_count: intake.extraction.unsupportedFiles.length,
+      },
+    }),
   });
 
   const macrosToSave = rows
@@ -297,6 +335,10 @@ export async function saveNutritionFileReport(input: {
     intake,
     quality,
     status: resolvedStatus,
+    effectiveWeekFrom: effectiveWeek.effectiveWeekFrom,
+    effectiveWeekTo: effectiveWeek.effectiveWeekTo,
+    dateMismatchNotice,
+    dateComparison,
   };
 }
 
@@ -312,8 +354,11 @@ export async function generateNutritionWeeklyReview(input: {
     throw new Error(`Nutrition report not found: ${input.reportId}`);
   }
 
+  const effectiveWeekFrom = reportWithMacros.report.weekFrom;
+  const effectiveWeekTo = reportWithMacros.report.weekTo;
+
   const rows = input.manualRowsOverrideText
-    ? normalizeManualMacroInput(input.manualRowsOverrideText, input.weekFrom)
+    ? normalizeManualMacroInput(input.manualRowsOverrideText, effectiveWeekFrom)
     : reportWithMacros.macros.map((row) => ({
         day: row.day,
         weekday: null,
@@ -327,8 +372,8 @@ export async function generateNutritionWeeklyReview(input: {
 
   const context = await buildNutritionStudentContext({
     studentId: input.studentId,
-    weekFrom: input.weekFrom,
-    weekTo: input.weekTo,
+    weekFrom: effectiveWeekFrom,
+    weekTo: effectiveWeekTo,
     manualRows: rows,
   });
   const generated = await generateNutritionWeeklyAnalysis({ context });
@@ -341,8 +386,8 @@ export async function generateNutritionWeeklyReview(input: {
   const analysis = await createNutritionWeeklyAnalysis({
     studentId: input.studentId,
     reportId: input.reportId,
-    weekFrom: input.weekFrom,
-    weekTo: input.weekTo,
+    weekFrom: effectiveWeekFrom,
+    weekTo: effectiveWeekTo,
     status,
     internalSummary: generated.internal_summary,
     tpPastWeekContext: context.tpPastWeek,
@@ -387,5 +432,7 @@ export async function generateNutritionWeeklyReview(input: {
     analysis,
     generated,
     context,
+    effectiveWeekFrom,
+    effectiveWeekTo,
   };
 }

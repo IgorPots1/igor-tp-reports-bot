@@ -462,10 +462,15 @@ export async function saveNutritionFileReportAction(formData: FormData): Promise
   redirect(
     buildNutritionStudentCardHref({
       studentId,
-      weekFrom,
-      weekTo,
+      weekFrom: result.effectiveWeekFrom,
+      weekTo: result.effectiveWeekTo,
       reportId: result.report.id,
-      notice: `Отчёт сохранён (${formatNutritionStatus(result.status, "report")}), файлов: ${result.intake.fileMetas.length}, макросов: ${result.macros.length}.`,
+      notice: [
+        `Отчёт сохранён (${formatNutritionStatus(result.status, "report")}), файлов: ${result.intake.fileMetas.length}, макросов: ${result.macros.length}.`,
+        result.dateMismatchNotice,
+      ]
+        .filter(Boolean)
+        .join(" "),
     })
   );
 }
@@ -536,8 +541,8 @@ export async function generateNutritionWeeklyReviewAction(formData: FormData): P
     redirect(
       buildNutritionStudentCardHref({
         studentId,
-        weekFrom,
-        weekTo,
+        weekFrom: result.effectiveWeekFrom,
+        weekTo: result.effectiveWeekTo,
         reportId,
         reviewId: result.analysis.id,
         notice: message,

@@ -62,6 +62,7 @@ import {
   getActionablePageConsistencyIssues,
   hasStaleReviewIssues,
 } from "@/features/nutrition/page-consistency";
+import { formatNutritionReportDateMismatchCardNotice } from "@/features/nutrition/report-date-coverage";
 import type { NutritionContextItemType, NutritionWeeklyPlan } from "@/features/nutrition/repository";
 
 type NutritionStudentCardPageProps = {
@@ -131,8 +132,16 @@ function formatTrainingType(type: string | null | undefined): string {
 }
 
 function getParsedDays(dataQuality: Record<string, unknown>): string {
-  const parsedDays = dataQuality.parsed_days;
+  const parsedDays = dataQuality.parsed_days ?? dataQuality.parsedDays;
   return typeof parsedDays === "number" ? String(parsedDays) : "—";
+}
+
+function getReportMacroDates(dataQuality: Record<string, unknown>): string[] {
+  const parsedDates = dataQuality.parsed_dates;
+  if (!Array.isArray(parsedDates)) {
+    return [];
+  }
+  return parsedDates.filter((item): item is string => typeof item === "string");
 }
 
 function formatWeekdayRu(isoDate: string): string {
@@ -376,7 +385,14 @@ export default async function CoachOsNutritionStudentCardPage({
     plan: displayPlan,
     selectedPlanWrongWeek,
     hasReview: Boolean(card.weeklyAnalysis),
+    reportDataQuality: selectedReport ? asObject(selectedReport.dataQuality) : null,
+    reportWeekFrom: selectedReport?.weekFrom ?? null,
+    reportWeekTo: selectedReport?.weekTo ?? null,
+    reportMacroDates: selectedReport ? getReportMacroDates(asObject(selectedReport.dataQuality)) : [],
   });
+  const selectedReportDateNotice = selectedReport
+    ? formatNutritionReportDateMismatchCardNotice(asObject(selectedReport.dataQuality))
+    : null;
   const actionableConsistencyIssues = getActionablePageConsistencyIssues(pageConsistencyIssues);
   const coachDetailsStoredNotice = pageConsistencyIssues.find(
     (issue) => issue.code === "coach_details_stored_layer"
@@ -466,12 +482,17 @@ export default async function CoachOsNutritionStudentCardPage({
           {!selectedReport ? (
             <p className="admin-muted">Сначала сохраните или выберите отчёт питания за эту неделю.</p>
           ) : (
-            <p className="admin-nutrition-selected-card">
-              Выбран: <code className="admin-nutrition-code">{formatNutritionShortId(selectedReport.id)}</code> ·{" "}
-              {formatNutritionStatus(selectedReport.status, "report")} ·{" "}
-              {formatNutritionSourceType(selectedReport.sourceType)} · создан{" "}
-              {formatNutritionCompactDate(selectedReport.createdAt)}
-            </p>
+            <>
+              <p className="admin-nutrition-selected-card">
+                Выбран: <code className="admin-nutrition-code">{formatNutritionShortId(selectedReport.id)}</code> ·{" "}
+                {formatNutritionStatus(selectedReport.status, "report")} ·{" "}
+                {formatNutritionSourceType(selectedReport.sourceType)} · создан{" "}
+                {formatNutritionCompactDate(selectedReport.createdAt)}
+              </p>
+              {selectedReportDateNotice ? (
+                <p className="admin-alert admin-alert-warning admin-nutrition-helper">{selectedReportDateNotice}</p>
+              ) : null}
+            </>
           )}
 
           {recentReports.length > 0 ? (

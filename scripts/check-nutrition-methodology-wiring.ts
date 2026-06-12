@@ -24,6 +24,15 @@ assert.match(pageSource, /Вес не задан — расчёт г\/кг и б
 assert.match(pageSource, /<details>[\s\S]*Technical JSON/, "technical JSON should be collapsed");
 assert.match(pageSource, /<details>[\s\S]*Safety JSON/, "safety JSON should be collapsed");
 
+assert.match(adminSource, /weekFrom: effectiveWeekFrom/, "weekly review must persist report week, not UI week");
+assert.match(adminSource, /weekFrom: effectiveWeek\.effectiveWeekFrom/, "file report save must persist parsed effective week");
+
+const reportDateCoverageSource = readFileSync(join(root, "src/features/nutrition/report-date-coverage.ts"), "utf8");
+assert.match(reportDateCoverageSource, /compareNutritionReportDateRanges/, "report date coverage must compare UI vs parsed week");
+assert.match(reportDateCoverageSource, /resolveNutritionEffectiveReportWeek/, "report date coverage must resolve effective week");
+
+const draftGeneratorSource = readFileSync(join(root, "src/features/nutrition/draft-generator.ts"), "utf8");
+assert.match(draftGeneratorSource, /date_range_mismatch_detected/, "draft generator must flag macro/review week mismatch");
 const contextSource = readFileSync(join(root, "src/features/nutrition/context.ts"), "utf8");
 assert.match(contextSource, /currentWeightKg:\s*essentials\.profile\?\.currentWeightKg\s*\?\?\s*latestConfirmedWeight\s*\?\?\s*latestWeight\s*\?\?\s*null/, "weight resolution must include profile -> latest confirmed log -> latest log");
 

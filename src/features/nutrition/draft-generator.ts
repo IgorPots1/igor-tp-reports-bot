@@ -7,6 +7,7 @@ import {
   selectNutritionWeeklyFocus,
   type CarbProgressionStrategy,
 } from "@/features/nutrition/methodology";
+import { detectNutritionMacroReviewWeekMismatch } from "@/features/nutrition/report-date-coverage";
 import { stableHash } from "@/features/nutrition/repository";
 import type { TrainingPeaksTelegramFormality } from "@/features/trainingpeaks/repository";
 import { getTrainingPeaksReplyDraftFormalityInstruction } from "@/features/trainingpeaks/telegram-context";
@@ -282,11 +283,22 @@ function buildCoachReasonForDay(day: Record<string, unknown>): string {
   return "Данных или контекста недостаточно для точного вывода.";
 }
 
-function buildNutritionDailyFactsForNarrative(input: {
+export function buildNutritionDailyFactsForNarrative(input: {
   context: NutritionStudentContext;
   dailyAnalysis: Array<Record<string, unknown>>;
 }): Array<Record<string, unknown>> {
   const workoutTitles = buildWorkoutTitleMap(input.context);
+  const reviewWeekFrom = input.context.tpPastWeek.periodFrom;
+  const reviewWeekTo = input.context.tpPastWeek.periodTo;
+  const macroDates = input.context.manualMacroRows
+    .map((row) => row.day)
+    .filter((day) => /^\d{4}-\d{2}-\d{2}$/.test(day));
+  const dateRangeMismatchDetected = detectNutritionMacroReviewWeekMismatch({
+    reviewWeekFrom,
+    reviewWeekTo,
+    macroDates,
+  });
+
   return input.dailyAnalysis
     .filter((day) => typeof day.date === "string")
     .map((day) => {
@@ -332,6 +344,12 @@ function buildNutritionDailyFactsForNarrative(input: {
         canonical?.sourceQuality && typeof canonical.sourceQuality === "object" && !Array.isArray(canonical.sourceQuality)
           ? (canonical.sourceQuality as Record<string, unknown>)
           : null;
+      const baseSourceQualityNotes = Array.isArray(canonicalSourceQuality?.notes)
+        ? canonicalSourceQuality.notes.filter((item): item is string => typeof item === "string")
+        : [];
+      const sourceQualityNotes = dateRangeMismatchDetected
+        ? [...new Set([...baseSourceQualityNotes, "date_range_mismatch_detected"])]
+        : baseSourceQualityNotes;
       return {
         date,
         weekday_ru: typeof canonical?.weekdayRu === "string" ? canonical.weekdayRu : null,
@@ -376,17 +394,22 @@ function buildNutritionDailyFactsForNarrative(input: {
           Array.isArray(canonical?.trainingNutritionLinks)
             ? canonical.trainingNutritionLinks
             : [],
-        source_quality:
-          canonicalSourceQuality ?? {
-            hasNutritionData:
-              typeof day.kcal === "number" ||
-              typeof day.carbsG === "number" ||
-              typeof day.proteinG === "number" ||
-              typeof day.fatG === "number",
-            hasTrainingContext: workoutTitles.has(date),
-            confidence: "medium",
-            notes: [],
-          },
+        source_quality: canonicalSourceQuality
+          ? {
+              ...canonicalSourceQuality,
+              confidence: dateRangeMismatchDetected ? "low" : canonicalSourceQuality.confidence ?? "medium",
+              notes: sourceQualityNotes,
+            }
+          : {
+              hasNutritionData:
+                typeof day.kcal === "number" ||
+                typeof day.carbsG === "number" ||
+                typeof day.proteinG === "number" ||
+                typeof day.fatG === "number",
+              hasTrainingContext: workoutTitles.has(date),
+              confidence: dateRangeMismatchDetected ? "low" : "medium",
+              notes: sourceQualityNotes,
+            },
         canonical_daily_analysis: canonical,
         caloriesActual: typeof day.kcal === "number" ? day.kcal : null,
         caloriesTargetOrEstimate: null,

@@ -13,6 +13,10 @@ import {
 import { buildNutritionStudentContext, type NutritionTrainingPeaksWeekContext } from "../src/features/nutrition/context";
 import { getNutritionPlanTargetWeekToday } from "../src/features/nutrition/plan-week-policy";
 import { analyzeNutritionPageConsistency } from "../src/features/nutrition/page-consistency";
+import {
+  countDatesOverlappingWeek,
+  formatNutritionReportDateMismatchCardNotice,
+} from "../src/features/nutrition/report-date-coverage";
 import { resolveNutritionWeeklyPlanForDisplay } from "../src/features/nutrition/repository";
 import { loadScriptEnv, resolveSupabaseEnv } from "./lib/load-script-env";
 
@@ -377,6 +381,21 @@ async function main(): Promise<void> {
 
   const selectedReportId = pickDefaultNutritionReport(card.reports, options.reportId ?? null);
   const selectedReport = card.reports.find((report) => report.id === selectedReportId) ?? null;
+  const selectedReportDataQuality = selectedReport ? asObject(selectedReport.dataQuality) : {};
+  let reportMacroDates = Array.isArray(selectedReportDataQuality.parsed_dates)
+    ? selectedReportDataQuality.parsed_dates.filter((item): item is string => typeof item === "string")
+    : [];
+  if (selectedReport && reportMacroDates.length === 0) {
+    const { data: macroRows, error: macroError } = await supabase
+      .from("nutrition_daily_macros")
+      .select("day")
+      .eq("report_id", selectedReport.id)
+      .order("day", { ascending: true });
+    if (macroError) {
+      throw new Error(`Failed to load report macro dates: ${macroError.message}`);
+    }
+    reportMacroDates = ((macroRows ?? []) as Array<{ day: string }>).map((row) => row.day);
+  }
   const review = card.weeklyAnalysis;
   const targetPlanWeek = review ? getNutritionPlanTargetWeekToday() : null;
   const planWeek = targetPlanWeek
@@ -497,7 +516,15 @@ async function main(): Promise<void> {
     plan: displayPlan,
     selectedPlanWrongWeek,
     hasReview: Boolean(review),
+    reportDataQuality: selectedReport ? selectedReportDataQuality : null,
+    reportWeekFrom: selectedReport?.weekFrom ?? null,
+    reportWeekTo: selectedReport?.weekTo ?? null,
+    reportMacroDates,
   });
+  const reportDateMismatchIssue = pageConsistencyIssues.find(
+    (issue) => issue.code === "report_date_mismatch" || issue.code === "report_date_ui_fallback"
+  );
+  void reportDateMismatchIssue;
 
   console.log("Nutrition page consistency diagnostic (read-only, mirrors page.tsx selection)");
   console.log("");
@@ -525,6 +552,14 @@ async function main(): Promise<void> {
     console.log(`- week: ${selectedReport.weekFrom}..${selectedReport.weekTo}`);
     console.log(`- created_at: ${selectedReport.createdAt}`);
     console.log(`- selected by URL?: ${yesNo(Boolean(options.reportId && options.reportId === selectedReport.id))}`);
+    console.log(`- date_range_source: ${String(selectedReportDataQuality.date_range_source ?? "n/a")}`);
+    console.log(`- parsed week: ${String(selectedReportDataQuality.parsed_week_from ?? "n/a")}..${String(selectedReportDataQuality.parsed_week_to ?? "n/a")}`);
+    console.log(`- UI week at save: ${String(selectedReportDataQuality.ui_week_from ?? "n/a")}..${String(selectedReportDataQuality.ui_week_to ?? "n/a")}`);
+    console.log(`- daily macro dates: ${reportMacroDates.join(", ") || "none"}`);
+    console.log(
+      `- overlap report week vs macro dates: ${selectedReport ? countDatesOverlappingWeek(reportMacroDates, selectedReport.weekFrom, selectedReport.weekTo) : 0}`
+    );
+    console.log(`- date mismatch notice: ${formatNutritionReportDateMismatchCardNotice(selectedReportDataQuality) ?? "none"}`);
   }
   console.log("");
   console.log("Selected review:");

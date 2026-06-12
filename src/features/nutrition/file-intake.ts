@@ -6,6 +6,10 @@ import {
   MAX_NUTRITION_FILE_SIZE_BYTES,
 } from "@/features/nutrition/file-upload-limits";
 import { extractPdfTextFromBuffer, type PdfTextExtractionErrorCode } from "@/features/nutrition/pdf-extraction";
+import {
+  computeNutritionParsedDateCoverageFromRows,
+  type NutritionParsedDateCoverage,
+} from "@/features/nutrition/report-date-coverage";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
 type SupportedNutritionFileKind = "pdf" | "csv" | "txt" | "screenshot" | "unknown";
@@ -53,6 +57,7 @@ export type NutritionFileExtractionResult = {
   extractedDays: ExtractedNutritionDay[];
   unsupportedFiles: Array<{ fileName: string; reason: string }>;
   extractionWarnings: string[];
+  dateCoverage: NutritionParsedDateCoverage;
 };
 
 export type IntakeNutritionReportFilesResult = {
@@ -580,6 +585,12 @@ export function extractNutritionRowsFromFatSecretPdfText(input: {
   extractedRows: NormalizedManualMacroRow[];
   extractedDays: ExtractedNutritionDay[];
   warnings: string[];
+  parsedWeekFrom: string | null;
+  parsedWeekTo: string | null;
+  parsedDateCount: number;
+  parsedDateMin: string | null;
+  parsedDateMax: string | null;
+  dateCoverage: NutritionParsedDateCoverage["dateCoverage"];
   diagnostics: {
     extractedTextLength: number;
     normalizedTextLength: number;
@@ -607,7 +618,10 @@ export function extractNutritionRowsFromFatSecretPdfText(input: {
     const converted = convertFatSecretPdfCandidates(ruDetailedParsed.candidates, input.sourceFileName ?? "pdf_text");
     diagnostics.parsedRows = converted.extractedRows.length;
     const warnings = [...converted.warnings, ...ruDetailedParsed.warnings];
-    return { ...converted, warnings, diagnostics };
+    const coverage = computeNutritionParsedDateCoverageFromRows(converted.extractedRows, {
+      source: "pdf_rows",
+    });
+    return { ...converted, ...coverage, warnings, diagnostics };
   }
   const parsed = parseFatSecretPdfLines(input.text);
   if (parsed.length === 0) {
@@ -617,7 +631,14 @@ export function extractNutritionRowsFromFatSecretPdfText(input: {
     const warnings = hasMacroKeywords
       ? ["daily_totals_not_found", "parsed_food_rows_but_no_day_totals", "fatsecret_layout_not_recognized"]
       : ["fatsecret_layout_not_recognized"];
-    return { extractedRows: [], extractedDays: [], warnings, diagnostics };
+    const emptyCoverage = computeNutritionParsedDateCoverageFromRows([]);
+    return {
+      extractedRows: [],
+      extractedDays: [],
+      ...emptyCoverage,
+      warnings,
+      diagnostics,
+    };
   }
   const converted = convertFatSecretPdfCandidates(parsed, input.sourceFileName ?? "pdf_text");
   diagnostics.parsedRows = converted.extractedRows.length;
@@ -626,7 +647,10 @@ export function extractNutritionRowsFromFatSecretPdfText(input: {
   if (hasLowConfidence) {
     warnings.push("low_confidence_pdf_parse");
   }
-  return { ...converted, warnings, diagnostics };
+  const coverage = computeNutritionParsedDateCoverageFromRows(converted.extractedRows, {
+    source: "pdf_rows",
+  });
+  return { ...converted, ...coverage, warnings, diagnostics };
 }
 
 type DeduplicatePdfRowsResult = {
@@ -866,13 +890,20 @@ export async function intakeNutritionReportFiles(input: {
   studentId: string;
   reportId: string;
   weekFrom: string;
+  weekTo?: string;
   files: File[];
   persistFiles?: boolean;
 }): Promise<IntakeNutritionReportFilesResult> {
   if (input.files.length === 0) {
     return {
       fileMetas: [],
-      extraction: { extractedRows: [], extractedDays: [], unsupportedFiles: [], extractionWarnings: [] },
+      extraction: {
+        extractedRows: [],
+        extractedDays: [],
+        unsupportedFiles: [],
+        extractionWarnings: [],
+        dateCoverage: computeNutritionParsedDateCoverageFromRows([]),
+      },
       sourceType: "manual_text",
     };
   }
@@ -1038,6 +1069,12 @@ export async function intakeNutritionReportFiles(input: {
     extractionWarnings.push(...dedupedMerged.warnings);
   }
 
+  const dateCoverage = computeNutritionParsedDateCoverageFromRows(dedupedMerged.rows, {
+    uiWeekFrom: input.weekFrom,
+    uiWeekTo: input.weekTo,
+    source: dedupedMerged.rows.some((row) => !row.day.startsWith("unresolved:")) ? "pdf_rows" : "unknown",
+  });
+
   return {
     fileMetas,
     extraction: {
@@ -1045,6 +1082,7 @@ export async function intakeNutritionReportFiles(input: {
       extractedDays: dedupedMerged.days,
       unsupportedFiles,
       extractionWarnings,
+      dateCoverage,
     },
     sourceType: resolveSourceType(fileMetas.map((meta) => meta.fileKind)),
   };
