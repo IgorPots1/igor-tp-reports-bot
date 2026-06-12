@@ -8,6 +8,7 @@ import {
   selectNutritionWeeklyFocus,
   type CarbProgressionStrategy,
 } from "@/features/nutrition/methodology";
+import { NUTRITION_REVIEW_NARRATIVE_PROMPT_LINES } from "@/features/nutrition/narrative-guardrails";
 
 export { NUTRITION_REVIEW_METHODOLOGY_VERSION };
 import { detectNutritionMacroReviewWeekMismatch } from "@/features/nutrition/report-date-coverage";
@@ -639,7 +640,8 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "athlete_message_draft: только plain Telegram text. Разрешены emoji-разделители.",
     "Запрещено в athlete_message_draft: **, ---, code fences, markdown headings.",
     "Строгая формальность: только ты ИЛИ только вы, без смешивания.",
-    "Не используй диагнозы/медицинские термины: RED-S, REDs, LEA, дефицит энергии, расстройство, анемия.",
+    "Не используй диагнозы/медицинские термины: RED-S, REDs, LEA, энергодоступность, дефицит энергии, медицинский риск, диагноз, расстройство, анемия.",
+    ...NUTRITION_REVIEW_NARRATIVE_PROMPT_LINES,
     "Не используй язык похудения/ограничения: похудеть, сбросить вес, урезать калории, меньше есть, дефицит калорий.",
     "Не давай меню/диету/рецепты. Продукты только как варианты при наличии фактов.",
     "Не придумывай тренировки и не придумывай гели/fueling.",

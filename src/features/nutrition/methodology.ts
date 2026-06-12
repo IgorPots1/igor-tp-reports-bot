@@ -3,6 +3,13 @@ import type {
   NutritionTrainingPeaksWeekContext,
   NormalizedManualMacroRow,
 } from "@/features/nutrition/context";
+import {
+  isExplicitNutritionLongRunTitle,
+  isNutritionLongRunWorkout,
+  resolveNutritionLongRunConfidence,
+  resolveNutritionLongRunSource,
+  type NutritionLongRunSource,
+} from "@/features/nutrition/long-run";
 
 export const NUTRITION_REVIEW_METHODOLOGY_VERSION = "ea_macro_narrative_v1";
 
@@ -243,7 +250,7 @@ type WorkoutContextByDate = {
   title: string;
   type: NutritionTrainingType;
   secondaryTitles: string[];
-  longRunSource: "explicit_title" | "default_sunday" | "none";
+  longRunSource: NutritionLongRunSource;
   longRunConfidence: "high" | "medium" | "low";
   description: string | null;
   coachComments: string | null;
@@ -412,7 +419,7 @@ function normalizeTrainingType(rawType: string | null | undefined, title: string
   ) {
     return "intervals";
   }
-  if (/длитель|длинн|long\s*run|\blong\b|longrun/.test(titleLc)) {
+  if (raw === "long_run" || isExplicitNutritionLongRunTitle(title)) {
     return "long_run";
   }
   if (raw === "run") {
@@ -437,13 +444,21 @@ function buildWorkoutContextByDate(week: NutritionTrainingPeaksWeekContext): Map
       distanceKm: number | null;
     }>
   >();
-  const forcedLongRunDate = week.longRun?.date ?? null;
   for (const workout of week.workouts) {
     if (workout.status === "planned") {
       continue;
     }
     const inferredType = normalizeTrainingType(workout.type, workout.title);
-    const type = forcedLongRunDate && workout.date === forcedLongRunDate ? "long_run" : inferredType;
+    const type = isNutritionLongRunWorkout({
+      title: workout.title,
+      durationHours: workout.durationHours,
+      isCompleted: true,
+      mode: "past_review",
+    })
+      ? "long_run"
+      : inferredType === "long_run"
+        ? "easy"
+        : inferredType;
     const sessions = grouped.get(workout.date) ?? [];
     sessions.push({
       title: workout.title,
@@ -451,9 +466,8 @@ function buildWorkoutContextByDate(week: NutritionTrainingPeaksWeekContext): Map
       description: workout.description ?? null,
       coachComments: workout.coachComments ?? null,
       plannedText: workout.plannedText ?? null,
-      durationHours:
-        forcedLongRunDate && workout.date === forcedLongRunDate ? week.longRun?.durationHours ?? null : null,
-      distanceKm: forcedLongRunDate && workout.date === forcedLongRunDate ? week.longRun?.distanceKm ?? null : null,
+      durationHours: workout.durationHours ?? null,
+      distanceKm: null,
     });
     grouped.set(workout.date, sessions);
   }
@@ -470,9 +484,10 @@ function buildWorkoutContextByDate(week: NutritionTrainingPeaksWeekContext): Map
     const effectiveType = hasStrength && hasEasy ? "easy" : primary.type;
     const longRunSource =
       effectiveType === "long_run"
-        ? week.longRun?.date === date
-          ? week.longRun.source ?? "explicit_title"
-          : "explicit_title"
+        ? resolveNutritionLongRunSource({
+            title: primary.title,
+            durationHours: primary.durationHours,
+          })
         : "none";
     map.set(date, {
       date,
@@ -480,7 +495,7 @@ function buildWorkoutContextByDate(week: NutritionTrainingPeaksWeekContext): Map
       type: effectiveType,
       secondaryTitles: sorted.slice(1).map((session) => session.title),
       longRunSource,
-      longRunConfidence: longRunSource === "explicit_title" ? "high" : longRunSource === "default_sunday" ? "medium" : "low",
+      longRunConfidence: resolveNutritionLongRunConfidence(longRunSource),
       description: primary.description,
       coachComments: primary.coachComments,
       plannedText: primary.plannedText,

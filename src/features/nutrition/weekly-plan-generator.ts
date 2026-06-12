@@ -1,4 +1,6 @@
 import { buildNutritionTrainingPeaksWeekContext } from "@/features/nutrition/context";
+import { isNutritionLongRunWorkout } from "@/features/nutrition/long-run";
+import { NUTRITION_PLAN_NARRATIVE_PROMPT_LINES } from "@/features/nutrition/narrative-guardrails";
 import { detectWorkoutFuelingInstructions } from "@/features/nutrition/methodology";
 import {
   getNutritionPlanTargetWeekToday,
@@ -166,6 +168,17 @@ function toStringOrNull(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 function toBooleanOrNull(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
@@ -240,7 +253,13 @@ function enrichWorkoutFacts(workout: Record<string, unknown>): NutritionWeeklyPl
   const fueling = detectWorkoutFuelingInstructions(combinedText || null);
   const titleLower = (title ?? "").toLocaleLowerCase("ru");
   const typeLower = (type ?? "").toLocaleLowerCase("ru");
-  const isLongRun = typeLower === "long_run" || /длитель|long run|longrun/.test(titleLower);
+  const isLongRun = isNutritionLongRunWorkout({
+    title,
+    durationMinutes: toFiniteNumber(workout.plannedDurationMin) ?? toFiniteNumber(workout.durationMinutes),
+    durationHours: toFiniteNumber(workout.durationHours) ?? toFiniteNumber(workout.duration_hours),
+    isCompleted: true,
+    mode: "target_plan",
+  });
   const isHardSession =
     typeLower === "intervals" ||
     typeLower === "tempo" ||
@@ -745,7 +764,8 @@ async function generateNutritionWeeklyPlanWithAiInternal(
     "Do not invent gels/fueling. If fueling_instruction_present is false, do not prescribe gels.",
     "No strict g/kg in athlete text. Carb ranges internal only.",
     "No diagnosis. No medical claims.",
-    "No RED-S/REDs/LEA/дефицит энергии/анемия/расстройство in athlete draft.",
+    "No RED-S/REDs/LEA/энергодоступность/дефицит энергии/медицинский риск/диагноз/анемия/расстройство in athlete draft.",
+    ...NUTRITION_PLAN_NARRATIVE_PROMPT_LINES,
     "No weight loss / deficit framing.",
     "No menu / meal plan / prescribed recipes.",
     "Allowed hedged causality only: может, могло, вполне могло, не утверждаю наверняка.",

@@ -16,7 +16,15 @@ export type NutritionPlanSource =
   | "missing_bodyweight"
   | "unknown";
 
-export type NutritionLongRunSource = "explicit_title" | "default_sunday" | "none";
+import {
+  isExplicitNutritionLongRunTitle,
+  isNutritionLongRunWorkout,
+  resolveNutritionLongRunConfidence,
+  resolveNutritionLongRunSource,
+  type NutritionLongRunSource,
+} from "@/features/nutrition/long-run";
+
+export type { NutritionLongRunSource };
 export type NutritionLongRunConfidence = "high" | "medium" | "low";
 
 export type NutritionDayTypeTarget = {
@@ -239,14 +247,7 @@ function toFinite(value: unknown): number | null {
   return null;
 }
 
-export function isExplicitNutritionLongRunTitle(titleRaw: string | null | undefined): boolean {
-  const title = (titleRaw ?? "").toLowerCase();
-  return /длитель|длинн|long\s*run|\blong\b|longrun/.test(title);
-}
-
-function isSunday(isoDate: string): boolean {
-  return new Date(`${isoDate}T12:00:00.000Z`).getUTCDay() === 0;
-}
+export { isExplicitNutritionLongRunTitle };
 
 function isRunningWorkout(typeRaw: string | null, titleRaw: string | null): boolean {
   const type = (typeRaw ?? "").toLowerCase();
@@ -269,9 +270,6 @@ function normalizeDayType(typeRaw: string | null, titleRaw: string | null): Nutr
   const haystack = `${type} ${title}`;
   if (/race|гонк|соревн/.test(haystack)) {
     return "race";
-  }
-  if (type === "long_run" || isExplicitNutritionLongRunTitle(haystack)) {
-    return "long_run";
   }
   if (
     type === "intervals" ||
@@ -320,8 +318,6 @@ function parseTrainingContextWorkouts(trainingContext: unknown): ParsedWorkout[]
     return [];
   }
   const workoutsRaw = Array.isArray(ctx.workouts) ? ctx.workouts : [];
-  const longRun = asObject(ctx.longRun);
-  const longRunDate = toIsoDate(longRun?.date);
   const baseWorkouts = workoutsRaw
     .map((item) => asObject(item))
     .filter((item): item is Record<string, unknown> => Boolean(item))
@@ -329,17 +325,25 @@ function parseTrainingContextWorkouts(trainingContext: unknown): ParsedWorkout[]
       const date = toIsoDate(workout.date) ?? "unknown-date";
       const title = toStringOrNull(workout.title);
       const type = toStringOrNull(workout.type);
+      const durationHours = toFinite(workout.durationHours) ?? toFinite(workout.duration_hours);
+      const status = toStringOrNull(workout.status);
+      const isCompleted = status === "completed" || status === "planned_and_completed" || status === null;
       let dayType = normalizeDayType(type, title);
-      let longRunSource: NutritionLongRunSource = "none";
-      let longRunConfidence: NutritionLongRunConfidence = "low";
-      if (longRunDate && date === longRunDate) {
+      if (
+        isNutritionLongRunWorkout({
+          title,
+          durationHours,
+          isCompleted,
+          mode: "target_plan",
+        })
+      ) {
         dayType = "long_run";
-        longRunSource = "explicit_title";
-        longRunConfidence = "high";
-      } else if (dayType === "long_run") {
-        longRunSource = "explicit_title";
-        longRunConfidence = "high";
       }
+      const longRunSource =
+        dayType === "long_run"
+          ? resolveNutritionLongRunSource({ title, durationHours })
+          : "none";
+      const longRunConfidence = resolveNutritionLongRunConfidence(longRunSource);
       return {
         date,
         title,
@@ -351,24 +355,9 @@ function parseTrainingContextWorkouts(trainingContext: unknown): ParsedWorkout[]
         longRunConfidence,
       };
     })
-    .filter((workout) => workout.date !== "unknown-date");
+    .filter((out) => out.date !== "unknown-date");
 
-  if (baseWorkouts.some((workout) => workout.dayType === "long_run")) {
-    return baseWorkouts;
-  }
-
-  return baseWorkouts.map((workout) => {
-    if (workout.isRunning && isSunday(workout.date)) {
-      return {
-        ...workout,
-        dayType: "long_run",
-        keyWorkout: true,
-        longRunSource: "default_sunday",
-        longRunConfidence: "medium",
-      };
-    }
-    return workout;
-  });
+  return baseWorkouts;
 }
 
 function pickPrimaryWorkout(workouts: ParsedWorkout[]): ParsedWorkout | null {

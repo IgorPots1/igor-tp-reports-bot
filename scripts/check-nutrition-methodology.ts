@@ -138,6 +138,7 @@ function buildMockContext(overrides?: Partial<NutritionStudentContext>): Nutriti
           description: "8x400",
           coachComments: null,
           plannedText: null,
+          durationHours: 1,
         },
         {
           date: "2026-06-07",
@@ -147,6 +148,7 @@ function buildMockContext(overrides?: Partial<NutritionStudentContext>): Nutriti
           description: "long easy run",
           coachComments: null,
           plannedText: null,
+          durationHours: 1.67,
         },
       ],
     },
@@ -209,6 +211,7 @@ async function run(): Promise<void> {
           description: null,
           coachComments: null,
           plannedText: null,
+          durationHours: 1.8,
         },
       ],
     },

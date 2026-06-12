@@ -9,6 +9,12 @@ import type {
   TrainingPeaksWorkoutCacheRow,
 } from "@/features/trainingpeaks/repository";
 import {
+  isNutritionLongRunWorkout,
+  resolveNutritionLongRunConfidence,
+  resolveNutritionLongRunSource,
+  type NutritionLongRunSource,
+} from "@/features/nutrition/long-run";
+import {
   getNutritionStudentEssentials,
   getNutritionTrainingPeaksCacheWindow,
   type NutritionContextItem,
@@ -59,8 +65,8 @@ export type NutritionTrainingPeaksWeekContext = {
     title: string;
     durationHours: number | null;
     distanceKm: number | null;
-    source?: "explicit_title" | "default_sunday";
-    confidence?: "high" | "medium";
+    source?: NutritionLongRunSource;
+    confidence?: "high" | "medium" | "low";
   } | null;
   keyWorkouts: Array<{
     date: string;
@@ -76,6 +82,7 @@ export type NutritionTrainingPeaksWeekContext = {
     description: string | null;
     coachComments: string | null;
     plannedText: string | null;
+    durationHours: number | null;
   }>;
 };
 
@@ -446,29 +453,6 @@ function resolveWorkoutStatus(row: TrainingPeaksWorkoutCacheRow): "planned" | "c
   return "other";
 }
 
-function isExplicitLongRunTitle(title: string | null | undefined): boolean {
-  return /длитель|длинн|long\s*run|\blong\b|longrun/.test((title ?? "").toLocaleLowerCase("ru"));
-}
-
-function isSundayIsoDate(isoDate: string): boolean {
-  return new Date(`${isoDate}T12:00:00.000Z`).getUTCDay() === 0;
-}
-
-function maybeExplicitLongRun(row: TrainingPeaksWorkoutCacheRow): {
-  durationHours: number | null;
-  distanceKm: number | null;
-} | null {
-  const duration = toFiniteNumber(row.completedTimeRaw ?? row.plannedTimeRaw);
-  const distance = normalizeDistanceKm(toFiniteNumber(row.completedDistanceRaw ?? row.plannedDistanceRaw));
-  if (!isExplicitLongRunTitle(row.title)) {
-    return null;
-  }
-  return {
-    durationHours: duration ?? null,
-    distanceKm: distance ?? null,
-  };
-}
-
 function toObjectRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -514,7 +498,7 @@ export async function buildNutritionTrainingPeaksWeekContext(
   studentId: string,
   weekFrom: string,
   weekTo: string,
-  options?: { keyWorkoutMode?: NutritionKeyWorkoutMode }
+  options?: { keyWorkoutMode?: NutritionKeyWorkoutMode; longRunMode?: "past_review" | "target_plan" }
 ): Promise<NutritionTrainingPeaksWeekContext> {
   const rows = await getNutritionTrainingPeaksCacheWindow({
     studentId,
@@ -535,10 +519,10 @@ export async function buildNutritionTrainingPeaksWeekContext(
   ).length;
 
   let longRunCandidate: NutritionTrainingPeaksWeekContext["longRun"] = null;
-  let defaultSundayCandidate: NutritionTrainingPeaksWeekContext["longRun"] = null;
   const keyWorkouts: NutritionTrainingPeaksWeekContext["keyWorkouts"] = [];
 
   const keyWorkoutMode: NutritionKeyWorkoutMode = options?.keyWorkoutMode ?? "all";
+  const longRunMode = options?.longRunMode ?? (keyWorkoutMode === "completed_only" ? "past_review" : "target_plan");
 
   for (const row of rows) {
     const classification = classifyTrainingPeaksWorkoutActivity({
@@ -547,31 +531,23 @@ export async function buildNutritionTrainingPeaksWeekContext(
       workoutTypeValueId: row.workoutTypeValueId,
       workoutSubTypeId: row.workoutSubTypeId,
     });
-    const longRun = maybeExplicitLongRun(row);
-    if (longRun && row.isCompleted && !longRunCandidate) {
+    const durationHours = toFiniteNumber(row.completedTimeRaw ?? row.plannedTimeRaw);
+    const distanceKm = normalizeDistanceKm(toFiniteNumber(row.completedDistanceRaw ?? row.plannedDistanceRaw));
+    const qualifiesAsLongRun = isNutritionLongRunWorkout({
+      title: row.title,
+      durationHours,
+      isCompleted: row.isCompleted,
+      mode: longRunMode,
+    });
+    if (qualifiesAsLongRun && !longRunCandidate) {
+      const source = resolveNutritionLongRunSource({ title: row.title, durationHours });
       longRunCandidate = {
         date: row.workoutDate,
         title: row.title?.trim() || "Untitled workout",
-        durationHours: longRun.durationHours,
-        distanceKm: longRun.distanceKm,
-        source: "explicit_title",
-        confidence: "high",
-      };
-    }
-    if (
-      !longRunCandidate &&
-      !defaultSundayCandidate &&
-      row.isCompleted &&
-      classification.isRunning &&
-      isSundayIsoDate(row.workoutDate)
-    ) {
-      defaultSundayCandidate = {
-        date: row.workoutDate,
-        title: row.title?.trim() || "Untitled workout",
-        durationHours: toFiniteNumber(row.completedTimeRaw ?? row.plannedTimeRaw),
-        distanceKm: normalizeDistanceKm(toFiniteNumber(row.completedDistanceRaw ?? row.plannedDistanceRaw)),
-        source: "default_sunday",
-        confidence: "medium",
+        durationHours,
+        distanceKm,
+        source,
+        confidence: resolveNutritionLongRunConfidence(source),
       };
     }
     if (isKeyWorkout(row, keyWorkoutMode)) {
@@ -593,7 +569,7 @@ export async function buildNutritionTrainingPeaksWeekContext(
     plannedSessions,
     completedSessions,
     runningSessions,
-    longRun: longRunCandidate ?? defaultSundayCandidate,
+    longRun: longRunCandidate,
     keyWorkouts: keyWorkouts.slice(0, 6),
     workouts: rows.slice(0, 16).map((row) => {
       const c = classifyTrainingPeaksWorkoutActivity({
@@ -611,6 +587,7 @@ export async function buildNutritionTrainingPeaksWeekContext(
         description: snapshotText(sourceSnapshot?.description),
         coachComments: snapshotText(sourceSnapshot?.coachComments),
         plannedText: snapshotText(sourceSnapshot?.structure) ?? snapshotText(sourceSnapshot?.plannedText),
+        durationHours: toFiniteNumber(row.completedTimeRaw ?? row.plannedTimeRaw),
       };
     }),
   };

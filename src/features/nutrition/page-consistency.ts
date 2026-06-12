@@ -1,6 +1,9 @@
+import { buildDerivedNutritionCoachDayByDayText } from "@/features/nutrition/combined-message";
+import { NUTRITION_REVIEW_METHODOLOGY_VERSION } from "@/features/nutrition/methodology";
 import type { NutritionWeeklyAnalysis, NutritionWeeklyPlan } from "@/features/nutrition/repository";
 import {
   countDatesOverlappingWeek,
+  formatNutritionCompactWeekRange,
   formatNutritionReportDateMismatchCardNotice,
 } from "@/features/nutrition/report-date-coverage";
 
@@ -11,6 +14,7 @@ export type NutritionPageConsistencyIssueCode =
   | "review_fallback_mode"
   | "daily_dates_mismatch"
   | "report_date_mismatch"
+  | "report_date_adjusted_from_pdf"
   | "report_date_ui_fallback"
   | "tp_daily_join_mismatch"
   | "missing_target_plan"
@@ -159,23 +163,60 @@ export function analyzeNutritionPageConsistency(
   const plan = input.plan ?? null;
   const hasReview = input.hasReview ?? Boolean(review);
 
+  const reportMacroDates = input.reportMacroDates ?? [];
   const reportDataQuality = input.reportDataQuality ?? null;
   if (reportDataQuality) {
     const cardNotice = formatNutritionReportDateMismatchCardNotice(reportDataQuality);
     if (cardNotice) {
-      issues.push({
-        severity: "warning",
-        code:
-          reportDataQuality.date_range_source === "ui_fallback"
-            ? "report_date_ui_fallback"
-            : "report_date_mismatch",
-        message: cardNotice,
-        action: reportDataQuality.date_range_mismatch === true ? "Перезагрузите PDF или проверьте неделю" : undefined,
-      });
+      const dateRangeSource =
+        typeof reportDataQuality.date_range_source === "string" ? reportDataQuality.date_range_source : null;
+      const historicalMismatch = reportDataQuality.date_range_mismatch === true;
+      const parsedWeekFrom =
+        typeof reportDataQuality.parsed_week_from === "string" ? reportDataQuality.parsed_week_from : null;
+      const parsedWeekTo =
+        typeof reportDataQuality.parsed_week_to === "string" ? reportDataQuality.parsed_week_to : null;
+      const effectiveWeekFrom = input.reportWeekFrom ?? parsedWeekFrom;
+      const effectiveWeekTo = input.reportWeekTo ?? parsedWeekTo;
+      const macroOverlap =
+        reportMacroDates.length > 0 && effectiveWeekFrom && effectiveWeekTo
+          ? countDatesOverlappingWeek(reportMacroDates, effectiveWeekFrom, effectiveWeekTo)
+          : 0;
+      const macroReportOverlapDays =
+        typeof reportDataQuality.macro_report_overlap_days === "number"
+          ? reportDataQuality.macro_report_overlap_days
+          : 0;
+      const savedWithParsedWeek =
+        dateRangeSource === "parsed_pdf" &&
+        effectiveWeekFrom === parsedWeekFrom &&
+        effectiveWeekTo === parsedWeekTo;
+      const effectivelyAligned =
+        savedWithParsedWeek &&
+        macroOverlap > 0 &&
+        (macroReportOverlapDays >= macroOverlap || macroOverlap >= 5);
+
+      if (dateRangeSource === "ui_fallback") {
+        issues.push({
+          severity: "warning",
+          code: "report_date_ui_fallback",
+          message: cardNotice,
+        });
+      } else if (effectivelyAligned && historicalMismatch && parsedWeekFrom && parsedWeekTo) {
+        issues.push({
+          severity: "info",
+          code: "report_date_adjusted_from_pdf",
+          message: `Отчёт сохранён по датам PDF (${formatNutritionCompactWeekRange(parsedWeekFrom, parsedWeekTo)}). Daily macros совпадают с текущей неделей отчёта.`,
+        });
+      } else {
+        issues.push({
+          severity: "warning",
+          code: "report_date_mismatch",
+          message: cardNotice,
+          action: historicalMismatch ? "Перезагрузите PDF или проверьте неделю" : undefined,
+        });
+      }
     }
   }
 
-  const reportMacroDates = input.reportMacroDates ?? [];
   if (
     reportMacroDates.length > 0 &&
     input.reportWeekFrom &&
@@ -197,13 +238,17 @@ export function analyzeNutritionPageConsistency(
     const dailyRows = dailyAnalysis.map(summarizeDailyRow);
     const generationMode =
       typeof summary.generation_mode === "string" ? summary.generation_mode : "fallback";
+    const methodologyVersion =
+      typeof summary.methodology_version === "string" ? summary.methodology_version : null;
     const coachSummaryText =
       typeof summary.coach_summary_text === "string" ? summary.coach_summary_text : "";
     const dayByDayText =
       typeof summary.day_by_day_analysis_text === "string" ? summary.day_by_day_analysis_text : "";
     const athleteDraft = review.athleteMessageDraft ?? "";
     const storedText = [coachSummaryText, dayByDayText, athleteDraft].join("\n");
-    const stalePhrases = findStalePhrases(storedText);
+    const storedStalePhrases = findStalePhrases(storedText);
+    const derivedCoachDayByDay = buildDerivedNutritionCoachDayByDayText(review) ?? "";
+    const primaryStalePhrases = findStalePhrases(derivedCoachDayByDay);
 
     if (generationMode === "fallback" || generationMode === "template") {
       issues.push({
@@ -222,13 +267,29 @@ export function analyzeNutritionPageConsistency(
         message: "Обзор создан до обновления методики питания (нет macroGuardrails / energyAvailability).",
         action: "Перегенерируйте обзор",
       });
-    } else if (stalePhrases.length > 0) {
-      issues.push({
-        severity: "warning",
-        code: "review_stale_methodology",
-        message: `Обзор содержит устаревшие формулировки (${stalePhrases.join(", ")}).`,
-        action: "Перегенерируйте обзор",
-      });
+    } else {
+      const storedLayerOnlyStale =
+        methodologyVersion === NUTRITION_REVIEW_METHODOLOGY_VERSION &&
+        modernEnough &&
+        primaryStalePhrases.length === 0 &&
+        storedStalePhrases.length > 0;
+      if (storedLayerOnlyStale) {
+        // Legacy stored coach/day-by-day text may still contain old phrases while derived facts are current.
+      } else if (primaryStalePhrases.length > 0) {
+        issues.push({
+          severity: "warning",
+          code: "review_stale_methodology",
+          message: `Обзор содержит устаревшие формулировки (${primaryStalePhrases.join(", ")}).`,
+          action: "Перегенерируйте обзор",
+        });
+      } else if (storedStalePhrases.length > 0) {
+        issues.push({
+          severity: "warning",
+          code: "review_stale_methodology",
+          message: `Обзор содержит устаревшие формулировки (${storedStalePhrases.join(", ")}).`,
+          action: "Перегенерируйте обзор",
+        });
+      }
     }
 
     const datedRows = dailyRows.filter((row) => row.date);
@@ -286,13 +347,25 @@ export function analyzeNutritionPageConsistency(
       });
     } else {
       const planSummary = asObject(plan.planSummary);
-      const hasNextWeekPlan = Boolean(asObject(planSummary.next_week_plan).days);
-      if (hasNextWeekPlan && !planHasPracticalTarget(planSummary)) {
+      const nextWeekPlan = asObject(planSummary.next_week_plan);
+      const hasNextWeekPlan = Boolean(nextWeekPlan.days);
+      const hasPracticalTarget = planHasPracticalTarget(planSummary);
+      if (hasNextWeekPlan && !hasPracticalTarget) {
         issues.push({
           severity: "warning",
           code: "plan_stale_methodology",
           message: "Фокус создан до обновления практичных ориентиров. Перегенерируйте фокус.",
           action: "Перегенерируйте фокус",
+        });
+      } else if (
+        hasNextWeekPlan &&
+        hasPracticalTarget &&
+        typeof planSummary.methodology_version !== "string"
+      ) {
+        issues.push({
+          severity: "info",
+          code: "plan_stale_methodology",
+          message: "Фокус с практичными ориентирами сохранён без methodology_version — это допустимо.",
         });
       }
     }

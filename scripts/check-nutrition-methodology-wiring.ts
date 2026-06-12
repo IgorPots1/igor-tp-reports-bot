@@ -37,7 +37,8 @@ const contextSource = readFileSync(join(root, "src/features/nutrition/context.ts
 assert.match(contextSource, /currentWeightKg:\s*essentials\.profile\?\.currentWeightKg\s*\?\?\s*latestConfirmedWeight\s*\?\?\s*latestWeight\s*\?\?\s*null/, "weight resolution must include profile -> latest confirmed log -> latest log");
 
 const methodologySource = readFileSync(join(root, "src/features/nutrition/methodology.ts"), "utf8");
-assert.match(methodologySource, /forcedLongRunDate/, "methodology must force long-run date override");
+assert.match(methodologySource, /isNutritionLongRunWorkout/, "methodology must classify long_run via shared helper");
+assert.match(contextSource, /isNutritionLongRunWorkout/, "TP context must classify long_run via shared helper");
 assert.match(methodologySource, /(?:x\|х\|×\|\\\*)/, "methodology must support x/х/×/* interval patterns");
 assert.match(methodologySource, /canonicalDailyAnalysis/, "methodology must build canonicalDailyAnalysis facts");
 assert.match(methodologySource, /weekdayRu/, "methodology canonical facts must include weekdayRu");

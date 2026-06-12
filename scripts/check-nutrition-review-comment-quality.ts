@@ -4,6 +4,9 @@ import {
   buildDerivedNutritionCoachDayByDayText,
   buildDerivedNutritionCombinedMessage,
 } from "@/features/nutrition/combined-message";
+import { NUTRITION_REVIEW_NARRATIVE_PROMPT_LINES } from "@/features/nutrition/narrative-guardrails";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { NutritionWeeklyAnalysis, NutritionWeeklyPlan } from "@/features/nutrition/repository";
 
 function minimalPlan(): NutritionWeeklyPlan {
@@ -357,5 +360,12 @@ assert.doesNotMatch(
   /Данные по питанию за день неполные/,
   "complete parsed week with TP-stale notes must not emit nutrition incomplete phrase"
 );
+
+const draftGeneratorSource = readFileSync(
+  join(process.cwd(), "src/features/nutrition/draft-generator.ts"),
+  "utf8"
+);
+assert.match(draftGeneratorSource, /NUTRITION_REVIEW_NARRATIVE_PROMPT_LINES/);
+assert.ok(NUTRITION_REVIEW_NARRATIVE_PROMPT_LINES.length >= 5, "narrative guardrails must stay aligned with nutrition audit");
 
 console.log("PASS check-nutrition-review-comment-quality");

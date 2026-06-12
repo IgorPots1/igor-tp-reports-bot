@@ -61,12 +61,37 @@ function buildStaleReview(): NutritionWeeklyAnalysis {
   };
 }
 
+function buildModernReviewWithStoredLegacyText(): NutritionWeeklyAnalysis {
+  return {
+    ...buildStaleReview(),
+    id: "review-modern-stored-legacy",
+    nutritionSummary: {
+      generation_mode: "ai",
+      methodology_version: "ea_macro_narrative_v1",
+      coach_summary_text: "Комментарий: можно дать краткий комментарий.",
+      day_by_day_analysis_text: "Комментарий: можно дать краткий комментарий.",
+      daily_analysis: [
+        {
+          date: "2026-06-09",
+          training_type: "easy",
+          training_label: "лёгкий бег",
+          canonicalDailyAnalysis: { date: "2026-06-09" },
+          macroGuardrails: { protein: { status: "ok" } },
+          energyAvailability: { eaZone: "green" },
+          energyFloor: { belowLoadFloor: false },
+        },
+      ],
+    },
+  };
+}
+
 function buildModernReview(): NutritionWeeklyAnalysis {
   return {
     ...buildStaleReview(),
     id: "review-modern",
     nutritionSummary: {
       generation_mode: "ai",
+      methodology_version: "ea_macro_narrative_v1",
       daily_analysis: [
         {
           date: "2026-06-09",
@@ -166,6 +191,89 @@ assert.ok(
   "modern review must not emit review_stale_methodology"
 );
 
+const legacyStoredIssues = analyzeNutritionPageConsistency({
+  selectedWeekFrom: "2026-06-08",
+  selectedWeekTo: "2026-06-14",
+  review: buildModernReviewWithStoredLegacyText(),
+  hasReview: true,
+});
+assert.ok(
+  !legacyStoredIssues.some((issue) => issue.code === "review_stale_methodology"),
+  "stored legacy coach text must not trigger review_stale_methodology when derived facts are modern"
+);
+
+const adjustedDateIssues = analyzeNutritionPageConsistency({
+  selectedWeekFrom: "2026-06-02",
+  selectedWeekTo: "2026-06-07",
+  reportWeekFrom: "2026-06-02",
+  reportWeekTo: "2026-06-07",
+  reportMacroDates: ["2026-06-02", "2026-06-03", "2026-06-04", "2026-06-05", "2026-06-06", "2026-06-07"],
+  reportDataQuality: {
+    date_range_source: "parsed_pdf",
+    parsed_week_from: "2026-06-02",
+    parsed_week_to: "2026-06-07",
+    ui_week_from: "2026-06-08",
+    ui_week_to: "2026-06-14",
+    date_range_mismatch: true,
+    macro_report_overlap_days: 6,
+  },
+});
+assert.ok(
+  adjustedDateIssues.some(
+    (issue) => issue.code === "report_date_adjusted_from_pdf" && issue.severity === "info"
+  ),
+  "historical UI mismatch with aligned saved report must downgrade to info"
+);
+assert.ok(
+  !adjustedDateIssues.some(
+    (issue) => issue.code === "report_date_mismatch" && issue.severity === "warning"
+  ),
+  "aligned saved report must not keep active report_date_mismatch warning"
+);
+
+const activeMismatchIssues = analyzeNutritionPageConsistency({
+  selectedWeekFrom: "2026-06-08",
+  selectedWeekTo: "2026-06-14",
+  reportWeekFrom: "2026-06-08",
+  reportWeekTo: "2026-06-14",
+  reportMacroDates: ["2026-06-02", "2026-06-03"],
+  reportDataQuality: {
+    date_range_source: "parsed_pdf",
+    parsed_week_from: "2026-06-02",
+    parsed_week_to: "2026-06-07",
+    ui_week_from: "2026-06-08",
+    ui_week_to: "2026-06-14",
+    date_range_mismatch: true,
+    macro_report_overlap_days: 0,
+  },
+});
+assert.ok(
+  activeMismatchIssues.some((issue) => issue.code === "report_date_mismatch" && issue.severity === "warning"),
+  "active macro/report mismatch must still warn"
+);
+
+const practicalPlanIssues = analyzeNutritionPageConsistency({
+  selectedWeekFrom: "2026-06-08",
+  selectedWeekTo: "2026-06-14",
+  targetPlanWeekFrom: "2026-06-08",
+  targetPlanWeekTo: "2026-06-14",
+  review: buildModernReview(),
+  plan: buildPlan(true),
+  hasReview: true,
+});
+assert.ok(
+  !practicalPlanIssues.some(
+    (issue) => issue.code === "plan_stale_methodology" && issue.severity === "warning"
+  ),
+  "plan with practicalTarget but missing version must not warn"
+);
+assert.ok(
+  practicalPlanIssues.some(
+    (issue) => issue.code === "plan_stale_methodology" && issue.severity === "info"
+  ),
+  "plan with practicalTarget but missing version may be info only"
+);
+
 const wrongWeekIssues = analyzeNutritionPageConsistency({
   selectedWeekFrom: "2026-06-08",
   selectedWeekTo: "2026-06-14",
@@ -245,6 +353,8 @@ assert.match(diagnoseScript, /--student-name/, "page consistency diagnostic must
 assert.match(diagnoseScript, /Daily analysis vs TP context/, "page consistency diagnostic must compare daily vs TP");
 
 assert.match(pageConsistencySource, /report_date_mismatch/, "page consistency helper must detect report date mismatch");
+assert.match(pageConsistencySource, /report_date_adjusted_from_pdf/, "page consistency helper must downgrade aligned historical mismatch");
+assert.match(pageConsistencySource, /NUTRITION_REVIEW_METHODOLOGY_VERSION/, "page consistency helper must respect methodology version for stale review");
 assert.match(diagnoseScript, /asNonemptyObject\(canonical\.macroGuardrails\)/, "diagnostic must resolve nested macroGuardrails");
 assert.match(pageConsistencySource, /formatNutritionReportDateMismatchCardNotice/, "page consistency helper must use report date notice formatter");
 

@@ -129,13 +129,15 @@ const sundayDefaultPlan = buildNutritionNextWeekPlan({
     longRun: null,
   },
 });
-const sundayLongRunDay = sundayDefaultPlan.days.find((day) => day.date === "2026-06-14");
-assert.equal(sundayLongRunDay?.training_type, "long_run", "Sunday running session should default to long_run");
-assert.equal(sundayLongRunDay?.training_label, "Бег по пульсу", "Sunday default must preserve original TP title");
-assert.equal(sundayLongRunDay?.long_run_source, "default_sunday");
-assert.equal(sundayLongRunDay?.long_run_confidence, "medium");
-assert.equal(sundayDefaultPlan.summary.long_run_source, "default_sunday");
-assert.ok(sundayDefaultPlan.days.some((day) => day.date === "2026-06-13" && day.training_type === "pre_long"));
+const sundayEasyDay = sundayDefaultPlan.days.find((day) => day.date === "2026-06-14");
+assert.equal(sundayEasyDay?.training_type, "easy", "Sunday easy run without duration/title must not default to long_run");
+assert.equal(sundayEasyDay?.training_label, "Бег по пульсу", "Sunday easy must preserve original TP title");
+assert.equal(sundayEasyDay?.long_run_source, "none");
+assert.equal(sundayDefaultPlan.summary.long_run_source, "none");
+assert.ok(
+  !sundayDefaultPlan.days.some((day) => day.training_type === "pre_long"),
+  "pre_long only when next day is true long_run"
+);
 
 const explicitOtherDayPlan = buildNutritionNextWeekPlan({
   bodyweightKg: 56,
