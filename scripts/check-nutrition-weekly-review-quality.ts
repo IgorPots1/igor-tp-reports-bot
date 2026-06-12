@@ -39,6 +39,8 @@ assert.match(draftGenerator, /bodyweight_kg/, "weekly generator output must cont
 assert.match(draftGenerator, /carb_progression_strategy/, "weekly generator output must contain carb_progression_strategy");
 assert.match(draftGenerator, /coach_context_ru/, "weekly generator must include coach_context_ru in facts payload");
 assert.match(draftGenerator, /athlete_report_signals/, "weekly generator must include athlete_report_signals in facts payload");
+assert.match(draftGenerator, /interpretation_shadow/, "weekly generator must persist interpretation shadow metadata");
+assert.match(draftGenerator, /generateNutritionWeeklyInterpretationShadow/, "weekly generator must call shadow interpretation generator");
 assert.match(draftGenerator, /nutrition_goal/, "weekly generator must include nutrition_goal in facts payload");
 assert.match(draftGenerator, /coach_memory/, "weekly generator must include coach memory summaries in facts payload");
 assert.match(draftGenerator, /athlete_report_signals_require_coach_review/, "weekly generator must flag illness/cycle/injury signals");

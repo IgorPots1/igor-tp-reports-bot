@@ -375,6 +375,8 @@ async function run(): Promise<void> {
   const draftGenerator = readFileSync(join(root, "src/features/nutrition/draft-generator.ts"), "utf8");
   assert.match(draftGenerator, /athlete_report_signals/, "review generator must persist athlete report signals");
   assert.doesNotMatch(helperSource, /coach_context_ru/, "combined athlete message must not expose coach context field");
+  assert.doesNotMatch(helperSource, /interpretation_shadow/, "production combined message must not switch to shadow interpretation");
+  assert.match(pageSource, /buildDerivedNutritionCombinedMessage/, "UI copy block must remain derived composer primary");
 
   console.log("PASS check-nutrition-combined-message");
 }

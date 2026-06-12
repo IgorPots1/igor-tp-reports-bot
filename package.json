@@ -233,6 +233,8 @@
     "check:nutrition-weekly-plan-refreshes-tp-context": "npx tsx scripts/check-nutrition-weekly-plan-refreshes-tp-context.ts",
     "check:nutrition-telegram-renderer-boundary": "npx tsx scripts/check-nutrition-telegram-renderer-boundary.ts",
     "check:nutrition-combined-message": "npx tsx scripts/check-nutrition-combined-message.ts",
+    "check:nutrition-interpretation-contract": "npx tsx scripts/check-nutrition-interpretation-contract.ts",
+    "diagnose:nutrition-interpretation-contract": "npx tsx scripts/diagnose-nutrition-interpretation-contract.ts",
     "nutrition:enable-test-cohort": "npx tsx scripts/nutrition-enable-test-cohort.ts"
   },
   "dependencies": {

@@ -206,6 +206,12 @@ async function run(): Promise<void> {
     assert.equal(noApiKey.generation_mode, "fallback", "fallback mode should be explicit when AI unavailable");
   }
 
+  const shadow = generated.nutrition_summary.interpretation_shadow;
+  assert.ok(shadow && typeof shadow === "object", "review generation must persist interpretation_shadow metadata");
+  assert.equal(shadow.version, "nutrition_interpretation_v1");
+  assert.ok(["ai", "fallback", "disabled"].includes(shadow.mode), "shadow mode must be explicit");
+  assert.ok(Array.isArray(shadow.issues), "shadow issues must be persisted");
+
   console.log("PASS check-nutrition-ai-review-quality");
 }
 

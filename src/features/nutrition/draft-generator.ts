@@ -12,6 +12,11 @@ import {
   selectNutritionWeeklyFocus,
   type CarbProgressionStrategy,
 } from "@/features/nutrition/methodology";
+import {
+  buildNutritionInterpretationShadowMetadata,
+  generateNutritionWeeklyInterpretationShadow,
+  type NutritionInterpretationShadowMetadata,
+} from "@/features/nutrition/interpretation-generator";
 import { NUTRITION_REVIEW_NARRATIVE_PROMPT_LINES } from "@/features/nutrition/narrative-guardrails";
 
 export { NUTRITION_REVIEW_METHODOLOGY_VERSION };
@@ -82,6 +87,7 @@ export type GeneratedNutritionWeeklyAnalysis = {
     prompt_version?: string;
     quality_notes?: string[];
     do_not_send_reasons?: string[];
+    interpretation_shadow?: NutritionInterpretationShadowMetadata | null;
   };
   tp_context_summary: {
     past_week_key_sessions: number;
@@ -909,6 +915,56 @@ export async function generateNutritionWeeklyAnalysis(input: {
     }
   }
 
+  let interpretationShadow: NutritionInterpretationShadowMetadata | null = null;
+  try {
+    const shadowFactsPayload = {
+      student: {
+        name: context.studentName,
+        formality: context.resolvedCommunicationProfile.formality,
+        nutrition_goal: context.nutritionGoal,
+        coach_context_ru: context.coachContextRu,
+      },
+      athlete_report_signals: context.athleteReportSignals,
+      previous_weeks_context: null,
+      daily_analysis: persistedDailyAnalysis,
+      one_focus: {
+        category: selectedFocus.category,
+        statement_ru: selectedFocus.statementRu,
+        progression_strategy: selectedFocus.progressionStrategy,
+      },
+      methodology_signals: {
+        protein_sufficient: methodology.proteinSufficient,
+        carb_reference_band_used: methodology.carbReferenceBandUsed,
+        carb_reference_not_prescriptive: methodology.carbReferenceNotPrescriptive,
+        long_run_fueling_instruction_detected: methodology.longRunFuelingInstructionDetected,
+        during_run_fuel_planned: methodology.duringRunFuelPlanned,
+      },
+      data_quality: context.dataQuality,
+    };
+    const shadowResult = await generateNutritionWeeklyInterpretationShadow({
+      factsPayload: shadowFactsPayload,
+      formality: context.resolvedCommunicationProfile.formality,
+      studentName: context.studentName,
+    });
+    interpretationShadow = buildNutritionInterpretationShadowMetadata({
+      mode: shadowResult.mode,
+      interpretation: shadowResult.interpretation,
+      issues: shadowResult.issues,
+    });
+  } catch {
+    interpretationShadow = buildNutritionInterpretationShadowMetadata({
+      mode: "disabled",
+      interpretation: null,
+      issues: [
+        {
+          severity: "error",
+          code: "shadow_generation_failed",
+          message: "Shadow interpretation generation failed without blocking review.",
+        },
+      ],
+    });
+  }
+
   const promptHash = stableHash({
     role: NUTRITION_REVIEW_PROMPT_VERSION,
     guardrails: [
@@ -930,6 +986,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
       "facts_only_no_recalculation",
       "json_output_required",
       "coach_summary_day_by_day_athlete_draft",
+      "interpretation_shadow_v1",
     ],
   });
   const contextHash = stableHash({
@@ -1002,6 +1059,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
       prompt_version: NUTRITION_REVIEW_PROMPT_VERSION,
       quality_notes: narrative.quality_notes,
       do_not_send_reasons: [...new Set([...safety.doNotSendReasons, ...narrative.do_not_send_reasons])],
+      interpretation_shadow: interpretationShadow,
     },
     tp_context_summary: {
       past_week_key_sessions: context.tpPastWeek.keyWorkouts.length,
