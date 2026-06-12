@@ -4703,7 +4703,7 @@ function addIsoDateDays(isoDate: string, days: number): string {
   return parsed.toISOString().slice(0, 10);
 }
 
-function isStaleGenericScheduleUnavailabilitySignal(input: {
+export function isStaleGenericScheduleUnavailabilitySignal(input: {
   signal: TrainingPeaksStudentOperationalSignal;
   asOfDate: string;
 }): boolean {
@@ -4754,7 +4754,7 @@ function isExpiredPlannedTrainingDatesSignal(
   return areAllPlannedTrainingDatesExpired(signal.structuredPayload, asOfDate);
 }
 
-function isExpiredScheduleOperationalSignal(
+export function isExpiredScheduleOperationalSignal(
   signal: { signalType: string; validUntil: string | null; structuredPayload: Record<string, unknown> },
   asOfDate: string
 ): boolean {
@@ -6481,6 +6481,11 @@ export function isOperationalNegativeObservationText(text: string): boolean {
   );
 }
 
+export function isOperationalPositiveObservationText(text: string): boolean {
+  const normalized = normalizeOperationalSignalSemanticText([text]);
+  return OPERATIONAL_RECOVERY_OBSERVATION_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
 function resolveNegativeAfterCompletionDisplayText(
   evidence: TrainingPeaksOperationalSignalDisplayEvidence | null | undefined
 ): string | null {
@@ -6726,7 +6731,7 @@ function findOperationalSignalRecoveryMessage(
   };
 }
 
-function findOperationalSignalNegativeAfterCompletion(input: {
+export function findOperationalSignalNegativeAfterCompletion(input: {
   observations: readonly TrainingPeaksTelegramContextObservation[];
   completionDate: string | null;
   completionObservedAt: string | null | undefined;
@@ -6898,7 +6903,7 @@ function resolvePainSeverity(input: {
   return "needs_clarification";
 }
 
-function buildMonitoringLifetimeDisplayLines(input: {
+export function buildMonitoringLifetimeDisplayLines(input: {
   lifecycleDisplayState: OperationalSignalDisplayLifecycleState;
   completion: TrainingPeaksOperationalSignalCompletionEvidence | null | undefined;
   sourceText: string | null;
@@ -8915,6 +8920,97 @@ function collectOperationalSignalDisplayItemsFromSignals(input: {
   );
   allItems.sort((left, right) => getOperationalSignalSortKey(left).localeCompare(getOperationalSignalSortKey(right)));
   return allItems;
+}
+
+export function collectOperationalSignalDiagnosticItems(input: {
+  signals: TrainingPeaksStudentOperationalSignal[];
+  studentNameById: ReadonlyMap<string, string | null>;
+  asOfDate: string;
+  scope?: TrainingPeaksOperationalSignalsScope;
+  activeMoveActions?: readonly TrainingPeaksAction[];
+  displayEvidenceBySignalId?: ReadonlyMap<string, TrainingPeaksOperationalSignalDisplayEvidence>;
+  visibleOnly?: boolean;
+}): TrainingPeaksOperationalSignalsItem[] {
+  const scope = input.scope ?? "all";
+  const episodeScheduleIndex = buildEpisodeScheduleContextIndex(input.signals);
+  const dedupedByEpisode = new Map<string, TrainingPeaksOperationalSignalsItem>();
+  const episodeSignalsByKey = new Map<string, TrainingPeaksStudentOperationalSignal[]>();
+  const fallbackItems: TrainingPeaksOperationalSignalsItem[] = [];
+  for (const signal of input.signals) {
+    if (signal.lifecycleState === "resolved") {
+      continue;
+    }
+    const effective = resolveEffectiveOperationalSignalForDisplay(signal);
+    if (!shouldKeepOperationalSignalByScope(effective.effectiveSignalType, scope)) {
+      continue;
+    }
+    const episodeKey = getSignalMetadataString(signal.metadata, "episode_key");
+    if (episodeKey && isScheduleOperationalSignalType(effective.effectiveSignalType)) {
+      const episodeDedupeKey = `${signal.studentId}:${episodeKey}`;
+      const group = episodeSignalsByKey.get(episodeDedupeKey) ?? [];
+      group.push(signal);
+      episodeSignalsByKey.set(episodeDedupeKey, group);
+    }
+  }
+
+  for (const signal of input.signals) {
+    if (signal.lifecycleState === "resolved") {
+      continue;
+    }
+    const effective = resolveEffectiveOperationalSignalForDisplay(signal);
+    if (!shouldKeepOperationalSignalByScope(effective.effectiveSignalType, scope)) {
+      continue;
+    }
+    const episodeKey = getSignalMetadataString(signal.metadata, "episode_key");
+    const episodeScheduleContext = episodeKey
+      ? episodeScheduleIndex.get(`${signal.studentId}:${episodeKey}`) ?? null
+      : null;
+    const item = buildOperationalSignalItemFromSignal({
+      signal,
+      studentNameById: input.studentNameById,
+      asOfDate: input.asOfDate,
+      episodeScheduleContext,
+      activeMoveActions: input.activeMoveActions,
+      displayEvidence: input.displayEvidenceBySignalId?.get(signal.id) ?? null,
+    });
+    if (input.visibleOnly && item.hiddenReason) {
+      continue;
+    }
+    if (!item.episodeKey) {
+      fallbackItems.push(item);
+      continue;
+    }
+    const episodeDedupeKey = `${item.studentId}:${item.episodeKey}`;
+    const existing = dedupedByEpisode.get(episodeDedupeKey);
+    if (!existing) {
+      if (item.section === "plan_constraints" && !item.hiddenReason) {
+        const episodeSignals = episodeSignalsByKey.get(episodeDedupeKey) ?? [signal];
+        dedupedByEpisode.set(episodeDedupeKey, {
+          ...item,
+          text: buildCanonicalEpisodeScheduleDisplayText({ signals: episodeSignals }),
+        });
+      } else {
+        dedupedByEpisode.set(episodeDedupeKey, item);
+      }
+      continue;
+    }
+    if (item.hiddenReason) {
+      continue;
+    }
+    dedupedByEpisode.set(
+      episodeDedupeKey,
+      mergeOperationalSignalEpisodeItems(existing, item, episodeSignalsByKey.get(episodeDedupeKey))
+    );
+  }
+
+  const allItemsRaw = [...dedupedByEpisode.values(), ...fallbackItems];
+  const filtered = input.visibleOnly
+    ? suppressAmbiguousIllnessWhenConcretePainVisible(
+        dedupeHealthByStudent(filterNormalOperationalSignalItems(allItemsRaw.filter((item) => !item.hiddenReason)))
+      )
+    : allItemsRaw;
+  filtered.sort((left, right) => getOperationalSignalSortKey(left).localeCompare(getOperationalSignalSortKey(right)));
+  return filtered;
 }
 
 export function buildTrainingPeaksOperationalSignalsSnapshotFromSignals(input: {
