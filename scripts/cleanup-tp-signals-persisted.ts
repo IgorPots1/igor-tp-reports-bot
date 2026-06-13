@@ -4,11 +4,14 @@ import process from "node:process";
 
 import {
   classifyPersistedSignalCleanupEligibility,
+  classifyStalePayloadParserOverreadWeekdayContextRemediation,
   formatPersistedCleanupSummaryMarkdown,
   TP_SIGNALS_PERSISTED_CLEANUP_CONFIRM,
   type PersistedCleanupCandidate,
+  type TargetedPersistedCleanupReason,
 } from "@/features/trainingpeaks/tp-signals-persisted-cleanup";
 import {
+  getTrainingPeaksTelegramContextObservationById,
   listTrainingPeaksOperationalSignals,
   listTrainingPeaksStudents,
   type TrainingPeaksStudent,
@@ -22,6 +25,8 @@ const REPORT_ROOT = "reports/tp-signals-persisted-cleanup";
 type CliOptions = {
   asOfDate: string;
   names: string[];
+  signalId: string | null;
+  reason: TargetedPersistedCleanupReason | null;
   apply: boolean;
   confirm: string | null;
 };
@@ -73,6 +78,8 @@ function parseCliOptions(argv: string[]): CliOptions {
   const options: CliOptions = {
     asOfDate: new Date().toISOString().slice(0, 10),
     names: [],
+    signalId: null,
+    reason: null,
     apply: false,
     confirm: null,
   };
@@ -118,6 +125,32 @@ function parseCliOptions(argv: string[]): CliOptions {
       index += 1;
       continue;
     }
+    if (arg.startsWith("--signal-id=")) {
+      options.signalId = arg.slice("--signal-id=".length).trim();
+      continue;
+    }
+    if (arg === "--signal-id") {
+      const next = argv[index + 1];
+      if (!next || next.startsWith("--")) {
+        throw new Error(`${LOG_PREFIX} FAIL: missing value for --signal-id`);
+      }
+      options.signalId = next.trim();
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--reason=")) {
+      options.reason = parseTargetedReason(arg.slice("--reason=".length));
+      continue;
+    }
+    if (arg === "--reason") {
+      const next = argv[index + 1];
+      if (!next || next.startsWith("--")) {
+        throw new Error(`${LOG_PREFIX} FAIL: missing value for --reason`);
+      }
+      options.reason = parseTargetedReason(next);
+      index += 1;
+      continue;
+    }
     if (arg.startsWith("--confirm=")) {
       options.confirm = arg.slice("--confirm=".length);
       continue;
@@ -136,6 +169,25 @@ function parseCliOptions(argv: string[]): CliOptions {
     }
   }
   return options;
+}
+
+function parseTargetedReason(raw: string): TargetedPersistedCleanupReason {
+  const normalized = raw.trim();
+  if (normalized === "parser_overread_weekday_context") {
+    return normalized;
+  }
+  throw new Error(
+    `${LOG_PREFIX} FAIL: unsupported --reason=${raw}; supported: parser_overread_weekday_context`
+  );
+}
+
+function validateCliOptions(options: CliOptions): void {
+  if (options.reason && !options.signalId) {
+    throw new Error(`${LOG_PREFIX} FAIL: --reason=${options.reason} requires --signal-id`);
+  }
+  if (options.signalId && !options.reason) {
+    throw new Error(`${LOG_PREFIX} FAIL: --signal-id requires --reason=parser_overread_weekday_context`);
+  }
 }
 
 function validateApplyPrerequisites(options: CliOptions): string | null {
@@ -289,7 +341,7 @@ async function applyEligibleCleanup(input: {
       updated_at: new Date().toISOString(),
     };
 
-    if (candidate.reason === "expired_schedule_constraint") {
+    if (candidate.reason === "expired_schedule_constraint" || candidate.reason === "stale_payload_parser_overread_weekday_context") {
       updates.status = "expired";
       const nextValidUntil =
         !signal.validUntil || signal.validUntil > input.asOfDate ? input.asOfDate : signal.validUntil;
@@ -321,6 +373,7 @@ async function applyEligibleCleanup(input: {
 async function run(): Promise<void> {
   loadLocalEnvFiles();
   const options = parseCliOptions(process.argv.slice(2));
+  validateCliOptions(options);
   const preApplyValidationError = validateApplyPrerequisites(options);
   if (preApplyValidationError) {
     throw new Error(`${LOG_PREFIX} FAIL: ${preApplyValidationError}`);
@@ -344,6 +397,12 @@ async function run(): Promise<void> {
   );
 
   let signals = activeSignals.filter((signal) => signal.lifecycleState !== "resolved");
+  if (options.signalId) {
+    signals = signals.filter((signal) => signal.id === options.signalId);
+    if (signals.length === 0) {
+      throw new Error(`${LOG_PREFIX} FAIL: no active signal found for signal_id=${options.signalId}`);
+    }
+  }
   if (options.names.length > 0) {
     const matchedStudents = resolveStudentsByNames(students, options.names);
     const matchedStudentIds = new Set(matchedStudents.map((student) => student.id));
@@ -359,24 +418,55 @@ async function run(): Promise<void> {
   ];
   const observationById = await fetchObservationRowsByIds(observationIds);
 
-  const candidates: PersistedCleanupCandidate[] = signals.map((signal) => {
+  let candidates: PersistedCleanupCandidate[];
+  if (options.reason === "parser_overread_weekday_context") {
+    if (signals.length !== 1) {
+      throw new Error(
+        `${LOG_PREFIX} FAIL: targeted remediation requires exactly one active signal; found ${signals.length}`
+      );
+    }
+    const signal = signals[0]!;
     const observation = signal.sourceObservationId
-      ? observationById.get(signal.sourceObservationId) ?? null
+      ? await getTrainingPeaksTelegramContextObservationById(signal.sourceObservationId)
       : null;
-    return classifyPersistedSignalCleanupEligibility({
-      signal,
-      studentName: studentNameById.get(signal.studentId) ?? `Unknown (${signal.studentId.slice(0, 8)})`,
-      sourceSnippet: observation?.text_preview ?? null,
-      asOfDate: options.asOfDate,
-      referenceObservedAt: observation?.observed_at ?? signal.createdAt,
+    candidates = [
+      classifyStalePayloadParserOverreadWeekdayContextRemediation({
+        signal,
+        studentName: studentNameById.get(signal.studentId) ?? `Unknown (${signal.studentId.slice(0, 8)})`,
+        sourceSnippet: observation?.textPreview ?? observationById.get(signal.sourceObservationId ?? "")?.text_preview ?? null,
+        asOfDate: options.asOfDate,
+        referenceObservedAt: observation?.observedAt ?? signal.createdAt,
+        studentId: signal.studentId,
+        sourceType: observation?.sourceType ?? null,
+        sourceLabels: observation?.labels ?? [],
+        sourceMetadata: observation?.metadata ?? {},
+      }),
+    ];
+  } else {
+    candidates = signals.map((signal) => {
+      const observation = signal.sourceObservationId
+        ? observationById.get(signal.sourceObservationId) ?? null
+        : null;
+      return classifyPersistedSignalCleanupEligibility({
+        signal,
+        studentName: studentNameById.get(signal.studentId) ?? `Unknown (${signal.studentId.slice(0, 8)})`,
+        sourceSnippet: observation?.text_preview ?? null,
+        asOfDate: options.asOfDate,
+        referenceObservedAt: observation?.observed_at ?? signal.createdAt,
+      });
     });
-  });
+  }
 
   const wouldWriteCount = candidates.filter((item) => item.eligibility === "eligible").length;
   const mode = options.apply ? "apply" : "dry-run";
   let actualWrittenCount = 0;
 
   if (options.apply) {
+    if (options.reason === "parser_overread_weekday_context" && wouldWriteCount !== 1) {
+      throw new Error(
+        `${LOG_PREFIX} FAIL: targeted apply blocked; expected would_write=1, got ${wouldWriteCount}`
+      );
+    }
     const signalsById = new Map(signals.map((signal) => [signal.id, signal]));
     actualWrittenCount = await applyEligibleCleanup({
       candidates,
@@ -392,6 +482,8 @@ async function run(): Promise<void> {
     generatedAt,
     asOfDate: options.asOfDate,
     names: options.names,
+    signalId: options.signalId,
+    targetedReason: options.reason,
     mode,
     candidates,
     wouldWriteCount,
@@ -404,6 +496,9 @@ async function run(): Promise<void> {
   fs.writeFileSync(path.join(reportDir, "summary.md"), summaryMarkdown);
 
   console.log(`${LOG_PREFIX} mode=${mode} as_of=${options.asOfDate} inspected=${candidates.length}`);
+  if (options.reason) {
+    console.log(`${LOG_PREFIX} targeted_reason=${options.reason} signal_id=${options.signalId ?? "(none)"}`);
+  }
   console.log(`${LOG_PREFIX} eligible=${candidates.filter((item) => item.eligibility === "eligible").length}`);
   console.log(`${LOG_PREFIX} partial_only=${candidates.filter((item) => item.eligibility === "partial_only").length}`);
   console.log(`${LOG_PREFIX} not_eligible=${candidates.filter((item) => item.eligibility === "not_eligible").length}`);
@@ -415,6 +510,11 @@ async function run(): Promise<void> {
       console.log(
         `- ${candidate.student}: ${candidate.signal_type} eligibility=${candidate.eligibility} reason=${candidate.reason} action=${candidate.recommended_action}`
       );
+    }
+    if (options.reason && candidate.safety_notes.length > 0) {
+      for (const note of candidate.safety_notes) {
+        console.log(`  - ${note}`);
+      }
     }
   }
 

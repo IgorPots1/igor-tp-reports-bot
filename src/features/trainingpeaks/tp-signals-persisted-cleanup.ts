@@ -1,4 +1,5 @@
 import {
+  classifyCoachOperationalSignal,
   isNonTrainingAdministrativeIntentText,
   isWeatherOrTemperatureSoftContextText,
 } from "@/features/trainingpeaks/coach-operational-signals";
@@ -18,8 +19,22 @@ export type PersistedCleanupReason =
   | "false_positive_billing_admin"
   | "false_positive_weather_soft_context"
   | "expired_schedule_constraint"
+  | "stale_payload_parser_overread_weekday_context"
   | "partial_stale_dates"
   | "not_safe";
+
+export type TargetedPersistedCleanupReason = "parser_overread_weekday_context";
+
+export const POLYAKOVA_PARSER_OVERREAD_REMEDIATION = {
+  signalId: "b1d8ae8f-64cb-4b62-acf5-6fd8d99e82c8",
+  studentName: "Polyakova Anastasia",
+  sourceObservationId: "88e923eb-5737-4b6a-b9b4-7918aeaa118e",
+  expectedPlannedDates: ["2026-06-15"],
+  expectedUnavailableDates: ["2026-06-10"],
+  sourcePreviewMarkers: ["сегодня", "не побегу", "пн", "был прям нужен"],
+  expectedParserPlannedDates: [] as string[],
+  expectedParserUnavailableDates: ["2026-06-10"],
+} as const;
 
 export type PersistedCleanupRecommendedAction =
   | "consume"
@@ -335,10 +350,169 @@ export function classifyPersistedSignalCleanupEligibility(input: {
   };
 }
 
+function normalizeStudentNameForGuard(value: string): string {
+  return value
+    .toLocaleLowerCase("ru")
+    .replace(/ё/gu, "е")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function arraysEqual(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  const sortedLeft = [...left].sort();
+  const sortedRight = [...right].sort();
+  return sortedLeft.every((value, index) => value === sortedRight[index]);
+}
+
+function simulateParserDatesForSource(input: {
+  sourceSnippet: string | null;
+  observedAt: string;
+  studentId: string;
+  sourceType?: string | null;
+  labels?: string[];
+  metadata?: Record<string, unknown>;
+}): { planned_training_dates: string[]; unavailable_dates: string[] } {
+  if (!input.sourceSnippet?.trim()) {
+    return { planned_training_dates: [], unavailable_dates: [] };
+  }
+  const parsed = classifyCoachOperationalSignal({
+    sourceType: input.sourceType ?? null,
+    textPreview: input.sourceSnippet,
+    labels: input.labels ?? [],
+    metadata: input.metadata ?? {},
+    observedAt: input.observedAt,
+    studentId: input.studentId,
+  });
+  return {
+    planned_training_dates: normalizeStringArray(parsed.structured_payload.planned_training_dates),
+    unavailable_dates: normalizeStringArray(parsed.structured_payload.unavailable_dates),
+  };
+}
+
+export function classifyStalePayloadParserOverreadWeekdayContextRemediation(input: {
+  signal: TrainingPeaksStudentOperationalSignal;
+  studentName: string;
+  sourceSnippet: string | null;
+  asOfDate: string;
+  referenceObservedAt: string | null;
+  studentId: string;
+  sourceType?: string | null;
+  sourceLabels?: string[];
+  sourceMetadata?: Record<string, unknown>;
+}): PersistedCleanupCandidate {
+  const guard = POLYAKOVA_PARSER_OVERREAD_REMEDIATION;
+  const base = buildCandidateBase(input);
+  const failedGuards: string[] = [];
+  const passedGuards: string[] = [];
+
+  const recordGuard = (label: string, passed: boolean): void => {
+    if (passed) {
+      passedGuards.push(label);
+      return;
+    }
+    failedGuards.push(label);
+  };
+
+  if (input.signal.status !== "active") {
+    return {
+      ...base,
+      eligibility: "not_eligible",
+      recommended_action: "no_action",
+      reason: "not_safe",
+      safety_notes: [
+        `Signal status is ${input.signal.status}; already not active/visible — no write.`,
+      ],
+    };
+  }
+
+  recordGuard(
+    "signal_id",
+    input.signal.id === guard.signalId
+  );
+  recordGuard(
+    "student_name",
+    normalizeStudentNameForGuard(input.studentName) === normalizeStudentNameForGuard(guard.studentName)
+  );
+  recordGuard(
+    "source_observation_id",
+    input.signal.sourceObservationId === guard.sourceObservationId
+  );
+  recordGuard(
+    "planned_training_dates",
+    arraysEqual(base.structured_payload_dates.planned_training_dates, guard.expectedPlannedDates)
+  );
+  recordGuard(
+    "unavailable_dates_contains_2026-06-10",
+    base.structured_payload_dates.unavailable_dates.includes("2026-06-10")
+  );
+
+  const sourceText = input.sourceSnippet ?? "";
+  for (const marker of guard.sourcePreviewMarkers) {
+    recordGuard(`source_preview_contains_${marker}`, sourceText.includes(marker));
+  }
+
+  const parserSimulation = simulateParserDatesForSource({
+    sourceSnippet: input.sourceSnippet,
+    observedAt: input.referenceObservedAt ?? input.signal.createdAt,
+    studentId: input.studentId,
+    sourceType: input.sourceType,
+    labels: input.sourceLabels,
+    metadata: input.sourceMetadata,
+  });
+  recordGuard(
+    "parser_simulation_planned_training_dates",
+    arraysEqual(parserSimulation.planned_training_dates, guard.expectedParserPlannedDates)
+  );
+  recordGuard(
+    "parser_simulation_unavailable_dates",
+    arraysEqual(parserSimulation.unavailable_dates, guard.expectedParserUnavailableDates)
+  );
+  recordGuard(
+    "as_of_date_past_unavailability",
+    base.structured_payload_dates.unavailable_dates.some((date) => date < input.asOfDate)
+  );
+  recordGuard(
+    "no_future_actionable_dates_after_corrected_interpretation",
+    !parserSimulation.planned_training_dates.some((date) => date >= input.asOfDate) &&
+      !parserSimulation.unavailable_dates.some((date) => date >= input.asOfDate)
+  );
+
+  if (failedGuards.length > 0) {
+    return {
+      ...base,
+      eligibility: "not_eligible",
+      recommended_action: "no_action",
+      reason: "not_safe",
+      safety_notes: [
+        "Targeted parser_overread_weekday_context guard failed; no write.",
+        ...failedGuards.map((item) => `guard_failed: ${item}`),
+        ...passedGuards.map((item) => `guard_passed: ${item}`),
+      ],
+    };
+  }
+
+  return {
+    ...base,
+    eligibility: "eligible",
+    recommended_action: "consume",
+    reason: "stale_payload_parser_overread_weekday_context",
+    safety_notes: [
+      "All targeted guards passed for confirmed Polyakova parser_overread_weekday_context stale payload.",
+      "Parser simulation yields only past unavailability; safe to expire persisted row.",
+      ...passedGuards.map((item) => `guard_passed: ${item}`),
+    ],
+  };
+}
+
 export function formatPersistedCleanupSummaryMarkdown(input: {
   generatedAt: string;
   asOfDate: string;
   names: string[];
+  signalId?: string | null;
+  targetedReason?: TargetedPersistedCleanupReason | null;
   mode: "dry-run" | "apply";
   candidates: PersistedCleanupCandidate[];
   wouldWriteCount: number;
@@ -360,6 +534,8 @@ export function formatPersistedCleanupSummaryMarkdown(input: {
     `- as_of_date: ${input.asOfDate}`,
     `- mode: ${input.mode}`,
     `- names_filter: ${input.names.length > 0 ? input.names.join(", ") : "(all active signals)"}`,
+    `- signal_id_filter: ${input.signalId ?? "(none)"}`,
+    `- targeted_reason: ${input.targetedReason ?? "(general cleanup)"}`,
     `- report_dir: ${input.reportDir}`,
     "",
     "## Counts",
