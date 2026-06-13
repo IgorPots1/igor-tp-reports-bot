@@ -156,6 +156,45 @@ assert.match(derivedSummary, /Длительная|Ключевая тренир
 assert.match(derivedSummary, /Средние макросы:/, "derived summary must include macro pattern");
 assert.match(derivedSummary, /Фокус недели:/, "derived summary must include one focus");
 
+function asObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function buildHighFatReview(): NutritionWeeklyAnalysis {
+  return {
+    ...review,
+    nutritionSummary: {
+      ...asObject(review.nutritionSummary),
+      narrative_preferences: { fatFeedbackPolicy: "coach_only" },
+      daily_analysis: [
+        {
+          date: "2026-06-09",
+          weekday_ru: "Вторник",
+          date_label: "09.06",
+          training_type: "easy",
+          training_label: "лёгкий бег",
+          actual_kcal: 2200,
+          protein_g: 95,
+          fat_g: 95,
+          carbs_g: 180,
+          carbs_g_per_kg: 3.2,
+          nutrition_status: "low_for_load",
+          findings: ["high_fat_percent", "high_fat_may_displace_carbs_on_load_day"],
+          macroGuardrails: {
+            protein: { status: "ok" },
+            fat: { status: "high", percentStatus: "high", g: 95, percentEnergy: 47, coachOnlyFindings: ["high_fat_percent"] },
+            carbs: { status: "borderline" },
+          },
+        },
+      ],
+    },
+  };
+}
+
+const highFatSummary = buildDerivedNutritionCoachSummary({ review: buildHighFatReview() });
+assert.match(highFatSummary, /Жиры:.*высокий процент энергии из жиров/i, "coach summary must surface high fat");
+assert.match(highFatSummary, /Athlete-facing скрыто по политике coach_only/i);
+
 const noFactsSummary = buildDerivedNutritionCoachSummary({
   review: buildReviewWithoutFacts(),
 });

@@ -143,4 +143,15 @@ assert.match(rendered, /углевод/i);
 assert.match(rendered, /белок|углевод/i);
 assert.doesNotMatch(rendered, /День выглядит ровно: белок закрыт, углеводов под эту нагрузку достаточно/);
 
+const highFatCtx = contextFixture(
+  { kcal: 2500, proteinG: 100, fatG: 150, carbsG: 150 },
+  { title: "Easy run", type: "easy" }
+);
+const highFatMethodology = buildNutritionMethodologyContext({ context: highFatCtx });
+const highFatDay = highFatMethodology.dailyAnalysis[0]?.canonicalDailyAnalysis;
+assert.ok(highFatDay);
+assert.equal(highFatDay?.macroGuardrails.fat.percentStatus, "high", ">=40% energy from fat => high_percent");
+assert.equal(highFatDay?.macroGuardrails.fat.status, "high");
+assert.ok(highFatDay?.findings.includes("high_fat_percent"));
+
 console.log("PASS check-nutrition-macro-guardrails");

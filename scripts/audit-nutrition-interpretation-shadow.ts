@@ -5,6 +5,8 @@ import process from "node:process";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import { buildDerivedNutritionCombinedMessage } from "../src/features/nutrition/combined-message";
+import { buildDerivedNutritionCoachSummary } from "../src/features/nutrition/coach-summary";
+import { resolveNutritionNarrativePreferencesFromStored } from "../src/features/nutrition/context";
 import {
   buildNutritionInterpretationValidationFacts,
   validateNutritionWeeklyInterpretation,
@@ -15,6 +17,7 @@ import {
   analyzeProductionText,
   analyzeShadowInterpretation,
   buildCanonicalFactsReadiness,
+  buildFatReviewerFactsLines,
   buildReviewerPack,
   compareNutritionOutputs,
   NUTRITION_AUDIT_VERDICTS,
@@ -239,6 +242,12 @@ async function buildSavedReviewCase(input: {
     studentName: student.student_name,
   });
   const productionText = combined.athleteMessageDraft;
+  const derivedCoachSummary = buildDerivedNutritionCoachSummary({ review, plan });
+  const narrativePreferences = resolveNutritionNarrativePreferencesFromStored({
+    nutritionSummary: summary,
+    contextSnapshot: toObject(review.contextSnapshot),
+    coachContextRu: coachContext,
+  });
 
   const readiness = buildCanonicalFactsReadiness({
     dailyAnalysis: daily,
@@ -268,6 +277,12 @@ async function buildSavedReviewCase(input: {
     `carb placement insight: ${readiness.carbPlacementInsight ?? "none"}`,
     `macro guardrails present: ${readiness.macroGuardrails ? "yes" : "no"}`,
     `energy availability screening present: ${readiness.energyAvailability ? "yes" : "no"}`,
+    ...buildFatReviewerFactsLines({
+      dailyAnalysis: daily,
+      fatFeedbackPolicy: narrativePreferences.fatFeedbackPolicy,
+      coachSummaryText: derivedCoachSummary,
+      athleteText: productionText,
+    }),
   ];
 
   const record: CaseRecord = {

@@ -8,6 +8,7 @@ import {
   NUTRITION_COACH_CONTEXT_RU_MAX_LENGTH,
   normalizeNutritionCoachContextRu,
 } from "@/features/nutrition/repository";
+import { getNutritionNarrativePreferences } from "@/features/nutrition/context";
 
 const root = process.cwd();
 const coachContextFixture = "недавно подняли объём, после болезни, нужен мягкий тон";
@@ -100,6 +101,13 @@ async function run(): Promise<void> {
     /не может быть длиннее/
   );
 
+  const defaultPrefs = getNutritionNarrativePreferences({});
+  assert.equal(defaultPrefs.fatFeedbackPolicy, "coach_only");
+  const suppressPrefs = getNutritionNarrativePreferences({
+    coachContextRu: "У ученицы своя позиция по высокому жиру, не делать жиры фокусом; фокус - углеводы.",
+  });
+  assert.equal(suppressPrefs.fatFeedbackPolicy, "suppress_athlete");
+
   const generated = await generateNutritionWeeklyAnalysis({ context: buildMockContext() });
   assert.equal(generated.athlete_report_signals.length, 0);
   const athleteDraft = generated.athlete_message_draft ?? "";
@@ -108,6 +116,7 @@ async function run(): Promise<void> {
 
   const draftGenerator = readFileSync(join(root, "src/features/nutrition/draft-generator.ts"), "utf8");
   assert.match(draftGenerator, /coach_context_ru/, "facts payload must include coach_context_ru");
+  assert.match(draftGenerator, /narrative_preferences/, "facts payload must include narrative_preferences");
   assert.match(draftGenerator, /nutrition_goal/, "facts payload must include nutrition_goal");
   assert.match(draftGenerator, /coach_memory/, "facts payload must include coach memory summaries");
 

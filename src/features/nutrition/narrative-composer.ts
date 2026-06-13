@@ -1,4 +1,6 @@
 import type { NutritionPlanTargetWeekMode } from "@/features/nutrition/plan-week-policy";
+import type { NutritionFatFeedbackPolicy } from "@/features/nutrition/context";
+import { shouldShowHighFatAthleteFeedback } from "@/features/nutrition/context";
 import { isNutritionLongEnduranceWorkout, isNutritionLongRunWorkout } from "@/features/nutrition/long-run";
 import type { NutritionNextWeekPlan, NutritionNextWeekPlanDay } from "@/features/nutrition/weekly-plan-formulas";
 
@@ -281,6 +283,8 @@ export class NutritionNarrativeRepetitionState {
     protein_closed: 0,
     energy_low: 0,
     carbs_low: 0,
+    energy_scarce: 0,
+    modest_energy_day: 0,
   };
 
   private exactSentenceCounts = new Map<string, number>();
@@ -312,8 +316,106 @@ export class NutritionNarrativeRepetitionState {
 export type MacroGuardrailStatuses = {
   proteinStatus: string | null;
   fatStatus: string | null;
+  fatPercentStatus?: string | null;
+  fatG?: number | null;
+  fatPercentEnergy?: number | null;
   carbsStatus: string | null;
 };
+
+function isHighFatMacro(macro: MacroGuardrailStatuses): boolean {
+  return macro.fatStatus === "high" || macro.fatPercentStatus === "high";
+}
+
+function isLowOrBorderlineFatMacro(macro: MacroGuardrailStatuses): boolean {
+  return macro.fatStatus === "low" || macro.fatStatus === "borderline";
+}
+
+function shouldMentionFatInAthleteText(input: {
+  macro: MacroGuardrailStatuses;
+  fatFeedbackPolicy: NutritionFatFeedbackPolicy;
+}): boolean {
+  if (isLowOrBorderlineFatMacro(input.macro)) {
+    return true;
+  }
+  if (isHighFatMacro(input.macro)) {
+    return shouldShowHighFatAthleteFeedback(input.fatFeedbackPolicy);
+  }
+  return false;
+}
+
+function buildHighFatAthleteSentence(loadDay: boolean, lowCarbs: boolean): string | null {
+  if (!loadDay || !lowCarbs) {
+    return null;
+  }
+  return "Жиры высоковаты, при этом углеводов под нагрузку не хватает — лучше сместить часть энергии в углеводы вокруг тяжёлых дней.";
+}
+
+function isLongEnduranceTrainingType(trainingType: string): boolean {
+  return trainingType === "long_endurance" || trainingType === "long_run";
+}
+
+function isRunLikeAfterLongDay(role: NutritionNarrativeWorkoutRole): boolean {
+  return (
+    role === "combined_load" ||
+    role === "key_interval" ||
+    role === "key_tempo" ||
+    role === "easy_run" ||
+    role === "long_run"
+  );
+}
+
+function buildLongAfterEndurancePrefix(input: {
+  previousDayTrainingType: string | null | undefined;
+  previousDayTrainingLabel: string | null | undefined;
+  roleInfo: NutritionNarrativeDayRoleInfo;
+}): string | null {
+  if (!input.previousDayTrainingType || !isLongEnduranceTrainingType(input.previousDayTrainingType)) {
+    return null;
+  }
+  if (!isRunLikeAfterLongDay(input.roleInfo.role)) {
+    return null;
+  }
+  const prevLabel = (input.previousDayTrainingLabel ?? "").toLocaleLowerCase("ru");
+  const prevIsBike = /вело|cycling|bike/.test(prevLabel) || input.previousDayTrainingType === "long_endurance";
+  if (prevIsBike) {
+    return "День после длинного вело + ещё беговая работа. ";
+  }
+  return "День после длинной нагрузки + ещё беговая работа. ";
+}
+
+function countMeaningfulSentences(text: string): number {
+  return text
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?…])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length >= 12).length;
+}
+
+const DETAIL_FLOOR_ROLES = new Set<NutritionNarrativeWorkoutRole>([
+  "key_interval",
+  "key_tempo",
+  "long_run",
+  "long_endurance",
+  "combined_load",
+]);
+
+function ensureDetailFloorSentence(input: {
+  text: string;
+  roleInfo: NutritionNarrativeDayRoleInfo;
+  athleteTrainingLabel: string;
+}): string {
+  if (!DETAIL_FLOOR_ROLES.has(input.roleInfo.role)) {
+    return input.text;
+  }
+  if (countMeaningfulSentences(input.text) >= 2) {
+    return input.text;
+  }
+  const supplement =
+    input.roleInfo.role === "long_endurance" || input.roleInfo.role === "long_run"
+      ? `Под ${input.athleteTrainingLabel} важно держать энергию и углеводы ровнее, без резких просадок в такие дни.`
+      : `Под ${input.athleteTrainingLabel} имеет смысл заранее поддержать энергию и углеводы, чтобы нагрузка не осталась «на пустом».`;
+  return `${input.text} ${supplement}`;
+}
 
 export type NutritionDayCommentComposerInput = {
   trainingType: string;
@@ -323,8 +425,12 @@ export type NutritionDayCommentComposerInput = {
   findings: string[];
   macro: MacroGuardrailStatuses;
   hasNutritionCompletenessIssue: boolean;
+  missingNutritionData?: boolean;
   hasEnergyIssue: boolean;
   roleInfo: NutritionNarrativeDayRoleInfo;
+  fatFeedbackPolicy?: NutritionFatFeedbackPolicy;
+  previousDayTrainingType?: string | null;
+  previousDayTrainingLabel?: string | null;
 };
 
 function hasLowCarbs(macro: MacroGuardrailStatuses, loadDay: boolean): boolean {
@@ -337,8 +443,9 @@ function buildMacroNuanceSentence(input: {
   hasEnergyIssue: boolean;
   state: NutritionNarrativeRepetitionState;
   patternOccurrence: number;
+  fatFeedbackPolicy: NutritionFatFeedbackPolicy;
 }): string | null {
-  const { macro, loadDay, hasEnergyIssue, state, patternOccurrence } = input;
+  const { macro, loadDay, hasEnergyIssue, state, patternOccurrence, fatFeedbackPolicy } = input;
   if (patternOccurrence >= 3) {
     return null;
   }
@@ -357,8 +464,16 @@ function buildMacroNuanceSentence(input: {
     return "Общей энергии и углеводов всё равно маловато.";
   }
 
+  const highFatSentence =
+    shouldShowHighFatAthleteFeedback(fatFeedbackPolicy) && isHighFatMacro(macro) && loadDay && hasLowCarbs(macro, loadDay)
+      ? buildHighFatAthleteSentence(loadDay, true)
+      : null;
+  if (highFatSentence) {
+    return highFatSentence;
+  }
+
   const segments: string[] = [];
-  if (loadDay && macro.carbsStatus === "low" && state.canUsePhrase("carbs_low", 4)) {
+  if (loadDay && macro.carbsStatus === "low" && state.canUsePhrase("carbs_low", 3)) {
     segments.push("углеводов под нагрузку маловато");
     state.registerPhrase("carbs_low");
   } else if (loadDay && macro.carbsStatus === "borderline") {
@@ -370,10 +485,12 @@ function buildMacroNuanceSentence(input: {
   } else if (macro.proteinStatus === "low") {
     segments.push("белка в этот день маловато");
   }
-  if (macro.fatStatus === "low") {
-    segments.push("жиры низковаты");
-  } else if (macro.fatStatus === "borderline") {
-    segments.push("жиры на нижней границе");
+  if (shouldMentionFatInAthleteText({ macro, fatFeedbackPolicy })) {
+    if (macro.fatStatus === "low") {
+      segments.push("жиры низковаты");
+    } else if (macro.fatStatus === "borderline") {
+      segments.push("жиры на нижней границе");
+    }
   }
 
   if (segments.length === 0) {
@@ -424,7 +541,11 @@ function buildLowEnergyPrimarySentence(input: {
 
   if (roleInfo.role === "combined_load") {
     if (patternOccurrence >= 2) {
-      return "При двойной нагрузке день снова вышел скромным по энергии.";
+      if (state.canUsePhrase("modest_energy_day", 2)) {
+        state.registerPhrase("modest_energy_day");
+        return "При двойной нагрузке день снова вышел скромным по энергии.";
+      }
+      return "При двойной нагрузке день снова вышел низким по энергии.";
     }
     return "Здесь нагрузка получилась двойная: силовая плюс бег или кросс плюс бег. При такой связке день вышел слишком скромным по энергии.";
   }
@@ -464,7 +585,11 @@ function buildLowEnergyPrimarySentence(input: {
     return "День с нагрузкой снова вышел низким по энергии.";
   }
   if (patternOccurrence >= 2) {
-    return "Для дня с нагрузкой энергии снова маловато.";
+    if (state.canUsePhrase("energy_scarce", 2)) {
+      state.registerPhrase("energy_scarce");
+      return "Для дня с нагрузкой энергии снова маловато.";
+    }
+    return "Для дня с нагрузкой энергии снова низковато.";
   }
   if (state.canUsePhrase("too_empty_day", 2)) {
     state.registerPhrase("too_empty_day");
@@ -472,9 +597,17 @@ function buildLowEnergyPrimarySentence(input: {
   }
   if (state.canUsePhrase("energy_low", 5)) {
     state.registerPhrase("energy_low");
-    return "Для дня с нагрузкой энергии получилось маловато. Лучше поддержать питание вокруг тренировки.";
+    if (state.canUsePhrase("energy_scarce", 2)) {
+      state.registerPhrase("energy_scarce");
+      return "Для дня с нагрузкой энергии получилось маловато. Лучше поддержать питание вокруг тренировки.";
+    }
+    return "Для дня с нагрузкой энергии получилось низковато. Лучше поддержать питание вокруг тренировки.";
   }
-  return "Для дня с нагрузкой энергии получилось маловато.";
+  if (state.canUsePhrase("energy_scarce", 2)) {
+    state.registerPhrase("energy_scarce");
+    return "Для дня с нагрузкой энергии получилось маловато.";
+  }
+  return "Для дня с нагрузкой энергии получилось низковато.";
 }
 
 function resolveLowEnergyPattern(roleInfo: NutritionNarrativeDayRoleInfo): NarrativePatternId {
@@ -500,11 +633,30 @@ export function composeNutritionDayComment(
   input: NutritionDayCommentComposerInput,
   state: NutritionNarrativeRepetitionState
 ): string {
-  const { macro, hasEnergyIssue, roleInfo, athleteTrainingLabel, hasNutritionCompletenessIssue } = input;
+  const {
+    macro,
+    hasEnergyIssue,
+    roleInfo,
+    athleteTrainingLabel,
+    hasNutritionCompletenessIssue,
+    fatFeedbackPolicy = "coach_only",
+    previousDayTrainingType,
+    previousDayTrainingLabel,
+  } = input;
   const cautiousPrefix = hasNutritionCompletenessIssue
     ? "Данные по питанию за день неполные, поэтому вывод короткий. "
     : "";
+  const longAfterPrefix =
+    buildLongAfterEndurancePrefix({
+      previousDayTrainingType,
+      previousDayTrainingLabel,
+      roleInfo,
+    }) ?? "";
   const loadDay = roleInfo.role !== "rest";
+
+  if (input.missingNutritionData) {
+    return `${cautiousPrefix}${longAfterPrefix}Питание за этот день не зафиксировано. Без данных конкретного макро-вывода не делаю.`;
+  }
 
   if (input.nutritionStatus === "suspect") {
     return "Данные по питанию за день выглядят неполными или нетипичными, поэтому здесь лучше проверить исходный отчёт вручную.";
@@ -530,8 +682,10 @@ export function composeNutritionDayComment(
       hasEnergyIssue: true,
       state,
       patternOccurrence: occurrence,
+      fatFeedbackPolicy,
     });
-    return macroSentence ? `${cautiousPrefix}${primary} ${macroSentence}` : `${cautiousPrefix}${primary}`;
+    const body = macroSentence ? `${primary} ${macroSentence}` : primary;
+    return `${cautiousPrefix}${longAfterPrefix}${ensureDetailFloorSentence({ text: body, roleInfo, athleteTrainingLabel })}`;
   }
 
   if (hasEnergyIssue) {
@@ -550,14 +704,30 @@ export function composeNutritionDayComment(
       hasEnergyIssue: true,
       state,
       patternOccurrence: occurrence,
+      fatFeedbackPolicy,
     });
     const combined = macroSentence ? `${primary} ${macroSentence}` : primary;
     state.registerExactSentence(combined);
-    return `${cautiousPrefix}${combined}`;
+    return `${cautiousPrefix}${longAfterPrefix}${ensureDetailFloorSentence({ text: combined, roleInfo, athleteTrainingLabel })}`;
   }
 
-  if (macro.fatStatus === "low" || input.nutritionStatus === "low_fat" || input.findings.includes("fat_below_floor")) {
-    return `${cautiousPrefix}Жиров в этот день получилось низковато. Не нужно специально держать такие дни слишком сухими по жирам, особенно если они повторяются.`;
+  if (
+    shouldMentionFatInAthleteText({ macro, fatFeedbackPolicy }) &&
+    (macro.fatStatus === "low" || input.nutritionStatus === "low_fat" || input.findings.includes("fat_below_floor"))
+  ) {
+    return `${cautiousPrefix}${longAfterPrefix}Жиров в этот день получилось низковато. Не нужно специально держать такие дни слишком сухими по жирам, особенно если они повторяются.`;
+  }
+
+  if (
+    shouldShowHighFatAthleteFeedback(fatFeedbackPolicy) &&
+    isHighFatMacro(macro) &&
+    loadDay &&
+    hasLowCarbs(macro, loadDay)
+  ) {
+    const highFatSentence = buildHighFatAthleteSentence(loadDay, true);
+    if (highFatSentence) {
+      return `${cautiousPrefix}${longAfterPrefix}${highFatSentence}`;
+    }
   }
 
   if (input.nutritionStatus === "low_protein" || input.findings.includes("protein_low")) {
@@ -582,8 +752,10 @@ export function composeNutritionDayComment(
       hasEnergyIssue: false,
       state,
       patternOccurrence: occurrence,
+      fatFeedbackPolicy,
     });
-    return macroSentence ? `${cautiousPrefix}${primary} ${macroSentence}` : `${cautiousPrefix}${primary}`;
+    const body = macroSentence ? `${primary} ${macroSentence}` : primary;
+    return `${cautiousPrefix}${longAfterPrefix}${ensureDetailFloorSentence({ text: body, roleInfo, athleteTrainingLabel })}`;
   }
 
   if (roleInfo.role === "rest") {
@@ -607,12 +779,20 @@ export function composeNutritionDayComment(
 
   if (roleInfo.role === "key_interval" && roleInfo.isKey) {
     state.bumpPattern("macro_ok");
-    return `${cautiousPrefix}Это ключевая интервальная работа недели, и по питанию день получился хорошо поддержан. Углеводов было достаточно для такой нагрузки, сильной просадки по энергии не видно.`;
+    return `${cautiousPrefix}${longAfterPrefix}${ensureDetailFloorSentence({
+      text: "Это ключевая интервальная работа недели, и по питанию день получился хорошо поддержан. Углеводов было достаточно для такой нагрузки, сильной просадки по энергии не видно.",
+      roleInfo,
+      athleteTrainingLabel,
+    })}`;
   }
 
   if (roleInfo.role === "key_tempo" && roleInfo.isKey) {
     state.bumpPattern("macro_ok");
-    return `${cautiousPrefix}Это ключевая темповая работа, и по питанию день выглядит ровно: углеводов достаточно, сильной просадки по энергии не видно.`;
+    return `${cautiousPrefix}${longAfterPrefix}${ensureDetailFloorSentence({
+      text: "Это ключевая темповая работа, и по питанию день выглядит ровно: углеводов достаточно, сильной просадки по энергии не видно.",
+      roleInfo,
+      athleteTrainingLabel,
+    })}`;
   }
 
   if (roleInfo.role === "easy_run") {
@@ -625,12 +805,20 @@ export function composeNutritionDayComment(
 
   if (roleInfo.role === "combined_load") {
     state.bumpPattern("macro_ok");
-    return `${cautiousPrefix}Здесь нагрузка двойная (${athleteTrainingLabel}). По питанию день выглядит достаточно ровно: энергии и углеводов хватает для такой связки.`;
+    return `${cautiousPrefix}${longAfterPrefix}${ensureDetailFloorSentence({
+      text: `Здесь нагрузка двойная (${athleteTrainingLabel}). По питанию день выглядит достаточно ровно: энергии и углеводов хватает для такой связки.`,
+      roleInfo,
+      athleteTrainingLabel,
+    })}`;
   }
 
   if (roleInfo.role === "long_endurance") {
     state.bumpPattern("macro_ok");
-    return `${cautiousPrefix}Под длинную выносливостную нагрузку день выглядит достаточно ровно: сильной просадки по энергии и углеводам не видно.`;
+    return `${cautiousPrefix}${longAfterPrefix}${ensureDetailFloorSentence({
+      text: "Под длинную выносливостную нагрузку день выглядит достаточно ровно: сильной просадки по энергии и углеводам не видно.",
+      roleInfo,
+      athleteTrainingLabel,
+    })}`;
   }
 
   if (roleInfo.role === "cross_training") {
@@ -640,12 +828,20 @@ export function composeNutritionDayComment(
 
   if (roleInfo.role === "long_run") {
     state.bumpPattern("macro_ok");
-    return `${cautiousPrefix}Под длинную работу день выглядит достаточно ровно: сильной просадки по энергии и углеводам не видно.`;
+    return `${cautiousPrefix}${longAfterPrefix}${ensureDetailFloorSentence({
+      text: "Под длинную работу день выглядит достаточно ровно: сильной просадки по энергии и углеводам не видно.",
+      roleInfo,
+      athleteTrainingLabel,
+    })}`;
   }
 
   if (roleInfo.role === "key_interval" || roleInfo.role === "key_tempo") {
     state.bumpPattern("macro_ok");
-    return `${cautiousPrefix}Под эту ключевую работу питание выглядит согласованно: сильной просадки по дню не видно.`;
+    return `${cautiousPrefix}${longAfterPrefix}${ensureDetailFloorSentence({
+      text: "Под эту ключевую работу питание выглядит согласованно: сильной просадки по дню не видно.",
+      roleInfo,
+      athleteTrainingLabel,
+    })}`;
   }
 
   if (input.findings.includes("protein_sufficient") && macro.fatStatus === "ok" && macro.carbsStatus === "ok") {
@@ -672,10 +868,13 @@ export function buildNutritionWeeklySummary(input: {
   days: NutritionWeeklySummaryDayFact[];
   proteinSufficient?: boolean;
   weeklyProteinAvgGPerKg?: number | null;
+  fatFeedbackPolicy?: NutritionFatFeedbackPolicy;
 }): string {
+  const fatFeedbackPolicy = input.fatFeedbackPolicy ?? "coach_only";
   let proteinOkDays = 0;
   let proteinLowOrBorderlineDays = 0;
   let fatLowOrBorderlineDays = 0;
+  let fatHighDays = 0;
   let carbsLowLoadDays = 0;
   let energyLowLoadDays = 0;
   let keyWorkoutLabel: string | null = null;
@@ -692,6 +891,9 @@ export function buildNutritionWeeklySummary(input: {
     }
     if (day.macro.fatStatus === "low" || day.macro.fatStatus === "borderline") {
       fatLowOrBorderlineDays += 1;
+    }
+    if (day.macro.fatStatus === "high" || day.macro.fatPercentStatus === "high") {
+      fatHighDays += 1;
     }
     if (loadDay && (day.macro.carbsStatus === "low" || day.macro.carbsStatus === "borderline")) {
       carbsLowLoadDays += 1;
@@ -755,6 +957,16 @@ export function buildNutritionWeeklySummary(input: {
 
   if (fatLowOrBorderlineDays >= 2) {
     segments.push("Жиры тоже несколько раз были на нижней границе.");
+  }
+
+  if (
+    shouldShowHighFatAthleteFeedback(fatFeedbackPolicy) &&
+    fatHighDays >= 1 &&
+    carbsLowLoadDays >= 1
+  ) {
+    segments.push(
+      "В несколько дней с нагрузкой жиры были высоковаты, а углеводов не хватало — имеет смысл сместить часть энергии в углеводы вокруг тяжёлых дней."
+    );
   }
 
   if (carbRichDayLabels.length > 0 && hardestDayLabels.length > 0) {

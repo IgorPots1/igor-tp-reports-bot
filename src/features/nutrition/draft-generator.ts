@@ -4,6 +4,8 @@ import {
 } from "@/features/nutrition/athlete-signals";
 import {
   buildNutritionSafetyFlags,
+  nutritionContextNarrativePreferences,
+  type NutritionNarrativePreferences,
   type NutritionStudentContext,
 } from "@/features/nutrition/context";
 import {
@@ -93,6 +95,8 @@ export type GeneratedNutritionWeeklyAnalysis = {
     quality_notes?: string[];
     do_not_send_reasons?: string[];
     interpretation_shadow?: NutritionInterpretationShadowMetadata | null;
+    narrative_preferences?: NutritionNarrativePreferences;
+    coach_context_ru?: string | null;
   };
   tp_context_summary: {
     past_week_key_sessions: number;
@@ -728,6 +732,7 @@ async function generateNutritionWeeklyReviewNarrative(input: {
       nutrition_goal: input.context.nutritionGoal,
       coach_context_ru: input.context.coachContextRu,
       coach_memory: coachMemory,
+      narrative_preferences: nutritionContextNarrativePreferences(input.context),
     },
     athlete_report_signals: input.context.athleteReportSignals,
     tp_context: {
@@ -933,6 +938,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
         formality: context.resolvedCommunicationProfile.formality,
         nutrition_goal: context.nutritionGoal,
         coach_context_ru: context.coachContextRu,
+        narrative_preferences: context.narrativePreferences,
       },
       athlete_report_signals: context.athleteReportSignals,
       previous_weeks_context: null,
@@ -1062,6 +1068,8 @@ export async function generateNutritionWeeklyAnalysis(input: {
         long_run_fueling_instruction_detected: methodology.longRunFuelingInstructionDetected,
         during_run_fuel_planned: methodology.duringRunFuelPlanned,
       },
+      narrative_preferences: nutritionContextNarrativePreferences(context),
+      coach_context_ru: context.coachContextRu,
       bodyweight_kg: methodology.bodyweightKg,
       carb_progression_strategy: selectedFocus.progressionStrategy,
       coach_summary_text: narrative.coach_summary_text,

@@ -52,6 +52,145 @@ export type NutritionSafetyFlags = {
   doNotSendReasons: string[];
 };
 
+export type NutritionFatFeedbackPolicy = "normal" | "soften" | "coach_only" | "suppress_athlete";
+export type NutritionCarbFeedbackPolicy = "normal" | "strong";
+export type NutritionNarrativeDetailLevel = "compact" | "normal" | "detailed";
+export type NutritionNarrativeFocusPriority =
+  | "carbs"
+  | "energy"
+  | "protein"
+  | "fat"
+  | "timing"
+  | "quality";
+
+export type NutritionNarrativePreferences = {
+  fatFeedbackPolicy?: NutritionFatFeedbackPolicy;
+  carbFeedbackPolicy?: NutritionCarbFeedbackPolicy;
+  detailLevel?: NutritionNarrativeDetailLevel;
+  focusPriority?: NutritionNarrativeFocusPriority[];
+};
+
+const COACH_CONTEXT_FAT_SUPPRESS_PATTERNS = [
+  /жиры не акцентировать/i,
+  /не давить по жирам/i,
+  /не делать жиры фокусом/i,
+  /не фокусироваться на жирах/i,
+] as const;
+
+const NUTRITION_FAT_FEEDBACK_POLICIES = new Set<NutritionFatFeedbackPolicy>([
+  "normal",
+  "soften",
+  "coach_only",
+  "suppress_athlete",
+]);
+
+function asPreferencesObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+function normalizeFatFeedbackPolicy(value: unknown): NutritionFatFeedbackPolicy | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  return NUTRITION_FAT_FEEDBACK_POLICIES.has(value as NutritionFatFeedbackPolicy)
+    ? (value as NutritionFatFeedbackPolicy)
+    : null;
+}
+
+export function getNutritionNarrativePreferences(input: {
+  profilePreferences?: Record<string, unknown> | null;
+  coachContextRu?: string | null;
+}): Required<Pick<NutritionNarrativePreferences, "fatFeedbackPolicy" | "detailLevel">> &
+  NutritionNarrativePreferences {
+  const preferences = asPreferencesObject(input.profilePreferences);
+  const narrative = asPreferencesObject(preferences.narrative);
+  let fatFeedbackPolicy =
+    normalizeFatFeedbackPolicy(narrative.fatFeedbackPolicy) ??
+    normalizeFatFeedbackPolicy(preferences.fatFeedbackPolicy);
+
+  if (!fatFeedbackPolicy && input.coachContextRu?.trim()) {
+    if (COACH_CONTEXT_FAT_SUPPRESS_PATTERNS.some((pattern) => pattern.test(input.coachContextRu!))) {
+      fatFeedbackPolicy = "suppress_athlete";
+    }
+  }
+
+  const detailLevel =
+    narrative.detailLevel === "compact" || narrative.detailLevel === "detailed"
+      ? narrative.detailLevel
+      : preferences.detailLevel === "compact" || preferences.detailLevel === "detailed"
+        ? preferences.detailLevel
+        : "normal";
+
+  const carbFeedbackPolicy =
+    narrative.carbFeedbackPolicy === "strong" || preferences.carbFeedbackPolicy === "strong"
+      ? "strong"
+      : "normal";
+
+  const focusPriorityRaw = Array.isArray(narrative.focusPriority)
+    ? narrative.focusPriority
+    : Array.isArray(preferences.focusPriority)
+      ? preferences.focusPriority
+      : [];
+  const allowedFocus = new Set<NutritionNarrativeFocusPriority>([
+    "carbs",
+    "energy",
+    "protein",
+    "fat",
+    "timing",
+    "quality",
+  ]);
+  const focusPriority = focusPriorityRaw.filter(
+    (item): item is NutritionNarrativeFocusPriority =>
+      typeof item === "string" && allowedFocus.has(item as NutritionNarrativeFocusPriority)
+  );
+
+  return {
+    fatFeedbackPolicy: fatFeedbackPolicy ?? "coach_only",
+    detailLevel,
+    carbFeedbackPolicy,
+    ...(focusPriority.length > 0 ? { focusPriority } : {}),
+  };
+}
+
+export function shouldShowHighFatAthleteFeedback(policy: NutritionFatFeedbackPolicy): boolean {
+  return policy === "normal";
+}
+
+export function isHighFatHiddenFromAthlete(policy: NutritionFatFeedbackPolicy): boolean {
+  return policy === "coach_only" || policy === "suppress_athlete" || policy === "soften";
+}
+
+export function nutritionContextNarrativePreferences(
+  context: Pick<NutritionStudentContext, "narrativePreferences" | "coachContextRu">
+): Required<Pick<NutritionNarrativePreferences, "fatFeedbackPolicy" | "detailLevel">> &
+  NutritionNarrativePreferences {
+  return (
+    context.narrativePreferences ??
+    getNutritionNarrativePreferences({
+      coachContextRu: context.coachContextRu,
+    })
+  );
+}
+
+export function resolveNutritionNarrativePreferencesFromStored(input: {
+  nutritionSummary?: Record<string, unknown> | null;
+  contextSnapshot?: Record<string, unknown> | null;
+  coachContextRu?: string | null;
+}): Required<Pick<NutritionNarrativePreferences, "fatFeedbackPolicy" | "detailLevel">> &
+  NutritionNarrativePreferences {
+  const summary = input.nutritionSummary ?? {};
+  const snapshot = input.contextSnapshot ?? {};
+  const fromSummary = asPreferencesObject(summary.narrative_preferences ?? summary.narrativePreferences);
+  const fromSnapshot = asPreferencesObject(snapshot.narrative_preferences ?? snapshot.narrativePreferences);
+  return getNutritionNarrativePreferences({
+    profilePreferences: Object.keys(fromSummary).length > 0 ? fromSummary : fromSnapshot,
+    coachContextRu: input.coachContextRu ?? (typeof summary.coach_context_ru === "string" ? summary.coach_context_ru : null),
+  });
+}
+
 export type NutritionTrainingPeaksWeekContext = {
   periodFrom: string;
   periodTo: string;
@@ -101,6 +240,8 @@ export type NutritionStudentContext = {
   currentWeightKg: number | null;
   nutritionGoal: string | null;
   coachContextRu: string | null;
+  narrativePreferences?: Required<Pick<NutritionNarrativePreferences, "fatFeedbackPolicy" | "detailLevel">> &
+    NutritionNarrativePreferences;
   athleteReportSignals: NutritionAthleteReportSignal[];
   manualMacroRows: NormalizedManualMacroRow[];
   dataQuality: NutritionDataQuality;
@@ -672,6 +813,10 @@ export async function buildNutritionStudentContext(input: {
     currentWeightKg: essentials.profile?.currentWeightKg ?? latestConfirmedWeight ?? latestWeight ?? null,
     nutritionGoal: essentials.profile?.goal ?? null,
     coachContextRu: essentials.profile?.coachContextRu ?? null,
+    narrativePreferences: getNutritionNarrativePreferences({
+      profilePreferences: essentials.profile?.preferences ?? null,
+      coachContextRu: essentials.profile?.coachContextRu ?? null,
+    }),
     athleteReportSignals: input.athleteReportSignals ?? [],
     manualMacroRows: input.manualRows,
     dataQuality,

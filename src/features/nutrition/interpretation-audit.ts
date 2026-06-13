@@ -7,7 +7,199 @@ import {
   type NutritionInterpretationValidationIssue,
   type NutritionWeeklyInterpretation,
 } from "@/features/nutrition/interpretation-contract";
-import { NUTRITION_PRACTICAL_TARGET_REQUIRED_WORDING } from "@/features/nutrition/narrative-guardrails";
+import type { NutritionFatFeedbackPolicy } from "@/features/nutrition/context";
+import { isHighFatHiddenFromAthlete, shouldShowHighFatAthleteFeedback } from "@/features/nutrition/context";
+import {
+  NUTRITION_ATHLETE_FORBIDDEN_FOOD_QUALITY_WITHOUT_EVIDENCE,
+  NUTRITION_PRACTICAL_TARGET_REQUIRED_WORDING,
+} from "@/features/nutrition/narrative-guardrails";
+
+const HIGH_FAT_ATHLETE_PATTERNS = [/жиры высоковат/i, /высок(?:ий|ая|ие)?\s+процент\s+энергии\s+из\s+жиров/i, /много жир/i];
+
+function extractDailyFatFacts(dailyAnalysis: unknown): Array<{
+  date: string;
+  fatG: number | null;
+  percentEnergy: number | null;
+  status: string | null;
+  percentStatus: string | null;
+}> {
+  const rows = Array.isArray(dailyAnalysis) ? dailyAnalysis : [];
+  const facts: Array<{
+    date: string;
+    fatG: number | null;
+    percentEnergy: number | null;
+    status: string | null;
+    percentStatus: string | null;
+  }> = [];
+  for (const raw of rows) {
+    const day = asObject(raw);
+    const date = typeof day.date === "string" ? day.date : null;
+    if (!date) {
+      continue;
+    }
+    const canonical = asObject(day.canonical_daily_analysis ?? day.canonicalDailyAnalysis);
+    const guard = asObject(day.macro_guardrails ?? day.macroGuardrails ?? canonical.macroGuardrails);
+    const fat = asObject(guard.fat);
+    const actual = asObject(day.actual ?? canonical.actual);
+    facts.push({
+      date,
+      fatG:
+        typeof fat.g === "number"
+          ? fat.g
+          : typeof actual.fatG === "number"
+            ? actual.fatG
+            : typeof day.fat_g === "number"
+              ? day.fat_g
+              : null,
+      percentEnergy:
+        typeof fat.percentEnergy === "number"
+          ? fat.percentEnergy
+          : typeof fat.percent_energy === "number"
+            ? fat.percent_energy
+            : null,
+      status: typeof fat.status === "string" ? fat.status : null,
+      percentStatus: typeof fat.percentStatus === "string" ? fat.percentStatus : null,
+    });
+  }
+  return facts;
+}
+
+export function detectUnsupportedFoodQualityClaims(text: string): string[] {
+  const matches: string[] = [];
+  for (const pattern of NUTRITION_ATHLETE_FORBIDDEN_FOOD_QUALITY_WITHOUT_EVIDENCE) {
+    if (pattern.test(text)) {
+      matches.push(pattern.source);
+    }
+  }
+  return matches;
+}
+
+export function auditFatVisibility(input: {
+  dailyAnalysis: unknown;
+  athleteText: string | null;
+  coachSummaryText: string | null;
+  fatFeedbackPolicy: NutritionFatFeedbackPolicy;
+}): {
+  signals: string[];
+  issues: string[];
+  warnings: string[];
+  highFatDays: Array<{ date: string; fatG: number | null; percentEnergy: number | null }>;
+} {
+  const dailyFatFacts = extractDailyFatFacts(input.dailyAnalysis);
+  const highFatDays = dailyFatFacts.filter(
+    (day) => day.status === "high" || day.percentStatus === "high"
+  );
+  const athleteText = input.athleteText ?? "";
+  const coachText = input.coachSummaryText ?? "";
+  const signals: string[] = [];
+  const issues: string[] = [];
+  const warnings: string[] = [];
+
+  if (highFatDays.length > 0) {
+    signals.push("percent_energy_fat_visible_in_reviewer_pack");
+    if (!/Жиры:|high fat|высокий процент энергии из жиров/i.test(coachText)) {
+      issues.push("fat_visibility_consistency: high fat detected but coach summary silent");
+    } else {
+      signals.push("fat_visibility_consistency");
+    }
+  }
+
+  const athleteHighFatMention = HIGH_FAT_ATHLETE_PATTERNS.some((pattern) => pattern.test(athleteText));
+  if (athleteHighFatMention && isHighFatHiddenFromAthlete(input.fatFeedbackPolicy)) {
+    issues.push("fat_policy_respected: athlete text critiques high fat while policy hides it");
+  } else if (highFatDays.length > 0) {
+    signals.push("fat_policy_respected");
+  }
+
+  if (
+    shouldShowHighFatAthleteFeedback(input.fatFeedbackPolicy) &&
+    highFatDays.length > 0 &&
+    !athleteHighFatMention
+  ) {
+    warnings.push("policy normal + high fat present but athlete text silent");
+  }
+
+  const foodQualityViolations = detectUnsupportedFoodQualityClaims(athleteText);
+  if (foodQualityViolations.length > 0) {
+    issues.push(`unsupported_food_quality_claims: ${foodQualityViolations.join(", ")}`);
+  }
+
+  return {
+    signals,
+    issues,
+    warnings,
+    highFatDays: highFatDays.map((day) => ({
+      date: day.date,
+      fatG: day.fatG,
+      percentEnergy: day.percentEnergy,
+    })),
+  };
+}
+
+export function buildFatReviewerFactsLines(input: {
+  dailyAnalysis: unknown;
+  fatFeedbackPolicy: NutritionFatFeedbackPolicy;
+  coachSummaryText: string | null;
+  athleteText: string | null;
+}): string[] {
+  const audit = auditFatVisibility(input);
+  const lines = [
+    `fat visibility policy: ${input.fatFeedbackPolicy}`,
+    `high-fat coach-only observations: ${audit.highFatDays.length}`,
+  ];
+  for (const day of audit.highFatDays) {
+    lines.push(
+      `fat %energy ${day.date}: ${day.percentEnergy ?? "n/d"}% (${day.fatG ?? "n/d"} g)`
+    );
+  }
+  lines.push(
+    `athlete-facing fat visibility: ${
+      shouldShowHighFatAthleteFeedback(input.fatFeedbackPolicy) ? "allowed (normal policy)" : "hidden by policy"
+    }`
+  );
+  if (input.coachSummaryText && /Жиры:/i.test(input.coachSummaryText)) {
+    lines.push("coach summary includes high-fat line");
+  }
+  lines.push(...audit.signals.map((signal) => `signal: ${signal}`));
+  lines.push(...audit.issues.map((issue) => `issue: ${issue}`));
+  lines.push(...audit.warnings.map((warning) => `warning: ${warning}`));
+  return lines;
+}
+
+export function countAthletePhraseBudget(text: string, phrase: string, max: number): { count: number; ok: boolean } {
+  const count = (text.match(new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi")) ?? []).length;
+  return { count, ok: count <= max };
+}
+
+export function auditRepetitionBudget(text: string): string[] {
+  const issues: string[] = [];
+  const budgets: Array<[string, number]> = [
+    ["энергии маловато", 2],
+    ["день получился скромным по энергии", 2],
+    ["углеводов под нагрузку маловато", 3],
+    ["Белок закрыт", 3],
+  ];
+  for (const [phrase, max] of budgets) {
+    const result = countAthletePhraseBudget(text, phrase, max);
+    if (!result.ok) {
+      issues.push(`repetition_budget: "${phrase}" used ${result.count}x (max ${max})`);
+    }
+  }
+  return issues;
+}
+
+export function auditDailyDetailFloor(text: string, role: string): string[] {
+  const keyRoles = new Set(["key_interval", "key_tempo", "long_run", "long_endurance", "combined_load"]);
+  if (!keyRoles.has(role)) {
+    return [];
+  }
+  const sentences = splitSentences(text).filter((sentence) => sentence.length >= 12);
+  if (sentences.length < 2) {
+    return [`daily_detail_floor: ${role} comment has ${sentences.length} meaningful sentence(s)`];
+  }
+  return [];
+}
+
 
 /**
  * Deterministic audit helpers for comparing the current derived nutrition

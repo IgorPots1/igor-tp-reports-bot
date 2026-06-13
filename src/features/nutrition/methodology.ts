@@ -153,6 +153,11 @@ export type NutritionCanonicalDailyAnalysis = {
 
 export type NutritionMacroStatus = "low" | "borderline" | "ok" | "high" | "unknown";
 
+export type NutritionFatPercentStatus = "ok" | "borderline_high" | "high" | "unknown";
+
+export const NUTRITION_FAT_PERCENT_HIGH_THRESHOLD = 40;
+export const NUTRITION_FAT_PERCENT_BORDERLINE_HIGH_THRESHOLD = 37;
+
 export type NutritionCarbLoadBasis =
   | "rest"
   | "easy"
@@ -172,11 +177,14 @@ export type NutritionMacroGuardrailsFacts = {
     finding: string | null;
   };
   fat: {
+    g: number | null;
     gPerKg: number | null;
     percentEnergy: number | null;
     status: NutritionMacroStatus;
+    percentStatus?: NutritionFatPercentStatus;
     floorGPerKg: number;
     finding: string | null;
+    coachOnlyFindings?: string[];
   };
   carbs: {
     gPerKg: number | null;
@@ -1089,6 +1097,19 @@ function buildMacroGuardrails(input: {
 
   let fatStatus: NutritionMacroStatus = "unknown";
   let fatFinding: string | null = null;
+  let percentStatus: NutritionFatPercentStatus = "unknown";
+  const coachOnlyFindings: string[] = [];
+  if (fatPercentEnergy !== null) {
+    if (fatPercentEnergy >= NUTRITION_FAT_PERCENT_HIGH_THRESHOLD) {
+      percentStatus = "high";
+    } else if (fatPercentEnergy >= NUTRITION_FAT_PERCENT_BORDERLINE_HIGH_THRESHOLD) {
+      percentStatus = "borderline_high";
+    } else {
+      percentStatus = "ok";
+    }
+  }
+  const highByGPerKg = fatGPerKg !== null && fatGPerKg > 1.6;
+  const highByPercent = percentStatus === "high";
   if (fatGPerKg !== null) {
     if (fatGPerKg < 0.8) {
       fatStatus = "low";
@@ -1097,13 +1118,19 @@ function buildMacroGuardrails(input: {
     } else if (fatGPerKg < 1) {
       fatStatus = "borderline";
       fatFinding = "Жиры на нижней границе, лучше регулярно не уходить ниже.";
-    } else if (fatGPerKg > 1.6) {
+    } else if (highByGPerKg || highByPercent) {
       fatStatus = "high";
       fatFinding = null;
+      if (highByPercent) {
+        coachOnlyFindings.push("high_fat_percent");
+      }
     } else {
       fatStatus = "ok";
       fatFinding = null;
     }
+  } else if (highByPercent) {
+    fatStatus = "high";
+    coachOnlyFindings.push("high_fat_percent");
   }
 
   const loadBasis = resolveCarbLoadBasis(input.canonicalTrainingType);
@@ -1130,6 +1157,23 @@ function buildMacroGuardrails(input: {
     }
   }
 
+  const loadBasisForFat = resolveCarbLoadBasis(input.canonicalTrainingType);
+  const isLoadDayForFat = loadBasisForFat !== "rest";
+  if (
+    (fatStatus === "high" || percentStatus === "high" || percentStatus === "borderline_high") &&
+    isLoadDayForFat &&
+    input.carbsGPerKg !== null
+  ) {
+    const carbRangeForFat = resolveCarbRangeByLoadBasis(loadBasisForFat);
+    if (
+      carbRangeForFat.rangeMinGPerKg !== null &&
+      (input.carbsGPerKg < carbRangeForFat.rangeMinGPerKg ||
+        input.carbsGPerKg < carbRangeForFat.rangeMinGPerKg + 0.4)
+    ) {
+      coachOnlyFindings.push("high_fat_may_displace_carbs_on_load_day");
+    }
+  }
+
   return {
     protein: {
       gPerKg: input.proteinGPerKg,
@@ -1138,11 +1182,14 @@ function buildMacroGuardrails(input: {
       finding: proteinFinding,
     },
     fat: {
+      g: input.fatG,
       gPerKg: fatGPerKg,
       percentEnergy: fatPercentEnergy,
       status: fatStatus,
+      percentStatus,
       floorGPerKg: fatFloor,
       finding: fatFinding,
+      coachOnlyFindings: coachOnlyFindings.length > 0 ? coachOnlyFindings : undefined,
     },
     carbs: {
       gPerKg: input.carbsGPerKg,
@@ -1411,6 +1458,14 @@ function analyzeDailyTrainingNutrition(input: {
       canonicalFindings.push("fat_below_floor");
     } else if (macroGuardrails.fat.status === "borderline") {
       canonicalFindings.push("fat_borderline");
+    }
+    if (macroGuardrails.fat.status === "high" || macroGuardrails.fat.percentStatus === "high") {
+      canonicalFindings.push("high_fat_percent");
+    }
+    for (const finding of macroGuardrails.fat.coachOnlyFindings ?? []) {
+      if (!canonicalFindings.includes(finding)) {
+        canonicalFindings.push(finding);
+      }
     }
     if (macroGuardrails.carbs.status === "low") {
       canonicalFindings.push("low_carbs_for_load_type");

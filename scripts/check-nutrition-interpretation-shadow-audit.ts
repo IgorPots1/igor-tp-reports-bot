@@ -8,7 +8,10 @@ import {
 import {
   analyzeProductionText,
   analyzeShadowInterpretation,
+  auditFatVisibility,
+  auditRepetitionBudget,
   buildCanonicalFactsReadiness,
+  buildFatReviewerFactsLines,
   buildReviewerPack,
   compareNutritionOutputs,
   NUTRITION_AUDIT_VERDICTS,
@@ -264,6 +267,46 @@ function run(): void {
   assert.match(pack, /Output B — shadow interpretation pieces/);
   assert.match(pack, /production_switch_recommendation/);
   assert.doesNotMatch(pack, /raw_text/);
+
+  const highFatDaily = [
+    {
+      date: "2026-06-06",
+      actual: { kcal: 2200, proteinG: 95, fatG: 95, carbsG: 180 },
+      macro_guardrails: {
+        fat: { status: "high", percentStatus: "high", g: 95, percentEnergy: 47 },
+        protein: { status: "ok" },
+        carbs: { status: "borderline" },
+      },
+    },
+  ];
+  const fatAuditHidden = auditFatVisibility({
+    dailyAnalysis: highFatDaily,
+    athleteText: "Главный фокус — углеводы вокруг нагрузки.",
+    coachSummaryText: "Жиры: высокий процент энергии из жиров (сб). Athlete-facing скрыто по политике coach_only.",
+    fatFeedbackPolicy: "coach_only",
+  });
+  assert.ok(fatAuditHidden.signals.includes("fat_visibility_consistency"));
+  assert.ok(fatAuditHidden.signals.includes("fat_policy_respected"));
+  assert.equal(fatAuditHidden.issues.length, 0);
+
+  const fatAuditLeak = auditFatVisibility({
+    dailyAnalysis: highFatDaily,
+    athleteText: "Жиры высоковаты, при этом углеводов под нагрузку не хватает.",
+    coachSummaryText: "Жиры: высокий процент энергии из жиров (сб).",
+    fatFeedbackPolicy: "coach_only",
+  });
+  assert.ok(fatAuditLeak.issues.some((issue) => issue.startsWith("fat_policy_respected")));
+
+  const fatFactsLines = buildFatReviewerFactsLines({
+    dailyAnalysis: highFatDaily,
+    fatFeedbackPolicy: "coach_only",
+    coachSummaryText: "Жиры: высокий процент",
+    athleteText: "test",
+  });
+  assert.ok(fatFactsLines.some((line) => line.includes("fat visibility policy")));
+  assert.ok(fatFactsLines.some((line) => line.includes("fat %energy")));
+
+  assert.equal(auditRepetitionBudget("энергии маловато. энергии маловато. энергии маловато.").length, 1);
 
   console.log("PASS check-nutrition-interpretation-shadow-audit");
 }

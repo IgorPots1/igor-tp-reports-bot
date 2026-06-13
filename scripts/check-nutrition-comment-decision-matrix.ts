@@ -115,4 +115,19 @@ assert.doesNotMatch(suspectText, /энергодоступность|RED-S|LEA|�
 const allText = [floorText, crossText, strengthText, hardCarbsText, suspectText].join("\n");
 assert.doesNotMatch(allText, /энергодоступность|RED-S|LEA|дефицит энергии|дефицит калорий|опасная зона|медицинский риск|ешь на \d+/i);
 
+const highFatHiddenText = textFor({
+  nutrition_status: "adequate",
+  findings: ["high_fat_percent"],
+  canonical_daily_analysis: {
+    nutritionStatus: "adequate",
+    findings: ["high_fat_percent"],
+    macroGuardrails: {
+      protein: { status: "ok" },
+      fat: { status: "high", percentStatus: "high", percentEnergy: 47 },
+      carbs: { status: "ok" },
+    },
+  },
+});
+assert.doesNotMatch(highFatHiddenText, /жиры высоковат|высок(?:ий|ая|ие)? процент.*жир/i, "high fat hidden from athlete by default policy");
+
 console.log("PASS check-nutrition-comment-decision-matrix");

@@ -12,6 +12,7 @@ import {
   resolveWeekNarrativeDayRoles,
   type MacroGuardrailStatuses,
 } from "@/features/nutrition/narrative-composer";
+import { resolveNutritionNarrativePreferencesFromStored } from "@/features/nutrition/context";
 import {
   renderNutritionTelegramMessage,
   type NutritionTelegramRenderResult,
@@ -236,11 +237,7 @@ function normalizeStoredDailyFactItem(raw: unknown): CanonicalDailyFact | null {
   };
 }
 
-function extractMacroGuardrailStatuses(macroGuardrails: unknown): {
-  proteinStatus: string | null;
-  fatStatus: string | null;
-  carbsStatus: string | null;
-} {
+function extractMacroGuardrailStatuses(macroGuardrails: unknown): MacroGuardrailStatuses {
   const guardrails = asObject(macroGuardrails);
   const proteinGuard = asObject(guardrails.protein);
   const fatGuard = asObject(guardrails.fat);
@@ -248,6 +245,9 @@ function extractMacroGuardrailStatuses(macroGuardrails: unknown): {
   return {
     proteinStatus: typeof proteinGuard.status === "string" ? proteinGuard.status : null,
     fatStatus: typeof fatGuard.status === "string" ? fatGuard.status : null,
+    fatPercentStatus: typeof fatGuard.percentStatus === "string" ? fatGuard.percentStatus : null,
+    fatG: toFiniteNumber(fatGuard.g),
+    fatPercentEnergy: toFiniteNumber(fatGuard.percentEnergy ?? fatGuard.percent_energy),
     carbsStatus: typeof carbsGuard.status === "string" ? carbsGuard.status : null,
   };
 }
@@ -277,12 +277,18 @@ function hasDayEnergyIssue(input: {
 export function buildDayMacroSentence(input: {
   proteinStatus: string | null;
   fatStatus: string | null;
+  fatPercentStatus?: string | null;
   carbsStatus: string | null;
   trainingType: string;
   hasEnergyIssue: boolean;
+  fatFeedbackPolicy?: import("@/features/nutrition/context").NutritionFatFeedbackPolicy;
 }): string | null {
-  const { proteinStatus, fatStatus, carbsStatus, trainingType, hasEnergyIssue } = input;
+  const { proteinStatus, fatStatus, fatPercentStatus, carbsStatus, trainingType, hasEnergyIssue } = input;
+  const fatFeedbackPolicy = input.fatFeedbackPolicy ?? "coach_only";
   const loadDay = trainingType !== "rest";
+  const mentionHighFat =
+    fatFeedbackPolicy === "normal" && (fatStatus === "high" || fatPercentStatus === "high");
+  const mentionLowFat = fatStatus === "low" || fatStatus === "borderline";
 
   if (hasEnergyIssue && proteinStatus === "ok" && loadDay && (carbsStatus === "low" || carbsStatus === "borderline")) {
     return "Белок закрыт, но общей энергии и углеводов всё равно маловато.";
@@ -295,16 +301,22 @@ export function buildDayMacroSentence(input: {
     segments.push("Углеводы на нижней границе");
   }
 
+  if (mentionHighFat && loadDay && (carbsStatus === "low" || carbsStatus === "borderline")) {
+    return "Жиры высоковаты, при этом углеводов под нагрузку не хватает — лучше сместить часть энергии в углеводы вокруг тяжёлых дней.";
+  }
+
   const macroParts: string[] = [];
   if (proteinStatus === "borderline") {
     macroParts.push("белок близко к нижней границе");
   } else if (proteinStatus === "low") {
     macroParts.push("белка в этот день маловато");
   }
-  if (fatStatus === "low") {
-    macroParts.push("жиры низковаты");
-  } else if (fatStatus === "borderline") {
-    macroParts.push("жиры на нижней границе");
+  if (mentionLowFat) {
+    if (fatStatus === "low") {
+      macroParts.push("жиры низковаты");
+    } else if (fatStatus === "borderline") {
+      macroParts.push("жиры на нижней границе");
+    }
   }
 
   if (segments.length > 0 && macroParts.length > 0) {
@@ -405,6 +417,27 @@ function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
     return [];
   }
 
+  const summary = asObject(review.nutritionSummary);
+  const narrativePreferences = resolveNutritionNarrativePreferencesFromStored({
+    nutritionSummary: summary,
+    contextSnapshot: asObject(review.contextSnapshot),
+  });
+
+  const sortedFacts = [...reviewWeekFacts].sort((left, right) => {
+    const leftDate = typeof left.date === "string" ? left.date : "";
+    const rightDate = typeof right.date === "string" ? right.date : "";
+    return leftDate.localeCompare(rightDate);
+  });
+  const previousDayByDate = new Map<string, CanonicalDailyFact>();
+  for (let index = 1; index < sortedFacts.length; index += 1) {
+    const currentItem = sortedFacts[index];
+    const currentDate = typeof currentItem?.date === "string" ? currentItem.date : "";
+    const previous = sortedFacts[index - 1];
+    if (currentDate && previous) {
+      previousDayByDate.set(currentDate, previous);
+    }
+  }
+
   const roleInputs = reviewWeekFacts.map((item) => {
     const date = typeof item.date === "string" ? item.date : "";
     const trainingType =
@@ -440,13 +473,27 @@ function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
             ? item.nutritionStatus
             : null;
       const sourceQuality = asObject(item.source_quality) ?? asObject(item.sourceQuality);
+      const missingNutritionData = sourceQuality.hasNutritionData === false;
       const macroGuardrails = asObject(item.macro_guardrails) ?? asObject(item.macroGuardrails);
-      if (!weekday || !dateLabel || kcal == null || protein == null || fat == null || carbs == null) {
+      if (!weekday || !dateLabel || (!missingNutritionData && (kcal == null || protein == null || fat == null || carbs == null))) {
         return null;
       }
       const athleteTrainingLabel = resolveDailyTrainingLabelForAthlete(trainingType, trainingLabel);
       const macroStatuses: MacroGuardrailStatuses = extractMacroGuardrailStatuses(macroGuardrails);
       const dateKey = date ?? "";
+      const previousDay = dateKey ? previousDayByDate.get(dateKey) : undefined;
+      const previousDayTrainingType =
+        typeof previousDay?.training_type === "string"
+          ? previousDay.training_type
+          : typeof previousDay?.trainingType === "string"
+            ? previousDay.trainingType
+            : null;
+      const previousDayTrainingLabel =
+        typeof previousDay?.training_label === "string"
+          ? previousDay.training_label
+          : typeof previousDay?.trainingLabel === "string"
+            ? previousDay.trainingLabel
+            : null;
       const resolvedRole = resolveNutritionNarrativeWorkoutRole({
         trainingType,
         trainingLabel,
@@ -471,11 +518,19 @@ function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
             fat,
             carbs,
           }),
+          missingNutritionData,
           hasEnergyIssue: hasDayEnergyIssue({ nutritionStatus, findings }),
           roleInfo,
+          fatFeedbackPolicy: narrativePreferences.fatFeedbackPolicy,
+          previousDayTrainingType,
+          previousDayTrainingLabel,
         },
         repetitionState
       );
+      if (missingNutritionData) {
+        return `🔹 ${weekday} (${dateLabel}) · ${athleteTrainingLabel}
+${comment}`;
+      }
       const carbsKgText = carbsPerKg != null ? ` (${formatNutritionAthletePerKg(carbsPerKg)})` : "";
       return `🔹 ${weekday} (${dateLabel}) · ${athleteTrainingLabel}
 ${formatNutritionAthleteKcal(kcal, { mode: "actual" })} · белок ${formatNutritionAthleteMacro(protein)} · жиры ${formatNutritionAthleteMacro(fat)} · углеводы ${formatNutritionAthleteMacro(carbs)}${carbsKgText}.
@@ -511,6 +566,10 @@ export function buildDerivedNutritionCoachDayByDayText(review: NutritionWeeklyAn
 
 function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
   const summary = asObject(review.nutritionSummary);
+  const narrativePreferences = resolveNutritionNarrativePreferencesFromStored({
+    nutritionSummary: summary,
+    contextSnapshot: asObject(review.contextSnapshot),
+  });
   const oneFocus = asObject(summary.one_focus);
   const statement = compactText(typeof oneFocus.statement_ru === "string" ? oneFocus.statement_ru : null);
   const coachSummary = compactText(typeof summary.coach_summary_text === "string" ? summary.coach_summary_text : null);
@@ -561,6 +620,7 @@ function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
       days: summaryDays,
       proteinSufficient,
       weeklyProteinAvgGPerKg,
+      fatFeedbackPolicy: narrativePreferences.fatFeedbackPolicy,
     });
   }
   if (typeof methodologySignals.main_load_day_label === "string" && methodologySignals.main_load_day_label.trim()) {
