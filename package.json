@@ -173,6 +173,7 @@
     "check:tp-signals-actionable-health-flow": "npx tsx scripts/check-tp-signals-actionable-health-flow.ts",
     "check:tp-signals-regression-cases": "npx tsx scripts/check-tp-signals-regression-cases.ts",
     "diagnose:tp-signals-explain": "npx tsx scripts/diagnose-tp-signals-explain.ts",
+    "diagnose:tp-signal-source-trace": "npx tsx scripts/diagnose-tp-signal-source-trace.ts",
     "cleanup:tp-signals-persisted": "npx tsx scripts/cleanup-tp-signals-persisted.ts",
     "diagnose-tp-signals-stale-health-after-completion": "npx tsx scripts/diagnose-tp-signals-stale-health-after-completion.ts",
     "check:nutrition-admin-mvp": "npx tsx scripts/check-nutrition-admin-mvp.ts",
