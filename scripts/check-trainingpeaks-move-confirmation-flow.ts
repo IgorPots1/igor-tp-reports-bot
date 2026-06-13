@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   isCoachConfirmedSourceDateManualExecuteReady,
+  isCoachConfirmedSourceWorkoutManualExecuteReady,
   validateDryRunLogReadiness,
 } from "@/features/trainingpeaks/move-source-policy";
 import {
@@ -318,6 +319,40 @@ function run(): void {
     false
   );
   assert.equal(validateDryRunLogReadiness(noCandidateLog, coachConfirmedPayload).ok, false);
+
+  const coachConfirmedWorkoutPayload = {
+    actionType: "move_workout",
+    source: { kind: "date", value: "2026-06-13" },
+    target: { kind: "date", value: "2026-06-14" },
+    sourceDate: "2026-06-13",
+    coach_confirmed_source_workout_id: 3777415862,
+  };
+  const coachConfirmedWorkoutLog = {
+    dryRunResult: "candidate_found",
+    canExecute: true,
+    canExecuteReasons: [],
+    confidence: 0.65,
+    candidate: {
+      title: "5 х 7 мин (на улице)",
+      type: "run",
+      workoutId: 3777415862,
+      fingerprint: "student-1:2026-06-13:interval-outdoor",
+    },
+    resolvedDates: { sourceDate: "2026-06-13", targetDate: "2026-06-14" },
+    identityCheck: buildIdentityCheck(),
+    selectedSourceDatePolicy: "explicit_source_date",
+    selectedSourceDate: "2026-06-13",
+    candidateAlternativesCount: 0,
+  };
+  assert.equal(
+    isCoachConfirmedSourceWorkoutManualExecuteReady(coachConfirmedWorkoutLog, coachConfirmedWorkoutPayload),
+    true
+  );
+  assert.equal(
+    validateDryRunLogReadiness(coachConfirmedWorkoutLog, coachConfirmedWorkoutPayload).ok,
+    true,
+    "runner-approved canExecute=true dry-run must queue even when confidence is below threshold"
+  );
 
   const coachConfirmedBypassAllowed = shouldBypassConfidenceThresholdForCoachConfirmedRevalidation({
     parsedPayload: coachConfirmedPayload,

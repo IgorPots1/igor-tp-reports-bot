@@ -3796,6 +3796,7 @@ export async function requestTrainingPeaksActionExecution(
     .from("trainingpeaks_actions")
     .update({
       execution_status: "execute_pending",
+      execution_mode: "real",
       last_run_id: (dryRunRun as { id: string }).id,
       execution_requested_at: nowIso,
       execution_requested_by_chat_id: input.requestedByChatId,

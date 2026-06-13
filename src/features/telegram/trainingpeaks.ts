@@ -8,10 +8,9 @@ import type {
 import {
   INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU,
   isEligibleForCoachSourceDateConfirmation,
-  isCoachConfirmedSourceDateManualExecuteReady,
   validateDryRunLogReadiness,
 } from "@/features/trainingpeaks/move-source-policy";
-import { formatTrainingPeaksExecuteQueuedMessage } from "@/features/trainingpeaks/action-execute-telegram-copy";
+import { formatTrainingPeaksExecuteBlockedMessage, formatTrainingPeaksExecuteQueuedMessage } from "@/features/trainingpeaks/action-execute-telegram-copy";
 import {
   buildCoachActionsListText,
   COACH_REPLY_BUTTON_SIGNALS,
@@ -6027,16 +6026,13 @@ function shouldShowActionExecuteButton(
     return false;
   }
   const latestDryRun = action.latestRunContext?.latestDryRun ?? null;
-  const manualExecuteReady =
-    latestDryRun?.status === "completed" &&
-    Boolean(latestDryRun.logJson) &&
-    validateDryRunLogReadiness(latestDryRun.logJson, action.parsedPayload).ok &&
-    isCoachConfirmedSourceDateManualExecuteReady(latestDryRun.logJson, action.parsedPayload);
-  return (
-    latestDryRun?.status === "completed" &&
-    latestDryRun.dryRunResult === "candidate_found" &&
-    (latestDryRun.canExecute === true || manualExecuteReady)
-  );
+  if (latestDryRun?.status !== "completed" || latestDryRun.dryRunResult !== "candidate_found") {
+    return false;
+  }
+  if (!latestDryRun.logJson) {
+    return false;
+  }
+  return validateDryRunLogReadiness(latestDryRun.logJson, action.parsedPayload).ok;
 }
 
 function formatActionDetailFreshnessLabel(date = new Date()): string {
@@ -7117,14 +7113,10 @@ async function handleTrainingPeaksActionExecuteRequestCallback(
   const blockedText =
     result.kind === "blocked"
       ? [
-          "⚠️ Перенос не выполнен",
-          "",
-          ...formatTelegramLabeledBlock(
-            "Причина:",
-            translateCoachActionTechnicalReason(
-              result.reason?.trim() || formatCoachActionReasonForDisplay(result.latestRunContext)
-            )
-          ),
+          `⚠️ ${formatTrainingPeaksExecuteBlockedMessage({
+            reason: result.reason,
+            latestRunContext: result.latestRunContext,
+          })}`,
           (() => {
             const selectedSourceDate = result.latestRunContext?.latestDryRun?.selectedSourceDate ?? null;
             const selectedSourcePolicy = result.latestRunContext?.latestDryRun?.selectedSourceDatePolicy ?? null;

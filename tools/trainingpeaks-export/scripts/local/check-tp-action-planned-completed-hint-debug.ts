@@ -18,6 +18,7 @@ import {
   truncateWorkoutTitleForButton,
   type MoveCandidateStatusInput,
 } from "../../../../src/features/trainingpeaks/action-planned-completed-ambiguity.ts";
+import { validateDryRunLogReadiness } from "../../../../src/features/trainingpeaks/move-source-policy.ts";
 
 const LOG_PREFIX = "[check-tp-action-planned-completed-hint-debug]";
 const TP_CALLBACK_ACTION_SELECT_WORKOUT_PREFIX = "tp:ta:sw:";
@@ -417,6 +418,49 @@ async function main(): Promise<void> {
   for (const reason of buttonEligibility.reasons) {
     console.log(`- ${reason}`);
   }
+
+  const dryRunReadiness = logJson
+    ? validateDryRunLogReadiness(logJson, action.parsed_payload)
+    : { ok: false as const, reason: "Dry-run log not found." };
+  const wouldShowExecuteButton =
+    action.status === "approved" &&
+    action.execution_status === "dry_run_completed" &&
+    latestDryRun?.status === "completed" &&
+    logJson?.dryRunResult === "candidate_found" &&
+    dryRunReadiness.ok;
+  const wouldQueueExecute = wouldShowExecuteButton;
+  const runnerStatusApproved = action.status === "approved";
+  const runnerExecutePending = action.execution_status === "execute_pending";
+  const runnerHasLastRunId = Boolean(action.last_run_id);
+  const runnerPickupEligible = runnerStatusApproved && runnerExecutePending && runnerHasLastRunId;
+
+  console.log("");
+  console.log("executeButtonEligibility:");
+  console.log(`  latestDryRunId=${latestDryRun?.id ?? "null"}`);
+  console.log(`  latestDryRunResult=${String(logJson?.dryRunResult ?? "null")}`);
+  console.log(`  canExecute=${String(logJson?.canExecute ?? "null")}`);
+  console.log(`  wouldShowExecuteButton=${wouldShowExecuteButton ? "yes" : "no"}`);
+  console.log(`  wouldQueueExecute=${wouldQueueExecute ? "yes" : "no"}`);
+  console.log(`  runnerPickupEligible=${runnerPickupEligible ? "yes" : "no"}`);
+  if (!dryRunReadiness.ok) {
+    console.log(`  reasonIfNo=${dryRunReadiness.reason}`);
+  } else if (!wouldQueueExecute) {
+    console.log(`  reasonIfNo=action status ${action.status}/${action.execution_status} blocks execute button`);
+  } else if (!runnerPickupEligible) {
+    console.log("  reasonIfNo=action is not in execute_pending with last_run_id");
+  } else {
+    console.log("  reasonIfNo=null");
+  }
+
+  console.log("");
+  console.log("runnerExecutePickup:");
+  console.log(`  status=approved: ${runnerStatusApproved ? "yes" : "no"}`);
+  console.log(`  execution_status=execute_pending: ${runnerExecutePending ? "yes" : "no"}`);
+  console.log(
+    `  execution_mode condition: ${action.execution_mode === "real" || action.execution_mode === "dry_run" ? "yes" : "no"} (${action.execution_mode ?? "null"})`
+  );
+  console.log(`  last_run_id present: ${runnerHasLastRunId ? "yes" : "no"}`);
+  console.log(`  eligible: ${runnerPickupEligible ? "yes" : "no"}`);
 
   if (
     action.execution_status === "not_started" &&

@@ -78,6 +78,17 @@ function extractCoachConfirmedSourceDate(parsedPayload: unknown): string | null 
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function extractCoachConfirmedSourceWorkoutId(parsedPayload: unknown): number | null {
+  if (!parsedPayload || typeof parsedPayload !== "object") {
+    return null;
+  }
+  const value = (parsedPayload as { coach_confirmed_source_workout_id?: unknown }).coach_confirmed_source_workout_id;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  return value;
+}
+
 function normalizeCanExecuteReasons(canExecuteReasons: unknown): string[] {
   if (!Array.isArray(canExecuteReasons) || canExecuteReasons.length === 0) {
     return [];
@@ -199,6 +210,102 @@ export function isCoachConfirmedSourceDateManualExecuteReady(input: unknown, par
   return isBlockedOnlyByConfidenceThresholdReasons(payload.canExecuteReasons);
 }
 
+export function isCoachConfirmedSourceWorkoutManualExecuteReady(input: unknown, parsedPayload?: unknown): boolean {
+  if (!input || typeof input !== "object") {
+    return false;
+  }
+
+  const confirmedWorkoutId = extractCoachConfirmedSourceWorkoutId(parsedPayload ?? null);
+  if (!confirmedWorkoutId) {
+    return false;
+  }
+
+  const payload = input as {
+    dryRunResult?: unknown;
+    canExecute?: unknown;
+    canExecuteReasons?: unknown;
+    candidate?: { fingerprint?: unknown; workoutId?: unknown } | null;
+    selectedSourceDate?: unknown;
+    selectedSourceDatePolicy?: unknown;
+    resolvedDates?: { sourceDate?: unknown; targetDate?: unknown } | null;
+    identityCheck?: { matchedBy?: unknown } | null;
+    candidateAlternativesCount?: unknown;
+  };
+
+  if (payload.dryRunResult !== "candidate_found") {
+    return false;
+  }
+
+  const sourceDate = trimOrNull(payload.resolvedDates?.sourceDate) ?? trimOrNull(payload.selectedSourceDate);
+  const targetDate = trimOrNull(payload.resolvedDates?.targetDate);
+  if (!sourceDate || !targetDate) {
+    return false;
+  }
+
+  const fingerprint = trimOrNull(payload.candidate?.fingerprint);
+  if (!fingerprint) {
+    return false;
+  }
+
+  const candidateWorkoutId = payload.candidate?.workoutId;
+  const workoutIdNumber =
+    typeof candidateWorkoutId === "number"
+      ? candidateWorkoutId
+      : typeof candidateWorkoutId === "string"
+        ? Number(candidateWorkoutId)
+        : null;
+  if (!Number.isFinite(workoutIdNumber) || workoutIdNumber !== confirmedWorkoutId) {
+    return false;
+  }
+
+  const identityMatchedBy =
+    typeof payload.identityCheck?.matchedBy === "string" ? payload.identityCheck.matchedBy : null;
+  if (!identityMatchedBy || identityMatchedBy === "mismatch") {
+    return false;
+  }
+
+  if (
+    typeof payload.candidateAlternativesCount === "number" &&
+    Number.isFinite(payload.candidateAlternativesCount) &&
+    payload.candidateAlternativesCount > 0
+  ) {
+    return false;
+  }
+
+  const policy =
+    typeof payload.selectedSourceDatePolicy === "string" && payload.selectedSourceDatePolicy.trim()
+      ? payload.selectedSourceDatePolicy.trim()
+      : null;
+  const moveSourceValidation = validateMoveSourceForExecution({
+    selectedSourceDatePolicy: policy,
+    parsedPayload: parsedPayload ?? null,
+    dryRunLog: input,
+  });
+  if (!moveSourceValidation.ok) {
+    return false;
+  }
+
+  if (payload.canExecute === true) {
+    return true;
+  }
+
+  if (payload.canExecute !== false) {
+    return false;
+  }
+
+  const normalizedReasons = normalizeCanExecuteReasons(payload.canExecuteReasons);
+  if (normalizedReasons.length === 0) {
+    return false;
+  }
+
+  return normalizedReasons.every(
+    (reason) =>
+      isConfidenceThresholdReason(reason) ||
+      reason === INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_REASON ||
+      reason === INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU
+  );
+}
+
 export function isEligibleForCoachSourceDateConfirmation(input: unknown): boolean {
   if (!input || typeof input !== "object") {
     return false;
@@ -256,11 +363,14 @@ export function isEligibleForCoachSourceDateConfirmation(input: unknown): boolea
   return true;
 }
 
-function shouldAllowCoachConfirmedSourceDateReadinessBypass(
+function shouldAllowCoachConfirmedManualExecuteReadinessBypass(
   logJson: unknown,
   parsedPayload: unknown
 ): boolean {
   if (isCoachConfirmedSourceDateManualExecuteReady(logJson, parsedPayload)) {
+    return true;
+  }
+  if (isCoachConfirmedSourceWorkoutManualExecuteReady(logJson, parsedPayload)) {
     return true;
   }
   if (!logJson || typeof logJson !== "object") {
@@ -669,10 +779,11 @@ export function validateDryRunLogReadiness(
   if (payload.dryRunResult !== "candidate_found") {
     return { ok: false, reason: "Dry-run did not find a unique candidate." };
   }
-  const allowCoachConfirmedBypass = shouldAllowCoachConfirmedSourceDateReadinessBypass(
+  const allowCoachConfirmedBypass = shouldAllowCoachConfirmedManualExecuteReadinessBypass(
     logJson,
     parsedPayload ?? null
   );
+  const runnerApprovedExecute = payload.dryRunResult === "candidate_found" && payload.canExecute === true;
   if (payload.canExecute !== true && !allowCoachConfirmedBypass) {
     return { ok: false, reason: "Dry-run marked action as unsafe for execution." };
   }
@@ -705,7 +816,11 @@ export function validateDryRunLogReadiness(
     return { ok: false, reason: moveSourceValidation.reason };
   }
 
-  if (policy !== STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY && !allowCoachConfirmedBypass) {
+  if (
+    policy !== STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY &&
+    !allowCoachConfirmedBypass &&
+    !runnerApprovedExecute
+  ) {
     const confidence = toNumericConfidence(payload.confidence);
     if (confidence === null || confidence < DEFAULT_DRY_RUN_EXECUTION_CONFIDENCE_THRESHOLD) {
       return {

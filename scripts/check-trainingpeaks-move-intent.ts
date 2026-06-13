@@ -674,6 +674,14 @@ async function run(): Promise<void> {
     failed += 1;
     console.log(`FAIL: execute queued message must include trusted dry-run route, got ${JSON.stringify(viktoriaQueuedMessage)}`);
   }
+  if (!viktoriaQueuedMessage.includes("Выполнение поставлено в очередь")) {
+    failed += 1;
+    console.log("FAIL: execute queued message must use queue confirmation copy");
+  }
+  if (!viktoriaQueuedMessage.includes("TrainingPeaks пока не изменён")) {
+    failed += 1;
+    console.log("FAIL: execute queued message must state TrainingPeaks was not mutated");
+  }
   if (viktoriaQueuedMessage.includes("Ученик: ?")) {
     failed += 1;
     console.log("FAIL: execute queued message must not include placeholder student label");
