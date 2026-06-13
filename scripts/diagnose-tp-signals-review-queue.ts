@@ -16,6 +16,9 @@ import {
 import {
   buildTpSignalReviewQueueDryRunPreview,
   getTrainingPeaksTpSignalReviewQueueFeatureFlags,
+  isTrainingPeaksTpSignalReviewQueueEnabled,
+  isTrainingPeaksTpSignalReviewQueueSendEnabled,
+  notifyCoachTpSignalReviewQueue,
 } from "@/features/trainingpeaks/tp-signals-review-flow";
 import {
   buildActiveSignalReviewBucketItems,
@@ -27,6 +30,7 @@ import {
 const LOG_PREFIX = "[diagnose:tp-signals-review-queue]";
 const REPORT_ROOT = "reports/tp-signals-review-queue";
 const DEFAULT_SIGNAL_LIMIT = 250;
+const DEFAULT_SEND_LIMIT = 5;
 
 type CliOptions = {
   asOfDate: string;
@@ -35,6 +39,7 @@ type CliOptions = {
   limit: number | null;
   includeReviewed: boolean;
   noWrite: boolean;
+  send: boolean;
 };
 
 function loadLocalEnvFiles(): void {
@@ -83,10 +88,15 @@ function parseCliOptions(argv: string[]): CliOptions {
     limit: null,
     includeReviewed: false,
     noWrite: false,
+    send: false,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]!;
+    if (arg === "--send") {
+      options.send = true;
+      continue;
+    }
     if (arg === "--no-write") {
       options.noWrite = true;
       continue;
@@ -145,6 +155,46 @@ function parseCliOptions(argv: string[]): CliOptions {
   }
 
   return options;
+}
+
+function assertSendSafetyGuards(options: CliOptions): void {
+  if (!options.send) {
+    return;
+  }
+
+  if (options.allActive && !options.limit) {
+    throw new Error(
+      `${LOG_PREFIX} FAIL: --send with --all-active requires --limit (safety cap; do not send all active cards)`
+    );
+  }
+
+  if (!options.allActive && options.names.length === 0) {
+    throw new Error(`${LOG_PREFIX} FAIL: --send requires --names or --all-active with --limit`);
+  }
+
+  if (!isTrainingPeaksTpSignalReviewQueueEnabled()) {
+    throw new Error(
+      `${LOG_PREFIX} FAIL: --send requires TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_ENABLED=true`
+    );
+  }
+
+  if (!isTrainingPeaksTpSignalReviewQueueSendEnabled()) {
+    throw new Error(
+      `${LOG_PREFIX} FAIL: --send requires TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_SEND_ENABLED=true`
+    );
+  }
+}
+
+function resolveEffectiveSendLimit(options: CliOptions): number | null {
+  if (!options.send) {
+    return options.limit;
+  }
+
+  if (options.limit && options.limit > 0) {
+    return options.limit;
+  }
+
+  return DEFAULT_SEND_LIMIT;
 }
 
 function normalizeMatch(value: string | null | undefined): string {
@@ -223,6 +273,7 @@ function printConsoleSummary(input: {
   sampleCards: string[];
   noWrite: boolean;
   reportDir: string | null;
+  sendResult?: Awaited<ReturnType<typeof notifyCoachTpSignalReviewQueue>>;
 }): void {
   console.log("TP Signals Review Queue Diagnostic");
   console.log(`As-of date: ${input.asOfDate}`);
@@ -256,6 +307,16 @@ function printConsoleSummary(input: {
     console.log("");
   }
 
+  if (input.sendResult) {
+    console.log("Live send:");
+    console.log(`- status: ${input.sendResult.status}`);
+    if (input.sendResult.status === "sent") {
+      console.log(`- sent_count: ${input.sendResult.sentCount}`);
+      console.log("- destination: coach chat only (TELEGRAM_COACH_CHAT_IDS)");
+    }
+    console.log("");
+  }
+
   if (input.noWrite) {
     console.log(`${LOG_PREFIX} --no-write set: report files were not written`);
   } else if (input.reportDir) {
@@ -272,6 +333,7 @@ async function run(): Promise<void> {
   if (options.allActive && options.names.length > 0) {
     throw new Error(`${LOG_PREFIX} FAIL: use either --names or --all-active, not both`);
   }
+  assertSendSafetyGuards(options);
 
   const featureFlags = getTrainingPeaksTpSignalReviewQueueFeatureFlags();
   const [students, signalsResult, actions] = await Promise.all([
@@ -321,13 +383,18 @@ async function run(): Promise<void> {
     }
   }
 
+  const effectiveLimit = resolveEffectiveSendLimit(options);
   const selection = selectTpSignalReviewQueueItems({
     activeItems,
     latestDecisionsBySignalId,
     includeReviewed: options.includeReviewed,
-    limit: options.limit,
+    limit: effectiveLimit,
   });
   const sampleCards = buildTpSignalReviewQueueDryRunPreview({ items: selection.items });
+  let sendResult: Awaited<ReturnType<typeof notifyCoachTpSignalReviewQueue>> | undefined;
+  if (options.send) {
+    sendResult = await notifyCoachTpSignalReviewQueue({ items: selection.items });
+  }
   const scopeLabel = options.allActive
     ? "all active students (Supabase is_active=true)"
     : `named subset (${options.names.join(", ")})`;
@@ -342,6 +409,7 @@ async function run(): Promise<void> {
     sampleCards,
     noWrite: options.noWrite,
     reportDir: null,
+    sendResult,
   });
 
   if (options.noWrite) {
