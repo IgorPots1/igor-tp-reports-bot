@@ -25,9 +25,9 @@ import {
   formatTelegramLabeledBlock,
 } from "@/features/trainingpeaks/telegram-visual-ux";
 import {
-  extractPlannedVsCompletedHintFromLogJson,
   formatPlannedCompletedAmbiguityActionDetailLines,
   isEligibleForCoachSourceWorkoutConfirmation,
+  resolvePlannedVsCompletedHintFromDryRunLog,
   truncateWorkoutTitleForButton,
 } from "@/features/trainingpeaks/action-planned-completed-ambiguity";
 import {
@@ -6260,7 +6260,7 @@ function getTpActionDetailText(
     }
     lines.push("");
   }
-  const plannedVsCompletedHint = extractPlannedVsCompletedHintFromLogJson(latestDryRun?.logJson);
+  const plannedVsCompletedHint = resolvePlannedVsCompletedHintFromDryRunLog(latestDryRun?.logJson);
   if (plannedVsCompletedHint) {
     lines.push("");
     lines.push(...formatPlannedCompletedAmbiguityActionDetailLines(plannedVsCompletedHint));
@@ -6298,7 +6298,7 @@ function getTpActionDetailMarkup(
   }
 
   if (shouldShowCoachConfirmSourceWorkoutButton(action.latestRunContext)) {
-    const hint = extractPlannedVsCompletedHintFromLogJson(action.latestRunContext?.latestDryRun?.logJson);
+    const hint = resolvePlannedVsCompletedHintFromDryRunLog(action.latestRunContext?.latestDryRun?.logJson);
     const suggestedTitle = hint?.suggestedSourceCandidate.title ?? "planned";
     rows.push([
       createMenuButton(

@@ -14,8 +14,8 @@ import {
   validateDryRunLogReadiness,
 } from "@/features/trainingpeaks/move-source-policy";
 import {
-  extractPlannedVsCompletedHintFromLogJson,
   isEligibleForCoachSourceWorkoutConfirmation,
+  resolvePlannedVsCompletedHintFromDryRunLog,
 } from "@/features/trainingpeaks/action-planned-completed-ambiguity";
 
 export type TrainingPeaksTelegramFormality = "ty" | "vy" | "unknown";
@@ -4177,7 +4177,7 @@ export async function confirmTrainingPeaksActionSourceWorkout(
     };
   }
 
-  const hint = extractPlannedVsCompletedHintFromLogJson(latestDryRun.logJson);
+  const hint = resolvePlannedVsCompletedHintFromDryRunLog(latestDryRun.logJson);
   const confirmedWorkoutId = Number(hint?.suggestedSourceCandidate.workoutId);
   if (!Number.isFinite(confirmedWorkoutId) || confirmedWorkoutId <= 0) {
     return {

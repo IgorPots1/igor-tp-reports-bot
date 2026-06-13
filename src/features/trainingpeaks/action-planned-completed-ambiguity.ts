@@ -74,12 +74,11 @@ export function isNormalWorkoutTitle(title: string | null | undefined): boolean 
 export function inferMoveCandidateWorkoutStatus(candidate: MoveCandidateStatusInput): "planned" | "completed" {
   const text = (candidate.rawTextSnippet ?? "").toLowerCase();
   const classHint = (candidate.classHint ?? "").toLowerCase();
-  const selectorHint = (candidate.selectorHint ?? "").toLowerCase();
 
   if (/\b(done|completed|выполнено|завершено|finished|отчет|report|результат)\b/i.test(text)) {
     return "completed";
   }
-  if (classHint.includes("completed") || selectorHint.includes(".activity.workout")) {
+  if (classHint.includes("completed")) {
     return "completed";
   }
   if (/\bhr\s*tss\b/i.test(text)) {
@@ -154,7 +153,6 @@ function isCompletedLikeCandidate(candidate: MoveCandidateStatusInput): boolean 
   }
   const text = (candidate.rawTextSnippet ?? "").toLowerCase();
   return (
-    (candidate.selectorHint ?? "").includes(".activity.workout") ||
     typeof candidate.plannedDistance === "number" ||
     /\bhr\s*tss\b/i.test(text)
   );
@@ -221,8 +219,65 @@ export function extractPlannedVsCompletedHintFromLogJson(logJson: unknown): Plan
   return hint;
 }
 
+function selectDryRunLogCandidatesForAmbiguityHint(
+  candidates: unknown,
+  sourceDate: string | null
+): MoveCandidateStatusInput[] {
+  if (!Array.isArray(candidates)) {
+    return [];
+  }
+  const typed = candidates as Array<MoveCandidateStatusInput & { sourceDate?: string | null }>;
+  if (!sourceDate) {
+    return typed;
+  }
+  const onSourceDate = typed.filter((candidate) => candidate.sourceDate === sourceDate);
+  return onSourceDate.length > 0 ? onSourceDate : typed;
+}
+
+export function resolvePlannedVsCompletedHintFromDryRunLog(logJson: unknown): PlannedCompletedAmbiguityHint | null {
+  const stored = extractPlannedVsCompletedHintFromLogJson(logJson);
+  if (stored) {
+    return stored;
+  }
+  if (!logJson || typeof logJson !== "object") {
+    return null;
+  }
+  const payload = logJson as {
+    dryRunResult?: unknown;
+    canExecuteReasons?: unknown;
+    debugCandidatesTopN?: unknown;
+    identityCheck?: { matchedBy?: unknown } | null;
+    sourceInferenceProvenance?: { warnings?: unknown } | null;
+    selectedSourceDate?: unknown;
+    resolvedDates?: { sourceDate?: unknown } | null;
+  };
+  if (payload.dryRunResult !== "ambiguous") {
+    return null;
+  }
+  const sourceDate =
+    typeof payload.selectedSourceDate === "string"
+      ? payload.selectedSourceDate
+      : typeof payload.resolvedDates?.sourceDate === "string"
+        ? payload.resolvedDates.sourceDate
+        : null;
+  const candidates = selectDryRunLogCandidatesForAmbiguityHint(payload.debugCandidatesTopN, sourceDate);
+  return detectPlannedVsCompletedAmbiguityHint({
+    dryRunResult: "ambiguous",
+    plausibleCandidates: candidates,
+    canExecuteReasons: Array.isArray(payload.canExecuteReasons)
+      ? payload.canExecuteReasons.map((reason) => String(reason))
+      : [],
+    provenanceWarnings: Array.isArray(payload.sourceInferenceProvenance?.warnings)
+      ? payload.sourceInferenceProvenance!.warnings!.map((warning) => String(warning))
+      : [],
+    payloadWarnings: [],
+    identityMatchedBy:
+      typeof payload.identityCheck?.matchedBy === "string" ? payload.identityCheck.matchedBy : null,
+  });
+}
+
 export function isEligibleForCoachSourceWorkoutConfirmation(logJson: unknown): boolean {
-  const hint = extractPlannedVsCompletedHintFromLogJson(logJson);
+  const hint = resolvePlannedVsCompletedHintFromDryRunLog(logJson);
   if (!hint) {
     return false;
   }

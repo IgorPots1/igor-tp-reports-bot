@@ -90,6 +90,7 @@
     "check-trainingpeaks-admin-contact-display": "npx tsx scripts/check-trainingpeaks-admin-contact-display.ts",
     "check-trainingpeaks-actions-telegram-copy": "npx tsx scripts/check-trainingpeaks-actions-telegram-copy.ts",
     "check-trainingpeaks-actions-planned-completed-ambiguity": "npx tsx scripts/check-trainingpeaks-actions-planned-completed-ambiguity.ts",
+    "check:tp-action-planned-completed-hint-debug": "npx tsx tools/trainingpeaks-export/scripts/local/check-tp-action-planned-completed-hint-debug.ts",
     "check-trainingpeaks-telegram-readability": "npx tsx scripts/check-trainingpeaks-telegram-readability.ts",
     "check-trainingpeaks-operational-signals-command": "npx tsx scripts/check-trainingpeaks-operational-signals-command.ts",
     "check-trainingpeaks-operational-signals-health-move": "npx tsx scripts/check-trainingpeaks-operational-signals-health-move.ts",
