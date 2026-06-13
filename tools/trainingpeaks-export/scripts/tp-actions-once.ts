@@ -29,6 +29,11 @@ import * as trainingPeaksAttentionTelegramModule from "../../../src/features/tra
 import * as trainingPeaksTelegramBusinessModule from "../../../src/features/trainingpeaks/telegram-business";
 import * as trainingPeaksRepositoryModule from "../../../src/features/trainingpeaks/repository";
 import { buildCoachDryRunFailureNotificationLines } from "../../../src/features/trainingpeaks/action-dry-run-telegram-copy";
+import {
+  detectPlannedVsCompletedAmbiguityHint,
+  truncateWorkoutTitleForButton,
+  type PlannedCompletedAmbiguityHint,
+} from "../../../src/features/trainingpeaks/action-planned-completed-ambiguity";
 
 type NamespaceWithOptionalDefault<T> = T & { default?: T };
 
@@ -462,7 +467,11 @@ type ParsedMoveWorkoutPayload = {
   coach_confirmed_source_date?: string;
   coach_confirmed_source_date_at?: string;
   coach_confirmed_source_date_by?: string;
+  coach_confirmed_source_workout_id?: number;
+  coach_confirmed_source_workout_at?: string;
+  coach_confirmed_source_workout_by?: string;
   source_date_policy_override?: string;
+  warnings?: string[];
   workoutDescriptor?: {
     raw?: string;
     type?: string;
@@ -646,6 +655,7 @@ type DryRunEvaluation = {
   globalCandidateCount?: number;
   sourceDateBucketCounts?: Record<string, number>;
   sourceInferenceProvenance?: DryRunSourceInferenceProvenance | null;
+  plannedVsCompletedHint?: PlannedCompletedAmbiguityHint | null;
 };
 
 type RawWorkoutCandidate = {
@@ -946,6 +956,7 @@ const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
 const TP_CALLBACK_ACTION_CANCEL_PREFIX = "tp:ta:c:";
 const TP_CALLBACK_ACTION_EXECUTE_PREFIX = "tp:ta:x:";
 const TP_CALLBACK_ACTION_CONFIRM_SOURCE_PREFIX = "tp:ta:cs:";
+const TP_CALLBACK_ACTION_SELECT_WORKOUT_PREFIX = "tp:ta:sw:";
 const ACTION_ARTIFACTS_ROOT = path.join(toolRoot, "action-artifacts");
 const TP_ACTIONS_EXECUTE_REAL_FLAG = "--execute-real";
 const TP_ACTIONS_ACTION_ID_PREFIX = "--action-id=";
@@ -1339,6 +1350,24 @@ function extractCoachConfirmedSourceDate(parsedPayload: ParsedMoveWorkoutPayload
     return null;
   }
   return normalizeDateCandidate(rawDate.trim());
+}
+
+function extractCoachConfirmedSourceWorkoutId(parsedPayload: ParsedMoveWorkoutPayload | null): number | null {
+  if (!parsedPayload) {
+    return null;
+  }
+  const rawWorkoutId = parsedPayload.coach_confirmed_source_workout_id;
+  if (typeof rawWorkoutId !== "number" || !Number.isFinite(rawWorkoutId) || rawWorkoutId <= 0) {
+    return null;
+  }
+  return rawWorkoutId;
+}
+
+function extractParsedPayloadWarnings(parsedPayload: ParsedMoveWorkoutPayload | null): string[] {
+  if (!parsedPayload?.warnings?.length) {
+    return [];
+  }
+  return parsedPayload.warnings.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
 }
 
 function resolveTargetDateFromPayload(
@@ -2750,6 +2779,7 @@ async function notifyCoachDryRunResult(input: {
         sourceDate: evaluation?.resolvedDates.sourceDate ?? evaluation?.selectedSourceDate ?? null,
         canExecuteReasons: evaluation?.canExecuteReasons ?? [],
         candidates: evaluation?.debugCandidatesTopN ?? [],
+        plannedVsCompletedHint: evaluation?.plannedVsCompletedHint ?? null,
       })
     );
   }
@@ -2784,6 +2814,23 @@ async function notifyCoachDryRunResult(input: {
     } else {
       inlineKeyboardRows = [[cancelButton]];
     }
+  } else if (evaluation?.dryRunResult === "ambiguous" && evaluation.plannedVsCompletedHint) {
+    const actionId = input.action.id;
+    const suggestedTitle = evaluation.plannedVsCompletedHint.suggestedSourceCandidate.title;
+    inlineKeyboardRows = [
+      [
+        {
+          text: `✅ Перенести ${truncateWorkoutTitleForButton(suggestedTitle)}`,
+          callback_data: `${TP_CALLBACK_ACTION_SELECT_WORKOUT_PREFIX}${actionId}`,
+        },
+      ],
+      [
+        {
+          text: "❌ Отменить",
+          callback_data: `${TP_CALLBACK_ACTION_CANCEL_PREFIX}${actionId}`,
+        },
+      ],
+    ];
   }
 
   try {
@@ -7157,12 +7204,18 @@ export function evaluateDryRunOutcome(input: {
       sourceInferenceProvenance,
     };
   }
-  const top = topRanked.candidate;
+  const coachConfirmedSourceWorkoutId = extractCoachConfirmedSourceWorkoutId(payload);
+  const coachForcedRankedCandidate =
+    coachConfirmedSourceWorkoutId !== null
+      ? rankedBucketCandidates.find((entry) => entry.candidate.workoutId === coachConfirmedSourceWorkoutId) ?? null
+      : null;
+  const effectiveTopRanked = coachForcedRankedCandidate ?? topRanked;
+  const top = effectiveTopRanked.candidate;
   const confidence = sameDateRanking.confidence;
   sourceDate = selectedSourceDate;
   const plausibleCandidates = rankedBucketCandidates.filter((entry) => entry.plausibleSameDateCompetitor);
   const safeCandidates = rankedBucketCandidates.filter((entry) => entry.safeCandidate);
-  const alternativesCount = Math.max(0, plausibleCandidates.length - 1);
+  const alternativesCount = coachForcedRankedCandidate ? 0 : Math.max(0, plausibleCandidates.length - 1);
 
   const candidate: DryRunCandidate = {
     title: top.title,
@@ -7192,6 +7245,11 @@ export function evaluateDryRunOutcome(input: {
     reasons.push(normalized);
   };
 
+  if (coachConfirmedSourceWorkoutId !== null && !coachForcedRankedCandidate) {
+    dryRunResult = "failed";
+    pushReason("coach confirmed workout not found on selected source date");
+  }
+
   const strongFutureExecutionContext =
     selectedSourceDatePolicy === moveSourcePolicy.STRONG_FUTURE_DESCRIPTOR_MATCH_POLICY
       ? {
@@ -7220,13 +7278,17 @@ export function evaluateDryRunOutcome(input: {
   const executionConfidenceThreshold = strongFutureStructurallyConfirmed
     ? moveSourcePolicy.STRONG_FUTURE_DESCRIPTOR_EXECUTION_CONFIDENCE_THRESHOLD
     : 0.8;
-  const effectiveSafeCandidateCount = strongFutureStructurallyConfirmed ? 1 : safeCandidates.length;
+  const effectiveSafeCandidateCount = coachForcedRankedCandidate
+    ? 1
+    : strongFutureStructurallyConfirmed
+      ? 1
+      : safeCandidates.length;
 
-  if (plausibleCandidates.length > 1) {
+  if (!coachForcedRankedCandidate && plausibleCandidates.length > 1) {
     dryRunResult = "ambiguous";
     pushReason(sameDateRanking.helpfulAmbiguityReason ?? "multiple candidates on selected source date");
   }
-  if (sameDateRanking.margin !== null && sameDateRanking.margin < 0.12) {
+  if (!coachForcedRankedCandidate && sameDateRanking.margin !== null && sameDateRanking.margin < 0.12) {
     dryRunResult = "ambiguous";
     pushReason("top candidate margin too small");
   }
@@ -7239,17 +7301,17 @@ export function evaluateDryRunOutcome(input: {
   if (!candidate.fingerprint) {
     pushReason("candidate fingerprint missing");
   }
-  if (executionConfidence < executionConfidenceThreshold) {
+  if (!coachForcedRankedCandidate && executionConfidence < executionConfidenceThreshold) {
     pushReason(`confidence below threshold ${executionConfidenceThreshold}`);
   }
   if (effectiveSafeCandidateCount !== 1) {
     if (safeCandidates.length === 0) {
       pushReason("no candidate meets safe score threshold");
-    } else {
+    } else if (!coachForcedRankedCandidate) {
       pushReason(sameDateRanking.helpfulAmbiguityReason ?? "multiple candidates on selected source date");
     }
   }
-  if (sameDateRanking.margin !== null && sameDateRanking.margin < 0.12) {
+  if (!coachForcedRankedCandidate && sameDateRanking.margin !== null && sameDateRanking.margin < 0.12) {
     pushReason("top candidate margin too small");
   }
   if (input.identityCheck.matchedBy === "mismatch") {
@@ -7300,13 +7362,28 @@ export function evaluateDryRunOutcome(input: {
     reasons.length === 1 &&
     /^confidence below threshold \d+(?:\.\d+)?$/i.test(reasons[0] ?? "");
 
+  const coachConfirmedWorkoutExecuteReady =
+    coachForcedRankedCandidate !== null &&
+    dryRunResult !== "failed" &&
+    Boolean(targetDate) &&
+    Boolean(selectedSourceDate) &&
+    Boolean(candidate.fingerprint) &&
+    input.identityCheck.matchedBy !== "mismatch" &&
+    moveSourceTrustedForExecution;
+
+  if (coachConfirmedWorkoutExecuteReady) {
+    dryRunResult = "candidate_found";
+  }
+
   const canExecute =
     dryRunResult === "candidate_found" &&
     effectiveSafeCandidateCount === 1 &&
     Boolean(targetDate) &&
     Boolean(selectedSourceDate) &&
     Boolean(candidate.fingerprint) &&
-    (executionConfidence >= executionConfidenceThreshold || coachConfirmedManualExecuteReady) &&
+    (executionConfidence >= executionConfidenceThreshold ||
+      coachConfirmedManualExecuteReady ||
+      coachConfirmedWorkoutExecuteReady) &&
     input.identityCheck.matchedBy !== "mismatch" &&
     moveSourceTrustedForExecution;
 
@@ -7315,6 +7392,7 @@ export function evaluateDryRunOutcome(input: {
   }
 
   if (
+    !coachForcedRankedCandidate &&
     dryRunResult === "candidate_found" &&
     !canExecute &&
     moveSourceTrustedForExecution &&
@@ -7322,6 +7400,18 @@ export function evaluateDryRunOutcome(input: {
   ) {
     dryRunResult = "ambiguous";
   }
+
+  const plannedVsCompletedHint =
+    dryRunResult === "ambiguous"
+      ? detectPlannedVsCompletedAmbiguityHint({
+          dryRunResult,
+          plausibleCandidates: plausibleCandidates.map((entry) => entry.candidate),
+          canExecuteReasons: reasons,
+          provenanceWarnings: sourceInferenceProvenance?.warnings ?? [],
+          payloadWarnings: extractParsedPayloadWarnings(payload),
+          identityMatchedBy: input.identityCheck.matchedBy,
+        })
+      : null;
 
   return {
     dryRunResult,
@@ -7377,6 +7467,7 @@ export function evaluateDryRunOutcome(input: {
       topPlausibleMargin: sameDateRanking.margin,
     },
     sourceInferenceProvenance,
+    plannedVsCompletedHint,
   };
 }
 
@@ -8903,6 +8994,7 @@ async function main(): Promise<void> {
         globalCandidateCount: evaluation.globalCandidateCount,
         sourceDateBucketCounts: evaluation.sourceDateBucketCounts,
         sourceInferenceProvenance: evaluation.sourceInferenceProvenance ?? null,
+        plannedVsCompletedHint: evaluation.plannedVsCompletedHint ?? null,
         note: "Ничего не изменено в TrainingPeaks",
       };
 

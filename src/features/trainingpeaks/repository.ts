@@ -13,6 +13,10 @@ import {
   isExecutableMoveSourcePolicy,
   validateDryRunLogReadiness,
 } from "@/features/trainingpeaks/move-source-policy";
+import {
+  extractPlannedVsCompletedHintFromLogJson,
+  isEligibleForCoachSourceWorkoutConfirmation,
+} from "@/features/trainingpeaks/action-planned-completed-ambiguity";
 
 export type TrainingPeaksTelegramFormality = "ty" | "vy" | "unknown";
 
@@ -652,6 +656,32 @@ export type ConfirmTrainingPeaksActionSourceDateResult =
       kind: "confirmed";
       action: TrainingPeaksAction;
       confirmedSourceDate: string;
+      latestDryRun: TrainingPeaksActionRunContextSummary;
+      dryRunRequeueRequested: boolean;
+    }
+  | {
+      kind: "not_found";
+    }
+  | {
+      kind: "blocked";
+      action: TrainingPeaksAction;
+      reason: string;
+      latestDryRun: TrainingPeaksActionRunContextSummary | null;
+    };
+
+export type ConfirmTrainingPeaksActionSourceWorkoutInput = {
+  actionId: string;
+  confirmedByChatId: string;
+  confirmedByUserId?: string | null;
+  confirmationMessageId?: string | null;
+};
+
+export type ConfirmTrainingPeaksActionSourceWorkoutResult =
+  | {
+      kind: "confirmed";
+      action: TrainingPeaksAction;
+      confirmedWorkoutId: number;
+      confirmedWorkoutTitle: string;
       latestDryRun: TrainingPeaksActionRunContextSummary;
       dryRunRequeueRequested: boolean;
     }
@@ -3969,6 +3999,25 @@ function shouldShowCoachConfirmSourceDateAction(latestRunContext: TrainingPeaksA
   return isDryRunEligibleForCoachSourceDateConfirmation(latestRunContext?.latestDryRun ?? null);
 }
 
+function isDryRunEligibleForCoachSourceWorkoutConfirmation(
+  dryRun: TrainingPeaksActionRunContextSummary | null
+): dryRun is TrainingPeaksActionRunContextSummary {
+  if (!dryRun) {
+    return false;
+  }
+  if (dryRun.runType !== "dry_run" || dryRun.status !== "completed") {
+    return false;
+  }
+  if (dryRun.dryRunResult !== "ambiguous" || dryRun.canExecute === true) {
+    return false;
+  }
+  return isEligibleForCoachSourceWorkoutConfirmation(dryRun.logJson);
+}
+
+function shouldShowCoachConfirmSourceWorkoutAction(latestRunContext: TrainingPeaksActionLatestRunContext | null): boolean {
+  return isDryRunEligibleForCoachSourceWorkoutConfirmation(latestRunContext?.latestDryRun ?? null);
+}
+
 async function requestFreshDryRunAfterCoachSourceConfirmation(
   action: TrainingPeaksAction
 ): Promise<boolean> {
@@ -4083,6 +4132,97 @@ export async function confirmTrainingPeaksActionSourceDate(
     kind: "confirmed",
     action: mappedAction,
     confirmedSourceDate,
+    latestDryRun,
+    dryRunRequeueRequested,
+  };
+}
+
+function buildActionParsedPayloadWithCoachSourceWorkoutConfirmation(input: {
+  parsedPayload: unknown;
+  confirmedWorkoutId: number;
+  confirmedAtIso: string;
+  confirmedByUserId: string | null;
+}): Record<string, unknown> {
+  const basePayload =
+    input.parsedPayload && typeof input.parsedPayload === "object" && !Array.isArray(input.parsedPayload)
+      ? (input.parsedPayload as Record<string, unknown>)
+      : {};
+  return {
+    ...basePayload,
+    coach_confirmed_source_workout_id: input.confirmedWorkoutId,
+    coach_confirmed_source_workout_at: input.confirmedAtIso,
+    coach_confirmed_source_workout_by: input.confirmedByUserId,
+  };
+}
+
+export async function confirmTrainingPeaksActionSourceWorkout(
+  input: ConfirmTrainingPeaksActionSourceWorkoutInput
+): Promise<ConfirmTrainingPeaksActionSourceWorkoutResult> {
+  const context = await getTrainingPeaksActionLatestRunContext(input.actionId);
+  if (!context) {
+    return { kind: "not_found" };
+  }
+
+  const latestDryRun = context.latestDryRun;
+  if (!latestDryRun || !shouldShowCoachConfirmSourceWorkoutAction(context)) {
+    const blockedReason =
+      context.latestDryRun && typeof context.latestDryRun.blockedReason === "string"
+        ? context.latestDryRun.blockedReason
+        : "Latest dry-run is not eligible for planned workout confirmation.";
+    return {
+      kind: "blocked",
+      action: context.action,
+      reason: blockedReason,
+      latestDryRun: context.latestDryRun,
+    };
+  }
+
+  const hint = extractPlannedVsCompletedHintFromLogJson(latestDryRun.logJson);
+  const confirmedWorkoutId = Number(hint?.suggestedSourceCandidate.workoutId);
+  if (!Number.isFinite(confirmedWorkoutId) || confirmedWorkoutId <= 0) {
+    return {
+      kind: "blocked",
+      action: context.action,
+      reason: "Suggested planned workout is missing from dry-run context.",
+      latestDryRun,
+    };
+  }
+
+  const nowIso = new Date().toISOString();
+  const parsedPayload = buildActionParsedPayloadWithCoachSourceWorkoutConfirmation({
+    parsedPayload: context.action.parsedPayload,
+    confirmedWorkoutId,
+    confirmedAtIso: nowIso,
+    confirmedByUserId: input.confirmedByUserId ?? null,
+  });
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_actions")
+    .update({
+      parsed_payload: parsedPayload,
+      updated_at: nowIso,
+    })
+    .eq("id", input.actionId)
+    .eq("action_type", "move_workout")
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to confirm source workout for TrainingPeaks action ${input.actionId}: ${error.message}`);
+  }
+  if (!data) {
+    return { kind: "not_found" };
+  }
+
+  const mappedAction = mapTrainingPeaksActionRow(data as TrainingPeaksActionRow);
+  const dryRunRequeueRequested = await requestFreshDryRunAfterCoachSourceConfirmation(mappedAction);
+
+  return {
+    kind: "confirmed",
+    action: mappedAction,
+    confirmedWorkoutId,
+    confirmedWorkoutTitle: hint!.suggestedSourceCandidate.title,
     latestDryRun,
     dryRunRequeueRequested,
   };

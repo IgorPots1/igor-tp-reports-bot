@@ -1,4 +1,10 @@
 import { formatCompactCoachDateShort } from "@/features/trainingpeaks/action-execute-telegram-copy";
+import {
+  detectPlannedVsCompletedAmbiguityHint,
+  formatPlannedCompletedAmbiguityTelegramLines,
+  inferMoveCandidateWorkoutStatus,
+  type PlannedCompletedAmbiguityHint,
+} from "@/features/trainingpeaks/action-planned-completed-ambiguity";
 import { translateCoachActionTechnicalReason } from "@/features/trainingpeaks/action-list-telegram-copy";
 
 export type CoachDryRunNotificationCandidate = {
@@ -21,6 +27,7 @@ export type CoachDryRunFailureNotificationInput = {
   sourceDate?: string | null;
   canExecuteReasons?: string[];
   candidates?: CoachDryRunNotificationCandidate[];
+  plannedVsCompletedHint?: PlannedCompletedAmbiguityHint | null;
 };
 
 function formatDurationSecForCoach(seconds: number | null | undefined): string | null {
@@ -56,29 +63,9 @@ function extractTssLabelFromText(text: string | null | undefined): string | null
   return null;
 }
 
-function inferCandidateWorkoutStatus(candidate: CoachDryRunNotificationCandidate): "planned" | "completed" {
-  const text = (candidate.rawTextSnippet ?? "").toLowerCase();
-  const classHint = (candidate.classHint ?? "").toLowerCase();
-  const selectorHint = (candidate.selectorHint ?? "").toLowerCase();
-
-  if (/\b(done|completed|выполнено|завершено|finished|отчет|report|результат)\b/i.test(text)) {
-    return "completed";
-  }
-  if (classHint.includes("completed") || selectorHint.includes(".activity.workout")) {
-    return "completed";
-  }
-  if (/\bhr\s*tss\b/i.test(text)) {
-    return "completed";
-  }
-  if (typeof candidate.plannedDistance === "number" && candidate.plannedDistance > 0) {
-    return "completed";
-  }
-  return "planned";
-}
-
 export function formatCoachDryRunCandidateLine(candidate: CoachDryRunNotificationCandidate): string {
   const title = candidate.title?.trim() || "Без названия";
-  const status = inferCandidateWorkoutStatus(candidate);
+  const status = inferMoveCandidateWorkoutStatus(candidate);
   const details: string[] = [status];
 
   const duration =
@@ -119,9 +106,9 @@ export function selectCoachDryRunNotificationCandidates(
 function formatAmbiguousReason(sourceDate: string | null | undefined): string {
   const sourceDateLabel = formatCompactCoachDateShort(sourceDate ?? null);
   if (sourceDateLabel !== "?") {
-    return `на ${sourceDateLabel} найдено несколько вариантов — нужен выбор тренера.`;
+    return `на ${sourceDateLabel} найдено несколько вариантов.`;
   }
-  return "найдено несколько вариантов на исходную дату — нужен выбор тренера.";
+  return "найдено несколько вариантов на исходную дату.";
 }
 
 function formatNotFoundReason(sourceDate: string | null | undefined): string {
@@ -159,13 +146,38 @@ function formatFailedReason(reasons: string[] | undefined): string | null {
   return firstReason;
 }
 
+function resolvePlannedVsCompletedHint(input: CoachDryRunFailureNotificationInput): PlannedCompletedAmbiguityHint | null {
+  if (input.plannedVsCompletedHint) {
+    return input.plannedVsCompletedHint;
+  }
+  const sourceDate = input.sourceDate ?? null;
+  const sourceCandidates = selectCoachDryRunNotificationCandidates(input.candidates, sourceDate, 6);
+  return detectPlannedVsCompletedAmbiguityHint({
+    dryRunResult: input.dryRunResult,
+    plausibleCandidates: sourceCandidates,
+    canExecuteReasons: input.canExecuteReasons,
+    identityMatchedBy: null,
+  });
+}
+
 export function buildCoachDryRunFailureNotificationLines(input: CoachDryRunFailureNotificationInput): string[] {
   const lines: string[] = [];
   const sourceDate = input.sourceDate ?? null;
 
   if (input.dryRunResult === "ambiguous") {
+    const plannedVsCompletedHint = resolvePlannedVsCompletedHint(input);
+    if (plannedVsCompletedHint) {
+      lines.push(`⚠️ Перенос требует выбора. ${input.studentName}: ${input.route}.`);
+      lines.push("");
+      lines.push(formatAmbiguousReason(sourceDate));
+      lines.push(...formatPlannedCompletedAmbiguityTelegramLines(plannedVsCompletedHint));
+      lines.push("");
+      lines.push("TrainingPeaks не изменён. Открой /tp_actions и подтверди planned тренировку.");
+      return lines;
+    }
+
     lines.push(`⚠️ Перенос не выполнен. ${input.studentName}: ${input.route}.`);
-    lines.push(`Причина: ${formatAmbiguousReason(sourceDate)}`);
+    lines.push(`Причина: ${formatAmbiguousReason(sourceDate)} — нужен выбор тренера.`);
 
     const topCandidates = selectCoachDryRunNotificationCandidates(input.candidates, sourceDate, 2);
     if (topCandidates.length > 0) {

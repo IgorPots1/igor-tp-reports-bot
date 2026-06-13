@@ -25,6 +25,12 @@ import {
   formatTelegramLabeledBlock,
 } from "@/features/trainingpeaks/telegram-visual-ux";
 import {
+  extractPlannedVsCompletedHintFromLogJson,
+  formatPlannedCompletedAmbiguityActionDetailLines,
+  isEligibleForCoachSourceWorkoutConfirmation,
+  truncateWorkoutTitleForButton,
+} from "@/features/trainingpeaks/action-planned-completed-ambiguity";
+import {
   addTrainingPeaksStudentFromCommand,
   approveTrainingPeaksAction,
   cancelTrainingPeaksActionExecution,
@@ -33,6 +39,7 @@ import {
   createTrainingPeaksActionsFromGroupMoveCase,
   createTrainingPeaksMoveWorkoutActionFromTelegram,
   confirmTrainingPeaksActionSourceDate,
+  confirmTrainingPeaksActionSourceWorkout,
   createTrainingPeaksStudentTelegramLinkCode,
   dismissTrainingPeaksCoachCase,
   disableTrainingPeaksStudent,
@@ -262,6 +269,7 @@ const TP_CALLBACK_ACTION_LIST_CANCEL_PREFIX = "tp:ta:lc:";
 const TP_CALLBACK_ACTION_DETAIL_PREFIX = "tp:ta:d:";
 const TP_CALLBACK_ACTION_DETAIL_CANCEL_PREFIX = "tp:ta:dc:";
 const TP_CALLBACK_ACTION_CONFIRM_SOURCE_PREFIX = "tp:ta:cs:";
+const TP_CALLBACK_ACTION_SELECT_WORKOUT_PREFIX = "tp:ta:sw:";
 const TP_CALLBACK_ACTION_DETAIL_BACK = "tp:ta:back";
 const TP_CALLBACK_CASE_RESOLVE_PREFIX = "tp:case:r:";
 const TP_CALLBACK_CASE_DISMISS_PREFIX = "tp:case:d:";
@@ -442,6 +450,7 @@ type ParsedTrainingPeaksCallback =
   | { kind: "action_detail"; actionId: string }
   | { kind: "action_detail_cancel"; actionId: string }
   | { kind: "action_confirm_source_date"; actionId: string }
+  | { kind: "action_confirm_source_workout"; actionId: string }
   | { kind: "action_detail_back" }
   | { kind: "case_resolve"; shortId: string }
   | { kind: "case_dismiss"; shortId: string }
@@ -4455,6 +4464,7 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
     [TP_CALLBACK_ACTION_DETAIL_PREFIX, "action_detail"],
     [TP_CALLBACK_ACTION_DETAIL_CANCEL_PREFIX, "action_detail_cancel"],
     [TP_CALLBACK_ACTION_CONFIRM_SOURCE_PREFIX, "action_confirm_source_date"],
+    [TP_CALLBACK_ACTION_SELECT_WORKOUT_PREFIX, "action_confirm_source_workout"],
   ] as const) {
     if (data.startsWith(prefix)) {
       const id = data.slice(prefix.length).trim();
@@ -5956,6 +5966,26 @@ function shouldShowCoachConfirmSourceButton(latestRunContext: unknown): boolean 
   );
 }
 
+function shouldShowCoachConfirmSourceWorkoutButton(latestRunContext: unknown): boolean {
+  if (!latestRunContext || typeof latestRunContext !== "object") {
+    return false;
+  }
+  const dryRun = (latestRunContext as { latestDryRun?: unknown }).latestDryRun;
+  if (!dryRun || typeof dryRun !== "object") {
+    return false;
+  }
+  const run = dryRun as {
+    runType?: unknown;
+    status?: unknown;
+    logJson?: unknown;
+  };
+  return (
+    run.runType === "dry_run" &&
+    run.status === "completed" &&
+    isEligibleForCoachSourceWorkoutConfirmation(run.logJson)
+  );
+}
+
 function shouldShowActionDryRunRecheckButton(
   action: NonNullable<Awaited<ReturnType<typeof getTrainingPeaksActionWithStudentAndLatestRunContextById>>>
 ): boolean {
@@ -6227,6 +6257,11 @@ function getTpActionDetailText(
     }
     lines.push("");
   }
+  const plannedVsCompletedHint = extractPlannedVsCompletedHintFromLogJson(latestDryRun?.logJson);
+  if (plannedVsCompletedHint) {
+    lines.push("");
+    lines.push(...formatPlannedCompletedAmbiguityActionDetailLines(plannedVsCompletedHint));
+  }
   if (action.approvedAt) {
     lines.push(...formatTelegramLabeledBlock("Одобрено:", formatActionCompactDate(action.approvedAt)));
   }
@@ -6255,6 +6290,17 @@ function getTpActionDetailMarkup(
       createMenuButton(
         `✅ Подтвердить ${formatCompactDateShort(sourceDate)} как исходную`,
         `${TP_CALLBACK_ACTION_CONFIRM_SOURCE_PREFIX}${action.id}`
+      ),
+    ]);
+  }
+
+  if (shouldShowCoachConfirmSourceWorkoutButton(action.latestRunContext)) {
+    const hint = extractPlannedVsCompletedHintFromLogJson(action.latestRunContext?.latestDryRun?.logJson);
+    const suggestedTitle = hint?.suggestedSourceCandidate.title ?? "planned";
+    rows.push([
+      createMenuButton(
+        `✅ Перенести ${truncateWorkoutTitleForButton(suggestedTitle)}`,
+        `${TP_CALLBACK_ACTION_SELECT_WORKOUT_PREFIX}${action.id}`
       ),
     ]);
   }
@@ -6382,6 +6428,55 @@ async function handleTpActionsCancelCallback(
     parsedMessage.messageId,
     `${statusText}\n\n${getTpActionsListText(actions)}`,
     getTpActionsListMarkup(actions)
+  );
+}
+
+async function handleTrainingPeaksActionConfirmSourceWorkoutCallback(
+  parsedMessage: ParsedTelegramCallbackUpdate,
+  actionId: string
+): Promise<void> {
+  const result = await confirmTrainingPeaksActionSourceWorkout({
+    actionId,
+    confirmedByChatId: String(parsedMessage.chatId),
+    confirmedByUserId: parsedMessage.userId === null ? null : String(parsedMessage.userId),
+    confirmationMessageId: String(parsedMessage.messageId),
+  });
+
+  if (result.kind === "not_found") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      "Заявка не найдена или уже недоступна.",
+      getTrainingPeaksActionResolvedMarkup()
+    );
+    return;
+  }
+
+  if (result.kind === "blocked") {
+    const blockedReason = translateCoachActionTechnicalReason(
+      result.reason?.trim() ||
+        formatCoachActionReasonForDisplay({ latestDryRun: result.latestDryRun })
+    );
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      `⚠️ Подтверждение недоступно.\nПричина: ${blockedReason}`,
+      getTrainingPeaksActionResolvedMarkup()
+    );
+    return;
+  }
+
+  const rerunLine = result.dryRunRequeueRequested
+    ? "Запущен повторный dry-run — кнопка «Выполнить» появится после проверки."
+    : "Перейди к заявке, чтобы проверить статус.";
+  await editTrainingPeaksMenuMessage(
+    parsedMessage.chatId,
+    parsedMessage.messageId,
+    `✅ Planned тренировка подтверждена: ${result.confirmedWorkoutTitle}.\n${rerunLine}`,
+    createInlineKeyboardMarkup([
+      [createMenuButton("◀ К заявке", `${TP_CALLBACK_ACTION_DETAIL_PREFIX}${actionId}`)],
+      [createMenuButton("📋 К списку заявок", "tp:actions:list")],
+    ])
   );
 }
 
@@ -9703,6 +9798,11 @@ export async function handleTrainingPeaksTelegramCallback(
 
     if (callback.kind === "action_confirm_source_date") {
       await handleTrainingPeaksActionConfirmSourceDateCallback(parsedMessage, callback.actionId);
+      return "handled";
+    }
+
+    if (callback.kind === "action_confirm_source_workout") {
+      await handleTrainingPeaksActionConfirmSourceWorkoutCallback(parsedMessage, callback.actionId);
       return "handled";
     }
 

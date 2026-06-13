@@ -75,6 +75,7 @@ import {
   requestTrainingPeaksActionExecution as requestTrainingPeaksActionExecutionInRepository,
   requestTrainingPeaksActionDryRunRecheck as requestTrainingPeaksActionDryRunRecheckInRepository,
   confirmTrainingPeaksActionSourceDate as confirmTrainingPeaksActionSourceDateInRepository,
+  confirmTrainingPeaksActionSourceWorkout as confirmTrainingPeaksActionSourceWorkoutInRepository,
   cancelTrainingPeaksActionExecution as cancelTrainingPeaksActionExecutionInRepository,
   getTrainingPeaksActionById as getTrainingPeaksActionByIdInRepository,
   getLatestTrainingPeaksCronRunLog,
@@ -91,6 +92,7 @@ import {
   type RequestTrainingPeaksActionExecutionResult,
   type RequestTrainingPeaksActionDryRunRecheckResult,
   type ConfirmTrainingPeaksActionSourceDateResult,
+  type ConfirmTrainingPeaksActionSourceWorkoutResult,
   type CancelTrainingPeaksActionExecutionResultExtended,
   type TrainingPeaksBusinessChat,
   type TrainingPeaksAction,
@@ -451,6 +453,7 @@ export type DecideTrainingPeaksActionResultSnapshot = DecideTrainingPeaksActionR
 export type RequestTrainingPeaksActionExecutionResultSnapshot = RequestTrainingPeaksActionExecutionResult;
 export type RequestTrainingPeaksActionDryRunRecheckResultSnapshot = RequestTrainingPeaksActionDryRunRecheckResult;
 export type ConfirmTrainingPeaksActionSourceDateResultSnapshot = ConfirmTrainingPeaksActionSourceDateResult;
+export type ConfirmTrainingPeaksActionSourceWorkoutResultSnapshot = ConfirmTrainingPeaksActionSourceWorkoutResult;
 export type CancelTrainingPeaksActionExecutionResultSnapshot = CancelTrainingPeaksActionExecutionResultExtended;
 export type TrainingPeaksActionRunSnapshot = TrainingPeaksActionRun;
 export type ClaimedTrainingPeaksDryRunActionSnapshot = ClaimedTrainingPeaksDryRunAction;
@@ -9869,6 +9872,20 @@ export async function confirmTrainingPeaksActionSourceDate(input: {
   confirmationMessageId?: string | null;
 }): Promise<ConfirmTrainingPeaksActionSourceDateResultSnapshot> {
   return confirmTrainingPeaksActionSourceDateInRepository({
+    actionId: input.actionId,
+    confirmedByChatId: input.confirmedByChatId,
+    confirmedByUserId: input.confirmedByUserId ?? null,
+    confirmationMessageId: input.confirmationMessageId ?? null,
+  });
+}
+
+export async function confirmTrainingPeaksActionSourceWorkout(input: {
+  actionId: string;
+  confirmedByChatId: string;
+  confirmedByUserId?: string | null;
+  confirmationMessageId?: string | null;
+}): Promise<ConfirmTrainingPeaksActionSourceWorkoutResultSnapshot> {
+  return confirmTrainingPeaksActionSourceWorkoutInRepository({
     actionId: input.actionId,
     confirmedByChatId: input.confirmedByChatId,
     confirmedByUserId: input.confirmedByUserId ?? null,

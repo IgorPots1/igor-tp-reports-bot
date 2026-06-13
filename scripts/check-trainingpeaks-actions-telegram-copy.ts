@@ -194,14 +194,14 @@ function run(): void {
     ],
   }).join("\n");
 
-  assert(ambiguousDryRunNotification.includes("Перенос не выполнен"), "ambiguous dry-run missing failure header");
+  assert(ambiguousDryRunNotification.includes("Перенос требует выбора"), "ambiguous dry-run missing choice header");
   assert(
     ambiguousDryRunNotification.includes("найдено несколько вариантов"),
     "ambiguous dry-run missing specific reason"
   );
   assert(
-    ambiguousDryRunNotification.includes("нужен выбор тренера"),
-    "ambiguous dry-run missing coach choice hint"
+    ambiguousDryRunNotification.includes("Похоже, нужно перенести:"),
+    "ambiguous dry-run missing planned candidate hint"
   );
   assert(
     ambiguousDryRunNotification.includes("5 х 7 мин (на улице)"),
@@ -215,6 +215,10 @@ function run(): void {
   assert(
     !ambiguousDryRunNotification.includes("Можно выполнить перенос"),
     "ambiguous dry-run must not imply execution is possible"
+  );
+  assert(
+    ambiguousDryRunNotification.includes("подтверди planned тренировку"),
+    "ambiguous dry-run missing planned confirmation hint"
   );
   assert(
     !/Проверь заявку в \/tp_actions\.\s*$/.test(ambiguousDryRunNotification),
@@ -245,6 +249,7 @@ function run(): void {
   assert(trainingPeaksSource.includes("tp:ta:a:"), "approve callback prefix changed");
   assert(trainingPeaksSource.includes("tp:ta:r:"), "reject callback prefix changed");
   assert(trainingPeaksSource.includes("tp:ta:x:"), "execute callback prefix changed");
+  assert(trainingPeaksSource.includes("tp:ta:sw:"), "select workout callback prefix missing");
   assert(trainingPeaksSource.includes('data === "tp:actions:list"'), "actions list callback changed");
   assert(trainingPeaksSource.includes('data === TP_CALLBACK_SIGNALS'), "signals callback missing");
 
