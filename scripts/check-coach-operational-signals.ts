@@ -410,6 +410,22 @@ async function run(): Promise<void> {
       },
     },
     {
+      name: "polyakova-past-weekday-need-not-future-plan",
+      observation: {
+        ...mkObs("но в пн он был прям нужен, а сегодня понимала, что не побегу - не удалось бы"),
+        observedAt: "2026-06-10T13:57:05.943+00:00",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "plan_generation_constraint",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+        planned_training_dates: [],
+        unavailable_dates: ["2026-06-10"],
+      },
+    },
+    {
       name: "single-day-skip-friday-not-pause",
       observation: {
         ...mkObs("в пятницу не побегу"),

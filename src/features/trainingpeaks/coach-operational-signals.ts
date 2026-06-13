@@ -535,14 +535,82 @@ function hasPastCompletedRunCue(text: string): boolean {
   return /(?:^|[^\p{L}])(?:по|от|про)?бегал(?:а|и|о)?(?:[^\p{L}]|$)/iu.test(text);
 }
 
+function hasPositiveUnnegatedCue(clause: string, token: string): boolean {
+  let searchFrom = 0;
+  while (searchFrom < clause.length) {
+    const index = clause.indexOf(token, searchFrom);
+    if (index < 0) {
+      return false;
+    }
+    const prefix = clause.slice(Math.max(0, index - 4), index);
+    if (!/(?:^|[^\p{L}])не\s*$/iu.test(prefix)) {
+      return true;
+    }
+    searchFrom = index + token.length;
+  }
+  return false;
+}
+
+function hasExplicitFutureRunPlanningCue(clause: string): boolean {
+  if (hasAny(clause, ["планир", "выйду на пробежку", "выйти на пробежку"])) {
+    return true;
+  }
+  return hasPositiveUnnegatedCue(clause, "побегу") || hasPositiveUnnegatedCue(clause, "пробегу");
+}
+
+function isPastWeekdayNeedReflection(clause: string): boolean {
+  return /(?:^|[^a-zа-яё])в\s+(?:пн|вт|ср|чт|пт|сб|вс|понедельник|вторник|сред(?:у|а)|четверг|пятниц(?:у|а)|суббот(?:у|а)|воскресень(?:е|я))[^.!?;]{0,48}(?:был|была|было|были)\s+(?:нужен|нужна|нужно|нужны)/iu.test(
+    clause
+  );
+}
+
+function hasWeekdayFutureRunPlanningIntent(clause: string, day: string): boolean {
+  const alias = DAY_ALIASES.find((entry) => entry.day === day);
+  if (!alias) {
+    return false;
+  }
+  for (const form of alias.forms) {
+    const escaped = escapeRegexToken(form);
+    const nearWeekday = new RegExp(
+      `(?:в\\s+${escaped}|${escaped})[^.!?;]{0,32}(?:планир|побег|пробег|смогу|могу|трениров)`,
+      "iu"
+    );
+    const beforeWeekday = new RegExp(`(?:планир|побег|пробег|смогу|могу)[^.!?;]{0,32}(?:в\\s+)?${escaped}`, "iu");
+    if ((nearWeekday.test(clause) || beforeWeekday.test(clause)) && hasExplicitFutureRunPlanningCue(clause)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasWeekdayExplicitUnavailability(clause: string, day: string): boolean {
+  if (isPastWeekdayNeedReflection(clause)) {
+    return false;
+  }
+  const alias = DAY_ALIASES.find((entry) => entry.day === day);
+  if (!alias) {
+    return false;
+  }
+  for (const form of alias.forms) {
+    const escaped = escapeRegexToken(form);
+    if (
+      new RegExp(`(?:в\\s+${escaped}|${escaped})[^.!?;]{0,32}не\\s+(?:смог|мог|побег|бег|получится)`, "iu").test(
+        clause
+      ) ||
+      new RegExp(`не\\s+[^.!?;]{0,24}(?:в\\s+)?${escaped}`, "iu").test(clause)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function hasFutureRunAvailabilityCue(clause: string, globalRunningContext: boolean): boolean {
+  if (hasExplicitFutureRunPlanningCue(clause)) {
+    return true;
+  }
   if (
     hasAny(clause, [
-      "побегу",
-      "пробегу",
-      "планир",
-      "выйду на пробежку",
-      "выйти на пробежку",
       "смогу побегать",
       "могу побегать",
       "смогу бегать",
@@ -2020,7 +2088,7 @@ function extractPlanningIntentDates(input: { text: string; observedAt: string })
     }
     const hasRunCue = hasRunningCue(clause);
     const hasStrengthCue = hasAny(clause, STRENGTH_CONTEXT_CUES);
-    const hasPlanningCue = hasAny(clause, ["планир", "побегу", "пробегу", "выйду на пробежку", "выйти на пробежку"]);
+    const hasPlanningCue = hasExplicitFutureRunPlanningCue(clause);
     const hasUnavailabilityCue = hasTrainingUnavailabilityCue(clause);
     const hasPlannedIntent = hasPlanningCue && !hasStrengthCue && (hasRunCue || globalRunningContext);
     const hasTomorrowIntent = hasTomorrowRunAvailabilityIntent(clause, globalRunningContext);
@@ -2028,6 +2096,7 @@ function extractPlanningIntentDates(input: { text: string; observedAt: string })
       hasUnavailabilityCue && (hasRunCue || globalRunningContext || hasAny(clause, ["трениров"]));
     const pastMissedDays = extractPastMissedRunWeekdays(clause);
     const today = isoDate(parseIsoDateFallback(input.observedAt));
+    const observed = parseIsoDateFallback(input.observedAt);
 
     const hasPastMissedUnavailable =
       pastMissedDays.size > 0 && hasAny(clause, ["не смогла", "не смог", "не смогли"]);
@@ -2035,8 +2104,19 @@ function extractPlanningIntentDates(input: { text: string; observedAt: string })
       if (hasPlannedIntent && clause.includes("сегодня")) {
         unavailable.add(today);
       } else if (!hasPastMissedUnavailable) {
-        for (const date of clauseDates) {
-          unavailable.add(date);
+        if (clause.includes("сегодня")) {
+          unavailable.add(today);
+        }
+        if (hasStandaloneTomorrowToken(clause) && /завтра\s+не|не\s+[^.!?;]{0,24}завтра/iu.test(clause)) {
+          unavailable.add(isoDate(addDays(observed, 1)));
+        }
+        for (const day of extractDays(clause)) {
+          if (hasWeekdayExplicitUnavailability(clause, day)) {
+            const resolved = inferDateForDay(day, input.observedAt, clause);
+            if (resolved) {
+              unavailable.add(resolved);
+            }
+          }
         }
       }
     }
@@ -2048,6 +2128,14 @@ function extractPlanningIntentDates(input: { text: string; observedAt: string })
           continue;
         }
         if (hasUnavailableIntent && date === today) {
+          continue;
+        }
+        const weekdayDays = extractDays(clause);
+        const matchingWeekday = weekdayDays.find((day) => inferDateForDay(day, input.observedAt, clause) === date);
+        if (
+          matchingWeekday &&
+          (!hasWeekdayFutureRunPlanningIntent(clause, matchingWeekday) || isPastWeekdayNeedReflection(clause))
+        ) {
           continue;
         }
         planned.add(date);
