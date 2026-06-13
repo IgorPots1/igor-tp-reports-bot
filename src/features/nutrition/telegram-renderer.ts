@@ -80,6 +80,25 @@ function dayTypeEmoji(dayType: NutritionPlanDayType): string {
   }
 }
 
+function resolveConsistentDayType(day: NutritionNextWeekPlanDay): NutritionPlanDayType {
+  const declared = day.training_type;
+  const label = (day.workout_title ?? day.training_label ?? "").toLocaleLowerCase("ru");
+  const hasLongCue = /длительн|long\s*run|long\s*endurance|длинн|вело\s+\d+:\d{2}|лонг/.test(label);
+  if (declared === "easy" || declared === "rest" || declared === "cross_training" || declared === "strength") {
+    return declared;
+  }
+  if ((declared === "long_run" || declared === "long_endurance") && hasLongCue) {
+    return declared;
+  }
+  if ((declared === "long_run" || declared === "long_endurance") && !hasLongCue) {
+    return "easy";
+  }
+  if (declared === "hard" || declared === "pre_long" || declared === "race") {
+    return declared;
+  }
+  return declared;
+}
+
 function dayTypeRu(dayType: NutritionPlanDayType): string {
   switch (dayType) {
     case "rest":
@@ -138,8 +157,8 @@ function formatPlanFocusSectionHeading(mode: NutritionPlanTargetWeekMode): strin
 
 function resolveDayLabel(day: NutritionNextWeekPlanDay): string {
   return formatNutritionWorkoutLabelForAthlete({
-    trainingLabel: day.workout_title ?? day.training_label ?? dayTypeRu(day.training_type).toLowerCase(),
-    trainingType: day.training_type,
+    trainingLabel: day.workout_title ?? day.training_label ?? dayTypeRu(resolveConsistentDayType(day)).toLowerCase(),
+    trainingType: resolveConsistentDayType(day),
   });
 }
 
@@ -193,6 +212,8 @@ function buildMiniTable(input: {
 }): string[] {
   const days = resolveMiniTableDays(input);
   return days.map((day) => {
+    const dayType = resolveConsistentDayType(day);
+    const label = resolveDayLabel({ ...day, training_type: dayType });
     const kcal =
       day.display_target?.kcal_min != null && day.display_target?.kcal_max != null
         ? `~${Math.round(day.display_target.kcal_min)}-${Math.round(day.display_target.kcal_max)} ккал`
@@ -207,7 +228,7 @@ function buildMiniTable(input: {
           : "У н/д";
     const protein = day.protein_g != null ? `${Math.round(day.protein_g)}Б` : "Б н/д";
     const fat = day.fat_g != null ? `${Math.round(day.fat_g)}Ж` : "Ж н/д";
-    return `${dayTypeEmoji(day.training_type)} ${day.weekday_ru} (${formatDateRu(day.date)}) · ${resolveDayLabel(day)} · ${kcal} · ${protein} · ${fat} · ${carbs}`;
+    return `${dayTypeEmoji(dayType)} ${day.weekday_ru} (${formatDateRu(day.date)}) · ${label} · ${kcal} · ${protein} · ${fat} · ${carbs}`;
   });
 }
 
@@ -283,6 +304,13 @@ export function validateTelegramReadyNutritionMessage(input: {
     .some((line) => /Бег по пульсу/.test(line) && line.includes(longRunTargetKcalText) && !/длительн/i.test(line));
   if (longRunGenericLine) {
     pushIssue(issues, "error", "long_run_label", "Длительная не должна отображаться как общий «Бег по пульсу».");
+  }
+  const redEasyRows = text
+    .split("\n")
+    .filter((line) => line.startsWith("🟥"))
+    .filter((line) => /л[её]гк(?:ий|ая)\s+бег|л[её]гк(?:ий|ая)\s+день/i.test(line));
+  if (redEasyRows.length > 0) {
+    pushIssue(issues, "error", "red_easy_row", "В мини-таблице найдено несоответствие: 🟥 с лёгким днём.");
   }
   if (input.hasTargetWeekTrainingContext && /План на неделю по типам дней/.test(text) && /Мини-таблица|План по датам/.test(text)) {
     pushIssue(issues, "error", "plan_and_mini_table", "При доступном TP-контексте нельзя одновременно показывать типы дней и dated plan.");

@@ -384,6 +384,7 @@ export class NutritionNarrativeRepetitionState {
     carbs_low: 0,
     energy_scarce: 0,
     modest_energy_day: 0,
+    lower_boundary: 0,
   };
 
   private exactSentenceCounts = new Map<string, number>();
@@ -534,8 +535,206 @@ export type NutritionDayCommentComposerInput = {
   previousDayTrainingLabel?: string | null;
 };
 
+export type NutritionDayNarrativeParts = {
+  energyLine?: string;
+  carbLine?: string;
+  proteinLine?: string;
+  fatLine?: string;
+  practicalLine?: string;
+  coachOnlySuppressed?: string[];
+};
+
 function hasLowCarbs(macro: MacroGuardrailStatuses, loadDay: boolean): boolean {
   return loadDay && (macro.carbsStatus === "low" || macro.carbsStatus === "borderline");
+}
+
+function isKeyLoadRole(role: NutritionNarrativeWorkoutRole): boolean {
+  return role === "key_interval" || role === "key_tempo" || role === "combined_load" || role === "long_run" || role === "long_endurance";
+}
+
+function capitalizeRu(value: string): string {
+  if (!value) {
+    return value;
+  }
+  return `${value.slice(0, 1).toLocaleUpperCase("ru")}${value.slice(1)}`;
+}
+
+function rolePrefixSentence(roleInfo: NutritionNarrativeDayRoleInfo, athleteTrainingLabel: string): string | null {
+  switch (roleInfo.role) {
+    case "key_interval":
+      return roleInfo.isKey
+        ? "Это ключевая интервальная работа недели."
+        : `Это интервальная работа (${athleteTrainingLabel}).`;
+    case "key_tempo":
+      return roleInfo.isKey ? "Это ключевая темповая работа недели." : `Это темповая работа (${athleteTrainingLabel}).`;
+    case "combined_load":
+      return `Здесь нагрузка двойная (${athleteTrainingLabel}).`;
+    case "long_endurance":
+      return roleInfo.isKey ? `Это главный день недели: ${athleteTrainingLabel}.` : `Это день длинной выносливостной нагрузки (${athleteTrainingLabel}).`;
+    case "long_run":
+      return `Это длительная беговая работа (${athleteTrainingLabel}).`;
+    case "easy_run":
+      return `Под ${athleteTrainingLabel} день выглядит рабочим.`;
+    case "rest":
+      return "Это день отдыха.";
+    default:
+      return null;
+  }
+}
+
+export function buildNutritionDayNarrativeParts(input: {
+  macro: MacroGuardrailStatuses;
+  roleInfo: NutritionNarrativeDayRoleInfo;
+  nutritionStatus: string | null;
+  hasEnergyIssue: boolean;
+  loadDay: boolean;
+  fatFeedbackPolicy: NutritionFatFeedbackPolicy;
+  athleteTrainingLabel: string;
+  previousDayTrainingType?: string | null;
+}): NutritionDayNarrativeParts {
+  const {
+    macro,
+    roleInfo,
+    nutritionStatus,
+    hasEnergyIssue,
+    loadDay,
+    fatFeedbackPolicy,
+    athleteTrainingLabel,
+    previousDayTrainingType,
+  } = input;
+  const parts: NutritionDayNarrativeParts = {};
+  const suppressed: string[] = [];
+  const rolePrefix = rolePrefixSentence(roleInfo, athleteTrainingLabel);
+
+  if (rolePrefix) {
+    parts.energyLine = rolePrefix;
+  }
+
+  if (nutritionStatus === "pre_long_low") {
+    parts.energyLine = "Это день перед длинной нагрузкой.";
+  }
+
+  if (hasEnergyIssue) {
+    if (roleInfo.role === "rest") {
+      parts.energyLine = `${rolePrefix ?? "Это день отдыха."} Для дня отдыха это нижняя граница по энергии. Разово нормально, но такие дни не стоит делать регулярными.`;
+    } else if (roleInfo.role === "cross_training") {
+      parts.energyLine = `${capitalizeRu(athleteTrainingLabel)} тоже считается нагрузкой, и энергии под этот день маловато.`;
+    } else if (roleInfo.role === "strength") {
+      parts.energyLine = "В силовой день энергии маловато для уверенного восстановления.";
+    } else if (roleInfo.role === "easy_run") {
+      parts.energyLine = "Для лёгкой тренировки день получился низким по энергии.";
+    } else if (isKeyLoadRole(roleInfo.role)) {
+      parts.energyLine = `${rolePrefix ?? ""} День получился скромным по энергии под такую нагрузку.`.trim();
+    } else {
+      parts.energyLine = `${rolePrefix ?? ""} Энергии под нагрузку маловато.`.trim();
+    }
+  } else if (roleInfo.role === "rest") {
+    parts.energyLine = `${rolePrefix ?? "Это день отдыха."} По энергии день не был пустым.`;
+  }
+
+  if (loadDay) {
+    if (macro.carbsStatus === "low") {
+      if (nutritionStatus === "pre_long_low") {
+        parts.carbLine =
+          "Для подготовки к длинной работе углеводы здесь ниже ориентира, накануне такой нагрузки лучше смещать больше топлива в углеводы.";
+      } else {
+        parts.carbLine = "Углеводов для такой нагрузки маловато.";
+      }
+    } else if (macro.carbsStatus === "borderline") {
+      if (nutritionStatus === "pre_long_low") {
+        parts.carbLine =
+          "Углеводы на нижней границе: накануне длинной нагрузки лучше чуть выше, чтобы не заходить в работу на пустом топливе.";
+      } else {
+        parts.carbLine = "Углеводы на нижней границе для такой работы.";
+      }
+    } else if (macro.carbsStatus === "ok" && isKeyLoadRole(roleInfo.role)) {
+      parts.carbLine = "По углеводам день выглядит рабочим для этой нагрузки.";
+    }
+  }
+
+  if (macro.proteinStatus === "low") {
+    parts.proteinLine = "Белка маловато, восстановление лучше поддержать полноценным приёмом пищи.";
+  } else if (macro.proteinStatus === "borderline") {
+    parts.proteinLine = "Белок близко к нижней границе, восстановление лучше поддержать чуть увереннее.";
+  } else if (macro.proteinStatus === "ok" && (isKeyLoadRole(roleInfo.role) || nutritionStatus === "pre_long_low")) {
+    parts.proteinLine = "По белку день спокойный, базовое восстановление закрыто.";
+  }
+
+  if (isLowOrBorderlineFatMacro(macro)) {
+    parts.fatLine = macro.fatStatus === "low" ? "Жиры низковаты." : "Жиры на нижней границе.";
+  } else if (isHighFatMacro(macro)) {
+    if (shouldShowHighFatAthleteFeedback(fatFeedbackPolicy)) {
+      if (loadDay && (macro.carbsStatus === "low" || macro.carbsStatus === "borderline")) {
+        parts.fatLine = "Жиры высоковаты, а углеводов под нагрузку не хватает — лучше сместить часть энергии в углеводы.";
+      }
+    } else {
+      suppressed.push("high_fat_hidden_by_policy");
+    }
+  }
+
+  if (nutritionStatus === "pre_long_low") {
+    parts.practicalLine = "Практически: к длинной работе лучше подходить с более уверенными углеводами.";
+  } else if (roleInfo.role === "long_endurance" || roleInfo.role === "long_run") {
+    if (previousDayTrainingType === "long_endurance" && roleInfo.role === "long_run") {
+      parts.practicalLine = "Практически: это бег на фоне предыдущей длинной работы, поэтому углеводы и восстановление лучше держать ровнее.";
+    } else {
+      parts.practicalLine = "Практически: вокруг таких длинных работ важно не просаживать углеводы и восстановление.";
+    }
+  } else if (isKeyLoadRole(roleInfo.role)) {
+    parts.practicalLine = "Практически: к таким работам лучше подходить не пустой по энергии и углеводам.";
+  } else if (roleInfo.role === "easy_run") {
+    parts.practicalLine = "Практически: не делать беговой день слишком пустым по энергии.";
+  }
+
+  parts.coachOnlySuppressed = suppressed;
+  return parts;
+}
+
+function composeNarrativeFromParts(input: {
+  parts: NutritionDayNarrativeParts;
+  roleInfo: NutritionNarrativeDayRoleInfo;
+  state: NutritionNarrativeRepetitionState;
+}): string | null {
+  const { parts, roleInfo, state } = input;
+  const ordered = [parts.energyLine, parts.carbLine, parts.proteinLine, parts.fatLine, parts.practicalLine]
+    .map((line) => line?.trim())
+    .filter((line): line is string => Boolean(line));
+  if (ordered.length === 0) {
+    return null;
+  }
+  const detailBudget = roleInfo.role === "key_interval" || roleInfo.role === "key_tempo" || roleInfo.role === "combined_load" ? 3 : 4;
+  const sliced = ordered.slice(0, detailBudget);
+  let normalized = sliced
+    .map((line) => {
+      const withDot = /[.!?…]$/.test(line) ? line : `${line}.`;
+      if (/близко к нижней границе/i.test(withDot)) {
+        if (state.canUsePhrase("lower_boundary", 4)) {
+          state.registerPhrase("lower_boundary");
+          return withDot;
+        }
+        return withDot.replace(/близко к нижней границе/gi, "чуть ниже желаемого уровня");
+      }
+      if (/Белок закрыт/i.test(withDot) && !state.canUsePhrase("protein_closed", 3)) {
+        return withDot.replace(/Белок закрыт/gi, "По белку день спокойный");
+      }
+      if (/Белок закрыт/i.test(withDot)) {
+        state.registerPhrase("protein_closed");
+      }
+      if (/углеводов под нагрузку маловато/i.test(withDot)) {
+        if (!state.canUsePhrase("carbs_low", 2)) {
+          return withDot.replace(/углеводов под нагрузку маловато/gi, "углеводов для такой нагрузки немного");
+        }
+        state.registerPhrase("carbs_low");
+      }
+      return withDot;
+    })
+    .join(" ");
+  if (state.getExactSentenceCount(normalized) > 0) {
+    normalized = normalized
+      .replace(/Энергии под нагрузку маловато\./g, "День получился скромным по топливу.")
+      .replace(/Углеводов для такой нагрузки маловато\./g, "Углеводов было немного для такой работы.");
+  }
+  return normalized;
 }
 
 function buildMacroNuanceSentence(input: {
@@ -756,7 +955,11 @@ export function composeNutritionDayComment(
   const loadDay = roleInfo.role !== "rest";
 
   if (input.missingNutritionData) {
-    return `${cautiousPrefix}${longAfterPrefix}Питание за этот день не зафиксировано. Без данных конкретного макро-вывода не делаю.`;
+    const base = "Питание за этот день не зафиксировано. По макросам вывод не делаю.";
+    if (roleInfo.role === "rest") {
+      return `${cautiousPrefix}${longAfterPrefix}${base}`;
+    }
+    return `${cautiousPrefix}${longAfterPrefix}${base} Но сама тренировка тоже считается нагрузкой.`;
   }
 
   if (input.nutritionStatus === "suspect") {
@@ -765,6 +968,20 @@ export function composeNutritionDayComment(
 
   if (input.nutritionStatus === "pre_long_low") {
     state.bumpPattern("pre_long_low");
+    const parts = buildNutritionDayNarrativeParts({
+      macro,
+      roleInfo: { ...roleInfo, role: "pre_long" as NutritionNarrativeWorkoutRole },
+      nutritionStatus: input.nutritionStatus,
+      hasEnergyIssue,
+      loadDay: true,
+      fatFeedbackPolicy,
+      athleteTrainingLabel,
+      previousDayTrainingType,
+    });
+    const composed = composeNarrativeFromParts({ parts, roleInfo, state });
+    if (composed) {
+      return `${cautiousPrefix}${longAfterPrefix}${composed}`;
+    }
     return `${cautiousPrefix}Это день перед длинной нагрузкой: для такой подготовки углеводы на нижней границе, накануне длинной работы лучше не просаживать топливо.`;
   }
 
@@ -785,7 +1002,19 @@ export function composeNutritionDayComment(
       patternOccurrence: occurrence,
       fatFeedbackPolicy,
     });
-    const body = macroSentence ? `${primary} ${macroSentence}` : primary;
+    const baseBody = macroSentence ? `${primary} ${macroSentence}` : primary;
+    const parts = buildNutritionDayNarrativeParts({
+      macro,
+      roleInfo,
+      nutritionStatus: input.nutritionStatus,
+      hasEnergyIssue: true,
+      loadDay: true,
+      fatFeedbackPolicy,
+      athleteTrainingLabel,
+      previousDayTrainingType,
+    });
+    const composed = composeNarrativeFromParts({ parts, roleInfo, state });
+    const body = composed ?? baseBody;
     return `${cautiousPrefix}${longAfterPrefix}${ensureDetailFloorSentence({ text: body, roleInfo, athleteTrainingLabel })}`;
   }
 
@@ -807,7 +1036,19 @@ export function composeNutritionDayComment(
       patternOccurrence: occurrence,
       fatFeedbackPolicy,
     });
-    const combined = macroSentence ? `${primary} ${macroSentence}` : primary;
+    const combinedBase = macroSentence ? `${primary} ${macroSentence}` : primary;
+    const parts = buildNutritionDayNarrativeParts({
+      macro,
+      roleInfo,
+      nutritionStatus: input.nutritionStatus,
+      hasEnergyIssue: true,
+      loadDay,
+      fatFeedbackPolicy,
+      athleteTrainingLabel,
+      previousDayTrainingType,
+    });
+    const composed = composeNarrativeFromParts({ parts, roleInfo, state });
+    const combined = composed ?? combinedBase;
     state.registerExactSentence(combined);
     return `${cautiousPrefix}${longAfterPrefix}${ensureDetailFloorSentence({ text: combined, roleInfo, athleteTrainingLabel })}`;
   }
@@ -855,7 +1096,19 @@ export function composeNutritionDayComment(
       patternOccurrence: occurrence,
       fatFeedbackPolicy,
     });
-    const body = macroSentence ? `${primary} ${macroSentence}` : primary;
+    const baseBody = macroSentence ? `${primary} ${macroSentence}` : primary;
+    const parts = buildNutritionDayNarrativeParts({
+      macro,
+      roleInfo,
+      nutritionStatus: input.nutritionStatus,
+      hasEnergyIssue: false,
+      loadDay,
+      fatFeedbackPolicy,
+      athleteTrainingLabel,
+      previousDayTrainingType,
+    });
+    const composed = composeNarrativeFromParts({ parts, roleInfo, state });
+    const body = composed ?? baseBody;
     return `${cautiousPrefix}${longAfterPrefix}${ensureDetailFloorSentence({ text: body, roleInfo, athleteTrainingLabel })}`;
   }
 
@@ -880,6 +1133,24 @@ export function composeNutritionDayComment(
 
   if (roleInfo.role === "key_interval" && roleInfo.isKey) {
     state.bumpPattern("macro_ok");
+    const parts = buildNutritionDayNarrativeParts({
+      macro,
+      roleInfo,
+      nutritionStatus: input.nutritionStatus,
+      hasEnergyIssue: false,
+      loadDay: true,
+      fatFeedbackPolicy,
+      athleteTrainingLabel,
+      previousDayTrainingType,
+    });
+    const composed = composeNarrativeFromParts({ parts, roleInfo, state });
+    if (composed) {
+      return `${cautiousPrefix}${longAfterPrefix}${ensureDetailFloorSentence({
+        text: composed,
+        roleInfo,
+        athleteTrainingLabel,
+      })}`;
+    }
     return `${cautiousPrefix}${longAfterPrefix}${ensureDetailFloorSentence({
       text: "Это ключевая интервальная работа недели, и по питанию день получился хорошо поддержан. Углеводов было достаточно для такой нагрузки, сильной просадки по энергии не видно.",
       roleInfo,
@@ -889,6 +1160,24 @@ export function composeNutritionDayComment(
 
   if (roleInfo.role === "key_tempo" && roleInfo.isKey) {
     state.bumpPattern("macro_ok");
+    const parts = buildNutritionDayNarrativeParts({
+      macro,
+      roleInfo,
+      nutritionStatus: input.nutritionStatus,
+      hasEnergyIssue: false,
+      loadDay: true,
+      fatFeedbackPolicy,
+      athleteTrainingLabel,
+      previousDayTrainingType,
+    });
+    const composed = composeNarrativeFromParts({ parts, roleInfo, state });
+    if (composed) {
+      return `${cautiousPrefix}${longAfterPrefix}${ensureDetailFloorSentence({
+        text: composed,
+        roleInfo,
+        athleteTrainingLabel,
+      })}`;
+    }
     return `${cautiousPrefix}${longAfterPrefix}${ensureDetailFloorSentence({
       text: "Это ключевая темповая работа, и по питанию день выглядит ровно: углеводов достаточно, сильной просадки по энергии не видно.",
       roleInfo,
@@ -906,6 +1195,24 @@ export function composeNutritionDayComment(
 
   if (roleInfo.role === "combined_load") {
     state.bumpPattern("macro_ok");
+    const parts = buildNutritionDayNarrativeParts({
+      macro,
+      roleInfo,
+      nutritionStatus: input.nutritionStatus,
+      hasEnergyIssue: false,
+      loadDay: true,
+      fatFeedbackPolicy,
+      athleteTrainingLabel,
+      previousDayTrainingType,
+    });
+    const composed = composeNarrativeFromParts({ parts, roleInfo, state });
+    if (composed) {
+      return `${cautiousPrefix}${longAfterPrefix}${ensureDetailFloorSentence({
+        text: composed,
+        roleInfo,
+        athleteTrainingLabel,
+      })}`;
+    }
     return `${cautiousPrefix}${longAfterPrefix}${ensureDetailFloorSentence({
       text: `Здесь нагрузка двойная (${athleteTrainingLabel}). По питанию день выглядит достаточно ровно: энергии и углеводов хватает для такой связки.`,
       roleInfo,
@@ -915,6 +1222,24 @@ export function composeNutritionDayComment(
 
   if (roleInfo.role === "long_endurance") {
     state.bumpPattern("macro_ok");
+    const parts = buildNutritionDayNarrativeParts({
+      macro,
+      roleInfo,
+      nutritionStatus: input.nutritionStatus,
+      hasEnergyIssue: false,
+      loadDay: true,
+      fatFeedbackPolicy,
+      athleteTrainingLabel,
+      previousDayTrainingType,
+    });
+    const composed = composeNarrativeFromParts({ parts, roleInfo, state });
+    if (composed) {
+      return `${cautiousPrefix}${longAfterPrefix}${ensureDetailFloorSentence({
+        text: composed,
+        roleInfo,
+        athleteTrainingLabel,
+      })}`;
+    }
     return `${cautiousPrefix}${longAfterPrefix}${ensureDetailFloorSentence({
       text: "Под длинную выносливостную нагрузку день выглядит достаточно ровно: сильной просадки по энергии и углеводам не видно.",
       roleInfo,
@@ -929,6 +1254,24 @@ export function composeNutritionDayComment(
 
   if (roleInfo.role === "long_run") {
     state.bumpPattern("macro_ok");
+    const parts = buildNutritionDayNarrativeParts({
+      macro,
+      roleInfo,
+      nutritionStatus: input.nutritionStatus,
+      hasEnergyIssue: false,
+      loadDay: true,
+      fatFeedbackPolicy,
+      athleteTrainingLabel,
+      previousDayTrainingType,
+    });
+    const composed = composeNarrativeFromParts({ parts, roleInfo, state });
+    if (composed) {
+      return `${cautiousPrefix}${longAfterPrefix}${ensureDetailFloorSentence({
+        text: composed,
+        roleInfo,
+        athleteTrainingLabel,
+      })}`;
+    }
     return `${cautiousPrefix}${longAfterPrefix}${ensureDetailFloorSentence({
       text: "Под длинную работу день выглядит достаточно ровно: сильной просадки по энергии и углеводам не видно.",
       roleInfo,
@@ -1123,36 +1466,53 @@ function resolveTargetPlanDayRole(day: NutritionNextWeekPlanDay): NutritionNarra
 
 export function buildNutritionTargetWeekFocusNarrative(
   nextWeekPlan: NutritionNextWeekPlan | null,
-  planWeekMode: NutritionPlanTargetWeekMode
+  planWeekMode: NutritionPlanTargetWeekMode,
+  input?: {
+    todayLocalDate?: string;
+    miniTableMode?: "athlete_remaining_only" | "full_week";
+  }
 ): string[] {
   if (!nextWeekPlan || nextWeekPlan.days.length === 0) {
     return [];
   }
 
   const weekLabel = planWeekMode === "current_week" ? "на эту неделю" : "на следующую неделю";
+  const today = input?.todayLocalDate;
+  const remainingOnly = planWeekMode === "current_week" && (input?.miniTableMode ?? "athlete_remaining_only") === "athlete_remaining_only";
+  const daysForFocus =
+    remainingOnly && today
+      ? nextWeekPlan.days.filter((day) => day.date >= today)
+      : nextWeekPlan.days;
+  const focusDays = daysForFocus.length > 0 ? daysForFocus : nextWeekPlan.days;
   const lines: string[] = [
     `Фокус ${weekLabel} — не резко увеличивать всё питание, а лучше поддержать дни нагрузки.`,
   ];
 
-  const keyIntervalDay = nextWeekPlan.days.find((day) => {
+  const keyIntervalDay = focusDays.find((day) => {
     const role = resolveTargetPlanDayRole(day);
     return role.role === "key_interval" && (role.isKey || day.flags?.key_workout);
   });
-  const longRunDay = nextWeekPlan.days.find((day) => {
+  const longRunDay = focusDays.find((day) => {
     const role = resolveTargetPlanDayRole(day);
     return (
-      role.role === "long_run" &&
-      isNutritionLongRunWorkout({
-        title: day.workout_title ?? day.training_label,
-        mode: "target_plan",
-        isCompleted: false,
-      })
+      (role.role === "long_run" || role.role === "long_endurance") &&
+      (day.training_type === "long_endurance" ||
+        isNutritionLongRunWorkout({
+          title: day.workout_title ?? day.training_label,
+          mode: "target_plan",
+          isCompleted: false,
+        }))
     );
   });
 
-  const onlyEasyCrossRest = nextWeekPlan.days.every((day) => {
+  const onlyEasyCrossRest = focusDays.every((day) => {
     const role = resolveTargetPlanDayRole(day).role;
     return role === "easy_run" || role === "cross_training" || role === "rest";
+  });
+
+  const meaningfulRemainingLoad = focusDays.some((day) => {
+    const role = resolveTargetPlanDayRole(day).role;
+    return role === "key_interval" || role === "key_tempo" || role === "long_run" || role === "long_endurance" || role === "combined_load";
   });
 
   if (keyIntervalDay) {
@@ -1162,7 +1522,9 @@ export function buildNutritionTargetWeekFocusNarrative(
     );
     lines.push(`Особенно важен день с ${label}: к нему лучше подойти не «пустой» по энергии и углеводам.`);
   } else if (longRunDay) {
-    lines.push("Особенно важна длительная: к ней готовимся заранее, но цифры ниже — ориентиры, не обязательство.");
+    lines.push("На оставшиеся дни фокус простой: не уходить в слишком «пустой» день по энергии и углеводам, особенно вокруг оставшейся длительной нагрузки.");
+  } else if (remainingOnly && !meaningfulRemainingLoad) {
+    lines.push("На оставшиеся дни задача спокойная: удержать ровное питание и не пытаться резко добирать всё за один день.");
   } else if (onlyEasyCrossRest) {
     lines.push("Фокус — сделать дни с нагрузкой ровнее, без резкого увеличения всех цифр.");
   }

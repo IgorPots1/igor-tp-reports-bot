@@ -675,9 +675,16 @@ function buildAdjacentMissingNutritionLines(review: NutritionWeeklyAnalysis): st
 function getPlanFocusLines(
   plan: NutritionWeeklyPlan,
   mode: NutritionPlanTargetWeekMode,
-  nextWeekPlan: NutritionNextWeekPlan | null
+  nextWeekPlan: NutritionNextWeekPlan | null,
+  input?: {
+    todayLocalDate?: string;
+    miniTableMode?: "athlete_remaining_only" | "full_week";
+  }
 ): string[] {
-  const narrativeFocus = buildNutritionTargetWeekFocusNarrative(nextWeekPlan, mode);
+  const narrativeFocus = buildNutritionTargetWeekFocusNarrative(nextWeekPlan, mode, {
+    todayLocalDate: input?.todayLocalDate,
+    miniTableMode: input?.miniTableMode ?? "athlete_remaining_only",
+  });
   if (narrativeFocus.length > 0) {
     return narrativeFocus;
   }
@@ -958,7 +965,11 @@ export function buildDerivedNutritionCombinedMessage(input: {
       ? `По сравнению с прошлой неделей держим более ровную базу: среднее за неделю ${formatNutritionAthleteKcal(avgKcal, { mode: "actual" })}, ориентир для дня отдыха ${formatNutritionAthleteKcal(restKcal, { mode: "target" })}.`
       : null;
   const weekSummary = getReviewWeekSummaryLine(review);
-  const focusLines = getPlanFocusLines(plan, planWeekMode, nextWeekPlan);
+  const todayLocalDate = getNutritionAdminLocalDate();
+  const focusLines = getPlanFocusLines(plan, planWeekMode, nextWeekPlan, {
+    todayLocalDate,
+    miniTableMode: "athlete_remaining_only",
+  });
   const renderResult = renderNutritionTelegramMessage({
     formality: input.formality,
     athleteName,
@@ -980,7 +991,7 @@ export function buildDerivedNutritionCombinedMessage(input: {
     fallbackPlanLines: [compactText(plan.athleteMessageDraft) ?? "План на неделю не сформирован."],
     hasPreviousWeeksContext: previousWeeksContext,
     hasTargetWeekTrainingContext: hasTargetWeekTrainingContext(nextWeekPlan, plan),
-    todayLocalDate: getNutritionAdminLocalDate(),
+    todayLocalDate,
     miniTableMode: "athlete_remaining_only",
   });
   const athleteMessageDraft = renderResult.ok ? renderResult.text : null;

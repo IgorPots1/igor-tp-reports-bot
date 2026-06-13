@@ -464,13 +464,92 @@ export type ProductionTextMetrics = {
   keyWorkoutMentions: number;
   longRunMentions: number;
   practicalTargetWordingPresent: boolean;
+  dailyDetail: {
+    avgCommentSentences: number;
+    proteinMentionDays: number;
+    carbMentionDays: number;
+    energyMentionDays: number;
+    fatMentionDaysAthleteFacing: number;
+    fatSuppressedCoachOnly: number;
+    detailedLoadDaysPassed: number;
+  };
+  targetWeekConsistency: {
+    pastWorkoutMentionInRemainingFocus: number;
+    iconLabelMismatch: number;
+    redEasyRows: number;
+    longPreLongCarbSanity: boolean;
+  };
 };
+
+function extractDayCommentBlocks(text: string): string[] {
+  return text
+    .split("\n")
+    .filter((line) => line.trim().startsWith("🔹") || /^\s*~\d+/.test(line) || /энерг|углевод|белок|жир/i.test(line))
+    .join("\n")
+    .split(/\n(?=🔹)/)
+    .map((block) => block.trim())
+    .filter((block) => block.startsWith("🔹"));
+}
+
+function countSentences(value: string): number {
+  return splitSentences(value).filter((line) => line.length >= 12).length;
+}
 
 export function analyzeProductionText(input: {
   text: string | null;
   warnings: string[];
 }): ProductionTextMetrics {
   const text = input.text ?? "";
+  const dayBlocks = extractDayCommentBlocks(text);
+  const daySentenceCounts = dayBlocks.map((block) => countSentences(block));
+  const avgCommentSentences =
+    daySentenceCounts.length > 0
+      ? Number((daySentenceCounts.reduce((sum, value) => sum + value, 0) / daySentenceCounts.length).toFixed(2))
+      : 0;
+  const proteinMentionDays = dayBlocks.filter((block) => /белок|белка/i.test(block)).length;
+  const carbMentionDays = dayBlocks.filter((block) => /углевод/i.test(block)).length;
+  const energyMentionDays = dayBlocks.filter((block) => /энерг|ккал|пустым/i.test(block)).length;
+  const fatMentionDaysAthleteFacing = dayBlocks.filter((block) => /жир(ы|ов|ам|ах)?/i.test(block)).length;
+  const fatSuppressedCoachOnly = input.warnings.filter((warning) => /fat|жир|coach_only|suppress_athlete/i.test(warning)).length;
+  const detailedLoadDaysPassed = dayBlocks.filter(
+    (block) => /(интервал|темп|длительн|вело|ключев|двойн)/i.test(block) && countSentences(block) >= 2
+  ).length;
+  const focusSection = text.match(/📌[^\n]*\n([\s\S]*?)\n(?:📋|🍽|На следующем разборе)/);
+  const focusText = focusSection ? focusSection[1] ?? "" : "";
+  const pastWorkoutMentionInRemainingFocus =
+    /особенно важен день с|день с \d+\s*[xх]/i.test(focusText) && /оставш/i.test(focusText) ? 1 : 0;
+  const miniRows = text.split("\n").filter((line) => /^[🟦🟩🟧🟪🟥]/.test(line));
+  const redEasyRows = miniRows.filter((line) => line.startsWith("🟥") && /л[её]гк(?:ий|ая)\s+бег|л[её]гк(?:ий|ая)\s+день/i.test(line)).length;
+  const iconLabelMismatch = miniRows.filter((line) => {
+    if (line.startsWith("🟥")) {
+      return /л[её]гк(?:ий|ая)\s+бег|л[её]гк(?:ий|ая)\s+день/i.test(line);
+    }
+    if (line.startsWith("🟩")) {
+      return /длительн|длинн|long/i.test(line);
+    }
+    return false;
+  }).length;
+  const preLongRow = miniRows.find((line) => /день перед длительной|pre_long/i.test(line));
+  const longRow = miniRows.find((line) => line.startsWith("🟥"));
+  const longPreLongCarbSanity = (() => {
+    if (!preLongRow || !longRow) {
+      return true;
+    }
+    const num = (line: string): number | null => {
+      const rangeMatch = line.match(/(\d+)-(\d+)У/);
+      if (rangeMatch) {
+        return Number(rangeMatch[1]);
+      }
+      const single = line.match(/(\d+)У/);
+      return single ? Number(single[1]) : null;
+    };
+    const pre = num(preLongRow);
+    const long = num(longRow);
+    if (pre == null || long == null) {
+      return true;
+    }
+    return long >= pre;
+  })();
   return {
     textHash: text ? shortHash(text) : "",
     charCount: text.length,
@@ -482,6 +561,21 @@ export function analyzeProductionText(input: {
     practicalTargetWordingPresent: NUTRITION_PRACTICAL_TARGET_REQUIRED_WORDING.some((wording) =>
       text.includes(wording)
     ),
+    dailyDetail: {
+      avgCommentSentences,
+      proteinMentionDays,
+      carbMentionDays,
+      energyMentionDays,
+      fatMentionDaysAthleteFacing,
+      fatSuppressedCoachOnly,
+      detailedLoadDaysPassed,
+    },
+    targetWeekConsistency: {
+      pastWorkoutMentionInRemainingFocus,
+      iconLabelMismatch,
+      redEasyRows,
+      longPreLongCarbSanity,
+    },
   };
 }
 
@@ -575,6 +669,7 @@ export type ComparisonResult = {
   shadowGenericCommentCount: number;
   shadowBetterSignals: string[];
   shadowRiskSignals: string[];
+  productionRiskSignals: string[];
   verdict: NutritionAuditVerdict;
 };
 
@@ -696,6 +791,17 @@ export function compareNutritionOutputs(input: {
 
   const shadowBetterSignals: string[] = [];
   const shadowRiskSignals: string[] = [];
+  const productionRiskSignals: string[] = [];
+
+  if (production.dailyDetail.avgCommentSentences < 2) {
+    productionRiskSignals.push("derived_day_detail_too_thin");
+  }
+  if (production.targetWeekConsistency.pastWorkoutMentionInRemainingFocus > 0) {
+    productionRiskSignals.push("derived_focus_mentions_past_workout");
+  }
+  if (production.targetWeekConsistency.iconLabelMismatch > 0 || production.targetWeekConsistency.redEasyRows > 0) {
+    productionRiskSignals.push("derived_mini_table_icon_label_mismatch");
+  }
 
   if (lessRepetitive && production.repeatedPhraseCounts > 0) {
     shadowBetterSignals.push("less_repetitive_than_production");
@@ -792,6 +898,7 @@ export function compareNutritionOutputs(input: {
     shadowGenericCommentCount: genericCommentCount,
     shadowBetterSignals,
     shadowRiskSignals,
+    productionRiskSignals,
     verdict,
   };
 }
