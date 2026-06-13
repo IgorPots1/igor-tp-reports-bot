@@ -19,6 +19,7 @@ import {
   type MoveCandidateStatusInput,
 } from "../../../../src/features/trainingpeaks/action-planned-completed-ambiguity.ts";
 import { validateDryRunLogReadiness } from "../../../../src/features/trainingpeaks/move-source-policy.ts";
+import { formatTpActionsExecuteOnceCommand } from "../../../../src/features/trainingpeaks/action-runner-commands.ts";
 
 const LOG_PREFIX = "[check-tp-action-planned-completed-hint-debug]";
 const TP_CALLBACK_ACTION_SELECT_WORKOUT_PREFIX = "tp:ta:sw:";
@@ -461,6 +462,12 @@ async function main(): Promise<void> {
   );
   console.log(`  last_run_id present: ${runnerHasLastRunId ? "yes" : "no"}`);
   console.log(`  eligible: ${runnerPickupEligible ? "yes" : "no"}`);
+
+  if (runnerPickupEligible) {
+    console.log("");
+    console.log("nextCommand:");
+    console.log(`  ${formatTpActionsExecuteOnceCommand({ actionId: action.id })}`);
+  }
 
   if (
     action.execution_status === "not_started" &&

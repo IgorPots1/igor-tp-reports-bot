@@ -29,6 +29,8 @@ import * as trainingPeaksAttentionTelegramModule from "../../../src/features/tra
 import * as trainingPeaksTelegramBusinessModule from "../../../src/features/trainingpeaks/telegram-business";
 import * as trainingPeaksRepositoryModule from "../../../src/features/trainingpeaks/repository";
 import * as actionDryRunTelegramCopyModule from "../../../src/features/trainingpeaks/action-dry-run-telegram-copy";
+import * as actionExecuteTelegramCopyModule from "../../../src/features/trainingpeaks/action-execute-telegram-copy";
+import * as actionRunnerCommandsModule from "../../../src/features/trainingpeaks/action-runner-commands";
 import * as actionPlannedCompletedAmbiguityModule from "../../../src/features/trainingpeaks/action-planned-completed-ambiguity";
 import type { PlannedCompletedAmbiguityHint } from "../../../src/features/trainingpeaks/action-planned-completed-ambiguity";
 
@@ -56,6 +58,10 @@ const strongFutureDescriptorMoveSourceNamespaceCompat =
   >;
 const actionDryRunTelegramCopyModuleCompat =
   actionDryRunTelegramCopyModule as NamespaceWithOptionalDefault<typeof actionDryRunTelegramCopyModule>;
+const actionExecuteTelegramCopyModuleCompat =
+  actionExecuteTelegramCopyModule as NamespaceWithOptionalDefault<typeof actionExecuteTelegramCopyModule>;
+const actionRunnerCommandsModuleCompat =
+  actionRunnerCommandsModule as NamespaceWithOptionalDefault<typeof actionRunnerCommandsModule>;
 const actionPlannedCompletedAmbiguityModuleCompat =
   actionPlannedCompletedAmbiguityModule as NamespaceWithOptionalDefault<
     typeof actionPlannedCompletedAmbiguityModule
@@ -64,6 +70,12 @@ const actionPlannedCompletedAmbiguityModuleCompat =
 const buildCoachDryRunFailureNotificationLines =
   actionDryRunTelegramCopyModuleCompat.buildCoachDryRunFailureNotificationLines ??
   actionDryRunTelegramCopyModuleCompat.default?.buildCoachDryRunFailureNotificationLines;
+const formatTrainingPeaksExecuteResultMessage =
+  actionExecuteTelegramCopyModuleCompat.formatTrainingPeaksExecuteResultMessage ??
+  actionExecuteTelegramCopyModuleCompat.default?.formatTrainingPeaksExecuteResultMessage;
+const formatExecutePendingQueueHintLines =
+  actionRunnerCommandsModuleCompat.formatExecutePendingQueueHintLines ??
+  actionRunnerCommandsModuleCompat.default?.formatExecutePendingQueueHintLines;
 const detectPlannedVsCompletedAmbiguityHint =
   actionPlannedCompletedAmbiguityModuleCompat.detectPlannedVsCompletedAmbiguityHint ??
   actionPlannedCompletedAmbiguityModuleCompat.default?.detectPlannedVsCompletedAmbiguityHint;
@@ -73,6 +85,12 @@ const truncateWorkoutTitleForButton =
 
 if (typeof buildCoachDryRunFailureNotificationLines !== "function") {
   throw new Error("buildCoachDryRunFailureNotificationLines is unavailable.");
+}
+if (typeof formatTrainingPeaksExecuteResultMessage !== "function") {
+  throw new Error("formatTrainingPeaksExecuteResultMessage is unavailable.");
+}
+if (typeof formatExecutePendingQueueHintLines !== "function") {
+  throw new Error("formatExecutePendingQueueHintLines is unavailable.");
 }
 if (typeof detectPlannedVsCompletedAmbiguityHint !== "function") {
   throw new Error("detectPlannedVsCompletedAmbiguityHint is unavailable.");
@@ -981,12 +999,21 @@ const TP_CALLBACK_ACTION_EXECUTE_PREFIX = "tp:ta:x:";
 const TP_CALLBACK_ACTION_CONFIRM_SOURCE_PREFIX = "tp:ta:cs:";
 const TP_CALLBACK_ACTION_SELECT_WORKOUT_PREFIX = "tp:ta:sw:";
 const ACTION_ARTIFACTS_ROOT = path.join(toolRoot, "action-artifacts");
-const TP_ACTIONS_EXECUTE_REAL_FLAG = "--execute-real";
+const TP_ACTIONS_EXECUTE_REAL_FLAG =
+  actionRunnerCommandsModuleCompat.TP_ACTIONS_EXECUTE_REAL_FLAG ??
+  actionRunnerCommandsModuleCompat.default?.TP_ACTIONS_EXECUTE_REAL_FLAG ??
+  "--execute-real";
+const TP_ACTIONS_REAL_EXECUTION_ENV =
+  actionRunnerCommandsModuleCompat.TP_ACTIONS_REAL_EXECUTION_ENV ??
+  actionRunnerCommandsModuleCompat.default?.TP_ACTIONS_REAL_EXECUTION_ENV ??
+  "TP_ACTIONS_REAL_EXECUTION";
+const TP_ACTIONS_USE_API_MOVE_ENV =
+  actionRunnerCommandsModuleCompat.TP_ACTIONS_USE_API_MOVE_ENV ??
+  actionRunnerCommandsModuleCompat.default?.TP_ACTIONS_USE_API_MOVE_ENV ??
+  "TP_ACTIONS_USE_API_MOVE";
 const TP_ACTIONS_ACTION_ID_PREFIX = "--action-id=";
 const TP_ACTIONS_PREPARE_ONLY_FLAG = "--prepare-only";
 const TP_ACTIONS_CONFIRM_SAVE_FLAG = "--confirm-save";
-const TP_ACTIONS_REAL_EXECUTION_ENV = "TP_ACTIONS_REAL_EXECUTION";
-const TP_ACTIONS_USE_API_MOVE_ENV = "TP_ACTIONS_USE_API_MOVE";
 const TP_ACTIONS_ALLOW_SAVE_ENV = "TP_ACTIONS_ALLOW_SAVE";
 const REAL_MOVE_NOT_IMPLEMENTED_ERROR = "Real move not implemented yet (Phase 3D.2)";
 const TRAININGPEAKS_NOT_CHANGED_NOTE = "TrainingPeaks не изменён";
@@ -8017,20 +8044,13 @@ async function notifyCoachRealModeResult(input: {
     sourceDate: input.trustedDryRun.resolvedDates.sourceDate,
     targetDate: input.trustedDryRun.resolvedDates.targetDate,
   });
-  const lines: string[] = [];
-  const isSuccess = input.errorMessage.includes("verification passed");
-  const isVerificationFailure =
-    input.errorMessage.includes("verification failed") || input.errorMessage.includes("manual review required");
-
-  if (isSuccess) {
-    lines.push(
-      `✅ Перенос выполнен. ${input.studentName}: ${route}. Проверка после переноса пройдена.`
-    );
-  } else if (isVerificationFailure) {
-    lines.push(`⚠️ Перенос не подтверждён. ${input.studentName}: ${route}. Нужна ручная проверка.`);
-  } else {
-    lines.push("⚠️ Перенос не выполнен. TrainingPeaks не изменён. Проверь заявку в /tp_actions.");
-  }
+  const lines = [
+    formatTrainingPeaksExecuteResultMessage({
+      studentName: input.studentName,
+      route,
+      errorMessage: input.errorMessage,
+    }),
+  ];
 
   try {
     await sendTelegramText(input.chatId, lines.join("\n"));
@@ -8888,6 +8908,36 @@ async function runControlledSaveAndCloseExecution(input: {
   }
 }
 
+async function countExecutePendingActions(requestedActionId?: string | null): Promise<number> {
+  const supabase = getSupabase();
+  let query = supabase
+    .from("trainingpeaks_actions")
+    .select("id", { count: "exact", head: true })
+    .eq("action_type", "move_workout")
+    .eq("status", "approved")
+    .eq("execution_status", "execute_pending")
+    .not("last_run_id", "is", null);
+
+  if (requestedActionId?.trim()) {
+    query = query.eq("id", requestedActionId.trim());
+  }
+
+  const { count, error } = await query;
+  if (error) {
+    throw new Error(`Failed to count execute_pending actions: ${error.message}`);
+  }
+  return count ?? 0;
+}
+
+function logExecutePendingQueueHint(pendingCount: number, requestedActionId?: string | null): void {
+  for (const line of formatExecutePendingQueueHintLines({
+    pendingCount,
+    actionId: requestedActionId,
+  })) {
+    console.log(line);
+  }
+}
+
 async function main(): Promise<void> {
   loadLocalEnv();
 
@@ -8909,6 +8959,10 @@ async function main(): Promise<void> {
 
   if (runnerMode.mode === "blocked_real") {
     console.log(runnerMode.message);
+    const pendingCount = await countExecutePendingActions(requestedActionId);
+    if (pendingCount > 0) {
+      logExecutePendingQueueHint(pendingCount, requestedActionId);
+    }
     return;
   }
 
@@ -8916,6 +8970,8 @@ async function main(): Promise<void> {
     const claimed = await claimOneApprovedActionForDryRun(runnerId, requestedActionId);
     if (!claimed) {
       console.log("No approved TrainingPeaks actions ready for dry-run.");
+      const pendingCount = await countExecutePendingActions(requestedActionId);
+      logExecutePendingQueueHint(pendingCount, requestedActionId);
       return;
     }
 

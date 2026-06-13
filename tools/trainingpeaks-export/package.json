@@ -19,6 +19,7 @@
     "tp-agent-once": "tsx scripts/tp-agent-once.ts",
     "tp-agent-loop": "tsx scripts/tp-agent-loop.ts",
     "tp-actions-once": "tsx scripts/tp-actions-once.ts",
+    "tp-actions-execute-once": "TP_ACTIONS_REAL_EXECUTION=true TP_ACTIONS_USE_API_MOVE=true tsx scripts/tp-actions-once.ts --execute-real",
     "tp-actions-loop": "tsx scripts/tp-actions-loop.ts",
     "tp-races-requests-once": "tsx scripts/tp-races-requests-once.ts",
     "tp-races-loop": "tsx scripts/tp-races-loop.ts",

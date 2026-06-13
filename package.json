@@ -10,6 +10,7 @@
     "tp-sync-reports": "node --experimental-strip-types tools/trainingpeaks-export/scripts/tp-sync-reports.ts",
     "tp-agent-once": "npm --prefix tools/trainingpeaks-export run tp-agent-once",
     "tp-actions-once": "npm --prefix tools/trainingpeaks-export run tp-actions-once --",
+    "tp-actions-execute-once": "npm --prefix tools/trainingpeaks-export run tp-actions-execute-once --",
     "tp-discover-workouts-api": "npm --prefix tools/trainingpeaks-export run tp-discover-workouts-api --",
     "tp-discover-custom-metrics-api": "npm --prefix tools/trainingpeaks-export run tp-discover-custom-metrics-api --",
     "tp-discover-athletes": "npm --prefix tools/trainingpeaks-export run tp-discover-athletes --",

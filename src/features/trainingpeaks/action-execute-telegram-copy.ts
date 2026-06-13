@@ -2,6 +2,10 @@ import {
   formatCoachActionReasonForDisplay,
   translateCoachActionTechnicalReason,
 } from "@/features/trainingpeaks/action-list-telegram-copy";
+import {
+  formatTpActionsExecuteOnceCommand,
+  TP_ACTIONS_USE_API_MOVE_ENV,
+} from "@/features/trainingpeaks/action-runner-commands";
 
 function extractMoveDateRangeFromParsedPayload(
   parsedPayload: unknown
@@ -54,11 +58,13 @@ export function formatTrainingPeaksExecuteQueuedMessage(input?: {
   trustedSourceDate?: string | null;
   trustedTargetDate?: string | null;
 }): string {
+  const executeCommand = formatTpActionsExecuteOnceCommand();
   const lines = [
     "✅ Выполнение поставлено в очередь.",
     "TrainingPeaks пока не изменён.",
     "",
-    "Теперь запусти runner, чтобы перенести тренировку.",
+    "Теперь запусти:",
+    executeCommand,
   ];
 
   if (input?.studentName || input?.parsedPayload) {
@@ -117,4 +123,54 @@ export function formatTrainingPeaksExecuteBlockedMessage(input: {
   }
 
   return "Перенос не поставлен на выполнение: последняя проверка не разрешает выполнение.";
+}
+
+export function formatTrainingPeaksExecuteResultMessage(input: {
+  studentName: string;
+  route: string;
+  errorMessage: string;
+}): string {
+  const message = input.errorMessage.trim();
+
+  if (message.includes("verification passed")) {
+    return `✅ Перенос выполнен. ${input.studentName}: ${input.route}. Проверка после переноса пройдена.`;
+  }
+
+  if (message.includes("verification failed") || message.includes("manual review required")) {
+    return `⚠️ Перенос не подтверждён. ${input.studentName}: ${input.route}. Нужна ручная проверка.`;
+  }
+
+  if (message.startsWith("Revalidation failed:")) {
+    return `⚠️ Перенос не выполнен. ${input.studentName}: ${input.route}. Повторная проверка не совпала с dry-run. TrainingPeaks не изменён. Проверь заявку в /tp_actions.`;
+  }
+
+  if (
+    message.includes("API move gate closed") ||
+    message.includes(`${TP_ACTIONS_USE_API_MOVE_ENV}=true`) ||
+    message.includes("API move gate is closed")
+  ) {
+    return `⚠️ Перенос не выполнен. ${input.studentName}: ${input.route}. API move выключен. TrainingPeaks не изменён. Запусти: ${formatTpActionsExecuteOnceCommand()}`;
+  }
+
+  if (message.includes("Real move not implemented")) {
+    return `⚠️ Перенос не выполнен. ${input.studentName}: ${input.route}. Реальный перенос через UI отключён. TrainingPeaks не изменён. Проверь заявку в /tp_actions.`;
+  }
+
+  if (message.includes("API move PUT failed")) {
+    return `⚠️ Перенос не выполнен. ${input.studentName}: ${input.route}. TrainingPeaks API вернул ошибку. TrainingPeaks не изменён. Проверь заявку в /tp_actions.`;
+  }
+
+  if (message.includes("API move sent but verification failed")) {
+    return `⚠️ Перенос не подтверждён. ${input.studentName}: ${input.route}. TrainingPeaks изменён, но проверка после переноса не прошла. Нужна ручная проверка.`;
+  }
+
+  if (message.includes("API move failed or could not be verified")) {
+    return `⚠️ Перенос не подтверждён. ${input.studentName}: ${input.route}. Перенос не подтверждён автоматической проверкой. Нужна ручная проверка.`;
+  }
+
+  if (message) {
+    return `⚠️ Перенос не выполнен. ${input.studentName}: ${input.route}. ${message} TrainingPeaks не изменён. Проверь заявку в /tp_actions.`;
+  }
+
+  return `⚠️ Перенос не выполнен. ${input.studentName}: ${input.route}. TrainingPeaks не изменён. Проверь заявку в /tp_actions.`;
 }

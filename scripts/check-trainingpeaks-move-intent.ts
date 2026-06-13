@@ -682,6 +682,18 @@ async function run(): Promise<void> {
     failed += 1;
     console.log("FAIL: execute queued message must state TrainingPeaks was not mutated");
   }
+  if (!viktoriaQueuedMessage.includes("npm run tp-actions-execute-once")) {
+    failed += 1;
+    console.log("FAIL: execute queued message must include exact execute runner command");
+  }
+  if (!viktoriaQueuedMessage.includes("TP_ACTIONS_REAL_EXECUTION=true")) {
+    failed += 1;
+    console.log("FAIL: execute queued message must mention TP_ACTIONS_REAL_EXECUTION env");
+  }
+  if (!viktoriaQueuedMessage.includes("TP_ACTIONS_USE_API_MOVE=true")) {
+    failed += 1;
+    console.log("FAIL: execute queued message must mention TP_ACTIONS_USE_API_MOVE env");
+  }
   if (viktoriaQueuedMessage.includes("Ученик: ?")) {
     failed += 1;
     console.log("FAIL: execute queued message must not include placeholder student label");
