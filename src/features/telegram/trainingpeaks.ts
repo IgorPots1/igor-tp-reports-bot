@@ -117,7 +117,10 @@ import {
   tryHandleGroupWorkoutReportCoachEditMessage,
 } from "@/features/trainingpeaks/group-workout-report-review-flow";
 import { parseTpSignalReviewCallback } from "@/features/trainingpeaks/tp-signals-review-card";
-import { handleTpSignalReviewCallback } from "@/features/trainingpeaks/tp-signals-review-flow";
+import {
+  handleTpSignalReviewCallback,
+  logTpSignalReviewCallbackDispatch,
+} from "@/features/trainingpeaks/tp-signals-review-flow";
 import {
   isTrainingPeaksTelegramBusinessPeerMissingError,
   shortenTrainingPeaksTelegramDeliveryError,
@@ -9562,6 +9565,10 @@ export async function handleTrainingPeaksTelegramCallback(
 
   const tpSignalReviewCallback = parseTpSignalReviewCallback(parsedMessage.data);
   if (tpSignalReviewCallback) {
+    logTpSignalReviewCallbackDispatch({
+      callbackData: parsedMessage.data,
+      coachChatId: parsedMessage.chatId,
+    });
     if (!isCoachChat(parsedMessage.chatId)) {
       await sendTrainingPeaksMessage(parsedMessage.chatId, COACH_ONLY_MESSAGE);
       return "handled";

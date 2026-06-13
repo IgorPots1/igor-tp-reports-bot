@@ -10,6 +10,7 @@ import {
   mapTpSignalReviewCallbackToDecision,
   parseTpSignalReviewCallback,
   TP_SIGNAL_REVIEW_CALLBACK_ACKNOWLEDGED_PREFIX,
+  TP_SIGNAL_REVIEW_CALLBACK_CLOSE_SIGNAL_PREFIX,
   TP_SIGNAL_REVIEW_CALLBACK_HIDE_PREFIX,
 } from "@/features/trainingpeaks/tp-signals-review-card";
 import {
@@ -19,6 +20,7 @@ import {
   handleTpSignalReviewCallback,
   isTrainingPeaksTpSignalReviewQueueButtonsEnabled,
   isTrainingPeaksTpSignalReviewQueueEnabled,
+  isTrainingPeaksTpSignalReviewQueueMutationsEnabled,
   isTrainingPeaksTpSignalReviewQueueSendEnabled,
   notifyCoachTpSignalReviewQueue,
 } from "@/features/trainingpeaks/tp-signals-review-flow";
@@ -279,13 +281,17 @@ async function run(): Promise<void> {
 
   const reviewMarkup = getTpSignalReviewCardMarkup("review_required", SIGNAL_SHORT);
   assert.equal(reviewMarkup.inline_keyboard.length, 2);
-  assert.equal(reviewMarkup.inline_keyboard[0]?.[0]?.text, "✅ Учёл");
-  assert.equal(reviewMarkup.inline_keyboard[0]?.[1]?.text, "👀 Позже");
-  assert.equal(reviewMarkup.inline_keyboard[1]?.[0]?.text, "🙈 Скрыть");
-  assert.equal(reviewMarkup.inline_keyboard[1]?.[1]?.text, "📝 Напомнить follow-up");
+  assert.equal(reviewMarkup.inline_keyboard[0]?.[0]?.text, "✅ Актуально");
+  assert.equal(reviewMarkup.inline_keyboard[0]?.[1]?.text, "✅ Закрыть сигнал");
+  assert.equal(reviewMarkup.inline_keyboard[1]?.[0]?.text, "🙈 Это шум");
+  assert.equal(reviewMarkup.inline_keyboard[1]?.[1]?.text, "📝 Проверить позже");
   assert.equal(
     parseTpSignalReviewCallback(reviewMarkup.inline_keyboard[0]?.[0]?.callback_data ?? null)?.kind,
     "acknowledged"
+  );
+  assert.equal(
+    parseTpSignalReviewCallback(reviewMarkup.inline_keyboard[0]?.[1]?.callback_data ?? null)?.kind,
+    "close_signal"
   );
   assert.equal(
     mapTpSignalReviewCallbackToDecision(
@@ -296,8 +302,13 @@ async function run(): Promise<void> {
 
   const closeMarkup = getTpSignalReviewCardMarkup("close_candidate_review", SIGNAL_SHORT);
   assert.equal(closeMarkup.inline_keyboard.length, 2);
-  assert.equal(closeMarkup.inline_keyboard[0]?.[0]?.text, "✅ Увидел");
-  assert.equal(closeMarkup.inline_keyboard[0]?.[1]?.text, "🙈 Скрыть");
+  assert.equal(closeMarkup.inline_keyboard[0]?.[0]?.text, "✅ Закрыть сигнал");
+  assert.equal(closeMarkup.inline_keyboard[0]?.[1]?.text, "👀 Оставить активным");
+  assert.equal(closeMarkup.inline_keyboard[1]?.[0]?.text, "📝 Проверю вручную");
+
+  const parsedClose = parseTpSignalReviewCallback(`${TP_SIGNAL_REVIEW_CALLBACK_CLOSE_SIGNAL_PREFIX}${SIGNAL_SHORT}`);
+  assert.equal(parsedClose?.kind, "close_signal");
+  assert.equal(mapTpSignalReviewCallbackToDecision(parsedClose!), "close_signal");
 
   const parsedAck = parseTpSignalReviewCallback(`${TP_SIGNAL_REVIEW_CALLBACK_ACKNOWLEDGED_PREFIX}${SIGNAL_SHORT}`);
   assert.equal(parsedAck?.kind, "acknowledged");
@@ -306,22 +317,50 @@ async function run(): Promise<void> {
   const previousQueue = process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_ENABLED;
   const previousSend = process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_SEND_ENABLED;
   const previousButtons = process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_BUTTONS_ENABLED;
+  const previousMutations = process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MUTATIONS_ENABLED;
   let insertedDecision: string | null = null;
+  let mutationAttempted = false;
   let flags = getTrainingPeaksTpSignalReviewQueueFeatureFlags();
+
+  const makeStudent = () => ({
+    id: "student-1",
+    studentId: "student-1",
+    studentName: "Test Athlete",
+    trainingPeaksAthleteUrl: null,
+    telegramChatId: null,
+    telegramUsername: null,
+    telegramFormality: "ty" as const,
+    telegramContextNotes: null,
+    telegramDeliveryEnabled: true,
+    isActive: true,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    weeklyReportsEnabled: true,
+    telegramLinkedAt: null,
+    telegramLinkCode: null,
+    telegramLinkCodeExpiresAt: null,
+    billingClientId: null,
+    nutritionTargetsJson: null,
+    coachNotesJson: {},
+    metadata: {},
+  });
 
   try {
     process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_ENABLED = "false";
     process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_SEND_ENABLED = "false";
     process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_BUTTONS_ENABLED = "false";
+    process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MUTATIONS_ENABLED = "false";
 
     assert.equal(isTrainingPeaksTpSignalReviewQueueEnabled(), false);
     assert.equal(isTrainingPeaksTpSignalReviewQueueSendEnabled(), false);
     assert.equal(isTrainingPeaksTpSignalReviewQueueButtonsEnabled(), false);
+    assert.equal(isTrainingPeaksTpSignalReviewQueueMutationsEnabled(), false);
 
     const flagsOff = getTrainingPeaksTpSignalReviewQueueFeatureFlags();
     assert.equal(flagsOff.queueEnabled, false);
     assert.equal(flagsOff.sendEnabled, false);
     assert.equal(flagsOff.buttonsEnabled, false);
+    assert.equal(flagsOff.mutationsEnabled, false);
     flags = flagsOff;
 
     const sendResult = await notifyCoachTpSignalReviewQueue({
@@ -338,6 +377,7 @@ async function run(): Promise<void> {
     clearPendingTpSignalReviewStateForTest();
     let signalStatusAtWrite = "active";
     insertedDecision = null;
+    mutationAttempted = false;
     const callbackResult = await handleTpSignalReviewCallback({
       callback: parseTpSignalReviewCallback(`${TP_SIGNAL_REVIEW_CALLBACK_HIDE_PREFIX}${SIGNAL_SHORT}`)!,
       coachChatId: "coach-chat",
@@ -348,28 +388,7 @@ async function run(): Promise<void> {
         answerCallback: async () => undefined,
         editCoachMessage: async () => undefined,
         getSignalByIdPrefix: async () => makeSignal({ status: signalStatusAtWrite as "active" }),
-        getStudentById: async () => ({
-          id: "student-1",
-          studentId: "student-1",
-          studentName: "Test Athlete",
-          trainingPeaksAthleteUrl: null,
-          telegramChatId: null,
-          telegramUsername: null,
-          telegramFormality: "ty",
-          telegramContextNotes: null,
-          telegramDeliveryEnabled: true,
-          isActive: true,
-          createdAt: "2026-01-01T00:00:00.000Z",
-          updatedAt: "2026-01-01T00:00:00.000Z",
-          weeklyReportsEnabled: true,
-          telegramLinkedAt: null,
-          telegramLinkCode: null,
-          telegramLinkCodeExpiresAt: null,
-          billingClientId: null,
-          nutritionTargetsJson: null,
-          coachNotesJson: {},
-          metadata: {},
-        }),
+        getStudentById: async () => makeStudent(),
         insertReviewDecision: async (input) => {
           insertedDecision = input.decision;
           signalStatusAtWrite = "dismissed";
@@ -386,15 +405,21 @@ async function run(): Promise<void> {
             createdAt: "2026-06-13T10:00:00.000Z",
           };
         },
+        dismissSignalByReviewQueue: async () => {
+          mutationAttempted = true;
+          return { updated: true, previousStatus: "active", newStatus: "dismissed" };
+        },
       },
     });
     assert.equal(callbackResult, "handled");
     assert.equal(insertedDecision, null, "buttons disabled should not write review decision");
+    assert.equal(mutationAttempted, false);
 
     process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_BUTTONS_ENABLED = "true";
     clearPendingTpSignalReviewStateForTest();
     signalStatusAtWrite = "active";
     insertedDecision = null;
+    mutationAttempted = false;
     await handleTpSignalReviewCallback({
       callback: parseTpSignalReviewCallback(`${TP_SIGNAL_REVIEW_CALLBACK_HIDE_PREFIX}${SIGNAL_SHORT}`)!,
       coachChatId: "coach-chat",
@@ -405,28 +430,7 @@ async function run(): Promise<void> {
         answerCallback: async () => undefined,
         editCoachMessage: async () => undefined,
         getSignalByIdPrefix: async () => makeSignal({ status: signalStatusAtWrite as "active" }),
-        getStudentById: async () => ({
-          id: "student-1",
-          studentId: "student-1",
-          studentName: "Test Athlete",
-          trainingPeaksAthleteUrl: null,
-          telegramChatId: null,
-          telegramUsername: null,
-          telegramFormality: "ty",
-          telegramContextNotes: null,
-          telegramDeliveryEnabled: true,
-          isActive: true,
-          createdAt: "2026-01-01T00:00:00.000Z",
-          updatedAt: "2026-01-01T00:00:00.000Z",
-          weeklyReportsEnabled: true,
-          telegramLinkedAt: null,
-          telegramLinkCode: null,
-          telegramLinkCodeExpiresAt: null,
-          billingClientId: null,
-          nutritionTargetsJson: null,
-          coachNotesJson: {},
-          metadata: {},
-        }),
+        getStudentById: async () => makeStudent(),
         insertReviewDecision: async (input) => {
           insertedDecision = input.decision;
           return {
@@ -442,14 +446,82 @@ async function run(): Promise<void> {
             createdAt: "2026-06-13T10:00:00.000Z",
           };
         },
+        dismissSignalByReviewQueue: async () => {
+          mutationAttempted = true;
+          return { updated: true, previousStatus: "active", newStatus: "dismissed" };
+        },
       },
     });
     assert.equal(insertedDecision, "hide_from_queue");
-    assert.equal(signalStatusAtWrite, "active", "callback decision must not mutate operational signal status");
+    assert.equal(signalStatusAtWrite, "active", "mutations off must not mutate operational signal status");
+    assert.equal(mutationAttempted, false, "mutations off must not call dismiss mutation");
+
+    clearPendingTpSignalReviewStateForTest();
+    mutationAttempted = false;
+    let resolvedMutationAttempted = false;
+    process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MUTATIONS_ENABLED = "true";
+    await handleTpSignalReviewCallback({
+      callback: parseTpSignalReviewCallback(`${TP_SIGNAL_REVIEW_CALLBACK_CLOSE_SIGNAL_PREFIX}${SIGNAL_SHORT}`)!,
+      coachChatId: "coach-chat-no-pending",
+      coachMessageId: 43,
+      callbackQueryId: "cb-3",
+      deps: {
+        now: () => 1_700_000_000_000,
+        answerCallback: async () => undefined,
+        editCoachMessage: async () => undefined,
+        getSignalByIdPrefix: async () => makeSignal({ status: "active" }),
+        getStudentById: async () => makeStudent(),
+        insertReviewDecision: async (input) => ({
+          id: "decision-3",
+          signalId: input.signalId,
+          studentId: input.studentId ?? null,
+          bucket: input.bucket,
+          decision: input.decision,
+          decisionSource: input.decisionSource,
+          coachTelegramUserId: input.coachTelegramUserId ?? null,
+          callbackShortId: input.callbackShortId ?? null,
+          metadata: input.metadata ?? {},
+          createdAt: "2026-06-13T10:00:00.000Z",
+        }),
+        markSignalResolvedByReviewQueue: async () => {
+          resolvedMutationAttempted = true;
+          return { updated: true, previousStatus: "active", newStatus: "dismissed" };
+        },
+        dismissSignalByReviewQueue: async () => {
+          mutationAttempted = true;
+          return { updated: false, previousStatus: "active", newStatus: "active", reason: "no_mutation_needed" };
+        },
+      },
+    });
+    assert.equal(resolvedMutationAttempted, true, "close_signal should resolve without pending map");
+    assert.equal(mutationAttempted, false, "close_signal should not call dismiss mutation");
+
+    clearPendingTpSignalReviewStateForTest();
+    let staleAnswer: string | undefined;
+    await handleTpSignalReviewCallback({
+      callback: parseTpSignalReviewCallback(`${TP_SIGNAL_REVIEW_CALLBACK_ACKNOWLEDGED_PREFIX}${SIGNAL_SHORT}`)!,
+      coachChatId: "coach-chat",
+      coachMessageId: 44,
+      callbackQueryId: "cb-4",
+      deps: {
+        now: () => 1_700_000_000_000,
+        answerCallback: async (_id, text) => {
+          staleAnswer = text;
+        },
+        editCoachMessage: async () => undefined,
+        getSignalByIdPrefix: async () => makeSignal({ status: "dismissed" }),
+        getStudentById: async () => makeStudent(),
+        insertReviewDecision: async () => {
+          throw new Error("stale signal must not write decision");
+        },
+      },
+    });
+    assert.match(staleAnswer ?? "", /Не нашёл активный сигнал/u);
   } finally {
     process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_ENABLED = previousQueue;
     process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_SEND_ENABLED = previousSend;
     process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_BUTTONS_ENABLED = previousButtons;
+    process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MUTATIONS_ENABLED = previousMutations;
     clearPendingTpSignalReviewStateForTest();
   }
 
@@ -474,14 +546,15 @@ async function run(): Promise<void> {
     failures.push("unexpected report dir before no-write diagnostic");
   }
 
-  console.log(`${LOG_PREFIX} cases=16`);
+  console.log(`${LOG_PREFIX} cases=20`);
   console.log(`- review_required included: ${reviewRequiredItem.bucket}`);
   console.log(`- close_candidate_review included: ${closeCandidateItem.bucket}`);
   console.log(`- obvious_auto_record excluded from queue: ${baseSelection.totalSelected}`);
   console.log(`- acknowledged suppresses card: ${hiddenSelection.totalSelected}`);
   console.log(`- keep_visible stays visible: ${keepVisibleSelection.wouldSendCount}`);
-  console.log(`- callback writes review decision only: ${insertedDecision ?? "n/a"}`);
-  console.log(`- feature flags default off: queue=${String(flags.queueEnabled)} send=${String(flags.sendEnabled)}`);
+  console.log(`- callback resolves without pending map: close_signal`);
+  console.log(`- stale inactive signal safe no-op: ok`);
+  console.log(`- feature flags default off: queue=${String(flags.queueEnabled)} send=${String(flags.sendEnabled)} mutations=${String(flags.mutationsEnabled)}`);
 
   if (failures.length > 0) {
     console.error(`${LOG_PREFIX} FAIL`);
@@ -491,7 +564,7 @@ async function run(): Promise<void> {
     process.exit(1);
   }
 
-  console.log(`${LOG_PREFIX} PASS (16/16)`);
+  console.log(`${LOG_PREFIX} PASS (20/20)`);
 }
 
 run().catch((error) => {

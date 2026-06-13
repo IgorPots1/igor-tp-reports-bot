@@ -16,7 +16,8 @@ export type TpSignalReviewDecisionName =
   | "keep_visible"
   | "hide_from_queue"
   | "close_candidate_seen"
-  | "needs_manual_followup";
+  | "needs_manual_followup"
+  | "close_signal";
 
 export type TpSignalReviewDecisionSource = "telegram_button" | "diagnostic" | "manual";
 
@@ -82,6 +83,7 @@ export function normalizeTpSignalReviewDecisionName(
     case "hide_from_queue":
     case "close_candidate_seen":
     case "needs_manual_followup":
+    case "close_signal":
       return value;
     default:
       return null;
@@ -202,6 +204,7 @@ export function formatTpSignalReviewQueueSummaryMarkdown(input: {
     queueEnabled: boolean;
     sendEnabled: boolean;
     buttonsEnabled: boolean;
+    mutationsEnabled: boolean;
   };
   selection: TpSignalReviewQueueSelectionSummary;
   sampleCards: string[];
@@ -218,6 +221,7 @@ export function formatTpSignalReviewQueueSummaryMarkdown(input: {
     `- TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_ENABLED=${String(input.featureFlags.queueEnabled)}`,
     `- TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_SEND_ENABLED=${String(input.featureFlags.sendEnabled)}`,
     `- TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_BUTTONS_ENABLED=${String(input.featureFlags.buttonsEnabled)}`,
+    `- TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MUTATIONS_ENABLED=${String(input.featureFlags.mutationsEnabled)}`,
     "",
     "## Queue selection",
     "",
@@ -233,7 +237,7 @@ export function formatTpSignalReviewQueueSummaryMarkdown(input: {
     "",
     "- Includes only persisted active signals in `review_required` and `close_candidate_review`.",
     "- Excludes `obvious_auto_record` and all `silent_skip` buckets from Telegram v1.",
-    "- Review decisions are append-only and do not mutate operational signal status.",
+    "- Review decisions are append-only; operational signal status changes require TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MUTATIONS_ENABLED=true.",
     "",
   ];
 

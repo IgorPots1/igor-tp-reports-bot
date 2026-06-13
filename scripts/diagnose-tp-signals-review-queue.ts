@@ -287,6 +287,9 @@ function printConsoleSummary(input: {
   console.log(
     `- TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_BUTTONS_ENABLED=${String(input.featureFlags.buttonsEnabled)}`
   );
+  console.log(
+    `- TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MUTATIONS_ENABLED=${String(input.featureFlags.mutationsEnabled)}`
+  );
   console.log("");
   console.log("Queue selection:");
   console.log(`- total_selected: ${input.selection.totalSelected}`);
@@ -296,6 +299,7 @@ function printConsoleSummary(input: {
   console.log(`- hidden: ${input.selection.hiddenCount}`);
   console.log(`- keep_visible: ${input.selection.keepVisibleCount}`);
   console.log(`- would_send: ${input.selection.wouldSendCount}`);
+  console.log(`- mutable_if_enabled: ${input.selection.wouldSendCount}`);
   console.log("");
 
   if (input.sampleCards.length > 0) {

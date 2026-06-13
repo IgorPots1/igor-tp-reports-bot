@@ -7,11 +7,13 @@ import {
   formatTpSignalReviewWhatHappened,
 } from "@/features/trainingpeaks/tp-signals-review-coach-labels";
 import type { TpSignalReviewQueueBucket } from "@/features/trainingpeaks/tp-signals-review-queue-helpers";
+import type { TrainingPeaksOperationalSignalReviewDecisionName } from "@/features/trainingpeaks/repository";
 
 export const TP_SIGNAL_REVIEW_CALLBACK_ACKNOWLEDGED_PREFIX = "tp:rvq:a:";
 export const TP_SIGNAL_REVIEW_CALLBACK_KEEP_VISIBLE_PREFIX = "tp:rvq:k:";
 export const TP_SIGNAL_REVIEW_CALLBACK_HIDE_PREFIX = "tp:rvq:h:";
 export const TP_SIGNAL_REVIEW_CALLBACK_FOLLOWUP_PREFIX = "tp:rvq:f:";
+export const TP_SIGNAL_REVIEW_CALLBACK_CLOSE_SIGNAL_PREFIX = "tp:rvq:c:";
 export const TP_SIGNAL_REVIEW_CALLBACK_CLOSE_SEEN_PREFIX = "tp:rvq:s:";
 
 const TELEGRAM_MESSAGE_SOFT_LIMIT = 3900;
@@ -21,6 +23,7 @@ export type ParsedTpSignalReviewCallback =
   | { kind: "keep_visible"; signalIdPrefix: string }
   | { kind: "hide_from_queue"; signalIdPrefix: string }
   | { kind: "needs_manual_followup"; signalIdPrefix: string }
+  | { kind: "close_signal"; signalIdPrefix: string }
   | { kind: "close_candidate_seen"; signalIdPrefix: string };
 
 export type FormatTpSignalReviewCardInput = {
@@ -98,21 +101,21 @@ export function getTpSignalReviewCardMarkup(
     return createInlineKeyboardMarkup([
       [
         {
-          text: "✅ Учёл",
+          text: "✅ Актуально",
           callback_data: `${TP_SIGNAL_REVIEW_CALLBACK_ACKNOWLEDGED_PREFIX}${signalIdShort}`,
         },
         {
-          text: "👀 Позже",
-          callback_data: `${TP_SIGNAL_REVIEW_CALLBACK_KEEP_VISIBLE_PREFIX}${signalIdShort}`,
+          text: "✅ Закрыть сигнал",
+          callback_data: `${TP_SIGNAL_REVIEW_CALLBACK_CLOSE_SIGNAL_PREFIX}${signalIdShort}`,
         },
       ],
       [
         {
-          text: "🙈 Скрыть",
+          text: "🙈 Это шум",
           callback_data: `${TP_SIGNAL_REVIEW_CALLBACK_HIDE_PREFIX}${signalIdShort}`,
         },
         {
-          text: "📝 Напомнить follow-up",
+          text: "📝 Проверить позже",
           callback_data: `${TP_SIGNAL_REVIEW_CALLBACK_FOLLOWUP_PREFIX}${signalIdShort}`,
         },
       ],
@@ -122,12 +125,12 @@ export function getTpSignalReviewCardMarkup(
   return createInlineKeyboardMarkup([
     [
       {
-        text: "✅ Увидел",
-        callback_data: `${TP_SIGNAL_REVIEW_CALLBACK_CLOSE_SEEN_PREFIX}${signalIdShort}`,
+        text: "✅ Закрыть сигнал",
+        callback_data: `${TP_SIGNAL_REVIEW_CALLBACK_CLOSE_SIGNAL_PREFIX}${signalIdShort}`,
       },
       {
-        text: "🙈 Скрыть",
-        callback_data: `${TP_SIGNAL_REVIEW_CALLBACK_HIDE_PREFIX}${signalIdShort}`,
+        text: "👀 Оставить активным",
+        callback_data: `${TP_SIGNAL_REVIEW_CALLBACK_KEEP_VISIBLE_PREFIX}${signalIdShort}`,
       },
     ],
     [
@@ -150,6 +153,11 @@ function parseSignalIdPrefix(data: string, prefix: string): string | null {
 export function parseTpSignalReviewCallback(data: string | null): ParsedTpSignalReviewCallback | null {
   if (!data) {
     return null;
+  }
+
+  const closeSignal = parseSignalIdPrefix(data, TP_SIGNAL_REVIEW_CALLBACK_CLOSE_SIGNAL_PREFIX);
+  if (closeSignal) {
+    return { kind: "close_signal", signalIdPrefix: closeSignal };
   }
 
   const acknowledged = parseSignalIdPrefix(data, TP_SIGNAL_REVIEW_CALLBACK_ACKNOWLEDGED_PREFIX);
@@ -196,7 +204,7 @@ export function extractTpSignalReviewShortIdFromCoachText(text: string): string 
 
 export function mapTpSignalReviewCallbackToDecision(
   callback: ParsedTpSignalReviewCallback
-): "acknowledged" | "keep_visible" | "hide_from_queue" | "close_candidate_seen" | "needs_manual_followup" {
+): TrainingPeaksOperationalSignalReviewDecisionName {
   switch (callback.kind) {
     case "acknowledged":
       return "acknowledged";
@@ -206,7 +214,13 @@ export function mapTpSignalReviewCallbackToDecision(
       return "hide_from_queue";
     case "close_candidate_seen":
       return "close_candidate_seen";
+    case "close_signal":
+      return "close_signal";
     case "needs_manual_followup":
       return "needs_manual_followup";
   }
+}
+
+export function isTpSignalReviewCallbackData(data: string | null | undefined): boolean {
+  return Boolean(data && data.startsWith("tp:rvq:"));
 }

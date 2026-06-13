@@ -8030,7 +8030,8 @@ export type TrainingPeaksOperationalSignalReviewDecisionName =
   | "keep_visible"
   | "hide_from_queue"
   | "close_candidate_seen"
-  | "needs_manual_followup";
+  | "needs_manual_followup"
+  | "close_signal";
 
 export type TrainingPeaksOperationalSignalReviewDecisionSource =
   | "telegram_button"
@@ -8199,6 +8200,229 @@ export async function listLatestTrainingPeaksOperationalSignalReviewDecisionsByS
   }
 
   return latestBySignalId;
+}
+
+export type TrainingPeaksOperationalSignalReviewQueueMutationReason =
+  | "not_found"
+  | "not_active"
+  | "ambiguous_lookup"
+  | "unsupported_category"
+  | "mutation_disabled"
+  | "db_error"
+  | "no_mutation_needed";
+
+export type TrainingPeaksOperationalSignalReviewQueueMutationResult = {
+  updated: boolean;
+  previousStatus: TrainingPeaksOperationalSignalStatus | null;
+  newStatus: TrainingPeaksOperationalSignalStatus | null;
+  reason?: TrainingPeaksOperationalSignalReviewQueueMutationReason;
+};
+
+type ApplyOperationalSignalReviewQueueStatusMutationInput = {
+  signalId: string;
+  studentId: string;
+  nextStatus: Extract<TrainingPeaksOperationalSignalStatus, "dismissed" | "expired">;
+  reviewDecisionId: string;
+  reviewDecision: TrainingPeaksOperationalSignalReviewDecisionName;
+  reason: string;
+  lifecyclePatch?: Record<string, unknown>;
+  validUntil?: string | null;
+};
+
+async function applyOperationalSignalReviewQueueStatusMutation(
+  input: ApplyOperationalSignalReviewQueueStatusMutationInput
+): Promise<TrainingPeaksOperationalSignalReviewQueueMutationResult> {
+  const supabase = createSupabaseServerClient();
+  const appliedAt = new Date().toISOString();
+
+  const { data: beforeData, error: beforeError } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .select("*")
+    .eq("id", input.signalId)
+    .eq("student_id", input.studentId)
+    .maybeSingle();
+
+  if (beforeError) {
+    if (isTrainingPeaksMissingRelationError(beforeError)) {
+      throw new Error(
+        "trainingpeaks_student_operational_signals table is missing; apply Supabase migration first"
+      );
+    }
+    return {
+      updated: false,
+      previousStatus: null,
+      newStatus: null,
+      reason: "db_error",
+    };
+  }
+  if (!beforeData) {
+    return {
+      updated: false,
+      previousStatus: null,
+      newStatus: null,
+      reason: "not_found",
+    };
+  }
+
+  const before = mapTrainingPeaksStudentOperationalSignalRow(
+    beforeData as TrainingPeaksStudentOperationalSignalRow
+  );
+  if (before.status !== "active") {
+    return {
+      updated: false,
+      previousStatus: before.status,
+      newStatus: before.status,
+      reason: "not_active",
+    };
+  }
+
+  const metadataBefore =
+    before.metadata && typeof before.metadata === "object" && !Array.isArray(before.metadata)
+      ? before.metadata
+      : {};
+  const nextMetadata = {
+    ...metadataBefore,
+    review_queue_resolved_by: "coach_review_queue",
+    review_queue_resolved_at: appliedAt,
+    review_queue_review_decision_id: input.reviewDecisionId,
+    review_queue_review_decision: input.reviewDecision,
+    review_queue_previous_status: before.status,
+    review_queue_reason: input.reason,
+  };
+
+  const updates: Record<string, unknown> = {
+    status: input.nextStatus,
+    metadata: nextMetadata,
+    updated_at: appliedAt,
+    ...(input.lifecyclePatch ?? {}),
+  };
+  if (input.validUntil !== undefined) {
+    updates.valid_until = input.validUntil;
+  }
+
+  const { data: updatedData, error: updatedError } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .update(updates)
+    .eq("id", input.signalId)
+    .eq("student_id", input.studentId)
+    .eq("status", "active")
+    .select("id, status")
+    .maybeSingle();
+
+  if (updatedError) {
+    if (isTrainingPeaksMissingRelationError(updatedError)) {
+      throw new Error(
+        "trainingpeaks_student_operational_signals table is missing; apply Supabase migration first"
+      );
+    }
+    return {
+      updated: false,
+      previousStatus: before.status,
+      newStatus: before.status,
+      reason: "db_error",
+    };
+  }
+  if (!updatedData) {
+    return {
+      updated: false,
+      previousStatus: before.status,
+      newStatus: before.status,
+      reason: "not_active",
+    };
+  }
+
+  return {
+    updated: true,
+    previousStatus: before.status,
+    newStatus: (updatedData as { status: string }).status as TrainingPeaksOperationalSignalStatus,
+  };
+}
+
+export async function markOperationalSignalResolvedByReviewQueue(input: {
+  signal: TrainingPeaksStudentOperationalSignal;
+  reviewDecisionId: string;
+  reviewDecision: TrainingPeaksOperationalSignalReviewDecisionName;
+  reason?: string;
+  asOfDate?: string;
+}): Promise<TrainingPeaksOperationalSignalReviewQueueMutationResult> {
+  const appliedAt = new Date().toISOString();
+  const reason = input.reason?.trim() || "coach_review_queue_close_signal";
+  const scheduleSignalTypes = new Set<TrainingPeaksOperationalSignalType>([
+    "schedule_availability_window",
+    "schedule_unavailability_window",
+    "plan_generation_constraint",
+  ]);
+  const nextStatus: Extract<TrainingPeaksOperationalSignalStatus, "dismissed" | "expired"> =
+    scheduleSignalTypes.has(input.signal.signalType) ? "expired" : "dismissed";
+  const lifecyclePatch =
+    nextStatus === "dismissed"
+      ? {
+          lifecycle_state: "resolved",
+          lifecycle_state_updated_at: appliedAt,
+          lifecycle_applied_at: appliedAt,
+          resolved_at: appliedAt,
+          resolved_reason: reason,
+          requires_coach_close: false,
+        }
+      : undefined;
+  const validUntil =
+    nextStatus === "expired"
+      ? input.asOfDate ??
+        input.signal.validUntil ??
+        input.signal.targetDate ??
+        input.signal.sourceDate ??
+        null
+      : undefined;
+
+  return applyOperationalSignalReviewQueueStatusMutation({
+    signalId: input.signal.id,
+    studentId: input.signal.studentId,
+    nextStatus,
+    reviewDecisionId: input.reviewDecisionId,
+    reviewDecision: input.reviewDecision,
+    reason,
+    lifecyclePatch,
+    validUntil,
+  });
+}
+
+export async function dismissOperationalSignalByReviewQueue(input: {
+  signal: TrainingPeaksStudentOperationalSignal;
+  reviewDecisionId: string;
+  reviewDecision: TrainingPeaksOperationalSignalReviewDecisionName;
+  reason?: string;
+}): Promise<TrainingPeaksOperationalSignalReviewQueueMutationResult> {
+  return applyOperationalSignalReviewQueueStatusMutation({
+    signalId: input.signal.id,
+    studentId: input.signal.studentId,
+    nextStatus: "dismissed",
+    reviewDecisionId: input.reviewDecisionId,
+    reviewDecision: input.reviewDecision,
+    reason: input.reason?.trim() || "coach_review_queue_marked_noise",
+  });
+}
+
+export async function expireOperationalSignalByReviewQueue(input: {
+  signal: TrainingPeaksStudentOperationalSignal;
+  reviewDecisionId: string;
+  reviewDecision: TrainingPeaksOperationalSignalReviewDecisionName;
+  reason?: string;
+  asOfDate?: string;
+}): Promise<TrainingPeaksOperationalSignalReviewQueueMutationResult> {
+  return applyOperationalSignalReviewQueueStatusMutation({
+    signalId: input.signal.id,
+    studentId: input.signal.studentId,
+    nextStatus: "expired",
+    reviewDecisionId: input.reviewDecisionId,
+    reviewDecision: input.reviewDecision,
+    reason: input.reason?.trim() || "coach_review_queue_expired_stale",
+    validUntil:
+      input.asOfDate ??
+      input.signal.validUntil ??
+      input.signal.targetDate ??
+      input.signal.sourceDate ??
+      null,
+  });
 }
 
 export async function getLatestTrainingPeaksOperationalSignalLifecycleTransition(

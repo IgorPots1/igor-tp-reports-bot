@@ -10,13 +10,20 @@ import {
   type TpSignalReviewQueueItem,
 } from "@/features/trainingpeaks/tp-signals-review-queue-helpers";
 import {
+  dismissOperationalSignalByReviewQueue,
   getTrainingPeaksOperationalSignalByIdPrefix,
   getTrainingPeaksStudentById,
   insertTrainingPeaksOperationalSignalReviewDecision,
+  markOperationalSignalResolvedByReviewQueue,
   type TrainingPeaksOperationalSignalReviewDecisionBucket,
+  type TrainingPeaksOperationalSignalReviewDecisionName,
+  type TrainingPeaksOperationalSignalReviewQueueMutationResult,
   type TrainingPeaksStudent,
   type TrainingPeaksStudentOperationalSignal,
 } from "@/features/trainingpeaks/repository";
+import {
+  shouldAttemptTpSignalReviewQueueMutation,
+} from "@/features/trainingpeaks/tp-signals-review-mutations";
 import {
   editTelegramMessageText,
   sendTelegramMessageReturningId,
@@ -25,7 +32,10 @@ import {
 import type { TelegramInlineKeyboardMarkup } from "@/features/telegram/types";
 
 const TP_SIGNAL_REVIEW_PENDING_TTL_MS = 30 * 60 * 1000;
+const TP_SIGNAL_REVIEW_CALLBACK_LOG_PREFIX = "[tp-review-queue:callback]";
 const BUTTONS_DISABLED_MESSAGE = "Кнопки review queue отключены флагом безопасности.";
+const STALE_SIGNAL_MESSAGE =
+  "Не нашёл активный сигнал. Возможно, он уже закрыт или обновился.";
 
 export function isTrainingPeaksTpSignalReviewQueueEnabled(): boolean {
   return process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_ENABLED?.trim() === "true";
@@ -39,16 +49,26 @@ export function isTrainingPeaksTpSignalReviewQueueButtonsEnabled(): boolean {
   return process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_BUTTONS_ENABLED?.trim() === "true";
 }
 
+export function isTrainingPeaksTpSignalReviewQueueMutationsEnabled(): boolean {
+  return process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MUTATIONS_ENABLED?.trim() === "true";
+}
+
 export function getTrainingPeaksTpSignalReviewQueueFeatureFlags(): {
   queueEnabled: boolean;
   sendEnabled: boolean;
   buttonsEnabled: boolean;
+  mutationsEnabled: boolean;
 } {
   return {
     queueEnabled: isTrainingPeaksTpSignalReviewQueueEnabled(),
     sendEnabled: isTrainingPeaksTpSignalReviewQueueSendEnabled(),
     buttonsEnabled: isTrainingPeaksTpSignalReviewQueueButtonsEnabled(),
+    mutationsEnabled: isTrainingPeaksTpSignalReviewQueueMutationsEnabled(),
   };
+}
+
+function logTpSignalReviewCallback(message: string): void {
+  console.log(`${TP_SIGNAL_REVIEW_CALLBACK_LOG_PREFIX} ${message}`);
 }
 
 type PendingTpSignalReviewCard = {
@@ -76,6 +96,8 @@ export type TpSignalReviewTelegramDeps = {
   getSignalByIdPrefix?: (signalIdPrefix: string) => Promise<TrainingPeaksStudentOperationalSignal | null>;
   getStudentById?: (studentId: string) => Promise<TrainingPeaksStudent | null>;
   insertReviewDecision?: typeof insertTrainingPeaksOperationalSignalReviewDecision;
+  markSignalResolvedByReviewQueue?: typeof markOperationalSignalResolvedByReviewQueue;
+  dismissSignalByReviewQueue?: typeof dismissOperationalSignalByReviewQueue;
   now?: () => number;
 };
 
@@ -96,6 +118,8 @@ type ResolvedTpSignalReviewTelegramDeps = {
   getSignalByIdPrefix: (signalIdPrefix: string) => Promise<TrainingPeaksStudentOperationalSignal | null>;
   getStudentById: (studentId: string) => Promise<TrainingPeaksStudent | null>;
   insertReviewDecision: typeof insertTrainingPeaksOperationalSignalReviewDecision;
+  markSignalResolvedByReviewQueue: typeof markOperationalSignalResolvedByReviewQueue;
+  dismissSignalByReviewQueue: typeof dismissOperationalSignalByReviewQueue;
   now: () => number;
 };
 
@@ -115,6 +139,9 @@ function getDeps(deps?: TpSignalReviewTelegramDeps): ResolvedTpSignalReviewTeleg
     getSignalByIdPrefix: deps?.getSignalByIdPrefix ?? getTrainingPeaksOperationalSignalByIdPrefix,
     getStudentById: deps?.getStudentById ?? getTrainingPeaksStudentById,
     insertReviewDecision: deps?.insertReviewDecision ?? insertTrainingPeaksOperationalSignalReviewDecision,
+    markSignalResolvedByReviewQueue:
+      deps?.markSignalResolvedByReviewQueue ?? markOperationalSignalResolvedByReviewQueue,
+    dismissSignalByReviewQueue: deps?.dismissSignalByReviewQueue ?? dismissOperationalSignalByReviewQueue,
     now: deps?.now ?? (() => Date.now()),
   };
 }
@@ -221,20 +248,144 @@ function resolveReviewDecisionBucketForSignal(input: {
   return "review_required";
 }
 
+function normalizeReviewDecisionForMutation(
+  decision: TrainingPeaksOperationalSignalReviewDecisionName,
+  callbackKind: ParsedTpSignalReviewCallback["kind"]
+): TrainingPeaksOperationalSignalReviewDecisionName {
+  if (callbackKind === "close_candidate_seen") {
+    return "close_signal";
+  }
+  return decision;
+}
+
 function buildDecisionAcknowledgementText(input: {
-  decision: ReturnType<typeof mapTpSignalReviewCallbackToDecision>;
+  decision: TrainingPeaksOperationalSignalReviewDecisionName;
   studentName: string;
   signalShortId: string;
+  mutationResult?: TrainingPeaksOperationalSignalReviewQueueMutationResult | null;
+  mutationsEnabled: boolean;
 }): string {
-  const labels: Record<ReturnType<typeof mapTpSignalReviewCallbackToDecision>, string> = {
-    acknowledged: "✅ Решение сохранено: учёл",
-    keep_visible: "👀 Решение сохранено: оставлено в очереди",
-    hide_from_queue: "🙈 Решение сохранено: скрыто из очереди",
-    close_candidate_seen: "✅ Решение сохранено: увидел close candidate",
-    needs_manual_followup: "📝 Решение сохранено: нужен ручной follow-up",
-  };
+  const lines: string[] = [];
 
-  return [labels[input.decision], `Атлет: ${input.studentName}`, `#${input.signalShortId}`].join("\n");
+  if (input.decision === "close_signal") {
+    if (input.mutationResult?.updated) {
+      lines.push("✅ Готово: сигнал закрыт и больше не будет показываться в /tp_signals.");
+    } else if (shouldAttemptTpSignalReviewQueueMutation({
+      mutationsEnabled: input.mutationsEnabled,
+      decision: input.decision,
+    })) {
+      lines.push("⚠️ Не удалось закрыть сигнал. Проверь /tp_signals вручную.");
+    } else {
+      lines.push("✅ Решение сохранено: закрытие сигнала.");
+      lines.push("Кнопка записана, но закрытие сигналов пока выключено.");
+    }
+  } else if (input.decision === "hide_from_queue") {
+    if (input.mutationResult?.updated) {
+      lines.push("✅ Скрыто: сигнал помечен как шум.");
+    } else if (shouldAttemptTpSignalReviewQueueMutation({
+      mutationsEnabled: input.mutationsEnabled,
+      decision: input.decision,
+    })) {
+      lines.push("⚠️ Не удалось скрыть сигнал. Проверь /tp_signals вручную.");
+    } else {
+      lines.push("✅ Решение сохранено: скрыто из очереди.");
+      if (!input.mutationsEnabled) {
+        lines.push("Кнопка записана, но закрытие сигналов пока выключено.");
+      }
+    }
+  } else {
+    const labels: Partial<Record<TrainingPeaksOperationalSignalReviewDecisionName, string>> = {
+      acknowledged: "✅ Решение сохранено: актуально, сигнал оставлен активным.",
+      keep_visible: "👀 Ок, оставил сигнал активным.",
+      close_candidate_seen: "✅ Решение сохранено: увидел close candidate.",
+      needs_manual_followup: "📝 Решение сохранено: проверю позже.",
+    };
+    lines.push(labels[input.decision] ?? "✅ Решение сохранено.");
+  }
+
+  lines.push(`Атлет: ${input.studentName}`, `#${input.signalShortId}`);
+  return lines.join("\n");
+}
+
+function buildCallbackAnswerText(input: {
+  decision: TrainingPeaksOperationalSignalReviewDecisionName;
+  mutationResult?: TrainingPeaksOperationalSignalReviewQueueMutationResult | null;
+  mutationsEnabled: boolean;
+}): string {
+  if (input.decision === "close_signal") {
+    if (input.mutationResult?.updated) {
+      return "Готово: сигнал закрыт";
+    }
+    if (shouldAttemptTpSignalReviewQueueMutation({
+      mutationsEnabled: input.mutationsEnabled,
+      decision: input.decision,
+    })) {
+      return "Не удалось закрыть сигнал";
+    }
+    return "Кнопка записана, но закрытие сигналов пока выключено.";
+  }
+  if (input.decision === "hide_from_queue") {
+    if (input.mutationResult?.updated) {
+      return "Скрыто: сигнал помечен как шум";
+    }
+    if (shouldAttemptTpSignalReviewQueueMutation({
+      mutationsEnabled: input.mutationsEnabled,
+      decision: input.decision,
+    })) {
+      return "Не удалось скрыть сигнал";
+    }
+    if (!input.mutationsEnabled) {
+      return "Кнопка записана, но закрытие сигналов пока выключено.";
+    }
+  }
+  if (input.decision === "keep_visible") {
+    return "Ок, оставил сигнал активным";
+  }
+  return "Решение сохранено";
+}
+
+async function applyReviewQueueSignalMutation(input: {
+  signal: TrainingPeaksStudentOperationalSignal;
+  decision: TrainingPeaksOperationalSignalReviewDecisionName;
+  reviewDecisionId: string;
+  deps: ResolvedTpSignalReviewTelegramDeps;
+}): Promise<TrainingPeaksOperationalSignalReviewQueueMutationResult | null> {
+  if (!shouldAttemptTpSignalReviewQueueMutation({
+    mutationsEnabled: isTrainingPeaksTpSignalReviewQueueMutationsEnabled(),
+    decision: input.decision,
+  })) {
+    logTpSignalReviewCallback("mutation_attempt=skipped mutations=false");
+    return null;
+  }
+
+  logTpSignalReviewCallback(`mutation_attempt=yes decision=${input.decision}`);
+
+  if (input.decision === "close_signal" || input.decision === "close_candidate_seen") {
+    const result = await input.deps.markSignalResolvedByReviewQueue({
+      signal: input.signal,
+      reviewDecisionId: input.reviewDecisionId,
+      reviewDecision: input.decision === "close_candidate_seen" ? "close_signal" : input.decision,
+    });
+    logTpSignalReviewCallback(
+      `mutation_result=${result.updated ? "ok" : "noop"} reason=${result.reason ?? "updated"} previous=${result.previousStatus ?? "null"} new=${result.newStatus ?? "null"}`
+    );
+    return result;
+  }
+
+  if (input.decision === "hide_from_queue") {
+    const result = await input.deps.dismissSignalByReviewQueue({
+      signal: input.signal,
+      reviewDecisionId: input.reviewDecisionId,
+      reviewDecision: input.decision,
+    });
+    logTpSignalReviewCallback(
+      `mutation_result=${result.updated ? "ok" : "noop"} reason=${result.reason ?? "updated"} previous=${result.previousStatus ?? "null"} new=${result.newStatus ?? "null"}`
+    );
+    return result;
+  }
+
+  logTpSignalReviewCallback("mutation_attempt=skipped decision=no_mutation");
+  return null;
 }
 
 export async function handleTpSignalReviewCallback(input: {
@@ -245,34 +396,61 @@ export async function handleTpSignalReviewCallback(input: {
   coachTelegramUserId?: string | null;
   deps?: TpSignalReviewTelegramDeps;
 }): Promise<"handled" | "ignored"> {
-  if (!isTrainingPeaksTpSignalReviewQueueEnabled()) {
+  const flags = getTrainingPeaksTpSignalReviewQueueFeatureFlags();
+  logTpSignalReviewCallback(
+    `received prefix=tp:rvq action=${input.callback.kind} signal=${input.callback.signalIdPrefix}`
+  );
+  logTpSignalReviewCallback(
+    `flags queue=${String(flags.queueEnabled)} buttons=${String(flags.buttonsEnabled)} mutations=${String(flags.mutationsEnabled)}`
+  );
+
+  if (!flags.queueEnabled) {
+    logTpSignalReviewCallback("disabled queue=false");
     return "ignored";
   }
 
   const deps = getDeps(input.deps);
   cleanupExpiredPendingReviewCards(deps.now());
 
+  if (!flags.buttonsEnabled) {
+    logTpSignalReviewCallback("disabled buttons=false");
+    await deps.answerCallback(input.callbackQueryId, BUTTONS_DISABLED_MESSAGE);
+    return "handled";
+  }
+
   const signal = await deps.getSignalByIdPrefix(input.callback.signalIdPrefix);
   if (!signal) {
-    await deps.answerCallback(input.callbackQueryId, "Сигнал не найден — обновите очередь");
+    logTpSignalReviewCallback("signal_lookup=missing");
+    await deps.answerCallback(input.callbackQueryId, STALE_SIGNAL_MESSAGE);
+    return "handled";
+  }
+
+  logTpSignalReviewCallback(`signal_lookup=found signal_id=${signal.id.slice(0, 8)} status=${signal.status}`);
+
+  if (signal.status !== "active") {
+    logTpSignalReviewCallback(`signal_lookup=inactive status=${signal.status}`);
+    await deps.answerCallback(input.callbackQueryId, STALE_SIGNAL_MESSAGE);
     return "handled";
   }
 
   const pending = pendingTpSignalReviewCardByCoachChatId.get(input.coachChatId);
   const signalShortId = signal.id.slice(0, 8).toLowerCase();
-  const decision = mapTpSignalReviewCallbackToDecision(input.callback);
-
-  if (!isTrainingPeaksTpSignalReviewQueueButtonsEnabled()) {
-    await deps.answerCallback(input.callbackQueryId, BUTTONS_DISABLED_MESSAGE);
-    return "handled";
-  }
-
+  const rawDecision = mapTpSignalReviewCallbackToDecision(input.callback);
+  const decision = normalizeReviewDecisionForMutation(rawDecision, input.callback.kind);
   const bucket = resolveReviewDecisionBucketForSignal({
     signal,
     pendingBucket: pending?.signalIdPrefix === signalShortId ? pending.bucket : null,
   });
 
-  await deps.insertReviewDecision({
+  if (!isTpSignalReviewQueueBucket(bucket)) {
+    logTpSignalReviewCallback(`decision_write=blocked bucket=${bucket}`);
+    await deps.answerCallback(input.callbackQueryId, STALE_SIGNAL_MESSAGE);
+    return "handled";
+  }
+
+  logTpSignalReviewCallback(`decision_write=attempt decision=${decision} bucket=${bucket}`);
+
+  const insertedDecision = await deps.insertReviewDecision({
     signalId: signal.id,
     studentId: signal.studentId,
     bucket,
@@ -289,9 +467,31 @@ export async function handleTpSignalReviewCallback(input: {
     },
   });
 
+  if (!insertedDecision) {
+    logTpSignalReviewCallback("decision_write=failed");
+    await deps.answerCallback(input.callbackQueryId, "Не удалось сохранить решение");
+    return "handled";
+  }
+
+  logTpSignalReviewCallback(`decision_write=ok decision=${decision}`);
+
+  const mutationResult = await applyReviewQueueSignalMutation({
+    signal,
+    decision,
+    reviewDecisionId: insertedDecision.id,
+    deps,
+  });
+
   const student = await deps.getStudentById(signal.studentId);
   const studentName = student?.studentName ?? signal.studentId;
-  await deps.answerCallback(input.callbackQueryId, "Решение сохранено");
+  const answerText = buildCallbackAnswerText({
+    decision,
+    mutationResult,
+    mutationsEnabled: flags.mutationsEnabled,
+  });
+  await deps.answerCallback(input.callbackQueryId, answerText);
+  logTpSignalReviewCallback(`answered ${mutationResult?.updated ? "ok_with_mutation" : "ok"}`);
+
   await deps.editCoachMessage(
     input.coachChatId,
     input.coachMessageId,
@@ -299,6 +499,8 @@ export async function handleTpSignalReviewCallback(input: {
       decision,
       studentName,
       signalShortId,
+      mutationResult,
+      mutationsEnabled: flags.mutationsEnabled,
     })
   );
 
@@ -318,4 +520,16 @@ export function isTpSignalReviewQueueItemEligible(item: {
   bucket: string;
 }): boolean {
   return isTpSignalReviewQueueBucket(item.bucket as never);
+}
+
+export function logTpSignalReviewCallbackDispatch(input: {
+  callbackData: string | null | undefined;
+  coachChatId: string | number;
+}): void {
+  if (!input.callbackData?.startsWith("tp:rvq:")) {
+    return;
+  }
+  logTpSignalReviewCallback(
+    `dispatch matched coach_chat=${String(input.coachChatId)} prefix=${input.callbackData.slice(0, 16)}`
+  );
 }
