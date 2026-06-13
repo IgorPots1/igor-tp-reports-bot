@@ -28,12 +28,9 @@ import * as strongFutureDescriptorMoveSourceNamespace from "../../../src/feature
 import * as trainingPeaksAttentionTelegramModule from "../../../src/features/trainingpeaks/attention-telegram";
 import * as trainingPeaksTelegramBusinessModule from "../../../src/features/trainingpeaks/telegram-business";
 import * as trainingPeaksRepositoryModule from "../../../src/features/trainingpeaks/repository";
-import { buildCoachDryRunFailureNotificationLines } from "../../../src/features/trainingpeaks/action-dry-run-telegram-copy";
-import {
-  detectPlannedVsCompletedAmbiguityHint,
-  truncateWorkoutTitleForButton,
-  type PlannedCompletedAmbiguityHint,
-} from "../../../src/features/trainingpeaks/action-planned-completed-ambiguity";
+import * as actionDryRunTelegramCopyModule from "../../../src/features/trainingpeaks/action-dry-run-telegram-copy";
+import * as actionPlannedCompletedAmbiguityModule from "../../../src/features/trainingpeaks/action-planned-completed-ambiguity";
+import type { PlannedCompletedAmbiguityHint } from "../../../src/features/trainingpeaks/action-planned-completed-ambiguity";
 
 type NamespaceWithOptionalDefault<T> = T & { default?: T };
 
@@ -57,6 +54,32 @@ const strongFutureDescriptorMoveSourceNamespaceCompat =
   strongFutureDescriptorMoveSourceNamespace as NamespaceWithOptionalDefault<
     typeof strongFutureDescriptorMoveSourceNamespace
   >;
+const actionDryRunTelegramCopyModuleCompat =
+  actionDryRunTelegramCopyModule as NamespaceWithOptionalDefault<typeof actionDryRunTelegramCopyModule>;
+const actionPlannedCompletedAmbiguityModuleCompat =
+  actionPlannedCompletedAmbiguityModule as NamespaceWithOptionalDefault<
+    typeof actionPlannedCompletedAmbiguityModule
+  >;
+
+const buildCoachDryRunFailureNotificationLines =
+  actionDryRunTelegramCopyModuleCompat.buildCoachDryRunFailureNotificationLines ??
+  actionDryRunTelegramCopyModuleCompat.default?.buildCoachDryRunFailureNotificationLines;
+const detectPlannedVsCompletedAmbiguityHint =
+  actionPlannedCompletedAmbiguityModuleCompat.detectPlannedVsCompletedAmbiguityHint ??
+  actionPlannedCompletedAmbiguityModuleCompat.default?.detectPlannedVsCompletedAmbiguityHint;
+const truncateWorkoutTitleForButton =
+  actionPlannedCompletedAmbiguityModuleCompat.truncateWorkoutTitleForButton ??
+  actionPlannedCompletedAmbiguityModuleCompat.default?.truncateWorkoutTitleForButton;
+
+if (typeof buildCoachDryRunFailureNotificationLines !== "function") {
+  throw new Error("buildCoachDryRunFailureNotificationLines is unavailable.");
+}
+if (typeof detectPlannedVsCompletedAmbiguityHint !== "function") {
+  throw new Error("detectPlannedVsCompletedAmbiguityHint is unavailable.");
+}
+if (typeof truncateWorkoutTitleForButton !== "function") {
+  throw new Error("truncateWorkoutTitleForButton is unavailable.");
+}
 
 const getRequiredTrainingPeaksBusinessConnectionId =
   trainingPeaksTelegramBusinessModuleCompat.getRequiredTrainingPeaksBusinessConnectionId ??

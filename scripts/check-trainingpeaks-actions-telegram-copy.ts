@@ -1,4 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import process from "node:process";
 
 import {
@@ -44,7 +46,25 @@ function makeAction(input: Partial<CoachActionListItem> & Pick<CoachActionListIt
   };
 }
 
+function assertRunnerDryRunCopyImportSmoke(): void {
+  const output = execFileSync(
+    "npx",
+    ["tsx", "scripts/check-action-dry-run-telegram-copy-import.ts"],
+    {
+      cwd: path.join(process.cwd(), "tools/trainingpeaks-export"),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }
+  );
+  assert(
+    output.includes("check-action-dry-run-telegram-copy-import: ok"),
+    "tp-actions-once dry-run telegram copy import smoke failed"
+  );
+}
+
 function run(): void {
+  assertRunnerDryRunCopyImportSmoke();
+
   const pending = makeAction({ id: "a-pending", status: "pending_coach" });
   const ready = makeAction({
     id: "a-ready",
