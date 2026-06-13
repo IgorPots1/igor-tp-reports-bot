@@ -188,34 +188,116 @@ async function run(): Promise<void> {
     failures.push("keep_visible should keep card visible in would-send count");
   }
 
+  const previousDebugId = process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_SHOW_DEBUG_ID;
+  process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_SHOW_DEBUG_ID = "false";
+
   const reviewCard = formatTpSignalReviewCardText({
     bucket: "review_required",
     studentName: "Test Athlete",
-    category: "health",
+    category: "health_pause",
     reason: "ambiguous_or_non_high_confidence_active_signal",
     sourcePreview: "горло болит",
     state: "needs_review",
     signalShortId: SIGNAL_SHORT,
   });
   assert.match(reviewCard, /🟡 Проверить сигнал/u);
-  assert.match(reviewCard, /Атлет: Test Athlete/u);
-  assert.match(reviewCard, /#a1b2c3d4/u);
+  assert.match(reviewCard, /👤 Test Athlete/u);
+  assert.match(reviewCard, /Категория: болезнь \/ пауза/u);
+  assert.match(reviewCard, /Что произошло:/u);
+  assert.match(reviewCard, /Почему в очереди:/u);
+  assert.match(reviewCard, /Состояние:\nТребует проверки/u);
+  assert.doesNotMatch(reviewCard, /health_pause/u);
+  assert.doesNotMatch(reviewCard, /needs_review/u);
+  assert.doesNotMatch(reviewCard, /classifier_confidence/u);
+  assert.doesNotMatch(reviewCard, /#a1b2c3d4/u);
 
   const closeCard = formatTpSignalReviewCardText({
     bucket: "close_candidate_review",
     studentName: "Test Athlete",
-    category: "health",
+    category: "pain_injury",
     reason: "ready_for_coach_close",
     lifecycleReason: "ready_for_coach_close",
+    sourcePreview: "боль / спин — свежий ответ: Есть парк — закрыть после проверки",
     state: "close_candidate",
     signalShortId: SIGNAL_SHORT,
   });
   assert.match(closeCard, /🔵 Можно закрыть после проверки/u);
+  assert.match(closeCard, /Категория: боль \/ травма/u);
+  assert.match(closeCard, /Состояние:\nКандидат на закрытие/u);
+  assert.doesNotMatch(closeCard, /pain_injury/u);
+  assert.doesNotMatch(closeCard, /ready_for_coach_close/u);
+
+  const ivanovCard = formatTpSignalReviewCardText({
+    bucket: "review_required",
+    studentName: "Alexander Ivanov",
+    category: "health_pause",
+    reason: "classifier_confidence=medium",
+    sourcePreview: "после болезни: пробежка 11.06 была — проверить самочувствие после пробежки.",
+    state: "active_problem",
+    signalShortId: "9b201054",
+  });
+  assert.match(ivanovCard, /👤 Alexander Ivanov/u);
+  assert.match(ivanovCard, /Категория: болезнь \/ пауза/u);
+  assert.match(ivanovCard, /После болезни была пробежка 11\.06 — нужно проверить самочувствие после пробежки\./u);
+  assert.match(ivanovCard, /Сигнал не до конца однозначный, лучше проверить вручную\./u);
+  assert.match(ivanovCard, /Состояние:\nАктивный вопрос/u);
+  assert.doesNotMatch(ivanovCard, /health_pause|active_problem|classifier_confidence/u);
+
+  const trofimovCard = formatTpSignalReviewCardText({
+    bucket: "review_required",
+    studentName: "Stepan Trofimov",
+    category: "pain_injury",
+    reason: "recommended_state=needs_review; latest_negative_evidence; classifier_confidence=medium",
+    sourcePreview: "самочувствие улучшается — уточнить, болит ли сейчас и мешает ли тренировкам",
+    state: "needs_review",
+    signalShortId: "8dbd2492",
+  });
+  assert.match(trofimovCard, /👤 Stepan Trofimov/u);
+  assert.match(trofimovCard, /Категория: боль \/ травма/u);
+  assert.match(
+    trofimovCard,
+    /Есть жалоба или неясное самочувствие, нужно решение тренера\./u
+  );
+  assert.match(trofimovCard, /Состояние:\nТребует проверки/u);
+  assert.doesNotMatch(
+    trofimovCard,
+    /pain_injury|needs_review|recommended_state|latest_negative_evidence|classifier_confidence/u
+  );
+
+  process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_SHOW_DEBUG_ID = "true";
+  const debugCard = formatTpSignalReviewCardText({
+    bucket: "review_required",
+    studentName: "Test Athlete",
+    category: "health_pause",
+    reason: "classifier_confidence=medium",
+    sourcePreview: "горло болит",
+    state: "active_problem",
+    signalShortId: "9b201054",
+  });
+  assert.match(debugCard, /ID: 9b201054/u);
+  process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_SHOW_DEBUG_ID = previousDebugId;
 
   const reviewMarkup = getTpSignalReviewCardMarkup("review_required", SIGNAL_SHORT);
   assert.equal(reviewMarkup.inline_keyboard.length, 2);
+  assert.equal(reviewMarkup.inline_keyboard[0]?.[0]?.text, "✅ Учёл");
+  assert.equal(reviewMarkup.inline_keyboard[0]?.[1]?.text, "👀 Позже");
+  assert.equal(reviewMarkup.inline_keyboard[1]?.[0]?.text, "🙈 Скрыть");
+  assert.equal(reviewMarkup.inline_keyboard[1]?.[1]?.text, "📝 Напомнить follow-up");
+  assert.equal(
+    parseTpSignalReviewCallback(reviewMarkup.inline_keyboard[0]?.[0]?.callback_data ?? null)?.kind,
+    "acknowledged"
+  );
+  assert.equal(
+    mapTpSignalReviewCallbackToDecision(
+      parseTpSignalReviewCallback(reviewMarkup.inline_keyboard[1]?.[0]?.callback_data ?? null)!
+    ),
+    "hide_from_queue"
+  );
+
   const closeMarkup = getTpSignalReviewCardMarkup("close_candidate_review", SIGNAL_SHORT);
   assert.equal(closeMarkup.inline_keyboard.length, 2);
+  assert.equal(closeMarkup.inline_keyboard[0]?.[0]?.text, "✅ Увидел");
+  assert.equal(closeMarkup.inline_keyboard[0]?.[1]?.text, "🙈 Скрыть");
 
   const parsedAck = parseTpSignalReviewCallback(`${TP_SIGNAL_REVIEW_CALLBACK_ACKNOWLEDGED_PREFIX}${SIGNAL_SHORT}`);
   assert.equal(parsedAck?.kind, "acknowledged");
@@ -392,7 +474,7 @@ async function run(): Promise<void> {
     failures.push("unexpected report dir before no-write diagnostic");
   }
 
-  console.log(`${LOG_PREFIX} cases=12`);
+  console.log(`${LOG_PREFIX} cases=16`);
   console.log(`- review_required included: ${reviewRequiredItem.bucket}`);
   console.log(`- close_candidate_review included: ${closeCandidateItem.bucket}`);
   console.log(`- obvious_auto_record excluded from queue: ${baseSelection.totalSelected}`);
@@ -409,7 +491,7 @@ async function run(): Promise<void> {
     process.exit(1);
   }
 
-  console.log(`${LOG_PREFIX} PASS (12/12)`);
+  console.log(`${LOG_PREFIX} PASS (16/16)`);
 }
 
 run().catch((error) => {

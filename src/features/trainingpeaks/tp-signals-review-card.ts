@@ -1,4 +1,11 @@
 import type { TelegramInlineKeyboardMarkup } from "@/features/telegram/types";
+import {
+  formatTpSignalCategoryLabel,
+  formatTpSignalReviewDebugIdLine,
+  formatTpSignalReviewQueueReason,
+  formatTpSignalReviewStateLabel,
+  formatTpSignalReviewWhatHappened,
+} from "@/features/trainingpeaks/tp-signals-review-coach-labels";
 import type { TpSignalReviewQueueBucket } from "@/features/trainingpeaks/tp-signals-review-queue-helpers";
 
 export const TP_SIGNAL_REVIEW_CALLBACK_ACKNOWLEDGED_PREFIX = "tp:rvq:a:";
@@ -34,42 +41,40 @@ function truncateForTelegram(text: string, maxLength: number): string {
   return `${text.slice(0, Math.max(0, maxLength - 1))}…`;
 }
 
-function safePreview(value: string | null | undefined): string | null {
-  const trimmed = value?.replace(/\s+/gu, " ").trim();
-  if (!trimmed) {
-    return null;
-  }
-  return truncateForTelegram(trimmed, 240);
-}
-
 export function formatTpSignalReviewCardText(input: FormatTpSignalReviewCardInput): string {
-  const preview = safePreview(input.sourcePreview);
+  const categoryLabel = formatTpSignalCategoryLabel(input.category);
+  const whatHappened = formatTpSignalReviewWhatHappened({
+    bucket: input.bucket,
+    category: input.category,
+    sourcePreview: input.sourcePreview,
+  });
+  const queueReason = formatTpSignalReviewQueueReason({
+    bucket: input.bucket,
+    category: input.category,
+    reason: input.reason,
+    lifecycleReason: input.lifecycleReason,
+  });
+  const stateLabel = formatTpSignalReviewStateLabel(input.state, input.bucket);
+  const debugIdLine = formatTpSignalReviewDebugIdLine(input.signalShortId);
+
   const lines: string[] = [];
 
   if (input.bucket === "review_required") {
-    lines.push(
-      "🟡 Проверить сигнал",
-      "",
-      `Атлет: ${input.studentName}`,
-      `Тип: ${input.category}`,
-      `Причина: ${truncateForTelegram(input.reason, 240)}`
-    );
-    if (preview) {
-      lines.push(`Сообщение: ${preview}`);
-    }
-    lines.push(`Статус: ${input.state || "needs_review"}`);
+    lines.push("🟡 Проверить сигнал", "", `👤 ${input.studentName}`, `Категория: ${categoryLabel}`);
   } else {
-    lines.push(
-      "🔵 Можно закрыть после проверки",
-      "",
-      `Атлет: ${input.studentName}`,
-      `Тип: ${input.category}`,
-      `Причина: ${truncateForTelegram(input.reason, 240)}`,
-      `Почему можно закрыть: ${truncateForTelegram(input.lifecycleReason || input.reason, 240)}`
-    );
+    lines.push("🔵 Можно закрыть после проверки", "", `👤 ${input.studentName}`, `Категория: ${categoryLabel}`);
   }
 
-  lines.push("", `#${input.signalShortId}`);
+  if (whatHappened) {
+    lines.push("", "Что произошло:", truncateForTelegram(whatHappened, 240));
+  }
+
+  lines.push("", "Почему в очереди:", truncateForTelegram(queueReason, 240));
+  lines.push("", "Состояние:", stateLabel);
+
+  if (debugIdLine) {
+    lines.push("", debugIdLine);
+  }
 
   const fullText = lines.join("\n");
   if (fullText.length <= TELEGRAM_MESSAGE_SOFT_LIMIT) {
@@ -97,17 +102,17 @@ export function getTpSignalReviewCardMarkup(
           callback_data: `${TP_SIGNAL_REVIEW_CALLBACK_ACKNOWLEDGED_PREFIX}${signalIdShort}`,
         },
         {
-          text: "👀 Оставить в очереди",
+          text: "👀 Позже",
           callback_data: `${TP_SIGNAL_REVIEW_CALLBACK_KEEP_VISIBLE_PREFIX}${signalIdShort}`,
         },
       ],
       [
         {
-          text: "🙈 Не показывать",
+          text: "🙈 Скрыть",
           callback_data: `${TP_SIGNAL_REVIEW_CALLBACK_HIDE_PREFIX}${signalIdShort}`,
         },
         {
-          text: "📝 Нужен follow-up",
+          text: "📝 Напомнить follow-up",
           callback_data: `${TP_SIGNAL_REVIEW_CALLBACK_FOLLOWUP_PREFIX}${signalIdShort}`,
         },
       ],
@@ -121,7 +126,7 @@ export function getTpSignalReviewCardMarkup(
         callback_data: `${TP_SIGNAL_REVIEW_CALLBACK_CLOSE_SEEN_PREFIX}${signalIdShort}`,
       },
       {
-        text: "🙈 Не показывать",
+        text: "🙈 Скрыть",
         callback_data: `${TP_SIGNAL_REVIEW_CALLBACK_HIDE_PREFIX}${signalIdShort}`,
       },
     ],
@@ -176,11 +181,17 @@ export function parseTpSignalReviewCallback(data: string | null): ParsedTpSignal
 }
 
 export function extractTpSignalReviewShortIdFromCoachText(text: string): string | null {
-  const match = text.match(/#([0-9a-f]{8})\b/i);
-  if (!match?.[1]) {
-    return null;
+  const hashMatch = text.match(/#([0-9a-f]{8})\b/i);
+  if (hashMatch?.[1]) {
+    return hashMatch[1].toLowerCase();
   }
-  return match[1].toLowerCase();
+
+  const idMatch = text.match(/\bID:\s*([0-9a-f]{8})\b/i);
+  if (idMatch?.[1]) {
+    return idMatch[1].toLowerCase();
+  }
+
+  return null;
 }
 
 export function mapTpSignalReviewCallbackToDecision(
