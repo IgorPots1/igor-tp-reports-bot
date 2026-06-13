@@ -91,6 +91,16 @@ const COACH_ACTION_REASON_TRANSLATIONS: Array<{ pattern: RegExp | string; label:
   },
   { pattern: /candidate not found/i, label: "тренировка не найдена" },
   { pattern: /fingerprint mismatch/i, label: "тренировка изменилась, нужна повторная проверка" },
+  {
+    pattern: /current confidence below threshold/i,
+    label: "недостаточно уверенности при повторной проверке",
+  },
+  { pattern: /^Revalidation failed:/i, label: "повторная проверка перед выполнением не прошла" },
+  { pattern: /verification failed/i, label: "проверка после переноса не прошла" },
+  { pattern: /manual review required/i, label: "нужна ручная проверка после переноса" },
+  { pattern: /API move PUT failed/i, label: "TrainingPeaks API вернул ошибку" },
+  { pattern: /API move gate/i, label: "API move выключен" },
+  { pattern: /target day already has workout|target.?conflict|конфликт/i, label: "на целевой день уже есть тренировка" },
   { pattern: /source day is ambiguous/i, label: "исходный день указан неоднозначно" },
   { pattern: /ambiguous_target_day/i, label: "целевой день указан неоднозначно" },
 ];
@@ -178,10 +188,19 @@ export function extractCoachActionLatestReason(latestRunContext: unknown): strin
     latestDryRun?: CoachActionRunSummaryInput | null;
     latestExecute?: CoachActionRunSummaryInput | null;
   };
-  for (const run of [context.latestRelevant, context.latestExecute, context.latestDryRun]) {
-    if (!run || typeof run !== "object") {
+
+  const runs: Array<CoachActionRunSummaryInput | null | undefined> = [];
+  if (context.latestExecute?.status === "failed") {
+    runs.push(context.latestExecute);
+  }
+  runs.push(context.latestRelevant, context.latestExecute, context.latestDryRun);
+
+  const seen = new Set<CoachActionRunSummaryInput>();
+  for (const run of runs) {
+    if (!run || typeof run !== "object" || seen.has(run)) {
       continue;
     }
+    seen.add(run);
     const blocked = trimOrNull(run.blockedReason);
     if (blocked) {
       return blocked;

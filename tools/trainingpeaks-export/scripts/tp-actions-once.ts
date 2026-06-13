@@ -7669,7 +7669,39 @@ export function shouldBypassConfidenceThresholdForCoachConfirmedRevalidation(inp
   return input.actionExecutionStatus === "execute_pending" || input.actionExecutionStatus === "running_local";
 }
 
-function buildRevalidationComparison(input: {
+function logExecuteRevalidationDiagnostics(input: {
+  actionId: string;
+  parsedPayload: unknown;
+  trustedDryRunRunId: string;
+  trusted: TrustedDryRunLog;
+  current: DryRunEvaluation;
+  comparison: RevalidationComparison;
+  coachConfirmedWorkoutBypassEligible: boolean;
+}): void {
+  const confirmedWorkoutId = extractCoachConfirmedSourceWorkoutId(
+    (input.parsedPayload ?? null) as ParsedMoveWorkoutPayload | null
+  );
+  const confidenceThreshold = 0.8;
+  console.log(
+    [
+      "[tp-actions:execute-revalidation]",
+      `action_id=${input.actionId}`,
+      `coach_confirmed_source_workout_id=${confirmedWorkoutId ?? "null"}`,
+      `latest_dry_run_id=${input.trustedDryRunRunId}`,
+      `latest_dry_run_result=${input.trusted.dryRunResult}`,
+      `latest_dry_run_can_execute=${String(input.trusted.canExecute)}`,
+      `dry_run_selected_source_workout_id=${input.trusted.candidate.workoutId ?? "null"}`,
+      `current_selected_source_workout_id=${input.current.candidate?.workoutId ?? "null"}`,
+      `confidence=${input.current.confidence.toFixed(2)}`,
+      `confidence_threshold=${confidenceThreshold.toFixed(2)}`,
+      `coach_confirmed_bypass_eligible=${input.coachConfirmedWorkoutBypassEligible ? "true" : "false"}`,
+      `coach_confirmed_source_revalidation_bypass=${input.comparison.confidenceThresholdBypassed ? "true" : "false"}`,
+      `blocked_reason=${input.comparison.mismatchReasons.join("; ") || "null"}`,
+    ].join(" ")
+  );
+}
+
+export function buildRevalidationComparison(input: {
   trusted: TrustedDryRunLog;
   current: DryRunEvaluation;
   parsedPayload?: unknown;
@@ -7773,21 +7805,31 @@ function buildRevalidationComparison(input: {
   const currentExecutionConfidenceThreshold = strongFutureRevalidationTrusted
     ? moveSourcePolicy.STRONG_FUTURE_DESCRIPTOR_EXECUTION_CONFIDENCE_THRESHOLD
     : 0.8;
-  const shouldBypassConfidenceThreshold = shouldBypassConfidenceThresholdForCoachConfirmedRevalidation({
-    parsedPayload: input.parsedPayload ?? null,
-    trustedSelectedSourceDatePolicy: input.trusted.selectedSourceDatePolicy,
-    currentSelectedSourceDatePolicy: input.current.selectedSourceDatePolicy,
-    trustedSourceDate: input.trusted.resolvedDates.sourceDate,
-    trustedTargetDate: input.trusted.resolvedDates.targetDate,
-    currentSourceDate: input.current.resolvedDates.sourceDate,
-    currentTargetDate: input.current.resolvedDates.targetDate,
-    actionStatus: input.actionStatus,
-    actionExecutionStatus: input.actionExecutionStatus,
-  });
+  const shouldBypassConfidenceThresholdForCoachConfirmedDate =
+    shouldBypassConfidenceThresholdForCoachConfirmedRevalidation({
+      parsedPayload: input.parsedPayload ?? null,
+      trustedSelectedSourceDatePolicy: input.trusted.selectedSourceDatePolicy,
+      currentSelectedSourceDatePolicy: input.current.selectedSourceDatePolicy,
+      trustedSourceDate: input.trusted.resolvedDates.sourceDate,
+      trustedTargetDate: input.trusted.resolvedDates.targetDate,
+      currentSourceDate: input.current.resolvedDates.sourceDate,
+      currentTargetDate: input.current.resolvedDates.targetDate,
+      actionStatus: input.actionStatus,
+      actionExecutionStatus: input.actionExecutionStatus,
+    });
+  const coachConfirmedSourceWorkoutBypassEligible =
+    moveSourcePolicy.isCoachConfirmedSourceWorkoutExecuteRevalidationReady({
+      parsedPayload: input.parsedPayload ?? null,
+      trustedDryRunLog: input.trusted,
+      currentEvaluation: input.current,
+    });
+  const shouldBypassConfidenceThreshold =
+    shouldBypassConfidenceThresholdForCoachConfirmedDate || coachConfirmedSourceWorkoutBypassEligible;
   if (currentExecutionConfidence < currentExecutionConfidenceThreshold) {
     if (shouldBypassConfidenceThreshold) {
-      confidenceThresholdBypassReason =
-        "current confidence below threshold ignored because source was coach-confirmed";
+      confidenceThresholdBypassReason = coachConfirmedSourceWorkoutBypassEligible
+        ? "current confidence below threshold ignored because coach-confirmed source workout matched"
+        : "current confidence below threshold ignored because source was coach-confirmed";
     } else {
       mismatchReasons.push(`current confidence below threshold: ${currentExecutionConfidence.toFixed(2)}`);
     }
@@ -9241,13 +9283,33 @@ async function main(): Promise<void> {
       actionStatus: claimed.action.status,
       actionExecutionStatus: claimed.action.execution_status,
     });
+    const coachConfirmedWorkoutBypassEligible =
+      moveSourcePolicy.isCoachConfirmedSourceWorkoutExecuteRevalidationReady({
+        parsedPayload: claimed.action.parsed_payload,
+        trustedDryRunLog: claimed.trustedDryRunLog,
+        currentEvaluation: evaluation,
+      });
     if (comparison.confidenceThresholdBypassed && comparison.confidenceThresholdBypassReason) {
       console.log(
         `[execute-real] action=${claimed.action.id} ${comparison.confidenceThresholdBypassReason} (${evaluation.confidence.toFixed(2)})`
       );
+      if (coachConfirmedWorkoutBypassEligible) {
+        console.log(
+          `[execute-real] action=${claimed.action.id} coach_confirmed_source_revalidation_bypass=true workoutId=${claimed.trustedDryRunLog.candidate.workoutId ?? "null"}`
+        );
+      }
     }
 
     if (!comparison.revalidationPassed) {
+      logExecuteRevalidationDiagnostics({
+        actionId: claimed.action.id,
+        parsedPayload: claimed.action.parsed_payload,
+        trustedDryRunRunId: claimed.trustedDryRunRun.id,
+        trusted: claimed.trustedDryRunLog,
+        current: evaluation,
+        comparison,
+        coachConfirmedWorkoutBypassEligible,
+      });
       const errorMessage = `Revalidation failed: ${comparison.mismatchReasons.join("; ") || "unknown mismatch"}`;
       const logJson = {
         ...baseLog,

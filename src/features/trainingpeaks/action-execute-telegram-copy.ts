@@ -57,15 +57,14 @@ export function formatTrainingPeaksExecuteQueuedMessage(input?: {
   parsedPayload?: unknown;
   trustedSourceDate?: string | null;
   trustedTargetDate?: string | null;
+  actionId?: string | null;
+  retry?: boolean;
 }): string {
-  const executeCommand = formatTpActionsExecuteOnceCommand();
-  const lines = [
-    "✅ Выполнение поставлено в очередь.",
-    "TrainingPeaks пока не изменён.",
-    "",
-    "Теперь запусти:",
-    executeCommand,
-  ];
+  const executeCommand = formatTpActionsExecuteOnceCommand({ actionId: input?.actionId });
+  const lines = input?.retry
+    ? ["✅ Повторное выполнение поставлено в очередь."]
+    : ["✅ Выполнение поставлено в очередь."];
+  lines.push("TrainingPeaks пока не изменён.", "", input?.retry ? "Запусти:" : "Теперь запусти:", executeCommand);
 
   if (input?.studentName || input?.parsedPayload) {
     const route = formatActionMoveRouteForCoach(input.parsedPayload ?? {}, {
@@ -125,6 +124,63 @@ export function formatTrainingPeaksExecuteBlockedMessage(input: {
   return "Перенос не поставлен на выполнение: последняя проверка не разрешает выполнение.";
 }
 
+function translateExecuteRevalidationMismatchReason(reason: string): string | null {
+  const normalized = reason.trim();
+  if (!normalized) {
+    return null;
+  }
+  if (/candidate fingerprint mismatch/i.test(normalized)) {
+    return "Повторная проверка перед выполнением не прошла: подтверждённая тренировка не совпала с текущей карточкой в TP.";
+  }
+  if (/candidate title contradicts trusted dry-run/i.test(normalized)) {
+    return "Повторная проверка перед выполнением не прошла: название тренировки изменилось в TrainingPeaks.";
+  }
+  if (/sourceDate mismatch/i.test(normalized)) {
+    return "Повторная проверка перед выполнением не прошла: исходная дата не совпала с dry-run.";
+  }
+  if (/targetDate mismatch/i.test(normalized)) {
+    return "Повторная проверка перед выполнением не прошла: целевая дата не совпала с dry-run.";
+  }
+  if (/target day already has workout|target.?conflict|конфликт/i.test(normalized)) {
+    return "Повторная проверка перед выполнением не прошла: на целевом дне появился конфликт.";
+  }
+  if (/identityCheck\.matchedBy became mismatch/i.test(normalized)) {
+    return "Повторная проверка перед выполнением не прошла: ученик в TrainingPeaks не совпал с ожидаемым.";
+  }
+  if (/current evaluation ambiguous/i.test(normalized)) {
+    return "Повторная проверка перед выполнением не прошла: найдено несколько вариантов тренировки.";
+  }
+  if (/current revalidation marked action unsafe/i.test(normalized)) {
+    return "Повторная проверка перед выполнением не прошла: перенос помечен небезопасным.";
+  }
+  if (/current confidence below threshold/i.test(normalized)) {
+    return "Повторная проверка перед выполнением не прошла: недостаточно уверенности.";
+  }
+  if (/current dryRunResult=/i.test(normalized)) {
+    return "Повторная проверка перед выполнением не прошла: тренировка не найдена однозначно.";
+  }
+  return null;
+}
+
+export function formatExecuteRevalidationFailureReasonRu(errorMessage: string): string | null {
+  const message = errorMessage.trim();
+  if (!message.startsWith("Revalidation failed:")) {
+    return null;
+  }
+  const details = message.slice("Revalidation failed:".length).trim();
+  if (!details) {
+    return "Повторная проверка перед выполнением не прошла.";
+  }
+  const parts = details.split(";").map((part) => part.trim()).filter(Boolean);
+  for (const part of parts) {
+    const translated = translateExecuteRevalidationMismatchReason(part);
+    if (translated) {
+      return translated;
+    }
+  }
+  return `Повторная проверка перед выполнением не прошла: ${details}.`;
+}
+
 export function formatTrainingPeaksExecuteResultMessage(input: {
   studentName: string;
   route: string;
@@ -141,6 +197,10 @@ export function formatTrainingPeaksExecuteResultMessage(input: {
   }
 
   if (message.startsWith("Revalidation failed:")) {
+    const specificReason = formatExecuteRevalidationFailureReasonRu(message);
+    if (specificReason) {
+      return `⚠️ Перенос не выполнен. ${input.studentName}: ${input.route}. ${specificReason} TrainingPeaks не изменён. Проверь заявку в /tp_actions.`;
+    }
     return `⚠️ Перенос не выполнен. ${input.studentName}: ${input.route}. Повторная проверка не совпала с dry-run. TrainingPeaks не изменён. Проверь заявку в /tp_actions.`;
   }
 

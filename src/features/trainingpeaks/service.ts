@@ -73,6 +73,7 @@ import {
   rejectTrainingPeaksAction as rejectTrainingPeaksActionInRepository,
   recordTrainingPeaksStudentContactEvent,
   requestTrainingPeaksActionExecution as requestTrainingPeaksActionExecutionInRepository,
+  requeueTrainingPeaksActionExecution as requeueTrainingPeaksActionExecutionInRepository,
   requestTrainingPeaksActionDryRunRecheck as requestTrainingPeaksActionDryRunRecheckInRepository,
   confirmTrainingPeaksActionSourceDate as confirmTrainingPeaksActionSourceDateInRepository,
   confirmTrainingPeaksActionSourceWorkout as confirmTrainingPeaksActionSourceWorkoutInRepository,
@@ -90,6 +91,7 @@ import {
   TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
   type DecideTrainingPeaksActionResult,
   type RequestTrainingPeaksActionExecutionResult,
+  type RequeueTrainingPeaksActionExecutionResult,
   type RequestTrainingPeaksActionDryRunRecheckResult,
   type ConfirmTrainingPeaksActionSourceDateResult,
   type ConfirmTrainingPeaksActionSourceWorkoutResult,
@@ -451,6 +453,7 @@ export type DecideTrainingPeaksActionInput = {
 
 export type DecideTrainingPeaksActionResultSnapshot = DecideTrainingPeaksActionResult;
 export type RequestTrainingPeaksActionExecutionResultSnapshot = RequestTrainingPeaksActionExecutionResult;
+export type RequeueTrainingPeaksActionExecutionResultSnapshot = RequeueTrainingPeaksActionExecutionResult;
 export type RequestTrainingPeaksActionDryRunRecheckResultSnapshot = RequestTrainingPeaksActionDryRunRecheckResult;
 export type ConfirmTrainingPeaksActionSourceDateResultSnapshot = ConfirmTrainingPeaksActionSourceDateResult;
 export type ConfirmTrainingPeaksActionSourceWorkoutResultSnapshot = ConfirmTrainingPeaksActionSourceWorkoutResult;
@@ -9850,6 +9853,20 @@ export async function requestTrainingPeaksActionExecution(input: {
   return requestTrainingPeaksActionExecutionInRepository({
     actionId: input.actionId,
     requestedByChatId: input.requestedByChatId,
+    requestedByUserId: input.requestedByUserId ?? null,
+    requestMessageId: input.requestMessageId ?? null,
+  });
+}
+
+export async function requeueTrainingPeaksActionExecution(input: {
+  actionId: string;
+  requestedByChatId?: string | null;
+  requestedByUserId?: string | null;
+  requestMessageId?: string | null;
+}): Promise<RequeueTrainingPeaksActionExecutionResultSnapshot> {
+  return requeueTrainingPeaksActionExecutionInRepository({
+    actionId: input.actionId,
+    requestedByChatId: input.requestedByChatId ?? null,
     requestedByUserId: input.requestedByUserId ?? null,
     requestMessageId: input.requestMessageId ?? null,
   });

@@ -12,6 +12,12 @@ import {
   type CoachActionListItem,
 } from "@/features/trainingpeaks/action-list-telegram-copy";
 import {
+  formatTrainingPeaksExecuteQueuedMessage,
+} from "@/features/trainingpeaks/action-execute-telegram-copy";
+import {
+  evaluateActionExecuteRetryEligibility,
+} from "@/features/trainingpeaks/action-execute-retry-policy";
+import {
   buildCoachDryRunFailureNotificationLines,
   formatCoachDryRunCandidateLine,
 } from "@/features/trainingpeaks/action-dry-run-telegram-copy";
@@ -269,9 +275,119 @@ function run(): void {
   assert(trainingPeaksSource.includes("tp:ta:a:"), "approve callback prefix changed");
   assert(trainingPeaksSource.includes("tp:ta:r:"), "reject callback prefix changed");
   assert(trainingPeaksSource.includes("tp:ta:x:"), "execute callback prefix changed");
+  assert(trainingPeaksSource.includes("tp:ta:rx:"), "retry execute callback prefix missing");
   assert(trainingPeaksSource.includes("tp:ta:sw:"), "select workout callback prefix missing");
+  assert(trainingPeaksSource.includes("🔁 Повторить выполнение"), "retry execute button label missing");
   assert(trainingPeaksSource.includes('data === "tp:actions:list"'), "actions list callback changed");
   assert(trainingPeaksSource.includes('data === TP_CALLBACK_SIGNALS'), "signals callback missing");
+
+  const retryEligible = evaluateActionExecuteRetryEligibility({
+    actionType: "move_workout",
+    status: "approved",
+    executionStatus: "failed",
+    parsedPayload: {
+      sourceDate: "2026-06-13",
+      target: { kind: "date", value: "2026-06-14" },
+      coach_confirmed_source_workout_id: 3777415862,
+    },
+    latestRunContext: {
+      latestDryRun: {
+        runId: "dry-1",
+        runType: "dry_run",
+        status: "completed",
+        dryRunResult: "candidate_found",
+        canExecute: true,
+        logJson: {
+          dryRunResult: "candidate_found",
+          canExecute: true,
+          candidate: { fingerprint: "abc", workoutId: 3777415862 },
+          resolvedDates: { sourceDate: "2026-06-13", targetDate: "2026-06-14" },
+          selectedSourceDatePolicy: "explicit_source_date",
+          identityCheck: { matchedBy: "athlete_id" },
+        },
+      },
+      latestExecute: {
+        runId: "real-1",
+        runType: "real",
+        status: "failed",
+        failureReason: "Revalidation failed: current confidence below threshold: 0.77",
+      },
+    },
+  });
+  assert(retryEligible.safeToRetryExecute, "failed action with executable dry-run should allow retry");
+  assert(retryEligible.latestExecuteFailed, "latest execute failed flag missing");
+
+  const retryBlocked = evaluateActionExecuteRetryEligibility({
+    actionType: "move_workout",
+    status: "approved",
+    executionStatus: "failed",
+    parsedPayload: {
+      sourceDate: "2026-06-13",
+      target: { kind: "date", value: "2026-06-14" },
+    },
+    latestRunContext: {
+      latestDryRun: {
+        runId: "dry-2",
+        runType: "dry_run",
+        status: "completed",
+        dryRunResult: "not_found",
+        canExecute: false,
+        logJson: { dryRunResult: "not_found", canExecute: false },
+      },
+      latestExecute: {
+        runId: "real-2",
+        runType: "real",
+        status: "failed",
+        failureReason: "candidate not found",
+      },
+    },
+  });
+  assert(!retryBlocked.safeToRetryExecute, "failed action with non-executable dry-run must block retry");
+  assert(Boolean(retryBlocked.reasonIfNo), "blocked retry should expose reason");
+
+  const failedExecuteReason = formatCoachActionReasonForDisplay({
+    latestExecute: {
+      failureReason: "Revalidation failed: current confidence below threshold: 0.77",
+    },
+    latestDryRun: {
+      status: "completed",
+      dryRunResult: "candidate_found",
+      canExecute: true,
+    },
+  });
+  assert(
+    failedExecuteReason.includes("недостаточно уверенности при повторной проверке"),
+    "failed execute reason should not fall back to generic manual review"
+  );
+
+  const executeFailedSummary = formatCoachActionRunSummary(
+    {
+      status: "failed",
+      failureReason: "Revalidation failed: current confidence below threshold: 0.77",
+    },
+    "execute"
+  );
+  assert(executeFailedSummary.includes("ошибка выполнения"), "execute summary missing failure header");
+  assert(
+    executeFailedSummary.includes("недостаточно уверенности при повторной проверке"),
+    "execute summary missing specific failure reason"
+  );
+
+  const retryQueuedMessage = formatTrainingPeaksExecuteQueuedMessage({
+    studentName: "Gudkova Ekaterina",
+    parsedPayload: {
+      sourceDate: "2026-06-13",
+      target: { kind: "date", value: "2026-06-14" },
+    },
+    actionId: "a886b2cb-4d75-40f0-966a-b9905b8af350",
+    retry: true,
+  });
+  assert(retryQueuedMessage.includes("Повторное выполнение поставлено в очередь"), "retry queued header missing");
+  assert(retryQueuedMessage.includes("Gudkova Ekaterina: 13.06 → 14.06"), "retry queued route missing");
+  assert(
+    retryQueuedMessage.includes("--action-id=a886b2cb-4d75-40f0-966a-b9905b8af350"),
+    "retry queued command missing action id"
+  );
 
   console.log(`${LOG_PREFIX} PASS`);
 }

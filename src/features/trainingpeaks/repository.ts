@@ -17,6 +17,7 @@ import {
   isEligibleForCoachSourceWorkoutConfirmation,
   resolvePlannedVsCompletedHintFromDryRunLog,
 } from "@/features/trainingpeaks/action-planned-completed-ambiguity";
+import { evaluateActionExecuteRetryEligibility } from "@/features/trainingpeaks/action-execute-retry-policy";
 
 export type TrainingPeaksTelegramFormality = "ty" | "vy" | "unknown";
 
@@ -736,6 +737,34 @@ export type RequestTrainingPeaksActionExecutionResult =
     }
   | {
       kind: "final_state";
+      action: TrainingPeaksAction;
+    }
+  | {
+      kind: "blocked";
+      action: TrainingPeaksAction;
+      reason: string;
+      latestRunContext: TrainingPeaksActionLatestRunContext | null;
+    }
+  | {
+      kind: "not_found";
+    };
+
+export type RequeueTrainingPeaksActionExecutionInput = {
+  actionId: string;
+  requestedByChatId?: string | null;
+  requestedByUserId?: string | null;
+  requestMessageId?: string | null;
+};
+
+export type RequeueTrainingPeaksActionExecutionResult =
+  | {
+      kind: "queued";
+      action: TrainingPeaksAction;
+      queuedDisplay: TrainingPeaksActionExecutionQueuedDisplayContext;
+      dryRunRunId: string;
+    }
+  | {
+      kind: "already_queued";
       action: TrainingPeaksAction;
     }
   | {
@@ -3836,6 +3865,136 @@ export async function requestTrainingPeaksActionExecution(
   ) {
     return { kind: "final_state", action: latest };
   }
+  return {
+    kind: "blocked",
+    action: latest,
+    reason: "Action state changed. Please refresh and try again.",
+    latestRunContext: await getTrainingPeaksActionLatestRunContext(latest.id),
+  };
+}
+
+async function loadLatestCompletedDryRunRun(
+  actionId: string
+): Promise<{ id: string; log_json: unknown } | null> {
+  const supabase = createSupabaseServerClient();
+  const { data: dryRunRun, error: dryRunError } = await supabase
+    .from("trainingpeaks_action_runs")
+    .select("id, log_json")
+    .eq("action_id", actionId)
+    .eq("run_type", "dry_run")
+    .eq("status", "completed")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (dryRunError) {
+    throw new Error(
+      `Failed to load latest completed dry-run for TrainingPeaks action ${actionId}: ${dryRunError.message}`
+    );
+  }
+
+  if (!dryRunRun) {
+    return null;
+  }
+
+  return dryRunRun as { id: string; log_json: unknown };
+}
+
+export async function requeueTrainingPeaksActionExecution(
+  input: RequeueTrainingPeaksActionExecutionInput
+): Promise<RequeueTrainingPeaksActionExecutionResult> {
+  const supabase = createSupabaseServerClient();
+  const action = await getTrainingPeaksActionByIdInternal(input.actionId);
+  if (!action) {
+    return { kind: "not_found" };
+  }
+
+  if (action.executionStatus === "execute_pending" && action.status === "approved") {
+    return { kind: "already_queued", action };
+  }
+
+  const latestRunContext = await getTrainingPeaksActionLatestRunContext(action.id);
+  const retryEligibility = evaluateActionExecuteRetryEligibility({
+    actionType: action.actionType,
+    status: action.status,
+    executionStatus: action.executionStatus,
+    parsedPayload: action.parsedPayload,
+    latestRunContext,
+  });
+
+  if (!retryEligibility.safeToRetryExecute) {
+    return {
+      kind: "blocked",
+      action,
+      reason: retryEligibility.reasonIfNo ?? "Retry is not allowed for this action.",
+      latestRunContext,
+    };
+  }
+
+  const dryRunRun = await loadLatestCompletedDryRunRun(action.id);
+  if (!dryRunRun) {
+    return {
+      kind: "blocked",
+      action,
+      reason: "Trusted dry-run run is missing.",
+      latestRunContext,
+    };
+  }
+
+  const dryRunValidation = validateDryRunLogReadiness(dryRunRun.log_json, action.parsedPayload);
+  if (!dryRunValidation.ok) {
+    return {
+      kind: "blocked",
+      action,
+      reason: dryRunValidation.reason,
+      latestRunContext,
+    };
+  }
+
+  const nowIso = new Date().toISOString();
+  const { data: queuedRow, error: updateError } = await supabase
+    .from("trainingpeaks_actions")
+    .update({
+      execution_status: "execute_pending",
+      execution_mode: "real",
+      last_run_id: dryRunRun.id,
+      execution_requested_at: nowIso,
+      execution_requested_by_chat_id: input.requestedByChatId ?? null,
+      execution_requested_by_user_id: input.requestedByUserId ?? null,
+      execution_request_message_id: input.requestMessageId ?? null,
+    })
+    .eq("id", input.actionId)
+    .eq("status", "approved")
+    .eq("execution_status", "failed")
+    .select("*")
+    .maybeSingle();
+
+  if (updateError) {
+    throw new Error(`Failed to requeue TrainingPeaks action execution ${input.actionId}: ${updateError.message}`);
+  }
+
+  if (queuedRow) {
+    const queuedAction = mapTrainingPeaksActionRow(queuedRow as TrainingPeaksActionRow);
+    const queuedDisplay = await resolveActionExecutionQueuedDisplayContext(
+      queuedAction,
+      dryRunRun.log_json
+    );
+    return {
+      kind: "queued",
+      action: queuedAction,
+      queuedDisplay,
+      dryRunRunId: dryRunRun.id,
+    };
+  }
+
+  const latest = await getTrainingPeaksActionByIdInternal(input.actionId);
+  if (!latest) {
+    return { kind: "not_found" };
+  }
+  if (latest.executionStatus === "execute_pending" && latest.status === "approved") {
+    return { kind: "already_queued", action: latest };
+  }
+
   return {
     kind: "blocked",
     action: latest,

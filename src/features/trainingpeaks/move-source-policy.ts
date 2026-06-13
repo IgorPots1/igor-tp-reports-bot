@@ -306,6 +306,176 @@ export function isCoachConfirmedSourceWorkoutManualExecuteReady(input: unknown, 
   );
 }
 
+function normalizeWorkoutId(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function hasTargetConflictInCanExecuteReasons(canExecuteReasons: unknown): boolean {
+  return normalizeCanExecuteReasons(canExecuteReasons).some((reason) =>
+    /target day already has workout|target.?conflict|конфликт/i.test(reason)
+  );
+}
+
+function extractParsedMoveDates(parsedPayload: unknown): { sourceDate: string | null; targetDate: string | null } {
+  if (!parsedPayload || typeof parsedPayload !== "object") {
+    return { sourceDate: null, targetDate: null };
+  }
+  const payload = parsedPayload as {
+    sourceDate?: unknown;
+    source_date?: unknown;
+    source?: { kind?: unknown; value?: unknown } | null;
+    target?: { kind?: unknown; value?: unknown } | null;
+  };
+  const sourceDate =
+    trimOrNull(payload.sourceDate) ??
+    trimOrNull(payload.source_date) ??
+    (payload.source?.kind === "date" && typeof payload.source.value === "string"
+      ? trimOrNull(payload.source.value)
+      : null);
+  const targetDate =
+    payload.target?.kind === "date" && typeof payload.target.value === "string"
+      ? trimOrNull(payload.target.value)
+      : null;
+  return { sourceDate, targetDate };
+}
+
+function readDryRunEvaluationShape(input: unknown): {
+  dryRunResult: string | null;
+  canExecute: boolean | null;
+  canExecuteReasons: string[];
+  candidateWorkoutId: number | null;
+  sourceDate: string | null;
+  targetDate: string | null;
+  identityMatchedBy: string | null;
+  candidateAlternativesCount: number | null;
+  hasCandidate: boolean;
+} | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+  const payload = input as {
+    dryRunResult?: unknown;
+    canExecute?: unknown;
+    canExecuteReasons?: unknown;
+    candidate?: { workoutId?: unknown } | null;
+    resolvedDates?: { sourceDate?: unknown; targetDate?: unknown } | null;
+    selectedSourceDate?: unknown;
+    identityCheck?: { matchedBy?: unknown } | null;
+    candidateAlternativesCount?: unknown;
+  };
+  return {
+    dryRunResult: trimOrNull(payload.dryRunResult),
+    canExecute: typeof payload.canExecute === "boolean" ? payload.canExecute : null,
+    canExecuteReasons: normalizeCanExecuteReasons(payload.canExecuteReasons),
+    candidateWorkoutId: normalizeWorkoutId(payload.candidate?.workoutId),
+    sourceDate:
+      trimOrNull(payload.resolvedDates?.sourceDate) ?? trimOrNull(payload.selectedSourceDate),
+    targetDate: trimOrNull(payload.resolvedDates?.targetDate),
+    identityMatchedBy:
+      typeof payload.identityCheck?.matchedBy === "string" ? payload.identityCheck.matchedBy : null,
+    candidateAlternativesCount:
+      typeof payload.candidateAlternativesCount === "number" &&
+      Number.isFinite(payload.candidateAlternativesCount)
+        ? payload.candidateAlternativesCount
+        : null,
+    hasCandidate: Boolean(payload.candidate),
+  };
+}
+
+export type CoachConfirmedSourceWorkoutExecuteRevalidationInput = {
+  parsedPayload?: unknown;
+  trustedDryRunLog: unknown;
+  currentEvaluation: unknown;
+};
+
+export function isCoachConfirmedSourceWorkoutExecuteRevalidationReady(
+  input: CoachConfirmedSourceWorkoutExecuteRevalidationInput
+): boolean {
+  const parsedPayload = input.parsedPayload ?? null;
+  if (parsedPayload && typeof parsedPayload === "object") {
+    const actionType = (parsedPayload as { actionType?: unknown }).actionType;
+    if (typeof actionType === "string" && actionType.trim() && actionType !== "move_workout") {
+      return false;
+    }
+  }
+
+  const confirmedWorkoutId = extractCoachConfirmedSourceWorkoutId(parsedPayload);
+  if (!confirmedWorkoutId) {
+    return false;
+  }
+
+  const trusted = readDryRunEvaluationShape(input.trustedDryRunLog);
+  const current = readDryRunEvaluationShape(input.currentEvaluation);
+  if (!trusted || !current) {
+    return false;
+  }
+
+  if (trusted.dryRunResult !== "candidate_found" || trusted.canExecute !== true) {
+    return false;
+  }
+  if (current.dryRunResult !== "candidate_found" || current.canExecute !== true) {
+    return false;
+  }
+
+  if (!trusted.hasCandidate || !current.hasCandidate) {
+    return false;
+  }
+  if (trusted.candidateWorkoutId !== confirmedWorkoutId) {
+    return false;
+  }
+  if (current.candidateWorkoutId !== confirmedWorkoutId) {
+    return false;
+  }
+
+  if (
+    !trusted.sourceDate ||
+    !trusted.targetDate ||
+    !current.sourceDate ||
+    !current.targetDate
+  ) {
+    return false;
+  }
+  if (trusted.sourceDate !== current.sourceDate || trusted.targetDate !== current.targetDate) {
+    return false;
+  }
+
+  const parsedDates = extractParsedMoveDates(parsedPayload);
+  if (parsedDates.sourceDate && parsedDates.sourceDate !== trusted.sourceDate) {
+    return false;
+  }
+  if (parsedDates.targetDate && parsedDates.targetDate !== trusted.targetDate) {
+    return false;
+  }
+
+  if (!trusted.identityMatchedBy || trusted.identityMatchedBy === "mismatch") {
+    return false;
+  }
+  if (!current.identityMatchedBy || current.identityMatchedBy === "mismatch") {
+    return false;
+  }
+
+  if (hasTargetConflictInCanExecuteReasons(current.canExecuteReasons)) {
+    return false;
+  }
+  if (
+    typeof current.candidateAlternativesCount === "number" &&
+    current.candidateAlternativesCount > 0
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
 export function isEligibleForCoachSourceDateConfirmation(input: unknown): boolean {
   if (!input || typeof input !== "object") {
     return false;

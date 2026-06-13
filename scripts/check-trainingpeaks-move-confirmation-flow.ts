@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import {
   isCoachConfirmedSourceDateManualExecuteReady,
   isCoachConfirmedSourceWorkoutManualExecuteReady,
+  isCoachConfirmedSourceWorkoutExecuteRevalidationReady,
   validateDryRunLogReadiness,
 } from "@/features/trainingpeaks/move-source-policy";
+import { formatExecuteRevalidationFailureReasonRu } from "@/features/trainingpeaks/action-execute-telegram-copy";
 import {
+  buildRevalidationComparison,
   evaluateDryRunOutcome,
   shouldBypassConfidenceThresholdForCoachConfirmedRevalidation,
 } from "../tools/trainingpeaks-export/scripts/tp-actions-once";
@@ -386,6 +389,167 @@ function run(): void {
     inferredBypassBlocked,
     false,
     "inferred source moves without coach confirmation must remain confidence-gated"
+  );
+
+  const gudkovaPayload = {
+    actionType: "move_workout",
+    source: { kind: "date", value: "2026-06-13" },
+    target: { kind: "date", value: "2026-06-14" },
+    sourceDate: "2026-06-13",
+    coach_confirmed_source_workout_id: 3777415862,
+  };
+  const gudkovaCandidate = {
+    title: "5 х 7 мин (на улице)",
+    type: "run",
+    plannedDurationSec: 3600,
+    plannedDistance: null,
+    startTimeLocal: "1:00:00",
+    fingerprint: "4d3b22b6893011861cf75a6cda9f381381a7d1f4",
+    workoutId: 3777415862,
+  };
+  const gudkovaTrustedDryRun = {
+    dryRunResult: "candidate_found" as const,
+    canExecute: true as const,
+    confidence: 0.77,
+    candidate: gudkovaCandidate,
+    resolvedDates: {
+      sourceDate: "2026-06-13",
+      targetDate: "2026-06-14",
+      timezone: "Europe/Belgrade",
+    },
+    identityCheck: buildIdentityCheck(),
+    selectedSourceDatePolicy: "explicit_source_date",
+  };
+  const gudkovaCurrentEvaluation = {
+    dryRunResult: "candidate_found" as const,
+    resolvedDates: {
+      sourceDate: "2026-06-13",
+      targetDate: "2026-06-14",
+      timezone: "Europe/Belgrade",
+    },
+    candidate: gudkovaCandidate,
+    candidateAlternativesCount: 0,
+    confidence: 0.77,
+    canExecute: true,
+    canExecuteReasons: [] as string[],
+    diagnostics: {
+      loginRequired: false,
+      trainingPeaksContextOk: true,
+      athleteReachable: true,
+      parseWarnings: [],
+      zeroCandidates: null,
+      domDebug: null,
+    },
+    identityCheck: buildIdentityCheck(),
+    debugCandidatesTopN: [],
+    selectedSourceDatePolicy: "explicit_source_date",
+    selectedSourceDate: "2026-06-13",
+  };
+
+  assert.equal(
+    isCoachConfirmedSourceWorkoutExecuteRevalidationReady({
+      parsedPayload: gudkovaPayload,
+      trustedDryRunLog: gudkovaTrustedDryRun,
+      currentEvaluation: gudkovaCurrentEvaluation,
+    }),
+    true,
+    "Gudkova-like coach-confirmed workout should be eligible for execute revalidation bypass"
+  );
+
+  const gudkovaComparison = buildRevalidationComparison({
+    trusted: gudkovaTrustedDryRun,
+    current: gudkovaCurrentEvaluation,
+    parsedPayload: gudkovaPayload,
+    actionStatus: "approved",
+    actionExecutionStatus: "running_local",
+  });
+  assert.equal(
+    gudkovaComparison.revalidationPassed,
+    true,
+    "coach-confirmed workout revalidation should pass despite confidence 0.77"
+  );
+  assert.equal(gudkovaComparison.confidenceThresholdBypassed, true);
+
+  assert.equal(
+    isCoachConfirmedSourceWorkoutExecuteRevalidationReady({
+      parsedPayload: { actionType: "move_workout", sourceDate: "2026-06-13" },
+      trustedDryRunLog: gudkovaTrustedDryRun,
+      currentEvaluation: gudkovaCurrentEvaluation,
+    }),
+    false,
+    "missing coach_confirmed_source_workout_id must block bypass"
+  );
+
+  assert.equal(
+    isCoachConfirmedSourceWorkoutExecuteRevalidationReady({
+      parsedPayload: gudkovaPayload,
+      trustedDryRunLog: gudkovaTrustedDryRun,
+      currentEvaluation: {
+        ...gudkovaCurrentEvaluation,
+        candidate: { ...gudkovaCandidate, workoutId: 9999999999 },
+      },
+    }),
+    false,
+    "current source workout id mismatch must block bypass"
+  );
+
+  assert.equal(
+    isCoachConfirmedSourceWorkoutExecuteRevalidationReady({
+      parsedPayload: gudkovaPayload,
+      trustedDryRunLog: gudkovaTrustedDryRun,
+      currentEvaluation: {
+        ...gudkovaCurrentEvaluation,
+        canExecute: false,
+        canExecuteReasons: ["target day already has workout"],
+      },
+    }),
+    false,
+    "target conflict must block bypass"
+  );
+
+  assert.equal(
+    isCoachConfirmedSourceWorkoutExecuteRevalidationReady({
+      parsedPayload: gudkovaPayload,
+      trustedDryRunLog: { ...gudkovaTrustedDryRun, canExecute: false },
+      currentEvaluation: gudkovaCurrentEvaluation,
+    }),
+    false,
+    "trusted dry-run canExecute=false must block bypass"
+  );
+
+  assert.equal(
+    isCoachConfirmedSourceWorkoutExecuteRevalidationReady({
+      parsedPayload: gudkovaPayload,
+      trustedDryRunLog: gudkovaTrustedDryRun,
+      currentEvaluation: {
+        ...gudkovaCurrentEvaluation,
+        identityCheck: { ...buildIdentityCheck(), matchedBy: "mismatch" as const },
+      },
+    }),
+    false,
+    "athlete mismatch must block bypass"
+  );
+
+  const mismatchComparison = buildRevalidationComparison({
+    trusted: gudkovaTrustedDryRun,
+    current: {
+      ...gudkovaCurrentEvaluation,
+      candidate: { ...gudkovaCandidate, workoutId: 9999999999, fingerprint: "other-fp" },
+    },
+    parsedPayload: gudkovaPayload,
+    actionStatus: "approved",
+    actionExecutionStatus: "running_local",
+  });
+  assert.equal(mismatchComparison.revalidationPassed, false);
+  assert.equal(mismatchComparison.confidenceThresholdBypassed, false);
+
+  const revalidationCopy = formatExecuteRevalidationFailureReasonRu(
+    "Revalidation failed: candidate fingerprint mismatch"
+  );
+  assert.match(
+    revalidationCopy ?? "",
+    /подтверждённая тренировка не совпала/i,
+    "revalidation failure copy should be specific"
   );
 
   console.log("PASS check-trainingpeaks-move-confirmation-flow");

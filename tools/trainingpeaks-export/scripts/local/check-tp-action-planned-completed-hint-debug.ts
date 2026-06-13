@@ -20,6 +20,10 @@ import {
 } from "../../../../src/features/trainingpeaks/action-planned-completed-ambiguity.ts";
 import { validateDryRunLogReadiness } from "../../../../src/features/trainingpeaks/move-source-policy.ts";
 import { formatTpActionsExecuteOnceCommand } from "../../../../src/features/trainingpeaks/action-runner-commands.ts";
+import {
+  evaluateActionExecuteRetryEligibility,
+  extractExecuteRunFailureDiagnostics,
+} from "../../../../src/features/trainingpeaks/action-execute-retry-policy.ts";
 
 const LOG_PREFIX = "[check-tp-action-planned-completed-hint-debug]";
 const TP_CALLBACK_ACTION_SELECT_WORKOUT_PREFIX = "tp:ta:sw:";
@@ -279,6 +283,55 @@ function explainButtonEligibility(input: {
   return { wouldShow, reasons };
 }
 
+function extractCoachConfirmedSourceWorkoutId(parsedPayload: unknown): number | null {
+  if (!parsedPayload || typeof parsedPayload !== "object") {
+    return null;
+  }
+  const value = (parsedPayload as { coach_confirmed_source_workout_id?: unknown })
+    .coach_confirmed_source_workout_id;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  return value;
+}
+
+function extractFailureReasonFromRun(run: RunRow | null): string | null {
+  if (!run?.log_json || typeof run.log_json !== "object") {
+    return run?.status === "failed" ? null : null;
+  }
+  const payload = run.log_json as {
+    error?: unknown;
+    failureReason?: unknown;
+    blockedReason?: unknown;
+    reason?: unknown;
+  };
+  for (const key of ["failureReason", "blockedReason", "error", "reason"] as const) {
+    const value = payload[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+function mapRunContextSummary(run: RunRow | null) {
+  if (!run) {
+    return null;
+  }
+  const logJson = (run.log_json ?? null) as DryRunLogJson | null;
+  return {
+    runId: run.id,
+    runType: run.run_type,
+    status: run.status,
+    dryRunResult: typeof logJson?.dryRunResult === "string" ? logJson.dryRunResult : null,
+    canExecute: typeof logJson?.canExecute === "boolean" ? logJson.canExecute : null,
+    failureReason: extractFailureReasonFromRun(run),
+    errorMessage: null,
+    blockedReason: null,
+    logJson: run.log_json,
+  };
+}
+
 function formatCandidateDebugLine(candidate: DebugCandidate): string {
   const status = inferMoveCandidateWorkoutStatus(candidate);
   const built = buildPlannedCompletedAmbiguityCandidate(candidate);
@@ -338,6 +391,7 @@ async function main(): Promise<void> {
 
   const runs = (runRows as RunRow[] | null) ?? [];
   const latestDryRun = runs.find((run) => run.run_type === "dry_run") ?? null;
+  const latestExecute = runs.find((run) => run.run_type === "real") ?? null;
   const logJson = (latestDryRun?.log_json ?? null) as DryRunLogJson | null;
   const dates = extractMoveDates(action.parsed_payload);
   const storedHint = extractPlannedVsCompletedHintFromLogJson(logJson);
@@ -357,6 +411,7 @@ async function main(): Promise<void> {
   console.log(`status=${action.status}`);
   console.log(`execution_status=${action.execution_status}`);
   console.log(`execution_mode=${action.execution_mode ?? "null"}`);
+  console.log(`coach_confirmed_source_workout_id=${extractCoachConfirmedSourceWorkoutId(action.parsed_payload) ?? "null"}`);
   console.log(`source/target=${dates.sourceDate ?? "?"} -> ${dates.targetDate ?? "?"}`);
   console.log(`last_run_id=${action.last_run_id ?? "null"}`);
   console.log(`run_count=${runs.length}`);
@@ -378,6 +433,13 @@ async function main(): Promise<void> {
   console.log(`dryRunResult=${String(logJson?.dryRunResult ?? "null")}`);
   console.log(`canExecute=${String(logJson?.canExecute ?? "null")}`);
   console.log(`canExecuteReasons=${JSON.stringify(asStringArray(logJson?.canExecuteReasons))}`);
+  const selectedCandidate = Array.isArray(logJson?.debugCandidatesTopN)
+    ? (logJson!.debugCandidatesTopN as DebugCandidate[])[0]
+    : null;
+  if (selectedCandidate) {
+    console.log(`selectedSourceWorkoutId=${selectedCandidate.workoutId ?? "null"}`);
+    console.log(`selectedSourceWorkoutTitle=${selectedCandidate.title ?? "null"}`);
+  }
   console.log(
     `plannedVsCompletedHint: ${storedHint ? "present (stored in log_json)" : resolvedHint ? "missing in log_json, resolved from debugCandidatesTopN" : "missing"}`
   );
@@ -403,6 +465,35 @@ async function main(): Promise<void> {
       console.log(`- ${reason}`);
     }
   }
+
+  console.log("");
+  console.log("latest execute run:");
+  console.log(`run_id=${latestExecute?.id ?? "null"}`);
+  console.log(`created_at=${latestExecute?.created_at ?? "null"}`);
+  console.log(`mode/status=${latestExecute?.run_type ?? "null"}/${latestExecute?.status ?? "null"}`);
+  const executeDiagnostics = extractExecuteRunFailureDiagnostics(mapRunContextSummary(latestExecute));
+  console.log(`failureReason=${executeDiagnostics.failureReason ?? "null"}`);
+  console.log(`tpMutationAttempted=${executeDiagnostics.tpMutationAttempted === null ? "unknown" : executeDiagnostics.tpMutationAttempted ? "yes" : "no"}`);
+  console.log(`verificationFailed=${executeDiagnostics.verificationFailed === null ? "unknown" : executeDiagnostics.verificationFailed ? "yes" : "no"}`);
+
+  const retryEligibility = evaluateActionExecuteRetryEligibility({
+    actionType: "move_workout",
+    status: action.status,
+    executionStatus: action.execution_status,
+    parsedPayload: action.parsed_payload,
+    latestRunContext: {
+      latestDryRun: mapRunContextSummary(latestDryRun),
+      latestExecute: mapRunContextSummary(latestExecute),
+    },
+  });
+
+  console.log("");
+  console.log("retryEligibility:");
+  console.log(`  latestDryRunExecutable=${retryEligibility.latestDryRunExecutable ? "yes" : "no"}`);
+  console.log(`  latestExecuteFailed=${retryEligibility.latestExecuteFailed ? "yes" : "no"}`);
+  console.log(`  safeToRetryExecute=${retryEligibility.safeToRetryExecute ? "yes" : "no"}`);
+  console.log(`  reasonIfNo=${retryEligibility.reasonIfNo ?? "null"}`);
+  console.log(`  wouldShowRetryButton=${retryEligibility.safeToRetryExecute ? "yes" : "no"}`);
 
   console.log("");
   console.log("debugCandidatesTopN:");
@@ -463,7 +554,7 @@ async function main(): Promise<void> {
   console.log(`  last_run_id present: ${runnerHasLastRunId ? "yes" : "no"}`);
   console.log(`  eligible: ${runnerPickupEligible ? "yes" : "no"}`);
 
-  if (runnerPickupEligible) {
+  if (runnerPickupEligible || retryEligibility.safeToRetryExecute) {
     console.log("");
     console.log("nextCommand:");
     console.log(`  ${formatTpActionsExecuteOnceCommand({ actionId: action.id })}`);

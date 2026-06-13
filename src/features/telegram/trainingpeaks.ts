@@ -11,6 +11,7 @@ import {
   validateDryRunLogReadiness,
 } from "@/features/trainingpeaks/move-source-policy";
 import { formatTrainingPeaksExecuteBlockedMessage, formatTrainingPeaksExecuteQueuedMessage } from "@/features/trainingpeaks/action-execute-telegram-copy";
+import { evaluateActionExecuteRetryEligibility } from "@/features/trainingpeaks/action-execute-retry-policy";
 import {
   buildCoachActionsListText,
   COACH_REPLY_BUTTON_SIGNALS,
@@ -71,6 +72,7 @@ import {
   rejectTrainingPeaksAction,
   resolveTrainingPeaksCoachCase,
   requestTrainingPeaksActionExecution,
+  requeueTrainingPeaksActionExecution,
   requestTrainingPeaksActionDryRunRecheck,
   validateTrainingPeaksGroupMovePairsPreview,
   TRAININGPEAKS_JOB_CANCELLED_ERROR_MESSAGE,
@@ -265,6 +267,7 @@ const TP_CALLBACK_STUDENT_CONTEXT_PREFIX = "tp:ctx:";
 const TP_CALLBACK_ACTION_APPROVE_PREFIX = "tp:ta:a:";
 const TP_CALLBACK_ACTION_REJECT_PREFIX = "tp:ta:r:";
 const TP_CALLBACK_ACTION_EXECUTE_PREFIX = "tp:ta:x:";
+const TP_CALLBACK_ACTION_RETRY_EXECUTE_PREFIX = "tp:ta:rx:";
 const TP_CALLBACK_ACTION_RECHECK_DRY_RUN_PREFIX = "tp:ta:rd:";
 const TP_CALLBACK_ACTION_CANCEL_PREFIX = "tp:ta:c:";
 const TP_CALLBACK_ACTION_LIST_CANCEL_PREFIX = "tp:ta:lc:";
@@ -446,6 +449,7 @@ type ParsedTrainingPeaksCallback =
   | { kind: "action_approve"; actionId: string }
   | { kind: "action_reject"; actionId: string }
   | { kind: "action_execute_request"; actionId: string }
+  | { kind: "action_retry_execute"; actionId: string }
   | { kind: "action_recheck_dry_run"; actionId: string }
   | { kind: "action_execute_cancel"; actionId: string }
   | { kind: "action_list_cancel"; actionId: string }
@@ -4460,6 +4464,7 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
     [TP_CALLBACK_ACTION_APPROVE_PREFIX, "action_approve"],
     [TP_CALLBACK_ACTION_REJECT_PREFIX, "action_reject"],
     [TP_CALLBACK_ACTION_EXECUTE_PREFIX, "action_execute_request"],
+    [TP_CALLBACK_ACTION_RETRY_EXECUTE_PREFIX, "action_retry_execute"],
     [TP_CALLBACK_ACTION_RECHECK_DRY_RUN_PREFIX, "action_recheck_dry_run"],
     [TP_CALLBACK_ACTION_CANCEL_PREFIX, "action_execute_cancel"],
     [TP_CALLBACK_ACTION_LIST_CANCEL_PREFIX, "action_list_cancel"],
@@ -6035,6 +6040,18 @@ function shouldShowActionExecuteButton(
   return validateDryRunLogReadiness(latestDryRun.logJson, action.parsedPayload).ok;
 }
 
+function shouldShowActionRetryExecuteButton(
+  action: NonNullable<Awaited<ReturnType<typeof getTrainingPeaksActionWithStudentAndLatestRunContextById>>>
+): boolean {
+  return evaluateActionExecuteRetryEligibility({
+    actionType: action.actionType,
+    status: action.status,
+    executionStatus: action.executionStatus,
+    parsedPayload: action.parsedPayload,
+    latestRunContext: action.latestRunContext,
+  }).safeToRetryExecute;
+}
+
 function formatActionDetailFreshnessLabel(date = new Date()): string {
   return `Проверено: ${date.toLocaleTimeString("ru-RU", {
     timeZone: "Europe/Belgrade",
@@ -6313,6 +6330,12 @@ function getTpActionDetailMarkup(
   if (shouldShowActionExecuteButton(action)) {
     rows.push([
       createMenuButton("✅ Выполнить", `${TP_CALLBACK_ACTION_EXECUTE_PREFIX}${action.id}`),
+    ]);
+  }
+
+  if (shouldShowActionRetryExecuteButton(action)) {
+    rows.push([
+      createMenuButton("🔁 Повторить выполнение", `${TP_CALLBACK_ACTION_RETRY_EXECUTE_PREFIX}${action.id}`),
     ]);
   }
 
@@ -7080,6 +7103,7 @@ async function handleTrainingPeaksActionExecuteRequestCallback(
       parsedPayload: result.action.parsedPayload,
       trustedSourceDate: result.queuedDisplay.trustedSourceDate,
       trustedTargetDate: result.queuedDisplay.trustedTargetDate,
+      actionId: result.action.id,
     });
     await editTrainingPeaksMenuMessage(
       parsedMessage.chatId,
@@ -7135,6 +7159,86 @@ async function handleTrainingPeaksActionExecuteRequestCallback(
           .filter((line): line is string => Boolean(line))
           .join("\n")
       : `⚠️ ${INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU}`;
+
+  await editTrainingPeaksMenuMessage(
+    parsedMessage.chatId,
+    parsedMessage.messageId,
+    blockedText,
+    getTrainingPeaksActionResolvedMarkup()
+  );
+}
+
+async function handleTrainingPeaksActionRetryExecuteCallback(
+  parsedMessage: ParsedTelegramCallbackUpdate,
+  actionId: string
+): Promise<void> {
+  const result = await requeueTrainingPeaksActionExecution({
+    actionId,
+    requestedByChatId: String(parsedMessage.chatId),
+    requestedByUserId: parsedMessage.userId === null ? null : String(parsedMessage.userId),
+    requestMessageId: String(parsedMessage.messageId),
+  });
+
+  if (result.kind === "not_found") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      "Заявка не найдена или уже недоступна.",
+      getTrainingPeaksActionResolvedMarkup()
+    );
+    return;
+  }
+
+  if (result.kind === "queued") {
+    const queuedText = formatTrainingPeaksExecuteQueuedMessage({
+      studentName: result.queuedDisplay.studentName,
+      parsedPayload: result.action.parsedPayload,
+      trustedSourceDate: result.queuedDisplay.trustedSourceDate,
+      trustedTargetDate: result.queuedDisplay.trustedTargetDate,
+      actionId: result.action.id,
+      retry: true,
+    });
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      queuedText,
+      createInlineKeyboardMarkup([
+        [createMenuButton("◀ К заявке", `${TP_CALLBACK_ACTION_DETAIL_PREFIX}${actionId}`)],
+        [createMenuButton("📋 К списку заявок", "tp:actions:list")],
+      ])
+    );
+    return;
+  }
+
+  if (result.kind === "already_queued") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      "Перенос уже стоит в очереди. TrainingPeaks ещё не изменён.",
+      getTrainingPeaksActionResolvedMarkup()
+    );
+    return;
+  }
+
+  const blockedText =
+    result.kind === "blocked"
+      ? [
+          "⚠️ Повторное выполнение недоступно.",
+          `Причина: ${translateCoachActionTechnicalReason(result.reason)}`,
+          "Проверьте заявку в /tp_actions.",
+        ].join("\n")
+      : "⚠️ Повторное выполнение недоступно.";
+
+  const detailAction = await getTrainingPeaksActionWithStudentAndLatestRunContextById(actionId);
+  if (detailAction) {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      `${blockedText}\n\n${getTpActionDetailText(detailAction, { includeFreshness: true })}`,
+      getTpActionDetailMarkup(detailAction)
+    );
+    return;
+  }
 
   await editTrainingPeaksMenuMessage(
     parsedMessage.chatId,
@@ -9782,6 +9886,11 @@ export async function handleTrainingPeaksTelegramCallback(
 
     if (callback.kind === "action_execute_request") {
       await handleTrainingPeaksActionExecuteRequestCallback(parsedMessage, callback.actionId);
+      return "handled";
+    }
+
+    if (callback.kind === "action_retry_execute") {
+      await handleTrainingPeaksActionRetryExecuteCallback(parsedMessage, callback.actionId);
       return "handled";
     }
 
