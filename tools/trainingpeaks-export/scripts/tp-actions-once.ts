@@ -28,6 +28,7 @@ import * as strongFutureDescriptorMoveSourceNamespace from "../../../src/feature
 import * as trainingPeaksAttentionTelegramModule from "../../../src/features/trainingpeaks/attention-telegram";
 import * as trainingPeaksTelegramBusinessModule from "../../../src/features/trainingpeaks/telegram-business";
 import * as trainingPeaksRepositoryModule from "../../../src/features/trainingpeaks/repository";
+import { buildCoachDryRunFailureNotificationLines } from "../../../src/features/trainingpeaks/action-dry-run-telegram-copy";
 
 type NamespaceWithOptionalDefault<T> = T & { default?: T };
 
@@ -2742,9 +2743,15 @@ async function notifyCoachDryRunResult(input: {
     lines.push("TrainingPeaks не изменён. Проверь заявку в /tp_actions.");
   } else {
     lines.push(
-      `⚠️ Проверка не пройдена. ${input.studentName}: ${route}. Перенос не выполнен.`
+      ...buildCoachDryRunFailureNotificationLines({
+        studentName: input.studentName,
+        route,
+        dryRunResult: evaluation?.dryRunResult ?? "failed",
+        sourceDate: evaluation?.resolvedDates.sourceDate ?? evaluation?.selectedSourceDate ?? null,
+        canExecuteReasons: evaluation?.canExecuteReasons ?? [],
+        candidates: evaluation?.debugCandidatesTopN ?? [],
+      })
     );
-    lines.push("TrainingPeaks не изменён. Проверь заявку в /tp_actions.");
   }
 
   let inlineKeyboardRows: Array<Array<{ text: string; callback_data: string }>> = [];

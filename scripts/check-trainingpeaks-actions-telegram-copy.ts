@@ -10,6 +10,10 @@ import {
   type CoachActionListItem,
 } from "@/features/trainingpeaks/action-list-telegram-copy";
 import {
+  buildCoachDryRunFailureNotificationLines,
+  formatCoachDryRunCandidateLine,
+} from "@/features/trainingpeaks/action-dry-run-telegram-copy";
+import {
   getCoachReplyKeyboardLayoutForTest,
   getCoachReplyKeyboardRouteForTest,
 } from "@/features/telegram/trainingpeaks";
@@ -58,7 +62,7 @@ function run(): void {
     id: "a-not-found",
     status: "approved",
     executionStatus: "dry_run_completed",
-    updatedAt: "2026-06-01T10:00:00.000Z",
+    updatedAt: "2026-06-13T10:00:00.000Z",
     latestRunContext: {
       latestDryRun: {
         status: "completed",
@@ -72,6 +76,7 @@ function run(): void {
     id: "a-ambiguous",
     status: "approved",
     executionStatus: "dry_run_completed",
+    updatedAt: "2026-06-13T10:00:00.000Z",
     latestRunContext: {
       latestDryRun: {
         status: "completed",
@@ -158,6 +163,79 @@ function run(): void {
     },
   });
   assert(reason.includes("недостаточно уверенности"), "reason translation missing");
+
+  const ambiguousDryRunNotification = buildCoachDryRunFailureNotificationLines({
+    studentName: "Gudkova Ekaterina",
+    route: "13.06 → 14.06",
+    dryRunResult: "ambiguous",
+    sourceDate: "2026-06-13",
+    canExecuteReasons: [
+      "multiple candidates on selected source date",
+      "top candidate margin too small",
+      "confidence below threshold 0.8",
+    ],
+    candidates: [
+      {
+        title: "5 х 7 мин (на улице)",
+        plannedDurationSec: 3600,
+        rawTextSnippet: "5 х 7 мин (на улице) 01:00:00 92 TSS",
+        sourceDate: "2026-06-13",
+        score: 0.95,
+      },
+      {
+        title: "Other",
+        plannedDurationSec: 5051,
+        plannedDistance: 3.5,
+        rawTextSnippet: "Other 01:24:11 3.50 km 139 hrTSS",
+        selectorHint: ".activity.workout",
+        sourceDate: "2026-06-13",
+        score: 0.85,
+      },
+    ],
+  }).join("\n");
+
+  assert(ambiguousDryRunNotification.includes("Перенос не выполнен"), "ambiguous dry-run missing failure header");
+  assert(
+    ambiguousDryRunNotification.includes("найдено несколько вариантов"),
+    "ambiguous dry-run missing specific reason"
+  );
+  assert(
+    ambiguousDryRunNotification.includes("нужен выбор тренера"),
+    "ambiguous dry-run missing coach choice hint"
+  );
+  assert(
+    ambiguousDryRunNotification.includes("5 х 7 мин (на улице)"),
+    "ambiguous dry-run missing top candidate title"
+  );
+  assert(ambiguousDryRunNotification.includes("Other"), "ambiguous dry-run missing second candidate title");
+  assert(
+    ambiguousDryRunNotification.includes("TrainingPeaks не изменён"),
+    "ambiguous dry-run missing unchanged TP note"
+  );
+  assert(
+    !ambiguousDryRunNotification.includes("Можно выполнить перенос"),
+    "ambiguous dry-run must not imply execution is possible"
+  );
+  assert(
+    !/Проверь заявку в \/tp_actions\.\s*$/.test(ambiguousDryRunNotification),
+    "ambiguous dry-run must not use generic-only fallback copy"
+  );
+
+  const notFoundDryRunNotification = buildCoachDryRunFailureNotificationLines({
+    studentName: "Test Athlete",
+    route: "13.06 → 14.06",
+    dryRunResult: "not_found",
+    sourceDate: "2026-06-13",
+  }).join("\n");
+  assert(notFoundDryRunNotification.includes("не нашёл подходящую тренировку на 13.06"), "not_found copy missing");
+
+  const candidateLine = formatCoachDryRunCandidateLine({
+    title: "5 х 7 мин (на улице)",
+    plannedDurationSec: 3600,
+    rawTextSnippet: "5 х 7 мин (на улице) 01:00:00 92 TSS",
+  });
+  assert(candidateLine.includes("planned"), "candidate line missing planned status");
+  assert(candidateLine.includes("92 TSS"), "candidate line missing TSS");
 
   const layout = getCoachReplyKeyboardLayoutForTest().flat();
   assert(layout.includes(COACH_REPLY_BUTTON_SIGNALS), "Signals button missing from reply keyboard");
