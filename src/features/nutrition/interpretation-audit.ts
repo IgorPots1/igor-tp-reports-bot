@@ -52,6 +52,9 @@ const KEY_WORKOUT_TEXT_PATTERNS = [
   /ключев/i,
 ];
 const LONG_RUN_TEXT_PATTERNS = [/длительн/i, /длинн(?:ый|ая|ого|ую)?\s+бег/i, /long\s*run/i];
+const LONG_ENDURANCE_TEXT_PATTERNS = [/вело/i, /\bbike\b/i, /cycling/i, /длинн(?:ая|ый)\s+нагруз/i, /5[:.]\d{2}/];
+const SHADOW_LIGHT_DAY_PATTERNS = [/л[её]гк(?:ий|ая)\s+день/i, /день\s+отдыха/i, /свободн(?:ый|ая)\s+день/i];
+const MANUAL_REVIEW_PHRASES = [/нужен\s+ручной\s+разбор/i, /данных?\s+недостаточно/i, /не\s+могу\s+точно/i];
 
 const GENERIC_COMMENT_PATTERNS = [
   /питание выглядит относительно ровно/i,
@@ -65,17 +68,6 @@ function asObject(value: unknown): Record<string, unknown> {
     return {};
   }
   return value as Record<string, unknown>;
-}
-
-function toFiniteNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
 }
 
 export function shortHash(text: string): string {
@@ -127,12 +119,20 @@ export type CanonicalDayFact = {
   trainingLabel: string | null;
   isKeyWorkout: boolean;
   isLongRun: boolean;
+  isLongEndurance: boolean;
+  role: string;
 };
 
 export type CanonicalFactsReadiness = {
   dailyCount: number;
+  dayFacts: CanonicalDayFact[];
   keyWorkoutDates: string[];
   longRunDates: string[];
+  longEnduranceDays: string[];
+  missingNutritionTrainingDays: string[];
+  adjacentTrainingWithoutNutritionDays: string[];
+  mainLoadDay: string | null;
+  carbPlacementInsight: string | null;
   macroGuardrails: boolean;
   energyAvailability: boolean;
   coachContextPresent: boolean;
@@ -142,7 +142,7 @@ export type CanonicalFactsReadiness = {
 
 function dayIsKeyWorkout(day: Record<string, unknown>): boolean {
   const flags = asObject(day.flags);
-  if (flags.hard === true || flags.longRun === true) {
+  if (flags.hard === true || flags.longRun === true || flags.longEndurance === true) {
     return true;
   }
   if (day.isHardSession === true || day.isLongRun === true) {
@@ -154,6 +154,12 @@ function dayIsKeyWorkout(day: Record<string, unknown>): boolean {
 function dayIsLongRun(day: Record<string, unknown>): boolean {
   const flags = asObject(day.flags);
   return flags.longRun === true || day.isLongRun === true;
+}
+
+function dayIsLongEndurance(day: Record<string, unknown>): boolean {
+  const flags = asObject(day.flags);
+  const trainingType = typeof day.training_type === "string" ? day.training_type : typeof day.trainingType === "string" ? day.trainingType : "";
+  return flags.longEndurance === true || trainingType === "long_endurance";
 }
 
 function dayHasMacroGuardrails(day: Record<string, unknown>): boolean {
@@ -191,6 +197,11 @@ export function extractCanonicalDayFacts(dailyAnalysis: unknown): CanonicalDayFa
       trainingLabel: trainingLabel || null,
       isKeyWorkout: dayIsKeyWorkout(day),
       isLongRun: dayIsLongRun(day),
+      isLongEndurance: dayIsLongEndurance(day),
+      role:
+        (typeof day.training_type === "string" && day.training_type) ||
+        (typeof day.trainingType === "string" && day.trainingType) ||
+        "unknown",
     });
   }
   return facts;
@@ -204,6 +215,25 @@ export function buildCanonicalFactsReadiness(input: {
 }): CanonicalFactsReadiness {
   const rows = Array.isArray(input.dailyAnalysis) ? input.dailyAnalysis : [];
   const dayFacts = extractCanonicalDayFacts(input.dailyAnalysis);
+  const missingNutritionTrainingDays = rows
+    .map((raw) => asObject(raw))
+    .filter((day) => {
+      const sourceQuality = asObject(day.source_quality ?? day.sourceQuality);
+      const hasNutritionData = sourceQuality.hasNutritionData;
+      return hasNutritionData === false && dayIsKeyWorkout(day);
+    })
+    .map((day) => (typeof day.date === "string" ? day.date : ""))
+    .filter(Boolean);
+  const longEnduranceDays = dayFacts.filter((day) => day.isLongEndurance).map((day) => day.date);
+  const mainLoadDay =
+    dayFacts.find((day) => day.isLongEndurance)?.date ??
+    dayFacts.find((day) => day.isLongRun)?.date ??
+    dayFacts.find((day) => day.isKeyWorkout)?.date ??
+    null;
+  const carbPlacementInsight =
+    dayFacts.length >= 5 && dayFacts.some((day) => day.isKeyWorkout)
+      ? "needs_alignment_check"
+      : null;
   let macroGuardrails = false;
   let energyAvailability = false;
   for (const raw of rows) {
@@ -217,8 +247,14 @@ export function buildCanonicalFactsReadiness(input: {
   }
   return {
     dailyCount: dayFacts.length,
+    dayFacts,
     keyWorkoutDates: dayFacts.filter((day) => day.isKeyWorkout).map((day) => day.date),
     longRunDates: dayFacts.filter((day) => day.isLongRun).map((day) => day.date),
+    longEnduranceDays,
+    missingNutritionTrainingDays,
+    adjacentTrainingWithoutNutritionDays: [],
+    mainLoadDay,
+    carbPlacementInsight,
     macroGuardrails,
     energyAvailability,
     coachContextPresent: input.coachContextPresent,
@@ -341,6 +377,7 @@ export type ComparisonResult = {
   shadowHasClosing: boolean;
   shadowHasPlanTargetSection: boolean;
   shadowMentionsKeyWorkout: boolean;
+  shadowMentionsLongEndurance: boolean;
   shadowRepeatsNeedsReview: boolean;
   shadowHasPhantomComparison: boolean;
   shadowGenericCommentCount: number;
@@ -367,6 +404,61 @@ function shadowMentionsKeyWorkout(
   return anyMatch(shadowInterpretationText(interpretation), KEY_WORKOUT_TEXT_PATTERNS);
 }
 
+function shadowMentionsLongEndurance(
+  interpretation: NutritionWeeklyInterpretation | null,
+  longEnduranceDays: string[]
+): boolean {
+  if (!interpretation || longEnduranceDays.length === 0) {
+    return true;
+  }
+  const blocksByDate = new Map(interpretation.daily_blocks.map((block) => [block.date, block.comment_ru]));
+  for (const date of longEnduranceDays) {
+    const comment = blocksByDate.get(date);
+    if (comment && anyMatch(comment, LONG_ENDURANCE_TEXT_PATTERNS)) {
+      return true;
+    }
+  }
+  return anyMatch(shadowInterpretationText(interpretation), LONG_ENDURANCE_TEXT_PATTERNS);
+}
+
+function hasShadowDayRoleMismatch(input: {
+  interpretation: NutritionWeeklyInterpretation | null;
+  dayFacts: CanonicalDayFact[];
+}): boolean {
+  if (!input.interpretation) {
+    return false;
+  }
+  const blocksByDate = new Map(input.interpretation.daily_blocks.map((block) => [block.date, block.comment_ru]));
+  return input.dayFacts.some((fact) => {
+    if (!fact.isKeyWorkout && !fact.isLongEndurance) {
+      return false;
+    }
+    const comment = blocksByDate.get(fact.date);
+    if (!comment) {
+      return false;
+    }
+    return anyMatch(comment, SHADOW_LIGHT_DAY_PATTERNS);
+  });
+}
+
+function hasUnnecessaryManualReview(input: {
+  interpretation: NutritionWeeklyInterpretation | null;
+  readiness: CanonicalFactsReadiness;
+}): boolean {
+  if (!input.interpretation) {
+    return false;
+  }
+  const sufficientFacts =
+    input.readiness.dailyCount >= 5 &&
+    input.readiness.macroGuardrails &&
+    input.readiness.energyAvailability;
+  if (!sufficientFacts) {
+    return false;
+  }
+  const text = `${input.interpretation.one_focus_statement_ru}\n${input.interpretation.week_summary_ru}`;
+  return anyMatch(text, MANUAL_REVIEW_PHRASES);
+}
+
 function countGenericComments(interpretation: NutritionWeeklyInterpretation | null): number {
   if (!interpretation) {
     return 0;
@@ -388,7 +480,6 @@ export function compareNutritionOutputs(input: {
 }): ComparisonResult {
   const { production, shadow, interpretation, readiness } = input;
   const shadowText = shadowInterpretationText(interpretation);
-  const canonicalDates = new Set([...readiness.keyWorkoutDates, ...readiness.longRunDates]);
   const dailyCoverageMatch =
     interpretation != null && interpretation.daily_blocks.length === readiness.dailyCount;
 
@@ -397,9 +488,15 @@ export function compareNutritionOutputs(input: {
   const shadowHasMiniTable = anyMatch(shadowText, MINI_TABLE_PATTERNS);
   const shadowHasPlanTargetSection = anyMatch(shadowText, PLAN_TARGET_SECTION_PATTERNS);
   const mentionsKeyWorkout = shadowMentionsKeyWorkout(interpretation, readiness.keyWorkoutDates);
+  const mentionsLongEndurance = shadowMentionsLongEndurance(interpretation, readiness.longEnduranceDays);
   const repeatsNeedsReview = anyMatch(shadowText, NEEDS_REVIEW_LEAK_PATTERNS);
   const phantomComparison = !readiness.previousWeeksContextPresent && shadow.weekComparisonPresent;
   const genericCommentCount = countGenericComments(interpretation);
+  const roleMismatch = hasShadowDayRoleMismatch({
+    interpretation,
+    dayFacts: readiness.dayFacts,
+  });
+  const unnecessaryManualReview = hasUnnecessaryManualReview({ interpretation, readiness });
   const shadowForbiddenCount = Object.keys(shadow.forbiddenTermCounts).length;
 
   const shadowRepetition = countRepeatedSentences(shadowText);
@@ -449,7 +546,16 @@ export function compareNutritionOutputs(input: {
     shadowRiskSignals.push("macro_numbers_not_in_facts");
   }
   if (readiness.keyWorkoutDates.length > 0 && !mentionsKeyWorkout) {
-    shadowRiskSignals.push("misses_key_workout");
+    shadowRiskSignals.push("shadow_misses_key_workout");
+  }
+  if (readiness.longEnduranceDays.length > 0 && !mentionsLongEndurance) {
+    shadowRiskSignals.push("shadow_misses_long_endurance");
+  }
+  if (roleMismatch) {
+    shadowRiskSignals.push("shadow_day_role_mismatch");
+  }
+  if (unnecessaryManualReview) {
+    shadowRiskSignals.push("shadow_unnecessary_manual_review");
   }
   if (genericCommentCount > 0 && genericCommentCount >= Math.max(1, Math.ceil(readiness.dailyCount / 2))) {
     shadowRiskSignals.push("generic_daily_comments");
@@ -469,12 +575,16 @@ export function compareNutritionOutputs(input: {
     repeatsNeedsReview,
     phantomComparison,
     mentionsKeyWorkout,
+    mentionsLongEndurance,
     keyWorkoutCount: readiness.keyWorkoutDates.length,
+    longEnduranceCount: readiness.longEnduranceDays.length,
     genericCommentCount,
     dailyCount: readiness.dailyCount,
     dailyCoverageMatch,
     lessRepetitive,
     productionRepetition: production.repeatedPhraseCounts,
+    roleMismatch,
+    unnecessaryManualReview,
   });
 
   return {
@@ -484,6 +594,7 @@ export function compareNutritionOutputs(input: {
     shadowHasClosing,
     shadowHasPlanTargetSection,
     shadowMentionsKeyWorkout: mentionsKeyWorkout,
+    shadowMentionsLongEndurance: mentionsLongEndurance,
     shadowRepeatsNeedsReview: repeatsNeedsReview,
     shadowHasPhantomComparison: phantomComparison,
     shadowGenericCommentCount: genericCommentCount,
@@ -504,12 +615,16 @@ function decideVerdict(input: {
   repeatsNeedsReview: boolean;
   phantomComparison: boolean;
   mentionsKeyWorkout: boolean;
+  mentionsLongEndurance: boolean;
   keyWorkoutCount: number;
+  longEnduranceCount: number;
   genericCommentCount: number;
   dailyCount: number;
   dailyCoverageMatch: boolean;
   lessRepetitive: boolean;
   productionRepetition: number;
+  roleMismatch: boolean;
+  unnecessaryManualReview: boolean;
 }): NutritionAuditVerdict {
   // blocked: hard safety / structure problems.
   if (
@@ -532,7 +647,10 @@ function decideVerdict(input: {
   // needs_prompt_tuning: valid but quality gaps.
   if (
     input.repeatsNeedsReview ||
+    input.unnecessaryManualReview ||
+    input.roleMismatch ||
     (input.keyWorkoutCount > 0 && !input.mentionsKeyWorkout) ||
+    (input.longEnduranceCount > 0 && !input.mentionsLongEndurance) ||
     input.shadow.macroNumberWarnings > 0 ||
     manyGeneric
   ) {
@@ -541,7 +659,8 @@ function decideVerdict(input: {
 
   // shadow_candidate: clean, mentions key workout where relevant, not worse than production.
   const mentionsWhereRelevant = input.keyWorkoutCount === 0 || input.mentionsKeyWorkout;
-  if (mentionsWhereRelevant && input.lessRepetitive) {
+  const mentionsLongEnduranceWhereRelevant = input.longEnduranceCount === 0 || input.mentionsLongEndurance;
+  if (mentionsWhereRelevant && mentionsLongEnduranceWhereRelevant && input.lessRepetitive) {
     return "shadow_candidate";
   }
 

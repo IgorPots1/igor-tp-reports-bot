@@ -144,6 +144,18 @@ assert.equal(planPadelDay?.training_type, "cross_training");
 assert.equal(planPadelDay?.target_kcal, 2350);
 assert.notEqual(planPadelDay?.target_kcal, null);
 
+const longBikePlan = buildNutritionNextWeekPlan({
+  bodyweightKg: 60,
+  planWeekFrom: "2026-06-08",
+  planWeekTo: "2026-06-14",
+  trainingContext: {
+    cacheStatus: "ok",
+    workouts: [{ date: "2026-06-11", title: "Cycling", type: "bike", durationHours: 5.25, distanceKm: 70 }],
+  },
+});
+const longBikeDay = longBikePlan.days.find((day) => day.date === "2026-06-11");
+assert.equal(longBikeDay?.training_type, "long_endurance");
+
 const multiWorkoutContext = baseContext({ title: "Strength", type: "strength" });
 multiWorkoutContext.manualMacroRows = [
   { day: "2026-06-03", weekday: "ср", kcal: 1400, proteinG: 80, fatG: 40, carbsG: 170, confidence: 1, notes: null },

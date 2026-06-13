@@ -58,6 +58,7 @@ const render = renderNutritionTelegramMessage({
   fallbackPlanLines: ["fallback"],
   hasTargetWeekTrainingContext: true,
   hasPreviousWeeksContext: false,
+  todayLocalDate: "2026-06-10",
 });
 assert.ok(render.ok);
 const text = render.text ?? "";
@@ -65,5 +66,6 @@ assert.match(text, /ориентиры, не обязательство/i);
 assert.match(text, /Мини-таблица/);
 assert.match(text, /~\d{4}-\d{4} ккал/);
 assert.doesNotMatch(text, /обязательно выйти|нужно съесть ровно/i);
+assert.doesNotMatch(text, /Понедельник \(08\.06\)|Вторник \(09\.06\)/, "current week mini-table should hide past days");
 
 console.log("PASS check-nutrition-practical-targets");

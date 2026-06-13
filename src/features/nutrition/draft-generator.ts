@@ -77,6 +77,11 @@ export type GeneratedNutritionWeeklyAnalysis = {
       carb_reference_not_prescriptive: true;
       long_run_fueling_instruction_detected: boolean;
       during_run_fuel_planned: boolean;
+      adjacent_training_without_nutrition_days?: Array<{
+        date: string;
+        trainingLabel: string;
+        durationMinutes: number | null;
+      }>;
     };
     bodyweight_kg?: number | null;
     carb_progression_strategy?: CarbProgressionStrategy;
@@ -112,6 +117,11 @@ export type GeneratedNutritionWeeklyAnalysis = {
     carb_reference_not_prescriptive: true;
     long_run_fueling_instruction_detected: boolean;
     during_run_fuel_planned: boolean;
+    adjacent_training_without_nutrition_days?: Array<{
+      date: string;
+      trainingLabel: string;
+      durationMinutes: number | null;
+    }>;
   };
   athlete_message_draft: string | null;
   coach_summary_text: string;
@@ -938,6 +948,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
         carb_reference_not_prescriptive: methodology.carbReferenceNotPrescriptive,
         long_run_fueling_instruction_detected: methodology.longRunFuelingInstructionDetected,
         during_run_fuel_planned: methodology.duringRunFuelPlanned,
+        adjacent_training_without_nutrition_days: methodology.adjacentTrainingWithoutNutritionDays,
       },
       data_quality: context.dataQuality,
     };
@@ -1093,6 +1104,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
       carb_reference_not_prescriptive: methodology.carbReferenceNotPrescriptive,
       long_run_fueling_instruction_detected: methodology.longRunFuelingInstructionDetected,
       during_run_fuel_planned: methodology.duringRunFuelPlanned,
+      adjacent_training_without_nutrition_days: methodology.adjacentTrainingWithoutNutritionDays,
     },
     athlete_message_draft: narrative.athlete_message_draft,
     coach_summary_text: narrative.coach_summary_text,

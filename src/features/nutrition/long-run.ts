@@ -1,4 +1,6 @@
 export const NUTRITION_LONG_RUN_MIN_DURATION_MINUTES = 70;
+export const NUTRITION_LONG_ENDURANCE_MIN_DURATION_MINUTES = 120;
+export const NUTRITION_LONG_ENDURANCE_BIKE_MIN_DURATION_MINUTES = 90;
 
 export type NutritionLongRunWorkoutMode = "past_review" | "target_plan";
 
@@ -16,6 +18,16 @@ export function trainingPeaksDurationHoursToMinutes(
 export function isExplicitNutritionLongRunTitle(title?: string | null): boolean {
   const haystack = (title ?? "").toLocaleLowerCase("ru");
   return /long\s*run|longrun|длитель(?:ная|ный(?:\s+бег)?)?|длинн|лонг/.test(haystack);
+}
+
+export function isExplicitNutritionBikeTitle(title?: string | null): boolean {
+  const haystack = (title ?? "").toLocaleLowerCase("ru");
+  return /\bcycling\b|\bbike\b|вело|велотрен|велостанок|cycle/.test(haystack);
+}
+
+export function isExplicitRunTitle(title?: string | null): boolean {
+  const haystack = (title ?? "").toLocaleLowerCase("ru");
+  return /\brun(ning)?\b|бег|пробеж/.test(haystack);
 }
 
 export function resolveNutritionLongRunDurationMinutes(input: {
@@ -44,6 +56,31 @@ export function isNutritionLongRunWorkout(input: {
     return true;
   }
   if (isExplicitNutritionLongRunTitle(input.title)) {
+    return true;
+  }
+  return false;
+}
+
+export function isNutritionLongEnduranceWorkout(input: {
+  title?: string | null;
+  durationMinutes?: number | null;
+  durationHours?: number | null;
+  distanceKm?: number | null;
+  isRunLike?: boolean;
+}): boolean {
+  const durationMinutes = resolveNutritionLongRunDurationMinutes(input);
+  const isRunLike = input.isRunLike ?? isExplicitRunTitle(input.title);
+  if (isRunLike) {
+    return false;
+  }
+  const isBikeLike = isExplicitNutritionBikeTitle(input.title);
+  if (isBikeLike && durationMinutes !== null && durationMinutes >= NUTRITION_LONG_ENDURANCE_BIKE_MIN_DURATION_MINUTES) {
+    return true;
+  }
+  if (durationMinutes !== null && durationMinutes > NUTRITION_LONG_ENDURANCE_MIN_DURATION_MINUTES) {
+    return true;
+  }
+  if (isBikeLike && (input.distanceKm ?? null) !== null && (input.distanceKm ?? 0) >= 60) {
     return true;
   }
   return false;

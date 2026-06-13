@@ -16,6 +16,7 @@ import {
   renderNutritionTelegramMessage,
   type NutritionTelegramRenderResult,
 } from "@/features/nutrition/telegram-renderer";
+import { getNutritionAdminLocalDate } from "@/features/nutrition/plan-week-policy";
 
 type CanonicalDailyFact = {
   date?: unknown;
@@ -516,6 +517,7 @@ function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
   const proteinSufficient = asObject(summary.methodology_signals).protein_sufficient === true;
   const weeklyProteinAvgGPerKg = toFiniteNumber(summary.avg_protein_g_per_kg) ?? toFiniteNumber(summary.avgProteinGPerKg);
   const dailyFacts = filterFactsToReviewWeek(review, getCanonicalDailyFacts(review));
+  const methodologySignals = asObject(summary.methodology_signals);
 
   const roleInputs = dailyFacts.map((day) => {
     const date = typeof day.date === "string" ? day.date : "";
@@ -561,7 +563,30 @@ function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
       weeklyProteinAvgGPerKg,
     });
   }
+  if (typeof methodologySignals.main_load_day_label === "string" && methodologySignals.main_load_day_label.trim()) {
+    return `Главный тренировочный день недели — ${methodologySignals.main_load_day_label}. Фокус — углеводы вокруг тяжёлых дней, а не просто «есть больше каждый день».`;
+  }
   return statement ?? coachSummary ?? "По неделе держим курс на ровную энергию и восстановление без резких просадок.";
+}
+
+function buildAdjacentMissingNutritionLines(review: NutritionWeeklyAnalysis): string[] {
+  const summary = asObject(review.nutritionSummary);
+  const methodologySignals = asObject(summary.methodology_signals);
+  const adjacent = Array.isArray(methodologySignals.adjacent_training_without_nutrition_days)
+    ? methodologySignals.adjacent_training_without_nutrition_days
+    : [];
+  return adjacent
+    .map((raw) => asObject(raw))
+    .map((item) => {
+      const date = typeof item.date === "string" ? item.date : null;
+      const label = typeof item.trainingLabel === "string" ? item.trainingLabel : typeof item.training_label === "string" ? item.training_label : "тренировка";
+      if (!date) {
+        return null;
+      }
+      return `🔹 ${formatDateRu(date)} · ${humanizeNutritionTrainingLabel(label, "cross_training")}
+Питание за этот день не зафиксировано. Без данных конкретного макро-вывода не делаю, отмечаю только факт нагрузки.`;
+    })
+    .filter((line): line is string => Boolean(line));
 }
 
 function getPlanFocusLines(
@@ -749,6 +774,7 @@ export function buildDerivedNutritionCombinedMessage(input: {
   const warnings: string[] = [];
   const nextWeekPlan = getNextWeekPlan(plan);
   const reviewDailyLines = getDailyFactsLines(review);
+  const adjacentMissingLines = buildAdjacentMissingNutritionLines(review);
   const reviewDailyCoverage = getDailyFactsCoverage(review);
 
   if (!nextWeekPlan) {
@@ -792,12 +818,12 @@ export function buildDerivedNutritionCombinedMessage(input: {
     interpretation: {
       dayComments:
         reviewDailyLines.length > 0
-          ? reviewDailyLines
+          ? [...adjacentMissingLines, ...reviewDailyLines]
           : reviewDailyCoverage.hasOutsideWeekFacts
             ? [
                 "Разбор по дням в этом черновике не показываю: даты в daily_analysis не совпадают с выбранной неделей. Проверь отчёт за нужную неделю и перегенерируй обзор.",
               ]
-            : [],
+            : adjacentMissingLines,
       weekSummaryRu: weekSummary,
       focusLinesRu: focusLines,
       weekComparisonLineRu: comparisonLine,
@@ -806,6 +832,8 @@ export function buildDerivedNutritionCombinedMessage(input: {
     fallbackPlanLines: [compactText(plan.athleteMessageDraft) ?? "План на неделю не сформирован."],
     hasPreviousWeeksContext: previousWeeksContext,
     hasTargetWeekTrainingContext: hasTargetWeekTrainingContext(nextWeekPlan, plan),
+    todayLocalDate: getNutritionAdminLocalDate(),
+    miniTableMode: "athlete_remaining_only",
   });
   const athleteMessageDraft = renderResult.ok ? renderResult.text : null;
   return {

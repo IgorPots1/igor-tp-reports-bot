@@ -4,6 +4,7 @@ export type NutritionPlanDayType =
   | "hard"
   | "pre_long"
   | "long_run"
+  | "long_endurance"
   | "strength"
   | "cross_training"
   | "race"
@@ -17,6 +18,8 @@ export type NutritionPlanSource =
   | "unknown";
 
 import {
+  isExplicitRunTitle,
+  isNutritionLongEnduranceWorkout,
   isExplicitNutritionLongRunTitle,
   isNutritionLongRunWorkout,
   resolveNutritionLongRunConfidence,
@@ -95,6 +98,7 @@ export type NutritionNextWeekPlan = {
     hard: NutritionDayTypeTarget | null;
     pre_long: NutritionDayTypeTarget | null;
     long_run: NutritionDayTypeTarget | null;
+    long_endurance?: NutritionDayTypeTarget | null;
     strength: NutritionDayTypeTarget | null;
     cross_training?: NutritionDayTypeTarget | null;
   };
@@ -104,6 +108,7 @@ export type NutritionNextWeekPlan = {
     hard: NutritionDayTypeTarget | null;
     pre_long: NutritionDayTypeTarget | null;
     long_run: NutritionDayTypeTarget | null;
+    long_endurance?: NutritionDayTypeTarget | null;
     strength: NutritionDayTypeTarget | null;
     cross_training?: NutritionDayTypeTarget | null;
   };
@@ -155,6 +160,7 @@ const WEEKDAY_RU_FULL = ["Воскресенье", "Понедельник", "В
 
 const DAY_TYPE_PRIORITY: Record<NutritionPlanDayType, number> = {
   race: 7,
+  long_endurance: 7,
   long_run: 6,
   hard: 5,
   pre_long: 4,
@@ -171,6 +177,7 @@ const FORMULA_BY_DAY_TYPE: Partial<Record<NutritionPlanDayType, FormulaCoefficie
   hard: { kcalPerKg: 43, proteinPerKg: 1.7, fatPerKg: 1.15, carbsPerKg: 6.0 },
   pre_long: { kcalPerKg: 39, proteinPerKg: 1.6, fatPerKg: 1.15, carbsPerKg: 5.5 },
   long_run: { kcalPerKg: 45, proteinPerKg: 1.7, fatPerKg: 1.15, carbsPerKg: 7.0 },
+  long_endurance: { kcalPerKg: 45, proteinPerKg: 1.7, fatPerKg: 1.15, carbsPerKg: 7.0 },
   strength: { kcalPerKg: 39, proteinPerKg: 1.8, fatPerKg: 1.15, carbsPerKg: 5.2 },
   cross_training: { kcalPerKg: 39, proteinPerKg: 1.6, fatPerKg: 1.15, carbsPerKg: 5.2 },
 };
@@ -181,6 +188,7 @@ const GUIDANCE_BY_DAY_TYPE: Record<NutritionPlanDayType, string | null> = {
   hard: "Ключевая работа: не выходить голодным; углеводы в течение дня держать ближе к ориентиру для интервального/темпового дня.",
   pre_long: "День перед длительной: это не обычный отдых; важно не просадить углеводы за день.",
   long_run: "Длительная: заранее поддержать углеводы и после тренировки закрыть восстановление.",
+  long_endurance: "Длинная выносливостная нагрузка: поддержать углеводы и восстановление после работы.",
   strength: "Силовая: держать белок и углеводы без сильной просадки.",
   cross_training: "Кросс-тренировка: поддержать питание вокруг нагрузки, без пустого дня по энергии.",
   race: "Соревновательный день: не экспериментировать с питанием и держать проверенные схемы.",
@@ -309,7 +317,7 @@ function normalizeDayType(typeRaw: string | null, titleRaw: string | null): Nutr
 }
 
 function isKeyWorkout(dayType: NutritionPlanDayType): boolean {
-  return dayType === "hard" || dayType === "long_run" || dayType === "race";
+  return dayType === "hard" || dayType === "long_run" || dayType === "long_endurance" || dayType === "race";
 }
 
 function parseTrainingContextWorkouts(trainingContext: unknown): ParsedWorkout[] {
@@ -329,7 +337,16 @@ function parseTrainingContextWorkouts(trainingContext: unknown): ParsedWorkout[]
       const status = toStringOrNull(workout.status);
       const isCompleted = status === "completed" || status === "planned_and_completed" || status === null;
       let dayType = normalizeDayType(type, title);
+      const isRunLike = isExplicitRunTitle(title) || type === "run" || type === "easy_run" || type === "long_run";
       if (
+        isNutritionLongEnduranceWorkout({
+          title,
+          durationHours,
+          isRunLike,
+        })
+      ) {
+        dayType = "long_endurance";
+      } else if (
         isNutritionLongRunWorkout({
           title,
           durationHours,
@@ -391,6 +408,9 @@ function getTrainingLabel(dayType: NutritionPlanDayType, workoutTitle: string | 
   }
   if (dayType === "long_run") {
     return "длительная";
+  }
+  if (dayType === "long_endurance") {
+    return "длинная выносливостная нагрузка";
   }
   if (dayType === "strength") {
     return "силовая";
@@ -512,6 +532,7 @@ function applyPracticalTarget(input: {
     input.dayType === "hard" ||
     input.dayType === "pre_long" ||
     input.dayType === "long_run" ||
+    input.dayType === "long_endurance" ||
     input.dayType === "race";
   const maxCarbJump = isKeyDay ? 100 : 80;
   const maxKcalJump = isKeyDay ? 500 : 400;
@@ -585,7 +606,9 @@ export function buildNutritionNextWeekPlan(params: {
   }
 
   const longRunDates = new Set(
-    parsedWorkouts.filter((workout) => workout.dayType === "long_run").map((workout) => workout.date)
+    parsedWorkouts
+      .filter((workout) => workout.dayType === "long_run" || workout.dayType === "long_endurance")
+      .map((workout) => workout.date)
   );
   const previousWeekTargets = extractPreviousWeekTargets(params.previousWeekDailyAnalysis);
 
@@ -594,7 +617,8 @@ export function buildNutritionNextWeekPlan(params: {
     const primaryWorkout = pickPrimaryWorkout(dayWorkouts);
     const baseType = primaryWorkout?.dayType ?? (hasTrainingContext ? "rest" : "unknown");
     const dayBeforeLongRun = longRunDates.has(addDays(date, 1));
-    const harder = baseType === "race" || baseType === "long_run" || baseType === "hard";
+    const harder =
+      baseType === "race" || baseType === "long_run" || baseType === "long_endurance" || baseType === "hard";
     const trainingType: NutritionPlanDayType = dayBeforeLongRun && !harder ? "pre_long" : baseType;
     const hasWorkout = Boolean(primaryWorkout);
     const idealTarget = calculateNutritionDayTypeTarget({
@@ -648,7 +672,11 @@ export function buildNutritionNextWeekPlan(params: {
         strength: trainingType === "strength",
         cross_training: trainingType === "cross_training",
         race: trainingType === "race",
-        key_workout: trainingType === "hard" || trainingType === "long_run" || trainingType === "race",
+        key_workout:
+          trainingType === "hard" ||
+          trainingType === "long_run" ||
+          trainingType === "long_endurance" ||
+          trainingType === "race",
         day_before_long_run: dayBeforeLongRun,
         has_training_context: hasWorkout,
       },
@@ -668,6 +696,19 @@ export function buildNutritionNextWeekPlan(params: {
   });
 
   const longRunDay = days.find((day) => day.training_type === "long_run") ?? null;
+  const longEnduranceDay = days.find((day) => day.training_type === "long_endurance") ?? null;
+
+  const preLongTarget = days.find((day) => day.training_type === "pre_long")?.practical_target ?? null;
+  const longDayTarget =
+    days.find((day) => day.training_type === "long_endurance")?.practical_target ??
+    days.find((day) => day.training_type === "long_run")?.practical_target ??
+    null;
+  if (preLongTarget && longDayTarget && longDayTarget.carbs_g < preLongTarget.carbs_g) {
+    longDayTarget.carbs_g = preLongTarget.carbs_g;
+    longDayTarget.carbs_g_per_kg = Number((longDayTarget.carbs_g / (params.bodyweightKg ?? 1)).toFixed(2));
+    longDayTarget.target_kcal = Math.max(longDayTarget.target_kcal, preLongTarget.target_kcal);
+    longDayTarget.kcal_per_kg = Number((longDayTarget.target_kcal / (params.bodyweightKg ?? 1)).toFixed(1));
+  }
 
   return {
     formula_version: "nutrition_next_week_plan_v1",
@@ -710,6 +751,12 @@ export function buildNutritionNextWeekPlan(params: {
         ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "long_run" }),
         baseline: previousWeekTargets.byDayType.long_run ?? previousWeekTargets.overall,
       }),
+      long_endurance: applyPracticalTarget({
+        dayType: "long_endurance",
+        bodyweightKg: params.bodyweightKg,
+        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "long_endurance" }),
+        baseline: previousWeekTargets.byDayType.long_run ?? previousWeekTargets.overall,
+      }),
       strength: applyPracticalTarget({
         dayType: "strength",
         bodyweightKg: params.bodyweightKg,
@@ -729,6 +776,7 @@ export function buildNutritionNextWeekPlan(params: {
       hard: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "hard" }),
       pre_long: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "pre_long" }),
       long_run: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "long_run" }),
+      long_endurance: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "long_endurance" }),
       strength: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "strength" }),
       cross_training: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "cross_training" }),
     },
@@ -737,9 +785,11 @@ export function buildNutritionNextWeekPlan(params: {
       total_days: days.length,
       days_with_training: days.filter((day) => day.flags.has_training_context).length,
       key_days_count: days.filter((day) => day.flags.key_workout || day.flags.day_before_long_run).length,
-      long_run_dates: days.filter((day) => day.training_type === "long_run").map((day) => day.date),
-      long_run_source: longRunDay?.long_run_source ?? "none",
-      long_run_confidence: longRunDay?.long_run_confidence ?? "low",
+      long_run_dates: days
+        .filter((day) => day.training_type === "long_run" || day.training_type === "long_endurance")
+        .map((day) => day.date),
+      long_run_source: longRunDay?.long_run_source ?? (longEnduranceDay ? "duration" : "none"),
+      long_run_confidence: longRunDay?.long_run_confidence ?? (longEnduranceDay ? "medium" : "low"),
       hard_dates: days.filter((day) => day.training_type === "hard").map((day) => day.date),
       missing_bodyweight: !params.bodyweightKg || params.bodyweightKg <= 0,
     },

@@ -84,6 +84,7 @@ export type NutritionTrainingPeaksWeekContext = {
     coachComments: string | null;
     plannedText: string | null;
     durationHours: number | null;
+    distanceKm?: number | null;
   }>;
 };
 
@@ -143,6 +144,18 @@ function normalizeDistanceKm(distanceRaw: number | null): number | null {
     return Number((distanceRaw / 1000).toFixed(2));
   }
   return distanceRaw;
+}
+
+function inferDistanceKmFromText(text: string | null): number | null {
+  if (!text) {
+    return null;
+  }
+  const match = text.match(/(\d+(?:[.,]\d+)?)\s*(?:км|km)\b/i);
+  if (!match) {
+    return null;
+  }
+  const parsed = Number(match[1].replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function addDays(isoDate: string, days: number): string {
@@ -591,6 +604,9 @@ export async function buildNutritionTrainingPeaksWeekContext(
         coachComments: snapshotText(sourceSnapshot?.coachComments),
         plannedText: snapshotText(sourceSnapshot?.structure) ?? snapshotText(sourceSnapshot?.plannedText),
         durationHours: toFiniteNumber(row.completedTimeRaw ?? row.plannedTimeRaw),
+        distanceKm:
+          normalizeDistanceKm(toFiniteNumber(row.completedDistanceRaw ?? row.plannedDistanceRaw)) ??
+          inferDistanceKmFromText(snapshotText(sourceSnapshot?.description) ?? row.title ?? null),
       };
     }),
   };

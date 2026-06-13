@@ -97,6 +97,7 @@ function run(): void {
   assert.equal(readiness.dailyCount, 3);
   assert.deepEqual(readiness.keyWorkoutDates, ["2026-06-02", "2026-06-03"]);
   assert.deepEqual(readiness.longRunDates, ["2026-06-03"]);
+  assert.ok(Array.isArray(readiness.longEnduranceDays));
   assert.equal(readiness.macroGuardrails, true);
   assert.equal(readiness.energyAvailability, true);
 
@@ -170,7 +171,61 @@ function run(): void {
     readiness: goodReadiness,
   });
   assert.equal(noKeyComparison.verdict, "needs_prompt_tuning", `expected needs_prompt_tuning, got ${noKeyComparison.verdict}`);
-  assert.ok(noKeyComparison.shadowRiskSignals.includes("misses_key_workout"));
+  assert.ok(noKeyComparison.shadowRiskSignals.includes("shadow_misses_key_workout"));
+
+  const roleMismatchDaily = [
+    { date: "2026-06-02", actual: { kcal: 2000, proteinG: 110, fatG: 60, carbsG: 250 }, flags: { hard: true, longRun: false }, training_type: "hard" },
+    { date: "2026-06-03", actual: { kcal: 2100, proteinG: 120, fatG: 60, carbsG: 260 }, flags: { hard: false, longRun: false, longEndurance: true }, training_type: "long_endurance" },
+    { date: "2026-06-04", actual: { kcal: 1800, proteinG: 100, fatG: 50, carbsG: 210 }, flags: { hard: false, longRun: false }, training_type: "easy" },
+    {
+      date: "2026-06-05",
+      actual: { kcal: 1900, proteinG: 105, fatG: 55, carbsG: 220 },
+      flags: { hard: false, longRun: false },
+      training_type: "easy",
+      macro_guardrails: { protein: { status: "ok" } },
+      energy_availability: { status: "ok" },
+    },
+    {
+      date: "2026-06-06",
+      actual: { kcal: 1950, proteinG: 108, fatG: 58, carbsG: 230 },
+      flags: { hard: false, longRun: false },
+      training_type: "rest",
+      macro_guardrails: { protein: { status: "ok" } },
+      energy_availability: { status: "ok" },
+    },
+  ];
+  const roleMismatchReadiness = buildCanonicalFactsReadiness({
+    dailyAnalysis: roleMismatchDaily,
+    coachContextPresent: true,
+    athleteSignalsCount: 0,
+    previousWeeksContextPresent: false,
+  });
+  const roleMismatchInterpretation: NutritionWeeklyInterpretation = {
+    daily_blocks: [
+      { date: "2026-06-02", comment_ru: "Лёгкий день, питание выглядит ровно." },
+      { date: "2026-06-03", comment_ru: "День отдыха прошёл спокойно." },
+      { date: "2026-06-04", comment_ru: "Ровный день." },
+      { date: "2026-06-05", comment_ru: "Ровный день." },
+      { date: "2026-06-06", comment_ru: "Ровный день." },
+    ],
+    week_summary_ru: "Данных пока недостаточно, нужен ручной разбор.",
+    one_focus_statement_ru: "Данных пока недостаточно, нужен ручной разбор.",
+    week_comparison_line_ru: null,
+  };
+  const roleMismatchComparison = compareNutritionOutputs({
+    production: repetitiveProduction,
+    shadow: analyzeShadowInterpretation({
+      mode: "ai",
+      interpretation: roleMismatchInterpretation,
+      issues: [],
+      facts: buildNutritionInterpretationValidationFacts({ dailyAnalysis: roleMismatchDaily, hasPreviousWeeksContext: false }),
+    }),
+    interpretation: roleMismatchInterpretation,
+    readiness: roleMismatchReadiness,
+  });
+  assert.equal(roleMismatchComparison.verdict, "needs_prompt_tuning");
+  assert.ok(roleMismatchComparison.shadowRiskSignals.includes("shadow_day_role_mismatch"));
+  assert.ok(roleMismatchComparison.shadowRiskSignals.includes("shadow_unnecessary_manual_review"));
 
   // blocked: phantom comparison when no previous weeks context.
   const phantomInterpretation: NutritionWeeklyInterpretation = {

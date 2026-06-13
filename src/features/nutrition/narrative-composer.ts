@@ -1,11 +1,12 @@
 import type { NutritionPlanTargetWeekMode } from "@/features/nutrition/plan-week-policy";
-import { isNutritionLongRunWorkout } from "@/features/nutrition/long-run";
+import { isNutritionLongEnduranceWorkout, isNutritionLongRunWorkout } from "@/features/nutrition/long-run";
 import type { NutritionNextWeekPlan, NutritionNextWeekPlanDay } from "@/features/nutrition/weekly-plan-formulas";
 
 export type NutritionNarrativeWorkoutRole =
   | "key_interval"
   | "key_tempo"
   | "long_run"
+  | "long_endurance"
   | "combined_load"
   | "cross_training"
   | "strength"
@@ -31,6 +32,7 @@ const INTERVAL_KEYWORD_PATTERN = /(интервал|interval|vo2|повтор|re
 const TEMPO_KEYWORD_PATTERN = /(темповая|темп|порог|tempo|threshold|lt|пано|панo)/i;
 
 const KEY_ROLE_PRIORITY: NutritionNarrativeWorkoutRole[] = [
+  "long_endurance",
   "key_interval",
   "key_tempo",
   "long_run",
@@ -138,6 +140,17 @@ export function resolveNutritionNarrativeWorkoutRole(input: {
     return { role: "long_run", reason: "long_run_rule" };
   }
 
+  const runLike = trainingType === "easy" || trainingType === "hard" || trainingType === "long_run";
+  if (
+    isNutritionLongEnduranceWorkout({
+      title: label,
+      durationMinutes,
+      isRunLike: runLike,
+    })
+  ) {
+    return { role: "long_endurance", reason: "long_endurance_rule" };
+  }
+
   if (isStrengthType(trainingType, label)) {
     return { role: "strength", reason: "strength_type" };
   }
@@ -202,6 +215,9 @@ export function humanizeNutritionTrainingLabel(trainingLabel: string, trainingTy
     }
     return "длительная";
   }
+  if (/^cycling$/i.test(raw) || /^bike$/i.test(raw) || /вело/i.test(raw)) {
+    return "вело";
+  }
   return raw;
 }
 
@@ -228,7 +244,7 @@ export function resolveWeekNarrativeDayRoles(
   for (const day of days) {
     const { role, reason } = resolveNutritionNarrativeWorkoutRole(day);
     resolved.set(day.date, { role, isKey: false, reason });
-    if (role === "key_interval" || role === "key_tempo" || role === "long_run") {
+    if (role === "key_interval" || role === "key_tempo" || role === "long_run" || role === "long_endurance") {
       if (!weekKeyRole || KEY_ROLE_PRIORITY.indexOf(role) < KEY_ROLE_PRIORITY.indexOf(weekKeyRole)) {
         weekKeyRole = role;
         weekKeyDate = day.date;
@@ -467,6 +483,8 @@ function resolveLowEnergyPattern(roleInfo: NutritionNarrativeDayRoleInfo): Narra
       return "low_energy_key_interval";
     case "key_tempo":
       return "low_energy_key_tempo";
+    case "long_endurance":
+      return "low_energy_load";
     case "cross_training":
       return "low_energy_cross";
     case "strength":
@@ -494,15 +512,18 @@ export function composeNutritionDayComment(
 
   if (input.nutritionStatus === "pre_long_low") {
     state.bumpPattern("pre_long_low");
-    return `${cautiousPrefix}Это день перед длительной: для такой подготовки углеводы на нижней границе, накануне длинной работы лучше не просаживать топливо.`;
+    return `${cautiousPrefix}Это день перед длинной нагрузкой: для такой подготовки углеводы на нижней границе, накануне длинной работы лучше не просаживать топливо.`;
   }
 
-  if (input.nutritionStatus === "long_run_low" || (hasEnergyIssue && roleInfo.role === "long_run")) {
+  if (
+    input.nutritionStatus === "long_run_low" ||
+    (hasEnergyIssue && (roleInfo.role === "long_run" || roleInfo.role === "long_endurance"))
+  ) {
     const occurrence = state.bumpPattern("long_run_low");
     const primary =
       occurrence >= 2
-        ? "На длинную работу день снова вышел скромным по энергии."
-        : "На длинную работу день получился скромным по энергии: запас топлива и восстановление могли быть лучше.";
+      ? "На длинную работу день снова вышел скромным по энергии."
+      : "На длинную работу день получился скромным по энергии: запас топлива и восстановление могли быть лучше.";
     const macroSentence = buildMacroNuanceSentence({
       macro,
       loadDay: true,
@@ -607,6 +628,11 @@ export function composeNutritionDayComment(
     return `${cautiousPrefix}Здесь нагрузка двойная (${athleteTrainingLabel}). По питанию день выглядит достаточно ровно: энергии и углеводов хватает для такой связки.`;
   }
 
+  if (roleInfo.role === "long_endurance") {
+    state.bumpPattern("macro_ok");
+    return `${cautiousPrefix}Под длинную выносливостную нагрузку день выглядит достаточно ровно: сильной просадки по энергии и углеводам не видно.`;
+  }
+
   if (roleInfo.role === "cross_training") {
     state.bumpPattern("macro_ok");
     return `${cautiousPrefix}Под ${athleteTrainingLabel} день выглядит достаточно ровно: сильной просадки по энергии и углеводам не видно.`;
@@ -653,6 +679,9 @@ export function buildNutritionWeeklySummary(input: {
   let carbsLowLoadDays = 0;
   let energyLowLoadDays = 0;
   let keyWorkoutLabel: string | null = null;
+  let mainLoadLabel: string | null = null;
+  let hardestDayLabels: string[] = [];
+  let carbRichDayLabels: string[] = [];
 
   for (const day of input.days) {
     const loadDay = day.roleInfo.role !== "rest";
@@ -673,7 +702,37 @@ export function buildNutritionWeeklySummary(input: {
     if (day.roleInfo.isKey) {
       keyWorkoutLabel = humanizeNutritionTrainingLabel(day.trainingLabel, day.trainingType);
     }
+    if (
+      !mainLoadLabel &&
+      (day.roleInfo.role === "long_endurance" ||
+        day.roleInfo.role === "long_run" ||
+        day.roleInfo.role === "key_interval" ||
+        day.roleInfo.role === "key_tempo" ||
+        day.roleInfo.role === "combined_load")
+    ) {
+      mainLoadLabel = humanizeNutritionTrainingLabel(day.trainingLabel, day.trainingType);
+    }
   }
+
+  const sortedByCarbs = [...input.days]
+    .filter((day) => typeof day.macro.carbsStatus === "string")
+    .sort((left, right) => {
+      const leftScore = left.macro.carbsStatus === "ok" ? 2 : left.macro.carbsStatus === "borderline" ? 1 : 0;
+      const rightScore = right.macro.carbsStatus === "ok" ? 2 : right.macro.carbsStatus === "borderline" ? 1 : 0;
+      return rightScore - leftScore;
+    })
+    .slice(0, 2);
+  carbRichDayLabels = sortedByCarbs.map((day) => humanizeNutritionTrainingLabel(day.trainingLabel, day.trainingType));
+  hardestDayLabels = input.days
+    .filter(
+      (day) =>
+        day.roleInfo.role === "key_interval" ||
+        day.roleInfo.role === "key_tempo" ||
+        day.roleInfo.role === "long_run" ||
+        day.roleInfo.role === "long_endurance" ||
+        day.roleInfo.role === "combined_load"
+    )
+    .map((day) => humanizeNutritionTrainingLabel(day.trainingLabel, day.trainingType));
 
   const segments: string[] = [];
 
@@ -686,10 +745,8 @@ export function buildNutritionWeeklySummary(input: {
   }
 
   const proteinAvgOk = (input.weeklyProteinAvgGPerKg ?? 0) >= 1.5 || input.proteinSufficient;
-  if (proteinAvgOk && proteinLowOrBorderlineDays === 0) {
-    segments.push("Белок по неделе в целом близко к норме.");
-  } else if (proteinAvgOk && proteinLowOrBorderlineDays > 0) {
-    segments.push("В отдельные дни он был ближе к нижней границе, но главный вопрос не в белке.");
+  if (proteinAvgOk) {
+    segments.push("Белок в среднем держится хорошо, это не главный вопрос недели.");
   } else if (proteinLowOrBorderlineDays >= 2) {
     segments.push("Белок в целом ближе к нижней границе.");
   } else if (proteinOkDays > proteinLowOrBorderlineDays) {
@@ -700,9 +757,23 @@ export function buildNutritionWeeklySummary(input: {
     segments.push("Жиры тоже несколько раз были на нижней границе.");
   }
 
+  if (carbRichDayLabels.length > 0 && hardestDayLabels.length > 0) {
+    const overlap = carbRichDayLabels.some((label) => hardestDayLabels.includes(label));
+    if (!overlap) {
+      segments.push("Лучшие по углеводам дни пришлись не на самые тяжёлые тренировки.");
+    }
+  }
+  if (carbsLowLoadDays >= 2) {
+    segments.push("Самые тяжёлые дни вышли с углеводами на нижней границе.");
+  }
+
   if (keyWorkoutLabel) {
     segments.push(
       `Главный тренировочный день недели — ${keyWorkoutLabel}. Именно вокруг таких работ питание стоит поддерживать лучше всего.`
+    );
+  } else if (mainLoadLabel) {
+    segments.push(
+      `Главный тренировочный день недели — ${mainLoadLabel}. Именно вокруг такой нагрузки питание стоит поддерживать лучше всего.`
     );
   }
 

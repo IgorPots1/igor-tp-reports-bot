@@ -140,7 +140,7 @@ const polyakovaContext = basePastContext([
     description: null,
     coachComments: null,
     plannedText: null,
-    durationHours: 1.2,
+    durationHours: 5.25,
   },
   {
     date: "2026-06-07",
@@ -158,6 +158,8 @@ const polyakovaSaturday = polyakovaMethodology.dailyAnalysis.find((day) => day.d
 const polyakovaSunday = polyakovaMethodology.dailyAnalysis.find((day) => day.date === "2026-06-07");
 assert.notEqual(polyakovaSaturday?.canonicalDailyAnalysis.trainingType, "pre_long");
 assert.notEqual(polyakovaSaturday?.trainingType, "pre_long");
+assert.equal(polyakovaSaturday?.trainingType, "long_endurance");
+assert.equal(polyakovaSaturday?.canonicalDailyAnalysis.trainingType, "long_endurance");
 assert.notEqual(polyakovaSunday?.trainingType, "long_run");
 assert.notEqual(polyakovaSunday?.canonicalDailyAnalysis.trainingType, "long_run");
 
@@ -189,6 +191,30 @@ assert.ok(
   !sundayEasyPlan.days.some((day) => day.training_type === "pre_long"),
   "pre_long only when next day is true long_run"
 );
+
+const longEndurancePlan = buildNutritionNextWeekPlan({
+  bodyweightKg: 58,
+  planWeekFrom: "2026-06-08",
+  planWeekTo: "2026-06-14",
+  trainingContext: {
+    workouts: [
+      { date: "2026-06-13", title: "Easy jog", type: "run" },
+      { date: "2026-06-14", title: "Cycling", type: "bike", durationHours: 5.25, distanceKm: 70 },
+    ],
+  },
+});
+assert.ok(longEndurancePlan.days.some((day) => day.date === "2026-06-14" && day.training_type === "long_endurance"));
+assert.ok(longEndurancePlan.days.some((day) => day.date === "2026-06-13" && day.training_type === "pre_long"));
+
+const shortBikePlan = buildNutritionNextWeekPlan({
+  bodyweightKg: 58,
+  planWeekFrom: "2026-06-08",
+  planWeekTo: "2026-06-14",
+  trainingContext: {
+    workouts: [{ date: "2026-06-10", title: "Cycling", type: "bike", durationHours: 0.84 }],
+  },
+});
+assert.ok(shortBikePlan.days.some((day) => day.date === "2026-06-10" && day.training_type === "cross_training"));
 
 assert.equal(isExplicitNutritionLongRunTitle("long intervals"), false, "plain long intervals should not match");
 

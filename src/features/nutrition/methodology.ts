@@ -4,6 +4,8 @@ import type {
   NormalizedManualMacroRow,
 } from "@/features/nutrition/context";
 import {
+  isExplicitRunTitle,
+  isNutritionLongEnduranceWorkout,
   isExplicitNutritionLongRunTitle,
   isNutritionLongRunWorkout,
   resolveNutritionLongRunConfidence,
@@ -17,6 +19,7 @@ export type NutritionTrainingType =
   | "rest"
   | "easy"
   | "long_run"
+  | "long_endurance"
   | "intervals"
   | "tempo"
   | "race"
@@ -65,6 +68,7 @@ export type NutritionCanonicalTrainingType =
   | "easy"
   | "hard"
   | "long_run"
+  | "long_endurance"
   | "pre_long"
   | "strength"
   | "cross_training"
@@ -121,6 +125,7 @@ export type NutritionCanonicalDailyAnalysis = {
     crossTraining: boolean;
     preLong: boolean;
     longRun: boolean;
+    longEndurance?: boolean;
     dayBeforeKeyWorkout: boolean;
     dayAfterKeyWorkout: boolean;
     suspect: boolean;
@@ -155,6 +160,7 @@ export type NutritionCarbLoadBasis =
   | "strength"
   | "hard"
   | "long_run"
+  | "long_endurance"
   | "pre_long"
   | "unknown";
 
@@ -243,6 +249,11 @@ export type NutritionMethodologyContext = {
     proteinSupport: boolean;
     limitedData: boolean;
   };
+  adjacentTrainingWithoutNutritionDays: Array<{
+    date: string;
+    trainingLabel: string;
+    durationMinutes: number | null;
+  }>;
 };
 
 type WorkoutContextByDate = {
@@ -257,6 +268,8 @@ type WorkoutContextByDate = {
   plannedText: string | null;
   durationHours: number | null;
   distanceKm: number | null;
+  hasRunSession: boolean;
+  hasLongEnduranceSession: boolean;
 };
 
 const PROTEIN_GUARD_LOW_G_PER_KG = 1.1;
@@ -265,6 +278,7 @@ const PROTEIN_GUARD_SUFFICIENT_G_PER_KG = 1.5;
 const PROTEIN_GUARD_HIGH_G_PER_KG = 2.0;
 
 const WORKOUT_LOAD_PRIORITY: Record<NutritionTrainingType, number> = {
+  long_endurance: 105,
   long_run: 100,
   race: 95,
   intervals: 90,
@@ -368,6 +382,15 @@ function toDateValue(iso: string): number {
   return Date.parse(`${iso}T12:00:00.000Z`);
 }
 
+function addDays(isoDate: string, days: number): string {
+  const match = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return isoDate;
+  }
+  const dt = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + days, 12, 0, 0));
+  return dt.toISOString().slice(0, 10);
+}
+
 function toDateLabel(isoDate: string): string {
   const match = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) {
@@ -449,16 +472,26 @@ function buildWorkoutContextByDate(week: NutritionTrainingPeaksWeekContext): Map
       continue;
     }
     const inferredType = normalizeTrainingType(workout.type, workout.title);
-    const type = isNutritionLongRunWorkout({
+    const isRunLike = inferredType === "easy" || inferredType === "long_run" || isExplicitRunTitle(workout.title);
+    const isLongEndurance = isNutritionLongEnduranceWorkout({
+      title: workout.title,
+      durationHours: workout.durationHours,
+      isRunLike,
+    });
+    const isLongRun = isNutritionLongRunWorkout({
       title: workout.title,
       durationHours: workout.durationHours,
       isCompleted: true,
       mode: "past_review",
-    })
-      ? "long_run"
-      : inferredType === "long_run"
-        ? "easy"
-        : inferredType;
+    });
+    const type =
+      isLongEndurance
+        ? "long_endurance"
+        : isLongRun
+          ? "long_run"
+          : inferredType === "long_run"
+            ? "easy"
+            : inferredType;
     const sessions = grouped.get(workout.date) ?? [];
     sessions.push({
       title: workout.title,
@@ -481,6 +514,8 @@ function buildWorkoutContextByDate(week: NutritionTrainingPeaksWeekContext): Map
     }
     const hasStrength = sessions.some((session) => session.type === "strength");
     const hasEasy = sessions.some((session) => session.type === "easy");
+    const hasRunSession = sessions.some((session) => session.type === "easy" || session.type === "long_run");
+    const hasLongEnduranceSession = sessions.some((session) => session.type === "long_endurance");
     const effectiveType = hasStrength && hasEasy ? "easy" : primary.type;
     const longRunSource =
       effectiveType === "long_run"
@@ -501,6 +536,8 @@ function buildWorkoutContextByDate(week: NutritionTrainingPeaksWeekContext): Map
       plannedText: primary.plannedText,
       durationHours: primary.durationHours,
       distanceKm: primary.distanceKm,
+      hasRunSession,
+      hasLongEnduranceSession,
     });
   }
   return map;
@@ -684,7 +721,10 @@ export function calculateNutritionEnergyFloorFacts(input: {
     belowCrossTrainingFloor: kcal !== null && input.trainingType === "cross_training" && kcal < crossTrainingFloorKcal,
     belowHardFloor:
       kcal !== null &&
-      (input.trainingType === "hard" || input.trainingType === "long_run" || input.trainingType === "race") &&
+      (input.trainingType === "hard" ||
+        input.trainingType === "long_run" ||
+        input.trainingType === "long_endurance" ||
+        input.trainingType === "race") &&
       kcal < hardFloorKcal,
     floorSource: "bodyweight_fallback",
   };
@@ -733,6 +773,9 @@ function inferCanonicalTrainingType(input: {
   }
   if (input.trainingType === "long_run") {
     return "long_run";
+  }
+  if (input.trainingType === "long_endurance") {
+    return "long_endurance";
   }
   if (input.trainingType === "intervals" || input.trainingType === "tempo") {
     return "hard";
@@ -785,6 +828,16 @@ function buildCanonicalTarget(input: {
       carbsGMax: Number((7 * bodyweight).toFixed(0)),
       kcalMin: Number((35 * bodyweight).toFixed(0)),
       formulaCode: "canonical_daily_v1_long_run",
+    };
+  }
+  if (input.canonicalTrainingType === "long_endurance") {
+    return {
+      carbsGPerKgMin: 6,
+      carbsGPerKgMax: 8,
+      carbsGMin: Number((6 * bodyweight).toFixed(0)),
+      carbsGMax: Number((8 * bodyweight).toFixed(0)),
+      kcalMin: Number((35 * bodyweight).toFixed(0)),
+      formulaCode: "canonical_daily_v1_long_endurance",
     };
   }
   if (input.canonicalTrainingType === "pre_long") {
@@ -877,6 +930,14 @@ function buildCanonicalTrainingLabel(input: {
     }
     return title ? `длительная: ${title}` : "длительная";
   }
+  if (input.canonicalTrainingType === "long_endurance") {
+    const durationHours = input.workout.durationHours ?? null;
+    const durationLabel =
+      durationHours && durationHours > 0
+        ? ` ${Math.floor(durationHours)}:${String(Math.round((durationHours % 1) * 60)).padStart(2, "0")}`
+        : "";
+    return title ? `длинная выносливостная нагрузка${durationLabel}: ${title}` : `длинная выносливостная нагрузка${durationLabel}`;
+  }
   if (input.canonicalTrainingType === "easy") {
     const distanceFromTitle = normalizeDistanceFromTitleKm(title);
     if (distanceFromTitle !== null) {
@@ -949,6 +1010,9 @@ function resolveCarbLoadBasis(trainingType: NutritionCanonicalTrainingType): Nut
   if (trainingType === "long_run") {
     return "long_run";
   }
+  if (trainingType === "long_endurance") {
+    return "long_endurance";
+  }
   if (trainingType === "pre_long") {
     return "pre_long";
   }
@@ -976,6 +1040,9 @@ function resolveCarbRangeByLoadBasis(loadBasis: NutritionCarbLoadBasis): {
   }
   if (loadBasis === "long_run") {
     return { rangeMinGPerKg: 6, rangeMaxGPerKg: 10 };
+  }
+  if (loadBasis === "long_endurance") {
+    return { rangeMinGPerKg: 6, rangeMaxGPerKg: 8 };
   }
   if (loadBasis === "pre_long") {
     return { rangeMinGPerKg: 5, rangeMaxGPerKg: 7 };
@@ -1165,10 +1232,30 @@ function analyzeDailyTrainingNutrition(input: {
     let duringRunFuelPlanned: boolean | undefined;
     let fuelingEvidence: string[] | undefined;
 
-    const isHardOrLong = trainingType === "long_run" || trainingType === "intervals" || trainingType === "tempo" || trainingType === "race";
-    const nextIsHardOrLong = nextDayTrainingType === "long_run" || nextDayTrainingType === "intervals" || nextDayTrainingType === "tempo" || nextDayTrainingType === "race";
-    const prevIsHardOrLong = previousDayTrainingType === "long_run" || previousDayTrainingType === "intervals" || previousDayTrainingType === "tempo" || previousDayTrainingType === "race";
-    const isPreLong = nextDayTrainingType === "long_run";
+    const isHardOrLong =
+      trainingType === "long_run" ||
+      trainingType === "long_endurance" ||
+      trainingType === "intervals" ||
+      trainingType === "tempo" ||
+      trainingType === "race";
+    const nextIsHardOrLong =
+      nextDayTrainingType === "long_run" ||
+      nextDayTrainingType === "long_endurance" ||
+      nextDayTrainingType === "intervals" ||
+      nextDayTrainingType === "tempo" ||
+      nextDayTrainingType === "race";
+    const prevIsHardOrLong =
+      previousDayTrainingType === "long_run" ||
+      previousDayTrainingType === "long_endurance" ||
+      previousDayTrainingType === "intervals" ||
+      previousDayTrainingType === "tempo" ||
+      previousDayTrainingType === "race";
+    const isPreLong =
+      (nextDayTrainingType === "long_run" || nextDayTrainingType === "long_endurance") &&
+      trainingType !== "long_run" &&
+      trainingType !== "long_endurance" &&
+      trainingType !== "intervals" &&
+      trainingType !== "tempo";
     const lowKcal = row.kcal !== null && thresholds.lowKcal !== null && row.kcal <= thresholds.lowKcal;
     const lowCarbs = row.carbsG !== null && thresholds.lowCarbs !== null && row.carbsG <= thresholds.lowCarbs;
 
@@ -1192,7 +1279,7 @@ function analyzeDailyTrainingNutrition(input: {
       relevance = "high";
     }
 
-    if (trainingType === "long_run") {
+    if (trainingType === "long_run" || trainingType === "long_endurance") {
       const workoutText = [currentWorkout?.title, currentWorkout?.description, currentWorkout?.coachComments, currentWorkout?.plannedText]
         .filter((part): part is string => Boolean(part))
         .join(" ");
@@ -1260,6 +1347,7 @@ function analyzeDailyTrainingNutrition(input: {
       canonicalTrainingType === "easy" ||
       canonicalTrainingType === "hard" ||
       canonicalTrainingType === "long_run" ||
+      canonicalTrainingType === "long_endurance" ||
       canonicalTrainingType === "pre_long" ||
       canonicalTrainingType === "race" ||
       canonicalTrainingType === "strength" ||
@@ -1353,7 +1441,13 @@ function analyzeDailyTrainingNutrition(input: {
     }
     const carbsPerKg = carbsGPerKg;
     const kcalPerKgThreshold = input.bodyweightKg && input.bodyweightKg > 0 ? 35 * input.bodyweightKg : null;
-    if ((canonicalTrainingType === "hard" || canonicalTrainingType === "race") && carbsPerKg !== null && carbsPerKg < 4.5) {
+    if (
+      (canonicalTrainingType === "hard" ||
+        canonicalTrainingType === "race" ||
+        canonicalTrainingType === "long_endurance") &&
+      carbsPerKg !== null &&
+      carbsPerKg < 4.5
+    ) {
       canonicalFindings.push("low_carbs_for_hard_session");
     }
     if (canonicalTrainingType === "pre_long" && carbsPerKg !== null && carbsPerKg < 4.5) {
@@ -1381,7 +1475,7 @@ function analyzeDailyTrainingNutrition(input: {
     } else if (energyFloor.belowHardFloor || energyFloor.belowLoadFloor || energyFloor.belowRestFloor) {
       canonicalNutritionStatus = "below_energy_floor";
     } else if (
-      canonicalTrainingType === "long_run" &&
+      (canonicalTrainingType === "long_run" || canonicalTrainingType === "long_endurance") &&
       ((carbsPerKg !== null && carbsPerKg < 5) ||
         (kcalPerKgThreshold !== null && row.kcal !== null && row.kcal < kcalPerKgThreshold))
     ) {
@@ -1397,6 +1491,7 @@ function analyzeDailyTrainingNutrition(input: {
         canonicalTrainingType === "hard" ||
         canonicalTrainingType === "race" ||
         canonicalTrainingType === "long_run" ||
+        canonicalTrainingType === "long_endurance" ||
         canonicalTrainingType === "pre_long" ||
         canonicalTrainingType === "cross_training" ||
         canonicalTrainingType === "strength")
@@ -1411,7 +1506,13 @@ function analyzeDailyTrainingNutrition(input: {
       if (row.kcal !== null && thresholds.lowKcal !== null && row.kcal > thresholds.lowKcal + 700) {
         canonicalNutritionStatus = "ample";
       }
-    } else if ((canonicalTrainingType === "hard" || canonicalTrainingType === "long_run") && carbsPerKg !== null && carbsPerKg >= 6) {
+    } else if (
+      (canonicalTrainingType === "hard" ||
+        canonicalTrainingType === "long_run" ||
+        canonicalTrainingType === "long_endurance") &&
+      carbsPerKg !== null &&
+      carbsPerKg >= 6
+    ) {
       canonicalNutritionStatus = "ample";
     }
 
@@ -1456,7 +1557,13 @@ function analyzeDailyTrainingNutrition(input: {
           canonicalNutritionStatus === "long_run_low" || canonicalNutritionStatus === "pre_long_low" || canonicalNutritionStatus === "low_for_load"
             ? "needs_fuel_support"
             : "aligned_or_ok",
-        confidence: currentWorkout.type === "long_run" || currentWorkout.type === "intervals" || currentWorkout.type === "tempo" ? "high" : "moderate",
+        confidence:
+          currentWorkout.type === "long_run" ||
+          currentWorkout.type === "long_endurance" ||
+          currentWorkout.type === "intervals" ||
+          currentWorkout.type === "tempo"
+            ? "high"
+            : "moderate",
       });
     }
     if (nextWorkout && nextIsHardOrLong) {
@@ -1494,6 +1601,7 @@ function analyzeDailyTrainingNutrition(input: {
         crossTraining: canonicalTrainingType === "cross_training",
         preLong: canonicalTrainingType === "pre_long",
         longRun: canonicalTrainingType === "long_run",
+        longEndurance: canonicalTrainingType === "long_endurance",
         dayBeforeKeyWorkout: nextIsHardOrLong,
         dayAfterKeyWorkout: prevIsHardOrLong,
         suspect,
@@ -1540,6 +1648,36 @@ function analyzeDailyTrainingNutrition(input: {
       canonicalDailyAnalysis,
     };
   });
+}
+
+function buildAdjacentTrainingWithoutNutritionDays(input: {
+  rows: NormalizedManualMacroRow[];
+  workoutsByDate: Map<string, WorkoutContextByDate>;
+  lookbackDays: number;
+}): Array<{ date: string; trainingLabel: string; durationMinutes: number | null }> {
+  const rowDates = new Set(input.rows.filter((row) => !row.day.startsWith("unresolved:")).map((row) => row.day));
+  const sortedDates = [...rowDates].sort();
+  const weekStart = sortedDates[0] ?? null;
+  if (!weekStart) {
+    return [];
+  }
+  const result: Array<{ date: string; trainingLabel: string; durationMinutes: number | null }> = [];
+  for (let index = 1; index <= input.lookbackDays; index += 1) {
+    const candidate = addDays(weekStart, -index);
+    if (rowDates.has(candidate)) {
+      continue;
+    }
+    const workout = input.workoutsByDate.get(candidate);
+    if (!workout || workout.type === "rest") {
+      continue;
+    }
+    result.push({
+      date: candidate,
+      trainingLabel: workout.title || "тренировка",
+      durationMinutes: workout.durationHours ? Math.round(workout.durationHours * 60) : null,
+    });
+  }
+  return result;
 }
 
 export function buildNutritionMethodologyContext(input: {
@@ -1596,6 +1734,7 @@ export function buildNutritionMethodologyContext(input: {
   const postHardRecoverySupport = dailyAnalysis.some(
     (day) =>
       (day.previousDayTrainingType === "long_run" ||
+        day.previousDayTrainingType === "long_endurance" ||
         day.previousDayTrainingType === "intervals" ||
         day.previousDayTrainingType === "tempo" ||
         day.previousDayTrainingType === "race") &&
@@ -1604,6 +1743,7 @@ export function buildNutritionMethodologyContext(input: {
   const carbsAroundKeySessions = dailyAnalysis.some(
     (day) =>
       (day.nextDayTrainingType === "long_run" ||
+        day.nextDayTrainingType === "long_endurance" ||
         day.nextDayTrainingType === "intervals" ||
         day.nextDayTrainingType === "tempo" ||
         day.nextDayTrainingType === "race") &&
@@ -1619,7 +1759,10 @@ export function buildNutritionMethodologyContext(input: {
         day.nutritionStatus === "low_for_strength"
     ).length >= 2;
   const proteinSupport = !proteinSufficient && (averages.proteinGPerKg ?? 0) > 0;
-  const heavyTraining = context.tpPastWeek.longRun !== null || context.tpPastWeek.keyWorkouts.length > 0;
+  const heavyTraining =
+    context.tpPastWeek.longRun !== null ||
+    context.tpPastWeek.keyWorkouts.length > 0 ||
+    dailyAnalysis.some((day) => day.trainingType === "long_endurance");
   const carbProgressionStrategy = detectCarbProgressionStrategy({
     avgCarbsGPerKg: averages.carbsGPerKg,
     hasHeavyTraining: heavyTraining,
@@ -1628,6 +1771,11 @@ export function buildNutritionMethodologyContext(input: {
   const duringRunFuelPlanned = longRunFuelingInstructionDetected;
 
   const trainingNutritionLinks = [...new Set(dailyAnalysis.flatMap((day) => day.trainingNutritionLinks))];
+  const adjacentTrainingWithoutNutritionDays = buildAdjacentTrainingWithoutNutritionDays({
+    rows: context.manualMacroRows,
+    workoutsByDate,
+    lookbackDays: 1,
+  });
   return {
     bodyweightKg,
     sex,
@@ -1650,6 +1798,7 @@ export function buildNutritionMethodologyContext(input: {
       proteinSupport,
       limitedData: context.manualMacroRows.length < 3 || context.tpPastWeek.cacheStatus !== "ok",
     },
+    adjacentTrainingWithoutNutritionDays,
   };
 }
 

@@ -129,9 +129,17 @@ assert.equal(
 assert.equal(
   ((generated.planSummary.next_week_plan as { day_type_targets?: unknown }).day_type_targets as {
     rest?: { target_kcal?: unknown };
+    long_endurance?: { target_kcal?: unknown };
   })?.rest?.target_kcal,
   1950,
   "rest target kcal for 56kg must stay 1950 from deterministic formulas"
+);
+assert.equal(
+  typeof (((generated.planSummary.next_week_plan as { day_type_targets?: unknown }).day_type_targets as {
+    long_endurance?: { target_kcal?: unknown };
+  })?.long_endurance?.target_kcal),
+  "number",
+  "next_week_plan should expose long_endurance target"
 );
 assert.equal(
   typeof (generated.planSummary.next_week_plan as { day_type_ideal_targets?: unknown }).day_type_ideal_targets,

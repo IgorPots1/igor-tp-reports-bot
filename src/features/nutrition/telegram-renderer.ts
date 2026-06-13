@@ -1,3 +1,4 @@
+import { getNutritionAdminLocalDate } from "@/features/nutrition/plan-week-policy";
 import type { TrainingPeaksTelegramFormality } from "@/features/trainingpeaks/repository";
 import type { NutritionNextWeekPlan, NutritionNextWeekPlanDay, NutritionPlanDayType } from "@/features/nutrition/weekly-plan-formulas";
 import type { NutritionPlanTargetWeekMode } from "@/features/nutrition/plan-week-policy";
@@ -32,6 +33,8 @@ export type NutritionTelegramRendererInput = {
   hasTargetWeekTrainingContext: boolean;
   hasPreviousWeeksContext: boolean;
   forceDayTypePlan?: boolean;
+  todayLocalDate?: string;
+  miniTableMode?: "athlete_remaining_only" | "full_week";
 };
 
 function formatDateRu(isoDate: string): string {
@@ -162,8 +165,30 @@ function buildPlanByDayTypes(nextWeekPlan: NutritionNextWeekPlan | null, fallbac
     .filter((line): line is string => Boolean(line));
 }
 
-function buildMiniTable(nextWeekPlan: NutritionNextWeekPlan): string[] {
-  return nextWeekPlan.days.slice(0, 7).map((day) => {
+function resolveMiniTableDays(input: {
+  nextWeekPlan: NutritionNextWeekPlan;
+  planWeekMode: NutritionPlanTargetWeekMode;
+  todayLocalDate?: string;
+  mode?: "athlete_remaining_only" | "full_week";
+}): NutritionNextWeekPlanDay[] {
+  const all = input.nextWeekPlan.days.slice(0, 7);
+  const mode = input.mode ?? "athlete_remaining_only";
+  if (mode === "full_week" || input.planWeekMode !== "current_week") {
+    return all;
+  }
+  const today = input.todayLocalDate ?? getNutritionAdminLocalDate();
+  const remaining = all.filter((day) => day.date >= today);
+  return remaining.length > 0 ? remaining : all;
+}
+
+function buildMiniTable(input: {
+  nextWeekPlan: NutritionNextWeekPlan;
+  planWeekMode: NutritionPlanTargetWeekMode;
+  todayLocalDate?: string;
+  mode?: "athlete_remaining_only" | "full_week";
+}): string[] {
+  const days = resolveMiniTableDays(input);
+  return days.map((day) => {
     const kcal =
       day.display_target?.kcal_min != null && day.display_target?.kcal_max != null
         ? `~${Math.round(day.display_target.kcal_min)}-${Math.round(day.display_target.kcal_max)} ккал`
@@ -283,7 +308,12 @@ export function renderNutritionTelegramMessage(input: NutritionTelegramRendererI
     input.hasTargetWeekTrainingContext && !input.forceDayTypePlan && Boolean(input.nextWeekPlan?.days.length);
   const planHeading = canUseMiniTable ? "📋 Мини-таблица" : "📋 План на неделю по типам дней";
   const planLines = canUseMiniTable && input.nextWeekPlan
-    ? buildMiniTable(input.nextWeekPlan)
+    ? buildMiniTable({
+        nextWeekPlan: input.nextWeekPlan,
+        planWeekMode: input.planWeekMode,
+        todayLocalDate: input.todayLocalDate,
+        mode: input.miniTableMode ?? "athlete_remaining_only",
+      })
     : buildPlanByDayTypes(input.nextWeekPlan, input.fallbackPlanLines);
   const keyTrainingPresent = hasKeyTraining(input.nextWeekPlan);
   const lines = [

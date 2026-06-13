@@ -82,6 +82,7 @@ export type NutritionWeeklyPlanFacts = {
     previousWeekFocus: Record<string, unknown> | null;
     carbProgressionStrategy: Record<string, unknown> | null;
     proteinSufficient: boolean | null;
+    adjacent_training_without_nutrition_days?: unknown[];
     limitedData: boolean;
   };
   guardrails: {
@@ -488,6 +489,9 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
         ? { strategy: nutritionSummary.carb_progression_strategy }
         : null,
       proteinSufficient: toBooleanOrNull(methodologySignals.protein_sufficient),
+      adjacent_training_without_nutrition_days: Array.isArray(methodologySignals.adjacent_training_without_nutrition_days)
+        ? methodologySignals.adjacent_training_without_nutrition_days
+        : [],
       limitedData: parsedDays < 4 || isSafetyBlocked(safetyFlags),
     },
     guardrails: {
