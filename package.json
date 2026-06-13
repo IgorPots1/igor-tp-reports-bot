@@ -179,6 +179,7 @@
     "check:tp-signals-review-buckets": "npx tsx scripts/check-tp-signals-review-buckets.ts",
     "check:tp-signals-review-queue": "npx tsx scripts/check-tp-signals-review-queue.ts",
     "check:tp-signals-review-pending-mutations": "npx tsx scripts/check-tp-signals-review-pending-mutations.ts",
+    "check:tp-signals-schedule-expiry": "npx tsx scripts/check-tp-signals-schedule-expiry.ts",
     "diagnose:tp-signals-explain": "npx tsx scripts/diagnose-tp-signals-explain.ts",
     "diagnose:tp-signals-review-buckets": "npx tsx scripts/diagnose-tp-signals-review-buckets.ts",
     "diagnose:tp-signals-review-queue": "npx tsx scripts/diagnose-tp-signals-review-queue.ts",

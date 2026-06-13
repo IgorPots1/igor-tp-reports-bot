@@ -4761,6 +4761,30 @@ function isExpiredPlannedTrainingDatesSignal(
   return areAllPlannedTrainingDatesExpired(signal.structuredPayload, asOfDate);
 }
 
+function areAllUnavailableDatesExpired(
+  structuredPayload: Record<string, unknown>,
+  asOfDate: string
+): boolean {
+  const unavailableDates = normalizeRecordStringArray(structuredPayload.unavailable_dates);
+  if (unavailableDates.length === 0) {
+    return false;
+  }
+  if (!unavailableDates.every((date) => date < asOfDate)) {
+    return false;
+  }
+  // Concrete one-off unavailability dates have all passed. Only treat the row as
+  // expired when there is no remaining future actionable date in the payload, so
+  // a generous default valid_until cannot keep a stale past-weekday constraint
+  // visible. Availability windows (resolved_available_dates / available_days) are
+  // intentionally NOT a trigger here — they may be recurring and are governed by
+  // valid_until instead, to avoid over-hiding (e.g. weekly availability rows).
+  const plannedDates = normalizeRecordStringArray(structuredPayload.planned_training_dates);
+  const resolvedDates = normalizeRecordStringArray(structuredPayload.resolved_available_dates);
+  const hasFuturePlanned = plannedDates.some((date) => date >= asOfDate);
+  const hasFutureResolved = resolvedDates.some((date) => date >= asOfDate);
+  return !hasFuturePlanned && !hasFutureResolved;
+}
+
 export function isExpiredScheduleOperationalSignal(
   signal: { signalType: string; validUntil: string | null; structuredPayload: Record<string, unknown> },
   asOfDate: string,
@@ -4768,6 +4792,10 @@ export function isExpiredScheduleOperationalSignal(
 ): boolean {
   if (!isScheduleOperationalSignalType(signal.signalType)) {
     return false;
+  }
+  // Concrete past unavailability dates win over a generous default valid_until.
+  if (areAllUnavailableDatesExpired(signal.structuredPayload, asOfDate)) {
+    return true;
   }
   let validUntil = resolveScheduleOperationalSignalValidUntil(signal);
   if (!validUntil && options?.referenceObservedAt) {
