@@ -203,6 +203,111 @@ function isActionableClassification(input: {
   return input.secondaryBuckets.some((bucket) => ACTIONABLE_BUCKETS.has(bucket));
 }
 
+export type DiscardedOperationalCandidate = {
+  classification: OperationalSignalCandidate;
+  discardReason: "skip_bucket" | "non_persistable_type" | "non_actionable";
+};
+
+export type ObservationPersistenceSimulation = {
+  status: "would_persist" | "would_skip";
+  skipReason: string | null;
+  allCandidates: OperationalSignalCandidate[];
+  discardedCandidates: DiscardedOperationalCandidate[];
+  persistableCandidates: OperationalSignalCandidate[];
+};
+
+export function simulateObservationPersistenceOutcome(
+  input: Omit<PersistOperationalSignalsForObservationInput, "observationId">
+): ObservationPersistenceSimulation {
+  if (!input.studentId) {
+    return {
+      status: "would_skip",
+      skipReason: "missing_student_id",
+      allCandidates: [],
+      discardedCandidates: [],
+      persistableCandidates: [],
+    };
+  }
+
+  const classificationInput: ObservationLike = {
+    sourceType: input.sourceType,
+    textPreview: input.textPreview,
+    labels: input.labels.map((label) => label.toLowerCase()),
+    metadata: input.metadata ?? {},
+    observedAt: input.observedAt,
+    studentId: input.studentId,
+  };
+
+  const allCandidates = classifyCoachOperationalSignals(classificationInput);
+  if (!allCandidates.length) {
+    return {
+      status: "would_skip",
+      skipReason: "no_candidates",
+      allCandidates: [],
+      discardedCandidates: [],
+      persistableCandidates: [],
+    };
+  }
+
+  const discardedCandidates: DiscardedOperationalCandidate[] = [];
+  const persistableCandidatesMap = new Map<TrainingPeaksOperationalSignalType, PersistableCandidate>();
+  for (const classification of allCandidates) {
+    const signalType = classification.signal_type;
+    const isActionable = isActionableClassification({
+      primaryBucket: classification.primary_bucket,
+      secondaryBuckets: classification.secondary_buckets,
+    });
+    if (!PERSISTABLE_SIGNAL_TYPES.has(signalType as TrainingPeaksOperationalSignalType)) {
+      discardedCandidates.push({ classification, discardReason: "non_persistable_type" });
+      continue;
+    }
+    if (classification.primary_bucket === "skip") {
+      discardedCandidates.push({ classification, discardReason: "skip_bucket" });
+      continue;
+    }
+    if (!isActionable) {
+      discardedCandidates.push({ classification, discardReason: "non_actionable" });
+      continue;
+    }
+    const typedSignal = signalType as TrainingPeaksOperationalSignalType;
+    const prev = persistableCandidatesMap.get(typedSignal);
+    if (!prev) {
+      persistableCandidatesMap.set(typedSignal, {
+        classification,
+        signalType: typedSignal,
+      });
+      continue;
+    }
+    const prevScore = payloadRichnessScore(prev.classification.structured_payload as Record<string, unknown>);
+    const nextScore = payloadRichnessScore(classification.structured_payload as Record<string, unknown>);
+    if (nextScore >= prevScore) {
+      persistableCandidatesMap.set(typedSignal, {
+        classification,
+        signalType: typedSignal,
+      });
+    }
+  }
+
+  const persistableCandidates = [...persistableCandidatesMap.values()].map((item) => item.classification);
+  if (!persistableCandidates.length) {
+    return {
+      status: "would_skip",
+      skipReason: "no_persistable_candidates",
+      allCandidates,
+      discardedCandidates,
+      persistableCandidates: [],
+    };
+  }
+
+  return {
+    status: "would_persist",
+    skipReason: null,
+    allCandidates,
+    discardedCandidates,
+    persistableCandidates,
+  };
+}
+
 function parseTelegramBigInt(value: string | null | undefined): number | null {
   if (!value) {
     return null;
