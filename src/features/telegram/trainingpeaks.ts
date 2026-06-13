@@ -109,6 +109,8 @@ import {
   handleGroupWorkoutReportReviewCallback,
   tryHandleGroupWorkoutReportCoachEditMessage,
 } from "@/features/trainingpeaks/group-workout-report-review-flow";
+import { parseTpSignalReviewCallback } from "@/features/trainingpeaks/tp-signals-review-card";
+import { handleTpSignalReviewCallback } from "@/features/trainingpeaks/tp-signals-review-flow";
 import {
   isTrainingPeaksTelegramBusinessPeerMissingError,
   shortenTrainingPeaksTelegramDeliveryError,
@@ -9454,6 +9456,28 @@ export async function handleTrainingPeaksTelegramCallback(
       coachChatId: String(parsedMessage.chatId),
       coachMessageId: parsedMessage.messageId,
       callbackQueryId: parsedMessage.callbackQueryId,
+      deps: {
+        answerCallback: async (callbackQueryId, text) => {
+          await answerTelegramCallbackQuery(callbackQueryId, text);
+        },
+      },
+    });
+    return "handled";
+  }
+
+  const tpSignalReviewCallback = parseTpSignalReviewCallback(parsedMessage.data);
+  if (tpSignalReviewCallback) {
+    if (!isCoachChat(parsedMessage.chatId)) {
+      await sendTrainingPeaksMessage(parsedMessage.chatId, COACH_ONLY_MESSAGE);
+      return "handled";
+    }
+
+    await handleTpSignalReviewCallback({
+      callback: tpSignalReviewCallback,
+      coachChatId: String(parsedMessage.chatId),
+      coachMessageId: parsedMessage.messageId,
+      callbackQueryId: parsedMessage.callbackQueryId,
+      coachTelegramUserId: parsedMessage.userId ? String(parsedMessage.userId) : null,
       deps: {
         answerCallback: async (callbackQueryId, text) => {
           await answerTelegramCallbackQuery(callbackQueryId, text);

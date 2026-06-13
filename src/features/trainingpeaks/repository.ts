@@ -7881,6 +7881,186 @@ export async function listActiveTrainingPeaksOperationalSignalsByStudent(
   return rows.map(mapTrainingPeaksStudentOperationalSignalRow);
 }
 
+export type TrainingPeaksOperationalSignalReviewDecisionBucket =
+  | "review_required"
+  | "close_candidate_review";
+
+export type TrainingPeaksOperationalSignalReviewDecisionName =
+  | "acknowledged"
+  | "keep_visible"
+  | "hide_from_queue"
+  | "close_candidate_seen"
+  | "needs_manual_followup";
+
+export type TrainingPeaksOperationalSignalReviewDecisionSource =
+  | "telegram_button"
+  | "diagnostic"
+  | "manual";
+
+export type TrainingPeaksOperationalSignalReviewDecision = {
+  id: string;
+  signalId: string;
+  studentId: string | null;
+  bucket: TrainingPeaksOperationalSignalReviewDecisionBucket;
+  decision: TrainingPeaksOperationalSignalReviewDecisionName;
+  decisionSource: TrainingPeaksOperationalSignalReviewDecisionSource;
+  coachTelegramUserId: string | null;
+  callbackShortId: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
+type TrainingPeaksOperationalSignalReviewDecisionRow = {
+  id: string;
+  signal_id: string;
+  student_id: string | null;
+  bucket: string;
+  decision: string;
+  decision_source: string;
+  coach_telegram_user_id: string | null;
+  callback_short_id: string | null;
+  metadata: unknown;
+  created_at: string;
+};
+
+function mapTrainingPeaksOperationalSignalReviewDecisionRow(
+  row: TrainingPeaksOperationalSignalReviewDecisionRow
+): TrainingPeaksOperationalSignalReviewDecision {
+  return {
+    id: row.id,
+    signalId: row.signal_id,
+    studentId: row.student_id,
+    bucket: row.bucket as TrainingPeaksOperationalSignalReviewDecisionBucket,
+    decision: row.decision as TrainingPeaksOperationalSignalReviewDecisionName,
+    decisionSource: row.decision_source as TrainingPeaksOperationalSignalReviewDecisionSource,
+    coachTelegramUserId: row.coach_telegram_user_id,
+    callbackShortId: row.callback_short_id,
+    metadata:
+      row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? (row.metadata as Record<string, unknown>)
+        : {},
+    createdAt: row.created_at,
+  };
+}
+
+export async function getTrainingPeaksOperationalSignalByIdPrefix(
+  signalIdPrefix: string
+): Promise<TrainingPeaksStudentOperationalSignal | null> {
+  const normalizedPrefix = normalizeTrainingPeaksReplyDraftIdPrefix(signalIdPrefix);
+  if (!normalizedPrefix) {
+    return null;
+  }
+
+  const minUuid = formatTrainingPeaksUuidFromHex32(normalizedPrefix.padEnd(32, "0"));
+  const maxUuid = formatTrainingPeaksUuidFromHex32(normalizedPrefix.padEnd(32, "f"));
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .select("*")
+    .gte("id", minUuid)
+    .lte("id", maxUuid)
+    .order("created_at", { ascending: false })
+    .limit(2);
+
+  if (error) {
+    if (isTrainingPeaksMissingRelationError(error)) {
+      throw new Error(
+        "trainingpeaks_student_operational_signals table is missing; apply Supabase migration first"
+      );
+    }
+    throw new Error(
+      `Failed to get TrainingPeaks operational signal by prefix ${normalizedPrefix}: ${error.message}`
+    );
+  }
+
+  const rows = (data as TrainingPeaksStudentOperationalSignalRow[] | null) ?? [];
+  if (rows.length !== 1) {
+    return null;
+  }
+
+  return mapTrainingPeaksStudentOperationalSignalRow(rows[0]!);
+}
+
+export async function insertTrainingPeaksOperationalSignalReviewDecision(input: {
+  signalId: string;
+  studentId?: string | null;
+  bucket: TrainingPeaksOperationalSignalReviewDecisionBucket;
+  decision: TrainingPeaksOperationalSignalReviewDecisionName;
+  decisionSource: TrainingPeaksOperationalSignalReviewDecisionSource;
+  coachTelegramUserId?: string | null;
+  callbackShortId?: string | null;
+  metadata?: Record<string, unknown>;
+}): Promise<TrainingPeaksOperationalSignalReviewDecision | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_operational_signal_review_decisions")
+    .insert({
+      signal_id: input.signalId,
+      student_id: input.studentId ?? null,
+      bucket: input.bucket,
+      decision: input.decision,
+      decision_source: input.decisionSource,
+      coach_telegram_user_id: input.coachTelegramUserId ?? null,
+      callback_short_id: input.callbackShortId ?? null,
+      metadata: input.metadata ?? {},
+    })
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    if (isTrainingPeaksMissingRelationError(error)) {
+      throw new Error(
+        "trainingpeaks_operational_signal_review_decisions table is missing; apply Supabase migration first"
+      );
+    }
+    throw new Error(`Failed to insert TrainingPeaks operational signal review decision: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksOperationalSignalReviewDecisionRow(
+    data as TrainingPeaksOperationalSignalReviewDecisionRow
+  );
+}
+
+export async function listLatestTrainingPeaksOperationalSignalReviewDecisionsBySignalIds(
+  signalIds: string[]
+): Promise<Map<string, TrainingPeaksOperationalSignalReviewDecision>> {
+  const uniqueSignalIds = [...new Set(signalIds.filter(Boolean))];
+  if (uniqueSignalIds.length === 0) {
+    return new Map();
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_operational_signal_review_decisions")
+    .select("*")
+    .in("signal_id", uniqueSignalIds)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    if (isTrainingPeaksMissingRelationError(error)) {
+      throw new Error(
+        "trainingpeaks_operational_signal_review_decisions table is missing; apply Supabase migration first"
+      );
+    }
+    throw new Error(`Failed to list TrainingPeaks operational signal review decisions: ${error.message}`);
+  }
+
+  const latestBySignalId = new Map<string, TrainingPeaksOperationalSignalReviewDecision>();
+  for (const row of (data as TrainingPeaksOperationalSignalReviewDecisionRow[] | null) ?? []) {
+    const mapped = mapTrainingPeaksOperationalSignalReviewDecisionRow(row);
+    if (!latestBySignalId.has(mapped.signalId)) {
+      latestBySignalId.set(mapped.signalId, mapped);
+    }
+  }
+
+  return latestBySignalId;
+}
+
 export async function getLatestTrainingPeaksOperationalSignalLifecycleTransition(
   signalId: string
 ): Promise<TrainingPeaksOperationalSignalLifecycleTransition | null> {
