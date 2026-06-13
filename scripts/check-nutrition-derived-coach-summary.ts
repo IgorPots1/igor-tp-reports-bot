@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { buildDerivedNutritionCoachSummary } from "../src/features/nutrition/coach-summary";
 import { buildDerivedNutritionCombinedMessage } from "../src/features/nutrition/combined-message";
+import { humanizeNutritionTrainingLabel } from "../src/features/nutrition/narrative-composer";
 import { NUTRITION_ATHLETE_FORBIDDEN_MEDICAL_TERMS } from "../src/features/nutrition/narrative-guardrails";
 import { analyzeNutritionPageConsistency } from "../src/features/nutrition/page-consistency";
 import type { NutritionWeeklyAnalysis, NutritionWeeklyPlan } from "../src/features/nutrition/repository";
@@ -152,7 +153,7 @@ assert.doesNotMatch(
 );
 assert.match(derivedSummary, /Качество данных:/, "derived summary must include data quality");
 assert.match(derivedSummary, /Главный|Фокус недели|Средние макросы/, "derived summary must include weekly pattern or macro/focus");
-assert.match(derivedSummary, /Длительная|Ключевая тренировка|Long run/, "derived summary must include key workout pattern");
+assert.match(derivedSummary, /Длительная|длительн|Ключевая тренировка|Long run|вело/i, "derived summary must include key workout pattern");
 assert.match(derivedSummary, /Средние макросы:/, "derived summary must include macro pattern");
 assert.match(derivedSummary, /Фокус недели:/, "derived summary must include one focus");
 
@@ -248,5 +249,95 @@ assert.doesNotMatch(
   /moveWorkout|mutateTrainingPeaks|updateWorkout|executeMove/i,
   "derived helper must not mutate TrainingPeaks"
 );
+
+function buildPolyakovaLikeReview(): NutritionWeeklyAnalysis {
+  return {
+    ...review,
+    id: "review-polyakova-like",
+    weekFrom: "2026-06-02",
+    weekTo: "2026-06-08",
+    nutritionSummary: {
+      ...asObject(review.nutritionSummary),
+      one_focus: {
+        statement_ru: "Данных пока недостаточно для точного тренировка-день анализа, нужен ручной разбор.",
+      },
+      data_quality_summary: {
+        parsed_days: 6,
+        low_confidence_days: 0,
+      },
+      daily_analysis: [
+        {
+          date: "2026-06-04",
+          training_type: "hard",
+          training_label: "8 х 4 мин + Cycling",
+          nutrition_status: "low_for_load",
+          findings: ["low_carbs_for_load_type"],
+          macroGuardrails: {
+            protein: { status: "ok" },
+            fat: { status: "ok" },
+            carbs: { status: "low", g: 180, gPerKg: 3.1 },
+          },
+        },
+        {
+          date: "2026-06-06",
+          training_type: "long_endurance",
+          training_label: "длинная выносливостная нагрузка 5:16: Cycling",
+          nutrition_status: "low_for_load",
+          findings: ["low_carbs_for_load_type"],
+          macroGuardrails: {
+            protein: { status: "ok" },
+            fat: { status: "ok" },
+            carbs: { status: "borderline", g: 210, gPerKg: 3.6 },
+          },
+        },
+        {
+          date: "2026-06-07",
+          training_type: "long_run",
+          training_label: "длительная: бег",
+          nutrition_status: "long_run_low",
+          findings: ["low_carbs_for_load_type"],
+          macroGuardrails: {
+            protein: { status: "ok" },
+            fat: { status: "ok" },
+            carbs: { status: "low", g: 190, gPerKg: 3.2 },
+          },
+        },
+        {
+          date: "2026-06-02",
+          training_type: "easy",
+          training_label: "Бег в легком темпе",
+          nutrition_status: "below_energy_floor",
+          findings: [],
+          macroGuardrails: { protein: { status: "ok" }, fat: { status: "ok" }, carbs: { status: "low", g: 170, gPerKg: 2.9 } },
+        },
+        {
+          date: "2026-06-03",
+          training_type: "rest",
+          training_label: "день отдыха",
+          nutrition_status: "rest_ok",
+          findings: [],
+          macroGuardrails: { protein: { status: "ok" }, fat: { status: "ok" }, carbs: { status: "ok", g: 260, gPerKg: 4.5 } },
+        },
+        {
+          date: "2026-06-05",
+          training_type: "cross_training",
+          training_label: "Cycling",
+          nutrition_status: "low_for_cross_training",
+          findings: [],
+          macroGuardrails: { protein: { status: "ok" }, fat: { status: "ok" }, carbs: { status: "ok", g: 320, gPerKg: 5.5 } },
+        },
+      ],
+    },
+  };
+}
+
+const polyakovaSummary = buildDerivedNutritionCoachSummary({ review: buildPolyakovaLikeReview() });
+assert.doesNotMatch(polyakovaSummary, /Данных пока недостаточно/, "stale limited-data focus must not leak when facts are sufficient");
+assert.match(polyakovaSummary, /Фокус недели: углеводы и энергия вокруг длинных нагрузок/i);
+assert.doesNotMatch(polyakovaSummary, /\bCycling\b/);
+assert.doesNotMatch(polyakovaSummary, /длительная: длительная/i);
+assert.match(polyakovaSummary, /вело 5:16|вело/i);
+assert.match(polyakovaSummary, /Лучшие по углеводам дни пришлись не на самые тяжёлые тренировки/i);
+assert.equal(humanizeNutritionTrainingLabel("длинная выносливостная нагрузка 5:16: Cycling", "long_endurance"), "вело 5:16");
 
 console.log("PASS check-nutrition-derived-coach-summary");

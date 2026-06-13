@@ -57,6 +57,9 @@ assert.ok(isCombinedLoadLabel("Padel + run"));
 assert.equal(resolveNutritionNarrativeWorkoutRole({ trainingType: "easy", trainingLabel: "силовая + бег", mode: "past_review", isCompleted: true }).role, "combined_load");
 assert.equal(humanizeNutritionTrainingLabel("Padel Racket", "cross_training"), "падел");
 assert.equal(humanizeNutritionTrainingLabel("Cycling", "cross_training"), "вело");
+assert.equal(humanizeNutritionTrainingLabel("длинная выносливостная нагрузка 5:16: Cycling", "long_endurance"), "вело 5:16");
+assert.equal(humanizeNutritionTrainingLabel("длительная: бег", "long_run"), "длительный бег");
+assert.equal(humanizeNutritionTrainingLabel("8 х 4 мин + Cycling", "hard"), "8 х 4 мин + вело");
 
 function macroGuardrails(carbsStatus: string, carbsGPerKg: number, loadBasis: string): Record<string, unknown> {
   return {

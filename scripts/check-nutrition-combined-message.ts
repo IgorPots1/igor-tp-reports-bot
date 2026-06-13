@@ -5,8 +5,10 @@ import { join } from "node:path";
 import {
   buildDerivedNutritionCoachDayByDayText,
   buildDerivedNutritionCombinedMessage,
+  formatNutritionAthleteGreetingName,
   type NutritionCombinedMessageResult,
 } from "@/features/nutrition/combined-message";
+import { humanizeNutritionTrainingLabel } from "@/features/nutrition/narrative-composer";
 import type { NutritionWeeklyAnalysis, NutritionWeeklyPlan } from "@/features/nutrition/repository";
 import { resolveNutritionWeeklyPlanForDisplay } from "@/features/nutrition/repository";
 
@@ -208,6 +210,28 @@ async function run(): Promise<void> {
   });
   assert.match(nadezhdaGreeting.athleteMessageDraft ?? "", /^Надя, привет!/);
   assert.doesNotMatch(nadezhdaGreeting.athleteMessageDraft ?? "", /Nadezhda Ponomareva, привет/);
+
+  assert.equal(formatNutritionAthleteGreetingName({ studentName: "Polyakova Anastasia" }), "Анастасия");
+  const polyakovaGreeting = buildDerivedNutritionCombinedMessage({
+    review,
+    plan,
+    formality: "ty",
+    studentName: "Polyakova Anastasia",
+  });
+  assert.match(polyakovaGreeting.athleteMessageDraft ?? "", /^Анастасия, привет!/);
+  assert.doesNotMatch(polyakovaGreeting.athleteMessageDraft ?? "", /^Polyakova, привет!/);
+  assert.doesNotMatch(polyakovaGreeting.athleteMessageDraft ?? "", /\bCycling\b/);
+
+  const noNameGreeting = buildDerivedNutritionCombinedMessage({
+    review,
+    plan,
+    formality: "ty",
+    studentName: "Polyakova",
+  });
+  assert.match(noNameGreeting.athleteMessageDraft ?? "", /^Привет!/);
+
+  assert.equal(humanizeNutritionTrainingLabel("длинная выносливостная нагрузка 5:16: Cycling", "long_endurance"), "вело 5:16");
+  assert.equal(humanizeNutritionTrainingLabel("длительная: бег", "long_run"), "длительный бег");
 
   const methodologyReview = buildReview();
   methodologyReview.nutritionSummary = {

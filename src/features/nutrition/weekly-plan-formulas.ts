@@ -699,15 +699,40 @@ export function buildNutritionNextWeekPlan(params: {
   const longEnduranceDay = days.find((day) => day.training_type === "long_endurance") ?? null;
 
   const preLongTarget = days.find((day) => day.training_type === "pre_long")?.practical_target ?? null;
-  const longDayTarget =
-    days.find((day) => day.training_type === "long_endurance")?.practical_target ??
-    days.find((day) => day.training_type === "long_run")?.practical_target ??
+  const longDay =
+    days.find((day) => day.training_type === "long_endurance") ??
+    days.find((day) => day.training_type === "long_run") ??
     null;
-  if (preLongTarget && longDayTarget && longDayTarget.carbs_g < preLongTarget.carbs_g) {
-    longDayTarget.carbs_g = preLongTarget.carbs_g;
-    longDayTarget.carbs_g_per_kg = Number((longDayTarget.carbs_g / (params.bodyweightKg ?? 1)).toFixed(2));
-    longDayTarget.target_kcal = Math.max(longDayTarget.target_kcal, preLongTarget.target_kcal);
-    longDayTarget.kcal_per_kg = Number((longDayTarget.target_kcal / (params.bodyweightKg ?? 1)).toFixed(1));
+  const longDayTarget = longDay?.practical_target ?? null;
+  if (preLongTarget && longDayTarget && longDay) {
+    if (longDayTarget.carbs_g < preLongTarget.carbs_g) {
+      longDayTarget.carbs_g = preLongTarget.carbs_g;
+      longDayTarget.carbs_g_per_kg = Number((longDayTarget.carbs_g / (params.bodyweightKg ?? 1)).toFixed(2));
+      longDayTarget.target_kcal = Math.max(longDayTarget.target_kcal, preLongTarget.target_kcal);
+      longDayTarget.kcal_per_kg = Number((longDayTarget.target_kcal / (params.bodyweightKg ?? 1)).toFixed(1));
+    }
+    longDay.carbs_g = longDayTarget.carbs_g;
+    longDay.target_kcal = longDayTarget.target_kcal;
+    longDay.kcal_per_kg = longDayTarget.kcal_per_kg;
+    longDay.carbs_g_per_kg = longDayTarget.carbs_g_per_kg;
+    longDay.display_target = {
+      kcal_min: roundToNearest(longDayTarget.target_kcal - 50, 50),
+      kcal_max: roundToNearest(longDayTarget.target_kcal + 50, 50),
+      carbs_g_min: roundToNearest(longDayTarget.carbs_g - 20, 10),
+      carbs_g_max: roundToNearest(longDayTarget.carbs_g + 20, 10),
+    };
+    const preLongDay = days.find((day) => day.training_type === "pre_long");
+    if (
+      preLongDay?.display_target?.carbs_g_min != null &&
+      longDay.display_target.carbs_g_min != null &&
+      longDay.display_target.carbs_g_min < preLongDay.display_target.carbs_g_min
+    ) {
+      longDay.display_target.carbs_g_min = preLongDay.display_target.carbs_g_min;
+      longDay.display_target.carbs_g_max = Math.max(
+        longDay.display_target.carbs_g_max ?? longDay.display_target.carbs_g_min,
+        preLongDay.display_target.carbs_g_max ?? preLongDay.display_target.carbs_g_min
+      );
+    }
   }
 
   return {

@@ -176,6 +176,44 @@ export function resolveNutritionNarrativeWorkoutRole(input: {
   return { role: "unknown", reason: "unknown_type" };
 }
 
+function extractDurationHMM(label: string): string | null {
+  const match = label.match(/(\d+):(\d{2})/);
+  if (!match) {
+    return null;
+  }
+  return `${match[1]}:${match[2]}`;
+}
+
+function resolveSportShortRu(title: string): string | null {
+  if (/cycling|bike/i.test(title)) {
+    return "вело";
+  }
+  if (/padel/i.test(title)) {
+    return "падел";
+  }
+  if (/strength/i.test(title)) {
+    return "силовая";
+  }
+  if (/run|бег|пробеж/i.test(title)) {
+    return "бег";
+  }
+  return null;
+}
+
+function replaceEnglishSportTokens(label: string): string {
+  return label
+    .replace(/\bCycling\b/gi, "вело")
+    .replace(/\bBike\b/gi, "вело")
+    .replace(/\bPadel Racket\b/gi, "падел")
+    .replace(/\bPadel\b/gi, "падел")
+    .replace(/\bStrength\b/gi, "силовая")
+    .replace(/\bTrainingPeaks\b/gi, "план тренировок");
+}
+
+function isRunLikeLabel(label: string): boolean {
+  return /бег|run|пробеж|лонг/i.test(label);
+}
+
 export function humanizeNutritionTrainingLabel(trainingLabel: string, trainingType: string): string {
   const raw = trainingLabel.trim();
   if (!raw) {
@@ -197,30 +235,91 @@ export function humanizeNutritionTrainingLabel(trainingLabel: string, trainingTy
     return "лёгкий бег";
   }
   if (isCombinedLoadLabel(raw)) {
-    return raw
-      .replace(/\bCycling\b/gi, "вело")
-      .replace(/\bBike\b/gi, "вело")
-      .replace(/\bPadel Racket\b/gi, "падел")
-      .replace(/\bPadel\b/gi, "падел")
-      .replace(/\bStrength\b/gi, "силовая");
+    return replaceEnglishSportTokens(raw);
   }
   if (isKeyIntervalTitle(raw) || isKeyTempoTitle(raw)) {
-    return raw;
+    return replaceEnglishSportTokens(raw);
   }
-  if (trainingType === "long_run") {
-    const distanceMatch = raw.match(/(\d+(?:[,.]\d+)?)\s*(?:км|km)\b/i);
+
+  const longEndurancePattern = /^длинная выносливостная нагрузка(?:\s+(\d+:\d{2}))?(?::\s*(.+))?$/i;
+  const longEnduranceMatch = raw.match(longEndurancePattern);
+  if (longEnduranceMatch || trainingType === "long_endurance") {
+    const duration = longEnduranceMatch?.[1] ?? extractDurationHMM(raw);
+    const titleTail = longEnduranceMatch?.[2]?.trim() ?? raw.split(":").slice(-1)[0]?.trim() ?? "";
+    const sport = resolveSportShortRu(titleTail) ?? resolveSportShortRu(raw);
+    if (sport === "вело" && duration) {
+      return `вело ${duration}`;
+    }
+    if (sport && duration) {
+      return `${sport} ${duration}`;
+    }
+    if (duration) {
+      return `длинная нагрузка ${duration}`;
+    }
+    if (sport) {
+      return sport;
+    }
+  }
+
+  if (trainingType === "long_run" || /длительн|long\s*run|лонг/i.test(raw)) {
+    const stripped = raw
+      .replace(/^длительная:\s*/i, "")
+      .replace(/^длительная\s+/i, "")
+      .replace(/^длинная выносливостная нагрузка\s*/i, "")
+      .trim();
+    const duration = extractDurationHMM(stripped) ?? extractDurationHMM(raw);
+    const distanceMatch = stripped.match(/(\d+(?:[,.]\d+)?)\s*(?:км|km)\b/i) ?? raw.match(/(\d+(?:[,.]\d+)?)\s*(?:км|km)\b/i);
+    const runLike = isRunLikeLabel(stripped) || isRunLikeLabel(raw) || trainingType === "long_run";
+    if (distanceMatch && runLike) {
+      return `длительный бег ${distanceMatch[1].replace(".", ",")} км`;
+    }
     if (distanceMatch) {
       return `длительная ${distanceMatch[1].replace(".", ",")} км`;
+    }
+    if (duration && runLike) {
+      return `бег ${duration}`;
+    }
+    if (runLike) {
+      const cleaned = stripped.replace(/long\s*run/gi, "бег").trim();
+      if (/^бег$/i.test(cleaned)) {
+        return "длительный бег";
+      }
+      if (cleaned && !/^длительн/i.test(cleaned)) {
+        if (!distanceMatch && !duration && /бег по пульсу|easy run|long run/i.test(cleaned)) {
+          return "длительная";
+        }
+        return cleaned.toLocaleLowerCase("ru").startsWith("бег") ? cleaned : `длительный ${cleaned}`;
+      }
+      return "длительный бег";
     }
     if (/длитель|long\s*run|лонг/i.test(raw)) {
       return raw.replace(/long\s*run/gi, "длительная");
     }
     return "длительная";
   }
+
   if (/^cycling$/i.test(raw) || /^bike$/i.test(raw) || /вело/i.test(raw)) {
     return "вело";
   }
-  return raw;
+  return replaceEnglishSportTokens(raw);
+}
+
+export function formatNutritionWorkoutLabelForAthlete(input: {
+  trainingLabel: string;
+  trainingType: string;
+}): string {
+  return humanizeNutritionTrainingLabel(input.trainingLabel, input.trainingType);
+}
+
+export function formatNutritionWorkoutLabelForCoach(input: {
+  trainingLabel: string;
+  trainingType: string;
+}): string {
+  const label = humanizeNutritionTrainingLabel(input.trainingLabel, input.trainingType);
+  return label
+    .replace(/^длительная:\s*/i, "")
+    .replace(/^длительная\s+/i, "")
+    .trim() || label;
 }
 
 export type NutritionNarrativeDayRoleInfo = {
@@ -320,6 +419,8 @@ export type MacroGuardrailStatuses = {
   fatG?: number | null;
   fatPercentEnergy?: number | null;
   carbsStatus: string | null;
+  carbsG?: number | null;
+  carbsGPerKg?: number | null;
 };
 
 function isHighFatMacro(macro: MacroGuardrailStatuses): boolean {
@@ -902,7 +1003,7 @@ export function buildNutritionWeeklySummary(input: {
       energyLowLoadDays += 1;
     }
     if (day.roleInfo.isKey) {
-      keyWorkoutLabel = humanizeNutritionTrainingLabel(day.trainingLabel, day.trainingType);
+      keyWorkoutLabel = formatNutritionWorkoutLabelForAthlete(day);
     }
     if (
       !mainLoadLabel &&
@@ -912,29 +1013,33 @@ export function buildNutritionWeeklySummary(input: {
         day.roleInfo.role === "key_tempo" ||
         day.roleInfo.role === "combined_load")
     ) {
-      mainLoadLabel = humanizeNutritionTrainingLabel(day.trainingLabel, day.trainingType);
+      mainLoadLabel = formatNutritionWorkoutLabelForAthlete(day);
     }
   }
 
-  const sortedByCarbs = [...input.days]
-    .filter((day) => typeof day.macro.carbsStatus === "string")
-    .sort((left, right) => {
-      const leftScore = left.macro.carbsStatus === "ok" ? 2 : left.macro.carbsStatus === "borderline" ? 1 : 0;
-      const rightScore = right.macro.carbsStatus === "ok" ? 2 : right.macro.carbsStatus === "borderline" ? 1 : 0;
-      return rightScore - leftScore;
-    })
-    .slice(0, 2);
-  carbRichDayLabels = sortedByCarbs.map((day) => humanizeNutritionTrainingLabel(day.trainingLabel, day.trainingType));
-  hardestDayLabels = input.days
-    .filter(
-      (day) =>
-        day.roleInfo.role === "key_interval" ||
-        day.roleInfo.role === "key_tempo" ||
-        day.roleInfo.role === "long_run" ||
-        day.roleInfo.role === "long_endurance" ||
-        day.roleInfo.role === "combined_load"
-    )
-    .map((day) => humanizeNutritionTrainingLabel(day.trainingLabel, day.trainingType));
+  const hardestDays = input.days.filter(
+    (day) =>
+      day.roleInfo.role === "key_interval" ||
+      day.roleInfo.role === "key_tempo" ||
+      day.roleInfo.role === "long_run" ||
+      day.roleInfo.role === "long_endurance" ||
+      day.roleInfo.role === "combined_load"
+  );
+  hardestDayLabels = hardestDays.map((day) => formatNutritionWorkoutLabelForAthlete(day));
+  const macroDaysWithCarbs = input.days.filter(
+    (day) => day.macro.carbsG != null || day.macro.carbsGPerKg != null || typeof day.macro.carbsStatus === "string"
+  );
+  const sortedByCarbs = [...macroDaysWithCarbs].sort((left, right) => {
+    const leftGrams = left.macro.carbsG ?? (left.macro.carbsGPerKg != null ? left.macro.carbsGPerKg * 100 : null);
+    const rightGrams = right.macro.carbsG ?? (right.macro.carbsGPerKg != null ? right.macro.carbsGPerKg * 100 : null);
+    if (leftGrams != null && rightGrams != null && leftGrams !== rightGrams) {
+      return rightGrams - leftGrams;
+    }
+    const leftScore = left.macro.carbsStatus === "ok" ? 2 : left.macro.carbsStatus === "borderline" ? 1 : 0;
+    const rightScore = right.macro.carbsStatus === "ok" ? 2 : right.macro.carbsStatus === "borderline" ? 1 : 0;
+    return rightScore - leftScore;
+  });
+  carbRichDayLabels = sortedByCarbs.slice(0, 2).map((day) => formatNutritionWorkoutLabelForAthlete(day));
 
   const segments: string[] = [];
 
@@ -969,9 +1074,23 @@ export function buildNutritionWeeklySummary(input: {
     );
   }
 
-  if (carbRichDayLabels.length > 0 && hardestDayLabels.length > 0) {
-    const overlap = carbRichDayLabels.some((label) => hardestDayLabels.includes(label));
-    if (!overlap) {
+  if (macroDaysWithCarbs.length >= 5 && hardestDays.length >= 2 && carbRichDayLabels.length > 0) {
+    const topCarbDates = new Set(sortedByCarbs.slice(0, 2).map((day) => day.date));
+    const hardestDates = new Set(hardestDays.map((day) => day.date));
+    const overlapCount = [...topCarbDates].filter((date) => hardestDates.has(date)).length;
+    const hardestCarbValues = hardestDays
+      .map((day) => day.macro.carbsG ?? (day.macro.carbsGPerKg != null ? day.macro.carbsGPerKg * 60 : null))
+      .filter((value): value is number => value != null);
+    const topCarbValues = sortedByCarbs
+      .slice(0, 2)
+      .map((day) => day.macro.carbsG ?? (day.macro.carbsGPerKg != null ? day.macro.carbsGPerKg * 60 : null))
+      .filter((value): value is number => value != null);
+    const meaningfulDiff =
+      hardestCarbValues.length > 0 &&
+      topCarbValues.length > 0 &&
+      Math.min(...topCarbValues) - Math.max(...hardestCarbValues) >= 15;
+    const labelOverlap = carbRichDayLabels.some((label) => hardestDayLabels.includes(label));
+    if ((overlapCount < 1 || !labelOverlap) && meaningfulDiff) {
       segments.push("Лучшие по углеводам дни пришлись не на самые тяжёлые тренировки.");
     }
   }

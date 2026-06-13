@@ -68,4 +68,19 @@ assert.match(text, /~\d{4}-\d{4} ккал/);
 assert.doesNotMatch(text, /обязательно выйти|нужно съесть ровно/i);
 assert.doesNotMatch(text, /Понедельник \(08\.06\)|Вторник \(09\.06\)/, "current week mini-table should hide past days");
 
+const preLongDay = plan.days.find((day) => day.training_type === "pre_long");
+const longRunDay = plan.days.find((day) => day.training_type === "long_run");
+assert.ok(preLongDay, "pre_long day must exist before long run");
+assert.ok(longRunDay, "long_run day must exist");
+if (preLongDay?.display_target?.carbs_g_min != null && longRunDay?.display_target?.carbs_g_min != null) {
+  assert.ok(
+    longRunDay.display_target.carbs_g_min >= preLongDay.display_target.carbs_g_min,
+    "long day carbs min must be >= pre_long carbs min"
+  );
+  assert.ok(
+    (longRunDay.display_target.carbs_g_max ?? 0) >= (preLongDay.display_target.carbs_g_max ?? 0),
+    "long day carbs max must be >= pre_long carbs max"
+  );
+}
+
 console.log("PASS check-nutrition-practical-targets");

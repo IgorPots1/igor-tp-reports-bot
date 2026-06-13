@@ -267,7 +267,7 @@ assert.doesNotMatch(
 );
 assert.match(
   text,
-  /Воскресенье \(14\.06\) · длительная · ~(2450-2550|2500) ккал/,
+  /Воскресенье \(14\.06\) · длительн.*18.*км · ~(2450-2550|2500) ккал/,
   "Sunday long run label must be deterministic"
 );
 assert.doesNotMatch(text, /Воскресенье \(14\.06\) · Бег по пульсу/, "Sunday long run must not expose generic TP label");
@@ -276,5 +276,40 @@ assert.match(text, /📋 Мини-таблица/, "must show mini-table when TP
 assert.doesNotMatch(text, /План на неделю по типам дней/, "must not show day-type plan with TP context");
 assert.match(text, /🍽 Перед ключевыми тренировками/, "pre-training block must be present with hard or long_run");
 assert.deepEqual(result.issues.filter((issue) => issue.severity === "error"), [], "Nadezhda-like render must have no errors");
+
+const polyakovaRender = renderNutritionTelegramMessage({
+  formality: "ty",
+  athleteName: "Анастасия",
+  planWeekMode: "current_week",
+  interpretation: {
+    dayComments: ["🔹 Суббота (06.06) · вело 5:16\n~2200 ккал · белок ~95 г · жиры ~65 г · углеводы ~210 г.\nДля дня с нагрузкой энергии получилось маловато."],
+    weekSummaryRu: "Лучшие по углеводам дни пришлись не на самые тяжёлые тренировки.",
+    focusLinesRu: ["Поддержать углеводы вокруг длинных нагрузок."],
+    weekComparisonLineRu: null,
+  },
+  nextWeekPlan,
+  fallbackPlanLines: ["fallback"],
+  hasTargetWeekTrainingContext: true,
+  hasPreviousWeeksContext: false,
+});
+assert.match(polyakovaRender.text ?? "", /^Анастасия, привет!/);
+assert.doesNotMatch(polyakovaRender.text ?? "", /\bCycling\b/);
+
+const emptyNameRender = renderNutritionTelegramMessage({
+  formality: "ty",
+  athleteName: "",
+  planWeekMode: "current_week",
+  interpretation: {
+    dayComments: ["🔹 Понедельник (01.06) · день отдыха\n~2000 ккал."],
+    weekSummaryRu: "Итог недели",
+    focusLinesRu: ["Фокус"],
+    weekComparisonLineRu: null,
+  },
+  nextWeekPlan,
+  fallbackPlanLines: ["fallback"],
+  hasTargetWeekTrainingContext: true,
+  hasPreviousWeeksContext: false,
+});
+assert.match(emptyNameRender.text ?? "", /^Привет!/);
 
 console.log("PASS check-nutrition-telegram-renderer-boundary");

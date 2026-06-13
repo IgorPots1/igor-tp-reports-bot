@@ -107,8 +107,10 @@ export function getNutritionNarrativePreferences(input: {
   NutritionNarrativePreferences {
   const preferences = asPreferencesObject(input.profilePreferences);
   const narrative = asPreferencesObject(preferences.narrative);
+  const nutritionNarrative = asPreferencesObject(preferences.nutritionNarrative);
+  const narrativeSource = Object.keys(nutritionNarrative).length > 0 ? nutritionNarrative : narrative;
   let fatFeedbackPolicy =
-    normalizeFatFeedbackPolicy(narrative.fatFeedbackPolicy) ??
+    normalizeFatFeedbackPolicy(narrativeSource.fatFeedbackPolicy) ??
     normalizeFatFeedbackPolicy(preferences.fatFeedbackPolicy);
 
   if (!fatFeedbackPolicy && input.coachContextRu?.trim()) {
@@ -118,19 +120,19 @@ export function getNutritionNarrativePreferences(input: {
   }
 
   const detailLevel =
-    narrative.detailLevel === "compact" || narrative.detailLevel === "detailed"
-      ? narrative.detailLevel
+    narrativeSource.detailLevel === "compact" || narrativeSource.detailLevel === "detailed"
+      ? narrativeSource.detailLevel
       : preferences.detailLevel === "compact" || preferences.detailLevel === "detailed"
         ? preferences.detailLevel
         : "normal";
 
   const carbFeedbackPolicy =
-    narrative.carbFeedbackPolicy === "strong" || preferences.carbFeedbackPolicy === "strong"
+    narrativeSource.carbFeedbackPolicy === "strong" || preferences.carbFeedbackPolicy === "strong"
       ? "strong"
       : "normal";
 
-  const focusPriorityRaw = Array.isArray(narrative.focusPriority)
-    ? narrative.focusPriority
+  const focusPriorityRaw = Array.isArray(narrativeSource.focusPriority)
+    ? narrativeSource.focusPriority
     : Array.isArray(preferences.focusPriority)
       ? preferences.focusPriority
       : [];

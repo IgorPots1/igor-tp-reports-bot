@@ -1,3 +1,4 @@
+import { formatNutritionWorkoutLabelForAthlete } from "@/features/nutrition/narrative-composer";
 import { getNutritionAdminLocalDate } from "@/features/nutrition/plan-week-policy";
 import type { TrainingPeaksTelegramFormality } from "@/features/trainingpeaks/repository";
 import type { NutritionNextWeekPlan, NutritionNextWeekPlanDay, NutritionPlanDayType } from "@/features/nutrition/weekly-plan-formulas";
@@ -121,10 +122,14 @@ export function cleanupPlainText(input: string): string {
 }
 
 function resolveGreeting(formality: TrainingPeaksTelegramFormality, athleteName: string): string {
-  if (formality === "vy") {
-    return `Здравствуйте, ${athleteName}!`;
+  const trimmed = athleteName.trim();
+  if (!trimmed) {
+    return formality === "vy" ? "Здравствуйте!" : "Привет!";
   }
-  return `${athleteName}, привет!`;
+  if (formality === "vy") {
+    return `Здравствуйте, ${trimmed}!`;
+  }
+  return `${trimmed}, привет!`;
 }
 
 function formatPlanFocusSectionHeading(mode: NutritionPlanTargetWeekMode): string {
@@ -132,11 +137,10 @@ function formatPlanFocusSectionHeading(mode: NutritionPlanTargetWeekMode): strin
 }
 
 function resolveDayLabel(day: NutritionNextWeekPlanDay): string {
-  if (day.training_type !== "long_run") {
-    return day.training_label || dayTypeRu(day.training_type).toLowerCase();
-  }
-  const distanceMatch = (day.workout_title ?? day.training_label ?? "").match(/(\d+(?:[,.]\d+)?)\s*(?:км|km)\b/i);
-  return distanceMatch ? `длительная ${distanceMatch[1].replace(".", ",")} км` : "длительная";
+  return formatNutritionWorkoutLabelForAthlete({
+    trainingLabel: day.workout_title ?? day.training_label ?? dayTypeRu(day.training_type).toLowerCase(),
+    trainingType: day.training_type,
+  });
 }
 
 function buildPlanByDayTypes(nextWeekPlan: NutritionNextWeekPlan | null, fallbackPlanLines: string[]): string[] {

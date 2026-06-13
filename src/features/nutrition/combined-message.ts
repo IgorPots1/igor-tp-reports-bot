@@ -6,7 +6,7 @@ import {
   buildNutritionTargetWeekFocusNarrative,
   buildNutritionWeeklySummary,
   composeNutritionDayComment,
-  humanizeNutritionTrainingLabel,
+  formatNutritionWorkoutLabelForAthlete,
   NutritionNarrativeRepetitionState,
   resolveNutritionNarrativeWorkoutRole,
   resolveWeekNarrativeDayRoles,
@@ -249,6 +249,8 @@ function extractMacroGuardrailStatuses(macroGuardrails: unknown): MacroGuardrail
     fatG: toFiniteNumber(fatGuard.g),
     fatPercentEnergy: toFiniteNumber(fatGuard.percentEnergy ?? fatGuard.percent_energy),
     carbsStatus: typeof carbsGuard.status === "string" ? carbsGuard.status : null,
+    carbsG: toFiniteNumber(carbsGuard.g ?? carbsGuard.gActual ?? carbsGuard.actualG),
+    carbsGPerKg: toFiniteNumber(carbsGuard.gPerKg ?? carbsGuard.g_per_kg),
   };
 }
 
@@ -374,7 +376,7 @@ function getDailyFactValue(item: CanonicalDailyFact, actual: Record<string, unkn
 }
 
 function resolveDailyTrainingLabelForAthlete(trainingType: string, trainingLabel: string): string {
-  return humanizeNutritionTrainingLabel(trainingLabel, trainingType);
+  return formatNutritionWorkoutLabelForAthlete({ trainingLabel, trainingType });
 }
 
 function hasNutritionCompletenessIssue(input: {
@@ -597,7 +599,21 @@ function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
     const nutritionStatus =
       typeof day.nutrition_status === "string" ? day.nutrition_status : typeof day.nutritionStatus === "string" ? day.nutritionStatus : null;
     const findings = asStringArray(day.findings);
-    const macro = extractMacroGuardrailStatuses(day.macro_guardrails ?? day.macroGuardrails);
+    const macroBase = extractMacroGuardrailStatuses(day.macro_guardrails ?? day.macroGuardrails);
+    const actual = asObject((day as Record<string, unknown>).actual);
+    const macro: MacroGuardrailStatuses = {
+      ...macroBase,
+      carbsG:
+        macroBase.carbsG ??
+        toFiniteNumber(day.carbs_g) ??
+        toFiniteNumber(actual.carbsG) ??
+        toFiniteNumber(actual.carbs_g),
+      carbsGPerKg:
+        macroBase.carbsGPerKg ??
+        toFiniteNumber(day.carbs_g_per_kg) ??
+        toFiniteNumber(actual.carbsGPerKg) ??
+        toFiniteNumber(actual.carbs_g_per_kg),
+    };
     const roleInfo = weekRoles.get(date) ?? {
       role: resolveNutritionNarrativeWorkoutRole({ trainingType, trainingLabel, mode: "past_review", isCompleted: true }).role,
       isKey: false,
@@ -624,7 +640,14 @@ function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
     });
   }
   if (typeof methodologySignals.main_load_day_label === "string" && methodologySignals.main_load_day_label.trim()) {
-    return `Главный тренировочный день недели — ${methodologySignals.main_load_day_label}. Фокус — углеводы вокруг тяжёлых дней, а не просто «есть больше каждый день».`;
+    const mainLoadLabel = formatNutritionWorkoutLabelForAthlete({
+      trainingLabel: methodologySignals.main_load_day_label,
+      trainingType:
+        typeof methodologySignals.main_load_day_type === "string"
+          ? methodologySignals.main_load_day_type
+          : "long_endurance",
+    });
+    return `Главный тренировочный день недели — ${mainLoadLabel}. Фокус — углеводы вокруг тяжёлых дней, а не просто «есть больше каждый день».`;
   }
   return statement ?? coachSummary ?? "По неделе держим курс на ровную энергию и восстановление без резких просадок.";
 }
@@ -643,7 +666,7 @@ function buildAdjacentMissingNutritionLines(review: NutritionWeeklyAnalysis): st
       if (!date) {
         return null;
       }
-      return `🔹 ${formatDateRu(date)} · ${humanizeNutritionTrainingLabel(label, "cross_training")}
+      return `🔹 ${formatDateRu(date)} · ${formatNutritionWorkoutLabelForAthlete({ trainingLabel: label, trainingType: "cross_training" })}
 Питание за этот день не зафиксировано. Без данных конкретного макро-вывода не делаю, отмечаю только факт нагрузки.`;
     })
     .filter((line): line is string => Boolean(line));
@@ -696,23 +719,88 @@ function getNextWeekPlan(plan: NutritionWeeklyPlan): NutritionNextWeekPlan | nul
   return nextWeekPlan as unknown as NutritionNextWeekPlan;
 }
 
-export function getNutritionAthleteDisplayName(student: { studentName?: string | null; profilePreferences?: Record<string, unknown> | null }): string {
+const KNOWN_LATIN_FIRST_NAMES_RU: Record<string, string> = {
+  nadezhda: "Надя",
+  anastasia: "Анастасия",
+  kristina: "Кристина",
+  anna: "Анна",
+};
+
+const LATIN_SURNAME_ONLY_TOKENS = new Set(["polyakova", "ponomareva"]);
+
+function isCyrillicToken(token: string): boolean {
+  return /[а-яё]/i.test(token);
+}
+
+function isLatinSurnameOnlyToken(token: string): boolean {
+  const lower = token.toLocaleLowerCase("en");
+  if (LATIN_SURNAME_ONLY_TOKENS.has(lower)) {
+    return true;
+  }
+  return /^[A-Z][a-z]+(?:ova|eva|skaya|sky|ich|enko|uk)$/i.test(token);
+}
+
+export function formatNutritionAthleteGreetingName(student: {
+  studentName?: string | null;
+  profilePreferences?: Record<string, unknown> | null;
+}): string {
   const preferences = asObject(student.profilePreferences);
-  const preferred =
+  const explicit =
+    compactText(typeof preferences.preferredNameRu === "string" ? preferences.preferredNameRu : null) ??
+    compactText(typeof preferences.preferred_name_ru === "string" ? preferences.preferred_name_ru : null) ??
+    compactText(typeof preferences.displayNameRu === "string" ? preferences.displayNameRu : null) ??
+    compactText(typeof preferences.display_name_ru === "string" ? preferences.display_name_ru : null) ??
+    compactText(typeof preferences.firstNameRu === "string" ? preferences.firstNameRu : null) ??
+    compactText(typeof preferences.first_name_ru === "string" ? preferences.first_name_ru : null) ??
     compactText(typeof preferences.preferred_name === "string" ? preferences.preferred_name : null) ??
     compactText(typeof preferences.preferredName === "string" ? preferences.preferredName : null) ??
     compactText(typeof preferences.display_name === "string" ? preferences.display_name : null) ??
     compactText(typeof preferences.displayName === "string" ? preferences.displayName : null);
-  if (preferred) {
-    return preferred;
+  if (explicit) {
+    return explicit;
   }
-  const rawName = compactText(student.studentName) ?? "Привет";
-  const firstToken = rawName.split(/\s+/)[0] ?? rawName;
-  const knownShortNames: Record<string, string> = {
-    nadezhda: "Надя",
-    надежда: "Надя",
-  };
-  return knownShortNames[firstToken.toLocaleLowerCase("ru")] ?? firstToken;
+
+  const rawName = compactText(student.studentName);
+  if (!rawName) {
+    return "";
+  }
+
+  const tokens = rawName.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) {
+    return "";
+  }
+
+  if (tokens.some(isCyrillicToken)) {
+    const cyrillicTokens = tokens.filter(isCyrillicToken);
+    if (cyrillicTokens.length >= 2 && /^[А-ЯЁ][а-яё]+(?:ов|ова|ев|ева|ин|ина|ский|ская)$/u.test(cyrillicTokens[0])) {
+      return cyrillicTokens[1];
+    }
+    return cyrillicTokens[0];
+  }
+
+  if (tokens.length >= 2) {
+    const first = tokens[0];
+    const second = tokens[1];
+    if (isLatinSurnameOnlyToken(first)) {
+      const mapped = KNOWN_LATIN_FIRST_NAMES_RU[second.toLocaleLowerCase("en")] ?? second;
+      return isLatinSurnameOnlyToken(mapped) ? "" : mapped;
+    }
+    const mapped = KNOWN_LATIN_FIRST_NAMES_RU[first.toLocaleLowerCase("en")] ?? first;
+    return isLatinSurnameOnlyToken(mapped) ? "" : mapped;
+  }
+
+  const single = tokens[0];
+  if (isLatinSurnameOnlyToken(single)) {
+    return "";
+  }
+  return KNOWN_LATIN_FIRST_NAMES_RU[single.toLocaleLowerCase("en")] ?? single;
+}
+
+export function getNutritionAthleteDisplayName(student: {
+  studentName?: string | null;
+  profilePreferences?: Record<string, unknown> | null;
+}): string {
+  return formatNutritionAthleteGreetingName(student);
 }
 
 function extractReviewDoNotSendReasons(review: NutritionWeeklyAnalysis): string[] {

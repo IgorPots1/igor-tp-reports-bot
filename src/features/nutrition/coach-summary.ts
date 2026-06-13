@@ -3,11 +3,12 @@ import type { NutritionAthleteReportSignal } from "@/features/nutrition/athlete-
 import {
   resolveNutritionNarrativePreferencesFromStored,
   type NutritionFatFeedbackPolicy,
+  type NutritionNarrativeFocusPriority,
 } from "@/features/nutrition/context";
 import { isNutritionLongRunWorkout } from "@/features/nutrition/long-run";
 import {
   buildNutritionWeeklySummary,
-  humanizeNutritionTrainingLabel,
+  formatNutritionWorkoutLabelForCoach,
   isCombinedLoadLabel,
   resolveNutritionNarrativeWorkoutRole,
   resolveWeekNarrativeDayRoles,
@@ -63,6 +64,8 @@ function extractMacroGuardrailStatuses(macroGuardrails: unknown): {
   fatG: number | null;
   fatPercentEnergy: number | null;
   carbsStatus: string | null;
+  carbsG: number | null;
+  carbsGPerKg: number | null;
 } {
   const guardrails = asObject(macroGuardrails);
   const proteinGuard = asObject(guardrails.protein);
@@ -75,6 +78,8 @@ function extractMacroGuardrailStatuses(macroGuardrails: unknown): {
     fatG: toFiniteNumber(fatGuard.g),
     fatPercentEnergy: toFiniteNumber(fatGuard.percentEnergy ?? fatGuard.percent_energy),
     carbsStatus: typeof carbsGuard.status === "string" ? carbsGuard.status : null,
+    carbsG: toFiniteNumber(carbsGuard.g ?? carbsGuard.gActual ?? carbsGuard.actualG),
+    carbsGPerKg: toFiniteNumber(carbsGuard.gPerKg ?? carbsGuard.g_per_kg),
   };
 }
 
@@ -311,6 +316,8 @@ function buildWeeklySummaryDays(review: NutritionWeeklyAnalysis): NutritionWeekl
       typeof day.nutrition_status === "string" ? day.nutrition_status : typeof day.nutritionStatus === "string" ? day.nutritionStatus : null;
     const findings = asStringArray(day.findings);
     const macroRaw = extractMacroGuardrailStatuses(day.macro_guardrails ?? day.macroGuardrails);
+    const embedded = asObject((day as Record<string, unknown>).canonicalDailyAnalysis ?? (day as Record<string, unknown>).canonical_daily_analysis);
+    const actual = asObject(embedded.actual);
     const macro = {
       proteinStatus: macroRaw.proteinStatus,
       fatStatus: macroRaw.fatStatus,
@@ -318,6 +325,16 @@ function buildWeeklySummaryDays(review: NutritionWeeklyAnalysis): NutritionWeekl
       fatG: macroRaw.fatG,
       fatPercentEnergy: macroRaw.fatPercentEnergy,
       carbsStatus: macroRaw.carbsStatus,
+      carbsG:
+        macroRaw.carbsG ??
+        toFiniteNumber((day as Record<string, unknown>).carbs_g) ??
+        toFiniteNumber(actual.carbsG) ??
+        toFiniteNumber(actual.carbs_g),
+      carbsGPerKg:
+        macroRaw.carbsGPerKg ??
+        toFiniteNumber((day as Record<string, unknown>).carbs_g_per_kg) ??
+        toFiniteNumber(actual.carbsGPerKg) ??
+        toFiniteNumber(actual.carbs_g_per_kg),
     };
     const roleInfo = weekRoles.get(date) ?? {
       role: resolveNutritionNarrativeWorkoutRole({ trainingType, trainingLabel, mode: "past_review", isCompleted: true }).role,
@@ -337,20 +354,34 @@ function buildWeeklySummaryDays(review: NutritionWeeklyAnalysis): NutritionWeekl
   });
 }
 
+function formatCoachWorkoutLine(prefix: string, label: string, date: string): string {
+  const lower = label.toLocaleLowerCase("ru");
+  if (
+    prefix === "Длительная" &&
+    (lower.startsWith("длительн") || lower.startsWith("бег") || lower.startsWith("вело") || lower.startsWith("лёгк"))
+  ) {
+    return `${label} (${date}).`;
+  }
+  return `${prefix}: ${label} (${date}).`;
+}
+
 function buildKeyWorkoutLines(days: NutritionWeeklySummaryDayFact[]): string[] {
   const lines: string[] = [];
   for (const day of days) {
-    const label = humanizeNutritionTrainingLabel(day.trainingLabel, day.trainingType);
-    if (day.roleInfo.role === "long_run" || day.trainingType === "long_run") {
-      lines.push(`Длительная: ${label} (${day.date}).`);
+    const label = formatNutritionWorkoutLabelForCoach({
+      trainingLabel: day.trainingLabel,
+      trainingType: day.trainingType,
+    });
+    if (day.roleInfo.role === "long_run" || day.roleInfo.role === "long_endurance" || day.trainingType === "long_run" || day.trainingType === "long_endurance") {
+      lines.push(formatCoachWorkoutLine("Длительная", label, day.date));
       continue;
     }
     if (day.roleInfo.role === "combined_load" || isCombinedLoadLabel(day.trainingLabel)) {
-      lines.push(`Комбинированная нагрузка: ${label} (${day.date}).`);
+      lines.push(formatCoachWorkoutLine("Комбинированная нагрузка", label, day.date));
       continue;
     }
     if (day.roleInfo.isKey) {
-      lines.push(`Ключевая тренировка: ${label} (${day.date}).`);
+      lines.push(formatCoachWorkoutLine("Ключевая тренировка", label, day.date));
     }
     if (
       isNutritionLongRunWorkout({
@@ -359,10 +390,93 @@ function buildKeyWorkoutLines(days: NutritionWeeklySummaryDayFact[]): string[] {
         isCompleted: true,
       })
     ) {
-      lines.push(`Long run по правилу: ${label} (${day.date}).`);
+      lines.push(formatCoachWorkoutLine("Long run по правилу", label, day.date));
     }
   }
   return [...new Set(lines)];
+}
+
+function isStaleManualReviewFocus(text: string): boolean {
+  return /данных пока недостаточно|нужен ручной разбор/i.test(text);
+}
+
+function hasCanonicalMacroGuardrails(days: NutritionWeeklySummaryDayFact[]): boolean {
+  return days.some((day) => day.macro.carbsStatus != null || day.macro.proteinStatus != null);
+}
+
+export function buildNutritionCanonicalCoachFocus(input: {
+  days: NutritionWeeklySummaryDayFact[];
+  dataQuality: Record<string, unknown>;
+  storedFocus?: string | null;
+  reviewBlocked?: boolean;
+  hasDateMismatch?: boolean;
+  focusPriority?: NutritionNarrativeFocusPriority[];
+}): string | null {
+  const parsedDays =
+    toFiniteNumber(input.dataQuality.parsed_days) ?? toFiniteNumber(input.dataQuality.parsedDays) ?? input.days.length;
+  const lowConfidenceDays =
+    toFiniteNumber(input.dataQuality.low_confidence_days) ?? toFiniteNumber(input.dataQuality.lowConfidenceDays) ?? 0;
+  const hasMacroGuardrails = hasCanonicalMacroGuardrails(input.days);
+  const needsManualReview =
+    input.reviewBlocked === true ||
+    input.hasDateMismatch === true ||
+    parsedDays < 4 ||
+    !hasMacroGuardrails ||
+    (lowConfidenceDays > 0 && parsedDays < 5);
+
+  if (needsManualReview) {
+    if (input.storedFocus && isStaleManualReviewFocus(input.storedFocus)) {
+      return input.storedFocus;
+    }
+    return null;
+  }
+
+  if (input.storedFocus && !isStaleManualReviewFocus(input.storedFocus)) {
+    return input.storedFocus;
+  }
+
+  const focusPriorities = input.focusPriority ?? ["carbs", "energy"];
+  const emphasizeCarbsEnergy = focusPriorities.includes("carbs") || focusPriorities.includes("energy");
+  if (!emphasizeCarbsEnergy) {
+    return input.storedFocus ?? null;
+  }
+
+  const longLabels = input.days
+    .filter((day) => day.roleInfo.role === "long_endurance" || day.roleInfo.role === "long_run")
+    .map((day) => formatNutritionWorkoutLabelForCoach({ trainingLabel: day.trainingLabel, trainingType: day.trainingType }));
+  const keyLabels = input.days
+    .filter(
+      (day) =>
+        day.roleInfo.isKey &&
+        day.roleInfo.role !== "long_endurance" &&
+        day.roleInfo.role !== "long_run" &&
+        day.roleInfo.role !== "combined_load"
+    )
+    .map((day) => formatNutritionWorkoutLabelForCoach({ trainingLabel: day.trainingLabel, trainingType: day.trainingType }));
+  const combinedLabels = input.days
+    .filter((day) => day.roleInfo.role === "combined_load")
+    .map((day) => formatNutritionWorkoutLabelForCoach({ trainingLabel: day.trainingLabel, trainingType: day.trainingType }));
+
+  const details: string[] = [];
+  const longVelo = longLabels.find((label) => label.startsWith("вело"));
+  const longRun = longLabels.find((label) => /бег|длительн/i.test(label));
+  if (longVelo) {
+    details.push(`перед/после ${longVelo}`);
+  }
+  if (longRun) {
+    details.push("перед беговой работой");
+  }
+  if (keyLabels[0]) {
+    details.push(`перед ${keyLabels[0]}`);
+  } else if (combinedLabels[0]) {
+    details.push(`вокруг ${combinedLabels[0]}`);
+  }
+
+  let focus = "углеводы и энергия вокруг длинных нагрузок";
+  if (details.length > 0) {
+    focus += `, особенно ${details.join(" и ")}`;
+  }
+  return focus;
 }
 
 function buildMacroPatternLine(summary: Record<string, unknown>): string | null {
@@ -524,7 +638,23 @@ export function buildDerivedNutritionCoachSummary(input: {
     sections.push(macroLine);
   }
 
-  if (oneFocusText) {
+  const dataQuality = asObject(summary.data_quality_summary);
+  const hasDateMismatch = (input.consistencyIssues ?? []).some(
+    (issue) => issue.code === "report_date_mismatch" || issue.code === "daily_dates_mismatch"
+  );
+  const reviewBlocked =
+    input.review.status === "blocked_safety" || extractReviewDoNotSendReasons(input.review).length > 0;
+  const canonicalFocus = buildNutritionCanonicalCoachFocus({
+    days: summaryDays,
+    dataQuality,
+    storedFocus: oneFocusText,
+    reviewBlocked,
+    hasDateMismatch,
+    focusPriority: narrativePreferences.focusPriority,
+  });
+  if (canonicalFocus) {
+    sections.push(`Фокус недели: ${canonicalFocus}`);
+  } else if (oneFocusText) {
     sections.push(`Фокус недели: ${oneFocusText}`);
   }
 
