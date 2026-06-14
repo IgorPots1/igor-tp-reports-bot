@@ -67,6 +67,30 @@ export type BillingClientUpdateInput = Partial<{
   updatedBy: string | null;
 }>;
 
+export type BillingClientCreateInput = {
+  clientName: string;
+  groupName?: string | null;
+  monthlyAmount: number;
+  currency: BillingCurrency;
+  plannedPaymentDay?: number | null;
+  paymentMethod: BillingPaymentMethod;
+  studentId?: string | null;
+  notes?: string | null;
+  actor?: string | null;
+  ensureCurrentMonthRow?: boolean;
+};
+
+export type NormalizedBillingClientCreateInput = {
+  clientName: string;
+  groupName: string | null;
+  monthlyAmount: number;
+  currency: BillingCurrency;
+  plannedPaymentDay: number | null;
+  paymentMethod: BillingPaymentMethod;
+  studentId: string | null;
+  notes: string | null;
+};
+
 export type BillingMonthlyPayment = {
   id: string;
   billingClientId: string;

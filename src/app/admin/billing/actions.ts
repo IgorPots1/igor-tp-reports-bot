@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 
 import {
   confirmImportedPaymentMatch,
+  createBillingClient,
   deleteBillingPayerIdentity,
   ignoreImportedPayment,
   linkBillingClientToStudent,
@@ -15,6 +16,7 @@ import {
   unlinkBillingClientFromStudent,
   updateBillingClientById,
 } from "@/features/billing/service";
+import type { BillingCurrency } from "@/features/billing/types";
 import {
   ADMIN_ACCESS_COOKIE_NAME,
   hasValidAdminAccessCookie,
@@ -305,6 +307,59 @@ export async function confirmImportedPaymentAction(formData: FormData): Promise<
 
   revalidateBillingPaths(clientId);
   redirect(withNotice(redirectTo, "notice", notice));
+}
+
+export async function createBillingClientAction(formData: FormData): Promise<void> {
+  const redirectTo = getOptionalFormValue(formData, "redirectTo") ?? "/admin/billing/clients/new";
+  await ensureAdminAccess(redirectTo);
+
+  const clientName = getRequiredFormValue(formData, "clientName");
+  const monthlyAmountRaw = getRequiredFormValue(formData, "monthlyAmount");
+  const currency = getRequiredFormValue(formData, "currency");
+  const paymentMethod = getRequiredFormValue(formData, "paymentMethod");
+  const groupName = getOptionalFormValue(formData, "groupName");
+  const plannedPaymentDayRaw = getOptionalFormValue(formData, "plannedPaymentDay");
+  const studentId = getOptionalFormValue(formData, "studentId");
+  const notes = getOptionalFormValue(formData, "notes");
+
+  let createdClientId: string | undefined;
+
+  try {
+    const monthlyAmount = Number(monthlyAmountRaw);
+    if (!Number.isInteger(monthlyAmount)) {
+      throw new Error("Сумма должна быть целым числом.");
+    }
+
+    const plannedPaymentDay = plannedPaymentDayRaw == null ? null : Number(plannedPaymentDayRaw);
+    if (plannedPaymentDay !== null && !Number.isInteger(plannedPaymentDay)) {
+      throw new Error("День оплаты должен быть числом.");
+    }
+
+    const created = await createBillingClient({
+      clientName,
+      groupName,
+      monthlyAmount,
+      currency: currency as BillingCurrency,
+      plannedPaymentDay,
+      paymentMethod,
+      studentId,
+      notes,
+      actor: BILLING_ACTION_ACTOR,
+    });
+    createdClientId = created.id;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Не удалось создать клиента биллинга.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+
+  revalidateBillingPaths(createdClientId);
+  redirect(
+    withNotice(
+      createdClientId ? `/admin/billing/clients/${createdClientId}` : redirectTo,
+      "notice",
+      "Клиент биллинга создан."
+    )
+  );
 }
 
 export async function deleteBillingPayerIdentityAction(formData: FormData): Promise<void> {

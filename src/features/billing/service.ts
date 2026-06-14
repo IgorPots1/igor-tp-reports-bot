@@ -5,6 +5,7 @@ import {
   getBillingPayerIdentityByTypeHash,
   getBillingMonthlyPaymentWithClientById,
   deleteBillingPayerIdentityById,
+  insertBillingClient,
   insertBillingPayerIdentity,
   insertBillingImportedPayments,
   listBillingImportedPayments,
@@ -23,9 +24,13 @@ import {
 import { derivePayerIdentitiesFromImportedPayment } from "@/features/billing/payer-identity";
 import {
   BILLING_CSV_COLUMNS,
+  BILLING_CURRENCY_VALUES,
+  BILLING_PAYMENT_METHOD_VALUES,
   BILLING_TIME_ZONE,
   type BillingClient,
+  type BillingClientCreateInput,
   type BillingClientUpdateInput,
+  type NormalizedBillingClientCreateInput,
   type BillingDateInput,
   type ConfirmImportedPaymentMatchInput,
   type ConfirmImportedPaymentMatchResult,
@@ -400,6 +405,82 @@ export async function ensureBillingMonthRows(input: {
     skippedInvalidClientCount,
     insertedCount: rowsToInsert.length,
   };
+}
+
+// Чистая валидация/нормализация входа создания клиента (тестируется офлайн).
+export function normalizeBillingClientCreateInput(
+  input: BillingClientCreateInput
+): NormalizedBillingClientCreateInput {
+  const clientName = input.clientName?.trim() ?? "";
+  if (!clientName) {
+    throw new Error("Имя клиента обязательно.");
+  }
+
+  if (!Number.isInteger(input.monthlyAmount) || input.monthlyAmount <= 0) {
+    throw new Error("Сумма должна быть целым числом больше нуля.");
+  }
+
+  if (!(BILLING_CURRENCY_VALUES as readonly string[]).includes(input.currency)) {
+    throw new Error(`Недопустимая валюта: ${input.currency}.`);
+  }
+
+  if (!(BILLING_PAYMENT_METHOD_VALUES as readonly string[]).includes(input.paymentMethod)) {
+    throw new Error(`Недопустимый метод оплаты: ${input.paymentMethod}.`);
+  }
+
+  const plannedPaymentDay = input.plannedPaymentDay ?? null;
+  if (
+    plannedPaymentDay !== null &&
+    (!Number.isInteger(plannedPaymentDay) || plannedPaymentDay < 1 || plannedPaymentDay > 31)
+  ) {
+    throw new Error("День оплаты должен быть числом от 1 до 31 (или пустым).");
+  }
+
+  return {
+    clientName,
+    groupName: input.groupName?.trim() ? input.groupName.trim() : null,
+    monthlyAmount: input.monthlyAmount,
+    currency: input.currency,
+    plannedPaymentDay,
+    paymentMethod: input.paymentMethod,
+    studentId: input.studentId?.trim() ? input.studentId.trim() : null,
+    notes: input.notes?.trim() ? input.notes.trim() : null,
+  };
+}
+
+// Создаёт billing-клиента вручную (раньше можно было только массовым CSV-импортом).
+// Опционально сразу генерирует строку оплаты текущего месяца.
+export async function createBillingClient(input: BillingClientCreateInput): Promise<BillingClient> {
+  const normalized = normalizeBillingClientCreateInput(input);
+
+  if (normalized.studentId) {
+    const existing = await listBillingClientsByStudentId(normalized.studentId);
+    if (existing.length > 0) {
+      throw new Error("К этому ученику уже привязан billing-клиент.");
+    }
+  }
+
+  const created = await insertBillingClient({
+    clientName: normalized.clientName,
+    groupName: normalized.groupName,
+    monthlyAmount: normalized.monthlyAmount,
+    currency: normalized.currency,
+    plannedPaymentDay: normalized.plannedPaymentDay,
+    paymentMethod: normalized.paymentMethod,
+    studentId: normalized.studentId,
+    notes: normalized.notes,
+    createdBy: input.actor ?? null,
+  });
+
+  if (input.ensureCurrentMonthRow !== false) {
+    try {
+      await ensureBillingMonthRows({ targetMonth: new Date(), actor: input.actor ?? null });
+    } catch {
+      // Создание клиента не должно падать, если генерация месячной строки не удалась.
+    }
+  }
+
+  return created;
 }
 
 function getDaysOverdue(

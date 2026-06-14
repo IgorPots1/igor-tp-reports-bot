@@ -6,6 +6,7 @@ import {
 } from "@/features/billing/repository";
 import { scoreBillingNameMatch } from "@/features/billing/name-matching";
 import { listTrainingPeaksStudents } from "@/features/trainingpeaks/repository";
+import { loadScriptEnv } from "./lib/load-script-env";
 
 type CliOptions = {
   apply: boolean;
@@ -108,6 +109,7 @@ async function run(): Promise<void> {
     return;
   }
 
+  loadScriptEnv();
   ensureSupabaseEnv();
 
   const [billingClients, trainingPeaksStudents] = await Promise.all([

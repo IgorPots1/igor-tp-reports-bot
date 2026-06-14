@@ -486,6 +486,45 @@ export async function listBillingClientsByStudentId(studentId: string): Promise<
   return ((data as BillingClientRow[]) ?? []).map(mapBillingClientRow);
 }
 
+export type InsertBillingClientRow = {
+  clientName: string;
+  groupName: string | null;
+  monthlyAmount: number;
+  currency: BillingCurrency;
+  plannedPaymentDay: number | null;
+  paymentMethod: BillingPaymentMethod;
+  studentId: string | null;
+  notes: string | null;
+  createdBy: string | null;
+};
+
+export async function insertBillingClient(input: InsertBillingClientRow): Promise<BillingClient> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("billing_clients")
+    .insert({
+      student_id: input.studentId,
+      client_name: input.clientName,
+      group_name: input.groupName,
+      monthly_amount: input.monthlyAmount,
+      currency: input.currency,
+      planned_payment_day: input.plannedPaymentDay,
+      payment_method: input.paymentMethod,
+      is_active: true,
+      notes: input.notes,
+      created_by: input.createdBy,
+      updated_by: input.createdBy,
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to insert billing client: ${error.message}`);
+  }
+
+  return mapBillingClientRow(data as BillingClientRow);
+}
+
 export async function updateBillingClientById(
   id: string,
   patch: BillingClientUpdateInput
