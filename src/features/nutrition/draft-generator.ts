@@ -906,6 +906,24 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     allow_athlete_draft: allowAthleteDraft,
   };
 
+  // GPT-5 / o-series models reject `max_tokens` (require `max_completion_tokens`)
+  // and only accept the default temperature, so build the request model-aware.
+  // Older models (gpt-4o, gpt-4o-mini, ...) keep temperature + max_tokens.
+  const isNextGenModel = /^(gpt-5|o\d)/i.test(OPENAI_NUTRITION_REVIEW_MODEL);
+  const requestBody: Record<string, unknown> = {
+    model: OPENAI_NUTRITION_REVIEW_MODEL,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: `Facts JSON:\n${JSON.stringify(factsPayload, null, 2)}` },
+    ],
+  };
+  if (isNextGenModel) {
+    requestBody.max_completion_tokens = 4096;
+  } else {
+    requestBody.temperature = 0.2;
+    requestBody.max_tokens = 4096;
+  }
   try {
     const response = await fetch(OPENAI_API_URL, {
       method: "POST",
@@ -913,16 +931,7 @@ async function generateNutritionWeeklyReviewNarrative(input: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        model: OPENAI_NUTRITION_REVIEW_MODEL,
-        temperature: 0.2,
-        max_tokens: 4096,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: `Facts JSON:\n${JSON.stringify(factsPayload, null, 2)}` },
-        ],
-      }),
+      body: JSON.stringify(requestBody),
     });
     if (!response.ok) {
       const bodyText = await response.text().catch(() => "");
