@@ -369,10 +369,14 @@ export type NutritionDayProseFacts = {
   findings: string[];
 };
 
+// Statuses that always demand an undershoot note in the prose. NOTE: amber-only
+// energy-availability (below_energy_availability driven by ea_amber_screen) is a
+// soft screen, NOT a hard day — its "hardness" is decided by the findings below
+// (ea_red_screen, floor breaches, low carbs for load), so it is intentionally
+// not listed here to avoid flagging reasonable "в целом ок" rest days.
 const NUTRITION_HARD_DAY_STATUSES = new Set<string>([
   "low_for_load",
   "below_energy_floor",
-  "below_energy_availability",
   "low_for_strength",
   "low_for_cross_training",
   "pre_long_low",
@@ -384,10 +388,12 @@ const NUTRITION_HARD_DAY_FINDINGS = new Set<string>([
   "below_cross_training_floor",
   "below_strength_floor",
   "ea_red_screen",
+  "low_carbs_for_load_type",
+  "low_carbs_before_long_run",
 ]);
 
 const NUTRITION_UNDERSHOOT_MARKERS =
-  /мал(?:о|ова)|низк|нижн|ниже|недостат|не\s*хвата|нехвата|подтян|добав|просад|недобор|поддерж|скромн|улучш/i;
+  /мал(?:о|ова)|низк|нижн|ниже|недостат|пустоват|не\s*хват|нехват|подтян|добав|просад|недобор|поддерж|скромн|улучш|не\s*наполн/i;
 
 function roundToNearestStep(value: number, step: number): number {
   return Math.round(value / step) * step;

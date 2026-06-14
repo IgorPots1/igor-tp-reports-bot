@@ -88,6 +88,53 @@ for (const prose of [
   assert.ok(!hasError(issues, "status_softened"), `undershoot phrasing must pass: "${prose}"`);
 }
 
+// 3b3. More honest undershoot phrasings the model actually uses.
+for (const prose of [
+  "День получился чуть пустоватым по общей энергии.",
+  "Общей углеводной плотности не хватило под нагрузку.",
+]) {
+  const issues = validateNutritionDayProse({ prose, facts: baseFacts });
+  assert.ok(!hasError(issues, "status_softened"), `undershoot phrasing must pass: "${prose}"`);
+}
+
+// 3b4. Amber-only energy availability on a rest day is a soft screen — a calm
+// "в целом ок" must NOT be flagged as softened.
+{
+  const amberRest: NutritionDayProseFacts = {
+    kcal: 2002,
+    proteinG: 77,
+    fatG: 87,
+    carbsG: 227,
+    carbsGPerKg: 3.66,
+    proteinGPerKg: 1.24,
+    nutritionStatus: "below_energy_availability",
+    findings: ["limited_training_context", "protein_borderline", "ea_amber_screen"],
+  };
+  const issues = validateNutritionDayProse({
+    prose: "Под день отдыха питание выглядит спокойно, в целом ок.",
+    facts: amberRest,
+  });
+  assert.ok(!hasError(issues, "status_softened"), "amber-only rest day must not require undershoot");
+}
+
+// 3b5. But red EA (or low-carbs-for-load) is still hard and must be honest.
+{
+  const redDay: NutritionDayProseFacts = {
+    kcal: 1877,
+    proteinG: 61,
+    fatG: 55,
+    carbsG: 295,
+    carbsGPerKg: 4.76,
+    proteinGPerKg: 0.98,
+    nutritionStatus: "below_energy_availability",
+    findings: ["protein_low", "ea_red_screen"],
+  };
+  assert.ok(
+    hasError(validateNutritionDayProse({ prose: "Отличный день, всё супер!", facts: redDay }), "status_softened"),
+    "red EA day with no undershoot must be flagged"
+  );
+}
+
 // 3c. Hard status detected via findings (not status string) is also enforced.
 {
   const issues = validateNutritionDayProse({
