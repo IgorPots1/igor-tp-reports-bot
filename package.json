@@ -103,6 +103,7 @@
     "check-trainingpeaks-operational-signal-recompute": "npx tsx scripts/check-trainingpeaks-operational-signal-recompute.ts",
     "check-billing-payer-identities": "npx tsx scripts/check-billing-payer-identities.ts",
     "check-billing-imported-payment-suggestions": "npx tsx scripts/check-billing-imported-payment-suggestions.ts",
+    "diagnose-billing-roster": "npx tsx scripts/diagnose-billing-roster.ts",
     "check-billing-auto-match-payments": "npx tsx scripts/check-billing-auto-match-payments.ts",
     "check-billing-email-import-cli": "npx tsx scripts/check-billing-email-import-cli.ts",
     "check-billing-recognition-smoke": "npx tsx scripts/check-billing-recognition-smoke.ts",
