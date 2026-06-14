@@ -115,6 +115,24 @@ assert.equal(plan.summary.long_run_source, "explicit_title");
 assert.equal(plan.summary.long_run_confidence, "high");
 assert.ok(plan.day_type_ideal_targets.hard?.carbs_g === 340);
 
+// Regression: an interval run whose title mentions a recovery jog ("отдых бегом")
+// must be a hard day, not easy/rest (family "run" must not swallow it).
+const intervalRecoveryPlan = buildNutritionNextWeekPlan({
+  bodyweightKg: 56,
+  planWeekFrom: "2026-06-08",
+  planWeekTo: "2026-06-14",
+  trainingContext: {
+    cacheStatus: "ok",
+    workouts: [{ date: "2026-06-10", title: "4 x 4 мин (отдых бегом)", type: "run" }],
+    keyWorkouts: [],
+    longRun: null,
+  },
+});
+assert.ok(
+  intervalRecoveryPlan.days.some((day) => day.date === "2026-06-10" && day.training_type === "hard"),
+  "interval run titled 'отдых бегом' must be a hard day, not easy/rest"
+);
+
 const sundayDefaultPlan = buildNutritionNextWeekPlan({
   bodyweightKg: 56,
   planWeekFrom: "2026-06-08",

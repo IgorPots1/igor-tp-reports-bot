@@ -295,24 +295,12 @@ function normalizeDayType(typeRaw: string | null, titleRaw: string | null): Nutr
     return "cross_training";
   }
   if (
-    type === "easy" ||
-    type === "easy_run" ||
-    type === "run" ||
-    type === "endurance" ||
-    type === "recovery" ||
-    isEasyLightNutritionTitle(title) ||
-    /легк|easy|recovery/.test(haystack)
-  ) {
-    return "easy";
-  }
-  if (type === "rest" || type === "day_off" || /rest|отдых/.test(haystack)) {
-    return "rest";
-  }
-  if (
     type === "intervals" ||
     hasNutritionIntervalWorkoutEvidence(title) ||
     /\b\d{1,2}\s*(?:x|х|×|\*)\s*\d{1,2}\b/.test(haystack)
   ) {
+    // Quality work first, so an interval run (family "run") is not swallowed by
+    // the easy/run branch below.
     return "hard";
   }
   if (
@@ -322,6 +310,22 @@ function normalizeDayType(typeRaw: string | null, titleRaw: string | null): Nutr
     /интерв|vo2|hill|ключ/.test(haystack)
   ) {
     return "hard";
+  }
+  // "отдых" can be a recovery jog inside a run title — only a rest DAY when there
+  // is no run evidence.
+  if (type === "rest" || type === "day_off" || (/rest|отдых|выходн/.test(haystack) && !isExplicitRunTitle(title))) {
+    return "rest";
+  }
+  if (
+    type === "easy" ||
+    type === "easy_run" ||
+    type === "run" ||
+    type === "endurance" ||
+    type === "recovery" ||
+    isEasyLightNutritionTitle(title) ||
+    /легк|easy|recovery/.test(haystack)
+  ) {
+    return "easy";
   }
   return "unknown";
 }
