@@ -4,6 +4,7 @@ import {
   listBillingClientsIncludingInactive,
   updateBillingClientById,
 } from "@/features/billing/repository";
+import { scoreBillingNameMatch } from "@/features/billing/name-matching";
 import { listTrainingPeaksStudents } from "@/features/trainingpeaks/repository";
 
 type CliOptions = {
@@ -114,34 +115,13 @@ async function run(): Promise<void> {
     listTrainingPeaksStudents(),
   ]);
 
-  const billingLinkedStudentIds = new Set(
+  // Студенты, уже занятые привязкой, не предлагаем повторно.
+  const reservedStudentIds = new Set(
     billingClients.map((client) => client.studentId).filter((value): value is string => value != null)
   );
 
-  const billingByNormalizedName = new Map<string, string[]>();
-  const studentsByNormalizedName = new Map<string, string[]>();
-  const studentsById = new Map(trainingPeaksStudents.map((student) => [student.id, student]));
-
-  for (const client of billingClients) {
-    const normalized = normalizePersonName(client.clientName);
-    if (!normalized) {
-      continue;
-    }
-    const current = billingByNormalizedName.get(normalized) ?? [];
-    current.push(client.id);
-    billingByNormalizedName.set(normalized, current);
-  }
-
-  for (const student of trainingPeaksStudents) {
-    const normalized = normalizePersonName(student.studentName);
-    if (!normalized) {
-      continue;
-    }
-    const current = studentsByNormalizedName.get(normalized) ?? [];
-    current.push(student.id);
-    studentsByNormalizedName.set(normalized, current);
-  }
-
+  // Полное совпадение имени (с транслитерацией) даёт ровно 100.
+  const FULL_MATCH_SCORE = 100;
   const candidates: MatchCandidate[] = [];
   const summary: Summary = {
     billingClientsTotal: billingClients.length,
@@ -178,34 +158,26 @@ async function run(): Promise<void> {
       continue;
     }
 
-    const sameNameClients = billingByNormalizedName.get(normalizedClientName) ?? [];
-    if (sameNameClients.length !== 1) {
-      summary.skippedAmbiguous += 1;
-      continue;
-    }
+    // Авто-привязываем только уверенные ПОЛНЫЕ совпадения имени (score=100),
+    // и только если такой ученик ровно один (иначе — на ручную проверку).
+    const fullMatchStudents = trainingPeaksStudents.filter(
+      (student) =>
+        !reservedStudentIds.has(student.id) &&
+        scoreBillingNameMatch(client.clientName, student.studentName).score >= FULL_MATCH_SCORE
+    );
 
-    const sameNameStudents = studentsByNormalizedName.get(normalizedClientName) ?? [];
-    if (sameNameStudents.length === 0) {
+    if (fullMatchStudents.length === 0) {
       summary.unmatched += 1;
       continue;
     }
-    if (sameNameStudents.length !== 1) {
+    if (fullMatchStudents.length !== 1) {
       summary.skippedAmbiguous += 1;
       continue;
     }
 
-    const studentId = sameNameStudents[0];
-    if (billingLinkedStudentIds.has(studentId)) {
-      summary.skippedAmbiguous += 1;
-      continue;
-    }
-
-    const student = studentsById.get(studentId);
-    if (!student) {
-      summary.unmatched += 1;
-      continue;
-    }
-
+    const student = fullMatchStudents[0];
+    // Резервируем ученика, чтобы два клиента не претендовали на одного.
+    reservedStudentIds.add(student.id);
     candidates.push({
       billingClientId: client.id,
       billingClientName: client.clientName,

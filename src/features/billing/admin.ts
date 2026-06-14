@@ -12,6 +12,7 @@ import {
   listUnpaidBillingMonthlyPaymentsWithClients,
 } from "@/features/billing/repository";
 import { derivePayerIdentitiesFromImportedPayment } from "@/features/billing/payer-identity";
+import { scoreBillingNameMatch } from "@/features/billing/name-matching";
 import {
   BILLING_TIME_ZONE,
   type AdminImportedPaymentsOverview,
@@ -197,37 +198,19 @@ function tokenizeName(value: string | null | undefined): string[] {
     .filter(Boolean);
 }
 
+// Порог отображения подсказки. Транслитерационное сопоставление имён
+// (кириллица клиента ↔ латиница ученика) даёт за фамилию ~45, за полное имя 100.
+const BILLING_CLIENT_SUGGESTION_THRESHOLD = 40;
+
 function buildBillingClientSuggestion(
   client: BillingClient,
   student: TrainingPeaksAdminStudentRecord
 ): BillingClientSuggestion | null {
-  const clientTokens = tokenizeName(client.clientName);
-  const studentTokens = tokenizeName(student.studentName);
-  if (clientTokens.length === 0 || studentTokens.length === 0) {
-    return null;
-  }
+  const nameMatch = scoreBillingNameMatch(client.clientName, student.studentName);
+  let score = nameMatch.score;
+  const explanationParts = [...nameMatch.reasons];
 
-  const clientNormalized = clientTokens.join(" ");
-  const studentNormalized = studentTokens.join(" ");
-  let score = 0;
-  const explanationParts: string[] = [];
-
-  if (clientNormalized === studentNormalized) {
-    score += 100;
-    explanationParts.push("полное совпадение имени");
-  }
-
-  const intersection = clientTokens.filter((token) => studentTokens.includes(token));
-  if (intersection.length > 0) {
-    score += intersection.length * 20;
-    explanationParts.push(`общие части: ${intersection.join(", ")}`);
-  }
-
-  if (clientNormalized.includes(studentNormalized) || studentNormalized.includes(clientNormalized)) {
-    score += 15;
-    explanationParts.push("одно имя вложено в другое");
-  }
-
+  // Небольшой бонус, если группа клиента упоминается в заметках ученика.
   if (client.groupName && student.notes) {
     const normalizedGroup = normalizeNamePart(client.groupName);
     const normalizedNotes = normalizeNamePart(student.notes);
@@ -237,7 +220,7 @@ function buildBillingClientSuggestion(
     }
   }
 
-  if (score <= 0) {
+  if (score < BILLING_CLIENT_SUGGESTION_THRESHOLD) {
     return null;
   }
 
