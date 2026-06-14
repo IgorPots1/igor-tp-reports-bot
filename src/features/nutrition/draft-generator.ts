@@ -23,7 +23,11 @@ import {
   generateNutritionWeeklyInterpretationShadow,
   type NutritionInterpretationShadowMetadata,
 } from "@/features/nutrition/interpretation-generator";
-import { NUTRITION_REVIEW_NARRATIVE_PROMPT_LINES } from "@/features/nutrition/narrative-guardrails";
+import {
+  buildNutritionVoiceFewShotBlock,
+  NUTRITION_REVIEW_NARRATIVE_PROMPT_LINES,
+  NUTRITION_VOICE_STYLE_SPEC_LINES,
+} from "@/features/nutrition/narrative-guardrails";
 
 export { NUTRITION_REVIEW_METHODOLOGY_VERSION };
 import { detectNutritionMacroReviewWeekMismatch } from "@/features/nutrition/report-date-coverage";
@@ -807,10 +811,29 @@ async function generateNutritionWeeklyReviewNarrative(input: {
   const formalityInstruction = getTrainingPeaksReplyDraftFormalityInstruction(
     input.context.resolvedCommunicationProfile.formality
   );
+  const dailyFacts = buildNutritionDailyFactsForNarrative({
+    context: input.context,
+    dailyAnalysis: input.dailyAnalysis,
+  });
+  const dayRoles = dailyFacts
+    .map((day) => (typeof day.day_role === "string" ? day.day_role : null))
+    .filter((role): role is string => Boolean(role));
+  const hasMissingDay = dailyFacts.some((day) => {
+    const sq = day.source_quality;
+    return Boolean(
+      sq &&
+        typeof sq === "object" &&
+        !Array.isArray(sq) &&
+        (sq as Record<string, unknown>).hasNutritionData === false
+    );
+  });
+  const voiceFewShotBlock = allowAthleteDraft
+    ? buildNutritionVoiceFewShotBlock({ dayRoles, hasMissingDay })
+    : [];
   const systemPrompt = [
     "Пиши только на русском языке.",
-    "Ты пишешь недельный nutrition review только по deterministic facts.",
-    "LLM writes. Code calculates.",
+    "Твоя задача: написать day_prose — живую прозу комментария по каждому дню в голосе Игоря (см. блок «КАК ПИСАТЬ» и примеры ниже), плюс coach_summary_text и day_by_day_analysis_text. Это не «причёсывание фактов» и не сухой системный язык, а тёплый человеческий разбор тренера в жёстких рамках ниже.",
+    "LLM пишет прозу. Код считает числа и ставит факт-строку.",
     "Ничего не пересчитывай и не придумывай: kcal, белки/жиры/углеводы, г/кг, formula targets, day type, nutrition status, one_focus, safety status, race status, TrainingPeaks workouts.",
     "Используй только exact числа и labels из facts JSON.",
     "Не классифицируй дни и не выводи формулы — это уже сделано в коде.",
@@ -843,13 +866,13 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     allowAthleteDraft
       ? "athlete_message_draft is required and must be useful Telegram-ready text."
       : "Hard safety flags present: athlete_message_draft must be null and coach-only text should explain manual review need.",
+    "Углеводную еду называть свободно как варианты («добавь каши, риса, картофеля»). Жирную еду ученику называть как акцент только при fat_policy=normal; при coach_only/soften/suppress_athlete жирное в текст ученику не выносить — это идёт в coach_summary_text.",
+    "Углеводы подавай как следующий реалистичный шаг от текущего, а не как научный потолок-обязательство.",
+    ...(voiceFewShotBlock.length > 0 ? NUTRITION_VOICE_STYLE_SPEC_LINES : []),
+    ...voiceFewShotBlock,
     `Formality instruction: ${formalityInstruction}`,
   ].join("\n");
 
-  const dailyFacts = buildNutritionDailyFactsForNarrative({
-    context: input.context,
-    dailyAnalysis: input.dailyAnalysis,
-  });
   const coachMemory = buildCoachMemoryFactsPayload(input.context);
   const factsPayload = {
     student: {
