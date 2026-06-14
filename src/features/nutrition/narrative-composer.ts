@@ -385,7 +385,15 @@ export function humanizeNutritionTrainingLabel(trainingLabel: string, trainingTy
   if (/^strength$/i.test(raw)) {
     return "силовая";
   }
-  if (/бег в легком темпе/i.test(raw)) {
+  if (
+    /бег в легком темпе/i.test(raw) &&
+    trainingType !== "long_run" &&
+    trainingType !== "long_endurance" &&
+    !/длительн|длинн|long\s*run|лонг/i.test(raw)
+  ) {
+    // Easy-pace run only when it is genuinely an easy day. A long run held at
+    // easy pace ("длинный бег в легком темпе") must fall through to the
+    // длительная label so the 🟥 mini-table square and the text agree.
     return "лёгкий бег";
   }
   if (isCombinedLoadLabel(raw)) {

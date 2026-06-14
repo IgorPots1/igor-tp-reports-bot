@@ -9,6 +9,7 @@ import {
   type NutritionTelegramRenderResult,
 } from "@/features/nutrition/telegram-renderer";
 import type { NutritionNextWeekPlan } from "@/features/nutrition/weekly-plan-formulas";
+import { humanizeNutritionTrainingLabel } from "@/features/nutrition/narrative-composer";
 
 function assertHasError(result: ReturnType<typeof validateTelegramReadyNutritionMessage>, rule: string): void {
   assert.ok(
@@ -379,5 +380,17 @@ const emptyNameRender = renderNutritionTelegramMessage({
   hasPreviousWeeksContext: false,
 });
 assert.match(emptyNameRender.text ?? "", /^Привет!/);
+
+// Regression: a long run held at easy pace ("бег в легком темпе" + long cue)
+// must not be labeled "лёгкий бег" — otherwise the 🟥 square and the text
+// disagree and trigger red_easy_row. A genuine easy run still reads "лёгкий бег".
+{
+  const longEasyPace = humanizeNutritionTrainingLabel("Длинный бег в легком темпе 1:40", "long_run");
+  assert.doesNotMatch(longEasyPace, /л[её]гк(?:ий|ая)\s+бег/i, "long run at easy pace must not render as лёгкий бег");
+  const longEndurEasyPace = humanizeNutritionTrainingLabel("Бег в легком темпе 1:50", "long_endurance");
+  assert.doesNotMatch(longEndurEasyPace, /л[её]гк(?:ий|ая)\s+бег/i, "long endurance at easy pace must not render as лёгкий бег");
+  const genuineEasy = humanizeNutritionTrainingLabel("Бег в легком темпе", "easy");
+  assert.equal(genuineEasy, "лёгкий бег", "genuine easy run still renders лёгкий бег");
+}
 
 console.log("PASS check-nutrition-telegram-renderer-boundary");
