@@ -1,0 +1,18 @@
+# Local diagnostics and generated reports
+reports/
+.playwright-mcp/
+playwright-report/
+test-results/
+
+# OS/editor noise
+.DS_Store
+*.log
+
+# Local temp/cache
+tmp/
+temp/
+.cache/
+
+# Large local exports/artifacts
+tools/trainingpeaks-export/exports/
+tools/trainingpeaks-export/debug/
