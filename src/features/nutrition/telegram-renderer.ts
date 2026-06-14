@@ -387,7 +387,7 @@ const NUTRITION_HARD_DAY_FINDINGS = new Set<string>([
 ]);
 
 const NUTRITION_UNDERSHOOT_MARKERS =
-  /мал(?:о|ова)|низков|ниже|не\s*хвата|нехвата|подтян|добав|просад|недобор|поддерж|скромн|маловато/i;
+  /мал(?:о|ова)|низк|нижн|ниже|недостат|не\s*хвата|нехвата|подтян|добав|просад|недобор|поддерж|скромн|улучш/i;
 
 function roundToNearestStep(value: number, step: number): number {
   return Math.round(value / step) * step;

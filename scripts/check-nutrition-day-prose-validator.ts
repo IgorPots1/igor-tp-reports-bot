@@ -77,6 +77,17 @@ const baseFacts: NutritionDayProseFacts = {
   assert.ok(!hasError(issues, "status_softened"), "honest hard-day prose must pass");
 }
 
+// 3b2. Honest undershoot phrasings that the marker set must recognize.
+for (const prose of [
+  "Уровень энергии оказался на нижней границе.",
+  "Углеводов недостаточно для подготовки.",
+  "Энергия и углеводы низкие для такого дня.",
+  "Питание требует улучшения, особенно по углеводам.",
+]) {
+  const issues = validateNutritionDayProse({ prose, facts: baseFacts });
+  assert.ok(!hasError(issues, "status_softened"), `undershoot phrasing must pass: "${prose}"`);
+}
+
 // 3c. Hard status detected via findings (not status string) is also enforced.
 {
   const issues = validateNutritionDayProse({
