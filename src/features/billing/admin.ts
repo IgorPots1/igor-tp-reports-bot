@@ -2,6 +2,7 @@ import {
   getBillingClientById,
   getBillingClientByStudentId,
   getBillingMonthlyPaymentWithClientById,
+  listBillingPayerIdentitiesByTypeHash,
   listBillingPayerIdentitiesForClient,
   listActiveBillingClients,
   listBillingClientsByStudentId,
@@ -10,6 +11,7 @@ import {
   listBillingMonthlyPaymentsForClient,
   listUnpaidBillingMonthlyPaymentsWithClients,
 } from "@/features/billing/repository";
+import { derivePayerIdentitiesFromImportedPayment } from "@/features/billing/payer-identity";
 import {
   BILLING_TIME_ZONE,
   type AdminImportedPaymentsOverview,
@@ -402,9 +404,14 @@ function isPaymentDateWithinBillingMonth(paymentDate: string, billingMonth: stri
   return paymentDate >= billingMonth && paymentDate <= monthEnd;
 }
 
-function buildImportedPaymentSuggestion(
+// Большой буст, чтобы знакомый плательщик (по прошлым подтверждённым оплатам)
+// всегда оказывался первым в подсказках и проходил порог отображения.
+const KNOWN_PAYER_SUGGESTION_BOOST = 1000;
+
+export function buildImportedPaymentSuggestion(
   imported: BillingImportedPayment,
-  candidate: BillingMonthlyPaymentWithClient
+  candidate: BillingMonthlyPaymentWithClient,
+  knownPayerClientIds: ReadonlySet<string> = new Set<string>()
 ): ImportedPaymentSuggestion | null {
   if (!candidate.plannedPaymentDate) {
     return null;
@@ -416,6 +423,12 @@ function buildImportedPaymentSuggestion(
 
   let score = 0;
   const reasons: string[] = [];
+  const isKnownPayer = knownPayerClientIds.has(candidate.client.id);
+
+  if (isKnownPayer) {
+    score += KNOWN_PAYER_SUGGESTION_BOOST;
+    reasons.push("знакомый плательщик (по прошлым оплатам)");
+  }
 
   score += 10;
   reasons.push("валюта совпадает");
@@ -475,7 +488,7 @@ function buildImportedPaymentSuggestion(
     reasons.push("метод оплаты T-Банк");
   }
 
-  if (score < 25) {
+  if (!isKnownPayer && score < 25) {
     return null;
   }
 
@@ -483,28 +496,65 @@ function buildImportedPaymentSuggestion(
     monthlyPayment: candidate,
     score,
     reasons,
+    knownPayer: isKnownPayer,
   };
 }
 
 function buildImportedPaymentSuggestions(
   imported: BillingImportedPayment,
-  candidates: BillingMonthlyPaymentWithClient[]
+  candidates: BillingMonthlyPaymentWithClient[],
+  knownPayerClientIds: ReadonlySet<string> = new Set<string>()
 ): ImportedPaymentSuggestion[] {
   return candidates
-    .map((candidate) => buildImportedPaymentSuggestion(imported, candidate))
+    .map((candidate) => buildImportedPaymentSuggestion(imported, candidate, knownPayerClientIds))
     .filter((suggestion): suggestion is ImportedPaymentSuggestion => suggestion !== null)
     .sort((left, right) => right.score - left.score)
     .slice(0, 3);
 }
 
+// Сопоставляет импортированный платёж с уже изученными плательщиками.
+// Возвращает id billing-клиентов, за которыми ранее закреплён этот плательщик.
+// Read-only: только чтение billing_payer_identities, без записей и без авто-зачёта.
+async function resolveKnownPayerClientIdsForImported(
+  imported: BillingImportedPayment
+): Promise<Set<string>> {
+  const derivedIdentities = derivePayerIdentitiesFromImportedPayment(imported);
+  if (derivedIdentities.length === 0) {
+    return new Set<string>();
+  }
+
+  const matchedIdentities = (
+    await Promise.all(
+      derivedIdentities.map((identity) =>
+        listBillingPayerIdentitiesByTypeHash({
+          identityType: identity.identityType,
+          identityHash: identity.identityHash,
+        })
+      )
+    )
+  ).flat();
+
+  return new Set(matchedIdentities.map((identity) => identity.billingClientId));
+}
+
 export async function getAdminImportedPaymentsOverview(
   statusFilter: BillingImportedPaymentReviewStatusFilter = "new"
 ): Promise<AdminImportedPaymentsOverview> {
-  const [allImported, filteredImported, candidates] = await Promise.all([
+  const [allImported, filteredImported, unsortedCandidates] = await Promise.all([
     listBillingImportedPayments(),
     statusFilter === "all" ? listBillingImportedPayments() : listBillingImportedPayments({ status: statusFilter }),
     listUnpaidBillingMonthlyPaymentsWithClients(),
   ]);
+
+  // Сортируем кандидатов для ручного выбора по имени клиента (затем по месяцу),
+  // чтобы в выпадающем списке было удобно искать нужного клиента.
+  const candidates = [...unsortedCandidates].sort((left, right) => {
+    const nameDiff = left.client.clientName.localeCompare(right.client.clientName, "ru-RU");
+    if (nameDiff !== 0) {
+      return nameDiff;
+    }
+    return left.billingMonth.localeCompare(right.billingMonth);
+  });
 
   const counts = {
     new: allImported.filter((row) => row.status === "new").length,
@@ -522,13 +572,23 @@ export async function getAdminImportedPaymentsOverview(
     matchedMonthlyPayments.flatMap((payment) => (payment ? [[payment.id, payment] as const] : []))
   );
 
-  const rows: ImportedPaymentReviewRow[] = filteredImported.map((imported) => ({
-    imported,
-    suggestions: imported.status === "new" ? buildImportedPaymentSuggestions(imported, candidates) : [],
-    matchedMonthlyPayment: imported.matchedMonthlyPaymentId
-      ? matchedMonthlyById.get(imported.matchedMonthlyPaymentId) ?? null
-      : null,
-  }));
+  const rows: ImportedPaymentReviewRow[] = await Promise.all(
+    filteredImported.map(async (imported) => {
+      const knownPayerClientIds =
+        imported.status === "new" ? await resolveKnownPayerClientIdsForImported(imported) : new Set<string>();
+
+      return {
+        imported,
+        suggestions:
+          imported.status === "new"
+            ? buildImportedPaymentSuggestions(imported, candidates, knownPayerClientIds)
+            : [],
+        matchedMonthlyPayment: imported.matchedMonthlyPaymentId
+          ? matchedMonthlyById.get(imported.matchedMonthlyPaymentId) ?? null
+          : null,
+      };
+    })
+  );
 
   return {
     statusFilter,

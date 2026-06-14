@@ -181,7 +181,14 @@ export default async function AdminBillingImportsPage({ searchParams }: AdminBil
                           <input type="hidden" name="monthlyPaymentId" value={suggestion.monthlyPayment.id} />
                           <input type="hidden" name="redirectTo" value={redirectTo} />
                           <div className="admin-import-suggestion-body">
-                            <strong>{suggestion.monthlyPayment.client.clientName}</strong>
+                            <strong>
+                              {suggestion.monthlyPayment.client.clientName}
+                              {suggestion.knownPayer && (
+                                <span className="admin-badge admin-badge-success" style={{ marginLeft: 8 }}>
+                                  Знакомый плательщик
+                                </span>
+                              )}
+                            </strong>
                             <span>
                               {formatBillingMonthLabel(suggestion.monthlyPayment.billingMonth)} ·{" "}
                               {formatBillingAmount(

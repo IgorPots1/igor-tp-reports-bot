@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import FormActionButton from "@/app/admin/FormActionButton";
 import {
+  deleteBillingPayerIdentityAction,
   linkBillingClientToStudentAction,
   markBillingPaidAction,
   markBillingUnpaidAction,
@@ -444,6 +445,7 @@ export default async function BillingClientDetailPage({
                     <th>Тип</th>
                     <th>Совпадения</th>
                     <th>Последний раз</th>
+                    <th>Действие</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -453,6 +455,24 @@ export default async function BillingClientDetailPage({
                       <td>{identity.identityType}</td>
                       <td>{identity.matchCount}</td>
                       <td>{formatIsoDate(identity.lastSeenAt)}</td>
+                      <td>
+                        <form action={deleteBillingPayerIdentityAction}>
+                          <input type="hidden" name="identityId" value={identity.id} />
+                          <input type="hidden" name="clientId" value={detail.client.id} />
+                          <input
+                            type="hidden"
+                            name="redirectTo"
+                            value={`/admin/billing/clients/${detail.client.id}`}
+                          />
+                          <FormActionButton
+                            className="admin-button admin-button-secondary"
+                            pendingText="Удаление..."
+                            confirmMessage="Удалить эту изученную связь плательщик→клиент? Будущие оплаты этого плательщика не будут авто-подсказываться, пока связь не обучится заново."
+                          >
+                            Удалить
+                          </FormActionButton>
+                        </form>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

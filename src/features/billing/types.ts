@@ -350,6 +350,7 @@ export type ImportedPaymentSuggestion = {
   monthlyPayment: BillingMonthlyPaymentWithClient;
   score: number;
   reasons: string[];
+  knownPayer: boolean;
 };
 
 export type ImportedPaymentReviewRow = {

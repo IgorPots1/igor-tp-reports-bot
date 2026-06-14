@@ -4,6 +4,7 @@ import {
   getBillingImportedPaymentById,
   getBillingPayerIdentityByTypeHash,
   getBillingMonthlyPaymentWithClientById,
+  deleteBillingPayerIdentityById,
   insertBillingPayerIdentity,
   insertBillingImportedPayments,
   listBillingImportedPayments,
@@ -134,6 +135,13 @@ async function learnPayerIdentitiesFromConfirmedImport(input: {
   }
 
   return warnings;
+}
+
+// Удаляет изученную связь «плательщик → клиент». Нужно тренеру, чтобы вручную
+// исправить ошибочную/устаревшую привязку. Затрагивает только billing_payer_identities;
+// сами оплаты (monthly/imported) не меняются.
+export async function deleteBillingPayerIdentity(input: { identityId: string }): Promise<void> {
+  await deleteBillingPayerIdentityById(input.identityId);
 }
 
 function getDateParts(date: Date, timeZone = BILLING_TIME_ZONE): { year: number; month: number; day: number } {

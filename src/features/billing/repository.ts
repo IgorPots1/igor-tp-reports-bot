@@ -973,6 +973,15 @@ export async function updateBillingPayerIdentityById(
   return mapBillingPayerIdentityRow(data as BillingPayerIdentityRow);
 }
 
+export async function deleteBillingPayerIdentityById(id: string): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase.from("billing_payer_identities").delete().eq("id", id);
+
+  if (error) {
+    throw new Error(`Failed to delete billing payer identity ${id}: ${error.message}`);
+  }
+}
+
 export async function listBillingPayerIdentitiesForClient(
   billingClientId: string
 ): Promise<BillingPayerIdentity[]> {
