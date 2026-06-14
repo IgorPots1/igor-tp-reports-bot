@@ -24,6 +24,7 @@ const REPORT_ROOT = "reports/tp-signals-explain";
 type CliOptions = {
   asOfDate: string;
   names: string[];
+  allActive: boolean;
   noWrite: boolean;
 };
 
@@ -68,12 +69,17 @@ function parseCliOptions(argv: string[]): CliOptions {
   const options: CliOptions = {
     asOfDate: new Date().toISOString().slice(0, 10),
     names: [],
+    allActive: false,
     noWrite: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]!;
     if (arg === "--no-write") {
       options.noWrite = true;
+      continue;
+    }
+    if (arg === "--all-active") {
+      options.allActive = true;
       continue;
     }
     if (arg.startsWith("--date=")) {
@@ -162,8 +168,11 @@ function resolveStudentsByNames(students: TrainingPeaksStudent[], names: string[
 async function run(): Promise<void> {
   loadLocalEnvFiles();
   const options = parseCliOptions(process.argv.slice(2));
-  if (options.names.length === 0) {
-    throw new Error(`${LOG_PREFIX} FAIL: provide at least one --names value`);
+  if (!options.allActive && options.names.length === 0) {
+    throw new Error(`${LOG_PREFIX} FAIL: provide at least one --names value or --all-active`);
+  }
+  if (options.allActive && options.names.length > 0) {
+    throw new Error(`${LOG_PREFIX} FAIL: use either --names or --all-active, not both`);
   }
 
   const [students, signalsResult, actions] = await Promise.all([
@@ -171,7 +180,7 @@ async function run(): Promise<void> {
     listTrainingPeaksOperationalSignals({ status: "active", limit: 250 }),
     listActiveTrainingPeaksMoveActions(250),
   ]);
-  const matchedStudents = resolveStudentsByNames(students, options.names);
+  const matchedStudents = options.allActive ? students : resolveStudentsByNames(students, options.names);
   const matchedStudentIds = new Set(matchedStudents.map((student) => student.id));
   const studentById = new Map(students.map((student) => [student.id, student]));
   const studentNameById = new Map(students.map((student) => [student.id, student.studentName?.trim() || null]));
@@ -218,7 +227,7 @@ async function run(): Promise<void> {
   const summaryMarkdown = formatTpSignalExplainSummaryMarkdown({
     generatedAt,
     asOfDate: options.asOfDate,
-    names: options.names,
+    names: options.allActive ? ["all active students"] : options.names,
     reportDir,
     records,
   });
@@ -233,7 +242,7 @@ async function run(): Promise<void> {
         {
           generatedAt,
           asOfDate: options.asOfDate,
-          names: options.names,
+          names: options.allActive ? ["all active students"] : options.names,
           matchedStudents: matchedStudents.map((student) => ({
             id: student.id,
             name: student.studentName,

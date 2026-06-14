@@ -22,6 +22,7 @@ import {
 } from "@/features/trainingpeaks/tp-signals-review-flow";
 import {
   buildActiveSignalReviewBucketItems,
+  buildTelegramReviewQueueDiagnosticRows,
   formatTpSignalReviewQueueSummaryMarkdown,
   selectTpSignalReviewQueueItems,
   type TpSignalReviewDecisionRecord,
@@ -270,6 +271,7 @@ function printConsoleSummary(input: {
   activeSignalsScanned: number;
   featureFlags: ReturnType<typeof getTrainingPeaksTpSignalReviewQueueFeatureFlags>;
   selection: ReturnType<typeof selectTpSignalReviewQueueItems>;
+  diagnosticRows: ReturnType<typeof buildTelegramReviewQueueDiagnosticRows>;
   sampleCards: string[];
   noWrite: boolean;
   reportDir: string | null;
@@ -300,6 +302,45 @@ function printConsoleSummary(input: {
   console.log(`- keep_visible: ${input.selection.keepVisibleCount}`);
   console.log(`- would_send: ${input.selection.wouldSendCount}`);
   console.log(`- mutable_if_enabled: ${input.selection.wouldSendCount}`);
+
+  const excludedRows = input.diagnosticRows.filter((row) => !row.includedInQueue);
+  const includedRows = input.diagnosticRows.filter((row) => row.includedInQueue);
+  const byCategory = new Map<string, number>();
+  for (const row of includedRows) {
+    byCategory.set(row.category, (byCategory.get(row.category) ?? 0) + 1);
+  }
+  const excludedByReason = new Map<string, number>();
+  for (const row of excludedRows) {
+    const reason = row.queueExclusionReason ?? "unknown";
+    excludedByReason.set(reason, (excludedByReason.get(reason) ?? 0) + 1);
+  }
+
+  console.log(`- queue_candidates: ${input.diagnosticRows.length}`);
+  console.log(`- excluded_from_queue: ${excludedRows.length}`);
+  if (byCategory.size > 0) {
+    console.log("- by category (included):");
+    for (const [category, count] of [...byCategory.entries()].sort((left, right) => left[0].localeCompare(right[0], "ru"))) {
+      console.log(`  - ${category}: ${count}`);
+    }
+  }
+  if (excludedByReason.size > 0) {
+    console.log("- excluded by reason:");
+    for (const [reason, count] of [...excludedByReason.entries()].sort((left, right) => left[0].localeCompare(right[0]))) {
+      console.log(`  - ${reason}: ${count}`);
+    }
+  }
+  console.log("");
+
+  if (input.diagnosticRows.length > 0) {
+    console.log("Queue item details (first 20):");
+    for (const row of input.diagnosticRows.slice(0, 20)) {
+      console.log(
+        `- ${row.studentName} | bucket=${row.bucket} | category=${row.category} | included=${String(row.includedInQueue)} | queue_reason=${row.queueReason ?? "—"} | exclusion=${row.queueExclusionReason ?? "—"} | recommended=${row.sourceSignalRecommendedState} | close_candidate=${String(row.isCloseCandidate)} | actionable_dates=${String(row.hasActionableDates)} | valid_until=${row.validUntil ?? "—"} | source_obs=${row.sourceObservationId ?? "—"}`
+      );
+    }
+    console.log("");
+  }
+
   console.log("");
 
   if (input.sampleCards.length > 0) {
@@ -388,6 +429,7 @@ async function run(): Promise<void> {
   }
 
   const effectiveLimit = resolveEffectiveSendLimit(options);
+  const diagnosticRows = buildTelegramReviewQueueDiagnosticRows(activeItems);
   const selection = selectTpSignalReviewQueueItems({
     activeItems,
     latestDecisionsBySignalId,
@@ -410,6 +452,7 @@ async function run(): Promise<void> {
     activeSignalsScanned: signals.length,
     featureFlags,
     selection,
+    diagnosticRows,
     sampleCards,
     noWrite: options.noWrite,
     reportDir: null,
@@ -442,6 +485,7 @@ async function run(): Promise<void> {
         asOfDate: options.asOfDate,
         featureFlags,
         selection,
+        diagnosticRows,
         sampleCards,
       },
       null,

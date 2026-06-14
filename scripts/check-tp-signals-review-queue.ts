@@ -30,6 +30,7 @@ import {
 } from "@/features/trainingpeaks/tp-signals-review-buckets-helpers";
 import {
   isTpSignalReviewQueueBucket,
+  resolveTelegramReviewQueueInclusion,
   selectTpSignalReviewQueueItems,
   type TpSignalReviewDecisionRecord,
 } from "@/features/trainingpeaks/tp-signals-review-queue-helpers";
@@ -94,7 +95,13 @@ const CLOSE_SIGNAL_ID = "b2c3d4e5-f6a7-8901-bcde-f12345678901";
 
 function makeActiveBucketItem(
   bucket: "review_required" | "close_candidate_review",
-  signalId = SIGNAL_ID
+  signalId = SIGNAL_ID,
+  overrides?: {
+    signal?: Partial<TrainingPeaksStudentOperationalSignal>;
+    item?: Partial<TrainingPeaksOperationalSignalsItem>;
+    studentName?: string;
+    asOfDate?: string;
+  }
 ): ActiveSignalReviewBucketItem {
   const signal = makeSignal(
     bucket === "close_candidate_review"
@@ -102,16 +109,17 @@ function makeActiveBucketItem(
           id: signalId,
           requiresCoachClose: true,
           lifecycleState: "ready_for_coach_close",
+          ...overrides?.signal,
         }
-      : { id: signalId }
+      : { id: signalId, ...overrides?.signal }
   );
-  const item = makeDiagnosticItem({ signalId });
+  const item = makeDiagnosticItem({ signalId, ...overrides?.item });
   return assignActiveSignalReviewBucket({
-    studentName: "Test Athlete",
+    studentName: overrides?.studentName ?? "Test Athlete",
     signal,
     item,
     evidence: null,
-    asOfDate: "2026-06-13",
+    asOfDate: overrides?.asOfDate ?? "2026-06-13",
   });
 }
 
@@ -136,6 +144,105 @@ async function run(): Promise<void> {
 
   const reviewRequiredItem = makeActiveBucketItem("review_required", SIGNAL_ID);
   const closeCandidateItem = makeActiveBucketItem("close_candidate_review", CLOSE_SIGNAL_ID);
+  const elenaCloseCandidate = makeActiveBucketItem("close_candidate_review", "e1e1e1e1-e1e1-e1e1-e1e1-e1e1e1e1e1e1", {
+    signal: {
+      id: "e1e1e1e1-e1e1-e1e1-e1e1-e1e1e1e1e1e1",
+      signalType: "health_issue_improving",
+      requiresCoachClose: false,
+      lifecycleState: "ready_for_coach_close",
+    },
+    item: {
+      signalId: "e1e1e1e1-e1e1-e1e1-e1e1-e1e1e1e1e1e1",
+      section: "health",
+      text: "самочувствие нормализовалось",
+      lifecycleDisplayState: "ready_for_coach_close",
+    },
+    studentName: "Elena Vasileva",
+    asOfDate: "2026-06-15",
+  });
+  const genericPlanConstraint = makeActiveBucketItem("review_required", "p1p1p1p1-p1p1-p1p1-p1p1-p1p1p1p1p1p1", {
+    signal: {
+      id: "p1p1p1p1-p1p1-p1p1-p1p1-p1p1p1p1p1p1",
+      signalType: "plan_generation_constraint",
+      metadata: { classifier_confidence: "medium" },
+      structuredPayload: {
+        planned_training_dates: ["2026-06-16"],
+        valid_until: "2026-06-18",
+      },
+    },
+    item: {
+      signalId: "p1p1p1p1-p1p1-p1p1-p1p1-p1p1p1p1p1p1",
+      section: "plan_constraints",
+      text: "учесть в плане: вт, чт",
+      lifecycleDisplayState: "active_problem",
+    },
+    studentName: "Aleksandra Tararova",
+    asOfDate: "2026-06-15",
+  });
+  const healthNegativeReview = makeActiveBucketItem("review_required", "h1h1h1h1-h1h1-h1h1-h1h1-h1h1h1h1h1h1", {
+    signal: {
+      id: "h1h1h1h1-h1h1-h1h1-h1h1-h1h1h1h1h1h1",
+      signalType: "health_issue_started",
+      metadata: { classifier_confidence: "medium" },
+    },
+    item: {
+      signalId: "h1h1h1h1-h1h1-h1h1-h1h1-h1h1h1h1h1h1",
+      section: "health",
+      text: "горло болит, кашель",
+      lifecycleDisplayState: "active_problem",
+    },
+    studentName: "Health Negative Athlete",
+    asOfDate: "2026-06-15",
+  });
+  const painAmbiguousReview = makeActiveBucketItem("review_required", "p2p2p2p2-p2p2-p2p2-p2p2-p2p2p2p2p2p2", {
+    signal: {
+      id: "p2p2p2p2-p2p2-p2p2-p2p2-p2p2p2p2p2p2",
+      signalType: "pain_injury",
+      metadata: { classifier_confidence: "medium" },
+    },
+    item: {
+      signalId: "p2p2p2p2-p2p2-p2p2-p2p2-p2p2p2p2p2p2",
+      section: "pain_injury",
+      text: "самочувствие улучшается — уточнить, болит ли сейчас",
+      lifecycleDisplayState: "needs_review",
+    },
+    studentName: "Pain Ambiguous Athlete",
+    asOfDate: "2026-06-15",
+  });
+  const moveWithDates = makeActiveBucketItem("review_required", "m1m1m1m1-m1m1-m1m1-m1m1-m1m1m1m1m1m1", {
+    signal: {
+      id: "m1m1m1m1-m1m1-m1m1-m1m1-m1m1m1m1m1m1",
+      signalType: "move_workout_candidate",
+      sourceDate: "2026-06-13",
+      targetDate: "2026-06-14",
+      metadata: { classifier_confidence: "medium" },
+    },
+    item: {
+      signalId: "m1m1m1m1-m1m1-m1m1-m1m1-m1m1m1m1m1m1",
+      section: "moves",
+      text: "кандидат переноса 2026-06-13 → 2026-06-14",
+      lifecycleDisplayState: "needs_review",
+    },
+    studentName: "Demian Diachenko",
+    asOfDate: "2026-06-15",
+  });
+  const moveMissingDates = makeActiveBucketItem("review_required", "m2m2m2m2-m2m2-m2m2-m2m2-m2m2m2m2m2m2", {
+    signal: {
+      id: "m2m2m2m2-m2m2-m2m2-m2m2-m2m2m2m2m2m2",
+      signalType: "move_workout_candidate",
+      sourceDate: null,
+      targetDate: null,
+      metadata: { classifier_confidence: "medium" },
+    },
+    item: {
+      signalId: "m2m2m2m2-m2m2-m2m2-m2m2-m2m2m2m2m2m2",
+      section: "moves",
+      text: "кандидат переноса — → —",
+      lifecycleDisplayState: "needs_review",
+    },
+    studentName: "Darya Khmelkova",
+    asOfDate: "2026-06-15",
+  });
   const obviousAutoItem = assignActiveSignalReviewBucket({
     studentName: "Auto Athlete",
     signal: makeSignal({
@@ -162,13 +269,54 @@ async function run(): Promise<void> {
     failures.push(`expected obvious_auto_record bucket, got ${obviousAutoItem.bucket}`);
   }
 
-  const activeItems = [reviewRequiredItem, closeCandidateItem, obviousAutoItem];
+  const activeItems = [
+    reviewRequiredItem,
+    closeCandidateItem,
+    elenaCloseCandidate,
+    genericPlanConstraint,
+    healthNegativeReview,
+    painAmbiguousReview,
+    moveWithDates,
+    moveMissingDates,
+    obviousAutoItem,
+  ];
   const baseSelection = selectTpSignalReviewQueueItems({ activeItems });
-  if (baseSelection.totalSelected !== 2) {
-    failures.push(`expected 2 queue items, got ${baseSelection.totalSelected}`);
+  if (baseSelection.totalSelected !== 6) {
+    failures.push(`expected 6 queue items after selector tightening, got ${baseSelection.totalSelected}`);
   }
-  if (baseSelection.byBucket.review_required !== 1 || baseSelection.byBucket.close_candidate_review !== 1) {
-    failures.push("queue bucket counts mismatch");
+  if (baseSelection.byBucket.review_required !== 4 || baseSelection.byBucket.close_candidate_review !== 2) {
+    failures.push("queue bucket counts mismatch after selector tightening");
+  }
+  if (baseSelection.items.some((item) => item.item.signalId === genericPlanConstraint.signalId)) {
+    failures.push("generic plan constraint should be excluded from Telegram queue");
+  }
+  if (baseSelection.items.some((item) => item.item.signalId === moveMissingDates.signalId)) {
+    failures.push("move candidate with missing dates should be excluded from Telegram queue");
+  }
+  if (!baseSelection.items.some((item) => item.item.signalId === elenaCloseCandidate.signalId)) {
+    failures.push("Elena-like close candidate should remain in Telegram queue");
+  }
+  if (!baseSelection.items.some((item) => item.item.signalId === healthNegativeReview.signalId)) {
+    failures.push("health negative review_required should remain in Telegram queue");
+  }
+  if (!baseSelection.items.some((item) => item.item.signalId === painAmbiguousReview.signalId)) {
+    failures.push("pain ambiguous review_required should remain in Telegram queue");
+  }
+  if (!baseSelection.items.some((item) => item.item.signalId === moveWithDates.signalId)) {
+    failures.push("move candidate with actionable dates should remain in Telegram queue");
+  }
+
+  const genericPlanInclusion = resolveTelegramReviewQueueInclusion(genericPlanConstraint);
+  if (genericPlanInclusion.include) {
+    failures.push("generic plan constraint inclusion resolver should exclude");
+  }
+  if (genericPlanInclusion.exclusionReason !== "generic_schedule_or_plan_constraint") {
+    failures.push(`expected generic_schedule_or_plan_constraint exclusion, got ${genericPlanInclusion.exclusionReason}`);
+  }
+
+  const moveMissingInclusion = resolveTelegramReviewQueueInclusion(moveMissingDates);
+  if (moveMissingInclusion.include || moveMissingInclusion.exclusionReason !== "move_missing_dates") {
+    failures.push("move missing dates inclusion resolver mismatch");
   }
   if (baseSelection.items.some((item) => item.bucket === "obvious_auto_record" as never)) {
     failures.push("obvious_auto_record leaked into queue");
@@ -178,7 +326,7 @@ async function run(): Promise<void> {
     activeItems,
     latestDecisionsBySignalId: new Map([[SIGNAL_ID, makeDecision("acknowledged")]]),
   });
-  if (hiddenSelection.totalSelected !== 1) {
+  if (hiddenSelection.totalSelected !== 5) {
     failures.push(`acknowledged decision should suppress review_required card, got ${hiddenSelection.totalSelected}`);
   }
 
@@ -186,7 +334,7 @@ async function run(): Promise<void> {
     activeItems,
     latestDecisionsBySignalId: new Map([[SIGNAL_ID, makeDecision("keep_visible")]]),
   });
-  if (keepVisibleSelection.wouldSendCount < 2) {
+  if (keepVisibleSelection.wouldSendCount < 6) {
     failures.push("keep_visible should keep card visible in would-send count");
   }
 
@@ -546,9 +694,14 @@ async function run(): Promise<void> {
     failures.push("unexpected report dir before no-write diagnostic");
   }
 
-  console.log(`${LOG_PREFIX} cases=20`);
+  console.log(`${LOG_PREFIX} cases=29`);
   console.log(`- review_required included: ${reviewRequiredItem.bucket}`);
   console.log(`- close_candidate_review included: ${closeCandidateItem.bucket}`);
+  console.log(`- elena-like close candidate included: ${baseSelection.items.some((item) => item.item.signalId === elenaCloseCandidate.signalId)}`);
+  console.log(`- generic plan constraint excluded: ${!baseSelection.items.some((item) => item.item.signalId === genericPlanConstraint.signalId)}`);
+  console.log(`- move missing dates excluded: ${!baseSelection.items.some((item) => item.item.signalId === moveMissingDates.signalId)}`);
+  console.log(`- health/pain review_required retained: ${baseSelection.items.some((item) => item.item.signalId === healthNegativeReview.signalId) && baseSelection.items.some((item) => item.item.signalId === painAmbiguousReview.signalId)}`);
+  console.log(`- move with dates retained: ${baseSelection.items.some((item) => item.item.signalId === moveWithDates.signalId)}`);
   console.log(`- obvious_auto_record excluded from queue: ${baseSelection.totalSelected}`);
   console.log(`- acknowledged suppresses card: ${hiddenSelection.totalSelected}`);
   console.log(`- keep_visible stays visible: ${keepVisibleSelection.wouldSendCount}`);
@@ -564,7 +717,7 @@ async function run(): Promise<void> {
     process.exit(1);
   }
 
-  console.log(`${LOG_PREFIX} PASS (20/20)`);
+  console.log(`${LOG_PREFIX} PASS (29/29)`);
 }
 
 run().catch((error) => {
