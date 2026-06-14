@@ -5,9 +5,13 @@ import {
 import {
   buildNutritionSafetyFlags,
   nutritionContextNarrativePreferences,
+  type NutritionFatFeedbackPolicy,
+  type NutritionFoodItem,
+  type NutritionMealSection,
   type NutritionNarrativePreferences,
   type NutritionStudentContext,
 } from "@/features/nutrition/context";
+import { EVENING_SECTIONS, pickNotableFoods } from "@/features/nutrition/narrative-composer";
 import {
   buildNutritionMethodologyContext,
   NUTRITION_REVIEW_METHODOLOGY_VERSION,
@@ -318,11 +322,87 @@ function buildCoachReasonForDay(day: Record<string, unknown>): string {
   return "Данных или контекста недостаточно для точного вывода.";
 }
 
+/**
+ * Day role hint for the narrative model: tells it how much to write.
+ * steady -> 1-2 phrases; key/hard/pre_long -> detailed paragraph.
+ * Deterministic from canonical flags / training type. No numbers here.
+ */
+function resolveNutritionNarrativeDayRole(input: {
+  isRestDay: boolean;
+  preLong: boolean;
+  isLongRun: boolean;
+  trainingType: string;
+  isHardSession: boolean;
+}): "rest" | "pre_long" | "key" | "hard" | "steady" {
+  if (input.isRestDay) {
+    return "rest";
+  }
+  if (input.preLong) {
+    return "pre_long";
+  }
+  if (input.isLongRun || input.trainingType === "race" || input.trainingType === "long_endurance") {
+    return "key";
+  }
+  if (input.isHardSession) {
+    return "hard";
+  }
+  return "steady";
+}
+
+type NutritionNarrativeNotableItem = {
+  name: string;
+  fat_contributor: boolean;
+  carb_contributor: boolean;
+};
+
+/**
+ * Notable food items for a day, grouped by meal section, as raw material for the
+ * model to name food in prose. IMPORTANT: only names + contribution markers are
+ * exposed — never per-item gram numbers — so the model cannot quote item-level
+ * numbers that are not in the day-total facts whitelist (see validator task).
+ */
+function buildNotableItemsForNarrative(items: NutritionFoodItem[] | undefined): {
+  by_section: Partial<Record<NutritionMealSection, NutritionNarrativeNotableItem[]>>;
+  carb_foods: string[];
+  evening_fat_foods: string[];
+} {
+  const safeItems = Array.isArray(items) ? items : [];
+  const sections: NutritionMealSection[] = ["breakfast", "lunch", "dinner", "snack"];
+  const bySection: Partial<Record<NutritionMealSection, NutritionNarrativeNotableItem[]>> = {};
+  for (const section of sections) {
+    const sectionItems = safeItems
+      .filter((item) => item.section === section)
+      .filter((item) => typeof item.name === "string" && item.name.trim().length >= 2)
+      .sort((a, b) => (b.kcal ?? 0) - (a.kcal ?? 0))
+      .slice(0, 4)
+      .map((item) => ({
+        name: item.name.trim().slice(0, 120),
+        fat_contributor: typeof item.fatG === "number" && item.fatG >= 10,
+        carb_contributor: typeof item.carbsG === "number" && item.carbsG >= 20,
+      }));
+    if (sectionItems.length > 0) {
+      bySection[section] = sectionItems;
+    }
+  }
+  return {
+    by_section: bySection,
+    carb_foods: pickNotableFoods(safeItems, "carbsG", { limit: 4 }),
+    evening_fat_foods: pickNotableFoods(safeItems, "fatG", { sections: EVENING_SECTIONS, limit: 3 }),
+  };
+}
+
 export function buildNutritionDailyFactsForNarrative(input: {
   context: NutritionStudentContext;
   dailyAnalysis: Array<Record<string, unknown>>;
 }): Array<Record<string, unknown>> {
   const workoutTitles = buildWorkoutTitleMap(input.context);
+  const fatPolicy: NutritionFatFeedbackPolicy = nutritionContextNarrativePreferences(input.context).fatFeedbackPolicy;
+  const itemsByDate = new Map<string, NutritionFoodItem[]>();
+  for (const row of input.context.manualMacroRows) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(row.day)) {
+      itemsByDate.set(row.day, Array.isArray(row.items) ? row.items : []);
+    }
+  }
   const reviewWeekFrom = input.context.tpPastWeek.periodFrom;
   const reviewWeekTo = input.context.tpPastWeek.periodTo;
   const macroDates = input.context.manualMacroRows
@@ -385,6 +465,21 @@ export function buildNutritionDailyFactsForNarrative(input: {
       const sourceQualityNotes = dateRangeMismatchDetected
         ? [...new Set([...baseSourceQualityNotes, "date_range_mismatch_detected"])]
         : baseSourceQualityNotes;
+      const dayFindings = Array.isArray(canonical?.findings)
+        ? canonical.findings.filter((item): item is string => typeof item === "string")
+        : Array.isArray(day.findings)
+          ? day.findings.filter((item): item is string => typeof item === "string")
+          : [];
+      const preLong = canonicalFlags?.preLong === true;
+      const dayRole = resolveNutritionNarrativeDayRole({
+        isRestDay,
+        preLong,
+        isLongRun,
+        trainingType,
+        isHardSession,
+      });
+      const fatDisplacedCarbs = dayFindings.includes("high_fat_may_displace_carbs_on_load_day");
+      const notableItems = buildNotableItemsForNarrative(itemsByDate.get(date));
       return {
         date,
         weekday_ru: typeof canonical?.weekdayRu === "string" ? canonical.weekdayRu : null,
@@ -419,16 +514,15 @@ export function buildNutritionDailyFactsForNarrative(input: {
           typeof canonical?.hintForComment === "string"
             ? canonical.hintForComment
             : buildCoachReasonForDay(day),
-        findings:
-          Array.isArray(canonical?.findings)
-            ? canonical.findings.filter((item): item is string => typeof item === "string")
-            : Array.isArray(day.findings)
-              ? day.findings.filter((item): item is string => typeof item === "string")
-              : [],
+        findings: dayFindings,
         training_nutrition_links:
           Array.isArray(canonical?.trainingNutritionLinks)
             ? canonical.trainingNutritionLinks
             : [],
+        items_notable: notableItems,
+        day_role: dayRole,
+        fat_displaced_carbs: fatDisplacedCarbs,
+        fat_policy: fatPolicy,
         source_quality: canonicalSourceQuality
           ? {
               ...canonicalSourceQuality,
