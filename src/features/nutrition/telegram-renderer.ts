@@ -356,6 +356,120 @@ function pushIssue(
   issues.push({ severity, rule, message });
 }
 
+export type NutritionDayProseFacts = {
+  kcal: number | null;
+  proteinG: number | null;
+  fatG: number | null;
+  carbsG: number | null;
+  carbsGPerKg: number | null;
+  proteinGPerKg: number | null;
+  /** Optional plan orientation numbers allowed to appear in prose. */
+  planTargetNumbers?: number[];
+  nutritionStatus: string | null;
+  findings: string[];
+};
+
+const NUTRITION_HARD_DAY_STATUSES = new Set<string>([
+  "low_for_load",
+  "below_energy_floor",
+  "below_energy_availability",
+  "low_for_strength",
+  "low_for_cross_training",
+  "pre_long_low",
+  "long_run_low",
+]);
+
+const NUTRITION_HARD_DAY_FINDINGS = new Set<string>([
+  "below_load_energy_floor",
+  "below_cross_training_floor",
+  "below_strength_floor",
+  "ea_red_screen",
+]);
+
+const NUTRITION_UNDERSHOOT_MARKERS =
+  /мал(?:о|ова)|низков|ниже|не\s*хвата|нехвата|подтян|добав|просад|недобор|поддерж|скромн|маловато/i;
+
+function roundToNearestStep(value: number, step: number): number {
+  return Math.round(value / step) * step;
+}
+
+function buildAllowedNutritionProseNumbers(facts: NutritionDayProseFacts): number[] {
+  const allowed: number[] = [];
+  const push = (value: number | null | undefined) => {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      allowed.push(value);
+    }
+  };
+  if (typeof facts.kcal === "number" && Number.isFinite(facts.kcal)) {
+    allowed.push(facts.kcal, roundToNearestStep(facts.kcal, 50));
+  }
+  for (const macro of [facts.proteinG, facts.fatG, facts.carbsG]) {
+    if (typeof macro === "number" && Number.isFinite(macro)) {
+      allowed.push(macro, roundToNearestStep(macro, 5));
+    }
+  }
+  push(facts.carbsGPerKg);
+  push(facts.proteinGPerKg);
+  for (const target of facts.planTargetNumbers ?? []) {
+    push(target);
+  }
+  return allowed;
+}
+
+function allowedNutritionProseNumberMatches(allowed: number[], value: number): boolean {
+  return allowed.some((candidate) => Math.abs(candidate - value) < 0.1);
+}
+
+/**
+ * Per-day prose validator — the key backstop of the hybrid path (задача 4).
+ * 1. number_not_in_facts: every number written in the model prose must be a fact
+ *    of that day (kcal/Б/Ж/У/г-на-кг or a plan orientation number). Percentages
+ *    are whitelisted. Guards against silent number invention.
+ * 2. status_softened: if code assigned a hard day status, the prose must contain
+ *    at least one undershoot marker; otherwise the model softened the verdict.
+ * On any error the caller falls back to the deterministic comment for that day.
+ */
+export function validateNutritionDayProse(input: {
+  prose: string;
+  facts: NutritionDayProseFacts;
+}): NutritionTelegramRenderIssue[] {
+  const issues: NutritionTelegramRenderIssue[] = [];
+  const prose = input.prose;
+  const allowed = buildAllowedNutritionProseNumbers(input.facts);
+  for (const match of prose.matchAll(/(\d+(?:[.,]\d+)?)(\s*%)?/g)) {
+    if (match[2]) {
+      continue; // percentages are whitelisted
+    }
+    const value = Number(match[1].replace(",", "."));
+    if (!Number.isFinite(value)) {
+      continue;
+    }
+    if (!allowedNutritionProseNumberMatches(allowed, value)) {
+      pushIssue(
+        issues,
+        "error",
+        "number_not_in_facts",
+        `Число ${match[1]} в прозе дня отсутствует в фактах этого дня.`
+      );
+      break;
+    }
+  }
+
+  const status = input.facts.nutritionStatus;
+  const isHardDay =
+    (typeof status === "string" && NUTRITION_HARD_DAY_STATUSES.has(status)) ||
+    input.facts.findings.some((finding) => NUTRITION_HARD_DAY_FINDINGS.has(finding));
+  if (isHardDay && !NUTRITION_UNDERSHOOT_MARKERS.test(prose)) {
+    pushIssue(
+      issues,
+      "error",
+      "status_softened",
+      "Жёсткий статус дня не отражён в прозе — модель смягчила вывод."
+    );
+  }
+  return issues;
+}
+
 export function validateTelegramReadyNutritionMessage(input: {
   text: string;
   hasPreviousWeeksContext: boolean;

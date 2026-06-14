@@ -16,6 +16,8 @@ import {
 import { resolveNutritionNarrativePreferencesFromStored } from "@/features/nutrition/context";
 import {
   renderNutritionTelegramMessage,
+  validateNutritionDayProse,
+  type NutritionDayProseFacts,
   type NutritionTelegramRenderResult,
 } from "@/features/nutrition/telegram-renderer";
 import { getNutritionAdminLocalDate } from "@/features/nutrition/plan-week-policy";
@@ -245,7 +247,7 @@ function normalizeStoredDailyFactItem(raw: unknown): CanonicalDailyFact | null {
  * deterministic comment. Rigorous per-day number/status validation is layered on
  * top in the validator task. Returns the prose to use, or null to fall back.
  */
-function resolveUsableNutritionDayProse(value: unknown): string | null {
+function resolveUsableNutritionDayProse(value: unknown, facts: NutritionDayProseFacts): string | null {
   if (typeof value !== "string") {
     return null;
   }
@@ -257,6 +259,12 @@ function resolveUsableNutritionDayProse(value: unknown): string | null {
     return null;
   }
   if (/TrainingPeaks|FatSecret|OpenAI|\bJSON\b|hint_for_comment|source_quality/.test(prose)) {
+    return null;
+  }
+  // Backstop: numbers must be facts of this day and a hard status must not be
+  // softened. On any error fall back to the deterministic comment.
+  const issues = validateNutritionDayProse({ prose, facts });
+  if (issues.some((issue) => issue.severity === "error")) {
     return null;
   }
   return prose;
@@ -564,7 +572,18 @@ ${comment}`;
       }
       // Hybrid: prefer validated model prose, otherwise the deterministic comment.
       // The fact line above is always code-owned and never replaced.
-      const dayComment = resolveUsableNutritionDayProse(item.athlete_prose) ?? comment;
+      const proteinPerKg = toFiniteNumber(actual.proteinGPerKg);
+      const dayComment =
+        resolveUsableNutritionDayProse(item.athlete_prose, {
+          kcal,
+          proteinG: protein,
+          fatG: fat,
+          carbsG: carbs,
+          carbsGPerKg: carbsPerKg,
+          proteinGPerKg: proteinPerKg,
+          nutritionStatus,
+          findings,
+        }) ?? comment;
       const carbsKgText = carbsPerKg != null ? ` (${formatNutritionAthletePerKg(carbsPerKg)})` : "";
       return `🔹 ${weekday} (${dateLabel}) · ${athleteTrainingLabel}
 ${formatNutritionAthleteKcal(kcal, { mode: "actual" })} · белок ${formatNutritionAthleteMacro(protein)} · жиры ${formatNutritionAthleteMacro(fat)} · углеводы ${formatNutritionAthleteMacro(carbs)}${carbsKgText}.
