@@ -2,14 +2,17 @@ import { formatNutritionAthleteReportSignalCategory } from "@/features/nutrition
 import type { NutritionAthleteReportSignal } from "@/features/nutrition/athlete-signals";
 import {
   resolveNutritionNarrativePreferencesFromStored,
+  sanitizeNutritionFoodItems,
   type NutritionFatFeedbackPolicy,
   type NutritionNarrativeFocusPriority,
 } from "@/features/nutrition/context";
 import { isNutritionLongRunWorkout } from "@/features/nutrition/long-run";
 import {
   buildNutritionWeeklySummary,
+  EVENING_SECTIONS,
   formatNutritionWorkoutLabelForCoach,
   isCombinedLoadLabel,
+  pickNotableFoods,
   resolveNutritionNarrativeWorkoutRole,
   resolveWeekNarrativeDayRoles,
   type NutritionWeeklySummaryDayFact,
@@ -108,6 +111,7 @@ type HighFatCoachDayObservation = {
   fatG: number | null;
   fatPercentEnergy: number | null;
   mayDisplaceCarbs: boolean;
+  eveningFatFoods: string[];
 };
 
 function collectHighFatCoachObservations(days: NutritionWeeklySummaryDayFact[], findingsByDate: Map<string, string[]>): HighFatCoachDayObservation[] {
@@ -124,6 +128,7 @@ function collectHighFatCoachObservations(days: NutritionWeeklySummaryDayFact[], 
       fatG: day.macro.fatG ?? null,
       fatPercentEnergy: day.macro.fatPercentEnergy ?? null,
       mayDisplaceCarbs: findings.includes("high_fat_may_displace_carbs_on_load_day"),
+      eveningFatFoods: pickNotableFoods(day.items, "fatG", { sections: EVENING_SECTIONS, limit: 3 }),
     });
   }
   return observations;
@@ -149,7 +154,13 @@ function buildHighFatCoachVisibilityLine(input: {
   const displacementNote = input.observations.some((item) => item.mayDisplaceCarbs)
     ? " Может смещать углеводы в дни нагрузки."
     : "";
-  return `Жиры: высокий процент энергии из жиров (${dayLabels}). ${detailParts.join("; ")}. ${policyNote}${displacementNote}`;
+  // Coach-only: notable evening fat sources (factual product names, no judgement).
+  const eveningFoods = [
+    ...new Set(input.observations.flatMap((item) => item.eveningFatFoods)),
+  ].slice(0, 4);
+  const notableFoodsNote =
+    eveningFoods.length > 0 ? ` Заметные источники вечером: ${eveningFoods.join(", ")}.` : "";
+  return `Жиры: высокий процент энергии из жиров (${dayLabels}). ${detailParts.join("; ")}. ${policyNote}${displacementNote}${notableFoodsNote}`;
 }
 
 function hasDayEnergyIssue(input: {
@@ -341,6 +352,9 @@ function buildWeeklySummaryDays(review: NutritionWeeklyAnalysis): NutritionWeekl
       isKey: false,
       reason: "fallback",
     };
+    const items = sanitizeNutritionFoodItems(
+      embedded.items ?? embedded.food_items ?? (day as Record<string, unknown>).items
+    );
     return {
       date,
       trainingType,
@@ -350,6 +364,7 @@ function buildWeeklySummaryDays(review: NutritionWeeklyAnalysis): NutritionWeekl
       macro,
       hasEnergyIssue: hasDayEnergyIssue({ nutritionStatus, findings }),
       roleInfo,
+      ...(items.length > 0 ? { items } : {}),
     };
   });
 }

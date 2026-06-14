@@ -222,6 +222,7 @@ export async function saveNutritionManualMacros(input: {
       confidence: row.confidence,
       source: "manual_text",
       notes: row.notes,
+      items: row.items,
     }));
 
   const savedMacros = await insertNutritionDailyMacros(macrosToSave);
@@ -341,6 +342,7 @@ export async function saveNutritionFileReport(input: {
       confidence: row.confidence,
       source: intake.sourceType === "manual_text" ? "manual_text" : "file_upload",
       notes: row.notes,
+      items: row.items,
     }));
   const macros = await insertNutritionDailyMacros(macrosToSave);
 
@@ -383,6 +385,7 @@ export async function generateNutritionWeeklyReview(input: {
         carbsG: row.carbsG,
         confidence: row.confidence ?? 1,
         notes: row.notes,
+        ...(row.items.length > 0 ? { items: row.items } : {}),
       }));
 
   const essentials = await getNutritionStudentEssentials(input.studentId);

@@ -2,7 +2,9 @@ import type {
   NutritionStudentContext,
   NutritionTrainingPeaksWeekContext,
   NormalizedManualMacroRow,
+  NutritionFoodItem,
 } from "@/features/nutrition/context";
+import { sanitizeNutritionFoodItems } from "@/features/nutrition/context";
 import {
   isExplicitRunTitle,
   isNutritionLongEnduranceWorkout,
@@ -149,6 +151,11 @@ export type NutritionCanonicalDailyAnalysis = {
     confidence: "high" | "medium" | "low";
     notes: string[];
   };
+  /**
+   * Per-day product rows parsed from detailed reports. Optional and never used
+   * to recompute totals — only to surface notable foods (coach-only by default).
+   */
+  items?: NutritionFoodItem[];
 };
 
 export type NutritionMacroStatus = "low" | "borderline" | "ok" | "high" | "unknown";
@@ -1680,6 +1687,9 @@ function analyzeDailyTrainingNutrition(input: {
               : "high",
         notes: sourceNotes,
       },
+      ...(row.items && row.items.length > 0
+        ? { items: sanitizeNutritionFoodItems(row.items) }
+        : {}),
     };
 
     return {

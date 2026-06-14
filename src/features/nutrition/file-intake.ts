@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 
-import { normalizeManualMacroInput, type NormalizedManualMacroRow } from "@/features/nutrition/context";
+import {
+  normalizeManualMacroInput,
+  type NormalizedManualMacroRow,
+  type NutritionFoodItem,
+  type NutritionMealSection,
+} from "@/features/nutrition/context";
 import {
   assertNutritionUploadFilesValid,
   MAX_NUTRITION_FILE_SIZE_BYTES,
@@ -162,7 +167,93 @@ type FatSecretPdfDayCandidate = {
   confidence: number;
   notes?: string;
   source: "daily_total";
+  items?: NutritionFoodItem[];
 };
+
+const FATSECRET_MEAL_SECTION_PATTERNS: Array<{ pattern: RegExp; section: NutritionMealSection }> = [
+  { pattern: /^завтрак/i, section: "breakfast" },
+  { pattern: /^обед/i, section: "lunch" },
+  { pattern: /^ужин/i, section: "dinner" },
+  { pattern: /^перекус/i, section: "snack" },
+  { pattern: /^друго/i, section: "snack" },
+];
+
+function resolveFatSecretMealSection(line: string): NutritionMealSection | null {
+  const normalized = line.trim().toLocaleLowerCase("ru");
+  for (const { pattern, section } of FATSECRET_MEAL_SECTION_PATTERNS) {
+    if (pattern.test(normalized)) {
+      return section;
+    }
+  }
+  return null;
+}
+
+function isFatSecretTotalsLine(line: string): boolean {
+  const normalized = line.trim().toLocaleLowerCase("ru");
+  return /^всего(?:\s|$)/.test(normalized) || /(period\s*summary|итого\s*за\s*период|за\s*период)/i.test(normalized);
+}
+
+/**
+ * Map the numeric tokens of a FatSecret product row to macros.
+ * Full RU layout exposes: ккал, жиры, нас.жиры, углеводы, ... , белки.
+ * Compact layout is just kcal/fat/carbs/protein.
+ */
+function pickFoodMacros(values: number[]): {
+  kcal: number | null;
+  fatG: number | null;
+  carbsG: number | null;
+  proteinG: number | null;
+} {
+  if (values.length >= 7) {
+    return {
+      kcal: values[0] ?? null,
+      fatG: values[1] ?? null,
+      carbsG: values[3] ?? null,
+      proteinG: values[6] ?? null,
+    };
+  }
+  return {
+    kcal: values[0] ?? null,
+    fatG: values[1] ?? null,
+    carbsG: values[2] ?? null,
+    proteinG: values[3] ?? null,
+  };
+}
+
+function parseFatSecretFoodItemLine(line: string, section: NutritionMealSection | null): NutritionFoodItem | null {
+  if (isFatSecretTotalsLine(line) || resolveFatSecretMealSection(line)) {
+    return null;
+  }
+  const firstNumberMatch = line.match(/-?\d+(?:[.,]\d+)?/);
+  if (!firstNumberMatch || firstNumberMatch.index === undefined) {
+    return null;
+  }
+  const rawName = line.slice(0, firstNumberMatch.index);
+  const name = rawName
+    .replace(/[.…]{2,}/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (name.length < 2 || !/[a-zа-яё]/i.test(name)) {
+    return null;
+  }
+  const numericTokens = line.slice(firstNumberMatch.index).match(/-?\d+(?:[.,]\d+)?/g) ?? [];
+  const values = numericTokens
+    .map((token) => parseNumberCell(token))
+    .filter((value): value is number => value !== null);
+  if (values.length < 3) {
+    return null;
+  }
+  const macros = pickFoodMacros(values);
+  return {
+    name: name.slice(0, 120),
+    section,
+    kcal: macros.kcal,
+    fatG: macros.fatG,
+    carbsG: macros.carbsG,
+    proteinG: macros.proteinG,
+    source: "fatsecret_pdf_ru_detailed",
+  };
+}
 
 const RU_MONTHS_GENITIVE: Record<string, number> = {
   января: 1,
@@ -247,6 +338,23 @@ function parseRussianFatSecretDetailedDailyTotals(text: string): {
       return;
     }
 
+    const items: NutritionFoodItem[] = [];
+    let activeSection: NutritionMealSection | null = null;
+    for (const line of currentDayLines) {
+      const section = resolveFatSecretMealSection(line);
+      if (section) {
+        activeSection = section;
+        continue;
+      }
+      if (isFatSecretTotalsLine(line)) {
+        continue;
+      }
+      const item = parseFatSecretFoodItemLine(line, activeSection);
+      if (item) {
+        items.push(item);
+      }
+    }
+
     const best = validTotals[validTotals.length - 1];
     candidates.push({
       day: currentDate,
@@ -257,6 +365,7 @@ function parseRussianFatSecretDetailedDailyTotals(text: string): {
       confidence: 0.94,
       notes: "fatsecret_ru_detailed_daily_total",
       source: "daily_total",
+      ...(items.length > 0 ? { items } : {}),
     });
   };
 
@@ -715,6 +824,7 @@ function convertFatSecretPdfCandidates(
     carbsG: candidate.carbsG,
     confidence: candidate.confidence,
     notes: candidate.notes ?? null,
+    ...(candidate.items && candidate.items.length > 0 ? { items: candidate.items } : {}),
   }));
   const deduplicated = deduplicatePdfRowsByDay(baseRows);
   const extractedDays: ExtractedNutritionDay[] = deduplicated.rows.map((row) => ({

@@ -1,5 +1,9 @@
 import type { NutritionPlanTargetWeekMode } from "@/features/nutrition/plan-week-policy";
-import type { NutritionFatFeedbackPolicy } from "@/features/nutrition/context";
+import type {
+  NutritionFatFeedbackPolicy,
+  NutritionFoodItem,
+  NutritionMealSection,
+} from "@/features/nutrition/context";
 import { shouldShowHighFatAthleteFeedback } from "@/features/nutrition/context";
 import { isNutritionLongEnduranceWorkout, isNutritionLongRunWorkout } from "@/features/nutrition/long-run";
 import type { NutritionNextWeekPlan, NutritionNextWeekPlanDay } from "@/features/nutrition/weekly-plan-formulas";
@@ -27,6 +31,102 @@ export type NarrativePatternId =
   | "macro_ok"
   | "long_run_low"
   | "pre_long_low";
+
+export const EVENING_SECTIONS = ["dinner", "snack"] as const;
+
+function normalizeFoodName(name: string): string {
+  return name
+    .replace(/[.…]{2,}/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Pick the most notable foods by a given macro, optionally restricted to meal
+ * sections. Pure helper: returns cleaned, deduped display names only. Empty or
+ * missing items yield []. Daily totals are never derived from this.
+ */
+export function pickNotableFoods(
+  items: NutritionFoodItem[] | undefined,
+  macro: "fatG" | "carbsG" | "kcal",
+  opts?: {
+    sections?: ReadonlyArray<NutritionMealSection>;
+    limit?: number;
+    minShare?: number;
+  }
+): string[] {
+  if (!items || items.length === 0) {
+    return [];
+  }
+  const limit = opts?.limit ?? 3;
+  const minShare = opts?.minShare ?? 0.12;
+  const sectionFilter = opts?.sections ? new Set(opts.sections) : null;
+
+  const scoped = items.filter((item) => {
+    if (sectionFilter && (item.section === null || !sectionFilter.has(item.section))) {
+      return false;
+    }
+    const value = item[macro];
+    return typeof value === "number" && Number.isFinite(value) && value > 0;
+  });
+  if (scoped.length === 0) {
+    return [];
+  }
+  const totalKnown = scoped.reduce((sum, item) => sum + (item[macro] ?? 0), 0);
+  const threshold = totalKnown > 0 ? totalKnown * minShare : 0;
+
+  const sorted = [...scoped].sort((a, b) => (b[macro] ?? 0) - (a[macro] ?? 0));
+  const names: string[] = [];
+  const seen = new Set<string>();
+  for (const item of sorted) {
+    if ((item[macro] ?? 0) < threshold) {
+      continue;
+    }
+    const name = normalizeFoodName(item.name);
+    if (name.length < 2) {
+      continue;
+    }
+    const key = name.toLocaleLowerCase("ru");
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    names.push(name);
+    if (names.length >= limit) {
+      break;
+    }
+  }
+  return names;
+}
+
+/**
+ * Athlete-facing notable-food mention, strictly gated by policy.
+ *
+ * Returns null unless `fatFeedbackPolicy === "normal"`. Even then it only fires on
+ * a load/key/long day that is low on carbs with notable evening fat sources, and
+ * stays neutral and factual (no morality, no "вечером" without dinner/snack
+ * section evidence). For coach_only / suppress_athlete / soften it always returns
+ * null, so high-fat product names never reach primary athlete text by default.
+ */
+export function buildAthleteFacingNotableFoodMention(input: {
+  fatFeedbackPolicy: NutritionFatFeedbackPolicy;
+  items: NutritionFoodItem[] | undefined;
+  loadDay: boolean;
+  lowCarbs: boolean;
+  highEveningFat: boolean;
+}): string | null {
+  if (input.fatFeedbackPolicy !== "normal") {
+    return null;
+  }
+  if (!input.loadDay || !input.lowCarbs || !input.highEveningFat) {
+    return null;
+  }
+  const foods = pickNotableFoods(input.items, "fatG", { sections: EVENING_SECTIONS, limit: 3 });
+  if (foods.length === 0) {
+    return null;
+  }
+  return `Часть энергии в ужин/перекус пришлась на ${foods.join(", ")}; при такой нагрузке лучше смещать больше топлива в углеводы.`;
+}
 
 const INTERVAL_REPEAT_PATTERN = /\b\d+\s*[xх]\s*\d+([,.]\d+)?\s*(мин|min|сек|sec|м|m|км|km)?/i;
 const INTERVAL_DISTANCE_PATTERN = /\b\d+\s*[xх]\s*\d{2,4}\s*(м|m)?/i;
@@ -1378,6 +1478,7 @@ export type NutritionWeeklySummaryDayFact = {
   macro: MacroGuardrailStatuses;
   hasEnergyIssue: boolean;
   roleInfo: NutritionNarrativeDayRoleInfo;
+  items?: NutritionFoodItem[];
 };
 
 export function buildNutritionWeeklySummary(input: {

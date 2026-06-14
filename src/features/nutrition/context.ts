@@ -25,6 +25,20 @@ import {
 
 const TP_CACHE_STALE_MS = 48 * 60 * 60 * 1000;
 
+export type NutritionMealSection = "breakfast" | "lunch" | "dinner" | "snack";
+
+export type NutritionFoodItemSource = "fatsecret_pdf_ru_detailed" | "manual" | "unknown";
+
+export type NutritionFoodItem = {
+  name: string;
+  section: NutritionMealSection | null;
+  kcal: number | null;
+  fatG: number | null;
+  carbsG: number | null;
+  proteinG: number | null;
+  source?: NutritionFoodItemSource;
+};
+
 export type NormalizedManualMacroRow = {
   day: string;
   weekday: string | null;
@@ -34,7 +48,68 @@ export type NormalizedManualMacroRow = {
   carbsG: number | null;
   confidence: number;
   notes: string | null;
+  /**
+   * Optional per-day product list parsed from detailed reports (FatSecret RU PDF).
+   * Backward compatible: legacy rows and daily-total parsers leave this undefined.
+   * Daily totals are never recomputed from items.
+   */
+  items?: NutritionFoodItem[];
 };
+
+const NUTRITION_MEAL_SECTIONS = new Set<NutritionMealSection>([
+  "breakfast",
+  "lunch",
+  "dinner",
+  "snack",
+]);
+
+const NUTRITION_FOOD_ITEM_SOURCES = new Set<NutritionFoodItemSource>([
+  "fatsecret_pdf_ru_detailed",
+  "manual",
+  "unknown",
+]);
+
+/**
+ * Defensive shape validation for food items coming from DB / external JSON.
+ * Drops anything that is not a plausible product row so the composer never
+ * receives malformed entries.
+ */
+export function sanitizeNutritionFoodItems(value: unknown): NutritionFoodItem[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const result: NutritionFoodItem[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      continue;
+    }
+    const entry = raw as Record<string, unknown>;
+    const name = typeof entry.name === "string" ? entry.name.replace(/\s+/g, " ").trim() : "";
+    if (name.length < 2 || !/[a-zа-яё]/i.test(name)) {
+      continue;
+    }
+    const section =
+      typeof entry.section === "string" && NUTRITION_MEAL_SECTIONS.has(entry.section as NutritionMealSection)
+        ? (entry.section as NutritionMealSection)
+        : null;
+    const toNum = (input: unknown): number | null =>
+      typeof input === "number" && Number.isFinite(input) ? input : null;
+    const source =
+      typeof entry.source === "string" && NUTRITION_FOOD_ITEM_SOURCES.has(entry.source as NutritionFoodItemSource)
+        ? (entry.source as NutritionFoodItemSource)
+        : undefined;
+    result.push({
+      name: name.slice(0, 120),
+      section,
+      kcal: toNum(entry.kcal),
+      fatG: toNum(entry.fatG ?? entry.fat_g),
+      carbsG: toNum(entry.carbsG ?? entry.carbs_g),
+      proteinG: toNum(entry.proteinG ?? entry.protein_g),
+      ...(source ? { source } : {}),
+    });
+  }
+  return result;
+}
 
 export type NutritionDataQuality = {
   parsedDays: number;
@@ -843,6 +918,7 @@ export function summarizeNutritionRows(rows: NormalizedManualMacroRow[]): Nutrit
       confidence: row.confidence,
       source: "manual_text",
       notes: row.notes,
+      items: row.items ?? [],
       createdAt: new Date().toISOString(),
     }));
 }

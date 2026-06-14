@@ -14,6 +14,10 @@ import {
 } from "@/features/trainingpeaks/repository";
 import { listTrainingPeaksAdminStudents } from "@/features/trainingpeaks/admin";
 import { buildNutritionNextActionHref } from "@/features/nutrition/admin-labels";
+import {
+  sanitizeNutritionFoodItems,
+  type NutritionFoodItem,
+} from "@/features/nutrition/context";
 
 export const NUTRITION_COACH_CONTEXT_RU_MAX_LENGTH = 500;
 
@@ -100,6 +104,7 @@ export type NutritionDailyMacro = {
   confidence: number | null;
   source: string | null;
   notes: string | null;
+  items: NutritionFoodItem[];
   createdAt: string;
 };
 
@@ -232,6 +237,7 @@ type NutritionDailyMacroRow = {
   confidence: number | string | null;
   source: string | null;
   notes: string | null;
+  food_items: unknown | null;
   created_at: string;
 };
 
@@ -335,6 +341,7 @@ export type InsertNutritionDailyMacrosInput = {
   confidence?: number | null;
   source?: string | null;
   notes?: string | null;
+  items?: NutritionFoodItem[];
 };
 
 export type CreateNutritionWeeklyAnalysisInput = {
@@ -520,6 +527,7 @@ function mapNutritionDailyMacroRow(row: NutritionDailyMacroRow): NutritionDailyM
     confidence: toFiniteNumber(row.confidence),
     source: row.source,
     notes: row.notes,
+    items: sanitizeNutritionFoodItems(row.food_items),
     createdAt: row.created_at,
   };
 }
@@ -781,6 +789,7 @@ export async function insertNutritionDailyMacros(
     confidence: item.confidence ?? null,
     source: compactText(item.source),
     notes: compactText(item.notes),
+    food_items: sanitizeNutritionFoodItems(item.items ?? []),
   }));
 
   const { data, error } = await supabase
