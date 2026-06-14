@@ -8,7 +8,7 @@ import {
   NUTRITION_COACH_CONTEXT_RU_MAX_LENGTH,
   normalizeNutritionCoachContextRu,
 } from "@/features/nutrition/repository";
-import { getNutritionNarrativePreferences } from "@/features/nutrition/context";
+import { applyNutritionFatPolicyOverrides, getNutritionNarrativePreferences } from "@/features/nutrition/context";
 
 const root = process.cwd();
 const coachContextFixture = "недавно подняли объём, после болезни, нужен мягкий тон";
@@ -102,11 +102,22 @@ async function run(): Promise<void> {
   );
 
   const defaultPrefs = getNutritionNarrativePreferences({});
-  assert.equal(defaultPrefs.fatFeedbackPolicy, "coach_only");
+  assert.equal(defaultPrefs.fatFeedbackPolicy, "normal", "default fat feedback is athlete-facing");
   const suppressPrefs = getNutritionNarrativePreferences({
     coachContextRu: "У ученицы своя позиция по высокому жиру, не делать жиры фокусом; фокус - углеводы.",
   });
   assert.equal(suppressPrefs.fatFeedbackPolicy, "suppress_athlete");
+  // Per-student override: Polyakova stays coach-only despite the athlete-facing default.
+  assert.equal(
+    applyNutritionFatPolicyOverrides("Polyakova Anastasia", defaultPrefs).fatFeedbackPolicy,
+    "coach_only",
+    "Polyakova override keeps fat coach-only"
+  );
+  assert.equal(
+    applyNutritionFatPolicyOverrides("Khadizhat Murtazalieva", defaultPrefs).fatFeedbackPolicy,
+    "normal",
+    "other athletes get athlete-facing fat feedback"
+  );
 
   const generated = await generateNutritionWeeklyAnalysis({ context: buildMockContext() });
   assert.equal(generated.athlete_report_signals.length, 0);

@@ -226,11 +226,25 @@ export function getNutritionNarrativePreferences(input: {
   );
 
   return {
-    fatFeedbackPolicy: fatFeedbackPolicy ?? "coach_only",
+    // Default is athlete-facing fat feedback; per-student opt-outs are applied
+    // by applyNutritionFatPolicyOverrides and explicit profile/coach-context.
+    fatFeedbackPolicy: fatFeedbackPolicy ?? "normal",
     detailLevel,
     carbFeedbackPolicy,
     ...(focusPriority.length > 0 ? { focusPriority } : {}),
   };
+}
+
+/** Students kept on coach-only fat feedback despite the athlete-facing default. */
+const NUTRITION_FAT_COACH_ONLY_STUDENT_NAMES = [/polyakova/i];
+
+export function applyNutritionFatPolicyOverrides<
+  T extends { fatFeedbackPolicy?: NutritionFatFeedbackPolicy },
+>(studentName: string | null | undefined, prefs: T): T {
+  if (NUTRITION_FAT_COACH_ONLY_STUDENT_NAMES.some((pattern) => pattern.test(studentName ?? ""))) {
+    return { ...prefs, fatFeedbackPolicy: "coach_only" };
+  }
+  return prefs;
 }
 
 export function shouldShowHighFatAthleteFeedback(policy: NutritionFatFeedbackPolicy): boolean {
@@ -899,10 +913,13 @@ export async function buildNutritionStudentContext(input: {
     currentWeightKg: essentials.profile?.currentWeightKg ?? latestConfirmedWeight ?? latestWeight ?? null,
     nutritionGoal: essentials.profile?.goal ?? null,
     coachContextRu: essentials.profile?.coachContextRu ?? null,
-    narrativePreferences: getNutritionNarrativePreferences({
-      profilePreferences: essentials.profile?.preferences ?? null,
-      coachContextRu: essentials.profile?.coachContextRu ?? null,
-    }),
+    narrativePreferences: applyNutritionFatPolicyOverrides(
+      student.studentName,
+      getNutritionNarrativePreferences({
+        profilePreferences: essentials.profile?.preferences ?? null,
+        coachContextRu: essentials.profile?.coachContextRu ?? null,
+      })
+    ),
     athleteReportSignals: input.athleteReportSignals ?? [],
     manualMacroRows: input.manualRows,
     dataQuality,

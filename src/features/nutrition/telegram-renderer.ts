@@ -401,9 +401,16 @@ function roundToNearestStep(value: number, step: number): number {
 
 function buildAllowedNutritionProseNumbers(facts: NutritionDayProseFacts): number[] {
   const allowed: number[] = [];
-  const push = (value: number | null | undefined) => {
+  const pushExact = (value: number | null | undefined) => {
     if (typeof value === "number" && Number.isFinite(value)) {
       allowed.push(value);
+    }
+  };
+  // Targets/deficits are coaching orientations ("цель ~350", "недобор ~100"),
+  // so accept their rounded forms; actual intake stays tight.
+  const pushLoose = (value: number | null | undefined) => {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      allowed.push(value, ...[5, 10, 25, 50].map((step) => roundToNearestStep(value, step)));
     }
   };
   if (typeof facts.kcal === "number" && Number.isFinite(facts.kcal)) {
@@ -411,13 +418,13 @@ function buildAllowedNutritionProseNumbers(facts: NutritionDayProseFacts): numbe
   }
   for (const macro of [facts.proteinG, facts.fatG, facts.carbsG]) {
     if (typeof macro === "number" && Number.isFinite(macro)) {
-      allowed.push(macro, roundToNearestStep(macro, 5));
+      allowed.push(macro, roundToNearestStep(macro, 5), roundToNearestStep(macro, 10));
     }
   }
-  push(facts.carbsGPerKg);
-  push(facts.proteinGPerKg);
+  pushExact(facts.carbsGPerKg);
+  pushExact(facts.proteinGPerKg);
   for (const target of facts.planTargetNumbers ?? []) {
-    push(target);
+    pushLoose(target);
   }
   return allowed;
 }

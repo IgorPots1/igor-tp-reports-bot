@@ -48,6 +48,7 @@ type CanonicalDailyFact = {
   macro_guardrails?: unknown;
   macroGuardrails?: unknown;
   athlete_prose?: unknown;
+  target?: unknown;
 };
 
 export type NutritionCombinedMessageResult = {
@@ -239,6 +240,7 @@ function normalizeStoredDailyFactItem(raw: unknown): CanonicalDailyFact | null {
       embedded.macroGuardrails ??
       embedded.macro_guardrails,
     athlete_prose: source.athlete_prose ?? item.athlete_prose,
+    target: source.target ?? item.target,
   };
 }
 
@@ -573,6 +575,26 @@ ${comment}`;
       // Hybrid: prefer validated model prose, otherwise the deterministic comment.
       // The fact line above is always code-owned and never replaced.
       const proteinPerKg = toFiniteNumber(actual.proteinGPerKg);
+      // Code-owned target numbers for this day, so the prose may state coaching
+      // orientations ("цель ~350, у тебя 233, недобор ~100") without the number
+      // validator treating them as invented.
+      const targetObj = asObject(item.target);
+      const carbsGMin = toFiniteNumber(targetObj.carbsGMin);
+      const carbsGMax = toFiniteNumber(targetObj.carbsGMax);
+      const planTargetNumbers: number[] = [];
+      for (const value of [carbsGMin, carbsGMax, toFiniteNumber(targetObj.kcalMin), toFiniteNumber(targetObj.proteinGMin)]) {
+        if (value != null) {
+          planTargetNumbers.push(value);
+        }
+      }
+      if (carbs != null) {
+        const mid = carbsGMin != null && carbsGMax != null ? (carbsGMin + carbsGMax) / 2 : null;
+        for (const target of [carbsGMin, carbsGMax, mid]) {
+          if (target != null && target > carbs) {
+            planTargetNumbers.push(target - carbs);
+          }
+        }
+      }
       const dayComment =
         resolveUsableNutritionDayProse(item.athlete_prose, {
           kcal,
@@ -581,6 +603,7 @@ ${comment}`;
           carbsG: carbs,
           carbsGPerKg: carbsPerKg,
           proteinGPerKg: proteinPerKg,
+          planTargetNumbers,
           nutritionStatus,
           findings,
         }) ?? comment;

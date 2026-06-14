@@ -59,6 +59,19 @@ const baseFacts: NutritionDayProseFacts = {
   assert.ok(!hasError(issues, "number_not_in_facts"), "percentages must be whitelisted");
 }
 
+// 2d. Target + deficit coaching numbers (эталон style) must pass when provided
+// as facts; a misstated actual intake is still caught.
+{
+  const withTarget: NutritionDayProseFacts = { ...baseFacts, planTargetNumbers: [350, 117] };
+  const ok = validateNutritionDayProse({
+    prose: "Под такую работу хотелось бы около 350 г углеводов, у тебя 233 — недобор около 100 г, добавь каши и риса.",
+    facts: withTarget,
+  });
+  assert.ok(!hasError(ok, "number_not_in_facts"), "target ~350 / actual 233 / deficit ~100 must pass");
+  const bad = validateNutritionDayProse({ prose: "Углеводы 240 под нагрузку, маловато.", facts: withTarget });
+  assert.ok(hasError(bad, "number_not_in_facts"), "misstated actual (240 vs 233) still caught");
+}
+
 // 3. status_softened: hard day but prose has no undershoot marker.
 {
   const issues = validateNutritionDayProse({
