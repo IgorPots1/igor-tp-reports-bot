@@ -1,10 +1,12 @@
 import type { TelegramInlineKeyboardMarkup } from "@/features/telegram/types";
+import type { TpSignalExplainRecord } from "@/features/trainingpeaks/tp-signals-explain-helpers";
 import {
   formatTpSignalCategoryLabel,
   formatTpSignalReviewDebugIdLine,
   formatTpSignalReviewQueueReason,
   formatTpSignalReviewStateLabel,
   formatTpSignalReviewWhatHappened,
+  TP_SIGNAL_REVIEW_CONTEXT_FALLBACK,
 } from "@/features/trainingpeaks/tp-signals-review-coach-labels";
 import type { TpSignalReviewQueueBucket } from "@/features/trainingpeaks/tp-signals-review-queue-helpers";
 import type { TrainingPeaksOperationalSignalReviewDecisionName } from "@/features/trainingpeaks/repository";
@@ -30,9 +32,18 @@ export type FormatTpSignalReviewCardInput = {
   bucket: TpSignalReviewQueueBucket;
   studentName: string;
   category: string;
+  signalType?: string;
   reason: string;
   sourcePreview?: string | null;
   lifecycleReason?: string | null;
+  explainRecord?: Pick<
+    TpSignalExplainRecord,
+    | "normalized_dates"
+    | "source_snippets"
+    | "latest_positive_evidence"
+    | "latest_negative_evidence"
+    | "visible_output"
+  > | null;
   state: string;
   signalShortId: string;
 };
@@ -46,11 +57,14 @@ function truncateForTelegram(text: string, maxLength: number): string {
 
 export function formatTpSignalReviewCardText(input: FormatTpSignalReviewCardInput): string {
   const categoryLabel = formatTpSignalCategoryLabel(input.category);
-  const whatHappened = formatTpSignalReviewWhatHappened({
-    bucket: input.bucket,
-    category: input.category,
-    sourcePreview: input.sourcePreview,
-  });
+  const whatHappened =
+    formatTpSignalReviewWhatHappened({
+      bucket: input.bucket,
+      category: input.category,
+      signalType: input.signalType ?? input.category,
+      sourcePreview: input.sourcePreview,
+      explainRecord: input.explainRecord,
+    }) || TP_SIGNAL_REVIEW_CONTEXT_FALLBACK;
   const queueReason = formatTpSignalReviewQueueReason({
     bucket: input.bucket,
     category: input.category,
@@ -68,10 +82,7 @@ export function formatTpSignalReviewCardText(input: FormatTpSignalReviewCardInpu
     lines.push("🔵 Можно закрыть после проверки", "", `👤 ${input.studentName}`, `Категория: ${categoryLabel}`);
   }
 
-  if (whatHappened) {
-    lines.push("", "Что произошло:", truncateForTelegram(whatHappened, 240));
-  }
-
+  lines.push("", "Что произошло:", truncateForTelegram(whatHappened, 240));
   lines.push("", "Почему в очереди:", truncateForTelegram(queueReason, 240));
   lines.push("", "Состояние:", stateLabel);
 

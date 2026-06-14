@@ -3,6 +3,10 @@ import {
   type ActiveSignalReviewBucketItem,
   type ReviewBucketName,
 } from "@/features/trainingpeaks/tp-signals-review-buckets-helpers";
+import {
+  resolveTpSignalReviewCardContext,
+  type TpSignalReviewContextSource,
+} from "@/features/trainingpeaks/tp-signals-review-coach-labels";
 import type { TrainingPeaksStudentOperationalSignal } from "@/features/trainingpeaks/repository";
 import type {
   TrainingPeaksOperationalSignalDisplayEvidence,
@@ -446,7 +450,75 @@ export type TelegramReviewQueueDiagnosticRow = {
   validUntil: string | null;
   sourceObservationId: string | null;
   reviewBucketReason: string;
+  cardHasContext?: boolean;
+  contextSource?: TpSignalReviewContextSource | null;
+  whatHappenedPreview?: string | null;
 };
+
+export type TpSignalReviewQueueSelectedDiagnostic = {
+  studentName: string;
+  bucket: TpSignalReviewQueueBucket;
+  category: string;
+  signalId: string;
+  cardHasContext: boolean;
+  contextSource: TpSignalReviewContextSource;
+  whatHappenedPreview: string;
+  queueReason: string;
+  queueExclusionReason: string | null;
+};
+
+export function buildTpSignalReviewQueueSelectedDiagnostics(
+  items: TpSignalReviewQueueItem[]
+): TpSignalReviewQueueSelectedDiagnostic[] {
+  return items.map((queueItem) => {
+    const context = resolveTpSignalReviewCardContext({
+      bucket: queueItem.bucket,
+      category: queueItem.category,
+      signalType: queueItem.item.signalType,
+      preview: queueItem.item.preview,
+      explainRecord: queueItem.item.explainRecord,
+    });
+
+    return {
+      studentName: queueItem.item.studentName,
+      bucket: queueItem.bucket,
+      category: queueItem.category,
+      signalId: queueItem.item.signalId,
+      cardHasContext: context.hasContext,
+      contextSource: context.source,
+      whatHappenedPreview: context.text,
+      queueReason: queueItem.queueReason,
+      queueExclusionReason: queueItem.queueExclusionReason,
+    };
+  });
+}
+
+export function enrichTelegramReviewQueueDiagnosticRow(
+  item: ActiveSignalReviewBucketItem,
+  inclusion: TelegramReviewQueueInclusion
+): Pick<TelegramReviewQueueDiagnosticRow, "cardHasContext" | "contextSource" | "whatHappenedPreview"> {
+  if (!inclusion.include || !isTpSignalReviewQueueBucket(item.bucket)) {
+    return {
+      cardHasContext: false,
+      contextSource: null,
+      whatHappenedPreview: null,
+    };
+  }
+
+  const context = resolveTpSignalReviewCardContext({
+    bucket: item.bucket,
+    category: item.category,
+    signalType: item.signalType,
+    preview: item.preview,
+    explainRecord: item.explainRecord,
+  });
+
+  return {
+    cardHasContext: context.hasContext,
+    contextSource: context.source,
+    whatHappenedPreview: context.text,
+  };
+}
 
 export function buildTelegramReviewQueueDiagnosticRows(
   activeItems: ActiveSignalReviewBucketItem[]
@@ -460,6 +532,7 @@ export function buildTelegramReviewQueueDiagnosticRows(
     const inclusion = resolveTelegramReviewQueueInclusion(item);
     const { source_date: sourceDate, target_date: targetDate, valid_until: validUntil } =
       item.explainRecord.normalized_dates;
+    const contextFields = enrichTelegramReviewQueueDiagnosticRow(item, inclusion);
 
     rows.push({
       studentName: item.studentName,
@@ -476,6 +549,7 @@ export function buildTelegramReviewQueueDiagnosticRows(
       validUntil: validUntil ?? null,
       sourceObservationId: item.sourceObservationId,
       reviewBucketReason: item.reason,
+      ...contextFields,
     });
   }
 

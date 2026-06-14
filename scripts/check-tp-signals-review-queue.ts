@@ -29,6 +29,12 @@ import {
   type ActiveSignalReviewBucketItem,
 } from "@/features/trainingpeaks/tp-signals-review-buckets-helpers";
 import {
+  formatTpSignalCategoryLabel,
+  formatTpSignalReviewWhatHappened,
+  resolveTpSignalReviewCardContext,
+  TP_SIGNAL_REVIEW_CONTEXT_FALLBACK,
+} from "@/features/trainingpeaks/tp-signals-review-coach-labels";
+import {
   isTpSignalReviewQueueBucket,
   resolveTelegramReviewQueueInclusion,
   selectTpSignalReviewQueueItems,
@@ -538,6 +544,177 @@ async function run(): Promise<void> {
     /pain_injury|needs_review|recommended_state|latest_negative_evidence|classifier_confidence/u
   );
 
+  const planConstraintIncluded = makeActiveBucketItem("review_required", "pl1pl1pl-pl1p-pl1p-pl1p-pl1pl1pl1pl1", {
+    signal: {
+      id: "pl1pl1pl-pl1p-pl1p-pl1p-pl1pl1pl1pl1",
+      signalType: "schedule_unavailability_window",
+      structuredPayload: { unavailable_dates: ["2026-06-10"] },
+    },
+    item: {
+      signalId: "pl1pl1pl-pl1p-pl1p-pl1p-pl1pl1pl1pl1",
+      section: "schedule",
+      text: "Ср не может тренироваться — учесть перенос/альтернативу",
+      lifecycleDisplayState: "needs_review",
+    },
+    studentName: "Schedule Athlete",
+    asOfDate: "2026-06-15",
+  });
+  const planConstraintInclusion = resolveTelegramReviewQueueInclusion(planConstraintIncluded);
+  if (!planConstraintInclusion.include) {
+    failures.push("schedule constraint with strong review reason should be includable for card test");
+  }
+  const planConstraintCard = formatTpSignalReviewCardText({
+    bucket: "review_required",
+    studentName: "Schedule Athlete",
+    category: "schedule",
+    signalType: "schedule_unavailability_window",
+    reason: "recommended_state=needs_review; partial_or_stale_schedule_payload",
+    sourcePreview: planConstraintIncluded.preview,
+    explainRecord: planConstraintIncluded.explainRecord,
+    state: "needs_review",
+    signalShortId: "pl1pl1pl",
+  });
+  assert.match(planConstraintCard, /Что произошло:/u);
+  assert.match(planConstraintCard, /Ограничение по плану: недоступна 2026-06-10/u);
+
+  const schedulePreviewContext = resolveTpSignalReviewCardContext({
+    bucket: "review_required",
+    category: "schedule",
+    signalType: "schedule_unavailability_window",
+    preview: "Ср не может тренироваться — учесть перенос/альтернативу",
+    explainRecord: {
+      normalized_dates: {
+        source_date: null,
+        target_date: null,
+        valid_until: null,
+        planned_training_dates: [],
+        unavailable_dates: [],
+      },
+      source_snippets: [],
+      latest_positive_evidence: [],
+      latest_negative_evidence: [],
+      visible_output: "Ср не может тренироваться — учесть перенос/альтернативу",
+    },
+  });
+  assert.match(schedulePreviewContext.text, /Ср не может тренироваться/u);
+
+  const illnessCard = formatTpSignalReviewCardText({
+    bucket: "review_required",
+    studentName: "Illness Athlete",
+    category: "health_pause",
+    signalType: "health_issue_started",
+    reason: "classifier_confidence=medium",
+    sourcePreview: "болеет, кашель",
+    state: "active_problem",
+    signalShortId: "ill11111",
+  });
+  assert.match(illnessCard, /Что произошло:/u);
+  assert.match(illnessCard, /болеет|кашель/iu);
+
+  const closeCandidateCard = formatTpSignalReviewCardText({
+    bucket: "close_candidate_review",
+    studentName: "Elena Vasileva",
+    category: "health_pause",
+    signalType: "health_issue_improving",
+    reason: "ready_for_coach_close",
+    sourcePreview: "самочувствие нормализовалось — новых жалоб нет",
+    explainRecord: {
+      normalized_dates: {
+        source_date: null,
+        target_date: null,
+        valid_until: null,
+        planned_training_dates: [],
+        unavailable_dates: [],
+      },
+      source_snippets: ["после болезни лёгкий выход"],
+      latest_positive_evidence: ["новых жалоб нет"],
+      latest_negative_evidence: [],
+      visible_output: "самочувствие нормализовалось",
+    },
+    state: "close_candidate",
+    signalShortId: "e1e1e1e1",
+  });
+  assert.match(closeCandidateCard, /Что произошло:/u);
+  assert.match(closeCandidateCard, /лёгкий выход|новых жалоб нет/iu);
+
+  const moveDatesCard = formatTpSignalReviewCardText({
+    bucket: "review_required",
+    studentName: "Demian Diachenko",
+    category: "moves",
+    signalType: "move_workout_candidate",
+    reason: "move_with_actionable_dates",
+    sourcePreview: moveWithDates.preview,
+    explainRecord: moveWithDates.explainRecord,
+    state: "needs_review",
+    signalShortId: "m1m1m1m1",
+  });
+  assert.match(moveDatesCard, /Что произошло:/u);
+  assert.match(moveDatesCard, /13\.06.*14\.06/u);
+
+  const weakSummaryContext = resolveTpSignalReviewCardContext({
+    bucket: "review_required",
+    category: "plan_constraints",
+    signalType: "plan_generation_constraint",
+    preview: "учесть в плане",
+    explainRecord: {
+      normalized_dates: {
+        source_date: null,
+        target_date: null,
+        valid_until: null,
+        planned_training_dates: [],
+        unavailable_dates: [],
+      },
+      source_snippets: ["В среду не могу тренироваться"],
+      latest_positive_evidence: [],
+      latest_negative_evidence: [],
+      visible_output: "учесть в плане",
+    },
+  });
+  if (weakSummaryContext.source !== "source_observation") {
+    failures.push(`weak summary should use source_observation, got ${weakSummaryContext.source}`);
+  }
+  assert.match(weakSummaryContext.text, /Исходное сообщение/u);
+  assert.match(weakSummaryContext.text, /среду не могу тренироваться/iu);
+
+  const fallbackContext = resolveTpSignalReviewCardContext({
+    bucket: "review_required",
+    category: "other",
+    signalType: "other",
+    preview: null,
+    explainRecord: {
+      normalized_dates: {
+        source_date: null,
+        target_date: null,
+        valid_until: null,
+        planned_training_dates: [],
+        unavailable_dates: [],
+      },
+      source_snippets: [],
+      latest_positive_evidence: [],
+      latest_negative_evidence: [],
+      visible_output: "",
+    },
+  });
+  if (fallbackContext.source !== "fallback_missing" || fallbackContext.hasContext) {
+    failures.push("empty context should use fallback_missing");
+  }
+  assert.equal(fallbackContext.text, TP_SIGNAL_REVIEW_CONTEXT_FALLBACK);
+
+  const technicalFreeCard = formatTpSignalReviewCardText({
+    bucket: "review_required",
+    studentName: "Clean Athlete",
+    category: "health_pause",
+    signalType: "health_issue_started",
+    reason: "recommended_state=needs_review; latest_negative_evidence",
+    sourcePreview: "горло болит",
+    state: "needs_review",
+    signalShortId: "clean111",
+  });
+  assert.doesNotMatch(
+    technicalFreeCard,
+    /health_pause|pain_injury|plan_generation_constraint|classifier_confidence|recommended_state|latest_negative_evidence|active_problem|needs_review|hidden=/iu
+  );
+
   process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_SHOW_DEBUG_ID = "true";
   const debugCard = formatTpSignalReviewCardText({
     bucket: "review_required",
@@ -809,8 +986,18 @@ async function run(): Promise<void> {
     signalShortId: SIGNAL_SHORT,
     queueState: "pending",
     latestDecision: null,
+    queueReason: "health_pain_review_required",
+    sourceSignalRecommendedState: "needs_review",
+    isCloseCandidate: false,
+    decisionSuppressionReason: null,
+    category: reviewRequiredItem.category,
+    hasActionableDates: false,
+    validUntil: null,
+    sourceObservationId: reviewRequiredItem.sourceObservationId,
+    queueExclusionReason: null,
   });
   assert.match(queueCard.text, /🟡 Проверить сигнал/u);
+  assert.match(queueCard.text, /Что произошло:/u);
 
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tp-signals-review-queue-no-write-"));
   const reportPath = path.join(tempRoot, "reports", "tp-signals-review-queue", "should-not-exist");
@@ -818,7 +1005,7 @@ async function run(): Promise<void> {
     failures.push("unexpected report dir before no-write diagnostic");
   }
 
-  console.log(`${LOG_PREFIX} cases=37`);
+  console.log(`${LOG_PREFIX} cases=48`);
   console.log(`- review_required included: ${reviewRequiredItem.bucket}`);
   console.log(`- close_candidate_review included: ${closeCandidateItem.bucket}`);
   console.log(`- close candidates sort first: ${baseSelection.items[0]?.bucket === "close_candidate_review"}`);
@@ -843,7 +1030,7 @@ async function run(): Promise<void> {
     process.exit(1);
   }
 
-  console.log(`${LOG_PREFIX} PASS (37/37)`);
+  console.log(`${LOG_PREFIX} PASS (48/48)`);
 }
 
 run().catch((error) => {

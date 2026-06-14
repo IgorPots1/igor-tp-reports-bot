@@ -23,6 +23,7 @@ import {
 import {
   buildActiveSignalReviewBucketItems,
   buildTelegramReviewQueueDiagnosticRows,
+  buildTpSignalReviewQueueSelectedDiagnostics,
   formatTpSignalReviewQueueSummaryMarkdown,
   selectTpSignalReviewQueueItems,
   type TpSignalReviewDecisionRecord,
@@ -272,6 +273,7 @@ function printConsoleSummary(input: {
   featureFlags: ReturnType<typeof getTrainingPeaksTpSignalReviewQueueFeatureFlags>;
   selection: ReturnType<typeof selectTpSignalReviewQueueItems>;
   diagnosticRows: ReturnType<typeof buildTelegramReviewQueueDiagnosticRows>;
+  selectedDiagnostics: ReturnType<typeof buildTpSignalReviewQueueSelectedDiagnostics>;
   sampleCards: string[];
   noWrite: boolean;
   reportDir: string | null;
@@ -362,7 +364,17 @@ function printConsoleSummary(input: {
     console.log("Queue item details (first 20):");
     for (const row of input.diagnosticRows.slice(0, 20)) {
       console.log(
-        `- ${row.studentName} | bucket=${row.bucket} | category=${row.category} | included=${String(row.includedInQueue)} | queue_reason=${row.queueReason ?? "—"} | exclusion=${row.queueExclusionReason ?? "—"} | recommended=${row.sourceSignalRecommendedState} | close_candidate=${String(row.isCloseCandidate)} | actionable_dates=${String(row.hasActionableDates)} | valid_until=${row.validUntil ?? "—"} | source_obs=${row.sourceObservationId ?? "—"}`
+        `- ${row.studentName} | bucket=${row.bucket} | category=${row.category} | included=${String(row.includedInQueue)} | queue_reason=${row.queueReason ?? "—"} | exclusion=${row.queueExclusionReason ?? "—"} | recommended=${row.sourceSignalRecommendedState} | close_candidate=${String(row.isCloseCandidate)} | actionable_dates=${String(row.hasActionableDates)} | valid_until=${row.validUntil ?? "—"} | source_obs=${row.sourceObservationId ?? "—"} | card_has_context=${String(row.cardHasContext ?? false)} | context_source=${row.contextSource ?? "—"}`
+      );
+    }
+    console.log("");
+  }
+
+  if (input.selectedDiagnostics.length > 0) {
+    console.log("Selected for send (card context):");
+    for (const row of input.selectedDiagnostics) {
+      console.log(
+        `- ${row.studentName} | bucket=${row.bucket} | category=${row.category} | card_has_context=${String(row.cardHasContext)} | context_source=${row.contextSource} | queue_reason=${row.queueReason} | what_happened=${row.whatHappenedPreview}`
       );
     }
     console.log("");
@@ -463,6 +475,7 @@ async function run(): Promise<void> {
     includeReviewed: options.includeReviewed,
     limit: effectiveLimit,
   });
+  const selectedDiagnostics = buildTpSignalReviewQueueSelectedDiagnostics(selection.items);
   const sampleCards = buildTpSignalReviewQueueDryRunPreview({ items: selection.items });
   let sendResult: Awaited<ReturnType<typeof notifyCoachTpSignalReviewQueue>> | undefined;
   if (options.send) {
@@ -480,6 +493,7 @@ async function run(): Promise<void> {
     featureFlags,
     selection,
     diagnosticRows,
+    selectedDiagnostics,
     sampleCards,
     noWrite: options.noWrite,
     reportDir: null,
@@ -513,6 +527,7 @@ async function run(): Promise<void> {
         featureFlags,
         selection,
         diagnosticRows,
+        selectedDiagnostics,
         sampleCards,
       },
       null,

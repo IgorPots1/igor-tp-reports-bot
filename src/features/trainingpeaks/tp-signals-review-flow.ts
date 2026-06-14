@@ -179,9 +179,11 @@ export function buildTpSignalReviewCardForQueueItem(item: TpSignalReviewQueueIte
     bucket: item.bucket,
     studentName: item.item.studentName,
     category: item.item.category,
+    signalType: item.item.signalType,
     reason: item.item.reason,
     sourcePreview: item.item.preview,
     lifecycleReason: item.item.explainRecord.why_not_closed || item.item.reason,
+    explainRecord: item.item.explainRecord,
     state: item.item.state,
     signalShortId: item.signalShortId,
   });
