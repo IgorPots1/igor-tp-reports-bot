@@ -7,12 +7,14 @@ import { redirect } from "next/navigation";
 import {
   confirmImportedPaymentMatch,
   createBillingClient,
+  createBillingClientFromImportedPaymentAndStudent,
   deleteBillingPayerIdentity,
   ignoreImportedPayment,
   linkBillingClientToStudent,
   markBillingClientPaid,
   markBillingClientUnpaid,
   resolveBillingMonth,
+  undoImportedPaymentMatch,
   unlinkBillingClientFromStudent,
   updateBillingClientById,
 } from "@/features/billing/service";
@@ -379,6 +381,60 @@ export async function deleteBillingPayerIdentityAction(formData: FormData): Prom
 
   revalidateBillingPaths(clientId);
   redirect(withNotice(redirectTo, "notice", "Идентификатор плательщика удалён."));
+}
+
+export async function undoImportedPaymentMatchAction(formData: FormData): Promise<void> {
+  const importedPaymentId = getRequiredFormValue(formData, "importedPaymentId");
+  const redirectTo = getOptionalFormValue(formData, "redirectTo") ?? buildBillingImportsRedirect("matched");
+
+  await ensureAdminAccess(redirectTo);
+
+  let notice = "Зачёт отменён: платёж снова доступен для привязки.";
+
+  try {
+    const result = await undoImportedPaymentMatch({
+      importedPaymentId,
+      actor: BILLING_IMPORTS_ACTION_ACTOR,
+    });
+    if (result.removedIdentityCount > 0) {
+      notice = `${notice} Удалена выученная связь плательщика (${result.removedIdentityCount}).`;
+    }
+  } catch (error) {
+    revalidatePath("/admin/billing/imports");
+    const message = error instanceof Error ? error.message : "Не удалось отменить зачёт.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+
+  revalidateBillingPaths();
+  redirect(withNotice(redirectTo, "notice", notice));
+}
+
+export async function createBillingClientFromPaymentAction(formData: FormData): Promise<void> {
+  const importedPaymentId = getRequiredFormValue(formData, "importedPaymentId");
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const clientName = getRequiredFormValue(formData, "clientName");
+  const redirectTo = getOptionalFormValue(formData, "redirectTo") ?? buildBillingImportsRedirect("new");
+
+  await ensureAdminAccess(redirectTo);
+
+  let clientId: string | undefined;
+
+  try {
+    const result = await createBillingClientFromImportedPaymentAndStudent({
+      importedPaymentId,
+      studentId,
+      clientName,
+      actor: BILLING_IMPORTS_ACTION_ACTOR,
+    });
+    clientId = result.createdClientId;
+  } catch (error) {
+    revalidatePath("/admin/billing/imports");
+    const message = error instanceof Error ? error.message : "Не удалось завести клиента из платежа.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+
+  revalidateBillingPaths(clientId);
+  redirect(withNotice(redirectTo, "notice", "Клиент заведён и платёж засчитан."));
 }
 
 export async function ignoreImportedPaymentAction(formData: FormData): Promise<void> {

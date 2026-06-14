@@ -1,7 +1,12 @@
 import Link from "next/link";
 
 import FormActionButton from "@/app/admin/FormActionButton";
-import { confirmImportedPaymentAction, ignoreImportedPaymentAction } from "@/app/admin/billing/actions";
+import {
+  confirmImportedPaymentAction,
+  createBillingClientFromPaymentAction,
+  ignoreImportedPaymentAction,
+  undoImportedPaymentMatchAction,
+} from "@/app/admin/billing/actions";
 import {
   formatBillingAmount,
   getBillingImportedPaymentStatusLabel,
@@ -151,7 +156,7 @@ export default async function AdminBillingImportsPage({ searchParams }: AdminBil
         </article>
       ) : (
         overview.rows.map((row) => {
-          const { imported, suggestions, matchedMonthlyPayment } = row;
+          const { imported, suggestions, studentSuggestions, matchedMonthlyPayment } = row;
           const sameCurrencyCandidates = overview.candidates.filter(
             (candidate) => candidate.currency === imported.currency
           );
@@ -278,6 +283,41 @@ export default async function AdminBillingImportsPage({ searchParams }: AdminBil
                     )}
                   </div>
 
+                  {studentSuggestions.length > 0 && (
+                    <div className="admin-import-suggestions">
+                      <h3 className="admin-eyebrow">Завести клиента из платежа</h3>
+                      <p className="admin-muted">
+                        Биллинг-клиента для этого плательщика ещё нет, но есть похожий ученик. Заведём клиента
+                        (сумма {formatBillingAmount(imported.amount, imported.currency)}) и сразу засчитаем платёж.
+                      </p>
+                      {studentSuggestions.map((student) => (
+                        <form
+                          key={student.studentId}
+                          action={createBillingClientFromPaymentAction}
+                          className="admin-import-suggestion"
+                        >
+                          <input type="hidden" name="importedPaymentId" value={imported.id} />
+                          <input type="hidden" name="studentId" value={student.studentId} />
+                          <input type="hidden" name="clientName" value={student.studentName} />
+                          <input type="hidden" name="redirectTo" value={redirectTo} />
+                          <div className="admin-import-suggestion-body">
+                            <strong>{student.studentName}</strong>
+                            <span className="admin-muted">
+                              ученик без биллинга · {student.studentExternalId}
+                            </span>
+                          </div>
+                          <FormActionButton
+                            className="admin-button admin-button-secondary"
+                            pendingText="Заведение..."
+                            confirmMessage="Завести billing-клиента для этого ученика и засчитать ему платёж?"
+                          >
+                            Завести и засчитать
+                          </FormActionButton>
+                        </form>
+                      ))}
+                    </div>
+                  )}
+
                   <div className="admin-import-actions">
                     <form action={ignoreImportedPaymentAction}>
                       <input type="hidden" name="importedPaymentId" value={imported.id} />
@@ -306,6 +346,17 @@ export default async function AdminBillingImportsPage({ searchParams }: AdminBil
                   ) : (
                     <p className="admin-muted">Связанный месячный платёж недоступен.</p>
                   )}
+                  <form action={undoImportedPaymentMatchAction}>
+                    <input type="hidden" name="importedPaymentId" value={imported.id} />
+                    <input type="hidden" name="redirectTo" value={redirectTo} />
+                    <FormActionButton
+                      className="admin-button admin-button-secondary"
+                      pendingText="Отмена..."
+                      confirmMessage="Отменить зачёт? Платёж вернётся в «Новые», месяц — в «ожидание»."
+                    >
+                      Отменить зачёт
+                    </FormActionButton>
+                  </form>
                 </div>
               )}
 

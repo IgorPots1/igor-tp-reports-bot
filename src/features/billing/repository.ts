@@ -1021,6 +1021,25 @@ export async function deleteBillingPayerIdentityById(id: string): Promise<void> 
   }
 }
 
+export async function deleteBillingPayerIdentitiesBySourceImportedPaymentId(
+  importedPaymentId: string
+): Promise<number> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("billing_payer_identities")
+    .delete()
+    .eq("source_imported_payment_id", importedPaymentId)
+    .select("id");
+
+  if (error) {
+    throw new Error(
+      `Failed to delete billing payer identities for imported payment ${importedPaymentId}: ${error.message}`
+    );
+  }
+
+  return (data as Array<{ id: string }> | null)?.length ?? 0;
+}
+
 export async function listBillingPayerIdentitiesForClient(
   billingClientId: string
 ): Promise<BillingPayerIdentity[]> {

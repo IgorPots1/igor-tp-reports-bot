@@ -5,6 +5,7 @@ import {
   getBillingPayerIdentityByTypeHash,
   getBillingMonthlyPaymentWithClientById,
   deleteBillingPayerIdentityById,
+  deleteBillingPayerIdentitiesBySourceImportedPaymentId,
   insertBillingClient,
   insertBillingPayerIdentity,
   insertBillingImportedPayments,
@@ -958,6 +959,104 @@ export async function confirmImportedPaymentMatch(
     },
     identityLearningWarnings: learningWarnings.map((warning) => warning.message),
   };
+}
+
+// Отменяет ошибочный зачёт: возвращает импортированный платёж в статус `new`
+// (чтобы его снова можно было засчитать), откатывает связанный месяц в «ожидание»
+// и убирает выученную связь плательщик→клиент, созданную именно этим зачётом.
+export async function undoImportedPaymentMatch(input: {
+  importedPaymentId: string;
+  actor: string;
+}): Promise<{ importedPayment: BillingImportedPayment; removedIdentityCount: number }> {
+  const imported = await getBillingImportedPaymentById(input.importedPaymentId);
+  if (!imported) {
+    throw new Error(`Imported payment ${input.importedPaymentId} not found.`);
+  }
+  if (imported.status !== "matched") {
+    throw new Error("Этот платёж не в статусе «засчитан» — отменять нечего.");
+  }
+
+  if (imported.matchedMonthlyPaymentId) {
+    const monthly = await getBillingMonthlyPaymentWithClientById(imported.matchedMonthlyPaymentId);
+    // Откатываем месяц только если он всё ещё привязан именно к этому платежу.
+    if (monthly && monthly.externalPaymentHash === imported.externalHash) {
+      await updateBillingMonthlyPaymentById(monthly.id, {
+        status: "pending",
+        actual_payment_date: null,
+        paid_amount: null,
+        external_payment_hash: null,
+        marked_paid_by: null,
+        source: "manual",
+        updated_by: input.actor,
+      });
+    }
+  }
+
+  const updatedImported = await updateBillingImportedPaymentById(imported.id, {
+    status: "new",
+    matchedMonthlyPaymentId: null,
+    matchedAt: null,
+    matchedByCoachChatId: null,
+  });
+  if (!updatedImported) {
+    throw new Error(`Imported payment ${imported.id} disappeared while undoing match.`);
+  }
+
+  // Убираем связь, выученную этим (ошибочным) зачётом, чтобы она не авто-засчитывала будущие платежи неверно.
+  const removedIdentityCount = await deleteBillingPayerIdentitiesBySourceImportedPaymentId(imported.id);
+
+  return { importedPayment: updatedImported, removedIdentityCount };
+}
+
+// Заводит нового billing-клиента из импортированного платежа и сразу засчитывает
+// платёж ему. Сумма/валюта берутся из платежа, клиент привязывается к ученику.
+// Зачёт идёт через confirmImportedPaymentMatch — значит связь плательщик→клиент
+// сохраняется и в будущем платежи этого плательщика будут авто-засчитываться.
+export async function createBillingClientFromImportedPaymentAndStudent(input: {
+  importedPaymentId: string;
+  studentId: string;
+  clientName: string;
+  actor: string;
+}): Promise<ConfirmImportedPaymentMatchResult & { createdClientId: string }> {
+  const imported = await getBillingImportedPaymentById(input.importedPaymentId);
+  if (!imported) {
+    throw new Error(`Imported payment ${input.importedPaymentId} not found.`);
+  }
+  if (imported.status !== "new") {
+    throw new Error("Этот платёж уже обработан.");
+  }
+
+  const paymentMethod =
+    imported.currency === "RUB" ? "tbank_link_a" : imported.currency === "EUR" ? "manual_eur" : "manual_other";
+
+  const client = await createBillingClient({
+    clientName: input.clientName,
+    monthlyAmount: imported.amount,
+    currency: imported.currency,
+    paymentMethod,
+    studentId: input.studentId,
+    actor: input.actor,
+    ensureCurrentMonthRow: false,
+  });
+
+  const targetMonth = resolveBillingMonth(imported.paymentDate);
+  await ensureBillingMonthRows({ targetMonth, actor: input.actor });
+
+  const monthly = await getBillingMonthlyPaymentForClientMonth({
+    billingClientId: client.id,
+    billingMonth: targetMonth,
+  });
+  if (!monthly) {
+    throw new Error("Не удалось создать месячную строку для месяца платежа.");
+  }
+
+  const result = await confirmImportedPaymentMatch({
+    importedPaymentId: input.importedPaymentId,
+    monthlyPaymentId: monthly.id,
+    actor: input.actor,
+  });
+
+  return { ...result, createdClientId: client.id };
 }
 
 export async function ignoreImportedPayment(input: IgnoreImportedPaymentInput): Promise<BillingImportedPayment> {

@@ -377,9 +377,17 @@ export type ImportedPaymentSuggestion = {
   knownPayer: boolean;
 };
 
+export type ImportedPaymentStudentSuggestion = {
+  studentId: string;
+  studentName: string;
+  studentExternalId: string;
+  score: number;
+};
+
 export type ImportedPaymentReviewRow = {
   imported: BillingImportedPayment;
   suggestions: ImportedPaymentSuggestion[];
+  studentSuggestions: ImportedPaymentStudentSuggestion[];
   matchedMonthlyPayment: BillingMonthlyPaymentWithClient | null;
 };
 

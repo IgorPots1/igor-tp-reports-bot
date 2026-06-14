@@ -24,6 +24,7 @@ import {
   type BillingMonthStatusFilter,
   type BillingMonthStatusRow,
   type ImportedPaymentReviewRow,
+  type ImportedPaymentStudentSuggestion,
   type ImportedPaymentSuggestion,
 } from "@/features/billing/types";
 import { getCurrentBelgradeDateIso, listBillingMonthStatus, resolveBillingMonth } from "@/features/billing/service";
@@ -520,14 +521,49 @@ async function resolveKnownPayerClientIdsForImported(
   return new Set(matchedIdentities.map((identity) => identity.billingClientId));
 }
 
+// Подсказки «завести клиента из платежа»: активные ученики БЕЗ billing-клиента,
+// чьё имя похоже на плательщика из выписки (транслитерация). Это закрывает кейс,
+// когда платёж есть, ученик в базе есть, а billing-клиента для него ещё нет.
+const BILLING_STUDENT_SUGGESTION_THRESHOLD = 40;
+
+function buildImportedPaymentStudentSuggestions(
+  imported: BillingImportedPayment,
+  availableStudents: TrainingPeaksAdminStudentRecord[]
+): ImportedPaymentStudentSuggestion[] {
+  const payerText = (imported.payerHint ?? imported.description ?? "").trim();
+  if (!payerText) {
+    return [];
+  }
+  return availableStudents
+    .map((student) => ({
+      studentId: student.id,
+      studentName: student.studentName,
+      studentExternalId: student.studentId,
+      score: scoreBillingNameMatch(payerText, student.studentName).score,
+    }))
+    .filter((suggestion) => suggestion.score >= BILLING_STUDENT_SUGGESTION_THRESHOLD)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 3);
+}
+
 export async function getAdminImportedPaymentsOverview(
   statusFilter: BillingImportedPaymentReviewStatusFilter = "new"
 ): Promise<AdminImportedPaymentsOverview> {
-  const [allImported, filteredImported, unsortedCandidates] = await Promise.all([
+  const [allImported, filteredImported, unsortedCandidates, activeStudents, activeClients] = await Promise.all([
     listBillingImportedPayments(),
     statusFilter === "all" ? listBillingImportedPayments() : listBillingImportedPayments({ status: statusFilter }),
     listUnpaidBillingMonthlyPaymentsWithClients(),
+    listTrainingPeaksAdminStudents("active"),
+    listActiveBillingClients(),
   ]);
+
+  // Активные ученики, у которых ещё нет billing-клиента (для «завести клиента из платежа»).
+  const linkedStudentIds = new Set(
+    activeClients.flatMap((client) => (client.studentId ? [client.studentId] : []))
+  );
+  const availableStudents = activeStudents.filter(
+    (student) => student.isActive && !linkedStudentIds.has(student.id)
+  );
 
   // Только активные клиенты как цели для зачёта (ушедшие/на паузе не должны
   // засорять подсказки и ручной список), отсортированы по имени и месяцу.
@@ -568,6 +604,8 @@ export async function getAdminImportedPaymentsOverview(
           imported.status === "new"
             ? buildImportedPaymentSuggestions(imported, candidates, knownPayerClientIds)
             : [],
+        studentSuggestions:
+          imported.status === "new" ? buildImportedPaymentStudentSuggestions(imported, availableStudents) : [],
         matchedMonthlyPayment: imported.matchedMonthlyPaymentId
           ? matchedMonthlyById.get(imported.matchedMonthlyPaymentId) ?? null
           : null,
