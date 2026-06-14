@@ -15,6 +15,7 @@ import {
   getBillingMonthlyPaymentForClientMonth,
   insertBillingMonthlyPayments,
   listActiveBillingClients,
+  listBillingMonthlyPaymentsForClient,
   listBillingMonthlyPaymentsForMonth,
   listBillingMonthlyPaymentsWithClientsForMonth,
   updateBillingClientById as updateBillingClientByIdInRepository,
@@ -770,6 +771,36 @@ export async function updateBillingClientById(
   }
 
   return updated;
+}
+
+// Меняет активность клиента. При архивировании (isActive=false) ставит все его
+// неоплаченные месяцы на паузу — чтобы он не висел как должник и не засорял
+// списки/подсказки. Оплаченные месяцы (история) не трогаются.
+export async function setBillingClientActive(input: {
+  clientId: string;
+  isActive: boolean;
+  actor: string | null;
+}): Promise<{ client: BillingClient; pausedMonths: number }> {
+  const client = await updateBillingClientById(input.clientId, {
+    isActive: input.isActive,
+    updatedBy: input.actor,
+  });
+
+  let pausedMonths = 0;
+  if (!input.isActive) {
+    const months = await listBillingMonthlyPaymentsForClient(input.clientId);
+    for (const month of months) {
+      if (month.status === "pending" || month.status === "overdue" || month.status === "manual_review") {
+        await updateBillingMonthlyPaymentById(month.id, {
+          status: "paused",
+          updated_by: input.actor,
+        });
+        pausedMonths += 1;
+      }
+    }
+  }
+
+  return { client, pausedMonths };
 }
 
 export async function linkBillingClientToStudent(
