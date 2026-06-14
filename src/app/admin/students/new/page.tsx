@@ -2,8 +2,15 @@ import Link from "next/link";
 
 import FormActionButton from "@/app/admin/FormActionButton";
 import { createTrainingPeaksStudentAction } from "@/app/admin/actions";
-import { getSingleSearchParam } from "@/app/admin/lib";
+import { getBillingPaymentMethodLabel, getSingleSearchParam } from "@/app/admin/lib";
 import StudentIdentityFields from "@/app/admin/students/new/StudentIdentityFields";
+import { BILLING_CURRENCY_VALUES, BILLING_PAYMENT_METHOD_VALUES } from "@/features/billing/types";
+
+const BILLING_CURRENCY_LABELS: Record<string, string> = {
+  RUB: "₽ RUB",
+  EUR: "€ EUR",
+  OTHER: "Другая",
+};
 
 type NewStudentPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
@@ -75,6 +82,63 @@ export default async function AdminNewStudentPage({ searchParams }: NewStudentPa
             />
             <span className="admin-muted">Поле опционально. Если не нужно, оставь пустым.</span>
           </label>
+
+          <fieldset className="admin-card" style={{ border: "1px solid #e2e8f0" }}>
+            <legend>
+              <strong>Биллинг</strong> <span className="admin-muted">(необязательно)</span>
+            </legend>
+            <p className="admin-muted">
+              Заполни сумму, чтобы сразу завести оплату для этого ученика. Оставь сумму пустой — ученик
+              создастся без биллинга, оплату можно добавить позже.
+            </p>
+
+            <label className="admin-field">
+              <span>Сумма в месяц</span>
+              <input
+                className="admin-input"
+                name="billing_monthly_amount"
+                type="number"
+                min={1}
+                step={1}
+                placeholder="5000"
+              />
+            </label>
+
+            <label className="admin-field">
+              <span>Валюта</span>
+              <select className="admin-input" name="billing_currency" defaultValue="RUB">
+                {BILLING_CURRENCY_VALUES.map((currency) => (
+                  <option key={currency} value={currency}>
+                    {BILLING_CURRENCY_LABELS[currency] ?? currency}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="admin-field">
+              <span>День оплаты</span>
+              <input
+                className="admin-input"
+                name="billing_payment_day"
+                type="number"
+                min={1}
+                max={31}
+                step={1}
+                placeholder="5"
+              />
+            </label>
+
+            <label className="admin-field">
+              <span>Метод оплаты</span>
+              <select className="admin-input" name="billing_payment_method" defaultValue="tbank_link_a">
+                {BILLING_PAYMENT_METHOD_VALUES.map((method) => (
+                  <option key={method} value={method}>
+                    {getBillingPaymentMethodLabel(method)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </fieldset>
 
           <label className="admin-field">
             <span>Заметки</span>

@@ -25,6 +25,8 @@ import {
   enableTrainingPeaksStudentByInternalId,
   requestTrainingPeaksWeeklyRunForStudentByInternalId,
 } from "@/features/trainingpeaks/service";
+import { createBillingClient } from "@/features/billing/service";
+import type { BillingCurrency } from "@/features/billing/types";
 import {
   ADMIN_ACCESS_COOKIE_NAME,
   hasValidAdminAccessCookie,
@@ -240,13 +242,57 @@ export async function createTrainingPeaksStudentAction(formData: FormData): Prom
     );
   }
 
-  redirect(
-    withNotice(
-      `/admin/students/${result.student.id}`,
-      "notice",
-      `Ученик создан: ${result.student.studentName}.`
-    )
-  );
+  // Опциональный биллинг: если в форме указана сумма — заводим клиента сразу,
+  // привязанного к новому ученику. Если биллинг не удался — ученик уже создан,
+  // не теряем его, сообщаем об этом в уведомлении.
+  const billingAmountRaw =
+    typeof formData.get("billing_monthly_amount") === "string"
+      ? String(formData.get("billing_monthly_amount")).trim()
+      : "";
+  let successNotice = `Ученик создан: ${result.student.studentName}.`;
+
+  if (billingAmountRaw) {
+    try {
+      const monthlyAmount = Number(billingAmountRaw);
+      if (!Number.isInteger(monthlyAmount)) {
+        throw new Error("сумма должна быть целым числом");
+      }
+
+      const billingDayRaw =
+        typeof formData.get("billing_payment_day") === "string"
+          ? String(formData.get("billing_payment_day")).trim()
+          : "";
+      const plannedPaymentDay = billingDayRaw ? Number(billingDayRaw) : null;
+      if (plannedPaymentDay !== null && !Number.isInteger(plannedPaymentDay)) {
+        throw new Error("день оплаты должен быть числом");
+      }
+
+      const currency =
+        typeof formData.get("billing_currency") === "string"
+          ? String(formData.get("billing_currency"))
+          : "RUB";
+      const paymentMethod =
+        typeof formData.get("billing_payment_method") === "string"
+          ? String(formData.get("billing_payment_method"))
+          : "tbank_link_a";
+
+      await createBillingClient({
+        clientName: result.student.studentName,
+        monthlyAmount,
+        currency: currency as BillingCurrency,
+        plannedPaymentDay,
+        paymentMethod,
+        studentId: result.student.id,
+        actor: "admin:/admin/students/new",
+      });
+      successNotice = `Ученик и биллинг созданы: ${result.student.studentName}.`;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "не удалось завести биллинг";
+      successNotice = `Ученик создан: ${result.student.studentName}. Биллинг не заведён: ${message}`;
+    }
+  }
+
+  redirect(withNotice(`/admin/students/${result.student.id}`, "notice", successNotice));
 }
 
 export async function setTrainingPeaksStudentWeeklyReportsEnabledAction(
