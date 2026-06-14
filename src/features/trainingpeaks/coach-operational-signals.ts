@@ -2359,7 +2359,7 @@ const NON_TRAINING_ERRAND_CUES = [
 
 // Phase 3 conservative non-run suppression: cues that, when present, mean the
 // message is NOT pure schedule noise and must keep producing a constraint.
-function hasHardTrainingConstraintCue(text: string): boolean {
+export function hasHardTrainingConstraintCue(text: string): boolean {
   return (
     hasRunningCue(text) ||
     hasTrainingUnavailabilityCue(text) ||
@@ -2393,7 +2393,7 @@ const RUNNING_WORKOUT_REQUEST_CUES = [
 ] as const;
 
 // Pattern 1: силовые/strength-only reshuffle with no running workout impact.
-function isStrengthOnlyReshuffleWithoutRun(text: string): boolean {
+export function isStrengthOnlyReshuffleWithoutRun(text: string): boolean {
   if (!hasAny(text, STRENGTH_CONTEXT_CUES)) {
     return false;
   }
@@ -2413,7 +2413,7 @@ function isStrengthOnlyReshuffleWithoutRun(text: string): boolean {
 }
 
 // Pattern 2: soft easy/ordinary-session question without any hard unavailability.
-function isSoftSessionQuestionWithoutHardConstraint(text: string): boolean {
+export function isSoftSessionQuestionWithoutHardConstraint(text: string): boolean {
   const isSoftRequest =
     text.includes("можно") &&
     hasAny(text, ["обычн", "восстанов", "лёгк", "легк", "спокойн", "полегче"]);
@@ -2427,7 +2427,7 @@ function isSoftSessionQuestionWithoutHardConstraint(text: string): boolean {
 }
 
 // Pattern 3: non-training errand (car/documents/shopping/admin) with no training impact.
-function isNonTrainingErrandWithoutTrainingImpact(text: string): boolean {
+export function isNonTrainingErrandWithoutTrainingImpact(text: string): boolean {
   if (!hasAny(text, NON_TRAINING_ERRAND_CUES)) {
     return false;
   }
