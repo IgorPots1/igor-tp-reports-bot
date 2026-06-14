@@ -928,17 +928,33 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     requestBody.max_tokens = 4096;
   }
   try {
-    const response = await fetch(OPENAI_API_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody),
-    });
-    if (!response.ok) {
-      const bodyText = await response.text().catch(() => "");
-      note(`ai_http_${response.status}`, { status: response.status, body: bodyText.slice(0, 300) });
+    // Retry transient throttling/server errors (429 / 5xx) with backoff. Honours
+    // Retry-After when present. Quota-exhaustion 429s won't recover, but rate
+    // limits from rapid regenerations will.
+    let response: Response | null = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      response = await fetch(OPENAI_API_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
+      if (response.ok || (response.status !== 429 && response.status < 500) || attempt === 2) {
+        break;
+      }
+      const retryAfterRaw = Number(response.headers.get("retry-after"));
+      const delayMs =
+        Number.isFinite(retryAfterRaw) && retryAfterRaw > 0
+          ? Math.min(retryAfterRaw * 1000, 15000)
+          : 1500 * (attempt + 1);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    if (!response || !response.ok) {
+      const status = response?.status ?? 0;
+      const bodyText = response ? await response.text().catch(() => "") : "";
+      note(`ai_http_${status}`, { status, body: bodyText.slice(0, 300) });
       return null;
     }
     const payload = (await response.json()) as {
