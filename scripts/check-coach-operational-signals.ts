@@ -371,6 +371,121 @@ async function run(): Promise<void> {
     },
   ];
   const cases: CaseDef[] = [
+    // --- Phase 3: conservative non-run / question / errand suppression ---
+    {
+      name: "phase3-katerina-strength-only-reshuffle-suppressed",
+      observation: {
+        ...mkObs("можно мне силовые на сегодня переставить"),
+        observedAt: "2026-06-13T09:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "phase3-katerina-strength-only-with-incidental-run-mention-suppressed",
+      observation: {
+        ...mkObs(
+          "привет !) а можно мне силовые на сегодня переставить, а то вот к бегу стабильно я привыкаю, а к силовым ещё нет"
+        ),
+        observedAt: "2026-06-13T09:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "phase3-strength-with-explicit-run-plan-stays-constraint",
+      observation: {
+        ...mkObs("можно пробежку и силовые во вторник?"),
+        observedAt: "2026-06-13T09:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "schedule_availability_window",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "phase3-vlasova-easy-session-question-suppressed",
+      observation: {
+        ...mkObs("можно сегодня обычную тренировку? восстановиться"),
+        observedAt: "2026-06-13T09:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "phase3-grigori-car-errand-suppressed",
+      observation: {
+        ...mkObs("только в понедельник поеду за новой машиной"),
+        observedAt: "2026-06-13T09:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "skip",
+        signal_type: null,
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "phase3-positive-strength-plus-run-unavailable-captured",
+      observation: {
+        ...mkObs("силовую можно перенести, бег сегодня не смогу"),
+        observedAt: "2026-06-13T09:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "coach_case",
+        signal_type: "move_workout_candidate",
+        should_create_memory: false,
+        should_create_case: true,
+        should_create_trainingpeaks_action: true,
+      },
+    },
+    {
+      name: "phase3-positive-errand-plus-run-unavailable-captured",
+      observation: {
+        ...mkObs("в понедельник поеду за машиной, поэтому бегать не смогу"),
+        observedAt: "2026-06-13T09:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "operational_signal",
+        signal_type: "pause_training",
+        should_create_memory: false,
+        should_create_case: false,
+        should_create_trainingpeaks_action: false,
+      },
+    },
+    {
+      name: "phase3-positive-question-with-explicit-run-move-captured",
+      observation: {
+        ...mkObs("можно перенести беговую тренировку с сегодня на завтра?"),
+        observedAt: "2026-06-13T09:00:00.000Z",
+      },
+      expected: {
+        primary_bucket: "coach_case",
+        signal_type: "move_workout_candidate",
+        should_create_memory: false,
+        should_create_case: true,
+        should_create_trainingpeaks_action: true,
+      },
+    },
     {
       name: "olga-unavailable-today-plans-tomorrow-and-sunday",
       observation: {

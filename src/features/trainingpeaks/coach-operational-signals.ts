@@ -2345,6 +2345,95 @@ function buildPauseTrainingCandidate(
   };
 }
 
+const NON_TRAINING_ERRAND_CUES = [
+  "за машин",
+  "новой машин",
+  "новую машин",
+  "за документ",
+  "за справк",
+  "в магазин",
+  "за продукт",
+  "по делам",
+  "к нотариус",
+] as const;
+
+// Phase 3 conservative non-run suppression: cues that, when present, mean the
+// message is NOT pure schedule noise and must keep producing a constraint.
+function hasHardTrainingConstraintCue(text: string): boolean {
+  return (
+    hasRunningCue(text) ||
+    hasTrainingUnavailabilityCue(text) ||
+    hasAny(text, [
+      "не могу",
+      "не смогу",
+      "не буду",
+      "не получится",
+      "перенес",
+      "перенести",
+      "перенесите",
+      "уезжа",
+      "уеду",
+    ])
+  );
+}
+
+// Explicit running-workout request/plan cues (a real running scheduling signal),
+// as opposed to a bare incidental mention of running ("к бегу привыкаю").
+const RUNNING_WORKOUT_REQUEST_CUES = [
+  "бегать",
+  "побегать",
+  "пробежк",
+  "пробеж",
+  "беговую",
+  "беговая",
+  "беговой",
+  "побег",
+  "побеж",
+  "убежать",
+] as const;
+
+// Pattern 1: силовые/strength-only reshuffle with no running workout impact.
+function isStrengthOnlyReshuffleWithoutRun(text: string): boolean {
+  if (!hasAny(text, STRENGTH_CONTEXT_CUES)) {
+    return false;
+  }
+  if (hasTrainingUnavailabilityCue(text)) {
+    return false;
+  }
+  // An explicit running workout request/plan stays a real constraint; a bare
+  // activity mention ("к бегу привыкаю") does not.
+  if (hasAny(text, RUNNING_WORKOUT_REQUEST_CUES)) {
+    return false;
+  }
+  // Explicit "strength blocks the run" stays a real constraint.
+  if (hasAny(text, ["не ставить интервалы", "лучше не ставить", "не ставить"])) {
+    return false;
+  }
+  return true;
+}
+
+// Pattern 2: soft easy/ordinary-session question without any hard unavailability.
+function isSoftSessionQuestionWithoutHardConstraint(text: string): boolean {
+  const isSoftRequest =
+    text.includes("можно") &&
+    hasAny(text, ["обычн", "восстанов", "лёгк", "легк", "спокойн", "полегче"]);
+  if (!isSoftRequest) {
+    return false;
+  }
+  if (hasHardTrainingConstraintCue(text)) {
+    return false;
+  }
+  return true;
+}
+
+// Pattern 3: non-training errand (car/documents/shopping/admin) with no training impact.
+function isNonTrainingErrandWithoutTrainingImpact(text: string): boolean {
+  if (!hasAny(text, NON_TRAINING_ERRAND_CUES)) {
+    return false;
+  }
+  return !hasRunningCue(text) && !hasTrainingUnavailabilityCue(text);
+}
+
 function buildScheduleCandidate(
   input: ObservationLike,
   text: string
@@ -2473,6 +2562,11 @@ function buildScheduleCandidate(
     if (isCompletedRunReflectionNotScheduleConstraint(text)) {
       return null;
     }
+    // Phase 3: non-training errand (e.g. "поеду за новой машиной") with no
+    // running mention and no training-unavailability cue is not a plan constraint.
+    if (isNonTrainingErrandWithoutTrainingImpact(text)) {
+      return null;
+    }
     payload.activity_domain = hasRunningCue(text) ? "running" : "life_schedule";
     payload.planning_effect = "run_unavailable";
     payload.evidence_level = "possible_schedule";
@@ -2554,7 +2648,11 @@ function buildScheduleCandidate(
     hasScheduleDateCue(text) &&
     scheduleAvailability &&
     !scheduleUnavailability &&
-    !isCompletedRunReflectionNotScheduleConstraint(text)
+    !isCompletedRunReflectionNotScheduleConstraint(text) &&
+    // Phase 3: strength-only reshuffle and soft easy-session questions without
+    // any hard unavailability are not running plan constraints.
+    !isStrengthOnlyReshuffleWithoutRun(text) &&
+    !isSoftSessionQuestionWithoutHardConstraint(text)
   ) {
     payload.activity_domain = hasRunningCue(text) ? "running" : "life_schedule";
     payload.planning_effect = "context_only";
