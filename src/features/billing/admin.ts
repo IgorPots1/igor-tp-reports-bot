@@ -192,13 +192,6 @@ function normalizeNamePart(value: string | null | undefined): string {
     .replace(/\s+/g, " ");
 }
 
-function tokenizeName(value: string | null | undefined): string[] {
-  return normalizeNamePart(value)
-    .split(" ")
-    .map((token) => token.trim())
-    .filter(Boolean);
-}
-
 // Порог отображения подсказки. Транслитерационное сопоставление имён
 // (кириллица клиента ↔ латиница ученика) даёт за фамилию ~45, за полное имя 100.
 const BILLING_CLIENT_SUGGESTION_THRESHOLD = 40;
@@ -442,29 +435,18 @@ export function buildImportedPaymentSuggestion(
     reasons.push("дата внутри месяца биллинга");
   }
 
-  const payerNormalized = normalizeNamePart(imported.payerHint);
-  const clientNormalized = normalizeNamePart(candidate.client.clientName);
-  const payerTokens = tokenizeName(imported.payerHint);
-  const clientTokens = tokenizeName(candidate.client.clientName);
-
-  if (payerNormalized && clientNormalized && payerNormalized === clientNormalized) {
+  // Сравнение имени плательщика и клиента с транслитерацией (кириллица ↔ латиница),
+  // чтобы платёж «Левина Екатерина» из выписки матчился с клиентом «Levina Ekaterina».
+  const payerNameMatch = scoreBillingNameMatch(imported.payerHint, candidate.client.clientName);
+  if (payerNameMatch.score >= 100) {
     score += 40;
-    reasons.push("полное совпадение имени плательщика");
-  } else {
-    const sharedTokens = payerTokens.filter((token) => clientTokens.includes(token));
-    if (sharedTokens.length > 0) {
-      score += sharedTokens.length * 15;
-      reasons.push(`общие части имени: ${sharedTokens.join(", ")}`);
-    }
-
-    if (
-      payerNormalized &&
-      clientNormalized &&
-      (payerNormalized.includes(clientNormalized) || clientNormalized.includes(payerNormalized))
-    ) {
-      score += 10;
-      reasons.push("имя плательщика частично совпадает");
-    }
+    reasons.push("совпадение имени плательщика");
+  } else if (payerNameMatch.score >= 45) {
+    score += 25;
+    reasons.push("совпадение по фамилии плательщика");
+  } else if (payerNameMatch.score >= 40) {
+    score += 15;
+    reasons.push("частичное совпадение имени плательщика");
   }
 
   if (candidate.client.paymentMethod.startsWith("tbank_")) {
