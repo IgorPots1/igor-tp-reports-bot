@@ -12,6 +12,20 @@ type BillingMatchingPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
+// Компактная подпись уверенности вместо длинного перечня причин сопоставления.
+function getSuggestionMatchLabel(score: number): string {
+  if (score >= 100) {
+    return "точное совпадение имени";
+  }
+  if (score >= 80) {
+    return "сильное совпадение";
+  }
+  if (score >= 45) {
+    return "совпадение по фамилии";
+  }
+  return "слабое совпадение";
+}
+
 export default async function BillingMatchingPage({ searchParams }: BillingMatchingPageProps) {
   const resolvedSearchParams = (await searchParams) ?? {};
   const notice = getSingleSearchParam(resolvedSearchParams.notice);
@@ -93,24 +107,22 @@ export default async function BillingMatchingPage({ searchParams }: BillingMatch
                         {record.suggestions.length === 0 ? (
                           <span className="admin-muted">Похожих учеников не найдено.</span>
                         ) : (
-                          <div className="admin-table-primary">
+                          <div className="admin-import-suggestions">
                             {record.suggestions.map((suggestion) => (
                               <form
                                 key={suggestion.student.id}
                                 action={linkBillingClientToStudentAction}
-                                className="admin-actions admin-inline-actions"
+                                className="admin-import-suggestion"
                               >
                                 <input type="hidden" name="clientId" value={record.client.id} />
                                 <input type="hidden" name="studentId" value={suggestion.student.id} />
                                 <input type="hidden" name="redirectTo" value={redirectTo} />
-                                <div className="admin-table-primary">
-                                  <span>
-                                    <strong>{suggestion.student.studentName}</strong> ({suggestion.student.studentId})
-                                  </span>
-                                  <span className="admin-muted">
-                                    score {suggestion.score}
-                                    {suggestion.explanation ? ` · ${suggestion.explanation}` : ""}
-                                  </span>
+                                <div className="admin-import-suggestion-body">
+                                  <strong>
+                                    {suggestion.student.studentName}{" "}
+                                    <span className="admin-muted">({suggestion.student.studentId})</span>
+                                  </strong>
+                                  <span className="admin-muted">{getSuggestionMatchLabel(suggestion.score)}</span>
                                 </div>
                                 <FormActionButton
                                   className="admin-button admin-button-secondary"
