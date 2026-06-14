@@ -476,6 +476,8 @@ export type ProductionTextMetrics = {
   targetWeekConsistency: {
     pastWorkoutMentionInRemainingFocus: number;
     iconLabelMismatch: number;
+    targetTypeMacroMismatch: number;
+    easyRowWithLongTargets: number;
     redEasyRows: number;
     longPreLongCarbSanity: boolean;
   };
@@ -529,6 +531,22 @@ export function analyzeProductionText(input: {
     }
     return false;
   }).length;
+  const parseCarbsMax = (line: string): number | null => {
+    const rangeMatch = line.match(/(\d+)-(\d+)У/);
+    if (rangeMatch) {
+      return Number(rangeMatch[2]);
+    }
+    const single = line.match(/(\d+)У/);
+    return single ? Number(single[1]) : null;
+  };
+  const easyRowWithLongTargets = miniRows.filter((line) => {
+    if (!line.startsWith("🟩") || !/л[её]гк(?:ий|ая)\s+бег|л[её]гк(?:ий|ая)\s+день/i.test(line)) {
+      return false;
+    }
+    const carbsMax = parseCarbsMax(line);
+    return carbsMax != null && carbsMax >= 330;
+  }).length;
+  const targetTypeMacroMismatch = iconLabelMismatch + easyRowWithLongTargets + redEasyRows;
   const preLongRow = miniRows.find((line) => /день перед длительной|pre_long/i.test(line));
   const longRow = miniRows.find((line) => line.startsWith("🟥"));
   const longPreLongCarbSanity = (() => {
@@ -573,6 +591,8 @@ export function analyzeProductionText(input: {
     targetWeekConsistency: {
       pastWorkoutMentionInRemainingFocus,
       iconLabelMismatch,
+      targetTypeMacroMismatch,
+      easyRowWithLongTargets,
       redEasyRows,
       longPreLongCarbSanity,
     },

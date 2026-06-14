@@ -337,6 +337,8 @@ assert.match(polyakovaSummary, /Фокус недели: углеводы и э�
 assert.doesNotMatch(polyakovaSummary, /\bCycling\b/);
 assert.doesNotMatch(polyakovaSummary, /длительная: длительная/i);
 assert.match(polyakovaSummary, /вело 5:16|вело/i);
+assert.doesNotMatch(polyakovaSummary, /длительная беговая работа \(вело/i);
+assert.doesNotMatch(polyakovaSummary, /беговая работа \(вело/i);
 assert.match(polyakovaSummary, /Лучшие по углеводам дни пришлись не на самые тяжёлые тренировки/i);
 assert.equal(humanizeNutritionTrainingLabel("длинная выносливостная нагрузка 5:16: Cycling", "long_endurance"), "вело 5:16");
 

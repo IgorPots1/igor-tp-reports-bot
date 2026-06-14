@@ -295,6 +295,74 @@ const polyakovaRender = renderNutritionTelegramMessage({
 assert.match(polyakovaRender.text ?? "", /^Анастасия, привет!/);
 assert.doesNotMatch(polyakovaRender.text ?? "", /\bCycling\b/);
 
+const easyLabelLongStoredPlan: NutritionNextWeekPlan = {
+  ...nextWeekPlan,
+  days: [
+    {
+      date: "2026-06-13",
+      weekday_ru: "Суббота",
+      training_type: "long_run",
+      training_label: "лёгкий бег",
+      workout_title: "лёгкий бег",
+      target_kcal: 2500,
+      protein_g: 95,
+      fat_g: 65,
+      carbs_g: 390,
+      kcal_per_kg: 45,
+      protein_g_per_kg: 1.7,
+      fat_g_per_kg: 1.15,
+      carbs_g_per_kg: 7,
+      display_target: {
+        kcal_min: 2450,
+        kcal_max: 2550,
+        carbs_g_min: 370,
+        carbs_g_max: 410,
+      },
+      flags: {
+        rest: false,
+        easy: false,
+        hard: false,
+        pre_long: false,
+        long_run: true,
+        strength: false,
+        race: false,
+        key_workout: true,
+        day_before_long_run: false,
+        has_training_context: true,
+      },
+      long_run_source: "none",
+      long_run_confidence: "low",
+      pre_training_guidance: null,
+      source: "tp_workout",
+    },
+  ],
+};
+
+const easyRowRender = renderNutritionTelegramMessage({
+  formality: "ty",
+  athleteName: "Анастасия",
+  planWeekMode: "current_week",
+  todayLocalDate: "2026-06-13",
+  miniTableMode: "athlete_remaining_only",
+  interpretation: {
+    dayComments: ["🔹 Суббота (06.06) · вело 5:16\n~2200 ккал."],
+    weekSummaryRu: "Итог",
+    focusLinesRu: ["Фокус на оставшиеся дни"],
+    weekComparisonLineRu: null,
+  },
+  nextWeekPlan: easyLabelLongStoredPlan,
+  fallbackPlanLines: ["fallback"],
+  hasTargetWeekTrainingContext: true,
+  hasPreviousWeeksContext: false,
+});
+const easyRowLine = (easyRowRender.text ?? "")
+  .split("\n")
+  .find((line) => line.startsWith("🟩") && /л[её]гк/i.test(line));
+assert.ok(easyRowLine, "easy label row must render with green icon");
+assert.match(easyRowLine ?? "", /~2150-2250 ккал|~2200-2300 ккал|~2100-2300 ккал|~2200 ккал/, "easy row should not keep long target kcal");
+assert.match(easyRowLine ?? "", /270-310У|290У/, "easy row should use easy carb target range");
+assert.doesNotMatch(easyRowLine ?? "", /370-410У|390У/, "easy row should not have long target carbs");
+
 const emptyNameRender = renderNutritionTelegramMessage({
   formality: "ty",
   athleteName: "",

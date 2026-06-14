@@ -1,7 +1,12 @@
-import { formatNutritionWorkoutLabelForAthlete } from "@/features/nutrition/narrative-composer";
+import { formatNutritionWorkoutLabelForAthlete, buildNutritionTargetWeekMainStepLine } from "@/features/nutrition/narrative-composer";
 import { getNutritionAdminLocalDate } from "@/features/nutrition/plan-week-policy";
 import type { TrainingPeaksTelegramFormality } from "@/features/trainingpeaks/repository";
-import type { NutritionNextWeekPlan, NutritionNextWeekPlanDay, NutritionPlanDayType } from "@/features/nutrition/weekly-plan-formulas";
+import type {
+  NutritionDayTypeTarget,
+  NutritionNextWeekPlan,
+  NutritionNextWeekPlanDay,
+  NutritionPlanDayType,
+} from "@/features/nutrition/weekly-plan-formulas";
 import type { NutritionPlanTargetWeekMode } from "@/features/nutrition/plan-week-policy";
 
 export type NutritionTelegramRenderIssue = {
@@ -73,6 +78,7 @@ function dayTypeEmoji(dayType: NutritionPlanDayType): string {
     case "pre_long":
       return "🟪";
     case "long_run":
+    case "long_endurance":
     case "race":
       return "🟥";
     default:
@@ -110,6 +116,7 @@ function dayTypeRu(dayType: NutritionPlanDayType): string {
     case "pre_long":
       return "День перед длительной";
     case "long_run":
+    case "long_endurance":
       return "Длительная";
     case "strength":
       return "Силовая";
@@ -204,6 +211,88 @@ function resolveMiniTableDays(input: {
   return remaining.length > 0 ? remaining : all;
 }
 
+function buildDisplayTargetFromTypeTarget(target: NutritionDayTypeTarget): {
+  kcal_min: number;
+  kcal_max: number;
+  carbs_g_min: number;
+  carbs_g_max: number;
+  protein_g: number;
+  fat_g: number;
+} {
+  return {
+    kcal_min: roundToNearest(target.target_kcal - 50, 50),
+    kcal_max: roundToNearest(target.target_kcal + 50, 50),
+    carbs_g_min: roundToNearest(target.carbs_g - 20, 10),
+    carbs_g_max: roundToNearest(target.carbs_g + 20, 10),
+    protein_g: target.protein_g,
+    fat_g: target.fat_g,
+  };
+}
+
+function resolveTypeTargetFromPlan(
+  plan: NutritionNextWeekPlan,
+  dayType: NutritionPlanDayType
+): NutritionDayTypeTarget | null {
+  switch (dayType) {
+    case "rest":
+      return plan.day_type_targets.rest;
+    case "easy":
+      return plan.day_type_targets.easy;
+    case "hard":
+      return plan.day_type_targets.hard;
+    case "pre_long":
+      return plan.day_type_targets.pre_long;
+    case "long_run":
+      return plan.day_type_targets.long_run;
+    case "long_endurance":
+      return plan.day_type_targets.long_endurance ?? plan.day_type_targets.long_run;
+    case "strength":
+      return plan.day_type_targets.strength;
+    case "cross_training":
+      return plan.day_type_targets.cross_training ?? null;
+    case "race":
+      return plan.day_type_targets.long_run ?? plan.day_type_targets.hard;
+    default:
+      return null;
+  }
+}
+
+function resolveMiniTableRowTargets(
+  day: NutritionNextWeekPlanDay,
+  dayType: NutritionPlanDayType,
+  plan: NutritionNextWeekPlan
+): {
+  kcalMin: number | null;
+  kcalMax: number | null;
+  carbsMin: number | null;
+  carbsMax: number | null;
+  proteinG: number | null;
+  fatG: number | null;
+} {
+  if (dayType !== day.training_type) {
+    const typeTarget = resolveTypeTargetFromPlan(plan, dayType);
+    if (typeTarget) {
+      const display = buildDisplayTargetFromTypeTarget(typeTarget);
+      return {
+        kcalMin: display.kcal_min,
+        kcalMax: display.kcal_max,
+        carbsMin: display.carbs_g_min,
+        carbsMax: display.carbs_g_max,
+        proteinG: display.protein_g,
+        fatG: display.fat_g,
+      };
+    }
+  }
+  return {
+    kcalMin: day.display_target?.kcal_min ?? null,
+    kcalMax: day.display_target?.kcal_max ?? null,
+    carbsMin: day.display_target?.carbs_g_min ?? null,
+    carbsMax: day.display_target?.carbs_g_max ?? null,
+    proteinG: day.protein_g ?? null,
+    fatG: day.fat_g ?? null,
+  };
+}
+
 function buildMiniTable(input: {
   nextWeekPlan: NutritionNextWeekPlan;
   planWeekMode: NutritionPlanTargetWeekMode;
@@ -214,20 +303,21 @@ function buildMiniTable(input: {
   return days.map((day) => {
     const dayType = resolveConsistentDayType(day);
     const label = resolveDayLabel({ ...day, training_type: dayType });
+    const targets = resolveMiniTableRowTargets(day, dayType, input.nextWeekPlan);
     const kcal =
-      day.display_target?.kcal_min != null && day.display_target?.kcal_max != null
-        ? `~${Math.round(day.display_target.kcal_min)}-${Math.round(day.display_target.kcal_max)} ккал`
+      targets.kcalMin != null && targets.kcalMax != null
+        ? `~${Math.round(targets.kcalMin)}-${Math.round(targets.kcalMax)} ккал`
         : day.target_kcal != null
           ? formatNutritionAthleteKcal(day.target_kcal, { mode: "target" })
           : "ккал н/д";
     const carbs =
-      day.display_target?.carbs_g_min != null && day.display_target?.carbs_g_max != null
-        ? `${Math.round(day.display_target.carbs_g_min)}-${Math.round(day.display_target.carbs_g_max)}У`
+      targets.carbsMin != null && targets.carbsMax != null
+        ? `${Math.round(targets.carbsMin)}-${Math.round(targets.carbsMax)}У`
         : day.carbs_g != null
           ? `${Math.round(day.carbs_g)}У`
           : "У н/д";
-    const protein = day.protein_g != null ? `${Math.round(day.protein_g)}Б` : "Б н/д";
-    const fat = day.fat_g != null ? `${Math.round(day.fat_g)}Ж` : "Ж н/д";
+    const protein = targets.proteinG != null ? `${Math.round(targets.proteinG)}Б` : "Б н/д";
+    const fat = targets.fatG != null ? `${Math.round(targets.fatG)}Ж` : "Ж н/д";
     return `${dayTypeEmoji(dayType)} ${day.weekday_ru} (${formatDateRu(day.date)}) · ${label} · ${kcal} · ${protein} · ${fat} · ${carbs}`;
   });
 }
@@ -348,6 +438,10 @@ export function renderNutritionTelegramMessage(input: NutritionTelegramRendererI
       })
     : buildPlanByDayTypes(input.nextWeekPlan, input.fallbackPlanLines);
   const keyTrainingPresent = hasKeyTraining(input.nextWeekPlan);
+  const mainStepLine = buildNutritionTargetWeekMainStepLine(input.nextWeekPlan, input.planWeekMode, {
+    todayLocalDate: input.todayLocalDate,
+    miniTableMode: input.miniTableMode ?? "athlete_remaining_only",
+  });
   const lines = [
     resolveGreeting(input.formality, input.athleteName),
     "",
@@ -365,7 +459,7 @@ export function renderNutritionTelegramMessage(input: NutritionTelegramRendererI
     formatPlanFocusSectionHeading(input.planWeekMode),
     ...(input.interpretation.focusLinesRu.length > 0 ? input.interpretation.focusLinesRu : ["Фокус на неделю не сформирован."]),
     "Цифры ниже - ориентиры, не обязательство. Не нужно резко прыгать к ним за один день.",
-    "Главный шаг на этой неделе - поднять энергию и углеводы в дни нагрузки, особенно перед ключевой тренировкой.",
+    mainStepLine,
     "",
     planHeading,
     ...planLines,

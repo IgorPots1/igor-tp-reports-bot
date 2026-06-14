@@ -11,6 +11,10 @@ import {
   isKeyIntervalTitle,
   isKeyTempoTitle,
   resolveNutritionNarrativeWorkoutRole,
+  composeNutritionDayComment,
+  buildNutritionDayNarrativeParts,
+  NutritionNarrativeRepetitionState,
+  buildNutritionTargetWeekMainStepLine,
 } from "@/features/nutrition/narrative-composer";
 import { isNutritionLongRunWorkout } from "@/features/nutrition/long-run";
 import type { NutritionWeeklyAnalysis, NutritionWeeklyPlan } from "@/features/nutrition/repository";
@@ -345,5 +349,108 @@ for (const term of NUTRITION_ATHLETE_FORBIDDEN_MEDICAL_TERMS) {
 
 assert.ok(isKeyIntervalTitle("15 х 1,5 мин"));
 assert.ok(isKeyTempoTitle("темповая 30 мин"));
+
+assert.equal(
+  resolveNutritionNarrativeWorkoutRole({
+    trainingType: "long_endurance",
+    trainingLabel: "длинная выносливостная нагрузка 5:16: Cycling",
+    mode: "past_review",
+    isCompleted: true,
+  }).role,
+  "long_endurance",
+  "long_endurance_cycling_not_called_running"
+);
+assert.doesNotMatch(
+  humanizeNutritionTrainingLabel("длинная выносливостная нагрузка 5:16: Cycling", "long_endurance"),
+  /бегов/i
+);
+
+const preLongHighKcalParts = buildNutritionDayNarrativeParts({
+  macro: {
+    proteinStatus: "ok",
+    fatStatus: "ok",
+    carbsStatus: "borderline",
+    fatPercentStatus: null,
+    carbsGPerKg: 4.1,
+  },
+  roleInfo: { role: "rest", isKey: false, reason: "rest_day" },
+  nutritionStatus: "pre_long_low",
+  hasEnergyIssue: true,
+  loadDay: true,
+  fatFeedbackPolicy: "coach_only",
+  athleteTrainingLabel: "день отдыха",
+  findings: ["low_carbs_before_long_run"],
+});
+assert.doesNotMatch(
+  [preLongHighKcalParts.energyLine, preLongHighKcalParts.carbLine, preLongHighKcalParts.proteinLine].join(" "),
+  /энергии под нагрузку маловато/i,
+  "pre_long_high_kcal_low_carbs_does_not_say_energy_low"
+);
+assert.match(
+  preLongHighKcalParts.energyLine ?? "",
+  /Калорийность высокая|не был «пустым»/i,
+  "pre_long_high_kcal_mentions_energy_ok_and_carbs_lower_bound"
+);
+assert.match(preLongHighKcalParts.carbLine ?? "", /нижняя граница/i);
+
+const longEnduranceComment = composeNutritionDayComment(
+  {
+    trainingType: "long_endurance",
+    trainingLabel: "длинная выносливостная нагрузка 5:16: Cycling",
+    athleteTrainingLabel: "вело 5:16",
+    nutritionStatus: "adequate",
+    findings: [],
+    macro: {
+      proteinStatus: "ok",
+      fatStatus: "ok",
+      carbsStatus: "ok",
+      fatPercentStatus: null,
+      carbsGPerKg: 5.5,
+    },
+    hasNutritionCompletenessIssue: false,
+    hasEnergyIssue: false,
+    roleInfo: {
+      role: "long_endurance",
+      isKey: true,
+      reason: "long_endurance_type",
+    },
+    fatFeedbackPolicy: "coach_only",
+  },
+  new NutritionNarrativeRepetitionState()
+);
+assert.match(longEnduranceComment, /главная длинная нагрузка недели.*вело 5:16/i);
+assert.doesNotMatch(longEnduranceComment, /беговая работа \(вело/i);
+assert.doesNotMatch(longEnduranceComment, /длительная беговая работа/i);
+
+const remainingMainStep = buildNutritionTargetWeekMainStepLine(
+  {
+    formula_version: "nutrition_next_week_plan_v1",
+    day_type_targets: {
+      rest: { target_kcal: 1950, protein_g: 90, fat_g: 60, carbs_g: 250 },
+      easy: { target_kcal: 2200, protein_g: 90, fat_g: 65, carbs_g: 290 },
+      hard: { target_kcal: 2400, protein_g: 95, fat_g: 65, carbs_g: 340 },
+      pre_long: { target_kcal: 2200, protein_g: 90, fat_g: 65, carbs_g: 310 },
+      long_run: { target_kcal: 2500, protein_g: 95, fat_g: 65, carbs_g: 390 },
+    },
+    days: [
+      {
+        date: "2026-06-13",
+        weekday_ru: "Суббота",
+        training_type: "easy",
+        training_label: "лёгкий бег",
+        workout_title: "лёгкий бег",
+        target_kcal: 2200,
+        protein_g: 90,
+        fat_g: 65,
+        carbs_g: 290,
+        flags: { easy: true, has_training_context: true },
+      },
+    ],
+  },
+  "current_week",
+  { todayLocalDate: "2026-06-14", miniTableMode: "athlete_remaining_only" }
+);
+assert.match(remainingMainStep, /На оставшиеся дни фокус простой/i, "remaining_only_focus_no_before_key_if_no_future_key");
+assert.doesNotMatch(remainingMainStep, /особенно перед ключевой/i, "remaining_only_focus_no_past_key_workout");
 
 console.log("PASS check-nutrition-review-narrative-quality");
