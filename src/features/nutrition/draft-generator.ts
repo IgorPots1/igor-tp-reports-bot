@@ -673,9 +673,39 @@ type NutritionAiNarrative = {
   coach_summary_text: string;
   day_by_day_analysis_text: string;
   athlete_message_draft: string | null;
+  /**
+   * Per-day athlete-facing prose keyed by ISO date (YYYY-MM-DD). Hybrid path:
+   * code owns the fact line + numbers, the model writes only the prose. Empty /
+   * absent for any day falls back to the deterministic comment in the renderer.
+   */
+  day_prose: Record<string, string>;
   quality_notes: string[];
   do_not_send_reasons: string[];
 };
+
+/**
+ * Defensive parse for model-returned per-day prose. Keeps only ISO-dated keys
+ * with non-empty string values; strips markdown fences so prose stays plain.
+ */
+function sanitizeNutritionDayProse(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const result: Record<string, string> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) {
+      continue;
+    }
+    if (typeof raw !== "string") {
+      continue;
+    }
+    const prose = raw.replace(/```+/g, "").replace(/\s+/g, " ").trim();
+    if (prose.length >= 2) {
+      result[key] = prose;
+    }
+  }
+  return result;
+}
 
 function pickCoachMemorySummaries(
   items: TrainingPeaksStudentMemoryItem[],
@@ -784,7 +814,9 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "Ничего не пересчитывай и не придумывай: kcal, белки/жиры/углеводы, г/кг, formula targets, day type, nutrition status, one_focus, safety status, race status, TrainingPeaks workouts.",
     "Используй только exact числа и labels из facts JSON.",
     "Не классифицируй дни и не выводи формулы — это уже сделано в коде.",
-    "Return strict JSON only with keys: coach_summary_text, day_by_day_analysis_text, athlete_message_draft, quality_notes, do_not_send_reasons.",
+    "Return strict JSON only with keys: coach_summary_text, day_by_day_analysis_text, athlete_message_draft, day_prose, quality_notes, do_not_send_reasons.",
+    "day_prose: объект {\"YYYY-MM-DD\": \"проза дня\"} по каждому дню из daily_analysis. Это athlete-facing проза комментария дня без факт-строки и без чисел — числа и факт-строку ставит код. Длину выбирай по day_role: steady/rest — одна-две фразы; key/hard/pre_long — подробнее.",
+    "В day_prose не вписывай ккал/граммы/г-на-кг и не повторяй факт-строку — только живой комментарий. Еду называй только из items_notable текущего дня с учётом fat_policy.",
     "coach_summary_text: короткий внутренний текст для тренера.",
     "day_by_day_analysis_text: дневные блоки строго по canonical daily_analysis.",
     "Для каждого дня при наличии данных используй: weekday_ru, date_label, training_label, actual, hint_for_comment/findings.",
@@ -881,6 +913,7 @@ async function generateNutritionWeeklyReviewNarrative(input: {
       coach_summary_text: coachSummary,
       day_by_day_analysis_text: dayByDay,
       athlete_message_draft: athleteDraft,
+      day_prose: allowAthleteDraft ? sanitizeNutritionDayProse(parsed.day_prose) : {},
       quality_notes: Array.isArray(parsed.quality_notes)
         ? parsed.quality_notes.filter((item): item is string => typeof item === "string")
         : [],
@@ -971,6 +1004,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
     coach_summary_text: string;
     day_by_day_analysis_text: string;
     athlete_message_draft: string | null;
+    day_prose: Record<string, string>;
     quality_notes: string[];
     do_not_send_reasons: string[];
     generation_mode: "ai" | "fallback";
@@ -987,6 +1021,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
           proteinSufficient: methodology.proteinSufficient,
           progressionStrategy: selectedFocus.progressionStrategy,
         }),
+    day_prose: {},
     quality_notes: [] as string[],
     do_not_send_reasons: [] as string[],
     generation_mode: "fallback" as const,
@@ -1021,6 +1056,19 @@ export async function generateNutritionWeeklyAnalysis(input: {
         generation_mode: "ai",
         ai_model: OPENAI_NUTRITION_REVIEW_MODEL,
       };
+    }
+  }
+
+  // Hybrid path: attach model per-day prose onto the canonical day facts by date.
+  // Code keeps the numbers/fact-line; the renderer uses this prose only if it
+  // passes validation, otherwise it falls back to the deterministic comment.
+  if (Object.keys(narrative.day_prose).length > 0) {
+    for (const dayFact of persistedDailyAnalysis) {
+      const date = typeof dayFact.date === "string" ? dayFact.date : null;
+      const prose = date ? narrative.day_prose[date] : undefined;
+      if (prose) {
+        dayFact.athlete_prose = prose;
+      }
     }
   }
 

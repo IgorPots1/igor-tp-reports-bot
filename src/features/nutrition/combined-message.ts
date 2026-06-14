@@ -45,6 +45,7 @@ type CanonicalDailyFact = {
   sourceQuality?: unknown;
   macro_guardrails?: unknown;
   macroGuardrails?: unknown;
+  athlete_prose?: unknown;
 };
 
 export type NutritionCombinedMessageResult = {
@@ -235,7 +236,30 @@ function normalizeStoredDailyFactItem(raw: unknown): CanonicalDailyFact | null {
       item.macro_guardrails ??
       embedded.macroGuardrails ??
       embedded.macro_guardrails,
+    athlete_prose: source.athlete_prose ?? item.athlete_prose,
   };
+}
+
+/**
+ * Hybrid path guard (task 1): basic gate before model day prose may replace the
+ * deterministic comment. Rigorous per-day number/status validation is layered on
+ * top in the validator task. Returns the prose to use, or null to fall back.
+ */
+function resolveUsableNutritionDayProse(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const prose = value.replace(/\s+/g, " ").trim();
+  if (prose.length < 2) {
+    return null;
+  }
+  if (/\*\*|__|```|[—–]/.test(prose)) {
+    return null;
+  }
+  if (/TrainingPeaks|FatSecret|OpenAI|\bJSON\b|hint_for_comment|source_quality/.test(prose)) {
+    return null;
+  }
+  return prose;
 }
 
 function extractMacroGuardrailStatuses(macroGuardrails: unknown): MacroGuardrailStatuses {
@@ -538,10 +562,13 @@ function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
         return `🔹 ${weekday} (${dateLabel}) · ${athleteTrainingLabel}
 ${comment}`;
       }
+      // Hybrid: prefer validated model prose, otherwise the deterministic comment.
+      // The fact line above is always code-owned and never replaced.
+      const dayComment = resolveUsableNutritionDayProse(item.athlete_prose) ?? comment;
       const carbsKgText = carbsPerKg != null ? ` (${formatNutritionAthletePerKg(carbsPerKg)})` : "";
       return `🔹 ${weekday} (${dateLabel}) · ${athleteTrainingLabel}
 ${formatNutritionAthleteKcal(kcal, { mode: "actual" })} · белок ${formatNutritionAthleteMacro(protein)} · жиры ${formatNutritionAthleteMacro(fat)} · углеводы ${formatNutritionAthleteMacro(carbs)}${carbsKgText}.
-${comment}`;
+${dayComment}`;
     })
     .filter((line): line is string => Boolean(line));
 }
