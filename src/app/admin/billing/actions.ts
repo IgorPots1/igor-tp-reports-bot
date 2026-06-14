@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 
 import {
   confirmImportedPaymentMatch,
+  deleteBillingPayerIdentity,
   ignoreImportedPayment,
   linkBillingClientToStudent,
   markBillingClientPaid,
@@ -294,7 +295,7 @@ export async function confirmImportedPaymentAction(formData: FormData): Promise<
     });
     clientId = result.monthlyPayment.client.id;
     if (result.identityLearningWarnings.length > 0) {
-      notice = `${notice} Обучение идентификаторов: ${result.identityLearningWarnings.length} предупрежд.`;
+      notice = `${notice} ⚠️ Не все идентификаторы плательщика обучены (${result.identityLearningWarnings.length}): возможен конфликт с другим клиентом. Проверь «Изученные идентификаторы» на карточке клиента.`;
     }
   } catch (error) {
     revalidatePath("/admin/billing/imports");
@@ -304,6 +305,25 @@ export async function confirmImportedPaymentAction(formData: FormData): Promise<
 
   revalidateBillingPaths(clientId);
   redirect(withNotice(redirectTo, "notice", notice));
+}
+
+export async function deleteBillingPayerIdentityAction(formData: FormData): Promise<void> {
+  const identityId = getRequiredFormValue(formData, "identityId");
+  const clientId = getRequiredFormValue(formData, "clientId");
+  const redirectTo = getOptionalFormValue(formData, "redirectTo") ?? `/admin/billing/clients/${clientId}`;
+
+  await ensureAdminAccess(redirectTo);
+
+  try {
+    await deleteBillingPayerIdentity({ identityId });
+  } catch (error) {
+    revalidateBillingPaths(clientId);
+    const message = error instanceof Error ? error.message : "Не удалось удалить идентификатор плательщика.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+
+  revalidateBillingPaths(clientId);
+  redirect(withNotice(redirectTo, "notice", "Идентификатор плательщика удалён."));
 }
 
 export async function ignoreImportedPaymentAction(formData: FormData): Promise<void> {
