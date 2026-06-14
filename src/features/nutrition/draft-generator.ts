@@ -802,9 +802,16 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     during_run_fuel_planned: boolean;
   };
   safetyFlags: { hard_flags: string[]; soft_flags: string[]; blocked: boolean };
+  /** Failure reasons are pushed here so the caller can surface them (notes + logs). */
+  diagnostics?: string[];
 }): Promise<NutritionAiNarrative | null> {
+  const note = (reason: string, extra?: Record<string, unknown>) => {
+    input.diagnostics?.push(reason);
+    console.error("[nutrition-review-ai] generation fell back", { reason, ...extra });
+  };
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
+    note("ai_no_api_key");
     return null;
   }
   const allowAthleteDraft = !input.safetyFlags.blocked;
@@ -908,6 +915,8 @@ async function generateNutritionWeeklyReviewNarrative(input: {
       body: JSON.stringify({
         model: OPENAI_NUTRITION_REVIEW_MODEL,
         temperature: 0.2,
+        max_tokens: 4096,
+        response_format: { type: "json_object" },
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: `Facts JSON:\n${JSON.stringify(factsPayload, null, 2)}` },
@@ -915,19 +924,39 @@ async function generateNutritionWeeklyReviewNarrative(input: {
       }),
     });
     if (!response.ok) {
+      const bodyText = await response.text().catch(() => "");
+      note(`ai_http_${response.status}`, { status: response.status, body: bodyText.slice(0, 300) });
       return null;
     }
     const payload = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string | null } }>;
+      choices?: Array<{ message?: { content?: string | null }; finish_reason?: string }>;
     };
     const content = payload.choices?.[0]?.message?.content?.trim();
+    const finishReason = payload.choices?.[0]?.finish_reason;
     if (!content) {
+      note("ai_empty_content", { finishReason });
       return null;
     }
-    const parsed = JSON.parse(extractJsonOnly(content)) as Partial<NutritionAiNarrative>;
+    let parsed: Partial<NutritionAiNarrative>;
+    try {
+      parsed = JSON.parse(extractJsonOnly(content)) as Partial<NutritionAiNarrative>;
+    } catch (parseError) {
+      note("ai_parse_failed", {
+        finishReason,
+        contentLength: content.length,
+        contentHead: content.slice(0, 300),
+        error: parseError instanceof Error ? parseError.message : String(parseError),
+      });
+      return null;
+    }
     const coachSummary = typeof parsed.coach_summary_text === "string" ? parsed.coach_summary_text.trim() : "";
     const dayByDay = typeof parsed.day_by_day_analysis_text === "string" ? parsed.day_by_day_analysis_text.trim() : "";
     if (!coachSummary || !dayByDay) {
+      note("ai_empty_required_fields", {
+        finishReason,
+        hasCoachSummary: Boolean(coachSummary),
+        hasDayByDay: Boolean(dayByDay),
+      });
       return null;
     }
     const athleteDraftRaw = typeof parsed.athlete_message_draft === "string" ? parsed.athlete_message_draft.trim() : null;
@@ -944,7 +973,8 @@ async function generateNutritionWeeklyReviewNarrative(input: {
         ? parsed.do_not_send_reasons.filter((item): item is string => typeof item === "string")
         : [],
     };
-  } catch {
+  } catch (error) {
+    note("ai_exception", { error: error instanceof Error ? error.message : String(error) });
     return null;
   }
 }
@@ -1051,6 +1081,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
     ai_model: "nutrition-weekly-review-fallback-v2",
   };
   if (!forceNeedsReview) {
+    const aiDiagnostics: string[] = [];
     const aiNarrative = await generateNutritionWeeklyReviewNarrative({
       context,
       dailyAnalysis: methodology.dailyAnalysis as Array<Record<string, unknown>>,
@@ -1072,6 +1103,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
         soft_flags: safety.softFlags,
         blocked: safety.blocked,
       },
+      diagnostics: aiDiagnostics,
     });
     if (aiNarrative) {
       narrative = {
@@ -1079,6 +1111,11 @@ export async function generateNutritionWeeklyAnalysis(input: {
         generation_mode: "ai",
         ai_model: OPENAI_NUTRITION_REVIEW_MODEL,
       };
+    } else {
+      // Surface why the AI path fell back (otherwise the fallback is silent).
+      for (const reason of aiDiagnostics) {
+        notes.push(`ai_generation_fallback:${reason}`);
+      }
     }
   }
 
