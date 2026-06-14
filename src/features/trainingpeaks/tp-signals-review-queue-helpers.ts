@@ -683,6 +683,7 @@ export function formatTpSignalReviewQueueSummaryMarkdown(input: {
   featureFlags: {
     queueEnabled: boolean;
     sendEnabled: boolean;
+    manualSendEnabled: boolean;
     buttonsEnabled: boolean;
     mutationsEnabled: boolean;
   };
@@ -700,6 +701,7 @@ export function formatTpSignalReviewQueueSummaryMarkdown(input: {
     "",
     `- TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_ENABLED=${String(input.featureFlags.queueEnabled)}`,
     `- TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_SEND_ENABLED=${String(input.featureFlags.sendEnabled)}`,
+    `- TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MANUAL_SEND_ENABLED=${String(input.featureFlags.manualSendEnabled)}`,
     `- TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_BUTTONS_ENABLED=${String(input.featureFlags.buttonsEnabled)}`,
     `- TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MUTATIONS_ENABLED=${String(input.featureFlags.mutationsEnabled)}`,
     "",

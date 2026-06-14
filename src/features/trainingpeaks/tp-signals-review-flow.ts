@@ -1,4 +1,15 @@
+import { getTrainingPeaksAttentionDigestBelgradeTodayIso } from "@/features/trainingpeaks/attention-digest-run";
 import { getTrainingPeaksCoachChatIds } from "@/features/trainingpeaks/attention-telegram";
+import {
+  listActiveTrainingPeaksMoveActions,
+  listLatestTrainingPeaksOperationalSignalReviewDecisionsBySignalIds,
+  listTrainingPeaksOperationalSignals,
+  listTrainingPeaksStudents,
+} from "@/features/trainingpeaks/repository";
+import {
+  buildOperationalSignalDisplayEvidenceMap,
+  collectOperationalSignalDiagnosticItems,
+} from "@/features/trainingpeaks/service";
 import {
   formatTpSignalReviewCardText,
   getTpSignalReviewCardMarkup,
@@ -6,8 +17,12 @@ import {
   type ParsedTpSignalReviewCallback,
 } from "@/features/trainingpeaks/tp-signals-review-card";
 import {
+  buildActiveSignalReviewBucketItems,
   isTpSignalReviewQueueBucket,
+  selectTpSignalReviewQueueItems,
+  type TpSignalReviewDecisionRecord,
   type TpSignalReviewQueueItem,
+  type TpSignalReviewQueueSelectionSummary,
 } from "@/features/trainingpeaks/tp-signals-review-queue-helpers";
 import {
   dismissOperationalSignalByReviewQueue,
@@ -33,6 +48,13 @@ import type { TelegramInlineKeyboardMarkup } from "@/features/telegram/types";
 
 const TP_SIGNAL_REVIEW_PENDING_TTL_MS = 30 * 60 * 1000;
 const TP_SIGNAL_REVIEW_CALLBACK_LOG_PREFIX = "[tp-review-queue:callback]";
+const TP_SIGNAL_REVIEW_MANUAL_TRIGGER_LOG_PREFIX = "[tp-review-queue:manual-trigger]";
+const TP_SIGNAL_REVIEW_QUEUE_ACTIVE_SIGNAL_LIMIT = 250;
+const TP_SIGNAL_REVIEW_QUEUE_MOVE_ACTION_LIMIT = 250;
+const DEFAULT_TP_SIGNAL_REVIEW_QUEUE_MANUAL_LIMIT = 5;
+
+export const TP_SIGNALS_REVIEW_QUEUE_START_CALLBACK = "tp:signals:review_queue:start";
+export const TP_SIGNALS_REVIEW_QUEUE_LAUNCH_BUTTON_TEXT = "🔎 Разобрать спорные сигналы";
 const BUTTONS_DISABLED_MESSAGE = "Кнопки review queue отключены флагом безопасности.";
 const STALE_SIGNAL_MESSAGE =
   "Не нашёл активный сигнал. Возможно, он уже закрыт или обновился.";
@@ -43,6 +65,22 @@ export function isTrainingPeaksTpSignalReviewQueueEnabled(): boolean {
 
 export function isTrainingPeaksTpSignalReviewQueueSendEnabled(): boolean {
   return process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_SEND_ENABLED?.trim() === "true";
+}
+
+export function isTrainingPeaksTpSignalReviewQueueManualSendEnabled(): boolean {
+  return process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MANUAL_SEND_ENABLED?.trim() === "true";
+}
+
+export function getTrainingPeaksTpSignalReviewQueueManualLimit(): number {
+  const raw = process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MANUAL_LIMIT?.trim();
+  if (!raw) {
+    return DEFAULT_TP_SIGNAL_REVIEW_QUEUE_MANUAL_LIMIT;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_TP_SIGNAL_REVIEW_QUEUE_MANUAL_LIMIT;
+  }
+  return parsed;
 }
 
 export function isTrainingPeaksTpSignalReviewQueueButtonsEnabled(): boolean {
@@ -56,15 +94,111 @@ export function isTrainingPeaksTpSignalReviewQueueMutationsEnabled(): boolean {
 export function getTrainingPeaksTpSignalReviewQueueFeatureFlags(): {
   queueEnabled: boolean;
   sendEnabled: boolean;
+  manualSendEnabled: boolean;
   buttonsEnabled: boolean;
   mutationsEnabled: boolean;
 } {
   return {
     queueEnabled: isTrainingPeaksTpSignalReviewQueueEnabled(),
     sendEnabled: isTrainingPeaksTpSignalReviewQueueSendEnabled(),
+    manualSendEnabled: isTrainingPeaksTpSignalReviewQueueManualSendEnabled(),
     buttonsEnabled: isTrainingPeaksTpSignalReviewQueueButtonsEnabled(),
     mutationsEnabled: isTrainingPeaksTpSignalReviewQueueMutationsEnabled(),
   };
+}
+
+function logTpSignalReviewManualTrigger(message: string): void {
+  console.log(`${TP_SIGNAL_REVIEW_MANUAL_TRIGGER_LOG_PREFIX} ${message}`);
+}
+
+export function buildTpSignalsReviewQueueLaunchMarkup(): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [
+        {
+          text: TP_SIGNALS_REVIEW_QUEUE_LAUNCH_BUTTON_TEXT,
+          callback_data: TP_SIGNALS_REVIEW_QUEUE_START_CALLBACK,
+        },
+      ],
+    ],
+  };
+}
+
+function mapLatestReviewDecisions(
+  decisions: Awaited<ReturnType<typeof listLatestTrainingPeaksOperationalSignalReviewDecisionsBySignalIds>>
+): Map<string, TpSignalReviewDecisionRecord> {
+  const mapped = new Map<string, TpSignalReviewDecisionRecord>();
+  for (const [signalId, decision] of decisions.entries()) {
+    mapped.set(signalId, {
+      signalId: decision.signalId,
+      studentId: decision.studentId,
+      bucket: decision.bucket,
+      decision: decision.decision,
+      decisionSource: decision.decisionSource,
+      coachTelegramUserId: decision.coachTelegramUserId,
+      callbackShortId: decision.callbackShortId,
+      createdAt: decision.createdAt,
+      metadata: decision.metadata,
+    });
+  }
+  return mapped;
+}
+
+export async function collectTpSignalReviewQueueSelection(input?: {
+  asOfDate?: string;
+  limit?: number;
+}): Promise<TpSignalReviewQueueSelectionSummary> {
+  const asOfDate = input?.asOfDate ?? getTrainingPeaksAttentionDigestBelgradeTodayIso();
+  const limit = input?.limit ?? getTrainingPeaksTpSignalReviewQueueManualLimit();
+  const [students, signalsResult, actions] = await Promise.all([
+    listTrainingPeaksStudents(),
+    listTrainingPeaksOperationalSignals({
+      status: "active",
+      limit: TP_SIGNAL_REVIEW_QUEUE_ACTIVE_SIGNAL_LIMIT,
+    }),
+    listActiveTrainingPeaksMoveActions(TP_SIGNAL_REVIEW_QUEUE_MOVE_ACTION_LIMIT),
+  ]);
+  const studentNameById = new Map(
+    students.map((student) => [student.id, student.studentName?.trim() || student.studentId])
+  );
+  const signals = signalsResult.items;
+  const displayEvidenceBySignalId = await buildOperationalSignalDisplayEvidenceMap({
+    signals,
+    asOfDate,
+  });
+  const diagnosticItems = collectOperationalSignalDiagnosticItems({
+    signals,
+    studentNameById,
+    asOfDate,
+    activeMoveActions: actions,
+    displayEvidenceBySignalId,
+  });
+  const activeItems = buildActiveSignalReviewBucketItems({
+    signals,
+    diagnosticItems,
+    studentNameById,
+    displayEvidenceBySignalId: new Map(displayEvidenceBySignalId),
+    asOfDate,
+  });
+
+  let latestDecisionsBySignalId = new Map<string, TpSignalReviewDecisionRecord>();
+  try {
+    const latestDecisions = await listLatestTrainingPeaksOperationalSignalReviewDecisionsBySignalIds(
+      activeItems.map((item) => item.signalId)
+    );
+    latestDecisionsBySignalId = mapLatestReviewDecisions(latestDecisions);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("trainingpeaks_operational_signal_review_decisions table is missing")) {
+      throw error;
+    }
+  }
+
+  return selectTpSignalReviewQueueItems({
+    activeItems,
+    latestDecisionsBySignalId,
+    limit,
+  });
 }
 
 function logTpSignalReviewCallback(message: string): void {
@@ -200,11 +334,19 @@ export type NotifyCoachTpSignalReviewQueueResult =
 export async function notifyCoachTpSignalReviewQueue(input: {
   items: TpSignalReviewQueueItem[];
   deps?: TpSignalReviewTelegramDeps;
+  sendMode?: "auto" | "manual";
+  targetCoachChatId?: string;
 }): Promise<NotifyCoachTpSignalReviewQueueResult> {
+  const sendMode = input.sendMode ?? "auto";
+
   if (!isTrainingPeaksTpSignalReviewQueueEnabled()) {
     return { status: "queue_disabled" };
   }
-  if (!isTrainingPeaksTpSignalReviewQueueSendEnabled()) {
+  if (sendMode === "manual") {
+    if (!isTrainingPeaksTpSignalReviewQueueManualSendEnabled()) {
+      return { status: "send_disabled" };
+    }
+  } else if (!isTrainingPeaksTpSignalReviewQueueSendEnabled()) {
     return { status: "send_disabled" };
   }
 
@@ -216,7 +358,9 @@ export async function notifyCoachTpSignalReviewQueue(input: {
   }
 
   const deps = getDeps(input.deps);
-  const coachChatIds = deps.getCoachChatIds();
+  const coachChatIds = input.targetCoachChatId
+    ? [input.targetCoachChatId]
+    : deps.getCoachChatIds();
   let sentCount = 0;
 
   for (const coachChatId of coachChatIds) {
@@ -235,6 +379,77 @@ export async function notifyCoachTpSignalReviewQueue(input: {
   }
 
   return { status: "sent", sentCount };
+}
+
+export async function handleTpSignalReviewQueueManualLaunch(input: {
+  coachChatId: string;
+  callbackQueryId: string;
+  deps?: TpSignalReviewTelegramDeps & {
+    collectSelection?: () => Promise<TpSignalReviewQueueSelectionSummary>;
+  };
+}): Promise<"handled"> {
+  logTpSignalReviewManualTrigger("received");
+  const deps = getDeps(input.deps);
+
+  if (!isTrainingPeaksTpSignalReviewQueueEnabled()) {
+    logTpSignalReviewManualTrigger("disabled queue=false");
+    await deps.answerCallback(input.callbackQueryId, "Review Queue сейчас выключена.");
+    return "handled";
+  }
+
+  if (!isTrainingPeaksTpSignalReviewQueueManualSendEnabled()) {
+    logTpSignalReviewManualTrigger("disabled manual_send=false");
+    await deps.answerCallback(input.callbackQueryId, "Review Queue сейчас выключена.");
+    return "handled";
+  }
+
+  const selection = input.deps?.collectSelection
+    ? await input.deps.collectSelection()
+    : await collectTpSignalReviewQueueSelection();
+  logTpSignalReviewManualTrigger(`selected=${selection.wouldSendCount}`);
+
+  const sendResult = await notifyCoachTpSignalReviewQueue({
+    items: selection.items,
+    sendMode: "manual",
+    targetCoachChatId: input.coachChatId,
+    deps: input.deps,
+  });
+
+  if (sendResult.status === "nothing_to_send") {
+    logTpSignalReviewManualTrigger("sent=0");
+    await deps.answerCallback(
+      input.callbackQueryId,
+      "✅ Сейчас нет спорных TP Signals для разбора."
+    );
+    return "handled";
+  }
+
+  if (sendResult.status !== "sent") {
+    logTpSignalReviewManualTrigger(`send_status=${sendResult.status}`);
+    await deps.answerCallback(input.callbackQueryId, "Review Queue сейчас выключена.");
+    return "handled";
+  }
+
+  logTpSignalReviewManualTrigger(`sent=${sendResult.sentCount}`);
+  await deps.answerCallback(
+    input.callbackQueryId,
+    formatReviewQueueManualLaunchSentMessage(sendResult.sentCount)
+  );
+  return "handled";
+}
+
+function formatReviewQueueManualLaunchSentMessage(sentCount: number): string {
+  const lastTwo = sentCount % 100;
+  const lastOne = sentCount % 10;
+  let noun = "карточек";
+  if (lastTwo < 11 || lastTwo > 14) {
+    if (lastOne === 1) {
+      noun = "карточку";
+    } else if (lastOne >= 2 && lastOne <= 4) {
+      noun = "карточки";
+    }
+  }
+  return `Отправил ${sentCount} ${noun} на разбор.`;
 }
 
 function resolveReviewDecisionBucketForSignal(input: {

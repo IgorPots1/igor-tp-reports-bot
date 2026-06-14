@@ -119,8 +119,12 @@ import {
 } from "@/features/trainingpeaks/group-workout-report-review-flow";
 import { parseTpSignalReviewCallback } from "@/features/trainingpeaks/tp-signals-review-card";
 import {
+  buildTpSignalsReviewQueueLaunchMarkup,
   handleTpSignalReviewCallback,
+  handleTpSignalReviewQueueManualLaunch,
+  isTrainingPeaksTpSignalReviewQueueEnabled,
   logTpSignalReviewCallbackDispatch,
+  TP_SIGNALS_REVIEW_QUEUE_START_CALLBACK,
 } from "@/features/trainingpeaks/tp-signals-review-flow";
 import {
   isTrainingPeaksTelegramBusinessPeerMissingError,
@@ -3693,8 +3697,13 @@ async function handleTrainingPeaksOperationalSignalsCommand(
     limit: 100,
   });
   const messages = formatTrainingPeaksOperationalSignalsForTelegramMultiMessage(snapshot);
-  for (const message of messages) {
-    await sendTrainingPeaksMessage(parsedMessage.chatId, message);
+  const launchMarkup = isTrainingPeaksTpSignalReviewQueueEnabled()
+    ? buildTpSignalsReviewQueueLaunchMarkup()
+    : undefined;
+  for (const [index, message] of messages.entries()) {
+    await sendTrainingPeaksMessage(parsedMessage.chatId, message, {
+      replyMarkup: index === messages.length - 1 ? launchMarkup : undefined,
+    });
   }
 }
 
@@ -9649,6 +9658,27 @@ export async function handleTrainingPeaksTelegramCallback(
       callback: groupWorkoutReportReviewCallback,
       coachChatId: String(parsedMessage.chatId),
       coachMessageId: parsedMessage.messageId,
+      callbackQueryId: parsedMessage.callbackQueryId,
+      deps: {
+        answerCallback: async (callbackQueryId, text) => {
+          await answerTelegramCallbackQuery(callbackQueryId, text);
+        },
+      },
+    });
+    return "handled";
+  }
+
+  if (parsedMessage.data === TP_SIGNALS_REVIEW_QUEUE_START_CALLBACK) {
+    if (!isCoachChat(parsedMessage.chatId)) {
+      await answerTelegramCallbackQuery(
+        parsedMessage.callbackQueryId,
+        "Команда доступна только тренеру."
+      );
+      return "handled";
+    }
+
+    await handleTpSignalReviewQueueManualLaunch({
+      coachChatId: String(parsedMessage.chatId),
       callbackQueryId: parsedMessage.callbackQueryId,
       deps: {
         answerCallback: async (callbackQueryId, text) => {

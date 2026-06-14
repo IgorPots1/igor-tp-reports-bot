@@ -15,14 +15,20 @@ import {
 } from "@/features/trainingpeaks/tp-signals-review-card";
 import {
   buildTpSignalReviewCardForQueueItem,
+  buildTpSignalsReviewQueueLaunchMarkup,
   clearPendingTpSignalReviewStateForTest,
   getTrainingPeaksTpSignalReviewQueueFeatureFlags,
+  getTrainingPeaksTpSignalReviewQueueManualLimit,
   handleTpSignalReviewCallback,
+  handleTpSignalReviewQueueManualLaunch,
   isTrainingPeaksTpSignalReviewQueueButtonsEnabled,
   isTrainingPeaksTpSignalReviewQueueEnabled,
+  isTrainingPeaksTpSignalReviewQueueManualSendEnabled,
   isTrainingPeaksTpSignalReviewQueueMutationsEnabled,
   isTrainingPeaksTpSignalReviewQueueSendEnabled,
   notifyCoachTpSignalReviewQueue,
+  TP_SIGNALS_REVIEW_QUEUE_LAUNCH_BUTTON_TEXT,
+  TP_SIGNALS_REVIEW_QUEUE_START_CALLBACK,
 } from "@/features/trainingpeaks/tp-signals-review-flow";
 import {
   assignActiveSignalReviewBucket,
@@ -765,6 +771,8 @@ async function run(): Promise<void> {
 
   const previousQueue = process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_ENABLED;
   const previousSend = process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_SEND_ENABLED;
+  const previousManualSend = process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MANUAL_SEND_ENABLED;
+  const previousManualLimit = process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MANUAL_LIMIT;
   const previousButtons = process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_BUTTONS_ENABLED;
   const previousMutations = process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MUTATIONS_ENABLED;
   let insertedDecision: string | null = null;
@@ -797,6 +805,7 @@ async function run(): Promise<void> {
   try {
     process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_ENABLED = "false";
     process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_SEND_ENABLED = "false";
+    process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MANUAL_SEND_ENABLED = "false";
     process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_BUTTONS_ENABLED = "false";
     process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MUTATIONS_ENABLED = "false";
 
@@ -808,6 +817,7 @@ async function run(): Promise<void> {
     const flagsOff = getTrainingPeaksTpSignalReviewQueueFeatureFlags();
     assert.equal(flagsOff.queueEnabled, false);
     assert.equal(flagsOff.sendEnabled, false);
+    assert.equal(flagsOff.manualSendEnabled, false);
     assert.equal(flagsOff.buttonsEnabled, false);
     assert.equal(flagsOff.mutationsEnabled, false);
     flags = flagsOff;
@@ -966,9 +976,124 @@ async function run(): Promise<void> {
       },
     });
     assert.match(staleAnswer ?? "", /Не нашёл активный сигнал/u);
+
+    const launchMarkup = buildTpSignalsReviewQueueLaunchMarkup();
+    assert.equal(launchMarkup.inline_keyboard.length, 1);
+    assert.equal(launchMarkup.inline_keyboard[0]?.[0]?.text, TP_SIGNALS_REVIEW_QUEUE_LAUNCH_BUTTON_TEXT);
+    assert.equal(launchMarkup.inline_keyboard[0]?.[0]?.callback_data, TP_SIGNALS_REVIEW_QUEUE_START_CALLBACK);
+    assert.equal(TP_SIGNALS_REVIEW_QUEUE_START_CALLBACK, "tp:signals:review_queue:start");
+    assert.equal(parseTpSignalReviewCallback(TP_SIGNALS_REVIEW_QUEUE_START_CALLBACK), null);
+
+    delete process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MANUAL_LIMIT;
+    assert.equal(getTrainingPeaksTpSignalReviewQueueManualLimit(), 5);
+    process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MANUAL_LIMIT = "3";
+    assert.equal(getTrainingPeaksTpSignalReviewQueueManualLimit(), 3);
+
+    process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_ENABLED = "true";
+    process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MANUAL_SEND_ENABLED = "false";
+    process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_SEND_ENABLED = "false";
+    let manualLaunchAnswer: string | undefined;
+    await handleTpSignalReviewQueueManualLaunch({
+      coachChatId: "coach-chat",
+      callbackQueryId: "manual-disabled",
+      deps: {
+        answerCallback: async (_id, text) => {
+          manualLaunchAnswer = text;
+        },
+      },
+    });
+    assert.equal(manualLaunchAnswer, "Review Queue сейчас выключена.");
+
+    process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MANUAL_SEND_ENABLED = "true";
+    let manualLaunchSentCount = 0;
+    let manualLaunchDecisionWrites = 0;
+    manualLaunchAnswer = undefined;
+    await handleTpSignalReviewQueueManualLaunch({
+      coachChatId: "coach-chat-manual",
+      callbackQueryId: "manual-send",
+      deps: {
+        collectSelection: async () => baseSelection,
+        answerCallback: async (_id, text) => {
+          manualLaunchAnswer = text;
+        },
+        sendCoachMessage: async () => {
+          manualLaunchSentCount += 1;
+          return { messageId: manualLaunchSentCount, chatId: "coach-chat-manual" };
+        },
+        insertReviewDecision: async () => {
+          manualLaunchDecisionWrites += 1;
+          throw new Error("manual launch must not write review decisions");
+        },
+      },
+    });
+    assert.equal(manualLaunchDecisionWrites, 0, "manual launch must not mutate signals");
+    assert.equal(manualLaunchSentCount, baseSelection.wouldSendCount);
+    assert.match(manualLaunchAnswer ?? "", /Отправил .* на разбор/u);
+
+    process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MANUAL_SEND_ENABLED = "true";
+    process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_SEND_ENABLED = "false";
+    const manualOnlySendResult = await notifyCoachTpSignalReviewQueue({
+      items: baseSelection.items,
+      sendMode: "manual",
+      targetCoachChatId: "coach-chat-manual-only",
+      deps: {
+        sendCoachMessage: async () => ({ messageId: 1, chatId: "coach-chat-manual-only" }),
+      },
+    });
+    assert.equal(manualOnlySendResult.status, "sent");
+    const autoSendBlockedResult = await notifyCoachTpSignalReviewQueue({
+      items: baseSelection.items,
+      sendMode: "auto",
+    });
+    assert.equal(autoSendBlockedResult.status, "send_disabled");
+
+    process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_ENABLED = "false";
+    manualLaunchAnswer = undefined;
+    await handleTpSignalReviewQueueManualLaunch({
+      coachChatId: "coach-chat",
+      callbackQueryId: "manual-queue-disabled",
+      deps: {
+        answerCallback: async (_id, text) => {
+          manualLaunchAnswer = text;
+        },
+      },
+    });
+    assert.equal(manualLaunchAnswer, "Review Queue сейчас выключена.");
+
+    const emptySelection = selectTpSignalReviewQueueItems({
+      activeItems: [],
+      latestDecisionsBySignalId: new Map<string, TpSignalReviewDecisionRecord>(),
+      limit: 5,
+    });
+    assert.equal(emptySelection.wouldSendCount, 0);
+    process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_ENABLED = "true";
+    process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MANUAL_SEND_ENABLED = "true";
+    manualLaunchAnswer = undefined;
+    manualLaunchSentCount = 0;
+    await handleTpSignalReviewQueueManualLaunch({
+      coachChatId: "coach-chat-empty",
+      callbackQueryId: "manual-empty",
+      deps: {
+        collectSelection: async () => emptySelection,
+        answerCallback: async (_id, text) => {
+          manualLaunchAnswer = text;
+        },
+        sendCoachMessage: async () => {
+          manualLaunchSentCount += 1;
+          return { messageId: 1, chatId: "coach-chat-empty" };
+        },
+      },
+    });
+    assert.equal(manualLaunchSentCount, 0);
+    assert.equal(
+      manualLaunchAnswer,
+      "✅ Сейчас нет спорных TP Signals для разбора."
+    );
   } finally {
     process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_ENABLED = previousQueue;
     process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_SEND_ENABLED = previousSend;
+    process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MANUAL_SEND_ENABLED = previousManualSend;
+    process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MANUAL_LIMIT = previousManualLimit;
     process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_BUTTONS_ENABLED = previousButtons;
     process.env.TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MUTATIONS_ENABLED = previousMutations;
     clearPendingTpSignalReviewStateForTest();
@@ -1005,7 +1130,7 @@ async function run(): Promise<void> {
     failures.push("unexpected report dir before no-write diagnostic");
   }
 
-  console.log(`${LOG_PREFIX} cases=48`);
+  console.log(`${LOG_PREFIX} cases=58`);
   console.log(`- review_required included: ${reviewRequiredItem.bucket}`);
   console.log(`- close_candidate_review included: ${closeCandidateItem.bucket}`);
   console.log(`- close candidates sort first: ${baseSelection.items[0]?.bucket === "close_candidate_review"}`);
@@ -1020,7 +1145,10 @@ async function run(): Promise<void> {
   console.log(`- keep_visible stays visible: ${keepVisibleSelection.wouldSendCount}`);
   console.log(`- callback resolves without pending map: close_signal`);
   console.log(`- stale inactive signal safe no-op: ok`);
-  console.log(`- feature flags default off: queue=${String(flags.queueEnabled)} send=${String(flags.sendEnabled)} mutations=${String(flags.mutationsEnabled)}`);
+  console.log(`- manual launch button callback: ${TP_SIGNALS_REVIEW_QUEUE_START_CALLBACK}`);
+  console.log(`- manual send independent of auto send: ok`);
+  console.log(`- manual launch no mutation on trigger: ok`);
+  console.log(`- feature flags default off: queue=${String(flags.queueEnabled)} send=${String(flags.sendEnabled)} manual=${String(isTrainingPeaksTpSignalReviewQueueManualSendEnabled())} mutations=${String(flags.mutationsEnabled)}`);
 
   if (failures.length > 0) {
     console.error(`${LOG_PREFIX} FAIL`);
@@ -1030,7 +1158,7 @@ async function run(): Promise<void> {
     process.exit(1);
   }
 
-  console.log(`${LOG_PREFIX} PASS (48/48)`);
+  console.log(`${LOG_PREFIX} PASS (58/58)`);
 }
 
 run().catch((error) => {
