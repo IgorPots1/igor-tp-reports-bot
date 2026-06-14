@@ -70,6 +70,12 @@ export type TpSignalReviewQueueSelectionSummary = {
   hiddenCount: number;
   keepVisibleCount: number;
   wouldSendCount: number;
+  includedBeforeLimit: number;
+  excludedFromQueue: number;
+  includedBeforeLimitByBucket: Record<TpSignalReviewQueueBucket, number>;
+  includedBeforeLimitByCategory: Record<string, number>;
+  selectedByCategory: Record<string, number>;
+  excludedByReason: Record<string, number>;
   items: TpSignalReviewQueueItem[];
 };
 
@@ -159,7 +165,60 @@ function isHiddenDisplayOnlyReason(hiddenReason: string | null): boolean {
   if (!hiddenReason) {
     return false;
   }
-  return /^(?:expired_|auto_hidden_|no_active_move_action)/u.test(hiddenReason);
+  return /^(?:expired_|auto_hidden_|no_active_move_action|superseded_signal_hidden|stale_generic_schedule_unavailability)/u.test(
+    hiddenReason
+  );
+}
+
+function resolveHiddenDisplayQueueExclusion(
+  item: ActiveSignalReviewBucketItem
+): TelegramReviewQueueInclusion | null {
+  const recommendedState = item.explainRecord.recommended_state;
+  const hiddenReason = resolveHiddenReasonToken(item.reason);
+
+  if (recommendedState === "hidden" || hiddenReason || !item.visible) {
+    return {
+      include: false,
+      queueReason: "",
+      exclusionReason: "hidden_display_state",
+    };
+  }
+
+  return null;
+}
+
+function resolveTelegramReviewQueueSortPriority(queueItem: TpSignalReviewQueueItem): number {
+  if (queueItem.bucket === "close_candidate_review") {
+    return 0;
+  }
+
+  const tokens = parseReviewBucketReasonTokens(queueItem.item.reason);
+  const signalType = queueItem.item.signalType;
+
+  if (HEALTH_PAIN_REVIEW_SIGNAL_TYPES.has(signalType)) {
+    if (tokens.has("latest_negative_evidence")) {
+      return 1;
+    }
+    return 2;
+  }
+
+  if (signalType === "move_workout_candidate") {
+    return 3;
+  }
+
+  return 4;
+}
+
+function compareTpSignalReviewQueueItems(
+  left: TpSignalReviewQueueItem,
+  right: TpSignalReviewQueueItem
+): number {
+  const priorityDiff =
+    resolveTelegramReviewQueueSortPriority(left) - resolveTelegramReviewQueueSortPriority(right);
+  if (priorityDiff !== 0) {
+    return priorityDiff;
+  }
+  return left.item.studentName.localeCompare(right.item.studentName, "ru");
 }
 
 function hasStrongTelegramReviewReason(
@@ -222,6 +281,11 @@ export function resolveTelegramReviewQueueInclusion(
       queueReason: "close_candidate_review",
       exclusionReason: null,
     };
+  }
+
+  const hiddenExclusion = resolveHiddenDisplayQueueExclusion(item);
+  if (hiddenExclusion) {
+    return hiddenExclusion;
   }
 
   const tokens = parseReviewBucketReasonTokens(item.reason);
@@ -419,10 +483,24 @@ export function buildTelegramReviewQueueDiagnosticRows(
     if (left.includedInQueue !== right.includedInQueue) {
       return left.includedInQueue ? -1 : 1;
     }
-    const bucketOrder =
-      (left.bucket === "review_required" ? 0 : 1) - (right.bucket === "review_required" ? 0 : 1);
-    if (bucketOrder !== 0) {
-      return bucketOrder;
+    const leftPriority =
+      left.bucket === "close_candidate_review"
+        ? 0
+        : left.bucket === "review_required" && left.reviewBucketReason.includes("latest_negative_evidence")
+          ? 1
+          : left.bucket === "review_required"
+            ? 2
+            : 3;
+    const rightPriority =
+      right.bucket === "close_candidate_review"
+        ? 0
+        : right.bucket === "review_required" && right.reviewBucketReason.includes("latest_negative_evidence")
+          ? 1
+          : right.bucket === "review_required"
+            ? 2
+            : 3;
+    if (leftPriority !== rightPriority) {
+      return leftPriority - rightPriority;
     }
     return left.studentName.localeCompare(right.studentName, "ru");
   });
@@ -435,6 +513,7 @@ export function selectTpSignalReviewQueueItems(
 ): TpSignalReviewQueueSelectionSummary {
   const latestDecisionsBySignalId = input.latestDecisionsBySignalId ?? new Map();
   const queueItems: TpSignalReviewQueueItem[] = [];
+  const excludedByReason = new Map<string, number>();
 
   for (const item of input.activeItems) {
     if (!isTpSignalReviewQueueBucket(item.bucket)) {
@@ -443,12 +522,15 @@ export function selectTpSignalReviewQueueItems(
 
     const inclusion = resolveTelegramReviewQueueInclusion(item);
     if (!inclusion.include) {
+      const reason = inclusion.exclusionReason ?? "unknown";
+      excludedByReason.set(reason, (excludedByReason.get(reason) ?? 0) + 1);
       continue;
     }
 
     const latestDecision = latestDecisionsBySignalId.get(item.signalId) ?? null;
     const queueState = resolveReviewQueueState(latestDecision);
     if (!input.includeReviewed && queueState === "hidden") {
+      excludedByReason.set("decision_suppressed", (excludedByReason.get("decision_suppressed") ?? 0) + 1);
       continue;
     }
 
@@ -473,14 +555,19 @@ export function selectTpSignalReviewQueueItems(
     });
   }
 
-  queueItems.sort((left, right) => {
-    const bucketOrder =
-      (left.bucket === "review_required" ? 0 : 1) - (right.bucket === "review_required" ? 0 : 1);
-    if (bucketOrder !== 0) {
-      return bucketOrder;
-    }
-    return left.item.studentName.localeCompare(right.item.studentName, "ru");
-  });
+  queueItems.sort(compareTpSignalReviewQueueItems);
+
+  const includedBeforeLimitByBucket: Record<TpSignalReviewQueueBucket, number> = {
+    review_required: queueItems.filter((entry) => entry.bucket === "review_required").length,
+    close_candidate_review: queueItems.filter((entry) => entry.bucket === "close_candidate_review").length,
+  };
+  const includedBeforeLimitByCategory = new Map<string, number>();
+  for (const entry of queueItems) {
+    includedBeforeLimitByCategory.set(
+      entry.category,
+      (includedBeforeLimitByCategory.get(entry.category) ?? 0) + 1
+    );
+  }
 
   const limitedItems =
     input.limit && input.limit > 0 ? queueItems.slice(0, input.limit) : queueItems;
@@ -489,6 +576,10 @@ export function selectTpSignalReviewQueueItems(
     review_required: limitedItems.filter((entry) => entry.bucket === "review_required").length,
     close_candidate_review: limitedItems.filter((entry) => entry.bucket === "close_candidate_review").length,
   };
+  const selectedByCategory = new Map<string, number>();
+  for (const entry of limitedItems) {
+    selectedByCategory.set(entry.category, (selectedByCategory.get(entry.category) ?? 0) + 1);
+  }
 
   const pendingCount = limitedItems.filter((entry) => entry.queueState === "pending").length;
   const hiddenCount = limitedItems.filter((entry) => entry.queueState === "hidden").length;
@@ -501,6 +592,12 @@ export function selectTpSignalReviewQueueItems(
     hiddenCount,
     keepVisibleCount,
     wouldSendCount: pendingCount + keepVisibleCount,
+    includedBeforeLimit: queueItems.length,
+    excludedFromQueue: [...excludedByReason.values()].reduce((sum, count) => sum + count, 0),
+    includedBeforeLimitByBucket,
+    includedBeforeLimitByCategory: Object.fromEntries(includedBeforeLimitByCategory.entries()),
+    selectedByCategory: Object.fromEntries(selectedByCategory.entries()),
+    excludedByReason: Object.fromEntries(excludedByReason.entries()),
     items: limitedItems,
   };
 }
@@ -532,7 +629,14 @@ export function formatTpSignalReviewQueueSummaryMarkdown(input: {
     `- TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_BUTTONS_ENABLED=${String(input.featureFlags.buttonsEnabled)}`,
     `- TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MUTATIONS_ENABLED=${String(input.featureFlags.mutationsEnabled)}`,
     "",
-    "## Queue selection",
+    "## Queue candidates before limit",
+    "",
+    `- included_before_limit: ${input.selection.includedBeforeLimit}`,
+    `- excluded_from_queue: ${input.selection.excludedFromQueue}`,
+    `- review_required: ${input.selection.includedBeforeLimitByBucket.review_required}`,
+    `- close_candidate_review: ${input.selection.includedBeforeLimitByBucket.close_candidate_review}`,
+    "",
+    "## Selected for send after limit",
     "",
     `- total_selected: ${input.selection.totalSelected}`,
     `- review_required: ${input.selection.byBucket.review_required}`,
@@ -542,14 +646,50 @@ export function formatTpSignalReviewQueueSummaryMarkdown(input: {
     `- keep_visible: ${input.selection.keepVisibleCount}`,
     `- would_send: ${input.selection.wouldSendCount}`,
     "",
+  ];
+
+  const includedCategoryEntries = Object.entries(input.selection.includedBeforeLimitByCategory).sort(
+    (left, right) => left[0].localeCompare(right[0], "ru")
+  );
+  if (includedCategoryEntries.length > 0) {
+    lines.push("### Included before limit by category", "");
+    for (const [category, count] of includedCategoryEntries) {
+      lines.push(`- ${category}: ${count}`);
+    }
+    lines.push("");
+  }
+
+  const selectedCategoryEntries = Object.entries(input.selection.selectedByCategory).sort((left, right) =>
+    left[0].localeCompare(right[0], "ru")
+  );
+  if (selectedCategoryEntries.length > 0) {
+    lines.push("### Selected by category", "");
+    for (const [category, count] of selectedCategoryEntries) {
+      lines.push(`- ${category}: ${count}`);
+    }
+    lines.push("");
+  }
+
+  const excludedReasonEntries = Object.entries(input.selection.excludedByReason).sort((left, right) =>
+    left[0].localeCompare(right[0])
+  );
+  if (excludedReasonEntries.length > 0) {
+    lines.push("### Excluded by reason", "");
+    for (const [reason, count] of excludedReasonEntries) {
+      lines.push(`- ${reason}: ${count}`);
+    }
+    lines.push("");
+  }
+
+  lines.push(
     "## Safety",
     "",
     "- Includes close candidates and review_required signals that need a coach decision.",
     "- Excludes passive plan/schedule constraints, move candidates without dates, and generic ambiguous rows.",
-    "- Excludes `obvious_auto_record` and all `silent_skip` buckets from Telegram v1.",
+    "- Excludes hidden/superseded/stale display rows and `obvious_auto_record` / `silent_skip` buckets from Telegram v1.",
     "- Review decisions are append-only; operational signal status changes require TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MUTATIONS_ENABLED=true.",
     "",
-  ];
+  );
 
   if (input.sampleCards.length > 0) {
     lines.push("## Sample cards", "");

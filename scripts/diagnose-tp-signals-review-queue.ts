@@ -293,7 +293,15 @@ function printConsoleSummary(input: {
     `- TRAININGPEAKS_TP_SIGNAL_REVIEW_QUEUE_MUTATIONS_ENABLED=${String(input.featureFlags.mutationsEnabled)}`
   );
   console.log("");
-  console.log("Queue selection:");
+  console.log("Queue candidates before limit:");
+  console.log(`- included_before_limit: ${input.selection.includedBeforeLimit}`);
+  console.log(`- excluded_from_queue: ${input.selection.excludedFromQueue}`);
+  console.log(`- review_required: ${input.selection.includedBeforeLimitByBucket.review_required}`);
+  console.log(
+    `- close_candidate_review: ${input.selection.includedBeforeLimitByBucket.close_candidate_review}`
+  );
+  console.log("");
+  console.log("Selected for send after limit:");
   console.log(`- total_selected: ${input.selection.totalSelected}`);
   console.log(`- review_required: ${input.selection.byBucket.review_required}`);
   console.log(`- close_candidate_review: ${input.selection.byBucket.close_candidate_review}`);
@@ -316,16 +324,35 @@ function printConsoleSummary(input: {
   }
 
   console.log(`- queue_candidates: ${input.diagnosticRows.length}`);
-  console.log(`- excluded_from_queue: ${excludedRows.length}`);
-  if (byCategory.size > 0) {
-    console.log("- by category (included):");
-    for (const [category, count] of [...byCategory.entries()].sort((left, right) => left[0].localeCompare(right[0], "ru"))) {
+  if (Object.keys(input.selection.includedBeforeLimitByCategory).length > 0) {
+    console.log("- included_before_limit by category:");
+    for (const [category, count] of Object.entries(input.selection.includedBeforeLimitByCategory).sort(
+      (left, right) => left[0].localeCompare(right[0], "ru")
+    )) {
       console.log(`  - ${category}: ${count}`);
     }
   }
-  if (excludedByReason.size > 0) {
+  if (Object.keys(input.selection.selectedByCategory).length > 0) {
+    console.log("- selected by category:");
+    for (const [category, count] of Object.entries(input.selection.selectedByCategory).sort((left, right) =>
+      left[0].localeCompare(right[0], "ru")
+    )) {
+      console.log(`  - ${category}: ${count}`);
+    }
+  }
+  const selectionExcludedReasons = Object.entries(input.selection.excludedByReason).sort((left, right) =>
+    left[0].localeCompare(right[0])
+  );
+  if (selectionExcludedReasons.length > 0) {
     console.log("- excluded by reason:");
-    for (const [reason, count] of [...excludedByReason.entries()].sort((left, right) => left[0].localeCompare(right[0]))) {
+    for (const [reason, count] of selectionExcludedReasons) {
+      console.log(`  - ${reason}: ${count}`);
+    }
+  } else if (excludedByReason.size > 0) {
+    console.log("- excluded by reason:");
+    for (const [reason, count] of [...excludedByReason.entries()].sort((left, right) =>
+      left[0].localeCompare(right[0])
+    )) {
       console.log(`  - ${reason}: ${count}`);
     }
   }

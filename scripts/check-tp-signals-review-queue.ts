@@ -243,6 +243,70 @@ async function run(): Promise<void> {
     studentName: "Darya Khmelkova",
     asOfDate: "2026-06-15",
   });
+  const hiddenRecoveryRun = makeActiveBucketItem("review_required", "h3h3h3h3-h3h3-h3h3-h3h3-h3h3h3h3h3h3", {
+    signal: {
+      id: "h3h3h3h3-h3h3-h3h3-h3h3-h3h3h3h3h3h3",
+      signalType: "health_issue_improving",
+      metadata: { classifier_confidence: "medium" },
+    },
+    item: {
+      signalId: "h3h3h3h3-h3h3-h3h3-h3h3-h3h3h3h3h3h3",
+      section: "health",
+      text: "после болезни чистая пробежка",
+      lifecycleDisplayState: "active_problem",
+      hiddenReason: "auto_hidden_clean_recovery_run",
+    },
+    studentName: "Darya Khmelkova",
+    asOfDate: "2026-06-15",
+  });
+  const supersededHidden = makeActiveBucketItem("review_required", "s1s1s1s1-s1s1-s1s1-s1s1-s1s1s1s1s1s1", {
+    signal: {
+      id: "s1s1s1s1-s1s1-s1s1-s1s1-s1s1s1s1s1s1",
+      signalType: "pain_injury",
+      metadata: { classifier_confidence: "medium" },
+    },
+    item: {
+      signalId: "s1s1s1s1-s1s1-s1s1-s1s1-s1s1s1s1s1s1",
+      section: "pain_injury",
+      text: "старый сигнал заменён новым",
+      lifecycleDisplayState: "active_problem",
+      hiddenReason: "superseded_signal_hidden",
+    },
+    studentName: "slava Taranec",
+    asOfDate: "2026-06-15",
+  });
+  const staleGenericScheduleHidden = makeActiveBucketItem("review_required", "s2s2s2s2-s2s2-s2s2-s2s2-s2s2s2s2s2s2", {
+    signal: {
+      id: "s2s2s2s2-s2s2-s2s2-s2s2-s2s2s2s2s2s2",
+      signalType: "schedule_unavailability_window",
+      metadata: { classifier_confidence: "medium" },
+    },
+    item: {
+      signalId: "s2s2s2s2-s2s2-s2s2-s2s2-s2s2s2s2s2s2",
+      section: "schedule",
+      text: "не могу в среду",
+      lifecycleDisplayState: "active_problem",
+      hiddenReason: "stale_generic_schedule_unavailability",
+    },
+    studentName: "Sofia Vlasova",
+    asOfDate: "2026-06-15",
+  });
+  const hiddenRecommendedReview = makeActiveBucketItem("review_required", "h4h4h4h4-h4h4-h4h4-h4h4-h4h4h4h4h4h4", {
+    signal: {
+      id: "h4h4h4h4-h4h4-h4h4-h4h4-h4h4h4h4h4h4",
+      signalType: "health_issue_started",
+      metadata: { classifier_confidence: "medium" },
+    },
+    item: {
+      signalId: "h4h4h4h4-h4h4-h4h4-h4h4-h4h4h4h4h4h4",
+      section: "health",
+      text: "скрытый сигнал",
+      lifecycleDisplayState: "active_problem",
+      hiddenReason: "expired_schedule_window",
+    },
+    studentName: "Larionova",
+    asOfDate: "2026-06-15",
+  });
   const obviousAutoItem = assignActiveSignalReviewBucket({
     studentName: "Auto Athlete",
     signal: makeSignal({
@@ -278,14 +342,27 @@ async function run(): Promise<void> {
     painAmbiguousReview,
     moveWithDates,
     moveMissingDates,
+    hiddenRecoveryRun,
+    supersededHidden,
+    staleGenericScheduleHidden,
+    hiddenRecommendedReview,
     obviousAutoItem,
   ];
   const baseSelection = selectTpSignalReviewQueueItems({ activeItems });
   if (baseSelection.totalSelected !== 6) {
     failures.push(`expected 6 queue items after selector tightening, got ${baseSelection.totalSelected}`);
   }
+  if (baseSelection.includedBeforeLimit !== 6) {
+    failures.push(`expected 6 included before limit, got ${baseSelection.includedBeforeLimit}`);
+  }
+  if (baseSelection.excludedFromQueue < 4) {
+    failures.push(`expected at least 4 hidden/generic exclusions, got ${baseSelection.excludedFromQueue}`);
+  }
   if (baseSelection.byBucket.review_required !== 4 || baseSelection.byBucket.close_candidate_review !== 2) {
     failures.push("queue bucket counts mismatch after selector tightening");
+  }
+  if (baseSelection.items[0]?.bucket !== "close_candidate_review") {
+    failures.push("close candidates should sort before review_required");
   }
   if (baseSelection.items.some((item) => item.item.signalId === genericPlanConstraint.signalId)) {
     failures.push("generic plan constraint should be excluded from Telegram queue");
@@ -318,6 +395,53 @@ async function run(): Promise<void> {
   if (moveMissingInclusion.include || moveMissingInclusion.exclusionReason !== "move_missing_dates") {
     failures.push("move missing dates inclusion resolver mismatch");
   }
+
+  for (const [label, hiddenItem] of [
+    ["hidden recovery run", hiddenRecoveryRun],
+    ["superseded hidden", supersededHidden],
+    ["stale generic schedule hidden", staleGenericScheduleHidden],
+    ["hidden recommended review", hiddenRecommendedReview],
+  ] as const) {
+    const inclusion = resolveTelegramReviewQueueInclusion(hiddenItem);
+    if (inclusion.include) {
+      failures.push(`${label} should be excluded from Telegram queue`);
+    }
+    if (inclusion.exclusionReason !== "hidden_display_state") {
+      failures.push(`${label} expected hidden_display_state exclusion, got ${inclusion.exclusionReason}`);
+    }
+    if (baseSelection.items.some((item) => item.item.signalId === hiddenItem.signalId)) {
+      failures.push(`${label} leaked into selected queue items`);
+    }
+  }
+
+  const limitOneSelection = selectTpSignalReviewQueueItems({
+    activeItems: [
+      reviewRequiredItem,
+      healthNegativeReview,
+      painAmbiguousReview,
+      moveWithDates,
+      closeCandidateItem,
+    ],
+    limit: 1,
+  });
+  if (limitOneSelection.totalSelected !== 1) {
+    failures.push(`limit=1 should select one item, got ${limitOneSelection.totalSelected}`);
+  }
+  if (limitOneSelection.items[0]?.bucket !== "close_candidate_review") {
+    failures.push("limit=1 should prioritize close_candidate_review over review_required");
+  }
+
+  const limitTwoSelection = selectTpSignalReviewQueueItems({
+    activeItems: [reviewRequiredItem, closeCandidateItem, elenaCloseCandidate, healthNegativeReview],
+    limit: 2,
+  });
+  if (
+    limitTwoSelection.items.length !== 2 ||
+    limitTwoSelection.items.every((item) => item.bucket !== "close_candidate_review")
+  ) {
+    failures.push("limit=2 with two close candidates should include both close candidates first");
+  }
+
   if (baseSelection.items.some((item) => item.bucket === "obvious_auto_record" as never)) {
     failures.push("obvious_auto_record leaked into queue");
   }
@@ -694,10 +818,12 @@ async function run(): Promise<void> {
     failures.push("unexpected report dir before no-write diagnostic");
   }
 
-  console.log(`${LOG_PREFIX} cases=29`);
+  console.log(`${LOG_PREFIX} cases=37`);
   console.log(`- review_required included: ${reviewRequiredItem.bucket}`);
   console.log(`- close_candidate_review included: ${closeCandidateItem.bucket}`);
-  console.log(`- elena-like close candidate included: ${baseSelection.items.some((item) => item.item.signalId === elenaCloseCandidate.signalId)}`);
+  console.log(`- close candidates sort first: ${baseSelection.items[0]?.bucket === "close_candidate_review"}`);
+  console.log(`- hidden rows excluded: ${baseSelection.excludedFromQueue}`);
+  console.log(`- limit=1 close candidate wins: ${limitOneSelection.items[0]?.bucket === "close_candidate_review"}`);
   console.log(`- generic plan constraint excluded: ${!baseSelection.items.some((item) => item.item.signalId === genericPlanConstraint.signalId)}`);
   console.log(`- move missing dates excluded: ${!baseSelection.items.some((item) => item.item.signalId === moveMissingDates.signalId)}`);
   console.log(`- health/pain review_required retained: ${baseSelection.items.some((item) => item.item.signalId === healthNegativeReview.signalId) && baseSelection.items.some((item) => item.item.signalId === painAmbiguousReview.signalId)}`);
@@ -717,7 +843,7 @@ async function run(): Promise<void> {
     process.exit(1);
   }
 
-  console.log(`${LOG_PREFIX} PASS (29/29)`);
+  console.log(`${LOG_PREFIX} PASS (37/37)`);
 }
 
 run().catch((error) => {
