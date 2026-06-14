@@ -6318,7 +6318,11 @@ function hasOperationalDisplayNegativeEvidence(input: {
   });
 }
 
-function hasFreshOperationalPainCloseEvidence(
+// Shared coach-close evidence gate driven by explicit Telegram recovery messages
+// (no TP completion required). Requires a confident positive recovery message
+// after the signal opened, and blocks if later/equal negative evidence exists.
+// Never resolves a signal — only marks it as a coach-reviewable close candidate.
+function hasFreshTelegramRecoveryCloseEvidence(
   signal: TrainingPeaksStudentOperationalSignal,
   evidence: TrainingPeaksOperationalSignalDisplayEvidence | null | undefined
 ): boolean {
@@ -6327,7 +6331,7 @@ function hasFreshOperationalPainCloseEvidence(
     return false;
   }
   const positiveText = latestPositive.textPreview?.replace(/\s+/g, " ").trim() ?? "";
-  if (!isOperationalPositiveObservationText(positiveText)) {
+  if (!isConfidentOperationalRecoveryText(positiveText)) {
     return false;
   }
   const positiveAt = Date.parse(latestPositive.observedAt);
@@ -6347,6 +6351,13 @@ function hasFreshOperationalPainCloseEvidence(
   return true;
 }
 
+function hasFreshOperationalPainCloseEvidence(
+  signal: TrainingPeaksStudentOperationalSignal,
+  evidence: TrainingPeaksOperationalSignalDisplayEvidence | null | undefined
+): boolean {
+  return hasFreshTelegramRecoveryCloseEvidence(signal, evidence);
+}
+
 function hasFreshIllnessCloseCandidateEvidence(
   signal: TrainingPeaksStudentOperationalSignal,
   evidence: TrainingPeaksOperationalSignalDisplayEvidence | null | undefined
@@ -6362,16 +6373,19 @@ function hasFreshIllnessCloseCandidateEvidence(
     return false;
   }
   const completion = evidence?.completion?.latestCompletionAfterOpen ?? null;
-  if (!hasReliableRunningCompletionAfterOpen(completion)) {
-    return false;
-  }
   if (hasOperationalDisplayNegativeEvidence({ signal, evidence, completion })) {
     return false;
   }
-  if (evidence?.completion?.recommendedAction === "coach_close_candidate") {
+  // Path 1: reliable TP running completion after open (existing behavior).
+  if (hasReliableRunningCompletionAfterOpen(completion)) {
     return true;
   }
-  return true;
+  // Path 2: explicit Telegram recovery evidence even without a TP completion
+  // (e.g. doctor cleared + clean run feedback). Negative evidence already blocked above.
+  if (hasFreshTelegramRecoveryCloseEvidence(signal, evidence)) {
+    return true;
+  }
+  return false;
 }
 
 export function resolveOperationalSignalDisplayLifecycleState(
@@ -6622,6 +6636,29 @@ export function isOperationalNegativeObservationText(text: string): boolean {
 export function isOperationalPositiveObservationText(text: string): boolean {
   const normalized = normalizeOperationalSignalSemanticText([text]);
   return OPERATIONAL_RECOVERY_OBSERVATION_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+// Uncertainty hedges that keep a recovery message ambiguous: positive wording is
+// present but the athlete is explicitly unsure, so it must NOT promote to a
+// coach-close candidate (stays active / monitoring for manual review).
+const OPERATIONAL_RECOVERY_UNCERTAINTY_HEDGE_PATTERNS = [
+  /не\s*понятно|непонятно/iu,
+  /не\s+пойму|не\s+понял[аи]?/iu,
+  /пока\s+(?:не\s+ясно|неясно|непонятно|не\s+понятно|не\s+уверен[ао]?)/iu,
+  /не\s+до\s+конца/iu,
+  /ещ[её]\s+не\s+(?:понятно|ясно|уверен[ао]?)/iu,
+  /время\s+покажет/iu,
+];
+
+export function hasOperationalRecoveryUncertaintyHedge(text: string): boolean {
+  const normalized = normalizeOperationalSignalSemanticText([text]);
+  return OPERATIONAL_RECOVERY_UNCERTAINTY_HEDGE_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+// A confident recovery statement: positive recovery wording without an explicit
+// uncertainty hedge. Used to gate coach-close candidate promotion.
+export function isConfidentOperationalRecoveryText(text: string): boolean {
+  return isOperationalPositiveObservationText(text) && !hasOperationalRecoveryUncertaintyHedge(text);
 }
 
 function resolveNegativeAfterCompletionDisplayText(

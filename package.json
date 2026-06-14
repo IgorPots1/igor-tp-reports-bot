@@ -181,6 +181,7 @@
     "check:tp-signals-review-pending-mutations": "npx tsx scripts/check-tp-signals-review-pending-mutations.ts",
     "check:tp-signals-schedule-expiry": "npx tsx scripts/check-tp-signals-schedule-expiry.ts",
     "check:tp-signals-nonrun-constraint-cleanup": "npx tsx scripts/check-tp-signals-nonrun-constraint-cleanup.ts",
+    "check:tp-signals-recovery-close-candidates": "npx tsx scripts/check-tp-signals-recovery-close-candidates.ts",
     "diagnose:tp-signals-explain": "npx tsx scripts/diagnose-tp-signals-explain.ts",
     "diagnose:tp-signals-review-buckets": "npx tsx scripts/diagnose-tp-signals-review-buckets.ts",
     "diagnose:tp-signals-review-queue": "npx tsx scripts/diagnose-tp-signals-review-queue.ts",

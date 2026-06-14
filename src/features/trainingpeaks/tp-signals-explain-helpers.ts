@@ -138,9 +138,6 @@ function inferRecommendedState(input: {
   if (input.signal.lifecycleState === "monitoring_after_return") {
     return "monitoring_after_return";
   }
-  if (input.signal.signalType === "pain_injury" && input.evidence?.latestPositive?.textPreview) {
-    return "close_candidate";
-  }
   return input.item.lifecycleDisplayState;
 }
 
@@ -201,7 +198,7 @@ export function buildTpSignalExplainRecord(input: {
 }): TpSignalExplainRecord {
   const effective = resolveEffectiveOperationalSignalForDisplay(input.signal);
   const summary = resolveOperationalSignalDisplaySummary(input.signal, null) ?? "";
-  const lifecycleDisplayState = resolveOperationalSignalDisplayLifecycleState(input.signal);
+  const lifecycleDisplayState = resolveOperationalSignalDisplayLifecycleState(input.signal, input.evidence);
   const debugInfo = resolveOperationalSignalDisplayDebugInfo({
     signal: input.signal,
     effective,
