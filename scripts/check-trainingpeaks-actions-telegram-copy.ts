@@ -388,6 +388,47 @@ function run(): void {
     retryQueuedMessage.includes("--action-id=a886b2cb-4d75-40f0-966a-b9905b8af350"),
     "retry queued command missing action id"
   );
+  assert(retryQueuedMessage.includes("Если в течение 1–2 минут"), "queued copy missing conditional runner hint");
+  assert(retryQueuedMessage.includes("Cursor Terminal"), "queued copy missing Cursor Terminal hint");
+  assert(
+    retryQueuedMessage.includes("npm run tp-actions-execute-once -- --action-id="),
+    "queued copy missing action-id execute command"
+  );
+  assert(!retryQueuedMessage.includes("Теперь запусти:"), "queued copy must not use mandatory runner wording");
+  assert(
+    retryQueuedMessage.includes("TrainingPeaks пока не изменён: перенос выполнит runner."),
+    "queued copy missing runner responsibility note"
+  );
+  assert(!retryQueuedMessage.includes("TP_ACTIONS_USE_API_MOVE=truenpm"), "queued copy malformed env string");
+  assert(!retryQueuedMessage.includes("TP_ACTIONS_USE_API_MOVE=truetsx"), "queued copy malformed env string");
+  assert(
+    !retryQueuedMessage.includes("TP_ACTIONS_REAL_EXECUTION=trueTP_ACTIONS_USE_API_MOVE=true"),
+    "queued copy malformed env string"
+  );
+
+  const elenaBackwardsQueuedMessage = formatTrainingPeaksExecuteQueuedMessage({
+    studentName: "Elena Yarulina",
+    parsedPayload: {
+      sourceDate: "2026-06-15",
+      target: { kind: "date", value: "2026-06-14" },
+    },
+    trustedSourceDate: "2026-06-15",
+    trustedTargetDate: "2026-06-14",
+    actionId: "elena-backwards-move-action-id",
+  });
+  assert(elenaBackwardsQueuedMessage.includes("Elena Yarulina: 15.06 → 14.06."), "backwards queued route missing");
+  assert(
+    elenaBackwardsQueuedMessage.includes("⚠️ Перенос на более раннюю дату: 15.06 → 14.06."),
+    "backwards queued warning missing"
+  );
+  assert(
+    elenaBackwardsQueuedMessage.includes("Проверь, что это действительно нужно."),
+    "backwards queued confirmation hint missing"
+  );
+  assert(
+    elenaBackwardsQueuedMessage.includes("--action-id=elena-backwards-move-action-id"),
+    "backwards queued command missing action id"
+  );
 
   console.log(`${LOG_PREFIX} PASS`);
 }

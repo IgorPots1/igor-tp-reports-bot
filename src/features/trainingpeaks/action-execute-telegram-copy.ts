@@ -52,6 +52,26 @@ export function formatActionMoveRouteForCoach(
   return `${formatCompactCoachDateShort(sourceDate)} → ${formatCompactCoachDateShort(targetDate)}`;
 }
 
+function normalizeCoachMoveDateIso(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const match = /^(\d{4}-\d{2}-\d{2})/.exec(value);
+  return match ? match[1] : null;
+}
+
+export function isBackwardsCoachMove(
+  sourceDate: string | null | undefined,
+  targetDate: string | null | undefined
+): boolean {
+  const sourceDay = normalizeCoachMoveDateIso(sourceDate);
+  const targetDay = normalizeCoachMoveDateIso(targetDate);
+  if (!sourceDay || !targetDay) {
+    return false;
+  }
+  return sourceDay > targetDay;
+}
+
 export function formatTrainingPeaksExecuteQueuedMessage(input?: {
   studentName?: string | null;
   parsedPayload?: unknown;
@@ -61,23 +81,36 @@ export function formatTrainingPeaksExecuteQueuedMessage(input?: {
   retry?: boolean;
 }): string {
   const executeCommand = formatTpActionsExecuteOnceCommand({ actionId: input?.actionId });
+  const parsedDates = extractMoveDateRangeFromParsedPayload(input?.parsedPayload ?? {});
+  const sourceDate = input?.trustedSourceDate ?? parsedDates.sourceDate;
+  const targetDate = input?.trustedTargetDate ?? parsedDates.targetDate;
+  const route = formatActionMoveRouteForCoach(input?.parsedPayload ?? {}, {
+    sourceDate,
+    targetDate,
+  });
+
   const lines = input?.retry
     ? ["✅ Повторное выполнение поставлено в очередь."]
     : ["✅ Выполнение поставлено в очередь."];
-  lines.push("TrainingPeaks пока не изменён.", "", input?.retry ? "Запусти:" : "Теперь запусти:", executeCommand);
 
-  if (input?.studentName || input?.parsedPayload) {
-    const route = formatActionMoveRouteForCoach(input.parsedPayload ?? {}, {
-      sourceDate: input.trustedSourceDate,
-      targetDate: input.trustedTargetDate,
-    });
-    const studentName = input.studentName?.trim();
-    if (studentName) {
-      lines.splice(1, 0, `${studentName}: ${route}.`);
-    } else if (route !== "? → ?") {
-      lines.splice(1, 0, `${route}.`);
-    }
+  const studentName = input?.studentName?.trim();
+  if (studentName) {
+    lines.push(`${studentName}: ${route}.`);
+  } else if (route !== "? → ?") {
+    lines.push(`${route}.`);
   }
+
+  if (isBackwardsCoachMove(sourceDate, targetDate)) {
+    lines.push("", `⚠️ Перенос на более раннюю дату: ${route}.`, "Проверь, что это действительно нужно.");
+  }
+
+  lines.push(
+    "",
+    "TrainingPeaks пока не изменён: перенос выполнит runner.",
+    "",
+    "Если в течение 1–2 минут не появится сообщение «✅ Перенос выполнен», запусти в Cursor Terminal:",
+    executeCommand
+  );
 
   return lines.join("\n");
 }

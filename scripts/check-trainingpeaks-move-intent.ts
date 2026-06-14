@@ -665,6 +665,7 @@ async function run(): Promise<void> {
     parsedPayload: viktoriaLikePayload,
     trustedSourceDate: "2026-05-28",
     trustedTargetDate: "2026-05-26",
+    actionId: "viktoria-backwards-move-action-id",
   });
   if (!viktoriaQueuedMessage.includes("Viktoria Sergeeva")) {
     failed += 1;
@@ -682,9 +683,9 @@ async function run(): Promise<void> {
     failed += 1;
     console.log("FAIL: execute queued message must state TrainingPeaks was not mutated");
   }
-  if (!viktoriaQueuedMessage.includes("npm run tp-actions-execute-once")) {
+  if (!viktoriaQueuedMessage.includes("npm run tp-actions-execute-once -- --action-id=")) {
     failed += 1;
-    console.log("FAIL: execute queued message must include exact execute runner command");
+    console.log("FAIL: execute queued message must include exact execute runner command with action id");
   }
   if (!viktoriaQueuedMessage.includes("TP_ACTIONS_REAL_EXECUTION=true")) {
     failed += 1;
@@ -693,6 +694,26 @@ async function run(): Promise<void> {
   if (!viktoriaQueuedMessage.includes("TP_ACTIONS_USE_API_MOVE=true")) {
     failed += 1;
     console.log("FAIL: execute queued message must mention TP_ACTIONS_USE_API_MOVE env");
+  }
+  if (!viktoriaQueuedMessage.includes("Если в течение 1–2 минут")) {
+    failed += 1;
+    console.log("FAIL: execute queued message must use conditional runner instruction");
+  }
+  if (!viktoriaQueuedMessage.includes("Cursor Terminal")) {
+    failed += 1;
+    console.log("FAIL: execute queued message must mention Cursor Terminal");
+  }
+  if (viktoriaQueuedMessage.includes("Теперь запусти:")) {
+    failed += 1;
+    console.log("FAIL: execute queued message must not use mandatory runner wording");
+  }
+  if (!viktoriaQueuedMessage.includes("Перенос на более раннюю дату")) {
+    failed += 1;
+    console.log("FAIL: backwards move queued message must include earlier-date warning");
+  }
+  if (viktoriaQueuedMessage.includes("TP_ACTIONS_USE_API_MOVE=truenpm")) {
+    failed += 1;
+    console.log("FAIL: execute queued message must not contain malformed env string");
   }
   if (viktoriaQueuedMessage.includes("Ученик: ?")) {
     failed += 1;
@@ -706,6 +727,7 @@ async function run(): Promise<void> {
     parsedPayload: viktoriaLikePayload,
     trustedSourceDate: viktoriaDryRunContext?.resolvedSourceDate,
     trustedTargetDate: viktoriaDryRunContext?.resolvedTargetDate,
+    actionId: "viktoria-backwards-move-action-id",
   });
   if (!viktoriaQueuedFromDryRun.includes("28.05 → 26.05")) {
     failed += 1;

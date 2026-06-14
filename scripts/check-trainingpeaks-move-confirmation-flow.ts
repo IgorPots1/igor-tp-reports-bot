@@ -5,7 +5,11 @@ import {
   isCoachConfirmedSourceWorkoutExecuteRevalidationReady,
   validateDryRunLogReadiness,
 } from "@/features/trainingpeaks/move-source-policy";
-import { formatExecuteRevalidationFailureReasonRu } from "@/features/trainingpeaks/action-execute-telegram-copy";
+import {
+  formatExecuteRevalidationFailureReasonRu,
+  formatTrainingPeaksExecuteQueuedMessage,
+  isBackwardsCoachMove,
+} from "@/features/trainingpeaks/action-execute-telegram-copy";
 import {
   buildRevalidationComparison,
   evaluateDryRunOutcome,
@@ -551,6 +555,30 @@ function run(): void {
     /подтверждённая тренировка не совпала/i,
     "revalidation failure copy should be specific"
   );
+
+  assert.equal(isBackwardsCoachMove("2026-06-15", "2026-06-14"), true, "later source date is backwards move");
+  assert.equal(isBackwardsCoachMove("2026-06-14", "2026-06-15"), false, "forward move is not backwards");
+
+  const executeQueuedCopy = formatTrainingPeaksExecuteQueuedMessage({
+    studentName: "Elena Yarulina",
+    parsedPayload: {
+      sourceDate: "2026-06-15",
+      target: { kind: "date", value: "2026-06-14" },
+    },
+    trustedSourceDate: "2026-06-15",
+    trustedTargetDate: "2026-06-14",
+    actionId: "elena-backwards-move-action-id",
+  });
+  assert.match(executeQueuedCopy, /Если в течение 1–2 минут/, "execute queued copy missing conditional runner hint");
+  assert.match(executeQueuedCopy, /Cursor Terminal/, "execute queued copy missing Cursor Terminal hint");
+  assert.match(
+    executeQueuedCopy,
+    /npm run tp-actions-execute-once -- --action-id=elena-backwards-move-action-id/,
+    "execute queued copy missing action-id command"
+  );
+  assert.doesNotMatch(executeQueuedCopy, /Теперь запусти:/, "execute queued copy must not use mandatory runner wording");
+  assert.match(executeQueuedCopy, /Перенос на более раннюю дату/, "backwards execute queued copy missing warning");
+  assert.doesNotMatch(executeQueuedCopy, /TP_ACTIONS_USE_API_MOVE=truenpm/, "execute queued copy malformed env string");
 
   console.log("PASS check-trainingpeaks-move-confirmation-flow");
 }
