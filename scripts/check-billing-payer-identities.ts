@@ -58,7 +58,19 @@ function run(): void {
       description: "Оплата тренерского плана за май",
     })
   );
-  assert(safeCase.length >= 2, "Expected at least two derived identities for safe text.");
+  // Теперь идентификатор только один — по имени плательщика (payer_hint).
+  // Описание из банка больше НЕ используется (generic, ложные совпадения).
+  assert(safeCase.length === 1, "Expected exactly one derived identity (payer name only).");
+  assert(safeCase[0].identityType === "payer_hint", "Only payer_hint identity must be derived.");
+
+  // Описание без имени плательщика не должно давать идентификатор (фикс «Товар 1»).
+  const descriptionOnlyCase = derivePayerIdentitiesFromImportedPayment(
+    buildSampleImportedPayment({
+      payerHint: null,
+      description: "Товар 1",
+    })
+  );
+  assert(descriptionOnlyCase.length === 0, "Description-only payment must not derive any identity.");
 
   const sensitiveCase = derivePayerIdentitiesFromImportedPayment(
     buildSampleImportedPayment({

@@ -94,11 +94,11 @@ function maybeBuildIdentity(
 export function derivePayerIdentitiesFromImportedPayment(
   imported: BillingImportedPayment
 ): DerivedBillingPayerIdentity[] {
-  const candidates = [
-    maybeBuildIdentity("payer_hint", imported.payerHint),
-    maybeBuildIdentity("description_hint", imported.description),
-    maybeBuildIdentity("payment_description", imported.description),
-  ];
+  // Запоминаем/матчим плательщика ТОЛЬКО по имени (payer_hint). Описание из банка
+  // (например, «Товар 1») generic и одинаково у разных людей — по нему нельзя
+  // привязывать плательщика, иначе один платёж ложно «узнаётся» как другой клиент
+  // (и может быть ошибочно авто-засчитан).
+  const candidates = [maybeBuildIdentity("payer_hint", imported.payerHint)];
 
   const seen = new Set<string>();
   const result: DerivedBillingPayerIdentity[] = [];
