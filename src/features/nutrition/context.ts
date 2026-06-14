@@ -4,6 +4,7 @@ import {
   type ResolvedStudentCommunicationProfile,
 } from "@/features/trainingpeaks/communication-profile";
 import { classifyTrainingPeaksWorkoutActivity } from "@/features/trainingpeaks/workout-activity-classification";
+import { getNutritionAdminLocalDate } from "@/features/nutrition/plan-week-policy";
 import type {
   TrainingPeaksStudentMemoryItem,
   TrainingPeaksWorkoutCacheRow,
@@ -739,7 +740,15 @@ export async function buildNutritionTrainingPeaksWeekContext(
     from: weekFrom,
     to: weekTo,
   });
-  const cacheStatus = resolveCacheStatus(rows);
+  const rawCacheStatus = resolveCacheStatus(rows);
+  // A week fully in the past won't change anymore, so an "old scan" is expected
+  // and shouldn't be treated as stale/unusable (which would wrongly force the
+  // review into limited-data mode). Only flag staleness for the current/future
+  // window where we actually expect fresh syncs.
+  const cacheStatus =
+    rawCacheStatus.kind === "stale" && rows.length > 0 && weekTo < getNutritionAdminLocalDate()
+      ? { kind: "ok" as const, note: `Прошедшая неделя: кэш финальный. ${rawCacheStatus.note}` }
+      : rawCacheStatus;
   const totalSessions = rows.length;
   const plannedSessions = rows.filter((row) => row.isPlanned).length;
   const completedSessions = rows.filter((row) => row.isCompleted).length;

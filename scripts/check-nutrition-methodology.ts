@@ -6,8 +6,16 @@ import { generateNutritionWeeklyAnalysis } from "@/features/nutrition/draft-gene
 import {
   buildNutritionMethodologyContext,
   detectWorkoutFuelingInstructions,
+  normalizeTrainingType,
   selectNutritionWeeklyFocus,
 } from "@/features/nutrition/methodology";
+
+// Regression: "отдых"/recovery inside an interval title must NOT be read as a
+// rest day; a genuine rest title still is.
+assert.equal(normalizeTrainingType("run", "3 x 15 мин (отдых бегом)"), "intervals", "interval with recovery jog must be intervals, not rest");
+assert.equal(normalizeTrainingType(null, "Отдых"), "rest", "plain rest title stays rest");
+assert.equal(normalizeTrainingType("day_off", "День отдыха"), "rest", "day_off stays rest");
+assert.equal(normalizeTrainingType(null, "Восстановительный бег"), "easy", "recovery run is a run, not rest");
 
 function buildMockContext(overrides?: Partial<NutritionStudentContext>): NutritionStudentContext {
   return {

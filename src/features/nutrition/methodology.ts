@@ -436,10 +436,20 @@ function formatDistanceKmRu(distanceKm: number): string {
   return `${distanceKm.toFixed(1).replace(".", ",")} км`;
 }
 
-function normalizeTrainingType(rawType: string | null | undefined, title: string): NutritionTrainingType {
+export function normalizeTrainingType(rawType: string | null | undefined, title: string): NutritionTrainingType {
   const raw = (rawType ?? "").toLowerCase();
   const titleLc = title.toLowerCase();
-  if (raw === "day_off" || /rest|отдых/.test(titleLc)) {
+  // "отдых"/"rest" often appears inside a workout title as recovery between reps
+  // (e.g. "3 x 15 мин (отдых бегом)"). Only treat it as a rest DAY when the title
+  // carries no actual workout evidence — otherwise an interval session would be
+  // misread as a day off.
+  const hasWorkoutEvidence =
+    hasNutritionIntervalWorkoutEvidence(title) ||
+    hasNutritionTempoWorkEvidence(title) ||
+    isEasyLightNutritionTitle(title) ||
+    isExplicitNutritionLongRunTitle(title) ||
+    isExplicitRunTitle(title);
+  if (raw === "day_off" || (/rest|отдых|day\s*off|выходн/.test(titleLc) && !hasWorkoutEvidence)) {
     return "rest";
   }
   if (raw === "strength") {
