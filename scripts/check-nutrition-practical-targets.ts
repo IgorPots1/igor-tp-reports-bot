@@ -3,6 +3,25 @@ import assert from "node:assert/strict";
 import { buildNutritionNextWeekPlan } from "@/features/nutrition/weekly-plan-formulas";
 import { renderNutritionTelegramMessage } from "@/features/nutrition/telegram-renderer";
 
+const easyTempoPlan = buildNutritionNextWeekPlan({
+  bodyweightKg: 62,
+  planWeekFrom: "2026-06-15",
+  planWeekTo: "2026-06-21",
+  trainingContext: {
+    workouts: [
+      { date: "2026-06-15", title: "Легкий бег по темпу", type: "run" },
+      { date: "2026-06-17", title: "4 x 4 мин", type: "intervals" },
+      { date: "2026-06-19", title: "Разминка", type: "run" },
+    ],
+  },
+});
+const easyTempoDay = easyTempoPlan.days.find((day) => day.date === "2026-06-15");
+const intervalDay = easyTempoPlan.days.find((day) => day.date === "2026-06-17");
+const warmupDay = easyTempoPlan.days.find((day) => day.date === "2026-06-19");
+assert.equal(easyTempoDay?.training_type, "easy", "Легкий бег по темпу must stay easy");
+assert.equal(intervalDay?.training_type, "hard", "4 x 4 мин must stay hard");
+assert.equal(warmupDay?.training_type, "easy", "Разминка must stay easy");
+
 const plan = buildNutritionNextWeekPlan({
   bodyweightKg: 60,
   planWeekFrom: "2026-06-08",

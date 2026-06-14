@@ -5,7 +5,7 @@ import type {
   NutritionMealSection,
 } from "@/features/nutrition/context";
 import { shouldShowHighFatAthleteFeedback } from "@/features/nutrition/context";
-import { isNutritionLongEnduranceWorkout, isNutritionLongRunWorkout } from "@/features/nutrition/long-run";
+import { isNutritionLongEnduranceWorkout, isNutritionLongRunWorkout, isEasyLightNutritionTitle, hasNutritionTempoWorkEvidence } from "@/features/nutrition/long-run";
 import type { NutritionNextWeekPlan, NutritionNextWeekPlanDay } from "@/features/nutrition/weekly-plan-formulas";
 
 export type NutritionNarrativeWorkoutRole =
@@ -131,7 +131,6 @@ export function buildAthleteFacingNotableFoodMention(input: {
 const INTERVAL_REPEAT_PATTERN = /\b\d+\s*[xх]\s*\d+([,.]\d+)?\s*(мин|min|сек|sec|м|m|км|km)?/i;
 const INTERVAL_DISTANCE_PATTERN = /\b\d+\s*[xх]\s*\d{2,4}\s*(м|m)?/i;
 const INTERVAL_KEYWORD_PATTERN = /(интервал|interval|vo2|повтор|repeats?)/i;
-const TEMPO_KEYWORD_PATTERN = /(темповая|темп|порог|tempo|threshold|lt|пано|панo)/i;
 
 const KEY_ROLE_PRIORITY: NutritionNarrativeWorkoutRole[] = [
   "long_endurance",
@@ -159,11 +158,7 @@ export function isKeyIntervalTitle(title: string): boolean {
 }
 
 export function isKeyTempoTitle(title: string): boolean {
-  const haystack = title.trim();
-  if (!haystack) {
-    return false;
-  }
-  return TEMPO_KEYWORD_PATTERN.test(haystack);
+  return hasNutritionTempoWorkEvidence(title);
 }
 
 export function isCombinedLoadLabel(label: string): boolean {
@@ -262,6 +257,10 @@ export function resolveNutritionNarrativeWorkoutRole(input: {
     return { role: "combined_load", reason: "combined_load_label" };
   }
 
+  if (isEasyLightNutritionTitle(label)) {
+    return { role: "easy_run", reason: "easy_light_title" };
+  }
+
   if (isKeyTempoTitle(label)) {
     return { role: "key_tempo", reason: "tempo_pattern" };
   }
@@ -308,6 +307,14 @@ export function resolveNutritionNarrativeWorkoutRole(input: {
     return { role: "cross_training", reason: "cross_training_type" };
   }
 
+  if (trainingType === "intervals") {
+    return { role: "key_interval", reason: "canonical_interval_type" };
+  }
+
+  if (trainingType === "tempo") {
+    return { role: "key_tempo", reason: "canonical_tempo_type" };
+  }
+
   if (trainingType === "easy" || trainingType === "unknown") {
     return { role: "easy_run", reason: "easy_type" };
   }
@@ -317,7 +324,7 @@ export function resolveNutritionNarrativeWorkoutRole(input: {
   }
 
   if (trainingType === "hard") {
-    return { role: "easy_run", reason: "hard_without_title_evidence" };
+    return { role: "key_tempo", reason: "canonical_hard_type" };
   }
 
   return { role: "unknown", reason: "unknown_type" };
@@ -508,6 +515,59 @@ export function resolveWeekNarrativeDayRoles(
   }
 
   return resolved;
+}
+
+export function mapCarbLoadBasisToNarrativeRole(loadBasis: string): NutritionNarrativeWorkoutRole | null {
+  switch (loadBasis) {
+    case "rest":
+      return "rest";
+    case "easy":
+      return "easy_run";
+    case "hard":
+      return "key_tempo";
+    case "long_run":
+      return "long_run";
+    case "long_endurance":
+      return "long_endurance";
+    case "pre_long":
+      return "easy_run";
+    case "cross_training":
+      return "cross_training";
+    case "strength":
+      return "strength";
+    default:
+      return null;
+  }
+}
+
+export function reconcileNarrativeRoleWithCarbLoadBasis(
+  roleInfo: NutritionNarrativeDayRoleInfo,
+  loadBasis: string | null | undefined
+): NutritionNarrativeDayRoleInfo {
+  if (!loadBasis || loadBasis === "unknown") {
+    return roleInfo;
+  }
+  const basisRole = mapCarbLoadBasisToNarrativeRole(loadBasis);
+  if (!basisRole) {
+    return roleInfo;
+  }
+
+  const softRoles = new Set<NutritionNarrativeWorkoutRole>(["easy_run", "unknown", "rest"]);
+  const hardBases = new Set(["hard", "long_run", "long_endurance", "pre_long"]);
+
+  if (softRoles.has(roleInfo.role) && hardBases.has(loadBasis)) {
+    return { ...roleInfo, role: basisRole, reason: `${roleInfo.reason}+carb_load_basis_${loadBasis}` };
+  }
+  if (roleInfo.role !== "rest" && loadBasis === "rest") {
+    return { ...roleInfo, role: "rest", reason: `${roleInfo.reason}+carb_load_basis_rest` };
+  }
+  if (
+    loadBasis === "easy" &&
+    (roleInfo.role === "key_tempo" || roleInfo.role === "key_interval" || roleInfo.role === "long_run")
+  ) {
+    return { ...roleInfo, role: "easy_run", reason: `${roleInfo.reason}+carb_load_basis_easy` };
+  }
+  return roleInfo;
 }
 
 export class NutritionNarrativeRepetitionState {
@@ -785,7 +845,16 @@ export function buildNutritionDayNarrativeParts(input: {
 
   if (hasEnergyIssue && !isPreLong) {
     if (roleInfo.role === "rest") {
-      parts.energyLine = `${rolePrefix ?? "Это день отдыха."} Для дня отдыха это нижняя граница по энергии. Разово нормально, но такие дни не стоит делать регулярными.`;
+      const onlyEaAmber =
+        findings.includes("ea_amber_screen") &&
+        !findings.includes("ea_red_screen") &&
+        !findings.includes("below_load_energy_floor") &&
+        nutritionStatus !== "below_energy_floor";
+      if (onlyEaAmber) {
+        parts.energyLine = `${rolePrefix ?? "Это день отдыха."} По общей энергии день выглядит скорее сдержанно, но не критично.`;
+      } else {
+        parts.energyLine = `${rolePrefix ?? "Это день отдыха."} Для дня отдыха это нижняя граница по энергии. Разово нормально, но такие дни не стоит делать регулярными.`;
+      }
     } else if (roleInfo.role === "cross_training") {
       parts.energyLine = `${capitalizeRu(athleteTrainingLabel)} тоже считается нагрузкой, и энергии под этот день маловато.`;
     } else if (roleInfo.role === "strength") {

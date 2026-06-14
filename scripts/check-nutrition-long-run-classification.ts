@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 
 import type { NutritionStudentContext } from "@/features/nutrition/context";
 import {
+  isEasyLightNutritionTitle,
+  hasExplicitNutritionQualityWorkoutEvidence,
   isExplicitNutritionLongRunTitle,
   isNutritionLongRunWorkout,
   NUTRITION_LONG_RUN_MIN_DURATION_MINUTES,
@@ -80,6 +82,24 @@ assert.equal(
   true,
   "75 min easy run => long_run"
 );
+assert.equal(
+  isNutritionLongRunWorkout({ title: "3×15 мин", durationMinutes: 73, mode: "past_review", isCompleted: true }),
+  false,
+  "73 min interval session must not become long_run by duration"
+);
+assert.equal(
+  isNutritionLongRunWorkout({ title: "Tempo 91 min", durationMinutes: 91, mode: "past_review", isCompleted: true }),
+  false,
+  "91 min tempo session must not become long_run by duration"
+);
+assert.equal(
+  isNutritionLongRunWorkout({ title: "Бег в легком темпе", durationMinutes: 75, mode: "past_review", isCompleted: true }),
+  true,
+  "75 min easy-light title without quality evidence => long_run by duration"
+);
+assert.equal(isEasyLightNutritionTitle("Легкий бег по темпу"), true);
+assert.equal(hasExplicitNutritionQualityWorkoutEvidence("Легкий бег по темпу"), false);
+assert.equal(hasExplicitNutritionQualityWorkoutEvidence("3×15 мин"), true);
 assert.equal(
   isNutritionLongRunWorkout({ title: "Run", durationMinutes: 80, mode: "past_review", isCompleted: true }),
   true,

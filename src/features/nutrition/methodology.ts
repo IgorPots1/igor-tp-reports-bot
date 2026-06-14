@@ -6,6 +6,9 @@ import type {
 } from "@/features/nutrition/context";
 import { sanitizeNutritionFoodItems } from "@/features/nutrition/context";
 import {
+  hasNutritionIntervalWorkoutEvidence,
+  hasNutritionTempoWorkEvidence,
+  isEasyLightNutritionTitle,
   isExplicitRunTitle,
   isNutritionLongEnduranceWorkout,
   isExplicitNutritionLongRunTitle,
@@ -448,14 +451,14 @@ function normalizeTrainingType(rawType: string | null | undefined, title: string
   if (/race|гонк|соревн/.test(titleLc)) {
     return "race";
   }
-  if (/tempo|темп|порог|threshold/.test(titleLc)) {
-    return "tempo";
+  if (isEasyLightNutritionTitle(title)) {
+    return "easy";
   }
-  if (
-    /интерв|interval|vo2|спринт|hill/.test(titleLc) ||
-    /\b\d{1,2}\s*(?:x|х|×|\*)\s*\d{1,2}\s*(?:мин|min|m)?\b/i.test(titleLc)
-  ) {
+  if (hasNutritionIntervalWorkoutEvidence(title)) {
     return "intervals";
+  }
+  if (hasNutritionTempoWorkEvidence(title)) {
+    return "tempo";
   }
   if (raw === "long_run" || isExplicitNutritionLongRunTitle(title)) {
     return "long_run";

@@ -18,6 +18,9 @@ export type NutritionPlanSource =
   | "unknown";
 
 import {
+  hasNutritionIntervalWorkoutEvidence,
+  hasNutritionTempoWorkEvidence,
+  isEasyLightNutritionTitle,
   isExplicitRunTitle,
   isNutritionLongEnduranceWorkout,
   isExplicitNutritionLongRunTitle,
@@ -274,19 +277,10 @@ function isRunningWorkout(typeRaw: string | null, titleRaw: string | null): bool
 
 function normalizeDayType(typeRaw: string | null, titleRaw: string | null): NutritionPlanDayType {
   const type = (typeRaw ?? "").toLowerCase();
-  const title = (titleRaw ?? "").toLowerCase();
-  const haystack = `${type} ${title}`;
+  const title = titleRaw ?? "";
+  const haystack = `${type} ${title}`.toLowerCase();
   if (/race|гонк|соревн/.test(haystack)) {
     return "race";
-  }
-  if (
-    type === "intervals" ||
-    type === "tempo" ||
-    type === "threshold" ||
-    /интерв|tempo|темп|порог|threshold|vo2|hill|ключ/.test(haystack) ||
-    /\b\d{1,2}\s*(?:x|х|×|\*)\s*\d{1,2}\b/.test(haystack)
-  ) {
-    return "hard";
   }
   if (type === "strength" || /силов/.test(haystack)) {
     return "strength";
@@ -306,12 +300,28 @@ function normalizeDayType(typeRaw: string | null, titleRaw: string | null): Nutr
     type === "run" ||
     type === "endurance" ||
     type === "recovery" ||
+    isEasyLightNutritionTitle(title) ||
     /легк|easy|recovery/.test(haystack)
   ) {
     return "easy";
   }
   if (type === "rest" || type === "day_off" || /rest|отдых/.test(haystack)) {
     return "rest";
+  }
+  if (
+    type === "intervals" ||
+    hasNutritionIntervalWorkoutEvidence(title) ||
+    /\b\d{1,2}\s*(?:x|х|×|\*)\s*\d{1,2}\b/.test(haystack)
+  ) {
+    return "hard";
+  }
+  if (
+    type === "tempo" ||
+    type === "threshold" ||
+    hasNutritionTempoWorkEvidence(title) ||
+    /интерв|vo2|hill|ключ/.test(haystack)
+  ) {
+    return "hard";
   }
   return "unknown";
 }

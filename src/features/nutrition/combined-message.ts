@@ -9,6 +9,7 @@ import {
   formatNutritionWorkoutLabelForAthlete,
   NutritionNarrativeRepetitionState,
   resolveNutritionNarrativeWorkoutRole,
+  reconcileNarrativeRoleWithCarbLoadBasis,
   resolveWeekNarrativeDayRoles,
   type MacroGuardrailStatuses,
 } from "@/features/nutrition/narrative-composer";
@@ -502,7 +503,11 @@ function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
         mode: "past_review",
         isCompleted: true,
       });
-      const roleInfo = weekRoles.get(dateKey) ?? { ...resolvedRole, isKey: false };
+      const carbsGuard = asObject(macroGuardrails.carbs);
+      const roleInfo = reconcileNarrativeRoleWithCarbLoadBasis(
+        weekRoles.get(dateKey) ?? { ...resolvedRole, isKey: false },
+        typeof carbsGuard.loadBasis === "string" ? carbsGuard.loadBasis : null
+      );
       const comment = composeNutritionDayComment(
         {
           trainingType,
@@ -599,7 +604,10 @@ function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
     const nutritionStatus =
       typeof day.nutrition_status === "string" ? day.nutrition_status : typeof day.nutritionStatus === "string" ? day.nutritionStatus : null;
     const findings = asStringArray(day.findings);
-    const macroBase = extractMacroGuardrailStatuses(day.macro_guardrails ?? day.macroGuardrails);
+    const macroGuardrailsRaw = day.macro_guardrails ?? day.macroGuardrails;
+    const macroBase = extractMacroGuardrailStatuses(macroGuardrailsRaw);
+    const carbsGuard = asObject(asObject(macroGuardrailsRaw).carbs);
+    const loadBasis = typeof carbsGuard.loadBasis === "string" ? carbsGuard.loadBasis : null;
     const actual = asObject((day as Record<string, unknown>).actual);
     const macro: MacroGuardrailStatuses = {
       ...macroBase,
@@ -614,11 +622,14 @@ function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
         toFiniteNumber(actual.carbsGPerKg) ??
         toFiniteNumber(actual.carbs_g_per_kg),
     };
-    const roleInfo = weekRoles.get(date) ?? {
-      role: resolveNutritionNarrativeWorkoutRole({ trainingType, trainingLabel, mode: "past_review", isCompleted: true }).role,
-      isKey: false,
-      reason: "fallback",
-    };
+    const roleInfo = reconcileNarrativeRoleWithCarbLoadBasis(
+      weekRoles.get(date) ?? {
+        role: resolveNutritionNarrativeWorkoutRole({ trainingType, trainingLabel, mode: "past_review", isCompleted: true }).role,
+        isKey: false,
+        reason: "fallback",
+      },
+      loadBasis
+    );
     return {
       date,
       trainingType,

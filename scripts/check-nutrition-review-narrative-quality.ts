@@ -10,13 +10,19 @@ import {
   isCombinedLoadLabel,
   isKeyIntervalTitle,
   isKeyTempoTitle,
+  reconcileNarrativeRoleWithCarbLoadBasis,
   resolveNutritionNarrativeWorkoutRole,
   composeNutritionDayComment,
   buildNutritionDayNarrativeParts,
   NutritionNarrativeRepetitionState,
   buildNutritionTargetWeekMainStepLine,
 } from "@/features/nutrition/narrative-composer";
-import { isNutritionLongRunWorkout } from "@/features/nutrition/long-run";
+import {
+  isEasyLightNutritionTitle,
+  isNutritionLongRunWorkout,
+} from "@/features/nutrition/long-run";
+import { buildNutritionMethodologyContext } from "@/features/nutrition/methodology";
+import type { NutritionStudentContext } from "@/features/nutrition/context";
 import type { NutritionWeeklyAnalysis, NutritionWeeklyPlan } from "@/features/nutrition/repository";
 
 function assertRole(title: string, expected: string, options?: { trainingType?: string; durationMinutes?: number }) {
@@ -40,6 +46,14 @@ assertRole("10 х 400 м", "key_interval");
 assertRole("5 x 1000", "key_interval");
 assertRole("темповая 30 мин", "key_tempo");
 assertRole("порог 3 х 10 мин", "key_tempo", { trainingType: "hard" });
+assert.equal(resolveNutritionNarrativeWorkoutRole({ trainingType: "easy", trainingLabel: "Легкий бег по темпу", mode: "past_review", isCompleted: true }).role, "easy_run");
+assert.equal(isKeyTempoTitle("Легкий бег по темпу"), false);
+assert.ok(isEasyLightNutritionTitle("Бег в легком темпе"));
+assert.equal(
+  reconcileNarrativeRoleWithCarbLoadBasis({ role: "easy_run", isKey: false, reason: "easy_type" }, "hard").role,
+  "key_tempo",
+  "easy_run role must reconcile with hard carb load basis"
+);
 assertRole("длительная 90 мин", "long_run", { durationMinutes: 90 });
 assert.equal(
   isNutritionLongRunWorkout({ title: "Easy run", durationMinutes: 70, mode: "past_review", isCompleted: true }),
@@ -452,5 +466,102 @@ const remainingMainStep = buildNutritionTargetWeekMainStepLine(
 );
 assert.match(remainingMainStep, /На оставшиеся дни фокус простой/i, "remaining_only_focus_no_before_key_if_no_future_key");
 assert.doesNotMatch(remainingMainStep, /особенно перед ключевой/i, "remaining_only_focus_no_past_key_workout");
+
+const khadizhatEasyRunContext: NutritionStudentContext = {
+  studentName: "Khadizhat",
+  studentSlug: "khadizhat",
+  studentUuid: "student-khadizhat",
+  resolvedCommunicationProfile: {
+    formality: "ty",
+    formalitySource: "manual",
+    tone: "neutral",
+    preferredGreeting: null,
+    notes: null,
+    conflictFlags: [],
+  },
+  communicationProfilePromptLines: [],
+  telegramContextNotes: null,
+  coachMemoryItems: [],
+  nutritionContextItems: [],
+  weightLogs: [],
+  currentWeightKg: 62,
+  nutritionGoal: null,
+  coachContextRu: null,
+  athleteReportSignals: [],
+  manualMacroRows: [
+    { day: "2026-06-01", weekday: "вс", kcal: 2100, proteinG: 95, fatG: 60, carbsG: 295, confidence: 1, notes: null },
+  ],
+  dataQuality: { parsedDays: 1, lowConfidenceDays: 0, hasResolvedDates: true, unrealisticRows: 0, duplicateDays: [], qualityFlags: [] },
+  reportStatus: "ready_for_analysis",
+  tpPastWeek: {
+    periodFrom: "2026-06-01",
+    periodTo: "2026-06-07",
+    cacheStatus: "ok",
+    cacheStatusNote: "ok",
+    totalSessions: 1,
+    plannedSessions: 0,
+    completedSessions: 1,
+    runningSessions: 1,
+    longRun: null,
+    keyWorkouts: [],
+    workouts: [
+      {
+        date: "2026-06-01",
+        title: "Бег в легком темпе",
+        status: "completed",
+        type: "run",
+        description: null,
+        coachComments: null,
+        plannedText: null,
+        durationHours: 0.75,
+      },
+    ],
+  },
+  tpNextWeek: {
+    periodFrom: "2026-06-08",
+    periodTo: "2026-06-14",
+    cacheStatus: "empty",
+    cacheStatusNote: "empty",
+    totalSessions: 0,
+    plannedSessions: 0,
+    completedSessions: 0,
+    runningSessions: 0,
+    longRun: null,
+    keyWorkouts: [],
+    workouts: [],
+  },
+};
+const khadizhatEasyMethodology = buildNutritionMethodologyContext({ context: khadizhatEasyRunContext });
+const khadizhatEasyDay = khadizhatEasyMethodology.dailyAnalysis.find((day) => day.date === "2026-06-01");
+assert.equal(khadizhatEasyDay?.canonicalDailyAnalysis.trainingType, "easy");
+assert.equal(khadizhatEasyDay?.canonicalDailyAnalysis.macroGuardrails.carbs.loadBasis, "easy");
+assert.notEqual(khadizhatEasyDay?.canonicalDailyAnalysis.macroGuardrails.carbs.status, "low");
+
+const easyRunComment = composeNutritionDayComment(
+  {
+    trainingType: "easy",
+    trainingLabel: "Бег в легком темпе",
+    athleteTrainingLabel: "лёгкий бег",
+    nutritionStatus: "adequate",
+    findings: [],
+    macro: {
+      proteinStatus: "ok",
+      fatStatus: "ok",
+      carbsStatus: khadizhatEasyDay?.canonicalDailyAnalysis.macroGuardrails.carbs.status ?? "ok",
+      carbsGPerKg: 4.76,
+    },
+    hasNutritionCompletenessIssue: false,
+    hasEnergyIssue: false,
+    roleInfo: resolveNutritionNarrativeWorkoutRole({
+      trainingType: "easy",
+      trainingLabel: "Бег в легком темпе",
+      mode: "past_review",
+      isCompleted: true,
+    }),
+    fatFeedbackPolicy: "coach_only",
+  },
+  new NutritionNarrativeRepetitionState()
+);
+assert.doesNotMatch(easyRunComment, /углеводов.*маловато/i, "4.76 g/kg easy day must not say carbs low");
 
 console.log("PASS check-nutrition-review-narrative-quality");

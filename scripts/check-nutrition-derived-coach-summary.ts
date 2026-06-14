@@ -196,6 +196,42 @@ const highFatSummary = buildDerivedNutritionCoachSummary({ review: buildHighFatR
 assert.match(highFatSummary, /Жиры:.*высокий процент энергии из жиров/i, "coach summary must surface high fat");
 assert.match(highFatSummary, /Athlete-facing скрыто по политике coach_only/i);
 
+function buildHighFatReviewWithFoodItems(): NutritionWeeklyAnalysis {
+  return {
+    ...buildHighFatReview(),
+    nutritionSummary: {
+      ...asObject(buildHighFatReview().nutritionSummary),
+      daily_analysis: [
+        {
+          date: "2026-06-09",
+          weekday_ru: "Вторник",
+          date_label: "09.06",
+          training_type: "easy",
+          training_label: "лёгкий бег",
+          nutrition_status: "low_for_load",
+          findings: ["high_fat_percent", "high_fat_may_displace_carbs_on_load_day"],
+          macroGuardrails: {
+            protein: { status: "ok" },
+            fat: { status: "high", percentStatus: "high", g: 95, percentEnergy: 47, coachOnlyFindings: ["high_fat_percent"] },
+            carbs: { status: "borderline" },
+          },
+          canonical_daily_analysis: {
+            date: "2026-06-09",
+            items: [
+              { name: "сыр", section: "dinner", kcal: 320, proteinG: 18, fatG: 26, carbsG: 2 },
+              { name: "орехи", section: "snack", kcal: 280, proteinG: 8, fatG: 24, carbsG: 6 },
+            ],
+          },
+        },
+      ],
+    },
+  };
+}
+
+const highFatFoodSummary = buildDerivedNutritionCoachSummary({ review: buildHighFatReviewWithFoodItems() });
+assert.match(highFatFoodSummary, /Заметные источники вечером:/i, "coach summary must show notable evening fat foods");
+assert.match(highFatFoodSummary, /сыр|орехи/i, "coach summary must include evening food names coach-only");
+
 const noFactsSummary = buildDerivedNutritionCoachSummary({
   review: buildReviewWithoutFacts(),
 });

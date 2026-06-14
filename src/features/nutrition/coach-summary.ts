@@ -13,10 +13,12 @@ import {
   formatNutritionWorkoutLabelForCoach,
   isCombinedLoadLabel,
   pickNotableFoods,
+  reconcileNarrativeRoleWithCarbLoadBasis,
   resolveNutritionNarrativeWorkoutRole,
   resolveWeekNarrativeDayRoles,
   type NutritionWeeklySummaryDayFact,
 } from "@/features/nutrition/narrative-composer";
+import type { NutritionFoodItem } from "@/features/nutrition/context";
 import type { NutritionPageConsistencyIssue } from "@/features/nutrition/page-consistency";
 import type { NutritionWeeklyAnalysis, NutritionWeeklyPlan } from "@/features/nutrition/repository";
 
@@ -31,6 +33,9 @@ type CanonicalDailyFact = {
   findings?: unknown;
   macro_guardrails?: unknown;
   macroGuardrails?: unknown;
+  items?: NutritionFoodItem[];
+  canonical_daily_analysis?: Record<string, unknown>;
+  canonicalDailyAnalysis?: Record<string, unknown>;
 };
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -69,6 +74,7 @@ function extractMacroGuardrailStatuses(macroGuardrails: unknown): {
   carbsStatus: string | null;
   carbsG: number | null;
   carbsGPerKg: number | null;
+  carbsLoadBasis: string | null;
 } {
   const guardrails = asObject(macroGuardrails);
   const proteinGuard = asObject(guardrails.protein);
@@ -83,6 +89,7 @@ function extractMacroGuardrailStatuses(macroGuardrails: unknown): {
     carbsStatus: typeof carbsGuard.status === "string" ? carbsGuard.status : null,
     carbsG: toFiniteNumber(carbsGuard.g ?? carbsGuard.gActual ?? carbsGuard.actualG),
     carbsGPerKg: toFiniteNumber(carbsGuard.gPerKg ?? carbsGuard.g_per_kg),
+    carbsLoadBasis: typeof carbsGuard.loadBasis === "string" ? carbsGuard.loadBasis : null,
   };
 }
 
@@ -216,6 +223,9 @@ function normalizeStoredDailyFactItem(raw: unknown): CanonicalDailyFact | null {
           : typeof item.training_label === "string"
             ? item.training_label
             : "день недели";
+  const items = sanitizeNutritionFoodItems(
+    embedded.items ?? embedded.food_items ?? item.items ?? item.food_items
+  );
   return {
     date,
     training_type: trainingType,
@@ -238,6 +248,10 @@ function normalizeStoredDailyFactItem(raw: unknown): CanonicalDailyFact | null {
       item.macro_guardrails ??
       embedded.macroGuardrails ??
       embedded.macro_guardrails,
+    ...(Object.keys(embedded).length > 0
+      ? { canonical_daily_analysis: embedded, canonicalDailyAnalysis: embedded }
+      : {}),
+    ...(items.length > 0 ? { items } : {}),
   };
 }
 
@@ -327,7 +341,7 @@ function buildWeeklySummaryDays(review: NutritionWeeklyAnalysis): NutritionWeekl
       typeof day.nutrition_status === "string" ? day.nutrition_status : typeof day.nutritionStatus === "string" ? day.nutritionStatus : null;
     const findings = asStringArray(day.findings);
     const macroRaw = extractMacroGuardrailStatuses(day.macro_guardrails ?? day.macroGuardrails);
-    const embedded = asObject((day as Record<string, unknown>).canonicalDailyAnalysis ?? (day as Record<string, unknown>).canonical_daily_analysis);
+    const embedded = asObject(day.canonical_daily_analysis ?? day.canonicalDailyAnalysis);
     const actual = asObject(embedded.actual);
     const macro = {
       proteinStatus: macroRaw.proteinStatus,
@@ -347,13 +361,16 @@ function buildWeeklySummaryDays(review: NutritionWeeklyAnalysis): NutritionWeekl
         toFiniteNumber(actual.carbsGPerKg) ??
         toFiniteNumber(actual.carbs_g_per_kg),
     };
-    const roleInfo = weekRoles.get(date) ?? {
-      role: resolveNutritionNarrativeWorkoutRole({ trainingType, trainingLabel, mode: "past_review", isCompleted: true }).role,
-      isKey: false,
-      reason: "fallback",
-    };
+    const roleInfo = reconcileNarrativeRoleWithCarbLoadBasis(
+      weekRoles.get(date) ?? {
+        role: resolveNutritionNarrativeWorkoutRole({ trainingType, trainingLabel, mode: "past_review", isCompleted: true }).role,
+        isKey: false,
+        reason: "fallback",
+      },
+      macroRaw.carbsLoadBasis
+    );
     const items = sanitizeNutritionFoodItems(
-      embedded.items ?? embedded.food_items ?? (day as Record<string, unknown>).items
+      day.items ?? embedded.items ?? embedded.food_items
     );
     return {
       date,

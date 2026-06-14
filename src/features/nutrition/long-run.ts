@@ -30,6 +30,66 @@ export function isExplicitRunTitle(title?: string | null): boolean {
   return /\brun(ning)?\b|бег|пробеж/.test(haystack);
 }
 
+const EASY_LIGHT_NUTRITION_TITLE_PATTERN =
+  /бег\s+в\s+легк(?:ом|ом)\s+темпе|легк\w*\s+бег\s+по\s+темпу|легк\w*\s+по\s+темпу|бег\s+по\s+темпу|easy\s+(?:run|pace)|recovery\s+run|легк\w*\s+пробеж|разминк|заминк/i;
+
+function isExplicitEasyLightNutritionTitle(title: string): boolean {
+  return EASY_LIGHT_NUTRITION_TITLE_PATTERN.test(title);
+}
+
+export function isEasyLightNutritionTitle(title?: string | null): boolean {
+  const haystack = (title ?? "").trim();
+  if (!haystack) {
+    return false;
+  }
+  if (isExplicitEasyLightNutritionTitle(haystack)) {
+    return true;
+  }
+  const haystackLc = haystack.toLocaleLowerCase("ru");
+  if (/легк|easy|recovery|восстанов|комфортн/.test(haystackLc)) {
+    if (/\b\d{1,2}\s*(?:x|х|×|\*)\s*\d{1,2}\s*(?:мин|min|m)?\b/i.test(haystack)) {
+      return false;
+    }
+    if (/интерв|interval|vo2|спринт|hill/i.test(haystack)) {
+      return false;
+    }
+    if (/темпов(?:ая|ый)|^tempo\b|tempo\s+run|threshold|порог(?:ов(?:ой|ая)?)?/i.test(haystack)) {
+      return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+export function hasNutritionIntervalWorkoutEvidence(title?: string | null): boolean {
+  const haystack = (title ?? "").trim();
+  if (!haystack || isExplicitEasyLightNutritionTitle(haystack)) {
+    return false;
+  }
+  return (
+    /интерв|interval|vo2|спринт|hill/i.test(haystack) ||
+    /\b\d{1,2}\s*(?:x|х|×|\*)\s*\d{1,2}\s*(?:мин|min|m)?\b/i.test(haystack)
+  );
+}
+
+export function hasNutritionTempoWorkEvidence(title?: string | null): boolean {
+  const haystack = (title ?? "").trim();
+  if (!haystack || isExplicitEasyLightNutritionTitle(haystack)) {
+    return false;
+  }
+  if (/темпов(?:ая|ый)|tempo\s+run|threshold|порог(?:ов(?:ой|ая)?)?/i.test(haystack)) {
+    return true;
+  }
+  if (/^tempo\b/i.test(haystack)) {
+    return true;
+  }
+  return false;
+}
+
+export function hasExplicitNutritionQualityWorkoutEvidence(title?: string | null): boolean {
+  return hasNutritionIntervalWorkoutEvidence(title) || hasNutritionTempoWorkEvidence(title);
+}
+
 export function resolveNutritionLongRunDurationMinutes(input: {
   durationMinutes?: number | null;
   durationHours?: number | null;
@@ -51,11 +111,14 @@ export function isNutritionLongRunWorkout(input: {
     return false;
   }
 
-  const durationMinutes = resolveNutritionLongRunDurationMinutes(input);
-  if (durationMinutes !== null && durationMinutes > NUTRITION_LONG_RUN_MIN_DURATION_MINUTES) {
+  if (isExplicitNutritionLongRunTitle(input.title)) {
     return true;
   }
-  if (isExplicitNutritionLongRunTitle(input.title)) {
+  if (hasExplicitNutritionQualityWorkoutEvidence(input.title)) {
+    return false;
+  }
+  const durationMinutes = resolveNutritionLongRunDurationMinutes(input);
+  if (durationMinutes !== null && durationMinutes > NUTRITION_LONG_RUN_MIN_DURATION_MINUTES) {
     return true;
   }
   return false;
@@ -93,6 +156,9 @@ export function resolveNutritionLongRunSource(input: {
 }): NutritionLongRunSource {
   if (isExplicitNutritionLongRunTitle(input.title)) {
     return "explicit_title";
+  }
+  if (hasExplicitNutritionQualityWorkoutEvidence(input.title)) {
+    return "none";
   }
   const durationMinutes = resolveNutritionLongRunDurationMinutes(input);
   if (durationMinutes !== null && durationMinutes > NUTRITION_LONG_RUN_MIN_DURATION_MINUTES) {
