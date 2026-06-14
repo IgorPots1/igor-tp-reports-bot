@@ -14,6 +14,7 @@ import {
   markBillingClientPaid,
   markBillingClientUnpaid,
   resolveBillingMonth,
+  setBillingClientActive,
   undoImportedPaymentMatch,
   unlinkBillingClientFromStudent,
   updateBillingClientById,
@@ -230,11 +231,15 @@ export async function setBillingClientActiveAction(formData: FormData): Promise<
   const nextState = getRequiredFormValue(formData, "isActive") === "true";
   await ensureAdminAccess(redirectTo);
 
+  let pausedMonths = 0;
+
   try {
-    await updateBillingClientById(clientId, {
+    const result = await setBillingClientActive({
+      clientId,
       isActive: nextState,
-      updatedBy: BILLING_ACTION_ACTOR,
+      actor: BILLING_ACTION_ACTOR,
     });
+    pausedMonths = result.pausedMonths;
   } catch (error) {
     revalidateBillingPaths(clientId);
     const message = error instanceof Error ? error.message : "Не удалось обновить статус клиента.";
@@ -242,7 +247,12 @@ export async function setBillingClientActiveAction(formData: FormData): Promise<
   }
 
   revalidateBillingPaths(clientId);
-  redirect(withNotice(redirectTo, "notice", nextState ? "Клиент активирован." : "Клиент поставлен на паузу."));
+  const notice = nextState
+    ? "Клиент активирован."
+    : pausedMonths > 0
+      ? `Клиент на паузе. Неоплаченных месяцев приостановлено: ${pausedMonths}.`
+      : "Клиент поставлен на паузу.";
+  redirect(withNotice(redirectTo, "notice", notice));
 }
 
 export async function linkBillingClientToStudentAction(formData: FormData): Promise<void> {
