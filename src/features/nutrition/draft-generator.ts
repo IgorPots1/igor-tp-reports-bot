@@ -847,6 +847,7 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "Return strict JSON only with keys: coach_summary_text, day_by_day_analysis_text, athlete_message_draft, day_prose, quality_notes, do_not_send_reasons.",
     "day_prose: объект {\"YYYY-MM-DD\": \"проза дня\"} по каждому дню из daily_analysis. Это athlete-facing проза комментария дня без факт-строки и без чисел — числа и факт-строку ставит код. Длину выбирай по day_role: steady/rest — одна-две фразы; key/hard/pre_long — подробнее.",
     "В day_prose не вписывай ккал/граммы/г-на-кг и не повторяй факт-строку — только живой комментарий. Еду называй только из items_notable текущего дня с учётом fat_policy.",
+    "coach_summary_text и day_by_day_analysis_text — ОБЯЗАТЕЛЬНЫЕ непустые поля, заполняй их всегда (даже если основной фокус ушёл в day_prose). coach_summary_text: 2-4 предложения для тренера. day_by_day_analysis_text: по строке-две на каждый день из daily_analysis. Пустые строки в этих полях недопустимы.",
     "coach_summary_text: короткий внутренний текст для тренера.",
     "day_by_day_analysis_text: дневные блоки строго по canonical daily_analysis.",
     "Для каждого дня при наличии данных используй: weekday_ru, date_label, training_label, actual, hint_for_comment/findings.",
@@ -949,15 +950,36 @@ async function generateNutritionWeeklyReviewNarrative(input: {
       });
       return null;
     }
-    const coachSummary = typeof parsed.coach_summary_text === "string" ? parsed.coach_summary_text.trim() : "";
-    const dayByDay = typeof parsed.day_by_day_analysis_text === "string" ? parsed.day_by_day_analysis_text.trim() : "";
+    let coachSummary = typeof parsed.coach_summary_text === "string" ? parsed.coach_summary_text.trim() : "";
+    let dayByDay = typeof parsed.day_by_day_analysis_text === "string" ? parsed.day_by_day_analysis_text.trim() : "";
+    const dayProse = allowAthleteDraft ? sanitizeNutritionDayProse(parsed.day_prose) : {};
     if (!coachSummary || !dayByDay) {
-      note("ai_empty_required_fields", {
-        finishReason,
-        hasCoachSummary: Boolean(coachSummary),
-        hasDayByDay: Boolean(dayByDay),
-      });
-      return null;
+      // Salvage: if the model produced per-day prose, keep AI mode and fill the
+      // empty coach-facing legacy fields deterministically instead of discarding
+      // the whole result (which would also lose the good day_prose).
+      if (Object.keys(dayProse).length > 0) {
+        if (!dayByDay) {
+          dayByDay = buildFallbackDayByDay({ context: input.context, dailyAnalysis: input.dailyAnalysis });
+        }
+        if (!coachSummary) {
+          coachSummary = buildFallbackCoachSummary({
+            context: input.context,
+            selectedFocus: { statementRu: input.oneFocus.statement_ru },
+            proteinSufficient: input.methodologySignals.protein_sufficient,
+            dataQualityFlags: input.context.dataQuality.qualityFlags,
+            nextWeekHasKeySessions: input.context.tpNextWeek.keyWorkouts.length > 0,
+          });
+        }
+        input.diagnostics?.push("ai_legacy_fields_derived");
+        console.warn("[nutrition-review-ai] kept AI day_prose, derived empty coach fields", { finishReason });
+      } else {
+        note("ai_empty_required_fields", {
+          finishReason,
+          hasCoachSummary: Boolean(coachSummary),
+          hasDayByDay: Boolean(dayByDay),
+        });
+        return null;
+      }
     }
     const athleteDraftRaw = typeof parsed.athlete_message_draft === "string" ? parsed.athlete_message_draft.trim() : null;
     const athleteDraft = allowAthleteDraft ? athleteDraftRaw : null;
@@ -965,7 +987,7 @@ async function generateNutritionWeeklyReviewNarrative(input: {
       coach_summary_text: coachSummary,
       day_by_day_analysis_text: dayByDay,
       athlete_message_draft: athleteDraft,
-      day_prose: allowAthleteDraft ? sanitizeNutritionDayProse(parsed.day_prose) : {},
+      day_prose: dayProse,
       quality_notes: Array.isArray(parsed.quality_notes)
         ? parsed.quality_notes.filter((item): item is string => typeof item === "string")
         : [],
