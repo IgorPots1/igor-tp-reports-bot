@@ -38,6 +38,25 @@ function formatBillingMonthLabel(billingMonth: string): string {
   return billingMonth.slice(0, 7);
 }
 
+// Возвращает ключи "YYYY-MM" для месяца платежа и соседних (±1),
+// чтобы ручной список кандидатов закрывал задержанные/авансовые оплаты.
+function getAdjacentBillingMonthKeys(paymentDate: string): Set<string> {
+  const match = paymentDate.match(/^(\d{4})-(\d{2})/);
+  if (!match) {
+    return new Set<string>();
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]); // 1..12
+  const keys = new Set<string>();
+  for (const offset of [-1, 0, 1]) {
+    const base = new Date(Date.UTC(year, month - 1 + offset, 1, 12, 0, 0));
+    const key = `${base.getUTCFullYear()}-${String(base.getUTCMonth() + 1).padStart(2, "0")}`;
+    keys.add(key);
+  }
+  return keys;
+}
+
 function getImportedStatusBadgeClass(status: string): string {
   switch (status) {
     case "matched":
@@ -133,9 +152,17 @@ export default async function AdminBillingImportsPage({ searchParams }: AdminBil
       ) : (
         overview.rows.map((row) => {
           const { imported, suggestions, matchedMonthlyPayment } = row;
-          const manualCandidates = overview.candidates.filter(
+          const sameCurrencyCandidates = overview.candidates.filter(
             (candidate) => candidate.currency === imported.currency
           );
+          // Сужаем ручной список до месяца платежа ±1 — это закрывает тех, кто
+          // платит с задержкой или авансом на соседний месяц, и убирает старые
+          // зависшие месяцы. Если в окне пусто — показываем все (запасной вариант).
+          const nearbyMonthKeys = getAdjacentBillingMonthKeys(imported.paymentDate);
+          const scopedCandidates = sameCurrencyCandidates.filter((candidate) =>
+            nearbyMonthKeys.has(candidate.billingMonth.slice(0, 7))
+          );
+          const manualCandidates = scopedCandidates.length > 0 ? scopedCandidates : sameCurrencyCandidates;
 
           return (
             <article key={imported.id} className="admin-card admin-import-card">
@@ -230,7 +257,9 @@ export default async function AdminBillingImportsPage({ searchParams }: AdminBil
                             </option>
                             {manualCandidates.map((candidate) => (
                               <option key={candidate.id} value={candidate.id}>
-                                {candidate.client.clientName} — {formatBillingMonthLabel(candidate.billingMonth)} —{" "}
+                                {candidate.client.clientName}
+                                {candidate.client.groupName ? ` [${candidate.client.groupName}]` : ""} —{" "}
+                                {formatBillingMonthLabel(candidate.billingMonth)} —{" "}
                                 {formatBillingAmount(candidate.plannedAmount, candidate.currency)}
                               </option>
                             ))}

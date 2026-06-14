@@ -546,15 +546,17 @@ export async function getAdminImportedPaymentsOverview(
     listUnpaidBillingMonthlyPaymentsWithClients(),
   ]);
 
-  // Сортируем кандидатов для ручного выбора по имени клиента (затем по месяцу),
-  // чтобы в выпадающем списке было удобно искать нужного клиента.
-  const candidates = [...unsortedCandidates].sort((left, right) => {
-    const nameDiff = left.client.clientName.localeCompare(right.client.clientName, "ru-RU");
-    if (nameDiff !== 0) {
-      return nameDiff;
-    }
-    return left.billingMonth.localeCompare(right.billingMonth);
-  });
+  // Только активные клиенты как цели для зачёта (ушедшие/на паузе не должны
+  // засорять подсказки и ручной список), отсортированы по имени и месяцу.
+  const candidates = unsortedCandidates
+    .filter((candidate) => candidate.client.isActive)
+    .sort((left, right) => {
+      const nameDiff = left.client.clientName.localeCompare(right.client.clientName, "ru-RU");
+      if (nameDiff !== 0) {
+        return nameDiff;
+      }
+      return left.billingMonth.localeCompare(right.billingMonth);
+    });
 
   const counts = {
     new: allImported.filter((row) => row.status === "new").length,
