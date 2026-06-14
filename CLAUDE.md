@@ -149,3 +149,12 @@ Every task report should include:
 - preserve working flows
 - prefer readable code and practical checks
 - communicate in clear summaries
+
+## 11. Cowork (Claude desktop) рабочий процесс и контекст
+
+Полная памятка: `docs/cowork-workflow.md`. Кратко:
+
+- **Поток фичи:** Claude делает работу в отдельной ветке + проверки (`npm run lint`, `npx tsc --noEmit`, относящиеся `check-*`). Игорь пушит ветку (Vercel preview) → смотрит → Claude делает fast-forward `main` → Игорь один раз `git push origin main`. Без PR-кликанья. Максимум 2 `git push` от Игоря на фичу.
+- **Прод-push и деплой делает только Игорь.** Claude не пушит (нет кредов в песочнице) и не запускает прод-миграции; при необходимости миграции пишет файл в `supabase/migrations/` + команду применить (до деплоя).
+- **Obsidian как контекст:** волт «Igor Second Brain» (`~/Library/Mobile Documents/iCloud~md~obsidian/Documents`) можно подключать как папку — Claude читает/ищет по заметкам (теги во фронтматтере, папки Agent-Hub / AI-Running-Coach / Ученики / Inbox) и складывает итоги задач туда же в том же формате (`ГГГГ-ММ-ДД - превью - хэш.md`, фронтматтер `type/source/category/tags`). Dev-summary по этому репозиторию → папка `Agent-Hub`.
+- **Координация с Cursor:** пока активна сессия Claude, не давать Cursor делать git-операции (коммиты/checkout) — общий рабочий каталог, чужие коммиты «прилипают» к веткам Claude.
