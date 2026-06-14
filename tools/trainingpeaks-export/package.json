@@ -51,6 +51,7 @@
     "check-running-request-structure-truth": "tsx scripts/check-running-request-structure-truth.ts",
     "check-running-workout-generic-runner": "tsx scripts/check-running-workout-generic-runner.ts",
     "tp-import-athletes": "tsx scripts/tp-import-athletes.ts",
+    "tp-onboard-athletes": "tsx scripts/tp-onboard-athletes.ts",
     "tp-enable-weekly-reports": "tsx scripts/tp-enable-weekly-reports.ts",
     "tp-telegram-context-backfill": "tsx scripts/tp-telegram-context-backfill.ts",
     "tp-custom-metrics-availability-report": "tsx scripts/tp-custom-metrics-availability-report.ts",

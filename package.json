@@ -14,6 +14,7 @@
     "tp-discover-workouts-api": "npm --prefix tools/trainingpeaks-export run tp-discover-workouts-api --",
     "tp-discover-custom-metrics-api": "npm --prefix tools/trainingpeaks-export run tp-discover-custom-metrics-api --",
     "tp-discover-athletes": "npm --prefix tools/trainingpeaks-export run tp-discover-athletes --",
+    "tp-onboard-athletes": "npm --prefix tools/trainingpeaks-export run tp-onboard-athletes --",
     "tp:capture-strength-builder": "npm --prefix tools/trainingpeaks-export run tp-capture-strength-builder --",
     "tp:capture-strength-field-truth": "npm --prefix tools/trainingpeaks-export run tp-capture-strength-field-truth --",
     "tp:scrape-strength-rendered-exercises": "npm --prefix tools/trainingpeaks-export run tp-scrape-strength-rendered-exercises --",
