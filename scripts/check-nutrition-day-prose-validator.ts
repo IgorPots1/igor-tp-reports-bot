@@ -226,6 +226,36 @@ for (const prose of [
   assert.ok(hasError(issues, "status_softened"), "hard finding must enforce undershoot marker");
 }
 
+// 3d. Task 4 вариант (б): status_softened catches CONTRADICTION (day-level praise
+// on a hard day), not the absence of an undershoot word. Honest undershoot in any
+// phrasing passes; per-macro praise alongside it passes; day-level approval blocks.
+{
+  // Honest undershoot phrasings the old word-list missed must now pass.
+  for (const prose of [
+    "Углеводов меньше, чем нужно под такую нагрузку.",
+    "Белок 133 г — отлично, но углеводов заметно меньше ориентира.",
+    "Под длительную не дотянул по углеводам.",
+    "Энергия в этот день вышла скромная для такой работы.",
+    "160 г углеводов — меньше, чем ориентир, накануне длительной стоит наполнить запасы.",
+  ]) {
+    assert.ok(
+      !hasError(validateNutritionDayProse({ prose, facts: baseFacts }), "status_softened"),
+      `honest hard-day undershoot must pass: "${prose}"`
+    );
+  }
+  // Day-level approval / "no change needed" on a hard day must block.
+  for (const prose of [
+    "Всё хорошо, ничего менять не надо.",
+    "День отличный, всё в норме, так держать!",
+    "Углеводы и энергия — всё в порядке.",
+  ]) {
+    assert.ok(
+      hasError(validateNutritionDayProse({ prose, facts: baseFacts }), "status_softened"),
+      `day-level praise on a hard day must block: "${prose}"`
+    );
+  }
+}
+
 // 4. Clean prose for a steady day (no numbers, no hard status) passes entirely.
 {
   const steadyFacts: NutritionDayProseFacts = {

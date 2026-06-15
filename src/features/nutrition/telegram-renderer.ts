@@ -392,8 +392,35 @@ const NUTRITION_HARD_DAY_FINDINGS = new Set<string>([
   "low_carbs_before_long_run",
 ]);
 
-const NUTRITION_UNDERSHOOT_MARKERS =
-  /мал(?:о|ова)|низк|нижн|ниже|недостат|пустоват|не\s*хват|нехват|подтян|добав|просад|недобор|поддерж|скромн|улучш|не\s*наполн/i;
+// status_softened (Task 4, вариант б): instead of requiring an undershoot word
+// from an endless list (which produced false cuts on honest phrasings like
+// "меньше"), we catch the CONTRADICTION — a hard (undershoot) day whose prose
+// claims the day is fine / needs no change. The list is short, stable, and
+// DAY-LEVEL: bare per-macro praise ("белок 133 г — отлично") must stay allowed,
+// since the voice opens hard days with praise. Lowercased substring match.
+const NUTRITION_HARD_DAY_APPROVAL_PHRASES: readonly string[] = [
+  "всё хорошо",
+  "все хорошо",
+  "всё в порядке",
+  "все в порядке",
+  "всё в норме",
+  "все в норме",
+  "всё отлично",
+  "все отлично",
+  "всё супер",
+  "все супер",
+  "всё идеально",
+  "всё ок",
+  "все ок",
+  "ничего менять не надо",
+  "ничего менять не нужно",
+  "менять ничего не надо",
+  "ничего не меняем",
+  "ничего не меняю",
+  "так держать",
+  "отличный день",
+  "прекрасный день",
+];
 
 // Number spans that are NOT macro/energy claims and must not be policed as
 // "facts" — workout descriptors, time, dates, percentages, and signed coaching
@@ -491,13 +518,17 @@ export function validateNutritionDayProse(input: {
   const isHardDay =
     (typeof status === "string" && NUTRITION_HARD_DAY_STATUSES.has(status)) ||
     input.facts.findings.some((finding) => NUTRITION_HARD_DAY_FINDINGS.has(finding));
-  if (isHardDay && !NUTRITION_UNDERSHOOT_MARKERS.test(prose)) {
-    pushIssue(
-      issues,
-      "error",
-      "status_softened",
-      "Жёсткий статус дня не отражён в прозе — модель смягчила вывод."
-    );
+  if (isHardDay) {
+    const lowered = prose.toLowerCase();
+    const approval = NUTRITION_HARD_DAY_APPROVAL_PHRASES.find((phrase) => lowered.includes(phrase));
+    if (approval) {
+      pushIssue(
+        issues,
+        "error",
+        "status_softened",
+        `Жёсткий день, а проза хвалит/успокаивает ("${approval}") — модель смягчила вывод.`
+      );
+    }
   }
   return issues;
 }
