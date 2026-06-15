@@ -876,6 +876,7 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "Не используй язык похудения/ограничения: похудеть, сбросить вес, урезать калории, меньше есть, дефицит калорий.",
     "Не давай меню/диету/рецепты. Продукты только как варианты при наличии фактов.",
     "Не придумывай тренировки и не придумывай гели/fueling.",
+    "Если тренировка в tp_context имеет status=planned (а не completed / planned_and_completed) — она НЕ состоялась (пропущена). Не оценивай такой день как тренировочный: считай его поддержанием/восстановлением, спокойно, без упрёка за «недобор под нагрузку» — нагрузки в этот день не было. Опирайся на nutrition_status дня (rest_ok и т.п.), а не на запланированную, но не выполненную работу.",
     "Причинность только с хеджами (может, могло, вполне могло); запрещено: вызвало, из-за этого точно, именно поэтому.",
     "Упоминание athlete name допускается при наличии в facts. One focus only: используй exact one_focus из facts.",
     "If illness/cycle/injury signals present, recommend coach review in coach_summary_text and quality_notes; no medical claims/diagnosis in athlete_message_draft.",
@@ -883,10 +884,17 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     ...NUTRITION_VOICE_STYLE_SPEC_LINES,
     ...NUTRITION_VOICE_FEWSHOT_STABLE_LINES,
   ].join("\n");
+  const noTrainingWeek = input.context.noTrainingWeek === true;
   const systemDynamic = [
     allowAthleteDraft
       ? "athlete_message_draft is required and must be useful Telegram-ready text. Use the required ты/вы form from formality instruction."
       : "Hard safety flags present: athlete_message_draft must be null and coach-only text should explain manual review need.",
+    ...(noTrainingWeek
+      ? [
+          "На этой неделе тренировок не было — считай дни как поддержание (база от веса + восстановление), спокойно и ровно. НЕ пиши про «энергию мало под нагрузку», «недобор под работу» и т.п. — нагрузки не было. Фокус мягкий: ровное питание, белок, восстановление.",
+          "В coach_summary_text добавь короткую оговорку для тренера: по тренировкам данных в TrainingPeaks за эту неделю нет, разбор сделан как поддерживающий; если тренировки были — синхронизировать TP и перегенерировать. В athlete_message_draft эту оговорку НЕ выноси (не пугать «нет данных»).",
+        ]
+      : []),
     ...(allowAthleteDraft ? buildNutritionVoiceFewShotDynamic({ hasMissingDay }) : []),
     `Formality instruction: ${formalityInstruction}`,
   ].join("\n");
@@ -907,6 +915,7 @@ async function generateNutritionWeeklyReviewNarrative(input: {
       next_week: input.context.tpNextWeek,
     },
     data_quality: input.context.dataQuality,
+    week_training_context: noTrainingWeek ? "maintenance_no_training" : "training_week",
     daily_analysis: dailyFacts,
     training_nutrition_links: input.trainingNutritionLinks,
     one_focus: input.oneFocus,
@@ -1101,10 +1110,19 @@ export async function generateNutritionWeeklyAnalysis(input: {
     `communication_formality:${getTrainingPeaksReplyDraftFormalityInstruction(context.resolvedCommunicationProfile.formality)}`
   );
   notes.push(...context.communicationProfilePromptLines);
+  if (context.noTrainingWeek === true) {
+    // Coach-facing caveat: maintenance assumed from an empty TP week. Guaranteed in
+    // notes so the coach sees it even if the model omits it. Not shown to the athlete.
+    notes.push("no_training_week:maintenance_assumed_sync_tp_if_wrong");
+  }
   const resolvedMacroDays = context.manualMacroRows.filter((row) => !row.day.startsWith("unresolved:")).length;
+  // A genuine no-training week (empty past week, but workouts in nearby weeks) is
+  // usable context: days are treated as maintenance and the review generates
+  // normally. Only a true data gap (no workouts anywhere) stays needs_review. (Task 5b.)
   const hasUsableTrainingContext =
-    context.tpPastWeek.workouts.length > 0 &&
-    (context.tpPastWeek.cacheStatus === "ok" || context.tpPastWeek.cacheStatus === "stale");
+    (context.tpPastWeek.workouts.length > 0 &&
+      (context.tpPastWeek.cacheStatus === "ok" || context.tpPastWeek.cacheStatus === "stale")) ||
+    context.noTrainingWeek === true;
   const hasMethodologyFacts =
     resolvedMacroDays > 0 &&
     context.dataQuality.parsedDays > 0 &&

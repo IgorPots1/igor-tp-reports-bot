@@ -1874,7 +1874,12 @@ export function buildNutritionMethodologyContext(input: {
       carbsAroundKeySessions,
       weeklyConsistency,
       proteinSupport,
-      limitedData: context.manualMacroRows.length < 3 || context.tpPastWeek.cacheStatus !== "ok",
+      // A genuine no-training week has an empty TP cache by definition — that is
+      // expected, not a data gap. Only treat empty/non-ok cache as limited data
+      // when it is NOT a confirmed no-training week (Task 5b).
+      limitedData:
+        context.manualMacroRows.length < 3 ||
+        (context.tpPastWeek.cacheStatus !== "ok" && context.noTrainingWeek !== true),
     },
     adjacentTrainingWithoutNutritionDays,
   };

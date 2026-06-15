@@ -340,6 +340,12 @@ export type NutritionStudentContext = {
   reportStatus: "received" | "parsed" | "insufficient" | "needs_review" | "ready_for_analysis";
   tpPastWeek: NutritionTrainingPeaksWeekContext;
   tpNextWeek: NutritionTrainingPeaksWeekContext;
+  /**
+   * True when the past week had no TP workouts but the athlete has workouts in
+   * nearby weeks — i.e. a genuine rest/maintenance week, not a missing-data gap.
+   * Drives maintenance-mode review generation (Task 5b). Optional: absent === false.
+   */
+  noTrainingWeek?: boolean;
 };
 
 const WEEKDAY_RU_TO_INDEX: Record<string, number> = {
@@ -888,6 +894,21 @@ export async function buildNutritionStudentContext(input: {
     essentials.weightLogs.find((item) => item.confirmedByCoach)?.weightKg ?? null;
   const latestWeight = essentials.weightLogs[0]?.weightKg ?? null;
 
+  // No-training-week detection (Task 5b). An empty past week is ambiguous: it can
+  // be a genuine rest week OR a missing TP sync (both leave the cache empty). If
+  // the athlete has TP workouts in nearby weeks (±4 weeks) but none this week, it
+  // was a real rest week — treat it as maintenance. If there are no workouts
+  // anywhere nearby, it's a data gap — leave it to needs_review (don't invent).
+  let noTrainingWeek = false;
+  if (tpPastWeek.workouts.length === 0) {
+    const neighborRows = await getNutritionTrainingPeaksCacheWindow({
+      studentId: input.studentId,
+      from: addDays(input.weekFrom, -28),
+      to: addDays(input.weekTo, 28),
+    });
+    noTrainingWeek = neighborRows.length > 0;
+  }
+
   return {
     studentName: student.studentName,
     studentSlug: student.studentId,
@@ -926,6 +947,7 @@ export async function buildNutritionStudentContext(input: {
     reportStatus,
     tpPastWeek,
     tpNextWeek,
+    noTrainingWeek,
   };
 }
 
