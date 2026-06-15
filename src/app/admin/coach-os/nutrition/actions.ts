@@ -451,11 +451,15 @@ export async function saveNutritionFileReportAction(formData: FormData): Promise
       mimeTypes: files.map((file) => file.type || "application/octet-stream"),
     });
     const forceNeedsReview = parseBoolean(getOptionalFormValue(formData, "forceNeedsReview"), false);
+    const coachNotesRu = getOptionalFormValue(formData, "coachNotesRu");
+    const rememberCoachNote = parseBoolean(getOptionalFormValue(formData, "rememberCoachNote"), false);
     result = await saveNutritionFileReport({
       studentId,
       weekFrom,
       weekTo,
       studentNotes,
+      coachNotesRu,
+      rememberCoachNote,
       files,
       forceNeedsReview,
     });

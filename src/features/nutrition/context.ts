@@ -17,10 +17,12 @@ import {
 } from "@/features/nutrition/long-run";
 import type { NutritionAthleteReportSignal } from "@/features/nutrition/athlete-signals";
 import {
+  emptyNutritionStudentMemory,
   getNutritionStudentEssentials,
   getNutritionTrainingPeaksCacheWindow,
   type NutritionContextItem,
   type NutritionDailyMacro,
+  type NutritionStudentMemory,
   type NutritionWeightLog,
 } from "@/features/nutrition/repository";
 
@@ -332,6 +334,10 @@ export type NutritionStudentContext = {
   currentWeightKg: number | null;
   nutritionGoal: string | null;
   coachContextRu: string | null;
+  /** Task 8: one-time coach note attached to THIS report (this week's review only). */
+  coachReportNoteRu: string | null;
+  /** Tasks 7+8: compact per-student review memory (persistent notes, approved patterns, last focus, trends). */
+  studentMemory: NutritionStudentMemory;
   narrativePreferences?: Required<Pick<NutritionNarrativePreferences, "fatFeedbackPolicy" | "detailLevel">> &
     NutritionNarrativePreferences;
   athleteReportSignals: NutritionAthleteReportSignal[];
@@ -865,6 +871,8 @@ export async function buildNutritionStudentContext(input: {
   weekTo: string;
   manualRows: NormalizedManualMacroRow[];
   athleteReportSignals?: NutritionAthleteReportSignal[];
+  /** Task 8: one-time coach note from THIS report's upload. */
+  coachReportNoteRu?: string | null;
 }): Promise<NutritionStudentContext> {
   const essentials = await getNutritionStudentEssentials(input.studentId);
   const student = essentials.student;
@@ -934,6 +942,8 @@ export async function buildNutritionStudentContext(input: {
     currentWeightKg: essentials.profile?.currentWeightKg ?? latestConfirmedWeight ?? latestWeight ?? null,
     nutritionGoal: essentials.profile?.goal ?? null,
     coachContextRu: essentials.profile?.coachContextRu ?? null,
+    coachReportNoteRu: compactText(input.coachReportNoteRu) ?? null,
+    studentMemory: essentials.profile?.nutritionMemory ?? emptyNutritionStudentMemory(),
     narrativePreferences: applyNutritionFatPolicyOverrides(
       student.studentName,
       getNutritionNarrativePreferences({

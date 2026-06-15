@@ -261,6 +261,19 @@ export default function NutritionFileUploadPanel({
                 <textarea className="admin-textarea admin-textarea-compact" name="studentNotes" rows={2} />
               </label>
               <label className="admin-form-field">
+                <span>Заметки тренера (контекст для разбора)</span>
+                <textarea
+                  className="admin-textarea admin-textarea-compact"
+                  name="coachNotesRu"
+                  rows={2}
+                  placeholder="Например: интервалы натощак утром в 6:48; суматошный вторник; уточнил, что ел перед длительной."
+                />
+              </label>
+              <label className="admin-form-field admin-form-field-inline">
+                <input type="checkbox" name="rememberCoachNote" value="true" />
+                <span>🧠 Запомнить про ученика (подтягивать в каждый разбор)</span>
+              </label>
+              <label className="admin-form-field">
                 <span>Если данных мало</span>
                 <select className="admin-input" name="forceNeedsReview" defaultValue="false">
                   <option value="false">Автостатус по качеству данных</option>

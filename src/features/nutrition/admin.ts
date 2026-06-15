@@ -263,6 +263,8 @@ export async function saveNutritionFileReport(input: {
   weekFrom: string;
   weekTo: string;
   studentNotes?: string | null;
+  coachNotesRu?: string | null;
+  rememberCoachNote?: boolean;
   files: File[];
   forceNeedsReview?: boolean;
 }) {
@@ -307,6 +309,7 @@ export async function saveNutritionFileReport(input: {
     weekTo: effectiveWeek.effectiveWeekTo,
     sourceType: intake.sourceType,
     rawText: input.studentNotes ?? null,
+    coachNotesRu: input.coachNotesRu ?? null,
     fileRefs: {
       files: intake.fileMetas,
       unsupported_files: intake.extraction.unsupportedFiles,
@@ -345,6 +348,13 @@ export async function saveNutritionFileReport(input: {
       items: row.items,
     }));
   const macros = await insertNutritionDailyMacros(macrosToSave);
+
+  // Task 8: "remember about the student" → persist the coach note so it is pulled
+  // into every future review (not just this week's report).
+  if (input.rememberCoachNote && input.coachNotesRu?.trim()) {
+    const { appendNutritionPersistentNote } = await import("@/features/nutrition/repository");
+    await appendNutritionPersistentNote({ studentId: input.studentId, note: input.coachNotesRu });
+  }
 
   return {
     report,
@@ -403,6 +413,7 @@ export async function generateNutritionWeeklyReview(input: {
     weekTo: effectiveWeekTo,
     manualRows: rows,
     athleteReportSignals,
+    coachReportNoteRu: reportWithMacros.report.coachNotesRu,
   });
   const generated = await generateNutritionWeeklyAnalysis({ context });
   const status = generated.safety_flags.blocked

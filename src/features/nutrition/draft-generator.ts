@@ -914,6 +914,8 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "Упоминание athlete name допускается при наличии в facts. One focus only: используй exact one_focus из facts.",
     "If illness/cycle/injury signals present, recommend coach review in coach_summary_text and quality_notes; no medical claims/diagnosis in athlete_message_draft.",
     "Углеводную еду называть свободно как варианты («добавь каши, риса, картофеля»). Жирную еду ученику называть как акцент только при fat_policy=normal; при coach_only/soften/suppress_athlete жирное в текст ученику не выносить — это идёт в coach_summary_text.",
+    "Заметки тренера (student.coach_report_note — разовая на этот отчёт; student.coach_persistent_notes — постоянные про ученика) — это КОНТЕКСТ для тона и акцентов разбора, НЕ числа и НЕ факты дня. Учитывай их в интерпретации (что уточнил ученик, контекст дня), но не выдумывай по ним числа и не цитируй дословно как медфакт.",
+    "Натощак/рано утром: если в заметках тренера указано, что тренировка проходит натощак/рано утром — это осознанный режим, НЕ ошибка питания. Топливо под такую работу ищи в УЖИНЕ НАКАНУНЕ и ЗАВТРАКЕ/восстановлении ПОСЛЕ, а не «в день тренировки до неё мало углеводов». Акцент в разборе и совете смещай на вечер накануне и приём пищи после тренировки.",
     ...NUTRITION_VOICE_STYLE_SPEC_LINES,
     ...NUTRITION_VOICE_FEWSHOT_STABLE_LINES,
   ].join("\n");
@@ -942,6 +944,8 @@ async function generateNutritionWeeklyReviewNarrative(input: {
       formality: input.context.resolvedCommunicationProfile.formality,
       nutrition_goal: input.context.nutritionGoal,
       coach_context_ru: input.context.coachContextRu,
+      coach_report_note: input.context.coachReportNoteRu,
+      coach_persistent_notes: input.context.studentMemory.persistent_notes,
       coach_memory: coachMemory,
       narrative_preferences: nutritionContextNarrativePreferences(input.context),
     },

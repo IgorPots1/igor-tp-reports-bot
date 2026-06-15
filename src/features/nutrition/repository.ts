@@ -21,6 +21,28 @@ import {
 
 export const NUTRITION_COACH_CONTEXT_RU_MAX_LENGTH = 500;
 
+/**
+ * Compact per-student nutrition review memory (Tasks 7+8). Kept small — it is
+ * fed into every review prompt, so it must not balloon token cost.
+ */
+export type NutritionApprovedPattern = {
+  /** Short coach-approved pattern, e.g. "углеводы в беговые дни ниже ориентира". */
+  text: string;
+  /** ISO week-from of the earliest week this was observed (for "третью неделю"). */
+  since_week: string | null;
+};
+
+export type NutritionStudentMemory = {
+  approved_patterns: NutritionApprovedPattern[];
+  persistent_notes: string[];
+  last_focus: string | null;
+  key_trends: string[];
+};
+
+export function emptyNutritionStudentMemory(): NutritionStudentMemory {
+  return { approved_patterns: [], persistent_notes: [], last_focus: null, key_trends: [] };
+}
+
 export type NutritionStudentProfile = {
   id: string;
   studentId: string;
@@ -33,6 +55,7 @@ export type NutritionStudentProfile = {
   toleranceNotes: string | null;
   coachNotes: string | null;
   coachContextRu: string | null;
+  nutritionMemory: NutritionStudentMemory;
   createdAt: string;
   updatedAt: string;
 };
@@ -85,6 +108,7 @@ export type NutritionReport = {
   weekTo: string;
   sourceType: string;
   rawText: string | null;
+  coachNotesRu: string | null;
   fileRefs: Record<string, unknown> | null;
   status: NutritionReportStatus;
   dataQuality: Record<string, unknown>;
@@ -184,6 +208,7 @@ type NutritionStudentProfileRow = {
   tolerance_notes: string | null;
   coach_notes: string | null;
   coach_context_ru: string | null;
+  nutrition_memory: unknown | null;
   created_at: string;
   updated_at: string;
 };
@@ -219,6 +244,7 @@ type NutritionReportRow = {
   week_to: string;
   source_type: string;
   raw_text: string | null;
+  coach_notes_ru: string | null;
   file_refs: unknown | null;
   status: NutritionReportStatus;
   data_quality: unknown;
@@ -299,6 +325,7 @@ export type UpsertNutritionStudentProfileInput = {
   toleranceNotes?: string | null;
   coachNotes?: string | null;
   coachContextRu?: string | null;
+  nutritionMemory?: NutritionStudentMemory;
 };
 
 export type AddNutritionWeightLogInput = {
@@ -326,6 +353,7 @@ export type CreateNutritionReportInput = {
   weekTo: string;
   sourceType: string;
   rawText?: string | null;
+  coachNotesRu?: string | null;
   fileRefs?: Record<string, unknown> | null;
   status?: NutritionReportStatus;
   dataQuality?: Record<string, unknown>;
@@ -464,6 +492,7 @@ function mapNutritionStudentProfileRow(row: NutritionStudentProfileRow): Nutriti
     toleranceNotes: row.tolerance_notes,
     coachNotes: row.coach_notes,
     coachContextRu: compactText(row.coach_context_ru),
+    nutritionMemory: sanitizeNutritionStudentMemory(row.nutrition_memory),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -505,6 +534,7 @@ function mapNutritionReportRow(row: NutritionReportRow): NutritionReport {
     weekTo: row.week_to,
     sourceType: row.source_type,
     rawText: row.raw_text,
+    coachNotesRu: compactText(row.coach_notes_ru),
     fileRefs: row.file_refs && typeof row.file_refs === "object" && !Array.isArray(row.file_refs)
       ? (row.file_refs as Record<string, unknown>)
       : null,
@@ -588,6 +618,33 @@ function compactText(value: string | null | undefined): string | null {
   return normalized || null;
 }
 
+/**
+ * Defensive parse for the stored nutrition_memory JSONB. Caps list sizes so the
+ * memory stays compact (it is fed into every review prompt — Tasks 7+8).
+ */
+export function sanitizeNutritionStudentMemory(value: unknown): NutritionStudentMemory {
+  const obj = toObject(value);
+  const strings = (raw: unknown, max: number): string[] =>
+    (Array.isArray(raw) ? raw : [])
+      .map((item) => compactText(typeof item === "string" ? item : null))
+      .filter((item): item is string => Boolean(item))
+      .slice(0, max);
+  const patterns = (Array.isArray(obj.approved_patterns) ? obj.approved_patterns : [])
+    .map((item) => toObject(item))
+    .map((item) => ({
+      text: compactText(typeof item.text === "string" ? item.text : null),
+      since_week: typeof item.since_week === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.since_week) ? item.since_week : null,
+    }))
+    .filter((item): item is NutritionApprovedPattern => Boolean(item.text))
+    .slice(0, 4);
+  return {
+    approved_patterns: patterns,
+    persistent_notes: strings(obj.persistent_notes, 6),
+    last_focus: compactText(typeof obj.last_focus === "string" ? obj.last_focus : null),
+    key_trends: strings(obj.key_trends, 3),
+  };
+}
+
 export function normalizeNutritionCoachContextRu(value: string | null | undefined): string | null {
   const normalized = compactText(value);
   if (!normalized) {
@@ -640,6 +697,8 @@ export async function upsertNutritionStudentProfile(
     coach_notes: compactText(input.coachNotes),
     coach_context_ru:
       input.coachContextRu === undefined ? undefined : normalizeNutritionCoachContextRu(input.coachContextRu),
+    nutrition_memory:
+      input.nutritionMemory === undefined ? undefined : sanitizeNutritionStudentMemory(input.nutritionMemory),
   };
   const upsertPayload = Object.fromEntries(
     Object.entries(payload).filter(([, value]) => value !== undefined)
@@ -670,6 +729,46 @@ export async function saveNutritionCoachContextRu(input: {
     toleranceNotes: existing?.toleranceNotes ?? null,
     coachNotes: existing?.coachNotes ?? null,
     coachContextRu: normalizeNutritionCoachContextRu(input.coachContextRu),
+  });
+}
+
+export async function saveNutritionStudentMemory(input: {
+  studentId: string;
+  nutritionMemory: NutritionStudentMemory;
+}): Promise<NutritionStudentProfile> {
+  const existing = await getNutritionStudentProfile(input.studentId);
+  return upsertNutritionStudentProfile({
+    studentId: input.studentId,
+    enabled: existing?.enabled ?? false,
+    goal: existing?.goal ?? null,
+    trackingApp: existing?.trackingApp ?? null,
+    currentWeightKg: existing?.currentWeightKg ?? null,
+    preferences: existing?.preferences,
+    dislikes: existing?.dislikes,
+    toleranceNotes: existing?.toleranceNotes ?? null,
+    coachNotes: existing?.coachNotes ?? null,
+    coachContextRu: existing?.coachContextRu ?? null,
+    nutritionMemory: sanitizeNutritionStudentMemory(input.nutritionMemory),
+  });
+}
+
+/** Append one persistent coach note (Task 8 "remember"), deduped, keeping memory compact. */
+export async function appendNutritionPersistentNote(input: {
+  studentId: string;
+  note: string;
+}): Promise<NutritionStudentProfile | null> {
+  const note = compactText(input.note);
+  if (!note) {
+    return null;
+  }
+  const existing = await getNutritionStudentProfile(input.studentId);
+  const memory = existing?.nutritionMemory ?? emptyNutritionStudentMemory();
+  if (memory.persistent_notes.some((item) => item.toLowerCase() === note.toLowerCase())) {
+    return existing;
+  }
+  return saveNutritionStudentMemory({
+    studentId: input.studentId,
+    nutritionMemory: { ...memory, persistent_notes: [...memory.persistent_notes, note] },
   });
 }
 
@@ -758,6 +857,7 @@ export async function createNutritionReport(input: CreateNutritionReportInput): 
       week_to: input.weekTo,
       source_type: input.sourceType,
       raw_text: compactText(input.rawText),
+      coach_notes_ru: compactText(input.coachNotesRu),
       file_refs: input.fileRefs ?? null,
       status: input.status ?? "received",
       data_quality: input.dataQuality ?? {},
