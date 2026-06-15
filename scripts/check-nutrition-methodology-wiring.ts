@@ -39,7 +39,10 @@ assert.match(contextSource, /currentWeightKg:\s*essentials\.profile\?\.currentWe
 const methodologySource = readFileSync(join(root, "src/features/nutrition/methodology.ts"), "utf8");
 assert.match(methodologySource, /isNutritionLongRunWorkout/, "methodology must classify long_run via shared helper");
 assert.match(contextSource, /isNutritionLongRunWorkout/, "TP context must classify long_run via shared helper");
-assert.match(methodologySource, /(?:x\|х\|×\|\\\*)/, "methodology must support x/х/×/* interval patterns");
+// Interval pattern detection (x/х/×/*) was refactored out of methodology.ts into
+// shared helpers (context.ts / long-run.ts / weekly-plan-formulas.ts); methodology
+// classifies intervals through them. Assert the pattern lives in the shared helper.
+assert.match(contextSource, /\(\?:x\|х\|×\|\\\*\)/, "interval pattern x/х/×/* must be supported in the shared TP context helper");
 assert.match(methodologySource, /canonicalDailyAnalysis/, "methodology must build canonicalDailyAnalysis facts");
 assert.match(methodologySource, /weekdayRu/, "methodology canonical facts must include weekdayRu");
 assert.match(methodologySource, /dateLabel/, "methodology canonical facts must include dateLabel");

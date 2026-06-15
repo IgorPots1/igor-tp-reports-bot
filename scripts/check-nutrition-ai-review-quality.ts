@@ -37,7 +37,11 @@ function buildMockContext(overrides?: Partial<NutritionStudentContext>): Nutriti
     dataQuality: {
       parsedDays: 7,
       lowConfidenceDays: 0,
-      hasResolvedDates: true,
+      // hasResolvedDates:false forces forceNeedsReview, so generation uses the
+      // DETERMINISTIC fallback draft instead of attempting the model. Without a
+      // live model key the model path is correctly HELD (Task 3: awaiting_generation,
+      // draft = null), so this is how we exercise + assert fallback draft quality.
+      hasResolvedDates: false,
       unrealisticRows: 0,
       duplicateDays: [],
       qualityFlags: [],
