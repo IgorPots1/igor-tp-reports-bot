@@ -12,6 +12,11 @@ import {
   type NutritionStudentContext,
 } from "@/features/nutrition/context";
 import { buildNutritionDayProseFacts } from "@/features/nutrition/combined-message";
+import {
+  buildNutritionNextWeekPlan,
+  type NutritionNextWeekPlan,
+} from "@/features/nutrition/weekly-plan-formulas";
+import type { NutritionPlanTargetWeekMode } from "@/features/nutrition/plan-week-policy";
 import { EVENING_SECTIONS, pickNotableFoods } from "@/features/nutrition/narrative-composer";
 import { validateNutritionDayProse } from "@/features/nutrition/telegram-renderer";
 import { enqueueOpenAiCall } from "@/features/nutrition/nutrition-generation-queue";
@@ -118,6 +123,12 @@ export type GeneratedNutritionWeeklyAnalysis = {
     interpretation_shadow?: NutritionInterpretationShadowMetadata | null;
     narrative_preferences?: NutritionNarrativePreferences;
     coach_context_ru?: string | null;
+    /** Task 6: next-week plan prose from the same Claude call (null if held/blocked). */
+    next_week_plan_text?: string | null;
+    /** Task 6: deterministic next-week plan numbers the model was shown. */
+    next_week_plan?: NutritionNextWeekPlan;
+    /** Task 6: the plan target week these numbers/prose cover. */
+    plan_week?: { from: string; to: string; mode: NutritionPlanTargetWeekMode };
   };
   tp_context_summary: {
     past_week_key_sessions: number;
@@ -159,6 +170,12 @@ export type GeneratedNutritionWeeklyAnalysis = {
   prompt_hash: string;
   context_hash: string;
   ai_model: string;
+  /** Task 6: next-week plan prose from the same Claude call (null if held/blocked). */
+  next_week_plan_text: string | null;
+  /** Task 6: deterministic next-week plan numbers the model was shown. */
+  next_week_plan: NutritionNextWeekPlan;
+  /** Task 6: the plan target week these numbers/prose cover. */
+  plan_week: { from: string; to: string; mode: NutritionPlanTargetWeekMode };
 };
 
 function avg(values: Array<number | null>): number | null {
@@ -691,6 +708,13 @@ type NutritionAiNarrative = {
   day_by_day_analysis_text: string;
   athlete_message_draft: string | null;
   /**
+   * Athlete-facing prose for next week's nutrition plan, written in the same
+   * Claude call as the review (Task 6 merge). Numbers in this prose are the
+   * deterministic next_week_plan targets, rounded to 10 (Task 4 rule). Null when
+   * safety-blocked or the model produced nothing usable (awaiting_generation).
+   */
+  next_week_plan_text: string | null;
+  /**
    * Per-day athlete-facing prose keyed by ISO date (YYYY-MM-DD). Hybrid path:
    * code owns the fact line + numbers, the model writes only the prose. Empty /
    * absent for any day falls back to the deterministic comment in the renderer.
@@ -803,6 +827,11 @@ function buildFallbackDayByDay(input: {
 async function generateNutritionWeeklyReviewNarrative(input: {
   context: NutritionStudentContext;
   dailyAnalysis: Array<Record<string, unknown>>;
+  /**
+   * Deterministic next-week plan numbers (Task 6). The model writes plan prose
+   * (next_week_plan_text) grounded in these targets — it never invents numbers.
+   */
+  nextWeekPlan: NutritionNextWeekPlan;
   trainingNutritionLinks: string[];
   oneFocus: {
     category: string;
@@ -859,7 +888,11 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "Ничего не пересчитывай и не придумывай: kcal, белки/жиры/углеводы, г/кг, formula targets, day type, nutrition status, one_focus, safety status, race status, TrainingPeaks workouts.",
     "Используй только exact числа и labels из facts JSON.",
     "Не классифицируй дни и не выводи формулы — это уже сделано в коде.",
-    "Return strict JSON only with keys: coach_summary_text, day_by_day_analysis_text, athlete_message_draft, day_prose, quality_notes, do_not_send_reasons.",
+    "Return strict JSON only with keys: coach_summary_text, day_by_day_analysis_text, athlete_message_draft, day_prose, next_week_plan_text, quality_notes, do_not_send_reasons.",
+    "next_week_plan_text: athlete-facing проза ПЛАНА на следующую неделю (одним связным куском, тот же тёплый голос Игоря, plain Telegram text). Это продолжение того же сообщения после разбора прошлой недели — не повторяй приветствие. Опиши, на чём сделать акцент по питанию под РЕАЛЬНЫЕ ключевые тренировки следующей недели из next_week_plan (интервалы/длительная/темпо и дни перед ними): что есть и когда догрузиться углеводами. Без раскладки по граммам на каждый день — это сделает код-таблица отдельно.",
+    "ЧИСЛА в next_week_plan_text бери ТОЛЬКО из next_week_plan (display_target.carbs_g_min/max, kcal, целевые по типу дня) и округляй до 10 (углеводы/ориентиры) — пиши «около 300 г», «300–320 г»; не выдумывай промежуточных и негладких чисел, г/кг ученику не пиши. Если тренировок на следующей неделе в плане нет (next_week_plan.summary.has_training_context=false) — общий мягкий фокус без привязки к дням.",
+    "next_week_plan_text подчиняется тем же запретам, что и athlete_message_draft: без диагнозов/медтерминов, без языка похудения, без меню/рецептов, без выдуманных тренировок и гелей, строгая ты/вы.",
+    "В тексте ученику (athlete_message_draft, day_prose, next_week_plan_text) НЕ используй обобщённых сравнений «прошлая неделя» / «по сравнению с прошлой неделей» / «на прошлой неделе»: сохранённого контекста прошлых недель пока нет. Разбор прошедшей недели веди по конкретным дням и числам этой недели; план пиши вперёд — «на следующей неделе держи …», «в день интервалов добавь …», без отсылок к «прошлой неделе».",
     "day_prose: объект {\"YYYY-MM-DD\": \"проза дня\"} по каждому дню из daily_analysis. Это athlete-facing проза комментария дня. Длину выбирай по day_role: steady/rest — одна-две фразы; key/hard/pre_long — абзац подробнее.",
     "Подача каждого дня как у Игоря, трёхтактно: (1) что хорошо — конкретно похвали («белок 107 отлично, в самую точку», «хорошо, что калорийность подросла»); (2) что недотянуто — с числом и причиной, используя ЦЕЛЬ из target дня («под такую работу хотелось бы ~цель углеводов, у тебя X, недобор ~Z»); (3) мягкий шаг с конкретной едой (каша, рис, паста, картофель, хлеб, фрукты).",
     "ЧИСЛА в day_prose только из фактов дня. ФАКТЫ (сколько реально съедено: ккал, Б, Ж, У, г/кг из actual) — пиши фактическое число, можно округлить до целого для читаемости, но НЕ приближай и не заменяй (нельзя «около 250», если по факту 233). ЦЕЛИ/ориентиры бери ТОЛЬКО из чисел дня — carbsGMin/carbsGMax (и их середину), kcalMin, proteinGMin — округлёнными до 10: пиши «около 240» (середина), «200–280» (края коридора) или «около 300»; НЕ придумывай промежуточные числа (если коридор 196–280, нельзя «250–280»). Недобор = цель − факт, тоже округляй до 10. Не давай дробных/негладких краёв («341–372»). Граница: факт — точно, цель — округлённо из чисел дня. Других чисел не выдумывай.",
@@ -889,6 +922,9 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     allowAthleteDraft
       ? "athlete_message_draft is required and must be useful Telegram-ready text. Use the required ты/вы form from formality instruction."
       : "Hard safety flags present: athlete_message_draft must be null and coach-only text should explain manual review need.",
+    allowAthleteDraft
+      ? "next_week_plan_text is required — athlete-facing plan prose for next week in the same voice."
+      : "Hard safety flags present: next_week_plan_text must be null.",
     ...(noTrainingWeek
       ? [
           "На этой неделе тренировок не было — считай дни как поддержание (база от веса + восстановление), спокойно и ровно. НЕ пиши про «энергию мало под нагрузку», «недобор под работу» и т.п. — нагрузки не было. Фокус мягкий: ровное питание, белок, восстановление.",
@@ -916,6 +952,7 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     },
     data_quality: input.context.dataQuality,
     week_training_context: noTrainingWeek ? "maintenance_no_training" : "training_week",
+    next_week_plan: input.nextWeekPlan,
     daily_analysis: dailyFacts,
     training_nutrition_links: input.trainingNutritionLinks,
     one_focus: input.oneFocus,
@@ -1055,10 +1092,18 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     }
     const athleteDraftRaw = typeof parsed.athlete_message_draft === "string" ? parsed.athlete_message_draft.trim() : null;
     const athleteDraft = allowAthleteDraft ? athleteDraftRaw : null;
+    // Task 6: plan prose from the same call. Plain text, stripped of markdown
+    // fences; held to null when safety-blocked (no athlete-facing text).
+    const planTextRaw =
+      typeof parsed.next_week_plan_text === "string"
+        ? parsed.next_week_plan_text.replace(/```+/g, "").trim()
+        : null;
+    const nextWeekPlanText = allowAthleteDraft && planTextRaw ? planTextRaw : null;
     return {
       coach_summary_text: coachSummary,
       day_by_day_analysis_text: dayByDay,
       athlete_message_draft: athleteDraft,
+      next_week_plan_text: nextWeekPlanText,
       day_prose: dayProse,
       quality_notes: Array.isArray(parsed.quality_notes)
         ? parsed.quality_notes.filter((item): item is string => typeof item === "string")
@@ -1157,10 +1202,32 @@ export async function generateNutritionWeeklyAnalysis(input: {
     dataQualityFlags: context.dataQuality.qualityFlags,
     nextWeekHasKeySessions: context.tpNextWeek.keyWorkouts.length > 0,
   });
+  // Task 6: deterministic next-week plan numbers, computed once here and shared
+  // by (a) the Claude facts (so plan prose is grounded in real targets) and
+  // (b) the persisted analysis (so the chained plan record reuses identical
+  // numbers without a second TP fetch). The plan covers the week the review's
+  // next-week TP context actually spans (the week after the reviewed week):
+  // buildNutritionNextWeekPlan maps workouts BY DATE, so the plan week dates must
+  // equal that context's week or the real key workouts would not line up. In the
+  // normal flow (review run right after the week) this equals today's target plan
+  // week; anchoring to the context keeps prose and numbers aligned even on a
+  // re-run of an older week.
+  const planWeekFrom = context.tpNextWeek.periodFrom;
+  const planWeekTo = context.tpNextWeek.periodTo;
+  const planWeekMode: NutritionPlanTargetWeekMode = "next_week";
+  const nextWeekPlan = buildNutritionNextWeekPlan({
+    bodyweightKg: methodology.bodyweightKg ?? context.currentWeightKg,
+    planWeekFrom,
+    planWeekTo,
+    trainingContext: context.tpNextWeek,
+    previousWeekDailyAnalysis: persistedDailyAnalysis,
+  });
+
   let narrative: {
     coach_summary_text: string;
     day_by_day_analysis_text: string;
     athlete_message_draft: string | null;
+    next_week_plan_text: string | null;
     day_prose: Record<string, string>;
     quality_notes: string[];
     do_not_send_reasons: string[];
@@ -1178,6 +1245,9 @@ export async function generateNutritionWeeklyAnalysis(input: {
           proteinSufficient: methodology.proteinSufficient,
           progressionStrategy: selectedFocus.progressionStrategy,
         }),
+    // Plan prose comes only from a live Claude call; the deterministic plan
+    // narrative is rebuilt downstream from next_week_plan when this is null.
+    next_week_plan_text: null,
     day_prose: {},
     quality_notes: [] as string[],
     do_not_send_reasons: [] as string[],
@@ -1189,6 +1259,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
     const aiNarrative = await generateNutritionWeeklyReviewNarrative({
       context,
       dailyAnalysis: methodology.dailyAnalysis as Array<Record<string, unknown>>,
+      nextWeekPlan,
       trainingNutritionLinks: methodology.trainingNutritionLinks,
       oneFocus: {
         category: selectedFocus.category,
@@ -1418,6 +1489,9 @@ export async function generateNutritionWeeklyAnalysis(input: {
       quality_notes: narrative.quality_notes,
       do_not_send_reasons: [...new Set([...safety.doNotSendReasons, ...narrative.do_not_send_reasons])],
       interpretation_shadow: interpretationShadow,
+      next_week_plan_text: narrative.next_week_plan_text,
+      next_week_plan: nextWeekPlan,
+      plan_week: { from: planWeekFrom, to: planWeekTo, mode: planWeekMode },
     },
     tp_context_summary: {
       past_week_key_sessions: context.tpPastWeek.keyWorkouts.length,
@@ -1463,5 +1537,8 @@ export async function generateNutritionWeeklyAnalysis(input: {
     prompt_hash: promptHash,
     context_hash: contextHash,
     ai_model: narrative.ai_model,
+    next_week_plan_text: narrative.next_week_plan_text,
+    next_week_plan: nextWeekPlan,
+    plan_week: { from: planWeekFrom, to: planWeekTo, mode: planWeekMode },
   };
 }

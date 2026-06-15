@@ -30,7 +30,7 @@ const FACTS = { a: 1, nested: { b: 2 } };
   assert.ok(!("Authorization" in req.headers), "no Bearer auth on anthropic");
   const body = JSON.parse(req.body) as Record<string, unknown>;
   assert.equal(body.model, "claude-sonnet-4-6");
-  assert.equal(body.max_tokens, 4096, "anthropic uses max_tokens");
+  assert.equal(body.max_tokens, 8192, "anthropic uses max_tokens (raised for merged review+plan output — Task 6)");
   const system = body.system as Array<Record<string, unknown>>;
   assert.ok(Array.isArray(system) && system.length === 2, "system is two blocks (stable + dynamic)");
   assert.equal(system[0].text, STABLE, "first block is the stable prompt");
@@ -61,7 +61,7 @@ const FACTS = { a: 1, nested: { b: 2 } };
   assert.equal(sys.role, "system");
   assert.equal(sys.content, `${STABLE}\n${DYNAMIC}`, "openai system = stable + dynamic, stable first");
   assert.equal(body.temperature, 0.2, "gpt-4o keeps temperature");
-  assert.equal(body.max_tokens, 4096, "gpt-4o keeps max_tokens");
+  assert.equal(body.max_tokens, 8192, "gpt-4o keeps max_tokens");
   assert.ok(!("max_completion_tokens" in body), "gpt-4o does not use max_completion_tokens");
 }
 
@@ -77,7 +77,7 @@ const FACTS = { a: 1, nested: { b: 2 } };
       factsPayload: FACTS,
     });
     const body = JSON.parse(req.body) as Record<string, unknown>;
-    assert.equal(body.max_completion_tokens, 4096, `${model} uses max_completion_tokens`);
+    assert.equal(body.max_completion_tokens, 8192, `${model} uses max_completion_tokens`);
     assert.ok(!("max_tokens" in body), `${model} drops max_tokens`);
     assert.ok(!("temperature" in body), `${model} drops temperature`);
   }

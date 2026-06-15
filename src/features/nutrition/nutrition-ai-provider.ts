@@ -19,7 +19,12 @@ const ANTHROPIC_API_URL = process.env.ANTHROPIC_API_URL?.trim() || "https://api.
 const ANTHROPIC_VERSION = "2023-06-01";
 const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
 const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6";
-const MAX_OUTPUT_TOKENS = 4096;
+// The single nutrition call now returns the weekly review (per-day prose for up
+// to 7 days, coach summary, day-by-day, athlete draft) AND the next-week plan
+// prose in one response (Task 6). Review-only output already ran ~4k tokens, so
+// 4096 truncated the merged JSON (max_tokens → invalid JSON → held). 8192 gives
+// headroom; only tokens actually produced are billed.
+const MAX_OUTPUT_TOKENS = 8192;
 
 /** Selected provider. Default is Anthropic; set NUTRITION_AI_PROVIDER=openai to fall back. */
 export function resolveNutritionAiProvider(): NutritionAiProvider {

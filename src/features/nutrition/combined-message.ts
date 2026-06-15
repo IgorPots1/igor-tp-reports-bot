@@ -253,11 +253,18 @@ function resolveUsableNutritionDayProse(value: unknown, facts: NutritionDayProse
   if (typeof value !== "string") {
     return null;
   }
-  const prose = value.replace(/\s+/g, " ").trim();
+  // Normalize em/en dashes to a hyphen exactly like the whole-message cleanup
+  // (cleanupPlainText) does — Igor's voice uses "—" constantly ("белок 133 г —
+  // отлично"), and rejecting on it silently dropped live prose to the dry
+  // deterministic comment. Markdown emphasis/fences are still rejected.
+  const prose = value
+    .replace(/\s+/g, " ")
+    .replace(/[—–]/g, "-")
+    .trim();
   if (prose.length < 2) {
     return null;
   }
-  if (/\*\*|__|```|[—–]/.test(prose)) {
+  if (/\*\*|__|```/.test(prose)) {
     return null;
   }
   if (/TrainingPeaks|FatSecret|OpenAI|\bJSON\b|hint_for_comment|source_quality/.test(prose)) {
@@ -790,6 +797,20 @@ function getPlanFocusLines(
     miniTableMode?: "athlete_remaining_only" | "full_week";
   }
 ): string[] {
+  // Task 6: if the plan prose was written by the model (Claude, same call as the
+  // review), use it as the focus prose so the whole message is in one voice. The
+  // deterministic per-day narrative becomes the fallback. The numbers mini-table
+  // is rendered separately from nextWeekPlan, so it is unaffected either way.
+  if (plan.generationMode === "ai") {
+    const claudePlanLines = (compactText(plan.athleteMessageDraft) ? plan.athleteMessageDraft ?? "" : "")
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (claudePlanLines.length > 0) {
+      return claudePlanLines;
+    }
+  }
+
   const narrativeFocus = buildNutritionTargetWeekFocusNarrative(nextWeekPlan, mode, {
     todayLocalDate: input?.todayLocalDate,
     miniTableMode: input?.miniTableMode ?? "athlete_remaining_only",

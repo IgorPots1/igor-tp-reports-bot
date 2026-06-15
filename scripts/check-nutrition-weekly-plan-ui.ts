@@ -21,7 +21,13 @@ assert.match(studentPage, /plansForWeek/, "student page must list plans for week
 assert.match(studentPage, /planIdFromQuery/, "student page must read planId search param");
 assert.match(studentPage, /getNutritionPlanTargetWeekToday/, "student page must compute target plan week from admin local date");
 
-assert.match(mainUi, /name="sourceReportId"/, "plan form must pass sourceReportId from selected review");
+// Task 6: the plan is generated together with the review in one model call, so
+// there is no separate plan form. The plan card explains the merged flow.
+assert.match(
+  mainUi,
+  /План на неделю генерируется вместе с разбором/,
+  "plan card must explain that the plan is generated together with the review (one button)"
+);
 assert.match(
   mainUi,
   /Выбранный отчёт отличается от отчёта, по которому создан обзор/,
@@ -81,8 +87,11 @@ assert.doesNotMatch(
   /sourceReportId:\s*reportId/,
   "plan action must not pass URL reportId as sourceReportId"
 );
-assert.match(mainUi, /generateNutritionWeeklyPlanAction/, "main UI must use generateNutritionWeeklyPlanAction");
-assert.match(mainUi, /formatNutritionPlanGenerateButtonLabel/, "main UI must include dynamic generate focus button");
+// Task 6: one button. The review action also generates the plan (Claude plan
+// prose from the same call); reuse the saved review TP context so plan numbers
+// match what the model saw.
+assert.match(actions, /claudePlanProse:\s*result\.generated\.next_week_plan_text/, "review action must build the plan from the same Claude call");
+assert.match(actions, /preferSavedTpContext:\s*true/, "merged plan must reuse the saved review TP next-week context");
 assert.match(mainUi, /Сначала сгенерируйте разбор прошлой недели/, "main UI must show empty state without review");
 
 assert.match(mainUi, /formatNutritionStatus\([^,]+,\s*"weekly_plan"\)/, "main UI must use weekly_plan status labels");

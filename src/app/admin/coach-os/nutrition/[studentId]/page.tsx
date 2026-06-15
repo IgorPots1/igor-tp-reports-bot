@@ -9,7 +9,6 @@ import { formatIsoDate, getSingleSearchParam } from "@/app/admin/lib";
 import {
   addNutritionContextNoteAction,
   addNutritionWeightAction,
-  generateNutritionWeeklyPlanAction,
   generateNutritionWeeklyReviewAction,
   parseNutritionManualMacrosAction,
   previewNutritionFileUploadAction,
@@ -49,7 +48,6 @@ import {
   formatNutritionTpCacheStatus,
   formatNutritionPlanTrainingContextLine,
   formatNutritionPlanTargetWeekHeading,
-  formatNutritionPlanGenerateButtonLabel,
   formatNutritionCombinedMessageMissingPlanHint,
   formatNutritionTpNextWeekContextLine,
   NUTRITION_CONTEXT_ITEM_TYPE_LABELS,
@@ -719,20 +717,10 @@ export default async function CoachOsNutritionStudentCardPage({
                 </div>
               ) : null}
 
-              <form className="admin-nutrition-review-row" action={generateNutritionWeeklyPlanAction}>
-                <input type="hidden" name="studentId" value={studentId} />
-                <input type="hidden" name="weekFrom" value={weekFrom} />
-                <input type="hidden" name="weekTo" value={weekTo} />
-                <input type="hidden" name="sourceAnalysisId" value={card.weeklyAnalysis.id} />
-                <input type="hidden" name="redirectTo" value={studentCardPath} />
-                {reviewSourceReportId ? (
-                  <input type="hidden" name="sourceReportId" value={reviewSourceReportId} />
-                ) : null}
-                {selectedReportId ? <input type="hidden" name="reportId" value={selectedReportId} /> : null}
-                <FormActionButton className="admin-button" pendingText="Генерирую…">
-                  {planWeek ? formatNutritionPlanGenerateButtonLabel(planWeek.mode) : "Сгенерировать фокус"}
-                </FormActionButton>
-              </form>
+              <p className="admin-muted admin-nutrition-helper">
+                План на неделю генерируется вместе с разбором прошлой недели одним вызовом модели. Чтобы обновить план,
+                нажмите «Сгенерировать обзор» выше — план пересоберётся в том же голосе.
+              </p>
 
               {!displayPlan ? (
                 <p className="admin-muted admin-nutrition-helper">Сохранённого фокуса на эту неделю пока нет.</p>

@@ -625,10 +625,37 @@ export async function generateNutritionWeeklyReviewAction(formData: FormData): P
       reportId,
       manualRowsOverrideText: getOptionalFormValue(formData, "manualRowsOverrideText"),
     });
+    // Task 6: one button. The review (Claude) already wrote the next-week plan
+    // prose in the same call; build the plan record from it now (numbers from
+    // formulas, no OpenAI). Skip when the review was held (awaiting_generation)
+    // or safety-blocked — those must be regenerated/reviewed, not turned into a
+    // "ready" plan.
+    let planId: string | null = null;
+    const reviewStatus = result.analysis.status;
+    if (reviewStatus === "draft_generated" || reviewStatus === "needs_review") {
+      try {
+        const plan = await generateAndSaveNutritionWeeklyPlan({
+          studentId,
+          sourceAnalysisId: result.analysis.id,
+          sourceReportId: result.analysis.reportId ?? reportId,
+          claudePlanProse: result.generated.next_week_plan_text,
+          claudePlanAiModel: result.generated.ai_model,
+          preferSavedTpContext: true,
+        });
+        planId = plan.id;
+      } catch (planError) {
+        // A plan failure must not lose the saved review; surface it on the page.
+        console.error("[nutrition-review-action] plan generation after review failed", planError);
+      }
+    }
     revalidateNutritionPaths(studentId);
     const message = result.generated.safety_flags.blocked
       ? "Блок безопасности: черновик скрыт, нужна ручная проверка."
-      : "Недельный обзор сгенерирован.";
+      : reviewStatus === "awaiting_generation"
+        ? "Разбор не сгенерирован живой моделью — поставлен в очередь. Перегенерируй."
+        : planId
+          ? "Разбор и план на неделю сгенерированы."
+          : "Недельный обзор сгенерирован.";
     redirect(
       buildNutritionStudentCardHref({
         studentId,
@@ -636,6 +663,7 @@ export async function generateNutritionWeeklyReviewAction(formData: FormData): P
         weekTo: result.effectiveWeekTo,
         reportId,
         reviewId: result.analysis.id,
+        planId,
         notice: message,
       })
     );
