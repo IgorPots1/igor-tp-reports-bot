@@ -434,6 +434,8 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
    * instead of the today-relative target week.
    */
   planWeekOverride?: { from: string; to: string; mode: NutritionPlanTargetWeekMode };
+  /** Task 10: student goal (maintain default). Shifts plan targets for lose/gain. */
+  nutritionGoalType?: import("@/features/nutrition/repository").NutritionGoalType;
 }): NutritionWeeklyPlanFacts {
   const nutritionSummary = input.sourceAnalysis.nutritionSummary;
   const safetyFlags = input.sourceAnalysis.safetyFlags;
@@ -463,6 +465,7 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
     planWeekTo: planWeek.to,
     trainingContext: tpNextWeek,
     previousWeekDailyAnalysis: nutritionSummary.daily_analysis,
+    goalType: input.nutritionGoalType ?? "maintain",
   });
 
   return {
@@ -579,6 +582,7 @@ async function buildNutritionWeeklyPlanFactsInternal(input: {
       tpNextWeekContextOverride: sourceReviewContext,
       todayLocalDate: input.todayLocalDate,
       planWeekOverride,
+      nutritionGoalType: essentials.profile?.nutritionGoalType ?? "maintain",
     });
     return {
       facts,
@@ -638,6 +642,7 @@ async function buildNutritionWeeklyPlanFactsInternal(input: {
     sourceReportId: input.sourceReportId,
     tpNextWeekContextOverride,
     todayLocalDate: input.todayLocalDate,
+    nutritionGoalType: essentials.profile?.nutritionGoalType ?? "maintain",
   });
 
   return { facts, tpContextRefresh };
