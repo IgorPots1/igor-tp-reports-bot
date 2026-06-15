@@ -13,6 +13,10 @@ import {
 } from "@/features/nutrition/context";
 import { EVENING_SECTIONS, pickNotableFoods } from "@/features/nutrition/narrative-composer";
 import {
+  classifyOpenAiError,
+  enqueueOpenAiCall,
+} from "@/features/nutrition/nutrition-generation-queue";
+import {
   buildNutritionMethodologyContext,
   NUTRITION_REVIEW_METHODOLOGY_VERSION,
   selectNutritionWeeklyFocus,
@@ -928,33 +932,70 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     requestBody.max_tokens = 4096;
   }
   try {
-    // Retry transient throttling/server errors (429 / 5xx) with backoff. Honours
-    // Retry-After when present. Quota-exhaustion 429s won't recover, but rate
-    // limits from rapid regenerations will.
-    let response: Response | null = null;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      response = await fetch(OPENAI_API_URL, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(requestBody),
-      });
-      if (response.ok || (response.status !== 429 && response.status < 500) || attempt === 2) {
-        break;
+    // Serialise through the generation queue so concurrent students / the two
+    // calls per student don't burst OpenAI. The slot is held for the whole
+    // retry sequence below.
+    const { response, prefetchedBody } = await enqueueOpenAiCall(async () => {
+      // Retry transient throttling/server errors (429 / 5xx) with exponential
+      // backoff (2s -> 4s -> 8s). Honours Retry-After when present. Rate limits
+      // from rapid regenerations recover, so we retry them; quota exhaustion
+      // (insufficient_quota) won't recover, so we stop immediately and don't
+      // burn attempts. The error body is read once and passed back so the
+      // caller doesn't re-read a consumed stream.
+      let res: Response | null = null;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        res = await fetch(OPENAI_API_URL, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(requestBody),
+        });
+        if (res.ok) {
+          return { response: res, prefetchedBody: null as string | null };
+        }
+        // Non-transient errors: stop immediately.
+        if (res.status !== 429 && res.status < 500) {
+          return { response: res, prefetchedBody: await res.text().catch(() => "") };
+        }
+        const body = await res.text().catch(() => "");
+        // Quota exhausted — retry is useless, stop now.
+        if (classifyOpenAiError(res.status, body) === "insufficient_quota") {
+          return { response: res, prefetchedBody: body };
+        }
+        // Out of attempts for a transient error.
+        if (attempt === 2) {
+          return { response: res, prefetchedBody: body };
+        }
+        const retryAfterRaw = Number(res.headers.get("retry-after"));
+        const delayMs =
+          Number.isFinite(retryAfterRaw) && retryAfterRaw > 0
+            ? Math.min(retryAfterRaw * 1000, 15000)
+            : 2000 * 2 ** attempt;
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
-      const retryAfterRaw = Number(response.headers.get("retry-after"));
-      const delayMs =
-        Number.isFinite(retryAfterRaw) && retryAfterRaw > 0
-          ? Math.min(retryAfterRaw * 1000, 15000)
-          : 1500 * (attempt + 1);
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-    }
+      return { response: res, prefetchedBody: null as string | null };
+    });
     if (!response || !response.ok) {
       const status = response?.status ?? 0;
-      const bodyText = response ? await response.text().catch(() => "") : "";
-      note(`ai_http_${status}`, { status, body: bodyText.slice(0, 300) });
+      const bodyText = prefetchedBody ?? (response ? await response.text().catch(() => "") : "");
+      // Distinguish transient rate limit from exhausted quota / server error so
+      // the fallback reason is actionable (master order Task 1).
+      const errorType = classifyOpenAiError(status, bodyText);
+      if (errorType === "insufficient_quota") {
+        console.error(
+          "[nutrition-review-ai] OpenAI quota exhausted — проверь баланс OpenAI (ретрай бесполезен)",
+          { status }
+        );
+        note("ai_insufficient_quota", { status, body: bodyText.slice(0, 300) });
+      } else if (errorType === "rate_limit_exceeded") {
+        note("ai_rate_limited", { status, body: bodyText.slice(0, 300) });
+      } else if (errorType === "server_error") {
+        note("ai_server_error", { status, body: bodyText.slice(0, 300) });
+      } else {
+        note(`ai_http_${status}`, { status, body: bodyText.slice(0, 300) });
+      }
       return null;
     }
     const payload = (await response.json()) as {
@@ -1210,11 +1251,15 @@ export async function generateNutritionWeeklyAnalysis(input: {
       },
       data_quality: context.dataQuality,
     };
-    const shadowResult = await generateNutritionWeeklyInterpretationShadow({
-      factsPayload: shadowFactsPayload,
-      formality: context.resolvedCommunicationProfile.formality,
-      studentName: context.studentName,
-    });
+    // Route through the same queue so the shadow call doesn't fire back-to-back
+    // with the main narrative call and add to the burst.
+    const shadowResult = await enqueueOpenAiCall(() =>
+      generateNutritionWeeklyInterpretationShadow({
+        factsPayload: shadowFactsPayload,
+        formality: context.resolvedCommunicationProfile.formality,
+        studentName: context.studentName,
+      })
+    );
     interpretationShadow = buildNutritionInterpretationShadowMetadata({
       mode: shadowResult.mode,
       interpretation: shadowResult.interpretation,

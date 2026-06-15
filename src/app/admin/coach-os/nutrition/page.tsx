@@ -2,7 +2,10 @@ import Link from "next/link";
 
 import FormActionButton from "@/app/admin/FormActionButton";
 import { getSingleSearchParam } from "@/app/admin/lib";
-import { setNutritionEnabledAction } from "@/app/admin/coach-os/nutrition/actions";
+import {
+  generateNutritionWeeklyReviewBatchAction,
+  setNutritionEnabledAction,
+} from "@/app/admin/coach-os/nutrition/actions";
 import { listNutritionAdminDashboardRows } from "@/features/nutrition/admin";
 import {
   buildNutritionDashboardOpenHref,
@@ -164,10 +167,29 @@ export default async function CoachOsNutritionDashboardPage({
         </div>
       </div>
 
+      <div className="admin-card admin-card-compact">
+        <form id="nutrition-batch-form" action={generateNutritionWeeklyReviewBatchAction}>
+          <input type="hidden" name="redirectTo" value={redirectTo} />
+          <div className="admin-inline-actions">
+            <FormActionButton
+              className="admin-button admin-button-primary admin-button-compact"
+              pendingText="Генерация пачки…"
+              confirmMessage="Сгенерировать недельные обзоры для всех отмеченных учеников по одному?"
+            >
+              Сгенерировать пачку
+            </FormActionButton>
+            <span className="admin-muted">
+              Отметь учеников ниже. Разборы генерятся последовательно, по одному, с паузой между запросами.
+            </span>
+          </div>
+        </form>
+      </div>
+
       <div className="admin-card admin-card-compact admin-table-wrap">
         <table className="admin-table admin-table-compact">
           <thead>
             <tr>
+              <th></th>
               <th>Ученик</th>
               <th>Питание</th>
               <th>Вес</th>
@@ -183,13 +205,31 @@ export default async function CoachOsNutritionDashboardPage({
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td className="admin-empty-cell" colSpan={10}>
+                <td className="admin-empty-cell" colSpan={11}>
                   Нет учеников по выбранным фильтрам.
                 </td>
               </tr>
             ) : (
-              rows.map((row) => (
+              rows.map((row) => {
+                const batchValue =
+                  row.latestReportId && row.latestReportWeekFrom && row.latestReportWeekTo
+                    ? `${row.studentId}|${row.latestReportId}|${row.latestReportWeekFrom}|${row.latestReportWeekTo}`
+                    : null;
+                return (
                 <tr key={row.studentId}>
+                  <td>
+                    {batchValue ? (
+                      <input
+                        type="checkbox"
+                        name="batchStudent"
+                        form="nutrition-batch-form"
+                        value={batchValue}
+                        aria-label={`Выбрать ${row.studentName} для пачки`}
+                      />
+                    ) : (
+                      <span className="admin-muted">—</span>
+                    )}
+                  </td>
                   <td>
                     <div className="admin-table-primary">
                       <strong>{row.studentName}</strong>
@@ -258,7 +298,8 @@ export default async function CoachOsNutritionDashboardPage({
                     </Link>
                   </td>
                 </tr>
-              ))
+                );
+              })
             )}
           </tbody>
         </table>

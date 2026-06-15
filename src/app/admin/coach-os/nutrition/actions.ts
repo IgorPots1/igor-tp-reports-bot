@@ -539,6 +539,76 @@ export async function generateNutritionWeeklyPlanAction(formData: FormData): Pro
   }
 }
 
+/**
+ * Sequential batch generation (master order Task 1). Generates weekly reviews
+ * for the selected students ONE AT A TIME — never in parallel. Each call already
+ * spaces its OpenAI requests through the in-process generation queue, so a real
+ * "пачка подряд" run does not burst the model into a 429. Reuses the exact same
+ * per-student path as the single-review button; adds no new mutation.
+ *
+ * Each selected entry is `studentId|reportId|weekFrom|weekTo`, mirroring the
+ * hidden inputs the single-review form already trusts.
+ */
+export async function generateNutritionWeeklyReviewBatchAction(formData: FormData): Promise<void> {
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+
+  const entries = formData
+    .getAll("batchStudent")
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  if (entries.length === 0) {
+    redirect(withNotice(redirectTo, "error", "Не выбрано ни одного ученика для пачки."));
+  }
+
+  let ok = 0;
+  let blocked = 0;
+  let rateLimited = 0;
+  let failed = 0;
+  const touchedStudentIds: string[] = [];
+
+  for (const entry of entries) {
+    const [studentId, reportId, weekFrom, weekTo] = entry.split("|");
+    if (!studentId || !reportId || !weekFrom || !weekTo) {
+      failed += 1;
+      continue;
+    }
+    try {
+      const result = await generateNutritionWeeklyReview({ studentId, weekFrom, weekTo, reportId });
+      touchedStudentIds.push(studentId);
+      const notes = result.generated.internal_summary?.notes ?? [];
+      if (notes.some((note) => note.includes("ai_rate_limited") || note.includes("ai_insufficient_quota"))) {
+        rateLimited += 1;
+      }
+      if (result.generated.safety_flags.blocked) {
+        blocked += 1;
+      } else {
+        ok += 1;
+      }
+    } catch {
+      failed += 1;
+    }
+  }
+
+  revalidatePath("/admin/coach-os/nutrition");
+  for (const studentId of touchedStudentIds) {
+    revalidateNutritionPaths(studentId);
+  }
+
+  const parts = [`готово ${ok}`];
+  if (blocked) {
+    parts.push(`блок безопасности ${blocked}`);
+  }
+  if (rateLimited) {
+    parts.push(`лимит OpenAI ${rateLimited}`);
+  }
+  if (failed) {
+    parts.push(`ошибок ${failed}`);
+  }
+  redirect(
+    withNotice(redirectTo, rateLimited || failed ? "error" : "notice", `Пачка разборов: ${parts.join(", ")}.`)
+  );
+}
+
 export async function generateNutritionWeeklyReviewAction(formData: FormData): Promise<void> {
   const studentId = getRequiredFormValue(formData, "studentId");
   const weekFrom = getRequiredFormValue(formData, "weekFrom");
