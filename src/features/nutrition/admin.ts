@@ -407,9 +407,11 @@ export async function generateNutritionWeeklyReview(input: {
   const generated = await generateNutritionWeeklyAnalysis({ context });
   const status = generated.safety_flags.blocked
     ? "blocked_safety"
-    : generated.status === "draft_ready"
-      ? "draft_generated"
-      : "needs_review";
+    : generated.generation_mode === "awaiting_generation"
+      ? "awaiting_generation"
+      : generated.status === "draft_ready"
+        ? "draft_generated"
+        : "needs_review";
 
   const analysis = await createNutritionWeeklyAnalysis({
     studentId: input.studentId,

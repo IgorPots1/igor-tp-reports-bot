@@ -52,7 +52,7 @@ type CanonicalDailyFact = {
 };
 
 export type NutritionCombinedMessageResult = {
-  status: "ready" | "missing_review" | "missing_plan" | "blocked_safety" | "needs_review";
+  status: "ready" | "missing_review" | "missing_plan" | "blocked_safety" | "needs_review" | "awaiting_generation";
   athleteMessageDraft: string | null;
   renderResult: NutritionTelegramRenderResult;
   warnings: string[];
@@ -270,6 +270,60 @@ function resolveUsableNutritionDayProse(value: unknown, facts: NutritionDayProse
     return null;
   }
   return prose;
+}
+
+/**
+ * Build the per-day prose facts (actual macros + code-owned plan target numbers)
+ * from a canonical daily_analysis item. Single source of truth so the render-time
+ * gate (resolveUsableNutritionDayProse) and the generation-time audit in
+ * draft-generator validate model prose against identical facts.
+ */
+export function buildNutritionDayProseFacts(item: Record<string, unknown>): NutritionDayProseFacts {
+  const actual = asObject(item.actual);
+  const kcal = getDailyFactValue(item, actual, "actual_kcal", "kcal");
+  const protein = getDailyFactValue(item, actual, "protein_g", "proteinG");
+  const fat = getDailyFactValue(item, actual, "fat_g", "fatG");
+  const carbs = getDailyFactValue(item, actual, "carbs_g", "carbsG");
+  const carbsGPerKg = toFiniteNumber(item.carbs_g_per_kg) ?? toFiniteNumber(actual.carbsGPerKg);
+  const proteinGPerKg = toFiniteNumber(actual.proteinGPerKg);
+  const findings = asStringArray(item.findings);
+  const nutritionStatus =
+    typeof item.nutrition_status === "string"
+      ? item.nutrition_status
+      : typeof item.nutritionStatus === "string"
+        ? item.nutritionStatus
+        : null;
+  // Code-owned target numbers for this day, so the prose may state coaching
+  // orientations ("цель ~350, у тебя 233, недобор ~100") without the number
+  // validator treating them as invented.
+  const targetObj = asObject(item.target);
+  const carbsGMin = toFiniteNumber(targetObj.carbsGMin);
+  const carbsGMax = toFiniteNumber(targetObj.carbsGMax);
+  const planTargetNumbers: number[] = [];
+  for (const value of [carbsGMin, carbsGMax, toFiniteNumber(targetObj.kcalMin), toFiniteNumber(targetObj.proteinGMin)]) {
+    if (value != null) {
+      planTargetNumbers.push(value);
+    }
+  }
+  if (carbs != null) {
+    const mid = carbsGMin != null && carbsGMax != null ? (carbsGMin + carbsGMax) / 2 : null;
+    for (const target of [carbsGMin, carbsGMax, mid]) {
+      if (target != null && target > carbs) {
+        planTargetNumbers.push(target - carbs);
+      }
+    }
+  }
+  return {
+    kcal,
+    proteinG: protein,
+    fatG: fat,
+    carbsG: carbs,
+    carbsGPerKg,
+    proteinGPerKg,
+    planTargetNumbers,
+    nutritionStatus,
+    findings,
+  };
 }
 
 function extractMacroGuardrailStatuses(macroGuardrails: unknown): MacroGuardrailStatuses {
@@ -574,39 +628,9 @@ ${comment}`;
       }
       // Hybrid: prefer validated model prose, otherwise the deterministic comment.
       // The fact line above is always code-owned and never replaced.
-      const proteinPerKg = toFiniteNumber(actual.proteinGPerKg);
-      // Code-owned target numbers for this day, so the prose may state coaching
-      // orientations ("цель ~350, у тебя 233, недобор ~100") without the number
-      // validator treating them as invented.
-      const targetObj = asObject(item.target);
-      const carbsGMin = toFiniteNumber(targetObj.carbsGMin);
-      const carbsGMax = toFiniteNumber(targetObj.carbsGMax);
-      const planTargetNumbers: number[] = [];
-      for (const value of [carbsGMin, carbsGMax, toFiniteNumber(targetObj.kcalMin), toFiniteNumber(targetObj.proteinGMin)]) {
-        if (value != null) {
-          planTargetNumbers.push(value);
-        }
-      }
-      if (carbs != null) {
-        const mid = carbsGMin != null && carbsGMax != null ? (carbsGMin + carbsGMax) / 2 : null;
-        for (const target of [carbsGMin, carbsGMax, mid]) {
-          if (target != null && target > carbs) {
-            planTargetNumbers.push(target - carbs);
-          }
-        }
-      }
-      const dayComment =
-        resolveUsableNutritionDayProse(item.athlete_prose, {
-          kcal,
-          proteinG: protein,
-          fatG: fat,
-          carbsG: carbs,
-          carbsGPerKg: carbsPerKg,
-          proteinGPerKg: proteinPerKg,
-          planTargetNumbers,
-          nutritionStatus,
-          findings,
-        }) ?? comment;
+      // Facts come from the shared helper so this render-time gate and the
+      // generation-time audit (draft-generator) validate against identical facts.
+      const dayComment = resolveUsableNutritionDayProse(item.athlete_prose, buildNutritionDayProseFacts(item)) ?? comment;
       const carbsKgText = carbsPerKg != null ? ` (${formatNutritionAthletePerKg(carbsPerKg)})` : "";
       return `🔹 ${weekday} (${dateLabel}) · ${athleteTrainingLabel}
 ${formatNutritionAthleteKcal(kcal, { mode: "actual" })} · белок ${formatNutritionAthleteMacro(protein)} · жиры ${formatNutritionAthleteMacro(fat)} · углеводы ${formatNutritionAthleteMacro(carbs)}${carbsKgText}.
@@ -952,6 +976,14 @@ function isReviewBlockedSafety(review: NutritionWeeklyAnalysis): boolean {
   return extractReviewDoNotSendReasons(review).length > 0;
 }
 
+/** The model failed to generate this review — it must not be sent, only regenerated. */
+function isReviewAwaitingGeneration(review: NutritionWeeklyAnalysis): boolean {
+  if (review.status === "awaiting_generation") {
+    return true;
+  }
+  return asObject(review.nutritionSummary).generation_mode === "awaiting_generation";
+}
+
 function isPlanBlockedSafety(plan: NutritionWeeklyPlan): boolean {
   if (plan.status === "blocked_safety") {
     return true;
@@ -988,6 +1020,18 @@ export function buildDerivedNutritionCombinedMessage(input: {
       renderResult: emptyRenderResult(),
       warnings: [],
       sourceReviewId: null,
+      sourcePlanId: input.plan?.id ?? null,
+    };
+  }
+  // The model failed to generate this review — never assemble a sendable text;
+  // the coach must regenerate (master order Task 3, Igor decision #3).
+  if (isReviewAwaitingGeneration(input.review)) {
+    return {
+      status: "awaiting_generation",
+      athleteMessageDraft: null,
+      renderResult: emptyRenderResult(),
+      warnings: [],
+      sourceReviewId: input.review.id,
       sourcePlanId: input.plan?.id ?? null,
     };
   }

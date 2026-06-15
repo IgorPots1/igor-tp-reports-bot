@@ -151,7 +151,16 @@ async function run(): Promise<void> {
     },
   });
   assert.equal(generatedIllnessSignals.status, "needs_review", "illness signals should require coach review without hard block");
-  assert.notEqual(generatedIllnessSignals.athlete_message_draft, null, "illness signals alone must not auto-block athlete draft");
+  // Illness (soft) must not trigger a HARD safety block — the real property here.
+  assert.equal(generatedIllnessSignals.safety_flags.blocked, false, "illness signals alone must not hard-block (safety)");
+  // Task 3: with no live model available in the test env, the review is held for
+  // regeneration rather than handed a template draft as if ready (Igor decision #3).
+  assert.equal(
+    generatedIllnessSignals.generation_mode,
+    "awaiting_generation",
+    "model unavailable -> awaiting_generation (draft held, not auto-blocked by safety)"
+  );
+  assert.equal(generatedIllnessSignals.athlete_message_draft, null, "held athlete draft when model unavailable");
 
   console.log("PASS check-nutrition-safety-blocks");
 }

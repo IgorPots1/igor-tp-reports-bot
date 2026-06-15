@@ -92,7 +92,7 @@ function getBadgeClass(status: string): string {
   if (status === "blocked_safety" || status === "insufficient") {
     return "admin-badge admin-badge-danger";
   }
-  if (status === "needs_review") {
+  if (status === "needs_review" || status === "awaiting_generation") {
     return "admin-badge admin-badge-warning";
   }
   return "admin-badge admin-badge-outline";
@@ -859,7 +859,24 @@ export default async function CoachOsNutritionStudentCardPage({
         <article className="admin-card admin-card-compact admin-nutrition-card-wide">
           <h3>Черновик ученику — полный текст</h3>
           <p className="admin-muted">Основной текст для отправки ученику. Копируйте именно этот блок.</p>
-          {combinedMessage.status === "missing_review" ? (
+          {combinedMessage.status === "awaiting_generation" ? (
+            <>
+              <div className="admin-alert admin-alert-error">
+                <strong>Разбор ещё не сгенерирован живой моделью.</strong> Поставлен в очередь — текст ученику не
+                сформирован и не готов к отправке. Перегенерируй разбор.
+              </div>
+              <form action={generateNutritionWeeklyReviewAction}>
+                <input type="hidden" name="studentId" value={studentId} />
+                <input type="hidden" name="weekFrom" value={weekFrom} />
+                <input type="hidden" name="weekTo" value={weekTo} />
+                <input type="hidden" name="reportId" value={selectedReportId ?? ""} />
+                <input type="hidden" name="redirectTo" value={studentCardPath} />
+                <FormActionButton className="admin-button" pendingText="Перегенерирую…" disabled={!selectedReportId}>
+                  Перегенерировать
+                </FormActionButton>
+              </form>
+            </>
+          ) : combinedMessage.status === "missing_review" ? (
             <p className="admin-muted">Сначала сгенерируйте разбор прошлой недели.</p>
           ) : combinedMessage.status === "missing_plan" ? (
             <p className="admin-muted">
@@ -1107,6 +1124,11 @@ export default async function CoachOsNutritionStudentCardPage({
                   <h4>Служебный черновик обзора из БД</h4>
                   {!card.weeklyAnalysis ? (
                     <p className="admin-muted">Обзор ещё не сгенерирован.</p>
+                  ) : card.weeklyAnalysis.status === "awaiting_generation" ? (
+                    <div className="admin-alert admin-alert-error">
+                      <strong>Ожидает генерации живой моделью.</strong> Черновик не сформирован — перегенерируй разбор
+                      выше. Это не финальный текст.
+                    </div>
                   ) : card.weeklyAnalysis.status === "blocked_safety" ? (
                     <div className="admin-alert admin-alert-error">
                       <strong>Блок безопасности.</strong> Черновик скрыт. Проверьте флаги перед ручным просмотром.

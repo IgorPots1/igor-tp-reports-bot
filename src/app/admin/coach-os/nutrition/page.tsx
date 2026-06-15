@@ -68,7 +68,7 @@ function getStatusBadgeClass(status: string | null): string {
   if (status === "insufficient" || status === "blocked_safety") {
     return "admin-badge admin-badge-danger";
   }
-  if (status === "needs_review") {
+  if (status === "needs_review" || status === "awaiting_generation") {
     return "admin-badge admin-badge-warning";
   }
   return "admin-badge admin-badge-outline";

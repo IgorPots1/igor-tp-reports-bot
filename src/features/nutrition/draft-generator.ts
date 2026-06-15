@@ -11,7 +11,9 @@ import {
   type NutritionNarrativePreferences,
   type NutritionStudentContext,
 } from "@/features/nutrition/context";
+import { buildNutritionDayProseFacts } from "@/features/nutrition/combined-message";
 import { EVENING_SECTIONS, pickNotableFoods } from "@/features/nutrition/narrative-composer";
+import { validateNutritionDayProse } from "@/features/nutrition/telegram-renderer";
 import { enqueueOpenAiCall } from "@/features/nutrition/nutrition-generation-queue";
 import {
   buildNutritionModelRequest,
@@ -106,7 +108,7 @@ export type GeneratedNutritionWeeklyAnalysis = {
     carb_progression_strategy?: CarbProgressionStrategy;
     coach_summary_text?: string;
     day_by_day_analysis_text?: string;
-    generation_mode?: "ai" | "fallback";
+    generation_mode?: "ai" | "fallback" | "awaiting_generation";
     methodology_version?: string;
     prompt_version?: string;
     quality_notes?: string[];
@@ -147,7 +149,7 @@ export type GeneratedNutritionWeeklyAnalysis = {
   athlete_message_draft: string | null;
   coach_summary_text: string;
   day_by_day_analysis_text: string;
-  generation_mode: "ai" | "fallback";
+  generation_mode: "ai" | "fallback" | "awaiting_generation";
   methodology_version: string;
   prompt_version: string;
   do_not_send_reasons: string[];
@@ -1145,7 +1147,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
     day_prose: Record<string, string>;
     quality_notes: string[];
     do_not_send_reasons: string[];
-    generation_mode: "ai" | "fallback";
+    generation_mode: "ai" | "fallback" | "awaiting_generation";
     ai_model: string;
   } = {
     coach_summary_text: fallbackCoachSummary,
@@ -1201,6 +1203,19 @@ export async function generateNutritionWeeklyAnalysis(input: {
       for (const reason of aiDiagnostics) {
         notes.push(`ai_generation_fallback:${reason}`);
       }
+      // The model was attempted but produced nothing usable (quota / rate limit /
+      // server error / empty / parse). This is NOT a valid fallback — do not hand
+      // a deterministic template to the student as if ready. Mark it
+      // awaiting_generation and hold the athlete text; the coach regenerates.
+      // (A safety block is a different, valid state and keeps its coach-only path.)
+      if (!safety.blocked) {
+        narrative = {
+          ...narrative,
+          athlete_message_draft: null,
+          generation_mode: "awaiting_generation",
+          ai_model: "nutrition-weekly-review-awaiting-generation",
+        };
+      }
     }
   }
 
@@ -1213,6 +1228,16 @@ export async function generateNutritionWeeklyAnalysis(input: {
       const prose = date ? narrative.day_prose[date] : undefined;
       if (prose) {
         dayFact.athlete_prose = prose;
+        // Close the blind per-day cutover (master order Task 3 #8): record which
+        // day the renderer will drop to the deterministic comment and why, using
+        // the SAME facts/validator the renderer uses, so the silent fallback is
+        // visible in notes.
+        const issues = validateNutritionDayProse({ prose, facts: buildNutritionDayProseFacts(dayFact) });
+        const errors = issues.filter((issue) => issue.severity === "error");
+        if (errors.length > 0) {
+          const rules = [...new Set(errors.map((issue) => issue.rule))].join(",");
+          notes.push(`day_prose_rejected:${date ?? "?"}:${rules}:${prose.slice(0, 80)}`);
+        }
       }
     }
   }

@@ -112,6 +112,7 @@ export type NutritionWeeklyAnalysisStatus =
   | "draft_generated"
   | "blocked_safety"
   | "needs_review"
+  | "awaiting_generation"
   | "approved_for_copy"
   | "archived";
 
