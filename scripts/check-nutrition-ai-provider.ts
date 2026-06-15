@@ -10,16 +10,18 @@ import {
   resolveNutritionAiProvider,
 } from "@/features/nutrition/nutrition-ai-provider";
 
-const SYSTEM = "system prompt";
-const FACTS = { a: 1 };
+const STABLE = "stable rules block";
+const DYNAMIC = "dynamic per-student block";
+const FACTS = { a: 1, nested: { b: 2 } };
 
-// --- buildNutritionModelRequest: Anthropic ---------------------------------
+// --- buildNutritionModelRequest: Anthropic (cached stable block) ------------
 {
   const req = buildNutritionModelRequest({
     provider: "anthropic",
     model: "claude-sonnet-4-6",
     apiKey: "key-a",
-    systemPrompt: SYSTEM,
+    systemStable: STABLE,
+    systemDynamic: DYNAMIC,
     factsPayload: FACTS,
   });
   assert.equal(req.url, "https://api.anthropic.com/v1/messages", "anthropic endpoint");
@@ -29,25 +31,35 @@ const FACTS = { a: 1 };
   const body = JSON.parse(req.body) as Record<string, unknown>;
   assert.equal(body.model, "claude-sonnet-4-6");
   assert.equal(body.max_tokens, 4096, "anthropic uses max_tokens");
-  assert.equal(body.system, SYSTEM, "system is a top-level field");
-  assert.ok(Array.isArray(body.messages), "messages present");
+  const system = body.system as Array<Record<string, unknown>>;
+  assert.ok(Array.isArray(system) && system.length === 2, "system is two blocks (stable + dynamic)");
+  assert.equal(system[0].text, STABLE, "first block is the stable prompt");
+  assert.deepEqual(system[0].cache_control, { type: "ephemeral" }, "cache_control on the stable block");
+  assert.equal(system[1].text, DYNAMIC, "second block is the dynamic prompt");
+  assert.ok(!("cache_control" in system[1]), "no cache_control on the dynamic block");
   assert.ok(!("temperature" in body), "no temperature on anthropic (avoids 400 across models)");
-  assert.ok(!("response_format" in body), "no response_format on anthropic");
+  // Compact JSON: no pretty-print newlines/indentation in the facts payload.
+  const userContent = (body.messages as Array<{ content: string }>)[0].content;
+  assert.ok(userContent.includes('{"a":1'), "facts JSON is compact (no pretty-print)");
 }
 
-// --- buildNutritionModelRequest: OpenAI gpt-4o (legacy params) --------------
+// --- buildNutritionModelRequest: OpenAI gpt-4o (stable+dynamic concatenated) -
 {
   const req = buildNutritionModelRequest({
     provider: "openai",
     model: "gpt-4o",
     apiKey: "key-o",
-    systemPrompt: SYSTEM,
+    systemStable: STABLE,
+    systemDynamic: DYNAMIC,
     factsPayload: FACTS,
   });
   assert.equal(req.url, "https://api.openai.com/v1/chat/completions", "openai endpoint");
   assert.equal(req.headers.Authorization, "Bearer key-o", "Bearer auth on openai");
   const body = JSON.parse(req.body) as Record<string, unknown>;
   assert.deepEqual(body.response_format, { type: "json_object" }, "openai json_object format");
+  const sys = (body.messages as Array<{ role: string; content: string }>)[0];
+  assert.equal(sys.role, "system");
+  assert.equal(sys.content, `${STABLE}\n${DYNAMIC}`, "openai system = stable + dynamic, stable first");
   assert.equal(body.temperature, 0.2, "gpt-4o keeps temperature");
   assert.equal(body.max_tokens, 4096, "gpt-4o keeps max_tokens");
   assert.ok(!("max_completion_tokens" in body), "gpt-4o does not use max_completion_tokens");
@@ -60,7 +72,8 @@ const FACTS = { a: 1 };
       provider: "openai",
       model,
       apiKey: "key-o",
-      systemPrompt: SYSTEM,
+      systemStable: STABLE,
+      systemDynamic: DYNAMIC,
       factsPayload: FACTS,
     });
     const body = JSON.parse(req.body) as Record<string, unknown>;

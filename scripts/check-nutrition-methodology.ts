@@ -295,8 +295,20 @@ async function run(): Promise<void> {
   assert.equal(generatedSafety.athlete_message_draft, null);
 
   const generatedTy = await generateNutritionWeeklyAnalysis({ context: baseContext });
-  const draftTy = generatedTy.athlete_message_draft ?? "";
-  assert.ok(draftTy.length > 0);
+  // Task 3: complete methodology + no live model in the test env -> the review is
+  // held (awaiting_generation) rather than handed a template draft as if ready.
+  assert.equal(generatedTy.generation_mode, "awaiting_generation", "no model in test env -> awaiting_generation");
+  assert.equal(generatedTy.athlete_message_draft, null, "held athlete draft when model unavailable");
+
+  // Deterministic fallback draft hygiene is validated on the forceNeedsReview path
+  // (incomplete methodology — unresolved dates), where the template IS surfaced for
+  // coach review. Training-independent trigger so Task 5b doesn't affect it.
+  const fallbackContext = buildMockContext({
+    dataQuality: { ...baseContext.dataQuality, hasResolvedDates: false },
+  });
+  const generatedFallback = await generateNutritionWeeklyAnalysis({ context: fallbackContext });
+  const draftTy = generatedFallback.athlete_message_draft ?? "";
+  assert.ok(draftTy.length > 0, "forceNeedsReview surfaces a deterministic fallback draft");
   assert.doesNotMatch(draftTy, /[A-Za-z]{3,}/, "draft should avoid English text");
   assert.doesNotMatch(draftTy.toLowerCase(), /\bвы\b/, "ty draft should not mix vy");
   assert.doesNotMatch(draftTy.toLowerCase(), /похуд|сниже|дефицит|уреза/, "draft should avoid weight-loss language");

@@ -59,10 +59,15 @@ export function buildNutritionModelRequest(input: {
   provider: NutritionAiProvider;
   model: string;
   apiKey: string;
-  systemPrompt: string;
+  /** Invariant prompt (rules/style/reference) — cached prefix, identical across students. */
+  systemStable: string;
+  /** Per-student prompt (safety line, variable few-shot, formality) — not cached. */
+  systemDynamic: string;
   factsPayload: unknown;
 }): { url: string; headers: Record<string, string>; body: string } {
-  const factsContent = `Facts JSON:\n${JSON.stringify(input.factsPayload, null, 2)}`;
+  // Compact JSON (no pretty-print) — pretty-print added ~thousands of whitespace
+  // tokens per request for no model benefit (master order Task 5).
+  const factsContent = `Facts JSON:\n${JSON.stringify(input.factsPayload)}`;
 
   if (input.provider === "anthropic") {
     return {
@@ -75,7 +80,12 @@ export function buildNutritionModelRequest(input: {
       body: JSON.stringify({
         model: input.model,
         max_tokens: MAX_OUTPUT_TOKENS,
-        system: input.systemPrompt,
+        // Stable block carries cache_control so it is billed once per ~5 min and
+        // read cheaply for every subsequent student; dynamic block stays uncached.
+        system: [
+          { type: "text", text: input.systemStable, cache_control: { type: "ephemeral" } },
+          { type: "text", text: input.systemDynamic },
+        ],
         messages: [{ role: "user", content: factsContent }],
       }),
     };
@@ -86,7 +96,8 @@ export function buildNutritionModelRequest(input: {
     model: input.model,
     response_format: { type: "json_object" },
     messages: [
-      { role: "system", content: input.systemPrompt },
+      // Stable first so OpenAI's automatic prefix caching can reuse it across students.
+      { role: "system", content: `${input.systemStable}\n${input.systemDynamic}` },
       { role: "user", content: factsContent },
     ],
   };
@@ -128,6 +139,45 @@ export function extractNutritionModelText(provider: NutritionAiProvider, json: u
 export function extractNutritionModelId(json: unknown): string | null {
   const model = (json as { model?: unknown })?.model;
   return typeof model === "string" && model ? model : null;
+}
+
+export type NutritionModelUsage = {
+  input: number;
+  output: number;
+  cacheCreation: number;
+  cacheRead: number;
+};
+
+/**
+ * Token usage from a provider response, for cost diagnostics. Anthropic reports
+ * cache_creation/cache_read directly; OpenAI reports cached prompt tokens under
+ * prompt_tokens_details.cached_tokens (read side only; no write counter).
+ */
+export function extractNutritionModelUsage(provider: NutritionAiProvider, json: unknown): NutritionModelUsage | null {
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  if (provider === "anthropic") {
+    const usage = (json as { usage?: Record<string, unknown> })?.usage;
+    if (!usage) {
+      return null;
+    }
+    return {
+      input: num(usage.input_tokens),
+      output: num(usage.output_tokens),
+      cacheCreation: num(usage.cache_creation_input_tokens),
+      cacheRead: num(usage.cache_read_input_tokens),
+    };
+  }
+  const usage = (json as { usage?: Record<string, unknown> })?.usage;
+  if (!usage) {
+    return null;
+  }
+  const cached = num((usage.prompt_tokens_details as { cached_tokens?: unknown } | undefined)?.cached_tokens);
+  return {
+    input: num(usage.prompt_tokens),
+    output: num(usage.completion_tokens),
+    cacheCreation: 0,
+    cacheRead: cached,
+  };
 }
 
 /** Provider-specific finish/stop reason, for diagnostics only. */

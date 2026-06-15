@@ -21,6 +21,7 @@ import {
   extractNutritionFinishReason,
   extractNutritionModelId,
   extractNutritionModelText,
+  extractNutritionModelUsage,
   resolveNutritionAiApiKey,
   resolveNutritionAiModel,
   resolveNutritionAiProvider,
@@ -37,8 +38,9 @@ import {
   type NutritionInterpretationShadowMetadata,
 } from "@/features/nutrition/interpretation-generator";
 import {
-  buildNutritionVoiceFewShotBlock,
+  buildNutritionVoiceFewShotDynamic,
   NUTRITION_REVIEW_NARRATIVE_PROMPT_LINES,
+  NUTRITION_VOICE_FEWSHOT_STABLE_LINES,
   NUTRITION_VOICE_STYLE_SPEC_LINES,
 } from "@/features/nutrition/narrative-guardrails";
 
@@ -837,9 +839,6 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     context: input.context,
     dailyAnalysis: input.dailyAnalysis,
   });
-  const dayRoles = dailyFacts
-    .map((day) => (typeof day.day_role === "string" ? day.day_role : null))
-    .filter((role): role is string => Boolean(role));
   const hasMissingDay = dailyFacts.some((day) => {
     const sq = day.source_quality;
     return Boolean(
@@ -849,10 +848,11 @@ async function generateNutritionWeeklyReviewNarrative(input: {
         (sq as Record<string, unknown>).hasNutritionData === false
     );
   });
-  const voiceFewShotBlock = allowAthleteDraft
-    ? buildNutritionVoiceFewShotBlock({ dayRoles, hasMissingDay })
-    : [];
-  const systemPrompt = [
+  // Split the system prompt into a STABLE block (invariant rules + style spec +
+  // a fixed reference example — byte-identical for every student, so it caches)
+  // and a DYNAMIC per-student block (safety line, variable few-shot, formality).
+  // (Task 5: prompt caching + token reduction.)
+  const systemStable = [
     "Пиши только на русском языке.",
     "Твоя задача: написать day_prose — живую прозу комментария по каждому дню в голосе Игоря (см. блок «КАК ПИСАТЬ» и примеры ниже), плюс coach_summary_text и day_by_day_analysis_text. Это не «причёсывание фактов» и не сухой системный язык, а тёплый человеческий разбор тренера в жёстких рамках ниже.",
     "LLM пишет прозу. Код считает числа и ставит факт-строку.",
@@ -866,36 +866,28 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "Перед длительной/интервальной/ключевой работой (day_role=key/hard/pre_long или nextDayTrainingType ключевой) прямо скажи догрузиться углеводами накануне и в день работы.",
     "Еду называй из items_notable текущего дня. Углеводную называй свободно. Жирную/сладкую вечером называй ученику и связывай «жиры пошли вместо углеводов под нагрузку» ТОЛЬКО при fat_policy=normal; при coach_only/soften/suppress_athlete жир ученику не выноси.",
     "coach_summary_text и day_by_day_analysis_text — ОБЯЗАТЕЛЬНЫЕ непустые поля, заполняй их всегда (даже если основной фокус ушёл в day_prose). coach_summary_text: 2-4 предложения для тренера. day_by_day_analysis_text: по строке-две на каждый день из daily_analysis. Пустые строки в этих полях недопустимы.",
-    "coach_summary_text: короткий внутренний текст для тренера.",
-    "day_by_day_analysis_text: дневные блоки строго по canonical daily_analysis.",
-    "Для каждого дня при наличии данных используй: weekday_ru, date_label, training_label, actual, hint_for_comment/findings.",
-    "В day_by_day_analysis_text комментируй только дневные totals; без intraday утверждений (до/во время/после тренировки, граммы по таймингу, гели).",
+    "day_by_day_analysis_text: дневные блоки строго по canonical daily_analysis; используй weekday_ru, date_label, training_label, actual, hint_for_comment/findings; комментируй только дневные totals, без intraday (до/во время/после, граммы по таймингу, гели).",
     "Если source_quality.confidence=low или suspect=true, формулируй осторожно как ограничение данных.",
     "athlete_message_draft должен включать 3-7 дневных наблюдений, если daily facts есть.",
-    "athlete_message_draft: только plain Telegram text. Разрешены emoji-разделители.",
-    "Запрещено в athlete_message_draft: **, ---, code fences, markdown headings.",
+    "athlete_message_draft: только plain Telegram text, emoji-разделители ок. Запрещено: **, ---, code fences, markdown headings.",
     "Строгая формальность: только ты ИЛИ только вы, без смешивания.",
     "Не используй диагнозы/медицинские термины: RED-S, REDs, LEA, энергодоступность, дефицит энергии, медицинский риск, диагноз, расстройство, анемия.",
     ...NUTRITION_REVIEW_NARRATIVE_PROMPT_LINES,
     "Не используй язык похудения/ограничения: похудеть, сбросить вес, урезать калории, меньше есть, дефицит калорий.",
     "Не давай меню/диету/рецепты. Продукты только как варианты при наличии фактов.",
     "Не придумывай тренировки и не придумывай гели/fueling.",
-    "Разрешённая причинность только с хеджами: может, могло, вполне могло, не утверждаю наверняка.",
-    "Запрещённая причинность: вызвало, из-за этого точно, именно поэтому.",
-    "Use the required ты/вы form from formality instruction.",
-    "Упоминание athlete name допускается при наличии в facts.",
-    "One focus only: используй exact one_focus из facts.",
-    "coach_context_ru — high-priority interpretation context for coach summary only. Do not quote coach_context_ru verbatim to athlete.",
-    "athlete_report_signals — coach summary / review caution only. Do not cite or diagnose in athlete_message_draft.",
-    "If illness/cycle/injury signals present, recommend coach review in coach_summary_text and quality_notes.",
-    "Do not write medical claims or diagnostic conclusions in athlete_message_draft.",
-    allowAthleteDraft
-      ? "athlete_message_draft is required and must be useful Telegram-ready text."
-      : "Hard safety flags present: athlete_message_draft must be null and coach-only text should explain manual review need.",
+    "Причинность только с хеджами (может, могло, вполне могло); запрещено: вызвало, из-за этого точно, именно поэтому.",
+    "Упоминание athlete name допускается при наличии в facts. One focus only: используй exact one_focus из facts.",
+    "If illness/cycle/injury signals present, recommend coach review in coach_summary_text and quality_notes; no medical claims/diagnosis in athlete_message_draft.",
     "Углеводную еду называть свободно как варианты («добавь каши, риса, картофеля»). Жирную еду ученику называть как акцент только при fat_policy=normal; при coach_only/soften/suppress_athlete жирное в текст ученику не выносить — это идёт в coach_summary_text.",
-    "Углеводы подавай как следующий реалистичный шаг от текущего, а не как научный потолок-обязательство.",
-    ...(voiceFewShotBlock.length > 0 ? NUTRITION_VOICE_STYLE_SPEC_LINES : []),
-    ...voiceFewShotBlock,
+    ...NUTRITION_VOICE_STYLE_SPEC_LINES,
+    ...NUTRITION_VOICE_FEWSHOT_STABLE_LINES,
+  ].join("\n");
+  const systemDynamic = [
+    allowAthleteDraft
+      ? "athlete_message_draft is required and must be useful Telegram-ready text. Use the required ты/вы form from formality instruction."
+      : "Hard safety flags present: athlete_message_draft must be null and coach-only text should explain manual review need.",
+    ...(allowAthleteDraft ? buildNutritionVoiceFewShotDynamic({ hasMissingDay }) : []),
     `Formality instruction: ${formalityInstruction}`,
   ].join("\n");
 
@@ -916,7 +908,6 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     },
     data_quality: input.context.dataQuality,
     daily_analysis: dailyFacts,
-    daily_analysis_raw: input.dailyAnalysis,
     training_nutrition_links: input.trainingNutritionLinks,
     one_focus: input.oneFocus,
     methodology_signals: input.methodologySignals,
@@ -931,7 +922,8 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     provider,
     model,
     apiKey,
-    systemPrompt,
+    systemStable,
+    systemDynamic,
     factsPayload,
   });
   try {
@@ -998,6 +990,13 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     const content = extractNutritionModelText(provider, payload);
     const finishReason = extractNutritionFinishReason(provider, payload);
     const answeredModel = extractNutritionModelId(payload) ?? model;
+    // Surface real token usage for cost diagnostics (master order Task 5).
+    const usage = extractNutritionModelUsage(provider, payload);
+    if (usage) {
+      input.diagnostics?.push(
+        `ai_usage:input=${usage.input},output=${usage.output},cache_creation=${usage.cacheCreation},cache_read=${usage.cacheRead}`
+      );
+    }
     if (!content) {
       note("ai_empty_content", { provider, model, finishReason });
       return null;
@@ -1193,6 +1192,12 @@ export async function generateNutritionWeeklyAnalysis(input: {
       diagnostics: aiDiagnostics,
     });
     if (aiNarrative) {
+      // Surface token usage (cost diagnostics) into notes on the success path too.
+      for (const reason of aiDiagnostics) {
+        if (reason.startsWith("ai_usage:")) {
+          notes.push(reason);
+        }
+      }
       narrative = {
         ...aiNarrative,
         generation_mode: "ai",
