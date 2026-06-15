@@ -77,6 +77,82 @@ function run(): void {
   const case4 = parseSyntheticPdfText(mealOnly);
   assert.equal(case4.extractedRows.length, 0, "single meal total without final day marker must not become day row");
 
+  // English FatSecret "Food Diary Report - Detailed Report" (надя_2.pdf). Same
+  // column order as RU (Cals Fat Sat Carbs Fiber Sugar Prot ...), English markers.
+  // Includes: top Period Summary (averages — must be excluded), page chrome,
+  // Monday split across pages with per-meal Totals + a final day Total, and the
+  // other 6 days as header + day Total. Day total = the LAST Total of the day.
+  const enDetailedWeek = [
+    "Food Diary Report - Detailed Report Mon, June 8 - Sun, June 14, 2026 foods.fatsecret.com",
+    "Page 1",
+    "Period Summary",
+    "Daily Average Cals Fat Carbs Prot",
+    "(kcal) (g) (g) (g)",
+    "Breakfast 570 17.31 90.2 20.2",
+    "Total 1678 51.95 232.3 84.7",
+    "Food Diary Report - Detailed Report Mon, June 8 - Sun, June 14, 2026 foods.fatsecret.com",
+    "Page 2",
+    "Monday, June 8, 2026",
+    "Cals Fat Sat Carbs Fiber Sugar Prot Sod Chol Potas",
+    "(kcal) (g) (g) (g) (g) (g) (g) (mg) (mg) (mg)",
+    "Breakfast",
+    "Mushrooms 5 0.07 0.011 0.72 0.2 0.36 0.68 1 0 70",
+    "22 g",
+    "Total 523 15.57 4.48 74.83 9.22 12.65 28.25 815.55 45.93 878.43",
+    "Lunch",
+    "Cheese Pizza 248 10.57 4.504 27.3 1.7 3.2 11.1 483 22 145",
+    "Total 548 13.11 4.656 79.04 5.36 39.71 32.06 559.36 33.47 918.75",
+    "Food Diary Report - Detailed Report Mon, June 8 - Sun, June 14, 2026 foods.fatsecret.com",
+    "Page 3",
+    "Monday, June 8, 2026",
+    "Cals Fat Sat Carbs Fiber Sugar Prot Sod Chol Potas",
+    "Dinner",
+    "Peanuts 60 5.25 0.867 1.53 0.9 0.42 2.8 32 0 73",
+    "Total 521 19.46 7.11 44.24 5.5 10.76 40.74 215.8 82.79 955.02",
+    "Snacks/Other",
+    "Total 1592 48.14 16.246 198.11 20.08 63.12 101.05 1590.71 162.19 2752.2",
+    "Tuesday, June 9, 2026",
+    "Total 1492 43.47 14.029 192.65 20.16 76.9 92.57 1796.05 148.88 3362.26",
+    "Wednesday, June 10, 2026",
+    "Total 1245 54.07 19.846 149.61 16.4 78.03 51.85 2580 83 2031",
+    "Thursday, June 11, 2026",
+    "Total 1494 40.27 10.177 211.85 25.63 73.54 82.74 1442.19 169.9 2758.1",
+    "Friday, June 12, 2026",
+    "Total 1774 44.62 17.913 293.19 28.03 109.37 69.82 2363.54 73.64 2497.43",
+    "Saturday, June 13, 2026",
+    "Total 1883 66.77 23.314 227.73 16.3 77.67 104.11 2844.72 566.24 2406.88",
+    "Sunday, June 14, 2026",
+    "Total 2264 66.33 28.824 352.94 22.88 169.29 90.78 3506.85 162.02 3125.47",
+  ].join("\n");
+  const en = parseSyntheticPdfText(enDetailedWeek);
+  assert.equal(en.extractedRows.length, 7, "EN detailed FatSecret must produce 7 day rows");
+  const enByDate = new Map(en.extractedRows.map((row) => [row.day, row]));
+  // Monday: day total (1592) wins over per-meal totals (523/548/521).
+  const mon = enByDate.get("2026-06-08");
+  assert.equal(mon?.kcal, 1592, "EN Monday kcal must be the day total, not a meal total");
+  assert.equal(mon?.fatG, 48.14, "EN Monday fat");
+  assert.equal(mon?.carbsG, 198.11, "EN Monday carbs");
+  assert.equal(mon?.proteinG, 101.05, "EN Monday protein");
+  assert.equal(enByDate.get("2026-06-09")?.kcal, 1492, "EN Tue kcal");
+  assert.equal(enByDate.get("2026-06-09")?.proteinG, 92.57, "EN Tue protein");
+  assert.equal(enByDate.get("2026-06-10")?.carbsG, 149.61, "EN Wed carbs");
+  assert.equal(enByDate.get("2026-06-10")?.proteinG, 51.85, "EN Wed protein");
+  assert.equal(enByDate.get("2026-06-11")?.carbsG, 211.85, "EN Thu carbs");
+  assert.equal(enByDate.get("2026-06-12")?.kcal, 1774, "EN Fri kcal");
+  assert.equal(enByDate.get("2026-06-12")?.carbsG, 293.19, "EN Fri carbs");
+  assert.equal(enByDate.get("2026-06-13")?.proteinG, 104.11, "EN Sat protein");
+  assert.equal(enByDate.get("2026-06-14")?.kcal, 2264, "EN Sun kcal");
+  assert.equal(enByDate.get("2026-06-14")?.carbsG, 352.94, "EN Sun carbs");
+  assert.equal(enByDate.get("2026-06-14")?.proteinG, 90.78, "EN Sun protein");
+  // Period Summary averages (1678 / 84.7) must NOT become a day row.
+  assert.equal(
+    en.extractedRows.some((row) => row.kcal === 1678),
+    false,
+    "Period Summary average must not be parsed as a day"
+  );
+  assert.equal(en.parsedWeekFrom, "2026-06-08", "EN week start from Monday header");
+  assert.equal(en.parsedWeekTo, "2026-06-14", "EN week end from Sunday header");
+
   const ruText = [
     "FatSecret Food Diary",
     "2026-06-01 Итого: ккал 2200 белки 130 г жиры 70 г углеводы 280 г",
