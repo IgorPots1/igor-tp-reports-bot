@@ -9,6 +9,8 @@ import { formatIsoDate, getSingleSearchParam } from "@/app/admin/lib";
 import {
   addNutritionContextNoteAction,
   addNutritionWeightAction,
+  approveNutritionPatternAction,
+  dismissNutritionPatternAction,
   generateNutritionWeeklyReviewAction,
   parseNutritionManualMacrosAction,
   previewNutritionFileUploadAction,
@@ -364,6 +366,17 @@ export default async function CoachOsNutritionStudentCardPage({
         : null;
   const oneFocusText = typeof oneFocus.statement_ru === "string" ? oneFocus.statement_ru : null;
   const athleteReportSignals = asAthleteReportSignals(weeklyNutritionSummary.athlete_report_signals);
+  const patternCandidates = (
+    Array.isArray(weeklyNutritionSummary.pattern_candidates) ? weeklyNutritionSummary.pattern_candidates : []
+  )
+    .map((item) => asObject(item))
+    .map((item) => ({
+      code: typeof item.code === "string" ? item.code : "",
+      text: typeof item.text === "string" ? item.text : "",
+      sinceWeek: typeof item.since_week === "string" ? item.since_week : "",
+      weeksObserved: typeof item.weeks_observed === "number" ? item.weeks_observed : 0,
+    }))
+    .filter((item) => item.code && item.text);
   const hardSafetyFlags = asStringArray(card.weeklyAnalysis?.safetyFlags?.hard_flags);
   const hasSafetyFlags = hardSafetyFlags.length > 0;
   const reviewSelectedById = Boolean(reviewIdFromQuery && card.weeklyAnalysis?.id === reviewIdFromQuery);
@@ -937,6 +950,48 @@ export default async function CoachOsNutritionStudentCardPage({
             <p className="admin-muted">Полный текст ученику не сформирован: есть причины для ручной проверки.</p>
           )}
         </article>
+
+        {patternCandidates.length > 0 && card.weeklyAnalysis ? (
+          <article className="admin-card admin-card-compact admin-nutrition-card-wide">
+            <h3>Память ученика — предложенные паттерны</h3>
+            <p className="admin-muted admin-nutrition-helper">
+              Система заметила повторяющиеся паттерны. Подтвердите, чтобы добавить в память ученика (будет подтягиваться
+              в каждый разбор и озвучиваться по-доброму). Неподтверждённое не сохраняется.
+            </p>
+            <ul className="admin-list">
+              {patternCandidates.map((candidate) => (
+                <li key={`pattern-${candidate.code}`} className="admin-nutrition-pattern-row">
+                  <span>
+                    Заметил паттерн: <strong>{candidate.text}</strong> — повторяется {candidate.weeksObserved} нед.
+                    {candidate.sinceWeek ? ` (с ${formatNutritionCompactDate(candidate.sinceWeek)})` : ""}
+                  </span>
+                  <span className="admin-card-actions admin-card-actions-compact">
+                    <form action={approveNutritionPatternAction}>
+                      <input type="hidden" name="studentId" value={studentId} />
+                      <input type="hidden" name="analysisId" value={card.weeklyAnalysis.id} />
+                      <input type="hidden" name="code" value={candidate.code} />
+                      <input type="hidden" name="patternText" value={candidate.text} />
+                      <input type="hidden" name="sinceWeek" value={candidate.sinceWeek} />
+                      <input type="hidden" name="redirectTo" value={studentCardPath} />
+                      <FormActionButton className="admin-button" pendingText="Сохраняю…">
+                        В память
+                      </FormActionButton>
+                    </form>
+                    <form action={dismissNutritionPatternAction}>
+                      <input type="hidden" name="studentId" value={studentId} />
+                      <input type="hidden" name="analysisId" value={card.weeklyAnalysis.id} />
+                      <input type="hidden" name="code" value={candidate.code} />
+                      <input type="hidden" name="redirectTo" value={studentCardPath} />
+                      <FormActionButton className="admin-button admin-button-secondary" pendingText="Отклоняю…">
+                        Отклонить
+                      </FormActionButton>
+                    </form>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </article>
+        ) : null}
 
         <article className="admin-card admin-card-compact admin-nutrition-card-wide">
           <h3>Детали для тренера — актуальная сводка</h3>

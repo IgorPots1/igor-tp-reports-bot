@@ -60,9 +60,12 @@ assert.match(adminSrc, /rememberCoachNote && input\.coachNotesRu/, "persist only
 
 // --- 4. Prompt: notes as context (not numbers) + fasted-morning rule ----------
 assert.match(draftSrc, /coach_report_note: input\.context\.coachReportNoteRu/, "facts payload must include the one-time note");
-assert.match(draftSrc, /coach_persistent_notes: input\.context\.studentMemory\.persistent_notes/, "facts payload must include persistent notes");
+assert.match(draftSrc, /coach_persistent_notes: input\.context\.studentMemory\?\.persistent_notes/, "facts payload must include persistent notes");
 assert.match(draftSrc, /Заметки тренера[\s\S]*КОНТЕКСТ для тона[\s\S]*НЕ числа/i, "prompt must treat coach notes as tone context, not numbers");
 assert.match(draftSrc, /[Нн]атощак[\s\S]*УЖИНЕ НАКАНУНЕ[\s\S]*ЗАВТРАКЕ\/восстановлении ПОСЛЕ/, "prompt must encode fasted-morning fueling shift");
+// Strict: the model retells coach notes/history but must NOT invent circumstances
+// the coach did not give (e.g. "поели не сразу"). Forward advice is allowed.
+assert.match(draftSrc, /пересказывай ТОЛЬКО то, что прямо дано[\s\S]*НЕ предполагай[\s\S]*поели не сразу/, "prompt must ban fabricating un-given student circumstances from notes/history");
 
 // --- 5. Upload UI exposes coach notes + remember ------------------------------
 assert.match(uploadSrc, /name="coachNotesRu"/, "upload save form must expose a coach-notes field");

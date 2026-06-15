@@ -677,3 +677,50 @@ export async function generateNutritionWeeklyReviewAction(formData: FormData): P
     redirect(withNotice(redirectTo, "error", message));
   }
 }
+
+/**
+ * Task 7: coach approves a proposed repeating pattern → it enters student memory
+ * (draft->approve). The candidate is then removed from the analysis so the
+ * proposal stops showing. Unconfirmed patterns are never stored.
+ */
+export async function approveNutritionPatternAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const analysisId = getRequiredFormValue(formData, "analysisId");
+  const code = getRequiredFormValue(formData, "code");
+  const text = getRequiredFormValue(formData, "patternText");
+  const sinceWeek = getOptionalFormValue(formData, "sinceWeek");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  try {
+    const { addNutritionApprovedPattern, removeNutritionAnalysisPatternCandidate } = await import(
+      "@/features/nutrition/repository"
+    );
+    await addNutritionApprovedPattern({ studentId, text, sinceWeek: sinceWeek ?? null });
+    await removeNutritionAnalysisPatternCandidate({ analysisId, code });
+    revalidateNutritionPaths(studentId);
+    redirect(withNotice(redirectTo, "notice", "Паттерн добавлен в память ученика."));
+  } catch (error) {
+    revalidateNutritionPaths(studentId);
+    const message = error instanceof Error ? error.message : "Не удалось сохранить паттерн.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+}
+
+/** Task 7: coach rejects a proposed pattern — removed from the analysis, NOT stored to memory. */
+export async function dismissNutritionPatternAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const analysisId = getRequiredFormValue(formData, "analysisId");
+  const code = getRequiredFormValue(formData, "code");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  try {
+    const { removeNutritionAnalysisPatternCandidate } = await import("@/features/nutrition/repository");
+    await removeNutritionAnalysisPatternCandidate({ analysisId, code });
+    revalidateNutritionPaths(studentId);
+    redirect(withNotice(redirectTo, "notice", "Паттерн отклонён (в память не добавлен)."));
+  } catch (error) {
+    revalidateNutritionPaths(studentId);
+    const message = error instanceof Error ? error.message : "Не удалось отклонить паттерн.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+}

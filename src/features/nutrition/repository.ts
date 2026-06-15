@@ -1004,6 +1004,106 @@ export async function listNutritionWeeklyAnalysesForStudentWeek(
   return ((data as NutritionWeeklyAnalysisRow[]) ?? []).map(mapNutritionWeeklyAnalysisRow);
 }
 
+/**
+ * Recent weekly analyses for a student, newest week first (Task 7 pattern
+ * detection). One per week; optionally exclude the week being generated now.
+ */
+export async function listRecentNutritionWeeklyAnalysesForStudent(
+  studentId: string,
+  options?: { limit?: number; excludeWeekFrom?: string }
+): Promise<NutritionWeeklyAnalysis[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_weekly_analyses")
+    .select("*")
+    .eq("student_id", studentId)
+    .order("week_from", { ascending: false })
+    .limit(Math.max(1, (options?.limit ?? 4) + 1));
+  if (error) {
+    throw new Error(`Failed to list recent nutrition weekly analyses for ${studentId}: ${error.message}`);
+  }
+  const rows = ((data as NutritionWeeklyAnalysisRow[]) ?? []).map(mapNutritionWeeklyAnalysisRow);
+  const filtered = options?.excludeWeekFrom
+    ? rows.filter((row) => row.weekFrom !== options.excludeWeekFrom)
+    : rows;
+  return filtered.slice(0, options?.limit ?? 4);
+}
+
+/**
+ * Append a coach-approved pattern to student memory (Task 7 draft->approve).
+ * Deduped by text; capped by the sanitizer so memory stays compact.
+ */
+export async function addNutritionApprovedPattern(input: {
+  studentId: string;
+  text: string;
+  sinceWeek?: string | null;
+}): Promise<NutritionStudentProfile | null> {
+  const text = compactText(input.text);
+  if (!text) {
+    return null;
+  }
+  const existing = await getNutritionStudentProfile(input.studentId);
+  const memory = existing?.nutritionMemory ?? emptyNutritionStudentMemory();
+  if (memory.approved_patterns.some((item) => item.text.toLowerCase() === text.toLowerCase())) {
+    return existing;
+  }
+  const sinceWeek =
+    typeof input.sinceWeek === "string" && /^\d{4}-\d{2}-\d{2}$/.test(input.sinceWeek) ? input.sinceWeek : null;
+  return saveNutritionStudentMemory({
+    studentId: input.studentId,
+    nutritionMemory: {
+      ...memory,
+      approved_patterns: [...memory.approved_patterns, { text, since_week: sinceWeek }],
+    },
+  });
+}
+
+/** Update the rolling review-memory signals after a review (last focus + numeric trends). */
+export async function updateNutritionMemoryAfterReview(input: {
+  studentId: string;
+  lastFocus?: string | null;
+  keyTrends?: string[];
+}): Promise<NutritionStudentProfile | null> {
+  const existing = await getNutritionStudentProfile(input.studentId);
+  const memory = existing?.nutritionMemory ?? emptyNutritionStudentMemory();
+  return saveNutritionStudentMemory({
+    studentId: input.studentId,
+    nutritionMemory: {
+      ...memory,
+      last_focus: input.lastFocus !== undefined ? compactText(input.lastFocus) : memory.last_focus,
+      key_trends: input.keyTrends !== undefined ? input.keyTrends : memory.key_trends,
+    },
+  });
+}
+
+/**
+ * Remove one pattern candidate from a stored analysis after the coach decided on
+ * it (accept or reject), so the proposal stops showing. Decisions never auto-store
+ * to memory here — approval is a separate explicit call.
+ */
+export async function removeNutritionAnalysisPatternCandidate(input: {
+  analysisId: string;
+  code: string;
+}): Promise<void> {
+  const analysis = await getNutritionWeeklyAnalysisById(input.analysisId);
+  if (!analysis) {
+    return;
+  }
+  const summary = toObject(analysis.nutritionSummary);
+  const candidates = Array.isArray(summary.pattern_candidates) ? summary.pattern_candidates : [];
+  const next = candidates.filter(
+    (item) => !(item && typeof item === "object" && (item as Record<string, unknown>).code === input.code)
+  );
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from("nutrition_weekly_analyses")
+    .update({ nutrition_summary: { ...summary, pattern_candidates: next } })
+    .eq("id", input.analysisId);
+  if (error) {
+    throw new Error(`Failed to update nutrition analysis pattern candidates ${input.analysisId}: ${error.message}`);
+  }
+}
+
 export async function getNutritionWeeklyAnalysisForWeek(input: {
   studentId: string;
   weekFrom: string;

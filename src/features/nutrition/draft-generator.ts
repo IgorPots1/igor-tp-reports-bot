@@ -129,6 +129,8 @@ export type GeneratedNutritionWeeklyAnalysis = {
     next_week_plan?: NutritionNextWeekPlan;
     /** Task 6: the plan target week these numbers/prose cover. */
     plan_week?: { from: string; to: string; mode: NutritionPlanTargetWeekMode };
+    /** Task 7: non-null once coach-approved history exists (flips hasPreviousWeeksContext). */
+    previous_weeks_context?: Record<string, unknown> | null;
   };
   tp_context_summary: {
     past_week_key_sessions: number;
@@ -892,7 +894,7 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "next_week_plan_text: athlete-facing проза ПЛАНА на следующую неделю (одним связным куском, тот же тёплый голос Игоря, plain Telegram text). Это продолжение того же сообщения после разбора прошлой недели — не повторяй приветствие. Опиши, на чём сделать акцент по питанию под РЕАЛЬНЫЕ ключевые тренировки следующей недели из next_week_plan (интервалы/длительная/темпо и дни перед ними): что есть и когда догрузиться углеводами. Без раскладки по граммам на каждый день — это сделает код-таблица отдельно.",
     "ЧИСЛА в next_week_plan_text бери ТОЛЬКО из next_week_plan (display_target.carbs_g_min/max, kcal, целевые по типу дня) и округляй до 10 (углеводы/ориентиры) — пиши «около 300 г», «300–320 г»; не выдумывай промежуточных и негладких чисел, г/кг ученику не пиши. Если тренировок на следующей неделе в плане нет (next_week_plan.summary.has_training_context=false) — общий мягкий фокус без привязки к дням.",
     "next_week_plan_text подчиняется тем же запретам, что и athlete_message_draft: без диагнозов/медтерминов, без языка похудения, без меню/рецептов, без выдуманных тренировок и гелей, строгая ты/вы.",
-    "В тексте ученику (athlete_message_draft, day_prose, next_week_plan_text) НЕ используй обобщённых сравнений «прошлая неделя» / «по сравнению с прошлой неделей» / «на прошлой неделе»: сохранённого контекста прошлых недель пока нет. Разбор прошедшей недели веди по конкретным дням и числам этой недели; план пиши вперёд — «на следующей неделе держи …», «в день интервалов добавь …», без отсылок к «прошлой неделе».",
+    "Числа-тренды из истории ученика (student.history.key_trends) и любые сравнения с прошлыми неделями пиши в «итог недели» (day_by_day_analysis_text/week summary) или в фокус — НЕ в подневную day_prose (там числа проверяются построчно по фактам дня). План пиши вперёд («на следующей неделе держи …»).",
     "day_prose: объект {\"YYYY-MM-DD\": \"проза дня\"} по каждому дню из daily_analysis. Это athlete-facing проза комментария дня. Длину выбирай по day_role: steady/rest — одна-две фразы; key/hard/pre_long — абзац подробнее.",
     "Подача каждого дня как у Игоря, трёхтактно: (1) что хорошо — конкретно похвали («белок 107 отлично, в самую точку», «хорошо, что калорийность подросла»); (2) что недотянуто — с числом и причиной, используя ЦЕЛЬ из target дня («под такую работу хотелось бы ~цель углеводов, у тебя X, недобор ~Z»); (3) мягкий шаг с конкретной едой (каша, рис, паста, картофель, хлеб, фрукты).",
     "ЧИСЛА в day_prose только из фактов дня. ФАКТЫ (сколько реально съедено: ккал, Б, Ж, У, г/кг из actual) — пиши фактическое число, можно округлить до целого для читаемости, но НЕ приближай и не заменяй (нельзя «около 250», если по факту 233). ЦЕЛИ/ориентиры бери ТОЛЬКО из чисел дня — carbsGMin/carbsGMax (и их середину), kcalMin, proteinGMin — округлёнными до 10: пиши «около 240» (середина), «200–280» (края коридора) или «около 300»; НЕ придумывай промежуточные числа (если коридор 196–280, нельзя «250–280»). Недобор = цель − факт, тоже округляй до 10. Не давай дробных/негладких краёв («341–372»). Граница: факт — точно, цель — округлённо из чисел дня. Других чисел не выдумывай.",
@@ -915,15 +917,25 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "If illness/cycle/injury signals present, recommend coach review in coach_summary_text and quality_notes; no medical claims/diagnosis in athlete_message_draft.",
     "Углеводную еду называть свободно как варианты («добавь каши, риса, картофеля»). Жирную еду ученику называть как акцент только при fat_policy=normal; при coach_only/soften/suppress_athlete жирное в текст ученику не выносить — это идёт в coach_summary_text.",
     "Заметки тренера (student.coach_report_note — разовая на этот отчёт; student.coach_persistent_notes — постоянные про ученика) — это КОНТЕКСТ для тона и акцентов разбора, НЕ числа и НЕ факты дня. Учитывай их в интерпретации (что уточнил ученик, контекст дня), но не выдумывай по ним числа и не цитируй дословно как медфакт.",
+    "ЖЁСТКО про контекст ученика (заметки тренера и история): пересказывай ТОЛЬКО то, что прямо дано в заметке/истории. НЕ предполагай и НЕ додумывай обстоятельства, которых там нет — например, не пиши «после тренировки поели не сразу», «пропустила приём», «наверное, не успела поесть», если этого нет в заметке. Forward-совет разрешён («после интервалов важно поесть плотно»), но утверждать или предполагать незаданные ФАКТЫ о поведении ученика — нельзя. Не сужай формулировку («вторник суматошный» ≠ «вечер вторника суматошный»).",
     "Натощак/рано утром: если в заметках тренера указано, что тренировка проходит натощак/рано утром — это осознанный режим, НЕ ошибка питания. Топливо под такую работу ищи в УЖИНЕ НАКАНУНЕ и ЗАВТРАКЕ/восстановлении ПОСЛЕ, а не «в день тренировки до неё мало углеводов». Акцент в разборе и совете смещай на вечер накануне и приём пищи после тренировки.",
     ...NUTRITION_VOICE_STYLE_SPEC_LINES,
     ...NUTRITION_VOICE_FEWSHOT_STABLE_LINES,
   ].join("\n");
   const noTrainingWeek = input.context.noTrainingWeek === true;
+  const hasApprovedHistory = (input.context.studentMemory?.approved_patterns ?? []).length > 0;
   const systemDynamic = [
     allowAthleteDraft
       ? "athlete_message_draft is required and must be useful Telegram-ready text. Use the required ты/вы form from formality instruction."
       : "Hard safety flags present: athlete_message_draft must be null and coach-only text should explain manual review need.",
+    hasApprovedHistory
+      ? "У ученика ЕСТЬ сохранённая история (student.history.approved_patterns с since_week). Если паттерн из истории повторяется и на этой неделе — мягко и по-доброму отметь это ученику: «это повторяется N-ю неделю — давай разберёмся, что мешает» (N считай по since_week). БЕЗ упрёка и морали («давай разберёмся, почему не получается», НЕ «опять не доела»). Если паттерн на этой неделе НЕ повторился (улучшение) — отметь позитивно: «смотри, в этот раз ... подтянулось — отлично». Ссылаться на «прошлые недели» можно — контекст есть."
+      : "Сохранённого контекста прошлых недель нет — НЕ используй обобщённых сравнений «прошлая неделя»/«на прошлой неделе» в тексте ученику; веди разбор по конкретным дням и числам этой недели.",
+    ...(hasApprovedHistory
+      ? [
+          "ГДЕ озвучивать паттерн истории: впиши добрый callout про «повторяется N-ю неделю» в next_week_plan_text (проза фокуса/плана) И/ИЛИ в day_prose релевантного дня. Итоговое сообщение ученику собирается ИЗ day_prose + прозы плана (общий athlete_message_draft в него не попадает), поэтому callout только в athlete_message_draft до ученика НЕ доедет.",
+        ]
+      : []),
     allowAthleteDraft
       ? "next_week_plan_text is required — athlete-facing plan prose for next week in the same voice."
       : "Hard safety flags present: next_week_plan_text must be null.",
@@ -945,7 +957,12 @@ async function generateNutritionWeeklyReviewNarrative(input: {
       nutrition_goal: input.context.nutritionGoal,
       coach_context_ru: input.context.coachContextRu,
       coach_report_note: input.context.coachReportNoteRu,
-      coach_persistent_notes: input.context.studentMemory.persistent_notes,
+      coach_persistent_notes: input.context.studentMemory?.persistent_notes ?? [],
+      history: {
+        approved_patterns: input.context.studentMemory?.approved_patterns ?? [],
+        last_focus: input.context.studentMemory?.last_focus ?? null,
+        key_trends: input.context.studentMemory?.key_trends ?? [],
+      },
       coach_memory: coachMemory,
       narrative_preferences: nutritionContextNarrativePreferences(input.context),
     },
@@ -1496,6 +1513,17 @@ export async function generateNutritionWeeklyAnalysis(input: {
       next_week_plan_text: narrative.next_week_plan_text,
       next_week_plan: nextWeekPlan,
       plan_week: { from: planWeekFrom, to: planWeekTo, mode: planWeekMode },
+      // Task 7: flip hasPreviousWeeksContext on once the coach has approved
+      // patterns — enables the week-over-week comparison line and lets the model
+      // legitimately say "повторяется N-ю неделю" (renderer phantom guard lifts).
+      previous_weeks_context:
+        (context.studentMemory?.approved_patterns?.length ?? 0) > 0
+          ? {
+              approved_patterns: context.studentMemory.approved_patterns,
+              key_trends: context.studentMemory.key_trends,
+              last_focus: context.studentMemory.last_focus,
+            }
+          : null,
     },
     tp_context_summary: {
       past_week_key_sessions: context.tpPastWeek.keyWorkouts.length,

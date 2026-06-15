@@ -424,6 +424,39 @@ export async function generateNutritionWeeklyReview(input: {
         ? "draft_generated"
         : "needs_review";
 
+  // Task 7: propose repeating patterns to the coach (draft->approve). Compare this
+  // week's findings with recent prior weeks. NOT on a safety-blocked week.
+  let patternCandidates: import("@/features/nutrition/pattern-detection").NutritionPatternCandidate[] = [];
+  let loadCarbsTrend: string | null = null;
+  try {
+    const { listRecentNutritionWeeklyAnalysesForStudent } = await import("@/features/nutrition/repository");
+    const { detectNutritionRepeatingPatterns, buildNutritionLoadCarbsTrend } = await import(
+      "@/features/nutrition/pattern-detection"
+    );
+    const priorAnalyses = await listRecentNutritionWeeklyAnalysesForStudent(input.studentId, {
+      limit: 4,
+      excludeWeekFrom: effectiveWeekFrom,
+    });
+    const toWeekDaily = (weekFrom: string, daily: unknown) => ({
+      weekFrom,
+      days: Array.isArray(daily) ? (daily as Array<Record<string, unknown>>) : [],
+    });
+    const current = toWeekDaily(effectiveWeekFrom, generated.daily_analysis);
+    const prior = priorAnalyses.map((a) =>
+      toWeekDaily(a.weekFrom, (a.nutritionSummary as Record<string, unknown>)?.daily_analysis)
+    );
+    loadCarbsTrend = buildNutritionLoadCarbsTrend({ current, prior });
+    if (!generated.safety_flags.blocked) {
+      patternCandidates = detectNutritionRepeatingPatterns({
+        current,
+        prior,
+        alreadyApprovedTexts: (context.studentMemory.approved_patterns ?? []).map((p) => p.text),
+      });
+    }
+  } catch (error) {
+    console.error("[nutrition-review] pattern detection failed (non-blocking)", error);
+  }
+
   const analysis = await createNutritionWeeklyAnalysis({
     studentId: input.studentId,
     reportId: input.reportId,
@@ -448,6 +481,7 @@ export async function generateNutritionWeeklyReview(input: {
       generation_mode: generated.generation_mode,
       prompt_version: generated.prompt_version,
       do_not_send_reasons: generated.do_not_send_reasons,
+      pattern_candidates: patternCandidates,
     },
     safetyFlags: generated.safety_flags,
     contextSnapshot: {
@@ -471,6 +505,22 @@ export async function generateNutritionWeeklyReview(input: {
     athleteMessageDraft: generated.athlete_message_draft,
     coachEdits: null,
   });
+
+  // Task 7: roll the review-memory signals forward (last focus + carbs trend) so
+  // the next review sees the shift. Approved patterns are added only on coach
+  // approval (separate action) — never auto-stored here.
+  if (!generated.safety_flags.blocked) {
+    try {
+      const { updateNutritionMemoryAfterReview } = await import("@/features/nutrition/repository");
+      await updateNutritionMemoryAfterReview({
+        studentId: input.studentId,
+        lastFocus: generated.one_focus?.statement_ru ?? null,
+        keyTrends: loadCarbsTrend ? [loadCarbsTrend] : context.studentMemory.key_trends,
+      });
+    } catch (error) {
+      console.error("[nutrition-review] memory roll-forward failed (non-blocking)", error);
+    }
+  }
 
   return {
     analysis,
