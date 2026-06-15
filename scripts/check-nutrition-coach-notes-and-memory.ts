@@ -66,6 +66,11 @@ assert.match(draftSrc, /[Нн]атощак[\s\S]*УЖИНЕ НАКАНУНЕ[\s\
 // Strict: the model retells coach notes/history but must NOT invent circumstances
 // the coach did not give (e.g. "поели не сразу"). Forward advice is allowed.
 assert.match(draftSrc, /пересказывай ТОЛЬКО то, что прямо дано[\s\S]*НЕ предполагай[\s\S]*поели не сразу/, "prompt must ban fabricating un-given student circumstances from notes/history");
+// Bug A: must not invent states/events (illness etc.) absent from notes/history.
+assert.match(draftSrc, /НЕ выдумывай состояния\/события: болезнь[\s\S]*после болезни/i, "prompt must explicitly ban inventing illness/events not in notes (Bug A)");
+// Bug A: the ban must also cover coach_summary_text, and inventing illness signals.
+assert.match(draftSrc, /относится КО ВСЕМ полям, включая coach_summary_text/i, "anti-fabrication must cover coach_summary_text, not just athlete text (Bug A)");
+assert.match(draftSrc, /НЕ выдумывай сигналы болезни\/цикла\/травмы и не пиши «зафиксировано в истории»/i, "must forbid inventing illness signals / false 'recorded in history' (Bug A)");
 
 // --- 5. Upload UI exposes coach notes + remember ------------------------------
 assert.match(uploadSrc, /name="coachNotesRu"/, "upload save form must expose a coach-notes field");

@@ -29,6 +29,7 @@ import {
   resolveNutritionLongRunSource,
   type NutritionLongRunSource,
 } from "@/features/nutrition/long-run";
+import type { NutritionGoalType } from "@/features/nutrition/repository";
 
 export type { NutritionLongRunSource };
 export type NutritionLongRunConfidence = "high" | "medium" | "low";
@@ -462,6 +463,88 @@ export function calculateNutritionDayTypeTarget(params: {
   };
 }
 
+// Task 10: periodized daily kcal deficit for goal=lose ("fuel for the work
+// required") — bigger cut in rest/easy, minimal in hard/long. Weekly average
+// lands in the moderate 300–500 kcal/day band.
+const LOSE_DEFICIT_BY_DAY_TYPE: Record<NutritionPlanDayType, number> = {
+  rest: 500,
+  easy: 400,
+  cross_training: 350,
+  strength: 300,
+  pre_long: 250,
+  hard: 200,
+  race: 200,
+  long_run: 150,
+  long_endurance: 150,
+  unknown: 350,
+};
+
+function roundPerKg(grams: number, bw: number): number {
+  return Number((grams / bw).toFixed(2));
+}
+
+/**
+ * Task 10: shift a maintenance (ideal) day target to the student's goal.
+ * - maintain: unchanged.
+ * - lose: kcal = maintenance − periodized deficit (clamped to a safety floor so
+ *   the formula never prescribes a dangerous deficit); protein HIGH (1.9 g/kg,
+ *   muscle protection + satiety); fat controlled to 20–30% energy (no 40%+);
+ *   carbs = remainder (so they fall most on rest, hold fuel on training days),
+ *   floored at ~2 g/kg for the CNS.
+ * - gain: small surplus, protein 1.8 g/kg, carbs fill the surplus.
+ * Safety floors here are formula guards only; the safety-flag system is separate
+ * and is never bypassed by goal.
+ */
+export function applyNutritionGoalToDayTarget(
+  ideal: NutritionDayTypeTarget | null,
+  params: { goalType: NutritionGoalType; dayType: NutritionPlanDayType; bodyweightKg: number | null }
+): NutritionDayTypeTarget | null {
+  if (!ideal || params.goalType === "maintain" || !params.bodyweightKg || params.bodyweightKg <= 0) {
+    return ideal;
+  }
+  const bw = params.bodyweightKg;
+
+  if (params.goalType === "lose") {
+    const deficit = LOSE_DEFICIT_BY_DAY_TYPE[params.dayType] ?? 350;
+    const kcalFloor = Math.max(Math.round(26 * bw), 1400);
+    const kcal = Math.max(roundToNearest(ideal.target_kcal - deficit, 50), kcalFloor);
+    const proteinG = roundToNearest(1.9 * bw, 5);
+    // Fat ~0.9 g/kg, but clamp to 20–30% of energy.
+    const fatMin = (0.2 * kcal) / 9;
+    const fatMax = (0.3 * kcal) / 9;
+    const fatG = roundToNearest(Math.min(Math.max(0.9 * bw, fatMin), fatMax), 5);
+    const carbsFloor = roundToNearest(2.0 * bw, 10);
+    const carbsRemainder = (kcal - proteinG * 4 - fatG * 9) / 4;
+    const carbsG = Math.max(roundToNearest(carbsRemainder, 10), carbsFloor);
+    return {
+      target_kcal: kcal,
+      protein_g: proteinG,
+      fat_g: fatG,
+      carbs_g: carbsG,
+      kcal_per_kg: Number((kcal / bw).toFixed(1)),
+      protein_g_per_kg: roundPerKg(proteinG, bw),
+      fat_g_per_kg: roundPerKg(fatG, bw),
+      carbs_g_per_kg: roundPerKg(carbsG, bw),
+    };
+  }
+
+  // gain: small surplus.
+  const kcal = roundToNearest(ideal.target_kcal * 1.11, 50);
+  const proteinG = roundToNearest(1.8 * bw, 5);
+  const fatG = roundToNearest(1.0 * bw, 5);
+  const carbsG = roundToNearest(Math.max((kcal - proteinG * 4 - fatG * 9) / 4, ideal.carbs_g), 10);
+  return {
+    target_kcal: kcal,
+    protein_g: proteinG,
+    fat_g: fatG,
+    carbs_g: carbsG,
+    kcal_per_kg: Number((kcal / bw).toFixed(1)),
+    protein_g_per_kg: roundPerKg(proteinG, bw),
+    fat_g_per_kg: roundPerKg(fatG, bw),
+    carbs_g_per_kg: roundPerKg(carbsG, bw),
+  };
+}
+
 function average(values: Array<number | null>): number | null {
   const present = values.filter((value): value is number => value !== null);
   if (present.length === 0) {
@@ -600,7 +683,21 @@ export function buildNutritionNextWeekPlan(params: {
   planWeekTo: string;
   trainingContext: unknown;
   previousWeekDailyAnalysis?: unknown;
+  /** Task 10: student goal. maintain (default) = current behavior; lose/gain shift targets. */
+  goalType?: NutritionGoalType;
 }): NutritionNextWeekPlan {
+  const goalType: NutritionGoalType = params.goalType ?? "maintain";
+  // For lose/gain the plan is anchored on the goal-shifted IDEAL target, NOT the
+  // last-week practical baseline (which could pull a losing athlete back up toward
+  // a surplus). maintain keeps the existing baseline-aware practical target.
+  const resolveDayTarget = (
+    dayType: NutritionPlanDayType,
+    ideal: NutritionDayTypeTarget | null,
+    baseline: PreviousWeekMacroPoint | null
+  ): NutritionDayTypeTarget | null =>
+    goalType === "maintain"
+      ? applyPracticalTarget({ dayType, bodyweightKg: params.bodyweightKg, ideal, baseline })
+      : applyNutritionGoalToDayTarget(ideal, { goalType, dayType, bodyweightKg: params.bodyweightKg });
   const dates = buildWeekDates(params.planWeekFrom, params.planWeekTo);
   const parsedWorkouts = parseTrainingContextWorkouts(params.trainingContext);
   const hasTrainingContext = parsedWorkouts.length > 0;
@@ -643,12 +740,7 @@ export function buildNutritionNextWeekPlan(params: {
       previousWeekTargets.byDayType[trainingType] ??
       (trainingType === "race" ? previousWeekTargets.byDayType.hard ?? null : null) ??
       previousWeekTargets.overall;
-    const practicalTarget = applyPracticalTarget({
-      dayType: trainingType,
-      bodyweightKg: params.bodyweightKg,
-      ideal: idealTarget,
-      baseline,
-    });
+    const practicalTarget = resolveDayTarget(trainingType, idealTarget, baseline);
 
     let source: NutritionPlanSource = "unknown";
     if (!params.bodyweightKg || params.bodyweightKg <= 0) {
@@ -760,54 +852,46 @@ export function buildNutritionNextWeekPlan(params: {
     },
     days,
     day_type_targets: {
-      rest: applyPracticalTarget({
-        dayType: "rest",
-        bodyweightKg: params.bodyweightKg,
-        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "rest" }),
-        baseline: previousWeekTargets.byDayType.rest ?? previousWeekTargets.overall,
-      }),
-      easy: applyPracticalTarget({
-        dayType: "easy",
-        bodyweightKg: params.bodyweightKg,
-        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "easy" }),
-        baseline: previousWeekTargets.byDayType.easy ?? previousWeekTargets.overall,
-      }),
-      hard: applyPracticalTarget({
-        dayType: "hard",
-        bodyweightKg: params.bodyweightKg,
-        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "hard" }),
-        baseline: previousWeekTargets.byDayType.hard ?? previousWeekTargets.overall,
-      }),
-      pre_long: applyPracticalTarget({
-        dayType: "pre_long",
-        bodyweightKg: params.bodyweightKg,
-        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "pre_long" }),
-        baseline: previousWeekTargets.byDayType.pre_long ?? previousWeekTargets.overall,
-      }),
-      long_run: applyPracticalTarget({
-        dayType: "long_run",
-        bodyweightKg: params.bodyweightKg,
-        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "long_run" }),
-        baseline: previousWeekTargets.byDayType.long_run ?? previousWeekTargets.overall,
-      }),
-      long_endurance: applyPracticalTarget({
-        dayType: "long_endurance",
-        bodyweightKg: params.bodyweightKg,
-        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "long_endurance" }),
-        baseline: previousWeekTargets.byDayType.long_run ?? previousWeekTargets.overall,
-      }),
-      strength: applyPracticalTarget({
-        dayType: "strength",
-        bodyweightKg: params.bodyweightKg,
-        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "strength" }),
-        baseline: previousWeekTargets.byDayType.strength ?? previousWeekTargets.overall,
-      }),
-      cross_training: applyPracticalTarget({
-        dayType: "cross_training",
-        bodyweightKg: params.bodyweightKg,
-        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "cross_training" }),
-        baseline: previousWeekTargets.byDayType.cross_training ?? previousWeekTargets.overall,
-      }),
+      rest: resolveDayTarget(
+        "rest",
+        calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "rest" }),
+        previousWeekTargets.byDayType.rest ?? previousWeekTargets.overall
+      ),
+      easy: resolveDayTarget(
+        "easy",
+        calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "easy" }),
+        previousWeekTargets.byDayType.easy ?? previousWeekTargets.overall
+      ),
+      hard: resolveDayTarget(
+        "hard",
+        calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "hard" }),
+        previousWeekTargets.byDayType.hard ?? previousWeekTargets.overall
+      ),
+      pre_long: resolveDayTarget(
+        "pre_long",
+        calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "pre_long" }),
+        previousWeekTargets.byDayType.pre_long ?? previousWeekTargets.overall
+      ),
+      long_run: resolveDayTarget(
+        "long_run",
+        calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "long_run" }),
+        previousWeekTargets.byDayType.long_run ?? previousWeekTargets.overall
+      ),
+      long_endurance: resolveDayTarget(
+        "long_endurance",
+        calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "long_endurance" }),
+        previousWeekTargets.byDayType.long_run ?? previousWeekTargets.overall
+      ),
+      strength: resolveDayTarget(
+        "strength",
+        calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "strength" }),
+        previousWeekTargets.byDayType.strength ?? previousWeekTargets.overall
+      ),
+      cross_training: resolveDayTarget(
+        "cross_training",
+        calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "cross_training" }),
+        previousWeekTargets.byDayType.cross_training ?? previousWeekTargets.overall
+      ),
     },
     day_type_ideal_targets: {
       rest: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "rest" }),

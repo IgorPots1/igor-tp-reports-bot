@@ -29,6 +29,7 @@ import {
 import type { NutritionFileUploadPreviewSnapshot } from "@/features/nutrition/file-preview-cookie";
 import type { NutritionFileUploadPreviewActionState } from "@/app/admin/coach-os/nutrition/upload-action-state";
 import type { NutritionContextItemType } from "@/features/nutrition/repository";
+import { normalizeNutritionGoalType } from "@/features/nutrition/repository";
 import {
   ADMIN_ACCESS_COOKIE_NAME,
   hasValidAdminAccessCookie,
@@ -193,6 +194,8 @@ export async function saveNutritionProfileAction(formData: FormData): Promise<vo
       currentWeightKg: parseOptionalNumber(getOptionalFormValue(formData, "currentWeightKg")),
       toleranceNotes: getOptionalFormValue(formData, "toleranceNotes"),
       coachNotes: getOptionalFormValue(formData, "coachNotes"),
+      nutritionGoalType: normalizeNutritionGoalType(getOptionalFormValue(formData, "nutritionGoalType")),
+      targetWeightKg: parseOptionalNumber(getOptionalFormValue(formData, "targetWeightKg")),
     });
   } catch (error) {
     revalidateNutritionPaths(studentId);

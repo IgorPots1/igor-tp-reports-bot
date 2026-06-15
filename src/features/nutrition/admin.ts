@@ -108,6 +108,8 @@ export async function saveNutritionProfileActionData(input: {
   currentWeightKg?: number | null;
   toleranceNotes?: string | null;
   coachNotes?: string | null;
+  nutritionGoalType?: import("@/features/nutrition/repository").NutritionGoalType;
+  targetWeightKg?: number | null;
 }) {
   const { upsertNutritionStudentProfile } = await import("@/features/nutrition/repository");
   return upsertNutritionStudentProfile({
@@ -118,6 +120,9 @@ export async function saveNutritionProfileActionData(input: {
     currentWeightKg: input.currentWeightKg ?? null,
     toleranceNotes: input.toleranceNotes ?? null,
     coachNotes: input.coachNotes ?? null,
+    nutritionGoalType: input.nutritionGoalType,
+    // Only meaningful for goal=lose; cleared otherwise.
+    targetWeightKg: input.nutritionGoalType === "lose" ? input.targetWeightKg ?? null : null,
   });
 }
 

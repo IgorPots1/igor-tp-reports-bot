@@ -22,6 +22,7 @@ import {
   getNutritionTrainingPeaksCacheWindow,
   type NutritionContextItem,
   type NutritionDailyMacro,
+  type NutritionGoalType,
   type NutritionStudentMemory,
   type NutritionWeightLog,
 } from "@/features/nutrition/repository";
@@ -338,6 +339,10 @@ export type NutritionStudentContext = {
   coachReportNoteRu: string | null;
   /** Tasks 7+8: compact per-student review memory (persistent notes, approved patterns, last focus, trends). */
   studentMemory: NutritionStudentMemory;
+  /** Task 10: student nutrition goal — drives target/plan math (default maintain = current behavior). */
+  nutritionGoalType: NutritionGoalType;
+  /** Task 10: optional target weight for goal=lose (tone only; does not change deficit size). */
+  targetWeightKg: number | null;
   narrativePreferences?: Required<Pick<NutritionNarrativePreferences, "fatFeedbackPolicy" | "detailLevel">> &
     NutritionNarrativePreferences;
   athleteReportSignals: NutritionAthleteReportSignal[];
@@ -944,6 +949,8 @@ export async function buildNutritionStudentContext(input: {
     coachContextRu: essentials.profile?.coachContextRu ?? null,
     coachReportNoteRu: compactText(input.coachReportNoteRu) ?? null,
     studentMemory: essentials.profile?.nutritionMemory ?? emptyNutritionStudentMemory(),
+    nutritionGoalType: essentials.profile?.nutritionGoalType ?? "maintain",
+    targetWeightKg: essentials.profile?.targetWeightKg ?? null,
     narrativePreferences: applyNutritionFatPolicyOverrides(
       student.studentName,
       getNutritionNarrativePreferences({

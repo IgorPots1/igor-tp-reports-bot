@@ -1244,7 +1244,29 @@ export default async function CoachOsNutritionStudentCardPage({
                     </select>
                   </label>
                   <label className="admin-form-field">
-                    <span>Цель</span>
+                    <span>Цель питания (влияет на расчёт)</span>
+                    <select
+                      className="admin-input"
+                      name="nutritionGoalType"
+                      defaultValue={card.profile?.nutritionGoalType ?? "maintain"}
+                    >
+                      <option value="maintain">Поддержание</option>
+                      <option value="lose">Снижение веса</option>
+                      <option value="gain">Набор формы</option>
+                    </select>
+                  </label>
+                  <label className="admin-form-field">
+                    <span>Целевой вес (кг) — только для снижения, опц.</span>
+                    <input
+                      className="admin-input"
+                      name="targetWeightKg"
+                      type="number"
+                      step="0.1"
+                      defaultValue={card.profile?.targetWeightKg ?? ""}
+                    />
+                  </label>
+                  <label className="admin-form-field">
+                    <span>Цель (текстом, опц.)</span>
                     <input className="admin-input" name="goal" defaultValue={card.profile?.goal ?? ""} />
                   </label>
                   <label className="admin-form-field">

@@ -77,6 +77,32 @@ function run(): void {
   const case4 = parseSyntheticPdfText(mealOnly);
   assert.equal(case4.extractedRows.length, 0, "single meal total without final day marker must not become day row");
 
+  // Bug B: a repeated PDF page header ("Food Diary Report …") must never be
+  // collected as a food item. RU detailed day with chrome lines + a real food.
+  const ruChrome = [
+    "Food Diary Report - Detailed Report Пн, июня 8 - Вс, июня 14, 2026 foods.fatsecret.com",
+    "Страница 2",
+    "понедельник, июня 1, 2026",
+    "Кал Жир Н/жир Углев Клетч Сахар Белк Натри Холес Калий",
+    "Завтрак",
+    "Гречка 166 1,12 0,241 35,89 4,9 1,62 6,08 7 0 158",
+    "Всего 341 11,43 3,323 30,6 0,7 3,21 15,04 212 19 34",
+    "Food Diary Report - Detailed Report Пн, июня 8 - Вс, июня 14, 2026 foods.fatsecret.com",
+    "Перекус/Другое",
+    "Всего 1617 44,97 9,837 176,7 11,11 36,29 112,97 621,1 111,1 811",
+  ].join("\n");
+  const ruChromeParsed = parseSyntheticPdfText(ruChrome);
+  assert.equal(ruChromeParsed.extractedRows.length, 1, "RU detailed day with chrome lines still parses one day");
+  const ruItems = ruChromeParsed.extractedRows[0]?.items ?? [];
+  assert.ok(
+    !ruItems.some((item) => /food diary report|fatsecret/i.test(item.name)),
+    "PDF page header must NOT appear as a food item (Bug B)"
+  );
+  assert.ok(
+    ruItems.some((item) => /гречка/i.test(item.name)),
+    "real food items must still be collected"
+  );
+
   // English FatSecret "Food Diary Report - Detailed Report" (надя_2.pdf). Same
   // column order as RU (Cals Fat Sat Carbs Fiber Sugar Prot ...), English markers.
   // Includes: top Period Summary (averages — must be excluded), page chrome,

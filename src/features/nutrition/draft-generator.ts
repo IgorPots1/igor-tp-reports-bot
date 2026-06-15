@@ -914,10 +914,12 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "Если тренировка в tp_context имеет status=planned (а не completed / planned_and_completed) — она НЕ состоялась (пропущена). Не оценивай такой день как тренировочный: считай его поддержанием/восстановлением, спокойно, без упрёка за «недобор под нагрузку» — нагрузки в этот день не было. Опирайся на nutrition_status дня (rest_ok и т.п.), а не на запланированную, но не выполненную работу.",
     "Причинность только с хеджами (может, могло, вполне могло); запрещено: вызвало, из-за этого точно, именно поэтому.",
     "Упоминание athlete name допускается при наличии в facts. One focus only: используй exact one_focus из facts.",
-    "If illness/cycle/injury signals present, recommend coach review in coach_summary_text and quality_notes; no medical claims/diagnosis in athlete_message_draft.",
+    "If illness/cycle/injury signals present, recommend coach review in coach_summary_text and quality_notes; no medical claims/diagnosis in athlete_message_draft. НО только ЕСЛИ такой сигнал реально есть в фактах (athlete_report_signals / заметки тренера / история). НЕ выдумывай сигналы болезни/цикла/травмы и не пиши «зафиксировано в истории», если в данных этого нет.",
     "Углеводную еду называть свободно как варианты («добавь каши, риса, картофеля»). Жирную еду ученику называть как акцент только при fat_policy=normal; при coach_only/soften/suppress_athlete жирное в текст ученику не выносить — это идёт в coach_summary_text.",
     "Заметки тренера (student.coach_report_note — разовая на этот отчёт; student.coach_persistent_notes — постоянные про ученика) — это КОНТЕКСТ для тона и акцентов разбора, НЕ числа и НЕ факты дня. Учитывай их в интерпретации (что уточнил ученик, контекст дня), но не выдумывай по ним числа и не цитируй дословно как медфакт.",
-    "ЖЁСТКО про контекст ученика (заметки тренера и история): пересказывай ТОЛЬКО то, что прямо дано в заметке/истории. НЕ предполагай и НЕ додумывай обстоятельства, которых там нет — например, не пиши «после тренировки поели не сразу», «пропустила приём», «наверное, не успела поесть», если этого нет в заметке. Forward-совет разрешён («после интервалов важно поесть плотно»), но утверждать или предполагать незаданные ФАКТЫ о поведении ученика — нельзя. Не сужай формулировку («вторник суматошный» ≠ «вечер вторника суматошный»).",
+    "ЖЁСТКО про контекст ученика (заметки тренера и история): пересказывай ТОЛЬКО то, что прямо дано в заметке/истории. НЕ предполагай и НЕ додумывай обстоятельства, которых там нет — например, не пиши «после тренировки поели не сразу», «пропустила приём», «наверное, не успела поесть», если этого нет в заметке. Forward-совет разрешён («после интервалов важно поесть плотно»), но утверждать или предполагать незаданные ФАКТЫ о поведении ученика — нельзя. Не сужай формулировку («вторник суматошный» ≠ «вечер вторника суматошный»). Особенно НЕ выдумывай состояния/события: болезнь, простуду, «после болезни», стресс, травму, праздник, поездку — если этого нет в заметке/истории, не упоминай вовсе (нельзя «молодец, что побегала после болезни», если про болезнь ничего не сказано). Это правило относится КО ВСЕМ полям, включая coach_summary_text и day_by_day_analysis_text, не только к тексту ученику.",
+    "ЦЕЛЬ УЧЕНИКА (student.nutrition_goal): maintain — текущая методика. lose (снижение веса): рамка «поддерживаем тренировки в общем мягком минусе». НЕ советуй «добавь углеводов/калорий» там, где у худеющего и так профицит/перебор; топливо догружай ТОЛЬКО в тренировочные/ключевые дни (fuel for the work required), а в дни отдыха — спокойнее, это и есть запланированный дефицит, а не ошибка. ХВАЛИ высокий белок (для худеющего это хорошо: не пиши «белок высоковат» как проблему и НЕ пиши «белок низковат» при ≥1.6 г/кг). МЯГКО озвучивай высокий жир (>~35% энергии) ученику как лишние калории, которые мешают снижению (для lose жир выносим в текст ученику). Тон поддерживающий, без «ешь больше». target_weight_kg, если задан — можно мягко («до цели ещё ~N кг»), без ИМТ/процентов жира/«минус N кг»/медикализации. gain (набор) — небольшой профицит, углеводы и белок с запасом.",
+    "ЦЕЛЬ lose НЕ отменяет safety: при опасно низкой калорийности или сигналах РПП — это блок/ручная проверка как обычно (худеть ≠ голодать; цель снижения НЕ оправдывает опасный дефицит). В тексте ученику при любой цели — без слов похудеть/сбросить вес/урезать калории/дефицит (язык поддержки, а не диеты).",
     "Натощак/рано утром: если в заметках тренера указано, что тренировка проходит натощак/рано утром — это осознанный режим, НЕ ошибка питания. Топливо под такую работу ищи в УЖИНЕ НАКАНУНЕ и ЗАВТРАКЕ/восстановлении ПОСЛЕ, а не «в день тренировки до неё мало углеводов». Акцент в разборе и совете смещай на вечер накануне и приём пищи после тренировки.",
     ...NUTRITION_VOICE_STYLE_SPEC_LINES,
     ...NUTRITION_VOICE_FEWSHOT_STABLE_LINES,
@@ -954,7 +956,9 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     student: {
       name: input.context.studentName,
       formality: input.context.resolvedCommunicationProfile.formality,
-      nutrition_goal: input.context.nutritionGoal,
+      nutrition_goal: input.context.nutritionGoalType,
+      nutrition_goal_text: input.context.nutritionGoal,
+      target_weight_kg: input.context.targetWeightKg,
       coach_context_ru: input.context.coachContextRu,
       coach_report_note: input.context.coachReportNoteRu,
       coach_persistent_notes: input.context.studentMemory?.persistent_notes ?? [],
@@ -1160,6 +1164,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
   const selectedFocus = selectNutritionWeeklyFocus({
     methodology,
     blockedSafety: safety.blocked,
+    goalType: context.nutritionGoalType,
   });
   const mainFocus = selectedFocus.statementRu;
   const notes: string[] = [];
@@ -1242,6 +1247,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
     planWeekTo,
     trainingContext: context.tpNextWeek,
     previousWeekDailyAnalysis: persistedDailyAnalysis,
+    goalType: context.nutritionGoalType,
   });
 
   let narrative: {

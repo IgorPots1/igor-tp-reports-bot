@@ -5,6 +5,7 @@ import type {
   NutritionFoodItem,
 } from "@/features/nutrition/context";
 import { sanitizeNutritionFoodItems } from "@/features/nutrition/context";
+import type { NutritionGoalType } from "@/features/nutrition/repository";
 import {
   hasNutritionIntervalWorkoutEvidence,
   hasNutritionTempoWorkEvidence,
@@ -215,6 +216,8 @@ export type NutritionFocusCategory =
   | "energy_availability"
   | "protein_support"
   | "maintenance"
+  | "lose_high_fat"
+  | "lose_steady_deficit"
   | "limited_data"
   | "blocked_safety";
 
@@ -266,6 +269,8 @@ export type NutritionMethodologyContext = {
     weeklyConsistency: boolean;
     proteinSupport: boolean;
     limitedData: boolean;
+    /** Task 10: weekly fat share is high (>~35% energy) — the lose-goal vector. */
+    highFat: boolean;
   };
   adjacentTrainingWithoutNutritionDays: Array<{
     date: string;
@@ -1837,6 +1842,13 @@ export function buildNutritionMethodologyContext(input: {
         day.nutritionStatus === "low_for_strength"
     ).length >= 2;
   const proteinSupport = !proteinSufficient && (averages.proteinGPerKg ?? 0) > 0;
+  // Task 10: high weekly fat share (>~35% energy) — for a weight-loss goal this is
+  // the main lever (excess calories), so the focus surfaces it instead of falling
+  // through to a vague maintenance focus (Bug C).
+  const highFat =
+    averages.fatG != null && averages.kcal != null && averages.kcal > 0
+      ? (averages.fatG * 9) / averages.kcal > 0.35
+      : false;
   const heavyTraining =
     context.tpPastWeek.longRun !== null ||
     context.tpPastWeek.keyWorkouts.length > 0 ||
@@ -1880,6 +1892,7 @@ export function buildNutritionMethodologyContext(input: {
       limitedData:
         context.manualMacroRows.length < 3 ||
         (context.tpPastWeek.cacheStatus !== "ok" && context.noTrainingWeek !== true),
+      highFat,
     },
     adjacentTrainingWithoutNutritionDays,
   };
@@ -1888,6 +1901,7 @@ export function buildNutritionMethodologyContext(input: {
 export function selectNutritionWeeklyFocus(input: {
   methodology: NutritionMethodologyContext;
   blockedSafety: boolean;
+  goalType?: NutritionGoalType;
 }): NutritionOneFocus {
   if (input.blockedSafety) {
     return {
@@ -1897,11 +1911,33 @@ export function selectNutritionWeeklyFocus(input: {
     };
   }
   const s = input.methodology.focusCandidateSignals;
+  const goalType = input.goalType ?? "maintain";
   if (s.limitedData) {
     return {
       category: "limited_data",
       statementRu: "Данных пока недостаточно для точного тренировка-день анализа, нужен ручной разбор.",
       progressionStrategy: "small_step",
+    };
+  }
+  // Task 10: for a weight-loss goal, safety-critical signals still come first
+  // (handled above + severeEnergyAvailability below). But the day-to-day vector
+  // for losing is calories/fat, not "add fuel" — so when there is no genuine
+  // hard-day underfueling, surface a goal-relevant focus instead of the vague
+  // maintenance fallback (Bug C). Fuel-for-work on hard/long days still wins.
+  if (goalType === "lose" && !s.severeEnergyAvailability && !s.hardSessionUnderfueling && !s.longRunUnderfueling) {
+    if (s.highFat) {
+      return {
+        category: "lose_high_fat",
+        statementRu:
+          "Главный фокус при снижении — жир высоковат (лишние калории): сместить часть в белок и овощи, углеводы держать вокруг тренировок, а не везде.",
+        progressionStrategy: "maintain",
+      };
+    }
+    return {
+      category: "lose_steady_deficit",
+      statementRu:
+        "Главный фокус — ровный мягкий минус: держим высокий белок, углеводы вокруг тренировок, спокойнее в дни отдыха. Без жёстких ограничений.",
+      progressionStrategy: "maintain",
     };
   }
   if (s.severeEnergyAvailability) {

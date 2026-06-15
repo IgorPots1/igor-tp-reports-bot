@@ -21,6 +21,13 @@ import {
 
 export const NUTRITION_COACH_CONTEXT_RU_MAX_LENGTH = 500;
 
+/** Student nutrition goal — drives target/plan math. Default maintain = current behavior. */
+export type NutritionGoalType = "lose" | "maintain" | "gain";
+
+export function normalizeNutritionGoalType(value: unknown): NutritionGoalType {
+  return value === "lose" || value === "gain" ? value : "maintain";
+}
+
 /**
  * Compact per-student nutrition review memory (Tasks 7+8). Kept small — it is
  * fed into every review prompt, so it must not balloon token cost.
@@ -56,6 +63,8 @@ export type NutritionStudentProfile = {
   coachNotes: string | null;
   coachContextRu: string | null;
   nutritionMemory: NutritionStudentMemory;
+  nutritionGoalType: NutritionGoalType;
+  targetWeightKg: number | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -209,6 +218,8 @@ type NutritionStudentProfileRow = {
   coach_notes: string | null;
   coach_context_ru: string | null;
   nutrition_memory: unknown | null;
+  nutrition_goal_type: string | null;
+  target_weight_kg: number | string | null;
   created_at: string;
   updated_at: string;
 };
@@ -326,6 +337,8 @@ export type UpsertNutritionStudentProfileInput = {
   coachNotes?: string | null;
   coachContextRu?: string | null;
   nutritionMemory?: NutritionStudentMemory;
+  nutritionGoalType?: NutritionGoalType;
+  targetWeightKg?: number | null;
 };
 
 export type AddNutritionWeightLogInput = {
@@ -493,6 +506,8 @@ function mapNutritionStudentProfileRow(row: NutritionStudentProfileRow): Nutriti
     coachNotes: row.coach_notes,
     coachContextRu: compactText(row.coach_context_ru),
     nutritionMemory: sanitizeNutritionStudentMemory(row.nutrition_memory),
+    nutritionGoalType: normalizeNutritionGoalType(row.nutrition_goal_type),
+    targetWeightKg: toFiniteNumber(row.target_weight_kg),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -699,6 +714,9 @@ export async function upsertNutritionStudentProfile(
       input.coachContextRu === undefined ? undefined : normalizeNutritionCoachContextRu(input.coachContextRu),
     nutrition_memory:
       input.nutritionMemory === undefined ? undefined : sanitizeNutritionStudentMemory(input.nutritionMemory),
+    nutrition_goal_type:
+      input.nutritionGoalType === undefined ? undefined : normalizeNutritionGoalType(input.nutritionGoalType),
+    target_weight_kg: input.targetWeightKg === undefined ? undefined : input.targetWeightKg,
   };
   const upsertPayload = Object.fromEntries(
     Object.entries(payload).filter(([, value]) => value !== undefined)
