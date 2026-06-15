@@ -395,36 +395,49 @@ const NUTRITION_HARD_DAY_FINDINGS = new Set<string>([
 const NUTRITION_UNDERSHOOT_MARKERS =
   /мал(?:о|ова)|низк|нижн|ниже|недостат|пустоват|не\s*хват|нехват|подтян|добав|просад|недобор|поддерж|скромн|улучш|не\s*наполн/i;
 
+// Number spans that are NOT macro/energy claims and must not be policed as
+// "facts" — workout descriptors, time, dates, percentages, and signed coaching
+// steps. Scrubbed before the macro-number check (Task 4).
+const NUTRITION_NON_MACRO_NUMBER_PATTERNS: RegExp[] = [
+  /\d+(?:[.,]\d+)?\s*%/g, // 41%
+  /\d+(?:[.,]\d+)?\s*[×xх]\s*\d+(?:[.,]\d+)?/gi, // intervals 7×5
+  /\d+(?:[.,]\d+)?\s*(?:км|мин|сек|час|ч|м)/giu, // distance / duration: 12 км, 5 мин, 2 ч
+  /\d+\s*:\s*\d+/g, // time 1:40
+  /\d{1,2}\s*(?:янв|фев|март|мар|апр|ма[йя]|июн|июл|авг|сен|окт|ноя|дек)/giu, // 14 июня
+  /[+\-–—]\s*\d+(?:[.,]\d+)?/g, // signed steps / range tails: +50, –60
+];
+
 function roundToNearestStep(value: number, step: number): number {
   return Math.round(value / step) * step;
 }
 
 function buildAllowedNutritionProseNumbers(facts: NutritionDayProseFacts): number[] {
   const allowed: number[] = [];
-  const pushExact = (value: number | null | undefined) => {
+  // Push a value plus its sensible rounded display forms. The model may render a
+  // diary fact (e.g. 103.58) as "104"/"105"/"100", so accept those roundings —
+  // but the set stays tight enough that a far-off invented number won't match
+  // (tolerance below is < 0.1). Task 4: stop cutting real facts; keep invented out.
+  const add = (value: number | null | undefined, steps: number[]) => {
     if (typeof value === "number" && Number.isFinite(value)) {
-      allowed.push(value);
+      allowed.push(value, ...steps.map((step) => roundToNearestStep(value, step)));
     }
   };
-  // Targets/deficits are coaching orientations ("цель ~350", "недобор ~100"),
-  // so accept their rounded forms; actual intake stays tight.
-  const pushLoose = (value: number | null | undefined) => {
-    if (typeof value === "number" && Number.isFinite(value)) {
-      allowed.push(value, ...[5, 10, 25, 50].map((step) => roundToNearestStep(value, step)));
-    }
-  };
-  if (typeof facts.kcal === "number" && Number.isFinite(facts.kcal)) {
-    allowed.push(facts.kcal, roundToNearestStep(facts.kcal, 50));
-  }
+  // Actual diary facts (kcal, Б/Ж/У) — exact + rounded display.
+  add(facts.kcal, [1, 10, 50]);
   for (const macro of [facts.proteinG, facts.fatG, facts.carbsG]) {
-    if (typeof macro === "number" && Number.isFinite(macro)) {
-      allowed.push(macro, roundToNearestStep(macro, 5), roundToNearestStep(macro, 10));
+    add(macro, [1, 5, 10]);
+  }
+  // g/kg are decimals — allow exact, 1-decimal, and whole-number forms.
+  for (const perKg of [facts.carbsGPerKg, facts.proteinGPerKg]) {
+    if (typeof perKg === "number" && Number.isFinite(perKg)) {
+      allowed.push(perKg, Math.round(perKg * 10) / 10, Math.round(perKg));
     }
   }
-  pushExact(facts.carbsGPerKg);
-  pushExact(facts.proteinGPerKg);
+  // Plan targets / deficits are coaching orientations — accept exact + rounded to
+  // 5/10 (the rounded "около 350" form). No 25/50 so loose target rounding can't
+  // accidentally admit a distant invented number.
   for (const target of facts.planTargetNumbers ?? []) {
-    pushLoose(target);
+    add(target, [5, 10]);
   }
   return allowed;
 }
@@ -449,10 +462,16 @@ export function validateNutritionDayProse(input: {
   const issues: NutritionTelegramRenderIssue[] = [];
   const prose = input.prose;
   const allowed = buildAllowedNutritionProseNumbers(input.facts);
-  for (const match of prose.matchAll(/(\d+(?:[.,]\d+)?)(\s*%)?/g)) {
-    if (match[2]) {
-      continue; // percentages are whitelisted
-    }
+  // Only police MACRO/ENERGY claims. Non-macro numbers are not facts to validate
+  // and were the dominant cause of valid days falling to dry text (Task 4):
+  // workout descriptors (12 км, 7×5 мин, 1:40), dates (14 июня), percentages, and
+  // "+N" coaching steps. Scrub those spans first; a bare or г/ккал number that
+  // remains must still be a fact of this day (invented macro numbers stay blocked).
+  let scanText = prose;
+  for (const re of NUTRITION_NON_MACRO_NUMBER_PATTERNS) {
+    scanText = scanText.replace(re, " ");
+  }
+  for (const match of scanText.matchAll(/(\d+(?:[.,]\d+)?)/g)) {
     const value = Number(match[1].replace(",", "."));
     if (!Number.isFinite(value)) {
       continue;

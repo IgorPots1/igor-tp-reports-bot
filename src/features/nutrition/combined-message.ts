@@ -305,6 +305,11 @@ export function buildNutritionDayProseFacts(item: Record<string, unknown>): Nutr
       planTargetNumbers.push(value);
     }
   }
+  // Band midpoint, rounded to 10, so a friendly "около 300" for a 280–320 corridor
+  // reads as a valid rounded target rather than an invented number (Task 4).
+  if (carbsGMin != null && carbsGMax != null) {
+    planTargetNumbers.push(Math.round((carbsGMin + carbsGMax) / 2 / 10) * 10);
+  }
   if (carbs != null) {
     const mid = carbsGMin != null && carbsGMax != null ? (carbsGMin + carbsGMax) / 2 : null;
     for (const target of [carbsGMin, carbsGMax, mid]) {
