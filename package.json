@@ -251,6 +251,7 @@
     "check:nutrition-telegram-renderer-boundary": "npx tsx scripts/check-nutrition-telegram-renderer-boundary.ts",
     "check:nutrition-day-prose-validator": "npx tsx scripts/check-nutrition-day-prose-validator.ts",
     "check:nutrition-generation-queue": "NUTRITION_GEN_DELAY_MS=120 npx tsx scripts/check-nutrition-generation-queue.ts",
+    "check:nutrition-ai-provider": "npx tsx scripts/check-nutrition-ai-provider.ts",
     "check:nutrition-combined-message": "npx tsx scripts/check-nutrition-combined-message.ts",
     "check:nutrition-interpretation-contract": "npx tsx scripts/check-nutrition-interpretation-contract.ts",
     "diagnose:nutrition-interpretation-contract": "npx tsx scripts/diagnose-nutrition-interpretation-contract.ts",

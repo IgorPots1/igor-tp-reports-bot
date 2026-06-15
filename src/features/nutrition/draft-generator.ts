@@ -12,10 +12,17 @@ import {
   type NutritionStudentContext,
 } from "@/features/nutrition/context";
 import { EVENING_SECTIONS, pickNotableFoods } from "@/features/nutrition/narrative-composer";
+import { enqueueOpenAiCall } from "@/features/nutrition/nutrition-generation-queue";
 import {
-  classifyOpenAiError,
-  enqueueOpenAiCall,
-} from "@/features/nutrition/nutrition-generation-queue";
+  buildNutritionModelRequest,
+  classifyAiError,
+  extractNutritionFinishReason,
+  extractNutritionModelId,
+  extractNutritionModelText,
+  resolveNutritionAiApiKey,
+  resolveNutritionAiModel,
+  resolveNutritionAiProvider,
+} from "@/features/nutrition/nutrition-ai-provider";
 import {
   buildNutritionMethodologyContext,
   NUTRITION_REVIEW_METHODOLOGY_VERSION,
@@ -43,8 +50,6 @@ import type {
 } from "@/features/trainingpeaks/repository";
 import { getTrainingPeaksReplyDraftFormalityInstruction } from "@/features/trainingpeaks/telegram-context";
 
-const OPENAI_API_URL = process.env.OPENAI_API_URL?.trim() || "https://api.openai.com/v1/chat/completions";
-const OPENAI_NUTRITION_REVIEW_MODEL = process.env.OPENAI_NUTRITION_WEEKLY_REVIEW_MODEL?.trim() || "gpt-4o-mini";
 const NUTRITION_REVIEW_PROMPT_VERSION = "nutrition-weekly-review-v3-ai";
 
 export type GeneratedNutritionWeeklyAnalysis = {
@@ -689,6 +694,8 @@ type NutritionAiNarrative = {
   day_prose: Record<string, string>;
   quality_notes: string[];
   do_not_send_reasons: string[];
+  /** The model that actually answered (for diagnostics). Set on the success path. */
+  ai_model?: string;
 };
 
 /**
@@ -813,9 +820,11 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     input.diagnostics?.push(reason);
     console.error("[nutrition-review-ai] generation fell back", { reason, ...extra });
   };
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const provider = resolveNutritionAiProvider();
+  const model = resolveNutritionAiModel(provider);
+  const apiKey = resolveNutritionAiApiKey(provider);
   if (!apiKey) {
-    note("ai_no_api_key");
+    note("ai_no_api_key", { provider });
     return null;
   }
   const allowAthleteDraft = !input.safetyFlags.blocked;
@@ -913,45 +922,30 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     allow_athlete_draft: allowAthleteDraft,
   };
 
-  // GPT-5 / o-series models reject `max_tokens` (require `max_completion_tokens`)
-  // and only accept the default temperature, so build the request model-aware.
-  // Older models (gpt-4o, gpt-4o-mini, ...) keep temperature + max_tokens.
-  const isNextGenModel = /^(gpt-5|o\d)/i.test(OPENAI_NUTRITION_REVIEW_MODEL);
-  const requestBody: Record<string, unknown> = {
-    model: OPENAI_NUTRITION_REVIEW_MODEL,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: `Facts JSON:\n${JSON.stringify(factsPayload, null, 2)}` },
-    ],
-  };
-  if (isNextGenModel) {
-    requestBody.max_completion_tokens = 4096;
-  } else {
-    requestBody.temperature = 0.2;
-    requestBody.max_tokens = 4096;
-  }
+  // Build the provider-aware request (OpenAI chat-completions vs Anthropic
+  // Messages API). Switching provider/model is env-only and never reproduces an
+  // HTTP 400 from mismatched params.
+  const { url, headers, body } = buildNutritionModelRequest({
+    provider,
+    model,
+    apiKey,
+    systemPrompt,
+    factsPayload,
+  });
   try {
     // Serialise through the generation queue so concurrent students / the two
-    // calls per student don't burst OpenAI. The slot is held for the whole
+    // calls per student don't burst the provider. The slot is held for the whole
     // retry sequence below.
     const { response, prefetchedBody } = await enqueueOpenAiCall(async () => {
-      // Retry transient throttling/server errors (429 / 5xx) with exponential
-      // backoff (2s -> 4s -> 8s). Honours Retry-After when present. Rate limits
-      // from rapid regenerations recover, so we retry them; quota exhaustion
-      // (insufficient_quota) won't recover, so we stop immediately and don't
-      // burn attempts. The error body is read once and passed back so the
-      // caller doesn't re-read a consumed stream.
+      // Retry transient throttling/server errors (429 / 5xx / 529) with
+      // exponential backoff (2s -> 4s -> 8s). Honours Retry-After when present.
+      // Rate limits from rapid regenerations recover, so we retry them; quota
+      // exhaustion (insufficient_quota) won't recover, so we stop immediately
+      // and don't burn attempts. The error body is read once and passed back so
+      // the caller doesn't re-read a consumed stream.
       let res: Response | null = null;
       for (let attempt = 0; attempt < 3; attempt += 1) {
-        res = await fetch(OPENAI_API_URL, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(requestBody),
-        });
+        res = await fetch(url, { method: "POST", headers, body });
         if (res.ok) {
           return { response: res, prefetchedBody: null as string | null };
         }
@@ -959,14 +953,14 @@ async function generateNutritionWeeklyReviewNarrative(input: {
         if (res.status !== 429 && res.status < 500) {
           return { response: res, prefetchedBody: await res.text().catch(() => "") };
         }
-        const body = await res.text().catch(() => "");
+        const errorBody = await res.text().catch(() => "");
         // Quota exhausted — retry is useless, stop now.
-        if (classifyOpenAiError(res.status, body) === "insufficient_quota") {
-          return { response: res, prefetchedBody: body };
+        if (classifyAiError(provider, res.status, errorBody) === "insufficient_quota") {
+          return { response: res, prefetchedBody: errorBody };
         }
         // Out of attempts for a transient error.
         if (attempt === 2) {
-          return { response: res, prefetchedBody: body };
+          return { response: res, prefetchedBody: errorBody };
         }
         const retryAfterRaw = Number(res.headers.get("retry-after"));
         const delayMs =
@@ -982,29 +976,28 @@ async function generateNutritionWeeklyReviewNarrative(input: {
       const bodyText = prefetchedBody ?? (response ? await response.text().catch(() => "") : "");
       // Distinguish transient rate limit from exhausted quota / server error so
       // the fallback reason is actionable (master order Task 1).
-      const errorType = classifyOpenAiError(status, bodyText);
+      const errorType = classifyAiError(provider, status, bodyText);
       if (errorType === "insufficient_quota") {
         console.error(
-          "[nutrition-review-ai] OpenAI quota exhausted — проверь баланс OpenAI (ретрай бесполезен)",
-          { status }
+          `[nutrition-review-ai] ${provider} quota exhausted — проверь баланс/квоту провайдера (ретрай бесполезен)`,
+          { provider, status }
         );
-        note("ai_insufficient_quota", { status, body: bodyText.slice(0, 300) });
+        note("ai_insufficient_quota", { provider, status, body: bodyText.slice(0, 300) });
       } else if (errorType === "rate_limit_exceeded") {
-        note("ai_rate_limited", { status, body: bodyText.slice(0, 300) });
+        note("ai_rate_limited", { provider, status, body: bodyText.slice(0, 300) });
       } else if (errorType === "server_error") {
-        note("ai_server_error", { status, body: bodyText.slice(0, 300) });
+        note("ai_server_error", { provider, status, body: bodyText.slice(0, 300) });
       } else {
-        note(`ai_http_${status}`, { status, body: bodyText.slice(0, 300) });
+        note(`ai_http_${status}`, { provider, status, body: bodyText.slice(0, 300) });
       }
       return null;
     }
-    const payload = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string | null }; finish_reason?: string }>;
-    };
-    const content = payload.choices?.[0]?.message?.content?.trim();
-    const finishReason = payload.choices?.[0]?.finish_reason;
+    const payload = (await response.json()) as unknown;
+    const content = extractNutritionModelText(provider, payload);
+    const finishReason = extractNutritionFinishReason(provider, payload);
+    const answeredModel = extractNutritionModelId(payload) ?? model;
     if (!content) {
-      note("ai_empty_content", { finishReason });
+      note("ai_empty_content", { provider, model, finishReason });
       return null;
     }
     let parsed: Partial<NutritionAiNarrative>;
@@ -1063,9 +1056,10 @@ async function generateNutritionWeeklyReviewNarrative(input: {
       do_not_send_reasons: Array.isArray(parsed.do_not_send_reasons)
         ? parsed.do_not_send_reasons.filter((item): item is string => typeof item === "string")
         : [],
+      ai_model: answeredModel,
     };
   } catch (error) {
-    note("ai_exception", { error: error instanceof Error ? error.message : String(error) });
+    note("ai_exception", { provider, error: error instanceof Error ? error.message : String(error) });
     return null;
   }
 }
@@ -1200,7 +1194,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
       narrative = {
         ...aiNarrative,
         generation_mode: "ai",
-        ai_model: OPENAI_NUTRITION_REVIEW_MODEL,
+        ai_model: aiNarrative.ai_model ?? resolveNutritionAiModel(resolveNutritionAiProvider()),
       };
     } else {
       // Surface why the AI path fell back (otherwise the fallback is silent).
