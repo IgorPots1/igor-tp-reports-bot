@@ -17,7 +17,13 @@ export type NutritionTelegramRenderIssue = {
 
 export type NutritionTelegramRenderResult = {
   ok: boolean;
+  /** Full message (both parts joined) — single-copy / backward compatible. */
   text: string | null;
+  /**
+   * The message split for Telegram's 4096-char cap: [past-week review, next-week
+   * plan]. Copy each part as its own Telegram message. One element if it all fits.
+   */
+  parts: string[];
   issues: NutritionTelegramRenderIssue[];
   charCount: number;
 };
@@ -127,6 +133,36 @@ function dayTypeRu(dayType: NutritionPlanDayType): string {
     default:
       return "День недели";
   }
+}
+
+/**
+ * Telegram-readable divider between the numbers line and the feedback of a day.
+ * Spaced em-dashes survive cleanupPlainText (em → hyphen) as "- - -" — a visible
+ * dashed divider that is NOT a markdown rule (3 consecutive hyphens) and NOT a
+ * long dash, so it passes validateTelegramReadyNutritionMessage.
+ */
+export const NUTRITION_TELEGRAM_DAY_DIVIDER = "— — —";
+
+/**
+ * Break a long block into short, phone-readable chunks of up to `maxSentences`
+ * sentences separated by a blank line. Splits only at sentence end followed by a
+ * capital letter, so decimals ("1.5"), "г/кг" and abbreviations are not split.
+ * Render-layer only: never changes wording, just inserts paragraph breaks.
+ */
+export function paragraphizeForTelegram(text: string | null | undefined, maxSentences = 2): string {
+  const trimmed = (text ?? "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  const sentences = trimmed.split(/(?<=[.!?…])\s+(?=[А-ЯЁA-Z0-9«])/u).filter((s) => s.trim());
+  if (sentences.length <= maxSentences) {
+    return trimmed;
+  }
+  const chunks: string[] = [];
+  for (let i = 0; i < sentences.length; i += maxSentences) {
+    chunks.push(sentences.slice(i, i + maxSentences).join(" ").trim());
+  }
+  return chunks.join("\n\n");
 }
 
 export function cleanupPlainText(input: string): string {
@@ -539,6 +575,8 @@ export function validateTelegramReadyNutritionMessage(input: {
   hasTargetWeekTrainingContext: boolean;
   hasKeyTraining: boolean;
   longRunTargetKcalText?: string | null;
+  /** When the message is split for sending, length is checked per part, not on the whole. */
+  messageParts?: string[];
 }): NutritionTelegramRenderIssue[] {
   const issues: NutritionTelegramRenderIssue[] = [];
   const text = input.text;
@@ -582,8 +620,12 @@ export function validateTelegramReadyNutritionMessage(input: {
   if (input.hasTargetWeekTrainingContext && /План на неделю по типам дней/.test(text) && /Мини-таблица|План по датам/.test(text)) {
     pushIssue(issues, "error", "plan_and_mini_table", "При доступном TP-контексте нельзя одновременно показывать типы дней и dated plan.");
   }
-  if (text.length > 4096) {
-    pushIssue(issues, "warning", "telegram_length", "Текст длиннее одного Telegram-сообщения; при ручной отправке разделите на 2 части.");
+  const lengthBasis =
+    input.messageParts && input.messageParts.length > 0
+      ? Math.max(...input.messageParts.map((part) => part.length))
+      : text.length;
+  if (lengthBasis > 4096) {
+    pushIssue(issues, "warning", "telegram_length", "Часть сообщения длиннее одного Telegram-сообщения; разбей её ещё.");
   }
   if (
     /дефицит калорий|дефицит энергии|энергодоступность|опасная зона|медицинский риск|урезать|похудеть|RED-S|LEA|анемия|расстройство пищевого/i.test(
@@ -619,24 +661,46 @@ export function renderNutritionTelegramMessage(input: NutritionTelegramRendererI
     todayLocalDate: input.todayLocalDate,
     miniTableMode: input.miniTableMode ?? "athlete_remaining_only",
   });
-  const lines = [
+  // Phone-readable structure: every section has a heading, a blank line, then
+  // its body; day blocks are separated by a blank line; long bodies are split
+  // into short chunks. One Telegram message, copy-paste-safe (no markdown).
+  const dayBlocks =
+    input.interpretation.dayComments.length > 0
+      ? input.interpretation.dayComments
+      : ["Разбор по дням в этом черновике не детализирую: canonical daily_analysis не найден, поэтому лучше проверить исходный обзор вручную."];
+  const daySection = dayBlocks.join("\n\n");
+  const weekSummary = paragraphizeForTelegram(
+    input.interpretation.weekSummaryRu ?? "По неделе держим курс на ровную энергию и восстановление без резких просадок."
+  );
+  const focusBody = paragraphizeForTelegram(
+    input.interpretation.focusLinesRu.length > 0
+      ? input.interpretation.focusLinesRu.join(" ")
+      : "Фокус на неделю не сформирован."
+  );
+  // Split into two Telegram messages at the natural past/future boundary so each
+  // fits the 4096-char cap: part 1 = last-week review (header + days + week
+  // summary), part 2 = next-week plan (focus + mini-table + pre-training memo).
+  const reviewLines = [
     resolveGreeting(input.formality, input.athleteName),
     "",
     "Посмотрел твой отчёт за неделю и сопоставил его с тренировками.",
     ...(comparisonLine ? ["", comparisonLine] : []),
     "",
-    "🔹 Разбор по дням",
-    ...(input.interpretation.dayComments.length > 0
-      ? input.interpretation.dayComments
-      : ["Разбор по дням в этом черновике не детализирую: canonical daily_analysis не найден, поэтому лучше проверить исходный обзор вручную."]),
+    "📊 Разбор по дням",
+    "",
+    daySection,
     "",
     "📌 Итог недели",
-    input.interpretation.weekSummaryRu ?? "По неделе держим курс на ровную энергию и восстановление без резких просадок.",
     "",
+    weekSummary,
+  ];
+  const planLinesSection = [
     formatPlanFocusSectionHeading(input.planWeekMode),
-    ...(input.interpretation.focusLinesRu.length > 0 ? input.interpretation.focusLinesRu : ["Фокус на неделю не сформирован."]),
+    "",
+    focusBody,
+    "",
     "Цифры ниже - ориентиры, не обязательство. Не нужно резко прыгать к ним за один день.",
-    mainStepLine,
+    ...(mainStepLine ? [mainStepLine] : []),
     "",
     planHeading,
     ...planLines,
@@ -645,18 +709,23 @@ export function renderNutritionTelegramMessage(input: NutritionTelegramRendererI
     "На следующем разборе посмотрим, как это отразится на энергии и восстановлении.",
   ];
 
-  const text = cleanupPlainText(lines.join("\n"));
+  const reviewText = cleanupPlainText(reviewLines.join("\n"));
+  const planText = cleanupPlainText(planLinesSection.join("\n"));
+  const parts = [reviewText, planText].filter((part) => part.length > 0);
+  const text = parts.join("\n\n");
   const issues = validateTelegramReadyNutritionMessage({
     text,
     hasPreviousWeeksContext: input.hasPreviousWeeksContext,
     hasTargetWeekTrainingContext: input.hasTargetWeekTrainingContext,
     hasKeyTraining: keyTrainingPresent,
     longRunTargetKcalText: getLongRunTargetKcalText(input.nextWeekPlan),
+    messageParts: parts,
   });
   const ok = !issues.some((issue) => issue.severity === "error");
   return {
     ok,
     text: ok ? text : null,
+    parts: ok ? parts : [],
     issues,
     charCount: text.length,
   };

@@ -26,9 +26,6 @@ function arg(name: string): string | undefined {
 function asObject(v: unknown): Record<string, unknown> {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 }
-function planDay(generated: { next_week_plan?: { days?: Array<Record<string, unknown>> } }, type: string) {
-  return (generated.next_week_plan?.days ?? []).find((d) => d.training_type === type) ?? null;
-}
 function planType(generated: { next_week_plan?: { day_type_targets?: Record<string, unknown> } }, type: string) {
   return asObject(generated.next_week_plan?.day_type_targets)[type] ?? null;
 }

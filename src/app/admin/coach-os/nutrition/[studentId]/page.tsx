@@ -941,10 +941,26 @@ export default async function CoachOsNutritionStudentCardPage({
                   </ul>
                 </details>
               ) : null}
-              <NutritionDraftCopyBlock
-                draft={combinedMessage.renderResult.text}
-                generationMode={displayPlan?.generationMode ?? generationMode}
-              />
+              {combinedMessage.athleteMessageDraftParts.length > 1 ? (
+                combinedMessage.athleteMessageDraftParts.map((part, idx) => (
+                  <div key={`combined-part-${idx}`} className="admin-nutrition-draft-part">
+                    <p className="admin-muted admin-nutrition-draft-part-label">
+                      {idx === 0
+                        ? `Сообщение 1 — разбор недели (${part.length} симв.)`
+                        : `Сообщение 2 — план на неделю (${part.length} симв.)`}
+                    </p>
+                    <NutritionDraftCopyBlock
+                      draft={part}
+                      generationMode={displayPlan?.generationMode ?? generationMode}
+                    />
+                  </div>
+                ))
+              ) : (
+                <NutritionDraftCopyBlock
+                  draft={combinedMessage.renderResult.text}
+                  generationMode={displayPlan?.generationMode ?? generationMode}
+                />
+              )}
             </>
           ) : (
             <p className="admin-muted">Полный текст ученику не сформирован: есть причины для ручной проверки.</p>

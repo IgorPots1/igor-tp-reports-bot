@@ -234,9 +234,20 @@ function kristinaReview(): NutritionWeeklyAnalysis {
   };
 }
 
+// Task 10c: day blocks now have internal blank lines (header / numbers / divider /
+// feedback), so split on the day-header marker and take the feedback after the divider.
+function feedbackAfterDivider(block: string): string {
+  const lines = block.split("\n");
+  const dividerIdx = lines.findIndex((l) => /^\s*[—–-](\s*[—–-])+\s*$/.test(l.trim()));
+  const feedbackLines = dividerIdx >= 0 ? lines.slice(dividerIdx + 1) : lines.slice(2);
+  return feedbackLines.map((l) => l.trim()).filter(Boolean).join(" ").trim();
+}
+function dayBlocks(derived: string): string[] {
+  return derived.split(/\n(?=🔹 )/).filter((b) => b.includes("🔹"));
+}
 function dayComment(derived: string, dateLabel: string): string {
-  const block = derived.split("\n\n").find((item) => item.includes(`(${dateLabel})`)) ?? "";
-  return block.split("\n").slice(2).join(" ").trim();
+  const block = dayBlocks(derived).find((item) => item.includes(`(${dateLabel})`)) ?? "";
+  return feedbackAfterDivider(block);
 }
 
 const review = kristinaReview();

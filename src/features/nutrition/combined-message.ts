@@ -15,6 +15,8 @@ import {
 } from "@/features/nutrition/narrative-composer";
 import { resolveNutritionNarrativePreferencesFromStored } from "@/features/nutrition/context";
 import {
+  NUTRITION_TELEGRAM_DAY_DIVIDER,
+  paragraphizeForTelegram,
   renderNutritionTelegramMessage,
   validateNutritionDayProse,
   type NutritionDayProseFacts,
@@ -55,6 +57,8 @@ type CanonicalDailyFact = {
 export type NutritionCombinedMessageResult = {
   status: "ready" | "missing_review" | "missing_plan" | "blocked_safety" | "needs_review" | "awaiting_generation";
   athleteMessageDraft: string | null;
+  /** Telegram-split copy blocks: [last-week review, next-week plan]. Empty unless ready. */
+  athleteMessageDraftParts: string[];
   renderResult: NutritionTelegramRenderResult;
   warnings: string[];
   sourceReviewId: string | null;
@@ -81,6 +85,7 @@ function emptyRenderResult(): NutritionTelegramRenderResult {
   return {
     ok: false,
     text: null,
+    parts: [],
     issues: [],
     charCount: 0,
   };
@@ -590,7 +595,6 @@ function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
       const protein = getDailyFactValue(item, actual, "protein_g", "proteinG");
       const fat = getDailyFactValue(item, actual, "fat_g", "fatG");
       const carbs = getDailyFactValue(item, actual, "carbs_g", "carbsG");
-      const carbsPerKg = toFiniteNumber(item.carbs_g_per_kg) ?? toFiniteNumber(actual.carbsGPerKg);
       const findings = asStringArray(item.findings);
       const nutritionStatus =
         typeof item.nutrition_status === "string"
@@ -665,19 +669,28 @@ function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
         },
         repetitionState
       );
+      // Telegram-readable day block: header line, blank, numbers line, blank,
+      // divider, blank, feedback (long feedback split into short chunks). Real
+      // newlines survive copy-paste; no markdown. Structure is goal-independent.
+      const header = `🔹 ${weekday} (${dateLabel}) · ${athleteTrainingLabel}`;
       if (missingNutritionData) {
-        return `🔹 ${weekday} (${dateLabel}) · ${athleteTrainingLabel}
-${comment}`;
+        return `${header}\n\n${paragraphizeForTelegram(comment)}`;
       }
       // Hybrid: prefer validated model prose, otherwise the deterministic comment.
       // The fact line above is always code-owned and never replaced.
       // Facts come from the shared helper so this render-time gate and the
       // generation-time audit (draft-generator) validate against identical facts.
       const dayComment = resolveUsableNutritionDayProse(item.athlete_prose, buildNutritionDayProseFacts(item)) ?? comment;
-      const carbsKgText = carbsPerKg != null ? ` (${formatNutritionAthletePerKg(carbsPerKg)})` : "";
-      return `🔹 ${weekday} (${dateLabel}) · ${athleteTrainingLabel}
-${formatNutritionAthleteKcal(kcal, { mode: "actual" })} · белок ${formatNutritionAthleteMacro(protein)} · жиры ${formatNutritionAthleteMacro(fat)} · углеводы ${formatNutritionAthleteMacro(carbs)}${carbsKgText}.
-${dayComment}`;
+      const numbersLine = `${formatNutritionAthleteKcal(kcal, { mode: "actual" })} · Б ${formatNutritionAthleteMacro(protein)} · Ж ${formatNutritionAthleteMacro(fat)} · У ${formatNutritionAthleteMacro(carbs)}`;
+      return [
+        header,
+        "",
+        numbersLine,
+        "",
+        NUTRITION_TELEGRAM_DAY_DIVIDER,
+        "",
+        paragraphizeForTelegram(dayComment),
+      ].join("\n");
     })
     .filter((line): line is string => Boolean(line));
 }
@@ -1074,6 +1087,7 @@ export function buildDerivedNutritionCombinedMessage(input: {
     return {
       status: "missing_review",
       athleteMessageDraft: null,
+      athleteMessageDraftParts: [],
       renderResult: emptyRenderResult(),
       warnings: [],
       sourceReviewId: null,
@@ -1086,6 +1100,7 @@ export function buildDerivedNutritionCombinedMessage(input: {
     return {
       status: "awaiting_generation",
       athleteMessageDraft: null,
+      athleteMessageDraftParts: [],
       renderResult: emptyRenderResult(),
       warnings: [],
       sourceReviewId: input.review.id,
@@ -1096,6 +1111,7 @@ export function buildDerivedNutritionCombinedMessage(input: {
     return {
       status: "missing_plan",
       athleteMessageDraft: null,
+      athleteMessageDraftParts: [],
       renderResult: emptyRenderResult(),
       warnings: [],
       sourceReviewId: input.review.id,
@@ -1126,6 +1142,7 @@ export function buildDerivedNutritionCombinedMessage(input: {
     return {
       status: "blocked_safety",
       athleteMessageDraft: null,
+      athleteMessageDraftParts: [],
       renderResult: emptyRenderResult(),
       warnings,
       sourceReviewId: review.id,
@@ -1179,6 +1196,7 @@ export function buildDerivedNutritionCombinedMessage(input: {
   return {
     status: renderResult.ok && !hasNeedsReviewStatus(review, plan) ? "ready" : "needs_review",
     athleteMessageDraft,
+    athleteMessageDraftParts: renderResult.ok ? renderResult.parts : [],
     renderResult,
     warnings,
     sourceReviewId: review.id,

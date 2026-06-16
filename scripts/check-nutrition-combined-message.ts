@@ -186,10 +186,27 @@ async function run(): Promise<void> {
   });
   assert.equal(ready.status, "ready");
   assertReady(ready);
+  // Task 10c: message is split into two Telegram-sized parts at the past/future
+  // boundary — part 1 = last-week review, part 2 = next-week plan; each ≤ 4096.
+  assert.equal(ready.athleteMessageDraftParts.length, 2, "ready message must split into two parts");
+  const [reviewPart, planPart] = ready.athleteMessageDraftParts;
+  assert.ok(reviewPart.length <= 4096 && planPart.length <= 4096, "each Telegram part must fit the 4096-char cap");
+  assert.match(reviewPart, /📊 Разбор по дням/, "part 1 holds the day-by-day review");
+  assert.match(reviewPart, /📌 Итог недели/, "part 1 ends with the week summary");
+  assert.doesNotMatch(reviewPart, /📋 Мини-таблица/, "part 1 must not contain the plan table");
+  assert.match(planPart, /Фокус на (эту|следующую) неделю/, "part 2 holds the week focus");
+  assert.match(planPart, /📋 Мини-таблица|План на неделю по типам дней/, "part 2 holds the plan");
   assert.match(ready.athleteMessageDraft ?? "", /~2000 ккал/, "must display-round rest kcal from next_week_plan");
   assert.doesNotMatch(ready.athleteMessageDraft ?? "", /~1950 ккал|2487 ккал|214\.69|104\.2|\d+\.\d+\s*г/, "athlete copy must avoid raw technical numbers");
   assert.match(ready.athleteMessageDraft ?? "", /~2500 ккал/, "actual kcal must be rounded for athlete text");
-  assert.match(ready.athleteMessageDraft ?? "", /~3,8 г\/кг/, "g/kg must be formatted with comma and one decimal");
+  // Task 10c: compact, phone-readable numbers line (ккал · Б · Ж · У) — no per-kg.
+  assert.match(ready.athleteMessageDraft ?? "", /· Б \d+ г · Ж \d+ г · У \d+ г/, "day numbers line uses compact Б/Ж/У format");
+  // Task 10c: phone-readable structure — section heading + blank, then per-day
+  // blocks (header / blank / numbers / blank / visible divider / blank / feedback),
+  // copy-paste-safe (no markdown), one blank line between days.
+  assert.match(ready.athleteMessageDraft ?? "", /📊 Разбор по дням\n\n🔹 /, "day section heading then blank line then first day");
+  assert.match(ready.athleteMessageDraft ?? "", /🔹 Понедельник \(01\.06\)[^\n]*\n\n[^\n]*ккал · Б [^\n]*\n\n- - -\n\n/, "per-day block: header / numbers / divider / feedback with blank lines");
+  assert.doesNotMatch(ready.athleteMessageDraft ?? "", /^\s*-{3,}\s*$/m, "divider must not be a markdown horizontal rule");
   assert.match(ready.athleteMessageDraft ?? "", /🔹 Понедельник \(01\.06\) · день отдыха/, "must include canonical day-by-day block");
   assert.match(ready.athleteMessageDraft ?? "", /День отдыха получился спокойным/, "rest day must render natural non-caution text");
   assert.match(ready.athleteMessageDraft ?? "", /🔹 Воскресенье \(07\.06\) · длительная/, "long_run daily label must be athlete-safe");

@@ -63,6 +63,13 @@ assert.ok(
   `lose long-day must be below the fixed-coefficient maintain long-day (${loseLongMifflin.target_kcal} < ${mLongRun.target_kcal})`
 );
 assert.ok(loseLongMifflin.target_kcal <= 2750, `Mifflin lose long-day stays realistic (~maintenance), got ${loseLongMifflin.target_kcal}`);
+// Documented behaviour: the Cunningham fallback (no height/age) runs at/above
+// Mifflin on training days — fill height/age for losing athletes to pull them down.
+const loseLongFallback = losePlanFallback.day_type_targets.long_run!;
+assert.ok(
+  loseLongFallback.target_kcal >= loseLongMifflin.target_kcal,
+  `Cunningham fallback long-day >= Mifflin (${loseLongFallback.target_kcal} >= ${loseLongMifflin.target_kcal})`
+);
 
 // Periodization holds on the corrected base: rest cut hardest, training fueled.
 const loseRest = losePlanMifflin.day_type_targets.rest!;
