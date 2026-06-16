@@ -1,0 +1,258 @@
+/* Брендинг igorp.run: фон zinc-950, акцент yellow-400, Oswald (заголовки) + Manrope (текст).
+   Самодостаточные стили — репозиторий не использует Tailwind. */
+
+.page {
+  min-height: 100vh;
+  background: #09090b; /* zinc-950 */
+  color: #ffffff;
+  padding: 24px;
+  font-family: var(--font-manrope), system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  box-sizing: border-box;
+}
+
+.page *,
+.page *::before,
+.page *::after {
+  box-sizing: border-box;
+}
+
+.inner {
+  max-width: 28rem; /* 448px */
+  margin: 0 auto;
+  padding-top: 16px;
+}
+
+.brand {
+  font-size: 12px;
+  color: #71717a; /* zinc-500 */
+  margin-bottom: 4px;
+}
+
+.title {
+  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
+  font-size: 30px;
+  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+  margin: 0 0 8px;
+}
+
+.accent {
+  color: #facc15; /* yellow-400 */
+}
+
+.subtitle {
+  color: #a1a1aa; /* zinc-400 */
+  font-size: 14px;
+  margin: 0 0 32px;
+}
+
+/* ----- Controls ----- */
+.field {
+  margin-bottom: 24px;
+}
+
+.fieldRow {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.fieldLabel {
+  font-size: 14px;
+  color: #a1a1aa; /* zinc-400 */
+  margin-bottom: 8px;
+}
+
+.fieldValue {
+  color: #facc15;
+  font-weight: 700;
+}
+
+.range {
+  width: 100%;
+  accent-color: #facc15;
+  cursor: pointer;
+}
+
+.btnGrid1 {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.btnGrid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.optionBtn {
+  font-family: inherit;
+  font-size: 14px;
+  border: 0;
+  border-radius: 8px;
+  padding: 12px 16px;
+  background: #18181b; /* zinc-900 */
+  color: #d4d4d8; /* zinc-300 */
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.optionBtnTypeLeft {
+  text-align: left;
+}
+
+.optionBtnActive {
+  background: #facc15;
+  color: #000000;
+  font-weight: 700;
+}
+
+/* ----- Result ----- */
+.result {
+  border-top: 2px solid #facc15;
+  padding-top: 24px;
+}
+
+.block {
+  margin-bottom: 24px;
+}
+
+.blockTitle {
+  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #facc15;
+  margin-bottom: 8px;
+}
+
+.macros {
+  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
+  font-size: 24px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.macrosProtein {
+  color: #a1a1aa;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.rule {
+  font-size: 14px;
+  color: #a1a1aa;
+  line-height: 1.6;
+  margin: 0 0 12px;
+}
+
+.examples {
+  display: grid;
+  gap: 6px;
+}
+
+.exampleRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.bullet {
+  color: #facc15;
+  line-height: 1.5;
+}
+
+.exampleText {
+  color: #e4e4e7; /* zinc-200 */
+}
+
+/* ----- Reshuffle ----- */
+.reshuffleBtn {
+  width: 100%;
+  font-family: inherit;
+  background: #18181b;
+  border: 1px solid #3f3f46; /* zinc-700 */
+  color: #d4d4d8;
+  padding: 12px;
+  border-radius: 12px;
+  font-size: 14px;
+  margin-bottom: 24px;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.reshuffleBtn:hover {
+  border-color: #52525b; /* zinc-600 */
+}
+
+/* ----- Disclaimer ----- */
+.disclaimer {
+  background: #18181b;
+  border: 1px solid #27272a; /* zinc-800 */
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.disclaimerLabel {
+  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #facc15;
+  margin-bottom: 8px;
+}
+
+.disclaimerText {
+  font-size: 14px;
+  color: #d4d4d8;
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* ----- CTA ----- */
+.cta {
+  background: linear-gradient(to bottom right, rgba(250, 204, 21, 0.15), #18181b);
+  border: 1px solid rgba(250, 204, 21, 0.4);
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.ctaTitle {
+  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 8px;
+}
+
+.ctaText {
+  font-size: 14px;
+  color: #d4d4d8;
+  line-height: 1.6;
+  margin: 0 0 16px;
+}
+
+.ctaButton {
+  display: inline-block;
+  background: #facc15;
+  color: #000000;
+  font-weight: 700;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.footer {
+  text-align: center;
+  font-size: 12px;
+  color: #52525b; /* zinc-600 */
+  margin-top: 32px;
+}
