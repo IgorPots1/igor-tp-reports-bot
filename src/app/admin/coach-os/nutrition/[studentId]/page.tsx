@@ -508,7 +508,7 @@ export default async function CoachOsNutritionStudentCardPage({
       <article className="admin-card admin-card-compact admin-nutrition-card-wide">
         <h3>Контекст для разбора питания</h3>
         <p className="admin-muted admin-nutrition-helper">
-          1–3 предложения для AI: что сейчас важно учесть по ученику. Не история болезни, а рабочий контекст.
+          1–3 предложения для AI: что сейчас важно учесть по ученику. Постоянный контекст, виден только в сводке тренеру (ученику не цитируется). Не история болезни, а рабочий контекст.
         </p>
         <form className="admin-form-stack" action={saveNutritionCoachContextAction}>
           <input type="hidden" name="studentId" value={studentId} />
@@ -1322,12 +1322,8 @@ export default async function CoachOsNutritionStudentCardPage({
                     <input className="admin-input" name="ageYears" type="number" step="1" defaultValue={card.profile?.ageYears ?? ""} />
                   </label>
                   <label className="admin-form-field">
-                    <span>Заметки по переносимости</span>
+                    <span>Аллергии / непереносимость (безопасность)</span>
                     <textarea className="admin-textarea admin-textarea-compact" name="toleranceNotes" rows={2} defaultValue={card.profile?.toleranceNotes ?? ""} />
-                  </label>
-                  <label className="admin-form-field">
-                    <span>Заметки тренера</span>
-                    <textarea className="admin-textarea admin-textarea-compact" name="coachNotes" rows={2} defaultValue={card.profile?.coachNotes ?? ""} />
                   </label>
                   <FormActionButton className="admin-button" pendingText="Сохраняю…">
                     Сохранить профиль

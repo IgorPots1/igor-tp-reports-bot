@@ -124,7 +124,7 @@ export default function NutritionFileUploadPanel({
             />
           </label>
           <label className="admin-form-field">
-            <span>Комментарий ученика / заметки</span>
+            <span>Слова ученика (что прислал сам)</span>
             <textarea className="admin-textarea admin-textarea-compact" name="studentNotes" rows={2} />
           </label>
           <div className="admin-card-actions admin-card-actions-compact">
@@ -257,16 +257,21 @@ export default function NutritionFileUploadPanel({
                 />
               </label>
               <label className="admin-form-field">
-                <span>Комментарий ученика / заметки</span>
-                <textarea className="admin-textarea admin-textarea-compact" name="studentNotes" rows={2} />
+                <span>Слова ученика (что прислал сам)</span>
+                <textarea
+                  className="admin-textarea admin-textarea-compact"
+                  name="studentNotes"
+                  rows={2}
+                  placeholder="Слова ученика как есть: «очень старалась», «не было аппетита из-за жары», «во вторник овсянка перед бегом». Разбор учтёт их тоном — числа берёт только из PDF."
+                />
               </label>
               <label className="admin-form-field">
-                <span>Заметки тренера (контекст для разбора)</span>
+                <span>Твой комментарий к этому отчёту</span>
                 <textarea
                   className="admin-textarea admin-textarea-compact"
                   name="coachNotesRu"
                   rows={2}
-                  placeholder="Например: интервалы натощак утром в 6:48; суматошный вторник; уточнил, что ел перед длительной."
+                  placeholder="Контекст для разбора: интервалы натощак утром; уточнил, что ел перед длительной. ☑ ниже — помнить про ученика всегда."
                 />
               </label>
               <label className="admin-form-field admin-form-field-inline">

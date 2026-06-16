@@ -193,7 +193,6 @@ export async function saveNutritionProfileAction(formData: FormData): Promise<vo
       trackingApp: getOptionalFormValue(formData, "trackingApp"),
       currentWeightKg: parseOptionalNumber(getOptionalFormValue(formData, "currentWeightKg")),
       toleranceNotes: getOptionalFormValue(formData, "toleranceNotes"),
-      coachNotes: getOptionalFormValue(formData, "coachNotes"),
       nutritionGoalType: normalizeNutritionGoalType(getOptionalFormValue(formData, "nutritionGoalType")),
       targetWeightKg: parseOptionalNumber(getOptionalFormValue(formData, "targetWeightKg")),
       sex: normalizeNutritionSex(getOptionalFormValue(formData, "sex")),
@@ -267,7 +266,6 @@ export async function setNutritionEnabledAction(formData: FormData): Promise<voi
       trackingApp: existing?.trackingApp ?? null,
       currentWeightKg: existing?.currentWeightKg ?? null,
       toleranceNotes: existing?.toleranceNotes ?? null,
-      coachNotes: existing?.coachNotes ?? null,
     });
   } catch (error) {
     revalidateNutritionPaths(studentId);

@@ -75,7 +75,7 @@ assert.match(draftSrc, /НЕ выдумывай сигналы болезни\/�
 // --- 5. Upload UI exposes coach notes + remember ------------------------------
 assert.match(uploadSrc, /name="coachNotesRu"/, "upload save form must expose a coach-notes field");
 assert.match(uploadSrc, /name="rememberCoachNote"/, "upload save form must expose the remember checkbox");
-assert.match(uploadSrc, /Заметки тренера/, "coach-notes field must be labeled");
+assert.match(uploadSrc, /Твой комментарий к этому отчёту/, "coach-notes field must be labeled (coach-facing, distinct from the athlete's words field)");
 assert.match(actionsSrc, /getOptionalFormValue\(formData, "coachNotesRu"\)/, "save action must read coachNotesRu");
 assert.match(actionsSrc, /rememberCoachNote/, "save action must read rememberCoachNote");
 // Athlete diary text stays separate from coach notes.

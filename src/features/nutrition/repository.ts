@@ -735,7 +735,10 @@ export async function upsertNutritionStudentProfile(
     preferences: input.preferences ?? {},
     dislikes: input.dislikes ?? {},
     tolerance_notes: compactText(input.toleranceNotes),
-    coach_notes: compactText(input.coachNotes),
+    // Legacy profile-level coach note: the UI field was removed (it never reached
+    // generation — the per-report coachNotesRu and persistent notes do). Preserve
+    // any existing value instead of nulling it when callers omit the field.
+    coach_notes: input.coachNotes === undefined ? undefined : compactText(input.coachNotes),
     coach_context_ru:
       input.coachContextRu === undefined ? undefined : normalizeNutritionCoachContextRu(input.coachContextRu),
     nutrition_memory:

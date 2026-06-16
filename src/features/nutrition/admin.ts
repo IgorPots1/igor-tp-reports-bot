@@ -107,7 +107,6 @@ export async function saveNutritionProfileActionData(input: {
   trackingApp?: string | null;
   currentWeightKg?: number | null;
   toleranceNotes?: string | null;
-  coachNotes?: string | null;
   nutritionGoalType?: import("@/features/nutrition/repository").NutritionGoalType;
   targetWeightKg?: number | null;
   sex?: import("@/features/nutrition/repository").NutritionSex | null;
@@ -122,7 +121,6 @@ export async function saveNutritionProfileActionData(input: {
     trackingApp: input.trackingApp ?? null,
     currentWeightKg: input.currentWeightKg ?? null,
     toleranceNotes: input.toleranceNotes ?? null,
-    coachNotes: input.coachNotes ?? null,
     nutritionGoalType: input.nutritionGoalType,
     // Only meaningful for goal=lose; cleared otherwise.
     targetWeightKg: input.nutritionGoalType === "lose" ? input.targetWeightKg ?? null : null,
