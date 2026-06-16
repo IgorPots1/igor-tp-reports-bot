@@ -140,6 +140,8 @@ const draftSrc = readFileSync(join(process.cwd(), "src/features/nutrition/draft-
 assert.match(draftSrc, /nutrition_goal: input\.context\.nutritionGoalType/, "goal must be in the model facts");
 assert.match(draftSrc, /ЦЕЛЬ УЧЕНИКА[\s\S]*lose[\s\S]*ХВАЛИ высокий белок[\s\S]*высокий жир/i, "lose prompt rules present");
 assert.match(draftSrc, /ЦЕЛЬ lose НЕ отменяет safety/i, "lose-does-not-bypass-safety rule present");
+// lose week-focus must carry the "why this structure" framing tied to the goal.
+assert.match(draftSrc, /ЦЕЛЬ lose — РАМКА в next_week_plan_text[\s\S]*работают на твою цель[\s\S]*ТОЛЬКО для lose/i, "lose focus must explain the week is structured for the loss goal");
 // safety-flags builder takes no goal input → goal cannot weaken it.
 const ctxSrc = readFileSync(join(process.cwd(), "src/features/nutrition/context.ts"), "utf8");
 const safetyFn = ctxSrc.slice(ctxSrc.indexOf("export function buildNutritionSafetyFlags"), ctxSrc.indexOf("export function buildNutritionSafetyFlags") + 600);
