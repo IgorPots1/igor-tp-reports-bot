@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { buildNutritionDayProseFacts } from "@/features/nutrition/combined-message";
 import {
@@ -6,6 +8,7 @@ import {
   NutritionNarrativeRepetitionState,
 } from "@/features/nutrition/narrative-composer";
 import { buildNutritionNextWeekPlan, estimatePlanDayExerciseKcal } from "@/features/nutrition/weekly-plan-formulas";
+import { resolveNutritionActivityCoefByTitle } from "@/features/nutrition/activity-energy";
 
 // Task 10d:
 //  Bug 2 — expenditure scales with intensity (intervals > easy of equal duration),
@@ -54,6 +57,23 @@ assert.ok(hardT.carbs_g > easyT.carbs_g, `interval day carbs > easy day carbs ($
 const maintainPlan = buildNutritionNextWeekPlan({ bodyweightKg: BW, planWeekFrom: "2026-06-22", planWeekTo: "2026-06-28", trainingContext: tp, goalType: "maintain" });
 const maintainNoGoal = buildNutritionNextWeekPlan({ bodyweightKg: BW, planWeekFrom: "2026-06-22", planWeekTo: "2026-06-28", trainingContext: tp });
 assert.deepEqual(maintainPlan.day_type_targets, maintainNoGoal.day_type_targets, "maintain plan unchanged by intensity coefficient");
+
+// --- Non-run activities: coach-approved coefficients (kcal/kg/h) ---------------
+assert.equal(resolveNutritionActivityCoefByTitle("Walk 60 мин"), 3.5, "walk coef 3.5");
+assert.equal(resolveNutritionActivityCoefByTitle("Hike"), 6, "hike coef 6");
+assert.equal(resolveNutritionActivityCoefByTitle("Tennis"), 7, "tennis coef 7");
+assert.equal(resolveNutritionActivityCoefByTitle("Padel"), 7, "padel coef 7");
+assert.equal(resolveNutritionActivityCoefByTitle("Swim"), 7, "swim coef 7");
+assert.equal(resolveNutritionActivityCoefByTitle("Cycling"), 5, "bike coef 5 (mostly easy/recreational)");
+assert.equal(resolveNutritionActivityCoefByTitle("Strength"), 5, "strength coef 5 (conservative)");
+assert.equal(resolveNutritionActivityCoefByTitle("Лёгкий бег"), null, "run titles fall through to intensity defaults");
+// Walking must cost markedly less than an easy run of equal duration.
+const walkKcal = estimatePlanDayExerciseKcal({ dayType: "cross_training", bodyweightKg: 70, durationHours: 1, distanceKm: null, workoutTitle: "Walk" });
+const easyRunKcal = estimatePlanDayExerciseKcal({ dayType: "easy", bodyweightKg: 70, durationHours: 1, distanceKm: null });
+assert.ok(walkKcal < easyRunKcal * 0.6, `walk (${walkKcal}) must be markedly below easy run (${easyRunKcal})`);
+// Strength-day protein accent is prompted (all goals, no timing).
+const draftSrc = readFileSync(join(process.cwd(), "src/features/nutrition/draft-generator.ts"), "utf8");
+assert.match(draftSrc, /Силовая тренировка[\s\S]*белок в приоритете[\s\S]*Для ВСЕХ целей/i, "strength-day protein accent rule present for all goals");
 
 // --- Bug 1a: goal_day_target numbers are allowed by the prose validator --------
 const facts = buildNutritionDayProseFacts({

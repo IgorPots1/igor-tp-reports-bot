@@ -5,6 +5,7 @@ import type {
   NutritionFoodItem,
 } from "@/features/nutrition/context";
 import { sanitizeNutritionFoodItems } from "@/features/nutrition/context";
+import { resolveNutritionActivityCoefByTitle } from "@/features/nutrition/activity-energy";
 import type { NutritionGoalType } from "@/features/nutrition/repository";
 import {
   hasNutritionIntervalWorkoutEvidence,
@@ -460,7 +461,17 @@ export function normalizeTrainingType(rawType: string | null | undefined, title:
   if (raw === "strength") {
     return "strength";
   }
-  if (raw === "crosstrain" || raw === "cross_training" || raw === "bike" || raw === "swim" || /\bpadel\b|падел|cross.?train|crosstrain|bike|cycling|swim|плав|вело/.test(titleLc)) {
+  if (
+    raw === "crosstrain" ||
+    raw === "cross_training" ||
+    raw === "bike" ||
+    raw === "swim" ||
+    raw === "walk" ||
+    raw === "hike" ||
+    /\bpadel\b|падел|cross.?train|crosstrain|bike|cycling|swim|плав|вело|\b(?:walk|walking|hike|hiking|trek|tennis)\b|ходьб|прогулк|поход|хайк|теннис/.test(titleLc)
+  ) {
+    // Non-run activities (incl. walk/hike/tennis) → cross-training family, so they
+    // are not mislabeled as "лёгкий бег" or evaluated against run carb targets.
     return "cross_training";
   }
   if (/race|гонк|соревн/.test(titleLc)) {
@@ -604,7 +615,7 @@ const NUTRITION_EXERCISE_KCAL_PER_KG_PER_HOUR: Record<NutritionTrainingType, num
   long_endurance: 9,
   easy: 8,
   cross_training: 7,
-  strength: 7,
+  strength: 5,
   rest: 0,
   unknown: 9,
 };
@@ -638,7 +649,12 @@ function estimateExerciseEnergyKcal(input: {
     };
   }
   if (input.workout.durationHours !== null && input.workout.durationHours > 0) {
-    const perKgPerHour = NUTRITION_EXERCISE_KCAL_PER_KG_PER_HOUR[input.workout.type] ?? 9;
+    // Activity-specific coefficient (walk/hike/tennis/padel/bike/swim/strength) wins
+    // over the run-intensity default, so a non-run session is costed correctly.
+    const perKgPerHour =
+      resolveNutritionActivityCoefByTitle(input.workout.title) ??
+      NUTRITION_EXERCISE_KCAL_PER_KG_PER_HOUR[input.workout.type] ??
+      9;
     return {
       exerciseEnergyKcal: Math.round(input.workout.durationHours * bw * perKgPerHour),
       exerciseEnergySource: "estimated_by_duration_or_distance",

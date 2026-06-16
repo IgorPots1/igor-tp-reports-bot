@@ -16,7 +16,9 @@ assert.equal(ru("Strength", "strength"), "силовая", "Strength → сил�
 assert.equal(ru("Cycling"), "вело", "Cycling → вело");
 assert.equal(ru("Padel Racket"), "падел", "Padel Racket → падел");
 assert.equal(ru("Rowing"), "гребля", "Rowing → гребля");
-assert.equal(ru("Hike"), "поход", "Hike → поход");
+assert.equal(ru("Hike"), "хайк", "Hike → хайк");
+assert.equal(ru("Walk"), "ходьба", "Walk → ходьба");
+assert.equal(ru("Tennis"), "теннис", "Tennis → теннис");
 assert.equal(ru("Yoga"), "йога");
 
 // --- transcription works inside combined / passthrough labels ------------------

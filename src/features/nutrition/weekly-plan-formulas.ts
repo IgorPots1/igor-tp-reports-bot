@@ -29,6 +29,7 @@ import {
   resolveNutritionLongRunSource,
   type NutritionLongRunSource,
 } from "@/features/nutrition/long-run";
+import { resolveNutritionActivityCoefByTitle } from "@/features/nutrition/activity-energy";
 import type { NutritionGoalType, NutritionSex } from "@/features/nutrition/repository";
 
 export type { NutritionLongRunSource };
@@ -294,8 +295,11 @@ function normalizeDayType(typeRaw: string | null, titleRaw: string | null): Nutr
     type === "cross_training" ||
     type === "bike" ||
     type === "swim" ||
-    /\bpadel\b|падел|cross.?train|crosstrain|bike|cycling|swim|плав|вело/.test(haystack)
+    type === "walk" ||
+    type === "hike" ||
+    /\bpadel\b|падел|cross.?train|crosstrain|bike|cycling|swim|плав|вело|\b(?:walk|walking|hike|hiking|trek|tennis)\b|ходьб|прогулк|поход|хайк|теннис/.test(haystack)
   ) {
+    // Non-run activities (incl. walk/hike/tennis) → cross-training family.
     return "cross_training";
   }
   if (
@@ -554,7 +558,7 @@ const EXERCISE_KCAL_PER_KG_PER_HOUR_BY_DAY_TYPE: Partial<Record<NutritionPlanDay
   pre_long: 8,
   easy: 8,
   cross_training: 7,
-  strength: 7,
+  strength: 5,
 };
 
 /**
@@ -601,6 +605,7 @@ export function estimatePlanDayExerciseKcal(params: {
   bodyweightKg: number;
   durationHours: number | null;
   distanceKm: number | null;
+  workoutTitle?: string | null;
 }): number {
   const { dayType, bodyweightKg: bw } = params;
   if (dayType === "rest" || dayType === "unknown") {
@@ -613,7 +618,12 @@ export function estimatePlanDayExerciseKcal(params: {
     params.durationHours && params.durationHours > 0
       ? params.durationHours
       : TYPICAL_EXERCISE_HOURS_BY_DAY_TYPE[dayType] ?? 0.75;
-  const perKgPerHour = EXERCISE_KCAL_PER_KG_PER_HOUR_BY_DAY_TYPE[dayType] ?? 9;
+  // Activity-specific coefficient (walk/hike/tennis/padel/bike/swim/strength) wins
+  // over the day-type default, so a non-run session is costed correctly.
+  const perKgPerHour =
+    resolveNutritionActivityCoefByTitle(params.workoutTitle) ??
+    EXERCISE_KCAL_PER_KG_PER_HOUR_BY_DAY_TYPE[dayType] ??
+    9;
   return Math.round(hours * bw * perKgPerHour);
 }
 
@@ -877,10 +887,11 @@ export function buildNutritionNextWeekPlan(params: {
   const planDayExerciseKcal = (
     dayType: NutritionPlanDayType,
     durationHours: number | null,
-    distanceKm: number | null
+    distanceKm: number | null,
+    workoutTitle: string | null = null
   ): number =>
     params.bodyweightKg && params.bodyweightKg > 0
-      ? estimatePlanDayExerciseKcal({ dayType, bodyweightKg: params.bodyweightKg, durationHours, distanceKm })
+      ? estimatePlanDayExerciseKcal({ dayType, bodyweightKg: params.bodyweightKg, durationHours, distanceKm, workoutTitle })
       : 0;
   const dates = buildWeekDates(params.planWeekFrom, params.planWeekTo);
   const parsedWorkouts = parseTrainingContextWorkouts(params.trainingContext);
@@ -927,7 +938,8 @@ export function buildNutritionNextWeekPlan(params: {
     const dayExerciseKcal = planDayExerciseKcal(
       trainingType,
       primaryWorkout?.durationHours ?? null,
-      primaryWorkout?.distanceKm ?? null
+      primaryWorkout?.distanceKm ?? null,
+      primaryWorkout?.title ?? null
     );
     const practicalTarget = resolveDayTarget(trainingType, idealTarget, baseline, dayExerciseKcal);
 
