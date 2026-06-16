@@ -210,6 +210,46 @@ export async function saveNutritionProfileAction(formData: FormData): Promise<vo
   redirect(withNotice(redirectTo, "notice", "Профиль питания сохранён."));
 }
 
+export async function archiveNutritionReportAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  const reportId = getRequiredFormValue(formData, "reportId");
+  const archived = getRequiredFormValue(formData, "archived") === "true";
+  await ensureAdminAccess(redirectTo);
+
+  try {
+    const { setNutritionReportArchived } = await import("@/features/nutrition/repository");
+    await setNutritionReportArchived(reportId, archived);
+  } catch (error) {
+    revalidateNutritionPaths(studentId);
+    const message = error instanceof Error ? error.message : "Не удалось обновить отчёт.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+
+  revalidateNutritionPaths(studentId);
+  redirect(withNotice(redirectTo, "notice", archived ? "Отчёт архивирован." : "Отчёт возвращён из архива."));
+}
+
+export async function archiveNutritionAnalysisAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  const analysisId = getRequiredFormValue(formData, "analysisId");
+  const archived = getRequiredFormValue(formData, "archived") === "true";
+  await ensureAdminAccess(redirectTo);
+
+  try {
+    const { setNutritionWeeklyAnalysisArchived } = await import("@/features/nutrition/repository");
+    await setNutritionWeeklyAnalysisArchived(analysisId, archived);
+  } catch (error) {
+    revalidateNutritionPaths(studentId);
+    const message = error instanceof Error ? error.message : "Не удалось обновить разбор.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+
+  revalidateNutritionPaths(studentId);
+  redirect(withNotice(redirectTo, "notice", archived ? "Разбор архивирован." : "Разбор возвращён из архива."));
+}
+
 export async function setNutritionEnabledAction(formData: FormData): Promise<void> {
   const studentId = getRequiredFormValue(formData, "studentId");
   const redirectTo = getRequiredFormValue(formData, "redirectTo");

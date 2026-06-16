@@ -132,6 +132,7 @@ export type NutritionReport = {
   fileRefs: Record<string, unknown> | null;
   status: NutritionReportStatus;
   dataQuality: Record<string, unknown>;
+  archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -178,6 +179,7 @@ export type NutritionWeeklyAnalysis = {
   aiModel: string | null;
   athleteMessageDraft: string | null;
   coachEdits: string | null;
+  archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -273,6 +275,7 @@ type NutritionReportRow = {
   file_refs: unknown | null;
   status: NutritionReportStatus;
   data_quality: unknown;
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -311,6 +314,7 @@ type NutritionWeeklyAnalysisRow = {
   ai_model: string | null;
   athlete_message_draft: string | null;
   coach_edits: string | null;
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -575,6 +579,7 @@ function mapNutritionReportRow(row: NutritionReportRow): NutritionReport {
       : null,
     status: row.status,
     dataQuality: toObject(row.data_quality),
+    archivedAt: row.archived_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -617,6 +622,7 @@ function mapNutritionWeeklyAnalysisRow(row: NutritionWeeklyAnalysisRow): Nutriti
     aiModel: row.ai_model,
     athleteMessageDraft: row.athlete_message_draft,
     coachEdits: row.coach_edits,
+    archivedAt: row.archived_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -980,7 +986,7 @@ export async function getNutritionStudentDefaultWeek(
 
 export async function listNutritionReportsForStudent(
   studentId: string,
-  input?: { weekFrom?: string; weekTo?: string; limit?: number }
+  input?: { weekFrom?: string; weekTo?: string; limit?: number; includeArchived?: boolean }
 ): Promise<NutritionReport[]> {
   const supabase = createSupabaseServerClient();
   let query = supabase
@@ -989,6 +995,10 @@ export async function listNutritionReportsForStudent(
     .eq("student_id", studentId)
     .order("created_at", { ascending: false });
 
+  // Active by default; the archive screen opts into archived rows.
+  if (!input?.includeArchived) {
+    query = query.is("archived_at", null);
+  }
   if (input?.weekFrom) {
     query = query.eq("week_from", input.weekFrom);
   }
@@ -1004,6 +1014,48 @@ export async function listNutritionReportsForStudent(
     throw new Error(`Failed to list nutrition reports for ${studentId}: ${error.message}`);
   }
   return ((data as NutritionReportRow[]) ?? []).map(mapNutritionReportRow);
+}
+
+/** History list for the archive screen — includes archived rows (newest week first). */
+export async function listNutritionWeeklyAnalysesForStudentHistory(
+  studentId: string,
+  input?: { limit?: number }
+): Promise<NutritionWeeklyAnalysis[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_weekly_analyses")
+    .select("*")
+    .eq("student_id", studentId)
+    .order("week_from", { ascending: false })
+    .limit(input?.limit ?? 30);
+  if (error) {
+    throw new Error(`Failed to list nutrition weekly analyses history for ${studentId}: ${error.message}`);
+  }
+  return ((data as NutritionWeeklyAnalysisRow[]) ?? []).map(mapNutritionWeeklyAnalysisRow);
+}
+
+/** Soft-archive / restore a report (reversible; data is never deleted). */
+export async function setNutritionReportArchived(reportId: string, archived: boolean): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from("nutrition_reports")
+    .update({ archived_at: archived ? new Date().toISOString() : null })
+    .eq("id", reportId);
+  if (error) {
+    throw new Error(`Failed to ${archived ? "archive" : "restore"} nutrition report ${reportId}: ${error.message}`);
+  }
+}
+
+/** Soft-archive / restore a weekly analysis (reversible; approved patterns are untouched). */
+export async function setNutritionWeeklyAnalysisArchived(analysisId: string, archived: boolean): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from("nutrition_weekly_analyses")
+    .update({ archived_at: archived ? new Date().toISOString() : null })
+    .eq("id", analysisId);
+  if (error) {
+    throw new Error(`Failed to ${archived ? "archive" : "restore"} nutrition weekly analysis ${analysisId}: ${error.message}`);
+  }
 }
 
 export async function getNutritionWeeklyAnalysisById(id: string): Promise<NutritionWeeklyAnalysis | null> {
@@ -1058,6 +1110,7 @@ export async function listRecentNutritionWeeklyAnalysesForStudent(
     .from("nutrition_weekly_analyses")
     .select("*")
     .eq("student_id", studentId)
+    .is("archived_at", null)
     .order("week_from", { ascending: false })
     .limit(Math.max(1, (options?.limit ?? 4) + 1));
   if (error) {
@@ -1157,6 +1210,7 @@ export async function getNutritionWeeklyAnalysisForWeek(input: {
     .eq("student_id", input.studentId)
     .eq("week_from", input.weekFrom)
     .eq("week_to", input.weekTo)
+    .is("archived_at", null)
     .maybeSingle();
 
   if (error) {
@@ -1455,6 +1509,9 @@ export async function createNutritionWeeklyAnalysis(
         ai_model: input.aiModel ?? null,
         athlete_message_draft: input.athleteMessageDraft ?? null,
         coach_edits: input.coachEdits ?? null,
+        // A freshly (re)generated review is active again, even if the prior row
+        // for this week had been archived.
+        archived_at: null,
       },
       { onConflict: "student_id,week_from,week_to" }
     )
@@ -1476,6 +1533,7 @@ async function getLatestReportsByStudent(studentIds: string[]): Promise<Map<stri
     .from("nutrition_reports")
     .select("*")
     .in("student_id", studentIds)
+    .is("archived_at", null)
     .order("created_at", { ascending: false });
   if (error) {
     throw new Error(`Failed to load nutrition dashboard reports: ${error.message}`);
@@ -1498,6 +1556,7 @@ async function getLatestAnalysesByStudent(studentIds: string[]): Promise<Map<str
     .from("nutrition_weekly_analyses")
     .select("*")
     .in("student_id", studentIds)
+    .is("archived_at", null)
     .order("created_at", { ascending: false });
   if (error) {
     throw new Error(`Failed to load nutrition dashboard analyses: ${error.message}`);

@@ -11,6 +11,8 @@ import {
   addNutritionWeightAction,
   approveNutritionPatternAction,
   dismissNutritionPatternAction,
+  archiveNutritionAnalysisAction,
+  archiveNutritionReportAction,
   generateNutritionWeeklyReviewAction,
   parseNutritionManualMacrosAction,
   previewNutritionFileUploadAction,
@@ -19,6 +21,7 @@ import {
   saveNutritionCoachContextAction,
   saveNutritionProfileAction,
 } from "@/app/admin/coach-os/nutrition/actions";
+import ConfirmSubmitButton from "@/app/admin/coach-os/nutrition/ConfirmSubmitButton";
 import {
   getNutritionAdminStudentCard,
   parseNutritionManualMacros,
@@ -264,6 +267,15 @@ export default async function CoachOsNutritionStudentCardPage({
   if (!card.student) {
     notFound();
   }
+
+  // Task: history + archive screen — reports (incl. archived) and weekly analyses.
+  const { listNutritionReportsForStudent, listNutritionWeeklyAnalysesForStudentHistory } = await import(
+    "@/features/nutrition/repository"
+  );
+  const [reportHistory, analysisHistory] = await Promise.all([
+    listNutritionReportsForStudent(studentId, { includeArchived: true, limit: 30 }),
+    listNutritionWeeklyAnalysesForStudentHistory(studentId, { limit: 30 }),
+  ]);
 
   const selectedReportId = pickDefaultNutritionReport(card.reports, reportIdFromQuery);
   const selectedReport = card.reports.find((report) => report.id === selectedReportId) ?? null;
@@ -1749,6 +1761,110 @@ export default async function CoachOsNutritionStudentCardPage({
                   </details>
                 </div>
               </details>
+            )}
+          </div>
+        </details>
+
+        <details className="admin-nutrition-history">
+          <summary>
+            История отчётов и разборов ({reportHistory.length} отчётов · {analysisHistory.length} разборов)
+          </summary>
+          <div className="admin-form-stack">
+            <p className="admin-muted">
+              Архив обратим: скрытое не участвует в «последнем отчёте», «прошлой неделе» и памяти разборов; одобренные
+              паттерны сохраняются. Данные не удаляются.
+            </p>
+
+            <h4>Отчёты-файлы</h4>
+            {reportHistory.length === 0 ? (
+              <p className="admin-muted">Отчётов пока нет.</p>
+            ) : (
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>Неделя</th>
+                    <th>Загружен</th>
+                    <th>Статус</th>
+                    <th>Состояние</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {reportHistory.map((report) => (
+                    <tr key={report.id} className={report.archivedAt ? "admin-muted" : undefined}>
+                      <td>
+                        {report.weekFrom}–{report.weekTo}
+                      </td>
+                      <td>{formatNutritionCompactDate(report.createdAt)}</td>
+                      <td>{formatNutritionStatus(report.status, "report")}</td>
+                      <td>{report.archivedAt ? "в архиве" : "активен"}</td>
+                      <td>
+                        <form action={archiveNutritionReportAction}>
+                          <input type="hidden" name="studentId" value={studentId} />
+                          <input type="hidden" name="redirectTo" value={studentCardPath} />
+                          <input type="hidden" name="reportId" value={report.id} />
+                          <input type="hidden" name="archived" value={report.archivedAt ? "false" : "true"} />
+                          <ConfirmSubmitButton
+                            confirmMessage={
+                              report.archivedAt
+                                ? undefined
+                                : `Архивировать отчёт за ${report.weekFrom}–${report.weekTo}? Его можно вернуть.`
+                            }
+                          >
+                            {report.archivedAt ? "Вернуть" : "Архивировать"}
+                          </ConfirmSubmitButton>
+                        </form>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            <h4>Разборы (по неделям)</h4>
+            {analysisHistory.length === 0 ? (
+              <p className="admin-muted">Разборов пока нет.</p>
+            ) : (
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>Неделя</th>
+                    <th>Обновлён</th>
+                    <th>Статус</th>
+                    <th>Состояние</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {analysisHistory.map((analysis) => (
+                    <tr key={analysis.id} className={analysis.archivedAt ? "admin-muted" : undefined}>
+                      <td>
+                        {analysis.weekFrom}–{analysis.weekTo}
+                      </td>
+                      <td>{formatNutritionCompactDate(analysis.updatedAt)}</td>
+                      <td>{formatNutritionStatus(analysis.status, "analysis")}</td>
+                      <td>{analysis.archivedAt ? "в архиве" : "активен"}</td>
+                      <td>
+                        <form action={archiveNutritionAnalysisAction}>
+                          <input type="hidden" name="studentId" value={studentId} />
+                          <input type="hidden" name="redirectTo" value={studentCardPath} />
+                          <input type="hidden" name="analysisId" value={analysis.id} />
+                          <input type="hidden" name="archived" value={analysis.archivedAt ? "false" : "true"} />
+                          <ConfirmSubmitButton
+                            confirmMessage={
+                              analysis.archivedAt
+                                ? undefined
+                                : `Архивировать разбор за ${analysis.weekFrom}–${analysis.weekTo}? Его можно вернуть; одобренные паттерны останутся.`
+                            }
+                          >
+                            {analysis.archivedAt ? "Вернуть" : "Архивировать"}
+                          </ConfirmSubmitButton>
+                        </form>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
         </details>
