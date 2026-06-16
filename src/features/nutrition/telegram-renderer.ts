@@ -724,8 +724,11 @@ export function renderNutritionTelegramMessage(input: NutritionTelegramRendererI
   const ok = !issues.some((issue) => issue.severity === "error");
   return {
     ok,
+    // `text` gates sending (null on error); `parts` always carries the rendered
+    // split so the admin/checkpoints can preview it even when validation flags an
+    // issue (the sendable copy blocks are still gated on `ok` upstream).
     text: ok ? text : null,
-    parts: ok ? parts : [],
+    parts,
     issues,
     charCount: text.length,
   };
