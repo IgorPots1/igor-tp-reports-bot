@@ -118,6 +118,8 @@ export type GeneratedNutritionWeeklyAnalysis = {
     carb_progression_strategy?: CarbProgressionStrategy;
     coach_summary_text?: string;
     day_by_day_analysis_text?: string;
+    /** Block 3: warm opening line for the athlete (qualitative, no numbers). */
+    athlete_opening_note_ru?: string | null;
     generation_mode?: "ai" | "fallback" | "awaiting_generation";
     methodology_version?: string;
     prompt_version?: string;
@@ -781,6 +783,13 @@ type NutritionAiNarrative = {
   day_by_day_analysis_text: string;
   athlete_message_draft: string | null;
   /**
+   * Block 3: one warm, qualitative opening line for the athlete, derived from the
+   * athlete's own words (student.athlete_comment) — effort/circumstances only,
+   * never numbers. Rendered after the greeting in the combined message (part 1).
+   * Null/empty when there is nothing genuine to acknowledge (no invented praise).
+   */
+  athlete_opening_note_ru: string | null;
+  /**
    * Athlete-facing prose for next week's nutrition plan, written in the same
    * Claude call as the review (Task 6 merge). Numbers in this prose are the
    * deterministic next_week_plan targets, rounded to 10 (Task 4 rule). Null when
@@ -961,7 +970,7 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "Ничего не пересчитывай и не придумывай: kcal, белки/жиры/углеводы, г/кг, formula targets, day type, nutrition status, one_focus, safety status, race status, TrainingPeaks workouts.",
     "Используй только exact числа и labels из facts JSON.",
     "Не классифицируй дни и не выводи формулы — это уже сделано в коде.",
-    "Return strict JSON only with keys: coach_summary_text, day_by_day_analysis_text, athlete_message_draft, day_prose, next_week_plan_text, quality_notes, do_not_send_reasons.",
+    "Return strict JSON only with keys: coach_summary_text, day_by_day_analysis_text, athlete_message_draft, athlete_opening_note_ru, day_prose, next_week_plan_text, quality_notes, do_not_send_reasons.",
     "next_week_plan_text: athlete-facing проза ПЛАНА на следующую неделю (одним связным куском, тот же тёплый голос Игоря, plain Telegram text). Это продолжение того же сообщения после разбора прошлой недели — не повторяй приветствие. Опиши, на чём сделать акцент по питанию под РЕАЛЬНЫЕ ключевые тренировки следующей недели из next_week_plan (интервалы/длительная/темпо и дни перед ними): что есть и когда догрузиться углеводами. Без раскладки по граммам на каждый день — это сделает код-таблица отдельно.",
     "ЧИСЛА в next_week_plan_text бери ТОЛЬКО из next_week_plan (display_target.carbs_g_min/max, kcal, целевые по типу дня) и округляй до 10 (углеводы/ориентиры) — пиши «около 300 г», «300–320 г»; не выдумывай промежуточных и негладких чисел, г/кг ученику не пиши. Если тренировок на следующей неделе в плане нет (next_week_plan.summary.has_training_context=false) — общий мягкий фокус без привязки к дням.",
     "next_week_plan_text подчиняется тем же запретам, что и athlete_message_draft: без диагнозов/медтерминов, без языка похудения, без меню/рецептов, без выдуманных тренировок и гелей, строгая ты/вы.",
@@ -992,6 +1001,9 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "Силовая тренировка (training_type strength или ярлык «силовая») — в day_prose этого дня сделай мягкий ДНЕВНОЙ акцент: белок в приоритете + немного углеводов для восстановления мышц. БЕЗ привязки ко времени (не «после тренировки» — времени тренировки в данных нет), общий акцент «в силовой день держи белок». Для ВСЕХ целей (lose/maintain/gain).",
     "Заметки тренера (student.coach_report_note — разовая на этот отчёт; student.coach_persistent_notes — постоянные про ученика) — это КОНТЕКСТ для тона и акцентов разбора, НЕ числа и НЕ факты дня. Учитывай их в интерпретации (что уточнил ученик, контекст дня), но не выдумывай по ним числа и не цитируй дословно как медфакт.",
     "ЖЁСТКО про контекст ученика (заметки тренера и история): пересказывай ТОЛЬКО то, что прямо дано в заметке/истории. НЕ предполагай и НЕ додумывай обстоятельства, которых там нет — например, не пиши «после тренировки поели не сразу», «пропустила приём», «наверное, не успела поесть», если этого нет в заметке. Forward-совет разрешён («после интервалов важно поесть плотно»), но утверждать или предполагать незаданные ФАКТЫ о поведении ученика — нельзя. Не сужай формулировку («вторник суматошный» ≠ «вечер вторника суматошный»). Особенно НЕ выдумывай состояния/события: болезнь, простуду, «после болезни», стресс, травму, праздник, поездку — если этого нет в заметке/истории, не упоминай вовсе (нельзя «молодец, что побегала после болезни», если про болезнь ничего не сказано). Это правило относится КО ВСЕМ полям, включая coach_summary_text и day_by_day_analysis_text, не только к тексту ученику.",
+    "СЛОВА УЧЕНИКА (student.athlete_comment) — это его собственный комментарий к этому отчёту (дневник, своими словами). РЕАГИРУЙ на них: используй для ТОНА и УЧЁТА ОБСТОЯТЕЛЬСТВ. Усталость / жара / стресс / не было аппетита — формулируй разбор мягче, с пониманием, без упрёка за недобор. Если ученик описал ЧТО и КОГДА он ел («во вторник овсянка с бананом перед интервалами») — отрази это в комментарии нужного дня (day_prose) как контекст. НЕ медикализируй: настоящие сигналы болезни/травмы/цикла идут через athlete_report_signals → coach review, не в текст ученику.",
+    "ТЁПЛАЯ ОПЕНИНГ-СТРОКА (athlete_opening_note_ru): если в словах ученика (student.athlete_comment) есть что искренне отметить — старание, что справился несмотря на обстоятельства (дорога/жара/занятость) — впиши ОДНУ тёплую человеческую фразу в athlete_opening_note_ru (она встанет сразу после приветствия). Пример: «вижу, ты очень старалась, даже в дороге держалась — это дорогого стоит». Качественно, в тёплом тоне Игоря, plain text без markdown, БЕЗ единой цифры. Если отмечать НЕЧЕГО (слов нет, или там только жалобы/нейтральное) — верни athlete_opening_note_ru пустым/null, НЕ придумывай похвалу на пустом месте. Эту похвалу за старание НЕ дублируй в athlete_message_draft — она живёт только в athlete_opening_note_ru.",
+    "ЧИСЛА И МАКРОСЫ — ТОЛЬКО из PDF/фактов дня (actual/target). НИКОГДА не бери калории/граммы/«съела ~N» из слов ученика (student.athlete_comment) на веру и не подставляй их как факт — ни в day_prose, ни в итог недели, ни в coach_summary_text. Если слова ученика противоречат числам из PDF — доверяй PDF; расхождение можно мягко отметить ТРЕНЕРУ в coach_summary_text, но не выноси выдуманное число ученику.",
     "ЦЕЛЬ УЧЕНИКА (student.nutrition_goal): maintain — текущая методика. lose (снижение веса): рамка «поддерживаем тренировки в общем мягком минусе». НЕ советуй «добавь углеводов/калорий» там, где у худеющего и так профицит/перебор; топливо догружай ТОЛЬКО в тренировочные/ключевые дни (fuel for the work required), а в дни отдыха — спокойнее, это и есть запланированный дефицит, а не ошибка. ХВАЛИ высокий белок (для худеющего это хорошо: не пиши «белок высоковат» как проблему и НЕ пиши «белок низковат» при ≥1.6 г/кг). Даже когда белок НИЖЕ ориентира — у худеющего подавай это МЯГКО и без упрёка: «белок можно чуть добавить» / «белка чуть больше не помешает», а НЕ «белок ниже нормы»/«стоит отметить»/«недобор белка». Белок для худеющего — приоритет и помощник, не повод ругать. МЯГКО озвучивай высокий жир (>~35% энергии) ученику как лишние калории, которые мешают снижению (для lose жир выносим в текст ученику). Тон поддерживающий, без «ешь больше». target_weight_kg, если задан — можно мягко («до цели ещё ~N кг»), без ИМТ/процентов жира/«минус N кг»/медикализации. gain (набор) — небольшой профицит, углеводы и белок с запасом.",
     "ЦЕЛЬ lose НЕ отменяет safety: при опасно низкой калорийности или сигналах РПП — это блок/ручная проверка как обычно (худеть ≠ голодать; цель снижения НЕ оправдывает опасный дефицит). В тексте ученику при любой цели — без слов похудеть/сбросить вес/урезать калории/дефицит (язык поддержки, а не диеты).",
     "ДЕФИЦИТНАЯ ЛИНИЯ (lose/gain): у каждого дня в daily_analysis есть goal_day_target — это ориентир дня ПОД ЦЕЛЬ (для lose уже с дефицитом, выстроенный от обмена + расхода именно этого дня). Оценивай фактический день ОТНОСИТЕЛЬНО goal_day_target, а НЕ относительно поддержания. Если goal_day_target.over_goal_line=true (факт заметно выше ориентира под цель) в день БЕЗ нагрузки — это «многовато для дня без нагрузки при твоей цели / лишние калории, которые тормозят прогресс», а НЕ «спокойно/ровно». В тренировочные дни питание у/около ориентира — это норма (топливо под работу), не перебор. НИКОГДА не подавай для худеющего рест-день в 2500–2800 ккал как «спокойный/ровный» — для цели снижения это перебор; озвучь мягко и по-доброму.",
@@ -1038,6 +1050,7 @@ async function generateNutritionWeeklyReviewNarrative(input: {
       target_weight_kg: input.context.targetWeightKg,
       coach_context_ru: input.context.coachContextRu,
       coach_report_note: input.context.coachReportNoteRu,
+      athlete_comment: input.context.athleteCommentRu,
       coach_persistent_notes: input.context.studentMemory?.persistent_notes ?? [],
       history: {
         approved_patterns: input.context.studentMemory?.approved_patterns ?? [],
@@ -1201,10 +1214,20 @@ async function generateNutritionWeeklyReviewNarrative(input: {
         ? parsed.next_week_plan_text.replace(/```+/g, "").trim()
         : null;
     const nextWeekPlanText = allowAthleteDraft && planTextRaw ? planTextRaw : null;
+    // Block 3: warm opening line from the athlete's words. Plain text only, and a
+    // hard digit-guard — qualitative acknowledgment must NOT smuggle any number
+    // (numbers belong to the PDF-grounded day/plan facts, never to free praise).
+    const openingNoteRaw =
+      typeof parsed.athlete_opening_note_ru === "string"
+        ? parsed.athlete_opening_note_ru.replace(/[*_`#]+/g, "").replace(/\s+/g, " ").trim()
+        : "";
+    const athleteOpeningNote =
+      allowAthleteDraft && openingNoteRaw && !/\d/.test(openingNoteRaw) ? openingNoteRaw : null;
     return {
       coach_summary_text: coachSummary,
       day_by_day_analysis_text: dayByDay,
       athlete_message_draft: athleteDraft,
+      athlete_opening_note_ru: athleteOpeningNote,
       next_week_plan_text: nextWeekPlanText,
       day_prose: dayProse,
       quality_notes: Array.isArray(parsed.quality_notes)
@@ -1334,6 +1357,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
     coach_summary_text: string;
     day_by_day_analysis_text: string;
     athlete_message_draft: string | null;
+    athlete_opening_note_ru: string | null;
     next_week_plan_text: string | null;
     day_prose: Record<string, string>;
     quality_notes: string[];
@@ -1352,6 +1376,9 @@ export async function generateNutritionWeeklyAnalysis(input: {
           proteinSufficient: methodology.proteinSufficient,
           progressionStrategy: selectedFocus.progressionStrategy,
         }),
+    // The warm opening line only comes from a live Claude call (it reacts to the
+    // athlete's words); the deterministic fallback never invents one.
+    athlete_opening_note_ru: null,
     // Plan prose comes only from a live Claude call; the deterministic plan
     // narrative is rebuilt downstream from next_week_plan when this is null.
     next_week_plan_text: null,
@@ -1413,6 +1440,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
         narrative = {
           ...narrative,
           athlete_message_draft: null,
+          athlete_opening_note_ru: null,
           generation_mode: "awaiting_generation",
           ai_model: "nutrition-weekly-review-awaiting-generation",
         };
@@ -1591,6 +1619,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
       carb_progression_strategy: selectedFocus.progressionStrategy,
       coach_summary_text: narrative.coach_summary_text,
       day_by_day_analysis_text: narrative.day_by_day_analysis_text,
+      athlete_opening_note_ru: narrative.athlete_opening_note_ru,
       generation_mode: narrative.generation_mode,
       prompt_version: NUTRITION_REVIEW_PROMPT_VERSION,
       quality_notes: narrative.quality_notes,

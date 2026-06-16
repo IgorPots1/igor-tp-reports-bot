@@ -34,6 +34,7 @@ function buildMockContext(overrides?: Partial<NutritionStudentContext>): Nutriti
     currentWeightKg: 58,
     nutritionGoal: null,
     coachContextRu: null,
+    athleteCommentRu: null,
     athleteReportSignals: [],
     manualMacroRows: [
       { day: "2026-06-01", weekday: "пн", kcal: 1850, proteinG: 108, fatG: 58, carbsG: 210, confidence: 1, notes: null },
@@ -147,6 +148,48 @@ async function run(): Promise<void> {
 
   const draftGenerator = readFileSync(join(root, "src/features/nutrition/draft-generator.ts"), "utf8");
   assert.match(draftGenerator, /athlete_report_signals/, "facts payload must include athlete_report_signals");
+
+  // Block 3: the athlete's verbatim words reach the model (tone/circumstances),
+  // separate from the keyword detector. Numbers still come only from the PDF.
+  assert.match(
+    draftGenerator,
+    /athlete_comment: input\.context\.athleteCommentRu/,
+    "facts payload must carry the athlete's verbatim comment"
+  );
+  assert.match(
+    draftGenerator,
+    /СЛОВА УЧЕНИКА \(student\.athlete_comment\)/,
+    "prompt must instruct the model to react to the athlete's words (tone/circumstances/effort praise)"
+  );
+  assert.match(
+    draftGenerator,
+    /ЧИСЛА И МАКРОСЫ — ТОЛЬКО из PDF/,
+    "prompt must forbid taking numbers from the athlete's words"
+  );
+
+  // Block 3 routing: the warm acknowledgment reaches the DELIVERED message
+  // (combined part 1), not just athlete_message_draft — via athlete_opening_note_ru.
+  assert.match(
+    draftGenerator,
+    /athlete_opening_note_ru/,
+    "model output must include athlete_opening_note_ru (warm opening line)"
+  );
+  assert.match(
+    draftGenerator,
+    /!\/\\d\/\.test\(openingNoteRaw\)/,
+    "opening note must be digit-guarded in the generator (no numbers in free praise)"
+  );
+  const combined = readFileSync(join(root, "src/features/nutrition/combined-message.ts"), "utf8");
+  assert.match(combined, /athleteOpeningNoteRu: athleteOpeningNote/, "combined message must pass the opening note to the renderer");
+  const renderer = readFileSync(join(root, "src/features/nutrition/telegram-renderer.ts"), "utf8");
+  assert.match(renderer, /openingNote \? \["", openingNote\] : \[\]/, "renderer must insert the opening line after the greeting (or nothing)");
+  assert.match(renderer, /!\/\\d\/\.test\(openingNoteRaw\)/, "renderer must digit-guard the opening line");
+
+  const contextBuilder = readFileSync(join(root, "src/features/nutrition/context.ts"), "utf8");
+  assert.match(contextBuilder, /athleteCommentRu: compactText\(input\.athleteCommentRu\)/, "context must carry athleteCommentRu");
+
+  const admin = readFileSync(join(root, "src/features/nutrition/admin.ts"), "utf8");
+  assert.match(admin, /athleteCommentRu: reportWithMacros\.report\.rawText/, "generation must pass the report's student comment as athleteCommentRu");
 
   const studentPage = readFileSync(join(root, "src/app/admin/coach-os/nutrition/[studentId]/page.tsx"), "utf8");
   assert.match(studentPage, /Сигналы из комментария ученика/, "UI must show athlete signal chips section");

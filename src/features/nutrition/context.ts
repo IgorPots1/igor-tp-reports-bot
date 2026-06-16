@@ -338,6 +338,14 @@ export type NutritionStudentContext = {
   coachContextRu: string | null;
   /** Task 8: one-time coach note attached to THIS report (this week's review only). */
   coachReportNoteRu: string | null;
+  /**
+   * Block 3: the athlete's own words for THIS report (the "Комментарий ученика"
+   * diary text). Verbatim context for TONE and circumstances (effort, fatigue,
+   * what/when they ate) — never a source of numbers (those come only from PDF).
+   * The illness/injury detector still runs over the same text separately
+   * (athleteReportSignals) as the medical safety net.
+   */
+  athleteCommentRu: string | null;
   /** Tasks 7+8: compact per-student review memory (persistent notes, approved patterns, last focus, trends). */
   studentMemory: NutritionStudentMemory;
   /** Task 10: student nutrition goal — drives target/plan math (default maintain = current behavior). */
@@ -883,6 +891,8 @@ export async function buildNutritionStudentContext(input: {
   athleteReportSignals?: NutritionAthleteReportSignal[];
   /** Task 8: one-time coach note from THIS report's upload. */
   coachReportNoteRu?: string | null;
+  /** Block 3: the athlete's own words for THIS report (diary comment, verbatim). */
+  athleteCommentRu?: string | null;
 }): Promise<NutritionStudentContext> {
   const essentials = await getNutritionStudentEssentials(input.studentId);
   const student = essentials.student;
@@ -953,6 +963,7 @@ export async function buildNutritionStudentContext(input: {
     nutritionGoal: essentials.profile?.goal ?? null,
     coachContextRu: essentials.profile?.coachContextRu ?? null,
     coachReportNoteRu: compactText(input.coachReportNoteRu) ?? null,
+    athleteCommentRu: compactText(input.athleteCommentRu) ?? null,
     studentMemory: essentials.profile?.nutritionMemory ?? emptyNutritionStudentMemory(),
     nutritionGoalType: essentials.profile?.nutritionGoalType ?? "maintain",
     targetWeightKg: essentials.profile?.targetWeightKg ?? null,

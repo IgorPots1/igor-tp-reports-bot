@@ -1164,6 +1164,10 @@ export function buildDerivedNutritionCombinedMessage(input: {
       ? `По сравнению с прошлой неделей держим более ровную базу: среднее за неделю ${formatNutritionAthleteKcal(avgKcal, { mode: "actual" })}, ориентир для дня отдыха ${formatNutritionAthleteKcal(restKcal, { mode: "target" })}.`
       : null;
   const weekSummary = getReviewWeekSummaryLine(review);
+  // Block 3: warm opening line derived from the athlete's own words. Qualitative
+  // only; the generator already digit-guards it, and we re-guard here defensively.
+  const openingNoteRaw = compactText(typeof summary.athlete_opening_note_ru === "string" ? summary.athlete_opening_note_ru : null);
+  const athleteOpeningNote = openingNoteRaw && !/\d/.test(openingNoteRaw) ? openingNoteRaw : null;
   const todayLocalDate = getNutritionAdminLocalDate();
   const focusLines = getPlanFocusLines(plan, planWeekMode, nextWeekPlan, {
     todayLocalDate,
@@ -1185,6 +1189,7 @@ export function buildDerivedNutritionCombinedMessage(input: {
       weekSummaryRu: weekSummary,
       focusLinesRu: focusLines,
       weekComparisonLineRu: comparisonLine,
+      athleteOpeningNoteRu: athleteOpeningNote,
     },
     nextWeekPlan,
     fallbackPlanLines: [compactText(plan.athleteMessageDraft) ?? "План на неделю не сформирован."],

@@ -46,6 +46,12 @@ export type NutritionMessageInterpretation = {
   weekSummaryRu: string | null;
   focusLinesRu: string[];
   weekComparisonLineRu: string | null;
+  /**
+   * Block 3: optional warm opening line from the athlete's own words (effort /
+   * circumstances), rendered right after the greeting. Qualitative only — any line
+   * containing a digit is dropped here as a final guard.
+   */
+  athleteOpeningNoteRu?: string | null;
 };
 
 export type NutritionTelegramRendererInput = {
@@ -744,11 +750,17 @@ export function renderNutritionTelegramMessage(input: NutritionTelegramRendererI
       ? input.interpretation.focusLinesRu.join(" ")
       : "Фокус на неделю не сформирован."
   );
+  // Block 3: warm opening line from the athlete's own words, right after the
+  // greeting. Final guards: plain text, drop if empty or if it smuggled a digit
+  // (numbers belong to the facts, never to free praise).
+  const openingNoteRaw = (input.interpretation.athleteOpeningNoteRu ?? "").replace(/[*_`#]+/g, "").replace(/\s+/g, " ").trim();
+  const openingNote = openingNoteRaw && !/\d/.test(openingNoteRaw) ? openingNoteRaw : null;
   // Split into two Telegram messages at the natural past/future boundary so each
   // fits the 4096-char cap: part 1 = last-week review (header + days + week
   // summary), part 2 = next-week plan (focus + mini-table + pre-training memo).
   const reviewLines = [
     resolveGreeting(input.formality, input.athleteName),
+    ...(openingNote ? ["", openingNote] : []),
     "",
     "Посмотрел твой отчёт за неделю и сопоставил его с тренировками.",
     ...(comparisonLine ? ["", comparisonLine] : []),

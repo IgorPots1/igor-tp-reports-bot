@@ -425,6 +425,7 @@ export async function generateNutritionWeeklyReview(input: {
     manualRows: rows,
     athleteReportSignals,
     coachReportNoteRu: reportWithMacros.report.coachNotesRu,
+    athleteCommentRu: reportWithMacros.report.rawText,
   });
   const generated = await generateNutritionWeeklyAnalysis({ context });
   const status = generated.safety_flags.blocked
