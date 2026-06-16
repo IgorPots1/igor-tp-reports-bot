@@ -435,6 +435,45 @@ function buildPreTrainingBlock(nextWeekPlan: NutritionNextWeekPlan | null): stri
   ];
 }
 
+/**
+ * Наряд 3 Шаг 2: a deterministic race-day block (gel / loading-or-not / morning
+ * vs night timing / recovery). Computed from race_protocol so the athlete always
+ * sees the right facts even if the model prose varies. No г/кг here — loading is
+ * delivered as a gentle step, the gram targets stay an internal coach orientation.
+ */
+function buildRaceDayBlock(nextWeekPlan: NutritionNextWeekPlan | null): string[] {
+  const raceDays = (nextWeekPlan?.days ?? []).filter((day) => day.flags.race && day.race_protocol);
+  if (raceDays.length === 0) {
+    return [];
+  }
+  const lines: string[] = ["🏁 День старта"];
+  for (const day of raceDays) {
+    const p = day.race_protocol!;
+    const name = day.workout_title?.trim() || "Старт";
+    const dist = typeof p.distance_km === "number" ? `, ${p.distance_km} км` : "";
+    lines.push("", `${formatDateRu(day.date)} — ${name}${dist}.`);
+    if (p.loading) {
+      lines.push(
+        `Дистанция длинная (дольше ~90 минут): за ${p.loading.days} дня до старта плавно подними углеводы (шагами от обычного, без рывка) — запасы топлива решают.`
+      );
+    } else {
+      lines.push("Короткий старт (меньше ~90 минут): углеводная загрузка НЕ нужна, питайся как в интенсивный тренировочный день.");
+    }
+    if (p.timing === "evening_or_night") {
+      lines.push(
+        "Старт вечером/ночью: углеводы распредели по дню, последний полноценный приём за 2-3 часа до старта; днём не наедайся тяжёлого и не оставайся голодной к вечеру."
+      );
+    } else {
+      lines.push("Старт утром: углеводный ужин накануне и лёгкий завтрак за 2-3 часа до старта.");
+    }
+    if (p.gel_before) {
+      lines.push("За ~10 минут до старта — один гель (обязательно для 10 км и длиннее).");
+    }
+    lines.push("После старта — углеводы и белок для восстановления.");
+  }
+  return lines;
+}
+
 // Task 10d: rules whose token is silently cleaned (no coach note) — pure
 // formatting / internal-term leaks, handled by cleanupPlainText.
 const NUTRITION_SILENT_RENDER_RULES = new Set(["markdown", "plain_dashes", "internal_terms"]);
@@ -730,6 +769,7 @@ export function renderNutritionTelegramMessage(input: NutritionTelegramRendererI
       })
     : buildPlanByDayTypes(input.nextWeekPlan, input.fallbackPlanLines);
   const keyTrainingPresent = hasKeyTraining(input.nextWeekPlan);
+  const raceBlock = buildRaceDayBlock(input.nextWeekPlan);
   const mainStepLine = buildNutritionTargetWeekMainStepLine(input.nextWeekPlan, input.planWeekMode, {
     todayLocalDate: input.todayLocalDate,
     miniTableMode: input.miniTableMode ?? "athlete_remaining_only",
@@ -785,6 +825,7 @@ export function renderNutritionTelegramMessage(input: NutritionTelegramRendererI
     "",
     planHeading,
     ...planLines,
+    ...(raceBlock.length > 0 ? ["", ...raceBlock] : []),
     ...(keyTrainingPresent ? ["", ...buildPreTrainingBlock(input.nextWeekPlan)] : []),
     "",
     "На следующем разборе посмотрим, как это отразится на энергии и восстановлении.",

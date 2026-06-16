@@ -20,9 +20,11 @@ import {
   emptyNutritionStudentMemory,
   getNutritionStudentEssentials,
   getNutritionTrainingPeaksCacheWindow,
+  listNutritionRaceEventsForStudentWindow,
   type NutritionContextItem,
   type NutritionDailyMacro,
   type NutritionGoalType,
+  type NutritionRaceEvent,
   type NutritionSex,
   type NutritionStudentMemory,
   type NutritionWeightLog,
@@ -340,6 +342,8 @@ export type NutritionStudentContext = {
   coachContextRu: string | null;
   /** Наряд 2: student on her own eating regime — don't treat calories/fat as a problem (layer A). */
   ownRegime: boolean;
+  /** Наряд 3: upcoming/just-past races (from the TP event scanner + manual marks) within the review+plan window. */
+  raceEvents: NutritionRaceEvent[];
   /** Task 8: one-time coach note attached to THIS report (this week's review only). */
   coachReportNoteRu: string | null;
   /**
@@ -887,6 +891,39 @@ export async function buildNutritionTrainingPeaksWeekContext(
   };
 }
 
+/**
+ * Наряд 3: inject each race that falls inside this week's window as a race-day
+ * "workout" so the existing day-classification pipeline reads it as race (not
+ * rest). Skips a date that already carries a race workout. Mutates the week.
+ */
+function injectRaceEventsIntoWeekContext(
+  week: NutritionTrainingPeaksWeekContext,
+  raceEvents: NutritionRaceEvent[]
+): void {
+  for (const event of raceEvents) {
+    if (event.eventDate < week.periodFrom || event.eventDate > week.periodTo) {
+      continue;
+    }
+    const alreadyRace = week.workouts.some(
+      (workout) => workout.date === event.eventDate && workout.type === "race"
+    );
+    if (alreadyRace) {
+      continue;
+    }
+    week.workouts.push({
+      date: event.eventDate,
+      title: event.title?.trim() || "Старт",
+      status: "completed",
+      type: "race",
+      description: null,
+      coachComments: null,
+      plannedText: null,
+      durationHours: null,
+      distanceKm: event.distanceKm ?? null,
+    });
+  }
+}
+
 export async function buildNutritionStudentContext(input: {
   studentId: string;
   weekFrom: string;
@@ -922,6 +959,18 @@ export async function buildNutritionStudentContext(input: {
       { keyWorkoutMode: "all" }
     ),
   ]);
+  // Наряд 3: pull races (TP scanner + coach manual marks) across the review and
+  // plan window, then inject each race date as a race-day so nutrition stops
+  // reading a race as a plain "rest" day. Distance rides along for the loading
+  // protocol (Step 2). Manual marks already override scan in the repository read.
+  const raceEvents = await listNutritionRaceEventsForStudentWindow({
+    studentId: input.studentId,
+    from: input.weekFrom,
+    to: addDays(input.weekTo, 7),
+  });
+  injectRaceEventsIntoWeekContext(tpPastWeek, raceEvents);
+  injectRaceEventsIntoWeekContext(tpNextWeek, raceEvents);
+
   const latestConfirmedWeight =
     essentials.weightLogs.find((item) => item.confirmedByCoach)?.weightKg ?? null;
   const latestWeight = essentials.weightLogs[0]?.weightKg ?? null;
@@ -967,6 +1016,7 @@ export async function buildNutritionStudentContext(input: {
     nutritionGoal: essentials.profile?.goal ?? null,
     coachContextRu: essentials.profile?.coachContextRu ?? null,
     ownRegime: essentials.profile?.ownRegime ?? false,
+    raceEvents,
     coachReportNoteRu: compactText(input.coachReportNoteRu) ?? null,
     athleteCommentRu: compactText(input.athleteCommentRu) ?? null,
     studentMemory: essentials.profile?.nutritionMemory ?? emptyNutritionStudentMemory(),

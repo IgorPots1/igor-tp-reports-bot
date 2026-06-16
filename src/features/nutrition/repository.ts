@@ -1780,3 +1780,120 @@ export async function getNutritionTrainingPeaksCacheWindow(input: {
 }): Promise<TrainingPeaksWorkoutCacheRow[]> {
   return listTrainingPeaksWorkoutCacheForStudentDateRange(input);
 }
+
+// --- Наряд 3 (race events) --------------------------------------------------
+// Bridge from the TP race/event scanner (source 'scan') + coach manual marks
+// (source 'manual'). Nutrition reads these per week to recognise race-day /
+// race-week. Manual overrides scan for the same date (the coach beats the scan).
+export type NutritionRaceEventSource = "scan" | "manual";
+export type NutritionRaceEvent = {
+  id: string;
+  studentId: string | null;
+  eventDate: string;
+  title: string | null;
+  distanceKm: number | null;
+  distanceRaw: string | null;
+  source: NutritionRaceEventSource;
+};
+
+type NutritionRaceEventRow = {
+  id: string;
+  student_id: string | null;
+  event_date: string;
+  title: string | null;
+  distance_km: number | string | null;
+  distance_raw: string | null;
+  source: string;
+};
+
+function mapNutritionRaceEventRow(row: NutritionRaceEventRow): NutritionRaceEvent {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    eventDate: row.event_date,
+    title: compactText(row.title),
+    distanceKm: toFiniteNumber(row.distance_km),
+    distanceRaw: compactText(row.distance_raw),
+    source: row.source === "manual" ? "manual" : "scan",
+  };
+}
+
+/**
+ * Races for a student within [from, to] (inclusive). Manual marks override scan
+ * rows for the same date so the coach always wins.
+ */
+export async function listNutritionRaceEventsForStudentWindow(input: {
+  studentId: string;
+  from: string;
+  to: string;
+}): Promise<NutritionRaceEvent[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_race_events")
+    .select("*")
+    .eq("student_id", input.studentId)
+    .gte("event_date", input.from)
+    .lte("event_date", input.to)
+    .order("event_date", { ascending: true });
+  if (error) {
+    // Race events are an enhancement, not a hard dependency. If the table is not
+    // there yet (migration not applied) or the read fails, degrade gracefully so
+    // the whole review still generates — just without race recognition.
+    if (/does not exist|42P01|could not find the table|schema cache|permission denied/i.test(error.message)) {
+      console.warn(`[nutrition.race-events] unavailable, skipping race recognition: ${error.message}`);
+      return [];
+    }
+    throw new Error(`Failed to list race events for student ${input.studentId}: ${error.message}`);
+  }
+  const rows = (data ?? []).map((row) => mapNutritionRaceEventRow(row as NutritionRaceEventRow));
+  // Manual wins over scan for the same date.
+  const byDate = new Map<string, NutritionRaceEvent>();
+  for (const event of rows) {
+    const existing = byDate.get(event.eventDate);
+    if (!existing || (event.source === "manual" && existing.source === "scan")) {
+      byDate.set(event.eventDate, event);
+    }
+  }
+  return [...byDate.values()].sort((a, b) => a.eventDate.localeCompare(b.eventDate));
+}
+
+/** Coach manual race mark (source 'manual') — upserts one row per student/day. */
+export async function upsertNutritionManualRaceEvent(input: {
+  studentId: string;
+  eventDate: string;
+  title?: string | null;
+  distanceKm?: number | null;
+}): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from("trainingpeaks_race_events")
+    .upsert(
+      {
+        student_id: input.studentId,
+        event_date: input.eventDate,
+        title: compactText(input.title),
+        distance_km: input.distanceKm ?? null,
+        source: "manual",
+      },
+      { onConflict: "student_id,event_date,source" }
+    );
+  if (error) {
+    throw new Error(`Failed to upsert manual race event for ${input.studentId}: ${error.message}`);
+  }
+}
+
+export async function deleteNutritionManualRaceEvent(input: {
+  studentId: string;
+  eventDate: string;
+}): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from("trainingpeaks_race_events")
+    .delete()
+    .eq("student_id", input.studentId)
+    .eq("event_date", input.eventDate)
+    .eq("source", "manual");
+  if (error) {
+    throw new Error(`Failed to delete manual race event for ${input.studentId}: ${error.message}`);
+  }
+}

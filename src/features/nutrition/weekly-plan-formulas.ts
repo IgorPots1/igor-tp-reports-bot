@@ -76,6 +76,8 @@ export type NutritionNextWeekPlanDay = {
   long_run_source: NutritionLongRunSource;
   long_run_confidence: NutritionLongRunConfidence;
   pre_training_guidance: string | null;
+  /** Наряд 3 Шаг 2: race-day protocol (gel / loading / timing) — null for non-race days. */
+  race_protocol: NutritionRaceProtocol | null;
   source: NutritionPlanSource;
   ideal_target: NutritionDayTypeTarget | null;
   practical_target: NutritionDayTypeTarget | null;
@@ -203,6 +205,53 @@ const GUIDANCE_BY_DAY_TYPE: Record<NutritionPlanDayType, string | null> = {
   unknown: null,
 };
 
+/**
+ * Наряд 3 Шаг 2: race protocol by distance. Loading ONLY for >90-min efforts
+ * (half+); 5K/10K are intense race days WITHOUT loading. A gel ~10 min before is
+ * a hard rule for ≥10 km (5K — no gel). Timing comes from the title (no race time
+ * in TP): "ночной/вечерний" → evening, the carb load is spread across the day;
+ * otherwise default to a morning race (carb dinner the night before).
+ */
+export type NutritionRaceProtocol = {
+  distance_km: number | null;
+  effort_over_90min: boolean;
+  loading: { g_per_kg_low: number; g_per_kg_high: number; days: number } | null;
+  gel_before: boolean;
+  timing: "morning" | "evening_or_night";
+  recovery_after: boolean;
+};
+
+export function computeNutritionRaceProtocol(input: {
+  distanceKm: number | null;
+  title: string | null;
+}): NutritionRaceProtocol {
+  const km = typeof input.distanceKm === "number" && Number.isFinite(input.distanceKm) ? input.distanceKm : null;
+  const title = (input.title ?? "").toLowerCase();
+  const timing: NutritionRaceProtocol["timing"] = /ночн|вечер|night|evening/u.test(title)
+    ? "evening_or_night"
+    : "morning";
+  // Loading only for half-marathon and longer (>~90 min).
+  const over90 = km != null && km >= 21;
+  let loading: NutritionRaceProtocol["loading"] = null;
+  if (km != null) {
+    if (km >= 50) {
+      loading = { g_per_kg_low: 8, g_per_kg_high: 10, days: 3 };
+    } else if (km >= 42) {
+      loading = { g_per_kg_low: 7, g_per_kg_high: 9, days: 3 };
+    } else if (km >= 21) {
+      loading = { g_per_kg_low: 6, g_per_kg_high: 8, days: 2 };
+    }
+  }
+  return {
+    distance_km: km,
+    effort_over_90min: over90,
+    loading,
+    gel_before: km != null && km >= 10,
+    timing,
+    recovery_after: true,
+  };
+}
+
 function asObject(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -284,7 +333,18 @@ function normalizeDayType(typeRaw: string | null, titleRaw: string | null): Nutr
   const type = (typeRaw ?? "").toLowerCase();
   const title = titleRaw ?? "";
   const haystack = `${type} ${title}`.toLowerCase();
-  if (/race|гонк|соревн/.test(haystack)) {
+  // Наряд 3: race entity (injected event type="race") OR a race-titled workout,
+  // excluding marathon-PACE training runs and prep/route notes.
+  const racePaceOrPrep =
+    /в\s+темпе|марафонск[\p{L}]*\s+темп|темп[\p{L}]*\s+марафон|в\s+марафонском|маршрут[\p{L}]*\s+забег|подготовк[\p{L}]*\s+к|к\s+марафону|marathon\s+pace|race\s+pace/u.test(
+      haystack
+    );
+  if (
+    !racePaceOrPrep &&
+    /гонк|соревнов|паркран|полумарафон|ультрамарафон|триатлон|марафон|(?<![\p{L}])(?:забег|старт|ультра|race|parkrun|triathlon)(?![\p{L}])/u.test(
+      haystack
+    )
+  ) {
     return "race";
   }
   if (type === "strength" || /силов/.test(haystack)) {
@@ -990,6 +1050,13 @@ export function buildNutritionNextWeekPlan(params: {
       long_run_source: trainingType === "long_run" ? primaryWorkout?.longRunSource ?? "none" : "none",
       long_run_confidence: trainingType === "long_run" ? primaryWorkout?.longRunConfidence ?? "low" : "low",
       pre_training_guidance: GUIDANCE_BY_DAY_TYPE[trainingType],
+      race_protocol:
+        trainingType === "race"
+          ? computeNutritionRaceProtocol({
+              distanceKm: primaryWorkout?.distanceKm ?? null,
+              title: primaryWorkout?.title ?? null,
+            })
+          : null,
       source,
       ideal_target: idealTarget,
       practical_target: practicalTarget,

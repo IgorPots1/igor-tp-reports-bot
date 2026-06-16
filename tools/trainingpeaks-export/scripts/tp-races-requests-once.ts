@@ -28,7 +28,9 @@ type TrainingPeaksJobRow = {
 };
 
 type RaceRow = {
+  student_id?: string | null;
   student_name?: string | null;
+  athlete_id?: number | null;
   event_date?: string | null;
   event_title?: string | null;
   distance?: string | null;
@@ -462,12 +464,71 @@ async function runRaceScanJob(job: TrainingPeaksJobRow): Promise<{
     throw new Error(`Failed to parse races.json: ${toShortErrorMessage(error)}`);
   }
   const rows = readRaceRows(racesJson);
+  // Наряд 3 (A): bridge scanned races into the DB so nutrition (serverless) can
+  // read them. Best-effort — never fail the scan/Telegram flow if the table is
+  // missing (migration not applied yet) or a student can't be resolved.
+  try {
+    await persistScannedRaceEvents(rows);
+  } catch (error) {
+    console.warn(`Race events persist skipped: ${toShortErrorMessage(error)}`);
+  }
   return {
     rowsCount: rows.length,
     outputDir,
     racesJsonPath,
     summaryText: buildRaceSummaryText(job.week_from, job.week_to, rows),
   };
+}
+
+/** Parse a leading numeric distance ("21.1 км" / "21,1" / "10K") to km. */
+function parseDistanceKm(distance: string | null | undefined): number | null {
+  if (!distance) return null;
+  const match = distance.replace(",", ".").match(/(\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/**
+ * Upsert scanned races into trainingpeaks_race_events (source 'scan'). Resolves
+ * the nutrition student uuid from the scanner's text student_id slug. Manual
+ * marks (source 'manual') are never touched here.
+ */
+async function persistScannedRaceEvents(rows: RaceRow[]): Promise<void> {
+  const supabase = getSupabase();
+  for (const row of rows) {
+    const eventDate = readStringValue(row.event_date);
+    const slug = readStringValue(row.student_id);
+    if (!eventDate || !ISO_DATE_PATTERN.test(eventDate) || !slug) {
+      continue;
+    }
+    const { data: student, error: studentError } = await supabase
+      .from("trainingpeaks_students")
+      .select("id")
+      .eq("student_id", slug)
+      .maybeSingle();
+    if (studentError || !student?.id) {
+      continue;
+    }
+    const { error: upsertError } = await supabase.from("trainingpeaks_race_events").upsert(
+      {
+        student_id: student.id,
+        trainingpeaks_athlete_id: typeof row.athlete_id === "number" ? row.athlete_id : null,
+        event_date: eventDate,
+        title: readStringValue(row.event_title),
+        distance_km: parseDistanceKm(row.distance),
+        distance_raw: readStringValue(row.distance),
+        source: "scan",
+      },
+      { onConflict: "student_id,event_date,source" }
+    );
+    if (upsertError) {
+      // Surface once and stop trying if the table is missing; otherwise skip the row.
+      if (/does not exist|could not find the table|schema cache|42P01/i.test(upsertError.message)) {
+        throw new Error(`trainingpeaks_race_events not available: ${upsertError.message}`);
+      }
+    }
+  }
 }
 
 async function main(): Promise<void> {

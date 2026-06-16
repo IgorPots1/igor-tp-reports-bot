@@ -29,7 +29,12 @@ import {
 import type { NutritionFileUploadPreviewSnapshot } from "@/features/nutrition/file-preview-cookie";
 import type { NutritionFileUploadPreviewActionState } from "@/app/admin/coach-os/nutrition/upload-action-state";
 import type { NutritionContextItemType } from "@/features/nutrition/repository";
-import { normalizeNutritionGoalType, normalizeNutritionSex } from "@/features/nutrition/repository";
+import {
+  deleteNutritionManualRaceEvent,
+  normalizeNutritionGoalType,
+  normalizeNutritionSex,
+  upsertNutritionManualRaceEvent,
+} from "@/features/nutrition/repository";
 import {
   ADMIN_ACCESS_COOKIE_NAME,
   hasValidAdminAccessCookie,
@@ -178,6 +183,51 @@ export async function saveNutritionCoachContextAction(formData: FormData): Promi
 
   revalidateNutritionPaths(studentId);
   redirect(withNotice(redirectTo, "notice", "Контекст для разбора питания сохранён."));
+}
+
+export async function addNutritionRaceEventAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+
+  const eventDate = (getOptionalFormValue(formData, "raceDate") ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) {
+    redirect(withNotice(redirectTo, "error", "Дату старта укажи в формате ГГГГ-ММ-ДД."));
+  }
+  const distanceKm = parseOptionalNumber(getOptionalFormValue(formData, "raceDistanceKm"));
+  try {
+    await upsertNutritionManualRaceEvent({
+      studentId,
+      eventDate,
+      title: getOptionalFormValue(formData, "raceTitle"),
+      distanceKm,
+    });
+  } catch (error) {
+    revalidateNutritionPaths(studentId);
+    const message = error instanceof Error ? error.message : "Не удалось сохранить старт.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+
+  revalidateNutritionPaths(studentId);
+  redirect(withNotice(redirectTo, "notice", `Старт ${eventDate} сохранён (ручная пометка).`));
+}
+
+export async function deleteNutritionRaceEventAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+
+  const eventDate = (getOptionalFormValue(formData, "raceDate") ?? "").trim();
+  try {
+    await deleteNutritionManualRaceEvent({ studentId, eventDate });
+  } catch (error) {
+    revalidateNutritionPaths(studentId);
+    const message = error instanceof Error ? error.message : "Не удалось удалить старт.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+
+  revalidateNutritionPaths(studentId);
+  redirect(withNotice(redirectTo, "notice", "Ручная пометка старта удалена."));
 }
 
 export async function saveNutritionProfileAction(formData: FormData): Promise<void> {

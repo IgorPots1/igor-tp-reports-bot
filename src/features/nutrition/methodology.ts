@@ -442,9 +442,43 @@ function formatDistanceKmRu(distanceKm: number): string {
   return `${distanceKm.toFixed(1).replace(".", ",")} км`;
 }
 
+/**
+ * Наряд 3: recognise a RACE from a workout title — забег/старт/гонка/соревнование/
+ * паркран/полу-/марафон/ультра/триатлон — WITHOUT misreading marathon-PACE training
+ * runs ("бег в темпе марафона", "15 км в темпе марафона", "марафонским темпом") or
+ * route notes ("по маршруту забега") as actual races. Events from the TP scanner /
+ * manual marks come through a separate path (raw === "race"); this only covers races
+ * a coach logged as a workout.
+ */
+export function isNutritionRaceTitle(title: string): boolean {
+  const t = (title ?? "").toLowerCase();
+  if (!t.trim()) {
+    return false;
+  }
+  // Exclude pace-run / prep / route phrasings that merely mention a race distance.
+  const paceOrPrep =
+    /в\s+темпе|марафонск[\p{L}]*\s+темп|темп[\p{L}]*\s+марафон|в\s+марафонском|маршрут[\p{L}]*\s+забег|подготовк[\p{L}]*\s+к|к\s+марафону|to\s+marathon|marathon\s+pace|race\s+pace/u.test(
+      t
+    );
+  if (paceOrPrep) {
+    return false;
+  }
+  // Low-ambiguity race nouns (substring); marathon variants are already guarded
+  // by paceOrPrep above. \p{L} lookarounds are Unicode word boundaries (\b is
+  // ASCII-only and never fires around Cyrillic).
+  return /гонк|соревнов|паркран|полумарафон|ультрамарафон|триатлон|марафон|(?<![\p{L}])(?:забег|старт|ультра|race|parkrun|triathlon)(?![\p{L}])/u.test(
+    t
+  );
+}
+
 export function normalizeTrainingType(rawType: string | null | undefined, title: string): NutritionTrainingType {
   const raw = (rawType ?? "").toLowerCase();
   const titleLc = title.toLowerCase();
+  // Наряд 3: explicit race entity (injected from a TP race event / manual mark)
+  // wins regardless of title wording.
+  if (raw === "race") {
+    return "race";
+  }
   // "отдых"/"rest" often appears inside a workout title as recovery between reps
   // (e.g. "3 x 15 мин (отдых бегом)"). Only treat it as a rest DAY when the title
   // carries no actual workout evidence — otherwise an interval session would be
@@ -474,7 +508,7 @@ export function normalizeTrainingType(rawType: string | null | undefined, title:
     // are not mislabeled as "лёгкий бег" or evaluated against run carb targets.
     return "cross_training";
   }
-  if (/race|гонк|соревн/.test(titleLc)) {
+  if (isNutritionRaceTitle(title)) {
     return "race";
   }
   if (isEasyLightNutritionTitle(title)) {

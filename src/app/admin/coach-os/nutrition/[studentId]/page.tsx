@@ -16,6 +16,8 @@ import {
   generateNutritionWeeklyReviewAction,
   parseNutritionManualMacrosAction,
   previewNutritionFileUploadAction,
+  addNutritionRaceEventAction,
+  deleteNutritionRaceEventAction,
   saveNutritionFileReportAction,
   saveNutritionManualMacrosAction,
   saveNutritionCoachContextAction,
@@ -526,6 +528,57 @@ export default async function CoachOsNutritionStudentCardPage({
           </label>
           <FormActionButton className="admin-button" pendingText="Сохраняю…">
             Сохранить контекст
+          </FormActionButton>
+        </form>
+      </article>
+
+      <article className="admin-card admin-card-compact admin-nutrition-card-wide">
+        <h3>Старты (углеводная загрузка)</h3>
+        <p className="admin-muted admin-nutrition-helper">
+          Старты подтягиваются автоматически из скана TP (/tp_races). Здесь можно добавить старт вручную, если он не отсканирован или появился поздно — ручная пометка переопределяет скан.
+        </p>
+        {(card.context.raceEvents ?? []).length > 0 ? (
+          <ul className="admin-nutrition-race-list">
+            {card.context.raceEvents.map((race) => (
+              <li key={`${race.eventDate}-${race.source}`}>
+                <span>
+                  {race.eventDate} — {race.title ?? "Старт"}
+                  {race.distanceKm ? ` · ${race.distanceKm} км` : ""}{" "}
+                  <span className="admin-muted">({race.source === "manual" ? "вручную" : "скан"})</span>
+                </span>
+                {race.source === "manual" ? (
+                  <form action={deleteNutritionRaceEventAction} className="admin-form-inline">
+                    <input type="hidden" name="studentId" value={studentId} />
+                    <input type="hidden" name="redirectTo" value={studentCardPath} />
+                    <input type="hidden" name="raceDate" value={race.eventDate} />
+                    <FormActionButton className="admin-button admin-button-secondary" pendingText="Удаляю…">
+                      Убрать
+                    </FormActionButton>
+                  </form>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="admin-muted">Стартов в окне разбора/плана не найдено.</p>
+        )}
+        <form className="admin-form-stack" action={addNutritionRaceEventAction}>
+          <input type="hidden" name="studentId" value={studentId} />
+          <input type="hidden" name="redirectTo" value={studentCardPath} />
+          <label className="admin-form-field">
+            <span>Дата старта (ГГГГ-ММ-ДД)</span>
+            <input className="admin-input" name="raceDate" placeholder="2026-06-20" />
+          </label>
+          <label className="admin-form-field">
+            <span>Дистанция, км (опц. — определяет протокол загрузки)</span>
+            <input className="admin-input" name="raceDistanceKm" type="number" step="0.1" placeholder="21.1" />
+          </label>
+          <label className="admin-form-field">
+            <span>Название (опц.)</span>
+            <input className="admin-input" name="raceTitle" placeholder="Ночной забег" />
+          </label>
+          <FormActionButton className="admin-button" pendingText="Сохраняю…">
+            Добавить старт вручную
           </FormActionButton>
         </form>
       </article>
