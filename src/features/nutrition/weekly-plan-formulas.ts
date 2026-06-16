@@ -542,6 +542,21 @@ const TYPICAL_EXERCISE_HOURS_BY_DAY_TYPE: Partial<Record<NutritionPlanDayType, n
   race: 1.5,
 };
 
+// Task 10d (Bug 2): per-hour energy cost by intensity (kcal/kg/h). "hard" (the
+// plan's intervals/tempo bucket) burns more than an easy run of equal duration,
+// so a quality day gets more fuel/carbs than a light day. Mirrors the review-side
+// coefficients in methodology.ts. Applies to ALL goals (lose/gain anchor + EA).
+const EXERCISE_KCAL_PER_KG_PER_HOUR_BY_DAY_TYPE: Partial<Record<NutritionPlanDayType, number>> = {
+  hard: 12,
+  race: 12,
+  long_run: 10,
+  long_endurance: 9,
+  pre_long: 8,
+  easy: 8,
+  cross_training: 7,
+  strength: 7,
+};
+
 /**
  * Goal-aware day target on the corrected (BMR + this day's TP expenditure)
  * maintenance. Single source of truth shared by the next-week plan and the
@@ -591,14 +606,15 @@ export function estimatePlanDayExerciseKcal(params: {
   if (dayType === "rest" || dayType === "unknown") {
     return 0;
   }
-  if (dayType === "long_run" && params.distanceKm && params.distanceKm > 0) {
+  if ((dayType === "long_run" || dayType === "long_endurance") && params.distanceKm && params.distanceKm > 0) {
     return Math.round(params.distanceKm * bw);
   }
   const hours =
     params.durationHours && params.durationHours > 0
       ? params.durationHours
       : TYPICAL_EXERCISE_HOURS_BY_DAY_TYPE[dayType] ?? 0.75;
-  return Math.round(hours * bw * 9);
+  const perKgPerHour = EXERCISE_KCAL_PER_KG_PER_HOUR_BY_DAY_TYPE[dayType] ?? 9;
+  return Math.round(hours * bw * perKgPerHour);
 }
 
 /**

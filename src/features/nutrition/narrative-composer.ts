@@ -748,6 +748,15 @@ export type NutritionDayCommentComposerInput = {
   fatFeedbackPolicy?: NutritionFatFeedbackPolicy;
   previousDayTrainingType?: string | null;
   previousDayTrainingLabel?: string | null;
+  /**
+   * Task 10d (Bug 1): goal-aware deterministic fallback. For goal=lose/gain, a
+   * rest/easy day whose actual energy is above the deficit line must NOT read as
+   * "спокойно". maintain leaves these undefined → behaviour byte-identical.
+   */
+  goalType?: "lose" | "maintain" | "gain";
+  goalDayTargetKcal?: number | null;
+  actualKcal?: number | null;
+  actualFatG?: number | null;
 };
 
 export type NutritionDayNarrativeParts = {
@@ -1212,6 +1221,27 @@ export function composeNutritionDayComment(
 
   if (input.nutritionStatus === "suspect") {
     return "Данные по питанию за день выглядят неполными или нетипичными, поэтому здесь лучше проверить исходный отчёт вручную.";
+  }
+
+  // Task 10d (Bug 1): goal-aware deterministic fallback so a losing athlete's REST
+  // day above the deficit line never reads as "спокойно" — even when the model's
+  // goal-aware prose is unavailable. maintain/gain or no target → fall through to
+  // the existing logic (behaviour byte-identical for them).
+  if (
+    input.goalType === "lose" &&
+    roleInfo.role === "rest" &&
+    typeof input.goalDayTargetKcal === "number" &&
+    typeof input.actualKcal === "number" &&
+    input.actualKcal > input.goalDayTargetKcal + 150
+  ) {
+    const orientKcal = Math.round(input.goalDayTargetKcal / 50) * 50;
+    const fatG = typeof input.actualFatG === "number" ? input.actualFatG : input.macro.fatG ?? null;
+    const fatPct = typeof fatG === "number" && input.actualKcal > 0 ? (fatG * 9) / input.actualKcal : null;
+    const fatSentence =
+      typeof fatG === "number" && fatPct !== null && fatPct > 0.35
+        ? ` Жиров ${Math.round(fatG / 5) * 5} г для дня без нагрузки многовато — в основном из них и набегают лишние калории.`
+        : "";
+    return `${longAfterPrefix}Для дня без нагрузки при твоей цели это многовато — ориентир в такие дни около ${orientKcal} ккал.${fatSentence} В дни отдыха попробуй сделать тарелку легче: больше овощей и белка, поменьше жирного.`;
   }
 
   if (input.nutritionStatus === "pre_long_low") {

@@ -591,6 +591,24 @@ function asSex(context: NutritionStudentContext): "female" | "male" | "unknown" 
   return "unknown";
 }
 
+// Task 10d (Bug 2): per-hour energy cost by workout intensity (kcal/kg/h).
+// Intervals/tempo/race are harder than an easy jog of the same duration, so they
+// must drive higher expenditure → higher maintenance/EA → more fuel. Applies to
+// ALL goals. Long runs are normally estimated from distance; this covers the
+// duration fallback for them.
+const NUTRITION_EXERCISE_KCAL_PER_KG_PER_HOUR: Record<NutritionTrainingType, number> = {
+  intervals: 12,
+  race: 12,
+  tempo: 11,
+  long_run: 10,
+  long_endurance: 9,
+  easy: 8,
+  cross_training: 7,
+  strength: 7,
+  rest: 0,
+  unknown: 9,
+};
+
 function estimateExerciseEnergyKcal(input: {
   workout: WorkoutContextByDate | null;
   bodyweightKg: number | null;
@@ -605,22 +623,24 @@ function estimateExerciseEnergyKcal(input: {
     return { exerciseEnergyKcal: null, exerciseEnergySource: "missing" };
   }
   const bw = input.bodyweightKg;
-  if (input.workout.type === "long_run" && input.workout.distanceKm !== null && input.workout.distanceKm > 0) {
+  // Task 10d (Bug 2): expenditure scales with INTENSITY, not just duration.
+  // Intervals/tempo burn more per hour than an easy jog of the same length.
+  // Long runs use distance (≈ km × bw) when available, else duration × the
+  // long-run coefficient (fixes the prior null when distance was missing).
+  if (
+    (input.workout.type === "long_run" || input.workout.type === "long_endurance") &&
+    input.workout.distanceKm !== null &&
+    input.workout.distanceKm > 0
+  ) {
     return {
       exerciseEnergyKcal: Math.round(input.workout.distanceKm * bw),
       exerciseEnergySource: "estimated_by_duration_or_distance",
     };
   }
-  if (
-    (input.workout.type === "intervals" ||
-      input.workout.type === "tempo" ||
-      input.workout.type === "race" ||
-      input.workout.type === "easy") &&
-    input.workout.durationHours !== null &&
-    input.workout.durationHours > 0
-  ) {
+  if (input.workout.durationHours !== null && input.workout.durationHours > 0) {
+    const perKgPerHour = NUTRITION_EXERCISE_KCAL_PER_KG_PER_HOUR[input.workout.type] ?? 9;
     return {
-      exerciseEnergyKcal: Math.round(input.workout.durationHours * bw * 9),
+      exerciseEnergyKcal: Math.round(input.workout.durationHours * bw * perKgPerHour),
       exerciseEnergySource: "estimated_by_duration_or_distance",
     };
   }

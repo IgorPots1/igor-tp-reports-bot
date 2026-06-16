@@ -49,6 +49,7 @@ type CanonicalDailyFact = {
   macroGuardrails?: unknown;
   athlete_prose?: unknown;
   target?: unknown;
+  goal_day_target?: unknown;
 };
 
 export type NutritionCombinedMessageResult = {
@@ -241,6 +242,9 @@ function normalizeStoredDailyFactItem(raw: unknown): CanonicalDailyFact | null {
       embedded.macro_guardrails,
     athlete_prose: source.athlete_prose ?? item.athlete_prose,
     target: source.target ?? item.target,
+    // Task 10d (Bug 1): carry the goal "deficit line" through normalization so the
+    // render-time validator allows its numbers and the goal-aware fallback can fire.
+    goal_day_target: source.goal_day_target ?? item.goal_day_target,
   };
 }
 
@@ -324,6 +328,25 @@ export function buildNutritionDayProseFacts(item: Record<string, unknown>): Nutr
         planTargetNumbers.push(target - carbs);
       }
     }
+  }
+  // Task 10d (Bug 1): the goal-aware "deficit line" (goal_day_target) is also a
+  // code-owned orientation. Without this, a losing athlete's prose citing the
+  // deficit target ("ориентир около 1800 ккал") was flagged as an invented number
+  // and the whole day's prose was dropped to the goal-blind deterministic comment.
+  const goalDayTarget = asObject(item.goal_day_target);
+  const goalKcal = toFiniteNumber(goalDayTarget.target_kcal);
+  const goalCarbs = toFiniteNumber(goalDayTarget.carbs_g);
+  for (const value of [goalKcal, toFiniteNumber(goalDayTarget.protein_g), toFiniteNumber(goalDayTarget.fat_g), goalCarbs]) {
+    if (value != null) {
+      planTargetNumbers.push(value);
+    }
+  }
+  // Allow the gap to the deficit line ("на ~950 больше ориентира").
+  if (goalKcal != null && kcal != null) {
+    planTargetNumbers.push(Math.abs(kcal - goalKcal));
+  }
+  if (goalCarbs != null && carbs != null) {
+    planTargetNumbers.push(Math.abs(carbs - goalCarbs));
   }
   return {
     kcal,
@@ -631,6 +654,14 @@ function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
           fatFeedbackPolicy: narrativePreferences.fatFeedbackPolicy,
           previousDayTrainingType,
           previousDayTrainingLabel,
+          // Task 10d (Bug 1): goal-aware fallback for a rest day over the deficit line.
+          goalType: (() => {
+            const g = asObject(item.goal_day_target).goal;
+            return g === "lose" || g === "gain" ? g : undefined;
+          })(),
+          goalDayTargetKcal: toFiniteNumber(asObject(item.goal_day_target).target_kcal),
+          actualKcal: kcal,
+          actualFatG: fat,
         },
         repetitionState
       );
