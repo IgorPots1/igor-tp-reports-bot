@@ -217,6 +217,7 @@
     "check:nutrition-pdf-extraction": "npx tsx scripts/check-nutrition-pdf-extraction.ts",
     "check:nutrition-food-items-parsing": "npx tsx scripts/check-nutrition-food-items-parsing.ts",
     "check:nutrition-food-quality": "npx tsx scripts/check-nutrition-food-quality.ts",
+    "check:nutrition-own-regime": "npx tsx scripts/check-nutrition-own-regime.ts",
     "nutrition:inspect-pdf": "npx tsx scripts/nutrition-inspect-pdf.ts",
     "check:nutrition-file-safety": "npx tsx scripts/check-nutrition-file-safety.ts",
     "check:nutrition-upload-size-limit": "npx tsx scripts/check-nutrition-upload-size-limit.ts",

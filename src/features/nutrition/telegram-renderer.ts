@@ -762,7 +762,9 @@ export function renderNutritionTelegramMessage(input: NutritionTelegramRendererI
     resolveGreeting(input.formality, input.athleteName),
     ...(openingNote ? ["", openingNote] : []),
     "",
-    "Посмотрел твой отчёт за неделю и сопоставил его с тренировками.",
+    input.formality === "vy"
+      ? "Посмотрел ваш отчёт за неделю и сопоставил его с тренировками."
+      : "Посмотрел твой отчёт за неделю и сопоставил его с тренировками.",
     ...(comparisonLine ? ["", comparisonLine] : []),
     "",
     "📊 Разбор по дням",

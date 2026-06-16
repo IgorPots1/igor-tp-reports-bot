@@ -107,16 +107,17 @@ async function run(): Promise<void> {
     coachContextRu: "У ученицы своя позиция по высокому жиру, не делать жиры фокусом; фокус - углеводы.",
   });
   assert.equal(suppressPrefs.fatFeedbackPolicy, "suppress_athlete");
-  // Per-student override: Polyakova stays coach-only despite the athlete-facing default.
+  // Наряд 2: the per-student override is now the coach-controlled own_regime flag
+  // (not a hardcoded surname). own_regime=true keeps fat coach-only.
   assert.equal(
-    applyNutritionFatPolicyOverrides("Polyakova Anastasia", defaultPrefs).fatFeedbackPolicy,
+    applyNutritionFatPolicyOverrides(true, defaultPrefs).fatFeedbackPolicy,
     "coach_only",
-    "Polyakova override keeps fat coach-only"
+    "own_regime=true keeps fat coach-only"
   );
   assert.equal(
-    applyNutritionFatPolicyOverrides("Khadizhat Murtazalieva", defaultPrefs).fatFeedbackPolicy,
+    applyNutritionFatPolicyOverrides(false, defaultPrefs).fatFeedbackPolicy,
     "normal",
-    "other athletes get athlete-facing fat feedback"
+    "own_regime=false → athlete-facing fat feedback (default)"
   );
 
   const generated = await generateNutritionWeeklyAnalysis({ context: buildMockContext() });

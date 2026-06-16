@@ -1325,6 +1325,10 @@ export default async function CoachOsNutritionStudentCardPage({
                     <span>Аллергии / непереносимость (безопасность)</span>
                     <textarea className="admin-textarea admin-textarea-compact" name="toleranceNotes" rows={2} defaultValue={card.profile?.toleranceNotes ?? ""} />
                   </label>
+                  <label className="admin-form-field admin-form-field-inline">
+                    <input type="checkbox" name="ownRegime" value="true" defaultChecked={card.profile?.ownRegime ?? false} />
+                    <span>Свой режим питания — не оценивать калорийность/жир как проблему</span>
+                  </label>
                   <FormActionButton className="admin-button" pendingText="Сохраняю…">
                     Сохранить профиль
                   </FormActionButton>

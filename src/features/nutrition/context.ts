@@ -239,13 +239,15 @@ export function getNutritionNarrativePreferences(input: {
   };
 }
 
-/** Students kept on coach-only fat feedback despite the athlete-facing default. */
-const NUTRITION_FAT_COACH_ONLY_STUDENT_NAMES = [/polyakova/i];
-
+/**
+ * Наряд 2: a student on her "own regime" (own_regime flag) keeps fat feedback
+ * coach-only — replaces the former hardcoded surname check (/polyakova/). The
+ * coach now controls this per student from the profile, not the code.
+ */
 export function applyNutritionFatPolicyOverrides<
   T extends { fatFeedbackPolicy?: NutritionFatFeedbackPolicy },
->(studentName: string | null | undefined, prefs: T): T {
-  if (NUTRITION_FAT_COACH_ONLY_STUDENT_NAMES.some((pattern) => pattern.test(studentName ?? ""))) {
+>(ownRegime: boolean | null | undefined, prefs: T): T {
+  if (ownRegime) {
     return { ...prefs, fatFeedbackPolicy: "coach_only" };
   }
   return prefs;
@@ -336,6 +338,8 @@ export type NutritionStudentContext = {
   currentWeightKg: number | null;
   nutritionGoal: string | null;
   coachContextRu: string | null;
+  /** Наряд 2: student on her own eating regime — don't treat calories/fat as a problem (layer A). */
+  ownRegime: boolean;
   /** Task 8: one-time coach note attached to THIS report (this week's review only). */
   coachReportNoteRu: string | null;
   /**
@@ -962,6 +966,7 @@ export async function buildNutritionStudentContext(input: {
     currentWeightKg: essentials.profile?.currentWeightKg ?? latestConfirmedWeight ?? latestWeight ?? null,
     nutritionGoal: essentials.profile?.goal ?? null,
     coachContextRu: essentials.profile?.coachContextRu ?? null,
+    ownRegime: essentials.profile?.ownRegime ?? false,
     coachReportNoteRu: compactText(input.coachReportNoteRu) ?? null,
     athleteCommentRu: compactText(input.athleteCommentRu) ?? null,
     studentMemory: essentials.profile?.nutritionMemory ?? emptyNutritionStudentMemory(),
@@ -971,7 +976,7 @@ export async function buildNutritionStudentContext(input: {
     heightCm: essentials.profile?.heightCm ?? null,
     ageYears: essentials.profile?.ageYears ?? null,
     narrativePreferences: applyNutritionFatPolicyOverrides(
-      student.studentName,
+      essentials.profile?.ownRegime ?? false,
       getNutritionNarrativePreferences({
         profilePreferences: essentials.profile?.preferences ?? null,
         coachContextRu: essentials.profile?.coachContextRu ?? null,

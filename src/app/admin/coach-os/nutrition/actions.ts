@@ -193,6 +193,7 @@ export async function saveNutritionProfileAction(formData: FormData): Promise<vo
       trackingApp: getOptionalFormValue(formData, "trackingApp"),
       currentWeightKg: parseOptionalNumber(getOptionalFormValue(formData, "currentWeightKg")),
       toleranceNotes: getOptionalFormValue(formData, "toleranceNotes"),
+      ownRegime: parseBoolean(getOptionalFormValue(formData, "ownRegime"), false),
       nutritionGoalType: normalizeNutritionGoalType(getOptionalFormValue(formData, "nutritionGoalType")),
       targetWeightKg: parseOptionalNumber(getOptionalFormValue(formData, "targetWeightKg")),
       sex: normalizeNutritionSex(getOptionalFormValue(formData, "sex")),

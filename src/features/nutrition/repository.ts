@@ -69,6 +69,8 @@ export type NutritionStudentProfile = {
   toleranceNotes: string | null;
   coachNotes: string | null;
   coachContextRu: string | null;
+  /** Наряд 2: athlete on her own eating regime — don't treat calories/fat as a problem (layer A: tone/feedback only). */
+  ownRegime: boolean;
   nutritionMemory: NutritionStudentMemory;
   nutritionGoalType: NutritionGoalType;
   targetWeightKg: number | null;
@@ -230,6 +232,7 @@ type NutritionStudentProfileRow = {
   tolerance_notes: string | null;
   coach_notes: string | null;
   coach_context_ru: string | null;
+  own_regime: boolean | null;
   nutrition_memory: unknown | null;
   nutrition_goal_type: string | null;
   target_weight_kg: number | string | null;
@@ -354,6 +357,7 @@ export type UpsertNutritionStudentProfileInput = {
   toleranceNotes?: string | null;
   coachNotes?: string | null;
   coachContextRu?: string | null;
+  ownRegime?: boolean;
   nutritionMemory?: NutritionStudentMemory;
   nutritionGoalType?: NutritionGoalType;
   targetWeightKg?: number | null;
@@ -526,6 +530,7 @@ function mapNutritionStudentProfileRow(row: NutritionStudentProfileRow): Nutriti
     toleranceNotes: row.tolerance_notes,
     coachNotes: row.coach_notes,
     coachContextRu: compactText(row.coach_context_ru),
+    ownRegime: row.own_regime === true,
     nutritionMemory: sanitizeNutritionStudentMemory(row.nutrition_memory),
     nutritionGoalType: normalizeNutritionGoalType(row.nutrition_goal_type),
     targetWeightKg: toFiniteNumber(row.target_weight_kg),
@@ -741,6 +746,7 @@ export async function upsertNutritionStudentProfile(
     coach_notes: input.coachNotes === undefined ? undefined : compactText(input.coachNotes),
     coach_context_ru:
       input.coachContextRu === undefined ? undefined : normalizeNutritionCoachContextRu(input.coachContextRu),
+    own_regime: input.ownRegime === undefined ? undefined : input.ownRegime,
     nutrition_memory:
       input.nutritionMemory === undefined ? undefined : sanitizeNutritionStudentMemory(input.nutritionMemory),
     nutrition_goal_type:

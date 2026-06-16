@@ -296,6 +296,30 @@ const polyakovaRender = renderNutritionTelegramMessage({
 assert.match(polyakovaRender.text ?? "", /^Анастасия, привет!/);
 assert.doesNotMatch(polyakovaRender.text ?? "", /\bCycling\b/);
 
+// Наряд 2: ты/вы must drive the deterministic scaffolding too, not just the
+// greeting — the intro line was hardcoded "твой отчёт" and leaked "ты" for a
+// formality=vy student (Hoffman). Both branches are pinned here.
+assert.match(text, /Посмотрел твой отчёт за неделю/, "ty render keeps the ты intro line");
+const vyRender = renderNutritionTelegramMessage({
+  formality: "vy",
+  athleteName: "Надя",
+  planWeekMode: "next_week",
+  interpretation: {
+    dayComments: ["🔹 Понедельник (01.06) - день отдыха\n~2500 ккал · белок ~105 г · жиры ~130 г · углеводы ~215 г.\nДень отдыха, по питанию спокойно."],
+    weekSummaryRu: "По белку спокойно.",
+    focusLinesRu: ["Ровные углеводы к ключевым сессиям."],
+    weekComparisonLineRu: null,
+  },
+  nextWeekPlan,
+  fallbackPlanLines: ["fallback"],
+  hasTargetWeekTrainingContext: true,
+  hasPreviousWeeksContext: false,
+});
+const vyText = vyRender.text ?? "";
+assert.match(vyText, /^Здравствуйте, Надя!/, "vy render must use the formal greeting");
+assert.match(vyText, /Посмотрел ваш отчёт за неделю/, "vy render must use the ваш intro line");
+assert.doesNotMatch(vyText, /Посмотрел твой отчёт/, "vy render must not leak the ты intro line");
+
 const easyLabelLongStoredPlan: NutritionNextWeekPlan = {
   ...nextWeekPlan,
   days: [
