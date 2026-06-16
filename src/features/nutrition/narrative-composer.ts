@@ -354,14 +354,69 @@ function resolveSportShortRu(title: string): string | null {
   return null;
 }
 
+// Task 10d: TrainingPeaks sends English activity names; in a Russian review they
+// must read in Russian (e.g. "Pilates" → "пилатес"). Ordered EN→RU map (multi-word
+// entries first). Anything not listed is left untouched (never break the label) and
+// logged once via transcribeTrainingPeaksActivityRu so the dictionary can grow.
+const TRAININGPEAKS_ACTIVITY_RU_MAP: Array<[RegExp, string]> = [
+  [/\bPadel\s*Racket\b/gi, "падел"],
+  [/\bPadel\b/gi, "падел"],
+  [/\bStand\s*Up\s*Paddleboarding\b/gi, "сап"],
+  [/\bPaddleboard(?:ing)?\b/gi, "сап"],
+  [/\bSUP\b/gi, "сап"],
+  [/\bM(?:ountain|tn)\s*Bike\b/gi, "вело"],
+  [/\bCycling\b/gi, "вело"],
+  [/\bBike\b/gi, "вело"],
+  [/\bRunning\b/gi, "бег"],
+  [/\bRun\b/gi, "бег"],
+  [/\bStrength\b/gi, "силовая"],
+  [/\bGym\b/gi, "зал"],
+  [/\bSwimming\b/gi, "плавание"],
+  [/\bSwim\b/gi, "плавание"],
+  [/\bPilates\b/gi, "пилатес"],
+  [/\bYoga\b/gi, "йога"],
+  [/\bStretching\b/gi, "растяжка"],
+  [/\bRowing\b/gi, "гребля"],
+  [/\bRow\b/gi, "гребля"],
+  [/\bWalking\b/gi, "ходьба"],
+  [/\bWalk\b/gi, "ходьба"],
+  [/\bHiking\b/gi, "поход"],
+  [/\bHike\b/gi, "поход"],
+  [/\bXC[-\s]?Ski(?:ing)?\b/gi, "лыжи"],
+  [/\bSkiing\b/gi, "лыжи"],
+  [/\bSki\b/gi, "лыжи"],
+  [/\bElliptical\b/gi, "эллипс"],
+  [/\bTreadmill\b/gi, "дорожка"],
+  [/\bBrick\b/gi, "брик"],
+  [/\bCross[-\s]?Train(?:ing)?\b/gi, "кросс-тренировка"],
+  [/\bTrainingPeaks\b/gi, "план тренировок"],
+];
+
+function applyActivityTranscription(label: string): string {
+  let out = label;
+  for (const [pattern, ru] of TRAININGPEAKS_ACTIVITY_RU_MAP) {
+    out = out.replace(pattern, ru);
+  }
+  return out;
+}
+
+/** Transcribe + log any leftover Latin activity token (so the map can be extended). */
+function transcribeTrainingPeaksActivityRu(label: string): string {
+  const out = applyActivityTranscription(label);
+  const residual = out.match(/[A-Za-z]{3,}/g);
+  if (residual && residual.length > 0) {
+    console.warn(
+      `[nutrition.activity-transcription] untranslated activity token(s) ${JSON.stringify([
+        ...new Set(residual.map((token) => token.toLowerCase())),
+      ])} in label "${label}" — add to TRAININGPEAKS_ACTIVITY_RU_MAP`
+    );
+  }
+  return out;
+}
+
+// Back-compat name used in the label branches below.
 function replaceEnglishSportTokens(label: string): string {
-  return label
-    .replace(/\bCycling\b/gi, "вело")
-    .replace(/\bBike\b/gi, "вело")
-    .replace(/\bPadel Racket\b/gi, "падел")
-    .replace(/\bPadel\b/gi, "падел")
-    .replace(/\bStrength\b/gi, "силовая")
-    .replace(/\bTrainingPeaks\b/gi, "план тренировок");
+  return applyActivityTranscription(label);
 }
 
 function isRunLikeLabel(label: string): boolean {
@@ -369,6 +424,12 @@ function isRunLikeLabel(label: string): boolean {
 }
 
 export function humanizeNutritionTrainingLabel(trainingLabel: string, trainingType: string): string {
+  // Final pass: whatever label branch produced, transcribe any English activity
+  // names to Russian (and log unknown tokens). Covers all return paths at once.
+  return transcribeTrainingPeaksActivityRu(humanizeNutritionTrainingLabelInner(trainingLabel, trainingType));
+}
+
+function humanizeNutritionTrainingLabelInner(trainingLabel: string, trainingType: string): string {
   const raw = trainingLabel.trim();
   if (!raw) {
     return trainingType === "rest" ? "день отдыха" : "день недели";

@@ -230,6 +230,7 @@
     "check:nutrition-goal-targets": "npx tsx scripts/check-nutrition-goal-targets.ts",
     "check:nutrition-goal-methodology": "npx tsx scripts/check-nutrition-goal-methodology.ts",
     "check:nutrition-intensity-rest-eval": "npx tsx scripts/check-nutrition-intensity-rest-eval.ts",
+    "check:nutrition-activity-transcription": "npx tsx scripts/check-nutrition-activity-transcription.ts",
     "check:nutrition-review-memory": "npx tsx scripts/check-nutrition-review-memory.ts",
     "check:nutrition-merged-review-plan": "npx tsx scripts/check-nutrition-merged-review-plan.ts",
     "check:nutrition-weekly-plan-generation": "npx tsx scripts/check-nutrition-weekly-plan-generation.ts",
