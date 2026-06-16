@@ -29,7 +29,7 @@ import {
   resolveNutritionLongRunSource,
   type NutritionLongRunSource,
 } from "@/features/nutrition/long-run";
-import type { NutritionGoalType } from "@/features/nutrition/repository";
+import type { NutritionGoalType, NutritionSex } from "@/features/nutrition/repository";
 
 export type { NutritionLongRunSource };
 export type NutritionLongRunConfidence = "high" | "medium" | "low";
@@ -146,6 +146,9 @@ type ParsedWorkout = {
   isRunning: boolean;
   longRunSource: NutritionLongRunSource;
   longRunConfidence: NutritionLongRunConfidence;
+  /** Task 10++: planned load for the goal=lose/gain maintenance anchor (BMR + TP expenditure). */
+  durationHours: number | null;
+  distanceKm: number | null;
 };
 
 type PreviousWeekMacroPoint = {
@@ -349,6 +352,7 @@ function parseTrainingContextWorkouts(trainingContext: unknown): ParsedWorkout[]
       const title = toStringOrNull(workout.title);
       const type = toStringOrNull(workout.type);
       const durationHours = toFinite(workout.durationHours) ?? toFinite(workout.duration_hours);
+      const distanceKm = toFinite(workout.distanceKm) ?? toFinite(workout.distance_km);
       const status = toStringOrNull(workout.status);
       const isCompleted = status === "completed" || status === "planned_and_completed" || status === null;
       let dayType = normalizeDayType(type, title);
@@ -385,6 +389,8 @@ function parseTrainingContextWorkouts(trainingContext: unknown): ParsedWorkout[]
         isRunning: isRunningWorkout(type, title),
         longRunSource,
         longRunConfidence,
+        durationHours,
+        distanceKm,
       };
     })
     .filter((out) => out.date !== "unknown-date");
@@ -483,31 +489,159 @@ function roundPerKg(grams: number, bw: number): number {
   return Number((grams / bw).toFixed(2));
 }
 
+// Task 10++: corrected maintenance for goal=lose/gain. Instead of anchoring the
+// deficit/surplus on the inflated fixed-coefficient ideal (rest 35 kcal/kg →
+// ~2450 for 70 kg), anchor on BMR (Mifflin when height/age are known, else a
+// Cunningham/FFM estimate) + the day's actual TP training expenditure. This is
+// used ONLY for lose/gain; the maintain path is untouched.
+const NON_EXERCISE_PAL = 1.3;
+
+const FFM_COEFFICIENT_BY_SEX: Record<"female" | "male" | "unknown", number> = {
+  female: 0.78,
+  male: 0.82,
+  unknown: 0.8,
+};
+
+function ffmKgForSex(bw: number, sex: NutritionSex | null): number {
+  const coef = FFM_COEFFICIENT_BY_SEX[sex ?? "unknown"];
+  return bw * coef;
+}
+
 /**
- * Task 10: shift a maintenance (ideal) day target to the student's goal.
- * - maintain: unchanged.
- * - lose: kcal = maintenance − periodized deficit (clamped to a safety floor so
- *   the formula never prescribes a dangerous deficit); protein HIGH (1.9 g/kg,
- *   muscle protection + satiety); fat controlled to 20–30% energy (no 40%+);
- *   carbs = remainder (so they fall most on rest, hold fuel on training days),
- *   floored at ~2 g/kg for the CNS.
- * - gain: small surplus, protein 1.8 g/kg, carbs fill the surplus.
+ * Resting metabolic rate. Mifflin–St Jeor when height + age are known (exact);
+ * otherwise a sex-aware Cunningham estimate on estimated fat-free mass
+ * (approximate — the review still generates without height/age). Unknown sex is
+ * treated as female (lower base) for the Mifflin constant.
+ */
+export function estimateRestingMetabolicRate(params: {
+  bodyweightKg: number;
+  sex: NutritionSex | null;
+  heightCm: number | null;
+  ageYears: number | null;
+}): { rmrKcal: number; source: "mifflin" | "cunningham_ffm" } {
+  const { bodyweightKg: w, sex, heightCm, ageYears } = params;
+  if (heightCm && heightCm > 0 && ageYears && ageYears > 0) {
+    const base = 10 * w + 6.25 * heightCm - 5 * ageYears;
+    const rmr = sex === "male" ? base + 5 : base - 161;
+    return { rmrKcal: Math.max(Math.round(rmr), 800), source: "mifflin" };
+  }
+  const ffm = ffmKgForSex(w, sex);
+  return { rmrKcal: Math.round(500 + 22 * ffm), source: "cunningham_ffm" };
+}
+
+// Typical session length per day type, used to estimate planned training
+// expenditure when the TP workout has no explicit duration/distance.
+const TYPICAL_EXERCISE_HOURS_BY_DAY_TYPE: Partial<Record<NutritionPlanDayType, number>> = {
+  easy: 0.75,
+  hard: 1.0,
+  pre_long: 0.5,
+  long_run: 1.5,
+  long_endurance: 1.75,
+  strength: 0.75,
+  cross_training: 0.75,
+  race: 1.5,
+};
+
+/**
+ * Goal-aware day target on the corrected (BMR + this day's TP expenditure)
+ * maintenance. Single source of truth shared by the next-week plan and the
+ * review's per-day "deficit line" so the two never drift. maintain → ideal.
+ */
+export function computeNutritionGoalDayTarget(params: {
+  goalType: NutritionGoalType;
+  dayType: NutritionPlanDayType;
+  bodyweightKg: number | null;
+  sex: NutritionSex | null;
+  heightCm: number | null;
+  ageYears: number | null;
+  exerciseKcal: number;
+  ideal?: NutritionDayTypeTarget | null;
+}): NutritionDayTypeTarget | null {
+  const ideal =
+    params.ideal ??
+    calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: params.dayType });
+  if (params.goalType === "maintain" || !params.bodyweightKg || params.bodyweightKg <= 0) {
+    return ideal;
+  }
+  const rmrKcal = estimateRestingMetabolicRate({
+    bodyweightKg: params.bodyweightKg,
+    sex: params.sex,
+    heightCm: params.heightCm,
+    ageYears: params.ageYears,
+  }).rmrKcal;
+  const maintenanceKcal = Math.round(rmrKcal * NON_EXERCISE_PAL + Math.max(params.exerciseKcal, 0));
+  return applyNutritionGoalToDayTarget(ideal, {
+    goalType: params.goalType,
+    dayType: params.dayType,
+    bodyweightKg: params.bodyweightKg,
+    maintenanceKcal,
+    exerciseKcal: params.exerciseKcal,
+    sex: params.sex,
+  });
+}
+
+/** Planned training expenditure for a day (mirrors the review estimator). */
+export function estimatePlanDayExerciseKcal(params: {
+  dayType: NutritionPlanDayType;
+  bodyweightKg: number;
+  durationHours: number | null;
+  distanceKm: number | null;
+}): number {
+  const { dayType, bodyweightKg: bw } = params;
+  if (dayType === "rest" || dayType === "unknown") {
+    return 0;
+  }
+  if (dayType === "long_run" && params.distanceKm && params.distanceKm > 0) {
+    return Math.round(params.distanceKm * bw);
+  }
+  const hours =
+    params.durationHours && params.durationHours > 0
+      ? params.durationHours
+      : TYPICAL_EXERCISE_HOURS_BY_DAY_TYPE[dayType] ?? 0.75;
+  return Math.round(hours * bw * 9);
+}
+
+/**
+ * Task 10 / 10++: shift a maintenance day target to the student's goal.
+ * - maintain: unchanged (this function is not called for maintain).
+ * - lose: kcal = corrected maintenance (BMR + this day's TP expenditure) −
+ *   periodized deficit, clamped UP to the energy-availability floor
+ *   (FFM·30 + the day's exercise) and an absolute floor — the formula never
+ *   prescribes a dangerous deficit; protein HIGH (1.9 g/kg); fat 20–30% energy;
+ *   carbs = remainder, floored at ~2 g/kg.
+ * - gain: surplus on the corrected maintenance, protein 1.8 g/kg, carbs fill it.
+ * `maintenanceKcal` is the corrected per-day anchor; when absent (no anthropometrics)
+ * it falls back to the fixed-coefficient ideal so a review still generates.
  * Safety floors here are formula guards only; the safety-flag system is separate
  * and is never bypassed by goal.
  */
 export function applyNutritionGoalToDayTarget(
   ideal: NutritionDayTypeTarget | null,
-  params: { goalType: NutritionGoalType; dayType: NutritionPlanDayType; bodyweightKg: number | null }
+  params: {
+    goalType: NutritionGoalType;
+    dayType: NutritionPlanDayType;
+    bodyweightKg: number | null;
+    maintenanceKcal?: number | null;
+    exerciseKcal?: number | null;
+    sex?: NutritionSex | null;
+  }
 ): NutritionDayTypeTarget | null {
   if (!ideal || params.goalType === "maintain" || !params.bodyweightKg || params.bodyweightKg <= 0) {
     return ideal;
   }
   const bw = params.bodyweightKg;
+  const maintenance =
+    params.maintenanceKcal && params.maintenanceKcal > 0 ? params.maintenanceKcal : ideal.target_kcal;
+  const exercise = params.exerciseKcal && params.exerciseKcal > 0 ? params.exerciseKcal : 0;
 
   if (params.goalType === "lose") {
     const deficit = LOSE_DEFICIT_BY_DAY_TYPE[params.dayType] ?? 350;
-    const kcalFloor = Math.max(Math.round(26 * bw), 1400);
-    const kcal = Math.max(roundToNearest(ideal.target_kcal - deficit, 50), kcalFloor);
+    // Energy-availability floor: keep EA ≥ 30 kcal/kg FFM, i.e. intake never
+    // below FFM·30 + the day's training expenditure. Plus an absolute floor.
+    const eaFloor = ffmKgForSex(bw, params.sex ?? null) * 30 + exercise;
+    const absFloor = Math.max(26 * bw, 1400);
+    const floor = roundToNearest(Math.max(eaFloor, absFloor), 50);
+    const kcal = Math.max(roundToNearest(maintenance - deficit, 50), floor);
     const proteinG = roundToNearest(1.9 * bw, 5);
     // Fat ~0.9 g/kg, but clamp to 20–30% of energy.
     const fatMin = (0.2 * kcal) / 9;
@@ -528,8 +662,8 @@ export function applyNutritionGoalToDayTarget(
     };
   }
 
-  // gain: small surplus.
-  const kcal = roundToNearest(ideal.target_kcal * 1.11, 50);
+  // gain: surplus on the corrected maintenance.
+  const kcal = roundToNearest(maintenance * 1.11, 50);
   const proteinG = roundToNearest(1.8 * bw, 5);
   const fatG = roundToNearest(1.0 * bw, 5);
   const carbsG = roundToNearest(Math.max((kcal - proteinG * 4 - fatG * 9) / 4, ideal.carbs_g), 10);
@@ -685,19 +819,53 @@ export function buildNutritionNextWeekPlan(params: {
   previousWeekDailyAnalysis?: unknown;
   /** Task 10: student goal. maintain (default) = current behavior; lose/gain shift targets. */
   goalType?: NutritionGoalType;
+  /** Task 10++: anthropometrics for the lose/gain maintenance anchor (BMR + TP expenditure). */
+  sex?: NutritionSex | null;
+  heightCm?: number | null;
+  ageYears?: number | null;
 }): NutritionNextWeekPlan {
   const goalType: NutritionGoalType = params.goalType ?? "maintain";
-  // For lose/gain the plan is anchored on the goal-shifted IDEAL target, NOT the
+  // Task 10++: for lose/gain the deficit/surplus is anchored on a corrected
+  // maintenance = BMR (weight+sex, Mifflin when height/age known) × non-exercise
+  // PAL + the day's actual TP training expenditure. maintain is untouched.
+  const rmrKcal =
+    params.bodyweightKg && params.bodyweightKg > 0 && goalType !== "maintain"
+      ? estimateRestingMetabolicRate({
+          bodyweightKg: params.bodyweightKg,
+          sex: params.sex ?? null,
+          heightCm: params.heightCm ?? null,
+          ageYears: params.ageYears ?? null,
+        }).rmrKcal
+      : null;
+  const maintenanceForDay = (exerciseKcal: number): number | null =>
+    rmrKcal === null ? null : Math.round(rmrKcal * NON_EXERCISE_PAL + exerciseKcal);
+  // For lose/gain the plan is anchored on the corrected maintenance, NOT the
   // last-week practical baseline (which could pull a losing athlete back up toward
   // a surplus). maintain keeps the existing baseline-aware practical target.
   const resolveDayTarget = (
     dayType: NutritionPlanDayType,
     ideal: NutritionDayTypeTarget | null,
-    baseline: PreviousWeekMacroPoint | null
+    baseline: PreviousWeekMacroPoint | null,
+    exerciseKcal: number
   ): NutritionDayTypeTarget | null =>
     goalType === "maintain"
       ? applyPracticalTarget({ dayType, bodyweightKg: params.bodyweightKg, ideal, baseline })
-      : applyNutritionGoalToDayTarget(ideal, { goalType, dayType, bodyweightKg: params.bodyweightKg });
+      : applyNutritionGoalToDayTarget(ideal, {
+          goalType,
+          dayType,
+          bodyweightKg: params.bodyweightKg,
+          maintenanceKcal: maintenanceForDay(exerciseKcal),
+          exerciseKcal,
+          sex: params.sex ?? null,
+        });
+  const planDayExerciseKcal = (
+    dayType: NutritionPlanDayType,
+    durationHours: number | null,
+    distanceKm: number | null
+  ): number =>
+    params.bodyweightKg && params.bodyweightKg > 0
+      ? estimatePlanDayExerciseKcal({ dayType, bodyweightKg: params.bodyweightKg, durationHours, distanceKm })
+      : 0;
   const dates = buildWeekDates(params.planWeekFrom, params.planWeekTo);
   const parsedWorkouts = parseTrainingContextWorkouts(params.trainingContext);
   const hasTrainingContext = parsedWorkouts.length > 0;
@@ -740,7 +908,12 @@ export function buildNutritionNextWeekPlan(params: {
       previousWeekTargets.byDayType[trainingType] ??
       (trainingType === "race" ? previousWeekTargets.byDayType.hard ?? null : null) ??
       previousWeekTargets.overall;
-    const practicalTarget = resolveDayTarget(trainingType, idealTarget, baseline);
+    const dayExerciseKcal = planDayExerciseKcal(
+      trainingType,
+      primaryWorkout?.durationHours ?? null,
+      primaryWorkout?.distanceKm ?? null
+    );
+    const practicalTarget = resolveDayTarget(trainingType, idealTarget, baseline, dayExerciseKcal);
 
     let source: NutritionPlanSource = "unknown";
     if (!params.bodyweightKg || params.bodyweightKg <= 0) {
@@ -855,42 +1028,50 @@ export function buildNutritionNextWeekPlan(params: {
       rest: resolveDayTarget(
         "rest",
         calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "rest" }),
-        previousWeekTargets.byDayType.rest ?? previousWeekTargets.overall
+        previousWeekTargets.byDayType.rest ?? previousWeekTargets.overall,
+        planDayExerciseKcal("rest", null, null)
       ),
       easy: resolveDayTarget(
         "easy",
         calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "easy" }),
-        previousWeekTargets.byDayType.easy ?? previousWeekTargets.overall
+        previousWeekTargets.byDayType.easy ?? previousWeekTargets.overall,
+        planDayExerciseKcal("easy", null, null)
       ),
       hard: resolveDayTarget(
         "hard",
         calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "hard" }),
-        previousWeekTargets.byDayType.hard ?? previousWeekTargets.overall
+        previousWeekTargets.byDayType.hard ?? previousWeekTargets.overall,
+        planDayExerciseKcal("hard", null, null)
       ),
       pre_long: resolveDayTarget(
         "pre_long",
         calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "pre_long" }),
-        previousWeekTargets.byDayType.pre_long ?? previousWeekTargets.overall
+        previousWeekTargets.byDayType.pre_long ?? previousWeekTargets.overall,
+        planDayExerciseKcal("pre_long", null, null)
       ),
       long_run: resolveDayTarget(
         "long_run",
         calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "long_run" }),
-        previousWeekTargets.byDayType.long_run ?? previousWeekTargets.overall
+        previousWeekTargets.byDayType.long_run ?? previousWeekTargets.overall,
+        planDayExerciseKcal("long_run", null, null)
       ),
       long_endurance: resolveDayTarget(
         "long_endurance",
         calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "long_endurance" }),
-        previousWeekTargets.byDayType.long_run ?? previousWeekTargets.overall
+        previousWeekTargets.byDayType.long_run ?? previousWeekTargets.overall,
+        planDayExerciseKcal("long_endurance", null, null)
       ),
       strength: resolveDayTarget(
         "strength",
         calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "strength" }),
-        previousWeekTargets.byDayType.strength ?? previousWeekTargets.overall
+        previousWeekTargets.byDayType.strength ?? previousWeekTargets.overall,
+        planDayExerciseKcal("strength", null, null)
       ),
       cross_training: resolveDayTarget(
         "cross_training",
         calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "cross_training" }),
-        previousWeekTargets.byDayType.cross_training ?? previousWeekTargets.overall
+        previousWeekTargets.byDayType.cross_training ?? previousWeekTargets.overall,
+        planDayExerciseKcal("cross_training", null, null)
       ),
     },
     day_type_ideal_targets: {

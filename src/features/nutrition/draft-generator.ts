@@ -14,7 +14,10 @@ import {
 import { buildNutritionDayProseFacts } from "@/features/nutrition/combined-message";
 import {
   buildNutritionNextWeekPlan,
+  computeNutritionGoalDayTarget,
+  estimatePlanDayExerciseKcal,
   type NutritionNextWeekPlan,
+  type NutritionPlanDayType,
 } from "@/features/nutrition/weekly-plan-formulas";
 import type { NutritionPlanTargetWeekMode } from "@/features/nutrition/plan-week-policy";
 import { EVENING_SECTIONS, pickNotableFoods } from "@/features/nutrition/narrative-composer";
@@ -516,6 +519,73 @@ export function buildNutritionDailyFactsForNarrative(input: {
       });
       const fatDisplacedCarbs = dayFindings.includes("high_fat_may_displace_carbs_on_load_day");
       const notableItems = buildNotableItemsForNarrative(itemsByDate.get(date));
+      // Task 10++: for lose/gain, the day's "deficit line" — the same goal-aware
+      // target the plan uses, anchored on BMR + this day's REAL TP expenditure.
+      // The model evaluates the actual intake against THIS, not the maintenance
+      // corridor (fixes "2750 in a rest day = calm" for a losing athlete).
+      const goalDayTarget = (() => {
+        const goalType = input.context.nutritionGoalType;
+        if (goalType === "maintain") {
+          return null;
+        }
+        const planDayType: NutritionPlanDayType =
+          trainingType === "intervals" || trainingType === "tempo"
+            ? "hard"
+            : trainingType === "long_run"
+              ? "long_run"
+              : trainingType === "long_endurance"
+                ? "long_endurance"
+                : trainingType === "race"
+                  ? "race"
+                  : trainingType === "strength"
+                    ? "strength"
+                    : trainingType === "cross_training"
+                      ? "cross_training"
+                      : trainingType === "easy"
+                        ? "easy"
+                        : preLong
+                          ? "pre_long"
+                          : trainingType === "rest"
+                            ? "rest"
+                            : "unknown";
+        const bw = typeof bodyweightKg === "number" ? bodyweightKg : null;
+        const ea =
+          canonical?.energyAvailability && typeof canonical.energyAvailability === "object"
+            ? (canonical.energyAvailability as Record<string, unknown>)
+            : null;
+        const exerciseFromTp = ea && typeof ea.exerciseEnergyKcal === "number" ? (ea.exerciseEnergyKcal as number) : null;
+        const exerciseKcal =
+          exerciseFromTp ??
+          (bw ? estimatePlanDayExerciseKcal({ dayType: planDayType, bodyweightKg: bw, durationHours: null, distanceKm: null }) : 0);
+        const target = computeNutritionGoalDayTarget({
+          goalType,
+          dayType: planDayType,
+          bodyweightKg: bw,
+          sex: input.context.sex,
+          heightCm: input.context.heightCm,
+          ageYears: input.context.ageYears,
+          exerciseKcal,
+        });
+        if (!target) {
+          return null;
+        }
+        const actualKcal =
+          typeof day.kcal === "number"
+            ? day.kcal
+            : canonicalActual && typeof canonicalActual.kcal === "number"
+              ? (canonicalActual.kcal as number)
+              : null;
+        return {
+          goal: goalType,
+          target_kcal: target.target_kcal,
+          protein_g: target.protein_g,
+          fat_g: target.fat_g,
+          carbs_g: target.carbs_g,
+          // lose: intake well above the deficit line on this day = more than the
+          // goal needs (gently note as surplus), NOT "ровно/спокойно".
+          over_goal_line: actualKcal !== null ? actualKcal > target.target_kcal + 150 : null,
+        };
+      })();
       return {
         date,
         weekday_ru: typeof canonical?.weekdayRu === "string" ? canonical.weekdayRu : null,
@@ -534,6 +604,7 @@ export function buildNutritionDailyFactsForNarrative(input: {
           carbsGPerKg: typeof day.carbsGPerKg === "number" ? day.carbsGPerKg : null,
         },
         target: canonicalTarget ?? { formulaCode: "legacy_daily_v1" },
+        goal_day_target: goalDayTarget,
         flags: canonicalFlags ?? {
           rest: isRestDay,
           easy: trainingType === "easy",
@@ -904,6 +975,7 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "day_by_day_analysis_text: дневные блоки строго по canonical daily_analysis; используй weekday_ru, date_label, training_label, actual, hint_for_comment/findings; комментируй только дневные totals, без intraday (до/во время/после, граммы по таймингу, гели).",
     "Если source_quality.confidence=low или suspect=true, формулируй осторожно как ограничение данных.",
     "athlete_message_draft должен включать 3-7 дневных наблюдений, если daily facts есть.",
+    "ЕДИНЫЙ ФОРМАТ для ВСЕХ целей (maintain/lose/gain): структура разбора всегда ПОДНЕВНАЯ — day_prose по каждому дню из daily_analysis и athlete_message_draft как разбор ДЕНЬ ЗА ДНЁМ с числами по каждому дню (как у обычного ученика). Цель меняет ЧИСЛА (ориентиры, дефицитная оценка) и АКЦЕНТЫ, но НЕ структуру. НЕ сворачивай разбор худеющего/набирающего в обобщённое «что хорошо / что подтянуть» без разбивки по дням — это запрещено; дни всегда отдельными блоками с фактическими числами. Общий фокус под цель допустим как короткое вступление или итог, но НЕ вместо подневных блоков.",
     "athlete_message_draft: только plain Telegram text, emoji-разделители ок. Запрещено: **, ---, code fences, markdown headings.",
     "Строгая формальность: только ты ИЛИ только вы, без смешивания.",
     "Не используй диагнозы/медицинские термины: RED-S, REDs, LEA, энергодоступность, дефицит энергии, медицинский риск, диагноз, расстройство, анемия.",
@@ -920,6 +992,9 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "ЖЁСТКО про контекст ученика (заметки тренера и история): пересказывай ТОЛЬКО то, что прямо дано в заметке/истории. НЕ предполагай и НЕ додумывай обстоятельства, которых там нет — например, не пиши «после тренировки поели не сразу», «пропустила приём», «наверное, не успела поесть», если этого нет в заметке. Forward-совет разрешён («после интервалов важно поесть плотно»), но утверждать или предполагать незаданные ФАКТЫ о поведении ученика — нельзя. Не сужай формулировку («вторник суматошный» ≠ «вечер вторника суматошный»). Особенно НЕ выдумывай состояния/события: болезнь, простуду, «после болезни», стресс, травму, праздник, поездку — если этого нет в заметке/истории, не упоминай вовсе (нельзя «молодец, что побегала после болезни», если про болезнь ничего не сказано). Это правило относится КО ВСЕМ полям, включая coach_summary_text и day_by_day_analysis_text, не только к тексту ученику.",
     "ЦЕЛЬ УЧЕНИКА (student.nutrition_goal): maintain — текущая методика. lose (снижение веса): рамка «поддерживаем тренировки в общем мягком минусе». НЕ советуй «добавь углеводов/калорий» там, где у худеющего и так профицит/перебор; топливо догружай ТОЛЬКО в тренировочные/ключевые дни (fuel for the work required), а в дни отдыха — спокойнее, это и есть запланированный дефицит, а не ошибка. ХВАЛИ высокий белок (для худеющего это хорошо: не пиши «белок высоковат» как проблему и НЕ пиши «белок низковат» при ≥1.6 г/кг). МЯГКО озвучивай высокий жир (>~35% энергии) ученику как лишние калории, которые мешают снижению (для lose жир выносим в текст ученику). Тон поддерживающий, без «ешь больше». target_weight_kg, если задан — можно мягко («до цели ещё ~N кг»), без ИМТ/процентов жира/«минус N кг»/медикализации. gain (набор) — небольшой профицит, углеводы и белок с запасом.",
     "ЦЕЛЬ lose НЕ отменяет safety: при опасно низкой калорийности или сигналах РПП — это блок/ручная проверка как обычно (худеть ≠ голодать; цель снижения НЕ оправдывает опасный дефицит). В тексте ученику при любой цели — без слов похудеть/сбросить вес/урезать калории/дефицит (язык поддержки, а не диеты).",
+    "ДЕФИЦИТНАЯ ЛИНИЯ (lose/gain): у каждого дня в daily_analysis есть goal_day_target — это ориентир дня ПОД ЦЕЛЬ (для lose уже с дефицитом, выстроенный от обмена + расхода именно этого дня). Оценивай фактический день ОТНОСИТЕЛЬНО goal_day_target, а НЕ относительно поддержания. Если goal_day_target.over_goal_line=true (факт заметно выше ориентира под цель) в день БЕЗ нагрузки — это «многовато для дня без нагрузки при твоей цели / лишние калории, которые тормозят прогресс», а НЕ «спокойно/ровно». В тренировочные дни питание у/около ориентира — это норма (топливо под работу), не перебор. НИКОГДА не подавай для худеющего рест-день в 2500–2800 ккал как «спокойный/ровный» — для цели снижения это перебор; озвучь мягко и по-доброму.",
+    "Еда при дефиците (lose): когда советуешь добавить объём/насыщение при меньшей калорийности — приоритет ОВОЩИ и цельные продукты, а НЕ фрукты/сухофрукты (сухофрукты — это концентрированный сахар и калории). «Добавь овощей/зелени к тарелке», не «добавь сухофруктов».",
+    "Без тайминговых советов, привязанных ко времени тренировки («после бега плотный обед», «углеводы за час до», «сразу после»): времени тренировки в данных нет, такой совет может оказаться абсурдным (бег мог быть в 6 утра). Давай ДНЕВНЫЕ ориентиры (сколько за день: белок, углеводы, общий объём), без «когда именно». Исключение — режим натощак из заметок тренера (правило выше): там акцент на ужин накануне и приём после.",
     "Натощак/рано утром: если в заметках тренера указано, что тренировка проходит натощак/рано утром — это осознанный режим, НЕ ошибка питания. Топливо под такую работу ищи в УЖИНЕ НАКАНУНЕ и ЗАВТРАКЕ/восстановлении ПОСЛЕ, а не «в день тренировки до неё мало углеводов». Акцент в разборе и совете смещай на вечер накануне и приём пищи после тренировки.",
     ...NUTRITION_VOICE_STYLE_SPEC_LINES,
     ...NUTRITION_VOICE_FEWSHOT_STABLE_LINES,
@@ -1248,6 +1323,9 @@ export async function generateNutritionWeeklyAnalysis(input: {
     trainingContext: context.tpNextWeek,
     previousWeekDailyAnalysis: persistedDailyAnalysis,
     goalType: context.nutritionGoalType,
+    sex: context.sex,
+    heightCm: context.heightCm,
+    ageYears: context.ageYears,
   });
 
   let narrative: {

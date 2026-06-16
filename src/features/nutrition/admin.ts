@@ -110,6 +110,9 @@ export async function saveNutritionProfileActionData(input: {
   coachNotes?: string | null;
   nutritionGoalType?: import("@/features/nutrition/repository").NutritionGoalType;
   targetWeightKg?: number | null;
+  sex?: import("@/features/nutrition/repository").NutritionSex | null;
+  heightCm?: number | null;
+  ageYears?: number | null;
 }) {
   const { upsertNutritionStudentProfile } = await import("@/features/nutrition/repository");
   return upsertNutritionStudentProfile({
@@ -123,6 +126,9 @@ export async function saveNutritionProfileActionData(input: {
     nutritionGoalType: input.nutritionGoalType,
     // Only meaningful for goal=lose; cleared otherwise.
     targetWeightKg: input.nutritionGoalType === "lose" ? input.targetWeightKg ?? null : null,
+    sex: input.sex,
+    heightCm: input.heightCm,
+    ageYears: input.ageYears,
   });
 }
 

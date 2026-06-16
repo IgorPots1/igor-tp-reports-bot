@@ -28,6 +28,13 @@ export function normalizeNutritionGoalType(value: unknown): NutritionGoalType {
   return value === "lose" || value === "gain" ? value : "maintain";
 }
 
+/** Task 10++: biological sex for BMR (Mifflin) + FFM/EA. Optional — null when unknown. */
+export type NutritionSex = "female" | "male";
+
+export function normalizeNutritionSex(value: unknown): NutritionSex | null {
+  return value === "female" || value === "male" ? value : null;
+}
+
 /**
  * Compact per-student nutrition review memory (Tasks 7+8). Kept small — it is
  * fed into every review prompt, so it must not balloon token cost.
@@ -65,6 +72,10 @@ export type NutritionStudentProfile = {
   nutritionMemory: NutritionStudentMemory;
   nutritionGoalType: NutritionGoalType;
   targetWeightKg: number | null;
+  /** Task 10++: optional anthropometrics for BMR/FFM. */
+  sex: NutritionSex | null;
+  heightCm: number | null;
+  ageYears: number | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -220,6 +231,9 @@ type NutritionStudentProfileRow = {
   nutrition_memory: unknown | null;
   nutrition_goal_type: string | null;
   target_weight_kg: number | string | null;
+  sex: string | null;
+  height_cm: number | string | null;
+  age_years: number | string | null;
   created_at: string;
   updated_at: string;
 };
@@ -339,6 +353,9 @@ export type UpsertNutritionStudentProfileInput = {
   nutritionMemory?: NutritionStudentMemory;
   nutritionGoalType?: NutritionGoalType;
   targetWeightKg?: number | null;
+  sex?: NutritionSex | null;
+  heightCm?: number | null;
+  ageYears?: number | null;
 };
 
 export type AddNutritionWeightLogInput = {
@@ -508,6 +525,9 @@ function mapNutritionStudentProfileRow(row: NutritionStudentProfileRow): Nutriti
     nutritionMemory: sanitizeNutritionStudentMemory(row.nutrition_memory),
     nutritionGoalType: normalizeNutritionGoalType(row.nutrition_goal_type),
     targetWeightKg: toFiniteNumber(row.target_weight_kg),
+    sex: normalizeNutritionSex(row.sex),
+    heightCm: toFiniteNumber(row.height_cm),
+    ageYears: toFiniteNumber(row.age_years),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -717,6 +737,9 @@ export async function upsertNutritionStudentProfile(
     nutrition_goal_type:
       input.nutritionGoalType === undefined ? undefined : normalizeNutritionGoalType(input.nutritionGoalType),
     target_weight_kg: input.targetWeightKg === undefined ? undefined : input.targetWeightKg,
+    sex: input.sex === undefined ? undefined : normalizeNutritionSex(input.sex),
+    height_cm: input.heightCm === undefined ? undefined : input.heightCm,
+    age_years: input.ageYears === undefined ? undefined : input.ageYears,
   };
   const upsertPayload = Object.fromEntries(
     Object.entries(payload).filter(([, value]) => value !== undefined)

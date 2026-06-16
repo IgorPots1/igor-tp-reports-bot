@@ -577,6 +577,10 @@ function buildWorkoutContextByDate(week: NutritionTrainingPeaksWeekContext): Map
 }
 
 function asSex(context: NutritionStudentContext): "female" | "male" | "unknown" {
+  // Task 10++: explicit profile field wins; fall back to the legacy note heuristic.
+  if (context.sex === "female" || context.sex === "male") {
+    return context.sex;
+  }
   const haystack = `${context.telegramContextNotes ?? ""} ${context.nutritionGoal ?? ""}`.toLowerCase();
   if (/\bfemale\b|жен|девушк/.test(haystack)) {
     return "female";

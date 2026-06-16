@@ -228,6 +228,7 @@
     "check:nutrition-weekly-plan-no-tp-mutation": "npx tsx scripts/check-nutrition-weekly-plan-storage.ts --no-tp-mutation",
     "check:nutrition-coach-notes-and-memory": "npx tsx scripts/check-nutrition-coach-notes-and-memory.ts",
     "check:nutrition-goal-targets": "npx tsx scripts/check-nutrition-goal-targets.ts",
+    "check:nutrition-goal-methodology": "npx tsx scripts/check-nutrition-goal-methodology.ts",
     "check:nutrition-review-memory": "npx tsx scripts/check-nutrition-review-memory.ts",
     "check:nutrition-merged-review-plan": "npx tsx scripts/check-nutrition-merged-review-plan.ts",
     "check:nutrition-weekly-plan-generation": "npx tsx scripts/check-nutrition-weekly-plan-generation.ts",

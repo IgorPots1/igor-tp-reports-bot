@@ -23,6 +23,7 @@ import {
   type NutritionContextItem,
   type NutritionDailyMacro,
   type NutritionGoalType,
+  type NutritionSex,
   type NutritionStudentMemory,
   type NutritionWeightLog,
 } from "@/features/nutrition/repository";
@@ -343,6 +344,10 @@ export type NutritionStudentContext = {
   nutritionGoalType: NutritionGoalType;
   /** Task 10: optional target weight for goal=lose (tone only; does not change deficit size). */
   targetWeightKg: number | null;
+  /** Task 10++: optional anthropometrics for BMR (Mifflin) + FFM/EA. Null = estimate from weight/sex. */
+  sex: NutritionSex | null;
+  heightCm: number | null;
+  ageYears: number | null;
   narrativePreferences?: Required<Pick<NutritionNarrativePreferences, "fatFeedbackPolicy" | "detailLevel">> &
     NutritionNarrativePreferences;
   athleteReportSignals: NutritionAthleteReportSignal[];
@@ -951,6 +956,9 @@ export async function buildNutritionStudentContext(input: {
     studentMemory: essentials.profile?.nutritionMemory ?? emptyNutritionStudentMemory(),
     nutritionGoalType: essentials.profile?.nutritionGoalType ?? "maintain",
     targetWeightKg: essentials.profile?.targetWeightKg ?? null,
+    sex: essentials.profile?.sex ?? null,
+    heightCm: essentials.profile?.heightCm ?? null,
+    ageYears: essentials.profile?.ageYears ?? null,
     narrativePreferences: applyNutritionFatPolicyOverrides(
       student.studentName,
       getNutritionNarrativePreferences({

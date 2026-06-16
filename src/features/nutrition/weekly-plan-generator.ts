@@ -436,6 +436,10 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
   planWeekOverride?: { from: string; to: string; mode: NutritionPlanTargetWeekMode };
   /** Task 10: student goal (maintain default). Shifts plan targets for lose/gain. */
   nutritionGoalType?: import("@/features/nutrition/repository").NutritionGoalType;
+  /** Task 10++: anthropometrics for the lose/gain maintenance anchor (BMR + TP expenditure). */
+  sex?: import("@/features/nutrition/repository").NutritionSex | null;
+  heightCm?: number | null;
+  ageYears?: number | null;
 }): NutritionWeeklyPlanFacts {
   const nutritionSummary = input.sourceAnalysis.nutritionSummary;
   const safetyFlags = input.sourceAnalysis.safetyFlags;
@@ -466,6 +470,9 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
     trainingContext: tpNextWeek,
     previousWeekDailyAnalysis: nutritionSummary.daily_analysis,
     goalType: input.nutritionGoalType ?? "maintain",
+    sex: input.sex ?? null,
+    heightCm: input.heightCm ?? null,
+    ageYears: input.ageYears ?? null,
   });
 
   return {
@@ -583,6 +590,9 @@ async function buildNutritionWeeklyPlanFactsInternal(input: {
       todayLocalDate: input.todayLocalDate,
       planWeekOverride,
       nutritionGoalType: essentials.profile?.nutritionGoalType ?? "maintain",
+      sex: essentials.profile?.sex ?? null,
+      heightCm: essentials.profile?.heightCm ?? null,
+      ageYears: essentials.profile?.ageYears ?? null,
     });
     return {
       facts,
@@ -643,6 +653,9 @@ async function buildNutritionWeeklyPlanFactsInternal(input: {
     tpNextWeekContextOverride,
     todayLocalDate: input.todayLocalDate,
     nutritionGoalType: essentials.profile?.nutritionGoalType ?? "maintain",
+    sex: essentials.profile?.sex ?? null,
+    heightCm: essentials.profile?.heightCm ?? null,
+    ageYears: essentials.profile?.ageYears ?? null,
   });
 
   return { facts, tpContextRefresh };

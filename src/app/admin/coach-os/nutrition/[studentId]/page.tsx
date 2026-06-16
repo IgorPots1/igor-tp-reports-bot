@@ -1278,6 +1278,22 @@ export default async function CoachOsNutritionStudentCardPage({
                     <input className="admin-input" name="currentWeightKg" type="number" step="0.1" defaultValue={card.profile?.currentWeightKg ?? ""} />
                   </label>
                   <label className="admin-form-field">
+                    <span>Пол (для снижения/набора, опц.)</span>
+                    <select className="admin-input" name="sex" defaultValue={card.profile?.sex ?? ""}>
+                      <option value="">—</option>
+                      <option value="female">Женский</option>
+                      <option value="male">Мужской</option>
+                    </select>
+                  </label>
+                  <label className="admin-form-field">
+                    <span>Рост (см) — уточняет BMR, опц.</span>
+                    <input className="admin-input" name="heightCm" type="number" step="0.5" defaultValue={card.profile?.heightCm ?? ""} />
+                  </label>
+                  <label className="admin-form-field">
+                    <span>Возраст (лет) — уточняет BMR, опц.</span>
+                    <input className="admin-input" name="ageYears" type="number" step="1" defaultValue={card.profile?.ageYears ?? ""} />
+                  </label>
+                  <label className="admin-form-field">
                     <span>Заметки по переносимости</span>
                     <textarea className="admin-textarea admin-textarea-compact" name="toleranceNotes" rows={2} defaultValue={card.profile?.toleranceNotes ?? ""} />
                   </label>
