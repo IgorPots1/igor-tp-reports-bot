@@ -13,6 +13,14 @@ export type NutritionTelegramRenderIssue = {
   rule: string;
   message: string;
   severity: "error" | "warning";
+  /**
+   * Task 10d: blocking tier, orthogonal to severity.
+   * - "hard": genuine athlete danger leaking into the text (clinical terms) →
+   *   withhold the message. (The primary medical gate is upstream `blocked`.)
+   * - "soft" (default): technical/borderline → never block; either cleaned
+   *   silently or surfaced to the coach as a review note.
+   */
+  tier: "hard" | "soft";
 };
 
 export type NutritionTelegramRenderResult = {
@@ -25,6 +33,11 @@ export type NutritionTelegramRenderResult = {
    */
   parts: string[];
   issues: NutritionTelegramRenderIssue[];
+  /**
+   * Task 10d: coach-facing review notes for SOFT issues (text still ships, but the
+   * coach should glance at these spots). Empty when nothing needs a look.
+   */
+  coachReviewNotes: string[];
   charCount: number;
 };
 
@@ -165,6 +178,35 @@ export function paragraphizeForTelegram(text: string | null | undefined, maxSent
   return chunks.join("\n\n");
 }
 
+const PHANTOM_PREVIOUS_COMPARISON = /прошл[а-я]+\s+недел|по сравнению с прошл/i;
+
+/**
+ * Task 10d: when there is no saved history, the model sometimes references "прошлая
+ * неделя" — a false claim. Remove only the offending sentence(s) (not the whole
+ * day) and report whether anything was removed, so the coach gets a note.
+ */
+function stripPhantomPreviousComparison(text: string): { text: string; removed: boolean } {
+  if (!PHANTOM_PREVIOUS_COMPARISON.test(text)) {
+    return { text, removed: false };
+  }
+  let removed = false;
+  const lines = text.split("\n").map((line) => {
+    if (!PHANTOM_PREVIOUS_COMPARISON.test(line)) {
+      return line;
+    }
+    const sentences = line.split(/(?<=[.!?…])\s+/);
+    const kept = sentences.filter((sentence) => {
+      if (PHANTOM_PREVIOUS_COMPARISON.test(sentence)) {
+        removed = true;
+        return false;
+      }
+      return true;
+    });
+    return kept.join(" ").replace(/ {2,}/g, " ").trim();
+  });
+  return { text: lines.join("\n"), removed };
+}
+
 export function cleanupPlainText(input: string): string {
   return input
     .replace(/```[\s\S]*?```/g, "")
@@ -175,9 +217,13 @@ export function cleanupPlainText(input: string): string {
     .replace(/^\s*-{3,}\s*$/gm, "")
     .replace(/TrainingPeaks/g, "план тренировок")
     .replace(/FatSecret/g, "дневник питания")
+    // Task 10d: silently drop internal/technical term leaks (no coach note needed).
+    .replace(/OpenAI/gi, "")
+    .replace(/\bJSON\b/g, "")
+    .replace(/\bAI\b/g, "")
     .replace(/[—–]/g, "-")
     .split("\n")
-    .map((line) => line.replace(/[ \t]+$/g, ""))
+    .map((line) => line.replace(/ {2,}/g, " ").replace(/[ \t]+$/g, ""))
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
@@ -383,13 +429,18 @@ function buildPreTrainingBlock(nextWeekPlan: NutritionNextWeekPlan | null): stri
   ];
 }
 
+// Task 10d: rules whose token is silently cleaned (no coach note) — pure
+// formatting / internal-term leaks, handled by cleanupPlainText.
+const NUTRITION_SILENT_RENDER_RULES = new Set(["markdown", "plain_dashes", "internal_terms"]);
+
 function pushIssue(
   issues: NutritionTelegramRenderIssue[],
   severity: "error" | "warning",
   rule: string,
-  message: string
+  message: string,
+  tier: "hard" | "soft" = "soft"
 ): void {
-  issues.push({ severity, rule, message });
+  issues.push({ severity, rule, message, tier });
 }
 
 export type NutritionDayProseFacts = {
@@ -627,12 +678,28 @@ export function validateTelegramReadyNutritionMessage(input: {
   if (lengthBasis > 4096) {
     pushIssue(issues, "warning", "telegram_length", "Часть сообщения длиннее одного Telegram-сообщения; разбей её ещё.");
   }
-  if (
-    /дефицит калорий|дефицит энергии|энергодоступность|опасная зона|медицинский риск|урезать|похудеть|RED-S|LEA|анемия|расстройство пищевого/i.test(
-      text
-    )
-  ) {
-    pushIssue(issues, "error", "forbidden_safety_language", "В тексте есть запрещённая safety-лексика.");
+  // Task 10d: split the old "forbidden_safety_language" rule by real risk.
+  // CLINICAL terms leaking into athlete text are genuinely harmful → HARD block.
+  // (The primary РПП/low-kcal gate is upstream `blocked`; this is the last guard.)
+  if (/RED-S|\bLEA\b|анеми|расстройство пищевого|медицинск/i.test(text)) {
+    pushIssue(
+      issues,
+      "error",
+      "forbidden_clinical_language",
+      "В тексте ученику клиническая лексика (РПП/RED-S/анемия/мед.) — нужна ручная проверка.",
+      "hard"
+    );
+  }
+  // Diet/weight-loss wording is borderline (often a false positive like the
+  // reassuring «не нужно урезать») → SOFT: keep the text, flag the coach.
+  if (/дефицит калори|дефицит энерг|энергодоступн|опасная зона|урезать|похуд/i.test(text)) {
+    pushIssue(
+      issues,
+      "warning",
+      "diet_language_in_athlete_text",
+      "Возможна диет-лексика в тексте ученику (урезать/дефицит/похудеть) — проверь формулировку.",
+      "soft"
+    );
   }
   if (!input.hasKeyTraining && /Перед ключевыми тренировками/.test(text)) {
     pushIssue(issues, "warning", "pre_training_without_key", "Блок перед тренировками показан без hard/long_run.");
@@ -709,8 +776,20 @@ export function renderNutritionTelegramMessage(input: NutritionTelegramRendererI
     "На следующем разборе посмотрим, как это отразится на энергии и восстановлении.",
   ];
 
-  const reviewText = cleanupPlainText(reviewLines.join("\n"));
-  const planText = cleanupPlainText(planLinesSection.join("\n"));
+  let reviewText = cleanupPlainText(reviewLines.join("\n"));
+  let planText = cleanupPlainText(planLinesSection.join("\n"));
+  // Task 10d: a phantom "прошлая неделя" reference with no saved history is a false
+  // claim — strip the sentence (soft), and tell the coach we did.
+  const coachReviewNotes: string[] = [];
+  if (!input.hasPreviousWeeksContext) {
+    const r = stripPhantomPreviousComparison(reviewText);
+    const p = stripPhantomPreviousComparison(planText);
+    reviewText = r.text;
+    planText = p.text;
+    if (r.removed || p.removed) {
+      coachReviewNotes.push("Убрал упоминание прошлой недели — сохранённой истории не было.");
+    }
+  }
   const parts = [reviewText, planText].filter((part) => part.length > 0);
   const text = parts.join("\n\n");
   const issues = validateTelegramReadyNutritionMessage({
@@ -721,15 +800,22 @@ export function renderNutritionTelegramMessage(input: NutritionTelegramRendererI
     longRunTargetKcalText: getLongRunTargetKcalText(input.nextWeekPlan),
     messageParts: parts,
   });
-  const ok = !issues.some((issue) => issue.severity === "error");
+  // Task 10d: only HARD issues (clinical danger) withhold the message. SOFT issues
+  // keep the text and surface as coach-review notes (silently-cleaned rules excluded).
+  const ok = !issues.some((issue) => issue.tier === "hard");
+  for (const issue of issues) {
+    if (issue.tier !== "hard" && !NUTRITION_SILENT_RENDER_RULES.has(issue.rule)) {
+      coachReviewNotes.push(issue.message);
+    }
+  }
   return {
     ok,
-    // `text` gates sending (null on error); `parts` always carries the rendered
-    // split so the admin/checkpoints can preview it even when validation flags an
-    // issue (the sendable copy blocks are still gated on `ok` upstream).
+    // `text` gates sending (null only on a HARD clinical block); `parts` always
+    // carries the rendered split so the admin/checkpoints can preview it.
     text: ok ? text : null,
     parts,
     issues,
+    coachReviewNotes,
     charCount: text.length,
   };
 }

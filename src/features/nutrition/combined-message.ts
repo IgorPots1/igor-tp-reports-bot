@@ -87,6 +87,7 @@ function emptyRenderResult(): NutritionTelegramRenderResult {
     text: null,
     parts: [],
     issues: [],
+    coachReviewNotes: [],
     charCount: 0,
   };
 }
@@ -1193,12 +1194,17 @@ export function buildDerivedNutritionCombinedMessage(input: {
     miniTableMode: "athlete_remaining_only",
   });
   const athleteMessageDraft = renderResult.ok ? renderResult.text : null;
+  // Task 10d: SOFT coach-review notes surface as warnings and flip the status to
+  // needs_review (text still ships); only a HARD clinical block (ok=false) withholds.
+  const combinedWarnings = [...warnings, ...renderResult.coachReviewNotes];
+  const needsReview =
+    !renderResult.ok || renderResult.coachReviewNotes.length > 0 || hasNeedsReviewStatus(review, plan);
   return {
-    status: renderResult.ok && !hasNeedsReviewStatus(review, plan) ? "ready" : "needs_review",
+    status: needsReview ? "needs_review" : "ready",
     athleteMessageDraft,
     athleteMessageDraftParts: renderResult.ok ? renderResult.parts : [],
     renderResult,
-    warnings,
+    warnings: combinedWarnings,
     sourceReviewId: review.id,
     sourcePlanId: plan.id,
   };
