@@ -293,6 +293,11 @@ function parseStoredWorkouts(raw: unknown): NutritionWeeklyPlanWorkoutFacts[] {
 }
 
 function isSafetyBlocked(safetyFlags: Record<string, unknown>): boolean {
+  // A coach-released report (coach_override) is not treated as blocked here — the
+  // plan generates normally; the review text carries the honest danger note.
+  if (safetyFlags.coach_override === true) {
+    return false;
+  }
   if (typeof safetyFlags.blocked === "boolean") {
     return safetyFlags.blocked;
   }

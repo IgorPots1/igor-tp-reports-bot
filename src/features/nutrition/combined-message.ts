@@ -1051,6 +1051,11 @@ function hasTargetWeekTrainingContext(nextWeekPlan: NutritionNextWeekPlan | null
 }
 
 function isReviewBlockedSafety(review: NutritionWeeklyAnalysis): boolean {
+  // Coach consciously released this report's hard block (honest danger text was
+  // generated). Don't re-block the combined message; it still goes needs_review.
+  if (asObject(review.safetyFlags).coach_override === true) {
+    return false;
+  }
   if (review.status === "blocked_safety") {
     return true;
   }
@@ -1066,6 +1071,10 @@ function isReviewAwaitingGeneration(review: NutritionWeeklyAnalysis): boolean {
 }
 
 function isPlanBlockedSafety(plan: NutritionWeeklyPlan): boolean {
+  // Coach override (inherited from the review's safety flags) releases the plan too.
+  if (asObject(plan.safetyFlags).coach_override === true) {
+    return false;
+  }
   if (plan.status === "blocked_safety") {
     return true;
   }

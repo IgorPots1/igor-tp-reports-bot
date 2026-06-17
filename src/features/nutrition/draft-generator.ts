@@ -75,6 +75,8 @@ export type GeneratedNutritionWeeklyAnalysis = {
     hard_flags: string[];
     soft_flags: string[];
     blocked: boolean;
+    /** Наряд: a hard block the coach consciously released for this report. */
+    coach_override?: boolean;
   };
   internal_summary: {
     student: string;
@@ -1099,7 +1101,13 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     long_run_fueling_instruction_detected: boolean;
     during_run_fuel_planned: boolean;
   };
-  safetyFlags: { hard_flags: string[]; soft_flags: string[]; blocked: boolean };
+  safetyFlags: {
+    hard_flags: string[];
+    soft_flags: string[];
+    blocked: boolean;
+    coach_override?: boolean;
+    override_low_kcal_days?: string[];
+  };
   /** Failure reasons are pushed here so the caller can surface them (notes + logs). */
   diagnostics?: string[];
 }): Promise<NutritionAiNarrative | null> {
@@ -1186,6 +1194,7 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "ТЁПЛАЯ ОПЕНИНГ-СТРОКА (athlete_opening_note_ru): если в словах ученика (student.athlete_comment) есть что искренне отметить — старание, что справился несмотря на обстоятельства (дорога/жара/занятость) — впиши ОДНУ тёплую человеческую фразу в athlete_opening_note_ru (она встанет сразу после приветствия). Пример: «вижу, ты очень старалась, даже в дороге держалась — это дорогого стоит». Качественно, в тёплом тоне Игоря, plain text без markdown, БЕЗ единой цифры. Если отмечать НЕЧЕГО (слов нет, или там только жалобы/нейтральное) — верни athlete_opening_note_ru пустым/null, НЕ придумывай похвалу на пустом месте. Эту похвалу за старание НЕ дублируй в athlete_message_draft — она живёт только в athlete_opening_note_ru.",
     "ЧИСЛА И МАКРОСЫ — ТОЛЬКО из PDF/фактов дня (actual/target). НИКОГДА не бери калории/граммы/«съела ~N» из слов ученика (student.athlete_comment) на веру и не подставляй их как факт — ни в day_prose, ни в итог недели, ни в coach_summary_text. Если слова ученика противоречат числам из PDF — доверяй PDF; расхождение можно мягко отметить ТРЕНЕРУ в coach_summary_text, но не выноси выдуманное число ученику.",
     "ЦЕЛЬ УЧЕНИКА (student.nutrition_goal): maintain — текущая методика. lose (снижение веса): рамка «поддерживаем тренировки в общем мягком минусе». НЕ советуй «добавь углеводов/калорий» там, где у худеющего и так профицит/перебор; топливо догружай ТОЛЬКО в тренировочные/ключевые дни (fuel for the work required), а в дни отдыха — спокойнее, это и есть запланированный дефицит, а не ошибка. ХВАЛИ высокий белок (для худеющего это хорошо: не пиши «белок высоковат» как проблему и НЕ пиши «белок низковат» при ≥1.6 г/кг). Даже когда белок НИЖЕ ориентира — у худеющего подавай это МЯГКО и без упрёка: «белок можно чуть добавить» / «белка чуть больше не помешает», а НЕ «белок ниже нормы»/«стоит отметить»/«недобор белка». Белок для худеющего — приоритет и помощник, не повод ругать. МЯГКО озвучивай высокий жир (>~35% энергии) ученику как лишние калории, которые мешают снижению (для lose жир выносим в текст ученику). Тон поддерживающий, без «ешь больше». target_weight_kg, если задан — можно мягко («до цели ещё ~N кг»), без ИМТ/процентов жира/«минус N кг»/медикализации. gain (набор) — небольшой профицит, углеводы и белок с запасом.",
+    "COACH-OVERRIDE БЛОКА (safety_flags.coach_override=true): тренер осознанно выпускает этот разбор поверх safety-блока. В дни из safety_flags.override_low_kcal_days калорий было опасно мало. В тексте ученику ОБЯЗАТЕЛЬНО мягко, тепло, но ПРЯМО скажи: в эти дни вышло очень мало энергии, а при таких тренировках это опасно для здоровья и восстановления — так держать нельзя; цель снижения НЕ требует голодания, наоборот, ровное достаточное питание помогает и худеть, и восстанавливаться. Без морали и стыда, как забота. Низкие дни НЕ хвали и НЕ называй «спокойными». Дальше — обычный план снижения по её параметрам (как всегда для lose). Фактические числа дня (ккал/Б/Ж/У) — из PDF, можно называть.",
     "ЦЕЛЬ lose НЕ отменяет safety: при опасно низкой калорийности или сигналах РПП — это блок/ручная проверка как обычно (худеть ≠ голодать; цель снижения НЕ оправдывает опасный дефицит). В тексте ученику при любой цели — без слов похудеть/сбросить вес/урезать калории/дефицит (язык поддержки, а не диеты).",
     "ДЕФИЦИТНАЯ ЛИНИЯ (lose/gain): у каждого дня в daily_analysis есть goal_day_target — это ориентир дня ПОД ЦЕЛЬ (для lose уже с дефицитом, выстроенный от обмена + расхода именно этого дня). Оценивай фактический день ОТНОСИТЕЛЬНО goal_day_target, а НЕ относительно поддержания. Если goal_day_target.over_goal_line=true (факт заметно выше ориентира под цель) в день БЕЗ нагрузки — это «многовато для дня без нагрузки при твоей цели / лишние калории, которые тормозят прогресс», а НЕ «спокойно/ровно». В тренировочные дни питание у/около ориентира — это норма (топливо под работу), не перебор. НИКОГДА не подавай для худеющего рест-день в 2500–2800 ккал как «спокойный/ровный» — для цели снижения это перебор; озвучь мягко и по-доброму.",
     "Еда при дефиците (lose): когда советуешь добавить объём/насыщение при меньшей калорийности — приоритет ОВОЩИ и цельные продукты, а НЕ фрукты/сухофрукты (сухофрукты — это концентрированный сахар и калории). «Добавь овощей/зелени к тарелке», не «добавь сухофруктов».",
@@ -1428,6 +1437,14 @@ async function generateNutritionWeeklyReviewNarrative(input: {
 
 export async function generateNutritionWeeklyAnalysis(input: {
   context: NutritionStudentContext;
+  /**
+   * Coach-initiated, per-report safety override. When a hard safety flag blocked
+   * the week, the coach may consciously release the review THIS time — the
+   * athlete text is generated, but it MUST honestly flag the dangerous low days
+   * (see the coach_override prompt rule) and the global threshold is untouched.
+   * Always ends up needs_review (the coach checks it; never auto-send).
+   */
+  coachSafetyOverride?: boolean;
 }): Promise<GeneratedNutritionWeeklyAnalysis> {
   const context = input.context;
   const safety = buildNutritionSafetyFlags({
@@ -1437,6 +1454,13 @@ export async function generateNutritionWeeklyAnalysis(input: {
     rows: context.manualMacroRows,
     weightLogs: context.weightLogs,
   });
+  // safety.blocked stays the truth (the week IS risky). overrideActive only lets
+  // the athlete text through this once; effectiveBlocked drives generation gating.
+  const overrideActive = Boolean(input.coachSafetyOverride) && safety.blocked;
+  const effectiveBlocked = safety.blocked && !overrideActive;
+  const overrideLowKcalDays = overrideActive
+    ? context.manualMacroRows.filter((row) => (row.kcal ?? 9999) < 1300).map((row) => row.day)
+    : [];
 
   const avgKcal = avg(context.manualMacroRows.map((row) => row.kcal));
   const avgProtein = avg(context.manualMacroRows.map((row) => row.proteinG));
@@ -1445,7 +1469,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
   const methodology = buildNutritionMethodologyContext({ context });
   const selectedFocus = selectNutritionWeeklyFocus({
     methodology,
-    blockedSafety: safety.blocked,
+    blockedSafety: effectiveBlocked,
     goalType: context.nutritionGoalType,
   });
   const mainFocus = selectedFocus.statementRu;
@@ -1549,7 +1573,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
   } = {
     coach_summary_text: fallbackCoachSummary,
     day_by_day_analysis_text: fallbackDayByDay,
-    athlete_message_draft: safety.blocked
+    athlete_message_draft: effectiveBlocked
       ? null
       : buildFallbackAthleteDraft({
           context,
@@ -1592,7 +1616,9 @@ export async function generateNutritionWeeklyAnalysis(input: {
       safetyFlags: {
         hard_flags: safety.hardFlags,
         soft_flags: safety.softFlags,
-        blocked: safety.blocked,
+        blocked: effectiveBlocked,
+        coach_override: overrideActive,
+        override_low_kcal_days: overrideLowKcalDays,
       },
       diagnostics: aiDiagnostics,
     });
@@ -1618,7 +1644,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
       // a deterministic template to the student as if ready. Mark it
       // awaiting_generation and hold the athlete text; the coach regenerates.
       // (A safety block is a different, valid state and keeps its coach-only path.)
-      if (!safety.blocked) {
+      if (!effectiveBlocked) {
         narrative = {
           ...narrative,
           athlete_message_draft: null,
@@ -1743,9 +1769,12 @@ export async function generateNutritionWeeklyAnalysis(input: {
     tpNextWeek: context.tpNextWeek,
     notes,
   });
-  const status = safety.blocked
+  const status = effectiveBlocked
     ? "blocked_safety"
-    : methodology.focusCandidateSignals.limitedData || forceNeedsReview || athleteSignalsNeedCoachReview
+    : overrideActive ||
+        methodology.focusCandidateSignals.limitedData ||
+        forceNeedsReview ||
+        athleteSignalsNeedCoachReview
       ? "needs_review"
       : "draft_ready";
 
@@ -1759,6 +1788,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
       hard_flags: safety.hardFlags,
       soft_flags: safety.softFlags,
       blocked: safety.blocked,
+      coach_override: overrideActive,
     },
     internal_summary: {
       student: context.studentName,

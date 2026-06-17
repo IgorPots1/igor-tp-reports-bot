@@ -386,6 +386,8 @@ export async function generateNutritionWeeklyReview(input: {
   weekTo: string;
   reportId: string;
   manualRowsOverrideText?: string | null;
+  /** Coach-initiated, per-report release of a hard safety block (honest danger text). */
+  coachSafetyOverride?: boolean;
 }) {
   const reportWithMacros = await getNutritionReportWithMacros(input.reportId);
   if (!reportWithMacros) {
@@ -427,8 +429,21 @@ export async function generateNutritionWeeklyReview(input: {
     coachReportNoteRu: reportWithMacros.report.coachNotesRu,
     athleteCommentRu: reportWithMacros.report.rawText,
   });
-  const generated = await generateNutritionWeeklyAnalysis({ context });
-  const status = generated.safety_flags.blocked
+  const generated = await generateNutritionWeeklyAnalysis({
+    context,
+    coachSafetyOverride: input.coachSafetyOverride,
+  });
+  // A coach override keeps safety_flags.blocked=true (the record stays honest)
+  // but releases the hold → needs_review, never blocked_safety, never auto-sent.
+  const blockedHard = generated.safety_flags.blocked && !generated.safety_flags.coach_override;
+  if (generated.safety_flags.coach_override) {
+    console.info("[nutrition.review] coach safety override applied", {
+      studentId: input.studentId,
+      reportId: input.reportId,
+      hardFlags: generated.safety_flags.hard_flags,
+    });
+  }
+  const status = blockedHard
     ? "blocked_safety"
     : generated.generation_mode === "awaiting_generation"
       ? "awaiting_generation"
