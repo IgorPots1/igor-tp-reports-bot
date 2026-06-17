@@ -442,7 +442,7 @@ function buildPreTrainingBlock(nextWeekPlan: NutritionNextWeekPlan | null): stri
  * delivered as a gentle step, the gram targets stay an internal coach orientation.
  */
 function buildRaceDayBlock(nextWeekPlan: NutritionNextWeekPlan | null): string[] {
-  const raceDays = (nextWeekPlan?.days ?? []).filter((day) => day.flags.race && day.race_protocol);
+  const raceDays = (nextWeekPlan?.days ?? []).filter((day) => day.flags?.race && day.race_protocol);
   if (raceDays.length === 0) {
     return [];
   }

@@ -8,7 +8,7 @@ import {
   nutritionAthleteReportSignalsRequireCoachReview,
 } from "@/features/nutrition/athlete-signals";
 import type { NutritionStudentContext } from "@/features/nutrition/context";
-import { generateNutritionWeeklyAnalysis } from "@/features/nutrition/draft-generator";
+import { buildAthleteDayNotes, generateNutritionWeeklyAnalysis } from "@/features/nutrition/draft-generator";
 import { NUTRITION_ATHLETE_FORBIDDEN_MEDICAL_TERMS } from "@/features/nutrition/narrative-guardrails";
 
 const root = process.cwd();
@@ -184,6 +184,19 @@ async function run(): Promise<void> {
   const renderer = readFileSync(join(root, "src/features/nutrition/telegram-renderer.ts"), "utf8");
   assert.match(renderer, /openingNote \? \["", openingNote\] : \[\]/, "renderer must insert the opening line after the greeting (or nothing)");
   assert.match(renderer, /!\/\\d\/\.test\(openingNoteRaw\)/, "renderer must digit-guard the opening line");
+
+  // Цель 4: a day-specific food note in the athlete's words lands on the right day.
+  // Review week Mon 2026-06-08 .. Sun 2026-06-14 → Wednesday is 2026-06-10.
+  const dayNotes = buildAthleteDayNotes(
+    "Среда Перед интервалами было печенье. Пятница блины. Суббота черешня перед пробежкой",
+    "2026-06-08",
+    "2026-06-14"
+  );
+  assert.ok(dayNotes.get("2026-06-10")?.includes("интервал"), "Среда note maps to 2026-06-10");
+  assert.ok(dayNotes.get("2026-06-12")?.includes("блины"), "Пятница note maps to 2026-06-12");
+  assert.ok(dayNotes.get("2026-06-13")?.includes("черешня"), "Суббота note maps to 2026-06-13");
+  assert.match(draftGenerator, /athlete_day_note: athleteDayNotes\.get\(date\)/, "per-day note attached to day facts");
+  assert.match(draftGenerator, /ЕДА ПО ДНЯМ \(athlete_day_note/, "prompt rule reflects the day note in that day's comment");
 
   const contextBuilder = readFileSync(join(root, "src/features/nutrition/context.ts"), "utf8");
   assert.match(contextBuilder, /athleteCommentRu: compactText\(input\.athleteCommentRu\)/, "context must carry athleteCommentRu");

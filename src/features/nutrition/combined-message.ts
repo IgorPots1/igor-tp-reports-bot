@@ -354,6 +354,16 @@ export function buildNutritionDayProseFacts(item: Record<string, unknown>): Nutr
   if (goalCarbs != null && carbs != null) {
     planTargetNumbers.push(Math.abs(carbs - goalCarbs));
   }
+  // Наряд 3 Пункт 3: pre-workout carbs are summed by code from the day's REAL
+  // diary items (PDF), so the prose may state "перед интервалами было ~48 г
+  // углеводов" without the validator treating it as invented.
+  const preWorkout = asObject(item.pre_workout);
+  const preWorkoutCarbs = toFiniteNumber(preWorkout.carbs_g);
+  if (preWorkoutCarbs != null) {
+    planTargetNumbers.push(preWorkoutCarbs);
+    planTargetNumbers.push(Math.round(preWorkoutCarbs / 10) * 10);
+    planTargetNumbers.push(Math.round(preWorkoutCarbs / 5) * 5);
+  }
   return {
     kcal,
     proteinG: protein,

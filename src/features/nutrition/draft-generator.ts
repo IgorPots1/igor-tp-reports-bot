@@ -418,6 +418,146 @@ function buildRaceWeekDeficitOffDates(context: NutritionStudentContext): Set<str
   return dates;
 }
 
+const NUTRITION_WEEKDAY_NAMES: Array<{ rx: RegExp; dow: number }> = [
+  { rx: /понедельник/iu, dow: 1 },
+  { rx: /вторник/iu, dow: 2 },
+  { rx: /сред[аеуы]/iu, dow: 3 },
+  { rx: /четверг/iu, dow: 4 },
+  { rx: /пятниц[аеуы]/iu, dow: 5 },
+  { rx: /суббот[аеуы]/iu, dow: 6 },
+  { rx: /воскресень[ея]/iu, dow: 0 },
+];
+
+/**
+ * Цель 4: split the athlete's week-level comment into per-day segments by Russian
+ * weekday markers ("Среда перед интервалами … Пятница … Суббота …") and map each
+ * to the ISO date of that weekday inside the review week. So a day-specific food
+ * note lands on the right day's facts (and the model reflects it in THAT day's
+ * comment). Text only — never a source of numbers (the day_prose validator still
+ * gates numbers to the PDF facts).
+ */
+export function buildAthleteDayNotes(comment: string | null, weekFrom: string, weekTo: string): Map<string, string> {
+  const result = new Map<string, string>();
+  const text = (comment ?? "").trim();
+  if (!text || !/^\d{4}-\d{2}-\d{2}$/.test(weekFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(weekTo)) {
+    return result;
+  }
+  // Map each weekday-of-week to its ISO date within the review window.
+  const dateByDow = new Map<number, string>();
+  for (let cursor = weekFrom; cursor <= weekTo; ) {
+    dateByDow.set(new Date(`${cursor}T00:00:00Z`).getUTCDay(), cursor);
+    const next = new Date(`${cursor}T00:00:00Z`);
+    next.setUTCDate(next.getUTCDate() + 1);
+    cursor = next.toISOString().slice(0, 10);
+  }
+  // Find weekday markers with positions, then take the text up to the next marker.
+  const markers: Array<{ index: number; dow: number }> = [];
+  for (const { rx, dow } of NUTRITION_WEEKDAY_NAMES) {
+    const m = new RegExp(rx.source, "giu");
+    let hit: RegExpExecArray | null;
+    while ((hit = m.exec(text)) !== null) {
+      markers.push({ index: hit.index, dow });
+    }
+  }
+  markers.sort((a, b) => a.index - b.index);
+  for (let i = 0; i < markers.length; i += 1) {
+    const start = markers[i].index;
+    const end = i + 1 < markers.length ? markers[i + 1].index : text.length;
+    const date = dateByDow.get(markers[i].dow);
+    if (!date) {
+      continue;
+    }
+    const segment = text.slice(start, end).trim();
+    if (segment) {
+      result.set(date, result.has(date) ? `${result.get(date)} ${segment}` : segment);
+    }
+  }
+  return result;
+}
+
+type NutritionPreWorkoutAdequacy = "good" | "medium" | "low";
+
+/** Parse a "за час / за 2 часа / за 30 минут / за полчаса" timing hint, if present. */
+function parsePreWorkoutTiming(segment: string): string | null {
+  if (/за\s*(?:30|тридцать)\s*мин|за\s*полчаса/u.test(segment)) return "~30 мин до старта";
+  const minutes = segment.match(/за\s*(\d{1,3})\s*мин/u);
+  if (minutes) return `~${minutes[1]} мин до старта`;
+  if (/за\s*час\b|за\s*1\s*час/u.test(segment)) return "~1 ч до старта";
+  const hours = segment.match(/за\s*(\d)\s*(?:час|ч\b)/u);
+  if (hours) return `~${hours[1]} ч до старта`;
+  return null;
+}
+
+/**
+ * Наряд 3 Пункт 3 (вариант A): link the athlete's words ("перед интервалами
+ * батончик и печенье") to the day's REAL diary items, sum their carbs from the
+ * PDF, and rate adequacy against the day's LOAD (intervals/long need more, easy
+ * less). Numbers stay in the calculation; delivery is QUALITATIVE (good/medium/
+ * low + foods + optional timing) so the strict day-prose validator never drops
+ * the day. Returns null when nothing matches (no invented numbers).
+ */
+export function computePreWorkoutCarbsFromDiary(
+  dayNote: string | null,
+  items: NutritionFoodItem[] | undefined,
+  dayType?: string | null,
+  bodyweightKg?: number | null
+): {
+  foods: string[];
+  carbs_g: number;
+  adequacy: NutritionPreWorkoutAdequacy;
+  timing: string | null;
+  heavy_foods: string[];
+} | null {
+  const note = (dayNote ?? "").toLowerCase();
+  const safeItems = Array.isArray(items) ? items : [];
+  if (!note.trim() || safeItems.length === 0) {
+    return null;
+  }
+  // Pre-workout part = text before "после"/"сразу после"/"after" (drop post-workout).
+  const preSegment = note.split(/после|сразу\s+после|after|\bпотом\b/u)[0] ?? note;
+  if (!/перед|до\s+трениров|до\s+забег|до\s+пробеж|до\s+старта|до\s+интервал/u.test(preSegment)) {
+    return null;
+  }
+  const foods: string[] = [];
+  const heavyFoods: string[] = [];
+  let carbs = 0;
+  for (const item of safeItems) {
+    const name = (item.name ?? "").trim();
+    if (!name) {
+      continue;
+    }
+    // A diary item counts as pre-workout if any of its meaningful name tokens
+    // (≥4 letters/latin) appears in the pre-workout text.
+    const tokens = name
+      .toLowerCase()
+      .split(/[^\p{L}]+/u)
+      .filter((t) => t.length >= 4);
+    if (tokens.some((t) => preSegment.includes(t)) && typeof item.carbsG === "number") {
+      foods.push(name);
+      carbs += item.carbsG;
+      // Heavy/fatty pre-workout food (slow to digest → heaviness/GI on the run).
+      if (typeof item.fatG === "number" && item.fatG >= 12) {
+        heavyFoods.push(name);
+      }
+    }
+  }
+  if (foods.length === 0) {
+    return null;
+  }
+  // Methodology orientation: a harder/longer effort needs more pre-workout carbs.
+  // Rate by g/kg when bodyweight is known, else by absolute grams. Numbers stay
+  // internal — only the verdict is delivered.
+  const needsMore = ["intervals", "tempo", "race", "long_run", "long_endurance", "hard"].includes(dayType ?? "");
+  const perKg = typeof bodyweightKg === "number" && bodyweightKg > 0 ? carbs / bodyweightKg : null;
+  let adequacy: NutritionPreWorkoutAdequacy;
+  if (needsMore) {
+    adequacy = perKg != null ? (perKg >= 1 ? "good" : perKg >= 0.5 ? "medium" : "low") : carbs >= 75 ? "good" : carbs >= 45 ? "medium" : "low";
+  } else {
+    adequacy = perKg != null ? (perKg >= 0.5 ? "good" : perKg >= 0.25 ? "medium" : "low") : carbs >= 30 ? "good" : carbs >= 15 ? "medium" : "low";
+  }
+  return { foods, carbs_g: Math.round(carbs), adequacy, timing: parsePreWorkoutTiming(preSegment), heavy_foods: heavyFoods };
+}
+
 /**
  * Notable food items for a day, grouped by meal section, as raw material for the
  * model to name food in prose. IMPORTANT: only names + contribution markers are
@@ -469,6 +609,7 @@ export function buildNutritionDailyFactsForNarrative(input: {
   const raceWeekDeficitOffDates = buildRaceWeekDeficitOffDates(input.context);
   const reviewWeekFrom = input.context.tpPastWeek.periodFrom;
   const reviewWeekTo = input.context.tpPastWeek.periodTo;
+  const athleteDayNotes = buildAthleteDayNotes(input.context.athleteCommentRu, reviewWeekFrom, reviewWeekTo);
   const macroDates = input.context.manualMacroRows
     .map((row) => row.day)
     .filter((day) => /^\d{4}-\d{2}-\d{2}$/.test(day));
@@ -653,6 +794,13 @@ export function buildNutritionDailyFactsForNarrative(input: {
             ? canonical.trainingNutritionLinks
             : [],
         items_notable: notableItems,
+        athlete_day_note: athleteDayNotes.get(date) ?? null,
+        pre_workout: computePreWorkoutCarbsFromDiary(
+          athleteDayNotes.get(date) ?? null,
+          itemsByDate.get(date),
+          trainingType,
+          bodyweightKg
+        ),
         day_role: dayRole,
         fat_displaced_carbs: fatDisplacedCarbs,
         fat_policy: fatPolicy,
@@ -1008,6 +1156,8 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "Перед длительной/интервальной/ключевой работой (day_role=key/hard/pre_long или nextDayTrainingType ключевой) прямо скажи догрузиться углеводами накануне и в день работы.",
     "Еду называй из items_notable текущего дня. Углеводную называй свободно. Жирную/сладкую вечером называй ученику и связывай «жиры пошли вместо углеводов под нагрузку» ТОЛЬКО при fat_policy=normal; при coach_only/soften/suppress_athlete жир ученику не выноси.",
     "СВОЙ РЕЖИМ (student.own_regime=true): у ученицы свой режим питания, согласованный отдельно. НЕ оценивай калорийность и жир как проблему — не пиши «многовато калорий», «калорий перебор», «жир высоковат», «недобор», не выводи дефицит/профицит. Числа можно называть нейтрально (констатация), тон поддерживающий, «держим твой режим». Углеводы под тренировку и белок обсуждать можно как обычно (это про топливо, не про «много/мало калорий»). Жир в текст ученику не выноси (он на coach_only). Это НЕ снимает safety: реальные клинические сигналы идут тренеру как обычно.",
+    "ЯЗЫК про углеводы: слово «крахмалистый/крахмалистое/крахмалистые/крахмал» НЕ использовать НИГДЕ — ни в day_prose, ни в athlete_message_draft, ни в coach_summary_text, ни в next_week_plan_text. Тренер так не говорит. Всегда заменяй на «медленные углеводы» с примерами (рис, паста, картофель, гречка, хлеб) ИЛИ просто называй продукты. Где уместно различай медленные (крупы/паста/картофель/хлеб) и быстрые (сладкое/выпечка) углеводы — это понятнее ученику.",
+    "КОЛИЧЕСТВО углеводов, не «фрукт=углевод»: малоуглеводные фрукты и ягоды (черешня, клубника, арбуз и т.п.) — это вода/витамины, углеводов в них МАЛО. НЕ называй их «хорошим источником углеводов» / углеводной базой под нагрузку. Можно отметить нейтрально (приятно, витамины), но топливо под тренировку дают крупы/паста/картофель/хлеб/банан, а не ягоды. Банан/сухофрукты — ок как углеводы (но сухофрукты для худеющего не приоритет, см. правило lose).",
     "КАЧЕСТВО УГЛЕВОДОВ — это ПРИНЦИП, применяй к ЛЮБОМУ продукту (не по списку). ХВАЛИ / называй удачными только ЦЕЛЬНЫЕ источники: крупы, рис, гречка, картофель, паста, хлеб, бобовые, фрукты, овощи. НЕ называй «хорошим/правильным продуктом» кондитерку, сладости, мороженое, конфеты, печенье, халву, выпечку с сахаром, круассаны, газировку, фастфуд, алкоголь/пиво (в т.ч. безалкогольное) — ДАЖЕ если они дали много углеводов: углеводы засчитываются в числа дня, но источник хвалить нельзя. Тон ПОДДЕРЖИВАЮЩИЙ, НЕ стыдящий: за сладкое/выпечку/фастфуд НЕ упрекай и не морализируй — просто не хвали; максимум один раз мягко «в следующий раз эти углеводы лучше взять из крупы/риса/фрукта». Никакой вины и «ай-ай».",
     "СОВЕТ ОТ РЕАЛЬНОЙ ЕДЫ (не шаблон): прежде чем советовать «добавь X», посмотри items_notable дня. Если углеводов не хватило, но подходящий ЦЕЛЬНЫЙ источник в этот день УЖЕ был (есть в items_notable — гречка/рис/паста/картофель/хлеб) — советуй УВЕЛИЧИТЬ ПОРЦИЮ того, что уже ел («та же гречка, но порцию побольше»), а НЕ «добавь кашу», когда каша уже есть, и не предлагай кашу к блюду, где уже есть макароны. Новый продукт предлагай ТОЛЬКО если подходящего цельного источника в дне не было. Не советуй добавлять то, чего и так в достатке.",
     "coach_summary_text и day_by_day_analysis_text — ОБЯЗАТЕЛЬНЫЕ непустые поля, заполняй их всегда (даже если основной фокус ушёл в day_prose). coach_summary_text: 2-4 предложения для тренера. day_by_day_analysis_text: по строке-две на каждый день из daily_analysis. Пустые строки в этих полях недопустимы.",
@@ -1031,6 +1181,8 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "Заметки тренера (student.coach_report_note — разовая на этот отчёт; student.coach_persistent_notes — постоянные про ученика) — это КОНТЕКСТ для тона и акцентов разбора, НЕ числа и НЕ факты дня. Учитывай их в интерпретации (что уточнил ученик, контекст дня), но не выдумывай по ним числа и не цитируй дословно как медфакт.",
     "ЖЁСТКО про контекст ученика (заметки тренера и история): пересказывай ТОЛЬКО то, что прямо дано в заметке/истории. НЕ предполагай и НЕ додумывай обстоятельства, которых там нет — например, не пиши «после тренировки поели не сразу», «пропустила приём», «наверное, не успела поесть», если этого нет в заметке. Forward-совет разрешён («после интервалов важно поесть плотно»), но утверждать или предполагать незаданные ФАКТЫ о поведении ученика — нельзя. Не сужай формулировку («вторник суматошный» ≠ «вечер вторника суматошный»). Особенно НЕ выдумывай состояния/события: болезнь, простуду, «после болезни», стресс, травму, праздник, поездку — если этого нет в заметке/истории, не упоминай вовсе (нельзя «молодец, что побегала после болезни», если про болезнь ничего не сказано). Это правило относится КО ВСЕМ полям, включая coach_summary_text и day_by_day_analysis_text, не только к тексту ученику.",
     "СЛОВА УЧЕНИКА (student.athlete_comment) — это его собственный комментарий к этому отчёту (дневник, своими словами). РЕАГИРУЙ на них: используй для ТОНА и УЧЁТА ОБСТОЯТЕЛЬСТВ. Усталость / жара / стресс / не было аппетита — формулируй разбор мягче, с пониманием, без упрёка за недобор. Если ученик описал ЧТО и КОГДА он ел («во вторник овсянка с бананом перед интервалами») — отрази это в комментарии нужного дня (day_prose) как контекст. НЕ медикализируй: настоящие сигналы болезни/травмы/цикла идут через athlete_report_signals → coach review, не в текст ученику.",
+    "ЕДА ПО ДНЯМ (athlete_day_note у дня в daily_analysis): если у дня есть это поле — это слова ученика про ИМЕННО ЭТОТ день (что и когда он ел вокруг тренировки). ОБЯЗАТЕЛЬНО отрази это в комментарии (day_prose) ЭТОГО дня: учти контекст в оценке и, где уместно, отметь по-доброму («хорошо, что перед интервалами что-то углеводное было», «перед длительной поел заранее — правильно»). НЕ бери из этих слов числа (числа только из PDF-фактов дня). Не путай дни — клади заметку только в свой день.",
+    "ОЦЕНКА ПРЕДТРЕНИРОВОЧНОЙ ЕДЫ (pre_workout у дня) — отрази в day_prose ЭТОГО дня, если поле есть. Код уже сопоставил еду перед тренировкой (pre_workout.foods) с её углеводами из дневника и с нагрузкой дня, и выдал вердикт pre_workout.adequacy: good/medium/low. Подавай КАЧЕСТВЕННО, БЕЗ грамм-числа (число оставь коду): good → «перед интервалами зарядилась хорошо (…)»; medium → «перед стартом углеводов было средне, можно чуть плотнее»; low → «перед интервалами углеводов было маловато (батончик+печенье) — под такую работу добавь банан, кашу или хлеб перед стартом». Это про ПЕРЕД тренировкой, не про ужин. Если есть pre_workout.timing (за сколько до старта поел) — учти: близко к старту (~30 мин) нужны лёгкие быстрые углеводы, за 2-3 часа можно полноценнее. Если есть pre_workout.heavy_foods (тяжёлое жирное перед тренировкой) — мягко отметь про КОМФОРТ на тренировке (не про «неправильно поела»): «перед интервалами был [продукт] — он тяжеловат и долго переваривается, на бегу может давить; в следующий раз лучше что-то лёгкое углеводное (банан, тост, каша)». Поддерживающе, про самочувствие и качество тренировки. Граммы предтренировочной еды НЕ называй и не выдумывай.",
     "ТЁПЛАЯ ОПЕНИНГ-СТРОКА (athlete_opening_note_ru): если в словах ученика (student.athlete_comment) есть что искренне отметить — старание, что справился несмотря на обстоятельства (дорога/жара/занятость) — впиши ОДНУ тёплую человеческую фразу в athlete_opening_note_ru (она встанет сразу после приветствия). Пример: «вижу, ты очень старалась, даже в дороге держалась — это дорогого стоит». Качественно, в тёплом тоне Игоря, plain text без markdown, БЕЗ единой цифры. Если отмечать НЕЧЕГО (слов нет, или там только жалобы/нейтральное) — верни athlete_opening_note_ru пустым/null, НЕ придумывай похвалу на пустом месте. Эту похвалу за старание НЕ дублируй в athlete_message_draft — она живёт только в athlete_opening_note_ru.",
     "ЧИСЛА И МАКРОСЫ — ТОЛЬКО из PDF/фактов дня (actual/target). НИКОГДА не бери калории/граммы/«съела ~N» из слов ученика (student.athlete_comment) на веру и не подставляй их как факт — ни в day_prose, ни в итог недели, ни в coach_summary_text. Если слова ученика противоречат числам из PDF — доверяй PDF; расхождение можно мягко отметить ТРЕНЕРУ в coach_summary_text, но не выноси выдуманное число ученику.",
     "ЦЕЛЬ УЧЕНИКА (student.nutrition_goal): maintain — текущая методика. lose (снижение веса): рамка «поддерживаем тренировки в общем мягком минусе». НЕ советуй «добавь углеводов/калорий» там, где у худеющего и так профицит/перебор; топливо догружай ТОЛЬКО в тренировочные/ключевые дни (fuel for the work required), а в дни отдыха — спокойнее, это и есть запланированный дефицит, а не ошибка. ХВАЛИ высокий белок (для худеющего это хорошо: не пиши «белок высоковат» как проблему и НЕ пиши «белок низковат» при ≥1.6 г/кг). Даже когда белок НИЖЕ ориентира — у худеющего подавай это МЯГКО и без упрёка: «белок можно чуть добавить» / «белка чуть больше не помешает», а НЕ «белок ниже нормы»/«стоит отметить»/«недобор белка». Белок для худеющего — приоритет и помощник, не повод ругать. МЯГКО озвучивай высокий жир (>~35% энергии) ученику как лишние калории, которые мешают снижению (для lose жир выносим в текст ученику). Тон поддерживающий, без «ешь больше». target_weight_kg, если задан — можно мягко («до цели ещё ~N кг»), без ИМТ/процентов жира/«минус N кг»/медикализации. gain (набор) — небольшой профицит, углеводы и белок с запасом.",
