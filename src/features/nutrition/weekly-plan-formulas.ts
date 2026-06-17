@@ -635,6 +635,8 @@ export function computeNutritionGoalDayTarget(params: {
   ageYears: number | null;
   exerciseKcal: number;
   ideal?: NutritionDayTypeTarget | null;
+  /** Наряд 3: race-week → lose deficit OFF (don't toe a start on a deficit). */
+  raceWeekDeficitOff?: boolean;
 }): NutritionDayTypeTarget | null {
   const ideal =
     params.ideal ??
@@ -656,6 +658,7 @@ export function computeNutritionGoalDayTarget(params: {
     maintenanceKcal,
     exerciseKcal: params.exerciseKcal,
     sex: params.sex,
+    raceWeekDeficitOff: params.raceWeekDeficitOff ?? false,
   });
 }
 
@@ -710,6 +713,13 @@ export function applyNutritionGoalToDayTarget(
     maintenanceKcal?: number | null;
     exerciseKcal?: number | null;
     sex?: NutritionSex | null;
+    /**
+     * Наряд 3: in race-week a losing athlete must NOT toe the start on a deficit
+     * (incomplete glycogen → "the wall" + health risk). When true the lose deficit
+     * is switched off (treat the day as maintenance — loading wins over weight
+     * loss). The EA/absolute floors and the safety-flag system are unchanged.
+     */
+    raceWeekDeficitOff?: boolean;
   }
 ): NutritionDayTypeTarget | null {
   if (!ideal || params.goalType === "maintain" || !params.bodyweightKg || params.bodyweightKg <= 0) {
@@ -721,7 +731,8 @@ export function applyNutritionGoalToDayTarget(
   const exercise = params.exerciseKcal && params.exerciseKcal > 0 ? params.exerciseKcal : 0;
 
   if (params.goalType === "lose") {
-    const deficit = LOSE_DEFICIT_BY_DAY_TYPE[params.dayType] ?? 350;
+    // Race-week priority rule: deficit OFF (fuel normally for the start).
+    const deficit = params.raceWeekDeficitOff ? 0 : LOSE_DEFICIT_BY_DAY_TYPE[params.dayType] ?? 350;
     // Energy-availability floor: keep EA ≥ 30 kcal/kg FFM, i.e. intake never
     // below FFM·30 + the day's training expenditure. Plus an absolute floor.
     const eaFloor = ffmKgForSex(bw, params.sex ?? null) * 30 + exercise;
@@ -932,7 +943,8 @@ export function buildNutritionNextWeekPlan(params: {
     dayType: NutritionPlanDayType,
     ideal: NutritionDayTypeTarget | null,
     baseline: PreviousWeekMacroPoint | null,
-    exerciseKcal: number
+    exerciseKcal: number,
+    raceWeekDeficitOff = false
   ): NutritionDayTypeTarget | null =>
     goalType === "maintain"
       ? applyPracticalTarget({ dayType, bodyweightKg: params.bodyweightKg, ideal, baseline })
@@ -943,6 +955,7 @@ export function buildNutritionNextWeekPlan(params: {
           maintenanceKcal: maintenanceForDay(exerciseKcal),
           exerciseKcal,
           sex: params.sex ?? null,
+          raceWeekDeficitOff,
         });
   const planDayExerciseKcal = (
     dayType: NutritionPlanDayType,
@@ -976,6 +989,20 @@ export function buildNutritionNextWeekPlan(params: {
       .filter((workout) => workout.dayType === "long_run" || workout.dayType === "long_endurance")
       .map((workout) => workout.date)
   );
+  // Наряд 3: race-week = the lead-up (loading window, or ~2 days for short races),
+  // the race day, and the recovery day after. On these days a losing athlete's
+  // deficit is switched off (fuel for the start; loading wins over weight loss).
+  const raceWeekDates = new Set<string>();
+  for (const workout of parsedWorkouts) {
+    if (workout.dayType !== "race") {
+      continue;
+    }
+    const protocol = computeNutritionRaceProtocol({ distanceKm: workout.distanceKm, title: workout.title });
+    const leadDays = protocol.loading?.days ?? 2;
+    for (let offset = -leadDays; offset <= 1; offset += 1) {
+      raceWeekDates.add(addDays(workout.date, offset));
+    }
+  }
   const previousWeekTargets = extractPreviousWeekTargets(params.previousWeekDailyAnalysis);
 
   const days: NutritionNextWeekPlanDay[] = dates.map((date) => {
@@ -1001,7 +1028,7 @@ export function buildNutritionNextWeekPlan(params: {
       primaryWorkout?.distanceKm ?? null,
       primaryWorkout?.title ?? null
     );
-    const practicalTarget = resolveDayTarget(trainingType, idealTarget, baseline, dayExerciseKcal);
+    const practicalTarget = resolveDayTarget(trainingType, idealTarget, baseline, dayExerciseKcal, raceWeekDates.has(date));
 
     let source: NutritionPlanSource = "unknown";
     if (!params.bodyweightKg || params.bodyweightKg <= 0) {

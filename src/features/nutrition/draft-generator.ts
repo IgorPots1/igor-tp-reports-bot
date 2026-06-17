@@ -15,6 +15,7 @@ import { buildNutritionDayProseFacts } from "@/features/nutrition/combined-messa
 import {
   buildNutritionNextWeekPlan,
   computeNutritionGoalDayTarget,
+  computeNutritionRaceProtocol,
   estimatePlanDayExerciseKcal,
   type NutritionNextWeekPlan,
   type NutritionPlanDayType,
@@ -396,6 +397,27 @@ type NutritionNarrativeNotableItem = {
   carb_contributor: boolean;
 };
 
+function shiftIsoDate(isoDate: string, days: number): string {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * Наряд 3: dates within race-week (lead-up + race day + recovery) where a losing
+ * athlete's deficit is switched off. Built from the review-window race events.
+ */
+function buildRaceWeekDeficitOffDates(context: NutritionStudentContext): Set<string> {
+  const dates = new Set<string>();
+  for (const race of context.raceEvents ?? []) {
+    const leadDays = computeNutritionRaceProtocol({ distanceKm: race.distanceKm, title: race.title }).loading?.days ?? 2;
+    for (let offset = -leadDays; offset <= 1; offset += 1) {
+      dates.add(shiftIsoDate(race.eventDate, offset));
+    }
+  }
+  return dates;
+}
+
 /**
  * Notable food items for a day, grouped by meal section, as raw material for the
  * model to name food in prose. IMPORTANT: only names + contribution markers are
@@ -444,6 +466,7 @@ export function buildNutritionDailyFactsForNarrative(input: {
       itemsByDate.set(row.day, Array.isArray(row.items) ? row.items : []);
     }
   }
+  const raceWeekDeficitOffDates = buildRaceWeekDeficitOffDates(input.context);
   const reviewWeekFrom = input.context.tpPastWeek.periodFrom;
   const reviewWeekTo = input.context.tpPastWeek.periodTo;
   const macroDates = input.context.manualMacroRows
@@ -567,6 +590,7 @@ export function buildNutritionDailyFactsForNarrative(input: {
           heightCm: input.context.heightCm,
           ageYears: input.context.ageYears,
           exerciseKcal,
+          raceWeekDeficitOff: raceWeekDeficitOffDates.has(date),
         });
         if (!target) {
           return null;
@@ -975,6 +999,7 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "ЧИСЛА в next_week_plan_text бери ТОЛЬКО из next_week_plan (display_target.carbs_g_min/max, kcal, целевые по типу дня) и округляй до 10 (углеводы/ориентиры) — пиши «около 300 г», «300–320 г»; не выдумывай промежуточных и негладких чисел, г/кг ученику не пиши. Если тренировок на следующей неделе в плане нет (next_week_plan.summary.has_training_context=false) — общий мягкий фокус без привязки к дням.",
     "next_week_plan_text подчиняется тем же запретам, что и athlete_message_draft: без диагнозов/медтерминов, без языка похудения, без меню/рецептов, без выдуманных тренировок и гелей, строгая ты/вы.",
     "СТАРТ/ГОНКА в next_week_plan (день с flags.race=true и объектом race_protocol): отметь его в next_week_plan_text как ОСОБЫЙ день старта (назови старт), не как обычный день. Следуй race_protocol: (1) loading=null → это КОРОТКИЙ старт (короче ~90 мин, 5-10 км): углеводную ЗАГРУЗКУ НЕ предлагай, питание как в интенсивный день; НЕ переоценивай, не пиши про «заряд/загрузку на несколько дней». loading!=null (полумарафон+) → плавная загрузка за несколько дней ШАГАМИ от обычного (без г/кг ученику, без рывков). (2) gel_before=true (≥10 км) → обязательно «один гель за ~10 минут до старта»; gel_before=false (5 км) — про гель не пиши. (3) timing='evening_or_night' → старт вечером/ночью: углеводы по дню, последний полноценный приём за 2-3 ч до старта, не наедаться тяжёлого днём и не голодать к вечеру; timing='morning' → углеводный ужин накануне + завтрак за 2-3 ч. (4) после старта — углеводы+белок на восстановление. Тон тёплый, «ориентир не обязательство», без медтерминов.",
+    "ХУДЕЮЩИЙ + СТАРТ (race-week): для goal=lose в неделю старта дефицит ВЫКЛЮЧАЕТСЯ — питаемся нормально/грузимся под старт, загрузка ПОБЕЖДАЕТ снижение (выходить на старт в дефиците опасно: неполный гликоген, риск «стены»). НЕ смешивай: запрещено «грузись, но оставайся в дефиците». В эти дни не пиши про снижение/дефицит/срез вообще; после старта — день восстановления (углеводы+белок), затем обычный режим цели возвращается. Числа дня уже посчитаны кодом без дефицита — просто поддержи это тоном.",
     "ЦЕЛЬ lose — РАМКА в next_week_plan_text: один раз мягко объясни, ЗАЧЕМ так выстроена неделя, связав с её целью снижения — например «дни отдыха идут в мягком минусе и работают на твою цель, а тренировки питаем полноценно, чтобы снижать вес без потери качества бега». Это даёт ученице понять логику недели, а не просто список советов. По-доброму, в тёплом тоне, без слов диета/худей/урезай/дефицит. Добавляй такую рамку ТОЛЬКО для lose; для maintain/gain — не добавляй.",
     "Числа-тренды из истории ученика (student.history.key_trends) и любые сравнения с прошлыми неделями пиши в «итог недели» (day_by_day_analysis_text/week summary) или в фокус — НЕ в подневную day_prose (там числа проверяются построчно по фактам дня). План пиши вперёд («на следующей неделе держи …»).",
     "day_prose: объект {\"YYYY-MM-DD\": \"проза дня\"} по каждому дню из daily_analysis. Это athlete-facing проза комментария дня. Длину выбирай по day_role: steady/rest — одна-две фразы; key/hard/pre_long — абзац подробнее.",

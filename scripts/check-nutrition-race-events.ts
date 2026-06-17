@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { isNutritionRaceTitle, normalizeTrainingType } from "@/features/nutrition/methodology";
-import { computeNutritionRaceProtocol } from "@/features/nutrition/weekly-plan-formulas";
+import { computeNutritionGoalDayTarget, computeNutritionRaceProtocol } from "@/features/nutrition/weekly-plan-formulas";
 
 // Наряд 3 Шаг 1: recognise a race (race-day / race-week) from the TP event
 // scanner (auto, source 'scan') + a coach manual mark (source 'manual'), without
@@ -61,6 +61,34 @@ assert.equal(half.timing, "morning", "без маркера времени → �
 
 const marathon = computeNutritionRaceProtocol({ distanceKm: 42.2, title: "Марафон" });
 assert.ok(marathon.loading && marathon.loading.g_per_kg_low === 7 && marathon.loading.g_per_kg_high === 9, "марафон → 7-9 г/кг");
+
+// --- lose + race → deficit OFF in race-week (safety priority rule) ------------
+// On a training day the deficit-off raises intake toward maintenance; outside it
+// keeps the periodised deficit. (Rest days already sit on the EA floor.)
+const loseDayParams = {
+  goalType: "lose" as const,
+  dayType: "easy" as const,
+  bodyweightKg: 70,
+  sex: "female" as const,
+  heightCm: 168,
+  ageYears: 40,
+  exerciseKcal: 450,
+};
+const normalDeficit = computeNutritionGoalDayTarget({ ...loseDayParams, raceWeekDeficitOff: false });
+const raceWeekOff = computeNutritionGoalDayTarget({ ...loseDayParams, raceWeekDeficitOff: true });
+assert.ok(normalDeficit && raceWeekOff, "lose day targets compute");
+assert.ok(
+  (raceWeekOff!.target_kcal ?? 0) > (normalDeficit!.target_kcal ?? 0),
+  "race-week deficit-off must fuel a training day higher than the normal deficit"
+);
+
+const draftDeficit = readFileSync(join(root, "src/features/nutrition/draft-generator.ts"), "utf8");
+assert.match(draftDeficit, /ХУДЕЮЩИЙ \+ СТАРТ \(race-week\)/, "prompt has the lose+race priority rule");
+assert.match(
+  readFileSync(join(root, "src/features/nutrition/weekly-plan-formulas.ts"), "utf8"),
+  /raceWeekDeficitOff \? 0 :/,
+  "deficit is switched off in race-week for lose"
+);
 
 const renderer = readFileSync(join(root, "src/features/nutrition/telegram-renderer.ts"), "utf8");
 assert.match(renderer, /buildRaceDayBlock/, "renderer has a deterministic race-day block");
