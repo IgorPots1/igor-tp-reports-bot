@@ -410,6 +410,11 @@ const TRAININGPEAKS_ACTIVITY_RU_MAP: Array<[RegExp, string]> = [
   [/\bWalk\b/gi, "ходьба"],
   [/\bHiking\b/gi, "хайк"],
   [/\bHike\b/gi, "хайк"],
+  // Multi-word "Table Tennis" MUST come before the bare \bTennis\b rule — the map
+  // is applied as sequential replaces, so otherwise "Tennis" alone would match and
+  // leave "Table" stranded ("Table теннис").
+  [/\bTable\s*Tennis\b/gi, "настольный теннис"],
+  [/\bPing[-\s]?Pong\b/gi, "настольный теннис"],
   [/\bTennis\b/gi, "теннис"],
   [/\bXC[-\s]?Ski(?:ing)?\b/gi, "лыжи"],
   [/\bSkiing\b/gi, "лыжи"],

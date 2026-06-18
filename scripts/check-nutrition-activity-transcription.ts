@@ -19,6 +19,10 @@ assert.equal(ru("Rowing"), "гребля", "Rowing → гребля");
 assert.equal(ru("Hike"), "хайк", "Hike → хайк");
 assert.equal(ru("Walk"), "ходьба", "Walk → ходьба");
 assert.equal(ru("Tennis"), "теннис", "Tennis → теннис");
+// D5: multi-word must win over bare Tennis (no stranded "Table теннис").
+assert.equal(ru("Table Tennis"), "настольный теннис", "Table Tennis → настольный теннис");
+assert.doesNotMatch(ru("Table Tennis"), /table/i, "no stranded English «Table»");
+assert.equal(ru("Ping Pong"), "настольный теннис", "Ping Pong → настольный теннис");
 assert.equal(ru("Yoga"), "йога");
 
 // --- transcription works inside combined / passthrough labels ------------------
