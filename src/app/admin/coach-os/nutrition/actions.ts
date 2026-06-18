@@ -244,6 +244,7 @@ export async function saveNutritionProfileAction(formData: FormData): Promise<vo
       currentWeightKg: parseOptionalNumber(getOptionalFormValue(formData, "currentWeightKg")),
       toleranceNotes: getOptionalFormValue(formData, "toleranceNotes"),
       ownRegime: parseBoolean(getOptionalFormValue(formData, "ownRegime"), false),
+      excludeOtherActivities: parseBoolean(getOptionalFormValue(formData, "excludeOtherActivities"), false),
       nutritionGoalType: normalizeNutritionGoalType(getOptionalFormValue(formData, "nutritionGoalType")),
       targetWeightKg: parseOptionalNumber(getOptionalFormValue(formData, "targetWeightKg")),
       sex: normalizeNutritionSex(getOptionalFormValue(formData, "sex")),

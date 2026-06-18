@@ -1374,6 +1374,10 @@ export default async function CoachOsNutritionStudentCardPage({
                     <input type="checkbox" name="ownRegime" value="true" defaultChecked={card.profile?.ownRegime ?? false} />
                     <span>Свой режим питания — не оценивать калорийность/жир как проблему</span>
                   </label>
+                  <label className="admin-form-field admin-form-field-inline">
+                    <input type="checkbox" name="excludeOtherActivities" value="true" defaultChecked={card.profile?.excludeOtherActivities ?? false} />
+                    <span>Игнорировать активности типа «Other» из TrainingPeaks (не учитывать в питании)</span>
+                  </label>
                   <FormActionButton className="admin-button" pendingText="Сохраняю…">
                     Сохранить профиль
                   </FormActionButton>

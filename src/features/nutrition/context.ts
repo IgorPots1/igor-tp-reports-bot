@@ -342,6 +342,8 @@ export type NutritionStudentContext = {
   coachContextRu: string | null;
   /** Наряд 2: student on her own eating regime — don't treat calories/fat as a problem (layer A). */
   ownRegime: boolean;
+  /** Часть Ю: TP "Other" activities are dropped for this student (already filtered out of tpPastWeek/tpNextWeek). */
+  excludeOtherActivities: boolean;
   /** Наряд 3: upcoming/just-past races (from the TP event scanner + manual marks) within the review+plan window. */
   raceEvents: NutritionRaceEvent[];
   /** Task 8: one-time coach note attached to THIS report (this week's review only). */
@@ -786,17 +788,54 @@ function isKeyWorkout(row: TrainingPeaksWorkoutCacheRow, mode: NutritionKeyWorko
   return classification.isRunning && /quality|race|interval/.test(classification.reason.toLocaleLowerCase("ru"));
 }
 
+/**
+ * Часть Ю: is this TP workout an "Other"/"Custom" activity to drop for a student
+ * with exclude_other_activities? Keys on the RAW TP type code first (sportOrTypeCode
+ * other/custom) so a strength-TITLED session that is TP-typed "Other" is still
+ * caught — the activity classifier would otherwise let the title win and call it
+ * "strength". Falls back to the classifier's "other" family for neutral titles.
+ */
+export function isNutritionExcludedOtherActivity(input: {
+  title: string | null;
+  sportOrTypeCode: string | null;
+  workoutTypeValueId: number | null;
+  workoutSubTypeId: number | null;
+}): boolean {
+  if (/(?:^|[^\p{L}])(?:other|custom)(?:[^\p{L}]|$)/iu.test(input.sportOrTypeCode ?? "")) {
+    return true;
+  }
+  return classifyTrainingPeaksWorkoutActivity(input).family === "other";
+}
+
 export async function buildNutritionTrainingPeaksWeekContext(
   studentId: string,
   weekFrom: string,
   weekTo: string,
-  options?: { keyWorkoutMode?: NutritionKeyWorkoutMode; longRunMode?: "past_review" | "target_plan" }
+  options?: {
+    keyWorkoutMode?: NutritionKeyWorkoutMode;
+    longRunMode?: "past_review" | "target_plan";
+    /** Часть Ю: drop TP activities classified "Other" before anything else sees
+     * them, so they affect neither expenditure nor the review text. A day left with
+     * no other session then reads as a normal rest day. Per-student (profile flag). */
+    excludeOtherActivities?: boolean;
+  }
 ): Promise<NutritionTrainingPeaksWeekContext> {
-  const rows = await getNutritionTrainingPeaksCacheWindow({
+  const allRows = await getNutritionTrainingPeaksCacheWindow({
     studentId,
     from: weekFrom,
     to: weekTo,
   });
+  const rows = options?.excludeOtherActivities
+    ? allRows.filter(
+        (row) =>
+          !isNutritionExcludedOtherActivity({
+            title: row.title,
+            sportOrTypeCode: row.sportOrTypeCode,
+            workoutTypeValueId: row.workoutTypeValueId,
+            workoutSubTypeId: row.workoutSubTypeId,
+          })
+      )
+    : allRows;
   const rawCacheStatus = resolveCacheStatus(rows);
   // A week fully in the past won't change anymore, so an "old scan" is expected
   // and shouldn't be treated as stale/unusable (which would wrongly force the
@@ -953,15 +992,17 @@ export async function buildNutritionStudentContext(input: {
   });
   const dataQuality = calculateNutritionDataQuality(input.manualRows);
   const reportStatus = classifyNutritionReportStatus(dataQuality);
+  const excludeOtherActivities = essentials.profile?.excludeOtherActivities ?? false;
   const [tpPastWeek, tpNextWeek] = await Promise.all([
     buildNutritionTrainingPeaksWeekContext(input.studentId, input.weekFrom, input.weekTo, {
       keyWorkoutMode: "completed_only",
+      excludeOtherActivities,
     }),
     buildNutritionTrainingPeaksWeekContext(
       input.studentId,
       addDays(input.weekTo, 1),
       addDays(input.weekTo, 7),
-      { keyWorkoutMode: "all" }
+      { keyWorkoutMode: "all", excludeOtherActivities }
     ),
   ]);
   // Наряд 3: pull races (TP scanner + coach manual marks) across the review and
@@ -1021,6 +1062,7 @@ export async function buildNutritionStudentContext(input: {
     nutritionGoal: essentials.profile?.goal ?? null,
     coachContextRu: essentials.profile?.coachContextRu ?? null,
     ownRegime: essentials.profile?.ownRegime ?? false,
+    excludeOtherActivities,
     raceEvents,
     coachReportNoteRu: compactText(input.coachReportNoteRu) ?? null,
     athleteCommentRu: compactText(input.athleteCommentRu) ?? null,

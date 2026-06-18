@@ -219,6 +219,7 @@
     "check:nutrition-food-items-parsing": "npx tsx scripts/check-nutrition-food-items-parsing.ts",
     "check:nutrition-food-quality": "npx tsx scripts/check-nutrition-food-quality.ts",
     "check:nutrition-carb-quality": "npx tsx scripts/check-nutrition-carb-quality.ts",
+    "check:nutrition-exclude-other-activities": "npx tsx scripts/check-nutrition-exclude-other-activities.ts",
     "check:nutrition-own-regime": "npx tsx scripts/check-nutrition-own-regime.ts",
     "check:nutrition-race-events": "npx tsx scripts/check-nutrition-race-events.ts",
     "nutrition:inspect-pdf": "npx tsx scripts/nutrition-inspect-pdf.ts",
