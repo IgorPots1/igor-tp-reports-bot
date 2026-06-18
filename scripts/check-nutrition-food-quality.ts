@@ -35,7 +35,7 @@ assert.match(draft, /НЕ «добавь кашу», когда каша уже 
 assert.match(draft, /Новый продукт предлагай ТОЛЬКО если подходящего цельного источника в дне не было/, "new food only when the category is absent");
 
 // The legacy free-naming rule was aligned to "increase or add", not just "add".
-assert.match(draft, /увеличь порцию каши\/риса, что уже была, или добавь, если её не было/, "legacy carb-naming rule aligned to increase-or-add");
+assert.match(draft, /увеличь порцию каши или пасты, что уже была, или добавь, если её не было/, "legacy carb-naming rule aligned to increase-or-add");
 
 // --- Grushevskaya Пункт 2: drop "крахмалистое" for natural language -----------
 assert.match(draft, /«крахмалистый\/крахмалистое\/крахмалистые\/крахмал» НЕ использовать НИГДЕ/, "must ban крахмалистый everywhere");
