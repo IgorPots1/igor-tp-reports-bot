@@ -508,6 +508,14 @@ async function persistScannedRaceEvents(rows: RaceRow[]): Promise<void> {
       .eq("student_id", slug)
       .maybeSingle();
     if (studentError || !student?.id) {
+      // Task 10d (Bug в): a scanned race silently vanished here when its scanner
+      // slug didn't resolve to a nutrition student (Надя's case). Don't change the
+      // skip — just make it visible so a missing race is diagnosable, not invisible.
+      console.warn(
+        `[tp-races] skip race ${eventDate} «${readStringValue(row.event_title) ?? "?"}»: ` +
+          `student slug "${slug}" not found in trainingpeaks_students` +
+          (studentError ? ` (${studentError.message})` : "")
+      );
       continue;
     }
     const { error: upsertError } = await supabase.from("trainingpeaks_race_events").upsert(

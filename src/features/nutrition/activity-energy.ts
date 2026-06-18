@@ -31,3 +31,24 @@ export function resolveNutritionActivityCoefByTitle(title: string | null | undef
   }
   return null;
 }
+
+// Task 10d (Bug б): a day can hold MORE than one session (e.g. an easy run plus a
+// strength workout). The day TYPE is decided elsewhere (primary session only), but
+// EXPENDITURE must count every session — otherwise a run+strength day is
+// under-credited and maintenance/EA come out too low. Each session is estimated by
+// its OWN method/intensity (do NOT add durations under one coefficient — that would
+// put a run's coef on the strength minutes or vice versa), then summed. Single
+// source of truth so the review path and the plan path never drift (урок #3).
+export function sumDaySessionsExpenditureKcal<S>(
+  sessions: readonly S[],
+  estimateOne: (session: S) => number | null
+): number {
+  let total = 0;
+  for (const session of sessions) {
+    const kcal = estimateOne(session);
+    if (typeof kcal === "number" && Number.isFinite(kcal) && kcal > 0) {
+      total += kcal;
+    }
+  }
+  return Math.round(total);
+}

@@ -5,7 +5,10 @@ import type {
   NutritionFoodItem,
 } from "@/features/nutrition/context";
 import { sanitizeNutritionFoodItems } from "@/features/nutrition/context";
-import { resolveNutritionActivityCoefByTitle } from "@/features/nutrition/activity-energy";
+import {
+  resolveNutritionActivityCoefByTitle,
+  sumDaySessionsExpenditureKcal,
+} from "@/features/nutrition/activity-energy";
 import type { NutritionGoalType } from "@/features/nutrition/repository";
 import {
   hasNutritionIntervalWorkoutEvidence,
@@ -280,11 +283,21 @@ export type NutritionMethodologyContext = {
   }>;
 };
 
+type WorkoutSessionContext = {
+  type: NutritionTrainingType;
+  title: string;
+  durationHours: number | null;
+  distanceKm: number | null;
+};
+
 type WorkoutContextByDate = {
   date: string;
   title: string;
   type: NutritionTrainingType;
   secondaryTitles: string[];
+  // Task 10d (Bug б): every session of the day (run, strength, …). The day type is
+  // still the primary's (below), but expenditure sums over ALL of these.
+  sessions: WorkoutSessionContext[];
   longRunSource: NutritionLongRunSource;
   longRunConfidence: "high" | "medium" | "low";
   description: string | null;
@@ -607,6 +620,14 @@ function buildWorkoutContextByDate(week: NutritionTrainingPeaksWeekContext): Map
       title: mergeWorkoutTitlesForDay(sessions.map((session) => session.title)),
       type: effectiveType,
       secondaryTitles: sorted.slice(1).map((session) => session.title),
+      // All sessions for expenditure summation (Bug б). Each keeps its own type/
+      // duration so a run+strength day costs run-energy + strength-energy.
+      sessions: sessions.map((session) => ({
+        type: session.type,
+        title: session.title,
+        durationHours: session.durationHours,
+        distanceKm: session.distanceKm,
+      })),
       longRunSource,
       longRunConfidence: resolveNutritionLongRunConfidence(longRunSource),
       description: primary.description,
@@ -654,6 +675,30 @@ const NUTRITION_EXERCISE_KCAL_PER_KG_PER_HOUR: Record<NutritionTrainingType, num
   unknown: 9,
 };
 
+// Energy for ONE session, by its own intensity. Long runs use distance (≈ km × bw)
+// when available, else duration × the long-run coefficient. Returns null when the
+// session has neither duration nor usable distance (cannot estimate it).
+function estimateSessionEnergyKcal(session: WorkoutSessionContext, bw: number): number | null {
+  // Task 10d (Bug 2): expenditure scales with INTENSITY, not just duration.
+  if (
+    (session.type === "long_run" || session.type === "long_endurance") &&
+    session.distanceKm !== null &&
+    session.distanceKm > 0
+  ) {
+    return Math.round(session.distanceKm * bw);
+  }
+  if (session.durationHours !== null && session.durationHours > 0) {
+    // Activity-specific coefficient (walk/hike/tennis/padel/bike/swim/strength) wins
+    // over the run-intensity default, so a non-run session is costed correctly.
+    const perKgPerHour =
+      resolveNutritionActivityCoefByTitle(session.title) ??
+      NUTRITION_EXERCISE_KCAL_PER_KG_PER_HOUR[session.type] ??
+      9;
+    return Math.round(session.durationHours * bw * perKgPerHour);
+  }
+  return null;
+}
+
 function estimateExerciseEnergyKcal(input: {
   workout: WorkoutContextByDate | null;
   bodyweightKg: number | null;
@@ -668,33 +713,27 @@ function estimateExerciseEnergyKcal(input: {
     return { exerciseEnergyKcal: null, exerciseEnergySource: "missing" };
   }
   const bw = input.bodyweightKg;
-  // Task 10d (Bug 2): expenditure scales with INTENSITY, not just duration.
-  // Intervals/tempo burn more per hour than an easy jog of the same length.
-  // Long runs use distance (≈ km × bw) when available, else duration × the
-  // long-run coefficient (fixes the prior null when distance was missing).
-  if (
-    (input.workout.type === "long_run" || input.workout.type === "long_endurance") &&
-    input.workout.distanceKm !== null &&
-    input.workout.distanceKm > 0
-  ) {
-    return {
-      exerciseEnergyKcal: Math.round(input.workout.distanceKm * bw),
-      exerciseEnergySource: "estimated_by_duration_or_distance",
-    };
+  // Task 10d (Bug б): sum every session of the day (run + strength + …), each by
+  // its own intensity, so a multi-session day isn't under-credited. A single-session
+  // day is byte-identical to the previous primary-only estimate.
+  const sessions =
+    input.workout.sessions.length > 0
+      ? input.workout.sessions
+      : [
+          {
+            type: input.workout.type,
+            title: input.workout.title,
+            durationHours: input.workout.durationHours,
+            distanceKm: input.workout.distanceKm,
+          },
+        ];
+  const estimable = sessions.some((session) => estimateSessionEnergyKcal(session, bw) !== null);
+  if (!estimable) {
+    // Sessions exist but none has duration/distance — same "missing" as before.
+    return { exerciseEnergyKcal: null, exerciseEnergySource: "missing" };
   }
-  if (input.workout.durationHours !== null && input.workout.durationHours > 0) {
-    // Activity-specific coefficient (walk/hike/tennis/padel/bike/swim/strength) wins
-    // over the run-intensity default, so a non-run session is costed correctly.
-    const perKgPerHour =
-      resolveNutritionActivityCoefByTitle(input.workout.title) ??
-      NUTRITION_EXERCISE_KCAL_PER_KG_PER_HOUR[input.workout.type] ??
-      9;
-    return {
-      exerciseEnergyKcal: Math.round(input.workout.durationHours * bw * perKgPerHour),
-      exerciseEnergySource: "estimated_by_duration_or_distance",
-    };
-  }
-  return { exerciseEnergyKcal: null, exerciseEnergySource: "missing" };
+  const total = sumDaySessionsExpenditureKcal(sessions, (session) => estimateSessionEnergyKcal(session, bw));
+  return { exerciseEnergyKcal: total, exerciseEnergySource: "estimated_by_duration_or_distance" };
 }
 
 function ffmCoefficientForSex(sex: "female" | "male" | "unknown"): number {

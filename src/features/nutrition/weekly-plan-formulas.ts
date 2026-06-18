@@ -29,7 +29,10 @@ import {
   resolveNutritionLongRunSource,
   type NutritionLongRunSource,
 } from "@/features/nutrition/long-run";
-import { resolveNutritionActivityCoefByTitle } from "@/features/nutrition/activity-energy";
+import {
+  resolveNutritionActivityCoefByTitle,
+  sumDaySessionsExpenditureKcal,
+} from "@/features/nutrition/activity-energy";
 import type { NutritionGoalType, NutritionSex } from "@/features/nutrition/repository";
 
 export type { NutritionLongRunSource };
@@ -1022,12 +1025,28 @@ export function buildNutritionNextWeekPlan(params: {
       previousWeekTargets.byDayType[trainingType] ??
       (trainingType === "race" ? previousWeekTargets.byDayType.hard ?? null : null) ??
       previousWeekTargets.overall;
-    const dayExerciseKcal = planDayExerciseKcal(
-      trainingType,
-      primaryWorkout?.durationHours ?? null,
-      primaryWorkout?.distanceKm ?? null,
-      primaryWorkout?.title ?? null
-    );
+    // Task 10d (Bug б): count EVERY session of the day, not just the primary, so a
+    // run+strength day isn't under-credited. The day type stays the primary's; the
+    // primary session keeps its (pre_long-adjusted) trainingType, each secondary
+    // uses its own dayType. Single-session and zero-workout days are byte-identical
+    // to the previous primary-only estimate (the latter preserves the pre_long
+    // phantom-expenditure on a no-workout day-before-long-run).
+    const dayExerciseKcal =
+      dayWorkouts.length > 0
+        ? sumDaySessionsExpenditureKcal(dayWorkouts, (workout) =>
+            planDayExerciseKcal(
+              workout === primaryWorkout ? trainingType : workout.dayType,
+              workout.durationHours,
+              workout.distanceKm,
+              workout.title
+            )
+          )
+        : planDayExerciseKcal(
+            trainingType,
+            primaryWorkout?.durationHours ?? null,
+            primaryWorkout?.distanceKm ?? null,
+            primaryWorkout?.title ?? null
+          );
     const practicalTarget = resolveDayTarget(trainingType, idealTarget, baseline, dayExerciseKcal, raceWeekDates.has(date));
 
     let source: NutritionPlanSource = "unknown";

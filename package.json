@@ -195,6 +195,7 @@
     "check:nutrition-context-builder": "npx tsx scripts/check-nutrition-context-builder.ts",
     "check:nutrition-methodology": "npx tsx scripts/check-nutrition-methodology.ts",
     "check:nutrition-energy-availability": "npx tsx scripts/check-nutrition-energy-availability.ts",
+    "check:nutrition-two-workouts-expenditure": "npx tsx scripts/check-nutrition-two-workouts-expenditure.ts",
     "check:nutrition-macro-guardrails": "npx tsx scripts/check-nutrition-macro-guardrails.ts",
     "check:nutrition-review-comment-quality": "npx tsx scripts/check-nutrition-review-comment-quality.ts",
     "check:nutrition-review-narrative-quality": "npx tsx scripts/check-nutrition-review-narrative-quality.ts",
