@@ -216,7 +216,7 @@ async function run(): Promise<void> {
     /Комментарий:|можно дать|указать факт|hint|source_quality|по качеству данных здесь возможна неполная картина|по этому дню вывод делаю осторожно|данных может быть чуть меньше|Данные по питанию за день неполные|вывод короткий|день без тренировки в план тренировок|день без тренировки в TrainingPeaks|Собрала|\*\*|---|—|–|TrainingPeaks|FatSecret/,
     "combined message must not leak internal hints or markdown separators"
   );
-  assert.equal((ready.athleteMessageDraft ?? "").match(/Анна, привет!/g)?.length, 1, "combined message must have one greeting");
+  assert.equal((ready.athleteMessageDraft ?? "").match(/Привет!/g)?.length, 1, "combined message must have exactly one (name-less) greeting");
   assert.doesNotMatch(ready.athleteMessageDraft ?? "", /Силовая —/, "strength block must not show without strength day");
 
   const nadezhdaGreeting = buildDerivedNutritionCombinedMessage({
@@ -225,8 +225,8 @@ async function run(): Promise<void> {
     formality: "ty",
     studentName: "Nadezhda Ponomareva",
   });
-  assert.match(nadezhdaGreeting.athleteMessageDraft ?? "", /^Надя, привет!/);
-  assert.doesNotMatch(nadezhdaGreeting.athleteMessageDraft ?? "", /Nadezhda Ponomareva, привет/);
+  assert.match(nadezhdaGreeting.athleteMessageDraft ?? "", /^Привет!/, "greeting is name-less");
+  assert.doesNotMatch((nadezhdaGreeting.athleteMessageDraft ?? "").split("\n")[0] ?? "", /Надя|Nadezhda/, "greeting line carries no name");
 
   assert.equal(formatNutritionAthleteGreetingName({ studentName: "Polyakova Anastasia" }), "Анастасия");
   const polyakovaGreeting = buildDerivedNutritionCombinedMessage({
@@ -235,8 +235,8 @@ async function run(): Promise<void> {
     formality: "ty",
     studentName: "Polyakova Anastasia",
   });
-  assert.match(polyakovaGreeting.athleteMessageDraft ?? "", /^Анастасия, привет!/);
-  assert.doesNotMatch(polyakovaGreeting.athleteMessageDraft ?? "", /^Polyakova, привет!/);
+  assert.match(polyakovaGreeting.athleteMessageDraft ?? "", /^Привет!/, "greeting is name-less");
+  assert.doesNotMatch((polyakovaGreeting.athleteMessageDraft ?? "").split("\n")[0] ?? "", /Анастасия|Polyakova/, "greeting line carries no name");
   assert.doesNotMatch(polyakovaGreeting.athleteMessageDraft ?? "", /\bCycling\b/);
 
   const noNameGreeting = buildDerivedNutritionCombinedMessage({
@@ -295,7 +295,9 @@ async function run(): Promise<void> {
   assert.match(methodologyCombined.athleteMessageDraft ?? "", /🔹 Понедельник \(01\.06\) · день отдыха/);
   assert.doesNotMatch(
     methodologyCombined.athleteMessageDraft ?? "",
-    /Комментарий:|можно дать|103\.58|206\.93|Привет!/,
+    // NB: "Привет!" is now the legitimate name-less greeting, so it's no longer a
+    // leakage marker — the distinctive stored-draft junk below still pins leakage.
+    /Комментарий:|можно дать|103\.58|206\.93/,
     "methodology daily_analysis must render polished combined lines without stored review draft leakage"
   );
   assert.equal(methodologyCombined.warnings.length, 0, "methodology daily_analysis must not warn about missing canonical facts");

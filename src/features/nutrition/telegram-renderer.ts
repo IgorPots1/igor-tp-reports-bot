@@ -235,15 +235,10 @@ export function cleanupPlainText(input: string): string {
     .trim();
 }
 
-function resolveGreeting(formality: TrainingPeaksTelegramFormality, athleteName: string): string {
-  const trimmed = athleteName.trim();
-  if (!trimmed) {
-    return formality === "vy" ? "Здравствуйте!" : "Привет!";
-  }
-  if (formality === "vy") {
-    return `Здравствуйте, ${trimmed}!`;
-  }
-  return `${trimmed}, привет!`;
+// Greeting without the athlete's name — clean and formality-aware (profile ты/вы,
+// from the resolved communication profile). Coach decision: drop the name entirely.
+function resolveGreeting(formality: TrainingPeaksTelegramFormality): string {
+  return formality === "vy" ? "Здравствуйте!" : "Привет!";
 }
 
 function formatPlanFocusSectionHeading(mode: NutritionPlanTargetWeekMode): string {
@@ -852,7 +847,7 @@ export function renderNutritionTelegramMessage(input: NutritionTelegramRendererI
   // fits the 4096-char cap: part 1 = last-week review (header + days + week
   // summary), part 2 = next-week plan (focus + mini-table + pre-training memo).
   const reviewLines = [
-    resolveGreeting(input.formality, input.athleteName),
+    resolveGreeting(input.formality),
     ...(openingNote ? ["", openingNote] : []),
     "",
     input.formality === "vy"

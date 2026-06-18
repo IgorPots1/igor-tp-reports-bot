@@ -245,6 +245,27 @@ function pickFoodMacros(values: number[]): {
   };
 }
 
+// Корявые слова (1a, only-safe): repair FatSecret glue artifacts in a parsed food
+// name. A lost space before a capitalized word right after a short preposition
+// ("Bbq сПенне" → "с Пенне", "сМолодым" → "с Молодым"). Deliberately narrow — only
+// single prepositions before a Cyrillic capital — so brand CamelCase (ВкусВилл) and
+// CAPS words are NOT touched (brand/quality cleanup is the model's job, per prompt).
+// Also truncate the 120-char cap at a word boundary (no "Молодым Карт[офелем]" stub).
+const NUTRITION_GLUED_PREPOSITION_RE = /(^|\s)(с|со|в|во|из|на|по|от|до|за|для|при|у|к|о|об)([А-ЯЁ])/gu;
+function tidyParsedFoodName(raw: string): string {
+  const cleaned = raw
+    .replace(/[.…]{2,}/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(NUTRITION_GLUED_PREPOSITION_RE, "$1$2 $3")
+    .trim();
+  if (cleaned.length <= 120) {
+    return cleaned;
+  }
+  const cut = cleaned.slice(0, 120);
+  const lastSpace = cut.lastIndexOf(" ");
+  return (lastSpace > 60 ? cut.slice(0, lastSpace) : cut).trim();
+}
+
 function parseFatSecretFoodItemLine(line: string, section: NutritionMealSection | null): NutritionFoodItem | null {
   if (isFatSecretTotalsLine(line) || resolveFatSecretMealSection(line)) {
     return null;
@@ -253,11 +274,7 @@ function parseFatSecretFoodItemLine(line: string, section: NutritionMealSection 
   if (!firstNumberMatch || firstNumberMatch.index === undefined) {
     return null;
   }
-  const rawName = line.slice(0, firstNumberMatch.index);
-  const name = rawName
-    .replace(/[.…]{2,}/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const name = tidyParsedFoodName(line.slice(0, firstNumberMatch.index));
   if (name.length < 2 || !/[a-zа-яё]/i.test(name)) {
     return null;
   }
@@ -270,7 +287,7 @@ function parseFatSecretFoodItemLine(line: string, section: NutritionMealSection 
   }
   const macros = pickFoodMacros(values);
   return {
-    name: name.slice(0, 120),
+    name,
     section,
     kcal: macros.kcal,
     fatG: macros.fatG,

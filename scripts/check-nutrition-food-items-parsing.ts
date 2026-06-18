@@ -24,6 +24,8 @@ function run(): void {
     "Ужин",
     "Пицца Тестовая 600 30 12 60 3 5 25 800 40 300",
     "Сыр Домашний Тестовый 200 16 9 2 0 1 12 300 50 100",
+    "Курица Bbq сПенне 500 10 1 60 0 0 40 100 0 200",
+    "ВкусВилл Скир 100 2 1 5 0 0 10 50 0 100",
     "Перекус/Другое",
     "Мороженое Тестовое 250 14 8 28 0 24 5 80 30 150",
     "Банан Тестовый 90 0 23 1",
@@ -81,6 +83,14 @@ function run(): void {
   assert(!eveningFatFoods.includes("Овсянка Тестовая"), "breakfast item leaked into evening pick");
   assert.deepEqual(pickNotableFoods(undefined, "fatG"), [], "undefined items -> []");
   assert.deepEqual(pickNotableFoods([], "fatG"), [], "empty items -> []");
+
+  // --- Корявые слова (1a): deglue lost-space artifacts ("сПенне" → "с Пенне") ---
+  assert.ok(
+    byName.has("Курица Bbq с Пенне"),
+    `«сПенне» должно расклеиться в «с Пенне», имена: ${JSON.stringify([...byName.keys()])}`
+  );
+  // Brand CamelCase must NOT be touched by code (brand cleanup is the prompt's job).
+  assert.ok(byName.has("ВкусВилл Скир"), "бренд CamelCase «ВкусВилл» код НЕ трогает (расклейка только одиночных предлогов)");
 
   // --- Old rows without items still parse cleanly ------------------------
   const legacyWeek = [
