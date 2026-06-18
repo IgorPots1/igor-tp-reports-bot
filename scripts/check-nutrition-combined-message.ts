@@ -366,7 +366,11 @@ async function run(): Promise<void> {
   assert.equal(missingPlan.athleteMessageDraft, null);
   assert.equal(missingPlan.renderResult.ok, false);
 
-  const blockedByReview = buildDerivedNutritionCombinedMessage({
+  // Coach policy: safety signals never hide the athlete text. Even a PRE-POLICY
+  // stored row (legacy status blocked_safety + hard_flags + safety.blocked) must
+  // render WITHOUT a regeneration — only manual_review_required:* reasons, which are
+  // advisory now, are present, so the message is NOT blocked.
+  const staleReviewBlock = buildDerivedNutritionCombinedMessage({
     review: {
       ...review,
       status: "blocked_safety",
@@ -376,20 +380,17 @@ async function run(): Promise<void> {
     formality: "ty",
     studentName: "Анна",
   });
-  assert.equal(blockedByReview.status, "blocked_safety");
-  assert.equal(blockedByReview.athleteMessageDraft, null);
+  assert.notEqual(staleReviewBlock.status, "blocked_safety", "legacy blocked_safety review must NOT hide text anymore");
+  assert.ok(staleReviewBlock.athleteMessageDraft, "athlete text renders despite stale safety flags");
 
-  const blockedByPlan = buildDerivedNutritionCombinedMessage({
+  const stalePlanBlock = buildDerivedNutritionCombinedMessage({
     review,
-    plan: buildPlan({
-      status: "blocked_safety",
-      draft: null,
-    }),
+    plan: buildPlan({ status: "blocked_safety", draft: null }),
     formality: "ty",
     studentName: "Анна",
   });
-  assert.equal(blockedByPlan.status, "blocked_safety");
-  assert.equal(blockedByPlan.athleteMessageDraft, null);
+  assert.notEqual(stalePlanBlock.status, "blocked_safety", "legacy blocked_safety plan must NOT hide text anymore");
+  assert.ok(stalePlanBlock.athleteMessageDraft, "athlete text renders despite stale plan safety status");
 
   const noCanonicalPlan = buildDerivedNutritionCombinedMessage({
     review,

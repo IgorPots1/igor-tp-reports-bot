@@ -1100,15 +1100,18 @@ function hasTargetWeekTrainingContext(nextWeekPlan: NutritionNextWeekPlan | null
   return Array.isArray(workouts) && workouts.length > 0;
 }
 
+// Safety signals (very-low kcal/carb/weight, рпп/medical notes) are ADVISORY now
+// (coach decision) — they must never hide the athlete text. These derive into
+// "manual_review_required:<flag>" reasons; we ignore them when deciding to block.
+// This also unblocks PRE-POLICY stored rows (status blocked_safety / safety.blocked /
+// baked manual_review_required reasons) WITHOUT a regeneration. Block only on a
+// genuine non-safety do-not-send reason the model itself emitted.
+function isSafetyDerivedReason(reason: string): boolean {
+  return reason.trim().startsWith("manual_review_required:");
+}
+
 function isReviewBlockedSafety(review: NutritionWeeklyAnalysis): boolean {
-  // Coach decision (Igor): very-low energy/carb/weight signals no longer hard-block;
-  // they become an honest note inside the normal review. A review is "blocked" only
-  // if the model itself flagged do-not-send reasons. (safety hard_flags are now a
-  // non-blocking coach record, not a block.)
-  if (review.status === "blocked_safety") {
-    return true;
-  }
-  return extractReviewDoNotSendReasons(review).length > 0;
+  return extractReviewDoNotSendReasons(review).some((reason) => !isSafetyDerivedReason(reason));
 }
 
 /** The model failed to generate this review — it must not be sent, only regenerated. */
@@ -1120,16 +1123,10 @@ function isReviewAwaitingGeneration(review: NutritionWeeklyAnalysis): boolean {
 }
 
 function isPlanBlockedSafety(plan: NutritionWeeklyPlan): boolean {
-  // Coach decision (Igor): safety hard_flags are now a non-blocking coach record,
-  // not a plan block. The plan is "blocked" only on an explicit blocked_safety
-  // status or model do-not-send reasons. (safety.blocked is always false now.)
-  if (plan.status === "blocked_safety") {
-    return true;
-  }
-  const reasons = extractPlanDoNotSendReasons(plan);
-  const safety = asObject(plan.safetyFlags);
-  const blocked = typeof safety.blocked === "boolean" ? safety.blocked : false;
-  return blocked || reasons.length > 0;
+  // Same policy as the review: ignore the legacy blocked_safety status, the stored
+  // safety.blocked flag, and the safety-derived manual_review_required:* reasons —
+  // none of them hide the plan anymore. Block only on a genuine non-safety reason.
+  return extractPlanDoNotSendReasons(plan).some((reason) => !isSafetyDerivedReason(reason));
 }
 
 function hasNeedsReviewStatus(review: NutritionWeeklyAnalysis, plan: NutritionWeeklyPlan): boolean {
