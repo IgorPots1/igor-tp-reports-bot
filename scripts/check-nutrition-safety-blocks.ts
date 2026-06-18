@@ -41,11 +41,13 @@ async function run(): Promise<void> {
     ],
   });
 
-  // Coach decision (Igor): рпп-note + very-low-kcal + rapid weight loss are now
-  // recorded as a non-blocking coach record (hardFlags stay populated) but they
-  // DO NOT hard-block — the week generates like any other student's.
+  // Coach decision (Igor): рпп-note + very-low-kcal + rapid weight loss no longer
+  // hard-block. CRITICAL invariant: hardFlags must be EMPTY — downstream consumers
+  // reconstruct a do-not-send block from hard_flags, so any populated hard flag
+  // re-blocks. Detected signals live in softFlags (advisory, coach still sees them).
   assert.equal(safety.blocked, false, "signals no longer hard-block (coach decision)");
-  assert.ok(safety.hardFlags.length > 0, "signals are still recorded for the coach");
+  assert.equal(safety.hardFlags.length, 0, "hard_flags MUST be empty so nothing reconstructs a block");
+  assert.ok(safety.softFlags.length > 0, "signals recorded as advisory soft flags");
   assert.equal(safety.doNotSendReasons.length, 0, "safety no longer forces do-not-send");
 
   const mockContext: NutritionStudentContext = {
@@ -109,6 +111,11 @@ async function run(): Promise<void> {
 
   const generated = await generateNutritionWeeklyAnalysis({ context: mockContext });
   assert.equal(generated.safety_flags.blocked, false, "generation is not safety-blocked anymore");
+  assert.equal(
+    generated.safety_flags.hard_flags.length,
+    0,
+    "generated hard_flags empty → combined/plan/UI cannot reconstruct manual_review_required:* block"
+  );
   assert.notEqual(generated.status, "blocked_safety", "status is never blocked_safety under the new policy");
 
   const illnessSignals = (await import("@/features/nutrition/athlete-signals")).detectNutritionAthleteReportSignals(

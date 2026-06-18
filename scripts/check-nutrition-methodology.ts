@@ -289,9 +289,11 @@ async function run(): Promise<void> {
     rows: safetyContext.manualMacroRows,
     weightLogs: [],
   });
-  // Coach decision (Igor): signals are recorded but no longer hard-block.
+  // Coach decision (Igor): signals are advisory (softFlags), not hard blocks.
+  // hardFlags MUST be empty — downstream consumers reconstruct a block from it.
   assert.equal(safety.blocked, false);
-  assert.ok(safety.hardFlags.length > 0, "signal still recorded for the coach");
+  assert.equal(safety.hardFlags.length, 0, "hard_flags empty so nothing reconstructs a block");
+  assert.ok(safety.softFlags.length > 0, "signal recorded as advisory soft flag");
   const generatedSafety = await generateNutritionWeeklyAnalysis({ context: safetyContext });
   assert.notEqual(generatedSafety.status, "blocked_safety", "week is no longer safety-blocked");
 

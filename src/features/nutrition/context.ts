@@ -682,15 +682,17 @@ export function buildNutritionSafetyFlags(input: {
     }
   }
 
-  // Coach decision (Igor): these signals no longer HARD-BLOCK the report. The week
-  // generates and the review/plan flow like any other student; nothing auto-sends
-  // (the coach always reviews and sends manually). The detected signals are kept
-  // here as a coach-facing record (warnings) and woven into the review as an honest
-  // note ("в эти дни энергии было критически мало — так повторять нельзя"). Very-low
-  // energy/carb days и быстрая потеря веса разбираются обычным алгоритмом с пометкой.
+  // Coach decision (Igor): these signals no longer HARD-BLOCK the report. CRITICAL:
+  // hardFlags must stay EMPTY here — multiple downstream consumers (combined-message
+  // extractReviewDoNotSendReasons/extractPlanDoNotSendReasons, weekly-plan-generator,
+  // coach-summary, the student-page UI) reconstruct a do-not-send block from
+  // safety.hard_flags. Setting blocked=false / doNotSendReasons=[] is NOT enough —
+  // any populated hard_flags re-blocks. So the detected signals are exposed as
+  // ADVISORY soft flags (coach still sees them; nothing blocks). The very-low-kcal
+  // note reaches the athlete via the dedicated very_low_kcal_days prompt rule.
   return {
-    hardFlags,
-    softFlags,
+    hardFlags: [],
+    softFlags: [...softFlags, ...hardFlags],
     blocked: false,
     doNotSendReasons: [],
   };
