@@ -594,10 +594,22 @@ function buildAllowedNutritionProseNumbers(facts: NutritionDayProseFacts): numbe
     }
   }
   // Plan targets / deficits are coaching orientations — accept exact + rounded to
-  // 5/10 (the rounded "около 350" form). No 25/50 so loose target rounding can't
-  // accidentally admit a distant invented number.
+  // 5/10. Round in BOTH directions (floor AND ceil), not just nearest: the model
+  // legitimately writes "ориентир 310–370" for a 315 band edge (315 floors to 310,
+  // not the nearest 320) and "недобор ~120" for a 114–125 gap. No 25/50 so a distant
+  // invented number still can't slip in (every accepted value stays within 10 of a
+  // real target). Actual diary macros above remain strict (nearest only).
   for (const target of facts.planTargetNumbers ?? []) {
-    add(target, [5, 10]);
+    if (typeof target === "number" && Number.isFinite(target)) {
+      allowed.push(target);
+      for (const step of [5, 10]) {
+        allowed.push(
+          roundToNearestStep(target, step),
+          Math.floor(target / step) * step,
+          Math.ceil(target / step) * step
+        );
+      }
+    }
   }
   return allowed;
 }

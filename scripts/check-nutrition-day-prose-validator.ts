@@ -74,6 +74,27 @@ const baseFacts: NutritionDayProseFacts = {
   assert.ok(hasError(bad, "number_not_in_facts"), "misstated actual (240 vs 233) still caught");
 }
 
+// 2d-bis. Задача г: the model rounds target band edges to "nicer" tens in EITHER
+// direction (315 → "310", not the nearest 320; a 114–125 gap → "~120"). Both must
+// pass now (Maria Turkina case), while a far invented number still fails.
+{
+  const bandFacts: NutritionDayProseFacts = {
+    ...baseFacts,
+    carbsG: 175,
+    planTargetNumbers: [315, 368, 340, 114.45, 140.45, 125.45], // carbsGMin/Max/mid + undershoots
+  };
+  const rounded = validateNutritionDayProse({
+    prose: "Углеводы 175 г при ориентире 310–370 г для длительной — недобор около 120 г.",
+    facts: bandFacts,
+  });
+  assert.ok(!hasError(rounded, "number_not_in_facts"), "310 (floor of 315) and ~120 (gap round) must pass");
+  const wild = validateNutritionDayProse({
+    prose: "Ориентир аж 250 г, всё ок.", // 250 is >10 from every target → still invented
+    facts: bandFacts,
+  });
+  assert.ok(hasError(wild, "number_not_in_facts"), "a number >10 from any target is still blocked");
+}
+
 // 2e. Task 4: a real diary fact rounded to a whole number passes, BUT an invented
 // number absent from the day's facts is still blocked — both in one test (the
 // false-cut fix must not open the door to invented numbers).
