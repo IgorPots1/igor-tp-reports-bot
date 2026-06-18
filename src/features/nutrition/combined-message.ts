@@ -52,6 +52,7 @@ type CanonicalDailyFact = {
   athlete_prose?: unknown;
   target?: unknown;
   goal_day_target?: unknown;
+  items_notable?: unknown;
 };
 
 export type NutritionCombinedMessageResult = {
@@ -251,6 +252,9 @@ function normalizeStoredDailyFactItem(raw: unknown): CanonicalDailyFact | null {
     // Task 10d (Bug 1): carry the goal "deficit line" through normalization so the
     // render-time validator allows its numbers and the goal-aware fallback can fire.
     goal_day_target: source.goal_day_target ?? item.goal_day_target,
+    // Часть А: carry items_notable (with per-item carb_class) so the render-time
+    // carb_quality_mismatch guard can see which foods are fast/neutral.
+    items_notable: source.items_notable ?? item.items_notable,
   };
 }
 
@@ -364,6 +368,11 @@ export function buildNutritionDayProseFacts(item: Record<string, unknown>): Nutr
     planTargetNumbers.push(Math.round(preWorkoutCarbs / 10) * 10);
     planTargetNumbers.push(Math.round(preWorkoutCarbs / 5) * 5);
   }
+  // Часть А: collect this day's carb foods that code classified FAST, so the
+  // carb_quality_mismatch guard can catch the prose calling any of them
+  // "медленный". Names come from items_notable (built deterministically from PDF).
+  // Only fast — see the guard comment for why neutral is deliberately excluded.
+  const carbFastFoods = collectCarbFastFoods(item.items_notable);
   return {
     kcal,
     proteinG: protein,
@@ -374,7 +383,48 @@ export function buildNutritionDayProseFacts(item: Record<string, unknown>): Nutr
     planTargetNumbers,
     nutritionStatus,
     findings,
+    carbFastFoods,
   };
+}
+
+function collectCarbFastFoods(itemsNotable: unknown): string[] {
+  const notable = asObject(itemsNotable);
+  if (!notable) {
+    return [];
+  }
+  const names = new Set<string>();
+  const consider = (name: unknown, carbClass: unknown): void => {
+    if (typeof name !== "string" || name.trim().length < 2) {
+      return;
+    }
+    if (carbClass === "fast") {
+      names.add(name.trim());
+    }
+  };
+  // carb_foods: [{ name, carb_class }]
+  if (Array.isArray(notable.carb_foods)) {
+    for (const food of notable.carb_foods) {
+      const obj = asObject(food);
+      if (obj) {
+        consider(obj.name, obj.carb_class);
+      }
+    }
+  }
+  // by_section[*]: [{ name, carb_class, ... }]
+  const bySection = asObject(notable.by_section);
+  if (bySection) {
+    for (const sectionItems of Object.values(bySection)) {
+      if (Array.isArray(sectionItems)) {
+        for (const entry of sectionItems) {
+          const obj = asObject(entry);
+          if (obj) {
+            consider(obj.name, obj.carb_class);
+          }
+        }
+      }
+    }
+  }
+  return [...names];
 }
 
 function extractMacroGuardrailStatuses(macroGuardrails: unknown): MacroGuardrailStatuses {

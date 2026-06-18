@@ -46,7 +46,11 @@ function normalizeFoodName(name: string): string {
  * sections. Pure helper: returns cleaned, deduped display names only. Empty or
  * missing items yield []. Daily totals are never derived from this.
  */
-export function pickNotableFoods(
+// Shared selection core: pick the most notable food items by a macro (share
+// threshold + dedupe by normalized name + limit). Returns the items themselves
+// (with grams) so callers that need either the name OR the gram value build on
+// ONE selection algorithm — no duplicated logic that could drift (урок #3).
+function selectNotableFoodItems(
   items: NutritionFoodItem[] | undefined,
   macro: "fatG" | "carbsG" | "kcal",
   opts?: {
@@ -54,7 +58,7 @@ export function pickNotableFoods(
     limit?: number;
     minShare?: number;
   }
-): string[] {
+): NutritionFoodItem[] {
   if (!items || items.length === 0) {
     return [];
   }
@@ -76,7 +80,7 @@ export function pickNotableFoods(
   const threshold = totalKnown > 0 ? totalKnown * minShare : 0;
 
   const sorted = [...scoped].sort((a, b) => (b[macro] ?? 0) - (a[macro] ?? 0));
-  const names: string[] = [];
+  const picked: NutritionFoodItem[] = [];
   const seen = new Set<string>();
   for (const item of sorted) {
     if ((item[macro] ?? 0) < threshold) {
@@ -91,12 +95,36 @@ export function pickNotableFoods(
       continue;
     }
     seen.add(key);
-    names.push(name);
-    if (names.length >= limit) {
+    picked.push(item);
+    if (picked.length >= limit) {
       break;
     }
   }
-  return names;
+  return picked;
+}
+
+export function pickNotableFoods(
+  items: NutritionFoodItem[] | undefined,
+  macro: "fatG" | "carbsG" | "kcal",
+  opts?: {
+    sections?: ReadonlyArray<NutritionMealSection>;
+    limit?: number;
+    minShare?: number;
+  }
+): string[] {
+  return selectNotableFoodItems(items, macro, opts).map((item) => normalizeFoodName(item.name));
+}
+
+// Same selection as pickNotableFoods("carbsG"), but keeps the per-item carb grams
+// (from the PDF) so the caller can attach a deterministic fast/slow carb class.
+export function pickNotableCarbItemsWithGrams(
+  items: NutritionFoodItem[] | undefined,
+  opts?: { limit?: number; minShare?: number }
+): Array<{ name: string; carbsG: number }> {
+  return selectNotableFoodItems(items, "carbsG", opts).map((item) => ({
+    name: normalizeFoodName(item.name),
+    carbsG: typeof item.carbsG === "number" ? item.carbsG : 0,
+  }));
 }
 
 /**

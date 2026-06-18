@@ -21,7 +21,12 @@ import {
   type NutritionPlanDayType,
 } from "@/features/nutrition/weekly-plan-formulas";
 import type { NutritionPlanTargetWeekMode } from "@/features/nutrition/plan-week-policy";
-import { EVENING_SECTIONS, pickNotableFoods } from "@/features/nutrition/narrative-composer";
+import {
+  EVENING_SECTIONS,
+  pickNotableFoods,
+  pickNotableCarbItemsWithGrams,
+} from "@/features/nutrition/narrative-composer";
+import { classifyCarbItem, CARB_CONTRIBUTOR_MIN_G, type CarbClass } from "@/features/nutrition/carb-quality";
 import { validateNutritionDayProse } from "@/features/nutrition/telegram-renderer";
 import { enqueueOpenAiCall } from "@/features/nutrition/nutrition-generation-queue";
 import {
@@ -397,6 +402,9 @@ type NutritionNarrativeNotableItem = {
   name: string;
   fat_contributor: boolean;
   carb_contributor: boolean;
+  // Deterministic carb-speed class (code-owned, from the PDF item carbs). The
+  // model may only repeat this; it must NEVER call a fast/neutral item "slow".
+  carb_class: CarbClass;
 };
 
 function shiftIsoDate(isoDate: string, days: number): string {
@@ -568,7 +576,7 @@ export function computePreWorkoutCarbsFromDiary(
  */
 function buildNotableItemsForNarrative(items: NutritionFoodItem[] | undefined): {
   by_section: Partial<Record<NutritionMealSection, NutritionNarrativeNotableItem[]>>;
-  carb_foods: string[];
+  carb_foods: Array<{ name: string; carb_class: CarbClass }>;
   evening_fat_foods: string[];
 } {
   const safeItems = Array.isArray(items) ? items : [];
@@ -583,7 +591,8 @@ function buildNotableItemsForNarrative(items: NutritionFoodItem[] | undefined): 
       .map((item) => ({
         name: item.name.trim().slice(0, 120),
         fat_contributor: typeof item.fatG === "number" && item.fatG >= 10,
-        carb_contributor: typeof item.carbsG === "number" && item.carbsG >= 20,
+        carb_contributor: typeof item.carbsG === "number" && item.carbsG >= CARB_CONTRIBUTOR_MIN_G,
+        carb_class: classifyCarbItem(item.name, item.carbsG),
       }));
     if (sectionItems.length > 0) {
       bySection[section] = sectionItems;
@@ -591,7 +600,12 @@ function buildNotableItemsForNarrative(items: NutritionFoodItem[] | undefined): 
   }
   return {
     by_section: bySection,
-    carb_foods: pickNotableFoods(safeItems, "carbsG", { limit: 4 }),
+    // Each primary carb food carries its deterministic class so the model never
+    // has to guess fast vs slow (the root of the банан/булочка "медленные" bug).
+    carb_foods: pickNotableCarbItemsWithGrams(safeItems, { limit: 4 }).map((food) => ({
+      name: food.name,
+      carb_class: classifyCarbItem(food.name, food.carbsG),
+    })),
     evening_fat_foods: pickNotableFoods(safeItems, "fatG", { sections: EVENING_SECTIONS, limit: 3 }),
   };
 }
@@ -1164,7 +1178,8 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "Перед длительной/интервальной/ключевой работой (day_role=key/hard/pre_long или nextDayTrainingType ключевой) прямо скажи догрузиться углеводами накануне и в день работы.",
     "Еду называй из items_notable текущего дня. Углеводную называй свободно. Жирную/сладкую вечером называй ученику и связывай «жиры пошли вместо углеводов под нагрузку» ТОЛЬКО при fat_policy=normal; при coach_only/soften/suppress_athlete жир ученику не выноси.",
     "СВОЙ РЕЖИМ (student.own_regime=true): у ученицы свой режим питания, согласованный отдельно. НЕ оценивай калорийность и жир как проблему — не пиши «многовато калорий», «калорий перебор», «жир высоковат», «недобор», не выводи дефицит/профицит. Числа можно называть нейтрально (констатация), тон поддерживающий, «держим твой режим». Углеводы под тренировку и белок обсуждать можно как обычно (это про топливо, не про «много/мало калорий»). Жир в текст ученику не выноси (он на coach_only). Это НЕ снимает safety: реальные клинические сигналы идут тренеру как обычно.",
-    "ЯЗЫК про углеводы: слово «крахмалистый/крахмалистое/крахмалистые/крахмал» НЕ использовать НИГДЕ — ни в day_prose, ни в athlete_message_draft, ни в coach_summary_text, ни в next_week_plan_text. Тренер так не говорит. Всегда заменяй на «медленные углеводы» с примерами (рис, паста, картофель, гречка, хлеб) ИЛИ просто называй продукты. Где уместно различай медленные (крупы/паста/картофель/хлеб) и быстрые (сладкое/выпечка) углеводы — это понятнее ученику.",
+    "ЯЗЫК про углеводы: слово «крахмалистый/крахмалистое/крахмалистые/крахмал» НЕ использовать НИГДЕ — ни в day_prose, ни в athlete_message_draft, ни в coach_summary_text, ни в next_week_plan_text. Тренер так не говорит. Заменяй на «медленные углеводы» (с примерами) ИЛИ просто называй продукты.",
+    "КЛАСС УГЛЕВОДА БЕРИ ИЗ ФАКТОВ, НЕ ПО НАИТИЮ: у каждого продукта в items_notable (by_section[*] и carb_foods) код проставил поле carb_class — это источник правды. Правила: carb_class=slow → можно называть «медленный углевод»; carb_class=fast → это БЫСТРЫЙ углевод, «медленным» НЕ называть НИКОГДА (банан, белый хлеб, булочка, лаваш, выпечка, печенье, сладкое, сок — быстрые, даже если дали много углеводов); carb_class=neutral → просто «углеводы», БЕЗ прилагательного «медленный/быстрый» (белый рис, картофель, обычная паста); carb_class=not_carb_base → НЕ углеводная основа: не зачитывай в углеводную цель и не хвали как источник углеводов под нагрузку (борщ, суп, салат, малоуглеводное). Не придумывай класс для продукта, которого нет в items_notable. Без стыда: быстрый углевод не ругай — просто не зови его медленным.",
     "КОЛИЧЕСТВО углеводов, не «фрукт=углевод»: малоуглеводные фрукты и ягоды (черешня, клубника, арбуз и т.п.) — это вода/витамины, углеводов в них МАЛО. НЕ называй их «хорошим источником углеводов» / углеводной базой под нагрузку. Можно отметить нейтрально (приятно, витамины), но топливо под тренировку дают крупы/паста/картофель/хлеб/банан, а не ягоды. Банан/сухофрукты — ок как углеводы (но сухофрукты для худеющего не приоритет, см. правило lose).",
     "КАЧЕСТВО УГЛЕВОДОВ — это ПРИНЦИП, применяй к ЛЮБОМУ продукту (не по списку). ХВАЛИ / называй удачными только ЦЕЛЬНЫЕ источники: крупы, рис, гречка, картофель, паста, хлеб, бобовые, фрукты, овощи. НЕ называй «хорошим/правильным продуктом» кондитерку, сладости, мороженое, конфеты, печенье, халву, выпечку с сахаром, круассаны, газировку, фастфуд, алкоголь/пиво (в т.ч. безалкогольное) — ДАЖЕ если они дали много углеводов: углеводы засчитываются в числа дня, но источник хвалить нельзя. Тон ПОДДЕРЖИВАЮЩИЙ, НЕ стыдящий: за сладкое/выпечку/фастфуд НЕ упрекай и не морализируй — просто не хвали; максимум один раз мягко «в следующий раз эти углеводы лучше взять из крупы/риса/фрукта». Никакой вины и «ай-ай».",
     "СОВЕТ ОТ РЕАЛЬНОЙ ЕДЫ (не шаблон): прежде чем советовать «добавь X», посмотри items_notable дня. Если углеводов не хватило, но подходящий ЦЕЛЬНЫЙ источник в этот день УЖЕ был (есть в items_notable — гречка/рис/паста/картофель/хлеб) — советуй УВЕЛИЧИТЬ ПОРЦИЮ того, что уже ел («та же гречка, но порцию побольше»), а НЕ «добавь кашу», когда каша уже есть, и не предлагай кашу к блюду, где уже есть макароны. Новый продукт предлагай ТОЛЬКО если подходящего цельного источника в дне не было. Не советуй добавлять то, чего и так в достатке.",

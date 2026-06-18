@@ -499,6 +499,12 @@ export type NutritionDayProseFacts = {
   planTargetNumbers?: number[];
   nutritionStatus: string | null;
   findings: string[];
+  /**
+   * Names of this day's carb foods classified FAST by code (carb_quality). The
+   * prose must NOT call any of these a "медленный/медленные углевод" — that is the
+   * банан/булочка/лаваш mislabel bug. Used by the carb_quality_mismatch guard.
+   */
+  carbFastFoods?: string[];
 };
 
 // Statuses that always demand an undershoot note in the prose. NOTE: amber-only
@@ -662,7 +668,54 @@ export function validateNutritionDayProse(input: {
       );
     }
   }
+
+  // 3. carb_quality_mismatch (Часть А): catch ONLY the unambiguous error — a FAST
+  //    product (банан/булочка/лаваш/сладкое) called "медленный". neutral foods
+  //    (рис/картофель/паста) inside the phrase "медленные углеводы" are a coach
+  //    idiom and the system's own fallback wording — NOT an error, so we hold them
+  //    on the PROMPT rule, never on the hard guard (verified: a fast+neutral guard
+  //    false-cut 4/9 real day_prose lines — урок #1). Symmetrically not_carb_base
+  //    is held on facts (carb_contributor=false) + prompt, no guard.
+  //    Narrow on purpose — only a concrete fast food adjacent to "медленн". Free
+  //    words "медленный/быстрый" are NOT policed (timing advice "лёгкие быстрые
+  //    углеводы перед стартом" is correct). A contrastive sentence ("гречка
+  //    медленная, а банан быстрый") is excluded by the nearby "быстр" check.
+  const guardFoods = input.facts.carbFastFoods ?? [];
+  if (guardFoods.length > 0) {
+    const lowered = prose.toLowerCase();
+    for (const food of guardFoods) {
+      const f = food.toLowerCase().trim();
+      if (f.length < 2) {
+        continue;
+      }
+      const fe = escapeRegExpLiteral(f);
+      const adjacent =
+        new RegExp(`${fe}[^.!?\\n]{0,12}медленн`, "u").test(lowered) ||
+        new RegExp(`медленн\\p{L}*[^.!?\\n]{0,12}${fe}`, "u").test(lowered);
+      if (!adjacent) {
+        continue;
+      }
+      // Contrast guard: if "быстр" sits right next to this food, the prose is
+      // correctly contrasting it as fast — not mislabeling it slow.
+      const idx = lowered.indexOf(f);
+      const ctx = lowered.slice(Math.max(0, idx - 15), idx + f.length + 15);
+      if (/быстр/u.test(ctx)) {
+        continue;
+      }
+      pushIssue(
+        issues,
+        "error",
+        "carb_quality_mismatch",
+        `Быстрый/нейтральный продукт «${food}» назван медленным углеводом.`
+      );
+      break;
+    }
+  }
   return issues;
+}
+
+function escapeRegExpLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export function validateTelegramReadyNutritionMessage(input: {
