@@ -399,7 +399,6 @@ export default async function CoachOsNutritionStudentCardPage({
   const recentReports = [...card.reports].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   const visibleReports = recentReports.slice(0, 5);
   const hiddenReportCount = Math.max(0, recentReports.length - visibleReports.length);
-  const reviewBlockedSafety = card.weeklyAnalysis?.status === "blocked_safety";
   const reviewSourceReportId = card.weeklyAnalysis?.reportId ?? null;
   const reviewReportMismatch = Boolean(
     card.weeklyAnalysis && selectedReportId && reviewSourceReportId && selectedReportId !== reviewSourceReportId
@@ -787,30 +786,6 @@ export default async function CoachOsNutritionStudentCardPage({
                   ? formatNutritionPlanTrainingContextLine(displayPlanTrainingSnapshot)
                   : formatNutritionTpNextWeekContextLine(savedReviewTpNextWeek)}
               </p>
-
-              {reviewBlockedSafety ? (
-                <div className="admin-alert admin-alert-error admin-nutrition-plan-safety-note">
-                  <strong>Блок безопасности в обзоре.</strong> Текст ученику скрыт намеренно (опасно низкая
-                  калорийность/энергодоступность). Можно осознанно выпустить разбор: текст честно отметит опасные
-                  дни и даст обычный план под цель. Порог безопасности при этом не меняется.
-                  {reviewSourceReportId ? (
-                    <form action={generateNutritionWeeklyReviewAction} className="admin-form-inline admin-nutrition-override-row">
-                      <input type="hidden" name="studentId" value={studentId} />
-                      <input type="hidden" name="reportId" value={reviewSourceReportId} />
-                      <input type="hidden" name="weekFrom" value={card.weeklyAnalysis?.weekFrom ?? weekFrom} />
-                      <input type="hidden" name="weekTo" value={card.weeklyAnalysis?.weekTo ?? weekTo} />
-                      <input type="hidden" name="redirectTo" value={studentCardPath} />
-                      <input type="hidden" name="coachSafetyOverride" value="true" />
-                      <ConfirmSubmitButton
-                        className="admin-button admin-button-secondary"
-                        confirmMessage="Выпустить разбор поверх блока безопасности? Текст честно отметит опасно низкие дни. Порог не меняется, отправка — только после твоей проверки."
-                      >
-                        Выпустить с пояснением (override)
-                      </ConfirmSubmitButton>
-                    </form>
-                  ) : null}
-                </div>
-              ) : null}
 
               <p className="admin-muted admin-nutrition-helper">
                 План на неделю генерируется вместе с разбором прошлой недели одним вызовом модели. Чтобы обновить план,

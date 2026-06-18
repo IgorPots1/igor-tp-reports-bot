@@ -182,17 +182,17 @@ async function run(): Promise<void> {
     assert.notEqual(missedDay?.nutritionStatus, "low_for_load", "skipped day must not be faulted as low under load");
   }
 
-  // 4. Safety is NOT bypassed by no-training week: a real signal (repeated very-low
-  //    kcal) still hard-blocks even when there was no training.
+  // 4. Coach decision (Igor): very-low-kcal days no longer hard-block (on a
+  //    no-training week or otherwise). The signal is recorded but the week is
+  //    analyzed normally with an honest "критически мало" note.
   {
     const ctx = buildContext({
       noTrainingWeek: true,
       manualMacroRows: macroRows().map((r) => ({ ...r, kcal: 1100, carbsG: 70 })),
     });
     const generated = await generateNutritionWeeklyAnalysis({ context: ctx });
-    assert.equal(generated.safety_flags.blocked, true, "real safety signal still blocks on a no-training week");
-    assert.equal(generated.status, "blocked_safety", "no-training week does not bypass safety");
-    assert.equal(generated.athlete_message_draft, null, "blocked week holds athlete draft");
+    assert.equal(generated.safety_flags.blocked, false, "very-low kcal no longer hard-blocks (coach decision)");
+    assert.notEqual(generated.status, "blocked_safety", "week is analyzed normally, not blocked");
   }
 
   console.log("PASS check-nutrition-no-training-week");

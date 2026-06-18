@@ -723,7 +723,6 @@ export async function generateNutritionWeeklyReviewAction(formData: FormData): P
       weekTo,
       reportId,
       manualRowsOverrideText: getOptionalFormValue(formData, "manualRowsOverrideText"),
-      coachSafetyOverride: parseBoolean(getOptionalFormValue(formData, "coachSafetyOverride"), false),
     });
     // Task 6: one button. The review (Claude) already wrote the next-week plan
     // prose in the same call; build the plan record from it now (numbers from

@@ -289,10 +289,11 @@ async function run(): Promise<void> {
     rows: safetyContext.manualMacroRows,
     weightLogs: [],
   });
-  assert.equal(safety.blocked, true);
+  // Coach decision (Igor): signals are recorded but no longer hard-block.
+  assert.equal(safety.blocked, false);
+  assert.ok(safety.hardFlags.length > 0, "signal still recorded for the coach");
   const generatedSafety = await generateNutritionWeeklyAnalysis({ context: safetyContext });
-  assert.equal(generatedSafety.status, "blocked_safety");
-  assert.equal(generatedSafety.athlete_message_draft, null);
+  assert.notEqual(generatedSafety.status, "blocked_safety", "week is no longer safety-blocked");
 
   const generatedTy = await generateNutritionWeeklyAnalysis({ context: baseContext });
   // Task 3: complete methodology + no live model in the test env -> the review is

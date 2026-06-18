@@ -168,8 +168,10 @@ async function run(): Promise<void> {
     manualMacroRows: buildMockContext().manualMacroRows.map((row) => ({ ...row, kcal: 1150, carbsG: 70 })),
   });
   const generatedHardSafety = await generateNutritionWeeklyAnalysis({ context: hardSafety });
-  assert.equal(generatedHardSafety.status, "blocked_safety");
-  assert.equal(generatedHardSafety.athlete_message_draft, null, "hard safety should block athlete draft");
+  // Coach decision (Igor): safety signals no longer hard-block — the week generates
+  // like any other (status is never blocked_safety; signals become an honest note).
+  assert.notEqual(generatedHardSafety.status, "blocked_safety", "no hard safety block anymore");
+  assert.equal(generatedHardSafety.safety_flags.blocked, false, "safety.blocked is false under the new policy");
 
   const withCoachContext = buildMockContext({
     coachContextRu: "недавно подняли объём, после болезни, нужен мягкий тон",

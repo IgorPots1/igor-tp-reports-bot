@@ -41,8 +41,12 @@ async function run(): Promise<void> {
     ],
   });
 
-  assert.equal(safety.blocked, true);
-  assert.ok(safety.hardFlags.length > 0);
+  // Coach decision (Igor): рпп-note + very-low-kcal + rapid weight loss are now
+  // recorded as a non-blocking coach record (hardFlags stay populated) but they
+  // DO NOT hard-block — the week generates like any other student's.
+  assert.equal(safety.blocked, false, "signals no longer hard-block (coach decision)");
+  assert.ok(safety.hardFlags.length > 0, "signals are still recorded for the coach");
+  assert.equal(safety.doNotSendReasons.length, 0, "safety no longer forces do-not-send");
 
   const mockContext: NutritionStudentContext = {
     studentName: "Test Student",
@@ -104,9 +108,8 @@ async function run(): Promise<void> {
   };
 
   const generated = await generateNutritionWeeklyAnalysis({ context: mockContext });
-  assert.equal(generated.safety_flags.blocked, true);
-  assert.equal(generated.athlete_message_draft, null);
-  assert.ok(generated.do_not_send_reasons.length > 0);
+  assert.equal(generated.safety_flags.blocked, false, "generation is not safety-blocked anymore");
+  assert.notEqual(generated.status, "blocked_safety", "status is never blocked_safety under the new policy");
 
   const illnessSignals = (await import("@/features/nutrition/athlete-signals")).detectNutritionAthleteReportSignals(
     "Заболела, была температура"

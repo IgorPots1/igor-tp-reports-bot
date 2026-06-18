@@ -680,12 +680,17 @@ export function buildNutritionSafetyFlags(input: {
     }
   }
 
-  const doNotSendReasons = hardFlags.map((flag) => `manual_review_required:${flag}`);
+  // Coach decision (Igor): these signals no longer HARD-BLOCK the report. The week
+  // generates and the review/plan flow like any other student; nothing auto-sends
+  // (the coach always reviews and sends manually). The detected signals are kept
+  // here as a coach-facing record (warnings) and woven into the review as an honest
+  // note ("в эти дни энергии было критически мало — так повторять нельзя"). Very-low
+  // energy/carb days и быстрая потеря веса разбираются обычным алгоритмом с пометкой.
   return {
     hardFlags,
     softFlags,
-    blocked: hardFlags.length > 0,
-    doNotSendReasons,
+    blocked: false,
+    doNotSendReasons: [],
   };
 }
 

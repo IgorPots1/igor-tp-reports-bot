@@ -293,16 +293,12 @@ function parseStoredWorkouts(raw: unknown): NutritionWeeklyPlanWorkoutFacts[] {
 }
 
 function isSafetyBlocked(safetyFlags: Record<string, unknown>): boolean {
-  // A coach-released report (coach_override) is not treated as blocked here — the
-  // plan generates normally; the review text carries the honest danger note.
-  if (safetyFlags.coach_override === true) {
-    return false;
-  }
+  // Coach decision (Igor): hard_flags are a non-blocking coach record now; only an
+  // explicit blocked=true gates the plan (always false under the current policy).
   if (typeof safetyFlags.blocked === "boolean") {
     return safetyFlags.blocked;
   }
-  const hardFlags = Array.isArray(safetyFlags.hard_flags) ? safetyFlags.hard_flags : [];
-  return hardFlags.length > 0;
+  return false;
 }
 
 function extractDoNotSendReasons(safetyFlags: Record<string, unknown>, nutritionSummary: Record<string, unknown>): string[] {

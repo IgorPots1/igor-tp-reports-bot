@@ -1101,11 +1101,10 @@ function hasTargetWeekTrainingContext(nextWeekPlan: NutritionNextWeekPlan | null
 }
 
 function isReviewBlockedSafety(review: NutritionWeeklyAnalysis): boolean {
-  // Coach consciously released this report's hard block (honest danger text was
-  // generated). Don't re-block the combined message; it still goes needs_review.
-  if (asObject(review.safetyFlags).coach_override === true) {
-    return false;
-  }
+  // Coach decision (Igor): very-low energy/carb/weight signals no longer hard-block;
+  // they become an honest note inside the normal review. A review is "blocked" only
+  // if the model itself flagged do-not-send reasons. (safety hard_flags are now a
+  // non-blocking coach record, not a block.)
   if (review.status === "blocked_safety") {
     return true;
   }
@@ -1121,24 +1120,16 @@ function isReviewAwaitingGeneration(review: NutritionWeeklyAnalysis): boolean {
 }
 
 function isPlanBlockedSafety(plan: NutritionWeeklyPlan): boolean {
-  // Coach override (inherited from the review's safety flags) releases the plan too.
-  if (asObject(plan.safetyFlags).coach_override === true) {
-    return false;
-  }
+  // Coach decision (Igor): safety hard_flags are now a non-blocking coach record,
+  // not a plan block. The plan is "blocked" only on an explicit blocked_safety
+  // status or model do-not-send reasons. (safety.blocked is always false now.)
   if (plan.status === "blocked_safety") {
     return true;
   }
   const reasons = extractPlanDoNotSendReasons(plan);
   const safety = asObject(plan.safetyFlags);
-  const hardFlags = asStringArray(safety.hard_flags);
   const blocked = typeof safety.blocked === "boolean" ? safety.blocked : false;
-  if (blocked || hardFlags.length > 0 || reasons.length > 0) {
-    return true;
-  }
-  if (!plan.athleteMessageDraft && reasons.length > 0) {
-    return true;
-  }
-  return false;
+  return blocked || reasons.length > 0;
 }
 
 function hasNeedsReviewStatus(review: NutritionWeeklyAnalysis, plan: NutritionWeeklyPlan): boolean {
