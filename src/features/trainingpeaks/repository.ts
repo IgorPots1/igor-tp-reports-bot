@@ -29,6 +29,7 @@ export type TrainingPeaksStudent = {
   weeklyReportEnabled: boolean;
   archivedAt: string | null;
   telegramChatId: string | null;
+  telegramUserId: number | null;
   telegramUsername: string | null;
   telegramProfileUrl: string | null;
   telegramDeliveryEnabled: boolean;
@@ -93,6 +94,7 @@ type TrainingPeaksStudentRow = {
   weekly_report_enabled: boolean;
   archived_at: string | null;
   telegram_chat_id: string | null;
+  telegram_user_id: number | null;
   telegram_username: string | null;
   telegram_profile_url: string | null;
   telegram_delivery_enabled: boolean;
@@ -1224,6 +1226,7 @@ function mapTrainingPeaksStudentRow(row: TrainingPeaksStudentRow): TrainingPeaks
     weeklyReportEnabled: row.weekly_report_enabled,
     archivedAt: row.archived_at,
     telegramChatId: row.telegram_chat_id,
+    telegramUserId: row.telegram_user_id ?? null,
     telegramUsername: row.telegram_username,
     telegramProfileUrl: row.telegram_profile_url,
     telegramDeliveryEnabled: row.telegram_delivery_enabled,
@@ -2362,6 +2365,30 @@ export async function getTrainingPeaksStudentByStudentId(
 
   if (error) {
     throw new Error(`Failed to get TrainingPeaks student by student_id ${studentId}: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
+}
+
+export async function getTrainingPeaksStudentByTelegramUserId(
+  telegramUserId: number
+): Promise<TrainingPeaksStudent | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_students")
+    .select("*")
+    .eq("telegram_user_id", telegramUserId)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to get TrainingPeaks student by telegram_user_id ${telegramUserId}: ${error.message}`
+    );
   }
 
   if (!data) {

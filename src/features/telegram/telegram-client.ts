@@ -444,6 +444,26 @@ export async function getTelegramFilePath(fileId: string): Promise<string> {
   return filePath;
 }
 
+export async function sendTelegramWebAppButton(input: {
+  chatId: string | number;
+  text: string;
+  buttonLabel: string;
+  webAppUrl: string;
+  businessConnectionId?: string;
+}): Promise<void> {
+  const body: Record<string, unknown> = {
+    chat_id: input.chatId,
+    text: input.text,
+    reply_markup: {
+      inline_keyboard: [[{ text: input.buttonLabel, web_app: { url: input.webAppUrl } }]],
+    },
+  };
+  if (input.businessConnectionId) {
+    body.business_connection_id = input.businessConnectionId;
+  }
+  await postTelegramApi("sendMessage", body);
+}
+
 export async function downloadTelegramFile(fileId: string): Promise<Buffer> {
   const token = getTelegramBotToken();
   const filePath = await getTelegramFilePath(fileId);

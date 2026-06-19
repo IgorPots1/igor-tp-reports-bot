@@ -256,6 +256,7 @@
     "check:nutrition-derived-coach-summary": "npx tsx scripts/check-nutrition-derived-coach-summary.ts",
     "check:nutrition-long-run-classification": "npx tsx scripts/check-nutrition-long-run-classification.ts",
     "check:nutrition-report-date-source": "npx tsx scripts/check-nutrition-report-date-source.ts",
+    "check:miniapp-init-data": "npx tsx scripts/check-miniapp-init-data.ts",
     "diagnose:trainingpeaks-future-workout-cache": "npx tsx scripts/diagnose-trainingpeaks-future-workout-cache.ts",
     "check:nutrition-tp-future-workout-context": "npx tsx scripts/check-nutrition-tp-future-workout-context.ts",
     "check:nutrition-weekly-plan-ui": "npx tsx scripts/check-nutrition-weekly-plan-ui.ts",
