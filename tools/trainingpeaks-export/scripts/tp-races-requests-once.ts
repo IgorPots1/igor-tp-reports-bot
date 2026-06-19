@@ -3,6 +3,7 @@ import { mkdir, readdir } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { spawn } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
 import { createClient } from "@supabase/supabase-js";
 
@@ -27,7 +28,7 @@ type TrainingPeaksJobRow = {
   updated_at: string;
 };
 
-type RaceRow = {
+export type RaceRow = {
   student_id?: string | null;
   student_name?: string | null;
   athlete_id?: number | null;
@@ -310,7 +311,7 @@ function readStringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function readRaceRows(resultJson: unknown): RaceRow[] {
+export function readRaceRows(resultJson: unknown): RaceRow[] {
   if (!resultJson || typeof resultJson !== "object") {
     return [];
   }
@@ -319,6 +320,79 @@ function readRaceRows(resultJson: unknown): RaceRow[] {
     return [];
   }
   return rows.filter((row) => row && typeof row === "object") as RaceRow[];
+}
+
+export type StudentRecord = {
+  id: string;
+  student_id?: string | null;
+  student_name?: string | null;
+  trainingpeaks_athlete_url?: string | null;
+};
+
+/** Parse the numeric athlete id embedded in a TrainingPeaks athlete URL. */
+export function parseAthleteIdFromUrl(athleteUrl: string | null | undefined): number | null {
+  if (!athleteUrl) return null;
+  const match = athleteUrl.match(/\/athletes\/(\d+)/i);
+  if (!match) return null;
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function normalizeStudentName(name: string | null | undefined): string {
+  return (name ?? "").trim().toLocaleLowerCase("ru-RU").replace(/\s+/g, " ");
+}
+
+export type RaceStudentMatch = {
+  student: StudentRecord;
+  matchedBy: "athlete_id" | "student_name" | "slug";
+};
+
+/**
+ * Resolve a scanned race row to a nutrition student. Task 10d (race persist):
+ * races.json carries `athlete_id` + `student_name` but NO `student_id` slug, so
+ * the old slug-only match dropped every row silently. Primary key is athlete_id
+ * (parsed from trainingpeaks_athlete_url); fall back to an unambiguous name, then
+ * the legacy slug. Ambiguous names (two students share one name) never match by
+ * name — only athlete_id can disambiguate them.
+ */
+export function buildRaceStudentResolver(students: StudentRecord[]): {
+  resolve: (row: RaceRow) => RaceStudentMatch | null;
+} {
+  const byAthleteId = new Map<number, StudentRecord>();
+  const bySlug = new Map<string, StudentRecord>();
+  const byName = new Map<string, StudentRecord>();
+  const ambiguousNames = new Set<string>();
+  for (const student of students) {
+    const athleteId = parseAthleteIdFromUrl(student.trainingpeaks_athlete_url);
+    if (athleteId != null && !byAthleteId.has(athleteId)) byAthleteId.set(athleteId, student);
+    const slug = readStringValue(student.student_id);
+    if (slug && !bySlug.has(slug)) bySlug.set(slug, student);
+    const nameKey = normalizeStudentName(student.student_name);
+    if (nameKey) {
+      if (byName.has(nameKey)) ambiguousNames.add(nameKey);
+      else byName.set(nameKey, student);
+    }
+  }
+  return {
+    resolve(row) {
+      const athleteId = typeof row.athlete_id === "number" ? row.athlete_id : null;
+      if (athleteId != null) {
+        const hit = byAthleteId.get(athleteId);
+        if (hit) return { student: hit, matchedBy: "athlete_id" };
+      }
+      const nameKey = normalizeStudentName(row.student_name);
+      if (nameKey && !ambiguousNames.has(nameKey)) {
+        const hit = byName.get(nameKey);
+        if (hit) return { student: hit, matchedBy: "student_name" };
+      }
+      const slug = readStringValue(row.student_id);
+      if (slug) {
+        const hit = bySlug.get(slug);
+        if (hit) return { student: hit, matchedBy: "slug" };
+      }
+      return null;
+    },
+  };
 }
 
 function parseEventDateMs(value: string | null): number | null {
@@ -491,36 +565,42 @@ function parseDistanceKm(distance: string | null | undefined): number | null {
 
 /**
  * Upsert scanned races into trainingpeaks_race_events (source 'scan'). Resolves
- * the nutrition student uuid from the scanner's text student_id slug. Manual
- * marks (source 'manual') are never touched here.
+ * each nutrition student by athlete_id (primary) → name → legacy slug; see
+ * buildRaceStudentResolver. Manual marks (source 'manual') are never touched here.
  */
-async function persistScannedRaceEvents(rows: RaceRow[]): Promise<void> {
+export async function persistScannedRaceEvents(rows: RaceRow[]): Promise<void> {
   const supabase = getSupabase();
+  // Load the roster once and resolve in-memory (races.json has no student_id slug).
+  const { data: students, error: studentsError } = await supabase
+    .from("trainingpeaks_students")
+    .select("id,student_id,student_name,trainingpeaks_athlete_url");
+  if (studentsError) {
+    throw new Error(`Failed to load students for race persist: ${studentsError.message}`);
+  }
+  const resolver = buildRaceStudentResolver((students ?? []) as StudentRecord[]);
+  let written = 0;
+  let unresolved = 0;
   for (const row of rows) {
     const eventDate = readStringValue(row.event_date);
-    const slug = readStringValue(row.student_id);
-    if (!eventDate || !ISO_DATE_PATTERN.test(eventDate) || !slug) {
+    if (!eventDate || !ISO_DATE_PATTERN.test(eventDate)) {
       continue;
     }
-    const { data: student, error: studentError } = await supabase
-      .from("trainingpeaks_students")
-      .select("id")
-      .eq("student_id", slug)
-      .maybeSingle();
-    if (studentError || !student?.id) {
-      // Task 10d (Bug в): a scanned race silently vanished here when its scanner
-      // slug didn't resolve to a nutrition student (Надя's case). Don't change the
-      // skip — just make it visible so a missing race is diagnosable, not invisible.
+    const match = resolver.resolve(row);
+    if (!match) {
+      // Task 10d: this was the invisible root — the bridge dropped every race
+      // because it matched only on a slug races.json never carries. Keep the skip
+      // loud so an unattributed race is diagnosable, not silently vanished.
+      unresolved += 1;
       console.warn(
         `[tp-races] skip race ${eventDate} «${readStringValue(row.event_title) ?? "?"}»: ` +
-          `student slug "${slug}" not found in trainingpeaks_students` +
-          (studentError ? ` (${studentError.message})` : "")
+          `could not resolve student (athlete_id=${row.athlete_id ?? "?"}, ` +
+          `name="${readStringValue(row.student_name) ?? "?"}") in trainingpeaks_students`
       );
       continue;
     }
     const { error: upsertError } = await supabase.from("trainingpeaks_race_events").upsert(
       {
-        student_id: student.id,
+        student_id: match.student.id,
         trainingpeaks_athlete_id: typeof row.athlete_id === "number" ? row.athlete_id : null,
         event_date: eventDate,
         title: readStringValue(row.event_title),
@@ -531,12 +611,20 @@ async function persistScannedRaceEvents(rows: RaceRow[]): Promise<void> {
       { onConflict: "student_id,event_date,source" }
     );
     if (upsertError) {
-      // Surface once and stop trying if the table is missing; otherwise skip the row.
+      // Stop entirely if the table is missing; otherwise surface and skip the row.
       if (/does not exist|could not find the table|schema cache|42P01/i.test(upsertError.message)) {
         throw new Error(`trainingpeaks_race_events not available: ${upsertError.message}`);
       }
+      console.warn(
+        `[tp-races] upsert failed for ${eventDate} «${readStringValue(row.event_title) ?? "?"}»: ${upsertError.message}`
+      );
+      continue;
     }
+    written += 1;
   }
+  console.log(
+    `[tp-races] persisted ${written} race event(s); ${unresolved} unresolved of ${rows.length} scanned.`
+  );
 }
 
 async function main(): Promise<void> {
@@ -598,11 +686,18 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error: unknown) => {
-  if (error instanceof Error) {
-    console.error(error.message);
-  } else {
-    console.error(error);
-  }
-  process.exit(1);
-});
+// Run only when invoked directly (the launchagent loop spawns `npm run
+// tp-races-requests-once`). Guarded so diagnostics can import the resolver
+// helpers without triggering a job claim.
+const invokedDirectly =
+  Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedDirectly) {
+  main().catch((error: unknown) => {
+    if (error instanceof Error) {
+      console.error(error.message);
+    } else {
+      console.error(error);
+    }
+    process.exit(1);
+  });
+}
