@@ -40,6 +40,51 @@ assert.deepEqual([runWeirdTitle].filter((w) => !ex(w)).map((w) => w.title), ["У
 // 3. "минут"/слова с "other" внутри не должны ложно матчить (граница).
 assert.equal(ex({ title: "Brotherhood run", sportOrTypeCode: "Run", workoutTypeValueId: null, workoutSubTypeId: null }), false, "«Brotherhood» не матчит other (граница слова)");
 
+// 5. Юлин реальный кейс: TP-«Other» приходит как workoutTypeValueId=100 + title
+//    "Other" + sportOrTypeCode=null (классификатор → unknown, не other). Прежние
+//    сигналы это пропускали; новый якорь по type-id ловит.
+const tpOtherById: W = { title: "Other", sportOrTypeCode: null, workoutTypeValueId: 100, workoutSubTypeId: null };
+assert.equal(ex(tpOtherById), true, "TP-«Other» (typeValueId=100, code=null) → ИСКЛЮЧАЕТСЯ (якорь по id)");
+
+// 5bis. title "Other" без осмысленного id (code/id отсутствуют) → доп.сигнал ловит.
+const otherTitleNoId: W = { title: "Other", sportOrTypeCode: null, workoutTypeValueId: null, workoutSubTypeId: null };
+assert.equal(ex(otherTitleNoId), true, "title «Other» без id → исключается (доп.сигнал по сырому тайтлу)");
+
+// 6. Настоящий тип НЕ обманывается тайтлом «Other»: бег id=3 / силовая id=9 с
+//    title="Other" → ОСТАЮТСЯ (реальный тип побеждает).
+assert.equal(
+  ex({ title: "Other", sportOrTypeCode: null, workoutTypeValueId: 3, workoutSubTypeId: null }),
+  false,
+  "бег id=3 с тайтлом «Other» → ОСТАЁТСЯ (настоящий тип побеждает)"
+);
+assert.equal(
+  ex({ title: "Other", sportOrTypeCode: null, workoutTypeValueId: 9, workoutSubTypeId: null }),
+  false,
+  "силовая id=9 с тайтлом «Other» → ОСТАЁТСЯ"
+);
+
+// 7. Осмысленное имя тренировки не матчит по подстроке «other».
+assert.equal(
+  ex({ title: "Brotherhood", sportOrTypeCode: null, workoutTypeValueId: null, workoutSubTypeId: null }),
+  false,
+  "«Brotherhood» (подстрока other, но не равно «Other») → НЕ исключается"
+);
+
+// 8. Юлин день: только-Other (по id=100) → пусто → rest/maintenance, не битый.
+const yuliaDay = [
+  { title: "Other", sportOrTypeCode: null, workoutTypeValueId: 100, workoutSubTypeId: null } as W,
+];
+assert.equal(yuliaDay.filter((w) => !ex(w)).length, 0, "день только-Other (id=100) → пусто → rest");
+// Юлин беговой день (id=3) остаётся в расходе при флаге ON.
+const yuliaRunDay = [
+  { title: "5 х 4 + 2 мин", sportOrTypeCode: null, workoutTypeValueId: 3, workoutSubTypeId: null } as W,
+];
+assert.deepEqual(
+  yuliaRunDay.filter((w) => !ex(w)).map((w) => w.title),
+  ["5 х 4 + 2 мин"],
+  "беговой день (id=3) остаётся после фильтра"
+);
+
 // 4. The filter semantics: run + Other day → only run; only-Other day → empty → rest.
 const day = [easyRun, otherTypedStrengthTitle];
 const kept = day.filter((w) => !ex(w));

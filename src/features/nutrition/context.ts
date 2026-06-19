@@ -803,9 +803,29 @@ export function isNutritionExcludedOtherActivity(input: {
   workoutTypeValueId: number | null;
   workoutSubTypeId: number | null;
 }): boolean {
+  // Existing signal #1: raw sport/type-code string says other/custom.
   if (/(?:^|[^\p{L}])(?:other|custom)(?:[^\p{L}]|$)/iu.test(input.sportOrTypeCode ?? "")) {
     return true;
   }
+  // Signal #2 (anchor): TP's "Other" activity arrives as workoutTypeValueId=100
+  // with title "Other" and a null sportOrTypeCode — the classifier returns
+  // "unknown" (it maps only 3→run, 9→strength), so signals #1 and #4 miss it.
+  // The type id is the reliable anchor for TP-"Other".
+  if (input.workoutTypeValueId === 100) {
+    return true;
+  }
+  // Signal #3 (extra): a raw TP title of exactly "Other" — but only when the
+  // session has no real activity type id (3=run, 9=strength). Someone may title a
+  // genuine run/strength "Other"; that real type wins and the session stays.
+  // Exact match (not substring) so "Brotherhood" never trips it.
+  if (
+    (input.title ?? "").trim().toLowerCase() === "other" &&
+    input.workoutTypeValueId !== 3 &&
+    input.workoutTypeValueId !== 9
+  ) {
+    return true;
+  }
+  // Existing signal #4: the activity classifier resolves the family to "other".
   return classifyTrainingPeaksWorkoutActivity(input).family === "other";
 }
 
