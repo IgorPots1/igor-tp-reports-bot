@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 
 import { sendTelegramWebAppButton } from "@/features/telegram/telegram-client";
+import { getRequiredTrainingPeaksBusinessConnectionId } from "@/features/trainingpeaks/telegram-business";
 import { getTrainingPeaksStudentByStudentId } from "@/features/trainingpeaks/repository";
 import { isValidAdminAccessToken } from "@/lib/admin-auth";
 
@@ -61,6 +62,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     text: "Загрузи отчёт о питании за прошедшую неделю:",
     buttonLabel: "Открыть форму",
     webAppUrl: miniAppUrl,
+    businessConnectionId: getRequiredTrainingPeaksBusinessConnectionId(),
   });
 
   console.info("[admin.send-nutrition-button] sent", {
