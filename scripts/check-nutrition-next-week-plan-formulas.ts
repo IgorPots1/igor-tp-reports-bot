@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   buildNutritionNextWeekPlan,
   calculateNutritionDayTypeTarget,
+  computeRaceDayTarget,
 } from "@/features/nutrition/weekly-plan-formulas";
 
 const root = process.cwd();
@@ -214,5 +215,37 @@ const padelDay = padelPlan.days.find((day) => day.date === "2026-06-10");
 assert.equal(padelDay?.training_type, "cross_training");
 assert.equal(padelDay?.target_kcal, 2350);
 assert.ok(padelDay?.target_kcal !== null, "Padel day with bodyweight must not render kcal n/d");
+
+// --- S2 fix: race-day target — мини-таблица больше не «н/д» ---
+// 10K / short race → intense (hard) base, NOT null.
+const race10 = computeRaceDayTarget({ bodyweightKg: 60, distanceKm: 10, title: "Ночной забег" });
+assert.ok(race10 && race10.target_kcal != null, "race 10 км must have a target (not н/д)");
+assert.equal(race10?.carbs_g, 360, "race 10 км carbs at intense level (6 г/кг × 60)");
+assert.equal(race10?.target_kcal, 2600, "race 10 км kcal at hard level (43 × 60)");
+// Half-marathon → carbs raised to loading high (8 г/кг), kcal bumped.
+const raceHM = computeRaceDayTarget({ bodyweightKg: 60, distanceKm: 21.1, title: "Полумарафон" });
+assert.equal(raceHM?.carbs_g, 480, "HM carbs at loading high (8 г/кг × 60)");
+assert.ok((raceHM?.target_kcal ?? 0) > (race10?.target_kcal ?? 0), "HM kcal higher than 10K (loading)");
+// Unknown distance → intense base, never null.
+const raceUnknown = computeRaceDayTarget({ bodyweightKg: 60, distanceKm: null, title: "Старт" });
+assert.ok(raceUnknown && raceUnknown.target_kcal != null, "unknown-distance race still has a target");
+assert.equal(raceUnknown?.carbs_g, 360, "unknown distance → intense base carbs");
+// No bodyweight → null (consistent with other day types).
+assert.equal(computeRaceDayTarget({ bodyweightKg: null, distanceKm: 10 }), null, "no bodyweight → null");
+
+// Plan integration: a race-day in the plan renders КБЖУ, not н/д.
+const racePlan = buildNutritionNextWeekPlan({
+  bodyweightKg: 60,
+  planWeekFrom: "2026-06-08",
+  planWeekTo: "2026-06-14",
+  trainingContext: {
+    cacheStatus: "ok",
+    workouts: [{ date: "2026-06-13", title: "Ночной забег", type: "race", distanceKm: 10 }],
+  },
+});
+const raceDay = racePlan.days.find((day) => day.date === "2026-06-13");
+assert.equal(raceDay?.training_type, "race", "race workout → race day type");
+assert.ok(raceDay?.target_kcal != null, "race day in plan must not render kcal н/д");
+assert.ok(raceDay?.carbs_g != null && raceDay?.protein_g != null && raceDay?.fat_g != null, "race day Б/Ж/У not н/д");
 
 console.log("PASS check-nutrition-next-week-plan-formulas");

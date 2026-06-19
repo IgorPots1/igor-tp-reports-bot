@@ -193,6 +193,11 @@ const FORMULA_BY_DAY_TYPE: Partial<Record<NutritionPlanDayType, FormulaCoefficie
   long_endurance: { kcalPerKg: 45, proteinPerKg: 1.7, fatPerKg: 1.15, carbsPerKg: 7.0 },
   strength: { kcalPerKg: 39, proteinPerKg: 1.8, fatPerKg: 1.15, carbsPerKg: 5.2 },
   cross_training: { kcalPerKg: 39, proteinPerKg: 1.6, fatPerKg: 1.15, carbsPerKg: 5.2 },
+  // Base race-day target = intense (hard) level: covers short races (10K / <90 min,
+  // no multi-day loading) and the unknown-distance default. Half-marathon+ bumps
+  // carbs to the loading level via computeRaceDayTarget (distance source of truth
+  // stays computeNutritionRaceProtocol). Без этого race-день шёл null → мини-таблица «н/д».
+  race: { kcalPerKg: 43, proteinPerKg: 1.7, fatPerKg: 1.15, carbsPerKg: 6.0 },
 };
 
 const GUIDANCE_BY_DAY_TYPE: Record<NutritionPlanDayType, string | null> = {
@@ -533,6 +538,40 @@ export function calculateNutritionDayTypeTarget(params: {
     protein_g_per_kg: formula.proteinPerKg,
     fat_g_per_kg: formula.fatPerKg,
     carbs_g_per_kg: formula.carbsPerKg,
+  };
+}
+
+/**
+ * Race-day ideal target. Base = the intense (race/hard) day-type target; for a
+ * half-marathon+ (≥21 km) the carbohydrate target is raised to the loading level,
+ * with distance read from the SINGLE source of truth (computeNutritionRaceProtocol)
+ * — no second distance ladder here. Short races (10K / <90 min, loading=null) and
+ * unknown distance keep the intense base (never null). kcal rises to cover the extra
+ * loading carbs. The lose deficit-off in race-week is applied later by resolveDayTarget.
+ */
+export function computeRaceDayTarget(params: {
+  bodyweightKg: number | null;
+  distanceKm: number | null;
+  title?: string | null;
+}): NutritionDayTypeTarget | null {
+  const base = calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "race" });
+  if (!base || !params.bodyweightKg || params.bodyweightKg <= 0) {
+    return base;
+  }
+  const protocol = computeNutritionRaceProtocol({ distanceKm: params.distanceKm, title: params.title ?? null });
+  if (!protocol.loading) {
+    return base; // 10K / short / unknown → intense base, no multi-day loading.
+  }
+  const bw = params.bodyweightKg;
+  const carbsPerKg = protocol.loading.g_per_kg_high;
+  const baseCarbsPerKg = base.carbs_g_per_kg ?? 6;
+  const kcalPerKg = (base.kcal_per_kg ?? 43) + Math.max(0, carbsPerKg - baseCarbsPerKg) * 4;
+  return {
+    ...base,
+    target_kcal: roundToNearest(kcalPerKg * bw, 50),
+    carbs_g: roundToNearest(carbsPerKg * bw, 10),
+    kcal_per_kg: kcalPerKg,
+    carbs_g_per_kg: carbsPerKg,
   };
 }
 
@@ -1017,10 +1056,17 @@ export function buildNutritionNextWeekPlan(params: {
       baseType === "race" || baseType === "long_run" || baseType === "long_endurance" || baseType === "hard";
     const trainingType: NutritionPlanDayType = dayBeforeLongRun && !harder ? "pre_long" : baseType;
     const hasWorkout = Boolean(primaryWorkout);
-    const idealTarget = calculateNutritionDayTypeTarget({
-      bodyweightKg: params.bodyweightKg,
-      dayType: trainingType,
-    });
+    const idealTarget =
+      trainingType === "race"
+        ? computeRaceDayTarget({
+            bodyweightKg: params.bodyweightKg,
+            distanceKm: primaryWorkout?.distanceKm ?? null,
+            title: primaryWorkout?.title ?? null,
+          })
+        : calculateNutritionDayTypeTarget({
+            bodyweightKg: params.bodyweightKg,
+            dayType: trainingType,
+          });
     const baseline =
       previousWeekTargets.byDayType[trainingType] ??
       (trainingType === "race" ? previousWeekTargets.byDayType.hard ?? null : null) ??
