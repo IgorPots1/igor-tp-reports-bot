@@ -10,7 +10,9 @@ import {
   compareNutritionReportDateRanges,
   computeNutritionParsedDateCoverageFromRows,
   formatNutritionReportDateMismatchNotice,
+  getCalendarWeekContaining,
   resolveNutritionEffectiveReportWeek,
+  snapParsedDatesToCalendarWeek,
 } from "../src/features/nutrition/report-date-coverage";
 
 const root = process.cwd();
@@ -51,25 +53,30 @@ const uiMismatch = compareNutritionReportDateRanges({
 assert.equal(uiMismatch.mismatch, true, "UI 08..14 vs parsed 02..07 must mismatch");
 assert.equal(uiMismatch.overlapDays, 0, "UI 08..14 vs parsed 02..07 must have zero overlap");
 
+// Layer A snapping: effective report week snaps to the FULL calendar week (пн–вс)
+// containing the parsed days. Parsed 06-02..06-07 (Tue–Sun) → week 06-01..06-07.
 const effectiveMismatch = resolveNutritionEffectiveReportWeek({
   uiWeekFrom: "2026-06-08",
   uiWeekTo: "2026-06-14",
   parsedWeekFrom: "2026-06-02",
   parsedWeekTo: "2026-06-07",
+  parsedDates: ["2026-06-02", "2026-06-03", "2026-06-04", "2026-06-05", "2026-06-06", "2026-06-07"],
 });
-assert.equal(effectiveMismatch.effectiveWeekFrom, "2026-06-02");
-assert.equal(effectiveMismatch.effectiveWeekTo, "2026-06-07");
+assert.equal(effectiveMismatch.effectiveWeekFrom, "2026-06-01", "snap weekFrom back to Monday");
+assert.equal(effectiveMismatch.effectiveWeekTo, "2026-06-07", "snap weekTo to Sunday");
 assert.equal(effectiveMismatch.dateRangeSource, "parsed_pdf");
 
+// The mismatch notice shows the RAW parsed PDF range (what the file contained),
+// NOT the snapped report week — coach clarity.
 const mismatchNotice = formatNutritionReportDateMismatchNotice({
   uiWeekFrom: "2026-06-08",
   uiWeekTo: "2026-06-14",
-  effectiveWeekFrom: effectiveMismatch.effectiveWeekFrom,
-  effectiveWeekTo: effectiveMismatch.effectiveWeekTo,
+  parsedWeekFrom: "2026-06-02",
+  parsedWeekTo: "2026-06-07",
   dateRangeSource: effectiveMismatch.dateRangeSource,
   mismatch: uiMismatch.mismatch,
 });
-assert.ok(mismatchNotice?.includes("02.06—07.06"), "notice must mention parsed dates");
+assert.ok(mismatchNotice?.includes("02.06—07.06"), "notice must mention RAW parsed dates");
 assert.ok(mismatchNotice?.includes("08.06—14.06"), "notice must mention UI dates");
 
 const uiPartialOverlap = compareNutritionReportDateRanges({
@@ -86,9 +93,10 @@ const effectivePartial = resolveNutritionEffectiveReportWeek({
   uiWeekTo: "2026-06-07",
   parsedWeekFrom: "2026-06-02",
   parsedWeekTo: "2026-06-07",
+  parsedDates: ["2026-06-02", "2026-06-03", "2026-06-04", "2026-06-05", "2026-06-06", "2026-06-07"],
 });
-assert.equal(effectivePartial.effectiveWeekFrom, "2026-06-02");
-assert.equal(effectivePartial.effectiveWeekTo, "2026-06-07");
+assert.equal(effectivePartial.effectiveWeekFrom, "2026-06-01", "snap weekFrom back to Monday");
+assert.equal(effectivePartial.effectiveWeekTo, "2026-06-07", "snap weekTo to Sunday");
 
 const noParsedDates = resolveNutritionEffectiveReportWeek({
   uiWeekFrom: "2026-06-08",
@@ -99,6 +107,40 @@ const noParsedDates = resolveNutritionEffectiveReportWeek({
 assert.equal(noParsedDates.effectiveWeekFrom, "2026-06-08");
 assert.equal(noParsedDates.effectiveWeekTo, "2026-06-14");
 assert.equal(noParsedDates.dateRangeSource, "ui_fallback");
+
+// --- Layer A snapping unit cases (Туркина fix / Трофимова byte-identical / стык) ---
+// Туркина: partial 4-day PDF (Mon–Thu 08-11) → full week 08-14 (fixes the plan-window
+// slide; was 08-11 → план 12-18 instead of 15-21).
+assert.deepEqual(
+  snapParsedDatesToCalendarWeek(["2026-06-08", "2026-06-09", "2026-06-10", "2026-06-11"]),
+  { weekFrom: "2026-06-08", weekTo: "2026-06-14" },
+  "Туркина: 4-дневный PDF 08-11 → полная неделя 08-14"
+);
+// Трофимова: full Mon–Sun PDF (08-14) → unchanged (byte-identical).
+assert.deepEqual(
+  snapParsedDatesToCalendarWeek([
+    "2026-06-08", "2026-06-09", "2026-06-10", "2026-06-11", "2026-06-12", "2026-06-13", "2026-06-14",
+  ]),
+  { weekFrom: "2026-06-08", weekTo: "2026-06-14" },
+  "Трофимова: полный пн–вс PDF не меняется"
+);
+// Edge: PDF straddling two weeks → dominant week by majority of days.
+assert.deepEqual(
+  snapParsedDatesToCalendarWeek(["2026-06-13", "2026-06-15", "2026-06-16", "2026-06-17"]),
+  { weekFrom: "2026-06-15", weekTo: "2026-06-21" },
+  "стык: большинство дней (3 из 4) в неделе 15-21 → она и выбирается"
+);
+// Edge: straddle tie → earliest week.
+assert.deepEqual(
+  snapParsedDatesToCalendarWeek(["2026-06-13", "2026-06-14", "2026-06-15", "2026-06-16"]),
+  { weekFrom: "2026-06-08", weekTo: "2026-06-14" },
+  "стык-ничья (2/2) → ранняя неделя"
+);
+// Empty → null (no parsed dates).
+assert.equal(snapParsedDatesToCalendarWeek([]), null, "нет дат → null");
+// getCalendarWeekContaining: Monday-anchored.
+assert.deepEqual(getCalendarWeekContaining("2026-06-19"), { weekFrom: "2026-06-15", weekTo: "2026-06-21" });
+assert.deepEqual(getCalendarWeekContaining("2026-06-08"), { weekFrom: "2026-06-08", weekTo: "2026-06-14" });
 
 const metadata = buildNutritionReportDateQualityMetadata({
   uiWeekFrom: "2026-06-08",

@@ -296,6 +296,7 @@ export async function saveNutritionFileReport(input: {
     uiWeekTo: input.weekTo,
     parsedWeekFrom: parsedCoverage.parsedWeekFrom,
     parsedWeekTo: parsedCoverage.parsedWeekTo,
+    parsedDates: parsedCoverage.dateCoverage.dates,
   });
   const dateComparison = compareNutritionReportDateRanges({
     uiWeekFrom: input.weekFrom,
@@ -310,8 +311,8 @@ export async function saveNutritionFileReport(input: {
   const dateMismatchNotice = formatNutritionReportDateMismatchNotice({
     uiWeekFrom: input.weekFrom,
     uiWeekTo: input.weekTo,
-    effectiveWeekFrom: effectiveWeek.effectiveWeekFrom,
-    effectiveWeekTo: effectiveWeek.effectiveWeekTo,
+    parsedWeekFrom: parsedCoverage.parsedWeekFrom,
+    parsedWeekTo: parsedCoverage.parsedWeekTo,
     dateRangeSource: effectiveWeek.dateRangeSource,
     mismatch: dateComparison.mismatch,
   });
