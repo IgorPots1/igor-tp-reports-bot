@@ -3,12 +3,24 @@ import type { NextRequest } from "next/server";
 import { sendTelegramUrlButton, getTelegramBotUsername } from "@/features/telegram/telegram-client";
 import { getRequiredTrainingPeaksBusinessConnectionId } from "@/features/trainingpeaks/telegram-business";
 import { getTrainingPeaksStudentByStudentId } from "@/features/trainingpeaks/repository";
+import { resolveGreeting } from "@/features/nutrition/telegram-renderer";
+import type { TrainingPeaksTelegramFormality } from "@/features/trainingpeaks/repository";
 import { isValidAdminAccessToken } from "@/lib/admin-auth";
 
 export const runtime = "nodejs";
 
 function isMiniAppEnabled(): boolean {
   return process.env.MINIAPP_ENABLED === "true";
+}
+
+/** Greeting + formality-aware request, ты/вы from the student's profile. */
+function buildButtonMessage(formality: TrainingPeaksTelegramFormality): string {
+  const greeting = resolveGreeting(formality);
+  const request =
+    formality === "vy"
+      ? "Загрузите отчёт о питании за прошедшую неделю:"
+      : "Загрузи отчёт о питании за прошедшую неделю:";
+  return `${greeting}\n\n${request}`;
 }
 
 /**
@@ -74,7 +86,7 @@ export async function GET(request: NextRequest): Promise<Response> {
 
   await sendTelegramUrlButton({
     chatId: student.telegramChatId,
-    text: "Загрузи отчёт о питании за прошедшую неделю:",
+    text: buildButtonMessage(student.telegramFormality),
     buttonLabel: "Открыть форму",
     url: miniAppUrl,
     businessConnectionId: getRequiredTrainingPeaksBusinessConnectionId(),

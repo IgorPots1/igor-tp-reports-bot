@@ -237,7 +237,7 @@ export function cleanupPlainText(input: string): string {
 
 // Greeting without the athlete's name — clean and formality-aware (profile ты/вы,
 // from the resolved communication profile). Coach decision: drop the name entirely.
-function resolveGreeting(formality: TrainingPeaksTelegramFormality): string {
+export function resolveGreeting(formality: TrainingPeaksTelegramFormality): string {
   return formality === "vy" ? "Здравствуйте!" : "Привет!";
 }
 

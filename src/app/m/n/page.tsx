@@ -37,14 +37,28 @@ const STYLES = {
   },
   card: {
     background: "var(--tg-theme-secondary-bg-color, #fff)",
-    borderRadius: 12,
-    padding: "20px 16px",
+    borderRadius: 14,
+    padding: "22px 18px",
     marginTop: 8,
     boxShadow: "0 1px 4px rgba(0,0,0,0.08)",
   },
-  heading: { fontSize: 18, fontWeight: 600, marginBottom: 12, marginTop: 0 },
+  heading: { fontSize: 19, fontWeight: 700, margin: "0 0 4px" },
+  subtitle: {
+    fontSize: 14,
+    color: "var(--tg-theme-hint-color, #888)",
+    margin: "0 0 20px",
+    lineHeight: 1.4,
+  },
+  stepLabel: {
+    display: "block" as const,
+    fontSize: 12,
+    fontWeight: 700,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase" as const,
+    color: "var(--tg-theme-hint-color, #888)",
+    margin: "0 0 8px",
+  },
   label: { display: "block" as const, fontSize: 14, marginBottom: 6, fontWeight: 500 },
-  fileInput: { display: "block" as const, width: "100%", marginBottom: 16 },
   btn: {
     display: "block" as const,
     width: "100%",
@@ -56,25 +70,47 @@ const STYLES = {
     cursor: "pointer",
     background: "var(--tg-theme-button-color, #2481cc)",
     color: "var(--tg-theme-button-text-color, #fff)",
-    marginBottom: 10,
+    textAlign: "center" as const,
+    boxSizing: "border-box" as const,
   },
-  btnSecondary: {
+  btnOutline: {
     background: "transparent",
     color: "var(--tg-theme-button-color, #2481cc)",
     border: "1px solid var(--tg-theme-button-color, #2481cc)",
   },
-  hint: { fontSize: 13, color: "var(--tg-theme-hint-color, #888)", marginTop: 8 },
-  previewRow: { marginBottom: 6 },
+  btnDisabled: {
+    // Greyed, non-interactive until a file is picked.
+    background: "var(--tg-theme-hint-color, #c4c9cc)",
+    color: "var(--tg-theme-secondary-bg-color, #fff)",
+    cursor: "not-allowed" as const,
+    opacity: 0.7,
+  },
+  fileChip: {
+    display: "flex" as const,
+    alignItems: "center" as const,
+    gap: 8,
+    padding: "12px 14px",
+    borderRadius: 10,
+    background: "var(--tg-theme-bg-color, #f0f4f8)",
+    color: "var(--tg-theme-text-color, #222)",
+    fontSize: 14,
+    wordBreak: "break-all" as const,
+  },
+  hint: { fontSize: 13, color: "var(--tg-theme-hint-color, #888)", marginTop: 8, lineHeight: 1.4 },
+  previewRow: { marginBottom: 8, fontSize: 15 },
   dateInput: {
     display: "block" as const,
     width: "100%",
-    padding: "10px 12px",
+    padding: "11px 12px",
     borderRadius: 8,
-    border: "1px solid #ddd",
+    border: "1px solid var(--tg-theme-hint-color, #ddd)",
+    background: "var(--tg-theme-bg-color, #fff)",
+    color: "var(--tg-theme-text-color, #222)",
     fontSize: 15,
     marginBottom: 12,
     boxSizing: "border-box" as const,
   },
+  hiddenInput: { display: "none" as const },
 };
 
 function formatIsoToDisplay(iso: string): string {
@@ -207,27 +243,52 @@ export default function NutritionMiniApp() {
     <div style={STYLES.page}>
       <div style={STYLES.card}>
         <h2 style={STYLES.heading}>Отчёт о питании</h2>
+        <p style={STYLES.subtitle}>Прикрепи PDF-выгрузку из FatSecret за прошедшую неделю.</p>
 
         {step === "idle" || step === "uploading" ? (
           <>
-            <label style={STYLES.label}>Файл из FatSecret (PDF)</label>
+            {/* Step 1 — choose the file (the primary action until one is picked). */}
+            <span style={STYLES.stepLabel}>Шаг 1 · Файл</span>
             <input
               ref={fileRef}
               type="file"
               accept=".pdf"
-              style={STYLES.fileInput}
+              style={STYLES.hiddenInput}
               onChange={handleFileChange}
               disabled={busy}
             />
-            {file && (
-              <p style={STYLES.hint}>{file.name}</p>
-            )}
+            {file ? (
+              <div style={{ ...STYLES.fileChip, marginBottom: 12 }}>
+                <span aria-hidden>✓</span>
+                <span>{file.name}</span>
+              </div>
+            ) : null}
             <button
-              style={{ ...STYLES.btn, opacity: busy ? 0.6 : 1 }}
+              type="button"
+              style={{
+                ...STYLES.btn,
+                ...(file ? STYLES.btnOutline : {}),
+                opacity: busy ? 0.6 : 1,
+                marginBottom: 20,
+              }}
+              onClick={() => fileRef.current?.click()}
+              disabled={busy}
+            >
+              {file ? "Выбрать другой файл" : "Выбрать файл"}
+            </button>
+
+            {/* Step 2 — upload (disabled until a file is selected). */}
+            <span style={STYLES.stepLabel}>Шаг 2 · Загрузка</span>
+            <button
+              type="button"
+              style={{
+                ...STYLES.btn,
+                ...(!file || busy ? STYLES.btnDisabled : {}),
+              }}
               onClick={handleUpload}
               disabled={busy || !file}
             >
-              {step === "uploading" ? "Обрабатываю..." : "Загрузить"}
+              {step === "uploading" ? "Обрабатываю…" : "Загрузить"}
             </button>
           </>
         ) : null}
@@ -274,14 +335,16 @@ export default function NutritionMiniApp() {
             )}
 
             <button
-              style={{ ...STYLES.btn, opacity: busy ? 0.6 : 1, marginTop: 12 }}
+              type="button"
+              style={{ ...STYLES.btn, opacity: busy ? 0.6 : 1, marginTop: 12, marginBottom: 10 }}
               onClick={handleConfirm}
               disabled={busy}
             >
-              {step === "confirming" ? "Сохраняю..." : "Подтвердить и отправить"}
+              {step === "confirming" ? "Сохраняю…" : "Подтвердить и отправить"}
             </button>
             <button
-              style={{ ...STYLES.btn, ...STYLES.btnSecondary }}
+              type="button"
+              style={{ ...STYLES.btn, ...STYLES.btnOutline }}
               onClick={handleBack}
               disabled={busy}
             >
