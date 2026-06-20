@@ -5,6 +5,7 @@ import { signStudentLink } from "@/features/telegram/validate-init-data";
 import { getRequiredTrainingPeaksBusinessConnectionId } from "@/features/trainingpeaks/telegram-business";
 import { getTrainingPeaksStudentByStudentId } from "@/features/trainingpeaks/repository";
 import { isValidAdminAccessToken } from "@/lib/admin-auth";
+import { resolveAppBaseUrl } from "@/lib/app-base-url";
 
 export const runtime = "nodejs";
 
@@ -13,7 +14,7 @@ function isMiniAppEnabled(): boolean {
 }
 
 function getMiniAppUrl(studentId: string): string {
-  const base = process.env.NEXT_PUBLIC_BASE_URL?.replace(/\/$/, "") ?? "";
+  const base = resolveAppBaseUrl();
   const sig = signStudentLink(studentId);
   const query = new URLSearchParams({ sid: studentId, sig });
   return `${base}/m/n?${query.toString()}`;
@@ -58,7 +59,13 @@ export async function GET(request: NextRequest): Promise<Response> {
     return jsonResponse(422, { ok: false, error: "Student has no telegramChatId" });
   }
 
-  const miniAppUrl = getMiniAppUrl(student.studentId);
+  let miniAppUrl: string;
+  try {
+    miniAppUrl = getMiniAppUrl(student.studentId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Mini app base URL not configured.";
+    return jsonResponse(500, { ok: false, error: message });
+  }
 
   await sendTelegramWebAppButton({
     chatId: student.telegramChatId,
