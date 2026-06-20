@@ -1,7 +1,10 @@
 import { sendTelegramMessageStrict, getTelegramBotUsername } from "@/features/telegram/telegram-client";
 import { resolveGreeting } from "@/features/nutrition/telegram-renderer";
 import { getRequiredTrainingPeaksBusinessConnectionId } from "@/features/trainingpeaks/telegram-business";
-import { getTrainingPeaksStudentByStudentId } from "@/features/trainingpeaks/repository";
+import {
+  getTrainingPeaksStudentById,
+  getTrainingPeaksStudentByStudentId,
+} from "@/features/trainingpeaks/repository";
 import type { TrainingPeaksTelegramFormality } from "@/features/trainingpeaks/repository";
 
 export type SendNutritionFormResult =
@@ -12,13 +15,20 @@ function isMiniAppEnabled(): boolean {
   return process.env.MINIAPP_ENABLED === "true";
 }
 
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 /**
- * Greeting + formality-aware request + the Mini App deep link, all in plain text.
+ * Greeting + formality-aware request + the Mini App deep link as an HTML link.
  *
- * The link is in the MESSAGE TEXT, not an inline button: named Mini App links
- * require a web_app button, which Telegram rejects in business messages
- * (BUTTON_TYPE_INVALID). A tapped text link opens the Mini App with the same
- * signed start_param, so auto-linking still works.
+ * The link lives in the MESSAGE TEXT (parse_mode=HTML), not an inline button:
+ * named Mini App links require a web_app button, which Telegram rejects in
+ * business messages (BUTTON_TYPE_INVALID). An HTML <a> link renders as tappable
+ * "Открыть форму" (the long URL hidden) and is allowed in business text. The
+ * tapped link opens the Mini App with the same signed start_param, so
+ * auto-linking still works. HTML is used (not MarkdownV2) — the bot client
+ * already supports parse_mode HTML and escaping is simpler (&, <, > only).
  */
 function buildFormMessage(formality: TrainingPeaksTelegramFormality, deepLink: string): string {
   const greeting = resolveGreeting(formality);
@@ -26,7 +36,8 @@ function buildFormMessage(formality: TrainingPeaksTelegramFormality, deepLink: s
     formality === "vy"
       ? "Загрузите отчёт о питании за прошедшую неделю:"
       : "Загрузи отчёт о питании за прошедшую неделю:";
-  return `${greeting}\n\n${request}\n👉 ${deepLink}`;
+  const link = `<a href="${escapeHtml(deepLink)}">Открыть форму</a>`;
+  return `${escapeHtml(greeting)}\n\n${escapeHtml(request)}\n👉 ${link}`;
 }
 
 /**
@@ -44,21 +55,25 @@ async function buildMiniAppDeepLink(studentRowId: string): Promise<string> {
 }
 
 /**
- * Sends the nutrition upload-form button to one student's Business DM.
+ * Sends the nutrition upload-form link to one student's Business DM.
  *
- * `studentId` is the public text slug; it is resolved to the student row, whose
- * UUID `id` carries the deep link. Returns a structured result (never throws for
- * expected conditions) so callers — the curl route and the admin server actions
- * — can surface a clear message instead of a silent failure.
+ * `identifier` may be the student ROW id (UUID) — what the admin UI passes
+ * (row.studentId = student.id) — or the public text slug — what curl callers
+ * use (?studentId=aleksandra-kasianenko). Resolve by UUID first, then fall back
+ * to slug, so both paths work. Returns a structured result (never throws for
+ * expected conditions) so callers surface a clear message instead of failing
+ * silently.
  */
 export async function sendNutritionFormButtonToStudent(
-  studentId: string
+  identifier: string
 ): Promise<SendNutritionFormResult> {
   if (!isMiniAppEnabled()) {
     return { ok: false, reason: "MINIAPP_ENABLED не включён." };
   }
 
-  const student = await getTrainingPeaksStudentByStudentId(studentId).catch(() => null);
+  const student =
+    (await getTrainingPeaksStudentById(identifier).catch(() => null)) ??
+    (await getTrainingPeaksStudentByStudentId(identifier).catch(() => null));
   if (!student) {
     return { ok: false, reason: "Ученик не найден." };
   }
@@ -82,7 +97,7 @@ export async function sendNutritionFormButtonToStudent(
     await sendTelegramMessageStrict(
       student.telegramChatId,
       buildFormMessage(student.telegramFormality, miniAppUrl),
-      { businessConnectionId: getRequiredTrainingPeaksBusinessConnectionId() }
+      { businessConnectionId: getRequiredTrainingPeaksBusinessConnectionId(), parseMode: "HTML" }
     );
   } catch (err) {
     return {
