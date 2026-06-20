@@ -4,6 +4,8 @@ import FormActionButton from "@/app/admin/FormActionButton";
 import { getSingleSearchParam } from "@/app/admin/lib";
 import {
   generateNutritionWeeklyReviewBatchAction,
+  sendNutritionFormAction,
+  sendNutritionFormBatchAction,
   setNutritionEnabledAction,
 } from "@/app/admin/coach-os/nutrition/actions";
 import { listNutritionAdminDashboardRows } from "@/features/nutrition/admin";
@@ -179,7 +181,25 @@ export default async function CoachOsNutritionDashboardPage({
               Сгенерировать пачку
             </FormActionButton>
             <span className="admin-muted">
-              Отметь учеников ниже. Разборы генерятся последовательно, по одному, с паузой между запросами.
+              Отметь учеников в колонке «Разбор». Разборы генерятся последовательно, по одному, с паузой между запросами.
+            </span>
+          </div>
+        </form>
+      </div>
+
+      <div className="admin-card admin-card-compact">
+        <form id="nutrition-send-form-form" action={sendNutritionFormBatchAction}>
+          <input type="hidden" name="redirectTo" value={redirectTo} />
+          <div className="admin-inline-actions">
+            <FormActionButton
+              className="admin-button admin-button-primary admin-button-compact"
+              pendingText="Отправка формы…"
+              confirmMessage="Отправить форму загрузки отчёта всем отмеченным ученицам?"
+            >
+              Отправить форму отмеченным
+            </FormActionButton>
+            <span className="admin-muted">
+              Отметь учениц в колонке «Форма» (можно тех, у кого ещё нет отчёта) — каждая получит кнопку загрузки в личный чат.
             </span>
           </div>
         </form>
@@ -189,7 +209,8 @@ export default async function CoachOsNutritionDashboardPage({
         <table className="admin-table admin-table-compact">
           <thead>
             <tr>
-              <th></th>
+              <th>Разбор</th>
+              <th>Форма</th>
               <th>Ученик</th>
               <th>Питание</th>
               <th>Вес</th>
@@ -205,7 +226,7 @@ export default async function CoachOsNutritionDashboardPage({
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td className="admin-empty-cell" colSpan={11}>
+                <td className="admin-empty-cell" colSpan={12}>
                   Нет учеников по выбранным фильтрам.
                 </td>
               </tr>
@@ -224,11 +245,21 @@ export default async function CoachOsNutritionDashboardPage({
                         name="batchStudent"
                         form="nutrition-batch-form"
                         value={batchValue}
-                        aria-label={`Выбрать ${row.studentName} для пачки`}
+                        aria-label={`Выбрать ${row.studentName} для пачки разборов`}
                       />
                     ) : (
                       <span className="admin-muted">—</span>
                     )}
+                  </td>
+                  <td>
+                    {/* Send-form cohort = ALL students (даже без отчёта). */}
+                    <input
+                      type="checkbox"
+                      name="sendFormStudent"
+                      form="nutrition-send-form-form"
+                      value={row.studentId}
+                      aria-label={`Выбрать ${row.studentName} для рассылки формы`}
+                    />
                   </td>
                   <td>
                     <div className="admin-table-primary">
@@ -282,20 +313,32 @@ export default async function CoachOsNutritionDashboardPage({
                     )}
                   </td>
                   <td>
-                    <Link
-                      className="admin-button admin-button-secondary"
-                      href={buildNutritionDashboardOpenHref({
-                        studentId: row.studentId,
-                        latestReportId: row.latestReportId,
-                        latestReportWeekFrom: row.latestReportWeekFrom,
-                        latestReportWeekTo: row.latestReportWeekTo,
-                        lastAnalysisId: row.lastAnalysisId,
-                        lastAnalysisWeekFrom: row.lastAnalysisWeekFrom,
-                        lastAnalysisWeekTo: row.lastAnalysisWeekTo,
-                      })}
-                    >
-                      Открыть
-                    </Link>
+                    <div className="admin-inline-actions">
+                      <Link
+                        className="admin-button admin-button-secondary"
+                        href={buildNutritionDashboardOpenHref({
+                          studentId: row.studentId,
+                          latestReportId: row.latestReportId,
+                          latestReportWeekFrom: row.latestReportWeekFrom,
+                          latestReportWeekTo: row.latestReportWeekTo,
+                          lastAnalysisId: row.lastAnalysisId,
+                          lastAnalysisWeekFrom: row.lastAnalysisWeekFrom,
+                          lastAnalysisWeekTo: row.lastAnalysisWeekTo,
+                        })}
+                      >
+                        Открыть
+                      </Link>
+                      <form action={sendNutritionFormAction}>
+                        <input type="hidden" name="studentId" value={row.studentId} />
+                        <input type="hidden" name="redirectTo" value={redirectTo} />
+                        <FormActionButton
+                          className="admin-button admin-button-secondary admin-button-compact"
+                          pendingText="Отправка…"
+                        >
+                          Отправить форму
+                        </FormActionButton>
+                      </form>
+                    </div>
                   </td>
                 </tr>
                 );

@@ -22,6 +22,7 @@ import {
   formatNutritionStatus,
 } from "@/features/nutrition/admin-labels";
 import { getNutritionPlanTargetWeekToday } from "@/features/nutrition/plan-week-policy";
+import { sendNutritionFormButtonToStudent } from "@/features/nutrition/send-nutrition-form";
 import {
   NUTRITION_FILE_PREVIEW_COOKIE,
   serializeNutritionFileUploadPreview,
@@ -707,6 +708,54 @@ export async function generateNutritionWeeklyReviewBatchAction(formData: FormDat
   redirect(
     withNotice(redirectTo, rateLimited || failed ? "error" : "notice", `Пачка разборов: ${parts.join(", ")}.`)
   );
+}
+
+// Send the upload-form button to ONE student (personal). No confirmation needed.
+export async function sendNutritionFormAction(formData: FormData): Promise<void> {
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const studentId = getRequiredFormValue(formData, "studentId");
+
+  const result = await sendNutritionFormButtonToStudent(studentId);
+  revalidateNutritionPaths(studentId);
+
+  if (result.ok) {
+    redirect(withNotice(redirectTo, "notice", `Форма отправлена: ${result.studentName}.`));
+  }
+  redirect(withNotice(redirectTo, "error", `Не отправлено: ${result.reason}`));
+}
+
+// Send the upload-form button to MANY selected students (batch). The page guards
+// this with an explicit confirmation so nobody mass-sends by accident.
+export async function sendNutritionFormBatchAction(formData: FormData): Promise<void> {
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+
+  const studentIds = formData
+    .getAll("sendFormStudent")
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  if (studentIds.length === 0) {
+    redirect(withNotice(redirectTo, "error", "Не выбрано ни одной ученицы для рассылки формы."));
+  }
+
+  let sent = 0;
+  let failed = 0;
+  for (const studentId of studentIds) {
+    const result = await sendNutritionFormButtonToStudent(studentId);
+    if (result.ok) {
+      sent += 1;
+    } else {
+      failed += 1;
+    }
+  }
+
+  revalidatePath("/admin/coach-os/nutrition");
+
+  const parts = [`отправлено ${sent}`];
+  if (failed) {
+    parts.push(`ошибок ${failed}`);
+  }
+  redirect(withNotice(redirectTo, failed ? "error" : "notice", `Рассылка формы: ${parts.join(", ")}.`));
 }
 
 export async function generateNutritionWeeklyReviewAction(formData: FormData): Promise<void> {

@@ -22,6 +22,7 @@ import {
   saveNutritionManualMacrosAction,
   saveNutritionCoachContextAction,
   saveNutritionProfileAction,
+  sendNutritionFormAction,
 } from "@/app/admin/coach-os/nutrition/actions";
 import ConfirmSubmitButton from "@/app/admin/coach-os/nutrition/ConfirmSubmitButton";
 import {
@@ -602,6 +603,24 @@ export default async function CoachOsNutritionStudentCardPage({
           </ul>
         </article>
       ) : null}
+
+      <div className="admin-card admin-card-compact">
+        <div className="admin-inline-actions">
+          <form action={sendNutritionFormAction}>
+            <input type="hidden" name="studentId" value={studentId} />
+            <input type="hidden" name="redirectTo" value={studentCardPath} />
+            <FormActionButton
+              className="admin-button admin-button-secondary admin-button-compact"
+              pendingText="Отправка…"
+            >
+              Отправить форму этому ученику
+            </FormActionButton>
+          </form>
+          <span className="admin-muted">
+            Ученик получит кнопку загрузки отчёта о питании в личный чат.
+          </span>
+        </div>
+      </div>
 
       <div className="admin-grid admin-grid-student-detail">
         <NutritionFileUploadPanel
