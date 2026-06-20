@@ -1,10 +1,12 @@
 /**
- * Unit tests for mini-app student auto-linking:
- *  - linkTelegramUserIdToStudent (atomic, collision-safe) via an in-memory
- *    fake Supabase client — no live DB required.
- *  - resolveMiniAppStudent end-to-end: valid sid+sig links on first open,
- *    forged sig is rejected with a coach notification, a user.id already bound
- *    to another student collides without overwrite, and a re-open is idempotent.
+ * Unit tests for mini-app student auto-linking (t.me direct-link variant):
+ *  - linkTelegramUserIdToStudent (atomic, collision-safe, keyed by ROW id) via
+ *    an in-memory fake Supabase client — no live DB required.
+ *  - resolveMiniAppStudent end-to-end: start_param (row id) from the signed
+ *    initData links on first open; no start_param is rejected (the only source
+ *    is the signed initData, never an unsafe field); a user.id already bound to
+ *    another student collides without overwrite and notifies the coach; a
+ *    re-open is idempotent.
  */
 
 import assert from "node:assert/strict";
@@ -15,7 +17,6 @@ import {
   type SupabaseServerClientLike,
 } from "../src/features/trainingpeaks/repository";
 import { resolveMiniAppStudent } from "../src/features/telegram/miniapp-student-resolver";
-import { signStudentLinkWithToken } from "../src/features/telegram/validate-init-data";
 
 const TEST_TOKEN = "1234567890:ABCDEFGhijklmnopqrstuvwxyz_test_token";
 process.env.TELEGRAM_BOT_TOKEN = TEST_TOKEN;
@@ -24,9 +25,9 @@ process.env.TELEGRAM_BOT_TOKEN = TEST_TOKEN;
 
 type Row = Record<string, unknown>;
 
-function makeRow(overrides: Partial<Row> & { student_id: string }): Row {
+function makeRow(overrides: Partial<Row> & { id: string; student_id: string }): Row {
   return {
-    id: `id-${overrides.student_id}`,
+    id: overrides.id,
     student_id: overrides.student_id,
     student_name: `Name ${overrides.student_id}`,
     trainingpeaks_athlete_url: "https://tp/x",
@@ -94,12 +95,15 @@ function makeFakeClient(rows: Row[]): SupabaseServerClientLike {
   } as unknown as SupabaseServerClientLike;
 }
 
-/** Build a valid Telegram initData string for the test token. */
-function buildValidInitData(userId: number, firstName = "Мария"): string {
+/** Build a valid Telegram initData string (optionally with start_param). */
+function buildValidInitData(userId: number, startParam?: string, firstName = "Мария"): string {
   const params = new URLSearchParams({
     auth_date: "1700000000",
     user: JSON.stringify({ id: userId, first_name: firstName }),
   });
+  if (startParam !== undefined) {
+    params.set("start_param", startParam);
+  }
   const checkString = [...params.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([k, v]) => `${k}=${v}`)
@@ -111,12 +115,12 @@ function buildValidInitData(userId: number, firstName = "Мария"): string {
 }
 
 async function main() {
-// --- 1. linkTelegramUserIdToStudent: empty target → linked ---
+// --- 1. linkTelegramUserIdToStudent (by row id): empty target → linked ---
 
 {
-  const rows = [makeRow({ student_id: "S1", telegram_user_id: null })];
+  const rows = [makeRow({ id: "R1", student_id: "S1", telegram_user_id: null })];
   const client = makeFakeClient(rows);
-  const r = await linkTelegramUserIdToStudent("S1", 555, client);
+  const r = await linkTelegramUserIdToStudent("R1", 555, client);
   assert.equal(r.status, "linked", "empty target must link");
   assert.equal(rows[0].telegram_user_id, 555, "user.id must be written to the row");
 }
@@ -124,9 +128,9 @@ async function main() {
 // --- 2. repeat link (same pair) → idempotent, not overwritten ---
 
 {
-  const rows = [makeRow({ student_id: "S1", telegram_user_id: 555 })];
+  const rows = [makeRow({ id: "R1", student_id: "S1", telegram_user_id: 555 })];
   const client = makeFakeClient(rows);
-  const r = await linkTelegramUserIdToStudent("S1", 555, client);
+  const r = await linkTelegramUserIdToStudent("R1", 555, client);
   assert.equal(r.status, "already_linked_same", "same pair must be idempotent");
   assert.equal(rows[0].telegram_user_id, 555, "value unchanged");
 }
@@ -135,8 +139,8 @@ async function main() {
 
 {
   const rows = [
-    makeRow({ student_id: "A", telegram_user_id: 777 }),
-    makeRow({ student_id: "B", telegram_user_id: null }),
+    makeRow({ id: "A", student_id: "A", telegram_user_id: 777 }),
+    makeRow({ id: "B", student_id: "B", telegram_user_id: null }),
   ];
   const client = makeFakeClient(rows);
   const r = await linkTelegramUserIdToStudent("B", 777, client);
@@ -147,14 +151,14 @@ async function main() {
 // --- 4. target already has a DIFFERENT user.id → collision_student_taken ---
 
 {
-  const rows = [makeRow({ student_id: "C", telegram_user_id: 888 })];
+  const rows = [makeRow({ id: "C", student_id: "C", telegram_user_id: 888 })];
   const client = makeFakeClient(rows);
   const r = await linkTelegramUserIdToStudent("C", 999, client);
   assert.equal(r.status, "collision_student_taken", "different user.id on target must collide");
   assert.equal(rows[0].telegram_user_id, 888, "C must NOT be overwritten");
 }
 
-// --- 5. unknown student → student_not_found ---
+// --- 5. unknown row id → student_not_found ---
 
 {
   const client = makeFakeClient([]);
@@ -162,15 +166,14 @@ async function main() {
   assert.equal(r.status, "student_not_found", "unknown student");
 }
 
-// --- 6. resolver: valid sid+sig, empty user_id → auto-link, no coach notify ---
+// --- 6. resolver: start_param (row id) + empty user_id → auto-link, no notify ---
 
 {
-  const rows = [makeRow({ student_id: "S1", telegram_user_id: null })];
+  const rows = [makeRow({ id: "R1", student_id: "S1", telegram_user_id: null })];
   const client = makeFakeClient(rows);
   const notices: string[] = [];
-  const sig = signStudentLinkWithToken("S1", TEST_TOKEN);
   const res = await resolveMiniAppStudent(
-    { initData: buildValidInitData(555), sid: "S1", sig },
+    { initData: buildValidInitData(555, "R1") },
     { client, notifyCoach: async (d) => void notices.push(d) }
   );
   assert.ok(res.ok, "valid link must succeed");
@@ -182,20 +185,19 @@ async function main() {
   assert.equal(notices.length, 0, "no coach notification on success");
 }
 
-// --- 7. resolver: forged sig → invalid_signature + coach notify ---
+// --- 7. resolver: no start_param → needs_link (only the signed initData is a source) ---
 
 {
-  const rows = [makeRow({ student_id: "S1", telegram_user_id: null })];
+  const rows = [makeRow({ id: "R1", student_id: "S1", telegram_user_id: null })];
   const client = makeFakeClient(rows);
   const notices: string[] = [];
   const res = await resolveMiniAppStudent(
-    { initData: buildValidInitData(555), sid: "S1", sig: "deadbeefdeadbeefdeadbeefdeadbeef" },
+    { initData: buildValidInitData(555) }, // no start_param
     { client, notifyCoach: async (d) => void notices.push(d) }
   );
-  assert.ok(!res.ok, "forged sig must fail");
-  if (!res.ok) assert.equal(res.code, "invalid_signature");
-  assert.equal(rows[0].telegram_user_id, null, "nothing written on forged sig");
-  assert.equal(notices.length, 1, "coach notified about forged sig");
+  assert.ok(!res.ok, "missing start_param must fail");
+  if (!res.ok) assert.equal(res.code, "needs_link");
+  assert.equal(rows[0].telegram_user_id, null, "nothing written without start_param");
 }
 
 // --- 8. resolver: user.id belongs to another (inactive) student → collision + notify ---
@@ -204,14 +206,13 @@ async function main() {
   // A is inactive so the active-only step-1 lookup misses it, but the link-time
   // collision check (no active filter) catches the conflict.
   const rows = [
-    makeRow({ student_id: "A", telegram_user_id: 777, is_active: false }),
-    makeRow({ student_id: "B", telegram_user_id: null }),
+    makeRow({ id: "A", student_id: "A", telegram_user_id: 777, is_active: false }),
+    makeRow({ id: "B", student_id: "B", telegram_user_id: null }),
   ];
   const client = makeFakeClient(rows);
   const notices: string[] = [];
-  const sig = signStudentLinkWithToken("B", TEST_TOKEN);
   const res = await resolveMiniAppStudent(
-    { initData: buildValidInitData(777), sid: "B", sig },
+    { initData: buildValidInitData(777, "B") },
     { client, notifyCoach: async (d) => void notices.push(d) }
   );
   assert.ok(!res.ok, "collision must fail");
@@ -220,14 +221,14 @@ async function main() {
   assert.equal(notices.length, 1, "coach notified about collision");
 }
 
-// --- 9. resolver: already linked → idempotent resolve, no sid needed ---
+// --- 9. resolver: already linked → idempotent resolve, no start_param needed ---
 
 {
-  const rows = [makeRow({ student_id: "S1", telegram_user_id: 555 })];
+  const rows = [makeRow({ id: "R1", student_id: "S1", telegram_user_id: 555 })];
   const client = makeFakeClient(rows);
   const notices: string[] = [];
   const res = await resolveMiniAppStudent(
-    { initData: buildValidInitData(555), sid: null, sig: null },
+    { initData: buildValidInitData(555) },
     { client, notifyCoach: async (d) => void notices.push(d) }
   );
   assert.ok(res.ok, "already-linked must resolve");

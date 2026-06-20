@@ -2334,8 +2334,11 @@ export async function listTrainingPeaksStudentsIncludingArchived(): Promise<Trai
   return ((data as TrainingPeaksStudentRow[]) ?? []).map(mapTrainingPeaksStudentRow);
 }
 
-export async function getTrainingPeaksStudentById(id: string): Promise<TrainingPeaksStudent | null> {
-  const supabase = createSupabaseServerClient();
+export async function getTrainingPeaksStudentById(
+  id: string,
+  client?: SupabaseServerClientLike
+): Promise<TrainingPeaksStudent | null> {
+  const supabase = client ?? createSupabaseServerClient();
   const { data, error } = await supabase
     .from("trainingpeaks_students")
     .select("*")
@@ -2410,7 +2413,7 @@ export async function getTrainingPeaksStudentByTelegramUserId(
  * - already_linked_same: this exact pair is already stored (idempotent re-click).
  * - collision_user_taken: this user.id already belongs to a DIFFERENT student.
  * - collision_student_taken: this student already has a DIFFERENT user.id.
- * - student_not_found: no student row for the given student_id.
+ * - student_not_found: no student row for the given row id.
  */
 export type LinkTelegramUserResult =
   | { status: "linked"; student: TrainingPeaksStudent }
@@ -2420,8 +2423,8 @@ export type LinkTelegramUserResult =
   | { status: "student_not_found" };
 
 /**
- * Auto-link a Telegram personal user.id to a student, used by the nutrition
- * mini app. Safe by construction:
+ * Auto-link a Telegram personal user.id to a student (by student ROW id / UUID),
+ * used by the nutrition mini app. Safe by construction:
  *  - one user.id maps to one student (rejects if user.id is taken elsewhere);
  *  - only writes when the target student's telegram_user_id is still empty
  *    (atomic UPDATE ... WHERE telegram_user_id IS NULL);
@@ -2429,7 +2432,7 @@ export type LinkTelegramUserResult =
  *    caller can notify the coach instead of binding the wrong person.
  */
 export async function linkTelegramUserIdToStudent(
-  studentId: string,
+  studentRowId: string,
   telegramUserId: number,
   client?: SupabaseServerClientLike
 ): Promise<LinkTelegramUserResult> {
@@ -2450,14 +2453,14 @@ export async function linkTelegramUserIdToStudent(
 
   if (existingByUser) {
     const existing = mapTrainingPeaksStudentRow(existingByUser as TrainingPeaksStudentRow);
-    if (existing.studentId === studentId) {
+    if (existing.id === studentRowId) {
       return { status: "already_linked_same", student: existing };
     }
     return { status: "collision_user_taken", conflictingStudent: existing };
   }
 
-  // 2. Fetch the target student.
-  const target = await getTrainingPeaksStudentByStudentId(studentId, supabase);
+  // 2. Fetch the target student by row id.
+  const target = await getTrainingPeaksStudentById(studentRowId, supabase);
   if (!target) {
     return { status: "student_not_found" };
   }
@@ -2477,14 +2480,14 @@ export async function linkTelegramUserIdToStudent(
   const { data: updated, error: updateError } = await supabase
     .from("trainingpeaks_students")
     .update({ telegram_user_id: telegramUserId })
-    .eq("student_id", studentId)
+    .eq("id", studentRowId)
     .is("telegram_user_id", null)
     .select("*")
     .maybeSingle();
 
   if (updateError) {
     throw new Error(
-      `Failed to link telegram_user_id ${telegramUserId} to student ${studentId}: ${updateError.message}`
+      `Failed to link telegram_user_id ${telegramUserId} to student ${studentRowId}: ${updateError.message}`
     );
   }
 
@@ -2493,7 +2496,7 @@ export async function linkTelegramUserIdToStudent(
   }
 
   // 4. Zero rows updated → someone set it between step 2 and 3 (race). Re-read.
-  const refetched = await getTrainingPeaksStudentByStudentId(studentId, supabase);
+  const refetched = await getTrainingPeaksStudentById(studentRowId, supabase);
   if (refetched && refetched.telegramUserId === telegramUserId) {
     return { status: "already_linked_same", student: refetched };
   }

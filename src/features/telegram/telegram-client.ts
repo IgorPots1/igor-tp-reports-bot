@@ -444,24 +444,58 @@ export async function getTelegramFilePath(fileId: string): Promise<string> {
   return filePath;
 }
 
-export async function sendTelegramWebAppButton(input: {
+/**
+ * Sends an inline URL button. Unlike `web_app` buttons, plain `url` buttons are
+ * allowed in business-account messages (web_app returns BUTTON_TYPE_INVALID).
+ * Point it at a t.me Mini App direct link so it opens with signed initData.
+ */
+export async function sendTelegramUrlButton(input: {
   chatId: string | number;
   text: string;
   buttonLabel: string;
-  webAppUrl: string;
+  url: string;
   businessConnectionId?: string;
 }): Promise<void> {
   const body: Record<string, unknown> = {
     chat_id: input.chatId,
     text: input.text,
     reply_markup: {
-      inline_keyboard: [[{ text: input.buttonLabel, web_app: { url: input.webAppUrl } }]],
+      inline_keyboard: [[{ text: input.buttonLabel, url: input.url }]],
     },
   };
   if (input.businessConnectionId) {
     body.business_connection_id = input.businessConnectionId;
   }
   await postTelegramApi("sendMessage", body);
+}
+
+let cachedBotUsername: string | null = null;
+
+/** Returns the bot's @username via getMe, cached for the process lifetime. */
+export async function getTelegramBotUsername(): Promise<string> {
+  if (cachedBotUsername) {
+    return cachedBotUsername;
+  }
+  const token = getTelegramBotToken();
+  const response = await fetch(`${TELEGRAM_API_BASE_URL}/bot${token}/getMe`, { method: "POST" });
+  const responseText = await response.text();
+  if (!response.ok) {
+    throw new Error(`Telegram getMe failed (${response.status}): ${responseText}`);
+  }
+  const payload = JSON.parse(responseText) as {
+    ok?: boolean;
+    description?: string;
+    result?: { username?: string };
+  };
+  if (payload.ok === false) {
+    throw new Error(`Telegram getMe failed: ${payload.description ?? "Unknown Telegram API error"}`);
+  }
+  const username = payload.result?.username?.trim();
+  if (!username) {
+    throw new Error("Telegram getMe returned no username");
+  }
+  cachedBotUsername = username;
+  return username;
 }
 
 export async function downloadTelegramFile(fileId: string): Promise<Buffer> {

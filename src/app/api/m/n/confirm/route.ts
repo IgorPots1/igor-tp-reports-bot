@@ -39,9 +39,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     return jsonResponse(401, { ok: false, error: "Не авторизован." });
   }
 
-  const sid = (formData.get("sid") as string | null) ?? null;
-  const sig = (formData.get("sig") as string | null) ?? null;
-  const resolved = await resolveMiniAppStudent({ initData, sid, sig });
+  const resolved = await resolveMiniAppStudent({ initData });
   if (!resolved.ok) {
     return jsonResponse(resolved.httpStatus, { ok: false, error: resolved.message });
   }

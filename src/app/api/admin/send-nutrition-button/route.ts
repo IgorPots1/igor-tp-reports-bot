@@ -1,11 +1,9 @@
 import type { NextRequest } from "next/server";
 
-import { sendTelegramWebAppButton } from "@/features/telegram/telegram-client";
-import { signStudentLink } from "@/features/telegram/validate-init-data";
+import { sendTelegramUrlButton, getTelegramBotUsername } from "@/features/telegram/telegram-client";
 import { getRequiredTrainingPeaksBusinessConnectionId } from "@/features/trainingpeaks/telegram-business";
 import { getTrainingPeaksStudentByStudentId } from "@/features/trainingpeaks/repository";
 import { isValidAdminAccessToken } from "@/lib/admin-auth";
-import { resolveAppBaseUrl } from "@/lib/app-base-url";
 
 export const runtime = "nodejs";
 
@@ -13,11 +11,18 @@ function isMiniAppEnabled(): boolean {
   return process.env.MINIAPP_ENABLED === "true";
 }
 
-function getMiniAppUrl(studentId: string): string {
-  const base = resolveAppBaseUrl();
-  const sig = signStudentLink(studentId);
-  const query = new URLSearchParams({ sid: studentId, sig });
-  return `${base}/m/n?${query.toString()}`;
+/**
+ * Builds the t.me Mini App direct link. The student's row id (UUID) is passed
+ * as `startapp` — UUID chars [0-9a-f-] are startapp-safe and Telegram folds
+ * start_param into the signed initData, so it needs no extra signature.
+ */
+async function buildMiniAppDeepLink(studentRowId: string): Promise<string> {
+  const shortName = process.env.TELEGRAM_MINIAPP_SHORT_NAME?.trim();
+  if (!shortName) {
+    throw new Error("TELEGRAM_MINIAPP_SHORT_NAME is not set (BotFather /newapp short name).");
+  }
+  const username = await getTelegramBotUsername();
+  return `https://t.me/${username}/${shortName}?startapp=${studentRowId}`;
 }
 
 function jsonResponse(status: number, body: Record<string, unknown>): Response {
@@ -61,17 +66,17 @@ export async function GET(request: NextRequest): Promise<Response> {
 
   let miniAppUrl: string;
   try {
-    miniAppUrl = getMiniAppUrl(student.studentId);
+    miniAppUrl = await buildMiniAppDeepLink(student.id);
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Mini app base URL not configured.";
+    const message = err instanceof Error ? err.message : "Mini app deep link not configured.";
     return jsonResponse(500, { ok: false, error: message });
   }
 
-  await sendTelegramWebAppButton({
+  await sendTelegramUrlButton({
     chatId: student.telegramChatId,
     text: "Загрузи отчёт о питании за прошедшую неделю:",
     buttonLabel: "Открыть форму",
-    webAppUrl: miniAppUrl,
+    url: miniAppUrl,
     businessConnectionId: getRequiredTrainingPeaksBusinessConnectionId(),
   });
 

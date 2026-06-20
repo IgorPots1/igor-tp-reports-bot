@@ -1,4 +1,7 @@
-import { parseTelegramInitDataUser, verifyStudentLinkSig } from "@/features/telegram/validate-init-data";
+import {
+  parseTelegramInitDataUser,
+  parseTelegramInitDataStartParam,
+} from "@/features/telegram/validate-init-data";
 import { sendTelegramMessage } from "@/features/telegram/telegram-client";
 import { getTrainingPeaksCoachChatIds } from "@/features/trainingpeaks/attention-telegram";
 import type {
@@ -16,16 +19,20 @@ import {
  *
  * Resolution order:
  *  1. If the user.id is already linked to a student → return it (idempotent).
- *  2. Otherwise use the signed sid+sig from the "Open form" button (which only
- *     Igor can mint) to identify the target student and auto-link the user.id.
+ *  2. Otherwise use the `start_param` from the t.me direct link (the student
+ *     ROW id Igor's "Open form" button carries) to identify the target student
+ *     and auto-link the user.id.
  *
- * Failures are never silent: an invalid signature and a binding collision both
- * return an explicit error, and collisions additionally notify the coach.
+ * SECURITY: start_param is taken from the HMAC-signed initData (it is covered by
+ * validateTelegramInitData's hash check), so it cannot be forged — no separate
+ * signature is needed. The caller MUST have validated initData first.
+ *
+ * Failures are never silent: a binding collision returns an explicit error and
+ * notifies the coach.
  */
 
 export type MiniAppResolveErrorCode =
   | "no_user"
-  | "invalid_signature"
   | "student_not_found"
   | "collision"
   | "needs_link";
@@ -57,9 +64,8 @@ export type ResolveMiniAppStudentDeps = {
 
 export async function resolveMiniAppStudent(
   input: {
+    /** The validated initData string (must already pass validateTelegramInitData). */
     initData: string;
-    sid: string | null;
-    sig: string | null;
   },
   deps: ResolveMiniAppStudentDeps = {}
 ): Promise<MiniAppResolveResult> {
@@ -78,10 +84,10 @@ export async function resolveMiniAppStudent(
     return { ok: true, student: existing, justLinked: false };
   }
 
-  // 2. Not linked yet → need the signed button context to auto-link.
-  const sid = input.sid?.trim() ?? "";
-  const sig = input.sig?.trim() ?? "";
-  if (!sid || !sig) {
+  // 2. Not linked yet → use the start_param (student row id) from the signed
+  //    initData to auto-link.
+  const studentRowId = parseTelegramInitDataStartParam(input.initData);
+  if (!studentRowId) {
     return {
       ok: false,
       httpStatus: 403,
@@ -90,20 +96,7 @@ export async function resolveMiniAppStudent(
     };
   }
 
-  if (!verifyStudentLinkSig(sid, sig)) {
-    await notifyCoach(
-      `Невалидная подпись ссылки. user.id=${tgUser.id}, sid=${sid}. ` +
-        `Ученик пытался открыть форму с поддельным или устаревшим sid.`
-    );
-    return {
-      ok: false,
-      httpStatus: 403,
-      code: "invalid_signature",
-      message: "Ссылка недействительна. Попроси тренера прислать кнопку заново.",
-    };
-  }
-
-  const linkResult = await linkTelegramUserIdToStudent(sid, tgUser.id, deps.client);
+  const linkResult = await linkTelegramUserIdToStudent(studentRowId, tgUser.id, deps.client);
 
   switch (linkResult.status) {
     case "linked":
@@ -128,7 +121,7 @@ export async function resolveMiniAppStudent(
       await notifyCoach(
         `user.id=${tgUser.id} уже привязан к ученику ` +
           `«${linkResult.conflictingStudent.studentName}» (studentId=${linkResult.conflictingStudent.studentId}). ` +
-          `Кнопка была адресована studentId=${sid}. Привязка НЕ перезаписана.`
+          `Кнопка была адресована row id=${studentRowId}. Привязка НЕ перезаписана.`
       );
       return {
         ok: false,
@@ -139,7 +132,7 @@ export async function resolveMiniAppStudent(
 
     case "collision_student_taken":
       await notifyCoach(
-        `Ученик «${linkResult.student.studentName}» (studentId=${sid}) уже привязан к ` +
+        `Ученик «${linkResult.student.studentName}» (row id=${studentRowId}) уже привязан к ` +
           `user.id=${linkResult.existingUserId}, а форму открыл user.id=${tgUser.id}. ` +
           `Привязка НЕ перезаписана.`
       );

@@ -11,8 +11,7 @@ import { createHmac } from "node:crypto";
 import {
   validateTelegramInitDataWithToken,
   parseTelegramInitDataUser,
-  signStudentLinkWithToken,
-  verifyStudentLinkSigWithToken,
+  parseTelegramInitDataStartParam,
 } from "../src/features/telegram/validate-init-data";
 import { snapParsedDatesToCalendarWeek } from "../src/features/nutrition/report-date-coverage";
 
@@ -23,13 +22,17 @@ function buildValidInitData(
   botToken: string,
   userId: number,
   firstName: string,
-  authDate = 1700000000
+  authDate = 1700000000,
+  startParam?: string
 ): string {
   const userJson = JSON.stringify({ id: userId, first_name: firstName });
   const params = new URLSearchParams({
     auth_date: String(authDate),
     user: userJson,
   });
+  if (startParam !== undefined) {
+    params.set("start_param", startParam);
+  }
 
   const checkString = [...params.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
@@ -122,38 +125,37 @@ assert.deepEqual(
   "single Thu → week 15–21"
 );
 
-// --- 4. signStudentLink / verifyStudentLinkSig — student-link signature ---
+// --- 4. start_param — carried in the signed initData (t.me direct link) ---
 
-const STUDENT_ID = "student-uuid-aaaa";
-const goodSig = signStudentLinkWithToken(STUDENT_ID, TEST_TOKEN);
+const ROW_ID = "11111111-2222-3333-4444-555555555555";
+const withStartParam = buildValidInitData(TEST_TOKEN, 987654321, "Мария", 1700000000, ROW_ID);
 
+// initData with start_param still validates (start_param is part of the hash).
 assert.ok(
-  verifyStudentLinkSigWithToken(STUDENT_ID, goodSig, TEST_TOKEN),
-  "valid student-link signature must verify"
+  validateTelegramInitDataWithToken(withStartParam, TEST_TOKEN),
+  "initData with start_param must validate"
 );
 
-// Forged signature must fail.
-assert.ok(
-  !verifyStudentLinkSigWithToken(STUDENT_ID, "deadbeefdeadbeefdeadbeefdeadbeef", TEST_TOKEN),
-  "forged signature must fail"
+// start_param is extracted.
+assert.equal(
+  parseTelegramInitDataStartParam(withStartParam),
+  ROW_ID,
+  "start_param must be parsed"
 );
 
-// Same sig but a DIFFERENT studentId must fail (can't reuse another's button).
+// CRITICAL: tampering start_param breaks the hash → proves it is hash-covered,
+// so it cannot be forged and needs no separate signature.
+const tamperedStartParam = withStartParam.replace(ROW_ID, "99999999-9999-9999-9999-999999999999");
 assert.ok(
-  !verifyStudentLinkSigWithToken("student-uuid-bbbb", goodSig, TEST_TOKEN),
-  "signature is bound to its studentId"
+  !validateTelegramInitDataWithToken(tamperedStartParam, TEST_TOKEN),
+  "tampering start_param must fail validation (start_param is in the hash)"
 );
 
-// Wrong token must fail (student doesn't know the bot token).
-assert.ok(
-  !verifyStudentLinkSigWithToken(STUDENT_ID, goodSig, "other_token"),
-  "signature minted with another token must fail"
-);
-
-// Empty sig must fail.
-assert.ok(
-  !verifyStudentLinkSigWithToken(STUDENT_ID, "", TEST_TOKEN),
-  "empty signature must fail"
+// No start_param → null.
+assert.equal(
+  parseTelegramInitDataStartParam(validInitData),
+  null,
+  "missing start_param → null"
 );
 
 console.log("PASS check-miniapp-init-data");

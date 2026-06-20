@@ -28,15 +28,6 @@ export type TelegramReplyKeyboardMarkup = {
 
 export type TelegramReplyMarkup = TelegramInlineKeyboardMarkup | TelegramReplyKeyboardMarkup;
 
-export type TelegramWebAppInfo = {
-  url: string;
-};
-
-export type TelegramWebAppInlineKeyboardButton = {
-  text: string;
-  web_app: TelegramWebAppInfo;
-};
-
 export type TelegramChat = {
   id: number;
   type?: TelegramChatType;

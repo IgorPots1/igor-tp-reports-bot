@@ -68,42 +68,20 @@ export function parseTelegramInitDataUser(initData: string): TelegramInitDataUse
 }
 
 /**
- * Student-link signature for mini-app auto-binding.
+ * Extracts the `start_param` from initData (the Mini App direct-link payload,
+ * i.e. the `?startapp=<value>` from the t.me deep link).
  *
- * The "Open form" button Igor sends carries the target studentId in the URL.
- * To stop a student from opening the form with someone else's studentId, the
- * studentId is HMAC-signed with the bot token (which only the server knows).
- * The mini app echoes sid+sig back; the server re-derives the signature and
- * compares before auto-linking the student's Telegram user.id.
+ * SECURITY: pass only a string that has ALREADY passed validateTelegramInitData.
+ * `start_param` is part of the HMAC-signed initData (it is included in the hash
+ * check), so once the hash verifies, start_param is tamper-proof — no extra
+ * signature is needed. Never read it from `initDataUnsafe` on the client.
  */
-const STUDENT_LINK_SIG_PREFIX = "miniapp-link:";
-const STUDENT_LINK_SIG_LENGTH = 32;
-
-export function signStudentLinkWithToken(studentId: string, botToken: string): string {
-  return createHmac("sha256", botToken)
-    .update(STUDENT_LINK_SIG_PREFIX + studentId)
-    .digest("hex")
-    .slice(0, STUDENT_LINK_SIG_LENGTH);
-}
-
-export function verifyStudentLinkSigWithToken(
-  studentId: string,
-  sig: string,
-  botToken: string
-): boolean {
-  if (!studentId || !sig) return false;
-  const expected = signStudentLinkWithToken(studentId, botToken);
-  return safeTimingEqual(sig, expected);
-}
-
-export function signStudentLink(studentId: string): string {
-  const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
-  if (!token) throw new Error("TELEGRAM_BOT_TOKEN is not set");
-  return signStudentLinkWithToken(studentId, token);
-}
-
-export function verifyStudentLinkSig(studentId: string, sig: string): boolean {
-  const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
-  if (!token) return false;
-  return verifyStudentLinkSigWithToken(studentId, sig, token);
+export function parseTelegramInitDataStartParam(initData: string): string | null {
+  try {
+    const params = new URLSearchParams(initData);
+    const value = params.get("start_param");
+    return value && value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
 }
