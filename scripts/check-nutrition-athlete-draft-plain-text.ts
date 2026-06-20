@@ -41,7 +41,10 @@ function buildReviewContext(overrides?: Partial<NutritionStudentContext>): Nutri
     dataQuality: {
       parsedDays: 5,
       lowConfidenceDays: 0,
-      hasResolvedDates: true,
+      // hasResolvedDates:false forces forceNeedsReview → deterministic fallback
+      // draft (without a live model key the model path is correctly HELD per Task 3,
+      // draft = null). This lets us assert fallback athlete-draft hygiene in CI.
+      hasResolvedDates: false,
       unrealisticRows: 0,
       duplicateDays: [],
       qualityFlags: [],

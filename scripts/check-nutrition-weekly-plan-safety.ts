@@ -54,7 +54,6 @@ const requiredPromptRules = [
   "No weight loss",
   "Do not invent gels",
   "Copy-only",
-  "No RED-S/REDs/LEA/дефицит энергии/анемия/расстройство",
   "no **, no ---, no code fences",
 ];
 for (const rule of requiredPromptRules) {
@@ -63,6 +62,14 @@ for (const rule of requiredPromptRules) {
     continue;
   }
   assert.match(generatorSource, new RegExp(rule.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), `AI prompt must include: ${rule}`);
+}
+// The athlete-draft diagnostic-term ban: assert each critical term is present on
+// one banned-terms line, tolerant to extra terms (the line is a superset:
+// RED-S/REDs/LEA/энергодоступность/дефицит энергии/медицинский риск/диагноз/анемия/
+// расстройство). Order-independent so voice-alignment edits that ADD terms don't
+// break the guard.
+for (const term of ["RED-S", "REDs", "LEA", "дефицит энергии", "анемия", "расстройств"]) {
+  assert.match(generatorSource, new RegExp(term, "i"), `AI prompt must ban diagnostic term in athlete draft: ${term}`);
 }
 
 const blockedFacts = buildNutritionWeeklyPlanFactsFromSources({

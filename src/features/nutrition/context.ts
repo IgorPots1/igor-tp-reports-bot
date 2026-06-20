@@ -17,10 +17,16 @@ import {
 } from "@/features/nutrition/long-run";
 import type { NutritionAthleteReportSignal } from "@/features/nutrition/athlete-signals";
 import {
+  emptyNutritionStudentMemory,
   getNutritionStudentEssentials,
   getNutritionTrainingPeaksCacheWindow,
+  listNutritionRaceEventsForStudentWindow,
   type NutritionContextItem,
   type NutritionDailyMacro,
+  type NutritionGoalType,
+  type NutritionRaceEvent,
+  type NutritionSex,
+  type NutritionStudentMemory,
   type NutritionWeightLog,
 } from "@/features/nutrition/repository";
 
@@ -235,13 +241,15 @@ export function getNutritionNarrativePreferences(input: {
   };
 }
 
-/** Students kept on coach-only fat feedback despite the athlete-facing default. */
-const NUTRITION_FAT_COACH_ONLY_STUDENT_NAMES = [/polyakova/i];
-
+/**
+ * Наряд 2: a student on her "own regime" (own_regime flag) keeps fat feedback
+ * coach-only — replaces the former hardcoded surname check (/polyakova/). The
+ * coach now controls this per student from the profile, not the code.
+ */
 export function applyNutritionFatPolicyOverrides<
   T extends { fatFeedbackPolicy?: NutritionFatFeedbackPolicy },
->(studentName: string | null | undefined, prefs: T): T {
-  if (NUTRITION_FAT_COACH_ONLY_STUDENT_NAMES.some((pattern) => pattern.test(studentName ?? ""))) {
+>(ownRegime: boolean | null | undefined, prefs: T): T {
+  if (ownRegime) {
     return { ...prefs, fatFeedbackPolicy: "coach_only" };
   }
   return prefs;
@@ -332,6 +340,32 @@ export type NutritionStudentContext = {
   currentWeightKg: number | null;
   nutritionGoal: string | null;
   coachContextRu: string | null;
+  /** Наряд 2: student on her own eating regime — don't treat calories/fat as a problem (layer A). */
+  ownRegime: boolean;
+  /** Часть Ю: TP "Other" activities are dropped for this student (already filtered out of tpPastWeek/tpNextWeek). */
+  excludeOtherActivities: boolean;
+  /** Наряд 3: upcoming/just-past races (from the TP event scanner + manual marks) within the review+plan window. */
+  raceEvents: NutritionRaceEvent[];
+  /** Task 8: one-time coach note attached to THIS report (this week's review only). */
+  coachReportNoteRu: string | null;
+  /**
+   * Block 3: the athlete's own words for THIS report (the "Комментарий ученика"
+   * diary text). Verbatim context for TONE and circumstances (effort, fatigue,
+   * what/when they ate) — never a source of numbers (those come only from PDF).
+   * The illness/injury detector still runs over the same text separately
+   * (athleteReportSignals) as the medical safety net.
+   */
+  athleteCommentRu: string | null;
+  /** Tasks 7+8: compact per-student review memory (persistent notes, approved patterns, last focus, trends). */
+  studentMemory: NutritionStudentMemory;
+  /** Task 10: student nutrition goal — drives target/plan math (default maintain = current behavior). */
+  nutritionGoalType: NutritionGoalType;
+  /** Task 10: optional target weight for goal=lose (tone only; does not change deficit size). */
+  targetWeightKg: number | null;
+  /** Task 10++: optional anthropometrics for BMR (Mifflin) + FFM/EA. Null = estimate from weight/sex. */
+  sex: NutritionSex | null;
+  heightCm: number | null;
+  ageYears: number | null;
   narrativePreferences?: Required<Pick<NutritionNarrativePreferences, "fatFeedbackPolicy" | "detailLevel">> &
     NutritionNarrativePreferences;
   athleteReportSignals: NutritionAthleteReportSignal[];
@@ -340,6 +374,12 @@ export type NutritionStudentContext = {
   reportStatus: "received" | "parsed" | "insufficient" | "needs_review" | "ready_for_analysis";
   tpPastWeek: NutritionTrainingPeaksWeekContext;
   tpNextWeek: NutritionTrainingPeaksWeekContext;
+  /**
+   * True when the past week had no TP workouts but the athlete has workouts in
+   * nearby weeks — i.e. a genuine rest/maintenance week, not a missing-data gap.
+   * Drives maintenance-mode review generation (Task 5b). Optional: absent === false.
+   */
+  noTrainingWeek?: boolean;
 };
 
 const WEEKDAY_RU_TO_INDEX: Record<string, number> = {
@@ -642,12 +682,19 @@ export function buildNutritionSafetyFlags(input: {
     }
   }
 
-  const doNotSendReasons = hardFlags.map((flag) => `manual_review_required:${flag}`);
+  // Coach decision (Igor): these signals no longer HARD-BLOCK the report. CRITICAL:
+  // hardFlags must stay EMPTY here — multiple downstream consumers (combined-message
+  // extractReviewDoNotSendReasons/extractPlanDoNotSendReasons, weekly-plan-generator,
+  // coach-summary, the student-page UI) reconstruct a do-not-send block from
+  // safety.hard_flags. Setting blocked=false / doNotSendReasons=[] is NOT enough —
+  // any populated hard_flags re-blocks. So the detected signals are exposed as
+  // ADVISORY soft flags (coach still sees them; nothing blocks). The very-low-kcal
+  // note reaches the athlete via the dedicated very_low_kcal_days prompt rule.
   return {
-    hardFlags,
-    softFlags,
-    blocked: hardFlags.length > 0,
-    doNotSendReasons,
+    hardFlags: [],
+    softFlags: [...softFlags, ...hardFlags],
+    blocked: false,
+    doNotSendReasons: [],
   };
 }
 
@@ -743,17 +790,74 @@ function isKeyWorkout(row: TrainingPeaksWorkoutCacheRow, mode: NutritionKeyWorko
   return classification.isRunning && /quality|race|interval/.test(classification.reason.toLocaleLowerCase("ru"));
 }
 
+/**
+ * Часть Ю: is this TP workout an "Other"/"Custom" activity to drop for a student
+ * with exclude_other_activities? Keys on the RAW TP type code first (sportOrTypeCode
+ * other/custom) so a strength-TITLED session that is TP-typed "Other" is still
+ * caught — the activity classifier would otherwise let the title win and call it
+ * "strength". Falls back to the classifier's "other" family for neutral titles.
+ */
+export function isNutritionExcludedOtherActivity(input: {
+  title: string | null;
+  sportOrTypeCode: string | null;
+  workoutTypeValueId: number | null;
+  workoutSubTypeId: number | null;
+}): boolean {
+  // Existing signal #1: raw sport/type-code string says other/custom.
+  if (/(?:^|[^\p{L}])(?:other|custom)(?:[^\p{L}]|$)/iu.test(input.sportOrTypeCode ?? "")) {
+    return true;
+  }
+  // Signal #2 (anchor): TP's "Other" activity arrives as workoutTypeValueId=100
+  // with title "Other" and a null sportOrTypeCode — the classifier returns
+  // "unknown" (it maps only 3→run, 9→strength), so signals #1 and #4 miss it.
+  // The type id is the reliable anchor for TP-"Other".
+  if (input.workoutTypeValueId === 100) {
+    return true;
+  }
+  // Signal #3 (extra): a raw TP title of exactly "Other" — but only when the
+  // session has no real activity type id (3=run, 9=strength). Someone may title a
+  // genuine run/strength "Other"; that real type wins and the session stays.
+  // Exact match (not substring) so "Brotherhood" never trips it.
+  if (
+    (input.title ?? "").trim().toLowerCase() === "other" &&
+    input.workoutTypeValueId !== 3 &&
+    input.workoutTypeValueId !== 9
+  ) {
+    return true;
+  }
+  // Existing signal #4: the activity classifier resolves the family to "other".
+  return classifyTrainingPeaksWorkoutActivity(input).family === "other";
+}
+
 export async function buildNutritionTrainingPeaksWeekContext(
   studentId: string,
   weekFrom: string,
   weekTo: string,
-  options?: { keyWorkoutMode?: NutritionKeyWorkoutMode; longRunMode?: "past_review" | "target_plan" }
+  options?: {
+    keyWorkoutMode?: NutritionKeyWorkoutMode;
+    longRunMode?: "past_review" | "target_plan";
+    /** Часть Ю: drop TP activities classified "Other" before anything else sees
+     * them, so they affect neither expenditure nor the review text. A day left with
+     * no other session then reads as a normal rest day. Per-student (profile flag). */
+    excludeOtherActivities?: boolean;
+  }
 ): Promise<NutritionTrainingPeaksWeekContext> {
-  const rows = await getNutritionTrainingPeaksCacheWindow({
+  const allRows = await getNutritionTrainingPeaksCacheWindow({
     studentId,
     from: weekFrom,
     to: weekTo,
   });
+  const rows = options?.excludeOtherActivities
+    ? allRows.filter(
+        (row) =>
+          !isNutritionExcludedOtherActivity({
+            title: row.title,
+            sportOrTypeCode: row.sportOrTypeCode,
+            workoutTypeValueId: row.workoutTypeValueId,
+            workoutSubTypeId: row.workoutSubTypeId,
+          })
+      )
+    : allRows;
   const rawCacheStatus = resolveCacheStatus(rows);
   // A week fully in the past won't change anymore, so an "old scan" is expected
   // and shouldn't be treated as stale/unusable (which would wrongly force the
@@ -853,12 +957,49 @@ export async function buildNutritionTrainingPeaksWeekContext(
   };
 }
 
+/**
+ * Наряд 3: inject each race that falls inside this week's window as a race-day
+ * "workout" so the existing day-classification pipeline reads it as race (not
+ * rest). Skips a date that already carries a race workout. Mutates the week.
+ */
+function injectRaceEventsIntoWeekContext(
+  week: NutritionTrainingPeaksWeekContext,
+  raceEvents: NutritionRaceEvent[]
+): void {
+  for (const event of raceEvents) {
+    if (event.eventDate < week.periodFrom || event.eventDate > week.periodTo) {
+      continue;
+    }
+    const alreadyRace = week.workouts.some(
+      (workout) => workout.date === event.eventDate && workout.type === "race"
+    );
+    if (alreadyRace) {
+      continue;
+    }
+    week.workouts.push({
+      date: event.eventDate,
+      title: event.title?.trim() || "Старт",
+      status: "completed",
+      type: "race",
+      description: null,
+      coachComments: null,
+      plannedText: null,
+      durationHours: null,
+      distanceKm: event.distanceKm ?? null,
+    });
+  }
+}
+
 export async function buildNutritionStudentContext(input: {
   studentId: string;
   weekFrom: string;
   weekTo: string;
   manualRows: NormalizedManualMacroRow[];
   athleteReportSignals?: NutritionAthleteReportSignal[];
+  /** Task 8: one-time coach note from THIS report's upload. */
+  coachReportNoteRu?: string | null;
+  /** Block 3: the athlete's own words for THIS report (diary comment, verbatim). */
+  athleteCommentRu?: string | null;
 }): Promise<NutritionStudentContext> {
   const essentials = await getNutritionStudentEssentials(input.studentId);
   const student = essentials.student;
@@ -873,20 +1014,49 @@ export async function buildNutritionStudentContext(input: {
   });
   const dataQuality = calculateNutritionDataQuality(input.manualRows);
   const reportStatus = classifyNutritionReportStatus(dataQuality);
+  const excludeOtherActivities = essentials.profile?.excludeOtherActivities ?? false;
   const [tpPastWeek, tpNextWeek] = await Promise.all([
     buildNutritionTrainingPeaksWeekContext(input.studentId, input.weekFrom, input.weekTo, {
       keyWorkoutMode: "completed_only",
+      excludeOtherActivities,
     }),
     buildNutritionTrainingPeaksWeekContext(
       input.studentId,
       addDays(input.weekTo, 1),
       addDays(input.weekTo, 7),
-      { keyWorkoutMode: "all" }
+      { keyWorkoutMode: "all", excludeOtherActivities }
     ),
   ]);
+  // Наряд 3: pull races (TP scanner + coach manual marks) across the review and
+  // plan window, then inject each race date as a race-day so nutrition stops
+  // reading a race as a plain "rest" day. Distance rides along for the loading
+  // protocol (Step 2). Manual marks already override scan in the repository read.
+  const raceEvents = await listNutritionRaceEventsForStudentWindow({
+    studentId: input.studentId,
+    from: input.weekFrom,
+    to: addDays(input.weekTo, 7),
+  });
+  injectRaceEventsIntoWeekContext(tpPastWeek, raceEvents);
+  injectRaceEventsIntoWeekContext(tpNextWeek, raceEvents);
+
   const latestConfirmedWeight =
     essentials.weightLogs.find((item) => item.confirmedByCoach)?.weightKg ?? null;
   const latestWeight = essentials.weightLogs[0]?.weightKg ?? null;
+
+  // No-training-week detection (Task 5b). An empty past week is ambiguous: it can
+  // be a genuine rest week OR a missing TP sync (both leave the cache empty). If
+  // the athlete has TP workouts in nearby weeks (±4 weeks) but none this week, it
+  // was a real rest week — treat it as maintenance. If there are no workouts
+  // anywhere nearby, it's a data gap — leave it to needs_review (don't invent).
+  let noTrainingWeek = false;
+  if (tpPastWeek.workouts.length === 0) {
+    const neighborRows = await getNutritionTrainingPeaksCacheWindow({
+      studentId: input.studentId,
+      from: addDays(input.weekFrom, -28),
+      to: addDays(input.weekTo, 28),
+    });
+    noTrainingWeek = neighborRows.length > 0;
+  }
 
   return {
     studentName: student.studentName,
@@ -913,8 +1083,19 @@ export async function buildNutritionStudentContext(input: {
     currentWeightKg: essentials.profile?.currentWeightKg ?? latestConfirmedWeight ?? latestWeight ?? null,
     nutritionGoal: essentials.profile?.goal ?? null,
     coachContextRu: essentials.profile?.coachContextRu ?? null,
+    ownRegime: essentials.profile?.ownRegime ?? false,
+    excludeOtherActivities,
+    raceEvents,
+    coachReportNoteRu: compactText(input.coachReportNoteRu) ?? null,
+    athleteCommentRu: compactText(input.athleteCommentRu) ?? null,
+    studentMemory: essentials.profile?.nutritionMemory ?? emptyNutritionStudentMemory(),
+    nutritionGoalType: essentials.profile?.nutritionGoalType ?? "maintain",
+    targetWeightKg: essentials.profile?.targetWeightKg ?? null,
+    sex: essentials.profile?.sex ?? null,
+    heightCm: essentials.profile?.heightCm ?? null,
+    ageYears: essentials.profile?.ageYears ?? null,
     narrativePreferences: applyNutritionFatPolicyOverrides(
-      student.studentName,
+      essentials.profile?.ownRegime ?? false,
       getNutritionNarrativePreferences({
         profilePreferences: essentials.profile?.preferences ?? null,
         coachContextRu: essentials.profile?.coachContextRu ?? null,
@@ -926,6 +1107,7 @@ export async function buildNutritionStudentContext(input: {
     reportStatus,
     tpPastWeek,
     tpNextWeek,
+    noTrainingWeek,
   };
 }
 

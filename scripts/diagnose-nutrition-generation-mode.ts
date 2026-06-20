@@ -9,7 +9,8 @@ import process from "node:process";
 
 import { createClient } from "@supabase/supabase-js";
 
-import { validateNutritionDayProse, type NutritionDayProseFacts } from "../src/features/nutrition/telegram-renderer";
+import { validateNutritionDayProse } from "../src/features/nutrition/telegram-renderer";
+import { buildNutritionDayProseFacts } from "../src/features/nutrition/combined-message";
 import { loadScriptEnv, resolveSupabaseEnv } from "./lib/load-script-env";
 
 function arg(name: string): string | undefined {
@@ -19,9 +20,6 @@ function arg(name: string): string | undefined {
 
 function asObject(v: unknown): Record<string, unknown> {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
-}
-function num(v: unknown): number | null {
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
 async function main() {
@@ -128,17 +126,11 @@ async function main() {
     const day = asObject(d);
     const prose = typeof day.athlete_prose === "string" ? day.athlete_prose.trim() : "";
     if (!prose) continue;
-    const actual = asObject(day.actual);
-    const facts: NutritionDayProseFacts = {
-      kcal: num(actual.kcal) ?? num(day.actual_kcal) ?? num(day.caloriesActual),
-      proteinG: num(actual.proteinG) ?? num(day.protein_g),
-      fatG: num(actual.fatG) ?? num(day.fat_g),
-      carbsG: num(actual.carbsG) ?? num(day.carbs_g),
-      carbsGPerKg: num(actual.carbsGPerKg) ?? num(day.carbs_g_per_kg),
-      proteinGPerKg: num(actual.proteinGPerKg) ?? num(day.proteinPerKg),
-      nutritionStatus: typeof day.nutrition_status === "string" ? day.nutrition_status : null,
-      findings: Array.isArray(day.findings) ? (day.findings as string[]) : [],
-    };
+    // Build facts EXACTLY like production (buildNutritionDayProseFacts) — it pulls
+    // item.target → planTargetNumbers (carb band + undershoot) and carbFastFoods, so
+    // coaching numbers like "ориентир 180–260" are allowed. Hand-building facts here
+    // omitted that and over-rejected (false alarm).
+    const facts = buildNutritionDayProseFacts(day);
     const issues = validateNutritionDayProse({ prose, facts });
     if (issues.length === 0) continue;
     rejected += 1;

@@ -11,7 +11,35 @@ import {
   type NutritionNarrativePreferences,
   type NutritionStudentContext,
 } from "@/features/nutrition/context";
-import { EVENING_SECTIONS, pickNotableFoods } from "@/features/nutrition/narrative-composer";
+import { buildNutritionDayProseFacts } from "@/features/nutrition/combined-message";
+import {
+  buildNutritionNextWeekPlan,
+  computeNutritionGoalDayTarget,
+  computeNutritionRaceProtocol,
+  estimatePlanDayExerciseKcal,
+  type NutritionNextWeekPlan,
+  type NutritionPlanDayType,
+} from "@/features/nutrition/weekly-plan-formulas";
+import type { NutritionPlanTargetWeekMode } from "@/features/nutrition/plan-week-policy";
+import {
+  EVENING_SECTIONS,
+  pickNotableFoods,
+  pickNotableCarbItemsWithGrams,
+} from "@/features/nutrition/narrative-composer";
+import { classifyCarbItem, CARB_CONTRIBUTOR_MIN_G, type CarbClass } from "@/features/nutrition/carb-quality";
+import { validateNutritionDayProse } from "@/features/nutrition/telegram-renderer";
+import { enqueueOpenAiCall } from "@/features/nutrition/nutrition-generation-queue";
+import {
+  buildNutritionModelRequest,
+  classifyAiError,
+  extractNutritionFinishReason,
+  extractNutritionModelId,
+  extractNutritionModelText,
+  extractNutritionModelUsage,
+  resolveNutritionAiApiKey,
+  resolveNutritionAiModel,
+  resolveNutritionAiProvider,
+} from "@/features/nutrition/nutrition-ai-provider";
 import {
   buildNutritionMethodologyContext,
   NUTRITION_REVIEW_METHODOLOGY_VERSION,
@@ -24,8 +52,9 @@ import {
   type NutritionInterpretationShadowMetadata,
 } from "@/features/nutrition/interpretation-generator";
 import {
-  buildNutritionVoiceFewShotBlock,
+  buildNutritionVoiceFewShotDynamic,
   NUTRITION_REVIEW_NARRATIVE_PROMPT_LINES,
+  NUTRITION_VOICE_FEWSHOT_STABLE_LINES,
   NUTRITION_VOICE_STYLE_SPEC_LINES,
 } from "@/features/nutrition/narrative-guardrails";
 
@@ -39,8 +68,6 @@ import type {
 } from "@/features/trainingpeaks/repository";
 import { getTrainingPeaksReplyDraftFormalityInstruction } from "@/features/trainingpeaks/telegram-context";
 
-const OPENAI_API_URL = process.env.OPENAI_API_URL?.trim() || "https://api.openai.com/v1/chat/completions";
-const OPENAI_NUTRITION_REVIEW_MODEL = process.env.OPENAI_NUTRITION_WEEKLY_REVIEW_MODEL?.trim() || "gpt-4o-mini";
 const NUTRITION_REVIEW_PROMPT_VERSION = "nutrition-weekly-review-v3-ai";
 
 export type GeneratedNutritionWeeklyAnalysis = {
@@ -97,7 +124,9 @@ export type GeneratedNutritionWeeklyAnalysis = {
     carb_progression_strategy?: CarbProgressionStrategy;
     coach_summary_text?: string;
     day_by_day_analysis_text?: string;
-    generation_mode?: "ai" | "fallback";
+    /** Block 3: warm opening line for the athlete (qualitative, no numbers). */
+    athlete_opening_note_ru?: string | null;
+    generation_mode?: "ai" | "fallback" | "awaiting_generation";
     methodology_version?: string;
     prompt_version?: string;
     quality_notes?: string[];
@@ -105,6 +134,14 @@ export type GeneratedNutritionWeeklyAnalysis = {
     interpretation_shadow?: NutritionInterpretationShadowMetadata | null;
     narrative_preferences?: NutritionNarrativePreferences;
     coach_context_ru?: string | null;
+    /** Task 6: next-week plan prose from the same Claude call (null if held/blocked). */
+    next_week_plan_text?: string | null;
+    /** Task 6: deterministic next-week plan numbers the model was shown. */
+    next_week_plan?: NutritionNextWeekPlan;
+    /** Task 6: the plan target week these numbers/prose cover. */
+    plan_week?: { from: string; to: string; mode: NutritionPlanTargetWeekMode };
+    /** Task 7: non-null once coach-approved history exists (flips hasPreviousWeeksContext). */
+    previous_weeks_context?: Record<string, unknown> | null;
   };
   tp_context_summary: {
     past_week_key_sessions: number;
@@ -138,7 +175,7 @@ export type GeneratedNutritionWeeklyAnalysis = {
   athlete_message_draft: string | null;
   coach_summary_text: string;
   day_by_day_analysis_text: string;
-  generation_mode: "ai" | "fallback";
+  generation_mode: "ai" | "fallback" | "awaiting_generation";
   methodology_version: string;
   prompt_version: string;
   do_not_send_reasons: string[];
@@ -146,6 +183,12 @@ export type GeneratedNutritionWeeklyAnalysis = {
   prompt_hash: string;
   context_hash: string;
   ai_model: string;
+  /** Task 6: next-week plan prose from the same Claude call (null if held/blocked). */
+  next_week_plan_text: string | null;
+  /** Task 6: deterministic next-week plan numbers the model was shown. */
+  next_week_plan: NutritionNextWeekPlan;
+  /** Task 6: the plan target week these numbers/prose cover. */
+  plan_week: { from: string; to: string; mode: NutritionPlanTargetWeekMode };
 };
 
 function avg(values: Array<number | null>): number | null {
@@ -357,7 +400,171 @@ type NutritionNarrativeNotableItem = {
   name: string;
   fat_contributor: boolean;
   carb_contributor: boolean;
+  // Deterministic carb-speed class (code-owned, from the PDF item carbs). The
+  // model may only repeat this; it must NEVER call a fast/neutral item "slow".
+  carb_class: CarbClass;
 };
+
+function shiftIsoDate(isoDate: string, days: number): string {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * Наряд 3: dates within race-week (lead-up + race day + recovery) where a losing
+ * athlete's deficit is switched off. Built from the review-window race events.
+ */
+function buildRaceWeekDeficitOffDates(context: NutritionStudentContext): Set<string> {
+  const dates = new Set<string>();
+  for (const race of context.raceEvents ?? []) {
+    const leadDays = computeNutritionRaceProtocol({ distanceKm: race.distanceKm, title: race.title }).loading?.days ?? 2;
+    for (let offset = -leadDays; offset <= 1; offset += 1) {
+      dates.add(shiftIsoDate(race.eventDate, offset));
+    }
+  }
+  return dates;
+}
+
+const NUTRITION_WEEKDAY_NAMES: Array<{ rx: RegExp; dow: number }> = [
+  { rx: /понедельник/iu, dow: 1 },
+  { rx: /вторник/iu, dow: 2 },
+  { rx: /сред[аеуы]/iu, dow: 3 },
+  { rx: /четверг/iu, dow: 4 },
+  { rx: /пятниц[аеуы]/iu, dow: 5 },
+  { rx: /суббот[аеуы]/iu, dow: 6 },
+  { rx: /воскресень[ея]/iu, dow: 0 },
+];
+
+/**
+ * Цель 4: split the athlete's week-level comment into per-day segments by Russian
+ * weekday markers ("Среда перед интервалами … Пятница … Суббота …") and map each
+ * to the ISO date of that weekday inside the review week. So a day-specific food
+ * note lands on the right day's facts (and the model reflects it in THAT day's
+ * comment). Text only — never a source of numbers (the day_prose validator still
+ * gates numbers to the PDF facts).
+ */
+export function buildAthleteDayNotes(comment: string | null, weekFrom: string, weekTo: string): Map<string, string> {
+  const result = new Map<string, string>();
+  const text = (comment ?? "").trim();
+  if (!text || !/^\d{4}-\d{2}-\d{2}$/.test(weekFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(weekTo)) {
+    return result;
+  }
+  // Map each weekday-of-week to its ISO date within the review window.
+  const dateByDow = new Map<number, string>();
+  for (let cursor = weekFrom; cursor <= weekTo; ) {
+    dateByDow.set(new Date(`${cursor}T00:00:00Z`).getUTCDay(), cursor);
+    const next = new Date(`${cursor}T00:00:00Z`);
+    next.setUTCDate(next.getUTCDate() + 1);
+    cursor = next.toISOString().slice(0, 10);
+  }
+  // Find weekday markers with positions, then take the text up to the next marker.
+  const markers: Array<{ index: number; dow: number }> = [];
+  for (const { rx, dow } of NUTRITION_WEEKDAY_NAMES) {
+    const m = new RegExp(rx.source, "giu");
+    let hit: RegExpExecArray | null;
+    while ((hit = m.exec(text)) !== null) {
+      markers.push({ index: hit.index, dow });
+    }
+  }
+  markers.sort((a, b) => a.index - b.index);
+  for (let i = 0; i < markers.length; i += 1) {
+    const start = markers[i].index;
+    const end = i + 1 < markers.length ? markers[i + 1].index : text.length;
+    const date = dateByDow.get(markers[i].dow);
+    if (!date) {
+      continue;
+    }
+    const segment = text.slice(start, end).trim();
+    if (segment) {
+      result.set(date, result.has(date) ? `${result.get(date)} ${segment}` : segment);
+    }
+  }
+  return result;
+}
+
+type NutritionPreWorkoutAdequacy = "good" | "medium" | "low";
+
+/** Parse a "за час / за 2 часа / за 30 минут / за полчаса" timing hint, if present. */
+function parsePreWorkoutTiming(segment: string): string | null {
+  if (/за\s*(?:30|тридцать)\s*мин|за\s*полчаса/u.test(segment)) return "~30 мин до старта";
+  const minutes = segment.match(/за\s*(\d{1,3})\s*мин/u);
+  if (minutes) return `~${minutes[1]} мин до старта`;
+  if (/за\s*час\b|за\s*1\s*час/u.test(segment)) return "~1 ч до старта";
+  const hours = segment.match(/за\s*(\d)\s*(?:час|ч\b)/u);
+  if (hours) return `~${hours[1]} ч до старта`;
+  return null;
+}
+
+/**
+ * Наряд 3 Пункт 3 (вариант A): link the athlete's words ("перед интервалами
+ * батончик и печенье") to the day's REAL diary items, sum their carbs from the
+ * PDF, and rate adequacy against the day's LOAD (intervals/long need more, easy
+ * less). Numbers stay in the calculation; delivery is QUALITATIVE (good/medium/
+ * low + foods + optional timing) so the strict day-prose validator never drops
+ * the day. Returns null when nothing matches (no invented numbers).
+ */
+export function computePreWorkoutCarbsFromDiary(
+  dayNote: string | null,
+  items: NutritionFoodItem[] | undefined,
+  dayType?: string | null,
+  bodyweightKg?: number | null
+): {
+  foods: string[];
+  carbs_g: number;
+  adequacy: NutritionPreWorkoutAdequacy;
+  timing: string | null;
+  heavy_foods: string[];
+} | null {
+  const note = (dayNote ?? "").toLowerCase();
+  const safeItems = Array.isArray(items) ? items : [];
+  if (!note.trim() || safeItems.length === 0) {
+    return null;
+  }
+  // Pre-workout part = text before "после"/"сразу после"/"after" (drop post-workout).
+  const preSegment = note.split(/после|сразу\s+после|after|\bпотом\b/u)[0] ?? note;
+  if (!/перед|до\s+трениров|до\s+забег|до\s+пробеж|до\s+старта|до\s+интервал/u.test(preSegment)) {
+    return null;
+  }
+  const foods: string[] = [];
+  const heavyFoods: string[] = [];
+  let carbs = 0;
+  for (const item of safeItems) {
+    const name = (item.name ?? "").trim();
+    if (!name) {
+      continue;
+    }
+    // A diary item counts as pre-workout if any of its meaningful name tokens
+    // (≥4 letters/latin) appears in the pre-workout text.
+    const tokens = name
+      .toLowerCase()
+      .split(/[^\p{L}]+/u)
+      .filter((t) => t.length >= 4);
+    if (tokens.some((t) => preSegment.includes(t)) && typeof item.carbsG === "number") {
+      foods.push(name);
+      carbs += item.carbsG;
+      // Heavy/fatty pre-workout food (slow to digest → heaviness/GI on the run).
+      if (typeof item.fatG === "number" && item.fatG >= 12) {
+        heavyFoods.push(name);
+      }
+    }
+  }
+  if (foods.length === 0) {
+    return null;
+  }
+  // Methodology orientation: a harder/longer effort needs more pre-workout carbs.
+  // Rate by g/kg when bodyweight is known, else by absolute grams. Numbers stay
+  // internal — only the verdict is delivered.
+  const needsMore = ["intervals", "tempo", "race", "long_run", "long_endurance", "hard"].includes(dayType ?? "");
+  const perKg = typeof bodyweightKg === "number" && bodyweightKg > 0 ? carbs / bodyweightKg : null;
+  let adequacy: NutritionPreWorkoutAdequacy;
+  if (needsMore) {
+    adequacy = perKg != null ? (perKg >= 1 ? "good" : perKg >= 0.5 ? "medium" : "low") : carbs >= 75 ? "good" : carbs >= 45 ? "medium" : "low";
+  } else {
+    adequacy = perKg != null ? (perKg >= 0.5 ? "good" : perKg >= 0.25 ? "medium" : "low") : carbs >= 30 ? "good" : carbs >= 15 ? "medium" : "low";
+  }
+  return { foods, carbs_g: Math.round(carbs), adequacy, timing: parsePreWorkoutTiming(preSegment), heavy_foods: heavyFoods };
+}
 
 /**
  * Notable food items for a day, grouped by meal section, as raw material for the
@@ -367,7 +574,7 @@ type NutritionNarrativeNotableItem = {
  */
 function buildNotableItemsForNarrative(items: NutritionFoodItem[] | undefined): {
   by_section: Partial<Record<NutritionMealSection, NutritionNarrativeNotableItem[]>>;
-  carb_foods: string[];
+  carb_foods: Array<{ name: string; carb_class: CarbClass }>;
   evening_fat_foods: string[];
 } {
   const safeItems = Array.isArray(items) ? items : [];
@@ -382,7 +589,8 @@ function buildNotableItemsForNarrative(items: NutritionFoodItem[] | undefined): 
       .map((item) => ({
         name: item.name.trim().slice(0, 120),
         fat_contributor: typeof item.fatG === "number" && item.fatG >= 10,
-        carb_contributor: typeof item.carbsG === "number" && item.carbsG >= 20,
+        carb_contributor: typeof item.carbsG === "number" && item.carbsG >= CARB_CONTRIBUTOR_MIN_G,
+        carb_class: classifyCarbItem(item.name, item.carbsG),
       }));
     if (sectionItems.length > 0) {
       bySection[section] = sectionItems;
@@ -390,7 +598,12 @@ function buildNotableItemsForNarrative(items: NutritionFoodItem[] | undefined): 
   }
   return {
     by_section: bySection,
-    carb_foods: pickNotableFoods(safeItems, "carbsG", { limit: 4 }),
+    // Each primary carb food carries its deterministic class so the model never
+    // has to guess fast vs slow (the root of the банан/булочка "медленные" bug).
+    carb_foods: pickNotableCarbItemsWithGrams(safeItems, { limit: 4 }).map((food) => ({
+      name: food.name,
+      carb_class: classifyCarbItem(food.name, food.carbsG),
+    })),
     evening_fat_foods: pickNotableFoods(safeItems, "fatG", { sections: EVENING_SECTIONS, limit: 3 }),
   };
 }
@@ -407,8 +620,10 @@ export function buildNutritionDailyFactsForNarrative(input: {
       itemsByDate.set(row.day, Array.isArray(row.items) ? row.items : []);
     }
   }
+  const raceWeekDeficitOffDates = buildRaceWeekDeficitOffDates(input.context);
   const reviewWeekFrom = input.context.tpPastWeek.periodFrom;
   const reviewWeekTo = input.context.tpPastWeek.periodTo;
+  const athleteDayNotes = buildAthleteDayNotes(input.context.athleteCommentRu, reviewWeekFrom, reviewWeekTo);
   const macroDates = input.context.manualMacroRows
     .map((row) => row.day)
     .filter((day) => /^\d{4}-\d{2}-\d{2}$/.test(day));
@@ -484,6 +699,74 @@ export function buildNutritionDailyFactsForNarrative(input: {
       });
       const fatDisplacedCarbs = dayFindings.includes("high_fat_may_displace_carbs_on_load_day");
       const notableItems = buildNotableItemsForNarrative(itemsByDate.get(date));
+      // Task 10++: for lose/gain, the day's "deficit line" — the same goal-aware
+      // target the plan uses, anchored on BMR + this day's REAL TP expenditure.
+      // The model evaluates the actual intake against THIS, not the maintenance
+      // corridor (fixes "2750 in a rest day = calm" for a losing athlete).
+      const goalDayTarget = (() => {
+        const goalType = input.context.nutritionGoalType;
+        if (goalType === "maintain") {
+          return null;
+        }
+        const planDayType: NutritionPlanDayType =
+          trainingType === "intervals" || trainingType === "tempo"
+            ? "hard"
+            : trainingType === "long_run"
+              ? "long_run"
+              : trainingType === "long_endurance"
+                ? "long_endurance"
+                : trainingType === "race"
+                  ? "race"
+                  : trainingType === "strength"
+                    ? "strength"
+                    : trainingType === "cross_training"
+                      ? "cross_training"
+                      : trainingType === "easy"
+                        ? "easy"
+                        : preLong
+                          ? "pre_long"
+                          : trainingType === "rest"
+                            ? "rest"
+                            : "unknown";
+        const bw = typeof bodyweightKg === "number" ? bodyweightKg : null;
+        const ea =
+          canonical?.energyAvailability && typeof canonical.energyAvailability === "object"
+            ? (canonical.energyAvailability as Record<string, unknown>)
+            : null;
+        const exerciseFromTp = ea && typeof ea.exerciseEnergyKcal === "number" ? (ea.exerciseEnergyKcal as number) : null;
+        const exerciseKcal =
+          exerciseFromTp ??
+          (bw ? estimatePlanDayExerciseKcal({ dayType: planDayType, bodyweightKg: bw, durationHours: null, distanceKm: null }) : 0);
+        const target = computeNutritionGoalDayTarget({
+          goalType,
+          dayType: planDayType,
+          bodyweightKg: bw,
+          sex: input.context.sex,
+          heightCm: input.context.heightCm,
+          ageYears: input.context.ageYears,
+          exerciseKcal,
+          raceWeekDeficitOff: raceWeekDeficitOffDates.has(date),
+        });
+        if (!target) {
+          return null;
+        }
+        const actualKcal =
+          typeof day.kcal === "number"
+            ? day.kcal
+            : canonicalActual && typeof canonicalActual.kcal === "number"
+              ? (canonicalActual.kcal as number)
+              : null;
+        return {
+          goal: goalType,
+          target_kcal: target.target_kcal,
+          protein_g: target.protein_g,
+          fat_g: target.fat_g,
+          carbs_g: target.carbs_g,
+          // lose: intake well above the deficit line on this day = more than the
+          // goal needs (gently note as surplus), NOT "ровно/спокойно".
+          over_goal_line: actualKcal !== null ? actualKcal > target.target_kcal + 150 : null,
+        };
+      })();
       return {
         date,
         weekday_ru: typeof canonical?.weekdayRu === "string" ? canonical.weekdayRu : null,
@@ -502,6 +785,7 @@ export function buildNutritionDailyFactsForNarrative(input: {
           carbsGPerKg: typeof day.carbsGPerKg === "number" ? day.carbsGPerKg : null,
         },
         target: canonicalTarget ?? { formulaCode: "legacy_daily_v1" },
+        goal_day_target: goalDayTarget,
         flags: canonicalFlags ?? {
           rest: isRestDay,
           easy: trainingType === "easy",
@@ -524,6 +808,13 @@ export function buildNutritionDailyFactsForNarrative(input: {
             ? canonical.trainingNutritionLinks
             : [],
         items_notable: notableItems,
+        athlete_day_note: athleteDayNotes.get(date) ?? null,
+        pre_workout: computePreWorkoutCarbsFromDiary(
+          athleteDayNotes.get(date) ?? null,
+          itemsByDate.get(date),
+          trainingType,
+          bodyweightKg
+        ),
         day_role: dayRole,
         fat_displaced_carbs: fatDisplacedCarbs,
         fat_policy: fatPolicy,
@@ -678,6 +969,20 @@ type NutritionAiNarrative = {
   day_by_day_analysis_text: string;
   athlete_message_draft: string | null;
   /**
+   * Block 3: one warm, qualitative opening line for the athlete, derived from the
+   * athlete's own words (student.athlete_comment) — effort/circumstances only,
+   * never numbers. Rendered after the greeting in the combined message (part 1).
+   * Null/empty when there is nothing genuine to acknowledge (no invented praise).
+   */
+  athlete_opening_note_ru: string | null;
+  /**
+   * Athlete-facing prose for next week's nutrition plan, written in the same
+   * Claude call as the review (Task 6 merge). Numbers in this prose are the
+   * deterministic next_week_plan targets, rounded to 10 (Task 4 rule). Null when
+   * safety-blocked or the model produced nothing usable (awaiting_generation).
+   */
+  next_week_plan_text: string | null;
+  /**
    * Per-day athlete-facing prose keyed by ISO date (YYYY-MM-DD). Hybrid path:
    * code owns the fact line + numbers, the model writes only the prose. Empty /
    * absent for any day falls back to the deterministic comment in the renderer.
@@ -685,6 +990,8 @@ type NutritionAiNarrative = {
   day_prose: Record<string, string>;
   quality_notes: string[];
   do_not_send_reasons: string[];
+  /** The model that actually answered (for diagnostics). Set on the success path. */
+  ai_model?: string;
 };
 
 /**
@@ -788,6 +1095,11 @@ function buildFallbackDayByDay(input: {
 async function generateNutritionWeeklyReviewNarrative(input: {
   context: NutritionStudentContext;
   dailyAnalysis: Array<Record<string, unknown>>;
+  /**
+   * Deterministic next-week plan numbers (Task 6). The model writes plan prose
+   * (next_week_plan_text) grounded in these targets — it never invents numbers.
+   */
+  nextWeekPlan: NutritionNextWeekPlan;
   trainingNutritionLinks: string[];
   oneFocus: {
     category: string;
@@ -801,7 +1113,14 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     long_run_fueling_instruction_detected: boolean;
     during_run_fuel_planned: boolean;
   };
-  safetyFlags: { hard_flags: string[]; soft_flags: string[]; blocked: boolean };
+  safetyFlags: {
+    hard_flags: string[];
+    soft_flags: string[];
+    blocked: boolean;
+    /** Days with critically low energy (<1300 kcal) — woven into the review as an
+     * honest "так повторять нельзя" note. Non-blocking (coach decision). */
+    very_low_kcal_days?: string[];
+  };
   /** Failure reasons are pushed here so the caller can surface them (notes + logs). */
   diagnostics?: string[];
 }): Promise<NutritionAiNarrative | null> {
@@ -809,9 +1128,11 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     input.diagnostics?.push(reason);
     console.error("[nutrition-review-ai] generation fell back", { reason, ...extra });
   };
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const provider = resolveNutritionAiProvider();
+  const model = resolveNutritionAiModel(provider);
+  const apiKey = resolveNutritionAiApiKey(provider);
   if (!apiKey) {
-    note("ai_no_api_key");
+    note("ai_no_api_key", { provider });
     return null;
   }
   const allowAthleteDraft = !input.safetyFlags.blocked;
@@ -822,9 +1143,6 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     context: input.context,
     dailyAnalysis: input.dailyAnalysis,
   });
-  const dayRoles = dailyFacts
-    .map((day) => (typeof day.day_role === "string" ? day.day_role : null))
-    .filter((role): role is string => Boolean(role));
   const hasMissingDay = dailyFacts.some((day) => {
     const sq = day.source_quality;
     return Boolean(
@@ -834,53 +1152,97 @@ async function generateNutritionWeeklyReviewNarrative(input: {
         (sq as Record<string, unknown>).hasNutritionData === false
     );
   });
-  const voiceFewShotBlock = allowAthleteDraft
-    ? buildNutritionVoiceFewShotBlock({ dayRoles, hasMissingDay })
-    : [];
-  const systemPrompt = [
+  // Split the system prompt into a STABLE block (invariant rules + style spec +
+  // a fixed reference example — byte-identical for every student, so it caches)
+  // and a DYNAMIC per-student block (safety line, variable few-shot, formality).
+  // (Task 5: prompt caching + token reduction.)
+  const systemStable = [
     "Пиши только на русском языке.",
     "Твоя задача: написать day_prose — живую прозу комментария по каждому дню в голосе Игоря (см. блок «КАК ПИСАТЬ» и примеры ниже), плюс coach_summary_text и day_by_day_analysis_text. Это не «причёсывание фактов» и не сухой системный язык, а тёплый человеческий разбор тренера в жёстких рамках ниже.",
     "LLM пишет прозу. Код считает числа и ставит факт-строку.",
     "Ничего не пересчитывай и не придумывай: kcal, белки/жиры/углеводы, г/кг, formula targets, day type, nutrition status, one_focus, safety status, race status, TrainingPeaks workouts.",
     "Используй только exact числа и labels из facts JSON.",
     "Не классифицируй дни и не выводи формулы — это уже сделано в коде.",
-    "Return strict JSON only with keys: coach_summary_text, day_by_day_analysis_text, athlete_message_draft, day_prose, quality_notes, do_not_send_reasons.",
+    "Return strict JSON only with keys: coach_summary_text, day_by_day_analysis_text, athlete_message_draft, athlete_opening_note_ru, day_prose, next_week_plan_text, quality_notes, do_not_send_reasons.",
+    "next_week_plan_text: athlete-facing проза ПЛАНА на следующую неделю (одним связным куском, тот же тёплый голос Игоря, plain Telegram text). Это продолжение того же сообщения после разбора прошлой недели — не повторяй приветствие. Опиши, на чём сделать акцент по питанию под РЕАЛЬНЫЕ ключевые тренировки следующей недели из next_week_plan (интервалы/длительная/темпо и дни перед ними): что есть и когда догрузиться углеводами. Без раскладки по граммам на каждый день — это сделает код-таблица отдельно.",
+    "ЧИСЛА в next_week_plan_text бери ТОЛЬКО из next_week_plan (display_target.carbs_g_min/max, kcal, целевые по типу дня) и округляй до 10 (углеводы/ориентиры) — пиши «около 300 г», «300–320 г»; не выдумывай промежуточных и негладких чисел, г/кг ученику не пиши. Если тренировок на следующей неделе в плане нет (next_week_plan.summary.has_training_context=false) — общий мягкий фокус без привязки к дням.",
+    "next_week_plan_text подчиняется тем же запретам, что и athlete_message_draft: без диагнозов/медтерминов, без языка похудения, без меню/рецептов, без выдуманных тренировок и гелей, строгая ты/вы.",
+    "СТАРТ/ГОНКА в next_week_plan (день с flags.race=true и объектом race_protocol): отметь его в next_week_plan_text как ОСОБЫЙ день старта (назови старт), не как обычный день. Следуй race_protocol: (1) loading=null → это КОРОТКИЙ старт (короче ~90 мин, 5-10 км): углеводную ЗАГРУЗКУ НЕ предлагай, питание как в интенсивный день; НЕ переоценивай, не пиши про «заряд/загрузку на несколько дней». loading!=null (полумарафон+) → плавная загрузка за несколько дней ШАГАМИ от обычного (без г/кг ученику, без рывков). (2) gel_before=true (≥10 км) → обязательно «один гель за ~10 минут до старта»; gel_before=false (5 км) — про гель не пиши. (3) timing='evening_or_night' → старт вечером/ночью: углеводы по дню, последний полноценный приём за 2-3 ч до старта, не наедаться тяжёлого днём и не голодать к вечеру; timing='morning' → углеводный ужин накануне + завтрак за 2-3 ч. (4) после старта — углеводы+белок на восстановление. Тон тёплый, «ориентир не обязательство», без медтерминов.",
+    "ХУДЕЮЩИЙ + СТАРТ (race-week): для goal=lose в неделю старта дефицит ВЫКЛЮЧАЕТСЯ — питаемся нормально/грузимся под старт, загрузка ПОБЕЖДАЕТ снижение (выходить на старт в дефиците опасно: неполный гликоген, риск «стены»). НЕ смешивай: запрещено «грузись, но оставайся в дефиците». В эти дни не пиши про снижение/дефицит/срез вообще; после старта — день восстановления (углеводы+белок), затем обычный режим цели возвращается. Числа дня уже посчитаны кодом без дефицита — просто поддержи это тоном.",
+    "ЦЕЛЬ lose — РАМКА в next_week_plan_text: один раз мягко объясни, ЗАЧЕМ так выстроена неделя, связав с её целью снижения — например «дни отдыха идут в мягком минусе и работают на твою цель, а тренировки питаем полноценно, чтобы снижать вес без потери качества бега». Это даёт ученице понять логику недели, а не просто список советов. По-доброму, в тёплом тоне, без слов диета/худей/урезай/дефицит. Добавляй такую рамку ТОЛЬКО для lose; для maintain/gain — не добавляй.",
+    "Числа-тренды из истории ученика (student.history.key_trends) и любые сравнения с прошлыми неделями пиши в «итог недели» (day_by_day_analysis_text/week summary) или в фокус — НЕ в подневную day_prose (там числа проверяются построчно по фактам дня). План пиши вперёд («на следующей неделе держи …»).",
     "day_prose: объект {\"YYYY-MM-DD\": \"проза дня\"} по каждому дню из daily_analysis. Это athlete-facing проза комментария дня. Длину выбирай по day_role: steady/rest — одна-две фразы; key/hard/pre_long — абзац подробнее.",
     "Подача каждого дня как у Игоря, трёхтактно: (1) что хорошо — конкретно похвали («белок 107 отлично, в самую точку», «хорошо, что калорийность подросла»); (2) что недотянуто — с числом и причиной, используя ЦЕЛЬ из target дня («под такую работу хотелось бы ~цель углеводов, у тебя X, недобор ~Z»); (3) мягкий шаг с конкретной едой (каша, рис, паста, картофель, хлеб, фрукты).",
-    "ЧИСЛА в day_prose разрешены ТОЛЬКО из фактов дня: фактические макросы (actual) и ориентиры из target (carbsGMin/carbsGMax как цель углеводов, kcalMin, proteinGMin) и их разница (недобор = цель − факт). Других чисел не выдумывай. Факт-строку дословно не повторяй.",
+    "ЧИСЛА в day_prose только из фактов дня. ФАКТЫ (сколько реально съедено: ккал, Б, Ж, У, г/кг из actual) — пиши фактическое число, можно округлить до целого для читаемости, но НЕ приближай и не заменяй (нельзя «около 250», если по факту 233). ЦЕЛИ/ориентиры бери ТОЛЬКО из чисел дня — carbsGMin/carbsGMax (и их середину), kcalMin, proteinGMin — округлёнными до 10: пиши «около 240» (середина), «200–280» (края коридора) или «около 300»; НЕ придумывай промежуточные числа (если коридор 196–280, нельзя «250–280»). Недобор = цель − факт, тоже округляй до 10. Не давай дробных/негладких краёв («341–372»). Граница: факт — точно, цель — округлённо из чисел дня. Других чисел не выдумывай.",
     "Перед длительной/интервальной/ключевой работой (day_role=key/hard/pre_long или nextDayTrainingType ключевой) прямо скажи догрузиться углеводами накануне и в день работы.",
     "Еду называй из items_notable текущего дня. Углеводную называй свободно. Жирную/сладкую вечером называй ученику и связывай «жиры пошли вместо углеводов под нагрузку» ТОЛЬКО при fat_policy=normal; при coach_only/soften/suppress_athlete жир ученику не выноси.",
+    "НАЗВАНИЕ ПРОДУКТА — упрости до бытового: убери БРЕНД/марку/магазин/фасовку/форму нарезки и дубли (Геркулес Геркулес Традиционный → геркулес; Макфа Макароны Витки → макароны; Coffee Point Булочка с Творогом → булочка с творогом; Окское Яйцо Вареное → яйцо; Натуральное Хозяйство Шаурма с Курицей → шаурма с курицей). НО сохрани СУТЬ продукта и ключевую характеристику для классификации углеводов ЦЕЛИКОМ — НЕ обрезай до одного слова: «куриное филе» (не «куриное»), «бурый рис» (не «рис»), «цельнозерновой хлеб» (не «хлеб»), «белый хлеб» (не «хлеб»), «овсяная каша» (не «каша»). Бренд — убрать; суть + прилагательное вида продукта (бурый/белый/цельнозерновой/куриное/овсяная) — оставить.",
+    "СВОЙ РЕЖИМ (student.own_regime=true): у ученицы свой режим питания, согласованный отдельно. НЕ оценивай калорийность и жир как проблему — не пиши «многовато калорий», «калорий перебор», «жир высоковат», «недобор», не выводи дефицит/профицит. Числа можно называть нейтрально (констатация), тон поддерживающий, «держим твой режим». Углеводы под тренировку и белок обсуждать можно как обычно (это про топливо, не про «много/мало калорий»). Жир в текст ученику не выноси (он на coach_only). Это НЕ снимает safety: реальные клинические сигналы идут тренеру как обычно.",
+    "ЯЗЫК про углеводы: слово «крахмалистый/крахмалистое/крахмалистые/крахмал» НЕ использовать НИГДЕ — ни в day_prose, ни в athlete_message_draft, ни в coach_summary_text, ни в next_week_plan_text. Тренер так не говорит. Заменяй на «медленные углеводы» (с примерами) ИЛИ просто называй продукты.",
+    "КЛАСС УГЛЕВОДА БЕРИ ИЗ ФАКТОВ, НЕ ПО НАИТИЮ: у каждого продукта в items_notable (by_section[*] и carb_foods) код проставил поле carb_class — это источник правды. Правила: carb_class=slow → можно называть «медленный углевод»; carb_class=fast → это БЫСТРЫЙ углевод, «медленным» НЕ называть НИКОГДА (банан, белый хлеб, булочка, лаваш, выпечка, печенье, сладкое, сок — быстрые, даже если дали много углеводов); carb_class=neutral → просто «углеводы», БЕЗ прилагательного «медленный/быстрый» (белый рис, картофель, обычная паста); carb_class=not_carb_base → НЕ углеводная основа: не зачитывай в углеводную цель и не хвали как источник углеводов под нагрузку (борщ, суп, салат, малоуглеводное). Не придумывай класс для продукта, которого нет в items_notable. Без стыда: быстрый углевод не ругай — просто не зови его медленным.",
+    "БЫСТРЫЙ ≠ ОСНОВА: carb_class=fast (банан, лаваш, белый хлеб, булочка, выпечка, печенье, сладкое) — это углеводы, их числа засчитываются в день, и как быстрый перекус перед/во время нагрузки они ок. НО НЕ называй такой продукт «правильным/удачным источником углеводов» или «углеводной основой» под нагрузку и не строй на нём запас — для запаса гликогена нужны медленные (крупа, паста, картофель, бобовые, цельный хлеб). Без упрёка — просто не подавай быстрый как основу.",
+    "КОЛИЧЕСТВО углеводов, не «фрукт=углевод»: малоуглеводные фрукты и ягоды (черешня, клубника, арбуз и т.п.) — это вода/витамины, углеводов в них МАЛО. НЕ называй их «хорошим источником углеводов» / углеводной базой под нагрузку. Можно отметить нейтрально (приятно, витамины), но топливо под тренировку дают крупы/паста/картофель/хлеб/банан, а не ягоды. Банан/сухофрукты — ок как углеводы (но сухофрукты для худеющего не приоритет, см. правило lose).",
+    "КАЧЕСТВО УГЛЕВОДОВ — это ПРИНЦИП, применяй к ЛЮБОМУ продукту (не по списку). ХВАЛИ / называй удачными только ЦЕЛЬНЫЕ источники: крупы, рис, гречка, картофель, паста, хлеб, бобовые, фрукты, овощи. НЕ называй «хорошим/правильным продуктом» кондитерку, сладости, мороженое, конфеты, печенье, халву, выпечку с сахаром, круассаны, газировку, фастфуд, алкоголь/пиво (в т.ч. безалкогольное) — ДАЖЕ если они дали много углеводов: углеводы засчитываются в числа дня, но источник хвалить нельзя. Тон ПОДДЕРЖИВАЮЩИЙ, НЕ стыдящий: за сладкое/выпечку/фастфуд НЕ упрекай и не морализируй — просто не хвали; максимум один раз мягко «в следующий раз эти углеводы лучше взять из крупы/риса/фрукта». Никакой вины и «ай-ай».",
+    "СОВЕТ ОТ РЕАЛЬНОЙ ЕДЫ (не шаблон): прежде чем советовать «добавь X», посмотри items_notable дня. Если углеводов не хватило, но подходящий ЦЕЛЬНЫЙ источник в этот день УЖЕ был (есть в items_notable — гречка/рис/паста/картофель/хлеб) — советуй УВЕЛИЧИТЬ ПОРЦИЮ того, что уже ел («та же гречка, но порцию побольше»), а НЕ «добавь кашу», когда каша уже есть, и не предлагай кашу к блюду, где уже есть макароны. Новый продукт предлагай ТОЛЬКО если подходящего цельного источника в дне не было. Не советуй добавлять то, чего и так в достатке.",
     "coach_summary_text и day_by_day_analysis_text — ОБЯЗАТЕЛЬНЫЕ непустые поля, заполняй их всегда (даже если основной фокус ушёл в day_prose). coach_summary_text: 2-4 предложения для тренера. day_by_day_analysis_text: по строке-две на каждый день из daily_analysis. Пустые строки в этих полях недопустимы.",
-    "coach_summary_text: короткий внутренний текст для тренера.",
-    "day_by_day_analysis_text: дневные блоки строго по canonical daily_analysis.",
-    "Для каждого дня при наличии данных используй: weekday_ru, date_label, training_label, actual, hint_for_comment/findings.",
-    "В day_by_day_analysis_text комментируй только дневные totals; без intraday утверждений (до/во время/после тренировки, граммы по таймингу, гели).",
+    "day_by_day_analysis_text: дневные блоки строго по canonical daily_analysis; используй weekday_ru, date_label, training_label, actual, hint_for_comment/findings; комментируй только дневные totals, без intraday (до/во время/после, граммы по таймингу, гели).",
     "Если source_quality.confidence=low или suspect=true, формулируй осторожно как ограничение данных.",
     "athlete_message_draft должен включать 3-7 дневных наблюдений, если daily facts есть.",
-    "athlete_message_draft: только plain Telegram text. Разрешены emoji-разделители.",
-    "Запрещено в athlete_message_draft: **, ---, code fences, markdown headings.",
+    "ЕДИНЫЙ ФОРМАТ для ВСЕХ целей (maintain/lose/gain): структура разбора всегда ПОДНЕВНАЯ — day_prose по каждому дню из daily_analysis и athlete_message_draft как разбор ДЕНЬ ЗА ДНЁМ с числами по каждому дню (как у обычного ученика). Цель меняет ЧИСЛА (ориентиры, дефицитная оценка) и АКЦЕНТЫ, но НЕ структуру. НЕ сворачивай разбор худеющего/набирающего в обобщённое «что хорошо / что подтянуть» без разбивки по дням — это запрещено; дни всегда отдельными блоками с фактическими числами. Общий фокус под цель допустим как короткое вступление или итог, но НЕ вместо подневных блоков.",
+    "athlete_message_draft: только plain Telegram text, emoji-разделители ок. Запрещено: **, ---, code fences, markdown headings.",
     "Строгая формальность: только ты ИЛИ только вы, без смешивания.",
     "Не используй диагнозы/медицинские термины: RED-S, REDs, LEA, энергодоступность, дефицит энергии, медицинский риск, диагноз, расстройство, анемия.",
     ...NUTRITION_REVIEW_NARRATIVE_PROMPT_LINES,
     "Не используй язык похудения/ограничения: похудеть, сбросить вес, урезать калории, меньше есть, дефицит калорий.",
     "Не давай меню/диету/рецепты. Продукты только как варианты при наличии фактов.",
     "Не придумывай тренировки и не придумывай гели/fueling.",
-    "Разрешённая причинность только с хеджами: может, могло, вполне могло, не утверждаю наверняка.",
-    "Запрещённая причинность: вызвало, из-за этого точно, именно поэтому.",
-    "Use the required ты/вы form from formality instruction.",
-    "Упоминание athlete name допускается при наличии в facts.",
-    "One focus only: используй exact one_focus из facts.",
-    "coach_context_ru — high-priority interpretation context for coach summary only. Do not quote coach_context_ru verbatim to athlete.",
-    "athlete_report_signals — coach summary / review caution only. Do not cite or diagnose in athlete_message_draft.",
-    "If illness/cycle/injury signals present, recommend coach review in coach_summary_text and quality_notes.",
-    "Do not write medical claims or diagnostic conclusions in athlete_message_draft.",
+    "Если тренировка в tp_context имеет status=planned (а не completed / planned_and_completed) — она НЕ состоялась (пропущена). Не оценивай такой день как тренировочный: считай его поддержанием/восстановлением, спокойно, без упрёка за «недобор под нагрузку» — нагрузки в этот день не было. Опирайся на nutrition_status дня (rest_ok и т.п.), а не на запланированную, но не выполненную работу.",
+    "Причинность только с хеджами (может, могло, вполне могло); запрещено: вызвало, из-за этого точно, именно поэтому.",
+    "Упоминание athlete name допускается при наличии в facts. One focus only: используй exact one_focus из facts.",
+    "If illness/cycle/injury signals present, recommend coach review in coach_summary_text and quality_notes; no medical claims/diagnosis in athlete_message_draft. НО только ЕСЛИ такой сигнал реально есть в фактах (athlete_report_signals / заметки тренера / история). НЕ выдумывай сигналы болезни/цикла/травмы и не пиши «зафиксировано в истории», если в данных этого нет.",
+    "Углеводную еду называть свободно как варианты («увеличь порцию каши или пасты, что уже была, или добавь, если её не было»). Жирную еду ученику называть как акцент только при fat_policy=normal; при coach_only/soften/suppress_athlete жирное в текст ученику не выносить — это идёт в coach_summary_text.",
+    "Силовая тренировка (training_type strength или ярлык «силовая») — в day_prose этого дня сделай мягкий ДНЕВНОЙ акцент: белок в приоритете + немного углеводов для восстановления мышц. БЕЗ привязки ко времени (не «после тренировки» — времени тренировки в данных нет), общий акцент «в силовой день держи белок». Для ВСЕХ целей (lose/maintain/gain).",
+    "Заметки тренера (student.coach_report_note — разовая на этот отчёт; student.coach_persistent_notes — постоянные про ученика) — это КОНТЕКСТ для тона и акцентов разбора, НЕ числа и НЕ факты дня. Учитывай их в интерпретации (что уточнил ученик, контекст дня), но не выдумывай по ним числа и не цитируй дословно как медфакт.",
+    "ЖЁСТКО про контекст ученика (заметки тренера и история): пересказывай ТОЛЬКО то, что прямо дано в заметке/истории. НЕ предполагай и НЕ додумывай обстоятельства, которых там нет — например, не пиши «после тренировки поели не сразу», «пропустила приём», «наверное, не успела поесть», если этого нет в заметке. Forward-совет разрешён («после интервалов важно поесть плотно»), но утверждать или предполагать незаданные ФАКТЫ о поведении ученика — нельзя. Не сужай формулировку («вторник суматошный» ≠ «вечер вторника суматошный»). Особенно НЕ выдумывай состояния/события: болезнь, простуду, «после болезни», стресс, травму, праздник, поездку — если этого нет в заметке/истории, не упоминай вовсе (нельзя «молодец, что побегала после болезни», если про болезнь ничего не сказано). Это правило относится КО ВСЕМ полям, включая coach_summary_text и day_by_day_analysis_text, не только к тексту ученику.",
+    "СЛОВА УЧЕНИКА (student.athlete_comment) — это его собственный комментарий к этому отчёту (дневник, своими словами). РЕАГИРУЙ на них: используй для ТОНА и УЧЁТА ОБСТОЯТЕЛЬСТВ. Усталость / жара / стресс / не было аппетита — формулируй разбор мягче, с пониманием, без упрёка за недобор. Если ученик описал ЧТО и КОГДА он ел («во вторник овсянка с бананом перед интервалами») — отрази это в комментарии нужного дня (day_prose) как контекст. НЕ медикализируй: настоящие сигналы болезни/травмы/цикла идут через athlete_report_signals → coach review, не в текст ученику.",
+    "ЕДА ПО ДНЯМ (athlete_day_note у дня в daily_analysis): если у дня есть это поле — это слова ученика про ИМЕННО ЭТОТ день (что и когда он ел вокруг тренировки). ОБЯЗАТЕЛЬНО отрази это в комментарии (day_prose) ЭТОГО дня: учти контекст в оценке и, где уместно, отметь по-доброму («хорошо, что перед интервалами что-то углеводное было», «перед длительной поел заранее — правильно»). НЕ бери из этих слов числа (числа только из PDF-фактов дня). Не путай дни — клади заметку только в свой день.",
+    "ОЦЕНКА ПРЕДТРЕНИРОВОЧНОЙ ЕДЫ (pre_workout у дня) — отрази в day_prose ЭТОГО дня, если поле есть. Код уже сопоставил еду перед тренировкой (pre_workout.foods) с её углеводами из дневника и с нагрузкой дня, и выдал вердикт pre_workout.adequacy: good/medium/low. Подавай КАЧЕСТВЕННО, БЕЗ грамм-числа (число оставь коду): good → «перед интервалами зарядилась хорошо (…)»; medium → «перед стартом углеводов было средне, можно чуть плотнее»; low → «перед интервалами углеводов было маловато (батончик+печенье) — под такую работу добавь банан, кашу или хлеб перед стартом». Это про ПЕРЕД тренировкой, не про ужин. Если есть pre_workout.timing (за сколько до старта поел) — учти: близко к старту (~30 мин) нужны лёгкие быстрые углеводы, за 2-3 часа можно полноценнее. Если есть pre_workout.heavy_foods (тяжёлое жирное перед тренировкой) — мягко отметь про КОМФОРТ на тренировке (не про «неправильно поела»): «перед интервалами был [продукт] — он тяжеловат и долго переваривается, на бегу может давить; в следующий раз лучше что-то лёгкое углеводное (банан, тост, каша)». Поддерживающе, про самочувствие и качество тренировки. Граммы предтренировочной еды НЕ называй и не выдумывай.",
+    "ТЁПЛАЯ ОПЕНИНГ-СТРОКА (athlete_opening_note_ru): если в словах ученика (student.athlete_comment) есть что искренне отметить — старание, что справился несмотря на обстоятельства (дорога/жара/занятость) — впиши ОДНУ тёплую человеческую фразу в athlete_opening_note_ru (она встанет сразу после приветствия). Пример: «вижу, ты очень старалась, даже в дороге держалась — это дорогого стоит». Качественно, в тёплом тоне Игоря, plain text без markdown, БЕЗ единой цифры. Если отмечать НЕЧЕГО (слов нет, или там только жалобы/нейтральное) — верни athlete_opening_note_ru пустым/null, НЕ придумывай похвалу на пустом месте. Эту похвалу за старание НЕ дублируй в athlete_message_draft — она живёт только в athlete_opening_note_ru.",
+    "ЧИСЛА И МАКРОСЫ — ТОЛЬКО из PDF/фактов дня (actual/target). НИКОГДА не бери калории/граммы/«съела ~N» из слов ученика (student.athlete_comment) на веру и не подставляй их как факт — ни в day_prose, ни в итог недели, ни в coach_summary_text. Если слова ученика противоречат числам из PDF — доверяй PDF; расхождение можно мягко отметить ТРЕНЕРУ в coach_summary_text, но не выноси выдуманное число ученику.",
+    "ЦЕЛЬ УЧЕНИКА (student.nutrition_goal): maintain — текущая методика. lose (снижение веса): рамка «поддерживаем тренировки в общем мягком минусе». НЕ советуй «добавь углеводов/калорий» там, где у худеющего и так профицит/перебор; топливо догружай ТОЛЬКО в тренировочные/ключевые дни (fuel for the work required), а в дни отдыха — спокойнее, это и есть запланированный дефицит, а не ошибка. ХВАЛИ высокий белок (для худеющего это хорошо: не пиши «белок высоковат» как проблему и НЕ пиши «белок низковат» при ≥1.6 г/кг). Даже когда белок НИЖЕ ориентира — у худеющего подавай это МЯГКО и без упрёка: «белок можно чуть добавить» / «белка чуть больше не помешает», а НЕ «белок ниже нормы»/«стоит отметить»/«недобор белка». Белок для худеющего — приоритет и помощник, не повод ругать. МЯГКО озвучивай высокий жир (>~35% энергии) ученику как лишние калории, которые мешают снижению (для lose жир выносим в текст ученику). Тон поддерживающий, без «ешь больше». target_weight_kg, если задан — можно мягко («до цели ещё ~N кг»), без ИМТ/процентов жира/«минус N кг»/медикализации. gain (набор) — небольшой профицит, углеводы и белок с запасом.",
+    "КРИТИЧЕСКИ НИЗКИЕ ДНИ (safety_flags.very_low_kcal_days непуст): в эти дни энергии было критически мало. В тексте ученику ОБЯЗАТЕЛЬНО мягко, тепло, но ПРЯМО отметь: в такие дни энергии вышло очень мало, а при тренировках так повторять нельзя — это бьёт по восстановлению; цель снижения НЕ требует голодания, наоборот, ровное достаточное питание помогает и результату, и восстановлению. Без морали и стыда, как забота. Эти дни НЕ хвали и НЕ называй «спокойными». Дальше — обычный разбор и план по её параметрам, как всегда. Фактические числа дня (ккал/Б/Ж/У) — из PDF, можно называть.",
+    "ЦЕЛЬ lose НЕ отменяет safety: при опасно низкой калорийности или сигналах РПП — это блок/ручная проверка как обычно (худеть ≠ голодать; цель снижения НЕ оправдывает опасный дефицит). В тексте ученику при любой цели — без слов похудеть/сбросить вес/урезать калории/дефицит (язык поддержки, а не диеты).",
+    "ДЕФИЦИТНАЯ ЛИНИЯ (lose/gain): у каждого дня в daily_analysis есть goal_day_target — это ориентир дня ПОД ЦЕЛЬ (для lose уже с дефицитом, выстроенный от обмена + расхода именно этого дня). Оценивай фактический день ОТНОСИТЕЛЬНО goal_day_target, а НЕ относительно поддержания. Если goal_day_target.over_goal_line=true (факт заметно выше ориентира под цель) в день БЕЗ нагрузки — это «многовато для дня без нагрузки при твоей цели / лишние калории, которые тормозят прогресс», а НЕ «спокойно/ровно». В тренировочные дни питание у/около ориентира — это норма (топливо под работу), не перебор. НИКОГДА не подавай для худеющего рест-день в 2500–2800 ккал как «спокойный/ровный» — для цели снижения это перебор; озвучь мягко и по-доброму.",
+    "Еда при дефиците (lose): когда советуешь добавить объём/насыщение при меньшей калорийности — приоритет ОВОЩИ и цельные продукты, а НЕ фрукты/сухофрукты (сухофрукты — это концентрированный сахар и калории). «Добавь овощей/зелени к тарелке», не «добавь сухофруктов».",
+    "Без тайминговых советов, привязанных ко времени тренировки («после бега плотный обед», «углеводы за час до», «сразу после»): времени тренировки в данных нет, такой совет может оказаться абсурдным (бег мог быть в 6 утра). Давай ДНЕВНЫЕ ориентиры (сколько за день: белок, углеводы, общий объём), без «когда именно». Исключение — режим натощак из заметок тренера (правило выше): там акцент на ужин накануне и приём после.",
+    "Натощак/рано утром: если в заметках тренера указано, что тренировка проходит натощак/рано утром — это осознанный режим, НЕ ошибка питания. Топливо под такую работу ищи в УЖИНЕ НАКАНУНЕ и ЗАВТРАКЕ/восстановлении ПОСЛЕ, а не «в день тренировки до неё мало углеводов». Акцент в разборе и совете смещай на вечер накануне и приём пищи после тренировки.",
+    ...NUTRITION_VOICE_STYLE_SPEC_LINES,
+    ...NUTRITION_VOICE_FEWSHOT_STABLE_LINES,
+  ].join("\n");
+  const noTrainingWeek = input.context.noTrainingWeek === true;
+  const hasApprovedHistory = (input.context.studentMemory?.approved_patterns ?? []).length > 0;
+  const systemDynamic = [
     allowAthleteDraft
-      ? "athlete_message_draft is required and must be useful Telegram-ready text."
+      ? "athlete_message_draft is required and must be useful Telegram-ready text. Use the required ты/вы form from formality instruction."
       : "Hard safety flags present: athlete_message_draft must be null and coach-only text should explain manual review need.",
-    "Углеводную еду называть свободно как варианты («добавь каши, риса, картофеля»). Жирную еду ученику называть как акцент только при fat_policy=normal; при coach_only/soften/suppress_athlete жирное в текст ученику не выносить — это идёт в coach_summary_text.",
-    "Углеводы подавай как следующий реалистичный шаг от текущего, а не как научный потолок-обязательство.",
-    ...(voiceFewShotBlock.length > 0 ? NUTRITION_VOICE_STYLE_SPEC_LINES : []),
-    ...voiceFewShotBlock,
+    hasApprovedHistory
+      ? "У ученика ЕСТЬ сохранённая история (student.history.approved_patterns с since_week). Если паттерн из истории повторяется и на этой неделе — мягко и по-доброму отметь это ученику: «это повторяется N-ю неделю — давай разберёмся, что мешает» (N считай по since_week). БЕЗ упрёка и морали («давай разберёмся, почему не получается», НЕ «опять не доела»). Если паттерн на этой неделе НЕ повторился (улучшение) — отметь позитивно: «смотри, в этот раз ... подтянулось — отлично». Ссылаться на «прошлые недели» можно — контекст есть."
+      : "Сохранённого контекста прошлых недель нет — НЕ используй обобщённых сравнений «прошлая неделя»/«на прошлой неделе» в тексте ученику; веди разбор по конкретным дням и числам этой недели.",
+    ...(hasApprovedHistory
+      ? [
+          "ГДЕ озвучивать паттерн истории: впиши добрый callout про «повторяется N-ю неделю» в next_week_plan_text (проза фокуса/плана) И/ИЛИ в day_prose релевантного дня. Итоговое сообщение ученику собирается ИЗ day_prose + прозы плана (общий athlete_message_draft в него не попадает), поэтому callout только в athlete_message_draft до ученика НЕ доедет.",
+        ]
+      : []),
+    allowAthleteDraft
+      ? "next_week_plan_text is required — athlete-facing plan prose for next week in the same voice."
+      : "Hard safety flags present: next_week_plan_text must be null.",
+    ...(noTrainingWeek
+      ? [
+          "На этой неделе тренировок не было — считай дни как поддержание (база от веса + восстановление), спокойно и ровно. НЕ пиши про «энергию мало под нагрузку», «недобор под работу» и т.п. — нагрузки не было. Фокус мягкий: ровное питание, белок, восстановление.",
+          "В coach_summary_text добавь короткую оговорку для тренера: по тренировкам данных в TrainingPeaks за эту неделю нет, разбор сделан как поддерживающий; если тренировки были — синхронизировать TP и перегенерировать. В athlete_message_draft эту оговорку НЕ выноси (не пугать «нет данных»).",
+        ]
+      : []),
+    ...(allowAthleteDraft ? buildNutritionVoiceFewShotDynamic({ hasMissingDay }) : []),
     `Formality instruction: ${formalityInstruction}`,
   ].join("\n");
 
@@ -889,8 +1251,19 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     student: {
       name: input.context.studentName,
       formality: input.context.resolvedCommunicationProfile.formality,
-      nutrition_goal: input.context.nutritionGoal,
+      nutrition_goal: input.context.nutritionGoalType,
+      nutrition_goal_text: input.context.nutritionGoal,
+      target_weight_kg: input.context.targetWeightKg,
       coach_context_ru: input.context.coachContextRu,
+      coach_report_note: input.context.coachReportNoteRu,
+      athlete_comment: input.context.athleteCommentRu,
+      own_regime: input.context.ownRegime,
+      coach_persistent_notes: input.context.studentMemory?.persistent_notes ?? [],
+      history: {
+        approved_patterns: input.context.studentMemory?.approved_patterns ?? [],
+        last_focus: input.context.studentMemory?.last_focus ?? null,
+        key_trends: input.context.studentMemory?.key_trends ?? [],
+      },
       coach_memory: coachMemory,
       narrative_preferences: nutritionContextNarrativePreferences(input.context),
     },
@@ -900,8 +1273,9 @@ async function generateNutritionWeeklyReviewNarrative(input: {
       next_week: input.context.tpNextWeek,
     },
     data_quality: input.context.dataQuality,
+    week_training_context: noTrainingWeek ? "maintenance_no_training" : "training_week",
+    next_week_plan: input.nextWeekPlan,
     daily_analysis: dailyFacts,
-    daily_analysis_raw: input.dailyAnalysis,
     training_nutrition_links: input.trainingNutritionLinks,
     one_focus: input.oneFocus,
     methodology_signals: input.methodologySignals,
@@ -909,45 +1283,90 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     allow_athlete_draft: allowAthleteDraft,
   };
 
-  // GPT-5 / o-series models reject `max_tokens` (require `max_completion_tokens`)
-  // and only accept the default temperature, so build the request model-aware.
-  // Older models (gpt-4o, gpt-4o-mini, ...) keep temperature + max_tokens.
-  const isNextGenModel = /^(gpt-5|o\d)/i.test(OPENAI_NUTRITION_REVIEW_MODEL);
-  const requestBody: Record<string, unknown> = {
-    model: OPENAI_NUTRITION_REVIEW_MODEL,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: `Facts JSON:\n${JSON.stringify(factsPayload, null, 2)}` },
-    ],
-  };
-  if (isNextGenModel) {
-    requestBody.max_completion_tokens = 4096;
-  } else {
-    requestBody.temperature = 0.2;
-    requestBody.max_tokens = 4096;
-  }
+  // Build the provider-aware request (OpenAI chat-completions vs Anthropic
+  // Messages API). Switching provider/model is env-only and never reproduces an
+  // HTTP 400 from mismatched params.
+  const { url, headers, body } = buildNutritionModelRequest({
+    provider,
+    model,
+    apiKey,
+    systemStable,
+    systemDynamic,
+    factsPayload,
+  });
   try {
-    const response = await fetch(OPENAI_API_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody),
+    // Serialise through the generation queue so concurrent students / the two
+    // calls per student don't burst the provider. The slot is held for the whole
+    // retry sequence below.
+    const { response, prefetchedBody } = await enqueueOpenAiCall(async () => {
+      // Retry transient throttling/server errors (429 / 5xx / 529) with
+      // exponential backoff (2s -> 4s -> 8s). Honours Retry-After when present.
+      // Rate limits from rapid regenerations recover, so we retry them; quota
+      // exhaustion (insufficient_quota) won't recover, so we stop immediately
+      // and don't burn attempts. The error body is read once and passed back so
+      // the caller doesn't re-read a consumed stream.
+      let res: Response | null = null;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        res = await fetch(url, { method: "POST", headers, body });
+        if (res.ok) {
+          return { response: res, prefetchedBody: null as string | null };
+        }
+        // Non-transient errors: stop immediately.
+        if (res.status !== 429 && res.status < 500) {
+          return { response: res, prefetchedBody: await res.text().catch(() => "") };
+        }
+        const errorBody = await res.text().catch(() => "");
+        // Quota exhausted — retry is useless, stop now.
+        if (classifyAiError(provider, res.status, errorBody) === "insufficient_quota") {
+          return { response: res, prefetchedBody: errorBody };
+        }
+        // Out of attempts for a transient error.
+        if (attempt === 2) {
+          return { response: res, prefetchedBody: errorBody };
+        }
+        const retryAfterRaw = Number(res.headers.get("retry-after"));
+        const delayMs =
+          Number.isFinite(retryAfterRaw) && retryAfterRaw > 0
+            ? Math.min(retryAfterRaw * 1000, 15000)
+            : 2000 * 2 ** attempt;
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+      return { response: res, prefetchedBody: null as string | null };
     });
-    if (!response.ok) {
-      const bodyText = await response.text().catch(() => "");
-      note(`ai_http_${response.status}`, { status: response.status, body: bodyText.slice(0, 300) });
+    if (!response || !response.ok) {
+      const status = response?.status ?? 0;
+      const bodyText = prefetchedBody ?? (response ? await response.text().catch(() => "") : "");
+      // Distinguish transient rate limit from exhausted quota / server error so
+      // the fallback reason is actionable (master order Task 1).
+      const errorType = classifyAiError(provider, status, bodyText);
+      if (errorType === "insufficient_quota") {
+        console.error(
+          `[nutrition-review-ai] ${provider} quota exhausted — проверь баланс/квоту провайдера (ретрай бесполезен)`,
+          { provider, status }
+        );
+        note("ai_insufficient_quota", { provider, status, body: bodyText.slice(0, 300) });
+      } else if (errorType === "rate_limit_exceeded") {
+        note("ai_rate_limited", { provider, status, body: bodyText.slice(0, 300) });
+      } else if (errorType === "server_error") {
+        note("ai_server_error", { provider, status, body: bodyText.slice(0, 300) });
+      } else {
+        note(`ai_http_${status}`, { provider, status, body: bodyText.slice(0, 300) });
+      }
       return null;
     }
-    const payload = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string | null }; finish_reason?: string }>;
-    };
-    const content = payload.choices?.[0]?.message?.content?.trim();
-    const finishReason = payload.choices?.[0]?.finish_reason;
+    const payload = (await response.json()) as unknown;
+    const content = extractNutritionModelText(provider, payload);
+    const finishReason = extractNutritionFinishReason(provider, payload);
+    const answeredModel = extractNutritionModelId(payload) ?? model;
+    // Surface real token usage for cost diagnostics (master order Task 5).
+    const usage = extractNutritionModelUsage(provider, payload);
+    if (usage) {
+      input.diagnostics?.push(
+        `ai_usage:input=${usage.input},output=${usage.output},cache_creation=${usage.cacheCreation},cache_read=${usage.cacheRead}`
+      );
+    }
     if (!content) {
-      note("ai_empty_content", { finishReason });
+      note("ai_empty_content", { provider, model, finishReason });
       return null;
     }
     let parsed: Partial<NutritionAiNarrative>;
@@ -995,10 +1414,28 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     }
     const athleteDraftRaw = typeof parsed.athlete_message_draft === "string" ? parsed.athlete_message_draft.trim() : null;
     const athleteDraft = allowAthleteDraft ? athleteDraftRaw : null;
+    // Task 6: plan prose from the same call. Plain text, stripped of markdown
+    // fences; held to null when safety-blocked (no athlete-facing text).
+    const planTextRaw =
+      typeof parsed.next_week_plan_text === "string"
+        ? parsed.next_week_plan_text.replace(/```+/g, "").trim()
+        : null;
+    const nextWeekPlanText = allowAthleteDraft && planTextRaw ? planTextRaw : null;
+    // Block 3: warm opening line from the athlete's words. Plain text only, and a
+    // hard digit-guard — qualitative acknowledgment must NOT smuggle any number
+    // (numbers belong to the PDF-grounded day/plan facts, never to free praise).
+    const openingNoteRaw =
+      typeof parsed.athlete_opening_note_ru === "string"
+        ? parsed.athlete_opening_note_ru.replace(/[*_`#]+/g, "").replace(/\s+/g, " ").trim()
+        : "";
+    const athleteOpeningNote =
+      allowAthleteDraft && openingNoteRaw && !/\d/.test(openingNoteRaw) ? openingNoteRaw : null;
     return {
       coach_summary_text: coachSummary,
       day_by_day_analysis_text: dayByDay,
       athlete_message_draft: athleteDraft,
+      athlete_opening_note_ru: athleteOpeningNote,
+      next_week_plan_text: nextWeekPlanText,
       day_prose: dayProse,
       quality_notes: Array.isArray(parsed.quality_notes)
         ? parsed.quality_notes.filter((item): item is string => typeof item === "string")
@@ -1006,9 +1443,10 @@ async function generateNutritionWeeklyReviewNarrative(input: {
       do_not_send_reasons: Array.isArray(parsed.do_not_send_reasons)
         ? parsed.do_not_send_reasons.filter((item): item is string => typeof item === "string")
         : [],
+      ai_model: answeredModel,
     };
   } catch (error) {
-    note("ai_exception", { error: error instanceof Error ? error.message : String(error) });
+    note("ai_exception", { provider, error: error instanceof Error ? error.message : String(error) });
     return null;
   }
 }
@@ -1024,6 +1462,14 @@ export async function generateNutritionWeeklyAnalysis(input: {
     rows: context.manualMacroRows,
     weightLogs: context.weightLogs,
   });
+  // Coach decision (Igor): the week is never hard-blocked anymore (safety.blocked is
+  // always false). Critically low days are surfaced as an honest note via the prompt
+  // rule below. effectiveBlocked is kept = safety.blocked so the (now inert) gating
+  // reads cleanly; it is false in practice.
+  const effectiveBlocked = safety.blocked;
+  const veryLowKcalDays = context.manualMacroRows
+    .filter((row) => (row.kcal ?? 9999) < 1300)
+    .map((row) => row.day);
 
   const avgKcal = avg(context.manualMacroRows.map((row) => row.kcal));
   const avgProtein = avg(context.manualMacroRows.map((row) => row.proteinG));
@@ -1032,7 +1478,8 @@ export async function generateNutritionWeeklyAnalysis(input: {
   const methodology = buildNutritionMethodologyContext({ context });
   const selectedFocus = selectNutritionWeeklyFocus({
     methodology,
-    blockedSafety: safety.blocked,
+    blockedSafety: effectiveBlocked,
+    goalType: context.nutritionGoalType,
   });
   const mainFocus = selectedFocus.statementRu;
   const notes: string[] = [];
@@ -1049,10 +1496,19 @@ export async function generateNutritionWeeklyAnalysis(input: {
     `communication_formality:${getTrainingPeaksReplyDraftFormalityInstruction(context.resolvedCommunicationProfile.formality)}`
   );
   notes.push(...context.communicationProfilePromptLines);
+  if (context.noTrainingWeek === true) {
+    // Coach-facing caveat: maintenance assumed from an empty TP week. Guaranteed in
+    // notes so the coach sees it even if the model omits it. Not shown to the athlete.
+    notes.push("no_training_week:maintenance_assumed_sync_tp_if_wrong");
+  }
   const resolvedMacroDays = context.manualMacroRows.filter((row) => !row.day.startsWith("unresolved:")).length;
+  // A genuine no-training week (empty past week, but workouts in nearby weeks) is
+  // usable context: days are treated as maintenance and the review generates
+  // normally. Only a true data gap (no workouts anywhere) stays needs_review. (Task 5b.)
   const hasUsableTrainingContext =
-    context.tpPastWeek.workouts.length > 0 &&
-    (context.tpPastWeek.cacheStatus === "ok" || context.tpPastWeek.cacheStatus === "stale");
+    (context.tpPastWeek.workouts.length > 0 &&
+      (context.tpPastWeek.cacheStatus === "ok" || context.tpPastWeek.cacheStatus === "stale")) ||
+    context.noTrainingWeek === true;
   const hasMethodologyFacts =
     resolvedMacroDays > 0 &&
     context.dataQuality.parsedDays > 0 &&
@@ -1087,19 +1543,46 @@ export async function generateNutritionWeeklyAnalysis(input: {
     dataQualityFlags: context.dataQuality.qualityFlags,
     nextWeekHasKeySessions: context.tpNextWeek.keyWorkouts.length > 0,
   });
+  // Task 6: deterministic next-week plan numbers, computed once here and shared
+  // by (a) the Claude facts (so plan prose is grounded in real targets) and
+  // (b) the persisted analysis (so the chained plan record reuses identical
+  // numbers without a second TP fetch). The plan covers the week the review's
+  // next-week TP context actually spans (the week after the reviewed week):
+  // buildNutritionNextWeekPlan maps workouts BY DATE, so the plan week dates must
+  // equal that context's week or the real key workouts would not line up. In the
+  // normal flow (review run right after the week) this equals today's target plan
+  // week; anchoring to the context keeps prose and numbers aligned even on a
+  // re-run of an older week.
+  const planWeekFrom = context.tpNextWeek.periodFrom;
+  const planWeekTo = context.tpNextWeek.periodTo;
+  const planWeekMode: NutritionPlanTargetWeekMode = "next_week";
+  const nextWeekPlan = buildNutritionNextWeekPlan({
+    bodyweightKg: methodology.bodyweightKg ?? context.currentWeightKg,
+    planWeekFrom,
+    planWeekTo,
+    trainingContext: context.tpNextWeek,
+    previousWeekDailyAnalysis: persistedDailyAnalysis,
+    goalType: context.nutritionGoalType,
+    sex: context.sex,
+    heightCm: context.heightCm,
+    ageYears: context.ageYears,
+  });
+
   let narrative: {
     coach_summary_text: string;
     day_by_day_analysis_text: string;
     athlete_message_draft: string | null;
+    athlete_opening_note_ru: string | null;
+    next_week_plan_text: string | null;
     day_prose: Record<string, string>;
     quality_notes: string[];
     do_not_send_reasons: string[];
-    generation_mode: "ai" | "fallback";
+    generation_mode: "ai" | "fallback" | "awaiting_generation";
     ai_model: string;
   } = {
     coach_summary_text: fallbackCoachSummary,
     day_by_day_analysis_text: fallbackDayByDay,
-    athlete_message_draft: safety.blocked
+    athlete_message_draft: effectiveBlocked
       ? null
       : buildFallbackAthleteDraft({
           context,
@@ -1108,6 +1591,12 @@ export async function generateNutritionWeeklyAnalysis(input: {
           proteinSufficient: methodology.proteinSufficient,
           progressionStrategy: selectedFocus.progressionStrategy,
         }),
+    // The warm opening line only comes from a live Claude call (it reacts to the
+    // athlete's words); the deterministic fallback never invents one.
+    athlete_opening_note_ru: null,
+    // Plan prose comes only from a live Claude call; the deterministic plan
+    // narrative is rebuilt downstream from next_week_plan when this is null.
+    next_week_plan_text: null,
     day_prose: {},
     quality_notes: [] as string[],
     do_not_send_reasons: [] as string[],
@@ -1119,6 +1608,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
     const aiNarrative = await generateNutritionWeeklyReviewNarrative({
       context,
       dailyAnalysis: methodology.dailyAnalysis as Array<Record<string, unknown>>,
+      nextWeekPlan,
       trainingNutritionLinks: methodology.trainingNutritionLinks,
       oneFocus: {
         category: selectedFocus.category,
@@ -1135,20 +1625,41 @@ export async function generateNutritionWeeklyAnalysis(input: {
       safetyFlags: {
         hard_flags: safety.hardFlags,
         soft_flags: safety.softFlags,
-        blocked: safety.blocked,
+        blocked: effectiveBlocked,
+        very_low_kcal_days: veryLowKcalDays,
       },
       diagnostics: aiDiagnostics,
     });
     if (aiNarrative) {
+      // Surface token usage (cost diagnostics) into notes on the success path too.
+      for (const reason of aiDiagnostics) {
+        if (reason.startsWith("ai_usage:")) {
+          notes.push(reason);
+        }
+      }
       narrative = {
         ...aiNarrative,
         generation_mode: "ai",
-        ai_model: OPENAI_NUTRITION_REVIEW_MODEL,
+        ai_model: aiNarrative.ai_model ?? resolveNutritionAiModel(resolveNutritionAiProvider()),
       };
     } else {
       // Surface why the AI path fell back (otherwise the fallback is silent).
       for (const reason of aiDiagnostics) {
         notes.push(`ai_generation_fallback:${reason}`);
+      }
+      // The model was attempted but produced nothing usable (quota / rate limit /
+      // server error / empty / parse). This is NOT a valid fallback — do not hand
+      // a deterministic template to the student as if ready. Mark it
+      // awaiting_generation and hold the athlete text; the coach regenerates.
+      // (A safety block is a different, valid state and keeps its coach-only path.)
+      if (!effectiveBlocked) {
+        narrative = {
+          ...narrative,
+          athlete_message_draft: null,
+          athlete_opening_note_ru: null,
+          generation_mode: "awaiting_generation",
+          ai_model: "nutrition-weekly-review-awaiting-generation",
+        };
       }
     }
   }
@@ -1162,6 +1673,16 @@ export async function generateNutritionWeeklyAnalysis(input: {
       const prose = date ? narrative.day_prose[date] : undefined;
       if (prose) {
         dayFact.athlete_prose = prose;
+        // Close the blind per-day cutover (master order Task 3 #8): record which
+        // day the renderer will drop to the deterministic comment and why, using
+        // the SAME facts/validator the renderer uses, so the silent fallback is
+        // visible in notes.
+        const issues = validateNutritionDayProse({ prose, facts: buildNutritionDayProseFacts(dayFact) });
+        const errors = issues.filter((issue) => issue.severity === "error");
+        if (errors.length > 0) {
+          const rules = [...new Set(errors.map((issue) => issue.rule))].join(",");
+          notes.push(`day_prose_rejected:${date ?? "?"}:${rules}:${prose.slice(0, 80)}`);
+        }
       }
     }
   }
@@ -1194,11 +1715,15 @@ export async function generateNutritionWeeklyAnalysis(input: {
       },
       data_quality: context.dataQuality,
     };
-    const shadowResult = await generateNutritionWeeklyInterpretationShadow({
-      factsPayload: shadowFactsPayload,
-      formality: context.resolvedCommunicationProfile.formality,
-      studentName: context.studentName,
-    });
+    // Route through the same queue so the shadow call doesn't fire back-to-back
+    // with the main narrative call and add to the burst.
+    const shadowResult = await enqueueOpenAiCall(() =>
+      generateNutritionWeeklyInterpretationShadow({
+        factsPayload: shadowFactsPayload,
+        formality: context.resolvedCommunicationProfile.formality,
+        studentName: context.studentName,
+      })
+    );
     interpretationShadow = buildNutritionInterpretationShadowMetadata({
       mode: shadowResult.mode,
       interpretation: shadowResult.interpretation,
@@ -1252,7 +1777,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
     tpNextWeek: context.tpNextWeek,
     notes,
   });
-  const status = safety.blocked
+  const status = effectiveBlocked
     ? "blocked_safety"
     : methodology.focusCandidateSignals.limitedData || forceNeedsReview || athleteSignalsNeedCoachReview
       ? "needs_review"
@@ -1310,11 +1835,26 @@ export async function generateNutritionWeeklyAnalysis(input: {
       carb_progression_strategy: selectedFocus.progressionStrategy,
       coach_summary_text: narrative.coach_summary_text,
       day_by_day_analysis_text: narrative.day_by_day_analysis_text,
+      athlete_opening_note_ru: narrative.athlete_opening_note_ru,
       generation_mode: narrative.generation_mode,
       prompt_version: NUTRITION_REVIEW_PROMPT_VERSION,
       quality_notes: narrative.quality_notes,
       do_not_send_reasons: [...new Set([...safety.doNotSendReasons, ...narrative.do_not_send_reasons])],
       interpretation_shadow: interpretationShadow,
+      next_week_plan_text: narrative.next_week_plan_text,
+      next_week_plan: nextWeekPlan,
+      plan_week: { from: planWeekFrom, to: planWeekTo, mode: planWeekMode },
+      // Task 7: flip hasPreviousWeeksContext on once the coach has approved
+      // patterns — enables the week-over-week comparison line and lets the model
+      // legitimately say "повторяется N-ю неделю" (renderer phantom guard lifts).
+      previous_weeks_context:
+        (context.studentMemory?.approved_patterns?.length ?? 0) > 0
+          ? {
+              approved_patterns: context.studentMemory.approved_patterns,
+              key_trends: context.studentMemory.key_trends,
+              last_focus: context.studentMemory.last_focus,
+            }
+          : null,
     },
     tp_context_summary: {
       past_week_key_sessions: context.tpPastWeek.keyWorkouts.length,
@@ -1360,5 +1900,8 @@ export async function generateNutritionWeeklyAnalysis(input: {
     prompt_hash: promptHash,
     context_hash: contextHash,
     ai_model: narrative.ai_model,
+    next_week_plan_text: narrative.next_week_plan_text,
+    next_week_plan: nextWeekPlan,
+    plan_week: { from: planWeekFrom, to: planWeekTo, mode: planWeekMode },
   };
 }

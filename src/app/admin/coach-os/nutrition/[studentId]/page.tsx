@@ -9,15 +9,21 @@ import { formatIsoDate, getSingleSearchParam } from "@/app/admin/lib";
 import {
   addNutritionContextNoteAction,
   addNutritionWeightAction,
-  generateNutritionWeeklyPlanAction,
+  approveNutritionPatternAction,
+  dismissNutritionPatternAction,
+  archiveNutritionAnalysisAction,
+  archiveNutritionReportAction,
   generateNutritionWeeklyReviewAction,
   parseNutritionManualMacrosAction,
   previewNutritionFileUploadAction,
+  addNutritionRaceEventAction,
+  deleteNutritionRaceEventAction,
   saveNutritionFileReportAction,
   saveNutritionManualMacrosAction,
   saveNutritionCoachContextAction,
   saveNutritionProfileAction,
 } from "@/app/admin/coach-os/nutrition/actions";
+import ConfirmSubmitButton from "@/app/admin/coach-os/nutrition/ConfirmSubmitButton";
 import {
   getNutritionAdminStudentCard,
   parseNutritionManualMacros,
@@ -49,7 +55,6 @@ import {
   formatNutritionTpCacheStatus,
   formatNutritionPlanTrainingContextLine,
   formatNutritionPlanTargetWeekHeading,
-  formatNutritionPlanGenerateButtonLabel,
   formatNutritionCombinedMessageMissingPlanHint,
   formatNutritionTpNextWeekContextLine,
   NUTRITION_CONTEXT_ITEM_TYPE_LABELS,
@@ -92,7 +97,7 @@ function getBadgeClass(status: string): string {
   if (status === "blocked_safety" || status === "insufficient") {
     return "admin-badge admin-badge-danger";
   }
-  if (status === "needs_review") {
+  if (status === "needs_review" || status === "awaiting_generation") {
     return "admin-badge admin-badge-warning";
   }
   return "admin-badge admin-badge-outline";
@@ -265,6 +270,15 @@ export default async function CoachOsNutritionStudentCardPage({
     notFound();
   }
 
+  // Task: history + archive screen — reports (incl. archived) and weekly analyses.
+  const { listNutritionReportsForStudent, listNutritionWeeklyAnalysesForStudentHistory } = await import(
+    "@/features/nutrition/repository"
+  );
+  const [reportHistory, analysisHistory] = await Promise.all([
+    listNutritionReportsForStudent(studentId, { includeArchived: true, limit: 30 }),
+    listNutritionWeeklyAnalysesForStudentHistory(studentId, { limit: 30 }),
+  ]);
+
   const selectedReportId = pickDefaultNutritionReport(card.reports, reportIdFromQuery);
   const selectedReport = card.reports.find((report) => report.id === selectedReportId) ?? null;
   const selectedReviewId = card.weeklyAnalysis?.id ?? null;
@@ -366,6 +380,17 @@ export default async function CoachOsNutritionStudentCardPage({
         : null;
   const oneFocusText = typeof oneFocus.statement_ru === "string" ? oneFocus.statement_ru : null;
   const athleteReportSignals = asAthleteReportSignals(weeklyNutritionSummary.athlete_report_signals);
+  const patternCandidates = (
+    Array.isArray(weeklyNutritionSummary.pattern_candidates) ? weeklyNutritionSummary.pattern_candidates : []
+  )
+    .map((item) => asObject(item))
+    .map((item) => ({
+      code: typeof item.code === "string" ? item.code : "",
+      text: typeof item.text === "string" ? item.text : "",
+      sinceWeek: typeof item.since_week === "string" ? item.since_week : "",
+      weeksObserved: typeof item.weeks_observed === "number" ? item.weeks_observed : 0,
+    }))
+    .filter((item) => item.code && item.text);
   const hardSafetyFlags = asStringArray(card.weeklyAnalysis?.safetyFlags?.hard_flags);
   const hasSafetyFlags = hardSafetyFlags.length > 0;
   const reviewSelectedById = Boolean(reviewIdFromQuery && card.weeklyAnalysis?.id === reviewIdFromQuery);
@@ -374,7 +399,6 @@ export default async function CoachOsNutritionStudentCardPage({
   const recentReports = [...card.reports].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   const visibleReports = recentReports.slice(0, 5);
   const hiddenReportCount = Math.max(0, recentReports.length - visibleReports.length);
-  const reviewBlockedSafety = card.weeklyAnalysis?.status === "blocked_safety";
   const reviewSourceReportId = card.weeklyAnalysis?.reportId ?? null;
   const reviewReportMismatch = Boolean(
     card.weeklyAnalysis && selectedReportId && reviewSourceReportId && selectedReportId !== reviewSourceReportId
@@ -485,7 +509,7 @@ export default async function CoachOsNutritionStudentCardPage({
       <article className="admin-card admin-card-compact admin-nutrition-card-wide">
         <h3>Контекст для разбора питания</h3>
         <p className="admin-muted admin-nutrition-helper">
-          1–3 предложения для AI: что сейчас важно учесть по ученику. Не история болезни, а рабочий контекст.
+          1–3 предложения для AI: что сейчас важно учесть по ученику. Постоянный контекст, виден только в сводке тренеру (ученику не цитируется). Не история болезни, а рабочий контекст.
         </p>
         <form className="admin-form-stack" action={saveNutritionCoachContextAction}>
           <input type="hidden" name="studentId" value={studentId} />
@@ -503,6 +527,57 @@ export default async function CoachOsNutritionStudentCardPage({
           </label>
           <FormActionButton className="admin-button" pendingText="Сохраняю…">
             Сохранить контекст
+          </FormActionButton>
+        </form>
+      </article>
+
+      <article className="admin-card admin-card-compact admin-nutrition-card-wide">
+        <h3>Старты (углеводная загрузка)</h3>
+        <p className="admin-muted admin-nutrition-helper">
+          Старты подтягиваются автоматически из скана TP (/tp_races). Здесь можно добавить старт вручную, если он не отсканирован или появился поздно — ручная пометка переопределяет скан.
+        </p>
+        {(card.context.raceEvents ?? []).length > 0 ? (
+          <ul className="admin-nutrition-race-list">
+            {card.context.raceEvents.map((race) => (
+              <li key={`${race.eventDate}-${race.source}`}>
+                <span>
+                  {race.eventDate} — {race.title ?? "Старт"}
+                  {race.distanceKm ? ` · ${race.distanceKm} км` : ""}{" "}
+                  <span className="admin-muted">({race.source === "manual" ? "вручную" : "скан"})</span>
+                </span>
+                {race.source === "manual" ? (
+                  <form action={deleteNutritionRaceEventAction} className="admin-form-inline">
+                    <input type="hidden" name="studentId" value={studentId} />
+                    <input type="hidden" name="redirectTo" value={studentCardPath} />
+                    <input type="hidden" name="raceDate" value={race.eventDate} />
+                    <FormActionButton className="admin-button admin-button-secondary" pendingText="Удаляю…">
+                      Убрать
+                    </FormActionButton>
+                  </form>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="admin-muted">Стартов в окне разбора/плана не найдено.</p>
+        )}
+        <form className="admin-form-stack" action={addNutritionRaceEventAction}>
+          <input type="hidden" name="studentId" value={studentId} />
+          <input type="hidden" name="redirectTo" value={studentCardPath} />
+          <label className="admin-form-field">
+            <span>Дата старта (ГГГГ-ММ-ДД)</span>
+            <input className="admin-input" name="raceDate" placeholder="2026-06-20" />
+          </label>
+          <label className="admin-form-field">
+            <span>Дистанция, км (опц. — определяет протокол загрузки)</span>
+            <input className="admin-input" name="raceDistanceKm" type="number" step="0.1" placeholder="21.1" />
+          </label>
+          <label className="admin-form-field">
+            <span>Название (опц.)</span>
+            <input className="admin-input" name="raceTitle" placeholder="Ночной забег" />
+          </label>
+          <FormActionButton className="admin-button" pendingText="Сохраняю…">
+            Добавить старт вручную
           </FormActionButton>
         </form>
       </article>
@@ -712,27 +787,10 @@ export default async function CoachOsNutritionStudentCardPage({
                   : formatNutritionTpNextWeekContextLine(savedReviewTpNextWeek)}
               </p>
 
-              {reviewBlockedSafety ? (
-                <div className="admin-alert admin-alert-error admin-nutrition-plan-safety-note">
-                  <strong>Блок безопасности в обзоре.</strong> Фокус можно сохранить, но черновик для ученика может
-                  быть скрыт — проверьте вручную.
-                </div>
-              ) : null}
-
-              <form className="admin-nutrition-review-row" action={generateNutritionWeeklyPlanAction}>
-                <input type="hidden" name="studentId" value={studentId} />
-                <input type="hidden" name="weekFrom" value={weekFrom} />
-                <input type="hidden" name="weekTo" value={weekTo} />
-                <input type="hidden" name="sourceAnalysisId" value={card.weeklyAnalysis.id} />
-                <input type="hidden" name="redirectTo" value={studentCardPath} />
-                {reviewSourceReportId ? (
-                  <input type="hidden" name="sourceReportId" value={reviewSourceReportId} />
-                ) : null}
-                {selectedReportId ? <input type="hidden" name="reportId" value={selectedReportId} /> : null}
-                <FormActionButton className="admin-button" pendingText="Генерирую…">
-                  {planWeek ? formatNutritionPlanGenerateButtonLabel(planWeek.mode) : "Сгенерировать фокус"}
-                </FormActionButton>
-              </form>
+              <p className="admin-muted admin-nutrition-helper">
+                План на неделю генерируется вместе с разбором прошлой недели одним вызовом модели. Чтобы обновить план,
+                нажмите «Сгенерировать обзор» выше — план пересоберётся в том же голосе.
+              </p>
 
               {!displayPlan ? (
                 <p className="admin-muted admin-nutrition-helper">Сохранённого фокуса на эту неделю пока нет.</p>
@@ -859,7 +917,24 @@ export default async function CoachOsNutritionStudentCardPage({
         <article className="admin-card admin-card-compact admin-nutrition-card-wide">
           <h3>Черновик ученику — полный текст</h3>
           <p className="admin-muted">Основной текст для отправки ученику. Копируйте именно этот блок.</p>
-          {combinedMessage.status === "missing_review" ? (
+          {combinedMessage.status === "awaiting_generation" ? (
+            <>
+              <div className="admin-alert admin-alert-error">
+                <strong>Разбор ещё не сгенерирован живой моделью.</strong> Поставлен в очередь — текст ученику не
+                сформирован и не готов к отправке. Перегенерируй разбор.
+              </div>
+              <form action={generateNutritionWeeklyReviewAction}>
+                <input type="hidden" name="studentId" value={studentId} />
+                <input type="hidden" name="weekFrom" value={weekFrom} />
+                <input type="hidden" name="weekTo" value={weekTo} />
+                <input type="hidden" name="reportId" value={selectedReportId ?? ""} />
+                <input type="hidden" name="redirectTo" value={studentCardPath} />
+                <FormActionButton className="admin-button" pendingText="Перегенерирую…" disabled={!selectedReportId}>
+                  Перегенерировать
+                </FormActionButton>
+              </form>
+            </>
+          ) : combinedMessage.status === "missing_review" ? (
             <p className="admin-muted">Сначала сгенерируйте разбор прошлой недели.</p>
           ) : combinedMessage.status === "missing_plan" ? (
             <p className="admin-muted">
@@ -923,15 +998,73 @@ export default async function CoachOsNutritionStudentCardPage({
                   </ul>
                 </details>
               ) : null}
-              <NutritionDraftCopyBlock
-                draft={combinedMessage.renderResult.text}
-                generationMode={displayPlan?.generationMode ?? generationMode}
-              />
+              {combinedMessage.athleteMessageDraftParts.length > 1 ? (
+                combinedMessage.athleteMessageDraftParts.map((part, idx) => (
+                  <div key={`combined-part-${idx}`} className="admin-nutrition-draft-part">
+                    <p className="admin-muted admin-nutrition-draft-part-label">
+                      {idx === 0
+                        ? `Сообщение 1 — разбор недели (${part.length} симв.)`
+                        : `Сообщение 2 — план на неделю (${part.length} симв.)`}
+                    </p>
+                    <NutritionDraftCopyBlock
+                      draft={part}
+                      generationMode={displayPlan?.generationMode ?? generationMode}
+                    />
+                  </div>
+                ))
+              ) : (
+                <NutritionDraftCopyBlock
+                  draft={combinedMessage.renderResult.text}
+                  generationMode={displayPlan?.generationMode ?? generationMode}
+                />
+              )}
             </>
           ) : (
             <p className="admin-muted">Полный текст ученику не сформирован: есть причины для ручной проверки.</p>
           )}
         </article>
+
+        {patternCandidates.length > 0 && card.weeklyAnalysis ? (
+          <article className="admin-card admin-card-compact admin-nutrition-card-wide">
+            <h3>Память ученика — предложенные паттерны</h3>
+            <p className="admin-muted admin-nutrition-helper">
+              Система заметила повторяющиеся паттерны. Подтвердите, чтобы добавить в память ученика (будет подтягиваться
+              в каждый разбор и озвучиваться по-доброму). Неподтверждённое не сохраняется.
+            </p>
+            <ul className="admin-list">
+              {patternCandidates.map((candidate) => (
+                <li key={`pattern-${candidate.code}`} className="admin-nutrition-pattern-row">
+                  <span>
+                    Заметил паттерн: <strong>{candidate.text}</strong> — повторяется {candidate.weeksObserved} нед.
+                    {candidate.sinceWeek ? ` (с ${formatNutritionCompactDate(candidate.sinceWeek)})` : ""}
+                  </span>
+                  <span className="admin-card-actions admin-card-actions-compact">
+                    <form action={approveNutritionPatternAction}>
+                      <input type="hidden" name="studentId" value={studentId} />
+                      <input type="hidden" name="analysisId" value={card.weeklyAnalysis.id} />
+                      <input type="hidden" name="code" value={candidate.code} />
+                      <input type="hidden" name="patternText" value={candidate.text} />
+                      <input type="hidden" name="sinceWeek" value={candidate.sinceWeek} />
+                      <input type="hidden" name="redirectTo" value={studentCardPath} />
+                      <FormActionButton className="admin-button" pendingText="Сохраняю…">
+                        В память
+                      </FormActionButton>
+                    </form>
+                    <form action={dismissNutritionPatternAction}>
+                      <input type="hidden" name="studentId" value={studentId} />
+                      <input type="hidden" name="analysisId" value={card.weeklyAnalysis.id} />
+                      <input type="hidden" name="code" value={candidate.code} />
+                      <input type="hidden" name="redirectTo" value={studentCardPath} />
+                      <FormActionButton className="admin-button admin-button-secondary" pendingText="Отклоняю…">
+                        Отклонить
+                      </FormActionButton>
+                    </form>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </article>
+        ) : null}
 
         <article className="admin-card admin-card-compact admin-nutrition-card-wide">
           <h3>Детали для тренера — актуальная сводка</h3>
@@ -1107,6 +1240,11 @@ export default async function CoachOsNutritionStudentCardPage({
                   <h4>Служебный черновик обзора из БД</h4>
                   {!card.weeklyAnalysis ? (
                     <p className="admin-muted">Обзор ещё не сгенерирован.</p>
+                  ) : card.weeklyAnalysis.status === "awaiting_generation" ? (
+                    <div className="admin-alert admin-alert-error">
+                      <strong>Ожидает генерации живой моделью.</strong> Черновик не сформирован — перегенерируй разбор
+                      выше. Это не финальный текст.
+                    </div>
                   ) : card.weeklyAnalysis.status === "blocked_safety" ? (
                     <div className="admin-alert admin-alert-error">
                       <strong>Блок безопасности.</strong> Черновик скрыт. Проверьте флаги перед ручным просмотром.
@@ -1179,7 +1317,29 @@ export default async function CoachOsNutritionStudentCardPage({
                     </select>
                   </label>
                   <label className="admin-form-field">
-                    <span>Цель</span>
+                    <span>Цель питания (влияет на расчёт)</span>
+                    <select
+                      className="admin-input"
+                      name="nutritionGoalType"
+                      defaultValue={card.profile?.nutritionGoalType ?? "maintain"}
+                    >
+                      <option value="maintain">Поддержание</option>
+                      <option value="lose">Снижение веса</option>
+                      <option value="gain">Набор формы</option>
+                    </select>
+                  </label>
+                  <label className="admin-form-field">
+                    <span>Целевой вес (кг) — только для снижения, опц.</span>
+                    <input
+                      className="admin-input"
+                      name="targetWeightKg"
+                      type="number"
+                      step="0.1"
+                      defaultValue={card.profile?.targetWeightKg ?? ""}
+                    />
+                  </label>
+                  <label className="admin-form-field">
+                    <span>Цель (текстом, опц.)</span>
                     <input className="admin-input" name="goal" defaultValue={card.profile?.goal ?? ""} />
                   </label>
                   <label className="admin-form-field">
@@ -1191,12 +1351,32 @@ export default async function CoachOsNutritionStudentCardPage({
                     <input className="admin-input" name="currentWeightKg" type="number" step="0.1" defaultValue={card.profile?.currentWeightKg ?? ""} />
                   </label>
                   <label className="admin-form-field">
-                    <span>Заметки по переносимости</span>
-                    <textarea className="admin-textarea admin-textarea-compact" name="toleranceNotes" rows={2} defaultValue={card.profile?.toleranceNotes ?? ""} />
+                    <span>Пол (для снижения/набора, опц.)</span>
+                    <select className="admin-input" name="sex" defaultValue={card.profile?.sex ?? ""}>
+                      <option value="">—</option>
+                      <option value="female">Женский</option>
+                      <option value="male">Мужской</option>
+                    </select>
                   </label>
                   <label className="admin-form-field">
-                    <span>Заметки тренера</span>
-                    <textarea className="admin-textarea admin-textarea-compact" name="coachNotes" rows={2} defaultValue={card.profile?.coachNotes ?? ""} />
+                    <span>Рост (см) — уточняет BMR, опц.</span>
+                    <input className="admin-input" name="heightCm" type="number" step="0.5" defaultValue={card.profile?.heightCm ?? ""} />
+                  </label>
+                  <label className="admin-form-field">
+                    <span>Возраст (лет) — уточняет BMR, опц.</span>
+                    <input className="admin-input" name="ageYears" type="number" step="1" defaultValue={card.profile?.ageYears ?? ""} />
+                  </label>
+                  <label className="admin-form-field">
+                    <span>Аллергии / непереносимость (безопасность)</span>
+                    <textarea className="admin-textarea admin-textarea-compact" name="toleranceNotes" rows={2} defaultValue={card.profile?.toleranceNotes ?? ""} />
+                  </label>
+                  <label className="admin-form-field admin-form-field-inline">
+                    <input type="checkbox" name="ownRegime" value="true" defaultChecked={card.profile?.ownRegime ?? false} />
+                    <span>Свой режим питания — не оценивать калорийность/жир как проблему</span>
+                  </label>
+                  <label className="admin-form-field admin-form-field-inline">
+                    <input type="checkbox" name="excludeOtherActivities" value="true" defaultChecked={card.profile?.excludeOtherActivities ?? false} />
+                    <span>Игнорировать активности типа «Other» из TrainingPeaks (не учитывать в питании)</span>
                   </label>
                   <FormActionButton className="admin-button" pendingText="Сохраняю…">
                     Сохранить профиль
@@ -1630,6 +1810,110 @@ export default async function CoachOsNutritionStudentCardPage({
                   </details>
                 </div>
               </details>
+            )}
+          </div>
+        </details>
+
+        <details className="admin-nutrition-history">
+          <summary>
+            История отчётов и разборов ({reportHistory.length} отчётов · {analysisHistory.length} разборов)
+          </summary>
+          <div className="admin-form-stack">
+            <p className="admin-muted">
+              Архив обратим: скрытое не участвует в «последнем отчёте», «прошлой неделе» и памяти разборов; одобренные
+              паттерны сохраняются. Данные не удаляются.
+            </p>
+
+            <h4>Отчёты-файлы</h4>
+            {reportHistory.length === 0 ? (
+              <p className="admin-muted">Отчётов пока нет.</p>
+            ) : (
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>Неделя</th>
+                    <th>Загружен</th>
+                    <th>Статус</th>
+                    <th>Состояние</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {reportHistory.map((report) => (
+                    <tr key={report.id} className={report.archivedAt ? "admin-muted" : undefined}>
+                      <td>
+                        {report.weekFrom}–{report.weekTo}
+                      </td>
+                      <td>{formatNutritionCompactDate(report.createdAt)}</td>
+                      <td>{formatNutritionStatus(report.status, "report")}</td>
+                      <td>{report.archivedAt ? "в архиве" : "активен"}</td>
+                      <td>
+                        <form action={archiveNutritionReportAction}>
+                          <input type="hidden" name="studentId" value={studentId} />
+                          <input type="hidden" name="redirectTo" value={studentCardPath} />
+                          <input type="hidden" name="reportId" value={report.id} />
+                          <input type="hidden" name="archived" value={report.archivedAt ? "false" : "true"} />
+                          <ConfirmSubmitButton
+                            confirmMessage={
+                              report.archivedAt
+                                ? undefined
+                                : `Архивировать отчёт за ${report.weekFrom}–${report.weekTo}? Его можно вернуть.`
+                            }
+                          >
+                            {report.archivedAt ? "Вернуть" : "Архивировать"}
+                          </ConfirmSubmitButton>
+                        </form>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            <h4>Разборы (по неделям)</h4>
+            {analysisHistory.length === 0 ? (
+              <p className="admin-muted">Разборов пока нет.</p>
+            ) : (
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>Неделя</th>
+                    <th>Обновлён</th>
+                    <th>Статус</th>
+                    <th>Состояние</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {analysisHistory.map((analysis) => (
+                    <tr key={analysis.id} className={analysis.archivedAt ? "admin-muted" : undefined}>
+                      <td>
+                        {analysis.weekFrom}–{analysis.weekTo}
+                      </td>
+                      <td>{formatNutritionCompactDate(analysis.updatedAt)}</td>
+                      <td>{formatNutritionStatus(analysis.status, "analysis")}</td>
+                      <td>{analysis.archivedAt ? "в архиве" : "активен"}</td>
+                      <td>
+                        <form action={archiveNutritionAnalysisAction}>
+                          <input type="hidden" name="studentId" value={studentId} />
+                          <input type="hidden" name="redirectTo" value={studentCardPath} />
+                          <input type="hidden" name="analysisId" value={analysis.id} />
+                          <input type="hidden" name="archived" value={analysis.archivedAt ? "false" : "true"} />
+                          <ConfirmSubmitButton
+                            confirmMessage={
+                              analysis.archivedAt
+                                ? undefined
+                                : `Архивировать разбор за ${analysis.weekFrom}–${analysis.weekTo}? Его можно вернуть; одобренные паттерны останутся.`
+                            }
+                          >
+                            {analysis.archivedAt ? "Вернуть" : "Архивировать"}
+                          </ConfirmSubmitButton>
+                        </form>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
         </details>

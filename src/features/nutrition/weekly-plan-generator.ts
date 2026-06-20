@@ -293,11 +293,12 @@ function parseStoredWorkouts(raw: unknown): NutritionWeeklyPlanWorkoutFacts[] {
 }
 
 function isSafetyBlocked(safetyFlags: Record<string, unknown>): boolean {
+  // Coach decision (Igor): hard_flags are a non-blocking coach record now; only an
+  // explicit blocked=true gates the plan (always false under the current policy).
   if (typeof safetyFlags.blocked === "boolean") {
     return safetyFlags.blocked;
   }
-  const hardFlags = Array.isArray(safetyFlags.hard_flags) ? safetyFlags.hard_flags : [];
-  return hardFlags.length > 0;
+  return false;
 }
 
 function extractDoNotSendReasons(safetyFlags: Record<string, unknown>, nutritionSummary: Record<string, unknown>): string[] {
@@ -427,6 +428,19 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
   sourceReportId?: string | null;
   tpNextWeekContextOverride?: Record<string, unknown>;
   todayLocalDate?: string;
+  /**
+   * Task 6: when the plan is built in the same flow as the review, the plan
+   * covers exactly the week the review's next-week TP context spans (so the
+   * plan numbers line up with the workouts the Claude plan prose referenced),
+   * instead of the today-relative target week.
+   */
+  planWeekOverride?: { from: string; to: string; mode: NutritionPlanTargetWeekMode };
+  /** Task 10: student goal (maintain default). Shifts plan targets for lose/gain. */
+  nutritionGoalType?: import("@/features/nutrition/repository").NutritionGoalType;
+  /** Task 10++: anthropometrics for the lose/gain maintenance anchor (BMR + TP expenditure). */
+  sex?: import("@/features/nutrition/repository").NutritionSex | null;
+  heightCm?: number | null;
+  ageYears?: number | null;
 }): NutritionWeeklyPlanFacts {
   const nutritionSummary = input.sourceAnalysis.nutritionSummary;
   const safetyFlags = input.sourceAnalysis.safetyFlags;
@@ -446,7 +460,9 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
   const methodologySignals = toObject(nutritionSummary.methodology_signals);
   const dataQuality = toObject(nutritionSummary.data_quality_summary);
   const parsedDays = typeof dataQuality.parsed_days === "number" ? dataQuality.parsed_days : 0;
-  const targetPlanWeek = resolveFactsTargetPlanWeek({ todayLocalDate: input.todayLocalDate });
+  const targetPlanWeek = input.planWeekOverride
+    ? { from: input.planWeekOverride.from, to: input.planWeekOverride.to, mode: input.planWeekOverride.mode, label: "" }
+    : resolveFactsTargetPlanWeek({ todayLocalDate: input.todayLocalDate });
   const planWeek = { from: targetPlanWeek.from, to: targetPlanWeek.to };
   const nextWeekPlan = buildNutritionNextWeekPlan({
     bodyweightKg: input.weightKg,
@@ -454,6 +470,10 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
     planWeekTo: planWeek.to,
     trainingContext: tpNextWeek,
     previousWeekDailyAnalysis: nutritionSummary.daily_analysis,
+    goalType: input.nutritionGoalType ?? "maintain",
+    sex: input.sex ?? null,
+    heightCm: input.heightCm ?? null,
+    ageYears: input.ageYears ?? null,
   });
 
   return {
@@ -510,6 +530,13 @@ export function buildNutritionWeeklyPlanFacts(input: {
   studentId: string;
   sourceAnalysis: NutritionWeeklyAnalysis;
   sourceReportId?: string | null;
+  /**
+   * Task 6: when the plan is created right after the review in the same flow,
+   * reuse the TP next-week context saved on the review (which the Claude plan
+   * prose was grounded in) instead of refetching — so the displayed numbers
+   * match what the model saw and cannot drift.
+   */
+  preferSavedTpContext?: boolean;
 }): Promise<NutritionWeeklyPlanFactsBuildResult> {
   return buildNutritionWeeklyPlanFactsInternal(input);
 }
@@ -519,6 +546,7 @@ async function buildNutritionWeeklyPlanFactsInternal(input: {
   sourceAnalysis: NutritionWeeklyAnalysis;
   sourceReportId?: string | null;
   todayLocalDate?: string;
+  preferSavedTpContext?: boolean;
 }): Promise<NutritionWeeklyPlanFactsBuildResult> {
   const essentials = await getNutritionStudentEssentials(input.studentId);
   const student = essentials.student;
@@ -541,6 +569,45 @@ async function buildNutritionWeeklyPlanFactsInternal(input: {
   let freshContext: Record<string, unknown> | null = null;
   let tpNextWeekContextOverride = sourceReviewContext;
   let tpContextRefresh: NutritionWeeklyPlanTpContextRefresh;
+  if (input.preferSavedTpContext) {
+    // Task 6: skip the fresh TP fetch and use the review's saved next-week
+    // context, so the plan numbers equal what the Claude plan prose referenced.
+    // Anchor the plan week to the week that context actually spans (the week
+    // after the reviewed week) — buildNutritionNextWeekPlan maps workouts by
+    // date, so the week must match or the real key workouts would not line up.
+    const diff = buildNutritionWeeklyPlanTpContextDiff(sourceReviewContext, null);
+    const savedFrom = toStringOrNull(sourceReviewContext.periodFrom);
+    const savedTo = toStringOrNull(sourceReviewContext.periodTo);
+    const planWeekOverride =
+      savedFrom && savedTo ? { from: savedFrom, to: savedTo, mode: "next_week" as const } : undefined;
+    const facts = buildNutritionWeeklyPlanFactsFromSources({
+      studentId: input.studentId,
+      studentName: student.studentName,
+      formality: profile.formality,
+      weightKg,
+      sourceAnalysis: input.sourceAnalysis,
+      sourceReportId: input.sourceReportId,
+      tpNextWeekContextOverride: sourceReviewContext,
+      todayLocalDate: input.todayLocalDate,
+      planWeekOverride,
+      nutritionGoalType: essentials.profile?.nutritionGoalType ?? "maintain",
+      sex: essentials.profile?.sex ?? null,
+      heightCm: essentials.profile?.heightCm ?? null,
+      ageYears: essentials.profile?.ageYears ?? null,
+    });
+    return {
+      facts,
+      tpContextRefresh: {
+        source: "source_review_fallback",
+        planWeekFrom: planWeekOverride?.from ?? planWeek.from,
+        planWeekTo: planWeekOverride?.to ?? planWeek.to,
+        freshContext: null,
+        sourceReviewContext,
+        diff,
+        warnings: ["Plan generated in the same flow as the review; used saved review TP context."],
+      },
+    };
+  }
   try {
     const fresh = await buildNutritionTrainingPeaksWeekContext(
       input.studentId,
@@ -586,6 +653,10 @@ async function buildNutritionWeeklyPlanFactsInternal(input: {
     sourceReportId: input.sourceReportId,
     tpNextWeekContextOverride,
     todayLocalDate: input.todayLocalDate,
+    nutritionGoalType: essentials.profile?.nutritionGoalType ?? "maintain",
+    sex: essentials.profile?.sex ?? null,
+    heightCm: essentials.profile?.heightCm ?? null,
+    ageYears: essentials.profile?.ageYears ?? null,
   });
 
   return { facts, tpContextRefresh };
@@ -735,6 +806,35 @@ export function generateNutritionWeeklyPlanFallback(
     promptVersion: NUTRITION_WEEKLY_PLAN_PROMPT_VERSION,
     aiModel: NUTRITION_WEEKLY_PLAN_FALLBACK_MODEL,
     doNotSendReasons,
+  };
+}
+
+const NUTRITION_WEEKLY_PLAN_FROM_REVIEW_MODEL = "nutrition-weekly-plan-from-review-v1";
+
+/**
+ * Task 6: build the plan record from prose already written in the same Claude
+ * call as the review (no second model call). Numbers stay deterministic from
+ * formulas (the fallback structure); only the athlete-facing prose is swapped in
+ * and the record is marked as AI-generated. Safety-blocked plans keep the
+ * coach-only fallback (no athlete draft), exactly as before.
+ */
+export function generateNutritionWeeklyPlanFromReviewProse(input: {
+  facts: NutritionWeeklyPlanFacts;
+  claudePlanProse: string;
+  claudePlanAiModel?: string | null;
+  tpContextRefresh?: NutritionWeeklyPlanTpContextRefresh | null;
+}): GeneratedNutritionWeeklyPlan {
+  const base = generateNutritionWeeklyPlanFallback(input.facts, input.tpContextRefresh);
+  const blocked = isSafetyBlocked(input.facts.sourceReview.safetyFlags);
+  const prose = input.claudePlanProse.trim();
+  if (blocked || !prose) {
+    return base;
+  }
+  return {
+    ...base,
+    athleteMessageDraft: prose,
+    generationMode: "ai",
+    aiModel: input.claudePlanAiModel?.trim() || NUTRITION_WEEKLY_PLAN_FROM_REVIEW_MODEL,
   };
 }
 
@@ -897,9 +997,25 @@ export async function generateNutritionWeeklyPlan(input: {
   facts: NutritionWeeklyPlanFacts;
   tpContextRefresh?: NutritionWeeklyPlanTpContextRefresh | null;
   requestedMode?: "ai" | "fallback";
+  /**
+   * Task 6: plan prose produced in the same Claude call as the review. When
+   * present (and not safety-blocked), the plan is built from formulas + this
+   * prose with no separate OpenAI call.
+   */
+  claudePlanProse?: string | null;
+  claudePlanAiModel?: string | null;
 }): Promise<GeneratedNutritionWeeklyPlan> {
   if (input.requestedMode === "fallback") {
     return generateNutritionWeeklyPlanFallback(input.facts, input.tpContextRefresh);
+  }
+  const claudeProse = input.claudePlanProse?.trim();
+  if (claudeProse) {
+    return generateNutritionWeeklyPlanFromReviewProse({
+      facts: input.facts,
+      claudePlanProse: claudeProse,
+      claudePlanAiModel: input.claudePlanAiModel,
+      tpContextRefresh: input.tpContextRefresh,
+    });
   }
   const aiPlan = await generateNutritionWeeklyPlanWithAi(input.facts, input.tpContextRefresh);
   if (aiPlan) {
@@ -913,6 +1029,11 @@ export async function generateAndSaveNutritionWeeklyPlan(input: {
   sourceAnalysisId: string;
   sourceReportId?: string | null;
   requestedMode?: "ai" | "fallback";
+  /** Task 6: plan prose from the same Claude call as the review (no OpenAI). */
+  claudePlanProse?: string | null;
+  claudePlanAiModel?: string | null;
+  /** Task 6: reuse the review's saved TP next-week context (no refetch). */
+  preferSavedTpContext?: boolean;
 }): Promise<NutritionWeeklyPlan> {
   const sourceAnalysis = await getNutritionWeeklyAnalysisById(input.sourceAnalysisId);
   if (!sourceAnalysis) {
@@ -927,11 +1048,14 @@ export async function generateAndSaveNutritionWeeklyPlan(input: {
     studentId: input.studentId,
     sourceAnalysis,
     sourceReportId: resolvedReportId,
+    preferSavedTpContext: input.preferSavedTpContext,
   });
   const generated = await generateNutritionWeeklyPlan({
     facts,
     tpContextRefresh,
     requestedMode: input.requestedMode,
+    claudePlanProse: input.claudePlanProse,
+    claudePlanAiModel: input.claudePlanAiModel,
   });
 
   const plan = await createNutritionWeeklyPlan({

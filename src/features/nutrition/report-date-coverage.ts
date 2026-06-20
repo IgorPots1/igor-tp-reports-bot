@@ -173,16 +173,63 @@ export function compareNutritionReportDateRanges(input: {
   };
 }
 
+/** Monday–Sunday calendar week (ISO) containing a date. */
+export function getCalendarWeekContaining(isoDate: string): { weekFrom: string; weekTo: string } {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+  const weekday = date.getUTCDay(); // 0=Sun..6=Sat
+  const mondayOffset = (weekday === 0 ? 7 : weekday) - 1;
+  const weekFrom = addDays(isoDate, -mondayOffset);
+  return { weekFrom, weekTo: addDays(weekFrom, 6) };
+}
+
+/**
+ * Snap parsed PDF dates to the full calendar week (пн–вс) they belong to. A
+ * partial PDF (e.g. 4 days Mon–Thu) must still anchor the report to the whole
+ * Mon–Sun week, otherwise week_to lands on the last food day and the plan window
+ * (review weekTo+1) slides backwards (Туркина: 08–11 → план 12–18 instead of
+ * 15–21). Picks the week holding the MOST parsed days; ties resolve to the
+ * earliest week. A full Mon–Sun PDF is unchanged (byte-identical). This does NOT
+ * invent food data — the analysis still covers only the days actually parsed.
+ */
+export function snapParsedDatesToCalendarWeek(dates: string[]): { weekFrom: string; weekTo: string } | null {
+  const valid = dates.filter((d) => ISO_DATE_PATTERN.test(d));
+  if (valid.length === 0) {
+    return null;
+  }
+  const counts = new Map<string, { weekFrom: string; weekTo: string; count: number }>();
+  for (const date of valid) {
+    const week = getCalendarWeekContaining(date);
+    const entry = counts.get(week.weekFrom) ?? { ...week, count: 0 };
+    entry.count += 1;
+    counts.set(week.weekFrom, entry);
+  }
+  let best: { weekFrom: string; weekTo: string; count: number } | null = null;
+  for (const entry of counts.values()) {
+    if (!best || entry.count > best.count || (entry.count === best.count && entry.weekFrom < best.weekFrom)) {
+      best = entry;
+    }
+  }
+  return best ? { weekFrom: best.weekFrom, weekTo: best.weekTo } : null;
+}
+
 export function resolveNutritionEffectiveReportWeek(input: {
   uiWeekFrom: string;
   uiWeekTo: string;
   parsedWeekFrom: string | null;
   parsedWeekTo: string | null;
+  /** All parsed day-dates; used to snap to the dominant calendar week. Falls back
+   * to the week containing parsedWeekFrom when not provided. */
+  parsedDates?: string[];
 }): NutritionEffectiveReportWeek {
   if (input.parsedWeekFrom && input.parsedWeekTo) {
+    const snapped =
+      snapParsedDatesToCalendarWeek(
+        input.parsedDates && input.parsedDates.length > 0 ? input.parsedDates : [input.parsedWeekFrom, input.parsedWeekTo]
+      ) ?? getCalendarWeekContaining(input.parsedWeekFrom);
     return {
-      effectiveWeekFrom: input.parsedWeekFrom,
-      effectiveWeekTo: input.parsedWeekTo,
+      effectiveWeekFrom: snapped.weekFrom,
+      effectiveWeekTo: snapped.weekTo,
       dateRangeSource: "parsed_pdf",
     };
   }
@@ -210,6 +257,7 @@ export function buildNutritionReportDateQualityMetadata(input: {
     uiWeekTo: input.uiWeekTo,
     parsedWeekFrom: input.parsedCoverage.parsedWeekFrom,
     parsedWeekTo: input.parsedCoverage.parsedWeekTo,
+    parsedDates: input.parsedCoverage.dateCoverage.dates,
   });
   const macroReportOverlapDays =
     input.parsedCoverage.parsedWeekFrom && input.parsedCoverage.parsedWeekTo
@@ -255,18 +303,21 @@ export function formatNutritionCompactWeekRange(weekFrom: string, weekTo: string
 export function formatNutritionReportDateMismatchNotice(input: {
   uiWeekFrom: string;
   uiWeekTo: string;
-  effectiveWeekFrom: string;
-  effectiveWeekTo: string;
+  /** RAW parsed PDF range — the notice shows the actual dates found in the PDF,
+   * NOT the calendar-snapped report week, so the coach sees what the file really
+   * contained. */
+  parsedWeekFrom: string | null;
+  parsedWeekTo: string | null;
   dateRangeSource: "parsed_pdf" | "ui_fallback";
   mismatch: boolean;
 }): string | null {
   if (input.dateRangeSource === "ui_fallback") {
     return "Даты в PDF не распознаны, использована выбранная неделя.";
   }
-  if (!input.mismatch) {
+  if (!input.mismatch || !input.parsedWeekFrom || !input.parsedWeekTo) {
     return null;
   }
-  return `PDF распознан как ${formatNutritionCompactWeekRange(input.effectiveWeekFrom, input.effectiveWeekTo)}. Выбранная неделя была ${formatNutritionCompactWeekRange(input.uiWeekFrom, input.uiWeekTo)}, поэтому отчёт сохранён по датам из PDF.`;
+  return `PDF распознан как ${formatNutritionCompactWeekRange(input.parsedWeekFrom, input.parsedWeekTo)}. Выбранная неделя была ${formatNutritionCompactWeekRange(input.uiWeekFrom, input.uiWeekTo)}, поэтому отчёт сохранён по датам из PDF.`;
 }
 
 export function formatNutritionReportDateMismatchCardNotice(dataQuality: Record<string, unknown>): string | null {

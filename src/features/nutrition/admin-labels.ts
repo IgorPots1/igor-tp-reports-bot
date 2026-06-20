@@ -17,6 +17,7 @@ export const NUTRITION_ANALYSIS_STATUS_LABELS: Record<string, string> = {
   draft_generated: "черновик готов",
   approved_for_copy: "одобрен для копии",
   blocked_safety: "блок безопасности",
+  awaiting_generation: "ожидает генерации",
   insufficient: "мало данных",
 };
 

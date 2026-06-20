@@ -260,7 +260,8 @@ const result: NutritionTelegramRenderResult = renderNutritionTelegramMessage({
 assert.equal(result.ok, true, "Nadezhda-like render must be copy-ready");
 assert.ok(result.text, "Nadezhda-like render must include text");
 const text = result.text ?? "";
-assert.match(text, /^Надя, привет!/);
+assert.match(text, /^Привет!/, "ty greeting is name-less «Привет!»");
+assert.doesNotMatch(text.split("\n")[0] ?? "", /Надя/, "greeting must not contain the athlete name");
 assert.doesNotMatch(text, /прошл[а-я]+\s+недел|по сравнению с прошл/i, "must omit comparison without context");
 assert.doesNotMatch(
   text,
@@ -293,8 +294,33 @@ const polyakovaRender = renderNutritionTelegramMessage({
   hasTargetWeekTrainingContext: true,
   hasPreviousWeeksContext: false,
 });
-assert.match(polyakovaRender.text ?? "", /^Анастасия, привет!/);
+assert.match(polyakovaRender.text ?? "", /^Привет!/, "ty greeting name-less");
 assert.doesNotMatch(polyakovaRender.text ?? "", /\bCycling\b/);
+
+// Наряд 2: ты/вы must drive the deterministic scaffolding too, not just the
+// greeting — the intro line was hardcoded "твой отчёт" and leaked "ты" for a
+// formality=vy student (Hoffman). Both branches are pinned here.
+assert.match(text, /Посмотрел твой отчёт за неделю/, "ty render keeps the ты intro line");
+const vyRender = renderNutritionTelegramMessage({
+  formality: "vy",
+  athleteName: "Надя",
+  planWeekMode: "next_week",
+  interpretation: {
+    dayComments: ["🔹 Понедельник (01.06) - день отдыха\n~2500 ккал · белок ~105 г · жиры ~130 г · углеводы ~215 г.\nДень отдыха, по питанию спокойно."],
+    weekSummaryRu: "По белку спокойно.",
+    focusLinesRu: ["Ровные углеводы к ключевым сессиям."],
+    weekComparisonLineRu: null,
+  },
+  nextWeekPlan,
+  fallbackPlanLines: ["fallback"],
+  hasTargetWeekTrainingContext: true,
+  hasPreviousWeeksContext: false,
+});
+const vyText = vyRender.text ?? "";
+assert.match(vyText, /^Здравствуйте!/, "vy greeting is name-less «Здравствуйте!»");
+assert.doesNotMatch(vyText.split("\n")[0] ?? "", /Надя/, "vy greeting must not contain the athlete name");
+assert.match(vyText, /Посмотрел ваш отчёт за неделю/, "vy render must use the ваш intro line");
+assert.doesNotMatch(vyText, /Посмотрел твой отчёт/, "vy render must not leak the ты intro line");
 
 const easyLabelLongStoredPlan: NutritionNextWeekPlan = {
   ...nextWeekPlan,

@@ -37,7 +37,11 @@ function buildMockContext(overrides?: Partial<NutritionStudentContext>): Nutriti
     dataQuality: {
       parsedDays: 7,
       lowConfidenceDays: 0,
-      hasResolvedDates: true,
+      // hasResolvedDates:false forces forceNeedsReview, so generation uses the
+      // DETERMINISTIC fallback draft instead of attempting the model. Without a
+      // live model key the model path is correctly HELD (Task 3: awaiting_generation,
+      // draft = null), so this is how we exercise + assert fallback draft quality.
+      hasResolvedDates: false,
       unrealisticRows: 0,
       duplicateDays: [],
       qualityFlags: [],
@@ -164,8 +168,10 @@ async function run(): Promise<void> {
     manualMacroRows: buildMockContext().manualMacroRows.map((row) => ({ ...row, kcal: 1150, carbsG: 70 })),
   });
   const generatedHardSafety = await generateNutritionWeeklyAnalysis({ context: hardSafety });
-  assert.equal(generatedHardSafety.status, "blocked_safety");
-  assert.equal(generatedHardSafety.athlete_message_draft, null, "hard safety should block athlete draft");
+  // Coach decision (Igor): safety signals no longer hard-block — the week generates
+  // like any other (status is never blocked_safety; signals become an honest note).
+  assert.notEqual(generatedHardSafety.status, "blocked_safety", "no hard safety block anymore");
+  assert.equal(generatedHardSafety.safety_flags.blocked, false, "safety.blocked is false under the new policy");
 
   const withCoachContext = buildMockContext({
     coachContextRu: "недавно подняли объём, после болезни, нужен мягкий тон",

@@ -130,7 +130,10 @@ assert.match(generatorSource, /buildNutritionTrainingPeaksWeekContext\([\s\S]*pl
 
 assert.match(pageSource, /getNutritionPlanTargetWeekToday/, "student page must resolve target plan week from admin local date");
 assert.match(pageSource, /formatNutritionPlanTargetWeekHeading/, "student page must render dynamic plan week heading");
-assert.match(pageSource, /formatNutritionPlanGenerateButtonLabel/, "student page must render dynamic generate button");
+// Task 6: the plan is generated together with the review (one button), so the
+// standalone dynamic generate button is gone; the plan card explains the merged
+// flow while the dynamic plan week heading above is still rendered.
+assert.match(pageSource, /План на неделю генерируется вместе с разбором/, "student page must explain merged review+plan generation");
 assert.doesNotMatch(pageSource, /calculateNutritionPlanWeek/, "student page must not use legacy review weekTo+1 helper");
 
 assert.match(actionsSource, /formatNutritionPlanTargetWeekNotice/, "generate action must use dynamic success notice");

@@ -107,7 +107,13 @@ export async function saveNutritionProfileActionData(input: {
   trackingApp?: string | null;
   currentWeightKg?: number | null;
   toleranceNotes?: string | null;
-  coachNotes?: string | null;
+  ownRegime?: boolean;
+  excludeOtherActivities?: boolean;
+  nutritionGoalType?: import("@/features/nutrition/repository").NutritionGoalType;
+  targetWeightKg?: number | null;
+  sex?: import("@/features/nutrition/repository").NutritionSex | null;
+  heightCm?: number | null;
+  ageYears?: number | null;
 }) {
   const { upsertNutritionStudentProfile } = await import("@/features/nutrition/repository");
   return upsertNutritionStudentProfile({
@@ -117,7 +123,14 @@ export async function saveNutritionProfileActionData(input: {
     trackingApp: input.trackingApp ?? null,
     currentWeightKg: input.currentWeightKg ?? null,
     toleranceNotes: input.toleranceNotes ?? null,
-    coachNotes: input.coachNotes ?? null,
+    ownRegime: input.ownRegime,
+    excludeOtherActivities: input.excludeOtherActivities,
+    nutritionGoalType: input.nutritionGoalType,
+    // Only meaningful for goal=lose; cleared otherwise.
+    targetWeightKg: input.nutritionGoalType === "lose" ? input.targetWeightKg ?? null : null,
+    sex: input.sex,
+    heightCm: input.heightCm,
+    ageYears: input.ageYears,
   });
 }
 
@@ -263,6 +276,8 @@ export async function saveNutritionFileReport(input: {
   weekFrom: string;
   weekTo: string;
   studentNotes?: string | null;
+  coachNotesRu?: string | null;
+  rememberCoachNote?: boolean;
   files: File[];
   forceNeedsReview?: boolean;
 }) {
@@ -281,6 +296,7 @@ export async function saveNutritionFileReport(input: {
     uiWeekTo: input.weekTo,
     parsedWeekFrom: parsedCoverage.parsedWeekFrom,
     parsedWeekTo: parsedCoverage.parsedWeekTo,
+    parsedDates: parsedCoverage.dateCoverage.dates,
   });
   const dateComparison = compareNutritionReportDateRanges({
     uiWeekFrom: input.weekFrom,
@@ -295,8 +311,8 @@ export async function saveNutritionFileReport(input: {
   const dateMismatchNotice = formatNutritionReportDateMismatchNotice({
     uiWeekFrom: input.weekFrom,
     uiWeekTo: input.weekTo,
-    effectiveWeekFrom: effectiveWeek.effectiveWeekFrom,
-    effectiveWeekTo: effectiveWeek.effectiveWeekTo,
+    parsedWeekFrom: parsedCoverage.parsedWeekFrom,
+    parsedWeekTo: parsedCoverage.parsedWeekTo,
     dateRangeSource: effectiveWeek.dateRangeSource,
     mismatch: dateComparison.mismatch,
   });
@@ -307,6 +323,7 @@ export async function saveNutritionFileReport(input: {
     weekTo: effectiveWeek.effectiveWeekTo,
     sourceType: intake.sourceType,
     rawText: input.studentNotes ?? null,
+    coachNotesRu: input.coachNotesRu ?? null,
     fileRefs: {
       files: intake.fileMetas,
       unsupported_files: intake.extraction.unsupportedFiles,
@@ -345,6 +362,13 @@ export async function saveNutritionFileReport(input: {
       items: row.items,
     }));
   const macros = await insertNutritionDailyMacros(macrosToSave);
+
+  // Task 8: "remember about the student" → persist the coach note so it is pulled
+  // into every future review (not just this week's report).
+  if (input.rememberCoachNote && input.coachNotesRu?.trim()) {
+    const { appendNutritionPersistentNote } = await import("@/features/nutrition/repository");
+    await appendNutritionPersistentNote({ studentId: input.studentId, note: input.coachNotesRu });
+  }
 
   return {
     report,
@@ -403,13 +427,52 @@ export async function generateNutritionWeeklyReview(input: {
     weekTo: effectiveWeekTo,
     manualRows: rows,
     athleteReportSignals,
+    coachReportNoteRu: reportWithMacros.report.coachNotesRu,
+    athleteCommentRu: reportWithMacros.report.rawText,
   });
   const generated = await generateNutritionWeeklyAnalysis({ context });
-  const status = generated.safety_flags.blocked
-    ? "blocked_safety"
-    : generated.status === "draft_ready"
-      ? "draft_generated"
-      : "needs_review";
+  // Coach decision (Igor): safety signals no longer hard-block (blocked is always
+  // false). Detected signals are recorded as a coach-facing note; the week flows
+  // through the normal review/plan path and the coach reviews before sending.
+  const status =
+    generated.generation_mode === "awaiting_generation"
+      ? "awaiting_generation"
+      : generated.status === "draft_ready"
+        ? "draft_generated"
+        : "needs_review";
+
+  // Task 7: propose repeating patterns to the coach (draft->approve). Compare this
+  // week's findings with recent prior weeks. NOT on a safety-blocked week.
+  let patternCandidates: import("@/features/nutrition/pattern-detection").NutritionPatternCandidate[] = [];
+  let loadCarbsTrend: string | null = null;
+  try {
+    const { listRecentNutritionWeeklyAnalysesForStudent } = await import("@/features/nutrition/repository");
+    const { detectNutritionRepeatingPatterns, buildNutritionLoadCarbsTrend } = await import(
+      "@/features/nutrition/pattern-detection"
+    );
+    const priorAnalyses = await listRecentNutritionWeeklyAnalysesForStudent(input.studentId, {
+      limit: 4,
+      excludeWeekFrom: effectiveWeekFrom,
+    });
+    const toWeekDaily = (weekFrom: string, daily: unknown) => ({
+      weekFrom,
+      days: Array.isArray(daily) ? (daily as Array<Record<string, unknown>>) : [],
+    });
+    const current = toWeekDaily(effectiveWeekFrom, generated.daily_analysis);
+    const prior = priorAnalyses.map((a) =>
+      toWeekDaily(a.weekFrom, (a.nutritionSummary as Record<string, unknown>)?.daily_analysis)
+    );
+    loadCarbsTrend = buildNutritionLoadCarbsTrend({ current, prior });
+    if (!generated.safety_flags.blocked) {
+      patternCandidates = detectNutritionRepeatingPatterns({
+        current,
+        prior,
+        alreadyApprovedTexts: (context.studentMemory.approved_patterns ?? []).map((p) => p.text),
+      });
+    }
+  } catch (error) {
+    console.error("[nutrition-review] pattern detection failed (non-blocking)", error);
+  }
 
   const analysis = await createNutritionWeeklyAnalysis({
     studentId: input.studentId,
@@ -435,6 +498,7 @@ export async function generateNutritionWeeklyReview(input: {
       generation_mode: generated.generation_mode,
       prompt_version: generated.prompt_version,
       do_not_send_reasons: generated.do_not_send_reasons,
+      pattern_candidates: patternCandidates,
     },
     safetyFlags: generated.safety_flags,
     contextSnapshot: {
@@ -458,6 +522,22 @@ export async function generateNutritionWeeklyReview(input: {
     athleteMessageDraft: generated.athlete_message_draft,
     coachEdits: null,
   });
+
+  // Task 7: roll the review-memory signals forward (last focus + carbs trend) so
+  // the next review sees the shift. Approved patterns are added only on coach
+  // approval (separate action) — never auto-stored here.
+  if (!generated.safety_flags.blocked) {
+    try {
+      const { updateNutritionMemoryAfterReview } = await import("@/features/nutrition/repository");
+      await updateNutritionMemoryAfterReview({
+        studentId: input.studentId,
+        lastFocus: generated.one_focus?.statement_ru ?? null,
+        keyTrends: loadCarbsTrend ? [loadCarbsTrend] : context.studentMemory.key_trends,
+      });
+    } catch (error) {
+      console.error("[nutrition-review] memory roll-forward failed (non-blocking)", error);
+    }
+  }
 
   return {
     analysis,

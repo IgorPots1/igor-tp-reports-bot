@@ -186,10 +186,27 @@ async function run(): Promise<void> {
   });
   assert.equal(ready.status, "ready");
   assertReady(ready);
+  // Task 10c: message is split into two Telegram-sized parts at the past/future
+  // boundary — part 1 = last-week review, part 2 = next-week plan; each ≤ 4096.
+  assert.equal(ready.athleteMessageDraftParts.length, 2, "ready message must split into two parts");
+  const [reviewPart, planPart] = ready.athleteMessageDraftParts;
+  assert.ok(reviewPart.length <= 4096 && planPart.length <= 4096, "each Telegram part must fit the 4096-char cap");
+  assert.match(reviewPart, /📊 Разбор по дням/, "part 1 holds the day-by-day review");
+  assert.match(reviewPart, /📌 Итог недели/, "part 1 ends with the week summary");
+  assert.doesNotMatch(reviewPart, /📋 Мини-таблица/, "part 1 must not contain the plan table");
+  assert.match(planPart, /Фокус на (эту|следующую) неделю/, "part 2 holds the week focus");
+  assert.match(planPart, /📋 Мини-таблица|План на неделю по типам дней/, "part 2 holds the plan");
   assert.match(ready.athleteMessageDraft ?? "", /~2000 ккал/, "must display-round rest kcal from next_week_plan");
   assert.doesNotMatch(ready.athleteMessageDraft ?? "", /~1950 ккал|2487 ккал|214\.69|104\.2|\d+\.\d+\s*г/, "athlete copy must avoid raw technical numbers");
   assert.match(ready.athleteMessageDraft ?? "", /~2500 ккал/, "actual kcal must be rounded for athlete text");
-  assert.match(ready.athleteMessageDraft ?? "", /~3,8 г\/кг/, "g/kg must be formatted with comma and one decimal");
+  // Task 10c: compact, phone-readable numbers line (ккал · Б · Ж · У) — no per-kg.
+  assert.match(ready.athleteMessageDraft ?? "", /· Б \d+ г · Ж \d+ г · У \d+ г/, "day numbers line uses compact Б/Ж/У format");
+  // Task 10c: phone-readable structure — section heading + blank, then per-day
+  // blocks (header / blank / numbers / blank / visible divider / blank / feedback),
+  // copy-paste-safe (no markdown), one blank line between days.
+  assert.match(ready.athleteMessageDraft ?? "", /📊 Разбор по дням\n\n🔹 /, "day section heading then blank line then first day");
+  assert.match(ready.athleteMessageDraft ?? "", /🔹 Понедельник \(01\.06\)[^\n]*\n\n[^\n]*ккал · Б [^\n]*\n\n- - -\n\n/, "per-day block: header / numbers / divider / feedback with blank lines");
+  assert.doesNotMatch(ready.athleteMessageDraft ?? "", /^\s*-{3,}\s*$/m, "divider must not be a markdown horizontal rule");
   assert.match(ready.athleteMessageDraft ?? "", /🔹 Понедельник \(01\.06\) · день отдыха/, "must include canonical day-by-day block");
   assert.match(ready.athleteMessageDraft ?? "", /День отдыха получился спокойным/, "rest day must render natural non-caution text");
   assert.match(ready.athleteMessageDraft ?? "", /🔹 Воскресенье \(07\.06\) · длительная/, "long_run daily label must be athlete-safe");
@@ -199,7 +216,7 @@ async function run(): Promise<void> {
     /Комментарий:|можно дать|указать факт|hint|source_quality|по качеству данных здесь возможна неполная картина|по этому дню вывод делаю осторожно|данных может быть чуть меньше|Данные по питанию за день неполные|вывод короткий|день без тренировки в план тренировок|день без тренировки в TrainingPeaks|Собрала|\*\*|---|—|–|TrainingPeaks|FatSecret/,
     "combined message must not leak internal hints or markdown separators"
   );
-  assert.equal((ready.athleteMessageDraft ?? "").match(/Анна, привет!/g)?.length, 1, "combined message must have one greeting");
+  assert.equal((ready.athleteMessageDraft ?? "").match(/Привет!/g)?.length, 1, "combined message must have exactly one (name-less) greeting");
   assert.doesNotMatch(ready.athleteMessageDraft ?? "", /Силовая —/, "strength block must not show without strength day");
 
   const nadezhdaGreeting = buildDerivedNutritionCombinedMessage({
@@ -208,8 +225,8 @@ async function run(): Promise<void> {
     formality: "ty",
     studentName: "Nadezhda Ponomareva",
   });
-  assert.match(nadezhdaGreeting.athleteMessageDraft ?? "", /^Надя, привет!/);
-  assert.doesNotMatch(nadezhdaGreeting.athleteMessageDraft ?? "", /Nadezhda Ponomareva, привет/);
+  assert.match(nadezhdaGreeting.athleteMessageDraft ?? "", /^Привет!/, "greeting is name-less");
+  assert.doesNotMatch((nadezhdaGreeting.athleteMessageDraft ?? "").split("\n")[0] ?? "", /Надя|Nadezhda/, "greeting line carries no name");
 
   assert.equal(formatNutritionAthleteGreetingName({ studentName: "Polyakova Anastasia" }), "Анастасия");
   const polyakovaGreeting = buildDerivedNutritionCombinedMessage({
@@ -218,8 +235,8 @@ async function run(): Promise<void> {
     formality: "ty",
     studentName: "Polyakova Anastasia",
   });
-  assert.match(polyakovaGreeting.athleteMessageDraft ?? "", /^Анастасия, привет!/);
-  assert.doesNotMatch(polyakovaGreeting.athleteMessageDraft ?? "", /^Polyakova, привет!/);
+  assert.match(polyakovaGreeting.athleteMessageDraft ?? "", /^Привет!/, "greeting is name-less");
+  assert.doesNotMatch((polyakovaGreeting.athleteMessageDraft ?? "").split("\n")[0] ?? "", /Анастасия|Polyakova/, "greeting line carries no name");
   assert.doesNotMatch(polyakovaGreeting.athleteMessageDraft ?? "", /\bCycling\b/);
 
   const noNameGreeting = buildDerivedNutritionCombinedMessage({
@@ -278,7 +295,9 @@ async function run(): Promise<void> {
   assert.match(methodologyCombined.athleteMessageDraft ?? "", /🔹 Понедельник \(01\.06\) · день отдыха/);
   assert.doesNotMatch(
     methodologyCombined.athleteMessageDraft ?? "",
-    /Комментарий:|можно дать|103\.58|206\.93|Привет!/,
+    // NB: "Привет!" is now the legitimate name-less greeting, so it's no longer a
+    // leakage marker — the distinctive stored-draft junk below still pins leakage.
+    /Комментарий:|можно дать|103\.58|206\.93/,
     "methodology daily_analysis must render polished combined lines without stored review draft leakage"
   );
   assert.equal(methodologyCombined.warnings.length, 0, "methodology daily_analysis must not warn about missing canonical facts");
@@ -347,7 +366,11 @@ async function run(): Promise<void> {
   assert.equal(missingPlan.athleteMessageDraft, null);
   assert.equal(missingPlan.renderResult.ok, false);
 
-  const blockedByReview = buildDerivedNutritionCombinedMessage({
+  // Coach policy: safety signals never hide the athlete text. Even a PRE-POLICY
+  // stored row (legacy status blocked_safety + hard_flags + safety.blocked) must
+  // render WITHOUT a regeneration — only manual_review_required:* reasons, which are
+  // advisory now, are present, so the message is NOT blocked.
+  const staleReviewBlock = buildDerivedNutritionCombinedMessage({
     review: {
       ...review,
       status: "blocked_safety",
@@ -357,20 +380,17 @@ async function run(): Promise<void> {
     formality: "ty",
     studentName: "Анна",
   });
-  assert.equal(blockedByReview.status, "blocked_safety");
-  assert.equal(blockedByReview.athleteMessageDraft, null);
+  assert.notEqual(staleReviewBlock.status, "blocked_safety", "legacy blocked_safety review must NOT hide text anymore");
+  assert.ok(staleReviewBlock.athleteMessageDraft, "athlete text renders despite stale safety flags");
 
-  const blockedByPlan = buildDerivedNutritionCombinedMessage({
+  const stalePlanBlock = buildDerivedNutritionCombinedMessage({
     review,
-    plan: buildPlan({
-      status: "blocked_safety",
-      draft: null,
-    }),
+    plan: buildPlan({ status: "blocked_safety", draft: null }),
     formality: "ty",
     studentName: "Анна",
   });
-  assert.equal(blockedByPlan.status, "blocked_safety");
-  assert.equal(blockedByPlan.athleteMessageDraft, null);
+  assert.notEqual(stalePlanBlock.status, "blocked_safety", "legacy blocked_safety plan must NOT hide text anymore");
+  assert.ok(stalePlanBlock.athleteMessageDraft, "athlete text renders despite stale plan safety status");
 
   const noCanonicalPlan = buildDerivedNutritionCombinedMessage({
     review,

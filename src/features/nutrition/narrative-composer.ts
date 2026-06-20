@@ -46,7 +46,11 @@ function normalizeFoodName(name: string): string {
  * sections. Pure helper: returns cleaned, deduped display names only. Empty or
  * missing items yield []. Daily totals are never derived from this.
  */
-export function pickNotableFoods(
+// Shared selection core: pick the most notable food items by a macro (share
+// threshold + dedupe by normalized name + limit). Returns the items themselves
+// (with grams) so callers that need either the name OR the gram value build on
+// ONE selection algorithm — no duplicated logic that could drift (урок #3).
+function selectNotableFoodItems(
   items: NutritionFoodItem[] | undefined,
   macro: "fatG" | "carbsG" | "kcal",
   opts?: {
@@ -54,7 +58,7 @@ export function pickNotableFoods(
     limit?: number;
     minShare?: number;
   }
-): string[] {
+): NutritionFoodItem[] {
   if (!items || items.length === 0) {
     return [];
   }
@@ -76,7 +80,7 @@ export function pickNotableFoods(
   const threshold = totalKnown > 0 ? totalKnown * minShare : 0;
 
   const sorted = [...scoped].sort((a, b) => (b[macro] ?? 0) - (a[macro] ?? 0));
-  const names: string[] = [];
+  const picked: NutritionFoodItem[] = [];
   const seen = new Set<string>();
   for (const item of sorted) {
     if ((item[macro] ?? 0) < threshold) {
@@ -91,12 +95,36 @@ export function pickNotableFoods(
       continue;
     }
     seen.add(key);
-    names.push(name);
-    if (names.length >= limit) {
+    picked.push(item);
+    if (picked.length >= limit) {
       break;
     }
   }
-  return names;
+  return picked;
+}
+
+export function pickNotableFoods(
+  items: NutritionFoodItem[] | undefined,
+  macro: "fatG" | "carbsG" | "kcal",
+  opts?: {
+    sections?: ReadonlyArray<NutritionMealSection>;
+    limit?: number;
+    minShare?: number;
+  }
+): string[] {
+  return selectNotableFoodItems(items, macro, opts).map((item) => normalizeFoodName(item.name));
+}
+
+// Same selection as pickNotableFoods("carbsG"), but keeps the per-item carb grams
+// (from the PDF) so the caller can attach a deterministic fast/slow carb class.
+export function pickNotableCarbItemsWithGrams(
+  items: NutritionFoodItem[] | undefined,
+  opts?: { limit?: number; minShare?: number }
+): Array<{ name: string; carbsG: number }> {
+  return selectNotableFoodItems(items, "carbsG", opts).map((item) => ({
+    name: normalizeFoodName(item.name),
+    carbsG: typeof item.carbsG === "number" ? item.carbsG : 0,
+  }));
 }
 
 /**
@@ -354,14 +382,75 @@ function resolveSportShortRu(title: string): string | null {
   return null;
 }
 
+// Task 10d: TrainingPeaks sends English activity names; in a Russian review they
+// must read in Russian (e.g. "Pilates" → "пилатес"). Ordered EN→RU map (multi-word
+// entries first). Anything not listed is left untouched (never break the label) and
+// logged once via transcribeTrainingPeaksActivityRu so the dictionary can grow.
+const TRAININGPEAKS_ACTIVITY_RU_MAP: Array<[RegExp, string]> = [
+  [/\bPadel\s*Racket\b/gi, "падел"],
+  [/\bPadel\b/gi, "падел"],
+  [/\bStand\s*Up\s*Paddleboarding\b/gi, "сап"],
+  [/\bPaddleboard(?:ing)?\b/gi, "сап"],
+  [/\bSUP\b/gi, "сап"],
+  [/\bM(?:ountain|tn)\s*Bike\b/gi, "вело"],
+  [/\bCycling\b/gi, "вело"],
+  [/\bBike\b/gi, "вело"],
+  [/\bRunning\b/gi, "бег"],
+  [/\bRun\b/gi, "бег"],
+  [/\bStrength\b/gi, "силовая"],
+  [/\bGym\b/gi, "зал"],
+  [/\bSwimming\b/gi, "плавание"],
+  [/\bSwim\b/gi, "плавание"],
+  [/\bPilates\b/gi, "пилатес"],
+  [/\bYoga\b/gi, "йога"],
+  [/\bStretching\b/gi, "растяжка"],
+  [/\bRowing\b/gi, "гребля"],
+  [/\bRow\b/gi, "гребля"],
+  [/\bWalking\b/gi, "ходьба"],
+  [/\bWalk\b/gi, "ходьба"],
+  [/\bHiking\b/gi, "хайк"],
+  [/\bHike\b/gi, "хайк"],
+  // Multi-word "Table Tennis" MUST come before the bare \bTennis\b rule — the map
+  // is applied as sequential replaces, so otherwise "Tennis" alone would match and
+  // leave "Table" stranded ("Table теннис").
+  [/\bTable\s*Tennis\b/gi, "настольный теннис"],
+  [/\bPing[-\s]?Pong\b/gi, "настольный теннис"],
+  [/\bTennis\b/gi, "теннис"],
+  [/\bXC[-\s]?Ski(?:ing)?\b/gi, "лыжи"],
+  [/\bSkiing\b/gi, "лыжи"],
+  [/\bSki\b/gi, "лыжи"],
+  [/\bElliptical\b/gi, "эллипс"],
+  [/\bTreadmill\b/gi, "дорожка"],
+  [/\bBrick\b/gi, "брик"],
+  [/\bCross[-\s]?Train(?:ing)?\b/gi, "кросс-тренировка"],
+  [/\bTrainingPeaks\b/gi, "план тренировок"],
+];
+
+function applyActivityTranscription(label: string): string {
+  let out = label;
+  for (const [pattern, ru] of TRAININGPEAKS_ACTIVITY_RU_MAP) {
+    out = out.replace(pattern, ru);
+  }
+  return out;
+}
+
+/** Transcribe + log any leftover Latin activity token (so the map can be extended). */
+function transcribeTrainingPeaksActivityRu(label: string): string {
+  const out = applyActivityTranscription(label);
+  const residual = out.match(/[A-Za-z]{3,}/g);
+  if (residual && residual.length > 0) {
+    console.warn(
+      `[nutrition.activity-transcription] untranslated activity token(s) ${JSON.stringify([
+        ...new Set(residual.map((token) => token.toLowerCase())),
+      ])} in label "${label}" — add to TRAININGPEAKS_ACTIVITY_RU_MAP`
+    );
+  }
+  return out;
+}
+
+// Back-compat name used in the label branches below.
 function replaceEnglishSportTokens(label: string): string {
-  return label
-    .replace(/\bCycling\b/gi, "вело")
-    .replace(/\bBike\b/gi, "вело")
-    .replace(/\bPadel Racket\b/gi, "падел")
-    .replace(/\bPadel\b/gi, "падел")
-    .replace(/\bStrength\b/gi, "силовая")
-    .replace(/\bTrainingPeaks\b/gi, "план тренировок");
+  return applyActivityTranscription(label);
 }
 
 function isRunLikeLabel(label: string): boolean {
@@ -369,6 +458,12 @@ function isRunLikeLabel(label: string): boolean {
 }
 
 export function humanizeNutritionTrainingLabel(trainingLabel: string, trainingType: string): string {
+  // Final pass: whatever label branch produced, transcribe any English activity
+  // names to Russian (and log unknown tokens). Covers all return paths at once.
+  return transcribeTrainingPeaksActivityRu(humanizeNutritionTrainingLabelInner(trainingLabel, trainingType));
+}
+
+function humanizeNutritionTrainingLabelInner(trainingLabel: string, trainingType: string): string {
   const raw = trainingLabel.trim();
   if (!raw) {
     return trainingType === "rest" ? "день отдыха" : "день недели";
@@ -748,6 +843,15 @@ export type NutritionDayCommentComposerInput = {
   fatFeedbackPolicy?: NutritionFatFeedbackPolicy;
   previousDayTrainingType?: string | null;
   previousDayTrainingLabel?: string | null;
+  /**
+   * Task 10d (Bug 1): goal-aware deterministic fallback. For goal=lose/gain, a
+   * rest/easy day whose actual energy is above the deficit line must NOT read as
+   * "спокойно". maintain leaves these undefined → behaviour byte-identical.
+   */
+  goalType?: "lose" | "maintain" | "gain";
+  goalDayTargetKcal?: number | null;
+  actualKcal?: number | null;
+  actualFatG?: number | null;
 };
 
 export type NutritionDayNarrativeParts = {
@@ -1212,6 +1316,27 @@ export function composeNutritionDayComment(
 
   if (input.nutritionStatus === "suspect") {
     return "Данные по питанию за день выглядят неполными или нетипичными, поэтому здесь лучше проверить исходный отчёт вручную.";
+  }
+
+  // Task 10d (Bug 1): goal-aware deterministic fallback so a losing athlete's REST
+  // day above the deficit line never reads as "спокойно" — even when the model's
+  // goal-aware prose is unavailable. maintain/gain or no target → fall through to
+  // the existing logic (behaviour byte-identical for them).
+  if (
+    input.goalType === "lose" &&
+    roleInfo.role === "rest" &&
+    typeof input.goalDayTargetKcal === "number" &&
+    typeof input.actualKcal === "number" &&
+    input.actualKcal > input.goalDayTargetKcal + 150
+  ) {
+    const orientKcal = Math.round(input.goalDayTargetKcal / 50) * 50;
+    const fatG = typeof input.actualFatG === "number" ? input.actualFatG : input.macro.fatG ?? null;
+    const fatPct = typeof fatG === "number" && input.actualKcal > 0 ? (fatG * 9) / input.actualKcal : null;
+    const fatSentence =
+      typeof fatG === "number" && fatPct !== null && fatPct > 0.35
+        ? ` Жиров ${Math.round(fatG / 5) * 5} г для дня без нагрузки многовато — в основном из них и набегают лишние калории.`
+        : "";
+    return `${longAfterPrefix}Для дня без нагрузки при твоей цели это многовато — ориентир в такие дни около ${orientKcal} ккал.${fatSentence} В дни отдыха попробуй сделать тарелку легче: больше овощей и белка, поменьше жирного.`;
   }
 
   if (input.nutritionStatus === "pre_long_low") {

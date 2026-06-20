@@ -176,6 +176,11 @@ const FATSECRET_MEAL_SECTION_PATTERNS: Array<{ pattern: RegExp; section: Nutriti
   { pattern: /^ужин/i, section: "dinner" },
   { pattern: /^перекус/i, section: "snack" },
   { pattern: /^друго/i, section: "snack" },
+  // English FatSecret ("Detailed Report") meal headers.
+  { pattern: /^breakfast\b/i, section: "breakfast" },
+  { pattern: /^lunch\b/i, section: "lunch" },
+  { pattern: /^dinner\b/i, section: "dinner" },
+  { pattern: /^snacks?\b/i, section: "snack" },
 ];
 
 function resolveFatSecretMealSection(line: string): NutritionMealSection | null {
@@ -190,7 +195,27 @@ function resolveFatSecretMealSection(line: string): NutritionMealSection | null 
 
 function isFatSecretTotalsLine(line: string): boolean {
   const normalized = line.trim().toLocaleLowerCase("ru");
-  return /^всего(?:\s|$)/.test(normalized) || /(period\s*summary|итого\s*за\s*период|за\s*период)/i.test(normalized);
+  return (
+    /^всего(?:\s|$)/.test(normalized) ||
+    /^total(?:\s|$)/.test(normalized) ||
+    /(period\s*summary|итого\s*за\s*период|за\s*период)/i.test(normalized)
+  );
+}
+
+/**
+ * Report chrome lines repeated on every PDF page (English FatSecret detailed
+ * report): page header/footer, column headers, the top Period Summary block.
+ * These must never be parsed as food items or day totals.
+ */
+function isFatSecretChromeLine(line: string): boolean {
+  const normalized = line.trim().toLocaleLowerCase("en");
+  return (
+    /food diary report|fatsecret\.com/.test(normalized) ||
+    /^page\s+\d+/.test(normalized) ||
+    /^cals\s+fat\b/.test(normalized) ||
+    /^\(kcal\)/.test(normalized) ||
+    /^(period summary|daily average)/.test(normalized)
+  );
 }
 
 /**
@@ -220,6 +245,27 @@ function pickFoodMacros(values: number[]): {
   };
 }
 
+// Корявые слова (1a, only-safe): repair FatSecret glue artifacts in a parsed food
+// name. A lost space before a capitalized word right after a short preposition
+// ("Bbq сПенне" → "с Пенне", "сМолодым" → "с Молодым"). Deliberately narrow — only
+// single prepositions before a Cyrillic capital — so brand CamelCase (ВкусВилл) and
+// CAPS words are NOT touched (brand/quality cleanup is the model's job, per prompt).
+// Also truncate the 120-char cap at a word boundary (no "Молодым Карт[офелем]" stub).
+const NUTRITION_GLUED_PREPOSITION_RE = /(^|\s)(с|со|в|во|из|на|по|от|до|за|для|при|у|к|о|об)([А-ЯЁ])/gu;
+function tidyParsedFoodName(raw: string): string {
+  const cleaned = raw
+    .replace(/[.…]{2,}/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(NUTRITION_GLUED_PREPOSITION_RE, "$1$2 $3")
+    .trim();
+  if (cleaned.length <= 120) {
+    return cleaned;
+  }
+  const cut = cleaned.slice(0, 120);
+  const lastSpace = cut.lastIndexOf(" ");
+  return (lastSpace > 60 ? cut.slice(0, lastSpace) : cut).trim();
+}
+
 function parseFatSecretFoodItemLine(line: string, section: NutritionMealSection | null): NutritionFoodItem | null {
   if (isFatSecretTotalsLine(line) || resolveFatSecretMealSection(line)) {
     return null;
@@ -228,11 +274,7 @@ function parseFatSecretFoodItemLine(line: string, section: NutritionMealSection 
   if (!firstNumberMatch || firstNumberMatch.index === undefined) {
     return null;
   }
-  const rawName = line.slice(0, firstNumberMatch.index);
-  const name = rawName
-    .replace(/[.…]{2,}/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const name = tidyParsedFoodName(line.slice(0, firstNumberMatch.index));
   if (name.length < 2 || !/[a-zа-яё]/i.test(name)) {
     return null;
   }
@@ -245,7 +287,7 @@ function parseFatSecretFoodItemLine(line: string, section: NutritionMealSection 
   }
   const macros = pickFoodMacros(values);
   return {
-    name: name.slice(0, 120),
+    name,
     section,
     kcal: macros.kcal,
     fatG: macros.fatG,
@@ -285,6 +327,47 @@ function parseRussianDetailedDateHeader(line: string): string | null {
   return isoFromDateParts(Number(match[3]), month, Number(match[2]));
 }
 
+const EN_MONTHS: Record<string, number> = {
+  january: 1, jan: 1,
+  february: 2, feb: 2,
+  march: 3, mar: 3,
+  april: 4, apr: 4,
+  may: 5,
+  june: 6, jun: 6,
+  july: 7, jul: 7,
+  august: 8, aug: 8,
+  september: 9, sep: 9, sept: 9,
+  october: 10, oct: 10,
+  november: 11, nov: 11,
+  december: 12, dec: 12,
+};
+
+/**
+ * English FatSecret detailed day header, e.g. "Monday, June 8, 2026".
+ * Anchored so a food/page-chrome line that merely contains a date is not treated
+ * as a day header. The page header ("Food Diary Report … Mon, June 8 - …") starts
+ * with "Food" and is a range, so it does not match.
+ */
+function parseEnglishDetailedDateHeader(line: string): string | null {
+  const normalized = line.trim();
+  const match = normalized.match(
+    /^(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\s*,\s*([a-z]+)\s+(\d{1,2})\s*,\s*(20\d{2})$/i
+  );
+  if (!match) {
+    return null;
+  }
+  const month = EN_MONTHS[(match[1] ?? "").toLocaleLowerCase("en")] ?? null;
+  if (!month) {
+    return null;
+  }
+  return isoFromDateParts(Number(match[3]), month, Number(match[2]));
+}
+
+/** RU or EN FatSecret "detailed report" day header. */
+function parseFatSecretDetailedDateHeader(line: string): string | null {
+  return parseRussianDetailedDateHeader(line) ?? parseEnglishDetailedDateHeader(line);
+}
+
 function parseRussianFatSecretDetailedDailyTotals(text: string): {
   candidates: FatSecretPdfDayCandidate[];
   warnings: string[];
@@ -304,8 +387,12 @@ function parseRussianFatSecretDetailedDailyTotals(text: string): {
     if (!currentDate) {
       return;
     }
-    const mealSectionSeen = currentDayLines.some((line) => /(завтрак|обед|ужин|перекус)/i.test(line));
-    const totalLines = currentDayLines.filter((line) => /^всего(?:\s|$)/i.test(line.toLocaleLowerCase("ru")));
+    const mealSectionSeen = currentDayLines.some((line) =>
+      /(завтрак|обед|ужин|перекус|breakfast|lunch|dinner|snack)/i.test(line)
+    );
+    const totalLines = currentDayLines.filter((line) =>
+      /^(всего|total)(?:\s|$)/i.test(line.trim().toLocaleLowerCase("ru"))
+    );
     const validTotals: Array<{ kcal: number; fatG: number; carbsG: number; proteinG: number }> = [];
 
     for (const totalLine of totalLines) {
@@ -341,6 +428,9 @@ function parseRussianFatSecretDetailedDailyTotals(text: string): {
     const items: NutritionFoodItem[] = [];
     let activeSection: NutritionMealSection | null = null;
     for (const line of currentDayLines) {
+      if (isFatSecretChromeLine(line)) {
+        continue;
+      }
       const section = resolveFatSecretMealSection(line);
       if (section) {
         activeSection = section;
@@ -370,7 +460,7 @@ function parseRussianFatSecretDetailedDailyTotals(text: string): {
   };
 
   for (const line of lines) {
-    const parsedDate = parseRussianDetailedDateHeader(line);
+    const parsedDate = parseFatSecretDetailedDateHeader(line);
     if (parsedDate) {
       inDaySection = true;
       if (!currentDate) {

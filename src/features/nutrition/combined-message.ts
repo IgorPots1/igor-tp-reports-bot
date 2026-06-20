@@ -15,6 +15,8 @@ import {
 } from "@/features/nutrition/narrative-composer";
 import { resolveNutritionNarrativePreferencesFromStored } from "@/features/nutrition/context";
 import {
+  NUTRITION_TELEGRAM_DAY_DIVIDER,
+  paragraphizeForTelegram,
   renderNutritionTelegramMessage,
   validateNutritionDayProse,
   type NutritionDayProseFacts,
@@ -49,11 +51,15 @@ type CanonicalDailyFact = {
   macroGuardrails?: unknown;
   athlete_prose?: unknown;
   target?: unknown;
+  goal_day_target?: unknown;
+  items_notable?: unknown;
 };
 
 export type NutritionCombinedMessageResult = {
-  status: "ready" | "missing_review" | "missing_plan" | "blocked_safety" | "needs_review";
+  status: "ready" | "missing_review" | "missing_plan" | "blocked_safety" | "needs_review" | "awaiting_generation";
   athleteMessageDraft: string | null;
+  /** Telegram-split copy blocks: [last-week review, next-week plan]. Empty unless ready. */
+  athleteMessageDraftParts: string[];
   renderResult: NutritionTelegramRenderResult;
   warnings: string[];
   sourceReviewId: string | null;
@@ -80,7 +86,9 @@ function emptyRenderResult(): NutritionTelegramRenderResult {
   return {
     ok: false,
     text: null,
+    parts: [],
     issues: [],
+    coachReviewNotes: [],
     charCount: 0,
   };
 }
@@ -241,6 +249,12 @@ function normalizeStoredDailyFactItem(raw: unknown): CanonicalDailyFact | null {
       embedded.macro_guardrails,
     athlete_prose: source.athlete_prose ?? item.athlete_prose,
     target: source.target ?? item.target,
+    // Task 10d (Bug 1): carry the goal "deficit line" through normalization so the
+    // render-time validator allows its numbers and the goal-aware fallback can fire.
+    goal_day_target: source.goal_day_target ?? item.goal_day_target,
+    // Часть А: carry items_notable (with per-item carb_class) so the render-time
+    // carb_quality_mismatch guard can see which foods are fast/neutral.
+    items_notable: source.items_notable ?? item.items_notable,
   };
 }
 
@@ -253,11 +267,18 @@ function resolveUsableNutritionDayProse(value: unknown, facts: NutritionDayProse
   if (typeof value !== "string") {
     return null;
   }
-  const prose = value.replace(/\s+/g, " ").trim();
+  // Normalize em/en dashes to a hyphen exactly like the whole-message cleanup
+  // (cleanupPlainText) does — Igor's voice uses "—" constantly ("белок 133 г —
+  // отлично"), and rejecting on it silently dropped live prose to the dry
+  // deterministic comment. Markdown emphasis/fences are still rejected.
+  const prose = value
+    .replace(/\s+/g, " ")
+    .replace(/[—–]/g, "-")
+    .trim();
   if (prose.length < 2) {
     return null;
   }
-  if (/\*\*|__|```|[—–]/.test(prose)) {
+  if (/\*\*|__|```/.test(prose)) {
     return null;
   }
   if (/TrainingPeaks|FatSecret|OpenAI|\bJSON\b|hint_for_comment|source_quality/.test(prose)) {
@@ -270,6 +291,140 @@ function resolveUsableNutritionDayProse(value: unknown, facts: NutritionDayProse
     return null;
   }
   return prose;
+}
+
+/**
+ * Build the per-day prose facts (actual macros + code-owned plan target numbers)
+ * from a canonical daily_analysis item. Single source of truth so the render-time
+ * gate (resolveUsableNutritionDayProse) and the generation-time audit in
+ * draft-generator validate model prose against identical facts.
+ */
+export function buildNutritionDayProseFacts(item: Record<string, unknown>): NutritionDayProseFacts {
+  const actual = asObject(item.actual);
+  const kcal = getDailyFactValue(item, actual, "actual_kcal", "kcal");
+  const protein = getDailyFactValue(item, actual, "protein_g", "proteinG");
+  const fat = getDailyFactValue(item, actual, "fat_g", "fatG");
+  const carbs = getDailyFactValue(item, actual, "carbs_g", "carbsG");
+  const carbsGPerKg = toFiniteNumber(item.carbs_g_per_kg) ?? toFiniteNumber(actual.carbsGPerKg);
+  const proteinGPerKg = toFiniteNumber(actual.proteinGPerKg);
+  const findings = asStringArray(item.findings);
+  const nutritionStatus =
+    typeof item.nutrition_status === "string"
+      ? item.nutrition_status
+      : typeof item.nutritionStatus === "string"
+        ? item.nutritionStatus
+        : null;
+  // Code-owned target numbers for this day, so the prose may state coaching
+  // orientations ("цель ~350, у тебя 233, недобор ~100") without the number
+  // validator treating them as invented.
+  const targetObj = asObject(item.target);
+  const carbsGMin = toFiniteNumber(targetObj.carbsGMin);
+  const carbsGMax = toFiniteNumber(targetObj.carbsGMax);
+  const planTargetNumbers: number[] = [];
+  for (const value of [carbsGMin, carbsGMax, toFiniteNumber(targetObj.kcalMin), toFiniteNumber(targetObj.proteinGMin)]) {
+    if (value != null) {
+      planTargetNumbers.push(value);
+    }
+  }
+  // Band midpoint, rounded to 10, so a friendly "около 300" for a 280–320 corridor
+  // reads as a valid rounded target rather than an invented number (Task 4).
+  if (carbsGMin != null && carbsGMax != null) {
+    planTargetNumbers.push(Math.round((carbsGMin + carbsGMax) / 2 / 10) * 10);
+  }
+  if (carbs != null) {
+    const mid = carbsGMin != null && carbsGMax != null ? (carbsGMin + carbsGMax) / 2 : null;
+    for (const target of [carbsGMin, carbsGMax, mid]) {
+      if (target != null && target > carbs) {
+        planTargetNumbers.push(target - carbs);
+      }
+    }
+  }
+  // Task 10d (Bug 1): the goal-aware "deficit line" (goal_day_target) is also a
+  // code-owned orientation. Without this, a losing athlete's prose citing the
+  // deficit target ("ориентир около 1800 ккал") was flagged as an invented number
+  // and the whole day's prose was dropped to the goal-blind deterministic comment.
+  const goalDayTarget = asObject(item.goal_day_target);
+  const goalKcal = toFiniteNumber(goalDayTarget.target_kcal);
+  const goalCarbs = toFiniteNumber(goalDayTarget.carbs_g);
+  for (const value of [goalKcal, toFiniteNumber(goalDayTarget.protein_g), toFiniteNumber(goalDayTarget.fat_g), goalCarbs]) {
+    if (value != null) {
+      planTargetNumbers.push(value);
+    }
+  }
+  // Allow the gap to the deficit line ("на ~950 больше ориентира").
+  if (goalKcal != null && kcal != null) {
+    planTargetNumbers.push(Math.abs(kcal - goalKcal));
+  }
+  if (goalCarbs != null && carbs != null) {
+    planTargetNumbers.push(Math.abs(carbs - goalCarbs));
+  }
+  // Наряд 3 Пункт 3: pre-workout carbs are summed by code from the day's REAL
+  // diary items (PDF), so the prose may state "перед интервалами было ~48 г
+  // углеводов" without the validator treating it as invented.
+  const preWorkout = asObject(item.pre_workout);
+  const preWorkoutCarbs = toFiniteNumber(preWorkout.carbs_g);
+  if (preWorkoutCarbs != null) {
+    planTargetNumbers.push(preWorkoutCarbs);
+    planTargetNumbers.push(Math.round(preWorkoutCarbs / 10) * 10);
+    planTargetNumbers.push(Math.round(preWorkoutCarbs / 5) * 5);
+  }
+  // Часть А: collect this day's carb foods that code classified FAST, so the
+  // carb_quality_mismatch guard can catch the prose calling any of them
+  // "медленный". Names come from items_notable (built deterministically from PDF).
+  // Only fast — see the guard comment for why neutral is deliberately excluded.
+  const carbFastFoods = collectCarbFastFoods(item.items_notable);
+  return {
+    kcal,
+    proteinG: protein,
+    fatG: fat,
+    carbsG: carbs,
+    carbsGPerKg,
+    proteinGPerKg,
+    planTargetNumbers,
+    nutritionStatus,
+    findings,
+    carbFastFoods,
+  };
+}
+
+function collectCarbFastFoods(itemsNotable: unknown): string[] {
+  const notable = asObject(itemsNotable);
+  if (!notable) {
+    return [];
+  }
+  const names = new Set<string>();
+  const consider = (name: unknown, carbClass: unknown): void => {
+    if (typeof name !== "string" || name.trim().length < 2) {
+      return;
+    }
+    if (carbClass === "fast") {
+      names.add(name.trim());
+    }
+  };
+  // carb_foods: [{ name, carb_class }]
+  if (Array.isArray(notable.carb_foods)) {
+    for (const food of notable.carb_foods) {
+      const obj = asObject(food);
+      if (obj) {
+        consider(obj.name, obj.carb_class);
+      }
+    }
+  }
+  // by_section[*]: [{ name, carb_class, ... }]
+  const bySection = asObject(notable.by_section);
+  if (bySection) {
+    for (const sectionItems of Object.values(bySection)) {
+      if (Array.isArray(sectionItems)) {
+        for (const entry of sectionItems) {
+          const obj = asObject(entry);
+          if (obj) {
+            consider(obj.name, obj.carb_class);
+          }
+        }
+      }
+    }
+  }
+  return [...names];
 }
 
 function extractMacroGuardrailStatuses(macroGuardrails: unknown): MacroGuardrailStatuses {
@@ -501,7 +656,6 @@ function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
       const protein = getDailyFactValue(item, actual, "protein_g", "proteinG");
       const fat = getDailyFactValue(item, actual, "fat_g", "fatG");
       const carbs = getDailyFactValue(item, actual, "carbs_g", "carbsG");
-      const carbsPerKg = toFiniteNumber(item.carbs_g_per_kg) ?? toFiniteNumber(actual.carbsGPerKg);
       const findings = asStringArray(item.findings);
       const nutritionStatus =
         typeof item.nutrition_status === "string"
@@ -565,52 +719,39 @@ function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
           fatFeedbackPolicy: narrativePreferences.fatFeedbackPolicy,
           previousDayTrainingType,
           previousDayTrainingLabel,
+          // Task 10d (Bug 1): goal-aware fallback for a rest day over the deficit line.
+          goalType: (() => {
+            const g = asObject(item.goal_day_target).goal;
+            return g === "lose" || g === "gain" ? g : undefined;
+          })(),
+          goalDayTargetKcal: toFiniteNumber(asObject(item.goal_day_target).target_kcal),
+          actualKcal: kcal,
+          actualFatG: fat,
         },
         repetitionState
       );
+      // Telegram-readable day block: header line, blank, numbers line, blank,
+      // divider, blank, feedback (long feedback split into short chunks). Real
+      // newlines survive copy-paste; no markdown. Structure is goal-independent.
+      const header = `🔹 ${weekday} (${dateLabel}) · ${athleteTrainingLabel}`;
       if (missingNutritionData) {
-        return `🔹 ${weekday} (${dateLabel}) · ${athleteTrainingLabel}
-${comment}`;
+        return `${header}\n\n${paragraphizeForTelegram(comment)}`;
       }
       // Hybrid: prefer validated model prose, otherwise the deterministic comment.
       // The fact line above is always code-owned and never replaced.
-      const proteinPerKg = toFiniteNumber(actual.proteinGPerKg);
-      // Code-owned target numbers for this day, so the prose may state coaching
-      // orientations ("цель ~350, у тебя 233, недобор ~100") without the number
-      // validator treating them as invented.
-      const targetObj = asObject(item.target);
-      const carbsGMin = toFiniteNumber(targetObj.carbsGMin);
-      const carbsGMax = toFiniteNumber(targetObj.carbsGMax);
-      const planTargetNumbers: number[] = [];
-      for (const value of [carbsGMin, carbsGMax, toFiniteNumber(targetObj.kcalMin), toFiniteNumber(targetObj.proteinGMin)]) {
-        if (value != null) {
-          planTargetNumbers.push(value);
-        }
-      }
-      if (carbs != null) {
-        const mid = carbsGMin != null && carbsGMax != null ? (carbsGMin + carbsGMax) / 2 : null;
-        for (const target of [carbsGMin, carbsGMax, mid]) {
-          if (target != null && target > carbs) {
-            planTargetNumbers.push(target - carbs);
-          }
-        }
-      }
-      const dayComment =
-        resolveUsableNutritionDayProse(item.athlete_prose, {
-          kcal,
-          proteinG: protein,
-          fatG: fat,
-          carbsG: carbs,
-          carbsGPerKg: carbsPerKg,
-          proteinGPerKg: proteinPerKg,
-          planTargetNumbers,
-          nutritionStatus,
-          findings,
-        }) ?? comment;
-      const carbsKgText = carbsPerKg != null ? ` (${formatNutritionAthletePerKg(carbsPerKg)})` : "";
-      return `🔹 ${weekday} (${dateLabel}) · ${athleteTrainingLabel}
-${formatNutritionAthleteKcal(kcal, { mode: "actual" })} · белок ${formatNutritionAthleteMacro(protein)} · жиры ${formatNutritionAthleteMacro(fat)} · углеводы ${formatNutritionAthleteMacro(carbs)}${carbsKgText}.
-${dayComment}`;
+      // Facts come from the shared helper so this render-time gate and the
+      // generation-time audit (draft-generator) validate against identical facts.
+      const dayComment = resolveUsableNutritionDayProse(item.athlete_prose, buildNutritionDayProseFacts(item)) ?? comment;
+      const numbersLine = `${formatNutritionAthleteKcal(kcal, { mode: "actual" })} · Б ${formatNutritionAthleteMacro(protein)} · Ж ${formatNutritionAthleteMacro(fat)} · У ${formatNutritionAthleteMacro(carbs)}`;
+      return [
+        header,
+        "",
+        numbersLine,
+        "",
+        NUTRITION_TELEGRAM_DAY_DIVIDER,
+        "",
+        paragraphizeForTelegram(dayComment),
+      ].join("\n");
     })
     .filter((line): line is string => Boolean(line));
 }
@@ -761,6 +902,20 @@ function getPlanFocusLines(
     miniTableMode?: "athlete_remaining_only" | "full_week";
   }
 ): string[] {
+  // Task 6: if the plan prose was written by the model (Claude, same call as the
+  // review), use it as the focus prose so the whole message is in one voice. The
+  // deterministic per-day narrative becomes the fallback. The numbers mini-table
+  // is rendered separately from nextWeekPlan, so it is unaffected either way.
+  if (plan.generationMode === "ai") {
+    const claudePlanLines = (compactText(plan.athleteMessageDraft) ? plan.athleteMessageDraft ?? "" : "")
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (claudePlanLines.length > 0) {
+      return claudePlanLines;
+    }
+  }
+
   const narrativeFocus = buildNutritionTargetWeekFocusNarrative(nextWeekPlan, mode, {
     todayLocalDate: input?.todayLocalDate,
     miniTableMode: input?.miniTableMode ?? "athlete_remaining_only",
@@ -945,28 +1100,33 @@ function hasTargetWeekTrainingContext(nextWeekPlan: NutritionNextWeekPlan | null
   return Array.isArray(workouts) && workouts.length > 0;
 }
 
+// Safety signals (very-low kcal/carb/weight, рпп/medical notes) are ADVISORY now
+// (coach decision) — they must never hide the athlete text. These derive into
+// "manual_review_required:<flag>" reasons; we ignore them when deciding to block.
+// This also unblocks PRE-POLICY stored rows (status blocked_safety / safety.blocked /
+// baked manual_review_required reasons) WITHOUT a regeneration. Block only on a
+// genuine non-safety do-not-send reason the model itself emitted.
+function isSafetyDerivedReason(reason: string): boolean {
+  return reason.trim().startsWith("manual_review_required:");
+}
+
 function isReviewBlockedSafety(review: NutritionWeeklyAnalysis): boolean {
-  if (review.status === "blocked_safety") {
+  return extractReviewDoNotSendReasons(review).some((reason) => !isSafetyDerivedReason(reason));
+}
+
+/** The model failed to generate this review — it must not be sent, only regenerated. */
+function isReviewAwaitingGeneration(review: NutritionWeeklyAnalysis): boolean {
+  if (review.status === "awaiting_generation") {
     return true;
   }
-  return extractReviewDoNotSendReasons(review).length > 0;
+  return asObject(review.nutritionSummary).generation_mode === "awaiting_generation";
 }
 
 function isPlanBlockedSafety(plan: NutritionWeeklyPlan): boolean {
-  if (plan.status === "blocked_safety") {
-    return true;
-  }
-  const reasons = extractPlanDoNotSendReasons(plan);
-  const safety = asObject(plan.safetyFlags);
-  const hardFlags = asStringArray(safety.hard_flags);
-  const blocked = typeof safety.blocked === "boolean" ? safety.blocked : false;
-  if (blocked || hardFlags.length > 0 || reasons.length > 0) {
-    return true;
-  }
-  if (!plan.athleteMessageDraft && reasons.length > 0) {
-    return true;
-  }
-  return false;
+  // Same policy as the review: ignore the legacy blocked_safety status, the stored
+  // safety.blocked flag, and the safety-derived manual_review_required:* reasons —
+  // none of them hide the plan anymore. Block only on a genuine non-safety reason.
+  return extractPlanDoNotSendReasons(plan).some((reason) => !isSafetyDerivedReason(reason));
 }
 
 function hasNeedsReviewStatus(review: NutritionWeeklyAnalysis, plan: NutritionWeeklyPlan): boolean {
@@ -985,9 +1145,23 @@ export function buildDerivedNutritionCombinedMessage(input: {
     return {
       status: "missing_review",
       athleteMessageDraft: null,
+      athleteMessageDraftParts: [],
       renderResult: emptyRenderResult(),
       warnings: [],
       sourceReviewId: null,
+      sourcePlanId: input.plan?.id ?? null,
+    };
+  }
+  // The model failed to generate this review — never assemble a sendable text;
+  // the coach must regenerate (master order Task 3, Igor decision #3).
+  if (isReviewAwaitingGeneration(input.review)) {
+    return {
+      status: "awaiting_generation",
+      athleteMessageDraft: null,
+      athleteMessageDraftParts: [],
+      renderResult: emptyRenderResult(),
+      warnings: [],
+      sourceReviewId: input.review.id,
       sourcePlanId: input.plan?.id ?? null,
     };
   }
@@ -995,6 +1169,7 @@ export function buildDerivedNutritionCombinedMessage(input: {
     return {
       status: "missing_plan",
       athleteMessageDraft: null,
+      athleteMessageDraftParts: [],
       renderResult: emptyRenderResult(),
       warnings: [],
       sourceReviewId: input.review.id,
@@ -1025,6 +1200,7 @@ export function buildDerivedNutritionCombinedMessage(input: {
     return {
       status: "blocked_safety",
       athleteMessageDraft: null,
+      athleteMessageDraftParts: [],
       renderResult: emptyRenderResult(),
       warnings,
       sourceReviewId: review.id,
@@ -1045,6 +1221,10 @@ export function buildDerivedNutritionCombinedMessage(input: {
       ? `По сравнению с прошлой неделей держим более ровную базу: среднее за неделю ${formatNutritionAthleteKcal(avgKcal, { mode: "actual" })}, ориентир для дня отдыха ${formatNutritionAthleteKcal(restKcal, { mode: "target" })}.`
       : null;
   const weekSummary = getReviewWeekSummaryLine(review);
+  // Block 3: warm opening line derived from the athlete's own words. Qualitative
+  // only; the generator already digit-guards it, and we re-guard here defensively.
+  const openingNoteRaw = compactText(typeof summary.athlete_opening_note_ru === "string" ? summary.athlete_opening_note_ru : null);
+  const athleteOpeningNote = openingNoteRaw && !/\d/.test(openingNoteRaw) ? openingNoteRaw : null;
   const todayLocalDate = getNutritionAdminLocalDate();
   const focusLines = getPlanFocusLines(plan, planWeekMode, nextWeekPlan, {
     todayLocalDate,
@@ -1066,6 +1246,7 @@ export function buildDerivedNutritionCombinedMessage(input: {
       weekSummaryRu: weekSummary,
       focusLinesRu: focusLines,
       weekComparisonLineRu: comparisonLine,
+      athleteOpeningNoteRu: athleteOpeningNote,
     },
     nextWeekPlan,
     fallbackPlanLines: [compactText(plan.athleteMessageDraft) ?? "План на неделю не сформирован."],
@@ -1075,11 +1256,17 @@ export function buildDerivedNutritionCombinedMessage(input: {
     miniTableMode: "athlete_remaining_only",
   });
   const athleteMessageDraft = renderResult.ok ? renderResult.text : null;
+  // Task 10d: SOFT coach-review notes surface as warnings and flip the status to
+  // needs_review (text still ships); only a HARD clinical block (ok=false) withholds.
+  const combinedWarnings = [...warnings, ...renderResult.coachReviewNotes];
+  const needsReview =
+    !renderResult.ok || renderResult.coachReviewNotes.length > 0 || hasNeedsReviewStatus(review, plan);
   return {
-    status: renderResult.ok && !hasNeedsReviewStatus(review, plan) ? "ready" : "needs_review",
+    status: needsReview ? "needs_review" : "ready",
     athleteMessageDraft,
+    athleteMessageDraftParts: renderResult.ok ? renderResult.parts : [],
     renderResult,
-    warnings,
+    warnings: combinedWarnings,
     sourceReviewId: review.id,
     sourcePlanId: plan.id,
   };

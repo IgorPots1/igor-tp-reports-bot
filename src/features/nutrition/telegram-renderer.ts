@@ -13,12 +13,31 @@ export type NutritionTelegramRenderIssue = {
   rule: string;
   message: string;
   severity: "error" | "warning";
+  /**
+   * Task 10d: blocking tier, orthogonal to severity.
+   * - "hard": genuine athlete danger leaking into the text (clinical terms) →
+   *   withhold the message. (The primary medical gate is upstream `blocked`.)
+   * - "soft" (default): technical/borderline → never block; either cleaned
+   *   silently or surfaced to the coach as a review note.
+   */
+  tier: "hard" | "soft";
 };
 
 export type NutritionTelegramRenderResult = {
   ok: boolean;
+  /** Full message (both parts joined) — single-copy / backward compatible. */
   text: string | null;
+  /**
+   * The message split for Telegram's 4096-char cap: [past-week review, next-week
+   * plan]. Copy each part as its own Telegram message. One element if it all fits.
+   */
+  parts: string[];
   issues: NutritionTelegramRenderIssue[];
+  /**
+   * Task 10d: coach-facing review notes for SOFT issues (text still ships, but the
+   * coach should glance at these spots). Empty when nothing needs a look.
+   */
+  coachReviewNotes: string[];
   charCount: number;
 };
 
@@ -27,6 +46,12 @@ export type NutritionMessageInterpretation = {
   weekSummaryRu: string | null;
   focusLinesRu: string[];
   weekComparisonLineRu: string | null;
+  /**
+   * Block 3: optional warm opening line from the athlete's own words (effort /
+   * circumstances), rendered right after the greeting. Qualitative only — any line
+   * containing a digit is dropped here as a final guard.
+   */
+  athleteOpeningNoteRu?: string | null;
 };
 
 export type NutritionTelegramRendererInput = {
@@ -129,6 +154,65 @@ function dayTypeRu(dayType: NutritionPlanDayType): string {
   }
 }
 
+/**
+ * Telegram-readable divider between the numbers line and the feedback of a day.
+ * Spaced em-dashes survive cleanupPlainText (em → hyphen) as "- - -" — a visible
+ * dashed divider that is NOT a markdown rule (3 consecutive hyphens) and NOT a
+ * long dash, so it passes validateTelegramReadyNutritionMessage.
+ */
+export const NUTRITION_TELEGRAM_DAY_DIVIDER = "— — —";
+
+/**
+ * Break a long block into short, phone-readable chunks of up to `maxSentences`
+ * sentences separated by a blank line. Splits only at sentence end followed by a
+ * capital letter, so decimals ("1.5"), "г/кг" and abbreviations are not split.
+ * Render-layer only: never changes wording, just inserts paragraph breaks.
+ */
+export function paragraphizeForTelegram(text: string | null | undefined, maxSentences = 2): string {
+  const trimmed = (text ?? "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  const sentences = trimmed.split(/(?<=[.!?…])\s+(?=[А-ЯЁA-Z0-9«])/u).filter((s) => s.trim());
+  if (sentences.length <= maxSentences) {
+    return trimmed;
+  }
+  const chunks: string[] = [];
+  for (let i = 0; i < sentences.length; i += maxSentences) {
+    chunks.push(sentences.slice(i, i + maxSentences).join(" ").trim());
+  }
+  return chunks.join("\n\n");
+}
+
+const PHANTOM_PREVIOUS_COMPARISON = /прошл[а-я]+\s+недел|по сравнению с прошл/i;
+
+/**
+ * Task 10d: when there is no saved history, the model sometimes references "прошлая
+ * неделя" — a false claim. Remove only the offending sentence(s) (not the whole
+ * day) and report whether anything was removed, so the coach gets a note.
+ */
+function stripPhantomPreviousComparison(text: string): { text: string; removed: boolean } {
+  if (!PHANTOM_PREVIOUS_COMPARISON.test(text)) {
+    return { text, removed: false };
+  }
+  let removed = false;
+  const lines = text.split("\n").map((line) => {
+    if (!PHANTOM_PREVIOUS_COMPARISON.test(line)) {
+      return line;
+    }
+    const sentences = line.split(/(?<=[.!?…])\s+/);
+    const kept = sentences.filter((sentence) => {
+      if (PHANTOM_PREVIOUS_COMPARISON.test(sentence)) {
+        removed = true;
+        return false;
+      }
+      return true;
+    });
+    return kept.join(" ").replace(/ {2,}/g, " ").trim();
+  });
+  return { text: lines.join("\n"), removed };
+}
+
 export function cleanupPlainText(input: string): string {
   return input
     .replace(/```[\s\S]*?```/g, "")
@@ -139,23 +223,22 @@ export function cleanupPlainText(input: string): string {
     .replace(/^\s*-{3,}\s*$/gm, "")
     .replace(/TrainingPeaks/g, "план тренировок")
     .replace(/FatSecret/g, "дневник питания")
+    // Task 10d: silently drop internal/technical term leaks (no coach note needed).
+    .replace(/OpenAI/gi, "")
+    .replace(/\bJSON\b/g, "")
+    .replace(/\bAI\b/g, "")
     .replace(/[—–]/g, "-")
     .split("\n")
-    .map((line) => line.replace(/[ \t]+$/g, ""))
+    .map((line) => line.replace(/ {2,}/g, " ").replace(/[ \t]+$/g, ""))
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
-function resolveGreeting(formality: TrainingPeaksTelegramFormality, athleteName: string): string {
-  const trimmed = athleteName.trim();
-  if (!trimmed) {
-    return formality === "vy" ? "Здравствуйте!" : "Привет!";
-  }
-  if (formality === "vy") {
-    return `Здравствуйте, ${trimmed}!`;
-  }
-  return `${trimmed}, привет!`;
+// Greeting without the athlete's name — clean and formality-aware (profile ты/вы,
+// from the resolved communication profile). Coach decision: drop the name entirely.
+function resolveGreeting(formality: TrainingPeaksTelegramFormality): string {
+  return formality === "vy" ? "Здравствуйте!" : "Привет!";
 }
 
 function formatPlanFocusSectionHeading(mode: NutritionPlanTargetWeekMode): string {
@@ -347,13 +430,57 @@ function buildPreTrainingBlock(nextWeekPlan: NutritionNextWeekPlan | null): stri
   ];
 }
 
+/**
+ * Наряд 3 Шаг 2: a deterministic race-day block (gel / loading-or-not / morning
+ * vs night timing / recovery). Computed from race_protocol so the athlete always
+ * sees the right facts even if the model prose varies. No г/кг here — loading is
+ * delivered as a gentle step, the gram targets stay an internal coach orientation.
+ */
+function buildRaceDayBlock(nextWeekPlan: NutritionNextWeekPlan | null): string[] {
+  const raceDays = (nextWeekPlan?.days ?? []).filter((day) => day.flags?.race && day.race_protocol);
+  if (raceDays.length === 0) {
+    return [];
+  }
+  const lines: string[] = ["🏁 День старта"];
+  for (const day of raceDays) {
+    const p = day.race_protocol!;
+    const name = day.workout_title?.trim() || "Старт";
+    const dist = typeof p.distance_km === "number" ? `, ${p.distance_km} км` : "";
+    lines.push("", `${formatDateRu(day.date)} — ${name}${dist}.`);
+    if (p.loading) {
+      lines.push(
+        `Дистанция длинная (дольше ~90 минут): за ${p.loading.days} дня до старта плавно подними углеводы (шагами от обычного, без рывка) — запасы топлива решают.`
+      );
+    } else {
+      lines.push("Короткий старт (меньше ~90 минут): углеводная загрузка НЕ нужна, питайся как в интенсивный тренировочный день.");
+    }
+    if (p.timing === "evening_or_night") {
+      lines.push(
+        "Старт вечером/ночью: углеводы распредели по дню, последний полноценный приём за 2-3 часа до старта; днём не наедайся тяжёлого и не оставайся голодной к вечеру."
+      );
+    } else {
+      lines.push("Старт утром: углеводный ужин накануне и лёгкий завтрак за 2-3 часа до старта.");
+    }
+    if (p.gel_before) {
+      lines.push("За ~10 минут до старта — один гель (обязательно для 10 км и длиннее).");
+    }
+    lines.push("После старта — углеводы и белок для восстановления.");
+  }
+  return lines;
+}
+
+// Task 10d: rules whose token is silently cleaned (no coach note) — pure
+// formatting / internal-term leaks, handled by cleanupPlainText.
+const NUTRITION_SILENT_RENDER_RULES = new Set(["markdown", "plain_dashes", "internal_terms"]);
+
 function pushIssue(
   issues: NutritionTelegramRenderIssue[],
   severity: "error" | "warning",
   rule: string,
-  message: string
+  message: string,
+  tier: "hard" | "soft" = "soft"
 ): void {
-  issues.push({ severity, rule, message });
+  issues.push({ severity, rule, message, tier });
 }
 
 export type NutritionDayProseFacts = {
@@ -367,6 +494,12 @@ export type NutritionDayProseFacts = {
   planTargetNumbers?: number[];
   nutritionStatus: string | null;
   findings: string[];
+  /**
+   * Names of this day's carb foods classified FAST by code (carb_quality). The
+   * prose must NOT call any of these a "медленный/медленные углевод" — that is the
+   * банан/булочка/лаваш mislabel bug. Used by the carb_quality_mismatch guard.
+   */
+  carbFastFoods?: string[];
 };
 
 // Statuses that always demand an undershoot note in the prose. NOTE: amber-only
@@ -392,8 +525,47 @@ const NUTRITION_HARD_DAY_FINDINGS = new Set<string>([
   "low_carbs_before_long_run",
 ]);
 
-const NUTRITION_UNDERSHOOT_MARKERS =
-  /мал(?:о|ова)|низк|нижн|ниже|недостат|пустоват|не\s*хват|нехват|подтян|добав|просад|недобор|поддерж|скромн|улучш|не\s*наполн/i;
+// status_softened (Task 4, вариант б): instead of requiring an undershoot word
+// from an endless list (which produced false cuts on honest phrasings like
+// "меньше"), we catch the CONTRADICTION — a hard (undershoot) day whose prose
+// claims the day is fine / needs no change. The list is short, stable, and
+// DAY-LEVEL: bare per-macro praise ("белок 133 г — отлично") must stay allowed,
+// since the voice opens hard days with praise. Lowercased substring match.
+const NUTRITION_HARD_DAY_APPROVAL_PHRASES: readonly string[] = [
+  "всё хорошо",
+  "все хорошо",
+  "всё в порядке",
+  "все в порядке",
+  "всё в норме",
+  "все в норме",
+  "всё отлично",
+  "все отлично",
+  "всё супер",
+  "все супер",
+  "всё идеально",
+  "всё ок",
+  "все ок",
+  "ничего менять не надо",
+  "ничего менять не нужно",
+  "менять ничего не надо",
+  "ничего не меняем",
+  "ничего не меняю",
+  "так держать",
+  "отличный день",
+  "прекрасный день",
+];
+
+// Number spans that are NOT macro/energy claims and must not be policed as
+// "facts" — workout descriptors, time, dates, percentages, and signed coaching
+// steps. Scrubbed before the macro-number check (Task 4).
+const NUTRITION_NON_MACRO_NUMBER_PATTERNS: RegExp[] = [
+  /\d+(?:[.,]\d+)?\s*%/g, // 41%
+  /\d+(?:[.,]\d+)?\s*[×xх]\s*\d+(?:[.,]\d+)?/gi, // intervals 7×5
+  /\d+(?:[.,]\d+)?\s*(?:км|мин|сек|час|ч|м)/giu, // distance / duration: 12 км, 5 мин, 2 ч
+  /\d+\s*:\s*\d+/g, // time 1:40
+  /\d{1,2}\s*(?:янв|фев|март|мар|апр|ма[йя]|июн|июл|авг|сен|окт|ноя|дек)/giu, // 14 июня
+  /[+\-–—]\s*\d+(?:[.,]\d+)?/g, // signed steps / range tails: +50, –60
+];
 
 function roundToNearestStep(value: number, step: number): number {
   return Math.round(value / step) * step;
@@ -401,30 +573,43 @@ function roundToNearestStep(value: number, step: number): number {
 
 function buildAllowedNutritionProseNumbers(facts: NutritionDayProseFacts): number[] {
   const allowed: number[] = [];
-  const pushExact = (value: number | null | undefined) => {
+  // Push a value plus its sensible rounded display forms. The model may render a
+  // diary fact (e.g. 103.58) as "104"/"105"/"100", so accept those roundings —
+  // but the set stays tight enough that a far-off invented number won't match
+  // (tolerance below is < 0.1). Task 4: stop cutting real facts; keep invented out.
+  const add = (value: number | null | undefined, steps: number[]) => {
     if (typeof value === "number" && Number.isFinite(value)) {
-      allowed.push(value);
+      allowed.push(value, ...steps.map((step) => roundToNearestStep(value, step)));
     }
   };
-  // Targets/deficits are coaching orientations ("цель ~350", "недобор ~100"),
-  // so accept their rounded forms; actual intake stays tight.
-  const pushLoose = (value: number | null | undefined) => {
-    if (typeof value === "number" && Number.isFinite(value)) {
-      allowed.push(value, ...[5, 10, 25, 50].map((step) => roundToNearestStep(value, step)));
-    }
-  };
-  if (typeof facts.kcal === "number" && Number.isFinite(facts.kcal)) {
-    allowed.push(facts.kcal, roundToNearestStep(facts.kcal, 50));
-  }
+  // Actual diary facts (kcal, Б/Ж/У) — exact + rounded display.
+  add(facts.kcal, [1, 10, 50]);
   for (const macro of [facts.proteinG, facts.fatG, facts.carbsG]) {
-    if (typeof macro === "number" && Number.isFinite(macro)) {
-      allowed.push(macro, roundToNearestStep(macro, 5), roundToNearestStep(macro, 10));
+    add(macro, [1, 5, 10]);
+  }
+  // g/kg are decimals — allow exact, 1-decimal, and whole-number forms.
+  for (const perKg of [facts.carbsGPerKg, facts.proteinGPerKg]) {
+    if (typeof perKg === "number" && Number.isFinite(perKg)) {
+      allowed.push(perKg, Math.round(perKg * 10) / 10, Math.round(perKg));
     }
   }
-  pushExact(facts.carbsGPerKg);
-  pushExact(facts.proteinGPerKg);
+  // Plan targets / deficits are coaching orientations — accept exact + rounded to
+  // 5/10. Round in BOTH directions (floor AND ceil), not just nearest: the model
+  // legitimately writes "ориентир 310–370" for a 315 band edge (315 floors to 310,
+  // not the nearest 320) and "недобор ~120" for a 114–125 gap. No 25/50 so a distant
+  // invented number still can't slip in (every accepted value stays within 10 of a
+  // real target). Actual diary macros above remain strict (nearest only).
   for (const target of facts.planTargetNumbers ?? []) {
-    pushLoose(target);
+    if (typeof target === "number" && Number.isFinite(target)) {
+      allowed.push(target);
+      for (const step of [5, 10]) {
+        allowed.push(
+          roundToNearestStep(target, step),
+          Math.floor(target / step) * step,
+          Math.ceil(target / step) * step
+        );
+      }
+    }
   }
   return allowed;
 }
@@ -449,10 +634,16 @@ export function validateNutritionDayProse(input: {
   const issues: NutritionTelegramRenderIssue[] = [];
   const prose = input.prose;
   const allowed = buildAllowedNutritionProseNumbers(input.facts);
-  for (const match of prose.matchAll(/(\d+(?:[.,]\d+)?)(\s*%)?/g)) {
-    if (match[2]) {
-      continue; // percentages are whitelisted
-    }
+  // Only police MACRO/ENERGY claims. Non-macro numbers are not facts to validate
+  // and were the dominant cause of valid days falling to dry text (Task 4):
+  // workout descriptors (12 км, 7×5 мин, 1:40), dates (14 июня), percentages, and
+  // "+N" coaching steps. Scrub those spans first; a bare or г/ккал number that
+  // remains must still be a fact of this day (invented macro numbers stay blocked).
+  let scanText = prose;
+  for (const re of NUTRITION_NON_MACRO_NUMBER_PATTERNS) {
+    scanText = scanText.replace(re, " ");
+  }
+  for (const match of scanText.matchAll(/(\d+(?:[.,]\d+)?)/g)) {
     const value = Number(match[1].replace(",", "."));
     if (!Number.isFinite(value)) {
       continue;
@@ -472,15 +663,66 @@ export function validateNutritionDayProse(input: {
   const isHardDay =
     (typeof status === "string" && NUTRITION_HARD_DAY_STATUSES.has(status)) ||
     input.facts.findings.some((finding) => NUTRITION_HARD_DAY_FINDINGS.has(finding));
-  if (isHardDay && !NUTRITION_UNDERSHOOT_MARKERS.test(prose)) {
-    pushIssue(
-      issues,
-      "error",
-      "status_softened",
-      "Жёсткий статус дня не отражён в прозе — модель смягчила вывод."
-    );
+  if (isHardDay) {
+    const lowered = prose.toLowerCase();
+    const approval = NUTRITION_HARD_DAY_APPROVAL_PHRASES.find((phrase) => lowered.includes(phrase));
+    if (approval) {
+      pushIssue(
+        issues,
+        "error",
+        "status_softened",
+        `Жёсткий день, а проза хвалит/успокаивает ("${approval}") — модель смягчила вывод.`
+      );
+    }
+  }
+
+  // 3. carb_quality_mismatch (Часть А): catch ONLY the unambiguous error — a FAST
+  //    product (банан/булочка/лаваш/сладкое) called "медленный". neutral foods
+  //    (рис/картофель/паста) inside the phrase "медленные углеводы" are a coach
+  //    idiom and the system's own fallback wording — NOT an error, so we hold them
+  //    on the PROMPT rule, never on the hard guard (verified: a fast+neutral guard
+  //    false-cut 4/9 real day_prose lines — урок #1). Symmetrically not_carb_base
+  //    is held on facts (carb_contributor=false) + prompt, no guard.
+  //    Narrow on purpose — only a concrete fast food adjacent to "медленн". Free
+  //    words "медленный/быстрый" are NOT policed (timing advice "лёгкие быстрые
+  //    углеводы перед стартом" is correct). A contrastive sentence ("гречка
+  //    медленная, а банан быстрый") is excluded by the nearby "быстр" check.
+  const guardFoods = input.facts.carbFastFoods ?? [];
+  if (guardFoods.length > 0) {
+    const lowered = prose.toLowerCase();
+    for (const food of guardFoods) {
+      const f = food.toLowerCase().trim();
+      if (f.length < 2) {
+        continue;
+      }
+      const fe = escapeRegExpLiteral(f);
+      const adjacent =
+        new RegExp(`${fe}[^.!?\\n]{0,12}медленн`, "u").test(lowered) ||
+        new RegExp(`медленн\\p{L}*[^.!?\\n]{0,12}${fe}`, "u").test(lowered);
+      if (!adjacent) {
+        continue;
+      }
+      // Contrast guard: if "быстр" sits right next to this food, the prose is
+      // correctly contrasting it as fast — not mislabeling it slow.
+      const idx = lowered.indexOf(f);
+      const ctx = lowered.slice(Math.max(0, idx - 15), idx + f.length + 15);
+      if (/быстр/u.test(ctx)) {
+        continue;
+      }
+      pushIssue(
+        issues,
+        "error",
+        "carb_quality_mismatch",
+        `Быстрый/нейтральный продукт «${food}» назван медленным углеводом.`
+      );
+      break;
+    }
   }
   return issues;
+}
+
+function escapeRegExpLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export function validateTelegramReadyNutritionMessage(input: {
@@ -489,6 +731,8 @@ export function validateTelegramReadyNutritionMessage(input: {
   hasTargetWeekTrainingContext: boolean;
   hasKeyTraining: boolean;
   longRunTargetKcalText?: string | null;
+  /** When the message is split for sending, length is checked per part, not on the whole. */
+  messageParts?: string[];
 }): NutritionTelegramRenderIssue[] {
   const issues: NutritionTelegramRenderIssue[] = [];
   const text = input.text;
@@ -532,15 +776,35 @@ export function validateTelegramReadyNutritionMessage(input: {
   if (input.hasTargetWeekTrainingContext && /План на неделю по типам дней/.test(text) && /Мини-таблица|План по датам/.test(text)) {
     pushIssue(issues, "error", "plan_and_mini_table", "При доступном TP-контексте нельзя одновременно показывать типы дней и dated plan.");
   }
-  if (text.length > 4096) {
-    pushIssue(issues, "warning", "telegram_length", "Текст длиннее одного Telegram-сообщения; при ручной отправке разделите на 2 части.");
+  const lengthBasis =
+    input.messageParts && input.messageParts.length > 0
+      ? Math.max(...input.messageParts.map((part) => part.length))
+      : text.length;
+  if (lengthBasis > 4096) {
+    pushIssue(issues, "warning", "telegram_length", "Часть сообщения длиннее одного Telegram-сообщения; разбей её ещё.");
   }
-  if (
-    /дефицит калорий|дефицит энергии|энергодоступность|опасная зона|медицинский риск|урезать|похудеть|RED-S|LEA|анемия|расстройство пищевого/i.test(
-      text
-    )
-  ) {
-    pushIssue(issues, "error", "forbidden_safety_language", "В тексте есть запрещённая safety-лексика.");
+  // Task 10d: split the old "forbidden_safety_language" rule by real risk.
+  // CLINICAL terms leaking into athlete text are genuinely harmful → HARD block.
+  // (The primary РПП/low-kcal gate is upstream `blocked`; this is the last guard.)
+  if (/RED-S|\bLEA\b|анеми|расстройство пищевого|медицинск/i.test(text)) {
+    pushIssue(
+      issues,
+      "error",
+      "forbidden_clinical_language",
+      "В тексте ученику клиническая лексика (РПП/RED-S/анемия/мед.) — нужна ручная проверка.",
+      "hard"
+    );
+  }
+  // Diet/weight-loss wording is borderline (often a false positive like the
+  // reassuring «не нужно урезать») → SOFT: keep the text, flag the coach.
+  if (/дефицит калори|дефицит энерг|энергодоступн|опасная зона|урезать|похуд/i.test(text)) {
+    pushIssue(
+      issues,
+      "warning",
+      "diet_language_in_athlete_text",
+      "Возможна диет-лексика в тексте ученику (урезать/дефицит/похудеть) — проверь формулировку.",
+      "soft"
+    );
   }
   if (!input.hasKeyTraining && /Перед ключевыми тренировками/.test(text)) {
     pushIssue(issues, "warning", "pre_training_without_key", "Блок перед тренировками показан без hard/long_run.");
@@ -565,49 +829,108 @@ export function renderNutritionTelegramMessage(input: NutritionTelegramRendererI
       })
     : buildPlanByDayTypes(input.nextWeekPlan, input.fallbackPlanLines);
   const keyTrainingPresent = hasKeyTraining(input.nextWeekPlan);
+  const raceBlock = buildRaceDayBlock(input.nextWeekPlan);
   const mainStepLine = buildNutritionTargetWeekMainStepLine(input.nextWeekPlan, input.planWeekMode, {
     todayLocalDate: input.todayLocalDate,
     miniTableMode: input.miniTableMode ?? "athlete_remaining_only",
   });
-  const lines = [
-    resolveGreeting(input.formality, input.athleteName),
+  // Phone-readable structure: every section has a heading, a blank line, then
+  // its body; day blocks are separated by a blank line; long bodies are split
+  // into short chunks. One Telegram message, copy-paste-safe (no markdown).
+  const dayBlocks =
+    input.interpretation.dayComments.length > 0
+      ? input.interpretation.dayComments
+      : ["Разбор по дням в этом черновике не детализирую: canonical daily_analysis не найден, поэтому лучше проверить исходный обзор вручную."];
+  const daySection = dayBlocks.join("\n\n");
+  const weekSummary = paragraphizeForTelegram(
+    input.interpretation.weekSummaryRu ?? "По неделе держим курс на ровную энергию и восстановление без резких просадок."
+  );
+  const focusBody = paragraphizeForTelegram(
+    input.interpretation.focusLinesRu.length > 0
+      ? input.interpretation.focusLinesRu.join(" ")
+      : "Фокус на неделю не сформирован."
+  );
+  // Block 3: warm opening line from the athlete's own words, right after the
+  // greeting. Final guards: plain text, drop if empty or if it smuggled a digit
+  // (numbers belong to the facts, never to free praise).
+  const openingNoteRaw = (input.interpretation.athleteOpeningNoteRu ?? "").replace(/[*_`#]+/g, "").replace(/\s+/g, " ").trim();
+  const openingNote = openingNoteRaw && !/\d/.test(openingNoteRaw) ? openingNoteRaw : null;
+  // Split into two Telegram messages at the natural past/future boundary so each
+  // fits the 4096-char cap: part 1 = last-week review (header + days + week
+  // summary), part 2 = next-week plan (focus + mini-table + pre-training memo).
+  const reviewLines = [
+    resolveGreeting(input.formality),
+    ...(openingNote ? ["", openingNote] : []),
     "",
-    "Посмотрел твой отчёт за неделю и сопоставил его с тренировками.",
+    input.formality === "vy"
+      ? "Посмотрел ваш отчёт за неделю и сопоставил его с тренировками."
+      : "Посмотрел твой отчёт за неделю и сопоставил его с тренировками.",
     ...(comparisonLine ? ["", comparisonLine] : []),
     "",
-    "🔹 Разбор по дням",
-    ...(input.interpretation.dayComments.length > 0
-      ? input.interpretation.dayComments
-      : ["Разбор по дням в этом черновике не детализирую: canonical daily_analysis не найден, поэтому лучше проверить исходный обзор вручную."]),
+    "📊 Разбор по дням",
+    "",
+    daySection,
     "",
     "📌 Итог недели",
-    input.interpretation.weekSummaryRu ?? "По неделе держим курс на ровную энергию и восстановление без резких просадок.",
     "",
+    weekSummary,
+  ];
+  const planLinesSection = [
     formatPlanFocusSectionHeading(input.planWeekMode),
-    ...(input.interpretation.focusLinesRu.length > 0 ? input.interpretation.focusLinesRu : ["Фокус на неделю не сформирован."]),
+    "",
+    focusBody,
+    "",
     "Цифры ниже - ориентиры, не обязательство. Не нужно резко прыгать к ним за один день.",
-    mainStepLine,
+    ...(mainStepLine ? [mainStepLine] : []),
     "",
     planHeading,
     ...planLines,
+    ...(raceBlock.length > 0 ? ["", ...raceBlock] : []),
     ...(keyTrainingPresent ? ["", ...buildPreTrainingBlock(input.nextWeekPlan)] : []),
     "",
     "На следующем разборе посмотрим, как это отразится на энергии и восстановлении.",
   ];
 
-  const text = cleanupPlainText(lines.join("\n"));
+  let reviewText = cleanupPlainText(reviewLines.join("\n"));
+  let planText = cleanupPlainText(planLinesSection.join("\n"));
+  // Task 10d: a phantom "прошлая неделя" reference with no saved history is a false
+  // claim — strip the sentence (soft), and tell the coach we did.
+  const coachReviewNotes: string[] = [];
+  if (!input.hasPreviousWeeksContext) {
+    const r = stripPhantomPreviousComparison(reviewText);
+    const p = stripPhantomPreviousComparison(planText);
+    reviewText = r.text;
+    planText = p.text;
+    if (r.removed || p.removed) {
+      coachReviewNotes.push("Убрал упоминание прошлой недели — сохранённой истории не было.");
+    }
+  }
+  const parts = [reviewText, planText].filter((part) => part.length > 0);
+  const text = parts.join("\n\n");
   const issues = validateTelegramReadyNutritionMessage({
     text,
     hasPreviousWeeksContext: input.hasPreviousWeeksContext,
     hasTargetWeekTrainingContext: input.hasTargetWeekTrainingContext,
     hasKeyTraining: keyTrainingPresent,
     longRunTargetKcalText: getLongRunTargetKcalText(input.nextWeekPlan),
+    messageParts: parts,
   });
-  const ok = !issues.some((issue) => issue.severity === "error");
+  // Task 10d: only HARD issues (clinical danger) withhold the message. SOFT issues
+  // keep the text and surface as coach-review notes (silently-cleaned rules excluded).
+  const ok = !issues.some((issue) => issue.tier === "hard");
+  for (const issue of issues) {
+    if (issue.tier !== "hard" && !NUTRITION_SILENT_RENDER_RULES.has(issue.rule)) {
+      coachReviewNotes.push(issue.message);
+    }
+  }
   return {
     ok,
+    // `text` gates sending (null only on a HARD clinical block); `parts` always
+    // carries the rendered split so the admin/checkpoints can preview it.
     text: ok ? text : null,
+    parts,
     issues,
+    coachReviewNotes,
     charCount: text.length,
   };
 }

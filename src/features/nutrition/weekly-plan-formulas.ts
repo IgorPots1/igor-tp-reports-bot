@@ -29,6 +29,11 @@ import {
   resolveNutritionLongRunSource,
   type NutritionLongRunSource,
 } from "@/features/nutrition/long-run";
+import {
+  resolveNutritionActivityCoefByTitle,
+  sumDaySessionsExpenditureKcal,
+} from "@/features/nutrition/activity-energy";
+import type { NutritionGoalType, NutritionSex } from "@/features/nutrition/repository";
 
 export type { NutritionLongRunSource };
 export type NutritionLongRunConfidence = "high" | "medium" | "low";
@@ -74,6 +79,8 @@ export type NutritionNextWeekPlanDay = {
   long_run_source: NutritionLongRunSource;
   long_run_confidence: NutritionLongRunConfidence;
   pre_training_guidance: string | null;
+  /** Наряд 3 Шаг 2: race-day protocol (gel / loading / timing) — null for non-race days. */
+  race_protocol: NutritionRaceProtocol | null;
   source: NutritionPlanSource;
   ideal_target: NutritionDayTypeTarget | null;
   practical_target: NutritionDayTypeTarget | null;
@@ -145,6 +152,9 @@ type ParsedWorkout = {
   isRunning: boolean;
   longRunSource: NutritionLongRunSource;
   longRunConfidence: NutritionLongRunConfidence;
+  /** Task 10++: planned load for the goal=lose/gain maintenance anchor (BMR + TP expenditure). */
+  durationHours: number | null;
+  distanceKm: number | null;
 };
 
 type PreviousWeekMacroPoint = {
@@ -183,6 +193,11 @@ const FORMULA_BY_DAY_TYPE: Partial<Record<NutritionPlanDayType, FormulaCoefficie
   long_endurance: { kcalPerKg: 45, proteinPerKg: 1.7, fatPerKg: 1.15, carbsPerKg: 7.0 },
   strength: { kcalPerKg: 39, proteinPerKg: 1.8, fatPerKg: 1.15, carbsPerKg: 5.2 },
   cross_training: { kcalPerKg: 39, proteinPerKg: 1.6, fatPerKg: 1.15, carbsPerKg: 5.2 },
+  // Base race-day target = intense (hard) level: covers short races (10K / <90 min,
+  // no multi-day loading) and the unknown-distance default. Half-marathon+ bumps
+  // carbs to the loading level via computeRaceDayTarget (distance source of truth
+  // stays computeNutritionRaceProtocol). Без этого race-день шёл null → мини-таблица «н/д».
+  race: { kcalPerKg: 43, proteinPerKg: 1.7, fatPerKg: 1.15, carbsPerKg: 6.0 },
 };
 
 const GUIDANCE_BY_DAY_TYPE: Record<NutritionPlanDayType, string | null> = {
@@ -197,6 +212,53 @@ const GUIDANCE_BY_DAY_TYPE: Record<NutritionPlanDayType, string | null> = {
   race: "Соревновательный день: не экспериментировать с питанием и держать проверенные схемы.",
   unknown: null,
 };
+
+/**
+ * Наряд 3 Шаг 2: race protocol by distance. Loading ONLY for >90-min efforts
+ * (half+); 5K/10K are intense race days WITHOUT loading. A gel ~10 min before is
+ * a hard rule for ≥10 km (5K — no gel). Timing comes from the title (no race time
+ * in TP): "ночной/вечерний" → evening, the carb load is spread across the day;
+ * otherwise default to a morning race (carb dinner the night before).
+ */
+export type NutritionRaceProtocol = {
+  distance_km: number | null;
+  effort_over_90min: boolean;
+  loading: { g_per_kg_low: number; g_per_kg_high: number; days: number } | null;
+  gel_before: boolean;
+  timing: "morning" | "evening_or_night";
+  recovery_after: boolean;
+};
+
+export function computeNutritionRaceProtocol(input: {
+  distanceKm: number | null;
+  title: string | null;
+}): NutritionRaceProtocol {
+  const km = typeof input.distanceKm === "number" && Number.isFinite(input.distanceKm) ? input.distanceKm : null;
+  const title = (input.title ?? "").toLowerCase();
+  const timing: NutritionRaceProtocol["timing"] = /ночн|вечер|night|evening/u.test(title)
+    ? "evening_or_night"
+    : "morning";
+  // Loading only for half-marathon and longer (>~90 min).
+  const over90 = km != null && km >= 21;
+  let loading: NutritionRaceProtocol["loading"] = null;
+  if (km != null) {
+    if (km >= 50) {
+      loading = { g_per_kg_low: 8, g_per_kg_high: 10, days: 3 };
+    } else if (km >= 42) {
+      loading = { g_per_kg_low: 7, g_per_kg_high: 9, days: 3 };
+    } else if (km >= 21) {
+      loading = { g_per_kg_low: 6, g_per_kg_high: 8, days: 2 };
+    }
+  }
+  return {
+    distance_km: km,
+    effort_over_90min: over90,
+    loading,
+    gel_before: km != null && km >= 10,
+    timing,
+    recovery_after: true,
+  };
+}
 
 function asObject(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -279,7 +341,18 @@ function normalizeDayType(typeRaw: string | null, titleRaw: string | null): Nutr
   const type = (typeRaw ?? "").toLowerCase();
   const title = titleRaw ?? "";
   const haystack = `${type} ${title}`.toLowerCase();
-  if (/race|гонк|соревн/.test(haystack)) {
+  // Наряд 3: race entity (injected event type="race") OR a race-titled workout,
+  // excluding marathon-PACE training runs and prep/route notes.
+  const racePaceOrPrep =
+    /в\s+темпе|марафонск[\p{L}]*\s+темп|темп[\p{L}]*\s+марафон|в\s+марафонском|маршрут[\p{L}]*\s+забег|подготовк[\p{L}]*\s+к|к\s+марафону|marathon\s+pace|race\s+pace/u.test(
+      haystack
+    );
+  if (
+    !racePaceOrPrep &&
+    /гонк|соревнов|паркран|полумарафон|ультрамарафон|триатлон|марафон|(?<![\p{L}])(?:забег|старт|ультра|race|parkrun|triathlon)(?![\p{L}])/u.test(
+      haystack
+    )
+  ) {
     return "race";
   }
   if (type === "strength" || /силов/.test(haystack)) {
@@ -290,8 +363,11 @@ function normalizeDayType(typeRaw: string | null, titleRaw: string | null): Nutr
     type === "cross_training" ||
     type === "bike" ||
     type === "swim" ||
-    /\bpadel\b|падел|cross.?train|crosstrain|bike|cycling|swim|плав|вело/.test(haystack)
+    type === "walk" ||
+    type === "hike" ||
+    /\bpadel\b|падел|cross.?train|crosstrain|bike|cycling|swim|плав|вело|\b(?:walk|walking|hike|hiking|trek|tennis)\b|ходьб|прогулк|поход|хайк|теннис/.test(haystack)
   ) {
+    // Non-run activities (incl. walk/hike/tennis) → cross-training family.
     return "cross_training";
   }
   if (
@@ -348,6 +424,7 @@ function parseTrainingContextWorkouts(trainingContext: unknown): ParsedWorkout[]
       const title = toStringOrNull(workout.title);
       const type = toStringOrNull(workout.type);
       const durationHours = toFinite(workout.durationHours) ?? toFinite(workout.duration_hours);
+      const distanceKm = toFinite(workout.distanceKm) ?? toFinite(workout.distance_km);
       const status = toStringOrNull(workout.status);
       const isCompleted = status === "completed" || status === "planned_and_completed" || status === null;
       let dayType = normalizeDayType(type, title);
@@ -384,6 +461,8 @@ function parseTrainingContextWorkouts(trainingContext: unknown): ParsedWorkout[]
         isRunning: isRunningWorkout(type, title),
         longRunSource,
         longRunConfidence,
+        durationHours,
+        distanceKm,
       };
     })
     .filter((out) => out.date !== "unknown-date");
@@ -459,6 +538,283 @@ export function calculateNutritionDayTypeTarget(params: {
     protein_g_per_kg: formula.proteinPerKg,
     fat_g_per_kg: formula.fatPerKg,
     carbs_g_per_kg: formula.carbsPerKg,
+  };
+}
+
+/**
+ * Race-day ideal target. Base = the intense (race/hard) day-type target; for a
+ * half-marathon+ (≥21 km) the carbohydrate target is raised to the loading level,
+ * with distance read from the SINGLE source of truth (computeNutritionRaceProtocol)
+ * — no second distance ladder here. Short races (10K / <90 min, loading=null) and
+ * unknown distance keep the intense base (never null). kcal rises to cover the extra
+ * loading carbs. The lose deficit-off in race-week is applied later by resolveDayTarget.
+ */
+export function computeRaceDayTarget(params: {
+  bodyweightKg: number | null;
+  distanceKm: number | null;
+  title?: string | null;
+}): NutritionDayTypeTarget | null {
+  const base = calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "race" });
+  if (!base || !params.bodyweightKg || params.bodyweightKg <= 0) {
+    return base;
+  }
+  const protocol = computeNutritionRaceProtocol({ distanceKm: params.distanceKm, title: params.title ?? null });
+  if (!protocol.loading) {
+    return base; // 10K / short / unknown → intense base, no multi-day loading.
+  }
+  const bw = params.bodyweightKg;
+  const carbsPerKg = protocol.loading.g_per_kg_high;
+  const baseCarbsPerKg = base.carbs_g_per_kg ?? 6;
+  const kcalPerKg = (base.kcal_per_kg ?? 43) + Math.max(0, carbsPerKg - baseCarbsPerKg) * 4;
+  return {
+    ...base,
+    target_kcal: roundToNearest(kcalPerKg * bw, 50),
+    carbs_g: roundToNearest(carbsPerKg * bw, 10),
+    kcal_per_kg: kcalPerKg,
+    carbs_g_per_kg: carbsPerKg,
+  };
+}
+
+// Task 10: periodized daily kcal deficit for goal=lose ("fuel for the work
+// required") — bigger cut in rest/easy, minimal in hard/long. Weekly average
+// lands in the moderate 300–500 kcal/day band.
+const LOSE_DEFICIT_BY_DAY_TYPE: Record<NutritionPlanDayType, number> = {
+  rest: 500,
+  easy: 400,
+  cross_training: 350,
+  strength: 300,
+  pre_long: 250,
+  hard: 200,
+  race: 200,
+  long_run: 150,
+  long_endurance: 150,
+  unknown: 350,
+};
+
+function roundPerKg(grams: number, bw: number): number {
+  return Number((grams / bw).toFixed(2));
+}
+
+// Task 10++: corrected maintenance for goal=lose/gain. Instead of anchoring the
+// deficit/surplus on the inflated fixed-coefficient ideal (rest 35 kcal/kg →
+// ~2450 for 70 kg), anchor on BMR (Mifflin when height/age are known, else a
+// Cunningham/FFM estimate) + the day's actual TP training expenditure. This is
+// used ONLY for lose/gain; the maintain path is untouched.
+const NON_EXERCISE_PAL = 1.3;
+
+const FFM_COEFFICIENT_BY_SEX: Record<"female" | "male" | "unknown", number> = {
+  female: 0.78,
+  male: 0.82,
+  unknown: 0.8,
+};
+
+function ffmKgForSex(bw: number, sex: NutritionSex | null): number {
+  const coef = FFM_COEFFICIENT_BY_SEX[sex ?? "unknown"];
+  return bw * coef;
+}
+
+/**
+ * Resting metabolic rate. Mifflin–St Jeor when height + age are known (exact);
+ * otherwise a sex-aware Cunningham estimate on estimated fat-free mass
+ * (approximate — the review still generates without height/age). Unknown sex is
+ * treated as female (lower base) for the Mifflin constant.
+ */
+export function estimateRestingMetabolicRate(params: {
+  bodyweightKg: number;
+  sex: NutritionSex | null;
+  heightCm: number | null;
+  ageYears: number | null;
+}): { rmrKcal: number; source: "mifflin" | "cunningham_ffm" } {
+  const { bodyweightKg: w, sex, heightCm, ageYears } = params;
+  if (heightCm && heightCm > 0 && ageYears && ageYears > 0) {
+    const base = 10 * w + 6.25 * heightCm - 5 * ageYears;
+    const rmr = sex === "male" ? base + 5 : base - 161;
+    return { rmrKcal: Math.max(Math.round(rmr), 800), source: "mifflin" };
+  }
+  const ffm = ffmKgForSex(w, sex);
+  return { rmrKcal: Math.round(500 + 22 * ffm), source: "cunningham_ffm" };
+}
+
+// Typical session length per day type, used to estimate planned training
+// expenditure when the TP workout has no explicit duration/distance.
+const TYPICAL_EXERCISE_HOURS_BY_DAY_TYPE: Partial<Record<NutritionPlanDayType, number>> = {
+  easy: 0.75,
+  hard: 1.0,
+  pre_long: 0.5,
+  long_run: 1.5,
+  long_endurance: 1.75,
+  strength: 0.75,
+  cross_training: 0.75,
+  race: 1.5,
+};
+
+// Task 10d (Bug 2): per-hour energy cost by intensity (kcal/kg/h). "hard" (the
+// plan's intervals/tempo bucket) burns more than an easy run of equal duration,
+// so a quality day gets more fuel/carbs than a light day. Mirrors the review-side
+// coefficients in methodology.ts. Applies to ALL goals (lose/gain anchor + EA).
+const EXERCISE_KCAL_PER_KG_PER_HOUR_BY_DAY_TYPE: Partial<Record<NutritionPlanDayType, number>> = {
+  hard: 12,
+  race: 12,
+  long_run: 10,
+  long_endurance: 9,
+  pre_long: 8,
+  easy: 8,
+  cross_training: 7,
+  strength: 5,
+};
+
+/**
+ * Goal-aware day target on the corrected (BMR + this day's TP expenditure)
+ * maintenance. Single source of truth shared by the next-week plan and the
+ * review's per-day "deficit line" so the two never drift. maintain → ideal.
+ */
+export function computeNutritionGoalDayTarget(params: {
+  goalType: NutritionGoalType;
+  dayType: NutritionPlanDayType;
+  bodyweightKg: number | null;
+  sex: NutritionSex | null;
+  heightCm: number | null;
+  ageYears: number | null;
+  exerciseKcal: number;
+  ideal?: NutritionDayTypeTarget | null;
+  /** Наряд 3: race-week → lose deficit OFF (don't toe a start on a deficit). */
+  raceWeekDeficitOff?: boolean;
+}): NutritionDayTypeTarget | null {
+  const ideal =
+    params.ideal ??
+    calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: params.dayType });
+  if (params.goalType === "maintain" || !params.bodyweightKg || params.bodyweightKg <= 0) {
+    return ideal;
+  }
+  const rmrKcal = estimateRestingMetabolicRate({
+    bodyweightKg: params.bodyweightKg,
+    sex: params.sex,
+    heightCm: params.heightCm,
+    ageYears: params.ageYears,
+  }).rmrKcal;
+  const maintenanceKcal = Math.round(rmrKcal * NON_EXERCISE_PAL + Math.max(params.exerciseKcal, 0));
+  return applyNutritionGoalToDayTarget(ideal, {
+    goalType: params.goalType,
+    dayType: params.dayType,
+    bodyweightKg: params.bodyweightKg,
+    maintenanceKcal,
+    exerciseKcal: params.exerciseKcal,
+    sex: params.sex,
+    raceWeekDeficitOff: params.raceWeekDeficitOff ?? false,
+  });
+}
+
+/** Planned training expenditure for a day (mirrors the review estimator). */
+export function estimatePlanDayExerciseKcal(params: {
+  dayType: NutritionPlanDayType;
+  bodyweightKg: number;
+  durationHours: number | null;
+  distanceKm: number | null;
+  workoutTitle?: string | null;
+}): number {
+  const { dayType, bodyweightKg: bw } = params;
+  if (dayType === "rest" || dayType === "unknown") {
+    return 0;
+  }
+  if ((dayType === "long_run" || dayType === "long_endurance") && params.distanceKm && params.distanceKm > 0) {
+    return Math.round(params.distanceKm * bw);
+  }
+  const hours =
+    params.durationHours && params.durationHours > 0
+      ? params.durationHours
+      : TYPICAL_EXERCISE_HOURS_BY_DAY_TYPE[dayType] ?? 0.75;
+  // Activity-specific coefficient (walk/hike/tennis/padel/bike/swim/strength) wins
+  // over the day-type default, so a non-run session is costed correctly.
+  const perKgPerHour =
+    resolveNutritionActivityCoefByTitle(params.workoutTitle) ??
+    EXERCISE_KCAL_PER_KG_PER_HOUR_BY_DAY_TYPE[dayType] ??
+    9;
+  return Math.round(hours * bw * perKgPerHour);
+}
+
+/**
+ * Task 10 / 10++: shift a maintenance day target to the student's goal.
+ * - maintain: unchanged (this function is not called for maintain).
+ * - lose: kcal = corrected maintenance (BMR + this day's TP expenditure) −
+ *   periodized deficit, clamped UP to the energy-availability floor
+ *   (FFM·30 + the day's exercise) and an absolute floor — the formula never
+ *   prescribes a dangerous deficit; protein HIGH (1.9 g/kg); fat 20–30% energy;
+ *   carbs = remainder, floored at ~2 g/kg.
+ * - gain: surplus on the corrected maintenance, protein 1.8 g/kg, carbs fill it.
+ * `maintenanceKcal` is the corrected per-day anchor; when absent (no anthropometrics)
+ * it falls back to the fixed-coefficient ideal so a review still generates.
+ * Safety floors here are formula guards only; the safety-flag system is separate
+ * and is never bypassed by goal.
+ */
+export function applyNutritionGoalToDayTarget(
+  ideal: NutritionDayTypeTarget | null,
+  params: {
+    goalType: NutritionGoalType;
+    dayType: NutritionPlanDayType;
+    bodyweightKg: number | null;
+    maintenanceKcal?: number | null;
+    exerciseKcal?: number | null;
+    sex?: NutritionSex | null;
+    /**
+     * Наряд 3: in race-week a losing athlete must NOT toe the start on a deficit
+     * (incomplete glycogen → "the wall" + health risk). When true the lose deficit
+     * is switched off (treat the day as maintenance — loading wins over weight
+     * loss). The EA/absolute floors and the safety-flag system are unchanged.
+     */
+    raceWeekDeficitOff?: boolean;
+  }
+): NutritionDayTypeTarget | null {
+  if (!ideal || params.goalType === "maintain" || !params.bodyweightKg || params.bodyweightKg <= 0) {
+    return ideal;
+  }
+  const bw = params.bodyweightKg;
+  const maintenance =
+    params.maintenanceKcal && params.maintenanceKcal > 0 ? params.maintenanceKcal : ideal.target_kcal;
+  const exercise = params.exerciseKcal && params.exerciseKcal > 0 ? params.exerciseKcal : 0;
+
+  if (params.goalType === "lose") {
+    // Race-week priority rule: deficit OFF (fuel normally for the start).
+    const deficit = params.raceWeekDeficitOff ? 0 : LOSE_DEFICIT_BY_DAY_TYPE[params.dayType] ?? 350;
+    // Energy-availability floor: keep EA ≥ 30 kcal/kg FFM, i.e. intake never
+    // below FFM·30 + the day's training expenditure. Plus an absolute floor.
+    const eaFloor = ffmKgForSex(bw, params.sex ?? null) * 30 + exercise;
+    const absFloor = Math.max(26 * bw, 1400);
+    const floor = roundToNearest(Math.max(eaFloor, absFloor), 50);
+    const kcal = Math.max(roundToNearest(maintenance - deficit, 50), floor);
+    const proteinG = roundToNearest(1.9 * bw, 5);
+    // Fat ~0.9 g/kg, but clamp to 20–30% of energy.
+    const fatMin = (0.2 * kcal) / 9;
+    const fatMax = (0.3 * kcal) / 9;
+    const fatG = roundToNearest(Math.min(Math.max(0.9 * bw, fatMin), fatMax), 5);
+    const carbsFloor = roundToNearest(2.0 * bw, 10);
+    const carbsRemainder = (kcal - proteinG * 4 - fatG * 9) / 4;
+    const carbsG = Math.max(roundToNearest(carbsRemainder, 10), carbsFloor);
+    return {
+      target_kcal: kcal,
+      protein_g: proteinG,
+      fat_g: fatG,
+      carbs_g: carbsG,
+      kcal_per_kg: Number((kcal / bw).toFixed(1)),
+      protein_g_per_kg: roundPerKg(proteinG, bw),
+      fat_g_per_kg: roundPerKg(fatG, bw),
+      carbs_g_per_kg: roundPerKg(carbsG, bw),
+    };
+  }
+
+  // gain: surplus on the corrected maintenance.
+  const kcal = roundToNearest(maintenance * 1.11, 50);
+  const proteinG = roundToNearest(1.8 * bw, 5);
+  const fatG = roundToNearest(1.0 * bw, 5);
+  const carbsG = roundToNearest(Math.max((kcal - proteinG * 4 - fatG * 9) / 4, ideal.carbs_g), 10);
+  return {
+    target_kcal: kcal,
+    protein_g: proteinG,
+    fat_g: fatG,
+    carbs_g: carbsG,
+    kcal_per_kg: Number((kcal / bw).toFixed(1)),
+    protein_g_per_kg: roundPerKg(proteinG, bw),
+    fat_g_per_kg: roundPerKg(fatG, bw),
+    carbs_g_per_kg: roundPerKg(carbsG, bw),
   };
 }
 
@@ -600,7 +956,58 @@ export function buildNutritionNextWeekPlan(params: {
   planWeekTo: string;
   trainingContext: unknown;
   previousWeekDailyAnalysis?: unknown;
+  /** Task 10: student goal. maintain (default) = current behavior; lose/gain shift targets. */
+  goalType?: NutritionGoalType;
+  /** Task 10++: anthropometrics for the lose/gain maintenance anchor (BMR + TP expenditure). */
+  sex?: NutritionSex | null;
+  heightCm?: number | null;
+  ageYears?: number | null;
 }): NutritionNextWeekPlan {
+  const goalType: NutritionGoalType = params.goalType ?? "maintain";
+  // Task 10++: for lose/gain the deficit/surplus is anchored on a corrected
+  // maintenance = BMR (weight+sex, Mifflin when height/age known) × non-exercise
+  // PAL + the day's actual TP training expenditure. maintain is untouched.
+  const rmrKcal =
+    params.bodyweightKg && params.bodyweightKg > 0 && goalType !== "maintain"
+      ? estimateRestingMetabolicRate({
+          bodyweightKg: params.bodyweightKg,
+          sex: params.sex ?? null,
+          heightCm: params.heightCm ?? null,
+          ageYears: params.ageYears ?? null,
+        }).rmrKcal
+      : null;
+  const maintenanceForDay = (exerciseKcal: number): number | null =>
+    rmrKcal === null ? null : Math.round(rmrKcal * NON_EXERCISE_PAL + exerciseKcal);
+  // For lose/gain the plan is anchored on the corrected maintenance, NOT the
+  // last-week practical baseline (which could pull a losing athlete back up toward
+  // a surplus). maintain keeps the existing baseline-aware practical target.
+  const resolveDayTarget = (
+    dayType: NutritionPlanDayType,
+    ideal: NutritionDayTypeTarget | null,
+    baseline: PreviousWeekMacroPoint | null,
+    exerciseKcal: number,
+    raceWeekDeficitOff = false
+  ): NutritionDayTypeTarget | null =>
+    goalType === "maintain"
+      ? applyPracticalTarget({ dayType, bodyweightKg: params.bodyweightKg, ideal, baseline })
+      : applyNutritionGoalToDayTarget(ideal, {
+          goalType,
+          dayType,
+          bodyweightKg: params.bodyweightKg,
+          maintenanceKcal: maintenanceForDay(exerciseKcal),
+          exerciseKcal,
+          sex: params.sex ?? null,
+          raceWeekDeficitOff,
+        });
+  const planDayExerciseKcal = (
+    dayType: NutritionPlanDayType,
+    durationHours: number | null,
+    distanceKm: number | null,
+    workoutTitle: string | null = null
+  ): number =>
+    params.bodyweightKg && params.bodyweightKg > 0
+      ? estimatePlanDayExerciseKcal({ dayType, bodyweightKg: params.bodyweightKg, durationHours, distanceKm, workoutTitle })
+      : 0;
   const dates = buildWeekDates(params.planWeekFrom, params.planWeekTo);
   const parsedWorkouts = parseTrainingContextWorkouts(params.trainingContext);
   const hasTrainingContext = parsedWorkouts.length > 0;
@@ -624,6 +1031,20 @@ export function buildNutritionNextWeekPlan(params: {
       .filter((workout) => workout.dayType === "long_run" || workout.dayType === "long_endurance")
       .map((workout) => workout.date)
   );
+  // Наряд 3: race-week = the lead-up (loading window, or ~2 days for short races),
+  // the race day, and the recovery day after. On these days a losing athlete's
+  // deficit is switched off (fuel for the start; loading wins over weight loss).
+  const raceWeekDates = new Set<string>();
+  for (const workout of parsedWorkouts) {
+    if (workout.dayType !== "race") {
+      continue;
+    }
+    const protocol = computeNutritionRaceProtocol({ distanceKm: workout.distanceKm, title: workout.title });
+    const leadDays = protocol.loading?.days ?? 2;
+    for (let offset = -leadDays; offset <= 1; offset += 1) {
+      raceWeekDates.add(addDays(workout.date, offset));
+    }
+  }
   const previousWeekTargets = extractPreviousWeekTargets(params.previousWeekDailyAnalysis);
 
   const days: NutritionNextWeekPlanDay[] = dates.map((date) => {
@@ -635,20 +1056,44 @@ export function buildNutritionNextWeekPlan(params: {
       baseType === "race" || baseType === "long_run" || baseType === "long_endurance" || baseType === "hard";
     const trainingType: NutritionPlanDayType = dayBeforeLongRun && !harder ? "pre_long" : baseType;
     const hasWorkout = Boolean(primaryWorkout);
-    const idealTarget = calculateNutritionDayTypeTarget({
-      bodyweightKg: params.bodyweightKg,
-      dayType: trainingType,
-    });
+    const idealTarget =
+      trainingType === "race"
+        ? computeRaceDayTarget({
+            bodyweightKg: params.bodyweightKg,
+            distanceKm: primaryWorkout?.distanceKm ?? null,
+            title: primaryWorkout?.title ?? null,
+          })
+        : calculateNutritionDayTypeTarget({
+            bodyweightKg: params.bodyweightKg,
+            dayType: trainingType,
+          });
     const baseline =
       previousWeekTargets.byDayType[trainingType] ??
       (trainingType === "race" ? previousWeekTargets.byDayType.hard ?? null : null) ??
       previousWeekTargets.overall;
-    const practicalTarget = applyPracticalTarget({
-      dayType: trainingType,
-      bodyweightKg: params.bodyweightKg,
-      ideal: idealTarget,
-      baseline,
-    });
+    // Task 10d (Bug б): count EVERY session of the day, not just the primary, so a
+    // run+strength day isn't under-credited. The day type stays the primary's; the
+    // primary session keeps its (pre_long-adjusted) trainingType, each secondary
+    // uses its own dayType. Single-session and zero-workout days are byte-identical
+    // to the previous primary-only estimate (the latter preserves the pre_long
+    // phantom-expenditure on a no-workout day-before-long-run).
+    const dayExerciseKcal =
+      dayWorkouts.length > 0
+        ? sumDaySessionsExpenditureKcal(dayWorkouts, (workout) =>
+            planDayExerciseKcal(
+              workout === primaryWorkout ? trainingType : workout.dayType,
+              workout.durationHours,
+              workout.distanceKm,
+              workout.title
+            )
+          )
+        : planDayExerciseKcal(
+            trainingType,
+            primaryWorkout?.durationHours ?? null,
+            primaryWorkout?.distanceKm ?? null,
+            primaryWorkout?.title ?? null
+          );
+    const practicalTarget = resolveDayTarget(trainingType, idealTarget, baseline, dayExerciseKcal, raceWeekDates.has(date));
 
     let source: NutritionPlanSource = "unknown";
     if (!params.bodyweightKg || params.bodyweightKg <= 0) {
@@ -697,6 +1142,13 @@ export function buildNutritionNextWeekPlan(params: {
       long_run_source: trainingType === "long_run" ? primaryWorkout?.longRunSource ?? "none" : "none",
       long_run_confidence: trainingType === "long_run" ? primaryWorkout?.longRunConfidence ?? "low" : "low",
       pre_training_guidance: GUIDANCE_BY_DAY_TYPE[trainingType],
+      race_protocol:
+        trainingType === "race"
+          ? computeNutritionRaceProtocol({
+              distanceKm: primaryWorkout?.distanceKm ?? null,
+              title: primaryWorkout?.title ?? null,
+            })
+          : null,
       source,
       ideal_target: idealTarget,
       practical_target: practicalTarget,
@@ -760,54 +1212,54 @@ export function buildNutritionNextWeekPlan(params: {
     },
     days,
     day_type_targets: {
-      rest: applyPracticalTarget({
-        dayType: "rest",
-        bodyweightKg: params.bodyweightKg,
-        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "rest" }),
-        baseline: previousWeekTargets.byDayType.rest ?? previousWeekTargets.overall,
-      }),
-      easy: applyPracticalTarget({
-        dayType: "easy",
-        bodyweightKg: params.bodyweightKg,
-        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "easy" }),
-        baseline: previousWeekTargets.byDayType.easy ?? previousWeekTargets.overall,
-      }),
-      hard: applyPracticalTarget({
-        dayType: "hard",
-        bodyweightKg: params.bodyweightKg,
-        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "hard" }),
-        baseline: previousWeekTargets.byDayType.hard ?? previousWeekTargets.overall,
-      }),
-      pre_long: applyPracticalTarget({
-        dayType: "pre_long",
-        bodyweightKg: params.bodyweightKg,
-        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "pre_long" }),
-        baseline: previousWeekTargets.byDayType.pre_long ?? previousWeekTargets.overall,
-      }),
-      long_run: applyPracticalTarget({
-        dayType: "long_run",
-        bodyweightKg: params.bodyweightKg,
-        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "long_run" }),
-        baseline: previousWeekTargets.byDayType.long_run ?? previousWeekTargets.overall,
-      }),
-      long_endurance: applyPracticalTarget({
-        dayType: "long_endurance",
-        bodyweightKg: params.bodyweightKg,
-        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "long_endurance" }),
-        baseline: previousWeekTargets.byDayType.long_run ?? previousWeekTargets.overall,
-      }),
-      strength: applyPracticalTarget({
-        dayType: "strength",
-        bodyweightKg: params.bodyweightKg,
-        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "strength" }),
-        baseline: previousWeekTargets.byDayType.strength ?? previousWeekTargets.overall,
-      }),
-      cross_training: applyPracticalTarget({
-        dayType: "cross_training",
-        bodyweightKg: params.bodyweightKg,
-        ideal: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "cross_training" }),
-        baseline: previousWeekTargets.byDayType.cross_training ?? previousWeekTargets.overall,
-      }),
+      rest: resolveDayTarget(
+        "rest",
+        calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "rest" }),
+        previousWeekTargets.byDayType.rest ?? previousWeekTargets.overall,
+        planDayExerciseKcal("rest", null, null)
+      ),
+      easy: resolveDayTarget(
+        "easy",
+        calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "easy" }),
+        previousWeekTargets.byDayType.easy ?? previousWeekTargets.overall,
+        planDayExerciseKcal("easy", null, null)
+      ),
+      hard: resolveDayTarget(
+        "hard",
+        calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "hard" }),
+        previousWeekTargets.byDayType.hard ?? previousWeekTargets.overall,
+        planDayExerciseKcal("hard", null, null)
+      ),
+      pre_long: resolveDayTarget(
+        "pre_long",
+        calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "pre_long" }),
+        previousWeekTargets.byDayType.pre_long ?? previousWeekTargets.overall,
+        planDayExerciseKcal("pre_long", null, null)
+      ),
+      long_run: resolveDayTarget(
+        "long_run",
+        calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "long_run" }),
+        previousWeekTargets.byDayType.long_run ?? previousWeekTargets.overall,
+        planDayExerciseKcal("long_run", null, null)
+      ),
+      long_endurance: resolveDayTarget(
+        "long_endurance",
+        calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "long_endurance" }),
+        previousWeekTargets.byDayType.long_run ?? previousWeekTargets.overall,
+        planDayExerciseKcal("long_endurance", null, null)
+      ),
+      strength: resolveDayTarget(
+        "strength",
+        calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "strength" }),
+        previousWeekTargets.byDayType.strength ?? previousWeekTargets.overall,
+        planDayExerciseKcal("strength", null, null)
+      ),
+      cross_training: resolveDayTarget(
+        "cross_training",
+        calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "cross_training" }),
+        previousWeekTargets.byDayType.cross_training ?? previousWeekTargets.overall,
+        planDayExerciseKcal("cross_training", null, null)
+      ),
     },
     day_type_ideal_targets: {
       rest: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "rest" }),

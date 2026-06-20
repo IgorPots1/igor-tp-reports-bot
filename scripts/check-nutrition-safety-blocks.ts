@@ -41,8 +41,14 @@ async function run(): Promise<void> {
     ],
   });
 
-  assert.equal(safety.blocked, true);
-  assert.ok(safety.hardFlags.length > 0);
+  // Coach decision (Igor): рпп-note + very-low-kcal + rapid weight loss no longer
+  // hard-block. CRITICAL invariant: hardFlags must be EMPTY — downstream consumers
+  // reconstruct a do-not-send block from hard_flags, so any populated hard flag
+  // re-blocks. Detected signals live in softFlags (advisory, coach still sees them).
+  assert.equal(safety.blocked, false, "signals no longer hard-block (coach decision)");
+  assert.equal(safety.hardFlags.length, 0, "hard_flags MUST be empty so nothing reconstructs a block");
+  assert.ok(safety.softFlags.length > 0, "signals recorded as advisory soft flags");
+  assert.equal(safety.doNotSendReasons.length, 0, "safety no longer forces do-not-send");
 
   const mockContext: NutritionStudentContext = {
     studentName: "Test Student",
@@ -104,9 +110,13 @@ async function run(): Promise<void> {
   };
 
   const generated = await generateNutritionWeeklyAnalysis({ context: mockContext });
-  assert.equal(generated.safety_flags.blocked, true);
-  assert.equal(generated.athlete_message_draft, null);
-  assert.ok(generated.do_not_send_reasons.length > 0);
+  assert.equal(generated.safety_flags.blocked, false, "generation is not safety-blocked anymore");
+  assert.equal(
+    generated.safety_flags.hard_flags.length,
+    0,
+    "generated hard_flags empty → combined/plan/UI cannot reconstruct manual_review_required:* block"
+  );
+  assert.notEqual(generated.status, "blocked_safety", "status is never blocked_safety under the new policy");
 
   const illnessSignals = (await import("@/features/nutrition/athlete-signals")).detectNutritionAthleteReportSignals(
     "Заболела, была температура"
@@ -151,7 +161,16 @@ async function run(): Promise<void> {
     },
   });
   assert.equal(generatedIllnessSignals.status, "needs_review", "illness signals should require coach review without hard block");
-  assert.notEqual(generatedIllnessSignals.athlete_message_draft, null, "illness signals alone must not auto-block athlete draft");
+  // Illness (soft) must not trigger a HARD safety block — the real property here.
+  assert.equal(generatedIllnessSignals.safety_flags.blocked, false, "illness signals alone must not hard-block (safety)");
+  // Task 3: with no live model available in the test env, the review is held for
+  // regeneration rather than handed a template draft as if ready (Igor decision #3).
+  assert.equal(
+    generatedIllnessSignals.generation_mode,
+    "awaiting_generation",
+    "model unavailable -> awaiting_generation (draft held, not auto-blocked by safety)"
+  );
+  assert.equal(generatedIllnessSignals.athlete_message_draft, null, "held athlete draft when model unavailable");
 
   console.log("PASS check-nutrition-safety-blocks");
 }

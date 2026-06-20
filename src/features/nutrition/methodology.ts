@@ -6,6 +6,11 @@ import type {
 } from "@/features/nutrition/context";
 import { sanitizeNutritionFoodItems } from "@/features/nutrition/context";
 import {
+  resolveNutritionActivityCoefByTitle,
+  sumDaySessionsExpenditureKcal,
+} from "@/features/nutrition/activity-energy";
+import type { NutritionGoalType } from "@/features/nutrition/repository";
+import {
   hasNutritionIntervalWorkoutEvidence,
   hasNutritionTempoWorkEvidence,
   isEasyLightNutritionTitle,
@@ -215,6 +220,8 @@ export type NutritionFocusCategory =
   | "energy_availability"
   | "protein_support"
   | "maintenance"
+  | "lose_high_fat"
+  | "lose_steady_deficit"
   | "limited_data"
   | "blocked_safety";
 
@@ -266,6 +273,8 @@ export type NutritionMethodologyContext = {
     weeklyConsistency: boolean;
     proteinSupport: boolean;
     limitedData: boolean;
+    /** Task 10: weekly fat share is high (>~35% energy) — the lose-goal vector. */
+    highFat: boolean;
   };
   adjacentTrainingWithoutNutritionDays: Array<{
     date: string;
@@ -274,11 +283,21 @@ export type NutritionMethodologyContext = {
   }>;
 };
 
+type WorkoutSessionContext = {
+  type: NutritionTrainingType;
+  title: string;
+  durationHours: number | null;
+  distanceKm: number | null;
+};
+
 type WorkoutContextByDate = {
   date: string;
   title: string;
   type: NutritionTrainingType;
   secondaryTitles: string[];
+  // Task 10d (Bug б): every session of the day (run, strength, …). The day type is
+  // still the primary's (below), but expenditure sums over ALL of these.
+  sessions: WorkoutSessionContext[];
   longRunSource: NutritionLongRunSource;
   longRunConfidence: "high" | "medium" | "low";
   description: string | null;
@@ -436,9 +455,43 @@ function formatDistanceKmRu(distanceKm: number): string {
   return `${distanceKm.toFixed(1).replace(".", ",")} км`;
 }
 
+/**
+ * Наряд 3: recognise a RACE from a workout title — забег/старт/гонка/соревнование/
+ * паркран/полу-/марафон/ультра/триатлон — WITHOUT misreading marathon-PACE training
+ * runs ("бег в темпе марафона", "15 км в темпе марафона", "марафонским темпом") or
+ * route notes ("по маршруту забега") as actual races. Events from the TP scanner /
+ * manual marks come through a separate path (raw === "race"); this only covers races
+ * a coach logged as a workout.
+ */
+export function isNutritionRaceTitle(title: string): boolean {
+  const t = (title ?? "").toLowerCase();
+  if (!t.trim()) {
+    return false;
+  }
+  // Exclude pace-run / prep / route phrasings that merely mention a race distance.
+  const paceOrPrep =
+    /в\s+темпе|марафонск[\p{L}]*\s+темп|темп[\p{L}]*\s+марафон|в\s+марафонском|маршрут[\p{L}]*\s+забег|подготовк[\p{L}]*\s+к|к\s+марафону|to\s+marathon|marathon\s+pace|race\s+pace/u.test(
+      t
+    );
+  if (paceOrPrep) {
+    return false;
+  }
+  // Low-ambiguity race nouns (substring); marathon variants are already guarded
+  // by paceOrPrep above. \p{L} lookarounds are Unicode word boundaries (\b is
+  // ASCII-only and never fires around Cyrillic).
+  return /гонк|соревнов|паркран|полумарафон|ультрамарафон|триатлон|марафон|(?<![\p{L}])(?:забег|старт|ультра|race|parkrun|triathlon)(?![\p{L}])/u.test(
+    t
+  );
+}
+
 export function normalizeTrainingType(rawType: string | null | undefined, title: string): NutritionTrainingType {
   const raw = (rawType ?? "").toLowerCase();
   const titleLc = title.toLowerCase();
+  // Наряд 3: explicit race entity (injected from a TP race event / manual mark)
+  // wins regardless of title wording.
+  if (raw === "race") {
+    return "race";
+  }
   // "отдых"/"rest" often appears inside a workout title as recovery between reps
   // (e.g. "3 x 15 мин (отдых бегом)"). Only treat it as a rest DAY when the title
   // carries no actual workout evidence — otherwise an interval session would be
@@ -455,10 +508,20 @@ export function normalizeTrainingType(rawType: string | null | undefined, title:
   if (raw === "strength") {
     return "strength";
   }
-  if (raw === "crosstrain" || raw === "cross_training" || raw === "bike" || raw === "swim" || /\bpadel\b|падел|cross.?train|crosstrain|bike|cycling|swim|плав|вело/.test(titleLc)) {
+  if (
+    raw === "crosstrain" ||
+    raw === "cross_training" ||
+    raw === "bike" ||
+    raw === "swim" ||
+    raw === "walk" ||
+    raw === "hike" ||
+    /\bpadel\b|падел|cross.?train|crosstrain|bike|cycling|swim|плав|вело|\b(?:walk|walking|hike|hiking|trek|tennis)\b|ходьб|прогулк|поход|хайк|теннис/.test(titleLc)
+  ) {
+    // Non-run activities (incl. walk/hike/tennis) → cross-training family, so they
+    // are not mislabeled as "лёгкий бег" or evaluated against run carb targets.
     return "cross_training";
   }
-  if (/race|гонк|соревн/.test(titleLc)) {
+  if (isNutritionRaceTitle(title)) {
     return "race";
   }
   if (isEasyLightNutritionTitle(title)) {
@@ -557,6 +620,14 @@ function buildWorkoutContextByDate(week: NutritionTrainingPeaksWeekContext): Map
       title: mergeWorkoutTitlesForDay(sessions.map((session) => session.title)),
       type: effectiveType,
       secondaryTitles: sorted.slice(1).map((session) => session.title),
+      // All sessions for expenditure summation (Bug б). Each keeps its own type/
+      // duration so a run+strength day costs run-energy + strength-energy.
+      sessions: sessions.map((session) => ({
+        type: session.type,
+        title: session.title,
+        durationHours: session.durationHours,
+        distanceKm: session.distanceKm,
+      })),
       longRunSource,
       longRunConfidence: resolveNutritionLongRunConfidence(longRunSource),
       description: primary.description,
@@ -572,6 +643,10 @@ function buildWorkoutContextByDate(week: NutritionTrainingPeaksWeekContext): Map
 }
 
 function asSex(context: NutritionStudentContext): "female" | "male" | "unknown" {
+  // Task 10++: explicit profile field wins; fall back to the legacy note heuristic.
+  if (context.sex === "female" || context.sex === "male") {
+    return context.sex;
+  }
   const haystack = `${context.telegramContextNotes ?? ""} ${context.nutritionGoal ?? ""}`.toLowerCase();
   if (/\bfemale\b|жен|девушк/.test(haystack)) {
     return "female";
@@ -580,6 +655,48 @@ function asSex(context: NutritionStudentContext): "female" | "male" | "unknown" 
     return "male";
   }
   return "unknown";
+}
+
+// Task 10d (Bug 2): per-hour energy cost by workout intensity (kcal/kg/h).
+// Intervals/tempo/race are harder than an easy jog of the same duration, so they
+// must drive higher expenditure → higher maintenance/EA → more fuel. Applies to
+// ALL goals. Long runs are normally estimated from distance; this covers the
+// duration fallback for them.
+const NUTRITION_EXERCISE_KCAL_PER_KG_PER_HOUR: Record<NutritionTrainingType, number> = {
+  intervals: 12,
+  race: 12,
+  tempo: 11,
+  long_run: 10,
+  long_endurance: 9,
+  easy: 8,
+  cross_training: 7,
+  strength: 5,
+  rest: 0,
+  unknown: 9,
+};
+
+// Energy for ONE session, by its own intensity. Long runs use distance (≈ km × bw)
+// when available, else duration × the long-run coefficient. Returns null when the
+// session has neither duration nor usable distance (cannot estimate it).
+function estimateSessionEnergyKcal(session: WorkoutSessionContext, bw: number): number | null {
+  // Task 10d (Bug 2): expenditure scales with INTENSITY, not just duration.
+  if (
+    (session.type === "long_run" || session.type === "long_endurance") &&
+    session.distanceKm !== null &&
+    session.distanceKm > 0
+  ) {
+    return Math.round(session.distanceKm * bw);
+  }
+  if (session.durationHours !== null && session.durationHours > 0) {
+    // Activity-specific coefficient (walk/hike/tennis/padel/bike/swim/strength) wins
+    // over the run-intensity default, so a non-run session is costed correctly.
+    const perKgPerHour =
+      resolveNutritionActivityCoefByTitle(session.title) ??
+      NUTRITION_EXERCISE_KCAL_PER_KG_PER_HOUR[session.type] ??
+      9;
+    return Math.round(session.durationHours * bw * perKgPerHour);
+  }
+  return null;
 }
 
 function estimateExerciseEnergyKcal(input: {
@@ -596,26 +713,27 @@ function estimateExerciseEnergyKcal(input: {
     return { exerciseEnergyKcal: null, exerciseEnergySource: "missing" };
   }
   const bw = input.bodyweightKg;
-  if (input.workout.type === "long_run" && input.workout.distanceKm !== null && input.workout.distanceKm > 0) {
-    return {
-      exerciseEnergyKcal: Math.round(input.workout.distanceKm * bw),
-      exerciseEnergySource: "estimated_by_duration_or_distance",
-    };
+  // Task 10d (Bug б): sum every session of the day (run + strength + …), each by
+  // its own intensity, so a multi-session day isn't under-credited. A single-session
+  // day is byte-identical to the previous primary-only estimate.
+  const sessions =
+    input.workout.sessions.length > 0
+      ? input.workout.sessions
+      : [
+          {
+            type: input.workout.type,
+            title: input.workout.title,
+            durationHours: input.workout.durationHours,
+            distanceKm: input.workout.distanceKm,
+          },
+        ];
+  const estimable = sessions.some((session) => estimateSessionEnergyKcal(session, bw) !== null);
+  if (!estimable) {
+    // Sessions exist but none has duration/distance — same "missing" as before.
+    return { exerciseEnergyKcal: null, exerciseEnergySource: "missing" };
   }
-  if (
-    (input.workout.type === "intervals" ||
-      input.workout.type === "tempo" ||
-      input.workout.type === "race" ||
-      input.workout.type === "easy") &&
-    input.workout.durationHours !== null &&
-    input.workout.durationHours > 0
-  ) {
-    return {
-      exerciseEnergyKcal: Math.round(input.workout.durationHours * bw * 9),
-      exerciseEnergySource: "estimated_by_duration_or_distance",
-    };
-  }
-  return { exerciseEnergyKcal: null, exerciseEnergySource: "missing" };
+  const total = sumDaySessionsExpenditureKcal(sessions, (session) => estimateSessionEnergyKcal(session, bw));
+  return { exerciseEnergyKcal: total, exerciseEnergySource: "estimated_by_duration_or_distance" };
 }
 
 function ffmCoefficientForSex(sex: "female" | "male" | "unknown"): number {
@@ -1837,6 +1955,13 @@ export function buildNutritionMethodologyContext(input: {
         day.nutritionStatus === "low_for_strength"
     ).length >= 2;
   const proteinSupport = !proteinSufficient && (averages.proteinGPerKg ?? 0) > 0;
+  // Task 10: high weekly fat share (>~35% energy) — for a weight-loss goal this is
+  // the main lever (excess calories), so the focus surfaces it instead of falling
+  // through to a vague maintenance focus (Bug C).
+  const highFat =
+    averages.fatG != null && averages.kcal != null && averages.kcal > 0
+      ? (averages.fatG * 9) / averages.kcal > 0.35
+      : false;
   const heavyTraining =
     context.tpPastWeek.longRun !== null ||
     context.tpPastWeek.keyWorkouts.length > 0 ||
@@ -1874,7 +1999,13 @@ export function buildNutritionMethodologyContext(input: {
       carbsAroundKeySessions,
       weeklyConsistency,
       proteinSupport,
-      limitedData: context.manualMacroRows.length < 3 || context.tpPastWeek.cacheStatus !== "ok",
+      // A genuine no-training week has an empty TP cache by definition — that is
+      // expected, not a data gap. Only treat empty/non-ok cache as limited data
+      // when it is NOT a confirmed no-training week (Task 5b).
+      limitedData:
+        context.manualMacroRows.length < 3 ||
+        (context.tpPastWeek.cacheStatus !== "ok" && context.noTrainingWeek !== true),
+      highFat,
     },
     adjacentTrainingWithoutNutritionDays,
   };
@@ -1883,6 +2014,7 @@ export function buildNutritionMethodologyContext(input: {
 export function selectNutritionWeeklyFocus(input: {
   methodology: NutritionMethodologyContext;
   blockedSafety: boolean;
+  goalType?: NutritionGoalType;
 }): NutritionOneFocus {
   if (input.blockedSafety) {
     return {
@@ -1892,11 +2024,33 @@ export function selectNutritionWeeklyFocus(input: {
     };
   }
   const s = input.methodology.focusCandidateSignals;
+  const goalType = input.goalType ?? "maintain";
   if (s.limitedData) {
     return {
       category: "limited_data",
       statementRu: "Данных пока недостаточно для точного тренировка-день анализа, нужен ручной разбор.",
       progressionStrategy: "small_step",
+    };
+  }
+  // Task 10: for a weight-loss goal, safety-critical signals still come first
+  // (handled above + severeEnergyAvailability below). But the day-to-day vector
+  // for losing is calories/fat, not "add fuel" — so when there is no genuine
+  // hard-day underfueling, surface a goal-relevant focus instead of the vague
+  // maintenance fallback (Bug C). Fuel-for-work on hard/long days still wins.
+  if (goalType === "lose" && !s.severeEnergyAvailability && !s.hardSessionUnderfueling && !s.longRunUnderfueling) {
+    if (s.highFat) {
+      return {
+        category: "lose_high_fat",
+        statementRu:
+          "Главный фокус при снижении — жир высоковат (лишние калории): сместить часть в белок и овощи, углеводы держать вокруг тренировок, а не везде.",
+        progressionStrategy: "maintain",
+      };
+    }
+    return {
+      category: "lose_steady_deficit",
+      statementRu:
+        "Главный фокус — ровный мягкий минус: держим высокий белок, углеводы вокруг тренировок, спокойнее в дни отдыха. Без жёстких ограничений.",
+      progressionStrategy: "maintain",
     };
   }
   if (s.severeEnergyAvailability) {

@@ -173,3 +173,32 @@ export function buildNutritionVoiceFewShotBlock(input: {
   }
   return lines;
 }
+
+const NUTRITION_VOICE_FEWSHOT_DETAILED =
+  NUTRITION_VOICE_FEWSHOT_EXAMPLES.find((ex) => ex.category === "detailed") ?? NUTRITION_VOICE_FEWSHOT_EXAMPLES[0];
+const NUTRITION_VOICE_FEWSHOT_MISSING = NUTRITION_VOICE_FEWSHOT_EXAMPLES.find((ex) => ex.category === "missing_data");
+
+/**
+ * STABLE few-shot block (Task 5 caching): the voice-only header + one fixed
+ * "detailed" reference example. Byte-identical across all students, so it sits in
+ * the cached system prefix. The variable part (a missing-data example, one
+ * intonation quote) goes in the dynamic block below.
+ */
+export const NUTRITION_VOICE_FEWSHOT_STABLE_LINES: readonly string[] = [
+  "ПРИМЕРЫ-ЭТАЛОНЫ (образец ГОЛОСА И СТРУКТУРЫ, не источник данных):",
+  "ВАЖНО: числа, имена и еду бери ТОЛЬКО из фактов текущего ученика. Из примеров копируй манеру и структуру, НЕ содержание. Не переноси цифры/продукты из примеров в текст.",
+  `Пример (${NUTRITION_VOICE_FEWSHOT_DETAILED.title}):`,
+  NUTRITION_VOICE_FEWSHOT_DETAILED.text,
+] as const;
+
+/** Per-student few-shot additions: one intonation quote + a missing-data example when relevant. */
+export function buildNutritionVoiceFewShotDynamic(input: { hasMissingDay: boolean }): string[] {
+  const lines: string[] = [];
+  if (NUTRITION_VOICE_INTONATION_QUOTES[0]) {
+    lines.push(`Тон: ${NUTRITION_VOICE_INTONATION_QUOTES[0]}`);
+  }
+  if (input.hasMissingDay && NUTRITION_VOICE_FEWSHOT_MISSING) {
+    lines.push(`Пример (${NUTRITION_VOICE_FEWSHOT_MISSING.title}):`, NUTRITION_VOICE_FEWSHOT_MISSING.text);
+  }
+  return lines;
+}

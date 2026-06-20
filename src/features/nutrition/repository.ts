@@ -21,6 +21,42 @@ import {
 
 export const NUTRITION_COACH_CONTEXT_RU_MAX_LENGTH = 500;
 
+/** Student nutrition goal — drives target/plan math. Default maintain = current behavior. */
+export type NutritionGoalType = "lose" | "maintain" | "gain";
+
+export function normalizeNutritionGoalType(value: unknown): NutritionGoalType {
+  return value === "lose" || value === "gain" ? value : "maintain";
+}
+
+/** Task 10++: biological sex for BMR (Mifflin) + FFM/EA. Optional — null when unknown. */
+export type NutritionSex = "female" | "male";
+
+export function normalizeNutritionSex(value: unknown): NutritionSex | null {
+  return value === "female" || value === "male" ? value : null;
+}
+
+/**
+ * Compact per-student nutrition review memory (Tasks 7+8). Kept small — it is
+ * fed into every review prompt, so it must not balloon token cost.
+ */
+export type NutritionApprovedPattern = {
+  /** Short coach-approved pattern, e.g. "углеводы в беговые дни ниже ориентира". */
+  text: string;
+  /** ISO week-from of the earliest week this was observed (for "третью неделю"). */
+  since_week: string | null;
+};
+
+export type NutritionStudentMemory = {
+  approved_patterns: NutritionApprovedPattern[];
+  persistent_notes: string[];
+  last_focus: string | null;
+  key_trends: string[];
+};
+
+export function emptyNutritionStudentMemory(): NutritionStudentMemory {
+  return { approved_patterns: [], persistent_notes: [], last_focus: null, key_trends: [] };
+}
+
 export type NutritionStudentProfile = {
   id: string;
   studentId: string;
@@ -33,6 +69,17 @@ export type NutritionStudentProfile = {
   toleranceNotes: string | null;
   coachNotes: string | null;
   coachContextRu: string | null;
+  /** Наряд 2: athlete on her own eating regime — don't treat calories/fat as a problem (layer A: tone/feedback only). */
+  ownRegime: boolean;
+  /** Часть Ю: drop TrainingPeaks "Other" activities entirely (expenditure + text). */
+  excludeOtherActivities: boolean;
+  nutritionMemory: NutritionStudentMemory;
+  nutritionGoalType: NutritionGoalType;
+  targetWeightKg: number | null;
+  /** Task 10++: optional anthropometrics for BMR/FFM. */
+  sex: NutritionSex | null;
+  heightCm: number | null;
+  ageYears: number | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -85,9 +132,11 @@ export type NutritionReport = {
   weekTo: string;
   sourceType: string;
   rawText: string | null;
+  coachNotesRu: string | null;
   fileRefs: Record<string, unknown> | null;
   status: NutritionReportStatus;
   dataQuality: Record<string, unknown>;
+  archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -112,6 +161,7 @@ export type NutritionWeeklyAnalysisStatus =
   | "draft_generated"
   | "blocked_safety"
   | "needs_review"
+  | "awaiting_generation"
   | "approved_for_copy"
   | "archived";
 
@@ -133,6 +183,7 @@ export type NutritionWeeklyAnalysis = {
   aiModel: string | null;
   athleteMessageDraft: string | null;
   coachEdits: string | null;
+  archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -183,6 +234,14 @@ type NutritionStudentProfileRow = {
   tolerance_notes: string | null;
   coach_notes: string | null;
   coach_context_ru: string | null;
+  own_regime: boolean | null;
+  exclude_other_activities: boolean | null;
+  nutrition_memory: unknown | null;
+  nutrition_goal_type: string | null;
+  target_weight_kg: number | string | null;
+  sex: string | null;
+  height_cm: number | string | null;
+  age_years: number | string | null;
   created_at: string;
   updated_at: string;
 };
@@ -218,9 +277,11 @@ type NutritionReportRow = {
   week_to: string;
   source_type: string;
   raw_text: string | null;
+  coach_notes_ru: string | null;
   file_refs: unknown | null;
   status: NutritionReportStatus;
   data_quality: unknown;
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -259,6 +320,7 @@ type NutritionWeeklyAnalysisRow = {
   ai_model: string | null;
   athlete_message_draft: string | null;
   coach_edits: string | null;
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -298,6 +360,14 @@ export type UpsertNutritionStudentProfileInput = {
   toleranceNotes?: string | null;
   coachNotes?: string | null;
   coachContextRu?: string | null;
+  ownRegime?: boolean;
+  excludeOtherActivities?: boolean;
+  nutritionMemory?: NutritionStudentMemory;
+  nutritionGoalType?: NutritionGoalType;
+  targetWeightKg?: number | null;
+  sex?: NutritionSex | null;
+  heightCm?: number | null;
+  ageYears?: number | null;
 };
 
 export type AddNutritionWeightLogInput = {
@@ -325,6 +395,7 @@ export type CreateNutritionReportInput = {
   weekTo: string;
   sourceType: string;
   rawText?: string | null;
+  coachNotesRu?: string | null;
   fileRefs?: Record<string, unknown> | null;
   status?: NutritionReportStatus;
   dataQuality?: Record<string, unknown>;
@@ -463,6 +534,14 @@ function mapNutritionStudentProfileRow(row: NutritionStudentProfileRow): Nutriti
     toleranceNotes: row.tolerance_notes,
     coachNotes: row.coach_notes,
     coachContextRu: compactText(row.coach_context_ru),
+    ownRegime: row.own_regime === true,
+    excludeOtherActivities: row.exclude_other_activities === true,
+    nutritionMemory: sanitizeNutritionStudentMemory(row.nutrition_memory),
+    nutritionGoalType: normalizeNutritionGoalType(row.nutrition_goal_type),
+    targetWeightKg: toFiniteNumber(row.target_weight_kg),
+    sex: normalizeNutritionSex(row.sex),
+    heightCm: toFiniteNumber(row.height_cm),
+    ageYears: toFiniteNumber(row.age_years),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -504,11 +583,13 @@ function mapNutritionReportRow(row: NutritionReportRow): NutritionReport {
     weekTo: row.week_to,
     sourceType: row.source_type,
     rawText: row.raw_text,
+    coachNotesRu: compactText(row.coach_notes_ru),
     fileRefs: row.file_refs && typeof row.file_refs === "object" && !Array.isArray(row.file_refs)
       ? (row.file_refs as Record<string, unknown>)
       : null,
     status: row.status,
     dataQuality: toObject(row.data_quality),
+    archivedAt: row.archived_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -551,6 +632,7 @@ function mapNutritionWeeklyAnalysisRow(row: NutritionWeeklyAnalysisRow): Nutriti
     aiModel: row.ai_model,
     athleteMessageDraft: row.athlete_message_draft,
     coachEdits: row.coach_edits,
+    archivedAt: row.archived_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -585,6 +667,33 @@ function mapNutritionWeeklyPlanRow(row: NutritionWeeklyPlanRow): NutritionWeekly
 function compactText(value: string | null | undefined): string | null {
   const normalized = value?.replace(/\s+/g, " ").trim() ?? "";
   return normalized || null;
+}
+
+/**
+ * Defensive parse for the stored nutrition_memory JSONB. Caps list sizes so the
+ * memory stays compact (it is fed into every review prompt — Tasks 7+8).
+ */
+export function sanitizeNutritionStudentMemory(value: unknown): NutritionStudentMemory {
+  const obj = toObject(value);
+  const strings = (raw: unknown, max: number): string[] =>
+    (Array.isArray(raw) ? raw : [])
+      .map((item) => compactText(typeof item === "string" ? item : null))
+      .filter((item): item is string => Boolean(item))
+      .slice(0, max);
+  const patterns = (Array.isArray(obj.approved_patterns) ? obj.approved_patterns : [])
+    .map((item) => toObject(item))
+    .map((item) => ({
+      text: compactText(typeof item.text === "string" ? item.text : null),
+      since_week: typeof item.since_week === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.since_week) ? item.since_week : null,
+    }))
+    .filter((item): item is NutritionApprovedPattern => Boolean(item.text))
+    .slice(0, 4);
+  return {
+    approved_patterns: patterns,
+    persistent_notes: strings(obj.persistent_notes, 6),
+    last_focus: compactText(typeof obj.last_focus === "string" ? obj.last_focus : null),
+    key_trends: strings(obj.key_trends, 3),
+  };
 }
 
 export function normalizeNutritionCoachContextRu(value: string | null | undefined): string | null {
@@ -636,9 +745,23 @@ export async function upsertNutritionStudentProfile(
     preferences: input.preferences ?? {},
     dislikes: input.dislikes ?? {},
     tolerance_notes: compactText(input.toleranceNotes),
-    coach_notes: compactText(input.coachNotes),
+    // Legacy profile-level coach note: the UI field was removed (it never reached
+    // generation — the per-report coachNotesRu and persistent notes do). Preserve
+    // any existing value instead of nulling it when callers omit the field.
+    coach_notes: input.coachNotes === undefined ? undefined : compactText(input.coachNotes),
     coach_context_ru:
       input.coachContextRu === undefined ? undefined : normalizeNutritionCoachContextRu(input.coachContextRu),
+    own_regime: input.ownRegime === undefined ? undefined : input.ownRegime,
+    exclude_other_activities:
+      input.excludeOtherActivities === undefined ? undefined : input.excludeOtherActivities,
+    nutrition_memory:
+      input.nutritionMemory === undefined ? undefined : sanitizeNutritionStudentMemory(input.nutritionMemory),
+    nutrition_goal_type:
+      input.nutritionGoalType === undefined ? undefined : normalizeNutritionGoalType(input.nutritionGoalType),
+    target_weight_kg: input.targetWeightKg === undefined ? undefined : input.targetWeightKg,
+    sex: input.sex === undefined ? undefined : normalizeNutritionSex(input.sex),
+    height_cm: input.heightCm === undefined ? undefined : input.heightCm,
+    age_years: input.ageYears === undefined ? undefined : input.ageYears,
   };
   const upsertPayload = Object.fromEntries(
     Object.entries(payload).filter(([, value]) => value !== undefined)
@@ -669,6 +792,46 @@ export async function saveNutritionCoachContextRu(input: {
     toleranceNotes: existing?.toleranceNotes ?? null,
     coachNotes: existing?.coachNotes ?? null,
     coachContextRu: normalizeNutritionCoachContextRu(input.coachContextRu),
+  });
+}
+
+export async function saveNutritionStudentMemory(input: {
+  studentId: string;
+  nutritionMemory: NutritionStudentMemory;
+}): Promise<NutritionStudentProfile> {
+  const existing = await getNutritionStudentProfile(input.studentId);
+  return upsertNutritionStudentProfile({
+    studentId: input.studentId,
+    enabled: existing?.enabled ?? false,
+    goal: existing?.goal ?? null,
+    trackingApp: existing?.trackingApp ?? null,
+    currentWeightKg: existing?.currentWeightKg ?? null,
+    preferences: existing?.preferences,
+    dislikes: existing?.dislikes,
+    toleranceNotes: existing?.toleranceNotes ?? null,
+    coachNotes: existing?.coachNotes ?? null,
+    coachContextRu: existing?.coachContextRu ?? null,
+    nutritionMemory: sanitizeNutritionStudentMemory(input.nutritionMemory),
+  });
+}
+
+/** Append one persistent coach note (Task 8 "remember"), deduped, keeping memory compact. */
+export async function appendNutritionPersistentNote(input: {
+  studentId: string;
+  note: string;
+}): Promise<NutritionStudentProfile | null> {
+  const note = compactText(input.note);
+  if (!note) {
+    return null;
+  }
+  const existing = await getNutritionStudentProfile(input.studentId);
+  const memory = existing?.nutritionMemory ?? emptyNutritionStudentMemory();
+  if (memory.persistent_notes.some((item) => item.toLowerCase() === note.toLowerCase())) {
+    return existing;
+  }
+  return saveNutritionStudentMemory({
+    studentId: input.studentId,
+    nutritionMemory: { ...memory, persistent_notes: [...memory.persistent_notes, note] },
   });
 }
 
@@ -757,6 +920,7 @@ export async function createNutritionReport(input: CreateNutritionReportInput): 
       week_to: input.weekTo,
       source_type: input.sourceType,
       raw_text: compactText(input.rawText),
+      coach_notes_ru: compactText(input.coachNotesRu),
       file_refs: input.fileRefs ?? null,
       status: input.status ?? "received",
       data_quality: input.dataQuality ?? {},
@@ -838,7 +1002,7 @@ export async function getNutritionStudentDefaultWeek(
 
 export async function listNutritionReportsForStudent(
   studentId: string,
-  input?: { weekFrom?: string; weekTo?: string; limit?: number }
+  input?: { weekFrom?: string; weekTo?: string; limit?: number; includeArchived?: boolean }
 ): Promise<NutritionReport[]> {
   const supabase = createSupabaseServerClient();
   let query = supabase
@@ -847,6 +1011,10 @@ export async function listNutritionReportsForStudent(
     .eq("student_id", studentId)
     .order("created_at", { ascending: false });
 
+  // Active by default; the archive screen opts into archived rows.
+  if (!input?.includeArchived) {
+    query = query.is("archived_at", null);
+  }
   if (input?.weekFrom) {
     query = query.eq("week_from", input.weekFrom);
   }
@@ -862,6 +1030,48 @@ export async function listNutritionReportsForStudent(
     throw new Error(`Failed to list nutrition reports for ${studentId}: ${error.message}`);
   }
   return ((data as NutritionReportRow[]) ?? []).map(mapNutritionReportRow);
+}
+
+/** History list for the archive screen — includes archived rows (newest week first). */
+export async function listNutritionWeeklyAnalysesForStudentHistory(
+  studentId: string,
+  input?: { limit?: number }
+): Promise<NutritionWeeklyAnalysis[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_weekly_analyses")
+    .select("*")
+    .eq("student_id", studentId)
+    .order("week_from", { ascending: false })
+    .limit(input?.limit ?? 30);
+  if (error) {
+    throw new Error(`Failed to list nutrition weekly analyses history for ${studentId}: ${error.message}`);
+  }
+  return ((data as NutritionWeeklyAnalysisRow[]) ?? []).map(mapNutritionWeeklyAnalysisRow);
+}
+
+/** Soft-archive / restore a report (reversible; data is never deleted). */
+export async function setNutritionReportArchived(reportId: string, archived: boolean): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from("nutrition_reports")
+    .update({ archived_at: archived ? new Date().toISOString() : null })
+    .eq("id", reportId);
+  if (error) {
+    throw new Error(`Failed to ${archived ? "archive" : "restore"} nutrition report ${reportId}: ${error.message}`);
+  }
+}
+
+/** Soft-archive / restore a weekly analysis (reversible; approved patterns are untouched). */
+export async function setNutritionWeeklyAnalysisArchived(analysisId: string, archived: boolean): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from("nutrition_weekly_analyses")
+    .update({ archived_at: archived ? new Date().toISOString() : null })
+    .eq("id", analysisId);
+  if (error) {
+    throw new Error(`Failed to ${archived ? "archive" : "restore"} nutrition weekly analysis ${analysisId}: ${error.message}`);
+  }
 }
 
 export async function getNutritionWeeklyAnalysisById(id: string): Promise<NutritionWeeklyAnalysis | null> {
@@ -903,6 +1113,107 @@ export async function listNutritionWeeklyAnalysesForStudentWeek(
   return ((data as NutritionWeeklyAnalysisRow[]) ?? []).map(mapNutritionWeeklyAnalysisRow);
 }
 
+/**
+ * Recent weekly analyses for a student, newest week first (Task 7 pattern
+ * detection). One per week; optionally exclude the week being generated now.
+ */
+export async function listRecentNutritionWeeklyAnalysesForStudent(
+  studentId: string,
+  options?: { limit?: number; excludeWeekFrom?: string }
+): Promise<NutritionWeeklyAnalysis[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_weekly_analyses")
+    .select("*")
+    .eq("student_id", studentId)
+    .is("archived_at", null)
+    .order("week_from", { ascending: false })
+    .limit(Math.max(1, (options?.limit ?? 4) + 1));
+  if (error) {
+    throw new Error(`Failed to list recent nutrition weekly analyses for ${studentId}: ${error.message}`);
+  }
+  const rows = ((data as NutritionWeeklyAnalysisRow[]) ?? []).map(mapNutritionWeeklyAnalysisRow);
+  const filtered = options?.excludeWeekFrom
+    ? rows.filter((row) => row.weekFrom !== options.excludeWeekFrom)
+    : rows;
+  return filtered.slice(0, options?.limit ?? 4);
+}
+
+/**
+ * Append a coach-approved pattern to student memory (Task 7 draft->approve).
+ * Deduped by text; capped by the sanitizer so memory stays compact.
+ */
+export async function addNutritionApprovedPattern(input: {
+  studentId: string;
+  text: string;
+  sinceWeek?: string | null;
+}): Promise<NutritionStudentProfile | null> {
+  const text = compactText(input.text);
+  if (!text) {
+    return null;
+  }
+  const existing = await getNutritionStudentProfile(input.studentId);
+  const memory = existing?.nutritionMemory ?? emptyNutritionStudentMemory();
+  if (memory.approved_patterns.some((item) => item.text.toLowerCase() === text.toLowerCase())) {
+    return existing;
+  }
+  const sinceWeek =
+    typeof input.sinceWeek === "string" && /^\d{4}-\d{2}-\d{2}$/.test(input.sinceWeek) ? input.sinceWeek : null;
+  return saveNutritionStudentMemory({
+    studentId: input.studentId,
+    nutritionMemory: {
+      ...memory,
+      approved_patterns: [...memory.approved_patterns, { text, since_week: sinceWeek }],
+    },
+  });
+}
+
+/** Update the rolling review-memory signals after a review (last focus + numeric trends). */
+export async function updateNutritionMemoryAfterReview(input: {
+  studentId: string;
+  lastFocus?: string | null;
+  keyTrends?: string[];
+}): Promise<NutritionStudentProfile | null> {
+  const existing = await getNutritionStudentProfile(input.studentId);
+  const memory = existing?.nutritionMemory ?? emptyNutritionStudentMemory();
+  return saveNutritionStudentMemory({
+    studentId: input.studentId,
+    nutritionMemory: {
+      ...memory,
+      last_focus: input.lastFocus !== undefined ? compactText(input.lastFocus) : memory.last_focus,
+      key_trends: input.keyTrends !== undefined ? input.keyTrends : memory.key_trends,
+    },
+  });
+}
+
+/**
+ * Remove one pattern candidate from a stored analysis after the coach decided on
+ * it (accept or reject), so the proposal stops showing. Decisions never auto-store
+ * to memory here — approval is a separate explicit call.
+ */
+export async function removeNutritionAnalysisPatternCandidate(input: {
+  analysisId: string;
+  code: string;
+}): Promise<void> {
+  const analysis = await getNutritionWeeklyAnalysisById(input.analysisId);
+  if (!analysis) {
+    return;
+  }
+  const summary = toObject(analysis.nutritionSummary);
+  const candidates = Array.isArray(summary.pattern_candidates) ? summary.pattern_candidates : [];
+  const next = candidates.filter(
+    (item) => !(item && typeof item === "object" && (item as Record<string, unknown>).code === input.code)
+  );
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from("nutrition_weekly_analyses")
+    .update({ nutrition_summary: { ...summary, pattern_candidates: next } })
+    .eq("id", input.analysisId);
+  if (error) {
+    throw new Error(`Failed to update nutrition analysis pattern candidates ${input.analysisId}: ${error.message}`);
+  }
+}
+
 export async function getNutritionWeeklyAnalysisForWeek(input: {
   studentId: string;
   weekFrom: string;
@@ -915,6 +1226,7 @@ export async function getNutritionWeeklyAnalysisForWeek(input: {
     .eq("student_id", input.studentId)
     .eq("week_from", input.weekFrom)
     .eq("week_to", input.weekTo)
+    .is("archived_at", null)
     .maybeSingle();
 
   if (error) {
@@ -1213,6 +1525,9 @@ export async function createNutritionWeeklyAnalysis(
         ai_model: input.aiModel ?? null,
         athlete_message_draft: input.athleteMessageDraft ?? null,
         coach_edits: input.coachEdits ?? null,
+        // A freshly (re)generated review is active again, even if the prior row
+        // for this week had been archived.
+        archived_at: null,
       },
       { onConflict: "student_id,week_from,week_to" }
     )
@@ -1234,6 +1549,7 @@ async function getLatestReportsByStudent(studentIds: string[]): Promise<Map<stri
     .from("nutrition_reports")
     .select("*")
     .in("student_id", studentIds)
+    .is("archived_at", null)
     .order("created_at", { ascending: false });
   if (error) {
     throw new Error(`Failed to load nutrition dashboard reports: ${error.message}`);
@@ -1256,6 +1572,7 @@ async function getLatestAnalysesByStudent(studentIds: string[]): Promise<Map<str
     .from("nutrition_weekly_analyses")
     .select("*")
     .in("student_id", studentIds)
+    .is("archived_at", null)
     .order("created_at", { ascending: false });
   if (error) {
     throw new Error(`Failed to load nutrition dashboard analyses: ${error.message}`);
@@ -1469,4 +1786,121 @@ export async function getNutritionTrainingPeaksCacheWindow(input: {
   to: string;
 }): Promise<TrainingPeaksWorkoutCacheRow[]> {
   return listTrainingPeaksWorkoutCacheForStudentDateRange(input);
+}
+
+// --- Наряд 3 (race events) --------------------------------------------------
+// Bridge from the TP race/event scanner (source 'scan') + coach manual marks
+// (source 'manual'). Nutrition reads these per week to recognise race-day /
+// race-week. Manual overrides scan for the same date (the coach beats the scan).
+export type NutritionRaceEventSource = "scan" | "manual";
+export type NutritionRaceEvent = {
+  id: string;
+  studentId: string | null;
+  eventDate: string;
+  title: string | null;
+  distanceKm: number | null;
+  distanceRaw: string | null;
+  source: NutritionRaceEventSource;
+};
+
+type NutritionRaceEventRow = {
+  id: string;
+  student_id: string | null;
+  event_date: string;
+  title: string | null;
+  distance_km: number | string | null;
+  distance_raw: string | null;
+  source: string;
+};
+
+function mapNutritionRaceEventRow(row: NutritionRaceEventRow): NutritionRaceEvent {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    eventDate: row.event_date,
+    title: compactText(row.title),
+    distanceKm: toFiniteNumber(row.distance_km),
+    distanceRaw: compactText(row.distance_raw),
+    source: row.source === "manual" ? "manual" : "scan",
+  };
+}
+
+/**
+ * Races for a student within [from, to] (inclusive). Manual marks override scan
+ * rows for the same date so the coach always wins.
+ */
+export async function listNutritionRaceEventsForStudentWindow(input: {
+  studentId: string;
+  from: string;
+  to: string;
+}): Promise<NutritionRaceEvent[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_race_events")
+    .select("*")
+    .eq("student_id", input.studentId)
+    .gte("event_date", input.from)
+    .lte("event_date", input.to)
+    .order("event_date", { ascending: true });
+  if (error) {
+    // Race events are an enhancement, not a hard dependency. If the table is not
+    // there yet (migration not applied) or the read fails, degrade gracefully so
+    // the whole review still generates — just without race recognition.
+    if (/does not exist|42P01|could not find the table|schema cache|permission denied/i.test(error.message)) {
+      console.warn(`[nutrition.race-events] unavailable, skipping race recognition: ${error.message}`);
+      return [];
+    }
+    throw new Error(`Failed to list race events for student ${input.studentId}: ${error.message}`);
+  }
+  const rows = (data ?? []).map((row) => mapNutritionRaceEventRow(row as NutritionRaceEventRow));
+  // Manual wins over scan for the same date.
+  const byDate = new Map<string, NutritionRaceEvent>();
+  for (const event of rows) {
+    const existing = byDate.get(event.eventDate);
+    if (!existing || (event.source === "manual" && existing.source === "scan")) {
+      byDate.set(event.eventDate, event);
+    }
+  }
+  return [...byDate.values()].sort((a, b) => a.eventDate.localeCompare(b.eventDate));
+}
+
+/** Coach manual race mark (source 'manual') — upserts one row per student/day. */
+export async function upsertNutritionManualRaceEvent(input: {
+  studentId: string;
+  eventDate: string;
+  title?: string | null;
+  distanceKm?: number | null;
+}): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from("trainingpeaks_race_events")
+    .upsert(
+      {
+        student_id: input.studentId,
+        event_date: input.eventDate,
+        title: compactText(input.title),
+        distance_km: input.distanceKm ?? null,
+        source: "manual",
+      },
+      { onConflict: "student_id,event_date,source" }
+    );
+  if (error) {
+    throw new Error(`Failed to upsert manual race event for ${input.studentId}: ${error.message}`);
+  }
+}
+
+export async function deleteNutritionManualRaceEvent(input: {
+  studentId: string;
+  eventDate: string;
+}): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from("trainingpeaks_race_events")
+    .delete()
+    .eq("student_id", input.studentId)
+    .eq("event_date", input.eventDate)
+    .eq("source", "manual");
+  if (error) {
+    throw new Error(`Failed to delete manual race event for ${input.studentId}: ${error.message}`);
+  }
 }

@@ -30,6 +30,12 @@ import type { NutritionFileUploadPreviewSnapshot } from "@/features/nutrition/fi
 import type { NutritionFileUploadPreviewActionState } from "@/app/admin/coach-os/nutrition/upload-action-state";
 import type { NutritionContextItemType } from "@/features/nutrition/repository";
 import {
+  deleteNutritionManualRaceEvent,
+  normalizeNutritionGoalType,
+  normalizeNutritionSex,
+  upsertNutritionManualRaceEvent,
+} from "@/features/nutrition/repository";
+import {
   ADMIN_ACCESS_COOKIE_NAME,
   hasValidAdminAccessCookie,
   isAdminAccessBypassedForLocalDev,
@@ -179,6 +185,51 @@ export async function saveNutritionCoachContextAction(formData: FormData): Promi
   redirect(withNotice(redirectTo, "notice", "Контекст для разбора питания сохранён."));
 }
 
+export async function addNutritionRaceEventAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+
+  const eventDate = (getOptionalFormValue(formData, "raceDate") ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) {
+    redirect(withNotice(redirectTo, "error", "Дату старта укажи в формате ГГГГ-ММ-ДД."));
+  }
+  const distanceKm = parseOptionalNumber(getOptionalFormValue(formData, "raceDistanceKm"));
+  try {
+    await upsertNutritionManualRaceEvent({
+      studentId,
+      eventDate,
+      title: getOptionalFormValue(formData, "raceTitle"),
+      distanceKm,
+    });
+  } catch (error) {
+    revalidateNutritionPaths(studentId);
+    const message = error instanceof Error ? error.message : "Не удалось сохранить старт.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+
+  revalidateNutritionPaths(studentId);
+  redirect(withNotice(redirectTo, "notice", `Старт ${eventDate} сохранён (ручная пометка).`));
+}
+
+export async function deleteNutritionRaceEventAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+
+  const eventDate = (getOptionalFormValue(formData, "raceDate") ?? "").trim();
+  try {
+    await deleteNutritionManualRaceEvent({ studentId, eventDate });
+  } catch (error) {
+    revalidateNutritionPaths(studentId);
+    const message = error instanceof Error ? error.message : "Не удалось удалить старт.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+
+  revalidateNutritionPaths(studentId);
+  redirect(withNotice(redirectTo, "notice", "Ручная пометка старта удалена."));
+}
+
 export async function saveNutritionProfileAction(formData: FormData): Promise<void> {
   const studentId = getRequiredFormValue(formData, "studentId");
   const redirectTo = getRequiredFormValue(formData, "redirectTo");
@@ -192,7 +243,13 @@ export async function saveNutritionProfileAction(formData: FormData): Promise<vo
       trackingApp: getOptionalFormValue(formData, "trackingApp"),
       currentWeightKg: parseOptionalNumber(getOptionalFormValue(formData, "currentWeightKg")),
       toleranceNotes: getOptionalFormValue(formData, "toleranceNotes"),
-      coachNotes: getOptionalFormValue(formData, "coachNotes"),
+      ownRegime: parseBoolean(getOptionalFormValue(formData, "ownRegime"), false),
+      excludeOtherActivities: parseBoolean(getOptionalFormValue(formData, "excludeOtherActivities"), false),
+      nutritionGoalType: normalizeNutritionGoalType(getOptionalFormValue(formData, "nutritionGoalType")),
+      targetWeightKg: parseOptionalNumber(getOptionalFormValue(formData, "targetWeightKg")),
+      sex: normalizeNutritionSex(getOptionalFormValue(formData, "sex")),
+      heightCm: parseOptionalNumber(getOptionalFormValue(formData, "heightCm")),
+      ageYears: parseOptionalNumber(getOptionalFormValue(formData, "ageYears")),
     });
   } catch (error) {
     revalidateNutritionPaths(studentId);
@@ -202,6 +259,46 @@ export async function saveNutritionProfileAction(formData: FormData): Promise<vo
 
   revalidateNutritionPaths(studentId);
   redirect(withNotice(redirectTo, "notice", "Профиль питания сохранён."));
+}
+
+export async function archiveNutritionReportAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  const reportId = getRequiredFormValue(formData, "reportId");
+  const archived = getRequiredFormValue(formData, "archived") === "true";
+  await ensureAdminAccess(redirectTo);
+
+  try {
+    const { setNutritionReportArchived } = await import("@/features/nutrition/repository");
+    await setNutritionReportArchived(reportId, archived);
+  } catch (error) {
+    revalidateNutritionPaths(studentId);
+    const message = error instanceof Error ? error.message : "Не удалось обновить отчёт.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+
+  revalidateNutritionPaths(studentId);
+  redirect(withNotice(redirectTo, "notice", archived ? "Отчёт архивирован." : "Отчёт возвращён из архива."));
+}
+
+export async function archiveNutritionAnalysisAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  const analysisId = getRequiredFormValue(formData, "analysisId");
+  const archived = getRequiredFormValue(formData, "archived") === "true";
+  await ensureAdminAccess(redirectTo);
+
+  try {
+    const { setNutritionWeeklyAnalysisArchived } = await import("@/features/nutrition/repository");
+    await setNutritionWeeklyAnalysisArchived(analysisId, archived);
+  } catch (error) {
+    revalidateNutritionPaths(studentId);
+    const message = error instanceof Error ? error.message : "Не удалось обновить разбор.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+
+  revalidateNutritionPaths(studentId);
+  redirect(withNotice(redirectTo, "notice", archived ? "Разбор архивирован." : "Разбор возвращён из архива."));
 }
 
 export async function setNutritionEnabledAction(formData: FormData): Promise<void> {
@@ -221,7 +318,6 @@ export async function setNutritionEnabledAction(formData: FormData): Promise<voi
       trackingApp: existing?.trackingApp ?? null,
       currentWeightKg: existing?.currentWeightKg ?? null,
       toleranceNotes: existing?.toleranceNotes ?? null,
-      coachNotes: existing?.coachNotes ?? null,
     });
   } catch (error) {
     revalidateNutritionPaths(studentId);
@@ -451,11 +547,15 @@ export async function saveNutritionFileReportAction(formData: FormData): Promise
       mimeTypes: files.map((file) => file.type || "application/octet-stream"),
     });
     const forceNeedsReview = parseBoolean(getOptionalFormValue(formData, "forceNeedsReview"), false);
+    const coachNotesRu = getOptionalFormValue(formData, "coachNotesRu");
+    const rememberCoachNote = parseBoolean(getOptionalFormValue(formData, "rememberCoachNote"), false);
     result = await saveNutritionFileReport({
       studentId,
       weekFrom,
       weekTo,
       studentNotes,
+      coachNotesRu,
+      rememberCoachNote,
       files,
       forceNeedsReview,
     });
@@ -539,6 +639,76 @@ export async function generateNutritionWeeklyPlanAction(formData: FormData): Pro
   }
 }
 
+/**
+ * Sequential batch generation (master order Task 1). Generates weekly reviews
+ * for the selected students ONE AT A TIME — never in parallel. Each call already
+ * spaces its OpenAI requests through the in-process generation queue, so a real
+ * "пачка подряд" run does not burst the model into a 429. Reuses the exact same
+ * per-student path as the single-review button; adds no new mutation.
+ *
+ * Each selected entry is `studentId|reportId|weekFrom|weekTo`, mirroring the
+ * hidden inputs the single-review form already trusts.
+ */
+export async function generateNutritionWeeklyReviewBatchAction(formData: FormData): Promise<void> {
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+
+  const entries = formData
+    .getAll("batchStudent")
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  if (entries.length === 0) {
+    redirect(withNotice(redirectTo, "error", "Не выбрано ни одного ученика для пачки."));
+  }
+
+  let ok = 0;
+  let blocked = 0;
+  let rateLimited = 0;
+  let failed = 0;
+  const touchedStudentIds: string[] = [];
+
+  for (const entry of entries) {
+    const [studentId, reportId, weekFrom, weekTo] = entry.split("|");
+    if (!studentId || !reportId || !weekFrom || !weekTo) {
+      failed += 1;
+      continue;
+    }
+    try {
+      const result = await generateNutritionWeeklyReview({ studentId, weekFrom, weekTo, reportId });
+      touchedStudentIds.push(studentId);
+      const notes = result.generated.internal_summary?.notes ?? [];
+      if (notes.some((note) => note.includes("ai_rate_limited") || note.includes("ai_insufficient_quota"))) {
+        rateLimited += 1;
+      }
+      if (result.generated.safety_flags.blocked) {
+        blocked += 1;
+      } else {
+        ok += 1;
+      }
+    } catch {
+      failed += 1;
+    }
+  }
+
+  revalidatePath("/admin/coach-os/nutrition");
+  for (const studentId of touchedStudentIds) {
+    revalidateNutritionPaths(studentId);
+  }
+
+  const parts = [`готово ${ok}`];
+  if (blocked) {
+    parts.push(`блок безопасности ${blocked}`);
+  }
+  if (rateLimited) {
+    parts.push(`лимит OpenAI ${rateLimited}`);
+  }
+  if (failed) {
+    parts.push(`ошибок ${failed}`);
+  }
+  redirect(
+    withNotice(redirectTo, rateLimited || failed ? "error" : "notice", `Пачка разборов: ${parts.join(", ")}.`)
+  );
+}
+
 export async function generateNutritionWeeklyReviewAction(formData: FormData): Promise<void> {
   const studentId = getRequiredFormValue(formData, "studentId");
   const weekFrom = getRequiredFormValue(formData, "weekFrom");
@@ -555,10 +725,37 @@ export async function generateNutritionWeeklyReviewAction(formData: FormData): P
       reportId,
       manualRowsOverrideText: getOptionalFormValue(formData, "manualRowsOverrideText"),
     });
+    // Task 6: one button. The review (Claude) already wrote the next-week plan
+    // prose in the same call; build the plan record from it now (numbers from
+    // formulas, no OpenAI). Skip when the review was held (awaiting_generation)
+    // or safety-blocked — those must be regenerated/reviewed, not turned into a
+    // "ready" plan.
+    let planId: string | null = null;
+    const reviewStatus = result.analysis.status;
+    if (reviewStatus === "draft_generated" || reviewStatus === "needs_review") {
+      try {
+        const plan = await generateAndSaveNutritionWeeklyPlan({
+          studentId,
+          sourceAnalysisId: result.analysis.id,
+          sourceReportId: result.analysis.reportId ?? reportId,
+          claudePlanProse: result.generated.next_week_plan_text,
+          claudePlanAiModel: result.generated.ai_model,
+          preferSavedTpContext: true,
+        });
+        planId = plan.id;
+      } catch (planError) {
+        // A plan failure must not lose the saved review; surface it on the page.
+        console.error("[nutrition-review-action] plan generation after review failed", planError);
+      }
+    }
     revalidateNutritionPaths(studentId);
     const message = result.generated.safety_flags.blocked
       ? "Блок безопасности: черновик скрыт, нужна ручная проверка."
-      : "Недельный обзор сгенерирован.";
+      : reviewStatus === "awaiting_generation"
+        ? "Разбор не сгенерирован живой моделью — поставлен в очередь. Перегенерируй."
+        : planId
+          ? "Разбор и план на неделю сгенерированы."
+          : "Недельный обзор сгенерирован.";
     redirect(
       buildNutritionStudentCardHref({
         studentId,
@@ -566,12 +763,60 @@ export async function generateNutritionWeeklyReviewAction(formData: FormData): P
         weekTo: result.effectiveWeekTo,
         reportId,
         reviewId: result.analysis.id,
+        planId,
         notice: message,
       })
     );
   } catch (error) {
     revalidateNutritionPaths(studentId);
     const message = error instanceof Error ? error.message : "Не удалось сгенерировать недельный обзор.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+}
+
+/**
+ * Task 7: coach approves a proposed repeating pattern → it enters student memory
+ * (draft->approve). The candidate is then removed from the analysis so the
+ * proposal stops showing. Unconfirmed patterns are never stored.
+ */
+export async function approveNutritionPatternAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const analysisId = getRequiredFormValue(formData, "analysisId");
+  const code = getRequiredFormValue(formData, "code");
+  const text = getRequiredFormValue(formData, "patternText");
+  const sinceWeek = getOptionalFormValue(formData, "sinceWeek");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  try {
+    const { addNutritionApprovedPattern, removeNutritionAnalysisPatternCandidate } = await import(
+      "@/features/nutrition/repository"
+    );
+    await addNutritionApprovedPattern({ studentId, text, sinceWeek: sinceWeek ?? null });
+    await removeNutritionAnalysisPatternCandidate({ analysisId, code });
+    revalidateNutritionPaths(studentId);
+    redirect(withNotice(redirectTo, "notice", "Паттерн добавлен в память ученика."));
+  } catch (error) {
+    revalidateNutritionPaths(studentId);
+    const message = error instanceof Error ? error.message : "Не удалось сохранить паттерн.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+}
+
+/** Task 7: coach rejects a proposed pattern — removed from the analysis, NOT stored to memory. */
+export async function dismissNutritionPatternAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const analysisId = getRequiredFormValue(formData, "analysisId");
+  const code = getRequiredFormValue(formData, "code");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  try {
+    const { removeNutritionAnalysisPatternCandidate } = await import("@/features/nutrition/repository");
+    await removeNutritionAnalysisPatternCandidate({ analysisId, code });
+    revalidateNutritionPaths(studentId);
+    redirect(withNotice(redirectTo, "notice", "Паттерн отклонён (в память не добавлен)."));
+  } catch (error) {
+    revalidateNutritionPaths(studentId);
+    const message = error instanceof Error ? error.message : "Не удалось отклонить паттерн.";
     redirect(withNotice(redirectTo, "error", message));
   }
 }
