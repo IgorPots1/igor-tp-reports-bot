@@ -1148,3 +1148,118 @@ code {
   max-width: 100%;
   box-sizing: border-box;
 }
+
+/* ── Run Analysis Admin Tool (.admin-ra-*) ──────────────────────────────────── */
+.admin-ra-tool {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.admin-ra-canvas {
+  width: 100%;
+  max-width: 640px;
+  border-radius: 6px;
+  background: #000;
+  display: block;
+}
+
+.admin-ra-hero-img {
+  width: 100%;
+  max-width: 640px;
+  border-radius: 6px;
+  display: block;
+}
+
+.admin-ra-progress-bar {
+  height: 6px;
+  background: #e2e8f0;
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 12px 0 4px;
+}
+
+.admin-ra-progress-fill {
+  height: 100%;
+  background: #3b82f6;
+  border-radius: 3px;
+  transition: width 0.2s ease;
+}
+
+.admin-ra-finding {
+  border-left: 3px solid #e2e8f0;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  border-radius: 0 4px 4px 0;
+  background: #f8fafc;
+}
+
+.admin-ra-finding-ok {
+  border-left-color: #22c55e;
+}
+
+.admin-ra-finding-attention {
+  border-left-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.admin-ra-finding-important {
+  border-left-color: #ef4444;
+  background: #fef2f2;
+}
+
+.admin-ra-finding-title {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+.admin-ra-drill-list {
+  padding-left: 20px;
+  margin: 6px 0 0;
+  color: #475569;
+}
+
+.admin-ra-drill-list li {
+  margin-bottom: 3px;
+}
+
+.admin-ra-checklist {
+  padding-left: 20px;
+  margin: 8px 0 0;
+}
+
+.admin-ra-checklist li {
+  margin-bottom: 4px;
+  color: #475569;
+}
+
+.admin-ra-rec-item {
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.admin-ra-rec-item:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.admin-ra-rec-issue {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.admin-ra-rec-advice {
+  margin-bottom: 6px;
+  color: #334155;
+}
+
+.admin-ra-disclaimer {
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.5;
+}

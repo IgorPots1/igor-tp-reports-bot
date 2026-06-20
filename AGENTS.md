@@ -16,6 +16,10 @@ Read `.cursor/rules/` and `CLAUDE.md` before making risky changes. Keep scope na
 - `REVIEW`: review for bugs, safety regressions, wrong-student risk, send risk, and missing QA.
 - `HANDOFF`: summarize branch, worktree, decisions, deferred items, next task, and risks.
 
+## Features
+
+- Run Analysis (admin tool, `/admin/coach-os/run-analysis`): see `docs/run-analysis/` for architecture, decisions, and backlog.
+
 ## Non-Negotiables
 
 - Respect `.cursor/rules/*` and project safety docs.
