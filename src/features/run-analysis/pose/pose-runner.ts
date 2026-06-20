@@ -1,7 +1,7 @@
 // Client-only module — runs in browser via dynamic import from RunAnalysisFlow
 import type { NormalizedLandmark, PoseLandmarker, PoseLandmarkerResult } from "@mediapipe/tasks-vision";
 
-const WASM_CDN = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm";
+const WASM_CDN = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm";
 const MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task";
 
@@ -19,6 +19,25 @@ export type PoseRunnerProcessResult =
 
 export type ProcessProgressCallback = (progress: number, canvas: HTMLCanvasElement) => void;
 
+// MediaPipe failures during WASM/model loading are often thrown as a raw
+// DOM Event/ErrorEvent (e.g. a failed network fetch), not an Error — so the
+// naive String(err) yields "[object Event]". Extract something meaningful.
+function describeLoadError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof ErrorEvent !== "undefined" && err instanceof ErrorEvent) {
+    return err.message || (err.error instanceof Error ? err.error.message : "ошибка загрузки ресурса");
+  }
+  if (typeof Event !== "undefined" && err instanceof Event) {
+    const target = err.target as { src?: string; currentSrc?: string } | null;
+    const src = target?.src || target?.currentSrc;
+    return `сбой загрузки ресурса (event "${err.type}"${src ? `, src: ${src}` : ""})`;
+  }
+  if (err && typeof err === "object" && "message" in err) {
+    return String((err as { message: unknown }).message);
+  }
+  return String(err);
+}
+
 export async function initPoseLandmarker(): Promise<PoseRunnerInitResult> {
   try {
     const { FilesetResolver, PoseLandmarker } = await import("@mediapipe/tasks-vision");
@@ -33,9 +52,13 @@ export async function initPoseLandmarker(): Promise<PoseRunnerInitResult> {
     });
     return { ok: true, landmarker };
   } catch (err) {
+    // Full object to the console for diagnostics (real cause, stack, event target)
+    console.error("[run-analysis] Pose Landmarker init failed:", err);
     return {
       ok: false,
-      error: `Не удалось загрузить модель анализа: ${err instanceof Error ? err.message : String(err)}`,
+      error:
+        "Не удалось загрузить модель распознавания позы. Проверьте интернет-соединение и попробуйте ещё раз. " +
+        `(детали: ${describeLoadError(err)})`,
     };
   }
 }
