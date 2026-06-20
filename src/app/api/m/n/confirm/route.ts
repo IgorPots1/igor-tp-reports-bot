@@ -59,19 +59,20 @@ export async function POST(request: NextRequest): Promise<Response> {
   let result: Awaited<ReturnType<typeof saveNutritionFileReport>>;
   try {
     result = await saveNutritionFileReport({
-      studentId: student.studentId,
+      // The nutrition pipeline keys on the student ROW id (UUID), not the slug.
+      studentId: student.id,
       weekFrom,
       weekTo,
       files: [fileEntry],
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Не удалось сохранить отчёт.";
-    console.warn("[miniapp.confirm] save failed", { studentId: student.studentId, message });
+    console.warn("[miniapp.confirm] save failed", { studentId: student.id, message });
     return jsonResponse(422, { ok: false, error: message });
   }
 
   console.info("[miniapp.confirm] saved", {
-    studentId: student.studentId,
+    studentId: student.id,
     reportId: result.report.id,
     effectiveWeekFrom: result.effectiveWeekFrom,
     effectiveWeekTo: result.effectiveWeekTo,

@@ -52,7 +52,8 @@ export async function POST(request: NextRequest): Promise<Response> {
   let intake: Awaited<ReturnType<typeof intakeNutritionReportFiles>>;
   try {
     intake = await intakeNutritionReportFiles({
-      studentId: student.studentId,
+      // Keys on the student ROW id (UUID), consistent with the confirm/save path.
+      studentId: student.id,
       reportId: previewReportId,
       weekFrom: "2000-01-01",
       files: [fileEntry],
@@ -60,7 +61,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Не удалось распознать файл.";
-    console.warn("[miniapp.upload] intake failed", { studentId: student.studentId, message });
+    console.warn("[miniapp.upload] intake failed", { studentId: student.id, message });
     return jsonResponse(422, { ok: false, error: message });
   }
 
@@ -87,7 +88,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   const snappingApplied = snapped.weekFrom !== rawFrom || snapped.weekTo !== rawTo;
 
   console.info("[miniapp.upload] success", {
-    studentId: student.studentId,
+    studentId: student.id,
     dayCount,
     weekFrom: snapped.weekFrom,
     weekTo: snapped.weekTo,
