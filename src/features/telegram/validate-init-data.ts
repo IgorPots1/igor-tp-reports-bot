@@ -66,3 +66,44 @@ export function parseTelegramInitDataUser(initData: string): TelegramInitDataUse
     return null;
   }
 }
+
+/**
+ * Student-link signature for mini-app auto-binding.
+ *
+ * The "Open form" button Igor sends carries the target studentId in the URL.
+ * To stop a student from opening the form with someone else's studentId, the
+ * studentId is HMAC-signed with the bot token (which only the server knows).
+ * The mini app echoes sid+sig back; the server re-derives the signature and
+ * compares before auto-linking the student's Telegram user.id.
+ */
+const STUDENT_LINK_SIG_PREFIX = "miniapp-link:";
+const STUDENT_LINK_SIG_LENGTH = 32;
+
+export function signStudentLinkWithToken(studentId: string, botToken: string): string {
+  return createHmac("sha256", botToken)
+    .update(STUDENT_LINK_SIG_PREFIX + studentId)
+    .digest("hex")
+    .slice(0, STUDENT_LINK_SIG_LENGTH);
+}
+
+export function verifyStudentLinkSigWithToken(
+  studentId: string,
+  sig: string,
+  botToken: string
+): boolean {
+  if (!studentId || !sig) return false;
+  const expected = signStudentLinkWithToken(studentId, botToken);
+  return safeTimingEqual(sig, expected);
+}
+
+export function signStudentLink(studentId: string): string {
+  const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
+  if (!token) throw new Error("TELEGRAM_BOT_TOKEN is not set");
+  return signStudentLinkWithToken(studentId, token);
+}
+
+export function verifyStudentLinkSig(studentId: string, sig: string): boolean {
+  const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
+  if (!token) return false;
+  return verifyStudentLinkSigWithToken(studentId, sig, token);
+}

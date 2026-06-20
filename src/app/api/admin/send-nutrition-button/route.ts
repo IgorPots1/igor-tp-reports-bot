@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 
 import { sendTelegramWebAppButton } from "@/features/telegram/telegram-client";
+import { signStudentLink } from "@/features/telegram/validate-init-data";
 import { getRequiredTrainingPeaksBusinessConnectionId } from "@/features/trainingpeaks/telegram-business";
 import { getTrainingPeaksStudentByStudentId } from "@/features/trainingpeaks/repository";
 import { isValidAdminAccessToken } from "@/lib/admin-auth";
@@ -11,9 +12,11 @@ function isMiniAppEnabled(): boolean {
   return process.env.MINIAPP_ENABLED === "true";
 }
 
-function getMiniAppUrl(): string {
+function getMiniAppUrl(studentId: string): string {
   const base = process.env.NEXT_PUBLIC_BASE_URL?.replace(/\/$/, "") ?? "";
-  return `${base}/m/n`;
+  const sig = signStudentLink(studentId);
+  const query = new URLSearchParams({ sid: studentId, sig });
+  return `${base}/m/n?${query.toString()}`;
 }
 
 function jsonResponse(status: number, body: Record<string, unknown>): Response {
@@ -55,7 +58,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     return jsonResponse(422, { ok: false, error: "Student has no telegramChatId" });
   }
 
-  const miniAppUrl = getMiniAppUrl();
+  const miniAppUrl = getMiniAppUrl(student.studentId);
 
   await sendTelegramWebAppButton({
     chatId: student.telegramChatId,

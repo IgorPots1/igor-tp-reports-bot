@@ -11,6 +11,8 @@ import { createHmac } from "node:crypto";
 import {
   validateTelegramInitDataWithToken,
   parseTelegramInitDataUser,
+  signStudentLinkWithToken,
+  verifyStudentLinkSigWithToken,
 } from "../src/features/telegram/validate-init-data";
 import { snapParsedDatesToCalendarWeek } from "../src/features/nutrition/report-date-coverage";
 
@@ -118,6 +120,40 @@ assert.deepEqual(
   snapParsedDatesToCalendarWeek(["2026-06-18"]),
   { weekFrom: "2026-06-15", weekTo: "2026-06-21" },
   "single Thu → week 15–21"
+);
+
+// --- 4. signStudentLink / verifyStudentLinkSig — student-link signature ---
+
+const STUDENT_ID = "student-uuid-aaaa";
+const goodSig = signStudentLinkWithToken(STUDENT_ID, TEST_TOKEN);
+
+assert.ok(
+  verifyStudentLinkSigWithToken(STUDENT_ID, goodSig, TEST_TOKEN),
+  "valid student-link signature must verify"
+);
+
+// Forged signature must fail.
+assert.ok(
+  !verifyStudentLinkSigWithToken(STUDENT_ID, "deadbeefdeadbeefdeadbeefdeadbeef", TEST_TOKEN),
+  "forged signature must fail"
+);
+
+// Same sig but a DIFFERENT studentId must fail (can't reuse another's button).
+assert.ok(
+  !verifyStudentLinkSigWithToken("student-uuid-bbbb", goodSig, TEST_TOKEN),
+  "signature is bound to its studentId"
+);
+
+// Wrong token must fail (student doesn't know the bot token).
+assert.ok(
+  !verifyStudentLinkSigWithToken(STUDENT_ID, goodSig, "other_token"),
+  "signature minted with another token must fail"
+);
+
+// Empty sig must fail.
+assert.ok(
+  !verifyStudentLinkSigWithToken(STUDENT_ID, "", TEST_TOKEN),
+  "empty signature must fail"
 );
 
 console.log("PASS check-miniapp-init-data");

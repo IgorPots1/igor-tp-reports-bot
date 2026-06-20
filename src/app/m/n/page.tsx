@@ -86,6 +86,8 @@ function formatIsoToDisplay(iso: string): string {
 export default function NutritionMiniApp() {
   const [step, setStep] = useState<Step>("idle");
   const [initData, setInitData] = useState<string>("");
+  const [sid, setSid] = useState<string>("");
+  const [sig, setSig] = useState<string>("");
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<UploadPreview | null>(null);
   const [manualWeekFrom, setManualWeekFrom] = useState("");
@@ -100,6 +102,10 @@ export default function NutritionMiniApp() {
       tg.expand();
       setInitData(tg.initData);
     }
+    // Signed student-link params from the "Open form" button (first-open auto-link).
+    const params = new URLSearchParams(window.location.search);
+    setSid(params.get("sid") ?? "");
+    setSig(params.get("sig") ?? "");
   }, []);
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -119,6 +125,8 @@ export default function NutritionMiniApp() {
 
     const form = new FormData();
     form.append("initData", initData);
+    if (sid) form.append("sid", sid);
+    if (sig) form.append("sig", sig);
     form.append("file", file, file.name);
 
     try {
@@ -158,6 +166,8 @@ export default function NutritionMiniApp() {
 
     const form = new FormData();
     form.append("initData", initData);
+    if (sid) form.append("sid", sid);
+    if (sig) form.append("sig", sig);
     form.append("file", file, file.name);
     form.append("weekFrom", weekFrom);
     form.append("weekTo", weekTo);

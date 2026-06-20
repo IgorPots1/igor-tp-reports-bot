@@ -1,9 +1,9 @@
 import type { NextRequest } from "next/server";
 
 import { saveNutritionFileReport } from "@/features/nutrition/admin";
-import { validateTelegramInitData, parseTelegramInitDataUser } from "@/features/telegram/validate-init-data";
+import { validateTelegramInitData } from "@/features/telegram/validate-init-data";
+import { resolveMiniAppStudent } from "@/features/telegram/miniapp-student-resolver";
 import { sendTelegramMessage } from "@/features/telegram/telegram-client";
-import { getTrainingPeaksStudentByTelegramUserId } from "@/features/trainingpeaks/repository";
 import { getTrainingPeaksCoachChatIds } from "@/features/trainingpeaks/attention-telegram";
 import { formatNutritionCompactWeekRange } from "@/features/nutrition/report-date-coverage";
 
@@ -39,15 +39,13 @@ export async function POST(request: NextRequest): Promise<Response> {
     return jsonResponse(401, { ok: false, error: "Не авторизован." });
   }
 
-  const tgUser = parseTelegramInitDataUser(initData);
-  if (!tgUser) {
-    return jsonResponse(401, { ok: false, error: "Пользователь не определён." });
+  const sid = (formData.get("sid") as string | null) ?? null;
+  const sig = (formData.get("sig") as string | null) ?? null;
+  const resolved = await resolveMiniAppStudent({ initData, sid, sig });
+  if (!resolved.ok) {
+    return jsonResponse(resolved.httpStatus, { ok: false, error: resolved.message });
   }
-
-  const student = await getTrainingPeaksStudentByTelegramUserId(tgUser.id).catch(() => null);
-  if (!student) {
-    return jsonResponse(403, { ok: false, error: "Ученик не найден. Обратись к тренеру." });
-  }
+  const student = resolved.student;
 
   const weekFrom = (formData.get("weekFrom") as string | null)?.trim() ?? "";
   const weekTo = (formData.get("weekTo") as string | null)?.trim() ?? "";
