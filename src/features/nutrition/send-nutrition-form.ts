@@ -1,4 +1,4 @@
-import { sendTelegramUrlButton, getTelegramBotUsername } from "@/features/telegram/telegram-client";
+import { sendTelegramMessageStrict, getTelegramBotUsername } from "@/features/telegram/telegram-client";
 import { resolveGreeting } from "@/features/nutrition/telegram-renderer";
 import { getRequiredTrainingPeaksBusinessConnectionId } from "@/features/trainingpeaks/telegram-business";
 import { getTrainingPeaksStudentByStudentId } from "@/features/trainingpeaks/repository";
@@ -12,14 +12,21 @@ function isMiniAppEnabled(): boolean {
   return process.env.MINIAPP_ENABLED === "true";
 }
 
-/** Greeting + formality-aware request, ты/вы from the student's profile. */
-function buildButtonMessage(formality: TrainingPeaksTelegramFormality): string {
+/**
+ * Greeting + formality-aware request + the Mini App deep link, all in plain text.
+ *
+ * The link is in the MESSAGE TEXT, not an inline button: named Mini App links
+ * require a web_app button, which Telegram rejects in business messages
+ * (BUTTON_TYPE_INVALID). A tapped text link opens the Mini App with the same
+ * signed start_param, so auto-linking still works.
+ */
+function buildFormMessage(formality: TrainingPeaksTelegramFormality, deepLink: string): string {
   const greeting = resolveGreeting(formality);
   const request =
     formality === "vy"
       ? "Загрузите отчёт о питании за прошедшую неделю:"
       : "Загрузи отчёт о питании за прошедшую неделю:";
-  return `${greeting}\n\n${request}`;
+  return `${greeting}\n\n${request}\n👉 ${deepLink}`;
 }
 
 /**
@@ -70,13 +77,13 @@ export async function sendNutritionFormButtonToStudent(
   }
 
   try {
-    await sendTelegramUrlButton({
-      chatId: student.telegramChatId,
-      text: buildButtonMessage(student.telegramFormality),
-      buttonLabel: "Открыть форму",
-      url: miniAppUrl,
-      businessConnectionId: getRequiredTrainingPeaksBusinessConnectionId(),
-    });
+    // Plain text with the deep link — no reply_markup. Inline buttons for named
+    // Mini Apps are not allowed in business messages; a text link is.
+    await sendTelegramMessageStrict(
+      student.telegramChatId,
+      buildFormMessage(student.telegramFormality, miniAppUrl),
+      { businessConnectionId: getRequiredTrainingPeaksBusinessConnectionId() }
+    );
   } catch (err) {
     return {
       ok: false,
