@@ -97,7 +97,12 @@ export async function sendNutritionFormButtonToStudent(
     await sendTelegramMessageStrict(
       student.telegramChatId,
       buildFormMessage(student.telegramFormality, miniAppUrl),
-      { businessConnectionId: getRequiredTrainingPeaksBusinessConnectionId(), parseMode: "HTML" }
+      {
+        businessConnectionId: getRequiredTrainingPeaksBusinessConnectionId(),
+        parseMode: "HTML",
+        // No Mini App preview card under the link — Igor wants clean text.
+        disableLinkPreview: true,
+      }
     );
   } catch (err) {
     return {

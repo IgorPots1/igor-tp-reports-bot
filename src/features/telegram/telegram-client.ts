@@ -20,6 +20,7 @@ type SendTelegramMessageOptions = {
   messageThreadId?: number;
   replyToMessageId?: number;
   parseMode?: "HTML";
+  disableLinkPreview?: boolean;
 };
 
 export type SendTelegramMessageResult = {
@@ -168,6 +169,10 @@ function buildTelegramSendMessageBody(
 
   if (options?.replyToMessageId !== undefined) {
     body.reply_to_message_id = options.replyToMessageId;
+  }
+
+  if (options?.disableLinkPreview) {
+    body.link_preview_options = { is_disabled: true };
   }
 
   return body;
