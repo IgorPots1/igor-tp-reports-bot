@@ -56,9 +56,9 @@
 
 ### Admin-cookie авторизация в API route
 
-**Решение:** `/api/run-analysis` проверяет cookie `tp_admin_access` через `hasValidAdminAccessCookie` из `@/lib/admin-auth`. Dev-bypass: если `NODE_ENV !== "production"` и `ADMIN_ACCESS_TOKEN` не задан — пропускает (как в остальных admin-роутах).
+**Решение:** `/api/run-analysis` проверяет cookie `tp_admin_access` через `hasValidAdminAccessCookie` из `@/lib/admin-auth`. Байпас авторизации допускается **только** при `NODE_ENV === "development"` (локальный хелпер `isLocalDevBypass`). На Vercel — и в preview, и в проде, где `NODE_ENV === "production"` — валидная admin-кука обязательна **всегда**, независимо от наличия `ADMIN_ACCESS_TOKEN`.
 
-**Почему:** вызов идёт из браузера (same-origin), cookie отправляется автоматически. Bearer-токен (как в `send-nutrition-button/route.ts`) не нужен — нет внешних вызовов.
+**Почему:** вызов идёт из браузера (same-origin), cookie отправляется автоматически. Bearer-токен (как в `send-nutrition-button/route.ts`) не нужен — нет внешних вызовов. Строгий `NODE_ENV === "development"` (вместо более широкого `!== "production"` + отсутствие токена) гарантирует, что роут невозможно открыть без куки на любом задеплоенном окружении.
 
 ---
 
