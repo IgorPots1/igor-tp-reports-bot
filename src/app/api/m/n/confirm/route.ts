@@ -51,8 +51,11 @@ export async function POST(request: NextRequest): Promise<Response> {
     return jsonResponse(400, { ok: false, error: "Неверный диапазон дат." });
   }
 
-  const fileEntry = formData.get("file");
-  if (!(fileEntry instanceof File) || fileEntry.size === 0) {
+  // FatSecret may split a week across several PDFs — accept all of them.
+  const fileEntries = formData
+    .getAll("file")
+    .filter((entry): entry is File => entry instanceof File && entry.size > 0);
+  if (fileEntries.length === 0) {
     return jsonResponse(400, { ok: false, error: "Файл не прикреплён." });
   }
 
@@ -63,7 +66,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       studentId: student.id,
       weekFrom,
       weekTo,
-      files: [fileEntry],
+      files: fileEntries,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Не удалось сохранить отчёт.";

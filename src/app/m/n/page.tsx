@@ -122,7 +122,7 @@ function formatIsoToDisplay(iso: string): string {
 export default function NutritionMiniApp() {
   const [step, setStep] = useState<Step>("idle");
   const [initData, setInitData] = useState<string>("");
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [preview, setPreview] = useState<UploadPreview | null>(null);
   const [manualWeekFrom, setManualWeekFrom] = useState("");
   const [manualWeekTo, setManualWeekTo] = useState("");
@@ -141,15 +141,38 @@ export default function NutritionMiniApp() {
   }, []);
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0] ?? null;
-    setFile(f);
+    // FatSecret may split a week across several PDFs — append picked files,
+    // dedupe by name+size, so the coach can add more across multiple picks.
+    const picked = Array.from(e.target.files ?? []);
+    if (picked.length > 0) {
+      setFiles((prev) => {
+        const seen = new Set(prev.map((f) => `${f.name}:${f.size}`));
+        const merged = [...prev];
+        for (const f of picked) {
+          const key = `${f.name}:${f.size}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            merged.push(f);
+          }
+        }
+        return merged;
+      });
+      setPreview(null);
+      setErrorMsg(null);
+    }
+    // Reset the input so picking the same file again still fires onChange.
+    if (fileRef.current) fileRef.current.value = "";
+  }
+
+  function handleRemoveFile(index: number) {
+    setFiles((prev) => prev.filter((_, i) => i !== index));
     setPreview(null);
     setErrorMsg(null);
   }
 
   async function handleUpload() {
-    if (!file) {
-      setErrorMsg("Выбери PDF-файл из FatSecret.");
+    if (files.length === 0) {
+      setErrorMsg("Выбери хотя бы один PDF-файл из FatSecret.");
       return;
     }
     setStep("uploading");
@@ -157,7 +180,9 @@ export default function NutritionMiniApp() {
 
     const form = new FormData();
     form.append("initData", initData);
-    form.append("file", file, file.name);
+    for (const f of files) {
+      form.append("file", f, f.name);
+    }
 
     try {
       const res = await fetch("/api/m/n/upload", { method: "POST", body: form });
@@ -181,7 +206,7 @@ export default function NutritionMiniApp() {
   }
 
   async function handleConfirm() {
-    if (!file || !preview) return;
+    if (files.length === 0 || !preview) return;
 
     const weekFrom = preview.needsManualWeek ? manualWeekFrom : preview.weekFrom;
     const weekTo = preview.needsManualWeek ? manualWeekTo : preview.weekTo;
@@ -196,7 +221,9 @@ export default function NutritionMiniApp() {
 
     const form = new FormData();
     form.append("initData", initData);
-    form.append("file", file, file.name);
+    for (const f of files) {
+      form.append("file", f, f.name);
+    }
     form.append("weekFrom", weekFrom);
     form.append("weekTo", weekTo);
 
@@ -223,7 +250,7 @@ export default function NutritionMiniApp() {
     setPreview(null);
     setErrorMsg(null);
     if (fileRef.current) fileRef.current.value = "";
-    setFile(null);
+    setFiles([]);
   }
 
   if (step === "done") {
@@ -247,46 +274,64 @@ export default function NutritionMiniApp() {
 
         {step === "idle" || step === "uploading" ? (
           <>
-            {/* Step 1 — choose the file (the primary action until one is picked). */}
-            <span style={STYLES.stepLabel}>Шаг 1 · Файл</span>
+            {/* Step 1 — choose files (FatSecret may split a week into several PDFs). */}
+            <span style={STYLES.stepLabel}>Шаг 1 · Файлы</span>
             <input
               ref={fileRef}
               type="file"
               accept=".pdf"
+              multiple
               style={STYLES.hiddenInput}
               onChange={handleFileChange}
               disabled={busy}
             />
-            {file ? (
-              <div style={{ ...STYLES.fileChip, marginBottom: 12 }}>
+            {files.map((f, i) => (
+              <div key={`${f.name}:${f.size}`} style={{ ...STYLES.fileChip, marginBottom: 8 }}>
                 <span aria-hidden>✓</span>
-                <span>{file.name}</span>
+                <span style={{ flex: 1 }}>{f.name}</span>
+                <button
+                  type="button"
+                  onClick={() => handleRemoveFile(i)}
+                  disabled={busy}
+                  aria-label={`Убрать ${f.name}`}
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    color: "var(--tg-theme-hint-color, #888)",
+                    fontSize: 18,
+                    cursor: "pointer",
+                    lineHeight: 1,
+                  }}
+                >
+                  ✕
+                </button>
               </div>
-            ) : null}
+            ))}
             <button
               type="button"
               style={{
                 ...STYLES.btn,
-                ...(file ? STYLES.btnOutline : {}),
+                ...(files.length > 0 ? STYLES.btnOutline : {}),
                 opacity: busy ? 0.6 : 1,
+                marginTop: files.length > 0 ? 4 : 0,
                 marginBottom: 20,
               }}
               onClick={() => fileRef.current?.click()}
               disabled={busy}
             >
-              {file ? "Выбрать другой файл" : "Выбрать файл"}
+              {files.length > 0 ? "Добавить ещё файл" : "Выбрать файлы"}
             </button>
 
-            {/* Step 2 — upload (disabled until a file is selected). */}
+            {/* Step 2 — upload (disabled until at least one file is selected). */}
             <span style={STYLES.stepLabel}>Шаг 2 · Загрузка</span>
             <button
               type="button"
               style={{
                 ...STYLES.btn,
-                ...(!file || busy ? STYLES.btnDisabled : {}),
+                ...(files.length === 0 || busy ? STYLES.btnDisabled : {}),
               }}
               onClick={handleUpload}
-              disabled={busy || !file}
+              disabled={busy || files.length === 0}
             >
               {step === "uploading" ? "Обрабатываю…" : "Загрузить"}
             </button>
@@ -296,7 +341,8 @@ export default function NutritionMiniApp() {
         {(step === "preview" || step === "confirming") && preview ? (
           <>
             <p style={STYLES.previewRow}>
-              <strong>Файл:</strong> {file?.name}
+              <strong>{files.length > 1 ? `Файлов: ${files.length}` : "Файл:"}</strong>{" "}
+              {files.map((f) => f.name).join(", ")}
             </p>
             <p style={STYLES.previewRow}>
               <strong>Дней найдено:</strong> {preview.dayCount}

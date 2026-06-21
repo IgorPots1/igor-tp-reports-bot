@@ -42,8 +42,11 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
   const student = resolved.student;
 
-  const fileEntry = formData.get("file");
-  if (!(fileEntry instanceof File) || fileEntry.size === 0) {
+  // FatSecret may split a week across several PDFs — accept all of them.
+  const fileEntries = formData
+    .getAll("file")
+    .filter((entry): entry is File => entry instanceof File && entry.size > 0);
+  if (fileEntries.length === 0) {
     return jsonResponse(400, { ok: false, error: "Файл не прикреплён." });
   }
 
@@ -56,7 +59,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       studentId: student.id,
       reportId: previewReportId,
       weekFrom: "2000-01-01",
-      files: [fileEntry],
+      files: fileEntries,
       persistFiles: false,
     });
   } catch (err) {
