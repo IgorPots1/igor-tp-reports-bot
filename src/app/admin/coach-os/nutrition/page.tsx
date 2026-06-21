@@ -83,6 +83,8 @@ export default async function CoachOsNutritionDashboardPage({
   const viewMode = parseViewMode(getSingleSearchParam(resolved.view));
   const active = asBoolean(getSingleSearchParam(resolved.active));
   const safetyOnly = asBoolean(getSingleSearchParam(resolved.safety));
+  const notice = getSingleSearchParam(resolved.notice);
+  const error = getSingleSearchParam(resolved.error);
   const redirectTo = buildNutritionDashboardHref({ view: viewMode, safety: safetyOnly, active });
 
   const rows = await listNutritionAdminDashboardRows({
@@ -108,6 +110,10 @@ export default async function CoachOsNutritionDashboardPage({
         </div>
         <span className="admin-badge admin-badge-outline">Только копия</span>
       </div>
+
+      {(notice || error) && (
+        <div className={`admin-alert ${error ? "admin-alert-error" : "admin-alert-success"}`}>{error ?? notice}</div>
+      )}
 
       <div className="admin-summary-grid admin-summary-grid-compact">
         <article className="admin-card admin-summary-card">

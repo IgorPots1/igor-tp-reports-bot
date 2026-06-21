@@ -67,28 +67,32 @@ async function buildMiniAppDeepLink(studentRowId: string): Promise<string> {
 export async function sendNutritionFormButtonToStudent(
   identifier: string
 ): Promise<SendNutritionFormResult> {
+  // Every failure is logged (not just returned) so silent sends show up in
+  // Vercel runtime logs, not only in the admin notice banner (lesson #4).
+  const fail = (reason: string): SendNutritionFormResult => {
+    console.error("[nutrition.send-form] failed", { identifier, reason });
+    return { ok: false, reason };
+  };
+
   if (!isMiniAppEnabled()) {
-    return { ok: false, reason: "MINIAPP_ENABLED не включён." };
+    return fail("MINIAPP_ENABLED не включён.");
   }
 
   const student =
     (await getTrainingPeaksStudentById(identifier).catch(() => null)) ??
     (await getTrainingPeaksStudentByStudentId(identifier).catch(() => null));
   if (!student) {
-    return { ok: false, reason: "Ученик не найден." };
+    return fail("Ученик не найден.");
   }
   if (!student.telegramChatId) {
-    return { ok: false, reason: `У «${student.studentName}» нет Telegram-чата.` };
+    return fail(`У «${student.studentName}» нет Telegram-чата.`);
   }
 
   let miniAppUrl: string;
   try {
     miniAppUrl = await buildMiniAppDeepLink(student.id);
   } catch (err) {
-    return {
-      ok: false,
-      reason: err instanceof Error ? err.message : "Не настроена ссылка mini app.",
-    };
+    return fail(err instanceof Error ? err.message : "Не настроена ссылка mini app.");
   }
 
   try {
@@ -105,10 +109,7 @@ export async function sendNutritionFormButtonToStudent(
       }
     );
   } catch (err) {
-    return {
-      ok: false,
-      reason: err instanceof Error ? err.message : "Не удалось отправить сообщение.",
-    };
+    return fail(err instanceof Error ? err.message : "Не удалось отправить сообщение.");
   }
 
   console.info("[nutrition.send-form] sent", {
