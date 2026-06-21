@@ -43,7 +43,6 @@ function isValidPayload(v: unknown): v is RunAnalysisApiPayload {
   const p = v as Record<string, unknown>;
   if (!p.runner_profile || typeof p.runner_profile !== "object") return false;
   if (!p.computed_metrics || typeof p.computed_metrics !== "object") return false;
-  if (!p.metric_statuses || typeof p.metric_statuses !== "object") return false;
   return true;
 }
 

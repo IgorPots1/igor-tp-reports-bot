@@ -4,6 +4,24 @@
 
 ---
 
+## 2026-06-21 — Стратегия метрик: достоверность + каденс вручную
+
+**Что сделано (НЕ закоммичено — валидация на превью):**
+- Угол колена → flexion-конвенция (`180 − angleDeg`).
+- Каденс убран из видео-замера; добавлено опциональное поле «каденс с часов» в форме, показ как контекст.
+- Вертикальные колебания: амплитуда по циклам + детренд hip.y + калибровка роста + полоса low/medium/high.
+- Per-метрика `{ value, confidence, reason }` (ok/low/unavailable); `CONFIDENCE_CONFIG` в reference-ranges.ts.
+- Общий гейт «ролик не подходит» (мало доступных метрик) → экран пересъёмки, без частичного отчёта.
+- pose-runner: смягчён hard-гейт `too_few_cycles` (хватает ~3 циклов; точную достоверность даёт confidence-слой).
+- ReportView: confidence-aware рендер (unavailable → «не удалось определить» + причина; low → ориентир/полоса).
+- LLM-промпт: приоритет приземление → колебания → осанка; каденс только если введён вручную; unavailable не трактуется.
+- Payload: cadence убран из видео, computed_metrics — структура с confidence; unavailable = «не определено».
+- Гейты зелёные. Дальше — прогон на хорошем и заведомо плохом ролике на превью.
+
+**Файлы:** types.ts, metrics/{compute-metrics,reference-ranges}.ts, pose/pose-runner.ts, llm/prompt.ts, api/run-analysis/route.ts, admin UI {RunAnalysisTool,ReportView}.tsx, docs.
+
+---
+
 ## 2026-06-20 — Харднинг авторизации + хендофф-док
 
 **Что сделано:**

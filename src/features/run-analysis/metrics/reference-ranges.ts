@@ -1,4 +1,4 @@
-import type { FootStrikeType, MetricSeverity } from "@/features/run-analysis/types";
+import type { FootStrikeType, MetricSeverity, VerticalOscillationBand } from "@/features/run-analysis/types";
 
 // TODO: validate thresholds with Igor after first real runs
 
@@ -18,24 +18,22 @@ function classifyRange(value: number, r: Range): MetricSeverity {
   return "attention";
 }
 
-// Steps per minute — recreational to sub-elite
-const CADENCE: Range = { lowImportant: 150, lowAttention: 160, okLow: 170, okHigh: 190, highAttention: 200 };
-
-// Knee flexion at ground contact (degrees)
-const KNEE_ANGLE: Range = { lowImportant: 10, lowAttention: 15, okLow: 20, okHigh: 35, highAttention: 45, highImportant: 55 };
+// Knee FLEXION at ground contact (degrees from straight; 0° = straight leg).
+// Measured as 180 − interior(hip-knee-ankle) angle in compute-metrics.
+const KNEE_FLEXION: Range = { lowImportant: 10, lowAttention: 15, okLow: 20, okHigh: 35, highAttention: 45, highImportant: 55 };
 
 // Forward lean from vertical (degrees)
 const TRUNK_LEAN: Range = { lowAttention: 3, okLow: 5, okHigh: 12, highAttention: 18, highImportant: 25 };
 
-// Vertical oscillation as % of body height
-const VERT_OSC: Range = { okLow: 0, okHigh: 4, highAttention: 7, highImportant: 10 };
+// Vertical oscillation as % of body height (severity, used when confidence is ok)
+const VERT_OSC: Range = { okLow: 0, okHigh: 7, highAttention: 10, highImportant: 13 };
 
-export function classifyCadence(spm: number): MetricSeverity {
-  return classifyRange(spm, CADENCE);
-}
+// Vertical oscillation qualitative band (% of body height).
+// TODO: tune band edges on real static-camera footage.
+const VERT_OSC_BAND = { lowMax: 6, mediumMax: 9 };
 
 export function classifyKneeAngle(deg: number): MetricSeverity {
-  return classifyRange(deg, KNEE_ANGLE);
+  return classifyRange(deg, KNEE_FLEXION);
 }
 
 export function classifyTrunkLean(deg: number): MetricSeverity {
@@ -44,6 +42,12 @@ export function classifyTrunkLean(deg: number): MetricSeverity {
 
 export function classifyVerticalOscillation(pct: number): MetricSeverity {
   return classifyRange(pct, VERT_OSC);
+}
+
+export function classifyVerticalOscillationBand(pct: number): VerticalOscillationBand {
+  if (pct < VERT_OSC_BAND.lowMax) return "low";
+  if (pct < VERT_OSC_BAND.mediumMax) return "medium";
+  return "high";
 }
 
 // Negative or zero = foot under body (ok); positive = foot ahead of hip (overstride)
@@ -58,11 +62,35 @@ export function classifyFootStrike(type: FootStrikeType): MetricSeverity {
   return "attention";
 }
 
+// ── Confidence thresholds ────────────────────────────────────────────────
+// Start values — TODO: tune with Igor on real footage (good + deliberately bad).
+export const CONFIDENCE_CONFIG = {
+  // clean ground contacts needed for contact-based metrics (knee/overstride/foot strike)
+  minContactsOk: 3,
+  minContactsLow: 1,
+  // mean MediaPipe visibility of the landmarks a metric needs
+  visibilityOk: 0.6,
+  visibilityUnavailable: 0.4,
+  // subject size: full body height as a fraction of frame height
+  minSubjectHeightNorm: 0.3,
+  // vertical oscillation: contact cycles + camera-motion tolerance
+  oscMinCyclesOk: 3,
+  oscMinCyclesLow: 1,
+  // ratio of (linear hip.y drift over clip) / (per-cycle oscillation amplitude)
+  oscCameraMotionLow: 0.6, // above → "low" (camera moved a bit)
+  oscCameraMotionUnavailable: 1.5, // above → "unavailable" (camera clearly panned)
+  // overall gate: minimum measured metrics that must be available to show a report
+  minAvailableMetricsForReport: 2,
+} as const;
+
+// Calibration: shoulder→ankle span is ~0.75 of full standing height, so dividing
+// by it directly underestimates height and inflates the oscillation %. TODO: tune.
+export const SHOULDER_ANKLE_HEIGHT_FRACTION = 0.75;
+
 export const NORM_DESCRIPTIONS = {
-  cadence: "170–190 шаг/мин",
-  kneeAngle: "20–35° при опоре",
+  kneeAngle: "20–35° сгиба при опоре",
   trunkLean: "5–12° вперёд",
-  verticalOscillation: "< 4% роста",
+  verticalOscillation: "низкая–средняя",
   overstride: "стопа под бедром",
   footStrike: "передняя/средняя часть",
 } as const;

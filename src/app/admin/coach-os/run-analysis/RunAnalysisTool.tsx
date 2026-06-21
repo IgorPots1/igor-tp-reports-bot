@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import type {
+  ApiMetric,
   MetricStatus,
   RunAnalysisApiPayload,
   RunAnalysisResult,
@@ -11,7 +12,14 @@ import type {
 import ReportView from "@/app/admin/coach-os/run-analysis/ReportView";
 
 type ToolStep = "form" | "processing" | "report" | "error";
-type ErrorType = "no_pose" | "too_short" | "too_few_cycles" | "load_error" | "api_error" | "unknown";
+type ErrorType =
+  | "no_pose"
+  | "too_short"
+  | "too_few_cycles"
+  | "unsuitable"
+  | "load_error"
+  | "api_error"
+  | "unknown";
 
 const GOALS: { value: RunnerGoal; label: string }[] = [
   { value: "health", label: "Здоровье и фитнес" },
@@ -22,22 +30,21 @@ const GOALS: { value: RunnerGoal; label: string }[] = [
   { value: "speed", label: "Скорость и результат" },
 ];
 
+const SHOOTING_CHECKLIST = [
+  "Камера НЕПОДВИЖНА — поставьте телефон на опору, не ведите камерой за бегуном",
+  "Снимайте строго сбоку (сагиттальная плоскость)",
+  "Бегун пробегает мимо кадра, крупно, целиком от головы до ног",
+  "Несколько шагов в кадре, рабочий темп (не трусца и не максимум)",
+];
+
 const ERROR_CHECKLISTS: Partial<Record<ErrorType, string[]>> = {
-  no_pose: [
-    "Снимайте строго сбоку (сагиттальная плоскость)",
-    "Бегун должен быть полностью в кадре от головы до ног",
-    "Фон должен контрастировать с одеждой",
-    "Избегайте съёмки против света",
-  ],
+  no_pose: SHOOTING_CHECKLIST,
   too_short: [
-    "Запишите минимум 5–10 секунд непрерывного бега",
-    "Темп должен быть рабочим — не трусца и не максимальный",
+    "Запишите 5–10 секунд непрерывного бега",
+    "Камера неподвижна, бегун пробегает мимо кадра",
   ],
-  too_few_cycles: [
-    "В кадре должно быть минимум 4–6 шагов",
-    "Запишите более длинный отрезок бега",
-    "Убедитесь, что скорость стабильная",
-  ],
+  too_few_cycles: SHOOTING_CHECKLIST,
+  unsuitable: SHOOTING_CHECKLIST,
 };
 
 function validateVideoFile(file: File): string | null {
@@ -45,6 +52,26 @@ function validateVideoFile(file: File): string | null {
   if (!file.type.startsWith("video/") && !file.name.match(/\.(mp4|mov)$/i))
     return "Поддерживаются форматы MP4 и MOV.";
   return null;
+}
+
+function parseWatchCadence(raw: string): number | null {
+  const n = Number(raw.trim());
+  if (!Number.isFinite(n) || n <= 0) return null;
+  // plausible running cadence range; outside → ignore as a typo
+  if (n < 100 || n > 260) return null;
+  return Math.round(n);
+}
+
+function toApiMetric(ms: MetricStatus | undefined): ApiMetric {
+  if (!ms || ms.confidence === "unavailable" || ms.value === null) {
+    const m: ApiMetric = { value: "не определено", confidence: "unavailable", norm: ms?.normDescription ?? "" };
+    if (ms?.reason) m.reason = ms.reason;
+    return m;
+  }
+  const m: ApiMetric = { value: ms.value, confidence: ms.confidence, norm: ms.normDescription };
+  if (ms.band) m.band = ms.band;
+  if (ms.reason) m.reason = ms.reason;
+  return m;
 }
 
 function buildPayload(
@@ -60,21 +87,15 @@ function buildPayload(
       goal: profile.goal,
     },
     computed_metrics: {
-      cadence_spm: metrics.cadenceSpm,
-      knee_angle_at_contact_deg: metrics.kneeAngleDeg,
-      trunk_lean_deg: metrics.trunkLeanDeg,
-      vertical_oscillation_pct: metrics.verticalOscillationPct,
-      overstride_pct: metrics.overstridePct,
-      foot_strike: metrics.footStrike,
-      gait_cycles_detected: metrics.gaitCyclesDetected,
+      knee_flexion_at_contact_deg: toApiMetric(metricStatuses.kneeFlexion),
+      trunk_lean_deg: toApiMetric(metricStatuses.trunkLean),
+      vertical_oscillation_pct: toApiMetric(metricStatuses.verticalOscillation),
+      overstride_pct: toApiMetric(metricStatuses.overstride),
+      foot_strike: toApiMetric(metricStatuses.footStrike),
+      cadence_from_watch_spm: metrics.cadenceFromWatchSpm,
+      contact_cycles_detected: metrics.contactCyclesDetected,
       video_duration_sec: metrics.videoDurationSec,
     },
-    metric_statuses: Object.fromEntries(
-      Object.entries(metricStatuses).map(([k, v]) => [
-        k,
-        { value: v.value, severity: v.severity, norm: v.normDescription },
-      ])
-    ),
   };
 }
 
@@ -85,6 +106,7 @@ export default function RunAnalysisTool() {
   const [weightKg, setWeightKg] = useState("");
   const [paceMinPerKm, setPaceMinPerKm] = useState("5:30");
   const [goal, setGoal] = useState<RunnerGoal>("health");
+  const [cadenceWatch, setCadenceWatch] = useState("");
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
@@ -147,13 +169,24 @@ export default function RunAnalysisTool() {
       const { computeMetrics } = await import(
         "@/features/run-analysis/metrics/compute-metrics"
       );
-      const { metrics, metricStatuses } = computeMetrics({
+      const { metrics, metricStatuses, quality } = computeMetrics({
         frames: poseResult.frames,
         fps: poseResult.fps,
         durationSec: poseResult.durationSec,
+        cadenceFromWatchSpm: parseWatchCadence(cadenceWatch),
       });
 
       const heroFrameDataUrl = canvas.toDataURL("image/jpeg", 0.85);
+
+      // Overall gate: too little usable data → don't show a partial report.
+      if (!quality.usable) {
+        setErrorMsg(
+          "Этот ролик не подходит для анализа техники — слишком мало надёжных данных. Чаще всего причина в движении камеры или мелком объекте."
+        );
+        setErrorType("unsuitable");
+        setStep("error");
+        return;
+      }
 
       setProcessingStatus("Составляем разбор техники…");
       const payload = buildPayload(
@@ -291,6 +324,23 @@ export default function RunAnalysisTool() {
             </div>
 
             <div className="admin-field">
+              <label>Каденс с часов (шаг/мин) — необязательно</label>
+              <input
+                className="admin-input"
+                type="number"
+                min={100}
+                max={260}
+                value={cadenceWatch}
+                onChange={(e) => setCadenceWatch(e.target.value)}
+                placeholder="например 178"
+              />
+              <p className="admin-muted">
+                Каденс не измеряется из видео — он зависит от темпа и индивидуален. Если знаете значение
+                с часов, впишите — покажем в отчёте как контекст.
+              </p>
+            </div>
+
+            <div className="admin-field">
               <label>Видео (MP4 или MOV, сбоку, ≤ 30 МБ) *</label>
               <input
                 className="admin-input"
@@ -299,9 +349,15 @@ export default function RunAnalysisTool() {
                 onChange={handleFileChange}
               />
               {fileError && <p className="admin-field-error">{fileError}</p>}
-              <p className="admin-muted">
-                Снимайте строго сбоку. Бегун в кадре от головы до ног, 5–10 секунд непрерывного бега.
-              </p>
+              <div className="admin-muted" style={{ marginTop: 6 }}>
+                Как снимать:
+                <ul className="admin-ra-checklist" style={{ marginTop: 4 }}>
+                  {SHOOTING_CHECKLIST.map((tip) => (
+                    <li key={tip}>{tip}</li>
+                  ))}
+                </ul>
+                Камеру вести за бегуном <strong>нельзя</strong> — от этого ломается замер вертикальных колебаний.
+              </div>
             </div>
 
             <div className="admin-actions">
@@ -336,7 +392,7 @@ export default function RunAnalysisTool() {
       {step === "error" && (
         <div className="admin-card">
           <div className="admin-alert admin-alert-error">
-            <strong>Ошибка анализа</strong>
+            <strong>{errorType === "unsuitable" ? "Ролик не подходит для анализа" : "Ошибка анализа"}</strong>
             <p style={{ margin: "4px 0 0" }}>{errorMsg}</p>
           </div>
           {checklist && (

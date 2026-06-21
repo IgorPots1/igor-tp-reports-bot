@@ -7,7 +7,9 @@ const MODEL_URL =
 
 // Min frames required for a meaningful analysis
 const MIN_FRAMES_FOR_ANALYSIS = 30;
-const MIN_GAIT_CYCLES = 2;
+// Hard floor only — a short clip (~3 cycles) is enough. Per-metric confidence in
+// compute-metrics grades low-cycle cases; we just reject clips with no running.
+const MIN_ANKLE_CONTACTS = 2;
 
 export type PoseRunnerInitResult =
   | { ok: true; landmarker: PoseLandmarker }
@@ -170,11 +172,12 @@ async function _processUrl(
     };
   }
 
-  // Rough gait cycle estimate: count ankle y-peaks (each peak ≈ 1 step)
+  // Hard floor: need at least a couple of ankle contacts to confirm running at all.
+  // Fine-grained "few cycles" quality is graded per-metric in compute-metrics.
   const ankleYValues = allFrameLandmarks.map((f) => f[27]?.y ?? f[28]?.y ?? 0);
   const minGap = Math.max(2, Math.round(targetFps * 0.2));
   const peaks = countLocalMaxima(ankleYValues, minGap);
-  if (peaks < MIN_GAIT_CYCLES * 2) {
+  if (peaks < MIN_ANKLE_CONTACTS) {
     return {
       ok: false,
       error:

@@ -9,30 +9,80 @@ export type RunnerProfile = {
 
 export type FootStrikeType = "forefoot" | "midfoot" | "heel" | "unknown";
 
+export type MetricSeverity = "ok" | "attention" | "important";
+
+// Per-metric measurement reliability.
+//  - "ok"          — trustworthy, show value as usual
+//  - "low"         — noisy, show as an orientation (band/approximate)
+//  - "unavailable" — cannot be measured from this video; do not show a value
+export type MetricConfidence = "ok" | "low" | "unavailable";
+
+// Machine-readable reason a metric is "low"/"unavailable"; UI maps to text.
+export type MetricReason =
+  | "few_contact_cycles"
+  | "low_landmark_visibility"
+  | "camera_motion"
+  | "subject_too_small";
+
+export type VerticalOscillationBand = "low" | "medium" | "high";
+
+// A metric measured from video: value + how much we trust it.
+export type MeasuredMetric<T> = {
+  value: T | null; // null when confidence === "unavailable"
+  confidence: MetricConfidence;
+  reason: MetricReason | null;
+};
+
+export type VerticalOscillationMetric = MeasuredMetric<number> & {
+  band: VerticalOscillationBand | null;
+};
+
 export type RunMetrics = {
-  cadenceSpm: number | null;
-  kneeAngleDeg: number | null;
-  trunkLeanDeg: number | null;
-  verticalOscillationPct: number | null;
-  overstridePct: number | null;
-  footStrike: FootStrikeType;
+  // measured from video (headline)
+  kneeFlexionDeg: MeasuredMetric<number>;
+  trunkLeanDeg: MeasuredMetric<number>;
+  verticalOscillation: VerticalOscillationMetric;
+  overstridePct: MeasuredMetric<number>;
+  footStrike: MeasuredMetric<FootStrikeType>;
+  // manual context (entered from a watch, NOT measured from video)
+  cadenceFromWatchSpm: number | null;
+  // meta
   framesAnalyzed: number;
-  gaitCyclesDetected: number;
+  contactCyclesDetected: number;
   videoFps: number;
   videoDurationSec: number;
 };
 
-export type MetricSeverity = "ok" | "attention" | "important";
-
-export type MetricStatus = {
-  value: number | string | null;
-  unit: string;
-  severity: MetricSeverity;
-  label: string;
-  normDescription: string;
+// Overall "is this video usable at all" gate — separate from per-metric status.
+export type AnalysisQuality = {
+  usable: boolean;
+  reason: string | null; // machine reason when not usable
 };
 
-// Payload to server — only metrics JSON, no video
+// Display-ready per-metric status for the report UI.
+export type MetricStatus = {
+  key: string;
+  label: string;
+  value: number | string | null;
+  unit: string;
+  normDescription: string;
+  severity: MetricSeverity;
+  confidence: MetricConfidence;
+  reason: MetricReason | null;
+  band?: VerticalOscillationBand | null;
+};
+
+// One metric as sent to the LLM. Unavailable metrics carry the string
+// "не определено", never a fabricated number.
+export type ApiMetric = {
+  value: number | string; // number, foot-strike string, or "не определено"
+  confidence: MetricConfidence;
+  norm: string;
+  band?: VerticalOscillationBand;
+  reason?: MetricReason;
+};
+
+// Payload to server — only metrics JSON, no video.
 export type RunAnalysisApiPayload = {
   runner_profile: {
     height_cm: number;
@@ -41,16 +91,16 @@ export type RunAnalysisApiPayload = {
     goal: RunnerGoal;
   };
   computed_metrics: {
-    cadence_spm: number | null;
-    knee_angle_at_contact_deg: number | null;
-    trunk_lean_deg: number | null;
-    vertical_oscillation_pct: number | null;
-    overstride_pct: number | null;
-    foot_strike: FootStrikeType;
-    gait_cycles_detected: number;
+    knee_flexion_at_contact_deg: ApiMetric;
+    trunk_lean_deg: ApiMetric;
+    vertical_oscillation_pct: ApiMetric;
+    overstride_pct: ApiMetric;
+    foot_strike: ApiMetric;
+    // manual context; null when not provided
+    cadence_from_watch_spm: number | null;
+    contact_cycles_detected: number;
     video_duration_sec: number;
   };
-  metric_statuses: Record<string, { value: number | string | null; severity: MetricSeverity; norm: string }>;
 };
 
 // LLM output contract §8
