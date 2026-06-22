@@ -1077,6 +1077,29 @@ export async function setNutritionWeeklyAnalysisArchived(analysisId: string, arc
   }
 }
 
+/**
+ * Marks a review approved for sending to the athlete. Allowed only from the
+ * coach-reviewed states (draft_generated / needs_review) — NEVER from
+ * blocked_safety (that keeps its own coach-override path) or archived. The guard
+ * is enforced in SQL (status filter) so a stale UI cannot approve a blocked one.
+ * Returns false if nothing was updated (not in an approvable state).
+ */
+export async function approveNutritionWeeklyAnalysis(analysisId: string): Promise<boolean> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_weekly_analyses")
+    .update({ status: "approved_for_copy" })
+    .eq("id", analysisId)
+    .is("archived_at", null)
+    .in("status", ["draft_generated", "needs_review"])
+    .select("id")
+    .maybeSingle();
+  if (error) {
+    throw new Error(`Failed to approve nutrition weekly analysis ${analysisId}: ${error.message}`);
+  }
+  return Boolean(data);
+}
+
 export async function getNutritionWeeklyAnalysisById(id: string): Promise<NutritionWeeklyAnalysis | null> {
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase

@@ -24,6 +24,7 @@ import {
   saveNutritionProfileAction,
   sendNutritionFormAction,
   sendNutritionReviewLinkAction,
+  approveNutritionReviewAction,
 } from "@/app/admin/coach-os/nutrition/actions";
 import ConfirmSubmitButton from "@/app/admin/coach-os/nutrition/ConfirmSubmitButton";
 import {
@@ -1089,9 +1090,25 @@ export default async function CoachOsNutritionStudentCardPage({
                     );
                   })()}
                 </div>
+              ) : card.weeklyAnalysis?.status === "draft_generated" ||
+                card.weeklyAnalysis?.status === "needs_review" ? (
+                <div className="admin-inline-actions" style={{ marginTop: 14, flexWrap: "wrap", gap: 8 }}>
+                  {/* Approve a reviewed draft → enables "send to athlete". Never for blocked_safety. */}
+                  <form action={approveNutritionReviewAction}>
+                    <input type="hidden" name="studentId" value={studentId} />
+                    <input type="hidden" name="analysisId" value={card.weeklyAnalysis.id} />
+                    <input type="hidden" name="redirectTo" value={studentCardPath} />
+                    <FormActionButton className="admin-button" pendingText="Одобряю…">
+                      Одобрить разбор
+                    </FormActionButton>
+                  </form>
+                  <span className="admin-muted" style={{ fontSize: 13 }}>
+                    После одобрения появится «Отправить разбор ученику».
+                  </span>
+                </div>
               ) : (
                 <p className="admin-muted" style={{ marginTop: 12 }}>
-                  Отправить разбор ученику можно после одобрения (статус «approved_for_copy»).
+                  Отправить разбор ученику можно после одобрения.
                 </p>
               )}
             </>

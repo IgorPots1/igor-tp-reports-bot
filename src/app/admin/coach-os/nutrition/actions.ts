@@ -744,6 +744,33 @@ export async function sendNutritionReviewLinkAction(formData: FormData): Promise
   redirect(withNotice(redirectTo, "error", `Не отправлено: ${result.reason}`));
 }
 
+// Approve a review for sending (draft_generated / needs_review → approved_for_copy).
+// Never approves blocked_safety/archived — the repository guards that in SQL.
+export async function approveNutritionReviewAction(formData: FormData): Promise<void> {
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const analysisId = getRequiredFormValue(formData, "analysisId");
+
+  const { approveNutritionWeeklyAnalysis } = await import("@/features/nutrition/repository");
+  let approved = false;
+  try {
+    approved = await approveNutritionWeeklyAnalysis(analysisId);
+  } catch (error) {
+    revalidateNutritionPaths(studentId);
+    const message = error instanceof Error ? error.message : "Не удалось одобрить разбор.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+
+  revalidateNutritionPaths(studentId);
+  if (approved) {
+    redirect(withNotice(redirectTo, "notice", "Разбор одобрен — можно отправлять ученику."));
+  }
+  redirect(
+    withNotice(redirectTo, "error", "Не удалось одобрить: разбор не в статусе черновика/на проверке.")
+  );
+}
+
 // Send the upload-form button to MANY selected students (batch). The page guards
 // this with an explicit confirmation so nobody mass-sends by accident.
 export async function sendNutritionFormBatchAction(formData: FormData): Promise<void> {
