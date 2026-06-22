@@ -275,11 +275,19 @@ export default async function CoachOsNutritionStudentCardPage({
   }
 
   // Business 24h-window status for the "send form" button (open/closed at render).
-  const windowLastSeenAt = card.student.telegramChatId
-    ? (await getTrainingPeaksBusinessChatLastSeenByChatId([card.student.telegramChatId])).get(
-        card.student.telegramChatId
-      ) ?? null
-    : null;
+  // Non-critical: a failure here must NEVER take down the whole card — degrade to
+  // no badge (null) and keep rendering focus / generation / copy / send.
+  let windowLastSeenAt: string | null = null;
+  try {
+    if (card.student.telegramChatId) {
+      windowLastSeenAt =
+        (await getTrainingPeaksBusinessChatLastSeenByChatId([card.student.telegramChatId])).get(
+          card.student.telegramChatId
+        ) ?? null;
+    }
+  } catch (e) {
+    console.warn("[nutrition.card] window badge failed", e);
+  }
 
   // Task: history + archive screen — reports (incl. archived) and weekly analyses.
   const { listNutritionReportsForStudent, listNutritionWeeklyAnalysesForStudentHistory } = await import(

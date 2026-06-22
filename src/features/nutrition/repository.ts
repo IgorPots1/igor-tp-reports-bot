@@ -1672,14 +1672,22 @@ export async function listNutritionDashboardRows(
   const chatIds = adminStudents
     .map((student) => student.telegramChatId)
     .filter((id): id is string => Boolean(id));
-  const [profilesByStudent, latestReportsByStudent, latestAnalysesByStudent, dailyMacroCounts, windowByChatId] =
+  const [profilesByStudent, latestReportsByStudent, latestAnalysesByStudent, dailyMacroCounts] =
     await Promise.all([
       getNutritionProfilesByStudent(studentIds),
       getLatestReportsByStudent(studentIds),
       getLatestAnalysesByStudent(studentIds),
       getDailyMacroCountsByStudent(studentIds),
-      getTrainingPeaksBusinessChatLastSeenByChatId(chatIds),
     ]);
+
+  // The 24h-window badge is non-critical: its lookup must NEVER take down the
+  // whole dashboard. On failure, degrade to no badges (empty map).
+  let windowByChatId = new Map<string, string>();
+  try {
+    windowByChatId = await getTrainingPeaksBusinessChatLastSeenByChatId(chatIds);
+  } catch (e) {
+    console.warn("[nutrition.dashboard] window badge lookup failed", e);
+  }
 
   let rows: NutritionDashboardRow[] = adminStudents.map((student) => {
     const profile = profilesByStudent.get(student.id) ?? null;
