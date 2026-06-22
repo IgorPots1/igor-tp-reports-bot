@@ -5,6 +5,8 @@ import { join } from "node:path";
 import {
   buildNutritionNextWeekPlan,
   calculateNutritionDayTypeTarget,
+  computeCarbBaseFromReview,
+  computeCarbLoadingTargets,
   computeRaceDayTarget,
 } from "@/features/nutrition/weekly-plan-formulas";
 
@@ -247,5 +249,116 @@ const raceDay = racePlan.days.find((day) => day.date === "2026-06-13");
 assert.equal(raceDay?.training_type, "race", "race workout → race day type");
 assert.ok(raceDay?.target_kcal != null, "race day in plan must not render kcal н/д");
 assert.ok(raceDay?.carbs_g != null && raceDay?.protein_g != null && raceDay?.fat_g != null, "race day Б/Ж/У not н/д");
+
+// --- Carb-loading base from real review days ---
+// Mean of usable days; >50 g counted, ≤50 g dropped as under-recorded.
+assert.equal(
+  computeCarbBaseFromReview([240, 260, 70]),
+  190,
+  "base = mean of all days > 50 g (240+260+70)/3"
+);
+// A day at/below 50 g (forgotten dinner) is excluded; a real low day (70 g) stays.
+assert.equal(
+  computeCarbBaseFromReview([300, 200, 40, 70]),
+  190,
+  "≤50 g day excluded, 70 g real-low day kept: (300+200+70)/3"
+);
+assert.equal(computeCarbBaseFromReview([50, 50]), null, "all days ≤50 g (boundary) → null");
+assert.equal(computeCarbBaseFromReview([0, 10, 30]), null, "all garbage days → null");
+assert.equal(computeCarbBaseFromReview([]), null, "no days → null");
+assert.equal(computeCarbBaseFromReview([250, 250]), 250, "Nadia-like base ≈ 250");
+
+// --- Carb-loading targets: clamp + ramp ---
+// Nadia: base 250, weight 55, corridorUpper 8, N=2 → ceiling 440, target 325.
+// Ramp last lead day = full target; race day = target. 325/55 = 5.9 г/кг (below
+// corridor lower 6 — that's OK, it comes from a real base, no forced jump).
+const nadiaLoad = computeCarbLoadingTargets({ baseG: 250, weightKg: 55, corridorUpperGkg: 8, leadDayCount: 2 });
+assert.deepEqual(nadiaLoad.leadDays, [288, 325], "Nadia lead-day ramp [288, 325]");
+assert.equal(nadiaLoad.raceDay, 325, "Nadia race-day carbs 325");
+
+// Base above the ceiling → hold the base (don't cut), flat ramp.
+const richBase = computeCarbLoadingTargets({ baseG: 500, weightKg: 55, corridorUpperGkg: 8, leadDayCount: 2 });
+assert.equal(richBase.raceDay, 500, "base above ceiling holds the base (target = base = 500)");
+assert.deepEqual(richBase.leadDays, [500, 500], "base above ceiling → flat ramp [500, 500]");
+
+// Marathon, N=3: 3 interpolated points, last = target. base 300, corridorUpper 9,
+// weight 60 → ceiling 540, target = min(390, 540) = 390. Ramp 330/360/390.
+const marathonLoad = computeCarbLoadingTargets({ baseG: 300, weightKg: 60, corridorUpperGkg: 9, leadDayCount: 3 });
+assert.equal(marathonLoad.leadDays.length, 3, "marathon ramp has N=3 points");
+assert.deepEqual(marathonLoad.leadDays, [330, 360, 390], "marathon ramp [330, 360, 390]");
+assert.equal(marathonLoad.raceDay, 390, "marathon race-day = target 390");
+assert.equal(marathonLoad.leadDays[2], marathonLoad.raceDay, "last lead day == race-day target");
+
+// --- Plan integration: carb loading from real base on lead + race days (HM+) ---
+// Nadia-like: base ≈ 250 (prev week all ~250), 55 kg, HM 21.1 km on Sun 28.06.
+// Lead days 26.06/27.06 ramp 288→325; race day 28.06 = 325. Below corridor lower
+// (6 г/кг = 330) is fine — it comes from the real base.
+const loadingPlan = buildNutritionNextWeekPlan({
+  bodyweightKg: 55,
+  planWeekFrom: "2026-06-22",
+  planWeekTo: "2026-06-28",
+  trainingContext: {
+    cacheStatus: "ok",
+    workouts: [{ date: "2026-06-28", title: "Угличский полумарафон", type: "race", distanceKm: 21.1 }],
+  },
+  previousWeekDailyAnalysis: Array.from({ length: 7 }, (_, i) => ({
+    date: `2026-06-${15 + i}`,
+    actual: { carbsG: 250 },
+  })),
+});
+const lead1 = loadingPlan.days.find((day) => day.date === "2026-06-26");
+const lead2 = loadingPlan.days.find((day) => day.date === "2026-06-27");
+const raceLoadDay = loadingPlan.days.find((day) => day.date === "2026-06-28");
+assert.equal(lead1?.carbs_g, 288, "lead day -2 carbs ramp to 288");
+assert.equal(lead2?.carbs_g, 325, "lead day -1 carbs reach full target 325");
+assert.equal(raceLoadDay?.carbs_g, 325, "race day carbs = base-relative target 325 (not ceiling 440)");
+assert.equal(raceLoadDay?.training_type, "race", "race day type");
+assert.equal(lead1?.flags.carb_loading, true, "lead day -2 marked carb_loading");
+assert.equal(lead2?.flags.carb_loading, true, "lead day -1 marked carb_loading");
+assert.equal(raceLoadDay?.flags.carb_loading, true, "race day marked carb_loading");
+assert.equal(raceLoadDay?.race_protocol?.loading_hydration_note, true, "race protocol carries hydration-note flag");
+// kcal recomputed from the three macros (protein/fat unchanged), rounded to 50.
+for (const day of [lead1, lead2, raceLoadDay]) {
+  assert.ok(day && day.protein_g != null && day.fat_g != null && day.carbs_g != null && day.target_kcal != null);
+  const expectedKcal = Math.round((4 * day.carbs_g + 4 * day.protein_g + 9 * day.fat_g) / 50) * 50;
+  assert.equal(day.target_kcal, expectedKcal, `kcal recomputed from macros on ${day.date}`);
+  assert.ok(
+    day.display_target.carbs_g_min === Math.round((day.carbs_g - 20) / 10) * 10,
+    `display carb range tracks loading carbs on ${day.date}`
+  );
+}
+
+// Fallback: no real base (all garbage prev-week days) → standard race-day target
+// (ceiling 8 г/кг × 55 = 440), NOT base-relative loading. No carb_loading flag.
+const noBasePlan = buildNutritionNextWeekPlan({
+  bodyweightKg: 55,
+  planWeekFrom: "2026-06-22",
+  planWeekTo: "2026-06-28",
+  trainingContext: {
+    cacheStatus: "ok",
+    workouts: [{ date: "2026-06-28", title: "Угличский полумарафон", type: "race", distanceKm: 21.1 }],
+  },
+  previousWeekDailyAnalysis: [{ date: "2026-06-15", actual: { carbsG: 20 } }],
+});
+const noBaseRace = noBasePlan.days.find((day) => day.date === "2026-06-28");
+// No real base → the loading override never runs; the existing race-day practical
+// target stands (here capped by the baseline jump, not the base-relative 325).
+assert.notEqual(noBaseRace?.flags.carb_loading, true, "no base → race day not flagged carb_loading");
+assert.notEqual(noBaseRace?.carbs_g, 325, "no base → carbs are NOT the base-relative loading target");
+
+// Short race (10K): loading=null → NO carb-loading override (by design).
+const shortRacePlan = buildNutritionNextWeekPlan({
+  bodyweightKg: 55,
+  planWeekFrom: "2026-06-22",
+  planWeekTo: "2026-06-28",
+  trainingContext: {
+    cacheStatus: "ok",
+    workouts: [{ date: "2026-06-28", title: "Десятка", type: "race", distanceKm: 10 }],
+  },
+  previousWeekDailyAnalysis: Array.from({ length: 7 }, () => ({ actual: { carbsG: 250 } })),
+});
+const shortRaceDay = shortRacePlan.days.find((day) => day.date === "2026-06-28");
+assert.notEqual(shortRaceDay?.flags.carb_loading, true, "10K race → no carb-loading (loading=null)");
+assert.equal(shortRaceDay?.carbs_g, 330, "10K race keeps intense base carbs (6 г/кг × 55)");
 
 console.log("PASS check-nutrition-next-week-plan-formulas");

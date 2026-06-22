@@ -75,6 +75,8 @@ export type NutritionNextWeekPlanDay = {
     key_workout: boolean;
     day_before_long_run: boolean;
     has_training_context: boolean;
+    /** Carb-loading lead-up day or race day (HM+): carbs lifted from the real base. */
+    carb_loading?: boolean;
   };
   long_run_source: NutritionLongRunSource;
   long_run_confidence: NutritionLongRunConfidence;
@@ -227,6 +229,13 @@ export type NutritionRaceProtocol = {
   gel_before: boolean;
   timing: "morning" | "evening_or_night";
   recovery_after: boolean;
+  /**
+   * Structural flag: when loading applies, the renderer adds a hydration/fibre
+   * reminder for the loading days (drink more; the scale bump is water, not fat;
+   * top up carbs with liquids; ease off raw veg/fibre the day before). Carries no
+   * numbers, so it never trips the prose number validator.
+   */
+  loading_hydration_note: boolean;
 };
 
 export function computeNutritionRaceProtocol(input: {
@@ -257,6 +266,7 @@ export function computeNutritionRaceProtocol(input: {
     gel_before: km != null && km >= 10,
     timing,
     recovery_after: true,
+    loading_hydration_note: loading != null,
   };
 }
 
@@ -575,6 +585,68 @@ export function computeRaceDayTarget(params: {
   };
 }
 
+// Carb-loading base: a logged day is only counted toward the loading base if it
+// has more than this many carb grams. Days at/below are treated as UNDER-recorded
+// (a forgotten dinner), NOT a genuinely starved day — counting them would pull the
+// base down and under-load the athlete before a start. A real low day (60–80 g)
+// stays in and keeps the base honest and conservative.
+export const CARB_LOADING_MIN_LOGGED_G = 50;
+
+// Carb-loading step over the athlete's real base (tunable 0.20–0.30). The loading
+// target lifts the base by this fraction, capped at the protocol corridor's upper
+// bound and never cut below the base.
+export const CARB_LOADING_STEP = 0.3;
+
+/**
+ * Carb-loading BASE from the previous week's REAL per-day carbohydrate intake
+ * (parsed report, not the plan). The base is the MEAN of the usable days — not the
+ * peak, not the upper corridor — so loading lifts from where the athlete actually
+ * eats and never overloads the gut. Days at/below CARB_LOADING_MIN_LOGGED_G are
+ * dropped as under-recorded. Returns null when nothing usable remains (caller then
+ * skips loading and falls back to the standard protocol target).
+ */
+export function computeCarbBaseFromReview(perDayCarbsG: number[]): number | null {
+  const usable = perDayCarbsG.filter(
+    (grams) => typeof grams === "number" && Number.isFinite(grams) && grams > CARB_LOADING_MIN_LOGGED_G
+  );
+  if (usable.length === 0) {
+    return null;
+  }
+  const sum = usable.reduce((acc, grams) => acc + grams, 0);
+  return sum / usable.length;
+}
+
+/**
+ * Carb-loading carb grams for the lead-up days and the race day, anchored on the
+ * athlete's real base (computeCarbBaseFromReview), not an absolute g/kg figure.
+ *
+ * - ceiling = corridor upper bound × weight (HM 8 / M 9 / ultra 10 g/kg — passed
+ *   in from computeNutritionRaceProtocol, never hard-coded here).
+ * - target  = max( min(base × (1 + STEP), ceiling), base ): lift the base by STEP
+ *   but never above the corridor and never below the base (a base above the
+ *   ceiling holds the base — we don't cut someone who already eats plenty).
+ *   The corridor LOWER bound is NOT forced: a target below 6 g/kg is fine when it
+ *   comes from a real, modest base — no artificial jump.
+ * - ramp: leadDays[i] = round(base + (target − base) × i/N) for i = 1..N, so the
+ *   last lead day (the day before the start) reaches the full target.
+ * - raceDay = round(target) (timing/gel/"2–3 h before" stay in the protocol).
+ */
+export function computeCarbLoadingTargets(params: {
+  baseG: number;
+  weightKg: number;
+  corridorUpperGkg: number;
+  leadDayCount: number;
+}): { leadDays: number[]; raceDay: number } {
+  const ceilingG = params.corridorUpperGkg * params.weightKg;
+  const targetG = Math.max(Math.min(params.baseG * (1 + CARB_LOADING_STEP), ceilingG), params.baseG);
+  const n = Math.max(1, Math.round(params.leadDayCount));
+  const leadDays: number[] = [];
+  for (let i = 1; i <= n; i += 1) {
+    leadDays.push(Math.round(params.baseG + (targetG - params.baseG) * (i / n)));
+  }
+  return { leadDays, raceDay: Math.round(targetG) };
+}
+
 // Task 10: periodized daily kcal deficit for goal=lose ("fuel for the work
 // required") — bigger cut in rest/easy, minimal in hard/long. Weekly average
 // lands in the moderate 300–500 kcal/day band.
@@ -889,6 +961,68 @@ function extractPreviousWeekTargets(previousWeekDailyAnalysis: unknown): Previou
   return { overall, byDayType };
 }
 
+/**
+ * Real per-day carbohydrate grams from the previous week's parsed report — the
+ * raw series fed to computeCarbBaseFromReview (which drops under-recorded days).
+ * Mirrors extractPreviousWeekTargets' field resolution (actual.carbsG first).
+ */
+function extractPreviousWeekCarbsPerDay(previousWeekDailyAnalysis: unknown): number[] {
+  const days = Array.isArray(previousWeekDailyAnalysis) ? previousWeekDailyAnalysis : [];
+  const carbs: number[] = [];
+  for (const item of days) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const record = item as Record<string, unknown>;
+    const actual =
+      record.actual && typeof record.actual === "object" && !Array.isArray(record.actual)
+        ? (record.actual as Record<string, unknown>)
+        : {};
+    const value = toFinite(actual.carbsG ?? record.carbsG ?? record.carbs_g);
+    if (value !== null) {
+      carbs.push(value);
+    }
+  }
+  return carbs;
+}
+
+/**
+ * Override a plan day's carbohydrates with the carb-loading target and recompute
+ * kcal from the three macros (4·carb + 4·protein + 9·fat). Protein and fat are
+ * left exactly as the day formula produced them — only carbs (and the kcal that
+ * follow) change. Updates carbs_g/kcal, the per-kg figures, practical_target, the
+ * display ranges, and marks the carb_loading flag. No-op if the day has no macro
+ * numbers (missing bodyweight).
+ */
+function applyCarbLoadingToPlanDay(day: NutritionNextWeekPlanDay, carbsG: number, bodyweightKg: number): void {
+  if (day.carbs_g === null || day.protein_g === null || day.fat_g === null) {
+    return;
+  }
+  const protein = day.protein_g;
+  const fat = day.fat_g;
+  const kcal = roundToNearest(4 * carbsG + 4 * protein + 9 * fat, 50);
+  day.carbs_g = carbsG;
+  day.carbs_g_per_kg = Number((carbsG / bodyweightKg).toFixed(2));
+  day.target_kcal = kcal;
+  day.kcal_per_kg = Number((kcal / bodyweightKg).toFixed(1));
+  if (day.practical_target) {
+    day.practical_target = {
+      ...day.practical_target,
+      carbs_g: carbsG,
+      carbs_g_per_kg: day.carbs_g_per_kg,
+      target_kcal: kcal,
+      kcal_per_kg: day.kcal_per_kg,
+    };
+  }
+  day.display_target = {
+    kcal_min: roundToNearest(kcal - 50, 50),
+    kcal_max: roundToNearest(kcal + 50, 50),
+    carbs_g_min: roundToNearest(carbsG - 20, 10),
+    carbs_g_max: roundToNearest(carbsG + 20, 10),
+  };
+  day.flags.carb_loading = true;
+}
+
 function applyPracticalTarget(input: {
   dayType: NutritionPlanDayType;
   bodyweightKg: number | null;
@@ -1138,6 +1272,7 @@ export function buildNutritionNextWeekPlan(params: {
           trainingType === "race",
         day_before_long_run: dayBeforeLongRun,
         has_training_context: hasWorkout,
+        carb_loading: false,
       },
       long_run_source: trainingType === "long_run" ? primaryWorkout?.longRunSource ?? "none" : "none",
       long_run_confidence: trainingType === "long_run" ? primaryWorkout?.longRunConfidence ?? "low" : "low",
@@ -1198,6 +1333,45 @@ export function buildNutritionNextWeekPlan(params: {
         longDay.display_target.carbs_g_max ?? longDay.display_target.carbs_g_min,
         preLongDay.display_target.carbs_g_max ?? preLongDay.display_target.carbs_g_min
       );
+    }
+  }
+
+  // ⭐ Carb LOADING (HM+): on the lead-up days and the race day, lift carbs from the
+  // athlete's REAL prior-week base up the protocol corridor, so the plan numbers
+  // match the "loading" prose. Only when the protocol prescribes loading (≥21 km)
+  // and a real base exists — otherwise the standard race-day target (ceiling) and
+  // formula numbers stand (fallback). Protein stays race-week (deficit already off
+  // on these days); fat is left as the day formula computed it (no clamp — it falls
+  // as a % share by itself); kcal is recomputed from the three macros.
+  const loadingBodyweight = params.bodyweightKg;
+  const carbLoadingBase = computeCarbBaseFromReview(
+    extractPreviousWeekCarbsPerDay(params.previousWeekDailyAnalysis)
+  );
+  if (carbLoadingBase !== null && loadingBodyweight && loadingBodyweight > 0) {
+    for (const workout of parsedWorkouts) {
+      if (workout.dayType !== "race") {
+        continue;
+      }
+      const protocol = computeNutritionRaceProtocol({ distanceKm: workout.distanceKm, title: workout.title });
+      if (!protocol.loading) {
+        continue;
+      }
+      const n = protocol.loading.days;
+      const targets = computeCarbLoadingTargets({
+        baseG: carbLoadingBase,
+        weightKg: loadingBodyweight,
+        corridorUpperGkg: protocol.loading.g_per_kg_high,
+        leadDayCount: n,
+      });
+      for (let offset = -n; offset <= 0; offset += 1) {
+        const date = addDays(workout.date, offset);
+        const day = days.find((item) => item.date === date);
+        if (!day) {
+          continue; // lead day falls outside the plan week
+        }
+        const carbsG = offset === 0 ? targets.raceDay : targets.leadDays[offset + n];
+        applyCarbLoadingToPlanDay(day, carbsG, loadingBodyweight);
+      }
     }
   }
 
