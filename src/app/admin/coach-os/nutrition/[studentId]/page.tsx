@@ -60,7 +60,9 @@ import {
   formatNutritionTpNextWeekContextLine,
   NUTRITION_CONTEXT_ITEM_TYPE_LABELS,
   pickDefaultNutritionReport,
+  formatBusinessWindowBadge,
 } from "@/features/nutrition/admin-labels";
+import { getTrainingPeaksBusinessChatLastSeenByChatId } from "@/features/trainingpeaks/repository";
 import {
   NUTRITION_FILE_PREVIEW_COOKIE,
   parseNutritionFileUploadPreview,
@@ -270,6 +272,13 @@ export default async function CoachOsNutritionStudentCardPage({
   if (!card.student) {
     notFound();
   }
+
+  // Business 24h-window status for the "send form" button (open/closed at render).
+  const windowLastSeenAt = card.student.telegramChatId
+    ? (await getTrainingPeaksBusinessChatLastSeenByChatId([card.student.telegramChatId])).get(
+        card.student.telegramChatId
+      ) ?? null
+    : null;
 
   // Task: history + archive screen — reports (incl. archived) and weekly analyses.
   const { listNutritionReportsForStudent, listNutritionWeeklyAnalysesForStudentHistory } = await import(
@@ -616,9 +625,19 @@ export default async function CoachOsNutritionStudentCardPage({
               Отправить форму этому ученику
             </FormActionButton>
           </form>
-          <span className="admin-muted">
-            Ученик получит кнопку загрузки отчёта о питании в личный чат.
-          </span>
+          {(() => {
+            const w = formatBusinessWindowBadge(windowLastSeenAt);
+            return (
+              <span className="admin-muted" style={{ fontSize: 13 }}>
+                {w.icon} {w.label}
+                {w.isOpen
+                  ? " — дойдёт сейчас."
+                  : w.unknown
+                    ? " — дойдёт, когда ученица напишет."
+                    : " — дойдёт, когда ученица напишет (окно 24 ч)."}
+              </span>
+            );
+          })()}
         </div>
       </div>
 

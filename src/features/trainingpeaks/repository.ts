@@ -2916,6 +2916,40 @@ export async function getTrainingPeaksBusinessChatByChatId(
   return mapTrainingPeaksBusinessChatRow(data as TrainingPeaksBusinessChatRow);
 }
 
+/**
+ * Latest `last_seen_at` per chat_id for the given chat ids — used to show the
+ * Telegram business 24h-window status next to "send form" in the admin. Returns
+ * the raw ISO timestamp (open/closed is computed at render time against `now`).
+ */
+export async function getTrainingPeaksBusinessChatLastSeenByChatId(
+  chatIds: string[]
+): Promise<Map<string, string>> {
+  const normalized = [...new Set(chatIds.map((id) => id?.trim()).filter((id): id is string => Boolean(id)))];
+  if (normalized.length === 0) {
+    return new Map();
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_telegram_business_chats")
+    .select("chat_id, last_seen_at")
+    .in("chat_id", normalized);
+
+  if (error) {
+    throw new Error(`Failed to load business chat last_seen_at: ${error.message}`);
+  }
+
+  const map = new Map<string, string>();
+  for (const row of (data ?? []) as Array<{ chat_id: string; last_seen_at: string }>) {
+    const existing = map.get(row.chat_id);
+    // Keep the most recent last_seen_at if duplicates exist across connections.
+    if (!existing || row.last_seen_at > existing) {
+      map.set(row.chat_id, row.last_seen_at);
+    }
+  }
+  return map;
+}
+
 export async function listTrainingPeaksBusinessChatsForTelegramLinking(
   limit = 500
 ): Promise<TrainingPeaksBusinessChat[]> {

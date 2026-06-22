@@ -8,6 +8,7 @@ import type {
   TrainingPeaksWorkoutCacheRow,
 } from "@/features/trainingpeaks/repository";
 import {
+  getTrainingPeaksBusinessChatLastSeenByChatId,
   getTrainingPeaksStudentById,
   listActiveTrainingPeaksStudentMemoryItems,
   listTrainingPeaksWorkoutCacheForStudentDateRange,
@@ -496,6 +497,8 @@ export type NutritionDashboardRow = {
   latestReportWeekFrom: string | null;
   latestReportWeekTo: string | null;
   nextActionHref: string | null;
+  /** Raw last inbound business message time (ISO); open/closed computed at render. */
+  windowLastSeenAt: string | null;
 };
 
 export type NutritionReportWithMacros = {
@@ -1666,12 +1669,17 @@ export async function listNutritionDashboardRows(
 ): Promise<NutritionDashboardRow[]> {
   const adminStudents = await listTrainingPeaksAdminStudents("all");
   const studentIds = adminStudents.map((student) => student.id);
-  const [profilesByStudent, latestReportsByStudent, latestAnalysesByStudent, dailyMacroCounts] = await Promise.all([
-    getNutritionProfilesByStudent(studentIds),
-    getLatestReportsByStudent(studentIds),
-    getLatestAnalysesByStudent(studentIds),
-    getDailyMacroCountsByStudent(studentIds),
-  ]);
+  const chatIds = adminStudents
+    .map((student) => student.telegramChatId)
+    .filter((id): id is string => Boolean(id));
+  const [profilesByStudent, latestReportsByStudent, latestAnalysesByStudent, dailyMacroCounts, windowByChatId] =
+    await Promise.all([
+      getNutritionProfilesByStudent(studentIds),
+      getLatestReportsByStudent(studentIds),
+      getLatestAnalysesByStudent(studentIds),
+      getDailyMacroCountsByStudent(studentIds),
+      getTrainingPeaksBusinessChatLastSeenByChatId(chatIds),
+    ]);
 
   let rows: NutritionDashboardRow[] = adminStudents.map((student) => {
     const profile = profilesByStudent.get(student.id) ?? null;
@@ -1701,6 +1709,9 @@ export async function listNutritionDashboardRows(
       latestReportId: report?.id ?? null,
       latestReportWeekFrom: report?.weekFrom ?? null,
       latestReportWeekTo: report?.weekTo ?? null,
+      windowLastSeenAt: student.telegramChatId
+        ? windowByChatId.get(student.telegramChatId) ?? null
+        : null,
       nextActionHref: buildNutritionNextActionHref({
         studentId: student.id,
         nextAction,

@@ -11,6 +11,7 @@ import {
 import { listNutritionAdminDashboardRows } from "@/features/nutrition/admin";
 import {
   buildNutritionDashboardOpenHref,
+  formatBusinessWindowBadge,
   formatNutritionCohortStatus,
   formatNutritionNextAction,
   formatNutritionSafetyFlag,
@@ -334,16 +335,34 @@ export default async function CoachOsNutritionDashboardPage({
                       >
                         Открыть
                       </Link>
-                      <form action={sendNutritionFormAction}>
-                        <input type="hidden" name="studentId" value={row.studentId} />
-                        <input type="hidden" name="redirectTo" value={redirectTo} />
-                        <FormActionButton
-                          className="admin-button admin-button-secondary admin-button-compact"
-                          pendingText="Отправка…"
-                        >
-                          Отправить форму
-                        </FormActionButton>
-                      </form>
+                      <div className="admin-inline-actions admin-inline-actions-compact">
+                        <form action={sendNutritionFormAction}>
+                          <input type="hidden" name="studentId" value={row.studentId} />
+                          <input type="hidden" name="redirectTo" value={redirectTo} />
+                          <FormActionButton
+                            className="admin-button admin-button-secondary admin-button-compact"
+                            pendingText="Отправка…"
+                          >
+                            Отправить форму
+                          </FormActionButton>
+                        </form>
+                        {(() => {
+                          const w = formatBusinessWindowBadge(row.windowLastSeenAt);
+                          return (
+                            <span
+                              className="admin-muted"
+                              style={{ fontSize: 12, whiteSpace: "nowrap" }}
+                              title={
+                                w.isOpen
+                                  ? "Окно открыто — форма дойдёт сейчас."
+                                  : "Окно закрыто — форма дойдёт, когда ученица напишет."
+                              }
+                            >
+                              {w.icon} {w.label}
+                            </span>
+                          );
+                        })()}
+                      </div>
                     </div>
                   </td>
                 </tr>

@@ -586,3 +586,49 @@ export function formatNutritionExtractionWarning(warning: string): string {
 }
 
 export { NUTRITION_FILE_UPLOAD_LIMIT_HINT } from "@/features/nutrition/file-upload-limits";
+
+export type BusinessWindowBadge = {
+  icon: string;
+  label: string;
+  /** true only when the 24h window is open and a message can be sent now. */
+  isOpen: boolean;
+  /** true when there is no business-chat record at all. */
+  unknown: boolean;
+};
+
+/** Human-readable "time ago" in Russian: «только что» / «N ч назад» / «вчера» / «N дн. назад». */
+function formatRussianTimeAgo(fromIso: string, now: number): string {
+  const ms = now - new Date(fromIso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) {
+    return "только что";
+  }
+  const minutes = Math.floor(ms / 60000);
+  if (minutes < 1) return "только что";
+  if (minutes < 60) return `${minutes} мин назад`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} ч назад`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "вчера";
+  return `${days} дн. назад`;
+}
+
+/**
+ * Telegram business 24h-window badge for the "send form" UI. Status is computed
+ * against `now` at render time (never cached) — the window opens on the student's
+ * incoming message and closes 24h later.
+ */
+export function formatBusinessWindowBadge(
+  lastSeenAt: string | null,
+  now: number = Date.now()
+): BusinessWindowBadge {
+  if (!lastSeenAt) {
+    return { icon: "⚪", label: "нет данных", isOpen: false, unknown: true };
+  }
+  const ageMs = now - new Date(lastSeenAt).getTime();
+  const ago = formatRussianTimeAgo(lastSeenAt, now);
+  const H24 = 24 * 60 * 60 * 1000;
+  if (Number.isFinite(ageMs) && ageMs <= H24) {
+    return { icon: "🟢", label: `окно открыто (${ago})`, isOpen: true, unknown: false };
+  }
+  return { icon: "🔴", label: `окно закрыто (${ago})`, isOpen: false, unknown: false };
+}
