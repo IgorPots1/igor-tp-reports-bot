@@ -33,10 +33,16 @@ function buildLinkMessage(input: {
   deepLink: string;
   request: string;
   linkLabel: string;
+  /** Greeting is dropped for the review (it almost always follows the form msg). */
+  includeGreeting?: boolean;
 }): string {
-  const greeting = resolveGreeting(input.formality);
   const link = `<a href="${escapeHtml(input.deepLink)}">${escapeHtml(input.linkLabel)}</a>`;
-  return `${escapeHtml(greeting)}\n\n${escapeHtml(input.request)}\n👉 ${link}`;
+  const body = `${escapeHtml(input.request)}\n👉 ${link}`;
+  if (input.includeGreeting === false) {
+    return body;
+  }
+  const greeting = resolveGreeting(input.formality);
+  return `${escapeHtml(greeting)}\n\n${body}`;
 }
 
 /**
@@ -99,8 +105,10 @@ async function sendMiniAppLinkToStudent(
       ? buildLinkMessage({
           formality: student.telegramFormality,
           deepLink,
-          request: "Разбор питания за неделю готов:",
+          request: "Разбор за неделю готов:",
           linkLabel: "Открыть разбор",
+          // No greeting — the review almost always follows the form message.
+          includeGreeting: false,
         })
       : buildLinkMessage({
           formality: student.telegramFormality,
