@@ -1975,6 +1975,7 @@ export default async function CoachOsNutritionStudentCardPage({
                     <th>Статус</th>
                     <th>Состояние</th>
                     <th />
+                    <th />
                   </tr>
                 </thead>
                 <tbody>
@@ -1986,6 +1987,27 @@ export default async function CoachOsNutritionStudentCardPage({
                       <td>{formatNutritionCompactDate(analysis.updatedAt)}</td>
                       <td>{formatNutritionStatus(analysis.status, "analysis")}</td>
                       <td>{analysis.archivedAt ? "в архиве" : "активен"}</td>
+                      <td>
+                        {/* Switch the whole card to THIS review's week (week selector). */}
+                        {analysis.id === selectedReviewId ? (
+                          <span className="admin-muted">открыт</span>
+                        ) : analysis.archivedAt ? (
+                          <span className="admin-muted">—</span>
+                        ) : (
+                          <Link
+                            className="admin-backlink"
+                            href={buildNutritionStudentCardHref({
+                              studentId,
+                              weekFrom: analysis.weekFrom,
+                              weekTo: analysis.weekTo,
+                              reportId: analysis.reportId ?? null,
+                              reviewId: analysis.id,
+                            })}
+                          >
+                            Открыть
+                          </Link>
+                        )}
+                      </td>
                       <td>
                         <form action={archiveNutritionAnalysisAction}>
                           <input type="hidden" name="studentId" value={studentId} />
