@@ -9,6 +9,7 @@ import { isNutritionLongEnduranceWorkout, isNutritionLongRunWorkout, isEasyLight
 import type { NutritionNextWeekPlan, NutritionNextWeekPlanDay } from "@/features/nutrition/weekly-plan-formulas";
 
 export type NutritionNarrativeWorkoutRole =
+  | "race"
   | "key_interval"
   | "key_tempo"
   | "long_run"
@@ -161,6 +162,9 @@ const INTERVAL_DISTANCE_PATTERN = /\b\d+\s*[xх]\s*\d{2,4}\s*(м|m)?/i;
 const INTERVAL_KEYWORD_PATTERN = /(интервал|interval|vo2|повтор|repeats?)/i;
 
 const KEY_ROLE_PRIORITY: NutritionNarrativeWorkoutRole[] = [
+  // A race is THE event of the week — it outranks every training role so the
+  // week's "key work" is the start, not a pre-race interval/tempo session.
+  "race",
   "long_endurance",
   "key_interval",
   "key_tempo",
@@ -348,7 +352,7 @@ export function resolveNutritionNarrativeWorkoutRole(input: {
   }
 
   if (trainingType === "race") {
-    return { role: "key_tempo", reason: "race_day" };
+    return { role: "race", reason: "race_day" };
   }
 
   if (trainingType === "hard") {
@@ -602,7 +606,13 @@ export function resolveWeekNarrativeDayRoles(
   for (const day of days) {
     const { role, reason } = resolveNutritionNarrativeWorkoutRole(day);
     resolved.set(day.date, { role, isKey: false, reason });
-    if (role === "key_interval" || role === "key_tempo" || role === "long_run" || role === "long_endurance") {
+    if (
+      role === "race" ||
+      role === "key_interval" ||
+      role === "key_tempo" ||
+      role === "long_run" ||
+      role === "long_endurance"
+    ) {
       if (!weekKeyRole || KEY_ROLE_PRIORITY.indexOf(role) < KEY_ROLE_PRIORITY.indexOf(weekKeyRole)) {
         weekKeyRole = role;
         weekKeyDate = day.date;
@@ -768,6 +778,7 @@ function isLongEnduranceTrainingType(trainingType: string): boolean {
 
 function isRunLikeAfterLongDay(role: NutritionNarrativeWorkoutRole): boolean {
   return (
+    role === "race" ||
     role === "combined_load" ||
     role === "key_interval" ||
     role === "key_tempo" ||
@@ -868,7 +879,7 @@ function hasLowCarbs(macro: MacroGuardrailStatuses, loadDay: boolean): boolean {
 }
 
 function isKeyLoadRole(role: NutritionNarrativeWorkoutRole): boolean {
-  return role === "key_interval" || role === "key_tempo" || role === "combined_load" || role === "long_run" || role === "long_endurance";
+  return role === "race" || role === "key_interval" || role === "key_tempo" || role === "combined_load" || role === "long_run" || role === "long_endurance";
 }
 
 function capitalizeRu(value: string): string {
@@ -880,6 +891,10 @@ function capitalizeRu(value: string): string {
 
 function rolePrefixSentence(roleInfo: NutritionNarrativeDayRoleInfo, athleteTrainingLabel: string): string | null {
   switch (roleInfo.role) {
+    case "race":
+      return roleInfo.isKey
+        ? `Это главный старт недели — забег (${athleteTrainingLabel}).`
+        : `Это забег (${athleteTrainingLabel}).`;
     case "key_interval":
       return roleInfo.isKey
         ? "Это ключевая интервальная работа недели."
@@ -1054,7 +1069,13 @@ function composeNarrativeFromParts(input: {
   if (ordered.length === 0) {
     return null;
   }
-  const detailBudget = roleInfo.role === "key_interval" || roleInfo.role === "key_tempo" || roleInfo.role === "combined_load" ? 3 : 4;
+  const detailBudget =
+    roleInfo.role === "race" ||
+    roleInfo.role === "key_interval" ||
+    roleInfo.role === "key_tempo" ||
+    roleInfo.role === "combined_load"
+      ? 3
+      : 4;
   const sliced = ordered.slice(0, detailBudget);
   let normalized = sliced
     .map((line) => {
@@ -1168,6 +1189,10 @@ function buildLowEnergyPrimarySentence(input: {
   const { roleInfo, athleteTrainingLabel, state, patternOccurrence } = input;
   const keyPrefix = roleInfo.isKey ? "ключевая " : "";
 
+  if (roleInfo.role === "race") {
+    return `Это забег (${athleteTrainingLabel}) — главный старт недели. Под него важны углеводы накануне и в день старта; здесь топлива было маловато.`;
+  }
+
   if (roleInfo.role === "key_interval") {
     if (patternOccurrence >= 3) {
       return "Интервальный день снова вышел низким по энергии.";
@@ -1264,6 +1289,8 @@ function buildLowEnergyPrimarySentence(input: {
 
 function resolveLowEnergyPattern(roleInfo: NutritionNarrativeDayRoleInfo): NarrativePatternId {
   switch (roleInfo.role) {
+    case "race":
+      return "low_energy_key_tempo";
     case "key_interval":
       return "low_energy_key_interval";
     case "key_tempo":
