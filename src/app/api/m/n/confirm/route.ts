@@ -82,20 +82,30 @@ export async function POST(request: NextRequest): Promise<Response> {
     macrosSaved: result.macros.length,
   });
 
-  // Notify Igor via all configured coach chat IDs
-  const coachChatIds = getTrainingPeaksCoachChatIds();
-  const weekRange = formatNutritionCompactWeekRange(result.effectiveWeekFrom, result.effectiveWeekTo);
-  const noticeText =
-    `${student.studentName} загрузила отчёт о питании за ${weekRange}` +
-    ` (${result.macros.length} дн., через Telegram).`;
+  // Notify Igor only on a CONTENTFUL save (at least one parsed day). An empty
+  // 0-day save still creates the report row (visible in admin) — but a "(0 дн.)"
+  // notification is noise, so it is suppressed. Notification ≠ persistence: the
+  // report is already saved above regardless of this guard.
+  if (result.macros.length > 0) {
+    const coachChatIds = getTrainingPeaksCoachChatIds();
+    const weekRange = formatNutritionCompactWeekRange(result.effectiveWeekFrom, result.effectiveWeekTo);
+    const noticeText =
+      `${student.studentName} загрузила отчёт о питании за ${weekRange}` +
+      ` (${result.macros.length} дн., через Telegram).`;
 
-  await Promise.allSettled(
-    coachChatIds.map((chatId) =>
-      sendTelegramMessage(chatId, noticeText).catch((err) => {
-        console.warn("[miniapp.confirm] coach notify failed", { chatId, error: String(err) });
-      })
-    )
-  );
+    await Promise.allSettled(
+      coachChatIds.map((chatId) =>
+        sendTelegramMessage(chatId, noticeText).catch((err) => {
+          console.warn("[miniapp.confirm] coach notify failed", { chatId, error: String(err) });
+        })
+      )
+    );
+  } else {
+    console.info("[miniapp.confirm] coach notify skipped — 0 parsed days", {
+      studentId: student.id,
+      reportId: result.report.id,
+    });
+  }
 
   return jsonResponse(200, { ok: true, reportId: result.report.id });
 }
