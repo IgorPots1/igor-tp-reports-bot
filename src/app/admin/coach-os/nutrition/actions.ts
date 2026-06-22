@@ -22,7 +22,10 @@ import {
   formatNutritionStatus,
 } from "@/features/nutrition/admin-labels";
 import { getNutritionPlanTargetWeekToday } from "@/features/nutrition/plan-week-policy";
-import { sendNutritionFormButtonToStudent } from "@/features/nutrition/send-nutrition-form";
+import {
+  sendNutritionFormButtonToStudent,
+  sendNutritionReviewLinkToStudent,
+} from "@/features/nutrition/send-nutrition-form";
 import {
   NUTRITION_FILE_PREVIEW_COOKIE,
   serializeNutritionFileUploadPreview,
@@ -721,6 +724,22 @@ export async function sendNutritionFormAction(formData: FormData): Promise<void>
 
   if (result.ok) {
     redirect(withNotice(redirectTo, "notice", `Форма отправлена: ${result.studentName}.`));
+  }
+  redirect(withNotice(redirectTo, "error", `Не отправлено: ${result.reason}`));
+}
+
+// Send the "review ready" deep link to ONE student (personal). The button is
+// shown only for an approved review; this is the delivery side-effect.
+export async function sendNutritionReviewLinkAction(formData: FormData): Promise<void> {
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const studentId = getRequiredFormValue(formData, "studentId");
+
+  const result = await sendNutritionReviewLinkToStudent(studentId);
+  revalidateNutritionPaths(studentId);
+
+  if (result.ok) {
+    redirect(withNotice(redirectTo, "notice", `Разбор отправлен: ${result.studentName}.`));
   }
   redirect(withNotice(redirectTo, "error", `Не отправлено: ${result.reason}`));
 }

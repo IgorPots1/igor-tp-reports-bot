@@ -23,6 +23,7 @@ import {
   saveNutritionCoachContextAction,
   saveNutritionProfileAction,
   sendNutritionFormAction,
+  sendNutritionReviewLinkAction,
 } from "@/app/admin/coach-os/nutrition/actions";
 import ConfirmSubmitButton from "@/app/admin/coach-os/nutrition/ConfirmSubmitButton";
 import {
@@ -1055,6 +1056,35 @@ export default async function CoachOsNutritionStudentCardPage({
                   draft={combinedMessage.renderResult.text}
                   generationMode={displayPlan?.generationMode ?? generationMode}
                 />
+              )}
+
+              {/* Send the review deep link — only for an APPROVED review. */}
+              {card.weeklyAnalysis?.status === "approved_for_copy" ? (
+                <div
+                  className="admin-inline-actions"
+                  style={{ marginTop: 14, flexWrap: "wrap", gap: 8 }}
+                >
+                  <form action={sendNutritionReviewLinkAction}>
+                    <input type="hidden" name="studentId" value={studentId} />
+                    <input type="hidden" name="redirectTo" value={studentCardPath} />
+                    <FormActionButton className="admin-button" pendingText="Отправка…">
+                      Отправить разбор ученику
+                    </FormActionButton>
+                  </form>
+                  {(() => {
+                    const w = formatBusinessWindowBadge(windowLastSeenAt);
+                    return (
+                      <span className="admin-muted" style={{ fontSize: 13 }}>
+                        {w.icon} {w.label}
+                        {w.isOpen ? " — дойдёт сейчас." : " — дойдёт, когда ученица напишет (окно 24 ч)."}
+                      </span>
+                    );
+                  })()}
+                </div>
+              ) : (
+                <p className="admin-muted" style={{ marginTop: 12 }}>
+                  Отправить разбор ученику можно после одобрения (статус «approved_for_copy»).
+                </p>
               )}
             </>
           ) : (

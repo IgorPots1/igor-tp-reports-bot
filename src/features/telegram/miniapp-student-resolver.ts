@@ -85,8 +85,10 @@ export async function resolveMiniAppStudent(
   }
 
   // 2. Not linked yet → use the start_param (student row id) from the signed
-  //    initData to auto-link.
-  const studentRowId = parseTelegramInitDataStartParam(input.initData);
+  //    initData to auto-link. The review deep link prefixes the row id with
+  //    "r_" (form uses the bare id) — strip it so auto-link works for both.
+  const rawStartParam = parseTelegramInitDataStartParam(input.initData);
+  const studentRowId = rawStartParam?.startsWith("r_") ? rawStartParam.slice(2) : rawStartParam;
   if (!studentRowId) {
     return {
       ok: false,

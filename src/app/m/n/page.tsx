@@ -2,8 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import ReviewScreen from "@/app/m/n/ReviewScreen";
+
 type TelegramWebApp = {
   initData: string;
+  initDataUnsafe?: { start_param?: string };
   ready: () => void;
   close: () => void;
   expand: () => void;
@@ -122,6 +125,9 @@ function formatIsoToDisplay(iso: string): string {
 export default function NutritionMiniApp() {
   const [step, setStep] = useState<Step>("idle");
   const [initData, setInitData] = useState<string>("");
+  // Review mode: the t.me deep link uses startapp=r_<uuid> (form uses bare uuid).
+  // Routing only — the server re-validates start_param from the signed initData.
+  const [isReviewMode, setIsReviewMode] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [preview, setPreview] = useState<UploadPreview | null>(null);
   const [manualWeekFrom, setManualWeekFrom] = useState("");
@@ -137,8 +143,13 @@ export default function NutritionMiniApp() {
       // initData carries the signed start_param (student row id) from the
       // t.me direct link — the server reads it after validating the hash.
       setInitData(tg.initData);
+      setIsReviewMode((tg.initDataUnsafe?.start_param ?? "").startsWith("r_"));
     }
   }, []);
+
+  if (isReviewMode) {
+    return <ReviewScreen initData={initData} />;
+  }
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     // FatSecret may split a week across several PDFs — append picked files,

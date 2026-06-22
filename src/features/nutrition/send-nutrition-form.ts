@@ -20,57 +20,56 @@ function escapeHtml(value: string): string {
 }
 
 /**
- * Greeting + formality-aware request + the Mini App deep link as an HTML link.
+ * Greeting + formality-aware body + the Mini App deep link as an HTML link.
  *
  * The link lives in the MESSAGE TEXT (parse_mode=HTML), not an inline button:
  * named Mini App links require a web_app button, which Telegram rejects in
- * business messages (BUTTON_TYPE_INVALID). An HTML <a> link renders as tappable
- * "Открыть форму" (the long URL hidden) and is allowed in business text. The
- * tapped link opens the Mini App with the same signed start_param, so
- * auto-linking still works. HTML is used (not MarkdownV2) — the bot client
- * already supports parse_mode HTML and escaping is simpler (&, <, > only).
+ * business messages (BUTTON_TYPE_INVALID). An HTML <a> link renders as a tappable
+ * label (the long URL hidden) and is allowed in business text. The tapped link
+ * opens the Mini App with the same signed start_param, so auto-linking works.
  */
-function buildFormMessage(formality: TrainingPeaksTelegramFormality, deepLink: string): string {
-  const greeting = resolveGreeting(formality);
-  const request =
-    formality === "vy"
-      ? "Загрузите отчёт о питании за прошедшую неделю:"
-      : "Загрузи отчёт о питании за прошедшую неделю:";
-  const link = `<a href="${escapeHtml(deepLink)}">Открыть форму</a>`;
-  return `${escapeHtml(greeting)}\n\n${escapeHtml(request)}\n👉 ${link}`;
+function buildLinkMessage(input: {
+  formality: TrainingPeaksTelegramFormality;
+  deepLink: string;
+  request: string;
+  linkLabel: string;
+}): string {
+  const greeting = resolveGreeting(input.formality);
+  const link = `<a href="${escapeHtml(input.deepLink)}">${escapeHtml(input.linkLabel)}</a>`;
+  return `${escapeHtml(greeting)}\n\n${escapeHtml(input.request)}\n👉 ${link}`;
 }
 
 /**
- * Builds the t.me Mini App direct link. The student's row id (UUID) is passed
- * as `startapp` — UUID chars [0-9a-f-] are startapp-safe and Telegram folds
- * start_param into the signed initData, so it needs no extra signature.
+ * Builds the t.me Mini App direct link. The student's row id (UUID) is passed as
+ * `startapp` — UUID chars [0-9a-f-] are startapp-safe and Telegram folds
+ * start_param into the signed initData, so it needs no extra signature. The
+ * review screen uses an `r_` prefix; the form uses the bare id.
  */
-async function buildMiniAppDeepLink(studentRowId: string): Promise<string> {
+async function buildMiniAppDeepLink(studentRowId: string, mode: "form" | "review"): Promise<string> {
   const shortName = process.env.TELEGRAM_MINIAPP_SHORT_NAME?.trim();
   if (!shortName) {
     throw new Error("TELEGRAM_MINIAPP_SHORT_NAME is not set (BotFather /newapp short name).");
   }
   const username = await getTelegramBotUsername();
-  return `https://t.me/${username}/${shortName}?startapp=${studentRowId}`;
+  const startParam = mode === "review" ? `r_${studentRowId}` : studentRowId;
+  return `https://t.me/${username}/${shortName}?startapp=${startParam}`;
 }
 
 /**
- * Sends the nutrition upload-form link to one student's Business DM.
+ * Shared delivery for the mini-app links (form upload + review). Resolves the
+ * student UUID-first (admin UI passes student.id) then by slug (curl), gates on
+ * MINIAPP_ENABLED, builds the deep link, and sends it as business text (HTML,
+ * link preview off). Every failure is logged (lesson #4), not just returned.
  *
- * `identifier` may be the student ROW id (UUID) — what the admin UI passes
- * (row.studentId = student.id) — or the public text slug — what curl callers
- * use (?studentId=aleksandra-kasianenko). Resolve by UUID first, then fall back
- * to slug, so both paths work. Returns a structured result (never throws for
- * expected conditions) so callers surface a clear message instead of failing
- * silently.
+ * `identifier` may be the student ROW id (UUID) or the public text slug.
  */
-export async function sendNutritionFormButtonToStudent(
-  identifier: string
+async function sendMiniAppLinkToStudent(
+  identifier: string,
+  mode: "form" | "review"
 ): Promise<SendNutritionFormResult> {
-  // Every failure is logged (not just returned) so silent sends show up in
-  // Vercel runtime logs, not only in the admin notice banner (lesson #4).
+  const logTag = mode === "review" ? "[nutrition.send-review]" : "[nutrition.send-form]";
   const fail = (reason: string): SendNutritionFormResult => {
-    console.error("[nutrition.send-form] failed", { identifier, reason });
+    console.error(`${logTag} failed`, { identifier, reason });
     return { ok: false, reason };
   };
 
@@ -88,35 +87,60 @@ export async function sendNutritionFormButtonToStudent(
     return fail(`У «${student.studentName}» нет Telegram-чата.`);
   }
 
-  let miniAppUrl: string;
+  let deepLink: string;
   try {
-    miniAppUrl = await buildMiniAppDeepLink(student.id);
+    deepLink = await buildMiniAppDeepLink(student.id, mode);
   } catch (err) {
     return fail(err instanceof Error ? err.message : "Не настроена ссылка mini app.");
   }
 
+  const message =
+    mode === "review"
+      ? buildLinkMessage({
+          formality: student.telegramFormality,
+          deepLink,
+          request: "Разбор питания за неделю готов:",
+          linkLabel: "Открыть разбор",
+        })
+      : buildLinkMessage({
+          formality: student.telegramFormality,
+          deepLink,
+          request:
+            student.telegramFormality === "vy"
+              ? "Загрузите отчёт о питании за прошедшую неделю:"
+              : "Загрузи отчёт о питании за прошедшую неделю:",
+          linkLabel: "Открыть форму",
+        });
+
   try {
-    // Plain text with the deep link — no reply_markup. Inline buttons for named
-    // Mini Apps are not allowed in business messages; a text link is.
-    await sendTelegramMessageStrict(
-      student.telegramChatId,
-      buildFormMessage(student.telegramFormality, miniAppUrl),
-      {
-        businessConnectionId: getRequiredTrainingPeaksBusinessConnectionId(),
-        parseMode: "HTML",
-        // No Mini App preview card under the link — Igor wants clean text.
-        disableLinkPreview: true,
-      }
-    );
+    await sendTelegramMessageStrict(student.telegramChatId, message, {
+      businessConnectionId: getRequiredTrainingPeaksBusinessConnectionId(),
+      parseMode: "HTML",
+      disableLinkPreview: true,
+    });
   } catch (err) {
     return fail(err instanceof Error ? err.message : "Не удалось отправить сообщение.");
   }
 
-  console.info("[nutrition.send-form] sent", {
+  console.info(`${logTag} sent`, {
     studentId: student.studentId,
     studentName: student.studentName,
     chatId: student.telegramChatId,
   });
 
   return { ok: true, studentName: student.studentName };
+}
+
+/** Sends the nutrition upload-form link to a student's Business DM. */
+export async function sendNutritionFormButtonToStudent(
+  identifier: string
+): Promise<SendNutritionFormResult> {
+  return sendMiniAppLinkToStudent(identifier, "form");
+}
+
+/** Sends the "review ready" link (r_ deep link) to a student's Business DM. */
+export async function sendNutritionReviewLinkToStudent(
+  identifier: string
+): Promise<SendNutritionFormResult> {
+  return sendMiniAppLinkToStudent(identifier, "review");
 }
