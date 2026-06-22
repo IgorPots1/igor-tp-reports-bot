@@ -973,6 +973,28 @@ export async function getNutritionStudentDefaultWeek(
   studentId: string
 ): Promise<{ weekFrom: string; weekTo: string } | null> {
   const supabase = createSupabaseServerClient();
+  // PRIORITY: the latest uploaded REPORT week, from the SAME non-archived set the
+  // dashboard list uses (archived_at IS NULL, newest by created_at). A review is
+  // always built from a report, so its week ≤ the report week; defaulting to the
+  // latest analysis landed the card on an older week and a freshly uploaded report
+  // (for a newer week than the last review) looked "missing". Report-first lands
+  // the card on what was actually just uploaded, matching the list.
+  const { data: report, error: reportError } = await supabase
+    .from("nutrition_reports")
+    .select("week_from, week_to")
+    .eq("student_id", studentId)
+    .is("archived_at", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (reportError) {
+    throw new Error(`Failed to load default nutrition report week for ${studentId}: ${reportError.message}`);
+  }
+  if (report) {
+    return { weekFrom: report.week_from, weekTo: report.week_to };
+  }
+
+  // FALLBACK: only when the student has no reports at all — use the latest review week.
   const { data: analysis, error: analysisError } = await supabase
     .from("nutrition_weekly_analyses")
     .select("week_from, week_to")
@@ -985,20 +1007,6 @@ export async function getNutritionStudentDefaultWeek(
   }
   if (analysis) {
     return { weekFrom: analysis.week_from, weekTo: analysis.week_to };
-  }
-
-  const { data: report, error: reportError } = await supabase
-    .from("nutrition_reports")
-    .select("week_from, week_to")
-    .eq("student_id", studentId)
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (reportError) {
-    throw new Error(`Failed to load default nutrition report week for ${studentId}: ${reportError.message}`);
-  }
-  if (report) {
-    return { weekFrom: report.week_from, weekTo: report.week_to };
   }
   return null;
 }
