@@ -668,7 +668,11 @@ const NUTRITION_HARD_DAY_APPROVAL_PHRASES: readonly string[] = [
 const NUTRITION_NON_MACRO_NUMBER_PATTERNS: RegExp[] = [
   /\d+(?:[.,]\d+)?\s*%/g, // 41%
   /\d+(?:[.,]\d+)?\s*[×xх]\s*\d+(?:[.,]\d+)?/gi, // intervals 7×5
-  /\d+(?:[.,]\d+)?\s*(?:км|мин|сек|час|ч|м)/giu, // distance / duration: 12 км, 5 мин, 2 ч
+  // distance / duration: «12 км», «5 мин», «2 ч» AND hyphenated adjective forms
+  // «90-минутного», «30-секундные» (separator allows hyphen / non-breaking hyphen,
+  // unit covers Cyrillic stems). Units stay distance/time only — macro numbers
+  // (число+г/ккал/Б/Ж/У) are a different pattern and are NOT scrubbed here.
+  /\d+(?:[.,]\d+)?[\s -]*(?:км|мин(?:ут[а-яё]*)?|сек[а-яё]*|час[а-яё]*|ч|м)/giu,
   /\d+\s*:\s*\d+/g, // time 1:40
   /\d{1,2}\s*(?:янв|фев|март|мар|апр|ма[йя]|июн|июл|авг|сен|окт|ноя|дек)/giu, // 14 июня
   /[+\-–—]\s*\d+(?:[.,]\d+)?/g, // signed steps / range tails: +50, –60
