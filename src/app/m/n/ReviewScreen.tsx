@@ -90,7 +90,7 @@ function dayMarkerColor(d: DayFlags): string {
   if (d.isKey) return PLAN_MARKER.key;
   if (d.isRest) return PLAN_MARKER.rest;
   if (d.isRun) return PLAN_MARKER.run;
-  return "var(--tg-theme-hint-color, #b0b6ba)";
+  return "#b0b6ba";
 }
 
 // Left border (special days only) + optional badge.
@@ -120,8 +120,11 @@ function splitParagraphs(text: string): string[] {
 const S = {
   page: {
     minHeight: "100vh",
-    background: "var(--tg-theme-bg-color, #f5f5f5)",
-    color: "var(--tg-theme-text-color, #222)",
+    // Force the light palette — never inherit Telegram's dark themeParams. The
+    // whole review screen is designed light (white cards, dark text, green accents).
+    background: "#f5f8f7",
+    color: "#1a2a25",
+    colorScheme: "only light" as const,
     fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
     fontSize: 16,
     padding: "0 0 40px",
@@ -137,53 +140,35 @@ const S = {
   headerTitle: { fontSize: 22, fontWeight: 800, margin: "4px 0 2px" },
   headerName: { fontSize: 15, margin: 0, opacity: 0.9 },
   body: { padding: "16px 14px 0" },
+  // ФОКУС plate — dark-green accent, explicit colours (never theme vars).
   focus: {
-    borderLeft: `4px solid ${TEAL.bar}`,
-    background: "var(--tg-theme-secondary-bg-color, #fff)",
-    padding: "12px 14px",
-    borderRadius: "0 10px 10px 0",
-    margin: "0 0 18px",
+    background: "#15302a",
+    color: "#eaf6f1",
+    padding: "14px 16px",
+    borderRadius: 14,
+    margin: "0 0 16px",
     fontSize: 15,
-    lineHeight: 1.5,
+    lineHeight: 1.6,
   },
   focusLabel: {
     fontSize: 12,
     fontWeight: 700,
     letterSpacing: "0.04em",
     textTransform: "uppercase" as const,
-    color: TEAL.bar,
+    color: "#7fd7bf",
     margin: "0 0 4px",
   },
   sectionLabel: {
     fontSize: 13,
     fontWeight: 700,
-    color: "var(--tg-theme-text-color, #222)",
+    color: "#1a2a25",
     margin: "0 0 10px",
-  },
-  prose: {
-    whiteSpace: "pre-wrap" as const,
-    lineHeight: 1.7,
-    fontSize: 15,
-    margin: "0 0 22px",
-    color: "var(--tg-theme-text-color, #222)",
-  },
-  dayCard: {
-    display: "flex" as const,
-    alignItems: "center" as const,
-    gap: 12,
-    background: "var(--tg-theme-secondary-bg-color, #fff)",
-    borderRadius: 12,
-    padding: "12px 14px",
-    marginBottom: 8,
-    boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
   },
   dayMarker: { width: 10, height: 10, borderRadius: "50%", flexShrink: 0 },
   dayWhen: { flex: 1, minWidth: 0 },
-  dayWeekday: { fontSize: 15, fontWeight: 600, textTransform: "capitalize" as const },
-  dayType: { fontWeight: 400, color: "var(--tg-theme-hint-color, #888)", textTransform: "none" as const },
-  dayDate: { fontSize: 12, color: "var(--tg-theme-hint-color, #888)" },
-  dayKcal: { fontSize: 17, fontWeight: 700, textAlign: "right" as const },
-  dayMacroLine: { fontSize: 12, color: "var(--tg-theme-hint-color, #888)", textAlign: "right" as const },
+  dayWeekday: { fontSize: 15, fontWeight: 600, color: "#16302a", textTransform: "capitalize" as const },
+  dayType: { fontWeight: 400, color: "#7a8a84", textTransform: "none" as const },
+  dayDate: { fontSize: 12, color: "#9aa8a3" },
   // Plan section (card layout). Green = accent only; dense text on white cards.
   planFocusPlate: {
     background: "#15302a",
@@ -245,7 +230,7 @@ const S = {
   planCardBody: { whiteSpace: "pre-wrap" as const, lineHeight: 1.6, fontSize: 14, color: "#2a3a35" },
   planNote: {
     fontSize: 12.5,
-    color: "var(--tg-theme-hint-color, #8a938f)",
+    color: "#7a8a84",
     lineHeight: 1.5,
     margin: "12px 2px 0",
   },
@@ -253,24 +238,22 @@ const S = {
   dayCardTop: { display: "flex" as const, alignItems: "center" as const, gap: 12 },
   dayProse: { borderTop: "1px solid #eef1f0", margin: "10px 0 0", paddingTop: 10 },
   dayProsePara: { fontSize: 14, lineHeight: 1.55, color: "#2a3a35", margin: "0 0 8px", whiteSpace: "pre-wrap" as const },
-  // Lead-in & week summary (white, readable paragraphs — no green wall).
-  introPara: { fontSize: 15, lineHeight: 1.6, margin: "0 0 10px", color: "var(--tg-theme-text-color, #222)" },
+  // Lead-in (white, readable paragraphs — explicit dark text).
+  introPara: { fontSize: 15, lineHeight: 1.6, margin: "0 0 10px", color: "#33433e" },
+  // ИТОГ plate — dark-green accent, explicit colours (never theme vars).
   summaryPlate: {
-    background: "var(--tg-theme-secondary-bg-color, #fff)",
-    border: "1px solid #e6ebe9",
+    background: "#15302a",
     borderRadius: 14,
-    padding: "12px 14px",
+    padding: "14px 16px",
     margin: "4px 0 8px",
   },
-  summaryLabel: { fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase" as const, color: PLAN_MARKER.key, margin: "0 0 6px" },
-  summaryPara: { fontSize: 14, lineHeight: 1.55, color: "#2a3a35", margin: "0 0 8px" },
-  // Plan focus: short intro on green plate; the rest on white readable paragraphs.
-  focusBodyWhite: { margin: "0 0 4px" },
-  center: { textAlign: "center" as const, padding: "60px 24px", color: "var(--tg-theme-hint-color, #888)" },
+  summaryLabel: { fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase" as const, color: "#7fd7bf", margin: "0 0 6px" },
+  summaryPara: { fontSize: 14, lineHeight: 1.55, color: "#eaf6f1", margin: "0 0 8px" },
+  center: { textAlign: "center" as const, padding: "60px 24px", color: "#7a8a84" },
   skeletonBar: {
     height: 14,
     borderRadius: 7,
-    background: "var(--tg-theme-secondary-bg-color, #e8eaed)",
+    background: "#e8eef0",
     margin: "10px 0",
   },
 };
@@ -346,6 +329,23 @@ export default function ReviewScreen({ initData }: { initData: string }) {
   const [phase, setPhase] = useState<Phase>("loading");
   const [data, setData] = useState<ReviewData | null>(null);
   const [errorMsg, setErrorMsg] = useState<string>("");
+
+  // Force the Telegram webview chrome to the light palette too (background behind
+  // the screen + header), so a dark-theme phone can't tint our surfaces. Guarded —
+  // older clients lack these methods. No-op outside Telegram.
+  useEffect(() => {
+    const tg = (
+      window as unknown as {
+        Telegram?: { WebApp?: { setBackgroundColor?: (c: string) => void; setHeaderColor?: (c: string) => void } };
+      }
+    ).Telegram?.WebApp;
+    try {
+      tg?.setBackgroundColor?.("#f5f8f7");
+      tg?.setHeaderColor?.("#04342c");
+    } catch {
+      /* ignore — unsupported on older Telegram clients */
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
