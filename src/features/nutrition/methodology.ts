@@ -451,8 +451,11 @@ function normalizeDistanceFromTitleKm(title: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function formatDistanceKmRu(distanceKm: number): string {
-  return `${distanceKm.toFixed(1).replace(".", ",")} км`;
+export function formatDistanceKmRu(distanceKm: number): string {
+  // Whole distances drop the decimal («10 км», «18 км»); fractional keep one («21,1 км»).
+  const rounded = Math.round(distanceKm * 10) / 10;
+  const text = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1).replace(".", ",");
+  return `${text} км`;
 }
 
 /**
@@ -591,7 +594,10 @@ function buildWorkoutContextByDate(week: NutritionTrainingPeaksWeekContext): Map
       coachComments: workout.coachComments ?? null,
       plannedText: workout.plannedText ?? null,
       durationHours: workout.durationHours ?? null,
-      distanceKm: null,
+      // Carry distance ONLY for races, so the canonical label can say «забег 10 км»
+      // (the race entity's distance lives on the event, not the title). Other types
+      // stay null — review expenditure for them is duration-based, so this is inert.
+      distanceKm: type === "race" ? workout.distanceKm ?? null : null,
     });
     grouped.set(workout.date, sessions);
   }
@@ -1091,7 +1097,12 @@ function buildCanonicalTrainingLabel(input: {
     }
     return title || "лёгкая тренировка";
   }
-  if (input.canonicalTrainingType === "hard" || input.canonicalTrainingType === "race") {
+  if (input.canonicalTrainingType === "race") {
+    const distanceFromTitle = normalizeDistanceFromTitleKm(title);
+    const distanceKm = input.workout.distanceKm ?? distanceFromTitle;
+    return distanceKm !== null ? `забег ${formatDistanceKmRu(distanceKm)}` : "забег";
+  }
+  if (input.canonicalTrainingType === "hard") {
     return title || "ключевая тренировка";
   }
   return title || "тренировка";

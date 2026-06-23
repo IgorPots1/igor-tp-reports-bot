@@ -77,6 +77,8 @@ export type NutritionNextWeekPlanDay = {
     has_training_context: boolean;
     /** Carb-loading lead-up day or race day (HM+): carbs lifted from the real base. */
     carb_loading?: boolean;
+    /** Day right after a race: recovery target (glycogen + repair), deficit off. */
+    recovery?: boolean;
   };
   long_run_source: NutritionLongRunSource;
   long_run_confidence: NutritionLongRunConfidence;
@@ -630,21 +632,27 @@ export function computeCarbBaseFromReview(perDayCarbsG: number[]): number | null
  * - ramp: leadDays[i] = round(base + (target − base) × i/N) for i = 1..N, so the
  *   last lead day (the day before the start) reaches the full target.
  * - raceDay = round(target) (timing/gel/"2–3 h before" stay in the protocol).
+ * - floorG: every loading day is floored at this (the athlete's EASY-run carbs) so
+ *   a modest weekly-average base can't ramp BELOW an ordinary running day right
+ *   before a start. The ceiling still caps the top. Default 0 = no floor.
  */
 export function computeCarbLoadingTargets(params: {
   baseG: number;
   weightKg: number;
   corridorUpperGkg: number;
   leadDayCount: number;
+  floorG?: number;
 }): { leadDays: number[]; raceDay: number } {
   const ceilingG = params.corridorUpperGkg * params.weightKg;
   const targetG = Math.max(Math.min(params.baseG * (1 + CARB_LOADING_STEP), ceilingG), params.baseG);
+  const floorG = params.floorG ?? 0;
   const n = Math.max(1, Math.round(params.leadDayCount));
   const leadDays: number[] = [];
   for (let i = 1; i <= n; i += 1) {
-    leadDays.push(Math.round(params.baseG + (targetG - params.baseG) * (i / n)));
+    const ramp = params.baseG + (targetG - params.baseG) * (i / n);
+    leadDays.push(Math.max(Math.round(ramp), Math.round(floorG)));
   }
-  return { leadDays, raceDay: Math.round(targetG) };
+  return { leadDays, raceDay: Math.max(Math.round(targetG), Math.round(floorG)) };
 }
 
 // Task 10: periodized daily kcal deficit for goal=lose ("fuel for the work
@@ -1023,6 +1031,111 @@ function applyCarbLoadingToPlanDay(day: NutritionNextWeekPlanDay, carbsG: number
   day.flags.carb_loading = true;
 }
 
+// Protein for glycogen + tissue repair on a recovery day — upper of the repair band.
+const RECOVERY_PROTEIN_G_PER_KG = 1.8;
+
+/**
+ * Recovery target for the day right AFTER a race: carbs at least the easy-run level
+ * (glycogen resynthesis), protein at the upper repair band (~1.8 g/kg), fat left as
+ * computed; kcal recomputed; the lose-deficit is already off on race-week days.
+ * Never lowers an existing macro — only lifts toward recovery.
+ */
+function applyRecoveryToPlanDay(day: NutritionNextWeekPlanDay, bodyweightKg: number, easyCarbFloorG: number): void {
+  if (day.carbs_g === null || day.protein_g === null || day.fat_g === null) {
+    return;
+  }
+  const carbs = Math.max(day.carbs_g, Math.round(easyCarbFloorG));
+  const protein = Math.max(day.protein_g, roundToNearest(RECOVERY_PROTEIN_G_PER_KG * bodyweightKg, 5));
+  const fat = day.fat_g;
+  const kcal = roundToNearest(4 * carbs + 4 * protein + 9 * fat, 50);
+  day.carbs_g = carbs;
+  day.protein_g = protein;
+  day.target_kcal = kcal;
+  day.carbs_g_per_kg = Number((carbs / bodyweightKg).toFixed(2));
+  day.protein_g_per_kg = Number((protein / bodyweightKg).toFixed(2));
+  day.kcal_per_kg = Number((kcal / bodyweightKg).toFixed(1));
+  if (day.practical_target) {
+    day.practical_target = {
+      ...day.practical_target,
+      carbs_g: carbs,
+      protein_g: protein,
+      target_kcal: kcal,
+      carbs_g_per_kg: day.carbs_g_per_kg,
+      protein_g_per_kg: day.protein_g_per_kg,
+      kcal_per_kg: day.kcal_per_kg,
+    };
+  }
+  day.display_target = {
+    kcal_min: roundToNearest(kcal - 50, 50),
+    kcal_max: roundToNearest(kcal + 50, 50),
+    carbs_g_min: roundToNearest(carbs - 20, 10),
+    carbs_g_max: roundToNearest(carbs + 20, 10),
+  };
+  // Label the day as recovery so the mini-table and prose read «восстановление»
+  // (not «день отдыха»); numbers above are unchanged.
+  day.training_label = "восстановление после старта";
+  day.flags.recovery = true;
+}
+
+/**
+ * Build a recovery day for a date that falls OUTSIDE the Mon–Sun plan window (a
+ * Sunday race → the next Monday). It is appended to the plan's display days WITHOUT
+ * changing plan_week.from/to — the week key stays Mon–Sun so plan↔review↔report
+ * pairing by exact week is untouched. Modelled as a rest day, then recovery-lifted.
+ */
+function buildRecoveryAppendedDay(
+  date: string,
+  bodyweightKg: number,
+  easyCarbFloorG: number
+): NutritionNextWeekPlanDay {
+  const restIdeal = calculateNutritionDayTypeTarget({ bodyweightKg, dayType: "rest" });
+  const day: NutritionNextWeekPlanDay = {
+    date,
+    weekday_ru: toWeekdayRu(date),
+    training_type: "rest",
+    training_label: "восстановление после старта",
+    workout_title: null,
+    target_kcal: restIdeal?.target_kcal ?? null,
+    protein_g: restIdeal?.protein_g ?? null,
+    fat_g: restIdeal?.fat_g ?? null,
+    carbs_g: restIdeal?.carbs_g ?? null,
+    kcal_per_kg: restIdeal?.kcal_per_kg ?? null,
+    protein_g_per_kg: restIdeal?.protein_g_per_kg ?? null,
+    fat_g_per_kg: restIdeal?.fat_g_per_kg ?? null,
+    carbs_g_per_kg: restIdeal?.carbs_g_per_kg ?? null,
+    flags: {
+      rest: true,
+      easy: false,
+      hard: false,
+      pre_long: false,
+      long_run: false,
+      strength: false,
+      cross_training: false,
+      race: false,
+      key_workout: false,
+      day_before_long_run: false,
+      has_training_context: false,
+      carb_loading: false,
+      recovery: false,
+    },
+    long_run_source: "none",
+    long_run_confidence: "low",
+    pre_training_guidance: GUIDANCE_BY_DAY_TYPE.rest,
+    race_protocol: null,
+    source: "inferred_from_week_structure",
+    ideal_target: restIdeal,
+    practical_target: restIdeal,
+    display_target: {
+      kcal_min: restIdeal ? roundToNearest(restIdeal.target_kcal - 50, 50) : null,
+      kcal_max: restIdeal ? roundToNearest(restIdeal.target_kcal + 50, 50) : null,
+      carbs_g_min: restIdeal ? roundToNearest(restIdeal.carbs_g - 20, 10) : null,
+      carbs_g_max: restIdeal ? roundToNearest(restIdeal.carbs_g + 20, 10) : null,
+    },
+  };
+  applyRecoveryToPlanDay(day, bodyweightKg, easyCarbFloorG);
+  return day;
+}
+
 function applyPracticalTarget(input: {
   dayType: NutritionPlanDayType;
   bodyweightKg: number | null;
@@ -1347,6 +1460,12 @@ export function buildNutritionNextWeekPlan(params: {
   const carbLoadingBase = computeCarbBaseFromReview(
     extractPreviousWeekCarbsPerDay(params.previousWeekDailyAnalysis)
   );
+  // Floor loading days at the athlete's EASY-run carbs — a loading day must never
+  // sit below an ordinary running day right before a start (Дефект B).
+  const easyCarbFloorG =
+    loadingBodyweight && loadingBodyweight > 0
+      ? calculateNutritionDayTypeTarget({ bodyweightKg: loadingBodyweight, dayType: "easy" })?.carbs_g ?? 0
+      : 0;
   if (carbLoadingBase !== null && loadingBodyweight && loadingBodyweight > 0) {
     for (const workout of parsedWorkouts) {
       if (workout.dayType !== "race") {
@@ -1362,6 +1481,7 @@ export function buildNutritionNextWeekPlan(params: {
         weightKg: loadingBodyweight,
         corridorUpperGkg: protocol.loading.g_per_kg_high,
         leadDayCount: n,
+        floorG: easyCarbFloorG,
       });
       for (let offset = -n; offset <= 0; offset += 1) {
         const date = addDays(workout.date, offset);
@@ -1371,6 +1491,25 @@ export function buildNutritionNextWeekPlan(params: {
         }
         const carbsG = offset === 0 ? targets.raceDay : targets.leadDays[offset + n];
         applyCarbLoadingToPlanDay(day, carbsG, loadingBodyweight);
+      }
+    }
+  }
+
+  // Recovery day right AFTER any race (glycogen + repair, deficit already off).
+  // In-window → lift the existing day; a Sunday race whose recovery (Mon) falls
+  // OUTSIDE the Mon–Sun window → append that one display day WITHOUT changing
+  // plan_week.from/to (the week key stays Mon–Sun so exact-week pairing holds).
+  if (loadingBodyweight && loadingBodyweight > 0) {
+    for (const workout of parsedWorkouts) {
+      if (workout.dayType !== "race") {
+        continue;
+      }
+      const recoveryDate = addDays(workout.date, 1);
+      const existing = days.find((item) => item.date === recoveryDate);
+      if (existing) {
+        applyRecoveryToPlanDay(existing, loadingBodyweight, easyCarbFloorG);
+      } else if (recoveryDate > params.planWeekTo && !days.some((item) => item.date === recoveryDate)) {
+        days.push(buildRecoveryAppendedDay(recoveryDate, loadingBodyweight, easyCarbFloorG));
       }
     }
   }

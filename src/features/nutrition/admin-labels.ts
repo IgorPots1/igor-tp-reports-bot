@@ -252,14 +252,22 @@ export function buildNutritionDashboardOpenHref(input: {
   lastAnalysisWeekFrom?: string | null;
   lastAnalysisWeekTo?: string | null;
 }): string {
-  const weekFrom = input.lastAnalysisWeekFrom ?? input.latestReportWeekFrom ?? null;
-  const weekTo = input.lastAnalysisWeekTo ?? input.latestReportWeekTo ?? null;
+  // Report-first: open the week of the freshly uploaded report, not the last
+  // review's (older) week — otherwise a new upload looks "missing" on the card.
+  const weekFrom = input.latestReportWeekFrom ?? input.lastAnalysisWeekFrom ?? null;
+  const weekTo = input.latestReportWeekTo ?? input.lastAnalysisWeekTo ?? null;
+  // Carry the review id only when it belongs to the week we're opening; an
+  // older-week review must not render on a newer report's week.
+  const analysisMatchesWeek =
+    input.lastAnalysisWeekFrom != null &&
+    input.lastAnalysisWeekFrom === weekFrom &&
+    input.lastAnalysisWeekTo === weekTo;
   return buildNutritionStudentCardHref({
     studentId: input.studentId,
     weekFrom,
     weekTo,
     reportId: input.latestReportId ?? null,
-    reviewId: input.lastAnalysisId ?? null,
+    reviewId: analysisMatchesWeek ? input.lastAnalysisId ?? null : null,
   });
 }
 
@@ -335,17 +343,24 @@ export function buildNutritionNextActionHref(input: {
   const studentCard = buildNutritionStudentCardHref({ studentId: input.studentId });
 
   switch (input.nextAction) {
-    case "Generate weekly nutrition review":
+    case "Generate weekly nutrition review": {
       if (!input.report) {
         return studentCard;
       }
+      // Carry reviewId only if the existing review is for THIS report's week — never
+      // pin an older-week review onto the fresh report week.
+      const analysisMatchesWeek =
+        input.analysis != null &&
+        input.analysis.weekFrom === input.report.weekFrom &&
+        input.analysis.weekTo === input.report.weekTo;
       return buildNutritionStudentCardHref({
         studentId: input.studentId,
         weekFrom: input.report.weekFrom,
         weekTo: input.report.weekTo,
         reportId: input.report.id,
-        reviewId: input.analysis?.id ?? null,
+        reviewId: analysisMatchesWeek ? input.analysis?.id ?? null : null,
       });
+    }
     case "Fix report data quality":
     case "Parse and review macros":
       if (!input.report) {
@@ -357,8 +372,27 @@ export function buildNutritionNextActionHref(input: {
         weekTo: input.report.weekTo,
         reportId: input.report.id,
       });
-    case "Review draft and mark approved":
+    case "Review draft and mark approved": {
+      // Report-first week (consistent with «Открыть»): with the latest report the
+      // source of truth, the draft to review is for that week. Carry reviewId only
+      // when the draft's week matches the week we open.
+      const weekFrom = input.report?.weekFrom ?? input.analysis?.weekFrom ?? null;
+      const weekTo = input.report?.weekTo ?? input.analysis?.weekTo ?? null;
+      if (!weekFrom || !weekTo) {
+        return studentCard;
+      }
+      const analysisMatchesWeek =
+        input.analysis != null && input.analysis.weekFrom === weekFrom && input.analysis.weekTo === weekTo;
+      return buildNutritionStudentCardHref({
+        studentId: input.studentId,
+        weekFrom,
+        weekTo,
+        reportId: input.report?.id ?? input.analysis?.reportId ?? null,
+        reviewId: analysisMatchesWeek ? input.analysis?.id ?? null : null,
+      });
+    }
     case "Manual safety review required":
+      // Safety flag lives on the review — open ON the flagged review's week.
       if (input.analysis) {
         return buildNutritionStudentCardHref({
           studentId: input.studentId,

@@ -1686,6 +1686,12 @@ function resolveNextAction(row: {
   if (row.hasSafetyFlag) {
     return "Manual safety review required";
   }
+  // A fresh report for a NEWER week than the latest review → review the new week,
+  // not the older draft. Without this the dashboard pointed «Review draft» (and the
+  // card) at the stale review week and the just-uploaded report looked missing.
+  if (row.analysis && row.report && row.report.weekFrom > row.analysis.weekFrom) {
+    return "Generate weekly nutrition review";
+  }
   if (!row.analysis || row.analysis.status === "needs_review") {
     return "Generate weekly nutrition review";
   }

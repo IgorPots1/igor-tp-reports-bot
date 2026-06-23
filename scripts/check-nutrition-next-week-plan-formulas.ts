@@ -289,10 +289,19 @@ assert.deepEqual(marathonLoad.leadDays, [330, 360, 390], "marathon ramp [330, 36
 assert.equal(marathonLoad.raceDay, 390, "marathon race-day = target 390");
 assert.equal(marathonLoad.leadDays[2], marathonLoad.raceDay, "last lead day == race-day target");
 
+// Floor: a loading day must not drop below the easy-run carbs. Nadia real base
+// 236.91, 55 kg, easy carbs = 290 → raw ramp пт 272 floored to 290; сб 308, старт 308.
+const flooredLoad = computeCarbLoadingTargets({ baseG: 236.91, weightKg: 55, corridorUpperGkg: 8, leadDayCount: 2, floorG: 290 });
+assert.deepEqual(flooredLoad.leadDays, [290, 308], "floor lifts ramp пт 272→290, keeps сб 308");
+assert.equal(flooredLoad.raceDay, 308, "race day stays above floor (308)");
+// No floor (default 0) leaves the raw ramp.
+const unflooredLoad = computeCarbLoadingTargets({ baseG: 236.91, weightKg: 55, corridorUpperGkg: 8, leadDayCount: 2 });
+assert.deepEqual(unflooredLoad.leadDays, [272, 308], "no floor → raw ramp [272, 308]");
+
 // --- Plan integration: carb loading from real base on lead + race days (HM+) ---
 // Nadia-like: base ≈ 250 (prev week all ~250), 55 kg, HM 21.1 km on Sun 28.06.
-// Lead days 26.06/27.06 ramp 288→325; race day 28.06 = 325. Below corridor lower
-// (6 г/кг = 330) is fine — it comes from the real base.
+// Raw ramp 288→325; easy-run floor (290) lifts 26.06 to 290; race day 28.06 = 325.
+// All loading days stay ≥ the easy-run carbs (290).
 const loadingPlan = buildNutritionNextWeekPlan({
   bodyweightKg: 55,
   planWeekFrom: "2026-06-22",
@@ -309,10 +318,14 @@ const loadingPlan = buildNutritionNextWeekPlan({
 const lead1 = loadingPlan.days.find((day) => day.date === "2026-06-26");
 const lead2 = loadingPlan.days.find((day) => day.date === "2026-06-27");
 const raceLoadDay = loadingPlan.days.find((day) => day.date === "2026-06-28");
-assert.equal(lead1?.carbs_g, 288, "lead day -2 carbs ramp to 288");
+const easyFloorCarbs = calculateNutritionDayTypeTarget({ bodyweightKg: 55, dayType: "easy" })?.carbs_g ?? 0;
+assert.equal(lead1?.carbs_g, 290, "lead day -2 floored to easy-run carbs (290), not raw 288");
 assert.equal(lead2?.carbs_g, 325, "lead day -1 carbs reach full target 325");
 assert.equal(raceLoadDay?.carbs_g, 325, "race day carbs = base-relative target 325 (not ceiling 440)");
 assert.equal(raceLoadDay?.training_type, "race", "race day type");
+for (const d of [lead1, lead2, raceLoadDay]) {
+  assert.ok((d?.carbs_g ?? 0) >= easyFloorCarbs, `loading day ${d?.date} carbs ≥ easy-run floor ${easyFloorCarbs}`);
+}
 assert.equal(lead1?.flags.carb_loading, true, "lead day -2 marked carb_loading");
 assert.equal(lead2?.flags.carb_loading, true, "lead day -1 marked carb_loading");
 assert.equal(raceLoadDay?.flags.carb_loading, true, "race day marked carb_loading");
@@ -327,6 +340,39 @@ for (const day of [lead1, lead2, raceLoadDay]) {
     `display carb range tracks loading carbs on ${day.date}`
   );
 }
+
+// Recovery day after a SUNDAY race (28.06) → Monday 29.06 appended for display,
+// WITHOUT changing the Mon–Sun window (8 days only because of the tail recovery).
+assert.equal(loadingPlan.days.length, 8, "Sunday race appends the Monday recovery day (7 + 1)");
+const recoveryDay = loadingPlan.days.find((day) => day.date === "2026-06-29");
+assert.ok(recoveryDay, "recovery day 29.06 present");
+assert.equal(recoveryDay?.flags.recovery, true, "29.06 flagged recovery");
+assert.ok((recoveryDay?.carbs_g ?? 0) >= easyFloorCarbs, "recovery carbs ≥ easy-run (glycogen)");
+assert.ok(
+  (recoveryDay?.protein_g ?? 0) >= Math.round((1.8 * 55) / 5) * 5,
+  "recovery protein at upper repair band (~1.8 г/кг)"
+);
+assert.ok(
+  recoveryDay && recoveryDay.target_kcal === Math.round((4 * recoveryDay.carbs_g! + 4 * recoveryDay.protein_g! + 9 * recoveryDay.fat_g!) / 50) * 50,
+  "recovery kcal recomputed from macros"
+);
+// A NON-Sunday race keeps 7 days (recovery is in-window).
+const midweekRacePlan = buildNutritionNextWeekPlan({
+  bodyweightKg: 55,
+  planWeekFrom: "2026-06-22",
+  planWeekTo: "2026-06-28",
+  trainingContext: {
+    cacheStatus: "ok",
+    workouts: [{ date: "2026-06-24", title: "Старт", type: "race", distanceKm: 10 }],
+  },
+  previousWeekDailyAnalysis: Array.from({ length: 7 }, () => ({ actual: { carbsG: 250 } })),
+});
+assert.equal(midweekRacePlan.days.length, 7, "mid-week race keeps 7 days (recovery in-window)");
+assert.equal(
+  midweekRacePlan.days.find((day) => day.date === "2026-06-25")?.flags.recovery,
+  true,
+  "day after mid-week race (25.06) elevated in place"
+);
 
 // Fallback: no real base (all garbage prev-week days) → standard race-day target
 // (ceiling 8 г/кг × 55 = 440), NOT base-relative loading. No carb_loading flag.

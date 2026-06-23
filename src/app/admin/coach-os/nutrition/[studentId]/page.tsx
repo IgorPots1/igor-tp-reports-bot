@@ -95,6 +95,84 @@ function getCurrentWeekWindow(): { weekFrom: string; weekTo: string } {
   };
 }
 
+// 1d/1e: one tappable week per real week the student has (report OR analysis).
+type NutritionWeekOption = {
+  weekFrom: string;
+  weekTo: string;
+  hasReport: boolean;
+  reportReceivedAt: string | null;
+  analysisStatus: string | null;
+  analysisAt: string | null;
+};
+
+function buildNutritionWeekOptions(
+  reports: Array<{ weekFrom: string; weekTo: string; createdAt: string; archivedAt: string | null }>,
+  analyses: Array<{ weekFrom: string; weekTo: string; status: string; createdAt: string }>
+): NutritionWeekOption[] {
+  const byWeek = new Map<string, NutritionWeekOption>();
+  const key = (from: string, to: string) => `${from}|${to}`;
+  for (const report of reports) {
+    if (report.archivedAt) continue; // archived reports don't make a week selectable
+    const existing = byWeek.get(key(report.weekFrom, report.weekTo));
+    if (existing) {
+      existing.hasReport = true;
+      if (!existing.reportReceivedAt || report.createdAt > existing.reportReceivedAt) {
+        existing.reportReceivedAt = report.createdAt;
+      }
+    } else {
+      byWeek.set(key(report.weekFrom, report.weekTo), {
+        weekFrom: report.weekFrom,
+        weekTo: report.weekTo,
+        hasReport: true,
+        reportReceivedAt: report.createdAt,
+        analysisStatus: null,
+        analysisAt: null,
+      });
+    }
+  }
+  for (const analysis of analyses) {
+    const existing = byWeek.get(key(analysis.weekFrom, analysis.weekTo));
+    if (existing) {
+      if (!existing.analysisAt || analysis.createdAt > existing.analysisAt) {
+        existing.analysisStatus = analysis.status;
+        existing.analysisAt = analysis.createdAt;
+      }
+    } else {
+      byWeek.set(key(analysis.weekFrom, analysis.weekTo), {
+        weekFrom: analysis.weekFrom,
+        weekTo: analysis.weekTo,
+        hasReport: false,
+        reportReceivedAt: null,
+        analysisStatus: analysis.status,
+        analysisAt: analysis.createdAt,
+      });
+    }
+  }
+  return [...byWeek.values()].sort((a, b) => b.weekFrom.localeCompare(a.weekFrom));
+}
+
+function nutritionWeekReviewLabel(status: string | null): string {
+  switch (status) {
+    case "approved_for_copy":
+      return "разбор готов";
+    case "draft_generated":
+      return "разбор: черновик";
+    case "needs_review":
+      return "разбор: на проверку";
+    case "blocked_safety":
+      return "разбор: блок";
+    default:
+      return "разбора нет";
+  }
+}
+
+function formatNutritionReceivedDdMm(iso: string | null): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  return `${String(date.getUTCDate()).padStart(2, "0")}.${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
 function getBadgeClass(status: string): string {
   if (status === "ready_for_analysis" || status === "approved_for_copy" || status === "draft_generated") {
     return "admin-badge admin-badge-success";
@@ -298,6 +376,14 @@ export default async function CoachOsNutritionStudentCardPage({
     listNutritionReportsForStudent(studentId, { includeArchived: true, limit: 30 }),
     listNutritionWeeklyAnalysesForStudentHistory(studentId, { limit: 30 }),
   ]);
+
+  // 1d/1e: tappable real weeks (report OR analysis), freshest first; + prev/next.
+  const weekOptions = buildNutritionWeekOptions(reportHistory, analysisHistory);
+  const selectedWeekIndex = weekOptions.findIndex((w) => w.weekFrom === weekFrom && w.weekTo === weekTo);
+  const selectedWeekOption = selectedWeekIndex >= 0 ? weekOptions[selectedWeekIndex] : null;
+  const newerWeekOption = selectedWeekIndex > 0 ? weekOptions[selectedWeekIndex - 1] : null;
+  const olderWeekOption =
+    selectedWeekIndex >= 0 && selectedWeekIndex < weekOptions.length - 1 ? weekOptions[selectedWeekIndex + 1] : null;
 
   const selectedReportId = pickDefaultNutritionReport(card.reports, reportIdFromQuery);
   const selectedReport = card.reports.find((report) => report.id === selectedReportId) ?? null;
@@ -503,23 +589,93 @@ export default async function CoachOsNutritionStudentCardPage({
 
       <article className="admin-card admin-card-compact admin-nutrition-card-wide admin-nutrition-profile-compact">
         <h3>Неделя и профиль</h3>
-        <form className="admin-form-inline admin-nutrition-week-row" method="get">
-          {selectedReportId ? <input type="hidden" name="reportId" value={selectedReportId} /> : null}
-          {selectedReviewId ? <input type="hidden" name="reviewId" value={selectedReviewId} /> : null}
-          {selectedPlanId ? <input type="hidden" name="planId" value={selectedPlanId} /> : null}
+        <div className="admin-nutrition-week-row">
           <span className="admin-nutrition-week-label">Неделя:</span>
-          <label className="admin-form-field">
-            <span>с</span>
-            <input className="admin-input" type="date" name="weekFrom" defaultValue={weekFrom} />
-          </label>
-          <label className="admin-form-field">
-            <span>по</span>
-            <input className="admin-input" type="date" name="weekTo" defaultValue={weekTo} />
-          </label>
-          <button className="admin-button admin-button-secondary" type="submit">
-            Показать
-          </button>
-        </form>
+          {newerWeekOption ? (
+            <Link
+              className="admin-button admin-button-secondary admin-button-compact"
+              href={buildNutritionStudentCardHref({
+                studentId,
+                weekFrom: newerWeekOption.weekFrom,
+                weekTo: newerWeekOption.weekTo,
+              })}
+              aria-label="Следующая неделя"
+            >
+              ‹
+            </Link>
+          ) : (
+            <span className="admin-button admin-button-secondary admin-button-compact admin-button-disabled">‹</span>
+          )}
+          <strong>{formatNutritionPlanWeekRange(weekFrom, weekTo)}</strong>
+          {olderWeekOption ? (
+            <Link
+              className="admin-button admin-button-secondary admin-button-compact"
+              href={buildNutritionStudentCardHref({
+                studentId,
+                weekFrom: olderWeekOption.weekFrom,
+                weekTo: olderWeekOption.weekTo,
+              })}
+              aria-label="Предыдущая неделя"
+            >
+              ›
+            </Link>
+          ) : (
+            <span className="admin-button admin-button-secondary admin-button-compact admin-button-disabled">›</span>
+          )}
+          {selectedWeekOption?.reportReceivedAt ? (
+            <span className="admin-nutrition-week-received admin-muted">
+              отчёт получен {formatNutritionReceivedDdMm(selectedWeekOption.reportReceivedAt)}
+            </span>
+          ) : null}
+        </div>
+        {weekOptions.length > 0 ? (
+          <ul className="admin-nutrition-week-list">
+            {weekOptions.map((option) => {
+              const isSelected = option.weekFrom === weekFrom && option.weekTo === weekTo;
+              return (
+                <li key={`${option.weekFrom}-${option.weekTo}`}>
+                  <Link
+                    className={`admin-nutrition-week-pill${isSelected ? " admin-nutrition-week-pill-active" : ""}`}
+                    href={buildNutritionStudentCardHref({
+                      studentId,
+                      weekFrom: option.weekFrom,
+                      weekTo: option.weekTo,
+                    })}
+                  >
+                    <span className="admin-nutrition-week-pill-range">
+                      {formatNutritionPlanWeekRange(option.weekFrom, option.weekTo)}
+                    </span>
+                    <span className="admin-muted">
+                      {option.hasReport ? "отчёт" : "нет отчёта"} · {nutritionWeekReviewLabel(option.analysisStatus)}
+                      {option.reportReceivedAt ? ` · получен ${formatNutritionReceivedDdMm(option.reportReceivedAt)}` : ""}
+                    </span>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="admin-muted">Недель с отчётом или разбором пока нет.</p>
+        )}
+        <details className="admin-nutrition-week-manual">
+          <summary className="admin-muted">Ввести неделю вручную</summary>
+          <form className="admin-form-inline admin-nutrition-week-row" method="get">
+            {selectedReportId ? <input type="hidden" name="reportId" value={selectedReportId} /> : null}
+            {selectedReviewId ? <input type="hidden" name="reviewId" value={selectedReviewId} /> : null}
+            {selectedPlanId ? <input type="hidden" name="planId" value={selectedPlanId} /> : null}
+            <label className="admin-form-field">
+              <span>с</span>
+              <input className="admin-input" type="date" name="weekFrom" defaultValue={weekFrom} />
+            </label>
+            <label className="admin-form-field">
+              <span>по</span>
+              <input className="admin-input" type="date" name="weekTo" defaultValue={weekTo} />
+            </label>
+            <button className="admin-button admin-button-secondary" type="submit">
+              Показать
+            </button>
+          </form>
+        </details>
         <p className="admin-nutrition-inline-meta">
           Питание: {formatNutritionEnabled(card.profile?.enabled ?? false).toLowerCase()} · Вес:{" "}
           {profileWeightKg ?? "—"} кг · Стиль: {profileFormality}

@@ -1,4 +1,5 @@
 import { formatNutritionWorkoutLabelForAthlete, buildNutritionTargetWeekMainStepLine } from "@/features/nutrition/narrative-composer";
+import { formatDistanceKmRu } from "@/features/nutrition/methodology";
 import { getNutritionAdminLocalDate } from "@/features/nutrition/plan-week-policy";
 import type { TrainingPeaksTelegramFormality } from "@/features/trainingpeaks/repository";
 import type {
@@ -284,7 +285,12 @@ function resolveMiniTableDays(input: {
   todayLocalDate?: string;
   mode?: "athlete_remaining_only" | "full_week";
 }): NutritionNextWeekPlanDay[] {
-  const all = input.nextWeekPlan.days.slice(0, 7);
+  // The Mon–Sun week (7) plus any tail RECOVERY day appended past the window (a
+  // Sunday race → recovery Monday). The recovery day must show even though it sits
+  // outside the 7-day window; plan_week.from/to is unchanged (see weekly-plan-formulas).
+  const weekDays = input.nextWeekPlan.days.slice(0, 7);
+  const tailRecoveryDays = input.nextWeekPlan.days.slice(7).filter((day) => day.flags?.recovery);
+  const all = [...weekDays, ...tailRecoveryDays];
   const mode = input.mode ?? "athlete_remaining_only";
   if (mode === "full_week" || input.planWeekMode !== "current_week") {
     return all;
@@ -445,7 +451,7 @@ function buildRaceDayBlock(nextWeekPlan: NutritionNextWeekPlan | null): string[]
   for (const day of raceDays) {
     const p = day.race_protocol!;
     const name = day.workout_title?.trim() || "Старт";
-    const dist = typeof p.distance_km === "number" ? `, ${p.distance_km} км` : "";
+    const dist = typeof p.distance_km === "number" ? `, ${formatDistanceKmRu(p.distance_km)}` : "";
     lines.push("", `${formatDateRu(day.date)} — ${name}${dist}.`);
     if (p.loading) {
       lines.push(

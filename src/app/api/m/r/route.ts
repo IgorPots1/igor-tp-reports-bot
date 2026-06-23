@@ -138,7 +138,15 @@ export async function POST(request: NextRequest): Promise<Response> {
     formality: student.telegramFormality,
     studentName: student.studentName,
   });
-  if (combined.status !== "ready" || combined.athleteMessageDraftParts.length === 0) {
+  // The review is already approved_for_copy (filtered above). Ship its athlete text
+  // whenever there's rendered content — a SOFT needs_review (coach-review notes)
+  // still ships by design (combined-message keeps the text). Withhold only on a hard
+  // clinical block (blocked_safety) or no rendered parts (which also covers a hard
+  // render failure, since that yields empty parts).
+  const shippable =
+    (combined.status === "ready" || combined.status === "needs_review") &&
+    combined.athleteMessageDraftParts.length > 0;
+  if (!shippable) {
     return jsonResponse(200, { ok: true, status: "not_ready" });
   }
 

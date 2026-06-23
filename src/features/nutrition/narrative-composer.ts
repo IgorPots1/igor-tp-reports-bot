@@ -472,8 +472,20 @@ function humanizeNutritionTrainingLabelInner(trainingLabel: string, trainingType
   if (!raw) {
     return trainingType === "rest" ? "день отдыха" : "день недели";
   }
+  // A recovery day (race+1) keeps its explicit «восстановление …» label — the rest
+  // branch below must not flatten it to «день отдыха».
+  if (/^восстановлени/iu.test(raw)) {
+    return raw;
+  }
   if (trainingType === "rest" || /день без тренировки/i.test(raw)) {
     return "день отдыха";
+  }
+  // A race is «забег», never the raw run title ("бег") or merged TP label. Keep the
+  // distance if it's present in the label (canonical produces «забег 10 км»);
+  // idempotent on an already-«забег …» string.
+  if (trainingType === "race") {
+    const distanceMatch = raw.match(/(\d+(?:[.,]\d+)?)\s*(?:км|km)/iu);
+    return distanceMatch ? `забег ${distanceMatch[1].replace(".", ",")} км` : "забег";
   }
   if (/^padel racket$/i.test(raw) || /\bpadel\b/i.test(raw)) {
     return "падел";
@@ -889,12 +901,21 @@ function capitalizeRu(value: string): string {
   return `${value.slice(0, 1).toLocaleUpperCase("ru")}${value.slice(1)}`;
 }
 
+/**
+ * "забег" clause without doubling: when the label is already a «забег …» (e.g.
+ * «забег 10 км»), use it verbatim; otherwise wrap a generic label in «забег (…)».
+ */
+export function formatRaceClause(athleteTrainingLabel: string): string {
+  const trimmed = athleteTrainingLabel.trim();
+  return trimmed.toLocaleLowerCase("ru").startsWith("забег") ? trimmed : `забег (${athleteTrainingLabel})`;
+}
+
 function rolePrefixSentence(roleInfo: NutritionNarrativeDayRoleInfo, athleteTrainingLabel: string): string | null {
   switch (roleInfo.role) {
     case "race":
       return roleInfo.isKey
-        ? `Это главный старт недели — забег (${athleteTrainingLabel}).`
-        : `Это забег (${athleteTrainingLabel}).`;
+        ? `Это главный старт недели — ${formatRaceClause(athleteTrainingLabel)}.`
+        : `Это ${formatRaceClause(athleteTrainingLabel)}.`;
     case "key_interval":
       return roleInfo.isKey
         ? "Это ключевая интервальная работа недели."
@@ -1190,7 +1211,7 @@ function buildLowEnergyPrimarySentence(input: {
   const keyPrefix = roleInfo.isKey ? "ключевая " : "";
 
   if (roleInfo.role === "race") {
-    return `Это забег (${athleteTrainingLabel}) — главный старт недели. Под него важны углеводы накануне и в день старта; здесь топлива было маловато.`;
+    return `Это ${formatRaceClause(athleteTrainingLabel)} — главный старт недели. Под него важны углеводы накануне и в день старта; здесь топлива было маловато.`;
   }
 
   if (roleInfo.role === "key_interval") {
@@ -1752,7 +1773,8 @@ export function buildNutritionWeeklySummary(input: {
     }
     if (
       !mainLoadLabel &&
-      (day.roleInfo.role === "long_endurance" ||
+      (day.roleInfo.role === "race" ||
+        day.roleInfo.role === "long_endurance" ||
         day.roleInfo.role === "long_run" ||
         day.roleInfo.role === "key_interval" ||
         day.roleInfo.role === "key_tempo" ||
