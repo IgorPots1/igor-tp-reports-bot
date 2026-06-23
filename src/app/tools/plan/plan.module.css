@@ -1,0 +1,322 @@
+/* Брендинг igorp.run: фон zinc-950, акцент yellow-400, Oswald (заголовки) + Manrope (текст).
+   Тот же визуальный набор, что и калькулятор калорий (/tools/nutrition). */
+
+.page {
+  min-height: 100vh;
+  background: #09090b; /* zinc-950 */
+  color: #ffffff;
+  padding: 24px;
+  font-family: var(--font-manrope), system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  box-sizing: border-box;
+}
+
+.page *,
+.page *::before,
+.page *::after {
+  box-sizing: border-box;
+}
+
+.inner {
+  max-width: 28rem; /* 448px */
+  margin: 0 auto;
+  padding-top: 16px;
+}
+
+.brand {
+  font-size: 12px;
+  color: #71717a; /* zinc-500 */
+  margin-bottom: 4px;
+}
+
+.title {
+  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
+  font-size: 30px;
+  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+  margin: 0 0 8px;
+}
+
+.accent {
+  color: #facc15; /* yellow-400 */
+}
+
+.subtitle {
+  color: #a1a1aa; /* zinc-400 */
+  font-size: 14px;
+  margin: 0 0 32px;
+}
+
+/* ----- Section heading ----- */
+.sectionHead {
+  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #facc15;
+  margin: 0 0 12px;
+}
+
+.section {
+  margin-bottom: 36px;
+}
+
+/* ----- Toggle (3/4, 5/10км) ----- */
+.toggleRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.toggleBtn {
+  font-family: inherit;
+  font-size: 14px;
+  border: 0;
+  border-radius: 8px;
+  padding: 12px 16px;
+  background: #18181b; /* zinc-900 */
+  color: #d4d4d8; /* zinc-300 */
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.toggleBtnActive {
+  background: #facc15;
+  color: #000000;
+  font-weight: 700;
+}
+
+/* ----- Week template ----- */
+.weekList {
+  display: grid;
+  gap: 8px;
+}
+
+.weekRow {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 12px 14px;
+  background: #18181b;
+  border: 1px solid #27272a; /* zinc-800 */
+  border-radius: 10px;
+}
+
+.weekDay {
+  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
+  font-weight: 700;
+  font-size: 14px;
+  color: #facc15;
+  min-width: 28px;
+}
+
+.weekType {
+  font-weight: 600;
+  font-size: 14px;
+  color: #ffffff;
+}
+
+.weekDuration {
+  margin-left: auto;
+  font-size: 13px;
+  color: #a1a1aa;
+  white-space: nowrap;
+}
+
+.note {
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #d4d4d8;
+}
+
+.noteAccent {
+  color: #facc15;
+  font-weight: 700;
+}
+
+/* ----- Pace input ----- */
+.fieldLabel {
+  font-size: 14px;
+  color: #a1a1aa;
+  margin-bottom: 8px;
+}
+
+.timeRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.timeInput {
+  width: 72px;
+  font-family: inherit;
+  font-size: 20px;
+  font-weight: 700;
+  text-align: center;
+  padding: 10px 8px;
+  border-radius: 8px;
+  border: 1px solid #3f3f46; /* zinc-700 */
+  background: #18181b;
+  color: #ffffff;
+}
+
+.timeInput:focus {
+  outline: none;
+  border-color: #facc15;
+}
+
+.timeColon {
+  font-size: 20px;
+  font-weight: 700;
+  color: #a1a1aa;
+}
+
+.timeUnit {
+  font-size: 13px;
+  color: #71717a;
+}
+
+.disclaimer {
+  margin: 0 0 24px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #a1a1aa;
+}
+
+/* ----- Workout cards ----- */
+.cards {
+  display: grid;
+  gap: 12px;
+}
+
+.card {
+  padding: 16px;
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 12px;
+}
+
+.cardHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.cardTitle {
+  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.01em;
+}
+
+.cardPace {
+  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  color: #facc15;
+  white-space: nowrap;
+}
+
+.cardMeta {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.cardMetaRow {
+  font-size: 13px;
+  color: #d4d4d8;
+  line-height: 1.5;
+}
+
+.cardMetaLabel {
+  color: #71717a;
+  font-weight: 600;
+}
+
+.cardDesc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #a1a1aa;
+}
+
+/* ----- Important / disclaimers block ----- */
+.important {
+  margin-top: 20px;
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.importantLabel {
+  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #facc15;
+  margin-bottom: 8px;
+}
+
+.importantText {
+  font-size: 13px;
+  color: #d4d4d8;
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* ----- CTA ----- */
+.cta {
+  margin-top: 16px;
+  background: linear-gradient(to bottom right, rgba(250, 204, 21, 0.15), #18181b);
+  border: 1px solid rgba(250, 204, 21, 0.4);
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.ctaTitle {
+  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 8px;
+}
+
+.ctaText {
+  font-size: 14px;
+  color: #d4d4d8;
+  line-height: 1.6;
+  margin: 0 0 16px;
+}
+
+.ctaButton {
+  display: inline-block;
+  background: #facc15;
+  color: #000000;
+  font-weight: 700;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.footer {
+  text-align: center;
+  font-size: 12px;
+  color: #52525b; /* zinc-600 */
+  margin-top: 32px;
+}
