@@ -131,11 +131,19 @@ export async function POST(request: NextRequest): Promise<Response> {
         }).catch(() => null)
       : null;
 
+  // «Эта» vs «следующая» неделя — purely by date: if today is already inside the
+  // plan week (review sent on Mon/Tue), it's the CURRENT week. Drives wording in the
+  // renderer (headings + model prose) and the ReviewScreen header.
+  const todayLocal = getNutritionAdminLocalDate();
+  const planWeekMode: "current_week" | "next_week" =
+    planWeekFrom && planWeekTo && todayLocal >= planWeekFrom && todayLocal <= planWeekTo ? "current_week" : "next_week";
+
   const combined = buildDerivedNutritionCombinedMessage({
     review,
     plan,
     formality: student.telegramFormality,
     studentName: student.studentName,
+    planWeekMode,
   });
   // The review is already approved_for_copy (filtered above). Ship its athlete text
   // whenever there's rendered content — a SOFT needs_review (coach-review notes)
@@ -186,9 +194,6 @@ export async function POST(request: NextRequest): Promise<Response> {
   // Past days of the CURRENT week are dropped using the SAME cutoff as the coach
   // mini-table (resolveMiniTableDays, athlete_remaining_only); a future week shows all.
   const nextWeekPlanObj = asObject(asObject(plan?.planSummary).next_week_plan);
-  const todayLocal = getNutritionAdminLocalDate();
-  const planWeekMode: "current_week" | "next_week" =
-    planWeekFrom && planWeekTo && todayLocal >= planWeekFrom && todayLocal <= planWeekTo ? "current_week" : "next_week";
   const planDayObjects = Array.isArray(nextWeekPlanObj.days)
     ? resolveMiniTableDays({
         nextWeekPlan: nextWeekPlanObj as unknown as NutritionNextWeekPlan,
@@ -235,6 +240,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     week: { from: review.weekFrom, to: review.weekTo },
     studentName: student.studentName,
     focus,
+    planWeekMode,
     parts: combined.athleteMessageDraftParts,
     reviewIntroText: combined.renderResult.reviewSections.intro,
     weekSummaryText: combined.renderResult.reviewSections.weekSummary,

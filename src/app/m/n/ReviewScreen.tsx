@@ -40,6 +40,7 @@ type ReviewData = {
   week?: { from: string; to: string };
   studentName?: string;
   focus?: string | null;
+  planWeekMode?: "current_week" | "next_week";
   parts?: string[];
   reviewIntroText?: string | null;
   weekSummaryText?: string | null;
@@ -494,7 +495,9 @@ export default function ReviewScreen({ initData }: { initData: string }) {
 
         {planDays.length > 0 || data?.planFocusText ? (
           <>
-            <p style={{ ...S.sectionLabel, marginTop: 22 }}>🎯 План на следующую неделю</p>
+            <p style={{ ...S.sectionLabel, marginTop: 22 }}>
+              🎯 План на {data?.planWeekMode === "current_week" ? "эту" : "следующую"} неделю
+            </p>
 
             {planFocusIntro ? (
               <div style={S.planFocusPlate}>

@@ -18,6 +18,8 @@ import {
   NUTRITION_TELEGRAM_DAY_DIVIDER,
   paragraphizeForTelegram,
   renderNutritionTelegramMessage,
+  simplifyAthleteWording,
+  stripAthleteTechJargon,
   validateNutritionDayProse,
   type NutritionDayProseFacts,
   type NutritionTelegramRenderResult,
@@ -273,9 +275,11 @@ function resolveUsableNutritionDayProse(value: unknown, facts: NutritionDayProse
   // (cleanupPlainText) does — Igor's voice uses "—" constantly ("белок 133 г —
   // отлично"), and rejecting on it silently dropped live prose to the dry
   // deterministic comment. Markdown emphasis/fences are still rejected.
-  const prose = value
-    .replace(/\s+/g, " ")
-    .replace(/[—–]/g, "-")
+  // Cut any leaked coach/technical tokens (adequacy: medium, day_role, status
+  // enums…) BEFORE validation, so a single leaked token doesn't drop otherwise-good
+  // prose to the dry fallback (1a). The reject list below is the backstop (1b).
+  const prose = simplifyAthleteWording(stripAthleteTechJargon(value.replace(/\s+/g, " ").replace(/[—–]/g, "-")))
+    .replace(/ {2,}/g, " ")
     .trim();
   if (prose.length < 2) {
     return null;
@@ -283,7 +287,12 @@ function resolveUsableNutritionDayProse(value: unknown, facts: NutritionDayProse
   if (/\*\*|__|```/.test(prose)) {
     return null;
   }
-  if (/TrainingPeaks|FatSecret|OpenAI|\bJSON\b|hint_for_comment|source_quality/.test(prose)) {
+  // Backstop (1b): if a raw key:value tech token still slipped through the strip,
+  // reject the prose entirely → deterministic fallback.
+  if (
+    /TrainingPeaks|FatSecret|OpenAI|\bJSON\b|hint_for_comment|source_quality/.test(prose) ||
+    /\b(?:adequacy|day_role|loadBasis|load_basis|fat_policy|fatFeedbackPolicy|nutrition_status)\s*[:=]/i.test(prose)
+  ) {
     return null;
   }
   // Backstop: numbers must be facts of this day and a hard status must not be
@@ -947,7 +956,7 @@ function buildAdjacentMissingNutritionLines(review: NutritionWeeklyAnalysis): st
         return null;
       }
       return `🔹 ${formatDateRu(date)} · ${formatNutritionWorkoutLabelForAthlete({ trainingLabel: label, trainingType: "cross_training" })}
-Питание за этот день не зафиксировано. Без данных конкретного макро-вывода не делаю, отмечаю только факт нагрузки.`;
+Питание за этот день не зафиксировано: данных за этот день нет — выводов не делаю, отмечаю только факт нагрузки.`;
     })
     .filter((line): line is string => Boolean(line));
 }

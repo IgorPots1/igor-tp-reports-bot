@@ -242,21 +242,89 @@ function stripPhantomPreviousComparison(text: string): { text: string; removed: 
   return { text: lines.join("\n"), removed };
 }
 
-export function cleanupPlainText(input: string): string {
+// Raw coach-only/technical tokens that must NEVER reach the athlete text. These are
+// fields the model is given in facts (pre_workout.adequacy, day_role, loadBasis,
+// nutrition_status enums, …) and occasionally leaks verbatim. We cut the labelled
+// "key: value" form and the bare snake_case enums — never normal prose words.
+const NUTRITION_ATHLETE_TECH_JARGON_PATTERNS: RegExp[] = [
+  // labelled fields: "adequacy: medium", "day_role = key", "fatFeedbackPolicy: coach_only"
+  /\b(?:adequacy|day_role|dayRole|load_basis|loadBasis|carb_load_basis|fat_policy|fatFeedbackPolicy|nutrition_status|nutritionStatus|role_info|roleInfo|source_quality|hint_for_comment|formula_code|formulaCode)\s*[:=]\s*[A-Za-z_]+/gi,
+  // bare leaked status/role enums (snake_case technical literals)
+  /\b(?:below_energy_availability|below_energy_floor|low_for_load|low_for_strength|low_for_cross_training|low_for_cross|moderate_for_load|rest_ok|pre_long_low|long_run_low|aligned_or_ok|needs_fuel_support|key_interval|key_tempo|combined_load|long_endurance)\b/gi,
+];
+
+// Deterministic plain-language replacements — the model occasionally writes florid
+// or bookish phrasings; rewrite them to Igor's simple voice. Pairs only; numbers,
+// food names and normal prose are untouched. Declension/case handled per pattern.
+const NUTRITION_ATHLETE_WORDING_REPLACEMENTS: Array<[RegExp, string]> = [
+  // Cyrillic \w doesn't work in JS regex — use explicit [а-яё] for declensions.
+  [/правильн[а-яё]*\s+инстинкт[а-яё]*/gi, "правильный подход"],
+  [/(?:что-то\s+|чего-то\s+)?крупян[а-яё]+/gi, "какую-нибудь крупу"],
+  [/более\s+щедр[а-яё]+/gi, "порцию побольше"],
+  [/поплотнее/gi, "порцию побольше"],
+  [/тарелк[а-яё]*\s+(?:должна\s+быть\s+|была\s+бы\s+)?плотн[а-яё]*/gi, "порцию побольше"],
+  [/плотн[а-яё]*\s+тарелк[а-яё]*/gi, "порцию побольше"],
+  [/макро-?вывод[а-яё]*/gi, "вывод"],
+];
+
+/** Rewrite florid/bookish phrasings to Igor's plain voice (see replacements above). */
+export function simplifyAthleteWording(input: string): string {
+  let out = input;
+  for (const [re, to] of NUTRITION_ATHLETE_WORDING_REPLACEMENTS) {
+    out = out.replace(re, to);
+  }
+  return out.replace(/ {2,}/g, " ");
+}
+
+/**
+ * When the plan week has ALREADY started (review sent Mon/Tue → current week),
+ * rewrite model prose «на следующей неделе» → «на этой неделе». Applied ONLY for
+ * current_week; a genuinely-next week keeps «следующая». Touches «… недел…» phrases
+ * only — «на следующем разборе» is untouched.
+ */
+export function relabelPlanWeekWordingToThisWeek(input: string): string {
+  const keepCase = (sample: string, lower: string): string =>
+    sample[0] === sample[0].toLocaleUpperCase("ru") ? lower[0].toLocaleUpperCase("ru") + lower.slice(1) : lower;
   return input
-    .replace(/```[\s\S]*?```/g, "")
-    .replace(/\[([^\]]+)]\([^)]+\)/g, "$1")
-    .replace(/\*\*|__/g, "")
-    .replace(/^\s{0,3}#{1,6}\s*/gm, "")
-    .replace(/^\s{0,3}>\s?/gm, "")
-    .replace(/^\s*-{3,}\s*$/gm, "")
-    .replace(/TrainingPeaks/g, "план тренировок")
-    .replace(/FatSecret/g, "дневник питания")
-    // Task 10d: silently drop internal/technical term leaks (no coach note needed).
-    .replace(/OpenAI/gi, "")
-    .replace(/\bJSON\b/g, "")
-    .replace(/\bAI\b/g, "")
-    .replace(/[—–]/g, "-")
+    .replace(/на следующей неделе/gi, (m) => keepCase(m, "на этой неделе"))
+    .replace(/на следующую неделю/gi, (m) => keepCase(m, "на эту неделю"))
+    .replace(/следующая неделя/gi, (m) => keepCase(m, "эта неделя"))
+    .replace(/следующей недел([иеёю])/gi, (m, g1) => keepCase(m, `этой недел${g1}`));
+}
+
+/** Cut leaked coach/technical tokens from athlete-facing prose (see patterns above). */
+export function stripAthleteTechJargon(input: string): string {
+  let out = input;
+  for (const re of NUTRITION_ATHLETE_TECH_JARGON_PATTERNS) {
+    out = out.replace(re, "");
+  }
+  // Tidy leftovers: orphan "; ." / doubled punctuation / spaces from the removals.
+  return out
+    .replace(/\s*;\s*([.!?,)])/g, "$1")
+    .replace(/\(\s*\)/g, "")
+    .replace(/\s+([.,;!?])/g, "$1")
+    .replace(/ {2,}/g, " ");
+}
+
+export function cleanupPlainText(input: string): string {
+  return simplifyAthleteWording(
+    stripAthleteTechJargon(
+    input
+      .replace(/```[\s\S]*?```/g, "")
+      .replace(/\[([^\]]+)]\([^)]+\)/g, "$1")
+      .replace(/\*\*|__/g, "")
+      .replace(/^\s{0,3}#{1,6}\s*/gm, "")
+      .replace(/^\s{0,3}>\s?/gm, "")
+      .replace(/^\s*-{3,}\s*$/gm, "")
+      .replace(/TrainingPeaks/g, "план тренировок")
+      .replace(/FatSecret/g, "дневник питания")
+      // Task 10d: silently drop internal/technical term leaks (no coach note needed).
+      .replace(/OpenAI/gi, "")
+      .replace(/\bJSON\b/g, "")
+      .replace(/\bAI\b/g, "")
+      .replace(/[—–]/g, "-")
+    )
+  )
     .split("\n")
     .map((line) => line.replace(/ {2,}/g, " ").replace(/[ \t]+$/g, ""))
     .join("\n")
@@ -885,11 +953,14 @@ export function renderNutritionTelegramMessage(input: NutritionTelegramRendererI
   const weekSummary = paragraphizeForTelegram(
     input.interpretation.weekSummaryRu ?? "По неделе держим курс на ровную энергию и восстановление без резких просадок."
   );
-  const focusBody = paragraphizeForTelegram(
+  const focusBodyRaw = paragraphizeForTelegram(
     input.interpretation.focusLinesRu.length > 0
       ? input.interpretation.focusLinesRu.join(" ")
       : "Фокус на неделю не сформирован."
   );
+  // Plan week already started → «следующая»→«эта» (date-driven via planWeekMode).
+  const focusBody =
+    input.planWeekMode === "current_week" ? relabelPlanWeekWordingToThisWeek(focusBodyRaw) : focusBodyRaw;
   // Block 3: warm opening line from the athlete's own words, right after the
   // greeting. Final guards: plain text, drop if empty or if it smuggled a digit
   // (numbers belong to the facts, never to free praise).

@@ -22,7 +22,9 @@ export function isExplicitNutritionLongRunTitle(title?: string | null): boolean 
 
 export function isExplicitNutritionBikeTitle(title?: string | null): boolean {
   const haystack = (title ?? "").toLocaleLowerCase("ru");
-  return /\bcycling\b|\bbike\b|вело|велотрен|велостанок|cycle/.test(haystack);
+  // Cyrillic \b is ASCII-only, so the «вел» abbreviation gets letter-boundary
+  // lookarounds (matches «… вел», not «велик»); «вело…» forms covered separately.
+  return /\bcycling\b|\bbike\b|вело|велотрен|велостанок|cycle|(?<![а-яёa-z])вел(?![а-яёa-z])/i.test(haystack);
 }
 
 export function isExplicitRunTitle(title?: string | null): boolean {
@@ -111,15 +113,23 @@ export function isNutritionLongRunWorkout(input: {
     return false;
   }
 
+  // A bike is never a long RUN — guard before the «длительн»-title check so
+  // «Длительный вел» isn't forced into the run family (it's a вело day).
+  if (isExplicitNutritionBikeTitle(input.title)) {
+    return false;
+  }
   if (isExplicitNutritionLongRunTitle(input.title)) {
+    return true;
+  }
+  // Duration WINS over a tempo/quality title: a run past the long-run threshold is a
+  // long day nutritionally even if titled «Бег по темпу» (a 90-min tempo run still
+  // needs long-run fuelling). Short quality work (< threshold) stays a quality day.
+  const durationMinutes = resolveNutritionLongRunDurationMinutes(input);
+  if (durationMinutes !== null && durationMinutes > NUTRITION_LONG_RUN_MIN_DURATION_MINUTES) {
     return true;
   }
   if (hasExplicitNutritionQualityWorkoutEvidence(input.title)) {
     return false;
-  }
-  const durationMinutes = resolveNutritionLongRunDurationMinutes(input);
-  if (durationMinutes !== null && durationMinutes > NUTRITION_LONG_RUN_MIN_DURATION_MINUTES) {
-    return true;
   }
   return false;
 }
@@ -137,6 +147,11 @@ export function isNutritionLongEnduranceWorkout(input: {
     return false;
   }
   const isBikeLike = isExplicitNutritionBikeTitle(input.title);
+  // An explicitly long bike («Длительный вел») is a long-endurance day by title,
+  // even when planned workouts carry no duration/distance yet.
+  if (isBikeLike && isExplicitNutritionLongRunTitle(input.title)) {
+    return true;
+  }
   if (isBikeLike && durationMinutes !== null && durationMinutes >= NUTRITION_LONG_ENDURANCE_BIKE_MIN_DURATION_MINUTES) {
     return true;
   }
