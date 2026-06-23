@@ -37,6 +37,17 @@ export type NutritionAthletePlanSections = {
   note: string | null;
 };
 
+/**
+ * Athlete-safe review sections for the mini-app: the lead-in and the week summary,
+ * exposed structurally so the screen can show day CARDS (with per-day prose) between
+ * them instead of one prose wall. SAME text, split; the per-day blocks live in the
+ * cards, not here. Does NOT affect `parts`/`text` (the Telegram coach copy).
+ */
+export type NutritionAthleteReviewSections = {
+  intro: string | null;
+  weekSummary: string | null;
+};
+
 export type NutritionTelegramRenderResult = {
   ok: boolean;
   /** Full message (both parts joined) — single-copy / backward compatible. */
@@ -55,6 +66,8 @@ export type NutritionTelegramRenderResult = {
   charCount: number;
   /** Athlete-safe plan sections for the mini-app card layout (see type doc). */
   planSections: NutritionAthletePlanSections;
+  /** Athlete-safe review sections (lead-in + week summary) for the card layout. */
+  reviewSections: NutritionAthleteReviewSections;
 };
 
 export type NutritionMessageInterpretation = {
@@ -958,6 +971,24 @@ export function renderNutritionTelegramMessage(input: NutritionTelegramRendererI
     keyTraining: preTrainingBlock.length > 0 ? cleanupPlainText(preTrainingBlock.join("\n")) : null,
     note: planNoteText && planNoteText.trim() ? planNoteText : null,
   };
+
+  // Athlete-safe review sections: lead-in + week summary (the per-day blocks become
+  // cards on the mini-app, so the day section is NOT included here). Same text.
+  const introLine = input.formality === "vy"
+    ? "Посмотрел ваш отчёт за неделю и сопоставил его с тренировками."
+    : "Посмотрел твой отчёт за неделю и сопоставил его с тренировками.";
+  let reviewIntroText: string | null = cleanupPlainText(
+    [...(openingNote ? [openingNote] : []), introLine, ...(comparisonLine ? [comparisonLine] : [])].join("\n\n")
+  );
+  let reviewWeekSummaryText: string | null = weekSummary.trim() ? cleanupPlainText(weekSummary) : null;
+  if (!input.hasPreviousWeeksContext) {
+    if (reviewIntroText) reviewIntroText = stripPhantomPreviousComparison(reviewIntroText).text || null;
+    if (reviewWeekSummaryText) reviewWeekSummaryText = stripPhantomPreviousComparison(reviewWeekSummaryText).text || null;
+  }
+  const reviewSections: NutritionAthleteReviewSections = {
+    intro: reviewIntroText && reviewIntroText.trim() ? reviewIntroText : null,
+    weekSummary: reviewWeekSummaryText && reviewWeekSummaryText.trim() ? reviewWeekSummaryText : null,
+  };
   const issues = validateTelegramReadyNutritionMessage({
     text,
     hasPreviousWeeksContext: input.hasPreviousWeeksContext,
@@ -984,5 +1015,6 @@ export function renderNutritionTelegramMessage(input: NutritionTelegramRendererI
     coachReviewNotes,
     charCount: text.length,
     planSections,
+    reviewSections,
   };
 }

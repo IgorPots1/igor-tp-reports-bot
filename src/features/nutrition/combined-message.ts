@@ -91,6 +91,7 @@ function emptyRenderResult(): NutritionTelegramRenderResult {
     coachReviewNotes: [],
     charCount: 0,
     planSections: { focus: null, raceDay: null, keyTraining: null, note: null },
+    reviewSections: { intro: null, weekSummary: null },
   };
 }
 
@@ -603,7 +604,45 @@ function hasNutritionCompletenessIssue(input: {
   );
 }
 
+/** One review day, both as the Telegram line and structured (athlete-safe) for cards. */
+type NutritionReviewDayEntry = {
+  date: string | null;
+  line: string;
+  prose: string;
+  isRest: boolean;
+  isRun: boolean;
+  isKey: boolean;
+  isRace: boolean;
+};
+
+/** Athlete-safe per-day review card data (date + validated prose + flags). */
+export type NutritionReviewDayCard = {
+  date: string | null;
+  prose: string;
+  isRest: boolean;
+  isRun: boolean;
+  isKey: boolean;
+  isRace: boolean;
+  isRecovery: boolean;
+};
+
+export function getNutritionReviewDayCards(review: NutritionWeeklyAnalysis): NutritionReviewDayCard[] {
+  return buildDailyFactsEntries(review).map((e) => ({
+    date: e.date,
+    prose: e.prose,
+    isRest: e.isRest,
+    isRun: e.isRun,
+    isKey: e.isKey,
+    isRace: e.isRace,
+    isRecovery: false, // the past-week review has no recovery-day concept
+  }));
+}
+
 function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
+  return buildDailyFactsEntries(review).map((entry) => entry.line);
+}
+
+function buildDailyFactsEntries(review: NutritionWeeklyAnalysis): NutritionReviewDayEntry[] {
   const facts = getCanonicalDailyFacts(review);
   const reviewWeekFacts = filterFactsToReviewWeek(review, facts);
   if (reviewWeekFacts.length === 0) {
@@ -697,6 +736,15 @@ function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
         weekRoles.get(dateKey) ?? { ...resolvedRole, isKey: false },
         typeof carbsGuard.loadBasis === "string" ? carbsGuard.loadBasis : null
       );
+      // Athlete-safe day flags for the mini-app cards (same markers as the plan).
+      const isRace = roleInfo.role === "race" || trainingType === "race";
+      const isRest = trainingType === "rest";
+      const dayFlags = {
+        isRest,
+        isRace,
+        isKey: roleInfo.isKey,
+        isRun: !isRest && !isRace,
+      };
       const comment = composeNutritionDayComment(
         {
           trainingType,
@@ -736,7 +784,12 @@ function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
       // newlines survive copy-paste; no markdown. Structure is goal-independent.
       const header = `🔹 ${weekday} (${dateLabel}) · ${athleteTrainingLabel}`;
       if (missingNutritionData) {
-        return `${header}\n\n${paragraphizeForTelegram(comment)}`;
+        return {
+          date,
+          line: `${header}\n\n${paragraphizeForTelegram(comment)}`,
+          prose: comment,
+          ...dayFlags,
+        };
       }
       // Hybrid: prefer validated model prose, otherwise the deterministic comment.
       // The fact line above is always code-owned and never replaced.
@@ -744,17 +797,22 @@ function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
       // generation-time audit (draft-generator) validate against identical facts.
       const dayComment = resolveUsableNutritionDayProse(item.athlete_prose, buildNutritionDayProseFacts(item)) ?? comment;
       const numbersLine = `${formatNutritionAthleteKcal(kcal, { mode: "actual" })} · Б ${formatNutritionAthleteMacro(protein)} · Ж ${formatNutritionAthleteMacro(fat)} · У ${formatNutritionAthleteMacro(carbs)}`;
-      return [
-        header,
-        "",
-        numbersLine,
-        "",
-        NUTRITION_TELEGRAM_DAY_DIVIDER,
-        "",
-        paragraphizeForTelegram(dayComment),
-      ].join("\n");
+      return {
+        date,
+        line: [
+          header,
+          "",
+          numbersLine,
+          "",
+          NUTRITION_TELEGRAM_DAY_DIVIDER,
+          "",
+          paragraphizeForTelegram(dayComment),
+        ].join("\n"),
+        prose: dayComment,
+        ...dayFlags,
+      };
     })
-    .filter((line): line is string => Boolean(line));
+    .filter((entry): entry is NutritionReviewDayEntry => entry !== null);
 }
 
 function getDailyFactsCoverage(review: NutritionWeeklyAnalysis): {

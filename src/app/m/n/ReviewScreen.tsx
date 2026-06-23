@@ -12,6 +12,12 @@ type DailyMacro = {
   carbsG: number | null;
   marker: DayMarker;
   trainingLabel: string | null;
+  prose?: string | null;
+  isRest?: boolean;
+  isRun?: boolean;
+  isKey?: boolean;
+  isRace?: boolean;
+  isRecovery?: boolean;
 };
 
 type PlanDay = {
@@ -35,12 +41,31 @@ type ReviewData = {
   studentName?: string;
   focus?: string | null;
   parts?: string[];
+  reviewIntroText?: string | null;
+  weekSummaryText?: string | null;
   dailyMacros?: DailyMacro[];
   planDays?: PlanDay[];
   planFocusText?: string | null;
   planRaceDayText?: string | null;
   planKeyTrainingText?: string | null;
   planNoteText?: string | null;
+};
+
+// A day card works for both review (has prose) and plan (no prose); shared shape.
+type DayCardData = {
+  date: string | null;
+  weekdayRu?: string | null;
+  trainingLabel: string | null;
+  kcal: number | null;
+  proteinG: number | null;
+  fatG: number | null;
+  carbsG: number | null;
+  isRest?: boolean;
+  isRun?: boolean;
+  isKey?: boolean;
+  isRace?: boolean;
+  isRecovery?: boolean;
+  prose?: string | null;
 };
 
 type Phase = "loading" | "ready" | "not_ready" | "error";
@@ -54,16 +79,12 @@ const TEAL = {
   darkText: "#E1F5EE",
 };
 
-const MARKER_COLOR: Record<DayMarker, string> = {
-  ok: "#1D9E75",
-  low_energy: "#EF9F27",
-  unknown: "var(--tg-theme-hint-color, #b0b6ba)",
-};
-
-// Plan-day accent tokens (green = accent, not fill).
+// Day accent tokens (green = accent, not fill). Shared by review + plan cards.
 const PLAN_MARKER = { rest: "#5b8def", run: "#23b07f", key: "#0e8d76", race: "#e0533f", recovery: "#5b8def" };
 
-function planDayMarkerColor(d: PlanDay): string {
+type DayFlags = { isRest?: boolean; isRun?: boolean; isKey?: boolean; isRace?: boolean; isRecovery?: boolean };
+
+function dayMarkerColor(d: DayFlags): string {
   if (d.isRace) return PLAN_MARKER.race;
   if (d.isRecovery) return PLAN_MARKER.recovery;
   if (d.isKey) return PLAN_MARKER.key;
@@ -73,7 +94,7 @@ function planDayMarkerColor(d: PlanDay): string {
 }
 
 // Left border (special days only) + optional badge.
-function planDayAccent(d: PlanDay): { borderLeft: string; background?: string; badge?: { text: string; color: string } } {
+function dayAccent(d: DayFlags): { borderLeft: string; background?: string; badge?: { text: string; color: string } } {
   if (d.isRace) return { borderLeft: `4px solid ${PLAN_MARKER.race}`, background: "#fdf3f1" };
   if (d.isRecovery) return { borderLeft: `4px solid ${PLAN_MARKER.recovery}`, badge: { text: "восстановление", color: PLAN_MARKER.recovery } };
   if (d.isKey) return { borderLeft: `4px solid ${PLAN_MARKER.key}`, badge: { text: "ключевой", color: PLAN_MARKER.key } };
@@ -85,6 +106,15 @@ function planDayAccent(d: PlanDay): { borderLeft: string; background?: string; b
 function splitSectionText(text: string): { heading: string; body: string } {
   const idx = text.indexOf("\n");
   return idx === -1 ? { heading: text.trim(), body: "" } : { heading: text.slice(0, idx).trim(), body: text.slice(idx + 1).trim() };
+}
+
+// Split prose into paragraphs on blank lines, so they render with real spacing
+// (not one slipped wall). Single newlines inside a paragraph are kept as spaces.
+function splitParagraphs(text: string): string[] {
+  return text
+    .split(/\n{2,}/)
+    .map((p) => p.replace(/\s*\n\s*/g, " ").trim())
+    .filter(Boolean);
 }
 
 const S = {
@@ -219,6 +249,23 @@ const S = {
     lineHeight: 1.5,
     margin: "12px 2px 0",
   },
+  // Day card that can hold prose (review) — column: top row + divider + prose.
+  dayCardTop: { display: "flex" as const, alignItems: "center" as const, gap: 12 },
+  dayProse: { borderTop: "1px solid #eef1f0", margin: "10px 0 0", paddingTop: 10 },
+  dayProsePara: { fontSize: 14, lineHeight: 1.55, color: "#2a3a35", margin: "0 0 8px", whiteSpace: "pre-wrap" as const },
+  // Lead-in & week summary (white, readable paragraphs — no green wall).
+  introPara: { fontSize: 15, lineHeight: 1.6, margin: "0 0 10px", color: "var(--tg-theme-text-color, #222)" },
+  summaryPlate: {
+    background: "var(--tg-theme-secondary-bg-color, #fff)",
+    border: "1px solid #e6ebe9",
+    borderRadius: 14,
+    padding: "12px 14px",
+    margin: "4px 0 8px",
+  },
+  summaryLabel: { fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase" as const, color: PLAN_MARKER.key, margin: "0 0 6px" },
+  summaryPara: { fontSize: 14, lineHeight: 1.55, color: "#2a3a35", margin: "0 0 8px" },
+  // Plan focus: short intro on green plate; the rest on white readable paragraphs.
+  focusBodyWhite: { margin: "0 0 4px" },
   center: { textAlign: "center" as const, padding: "60px 24px", color: "var(--tg-theme-hint-color, #888)" },
   skeletonBar: {
     height: 14,
@@ -246,12 +293,53 @@ function r(value: number | null): string {
   return value === null ? "—" : String(Math.round(value));
 }
 
-// The shared review renderer prepends a deterministic greeting ("Здравствуйте!" /
-// "Привет!"). On the athlete mini-app the screen has its own header and the form
-// already greeted on send, so drop a leading greeting line (render-only — the
-// Telegram coach copy keeps it; numbers and the rest of the text are untouched).
-function stripLeadingGreeting(text: string): string {
-  return text.replace(/^\s*(?:здравствуйте|привет)[!.…]*\s*\n+/iu, "");
+// Single day-card used by BOTH the review (with per-day prose) and the plan
+// (numbers only). Marker + day/date/type + КБЖУ-chip; prose (if any) under a
+// thin divider. Special days get a coloured left border + badge (key/race/recovery).
+function DayCard({ d }: { d: DayCardData }) {
+  const accent = dayAccent(d);
+  const paragraphs = d.prose ? splitParagraphs(d.prose) : [];
+  return (
+    <div
+      style={{
+        ...S.planCard,
+        display: "block",
+        borderLeft: accent.borderLeft,
+        ...(accent.background ? { background: accent.background } : {}),
+      }}
+    >
+      <div style={S.dayCardTop}>
+        <span style={{ ...S.dayMarker, background: dayMarkerColor(d) }} aria-hidden />
+        <div style={S.dayWhen}>
+          <div style={S.dayWeekday}>
+            {d.weekdayRu ?? (d.date ? formatWeekday(d.date) : "")}
+            {d.trainingLabel ? <span style={S.dayType}> · {d.trainingLabel}</span> : null}
+            {accent.badge ? (
+              <span style={{ ...S.planBadge, color: accent.badge.color, background: `${accent.badge.color}1a` }}>
+                {accent.badge.text}
+              </span>
+            ) : null}
+          </div>
+          {d.date ? <div style={S.dayDate}>{formatDateShort(d.date)}</div> : null}
+        </div>
+        <div style={S.planChip}>
+          <div style={S.planChipKcal}>{r(d.kcal)} ккал</div>
+          <div style={S.planChipMacro}>
+            Б {r(d.proteinG)} · Ж {r(d.fatG)} · У {r(d.carbsG)}
+          </div>
+        </div>
+      </div>
+      {paragraphs.length > 0 ? (
+        <div style={S.dayProse}>
+          {paragraphs.map((p, i) => (
+            <p key={i} style={S.dayProsePara}>
+              {p}
+            </p>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export default function ReviewScreen({ initData }: { initData: string }) {
@@ -332,9 +420,13 @@ export default function ReviewScreen({ initData }: { initData: string }) {
   }
 
   const week = data?.week;
-  const parts = data?.parts ?? [];
   const macros = data?.dailyMacros ?? [];
   const planDays = data?.planDays ?? [];
+  // Plan focus (Путь 2): short intro on the green plate, the rest on white readable
+  // paragraphs (no green wall, no slipping). First paragraph = the intro.
+  const planFocusParas = data?.planFocusText ? splitParagraphs(data.planFocusText) : [];
+  const planFocusIntro = planFocusParas[0] ?? null;
+  const planFocusRest = planFocusParas.slice(1);
 
   return (
     <div style={S.page}>
@@ -356,74 +448,87 @@ export default function ReviewScreen({ initData }: { initData: string }) {
           </div>
         ) : null}
 
-        {parts[0] ? <div style={S.prose}>{stripLeadingGreeting(parts[0])}</div> : null}
+        {data?.reviewIntroText
+          ? splitParagraphs(data.reviewIntroText).map((p, i) => (
+              <p key={i} style={S.introPara}>
+                {p}
+              </p>
+            ))
+          : null}
 
         {macros.length > 0 ? (
           <>
-            <p style={S.sectionLabel}>По дням</p>
+            <p style={S.sectionLabel}>📊 Разбор по дням</p>
             {macros.map((m) => (
-              <div key={m.day} style={S.dayCard}>
-                <span style={{ ...S.dayMarker, background: MARKER_COLOR[m.marker] }} aria-hidden />
-                <div style={S.dayWhen}>
-                  <div style={S.dayWeekday}>
-                    {formatWeekday(m.day)}
-                    {m.trainingLabel ? (
-                      <span style={S.dayType}> · {m.trainingLabel}</span>
-                    ) : null}
-                  </div>
-                  <div style={S.dayDate}>{formatDateShort(m.day)}</div>
-                </div>
-                <div>
-                  <div style={S.dayKcal}>{r(m.kcal)} ккал</div>
-                  <div style={S.dayMacroLine}>
-                    Б {r(m.proteinG)} · Ж {r(m.fatG)} · У {r(m.carbsG)}
-                  </div>
-                </div>
-              </div>
+              <DayCard
+                key={m.day}
+                d={{
+                  date: m.day,
+                  trainingLabel: m.trainingLabel,
+                  kcal: m.kcal,
+                  proteinG: m.proteinG,
+                  fatG: m.fatG,
+                  carbsG: m.carbsG,
+                  isRest: m.isRest,
+                  isRun: m.isRun,
+                  isKey: m.isKey,
+                  isRace: m.isRace,
+                  isRecovery: m.isRecovery,
+                  prose: m.prose,
+                }}
+              />
             ))}
           </>
+        ) : null}
+
+        {data?.weekSummaryText ? (
+          <div style={S.summaryPlate}>
+            <p style={S.summaryLabel}>📌 Итог недели</p>
+            {splitParagraphs(data.weekSummaryText).map((p, i) => (
+              <p key={i} style={S.summaryPara}>
+                {p}
+              </p>
+            ))}
+          </div>
         ) : null}
 
         {planDays.length > 0 || data?.planFocusText ? (
           <>
             <p style={{ ...S.sectionLabel, marginTop: 22 }}>🎯 План на следующую неделю</p>
 
-            {data?.planFocusText ? (
+            {planFocusIntro ? (
               <div style={S.planFocusPlate}>
                 <p style={S.planFocusPlateLabel}>Фокус недели</p>
-                {data.planFocusText}
+                {planFocusIntro}
               </div>
             ) : null}
+            {planFocusRest.length > 0
+              ? planFocusRest.map((p, i) => (
+                  <p key={i} style={S.introPara}>
+                    {p}
+                  </p>
+                ))
+              : null}
 
-            {planDays.map((d) => {
-              const accent = planDayAccent(d);
-              return (
-                <div
-                  key={d.date ?? Math.random()}
-                  style={{ ...S.planCard, borderLeft: accent.borderLeft, ...(accent.background ? { background: accent.background } : {}) }}
-                >
-                  <span style={{ ...S.dayMarker, background: planDayMarkerColor(d) }} aria-hidden />
-                  <div style={S.dayWhen}>
-                    <div style={S.dayWeekday}>
-                      {d.weekdayRu ?? (d.date ? formatWeekday(d.date) : "")}
-                      {d.trainingLabel ? <span style={S.dayType}> · {d.trainingLabel}</span> : null}
-                      {accent.badge ? (
-                        <span style={{ ...S.planBadge, color: accent.badge.color, background: `${accent.badge.color}1a` }}>
-                          {accent.badge.text}
-                        </span>
-                      ) : null}
-                    </div>
-                    {d.date ? <div style={S.dayDate}>{formatDateShort(d.date)}</div> : null}
-                  </div>
-                  <div style={S.planChip}>
-                    <div style={S.planChipKcal}>{r(d.targetKcal)} ккал</div>
-                    <div style={S.planChipMacro}>
-                      Б {r(d.proteinG)} · Ж {r(d.fatG)} · У {r(d.carbsG)}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+            {planDays.map((d) => (
+              <DayCard
+                key={d.date ?? Math.random()}
+                d={{
+                  date: d.date,
+                  weekdayRu: d.weekdayRu,
+                  trainingLabel: d.trainingLabel,
+                  kcal: d.targetKcal,
+                  proteinG: d.proteinG,
+                  fatG: d.fatG,
+                  carbsG: d.carbsG,
+                  isRest: d.isRest,
+                  isRun: d.isRun,
+                  isKey: d.isKey,
+                  isRace: d.isRace,
+                  isRecovery: d.isRecovery,
+                }}
+              />
+            ))}
 
             {data?.planNoteText ? <p style={S.planNote}>{data.planNoteText}</p> : null}
 

@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 
 import { validateTelegramInitData } from "@/features/telegram/validate-init-data";
 import { resolveMiniAppStudent } from "@/features/telegram/miniapp-student-resolver";
-import { buildDerivedNutritionCombinedMessage } from "@/features/nutrition/combined-message";
+import { buildDerivedNutritionCombinedMessage, getNutritionReviewDayCards } from "@/features/nutrition/combined-message";
 import { formatNutritionWorkoutLabelForAthlete } from "@/features/nutrition/narrative-composer";
 import { resolveMiniTableDays } from "@/features/nutrition/telegram-renderer";
 import { getNutritionAdminLocalDate } from "@/features/nutrition/plan-week-policy";
@@ -153,13 +153,16 @@ export async function POST(request: NextRequest): Promise<Response> {
   const focus = asStringOrNull(asObject(asObject(review.nutritionSummary).one_focus).statement_ru);
 
   // Her own daily macros for the review week (whitelisted numeric fields only)
-  // + a soft color marker per day (no clinical wording — see softDayMarker).
+  // + a soft color marker per day (no clinical wording — see softDayMarker)
+  // + validated per-day prose & athlete-safe day flags (for the mini-app cards).
   const metaByDate = buildDayMetaByDate(asObject(review.nutritionSummary).daily_analysis);
+  const reviewCardByDate = new Map(getNutritionReviewDayCards(review).map((c) => [c.date ?? "", c]));
   const macroSource = review.reportId ? await getNutritionReportWithMacros(review.reportId).catch(() => null) : null;
   const dailyMacros = (macroSource?.macros ?? [])
     .filter((m) => !m.day.startsWith("unresolved:"))
     .map((m) => {
       const meta = metaByDate.get(m.day);
+      const card = reviewCardByDate.get(m.day);
       return {
         day: m.day,
         kcal: m.kcal,
@@ -168,6 +171,12 @@ export async function POST(request: NextRequest): Promise<Response> {
         carbsG: m.carbsG,
         marker: meta?.marker ?? "unknown",
         trainingLabel: meta?.trainingLabel ?? null,
+        prose: card?.prose ?? null,
+        isRest: card?.isRest ?? false,
+        isRun: card?.isRun ?? false,
+        isKey: card?.isKey ?? false,
+        isRace: card?.isRace ?? false,
+        isRecovery: card?.isRecovery ?? false,
       };
     });
 
@@ -227,6 +236,8 @@ export async function POST(request: NextRequest): Promise<Response> {
     studentName: student.studentName,
     focus,
     parts: combined.athleteMessageDraftParts,
+    reviewIntroText: combined.renderResult.reviewSections.intro,
+    weekSummaryText: combined.renderResult.reviewSections.weekSummary,
     dailyMacros,
     planDays,
     planFocusText: planSections.focus,
