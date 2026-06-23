@@ -31,12 +31,12 @@
 
 .title {
   font-family: var(--font-oswald), var(--font-manrope), sans-serif;
-  font-size: 30px;
-  line-height: 1.1;
+  font-size: 36px;
+  line-height: 1.08;
   font-weight: 700;
   letter-spacing: -0.02em;
   text-transform: uppercase;
-  margin: 0 0 8px;
+  margin: 0 0 28px;
 }
 
 .accent {

@@ -41,10 +41,10 @@ function WeekTemplate({ days }: { days: WeekDay[] }) {
 }
 
 export default function ThreeRunsTool() {
-  // Часть A — шаблон недели
+  // Часть A, шаблон недели
   const [weekVariant, setWeekVariant] = useState<3 | 4>(3);
 
-  // Часть B — калькулятор темпов
+  // Часть B, калькулятор темпа
   const [distance, setDistance] = useState<RaceDistance>(5000);
   const [minutes, setMinutes] = useState("25");
   const [seconds, setSeconds] = useState("00");
@@ -82,11 +82,9 @@ export default function ThreeRunsTool() {
     <div className={styles.inner}>
       <div className={styles.brand}>igorp.run</div>
       <h1 className={styles.title}>
-        ТРИ ТИПА <span className={styles.accent}>ТРЕНИРОВОК</span>
+        Шаблон беговой недели и{" "}
+        <span className={styles.accent}>твой темп под разные тренировки</span>
       </h1>
-      <p className={styles.subtitle}>
-        Шаблон беговой недели и твой темп под разные тренировки
-      </p>
 
       {/* ===== Часть A. Шаблон недели ===== */}
       <section className={styles.section}>
@@ -116,11 +114,11 @@ export default function ThreeRunsTool() {
 
         <p className={styles.note}>
           <span className={styles.noteAccent}>Правило: </span>
-          развивающую и длительный не ставь в соседние дни — между ними лёгкий
+          развивающую и длительный не ставь в соседние дни, между ними лёгкий
           или отдых.
         </p>
         <p className={styles.note}>
-          В калькуляторе ниже «Развивающая» раскрыта на темповый, длинные и
+          В калькуляторе ниже «Развивающая» это темповый, длинные и
           короткие интервалы. Длительный беги в лёгком, разговорном темпе.
         </p>
       </section>
@@ -224,7 +222,7 @@ export default function ThreeRunsTool() {
         <div className={styles.important}>
           <div className={styles.importantLabel}>ВАЖНО</div>
           <p className={styles.importantText}>
-            Объём работы — ориентир для подготовленных. Если только начинаешь,
+            Объём работы, ориентир для подготовленных. Если только начинаешь,
             бери нижнюю границу и наращивай постепенно: 30–40 мин на пороге это
             верхний предел, а не старт для новичка.
           </p>
