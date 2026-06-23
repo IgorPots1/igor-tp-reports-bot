@@ -4,6 +4,9 @@ import { validateTelegramInitData } from "@/features/telegram/validate-init-data
 import { resolveMiniAppStudent } from "@/features/telegram/miniapp-student-resolver";
 import { buildDerivedNutritionCombinedMessage } from "@/features/nutrition/combined-message";
 import { formatNutritionWorkoutLabelForAthlete } from "@/features/nutrition/narrative-composer";
+import { resolveMiniTableDays } from "@/features/nutrition/telegram-renderer";
+import { getNutritionAdminLocalDate } from "@/features/nutrition/plan-week-policy";
+import type { NutritionNextWeekPlan } from "@/features/nutrition/weekly-plan-formulas";
 import {
   getLatestNutritionWeeklyPlanForStudentWeek,
   getNutritionReportWithMacros,
@@ -25,10 +28,6 @@ function jsonResponse(status: number, body: Record<string, unknown>): Response {
 
 function asObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
-function asNumberOrNull(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function asStringOrNull(value: unknown): string | null {
@@ -172,18 +171,54 @@ export async function POST(request: NextRequest): Promise<Response> {
       };
     });
 
-  // Next-week plan day targets (whitelisted: no coach notes/flags raw dump).
-  const nextWeekPlan = asObject(asObject(plan?.planSummary).next_week_plan);
-  const planDaysRaw = Array.isArray(nextWeekPlan.days) ? (nextWeekPlan.days as Array<Record<string, unknown>>) : [];
-  const planDays = planDaysRaw.map((d) => ({
-    date: asStringOrNull(d.date),
-    weekdayRu: asStringOrNull(d.weekday_ru),
-    trainingLabel: asStringOrNull(d.training_label),
-    targetKcal: asNumberOrNull(d.target_kcal),
-    proteinG: asNumberOrNull(d.protein_g),
-    fatG: asNumberOrNull(d.fat_g),
-    carbsG: asNumberOrNull(d.carbs_g),
-  }));
+  // Next-week plan day targets (whitelisted). Day-type flags are athlete-safe —
+  // the day type is already visible in the plan — and only forward what code already
+  // knows (key role / race / recovery from prior нарядов); no coach-only fields.
+  // Past days of the CURRENT week are dropped using the SAME cutoff as the coach
+  // mini-table (resolveMiniTableDays, athlete_remaining_only); a future week shows all.
+  const nextWeekPlanObj = asObject(asObject(plan?.planSummary).next_week_plan);
+  const todayLocal = getNutritionAdminLocalDate();
+  const planWeekMode: "current_week" | "next_week" =
+    planWeekFrom && planWeekTo && todayLocal >= planWeekFrom && todayLocal <= planWeekTo ? "current_week" : "next_week";
+  const planDayObjects = Array.isArray(nextWeekPlanObj.days)
+    ? resolveMiniTableDays({
+        nextWeekPlan: nextWeekPlanObj as unknown as NutritionNextWeekPlan,
+        planWeekMode,
+        todayLocalDate: todayLocal,
+        mode: "athlete_remaining_only",
+      })
+    : [];
+  const planDays = planDayObjects.map((d) => {
+    const f = d.flags ?? ({} as NutritionNextWeekPlan["days"][number]["flags"]);
+    const isRest = f.rest === true;
+    const isRace = f.race === true;
+    const isRecovery = f.recovery === true;
+    const isTraining =
+      f.easy === true ||
+      f.hard === true ||
+      f.long_run === true ||
+      f.strength === true ||
+      f.cross_training === true ||
+      f.key_workout === true;
+    return {
+      date: d.date ?? null,
+      weekdayRu: d.weekday_ru ?? null,
+      trainingLabel: d.training_label ?? null,
+      targetKcal: d.target_kcal ?? null,
+      proteinG: d.protein_g ?? null,
+      fatG: d.fat_g ?? null,
+      carbsG: d.carbs_g ?? null,
+      isRest,
+      isRun: !isRest && !isRace && !isRecovery && isTraining,
+      isKey: f.key_workout === true,
+      isRace,
+      isRecovery,
+    };
+  });
+
+  // Plan prose split into athlete-safe sections for the card layout (same text the
+  // plan already produces; the text mini-table is dropped — cards replace it).
+  const planSections = combined.renderResult.planSections;
 
   return jsonResponse(200, {
     ok: true,
@@ -194,5 +229,9 @@ export async function POST(request: NextRequest): Promise<Response> {
     parts: combined.athleteMessageDraftParts,
     dailyMacros,
     planDays,
+    planFocusText: planSections.focus,
+    planRaceDayText: planSections.raceDay,
+    planKeyTrainingText: planSections.keyTraining,
+    planNoteText: planSections.note,
   });
 }

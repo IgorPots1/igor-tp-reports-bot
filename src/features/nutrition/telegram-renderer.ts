@@ -24,6 +24,19 @@ export type NutritionTelegramRenderIssue = {
   tier: "hard" | "soft";
 };
 
+/**
+ * Athlete-safe plan sections, exposed structurally so the mini-app can render the
+ * plan as cards/panels instead of one text wall. SAME text the plan already
+ * produces — just split, never re-generated. Carries NO coach-only data and does
+ * NOT affect `parts`/`text` (the Telegram coach copy) or plan_week matching.
+ */
+export type NutritionAthletePlanSections = {
+  focus: string | null;
+  raceDay: string | null;
+  keyTraining: string | null;
+  note: string | null;
+};
+
 export type NutritionTelegramRenderResult = {
   ok: boolean;
   /** Full message (both parts joined) — single-copy / backward compatible. */
@@ -40,6 +53,8 @@ export type NutritionTelegramRenderResult = {
    */
   coachReviewNotes: string[];
   charCount: number;
+  /** Athlete-safe plan sections for the mini-app card layout (see type doc). */
+  planSections: NutritionAthletePlanSections;
 };
 
 export type NutritionMessageInterpretation = {
@@ -279,7 +294,7 @@ function buildPlanByDayTypes(nextWeekPlan: NutritionNextWeekPlan | null, fallbac
     .filter((line): line is string => Boolean(line));
 }
 
-function resolveMiniTableDays(input: {
+export function resolveMiniTableDays(input: {
   nextWeekPlan: NutritionNextWeekPlan;
   planWeekMode: NutritionPlanTargetWeekMode;
   todayLocalDate?: string;
@@ -841,6 +856,7 @@ export function renderNutritionTelegramMessage(input: NutritionTelegramRendererI
     : buildPlanByDayTypes(input.nextWeekPlan, input.fallbackPlanLines);
   const keyTrainingPresent = hasKeyTraining(input.nextWeekPlan);
   const raceBlock = buildRaceDayBlock(input.nextWeekPlan);
+  const preTrainingBlock = keyTrainingPresent ? buildPreTrainingBlock(input.nextWeekPlan) : [];
   const mainStepLine = buildNutritionTargetWeekMainStepLine(input.nextWeekPlan, input.planWeekMode, {
     todayLocalDate: input.todayLocalDate,
     miniTableMode: input.miniTableMode ?? "athlete_remaining_only",
@@ -897,7 +913,7 @@ export function renderNutritionTelegramMessage(input: NutritionTelegramRendererI
     planHeading,
     ...planLines,
     ...(raceBlock.length > 0 ? ["", ...raceBlock] : []),
-    ...(keyTrainingPresent ? ["", ...buildPreTrainingBlock(input.nextWeekPlan)] : []),
+    ...(preTrainingBlock.length > 0 ? ["", ...preTrainingBlock] : []),
     "",
     "На следующем разборе посмотрим, как это отразится на энергии и восстановлении.",
   ];
@@ -918,6 +934,30 @@ export function renderNutritionTelegramMessage(input: NutritionTelegramRendererI
   }
   const parts = [reviewText, planText].filter((part) => part.length > 0);
   const text = parts.join("\n\n");
+
+  // Athlete-safe plan sections (SAME text, split for the mini-app card layout).
+  // The text mini-table is deliberately NOT included — the app renders day cards
+  // from the structured plan days instead. `parts`/`text` above are untouched.
+  let planFocusText: string | null = focusBody.trim() ? cleanupPlainText(focusBody) : null;
+  let planNoteText: string | null = cleanupPlainText(
+    [
+      "Цифры ниже - ориентиры, не обязательство. Не нужно резко прыгать к ним за один день.",
+      ...(mainStepLine ? [mainStepLine] : []),
+      "На следующем разборе посмотрим, как это отразится на энергии и восстановлении.",
+    ].join(" ")
+  );
+  if (!input.hasPreviousWeeksContext) {
+    if (planFocusText) {
+      planFocusText = stripPhantomPreviousComparison(planFocusText).text || null;
+    }
+    planNoteText = stripPhantomPreviousComparison(planNoteText).text || null;
+  }
+  const planSections: NutritionAthletePlanSections = {
+    focus: planFocusText,
+    raceDay: raceBlock.length > 0 ? cleanupPlainText(raceBlock.join("\n")) : null,
+    keyTraining: preTrainingBlock.length > 0 ? cleanupPlainText(preTrainingBlock.join("\n")) : null,
+    note: planNoteText && planNoteText.trim() ? planNoteText : null,
+  };
   const issues = validateTelegramReadyNutritionMessage({
     text,
     hasPreviousWeeksContext: input.hasPreviousWeeksContext,
@@ -943,5 +983,6 @@ export function renderNutritionTelegramMessage(input: NutritionTelegramRendererI
     issues,
     coachReviewNotes,
     charCount: text.length,
+    planSections,
   };
 }

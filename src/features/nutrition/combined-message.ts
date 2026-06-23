@@ -90,6 +90,7 @@ function emptyRenderResult(): NutritionTelegramRenderResult {
     issues: [],
     coachReviewNotes: [],
     charCount: 0,
+    planSections: { focus: null, raceDay: null, keyTraining: null, note: null },
   };
 }
 
