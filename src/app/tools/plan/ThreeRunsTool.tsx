@@ -82,10 +82,10 @@ export default function ThreeRunsTool() {
     <div className={styles.inner}>
       <div className={styles.brand}>igorp.run</div>
       <h1 className={styles.title}>
-        ТРИ <span className={styles.accent}>ПРОБЕЖКИ</span>
+        ТРИ ТИПА <span className={styles.accent}>ТРЕНИРОВОК</span>
       </h1>
       <p className={styles.subtitle}>
-        Шаблон беговой недели и твои темпы под недавний результат
+        Шаблон беговой недели и твой темп под разные тренировки
       </p>
 
       {/* ===== Часть A. Шаблон недели ===== */}
@@ -125,9 +125,9 @@ export default function ThreeRunsTool() {
         </p>
       </section>
 
-      {/* ===== Часть B. Калькулятор темпов ===== */}
+      {/* ===== Часть B. Калькулятор темпа ===== */}
       <section className={styles.section}>
-        <div className={styles.sectionHead}>Калькулятор темпов</div>
+        <div className={styles.sectionHead}>Калькулятор темпа</div>
 
         <div className={styles.fieldLabel}>Недавний результат на</div>
         <div className={styles.toggleRow}>
@@ -178,8 +178,8 @@ export default function ThreeRunsTool() {
         </div>
 
         <p className={styles.disclaimer}>
-          Бери результат за последние 1–2 месяца. Если форма ушла, держи темпы
-          на 5–10 сек медленнее.
+          Бери результат за последние 1–2 месяца. Если форма ушла, держи темп
+          на 10–15 сек медленнее.
         </p>
 
         {cards ? (
@@ -233,10 +233,13 @@ export default function ThreeRunsTool() {
 
       {/* CTA */}
       <div className={styles.cta}>
-        <div className={styles.ctaTitle}>Хочешь план под свою цель?</div>
+        <div className={styles.ctaTitle}>
+          Хочешь знать, какие тренировки нужны именно тебе?
+        </div>
         <p className={styles.ctaText}>
-          Это базовый каркас. Под твой уровень, график и старт нужна система:
-          объёмы, прогрессия, восстановление. Давай разберём твою подготовку.
+          Это базовый каркас. Реальный прогресс дают правильный объём,
+          прогрессия нагрузки и восстановление, подобранные под твой уровень и
+          цель. Разберём твою подготовку на бесплатной консультации.
         </p>
         <a
           href="https://t.me/IgorPotseluev"
@@ -244,11 +247,11 @@ export default function ThreeRunsTool() {
           rel="noopener noreferrer"
           className={styles.ctaButton}
         >
-          Написать мне в Telegram →
+          Записаться на консультацию →
         </a>
       </div>
 
-      <div className={styles.footer}>igorp.run · три пробежки в неделю</div>
+      <div className={styles.footer}>igorp.run</div>
     </div>
   );
 }
