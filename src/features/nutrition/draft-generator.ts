@@ -767,6 +767,31 @@ export function buildNutritionDailyFactsForNarrative(input: {
           over_goal_line: actualKcal !== null ? actualKcal > target.target_kcal + 150 : null,
         };
       })();
+      // Поток B: for lose/gain, the cited carb ORIENTATION must match the plan's
+      // goal target, not the maintenance corridor (g/kg). Reuse the already-computed
+      // goalDayTarget (same computeNutritionGoalDayTarget the plan uses — no formula
+      // duplication, no rsync) and route its carbs into the day's target band (±20 г,
+      // round 10 — same display band as the plan). maintain → goalDayTarget is null →
+      // the corridor stays byte-identical.
+      const goalAwareCanonicalTarget = (() => {
+        const base = canonicalTarget ?? { formulaCode: "legacy_daily_v1" };
+        const carbs = goalDayTarget?.carbs_g;
+        if (!goalDayTarget || typeof carbs !== "number" || !Number.isFinite(carbs)) {
+          return base;
+        }
+        const bw = typeof bodyweightKg === "number" && bodyweightKg > 0 ? bodyweightKg : null;
+        const carbsMin = Math.round((carbs - 20) / 10) * 10;
+        const carbsMax = Math.round((carbs + 20) / 10) * 10;
+        const baseCode = typeof base.formulaCode === "string" ? base.formulaCode : "canonical_daily_v1";
+        return {
+          ...base,
+          carbsGMin: carbsMin,
+          carbsGMax: carbsMax,
+          carbsGPerKgMin: bw ? Number((carbsMin / bw).toFixed(2)) : base.carbsGPerKgMin,
+          carbsGPerKgMax: bw ? Number((carbsMax / bw).toFixed(2)) : base.carbsGPerKgMax,
+          formulaCode: `${baseCode}_goal`,
+        };
+      })();
       return {
         date,
         weekday_ru: typeof canonical?.weekdayRu === "string" ? canonical.weekdayRu : null,
@@ -784,7 +809,7 @@ export function buildNutritionDailyFactsForNarrative(input: {
           proteinGPerKg: typeof day.proteinGPerKg === "number" ? day.proteinGPerKg : null,
           carbsGPerKg: typeof day.carbsGPerKg === "number" ? day.carbsGPerKg : null,
         },
-        target: canonicalTarget ?? { formulaCode: "legacy_daily_v1" },
+        target: goalAwareCanonicalTarget,
         goal_day_target: goalDayTarget,
         flags: canonicalFlags ?? {
           rest: isRestDay,
