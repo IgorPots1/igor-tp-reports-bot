@@ -265,6 +265,18 @@ const NUTRITION_ATHLETE_WORDING_REPLACEMENTS: Array<[RegExp, string]> = [
   [/тарелк[а-яё]*\s+(?:должна\s+быть\s+|была\s+бы\s+)?плотн[а-яё]*/gi, "порцию побольше"],
   [/плотн[а-яё]*\s+тарелк[а-яё]*/gi, "порцию побольше"],
   [/макро-?вывод[а-яё]*/gi, "вывод"],
+  // Rephrase a leaked TECHNICAL carb-loading parenthetical into a human clause — keep
+  // the MEANING (loading before a long start is real advice), drop the bracket-note.
+  // Matches only parens that actually contain загрузк/carb-loading, so legitimate
+  // parentheses like «(открытая вода)» in an activity name are untouched.
+  [/\s*\(\s*(?:нужна\s+)?(?:углеводная\s+)?загрузк[а-яё]*\s*\)/gi, " - накануне стоит загрузиться углеводами"],
+  [/\s*\(\s*carb[\s-]?loading\s*\)/gi, " - накануне стоит загрузиться углеводами"],
+  // Drop the INTERNAL time-threshold justification from athlete text (90 min / 1.5h is
+  // a classification cutoff, not a fact for the runner — wrong for fast HM runners).
+  // Keyed on a "больше/дольше" threshold phrase, so factual timing advice ("за 2-3 часа
+  // до старта", "гель за 10 минут") and real day descriptions are untouched.
+  [/,?\s*(?:больше|дольше)\s*~?\s*(?:полу(?:тора|торы)\s+час[а-яё]*|\d+(?:[.,]\d+)?\s*(?:час[а-яё]*|ч|мин(?:ут[а-яё]*)?))(?:\s+на\s+ногах)?/gi, ""],
+  [/,?\s*(?:полтора\s+часа|полутора\s+часов)\s+на\s+ногах/gi, ""],
 ];
 
 /** Rewrite florid/bookish phrasings to Igor's plain voice (see replacements above). */
