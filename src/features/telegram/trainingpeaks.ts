@@ -6660,6 +6660,8 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
   );
 
   if (result.kind === "no_candidate" || result.kind === "no_match") {
+    // TODO: pass studentTimezone: student.timezone once trainingpeaks_students.timezone column is added.
+    // Until then AI date parsing ("сегодня/завтра") defaults to Europe/Moscow (audience default).
     let moveActionResult = await createTrainingPeaksMoveWorkoutActionFromTelegram({
       chatId,
       messageId: String(message.message_id),
@@ -6675,6 +6677,7 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
           textPreview: messageText.slice(0, 120),
           studentLinked: moveActionResult.reason !== "student_not_found",
           baseDate: message.date ? new Date(message.date * 1000) : undefined,
+          // TODO: timezone: moveActionResult.student?.timezone ?? undefined (once DB column exists)
         });
         if (
           aiResult.ok &&
@@ -6688,6 +6691,7 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
             text: messageText,
             messageDateUnix: message.date ?? null,
             aiBypass: true,
+            // TODO: studentTimezone: moveActionResult.student?.timezone ?? null (once DB column exists)
           });
           if (aiRecallResult.ok) {
             moveActionResult = aiRecallResult;

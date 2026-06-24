@@ -233,9 +233,10 @@ export async function classifyTrainingPeaksMoveIntentWithAi(
     return { ok: false, error: "missing_openai_api_key" };
   }
 
-  // Default to Belgrade — the coach timezone used throughout the app.
-  // Vercel runs in UTC; without this override "сегодня/завтра" resolves to the wrong UTC date late at night.
-  const timezone = input.timezone?.trim() || "Europe/Belgrade";
+  // Resolve by student timezone when provided; fall back to Moscow (audience default).
+  // Belgrade is the coach timezone and must NOT be used here — "завтра" is tomorrow for the student.
+  // When trainingpeaks_students.timezone column is added, pass it via input.timezone at call sites.
+  const timezone = input.timezone?.trim() || "Europe/Moscow";
   const baseDate = input.baseDate ?? new Date();
   const todayInTz = new Intl.DateTimeFormat("sv-SE", { timeZone: timezone }).format(baseDate);
   const schemaHint = {

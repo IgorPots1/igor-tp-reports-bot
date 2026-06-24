@@ -59,16 +59,19 @@ function extractJsonOnly(content: string): string {
   return trimmed;
 }
 
-export async function parseMoveWorkoutWithAiFallback(rawText: string): Promise<AiFallbackPayload | null> {
+export async function parseMoveWorkoutWithAiFallback(
+  rawText: string,
+  // Pass the student's timezone when available (trainingpeaks_students.timezone, column not yet in DB).
+  // Falls back to Moscow — the audience default. Do NOT pass the coach timezone (Belgrade).
+  studentTimezone?: string
+): Promise<AiFallbackPayload | null> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
     return null;
   }
 
   const now = new Date();
-  // Use the same timezone as the deterministic parser (coach timezone = Belgrade).
-  // Vercel runs in UTC; without this override "сегодня/завтра" resolves to the wrong date late at night.
-  const timezone = "Europe/Belgrade";
+  const timezone = studentTimezone?.trim() || "Europe/Moscow";
   const todayInTz = new Intl.DateTimeFormat("sv-SE", { timeZone: timezone }).format(now);
   const schemaHint = {
     source: { kind: "date|weekday|relative_day", value: "string", sourceText: "string" },

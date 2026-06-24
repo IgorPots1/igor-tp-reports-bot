@@ -419,6 +419,8 @@ export type CreateTrainingPeaksMoveWorkoutActionFromTelegramInput = {
   text: string;
   coachChatId?: string | null;
   messageDateUnix?: number | null;
+  // Student's IANA timezone for AI date resolution. Pass student.timezone once the DB column exists.
+  studentTimezone?: string | null;
   // When true, the LLM intent classifier already confirmed move_workout intent;
   // skip the strict keyword gate inside parseTrainingPeaksMoveWorkoutRequest.
   aiBypass?: boolean;
@@ -2435,6 +2437,9 @@ function resolveDeterministicMoveWorkout(
 
 type ParseTrainingPeaksMoveWorkoutRequestContext = {
   messageDateUnix?: number | null;
+  // Student's IANA timezone (e.g. "Europe/Moscow"). Used for AI date parsing ("сегодня/завтра").
+  // When trainingpeaks_students.timezone column is added, pass it here.
+  studentTimezone?: string | null;
   // When true, skip the strict keyword gate so the AI parser can attempt recovery.
   // Only set this after the LLM intent classifier has already confirmed move_workout intent.
   bypassStrictGate?: boolean;
@@ -2460,7 +2465,7 @@ export async function parseTrainingPeaksMoveWorkoutRequest(
     return deterministic;
   }
 
-  const aiFallback = await parseMoveWorkoutWithAiFallback(rawText);
+  const aiFallback = await parseMoveWorkoutWithAiFallback(rawText, context?.studentTimezone ?? undefined);
 
   if (!aiFallback) {
     if (
@@ -9673,6 +9678,7 @@ export async function createTrainingPeaksMoveWorkoutActionFromTelegram(
 
   const parsed = await parseTrainingPeaksMoveWorkoutRequest(trimmedText, {
     messageDateUnix: input.messageDateUnix ?? null,
+    studentTimezone: input.studentTimezone ?? null,
     bypassStrictGate: input.aiBypass === true,
   });
 
