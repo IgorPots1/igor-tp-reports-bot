@@ -1332,6 +1332,20 @@ export function buildNutritionNextWeekPlan(params: {
       raceWeekDates.add(addDays(workout.date, offset));
     }
   }
+  // Pre-race interval window: a short interval session 3-6 days before a start is an
+  // intensity REFRESH (вт/ср перед сб/вс-стартом + lead погрешности), NOT heavy work —
+  // питать как лёгкую, иначе перекармливаем предстартовые дни. Outside the window
+  // intervals stay hard (see the day loop). Carb-loading (applied later) is independent
+  // and still lifts these days; the race day itself is untouched (it's dayType "race").
+  const preRaceIntervalDates = new Set<string>();
+  for (const workout of parsedWorkouts) {
+    if (workout.dayType !== "race") {
+      continue;
+    }
+    for (let offset = -6; offset <= -3; offset += 1) {
+      preRaceIntervalDates.add(addDays(workout.date, offset));
+    }
+  }
   const previousWeekTargets = extractPreviousWeekTargets(params.previousWeekDailyAnalysis);
 
   const days: NutritionNextWeekPlanDay[] = dates.map((date) => {
@@ -1341,7 +1355,18 @@ export function buildNutritionNextWeekPlan(params: {
     const dayBeforeLongRun = longRunDates.has(addDays(date, 1));
     const harder =
       baseType === "race" || baseType === "long_run" || baseType === "long_endurance" || baseType === "hard";
-    const trainingType: NutritionPlanDayType = dayBeforeLongRun && !harder ? "pre_long" : baseType;
+    let trainingType: NutritionPlanDayType = dayBeforeLongRun && !harder ? "pre_long" : baseType;
+    // Pre-race interval refresh: an INTERVAL session in the 3-6-day pre-start window is
+    // light, not hard — питать как easy (intensity refresh, not heavy work). Only the
+    // interval evidence on the title triggers this; continuous tempo/long days are NOT
+    // reclassified, and the race day (dayType "race") is excluded by the hard-check.
+    if (
+      trainingType === "hard" &&
+      preRaceIntervalDates.has(date) &&
+      hasNutritionIntervalWorkoutEvidence(primaryWorkout?.title ?? null)
+    ) {
+      trainingType = "easy";
+    }
     const hasWorkout = Boolean(primaryWorkout);
     const idealTarget =
       trainingType === "race"
