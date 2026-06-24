@@ -265,6 +265,11 @@ const NUTRITION_ATHLETE_WORDING_REPLACEMENTS: Array<[RegExp, string]> = [
   [/тарелк[а-яё]*\s+(?:должна\s+быть\s+|была\s+бы\s+)?плотн[а-яё]*/gi, "порцию побольше"],
   [/плотн[а-яё]*\s+тарелк[а-яё]*/gi, "порцию побольше"],
   [/макро-?вывод[а-яё]*/gi, "вывод"],
+  // Тавтология «немного невысок…»: «невысоко» уже значит «чуть ниже», «немного»
+  // сверху лишнее. Убираем ТОЛЬКО дублирующее «немного » перед словом; само слово
+  // «невысокий/невысоко» нормальное и остаётся. «невысокого роста» не трогаем (нет
+  // «немного» перед ним).
+  [/немного\s+(?=невысок)/gi, ""],
   // Rephrase a leaked TECHNICAL carb-loading parenthetical into a human clause — keep
   // the MEANING (loading before a long start is real advice), drop the bracket-note.
   // Matches only parens that actually contain загрузк/carb-loading, so legitimate
