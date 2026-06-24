@@ -62,8 +62,13 @@ assert.equal(
 );
 assert.equal(
   isNutritionLongRunWorkout({ title: "Easy run", durationMinutes: 75, mode: "past_review", isCompleted: true }),
+  false,
+  "75 min < 80 => not long (Поток D-7: threshold raised to 80)"
+);
+assert.equal(
+  isNutritionLongRunWorkout({ title: "Easy run", durationMinutes: 85, mode: "past_review", isCompleted: true }),
   true,
-  "75 min => long"
+  "85 min >= 80 => long"
 );
 assert.equal(
   isNutritionLongRunWorkout({ title: "Sunday easy", mode: "past_review", isCompleted: true }),

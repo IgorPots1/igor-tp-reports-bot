@@ -770,7 +770,7 @@ function isQualityWorkoutTitle(title: string): boolean {
   if (/\b\d{1,2}\s*(?:x|х|×|\*)\s*\d{1,2}\s*(?:мин|min|m)?\b/iu.test(title)) {
     return true;
   }
-  return /интерв|tempo|темпо|темпов|порог|threshold|vo2|спринт|hill/iu.test(title);
+  return /интерв|tempo|темпо|темпов|порог|threshold|vo2|спринт|hill|hiit|хиит/iu.test(title);
 }
 
 function isKeyWorkout(row: TrainingPeaksWorkoutCacheRow, mode: NutritionKeyWorkoutMode): boolean {
@@ -840,6 +840,12 @@ export async function buildNutritionTrainingPeaksWeekContext(
      * them, so they affect neither expenditure nor the review text. A day left with
      * no other session then reads as a normal rest day. Per-student (profile flag). */
     excludeOtherActivities?: boolean;
+    /** Поток D: for the PLAN week take only SCHEDULED workouts (is_planned). Without
+     * this an already-completed actual that falls in the early (already-elapsed) days
+     * of the plan window (e.g. a Monday walk done before the plan was generated) leaks
+     * into the plan as if it were prescribed. The review week leaves this off so the
+     * completed actuals (the real past-week facts) are kept. */
+    plannedOnly?: boolean;
   }
 ): Promise<NutritionTrainingPeaksWeekContext> {
   const allRows = await getNutritionTrainingPeaksCacheWindow({
@@ -847,8 +853,9 @@ export async function buildNutritionTrainingPeaksWeekContext(
     from: weekFrom,
     to: weekTo,
   });
+  const plannedRows = options?.plannedOnly ? allRows.filter((row) => row.isPlanned) : allRows;
   const rows = options?.excludeOtherActivities
-    ? allRows.filter(
+    ? plannedRows.filter(
         (row) =>
           !isNutritionExcludedOtherActivity({
             title: row.title,
@@ -857,7 +864,7 @@ export async function buildNutritionTrainingPeaksWeekContext(
             workoutSubTypeId: row.workoutSubTypeId,
           })
       )
-    : allRows;
+    : plannedRows;
   const rawCacheStatus = resolveCacheStatus(rows);
   // A week fully in the past won't change anymore, so an "old scan" is expected
   // and shouldn't be treated as stale/unusable (which would wrongly force the
@@ -1024,7 +1031,7 @@ export async function buildNutritionStudentContext(input: {
       input.studentId,
       addDays(input.weekTo, 1),
       addDays(input.weekTo, 7),
-      { keyWorkoutMode: "all", excludeOtherActivities }
+      { keyWorkoutMode: "all", excludeOtherActivities, plannedOnly: true }
     ),
   ]);
   // Наряд 3: pull races (TP scanner + coach manual marks) across the review and

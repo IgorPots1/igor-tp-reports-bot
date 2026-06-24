@@ -27,9 +27,11 @@ import {
   isNutritionLongRunWorkout,
   resolveNutritionLongRunConfidence,
   resolveNutritionLongRunSource,
+  trainingPeaksDurationHoursToMinutes,
   type NutritionLongRunSource,
 } from "@/features/nutrition/long-run";
 import {
+  isNutritionTrivialShortActivity,
   resolveNutritionActivityCoefByTitle,
   sumDaySessionsExpenditureKcal,
 } from "@/features/nutrition/activity-energy";
@@ -477,7 +479,17 @@ function parseTrainingContextWorkouts(trainingContext: unknown): ParsedWorkout[]
         distanceKm,
       };
     })
-    .filter((out) => out.date !== "unknown-date");
+    .filter((out) => out.date !== "unknown-date")
+    // Поток D-5: drop a trivially short non-essential activity (walk/tennis <20 min,
+    // swim/bike <15 min) from the plan's load aggregate so a 10-min dip doesn't make a
+    // training day. Run/strength have no threshold. A day with a real session keeps it.
+    .filter(
+      (out) =>
+        !isNutritionTrivialShortActivity({
+          title: out.title,
+          durationMinutes: trainingPeaksDurationHoursToMinutes(out.durationHours),
+        })
+    );
 
   return baseWorkouts;
 }

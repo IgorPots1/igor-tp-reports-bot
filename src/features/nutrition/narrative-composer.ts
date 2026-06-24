@@ -399,10 +399,16 @@ const TRAININGPEAKS_ACTIVITY_RU_MAP: Array<[RegExp, string]> = [
   [/\bM(?:ountain|tn)\s*Bike\b/gi, "вело"],
   [/\bCycling\b/gi, "вело"],
   [/\bBike\b/gi, "вело"],
+  // TP often sends "Ride" for cycling — map it too (not in the original dict).
+  [/\bRide\b/gi, "вело"],
   [/\bRunning\b/gi, "бег"],
   [/\bRun\b/gi, "бег"],
   [/\bStrength\b/gi, "силовая"],
   [/\bGym\b/gi, "зал"],
+  // Multi-word "Open Water [Swim(ming)]" MUST come before the bare \bSwim(ming)\b
+  // rules — otherwise "Swimming" matches first and leaves the "Open Water" prefix
+  // stranded in Latin ("Open Water плавание").
+  [/\bOpen\s*Water(?:\s*Swim(?:ming)?)?\b/gi, "плавание (открытая вода)"],
   [/\bSwimming\b/gi, "плавание"],
   [/\bSwim\b/gi, "плавание"],
   [/\bPilates\b/gi, "пилатес"],
@@ -426,7 +432,11 @@ const TRAININGPEAKS_ACTIVITY_RU_MAP: Array<[RegExp, string]> = [
   [/\bElliptical\b/gi, "эллипс"],
   [/\bTreadmill\b/gi, "дорожка"],
   [/\bBrick\b/gi, "брик"],
+  [/\bCrossfit\b/gi, "кроссфит"],
   [/\bCross[-\s]?Train(?:ing)?\b/gi, "кросс-тренировка"],
+  // Generic TP placeholders for an untyped session → neutral Russian word.
+  [/\bCustom\b/gi, "тренировка"],
+  [/\bOther\b/gi, "тренировка"],
   [/\bTrainingPeaks\b/gi, "план тренировок"],
 ];
 

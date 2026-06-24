@@ -1,4 +1,6 @@
-export const NUTRITION_LONG_RUN_MIN_DURATION_MINUTES = 70;
+import { resolveNutritionActivityCoefByTitle } from "@/features/nutrition/activity-energy";
+
+export const NUTRITION_LONG_RUN_MIN_DURATION_MINUTES = 80;
 export const NUTRITION_LONG_ENDURANCE_MIN_DURATION_MINUTES = 120;
 export const NUTRITION_LONG_ENDURANCE_BIKE_MIN_DURATION_MINUTES = 90;
 
@@ -69,7 +71,7 @@ export function hasNutritionIntervalWorkoutEvidence(title?: string | null): bool
     return false;
   }
   return (
-    /интерв|interval|vo2|спринт|hill/i.test(haystack) ||
+    /интерв|interval|vo2|спринт|hill|hiit|хиит/i.test(haystack) ||
     /\b\d{1,2}\s*(?:x|х|×|\*)\s*\d{1,2}\s*(?:мин|min|m)?\b/i.test(haystack)
   );
 }
@@ -118,14 +120,31 @@ export function isNutritionLongRunWorkout(input: {
   if (isExplicitNutritionBikeTitle(input.title)) {
     return false;
   }
+  // Поток D-8: any RECOGNISED non-run activity (walk/hike/tennis/padel/swim/bike/
+  // strength — anything carrying a non-run expenditure coefficient) is never a long
+  // RUN, even past the duration threshold and even with a «длительн» title («длительная
+  // ходьба» is a long walk, not a long run). Without this an 80-min walk/swim was
+  // wrongly classified long_run and got a long-run carb target. Runs are not in the
+  // coefficient map (coef null), so a genuine long run still classifies below.
+  if (resolveNutritionActivityCoefByTitle(input.title) !== null) {
+    return false;
+  }
   if (isExplicitNutritionLongRunTitle(input.title)) {
     return true;
   }
-  // Duration WINS over a tempo/quality title: a run past the long-run threshold is a
-  // long day nutritionally even if titled «Бег по темпу» (a 90-min tempo run still
-  // needs long-run fuelling). Short quality work (< threshold) stays a quality day.
+  // Intermittent interval work (×/repeats, intervals, VO2, sprints, HIIT) is a HARD
+  // day regardless of duration — intervals are intensity, not volume. Keyed on
+  // INTERVAL evidence (intermittent), NOT tempo: a CONTINUOUS long effort like
+  // «23 км в темпе марафона» / «Бег по темпу 90 мин» is fuel-demanding and must stay
+  // LONG, so it is deliberately NOT excluded here.
+  if (hasNutritionIntervalWorkoutEvidence(input.title)) {
+    return false;
+  }
+  // Duration WINS over a (continuous) tempo title: a run at/above the long threshold is
+  // a long fuelling day even if titled «Бег по темпу» (intervals already returned above).
+  // Short continuous quality work (< threshold) stays a quality day.
   const durationMinutes = resolveNutritionLongRunDurationMinutes(input);
-  if (durationMinutes !== null && durationMinutes > NUTRITION_LONG_RUN_MIN_DURATION_MINUTES) {
+  if (durationMinutes !== null && durationMinutes >= NUTRITION_LONG_RUN_MIN_DURATION_MINUTES) {
     return true;
   }
   if (hasExplicitNutritionQualityWorkoutEvidence(input.title)) {
@@ -172,11 +191,13 @@ export function resolveNutritionLongRunSource(input: {
   if (isExplicitNutritionLongRunTitle(input.title)) {
     return "explicit_title";
   }
-  if (hasExplicitNutritionQualityWorkoutEvidence(input.title)) {
+  // Intermittent intervals never source a long_run (they are hard days); a continuous
+  // long effort at/above the threshold sources "duration" even with a tempo title.
+  if (hasNutritionIntervalWorkoutEvidence(input.title)) {
     return "none";
   }
   const durationMinutes = resolveNutritionLongRunDurationMinutes(input);
-  if (durationMinutes !== null && durationMinutes > NUTRITION_LONG_RUN_MIN_DURATION_MINUTES) {
+  if (durationMinutes !== null && durationMinutes >= NUTRITION_LONG_RUN_MIN_DURATION_MINUTES) {
     return "duration";
   }
   return "none";

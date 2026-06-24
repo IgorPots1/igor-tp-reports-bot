@@ -6,6 +6,7 @@ import type {
 } from "@/features/nutrition/context";
 import { sanitizeNutritionFoodItems } from "@/features/nutrition/context";
 import {
+  isNutritionTrivialShortActivity,
   resolveNutritionActivityCoefByTitle,
   sumDaySessionsExpenditureKcal,
 } from "@/features/nutrition/activity-energy";
@@ -20,6 +21,7 @@ import {
   isNutritionLongRunWorkout,
   resolveNutritionLongRunConfidence,
   resolveNutritionLongRunSource,
+  trainingPeaksDurationHoursToMinutes,
   type NutritionLongRunSource,
 } from "@/features/nutrition/long-run";
 
@@ -563,6 +565,18 @@ function buildWorkoutContextByDate(week: NutritionTrainingPeaksWeekContext): Map
   >();
   for (const workout of week.workouts) {
     if (workout.status === "planned") {
+      continue;
+    }
+    // Поток D-5: drop a trivially short non-essential activity (10-min open-water dip,
+    // 15-min stroll) from the day's session aggregate so it doesn't inflate the day
+    // type/label. Run/strength have no threshold. Aggregate-only — does not touch the
+    // expenditure formula; a day with a real session keeps it.
+    if (
+      isNutritionTrivialShortActivity({
+        title: workout.title,
+        durationMinutes: trainingPeaksDurationHoursToMinutes(workout.durationHours),
+      })
+    ) {
       continue;
     }
     const inferredType = normalizeTrainingType(workout.type, workout.title);

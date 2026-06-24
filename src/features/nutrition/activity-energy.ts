@@ -32,6 +32,44 @@ export function resolveNutritionActivityCoefByTitle(title: string | null | undef
   return null;
 }
 
+// Поток D-5: minimum duration (minutes) for a non-essential activity to count as a
+// real load. A trivially short activity (a 10-min open-water dip, a 15-min stroll) is
+// dropped from the day's load AGGREGATE so it doesn't inflate the day type/label — it
+// does NOT change the expenditure formula of full activities. Run has no entry here
+// (never in the coef map → never trivial); strength is intentionally omitted so it has
+// NO threshold (always counts). Coach-tunable.
+const NUTRITION_ACTIVITY_MIN_SIGNIFICANT_MINUTES: Partial<Record<string, number>> = {
+  walk: 20,
+  hike: 20,
+  padel: 20,
+  tennis: 20,
+  swim: 15,
+  bike: 15,
+};
+
+/**
+ * Is this a trivially short non-essential activity that should NOT enter the day's
+ * load aggregate? Keyed on the same title patterns as the coefficient map. Returns
+ * false (keep) for runs, strength, unknown activities, or unknown duration — only a
+ * matched activity strictly under its threshold is dropped.
+ */
+export function isNutritionTrivialShortActivity(input: {
+  title: string | null | undefined;
+  durationMinutes: number | null | undefined;
+}): boolean {
+  const { title, durationMinutes } = input;
+  if (!title || typeof durationMinutes !== "number" || !Number.isFinite(durationMinutes)) {
+    return false;
+  }
+  for (const activity of NUTRITION_ACTIVITY_COEF_BY_TITLE) {
+    if (activity.pattern.test(title)) {
+      const threshold = NUTRITION_ACTIVITY_MIN_SIGNIFICANT_MINUTES[activity.key];
+      return typeof threshold === "number" && durationMinutes < threshold;
+    }
+  }
+  return false;
+}
+
 // Task 10d (Bug б): a day can hold MORE than one session (e.g. an easy run plus a
 // strength workout). The day TYPE is decided elsewhere (primary session only), but
 // EXPENDITURE must count every session — otherwise a run+strength day is

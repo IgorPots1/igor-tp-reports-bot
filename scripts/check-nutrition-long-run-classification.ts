@@ -75,27 +75,50 @@ function basePastContext(workouts: NutritionStudentContext["tpPastWeek"]["workou
   };
 }
 
-assert.equal(NUTRITION_LONG_RUN_MIN_DURATION_MINUTES, 70);
+assert.equal(NUTRITION_LONG_RUN_MIN_DURATION_MINUTES, 80);
 
+// Поток D-7: threshold is now 80 min (inclusive). 70-79 min is NOT long; 80+ is.
 assert.equal(
   isNutritionLongRunWorkout({ title: "Easy run", durationMinutes: 75, mode: "past_review", isCompleted: true }),
-  true,
-  "75 min easy run => long_run"
+  false,
+  "75 min < 80 => not long_run"
 );
+assert.equal(
+  isNutritionLongRunWorkout({ title: "Easy run", durationMinutes: 85, mode: "past_review", isCompleted: true }),
+  true,
+  "85 min easy run => long_run (>= 80)"
+);
+// Intermittent intervals are HARD regardless of duration (intervals = intensity).
 assert.equal(
   isNutritionLongRunWorkout({ title: "3×15 мин", durationMinutes: 73, mode: "past_review", isCompleted: true }),
   false,
-  "73 min interval session must not become long_run by duration"
+  "73 min interval session must not become long_run"
 );
 assert.equal(
-  isNutritionLongRunWorkout({ title: "Tempo 91 min", durationMinutes: 91, mode: "past_review", isCompleted: true }),
+  isNutritionLongRunWorkout({ title: "8×5 мин", durationMinutes: 90, mode: "past_review", isCompleted: true }),
   false,
-  "91 min tempo session must not become long_run by duration"
+  "90 min interval session stays hard, not long_run (intensity not volume)"
+);
+// A CONTINUOUS long effort >= 80 (tempo title, no intervals) IS a long fuelling day.
+assert.equal(
+  isNutritionLongRunWorkout({ title: "Tempo 91 min", durationMinutes: 91, mode: "past_review", isCompleted: true }),
+  true,
+  "91 min continuous tempo => long_run by duration"
+);
+assert.equal(
+  isNutritionLongRunWorkout({ title: "Бег по темпу", durationMinutes: 90, mode: "past_review", isCompleted: true }),
+  true,
+  "90 min continuous «Бег по темпу» => long_run"
+);
+assert.equal(
+  isNutritionLongRunWorkout({ title: "23 км в темпе марафона", durationMinutes: 130, mode: "past_review", isCompleted: true }),
+  true,
+  "continuous «23 км в темпе марафона» => long_run, NOT hard"
 );
 assert.equal(
   isNutritionLongRunWorkout({ title: "Бег в легком темпе", durationMinutes: 75, mode: "past_review", isCompleted: true }),
-  true,
-  "75 min easy-light title without quality evidence => long_run by duration"
+  false,
+  "75 min < 80 easy-light title => not long_run"
 );
 assert.equal(isEasyLightNutritionTitle("Легкий бег по темпу"), true);
 assert.equal(hasExplicitNutritionQualityWorkoutEvidence("Легкий бег по темпу"), false);
@@ -103,12 +126,12 @@ assert.equal(hasExplicitNutritionQualityWorkoutEvidence("3×15 мин"), true);
 assert.equal(
   isNutritionLongRunWorkout({ title: "Run", durationMinutes: 80, mode: "past_review", isCompleted: true }),
   true,
-  "80 min run => long_run"
+  "80 min run => long_run (inclusive)"
 );
 assert.equal(
-  isNutritionLongRunWorkout({ title: "Run", durationMinutes: 70, mode: "past_review", isCompleted: true }),
+  isNutritionLongRunWorkout({ title: "Run", durationMinutes: 79, mode: "past_review", isCompleted: true }),
   false,
-  "70 min exactly => not long_run by duration"
+  "79 min => not long_run by duration"
 );
 assert.equal(
   isNutritionLongRunWorkout({
