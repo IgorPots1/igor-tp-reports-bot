@@ -997,11 +997,15 @@ function buildCanonicalTarget(input: {
     };
   }
   if (input.canonicalTrainingType === "long_endurance") {
+    // long_endurance is mostly long, EASY/recreational cycling for these athletes
+    // (expenditure coef 5, well below running's 10). The carb corridor stays at/below
+    // the long_run band (бег 6-7) instead of above it — a light long bike must not be
+    // fuelled MORE than a long run. (Was 6-8, which inverted bike > run.)
     return {
-      carbsGPerKgMin: 6,
-      carbsGPerKgMax: 8,
-      carbsGMin: Number((6 * bodyweight).toFixed(0)),
-      carbsGMax: Number((8 * bodyweight).toFixed(0)),
+      carbsGPerKgMin: 5,
+      carbsGPerKgMax: 6.5,
+      carbsGMin: Number((5 * bodyweight).toFixed(0)),
+      carbsGMax: Number((6.5 * bodyweight).toFixed(0)),
       kcalMin: Number((35 * bodyweight).toFixed(0)),
       formulaCode: "canonical_daily_v1_long_endurance",
     };
