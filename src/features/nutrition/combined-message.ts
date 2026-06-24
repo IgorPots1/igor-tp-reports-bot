@@ -384,6 +384,17 @@ export function buildNutritionDayProseFacts(item: Record<string, unknown>): Nutr
   // "медленный". Names come from items_notable (built deterministically from PDF).
   // Only fast — see the guard comment for why neutral is deliberately excluded.
   const carbFastFoods = collectCarbFastFoods(item.items_notable);
+  // Week-over-week: prev/current avgs + deltas, computed by code in draft-generator
+  // and persisted onto each day item so render-time validation also allows them.
+  const previousWeekNumbers: number[] = [];
+  if (Array.isArray(item.previous_week_numbers)) {
+    for (const raw of item.previous_week_numbers) {
+      const value = toFiniteNumber(raw);
+      if (value != null) {
+        previousWeekNumbers.push(value);
+      }
+    }
+  }
   return {
     kcal,
     proteinG: protein,
@@ -392,6 +403,7 @@ export function buildNutritionDayProseFacts(item: Record<string, unknown>): Nutr
     carbsGPerKg,
     proteinGPerKg,
     planTargetNumbers,
+    previousWeekNumbers,
     nutritionStatus,
     findings,
     carbFastFoods,

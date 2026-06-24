@@ -21,6 +21,7 @@ import {
   getNutritionStudentEssentials,
   getNutritionTrainingPeaksCacheWindow,
   listNutritionRaceEventsForStudentWindow,
+  listRecentNutritionWeeklyAnalysesForStudent,
   type NutritionContextItem,
   type NutritionDailyMacro,
   type NutritionGoalType,
@@ -366,6 +367,17 @@ export type NutritionStudentContext = {
   sex: NutritionSex | null;
   heightCm: number | null;
   ageYears: number | null;
+  /**
+   * Week-over-week: the most recent PRIOR week's average numbers (kcal/carbs/protein),
+   * loaded from persisted weekly analyses. Null when there is no prior week. The
+   * actual delta is computed by code (draft-generator), never by the model.
+   */
+  previousWeekNumbers: {
+    weekFrom: string;
+    avgKcal: number | null;
+    avgCarbsG: number | null;
+    avgProteinG: number | null;
+  } | null;
   narrativePreferences?: Required<Pick<NutritionNarrativePreferences, "fatFeedbackPolicy" | "detailLevel">> &
     NutritionNarrativePreferences;
   athleteReportSignals: NutritionAthleteReportSignal[];
@@ -1065,6 +1077,27 @@ export async function buildNutritionStudentContext(input: {
     noTrainingWeek = neighborRows.length > 0;
   }
 
+  // Week-over-week: load the most recent PRIOR week's persisted averages so the
+  // generator can praise REAL progress (delta is computed by code, not the model).
+  const priorAnalyses = await listRecentNutritionWeeklyAnalysesForStudent(input.studentId, {
+    excludeWeekFrom: input.weekFrom,
+    limit: 1,
+  }).catch(() => [] as Awaited<ReturnType<typeof listRecentNutritionWeeklyAnalysesForStudent>>);
+  const prior = priorAnalyses.find((a) => a.weekFrom < input.weekFrom) ?? null;
+  let previousWeekNumbers: NutritionStudentContext["previousWeekNumbers"] = null;
+  if (prior) {
+    const summary: Record<string, unknown> =
+      prior.nutritionSummary && typeof prior.nutritionSummary === "object"
+        ? (prior.nutritionSummary as Record<string, unknown>)
+        : {};
+    previousWeekNumbers = {
+      weekFrom: prior.weekFrom,
+      avgKcal: toFiniteNumber(summary["avg_kcal"] as number | string | null | undefined),
+      avgCarbsG: toFiniteNumber(summary["avg_carbs_g"] as number | string | null | undefined),
+      avgProteinG: toFiniteNumber(summary["avg_protein_g"] as number | string | null | undefined),
+    };
+  }
+
   return {
     studentName: student.studentName,
     studentSlug: student.studentId,
@@ -1101,6 +1134,7 @@ export async function buildNutritionStudentContext(input: {
     sex: essentials.profile?.sex ?? null,
     heightCm: essentials.profile?.heightCm ?? null,
     ageYears: essentials.profile?.ageYears ?? null,
+    previousWeekNumbers,
     narrativePreferences: applyNutritionFatPolicyOverrides(
       essentials.profile?.ownRegime ?? false,
       getNutritionNarrativePreferences({

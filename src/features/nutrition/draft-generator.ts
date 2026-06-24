@@ -1123,6 +1123,23 @@ function buildFallbackDayByDay(input: {
 
 async function generateNutritionWeeklyReviewNarrative(input: {
   context: NutritionStudentContext;
+  /**
+   * Week-over-week numbers + deltas, computed BY CODE (never the model). Fed into
+   * the facts so the model can praise a REAL progress shift using these exact
+   * numbers. Null when there is no prior week.
+   */
+  weekOverWeek: {
+    previous_week_from: string;
+    previous_avg_kcal: number | null;
+    current_avg_kcal: number | null;
+    delta_kcal: number | null;
+    previous_avg_carbs_g: number | null;
+    current_avg_carbs_g: number | null;
+    delta_carbs_g: number | null;
+    previous_avg_protein_g: number | null;
+    current_avg_protein_g: number | null;
+    delta_protein_g: number | null;
+  } | null;
   dailyAnalysis: Array<Record<string, unknown>>;
   /**
    * Deterministic next-week plan numbers (Task 6). The model writes plan prose
@@ -1239,6 +1256,7 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "ОЦЕНКА ПРЕДТРЕНИРОВОЧНОЙ ЕДЫ (pre_workout у дня) — отрази в day_prose ЭТОГО дня, если поле есть. Код уже сопоставил еду перед тренировкой (pre_workout.foods) с её углеводами из дневника и с нагрузкой дня, и выдал вердикт pre_workout.adequacy: good/medium/low. Подавай КАЧЕСТВЕННО, БЕЗ грамм-числа (число оставь коду): good → «перед интервалами зарядилась хорошо (…)»; medium → «перед стартом углеводов было средне, можно чуть плотнее»; low → «перед интервалами углеводов было маловато (батончик+печенье) — под такую работу добавь банан, кашу или хлеб перед стартом». Это про ПЕРЕД тренировкой, не про ужин. Если есть pre_workout.timing (за сколько до старта поел) — учти: близко к старту (~30 мин) нужны лёгкие быстрые углеводы, за 2-3 часа можно полноценнее. Если есть pre_workout.heavy_foods (тяжёлое жирное перед тренировкой) — мягко отметь про КОМФОРТ на тренировке (не про «неправильно поела»): «перед интервалами был [продукт] — он тяжеловат и долго переваривается, на бегу может давить; в следующий раз лучше что-то лёгкое углеводное (банан, тост, каша)». Поддерживающе, про самочувствие и качество тренировки. Граммы предтренировочной еды НЕ называй и не выдумывай.",
     "ТЁПЛАЯ ОПЕНИНГ-СТРОКА (athlete_opening_note_ru): если в словах ученика (student.athlete_comment) есть что искренне отметить — старание, что справился несмотря на обстоятельства (дорога/жара/занятость) — впиши ОДНУ тёплую человеческую фразу в athlete_opening_note_ru (она встанет сразу после приветствия). Пример: «вижу, ты очень старалась, даже в дороге держалась — это дорогого стоит». Качественно, в тёплом тоне Игоря, plain text без markdown, БЕЗ единой цифры. Если отмечать НЕЧЕГО (слов нет, или там только жалобы/нейтральное) — верни athlete_opening_note_ru пустым/null, НЕ придумывай похвалу на пустом месте. Эту похвалу за старание НЕ дублируй в athlete_message_draft — она живёт только в athlete_opening_note_ru.",
     "ЧИСЛА И МАКРОСЫ — ТОЛЬКО из PDF/фактов дня (actual/target). НИКОГДА не бери калории/граммы/«съела ~N» из слов ученика (student.athlete_comment) на веру и не подставляй их как факт — ни в day_prose, ни в итог недели, ни в coach_summary_text. Если слова ученика противоречат числам из PDF — доверяй PDF; расхождение можно мягко отметить ТРЕНЕРУ в coach_summary_text, но не выноси выдуманное число ученику.",
+    "WEEK-OVER-WEEK ПОХВАЛА ЗА ПРОГРЕСС: если в фактах есть student.history.previous_week_numbers (числа прошлой недели + дельта, посчитанная КОДОМ) И дельта показывает реальный положительный сдвиг (калории/белок/углеводы выросли к ориентиру), НАЧНИ разбор с искренней похвалы за КОНКРЕТНЫЙ прогресс, называя реальную дельту из previous_week_numbers («на прошлой неделе в среднем 1343 ккал, на этой 1482 — отлично, движемся вверх»). Числа бери ТОЛЬКО из previous_week_numbers, не выдумывай. Эту похвалу пиши в day_prose (опенинг-строка athlete_opening_note_ru цифр НЕ принимает) или в next_week_plan_text. Хвали ТОЛЬКО за реальный сдвиг; если сдвига нет / откат — без ложной похвалы и без упрёка (тон на равных). Если рост в одном (белок) и откат в другом (калории) — честно: похвали рост, мягко отметь просадку. Не хвали пусто и не каждую неделю обязательно.",
     "ЦЕЛЬ УЧЕНИКА (student.nutrition_goal): maintain — текущая методика. lose (снижение веса): рамка «поддерживаем тренировки в общем мягком минусе». НЕ советуй «добавь углеводов/калорий» там, где у худеющего и так профицит/перебор; топливо догружай ТОЛЬКО в тренировочные/ключевые дни (fuel for the work required), а в дни отдыха — спокойнее, это и есть запланированный дефицит, а не ошибка. ХВАЛИ высокий белок (для худеющего это хорошо: не пиши «белок высоковат» как проблему и НЕ пиши «белок низковат» при ≥1.6 г/кг). Даже когда белок НИЖЕ ориентира — у худеющего подавай это МЯГКО и без упрёка: «белок можно чуть добавить» / «белка чуть больше не помешает», а НЕ «белок ниже нормы»/«стоит отметить»/«недобор белка». Белок для худеющего — приоритет и помощник, не повод ругать. МЯГКО озвучивай высокий жир (>~35% энергии) ученику как лишние калории, которые мешают снижению (для lose жир выносим в текст ученику). Тон поддерживающий, без «ешь больше». target_weight_kg, если задан — можно мягко («до цели ещё ~N кг»), без ИМТ/процентов жира/«минус N кг»/медикализации. gain (набор) — небольшой профицит, углеводы и белок с запасом.",
     "КРИТИЧЕСКИ НИЗКИЕ ДНИ (safety_flags.very_low_kcal_days непуст): в эти дни энергии было критически мало. В тексте ученику ОБЯЗАТЕЛЬНО мягко, тепло, но ПРЯМО отметь: в такие дни энергии вышло очень мало, а при тренировках так повторять нельзя — это бьёт по восстановлению; цель снижения НЕ требует голодания, наоборот, ровное достаточное питание помогает и результату, и восстановлению. Без морали и стыда, как забота. Эти дни НЕ хвали и НЕ называй «спокойными». Дальше — обычный разбор и план по её параметрам, как всегда. Фактические числа дня (ккал/Б/Ж/У) — из PDF, можно называть.",
     "ЦЕЛЬ lose НЕ отменяет safety: при опасно низкой калорийности или сигналах РПП — это блок/ручная проверка как обычно (худеть ≠ голодать; цель снижения НЕ оправдывает опасный дефицит). В тексте ученику при любой цели — без слов похудеть/сбросить вес/урезать калории/дефицит (язык поддержки, а не диеты).",
@@ -1256,11 +1274,11 @@ async function generateNutritionWeeklyReviewNarrative(input: {
       ? "athlete_message_draft is required and must be useful Telegram-ready text. Use the required ты/вы form from formality instruction."
       : "Hard safety flags present: athlete_message_draft must be null and coach-only text should explain manual review need.",
     hasApprovedHistory
-      ? "У ученика ЕСТЬ сохранённая история (student.history.approved_patterns с since_week). Если паттерн из истории повторяется и на этой неделе — мягко и по-доброму отметь это ученику: «это повторяется N-ю неделю — давай разберёмся, что мешает» (N считай по since_week). БЕЗ упрёка и морали («давай разберёмся, почему не получается», НЕ «опять не доела»). Если паттерн на этой неделе НЕ повторился (улучшение) — отметь позитивно: «смотри, в этот раз ... подтянулось — отлично». Ссылаться на «прошлые недели» можно — контекст есть."
+      ? "У ученика ЕСТЬ сохранённая история (student.history.approved_patterns с since_week). Если паттерн из истории повторяется и на этой неделе — мягко, по-доброму и КОЛЛАБОРАТИВНО вернись к нему: «снова всплывает этот момент — давай разберёмся, что мешает (аппетит? время? что-то ещё?)». НЕ СЧИТАЙ вслух недели («N-ю неделю», «третья неделя», «N недель подряд») — это накопленное давление, демотивирует. БЕЗ упрёка и морали (НЕ «опять не доела», НЕ «сколько можно»). Признай движение, если оно есть. Если паттерн на этой неделе НЕ повторился (улучшение) — отметь позитивно: «смотри, в этот раз ... подтянулось — отлично». Ссылаться на «прошлые недели» в общем можно, но без счёта-долбёжки."
       : "Сохранённого контекста прошлых недель нет — НЕ используй обобщённых сравнений «прошлая неделя»/«на прошлой неделе» в тексте ученику; веди разбор по конкретным дням и числам этой недели.",
     ...(hasApprovedHistory
       ? [
-          "ГДЕ озвучивать паттерн истории: впиши добрый callout про «повторяется N-ю неделю» в next_week_plan_text (проза фокуса/плана) И/ИЛИ в day_prose релевантного дня. Итоговое сообщение ученику собирается ИЗ day_prose + прозы плана (общий athlete_message_draft в него не попадает), поэтому callout только в athlete_message_draft до ученика НЕ доедет.",
+          "ГДЕ озвучивать паттерн истории: впиши добрый КОЛЛАБОРАТИВНЫЙ callout (повторяющийся момент, без счёта недель) в next_week_plan_text (проза фокуса/плана) И/ИЛИ в day_prose релевантного дня. Итоговое сообщение ученику собирается ИЗ day_prose + прозы плана (общий athlete_message_draft в него не попадает), поэтому callout только в athlete_message_draft до ученика НЕ доедет.",
         ]
       : []),
     allowAthleteDraft
@@ -1296,6 +1314,10 @@ async function generateNutritionWeeklyReviewNarrative(input: {
         approved_patterns: input.context.studentMemory?.approved_patterns ?? [],
         last_focus: input.context.studentMemory?.last_focus ?? null,
         key_trends: input.context.studentMemory?.key_trends ?? [],
+        // Week-over-week numbers + deltas (computed by code, never the model). The
+        // prompt rule below tells the model to praise a REAL positive shift using
+        // ONLY these numbers. Null when no prior week.
+        previous_week_numbers: input.weekOverWeek,
       },
       coach_memory: coachMemory,
       narrative_preferences: nutritionContextNarrativePreferences(input.context),
@@ -1508,6 +1530,47 @@ export async function generateNutritionWeeklyAnalysis(input: {
   const avgProtein = avg(context.manualMacroRows.map((row) => row.proteinG));
   const avgFat = avg(context.manualMacroRows.map((row) => row.fatG));
   const avgCarbs = avg(context.manualMacroRows.map((row) => row.carbsG));
+
+  // Week-over-week (Task: WoW praise): the prior week's persisted averages are on
+  // context.previousWeekNumbers. The DELTA is computed HERE BY CODE (never by the
+  // model). weekOverWeek goes into the model facts (so it can praise a real shift),
+  // and previousWeekAllowedNumbers (prev + current avgs + deltas) is injected per
+  // day so the prose number-validator allows these numbers at gen + render time.
+  const prevWeek = context.previousWeekNumbers;
+  const codeDelta = (current: number | null, previous: number | null): number | null =>
+    typeof current === "number" &&
+    Number.isFinite(current) &&
+    typeof previous === "number" &&
+    Number.isFinite(previous)
+      ? Math.round(current - previous)
+      : null;
+  const weekOverWeek = prevWeek
+    ? {
+        previous_week_from: prevWeek.weekFrom,
+        previous_avg_kcal: prevWeek.avgKcal,
+        current_avg_kcal: avgKcal,
+        delta_kcal: codeDelta(avgKcal, prevWeek.avgKcal),
+        previous_avg_carbs_g: prevWeek.avgCarbsG,
+        current_avg_carbs_g: avgCarbs,
+        delta_carbs_g: codeDelta(avgCarbs, prevWeek.avgCarbsG),
+        previous_avg_protein_g: prevWeek.avgProteinG,
+        current_avg_protein_g: avgProtein,
+        delta_protein_g: codeDelta(avgProtein, prevWeek.avgProteinG),
+      }
+    : null;
+  const previousWeekAllowedNumbers: number[] = weekOverWeek
+    ? [
+        weekOverWeek.previous_avg_kcal,
+        weekOverWeek.current_avg_kcal,
+        weekOverWeek.delta_kcal,
+        weekOverWeek.previous_avg_carbs_g,
+        weekOverWeek.current_avg_carbs_g,
+        weekOverWeek.delta_carbs_g,
+        weekOverWeek.previous_avg_protein_g,
+        weekOverWeek.current_avg_protein_g,
+        weekOverWeek.delta_protein_g,
+      ].filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+    : [];
   const methodology = buildNutritionMethodologyContext({ context });
   const selectedFocus = selectNutritionWeeklyFocus({
     methodology,
@@ -1562,6 +1625,14 @@ export async function generateNutritionWeeklyAnalysis(input: {
     context,
     dailyAnalysis: methodology.dailyAnalysis as Array<Record<string, unknown>>,
   });
+  // Inject the week-over-week allow-set onto EACH day so the per-day prose validator
+  // allows these code-computed numbers — both at gen-time (validate loop below) and
+  // at render-time (persisted → buildNutritionDayProseFacts reads previous_week_numbers).
+  if (previousWeekAllowedNumbers.length > 0) {
+    for (const day of persistedDailyAnalysis) {
+      day.previous_week_numbers = previousWeekAllowedNumbers;
+    }
+  }
 
   const fallbackDayByDay = buildFallbackDayByDay({
     context,
@@ -1640,6 +1711,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
     const aiDiagnostics: string[] = [];
     const aiNarrative = await generateNutritionWeeklyReviewNarrative({
       context,
+      weekOverWeek,
       dailyAnalysis: methodology.dailyAnalysis as Array<Record<string, unknown>>,
       nextWeekPlan,
       trainingNutritionLinks: methodology.trainingNutritionLinks,

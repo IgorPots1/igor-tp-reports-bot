@@ -616,6 +616,11 @@ export type NutritionDayProseFacts = {
   proteinGPerKg: number | null;
   /** Optional plan orientation numbers allowed to appear in prose. */
   planTargetNumbers?: number[];
+  /**
+   * Week-over-week numbers (prev-week avgs, current avgs, deltas) computed by code
+   * and allowed to appear in prose so the model can praise real progress.
+   */
+  previousWeekNumbers?: number[];
   nutritionStatus: string | null;
   findings: string[];
   /**
@@ -714,6 +719,11 @@ function buildAllowedNutritionProseNumbers(facts: NutritionDayProseFacts): numbe
   add(facts.kcal, [1, 10, 50]);
   for (const macro of [facts.proteinG, facts.fatG, facts.carbsG]) {
     add(macro, [1, 5, 10]);
+  }
+  // Week-over-week numbers (prev/current avgs + deltas, computed by code) — same
+  // exact + rounded treatment as macros so real progress praise survives the validator.
+  for (const wow of facts.previousWeekNumbers ?? []) {
+    add(wow, [1, 5, 10]);
   }
   // g/kg are decimals — allow exact, 1-decimal, and whole-number forms.
   for (const perKg of [facts.carbsGPerKg, facts.proteinGPerKg]) {
