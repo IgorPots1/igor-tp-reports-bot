@@ -842,6 +842,13 @@ export function applyNutritionGoalToDayTarget(
      * loss). The EA/absolute floors and the safety-flag system are unchanged.
      */
     raceWeekDeficitOff?: boolean;
+    /**
+     * Lose ramp: the athlete's real average intake (kcal) from the reviewed week.
+     * When present, the lose target is the next achievable step (base + 600) capped
+     * at the scientific absolute — not the textbook absolute itself. null/absent →
+     * no intake history → fall back to the scientific absolute with EA/abs floors.
+     */
+    actualBaseKcal?: number | null;
   }
 ): NutritionDayTypeTarget | null {
   if (!ideal || params.goalType === "maintain" || !params.bodyweightKg || params.bodyweightKg <= 0) {
@@ -855,12 +862,30 @@ export function applyNutritionGoalToDayTarget(
   if (params.goalType === "lose") {
     // Race-week priority rule: deficit OFF (fuel normally for the start).
     const deficit = params.raceWeekDeficitOff ? 0 : LOSE_DEFICIT_BY_DAY_TYPE[params.dayType] ?? 350;
-    // Energy-availability floor: keep EA ≥ 30 kcal/kg FFM, i.e. intake never
-    // below FFM·30 + the day's training expenditure. Plus an absolute floor.
-    const eaFloor = ffmKgForSex(bw, params.sex ?? null) * 30 + exercise;
-    const absFloor = Math.max(26 * bw, 1400);
-    const floor = roundToNearest(Math.max(eaFloor, absFloor), 50);
-    const kcal = Math.max(roundToNearest(maintenance - deficit, 50), floor);
+    const scientific = maintenance - deficit;
+    const base = params.actualBaseKcal && params.actualBaseKcal > 0 ? params.actualBaseKcal : null;
+    // Ramp, not jump: show the next ACHIEVABLE step from the athlete's real intake
+    // base (avg kcal of the reviewed week), capped at the scientific absolute. base+600
+    // is always > base, so we never recommend less than she already eats (no RED-S by
+    // reduction); the base re-bases each week, so the step climbs to `scientific` over
+    // ~2-4 weeks. Hard lower nets (rest 1650 / other 1600) catch an anomalously low
+    // single week (e.g. an illness week 800 → 1400 → lifted to the net). These nets
+    // are deliberately NOT the EA floor (FFM·30 + exercise): that would restore the
+    // absolute on loaded days and kill the ramp (accepted trade-off — a transitional
+    // loaded-day EA may dip below 30, the athlete still eats MORE than before).
+    // No intake history (base null, first review) → fall back to the scientific
+    // absolute guarded by the EA/absolute floors.
+    let rawKcal: number;
+    if (base !== null) {
+      const step = Math.min(scientific, base + 600);
+      const hardFloor = params.dayType === "rest" ? 1650 : 1600;
+      rawKcal = Math.max(step, hardFloor);
+    } else {
+      const eaFloor = ffmKgForSex(bw, params.sex ?? null) * 30 + exercise;
+      const absFloor = Math.max(26 * bw, 1400);
+      rawKcal = Math.max(scientific, Math.max(eaFloor, absFloor));
+    }
+    const kcal = roundToNearest(rawKcal, 50);
     const proteinG = roundToNearest(1.9 * bw, 5);
     // Fat ~0.9 g/kg, but clamp to 20–30% of energy.
     const fatMin = (0.2 * kcal) / 9;
@@ -1245,6 +1270,9 @@ export function buildNutritionNextWeekPlan(params: {
           exerciseKcal,
           sex: params.sex ?? null,
           raceWeekDeficitOff,
+          // Lose ramp: real intake base = overall avg kcal of the reviewed week
+          // (matches nutrition_summary.avg_kcal). null when no history → absolute fallback.
+          actualBaseKcal: previousWeekTargets.overall.kcal ?? null,
         });
   const planDayExerciseKcal = (
     dayType: NutritionPlanDayType,
