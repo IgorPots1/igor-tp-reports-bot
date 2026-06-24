@@ -20,6 +20,8 @@ import { resolveMiniAppStudent } from "../src/features/telegram/miniapp-student-
 
 const TEST_TOKEN = "1234567890:ABCDEFGhijklmnopqrstuvwxyz_test_token";
 process.env.TELEGRAM_BOT_TOKEN = TEST_TOKEN;
+// Coach account guard (Поток privacy): this id is treated as a coach account.
+process.env.TELEGRAM_COACH_CHAT_IDS = "424242";
 
 // --- in-memory fake Supabase client ---
 
@@ -234,6 +236,51 @@ async function main() {
   assert.ok(res.ok, "already-linked must resolve");
   if (res.ok) assert.equal(res.justLinked, false, "re-open is not a fresh link");
   assert.equal(notices.length, 0, "no notification on normal resolve");
+}
+
+// --- 10. resolver: COACH account opens a student link → refused, NOT bound ---
+
+{
+  const rows = [makeRow({ id: "R1", student_id: "S1", telegram_user_id: null })];
+  const client = makeFakeClient(rows);
+  const notices: string[] = [];
+  const res = await resolveMiniAppStudent(
+    { initData: buildValidInitData(424242, "R1") }, // 424242 = coach id
+    { client, notifyCoach: async (d) => void notices.push(d) }
+  );
+  assert.ok(!res.ok, "coach account must be refused");
+  if (!res.ok) assert.equal(res.code, "coach_account");
+  assert.equal(rows[0].telegram_user_id, null, "coach must NOT occupy a student's slot");
+}
+
+// --- 11. resolver: account bound to R1 opens R2's link → wrong_target, no foreign data ---
+
+{
+  const rows = [
+    makeRow({ id: "R1", student_id: "S1", telegram_user_id: 555 }),
+    makeRow({ id: "R2", student_id: "S2", telegram_user_id: null }),
+  ];
+  const client = makeFakeClient(rows);
+  const res = await resolveMiniAppStudent(
+    { initData: buildValidInitData(555, "R2") }, // bound to R1, taps R2's link
+    { client, notifyCoach: async () => {} }
+  );
+  assert.ok(!res.ok, "opening another student's link must be refused");
+  if (!res.ok) assert.equal(res.code, "wrong_target");
+  assert.equal(rows[1].telegram_user_id, null, "R2 must NOT be bound to the wrong account");
+}
+
+// --- 12. resolver: already-linked account opens its OWN review link (r_ prefix) → OK ---
+
+{
+  const rows = [makeRow({ id: "R1", student_id: "S1", telegram_user_id: 555 })];
+  const client = makeFakeClient(rows);
+  const res = await resolveMiniAppStudent(
+    { initData: buildValidInitData(555, "r_R1") }, // own review link
+    { client, notifyCoach: async () => {} }
+  );
+  assert.ok(res.ok, "own review link (r_ prefix) must resolve");
+  if (res.ok) assert.equal(res.student.studentId, "S1", "shows own review");
 }
 
 console.log("PASS check-miniapp-autolink");

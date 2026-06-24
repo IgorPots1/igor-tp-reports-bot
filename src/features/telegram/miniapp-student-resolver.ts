@@ -35,7 +35,13 @@ export type MiniAppResolveErrorCode =
   | "no_user"
   | "student_not_found"
   | "collision"
-  | "needs_link";
+  | "needs_link"
+  // The opener's Telegram account is a coach account — never bind it to / show it a
+  // student's data (a coach testing the broadcast must not occupy a student's slot).
+  | "coach_account"
+  // The opened link names a DIFFERENT student than this account is already bound to —
+  // refuse instead of silently showing the bound student's (foreign) data.
+  | "wrong_target";
 
 export type MiniAppResolveResult =
   | { ok: true; student: TrainingPeaksStudent; justLinked: boolean }
@@ -76,19 +82,57 @@ export async function resolveMiniAppStudent(
     return { ok: false, httpStatus: 401, code: "no_user", message: "Пользователь не определён." };
   }
 
-  // 1. Already linked → resolve directly (idempotent re-open).
+  // The start_param (student ROW id) the link carries. Review links prefix it with
+  // "r_" (form uses the bare id) — strip it. Parsed up front: it is now needed both
+  // for the target check (step 1) and the auto-link (step 2). It is covered by the
+  // HMAC of initData (validated by the caller), so it cannot be forged.
+  const rawStartParam = parseTelegramInitDataStartParam(input.initData);
+  const studentRowId = rawStartParam
+    ? rawStartParam.startsWith("r_")
+      ? rawStartParam.slice(2)
+      : rawStartParam
+    : null;
+
+  // 0. Coach guard: a coach's PERSONAL Telegram account must never bind to or view a
+  //    student's nutrition data. Without this, a coach testing the broadcast taps a
+  //    student link, gets auto-linked (trust-on-first-use), and then sees that one
+  //    student's review for every link (the "чужой отчёт" leak). Refuse outright —
+  //    even if a stale wrong binding already exists, this stops the coach reading it.
+  if (getTrainingPeaksCoachChatIds().includes(String(tgUser.id))) {
+    return {
+      ok: false,
+      httpStatus: 403,
+      code: "coach_account",
+      message: "Это тренерский аккаунт. Ученический разбор открывается из аккаунта ученицы.",
+    };
+  }
+
+  // 1. Already linked → resolve directly (idempotent re-open) — BUT only if the link
+  //    doesn't name a DIFFERENT student. If it does, the wrong link reached this
+  //    account (forward / wrong chat / shared device): refuse, never show foreign data.
   const existing = await getTrainingPeaksStudentByTelegramUserId(tgUser.id, deps.client).catch(
     () => null
   );
   if (existing) {
+    if (studentRowId && studentRowId !== existing.id) {
+      console.warn("[miniapp.resolve] link target mismatch — refused", {
+        telegramUserId: tgUser.id,
+        boundStudentId: existing.studentId,
+        linkStudentRowId: studentRowId,
+      });
+      return {
+        ok: false,
+        httpStatus: 403,
+        code: "wrong_target",
+        message: "Эта ссылка для другого аккаунта. Открой свою ссылку от тренера.",
+      };
+    }
     return { ok: true, student: existing, justLinked: false };
   }
 
   // 2. Not linked yet → use the start_param (student row id) from the signed
-  //    initData to auto-link. The review deep link prefixes the row id with
-  //    "r_" (form uses the bare id) — strip it so auto-link works for both.
-  const rawStartParam = parseTelegramInitDataStartParam(input.initData);
-  const studentRowId = rawStartParam?.startsWith("r_") ? rawStartParam.slice(2) : rawStartParam;
+  //    initData to auto-link (trust-on-first-use for a genuine first open of one's
+  //    OWN link). A collision (this student already bound elsewhere) is rejected below.
   if (!studentRowId) {
     return {
       ok: false,
