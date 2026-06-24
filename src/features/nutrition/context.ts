@@ -292,6 +292,46 @@ export function resolveNutritionNarrativePreferencesFromStored(input: {
   });
 }
 
+export type NutritionWorkoutTimeOfDay = "morning" | "day" | "evening";
+
+// Coarse part-of-day boundaries for nutrition timing advice (local wall-clock hour).
+const NUTRITION_TIME_OF_DAY_MORNING_BEFORE_HOUR = 11; // <11 → morning
+const NUTRITION_TIME_OF_DAY_EVENING_AFTER_HOUR = 17; // >17 → evening; 11..17 → day
+
+/**
+ * Map a workout's FACTUAL local start time (start_time of the COMPLETED session)
+ * to a coarse part of day, for timing advice in the REVIEW. We read the recorded
+ * local hour straight from the ISO string (no timezone math) because start_time
+ * is stored as TrainingPeaks local wall-clock. Returns null when absent — callers
+ * must NOT invent a time.
+ *
+ * Deliberately consumes only the factual start_time. start_time_planned is NOT
+ * used here: athletes set it arbitrarily (coach does not control it), so it is
+ * noise and must never drive plan-side timing.
+ */
+export function resolveNutritionWorkoutTimeOfDay(
+  startTime: string | null | undefined
+): NutritionWorkoutTimeOfDay | null {
+  if (!startTime) {
+    return null;
+  }
+  const match = /T(\d{2}):/.exec(startTime);
+  if (!match) {
+    return null;
+  }
+  const hour = Number(match[1]);
+  if (!Number.isFinite(hour) || hour < 0 || hour > 23) {
+    return null;
+  }
+  if (hour < NUTRITION_TIME_OF_DAY_MORNING_BEFORE_HOUR) {
+    return "morning";
+  }
+  if (hour > NUTRITION_TIME_OF_DAY_EVENING_AFTER_HOUR) {
+    return "evening";
+  }
+  return "day";
+}
+
 export type NutritionTrainingPeaksWeekContext = {
   periodFrom: string;
   periodTo: string;
@@ -325,6 +365,9 @@ export type NutritionTrainingPeaksWeekContext = {
     plannedText: string | null;
     durationHours: number | null;
     distanceKm?: number | null;
+    // Factual part of day from start_time (completed session). null when absent
+    // or when the session is plan-only. Never derived from start_time_planned.
+    timeOfDay: NutritionWorkoutTimeOfDay | null;
   }>;
 };
 
@@ -971,6 +1014,9 @@ export async function buildNutritionTrainingPeaksWeekContext(
         distanceKm:
           normalizeDistanceKm(toFiniteNumber(row.completedDistanceRaw ?? row.plannedDistanceRaw)) ??
           inferDistanceKmFromText(snapshotText(sourceSnapshot?.description) ?? row.title ?? null),
+        // FACT only: time of day from start_time (completed). Plan-only sessions
+        // and start_time_planned are intentionally ignored (planned time is noise).
+        timeOfDay: resolveNutritionWorkoutTimeOfDay(row.startTime),
       };
     }),
   };
@@ -1005,6 +1051,9 @@ function injectRaceEventsIntoWeekContext(
       plannedText: null,
       durationHours: null,
       distanceKm: event.distanceKm ?? null,
+      // Injected race carries no factual start_time; race-day timing is handled by
+      // the race protocol (title-based), not by time_of_day.
+      timeOfDay: null,
     });
   }
 }

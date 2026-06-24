@@ -3,6 +3,7 @@ import type {
   NutritionTrainingPeaksWeekContext,
   NormalizedManualMacroRow,
   NutritionFoodItem,
+  NutritionWorkoutTimeOfDay,
 } from "@/features/nutrition/context";
 import { sanitizeNutritionFoodItems } from "@/features/nutrition/context";
 import {
@@ -110,6 +111,9 @@ export type NutritionCanonicalDailyAnalysis = {
   dateLabel: string;
   trainingType: NutritionCanonicalTrainingType;
   trainingLabel: string;
+  // Factual part of day of the session (from start_time). null when unknown —
+  // consumers must not invent a time. Review-only; never set from planned time.
+  timeOfDay: NutritionWorkoutTimeOfDay | null;
   actual: {
     kcal: number | null;
     proteinG: number | null;
@@ -309,6 +313,8 @@ type WorkoutContextByDate = {
   distanceKm: number | null;
   hasRunSession: boolean;
   hasLongEnduranceSession: boolean;
+  // Factual part of day of the PRIMARY session (from start_time). null when unknown.
+  timeOfDay: NutritionWorkoutTimeOfDay | null;
 };
 
 const PROTEIN_GUARD_LOW_G_PER_KG = 1.1;
@@ -561,6 +567,7 @@ function buildWorkoutContextByDate(week: NutritionTrainingPeaksWeekContext): Map
       plannedText: string | null;
       durationHours: number | null;
       distanceKm: number | null;
+      timeOfDay: NutritionWorkoutTimeOfDay | null;
     }>
   >();
   for (const workout of week.workouts) {
@@ -612,6 +619,7 @@ function buildWorkoutContextByDate(week: NutritionTrainingPeaksWeekContext): Map
       // (the race entity's distance lives on the event, not the title). Other types
       // stay null — review expenditure for them is duration-based, so this is inert.
       distanceKm: type === "race" ? workout.distanceKm ?? null : null,
+      timeOfDay: workout.timeOfDay ?? null,
     });
     grouped.set(workout.date, sessions);
   }
@@ -657,6 +665,8 @@ function buildWorkoutContextByDate(week: NutritionTrainingPeaksWeekContext): Map
       distanceKm: primary.distanceKm,
       hasRunSession,
       hasLongEnduranceSession,
+      // Part of day of the primary (load-dominant) session — factual start_time only.
+      timeOfDay: primary.timeOfDay ?? null,
     });
   }
   return map;
@@ -1806,6 +1816,8 @@ function analyzeDailyTrainingNutrition(input: {
         canonicalTrainingType,
         workout: currentWorkout ?? null,
       }),
+      // FACT only: part of day from start_time of the completed session.
+      timeOfDay: currentWorkout?.timeOfDay ?? null,
       actual: {
         kcal: row.kcal,
         proteinG: row.proteinG,
