@@ -149,6 +149,8 @@ import {
   logTrainingPeaksBusinessMessageIntentDecision,
   resolveTrainingPeaksMessageIntentLogStatus,
 } from "@/features/trainingpeaks/message-intent-log";
+import { classifyTrainingPeaksMoveIntentWithAi } from "@/features/trainingpeaks/move-workout-intent-ai";
+import { isTrainingPeaksIntentAiActive, getMoveAiRecallThreshold } from "@/features/trainingpeaks/intent-ai-mode";
 import {
   formatTrainingPeaksMessageIntentLogsTriageTelegram,
   parseTrainingPeaksIntentsCommandArgs,
@@ -6658,13 +6660,46 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
   );
 
   if (result.kind === "no_candidate" || result.kind === "no_match") {
-    const moveActionResult = await createTrainingPeaksMoveWorkoutActionFromTelegram({
+    let moveActionResult = await createTrainingPeaksMoveWorkoutActionFromTelegram({
       chatId,
       messageId: String(message.message_id),
       userId: message.from?.id === undefined ? null : String(message.from.id),
       text: messageText,
       messageDateUnix: message.date ?? null,
     });
+
+    if (!moveActionResult.ok && isTrainingPeaksIntentAiActive()) {
+      try {
+        const aiResult = await classifyTrainingPeaksMoveIntentWithAi({
+          normalizedText: messageText,
+          textPreview: messageText.slice(0, 120),
+          studentLinked: moveActionResult.reason !== "student_not_found",
+          baseDate: message.date ? new Date(message.date * 1000) : undefined,
+        });
+        if (
+          aiResult.ok &&
+          aiResult.classification.intent === "move_workout" &&
+          aiResult.classification.confidence >= getMoveAiRecallThreshold()
+        ) {
+          const aiRecallResult = await createTrainingPeaksMoveWorkoutActionFromTelegram({
+            chatId,
+            messageId: String(message.message_id),
+            userId: message.from?.id === undefined ? null : String(message.from.id),
+            text: messageText,
+            messageDateUnix: message.date ?? null,
+            aiBypass: true,
+          });
+          if (aiRecallResult.ok) {
+            moveActionResult = aiRecallResult;
+          }
+        }
+      } catch (error) {
+        console.warn("TrainingPeaks AI recall failed, continuing with original result", {
+          chatId,
+          error,
+        });
+      }
+    }
 
     try {
       await logTrainingPeaksBusinessMessageIntentDecision({

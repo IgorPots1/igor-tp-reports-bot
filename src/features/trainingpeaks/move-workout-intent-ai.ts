@@ -233,8 +233,11 @@ export async function classifyTrainingPeaksMoveIntentWithAi(
     return { ok: false, error: "missing_openai_api_key" };
   }
 
-  const timezone = input.timezone?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  // Default to Belgrade — the coach timezone used throughout the app.
+  // Vercel runs in UTC; without this override "сегодня/завтра" resolves to the wrong UTC date late at night.
+  const timezone = input.timezone?.trim() || "Europe/Belgrade";
   const baseDate = input.baseDate ?? new Date();
+  const todayInTz = new Intl.DateTimeFormat("sv-SE", { timeZone: timezone }).format(baseDate);
   const schemaHint = {
     intent: "move_workout|none|unknown",
     workout_reference: {
@@ -268,7 +271,7 @@ export async function classifyTrainingPeaksMoveIntentWithAi(
     "Если сообщение не про расписание/тренировки — intent=none.",
     "Если intent неясен — intent=unknown или needs_clarification=true.",
     "Не выдумывай даты. value для date — ISO YYYY-MM-DD, для relative — tomorrow|today|monday|...",
-    `Текущая дата: ${baseDate.toISOString().slice(0, 10)}; timezone: ${timezone}.`,
+    `Текущая дата: ${todayInTz}; timezone: ${timezone}.`,
     `Ученик привязан к TrainingPeaks: ${input.studentLinked ? "yes" : "no"}.`,
     `Известные алиасы тренировок: ${listKnownWorkoutAliasesForAiPrompt()}.`,
     `Схема: ${JSON.stringify(schemaHint)}.`,
@@ -286,6 +289,7 @@ export async function classifyTrainingPeaksMoveIntentWithAi(
       body: JSON.stringify({
         model: AI_MODEL,
         temperature: 0,
+        response_format: { type: "json_object" },
         messages: [
           {
             role: "system",

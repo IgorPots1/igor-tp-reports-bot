@@ -419,6 +419,9 @@ export type CreateTrainingPeaksMoveWorkoutActionFromTelegramInput = {
   text: string;
   coachChatId?: string | null;
   messageDateUnix?: number | null;
+  // When true, the LLM intent classifier already confirmed move_workout intent;
+  // skip the strict keyword gate inside parseTrainingPeaksMoveWorkoutRequest.
+  aiBypass?: boolean;
 };
 
 export type CreateTrainingPeaksMoveWorkoutActionFromTelegramResult =
@@ -2432,6 +2435,9 @@ function resolveDeterministicMoveWorkout(
 
 type ParseTrainingPeaksMoveWorkoutRequestContext = {
   messageDateUnix?: number | null;
+  // When true, skip the strict keyword gate so the AI parser can attempt recovery.
+  // Only set this after the LLM intent classifier has already confirmed move_workout intent.
+  bypassStrictGate?: boolean;
 };
 
 export async function parseTrainingPeaksMoveWorkoutRequest(
@@ -2439,7 +2445,7 @@ export async function parseTrainingPeaksMoveWorkoutRequest(
   context?: ParseTrainingPeaksMoveWorkoutRequestContext
 ): Promise<ParseTrainingPeaksMoveWorkoutResult> {
   const normalized = normalizeRussianText(rawText);
-  if (!normalized || !passesStrictMoveWorkoutIntentGate(normalized)) {
+  if (!normalized || (!context?.bypassStrictGate && !passesStrictMoveWorkoutIntentGate(normalized))) {
     logIgnoredTrainingPeaksMoveParser("intent_gate_failed", rawText);
     return { ok: false, reason: "not_explicit_move_request" };
   }
@@ -9667,6 +9673,7 @@ export async function createTrainingPeaksMoveWorkoutActionFromTelegram(
 
   const parsed = await parseTrainingPeaksMoveWorkoutRequest(trimmedText, {
     messageDateUnix: input.messageDateUnix ?? null,
+    bypassStrictGate: input.aiBypass === true,
   });
 
   let parsedPayload: ParsedTrainingPeaksMoveWorkoutPayload | null = null;

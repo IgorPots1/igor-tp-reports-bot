@@ -66,7 +66,10 @@ export async function parseMoveWorkoutWithAiFallback(rawText: string): Promise<A
   }
 
   const now = new Date();
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  // Use the same timezone as the deterministic parser (coach timezone = Belgrade).
+  // Vercel runs in UTC; without this override "сегодня/завтра" resolves to the wrong date late at night.
+  const timezone = "Europe/Belgrade";
+  const todayInTz = new Intl.DateTimeFormat("sv-SE", { timeZone: timezone }).format(now);
   const schemaHint = {
     source: { kind: "date|weekday|relative_day", value: "string", sourceText: "string" },
     target: { kind: "date|weekday|relative_day", value: "string", sourceText: "string" },
@@ -86,7 +89,7 @@ export async function parseMoveWorkoutWithAiFallback(rawText: string): Promise<A
     "Если target неясен или есть несколько целей, needsClarification=true и clarificationReason.",
     "Не выдумывай данные. Если source непонятен, source=null.",
     "Если дата ('вчера', 'сегодня') указана как причина/контекст (например, 'вчера был хайкинг'), а не как исходная дата тренировки, ставь source=null.",
-    `Текущая дата UTC: ${now.toISOString().slice(0, 10)}; timezone: ${timezone}.`,
+    `Текущая дата: ${todayInTz}; timezone: ${timezone}.`,
     `Схема: ${JSON.stringify(schemaHint)}.`,
     `Сообщение: ${rawText}`,
   ].join("\n");
@@ -101,6 +104,7 @@ export async function parseMoveWorkoutWithAiFallback(rawText: string): Promise<A
       body: JSON.stringify({
         model: AI_MODEL,
         temperature: 0,
+        response_format: { type: "json_object" },
         messages: [
           {
             role: "system",
