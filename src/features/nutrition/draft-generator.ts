@@ -1281,6 +1281,9 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     student: {
       name: input.context.studentName,
       formality: input.context.resolvedCommunicationProfile.formality,
+      // Grammatical gender for Russian prose (past-tense verbs, adjectives). null →
+      // the prompt rule defaults to feminine; an explicit male overrides that default.
+      sex: input.context.sex,
       nutrition_goal: input.context.nutritionGoalType,
       nutrition_goal_text: input.context.nutritionGoal,
       target_weight_kg: input.context.targetWeightKg,
@@ -1723,6 +1726,7 @@ export async function generateNutritionWeeklyAnalysis(input: {
       student: {
         name: context.studentName,
         formality: context.resolvedCommunicationProfile.formality,
+        sex: context.sex,
         nutrition_goal: context.nutritionGoal,
         coach_context_ru: context.coachContextRu,
         narrative_preferences: context.narrativePreferences,
