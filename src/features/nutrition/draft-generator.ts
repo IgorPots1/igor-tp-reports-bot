@@ -26,7 +26,7 @@ import {
   pickNotableFoods,
   pickNotableCarbItemsWithGrams,
 } from "@/features/nutrition/narrative-composer";
-import { classifyCarbItem, CARB_CONTRIBUTOR_MIN_G, type CarbClass } from "@/features/nutrition/carb-quality";
+import { classifyCarbItem, classifyProteinItem, CARB_CONTRIBUTOR_MIN_G, type CarbClass } from "@/features/nutrition/carb-quality";
 import { validateNutritionDayProse } from "@/features/nutrition/telegram-renderer";
 import { enqueueOpenAiCall } from "@/features/nutrition/nutrition-generation-queue";
 import {
@@ -403,6 +403,9 @@ type NutritionNarrativeNotableItem = {
   // Deterministic carb-speed class (code-owned, from the PDF item carbs). The
   // model may only repeat this; it must NEVER call a fast/neutral item "slow".
   carb_class: CarbClass;
+  // Deterministic protein-source flag (code-owned). The model may call an item a
+  // protein source ONLY when this is true; guards against "грибы=белок" inventions.
+  protein_contributor: boolean;
 };
 
 function shiftIsoDate(isoDate: string, days: number): string {
@@ -591,6 +594,7 @@ function buildNotableItemsForNarrative(items: NutritionFoodItem[] | undefined): 
         fat_contributor: typeof item.fatG === "number" && item.fatG >= 10,
         carb_contributor: typeof item.carbsG === "number" && item.carbsG >= CARB_CONTRIBUTOR_MIN_G,
         carb_class: classifyCarbItem(item.name, item.carbsG),
+        protein_contributor: classifyProteinItem(item.name, item.proteinG),
       }));
     if (sectionItems.length > 0) {
       bySection[section] = sectionItems;
@@ -1209,7 +1213,7 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "КОЛИЧЕСТВО углеводов, не «фрукт=углевод»: малоуглеводные фрукты и ягоды (черешня, клубника, арбуз и т.п.) — это вода/витамины, углеводов в них МАЛО. НЕ называй их «хорошим источником углеводов» / углеводной базой под нагрузку. Можно отметить нейтрально (приятно, витамины), но топливо под тренировку дают крупы/паста/картофель/хлеб/банан, а не ягоды. Банан/сухофрукты — ок как углеводы (но сухофрукты для худеющего не приоритет, см. правило lose).",
     "КАЧЕСТВО УГЛЕВОДОВ — это ПРИНЦИП, применяй к ЛЮБОМУ продукту (не по списку). ХВАЛИ / называй удачными только ЦЕЛЬНЫЕ источники: крупы, рис, гречка, картофель, паста, хлеб, бобовые, фрукты, овощи. НЕ называй «хорошим/правильным продуктом» кондитерку, сладости, мороженое, конфеты, печенье, халву, выпечку с сахаром, круассаны, газировку, фастфуд, алкоголь/пиво (в т.ч. безалкогольное) — ДАЖЕ если они дали много углеводов: углеводы засчитываются в числа дня, но источник хвалить нельзя. Тон ПОДДЕРЖИВАЮЩИЙ, НЕ стыдящий: за сладкое/выпечку/фастфуд НЕ упрекай и не морализируй — просто не хвали; максимум один раз мягко «в следующий раз эти углеводы лучше взять из крупы/риса/фрукта». Никакой вины и «ай-ай».",
     "СОВЕТ ОТ РЕАЛЬНОЙ ЕДЫ (не шаблон): прежде чем советовать «добавь X», посмотри items_notable дня. Если углеводов не хватило, но подходящий ЦЕЛЬНЫЙ источник в этот день УЖЕ был (есть в items_notable — гречка/рис/паста/картофель/хлеб) — советуй УВЕЛИЧИТЬ ПОРЦИЮ того, что уже ел («та же гречка, но порцию побольше»), а НЕ «добавь кашу», когда каша уже есть, и не предлагай кашу к блюду, где уже есть макароны. Новый продукт предлагай ТОЛЬКО если подходящего цельного источника в дне не было. Не советуй добавлять то, чего и так в достатке.",
-    "БЕЛОК/ЖИР — НЕ приписывай продукту макро-роль на глаз. Источником БЕЛКА называй только мясо, рыбу, морепродукты, яйца, творог/скир, бобовые. НЕ называй источником белка низкобелковые продукты (грибы, овощи, фрукты, ягоды, крупы) — «грибы добавили белок» неверно (в грибах белка почти нет). Если не уверен в макро-роли продукта — не приписывай ему макрос. Это страховка от выдуманных ролей, она НЕ режет конкретику: реальную еду, цифры и связки «съел X → эффект Y» сохраняй.",
+    "ИСТОЧНИК БЕЛКА БЕРИ ИЗ ФАКТОВ, НЕ ПО НАИТИЮ: у каждого продукта в items_notable код проставил поле protein_contributor — это источник правды. Источником белка («добавил белок», «закрыл белок», «белковая основа») называй ТОЛЬКО продукт с protein_contributor=true. Продукт с protein_contributor=false источником белка НЕ называй НИКОГДА, даже если кажется — грибы, овощи, фрукты, ягоды, хлеб, крупы белок не дают («грибы добавили белок» неверно). Не придумывай белковую роль для продукта, которого нет в items_notable. Жир тоже не атрибутируй на глаз: насыщенный/тяжёлый жир (выпечка, пломбир, фритюр, жирное мясо) не называй полезным. Это страховка от выдуманных ролей, она НЕ режет конкретику: реальную еду, цифры и связки «съел X → эффект Y» сохраняй.",
     "coach_summary_text и day_by_day_analysis_text — ОБЯЗАТЕЛЬНЫЕ непустые поля, заполняй их всегда (даже если основной фокус ушёл в day_prose). coach_summary_text: 2-4 предложения для тренера. day_by_day_analysis_text: по строке-две на каждый день из daily_analysis. Пустые строки в этих полях недопустимы.",
     "day_by_day_analysis_text: дневные блоки строго по canonical daily_analysis; используй weekday_ru, date_label, training_label, actual, hint_for_comment/findings; комментируй только дневные totals, без intraday (до/во время/после, граммы по таймингу, гели).",
     "Если source_quality.confidence=low или suspect=true, формулируй осторожно как ограничение данных.",
