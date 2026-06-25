@@ -6,7 +6,7 @@ import {
   type TrainingPeaksMessageIntentLogStatus,
 } from "@/features/trainingpeaks/repository";
 import type { CreateTrainingPeaksMoveWorkoutActionFromTelegramResult } from "@/features/trainingpeaks/service";
-import { isTrainingPeaksIntentAiLogOnlyEnabled } from "@/features/trainingpeaks/intent-ai-mode";
+import { isTrainingPeaksIntentAiLogOnlyEnabled, isTrainingPeaksIntentAiActive } from "@/features/trainingpeaks/intent-ai-mode";
 import {
   buildTrainingPeaksAiIntentLogFields,
   classifyTrainingPeaksMoveIntentWithAi,
@@ -317,6 +317,114 @@ export async function logTrainingPeaksBusinessMessageIntentDecision(input: {
     });
   } catch (error) {
     console.warn("Failed to append TrainingPeaks AI intent log-only fields", {
+      chatId: input.chatId,
+      messageId: input.messageId,
+      error,
+    });
+  }
+}
+
+// Phase 2 helpers — log-only intent measurement for group and private channels.
+// Neither function creates move actions; they only write to trainingpeaks_message_intent_logs.
+// AI classifier runs in log-only mode whenever TRAININGPEAKS_INTENT_AI_MODE is log_only or active.
+
+function shouldRunGroupPrivateIntentAi(status: TrainingPeaksMessageIntentLogStatus): boolean {
+  return (isTrainingPeaksIntentAiLogOnlyEnabled() || isTrainingPeaksIntentAiActive()) && AI_LOG_ONLY_STATUSES.has(status);
+}
+
+export async function logTrainingPeaksGroupMessageIntent(input: {
+  chatId: string;
+  messageId: string | number;
+  userId: string | null;
+  messageThreadId?: number | null;
+  rawText: string;
+  student: { id: string } | null;
+  strictMoveIntent: boolean;
+}): Promise<void> {
+  const hasRelevance = hasTrainingPeaksMessageIntentLoggingRelevance(input.rawText);
+  if (!hasRelevance) return;
+
+  const status: TrainingPeaksMessageIntentLogStatus = !input.student
+    ? "student_not_found"
+    : input.strictMoveIntent
+      ? "needs_review"  // gate passed but group never creates actions (Phase 2 observation)
+      : "unrecognized";
+
+  const textFields = buildIntentLogTextFields(input.rawText);
+  const logEntry = await logTrainingPeaksMessageIntentDecision({
+    source: "telegram_group",
+    telegramChatId: input.chatId,
+    telegramUserId: input.userId,
+    telegramMessageId: String(input.messageId),
+    messageThreadId: input.messageThreadId ?? null,
+    rawText: input.rawText,
+    studentId: input.student?.id ?? null,
+    status,
+    ruleIntent: { strictMoveIntent: input.strictMoveIntent },
+    ruleConfidence: input.strictMoveIntent ? 1 : 0,
+  });
+
+  if (!shouldRunGroupPrivateIntentAi(status)) return;
+
+  try {
+    await appendTrainingPeaksIntentAiLogOnlyFields({
+      logEntry,
+      telegramChatId: input.chatId,
+      telegramMessageId: String(input.messageId),
+      normalizedText: textFields.normalizedText,
+      textPreview: textFields.textPreview,
+      studentLinked: Boolean(input.student),
+    });
+  } catch (error) {
+    console.warn("Failed to append TrainingPeaks group AI intent log fields", {
+      chatId: input.chatId,
+      messageId: input.messageId,
+      error,
+    });
+  }
+}
+
+export async function logTrainingPeaksPrivateMessageIntent(input: {
+  chatId: string;
+  messageId: string | number;
+  userId: string | null;
+  rawText: string;
+  student: { id: string } | null;
+  strictMoveIntent: boolean;
+}): Promise<void> {
+  const hasRelevance = hasTrainingPeaksMessageIntentLoggingRelevance(input.rawText);
+  if (!hasRelevance) return;
+
+  const status: TrainingPeaksMessageIntentLogStatus = !input.student
+    ? "student_not_found"
+    : "unrecognized";  // private non-Business never creates actions
+
+  const textFields = buildIntentLogTextFields(input.rawText);
+  const logEntry = await logTrainingPeaksMessageIntentDecision({
+    source: "telegram_private",
+    telegramChatId: input.chatId,
+    telegramUserId: input.userId,
+    telegramMessageId: String(input.messageId),
+    rawText: input.rawText,
+    studentId: input.student?.id ?? null,
+    status,
+    ruleIntent: { strictMoveIntent: input.strictMoveIntent },
+    ruleConfidence: input.strictMoveIntent ? 1 : 0,
+  });
+
+  if (!shouldRunGroupPrivateIntentAi(status)) return;
+
+  try {
+    await appendTrainingPeaksIntentAiLogOnlyFields({
+      logEntry,
+      telegramChatId: input.chatId,
+      telegramMessageId: String(input.messageId),
+      normalizedText: textFields.normalizedText,
+      textPreview: textFields.textPreview,
+      studentLinked: Boolean(input.student),
+    });
+  } catch (error) {
+    console.warn("Failed to append TrainingPeaks private AI intent log fields", {
       chatId: input.chatId,
       messageId: input.messageId,
       error,

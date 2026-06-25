@@ -15,6 +15,7 @@ import { processCoachMemoryForObservation } from "@/features/trainingpeaks/coach
 import { getTrainingPeaksCoachChatIds } from "@/features/trainingpeaks/attention-telegram";
 import { persistOperationalSignalsForObservation } from "@/features/trainingpeaks/operational-signals-inline";
 import { passesTrainingPeaksStrictMoveWorkoutIntentGate } from "@/features/trainingpeaks/service";
+import { logTrainingPeaksPrivateMessageIntent } from "@/features/trainingpeaks/message-intent-log";
 import { buildTelegramContextTextPreview, sha256TelegramContextText } from "@/features/trainingpeaks/telegram-context";
 import { tryAutoLinkTrainingPeaksTopic } from "@/features/trainingpeaks/topic-auto-link";
 import type { TelegramMessage } from "@/features/telegram/types";
@@ -1085,6 +1086,17 @@ export async function handleTrainingPeaksContextObserverMessage(
     });
 
     if (!student) {
+      if (text) {
+        const strictMoveIntent = passesTrainingPeaksStrictMoveWorkoutIntentGate(text);
+        logTrainingPeaksPrivateMessageIntent({
+          chatId: String(message.chat.id),
+          messageId: String(message.message_id),
+          userId: fromId !== undefined ? String(fromId) : null,
+          rawText: text,
+          student: null,
+          strictMoveIntent,
+        }).catch(() => {/* fire-and-forget, never throws */});
+      }
       return {
         handled: true,
         reason: "unknown_private_dm",
@@ -1109,6 +1121,18 @@ export async function handleTrainingPeaksContextObserverMessage(
       senderRole: "linked_student",
       senderMatchMethod: matchMethod,
     });
+
+    if (text) {
+      const strictMoveIntent = passesTrainingPeaksStrictMoveWorkoutIntentGate(text);
+      logTrainingPeaksPrivateMessageIntent({
+        chatId: String(message.chat.id),
+        messageId: String(message.message_id),
+        userId: fromId !== undefined ? String(fromId) : null,
+        rawText: text,
+        student,
+        strictMoveIntent,
+      }).catch(() => {/* fire-and-forget, never throws */});
+    }
 
     return {
       handled: true,

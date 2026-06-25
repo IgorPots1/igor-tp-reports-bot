@@ -11,6 +11,7 @@ import {
   passesTrainingPeaksStrictMoveWorkoutIntentGate,
 } from "@/features/trainingpeaks/service";
 import { buildTelegramContextTextPreview } from "@/features/trainingpeaks/telegram-context";
+import { logTrainingPeaksGroupMessageIntent } from "@/features/trainingpeaks/message-intent-log";
 import { getTrainingPeaksCoachChatIds } from "@/features/trainingpeaks/attention-telegram";
 import { sendTelegramMessage } from "@/features/telegram/telegram-client";
 import type { TelegramInlineKeyboardMarkup, TelegramMessage } from "@/features/telegram/types";
@@ -507,6 +508,36 @@ export async function handleTrainingPeaksGroupProbe(message: TelegramMessage): P
           caseId: caseResult.caseId,
         });
       }
+    }
+  }
+
+  // Phase 2: intent logging for measurement — runs regardless of student match.
+  // Fires after move detection so strictMoveIntent can be re-computed independently.
+  // Never creates move actions here; observation only.
+  if (
+    rawText &&
+    !rawText.startsWith("/") &&
+    !isTelegramBotSender(message) &&
+    !isCoachTelegramId(from?.id) &&
+    !isTelegramServiceMessage(message)
+  ) {
+    const strictMoveIntentForLog = passesTrainingPeaksStrictMoveWorkoutIntentGate(rawText);
+    try {
+      await logTrainingPeaksGroupMessageIntent({
+        chatId: String(message.chat.id),
+        messageId: String(message.message_id),
+        userId: from?.id !== undefined ? String(from.id) : null,
+        messageThreadId: message.message_thread_id ?? null,
+        rawText,
+        student,
+        strictMoveIntent: strictMoveIntentForLog,
+      });
+    } catch (error) {
+      console.warn("TrainingPeaks group intent log failed", {
+        chatId: message.chat.id,
+        messageId: message.message_id,
+        error,
+      });
     }
   }
 
