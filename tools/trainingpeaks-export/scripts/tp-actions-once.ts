@@ -7104,13 +7104,16 @@ export function evaluateDryRunOutcome(input: {
     }
   }
 
-  // Hard gate: inferred source date must not be in the past (completed workouts cannot be moved).
-  // Coach-confirmed source dates skip this gate — the coach takes responsibility.
-  if (selectedSourceDate && !coachConfirmedSourceDate) {
+  // Hard gate: source date in the past is always rejected — even when coach-confirmed.
+  // Completed workouts cannot be moved. Coach confirmation does NOT override this gate.
+  // (Kasianenko case: confirm button stamped a completed 24.06 swim through because this
+  // gate had a !coachConfirmedSourceDate bypass. That bypass is now removed.)
+  // If a coach needs to move a past-but-unexecuted workout, act directly in TrainingPeaks.
+  if (selectedSourceDate) {
     const todayIso = toBelgradeIsoDate(baseDate);
     if (selectedSourceDate < todayIso) {
       parseWarnings.push(
-        "Источник тренировки в прошлом — перенос невозможен. Укажите исходную дату явно."
+        "Источник тренировки в прошлом — перенос невозможен даже с подтверждением тренера. Выполненные тренировки нельзя переносить."
       );
       selectedSourceDate = null;
       selectedSourceDatePolicy = "past_source_date_rejected";
