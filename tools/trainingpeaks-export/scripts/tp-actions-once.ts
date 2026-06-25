@@ -1271,7 +1271,10 @@ function getTargetSummary(parsedPayload: unknown): string {
   return "target: unknown";
 }
 
-const MOVE_DATE_TIMEZONE = "Europe/Belgrade";
+// Europe/Moscow matches the student audience default (UTC+3 year-round).
+// The parser also uses Moscow (fixed in Phase 1). Belgrade (UTC+2 summer) caused
+// weekday resolution off-by-one for messages sent in the 00:00-01:00 Moscow window.
+const MOVE_DATE_TIMEZONE = "Europe/Moscow";
 const YYYY_MM_DD_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 function getBelgradeDateParts(value: Date): { year: number; month: number; day: number; weekday: number } {
@@ -1458,7 +1461,11 @@ function resolveTargetDateFromPayload(
     day_after_tomorrow: 0,
   };
 
-  const targetWeekday = weekdayMap[target.value];
+  // Normalize to lowercase: the AI parser may return "Saturday" (capital) but the map has
+  // lowercase keys. Without this, weekdayMap["Saturday"] === undefined → target collapses to
+  // today (the nowIso fallback), which is the root cause of the Kasianenko 2026-06-25 miss.
+  const normalizedValue = target.value.toLowerCase() as keyof typeof weekdayMap;
+  const targetWeekday = weekdayMap[normalizedValue];
   if (targetWeekday === undefined) {
     warnings.push("target weekday is unknown");
     return { targetDate: nowIso, warnings };
@@ -7079,16 +7086,34 @@ export function evaluateDryRunOutcome(input: {
   }
 
   if (!selectedSourceDate && targetDate) {
-    const eligibleDates = Object.keys(sourceDateBucketCounts)
-      .filter((date) => date < targetDate)
-      .map((date) => ({ date, delta: dateDistanceDays(date, targetDate) }))
-      .filter((entry) => entry.delta >= 1 && entry.delta <= 3)
-      .sort((left, right) => left.delta - right.delta);
-    if (eligibleDates.length > 0) {
-      selectedSourceDate = eligibleDates[0]!.date;
-      selectedSourceDatePolicy = "nearest_prior_within_3_days";
+    // Look for upcoming planned workouts between today (inclusive) and target (exclusive).
+    // Past dates are excluded: those workouts may already be completed and cannot be moved.
+    // (nearest_prior_within_3_days silently picked completed workouts — see Kasianenko case.)
+    const todayIso = toBelgradeIsoDate(baseDate);
+    const upcomingDates = Object.keys(sourceDateBucketCounts)
+      .filter((date) => date >= todayIso && date < targetDate)
+      .sort();
+    if (upcomingDates.length === 1) {
+      selectedSourceDate = upcomingDates[0]!;
+      selectedSourceDatePolicy = "nearest_upcoming_before_target";
+    } else if (upcomingDates.length > 1) {
+      // Multiple candidates — don't guess; require the student to specify which workout.
+      selectedSourceDatePolicy = "ambiguous_upcoming_source";
     } else {
       selectedSourceDatePolicy = "no_safe_inferred_source_date";
+    }
+  }
+
+  // Hard gate: inferred source date must not be in the past (completed workouts cannot be moved).
+  // Coach-confirmed source dates skip this gate — the coach takes responsibility.
+  if (selectedSourceDate && !coachConfirmedSourceDate) {
+    const todayIso = toBelgradeIsoDate(baseDate);
+    if (selectedSourceDate < todayIso) {
+      parseWarnings.push(
+        "Источник тренировки в прошлом — перенос невозможен. Укажите исходную дату явно."
+      );
+      selectedSourceDate = null;
+      selectedSourceDatePolicy = "past_source_date_rejected";
     }
   }
 

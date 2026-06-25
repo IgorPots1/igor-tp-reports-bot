@@ -5934,6 +5934,15 @@ function formatSourcePolicyLabel(policy: string | null | undefined): string {
   if (policy === "explicit_source_date" || policy === "explicit_source_ref") {
     return "явно указан";
   }
+  if (policy === "nearest_upcoming_before_target") {
+    return "определён автоматически (ближайшая до цели)";
+  }
+  if (policy === "ambiguous_upcoming_source") {
+    return "неоднозначно — уточни исходную";
+  }
+  if (policy === "past_source_date_rejected") {
+    return "в прошлом — невозможен";
+  }
   return "определён автоматически";
 }
 
@@ -6284,14 +6293,19 @@ function getTpActionDetailMarkup(
   const rows: TrainingPeaksMenuButton[][] = [];
 
   if (shouldShowCoachConfirmSourceButton(action.latestRunContext)) {
+    const dryRunLog = action.latestRunContext?.latestDryRun?.logJson;
     const sourceDate =
       action.latestRunContext?.latestDryRun?.selectedSourceDate ??
       extractMoveDateRangeFromParsedPayload(action.parsedPayload).sourceDate;
+    const candidateTitle =
+      typeof (dryRunLog as { candidate?: { title?: unknown } } | null)?.candidate?.title === "string"
+        ? ((dryRunLog as { candidate: { title: string } }).candidate.title.slice(0, 35))
+        : null;
+    const confirmLabel = candidateTitle
+      ? `✅ Подтвердить ${formatCompactDateShort(sourceDate)} «${candidateTitle}» как исходную`
+      : `✅ Подтвердить ${formatCompactDateShort(sourceDate)} как исходную`;
     rows.push([
-      createMenuButton(
-        `✅ Подтвердить ${formatCompactDateShort(sourceDate)} как исходную`,
-        `${TP_CALLBACK_ACTION_CONFIRM_SOURCE_PREFIX}${action.id}`
-      ),
+      createMenuButton(confirmLabel, `${TP_CALLBACK_ACTION_CONFIRM_SOURCE_PREFIX}${action.id}`),
     ]);
   }
 
