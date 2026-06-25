@@ -1,6 +1,11 @@
 import type { NextRequest } from "next/server";
 
 import { saveNutritionFileReport } from "@/features/nutrition/admin";
+import {
+  addNutritionWeightLog,
+  getNutritionWeightLogs,
+  upsertNutritionCheckin,
+} from "@/features/nutrition/repository";
 import { validateTelegramInitData } from "@/features/telegram/validate-init-data";
 import { resolveMiniAppStudent } from "@/features/telegram/miniapp-student-resolver";
 import { sendTelegramMessage } from "@/features/telegram/telegram-client";
@@ -10,6 +15,27 @@ import { formatNutritionCompactWeekRange } from "@/features/nutrition/report-dat
 export const runtime = "nodejs";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+// Athlete weight is always auto-accepted, but a jump this large vs the previous
+// logged weight is more likely a typo than reality (normal week-to-week swing is
+// 1-2 kg) — flag it to the coach to sanity-check. Does NOT block the save.
+const WEIGHT_ALERT_THRESHOLD_KG = 4;
+
+// Optional check-in scale: integer 1-10, else null (field is skippable).
+function parseScale(raw: FormDataEntryValue | null): number | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const n = Number(raw.trim());
+  if (!Number.isInteger(n) || n < 1 || n > 10) return null;
+  return n;
+}
+
+// Optional self-reported weight: positive, within a sane human range, else null.
+function parseWeightKg(raw: FormDataEntryValue | null): number | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const n = Number(raw.trim().replace(",", "."));
+  if (!Number.isFinite(n) || n < 30 || n > 300) return null;
+  return Number(n.toFixed(1));
+}
 
 function isMiniAppEnabled(): boolean {
   return process.env.MINIAPP_ENABLED === "true";
@@ -59,6 +85,13 @@ export async function POST(request: NextRequest): Promise<Response> {
     return jsonResponse(400, { ok: false, error: "Файл не прикреплён." });
   }
 
+  // Optional weekly check-in (step 4) — every field is skippable.
+  const energy = parseScale(formData.get("energy"));
+  const wellbeing = parseScale(formData.get("wellbeing"));
+  const eatingComfort = parseScale(formData.get("eatingComfort"));
+  const weightKg = parseWeightKg(formData.get("weightKg"));
+  const studentNote = (formData.get("studentNotes") as string | null)?.trim() || null;
+
   let result: Awaited<ReturnType<typeof saveNutritionFileReport>>;
   try {
     result = await saveNutritionFileReport({
@@ -66,12 +99,83 @@ export async function POST(request: NextRequest): Promise<Response> {
       studentId: student.id,
       weekFrom,
       weekTo,
+      // Athlete's own words → raw_text (the existing channel that reaches generation).
+      studentNotes: studentNote,
       files: fileEntries,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Не удалось сохранить отчёт.";
     console.warn("[miniapp.confirm] save failed", { studentId: student.id, message });
     return jsonResponse(422, { ok: false, error: message });
+  }
+
+  // Weight + check-in scales are best-effort: the report is already saved above, so a
+  // failure here (e.g. table missing) must NOT fail the whole upload — log and move on.
+  if (weightKg !== null) {
+    // Read the prior weight BEFORE inserting the new one, so we can flag a big jump.
+    let previousWeightKg: number | null = null;
+    try {
+      const priorLogs = await getNutritionWeightLogs(student.id);
+      previousWeightKg = priorLogs[0]?.weightKg ?? null;
+    } catch (err) {
+      console.warn("[miniapp.confirm] prior weight read failed", {
+        studentId: student.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    try {
+      await addNutritionWeightLog({
+        studentId: student.id,
+        weightKg,
+        // Athlete-reported → auto-accepted but NOT coach-confirmed (coach reviews; an
+        // anomaly alert fires separately). The targets resolver prefers confirmed logs.
+        source: "athlete_report",
+        confirmedByCoach: false,
+      });
+    } catch (err) {
+      console.warn("[miniapp.confirm] weight log failed", {
+        studentId: student.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    // Anomaly alert to the coach — weight is already written; this never blocks.
+    if (previousWeightKg !== null && Math.abs(weightKg - previousWeightKg) >= WEIGHT_ALERT_THRESHOLD_KG) {
+      const delta = Number((weightKg - previousWeightKg).toFixed(1));
+      const sign = delta > 0 ? "+" : "";
+      const alertText =
+        `⚠️ ${student.studentName}: вес ${weightKg} кг, было ${previousWeightKg} кг,` +
+        ` разница ${sign}${delta} кг — проверь.`;
+      const coachChatIds = getTrainingPeaksCoachChatIds();
+      await Promise.allSettled(
+        coachChatIds.map((chatId) =>
+          sendTelegramMessage(chatId, alertText).catch((err) => {
+            console.warn("[miniapp.confirm] weight alert failed", { chatId, error: String(err) });
+          })
+        )
+      );
+    }
+  }
+
+  if (energy !== null || wellbeing !== null || eatingComfort !== null) {
+    try {
+      await upsertNutritionCheckin({
+        studentId: student.id,
+        weekFrom: result.effectiveWeekFrom,
+        weekTo: result.effectiveWeekTo,
+        reportId: result.report.id,
+        energy,
+        wellbeing,
+        eatingComfort,
+        source: "athlete_miniapp",
+      });
+    } catch (err) {
+      console.warn("[miniapp.confirm] check-in upsert failed", {
+        studentId: student.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   console.info("[miniapp.confirm] saved", {

@@ -18,11 +18,13 @@ import {
 import type { NutritionAthleteReportSignal } from "@/features/nutrition/athlete-signals";
 import {
   emptyNutritionStudentMemory,
+  getNutritionCheckinForWeek,
   getNutritionStudentEssentials,
   getNutritionTrainingPeaksCacheWindow,
   listNutritionRaceEventsForStudentWindow,
   listRecentNutritionWeeklyAnalysesForStudent,
   type NutritionContextItem,
+  type NutritionWeeklyCheckin,
   type NutritionDailyMacro,
   type NutritionGoalType,
   type NutritionRaceEvent,
@@ -421,6 +423,12 @@ export type NutritionStudentContext = {
     avgCarbsG: number | null;
     avgProteinG: number | null;
   } | null;
+  /**
+   * Athlete's self-reported check-in for THIS week (energy / wellbeing / eating
+   * comfort, 1-10, higher = better). Null when the athlete skipped the form. Used
+   * for tone and gentle connections; the model must never invent ratings.
+   */
+  weeklyCheckin: NutritionWeeklyCheckin | null;
   narrativePreferences?: Required<Pick<NutritionNarrativePreferences, "fatFeedbackPolicy" | "detailLevel">> &
     NutritionNarrativePreferences;
   athleteReportSignals: NutritionAthleteReportSignal[];
@@ -1147,6 +1155,12 @@ export async function buildNutritionStudentContext(input: {
     };
   }
 
+  // This week's athlete check-in (energy/wellbeing/eating comfort). Graceful: a
+  // missing table/read never blocks review generation — just no check-in facts.
+  const weeklyCheckin = await getNutritionCheckinForWeek(input.studentId, input.weekFrom).catch(
+    () => null as NutritionWeeklyCheckin | null
+  );
+
   return {
     studentName: student.studentName,
     studentSlug: student.studentId,
@@ -1184,6 +1198,7 @@ export async function buildNutritionStudentContext(input: {
     heightCm: essentials.profile?.heightCm ?? null,
     ageYears: essentials.profile?.ageYears ?? null,
     previousWeekNumbers,
+    weeklyCheckin,
     narrativePreferences: applyNutritionFatPolicyOverrides(
       essentials.profile?.ownRegime ?? false,
       getNutritionNarrativePreferences({

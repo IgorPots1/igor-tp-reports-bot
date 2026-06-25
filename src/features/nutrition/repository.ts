@@ -874,6 +874,87 @@ export async function getNutritionWeightLogs(studentId: string): Promise<Nutriti
   return ((data as NutritionWeightLogRow[]) ?? []).map(mapNutritionWeightLogRow);
 }
 
+export type NutritionWeeklyCheckin = {
+  energy: number | null;
+  wellbeing: number | null;
+  eatingComfort: number | null;
+};
+
+/**
+ * Read the athlete's self-reported check-in scales for a given week (one row per
+ * student+week). Returns null when there is no check-in or all scales are empty,
+ * so the generator never invents ratings.
+ */
+export async function getNutritionCheckinForWeek(
+  studentId: string,
+  weekFrom: string
+): Promise<NutritionWeeklyCheckin | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_checkins")
+    .select("energy, wellbeing, eating_comfort")
+    .eq("student_id", studentId)
+    .eq("week_from", weekFrom)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to read nutrition check-in for ${studentId} ${weekFrom}: ${error.message}`);
+  }
+  if (!data) {
+    return null;
+  }
+  const row = data as { energy: number | null; wellbeing: number | null; eating_comfort: number | null };
+  const checkin: NutritionWeeklyCheckin = {
+    energy: row.energy ?? null,
+    wellbeing: row.wellbeing ?? null,
+    eatingComfort: row.eating_comfort ?? null,
+  };
+  if (checkin.energy === null && checkin.wellbeing === null && checkin.eatingComfort === null) {
+    return null;
+  }
+  return checkin;
+}
+
+export type UpsertNutritionCheckinInput = {
+  studentId: string;
+  weekFrom: string;
+  weekTo: string;
+  reportId?: string | null;
+  energy?: number | null;
+  wellbeing?: number | null;
+  eatingComfort?: number | null;
+  source?: string;
+};
+
+/**
+ * Upsert the athlete's weekly check-in scales (one row per student+week). Only
+ * the scales actually provided are written: on a re-upload that skips a scale,
+ * PostgREST merge-duplicates updates just the columns present in the payload, so
+ * a previously-set value is preserved (an omitted column is not overwritten with
+ * null). The free-text note is NOT stored here — it goes to nutrition_reports.raw_text.
+ */
+export async function upsertNutritionCheckin(input: UpsertNutritionCheckinInput): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const payload: Record<string, unknown> = {
+    student_id: input.studentId,
+    week_from: input.weekFrom,
+    week_to: input.weekTo,
+    source: input.source ?? "athlete_miniapp",
+  };
+  if (input.reportId != null) payload.report_id = input.reportId;
+  if (input.energy != null) payload.energy = input.energy;
+  if (input.wellbeing != null) payload.wellbeing = input.wellbeing;
+  if (input.eatingComfort != null) payload.eating_comfort = input.eatingComfort;
+
+  const { error } = await supabase
+    .from("nutrition_checkins")
+    .upsert(payload, { onConflict: "student_id,week_from" });
+
+  if (error) {
+    throw new Error(`Failed to upsert nutrition check-in for ${input.studentId}: ${error.message}`);
+  }
+}
+
 export async function addNutritionContextItem(input: AddNutritionContextItemInput): Promise<NutritionContextItem> {
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase

@@ -26,7 +26,98 @@ type UploadPreview = {
   needsManualWeek: boolean;
 };
 
-type Step = "idle" | "uploading" | "preview" | "confirming" | "done" | "error";
+type Step = "idle" | "uploading" | "preview" | "checkin" | "confirming" | "done" | "error";
+
+// Force-light palette for the check-in step (Whoop-style). Explicit hex so the
+// phone's Telegram dark theme can't wash out the scale taps (same intent as ReviewScreen).
+const CHECKIN = {
+  card: {
+    background: "#ffffff",
+    color: "#1c1c1e",
+    borderRadius: 14,
+    padding: "22px 18px",
+    marginTop: 8,
+    boxShadow: "0 1px 4px rgba(0,0,0,0.08)",
+  },
+  scaleLabel: { fontSize: 15, fontWeight: 600, color: "#1c1c1e", margin: "0 0 8px" },
+  scaleRow: { display: "flex" as const, gap: 5, marginBottom: 6 },
+  scaleCell: {
+    flex: 1,
+    minWidth: 0,
+    padding: "10px 0",
+    borderRadius: 8,
+    border: "1px solid #d7dadf",
+    background: "#f3f5f7",
+    color: "#1c1c1e",
+    fontSize: 14,
+    fontWeight: 600,
+    cursor: "pointer",
+    textAlign: "center" as const,
+  },
+  scaleCellActive: {
+    background: "#2481cc",
+    color: "#ffffff",
+    border: "1px solid #2481cc",
+  },
+  poles: {
+    display: "flex" as const,
+    justifyContent: "space-between" as const,
+    fontSize: 12,
+    color: "#8a8f96",
+    marginBottom: 18,
+  },
+  fieldLabel: { display: "block" as const, fontSize: 15, fontWeight: 600, color: "#1c1c1e", margin: "0 0 6px" },
+  input: {
+    display: "block" as const,
+    width: "100%",
+    padding: "11px 12px",
+    borderRadius: 8,
+    border: "1px solid #d7dadf",
+    background: "#ffffff",
+    color: "#1c1c1e",
+    fontSize: 15,
+    marginBottom: 18,
+    boxSizing: "border-box" as const,
+  },
+  note: { fontSize: 13, color: "#8a8f96", margin: "0 0 16px", lineHeight: 1.4 },
+};
+
+// Whoop-style 1-10 selector. Neutral noun label; impersonal poles. Tap to set,
+// tap the active value again to clear (the field stays optional/skippable).
+function ScaleRow(props: {
+  label: string;
+  value: number | null;
+  onChange: (next: number | null) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div>
+      <p style={CHECKIN.scaleLabel}>{props.label}</p>
+      <div style={CHECKIN.scaleRow}>
+        {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => {
+          const active = props.value === n;
+          return (
+            <button
+              key={n}
+              type="button"
+              disabled={props.disabled}
+              aria-label={`${props.label}: ${n}`}
+              aria-pressed={active}
+              style={{ ...CHECKIN.scaleCell, ...(active ? CHECKIN.scaleCellActive : {}) }}
+              onClick={() => props.onChange(active ? null : n)}
+            >
+              {n}
+            </button>
+          );
+        })}
+      </div>
+      <div style={CHECKIN.poles}>
+        <span>1 — низко</span>
+        <span>10 — высоко</span>
+      </div>
+    </div>
+  );
+}
 
 const STYLES = {
   page: {
@@ -133,6 +224,12 @@ export default function NutritionMiniApp() {
   const [manualWeekFrom, setManualWeekFrom] = useState("");
   const [manualWeekTo, setManualWeekTo] = useState("");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // Step 4 — optional weekly check-in (all skippable; null/empty = not provided).
+  const [energy, setEnergy] = useState<number | null>(null);
+  const [wellbeing, setWellbeing] = useState<number | null>(null);
+  const [eatingComfort, setEatingComfort] = useState<number | null>(null);
+  const [weightKg, setWeightKg] = useState("");
+  const [checkinNote, setCheckinNote] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -216,6 +313,20 @@ export default function NutritionMiniApp() {
     }
   }
 
+  // preview → check-in: validate the week dates once here, then show the optional
+  // check-in step. Dates are locked in before the (skippable) check-in.
+  function goToCheckin() {
+    if (files.length === 0 || !preview) return;
+    const weekFrom = preview.needsManualWeek ? manualWeekFrom : preview.weekFrom;
+    const weekTo = preview.needsManualWeek ? manualWeekTo : preview.weekTo;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(weekFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(weekTo)) {
+      setErrorMsg("Укажи даты недели в формате ГГГГ-ММ-ДД.");
+      return;
+    }
+    setErrorMsg(null);
+    setStep("checkin");
+  }
+
   async function handleConfirm() {
     if (files.length === 0 || !preview) return;
 
@@ -237,13 +348,21 @@ export default function NutritionMiniApp() {
     }
     form.append("weekFrom", weekFrom);
     form.append("weekTo", weekTo);
+    // Optional check-in — only send fields the athlete actually set (skippable form).
+    if (energy !== null) form.append("energy", String(energy));
+    if (wellbeing !== null) form.append("wellbeing", String(wellbeing));
+    if (eatingComfort !== null) form.append("eatingComfort", String(eatingComfort));
+    const trimmedWeight = weightKg.trim().replace(",", ".");
+    if (trimmedWeight) form.append("weightKg", trimmedWeight);
+    const trimmedNote = checkinNote.trim();
+    if (trimmedNote) form.append("studentNotes", trimmedNote);
 
     try {
       const res = await fetch("/api/m/n/confirm", { method: "POST", body: form });
       const json = (await res.json()) as { ok: boolean; error?: string };
       if (!json.ok) {
         setErrorMsg(json.error ?? "Не удалось сохранить отчёт.");
-        setStep("preview");
+        setStep("checkin");
         return;
       }
       setStep("done");
@@ -252,7 +371,7 @@ export default function NutritionMiniApp() {
       }, 2000);
     } catch {
       setErrorMsg("Ошибка сети. Попробуй ещё раз.");
-      setStep("preview");
+      setStep("checkin");
     }
   }
 
@@ -262,6 +381,11 @@ export default function NutritionMiniApp() {
     setErrorMsg(null);
     if (fileRef.current) fileRef.current.value = "";
     setFiles([]);
+    setEnergy(null);
+    setWellbeing(null);
+    setEatingComfort(null);
+    setWeightKg("");
+    setCheckinNote("");
   }
 
   if (step === "done") {
@@ -349,7 +473,7 @@ export default function NutritionMiniApp() {
           </>
         ) : null}
 
-        {(step === "preview" || step === "confirming") && preview ? (
+        {step === "preview" && preview ? (
           <>
             <p style={STYLES.previewRow}>
               <strong>{files.length > 1 ? `Файлов: ${files.length}` : "Файл:"}</strong>{" "}
@@ -394,10 +518,10 @@ export default function NutritionMiniApp() {
             <button
               type="button"
               style={{ ...STYLES.btn, opacity: busy ? 0.6 : 1, marginTop: 12, marginBottom: 10 }}
-              onClick={handleConfirm}
+              onClick={goToCheckin}
               disabled={busy}
             >
-              {step === "confirming" ? "Сохраняю…" : "Подтвердить и отправить"}
+              Далее →
             </button>
             <button
               type="button"
@@ -408,6 +532,58 @@ export default function NutritionMiniApp() {
               Назад
             </button>
           </>
+        ) : null}
+
+        {(step === "checkin" || step === "confirming") && preview ? (
+          <div style={{ marginTop: 4 }}>
+            <span style={STYLES.stepLabel}>Шаг 3 · Самочувствие (по желанию)</span>
+            <p style={CHECKIN.note}>
+              Можно пропустить и сразу отправить. Оценки помогают тренеру точнее разобрать неделю.
+            </p>
+            <ScaleRow label="Энергия" value={energy} onChange={setEnergy} disabled={busy} />
+            <ScaleRow label="Самочувствие" value={wellbeing} onChange={setWellbeing} disabled={busy} />
+            <ScaleRow label="Комфорт питания" value={eatingComfort} onChange={setEatingComfort} disabled={busy} />
+
+            <label style={CHECKIN.fieldLabel}>Вес</label>
+            <input
+              type="text"
+              inputMode="decimal"
+              placeholder="кг, например 62.5"
+              style={CHECKIN.input}
+              value={weightKg}
+              onChange={(e) => setWeightKg(e.target.value)}
+              disabled={busy}
+            />
+
+            <label style={CHECKIN.fieldLabel}>Заметка</label>
+            <textarea
+              placeholder="По желанию: что было особенного за неделю"
+              style={{ ...CHECKIN.input, minHeight: 80, resize: "vertical" as const }}
+              value={checkinNote}
+              onChange={(e) => setCheckinNote(e.target.value)}
+              disabled={busy}
+            />
+
+            <button
+              type="button"
+              style={{ ...STYLES.btn, opacity: busy ? 0.6 : 1, marginTop: 4, marginBottom: 10 }}
+              onClick={handleConfirm}
+              disabled={busy}
+            >
+              {step === "confirming" ? "Сохраняю…" : "Подтвердить и отправить"}
+            </button>
+            <button
+              type="button"
+              style={{ ...STYLES.btn, ...STYLES.btnOutline }}
+              onClick={() => {
+                setErrorMsg(null);
+                setStep("preview");
+              }}
+              disabled={busy}
+            >
+              Назад
+            </button>
+          </div>
         ) : null}
 
         {errorMsg && (
