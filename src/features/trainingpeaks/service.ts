@@ -65,7 +65,7 @@ import {
   listTrainingPeaksWeeklyReportEligibleStudents as listTrainingPeaksWeeklyReportEligibleStudentsFromRepository,
   listTrainingPeaksWorkoutCacheForDateRange,
   listTrainingPeaksWorkoutCacheForStudentDateRange,
-  listTrainingPeaksWorkoutCacheScanStatusesForRange,
+  listTrainingPeaksWorkoutCacheScanStatusesCoveringDate,
   listTrainingPeaksStudentsEligibleForHealthMetrics,
   listTrainingPeaksHealthMetricsForStudentDateRange,
   listTrainingPeaksOperationalSignals,
@@ -4455,6 +4455,7 @@ type YesterdayScanAttentionSummary = {
   missingScanCount: number;
   shouldShowMissingScanAlert: boolean;
   latestStatusByStudentId: Map<string, YesterdayScanStatusSignalSource>;
+  latestOkStatusByStudentId: Map<string, YesterdayScanStatusSignalSource>;
 };
 
 function getBelgradeHour(now = new Date()): number | null {
@@ -4492,6 +4493,7 @@ export function summarizeYesterdayScanAttention(input: {
   const latestStatusMsByStudentId = new Map<string, number | null>();
   const latestFailedMsByStudentId = new Map<string, number>();
   const latestOkMsByStudentId = new Map<string, number>();
+  const latestOkStatusByStudentId = new Map<string, YesterdayScanStatusSignalSource>();
   const hasAnyStatusByStudentId = new Set<string>();
 
   for (const status of input.statuses) {
@@ -4522,6 +4524,7 @@ export function summarizeYesterdayScanAttention(input: {
       const previousOkMs = latestOkMsByStudentId.get(status.studentId);
       if (previousOkMs === undefined || statusTimeMs > previousOkMs) {
         latestOkMsByStudentId.set(status.studentId, statusTimeMs);
+        latestOkStatusByStudentId.set(status.studentId, status);
       }
     }
   }
@@ -4555,6 +4558,7 @@ export function summarizeYesterdayScanAttention(input: {
     missingScanCount,
     shouldShowMissingScanAlert: shouldShowMissingYesterdayScanAlert(now),
     latestStatusByStudentId,
+    latestOkStatusByStudentId,
   };
 }
 
@@ -5493,7 +5497,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     [
       Awaited<ReturnType<typeof listTrainingPeaksStudents>>,
       Awaited<ReturnType<typeof listTrainingPeaksWorkoutCacheForDateRange>>,
-      Awaited<ReturnType<typeof listTrainingPeaksWorkoutCacheScanStatusesForRange>>,
+      Awaited<ReturnType<typeof listTrainingPeaksWorkoutCacheScanStatusesCoveringDate>>,
     ]
   >(
     "yesterday_scan_sources",
@@ -5504,10 +5508,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
           from: yesterdayDate,
           to: yesterdayDate,
         }),
-        listTrainingPeaksWorkoutCacheScanStatusesForRange({
-          from: yesterdayDate,
-          to: yesterdayDate,
-        }),
+        listTrainingPeaksWorkoutCacheScanStatusesCoveringDate(yesterdayDate),
       ]),
     [[], [], []]
   );
@@ -5548,10 +5549,10 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
           ? `; первые: ${previewNames.join(", ")}; ещё ${hiddenNames}`
           : `; первые: ${previewNames.join(", ")}`;
     }
-    pushUniqueAttentionSignal(observe, {
-      level: "observe",
+    pushUniqueAttentionSignal(checkTodaySignals, {
+      level: "today",
       studentName: null,
-      reason: `Скан тренировок за вчера завершился с ошибкой: ${failedCount} ${studentNoun}${namesSuffix}`,
+      reason: `⚠️ Скан TP за вчера не прошёл (${failedCount} ${studentNoun}${namesSuffix}) — данные о тренировках могут быть неполными. Перелогинься: npm run tp-login (в tools/trainingpeaks-export)`,
       signalKind: "scan_failed",
     });
   }
@@ -5559,16 +5560,18 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
   for (const student of activeStudents) {
     const studentName = student.studentName?.trim() || null;
     const scanStatus = yesterdayScanSummary.latestStatusByStudentId.get(student.id);
+    const fallbackOkStatus = yesterdayScanSummary.latestOkStatusByStudentId.get(student.id);
 
-    if (!scanStatus) {
-      continue;
-    }
-
-    if (scanStatus.status === "failed") {
-      continue;
-    }
-
-    if (scanStatus.status !== "ok") {
+    // Determine effective scan: use latest if ok, else fall back to last ok within 48h
+    let usedFallback = false;
+    if (scanStatus?.status === "ok") {
+      // normal path
+    } else if (
+      fallbackOkStatus &&
+      isWithinLookbackHours(fallbackOkStatus.scannedAt, YESTERDAY_SCAN_FAILURE_TTL_HOURS)
+    ) {
+      usedFallback = true;
+    } else {
       continue;
     }
 
@@ -5596,11 +5599,13 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
       }
     }
 
+    const staleSuffix = usedFallback ? " (по данным предыдущего скана)" : "";
+
     if (missedRunningPlannedCount === 1) {
       pushUniqueAttentionSignal(missedWorkouts, {
         level: "today",
         studentName,
-        reason: "вчера была беговая тренировка, выполнения не найдено",
+        reason: `вчера была беговая тренировка, выполнения не найдено${staleSuffix}`,
         studentId: student.id,
         signalKind: "missed_workout",
       });
@@ -5611,7 +5616,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
       pushUniqueAttentionSignal(missedWorkouts, {
         level: "today",
         studentName,
-        reason: formatMissedRunningWorkoutReason(missedRunningPlannedCount),
+        reason: `${formatMissedRunningWorkoutReason(missedRunningPlannedCount)}${staleSuffix}`,
         studentId: student.id,
         signalKind: "missed_workout",
       });
