@@ -746,6 +746,9 @@ export default async function CoachOsAdminPage({ searchParams }: CoachOsPageProp
           </p>
         </div>
         <div className="admin-actions">
+          <Link className="admin-button admin-button-secondary" href="/admin/coach-os/signals">
+            Сигналы
+          </Link>
           <Link className="admin-button admin-button-secondary" href="/admin/coach-os/nutrition">
             Питание
           </Link>

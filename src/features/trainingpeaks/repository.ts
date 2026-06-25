@@ -10028,3 +10028,84 @@ export async function listTrainingPeaksMessageIntentLogsForTriage(
 
   return ((data as TrainingPeaksMessageIntentLogRow[]) ?? []).map(mapTrainingPeaksMessageIntentLogRow);
 }
+
+export type AdminHealthSignalCloseReason = "recovered" | "false_positive" | "obsolete";
+
+const ADMIN_CLOSEABLE_HEALTH_SIGNAL_TYPES = new Set([
+  "pain_injury",
+  "health_issue_started",
+  "health_issue_improving",
+  "health_issue_resolved",
+  "resume_training",
+]);
+
+export function isAdminCloseableHealthSignalType(signalType: string): boolean {
+  return ADMIN_CLOSEABLE_HEALTH_SIGNAL_TYPES.has(signalType);
+}
+
+export async function closeHealthSignalByAdminUi(input: {
+  signalId: string;
+  studentId: string;
+  closeReason: AdminHealthSignalCloseReason;
+}): Promise<{ updated: boolean; reason: string }> {
+  const supabase = createSupabaseServerClient();
+  const appliedAt = new Date().toISOString();
+
+  const { data: existing, error: fetchError } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .select("id, status, signal_type, metadata")
+    .eq("id", input.signalId)
+    .eq("student_id", input.studentId)
+    .maybeSingle();
+
+  if (fetchError) {
+    throw new Error(`Failed to load signal for admin close: ${fetchError.message}`);
+  }
+  if (!existing) {
+    return { updated: false, reason: "not_found" };
+  }
+  const row = existing as { id: string; status: string; signal_type: string; metadata: Record<string, unknown> };
+  if (row.status !== "active") {
+    return { updated: false, reason: "not_active" };
+  }
+  if (!ADMIN_CLOSEABLE_HEALTH_SIGNAL_TYPES.has(row.signal_type)) {
+    return { updated: false, reason: "not_health_signal" };
+  }
+
+  const metaBefore =
+    row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+      ? (row.metadata as Record<string, unknown>)
+      : {};
+  const nextMetadata = {
+    ...metaBefore,
+    coach_ui_close: {
+      closed_at: appliedAt,
+      close_reason: input.closeReason,
+      actor: "admin_ui",
+    },
+  };
+
+  const { data: updated, error: updateError } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .update({
+      status: "expired",
+      resolved_reason: `coach_ui_closed_${input.closeReason}`,
+      resolved_at: appliedAt,
+      metadata: nextMetadata,
+      updated_at: appliedAt,
+    })
+    .eq("id", input.signalId)
+    .eq("student_id", input.studentId)
+    .eq("status", "active")
+    .select("id")
+    .maybeSingle();
+
+  if (updateError) {
+    throw new Error(`Failed to close health signal: ${updateError.message}`);
+  }
+  if (!updated) {
+    return { updated: false, reason: "concurrent_update" };
+  }
+
+  return { updated: true, reason: "ok" };
+}
