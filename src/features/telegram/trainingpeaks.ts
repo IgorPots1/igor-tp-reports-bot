@@ -39,6 +39,8 @@ import {
   createTrainingPeaksMoveWorkoutActionFromTelegram,
   confirmTrainingPeaksActionSourceDate,
   confirmTrainingPeaksActionSourceWorkout,
+  pickTrainingPeaksActionSourceCandidate,
+  extractMoveSourcePickerCandidates,
   createTrainingPeaksStudentTelegramLinkCode,
   dismissTrainingPeaksCoachCase,
   disableTrainingPeaksStudent,
@@ -274,6 +276,8 @@ const TP_CALLBACK_ACTION_DETAIL_PREFIX = "tp:ta:d:";
 const TP_CALLBACK_ACTION_DETAIL_CANCEL_PREFIX = "tp:ta:dc:";
 const TP_CALLBACK_ACTION_CONFIRM_SOURCE_PREFIX = "tp:ta:cs:";
 const TP_CALLBACK_ACTION_SELECT_WORKOUT_PREFIX = "tp:ta:sw:";
+// Source-ambiguity picker: callback data is `${prefix}${actionId}:${candidateIndex}`.
+const TP_CALLBACK_ACTION_PICK_SOURCE_PREFIX = "tp:ta:ps:";
 const TP_CALLBACK_ACTION_DETAIL_BACK = "tp:ta:back";
 const TP_CALLBACK_CASE_RESOLVE_PREFIX = "tp:case:r:";
 const TP_CALLBACK_CASE_DISMISS_PREFIX = "tp:case:d:";
@@ -455,6 +459,7 @@ type ParsedTrainingPeaksCallback =
   | { kind: "action_detail_cancel"; actionId: string }
   | { kind: "action_confirm_source_date"; actionId: string }
   | { kind: "action_confirm_source_workout"; actionId: string }
+  | { kind: "action_pick_source"; actionId: string; candidateIndex: number }
   | { kind: "action_detail_back" }
   | { kind: "case_resolve"; shortId: string }
   | { kind: "case_dismiss"; shortId: string }
@@ -4456,6 +4461,20 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
     return studentId && chatKey ? { kind: "student_choose_chat", studentId, chatKey } : null;
   }
 
+  if (data.startsWith(TP_CALLBACK_ACTION_PICK_SOURCE_PREFIX)) {
+    const rest = data.slice(TP_CALLBACK_ACTION_PICK_SOURCE_PREFIX.length);
+    const separatorIndex = rest.lastIndexOf(":");
+    if (separatorIndex <= 0) {
+      return null;
+    }
+    const actionId = rest.slice(0, separatorIndex).trim();
+    const candidateIndex = Number.parseInt(rest.slice(separatorIndex + 1).trim(), 10);
+    if (!actionId || !Number.isInteger(candidateIndex) || candidateIndex < 0) {
+      return null;
+    }
+    return { kind: "action_pick_source", actionId, candidateIndex };
+  }
+
   for (const [prefix, kind] of [
     [TP_CALLBACK_REPORT_SEND_PREFIX, "report_send"],
     [TP_CALLBACK_REPORT_SKIP_PREFIX, "report_skip"],
@@ -6320,6 +6339,21 @@ function getTpActionDetailMarkup(
     ]);
   }
 
+  // Source-ambiguity picker: AI returned several plausible workouts → real buttons, one per
+  // candidate, instead of the old text "открой /tp_actions и выбери" dead-end.
+  const sourcePickerCandidates = extractMoveSourcePickerCandidates(action.parsedPayload);
+  if (sourcePickerCandidates.length >= 2) {
+    sourcePickerCandidates.slice(0, 4).forEach((candidate: { workoutDate: string; title: string | null }, index: number) => {
+      const titlePart = candidate.title ? ` «${truncateWorkoutTitleForButton(candidate.title)}»` : "";
+      rows.push([
+        createMenuButton(
+          `↪️ Двигать ${formatCompactDateShort(candidate.workoutDate)}${titlePart}`,
+          `${TP_CALLBACK_ACTION_PICK_SOURCE_PREFIX}${action.id}:${index}`
+        ),
+      ]);
+    });
+  }
+
   if (shouldShowActionDryRunRecheckButton(action)) {
     rows.push([
       createMenuButton("🔁 Повторить проверку", `${TP_CALLBACK_ACTION_RECHECK_DRY_RUN_PREFIX}${action.id}`),
@@ -6538,6 +6572,56 @@ async function handleTrainingPeaksActionConfirmSourceDateCallback(
     parsedMessage.chatId,
     parsedMessage.messageId,
     `✅ Исходная дата подтверждена: ${formattedDate}.\n${rerunLine}`,
+    createInlineKeyboardMarkup([
+      [createMenuButton("◀ К заявке", `${TP_CALLBACK_ACTION_DETAIL_PREFIX}${actionId}`)],
+      [createMenuButton("📋 К списку заявок", "tp:actions:list")],
+    ])
+  );
+}
+
+async function handleTrainingPeaksActionPickSourceCallback(
+  parsedMessage: ParsedTelegramCallbackUpdate,
+  actionId: string,
+  candidateIndex: number
+): Promise<void> {
+  const result = await pickTrainingPeaksActionSourceCandidate({
+    actionId,
+    candidateIndex,
+    confirmedByChatId: String(parsedMessage.chatId),
+    confirmedByUserId: parsedMessage.userId === null ? null : String(parsedMessage.userId),
+  });
+
+  if (result.kind === "not_found") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      "Заявка не найдена или уже недоступна.",
+      getTrainingPeaksActionResolvedMarkup()
+    );
+    return;
+  }
+
+  if (result.kind === "invalid_candidate") {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      "Этот вариант источника больше недоступен. Открой заявку и выбери заново.",
+      createInlineKeyboardMarkup([
+        [createMenuButton("◀ К заявке", `${TP_CALLBACK_ACTION_DETAIL_PREFIX}${actionId}`)],
+      ])
+    );
+    return;
+  }
+
+  const formattedDate = formatCompactDateShort(result.confirmedSourceDate);
+  const titlePart = result.confirmedWorkoutTitle ? ` «${result.confirmedWorkoutTitle}»` : "";
+  const rerunLine = result.dryRunRequeueRequested
+    ? "Запущен повторный dry-run — кнопка «Выполнить» появится в новом уведомлении после проверки."
+    : "Перейди к заявке, чтобы проверить статус.";
+  await editTrainingPeaksMenuMessage(
+    parsedMessage.chatId,
+    parsedMessage.messageId,
+    `✅ Источник выбран: ${formattedDate}${titlePart}.\n${rerunLine}`,
     createInlineKeyboardMarkup([
       [createMenuButton("◀ К заявке", `${TP_CALLBACK_ACTION_DETAIL_PREFIX}${actionId}`)],
       [createMenuButton("📋 К списку заявок", "tp:actions:list")],
@@ -9855,6 +9939,15 @@ export async function handleTrainingPeaksTelegramCallback(
 
     if (callback.kind === "action_confirm_source_workout") {
       await handleTrainingPeaksActionConfirmSourceWorkoutCallback(parsedMessage, callback.actionId);
+      return "handled";
+    }
+
+    if (callback.kind === "action_pick_source") {
+      await handleTrainingPeaksActionPickSourceCallback(
+        parsedMessage,
+        callback.actionId,
+        callback.candidateIndex
+      );
       return "handled";
     }
 

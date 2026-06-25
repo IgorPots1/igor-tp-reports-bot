@@ -76,6 +76,9 @@ import {
   requestTrainingPeaksActionDryRunRecheck as requestTrainingPeaksActionDryRunRecheckInRepository,
   confirmTrainingPeaksActionSourceDate as confirmTrainingPeaksActionSourceDateInRepository,
   confirmTrainingPeaksActionSourceWorkout as confirmTrainingPeaksActionSourceWorkoutInRepository,
+  pickTrainingPeaksActionSourceCandidate as pickTrainingPeaksActionSourceCandidateInRepository,
+  extractMoveSourcePickerCandidates as extractMoveSourcePickerCandidatesInRepository,
+  type PickTrainingPeaksActionSourceCandidateResult,
   cancelTrainingPeaksActionExecution as cancelTrainingPeaksActionExecutionInRepository,
   getTrainingPeaksActionById as getTrainingPeaksActionByIdInRepository,
   getLatestTrainingPeaksCronRunLog,
@@ -151,7 +154,11 @@ import {
 } from "@/features/trainingpeaks/repository";
 import { evaluateTrainingPeaksRecoveryAlert } from "@/features/trainingpeaks/recovery-alerts";
 import { classifyTrainingPeaksWorkoutActivity } from "@/features/trainingpeaks/workout-activity-classification";
-import { parseMoveWorkoutWithAiFallback } from "@/features/trainingpeaks/move-workout-parser-ai";
+import {
+  parseMoveWorkoutWithAiFallback,
+  selectMoveSourceWorkoutWithAi,
+  type MoveSourceCalendarWorkout,
+} from "@/features/trainingpeaks/move-workout-parser-ai";
 import {
   assembleTrainingPeaksMoveIntentContext,
   triggerHasStrictMoveVerb,
@@ -385,6 +392,17 @@ export type ParsedTrainingPeaksMoveWorkoutPayload = {
     }>;
     reason?: string | null;
     warnings?: string[];
+  };
+  // Set when Haiku chose the source workout from the student's calendar (calendar-aware selection).
+  // Provenance only — the chosen date/source fields drive the runner; this records the why.
+  aiSourceSelection?: {
+    decision: "single" | "ambiguous";
+    selectedWorkoutId?: number;
+    selectedDate?: string;
+    candidateWorkoutIds?: number[];
+    confidence: number;
+    reasoning: string;
+    model: string;
   };
   parsingDiagnostics?: {
     parserBaseDateSource: "message_timestamp" | "env_override" | "server_now";
@@ -3116,10 +3134,13 @@ function isLikelyHardOrIntervalWorkout(row: TrainingPeaksWorkoutCacheRow): boole
   return title.includes("темп") || title.includes("порог") || title.includes("фартлек");
 }
 
+const MOVE_SOURCE_AI_MODEL_LABEL = process.env.MOVE_INTENT_MODEL?.trim() || "claude-haiku-4-5-20251001";
+
 async function enrichParsedMovePayloadWithWorkoutInference(input: {
   studentId: string;
   rawText: string;
   parsedPayload: ParsedTrainingPeaksMoveWorkoutPayload;
+  studentTimezone?: string | null;
 }): Promise<ParsedTrainingPeaksMoveWorkoutPayload> {
   const payload: ParsedTrainingPeaksMoveWorkoutPayload = {
     ...input.parsedPayload,
@@ -3133,8 +3154,14 @@ async function enrichParsedMovePayloadWithWorkoutInference(input: {
     return payload;
   }
 
+  // Window must include TODAY, not just target±. The previous window started at target-1 and the
+  // candidate filter required workoutDate >= target, so today's planned workout was invisible —
+  // the root cause of "moved the future long run instead of today's session" (Kasianenko audit).
+  const timezone = input.studentTimezone?.trim() || "Europe/Moscow";
+  const todayIso = new Intl.DateTimeFormat("sv-SE", { timeZone: timezone }).format(new Date());
   const searchTo = addLocalDaysIso(targetDateIso, 10);
-  const searchFrom = addLocalDaysIso(targetDateIso, -1);
+  const targetMinusOne = addLocalDaysIso(targetDateIso, -1);
+  const searchFrom = todayIso < targetMinusOne ? todayIso : targetMinusOne;
   const rows = await listTrainingPeaksWorkoutCacheForStudentDateRange({
     studentId: input.studentId,
     from: searchFrom,
@@ -3142,51 +3169,137 @@ async function enrichParsedMovePayloadWithWorkoutInference(input: {
   });
 
   if (!payload.sourceDate && !payload.source_date) {
-    const inferredKind = inferWorkoutKindFromText(input.rawText);
-    const candidates = rows
-      .filter((row) => row.isPlanned && row.workoutDate >= targetDateIso)
-      .map((row) => ({
-        row,
-        score: scoreWorkoutCandidate({
-          row,
-          targetDateIso,
-          inferredKind,
-          rawText: input.rawText,
-        }),
-      }))
-      .filter((entry) => entry.score >= 0.8)
-      .sort((a, b) => a.row.workoutDate.localeCompare(b.row.workoutDate) || b.score - a.score);
-
-    const previewCandidates = candidates.map((entry) => ({
-      workoutId: entry.row.trainingPeaksWorkoutId,
-      workoutDate: entry.row.workoutDate,
-      title: entry.row.title,
-      score: entry.score,
+    // ── Primary path: let Haiku read the calendar and decide which workout to move. ──
+    // Candidate pool: planned, NOT completed, today onward, excluding the target day itself
+    // (the target is the destination, never the source). Completed/past are excluded here and
+    // also blocked absolutely by the runner's hard gate.
+    const calendarRows = rows.filter(
+      (row) =>
+        row.isPlanned && !row.isCompleted && row.workoutDate >= todayIso && row.workoutDate !== targetDateIso
+    );
+    const aiCalendar: MoveSourceCalendarWorkout[] = calendarRows.map((row) => ({
+      workoutId: row.trainingPeaksWorkoutId,
+      date: row.workoutDate,
+      type: row.sportOrTypeCode,
+      title: row.title,
+      isToday: row.workoutDate === todayIso,
     }));
-    const sourceInferencePreview = buildMoveSourceInferencePreviewFromCacheCandidates({
-      candidates: previewCandidates,
-    });
-    payload.sourceInferencePreview = sourceInferencePreview;
-    payload.sourceInference = {
-      strategy: "future_workout_cache_preview",
-      trusted: false,
-      source: "trainingpeaks_workout_cache",
-      candidateCount: sourceInferencePreview.candidateCount,
-      selectedWorkoutId: sourceInferencePreview.selectedCandidate?.workoutId,
-      candidates: sourceInferencePreview.candidates,
-      reason: sourceInferencePreview.reason ?? null,
-      warnings: sourceInferencePreview.warnings,
-    };
 
-    if (sourceInferencePreview.warnings?.length) {
-      payload.warnings?.push(...sourceInferencePreview.warnings);
+    const aiSelection = await selectMoveSourceWorkoutWithAi({
+      messageText: input.rawText,
+      todayIso,
+      targetDateIso,
+      timezone,
+      calendar: aiCalendar,
+    });
+
+    if (aiSelection && aiSelection.decision === "single" && aiSelection.selectedWorkoutId !== null) {
+      const chosen = calendarRows.find(
+        (row) => row.trainingPeaksWorkoutId === aiSelection.selectedWorkoutId
+      );
+      if (chosen) {
+        // Trusted explicit source: the runner consumes payload.source/sourceDate and skips its
+        // arithmetic guessing. We deliberately do NOT set an untrusted sourceInferencePreview here,
+        // so the runner's extractExplicitSourceDate trusts these fields.
+        payload.source = { kind: "date", value: chosen.workoutDate, sourceText: chosen.title ?? "" };
+        payload.sourceDate = chosen.workoutDate;
+        payload.source_date = chosen.workoutDate;
+        payload.aiSourceSelection = {
+          decision: "single",
+          selectedWorkoutId: chosen.trainingPeaksWorkoutId,
+          selectedDate: chosen.workoutDate,
+          confidence: aiSelection.confidence,
+          reasoning: aiSelection.reasoning,
+          model: MOVE_SOURCE_AI_MODEL_LABEL,
+        };
+      }
+    } else if (aiSelection && aiSelection.decision === "ambiguous") {
+      const chosenRows = aiSelection.candidateWorkoutIds
+        .map((id) => calendarRows.find((row) => row.trainingPeaksWorkoutId === id))
+        .filter((row): row is TrainingPeaksWorkoutCacheRow => Boolean(row));
+      if (chosenRows.length >= 2) {
+        // Genuine ambiguity even with calendar context → hand the coach a real picker (Этап 3),
+        // never guess silently. Keep the source untrusted so the runner stays in "needs choice".
+        const previewCandidates = chosenRows.map((row) => ({
+          workoutId: row.trainingPeaksWorkoutId,
+          workoutDate: row.workoutDate,
+          title: row.title,
+          score: aiSelection.confidence,
+        }));
+        const sourceInferencePreview = buildMoveSourceInferencePreviewFromCacheCandidates({
+          candidates: previewCandidates,
+        });
+        payload.sourceInferencePreview = sourceInferencePreview;
+        payload.sourceInference = {
+          strategy: "future_workout_cache_preview",
+          trusted: false,
+          source: "trainingpeaks_workout_cache",
+          candidateCount: sourceInferencePreview.candidateCount,
+          selectedWorkoutId: sourceInferencePreview.selectedCandidate?.workoutId,
+          candidates: sourceInferencePreview.candidates,
+          reason: sourceInferencePreview.reason ?? null,
+          warnings: sourceInferencePreview.warnings,
+        };
+        payload.aiSourceSelection = {
+          decision: "ambiguous",
+          candidateWorkoutIds: chosenRows.map((row) => row.trainingPeaksWorkoutId),
+          confidence: aiSelection.confidence,
+          reasoning: aiSelection.reasoning,
+          model: MOVE_SOURCE_AI_MODEL_LABEL,
+        };
+        payload.needsClarification = true;
+        payload.clarificationReason = "multiple source workout candidates";
+      }
     }
-    if (sourceInferencePreview.reason === "multiple source workout candidates") {
-      payload.needsClarification = true;
-      payload.clarificationReason = sourceInferencePreview.reason;
-    } else if (sourceInferencePreview.candidateCount === 0) {
-      payload.needsClarification = true;
-      payload.clarificationReason = "unresolved_workout";
+
+    // ── Degradation path: AI unavailable or no usable decision → legacy arithmetic cache scoring. ──
+    if (!payload.sourceDate && !payload.source_date && !payload.sourceInferencePreview) {
+      const inferredKind = inferWorkoutKindFromText(input.rawText);
+      const candidates = rows
+        .filter((row) => row.isPlanned && row.workoutDate >= targetDateIso)
+        .map((row) => ({
+          row,
+          score: scoreWorkoutCandidate({
+            row,
+            targetDateIso,
+            inferredKind,
+            rawText: input.rawText,
+          }),
+        }))
+        .filter((entry) => entry.score >= 0.8)
+        .sort((a, b) => a.row.workoutDate.localeCompare(b.row.workoutDate) || b.score - a.score);
+
+      const previewCandidates = candidates.map((entry) => ({
+        workoutId: entry.row.trainingPeaksWorkoutId,
+        workoutDate: entry.row.workoutDate,
+        title: entry.row.title,
+        score: entry.score,
+      }));
+      const sourceInferencePreview = buildMoveSourceInferencePreviewFromCacheCandidates({
+        candidates: previewCandidates,
+      });
+      payload.sourceInferencePreview = sourceInferencePreview;
+      payload.sourceInference = {
+        strategy: "future_workout_cache_preview",
+        trusted: false,
+        source: "trainingpeaks_workout_cache",
+        candidateCount: sourceInferencePreview.candidateCount,
+        selectedWorkoutId: sourceInferencePreview.selectedCandidate?.workoutId,
+        candidates: sourceInferencePreview.candidates,
+        reason: sourceInferencePreview.reason ?? null,
+        warnings: sourceInferencePreview.warnings,
+      };
+
+      if (sourceInferencePreview.warnings?.length) {
+        payload.warnings?.push(...sourceInferencePreview.warnings);
+      }
+      if (sourceInferencePreview.reason === "multiple source workout candidates") {
+        payload.needsClarification = true;
+        payload.clarificationReason = sourceInferencePreview.reason;
+      } else if (sourceInferencePreview.candidateCount === 0) {
+        payload.needsClarification = true;
+        payload.clarificationReason = "unresolved_workout";
+      }
     }
   }
 
@@ -9750,6 +9863,7 @@ export async function createTrainingPeaksMoveWorkoutActionFromTelegram(
       studentId: student.id,
       rawText: trimmedText,
       parsedPayload: parsedPayload,
+      studentTimezone: input.studentTimezone ?? null,
     });
   } catch (error) {
     console.warn("Failed to enrich move workout payload with workout cache inference", {
@@ -9908,6 +10022,22 @@ export async function confirmTrainingPeaksActionSourceWorkout(input: {
     confirmedByChatId: input.confirmedByChatId,
     confirmedByUserId: input.confirmedByUserId ?? null,
     confirmationMessageId: input.confirmationMessageId ?? null,
+  });
+}
+
+export const extractMoveSourcePickerCandidates = extractMoveSourcePickerCandidatesInRepository;
+
+export async function pickTrainingPeaksActionSourceCandidate(input: {
+  actionId: string;
+  candidateIndex: number;
+  confirmedByChatId: string;
+  confirmedByUserId?: string | null;
+}): Promise<PickTrainingPeaksActionSourceCandidateResult> {
+  return pickTrainingPeaksActionSourceCandidateInRepository({
+    actionId: input.actionId,
+    candidateIndex: input.candidateIndex,
+    confirmedByChatId: input.confirmedByChatId,
+    confirmedByUserId: input.confirmedByUserId ?? null,
   });
 }
 

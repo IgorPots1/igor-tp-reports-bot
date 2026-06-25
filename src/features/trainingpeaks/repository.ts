@@ -4425,6 +4425,127 @@ export async function confirmTrainingPeaksActionSourceWorkout(
   };
 }
 
+export type PickTrainingPeaksActionSourceCandidateInput = {
+  actionId: string;
+  candidateIndex: number;
+  confirmedByChatId: string;
+  confirmedByUserId?: string | null;
+};
+
+export type PickTrainingPeaksActionSourceCandidateResult =
+  | {
+      kind: "confirmed";
+      action: TrainingPeaksAction;
+      confirmedSourceDate: string;
+      confirmedWorkoutId: number;
+      confirmedWorkoutTitle: string | null;
+      dryRunRequeueRequested: boolean;
+    }
+  | { kind: "not_found" }
+  | { kind: "invalid_candidate" };
+
+export type MoveSourcePickerCandidate = {
+  workoutId: number;
+  workoutDate: string;
+  title: string | null;
+};
+
+// Candidates the coach can pick from when AI source selection was ambiguous.
+// Read from parsedPayload.sourceInferencePreview.candidates (set during parse enrichment).
+export function extractMoveSourcePickerCandidates(parsedPayload: unknown): MoveSourcePickerCandidate[] {
+  if (!parsedPayload || typeof parsedPayload !== "object") {
+    return [];
+  }
+  const preview = (parsedPayload as { sourceInferencePreview?: unknown }).sourceInferencePreview;
+  if (!preview || typeof preview !== "object") {
+    return [];
+  }
+  const candidates = (preview as { candidates?: unknown }).candidates;
+  if (!Array.isArray(candidates) || candidates.length < 2) {
+    return [];
+  }
+  return candidates
+    .map((candidate) => {
+      if (!candidate || typeof candidate !== "object") {
+        return null;
+      }
+      const obj = candidate as { workoutId?: unknown; workoutDate?: unknown; title?: unknown };
+      const workoutId = typeof obj.workoutId === "number" ? obj.workoutId : Number(obj.workoutId);
+      const workoutDate = typeof obj.workoutDate === "string" ? obj.workoutDate : null;
+      if (!Number.isFinite(workoutId) || !workoutDate) {
+        return null;
+      }
+      return { workoutId, workoutDate, title: typeof obj.title === "string" ? obj.title : null };
+    })
+    .filter((candidate): candidate is MoveSourcePickerCandidate => Boolean(candidate));
+}
+
+// Coach taps a specific source candidate from the ambiguity picker. Pins both the date and the
+// workout id as coach-confirmed, then requeues a fresh dry-run. The completed/past hard gate in the
+// runner still applies on top — picking a candidate does NOT bypass it.
+export async function pickTrainingPeaksActionSourceCandidate(
+  input: PickTrainingPeaksActionSourceCandidateInput
+): Promise<PickTrainingPeaksActionSourceCandidateResult> {
+  const context = await getTrainingPeaksActionLatestRunContext(input.actionId);
+  if (!context) {
+    return { kind: "not_found" };
+  }
+
+  const candidates = extractMoveSourcePickerCandidates(context.action.parsedPayload);
+  const chosen = candidates[input.candidateIndex];
+  if (!chosen) {
+    return { kind: "invalid_candidate" };
+  }
+
+  const nowIso = new Date().toISOString();
+  const basePayload =
+    context.action.parsedPayload &&
+    typeof context.action.parsedPayload === "object" &&
+    !Array.isArray(context.action.parsedPayload)
+      ? (context.action.parsedPayload as Record<string, unknown>)
+      : {};
+  const parsedPayload: Record<string, unknown> = {
+    ...basePayload,
+    coach_confirmed_source_date: chosen.workoutDate,
+    coach_confirmed_source_date_at: nowIso,
+    coach_confirmed_source_date_by: input.confirmedByUserId ?? null,
+    coach_confirmed_source_workout_id: chosen.workoutId,
+    coach_confirmed_source_workout_at: nowIso,
+    coach_confirmed_source_workout_by: input.confirmedByUserId ?? null,
+    source_date_policy_override: "coach_confirmed_source_date",
+  };
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_actions")
+    .update({ parsed_payload: parsedPayload, updated_at: nowIso })
+    .eq("id", input.actionId)
+    .eq("action_type", "move_workout")
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to pick source candidate for TrainingPeaks action ${input.actionId}: ${error.message}`
+    );
+  }
+  if (!data) {
+    return { kind: "not_found" };
+  }
+
+  const mappedAction = mapTrainingPeaksActionRow(data as TrainingPeaksActionRow);
+  const dryRunRequeueRequested = await requestFreshDryRunAfterCoachSourceConfirmation(mappedAction);
+
+  return {
+    kind: "confirmed",
+    action: mappedAction,
+    confirmedSourceDate: chosen.workoutDate,
+    confirmedWorkoutId: chosen.workoutId,
+    confirmedWorkoutTitle: chosen.title,
+    dryRunRequeueRequested,
+  };
+}
+
 export type CancelTrainingPeaksActionExecutionResultExtended =
   | CancelTrainingPeaksActionExecutionResult
   | {

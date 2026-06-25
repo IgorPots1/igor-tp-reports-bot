@@ -154,3 +154,157 @@ export async function parseMoveWorkoutWithAiFallback(
     return null;
   }
 }
+
+// ── Calendar-aware source selection ──────────────────────────────────────────
+// The plain parser (above) only sees the message text and leaves source=null when
+// the student does not name a workout ("перенесите на субботу, сегодня плохо").
+// This selector additionally sees the student's planned calendar and decides which
+// concrete workout to move — the pragmatic leap the runner's arithmetic could not make
+// ("сегодня плохо" → move TODAY's planned workout). It NEVER executes: the choice still
+// goes through the coach card → confirmation → dry-run → execution, with all gates intact.
+
+export type MoveSourceCalendarWorkout = {
+  workoutId: number;
+  date: string; // ISO YYYY-MM-DD
+  type: string | null;
+  title: string | null;
+  isToday: boolean;
+};
+
+export type MoveSourceAiSelection = {
+  decision: "single" | "ambiguous" | "none";
+  selectedWorkoutId: number | null;
+  candidateWorkoutIds: number[];
+  confidence: number;
+  reasoning: string;
+};
+
+function sanitizeWorkoutIdList(value: unknown, allowed: Set<number>): number[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const out: number[] = [];
+  for (const item of value) {
+    const id = typeof item === "number" ? item : Number(item);
+    if (Number.isFinite(id) && allowed.has(id) && !out.includes(id)) {
+      out.push(id);
+    }
+  }
+  return out;
+}
+
+export async function selectMoveSourceWorkoutWithAi(input: {
+  messageText: string;
+  todayIso: string;
+  targetDateIso: string | null;
+  timezone: string;
+  calendar: MoveSourceCalendarWorkout[];
+}): Promise<MoveSourceAiSelection | null> {
+  const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
+  if (!apiKey) {
+    return null;
+  }
+  if (input.calendar.length === 0) {
+    return null;
+  }
+
+  const allowedIds = new Set(input.calendar.map((w) => w.workoutId));
+  const calendarLines = input.calendar
+    .map(
+      (w) =>
+        `- workoutId=${w.workoutId} | ${w.date}${w.isToday ? " (СЕГОДНЯ)" : ""} | ${w.type ?? "?"} | ${
+          w.title ?? "(без названия)"
+        }`
+    )
+    .join("\n");
+
+  const schemaHint = {
+    decision: "single|ambiguous|none",
+    selectedWorkoutId: "number|null",
+    candidateWorkoutIds: "number[]",
+    confidence: 0.0,
+    reasoning: "string",
+  };
+
+  const prompt = [
+    "Ты помогаешь тренеру по бегу понять, КАКУЮ запланированную тренировку ученик просит перенести.",
+    "У тебя есть текст сообщения ученика и его календарь запланированных НЕвыполненных тренировок.",
+    "Реши, какую КОНКРЕТНУЮ тренировку (workoutId из календаря) ученик хочет перенести.",
+    "Опирайся на смысл сообщения, а не на близость дат:",
+    "— «сегодня плохо / не могу сегодня / температура» → тренировку, помеченную (СЕГОДНЯ);",
+    "— «не могу во вторник / в среду» → тренировку того дня недели;",
+    "— «уезжаю на выходных» → тренировки субботы/воскресенья;",
+    "— если назван тип («интервалы», «длительная») → тренировку этого типа.",
+    "Верни только JSON без markdown.",
+    "Правила вывода:",
+    "— decision=single + selectedWorkoutId, если из сообщения ОДНОЗНАЧНО ясно, какую двигать.",
+    "— decision=ambiguous + candidateWorkoutIds (2-4 id), если реально непонятно — пусть выберет тренер.",
+    "— decision=none, если ни одна тренировка из календаря не подходит под просьбу.",
+    "— Не выдумывай workoutId — бери только из календаря. Не предлагай тренировку целевого дня как источник, если есть более осмысленный кандидат.",
+    `Сегодня: ${input.todayIso}; целевой день переноса: ${input.targetDateIso ?? "неизвестен"}; timezone: ${input.timezone}.`,
+    `Схема: ${JSON.stringify(schemaHint)}.`,
+    "Календарь запланированных тренировок:",
+    calendarLines,
+    `Сообщение ученика: ${input.messageText}`,
+  ].join("\n");
+
+  try {
+    const response = await fetch(ANTHROPIC_API_URL, {
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": ANTHROPIC_VERSION,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: CLAUDE_MODEL,
+        max_tokens: 512,
+        system: "Return strict JSON only.",
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+    const payload = (await response.json()) as {
+      content?: Array<{ type: string; text: string }>;
+    };
+    const text = payload.content?.find((b) => b.type === "text")?.text?.trim();
+    if (!text) {
+      return null;
+    }
+    const parsed = JSON.parse(extractJsonOnly(text)) as {
+      decision?: unknown;
+      selectedWorkoutId?: unknown;
+      candidateWorkoutIds?: unknown;
+      confidence?: unknown;
+      reasoning?: unknown;
+    };
+
+    const decision =
+      parsed.decision === "single" || parsed.decision === "ambiguous" || parsed.decision === "none"
+        ? parsed.decision
+        : "none";
+    const rawSelectedId =
+      typeof parsed.selectedWorkoutId === "number" ? parsed.selectedWorkoutId : Number(parsed.selectedWorkoutId);
+    const selectedWorkoutId =
+      Number.isFinite(rawSelectedId) && allowedIds.has(rawSelectedId) ? rawSelectedId : null;
+    const candidateWorkoutIds = sanitizeWorkoutIdList(parsed.candidateWorkoutIds, allowedIds);
+    const confidence =
+      typeof parsed.confidence === "number" ? Math.max(0, Math.min(1, parsed.confidence)) : 0;
+    const reasoning = typeof parsed.reasoning === "string" ? parsed.reasoning.trim() : "";
+
+    // Reconcile the model's decision label with the validated ids so downstream code can trust it.
+    if (decision === "single" && selectedWorkoutId !== null) {
+      return { decision: "single", selectedWorkoutId, candidateWorkoutIds: [], confidence, reasoning };
+    }
+    if (decision === "ambiguous" && candidateWorkoutIds.length >= 2) {
+      return { decision: "ambiguous", selectedWorkoutId: null, candidateWorkoutIds, confidence, reasoning };
+    }
+    // single without a valid id, or ambiguous with <2 valid ids → treat as no usable decision.
+    return { decision: "none", selectedWorkoutId: null, candidateWorkoutIds: [], confidence, reasoning };
+  } catch {
+    return null;
+  }
+}
