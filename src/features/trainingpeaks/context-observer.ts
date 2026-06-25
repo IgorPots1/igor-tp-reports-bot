@@ -570,6 +570,13 @@ function shouldSkipGroupGeneralAckOrNoise(labels: TrainingPeaksObserverLabel[]):
   return !GROUP_GENERAL_MEANINGFUL_LABELS.some((label) => labels.includes(label));
 }
 
+// Pre-filter: skip OpenAI memory extraction for pure ack/noise and third-party messages.
+// These contain no durable facts about the student. Everything else (pain, schedule,
+// questions, unclassified long text, report-like) may carry life context and is kept.
+function shouldExtractMemoryForLabels(labels: PersistedObservationLabel[]): boolean {
+  return labels.some((l) => l !== "ack_or_noise" && l !== "third_party_in_linked_topic");
+}
+
 function classifyObserverText(text: string | null): {
   labels: TrainingPeaksObserverLabel[];
   scores: Partial<Record<TrainingPeaksObserverLabel, number>>;
@@ -688,46 +695,54 @@ async function persistObserverObservation(input: BuildObservationLogPayloadInput
     });
 
     if (input.studentId && process.env.COACH_MEMORY_EXTRACTION_ENABLED?.trim() === "true") {
-      try {
-        const student = await getTrainingPeaksStudentById(input.studentId);
-        const activeMemoryItems = await listActiveTrainingPeaksStudentMemoryItems(input.studentId, {
-          limit: 200,
-        });
-        const memoryResult = await processCoachMemoryForObservation({
-          observationId: insertedObservation.id,
-          studentId: input.studentId,
-          studentName: student?.studentName ?? "Unknown student",
-          textPreview: payload.textPreview,
+      if (!shouldExtractMemoryForLabels(persistedLabels)) {
+        console.debug("TrainingPeaks coach memory pre-filter skip", {
+          event: "trainingpeaks_coach_memory_prefilter_skipped",
+          observationIdPrefix: insertedObservation.id.slice(0, 8),
           labels: persistedLabels,
-          sourceType: input.sourceType,
-          observedAt: insertedObservation.observedAt,
-          currentActiveMemoryItems: activeMemoryItems.map((item) => ({
-            id: item.id,
-            memoryType: item.memoryType,
-            summaryText: item.summaryText,
-            structured: item.structured,
-            validUntil: item.validUntil,
-          })),
         });
+      } else {
+        try {
+          const student = await getTrainingPeaksStudentById(input.studentId);
+          const activeMemoryItems = await listActiveTrainingPeaksStudentMemoryItems(input.studentId, {
+            limit: 200,
+          });
+          const memoryResult = await processCoachMemoryForObservation({
+            observationId: insertedObservation.id,
+            studentId: input.studentId,
+            studentName: student?.studentName ?? "Unknown student",
+            textPreview: payload.textPreview,
+            labels: persistedLabels,
+            sourceType: input.sourceType,
+            observedAt: insertedObservation.observedAt,
+            currentActiveMemoryItems: activeMemoryItems.map((item) => ({
+              id: item.id,
+              memoryType: item.memoryType,
+              summaryText: item.summaryText,
+              structured: item.structured,
+              validUntil: item.validUntil,
+            })),
+          });
 
-        if (memoryResult.status === "processed" && (memoryResult.inserted > 0 || memoryResult.touched > 0)) {
-          console.info("TrainingPeaks coach memory observation write", {
-            event: "trainingpeaks_coach_memory_observation_processed",
+          if (memoryResult.status === "processed" && (memoryResult.inserted > 0 || memoryResult.touched > 0)) {
+            console.info("TrainingPeaks coach memory observation write", {
+              event: "trainingpeaks_coach_memory_observation_processed",
+              observationIdPrefix: insertedObservation.id.slice(0, 8),
+              studentIdPrefix: input.studentId.slice(0, 8),
+              inserted: memoryResult.inserted,
+              touched: memoryResult.touched,
+              skipped: memoryResult.skipped,
+            });
+          }
+        } catch (error) {
+          const errorName = error instanceof Error ? error.name : "UnknownError";
+          console.warn("TrainingPeaks coach memory observation processing failed", {
+            event: "trainingpeaks_coach_memory_observation_failed",
             observationIdPrefix: insertedObservation.id.slice(0, 8),
             studentIdPrefix: input.studentId.slice(0, 8),
-            inserted: memoryResult.inserted,
-            touched: memoryResult.touched,
-            skipped: memoryResult.skipped,
+            errorClass: errorName,
           });
         }
-      } catch (error) {
-        const errorName = error instanceof Error ? error.name : "UnknownError";
-        console.warn("TrainingPeaks coach memory observation processing failed", {
-          event: "trainingpeaks_coach_memory_observation_failed",
-          observationIdPrefix: insertedObservation.id.slice(0, 8),
-          studentIdPrefix: input.studentId.slice(0, 8),
-          errorClass: errorName,
-        });
       }
     }
 

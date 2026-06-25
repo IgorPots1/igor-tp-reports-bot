@@ -9,7 +9,7 @@ const OPENAI_API_URL = process.env.OPENAI_API_URL?.trim() || "https://api.openai
 const OPENAI_MODEL =
   process.env.COACH_MEMORY_EXTRACTION_MODEL?.trim() ||
   process.env.OPENAI_COACH_MEMORY_MODEL?.trim() ||
-  "gpt-5.5";
+  "gpt-4o-mini";
 const DRY_RUN_GUARD_ENV = "COACH_MEMORY_AI_DRY_RUN_MODE";
 const EXTRACTION_ENABLED_ENV = "COACH_MEMORY_EXTRACTION_ENABLED";
 const MIN_CONFIDENCE_ENV = "COACH_MEMORY_MIN_CONFIDENCE";
