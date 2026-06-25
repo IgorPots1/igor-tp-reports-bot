@@ -5,11 +5,11 @@ import {
   type TrainingPeaksStudentMemoryType,
 } from "@/features/trainingpeaks/repository";
 
-const OPENAI_API_URL = process.env.OPENAI_API_URL?.trim() || "https://api.openai.com/v1/chat/completions";
-const OPENAI_MODEL =
+const CLAUDE_MODEL =
   process.env.COACH_MEMORY_EXTRACTION_MODEL?.trim() ||
-  process.env.OPENAI_COACH_MEMORY_MODEL?.trim() ||
-  "gpt-4o-mini";
+  "claude-haiku-4-5-20251001";
+const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
+const ANTHROPIC_VERSION = "2023-06-01";
 const DRY_RUN_GUARD_ENV = "COACH_MEMORY_AI_DRY_RUN_MODE";
 const EXTRACTION_ENABLED_ENV = "COACH_MEMORY_EXTRACTION_ENABLED";
 const MIN_CONFIDENCE_ENV = "COACH_MEMORY_MIN_CONFIDENCE";
@@ -145,8 +145,8 @@ export type ProcessCoachMemoryForObservationResult =
       applyWrites: boolean;
     };
 
-type OpenAiChatResponse = {
-  choices?: Array<{ message?: { content?: string | null } }>;
+type AnthropicMessagesResponse = {
+  content?: Array<{ type: string; text: string }>;
 };
 
 const MUSCULOSKELETAL_PAIN_OR_INJURY_KEYWORDS = [
@@ -806,12 +806,6 @@ function applyDryRunMemoryGuards(
   };
 }
 
-function resolveCandidateModels(): string[] {
-  const preferred = OPENAI_MODEL.trim();
-  const fallback = "gpt-4o-mini";
-  const models = [preferred, fallback].filter((value, index, array) => value.length > 0 && array.indexOf(value) === index);
-  return models;
-}
 
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) {
@@ -1172,13 +1166,13 @@ export async function extractCoachMemoryItemsDryRun(input: ExtractionInput): Pro
 
 async function extractCoachMemoryItems(input: ExtractionInput): Promise<CoachMemoryExtractionResult> {
 
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) {
     return {
       shouldRemember: false,
       memoryItems: [],
       caseCandidate: null,
-      reason: "OPENAI_API_KEY is missing.",
+      reason: "ANTHROPIC_API_KEY is missing.",
     };
   }
 
@@ -1187,49 +1181,47 @@ async function extractCoachMemoryItems(input: ExtractionInput): Promise<CoachMem
   const userPrompt = buildUserPrompt(input);
 
   let content: string | null = null;
-  const candidateModels = resolveCandidateModels();
-  const attemptErrors: string[] = [];
-  for (const model of candidateModels) {
-    try {
-      const response = await fetch(OPENAI_API_URL, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model,
-          temperature: 0,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
-        }),
-      });
+  try {
+    const response = await fetch(ANTHROPIC_API_URL, {
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": ANTHROPIC_VERSION,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: CLAUDE_MODEL,
+        max_tokens: 1024,
+        system: systemPrompt,
+        messages: [{ role: "user", content: userPrompt }],
+      }),
+    });
 
-      if (!response.ok) {
-        attemptErrors.push(`${model}:HTTP_${response.status}`);
-        continue;
-      }
-
-      const payload = (await response.json()) as OpenAiChatResponse;
-      content = payload.choices?.[0]?.message?.content?.trim() ?? null;
-      if (!content) {
-        attemptErrors.push(`${model}:empty_response`);
-        continue;
-      }
-      break;
-    } catch {
-      attemptErrors.push(`${model}:request_failed`);
+    if (!response.ok) {
+      return {
+        shouldRemember: false,
+        memoryItems: [],
+        caseCandidate: null,
+        reason: `Anthropic HTTP error: ${response.status}`,
+      };
     }
-  }
 
-  if (!content) {
+    const payload = (await response.json()) as AnthropicMessagesResponse;
+    content = payload.content?.find((b) => b.type === "text")?.text?.trim() ?? null;
+    if (!content) {
+      return {
+        shouldRemember: false,
+        memoryItems: [],
+        caseCandidate: null,
+        reason: "Empty Anthropic response.",
+      };
+    }
+  } catch {
     return {
       shouldRemember: false,
       memoryItems: [],
       caseCandidate: null,
-      reason: `OpenAI request failed for all models: ${attemptErrors.join(",") || "unknown_error"}`,
+      reason: "Anthropic request failed.",
     };
   }
 
@@ -1241,7 +1233,7 @@ async function extractCoachMemoryItems(input: ExtractionInput): Promise<CoachMem
       shouldRemember: false,
       memoryItems: [],
       caseCandidate: null,
-      reason: "Failed to parse OpenAI JSON response.",
+      reason: "Failed to parse Anthropic JSON response.",
     };
   }
 

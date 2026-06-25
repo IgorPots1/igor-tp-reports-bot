@@ -80,8 +80,8 @@ async function main() {
 
   console.log(`\n=== PROBE: student memory pre-filter (last ${days} days, sample=${sample}) ===\n`);
 
-  if (!process.env.OPENAI_API_KEY?.trim()) {
-    console.error("ABORT: OPENAI_API_KEY is missing or empty. Check .env.local.");
+  if (!process.env.ANTHROPIC_API_KEY?.trim()) {
+    console.error("ABORT: ANTHROPIC_API_KEY is missing or empty. Check .env.local.");
     process.exit(1);
   }
 

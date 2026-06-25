@@ -6,8 +6,9 @@ import type {
 
 type AiFallbackPayload = Omit<ParsedTrainingPeaksMoveWorkoutPayload, "actionType" | "parser">;
 
-const AI_MODEL = process.env.OPENAI_MOVE_WORKOUT_PARSER_MODEL?.trim() || "gpt-4o-mini";
-const OPENAI_API_URL = process.env.OPENAI_API_URL?.trim() || "https://api.openai.com/v1/chat/completions";
+const CLAUDE_MODEL = process.env.MOVE_INTENT_MODEL?.trim() || "claude-haiku-4-5-20251001";
+const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
+const ANTHROPIC_VERSION = "2023-06-01";
 
 function sanitizeTimeRef(value: unknown): TrainingPeaksMoveWorkoutTimeRef | null {
   if (!value || typeof value !== "object") {
@@ -65,7 +66,7 @@ export async function parseMoveWorkoutWithAiFallback(
   // Falls back to Moscow — the audience default. Do NOT pass the coach timezone (Belgrade).
   studentTimezone?: string
 ): Promise<AiFallbackPayload | null> {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) {
     return null;
   }
@@ -98,26 +99,18 @@ export async function parseMoveWorkoutWithAiFallback(
   ].join("\n");
 
   try {
-    const response = await fetch(OPENAI_API_URL, {
+    const response = await fetch(ANTHROPIC_API_URL, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": ANTHROPIC_VERSION,
+        "content-type": "application/json",
       },
       body: JSON.stringify({
-        model: AI_MODEL,
-        temperature: 0,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content: "Return strict JSON only.",
-          },
-          {
-            role: "user",
-            content: prompt,
-          },
-        ],
+        model: CLAUDE_MODEL,
+        max_tokens: 512,
+        system: "Return strict JSON only.",
+        messages: [{ role: "user", content: prompt }],
       }),
     });
 
@@ -125,9 +118,9 @@ export async function parseMoveWorkoutWithAiFallback(
       return null;
     }
     const payload = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string | null } }>;
+      content?: Array<{ type: string; text: string }>;
     };
-    const text = payload.choices?.[0]?.message?.content?.trim();
+    const text = payload.content?.find((b) => b.type === "text")?.text?.trim();
     if (!text) {
       return null;
     }

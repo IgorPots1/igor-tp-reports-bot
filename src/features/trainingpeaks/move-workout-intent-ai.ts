@@ -55,8 +55,9 @@ export type ClassifyTrainingPeaksMoveIntentResult =
       error: string;
     };
 
-const AI_MODEL = process.env.OPENAI_MOVE_WORKOUT_PARSER_MODEL?.trim() || "gpt-4o-mini";
-const OPENAI_API_URL = process.env.OPENAI_API_URL?.trim() || "https://api.openai.com/v1/chat/completions";
+const CLAUDE_MODEL = process.env.MOVE_INTENT_MODEL?.trim() || "claude-haiku-4-5-20251001";
+const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
+const ANTHROPIC_VERSION = "2023-06-01";
 const ALLOWED_INTENTS = new Set<TrainingPeaksAiIntentKind>(["move_workout", "none", "unknown"]);
 const ALLOWED_WORKOUT_KINDS = new Set<TrainingPeaksAiWorkoutReferenceKind>([
   "long_run",
@@ -228,9 +229,9 @@ export function buildTrainingPeaksAiIntentLogFields(input: {
 export async function classifyTrainingPeaksMoveIntentWithAi(
   input: ClassifyTrainingPeaksMoveIntentInput
 ): Promise<ClassifyTrainingPeaksMoveIntentResult> {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) {
-    return { ok: false, error: "missing_openai_api_key" };
+    return { ok: false, error: "missing_anthropic_api_key" };
   }
 
   // Resolve by student timezone when provided; fall back to Moscow (audience default).
@@ -281,39 +282,31 @@ export async function classifyTrainingPeaksMoveIntentWithAi(
   ].join("\n");
 
   try {
-    const response = await fetch(OPENAI_API_URL, {
+    const response = await fetch(ANTHROPIC_API_URL, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": ANTHROPIC_VERSION,
+        "content-type": "application/json",
       },
       body: JSON.stringify({
-        model: AI_MODEL,
-        temperature: 0,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content: "Return strict JSON only.",
-          },
-          {
-            role: "user",
-            content: prompt,
-          },
-        ],
+        model: CLAUDE_MODEL,
+        max_tokens: 512,
+        system: "Return strict JSON only.",
+        messages: [{ role: "user", content: prompt }],
       }),
     });
 
     if (!response.ok) {
-      return { ok: false, error: `openai_http_${response.status}` };
+      return { ok: false, error: `anthropic_http_${response.status}` };
     }
 
     const payload = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string | null } }>;
+      content?: Array<{ type: string; text: string }>;
     };
-    const text = payload.choices?.[0]?.message?.content?.trim();
+    const text = payload.content?.find((b) => b.type === "text")?.text?.trim();
     if (!text) {
-      return { ok: false, error: "empty_openai_response" };
+      return { ok: false, error: "empty_anthropic_response" };
     }
 
     let parsedJson: unknown;
@@ -331,9 +324,9 @@ export async function classifyTrainingPeaksMoveIntentWithAi(
     return {
       ok: true,
       classification: parsed.classification,
-      model: AI_MODEL,
+      model: CLAUDE_MODEL,
     };
   } catch {
-    return { ok: false, error: "openai_request_failed" };
+    return { ok: false, error: "anthropic_request_failed" };
   }
 }
