@@ -15,7 +15,8 @@ export type MetricReason =
   | "few_contact_cycles"
   | "low_landmark_visibility"
   | "camera_motion"
-  | "subject_too_small";
+  | "subject_too_small"
+  | "foot_strike_2d_only"; // inherent 2D side-view limitation — type can be estimated, not confirmed
 
 export type VerticalOscillationBand = "low" | "medium" | "high";
 

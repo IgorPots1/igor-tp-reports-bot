@@ -20,6 +20,7 @@ const REASON_TEXT: Record<MetricReason, string> = {
   low_landmark_visibility: "ключевые точки тела плохо видны на видео",
   camera_motion: "камера двигалась во время съёмки",
   subject_too_small: "бегун слишком мелкий в кадре",
+  foot_strike_2d_only: "2D-видео сбоку — тип приземления определяется приблизительно",
 };
 
 const FOOT_STRIKE_LABEL: Record<string, string> = {
@@ -134,7 +135,7 @@ export default function ReportView({ result, onNewAnalysis }: ReportViewProps) {
             Синяя — колено. Стрелка — горизонтальный вынос стопы от таза (красная = большой, зелёная = ок).
             Метка вверху — тип приземления.
           </p>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-start" }}>
             {contactDiagnosticFrames.map((url, i) => (
               <div key={i} style={{ textAlign: "center" }}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -142,12 +143,12 @@ export default function ReportView({ result, onNewAnalysis }: ReportViewProps) {
                   src={url}
                   alt={`Касание ${i + 1}`}
                   style={{
-                    width: 150,
-                    height: 225,
-                    objectFit: "contain",
+                    display: "block",
+                    width: "auto",
+                    maxWidth: 260,
+                    height: "auto",
                     border: "1px solid #374151",
                     borderRadius: 4,
-                    display: "block",
                   }}
                 />
                 <div className="admin-muted" style={{ fontSize: 11, marginTop: 3 }}>
@@ -214,7 +215,11 @@ export default function ReportView({ result, onNewAnalysis }: ReportViewProps) {
                       )}
                     </td>
                     <td className="admin-muted">{ms.normDescription}</td>
-                    <td>{statusBadge(ms.confidence, ms.severity)}</td>
+                    <td>
+                      {ms.key === "footStrike"
+                        ? <span className="admin-badge">Справка</span>
+                        : statusBadge(ms.confidence, ms.severity)}
+                    </td>
                   </tr>
                 );
               })}

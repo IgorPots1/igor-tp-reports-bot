@@ -54,34 +54,71 @@ function validateVideoFile(file: File): string | null {
   return null;
 }
 
-// Render annotated skeleton overlays at initial-contact moments for diagnostic use.
-// Returns up to 6 JPEG data-URLs (300×450 canvas each).
+// Render annotated diagnostic frames at initial-contact moments.
+// Seeks the video to each onset time and composites the real frame + skeleton overlay.
+// Returns up to 6 JPEG data-URLs.
 type LM = { x: number; y: number; z: number; visibility?: number };
 const SIDE_IDX = {
   left: { shoulder: 11, hip: 23, knee: 25, ankle: 27, heel: 29, foot: 31 },
   right: { shoulder: 12, hip: 24, knee: 26, ankle: 28, heel: 30, foot: 32 },
 } as const;
 
-function captureOnsetDiagnostics(
+async function captureOnsetDiagnostics(
   onsets: number[],
   allFrames: LM[][],
-  side: "left" | "right"
-): string[] {
-  const W = 300, H = 450;
+  side: "left" | "right",
+  videoFile: File,
+  fps: number
+): Promise<string[]> {
+  if (onsets.length === 0) return [];
+
+  const video = document.createElement("video");
+  const objectUrl = URL.createObjectURL(videoFile);
+  video.src = objectUrl;
+  video.muted = true;
+  video.playsInline = true;
+
+  const loaded = await new Promise<boolean>((resolve) => {
+    const t = setTimeout(() => resolve(false), 5000);
+    video.onloadedmetadata = () => { clearTimeout(t); resolve(true); };
+    video.onerror = () => { clearTimeout(t); resolve(false); };
+    video.load();
+  });
+
+  if (!loaded || !video.videoWidth || !video.videoHeight) {
+    URL.revokeObjectURL(objectUrl);
+    return [];
+  }
+
+  // Scale so the longest side is at most 600px — enough to see the foot clearly
+  const scale = Math.min(1, 600 / Math.max(video.videoWidth, video.videoHeight));
+  const W = Math.round(video.videoWidth * scale);
+  const H = Math.round(video.videoHeight * scale);
+
   const canvas = document.createElement("canvas");
   canvas.width = W;
   canvas.height = H;
   const ctx = canvas.getContext("2d");
-  if (!ctx) return [];
+  if (!ctx) { URL.revokeObjectURL(objectUrl); return []; }
 
   const idx = SIDE_IDX[side];
+  const results: string[] = [];
 
-  return onsets.slice(0, 6).map((fi) => {
-    const frame = allFrames[fi];
-    if (!frame) return "";
+  for (const fi of onsets.slice(0, 6)) {
+    video.currentTime = fi / fps;
+    await new Promise<void>((resolve) => {
+      const t = setTimeout(resolve, 2000);
+      video.onseeked = () => { clearTimeout(t); resolve(); };
+    });
 
-    ctx.fillStyle = "#111827";
+    // Real video frame
+    ctx.drawImage(video, 0, 0, W, H);
+    // Slight darken so skeleton lines read over any background
+    ctx.fillStyle = "rgba(0,0,0,0.22)";
     ctx.fillRect(0, 0, W, H);
+
+    const frame = allFrames[fi];
+    if (!frame) { results.push(canvas.toDataURL("image/jpeg", 0.85)); continue; }
 
     const get = (id: number): { x: number; y: number } | null => {
       const l = frame[id];
@@ -97,8 +134,8 @@ function captureOnsetDiagnostics(
     const ft = get(idx.foot);
 
     // Skeleton lines
-    ctx.strokeStyle = "#374151";
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(255,255,255,0.75)";
+    ctx.lineWidth = Math.max(2, W * 0.005);
     const line = (a: { x: number; y: number } | null, b: { x: number; y: number } | null) => {
       if (!a || !b) return;
       ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
@@ -107,12 +144,12 @@ function captureOnsetDiagnostics(
     if (hl) line(an, hl);
     if (ft) line(an, ft);
 
-    // Vertical reference line through hip
+    // Dashed vertical reference through hip (overstride baseline)
     if (hp) {
       ctx.save();
-      ctx.strokeStyle = "rgba(251,191,36,0.35)";
-      ctx.setLineDash([5, 4]);
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = "rgba(251,191,36,0.65)";
+      ctx.setLineDash([6, 5]);
+      ctx.lineWidth = Math.max(1.5, W * 0.004);
       ctx.beginPath(); ctx.moveTo(hp.x, 0); ctx.lineTo(hp.x, H); ctx.stroke();
       ctx.restore();
     }
@@ -120,49 +157,67 @@ function captureOnsetDiagnostics(
     // Overstride arrow: hip.x → ankle.x at ankle.y
     if (hp && an) {
       const os = an.x - hp.x;
-      const color = Math.abs(os) > 12 ? "#ef4444" : "#22c55e";
+      const color = Math.abs(os) > W * 0.04 ? "#ef4444" : "#22c55e";
+      const aw = Math.max(8, W * 0.025); // arrowhead size scales with canvas
       ctx.strokeStyle = color;
       ctx.fillStyle = color;
-      ctx.lineWidth = 2;
+      ctx.lineWidth = Math.max(2.5, W * 0.007);
       ctx.beginPath(); ctx.moveTo(hp.x, an.y); ctx.lineTo(an.x, an.y); ctx.stroke();
       const dir = os >= 0 ? 1 : -1;
       ctx.beginPath();
       ctx.moveTo(an.x, an.y);
-      ctx.lineTo(an.x - dir * 7, an.y - 4);
-      ctx.lineTo(an.x - dir * 7, an.y + 4);
-      ctx.closePath();
-      ctx.fill();
+      ctx.lineTo(an.x - dir * aw, an.y - aw * 0.55);
+      ctx.lineTo(an.x - dir * aw, an.y + aw * 0.55);
+      ctx.closePath(); ctx.fill();
     }
 
-    // Landmark dots
-    const dot = (pt: { x: number; y: number } | null, color: string, r = 5) => {
+    // Landmark dots (with dark outline for visibility over video)
+    const dot = (pt: { x: number; y: number } | null, fill: string, r: number) => {
       if (!pt) return;
-      ctx.fillStyle = color;
-      ctx.beginPath(); ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = fill;
+      ctx.strokeStyle = "rgba(0,0,0,0.55)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
     };
-    dot(sh, "#9ca3af", 4);
-    dot(hp, "#fbbf24", 6);  // yellow: hip — reference line
-    dot(kn, "#60a5fa", 6);  // blue: knee
-    dot(an, "#34d399", 7);  // green: ankle — contact point
-    dot(hl, "#a855f7", 4);  // purple: heel
-    dot(ft, "#06b6d4", 4);  // cyan: ball of foot
+    const dr = Math.max(5, W * 0.018);
+    dot(sh, "#9ca3af", dr * 0.65);
+    dot(hp, "#fbbf24", dr);        // yellow: hip — reference
+    dot(kn, "#60a5fa", dr);        // blue: knee
+    dot(an, "#34d399", dr * 1.15); // green: ankle — contact point
+    dot(hl, "#a855f7", dr * 0.8);  // purple: heel
+    dot(ft, "#06b6d4", dr * 0.8);  // cyan: ball of foot
 
-    // Footstrike label (heel.y > foot.y = heel lower on screen = heel strike)
+    // Footstrike label with background box
     if (hl && ft) {
-      const diff = hl.y - ft.y;
-      const label = diff > 8 ? "ПЯТКА" : diff < -8 ? "НОСОК" : "МИДФУТ";
-      const color = diff > 8 ? "#ef4444" : diff < -8 ? "#fbbf24" : "#34d399";
+      const diff = hl.y - ft.y; // positive = heel lower = heel strike
+      const thresh = H * 0.012;
+      const label = diff > thresh ? "ПЯТКА" : diff < -thresh ? "НОСОК" : "МИДФУТ";
+      const color = diff > thresh ? "#f87171" : diff < -thresh ? "#fbbf24" : "#34d399";
+      const fs = Math.round(Math.max(13, W * 0.048));
+      ctx.font = `bold ${fs}px monospace`;
+      const tw = ctx.measureText(label).width;
+      ctx.fillStyle = "rgba(0,0,0,0.65)";
+      ctx.fillRect(8, 8, tw + 12, fs + 8);
       ctx.fillStyle = color;
-      ctx.font = "bold 13px monospace";
-      ctx.fillText(label, 8, 20);
+      ctx.fillText(label, 14, fs + 10);
     }
 
-    ctx.fillStyle = "#4b5563";
-    ctx.font = "10px monospace";
-    ctx.fillText(`кадр ${fi}`, 8, H - 7);
+    // Frame index label
+    const fLabel = `кадр ${fi}`;
+    const ffs = Math.round(Math.max(10, W * 0.036));
+    ctx.font = `${ffs}px monospace`;
+    const tw2 = ctx.measureText(fLabel).width;
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillRect(5, H - ffs - 10, tw2 + 10, ffs + 6);
+    ctx.fillStyle = "#d1d5db";
+    ctx.fillText(fLabel, 10, H - 7);
 
-    return canvas.toDataURL("image/jpeg", 0.88);
-  }).filter((s) => s.length > 0);
+    results.push(canvas.toDataURL("image/jpeg", 0.85));
+  }
+
+  URL.revokeObjectURL(objectUrl);
+  return results;
 }
 
 function parseWatchCadence(raw: string): number | null {
@@ -173,13 +228,14 @@ function parseWatchCadence(raw: string): number | null {
   return Math.round(n);
 }
 
-function toApiMetric(ms: MetricStatus | undefined): ApiMetric {
+function toApiMetric(ms: MetricStatus | undefined, opts?: { omitSeverity?: boolean }): ApiMetric {
   if (!ms || ms.confidence === "unavailable" || ms.value === null) {
     const m: ApiMetric = { value: "не определено", confidence: "unavailable", norm: ms?.normDescription ?? "" };
     if (ms?.reason) m.reason = ms.reason;
     return m;
   }
-  const m: ApiMetric = { value: ms.value, confidence: ms.confidence, norm: ms.normDescription, severity: ms.severity };
+  const m: ApiMetric = { value: ms.value, confidence: ms.confidence, norm: ms.normDescription };
+  if (!opts?.omitSeverity) m.severity = ms.severity;
   if (ms.band) m.band = ms.band;
   if (ms.reason) m.reason = ms.reason;
   return m;
@@ -201,7 +257,7 @@ function buildPayload(
       trunk_lean_deg: toApiMetric(metricStatuses.trunkLean),
       vertical_oscillation_pct: toApiMetric(metricStatuses.verticalOscillation),
       overstride_pct: toApiMetric(metricStatuses.overstride),
-      foot_strike: toApiMetric(metricStatuses.footStrike),
+      foot_strike: toApiMetric(metricStatuses.footStrike, { omitSeverity: true }),
       cadence_from_watch_spm: metrics.cadenceFromWatchSpm,
       contact_cycles_detected: metrics.contactCyclesDetected,
       video_duration_sec: metrics.videoDurationSec,
@@ -286,10 +342,12 @@ export default function RunAnalysisTool() {
       });
 
       const heroFrameDataUrl = canvas.toDataURL("image/jpeg", 0.85);
-      const contactDiagnosticFrames = captureOnsetDiagnostics(
+      const contactDiagnosticFrames = await captureOnsetDiagnostics(
         onsetFrameIndices,
         poseResult.frames as LM[][],
-        side
+        side,
+        videoFile,
+        poseResult.fps
       );
 
       // Overall gate: too little usable data → don't show a partial report.

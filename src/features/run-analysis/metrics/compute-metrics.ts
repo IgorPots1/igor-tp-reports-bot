@@ -365,6 +365,12 @@ export function computeMetrics({ frames, fps, durationSec, cadenceFromWatchSpm =
     return { value: majorityVote(footStrikeVotes), confidence: g.confidence, reason: g.reason };
   })();
   footStrike = applySubjectSize(footStrike, subjectTooSmall);
+  // Foot-strike type from a 2D side-view at typical video resolution is inherently uncertain
+  // (small foot landmarks, compressed 2D projection, heel vs ball-of-foot hard to distinguish).
+  // Always cap at "low" — show as "estimated" rather than asserting a definitive type.
+  if (footStrike.confidence === "ok") {
+    footStrike = { ...footStrike, confidence: "low", reason: "foot_strike_2d_only" };
+  }
 
   const metrics: RunMetrics = {
     kneeFlexionDeg: kneeFlexion,

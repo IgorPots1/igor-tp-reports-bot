@@ -58,9 +58,12 @@ export function classifyOverstride(pct: number): MetricSeverity {
   return "important"; // TODO: tune
 }
 
-export function classifyFootStrike(type: FootStrikeType): MetricSeverity {
-  if (type === "forefoot" || type === "midfoot") return "ok";
-  return "attention";
+// Foot-strike type alone is NOT a quality indicator.
+// ~75–80% of runners (including elite) land on their heel — it is biomechanically normal.
+// Problems arise from OVERSTRIDE (foot far ahead of the centre of mass), not from the strike type itself.
+// Overstride is already measured as its own metric. Foot-strike is descriptive context only.
+export function classifyFootStrike(_type: FootStrikeType): MetricSeverity {
+  return "ok";
 }
 
 // ── Confidence thresholds ────────────────────────────────────────────────
