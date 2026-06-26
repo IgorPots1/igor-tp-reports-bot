@@ -78,6 +78,9 @@ export type ApiMetric = {
   value: number | string; // number, foot-strike string, or "не определено"
   confidence: MetricConfidence;
   norm: string;
+  // Severity computed by deterministic classifier before the LLM sees this data.
+  // Absent when confidence === "unavailable". LLM must use this in headline_findings, not reassess.
+  severity?: MetricSeverity;
   band?: VerticalOscillationBand;
   reason?: MetricReason;
 };

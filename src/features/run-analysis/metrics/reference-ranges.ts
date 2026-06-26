@@ -50,11 +50,12 @@ export function classifyVerticalOscillationBand(pct: number): VerticalOscillatio
   return "high";
 }
 
-// Negative or zero = foot under body (ok); positive = foot ahead of hip (overstride)
+// Overstride: foot ahead of hip as % of height. Negative = foot behind hip (ok).
+// TODO: validate thresholds with Igor after real footage (current: 0–8 normal, 8–20 attention, >20 important)
 export function classifyOverstride(pct: number): MetricSeverity {
-  if (pct <= 0) return "ok";
-  if (pct <= 8) return "attention";
-  return "important";
+  if (pct <= 8) return "ok"; // covers negative values (foot behind hip) and mild lead
+  if (pct <= 20) return "attention"; // TODO: tune
+  return "important"; // TODO: tune
 }
 
 export function classifyFootStrike(type: FootStrikeType): MetricSeverity {
@@ -76,9 +77,12 @@ export const CONFIDENCE_CONFIG = {
   // vertical oscillation: contact cycles + camera-motion tolerance
   oscMinCyclesOk: 3,
   oscMinCyclesLow: 1,
-  // ratio of (linear hip.y drift over clip) / (per-cycle oscillation amplitude)
-  oscCameraMotionLow: 0.6, // above → "low" (camera moved a bit)
-  oscCameraMotionUnavailable: 1.5, // above → "unavailable" (camera clearly panned)
+  // ratio of (linear hip.y drift over clip) / (per-cycle oscillation amplitude).
+  // Static handheld shaking → small net drift → low ratio → confidence "low" (show band).
+  // Panning camera following runner → large sustained drift → high ratio → "unavailable".
+  // TODO: tune on real handheld vs panning footage (values below are initial calibration).
+  oscCameraMotionLow: 1.2, // above → "low" (some unsteadiness; show band as orientation)
+  oscCameraMotionUnavailable: 5.0, // above → "unavailable" (real directional pan)
   // overall gate: minimum measured metrics that must be available to show a report
   minAvailableMetricsForReport: 2,
 } as const;

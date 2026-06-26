@@ -68,7 +68,7 @@ function toApiMetric(ms: MetricStatus | undefined): ApiMetric {
     if (ms?.reason) m.reason = ms.reason;
     return m;
   }
-  const m: ApiMetric = { value: ms.value, confidence: ms.confidence, norm: ms.normDescription };
+  const m: ApiMetric = { value: ms.value, confidence: ms.confidence, norm: ms.normDescription, severity: ms.severity };
   if (ms.band) m.band = ms.band;
   if (ms.reason) m.reason = ms.reason;
   return m;

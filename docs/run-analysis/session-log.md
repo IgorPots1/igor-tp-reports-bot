@@ -4,6 +4,23 @@
 
 ---
 
+## 2026-06-26 — Тюнинг порогов + severity-lock + калибровка камеры
+
+**Что сделано (НЕ закоммичено — прогон двух роликов):**
+- Оверстрайд: 0–8% → ok, 8–20% → attention, >20% → important. 12% Фила теперь "attention", не "important".
+- Camera motion: `oscCameraMotionLow` 0.6→1.2; `oscCameraMotionUnavailable` 1.5→5.0. Статичная с руки → "low" (полоса); панорама → "unavailable".
+- `ApiMetric` расширен `severity?: MetricSeverity`; `toApiMetric()` проставляет его из `MetricStatus`.
+- Prompt правило 7: severity-lock — LLM обязан брать `severity` из payload без переоценки.
+- backlog.md: пункт 5 «Аннотированные кадры + PDF».
+
+**Ожидаемый результат на тестах:**
+- IMG_4933 (с руки): оверстрайд "внимание" + вертикальные колебания = полоса.
+- IMG_4932 (панорама): колебания "не удалось определить".
+
+**Файлы:** reference-ranges.ts, types.ts, RunAnalysisTool.tsx, llm/prompt.ts, docs/{decisions,backlog,session-log}.md.
+
+---
+
 ## 2026-06-21 — Стратегия метрик: достоверность + каденс вручную
 
 **Что сделано (НЕ закоммичено — валидация на превью):**
