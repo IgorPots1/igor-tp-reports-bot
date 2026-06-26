@@ -171,7 +171,21 @@ export type MoveSourceCalendarWorkout = {
   isToday: boolean;
 };
 
+// What KIND of request this is, judged against the actual plan (not by keywords):
+//  - move_existing: the student wants to reschedule a workout that is in the plan.
+//  - already_planned: a workout of the asked type already stands on/around the asked day →
+//    nothing to move blindly; offer the coach keep-as-is vs move-to-an-alternative-day.
+//  - no_such_workout: no workout of that type in the plan → this is an ADD request, not a move;
+//    we do NOT fabricate a move onto an unrelated workout (creating workouts is a separate feature).
+//  - unclear: cannot tell from plan + message; fall back to existing source-inference behavior.
+export type MoveSourceSituation =
+  | "move_existing"
+  | "already_planned"
+  | "no_such_workout"
+  | "unclear";
+
 export type MoveSourceAiSelection = {
+  situation: MoveSourceSituation;
   decision: "single" | "ambiguous" | "none";
   selectedWorkoutId: number | null;
   candidateWorkoutIds: number[];
@@ -219,6 +233,7 @@ export async function selectMoveSourceWorkoutWithAi(input: {
     .join("\n");
 
   const schemaHint = {
+    situation: "move_existing|already_planned|no_such_workout|unclear",
     decision: "single|ambiguous|none",
     selectedWorkoutId: "number|null",
     candidateWorkoutIds: "number[]",
@@ -227,20 +242,25 @@ export async function selectMoveSourceWorkoutWithAi(input: {
   };
 
   const prompt = [
-    "Ты помогаешь тренеру по бегу понять, КАКУЮ запланированную тренировку ученик просит перенести.",
-    "У тебя есть текст сообщения ученика и его календарь запланированных НЕвыполненных тренировок.",
-    "Реши, какую КОНКРЕТНУЮ тренировку (workoutId из календаря) ученик хочет перенести.",
-    "Опирайся на смысл сообщения, а не на близость дат:",
-    "— «сегодня плохо / не могу сегодня / температура» → тренировку, помеченную (СЕГОДНЯ);",
-    "— «не могу во вторник / в среду» → тренировку того дня недели;",
+    "Ты помогаешь тренеру по бегу разобрать сообщение ученика про тренировки, СВЕРЯЯСЬ С ПЛАНОМ.",
+    "У тебя есть текст ученика и его календарь запланированных НЕвыполненных тренировок.",
+    "Сначала пойми ТИП ситуации (поле situation), потом — какую тренировку двигать:",
+    "— move_existing: ученик хочет ПЕРЕНЕСТИ тренировку, которая есть в плане (явный сдвиг существующей).",
+    "— already_planned: тренировка такого типа УЖЕ стоит в нужный день/период из сообщения. Двигать вслепую нечего; тренеру надо предложить «оставить как есть ИЛИ перенести на другой день из сообщения». В reasoning дай короткое предложение тренеру, например «вел уже стоит в сб — оставить или перенести на вс?».",
+    "— no_such_workout: тренировки такого типа в плане НЕТ. Это просьба ДОБАВИТЬ новую, а не перенести. НЕ подбирай чужую тренировку. selectedWorkoutId=null.",
+    "— unclear: не понять по плану и тексту.",
+    "Ключевое: «сделаю/давай сделаю <тип> в <день>» — это НЕ всегда перенос. Если такая тренировка уже стоит → already_planned. Если её нет в плане → no_such_workout. Перенос (move_existing) — только когда ученик про существующую тренировку.",
+    "Какую двигать (для move_existing) — по смыслу, не по близости дат:",
+    "— «сегодня плохо/не могу сегодня/температура» → тренировку (СЕГОДНЯ);",
+    "— «не могу во вторник/в среду» → тренировку того дня недели;",
     "— «уезжаю на выходных» → тренировки субботы/воскресенья;",
-    "— если назван тип («интервалы», «длительная») → тренировку этого типа.",
-    "Верни только JSON без markdown.",
-    "Правила вывода:",
-    "— decision=single + selectedWorkoutId, если из сообщения ОДНОЗНАЧНО ясно, какую двигать.",
-    "— decision=ambiguous + candidateWorkoutIds (2-4 id), если реально непонятно — пусть выберет тренер.",
-    "— decision=none, если ни одна тренировка из календаря не подходит под просьбу.",
-    "— Не выдумывай workoutId — бери только из календаря. Не предлагай тренировку целевого дня как источник, если есть более осмысленный кандидат.",
+    "— назван тип («интервалы», «длительная», «силовая») → тренировку этого типа.",
+    "Верни только JSON без markdown. Правила вывода:",
+    "— situation=move_existing + decision=single + selectedWorkoutId, если однозначно какую двигать.",
+    "— situation=move_existing + decision=ambiguous + candidateWorkoutIds (2-4 id), если реально непонятно.",
+    "— situation=already_planned + selectedWorkoutId = уже стоящая тренировка (для справки), decision=none.",
+    "— situation=no_such_workout → decision=none, selectedWorkoutId=null.",
+    "— Не выдумывай workoutId — только из календаря.",
     `Сегодня: ${input.todayIso}; целевой день переноса: ${input.targetDateIso ?? "неизвестен"}; timezone: ${input.timezone}.`,
     `Схема: ${JSON.stringify(schemaHint)}.`,
     "Календарь запланированных тренировок:",
@@ -275,6 +295,7 @@ export async function selectMoveSourceWorkoutWithAi(input: {
       return null;
     }
     const parsed = JSON.parse(extractJsonOnly(text)) as {
+      situation?: unknown;
       decision?: unknown;
       selectedWorkoutId?: unknown;
       candidateWorkoutIds?: unknown;
@@ -282,6 +303,13 @@ export async function selectMoveSourceWorkoutWithAi(input: {
       reasoning?: unknown;
     };
 
+    const situation: MoveSourceSituation =
+      parsed.situation === "move_existing" ||
+      parsed.situation === "already_planned" ||
+      parsed.situation === "no_such_workout" ||
+      parsed.situation === "unclear"
+        ? parsed.situation
+        : "unclear";
     const decision =
       parsed.decision === "single" || parsed.decision === "ambiguous" || parsed.decision === "none"
         ? parsed.decision
@@ -295,15 +323,28 @@ export async function selectMoveSourceWorkoutWithAi(input: {
       typeof parsed.confidence === "number" ? Math.max(0, Math.min(1, parsed.confidence)) : 0;
     const reasoning = typeof parsed.reasoning === "string" ? parsed.reasoning.trim() : "";
 
-    // Reconcile the model's decision label with the validated ids so downstream code can trust it.
+    // already_planned / no_such_workout: not a blind move. Keep the situation so enrich can offer
+    // keep-or-move (already_planned) or decline the false move (no_such_workout) instead of pulling
+    // an unrelated workout. decision is forced to "none" so no source gets auto-selected.
+    if (situation === "already_planned" || situation === "no_such_workout") {
+      return {
+        situation,
+        decision: "none",
+        selectedWorkoutId: situation === "already_planned" ? selectedWorkoutId : null,
+        candidateWorkoutIds: [],
+        confidence,
+        reasoning,
+      };
+    }
+
+    // move_existing / unclear: reconcile decision with validated ids.
     if (decision === "single" && selectedWorkoutId !== null) {
-      return { decision: "single", selectedWorkoutId, candidateWorkoutIds: [], confidence, reasoning };
+      return { situation: "move_existing", decision: "single", selectedWorkoutId, candidateWorkoutIds: [], confidence, reasoning };
     }
     if (decision === "ambiguous" && candidateWorkoutIds.length >= 2) {
-      return { decision: "ambiguous", selectedWorkoutId: null, candidateWorkoutIds, confidence, reasoning };
+      return { situation: "move_existing", decision: "ambiguous", selectedWorkoutId: null, candidateWorkoutIds, confidence, reasoning };
     }
-    // single without a valid id, or ambiguous with <2 valid ids → treat as no usable decision.
-    return { decision: "none", selectedWorkoutId: null, candidateWorkoutIds: [], confidence, reasoning };
+    return { situation: "unclear", decision: "none", selectedWorkoutId: null, candidateWorkoutIds: [], confidence, reasoning };
   } catch {
     return null;
   }

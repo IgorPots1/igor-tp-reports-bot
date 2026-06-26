@@ -158,6 +158,7 @@ import {
   parseMoveWorkoutWithAiFallback,
   selectMoveSourceWorkoutWithAi,
   type MoveSourceCalendarWorkout,
+  type MoveSourceSituation,
 } from "@/features/trainingpeaks/move-workout-parser-ai";
 import {
   assembleTrainingPeaksMoveIntentContext,
@@ -393,6 +394,9 @@ export type ParsedTrainingPeaksMoveWorkoutPayload = {
     reason?: string | null;
     warnings?: string[];
   };
+  // What kind of request this is, judged against the plan (greedy-fix). Drives whether a move card
+  // is created at all (no_such_workout → suppressed by the caller) or shown as keep-or-move.
+  moveSituation?: MoveSourceSituation;
   // Set when Haiku chose the source workout from the student's calendar (calendar-aware selection).
   // Provenance only — the chosen date/source fields drive the runner; this records the why.
   aiSourceSelection?: {
@@ -461,6 +465,7 @@ export type CreateTrainingPeaksMoveWorkoutActionFromTelegramResult =
         | "empty_text"
         | "not_explicit_move_request"
         | "needs_clarification"
+        | "no_such_workout_not_a_move"
         | "parse_rejected";
       student?: TrainingPeaksStudent;
     };
@@ -3150,17 +3155,16 @@ async function enrichParsedMovePayloadWithWorkoutInference(input: {
 
   const targetDateIso =
     payload.target.kind === "date" && ISO_DATE_PATTERN.test(payload.target.value) ? payload.target.value : null;
-  if (!targetDateIso) {
-    return payload;
-  }
 
   // Window must include TODAY, not just target±. The previous window started at target-1 and the
   // candidate filter required workoutDate >= target, so today's planned workout was invisible —
   // the root cause of "moved the future long run instead of today's session" (Kasianenko audit).
+  // When the target is fuzzy (e.g. «выходные» → no single ISO date), we still analyse the plan
+  // from today forward so the situation check (already_planned / no_such_workout) can run.
   const timezone = input.studentTimezone?.trim() || "Europe/Moscow";
   const todayIso = new Intl.DateTimeFormat("sv-SE", { timeZone: timezone }).format(new Date());
-  const searchTo = addLocalDaysIso(targetDateIso, 10);
-  const targetMinusOne = addLocalDaysIso(targetDateIso, -1);
+  const searchTo = targetDateIso ? addLocalDaysIso(targetDateIso, 10) : addLocalDaysIso(todayIso, 14);
+  const targetMinusOne = targetDateIso ? addLocalDaysIso(targetDateIso, -1) : todayIso;
   const searchFrom = todayIso < targetMinusOne ? todayIso : targetMinusOne;
   const rows = await listTrainingPeaksWorkoutCacheForStudentDateRange({
     studentId: input.studentId,
@@ -3193,7 +3197,22 @@ async function enrichParsedMovePayloadWithWorkoutInference(input: {
       calendar: aiCalendar,
     });
 
-    if (aiSelection && aiSelection.decision === "single" && aiSelection.selectedWorkoutId !== null) {
+    if (aiSelection && aiSelection.situation === "no_such_workout") {
+      // The asked workout type is not in the plan → ADD request, not a move. Do NOT pull an
+      // unrelated workout (the old greedy bug). Flag for the caller to skip the false move card.
+      payload.moveSituation = "no_such_workout";
+      payload.needsClarification = true;
+      payload.clarificationReason = "no_such_workout_in_plan";
+      if (aiSelection.reasoning) {
+        payload.warnings?.push(aiSelection.reasoning);
+      }
+    } else if (aiSelection && aiSelection.situation === "already_planned") {
+      // A workout of that type already stands on/around the asked day. Nothing to move blindly —
+      // offer the coach keep-as-is vs move-to-an-alternative-day (carried in the reasoning).
+      payload.moveSituation = "already_planned";
+      payload.needsClarification = true;
+      payload.clarificationReason = aiSelection.reasoning || "already_planned_keep_or_move";
+    } else if (aiSelection && aiSelection.decision === "single" && aiSelection.selectedWorkoutId !== null) {
       const chosen = calendarRows.find(
         (row) => row.trainingPeaksWorkoutId === aiSelection.selectedWorkoutId
       );
@@ -3201,6 +3220,7 @@ async function enrichParsedMovePayloadWithWorkoutInference(input: {
         // Trusted explicit source: the runner consumes payload.source/sourceDate and skips its
         // arithmetic guessing. We deliberately do NOT set an untrusted sourceInferencePreview here,
         // so the runner's extractExplicitSourceDate trusts these fields.
+        payload.moveSituation = "move_existing";
         payload.source = { kind: "date", value: chosen.workoutDate, sourceText: chosen.title ?? "" };
         payload.sourceDate = chosen.workoutDate;
         payload.source_date = chosen.workoutDate;
@@ -3240,6 +3260,7 @@ async function enrichParsedMovePayloadWithWorkoutInference(input: {
           reason: sourceInferencePreview.reason ?? null,
           warnings: sourceInferencePreview.warnings,
         };
+        payload.moveSituation = "move_existing";
         payload.aiSourceSelection = {
           decision: "ambiguous",
           candidateWorkoutIds: chosenRows.map((row) => row.trainingPeaksWorkoutId),
@@ -3253,10 +3274,18 @@ async function enrichParsedMovePayloadWithWorkoutInference(input: {
     }
 
     // ── Degradation path: AI unavailable or no usable decision → legacy arithmetic cache scoring. ──
-    if (!payload.sourceDate && !payload.source_date && !payload.sourceInferencePreview) {
+    // Skipped when a situation was decided (already_planned/no_such_workout) so we never fall back
+    // to pulling an unrelated workout, and skipped when the target day is fuzzy (no ISO date).
+    if (
+      !payload.sourceDate &&
+      !payload.source_date &&
+      !payload.sourceInferencePreview &&
+      !payload.moveSituation &&
+      targetDateIso
+    ) {
       const inferredKind = inferWorkoutKindFromText(input.rawText);
       const candidates = rows
-        .filter((row) => row.isPlanned && row.workoutDate >= targetDateIso)
+        .filter((row) => row.isPlanned && !row.isCompleted && row.workoutDate >= targetDateIso)
         .map((row) => ({
           row,
           score: scoreWorkoutCandidate({
@@ -3303,40 +3332,43 @@ async function enrichParsedMovePayloadWithWorkoutInference(input: {
     }
   }
 
-  const targetDayRows = rows.filter((row) => row.workoutDate === targetDateIso && row.isPlanned);
-  if (targetDayRows.length > 0) {
-    payload.warnings?.push("На целевой день уже есть тренировка. Проверь расписание недели.");
-  }
+  // Target-relative warnings only make sense once the target resolved to a concrete date.
+  if (targetDateIso) {
+    const targetDayRows = rows.filter((row) => row.workoutDate === targetDateIso && row.isPlanned);
+    if (targetDayRows.length > 0) {
+      payload.warnings?.push("На целевой день уже есть тренировка. Проверь расписание недели.");
+    }
 
-  const explicitSourceIso = payload.sourceDate ?? payload.source_date;
-  const previewSelectedWorkoutId = payload.sourceInferencePreview?.selectedCandidate?.workoutId;
-  const sourceRow = explicitSourceIso
-    ? rows.find(
-        (row) =>
-          row.workoutDate === explicitSourceIso &&
-          row.isPlanned &&
-          (previewSelectedWorkoutId ? row.trainingPeaksWorkoutId === previewSelectedWorkoutId : true)
-      ) ?? rows.find((row) => row.workoutDate === explicitSourceIso && row.isPlanned)
-    : null;
-  if (sourceRow && isLikelyHardOrIntervalWorkout(sourceRow)) {
-    const aroundTarget = rows.filter((row) => {
-      if (!row.isPlanned || row.workoutDate === targetDateIso) {
-        return false;
-      }
-      const distanceDays =
-        Math.abs(
-          Date.parse(`${row.workoutDate}T12:00:00Z`) - Date.parse(`${targetDateIso}T12:00:00Z`)
-        ) / (1000 * 60 * 60 * 24);
-      return distanceDays > 0 && distanceDays <= 1.5;
-    });
-    if (aroundTarget.length > 0) {
-      payload.warnings?.push("Перенос интервальной тренировки раньше может потребовать корректировки недели.");
-      const suggestedDate = addLocalDaysIso(targetDateIso, 3);
-      const hasNearSuggested = rows.some((row) => row.workoutDate === suggestedDate);
-      if (!hasNearSuggested) {
-        payload.suggestedAdjustments?.push(
-          `Возможно, стоит сдвинуть тренировку ${addLocalDaysIso(targetDateIso, 1)} на ${suggestedDate}.`
-        );
+    const explicitSourceIso = payload.sourceDate ?? payload.source_date;
+    const previewSelectedWorkoutId = payload.sourceInferencePreview?.selectedCandidate?.workoutId;
+    const sourceRow = explicitSourceIso
+      ? rows.find(
+          (row) =>
+            row.workoutDate === explicitSourceIso &&
+            row.isPlanned &&
+            (previewSelectedWorkoutId ? row.trainingPeaksWorkoutId === previewSelectedWorkoutId : true)
+        ) ?? rows.find((row) => row.workoutDate === explicitSourceIso && row.isPlanned)
+      : null;
+    if (sourceRow && isLikelyHardOrIntervalWorkout(sourceRow)) {
+      const aroundTarget = rows.filter((row) => {
+        if (!row.isPlanned || row.workoutDate === targetDateIso) {
+          return false;
+        }
+        const distanceDays =
+          Math.abs(
+            Date.parse(`${row.workoutDate}T12:00:00Z`) - Date.parse(`${targetDateIso}T12:00:00Z`)
+          ) / (1000 * 60 * 60 * 24);
+        return distanceDays > 0 && distanceDays <= 1.5;
+      });
+      if (aroundTarget.length > 0) {
+        payload.warnings?.push("Перенос интервальной тренировки раньше может потребовать корректировки недели.");
+        const suggestedDate = addLocalDaysIso(targetDateIso, 3);
+        const hasNearSuggested = rows.some((row) => row.workoutDate === suggestedDate);
+        if (!hasNearSuggested) {
+          payload.suggestedAdjustments?.push(
+            `Возможно, стоит сдвинуть тренировку ${addLocalDaysIso(targetDateIso, 1)} на ${suggestedDate}.`
+          );
+        }
       }
     }
   }
@@ -9900,6 +9932,18 @@ export async function createTrainingPeaksMoveWorkoutActionFromTelegram(
       ),
       needsClarification: true,
     };
+  }
+
+  // Greedy-fix: «давайте сделаю <тип> в <день>» where no such workout is in the plan is an ADD
+  // request, not a move. Do NOT create a move card pulling an unrelated workout (creating workouts
+  // is a separate feature). Silently skip — the student can rephrase or the coach acts manually.
+  if (enrichedParsed.moveSituation === "no_such_workout") {
+    console.info("Skipping TrainingPeaks move action — no such workout in plan (add request, not move)", {
+      studentId: student.id,
+      chatId: input.chatId,
+      messageId: input.messageId,
+    });
+    return { ok: false, reason: "no_such_workout_not_a_move", student };
   }
 
   const action = await createTrainingPeaksActionInRepository({

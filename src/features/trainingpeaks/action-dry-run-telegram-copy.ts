@@ -103,6 +103,33 @@ export function selectCoachDryRunNotificationCandidates(
   return [...pool].sort((left, right) => (right.score ?? 0) - (left.score ?? 0)).slice(0, limit);
 }
 
+// A completed/performed or past workout must never be OFFERED AS A MOVE VARIANT, just as it can't
+// be the move SOURCE (runner hard gate). Applied only to the displayed variants — NOT to the
+// planned-vs-completed ambiguity detector, which must still see completed workouts.
+// (Was the leak: variants showed "Running — completed 271 TSS".)
+export function filterMovableNotificationCandidates(
+  candidates: CoachDryRunNotificationCandidate[],
+  todayIso?: string | null
+): CoachDryRunNotificationCandidate[] {
+  const today = todayIso ?? new Date().toISOString().slice(0, 10);
+  return candidates.filter((candidate) => {
+    const text = (candidate.rawTextSnippet ?? "").toLowerCase();
+    if (/\b(done|completed|выполнено|завершено|finished|отчет|report|результат)\b/i.test(text)) {
+      return false;
+    }
+    if (/\bhr\s*tss\b/i.test(text)) {
+      return false;
+    }
+    if ((candidate.classHint ?? "").toLowerCase().includes("completed")) {
+      return false;
+    }
+    if (candidate.sourceDate && candidate.sourceDate < today) {
+      return false;
+    }
+    return true;
+  });
+}
+
 function formatAmbiguousReason(sourceDate: string | null | undefined): string {
   const sourceDateLabel = formatCompactCoachDateShort(sourceDate ?? null);
   if (sourceDateLabel !== "?") {
@@ -179,7 +206,8 @@ export function buildCoachDryRunFailureNotificationLines(input: CoachDryRunFailu
     lines.push(`⚠️ Перенос не выполнен. ${input.studentName}: ${input.route}.`);
     lines.push(`Причина: ${formatAmbiguousReason(sourceDate)} — нужен выбор тренера.`);
 
-    const topCandidates = selectCoachDryRunNotificationCandidates(input.candidates, sourceDate, 2);
+    const movableCandidates = filterMovableNotificationCandidates(input.candidates ?? []);
+    const topCandidates = selectCoachDryRunNotificationCandidates(movableCandidates, sourceDate, 2);
     if (topCandidates.length > 0) {
       lines.push("");
       lines.push("Варианты:");

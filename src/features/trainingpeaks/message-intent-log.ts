@@ -107,6 +107,7 @@ export function resolveTrainingPeaksMessageIntentLogStatus(input: {
     | "empty_text"
     | "not_explicit_move_request"
     | "needs_clarification"
+    | "no_such_workout_not_a_move"
     | "parse_rejected";
   hasRelevance: boolean;
 }): TrainingPeaksMessageIntentLogStatus | null {
@@ -114,6 +115,11 @@ export function resolveTrainingPeaksMessageIntentLogStatus(input: {
 
   if (reason === "empty_text") {
     return null;
+  }
+
+  if (reason === "no_such_workout_not_a_move") {
+    // Not a move (add request / already planned) — log as unrecognized when relevant, else drop.
+    return hasRelevance ? "unrecognized" : null;
   }
 
   if (reason === "student_not_found") {
