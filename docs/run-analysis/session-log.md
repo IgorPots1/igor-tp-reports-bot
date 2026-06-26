@@ -4,6 +4,25 @@
 
 ---
 
+## 2026-06-26 — Фикс точности: первое касание вместо середины опоры
+
+**Что сделано (НЕ закоммичено):**
+- Диагноз подтверждён: `findLocalMaxima(ankleY)` давал MID-STANCE пики → нога уже плоская → foot_strike = "midfoot", оверстрайд ≈ 0, колено чрезмерно согнуто.
+- Добавлена `findContactOnsets()` в compute-metrics.ts: сканирует назад от каждого пика до первого кадра, где голеностоп вышел из "зоны земли" (`groundProximity = 0.04`). Параметры в `CONFIDENCE_CONFIG`: `contactOnsetLookbackSec: 0.15`, `contactOnsetGroundProximity: 0.04` (TODO: тюнить на реальном материале).
+- Knee/overstride/foot_strike → теперь meряются на onset-кадрах. Oscillation → по-прежнему на `contacts` (mid-stance, там нужны пики для цикла).
+- `ComputeMetricsOutput` расширен `onsetFrameIndices: number[]` и `side: "left" | "right"`.
+- `RunAnalysisResult` расширен `contactDiagnosticFrames?: string[]`.
+- `captureOnsetDiagnostics()` в RunAnalysisTool.tsx: off-screen canvas 300×450, рисует: скелет, пунктир через таз (референс), стрелку оверстрайда (красная/зелёная), точки landmark'ов по цвету (жёлтый=таз, синий=колено, зелёный=голеностоп, пурпурный=пятка, голубой=мяч стопы), метку ПЯТКА/МИДФУТ/НОСОК.
+- ReportView: новая секция «Диагностика: кадры первого касания» — ряд thumbnail'ов с пояснением легенды.
+
+**Файлы:** reference-ranges.ts, compute-metrics.ts, types.ts, RunAnalysisTool.tsx, ReportView.tsx, docs.
+
+**Гейты:** tsc ✅, lint ✅ (0 errors), build ✅.
+
+**Следующий шаг:** прогон IMG_4933 (Филипп) и IMG_4932 (Александр), сравнить onset-кадры с mid-stance результатами ДО.
+
+---
+
 ## 2026-06-26 — Форма: темп убран, рост/вес опциональны; горизонтальный детектор панорамы
 
 **Что сделано (НЕ закоммичено):**

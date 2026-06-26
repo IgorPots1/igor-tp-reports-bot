@@ -83,7 +83,7 @@ function metricNote(ms: MetricStatus): string | null {
 }
 
 export default function ReportView({ result, onNewAnalysis }: ReportViewProps) {
-  const { report, metrics, metricStatuses, heroFrameDataUrl, studentName } = result;
+  const { report, metrics, metricStatuses, heroFrameDataUrl, studentName, contactDiagnosticFrames } = result;
   const date = new Date().toLocaleDateString("ru-RU");
   const orderedStatuses = METRIC_ORDER.map((k) => metricStatuses[k]).filter(
     (ms): ms is MetricStatus => Boolean(ms)
@@ -122,6 +122,40 @@ export default function ReportView({ result, onNewAnalysis }: ReportViewProps) {
             alt="Кадр анализа со скелетом"
             className="admin-ra-hero-img"
           />
+        </div>
+      )}
+
+      {/* Contact onset diagnostic frames */}
+      {contactDiagnosticFrames && contactDiagnosticFrames.length > 0 && (
+        <div className="admin-card">
+          <h4 style={{ marginBottom: 6 }}>Диагностика: кадры первого касания</h4>
+          <p className="admin-muted" style={{ fontSize: 13, marginBottom: 10 }}>
+            Жёлтая точка и пунктир — таз (референс оверстрайда). Зелёная — голеностоп.
+            Синяя — колено. Стрелка — горизонтальный вынос стопы от таза (красная = большой, зелёная = ок).
+            Метка вверху — тип приземления.
+          </p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {contactDiagnosticFrames.map((url, i) => (
+              <div key={i} style={{ textAlign: "center" }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={url}
+                  alt={`Касание ${i + 1}`}
+                  style={{
+                    width: 150,
+                    height: 225,
+                    objectFit: "contain",
+                    border: "1px solid #374151",
+                    borderRadius: 4,
+                    display: "block",
+                  }}
+                />
+                <div className="admin-muted" style={{ fontSize: 11, marginTop: 3 }}>
+                  касание {i + 1}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

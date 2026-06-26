@@ -90,6 +90,8 @@ function mean(values: number[]): number {
 }
 
 // Ground-contact frames ≈ local maxima of ankle y-position (lowest point on screen).
+// These are MID-STANCE peaks — use for oscillation cycle timing.
+// For foot-strike / overstride / knee metrics, use findContactOnsets() instead.
 function findLocalMaxima(values: number[], minGap: number): number[] {
   const peaks: number[] = [];
   for (let i = minGap; i < values.length - minGap; i++) {
@@ -104,6 +106,25 @@ function findLocalMaxima(values: number[], minGap: number): number[] {
     if (isPeak) peaks.push(i);
   }
   return peaks;
+}
+
+// Find the initial-contact (first-touch) frame for each mid-stance peak.
+// Strategy: scan backward from the peak. The contact plateau starts where ankle.y
+// first rises into the "ground zone" (within groundProximity of the nadir).
+// One frame before that is still in swing → onset = that frame + 1.
+function findContactOnsets(ankleY: number[], peaks: number[], fps: number): number[] {
+  const maxLookback = Math.round(fps * CFG.contactOnsetLookbackSec);
+  const proximity = CFG.contactOnsetGroundProximity;
+  return peaks.map((peak) => {
+    const yPeak = ankleY[peak] ?? 0;
+    for (let i = peak - 1; i >= Math.max(0, peak - maxLookback); i--) {
+      if ((ankleY[i] ?? 0) < yPeak - proximity) {
+        return i + 1; // frame i was in swing; i+1 is first contact
+      }
+    }
+    // Fallback: no clear swing-to-ground transition found; use ~50ms before peak
+    return Math.max(0, peak - Math.max(1, Math.round(fps * 0.05)));
+  });
 }
 
 // Least-squares linear detrend; returns detrended series (NaN preserved) and the
@@ -192,12 +213,16 @@ export type ComputeMetricsOutput = {
   metrics: RunMetrics;
   metricStatuses: Record<string, MetricStatus>;
   quality: AnalysisQuality;
+  // Initial-contact (first-touch) frames — one per detected contact cycle.
+  // Used by RunAnalysisTool to render diagnostic skeleton overlays.
+  onsetFrameIndices: number[];
+  side: "left" | "right"; // which body side was used for measurement
 };
 
 export function computeMetrics({ frames, fps, durationSec, cadenceFromWatchSpm = null }: ComputeMetricsInput): ComputeMetricsOutput {
   if (frames.length === 0) {
     const m = emptyMetrics(fps, durationSec, cadenceFromWatchSpm);
-    return { metrics: m, metricStatuses: buildStatuses(m), quality: { usable: false, reason: "no_frames" } };
+    return { metrics: m, metricStatuses: buildStatuses(m), quality: { usable: false, reason: "no_frames" }, onsetFrameIndices: [], side: "left" };
   }
 
   const side = chooseSide(frames[Math.floor(frames.length / 2)] ?? []);
@@ -206,8 +231,11 @@ export function computeMetrics({ frames, fps, durationSec, cadenceFromWatchSpm =
   // ── Ground contacts (drive knee / overstride / foot strike / oscillation cycles)
   const ankleY = frames.map((f) => f[idx.ankle]?.y ?? 0);
   const minGapFrames = Math.max(3, Math.round(fps * 0.2)); // ~200 ms min between contacts
-  const contacts = findLocalMaxima(ankleY, minGapFrames);
+  const contacts = findLocalMaxima(ankleY, minGapFrames); // mid-stance peaks → oscillation timing
   const contactCycles = contacts.length > 1 ? contacts.length - 1 : 0;
+  // Initial-contact frames (first-touch, ~50–150ms before mid-stance peak).
+  // Used for knee / overstride / foot-strike — measuring at mid-stance gives wrong results.
+  const onsets = findContactOnsets(ankleY, contacts, fps);
 
   // ── Subject size: full body height (normalized) via shoulder→ankle + calibration
   const torsoSpans: number[] = [];
@@ -270,9 +298,9 @@ export function computeMetrics({ frames, fps, durationSec, cadenceFromWatchSpm =
     subjectTooSmall,
   });
 
-  // ── Knee flexion at contact (0° = straight leg → 180 − interior hip-knee-ankle)
+  // ── Knee flexion at initial contact (0° = straight leg → 180 − interior hip-knee-ankle)
   const kneeFlexions: number[] = [];
-  for (const peakIdx of contacts) {
+  for (const peakIdx of onsets) {
     const frame = frames[peakIdx];
     if (!frame) continue;
     const hp = frame[idx.hip];
@@ -292,9 +320,9 @@ export function computeMetrics({ frames, fps, durationSec, cadenceFromWatchSpm =
   })();
   kneeFlexion = applySubjectSize(kneeFlexion, subjectTooSmall);
 
-  // ── Overstride: foot ahead of hip at contact, normalized by leg length
+  // ── Overstride: foot ahead of hip at initial contact, normalized by leg length
   const overstrideVals: number[] = [];
-  for (const peakIdx of contacts) {
+  for (const peakIdx of onsets) {
     const frame = frames[peakIdx];
     if (!frame) continue;
     const hp = frame[idx.hip];
@@ -314,9 +342,9 @@ export function computeMetrics({ frames, fps, durationSec, cadenceFromWatchSpm =
   })();
   overstride = applySubjectSize(overstride, subjectTooSmall);
 
-  // ── Foot strike type at contact: heel vs ball-of-foot y
+  // ── Foot strike type at initial contact: heel vs ball-of-foot y
   const footStrikeVotes: FootStrikeType[] = [];
-  for (const peakIdx of contacts) {
+  for (const peakIdx of onsets) {
     const frame = frames[peakIdx];
     if (!frame) continue;
     const heel = frame[idx.heel];
@@ -351,7 +379,7 @@ export function computeMetrics({ frames, fps, durationSec, cadenceFromWatchSpm =
     videoDurationSec: durationSec,
   };
 
-  return { metrics, metricStatuses: buildStatuses(metrics), quality: assessQuality(metrics) };
+  return { metrics, metricStatuses: buildStatuses(metrics), quality: assessQuality(metrics), onsetFrameIndices: onsets, side };
 }
 
 function buildVerticalOscillation(args: {

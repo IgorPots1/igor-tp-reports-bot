@@ -54,6 +54,117 @@ function validateVideoFile(file: File): string | null {
   return null;
 }
 
+// Render annotated skeleton overlays at initial-contact moments for diagnostic use.
+// Returns up to 6 JPEG data-URLs (300×450 canvas each).
+type LM = { x: number; y: number; z: number; visibility?: number };
+const SIDE_IDX = {
+  left: { shoulder: 11, hip: 23, knee: 25, ankle: 27, heel: 29, foot: 31 },
+  right: { shoulder: 12, hip: 24, knee: 26, ankle: 28, heel: 30, foot: 32 },
+} as const;
+
+function captureOnsetDiagnostics(
+  onsets: number[],
+  allFrames: LM[][],
+  side: "left" | "right"
+): string[] {
+  const W = 300, H = 450;
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return [];
+
+  const idx = SIDE_IDX[side];
+
+  return onsets.slice(0, 6).map((fi) => {
+    const frame = allFrames[fi];
+    if (!frame) return "";
+
+    ctx.fillStyle = "#111827";
+    ctx.fillRect(0, 0, W, H);
+
+    const get = (id: number): { x: number; y: number } | null => {
+      const l = frame[id];
+      if (!l || (l.visibility ?? 0) < 0.35) return null;
+      return { x: l.x * W, y: l.y * H };
+    };
+
+    const sh = get(idx.shoulder);
+    const hp = get(idx.hip);
+    const kn = get(idx.knee);
+    const an = get(idx.ankle);
+    const hl = get(idx.heel);
+    const ft = get(idx.foot);
+
+    // Skeleton lines
+    ctx.strokeStyle = "#374151";
+    ctx.lineWidth = 2;
+    const line = (a: { x: number; y: number } | null, b: { x: number; y: number } | null) => {
+      if (!a || !b) return;
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    };
+    line(sh, hp); line(hp, kn); line(kn, an);
+    if (hl) line(an, hl);
+    if (ft) line(an, ft);
+
+    // Vertical reference line through hip
+    if (hp) {
+      ctx.save();
+      ctx.strokeStyle = "rgba(251,191,36,0.35)";
+      ctx.setLineDash([5, 4]);
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(hp.x, 0); ctx.lineTo(hp.x, H); ctx.stroke();
+      ctx.restore();
+    }
+
+    // Overstride arrow: hip.x → ankle.x at ankle.y
+    if (hp && an) {
+      const os = an.x - hp.x;
+      const color = Math.abs(os) > 12 ? "#ef4444" : "#22c55e";
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(hp.x, an.y); ctx.lineTo(an.x, an.y); ctx.stroke();
+      const dir = os >= 0 ? 1 : -1;
+      ctx.beginPath();
+      ctx.moveTo(an.x, an.y);
+      ctx.lineTo(an.x - dir * 7, an.y - 4);
+      ctx.lineTo(an.x - dir * 7, an.y + 4);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // Landmark dots
+    const dot = (pt: { x: number; y: number } | null, color: string, r = 5) => {
+      if (!pt) return;
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2); ctx.fill();
+    };
+    dot(sh, "#9ca3af", 4);
+    dot(hp, "#fbbf24", 6);  // yellow: hip — reference line
+    dot(kn, "#60a5fa", 6);  // blue: knee
+    dot(an, "#34d399", 7);  // green: ankle — contact point
+    dot(hl, "#a855f7", 4);  // purple: heel
+    dot(ft, "#06b6d4", 4);  // cyan: ball of foot
+
+    // Footstrike label (heel.y > foot.y = heel lower on screen = heel strike)
+    if (hl && ft) {
+      const diff = hl.y - ft.y;
+      const label = diff > 8 ? "ПЯТКА" : diff < -8 ? "НОСОК" : "МИДФУТ";
+      const color = diff > 8 ? "#ef4444" : diff < -8 ? "#fbbf24" : "#34d399";
+      ctx.fillStyle = color;
+      ctx.font = "bold 13px monospace";
+      ctx.fillText(label, 8, 20);
+    }
+
+    ctx.fillStyle = "#4b5563";
+    ctx.font = "10px monospace";
+    ctx.fillText(`кадр ${fi}`, 8, H - 7);
+
+    return canvas.toDataURL("image/jpeg", 0.88);
+  }).filter((s) => s.length > 0);
+}
+
 function parseWatchCadence(raw: string): number | null {
   const n = Number(raw.trim());
   if (!Number.isFinite(n) || n <= 0) return null;
@@ -167,7 +278,7 @@ export default function RunAnalysisTool() {
       const { computeMetrics } = await import(
         "@/features/run-analysis/metrics/compute-metrics"
       );
-      const { metrics, metricStatuses, quality } = computeMetrics({
+      const { metrics, metricStatuses, quality, onsetFrameIndices, side } = computeMetrics({
         frames: poseResult.frames,
         fps: poseResult.fps,
         durationSec: poseResult.durationSec,
@@ -175,6 +286,11 @@ export default function RunAnalysisTool() {
       });
 
       const heroFrameDataUrl = canvas.toDataURL("image/jpeg", 0.85);
+      const contactDiagnosticFrames = captureOnsetDiagnostics(
+        onsetFrameIndices,
+        poseResult.frames as LM[][],
+        side
+      );
 
       // Overall gate: too little usable data → don't show a partial report.
       if (!quality.usable) {
@@ -223,7 +339,7 @@ export default function RunAnalysisTool() {
         return;
       }
 
-      setResult({ metrics, metricStatuses, report: parseResult.report, heroFrameDataUrl, studentName });
+      setResult({ metrics, metricStatuses, report: parseResult.report, heroFrameDataUrl, studentName, contactDiagnosticFrames });
       setStep("report");
 
     } catch (err) {

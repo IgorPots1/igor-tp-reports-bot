@@ -92,6 +92,12 @@ export const CONFIDENCE_CONFIG = {
   oscHorizRangeUnavailable: 0.10, // below → clear horizontal pan → "unavailable"
   // overall gate: minimum measured metrics that must be available to show a report
   minAvailableMetricsForReport: 2,
+  // Initial contact (onset) detection: scan backward from mid-stance peak.
+  // contactOnsetLookbackSec: how far back to look (covers typical loading-response duration).
+  // contactOnsetGroundProximity: ankle within this fraction of frame height from nadir = "on ground".
+  // TODO: tune both values on real footage (current values are initial calibration).
+  contactOnsetLookbackSec: 0.15,
+  contactOnsetGroundProximity: 0.04,
 } as const;
 
 // Calibration: shoulder→ankle span is ~0.75 of full standing height, so dividing

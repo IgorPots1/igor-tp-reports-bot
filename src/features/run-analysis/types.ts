@@ -135,4 +135,7 @@ export type RunAnalysisResult = {
   report: RunAnalysisReport;
   heroFrameDataUrl: string | null;
   studentName?: string;
+  // Annotated skeleton frames at initial-contact moments (for diagnostic verification).
+  // Up to 6 frames; absent when no contacts were detected.
+  contactDiagnosticFrames?: string[];
 };
