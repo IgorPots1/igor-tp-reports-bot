@@ -17,6 +17,8 @@ type SignalsAdminPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
+export const maxDuration = 30;
+
 const HEALTH_SIGNAL_TYPE_LABELS: Record<string, string> = {
   pain_injury: "травма / боль",
   health_issue_started: "болезнь (начало)",
@@ -79,12 +81,23 @@ export default async function SignalsAdminPage({ searchParams }: SignalsAdminPag
   const notice = getSingleSearchParam(resolved.notice);
   const error = getSingleSearchParam(resolved.error);
 
-  const [activeSignalsResult, students, contactStatuses, snapshot] = await Promise.all([
+  const [r0, r1, r2, r3] = await Promise.allSettled([
     listTrainingPeaksOperationalSignals({ status: "active", limit: 200 }),
     listTrainingPeaksStudents(),
     listTrainingPeaksStudentContactStatus(),
     getTrainingPeaksAttentionSnapshot(),
   ]);
+
+  const activeSignalsResult = r0.status === "fulfilled" ? r0.value : { items: [] as TrainingPeaksStudentOperationalSignal[], total: 0 };
+  const students = r1.status === "fulfilled" ? r1.value : [];
+  const contactStatuses = r2.status === "fulfilled" ? r2.value : [];
+  const snapshotResult = r3.status === "fulfilled" ? r3.value : null;
+
+  const loadFailedSources: string[] = [];
+  if (r0.status === "rejected") loadFailedSources.push("операционные сигналы");
+  if (r1.status === "rejected") loadFailedSources.push("список учеников");
+  if (r2.status === "rejected") loadFailedSources.push("статус связи");
+  if (r3.status === "rejected") loadFailedSources.push("скан активности (пропуски / доступность)");
 
   const studentNameById = new Map(
     students.map((s) => [s.id, s.studentName?.trim() || null])
@@ -149,8 +162,8 @@ export default async function SignalsAdminPage({ searchParams }: SignalsAdminPag
       athleteSilentDays: daysSince(s.lastAthleteMessageAt),
     }));
 
-  const missedWorkouts = snapshot.missedWorkouts;
-  const planConstraints = snapshot.planConstraintsToday;
+  const missedWorkouts = snapshotResult?.missedWorkouts ?? [];
+  const planConstraints = snapshotResult?.planConstraintsToday ?? [];
 
   return (
     <section className="admin-section">
@@ -167,6 +180,12 @@ export default async function SignalsAdminPage({ searchParams }: SignalsAdminPag
       {(notice || error) && (
         <div className={`admin-alert ${error ? "admin-alert-error" : "admin-alert-success"}`}>
           {error ?? notice}
+        </div>
+      )}
+
+      {loadFailedSources.length > 0 && (
+        <div className="admin-alert admin-alert-error">
+          Не удалось загрузить: {loadFailedSources.join(", ")}. Данные могут быть неполными — обновите страницу.
         </div>
       )}
 
