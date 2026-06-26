@@ -8,6 +8,9 @@ export type TrainingPeaksAiWorkoutReferenceKind =
   | "intervals"
   | "easy_run"
   | "workout"
+  | "strength"
+  | "bike"
+  | "swim"
   | "unknown";
 
 export type TrainingPeaksAiDateReferenceKind = "date" | "relative" | "unknown";
@@ -65,6 +68,9 @@ const ALLOWED_WORKOUT_KINDS = new Set<TrainingPeaksAiWorkoutReferenceKind>([
   "intervals",
   "easy_run",
   "workout",
+  "strength",
+  "bike",
+  "swim",
   "unknown",
 ]);
 const ALLOWED_DATE_KINDS = new Set<TrainingPeaksAiDateReferenceKind>(["date", "relative", "unknown"]);
@@ -243,7 +249,7 @@ export async function classifyTrainingPeaksMoveIntentWithAi(
   const schemaHint = {
     intent: "move_workout|none|unknown",
     workout_reference: {
-      kind: "long_run|tempo|intervals|easy_run|workout|unknown",
+      kind: "long_run|tempo|intervals|easy_run|workout|strength|bike|swim|unknown",
       text: "string|null",
       confidence: 0.0,
     },

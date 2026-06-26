@@ -29,6 +29,18 @@ function sanitizeTimeRef(value: unknown): TrainingPeaksMoveWorkoutTimeRef | null
   };
 }
 
+const VALID_WORKOUT_DESCRIPTOR_TYPES = [
+  "easy_run",
+  "interval",
+  "tempo",
+  "long_run",
+  "run",
+  "strength",
+  "bike",
+  "swim",
+  "unknown",
+];
+
 function sanitizeWorkoutDescriptor(value: unknown): TrainingPeaksMoveWorkoutDescriptor | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -37,7 +49,7 @@ function sanitizeWorkoutDescriptor(value: unknown): TrainingPeaksMoveWorkoutDesc
   if (typeof raw.raw !== "string" || typeof raw.type !== "string" || typeof raw.confidence !== "number") {
     return null;
   }
-  if (!["easy_run", "interval", "tempo", "long_run", "run", "unknown"].includes(raw.type)) {
+  if (!VALID_WORKOUT_DESCRIPTOR_TYPES.includes(raw.type)) {
     return null;
   }
   return {
@@ -79,7 +91,7 @@ export async function parseMoveWorkoutWithAiFallback(
     target: { kind: "date|weekday|relative_day", value: "string", sourceText: "string" },
     workoutDescriptor: {
       raw: "string",
-      type: "easy_run|interval|tempo|long_run|run|unknown",
+      type: "easy_run|interval|tempo|long_run|run|strength|bike|swim|unknown",
       confidence: 0.0,
     },
     confidence: 0.0,

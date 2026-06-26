@@ -357,6 +357,9 @@ export type TrainingPeaksMoveWorkoutWorkoutType =
   | "tempo"
   | "long_run"
   | "run"
+  | "strength"
+  | "bike"
+  | "swim"
   | "unknown";
 
 export type TrainingPeaksMoveWorkoutDescriptor = {
@@ -2097,6 +2100,17 @@ function extractWeekdayAndRelativeRefs(normalized: string): IndexedTimeRef[] {
 }
 
 function extractWorkoutDescriptor(rawText: string, normalized: string): TrainingPeaksMoveWorkoutDescriptor | null {
+  // Non-running types: checked before running classification to avoid misclassification.
+  if (/силов|тренажер|gym|strength/.test(normalized)) {
+    return { raw: rawText.trim(), type: "strength", confidence: 0.9 };
+  }
+  if (/вело|велосипед|(?<![а-яё])вел(?![а-яё])|байк|cycling|\bbike\b/.test(normalized)) {
+    return { raw: rawText.trim(), type: "bike", confidence: 0.9 };
+  }
+  if (/плав|\bswim/.test(normalized)) {
+    return { raw: rawText.trim(), type: "swim", confidence: 0.9 };
+  }
+
   const reference = normalizeWorkoutReference(normalized);
   if (reference.kind === "unknown") {
     if (normalized.includes("заняти")) {
@@ -3058,7 +3072,19 @@ function normalizeForMatching(value: string | null | undefined): string {
     .trim();
 }
 
-function inferWorkoutKindFromText(text: string): "interval" | "tempo" | "long_run" | "run" | "unknown" {
+function inferWorkoutKindFromText(
+  text: string
+): "interval" | "tempo" | "long_run" | "run" | "strength" | "bike" | "swim" | "unknown" {
+  const lower = text.toLocaleLowerCase("ru").replace(/ё/g, "е");
+  if (/силов|тренажер|gym|strength/.test(lower)) {
+    return "strength";
+  }
+  if (/вело|велосипед|(?<![а-яё])вел(?![а-яё])|байк|cycling|\bbike\b/.test(lower)) {
+    return "bike";
+  }
+  if (/плав|\bswim/.test(lower)) {
+    return "swim";
+  }
   const normalizedRef = normalizeWorkoutReference(text);
   if (normalizedRef.kind === "intervals") {
     return "interval";
@@ -3081,7 +3107,7 @@ function inferWorkoutKindFromText(text: string): "interval" | "tempo" | "long_ru
 function scoreWorkoutCandidate(input: {
   row: TrainingPeaksWorkoutCacheRow;
   targetDateIso: string;
-  inferredKind: "interval" | "tempo" | "long_run" | "run" | "unknown";
+  inferredKind: "interval" | "tempo" | "long_run" | "run" | "strength" | "bike" | "swim" | "unknown";
   rawText: string;
 }): number {
   const { row, targetDateIso, inferredKind, rawText } = input;
@@ -3099,10 +3125,17 @@ function scoreWorkoutCandidate(input: {
     workoutSubTypeId: row.workoutSubTypeId,
     sourceSnapshot: row.sourceSnapshot,
   });
-  if (activity.isRunning) {
-    score += 0.1;
-  } else {
-    score -= 0.3;
+
+  // Running bias: only applied when the request is for a running workout or unknown.
+  // Explicit non-running requests (силовая/вел/плавание) must not be penalised here;
+  // they get a family-match bonus below instead.
+  const askingForNonRun = inferredKind === "strength" || inferredKind === "bike" || inferredKind === "swim";
+  if (!askingForNonRun) {
+    if (activity.isRunning) {
+      score += 0.1;
+    } else {
+      score -= 0.3;
+    }
   }
 
   if (inferredKind === "interval") {
@@ -3118,6 +3151,12 @@ function scoreWorkoutCandidate(input: {
     score += 0.7;
   } else if (inferredKind === "run" && activity.isRunning) {
     score += 0.2;
+  } else if (inferredKind === "strength" && activity.family === "strength") {
+    score += 0.6;
+  } else if (inferredKind === "bike" && activity.family === "bike") {
+    score += 0.6;
+  } else if (inferredKind === "swim" && activity.family === "swim") {
+    score += 0.6;
   }
 
   const rawRef = normalizeWorkoutReference(rawText);
