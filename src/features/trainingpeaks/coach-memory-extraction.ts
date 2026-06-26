@@ -115,6 +115,18 @@ export type ProcessCoachMemoryForObservationInput = {
   precomputedExtraction?: CoachMemoryExtractionResult;
 };
 
+// Inserted memory item surfaced for the memory→signal bridge (Слой 2). Carries just enough
+// to decide whether to offer an operational-signal confirmation and to build it on "Да".
+export type CoachMemoryInsertedItem = {
+  id: string;
+  memoryType: TrainingPeaksStudentMemoryType;
+  summaryText: string;
+  notificationLevel: CoachMemoryExtractionNotificationLevel;
+  affectsPlanning: boolean;
+  requiresCoachAttention: boolean;
+  validUntil: string | null;
+};
+
 export type ProcessCoachMemoryForObservationResult =
   | {
       status: "disabled";
@@ -137,6 +149,7 @@ export type ProcessCoachMemoryForObservationResult =
   | {
       status: "processed";
       inserted: number;
+      insertedItems: CoachMemoryInsertedItem[];
       touched: number;
       skipped: number;
       belowConfidence: number;
@@ -1340,6 +1353,7 @@ export async function processCoachMemoryForObservation(
   let skipped = 0;
   let belowConfidence = 0;
   let duplicate = 0;
+  const insertedItems: CoachMemoryInsertedItem[] = [];
 
   for (const rawItem of extraction.memoryItems) {
     const adjustedItem = applyConservativeMemoryRules(rawItem, observationText, referenceDate.slice(0, 10));
@@ -1440,6 +1454,15 @@ export async function processCoachMemoryForObservation(
       if (structuredKey) {
         structuredByTypeAndKey.set(structuredKey, insertedItem);
       }
+      insertedItems.push({
+        id: insertedItem.id,
+        memoryType: adjustedItem.memoryType,
+        summaryText: adjustedItem.summaryText,
+        notificationLevel: adjustedItem.notificationLevel,
+        affectsPlanning: adjustedItem.affectsPlanning,
+        requiresCoachAttention: adjustedItem.requiresCoachAttention,
+        validUntil: adjustedItem.validUntil,
+      });
     }
     inserted += 1;
   }
@@ -1447,6 +1470,7 @@ export async function processCoachMemoryForObservation(
   return {
     status: "processed",
     inserted,
+    insertedItems,
     touched,
     skipped,
     belowConfidence,

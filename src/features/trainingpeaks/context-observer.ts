@@ -11,7 +11,10 @@ import {
   recordTrainingPeaksStudentContactEvent,
   type TrainingPeaksStudent,
 } from "@/features/trainingpeaks/repository";
-import { processCoachMemoryForObservation } from "@/features/trainingpeaks/coach-memory-extraction";
+import {
+  processCoachMemoryForObservation,
+  type CoachMemoryInsertedItem,
+} from "@/features/trainingpeaks/coach-memory-extraction";
 import { getTrainingPeaksCoachChatIds } from "@/features/trainingpeaks/attention-telegram";
 import { persistOperationalSignalsForObservation } from "@/features/trainingpeaks/operational-signals-inline";
 import { passesTrainingPeaksStrictMoveWorkoutIntentGate } from "@/features/trainingpeaks/service";
@@ -673,9 +676,9 @@ export async function maybeRunCoachMemoryExtractionForObservation(input: {
   textPreview: string | null;
   labels: string[];
   sourceType: string | null;
-}): Promise<void> {
+}): Promise<CoachMemoryInsertedItem[]> {
   if (!input.studentId || process.env.COACH_MEMORY_EXTRACTION_ENABLED?.trim() !== "true") {
-    return;
+    return [];
   }
   if (!shouldExtractMemoryForLabels(input.labels as PersistedObservationLabel[])) {
     console.debug("TrainingPeaks coach memory pre-filter skip", {
@@ -683,7 +686,7 @@ export async function maybeRunCoachMemoryExtractionForObservation(input: {
       observationIdPrefix: input.observationId.slice(0, 8),
       labels: input.labels,
     });
-    return;
+    return [];
   }
 
   const studentId = input.studentId;
@@ -719,6 +722,9 @@ export async function maybeRunCoachMemoryExtractionForObservation(input: {
         skipped: memoryResult.skipped,
       });
     }
+    // Surface freshly inserted items so the caller (business handler) can offer the
+    // memory→signal bridge confirmation. Empty on any non-processed status.
+    return memoryResult.status === "processed" ? memoryResult.insertedItems : [];
   } catch (error) {
     const errorName = error instanceof Error ? error.name : "UnknownError";
     console.warn("TrainingPeaks coach memory observation processing failed", {
@@ -728,6 +734,7 @@ export async function maybeRunCoachMemoryExtractionForObservation(input: {
       errorClass: errorName,
     });
   }
+  return [];
 }
 
 async function persistObserverObservation(input: BuildObservationLogPayloadInput): Promise<void> {

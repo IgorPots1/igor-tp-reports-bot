@@ -169,6 +169,10 @@ import {
   listTrainingPeaksCronRunLogs,
   TRAININGPEAKS_ATTENTION_DIGEST_CRON_JOB_NAME,
   recordTrainingPeaksStudentContactEvent,
+  getTrainingPeaksStudentMemoryItemById,
+  recordTrainingPeaksMemorySignalBridgeDecision,
+  listActiveTrainingPeaksOperationalSignalsByStudent,
+  upsertTrainingPeaksOperationalSignalFromCandidate,
   type TrainingPeaksStudentMemoryItem,
   type TrainingPeaksStudentMemoryType,
   type TrainingPeaksCronRunLog,
@@ -179,6 +183,8 @@ import {
   isTrainingPeaksContextObserverEnabled,
   maybeRunCoachMemoryExtractionForObservation,
 } from "@/features/trainingpeaks/context-observer";
+import type { CoachMemoryInsertedItem } from "@/features/trainingpeaks/coach-memory-extraction";
+import { planMemorySignalFromInsertedItem } from "@/features/trainingpeaks/memory-signal-bridge";
 import {
   getPreviousTrainingPeaksWeek,
   resolveTrainingPeaksWeekKeyword,
@@ -281,6 +287,9 @@ const TP_CALLBACK_ACTION_CONFIRM_SOURCE_PREFIX = "tp:ta:cs:";
 const TP_CALLBACK_ACTION_SELECT_WORKOUT_PREFIX = "tp:ta:sw:";
 // Source-ambiguity picker: callback data is `${prefix}${actionId}:${candidateIndex}`.
 const TP_CALLBACK_ACTION_PICK_SOURCE_PREFIX = "tp:ta:ps:";
+// Memory→signal bridge confirmation: callback data is `${prefix}${memoryItemId}`.
+const TP_CALLBACK_SIGNAL_BRIDGE_YES_PREFIX = "tp:sig:y:";
+const TP_CALLBACK_SIGNAL_BRIDGE_NO_PREFIX = "tp:sig:n:";
 const TP_CALLBACK_ACTION_DETAIL_BACK = "tp:ta:back";
 const TP_CALLBACK_CASE_RESOLVE_PREFIX = "tp:case:r:";
 const TP_CALLBACK_CASE_DISMISS_PREFIX = "tp:case:d:";
@@ -463,6 +472,8 @@ type ParsedTrainingPeaksCallback =
   | { kind: "action_confirm_source_date"; actionId: string }
   | { kind: "action_confirm_source_workout"; actionId: string }
   | { kind: "action_pick_source"; actionId: string; candidateIndex: number }
+  | { kind: "signal_bridge_confirm"; memoryItemId: string }
+  | { kind: "signal_bridge_reject"; memoryItemId: string }
   | { kind: "action_detail_back" }
   | { kind: "case_resolve"; shortId: string }
   | { kind: "case_dismiss"; shortId: string }
@@ -4507,6 +4518,15 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
     }
   }
 
+  if (data.startsWith(TP_CALLBACK_SIGNAL_BRIDGE_YES_PREFIX)) {
+    const memoryItemId = data.slice(TP_CALLBACK_SIGNAL_BRIDGE_YES_PREFIX.length).trim();
+    return memoryItemId ? { kind: "signal_bridge_confirm", memoryItemId } : null;
+  }
+  if (data.startsWith(TP_CALLBACK_SIGNAL_BRIDGE_NO_PREFIX)) {
+    const memoryItemId = data.slice(TP_CALLBACK_SIGNAL_BRIDGE_NO_PREFIX.length).trim();
+    return memoryItemId ? { kind: "signal_bridge_reject", memoryItemId } : null;
+  }
+
   return null;
 }
 
@@ -6632,6 +6652,189 @@ async function handleTrainingPeaksActionPickSourceCallback(
   );
 }
 
+// Слой 2 memory→signal bridge. Gated separately so merge doesn't immediately start pinging the
+// coach: flip COACH_MEMORY_SIGNAL_BRIDGE_ENABLED=true to turn on the confirmation prompts.
+function isMemorySignalBridgeEnabled(): boolean {
+  return process.env.COACH_MEMORY_SIGNAL_BRIDGE_ENABLED?.trim() === "true";
+}
+
+// After memory extraction inserts a health/injury fact, offer the coach a one-tap confirmation
+// to turn it into an operational signal. Dedup: skip if an active signal of that type already
+// exists for the student (so we never re-ask "болит колено? да/нет" on the same standing issue).
+async function sendMemorySignalBridgeConfirmations(input: {
+  studentId: string;
+  studentName: string;
+  items: CoachMemoryInsertedItem[];
+}): Promise<void> {
+  if (!isMemorySignalBridgeEnabled() || input.items.length === 0) {
+    return;
+  }
+  const nowIso = new Date().toISOString();
+  const plans = input.items
+    .map((item) => ({ item, plan: planMemorySignalFromInsertedItem(item, input.studentId, nowIso) }))
+    .filter((entry): entry is { item: CoachMemoryInsertedItem; plan: NonNullable<typeof entry.plan> } =>
+      Boolean(entry.plan)
+    );
+  if (plans.length === 0) {
+    return;
+  }
+
+  const coachChatIds = getTrainingPeaksCoachChatIds();
+  if (coachChatIds.length === 0) {
+    return;
+  }
+
+  let activeSignalTypes: Set<string>;
+  try {
+    const activeSignals = await listActiveTrainingPeaksOperationalSignalsByStudent(input.studentId);
+    activeSignalTypes = new Set(activeSignals.map((signal) => signal.signalType));
+  } catch (error) {
+    console.warn("Memory→signal bridge: failed to load active signals for dedup", {
+      event: "memory_signal_bridge_dedup_failed",
+      studentIdPrefix: input.studentId.slice(0, 8),
+      errorClass: error instanceof Error ? error.name : "UnknownError",
+    });
+    return;
+  }
+
+  for (const { item, plan } of plans) {
+    if (activeSignalTypes.has(plan.signalType)) {
+      continue; // already an active signal of this type — don't re-ask.
+    }
+    const text = `🩺 ${input.studentName} — ${item.summaryText} (${plan.signalKindLabel}).\nЗавести сигнал?`;
+    const markup = createInlineKeyboardMarkup([
+      [
+        createMenuButton("✅ Да", `${TP_CALLBACK_SIGNAL_BRIDGE_YES_PREFIX}${item.id}`),
+        createMenuButton("❌ Нет", `${TP_CALLBACK_SIGNAL_BRIDGE_NO_PREFIX}${item.id}`),
+      ],
+    ]);
+    for (const chatId of coachChatIds) {
+      try {
+        await sendTrainingPeaksMessage(chatId, text, { replyMarkup: markup });
+      } catch (error) {
+        console.warn("Memory→signal bridge: failed to send confirmation", {
+          event: "memory_signal_bridge_send_failed",
+          memoryItemIdPrefix: item.id.slice(0, 8),
+          errorClass: error instanceof Error ? error.name : "UnknownError",
+        });
+      }
+    }
+  }
+}
+
+async function handleTrainingPeaksSignalBridgeCallback(
+  parsedMessage: ParsedTelegramCallbackUpdate,
+  memoryItemId: string,
+  action: "confirm" | "reject"
+): Promise<void> {
+  const emptyMarkup = createInlineKeyboardMarkup([]);
+  const decidedByChatId = String(parsedMessage.chatId);
+  const decidedByUserId = parsedMessage.userId === null ? null : String(parsedMessage.userId);
+
+  const item = await getTrainingPeaksStudentMemoryItemById(memoryItemId);
+  if (!item) {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      "Факт памяти не найден или уже недоступен.",
+      emptyMarkup
+    );
+    return;
+  }
+
+  if (action === "reject") {
+    await recordTrainingPeaksMemorySignalBridgeDecision({
+      memoryItemId,
+      decision: "rejected",
+      decidedByChatId,
+      decidedByUserId,
+      createdSignalId: null,
+    });
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      `❌ Не заводим сигнал: ${item.summaryText}`,
+      emptyMarkup
+    );
+    return;
+  }
+
+  const nowIso = new Date().toISOString();
+  const plan = planMemorySignalFromInsertedItem(
+    {
+      id: item.id,
+      memoryType: item.memoryType,
+      summaryText: item.summaryText,
+      validUntil: item.validUntil,
+    },
+    item.studentId,
+    nowIso
+  );
+  if (!plan) {
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      "Этот факт нельзя завести как сигнал.",
+      emptyMarkup
+    );
+    return;
+  }
+
+  // Re-check dedup at confirm time (idempotent: the upsert dedupeKey also protects).
+  const activeSignals = await listActiveTrainingPeaksOperationalSignalsByStudent(item.studentId);
+  if (activeSignals.some((signal) => signal.signalType === plan.signalType)) {
+    await recordTrainingPeaksMemorySignalBridgeDecision({
+      memoryItemId,
+      decision: "confirmed",
+      decidedByChatId,
+      decidedByUserId,
+      createdSignalId: null,
+    });
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      `Сигнал такого типа уже активен — не дублирую: ${item.summaryText}`,
+      emptyMarkup
+    );
+    return;
+  }
+
+  const upsertResult = await upsertTrainingPeaksOperationalSignalFromCandidate({
+    studentId: item.studentId,
+    signalType: plan.signalType,
+    sourceType: "memory_signal_bridge",
+    sourceObservationId: item.sourceObservationId,
+    structuredPayload: plan.structuredPayload,
+    confidence: plan.confidence,
+    validUntil: plan.validUntil,
+    linkedMemoryItemId: item.id,
+    dedupeKey: plan.dedupeKey,
+    requiresCoachClose: plan.requiresCoachClose,
+    metadata: {
+      source_script: "memory-signal-bridge",
+      classifier_version: "memory-bridge-v1",
+      classifier_reason: "memory_fact_confirmed_by_coach",
+      display_summary: item.summaryText,
+      latest_summary: item.summaryText,
+    },
+  });
+
+  await recordTrainingPeaksMemorySignalBridgeDecision({
+    memoryItemId,
+    decision: "confirmed",
+    decidedByChatId,
+    decidedByUserId,
+    createdSignalId: upsertResult.signal.id,
+  });
+
+  await editTrainingPeaksMenuMessage(
+    parsedMessage.chatId,
+    parsedMessage.messageId,
+    `✅ Сигнал заведён (${plan.signalKindLabel}): ${item.summaryText}`,
+    emptyMarkup
+  );
+}
+
 function isTrainingPeaksReplyDraftAutoDetectEnabled(): boolean {
   return process.env.TP_REPLY_DRAFT_AUTO_ENABLED?.trim() === "dry_run";
 }
@@ -6717,7 +6920,7 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
         // Coach memory extraction on the business-DM channel (the main student channel).
         // Same shared helper as the observer path: flag-gated, pre-filtered, self-contained
         // try/catch so a memory failure never breaks message handling.
-        await maybeRunCoachMemoryExtractionForObservation({
+        const insertedMemoryItems = await maybeRunCoachMemoryExtractionForObservation({
           studentId: observation.studentId,
           observationId: observation.id,
           observedAt: observation.observedAt,
@@ -6725,6 +6928,25 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
           labels: observation.labels,
           sourceType: observation.sourceType,
         });
+
+        // Слой 2 memory→signal bridge: offer the coach a confirmation to turn a freshly caught
+        // health/injury fact into an operational signal. Flag-gated + self-contained.
+        if (observation.studentId && insertedMemoryItems.length > 0 && isMemorySignalBridgeEnabled()) {
+          try {
+            const bridgeStudent = await getTrainingPeaksStudentById(observation.studentId);
+            await sendMemorySignalBridgeConfirmations({
+              studentId: observation.studentId,
+              studentName: bridgeStudent?.studentName ?? "Ученик",
+              items: insertedMemoryItems,
+            });
+          } catch (bridgeError) {
+            console.warn("Memory→signal bridge: confirmation flow failed", {
+              event: "memory_signal_bridge_flow_failed",
+              studentIdPrefix: observation.studentId.slice(0, 8),
+              errorClass: bridgeError instanceof Error ? bridgeError.name : "UnknownError",
+            });
+          }
+        }
       }
     } catch (error) {
       console.warn("Failed to record TrainingPeaks telegram business context observation", {
@@ -9963,6 +10185,16 @@ export async function handleTrainingPeaksTelegramCallback(
         callback.actionId,
         callback.candidateIndex
       );
+      return "handled";
+    }
+
+    if (callback.kind === "signal_bridge_confirm") {
+      await handleTrainingPeaksSignalBridgeCallback(parsedMessage, callback.memoryItemId, "confirm");
+      return "handled";
+    }
+
+    if (callback.kind === "signal_bridge_reject") {
+      await handleTrainingPeaksSignalBridgeCallback(parsedMessage, callback.memoryItemId, "reject");
       return "handled";
     }
 

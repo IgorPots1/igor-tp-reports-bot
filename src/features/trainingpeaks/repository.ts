@@ -7119,6 +7119,55 @@ export async function listActiveTrainingPeaksStudentMemoryItems(
   return ((data as TrainingPeaksStudentMemoryItemRow[]) ?? []).map(mapTrainingPeaksStudentMemoryItemRow);
 }
 
+export async function getTrainingPeaksStudentMemoryItemById(
+  id: string
+): Promise<TrainingPeaksStudentMemoryItem | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_memory_items")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`Failed to get TrainingPeaks student memory item ${id}: ${error.message}`);
+  }
+  return data ? mapTrainingPeaksStudentMemoryItemRow(data as TrainingPeaksStudentMemoryItemRow) : null;
+}
+
+// Records the coach's memory→signal bridge decision in the memory item metadata (no new table).
+// Used to capture rejections as data for a future automation-threshold decision (like Слой 1 close).
+export async function recordTrainingPeaksMemorySignalBridgeDecision(input: {
+  memoryItemId: string;
+  decision: "confirmed" | "rejected";
+  decidedByChatId: string | null;
+  decidedByUserId: string | null;
+  createdSignalId?: string | null;
+}): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const existing = await getTrainingPeaksStudentMemoryItemById(input.memoryItemId);
+  if (!existing) {
+    return;
+  }
+  const nowIso = new Date().toISOString();
+  const metadata = {
+    ...(existing.metadata ?? {}),
+    signal_bridge_decision: input.decision,
+    signal_bridge_decided_at: nowIso,
+    signal_bridge_decided_by_chat_id: input.decidedByChatId,
+    signal_bridge_decided_by_user_id: input.decidedByUserId,
+    signal_bridge_created_signal_id: input.createdSignalId ?? null,
+  };
+  const { error } = await supabase
+    .from("trainingpeaks_student_memory_items")
+    .update({ metadata, updated_at: nowIso })
+    .eq("id", input.memoryItemId);
+  if (error) {
+    throw new Error(
+      `Failed to record memory→signal bridge decision for item ${input.memoryItemId}: ${error.message}`
+    );
+  }
+}
+
 export async function listTrainingPeaksStudentMemoryItemsForStudents(
   studentIds: readonly string[],
   options: ListTrainingPeaksStudentMemoryItemsForStudentsOptions = {}
