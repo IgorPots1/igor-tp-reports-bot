@@ -661,6 +661,75 @@ async function resolveStudentByTelegramIdentity(input: {
   };
 }
 
+// Shared coach-memory extraction step. Used by BOTH the observer path (group_topic/private_dm)
+// and the business-DM path, so memory works on every channel — business DM is the main student
+// channel and previously never ran extraction (see ops-log 2026-06-26 debug-memory-business-path).
+// Same flag, same pre-filter, same model, same try/catch: a memory failure must never break
+// message handling. Re-uses processCoachMemoryForObservation as-is (no extraction logic duplicated).
+export async function maybeRunCoachMemoryExtractionForObservation(input: {
+  studentId: string | null | undefined;
+  observationId: string;
+  observedAt: string;
+  textPreview: string | null;
+  labels: string[];
+  sourceType: string | null;
+}): Promise<void> {
+  if (!input.studentId || process.env.COACH_MEMORY_EXTRACTION_ENABLED?.trim() !== "true") {
+    return;
+  }
+  if (!shouldExtractMemoryForLabels(input.labels as PersistedObservationLabel[])) {
+    console.debug("TrainingPeaks coach memory pre-filter skip", {
+      event: "trainingpeaks_coach_memory_prefilter_skipped",
+      observationIdPrefix: input.observationId.slice(0, 8),
+      labels: input.labels,
+    });
+    return;
+  }
+
+  const studentId = input.studentId;
+  try {
+    const student = await getTrainingPeaksStudentById(studentId);
+    const activeMemoryItems = await listActiveTrainingPeaksStudentMemoryItems(studentId, {
+      limit: 200,
+    });
+    const memoryResult = await processCoachMemoryForObservation({
+      observationId: input.observationId,
+      studentId,
+      studentName: student?.studentName ?? "Unknown student",
+      textPreview: input.textPreview,
+      labels: input.labels,
+      sourceType: input.sourceType,
+      observedAt: input.observedAt,
+      currentActiveMemoryItems: activeMemoryItems.map((item) => ({
+        id: item.id,
+        memoryType: item.memoryType,
+        summaryText: item.summaryText,
+        structured: item.structured,
+        validUntil: item.validUntil,
+      })),
+    });
+
+    if (memoryResult.status === "processed" && (memoryResult.inserted > 0 || memoryResult.touched > 0)) {
+      console.info("TrainingPeaks coach memory observation write", {
+        event: "trainingpeaks_coach_memory_observation_processed",
+        observationIdPrefix: input.observationId.slice(0, 8),
+        studentIdPrefix: studentId.slice(0, 8),
+        inserted: memoryResult.inserted,
+        touched: memoryResult.touched,
+        skipped: memoryResult.skipped,
+      });
+    }
+  } catch (error) {
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    console.warn("TrainingPeaks coach memory observation processing failed", {
+      event: "trainingpeaks_coach_memory_observation_failed",
+      observationIdPrefix: input.observationId.slice(0, 8),
+      studentIdPrefix: studentId.slice(0, 8),
+      errorClass: errorName,
+    });
+  }
+}
+
 async function persistObserverObservation(input: BuildObservationLogPayloadInput): Promise<void> {
   const payload = buildObservationLogPayload(input);
   const persistedLabels =
@@ -694,57 +763,14 @@ async function persistObserverObservation(input: BuildObservationLogPayloadInput
       },
     });
 
-    if (input.studentId && process.env.COACH_MEMORY_EXTRACTION_ENABLED?.trim() === "true") {
-      if (!shouldExtractMemoryForLabels(persistedLabels)) {
-        console.debug("TrainingPeaks coach memory pre-filter skip", {
-          event: "trainingpeaks_coach_memory_prefilter_skipped",
-          observationIdPrefix: insertedObservation.id.slice(0, 8),
-          labels: persistedLabels,
-        });
-      } else {
-        try {
-          const student = await getTrainingPeaksStudentById(input.studentId);
-          const activeMemoryItems = await listActiveTrainingPeaksStudentMemoryItems(input.studentId, {
-            limit: 200,
-          });
-          const memoryResult = await processCoachMemoryForObservation({
-            observationId: insertedObservation.id,
-            studentId: input.studentId,
-            studentName: student?.studentName ?? "Unknown student",
-            textPreview: payload.textPreview,
-            labels: persistedLabels,
-            sourceType: input.sourceType,
-            observedAt: insertedObservation.observedAt,
-            currentActiveMemoryItems: activeMemoryItems.map((item) => ({
-              id: item.id,
-              memoryType: item.memoryType,
-              summaryText: item.summaryText,
-              structured: item.structured,
-              validUntil: item.validUntil,
-            })),
-          });
-
-          if (memoryResult.status === "processed" && (memoryResult.inserted > 0 || memoryResult.touched > 0)) {
-            console.info("TrainingPeaks coach memory observation write", {
-              event: "trainingpeaks_coach_memory_observation_processed",
-              observationIdPrefix: insertedObservation.id.slice(0, 8),
-              studentIdPrefix: input.studentId.slice(0, 8),
-              inserted: memoryResult.inserted,
-              touched: memoryResult.touched,
-              skipped: memoryResult.skipped,
-            });
-          }
-        } catch (error) {
-          const errorName = error instanceof Error ? error.name : "UnknownError";
-          console.warn("TrainingPeaks coach memory observation processing failed", {
-            event: "trainingpeaks_coach_memory_observation_failed",
-            observationIdPrefix: insertedObservation.id.slice(0, 8),
-            studentIdPrefix: input.studentId.slice(0, 8),
-            errorClass: errorName,
-          });
-        }
-      }
-    }
+    await maybeRunCoachMemoryExtractionForObservation({
+      studentId: input.studentId,
+      observationId: insertedObservation.id,
+      observedAt: insertedObservation.observedAt,
+      textPreview: payload.textPreview,
+      labels: persistedLabels,
+      sourceType: input.sourceType,
+    });
 
     try {
       await persistOperationalSignalsForObservation({

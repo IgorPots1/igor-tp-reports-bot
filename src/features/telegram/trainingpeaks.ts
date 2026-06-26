@@ -175,7 +175,10 @@ import {
   type TrainingPeaksMessageIntentLogStatus,
   updateTrainingPeaksReplyDraftOutcome,
 } from "@/features/trainingpeaks/repository";
-import { isTrainingPeaksContextObserverEnabled } from "@/features/trainingpeaks/context-observer";
+import {
+  isTrainingPeaksContextObserverEnabled,
+  maybeRunCoachMemoryExtractionForObservation,
+} from "@/features/trainingpeaks/context-observer";
 import {
   getPreviousTrainingPeaksWeek,
   resolveTrainingPeaksWeekKeyword,
@@ -6710,6 +6713,18 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
             errorClass: signalError instanceof Error ? signalError.name : "UnknownError",
           });
         }
+
+        // Coach memory extraction on the business-DM channel (the main student channel).
+        // Same shared helper as the observer path: flag-gated, pre-filtered, self-contained
+        // try/catch so a memory failure never breaks message handling.
+        await maybeRunCoachMemoryExtractionForObservation({
+          studentId: observation.studentId,
+          observationId: observation.id,
+          observedAt: observation.observedAt,
+          textPreview: observation.textPreview,
+          labels: observation.labels,
+          sourceType: observation.sourceType,
+        });
       }
     } catch (error) {
       console.warn("Failed to record TrainingPeaks telegram business context observation", {
