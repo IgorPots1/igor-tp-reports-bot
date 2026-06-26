@@ -16,7 +16,7 @@ export type PoseRunnerInitResult =
   | { ok: false; error: string };
 
 export type PoseRunnerProcessResult =
-  | { ok: true; frames: NormalizedLandmark[][]; fps: number; durationSec: number; heroFrameIdx: number }
+  | { ok: true; frames: NormalizedLandmark[][]; fps: number; durationSec: number; heroFrameIdx: number; frameSnapshots: string[] }
   | { ok: false; error: string; errorType: "no_pose" | "too_short" | "too_few_cycles" | "load_error" };
 
 export type ProcessProgressCallback = (progress: number, canvas: HTMLCanvasElement) => void;
@@ -113,8 +113,14 @@ async function _processUrl(
   }
 
   const allFrameLandmarks: NormalizedLandmark[][] = [];
+  const frameSnapshots: string[] = []; // thumbnail per detected frame, index-aligned with allFrameLandmarks
   let bestFrameVisibility = -1;
   let heroFrameIdx = 0;
+
+  // Thumbnail canvas — small JPEG captured BEFORE skeleton draw, aligned with landmark index.
+  // Avoids seek imprecision: frame[k] and snapshot[k] are always the same video frame.
+  let thumbCanvas: HTMLCanvasElement | null = null;
+  let thumbCtx: CanvasRenderingContext2D | null = null;
 
   for (let i = 0; i < totalFrames; i++) {
     const timestamp = i * frameInterval;
@@ -130,6 +136,15 @@ async function _processUrl(
     if (i === 0) {
       canvas.width = video.videoWidth || 640;
       canvas.height = video.videoHeight || 360;
+      // Init thumbnail canvas (raw video, no skeleton) for diagnostic overlay use.
+      // Scale so shortest side ≤ 240px — compact but legible with custom overlays drawn on top.
+      const thumbScale = Math.min(0.25, 240 / Math.max(canvas.width, canvas.height));
+      const thumbW = Math.max(1, Math.round(canvas.width * thumbScale));
+      const thumbH = Math.max(1, Math.round(canvas.height * thumbScale));
+      thumbCanvas = document.createElement("canvas");
+      thumbCanvas.width = thumbW;
+      thumbCanvas.height = thumbH;
+      thumbCtx = thumbCanvas.getContext("2d");
     }
 
     // Detect pose at this timestamp (ms)
@@ -141,7 +156,9 @@ async function _processUrl(
     }
 
     const landmarks = result.landmarks[0];
-    if (landmarks && landmarks.length > 0) {
+    const hasLandmarks = landmarks && landmarks.length > 0;
+
+    if (hasLandmarks) {
       allFrameLandmarks.push(landmarks);
 
       // Track best frame for hero (highest total landmark visibility)
@@ -152,8 +169,17 @@ async function _processUrl(
       }
     }
 
-    // Draw current frame + skeleton to canvas and report progress
+    // Draw raw video frame to main canvas
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // Capture thumbnail NOW — raw video, before skeleton — so snapshot[k] matches frames[k].
+    // Only push when landmarks were found, keeping the two arrays index-aligned.
+    if (hasLandmarks && thumbCtx && thumbCanvas) {
+      thumbCtx.drawImage(canvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
+      frameSnapshots.push(thumbCanvas.toDataURL("image/jpeg", 0.35));
+    }
+
+    // Draw skeleton overlay on main canvas (for the live progress display)
     if (landmarks) {
       drawSkeleton(ctx, landmarks, canvas.width, canvas.height);
     }
@@ -205,6 +231,7 @@ async function _processUrl(
     fps: targetFps,
     durationSec,
     heroFrameIdx,
+    frameSnapshots,
   };
 }
 
