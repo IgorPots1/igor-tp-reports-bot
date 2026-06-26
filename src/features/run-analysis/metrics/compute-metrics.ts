@@ -248,11 +248,25 @@ export function computeMetrics({ frames, fps, durationSec, cadenceFromWatchSpm =
   const cycleAmps = perCycleAmplitude(detrended, contacts);
   const cycleAmp = cycleAmps.length > 0 ? median(cycleAmps) : 0;
   const cameraMotionRatio = cycleAmp > 0 ? trendAmplitude / cycleAmp : Infinity;
+
+  // Horizontal pan detection: static camera → runner crosses frame → large hip.x range.
+  // Panning camera → runner stays centered → small hip.x range despite gait cycles present.
+  let hipXMin = Infinity, hipXMax = -Infinity;
+  for (const frame of frames) {
+    const hp = frame[idx.hip];
+    if ((hp?.visibility ?? 0) > 0.4) {
+      if (hp!.x < hipXMin) hipXMin = hp!.x;
+      if (hp!.x > hipXMax) hipXMax = hp!.x;
+    }
+  }
+  const hipXRange = hipXMin < hipXMax ? hipXMax - hipXMin : 0;
+
   const verticalOscillation: VerticalOscillationMetric = buildVerticalOscillation({
     cycleAmps,
     cycleAmp,
     fullHeightNorm,
     cameraMotionRatio,
+    hipXRange,
     subjectTooSmall,
   });
 
@@ -345,14 +359,20 @@ function buildVerticalOscillation(args: {
   cycleAmp: number;
   fullHeightNorm: number;
   cameraMotionRatio: number;
+  hipXRange: number;
   subjectTooSmall: boolean;
 }): VerticalOscillationMetric {
-  const { cycleAmps, cycleAmp, fullHeightNorm, cameraMotionRatio, subjectTooSmall } = args;
+  const { cycleAmps, cycleAmp, fullHeightNorm, cameraMotionRatio, hipXRange, subjectTooSmall } = args;
 
   if (cycleAmps.length < CFG.oscMinCyclesLow || cycleAmp <= 0 || fullHeightNorm <= 0) {
     return { value: null, band: null, confidence: "unavailable", reason: "few_contact_cycles" };
   }
   if (cameraMotionRatio > CFG.oscCameraMotionUnavailable) {
+    return { value: null, band: null, confidence: "unavailable", reason: "camera_motion" };
+  }
+  // Horizontal pan: runner stays centered → camera follows → oscillation unreliable.
+  // hipXRange large = runner crossed frame = static camera = ok to measure.
+  if (hipXRange < CFG.oscHorizRangeUnavailable) {
     return { value: null, band: null, confidence: "unavailable", reason: "camera_motion" };
   }
 
@@ -362,6 +382,10 @@ function buildVerticalOscillation(args: {
   let confidence: MetricConfidence = "ok";
   let reason: MetricReason | null = null;
   if (cameraMotionRatio > CFG.oscCameraMotionLow) {
+    confidence = "low";
+    reason = "camera_motion";
+  } else if (hipXRange < CFG.oscHorizRangeLow) {
+    // Possible horizontal pan (runner doesn't cross much of the frame)
     confidence = "low";
     reason = "camera_motion";
   } else if (cycleAmps.length < CFG.oscMinCyclesOk) {

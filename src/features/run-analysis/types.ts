@@ -1,12 +1,5 @@
 export type RunnerGoal = "health" | "5k" | "10k" | "half" | "marathon" | "speed";
 
-export type RunnerProfile = {
-  heightCm: number;
-  weightKg: number;
-  paceMinPerKm: string;
-  goal: RunnerGoal;
-};
-
 export type FootStrikeType = "forefoot" | "midfoot" | "heel" | "unknown";
 
 export type MetricSeverity = "ok" | "attention" | "important";
@@ -88,9 +81,8 @@ export type ApiMetric = {
 // Payload to server — only metrics JSON, no video.
 export type RunAnalysisApiPayload = {
   runner_profile: {
-    height_cm: number;
-    weight_kg: number;
-    pace_min_per_km: string;
+    height_cm: number | null; // optional — not used in geometric computation, LLM context only
+    weight_kg: number | null; // optional — not used in geometric computation, LLM context only
     goal: RunnerGoal;
   };
   computed_metrics: {

@@ -75,7 +75,7 @@ function toApiMetric(ms: MetricStatus | undefined): ApiMetric {
 }
 
 function buildPayload(
-  profile: { heightCm: number; weightKg: number; paceMinPerKm: string; goal: RunnerGoal },
+  profile: { heightCm: number | null; weightKg: number | null; goal: RunnerGoal },
   metrics: RunMetrics,
   metricStatuses: Record<string, MetricStatus>
 ): RunAnalysisApiPayload {
@@ -83,7 +83,6 @@ function buildPayload(
     runner_profile: {
       height_cm: profile.heightCm,
       weight_kg: profile.weightKg,
-      pace_min_per_km: profile.paceMinPerKm,
       goal: profile.goal,
     },
     computed_metrics: {
@@ -104,7 +103,6 @@ export default function RunAnalysisTool() {
   const [studentName, setStudentName] = useState("");
   const [heightCm, setHeightCm] = useState("");
   const [weightKg, setWeightKg] = useState("");
-  const [paceMinPerKm, setPaceMinPerKm] = useState("5:30");
   const [goal, setGoal] = useState<RunnerGoal>("health");
   const [cadenceWatch, setCadenceWatch] = useState("");
   const [videoFile, setVideoFile] = useState<File | null>(null);
@@ -125,7 +123,7 @@ export default function RunAnalysisTool() {
   }
 
   async function handleAnalyze() {
-    if (!videoFile || !heightCm || !weightKg) return;
+    if (!videoFile) return;
     const fileErr = validateVideoFile(videoFile);
     if (fileErr) { setFileError(fileErr); return; }
 
@@ -190,7 +188,7 @@ export default function RunAnalysisTool() {
 
       setProcessingStatus("Составляем разбор техники…");
       const payload = buildPayload(
-        { heightCm: Number(heightCm), weightKg: Number(weightKg), paceMinPerKm, goal },
+        { heightCm: Number(heightCm) || null, weightKg: Number(weightKg) || null, goal },
         metrics,
         metricStatuses
       );
@@ -271,7 +269,7 @@ export default function RunAnalysisTool() {
 
             <div style={{ display: "flex", gap: 12 }}>
               <div className="admin-field" style={{ flex: 1 }}>
-                <label>Рост (см) *</label>
+                <label>Рост (см) — необязательно</label>
                 <input
                   className="admin-input"
                   type="number"
@@ -283,7 +281,7 @@ export default function RunAnalysisTool() {
                 />
               </div>
               <div className="admin-field" style={{ flex: 1 }}>
-                <label>Вес (кг) *</label>
+                <label>Вес (кг) — необязательно</label>
                 <input
                   className="admin-input"
                   type="number"
@@ -296,31 +294,19 @@ export default function RunAnalysisTool() {
               </div>
             </div>
 
-            <div style={{ display: "flex", gap: 12 }}>
-              <div className="admin-field" style={{ flex: 1 }}>
-                <label>Рабочий темп (мин/км)</label>
-                <input
-                  className="admin-input"
-                  type="text"
-                  value={paceMinPerKm}
-                  onChange={(e) => setPaceMinPerKm(e.target.value)}
-                  placeholder="5:30"
-                />
-              </div>
-              <div className="admin-field" style={{ flex: 1 }}>
-                <label>Цель</label>
-                <select
-                  className="admin-input"
-                  value={goal}
-                  onChange={(e) => setGoal(e.target.value as RunnerGoal)}
-                >
-                  {GOALS.map((g) => (
-                    <option key={g.value} value={g.value}>
-                      {g.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            <div className="admin-field">
+              <label>Цель</label>
+              <select
+                className="admin-input"
+                value={goal}
+                onChange={(e) => setGoal(e.target.value as RunnerGoal)}
+              >
+                {GOALS.map((g) => (
+                  <option key={g.value} value={g.value}>
+                    {g.label}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div className="admin-field">
@@ -364,7 +350,7 @@ export default function RunAnalysisTool() {
               <button
                 className="admin-button"
                 onClick={handleAnalyze}
-                disabled={!videoFile || !!fileError || !heightCm || !weightKg}
+                disabled={!videoFile || !!fileError}
               >
                 Анализировать
               </button>

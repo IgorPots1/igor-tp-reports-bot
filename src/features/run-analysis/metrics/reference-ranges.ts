@@ -77,12 +77,19 @@ export const CONFIDENCE_CONFIG = {
   // vertical oscillation: contact cycles + camera-motion tolerance
   oscMinCyclesOk: 3,
   oscMinCyclesLow: 1,
-  // ratio of (linear hip.y drift over clip) / (per-cycle oscillation amplitude).
-  // Static handheld shaking → small net drift → low ratio → confidence "low" (show band).
-  // Panning camera following runner → large sustained drift → high ratio → "unavailable".
-  // TODO: tune on real handheld vs panning footage (values below are initial calibration).
-  oscCameraMotionLow: 1.2, // above → "low" (some unsteadiness; show band as orientation)
-  oscCameraMotionUnavailable: 5.0, // above → "unavailable" (real directional pan)
+  // Vertical camera motion: ratio of (linear hip.y drift) / (per-cycle oscillation amplitude).
+  // Static handheld shaking → small net drift → low ratio → "low" (show band).
+  // Panning vertically → large drift → high ratio → "unavailable".
+  // TODO: tune on real handheld vs vertical-pan footage.
+  oscCameraMotionLow: 1.2, // above → "low" (some vertical unsteadiness; show band)
+  oscCameraMotionUnavailable: 5.0, // above → "unavailable" (clear vertical pan)
+  // Horizontal pan detection: hip.x range across the clip (normalized 0–1).
+  // Static camera: runner crosses frame → large range (typically 0.3–0.9+).
+  // Panning camera following runner: runner stays centered → small range (typically < 0.15).
+  // Only applied when gait cycles are confirmed (early-return guard already ensures this).
+  // TODO: tune on real panning vs static footage.
+  oscHorizRangeLow: 0.25,         // below → possible horizontal pan → "low" (show band)
+  oscHorizRangeUnavailable: 0.10, // below → clear horizontal pan → "unavailable"
   // overall gate: minimum measured metrics that must be available to show a report
   minAvailableMetricsForReport: 2,
 } as const;
