@@ -1422,6 +1422,24 @@ export default async function CoachOsNutritionStudentCardPage({
                     <dt>Вес (кг)</dt>
                     <dd>{bodyweightKg ?? "—"}</dd>
                   </div>
+                  {card.context.weeklyCheckin && (
+                    <div>
+                      <dt>Чек-ин (Э / С / К)</dt>
+                      <dd>
+                        {card.context.weeklyCheckin.energy ?? "—"}&thinsp;/&thinsp;
+                        {card.context.weeklyCheckin.wellbeing ?? "—"}&thinsp;/&thinsp;
+                        {card.context.weeklyCheckin.eatingComfort ?? "—"}
+                      </dd>
+                    </div>
+                  )}
+                  {selectedReport?.rawText && (
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <dt>Заметка ученицы</dt>
+                      <dd className="admin-muted" style={{ whiteSpace: "pre-wrap" }}>
+                        {selectedReport.rawText}
+                      </dd>
+                    </div>
+                  )}
                   <div>
                     <dt>Белок достаточный</dt>
                     <dd>

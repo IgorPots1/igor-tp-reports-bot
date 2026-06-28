@@ -2,7 +2,7 @@ import Script from "next/script";
 import type { ReactNode } from "react";
 
 export const metadata = {
-  title: "Питание — форма обратной связи",
+  title: "Недельный отчёт",
   robots: "noindex,nofollow",
 };
 

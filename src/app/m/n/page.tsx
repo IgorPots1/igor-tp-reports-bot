@@ -28,70 +28,68 @@ type UploadPreview = {
 
 type Step = "idle" | "uploading" | "preview" | "checkin" | "confirming" | "done" | "error";
 
-// Force-light palette for the check-in step (Whoop-style). Explicit hex so the
-// phone's Telegram dark theme can't wash out the scale taps (same intent as ReviewScreen).
+// Force-light palette for the check-in step. Explicit hex so the phone's Telegram
+// dark theme can't wash out the scale taps (same intent as ReviewScreen).
 const CHECKIN = {
-  card: {
-    background: "#ffffff",
-    color: "#1c1c1e",
-    borderRadius: 14,
-    padding: "22px 18px",
-    marginTop: 8,
-    boxShadow: "0 1px 4px rgba(0,0,0,0.08)",
+  section: {
+    marginBottom: 24,
   },
-  scaleLabel: { fontSize: 15, fontWeight: 600, color: "#1c1c1e", margin: "0 0 8px" },
-  scaleRow: { display: "flex" as const, gap: 5, marginBottom: 6 },
+  scaleLabel: { fontSize: 14, fontWeight: 600, color: "#8a8f96", letterSpacing: "0.03em", textTransform: "uppercase" as const, margin: "0 0 10px" },
+  scaleRow: { display: "flex" as const, gap: 4, marginBottom: 4 },
   scaleCell: {
     flex: 1,
     minWidth: 0,
-    padding: "10px 0",
-    borderRadius: 8,
-    border: "1px solid #d7dadf",
-    background: "#f3f5f7",
-    color: "#1c1c1e",
-    fontSize: 14,
+    padding: "12px 0",
+    borderRadius: 10,
+    border: "1.5px solid #e5e8ed",
+    background: "#f7f8fa",
+    color: "#5a5f6b",
+    fontSize: 15,
     fontWeight: 600,
     cursor: "pointer",
     textAlign: "center" as const,
+    transition: "background 0.1s, color 0.1s, border-color 0.1s",
   },
   scaleCellActive: {
     background: "#2481cc",
     color: "#ffffff",
-    border: "1px solid #2481cc",
+    border: "1.5px solid #2481cc",
   },
-  poles: {
+  scalePoles: {
     display: "flex" as const,
     justifyContent: "space-between" as const,
-    fontSize: 12,
-    color: "#8a8f96",
-    marginBottom: 18,
+    fontSize: 11,
+    color: "#b0b5be",
+    marginBottom: 22,
+    padding: "0 2px",
   },
-  fieldLabel: { display: "block" as const, fontSize: 15, fontWeight: 600, color: "#1c1c1e", margin: "0 0 6px" },
+  fieldLabel: { display: "block" as const, fontSize: 14, fontWeight: 600, color: "#8a8f96", letterSpacing: "0.03em", textTransform: "uppercase" as const, margin: "0 0 8px" },
   input: {
     display: "block" as const,
     width: "100%",
-    padding: "11px 12px",
-    borderRadius: 8,
-    border: "1px solid #d7dadf",
-    background: "#ffffff",
+    padding: "13px 14px",
+    borderRadius: 10,
+    border: "1.5px solid #e5e8ed",
+    background: "#f7f8fa",
     color: "#1c1c1e",
-    fontSize: 15,
-    marginBottom: 18,
+    fontSize: 16, // ≥16px prevents iOS auto-zoom on focus
+    marginBottom: 20,
     boxSizing: "border-box" as const,
   },
-  note: { fontSize: 13, color: "#8a8f96", margin: "0 0 16px", lineHeight: 1.4 },
+  note: { fontSize: 13, color: "#b0b5be", margin: "0 0 20px", lineHeight: 1.45 },
+  divider: { height: 1, background: "#f0f2f5", margin: "4px 0 20px" },
 };
 
-// Whoop-style 1-10 selector. Neutral noun label; impersonal poles. Tap to set,
-// tap the active value again to clear (the field stays optional/skippable).
+// 1-10 scale selector. Tap to set, tap again to clear (skippable).
 function ScaleRow(props: {
   label: string;
   value: number | null;
   onChange: (next: number | null) => void;
   disabled?: boolean;
+  showPoles?: boolean;
 }) {
   return (
-    <div>
+    <div style={CHECKIN.section}>
       <p style={CHECKIN.scaleLabel}>{props.label}</p>
       <div style={CHECKIN.scaleRow}>
         {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => {
@@ -111,10 +109,12 @@ function ScaleRow(props: {
           );
         })}
       </div>
-      <div style={CHECKIN.poles}>
-        <span>1 — низко</span>
-        <span>10 — высоко</span>
-      </div>
+      {props.showPoles && (
+        <div style={CHECKIN.scalePoles}>
+          <span>1 — низко</span>
+          <span>10 — высоко</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -200,7 +200,7 @@ const STYLES = {
     border: "1px solid var(--tg-theme-hint-color, #ddd)",
     background: "var(--tg-theme-bg-color, #fff)",
     color: "var(--tg-theme-text-color, #222)",
-    fontSize: 15,
+    fontSize: 16,
     marginBottom: 12,
     boxSizing: "border-box" as const,
   },
@@ -404,8 +404,18 @@ export default function NutritionMiniApp() {
   return (
     <div style={STYLES.page}>
       <div style={STYLES.card}>
-        <h2 style={STYLES.heading}>Отчёт о питании</h2>
-        <p style={STYLES.subtitle}>Прикрепи PDF-выгрузку из FatSecret за прошедшую неделю.</p>
+        <h2 style={STYLES.heading}>
+          {step === "checkin" || step === "confirming" ? "Самочувствие за неделю" : "Недельный отчёт"}
+        </h2>
+        {(step === "idle" || step === "uploading") && (
+          <p style={STYLES.subtitle}>Прикрепи PDF-выгрузку из FatSecret за прошедшую неделю.</p>
+        )}
+        {(step === "checkin" || step === "confirming") && preview && (
+          <p style={STYLES.subtitle}>
+            {formatIsoToDisplay(preview.needsManualWeek ? manualWeekFrom : preview.weekFrom)}–
+            {formatIsoToDisplay(preview.needsManualWeek ? manualWeekTo : preview.weekTo)}
+          </p>
+        )}
 
         {step === "idle" || step === "uploading" ? (
           <>
@@ -535,14 +545,15 @@ export default function NutritionMiniApp() {
         ) : null}
 
         {(step === "checkin" || step === "confirming") && preview ? (
-          <div style={{ marginTop: 4 }}>
-            <span style={STYLES.stepLabel}>Шаг 3 · Самочувствие (по желанию)</span>
+          <div style={{ marginTop: 8 }}>
             <p style={CHECKIN.note}>
-              Можно пропустить и сразу отправить. Оценки помогают тренеру точнее разобрать неделю.
+              Всё по желанию. Оценки помогают тренеру точнее разобрать неделю.
             </p>
             <ScaleRow label="Энергия" value={energy} onChange={setEnergy} disabled={busy} />
             <ScaleRow label="Самочувствие" value={wellbeing} onChange={setWellbeing} disabled={busy} />
-            <ScaleRow label="Комфорт питания" value={eatingComfort} onChange={setEatingComfort} disabled={busy} />
+            <ScaleRow label="Комфорт питания" value={eatingComfort} onChange={setEatingComfort} disabled={busy} showPoles />
+
+            <div style={CHECKIN.divider} />
 
             <label style={CHECKIN.fieldLabel}>Вес</label>
             <input
@@ -555,10 +566,10 @@ export default function NutritionMiniApp() {
               disabled={busy}
             />
 
-            <label style={CHECKIN.fieldLabel}>Заметка</label>
+            <label style={CHECKIN.fieldLabel}>Заметка тренеру</label>
             <textarea
               placeholder="По желанию: что было особенного за неделю"
-              style={{ ...CHECKIN.input, minHeight: 80, resize: "vertical" as const }}
+              style={{ ...CHECKIN.input, minHeight: 88, resize: "vertical" as const }}
               value={checkinNote}
               onChange={(e) => setCheckinNote(e.target.value)}
               disabled={busy}
@@ -570,18 +581,18 @@ export default function NutritionMiniApp() {
               onClick={handleConfirm}
               disabled={busy}
             >
-              {step === "confirming" ? "Сохраняю…" : "Подтвердить и отправить"}
+              {step === "confirming" ? "Сохраняю…" : "Отправить →"}
             </button>
             <button
               type="button"
-              style={{ ...STYLES.btn, ...STYLES.btnOutline }}
+              style={{ ...STYLES.btn, ...STYLES.btnOutline, marginTop: 4 }}
               onClick={() => {
                 setErrorMsg(null);
                 setStep("preview");
               }}
               disabled={busy}
             >
-              Назад
+              ← Назад
             </button>
           </div>
         ) : null}

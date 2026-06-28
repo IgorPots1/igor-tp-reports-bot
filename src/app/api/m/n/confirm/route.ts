@@ -92,6 +92,18 @@ export async function POST(request: NextRequest): Promise<Response> {
   const weightKg = parseWeightKg(formData.get("weightKg"));
   const studentNote = (formData.get("studentNotes") as string | null)?.trim() || null;
 
+  // Start reading prior weight early (doesn't depend on save result) so the DB
+  // round-trip overlaps with the PDF parsing in saveNutritionFileReport.
+  const priorWeightPromise = weightKg !== null
+    ? getNutritionWeightLogs(student.id).catch((err) => {
+        console.warn("[miniapp.confirm] prior weight read failed", {
+          studentId: student.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return [] as { weightKg: number }[];
+      })
+    : Promise.resolve([] as { weightKg: number }[]);
+
   let result: Awaited<ReturnType<typeof saveNutritionFileReport>>;
   try {
     result = await saveNutritionFileReport({
@@ -111,71 +123,60 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   // Weight + check-in scales are best-effort: the report is already saved above, so a
   // failure here (e.g. table missing) must NOT fail the whole upload — log and move on.
-  if (weightKg !== null) {
-    // Read the prior weight BEFORE inserting the new one, so we can flag a big jump.
-    let previousWeightKg: number | null = null;
-    try {
-      const priorLogs = await getNutritionWeightLogs(student.id);
-      previousWeightKg = priorLogs[0]?.weightKg ?? null;
-    } catch (err) {
-      console.warn("[miniapp.confirm] prior weight read failed", {
-        studentId: student.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+  const priorLogs = await priorWeightPromise;
+  const previousWeightKg: number | null = priorLogs[0]?.weightKg ?? null;
 
-    try {
-      await addNutritionWeightLog({
-        studentId: student.id,
-        weightKg,
-        // Athlete-reported → auto-accepted but NOT coach-confirmed (coach reviews; an
-        // anomaly alert fires separately). The targets resolver prefers confirmed logs.
-        source: "athlete_report",
-        confirmedByCoach: false,
-      });
-    } catch (err) {
-      console.warn("[miniapp.confirm] weight log failed", {
-        studentId: student.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+  // Run weight write + check-in upsert concurrently — neither depends on the other.
+  await Promise.allSettled([
+    weightKg !== null
+      ? addNutritionWeightLog({
+          studentId: student.id,
+          weightKg,
+          // Athlete-reported → auto-accepted but NOT coach-confirmed (coach reviews; an
+          // anomaly alert fires separately). The targets resolver prefers confirmed logs.
+          source: "athlete_report",
+          confirmedByCoach: false,
+        }).catch((err) => {
+          console.warn("[miniapp.confirm] weight log failed", {
+            studentId: student.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        })
+      : Promise.resolve(),
+    energy !== null || wellbeing !== null || eatingComfort !== null
+      ? upsertNutritionCheckin({
+          studentId: student.id,
+          weekFrom: result.effectiveWeekFrom,
+          weekTo: result.effectiveWeekTo,
+          reportId: result.report.id,
+          energy,
+          wellbeing,
+          eatingComfort,
+          source: "athlete_miniapp",
+        }).catch((err) => {
+          console.warn("[miniapp.confirm] check-in upsert failed", {
+            studentId: student.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        })
+      : Promise.resolve(),
+  ]);
 
-    // Anomaly alert to the coach — weight is already written; this never blocks.
-    if (previousWeightKg !== null && Math.abs(weightKg - previousWeightKg) >= WEIGHT_ALERT_THRESHOLD_KG) {
-      const delta = Number((weightKg - previousWeightKg).toFixed(1));
-      const sign = delta > 0 ? "+" : "";
-      const alertText =
-        `⚠️ ${student.studentName}: вес ${weightKg} кг, было ${previousWeightKg} кг,` +
-        ` разница ${sign}${delta} кг — проверь.`;
-      const coachChatIds = getTrainingPeaksCoachChatIds();
-      await Promise.allSettled(
-        coachChatIds.map((chatId) =>
-          sendTelegramMessage(chatId, alertText).catch((err) => {
-            console.warn("[miniapp.confirm] weight alert failed", { chatId, error: String(err) });
-          })
-        )
-      );
-    }
-  }
-
-  if (energy !== null || wellbeing !== null || eatingComfort !== null) {
-    try {
-      await upsertNutritionCheckin({
-        studentId: student.id,
-        weekFrom: result.effectiveWeekFrom,
-        weekTo: result.effectiveWeekTo,
-        reportId: result.report.id,
-        energy,
-        wellbeing,
-        eatingComfort,
-        source: "athlete_miniapp",
-      });
-    } catch (err) {
-      console.warn("[miniapp.confirm] check-in upsert failed", {
-        studentId: student.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+  // Anomaly alert — fires after weight is written; best-effort, non-blocking.
+  if (weightKg !== null && previousWeightKg !== null && Math.abs(weightKg - previousWeightKg) >= WEIGHT_ALERT_THRESHOLD_KG) {
+    const delta = Number((weightKg - previousWeightKg).toFixed(1));
+    const sign = delta > 0 ? "+" : "";
+    const alertText =
+      `⚠️ ${student.studentName}: вес ${weightKg} кг, было ${previousWeightKg} кг,` +
+      ` разница ${sign}${delta} кг — проверь.`;
+    const coachChatIds = getTrainingPeaksCoachChatIds();
+    await Promise.allSettled(
+      coachChatIds.map((chatId) =>
+        sendTelegramMessage(chatId, alertText).catch((err) => {
+          console.warn("[miniapp.confirm] weight alert failed", { chatId, error: String(err) });
+        })
+      )
+    );
   }
 
   console.info("[miniapp.confirm] saved", {
