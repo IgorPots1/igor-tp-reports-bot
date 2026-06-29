@@ -1363,6 +1363,75 @@ export async function removeNutritionAnalysisPatternCandidate(input: {
   }
 }
 
+/**
+ * Coach edit of the athlete-facing PROSE on a generated review (Flow C v1-B).
+ * Writes back ONLY free-text fields the athlete sees in the cards:
+ *   - daily_analysis[].athlete_prose (per day, matched by date)
+ *   - one_focus.statement_ru (the focus line)
+ *   - athlete_opening_note_ru (the warm opening; render still digit-guards it)
+ * Numbers, targets, flags and the canonical day data are left untouched: the whole
+ * nutrition_summary is deep-cloned and only these string fields are replaced.
+ * stripControlCharsForDb keeps newlines (paragraphs) but drops NUL/control chars.
+ * The render-time prose validator (resolveUsableNutritionDayProse) still applies,
+ * so an edit that introduces forbidden numbers falls back to deterministic text.
+ */
+export async function updateNutritionReviewProse(input: {
+  analysisId: string;
+  dayProse?: Record<string, string | null>;
+  oneFocusStatementRu?: string | null;
+  athleteOpeningNoteRu?: string | null;
+}): Promise<NutritionWeeklyAnalysis> {
+  const analysis = await getNutritionWeeklyAnalysisById(input.analysisId);
+  if (!analysis) {
+    throw new Error(`Nutrition weekly analysis not found: ${input.analysisId}`);
+  }
+  // Deep clone the jsonb so nested mutation never touches the cached object.
+  const summary = JSON.parse(JSON.stringify(toObject(analysis.nutritionSummary))) as Record<string, unknown>;
+
+  const cleanProse = (value: string | null | undefined): string | null => {
+    if (value == null) return null;
+    const cleaned = stripControlCharsForDb(value).trim();
+    return cleaned.length > 0 ? cleaned : null;
+  };
+
+  if (input.dayProse) {
+    const daily = Array.isArray(summary.daily_analysis) ? summary.daily_analysis : [];
+    for (const raw of daily) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+      const item = raw as Record<string, unknown>;
+      const date = typeof item.date === "string" ? item.date : null;
+      if (date && Object.prototype.hasOwnProperty.call(input.dayProse, date)) {
+        item.athlete_prose = cleanProse(input.dayProse[date]);
+      }
+    }
+  }
+
+  if (input.oneFocusStatementRu !== undefined) {
+    const oneFocus =
+      summary.one_focus && typeof summary.one_focus === "object" && !Array.isArray(summary.one_focus)
+        ? (summary.one_focus as Record<string, unknown>)
+        : {};
+    oneFocus.statement_ru = cleanProse(input.oneFocusStatementRu);
+    summary.one_focus = oneFocus;
+  }
+
+  if (input.athleteOpeningNoteRu !== undefined) {
+    summary.athlete_opening_note_ru = cleanProse(input.athleteOpeningNoteRu);
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_weekly_analyses")
+    .update({ nutrition_summary: summary })
+    .eq("id", input.analysisId)
+    .select("*")
+    .single();
+  if (error) {
+    throw new Error(`Failed to update nutrition review prose for ${input.analysisId}: ${error.message}`);
+  }
+  return mapNutritionWeeklyAnalysisRow(data as NutritionWeeklyAnalysisRow);
+}
+
 export async function getNutritionWeeklyAnalysisForWeek(input: {
   studentId: string;
   weekFrom: string;

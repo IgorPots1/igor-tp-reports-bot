@@ -38,6 +38,7 @@ import {
   normalizeNutritionGoalType,
   normalizeNutritionSex,
   updateNutritionReportNotes,
+  updateNutritionReviewProse,
   upsertNutritionManualRaceEvent,
 } from "@/features/nutrition/repository";
 import {
@@ -308,6 +309,44 @@ export async function updateNutritionReportNotesAction(formData: FormData): Prom
 
   revalidateNutritionPaths(studentId);
   redirect(withNotice(redirectTo, "notice", "Заметки к отчёту сохранены — попадут в следующий разбор."));
+}
+
+export async function updateNutritionReviewProseAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  const analysisId = getRequiredFormValue(formData, "analysisId");
+  await ensureAdminAccess(redirectTo);
+
+  // Flow C v1-B: edit ONLY athlete-facing prose, written back into the review canon
+  // so the Mini App cards re-derive with the edits. Per-day prose fields are named
+  // "prose__<date>"; focus and opening note are single fields. Numbers/flags/targets
+  // are never touched (the repository deep-clones and replaces only these strings).
+  const dayProse: Record<string, string | null> = {};
+  for (const [key, value] of formData.entries()) {
+    if (key.startsWith("prose__") && typeof value === "string") {
+      dayProse[key.slice("prose__".length)] = value;
+    }
+  }
+  const oneFocusStatementRu = getOptionalFormValue(formData, "oneFocusStatementRu");
+  const athleteOpeningNoteRu = getOptionalFormValue(formData, "athleteOpeningNoteRu");
+
+  try {
+    await updateNutritionReviewProse({
+      analysisId,
+      dayProse,
+      oneFocusStatementRu,
+      athleteOpeningNoteRu,
+    });
+  } catch (error) {
+    revalidateNutritionPaths(studentId);
+    const message = error instanceof Error ? error.message : "Не удалось сохранить правки разбора.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+
+  revalidateNutritionPaths(studentId);
+  redirect(
+    withNotice(redirectTo, "notice", "Правки разбора сохранены — попадут в карточки ученицы при открытии.")
+  );
 }
 
 export async function archiveNutritionAnalysisAction(formData: FormData): Promise<void> {
