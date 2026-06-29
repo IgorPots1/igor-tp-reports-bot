@@ -1022,6 +1022,36 @@ export async function createNutritionReport(input: CreateNutritionReportInput): 
   return mapNutritionReportRow(data as NutritionReportRow);
 }
 
+/**
+ * Update only the free-text notes on an EXISTING report (no new report row):
+ * raw_text (the athlete's own words) and coach_notes_ru (the coach note that the
+ * review reads). Used for inline editing of an auto-uploaded report, where these
+ * fields are otherwise only settable at manual upload time. compactText strips
+ * control chars (incl. NUL) so notes are safe for text storage. Numbers/macros
+ * are untouched.
+ */
+export async function updateNutritionReportNotes(input: {
+  reportId: string;
+  rawText: string | null;
+  coachNotesRu: string | null;
+}): Promise<NutritionReport> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_reports")
+    .update({
+      raw_text: compactText(input.rawText),
+      coach_notes_ru: compactText(input.coachNotesRu),
+    })
+    .eq("id", input.reportId)
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to update nutrition report notes for ${input.reportId}: ${error.message}`);
+  }
+  return mapNutritionReportRow(data as NutritionReportRow);
+}
+
 export async function insertNutritionDailyMacros(
   input: InsertNutritionDailyMacrosInput[]
 ): Promise<NutritionDailyMacro[]> {

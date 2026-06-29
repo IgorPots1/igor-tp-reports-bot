@@ -37,6 +37,7 @@ import {
   deleteNutritionManualRaceEvent,
   normalizeNutritionGoalType,
   normalizeNutritionSex,
+  updateNutritionReportNotes,
   upsertNutritionManualRaceEvent,
 } from "@/features/nutrition/repository";
 import {
@@ -283,6 +284,30 @@ export async function archiveNutritionReportAction(formData: FormData): Promise<
 
   revalidateNutritionPaths(studentId);
   redirect(withNotice(redirectTo, "notice", archived ? "Отчёт архивирован." : "Отчёт возвращён из архива."));
+}
+
+export async function updateNutritionReportNotesAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  const reportId = getRequiredFormValue(formData, "reportId");
+  await ensureAdminAccess(redirectTo);
+
+  // studentNotes -> raw_text (athlete words), coachNotesRu -> coach_notes_ru.
+  // Both feed the review context (athleteCommentRu / coachReportNoteRu). This edits
+  // an EXISTING report's notes only — no new report, no macros/number changes.
+  const rawText = getOptionalFormValue(formData, "studentNotes");
+  const coachNotesRu = getOptionalFormValue(formData, "coachNotesRu");
+
+  try {
+    await updateNutritionReportNotes({ reportId, rawText, coachNotesRu });
+  } catch (error) {
+    revalidateNutritionPaths(studentId);
+    const message = error instanceof Error ? error.message : "Не удалось сохранить заметки к отчёту.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+
+  revalidateNutritionPaths(studentId);
+  redirect(withNotice(redirectTo, "notice", "Заметки к отчёту сохранены — попадут в следующий разбор."));
 }
 
 export async function archiveNutritionAnalysisAction(formData: FormData): Promise<void> {

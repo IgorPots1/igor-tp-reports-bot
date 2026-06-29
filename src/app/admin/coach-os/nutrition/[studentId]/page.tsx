@@ -22,6 +22,7 @@ import {
   saveNutritionManualMacrosAction,
   saveNutritionCoachContextAction,
   saveNutritionProfileAction,
+  updateNutritionReportNotesAction,
   sendNutritionFormAction,
   sendNutritionReviewLinkAction,
   approveNutritionReviewAction,
@@ -833,6 +834,41 @@ export default async function CoachOsNutritionStudentCardPage({
               {selectedReportDateNotice ? (
                 <p className="admin-alert admin-alert-warning admin-nutrition-helper">{selectedReportDateNotice}</p>
               ) : null}
+              {/* Inline-редактирование заметок СУЩЕСТВУЮЩЕГО отчёта (в т.ч. авто-
+                  загруженного ученицей). Слова ученицы → raw_text, заметка тренера
+                  → coach_notes_ru; оба доезжают в контекст разбора. НЕ путать с
+                  «Текстом макросов» ручного ввода — это другое поле. */}
+              <details className="admin-nutrition-helper">
+                <summary>Заметки к отчёту (слова ученицы / тренера)</summary>
+                <form className="admin-form-stack" action={updateNutritionReportNotesAction}>
+                  <input type="hidden" name="studentId" value={studentId} />
+                  <input type="hidden" name="reportId" value={selectedReport.id} />
+                  <input type="hidden" name="redirectTo" value={studentCardPath} />
+                  <label className="admin-form-field">
+                    <span>Слова ученицы (что прислала сама)</span>
+                    <textarea
+                      className="admin-textarea admin-textarea-compact"
+                      name="studentNotes"
+                      rows={2}
+                      defaultValue={selectedReport.rawText ?? ""}
+                      placeholder="Слова ученицы как есть: «очень старалась», «не было аппетита из-за жары». Разбор учтёт их тоном."
+                    />
+                  </label>
+                  <label className="admin-form-field">
+                    <span>Заметка тренера (для разбора, не отправляется ученице)</span>
+                    <textarea
+                      className="admin-textarea admin-textarea-compact"
+                      name="coachNotesRu"
+                      rows={2}
+                      defaultValue={selectedReport.coachNotesRu ?? ""}
+                      placeholder="Контекст для разбора: травма, поездка, особый режим питания на этой неделе."
+                    />
+                  </label>
+                  <FormActionButton className="admin-button admin-button-secondary" pendingText="Сохраняю…">
+                    Сохранить заметки к отчёту
+                  </FormActionButton>
+                </form>
+              </details>
             </>
           )}
 
@@ -1317,6 +1353,25 @@ export default async function CoachOsNutritionStudentCardPage({
 
         <article className="admin-card admin-card-compact admin-nutrition-card-wide">
           <h3>Детали для тренера — актуальная сводка</h3>
+          {/* Самочувствие ученицы + вес показываем НЕЗАВИСИМО от разбора: чек-ин
+              грузится отдельно (card.context.weeklyCheckin) и должен быть виден,
+              как только ученица его прислала, даже если обзор ещё не сгенерирован. */}
+          <dl className="admin-meta-list admin-meta-list-compact admin-nutrition-compact-grid">
+            {card.context.weeklyCheckin && (
+              <div>
+                <dt>Самочувствие за неделю (чек-ин)</dt>
+                <dd>
+                  Энергия {card.context.weeklyCheckin.energy ?? "—"} · Самочувствие{" "}
+                  {card.context.weeklyCheckin.wellbeing ?? "—"} · Комфорт еды{" "}
+                  {card.context.weeklyCheckin.eatingComfort ?? "—"}
+                </dd>
+              </div>
+            )}
+            <div>
+              <dt>Вес (кг)</dt>
+              <dd>{bodyweightKg ?? "—"}</dd>
+            </div>
+          </dl>
           {!card.weeklyAnalysis ? (
             <p className="admin-muted">Обзор ещё не сгенерирован.</p>
           ) : (
@@ -1418,20 +1473,7 @@ export default async function CoachOsNutritionStudentCardPage({
                       {(weeklyNutritionSummary.avg_carbs_g as number | null) ?? "—"}
                     </dd>
                   </div>
-                  <div>
-                    <dt>Вес (кг)</dt>
-                    <dd>{bodyweightKg ?? "—"}</dd>
-                  </div>
-                  {card.context.weeklyCheckin && (
-                    <div>
-                      <dt>Чек-ин (Э / С / К)</dt>
-                      <dd>
-                        {card.context.weeklyCheckin.energy ?? "—"}&thinsp;/&thinsp;
-                        {card.context.weeklyCheckin.wellbeing ?? "—"}&thinsp;/&thinsp;
-                        {card.context.weeklyCheckin.eatingComfort ?? "—"}
-                      </dd>
-                    </div>
-                  )}
+                  {/* Вес и чек-ин теперь показаны выше, вне review-гейта. */}
                   {selectedReport?.rawText && (
                     <div style={{ gridColumn: "1 / -1" }}>
                       <dt>Заметка ученицы</dt>
