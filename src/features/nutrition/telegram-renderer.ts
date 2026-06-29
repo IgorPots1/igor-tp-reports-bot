@@ -323,10 +323,32 @@ export function stripAthleteTechJargon(input: string): string {
     .replace(/ {2,}/g, " ");
 }
 
+// Latin glyphs that visually collide with a Cyrillic letter. The model occasionally
+// emits one inside a Russian word (mixed keyboard layout / homoglyph), e.g. a Latin
+// "m" in «moмент». Targets are the visual twins; the few letters with no distinct
+// lowercase twin (h, t, b) reuse their UPPERCASE homoglyph (H→Н, T→Т, B→В).
+const LATIN_TO_CYRILLIC_HOMOGLYPH: Record<string, string> = {
+  a: "а", e: "е", o: "о", c: "с", p: "р", x: "х", y: "у", m: "м", k: "к", h: "н", t: "т", b: "в",
+  A: "А", E: "Е", O: "О", C: "С", P: "Р", X: "Х", Y: "У", M: "М", K: "К", H: "Н", T: "Т", B: "В",
+};
+
+// Fix isolated Latin homoglyphs ONLY inside a token that ALSO contains Cyrillic
+// (a mixed-script word is always a glitch). Pure-Latin tokens — brands, VO2, HIIT,
+// km, PR — contain no Cyrillic, so they are left completely untouched. Non-homoglyph
+// Latin letters (g, w, z, …) are kept as-is even inside a mixed token.
+export function normalizeMixedScriptHomoglyphs(input: string): string {
+  return input.replace(/[A-Za-zА-Яа-яЁё]+/gu, (token) => {
+    if (!/[А-Яа-яЁё]/u.test(token) || !/[A-Za-z]/.test(token)) {
+      return token; // pure-Latin (leave VO2/HIIT/km/brands) or pure-Cyrillic
+    }
+    return token.replace(/[A-Za-z]/g, (ch) => LATIN_TO_CYRILLIC_HOMOGLYPH[ch] ?? ch);
+  });
+}
+
 export function cleanupPlainText(input: string): string {
   return simplifyAthleteWording(
     stripAthleteTechJargon(
-    input
+    normalizeMixedScriptHomoglyphs(input)
       .replace(/```[\s\S]*?```/g, "")
       .replace(/\[([^\]]+)]\([^)]+\)/g, "$1")
       .replace(/\*\*|__/g, "")
