@@ -252,7 +252,13 @@ function normalizeStoredDailyFactItem(raw: unknown): CanonicalDailyFact | null {
       embedded.macroGuardrails ??
       embedded.macro_guardrails,
     athlete_prose: source.athlete_prose ?? item.athlete_prose,
-    target: source.target ?? item.target,
+    // Use the GOAL-AWARE target (top-level item.target = goalAwareCanonicalTarget,
+    // what the prose and plan were generated against), NOT the embedded
+    // canonicalDailyAnalysis.target which keeps the pre-goal raw band. For a lose/gain
+    // student the two diverge (e.g. 290–330 goal vs 350–455 raw band); validating the
+    // prose's deficit against the raw band falsely rejected the whole day to the dry
+    // fallback. For maintain they are byte-identical, so this is a no-op there.
+    target: item.target ?? source.target,
     // Task 10d (Bug 1): carry the goal "deficit line" through normalization so the
     // render-time validator allows its numbers and the goal-aware fallback can fire.
     goal_day_target: source.goal_day_target ?? item.goal_day_target,
