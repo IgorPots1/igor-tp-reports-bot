@@ -1301,6 +1301,20 @@ async function generateNutritionWeeklyReviewNarrative(input: {
   ].join("\n");
 
   const coachMemory = buildCoachMemoryFactsPayload(input.context);
+  // Slim ONLY the model INPUT: each day already carries its facts at top level
+  // (weekday_ru, date_label, training_label, actual, target, findings, flags,
+  // source_quality, hint_for_comment…), which the prompt reads. The embedded
+  // canonical (canonicalDailyAnalysis + canonical_daily_analysis snake copy) and the
+  // duplicate-cased macroGuardrails just repeat that — ~1.6k tok × 2 casings × 7 days,
+  // sent UNCACHED every call. The prompt never references the nested canonical, so drop
+  // it from the input. persistedDailyAnalysis stays FULL (the render reads its canon).
+  const dailyFactsForPrompt = dailyFacts.map((day) => {
+    const slim = { ...day };
+    delete slim.canonicalDailyAnalysis;
+    delete slim.canonical_daily_analysis;
+    delete slim.macroGuardrails;
+    return slim;
+  });
   const factsPayload = {
     student: {
       name: input.context.studentName,
@@ -1340,7 +1354,7 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     data_quality: input.context.dataQuality,
     week_training_context: noTrainingWeek ? "maintenance_no_training" : "training_week",
     next_week_plan: input.nextWeekPlan,
-    daily_analysis: dailyFacts,
+    daily_analysis: dailyFactsForPrompt,
     training_nutrition_links: input.trainingNutritionLinks,
     one_focus: input.oneFocus,
     methodology_signals: input.methodologySignals,
