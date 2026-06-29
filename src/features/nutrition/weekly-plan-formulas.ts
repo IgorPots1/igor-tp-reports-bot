@@ -351,6 +351,15 @@ function isRunningWorkout(typeRaw: string | null, titleRaw: string | null): bool
   return /бег|пробеж|run|running|tempo|темп|интерв|длитель|длинн/.test(`${type} ${title}`);
 }
 
+// Mirror of methodology.isLightIntermittentCrossTrainingTitle — kept local to avoid an
+// import cycle (methodology → activity-energy → weekly-plan-formulas). Light intermittent
+// play / walking (padel, tennis, walk, hike) is fuelled below endurance; bike/swim are
+// intentionally NOT matched here so they keep the full cross-training carb level.
+function isLightIntermittentCrossTrainingTitle(title: string): boolean {
+  const t = title.toLowerCase();
+  return /\bpadel\b|падел|\b(?:walk|walking|hike|hiking|trek|tennis)\b|ходьб|прогулк|поход|хайк|теннис/.test(t);
+}
+
 function normalizeDayType(typeRaw: string | null, titleRaw: string | null): NutritionPlanDayType {
   const type = (typeRaw ?? "").toLowerCase();
   const title = titleRaw ?? "";
@@ -544,14 +553,22 @@ function getTrainingLabel(dayType: NutritionPlanDayType, workoutTitle: string | 
 export function calculateNutritionDayTypeTarget(params: {
   bodyweightKg: number | null;
   dayType: NutritionPlanDayType;
+  isLightCross?: boolean;
 }): NutritionDayTypeTarget | null {
   if (!params.bodyweightKg || params.bodyweightKg <= 0) {
     return null;
   }
-  const formula = FORMULA_BY_DAY_TYPE[params.dayType];
-  if (!formula) {
+  const formulaBase = FORMULA_BY_DAY_TYPE[params.dayType];
+  if (!formulaBase) {
     return null;
   }
+  // Light intermittent cross-training (padel/tennis/walk/hike) is not glycogen-depleting
+  // → carbs at ~easy level (4.5 г/кг), not the 5.2 cross-training value. bike/swim keep
+  // 5.2 (isLightCross is false for them). kcal/protein/fat unchanged.
+  const formula =
+    params.dayType === "cross_training" && params.isLightCross
+      ? { ...formulaBase, carbsPerKg: 4.5 }
+      : formulaBase;
   const bw = params.bodyweightKg;
   return {
     target_kcal: roundToNearest(formula.kcalPerKg * bw, 50),
@@ -1378,6 +1395,9 @@ export function buildNutritionNextWeekPlan(params: {
         : calculateNutritionDayTypeTarget({
             bodyweightKg: params.bodyweightKg,
             dayType: trainingType,
+            isLightCross:
+              trainingType === "cross_training" &&
+              isLightIntermittentCrossTrainingTitle(primaryWorkout?.title ?? ""),
           });
     const baseline =
       previousWeekTargets.byDayType[trainingType] ??
@@ -1579,6 +1599,15 @@ export function buildNutritionNextWeekPlan(params: {
     }
   }
 
+  // Day-type table is per-type (one cross_training row). Treat the cross_training row as
+  // light ONLY when EVERY cross-training workout this week is light (padel/tennis/walk) —
+  // a week that also has a bike/swim endurance session keeps the full 5.2 so it is not
+  // under-fuelled.
+  const crossTrainingWorkouts = parsedWorkouts.filter((workout) => workout.dayType === "cross_training");
+  const weekCrossTrainingIsLight =
+    crossTrainingWorkouts.length > 0 &&
+    crossTrainingWorkouts.every((workout) => isLightIntermittentCrossTrainingTitle(workout.title ?? ""));
+
   return {
     formula_version: "nutrition_next_week_plan_v1",
     bodyweight_kg: params.bodyweightKg ?? null,
@@ -1634,7 +1663,7 @@ export function buildNutritionNextWeekPlan(params: {
       ),
       cross_training: resolveDayTarget(
         "cross_training",
-        calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "cross_training" }),
+        calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "cross_training", isLightCross: weekCrossTrainingIsLight }),
         previousWeekTargets.byDayType.cross_training ?? previousWeekTargets.overall,
         planDayExerciseKcal("cross_training", null, null)
       ),
@@ -1647,7 +1676,7 @@ export function buildNutritionNextWeekPlan(params: {
       long_run: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "long_run" }),
       long_endurance: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "long_endurance" }),
       strength: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "strength" }),
-      cross_training: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "cross_training" }),
+      cross_training: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "cross_training", isLightCross: weekCrossTrainingIsLight }),
     },
     summary: {
       has_training_context: hasTrainingContext,

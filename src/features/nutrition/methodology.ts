@@ -984,10 +984,20 @@ function inferCanonicalTrainingType(input: {
   return "unknown";
 }
 
+// Light, intermittent cross-training — racket games with pauses (padel, tennis) and
+// walking/hiking. These do NOT deplete glycogen like continuous endurance, so they are
+// fuelled at easy-day carb level, not the 5-7 г/кг endurance band. Continuous endurance
+// cross-training (bike, swim, cycling) is intentionally NOT matched here — it stays high.
+function isLightIntermittentCrossTrainingTitle(title: string): boolean {
+  const t = title.toLowerCase();
+  return /\bpadel\b|падел|\b(?:walk|walking|hike|hiking|trek|tennis)\b|ходьб|прогулк|поход|хайк|теннис/.test(t);
+}
+
 function buildCanonicalTarget(input: {
   canonicalTrainingType: NutritionCanonicalTrainingType;
   bodyweightKg: number | null;
   hasTrainingContext: boolean;
+  crossTrainingIsLight?: boolean;
 }): NutritionCanonicalDailyAnalysis["target"] {
   if (!input.bodyweightKg || input.bodyweightKg <= 0) {
     return {
@@ -1058,6 +1068,18 @@ function buildCanonicalTarget(input: {
     };
   }
   if (input.canonicalTrainingType === "cross_training") {
+    if (input.crossTrainingIsLight) {
+      // Padel/tennis/walk/hike: intermittent, not glycogen-depleting → easy-day carb
+      // band (3.5-5), not the 5-7 endurance band. kcal floor unchanged.
+      return {
+        carbsGPerKgMin: 3.5,
+        carbsGPerKgMax: 5,
+        carbsGMin: Number((3.5 * bodyweight).toFixed(0)),
+        carbsGMax: Number((5 * bodyweight).toFixed(0)),
+        kcalMin: Number((30 * bodyweight).toFixed(0)),
+        formulaCode: "canonical_daily_v1_cross_training_light",
+      };
+    }
     return {
       carbsGPerKgMin: 5,
       carbsGPerKgMax: 7,
@@ -1590,6 +1612,9 @@ function analyzeDailyTrainingNutrition(input: {
       canonicalTrainingType,
       bodyweightKg: input.bodyweightKg,
       hasTrainingContext,
+      crossTrainingIsLight:
+        canonicalTrainingType === "cross_training" &&
+        isLightIntermittentCrossTrainingTitle(currentWorkout?.title ?? ""),
     });
     const exerciseEnergy = estimateExerciseEnergyKcal({
       workout: currentWorkout ?? null,
