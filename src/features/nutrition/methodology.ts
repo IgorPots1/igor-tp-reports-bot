@@ -538,6 +538,16 @@ export function normalizeTrainingType(rawType: string | null | undefined, title:
   if (isEasyLightNutritionTitle(title)) {
     return "easy";
   }
+  // HIIT on a watch is almost always a strength/circuit session — athletes rarely do
+  // true HIIT — so treat a HIIT-titled day as STRENGTH (4–6 г/кг), not a hard interval
+  // session (5–6.5 г/кг). A title with REAL interval structure (reps «8×4», VO2,
+  // sprint, «интервалы», tempo/threshold) still wins as hard even if it also says HIIT.
+  const hasRealHardStructure =
+    /\b\d{1,2}\s*(?:x|х|×|\*)\s*\d{1,2}\b/iu.test(title) ||
+    /интерв|interval|vo2|спринт|sprint|hill|порог|threshold|tempo|темп/iu.test(titleLc);
+  if (/\bhiit\b|хиит/iu.test(titleLc) && !hasRealHardStructure) {
+    return "strength";
+  }
   if (hasNutritionIntervalWorkoutEvidence(title)) {
     return "intervals";
   }
