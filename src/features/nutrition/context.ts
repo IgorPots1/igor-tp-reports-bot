@@ -80,6 +80,24 @@ const NUTRITION_FOOD_ITEM_SOURCES = new Set<NutritionFoodItemSource>([
 ]);
 
 /**
+ * Strip C0 control characters that Postgres rejects in text / jsonb. A NUL byte
+ * (char code 0) from broken PDF extraction lands in the jsonb food_items column
+ * and makes the whole insert fail with "unsupported Unicode escape sequence".
+ * Tab (9), newline (10) and carriage return (13) are kept — the whitespace
+ * collapse at the call sites normalizes them anyway.
+ */
+export function stripControlCharsForDb(value: string): string {
+  let out = "";
+  for (const ch of value) {
+    const code = ch.charCodeAt(0);
+    if (code > 31 || code === 9 || code === 10 || code === 13) {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+/**
  * Defensive shape validation for food items coming from DB / external JSON.
  * Drops anything that is not a plausible product row so the composer never
  * receives malformed entries.
@@ -94,7 +112,10 @@ export function sanitizeNutritionFoodItems(value: unknown): NutritionFoodItem[] 
       continue;
     }
     const entry = raw as Record<string, unknown>;
-    const name = typeof entry.name === "string" ? entry.name.replace(/\s+/g, " ").trim() : "";
+    const name =
+      typeof entry.name === "string"
+        ? stripControlCharsForDb(entry.name).replace(/\s+/g, " ").trim()
+        : "";
     if (name.length < 2 || !/[a-zа-яё]/i.test(name)) {
       continue;
     }

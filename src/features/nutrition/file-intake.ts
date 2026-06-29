@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import {
   normalizeManualMacroInput,
+  stripControlCharsForDb,
   type NormalizedManualMacroRow,
   type NutritionFoodItem,
   type NutritionMealSection,
@@ -253,7 +254,9 @@ function pickFoodMacros(values: number[]): {
 // Also truncate the 120-char cap at a word boundary (no "Молодым Карт[офелем]" stub).
 const NUTRITION_GLUED_PREPOSITION_RE = /(^|\s)(с|со|в|во|из|на|по|от|до|за|для|при|у|к|о|об)([А-ЯЁ])/gu;
 function tidyParsedFoodName(raw: string): string {
-  const cleaned = raw
+  // Defense in depth: drop C0 control chars (NUL from broken PDF extraction) at
+  // the parse source, so a dirty name never propagates into jsonb / prose / memory.
+  const cleaned = stripControlCharsForDb(raw)
     .replace(/[.…]{2,}/g, " ")
     .replace(/\s+/g, " ")
     .replace(NUTRITION_GLUED_PREPOSITION_RE, "$1$2 $3")

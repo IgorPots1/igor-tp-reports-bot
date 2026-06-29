@@ -17,6 +17,7 @@ import { listTrainingPeaksAdminStudents } from "@/features/trainingpeaks/admin";
 import { buildNutritionNextActionHref } from "@/features/nutrition/admin-labels";
 import {
   sanitizeNutritionFoodItems,
+  stripControlCharsForDb,
   type NutritionFoodItem,
 } from "@/features/nutrition/context";
 
@@ -668,7 +669,10 @@ function mapNutritionWeeklyPlanRow(row: NutritionWeeklyPlanRow): NutritionWeekly
 }
 
 function compactText(value: string | null | undefined): string | null {
-  const normalized = value?.replace(/\s+/g, " ").trim() ?? "";
+  // Strip C0 control chars (esp. NUL) before whitespace-collapse: a NUL in a
+  // text/jsonb value sent to Postgres throws "unsupported Unicode escape sequence"
+  // and fails the whole insert.
+  const normalized = value ? stripControlCharsForDb(value).replace(/\s+/g, " ").trim() : "";
   return normalized || null;
 }
 
