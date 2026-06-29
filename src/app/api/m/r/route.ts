@@ -179,7 +179,11 @@ export async function POST(request: NextRequest): Promise<Response> {
         carbsG: m.carbsG,
         marker: meta?.marker ?? "unknown",
         trainingLabel: meta?.trainingLabel ?? null,
-        prose: card?.prose ?? null,
+        // The card prose bypasses the telegram-text cleanupPlainText path, so a
+        // deterministic comment's long dash («при цели многовато — ориентир…») reaches
+        // the athlete card raw. Normalize «—»/«–» → «-» (Igor's style; no dashes for the
+        // athlete either). Display-only — card layout/flags untouched.
+        prose: card?.prose ? card.prose.replace(/[—–]/g, "-") : null,
         isRest: card?.isRest ?? false,
         isRun: card?.isRun ?? false,
         isKey: card?.isKey ?? false,

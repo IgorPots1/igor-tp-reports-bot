@@ -192,6 +192,13 @@ function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+// Coach-view only: long dashes "—"/"–" → "-" (Igor's style; the athlete text is
+// already cleaned by cleanupPlainText/resolveUsableNutritionDayProse, so this is a
+// display-only pass for the coach screens — day-by-day divider, summary, Flow C editor).
+function coachShortDashes(value: string): string {
+  return value.replace(/[—–]/g, "-");
+}
+
 function asObject(value: unknown): Record<string, unknown> {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     return value as Record<string, unknown>;
@@ -471,15 +478,16 @@ export default async function CoachOsNutritionStudentCardPage({
       return {
         date,
         label: [weekday, dateLabel].filter(Boolean).join(" · ") || date,
-        prose: typeof day.athlete_prose === "string" ? day.athlete_prose : "",
+        prose: coachShortDashes(typeof day.athlete_prose === "string" ? day.athlete_prose : ""),
       };
     })
     .filter((block): block is { date: string; label: string; prose: string } => block !== null);
-  const reviewFocusStatement = typeof oneFocus.statement_ru === "string" ? oneFocus.statement_ru : "";
-  const reviewOpeningNote =
+  const reviewFocusStatement = coachShortDashes(typeof oneFocus.statement_ru === "string" ? oneFocus.statement_ru : "");
+  const reviewOpeningNote = coachShortDashes(
     typeof weeklyNutritionSummary.athlete_opening_note_ru === "string"
       ? weeklyNutritionSummary.athlete_opening_note_ru
-      : "";
+      : ""
+  );
   const methodologySignals = asObject(weeklyNutritionSummary.methodology_signals);
   const dataQualitySummary = asObject(weeklyNutritionSummary.data_quality_summary);
   const coachSummaryText =
@@ -549,7 +557,11 @@ export default async function CoachOsNutritionStudentCardPage({
     profilePreferences: card.profile?.preferences ?? null,
     planWeekMode: planWeek?.mode,
   });
-  const derivedCoachDayByDayText = buildDerivedNutritionCoachDayByDayText(card.weeklyAnalysis);
+  const derivedCoachDayByDayTextRaw = buildDerivedNutritionCoachDayByDayText(card.weeklyAnalysis);
+  // Coach day-by-day carries the "— — —" day divider raw (the athlete render cleans it,
+  // this coach view does not) → normalize long dashes for the coach screen.
+  const derivedCoachDayByDayText =
+    derivedCoachDayByDayTextRaw != null ? coachShortDashes(derivedCoachDayByDayTextRaw) : null;
   const coachDayByDayDisplayText = derivedCoachDayByDayText ?? dayByDayAnalysisText;
   const combinedDoNotSendReasons = [
     ...new Set([
@@ -581,13 +593,15 @@ export default async function CoachOsNutritionStudentCardPage({
     ? formatNutritionReportDateMismatchCardNotice(asObject(selectedReport.dataQuality))
     : null;
   const actionableConsistencyIssues = getActionablePageConsistencyIssues(pageConsistencyIssues);
-  const derivedCoachSummaryText = card.weeklyAnalysis
+  const derivedCoachSummaryTextRaw = card.weeklyAnalysis
     ? buildDerivedNutritionCoachSummary({
         review: card.weeklyAnalysis,
         plan: displayPlan,
         consistencyIssues: pageConsistencyIssues,
       })
     : null;
+  const derivedCoachSummaryText =
+    derivedCoachSummaryTextRaw != null ? coachShortDashes(derivedCoachSummaryTextRaw) : null;
   const showCoachDetailsStaleHint = hasStaleReviewIssues(pageConsistencyIssues);
 
   return (
