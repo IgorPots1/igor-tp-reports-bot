@@ -161,20 +161,16 @@ const INTERVAL_REPEAT_PATTERN = /\b\d+\s*[xх]\s*\d+([,.]\d+)?\s*(мин|min|с�
 const INTERVAL_DISTANCE_PATTERN = /\b\d+\s*[xх]\s*\d{2,4}\s*(м|m)?/i;
 const INTERVAL_KEYWORD_PATTERN = /(интервал|interval|vo2|повтор|repeats?)/i;
 
-const KEY_ROLE_PRIORITY: NutritionNarrativeWorkoutRole[] = [
-  // A race is THE event of the week — it outranks every training role so the
-  // week's "key work" is the start, not a pre-race interval/tempo session.
+// Roles that count as a KEY workout of the week. A week can have several (a long run
+// AND an interval/tempo session) — every day in one of these roles is marked isKey, not
+// just the single highest-priority one. Array order = how they are listed in the weekly
+// "key workouts" sentence: the race/long session first, then quality work.
+const KEY_WORKOUT_ROLE_ORDER: NutritionNarrativeWorkoutRole[] = [
   "race",
+  "long_run",
   "long_endurance",
   "key_interval",
   "key_tempo",
-  "long_run",
-  "combined_load",
-  "strength",
-  "cross_training",
-  "easy_run",
-  "rest",
-  "unknown",
 ];
 
 export function isKeyIntervalTitle(title: string): boolean {
@@ -594,6 +590,54 @@ export function formatNutritionWorkoutLabelForAthlete(input: {
   return humanizeNutritionTrainingLabel(input.trainingLabel, input.trainingType);
 }
 
+// Join a list naturally with «, » and a final «и»: ["A","B"] → «A и B»; ["A","B","C"] → «A, B и C».
+function joinWithIRu(items: string[]): string {
+  if (items.length <= 1) {
+    return items[0] ?? "";
+  }
+  return `${items.slice(0, -1).join(", ")} и ${items[items.length - 1]}`;
+}
+
+// Distance for the key-workouts sentence, rounded to WHOLE km — «17 км», «21 км». A
+// fractional «17,1 км» reads as noise in athlete prose, so the decimal is dropped.
+function formatKeyWorkoutDistanceRu(distanceKm: number): string {
+  return `${Math.round(distanceKm)} км`;
+}
+
+// Specific label for a KEY workout in the weekly "key workouts" sentence — built from the
+// RAW TrainingPeaks workout (title + distance), NOT the flattened canonical label («бег»).
+// Interval/tempo reps in the title become «интервалы 6×5 мин» (the reps win even when the
+// flattened role reads tempo); a long run/endurance/race is named with its distance
+// («длительная 17 км»). Used ONLY for the summary sentence — canonical is untouched.
+export function buildKeyWorkoutPhraseLabel(input: {
+  role: NutritionNarrativeWorkoutRole;
+  title: string;
+  distanceKm: number | null;
+  trainingType: string;
+}): string {
+  const title = (input.title ?? "").trim();
+  const fallback = humanizeNutritionTrainingLabel(title, input.trainingType);
+  const dist = input.distanceKm && input.distanceKm > 0 ? formatKeyWorkoutDistanceRu(input.distanceKm) : null;
+  const repMatch = title.match(INTERVAL_REPEAT_PATTERN);
+  if (
+    repMatch &&
+    (isKeyIntervalTitle(title) ||
+      INTERVAL_KEYWORD_PATTERN.test(title) ||
+      input.role === "key_interval" ||
+      input.role === "key_tempo")
+  ) {
+    const reps = repMatch[0].replace(/\s*[xх]\s*/iu, "×").replace(/\s+/gu, " ").trim();
+    return `интервалы ${reps}`;
+  }
+  if (input.role === "long_run" || input.role === "long_endurance") {
+    return dist ? `длительная ${dist}` : fallback;
+  }
+  if (input.role === "race") {
+    return dist ? `забег ${dist}` : fallback || "забег";
+  }
+  return fallback;
+}
+
 export function formatNutritionWorkoutLabelForCoach(input: {
   trainingLabel: string;
   trainingType: string;
@@ -622,31 +666,13 @@ export function resolveWeekNarrativeDayRoles(
   }>
 ): Map<string, NutritionNarrativeDayRoleInfo> {
   const resolved = new Map<string, NutritionNarrativeDayRoleInfo>();
-  let weekKeyRole: NutritionNarrativeWorkoutRole | null = null;
-  let weekKeyDate: string | null = null;
 
+  // Mark EVERY day in a key role as a key workout — a week often has more than one
+  // (e.g. a long run AND an interval/tempo session). Previously only the single
+  // highest-priority day was marked, which hid the other key sessions.
   for (const day of days) {
     const { role, reason } = resolveNutritionNarrativeWorkoutRole(day);
-    resolved.set(day.date, { role, isKey: false, reason });
-    if (
-      role === "race" ||
-      role === "key_interval" ||
-      role === "key_tempo" ||
-      role === "long_run" ||
-      role === "long_endurance"
-    ) {
-      if (!weekKeyRole || KEY_ROLE_PRIORITY.indexOf(role) < KEY_ROLE_PRIORITY.indexOf(weekKeyRole)) {
-        weekKeyRole = role;
-        weekKeyDate = day.date;
-      }
-    }
-  }
-
-  if (weekKeyDate && weekKeyRole) {
-    const current = resolved.get(weekKeyDate);
-    if (current) {
-      resolved.set(weekKeyDate, { ...current, isKey: true });
-    }
+    resolved.set(day.date, { role, isKey: KEY_WORKOUT_ROLE_ORDER.includes(role), reason });
   }
 
   return resolved;
@@ -1739,6 +1765,13 @@ export type NutritionWeeklySummaryDayFact = {
   hasEnergyIssue: boolean;
   roleInfo: NutritionNarrativeDayRoleInfo;
   items?: NutritionFoodItem[];
+  /**
+   * Specific label for the weekly "key workouts" sentence ONLY — built from the raw TP
+   * workout (title + distance), e.g. «интервалы 6×5 мин» / «длительная 17 км». When set,
+   * the sentence uses it instead of the flattened canonical trainingLabel («бег»). null
+   * for non-key days. Does NOT affect the mini-table or day prose.
+   */
+  specificWorkoutLabel?: string | null;
 };
 
 export function buildNutritionWeeklySummary(input: {
@@ -1754,8 +1787,10 @@ export function buildNutritionWeeklySummary(input: {
   let fatHighDays = 0;
   let carbsLowLoadDays = 0;
   let energyLowLoadDays = 0;
-  let keyWorkoutLabel: string | null = null;
-  let mainLoadLabel: string | null = null;
+  // Every key workout of the week with its specific label — the длительная/интервалы/
+  // темпо/гонка days marked isKey, plus a combined brick day. Listed together in the
+  // key-workouts sentence (ordered below); a week with none gets no sentence.
+  const keyWorkoutEntries: Array<{ role: NutritionNarrativeWorkoutRole; label: string }> = [];
   let hardestDayLabels: string[] = [];
   let carbRichDayLabels: string[] = [];
 
@@ -1778,19 +1813,11 @@ export function buildNutritionWeeklySummary(input: {
     if (day.hasEnergyIssue && loadDay) {
       energyLowLoadDays += 1;
     }
-    if (day.roleInfo.isKey) {
-      keyWorkoutLabel = formatNutritionWorkoutLabelForAthlete(day);
-    }
-    if (
-      !mainLoadLabel &&
-      (day.roleInfo.role === "race" ||
-        day.roleInfo.role === "long_endurance" ||
-        day.roleInfo.role === "long_run" ||
-        day.roleInfo.role === "key_interval" ||
-        day.roleInfo.role === "key_tempo" ||
-        day.roleInfo.role === "combined_load")
-    ) {
-      mainLoadLabel = formatNutritionWorkoutLabelForAthlete(day);
+    if (day.roleInfo.isKey || day.roleInfo.role === "combined_load") {
+      keyWorkoutEntries.push({
+        role: day.roleInfo.role,
+        label: day.specificWorkoutLabel ?? formatNutritionWorkoutLabelForAthlete(day),
+      });
     }
   }
 
@@ -1875,14 +1902,25 @@ export function buildNutritionWeeklySummary(input: {
     segments.push("Самые тяжёлые дни вышли с углеводами на нижней границе.");
   }
 
-  if (keyWorkoutLabel) {
-    segments.push(
-      `Главный тренировочный день недели — ${keyWorkoutLabel}. Именно вокруг таких работ питание стоит поддерживать лучше всего.`
-    );
-  } else if (mainLoadLabel) {
-    segments.push(
-      `Главный тренировочный день недели — ${mainLoadLabel}. Именно вокруг такой нагрузки питание стоит поддерживать лучше всего.`
-    );
+  // Key-workouts sentence: name ALL key workouts of the week (a week can have a long run
+  // AND an interval/tempo session). Several → plural «Ключевые тренировки … A и B …»;
+  // one → singular «Ключевая тренировка … A …»; none → no sentence.
+  const keyPhraseOrder = (role: NutritionNarrativeWorkoutRole): number => {
+    const i = KEY_WORKOUT_ROLE_ORDER.indexOf(role);
+    return i === -1 ? KEY_WORKOUT_ROLE_ORDER.length : i; // combined_load sorts last
+  };
+  const keyLabels = [
+    ...new Set(
+      [...keyWorkoutEntries]
+        .sort((a, b) => keyPhraseOrder(a.role) - keyPhraseOrder(b.role))
+        .map((entry) => entry.label)
+        .filter((label) => Boolean(label && label.trim()))
+    ),
+  ];
+  if (keyLabels.length >= 2) {
+    segments.push(`Ключевые тренировки недели — ${joinWithIRu(keyLabels)}. Вокруг них питание важнее всего.`);
+  } else if (keyLabels.length === 1) {
+    segments.push(`Ключевая тренировка недели — ${keyLabels[0]}. Вокруг неё питание важнее всего.`);
   }
 
   return segments.join(" ");

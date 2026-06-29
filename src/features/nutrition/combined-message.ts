@@ -3,6 +3,7 @@ import type { NutritionWeeklyAnalysis, NutritionWeeklyPlan } from "@/features/nu
 import type { TrainingPeaksTelegramFormality } from "@/features/trainingpeaks/repository";
 import type { NutritionNextWeekPlan } from "@/features/nutrition/weekly-plan-formulas";
 import {
+  buildKeyWorkoutPhraseLabel,
   buildNutritionTargetWeekFocusNarrative,
   buildNutritionWeeklySummary,
   composeNutritionDayComment,
@@ -891,6 +892,27 @@ function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
   });
   const weekRoles = resolveWeekNarrativeDayRoles(roleInputs);
 
+  // Specific key-workout labels come from the RAW TP workouts (title + distance), which
+  // the flattened canonical label has lost. Pick the run/quality session per date when a
+  // day has several (e.g. run + pilates).
+  const isRunLikeTpTitle = (title: string, type: string): boolean =>
+    type === "run" || /бег|интерв|темп|длительн|\b\d+\s*[xх]\s*\d+/iu.test(title);
+  const tpWorkoutByDate = new Map<string, { title: string; distanceKm: number | null; type: string }>();
+  const tpPastWorkoutsRaw = asObject(review.tpPastWeekContext).workouts;
+  for (const raw of Array.isArray(tpPastWorkoutsRaw) ? tpPastWorkoutsRaw : []) {
+    const wo = asObject(raw);
+    const date = typeof wo.date === "string" ? wo.date : "";
+    if (!date) continue;
+    const title = typeof wo.title === "string" ? wo.title : "";
+    const type = typeof wo.type === "string" ? wo.type : "";
+    const distanceKm =
+      toFiniteNumber(wo.distanceKm) ?? toFiniteNumber(wo.completedDistanceKm) ?? toFiniteNumber(wo.completed_distance_km) ?? null;
+    const existing = tpWorkoutByDate.get(date);
+    if (!existing || (isRunLikeTpTitle(title, type) && !isRunLikeTpTitle(existing.title, existing.type))) {
+      tpWorkoutByDate.set(date, { title, distanceKm, type });
+    }
+  }
+
   const summaryDays = dailyFacts.map((day) => {
     const date = typeof day.date === "string" ? day.date : "";
     const trainingType =
@@ -926,6 +948,16 @@ function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
       },
       loadBasis
     );
+    const tpWorkout = tpWorkoutByDate.get(date);
+    const specificWorkoutLabel =
+      roleInfo.isKey && tpWorkout
+        ? buildKeyWorkoutPhraseLabel({
+            role: roleInfo.role,
+            title: tpWorkout.title,
+            distanceKm: tpWorkout.distanceKm,
+            trainingType: tpWorkout.type || trainingType,
+          })
+        : null;
     return {
       date,
       trainingType,
@@ -935,6 +967,7 @@ function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
       macro,
       hasEnergyIssue: hasDayEnergyIssue({ nutritionStatus, findings }),
       roleInfo,
+      specificWorkoutLabel,
     };
   });
 
