@@ -77,7 +77,8 @@ function buildFixtureAnalysis(overrides?: Partial<NutritionWeeklyAnalysis>): Nut
 
 const targetWeek = resolveNutritionPlanTargetWeek({ todayLocalDate: "2026-06-10" });
 assert.equal(targetWeek.planWeekFrom, "2026-06-08");
-assert.equal(targetWeek.planWeekTo, "2026-06-14");
+// Mon→next Mon (8 days, bridge Monday). plan_week.to = following Monday.
+assert.equal(targetWeek.planWeekTo, "2026-06-15");
 
 const facts = buildNutritionWeeklyPlanFactsFromSources({
   studentId: "student-uuid-1",

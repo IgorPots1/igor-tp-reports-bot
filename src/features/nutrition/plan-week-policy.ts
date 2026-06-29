@@ -36,7 +36,10 @@ function getCalendarWeekContaining(isoDate: string): { weekFrom: string; weekTo:
   const date = parseIsoLocalDate(isoDate);
   const mondayOffset = getMondayBasedWeekday(date) - 1;
   const weekStart = shiftUtcDate(date, -mondayOffset);
-  const weekEnd = shiftUtcDate(weekStart, 6);
+  // Mon → next Mon (8 days). The trailing Monday is a bridge day: at the next
+  // generation it already has a plan, so adjacent plans overlap by one Monday
+  // instead of leaving a gap. plan_week.to = next Monday.
+  const weekEnd = shiftUtcDate(weekStart, 7);
   return { weekFrom: formatIsoDate(weekStart), weekTo: formatIsoDate(weekEnd) };
 }
 
@@ -45,7 +48,8 @@ function getNextCalendarWeekAfter(isoDate: string): { weekFrom: string; weekTo: 
   const mondayOffset = getMondayBasedWeekday(date) - 1;
   const currentWeekStart = shiftUtcDate(date, -mondayOffset);
   const nextWeekStart = shiftUtcDate(currentWeekStart, 7);
-  const nextWeekEnd = shiftUtcDate(nextWeekStart, 6);
+  // Mon → next Mon (8 days), bridge day included — see getCalendarWeekContaining.
+  const nextWeekEnd = shiftUtcDate(nextWeekStart, 7);
   return { weekFrom: formatIsoDate(nextWeekStart), weekTo: formatIsoDate(nextWeekEnd) };
 }
 

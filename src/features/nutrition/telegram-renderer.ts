@@ -398,11 +398,13 @@ export function resolveMiniTableDays(input: {
   todayLocalDate?: string;
   mode?: "athlete_remaining_only" | "full_week";
 }): NutritionNextWeekPlanDay[] {
-  // The Mon–Sun week (7) plus any tail RECOVERY day appended past the window (a
-  // Sunday race → recovery Monday). The recovery day must show even though it sits
-  // outside the 7-day window; plan_week.from/to is unchanged (see weekly-plan-formulas).
-  const weekDays = input.nextWeekPlan.days.slice(0, 7);
-  const tailRecoveryDays = input.nextWeekPlan.days.slice(7).filter((day) => day.flags?.recovery);
+  // The Mon→next-Mon week (8, incl. the bridge Monday) plus any tail RECOVERY day
+  // appended past the window (a Monday-on-bridge race → recovery Tuesday). The
+  // recovery tail must show even though it sits outside the 8-day window
+  // (see weekly-plan-formulas). A Sunday race's recovery Monday is the bridge day
+  // itself, lifted in place — not a tail.
+  const weekDays = input.nextWeekPlan.days.slice(0, 8);
+  const tailRecoveryDays = input.nextWeekPlan.days.slice(8).filter((day) => day.flags?.recovery);
   const all = [...weekDays, ...tailRecoveryDays];
   const mode = input.mode ?? "athlete_remaining_only";
   if (mode === "full_week" || input.planWeekMode !== "current_week") {

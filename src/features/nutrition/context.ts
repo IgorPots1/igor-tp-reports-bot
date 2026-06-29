@@ -1120,7 +1120,10 @@ export async function buildNutritionStudentContext(input: {
     buildNutritionTrainingPeaksWeekContext(
       input.studentId,
       addDays(input.weekTo, 1),
-      addDays(input.weekTo, 7),
+      // Mon→next Mon = 8 days (bridge Monday). This window is the saved next-week
+      // context the plan anchors to in the merged review+plan flow (preferSavedTpContext),
+      // so it must span all 8 plan days, not just Mon–Sun.
+      addDays(input.weekTo, 8),
       { keyWorkoutMode: "all", excludeOtherActivities, plannedOnly: true }
     ),
   ]);
@@ -1131,7 +1134,7 @@ export async function buildNutritionStudentContext(input: {
   const raceEvents = await listNutritionRaceEventsForStudentWindow({
     studentId: input.studentId,
     from: input.weekFrom,
-    to: addDays(input.weekTo, 7),
+    to: addDays(input.weekTo, 8),
   });
   injectRaceEventsIntoWeekContext(tpPastWeek, raceEvents);
   injectRaceEventsIntoWeekContext(tpNextWeek, raceEvents);

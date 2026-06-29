@@ -29,11 +29,13 @@ function assertTargetWeek(
   assert.equal(resolved.mode, expected.mode, `${todayLocalDate} mode`);
 }
 
-assertTargetWeek("2026-06-09", { from: "2026-06-08", to: "2026-06-14", mode: "current_week" });
-assertTargetWeek("2026-06-10", { from: "2026-06-08", to: "2026-06-14", mode: "current_week" });
-assertTargetWeek("2026-06-13", { from: "2026-06-08", to: "2026-06-14", mode: "current_week" });
-assertTargetWeek("2026-06-14", { from: "2026-06-15", to: "2026-06-21", mode: "next_week" });
-assertTargetWeek("2026-06-15", { from: "2026-06-15", to: "2026-06-21", mode: "current_week" });
+// Mon→next Mon = 8 days (bridge Monday). plan_week.to is the following Monday,
+// not Sunday — so adjacent plans overlap by one Monday instead of leaving a gap.
+assertTargetWeek("2026-06-09", { from: "2026-06-08", to: "2026-06-15", mode: "current_week" });
+assertTargetWeek("2026-06-10", { from: "2026-06-08", to: "2026-06-15", mode: "current_week" });
+assertTargetWeek("2026-06-13", { from: "2026-06-08", to: "2026-06-15", mode: "current_week" });
+assertTargetWeek("2026-06-14", { from: "2026-06-15", to: "2026-06-22", mode: "next_week" });
+assertTargetWeek("2026-06-15", { from: "2026-06-15", to: "2026-06-22", mode: "current_week" });
 
 assert.match(
   resolveNutritionPlanTargetWeek({ todayLocalDate: "2026-06-10" }).label,
@@ -97,7 +99,7 @@ const facts = buildNutritionWeeklyPlanFactsFromSources({
   todayLocalDate: "2026-06-10",
 });
 assert.equal(facts.planWeek.from, "2026-06-08");
-assert.equal(facts.planWeek.to, "2026-06-14");
+assert.equal(facts.planWeek.to, "2026-06-15");
 assert.equal(facts.planWeekMode, "current_week");
 
 const sundayFacts = buildNutritionWeeklyPlanFactsFromSources({
@@ -109,7 +111,7 @@ const sundayFacts = buildNutritionWeeklyPlanFactsFromSources({
   todayLocalDate: "2026-06-14",
 });
 assert.equal(sundayFacts.planWeek.from, "2026-06-15");
-assert.equal(sundayFacts.planWeek.to, "2026-06-21");
+assert.equal(sundayFacts.planWeek.to, "2026-06-22");
 assert.equal(sundayFacts.planWeekMode, "next_week");
 
 const generated = generateNutritionWeeklyPlanFallback(facts);

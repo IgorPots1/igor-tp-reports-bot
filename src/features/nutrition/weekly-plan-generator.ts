@@ -704,7 +704,7 @@ function buildFallbackKeyTrainingDays(facts: NutritionWeeklyPlanFacts): Nutritio
 function buildFallbackAthleteDraft(facts: NutritionWeeklyPlanFacts, planFocus: NutritionWeeklyPlanAiOutput["plan_focus"]): string {
   const address = buildPlanAddress(facts.student.formality);
   const keyDays = buildFallbackKeyTrainingDays(facts);
-  const nextWeekPlanLines = facts.nextWeekPlan.days.slice(0, 7).map((day) => {
+  const nextWeekPlanLines = facts.nextWeekPlan.days.slice(0, 8).map((day) => {
     const kcal =
       typeof day.display_target?.kcal_min === "number" && typeof day.display_target?.kcal_max === "number"
         ? `~${day.display_target.kcal_min}-${day.display_target.kcal_max} ккал`
