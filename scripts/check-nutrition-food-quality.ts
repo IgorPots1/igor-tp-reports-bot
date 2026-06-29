@@ -14,7 +14,14 @@ const root = process.cwd();
 const draft = readFileSync(join(root, "src/features/nutrition/draft-generator.ts"), "utf8");
 
 // --- Carb-quality principle (цель 2) -----------------------------------------
-assert.match(draft, /КАЧЕСТВО УГЛЕВОДОВ — это ПРИНЦИП/, "quality must be a principle, not a finite list");
+// nutrient-quality split this rule: QUALITY is a praise principle (whole sources),
+// while SPEED (slow/fast) comes only from the deterministic carb_class — never
+// guessed by analogy. The assert tracks the praise-principle wording.
+assert.match(
+  draft,
+  /КАЧЕСТВО ИСТОЧНИКА УГЛЕВОДОВ — это принцип про ПОХВАЛУ/,
+  "carb-source quality must be a praise principle (speed comes only from carb_class)"
+);
 // Praises whole sources.
 for (const whole of ["крупы", "рис", "картофель", "паста", "бобовые", "овощи"]) {
   assert.ok(draft.includes(whole), `quality rule must name whole source: ${whole}`);
