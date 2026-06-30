@@ -394,6 +394,20 @@ export type NutritionTrainingPeaksWeekContext = {
   }>;
 };
 
+/**
+ * Sustained weight-loss trend over the last two weeks (lose goal only). Built by
+ * computeWeightLossTrend from confirmed weight logs; present only when eligible.
+ * weeksDown is always 2 (this is the "second week down" signal). The kg numbers
+ * are code-exact (rounded to 0.1) and feed the prose number-validator allow-set.
+ */
+export type NutritionWeightLossTrend = {
+  weeksDown: number;
+  currentWeightKg: number;
+  prevWeightKg: number;
+  prev2WeightKg: number;
+  totalDropKg: number;
+};
+
 export type NutritionStudentContext = {
   studentName: string;
   studentSlug: string;
@@ -444,6 +458,15 @@ export type NutritionStudentContext = {
     avgCarbsG: number | null;
     avgProteinG: number | null;
   } | null;
+  /**
+   * Weight-loss praise (lose only): sustained downward trend over the LAST TWO weeks,
+   * computed BY CODE from confirmed weight logs (never the model). Non-null ONLY when
+   * eligible (monotonic down across 3 weekly anchors, each step ≥0.3 kg, total ≥0.6 kg,
+   * and NOT a rapid ≥4% drop). Null = nothing to praise → the model must not mention
+   * weight. The model voices it warmly without citing kg by default; the numbers ride
+   * along only so the prose number-validator allows them if cited.
+   */
+  weightTrend: NutritionWeightLossTrend | null;
   /**
    * Athlete's self-reported check-in for THIS week (energy / wellbeing / eating
    * comfort, 1-10, higher = better). Null when the athlete skipped the form. Used
@@ -779,6 +802,99 @@ export function buildNutritionSafetyFlags(input: {
     softFlags: [...softFlags, ...hardFlags],
     blocked: false,
     doNotSendReasons: [],
+  };
+}
+
+/**
+ * UTC day-index (days since epoch) for an ISO date or timestamp string. Used to bucket
+ * weight logs into report-week-aligned windows. Returns null on unparseable input.
+ */
+function isoDayIndex(value: string): number | null {
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) {
+    return null;
+  }
+  return Math.floor(ms / 86_400_000);
+}
+
+/**
+ * Sustained weight-loss praise (lose goal only). Computes a strictly downward trend
+ * across THREE report-week-aligned anchors — current [weekFrom..weekTo], −1, −2 — from
+ * confirmed weight logs. The three 7-day windows tile contiguously (weekFrom−14 .. weekTo),
+ * so a log maps to its week by date; a weigh-in 1–3 days AFTER weekTo still counts as the
+ * current week (athlete weighed just before uploading). Per anchor we keep the LATEST
+ * confirmed log. Eligible ONLY when:
+ *   - all three anchors present (else we stay silent — never guess a trend from gaps),
+ *   - monotonic down: w(−2) > w(−1) > w(0), each step ≥0.3 kg (filters scale noise ±0.3–0.5),
+ *   - total drop ≥0.6 kg over the two weeks,
+ *   - NOT a rapid drop (≥4% of starting weight over the window) — that is a health signal
+ *     (rapid_weight_loss_signal), never something to praise for speed.
+ * Returns null when ineligible OR goal ≠ lose. Numbers are code-exact; the model only
+ * voices the trend warmly (no kg by default).
+ */
+export function computeWeightLossTrend(input: {
+  weightLogs: NutritionWeightLog[];
+  weekFrom: string;
+  weekTo: string;
+  goalType: NutritionGoalType;
+}): NutritionWeightLossTrend | null {
+  if (input.goalType !== "lose") {
+    return null;
+  }
+  const weekFromDay = isoDayIndex(input.weekFrom);
+  const weekToDay = isoDayIndex(input.weekTo);
+  if (weekFromDay === null || weekToDay === null) {
+    return null;
+  }
+  const confirmed = input.weightLogs.filter(
+    (log) => log.confirmedByCoach && Number.isFinite(log.weightKg) && log.weightKg > 0
+  );
+  // Most-recent confirmed log per anchor week. Index 0 = current, 1 = −1 week, 2 = −2 week.
+  const anchors: Array<{ weightKg: number; loggedAt: string } | null> = [null, null, null];
+  for (const log of confirmed) {
+    const logDay = isoDayIndex(log.loggedAt);
+    if (logDay === null) {
+      continue;
+    }
+    let offset: number;
+    if (logDay <= weekToDay) {
+      offset = Math.floor((logDay - weekFromDay) / 7); // 0, −1, −2, …
+    } else if (logDay <= weekToDay + 3) {
+      offset = 0; // weighed just after week end → still this week (±2-3 day tolerance)
+    } else {
+      continue; // future relative to the report week
+    }
+    const idx = -offset;
+    if (idx < 0 || idx > 2) {
+      continue;
+    }
+    const existing = anchors[idx];
+    if (!existing || log.loggedAt > existing.loggedAt) {
+      anchors[idx] = { weightKg: log.weightKg, loggedAt: log.loggedAt };
+    }
+  }
+  const [w0, w1, w2] = anchors;
+  if (!w0 || !w1 || !w2) {
+    return null; // need all three weeks — no guessing across gaps
+  }
+  const round1 = (value: number): number => Math.round(value * 10) / 10;
+  // Weights are entered to 0.1 precision — round the deltas to 0.1 before threshold
+  // checks so float noise (e.g. 60.0−59.7 = 0.2999…) doesn't fail a clean 0.3 step.
+  const step2 = round1(w2.weightKg - w1.weightKg); // drop from −2 → −1
+  const step1 = round1(w1.weightKg - w0.weightKg); // drop from −1 → current
+  const totalDrop = round1(w2.weightKg - w0.weightKg);
+  const monotonicDown = step1 >= 0.3 && step2 >= 0.3;
+  const enoughTotal = totalDrop >= 0.6;
+  const rapid = w2.weightKg > 0 && totalDrop / w2.weightKg >= 0.04;
+  if (!monotonicDown || !enoughTotal || rapid) {
+    return null;
+  }
+  return {
+    weeksDown: 2,
+    currentWeightKg: round1(w0.weightKg),
+    prevWeightKg: round1(w1.weightKg),
+    prev2WeightKg: round1(w2.weightKg),
+    totalDropKg: round1(totalDrop),
   };
 }
 
@@ -1186,6 +1302,16 @@ export async function buildNutritionStudentContext(input: {
     }
   }
 
+  // Sustained weight-loss praise (lose only): a strictly downward two-week trend from
+  // confirmed weight logs, computed by code. Null = nothing to praise (the prompt then
+  // tells the model not to mention weight). Numbers are code-exact; the model voices it.
+  const weightTrend = computeWeightLossTrend({
+    weightLogs: essentials.weightLogs,
+    weekFrom: input.weekFrom,
+    weekTo: input.weekTo,
+    goalType: essentials.profile?.nutritionGoalType ?? "maintain",
+  });
+
   // This week's athlete check-in (energy/wellbeing/eating comfort). Graceful: a
   // missing table/read never blocks review generation — just no check-in facts.
   const weeklyCheckin = await getNutritionCheckinForWeek(input.studentId, input.weekFrom).catch(
@@ -1229,6 +1355,7 @@ export async function buildNutritionStudentContext(input: {
     heightCm: essentials.profile?.heightCm ?? null,
     ageYears: essentials.profile?.ageYears ?? null,
     previousWeekNumbers,
+    weightTrend,
     weeklyCheckin,
     narrativePreferences: applyNutritionFatPolicyOverrides(
       essentials.profile?.ownRegime ?? false,

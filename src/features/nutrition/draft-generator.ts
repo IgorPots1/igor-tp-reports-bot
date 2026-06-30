@@ -1276,6 +1276,7 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "ТЁПЛАЯ ОПЕНИНГ-СТРОКА (athlete_opening_note_ru): если в словах ученика (student.athlete_comment) есть что искренне отметить — старание, что справился несмотря на обстоятельства (дорога/жара/занятость) — впиши ОДНУ тёплую человеческую фразу в athlete_opening_note_ru (она встанет сразу после приветствия). Пример: «вижу, ты очень старалась, даже в дороге держалась — это дорогого стоит». Качественно, в тёплом тоне Игоря, plain text без markdown, БЕЗ единой цифры. Если отмечать НЕЧЕГО (слов нет, или там только жалобы/нейтральное) — верни athlete_opening_note_ru пустым/null, НЕ придумывай похвалу на пустом месте. Эту похвалу за старание НЕ дублируй в athlete_message_draft — она живёт только в athlete_opening_note_ru.",
     "ЧИСЛА И МАКРОСЫ — ТОЛЬКО из PDF/фактов дня (actual/target). НИКОГДА не бери калории/граммы/«съела ~N» из слов ученика (student.athlete_comment) на веру и не подставляй их как факт — ни в day_prose, ни в итог недели, ни в coach_summary_text. Если слова ученика противоречат числам из PDF — доверяй PDF; расхождение можно мягко отметить ТРЕНЕРУ в coach_summary_text, но не выноси выдуманное число ученику.",
     "WEEK-OVER-WEEK ПОХВАЛА ЗА ПРОГРЕСС: если в фактах есть student.history.previous_week_numbers (числа прошлой недели + дельта, посчитанная КОДОМ) И дельта показывает реальный положительный сдвиг (калории/белок/углеводы выросли к ориентиру), НАЧНИ разбор с искренней похвалы за КОНКРЕТНЫЙ прогресс, называя реальную дельту из previous_week_numbers («на прошлой неделе в среднем 1343 ккал, на этой 1482 — отлично, движемся вверх»). Числа бери ТОЛЬКО из previous_week_numbers, не выдумывай. Эту похвалу пиши в day_prose (опенинг-строка athlete_opening_note_ru цифр НЕ принимает) или в next_week_plan_text. Хвали ТОЛЬКО за реальный сдвиг; если сдвига нет / откат — без ложной похвалы и без упрёка (тон на равных). Если рост в одном (белок) и откат в другом (калории) — честно: похвали рост, мягко отметь просадку. Не хвали пусто и не каждую неделю обязательно.",
+    "ПОХВАЛА ЗА УСТОЙЧИВОЕ СНИЖЕНИЕ ВЕСА (только lose): если в фактах есть student.history.weight_trend (НЕ null — код подтвердил устойчивое снижение веса вторую неделю подряд), тепло и по-доброму отметь ученице эту динамику — что вес плавно снижается уже вторую неделю, это отличный устойчивый результат, так и держим. По УМОЛЧАНИЮ БЕЗ цифр в кг (просто «вес плавно снижается вторую неделю — отличная динамика»), без чисел-обязательств и без обещаний скорости. КАТЕГОРИЧЕСКИ без ИМТ, процентов жира, медикализации и языка диеты («минус N кг», «сбросила», «худеешь»). Пиши это в опенинге разбора (day_prose) или в next_week_plan_text — НЕ в athlete_opening_note_ru. Если weight_trend отсутствует (null) — НЕ упоминай вес вообще: ни похвалы за снижение, ни упрёка за его отсутствие, ни «вес держится». Разовое колебание код сюда НЕ передаёт, так что доверяй факту: есть weight_trend → хвали устойчивый тренд, нет → молчи про вес.",
     "ЦЕЛЬ УЧЕНИКА (student.nutrition_goal): maintain — текущая методика. lose (снижение веса): рамка «поддерживаем тренировки в общем мягком минусе». НЕ советуй «добавь углеводов/калорий» там, где у худеющего и так профицит/перебор; топливо догружай ТОЛЬКО в тренировочные/ключевые дни (fuel for the work required), а в дни отдыха — спокойнее, это и есть запланированный дефицит, а не ошибка. ХВАЛИ высокий белок (для худеющего это хорошо: не пиши «белок высоковат» как проблему и НЕ пиши «белок низковат» при ≥1.6 г/кг). Даже когда белок НИЖЕ ориентира — у худеющего подавай это МЯГКО и без упрёка: «белок можно чуть добавить» / «белка чуть больше не помешает», а НЕ «белок ниже нормы»/«стоит отметить»/«недобор белка». Белок для худеющего — приоритет и помощник, не повод ругать. МЯГКО озвучивай высокий жир (>~35% энергии) ученику как лишние калории, которые мешают снижению (для lose жир выносим в текст ученику). Тон поддерживающий, без «ешь больше». target_weight_kg, если задан — можно мягко («до цели ещё ~N кг»), без ИМТ/процентов жира/«минус N кг»/медикализации. gain (набор) — небольшой профицит, углеводы и белок с запасом.",
     "КРИТИЧЕСКИ НИЗКИЕ ДНИ (safety_flags.very_low_kcal_days непуст): в эти дни энергии было критически мало. В тексте ученику ОБЯЗАТЕЛЬНО мягко, тепло, но ПРЯМО отметь: в такие дни энергии вышло очень мало, а при тренировках так повторять нельзя — это бьёт по восстановлению; цель снижения НЕ требует голодания, наоборот, ровное достаточное питание помогает и результату, и восстановлению. Без морали и стыда, как забота. Эти дни НЕ хвали и НЕ называй «спокойными». Дальше — обычный разбор и план по её параметрам, как всегда. Фактические числа дня (ккал/Б/Ж/У) — из PDF, можно называть.",
     "ЦЕЛЬ lose НЕ отменяет safety: при опасно низкой калорийности или сигналах РПП — это блок/ручная проверка как обычно (худеть ≠ голодать; цель снижения НЕ оправдывает опасный дефицит). В тексте ученику при любой цели — без слов похудеть/сбросить вес/урезать калории/дефицит (язык поддержки, а не диеты).",
@@ -1355,6 +1356,11 @@ async function generateNutritionWeeklyReviewNarrative(input: {
         // prompt rule below tells the model to praise a REAL positive shift using
         // ONLY these numbers. Null when no prior week.
         previous_week_numbers: input.weekOverWeek,
+        // Sustained weight-loss trend (lose only), computed by code. Non-null ONLY when
+        // eligible (2 weeks strictly down, ≥0.6 kg, not rapid). The prompt rule tells the
+        // model to warmly note the sustained drop WITHOUT citing kg by default. Null →
+        // the model must not mention weight at all.
+        weight_trend: input.context.weightTrend,
       },
       coach_memory: coachMemory,
       narrative_preferences: nutritionContextNarrativePreferences(input.context),
@@ -1608,6 +1614,17 @@ export async function generateNutritionWeeklyAnalysis(input: {
         weekOverWeek.delta_protein_g,
       ].filter((value): value is number => typeof value === "number" && Number.isFinite(value))
     : [];
+  // Weight-trend praise (lose): code-exact kg figures, so the prose number-validator
+  // doesn't strip them if the model cites a weight. The prompt asks for no kg by
+  // default — these only ride along to keep an occasional honest figure allowed.
+  const weightTrendAllowedNumbers: number[] = context.weightTrend
+    ? [
+        context.weightTrend.currentWeightKg,
+        context.weightTrend.prevWeightKg,
+        context.weightTrend.prev2WeightKg,
+        context.weightTrend.totalDropKg,
+      ].filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+    : [];
   const methodology = buildNutritionMethodologyContext({ context });
   const selectedFocus = selectNutritionWeeklyFocus({
     methodology,
@@ -1665,9 +1682,11 @@ export async function generateNutritionWeeklyAnalysis(input: {
   // Inject the week-over-week allow-set onto EACH day so the per-day prose validator
   // allows these code-computed numbers — both at gen-time (validate loop below) and
   // at render-time (persisted → buildNutritionDayProseFacts reads previous_week_numbers).
-  if (previousWeekAllowedNumbers.length > 0) {
+  // The weight-trend kg figures (lose only) ride in the same allow-set.
+  const dayAllowedNumbers = [...previousWeekAllowedNumbers, ...weightTrendAllowedNumbers];
+  if (dayAllowedNumbers.length > 0) {
     for (const day of persistedDailyAnalysis) {
-      day.previous_week_numbers = previousWeekAllowedNumbers;
+      day.previous_week_numbers = dayAllowedNumbers;
     }
   }
 
