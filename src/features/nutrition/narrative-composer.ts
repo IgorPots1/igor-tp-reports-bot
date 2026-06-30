@@ -1822,7 +1822,17 @@ export function buildNutritionWeeklySummary(input: {
     if (day.hasEnergyIssue && loadDay) {
       energyLowLoadDays += 1;
     }
-    if (day.roleInfo.isKey || day.roleInfo.role === "combined_load") {
+    // A combined_load day counts as a key workout ONLY when it actually contains a key
+    // session: a race / long run (pickCombinedKeySession found it → specificWorkoutLabel
+    // is set) OR a quality run component (intervals/tempo in the label). A pure
+    // cross+cross (вело+эллипс) or run+light-cross with no quality is NOT a key workout —
+    // it must not become "Ключевая тренировка недели — вело + эллипс".
+    const combinedHasRealKeySession =
+      day.roleInfo.role === "combined_load" &&
+      (Boolean(day.specificWorkoutLabel && day.specificWorkoutLabel.trim()) ||
+        isKeyIntervalTitle(day.trainingLabel) ||
+        isKeyTempoTitle(day.trainingLabel));
+    if (day.roleInfo.isKey || combinedHasRealKeySession) {
       keyWorkoutEntries.push({
         role: day.roleInfo.role,
         label: day.specificWorkoutLabel ?? formatNutritionWorkoutLabelForAthlete(day),
