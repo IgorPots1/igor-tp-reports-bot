@@ -998,6 +998,7 @@ function buildCanonicalTarget(input: {
   bodyweightKg: number | null;
   hasTrainingContext: boolean;
   crossTrainingIsLight?: boolean;
+  longRunDurationMinutes?: number | null;
 }): NutritionCanonicalDailyAnalysis["target"] {
   if (!input.bodyweightKg || input.bodyweightKg <= 0) {
     return {
@@ -1017,11 +1018,25 @@ function buildCanonicalTarget(input: {
   }
 
   if (input.canonicalTrainingType === "long_run") {
+    // Graduate the carb band by HOW LONG the long run actually is — a flat 6-7 г/кг
+    // over-fuelled a borderline ~80-min long run with a marathon-loading target. By
+    // duration in MINUTES (steadier than TP distance): <100 → 5-6 (short/medium long,
+    // incl. the 80-100 band and the ≥80 boundary), 100-150 → 6-7 (true long), 150+ → 7-8
+    // (marathon/ultra loading). Missing duration → keep the previous 6-7 default.
+    const longRunMinutes = input.longRunDurationMinutes ?? null;
+    const [carbsGPerKgMin, carbsGPerKgMax] =
+      longRunMinutes === null
+        ? [6, 7]
+        : longRunMinutes >= 150
+          ? [7, 8]
+          : longRunMinutes >= 100
+            ? [6, 7]
+            : [5, 6];
     return {
-      carbsGPerKgMin: 6,
-      carbsGPerKgMax: 7,
-      carbsGMin: Number((6 * bodyweight).toFixed(0)),
-      carbsGMax: Number((7 * bodyweight).toFixed(0)),
+      carbsGPerKgMin,
+      carbsGPerKgMax,
+      carbsGMin: Number((carbsGPerKgMin * bodyweight).toFixed(0)),
+      carbsGMax: Number((carbsGPerKgMax * bodyweight).toFixed(0)),
       kcalMin: Number((35 * bodyweight).toFixed(0)),
       formulaCode: "canonical_daily_v1_long_run",
     };
@@ -1615,6 +1630,10 @@ function analyzeDailyTrainingNutrition(input: {
       crossTrainingIsLight:
         canonicalTrainingType === "cross_training" &&
         isLightIntermittentCrossTrainingTitle(currentWorkout?.title ?? ""),
+      longRunDurationMinutes:
+        canonicalTrainingType === "long_run"
+          ? trainingPeaksDurationHoursToMinutes(currentWorkout?.durationHours ?? null)
+          : null,
     });
     const exerciseEnergy = estimateExerciseEnergyKcal({
       workout: currentWorkout ?? null,
