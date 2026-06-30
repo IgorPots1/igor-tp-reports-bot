@@ -200,6 +200,16 @@ function avg(values: Array<number | null>): number | null {
   return Number((total / present.length).toFixed(1));
 }
 
+// Anomalous-input days (suspect kcal/macros — rowLooksUnrealistic) become a NON-blocking
+// data_quality advisory: combined-message treats data_quality:* like safety advisories, so
+// it is visible to the coach but never hides the athlete text. The athlete sees the soft
+// per-day "перепроверь продукт" note instead (see the suspect_macro_values prompt rule).
+function buildDataQualityDoNotSendReasons(context: NutritionStudentContext): string[] {
+  return context.dataQuality.unrealisticRows > 0
+    ? ["data_quality:нереалистичные числа в днях — вероятно ошибка ввода (вес/порция продукта), проверь данные"]
+    : [];
+}
+
 function buildNutritionDraftAddress(formality: TrainingPeaksTelegramFormality): {
   lead: string;
   proteinOk: string;
@@ -1213,6 +1223,7 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "Используй только exact числа и labels из facts JSON.",
     "Не классифицируй дни и не выводи формулы — это уже сделано в коде.",
     "Return strict JSON only with keys: coach_summary_text, day_by_day_analysis_text, athlete_message_draft, athlete_opening_note_ru, day_prose, next_week_plan_text, quality_notes, do_not_send_reasons.",
+    "do_not_send_reasons — ТОЛЬКО для реально неотправляемых SAFETY-причин (риск здоровья, требующий ручной проверки тренером перед отправкой). АНОМАЛИИ ДАННЫХ (нереалистичные числа: огромные ккал, белок/жир/углеводы вне реального диапазона, явная ошибка ввода веса/порции) сюда НЕ клади — они НЕ блокируют разбор. Про аномальный день пиши в его day_prose (правило про suspect_macro_values ниже): мягко отметь вероятную ошибку ввода продукта и попроси перепроверить. По умолчанию do_not_send_reasons пустой.",
     "next_week_plan_text: athlete-facing проза ПЛАНА на следующую неделю (одним связным куском, тот же тёплый голос Игоря, plain Telegram text). Это продолжение того же сообщения после разбора прошлой недели — не повторяй приветствие. Опиши, на чём сделать акцент по питанию под РЕАЛЬНЫЕ ключевые тренировки следующей недели из next_week_plan (интервалы/длительная/темпо и дни перед ними): что есть и насколько добрать углеводами накануне ключевых дней. Без раскладки по граммам на каждый день — это сделает код-таблица отдельно.",
     "ПЛАН — БЕЗ ВРЕМЕНИ СУТОК: в next_week_plan_text НЕ указывай время следующих тренировок и не привязывай к нему совет — НЕ пиши «тренировка утром/днём/вечером», «утром поешь», «завтрак за 2-3 часа до», «накануне вечером поешь, потому что бежишь утром». Времени БУДУЩИХ тренировок мы не знаем (плановое время ненадёжно), поэтому план даёт только ДНЕВНЫЕ ориентиры по дням (что и сколько за день, где добрать углеводов накануне ключевого дня) — без часа и без времени суток. Тайминг по времени суток («тренировка была утром, поэтому…») допустим ТОЛЬКО в разборе прошлой недели (day_prose), где время взято из факта. Исключение для плана — только день старта по race_protocol.timing (правило ниже).",
     "ЧИСЛА в next_week_plan_text бери ТОЛЬКО из next_week_plan (display_target.carbs_g_min/max, kcal, целевые по типу дня) и округляй до 10 (углеводы/ориентиры) — пиши «около 300 г», «300–320 г»; не выдумывай промежуточных и негладких чисел, г/кг ученику не пиши. Если тренировок на следующей неделе в плане нет (next_week_plan.summary.has_training_context=false) — общий мягкий фокус без привязки к дням.",
@@ -1223,6 +1234,7 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "Числа-тренды из истории ученика (student.history.key_trends) и любые сравнения с прошлыми неделями пиши в «итог недели» (day_by_day_analysis_text/week summary) или в фокус — НЕ в подневную day_prose (там числа проверяются построчно по фактам дня). План пиши вперёд («на следующей неделе держи …»).",
     "day_prose: объект {\"YYYY-MM-DD\": \"проза дня\"} по каждому дню из daily_analysis. Это athlete-facing проза комментария дня. Длину выбирай по day_role: steady/rest — одна-две фразы; key/hard/pre_long — абзац подробнее.",
     "Подача каждого дня как у Игоря, трёхтактно: (1) что хорошо — конкретно похвали («белок 107 отлично, в самую точку», «хорошо, что калорийность подросла»); (2) что недотянуто — с числом и причиной, используя ЦЕЛЬ из target дня («под такую работу хотелось бы ~цель углеводов, у тебя X, недобор ~Z»); (3) мягкий шаг с конкретной едой (каша, рис, паста, картофель, хлеб, фрукты).",
+    "АНОМАЛЬНЫЙ ДЕНЬ (finding дня = broken_input_values — числа нереалистичны: огромные ккал/макро, явная ошибка ввода продукта): НЕ считай этот день реальным — НЕ делай по нему выводов/похвал/упрёков, НЕ называй его ккал/Б/Ж/У как факт, не тяни его в недельные средние/итоги. Вместо разбора мягко и по-доброму отметь УЧЕНИЦЕ в day_prose ЭТОГО дня, что данные дня похоже занесены с ошибкой (вес/порция продукта; в hint_for_comment назван подозрительный продукт, если определён — назови его), и попроси перепроверить ввод. Тёплая тренерская фраза: «похоже, [продукт] занесён с ошибкой в весе/порции — это искажает картину дня, перепроверь, пожалуйста». Без морали и без чисел этого дня. (Низкий день <900 ккал — это НЕ broken_input, у него своё правило про very_low_kcal, не путай.)",
     "ЧИСЛА в day_prose только из фактов дня. ФАКТЫ (сколько реально съедено: ккал, Б, Ж, У, г/кг из actual) — пиши фактическое число, можно округлить до целого для читаемости, но НЕ приближай и не заменяй (нельзя «около 250», если по факту 233). ЦЕЛИ/ориентиры бери ТОЛЬКО из чисел дня — carbsGMin/carbsGMax (и их середину), kcalMin, proteinGMin — округлёнными до 10: пиши «около 240» (середина), «200–280» (края коридора) или «около 300»; НЕ придумывай промежуточные числа (если коридор 196–280, нельзя «250–280»). Недобор = цель − факт, тоже округляй до 10. Не давай дробных/негладких краёв («341–372»). Граница: факт — точно, цель — округлённо из чисел дня. Других чисел не выдумывай.",
     "Перед длительной/интервальной/ключевой работой (day_role=key/hard/pre_long или nextDayTrainingType ключевой) прямо скажи догрузиться углеводами накануне и в день работы.",
     "Еду называй из items_notable текущего дня. Углеводную называй свободно. ЖИР УЧЕНИКУ — только при fat_policy=normal, и тогда: рамка ТОПЛИВА, не вредности — «жир занял место углеводов под нагрузку» (вытеснение топлива, не «жир плохой»). НЕ клеймить жир однородно по сумме граммов. Смотри на конкретные продукты дня (items_notable): хорошие источники жира (авокадо, орехи, рыба, жирная рыба, сыр, яйца, семечки, оливковое масло) — НЕ называть «перекосом», «проблемой», «лишним жиром» — это нормальный жир, просто под нагрузку он занял место углеводов. Разовый день с высоким жиром из хороших источников — не повод для замечания; отметить уместно только при систематическом превышении (несколько дней подряд с high_fat) ИЛИ если источник явно дешёвый/плохой (фастфуд, колбаса, пельмени, жирная выпечка, торты, жирное мясо). НЕ склеивай хорошие и плохие источники в один «жировой перекос». При coach_only/soften/suppress_athlete жир ученику не выноси вовсе.",
@@ -1970,7 +1982,13 @@ export async function generateNutritionWeeklyAnalysis(input: {
       generation_mode: narrative.generation_mode,
       prompt_version: NUTRITION_REVIEW_PROMPT_VERSION,
       quality_notes: narrative.quality_notes,
-      do_not_send_reasons: [...new Set([...safety.doNotSendReasons, ...narrative.do_not_send_reasons])],
+      do_not_send_reasons: [
+        ...new Set([
+          ...safety.doNotSendReasons,
+          ...narrative.do_not_send_reasons,
+          ...buildDataQualityDoNotSendReasons(context),
+        ]),
+      ],
       interpretation_shadow: interpretationShadow,
       next_week_plan_text: narrative.next_week_plan_text,
       next_week_plan: nextWeekPlan,
@@ -2026,7 +2044,13 @@ export async function generateNutritionWeeklyAnalysis(input: {
     day_by_day_analysis_text: narrative.day_by_day_analysis_text,
     generation_mode: narrative.generation_mode,
     prompt_version: NUTRITION_REVIEW_PROMPT_VERSION,
-    do_not_send_reasons: [...new Set([...safety.doNotSendReasons, ...narrative.do_not_send_reasons])],
+    do_not_send_reasons: [
+      ...new Set([
+        ...safety.doNotSendReasons,
+        ...narrative.do_not_send_reasons,
+        ...buildDataQualityDoNotSendReasons(context),
+      ]),
+    ],
     athlete_report_signals: context.athleteReportSignals,
     prompt_hash: promptHash,
     context_hash: contextHash,

@@ -5,7 +5,7 @@ import type {
   NutritionFoodItem,
   NutritionWorkoutTimeOfDay,
 } from "@/features/nutrition/context";
-import { sanitizeNutritionFoodItems } from "@/features/nutrition/context";
+import { rowLooksUnrealistic, sanitizeNutritionFoodItems } from "@/features/nutrition/context";
 import {
   isNutritionTrivialShortActivity,
   resolveNutritionActivityCoefByTitle,
@@ -1648,6 +1648,24 @@ function analyzeDailyTrainingNutrition(input: {
       (row.carbsG !== null && row.carbsG === 0) ||
       (row.proteinG !== null && row.proteinG === 0);
 
+    // Likely-broken INPUT (not just "suspect"): clearly impossible numbers — a single item
+    // >3000 kcal («Котлета Домашняя» 17454), a day >7000 kcal, or a macro far outside the
+    // human range. Deliberately EXCLUDES the kcal<900 / low-confidence cases: a genuinely
+    // low day is real under-eating (handled by the very_low_kcal prompt rule) and must NOT
+    // be mislabeled «ошибка ввода». The outlier item is named so the day prose can point at it.
+    const suspectOutlierItem =
+      suspect && row.items && row.items.length > 0
+        ? [...row.items].sort((a, b) => (b.kcal ?? 0) - (a.kcal ?? 0))[0] ?? null
+        : null;
+    const suspectItemName =
+      suspectOutlierItem && (suspectOutlierItem.kcal ?? 0) > 3000 ? suspectOutlierItem.name?.trim() || null : null;
+    const brokenInput =
+      suspectItemName !== null ||
+      (row.kcal !== null && row.kcal > 7000) ||
+      (row.proteinG !== null && row.proteinG > 350) ||
+      (row.fatG !== null && row.fatG > 250) ||
+      (row.carbsG !== null && row.carbsG > 900);
+
     const canonicalFindings: string[] = [];
     if (!input.bodyweightKg || input.bodyweightKg <= 0) {
       canonicalFindings.push("missing_weight");
@@ -1657,6 +1675,9 @@ function analyzeDailyTrainingNutrition(input: {
     }
     if (suspect) {
       canonicalFindings.push("suspect_macro_values");
+    }
+    if (brokenInput) {
+      canonicalFindings.push("broken_input_values");
     }
     if (proteinGPerKg !== null && proteinGPerKg >= PROTEIN_GUARD_SUFFICIENT_G_PER_KG) {
       canonicalFindings.push("protein_sufficient");
@@ -1880,7 +1901,9 @@ function analyzeDailyTrainingNutrition(input: {
       macroGuardrails,
       nutritionStatus: canonicalNutritionStatus,
       relevance: canonicalRelevance,
-      hintForComment: buildHintForComment(canonicalNutritionStatus),
+      hintForComment: brokenInput
+        ? `${buildHintForComment(canonicalNutritionStatus)} Данные дня нереалистичны (вероятная ошибка ввода${suspectItemName ? ` продукта «${suspectItemName}»` : ""} — вес/порция). НЕ делай выводов/похвал/упрёков по числам этого дня; мягко попроси перепроверить ввод.`
+        : buildHintForComment(canonicalNutritionStatus),
       findings: [...new Set(canonicalFindings)],
       trainingNutritionLinks: canonicalTrainingLinks,
       sourceQuality: {
@@ -1966,18 +1989,24 @@ export function buildNutritionMethodologyContext(input: {
     sex,
     trainingCacheStatus: context.tpPastWeek.cacheStatus,
   });
+  // Weekly averages EXCLUDE broken-input days (rowLooksUnrealistic — a 17454-kcal item,
+  // a >7000 day, impossible macros) so one mis-entered product never poisons the stored
+  // avg_kcal that next week's week-over-week comparison reads. If every day is unrealistic,
+  // fall back to all rows (don't divide by zero / hide a fully-broken week from the coach).
+  const realisticRows = context.manualMacroRows.filter((row) => !rowLooksUnrealistic(row));
+  const avgRows = realisticRows.length > 0 ? realisticRows : context.manualMacroRows;
   const averages = {
-    kcal: avg(context.manualMacroRows.map((row) => row.kcal)),
-    proteinG: avg(context.manualMacroRows.map((row) => row.proteinG)),
-    fatG: avg(context.manualMacroRows.map((row) => row.fatG)),
-    carbsG: avg(context.manualMacroRows.map((row) => row.carbsG)),
+    kcal: avg(avgRows.map((row) => row.kcal)),
+    proteinG: avg(avgRows.map((row) => row.proteinG)),
+    fatG: avg(avgRows.map((row) => row.fatG)),
+    carbsG: avg(avgRows.map((row) => row.carbsG)),
     proteinGPerKg:
       bodyweightKg && bodyweightKg > 0
-        ? avg(context.manualMacroRows.map((row) => (row.proteinG !== null ? Number((row.proteinG / bodyweightKg).toFixed(2)) : null)))
+        ? avg(avgRows.map((row) => (row.proteinG !== null ? Number((row.proteinG / bodyweightKg).toFixed(2)) : null)))
         : null,
     carbsGPerKg:
       bodyweightKg && bodyweightKg > 0
-        ? avg(context.manualMacroRows.map((row) => (row.carbsG !== null ? Number((row.carbsG / bodyweightKg).toFixed(2)) : null)))
+        ? avg(avgRows.map((row) => (row.carbsG !== null ? Number((row.carbsG / bodyweightKg).toFixed(2)) : null)))
         : null,
   };
   const proteinSufficient = (averages.proteinGPerKg ?? 0) >= PROTEIN_GUARD_SUFFICIENT_G_PER_KG;

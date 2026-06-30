@@ -640,7 +640,7 @@ export function normalizeManualMacroInput(input: string, weekFrom: string): Norm
   return rows;
 }
 
-function rowLooksUnrealistic(row: NormalizedManualMacroRow): boolean {
+export function rowLooksUnrealistic(row: NormalizedManualMacroRow): boolean {
   if (row.kcal !== null && (row.kcal < 900 || row.kcal > 7000)) {
     return true;
   }
@@ -1177,6 +1177,13 @@ export async function buildNutritionStudentContext(input: {
       avgCarbsG: toFiniteNumber(summary["avg_carbs_g"] as number | string | null | undefined),
       avgProteinG: toFiniteNumber(summary["avg_protein_g"] as number | string | null | undefined),
     };
+    // Guard: a broken prior week (e.g. a 17454-kcal item inflating the stored avg to ~7045)
+    // must NOT poison the week-over-week comparison — drop it entirely so the model neither
+    // praises a nonsense delta nor flags it as a do-not-send. Threshold mirrors the per-day
+    // realistic band. This unblocks an already-stored broken history without re-running it.
+    if (previousWeekNumbers.avgKcal !== null && (previousWeekNumbers.avgKcal > 7000 || previousWeekNumbers.avgKcal < 900)) {
+      previousWeekNumbers = null;
+    }
   }
 
   // This week's athlete check-in (energy/wellbeing/eating comfort). Graceful: a

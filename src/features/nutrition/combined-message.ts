@@ -1259,7 +1259,13 @@ function hasTargetWeekTrainingContext(nextWeekPlan: NutritionNextWeekPlan | null
 // baked manual_review_required reasons) WITHOUT a regeneration. Block only on a
 // genuine non-safety do-not-send reason the model itself emitted.
 function isSafetyDerivedReason(reason: string): boolean {
-  return reason.trim().startsWith("manual_review_required:");
+  // manual_review_required:* — advisory safety signals (never hide text, coach decision).
+  // data_quality:* — anomalous-input advisories (suspect kcal/macros). Igor decision: a
+  // broken-input day must NOT block the review — it is flagged to the coach here and
+  // surfaced softly to the athlete in the day prose, but the text still assembles. Only a
+  // genuine, model-emitted non-prefixed do-not-send reason blocks (safety escape-hatch).
+  const trimmed = reason.trim();
+  return trimmed.startsWith("manual_review_required:") || trimmed.startsWith("data_quality:");
 }
 
 function isReviewBlockedSafety(review: NutritionWeeklyAnalysis): boolean {
