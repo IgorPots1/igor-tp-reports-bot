@@ -1216,14 +1216,20 @@ function applyPracticalTarget(input: {
   const baselineProtein = baseline?.protein ?? null;
   const baselineFat = baseline?.fat ?? null;
 
-  const practicalCarbs =
+  // Lower floor (maintain ≠ deficit): no day is fed below the REST band. Carbs are
+  // floored at the rest level (4.5 г/кг) and, with protein/fat already at their floors,
+  // the kcal that follow can't sink toward RMR (the easy-day-below-rest-day / ~1200 ккал
+  // case). It also keeps a training day ≥ a rest day: a rest day lands at exactly the rest
+  // band, every load day's band is ≥ rest, so flooring all days at the rest band leaves
+  // load ≥ rest. The ramp's "don't jump" cap still applies ABOVE this floor, and the floor
+  // never exceeds the day's own ideal band (rest is the lowest band) so nothing is
+  // over-fuelled. lose/gain go through applyNutritionGoalToDayTarget and are untouched.
+  const restCarbFloorG = roundToNearest((FORMULA_BY_DAY_TYPE.rest?.carbsPerKg ?? 4.5) * input.bodyweightKg, 10);
+  const rampedCarbs =
     baselineCarbs === null
       ? input.ideal.carbs_g
       : Math.min(input.ideal.carbs_g, roundToNearest(baselineCarbs + maxCarbJump, 10));
-  const practicalKcal =
-    baselineKcal === null
-      ? input.ideal.target_kcal
-      : Math.min(input.ideal.target_kcal, roundToNearest(baselineKcal + maxKcalJump, 50));
+  const practicalCarbs = Math.min(input.ideal.carbs_g, Math.max(rampedCarbs, restCarbFloorG));
   const practicalProtein = Math.min(
     input.ideal.protein_g,
     Math.max(
@@ -1238,6 +1244,18 @@ function applyPracticalTarget(input: {
       baselineFat === null ? input.ideal.fat_g : roundToNearest(Math.max(baselineFat, fatFloor), 5)
     )
   );
+  // Kcal ↔ macros consistency: the displayed kcal can NEVER read below its own macros.
+  // The old target was min(ideal_kcal, baseline+jump), which on a low-intake day fell
+  // BELOW the floored macros (the 1200-ккал-shown vs ~1760-from-macros bug). We floor the
+  // kcal at the macro sum (4·carb+4·prot+9·fat). Where the ramp/band already sits ABOVE
+  // the macros (a normally-fed day), that higher figure is kept — protein/fat are minimums
+  // and the extra is discretionary energy, so a target is never LOWERED.
+  const macroKcal = 4 * practicalCarbs + 4 * practicalProtein + 9 * practicalFat;
+  const rampedKcal =
+    baselineKcal === null
+      ? input.ideal.target_kcal
+      : Math.min(input.ideal.target_kcal, roundToNearest(baselineKcal + maxKcalJump, 50));
+  const practicalKcal = roundToNearest(Math.max(rampedKcal, macroKcal), 50);
 
   return {
     target_kcal: practicalKcal,
