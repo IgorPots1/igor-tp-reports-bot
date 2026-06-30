@@ -604,6 +604,14 @@ function formatKeyWorkoutDistanceRu(distanceKm: number): string {
   return `${Math.round(distanceKm)} км`;
 }
 
+// Race distance keeps one decimal — «21,1 км», «42,2 км» — because the .1/.2 IS the
+// distance identity of a half/full marathon (whole-km rounding would erase it). Whole
+// race distances still drop the decimal («10 км»).
+function formatRaceDistanceRu(distanceKm: number): string {
+  const rounded = Math.round(distanceKm * 10) / 10;
+  return `${Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1).replace(".", ",")} км`;
+}
+
 // Specific label for a KEY workout in the weekly "key workouts" sentence — built from the
 // RAW TrainingPeaks workout (title + distance), NOT the flattened canonical label («бег»).
 // Interval/tempo reps in the title become «интервалы 6×5 мин» (the reps win even when the
@@ -633,7 +641,8 @@ export function buildKeyWorkoutPhraseLabel(input: {
     return dist ? `длительная ${dist}` : fallback;
   }
   if (input.role === "race") {
-    return dist ? `забег ${dist}` : fallback || "забег";
+    const raceDist = input.distanceKm && input.distanceKm > 0 ? formatRaceDistanceRu(input.distanceKm) : null;
+    return raceDist ? `забег ${raceDist}` : fallback || "забег";
   }
   return fallback;
 }

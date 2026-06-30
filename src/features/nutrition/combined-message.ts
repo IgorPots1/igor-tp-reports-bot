@@ -897,7 +897,9 @@ function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
   // day has several (e.g. run + pilates).
   const isRunLikeTpTitle = (title: string, type: string): boolean =>
     type === "run" || /бег|интерв|темп|длительн|\b\d+\s*[xх]\s*\d+/iu.test(title);
-  const tpWorkoutByDate = new Map<string, { title: string; distanceKm: number | null; type: string }>();
+  type TpSession = { title: string; distanceKm: number | null; type: string };
+  const tpWorkoutByDate = new Map<string, TpSession>();
+  const tpSessionsByDate = new Map<string, TpSession[]>();
   const tpPastWorkoutsRaw = asObject(review.tpPastWeekContext).workouts;
   for (const raw of Array.isArray(tpPastWorkoutsRaw) ? tpPastWorkoutsRaw : []) {
     const wo = asObject(raw);
@@ -907,11 +909,31 @@ function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
     const type = typeof wo.type === "string" ? wo.type : "";
     const distanceKm =
       toFiniteNumber(wo.distanceKm) ?? toFiniteNumber(wo.completedDistanceKm) ?? toFiniteNumber(wo.completed_distance_km) ?? null;
+    const session: TpSession = { title, distanceKm, type };
+    tpSessionsByDate.set(date, [...(tpSessionsByDate.get(date) ?? []), session]);
     const existing = tpWorkoutByDate.get(date);
     if (!existing || (isRunLikeTpTitle(title, type) && !isRunLikeTpTitle(existing.title, existing.type))) {
-      tpWorkoutByDate.set(date, { title, distanceKm, type });
+      tpWorkoutByDate.set(date, session);
     }
   }
+  // On a combined day (run+race / run+long), the merged canonical label is verbose
+  // («бег + Угличский полумарафон»). Surface the race or long session so the sentence
+  // names it cleanly («забег 21,1 км» / «длительная N км»). A run+strength combined day
+  // has no such session → null, so it keeps the merged fallback (unchanged).
+  const isRaceTpSession = (s: TpSession): boolean =>
+    s.type === "race" || /полумарафон|марафон|забег|гонк|соревнован|паркран|parkrun|race|триатлон|ультрамарафон/iu.test(s.title);
+  const pickCombinedKeySession = (date: string): { role: "race" | "long_run"; session: TpSession } | null => {
+    const sessions = tpSessionsByDate.get(date) ?? [];
+    const race = sessions.find(isRaceTpSession);
+    if (race) return { role: "race", session: race };
+    const long = sessions.find(
+      (s) =>
+        (s.type === "run" || /бег|run/iu.test(s.title)) &&
+        ((s.distanceKm ?? 0) >= 18 || /длительн|long\s*run|лонг/iu.test(s.title))
+    );
+    if (long) return { role: "long_run", session: long };
+    return null;
+  };
 
   const summaryDays = dailyFacts.map((day) => {
     const date = typeof day.date === "string" ? day.date : "";
@@ -949,8 +971,15 @@ function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
       loadBasis
     );
     const tpWorkout = tpWorkoutByDate.get(date);
-    const specificWorkoutLabel =
-      roleInfo.isKey && tpWorkout
+    const combinedKey = roleInfo.role === "combined_load" ? pickCombinedKeySession(date) : null;
+    const specificWorkoutLabel = combinedKey
+      ? buildKeyWorkoutPhraseLabel({
+          role: combinedKey.role,
+          title: combinedKey.session.title,
+          distanceKm: combinedKey.session.distanceKm,
+          trainingType: combinedKey.session.type || trainingType,
+        })
+      : roleInfo.isKey && tpWorkout
         ? buildKeyWorkoutPhraseLabel({
             role: roleInfo.role,
             title: tpWorkout.title,
