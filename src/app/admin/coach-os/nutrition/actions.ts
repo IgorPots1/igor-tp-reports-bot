@@ -37,6 +37,7 @@ import {
   deleteNutritionManualRaceEvent,
   normalizeNutritionGoalType,
   normalizeNutritionSex,
+  updateNutritionPlanProse,
   updateNutritionReportNotes,
   updateNutritionReviewProse,
   upsertNutritionManualRaceEvent,
@@ -346,6 +347,32 @@ export async function updateNutritionReviewProseAction(formData: FormData): Prom
   revalidateNutritionPaths(studentId);
   redirect(
     withNotice(redirectTo, "notice", "Правки разбора сохранены — попадут в карточки ученицы при открытии.")
+  );
+}
+
+export async function updateNutritionPlanProseAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  const planId = getRequiredFormValue(formData, "planId");
+  await ensureAdminAccess(redirectTo);
+
+  // Flow C (plan): edit ONLY the athlete-facing plan prose, stored in coach_edited_draft
+  // so the original AI athlete_message_draft and the numeric mini-table (plan_summary)
+  // stay intact. The render prefers coach_edited_draft when present; clearing the field
+  // restores the original. A single text block (the plan is not per-day).
+  const planProse = getOptionalFormValue(formData, "planProse");
+
+  try {
+    await updateNutritionPlanProse({ planId, coachEditedDraft: planProse });
+  } catch (error) {
+    revalidateNutritionPaths(studentId);
+    const message = error instanceof Error ? error.message : "Не удалось сохранить правки плана.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+
+  revalidateNutritionPaths(studentId);
+  redirect(
+    withNotice(redirectTo, "notice", "Правки плана сохранены — попадут в текст ученицы при открытии.")
   );
 }
 

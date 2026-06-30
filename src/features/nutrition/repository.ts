@@ -1536,6 +1536,35 @@ export async function getNutritionWeeklyPlanById(planId: string): Promise<Nutrit
   return mapNutritionWeeklyPlanRow(data as NutritionWeeklyPlanRow);
 }
 
+// Flow C (plan): persist the coach's edit of the athlete-facing plan prose into the
+// dormant coach_edited_draft column ONLY. The original AI athlete_message_draft and the
+// numeric mini-table (plan_summary.day_type_targets) are left untouched, so the edit is
+// reversible (clear it → original returns) and never affects the numbers. The render
+// prefers coach_edited_draft over athlete_message_draft when present.
+export async function updateNutritionPlanProse(input: {
+  planId: string;
+  coachEditedDraft: string | null;
+}): Promise<NutritionWeeklyPlan> {
+  const cleaned =
+    input.coachEditedDraft == null
+      ? null
+      : (() => {
+          const value = stripControlCharsForDb(input.coachEditedDraft).trim();
+          return value.length > 0 ? value : null;
+        })();
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_weekly_plans")
+    .update({ coach_edited_draft: cleaned })
+    .eq("id", input.planId)
+    .select("*")
+    .single();
+  if (error) {
+    throw new Error(`Failed to update nutrition plan prose for ${input.planId}: ${error.message}`);
+  }
+  return mapNutritionWeeklyPlanRow(data as NutritionWeeklyPlanRow);
+}
+
 export async function listNutritionWeeklyPlansForStudentWeek(params: {
   studentId: string;
   planWeekFrom: string;

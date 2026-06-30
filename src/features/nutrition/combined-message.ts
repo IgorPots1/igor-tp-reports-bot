@@ -1055,7 +1055,11 @@ function getPlanFocusLines(
   // deterministic per-day narrative becomes the fallback. The numbers mini-table
   // is rendered separately from nextWeekPlan, so it is unaffected either way.
   if (plan.generationMode === "ai") {
-    const claudePlanLines = (compactText(plan.athleteMessageDraft) ? plan.athleteMessageDraft ?? "" : "")
+    // Flow C (plan): the coach's edit (coach_edited_draft) overrides the original AI prose
+    // (athlete_message_draft) when present; clearing it restores the original. The numeric
+    // mini-table comes from nextWeekPlan, so editing the prose never touches the numbers.
+    const planProse = compactText(plan.coachEditedDraft) ? plan.coachEditedDraft : plan.athleteMessageDraft;
+    const claudePlanLines = (compactText(planProse) ? planProse ?? "" : "")
       .split(/\n+/)
       .map((line) => line.trim())
       .filter(Boolean);

@@ -24,6 +24,7 @@ import {
   saveNutritionProfileAction,
   updateNutritionReportNotesAction,
   updateNutritionReviewProseAction,
+  updateNutritionPlanProseAction,
   sendNutritionFormAction,
   sendNutritionReviewLinkAction,
   approveNutritionReviewAction,
@@ -1194,51 +1195,81 @@ export default async function CoachOsNutritionStudentCardPage({
         <article className="admin-card admin-card-compact admin-nutrition-card-wide">
           <h3>Черновик ученику — полный текст</h3>
           <p className="admin-muted">Основной текст для отправки ученику. Копируйте именно этот блок.</p>
-          {card.weeklyAnalysis && reviewProseBlocks.length > 0 ? (
+          {(card.weeklyAnalysis && reviewProseBlocks.length > 0) || displayPlan ? (
             <details className="admin-nutrition-helper">
-              <summary>✏️ Редактировать текст для ученицы (по блокам)</summary>
-              <p className="admin-muted admin-nutrition-helper">
-                Правки ложатся в карточки ученицы по дням — вёрстка сохраняется, числа и таргеты не трогаются.
-                ⚠️ Не вписывай конкретные числа/граммы в текст: они не пройдут валидацию, и день откатится на
-                исходный текст.
-              </p>
-              <form className="admin-form-stack" action={updateNutritionReviewProseAction}>
-                <input type="hidden" name="studentId" value={studentId} />
-                <input type="hidden" name="analysisId" value={card.weeklyAnalysis.id} />
-                <input type="hidden" name="redirectTo" value={studentCardPath} />
-                <label className="admin-form-field">
-                  <span>Тёплое открытие (без цифр)</span>
-                  <textarea
-                    className="admin-textarea admin-textarea-compact"
-                    name="athleteOpeningNoteRu"
-                    rows={2}
-                    defaultValue={reviewOpeningNote}
-                  />
-                </label>
-                <label className="admin-form-field">
-                  <span>Фокус недели</span>
-                  <textarea
-                    className="admin-textarea admin-textarea-compact"
-                    name="oneFocusStatementRu"
-                    rows={2}
-                    defaultValue={reviewFocusStatement}
-                  />
-                </label>
-                {reviewProseBlocks.map((block) => (
-                  <label className="admin-form-field" key={block.date}>
-                    <span>{block.label}</span>
-                    <textarea
-                      className="admin-textarea admin-textarea-compact"
-                      name={`prose__${block.date}`}
-                      rows={3}
-                      defaultValue={block.prose}
-                    />
-                  </label>
-                ))}
-                <FormActionButton className="admin-button admin-button-secondary" pendingText="Сохраняю…">
-                  Сохранить правки разбора
-                </FormActionButton>
-              </form>
+              <summary>✏️ Редактировать текст для ученицы</summary>
+              {card.weeklyAnalysis && reviewProseBlocks.length > 0 ? (
+                <>
+                  <p className="admin-muted admin-nutrition-helper">
+                    Разбор по дням: правки ложатся в карточки ученицы по дням — вёрстка сохраняется, числа и таргеты
+                    не трогаются. ⚠️ Не вписывай конкретные числа/граммы в текст: они не пройдут валидацию, и день
+                    откатится на исходный текст.
+                  </p>
+                  <form className="admin-form-stack" action={updateNutritionReviewProseAction}>
+                    <input type="hidden" name="studentId" value={studentId} />
+                    <input type="hidden" name="analysisId" value={card.weeklyAnalysis.id} />
+                    <input type="hidden" name="redirectTo" value={studentCardPath} />
+                    <label className="admin-form-field">
+                      <span>Тёплое открытие (без цифр)</span>
+                      <textarea
+                        className="admin-textarea admin-textarea-compact"
+                        name="athleteOpeningNoteRu"
+                        rows={2}
+                        defaultValue={reviewOpeningNote}
+                      />
+                    </label>
+                    <label className="admin-form-field">
+                      <span>Фокус недели</span>
+                      <textarea
+                        className="admin-textarea admin-textarea-compact"
+                        name="oneFocusStatementRu"
+                        rows={2}
+                        defaultValue={reviewFocusStatement}
+                      />
+                    </label>
+                    {reviewProseBlocks.map((block) => (
+                      <label className="admin-form-field" key={block.date}>
+                        <span>{block.label}</span>
+                        <textarea
+                          className="admin-textarea admin-textarea-compact"
+                          name={`prose__${block.date}`}
+                          rows={3}
+                          defaultValue={block.prose}
+                        />
+                      </label>
+                    ))}
+                    <FormActionButton className="admin-button admin-button-secondary" pendingText="Сохраняю…">
+                      Сохранить правки разбора
+                    </FormActionButton>
+                  </form>
+                </>
+              ) : null}
+              {displayPlan ? (
+                <>
+                  <p className="admin-muted admin-nutrition-helper">
+                    Текст плана на следующую неделю — один блок (не по дням). Правка ложится в текст ученицы поверх
+                    оригинала (исходный сохраняется — очистишь поле, вернётся он). ⚠️ Не вписывай числа/граммы: они
+                    идут в мини-таблицу отдельно и тут не нужны.
+                  </p>
+                  <form className="admin-form-stack" action={updateNutritionPlanProseAction}>
+                    <input type="hidden" name="studentId" value={studentId} />
+                    <input type="hidden" name="planId" value={displayPlan.id} />
+                    <input type="hidden" name="redirectTo" value={studentCardPath} />
+                    <label className="admin-form-field">
+                      <span>Текст плана на след. неделю</span>
+                      <textarea
+                        className="admin-textarea"
+                        name="planProse"
+                        rows={6}
+                        defaultValue={displayPlan.coachEditedDraft ?? displayPlan.athleteMessageDraft ?? ""}
+                      />
+                    </label>
+                    <FormActionButton className="admin-button admin-button-secondary" pendingText="Сохраняю…">
+                      Сохранить правки плана
+                    </FormActionButton>
+                  </form>
+                </>
+              ) : null}
             </details>
           ) : null}
           {combinedMessage.status === "awaiting_generation" ? (
