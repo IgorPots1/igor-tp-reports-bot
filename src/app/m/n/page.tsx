@@ -10,6 +10,8 @@ type TelegramWebApp = {
   ready: () => void;
   close: () => void;
   expand: () => void;
+  setBackgroundColor?: (c: string) => void;
+  setHeaderColor?: (c: string) => void;
 };
 
 declare global {
@@ -51,9 +53,9 @@ const CHECKIN = {
     transition: "background 0.1s, color 0.1s, border-color 0.1s",
   },
   scaleCellActive: {
-    background: "#2481cc",
+    background: "#1D9E75",
     color: "#ffffff",
-    border: "1.5px solid #2481cc",
+    border: "1.5px solid #1D9E75",
   },
   scalePoles: {
     display: "flex" as const,
@@ -122,24 +124,35 @@ function ScaleRow(props: {
 const STYLES = {
   page: {
     minHeight: "100vh",
-    background: "var(--tg-theme-bg-color, #f5f5f5)",
-    color: "var(--tg-theme-text-color, #222)",
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    // Force light palette — never inherit Telegram dark themeParams (same as ReviewScreen).
+    background: "#f5f8f7",
+    color: "#222",
+    colorScheme: "only light" as const,
+    fontFamily: "var(--font-montserrat, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif)",
     fontSize: 16,
-    padding: "20px 16px 40px",
+    padding: "0 0 40px",
     boxSizing: "border-box" as const,
   },
+  // Teal header plate — matches ReviewScreen brand palette.
+  header: {
+    background: "#04342C",
+    color: "#E1F5EE",
+    padding: "22px 18px 20px",
+    borderRadius: "0 0 18px 18px",
+  },
+  headerTitle: { fontSize: 22, fontWeight: 700, margin: "4px 0 0", color: "#E1F5EE" },
+  headerSub: { fontSize: 14, opacity: 0.8, margin: "4px 0 0", color: "#E1F5EE" },
+  body: { padding: "16px 14px 0" },
   card: {
-    background: "var(--tg-theme-secondary-bg-color, #fff)",
+    background: "#fff",
     borderRadius: 14,
     padding: "22px 18px",
-    marginTop: 8,
+    marginTop: 0,
     boxShadow: "0 1px 4px rgba(0,0,0,0.08)",
   },
-  heading: { fontSize: 19, fontWeight: 700, margin: "0 0 4px" },
   subtitle: {
     fontSize: 14,
-    color: "var(--tg-theme-hint-color, #888)",
+    color: "#888",
     margin: "0 0 20px",
     lineHeight: 1.4,
   },
@@ -149,7 +162,7 @@ const STYLES = {
     fontWeight: 700,
     letterSpacing: "0.04em",
     textTransform: "uppercase" as const,
-    color: "var(--tg-theme-hint-color, #888)",
+    color: "#888",
     margin: "0 0 8px",
   },
   label: { display: "block" as const, fontSize: 14, marginBottom: 6, fontWeight: 500 },
@@ -162,20 +175,20 @@ const STYLES = {
     fontSize: 16,
     fontWeight: 600,
     cursor: "pointer",
-    background: "var(--tg-theme-button-color, #2481cc)",
-    color: "var(--tg-theme-button-text-color, #fff)",
+    background: "#1D9E75",
+    color: "#fff",
     textAlign: "center" as const,
     boxSizing: "border-box" as const,
   },
   btnOutline: {
     background: "transparent",
-    color: "var(--tg-theme-button-color, #2481cc)",
-    border: "1px solid var(--tg-theme-button-color, #2481cc)",
+    color: "#1D9E75",
+    border: "1px solid #1D9E75",
   },
   btnDisabled: {
     // Greyed, non-interactive until a file is picked.
-    background: "var(--tg-theme-hint-color, #c4c9cc)",
-    color: "var(--tg-theme-secondary-bg-color, #fff)",
+    background: "#c4c9cc",
+    color: "#fff",
     cursor: "not-allowed" as const,
     opacity: 0.7,
   },
@@ -185,21 +198,21 @@ const STYLES = {
     gap: 8,
     padding: "12px 14px",
     borderRadius: 10,
-    background: "var(--tg-theme-bg-color, #f0f4f8)",
-    color: "var(--tg-theme-text-color, #222)",
+    background: "#f0f4f8",
+    color: "#222",
     fontSize: 14,
     wordBreak: "break-all" as const,
   },
-  hint: { fontSize: 13, color: "var(--tg-theme-hint-color, #888)", marginTop: 8, lineHeight: 1.4 },
+  hint: { fontSize: 13, color: "#888", marginTop: 8, lineHeight: 1.4 },
   previewRow: { marginBottom: 8, fontSize: 15 },
   dateInput: {
     display: "block" as const,
     width: "100%",
     padding: "11px 12px",
     borderRadius: 8,
-    border: "1px solid var(--tg-theme-hint-color, #ddd)",
-    background: "var(--tg-theme-bg-color, #fff)",
-    color: "var(--tg-theme-text-color, #222)",
+    border: "1px solid #ddd",
+    background: "#fff",
+    color: "#222",
     fontSize: 16,
     marginBottom: 12,
     boxSizing: "border-box" as const,
@@ -241,6 +254,15 @@ export default function NutritionMiniApp() {
       // t.me direct link — the server reads it after validating the hash.
       setInitData(tg.initData);
       setIsReviewMode((tg.initDataUnsafe?.start_param ?? "").startsWith("r_"));
+      // Force light webview chrome (header + pull-region behind the card) so a
+      // dark-theme phone can't tint our surfaces. Guarded — older clients lack
+      // these methods. No-op outside Telegram. Same pattern as ReviewScreen.
+      try {
+        tg.setBackgroundColor?.("#f5f8f7");
+        tg.setHeaderColor?.("#04342c");
+      } catch {
+        /* ignore — unsupported on older Telegram clients */
+      }
     }
   }, []);
 
@@ -391,9 +413,14 @@ export default function NutritionMiniApp() {
   if (step === "done") {
     return (
       <div style={STYLES.page}>
-        <div style={STYLES.card}>
-          <p style={{ textAlign: "center", fontSize: 18 }}>✓ Отчёт сохранён!</p>
-          <p style={{ ...STYLES.hint, textAlign: "center" }}>Тренер получил уведомление. Окно закроется автоматически.</p>
+        <header style={STYLES.header}>
+          <h1 style={STYLES.headerTitle}>Отчёт сохранён</h1>
+        </header>
+        <div style={STYLES.body}>
+          <div style={STYLES.card}>
+            <p style={{ textAlign: "center", fontSize: 18 }}>✓ Готово!</p>
+            <p style={{ ...STYLES.hint, textAlign: "center" }}>Тренер получил уведомление. Окно закроется автоматически.</p>
+          </div>
         </div>
       </div>
     );
@@ -403,18 +430,21 @@ export default function NutritionMiniApp() {
 
   return (
     <div style={STYLES.page}>
-      <div style={STYLES.card}>
-        <h2 style={STYLES.heading}>
+      <header style={STYLES.header}>
+        <h1 style={STYLES.headerTitle}>
           {step === "checkin" || step === "confirming" ? "Самочувствие за неделю" : "Недельный отчёт"}
-        </h2>
-        {(step === "idle" || step === "uploading") && (
-          <p style={STYLES.subtitle}>Прикрепи PDF-выгрузку из FatSecret за прошедшую неделю.</p>
-        )}
+        </h1>
         {(step === "checkin" || step === "confirming") && preview && (
-          <p style={STYLES.subtitle}>
+          <p style={STYLES.headerSub}>
             {formatIsoToDisplay(preview.needsManualWeek ? manualWeekFrom : preview.weekFrom)}–
             {formatIsoToDisplay(preview.needsManualWeek ? manualWeekTo : preview.weekTo)}
           </p>
+        )}
+      </header>
+      <div style={STYLES.body}>
+      <div style={STYLES.card}>
+        {(step === "idle" || step === "uploading") && (
+          <p style={STYLES.subtitle}>Прикрепи PDF-выгрузку из FatSecret за прошедшую неделю.</p>
         )}
 
         {step === "idle" || step === "uploading" ? (
@@ -442,7 +472,7 @@ export default function NutritionMiniApp() {
                   style={{
                     border: "none",
                     background: "transparent",
-                    color: "var(--tg-theme-hint-color, #888)",
+                    color: "#888",
                     fontSize: 18,
                     cursor: "pointer",
                     lineHeight: 1,
@@ -549,8 +579,8 @@ export default function NutritionMiniApp() {
             <p style={CHECKIN.note}>
               Всё по желанию. Оценки помогают тренеру точнее разобрать неделю.
             </p>
-            <ScaleRow label="Энергия" value={energy} onChange={setEnergy} disabled={busy} />
-            <ScaleRow label="Самочувствие" value={wellbeing} onChange={setWellbeing} disabled={busy} />
+            <ScaleRow label="Энергия" value={energy} onChange={setEnergy} disabled={busy} showPoles />
+            <ScaleRow label="Самочувствие" value={wellbeing} onChange={setWellbeing} disabled={busy} showPoles />
             <ScaleRow label="Комфорт питания" value={eatingComfort} onChange={setEatingComfort} disabled={busy} showPoles />
 
             <div style={CHECKIN.divider} />
@@ -606,6 +636,7 @@ export default function NutritionMiniApp() {
             Открой через Telegram для полного функционала.
           </p>
         )}
+      </div>
       </div>
     </div>
   );

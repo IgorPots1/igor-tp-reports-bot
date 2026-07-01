@@ -126,7 +126,7 @@ const S = {
     background: "#f5f8f7",
     color: "#1a2a25",
     colorScheme: "only light" as const,
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    fontFamily: "var(--font-montserrat, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif)",
     fontSize: 16,
     padding: "0 0 40px",
     boxSizing: "border-box" as const,
