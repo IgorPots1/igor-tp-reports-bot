@@ -173,6 +173,8 @@ import {
   recordTrainingPeaksMemorySignalBridgeDecision,
   listActiveTrainingPeaksOperationalSignalsByStudent,
   upsertTrainingPeaksOperationalSignalFromCandidate,
+  closeHealthSignalsByRecoveryConfirmation,
+  markTrainingPeaksHealthSignalsRecoveryPrompt,
   type TrainingPeaksStudentMemoryItem,
   type TrainingPeaksStudentMemoryType,
   type TrainingPeaksCronRunLog,
@@ -185,6 +187,10 @@ import {
 } from "@/features/trainingpeaks/context-observer";
 import type { CoachMemoryInsertedItem } from "@/features/trainingpeaks/coach-memory-extraction";
 import { planMemorySignalFromInsertedItem } from "@/features/trainingpeaks/memory-signal-bridge";
+import {
+  planRecoveryConfirmation,
+  RECOVERY_CLOSABLE_SIGNAL_TYPES,
+} from "@/features/trainingpeaks/signal-recovery-bridge";
 import {
   getPreviousTrainingPeaksWeek,
   resolveTrainingPeaksWeekKeyword,
@@ -290,6 +296,10 @@ const TP_CALLBACK_ACTION_PICK_SOURCE_PREFIX = "tp:ta:ps:";
 // Memory→signal bridge confirmation: callback data is `${prefix}${memoryItemId}`.
 const TP_CALLBACK_SIGNAL_BRIDGE_YES_PREFIX = "tp:sig:y:";
 const TP_CALLBACK_SIGNAL_BRIDGE_NO_PREFIX = "tp:sig:n:";
+// Слой 3 recovery bridge confirmation: callback data is `${prefix}${studentId}` (closes the student's
+// active illness signals as an episode, so the key is the student, not a single signal row).
+const TP_CALLBACK_SIGNAL_RECOVERY_YES_PREFIX = "tp:rec:y:";
+const TP_CALLBACK_SIGNAL_RECOVERY_NO_PREFIX = "tp:rec:n:";
 const TP_CALLBACK_ACTION_DETAIL_BACK = "tp:ta:back";
 const TP_CALLBACK_CASE_RESOLVE_PREFIX = "tp:case:r:";
 const TP_CALLBACK_CASE_DISMISS_PREFIX = "tp:case:d:";
@@ -474,6 +484,8 @@ type ParsedTrainingPeaksCallback =
   | { kind: "action_pick_source"; actionId: string; candidateIndex: number }
   | { kind: "signal_bridge_confirm"; memoryItemId: string }
   | { kind: "signal_bridge_reject"; memoryItemId: string }
+  | { kind: "signal_recovery_confirm"; studentId: string }
+  | { kind: "signal_recovery_reject"; studentId: string }
   | { kind: "action_detail_back" }
   | { kind: "case_resolve"; shortId: string }
   | { kind: "case_dismiss"; shortId: string }
@@ -4527,6 +4539,15 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
     return memoryItemId ? { kind: "signal_bridge_reject", memoryItemId } : null;
   }
 
+  if (data.startsWith(TP_CALLBACK_SIGNAL_RECOVERY_YES_PREFIX)) {
+    const studentId = data.slice(TP_CALLBACK_SIGNAL_RECOVERY_YES_PREFIX.length).trim();
+    return studentId ? { kind: "signal_recovery_confirm", studentId } : null;
+  }
+  if (data.startsWith(TP_CALLBACK_SIGNAL_RECOVERY_NO_PREFIX)) {
+    const studentId = data.slice(TP_CALLBACK_SIGNAL_RECOVERY_NO_PREFIX.length).trim();
+    return studentId ? { kind: "signal_recovery_reject", studentId } : null;
+  }
+
   return null;
 }
 
@@ -6835,6 +6856,171 @@ async function handleTrainingPeaksSignalBridgeCallback(
   );
 }
 
+// Don't re-ask "снять?" within 3 days of asking, or within 7 days of a coach "Нет".
+const RECOVERY_PROMPT_RESEND_COOLDOWN_MS = 3 * 24 * 60 * 60 * 1000;
+const RECOVERY_PROMPT_REJECT_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Слой 3 recovery bridge gate. Separate flag from the entry bridge (COACH_MEMORY_SIGNAL_BRIDGE_ENABLED)
+// so closing prompts turn on independently once Igor is comfortable. Default OFF — merge alone never
+// starts asking to close.
+function isSignalRecoveryBridgeEnabled(): boolean {
+  return process.env.COACH_SIGNAL_RECOVERY_BRIDGE_ENABLED?.trim() === "true";
+}
+
+function recoveryPromptIsOnCooldown(
+  signals: Array<{ metadata: Record<string, unknown> }>,
+  nowMs: number
+): boolean {
+  for (const signal of signals) {
+    const prompt =
+      signal.metadata.recovery_prompt &&
+      typeof signal.metadata.recovery_prompt === "object" &&
+      !Array.isArray(signal.metadata.recovery_prompt)
+        ? (signal.metadata.recovery_prompt as Record<string, unknown>)
+        : null;
+    if (!prompt) {
+      continue;
+    }
+    const sentAt = typeof prompt.sent_at === "string" ? Date.parse(prompt.sent_at) : NaN;
+    const rejectedAt = typeof prompt.rejected_at === "string" ? Date.parse(prompt.rejected_at) : NaN;
+    if (Number.isFinite(sentAt) && nowMs - sentAt < RECOVERY_PROMPT_RESEND_COOLDOWN_MS) {
+      return true;
+    }
+    if (Number.isFinite(rejectedAt) && nowMs - rejectedAt < RECOVERY_PROMPT_REJECT_COOLDOWN_MS) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// After memory extraction catches a POSITIVE health fact ("стало лучше", "побегал"), offer the coach a
+// one-tap confirmation to CLOSE the student's active illness signals (Слой 3, exit mirror of the entry
+// bridge). Flag-gated, confirmation-gated, self-contained try/catch so a failure never breaks handling.
+async function sendMemorySignalRecoveryConfirmations(input: {
+  studentId: string;
+  studentName: string;
+  quote: string;
+  items: CoachMemoryInsertedItem[];
+}): Promise<void> {
+  if (!isSignalRecoveryBridgeEnabled() || input.items.length === 0) {
+    return;
+  }
+
+  const coachChatIds = getTrainingPeaksCoachChatIds();
+  if (coachChatIds.length === 0) {
+    return;
+  }
+
+  let activeSignals: Awaited<ReturnType<typeof listActiveTrainingPeaksOperationalSignalsByStudent>>;
+  try {
+    activeSignals = await listActiveTrainingPeaksOperationalSignalsByStudent(input.studentId);
+  } catch (error) {
+    console.warn("Recovery bridge: failed to load active signals", {
+      event: "signal_recovery_bridge_load_failed",
+      studentIdPrefix: input.studentId.slice(0, 8),
+      errorClass: error instanceof Error ? error.name : "UnknownError",
+    });
+    return;
+  }
+
+  const plan = planRecoveryConfirmation({
+    studentId: input.studentId,
+    quote: input.quote,
+    insertedItems: input.items,
+    activeSignalTypes: activeSignals.map((signal) => signal.signalType),
+  });
+  if (!plan) {
+    return;
+  }
+
+  // Dedup: don't re-ask if we already prompted recently or the coach recently said "Нет".
+  const closableActive = activeSignals.filter((signal) =>
+    plan.closableSignalTypes.includes(signal.signalType)
+  );
+  if (recoveryPromptIsOnCooldown(closableActive, Date.now())) {
+    return;
+  }
+
+  const quoteText = input.quote.length > 160 ? `${input.quote.slice(0, 160)}…` : input.quote;
+  const text = `🟢 ${input.studentName} написал(а), что лучше («${quoteText}»).\nСнять сигнал болезни?`;
+  const markup = createInlineKeyboardMarkup([
+    [
+      createMenuButton("✅ Да, снять", `${TP_CALLBACK_SIGNAL_RECOVERY_YES_PREFIX}${input.studentId}`),
+      createMenuButton("❌ Нет", `${TP_CALLBACK_SIGNAL_RECOVERY_NO_PREFIX}${input.studentId}`),
+    ],
+  ]);
+
+  let anySent = false;
+  for (const chatId of coachChatIds) {
+    try {
+      await sendTrainingPeaksMessage(chatId, text, { replyMarkup: markup });
+      anySent = true;
+    } catch (error) {
+      console.warn("Recovery bridge: failed to send confirmation", {
+        event: "signal_recovery_bridge_send_failed",
+        studentIdPrefix: input.studentId.slice(0, 8),
+        errorClass: error instanceof Error ? error.name : "UnknownError",
+      });
+    }
+  }
+
+  if (anySent) {
+    try {
+      await markTrainingPeaksHealthSignalsRecoveryPrompt({
+        studentId: input.studentId,
+        signalTypes: plan.closableSignalTypes,
+        outcome: "sent",
+      });
+    } catch (error) {
+      console.warn("Recovery bridge: failed to mark prompt sent", {
+        event: "signal_recovery_bridge_mark_failed",
+        studentIdPrefix: input.studentId.slice(0, 8),
+        errorClass: error instanceof Error ? error.name : "UnknownError",
+      });
+    }
+  }
+}
+
+async function handleTrainingPeaksSignalRecoveryCallback(
+  parsedMessage: ParsedTelegramCallbackUpdate,
+  studentId: string,
+  action: "confirm" | "reject"
+): Promise<void> {
+  const emptyMarkup = createInlineKeyboardMarkup([]);
+  const decidedByChatId = String(parsedMessage.chatId);
+  const decidedByUserId = parsedMessage.userId === null ? null : String(parsedMessage.userId);
+
+  if (action === "reject") {
+    await markTrainingPeaksHealthSignalsRecoveryPrompt({
+      studentId,
+      signalTypes: [...RECOVERY_CLOSABLE_SIGNAL_TYPES],
+      outcome: "rejected",
+      decidedByChatId,
+      decidedByUserId,
+    });
+    await editTrainingPeaksMenuMessage(
+      parsedMessage.chatId,
+      parsedMessage.messageId,
+      "❌ Оставляю сигнал болезни активным.",
+      emptyMarkup
+    );
+    return;
+  }
+
+  const result = await closeHealthSignalsByRecoveryConfirmation({
+    studentId,
+    signalTypes: [...RECOVERY_CLOSABLE_SIGNAL_TYPES],
+    decidedByChatId,
+    decidedByUserId,
+  });
+  const summaryLine = result.closedSummaries.length ? `: ${result.closedSummaries.join("; ")}` : "";
+  const text =
+    result.closed > 0
+      ? `✅ Снял сигнал болезни (${result.closed})${summaryLine}. Выздоровление подтверждено.`
+      : "Активных сигналов болезни уже нет — снимать нечего.";
+  await editTrainingPeaksMenuMessage(parsedMessage.chatId, parsedMessage.messageId, text, emptyMarkup);
+}
+
 function isTrainingPeaksReplyDraftAutoDetectEnabled(): boolean {
   return process.env.TP_REPLY_DRAFT_AUTO_ENABLED?.trim() === "dry_run";
 }
@@ -6944,6 +7130,27 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
               event: "memory_signal_bridge_flow_failed",
               studentIdPrefix: observation.studentId.slice(0, 8),
               errorClass: bridgeError instanceof Error ? bridgeError.name : "UnknownError",
+            });
+          }
+        }
+
+        // Слой 3 recovery bridge: if the same message carried a POSITIVE health fact, offer the coach a
+        // confirmation to CLOSE the student's active illness signals. Flag-gated (independent from the
+        // entry bridge) + self-contained.
+        if (observation.studentId && insertedMemoryItems.length > 0 && isSignalRecoveryBridgeEnabled()) {
+          try {
+            const recoveryStudent = await getTrainingPeaksStudentById(observation.studentId);
+            await sendMemorySignalRecoveryConfirmations({
+              studentId: observation.studentId,
+              studentName: recoveryStudent?.studentName ?? "Ученик",
+              quote: observation.textPreview ?? messageText,
+              items: insertedMemoryItems,
+            });
+          } catch (recoveryError) {
+            console.warn("Recovery bridge: confirmation flow failed", {
+              event: "signal_recovery_bridge_flow_failed",
+              studentIdPrefix: observation.studentId.slice(0, 8),
+              errorClass: recoveryError instanceof Error ? recoveryError.name : "UnknownError",
             });
           }
         }
@@ -10195,6 +10402,16 @@ export async function handleTrainingPeaksTelegramCallback(
 
     if (callback.kind === "signal_bridge_reject") {
       await handleTrainingPeaksSignalBridgeCallback(parsedMessage, callback.memoryItemId, "reject");
+      return "handled";
+    }
+
+    if (callback.kind === "signal_recovery_confirm") {
+      await handleTrainingPeaksSignalRecoveryCallback(parsedMessage, callback.studentId, "confirm");
+      return "handled";
+    }
+
+    if (callback.kind === "signal_recovery_reject") {
+      await handleTrainingPeaksSignalRecoveryCallback(parsedMessage, callback.studentId, "reject");
       return "handled";
     }
 

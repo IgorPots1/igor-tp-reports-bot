@@ -10109,3 +10109,170 @@ export async function closeHealthSignalByAdminUi(input: {
 
   return { updated: true, reason: "ok" };
 }
+
+// Слой 3 recovery bridge — batch-close a student's active illness signals when the coach confirms
+// recovery. Mirrors closeHealthSignalByAdminUi but keyed by student + signal types (one recovery
+// statement clears the whole illness episode, not a single row). Sets lifecycle_state=resolved so the
+// (previously null) lifecycle engine has a terminal state to read.
+export async function closeHealthSignalsByRecoveryConfirmation(input: {
+  studentId: string;
+  signalTypes: TrainingPeaksOperationalSignalType[];
+  quote?: string | null;
+  decidedByChatId?: string | null;
+  decidedByUserId?: string | null;
+}): Promise<{ closed: number; closedSummaries: string[] }> {
+  if (!input.signalTypes.length) {
+    return { closed: 0, closedSummaries: [] };
+  }
+  const supabase = createSupabaseServerClient();
+  const appliedAt = new Date().toISOString();
+  const normalizedTypes = [
+    ...new Set(input.signalTypes.map(normalizeTrainingPeaksOperationalSignalType)),
+  ];
+
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .select("id, metadata, structured_payload")
+    .eq("student_id", input.studentId)
+    .eq("status", "active")
+    .in("signal_type", normalizedTypes);
+  if (error) {
+    if (isTrainingPeaksMissingRelationError(error)) {
+      throw new Error(
+        "trainingpeaks_student_operational_signals table is missing; apply Supabase migration first"
+      );
+    }
+    throw new Error(`Failed to load active health signals for recovery close: ${error.message}`);
+  }
+
+  const rows =
+    (data as Array<{ id: string; metadata: unknown; structured_payload: unknown }> | null) ?? [];
+  const closedSummaries: string[] = [];
+  let closed = 0;
+  for (const row of rows) {
+    const metaBefore =
+      row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? (row.metadata as Record<string, unknown>)
+        : {};
+    const payload =
+      row.structured_payload &&
+      typeof row.structured_payload === "object" &&
+      !Array.isArray(row.structured_payload)
+        ? (row.structured_payload as Record<string, unknown>)
+        : {};
+    const nextMetadata = {
+      ...metaBefore,
+      recovery_close: {
+        confirmed_at: appliedAt,
+        actor: "coach_recovery_bridge",
+        quote: input.quote ?? null,
+        decided_by_chat_id: input.decidedByChatId ?? null,
+        decided_by_user_id: input.decidedByUserId ?? null,
+      },
+    };
+    const { data: updatedRow, error: updateError } = await supabase
+      .from("trainingpeaks_student_operational_signals")
+      .update({
+        status: "expired",
+        lifecycle_state: "resolved",
+        lifecycle_state_updated_at: appliedAt,
+        resolved_reason: "coach_confirmed_recovery",
+        resolved_at: appliedAt,
+        metadata: nextMetadata,
+        updated_at: appliedAt,
+      })
+      .eq("id", row.id)
+      .eq("student_id", input.studentId)
+      .eq("status", "active")
+      .select("id")
+      .maybeSingle();
+    if (updateError) {
+      throw new Error(`Failed to close health signal ${row.id} on recovery: ${updateError.message}`);
+    }
+    if (updatedRow) {
+      closed += 1;
+      const summary =
+        typeof payload.display_summary === "string"
+          ? payload.display_summary
+          : typeof payload.latest_summary === "string"
+            ? payload.latest_summary
+            : null;
+      if (summary) {
+        closedSummaries.push(summary);
+      }
+    }
+  }
+
+  return { closed, closedSummaries };
+}
+
+// Dedup marker for the recovery bridge so it doesn't re-ask "снять сигнал?" on every subsequent
+// message. Merges into metadata.recovery_prompt on the student's active illness signals.
+export async function markTrainingPeaksHealthSignalsRecoveryPrompt(input: {
+  studentId: string;
+  signalTypes: TrainingPeaksOperationalSignalType[];
+  outcome: "sent" | "rejected";
+  at?: string;
+  decidedByChatId?: string | null;
+  decidedByUserId?: string | null;
+}): Promise<number> {
+  if (!input.signalTypes.length) {
+    return 0;
+  }
+  const supabase = createSupabaseServerClient();
+  const at = input.at ?? new Date().toISOString();
+  const normalizedTypes = [
+    ...new Set(input.signalTypes.map(normalizeTrainingPeaksOperationalSignalType)),
+  ];
+
+  const { data, error } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .select("id, metadata")
+    .eq("student_id", input.studentId)
+    .eq("status", "active")
+    .in("signal_type", normalizedTypes);
+  if (error) {
+    if (isTrainingPeaksMissingRelationError(error)) {
+      throw new Error(
+        "trainingpeaks_student_operational_signals table is missing; apply Supabase migration first"
+      );
+    }
+    throw new Error(`Failed to load signals to mark recovery prompt: ${error.message}`);
+  }
+
+  const rows = (data as Array<{ id: string; metadata: unknown }> | null) ?? [];
+  let updated = 0;
+  for (const row of rows) {
+    const metaBefore =
+      row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? (row.metadata as Record<string, unknown>)
+        : {};
+    const prevPrompt =
+      metaBefore.recovery_prompt &&
+      typeof metaBefore.recovery_prompt === "object" &&
+      !Array.isArray(metaBefore.recovery_prompt)
+        ? (metaBefore.recovery_prompt as Record<string, unknown>)
+        : {};
+    const nextPrompt: Record<string, unknown> = {
+      ...prevPrompt,
+      [input.outcome === "sent" ? "sent_at" : "rejected_at"]: at,
+      decided_by_chat_id: input.decidedByChatId ?? prevPrompt.decided_by_chat_id ?? null,
+      decided_by_user_id: input.decidedByUserId ?? prevPrompt.decided_by_user_id ?? null,
+    };
+    const { error: updateError } = await supabase
+      .from("trainingpeaks_student_operational_signals")
+      .update({
+        metadata: { ...metaBefore, recovery_prompt: nextPrompt },
+        updated_at: at,
+      })
+      .eq("id", row.id)
+      .eq("status", "active");
+    if (updateError) {
+      throw new Error(
+        `Failed to mark recovery prompt on signal ${row.id}: ${updateError.message}`
+      );
+    }
+    updated += 1;
+  }
+  return updated;
+}

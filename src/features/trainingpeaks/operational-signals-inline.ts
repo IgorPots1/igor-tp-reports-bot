@@ -10,6 +10,7 @@ import {
 import {
   consumeActiveTrainingPeaksOperationalSignals,
   upsertTrainingPeaksOperationalSignalFromCandidate,
+  type TrainingPeaksOperationalSignalLifecycle,
   type TrainingPeaksOperationalSignalType,
   type UpsertTrainingPeaksOperationalSignalFromCandidateResult,
 } from "@/features/trainingpeaks/repository";
@@ -380,7 +381,29 @@ function healthSupersessionTargets(signalType: TrainingPeaksOperationalSignalTyp
   if (signalType === "health_issue_resolved") {
     return ["health_issue_started", "health_issue_improving"];
   }
+  // A fresh illness-started supersedes the student's OLDER active illness-starteds so oscillation
+  // ("опять плохо" after a lull) updates one episode instead of piling parallel rows. Keeps the newest.
+  if (signalType === "health_issue_started") {
+    return ["health_issue_started"];
+  }
   return [];
+}
+
+// lifecycle_state seed for health signals (was always null → the lifecycle engine had nothing to read).
+// Non-health signals stay unset to avoid shifting their display behavior.
+function healthLifecycleStateForSignal(
+  signalType: TrainingPeaksOperationalSignalType
+): TrainingPeaksOperationalSignalLifecycle | undefined {
+  if (signalType === "health_issue_started") {
+    return "active_problem";
+  }
+  if (signalType === "health_issue_improving") {
+    return "monitoring_after_return";
+  }
+  if (signalType === "health_issue_resolved") {
+    return "resolved";
+  }
+  return undefined;
 }
 
 export async function persistOperationalSignalsForObservation(
@@ -510,6 +533,7 @@ export async function persistOperationalSignalsForObservation(
       await dependencyBag.upsert({
         studentId: input.studentId,
         signalType,
+        lifecycleState: healthLifecycleStateForSignal(signalType),
         sourceType: (input.sourceType ?? "unknown").toLowerCase(),
         sourceObservationId: input.observationId,
         telegramChatId: parseTelegramBigInt(input.telegramChatId),
@@ -572,7 +596,9 @@ export async function persistOperationalSignalsForObservation(
           supersession_reason:
             signalType === "health_issue_improving"
               ? "health_issue_improving_supersedes_started"
-              : "health_issue_resolved_supersedes_health_lifecycle",
+              : signalType === "health_issue_started"
+                ? "newer_health_issue_started_supersedes_older"
+                : "health_issue_resolved_supersedes_health_lifecycle",
           superseded_at: new Date().toISOString(),
         },
       });
