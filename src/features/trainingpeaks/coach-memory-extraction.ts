@@ -160,6 +160,12 @@ export type ProcessCoachMemoryForObservationResult =
 
 type AnthropicMessagesResponse = {
   content?: Array<{ type: string; text: string }>;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  };
 };
 
 const MUSCULOSKELETAL_PAIN_OR_INJURY_KEYWORDS = [
@@ -1004,11 +1010,14 @@ function sanitizeCaseCandidate(input: unknown): CoachMemoryExtractionResult["cas
   return { kind, priority };
 }
 
-function buildSystemPrompt(referenceDate: string): string {
+// Invariant instructions/schema — identical on every extraction call, split out from the per-call
+// reference date so it can carry cache_control as a stable cached prefix. NOTE: at ~1.7K tokens this
+// block is currently BELOW Haiku's 2048-token minimum cacheable prefix, so caching stays inert (0 cache
+// tokens, measured) — the markup is correct and auto-activates only if this prompt later grows ≥2048.
+function buildStableSystemPrompt(): string {
   return [
     "Ты извлекаешь долговременную память тренера (Coach Memory v1) из наблюдений о студенте.",
     "Верни ТОЛЬКО строгий JSON без markdown, без комментариев и без дополнительного текста.",
-    "Дата отсчета: " + referenceDate + ".",
     "",
     "Разрешенные memoryType:",
     "- communication_style",
@@ -1190,7 +1199,8 @@ async function extractCoachMemoryItems(input: ExtractionInput): Promise<CoachMem
   }
 
   const referenceDate = (input.referenceDate ?? new Date().toISOString().slice(0, 10)).slice(0, 10);
-  const systemPrompt = buildSystemPrompt(referenceDate);
+  const stableSystemPrompt = buildStableSystemPrompt();
+  const dynamicSystemPrompt = "Дата отсчета: " + referenceDate + ".";
   const userPrompt = buildUserPrompt(input);
 
   let content: string | null = null;
@@ -1205,7 +1215,11 @@ async function extractCoachMemoryItems(input: ExtractionInput): Promise<CoachMem
       body: JSON.stringify({
         model: CLAUDE_MODEL,
         max_tokens: 1024,
-        system: systemPrompt,
+        // Stable prefix cached; the per-call reference date rides in an uncached block after it.
+        system: [
+          { type: "text", text: stableSystemPrompt, cache_control: { type: "ephemeral" } },
+          { type: "text", text: dynamicSystemPrompt },
+        ],
         messages: [{ role: "user", content: userPrompt }],
       }),
     });
@@ -1220,6 +1234,20 @@ async function extractCoachMemoryItems(input: ExtractionInput): Promise<CoachMem
     }
 
     const payload = (await response.json()) as AnthropicMessagesResponse;
+    const usage = payload.usage;
+    if (usage) {
+      // Token/cache diagnostics (debug — one per call). cacheReadTokens>0 confirms the cached prefix
+      // is being reused. NOTE: measured at ~1.7K static tokens the cache stays inert — Haiku's minimum
+      // cacheable prefix is 2048 tokens, and our stable block is below it, so cache_creation/read read 0
+      // today. The cache_control markup auto-activates if the stable prompt later grows past 2048.
+      console.debug("trainingpeaks_coach_memory_anthropic_usage", {
+        event: "trainingpeaks_coach_memory_anthropic_usage",
+        inputTokens: usage.input_tokens ?? null,
+        outputTokens: usage.output_tokens ?? null,
+        cacheReadTokens: usage.cache_read_input_tokens ?? null,
+        cacheCreationTokens: usage.cache_creation_input_tokens ?? null,
+      });
+    }
     content = payload.content?.find((b) => b.type === "text")?.text?.trim() ?? null;
     if (!content) {
       return {
