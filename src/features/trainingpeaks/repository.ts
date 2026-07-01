@@ -10160,11 +10160,23 @@ export async function closeHealthSignalsByRecoveryConfirmation(input: {
       !Array.isArray(row.structured_payload)
         ? (row.structured_payload as Record<string, unknown>)
         : {};
+    // Attribute the close: if the prompt that led here was fact-driven (completed workouts, marked
+    // recovery_prompt.trigger="workout"), record resolved_reason="recovery_by_workout"; otherwise the
+    // message-path default. Coach confirmed either way — this only preserves WHY for audit.
+    const promptBefore =
+      metaBefore.recovery_prompt &&
+      typeof metaBefore.recovery_prompt === "object" &&
+      !Array.isArray(metaBefore.recovery_prompt)
+        ? (metaBefore.recovery_prompt as Record<string, unknown>)
+        : {};
+    const resolvedReason =
+      promptBefore.trigger === "workout" ? "recovery_by_workout" : "coach_confirmed_recovery";
     const nextMetadata = {
       ...metaBefore,
       recovery_close: {
         confirmed_at: appliedAt,
         actor: "coach_recovery_bridge",
+        trigger: promptBefore.trigger ?? "message",
         quote: input.quote ?? null,
         decided_by_chat_id: input.decidedByChatId ?? null,
         decided_by_user_id: input.decidedByUserId ?? null,
@@ -10176,7 +10188,7 @@ export async function closeHealthSignalsByRecoveryConfirmation(input: {
         status: "expired",
         lifecycle_state: "resolved",
         lifecycle_state_updated_at: appliedAt,
-        resolved_reason: "coach_confirmed_recovery",
+        resolved_reason: resolvedReason,
         resolved_at: appliedAt,
         metadata: nextMetadata,
         updated_at: appliedAt,
@@ -10212,6 +10224,9 @@ export async function markTrainingPeaksHealthSignalsRecoveryPrompt(input: {
   studentId: string;
   signalTypes: TrainingPeaksOperationalSignalType[];
   outcome: "sent" | "rejected";
+  // Which path asked. Persisted in recovery_prompt.trigger so the close path can attribute the
+  // resolved_reason ("recovery_by_workout" vs "coach_confirmed_recovery"). Defaults to the message path.
+  trigger?: "message" | "workout";
   at?: string;
   decidedByChatId?: string | null;
   decidedByUserId?: string | null;
@@ -10256,6 +10271,7 @@ export async function markTrainingPeaksHealthSignalsRecoveryPrompt(input: {
     const nextPrompt: Record<string, unknown> = {
       ...prevPrompt,
       [input.outcome === "sent" ? "sent_at" : "rejected_at"]: at,
+      trigger: input.trigger ?? prevPrompt.trigger ?? "message",
       decided_by_chat_id: input.decidedByChatId ?? prevPrompt.decided_by_chat_id ?? null,
       decided_by_user_id: input.decidedByUserId ?? prevPrompt.decided_by_user_id ?? null,
     };

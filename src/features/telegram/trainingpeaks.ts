@@ -100,6 +100,7 @@ import {
   recordTrainingPeaksReplyDraftFeedback,
   type TrainingPeaksOperationalSignalsScope,
   formatTrainingPeaksOperationalSignalsForTelegramMultiMessage,
+  collectWorkoutRecoveryCandidates,
 } from "@/features/trainingpeaks/service";
 import {
   hasTrainingPeaksAttentionDigestSentForBelgradeDate,
@@ -191,6 +192,10 @@ import {
   planRecoveryConfirmation,
   RECOVERY_CLOSABLE_SIGNAL_TYPES,
 } from "@/features/trainingpeaks/signal-recovery-bridge";
+import {
+  buildWorkoutRecoveryCardText,
+  decideWorkoutRecoveryPrompt,
+} from "@/features/trainingpeaks/signal-recovery-by-workout";
 import {
   getPreviousTrainingPeaksWeek,
   resolveTrainingPeaksWeekKeyword,
@@ -7019,6 +7024,106 @@ async function handleTrainingPeaksSignalRecoveryCallback(
       ? `✅ Снял сигнал болезни (${result.closed})${summaryLine}. Выздоровление подтверждено.`
       : "Активных сигналов болезни уже нет — снимать нечего.";
   await editTrainingPeaksMenuMessage(parsedMessage.chatId, parsedMessage.messageId, text, emptyMarkup);
+}
+
+// Fact-driven recovery gate. Separate flag from the message-path bridge (COACH_SIGNAL_RECOVERY_BRIDGE_ENABLED)
+// so the cron cards turn on independently. Default OFF — merge alone never starts asking.
+function isSignalRecoveryByWorkoutEnabled(): boolean {
+  return process.env.COACH_SIGNAL_RECOVERY_WORKOUT_ENABLED?.trim() === "true";
+}
+
+// Слой 3 (fact path): scan the workout cache for students who ran after falling ill and offer the coach
+// a "снять сигнал?" card — channel-independent (reads the cache, not messages). Reuses the exact card,
+// callback (tp:rec:y/n), close path and cooldown of the message path; only the trigger differs
+// (recovery_prompt.trigger="workout" → resolved_reason="recovery_by_workout"). Runs in the attention-digest
+// cron. Flag-gated + self-contained so a failure never breaks the digest.
+export async function sendWorkoutRecoveryConfirmations(): Promise<{
+  considered: number;
+  prompted: number;
+}> {
+  if (!isSignalRecoveryByWorkoutEnabled()) {
+    return { considered: 0, prompted: 0 };
+  }
+  const coachChatIds = getTrainingPeaksCoachChatIds();
+  if (coachChatIds.length === 0) {
+    return { considered: 0, prompted: 0 };
+  }
+
+  let candidates: Awaited<ReturnType<typeof collectWorkoutRecoveryCandidates>>;
+  try {
+    candidates = await collectWorkoutRecoveryCandidates();
+  } catch (error) {
+    console.warn("Recovery-by-workout: failed to collect candidates", {
+      event: "signal_recovery_by_workout_collect_failed",
+      errorClass: error instanceof Error ? error.name : "UnknownError",
+    });
+    return { considered: 0, prompted: 0 };
+  }
+
+  const now = Date.now();
+  let prompted = 0;
+  for (const candidate of candidates) {
+    const decision = decideWorkoutRecoveryPrompt({
+      cleanRunCountAfterOnset: candidate.cleanRunCountAfterOnset,
+      hasNegativeHealthMessageAfterCompletion: candidate.hasNegativeHealthMessageAfterCompletion,
+      onRecoveryPromptCooldown: recoveryPromptIsOnCooldown(candidate.closableSignals, now),
+    });
+    if (!decision.shouldPrompt) {
+      continue;
+    }
+
+    let student: Awaited<ReturnType<typeof getTrainingPeaksStudentById>> = null;
+    try {
+      student = await getTrainingPeaksStudentById(candidate.studentId);
+    } catch {
+      student = null;
+    }
+    const text = buildWorkoutRecoveryCardText({
+      studentName: student?.studentName ?? "Ученик",
+      cleanRunCount: candidate.cleanRunCountAfterOnset,
+      lastRunDate: candidate.lastCleanRunDate,
+    });
+    const markup = createInlineKeyboardMarkup([
+      [
+        createMenuButton("✅ Да, снять", `${TP_CALLBACK_SIGNAL_RECOVERY_YES_PREFIX}${candidate.studentId}`),
+        createMenuButton("❌ Нет", `${TP_CALLBACK_SIGNAL_RECOVERY_NO_PREFIX}${candidate.studentId}`),
+      ],
+    ]);
+
+    let anySent = false;
+    for (const chatId of coachChatIds) {
+      try {
+        await sendTrainingPeaksMessage(chatId, text, { replyMarkup: markup });
+        anySent = true;
+      } catch (error) {
+        console.warn("Recovery-by-workout: failed to send confirmation", {
+          event: "signal_recovery_by_workout_send_failed",
+          studentIdPrefix: candidate.studentId.slice(0, 8),
+          errorClass: error instanceof Error ? error.name : "UnknownError",
+        });
+      }
+    }
+
+    if (anySent) {
+      try {
+        await markTrainingPeaksHealthSignalsRecoveryPrompt({
+          studentId: candidate.studentId,
+          signalTypes: candidate.closableSignalTypes,
+          outcome: "sent",
+          trigger: "workout",
+        });
+        prompted += 1;
+      } catch (error) {
+        console.warn("Recovery-by-workout: failed to mark prompt sent", {
+          event: "signal_recovery_by_workout_mark_failed",
+          studentIdPrefix: candidate.studentId.slice(0, 8),
+          errorClass: error instanceof Error ? error.name : "UnknownError",
+        });
+      }
+    }
+  }
+
+  return { considered: candidates.length, prompted };
 }
 
 function isTrainingPeaksReplyDraftAutoDetectEnabled(): boolean {

@@ -151,6 +151,7 @@
     "check-operational-signal-supersede-apply": "npx tsx scripts/check-operational-signal-supersede-apply.ts",
     "check-operational-signal-recovery-episode-apply": "npx tsx scripts/check-operational-signal-recovery-episode-apply.ts",
     "check-signal-recovery-bridge": "npx tsx scripts/check-signal-recovery-bridge.ts",
+    "check-signal-recovery-by-workout": "npx tsx scripts/check-signal-recovery-by-workout.ts",
     "check-operational-signal-false-positive-suppression": "npx tsx scripts/check-operational-signal-false-positive-suppression.ts",
     "check-operational-schedule-display": "npx tsx scripts/check-operational-schedule-display.ts",
     "diagnose-operational-schedule-duplicates": "npx tsx scripts/diagnose-operational-schedule-duplicates.ts",

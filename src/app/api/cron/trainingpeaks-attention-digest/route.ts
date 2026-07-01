@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 
 import { runTrainingPeaksAttentionDigest } from "@/features/trainingpeaks/attention-digest-run";
+import { sendWorkoutRecoveryConfirmations } from "@/features/telegram/trainingpeaks";
 import {
   createTrainingPeaksCronRunLog,
   expireTrainingPeaksOperationalSignals,
@@ -181,10 +182,24 @@ async function handleTrainingPeaksAttentionDigest(request: Request) {
     requestPath,
   });
 
+  // Fact-driven recovery: after the digest, offer "снять сигнал?" cards for students who ran after
+  // falling ill (evidence from the workout cache, channel-independent). Flag-gated (default OFF) and
+  // self-contained so it never affects the digest response.
+  let workoutRecovery: { considered: number; prompted: number } = { considered: 0, prompted: 0 };
+  try {
+    workoutRecovery = await sendWorkoutRecoveryConfirmations();
+    if (workoutRecovery.prompted > 0) {
+      console.info("trainingpeaks_workout_recovery_prompts_sent", workoutRecovery);
+    }
+  } catch (error) {
+    console.error("trainingpeaks_workout_recovery_failed", { error });
+  }
+
   return jsonResponse(result.ok ? 200 : 500, {
     ok: result.ok,
     status: result.status,
     counts: result.counts,
+    workoutRecovery,
   });
 }
 

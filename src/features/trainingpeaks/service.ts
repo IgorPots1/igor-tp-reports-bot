@@ -122,6 +122,7 @@ import {
   type TrainingPeaksRaceResultsProbeRequestJson,
   type TrainingPeaksStudent,
   type TrainingPeaksStudentOperationalSignal,
+  type TrainingPeaksOperationalSignalType,
   type TrainingPeaksStudentThread,
   type TrainingPeaksTelegramContextObservation,
   type TrainingPeaksTelegramFormality,
@@ -207,6 +208,7 @@ import {
   resolveBridgeRecommendedAction,
 } from "@/features/trainingpeaks/tp-completion-lifecycle-bridge";
 import { buildContinuedIllnessCoachDisplaySummary } from "@/features/trainingpeaks/coach-operational-signals";
+import { RECOVERY_BY_WORKOUT_CLOSABLE_TYPES } from "@/features/trainingpeaks/signal-recovery-by-workout";
 import {
   buildTrainingPeaksContactDisplay,
   TRAININGPEAKS_NO_CONTACT_ALERT_DAYS,
@@ -7118,6 +7120,109 @@ function buildOperationalSignalLifecycleInputFromCache(input: {
     missedOrSkippedReturnWorkout: false,
     returnWorkoutBlocker: null,
   };
+}
+
+// Fact-driven recovery: a candidate is a student who has an active illness signal AND whose TrainingPeaks
+// cache shows completed clean running workouts after the onset date. This reads the CACHE, not messages,
+// so it works in any channel (group / DM / silence). The cron (attention-digest) turns candidates into
+// "снять сигнал?" cards. Decision/threshold live in signal-recovery-by-workout.ts (pure, unit-tested);
+// this only assembles the evidence. See ops-log 2026-07-01-1610-signals-3-gaps.
+export type WorkoutRecoveryCandidate = {
+  studentId: string;
+  closableSignalTypes: TrainingPeaksOperationalSignalType[];
+  // Full signal rows for the shared recovery-prompt cooldown check (reads metadata.recovery_prompt).
+  closableSignals: TrainingPeaksStudentOperationalSignal[];
+  cleanRunCountAfterOnset: number;
+  lastCleanRunDate: string | null;
+  hasNegativeHealthMessageAfterCompletion: boolean;
+};
+
+function lastCleanRunningCompletionDate(input: {
+  workouts: TrainingPeaksWorkoutCacheRow[];
+  openedDate: string;
+  asOfDate: string;
+}): string | null {
+  let last: string | null = null;
+  for (const workout of input.workouts) {
+    if (
+      workout.workoutDate < input.openedDate ||
+      workout.workoutDate > input.asOfDate ||
+      !workout.isCompleted
+    ) {
+      continue;
+    }
+    const classification = classifyOperationalSignalWorkout(workout);
+    if (
+      isCleanRunningCompletion({
+        sportClass: classification.sportClass,
+        runningCompletionClass: classification.runningCompletionClass,
+        classificationConfidence: classification.confidence,
+      })
+    ) {
+      if (!last || workout.workoutDate > last) {
+        last = workout.workoutDate;
+      }
+    }
+  }
+  return last;
+}
+
+export async function collectWorkoutRecoveryCandidates(input?: {
+  asOfDate?: string;
+}): Promise<WorkoutRecoveryCandidate[]> {
+  const asOfDate = input?.asOfDate ?? getCoachTodayDateKey(DEFAULT_COACH_TIMEZONE);
+  const closableTypes = new Set<string>(RECOVERY_BY_WORKOUT_CLOSABLE_TYPES);
+
+  const { items } = await listTrainingPeaksOperationalSignals({ status: "active", limit: 200 });
+  const illnessSignals = items.filter((signal) => closableTypes.has(signal.signalType));
+  if (illnessSignals.length === 0) {
+    return [];
+  }
+
+  const byStudent = new Map<string, TrainingPeaksStudentOperationalSignal[]>();
+  for (const signal of illnessSignals) {
+    const group = byStudent.get(signal.studentId) ?? [];
+    group.push(signal);
+    byStudent.set(signal.studentId, group);
+  }
+
+  const candidates: WorkoutRecoveryCandidate[] = [];
+  for (const [studentId, signals] of byStudent) {
+    // Oldest signal = episode start; count runs since onset so the whole episode is covered.
+    const ordered = [...signals].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    const onsetDate = ordered[0].createdAt.slice(0, 10);
+    try {
+      const [workouts, observations] = await Promise.all([
+        listTrainingPeaksWorkoutCacheForStudentDateRange({ studentId, from: onsetDate, to: asOfDate }),
+        listTrainingPeaksTelegramContextObservationsForStudent(studentId, 250),
+      ]);
+      const cleanRunCountAfterOnset = countCleanOperationalSignalRunningCompletions({
+        workouts,
+        openedDate: onsetDate,
+        asOfDate,
+      });
+      const lifecycleInput = buildOperationalSignalLifecycleInputFromCache({
+        signal: ordered[0],
+        workouts,
+        asOfDate,
+        observations,
+      });
+      candidates.push({
+        studentId,
+        closableSignalTypes: [...new Set(ordered.map((signal) => signal.signalType))],
+        closableSignals: ordered,
+        cleanRunCountAfterOnset,
+        lastCleanRunDate: lastCleanRunningCompletionDate({ workouts, openedDate: onsetDate, asOfDate }),
+        hasNegativeHealthMessageAfterCompletion: Boolean(lifecycleInput.negativeMessageAfterCompletion),
+      });
+    } catch (error) {
+      console.error("trainingpeaks_workout_recovery_candidate_failed", {
+        studentIdPrefix: studentId.slice(0, 8),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return candidates;
 }
 
 function formatOperationalSignalShortDate(iso: string | null | undefined): string | null {
