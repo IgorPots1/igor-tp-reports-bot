@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 type TelegramWebApp = {
   initData: string;
@@ -18,13 +18,24 @@ function getTelegramWebApp(): TelegramWebApp | undefined {
 
 type HealthCard = { studentId: string | null; name: string; summary: string; days: number | null };
 type Card = { studentId: string | null; name: string; summary: string };
+type ErrorCard = { name: string | null; summary: string };
 type TodayView = {
   scanAlert: string | null;
   check: HealthCard[];
+  errors: ErrorCard[];
+  plan: Card[];
   pain: Card[];
-  moves: Card[];
-  background: { plan: string[]; noContact: string[]; missed: string[] };
-  counts: { check: number; pain: number; moves: number; background: number };
+  noContact: string[];
+  missed: string[];
+  counts: {
+    check: number;
+    errors: number;
+    plan: number;
+    moves: number;
+    pain: number;
+    noContact: number;
+    missed: number;
+  };
 };
 
 // Force-light palette (a dark-theme phone must not wash out the desk). Teal lineage from /m/n.
@@ -38,7 +49,9 @@ const C = {
   tealDark: "#04342c",
   line: "#e7ecea",
   pill: "#eef3f1",
-  danger: "#c2463a",
+  warn: "#8a6a2f",
+  warnBg: "#fff7ec",
+  warnLine: "#f2e0c2",
 };
 
 const S = {
@@ -49,34 +62,49 @@ const S = {
     color: C.ink,
     paddingBottom: 76,
   } as const,
-  header: { padding: "18px 18px 8px" } as const,
+  header: { padding: "18px 18px 6px" } as const,
   h1: { margin: 0, fontSize: 22, fontWeight: 800, letterSpacing: "-0.01em" } as const,
   date: { margin: "2px 0 0", fontSize: 13, fontWeight: 600, color: C.sub } as const,
-  pillRow: {
+  countRow: { display: "flex" as const, gap: 8, padding: "10px 18px 4px" },
+  countChip: {
     display: "flex" as const,
-    gap: 6,
-    overflowX: "auto" as const,
-    padding: "12px 18px 6px",
-    WebkitOverflowScrolling: "touch" as const,
-  },
-  pill: (active: boolean) => ({
-    flex: "0 0 auto" as const,
-    padding: "8px 13px",
+    alignItems: "baseline" as const,
+    gap: 5,
+    padding: "6px 11px",
     borderRadius: 999,
+    background: C.pill,
+    fontSize: 13,
+    fontWeight: 700,
+    color: C.sub,
+  } as const,
+  countN: { fontSize: 14, fontWeight: 800, color: C.ink } as const,
+  banner: {
+    margin: "6px 14px 4px",
+    padding: "11px 14px",
+    borderRadius: 12,
+    background: C.warnBg,
+    border: `1px solid ${C.warnLine}`,
+    color: C.warn,
+    fontSize: 13.5,
+    fontWeight: 600,
+    lineHeight: 1.4,
+  } as const,
+  section: { padding: "10px 14px 2px" } as const,
+  secHead: {
+    width: "100%",
+    display: "flex" as const,
+    justifyContent: "space-between" as const,
+    alignItems: "center" as const,
+    padding: "6px 4px 8px",
+    background: "transparent",
     border: "none",
     cursor: "pointer",
     fontFamily: "inherit",
-    fontSize: 13.5,
-    fontWeight: 700,
-    background: active ? C.teal : C.pill,
-    color: active ? "#fff" : C.sub,
-  }),
-  pillCount: (active: boolean) => ({
-    marginLeft: 6,
-    fontWeight: 800,
-    opacity: active ? 0.95 : 0.6,
-  }),
-  list: { padding: "6px 14px 18px" } as const,
+    color: C.ink,
+    textAlign: "left" as const,
+  } as const,
+  secTitle: { fontSize: 15.5, fontWeight: 800, letterSpacing: "-0.01em" } as const,
+  secCount: { fontSize: 13, fontWeight: 700, color: C.faint } as const,
   card: {
     background: C.card,
     borderRadius: 14,
@@ -89,6 +117,7 @@ const S = {
   name: { fontSize: 16, fontWeight: 700, lineHeight: 1.25 } as const,
   days: { flex: "0 0 auto" as const, fontSize: 12.5, fontWeight: 700, color: C.faint } as const,
   summary: { margin: "5px 0 0", fontSize: 14, fontWeight: 500, color: C.sub, lineHeight: 1.4 } as const,
+  manualNote: { margin: "6px 0 0", fontSize: 12, fontWeight: 600, color: C.faint } as const,
   actionRow: { marginTop: 11, display: "flex" as const, justifyContent: "flex-end" as const },
   closeBtn: {
     padding: "8px 16px",
@@ -101,36 +130,21 @@ const S = {
     fontWeight: 700,
     cursor: "pointer",
   } as const,
-  banner: {
-    margin: "4px 14px 10px",
+  errBlock: { marginTop: 4 } as const,
+  errHead: { fontSize: 13, fontWeight: 700, color: C.warn, margin: "4px 4px 8px" } as const,
+  errCard: {
+    background: C.warnBg,
+    border: `1px solid ${C.warnLine}`,
+    borderRadius: 12,
     padding: "11px 14px",
-    borderRadius: 12,
-    background: "#fff7ec",
-    border: "1px solid #f2e0c2",
-    color: "#8a6a2f",
-    fontSize: 13.5,
-    fontWeight: 600,
-    lineHeight: 1.4,
+    marginBottom: 8,
   } as const,
-  empty: { padding: "28px 18px", textAlign: "center" as const, color: C.faint, fontSize: 14, fontWeight: 600 } as const,
-  foldHead: {
-    width: "100%",
-    display: "flex" as const,
-    justifyContent: "space-between" as const,
-    alignItems: "center" as const,
-    padding: "13px 15px",
-    background: C.card,
-    border: `1px solid ${C.line}`,
-    borderRadius: 12,
-    marginBottom: 9,
-    cursor: "pointer",
-    fontFamily: "inherit",
-    color: C.ink,
-  } as const,
-  foldTitle: { fontSize: 15, fontWeight: 700 } as const,
-  foldCount: { fontSize: 13, fontWeight: 700, color: C.faint } as const,
-  foldBody: { padding: "2px 4px 10px", display: "flex" as const, flexWrap: "wrap" as const, gap: 7 } as const,
+  errName: { fontSize: 14.5, fontWeight: 700, color: C.ink } as const,
+  errSummary: { margin: "3px 0 0", fontSize: 13.5, fontWeight: 500, color: C.warn, lineHeight: 1.4 } as const,
+  chipsWrap: { padding: "2px 4px 10px", display: "flex" as const, flexWrap: "wrap" as const, gap: 7 } as const,
   chip: { padding: "6px 11px", borderRadius: 999, background: C.pill, color: C.sub, fontSize: 13, fontWeight: 600 } as const,
+  empty: { padding: "8px 6px 14px", color: C.faint, fontSize: 13.5, fontWeight: 600 } as const,
+  bigEmpty: { padding: "28px 18px", textAlign: "center" as const, color: C.faint, fontSize: 14, fontWeight: 600 } as const,
   tabBar: {
     position: "fixed" as const,
     left: 0,
@@ -160,10 +174,7 @@ const S = {
   soon: { fontSize: 9, fontWeight: 700, color: C.faint, letterSpacing: "0.04em" } as const,
 };
 
-type Pill = "check" | "pain" | "moves" | "bg";
 type Tab = "today" | "moves" | "students" | "reports";
-
-const PILL_LABELS: Record<Pill, string> = { check: "Проверить", pain: "Травмы", moves: "Переносы", bg: "Фон" };
 const TABS: Array<{ key: Tab; icon: string; label: string; ready: boolean }> = [
   { key: "today", icon: "🩺", label: "Сегодня", ready: true },
   { key: "moves", icon: "🔁", label: "Переносы", ready: false },
@@ -186,28 +197,9 @@ export default function CoachDeskPage() {
   const [date, setDate] = useState("");
   const [view, setView] = useState<TodayView | null>(null);
   const [tab, setTab] = useState<Tab>("today");
-  const [pill, setPill] = useState<Pill>("check");
   const [closing, setClosing] = useState<Set<string>>(new Set());
-  const [openFolds, setOpenFolds] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    const tg = getTelegramWebApp();
-    if (tg) {
-      tg.ready();
-      tg.expand();
-      setInitData(tg.initData);
-      try {
-        tg.setBackgroundColor?.(C.bg);
-        tg.setHeaderColor?.(C.tealDark);
-      } catch {
-        /* older clients */
-      }
-    }
-    // Even outside Telegram (dev), attempt the fetch — server rejects without valid initData.
-    const id = tg?.initData ?? "";
-    void loadToday(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Collapsible sections closed by default: the long tails (no-contact, no-completion).
+  const [closedSections, setClosedSections] = useState<Set<string>>(new Set(["noContact", "missed"]));
 
   const loadToday = useCallback(async (id: string) => {
     setStatus("loading");
@@ -233,34 +225,51 @@ export default function CoachDeskPage() {
     }
   }, []);
 
+  useEffect(() => {
+    const tg = getTelegramWebApp();
+    if (tg) {
+      tg.ready();
+      tg.expand();
+      setInitData(tg.initData);
+      try {
+        tg.setBackgroundColor?.(C.bg);
+        tg.setHeaderColor?.(C.tealDark);
+      } catch {
+        /* older clients */
+      }
+    }
+    void loadToday(tg?.initData ?? "");
+  }, [loadToday]);
+
   const handleClose = useCallback(
-    async (studentId: string | null) => {
+    async (studentId: string | null, kind: "illness" | "injury") => {
       if (!studentId) return;
-      setClosing((prev) => new Set(prev).add(studentId));
+      const tag = `${kind}:${studentId}`;
+      setClosing((prev) => new Set(prev).add(tag));
       try {
         const res = await fetch("/api/m/desk/signal/close", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ initData, studentId }),
+          body: JSON.stringify({ initData, studentId, kind }),
         });
         const json = (await res.json()) as { ok: boolean };
         if (json.ok) {
-          setView((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  check: prev.check.filter((c) => c.studentId !== studentId),
-                  counts: { ...prev.counts, check: prev.check.filter((c) => c.studentId !== studentId).length },
-                }
-              : prev
-          );
+          setView((prev) => {
+            if (!prev) return prev;
+            if (kind === "illness") {
+              const check = prev.check.filter((c) => c.studentId !== studentId);
+              return { ...prev, check, counts: { ...prev.counts, check: check.length } };
+            }
+            const pain = prev.pain.filter((c) => c.studentId !== studentId);
+            return { ...prev, pain, counts: { ...prev.counts, pain: pain.length } };
+          });
         }
       } catch {
         /* leave the card; coach can retry */
       } finally {
         setClosing((prev) => {
           const next = new Set(prev);
-          next.delete(studentId);
+          next.delete(tag);
           return next;
         });
       }
@@ -268,16 +277,14 @@ export default function CoachDeskPage() {
     [initData]
   );
 
-  const toggleFold = useCallback((key: string) => {
-    setOpenFolds((prev) => {
+  const toggleSection = useCallback((key: string) => {
+    setClosedSections((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
     });
   }, []);
-
-  const pillList = useMemo<Pill[]>(() => ["check", "pain", "moves", "bg"], []);
 
   return (
     <main style={S.shell}>
@@ -286,102 +293,131 @@ export default function CoachDeskPage() {
         {date ? <p style={S.date}>{date}</p> : null}
       </header>
 
+      {tab === "today" && view ? (
+        <div style={S.countRow}>
+          <span style={S.countChip}>🩺 <span style={S.countN}>{view.counts.check}</span></span>
+          <span style={S.countChip}>🦵 <span style={S.countN}>{view.counts.pain}</span></span>
+          <span style={S.countChip}>🔁 <span style={S.countN}>{view.counts.moves}</span></span>
+        </div>
+      ) : null}
+
       {tab !== "today" ? (
-        <div style={S.empty}>
+        <div style={S.bigEmpty}>
           {TABS.find((t) => t.key === tab)?.label} — скоро.
           <br />
           Пока доступна вкладка «Сегодня».
         </div>
       ) : status === "loading" ? (
-        <div style={S.empty}>Загружаю…</div>
+        <div style={S.bigEmpty}>Загружаю…</div>
       ) : status === "error" ? (
-        <div style={S.empty}>{errorMsg}</div>
+        <div style={S.bigEmpty}>{errorMsg}</div>
       ) : view ? (
         <>
           {view.scanAlert ? <div style={S.banner}>⚠️ {view.scanAlert}</div> : null}
 
-          <nav style={S.pillRow}>
-            {pillList.map((p) => (
-              <button key={p} type="button" style={S.pill(pill === p)} onClick={() => setPill(p)}>
-                {PILL_LABELS[p]}
-                <span style={S.pillCount(pill === p)}>{view.counts[p === "bg" ? "background" : p]}</span>
-              </button>
+          {/* 🩺 Проверить сегодня — illness (closable) + system errors (informational). */}
+          <section style={S.section}>
+            <div style={S.secHead}>
+              <span style={S.secTitle}>🩺 Проверить сегодня</span>
+              <span style={S.secCount}>{view.counts.check}</span>
+            </div>
+            {view.check.length === 0 && view.errors.length === 0 ? (
+              <p style={S.empty}>Никого проверять — чисто.</p>
+            ) : null}
+            {view.check.map((c, i) => (
+              <div key={c.studentId ?? `chk-${i}`} style={S.card}>
+                <div style={S.cardTop}>
+                  <span style={S.name}>{c.name}</span>
+                  {c.days !== null ? <span style={S.days}>{daysLabel(c.days)}</span> : null}
+                </div>
+                {c.summary ? <p style={S.summary}>{c.summary}</p> : null}
+                <div style={S.actionRow}>
+                  <button
+                    type="button"
+                    style={S.closeBtn}
+                    disabled={closing.has(`illness:${c.studentId ?? ""}`)}
+                    onClick={() => handleClose(c.studentId, "illness")}
+                  >
+                    {closing.has(`illness:${c.studentId ?? ""}`) ? "Снимаю…" : "Снять"}
+                  </button>
+                </div>
+              </div>
             ))}
-          </nav>
-
-          <section style={S.list}>
-            {pill === "check" &&
-              (view.check.length === 0 ? (
-                <p style={S.empty}>Никого проверять — чисто.</p>
-              ) : (
-                view.check.map((c, i) => (
-                  <div key={c.studentId ?? i} style={S.card}>
-                    <div style={S.cardTop}>
-                      <span style={S.name}>{c.name}</span>
-                      {c.days !== null ? <span style={S.days}>{daysLabel(c.days)}</span> : null}
-                    </div>
-                    {c.summary ? <p style={S.summary}>{c.summary}</p> : null}
-                    <div style={S.actionRow}>
-                      <button
-                        type="button"
-                        style={S.closeBtn}
-                        disabled={closing.has(c.studentId ?? "")}
-                        onClick={() => handleClose(c.studentId)}
-                      >
-                        {closing.has(c.studentId ?? "") ? "Снимаю…" : "Снять"}
-                      </button>
-                    </div>
+            {view.errors.length > 0 ? (
+              <div style={S.errBlock}>
+                <p style={S.errHead}>⚠️ Ошибки / сбои · {view.errors.length}</p>
+                {view.errors.map((e, i) => (
+                  <div key={`err-${i}`} style={S.errCard}>
+                    <span style={S.errName}>{e.name ?? "Система"}</span>
+                    {e.summary ? <p style={S.errSummary}>{e.summary}</p> : null}
                   </div>
-                ))
-              ))}
+                ))}
+              </div>
+            ) : null}
+          </section>
 
-            {pill === "pain" &&
-              (view.pain.length === 0 ? (
-                <p style={S.empty}>Травм нет.</p>
-              ) : (
-                view.pain.map((c, i) => (
-                  <div key={c.studentId ?? i} style={S.card}>
-                    <span style={S.name}>{c.name}</span>
-                    {c.summary ? <p style={S.summary}>{c.summary}</p> : null}
-                  </div>
-                ))
-              ))}
-
-            {pill === "moves" &&
-              (view.moves.length === 0 ? (
-                <p style={S.empty}>Переносов нет.</p>
-              ) : (
-                view.moves.map((c, i) => (
-                  <div key={c.studentId ?? i} style={S.card}>
-                    <span style={S.name}>{c.name}</span>
-                    {c.summary ? <p style={S.summary}>{c.summary}</p> : null}
-                  </div>
-                ))
-              ))}
-
-            {pill === "bg" && (
-              <>
-                <FoldGroup
-                  title="Доступность / план"
-                  names={view.background.plan}
-                  open={openFolds.has("plan")}
-                  onToggle={() => toggleFold("plan")}
-                />
-                <FoldGroup
-                  title="Нет контакта 5+ дней"
-                  names={view.background.noContact}
-                  open={openFolds.has("noContact")}
-                  onToggle={() => toggleFold("noContact")}
-                />
-                <FoldGroup
-                  title="Без отметки о выполнении"
-                  names={view.background.missed}
-                  open={openFolds.has("missed")}
-                  onToggle={() => toggleFold("missed")}
-                />
-              </>
+          {/* 📅 Учесть в плане — availability / constraints / move candidates & requests. */}
+          <section style={S.section}>
+            <div style={S.secHead}>
+              <span style={S.secTitle}>📅 Учесть в плане</span>
+              <span style={S.secCount}>{view.counts.plan}</span>
+            </div>
+            {view.plan.length === 0 ? (
+              <p style={S.empty}>Ничего учитывать.</p>
+            ) : (
+              view.plan.map((c, i) => (
+                <div key={c.studentId ?? `plan-${i}`} style={S.card}>
+                  <span style={S.name}>{c.name}</span>
+                  {c.summary ? <p style={S.summary}>{c.summary}</p> : null}
+                </div>
+              ))
             )}
           </section>
+
+          {/* 🦵 Травмы — admin-closable, manual only. */}
+          <section style={S.section}>
+            <div style={S.secHead}>
+              <span style={S.secTitle}>🦵 Травмы</span>
+              <span style={S.secCount}>{view.counts.pain}</span>
+            </div>
+            {view.pain.length === 0 ? (
+              <p style={S.empty}>Травм нет.</p>
+            ) : (
+              view.pain.map((c, i) => (
+                <div key={c.studentId ?? `pain-${i}`} style={S.card}>
+                  <span style={S.name}>{c.name}</span>
+                  {c.summary ? <p style={S.summary}>{c.summary}</p> : null}
+                  <p style={S.manualNote}>Закрывается вручную — не уйдёт сама.</p>
+                  <div style={S.actionRow}>
+                    <button
+                      type="button"
+                      style={S.closeBtn}
+                      disabled={closing.has(`injury:${c.studentId ?? ""}`)}
+                      onClick={() => handleClose(c.studentId, "injury")}
+                    >
+                      {closing.has(`injury:${c.studentId ?? ""}`) ? "Снимаю…" : "Снять"}
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </section>
+
+          {/* 📭 Нет контакта — collapsible tail. */}
+          <CollapsibleNames
+            title="📭 Нет контакта"
+            names={view.noContact}
+            open={!closedSections.has("noContact")}
+            onToggle={() => toggleSection("noContact")}
+          />
+
+          {/* 🏃 Нет выполнения — collapsible tail. */}
+          <CollapsibleNames
+            title="🏃 Нет выполнения"
+            names={view.missed}
+            open={!closedSections.has("missed")}
+            onToggle={() => toggleSection("missed")}
+          />
         </>
       ) : null}
 
@@ -398,27 +434,28 @@ export default function CoachDeskPage() {
   );
 }
 
-function FoldGroup(props: { title: string; names: string[]; open: boolean; onToggle: () => void }) {
-  if (props.names.length === 0) {
-    return null;
-  }
+function CollapsibleNames(props: { title: string; names: string[]; open: boolean; onToggle: () => void }) {
   return (
-    <div>
-      <button type="button" style={S.foldHead} onClick={props.onToggle}>
-        <span style={S.foldTitle}>{props.title}</span>
-        <span style={S.foldCount}>
-          {props.names.length} {props.open ? "▲" : "▼"}
+    <section style={S.section}>
+      <button type="button" style={S.secHead} onClick={props.onToggle}>
+        <span style={S.secTitle}>{props.title}</span>
+        <span style={S.secCount}>
+          {props.names.length} {props.names.length > 0 ? (props.open ? "▲" : "▼") : ""}
         </span>
       </button>
       {props.open ? (
-        <div style={S.foldBody}>
-          {props.names.map((n, i) => (
-            <span key={`${n}-${i}`} style={S.chip}>
-              {n}
-            </span>
-          ))}
-        </div>
+        props.names.length === 0 ? (
+          <p style={S.empty}>Пусто.</p>
+        ) : (
+          <div style={S.chipsWrap}>
+            {props.names.map((n, i) => (
+              <span key={`${n}-${i}`} style={S.chip}>
+                {n}
+              </span>
+            ))}
+          </div>
+        )
       ) : null}
-    </div>
+    </section>
   );
 }

@@ -3,10 +3,17 @@ import type {
   TrainingPeaksAttentionSnapshot,
 } from "@/features/trainingpeaks/service";
 
-// Coach-desk "Today" view model. Turns the same attention snapshot the bot digest uses into a clean,
-// phone-first shape: illness collapsed to ONE card per student, no tech noise (timestamps, ids, shell
-// commands), "N дней" instead of "просрочено N дн.", background lists foldable. Pure transform — no I/O,
-// unit-tested. The bot digest text stays as-is; this is a parallel presentation for the Mini App.
+// Coach-desk "Today" view model — a FULL mirror of the bot morning digest (same 5 sections, same order),
+// reshaped phone-first: illness collapsed to one card per student, no tech noise (timestamps, ids, shell
+// commands), "N дней" instead of "просрочено N дн.". Pure transform, unit-tested. The digest text is
+// unchanged; this is a parallel presentation. See ops-log 2026-07-02-1330-digest-vs-desk-sections-audit.
+//
+// Digest section → desk field:
+//   🩺 Проверить сегодня  → check (illness, closable via recovery) + errors (system failures) + scanAlert banner
+//   📅 Учесть в плане     → plan (availability/constraints + move candidates/requests)
+//   🦵 Травмы / дискомфорт → pain (closable via admin path, manual only)
+//   📭 Нет контакта        → noContact (names)
+//   🏃 Нет тренировки      → missed (names)
 
 export type CoachDeskHealthCard = {
   studentId: string | null;
@@ -21,17 +28,29 @@ export type CoachDeskCard = {
   summary: string;
 };
 
+// System failures (move execution failed, TP/race scan job failed) — NOT illness, so no "Снять".
+export type CoachDeskErrorCard = {
+  name: string | null; // may be absent (job-level failures have no student)
+  summary: string;
+};
+
 export type CoachDeskTodayView = {
   scanAlert: string | null;
-  check: CoachDeskHealthCard[]; // 🩺 illness, one per student
-  pain: CoachDeskCard[]; // 🦵 injuries / discomfort
-  moves: CoachDeskCard[]; // 🔁 workout-move candidates / needs-check
-  background: {
-    plan: string[]; // availability / constraints — names only
-    noContact: string[]; // silent 5+ days
-    missed: string[]; // no completion recorded
+  check: CoachDeskHealthCard[]; // 🩺 illness, one per student, recovery-closable
+  errors: CoachDeskErrorCard[]; // ⚠️ system failures, informational
+  plan: CoachDeskCard[]; // 📅 availability / constraints / move candidates & requests
+  pain: CoachDeskCard[]; // 🦵 injuries — admin-closable (manual only)
+  noContact: string[]; // 📭 silent 5+ days — names
+  missed: string[]; // 🏃 no completion recorded — names
+  counts: {
+    check: number;
+    errors: number;
+    plan: number;
+    moves: number;
+    pain: number;
+    noContact: number;
+    missed: number;
   };
-  counts: { check: number; pain: number; moves: number; background: number };
 };
 
 function collapseWhitespace(text: string): string {
@@ -43,10 +62,13 @@ function compactIsoDates(text: string): string {
   return text.replace(/\b(\d{4})-(\d{2})-(\d{2})\b/gu, (_m, _y, month, day) => `${day}.${month}`);
 }
 
-// "перенос требует проверки (01.07 21:44)" → drop the parenthetical timestamp. Also strips a bare
-// trailing "(DD.MM)" or "(DD.MM HH:MM)". Morning glance doesn't need the minute a request arrived.
-function stripTimestamps(text: string): string {
-  return collapseWhitespace(text.replace(/\((?:\d{1,2}\.\d{1,2})(?:\s+\d{1,2}:\d{2})?\)/gu, ""));
+// Drop parenthetical timestamps "(01.07 21:44)" / "(30.06)" and valid-until clauses "(до 05.07)".
+function stripNoiseParens(text: string): string {
+  return collapseWhitespace(
+    text
+      .replace(/\((?:\d{1,2}\.\d{1,2})(?:\s+\d{1,2}:\d{2})?\)/gu, "")
+      .replace(/\(до\s+[^)]*\)/giu, "")
+  );
 }
 
 // Pull "N" out of "просрочено 4 дн.:" / "Просрочено 4 дн." → 4. "Срок сегодня" / "срок сегодня" → 0.
@@ -70,9 +92,12 @@ function cleanHealthSummary(reason: string): string {
   return collapseWhitespace(text);
 }
 
-// The scan-failure signal is injected into checkToday with the alert as the "name". Detect it so we can
-// render a soft banner instead of a student card, and strip the "npm run tp-login …" shell command.
+// The scan-failure signal is injected into checkToday with the alert as the "name" (studentName null,
+// signalKind scan_failed). Detect it to render a soft banner and strip the "npm run tp-login" command.
 function isScanAlertSignal(signal: TrainingPeaksAttentionSignal): boolean {
+  if (signal.signalKind === "scan_failed") {
+    return true;
+  }
   const hay = `${signal.studentName ?? ""} ${signal.reason}`.toLowerCase();
   return hay.includes("скан tp") || hay.includes("tp-login");
 }
@@ -83,8 +108,9 @@ function softScanAlert(signal: TrainingPeaksAttentionSignal): string {
   return `Данные за вчера могут быть неполными${who}.`;
 }
 
-function isMoveReason(reason: string): boolean {
-  return /перенос|кандидат переноса/iu.test(reason);
+// Move candidates / move-needs-review requests inside the plan section (the "переносы" subset).
+export function isMoveReason(reason: string): boolean {
+  return /перенос|кандидат переноса|ждёт решения/iu.test(reason);
 }
 
 function displayName(signal: TrainingPeaksAttentionSignal): string {
@@ -92,18 +118,21 @@ function displayName(signal: TrainingPeaksAttentionSignal): string {
 }
 
 export function buildCoachDeskTodayView(snapshot: TrainingPeaksAttentionSnapshot): CoachDeskTodayView {
-  const healthSignals = [...snapshot.checkTodaySignals, ...snapshot.followUpToday];
-
-  // Scan alert (banner, once).
-  const scanSignal = healthSignals.find(isScanAlertSignal);
+  // 🩺 Проверить: checkTodaySignals carries the scan alert + SYSTEM failures (move exec failed, failed
+  // jobs); illness lives in followUpToday. Split them so system failures never look like closable illness.
+  const scanSignal = snapshot.checkTodaySignals.find(isScanAlertSignal);
   const scanAlert = scanSignal ? softScanAlert(scanSignal) : null;
 
-  // Illness collapsed to one card per student. Merge distinct summaries; days = most overdue.
+  const errors: CoachDeskErrorCard[] = snapshot.checkTodaySignals
+    .filter((signal) => !isScanAlertSignal(signal))
+    .map((signal) => ({
+      name: signal.studentName?.trim() || null,
+      summary: stripNoiseParens(signal.reason.split("\n").join(" ")),
+    }));
+
+  // Illness (followUpToday) collapsed to one card per student. Merge distinct summaries; days = most overdue.
   const byStudent = new Map<string, CoachDeskHealthCard & { summaries: string[] }>();
-  for (const signal of healthSignals) {
-    if (isScanAlertSignal(signal)) {
-      continue;
-    }
+  for (const signal of snapshot.followUpToday) {
     const key = signal.studentId?.trim() || signal.studentName?.trim() || "";
     if (!key) {
       continue;
@@ -135,41 +164,41 @@ export function buildCoachDeskTodayView(snapshot: TrainingPeaksAttentionSnapshot
     days: card.days,
   }));
 
+  // 📅 Учесть в плане: full digest section 2 — availability/constraints + move candidates & requests.
+  const planSignals = [...snapshot.planConstraintsToday, ...snapshot.movesToday];
+  const plan: CoachDeskCard[] = planSignals.map((signal) => ({
+    studentId: signal.studentId ?? null,
+    name: displayName(signal),
+    summary: compactIsoDates(stripNoiseParens(signal.reason.split("\n").join(" "))),
+  }));
+  const moves = planSignals.filter((signal) => isMoveReason(signal.reason)).length;
+
+  // 🦵 Травмы — admin-closable (manual only).
   const pain: CoachDeskCard[] = snapshot.painDiscomfort.map((signal) => ({
     studentId: signal.studentId ?? null,
     name: displayName(signal),
     summary: collapseWhitespace(signal.reason.split("\n").join(" — ")),
   }));
 
-  // Moves = explicit move candidates + any plan constraint phrased as a move-needs-check.
-  const moveSignals = [
-    ...snapshot.movesToday,
-    ...snapshot.planConstraintsToday.filter((signal) => isMoveReason(signal.reason)),
-  ];
-  const moves: CoachDeskCard[] = moveSignals.map((signal) => ({
-    studentId: signal.studentId ?? null,
-    name: displayName(signal),
-    summary: compactIsoDates(stripTimestamps(signal.reason.split("\n").join(" "))),
-  }));
-
-  // Background — names only, folded in the UI.
-  const plan = snapshot.planConstraintsToday
-    .filter((signal) => !isMoveReason(signal.reason))
-    .map(displayName);
   const noContact = snapshot.noContact5Days.map(displayName);
   const missed = snapshot.missedWorkouts.map(displayName);
 
   return {
     scanAlert,
     check,
+    errors,
+    plan,
     pain,
-    moves,
-    background: { plan, noContact, missed },
+    noContact,
+    missed,
     counts: {
       check: check.length,
+      errors: errors.length,
+      plan: plan.length,
+      moves,
       pain: pain.length,
-      moves: moves.length,
-      background: plan.length + noContact.length + missed.length,
+      noContact: noContact.length,
+      missed: missed.length,
     },
   };
 }
