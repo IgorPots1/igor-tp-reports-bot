@@ -7,10 +7,12 @@ import {
   linkBillingClientToStudentAction,
   markBillingPaidAction,
   markBillingUnpaidAction,
+  recordManualPaymentsAction,
   setBillingClientActiveAction,
   unlinkBillingClientFromStudentAction,
   updateBillingClientAction,
 } from "@/app/admin/billing/actions";
+import ManualPaymentForm from "@/app/admin/billing/clients/ManualPaymentForm";
 import {
   formatBillingAmount,
   formatIsoDate,
@@ -58,6 +60,13 @@ function getRowStatus(row: BillingMonthStatusRow): string {
   return row.status;
 }
 
+function shiftBillingMonthIso(isoDate: string, delta: number): string {
+  const d = new Date(`${isoDate}T12:00:00.000Z`);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + delta, 1, 12, 0, 0))
+    .toISOString()
+    .slice(0, 10);
+}
+
 function getStatusBadgeClass(status: string): string {
   switch (status) {
     case "paid":
@@ -90,6 +99,13 @@ export default async function BillingClientDetailPage({
   }
 
   const redirectTo = `/admin/billing/clients/${detail.client.id}`;
+
+  // Текущий месяц ±3 для формы ручного ввода оплаты.
+  const availableMonths = [-3, -2, -1, 0, 1, 2, 3].map((delta) => {
+    const iso = shiftBillingMonthIso(detail.currentMonth, delta);
+    return { value: iso.slice(0, 7), label: formatBillingMonthLabel(iso) };
+  });
+
   const [availableStudents, linkedStudent] = await Promise.all([
     detail.client.studentId ? Promise.resolve([]) : listBillingAvailableStudentsForManualLink(),
     detail.client.studentId ? getTrainingPeaksAdminStudentById(detail.client.studentId) : Promise.resolve(null),
@@ -248,6 +264,23 @@ export default async function BillingClientDetailPage({
         </article>
 
         <article className="admin-card admin-card-compact">
+          <h3>Внести оплату</h3>
+          <p className="admin-muted">
+            Свободный ввод: любой месяц, любая сумма, любая валюта. Если строка месяца ещё не создана — создаётся
+            автоматически. Для мультимесяца нажми «+ Добавить месяц».
+          </p>
+          <ManualPaymentForm
+            clientId={detail.client.id}
+            redirectTo={redirectTo}
+            defaultCurrency={detail.client.currency}
+            defaultAmount={detail.client.monthlyAmount}
+            defaultMonth={detail.currentMonth.slice(0, 7)}
+            availableMonths={availableMonths}
+            recordAction={recordManualPaymentsAction}
+          />
+        </article>
+
+        <article className="admin-card admin-card-compact">
           <h3>Редактировать клиента</h3>
           <div className="admin-section">
             <form className="admin-form-inline" action={updateBillingClientAction}>
@@ -342,10 +375,31 @@ export default async function BillingClientDetailPage({
                 Сохранить метод
               </FormActionButton>
             </form>
+
+            <form className="admin-form-inline" action={updateBillingClientAction}>
+              <input type="hidden" name="clientId" value={detail.client.id} />
+              <input type="hidden" name="redirectTo" value={redirectTo} />
+              <input type="hidden" name="field" value="currency" />
+              <label className="admin-field">
+                <span>Валюта клиента</span>
+                <select className="admin-input" name="value" defaultValue={detail.client.currency}>
+                  <option value="RUB">RUB</option>
+                  <option value="EUR">EUR</option>
+                  <option value="OTHER">OTHER</option>
+                </select>
+              </label>
+              <FormActionButton
+                className="admin-button admin-button-secondary"
+                pendingText="Сохранение..."
+                confirmMessage="Сменить валюту клиента? Уже созданные monthly rows не изменятся."
+              >
+                Сменить валюту
+              </FormActionButton>
+            </form>
           </div>
           <p className="admin-muted">
-            Изменения суммы и дня оплаты применяются только к будущим monthly rows. Уже созданные исторические строки не
-            переписываются автоматически.
+            Изменения суммы, дня оплаты и валюты применяются только к будущим monthly rows. Уже созданные исторические
+            строки не переписываются автоматически.
           </p>
         </article>
 
@@ -498,30 +552,29 @@ export default async function BillingClientDetailPage({
                 <th>Сумма</th>
                 <th>Статус</th>
                 <th>Фактическая дата</th>
+                <th>Действие</th>
               </tr>
             </thead>
             <tbody>
               {detail.paymentHistory.length === 0 ? (
                 <tr>
-                  <td className="admin-empty-cell" colSpan={5}>
+                  <td className="admin-empty-cell" colSpan={6}>
                     История оплат пока пустая.
                   </td>
                 </tr>
               ) : (
                 detail.paymentHistory.map((row) => {
                   const effectiveStatus = getRowStatus(row);
-                  const historyRowKey = `${row.clientId}:${row.plannedPaymentDate ?? "no-planned-date"}:${row.status}`;
+                  const monthKey = row.billingMonth ?? row.plannedPaymentDate;
+                  const historyRowKey = `${row.clientId}:${row.billingMonth ?? row.plannedPaymentDate ?? "no-date"}:${row.status}`;
 
                   return (
                     <tr key={historyRowKey}>
-                      <td>{row.plannedPaymentDate ? formatBillingMonthLabel(row.plannedPaymentDate) : "—"}</td>
+                      <td>{formatBillingMonthLabel(row.billingMonth ?? row.plannedPaymentDate ?? "")}</td>
                       <td>{formatBillingDate(row.plannedPaymentDate)}</td>
-                      <td>{formatBillingAmount(row.plannedAmount, row.currency)}</td>
                       <td>
                         <div className="admin-table-primary">
-                          <span className={`admin-badge ${getStatusBadgeClass(effectiveStatus)}`}>
-                            {getBillingPaymentStatusLabel(effectiveStatus)}
-                          </span>
+                          {formatBillingAmount(row.plannedAmount, row.currency)}
                           {row.paidAmount != null && row.paidAmount !== row.plannedAmount && (
                             <span className="admin-muted">
                               Факт: {formatBillingAmount(row.paidAmount, row.currency)}
@@ -529,7 +582,30 @@ export default async function BillingClientDetailPage({
                           )}
                         </div>
                       </td>
+                      <td>
+                        <span className={`admin-badge ${getStatusBadgeClass(effectiveStatus)}`}>
+                          {getBillingPaymentStatusLabel(effectiveStatus)}
+                        </span>
+                      </td>
                       <td>{formatBillingDate(row.actualPaymentDate)}</td>
+                      <td>
+                        {effectiveStatus === "paid" && monthKey ? (
+                          <form action={markBillingUnpaidAction}>
+                            <input type="hidden" name="clientId" value={detail.client.id} />
+                            <input type="hidden" name="month" value={monthKey.slice(0, 7)} />
+                            <input type="hidden" name="redirectTo" value={redirectTo} />
+                            <FormActionButton
+                              className="admin-button admin-button-secondary"
+                              pendingText="Снятие..."
+                              confirmMessage={`Снять оплату за ${formatBillingMonthLabel(monthKey)}? Статус вернётся в ожидание.`}
+                            >
+                              Снять оплату
+                            </FormActionButton>
+                          </form>
+                        ) : (
+                          <span className="admin-muted">—</span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })

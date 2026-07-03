@@ -294,6 +294,7 @@ export async function getBillingClientDetail(id: string): Promise<BillingClientD
     paidAmount: row.paidAmount,
     currency: row.currency,
     plannedPaymentDay: client.plannedPaymentDay,
+    billingMonth: row.billingMonth,
     plannedPaymentDate: row.plannedPaymentDate,
     actualPaymentDate: row.actualPaymentDate,
     status: row.status,

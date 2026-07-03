@@ -61,6 +61,7 @@ export type BillingClientUpdateInput = Partial<{
   clientName: string;
   groupName: string | null;
   monthlyAmount: number;
+  currency: BillingCurrency;
   plannedPaymentDay: number | null;
   paymentMethod: BillingPaymentMethod;
   isActive: boolean;
@@ -285,6 +286,7 @@ export type BillingMonthStatusRow = {
   paidAmount: number | null;
   currency: BillingCurrency;
   plannedPaymentDay: number | null;
+  billingMonth?: string;
   plannedPaymentDate: string | null;
   actualPaymentDate: string | null;
   status: BillingPaymentStatus;

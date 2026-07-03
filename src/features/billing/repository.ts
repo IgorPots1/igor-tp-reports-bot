@@ -76,6 +76,7 @@ type InsertBillingMonthlyPaymentRow = {
 };
 
 type UpdateBillingMonthlyPaymentRow = Partial<{
+  currency: string;
   actual_payment_date: string | null;
   paid_amount: number | null;
   status: BillingPaymentStatus;
@@ -92,6 +93,7 @@ type UpdateBillingClientRow = Partial<{
   client_name: string;
   group_name: string | null;
   monthly_amount: number;
+  currency: string;
   planned_payment_day: number | null;
   payment_method: BillingPaymentMethod;
   is_active: boolean;
@@ -384,6 +386,9 @@ function mapBillingClientUpdateInput(input: BillingClientUpdateInput): UpdateBil
   }
   if ("monthlyAmount" in input) {
     patch.monthly_amount = input.monthlyAmount;
+  }
+  if ("currency" in input) {
+    patch.currency = input.currency;
   }
   if ("plannedPaymentDay" in input) {
     patch.planned_payment_day = input.plannedPaymentDay;

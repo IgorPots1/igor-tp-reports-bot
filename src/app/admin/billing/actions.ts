@@ -13,13 +13,14 @@ import {
   linkBillingClientToStudent,
   markBillingClientPaid,
   markBillingClientUnpaid,
+  recordManualPaymentForClientMonth,
   resolveBillingMonth,
   setBillingClientActive,
   undoImportedPaymentMatch,
   unlinkBillingClientFromStudent,
   updateBillingClientById,
 } from "@/features/billing/service";
-import type { BillingCurrency } from "@/features/billing/types";
+import { BILLING_CURRENCY_VALUES, type BillingCurrency } from "@/features/billing/types";
 import {
   ADMIN_ACCESS_COOKIE_NAME,
   hasValidAdminAccessCookie,
@@ -212,6 +213,17 @@ export async function updateBillingClientAction(formData: FormData): Promise<voi
           updatedBy: BILLING_ACTION_ACTOR,
         });
         break;
+      case "currency": {
+        const newCurrency = getRequiredFormValue(formData, "value");
+        if (!(BILLING_CURRENCY_VALUES as readonly string[]).includes(newCurrency)) {
+          throw new Error(`Недопустимая валюта: ${newCurrency}.`);
+        }
+        await updateBillingClientById(clientId, {
+          currency: newCurrency as BillingCurrency,
+          updatedBy: BILLING_ACTION_ACTOR,
+        });
+        break;
+      }
       default:
         throw new Error(`Unsupported billing field: ${field}`);
     }
@@ -468,4 +480,62 @@ export async function ignoreImportedPaymentAction(formData: FormData): Promise<v
 
   revalidatePath("/admin/billing/imports");
   redirect(withNotice(redirectTo, "notice", "Импортированный платёж помечен как игнорированный."));
+}
+
+export async function recordManualPaymentsAction(formData: FormData): Promise<void> {
+  const clientId = getRequiredFormValue(formData, "clientId");
+  const redirectTo =
+    getOptionalFormValue(formData, "redirectTo") ?? `/admin/billing/clients/${clientId}`;
+
+  await ensureAdminAccess(redirectTo);
+
+  const currencyRaw = getRequiredFormValue(formData, "currency");
+  if (!(BILLING_CURRENCY_VALUES as readonly string[]).includes(currencyRaw)) {
+    revalidateBillingPaths(clientId);
+    redirect(withNotice(redirectTo, "error", `Недопустимая валюта: ${currencyRaw}.`));
+  }
+  const currency = currencyRaw as BillingCurrency;
+
+  const actualDate = getRequiredFormValue(formData, "actualDate");
+  const months = formData.getAll("month").filter((v): v is string => typeof v === "string" && v.trim() !== "");
+  const amounts = formData.getAll("amount").filter((v): v is string => typeof v === "string" && v.trim() !== "");
+
+  if (months.length === 0) {
+    revalidateBillingPaths(clientId);
+    redirect(withNotice(redirectTo, "error", "Укажи хотя бы один месяц."));
+  }
+
+  if (months.length !== amounts.length) {
+    revalidateBillingPaths(clientId);
+    redirect(withNotice(redirectTo, "error", "Количество месяцев и сумм не совпадает."));
+  }
+
+  const notices: string[] = [];
+
+  try {
+    for (let i = 0; i < months.length; i++) {
+      const month = months[i];
+      const paidAmount = Number(amounts[i]);
+      if (!Number.isInteger(paidAmount) || paidAmount <= 0) {
+        throw new Error(`Сумма для месяца ${month} должна быть положительным целым числом.`);
+      }
+      const result = await recordManualPaymentForClientMonth({
+        billingClientId: clientId,
+        month,
+        paidAmount,
+        actualPaymentDate: actualDate,
+        currency,
+        actor: BILLING_ACTION_ACTOR,
+      });
+      const label = month.slice(0, 7);
+      notices.push(result.kind === "already_paid" ? `${label}: уже был оплачен.` : `${label}: записано.`);
+    }
+  } catch (error) {
+    revalidateBillingPaths(clientId);
+    const message = error instanceof Error ? error.message : "Не удалось записать оплату.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+
+  revalidateBillingPaths(clientId);
+  redirect(withNotice(redirectTo, "notice", notices.join(" ")));
 }

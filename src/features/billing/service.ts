@@ -29,6 +29,7 @@ import {
   BILLING_CURRENCY_VALUES,
   BILLING_PAYMENT_METHOD_VALUES,
   BILLING_TIME_ZONE,
+  type BillingCurrency,
   type BillingClient,
   type BillingClientCreateInput,
   type BillingClientUpdateInput,
@@ -642,6 +643,53 @@ export async function markBillingClientUnpaid(input: MarkBillingClientUnpaidInpu
   return updated;
 }
 
+// Записывает ручной платёж для конкретного клиента и месяца. В отличие от
+// markBillingClientPaid, принимает явную валюту (может отличаться от валюты клиента).
+// Если строка для месяца ещё не создана — создаёт её через ensureBillingMonthRows.
+// Если месяц уже оплачен — возвращает {kind: "already_paid"}, не перезаписывает.
+export async function recordManualPaymentForClientMonth(input: {
+  billingClientId: string;
+  month: BillingMonthInput;
+  paidAmount: number;
+  actualPaymentDate: string;
+  currency: BillingCurrency;
+  actor?: string | null;
+}): Promise<{ kind: "paid" | "already_paid"; billingMonth: string }> {
+  if (!(BILLING_CURRENCY_VALUES as readonly string[]).includes(input.currency)) {
+    throw new Error(`Недопустимая валюта: ${input.currency}.`);
+  }
+
+  if (!Number.isInteger(input.paidAmount) || input.paidAmount <= 0) {
+    throw new Error("Сумма должна быть положительным целым числом больше нуля.");
+  }
+
+  const result = await markBillingClientPaid({
+    billingClientId: input.billingClientId,
+    month: input.month,
+    paidAmount: input.paidAmount,
+    actualPaymentDate: input.actualPaymentDate,
+    actor: input.actor,
+  });
+
+  if (result.kind === "already_paid") {
+    return { kind: "already_paid", billingMonth: result.payment.billingMonth };
+  }
+
+  // Если валюта платежа отличается от валюты строки (та берётся из клиента при создании) —
+  // обновляем currency отдельным патчем.
+  if (result.payment.currency !== input.currency) {
+    const patched = await updateBillingMonthlyPaymentById(result.payment.id, {
+      currency: input.currency,
+      updated_by: input.actor ?? null,
+    });
+    if (!patched) {
+      throw new Error(`Не удалось обновить валюту для платежа ${result.payment.id}.`);
+    }
+  }
+
+  return { kind: "paid", billingMonth: result.payment.billingMonth };
+}
+
 export async function getBillingOverdueCandidates(
   options: GetBillingOverdueCandidatesOptions = {}
 ): Promise<BillingMonthStatusRow[]> {
@@ -730,6 +778,12 @@ function validateBillingClientUpdateInput(input: BillingClientUpdateInput): void
     const monthlyAmount = input.monthlyAmount;
     if (!Number.isInteger(monthlyAmount) || (monthlyAmount ?? 0) <= 0) {
       throw new Error("Сумма должна быть положительным целым числом.");
+    }
+  }
+
+  if ("currency" in input && input.currency !== undefined) {
+    if (!(BILLING_CURRENCY_VALUES as readonly string[]).includes(input.currency)) {
+      throw new Error(`Недопустимая валюта: ${input.currency}.`);
     }
   }
 
