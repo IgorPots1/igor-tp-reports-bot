@@ -2137,6 +2137,72 @@ export async function listTrainingPeaksWorkoutCacheForStudentDateRange(input: {
   return ((data as TrainingPeaksWorkoutCacheDbRow[]) ?? []).map(mapTrainingPeaksWorkoutCacheRow);
 }
 
+export type TrainingPeaksRaceEventRow = {
+  id: string;
+  studentId: string;
+  studentName: string | null;
+  eventDate: string;
+  title: string;
+  distanceRaw: string | null;
+  source: string;
+};
+
+// Read-only list of upcoming race events (the Mac-runner scan / manual entries land in this table).
+// distance_km is intentionally NOT returned — it is unreliable (ultras mis-parsed, same event varies);
+// callers show distance_raw as-is. Student names are joined in a second batch query.
+export async function listUpcomingTrainingPeaksRaceEvents(input: {
+  fromDate: string;
+  toDate: string;
+}): Promise<TrainingPeaksRaceEventRow[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_race_events")
+    .select("id, student_id, event_date, title, distance_raw, source")
+    .gte("event_date", input.fromDate)
+    .lte("event_date", input.toDate)
+    .order("event_date", { ascending: true });
+  if (error) {
+    throw new Error(
+      `Failed to list TrainingPeaks race events for range ${input.fromDate}..${input.toDate}: ${error.message}`
+    );
+  }
+
+  const rows =
+    (data as Array<{
+      id: string;
+      student_id: string;
+      event_date: string;
+      title: string | null;
+      distance_raw: string | null;
+      source: string | null;
+    }> | null) ?? [];
+
+  const studentIds = [...new Set(rows.map((row) => row.student_id).filter(Boolean))];
+  const nameById = new Map<string, string | null>();
+  if (studentIds.length > 0) {
+    const { data: students, error: studentsError } = await supabase
+      .from("trainingpeaks_students")
+      .select("id, student_name")
+      .in("id", studentIds);
+    if (studentsError) {
+      throw new Error(`Failed to load student names for race events: ${studentsError.message}`);
+    }
+    for (const student of (students as Array<{ id: string; student_name: string | null }> | null) ?? []) {
+      nameById.set(student.id, student.student_name ?? null);
+    }
+  }
+
+  return rows.map((row) => ({
+    id: row.id,
+    studentId: row.student_id,
+    studentName: nameById.get(row.student_id) ?? null,
+    eventDate: row.event_date,
+    title: row.title ?? "",
+    distanceRaw: row.distance_raw ?? null,
+    source: row.source ?? "scan",
+  }));
+}
+
 export async function getTrainingPeaksWorkoutCacheFreshness(input?: {
   date?: string;
 }): Promise<{ latestScannedAt: string | null; rowCount: number }> {

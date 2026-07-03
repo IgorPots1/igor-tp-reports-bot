@@ -38,6 +38,21 @@ type TodayView = {
   };
 };
 
+type StartAthlete = { studentId: string; name: string; distance: string | null };
+type StartEvent = {
+  title: string;
+  date: string;
+  daysTo: number;
+  thisWeek: boolean;
+  athletes: StartAthlete[];
+  distanceLabel: string | null;
+};
+type StartsView = {
+  thisWeek: StartEvent[];
+  later: StartEvent[];
+  counts: { events: number; athletes: number; thisWeek: number };
+};
+
 // Force-light palette (a dark-theme phone must not wash out the desk). Teal lineage from /m/n.
 const C = {
   bg: "#f5f8f7",
@@ -145,6 +160,45 @@ const S = {
   chip: { padding: "6px 11px", borderRadius: 999, background: C.pill, color: C.sub, fontSize: 13, fontWeight: 600 } as const,
   empty: { padding: "8px 6px 14px", color: C.faint, fontSize: 13.5, fontWeight: 600 } as const,
   bigEmpty: { padding: "28px 18px", textAlign: "center" as const, color: C.faint, fontSize: 14, fontWeight: 600 } as const,
+  groupLabel: { padding: "12px 18px 2px", fontSize: 12, fontWeight: 700, color: C.faint, letterSpacing: "0.05em", textTransform: "uppercase" as const } as const,
+  eventCard: (week: boolean) =>
+    ({
+      background: C.card,
+      borderRadius: 14,
+      padding: "13px 15px",
+      margin: "0 14px 9px",
+      boxShadow: "0 1px 2px rgba(18,51,44,0.05)",
+      border: week ? `1.5px solid ${C.warnLine}` : `1px solid ${C.line}`,
+    }) as const,
+  eventHead: {
+    width: "100%",
+    display: "flex" as const,
+    justifyContent: "space-between" as const,
+    alignItems: "flex-start" as const,
+    gap: 10,
+    background: "transparent",
+    border: "none",
+    padding: 0,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    color: C.ink,
+    textAlign: "left" as const,
+  } as const,
+  eventTitle: { fontSize: 16, fontWeight: 700, lineHeight: 1.25 } as const,
+  eventMeta: { margin: "4px 0 0", fontSize: 13, fontWeight: 600, color: C.sub } as const,
+  eventWhen: (week: boolean) =>
+    ({
+      flex: "0 0 auto" as const,
+      fontSize: 12.5,
+      fontWeight: 800,
+      color: week ? C.warn : C.faint,
+      whiteSpace: "nowrap" as const,
+    }) as const,
+  eventCount: { margin: "6px 0 0", fontSize: 12.5, fontWeight: 700, color: C.faint } as const,
+  roster: { marginTop: 10, borderTop: `1px solid ${C.line}`, paddingTop: 8 } as const,
+  rosterRow: { display: "flex" as const, justifyContent: "space-between" as const, gap: 10, padding: "5px 0", fontSize: 14 } as const,
+  rosterName: { fontWeight: 600, color: C.ink } as const,
+  rosterDist: { flex: "0 0 auto" as const, fontWeight: 600, color: C.faint, fontSize: 13 } as const,
   tabBar: {
     position: "fixed" as const,
     left: 0,
@@ -174,10 +228,11 @@ const S = {
   soon: { fontSize: 9, fontWeight: 700, color: C.faint, letterSpacing: "0.04em" } as const,
 };
 
-type Tab = "today" | "moves" | "students" | "reports";
+type Tab = "today" | "moves" | "starts" | "students" | "reports";
 const TABS: Array<{ key: Tab; icon: string; label: string; ready: boolean }> = [
   { key: "today", icon: "🩺", label: "Сегодня", ready: true },
   { key: "moves", icon: "🔁", label: "Переносы", ready: false },
+  { key: "starts", icon: "🏁", label: "Старты", ready: true },
   { key: "students", icon: "👥", label: "Ученики", ready: false },
   { key: "reports", icon: "📊", label: "Отчёты", ready: false },
 ];
@@ -190,6 +245,12 @@ function daysLabel(days: number | null): string {
   return `${days} дней`;
 }
 
+function daysToLabel(days: number): string {
+  if (days <= 0) return "сегодня";
+  if (days === 1) return "завтра";
+  return `через ${days} ${days >= 2 && days <= 4 ? "дня" : "дней"}`;
+}
+
 export default function CoachDeskPage() {
   const [initData, setInitData] = useState("");
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -200,6 +261,10 @@ export default function CoachDeskPage() {
   const [closing, setClosing] = useState<Set<string>>(new Set());
   // Collapsible sections closed by default: the long tails (no-contact, no-completion).
   const [closedSections, setClosedSections] = useState<Set<string>>(new Set(["noContact", "missed"]));
+  // Starts tab (lazy-loaded on first open).
+  const [startsStatus, setStartsStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [startsView, setStartsView] = useState<StartsView | null>(null);
+  const [openEvents, setOpenEvents] = useState<Set<string>>(new Set());
 
   const loadToday = useCallback(async (id: string) => {
     setStatus("loading");
@@ -277,6 +342,42 @@ export default function CoachDeskPage() {
     [initData]
   );
 
+  const loadStarts = useCallback(async (id: string) => {
+    setStartsStatus("loading");
+    try {
+      const res = await fetch("/api/m/desk/starts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ initData: id }),
+      });
+      const json = (await res.json()) as { ok: boolean; view?: StartsView };
+      if (!json.ok || !json.view) {
+        setStartsStatus("error");
+        return;
+      }
+      setStartsView(json.view);
+      setStartsStatus("ready");
+    } catch {
+      setStartsStatus("error");
+    }
+  }, []);
+
+  // Lazy-load the Starts tab the first time it's opened.
+  useEffect(() => {
+    if (tab === "starts" && startsStatus === "idle") {
+      void loadStarts(initData);
+    }
+  }, [tab, startsStatus, initData, loadStarts]);
+
+  const toggleEvent = useCallback((key: string) => {
+    setOpenEvents((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
   const toggleSection = useCallback((key: string) => {
     setClosedSections((prev) => {
       const next = new Set(prev);
@@ -289,8 +390,12 @@ export default function CoachDeskPage() {
   return (
     <main style={S.shell}>
       <header style={S.header}>
-        <h1 style={S.h1}>Сегодня</h1>
-        {date ? <p style={S.date}>{date}</p> : null}
+        <h1 style={S.h1}>{tab === "starts" ? "Старты" : "Сегодня"}</h1>
+        {tab === "starts" ? (
+          <p style={S.date}>ближайшие 30 дней{startsView ? ` · ${startsView.counts.events}` : ""}</p>
+        ) : date ? (
+          <p style={S.date}>{date}</p>
+        ) : null}
       </header>
 
       {tab === "today" && view ? (
@@ -301,7 +406,14 @@ export default function CoachDeskPage() {
         </div>
       ) : null}
 
-      {tab !== "today" ? (
+      {tab === "starts" ? (
+        <StartsTab
+          status={startsStatus}
+          view={startsView}
+          openEvents={openEvents}
+          onToggleEvent={toggleEvent}
+        />
+      ) : tab !== "today" ? (
         <div style={S.bigEmpty}>
           {TABS.find((t) => t.key === tab)?.label} — скоро.
           <br />
@@ -431,6 +543,89 @@ export default function CoachDeskPage() {
         ))}
       </nav>
     </main>
+  );
+}
+
+function StartsTab(props: {
+  status: "idle" | "loading" | "ready" | "error";
+  view: StartsView | null;
+  openEvents: Set<string>;
+  onToggleEvent: (key: string) => void;
+}) {
+  if (props.status === "loading" || props.status === "idle") {
+    return <div style={S.bigEmpty}>Загружаю…</div>;
+  }
+  if (props.status === "error" || !props.view) {
+    return <div style={S.bigEmpty}>Не удалось загрузить старты.</div>;
+  }
+  if (props.view.counts.events === 0) {
+    return <div style={S.bigEmpty}>Ближайших стартов нет.</div>;
+  }
+  return (
+    <>
+      {props.view.thisWeek.length > 0 ? (
+        <>
+          <p style={S.groupLabel}>На этой неделе</p>
+          {props.view.thisWeek.map((e) => (
+            <EventCard
+              key={`${e.date}-${e.title}`}
+              event={e}
+              open={props.openEvents.has(`${e.date}-${e.title}`)}
+              onToggle={() => props.onToggleEvent(`${e.date}-${e.title}`)}
+            />
+          ))}
+        </>
+      ) : null}
+      {props.view.later.length > 0 ? (
+        <>
+          <p style={S.groupLabel}>Дальше</p>
+          {props.view.later.map((e) => (
+            <EventCard
+              key={`${e.date}-${e.title}`}
+              event={e}
+              open={props.openEvents.has(`${e.date}-${e.title}`)}
+              onToggle={() => props.onToggleEvent(`${e.date}-${e.title}`)}
+            />
+          ))}
+        </>
+      ) : null}
+    </>
+  );
+}
+
+function formatEventDate(iso: string): string {
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/u);
+  return m ? `${m[3]}.${m[2]}` : iso;
+}
+
+function EventCard(props: { event: StartEvent; open: boolean; onToggle: () => void }) {
+  const e = props.event;
+  return (
+    <div style={S.eventCard(e.thisWeek)}>
+      <button type="button" style={S.eventHead} onClick={props.onToggle}>
+        <span>
+          <span style={S.eventTitle}>{e.title}</span>
+          <p style={S.eventMeta}>
+            {formatEventDate(e.date)}
+            {e.distanceLabel ? ` · ${e.distanceLabel}` : " · дистанция уточняется"}
+          </p>
+        </span>
+        <span style={S.eventWhen(e.thisWeek)}>{daysToLabel(e.daysTo)}</span>
+      </button>
+      <p style={S.eventCount}>
+        {e.athletes.length} {e.athletes.length === 1 ? "ученик" : e.athletes.length >= 2 && e.athletes.length <= 4 ? "ученика" : "учеников"} {props.open ? "▲" : "▼"}
+      </p>
+      {props.open ? (
+        <div style={S.roster}>
+          {e.athletes.map((a) => (
+            <div key={a.studentId} style={S.rosterRow}>
+              <span style={S.rosterName}>{a.name}</span>
+              <span style={S.rosterDist}>{a.distance ?? "уточняется"}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
