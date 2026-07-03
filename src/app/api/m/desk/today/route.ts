@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 
 import { resolveMiniAppCoach } from "@/features/telegram/miniapp-coach-resolver";
 import { getTrainingPeaksAttentionSnapshot } from "@/features/trainingpeaks/service";
+import { listTrainingPeaksStudents } from "@/features/trainingpeaks/repository";
 import { buildCoachDeskTodayView } from "@/features/trainingpeaks/coach-desk-today";
 import { getTrainingPeaksAttentionDigestBelgradeTodayIso } from "@/features/trainingpeaks/attention-digest-run";
 
@@ -52,11 +53,20 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   try {
-    const snapshot = await getTrainingPeaksAttentionSnapshot();
-    const view = buildCoachDeskTodayView(snapshot);
+    // Snapshot + student usernames are BOTH plain Supabase reads — no TrainingPeaks/Mac call. The view
+    // is recomputed live on every open; usernames power tap-through to each student's 1:1 chat.
+    const [snapshot, students] = await Promise.all([
+      getTrainingPeaksAttentionSnapshot(),
+      listTrainingPeaksStudents(),
+    ]);
+    const usernameByStudentId = new Map<string, string | null>(
+      students.map((student) => [student.id, student.telegramUsername ?? null])
+    );
+    const view = buildCoachDeskTodayView(snapshot, usernameByStudentId);
     return jsonResponse(200, {
       ok: true,
       date: formatRuDate(getTrainingPeaksAttentionDigestBelgradeTodayIso()),
+      generatedAt: new Date().toISOString(),
       view,
     });
   } catch (error) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 
 type TelegramWebApp = {
   initData: string;
@@ -8,6 +8,7 @@ type TelegramWebApp = {
   expand: () => void;
   setBackgroundColor?: (c: string) => void;
   setHeaderColor?: (c: string) => void;
+  openTelegramLink?: (url: string) => void;
 };
 
 // Local cast (no global augmentation — /m/n already augments Window.Telegram; re-declaring here would
@@ -16,17 +17,31 @@ function getTelegramWebApp(): TelegramWebApp | undefined {
   return (globalThis as unknown as { Telegram?: { WebApp?: TelegramWebApp } }).Telegram?.WebApp;
 }
 
-type HealthCard = { studentId: string | null; name: string; summary: string; days: number | null };
-type Card = { studentId: string | null; name: string; summary: string };
+// Open the coach's 1:1 chat with a student (= the business conversation). Falls back to opening the URL
+// directly if openTelegramLink is unavailable (older client / dev browser).
+function openStudentChat(username: string | null) {
+  if (!username) return;
+  const url = `https://t.me/${username.replace(/^@/, "")}`;
+  const tg = getTelegramWebApp();
+  if (tg?.openTelegramLink) tg.openTelegramLink(url);
+  else if (typeof window !== "undefined") window.open(url, "_blank");
+}
+
+type WithChat = { studentId: string | null; name: string; telegramUsername: string | null };
+type HealthCard = WithChat & { summary: string; days: number | null };
+type Card = WithChat & { summary: string };
+type Dismiss = { kind: "action"; actionId: string } | { kind: "signal"; signalId: string } | null;
+type PlanCard = Card & { dismiss: Dismiss };
 type ErrorCard = { name: string | null; summary: string };
+type NameRow = WithChat;
 type TodayView = {
   scanAlert: string | null;
   check: HealthCard[];
   errors: ErrorCard[];
-  plan: Card[];
+  plan: PlanCard[];
   pain: Card[];
-  noContact: string[];
-  missed: string[];
+  noContact: NameRow[];
+  missed: NameRow[];
   counts: {
     check: number;
     errors: number;
@@ -226,6 +241,15 @@ const S = {
   }),
   tabIcon: { fontSize: 19, lineHeight: 1 } as const,
   soon: { fontSize: 9, fontWeight: 700, color: C.faint, letterSpacing: "0.04em" } as const,
+  fresh: { margin: "3px 0 0", fontSize: 11.5, fontWeight: 600, color: C.teal } as const,
+  softNote: { margin: "0 18px 6px", fontSize: 11.5, fontWeight: 600, color: C.faint, fontStyle: "italic" as const } as const,
+  nameRow: { display: "flex" as const, alignItems: "center" as const, gap: 6 } as const,
+  chatDot: { fontSize: 13, color: C.teal, flex: "0 0 auto" as const } as const,
+  noLink: { fontSize: 11, fontWeight: 700, color: C.faint } as const,
+  dim: { opacity: 0.55 } as const,
+  dismissRow: { marginTop: 11, display: "flex" as const, alignItems: "center" as const, justifyContent: "space-between" as const, gap: 8 } as const,
+  dismissNote: { fontSize: 11, fontWeight: 600, color: C.faint } as const,
+  chipTap: { padding: "6px 11px", borderRadius: 999, background: C.pill, color: C.teal, fontSize: 13, fontWeight: 600, cursor: "pointer", border: "none", fontFamily: "inherit" } as const,
 };
 
 type Tab = "today" | "moves" | "starts" | "students" | "reports";
@@ -257,8 +281,10 @@ export default function CoachDeskPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [date, setDate] = useState("");
   const [view, setView] = useState<TodayView | null>(null);
+  const [freshAt, setFreshAt] = useState("");
   const [tab, setTab] = useState<Tab>("today");
   const [closing, setClosing] = useState<Set<string>>(new Set());
+  const [dismissing, setDismissing] = useState<Set<string>>(new Set());
   // Collapsible sections closed by default: the long tails (no-contact, no-completion).
   const [closedSections, setClosedSections] = useState<Set<string>>(new Set(["noContact", "missed"]));
   // Starts tab (lazy-loaded on first open).
@@ -275,7 +301,13 @@ export default function CoachDeskPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ initData: id }),
       });
-      const json = (await res.json()) as { ok: boolean; view?: TodayView; date?: string; error?: string };
+      const json = (await res.json()) as {
+        ok: boolean;
+        view?: TodayView;
+        date?: string;
+        generatedAt?: string;
+        error?: string;
+      };
       if (!json.ok || !json.view) {
         setErrorMsg(json.error ?? "Не удалось загрузить.");
         setStatus("error");
@@ -283,6 +315,11 @@ export default function CoachDeskPage() {
       }
       setView(json.view);
       setDate(json.date ?? "");
+      setFreshAt(
+        json.generatedAt
+          ? new Date(json.generatedAt).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })
+          : ""
+      );
       setStatus("ready");
     } catch {
       setErrorMsg("Ошибка сети. Потяни, чтобы обновить.");
@@ -333,6 +370,42 @@ export default function CoachDeskPage() {
         /* leave the card; coach can retry */
       } finally {
         setClosing((prev) => {
+          const next = new Set(prev);
+          next.delete(tag);
+          return next;
+        });
+      }
+    },
+    [initData]
+  );
+
+  const handleDismiss = useCallback(
+    async (index: number, dismiss: NonNullable<Dismiss>) => {
+      const tag = `plan:${index}`;
+      setDismissing((prev) => new Set(prev).add(tag));
+      try {
+        const body =
+          dismiss.kind === "action"
+            ? { initData, kind: "action", actionId: dismiss.actionId }
+            : { initData, kind: "signal", signalId: dismiss.signalId };
+        const res = await fetch("/api/m/desk/plan/dismiss", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const json = (await res.json()) as { ok: boolean };
+        if (json.ok) {
+          setView((prev) => {
+            if (!prev) return prev;
+            const plan = prev.plan.filter((_, i) => i !== index);
+            const moves = plan.filter((p) => p.dismiss !== null).length;
+            return { ...prev, plan, counts: { ...prev.counts, plan: plan.length, moves } };
+          });
+        }
+      } catch {
+        /* leave the card; coach can retry */
+      } finally {
+        setDismissing((prev) => {
           const next = new Set(prev);
           next.delete(tag);
           return next;
@@ -396,6 +469,11 @@ export default function CoachDeskPage() {
         ) : date ? (
           <p style={S.date}>{date}</p>
         ) : null}
+        {tab === "today" && status === "ready" ? (
+          <p style={S.fresh}>
+            🟢 Обновлено{freshAt ? ` в ${freshAt}` : " только что"} · пересчёт при каждом открытии
+          </p>
+        ) : null}
       </header>
 
       {tab === "today" && view ? (
@@ -425,7 +503,12 @@ export default function CoachDeskPage() {
         <div style={S.bigEmpty}>{errorMsg}</div>
       ) : view ? (
         <>
-          {view.scanAlert ? <div style={S.banner}>⚠️ {view.scanAlert}</div> : null}
+          {view.scanAlert ? (
+            <>
+              <div style={S.banner}>⚠️ {view.scanAlert}</div>
+              <p style={S.softNote}>обновляется после ночного скана</p>
+            </>
+          ) : null}
 
           {/* 🩺 Проверить сегодня — illness (closable) + system errors (informational). */}
           <section style={S.section}>
@@ -437,18 +520,26 @@ export default function CoachDeskPage() {
               <p style={S.empty}>Никого проверять — чисто.</p>
             ) : null}
             {view.check.map((c, i) => (
-              <div key={c.studentId ?? `chk-${i}`} style={S.card}>
-                <div style={S.cardTop}>
-                  <span style={S.name}>{c.name}</span>
-                  {c.days !== null ? <span style={S.days}>{daysLabel(c.days)}</span> : null}
-                </div>
+              <div
+                key={c.studentId ?? `chk-${i}`}
+                style={chatCardStyle(c.telegramUsername)}
+                onClick={c.telegramUsername ? () => openStudentChat(c.telegramUsername) : undefined}
+              >
+                <CardName
+                  name={c.name}
+                  username={c.telegramUsername}
+                  right={c.days !== null ? <span style={S.days}>{daysLabel(c.days)}</span> : null}
+                />
                 {c.summary ? <p style={S.summary}>{c.summary}</p> : null}
                 <div style={S.actionRow}>
                   <button
                     type="button"
                     style={S.closeBtn}
                     disabled={closing.has(`illness:${c.studentId ?? ""}`)}
-                    onClick={() => handleClose(c.studentId, "illness")}
+                    onClick={(e) => {
+                      stop(e);
+                      handleClose(c.studentId, "illness");
+                    }}
                   >
                     {closing.has(`illness:${c.studentId ?? ""}`) ? "Снимаю…" : "Снять"}
                   </button>
@@ -478,9 +569,29 @@ export default function CoachDeskPage() {
               <p style={S.empty}>Ничего учитывать.</p>
             ) : (
               view.plan.map((c, i) => (
-                <div key={c.studentId ?? `plan-${i}`} style={S.card}>
-                  <span style={S.name}>{c.name}</span>
+                <div
+                  key={c.studentId ?? `plan-${i}`}
+                  style={chatCardStyle(c.telegramUsername)}
+                  onClick={c.telegramUsername ? () => openStudentChat(c.telegramUsername) : undefined}
+                >
+                  <CardName name={c.name} username={c.telegramUsername} />
                   {c.summary ? <p style={S.summary}>{c.summary}</p> : null}
+                  {c.dismiss ? (
+                    <div style={S.dismissRow}>
+                      <span style={S.dismissNote}>в TrainingPeaks ничего не меняется</span>
+                      <button
+                        type="button"
+                        style={S.closeBtn}
+                        disabled={dismissing.has(`plan:${i}`)}
+                        onClick={(e) => {
+                          stop(e);
+                          if (c.dismiss) void handleDismiss(i, c.dismiss);
+                        }}
+                      >
+                        {dismissing.has(`plan:${i}`) ? "Снимаю…" : "Снять"}
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               ))
             )}
@@ -496,8 +607,12 @@ export default function CoachDeskPage() {
               <p style={S.empty}>Травм нет.</p>
             ) : (
               view.pain.map((c, i) => (
-                <div key={c.studentId ?? `pain-${i}`} style={S.card}>
-                  <span style={S.name}>{c.name}</span>
+                <div
+                  key={c.studentId ?? `pain-${i}`}
+                  style={chatCardStyle(c.telegramUsername)}
+                  onClick={c.telegramUsername ? () => openStudentChat(c.telegramUsername) : undefined}
+                >
+                  <CardName name={c.name} username={c.telegramUsername} />
                   {c.summary ? <p style={S.summary}>{c.summary}</p> : null}
                   <p style={S.manualNote}>Закрывается вручную — не уйдёт сама.</p>
                   <div style={S.actionRow}>
@@ -505,7 +620,10 @@ export default function CoachDeskPage() {
                       type="button"
                       style={S.closeBtn}
                       disabled={closing.has(`injury:${c.studentId ?? ""}`)}
-                      onClick={() => handleClose(c.studentId, "injury")}
+                      onClick={(e) => {
+                        stop(e);
+                        handleClose(c.studentId, "injury");
+                      }}
                     >
                       {closing.has(`injury:${c.studentId ?? ""}`) ? "Снимаю…" : "Снять"}
                     </button>
@@ -515,20 +633,21 @@ export default function CoachDeskPage() {
             )}
           </section>
 
-          {/* 📭 Нет контакта — collapsible tail. */}
+          {/* 📭 Нет контакта — collapsible tail (tap name → chat). */}
           <CollapsibleNames
             title="📭 Нет контакта"
-            names={view.noContact}
+            rows={view.noContact}
             open={!closedSections.has("noContact")}
             onToggle={() => toggleSection("noContact")}
           />
 
-          {/* 🏃 Нет выполнения — collapsible tail. */}
+          {/* 🏃 Нет выполнения — collapsible tail, from nightly workout_cache. */}
           <CollapsibleNames
             title="🏃 Нет выполнения"
-            names={view.missed}
+            rows={view.missed}
             open={!closedSections.has("missed")}
             onToggle={() => toggleSection("missed")}
+            note="обновляется после ночного скана"
           />
         </>
       ) : null}
@@ -629,27 +748,72 @@ function EventCard(props: { event: StartEvent; open: boolean; onToggle: () => vo
   );
 }
 
-function CollapsibleNames(props: { title: string; names: string[]; open: boolean; onToggle: () => void }) {
+// A per-student card that taps through to the 1:1 chat when a username exists; dimmed + inert otherwise.
+function chatCardStyle(username: string | null): CSSProperties {
+  return username ? { ...S.card, cursor: "pointer" } : { ...S.card, ...S.dim };
+}
+
+function CardName(props: { name: string; username: string | null; right?: ReactNode }) {
+  return (
+    <div style={S.cardTop}>
+      <span style={S.nameRow}>
+        <span style={S.name}>{props.name}</span>
+        {props.username ? (
+          <span style={S.chatDot}>💬</span>
+        ) : (
+          <span style={S.noLink}>нет привязки</span>
+        )}
+      </span>
+      {props.right ?? null}
+    </div>
+  );
+}
+
+function stop(e: MouseEvent) {
+  e.stopPropagation();
+}
+
+function CollapsibleNames(props: {
+  title: string;
+  rows: NameRow[];
+  open: boolean;
+  onToggle: () => void;
+  note?: string;
+}) {
   return (
     <section style={S.section}>
       <button type="button" style={S.secHead} onClick={props.onToggle}>
         <span style={S.secTitle}>{props.title}</span>
         <span style={S.secCount}>
-          {props.names.length} {props.names.length > 0 ? (props.open ? "▲" : "▼") : ""}
+          {props.rows.length} {props.rows.length > 0 ? (props.open ? "▲" : "▼") : ""}
         </span>
       </button>
       {props.open ? (
-        props.names.length === 0 ? (
-          <p style={S.empty}>Пусто.</p>
-        ) : (
-          <div style={S.chipsWrap}>
-            {props.names.map((n, i) => (
-              <span key={`${n}-${i}`} style={S.chip}>
-                {n}
-              </span>
-            ))}
-          </div>
-        )
+        <>
+          {props.note ? <p style={S.softNote}>{props.note}</p> : null}
+          {props.rows.length === 0 ? (
+            <p style={S.empty}>Пусто.</p>
+          ) : (
+            <div style={S.chipsWrap}>
+              {props.rows.map((r, i) =>
+                r.telegramUsername ? (
+                  <button
+                    key={`${r.name}-${i}`}
+                    type="button"
+                    style={S.chipTap}
+                    onClick={() => openStudentChat(r.telegramUsername)}
+                  >
+                    {r.name} 💬
+                  </button>
+                ) : (
+                  <span key={`${r.name}-${i}`} style={{ ...S.chip, ...S.dim }}>
+                    {r.name}
+                  </span>
+                )
+              )}
+            </div>
+          )}
+        </>
       ) : null}
     </section>
   );
