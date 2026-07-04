@@ -1,4 +1,5 @@
 import { listKnownWorkoutAliasesForAiPrompt } from "@/features/trainingpeaks/workout-reference";
+import { logAiCall } from "@/features/trainingpeaks/ai-call-log";
 
 export type TrainingPeaksAiIntentKind = "move_workout" | "none" | "unknown";
 
@@ -45,6 +46,7 @@ export type ClassifyTrainingPeaksMoveIntentInput = {
   studentLinked: boolean;
   timezone?: string;
   baseDate?: Date;
+  _logCtx?: { messageId?: string | null; studentRef?: string | null };
 };
 
 export type ClassifyTrainingPeaksMoveIntentResult =
@@ -309,6 +311,7 @@ export async function classifyTrainingPeaksMoveIntentWithAi(
 
     const payload = (await response.json()) as {
       content?: Array<{ type: string; text: string }>;
+      usage?: { input_tokens?: number; output_tokens?: number };
     };
     const text = payload.content?.find((b) => b.type === "text")?.text?.trim();
     if (!text) {
@@ -326,6 +329,16 @@ export async function classifyTrainingPeaksMoveIntentWithAi(
     if (!parsed.ok) {
       return { ok: false, error: parsed.error };
     }
+
+    logAiCall({
+      callSite: "intent",
+      model: CLAUDE_MODEL,
+      labels: [],
+      inputTokens: payload.usage?.input_tokens ?? null,
+      outputTokens: payload.usage?.output_tokens ?? null,
+      messageId: input._logCtx?.messageId ?? null,
+      studentRef: input._logCtx?.studentRef ?? null,
+    });
 
     return {
       ok: true,

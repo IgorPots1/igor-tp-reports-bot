@@ -3,6 +3,7 @@ import type {
   TrainingPeaksMoveWorkoutDescriptor,
   TrainingPeaksMoveWorkoutTimeRef,
 } from "@/features/trainingpeaks/service";
+import { logAiCall } from "@/features/trainingpeaks/ai-call-log";
 
 type AiFallbackPayload = Omit<ParsedTrainingPeaksMoveWorkoutPayload, "actionType" | "parser">;
 
@@ -76,7 +77,8 @@ export async function parseMoveWorkoutWithAiFallback(
   rawText: string,
   // Pass the student's timezone when available (trainingpeaks_students.timezone, column not yet in DB).
   // Falls back to Moscow — the audience default. Do NOT pass the coach timezone (Belgrade).
-  studentTimezone?: string
+  studentTimezone?: string,
+  _logCtx?: { messageId?: string | null; studentRef?: string | null }
 ): Promise<AiFallbackPayload | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) {
@@ -131,7 +133,17 @@ export async function parseMoveWorkoutWithAiFallback(
     }
     const payload = (await response.json()) as {
       content?: Array<{ type: string; text: string }>;
+      usage?: { input_tokens?: number; output_tokens?: number };
     };
+    logAiCall({
+      callSite: "parser",
+      model: CLAUDE_MODEL,
+      labels: [],
+      inputTokens: payload.usage?.input_tokens ?? null,
+      outputTokens: payload.usage?.output_tokens ?? null,
+      messageId: _logCtx?.messageId ?? null,
+      studentRef: _logCtx?.studentRef ?? null,
+    });
     const text = payload.content?.find((b) => b.type === "text")?.text?.trim();
     if (!text) {
       return null;
@@ -301,7 +313,15 @@ export async function selectMoveSourceWorkoutWithAi(input: {
     }
     const payload = (await response.json()) as {
       content?: Array<{ type: string; text: string }>;
+      usage?: { input_tokens?: number; output_tokens?: number };
     };
+    logAiCall({
+      callSite: "parser",
+      model: CLAUDE_MODEL,
+      labels: [],
+      inputTokens: payload.usage?.input_tokens ?? null,
+      outputTokens: payload.usage?.output_tokens ?? null,
+    });
     const text = payload.content?.find((b) => b.type === "text")?.text?.trim();
     if (!text) {
       return null;

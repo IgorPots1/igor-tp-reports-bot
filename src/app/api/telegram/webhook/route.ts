@@ -23,6 +23,7 @@ import {
   isTrainingPeaksContextObserverEnabled,
 } from "@/features/trainingpeaks/context-observer";
 import { handleTrainingPeaksGroupProbe } from "@/features/trainingpeaks/group-probe";
+import { getTrainingPeaksTelegramContextObservationByChatMessage } from "@/features/trainingpeaks/repository";
 import type { TelegramMessage, TelegramUpdate } from "@/features/telegram/types";
 
 export const runtime = "nodejs";
@@ -147,6 +148,40 @@ export async function POST(request: Request) {
   if (update.business_message) {
     const businessMessageText =
       update.business_message.text ?? update.business_message.caption ?? null;
+    const bmChatId =
+      update.business_message.chat?.id !== undefined && update.business_message.chat?.id !== null
+        ? String(update.business_message.chat.id)
+        : null;
+    const bmMessageId = String(update.business_message.message_id);
+
+    // Dedup guard: Telegram retries the webhook with the same update_id if it does not receive
+    // a timely 200. The observation table records each processed (chat_id, message_id) pair, so
+    // a non-null hit here means this exact message was already handled — skip everything
+    // (including any Haiku call) and return 200 immediately.
+    if (bmChatId) {
+      try {
+        const alreadyProcessed = await getTrainingPeaksTelegramContextObservationByChatMessage({
+          chatId: bmChatId,
+          messageId: bmMessageId,
+        });
+        if (alreadyProcessed) {
+          console.info("Telegram business message dedup: skipping already-processed message", {
+            event: "telegram_business_message_dedup_skip",
+            updateId: update.update_id,
+            chatId: bmChatId,
+            messageId: bmMessageId,
+          });
+          return okResponse();
+        }
+      } catch (dedupError) {
+        // Dedup check failure is non-fatal: let processing continue rather than silently dropping.
+        console.warn("Telegram business message dedup check failed, processing anyway", {
+          event: "telegram_business_message_dedup_error",
+          chatId: bmChatId,
+          error: dedupError,
+        });
+      }
+    }
 
     console.info("Telegram business message received", {
       businessConnectionId: update.business_message.business_connection_id,

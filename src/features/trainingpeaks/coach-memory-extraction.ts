@@ -4,6 +4,7 @@ import {
   type TrainingPeaksStudentMemoryItem,
   type TrainingPeaksStudentMemoryType,
 } from "@/features/trainingpeaks/repository";
+import { logAiCall } from "@/features/trainingpeaks/ai-call-log";
 
 const CLAUDE_MODEL =
   process.env.COACH_MEMORY_EXTRACTION_MODEL?.trim() ||
@@ -82,6 +83,8 @@ export type CoachMemoryExtractionResult = {
     priority: "urgent" | "normal" | "low" | null;
   } | null;
   reason: string;
+  /** Internal: token usage from the Anthropic API call, for logAiCall. Not persisted to DB. */
+  _apiUsage?: { input_tokens?: number; output_tokens?: number } | null;
 };
 
 type ExtractionInput = {
@@ -1204,6 +1207,7 @@ async function extractCoachMemoryItems(input: ExtractionInput): Promise<CoachMem
   const userPrompt = buildUserPrompt(input);
 
   let content: string | null = null;
+  let capturedUsage: AnthropicMessagesResponse["usage"] | null = null;
   try {
     const response = await fetch(ANTHROPIC_API_URL, {
       method: "POST",
@@ -1248,6 +1252,7 @@ async function extractCoachMemoryItems(input: ExtractionInput): Promise<CoachMem
         cacheCreationTokens: usage.cache_creation_input_tokens ?? null,
       });
     }
+    capturedUsage = usage ?? null;
     content = payload.content?.find((b) => b.type === "text")?.text?.trim() ?? null;
     if (!content) {
       return {
@@ -1255,6 +1260,7 @@ async function extractCoachMemoryItems(input: ExtractionInput): Promise<CoachMem
         memoryItems: [],
         caseCandidate: null,
         reason: "Empty Anthropic response.",
+        _apiUsage: capturedUsage,
       };
     }
   } catch {
@@ -1275,6 +1281,7 @@ async function extractCoachMemoryItems(input: ExtractionInput): Promise<CoachMem
       memoryItems: [],
       caseCandidate: null,
       reason: "Failed to parse Anthropic JSON response.",
+      _apiUsage: capturedUsage,
     };
   }
 
@@ -1292,6 +1299,7 @@ async function extractCoachMemoryItems(input: ExtractionInput): Promise<CoachMem
       memoryItems: [],
       caseCandidate,
       reason,
+      _apiUsage: capturedUsage,
     };
   }
 
@@ -1301,6 +1309,7 @@ async function extractCoachMemoryItems(input: ExtractionInput): Promise<CoachMem
       memoryItems: [],
       caseCandidate,
       reason: `Model returned shouldRemember=true but no valid memory items. ${reason}`,
+      _apiUsage: capturedUsage,
     };
   }
 
@@ -1309,6 +1318,7 @@ async function extractCoachMemoryItems(input: ExtractionInput): Promise<CoachMem
     memoryItems,
     caseCandidate,
     reason,
+    _apiUsage: capturedUsage,
   };
 }
 
@@ -1342,6 +1352,20 @@ export async function processCoachMemoryForObservation(
         validUntil: item.validUntil,
       })),
     }));
+
+  // Log every real API call (precomputedExtraction skips the call, so no _apiUsage).
+  if (!input.precomputedExtraction && extraction._apiUsage !== undefined) {
+    logAiCall({
+      callSite: "memory",
+      model: CLAUDE_MODEL,
+      labels: input.labels,
+      shouldRemember: extraction.shouldRemember,
+      inputTokens: extraction._apiUsage?.input_tokens ?? null,
+      outputTokens: extraction._apiUsage?.output_tokens ?? null,
+      messageId: input.observationId.slice(0, 8),
+      studentRef: input.studentId.slice(0, 8),
+    });
+  }
 
   if (!extraction.shouldRemember || extraction.memoryItems.length === 0) {
     return {

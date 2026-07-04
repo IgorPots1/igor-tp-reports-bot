@@ -7325,6 +7325,7 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
           studentLinked: moveActionResult.reason !== "student_not_found",
           baseDate: message.date ? new Date(message.date * 1000) : undefined,
           // TODO: timezone: moveActionResult.student?.timezone ?? undefined (once DB column exists)
+          _logCtx: { messageId: String(message.message_id) },
         });
         if (
           aiResult.ok &&
