@@ -1149,10 +1149,14 @@ function buildStableSystemPrompt(): string {
 function buildUserPrompt(input: ExtractionInput): string {
   const preview = input.observationPreview.trim().slice(0, 500);
   const labels = input.observationLabels.slice(0, 15);
-  const activeMemory = (input.currentActiveMemoryItems ?? []).slice(0, 12).map((item) => ({
+  // Active memory is echoed only so the model can reason about dedup/supersede against
+  // existing memories. The structured blob is NOT needed here: the actual dedup/supersede
+  // decision runs in code after the model (processCoachMemoryForObservation builds Maps from
+  // summaryText + buildStructuredDedupeKey on the full DB objects, independent of this prompt).
+  // Dropping structured and capping at 8 items trims the input with zero effect on recall.
+  const activeMemory = (input.currentActiveMemoryItems ?? []).slice(0, 8).map((item) => ({
     memoryType: item.memoryType,
     summaryText: item.summaryText?.slice(0, 160),
-    structured: item.structured ?? {},
     validUntil: item.validUntil ?? null,
   }));
 
@@ -1241,9 +1245,9 @@ async function extractCoachMemoryItems(input: ExtractionInput): Promise<CoachMem
     const usage = payload.usage;
     if (usage) {
       // Token/cache diagnostics (debug — one per call). cacheReadTokens>0 confirms the cached prefix
-      // is being reused. NOTE: measured at ~1.7K static tokens the cache stays inert — Haiku's minimum
-      // cacheable prefix is 2048 tokens, and our stable block is below it, so cache_creation/read read 0
-      // today. The cache_control markup auto-activates if the stable prompt later grows past 2048.
+      // is being reused. NOTE: measured at ~1.7K static tokens the cache stays inert — Haiku 4.5's minimum
+      // cacheable prefix is 4096 tokens, and our stable block is below it, so cache_creation/read read 0
+      // today. The cache_control markup auto-activates if the stable prompt later grows past 4096.
       console.debug("trainingpeaks_coach_memory_anthropic_usage", {
         event: "trainingpeaks_coach_memory_anthropic_usage",
         inputTokens: usage.input_tokens ?? null,
