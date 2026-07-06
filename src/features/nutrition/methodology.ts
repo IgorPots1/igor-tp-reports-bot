@@ -1259,7 +1259,10 @@ function resolveCarbLoadBasis(trainingType: NutritionCanonicalTrainingType): Nut
   return "unknown";
 }
 
-function resolveCarbRangeByLoadBasis(loadBasis: NutritionCarbLoadBasis): {
+function resolveCarbRangeByLoadBasis(
+  loadBasis: NutritionCarbLoadBasis,
+  workoutDurationMinutes?: number | null
+): {
   rangeMinGPerKg: number | null;
   rangeMaxGPerKg: number | null;
 } {
@@ -1279,7 +1282,26 @@ function resolveCarbRangeByLoadBasis(loadBasis: NutritionCarbLoadBasis): {
     return { rangeMinGPerKg: 5.5, rangeMaxGPerKg: 7 };
   }
   if (loadBasis === "long_run") {
-    return { rangeMinGPerKg: 6, rangeMaxGPerKg: 10 };
+    // Scale the long-run carb corridor by the run's actual duration. A short/easy
+    // long run (right at the 80-min long-run threshold) depletes far less glycogen
+    // than a 2h+ marathon-prep long run, so a flat 6 g/kg lower bound over-flags
+    // small long runs as "мало углеводов". Coach-approved grid (duration is the
+    // primary signal — more reliable than GPS distance):
+    //   <110 min  → 4.5–8   (short / easy long run)
+    //   110–150   → 5.5–9   (moderate)
+    //   ≥150 min  → 6–10    (2h+ marathon volume — unchanged)
+    //   unknown   → 5.5–9   (safe middle; never re-inflate to 6.0 without evidence)
+    const min = workoutDurationMinutes ?? null;
+    if (min !== null && min < 110) {
+      return { rangeMinGPerKg: 4.5, rangeMaxGPerKg: 8 };
+    }
+    if (min !== null && min < 150) {
+      return { rangeMinGPerKg: 5.5, rangeMaxGPerKg: 9 };
+    }
+    if (min !== null) {
+      return { rangeMinGPerKg: 6, rangeMaxGPerKg: 10 };
+    }
+    return { rangeMinGPerKg: 5.5, rangeMaxGPerKg: 9 };
   }
   if (loadBasis === "long_endurance") {
     return { rangeMinGPerKg: 6, rangeMaxGPerKg: 8 };
@@ -1297,6 +1319,8 @@ function buildMacroGuardrails(input: {
   bodyweightKg: number | null;
   carbsGPerKg: number | null;
   canonicalTrainingType: NutritionCanonicalTrainingType;
+  /** Duration of the day's load-dominant session, used to scale the long_run corridor. */
+  workoutDurationMinutes?: number | null;
 }): NutritionMacroGuardrailsFacts {
   const proteinFloor = PROTEIN_GUARD_SUFFICIENT_G_PER_KG;
   const fatFloor = 1.0;
@@ -1366,7 +1390,7 @@ function buildMacroGuardrails(input: {
   }
 
   const loadBasis = resolveCarbLoadBasis(input.canonicalTrainingType);
-  const carbRange = resolveCarbRangeByLoadBasis(loadBasis);
+  const carbRange = resolveCarbRangeByLoadBasis(loadBasis, input.workoutDurationMinutes);
   let carbsStatus: NutritionMacroStatus = "unknown";
   let carbsFinding: string | null = null;
   if (
@@ -1400,7 +1424,7 @@ function buildMacroGuardrails(input: {
     isLoadDayForFat &&
     input.carbsGPerKg !== null
   ) {
-    const carbRangeForFat = resolveCarbRangeByLoadBasis(loadBasisForFat);
+    const carbRangeForFat = resolveCarbRangeByLoadBasis(loadBasisForFat, input.workoutDurationMinutes);
     if (
       carbRangeForFat.rangeMinGPerKg !== null &&
       (input.carbsGPerKg < carbRangeForFat.rangeMinGPerKg ||
@@ -1672,6 +1696,7 @@ function analyzeDailyTrainingNutrition(input: {
       bodyweightKg: input.bodyweightKg,
       carbsGPerKg,
       canonicalTrainingType,
+      workoutDurationMinutes: trainingPeaksDurationHoursToMinutes(currentWorkout?.durationHours ?? null),
     });
     const suspect =
       row.confidence < 0.6 ||
