@@ -610,13 +610,18 @@ function buildWorkoutContextByDate(week: NutritionTrainingPeaksWeekContext): Map
       mode: "past_review",
     });
     const type =
-      isLongEndurance
-        ? "long_endurance"
-        : isLongRun
-          ? "long_run"
-          : inferredType === "long_run"
-            ? "easy"
-            : inferredType;
+      // An explicit race (raw type "race", incl. a reconciled marathon) stays a race:
+      // its long duration must not demote it to long_endurance/long_run, or the day
+      // loses its race identity (label, loading, protocol all key on type "race").
+      inferredType === "race"
+        ? "race"
+        : isLongEndurance
+          ? "long_endurance"
+          : isLongRun
+            ? "long_run"
+            : inferredType === "long_run"
+              ? "easy"
+              : inferredType;
     const sessions = grouped.get(workout.date) ?? [];
     sessions.push({
       title: workout.title,
@@ -721,10 +726,13 @@ const NUTRITION_EXERCISE_KCAL_PER_KG_PER_HOUR: Record<NutritionTrainingType, num
 function estimateSessionEnergyKcal(session: WorkoutSessionContext, bw: number): number | null {
   // Task 10d (Bug 2): expenditure scales with INTENSITY, not just duration.
   if (
-    (session.type === "long_run" || session.type === "long_endurance") &&
+    (session.type === "long_run" || session.type === "long_endurance" || session.type === "race") &&
     session.distanceKm !== null &&
     session.distanceKm > 0
   ) {
+    // A reconciled race carries the OFFICIAL distance (e.g. 42.2 km), so distance×bw
+    // uses the clean figure rather than the inflated GPS one. Races with no distance
+    // fall through to the duration×intensity estimate below.
     return Math.round(session.distanceKm * bw);
   }
   if (session.durationHours !== null && session.durationHours > 0) {

@@ -452,23 +452,28 @@ function parseTrainingContextWorkouts(trainingContext: unknown): ParsedWorkout[]
       const isCompleted = status === "completed" || status === "planned_and_completed" || status === null;
       let dayType = normalizeDayType(type, title);
       const isRunLike = isExplicitRunTitle(title) || type === "run" || type === "easy_run" || type === "long_run";
-      if (
-        isNutritionLongEnduranceWorkout({
-          title,
-          durationHours,
-          isRunLike,
-        })
-      ) {
-        dayType = "long_endurance";
-      } else if (
-        isNutritionLongRunWorkout({
-          title,
-          durationHours,
-          isCompleted,
-          mode: "target_plan",
-        })
-      ) {
-        dayType = "long_run";
+      // An explicit race (incl. a reconciled marathon) keeps dayType "race": its long
+      // duration must not demote it to long_endurance/long_run, or the carb-loading
+      // window (which filters dayType === "race") would never anchor on it.
+      if (dayType !== "race") {
+        if (
+          isNutritionLongEnduranceWorkout({
+            title,
+            durationHours,
+            isRunLike,
+          })
+        ) {
+          dayType = "long_endurance";
+        } else if (
+          isNutritionLongRunWorkout({
+            title,
+            durationHours,
+            isCompleted,
+            mode: "target_plan",
+          })
+        ) {
+          dayType = "long_run";
+        }
       }
       const longRunSource =
         dayType === "long_run"
@@ -825,7 +830,13 @@ export function estimatePlanDayExerciseKcal(params: {
   if (dayType === "rest" || dayType === "unknown") {
     return 0;
   }
-  if ((dayType === "long_run" || dayType === "long_endurance") && params.distanceKm && params.distanceKm > 0) {
+  if (
+    (dayType === "long_run" || dayType === "long_endurance" || dayType === "race") &&
+    params.distanceKm &&
+    params.distanceKm > 0
+  ) {
+    // A reconciled race carries the OFFICIAL distance, so the day's expenditure is
+    // distance×bw on the clean figure (one session, not race + inflated-GPS run).
     return Math.round(params.distanceKm * bw);
   }
   const hours =

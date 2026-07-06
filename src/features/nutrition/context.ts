@@ -1186,6 +1186,32 @@ function injectRaceEventsIntoWeekContext(
     if (alreadyRace) {
       continue;
     }
+    // Reconcile the race event with the athlete's actual same-day run. One physical
+    // marathon arrives as TWO records: the scanned race event AND the completed TP run
+    // ("Running"), whose GPS distance can be inflated (e.g. 43.4 km for a 42.2 km race).
+    // When a same-day run's distance is within ±15% of the OFFICIAL race distance they
+    // are the same session: mark that activity as the race and adopt the official
+    // distance (not the inflated GPS one), instead of pushing a duplicate race row.
+    // ±15% keeps a half-marathon (21 km) from ever matching a marathon (42 km). If no
+    // matching activity exists (a planned/future race, or a race with no completed TP
+    // activity) we inject the race row as before — the ordinary case is untouched.
+    const raceKm = event.distanceKm ?? null;
+    const matchedRun =
+      raceKm != null && raceKm > 0
+        ? week.workouts.find(
+            (workout) =>
+              workout.date === event.eventDate &&
+              workout.type === "run" &&
+              workout.distanceKm != null &&
+              Math.abs(workout.distanceKm - raceKm) <= 0.15 * raceKm
+          )
+        : undefined;
+    if (matchedRun) {
+      matchedRun.type = "race";
+      matchedRun.distanceKm = raceKm; // official race distance, not inflated GPS
+      matchedRun.title = event.title?.trim() || matchedRun.title;
+      continue;
+    }
     week.workouts.push({
       date: event.eventDate,
       title: event.title?.trim() || "Старт",
