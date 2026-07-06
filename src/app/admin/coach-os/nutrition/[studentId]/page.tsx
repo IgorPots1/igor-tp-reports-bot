@@ -1482,6 +1482,15 @@ export default async function CoachOsNutritionStudentCardPage({
                 </dd>
               </div>
             )}
+            {/* Слова ученицы из формы («Заметка тренеру» → raw_text). Показываем
+                БЕЗУСЛОВНО рядом со шкалами — это контекст (самочувствие/обстоятельства),
+                который доходит до модели, но раньше был закопан в свёрнутый <details>. */}
+            {card.context.athleteCommentRu && (
+              <div style={{ gridColumn: "1 / -1" }}>
+                <dt>Заметка ученицы (из формы)</dt>
+                <dd style={{ whiteSpace: "pre-wrap" }}>{card.context.athleteCommentRu}</dd>
+              </div>
+            )}
             <div>
               <dt>Вес (кг)</dt>
               <dd>{bodyweightKg ?? "—"}</dd>

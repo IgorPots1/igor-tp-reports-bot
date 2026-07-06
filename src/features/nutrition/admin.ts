@@ -82,11 +82,20 @@ export async function getNutritionAdminStudentCard(input: {
       }));
   }
 
+  // Athlete's own free-text note for this week (mini-app «Заметка тренеру» →
+  // nutrition_reports.raw_text). Surface it into the card context so the summary
+  // card can show it UNCONDITIONALLY next to the check-in scores — same as
+  // weeklyCheckin — instead of it being reachable only via a selected report.
+  // Reports come newest-first; take the most recent one that actually has a note.
+  const latestAthleteNote =
+    reports.find((report) => (report.rawText ?? "").trim().length > 0)?.rawText ?? null;
+
   const context = await buildNutritionStudentContext({
     studentId: input.studentId,
     weekFrom: input.weekFrom,
     weekTo: input.weekTo,
     manualRows: [],
+    athleteCommentRu: latestAthleteNote,
   });
   return {
     student: essentials.student,
