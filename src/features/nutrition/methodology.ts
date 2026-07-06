@@ -1374,12 +1374,16 @@ function buildMacroGuardrails(input: {
     carbRange.rangeMinGPerKg !== null &&
     carbRange.rangeMaxGPerKg !== null
   ) {
-    if (input.carbsGPerKg < carbRange.rangeMinGPerKg - 0.4) {
+    // Carb under-target is flagged ONLY when the day is more than 10% BELOW the
+    // lower bound of its corridor. In-corridor (>= lower) is fine, and a near-miss
+    // (within 10% below the lower bound — «почти дотянула») is not flagged either,
+    // so a generally-on-target athlete isn't nagged for every load day. The 10% is
+    // taken from the LOWER bound (carbRange.rangeMinGPerKg), and because that bound
+    // is day-type-specific, loading days are judged against THEIR own lower bound.
+    const carbsLowerFlagThresholdGPerKg = carbRange.rangeMinGPerKg * 0.9;
+    if (input.carbsGPerKg < carbsLowerFlagThresholdGPerKg) {
       carbsStatus = "low";
       carbsFinding = "Углеводов для такого дня низковато.";
-    } else if (input.carbsGPerKg < carbRange.rangeMinGPerKg) {
-      carbsStatus = "borderline";
-      carbsFinding = "Углеводы на нижней границе для такой нагрузки.";
     } else if (input.carbsGPerKg > carbRange.rangeMaxGPerKg + 0.6) {
       carbsStatus = "high";
       carbsFinding = null;
