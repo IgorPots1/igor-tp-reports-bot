@@ -1867,9 +1867,27 @@ export function buildNutritionWeeklySummary(input: {
   const segments: string[] = [];
 
   if (energyLowLoadDays >= 3 || (energyLowLoadDays >= 2 && carbsLowLoadDays >= 2)) {
-    segments.push("Главный паттерн недели: дни с нагрузкой часто получались низкими по энергии и углеводам.");
+    // Word the pattern to match what actually triggered it. The condition can fire
+    // on energy alone (energyLowLoadDays >= 3, carbs fine) — asserting "и углеводам"
+    // then would be false. Only claim carbs when the carb pattern is real
+    // (carbsLowLoadDays >= 2, the same signal the second disjunct requires).
+    segments.push(
+      carbsLowLoadDays >= 2
+        ? "Главный паттерн недели: дни с нагрузкой часто получались низкими по энергии и углеводам."
+        : "Главный паттерн недели: дни с нагрузкой часто получались низкими по энергии."
+    );
   } else if (energyLowLoadDays > 0 || carbsLowLoadDays > 0) {
-    segments.push("Главный фокус: сделать дни с нагрузкой не такими «пустыми» по энергии и углеводам.");
+    // Same discipline as the pattern line above: name only what was actually low,
+    // so a purely low-energy (or purely low-carb) week is not told it was both.
+    const energyLow = energyLowLoadDays > 0;
+    const carbsLow = carbsLowLoadDays > 0;
+    segments.push(
+      energyLow && carbsLow
+        ? "Главный фокус: сделать дни с нагрузкой не такими «пустыми» по энергии и углеводам."
+        : carbsLow
+          ? "Главный фокус: сделать дни с нагрузкой не такими «пустыми» по углеводам."
+          : "Главный фокус: сделать дни с нагрузкой не такими «пустыми» по энергии."
+    );
   } else {
     segments.push("Главный момент недели — держать энергию ровнее вокруг ключевых тренировок.");
   }
