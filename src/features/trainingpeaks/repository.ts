@@ -2064,6 +2064,32 @@ export async function listTrainingPeaksWorkoutCacheScanStatusesCoveringDate(
   );
 }
 
+export async function getLatestTrainingPeaksWorkoutCacheScanStatusForStudentCoveringDate(
+  studentId: string,
+  date: string
+): Promise<TrainingPeaksWorkoutCacheScanStatus | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_workout_cache_scan_status")
+    .select("*")
+    .eq("student_id", studentId)
+    .lte("scan_from", date)
+    .gte("scan_to", date)
+    .order("scanned_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to load latest TrainingPeaks workout cache scan status for student ${studentId} covering ${date}: ${error.message}`
+    );
+  }
+
+  return data
+    ? mapTrainingPeaksWorkoutCacheScanStatusRow(data as TrainingPeaksWorkoutCacheScanStatusDbRow)
+    : null;
+}
+
 export async function listTrainingPeaksStudentHealthMetricProfiles(
   input: ListTrainingPeaksStudentHealthMetricProfilesInput = {}
 ): Promise<TrainingPeaksStudentHealthMetricProfile[]> {

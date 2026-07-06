@@ -715,7 +715,9 @@ export async function generateNutritionWeeklyPlanAction(formData: FormData): Pro
     const message =
       plan.status === "blocked_safety"
         ? "Блок безопасности: фокус недели сохранён без черновика для ученика."
-        : formatNutritionPlanTargetWeekNotice(targetWeek.mode);
+        : plan.status === "needs_review"
+          ? "Фокус недели сохранён, но помечен «нужна проверка» — см. причины в карточке (например, тренировки недели не видны в TrainingPeaks)."
+          : formatNutritionPlanTargetWeekNotice(targetWeek.mode);
     redirect(
       buildNutritionStudentCardHref({
         studentId,

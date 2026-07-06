@@ -21,7 +21,10 @@ import {
   type NutritionWeeklyPlan,
   type NutritionWeeklyPlanStatus,
 } from "@/features/nutrition/repository";
-import type { TrainingPeaksTelegramFormality } from "@/features/trainingpeaks/repository";
+import {
+  getLatestTrainingPeaksWorkoutCacheScanStatusForStudentCoveringDate,
+  type TrainingPeaksTelegramFormality,
+} from "@/features/trainingpeaks/repository";
 import { getTrainingPeaksReplyDraftFormalityInstruction } from "@/features/trainingpeaks/telegram-context";
 import { resolveStudentCommunicationProfile } from "@/features/trainingpeaks/communication-profile";
 
@@ -77,6 +80,15 @@ export type NutritionWeeklyPlanFacts = {
     status: "available" | "empty" | "stale" | "unknown";
     workouts: NutritionWeeklyPlanWorkoutFacts[];
     keyWorkouts: NutritionWeeklyPlanWorkoutFacts[];
+    /**
+     * State of the latest workout-cache scan covering the plan week. Lets the
+     * coach-facing gate tell an empty/stale plan week caused by a TP access
+     * failure (403 / scan down / never scanned) apart from a week that is simply
+     * not planned in TP yet (or planned after the once-daily morning scan).
+     * "ok" when no distinction is needed (e.g. status === "available").
+     */
+    scanState: "ok" | "failed" | "missing";
+    scanError: string | null;
   };
   methodology: {
     previousWeekFocus: Record<string, unknown> | null;
@@ -441,6 +453,13 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
   sex?: import("@/features/nutrition/repository").NutritionSex | null;
   heightCm?: number | null;
   ageYears?: number | null;
+  /**
+   * State of the latest workout-cache scan covering the plan week, resolved by
+   * the async caller. Defaults to "ok" so callers that don't pass it keep the
+   * prior (non-distinguishing) behaviour.
+   */
+  nextWeekScanState?: "ok" | "failed" | "missing";
+  nextWeekScanError?: string | null;
 }): NutritionWeeklyPlanFacts {
   const nutritionSummary = input.sourceAnalysis.nutritionSummary;
   const safetyFlags = input.sourceAnalysis.safetyFlags;
@@ -502,6 +521,8 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
       status: mapTpCacheStatus(tpNextWeek.cacheStatus),
       workouts,
       keyWorkouts,
+      scanState: input.nextWeekScanState ?? "ok",
+      scanError: input.nextWeekScanError ?? null,
     },
     methodology: {
       previousWeekFocus: Object.keys(oneFocus).length > 0 ? oneFocus : null,
@@ -524,6 +545,33 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
     },
     nextWeekPlan,
   };
+}
+
+/**
+ * Resolve the state of the latest workout-cache scan covering the plan week, so
+ * the coach-facing gate can distinguish "TP access failure" from "week not
+ * planned in TP yet". Never throws — a status-read failure must not block plan
+ * generation, so it degrades to "ok" (the generic "not visible in TP" hint).
+ */
+async function resolvePlanWeekScanState(
+  studentId: string,
+  planWeekDate: string
+): Promise<{ state: "ok" | "failed" | "missing"; error: string | null }> {
+  try {
+    const latest = await getLatestTrainingPeaksWorkoutCacheScanStatusForStudentCoveringDate(
+      studentId,
+      planWeekDate
+    );
+    if (!latest) {
+      return { state: "missing", error: null };
+    }
+    if (latest.status === "failed") {
+      return { state: "failed", error: compactText(latest.errorMessage) };
+    }
+    return { state: "ok", error: null };
+  } catch {
+    return { state: "ok", error: null };
+  }
 }
 
 export function buildNutritionWeeklyPlanFacts(input: {
@@ -565,6 +613,7 @@ async function buildNutritionWeeklyPlanFactsInternal(input: {
 
   const targetPlanWeek = resolveFactsTargetPlanWeek({ todayLocalDate: input.todayLocalDate });
   const planWeek = { from: targetPlanWeek.from, to: targetPlanWeek.to };
+  const nextWeekScan = await resolvePlanWeekScanState(input.studentId, planWeek.from);
   const sourceReviewContext = toObject(input.sourceAnalysis.tpNextWeekContext);
   let freshContext: Record<string, unknown> | null = null;
   let tpNextWeekContextOverride = sourceReviewContext;
@@ -594,6 +643,8 @@ async function buildNutritionWeeklyPlanFactsInternal(input: {
       sex: essentials.profile?.sex ?? null,
       heightCm: essentials.profile?.heightCm ?? null,
       ageYears: essentials.profile?.ageYears ?? null,
+      nextWeekScanState: nextWeekScan.state,
+      nextWeekScanError: nextWeekScan.error,
     });
     return {
       facts,
@@ -657,6 +708,8 @@ async function buildNutritionWeeklyPlanFactsInternal(input: {
     sex: essentials.profile?.sex ?? null,
     heightCm: essentials.profile?.heightCm ?? null,
     ageYears: essentials.profile?.ageYears ?? null,
+    nextWeekScanState: nextWeekScan.state,
+    nextWeekScanError: nextWeekScan.error,
   });
 
   return { facts, tpContextRefresh };
@@ -743,12 +796,51 @@ function buildFallbackAthleteDraft(facts: NutritionWeeklyPlanFacts, planFocus: N
   return lines.join("\n").trim();
 }
 
+/**
+ * Coach-facing gate for the plan (target) week's TP training. Plan generation
+ * reads a once-daily workout cache with no freshness requirement, so an empty
+ * plan week would otherwise produce a silent, workout-less plan. When the plan
+ * week has no usable workouts we mark the plan needs_review and surface WHY,
+ * distinguishing a TP access failure (403 / scan down / never scanned) from a
+ * week that is simply not planned in TP yet (or planned after the morning scan).
+ * Returns no reason when training is available — nothing to warn about.
+ */
+function resolveNextWeekPlanTrainingGate(
+  facts: NutritionWeeklyPlanFacts
+): { needsReview: boolean; reason: string | null } {
+  if (facts.nextWeekTraining.status === "available") {
+    return { needsReview: false, reason: null };
+  }
+  const weekLabel = facts.planWeekMode === "current_week" ? "текущей недели" : "следующей недели";
+  if (facts.nextWeekTraining.scanState === "failed") {
+    const detail = facts.nextWeekTraining.scanError ? `: ${facts.nextWeekTraining.scanError}` : "";
+    return {
+      needsReview: true,
+      reason: `Тренировки ${weekLabel} не подтянулись из TrainingPeaks — сбой доступа (403 / скан упал${detail}). Проверь связь коуча в TP и обнови кэш перед отправкой.`,
+    };
+  }
+  if (facts.nextWeekTraining.scanState === "missing") {
+    return {
+      needsReview: true,
+      reason: `Тренировки ${weekLabel} не подтянулись: кэш тренировок TrainingPeaks для этой недели ещё не собран. Запусти скан и перегенерируй.`,
+    };
+  }
+  return {
+    needsReview: true,
+    reason: `Тренировок ${weekLabel} в TrainingPeaks не видно. Расписана ли неделя? Кэш обновляется раз в сутки — только что добавленное появится после утреннего скана.`,
+  };
+}
+
 export function generateNutritionWeeklyPlanFallback(
   facts: NutritionWeeklyPlanFacts,
   tpContextRefresh?: NutritionWeeklyPlanTpContextRefresh | null
 ): GeneratedNutritionWeeklyPlan {
   const blocked = isSafetyBlocked(facts.sourceReview.safetyFlags);
-  const doNotSendReasons = extractDoNotSendReasons(facts.sourceReview.safetyFlags, facts.sourceReview.nutritionSummary);
+  const nextWeekGate = resolveNextWeekPlanTrainingGate(facts);
+  const doNotSendReasons = [
+    ...extractDoNotSendReasons(facts.sourceReview.safetyFlags, facts.sourceReview.nutritionSummary),
+    ...(nextWeekGate.reason ? [nextWeekGate.reason] : []),
+  ];
   const planFocus = buildFallbackPlanFocus(facts);
   const keyTrainingDays = buildFallbackKeyTrainingDays(facts);
   const simpleActions =
@@ -801,7 +893,11 @@ export function generateNutritionWeeklyPlanFallback(
       doNotSendReasons,
       copyOnly: true,
     },
-    status: blocked ? "blocked_safety" : facts.methodology.limitedData ? "needs_review" : "draft_generated",
+    status: blocked
+      ? "blocked_safety"
+      : facts.methodology.limitedData || nextWeekGate.needsReview
+        ? "needs_review"
+        : "draft_generated",
     generationMode: "fallback",
     promptVersion: NUTRITION_WEEKLY_PLAN_PROMPT_VERSION,
     aiModel: NUTRITION_WEEKLY_PLAN_FALLBACK_MODEL,
@@ -959,10 +1055,12 @@ export async function generateNutritionWeeklyPlanWithAi(
     return null;
   }
   const blocked = isSafetyBlocked(facts.sourceReview.safetyFlags);
+  const nextWeekGate = resolveNextWeekPlanTrainingGate(facts);
   const doNotSendReasons = [
     ...new Set([
       ...extractDoNotSendReasons(facts.sourceReview.safetyFlags, facts.sourceReview.nutritionSummary),
       ...aiOutput.do_not_send_reasons,
+      ...(nextWeekGate.reason ? [nextWeekGate.reason] : []),
     ]),
   ];
   return {
@@ -985,7 +1083,11 @@ export async function generateNutritionWeeklyPlanWithAi(
       doNotSendReasons,
       copyOnly: true,
     },
-    status: blocked ? "blocked_safety" : facts.methodology.limitedData ? "needs_review" : "draft_generated",
+    status: blocked
+      ? "blocked_safety"
+      : facts.methodology.limitedData || nextWeekGate.needsReview
+        ? "needs_review"
+        : "draft_generated",
     generationMode: "ai",
     promptVersion: NUTRITION_WEEKLY_PLAN_PROMPT_VERSION,
     aiModel: OPENAI_NUTRITION_PLAN_MODEL,
