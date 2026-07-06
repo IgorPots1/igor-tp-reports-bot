@@ -16,6 +16,66 @@ export const NUTRITION_ATHLETE_FORBIDDEN_MEDICAL_TERMS = [
   "костная плотность",
 ] as const;
 
+/**
+ * SINGLE SOURCE OF TRUTH for coach / clinical / methodical terms that must NEVER
+ * reach athlete-facing text. Superset of the medical terms above plus the coach
+ * abbreviations and methodical framings that leaked before (the bare "EA" in
+ * «EA на границе нормы» slipped past because the live send-gate list was a
+ * DIFFERENT, shorter list than this). Everything that blocks athlete prose is
+ * built from here now: the prompt stop-list (so the model never writes them),
+ * the per-day prose validator (so an offending day is rewritten to the safe
+ * deterministic comment), and the final send-gate (hard withhold as a backstop).
+ */
+export const NUTRITION_ATHLETE_FORBIDDEN_COACH_TERM_WORDS = [
+  ...NUTRITION_ATHLETE_FORBIDDEN_MEDICAL_TERMS,
+  "EA",
+  "energy availability",
+  "energyAvailability",
+  "энергодефицит",
+  "дефицит калорий",
+  "на границе нормы",
+] as const;
+
+/**
+ * Compiled matchers for the validators (hard block). Split per term so "EA" stays
+ * CASE-SENSITIVE (the uppercase coach abbreviation only) — a bare lowercase "ea"
+ * fragment never appears in Russian prose, and no food/brand is the standalone
+ * token "EA", so \bEA\b case-sensitive has effectively zero food false positives
+ * (word boundary also protects SEA / IKEA / EAA). Cyrillic terms match case-
+ * insensitively. "на границе нормы" targets ТОЛЬКО «границ… нормы» — the allowed
+ * athlete wording «нижняя граница» (без «нормы») is deliberately NOT matched.
+ */
+export const NUTRITION_ATHLETE_FORBIDDEN_COACH_TERM_PATTERNS: readonly RegExp[] = [
+  /\bEA\b/, // case-sensitive on purpose (coach abbrev, not food)
+  /\bLEA\b/i,
+  /RED[\s-]?S|\bREDs\b/i,
+  /energy\s*availability/i,
+  /энергодоступн/i,
+  /энергодефицит/i,
+  /дефицит\s+энерг/i,
+  /дефицит\s+калор/i,
+  /аменоре/i,
+  /анеми/i,
+  /костн\p{L}*\s+плотност/iu,
+  /расстройств\p{L}*\s+пищев/iu,
+  /медицинск/i,
+  /границ\p{L}*\s+нормы/iu,
+] as const;
+
+/**
+ * Returns the first forbidden coach/clinical/methodical term found in athlete text,
+ * or null. Used by both prose validators so the list lives in exactly one place.
+ */
+export function findForbiddenAthleteCoachTerm(text: string): string | null {
+  for (const re of NUTRITION_ATHLETE_FORBIDDEN_COACH_TERM_PATTERNS) {
+    const match = re.exec(text);
+    if (match) {
+      return match[0];
+    }
+  }
+  return null;
+}
+
 export const NUTRITION_ATHLETE_ALLOWED_ENERGY_WORDING = [
   "энергии для такого дня маловато",
   "для дня с нагрузкой это нижняя граница",
@@ -31,7 +91,7 @@ export const NUTRITION_PRACTICAL_TARGET_REQUIRED_WORDING = [
 export const NUTRITION_REVIEW_NARRATIVE_PROMPT_LINES = [
   "coach_context_ru — high-priority coach interpretation context. Не цитируй coach_context_ru дословно ученику.",
   "athlete_report_signals — только coach summary / review caution. Не пиши медицинские выводы ученику по сигналам illness/cycle/injury.",
-  "EA/energyAvailability — только coach screening. Не пиши ученику: RED-S, REDs, LEA, энергодоступность, дефицит энергии, медицинский риск, диагноз.",
+  `EA/energyAvailability — только coach screening. НИ В КАКОМ ВИДЕ не пиши ученику эти coach/медицинские термины и аббревиатуры (включая «EA»): ${NUTRITION_ATHLETE_FORBIDDEN_COACH_TERM_WORDS.join(", ")}. И не пиши методический оборот «на границе нормы»/«граница нормы» — вместо этого мягко словами («энергии для такого дня маловато»).`,
   "Допустимо ученику: «энергии для такого дня маловато», «для дня с нагрузкой это нижняя граница», «лучше поддержать питание вокруг нагрузки».",
   "macroGuardrails детерминированы в facts: не пересчитывай г/кг и не переопределяй protein ok как оправдание низкой энергии/углеводов.",
   "Если weekly protein avg >= 1.5, summary может сказать, что белок в целом ближе к норме; borderline days — мягко.",
@@ -50,7 +110,7 @@ export const NUTRITION_PLAN_NARRATIVE_PROMPT_LINES = [
   "Практический target — шаг от прошлой недели, ideal target — ориентир, не обязательство.",
   "Обязательные формулировки в athlete draft: «Цифры ниже — ориентиры, не обязательство.» и «Не нужно резко прыгать к ним за один день.»",
   "Главный шаг — поднять энергию и углеводы в дни нагрузки; не презентуй ideal kcal/carbs как must-hit за день.",
-  "No RED-S/REDs/LEA/энергодоступность/дефицит энергии/медицинский риск/диагноз in athlete draft.",
+  "Никаких coach/медицинских/методических терминов в athlete draft (ни RED-S/REDs/LEA/EA, ни энергодоступность/дефицит энергии/калорий, ни медицинский риск/диагноз, ни оборот «на границе нормы») — только мягко словами.",
   "РОД по полю student.sex: sex=male → мужской род (сделал, готов); sex=female ИЛИ null → женский (сделала, готова) — дефолт женский, явный male перебивает. Меняет ТОЛЬКО окончания, не смысл/числа/еду/тон.",
 ] as const;
 

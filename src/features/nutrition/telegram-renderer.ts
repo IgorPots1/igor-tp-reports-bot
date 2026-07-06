@@ -1,4 +1,5 @@
 import { formatNutritionWorkoutLabelForAthlete, buildNutritionTargetWeekMainStepLine } from "@/features/nutrition/narrative-composer";
+import { findForbiddenAthleteCoachTerm } from "@/features/nutrition/narrative-guardrails";
 import { formatDistanceKmRu } from "@/features/nutrition/methodology";
 import { getNutritionAdminLocalDate } from "@/features/nutrition/plan-week-policy";
 import type { TrainingPeaksTelegramFormality } from "@/features/trainingpeaks/repository";
@@ -795,6 +796,20 @@ export function validateNutritionDayProse(input: {
 }): NutritionTelegramRenderIssue[] {
   const issues: NutritionTelegramRenderIssue[] = [];
   const prose = input.prose;
+  // Coach/clinical/methodical term leaked INTO a day block (e.g. «EA на границе
+  // нормы»). The final message is assembled from day_prose, so a term here would
+  // otherwise reach the athlete before the send-gate ever sees it. An error here
+  // drops this day to the safe deterministic comment (rewrite path). Same single
+  // source of truth as the send-gate — see narrative-guardrails.
+  const forbiddenCoachTerm = findForbiddenAthleteCoachTerm(prose);
+  if (forbiddenCoachTerm) {
+    pushIssue(
+      issues,
+      "error",
+      "forbidden_coach_term",
+      `Coach/методический термин «${forbiddenCoachTerm}» в прозе дня — заменяем на детерминированный комментарий.`
+    );
+  }
   const allowed = buildAllowedNutritionProseNumbers(input.facts);
   // Only police MACRO/ENERGY claims. Non-macro numbers are not facts to validate
   // and were the dominant cause of valid days falling to dry text (Task 4):
@@ -946,20 +961,25 @@ export function validateTelegramReadyNutritionMessage(input: {
     pushIssue(issues, "warning", "telegram_length", "Часть сообщения длиннее одного Telegram-сообщения; разбей её ещё.");
   }
   // Task 10d: split the old "forbidden_safety_language" rule by real risk.
-  // CLINICAL terms leaking into athlete text are genuinely harmful → HARD block.
+  // COACH/CLINICAL/METHODICAL terms leaking into athlete text are genuinely harmful
+  // → HARD block (withhold; coach reviews). Single source of truth in
+  // narrative-guardrails so this last guard can never fall behind the prompt list
+  // again (the был-неполный send-gate list is why «EA на границе нормы» leaked).
   // (The primary РПП/low-kcal gate is upstream `blocked`; this is the last guard.)
-  if (/RED-S|\bLEA\b|анеми|расстройство пищевого|медицинск/i.test(text)) {
+  const forbiddenCoachTerm = findForbiddenAthleteCoachTerm(text);
+  if (forbiddenCoachTerm) {
     pushIssue(
       issues,
       "error",
       "forbidden_clinical_language",
-      "В тексте ученику клиническая лексика (РПП/RED-S/анемия/мед.) — нужна ручная проверка.",
+      `В тексте ученику coach/клинический/методический термин («${forbiddenCoachTerm}») — нужна ручная проверка.`,
       "hard"
     );
   }
   // Diet/weight-loss wording is borderline (often a false positive like the
-  // reassuring «не нужно урезать») → SOFT: keep the text, flag the coach.
-  if (/дефицит калори|дефицит энерг|энергодоступн|опасная зона|урезать|похуд/i.test(text)) {
+  // reassuring «не нужно урезать») → SOFT: keep the text, flag the coach. The
+  // energy-deficit / EA terms are now HARD above; here only the diet-language.
+  if (/опасная зона|урезать|похуд/i.test(text)) {
     pushIssue(
       issues,
       "warning",

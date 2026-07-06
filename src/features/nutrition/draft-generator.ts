@@ -53,6 +53,7 @@ import {
 } from "@/features/nutrition/interpretation-generator";
 import {
   buildNutritionVoiceFewShotDynamic,
+  NUTRITION_ATHLETE_FORBIDDEN_COACH_TERM_WORDS,
   NUTRITION_REVIEW_NARRATIVE_PROMPT_LINES,
   NUTRITION_VOICE_FEWSHOT_STABLE_LINES,
   NUTRITION_VOICE_STYLE_SPEC_LINES,
@@ -1256,7 +1257,7 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "athlete_message_draft: только plain Telegram text, emoji-разделители ок. Запрещено: **, ---, code fences, markdown headings.",
     "Строгая формальность: только ты ИЛИ только вы, без смешивания.",
     "ВЫ — это ВЕЖЛИВОЕ обращение к ОДНОМУ человеку, не множественное. Существительное-сказуемое при «вы» — в ЕДИНСТВЕННОМ числе: «вы молодец», НЕ «молодцы» (и не «вы все»/«ребята»). Это грамматика ед. числа, без навязанных ласковых слов. Глаголы при «вы» остаются в обычной форме («вы справились»).",
-    "Не используй диагнозы/медицинские термины: RED-S, REDs, LEA, энергодоступность, дефицит энергии, медицинский риск, диагноз, расстройство, анемия.",
+    `Не используй coach/диагностические/методические термины ученику НИ В КАКОМ ВИДЕ (включая аббревиатуру «EA» и оборот «на границе нормы»): ${NUTRITION_ATHLETE_FORBIDDEN_COACH_TERM_WORDS.join(", ")}.`,
     ...NUTRITION_REVIEW_NARRATIVE_PROMPT_LINES,
     "Не используй язык похудения/ограничения: похудеть, сбросить вес, урезать калории, меньше есть, дефицит калорий.",
     "Не давай меню/диету/рецепты. Продукты только как варианты при наличии фактов.",
