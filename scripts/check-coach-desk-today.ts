@@ -21,7 +21,7 @@ function assert(condition: unknown, message: string): void {
 function sig(
   studentName: string | null,
   reason: string,
-  opts?: { studentId?: string | null; signalKind?: string }
+  opts?: { studentId?: string | null; signalKind?: string; actionId?: string; signalId?: string }
 ): TrainingPeaksAttentionSignal {
   return {
     level: "today",
@@ -29,6 +29,8 @@ function sig(
     reason,
     studentId: opts?.studentId ?? null,
     signalKind: opts?.signalKind,
+    actionId: opts?.actionId ?? null,
+    signalId: opts?.signalId ?? null,
   };
 }
 
@@ -74,15 +76,33 @@ function run(): void {
     sig("Daria Postolaki", "болеет. Срок сегодня", { studentId: "daria", signalKind: "operational_follow_up" }),
   ];
   snapshot.painDiscomfort = [sig("Elena Titskaia", "боль / колено\nуточнить, актуально ли", { studentId: "elena" })];
-  snapshot.movesToday = [sig("Nastya Bunyakina", "кандидат переноса\n— → 2026-07-01", { studentId: "nastya" })];
+  // Move candidate — dismissible by expiring its operational signal.
+  snapshot.movesToday = [
+    sig("Nastya Bunyakina", "кандидат переноса\n— → 2026-07-01", {
+      studentId: "nastya",
+      signalKind: "operational_move",
+      signalId: "sig-candidate-1",
+    }),
+  ];
   snapshot.planConstraintsToday = [
     sig("Alena Grill", "доступна: ср 01.07, чт 02.07", { studentId: "alena" }),
-    sig("Tatyana Rishko", "перенос тренировки требует проверки (01.07 21:44)", { studentId: "tat2" }),
+    // Заявка (pending move action) — dismissible by rejecting the action.
+    sig("Sergei Ivoshin", "ждёт решения по переносу тренировки", {
+      studentId: "sergei",
+      signalKind: "move_pending_action",
+      actionId: "act-1",
+    }),
   ];
-  snapshot.noContact5Days = [sig("Margarita", ""), sig("Olga", "")];
+  snapshot.noContact5Days = [sig("Margarita", "", { studentId: "marg" }), sig("Olga", "")];
   snapshot.missedWorkouts = [sig("Alexander Ivanov", "вчера была беговая тренировка, выполнения не найдено", { studentId: "alex" })];
 
-  const view = buildCoachDeskTodayView(snapshot);
+  const usernames = new Map<string, string | null>([
+    ["ilya", "ilya_tg"],
+    ["elena", "elena_tg"],
+    ["alex", "alex_tg"],
+    ["marg", null], // has row but no username → dimmed, no tap
+  ]);
+  const view = buildCoachDeskTodayView(snapshot, usernames);
 
   // Scan alert → soft banner, no shell command.
   assert(view.scanAlert !== null && !/tp-login|npm/.test(view.scanAlert ?? ""), "scan alert soft, no shell");
@@ -99,17 +119,31 @@ function run(): void {
   assert(ilya!.summary.includes("горло") && ilya!.summary.includes("кашель"), "ILYA symptoms merged");
   assert(ilya!.days === 4, `ILYA days = max overdue (4), got ${ilya!.days}`);
 
-  // PLAN: availability + move-needs-review + move candidate = 3 cards; moves count = 2 (the two move ones).
+  // PLAN: availability + заявка + move candidate = 3 cards; moves count = 2 (заявка + candidate).
   assert(view.plan.length === 3, `3 plan cards, got ${view.plan.length}`);
   assert(view.counts.moves === 2, `moves count 2, got ${view.counts.moves}`);
   assert(view.plan.every((p) => !/\d{2}:\d{2}/.test(p.summary)), "no HH:MM in plan");
   assert(view.plan.every((p) => !/\d{4}-\d{2}-\d{2}/.test(p.summary)), "ISO dates compacted in plan");
 
-  // PAIN present (admin-closable).
-  assert(view.pain.length === 1 && view.pain[0].studentId === "elena", "pain card present with studentId");
+  // DISMISS handles: заявка → reject action; candidate → expire signal; availability → not dismissible.
+  const zayavka = view.plan.find((p) => p.studentId === "sergei");
+  assert(zayavka?.dismiss?.kind === "action" && zayavka.dismiss.actionId === "act-1", "заявка → dismiss action");
+  const candidate = view.plan.find((p) => p.studentId === "nastya");
+  assert(candidate?.dismiss?.kind === "signal" && candidate.dismiss.signalId === "sig-candidate-1", "candidate → dismiss signal");
+  const availability = view.plan.find((p) => p.studentId === "alena");
+  assert(availability?.dismiss === null, "availability not dismissible");
 
-  // Tails as names.
-  assert(view.noContact.length === 2 && view.missed.includes("Alexander Ivanov"), "tails as names");
+  // TAP-TO-CHAT: username threaded onto cards; absent → null (dimmed in UI).
+  assert(ilya!.telegramUsername === "ilya_tg", "illness card carries username");
+  assert(candidate!.telegramUsername === null, "no-username card → null");
+
+  // PAIN present (admin-closable) + username.
+  assert(view.pain.length === 1 && view.pain[0].studentId === "elena", "pain card present with studentId");
+  assert(view.pain[0].telegramUsername === "elena_tg", "pain card carries username");
+
+  // Tails as rows with name + username (tappable / dimmed).
+  assert(view.missed.some((r) => r.name === "Alexander Ivanov" && r.telegramUsername === "alex_tg"), "missed row tappable");
+  assert(view.noContact.some((r) => r.name === "Margarita" && r.telegramUsername === null), "no-username tail row dimmed");
 
   // Counts mirror sections.
   assert(

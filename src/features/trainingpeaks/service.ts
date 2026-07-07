@@ -688,6 +688,9 @@ export type TrainingPeaksAttentionSignal = {
   studentId?: string | null;
   caseId?: string | null;
   actionId?: string | null;
+  // Operational-signal row id, threaded for move candidates / schedule signals so the coach desk can
+  // dismiss a stale one directly (Supabase-only expire). Absent for non-signal-backed items.
+  signalId?: string | null;
   signalKind?: string;
 };
 
@@ -6021,6 +6024,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
       studentName: item.studentName,
       studentId: item.studentId,
       reason: item.reason,
+      signalId: item.signalId,
       signalKind: "operational_schedule",
     }));
     planConstraintsOverflowCount = scheduleSignals.overflowCount;
@@ -6044,6 +6048,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
       studentName: item.studentName,
       studentId: item.studentId,
       reason: item.reason,
+      signalId: item.signalId,
       signalKind: "operational_move",
     }));
     movesOverflowCount = moveSignals.overflowCount;

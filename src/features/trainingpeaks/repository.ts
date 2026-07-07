@@ -10202,6 +10202,86 @@ export async function closeHealthSignalByAdminUi(input: {
   return { updated: true, reason: "ok" };
 }
 
+// Plan signals a stale-dismiss may clear from the coach desk: a workout-move candidate or a schedule
+// constraint that hung after the coach acted manually in TrainingPeaks. Excludes health/pain (those
+// close via their own paths).
+const DESK_DISMISSIBLE_PLAN_SIGNAL_TYPES = new Set([
+  "move_workout_candidate",
+  "schedule_availability_window",
+  "schedule_unavailability_window",
+  "plan_generation_constraint",
+]);
+
+// Dismiss ONE stale plan operational signal (Supabase-only expire — no TrainingPeaks call). Mirrors
+// closeHealthSignalByAdminUi: status=expired, resolved_reason, coach_desk_dismiss metadata, history
+// kept (no delete). Idempotent: a non-active row returns updated:false. Used by the desk "Снять" on a
+// hanging move candidate / plan constraint.
+export async function dismissTrainingPeaksPlanSignalByCoach(input: {
+  signalId: string;
+  studentId: string;
+  reason?: string;
+  decidedByUserId?: string | null;
+}): Promise<{ updated: boolean; reason: string }> {
+  const supabase = createSupabaseServerClient();
+  const appliedAt = new Date().toISOString();
+
+  const { data: existing, error: fetchError } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .select("id, status, signal_type, metadata")
+    .eq("id", input.signalId)
+    .eq("student_id", input.studentId)
+    .maybeSingle();
+  if (fetchError) {
+    throw new Error(`Failed to load plan signal for desk dismiss: ${fetchError.message}`);
+  }
+  if (!existing) {
+    return { updated: false, reason: "not_found" };
+  }
+  const row = existing as { id: string; status: string; signal_type: string; metadata: Record<string, unknown> };
+  if (row.status !== "active") {
+    return { updated: false, reason: "not_active" };
+  }
+  if (!DESK_DISMISSIBLE_PLAN_SIGNAL_TYPES.has(row.signal_type)) {
+    return { updated: false, reason: "not_dismissible_signal" };
+  }
+
+  const metaBefore =
+    row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+      ? (row.metadata as Record<string, unknown>)
+      : {};
+  const nextMetadata = {
+    ...metaBefore,
+    coach_desk_dismiss: {
+      dismissed_at: appliedAt,
+      actor: "coach_desk",
+      reason: input.reason?.trim() || "coach_desk_dismissed_stale",
+      decided_by_user_id: input.decidedByUserId ?? null,
+    },
+  };
+
+  const { data: updated, error: updateError } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .update({
+      status: "expired",
+      resolved_reason: "coach_desk_dismissed",
+      resolved_at: appliedAt,
+      metadata: nextMetadata,
+      updated_at: appliedAt,
+    })
+    .eq("id", input.signalId)
+    .eq("student_id", input.studentId)
+    .eq("status", "active")
+    .select("id")
+    .maybeSingle();
+  if (updateError) {
+    throw new Error(`Failed to dismiss plan signal: ${updateError.message}`);
+  }
+  if (!updated) {
+    return { updated: false, reason: "concurrent_update" };
+  }
+  return { updated: true, reason: "ok" };
+}
+
 // Слой 3 recovery bridge — batch-close a student's active illness signals when the coach confirms
 // recovery. Mirrors closeHealthSignalByAdminUi but keyed by student + signal types (one recovery
 // statement clears the whole illness episode, not a single row). Sets lifecycle_state=resolved so the
