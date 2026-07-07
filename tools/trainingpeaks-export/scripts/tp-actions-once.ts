@@ -372,6 +372,7 @@ type UiCapabilityProbe = {
   };
   warnings: string[];
   errors: string[];
+  calendarReadyRetry: CalendarReadyRetryOutcome | null;
 };
 
 type TargetDateSelectionConfirmation = {
@@ -936,6 +937,7 @@ type ApiMoveExecutionArtifacts = {
 type ApiMoveExecutionResult = {
   apiMoveEnabled: boolean;
   apiMoveExecuted: boolean;
+  calendarReadyRetry: CalendarReadyRetryOutcome;
   athleteId: number;
   workoutId: number;
   sourceDate: string;
@@ -3760,6 +3762,7 @@ function buildEmptyUiCapabilityProbe(): UiCapabilityProbe {
     },
     warnings: [],
     errors: [],
+    calendarReadyRetry: null,
   };
 }
 
@@ -3777,27 +3780,82 @@ async function captureProbeScreenshot(
   }
 }
 
+const MANAGE_ATHLETES_SHELL_TEXT_PATTERN = /manage athletes/i;
+
+type CalendarReadinessReason =
+  | "calendar_root_not_visible"
+  | "calendar_day_cells_not_visible"
+  | "stuck_on_manage_athletes_list"
+  | null;
+
+type CalendarReadinessResult = {
+  ready: boolean;
+  reason: CalendarReadinessReason;
+};
+
+type CalendarReadyRetryOutcome = "ready_first_try" | "recovered_after_reload" | "still_not_ready_after_reload";
+
+type CalendarReadyCheckResult = {
+  ready: boolean;
+  retryOutcome: CalendarReadyRetryOutcome;
+  reason: CalendarReadinessReason;
+};
+
 async function waitForTrainingPeaksCalendarReadiness(
   page: import("playwright").Page,
   warnings: string[]
-): Promise<void> {
+): Promise<CalendarReadinessResult> {
   await page.waitForLoadState("domcontentloaded", { timeout: 5_000 }).catch(() => {});
   await page.waitForLoadState("networkidle", { timeout: 3_000 }).catch(() => {});
 
   try {
-    await page.locator(TP_CALENDAR_ROOT_SELECTOR).first().waitFor({ state: "attached", timeout: 5_000 });
+    await page.locator(TP_CALENDAR_ROOT_SELECTOR).first().waitFor({ state: "visible", timeout: 5_000 });
   } catch (error) {
     warnings.push(`probe calendar root wait failed: ${toShortErrorMessage(error)}`);
+    const visibleName = await extractVisibleTrainingPeaksAthleteName(page).catch(() => null);
+    if (visibleName && MANAGE_ATHLETES_SHELL_TEXT_PATTERN.test(visibleName)) {
+      return { ready: false, reason: "stuck_on_manage_athletes_list" };
+    }
+    return { ready: false, reason: "calendar_root_not_visible" };
   }
 
   try {
     await page
       .locator(`${TP_CALENDAR_ROOT_SELECTOR} ${TP_DAY_CELL_SELECTOR}`)
       .first()
-      .waitFor({ state: "attached", timeout: 5_000 });
+      .waitFor({ state: "visible", timeout: 5_000 });
   } catch (error) {
     warnings.push(`probe calendar day cells wait failed: ${toShortErrorMessage(error)}`);
+    return { ready: false, reason: "calendar_day_cells_not_visible" };
   }
+
+  return { ready: true, reason: null };
+}
+
+async function ensureTrainingPeaksCalendarReady(
+  page: import("playwright").Page,
+  warnings: string[]
+): Promise<CalendarReadyCheckResult> {
+  const firstAttempt = await waitForTrainingPeaksCalendarReadiness(page, warnings);
+  if (firstAttempt.ready) {
+    return { ready: true, retryOutcome: "ready_first_try", reason: null };
+  }
+
+  warnings.push(`calendar not ready (${firstAttempt.reason ?? "unknown"}); reloading once and retrying`);
+  await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 }).catch((error) => {
+    warnings.push(`calendar reload failed: ${toShortErrorMessage(error)}`);
+  });
+
+  const secondAttempt = await waitForTrainingPeaksCalendarReadiness(page, warnings);
+  if (secondAttempt.ready) {
+    return { ready: true, retryOutcome: "recovered_after_reload", reason: null };
+  }
+
+  return {
+    ready: false,
+    retryOutcome: "still_not_ready_after_reload",
+    reason: secondAttempt.reason ?? firstAttempt.reason,
+  };
 }
 
 async function resolveDayCellDateForProbe(
@@ -3951,8 +4009,14 @@ async function executeApiMoveForApprovedAction(input: {
       viewport: null,
     });
     const page = context.pages()[0] ?? (await context.newPage());
+    const readinessWarnings: string[] = [];
     await page.goto(student.trainingpeaks_athlete_url, { waitUntil: "domcontentloaded", timeout: 30_000 });
-    await waitForTrainingPeaksCalendarReadiness(page, []);
+    const calendarReadiness = await ensureTrainingPeaksCalendarReady(page, readinessWarnings);
+    if (!calendarReadiness.ready) {
+      throw new Error(
+        `TrainingPeaks calendar was not ready before API move (calendarReadyRetry=${calendarReadiness.retryOutcome}, reason=${calendarReadiness.reason ?? "unknown"}).`
+      );
+    }
 
     const pageAssessment = await assessTrainingPeaksPage(page);
     if (pageAssessment.loginRequired) {
@@ -3963,6 +4027,11 @@ async function executeApiMoveForApprovedAction(input: {
     }
 
     const visibleTrainingPeaksName = await extractVisibleTrainingPeaksAthleteName(page);
+    if (visibleTrainingPeaksName && MANAGE_ATHLETES_SHELL_TEXT_PATTERN.test(visibleTrainingPeaksName)) {
+      throw new Error(
+        "Athlete identity check failed before API move: page is still on the Manage Athletes list, not the athlete calendar."
+      );
+    }
     const identityCheck = buildIdentityCheck({
       student,
       expectedUrl: student.trainingpeaks_athlete_url,
@@ -4124,6 +4193,7 @@ async function executeApiMoveForApprovedAction(input: {
     return {
       apiMoveEnabled: true,
       apiMoveExecuted: true,
+      calendarReadyRetry: calendarReadiness.retryOutcome,
       athleteId,
       workoutId,
       sourceDate,
@@ -5509,10 +5579,18 @@ async function probeTrainingPeaksMoveCapabilities(
 
     const page = context.pages()[0] ?? (await context.newPage());
     probePage = page;
+    let calendarReadiness: CalendarReadyCheckResult | null = null;
     await runStep("open athlete page", UI_PROBE_STEP_TIMEOUTS.openAthletePage, async () => {
       await page.goto(student.trainingpeaks_athlete_url, { waitUntil: "domcontentloaded", timeout: 30_000 });
-      await waitForTrainingPeaksCalendarReadiness(page, probe.warnings);
+      calendarReadiness = await ensureTrainingPeaksCalendarReady(page, probe.warnings);
     });
+    probe.calendarReadyRetry = calendarReadiness?.retryOutcome ?? null;
+    if (!calendarReadiness?.ready) {
+      probe.errors.push(
+        `Probe aborted: TrainingPeaks calendar was not ready (calendarReadyRetry=${calendarReadiness?.retryOutcome ?? "unknown"}, reason=${calendarReadiness?.reason ?? "unknown"}).`
+      );
+      return probe;
+    }
 
     const pageAssessment = await assessTrainingPeaksPage(page);
     if (pageAssessment.loginRequired) {
@@ -8549,6 +8627,7 @@ async function findSaveAndCloseButton(
 }
 
 type ControlledSaveExecutionResult = {
+  calendarReadyRetry: CalendarReadyRetryOutcome;
   prepareMoveWorkout: ReturnType<typeof derivePrepareMoveWorkoutResultFromProbe>;
   prepareGateDiagnostics: {
     prepareMoveWorkoutStatus: string | null;
@@ -8665,8 +8744,14 @@ async function runControlledSaveAndCloseExecution(input: {
       viewport: null,
     });
     const page = context.pages()[0] ?? (await context.newPage());
+    const readinessWarnings: string[] = [];
     await page.goto(student.trainingpeaks_athlete_url, { waitUntil: "domcontentloaded", timeout: 30_000 });
-    await waitForTrainingPeaksCalendarReadiness(page, []);
+    const calendarReadiness = await ensureTrainingPeaksCalendarReady(page, readinessWarnings);
+    if (!calendarReadiness.ready) {
+      throw new Error(
+        `TrainingPeaks calendar was not ready before save (calendarReadyRetry=${calendarReadiness.retryOutcome}, reason=${calendarReadiness.reason ?? "unknown"}).`
+      );
+    }
 
     const pageAssessment = await assessTrainingPeaksPage(page);
     if (pageAssessment.loginRequired) {
@@ -8724,6 +8809,11 @@ async function runControlledSaveAndCloseExecution(input: {
     const unsavedUiStateChanged = Boolean(modalDateSelection.preSaveTargetDateSelectionAttempted);
 
     const visibleTrainingPeaksName = await extractVisibleTrainingPeaksAthleteName(page);
+    if (visibleTrainingPeaksName && MANAGE_ATHLETES_SHELL_TEXT_PATTERN.test(visibleTrainingPeaksName)) {
+      throw new Error(
+        "Athlete identity check failed before save: page is still on the Manage Athletes list, not the athlete calendar."
+      );
+    }
     const identityCheck = buildIdentityCheck({
       student,
       expectedUrl: student.trainingpeaks_athlete_url,
@@ -8902,6 +8992,7 @@ async function runControlledSaveAndCloseExecution(input: {
     }
 
     return {
+      calendarReadyRetry: calendarReadiness.retryOutcome,
       prepareMoveWorkout,
       prepareGateDiagnostics,
       preSaveScreenshot,
@@ -9496,6 +9587,7 @@ async function main(): Promise<void> {
       apiMove: {
         enabled: apiExecution.apiMoveEnabled,
         executed: apiExecution.apiMoveExecuted,
+        calendarReadyRetry: apiExecution.calendarReadyRetry,
         athleteId: apiExecution.athleteId,
         workoutId: apiExecution.workoutId,
         sourceDate: apiExecution.sourceDate,
