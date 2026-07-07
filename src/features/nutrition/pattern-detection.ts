@@ -30,6 +30,25 @@ const NUTRITION_PATTERN_TEXT: Record<string, string> = {
   protein_low: "белок ниже ориентира",
 };
 
+// Reverse of NUTRITION_PATTERN_TEXT, built once. Approved pattern texts are the
+// curated strings verbatim (Task 7 always wrote them via NUTRITION_PATTERN_TEXT),
+// so an exact case-insensitive match reliably recovers the finding code — unless
+// the curated text for that code changed since the pattern was approved (see
+// resolveNutritionPatternCodeByText's null case).
+const NUTRITION_PATTERN_TEXT_TO_CODE: Record<string, string> = Object.fromEntries(
+  Object.entries(NUTRITION_PATTERN_TEXT).map(([code, text]) => [text.toLowerCase(), code])
+);
+
+/**
+ * Resolve the curated finding code an approved pattern's stored text came from.
+ * Returns null when the text doesn't match any CURRENT curated string (e.g. the
+ * wording for that code was edited after this pattern was approved) — callers
+ * must treat null as "can't judge freshness, leave the pattern alone".
+ */
+export function resolveNutritionPatternCodeByText(text: string): string | null {
+  return NUTRITION_PATTERN_TEXT_TO_CODE[text.trim().toLowerCase()] ?? null;
+}
+
 function asObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
@@ -97,6 +116,43 @@ export function detectNutritionRepeatingPatterns(input: {
     candidates.push({ code, text, since_week: sinceWeek, weeks_observed: weeks.length });
   }
   return candidates.sort((a, b) => b.weeks_observed - a.weeks_observed);
+}
+
+export type NutritionApprovedPatternStaleness = {
+  /** true = suggest removal (not confirmed in either judgeable week). false =
+   * still confirmed. null = can't judge (see reason). */
+  stale: boolean | null;
+  reason: "confirmed_recent" | "not_confirmed_recent" | "unmatched_text" | "insufficient_data";
+};
+
+/**
+ * Layer 3: judge whether an approved pattern is still supported by recent data.
+ * "Recent" = the student's most recent analyses whose week is AFTER the
+ * pattern's since_week (so weeks that predate the pattern's own observation
+ * baseline never count against it). Needs >=2 such weeks to judge at all — the
+ * coach decides for a freshly-approved pattern, code never guesses on thin data.
+ * NEVER auto-removes — this only classifies for the UI to show a suggestion.
+ */
+export function judgeNutritionApprovedPatternStaleness(input: {
+  patternText: string;
+  sinceWeek: string | null;
+  /** Student's recent analyses, most-recent-first (as returned by
+   * listRecentNutritionWeeklyAnalysesForStudent). */
+  recentWeeks: NutritionWeekDaily[];
+}): NutritionApprovedPatternStaleness {
+  const code = resolveNutritionPatternCodeByText(input.patternText);
+  if (!code) {
+    return { stale: null, reason: "unmatched_text" };
+  }
+  const judgeableWeeks = input.sinceWeek
+    ? input.recentWeeks.filter((week) => week.weekFrom > input.sinceWeek!)
+    : input.recentWeeks;
+  if (judgeableWeeks.length < 2) {
+    return { stale: null, reason: "insufficient_data" };
+  }
+  const lastTwo = judgeableWeeks.slice(0, 2);
+  const confirmedRecently = lastTwo.some((week) => weekFindingCodes(week.days).has(code));
+  return confirmedRecently ? { stale: false, reason: "confirmed_recent" } : { stale: true, reason: "not_confirmed_recent" };
 }
 
 function loadDayCarbs(days: Array<Record<string, unknown>>): number | null {

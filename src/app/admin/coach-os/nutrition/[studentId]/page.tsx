@@ -537,6 +537,7 @@ export default async function CoachOsNutritionStudentCardPage({
     text: item.text,
     sinceWeek: item.since_week,
     ageLabel: formatNutritionPatternAge(item.since_week, approvedPatternsTodayIso),
+    staleness: card.approvedPatternsStaleness?.[item.text] ?? null,
   }));
   const hardSafetyFlags = asStringArray(card.weeklyAnalysis?.safetyFlags?.hard_flags);
   const hasSafetyFlags = hardSafetyFlags.length > 0;
@@ -1487,13 +1488,26 @@ export default async function CoachOsNutritionStudentCardPage({
                   <span>
                     <strong>{pattern.text}</strong>
                     {pattern.ageLabel ? ` — ${pattern.ageLabel}` : ""}
+                    {pattern.staleness?.stale === true ? (
+                      <>
+                        {" "}
+                        <span className="admin-badge admin-badge-warning">
+                          не повторяется 2 недели — снять?
+                        </span>
+                      </>
+                    ) : null}
                   </span>
                   <span className="admin-card-actions admin-card-actions-compact">
                     <form action={removeNutritionApprovedPatternAction}>
                       <input type="hidden" name="studentId" value={studentId} />
                       <input type="hidden" name="patternText" value={pattern.text} />
                       <input type="hidden" name="redirectTo" value={studentCardPath} />
-                      <FormActionButton className="admin-button admin-button-secondary" pendingText="Убираю…">
+                      <FormActionButton
+                        className={
+                          pattern.staleness?.stale === true ? "admin-button" : "admin-button admin-button-secondary"
+                        }
+                        pendingText="Убираю…"
+                      >
                         Убрать
                       </FormActionButton>
                     </form>

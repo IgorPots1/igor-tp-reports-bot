@@ -97,6 +97,38 @@ export async function getNutritionAdminStudentCard(input: {
     manualRows: [],
     athleteCommentRu: latestAthleteNote,
   });
+
+  // pattern-auto-suggest (Layer 3): for each approved pattern, judge whether it's
+  // still confirmed by recent data (>=2 judgeable weeks after since_week). Never
+  // blocks the card — a failure here just means no staleness badge is shown.
+  const approvedPatternsStaleness: Record<
+    string,
+    import("@/features/nutrition/pattern-detection").NutritionApprovedPatternStaleness
+  > = {};
+  const approvedPatterns = profile?.nutritionMemory?.approved_patterns ?? [];
+  if (approvedPatterns.length > 0) {
+    try {
+      const { listRecentNutritionWeeklyAnalysesForStudent } = await import("@/features/nutrition/repository");
+      const { judgeNutritionApprovedPatternStaleness } = await import("@/features/nutrition/pattern-detection");
+      const recentAnalyses = await listRecentNutritionWeeklyAnalysesForStudent(input.studentId, { limit: 6 });
+      const recentWeeks = recentAnalyses.map((analysis) => ({
+        weekFrom: analysis.weekFrom,
+        days: Array.isArray((analysis.nutritionSummary as Record<string, unknown>)?.daily_analysis)
+          ? ((analysis.nutritionSummary as Record<string, unknown>).daily_analysis as Array<Record<string, unknown>>)
+          : [],
+      }));
+      for (const pattern of approvedPatterns) {
+        approvedPatternsStaleness[pattern.text] = judgeNutritionApprovedPatternStaleness({
+          patternText: pattern.text,
+          sinceWeek: pattern.since_week,
+          recentWeeks,
+        });
+      }
+    } catch (error) {
+      console.error("[nutrition-review] approved-pattern staleness check failed (non-blocking)", error);
+    }
+  }
+
   return {
     student: essentials.student,
     profile,
@@ -106,6 +138,7 @@ export async function getNutritionAdminStudentCard(input: {
     weeklyAnalyses,
     weeklyAnalysis,
     context,
+    approvedPatternsStaleness,
   };
 }
 
