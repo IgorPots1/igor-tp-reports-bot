@@ -1025,98 +1025,91 @@ function buildCanonicalTarget(input: {
     };
   }
 
+  // SINGLE SOURCE for the carb corridor: resolveCarbRangeByLoadBasis is the same
+  // table that drives macro_guardrails.carbs.status (ok/low), so the displayed
+  // target and the internal status can never disagree for the same day again.
+  // Everything below this line only adds the per-type EXTRAS that guardrails
+  // doesn't carry (kcal floor, protein floor, formulaCode) — the carb numbers
+  // themselves come from one place.
+  const loadBasis = resolveCarbLoadBasis(input.canonicalTrainingType);
+  const longRunMinutes =
+    input.canonicalTrainingType === "long_run" ? input.longRunDurationMinutes ?? null : null;
+  const range = resolveCarbRangeByLoadBasis(loadBasis, longRunMinutes, input.crossTrainingIsLight);
+  if (range.rangeMinGPerKg === null || range.rangeMaxGPerKg === null) {
+    return {
+      formulaCode: "limited_context",
+    };
+  }
+  const carbsGPerKgMin = range.rangeMinGPerKg;
+  const carbsGPerKgMax = range.rangeMaxGPerKg;
+  const carbsGMin = Number((carbsGPerKgMin * bodyweight).toFixed(0));
+  const carbsGMax = Number((carbsGPerKgMax * bodyweight).toFixed(0));
+
   if (input.canonicalTrainingType === "long_run") {
-    // SAME grid as resolveCarbRangeByLoadBasis (macro guardrails' ok/low status) —
-    // kept in sync so the displayed target never contradicts the internal status
-    // for the same day. <110 → 4.5-8 (short/easy long run), 110-150 → 5.5-9
-    // (moderate), 150+ → 6-10 (marathon/ultra loading), unknown → 5.5-9 (safe middle).
-    const longRunMinutes = input.longRunDurationMinutes ?? null;
-    const [carbsGPerKgMin, carbsGPerKgMax] =
-      longRunMinutes === null
-        ? [5.5, 9]
-        : longRunMinutes >= 150
-          ? [6, 10]
-          : longRunMinutes >= 110
-            ? [5.5, 9]
-            : [4.5, 8];
     return {
       carbsGPerKgMin,
       carbsGPerKgMax,
-      carbsGMin: Number((carbsGPerKgMin * bodyweight).toFixed(0)),
-      carbsGMax: Number((carbsGPerKgMax * bodyweight).toFixed(0)),
+      carbsGMin,
+      carbsGMax,
       kcalMin: Number((35 * bodyweight).toFixed(0)),
       formulaCode: "canonical_daily_v1_long_run",
     };
   }
   if (input.canonicalTrainingType === "long_endurance") {
-    // long_endurance is mostly long, EASY/recreational cycling for these athletes
-    // (expenditure coef 5, well below running's 10). The carb corridor stays at/below
-    // the long_run band (бег 6-7) instead of above it — a light long bike must not be
-    // fuelled MORE than a long run. (Was 6-8, which inverted bike > run.)
     return {
-      carbsGPerKgMin: 5,
-      carbsGPerKgMax: 6.5,
-      carbsGMin: Number((5 * bodyweight).toFixed(0)),
-      carbsGMax: Number((6.5 * bodyweight).toFixed(0)),
+      carbsGPerKgMin,
+      carbsGPerKgMax,
+      carbsGMin,
+      carbsGMax,
       kcalMin: Number((35 * bodyweight).toFixed(0)),
       formulaCode: "canonical_daily_v1_long_endurance",
     };
   }
   if (input.canonicalTrainingType === "pre_long") {
     return {
-      carbsGPerKgMin: 5.5,
-      carbsGPerKgMax: 6,
-      carbsGMin: Number((5.5 * bodyweight).toFixed(0)),
-      carbsGMax: Number((6 * bodyweight).toFixed(0)),
+      carbsGPerKgMin,
+      carbsGPerKgMax,
+      carbsGMin,
+      carbsGMax,
       formulaCode: "canonical_daily_v1_pre_long",
     };
   }
   if (input.canonicalTrainingType === "hard" || input.canonicalTrainingType === "race") {
     return {
-      carbsGPerKgMin: 5,
-      carbsGPerKgMax: 6.5,
-      carbsGMin: Number((5 * bodyweight).toFixed(0)),
-      carbsGMax: Number((6.5 * bodyweight).toFixed(0)),
+      carbsGPerKgMin,
+      carbsGPerKgMax,
+      carbsGMin,
+      carbsGMax,
       formulaCode: "canonical_daily_v1_hard",
     };
   }
   if (input.canonicalTrainingType === "easy") {
     return {
-      carbsGPerKgMin: 3.5,
-      carbsGPerKgMax: 5,
-      carbsGMin: Number((3.5 * bodyweight).toFixed(0)),
-      carbsGMax: Number((5 * bodyweight).toFixed(0)),
+      carbsGPerKgMin,
+      carbsGPerKgMax,
+      carbsGMin,
+      carbsGMax,
       formulaCode: "canonical_daily_v1_easy",
     };
   }
   if (input.canonicalTrainingType === "cross_training") {
-    if (input.crossTrainingIsLight) {
-      // Padel/tennis/walk/hike: intermittent, not glycogen-depleting → easy-day carb
-      // band (3.5-5), not the 5-7 endurance band. kcal floor unchanged.
-      return {
-        carbsGPerKgMin: 3.5,
-        carbsGPerKgMax: 5,
-        carbsGMin: Number((3.5 * bodyweight).toFixed(0)),
-        carbsGMax: Number((5 * bodyweight).toFixed(0)),
-        kcalMin: Number((30 * bodyweight).toFixed(0)),
-        formulaCode: "canonical_daily_v1_cross_training_light",
-      };
-    }
     return {
-      carbsGPerKgMin: 5,
-      carbsGPerKgMax: 7,
-      carbsGMin: Number((5 * bodyweight).toFixed(0)),
-      carbsGMax: Number((7 * bodyweight).toFixed(0)),
+      carbsGPerKgMin,
+      carbsGPerKgMax,
+      carbsGMin,
+      carbsGMax,
       kcalMin: Number((30 * bodyweight).toFixed(0)),
-      formulaCode: "canonical_daily_v1_cross_training",
+      formulaCode: input.crossTrainingIsLight
+        ? "canonical_daily_v1_cross_training_light"
+        : "canonical_daily_v1_cross_training",
     };
   }
   if (input.canonicalTrainingType === "strength") {
     return {
-      carbsGPerKgMin: 4,
-      carbsGPerKgMax: 6,
-      carbsGMin: Number((4 * bodyweight).toFixed(0)),
-      carbsGMax: Number((6 * bodyweight).toFixed(0)),
+      carbsGPerKgMin,
+      carbsGPerKgMax,
+      carbsGMin,
+      carbsGMax,
       kcalMin: Number((30 * bodyweight).toFixed(0)),
       proteinGMin: Number((1.6 * bodyweight).toFixed(0)),
       formulaCode: "canonical_daily_v1_strength",
@@ -1124,10 +1117,10 @@ function buildCanonicalTarget(input: {
   }
   if (input.canonicalTrainingType === "rest") {
     return {
-      carbsGPerKgMin: 3,
-      carbsGPerKgMax: 4.5,
-      carbsGMin: Number((3 * bodyweight).toFixed(0)),
-      carbsGMax: Number((4.5 * bodyweight).toFixed(0)),
+      carbsGPerKgMin,
+      carbsGPerKgMax,
+      carbsGMin,
+      carbsGMax,
       formulaCode: "canonical_daily_v1_rest",
     };
   }
@@ -1260,7 +1253,8 @@ function resolveCarbLoadBasis(trainingType: NutritionCanonicalTrainingType): Nut
 
 function resolveCarbRangeByLoadBasis(
   loadBasis: NutritionCarbLoadBasis,
-  workoutDurationMinutes?: number | null
+  workoutDurationMinutes?: number | null,
+  crossTrainingIsLight?: boolean
 ): {
   rangeMinGPerKg: number | null;
   rangeMaxGPerKg: number | null;
@@ -1269,16 +1263,30 @@ function resolveCarbRangeByLoadBasis(
     return { rangeMinGPerKg: 3, rangeMaxGPerKg: 5 };
   }
   if (loadBasis === "easy") {
-    return { rangeMinGPerKg: 4, rangeMaxGPerKg: 6 };
+    // Lower bound kept at the pre-unify 3.5 (not 4.0) — verified on 227 real days
+    // (2026-07-08 Option B Layer 3): raising it to 4.0 would falsely flag 6 real
+    // easy-day cases at 3.2-3.57 g/kg as "low" that were correctly "ok". Upper
+    // bound raised to 6 (from 5) — that direction only removed false "high" flags
+    // (5.6-6.03 g/kg cases), coach-confirmed safe.
+    return { rangeMinGPerKg: 3.5, rangeMaxGPerKg: 6 };
   }
   if (loadBasis === "cross_training") {
+    if (crossTrainingIsLight) {
+      // Padel/tennis/walk/hike: intermittent, not glycogen-depleting → easy-day
+      // band, matching buildCanonicalTarget's cross_training_light band (bb22de3).
+      return { rangeMinGPerKg: 3.5, rangeMaxGPerKg: 5 };
+    }
     return { rangeMinGPerKg: 4.5, rangeMaxGPerKg: 6.5 };
   }
   if (loadBasis === "strength") {
     return { rangeMinGPerKg: 4, rangeMaxGPerKg: 6 };
   }
   if (loadBasis === "hard") {
-    return { rangeMinGPerKg: 5.5, rangeMaxGPerKg: 7 };
+    // Lower bound kept at the pre-unify 5.0 (not 5.5) — verified on 227 real days
+    // (2026-07-08 Option B Layer 3): raising it to 5.5 would falsely flag 2 real
+    // hard-day cases at 4.71-4.92 g/kg as "low" that were correctly "ok" (near-miss
+    // against the old 5.0 floor). Upper bound stays 7 (unify's value, unchanged).
+    return { rangeMinGPerKg: 5, rangeMaxGPerKg: 7 };
   }
   if (loadBasis === "long_run") {
     // Scale the long-run carb corridor by the run's actual duration. A short/easy
@@ -1303,7 +1311,10 @@ function resolveCarbRangeByLoadBasis(
     return { rangeMinGPerKg: 5.5, rangeMaxGPerKg: 9 };
   }
   if (loadBasis === "long_endurance") {
-    return { rangeMinGPerKg: 6, rangeMaxGPerKg: 8 };
+    // Matches buildCanonicalTarget's long_endurance band (2c3b839): a light
+    // recreational long bike must not be fuelled MORE than a long run. Was 6-8,
+    // which inverted bike > run.
+    return { rangeMinGPerKg: 5, rangeMaxGPerKg: 6.5 };
   }
   if (loadBasis === "pre_long") {
     return { rangeMinGPerKg: 5, rangeMaxGPerKg: 7 };
@@ -1320,6 +1331,8 @@ function buildMacroGuardrails(input: {
   canonicalTrainingType: NutritionCanonicalTrainingType;
   /** Duration of the day's load-dominant session, used to scale the long_run corridor. */
   workoutDurationMinutes?: number | null;
+  /** Padel/tennis/walk/hike vs continuous endurance cross-training — see resolveCarbRangeByLoadBasis. */
+  crossTrainingIsLight?: boolean;
 }): NutritionMacroGuardrailsFacts {
   const proteinFloor = PROTEIN_GUARD_SUFFICIENT_G_PER_KG;
   const fatFloor = 1.0;
@@ -1389,7 +1402,7 @@ function buildMacroGuardrails(input: {
   }
 
   const loadBasis = resolveCarbLoadBasis(input.canonicalTrainingType);
-  const carbRange = resolveCarbRangeByLoadBasis(loadBasis, input.workoutDurationMinutes);
+  const carbRange = resolveCarbRangeByLoadBasis(loadBasis, input.workoutDurationMinutes, input.crossTrainingIsLight);
   let carbsStatus: NutritionMacroStatus = "unknown";
   let carbsFinding: string | null = null;
   if (
@@ -1423,7 +1436,7 @@ function buildMacroGuardrails(input: {
     isLoadDayForFat &&
     input.carbsGPerKg !== null
   ) {
-    const carbRangeForFat = resolveCarbRangeByLoadBasis(loadBasisForFat, input.workoutDurationMinutes);
+    const carbRangeForFat = resolveCarbRangeByLoadBasis(loadBasisForFat, input.workoutDurationMinutes, input.crossTrainingIsLight);
     if (
       carbRangeForFat.rangeMinGPerKg !== null &&
       (input.carbsGPerKg < carbRangeForFat.rangeMinGPerKg ||
@@ -1658,13 +1671,14 @@ function analyzeDailyTrainingNutrition(input: {
       canonicalTrainingType === "race" ||
       canonicalTrainingType === "strength" ||
       canonicalTrainingType === "cross_training";
+    const crossTrainingIsLight =
+      canonicalTrainingType === "cross_training" &&
+      isLightIntermittentCrossTrainingTitle(currentWorkout?.title ?? "");
     const target = buildCanonicalTarget({
       canonicalTrainingType,
       bodyweightKg: input.bodyweightKg,
       hasTrainingContext,
-      crossTrainingIsLight:
-        canonicalTrainingType === "cross_training" &&
-        isLightIntermittentCrossTrainingTitle(currentWorkout?.title ?? ""),
+      crossTrainingIsLight,
       longRunDurationMinutes:
         canonicalTrainingType === "long_run"
           ? trainingPeaksDurationHoursToMinutes(currentWorkout?.durationHours ?? null)
@@ -1696,6 +1710,7 @@ function analyzeDailyTrainingNutrition(input: {
       carbsGPerKg,
       canonicalTrainingType,
       workoutDurationMinutes: trainingPeaksDurationHoursToMinutes(currentWorkout?.durationHours ?? null),
+      crossTrainingIsLight,
     });
     const suspect =
       row.confidence < 0.6 ||
