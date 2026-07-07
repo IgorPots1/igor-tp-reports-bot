@@ -2014,8 +2014,10 @@ export async function generateNutritionWeeklyAnalysis(input: {
       next_week_plan: nextWeekPlan,
       plan_week: { from: planWeekFrom, to: planWeekTo, mode: planWeekMode },
       // Task 7: flip hasPreviousWeeksContext on once the coach has approved
-      // patterns — enables the week-over-week comparison line and lets the model
-      // legitimately say "повторяется N-ю неделю" (renderer phantom guard lifts).
+      // patterns — enables the week-over-week comparison line (renderer phantom
+      // guard lifts). NOTE: the prompt rule explicitly forbids counting weeks
+      // aloud ("повторяется N-ю неделю") — the model gets a soft collaborative
+      // callout instead ("снова всплывает этот момент"), not a week count.
       previous_weeks_context:
         (context.studentMemory?.approved_patterns?.length ?? 0) > 0
           ? {

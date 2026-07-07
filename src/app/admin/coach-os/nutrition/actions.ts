@@ -976,13 +976,33 @@ export async function approveNutritionPatternAction(formData: FormData): Promise
   const redirectTo = getRequiredFormValue(formData, "redirectTo");
   await ensureAdminAccess(redirectTo);
   try {
-    const { addNutritionApprovedPattern, removeNutritionAnalysisPatternCandidate } = await import(
-      "@/features/nutrition/repository"
-    );
-    await addNutritionApprovedPattern({ studentId, text, sinceWeek: sinceWeek ?? null });
+    const {
+      addNutritionApprovedPattern,
+      removeNutritionAnalysisPatternCandidate,
+      NUTRITION_APPROVED_PATTERNS_CAP,
+    } = await import("@/features/nutrition/repository");
+    const result = await addNutritionApprovedPattern({ studentId, text, sinceWeek: sinceWeek ?? null });
+    if (!result.added && result.reason === "cap_reached") {
+      // Do NOT remove the candidate — it wasn't actually saved, so it should
+      // still show as pending next time the coach opens the card.
+      revalidateNutritionPaths(studentId);
+      redirect(
+        withNotice(
+          redirectTo,
+          "error",
+          `Лимит ${NUTRITION_APPROVED_PATTERNS_CAP} одобренных паттернов уже занят — сначала уберите один старый в блоке «Одобренные паттерны», потом одобрите этот.`
+        )
+      );
+    }
     await removeNutritionAnalysisPatternCandidate({ analysisId, code });
     revalidateNutritionPaths(studentId);
-    redirect(withNotice(redirectTo, "notice", "Паттерн добавлен в память ученика."));
+    redirect(
+      withNotice(
+        redirectTo,
+        "notice",
+        result.reason === "duplicate" ? "Паттерн уже был в памяти ученика." : "Паттерн добавлен в память ученика."
+      )
+    );
   } catch (error) {
     revalidateNutritionPaths(studentId);
     const message = error instanceof Error ? error.message : "Не удалось сохранить паттерн.";
@@ -1005,6 +1025,28 @@ export async function dismissNutritionPatternAction(formData: FormData): Promise
   } catch (error) {
     revalidateNutritionPaths(studentId);
     const message = error instanceof Error ? error.message : "Не удалось отклонить паттерн.";
+    redirect(withNotice(redirectTo, "error", message));
+  }
+}
+
+/**
+ * pattern-management Слой 2: coach manually removes an already-approved pattern
+ * from student memory — there is no auto-expiration, this is the only way an
+ * approved pattern ever leaves nutrition_memory.approved_patterns.
+ */
+export async function removeNutritionApprovedPatternAction(formData: FormData): Promise<void> {
+  const studentId = getRequiredFormValue(formData, "studentId");
+  const text = getRequiredFormValue(formData, "patternText");
+  const redirectTo = getRequiredFormValue(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  try {
+    const { removeNutritionApprovedPattern } = await import("@/features/nutrition/repository");
+    await removeNutritionApprovedPattern({ studentId, text });
+    revalidateNutritionPaths(studentId);
+    redirect(withNotice(redirectTo, "notice", "Паттерн убран из памяти ученика."));
+  } catch (error) {
+    revalidateNutritionPaths(studentId);
+    const message = error instanceof Error ? error.message : "Не удалось убрать паттерн.";
     redirect(withNotice(redirectTo, "error", message));
   }
 }

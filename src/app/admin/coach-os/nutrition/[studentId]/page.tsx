@@ -11,6 +11,7 @@ import {
   addNutritionWeightAction,
   approveNutritionPatternAction,
   dismissNutritionPatternAction,
+  removeNutritionApprovedPatternAction,
   archiveNutritionAnalysisAction,
   archiveNutritionReportAction,
   generateNutritionWeeklyReviewAction,
@@ -52,6 +53,7 @@ import {
   formatNutritionFormality,
   formatNutritionFormalitySource,
   formatNutritionGenerationMode,
+  formatNutritionPatternAge,
   formatNutritionPlanWeekRange,
   formatNutritionShortId,
   formatNutritionSourceType,
@@ -530,6 +532,12 @@ export default async function CoachOsNutritionStudentCardPage({
       weeksObserved: typeof item.weeks_observed === "number" ? item.weeks_observed : 0,
     }))
     .filter((item) => item.code && item.text);
+  const approvedPatternsTodayIso = new Date().toISOString();
+  const approvedPatterns = (card.profile?.nutritionMemory?.approved_patterns ?? []).map((item) => ({
+    text: item.text,
+    sinceWeek: item.since_week,
+    ageLabel: formatNutritionPatternAge(item.since_week, approvedPatternsTodayIso),
+  }));
   const hardSafetyFlags = asStringArray(card.weeklyAnalysis?.safetyFlags?.hard_flags);
   const hasSafetyFlags = hardSafetyFlags.length > 0;
   const reviewSelectedById = Boolean(reviewIdFromQuery && card.weeklyAnalysis?.id === reviewIdFromQuery);
@@ -1457,6 +1465,36 @@ export default async function CoachOsNutritionStudentCardPage({
                       <input type="hidden" name="redirectTo" value={studentCardPath} />
                       <FormActionButton className="admin-button admin-button-secondary" pendingText="Отклоняю…">
                         Отклонить
+                      </FormActionButton>
+                    </form>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </article>
+        ) : null}
+
+        {approvedPatterns.length > 0 ? (
+          <article className="admin-card admin-card-compact admin-nutrition-card-wide">
+            <h3>Память ученика — одобренные паттерны</h3>
+            <p className="admin-muted admin-nutrition-helper">
+              Подтягивается в каждый разбор как история. Снятия/экспирации нет — уберите вручную, когда паттерн больше
+              не актуален. Лимит {approvedPatterns.length >= 4 ? "достигнут (4)" : `4 (сейчас ${approvedPatterns.length})`}.
+            </p>
+            <ul className="admin-list">
+              {approvedPatterns.map((pattern) => (
+                <li key={`approved-pattern-${pattern.text}`} className="admin-nutrition-pattern-row">
+                  <span>
+                    <strong>{pattern.text}</strong>
+                    {pattern.ageLabel ? ` — ${pattern.ageLabel}` : ""}
+                  </span>
+                  <span className="admin-card-actions admin-card-actions-compact">
+                    <form action={removeNutritionApprovedPatternAction}>
+                      <input type="hidden" name="studentId" value={studentId} />
+                      <input type="hidden" name="patternText" value={pattern.text} />
+                      <input type="hidden" name="redirectTo" value={studentCardPath} />
+                      <FormActionButton className="admin-button admin-button-secondary" pendingText="Убираю…">
+                        Убрать
                       </FormActionButton>
                     </form>
                   </span>

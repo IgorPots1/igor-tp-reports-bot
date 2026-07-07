@@ -55,6 +55,14 @@ export type NutritionStudentMemory = {
   key_trends: string[];
 };
 
+/**
+ * Max approved patterns kept in memory (it's fed into every review prompt).
+ * Single source shared by sanitizeNutritionStudentMemory (enforces the cap on
+ * every save) and addNutritionApprovedPattern (checks it BEFORE appending, so a
+ * pattern approved past the cap is reported back, not silently dropped).
+ */
+export const NUTRITION_APPROVED_PATTERNS_CAP = 4;
+
 export function emptyNutritionStudentMemory(): NutritionStudentMemory {
   return { approved_patterns: [], persistent_notes: [], last_focus: null, key_trends: [] };
 }
@@ -694,7 +702,7 @@ export function sanitizeNutritionStudentMemory(value: unknown): NutritionStudent
       since_week: typeof item.since_week === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.since_week) ? item.since_week : null,
     }))
     .filter((item): item is NutritionApprovedPattern => Boolean(item.text))
-    .slice(0, 4);
+    .slice(0, NUTRITION_APPROVED_PATTERNS_CAP);
   return {
     approved_patterns: patterns,
     persistent_notes: strings(obj.persistent_notes, 6),
@@ -1288,14 +1296,55 @@ export async function listRecentNutritionWeeklyAnalysesForStudent(
   return filtered.slice(0, options?.limit ?? 4);
 }
 
+export type AddNutritionApprovedPatternResult = {
+  profile: NutritionStudentProfile | null;
+  added: boolean;
+  /** Why nothing was added, when added=false. */
+  reason?: "empty_text" | "duplicate" | "cap_reached";
+};
+
 /**
  * Append a coach-approved pattern to student memory (Task 7 draft->approve).
- * Deduped by text; capped by the sanitizer so memory stays compact.
+ * Deduped by text. Checks NUTRITION_APPROVED_PATTERNS_CAP BEFORE appending — a
+ * pattern approved past the cap is reported back as not-added (reason
+ * "cap_reached") instead of being silently dropped by the sanitizer on save.
  */
 export async function addNutritionApprovedPattern(input: {
   studentId: string;
   text: string;
   sinceWeek?: string | null;
+}): Promise<AddNutritionApprovedPatternResult> {
+  const text = compactText(input.text);
+  if (!text) {
+    return { profile: null, added: false, reason: "empty_text" };
+  }
+  const existing = await getNutritionStudentProfile(input.studentId);
+  const memory = existing?.nutritionMemory ?? emptyNutritionStudentMemory();
+  if (memory.approved_patterns.some((item) => item.text.toLowerCase() === text.toLowerCase())) {
+    return { profile: existing, added: false, reason: "duplicate" };
+  }
+  if (memory.approved_patterns.length >= NUTRITION_APPROVED_PATTERNS_CAP) {
+    return { profile: existing, added: false, reason: "cap_reached" };
+  }
+  const sinceWeek =
+    typeof input.sinceWeek === "string" && /^\d{4}-\d{2}-\d{2}$/.test(input.sinceWeek) ? input.sinceWeek : null;
+  const profile = await saveNutritionStudentMemory({
+    studentId: input.studentId,
+    nutritionMemory: {
+      ...memory,
+      approved_patterns: [...memory.approved_patterns, { text, since_week: sinceWeek }],
+    },
+  });
+  return { profile, added: true };
+}
+
+/**
+ * Remove one approved pattern from student memory by exact text match (Layer 2:
+ * manual removal — there is no auto-expiration, the coach decides).
+ */
+export async function removeNutritionApprovedPattern(input: {
+  studentId: string;
+  text: string;
 }): Promise<NutritionStudentProfile | null> {
   const text = compactText(input.text);
   if (!text) {
@@ -1303,17 +1352,13 @@ export async function addNutritionApprovedPattern(input: {
   }
   const existing = await getNutritionStudentProfile(input.studentId);
   const memory = existing?.nutritionMemory ?? emptyNutritionStudentMemory();
-  if (memory.approved_patterns.some((item) => item.text.toLowerCase() === text.toLowerCase())) {
-    return existing;
+  const next = memory.approved_patterns.filter((item) => item.text.toLowerCase() !== text.toLowerCase());
+  if (next.length === memory.approved_patterns.length) {
+    return existing; // nothing matched, no-op
   }
-  const sinceWeek =
-    typeof input.sinceWeek === "string" && /^\d{4}-\d{2}-\d{2}$/.test(input.sinceWeek) ? input.sinceWeek : null;
   return saveNutritionStudentMemory({
     studentId: input.studentId,
-    nutritionMemory: {
-      ...memory,
-      approved_patterns: [...memory.approved_patterns, { text, since_week: sinceWeek }],
-    },
+    nutritionMemory: { ...memory, approved_patterns: next },
   });
 }
 

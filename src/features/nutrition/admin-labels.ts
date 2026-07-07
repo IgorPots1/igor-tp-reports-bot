@@ -220,6 +220,27 @@ export function formatNutritionCompactDate(value: string | null | undefined): st
   return `${day}.${month} ${hours}:${minutes}`;
 }
 
+/**
+ * Calendar-approximate age of an approved pattern, from its since_week to a
+ * reference date (normally "today"). Distinct from a candidate's weeksObserved
+ * (which counts confirmed weeks from actual analyses) — this is just elapsed
+ * calendar time since approval, since approved patterns are never re-checked.
+ */
+export function formatNutritionPatternAge(sinceWeek: string | null, referenceIso: string): string {
+  if (!sinceWeek) {
+    return "";
+  }
+  const since = new Date(sinceWeek);
+  const reference = new Date(referenceIso);
+  if (Number.isNaN(since.getTime()) || Number.isNaN(reference.getTime())) {
+    return "";
+  }
+  const days = Math.round((reference.getTime() - since.getTime()) / (24 * 60 * 60 * 1000));
+  const weeks = Math.max(0, Math.round(days / 7));
+  const weeksLabel = weeks <= 0 ? "меньше недели" : `~${weeks} нед.`;
+  return `держится с ${formatNutritionCompactDate(sinceWeek)} (${weeksLabel})`;
+}
+
 export function formatNutritionSourceType(value: string | null | undefined): string {
   if (!value) {
     return "—";
