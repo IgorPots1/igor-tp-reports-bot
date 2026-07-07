@@ -474,12 +474,18 @@ function extractMacroGuardrailStatuses(macroGuardrails: unknown): MacroGuardrail
   };
 }
 
+// amber-only energy-availability (nutritionStatus "below_energy_availability" driven
+// by ea_amber_screen alone, no ea_red_screen/floor breach) is a soft screen on an
+// often-ESTIMATED FFM (Cunningham fallback, medium confidence) — not a hard finding.
+// "below_energy_availability" itself is ambiguous (set for BOTH red and amber zones
+// in methodology.ts), so it is deliberately NOT checked here; only the specific
+// ea_red_screen finding (or an actual floor breach) counts. Mirrors telegram-renderer.ts's
+// NUTRITION_HARD_DAY_STATUSES/NUTRITION_HARD_DAY_FINDINGS split.
 function hasDayEnergyIssue(input: {
   nutritionStatus: string | null;
   findings: string[];
 }): boolean {
   return (
-    input.nutritionStatus === "below_energy_availability" ||
     input.nutritionStatus === "below_energy_floor" ||
     input.nutritionStatus === "low_for_cross_training" ||
     input.nutritionStatus === "low_for_strength" ||
@@ -491,8 +497,7 @@ function hasDayEnergyIssue(input: {
     input.findings.includes("below_strength_floor") ||
     input.findings.includes("low_energy_with_cross_training") ||
     input.findings.includes("low_energy_with_strength") ||
-    input.findings.includes("ea_red_screen") ||
-    input.findings.includes("ea_amber_screen")
+    input.findings.includes("ea_red_screen")
   );
 }
 

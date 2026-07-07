@@ -1194,7 +1194,7 @@ function buildCanonicalTrainingLabel(input: {
   return title || "тренировка";
 }
 
-function buildHintForComment(status: NutritionCanonicalStatus): string {
+function buildHintForComment(status: NutritionCanonicalStatus, findings: string[]): string {
   if (status === "rest_ok") {
     return "День отдыха: питание в целом ровное, без ключевого замечания.";
   }
@@ -1214,6 +1214,12 @@ function buildHintForComment(status: NutritionCanonicalStatus): string {
     return "Белок ниже мягкого ориентира; отметить коротко, не уводя фокус от энергии и углеводов под нагрузку.";
   }
   if (status === "below_energy_availability") {
+    // "below_energy_availability" is set for BOTH the red and amber EA zones — amber
+    // alone (no ea_red_screen) is a soft screen on an often-ESTIMATED FFM, not a
+    // confirmed shortfall. Only nudge gently for amber; keep the firmer hint for red.
+    if (!findings.includes("ea_red_screen")) {
+      return "Мягкий, пограничный сигнал по энергодоступности на приблизительной оценке состава тела — НЕ утверждать нехватку энергии как факт; можно вскользь, без акцента, отметить общий уровень энергии под нагрузку, если это уместно.";
+    }
     return "Для такого дня энергии получилось маловато; написать мягко, без медицинских терминов и без точных добавок ккал.";
   }
   if (status === "below_energy_floor") {
@@ -1896,7 +1902,10 @@ function analyzeDailyTrainingNutrition(input: {
           : canonicalNutritionStatus === "long_run_low" || canonicalNutritionStatus === "pre_long_low"
             ? "key"
           : canonicalNutritionStatus === "low_for_load" ||
-              canonicalNutritionStatus === "below_energy_availability" ||
+              // amber-only below_energy_availability is a soft screen — only bump
+              // relevance for the confirmed-red case, same split as hasDayEnergyIssue.
+              (canonicalNutritionStatus === "below_energy_availability" &&
+                canonicalFindings.includes("ea_red_screen")) ||
               canonicalNutritionStatus === "below_energy_floor" ||
               canonicalNutritionStatus === "low_for_cross_training" ||
               canonicalNutritionStatus === "low_for_strength" ||
@@ -1988,8 +1997,8 @@ function analyzeDailyTrainingNutrition(input: {
       nutritionStatus: canonicalNutritionStatus,
       relevance: canonicalRelevance,
       hintForComment: brokenInput
-        ? `${buildHintForComment(canonicalNutritionStatus)} Данные дня нереалистичны (вероятная ошибка ввода${suspectItemName ? ` продукта «${suspectItemName}»` : ""} — вес/порция). НЕ делай выводов/похвал/упрёков по числам этого дня; мягко попроси перепроверить ввод.`
-        : buildHintForComment(canonicalNutritionStatus),
+        ? `${buildHintForComment(canonicalNutritionStatus, canonicalFindings)} Данные дня нереалистичны (вероятная ошибка ввода${suspectItemName ? ` продукта «${suspectItemName}»` : ""} — вес/порция). НЕ делай выводов/похвал/упрёков по числам этого дня; мягко попроси перепроверить ввод.`
+        : buildHintForComment(canonicalNutritionStatus, canonicalFindings),
       findings: [...new Set(canonicalFindings)],
       trainingNutritionLinks: canonicalTrainingLinks,
       sourceQuality: {

@@ -229,13 +229,16 @@ function resolveEffectiveDurationMinutes(label: string, durationMinutes?: number
   return extractDurationMinutesFromLabel(label) ?? extractDurationMinutesFromHMM(label);
 }
 
+// ea_amber_screen deliberately excluded — amber-only energy-availability is a soft
+// screen on an often-ESTIMATED FFM, not a hard pre-long energy issue (matches the
+// same split in combined-message.ts/coach-summary.ts hasDayEnergyIssue and
+// telegram-renderer.ts's NUTRITION_HARD_DAY_FINDINGS).
 const PRE_LONG_ENERGY_FLOOR_FINDINGS = new Set([
   "below_load_energy_floor",
   "below_rest_energy_floor",
   "below_cross_training_floor",
   "below_strength_floor",
   "ea_red_screen",
-  "ea_amber_screen",
   "low_energy_long_run_day",
   "low_energy_with_cross_training",
   "low_energy_with_strength",
