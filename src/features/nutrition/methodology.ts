@@ -1026,20 +1026,19 @@ function buildCanonicalTarget(input: {
   }
 
   if (input.canonicalTrainingType === "long_run") {
-    // Graduate the carb band by HOW LONG the long run actually is — a flat 6-7 г/кг
-    // over-fuelled a borderline ~80-min long run with a marathon-loading target. By
-    // duration in MINUTES (steadier than TP distance): <100 → 5-6 (short/medium long,
-    // incl. the 80-100 band and the ≥80 boundary), 100-150 → 6-7 (true long), 150+ → 7-8
-    // (marathon/ultra loading). Missing duration → keep the previous 6-7 default.
+    // SAME grid as resolveCarbRangeByLoadBasis (macro guardrails' ok/low status) —
+    // kept in sync so the displayed target never contradicts the internal status
+    // for the same day. <110 → 4.5-8 (short/easy long run), 110-150 → 5.5-9
+    // (moderate), 150+ → 6-10 (marathon/ultra loading), unknown → 5.5-9 (safe middle).
     const longRunMinutes = input.longRunDurationMinutes ?? null;
     const [carbsGPerKgMin, carbsGPerKgMax] =
       longRunMinutes === null
-        ? [6, 7]
+        ? [5.5, 9]
         : longRunMinutes >= 150
-          ? [7, 8]
-          : longRunMinutes >= 100
-            ? [6, 7]
-            : [5, 6];
+          ? [6, 10]
+          : longRunMinutes >= 110
+            ? [5.5, 9]
+            : [4.5, 8];
     return {
       carbsGPerKgMin,
       carbsGPerKgMax,
