@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 
 import { runTrainingPeaksAttentionDigest } from "@/features/trainingpeaks/attention-digest-run";
 import { sendWorkoutRecoveryConfirmations } from "@/features/telegram/trainingpeaks";
+import { runHealthSignalMemoryAutoClose } from "@/features/trainingpeaks/service";
 import {
   createTrainingPeaksCronRunLog,
   expireTrainingPeaksOperationalSignals,
@@ -195,11 +196,30 @@ async function handleTrainingPeaksAttentionDigest(request: Request) {
     console.error("trainingpeaks_workout_recovery_failed", { error });
   }
 
+  // Решение A / Шаг 2: auto-close the strongest memory misfire (same-message memory says the illness
+  // already resolved). Flag-gated (COACH_HEALTH_SIGNAL_AUTOCLOSE_MODE, default OFF) and self-contained
+  // so it never affects the digest response. off → no-op; dry_run → trace only; on → close + trace.
+  let memoryAutoClose: {
+    mode: string;
+    considered: number;
+    eligible: number;
+    closed: number;
+  } = { mode: "off", considered: 0, eligible: 0, closed: 0 };
+  try {
+    memoryAutoClose = await runHealthSignalMemoryAutoClose();
+    if (memoryAutoClose.eligible > 0) {
+      console.info("trainingpeaks_health_signal_memory_autoclose", memoryAutoClose);
+    }
+  } catch (error) {
+    console.error("trainingpeaks_health_signal_memory_autoclose_failed", { error });
+  }
+
   return jsonResponse(result.ok ? 200 : 500, {
     ok: result.ok,
     status: result.status,
     counts: result.counts,
     workoutRecovery,
+    memoryAutoClose,
   });
 }
 

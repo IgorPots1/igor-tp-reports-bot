@@ -10244,6 +10244,89 @@ export async function closeHealthSignalByAdminUi(input: {
   return { updated: true, reason: "ok" };
 }
 
+// Решение A / Шаг 2 — auto-close ONE health_issue_started signal whose SAME-message Haiku memory says
+// the episode already resolved (strong tier, see health-signal-autoclose.ts). Mirrors
+// closeHealthSignalByAdminUi (status=expired, resolved_reason, resolved_at, metadata trace, compare-and-set
+// on status="active") but is deliberately NARROWER — only health_issue_started — and records a full
+// machine trace under metadata.memory_autoclose (pattern/tier/memory id + confidence/reason) so every
+// automatic close is auditable. Sets lifecycle_state="resolved" like the recovery close (both mean "the
+// illness is over"). Idempotent: a non-active or non-matching row returns updated:false and mutates
+// nothing. Never called unless COACH_HEALTH_SIGNAL_AUTOCLOSE_MODE="on" (default OFF).
+export async function autoCloseHealthSignalByMemoryResolved(input: {
+  signalId: string;
+  studentId: string;
+  memoryItemId: string | null;
+  memoryConfidence: number | null;
+  reason: string;
+}): Promise<{ updated: boolean; reason: string }> {
+  const supabase = createSupabaseServerClient();
+  const appliedAt = new Date().toISOString();
+
+  const { data: existing, error: fetchError } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .select("id, status, signal_type, metadata")
+    .eq("id", input.signalId)
+    .eq("student_id", input.studentId)
+    .maybeSingle();
+  if (fetchError) {
+    throw new Error(`Failed to load signal for memory auto-close: ${fetchError.message}`);
+  }
+  if (!existing) {
+    return { updated: false, reason: "not_found" };
+  }
+  const row = existing as { id: string; status: string; signal_type: string; metadata: Record<string, unknown> };
+  if (row.status !== "active") {
+    return { updated: false, reason: "not_active" };
+  }
+  // Narrower than admin close on purpose: automation may only touch fresh illness onset.
+  if (row.signal_type !== "health_issue_started") {
+    return { updated: false, reason: "not_health_issue_started" };
+  }
+
+  const metaBefore =
+    row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+      ? (row.metadata as Record<string, unknown>)
+      : {};
+  const nextMetadata = {
+    ...metaBefore,
+    memory_autoclose: {
+      closed_at: appliedAt,
+      actor: "memory_autoclose",
+      pattern: "already_resolved",
+      tier: "strong",
+      memory_item_id: input.memoryItemId,
+      memory_confidence: input.memoryConfidence,
+      reason: input.reason,
+    },
+  };
+
+  const { data: updated, error: updateError } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .update({
+      status: "expired",
+      lifecycle_state: "resolved",
+      lifecycle_state_updated_at: appliedAt,
+      resolved_reason: "memory_autoclose_already_resolved",
+      resolved_at: appliedAt,
+      metadata: nextMetadata,
+      updated_at: appliedAt,
+    })
+    .eq("id", input.signalId)
+    .eq("student_id", input.studentId)
+    .eq("status", "active")
+    .select("id")
+    .maybeSingle();
+
+  if (updateError) {
+    throw new Error(`Failed to auto-close health signal: ${updateError.message}`);
+  }
+  if (!updated) {
+    return { updated: false, reason: "concurrent_update" };
+  }
+
+  return { updated: true, reason: "ok" };
+}
+
 // Plan signals a stale-dismiss may clear from the coach desk: a workout-move candidate or a schedule
 // constraint that hung after the coach acted manually in TrainingPeaks. Excludes health/pain (those
 // close via their own paths).

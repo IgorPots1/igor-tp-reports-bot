@@ -143,6 +143,7 @@ import {
   updateTrainingPeaksStudentTelegramContextById,
   listTrainingPeaksTelegramContextObservationsForStudent,
   listTrainingPeaksStudentMemoryItemsForStudents,
+  autoCloseHealthSignalByMemoryResolved,
   listRecentTrainingPeaksTelegramContextObservationsForChat,
   listRecentPendingTrainingPeaksMoveActionsForStudentChat,
   insertTrainingPeaksTelegramContextObservation,
@@ -159,6 +160,11 @@ import {
   evaluateHealthSignalMemoryDoubt,
   type HealthSignalMemoryDoubt,
 } from "@/features/trainingpeaks/health-signal-memory-reconcile";
+import {
+  decideHealthSignalAutoClose,
+  readHealthSignalAutoCloseMode,
+  type HealthSignalAutoCloseMode,
+} from "@/features/trainingpeaks/health-signal-autoclose";
 import { classifyTrainingPeaksWorkoutActivity } from "@/features/trainingpeaks/workout-activity-classification";
 import {
   parseMoveWorkoutWithAiFallback,
@@ -8178,6 +8184,87 @@ async function buildHealthSignalMemoryDoubtMap(
     console.warn("Failed to build health-signal memory doubt map", { error });
   }
   return doubtBySignalId;
+}
+
+// Решение A / Шаг 2 — auto-close the strongest memory misfire. Scans active health_issue_started
+// signals, reuses the Step-1 doubt map, and closes ONLY those with a `strong` `already_resolved` doubt
+// (same-message memory says the episode is over). Flag-gated + self-contained so a failure never breaks
+// the digest cron that calls it:
+//   mode="off"     → returns immediately, nothing scanned (DEFAULT — merge changes no behaviour)
+//   mode="dry_run" → logs each eligible candidate, mutates nothing
+//   mode="on"      → closes each eligible signal with a full audit trace
+export async function runHealthSignalMemoryAutoClose(): Promise<{
+  mode: HealthSignalAutoCloseMode;
+  considered: number;
+  eligible: number;
+  closed: number;
+}> {
+  const mode = readHealthSignalAutoCloseMode();
+  if (mode === "off") {
+    return { mode, considered: 0, eligible: 0, closed: 0 };
+  }
+
+  let signals: Awaited<ReturnType<typeof listTrainingPeaksOperationalSignals>>;
+  try {
+    signals = await listTrainingPeaksOperationalSignals({ status: "active", limit: 200 });
+  } catch (error) {
+    console.warn("Memory auto-close: failed to list active signals", {
+      event: "health_signal_memory_autoclose_list_failed",
+      errorClass: error instanceof Error ? error.name : "UnknownError",
+    });
+    return { mode, considered: 0, eligible: 0, closed: 0 };
+  }
+
+  const healthStarted = signals.items.filter((signal) => signal.signalType === "health_issue_started");
+  if (healthStarted.length === 0) {
+    return { mode, considered: 0, eligible: 0, closed: 0 };
+  }
+
+  const doubtBySignalId = await buildHealthSignalMemoryDoubtMap(healthStarted);
+  let eligible = 0;
+  let closed = 0;
+  for (const signal of healthStarted) {
+    const decision = decideHealthSignalAutoClose({
+      signalType: signal.signalType,
+      doubt: doubtBySignalId.get(signal.id) ?? null,
+    });
+    if (!decision.eligible) {
+      continue;
+    }
+    eligible += 1;
+    // Trace every candidate (both modes) — this is the audit record dry_run relies on.
+    console.info("health_signal_memory_autoclose_candidate", {
+      mode,
+      signalIdPrefix: signal.id.slice(0, 8),
+      studentIdPrefix: signal.studentId.slice(0, 8),
+      pattern: decision.pattern,
+      tier: decision.tier,
+      memoryConfidence: decision.memoryConfidence,
+    });
+    if (mode !== "on") {
+      continue; // dry_run: trace only, never mutate.
+    }
+    try {
+      const result = await autoCloseHealthSignalByMemoryResolved({
+        signalId: signal.id,
+        studentId: signal.studentId,
+        memoryItemId: decision.memoryItemId,
+        memoryConfidence: decision.memoryConfidence,
+        reason: decision.reason,
+      });
+      if (result.updated) {
+        closed += 1;
+      }
+    } catch (error) {
+      console.warn("Memory auto-close: failed to close signal", {
+        event: "health_signal_memory_autoclose_close_failed",
+        signalIdPrefix: signal.id.slice(0, 8),
+        errorClass: error instanceof Error ? error.name : "UnknownError",
+      });
+    }
+  }
+
+  return { mode, considered: healthStarted.length, eligible, closed };
 }
 
 export async function buildOperationalSignalDisplayEvidenceMap(input: {

@@ -59,6 +59,7 @@
     "check-trainingpeaks-student-identity-sources": "npx tsx scripts/check-trainingpeaks-student-identity-sources.ts",
     "check-trainingpeaks-coach-cases": "npx tsx scripts/check-trainingpeaks-coach-cases.ts",
     "check-health-signal-memory-reconcile": "npx tsx scripts/check-health-signal-memory-reconcile.ts",
+    "check-health-signal-autoclose": "npx tsx scripts/check-health-signal-autoclose.ts",
     "replay-trainingpeaks-coach-cases": "npx tsx scripts/replay-trainingpeaks-coach-cases.ts",
     "check-trainingpeaks-ai-intent-log-only": "npx tsx scripts/check-trainingpeaks-ai-intent-log-only.ts",
     "tp-intent-logs-recent": "npx tsx scripts/tp-intent-logs-recent.ts",
