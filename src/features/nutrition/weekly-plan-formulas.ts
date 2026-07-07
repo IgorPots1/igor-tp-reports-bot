@@ -35,6 +35,11 @@ import {
   resolveNutritionActivityCoefByTitle,
   sumDaySessionsExpenditureKcal,
 } from "@/features/nutrition/activity-energy";
+import {
+  resolveCarbLoadBasis,
+  resolveCarbRangeByLoadBasis,
+  type NutritionCarbLoadBasis,
+} from "@/features/nutrition/methodology";
 import type { NutritionGoalType, NutritionSex } from "@/features/nutrition/repository";
 
 export type { NutritionLongRunSource };
@@ -559,6 +564,9 @@ export function calculateNutritionDayTypeTarget(params: {
   bodyweightKg: number | null;
   dayType: NutritionPlanDayType;
   isLightCross?: boolean;
+  /** Real planned/completed duration of the day's session, if known — only
+   * moves the number for long_run (duration-graduated corridor). */
+  durationHours?: number | null;
 }): NutritionDayTypeTarget | null {
   if (!params.bodyweightKg || params.bodyweightKg <= 0) {
     return null;
@@ -567,23 +575,26 @@ export function calculateNutritionDayTypeTarget(params: {
   if (!formulaBase) {
     return null;
   }
-  // Light intermittent cross-training (padel/tennis/walk/hike) is not glycogen-depleting
-  // → carbs at ~easy level (4.5 г/кг), not the 5.2 cross-training value. bike/swim keep
-  // 5.2 (isLightCross is false for them). kcal/protein/fat unchanged.
-  const formula =
-    params.dayType === "cross_training" && params.isLightCross
-      ? { ...formulaBase, carbsPerKg: 4.5 }
-      : formulaBase;
   const bw = params.bodyweightKg;
+  // SINGLE SOURCE for the carb target: the same coach-approved corridor that
+  // drives the review's ok/low status (resolveCarbRangeByLoadBasis). The plan
+  // number is the corridor's LOWER bound + 0.4 g/kg — a realistic "aim for this",
+  // not the old flat (and for long_run, duration-blind) per-type multiplier.
+  // kcal/protein/fat stay on the original fixed-coefficient table (unchanged).
+  const durationMinutes =
+    params.dayType === "long_run" ? trainingPeaksDurationHoursToMinutes(params.durationHours ?? null) : null;
+  const loadBasis: NutritionCarbLoadBasis = resolveCarbLoadBasis(params.dayType);
+  const carbRange = resolveCarbRangeByLoadBasis(loadBasis, durationMinutes, params.isLightCross);
+  const carbsPerKg = carbRange.rangeMinGPerKg !== null ? Number((carbRange.rangeMinGPerKg + 0.4).toFixed(2)) : formulaBase.carbsPerKg;
   return {
-    target_kcal: roundToNearest(formula.kcalPerKg * bw, 50),
-    protein_g: roundToNearest(formula.proteinPerKg * bw, 5),
-    fat_g: roundToNearest(formula.fatPerKg * bw, 5),
-    carbs_g: roundToNearest(formula.carbsPerKg * bw, 10),
-    kcal_per_kg: formula.kcalPerKg,
-    protein_g_per_kg: formula.proteinPerKg,
-    fat_g_per_kg: formula.fatPerKg,
-    carbs_g_per_kg: formula.carbsPerKg,
+    target_kcal: roundToNearest(formulaBase.kcalPerKg * bw, 50),
+    protein_g: roundToNearest(formulaBase.proteinPerKg * bw, 5),
+    fat_g: roundToNearest(formulaBase.fatPerKg * bw, 5),
+    carbs_g: roundToNearest(carbsPerKg * bw, 10),
+    kcal_per_kg: formulaBase.kcalPerKg,
+    protein_g_per_kg: formulaBase.proteinPerKg,
+    fat_g_per_kg: formulaBase.fatPerKg,
+    carbs_g_per_kg: carbsPerKg,
   };
 }
 
@@ -1427,6 +1438,7 @@ export function buildNutritionNextWeekPlan(params: {
             isLightCross:
               trainingType === "cross_training" &&
               isLightIntermittentCrossTrainingTitle(primaryWorkout?.title ?? ""),
+            durationHours: primaryWorkout?.durationHours ?? null,
           });
     const baseline =
       previousWeekTargets.byDayType[trainingType] ??

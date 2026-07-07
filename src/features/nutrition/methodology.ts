@@ -958,12 +958,16 @@ function inferCanonicalTrainingType(input: {
   trainingType: NutritionTrainingType;
   hasTrainingContext: boolean;
   preLong: boolean;
+  /** No TP row for this date is ambiguous: a genuine rest day (coach just didn't
+   * mark it) vs a sync gap/failure (don't know). Only trust it as confident "rest"
+   * when the week's scan itself came back healthy. */
+  trainingCacheStatus: NutritionTrainingPeaksWeekContext["cacheStatus"];
 }): NutritionCanonicalTrainingType {
   if (input.preLong) {
     return "pre_long";
   }
   if (!input.hasTrainingContext) {
-    return input.trainingType === "rest" ? "rest" : "unknown";
+    return input.trainingType === "rest" && input.trainingCacheStatus === "ok" ? "rest" : "unknown";
   }
   if (input.trainingType === "long_run") {
     return "long_run";
@@ -1015,7 +1019,11 @@ function buildCanonicalTarget(input: {
   }
 
   const bodyweight = input.bodyweightKg;
-  if (!input.hasTrainingContext) {
+  // "unknown" here means genuinely low-confidence data (no TP row AND the week's
+  // scan itself wasn't healthy) — see inferCanonicalTrainingType. A confident rest
+  // day (no TP row, but the scan is fine) resolves to canonicalTrainingType "rest"
+  // and falls through to that branch below, same corridor as any other rest day.
+  if (input.canonicalTrainingType === "unknown") {
     return {
       carbsGPerKgMin: 3,
       carbsGPerKgMax: 5,
@@ -1133,13 +1141,16 @@ function buildCanonicalTrainingLabel(input: {
   canonicalTrainingType: NutritionCanonicalTrainingType;
   workout: WorkoutContextByDate | null;
 }): string {
+  // Check "rest" before the missing-workout fallback: a confident rest day (no TP
+  // row, scan healthy — see inferCanonicalTrainingType) already resolved to "rest"
+  // and deserves the honest label, not "no workout in TrainingPeaks".
+  if (input.canonicalTrainingType === "rest") {
+    return "день отдыха";
+  }
   if (!input.workout) {
     return "день без тренировки в TrainingPeaks";
   }
   const title = input.workout.title.trim();
-  if (input.canonicalTrainingType === "rest") {
-    return "день отдыха";
-  }
   if (input.canonicalTrainingType === "strength") {
     return "силовая";
   }
@@ -1223,7 +1234,7 @@ function buildHintForComment(status: NutritionCanonicalStatus): string {
   return "Нагрузка и питание в целом согласованы; можно дать краткий поддерживающий комментарий.";
 }
 
-function resolveCarbLoadBasis(trainingType: NutritionCanonicalTrainingType): NutritionCarbLoadBasis {
+export function resolveCarbLoadBasis(trainingType: NutritionCanonicalTrainingType): NutritionCarbLoadBasis {
   if (trainingType === "rest") {
     return "rest";
   }
@@ -1251,7 +1262,7 @@ function resolveCarbLoadBasis(trainingType: NutritionCanonicalTrainingType): Nut
   return "unknown";
 }
 
-function resolveCarbRangeByLoadBasis(
+export function resolveCarbRangeByLoadBasis(
   loadBasis: NutritionCarbLoadBasis,
   workoutDurationMinutes?: number | null,
   crossTrainingIsLight?: boolean
@@ -1661,6 +1672,7 @@ function analyzeDailyTrainingNutrition(input: {
       trainingType,
       hasTrainingContext,
       preLong: isPreLong,
+      trainingCacheStatus: input.trainingCacheStatus,
     });
     const canonicalHasLoad =
       canonicalTrainingType === "easy" ||
@@ -1740,7 +1752,11 @@ function analyzeDailyTrainingNutrition(input: {
     if (!input.bodyweightKg || input.bodyweightKg <= 0) {
       canonicalFindings.push("missing_weight");
     }
-    if (!hasTrainingContext || input.trainingCacheStatus !== "ok") {
+    // A confident rest day (no TP row, but the week's scan is healthy) is NOT
+    // "limited context" — canonicalTrainingType already resolved that distinction
+    // (inferCanonicalTrainingType). Only a genuinely unhealthy scan — whether or
+    // not a workout row exists — earns this finding.
+    if (input.trainingCacheStatus !== "ok") {
       canonicalFindings.push("limited_training_context");
     }
     if (suspect) {
@@ -1893,7 +1909,7 @@ function analyzeDailyTrainingNutrition(input: {
     if (!input.bodyweightKg || input.bodyweightKg <= 0) {
       sourceNotes.push("missing_bodyweight");
     }
-    if (!hasTrainingContext || input.trainingCacheStatus !== "ok") {
+    if (input.trainingCacheStatus !== "ok") {
       sourceNotes.push("missing_training_context");
     }
     if (sortedRows.length < 7) {
