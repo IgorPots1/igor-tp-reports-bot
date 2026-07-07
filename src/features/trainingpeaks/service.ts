@@ -142,6 +142,7 @@ import {
   updateTrainingPeaksStudentTelegramContactById,
   updateTrainingPeaksStudentTelegramContextById,
   listTrainingPeaksTelegramContextObservationsForStudent,
+  listTrainingPeaksStudentMemoryItemsForStudents,
   listRecentTrainingPeaksTelegramContextObservationsForChat,
   listRecentPendingTrainingPeaksMoveActionsForStudentChat,
   insertTrainingPeaksTelegramContextObservation,
@@ -154,6 +155,10 @@ import {
   updateTrainingPeaksWeeklyReportStateById,
 } from "@/features/trainingpeaks/repository";
 import { evaluateTrainingPeaksRecoveryAlert } from "@/features/trainingpeaks/recovery-alerts";
+import {
+  evaluateHealthSignalMemoryDoubt,
+  type HealthSignalMemoryDoubt,
+} from "@/features/trainingpeaks/health-signal-memory-reconcile";
 import { classifyTrainingPeaksWorkoutActivity } from "@/features/trainingpeaks/workout-activity-classification";
 import {
   parseMoveWorkoutWithAiFallback,
@@ -733,6 +738,8 @@ export type TrainingPeaksOperationalSignalsItem = {
   text: string;
   requiresCoachReview?: boolean | null;
   hiddenReason?: string | null;
+  // Решение A / Шаг 1: memory-based doubt shown as a "⚠️ память сомневается" badge (mark-only).
+  memoryDoubt?: HealthSignalMemoryDoubt | null;
 };
 
 export type TrainingPeaksOperationalSignalCompletionEvidence = {
@@ -761,6 +768,9 @@ export type TrainingPeaksOperationalSignalDisplayEvidence = {
   latestPositive?: TrainingPeaksOperationalSignalSourceEvidence | null;
   latestAgreement?: TrainingPeaksOperationalSignalSourceEvidence | null;
   completion?: TrainingPeaksOperationalSignalCompletionEvidence | null;
+  // Решение A / Шаг 1: doubt cast by the same-message Haiku memory on a health_issue_started signal.
+  // Read-only marking only — the signal stays visible; the coach decides.
+  memoryDoubt?: HealthSignalMemoryDoubt | null;
 };
 
 export type TrainingPeaksOperationalSignalsSection = {
@@ -5284,11 +5294,13 @@ async function listOperationalHealthFollowUpsForAttention(
     status: "active",
     limit: 200,
   });
+  const memoryDoubtBySignalId = await buildHealthSignalMemoryDoubtMap(signals.items);
   return collectOperationalHealthFollowUpsFromSignals({
     signals: signals.items,
     activeStudentNameById,
     asOfDate,
     maxItems,
+    memoryDoubtBySignalId,
   });
 }
 
@@ -8122,6 +8134,47 @@ export function buildDetailedActionableHealthOrPainDisplayText(input: {
   return lines.join("\n");
 }
 
+// Решение A / Шаг 1: build a signalId → memory-doubt map for health_issue_started signals, by
+// joining each to its student's active Haiku memory on the SAME source message. Best-effort: a read
+// failure yields an empty map (no badges), never an exception. Shared by the "Сегодня" attention
+// snapshot (desk + morning digest) and the operational-signals snapshot.
+async function buildHealthSignalMemoryDoubtMap(
+  signals: readonly TrainingPeaksStudentOperationalSignal[]
+): Promise<Map<string, HealthSignalMemoryDoubt>> {
+  const doubtBySignalId = new Map<string, HealthSignalMemoryDoubt>();
+  const candidates = signals.filter((signal) => signal.signalType === "health_issue_started");
+  if (candidates.length === 0) {
+    return doubtBySignalId;
+  }
+  try {
+    const studentIds = [...new Set(candidates.map((signal) => signal.studentId))];
+    const memoryItems = await listTrainingPeaksStudentMemoryItemsForStudents(studentIds, { activeOnly: true });
+    const memoryByStudent = new Map<string, typeof memoryItems>();
+    for (const memoryItem of memoryItems) {
+      const group = memoryByStudent.get(memoryItem.studentId) ?? [];
+      group.push(memoryItem);
+      memoryByStudent.set(memoryItem.studentId, group);
+    }
+    for (const signal of candidates) {
+      const doubt = evaluateHealthSignalMemoryDoubt({
+        signal: {
+          id: signal.id,
+          signalType: signal.signalType,
+          structuredPayload: signal.structuredPayload,
+          sourceObservationId: signal.sourceObservationId,
+        },
+        memoryItems: memoryByStudent.get(signal.studentId) ?? [],
+      });
+      if (doubt) {
+        doubtBySignalId.set(signal.id, doubt);
+      }
+    }
+  } catch (error) {
+    console.warn("Failed to build health-signal memory doubt map", { error });
+  }
+  return doubtBySignalId;
+}
+
 export async function buildOperationalSignalDisplayEvidenceMap(input: {
   signals: TrainingPeaksStudentOperationalSignal[];
   asOfDate: string;
@@ -8143,6 +8196,9 @@ export async function buildOperationalSignalDisplayEvidenceMap(input: {
     group.push(signal);
     byStudent.set(signal.studentId, group);
   }
+
+  // Решение A / Шаг 1: same-message Haiku memory casting doubt on health_issue_started signals.
+  const memoryDoubtBySignalId = await buildHealthSignalMemoryDoubtMap(eligible);
 
   const evidence = new Map<string, TrainingPeaksOperationalSignalDisplayEvidence>();
   await Promise.all(
@@ -8187,6 +8243,7 @@ export async function buildOperationalSignalDisplayEvidenceMap(input: {
             asOfDate: input.asOfDate,
             cleanRunningCompletionCount,
           });
+          const memoryDoubt = memoryDoubtBySignalId.get(signal.id) ?? null;
           const source = findOperationalSignalSourceObservation({ signal, observations });
           const negativeAfterCompletionObservation = lifecycleInput.negativeMessageAfterCompletion
             ? observations.find(
@@ -8195,6 +8252,7 @@ export async function buildOperationalSignalDisplayEvidenceMap(input: {
             : null;
           evidence.set(signal.id, {
             source,
+            memoryDoubt,
             latestRelevant: findLatestOperationalSignalObservation({
               signal,
               observations,
@@ -8457,6 +8515,8 @@ export function collectOperationalHealthFollowUpsFromSignals(input: {
   activeStudentNameById: ReadonlyMap<string, string | null>;
   asOfDate: string;
   maxItems?: number;
+  // Решение A / Шаг 1: signalId → memory doubt; appended to reason as a "Сегодня" doubt badge.
+  memoryDoubtBySignalId?: ReadonlyMap<string, HealthSignalMemoryDoubt>;
 }): { items: OperationalHealthFollowUpAttentionItem[]; overflowCount: number } {
   const maxItems = input.maxItems ?? 5;
   if (input.signals.length === 0) {
@@ -8495,6 +8555,11 @@ export function collectOperationalHealthFollowUpsFromSignals(input: {
       episodeKey: getSignalMetadataString(signal.metadata, "episode_key"),
       signalId: signal.id,
     };
+
+    const memoryDoubt = input.memoryDoubtBySignalId?.get(signal.id) ?? null;
+    if (memoryDoubt) {
+      item.reason = `${item.reason}\n⚠️ память сомневается: ${memoryDoubt.reason}`;
+    }
 
     const episodeKey = item.episodeKey;
     if (!episodeKey) {
@@ -9351,6 +9416,21 @@ export function formatTrainingPeaksOperationalSignalsForTelegramMultiMessage(
   );
 }
 
+// Решение A / Шаг 1: append the "память сомневается" doubt badge to a display item, in place.
+// Mark-only — visibility/priority are untouched; the coach still decides. Best-effort: illness
+// onsets are fallback items (no episode), so the badge survives episode dedup in practice.
+function applyMemoryDoubtToDisplayItem(
+  item: TrainingPeaksOperationalSignalsItem,
+  evidence: TrainingPeaksOperationalSignalDisplayEvidence | null | undefined
+): void {
+  const memoryDoubt = evidence?.memoryDoubt ?? null;
+  if (!memoryDoubt || !item.text) {
+    return;
+  }
+  item.memoryDoubt = memoryDoubt;
+  item.text = `${item.text}\n⚠️ память сомневается: ${memoryDoubt.reason}`;
+}
+
 function collectOperationalSignalDisplayItemsFromSignals(input: {
   signals: TrainingPeaksStudentOperationalSignal[];
   studentNameById: ReadonlyMap<string, string | null>;
@@ -9400,6 +9480,7 @@ function collectOperationalSignalDisplayItemsFromSignals(input: {
       activeMoveActions: input.activeMoveActions,
       displayEvidence: input.displayEvidenceBySignalId?.get(signal.id) ?? null,
     });
+    applyMemoryDoubtToDisplayItem(item, input.displayEvidenceBySignalId?.get(signal.id));
     if (item.hiddenReason) {
       continue;
     }
@@ -9491,6 +9572,7 @@ export function collectOperationalSignalDiagnosticItems(input: {
       activeMoveActions: input.activeMoveActions,
       displayEvidence: input.displayEvidenceBySignalId?.get(signal.id) ?? null,
     });
+    applyMemoryDoubtToDisplayItem(item, input.displayEvidenceBySignalId?.get(signal.id));
     if (input.visibleOnly && item.hiddenReason) {
       continue;
     }
