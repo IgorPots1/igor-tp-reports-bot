@@ -292,6 +292,22 @@ const NUTRITION_ATHLETE_WORDING_REPLACEMENTS: Array<[RegExp, string]> = [
   // до старта", "гель за 10 минут") and real day descriptions are untouched.
   [/,?\s*(?:больше|дольше)\s*~?\s*(?:полу(?:тора|торы)\s+час[а-яё]*|\d+(?:[.,]\d+)?\s*(?:час[а-яё]*|ч|мин(?:ут[а-яё]*)?))(?:\s+на\s+ногах)?/gi, ""],
   [/,?\s*(?:полтора\s+часа|полутора\s+часов)\s+на\s+ногах/gi, ""],
+  // Carb-slang anglicism «карбовый/карбовые/…» → «углеводный/углеводные/…». Both
+  // roots take the SAME hard-stem adjective endings (-ый/-ая/-ое/-ые/-ых/-ым/-ому…),
+  // so stripping only the «карбов» root and keeping whatever ending followed it
+  // preserves case/number exactly (same trick as the «макро-вывод» pair above).
+  // Requires >=1 trailing char so the bare noun genitive-plural «карбов» (see next
+  // two pairs) never matches this adjective pattern.
+  [/карбов([а-яё]+)/gi, "углеводн$1"],
+  // Bare noun forms («карбы» — carbs, nominative/accusative plural; «карбов» —
+  // genitive plural, "недостаток карбов") → the plain Russian noun.
+  // JS \b relies on \w, which does NOT include Cyrillic letters — using \b here
+  // would silently fail to match at a Cyrillic-word boundary. Lookaround against
+  // [а-яё] instead (same fix class as the rest of this file's comment above).
+  [/(?<![а-яё])карбы(?![а-яё])/gi, "углеводы"],
+  [/(?<![а-яё])карбов(?![а-яё])/gi, "углеводов"],
+  // Jargon construction «с жировой точки зрения» → plain «по жирам».
+  [/с\s+жиров[а-яё]*\s+точки\s+зрения/gi, "по жирам"],
 ];
 
 /** Rewrite florid/bookish phrasings to Igor's plain voice (see replacements above). */
