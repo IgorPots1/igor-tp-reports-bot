@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Глубокий бэкфилл раз в неделю (Пн 05:00), окно [-60 … +14] — ловит поздние правки старше недели. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.igor.trainingpeaks.workout-cache-backfill</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>PAST_DAYS=60 FUTURE_DAYS=14 "$HOME/igor-tp-reports-bot/tools/trainingpeaks-export/scripts/run-workout-cache-scan.sh"</string>
+  </array>
+
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>5</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+
+  <key>StandardOutPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/workout-cache-backfill.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/workout-cache-backfill.launchd.err.log</string>
+</dict>
+</plist>

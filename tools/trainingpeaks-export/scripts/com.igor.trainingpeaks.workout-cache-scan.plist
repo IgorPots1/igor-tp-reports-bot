@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Быстрый скан каждые 3 часа, окно [-10 … +10]. Кладётся в ~/Library/LaunchAgents/ -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.igor.trainingpeaks.workout-cache-scan</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>PAST_DAYS=10 FUTURE_DAYS=10 "$HOME/igor-tp-reports-bot/tools/trainingpeaks-export/scripts/run-workout-cache-scan.sh"</string>
+  </array>
+
+  <!-- запуск при каждом входе/включении ноута (ловит правки, накопившиеся пока Mac был выключен) -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- каждые 3 часа: 07,10,13,16,19,22 локального времени.
+       Пропущенные во время сна прогоны launchd докручивает при пробуждении. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>13</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>16</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>19</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>22</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+
+  <key>StandardOutPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/workout-cache-scan.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/workout-cache-scan.launchd.err.log</string>
+</dict>
+</plist>
