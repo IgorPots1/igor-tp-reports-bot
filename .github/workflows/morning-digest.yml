@@ -1,0 +1,34 @@
+# .github/workflows/morning-digest.yml
+# Надёжный триггер утреннего дайджеста вместо капризного Vercel-крона.
+# Требует секретов репозитория: DIGEST_URL, CRON_SECRET.
+#   DIGEST_URL  = https://<твой-домен>/api/cron/trainingpeaks-attention-digest
+#   CRON_SECRET = то же значение, что в env приложения
+# Дедуп на стороне приложения (hasTrainingPeaksAttentionDigestSentForBelgradeDate)
+# гарантирует один дайджест, даже если сработают оба расписания и/или Vercel.
+name: TrainingPeaks morning digest
+
+on:
+  schedule:
+    - cron: "0 9 * * *"    # 09:00 UTC — основной
+    - cron: "30 9 * * *"   # 09:30 UTC — подстраховка
+  workflow_dispatch: {}    # ручной запуск кнопкой
+
+concurrency:
+  group: tp-morning-digest
+  cancel-in-progress: false
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping digest endpoint
+        env:
+          DIGEST_URL: ${{ secrets.DIGEST_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o /tmp/resp.txt -w "%{http_code}" \
+            -X GET "$DIGEST_URL" \
+            -H "Authorization: Bearer $CRON_SECRET")
+          echo "HTTP $code"; cat /tmp/resp.txt || true
+          test "$code" = "200"

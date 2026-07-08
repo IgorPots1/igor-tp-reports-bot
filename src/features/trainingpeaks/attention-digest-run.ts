@@ -63,7 +63,7 @@ export type RunTrainingPeaksAttentionDigestInput = {
 
 export type RunTrainingPeaksAttentionDigestResult = {
   ok: boolean;
-  status: "sent" | "partial_failure" | "failed";
+  status: "sent" | "partial_failure" | "failed" | "skipped_already_sent";
   counts: {
     coachChats: number;
     sent: number;
@@ -97,6 +97,29 @@ async function finishCronRunLogSafely(
 export async function runTrainingPeaksAttentionDigest(
   input: RunTrainingPeaksAttentionDigestInput
 ): Promise<RunTrainingPeaksAttentionDigestResult> {
+  // Dedup guard for the cron path: if today's Belgrade digest was already sent,
+  // skip. Makes the endpoint safe to trigger from several schedulers at once
+  // (GitHub Actions dual schedule + Vercel cron) without duplicate sends. The
+  // manual command already guards separately before calling this. ok:true so a
+  // duplicate trigger gets 200 (no retry storm), not a 500.
+  const todayIso = getTrainingPeaksAttentionDigestBelgradeTodayIso();
+  if (await hasTrainingPeaksAttentionDigestSentForBelgradeDate(todayIso)) {
+    console.info("TrainingPeaks attention digest skipped: already sent for", todayIso);
+    return {
+      ok: true,
+      status: "skipped_already_sent",
+      counts: {
+        coachChats: 0,
+        sent: 0,
+        failed: 0,
+        urgent: 0,
+        today: 0,
+        observe: 0,
+        fyi: 0,
+      },
+    };
+  }
+
   const startedAtMs = Date.now();
   let runLogId: string | null = null;
 
