@@ -49,7 +49,15 @@ type StudentSummary = {
   warnings: number;
   reason?: string;
   rawItemsReturned?: number;
+  reconciledDeleted: number;
 };
+
+type ReconcilePlannedRowsFn = (input: {
+  studentId: string;
+  from: string;
+  to: string;
+  runStartedAt: string;
+}) => Promise<number>;
 
 type RepositoryCompat = {
   listTrainingPeaksStudents?: () => Promise<TrainingPeaksStudent[]>;
@@ -57,12 +65,14 @@ type RepositoryCompat = {
   upsertTrainingPeaksWorkoutCacheScanStatuses?: (
     rows: TrainingPeaksWorkoutCacheScanStatusUpsertRow[],
   ) => Promise<void>;
+  reconcileTrainingPeaksWorkoutCachePlannedRows?: ReconcilePlannedRowsFn;
   default?: {
     listTrainingPeaksStudents?: () => Promise<TrainingPeaksStudent[]>;
     upsertTrainingPeaksWorkoutCacheRows?: (rows: TrainingPeaksWorkoutCacheUpsertRow[]) => Promise<void>;
     upsertTrainingPeaksWorkoutCacheScanStatuses?: (
       rows: TrainingPeaksWorkoutCacheScanStatusUpsertRow[],
     ) => Promise<void>;
+    reconcileTrainingPeaksWorkoutCachePlannedRows?: ReconcilePlannedRowsFn;
   };
 };
 
@@ -487,15 +497,19 @@ function toCompactErrorMessage(error: unknown): string {
 async function scanOneStudent(input: {
   page: import("playwright").Page;
   upsertCacheFn: (rows: TrainingPeaksWorkoutCacheUpsertRow[]) => Promise<void>;
+  reconcileFn: ReconcilePlannedRowsFn;
   target: ResolvedTarget;
   from: string;
   to: string;
   scannedAt: string;
   authHeaders: Record<string, string>;
+  // Injectable for tests; defaults to the real TrainingPeaks API request.
+  requestFn?: typeof performApiJsonRequest;
 }): Promise<StudentSummary> {
-  const { page, upsertCacheFn, target, from, to, scannedAt, authHeaders } = input;
+  const { page, upsertCacheFn, reconcileFn, target, from, to, scannedAt, authHeaders } = input;
+  const requestFn = input.requestFn ?? performApiJsonRequest;
   const endpoint = `${TP_API_HOST}/fitness/v6/athletes/${target.athleteId}/workouts/${from}/${to}`;
-  const result = await performApiJsonRequest({
+  const result = await requestFn({
     page,
     method: "GET",
     endpoint,
@@ -556,6 +570,17 @@ async function scanOneStudent(input: {
 
   await upsertCacheFn(rows);
 
+  // Reconciliation: only reached after a successful scan (HTTP 200 + parsed
+  // array) and a successful upsert above. Deletes stale phantom plans this run
+  // did not refresh. runStartedAt === scannedAt (fixed once before the loop), so
+  // the rows just upserted are never deleted.
+  const reconciledDeleted = await reconcileFn({
+    studentId: target.student.id,
+    from,
+    to,
+    runStartedAt: scannedAt,
+  });
+
   const planned = filteredItems.filter((item) => item.isPlanned).length;
   const completed = filteredItems.filter((item) => item.isCompleted).length;
   const plannedButNotCompleted = filteredItems.filter((item) => item.isPlanned && !item.isCompleted).length;
@@ -573,6 +598,7 @@ async function scanOneStudent(input: {
     plannedButNotCompleted,
     warnings,
     rawItemsReturned: result.body.length,
+    reconciledDeleted,
   };
 }
 
@@ -587,8 +613,11 @@ async function main(): Promise<void> {
   const upsertScanStatusesFn =
     repoCompat.upsertTrainingPeaksWorkoutCacheScanStatuses ??
     repoCompat.default?.upsertTrainingPeaksWorkoutCacheScanStatuses;
+  const reconcileFn =
+    repoCompat.reconcileTrainingPeaksWorkoutCachePlannedRows ??
+    repoCompat.default?.reconcileTrainingPeaksWorkoutCachePlannedRows;
 
-  if (!listStudentsFn || !upsertCacheFn || !upsertScanStatusesFn) {
+  if (!listStudentsFn || !upsertCacheFn || !upsertScanStatusesFn || !reconcileFn) {
     throw new Error("TrainingPeaks repository helpers are unavailable in this runtime.");
   }
 
@@ -613,6 +642,7 @@ async function main(): Promise<void> {
           plannedButNotCompleted: 0,
           warnings: 0,
           reason: "missing valid TrainingPeaks athlete URL/id",
+          reconciledDeleted: 0,
         });
         continue;
       }
@@ -678,6 +708,7 @@ async function main(): Promise<void> {
         const studentSummary = await scanOneStudent({
           page,
           upsertCacheFn,
+          reconcileFn,
           target,
           from: args.from,
           to: args.to,
@@ -698,6 +729,7 @@ async function main(): Promise<void> {
           plannedButNotCompleted: 0,
           warnings: 1,
           reason: toCompactErrorMessage(error),
+          reconciledDeleted: 0,
         });
       }
     }
@@ -734,6 +766,7 @@ async function main(): Promise<void> {
     const totalPlanned = summaries.reduce((acc, item) => acc + item.planned, 0);
     const totalCompleted = summaries.reduce((acc, item) => acc + item.completed, 0);
     const totalPlannedNotCompleted = summaries.reduce((acc, item) => acc + item.plannedButNotCompleted, 0);
+    const totalReconciledDeleted = summaries.reduce((acc, item) => acc + item.reconciledDeleted, 0);
 
     console.log("[tp-workouts-cache-scan] Summary");
     console.log(`mode: ${args.allActive ? "all-active" : "single-student"}`);
@@ -747,13 +780,14 @@ async function main(): Promise<void> {
     console.log(`total_planned: ${totalPlanned}`);
     console.log(`total_completed: ${totalCompleted}`);
     console.log(`total_planned_but_not_completed: ${totalPlannedNotCompleted}`);
+    console.log(`total_reconciled_deleted: ${totalReconciledDeleted}`);
     console.log(`table_write_succeeded: ${writeSucceeded ? "yes" : "no"}`);
     console.log("");
     console.log("per_student:");
     for (const item of summaries.sort((a, b) => a.studentName.localeCompare(b.studentName))) {
       const shortReason = item.reason ? ` (${item.reason})` : "";
       console.log(
-        `- ${item.studentName}: rows=${item.rows}, planned=${item.planned}, completed=${item.completed}, planned_not_completed=${item.plannedButNotCompleted}, warnings=${item.warnings}, status=${item.status}${shortReason}`,
+        `- ${item.studentName}: rows=${item.rows}, planned=${item.planned}, completed=${item.completed}, planned_not_completed=${item.plannedButNotCompleted}, reconciled_deleted=${item.reconciledDeleted}, warnings=${item.warnings}, status=${item.status}${shortReason}`,
       );
     }
 

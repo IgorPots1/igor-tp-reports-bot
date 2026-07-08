@@ -1878,6 +1878,47 @@ export async function upsertTrainingPeaksWorkoutCacheRows(
   }
 }
 
+// Deletes stale "phantom" planned rows: planned-but-not-completed rows inside the
+// scanned window that the current run did NOT refresh (scanned_at older than
+// runStartedAt) — i.e. plans TrainingPeaks no longer returns (moved or deleted).
+// Completed rows are never touched.
+//
+// CRITICAL: call this ONLY after a successful scan of the student (HTTP 200 +
+// parsed items + successful upsert). On a failed/empty scan this would wipe live
+// plans. runStartedAt must be fixed once at the start of the run and is the same
+// value written to scanned_at on upsert, so freshly upserted rows (scanned_at ===
+// runStartedAt) never match `scanned_at < runStartedAt`.
+//
+// The filters here MUST mirror plannedCacheRowIsStale() in
+// workout-cache-reconcile.ts (tested by check-trainingpeaks-workout-cache-reconcile).
+// Returns the number of rows deleted.
+export async function reconcileTrainingPeaksWorkoutCachePlannedRows(input: {
+  studentId: string;
+  from: string;
+  to: string;
+  runStartedAt: string;
+}): Promise<number> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_workout_cache")
+    .delete()
+    .eq("student_id", input.studentId)
+    .gte("workout_date", input.from)
+    .lte("workout_date", input.to)
+    .eq("is_planned", true)
+    .eq("is_completed", false)
+    .lt("scanned_at", input.runStartedAt)
+    .select("id");
+
+  if (error) {
+    throw new Error(
+      `Failed to reconcile TrainingPeaks workout cache planned rows: ${error.message}`
+    );
+  }
+
+  return (data as { id: string }[] | null)?.length ?? 0;
+}
+
 export async function upsertTrainingPeaksWorkoutCacheScanStatuses(
   rows: TrainingPeaksWorkoutCacheScanStatusUpsertRow[]
 ): Promise<void> {
