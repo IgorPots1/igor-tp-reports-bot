@@ -21,7 +21,6 @@ import {
   normalizeTrainingPeaksWorkoutItems,
   type TrainingPeaksWorkoutRaw,
 } from "./lib/trainingpeaks-workout-normalization.ts";
-import { sendTelegramMessageStrict } from "../../../src/features/telegram/telegram-client.ts";
 
 const TP_API_HOST = "https://tpapi.trainingpeaks.com";
 const APP_HOST = "https://app.trainingpeaks.com";
@@ -59,11 +58,25 @@ async function sendSessionDeadAlert(): Promise<void> {
     console.error("[tp-workouts-cache-scan] TP session dead, but no TELEGRAM_COACH_CHAT_IDS configured for alert.");
     return;
   }
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) {
+    console.error("[tp-workouts-cache-scan] TP session dead, but TELEGRAM_BOT_TOKEN is not set for alert.");
+    return;
+  }
   const message =
     "⚠️ TP session dead: скан кэша тренировок прерван. Нужен перелогин в TrainingPeaks в persistent-профиле раннера (код re-login не делает).";
+  // Direct Telegram Bot API call — keep the runner free of the app's telegram
+  // module graph (cross-package .ts imports break under the runner's loader).
   for (const chatId of chatIds) {
     try {
-      await sendTelegramMessageStrict(chatId, message);
+      const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, text: message }),
+      });
+      if (!res.ok) {
+        console.error(`[tp-workouts-cache-scan] Session-dead alert to ${chatId} failed: HTTP ${res.status}`);
+      }
     } catch (error) {
       console.error(`[tp-workouts-cache-scan] Failed to send session-dead alert to ${chatId}:`, error);
     }
@@ -766,9 +779,14 @@ async function main(): Promise<void> {
       return true;
     }
 
-    // Request wrapper with auth resilience: 200 returns; 401/403 triggers one
-    // re-capture + token rotation and a retry; network/5xx get up to 3 backoff
-    // retries. Throws AuthDeadError when the session cannot be recovered.
+    // Request wrapper with auth resilience:
+    //  - 200 → return.
+    //  - 401 (token expired, session-wide) → re-capture + rotate token for the
+    //    rest of the run, then retry. Throws AuthDeadError if unrecoverable.
+    //  - 403 (forbidden for THIS athlete — not a session problem; some athletes
+    //    are permanently 403) → throw immediately so the caller marks just that
+    //    student failed and continues. Never re-capture or abort on 403.
+    //  - network / 5xx → up to 3 backoff retries.
     async function fetchWithAuth(endpoint: string): Promise<ApiJsonResponse> {
       for (let attempt = 0; attempt < 3; attempt++) {
         const res = await performApiJsonRequest({
@@ -780,7 +798,10 @@ async function main(): Promise<void> {
         if (res.status === 200) {
           return res;
         }
-        if (res.status === 401 || res.status === 403) {
+        if (res.status === 403) {
+          throw new Error(`TrainingPeaks workouts GET forbidden (403) for ${endpoint}`);
+        }
+        if (res.status === 401) {
           const recovered = await reCapture();
           if (!recovered) {
             throw new AuthDeadError();
@@ -793,8 +814,10 @@ async function main(): Promise<void> {
       throw new Error(`TrainingPeaks request failed after retries: ${endpoint}`);
     }
 
-    // Probe once before the loop: if the session is already dead, abort the
-    // whole run and alert instead of hammering every student with 401s.
+    // Probe once before the loop: a session-wide 401 means the token is dead —
+    // abort the whole run and alert instead of hammering every student. Only 401
+    // counts as session death; a 403 here would be athlete-specific, so we let
+    // the per-student loop handle it rather than aborting.
     {
       const probeEndpoint = `${TP_API_HOST}/fitness/v6/athletes/${warmupAthleteId}/workouts/${args.from}/${args.from}`;
       let probe = await performApiJsonRequest({
@@ -803,7 +826,7 @@ async function main(): Promise<void> {
         endpoint: probeEndpoint,
         headers: authState.headers,
       });
-      if (probe.status === 401 || probe.status === 403) {
+      if (probe.status === 401) {
         const recovered = await reCapture();
         if (recovered) {
           probe = await performApiJsonRequest({
@@ -813,7 +836,7 @@ async function main(): Promise<void> {
             headers: authState.headers,
           });
         }
-        if (!recovered || probe.status === 401 || probe.status === 403) {
+        if (!recovered || probe.status === 401) {
           await sendSessionDeadAlert();
           throw new Error(
             "TrainingPeaks session dead: aborting scan run (manual re-login needed in persistent profile).",
@@ -835,11 +858,12 @@ async function main(): Promise<void> {
         });
         summaries.push(studentSummary);
       } catch (error) {
-        // A dead session mid-run is not one student's failure — escalate and abort.
-        if (error instanceof AuthDeadError) {
-          await sendSessionDeadAlert();
-          throw error;
-        }
+        // Per-student failure (403 forbidden, unrecoverable 401, retries
+        // exhausted) — mark this student failed and continue with the rest.
+        // A genuinely dead session is caught up-front by the probe (alert +
+        // abort); a mid-run token death simply fails the remaining students and
+        // is surfaced by the next run's probe, so we never abort mid-loop over
+        // one athlete.
         summaries.push({
           studentId: target.student.id,
           athleteId: target.athleteId,
