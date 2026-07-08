@@ -1889,7 +1889,9 @@ export async function upsertTrainingPeaksWorkoutCacheRows(
 // value written to scanned_at on upsert, so freshly upserted rows (scanned_at ===
 // runStartedAt) never match `scanned_at < runStartedAt`.
 //
-// The filters here MUST mirror plannedCacheRowIsStale() in
+// Runs via a SECURITY DEFINER RPC (reconcile_trainingpeaks_workout_cache_planned_rows)
+// because service_role is deliberately NOT granted DELETE on this cache table.
+// The function's WHERE clause MUST mirror plannedCacheRowIsStale() in
 // workout-cache-reconcile.ts (tested by check-trainingpeaks-workout-cache-reconcile).
 // Returns the number of rows deleted.
 export async function reconcileTrainingPeaksWorkoutCachePlannedRows(input: {
@@ -1899,16 +1901,15 @@ export async function reconcileTrainingPeaksWorkoutCachePlannedRows(input: {
   runStartedAt: string;
 }): Promise<number> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("trainingpeaks_workout_cache")
-    .delete()
-    .eq("student_id", input.studentId)
-    .gte("workout_date", input.from)
-    .lte("workout_date", input.to)
-    .eq("is_planned", true)
-    .eq("is_completed", false)
-    .lt("scanned_at", input.runStartedAt)
-    .select("id");
+  const { data, error } = await supabase.rpc(
+    "reconcile_trainingpeaks_workout_cache_planned_rows",
+    {
+      p_student_id: input.studentId,
+      p_from: input.from,
+      p_to: input.to,
+      p_run_started_at: input.runStartedAt,
+    }
+  );
 
   if (error) {
     throw new Error(
@@ -1916,7 +1917,7 @@ export async function reconcileTrainingPeaksWorkoutCachePlannedRows(input: {
     );
   }
 
-  return (data as { id: string }[] | null)?.length ?? 0;
+  return typeof data === "number" ? data : 0;
 }
 
 export async function upsertTrainingPeaksWorkoutCacheScanStatuses(
