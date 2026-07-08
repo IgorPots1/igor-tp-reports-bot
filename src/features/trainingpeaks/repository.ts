@@ -10407,6 +10407,86 @@ export async function dismissTrainingPeaksPlanSignalByCoach(input: {
   return { updated: true, reason: "ok" };
 }
 
+// Expire ONE stale zombie plan signal (valid_until=null, aged out, memory inactive) — Supabase-only,
+// no TrainingPeaks/Telegram call. Mirrors dismissTrainingPeaksPlanSignalByCoach: status=expired,
+// resolved_reason=stale_zombie_cleanup, zombie_cleanup metadata trace, history kept (no delete).
+// Compare-and-set on status=active → idempotent (a re-run over an expired row returns updated:false).
+// Same type guard as the manual desk dismiss, so pain_injury/health can never be reached here.
+export async function expireStaleZombiePlanSignal(input: {
+  signalId: string;
+  studentId: string;
+  ageDays: number;
+  reason?: string;
+}): Promise<{ updated: boolean; reason: string }> {
+  const supabase = createSupabaseServerClient();
+  const appliedAt = new Date().toISOString();
+
+  const { data: existing, error: fetchError } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .select("id, status, signal_type, valid_until, metadata")
+    .eq("id", input.signalId)
+    .eq("student_id", input.studentId)
+    .maybeSingle();
+  if (fetchError) {
+    throw new Error(`Failed to load signal for zombie cleanup: ${fetchError.message}`);
+  }
+  if (!existing) {
+    return { updated: false, reason: "not_found" };
+  }
+  const row = existing as {
+    id: string;
+    status: string;
+    signal_type: string;
+    valid_until: string | null;
+    metadata: Record<string, unknown>;
+  };
+  if (row.status !== "active") {
+    return { updated: false, reason: "not_active" };
+  }
+  if (!DESK_DISMISSIBLE_PLAN_SIGNAL_TYPES.has(row.signal_type)) {
+    return { updated: false, reason: "not_dismissible_signal" };
+  }
+  if (row.valid_until !== null) {
+    return { updated: false, reason: "has_valid_until" };
+  }
+
+  const metaBefore =
+    row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+      ? (row.metadata as Record<string, unknown>)
+      : {};
+  const nextMetadata = {
+    ...metaBefore,
+    zombie_cleanup: {
+      closed_at: appliedAt,
+      actor: "signal_zombie_cleanup",
+      age_days: input.ageDays,
+      reason: input.reason?.trim() || "stale_zombie_no_ttl",
+    },
+  };
+
+  const { data: updated, error: updateError } = await supabase
+    .from("trainingpeaks_student_operational_signals")
+    .update({
+      status: "expired",
+      resolved_reason: "stale_zombie_cleanup",
+      resolved_at: appliedAt,
+      metadata: nextMetadata,
+      updated_at: appliedAt,
+    })
+    .eq("id", input.signalId)
+    .eq("student_id", input.studentId)
+    .eq("status", "active")
+    .select("id")
+    .maybeSingle();
+  if (updateError) {
+    throw new Error(`Failed to expire zombie signal: ${updateError.message}`);
+  }
+  if (!updated) {
+    return { updated: false, reason: "concurrent_update" };
+  }
+  return { updated: true, reason: "ok" };
+}
+
 // Слой 3 recovery bridge — batch-close a student's active illness signals when the coach confirms
 // recovery. Mirrors closeHealthSignalByAdminUi but keyed by student + signal types (one recovery
 // statement clears the whole illness episode, not a single row). Sets lifecycle_state=resolved so the

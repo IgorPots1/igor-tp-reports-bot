@@ -69,6 +69,7 @@ import {
   listTrainingPeaksStudentsEligibleForHealthMetrics,
   listTrainingPeaksHealthMetricsForStudentDateRange,
   listTrainingPeaksOperationalSignals,
+  expireStaleZombiePlanSignal,
   markTrainingPeaksStudentTelegramLinkCodeUsed,
   rejectTrainingPeaksAction as rejectTrainingPeaksActionInRepository,
   recordTrainingPeaksStudentContactEvent,
@@ -165,6 +166,11 @@ import {
   readHealthSignalAutoCloseMode,
   type HealthSignalAutoCloseMode,
 } from "@/features/trainingpeaks/health-signal-autoclose";
+import {
+  readSignalZombieCleanupMode,
+  decideSignalZombieCleanup,
+  type SignalZombieCleanupMode,
+} from "@/features/trainingpeaks/signal-zombie-cleanup";
 import { classifyTrainingPeaksWorkoutActivity } from "@/features/trainingpeaks/workout-activity-classification";
 import {
   parseMoveWorkoutWithAiFallback,
@@ -8270,6 +8276,101 @@ export async function runHealthSignalMemoryAutoClose(): Promise<{
   }
 
   return { mode, considered: healthStarted.length, eligible, closed };
+}
+
+// Zombie cleanup orchestrator — expire stale valid_until=null plan signals behind
+// COACH_SIGNAL_ZOMBIE_CLEANUP_MODE. off → no-op; dry_run → log what WOULD expire, mutate nothing;
+// on → expire each. Self-contained & best-effort: a read failure degrades to a no-op, never throws
+// into a caller. Zero TrainingPeaks/Telegram calls.
+export async function runSignalZombieCleanup(): Promise<{
+  mode: SignalZombieCleanupMode;
+  considered: number;
+  eligible: number;
+  closed: number;
+}> {
+  const mode = readSignalZombieCleanupMode();
+  if (mode === "off") {
+    return { mode, considered: 0, eligible: 0, closed: 0 };
+  }
+
+  const asOfDate = getCoachTodayDateKey(DEFAULT_COACH_TIMEZONE);
+
+  let signals: Awaited<ReturnType<typeof listTrainingPeaksOperationalSignals>>;
+  try {
+    signals = await listTrainingPeaksOperationalSignals({ status: "active", limit: 500 });
+  } catch (error) {
+    console.warn("Zombie cleanup: failed to list active signals", {
+      event: "signal_zombie_cleanup_list_failed",
+      errorClass: error instanceof Error ? error.name : "UnknownError",
+    });
+    return { mode, considered: 0, eligible: 0, closed: 0 };
+  }
+
+  const studentIds = [...new Set(signals.items.map((signal) => signal.studentId))];
+  const activeMemoryObsIds = new Set<string>();
+  try {
+    const memoryItems = await listTrainingPeaksStudentMemoryItemsForStudents(studentIds, {
+      activeOnly: true,
+    });
+    for (const item of memoryItems) {
+      if (item.sourceObservationId) {
+        activeMemoryObsIds.add(item.sourceObservationId);
+      }
+    }
+  } catch (error) {
+    console.warn("Zombie cleanup: failed to load memory (treating none as active)", {
+      event: "signal_zombie_cleanup_memory_failed",
+      errorClass: error instanceof Error ? error.name : "UnknownError",
+    });
+  }
+
+  let eligible = 0;
+  let closed = 0;
+  for (const signal of signals.items) {
+    const decision = decideSignalZombieCleanup({
+      status: signal.status,
+      signalType: signal.signalType,
+      validUntil: signal.validUntil,
+      createdAt: signal.createdAt,
+      asOfDate,
+      hasActiveConfirmingMemory: signal.sourceObservationId
+        ? activeMemoryObsIds.has(signal.sourceObservationId)
+        : false,
+    });
+    if (!decision.eligible) {
+      continue;
+    }
+    eligible += 1;
+    if (mode === "dry_run") {
+      console.info("Zombie cleanup [dry_run]: would expire", {
+        event: "signal_zombie_cleanup_dry_run",
+        signalId: signal.id,
+        studentId: signal.studentId,
+        signalType: signal.signalType,
+        ageDays: decision.ageDays,
+      });
+      continue;
+    }
+    try {
+      const result = await expireStaleZombiePlanSignal({
+        signalId: signal.id,
+        studentId: signal.studentId,
+        ageDays: decision.ageDays,
+        reason: decision.reason,
+      });
+      if (result.updated) {
+        closed += 1;
+      }
+    } catch (error) {
+      console.warn("Zombie cleanup: failed to expire one signal", {
+        event: "signal_zombie_cleanup_expire_failed",
+        signalId: signal.id,
+        errorClass: error instanceof Error ? error.name : "UnknownError",
+      });
+    }
+  }
+
+  return { mode, considered: signals.items.length, eligible, closed };
 }
 
 export async function buildOperationalSignalDisplayEvidenceMap(input: {
