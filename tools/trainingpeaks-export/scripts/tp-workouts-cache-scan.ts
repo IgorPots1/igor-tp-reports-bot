@@ -11,14 +11,81 @@ import type {
 } from "../../../src/features/trainingpeaks/repository.ts";
 import * as trainingPeaksRepository from "../../../src/features/trainingpeaks/repository.ts";
 import { profileDir, toolRoot } from "./lib/paths.ts";
-import { captureSessionAuth, performApiJsonRequest } from "./lib/trainingpeaks-api-move.ts";
+import {
+  captureSessionAuth,
+  performApiJsonRequest,
+  type ApiJsonResponse,
+  type CapturedAuth,
+} from "./lib/trainingpeaks-api-move.ts";
 import {
   normalizeTrainingPeaksWorkoutItems,
   type TrainingPeaksWorkoutRaw,
 } from "./lib/trainingpeaks-workout-normalization.ts";
+import { sendTelegramMessageStrict } from "../../../src/features/telegram/telegram-client.ts";
 
 const TP_API_HOST = "https://tpapi.trainingpeaks.com";
 const APP_HOST = "https://app.trainingpeaks.com";
+
+// Thrown when the TrainingPeaks session is dead and re-capturing the auth token
+// did not recover it — the runner needs a manual re-login in the persistent
+// Chromium profile. Escalated to a Telegram alert + run abort, never swallowed
+// as a per-student "failed".
+class AuthDeadError extends Error {
+  constructor(message = "TrainingPeaks session dead (re-capture failed).") {
+    super(message);
+    this.name = "AuthDeadError";
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Coach chat ids for operational alerts. Read inline (same env var as
+// getTrainingPeaksCoachChatIds) to avoid pulling the attention-telegram module
+// graph into the runner.
+function getCoachAlertChatIds(): string[] {
+  const value = process.env.TELEGRAM_COACH_CHAT_IDS?.trim();
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((chatId) => chatId.trim())
+    .filter(Boolean);
+}
+
+async function sendSessionDeadAlert(): Promise<void> {
+  const chatIds = getCoachAlertChatIds();
+  if (chatIds.length === 0) {
+    console.error("[tp-workouts-cache-scan] TP session dead, but no TELEGRAM_COACH_CHAT_IDS configured for alert.");
+    return;
+  }
+  const message =
+    "⚠️ TP session dead: скан кэша тренировок прерван. Нужен перелогин в TrainingPeaks в persistent-профиле раннера (код re-login не делает).";
+  for (const chatId of chatIds) {
+    try {
+      await sendTelegramMessageStrict(chatId, message);
+    } catch (error) {
+      console.error(`[tp-workouts-cache-scan] Failed to send session-dead alert to ${chatId}:`, error);
+    }
+  }
+}
+
+function buildAuthHeaders(auth: CapturedAuth): Record<string, string> {
+  const headers: Record<string, string> = {
+    accept: "application/json, text/javascript, */*; q=0.01",
+    "x-requested-with": "XMLHttpRequest",
+  };
+  if (auth.authorizationHeader) {
+    headers.authorization = auth.authorizationHeader;
+  }
+  if (typeof auth.sampleHeaders.referer === "string" && auth.sampleHeaders.referer.trim()) {
+    headers.referer = auth.sampleHeaders.referer;
+  }
+  if (typeof auth.sampleHeaders.origin === "string" && auth.sampleHeaders.origin.trim()) {
+    headers.origin = auth.sampleHeaders.origin;
+  }
+  return headers;
+}
 
 type CliArgs = {
   from: string;
@@ -495,26 +562,19 @@ function toCompactErrorMessage(error: unknown): string {
 }
 
 async function scanOneStudent(input: {
-  page: import("playwright").Page;
   upsertCacheFn: (rows: TrainingPeaksWorkoutCacheUpsertRow[]) => Promise<void>;
   reconcileFn: ReconcilePlannedRowsFn;
+  // Performs the GET with auth resilience (retry + token re-capture on 401/403).
+  // Throws AuthDeadError if the session is dead; that escalates to a run abort.
+  fetchFn: (endpoint: string) => Promise<ApiJsonResponse>;
   target: ResolvedTarget;
   from: string;
   to: string;
   scannedAt: string;
-  authHeaders: Record<string, string>;
-  // Injectable for tests; defaults to the real TrainingPeaks API request.
-  requestFn?: typeof performApiJsonRequest;
 }): Promise<StudentSummary> {
-  const { page, upsertCacheFn, reconcileFn, target, from, to, scannedAt, authHeaders } = input;
-  const requestFn = input.requestFn ?? performApiJsonRequest;
+  const { upsertCacheFn, reconcileFn, fetchFn, target, from, to, scannedAt } = input;
   const endpoint = `${TP_API_HOST}/fitness/v6/athletes/${target.athleteId}/workouts/${from}/${to}`;
-  const result = await requestFn({
-    page,
-    method: "GET",
-    endpoint,
-    headers: authHeaders,
-  });
+  const result = await fetchFn(endpoint);
 
   if (result.status !== 200) {
     throw new Error(`TrainingPeaks workouts GET failed: status=${result.status}, ok=${result.ok}`);
@@ -689,34 +749,97 @@ async function main(): Promise<void> {
       throw new Error("Failed to capture TrainingPeaks auth/session (no API session context observed).");
     }
 
-    const headers: Record<string, string> = {
-      accept: "application/json, text/javascript, */*; q=0.01",
-      "x-requested-with": "XMLHttpRequest",
-    };
-    if (auth.authorizationHeader) {
-      headers.authorization = auth.authorizationHeader;
+    // Mutable auth state: the token is rotated for the rest of the run when a
+    // 401/403 forces a re-capture, so one expired token no longer kills the
+    // whole run.
+    const authState = { headers: buildAuthHeaders(auth) };
+    const warmupAthleteId = targets[0]!.athleteId;
+
+    // Re-capture the session token in place. Returns false if the session is
+    // dead (no authorization header recoverable).
+    async function reCapture(): Promise<boolean> {
+      const fresh = await captureSessionAuth({ context, page, athleteId: warmupAthleteId });
+      if (!fresh.authorizationHeader) {
+        return false;
+      }
+      authState.headers = buildAuthHeaders(fresh);
+      return true;
     }
-    if (typeof auth.sampleHeaders.referer === "string" && auth.sampleHeaders.referer.trim()) {
-      headers.referer = auth.sampleHeaders.referer;
+
+    // Request wrapper with auth resilience: 200 returns; 401/403 triggers one
+    // re-capture + token rotation and a retry; network/5xx get up to 3 backoff
+    // retries. Throws AuthDeadError when the session cannot be recovered.
+    async function fetchWithAuth(endpoint: string): Promise<ApiJsonResponse> {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const res = await performApiJsonRequest({
+          page,
+          method: "GET",
+          endpoint,
+          headers: authState.headers,
+        });
+        if (res.status === 200) {
+          return res;
+        }
+        if (res.status === 401 || res.status === 403) {
+          const recovered = await reCapture();
+          if (!recovered) {
+            throw new AuthDeadError();
+          }
+          continue; // retry the same request with the rotated token
+        }
+        // network / 5xx — back off and retry
+        await sleep(500 * (attempt + 1));
+      }
+      throw new Error(`TrainingPeaks request failed after retries: ${endpoint}`);
     }
-    if (typeof auth.sampleHeaders.origin === "string" && auth.sampleHeaders.origin.trim()) {
-      headers.origin = auth.sampleHeaders.origin;
+
+    // Probe once before the loop: if the session is already dead, abort the
+    // whole run and alert instead of hammering every student with 401s.
+    {
+      const probeEndpoint = `${TP_API_HOST}/fitness/v6/athletes/${warmupAthleteId}/workouts/${args.from}/${args.from}`;
+      let probe = await performApiJsonRequest({
+        page,
+        method: "GET",
+        endpoint: probeEndpoint,
+        headers: authState.headers,
+      });
+      if (probe.status === 401 || probe.status === 403) {
+        const recovered = await reCapture();
+        if (recovered) {
+          probe = await performApiJsonRequest({
+            page,
+            method: "GET",
+            endpoint: probeEndpoint,
+            headers: authState.headers,
+          });
+        }
+        if (!recovered || probe.status === 401 || probe.status === 403) {
+          await sendSessionDeadAlert();
+          throw new Error(
+            "TrainingPeaks session dead: aborting scan run (manual re-login needed in persistent profile).",
+          );
+        }
+      }
     }
 
     for (const target of targets) {
       try {
         const studentSummary = await scanOneStudent({
-          page,
           upsertCacheFn,
           reconcileFn,
+          fetchFn: fetchWithAuth,
           target,
           from: args.from,
           to: args.to,
           scannedAt,
-          authHeaders: headers,
         });
         summaries.push(studentSummary);
       } catch (error) {
+        // A dead session mid-run is not one student's failure — escalate and abort.
+        if (error instanceof AuthDeadError) {
+          await sendSessionDeadAlert();
+          throw error;
+        }
         summaries.push({
           studentId: target.student.id,
           athleteId: target.athleteId,
