@@ -121,6 +121,14 @@ if (typeof getTrainingPeaksBusinessChatByChatId !== "function") {
   throw new Error("TrainingPeaks repository business chat helper is unavailable.");
 }
 
+const listRecentTrainingPeaksStudentContactEvents =
+  trainingPeaksRepositoryModuleCompat.listRecentTrainingPeaksStudentContactEvents ??
+  trainingPeaksRepositoryModuleCompat.default?.listRecentTrainingPeaksStudentContactEvents;
+
+if (typeof listRecentTrainingPeaksStudentContactEvents !== "function") {
+  throw new Error("TrainingPeaks repository contact events helper is unavailable.");
+}
+
 const getTrainingPeaksCoachChatIds =
   trainingPeaksAttentionTelegramModuleCompat.getTrainingPeaksCoachChatIds ??
   trainingPeaksAttentionTelegramModuleCompat.default?.getTrainingPeaksCoachChatIds;
@@ -2629,8 +2637,140 @@ function formatCompactDateShort(value: string | null): string {
   return `${match[3]}.${match[2]}`;
 }
 
-function formatMoveCompletionStudentReply(formality: "ty" | "vy" | "unknown" | null | undefined): string {
-  return formality === "ty" ? "Готово, проверяй." : "Готово, проверяйте.";
+const MOVE_COMPLETION_REPLY_TEMPLATES_VY: readonly string[] = [
+  "Готово!",
+  "Готово 🙌",
+  "Сделал!",
+  "Готово! Жду отчёт",
+  "Готово, жду от вас отчёт)",
+  "Готово 🙌 жду отчёт",
+  "Готово, хорошей тренировки!",
+  "Готово, удачной тренировки!",
+  "Готово! Как побегаете — напишите",
+  "Готово, как побегаете — отпишитесь)",
+];
+
+const MOVE_COMPLETION_REPLY_TEMPLATES_TY: readonly string[] = [
+  "Готово!",
+  "Готово 🙌",
+  "Сделал!",
+  "Готово! Жду отчёт",
+  "Готово, жду от тебя отчёт)",
+  "Готово 🙌 жду отчёт",
+  "Готово, хорошей тренировки!",
+  "Готово, удачной тренировки!",
+  "Готово! Как побегаешь — напиши",
+  "Готово, как побегаешь — отпишись)",
+];
+
+function resolveMoveCompletionReplyTemplateBank(
+  formality: "ty" | "vy" | "unknown" | null | undefined
+): readonly string[] {
+  // Unknown formality defaults to the "вы" bank — safer than guessing "ты".
+  return formality === "ty" ? MOVE_COMPLETION_REPLY_TEMPLATES_TY : MOVE_COMPLETION_REPLY_TEMPLATES_VY;
+}
+
+function resolveMoveCompletionGreetingPrefix(formality: "ty" | "vy" | "unknown" | null | undefined): string {
+  return formality === "ty" ? "Привет! " : "Здравствуйте! ";
+}
+
+function hashMoveCompletionTemplateKey(key: string): number {
+  let hash = 5381;
+  for (let index = 0; index < key.length; index += 1) {
+    hash = ((hash * 33) ^ key.charCodeAt(index)) >>> 0;
+  }
+  return hash >>> 0;
+}
+
+function pickMoveCompletionReplyTemplate(input: {
+  formality: "ty" | "vy" | "unknown" | null | undefined;
+  key: string;
+  previousTemplate: string | null;
+}): string {
+  const bank = resolveMoveCompletionReplyTemplateBank(input.formality);
+  const baseIndex = hashMoveCompletionTemplateKey(input.key) % bank.length;
+  const candidate = bank[baseIndex];
+  // Deterministic hash can coincide with the last-sent phrase; bump by one to
+  // guarantee no back-to-back repeat for the same student.
+  if (input.previousTemplate && candidate === input.previousTemplate) {
+    return bank[(baseIndex + 1) % bank.length];
+  }
+  return candidate;
+}
+
+async function getPreviousMoveCompletionReplyTemplate(input: {
+  studentId: string;
+  excludeActionId: string;
+}): Promise<string | null> {
+  const supabase = getSupabase();
+
+  const { data: recentActions, error: actionsError } = await supabase
+    .from("trainingpeaks_actions")
+    .select("id")
+    .eq("student_id", input.studentId)
+    .neq("id", input.excludeActionId)
+    .order("created_at", { ascending: false })
+    .limit(20);
+
+  if (actionsError) {
+    console.warn(
+      `Failed to look up prior move actions for student ${input.studentId}: ${actionsError.message}`
+    );
+    return null;
+  }
+
+  const actionIds = (recentActions ?? []).map((row: { id: string }) => row.id);
+  if (actionIds.length === 0) {
+    return null;
+  }
+
+  const { data: runs, error: runsError } = await supabase
+    .from("trainingpeaks_action_runs")
+    .select("log_json, finished_at")
+    .in("action_id", actionIds)
+    .not("log_json->>studentReplyTemplate", "is", null)
+    .order("finished_at", { ascending: false })
+    .limit(1);
+
+  if (runsError) {
+    console.warn(
+      `Failed to look up prior move completion reply template for student ${input.studentId}: ${runsError.message}`
+    );
+    return null;
+  }
+
+  const row = (runs ?? [])[0] as { log_json?: unknown } | undefined;
+  const logJson = row?.log_json as { studentReplyTemplate?: unknown } | null | undefined;
+  return typeof logJson?.studentReplyTemplate === "string" ? logJson.studentReplyTemplate : null;
+}
+
+async function shouldPrependMoveCompletionGreeting(input: {
+  studentId: string;
+  excludeReferenceId: string | null;
+}): Promise<boolean> {
+  const events = await listRecentTrainingPeaksStudentContactEvents({
+    studentId: input.studentId,
+    limit: 20,
+  });
+  const todayParts = getBelgradeDateParts(new Date());
+
+  const hasEarlierContactToday = events.some((event) => {
+    // The trigger message itself is already logged as an athlete_message contact
+    // event at ingestion time — it must not count as "contact today".
+    if (input.excludeReferenceId && event.referenceId === input.excludeReferenceId) {
+      return false;
+    }
+    const occurredAt = new Date(event.occurredAt);
+    if (Number.isNaN(occurredAt.getTime())) {
+      return false;
+    }
+    const parts = getBelgradeDateParts(occurredAt);
+    return (
+      parts.year === todayParts.year && parts.month === todayParts.month && parts.day === todayParts.day
+    );
+  });
+
+  return !hasEarlierContactToday;
 }
 
 function getDryRunConfidenceDetail(evaluation: DryRunEvaluation | null): string | null {
@@ -2656,16 +2796,30 @@ async function trySendMoveCompletionReply(input: {
     | "business_chat_not_found"
     | "send_failed"
     | null;
+  templateText: string | null;
+  greetingPrepended: boolean;
 }> {
   if (!input.student) {
     console.warn(`Student move completion reply skipped for action ${input.action.id}: missing student`);
-    return { attempted: false, sent: false, skippedReason: "missing_student" };
+    return {
+      attempted: false,
+      sent: false,
+      skippedReason: "missing_student",
+      templateText: null,
+      greetingPrepended: false,
+    };
   }
 
   const chatId = input.student.telegram_chat_id?.trim() || input.action.source_chat_id?.trim() || null;
   if (!chatId) {
     console.warn(`Student move completion reply skipped for action ${input.action.id}: missing chat`);
-    return { attempted: false, sent: false, skippedReason: "missing_chat" };
+    return {
+      attempted: false,
+      sent: false,
+      skippedReason: "missing_chat",
+      templateText: null,
+      greetingPrepended: false,
+    };
   }
 
   let businessConnectionId: string;
@@ -2675,29 +2829,94 @@ async function trySendMoveCompletionReply(input: {
     console.warn(
       `Student move completion reply skipped for action ${input.action.id}: ${toShortErrorMessage(error)}`
     );
-    return { attempted: false, sent: false, skippedReason: "missing_business_connection" };
+    return {
+      attempted: false,
+      sent: false,
+      skippedReason: "missing_business_connection",
+      templateText: null,
+      greetingPrepended: false,
+    };
   }
 
   try {
     const businessChat = await getTrainingPeaksBusinessChatByChatId(chatId);
     if (!businessChat) {
       console.warn(`Student move completion reply skipped for action ${input.action.id}: business chat not found`);
-      return { attempted: false, sent: false, skippedReason: "business_chat_not_found" };
+      return {
+        attempted: false,
+        sent: false,
+        skippedReason: "business_chat_not_found",
+        templateText: null,
+        greetingPrepended: false,
+      };
     }
   } catch (error) {
     console.warn(
       `Student move completion reply skipped for action ${input.action.id}: business chat lookup failed (${toShortErrorMessage(error)})`
     );
-    return { attempted: false, sent: false, skippedReason: "business_chat_not_found" };
+    return {
+      attempted: false,
+      sent: false,
+      skippedReason: "business_chat_not_found",
+      templateText: null,
+      greetingPrepended: false,
+    };
   }
 
-  const text = formatMoveCompletionStudentReply(input.student.telegram_formality ?? "unknown");
+  const formality = input.student.telegram_formality ?? "unknown";
+  const { targetDate, sourceDate } = extractMoveDateRangeFromParsedPayload(input.action.parsed_payload);
+  const templateKey = `${input.student.id}|${input.action.id}|${targetDate ?? sourceDate ?? "unknown"}`;
+
+  let previousTemplate: string | null = null;
+  try {
+    previousTemplate = await getPreviousMoveCompletionReplyTemplate({
+      studentId: input.student.id,
+      excludeActionId: input.action.id,
+    });
+  } catch (error) {
+    console.warn(
+      `Failed to look up previous move completion reply for action ${input.action.id}, proceeding without anti-repeat context: ${toShortErrorMessage(error)}`
+    );
+  }
+
+  const templateText = pickMoveCompletionReplyTemplate({
+    formality,
+    key: templateKey,
+    previousTemplate,
+  });
+
+  let greetingPrepended = false;
+  let greetingPrefix = "";
+  try {
+    const shouldGreet = await shouldPrependMoveCompletionGreeting({
+      studentId: input.student.id,
+      excludeReferenceId: input.action.source_message_id?.trim() || null,
+    });
+    if (shouldGreet) {
+      greetingPrefix = resolveMoveCompletionGreetingPrefix(formality);
+      greetingPrepended = true;
+    }
+  } catch (error) {
+    // Safe fallback: if we can't reliably tell whether there was contact today,
+    // skip the greeting rather than risk a "Здравствуйте!" mid-conversation.
+    console.warn(
+      `Move completion greeting check failed for action ${input.action.id}, defaulting to no greeting: ${toShortErrorMessage(error)}`
+    );
+  }
+
+  const text = `${greetingPrefix}${templateText}`;
   try {
     await sendTrainingPeaksTelegramBusinessMessage(chatId, text, businessConnectionId);
-    return { attempted: true, sent: true, skippedReason: null };
+    return { attempted: true, sent: true, skippedReason: null, templateText, greetingPrepended };
   } catch (error) {
     console.warn(`Student move completion reply failed for action ${input.action.id}: ${toShortErrorMessage(error)}`);
-    return { attempted: true, sent: false, skippedReason: "send_failed" };
+    return {
+      attempted: true,
+      sent: false,
+      skippedReason: "send_failed",
+      templateText,
+      greetingPrepended,
+    };
   }
 }
 
@@ -9600,6 +9819,8 @@ async function main(): Promise<void> {
             studentReplyAttempted: studentReply.attempted,
             studentReplySent: studentReply.sent,
             studentReplySkippedReason: studentReply.skippedReason,
+            studentReplyTemplate: studentReply.templateText,
+            studentReplyGreetingPrepended: studentReply.greetingPrepended,
           },
         })
         .eq("id", run.id)
