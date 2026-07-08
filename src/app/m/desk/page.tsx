@@ -28,7 +28,7 @@ function openStudentChat(username: string | null) {
 }
 
 type WithChat = { studentId: string | null; name: string; telegramUsername: string | null };
-type HealthCard = WithChat & { summary: string; days: number | null };
+type HealthCard = WithChat & { summary: string; days: number | null; doubt?: string | null };
 type Card = WithChat & { summary: string };
 type Dismiss = { kind: "action"; actionId: string } | { kind: "signal"; signalId: string } | null;
 type PlanCard = Card & { dismiss: Dismiss };
@@ -147,6 +147,17 @@ const S = {
   name: { fontSize: 16, fontWeight: 700, lineHeight: 1.25 } as const,
   days: { flex: "0 0 auto" as const, fontSize: 12.5, fontWeight: 700, color: C.faint } as const,
   summary: { margin: "5px 0 0", fontSize: 14, fontWeight: 500, color: C.sub, lineHeight: 1.4 } as const,
+  doubtBadge: {
+    margin: "7px 0 0",
+    padding: "6px 10px",
+    borderRadius: 9,
+    background: C.warnBg,
+    border: `1px solid ${C.warnLine}`,
+    color: C.warn,
+    fontSize: 12.5,
+    fontWeight: 600,
+    lineHeight: 1.35,
+  } as const,
   manualNote: { margin: "6px 0 0", fontSize: 12, fontWeight: 600, color: C.faint } as const,
   actionRow: { marginTop: 11, display: "flex" as const, justifyContent: "flex-end" as const },
   closeBtn: {
@@ -531,6 +542,7 @@ export default function CoachDeskPage() {
                   right={c.days !== null ? <span style={S.days}>{daysLabel(c.days)}</span> : null}
                 />
                 {c.summary ? <p style={S.summary}>{c.summary}</p> : null}
+                {c.doubt ? <p style={S.doubtBadge}>⚠️ память сомневается: {c.doubt}</p> : null}
                 <div style={S.actionRow}>
                   <button
                     type="button"

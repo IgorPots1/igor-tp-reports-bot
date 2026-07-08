@@ -2,6 +2,7 @@ import type {
   TrainingPeaksAttentionSignal,
   TrainingPeaksAttentionSnapshot,
 } from "@/features/trainingpeaks/service";
+import type { HealthSignalMemoryDoubt } from "@/features/trainingpeaks/health-signal-memory-reconcile";
 
 // Coach-desk "Today" view model — a FULL mirror of the bot morning digest (same 5 sections, same order),
 // reshaped phone-first: illness collapsed to one card per student, no tech noise, "N дней" phrasing.
@@ -14,6 +15,7 @@ type WithChat = { studentId: string | null; name: string; telegramUsername: stri
 export type CoachDeskHealthCard = WithChat & {
   summary: string;
   days: number | null; // days overdue; 0 = due today; null = no due info
+  doubt: string | null; // Шаг 1: short human doubt reason ("боль, не болезнь" …); null = no doubt
 };
 
 export type CoachDeskCard = WithChat & { summary: string };
@@ -85,6 +87,22 @@ function cleanHealthSummary(reason: string): string {
   return collapseWhitespace(text);
 }
 
+// Шаг 1: map the doubt pattern to a short, human badge label for the desk card.
+function shortDoubtReason(doubt: HealthSignalMemoryDoubt): string {
+  switch (doubt.pattern) {
+    case "already_resolved":
+      return "похоже, уже прошло";
+    case "pain_not_illness":
+      return "боль, не болезнь";
+    case "self_chosen_pause":
+      return "самовыбранная пауза, не болезнь";
+    case "no_health_corroboration":
+      return "нет подтверждения — проверить, о ком речь";
+    default:
+      return "проверить сигнал";
+  }
+}
+
 function isScanAlertSignal(signal: TrainingPeaksAttentionSignal): boolean {
   if (signal.signalKind === "scan_failed") {
     return true;
@@ -149,6 +167,7 @@ export function buildCoachDeskTodayView(
     }
     const summary = cleanHealthSummary(signal.reason);
     const days = extractOverdueDays(signal.reason);
+    const doubt = signal.memoryDoubt ? shortDoubtReason(signal.memoryDoubt) : null;
     const existing = byStudent.get(key);
     if (!existing) {
       byStudent.set(key, {
@@ -157,6 +176,7 @@ export function buildCoachDeskTodayView(
         telegramUsername: username(signal.studentId ?? null),
         summary: "",
         days,
+        doubt,
         summaries: summary ? [summary] : [],
       });
       continue;
@@ -167,6 +187,9 @@ export function buildCoachDeskTodayView(
     if (days !== null && (existing.days === null || days > existing.days)) {
       existing.days = days;
     }
+    if (!existing.doubt && doubt) {
+      existing.doubt = doubt;
+    }
   }
   const check: CoachDeskHealthCard[] = [...byStudent.values()].map((card) => ({
     studentId: card.studentId,
@@ -174,6 +197,7 @@ export function buildCoachDeskTodayView(
     telegramUsername: card.telegramUsername,
     summary: card.summaries.join(" · "),
     days: card.days,
+    doubt: card.doubt ?? null,
   }));
 
   // 📅 Учесть в плане — availability/constraints + move candidates & requests, with dismiss handles.

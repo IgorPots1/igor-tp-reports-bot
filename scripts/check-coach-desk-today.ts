@@ -9,6 +9,7 @@ import {
   extractOverdueDays,
   isMoveReason,
 } from "@/features/trainingpeaks/coach-desk-today";
+import type { HealthSignalMemoryDoubt } from "@/features/trainingpeaks/health-signal-memory-reconcile";
 
 const LOG_PREFIX = "[check-coach-desk-today]";
 
@@ -21,7 +22,13 @@ function assert(condition: unknown, message: string): void {
 function sig(
   studentName: string | null,
   reason: string,
-  opts?: { studentId?: string | null; signalKind?: string; actionId?: string; signalId?: string }
+  opts?: {
+    studentId?: string | null;
+    signalKind?: string;
+    actionId?: string;
+    signalId?: string;
+    memoryDoubt?: HealthSignalMemoryDoubt | null;
+  }
 ): TrainingPeaksAttentionSignal {
   return {
     level: "today",
@@ -31,6 +38,7 @@ function sig(
     signalKind: opts?.signalKind,
     actionId: opts?.actionId ?? null,
     signalId: opts?.signalId ?? null,
+    memoryDoubt: opts?.memoryDoubt ?? null,
   };
 }
 
@@ -72,7 +80,18 @@ function run(): void {
     sig("ILYA BOGDANOV", "просрочено 4 дн.: болеет", { studentId: "ilya", signalKind: "operational_follow_up" }),
     sig("ILYA BOGDANOV", "просрочено 4 дн.: болеет, горло", { studentId: "ilya", signalKind: "operational_follow_up" }),
     sig("ILYA BOGDANOV", "просрочено 1 дн.: болеет, кашель и горло", { studentId: "ilya", signalKind: "operational_follow_up" }),
-    sig("Koroleva Anna", "просрочено 1 дн.: слабость", { studentId: "anna", signalKind: "operational_follow_up" }),
+    sig("Koroleva Anna", "просрочено 1 дн.: слабость\n⚠️ память сомневается: это боль в колене, не болезнь", {
+      studentId: "anna",
+      signalKind: "operational_follow_up",
+      memoryDoubt: {
+        suspected: true,
+        pattern: "pain_not_illness",
+        tier: "medium",
+        reason: "это боль в колене, не болезнь",
+        memoryItemId: null,
+        memoryConfidence: null,
+      },
+    }),
     sig("Daria Postolaki", "болеет. Срок сегодня", { studentId: "daria", signalKind: "operational_follow_up" }),
   ];
   snapshot.painDiscomfort = [sig("Elena Titskaia", "боль / колено\nуточнить, актуально ли", { studentId: "elena" })];
@@ -118,6 +137,10 @@ function run(): void {
   const ilya = view.check.find((c) => c.studentId === "ilya");
   assert(ilya!.summary.includes("горло") && ilya!.summary.includes("кашель"), "ILYA symptoms merged");
   assert(ilya!.days === 4, `ILYA days = max overdue (4), got ${ilya!.days}`);
+  // Шаг 1 memory-doubt badge: threaded structurally (not parsed out of reason) onto the desk card.
+  assert(ilya!.doubt === null, `ILYA has no memoryDoubt → doubt null, got ${JSON.stringify(ilya!.doubt)}`);
+  const anna = view.check.find((c) => c.studentId === "anna");
+  assert(anna!.doubt === "боль, не болезнь", `Anna memoryDoubt → short badge, got ${JSON.stringify(anna!.doubt)}`);
 
   // PLAN: availability + заявка + move candidate = 3 cards; moves count = 2 (заявка + candidate).
   assert(view.plan.length === 3, `3 plan cards, got ${view.plan.length}`);

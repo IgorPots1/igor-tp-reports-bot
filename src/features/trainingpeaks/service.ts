@@ -698,6 +698,9 @@ export type TrainingPeaksAttentionSignal = {
   // dismiss a stale one directly (Supabase-only expire). Absent for non-signal-backed items.
   signalId?: string | null;
   signalKind?: string;
+  // Решение A / Шаг 1: memory doubt on a health follow-up, threaded structurally so the desk can render
+  // a badge without parsing reason (reason keeps the appended line for the bot digest).
+  memoryDoubt?: HealthSignalMemoryDoubt | null;
 };
 
 export type TrainingPeaksAttentionSnapshot = {
@@ -4872,6 +4875,7 @@ type OperationalHealthFollowUpAttentionItem = {
   daysOverdue: number;
   episodeKey: string | null;
   signalId: string;
+  memoryDoubt?: HealthSignalMemoryDoubt | null;
 };
 
 function getSignalMetadataString(
@@ -6013,6 +6017,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
       studentName: item.studentName,
       studentId: item.studentId,
       reason: item.reason,
+      memoryDoubt: item.memoryDoubt ?? null,
       signalKind: "operational_follow_up",
     }));
     followUpOverflowCount = followUps.overflowCount;
@@ -8650,6 +8655,7 @@ export function collectOperationalHealthFollowUpsFromSignals(input: {
 
     const memoryDoubt = input.memoryDoubtBySignalId?.get(signal.id) ?? null;
     if (memoryDoubt) {
+      item.memoryDoubt = memoryDoubt;
       item.reason = `${item.reason}\n⚠️ память сомневается: ${memoryDoubt.reason}`;
     }
 
